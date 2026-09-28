@@ -17,8 +17,9 @@ Git operations.
 The native executable is invoked as `baton2 DATABASE COMMAND ARGS`. Each
 invocation opens the named SQLite database and performs its command. A `turn`
 invocation remains in the foreground while it supervises one native process.
-There is no resident coordinator process. Separate invocations share the
-database; SQLite serializes their write transactions.
+A `receive` invocation reads an attempt whose process owner survives loss of
+that reader. Separate invocations share the database; SQLite serializes their
+write transactions.
 
 | Source | Responsibility |
 | --- | --- |
@@ -141,6 +142,17 @@ releases ownership after native exit, then checks for newly pending input and
 invokes the receiver again. Reading after release covers messages committed
 while the previous turn was ending. Pending messages remain in the existing
 SQLite inbox. A failed turn retains unacknowledged input for later delivery.
+
+Receive retains each attempt's launch arguments, initial input, recovery command
+and native stdout beside the database. A process owner holds the session lock,
+native stdin and exit status. It restarts the Bend observer when the observer's
+connection closes before completion acknowledgment. Recovery reads the existing
+attempt with its original report ID and inbox cutoff. The owner releases its lock
+after native exit and completion preparation, and exits after the observer
+finishes parent delivery and pending-input continuation. Successful acknowledgment
+removes the temporary raw stdout file; the filtered native log remains.
+The [recovery validation](receive-recovery-2026-09-28.md) records the tested
+process-loss boundary.
 
 Native initialization binds the session ID in the existing row. Later turns
 resume it. Codex retains conversations in its configured storage. OMP roots
