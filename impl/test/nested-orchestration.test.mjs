@@ -67,7 +67,7 @@
 //   P6  v1 lane reach on the child's OWN subtree: message.send/receipt, attention.watch (the
 //       lane's own lease-parent law), scratchpad.read/elevate, knowledge.seed.
 //   P7  Resolve-then-authorize constancy: unknown message.receipt and unknown/cross-run
-//       scratchpad.elevate → application_unauthorized; foreign/unknown attention.watch →
+//       foreign/unknown attention.watch →
 //       attention_scope_forbidden (the lane's own landed law).
 //
 // Verified split (baseline, two consecutive runs): 7 pins green, 8 reds failing at their
@@ -616,16 +616,11 @@ test('P6 PIN: v1 lane reach on the child\'s own subtree', async (t) => {
   const page = await fx.application.command('run.attention.watch', { runId: 'run:child-parent' }, childPrincipal, null);
   assert.equal(page?.schemaVersion, 1);
   assert.ok(Array.isArray(page?.reasons));
-  // scratchpad.read + elevate on the own subtree run.
+  // scratchpad.read on the own subtree run.
   const ownTask = fx.coordination.task(handle.taskId);
   const note = writeNote(fx, { runId: 'run:own', taskId: ownTask.id, workerId: handle.id, text: 'child note', key: 'p6-note' });
   const read = await fx.application.command('run.scratchpad.read', { runId: 'run:own', scope: 'shared' }, childPrincipal, null);
   assert.equal(read?.schemaVersion, 1);
-  completeTask(fx, ownTask.id);
-  const elevated = await fx.application.command('run.scratchpad.elevate', {
-    runId: 'run:own', taskId: ownTask.id, entryIds: [note.entry.entryId],
-  }, childPrincipal, null);
-  assert.equal(elevated?.result, 'settled');
   // knowledge.seed inside the own subtree run's horizon.
   const seeded = await fx.application.command('run.knowledge.seed', {
     runId: 'run:own', type: 'Finding', grounding: 'observed', body: 'child finding',
@@ -633,7 +628,7 @@ test('P6 PIN: v1 lane reach on the child\'s own subtree', async (t) => {
   assert.equal(seeded?.ok, true);
 });
 
-test('P7 PIN: resolve-then-authorize constancy — unknown message/scratchpad refuse with the one constant', async (t) => {
+test('P7 PIN: resolve-then-authorize constancy — unknown message and foreign attention refuse with the one constant', async (t) => {
   const fx = await facadeFixture(t);
   const child = authorityOn(fx, { runId: 'run:p7-parent', principalId: 'child-p7', sessionId: 'session-p7' });
   const childPrincipal = principalOfChild(child);
@@ -642,19 +637,6 @@ test('P7 PIN: resolve-then-authorize constancy — unknown message/scratchpad re
     messageId: `message:${'a'.repeat(64)}`,
   }, childPrincipal, null));
   assert.equal(unknownMessage?.code, 'application_unauthorized');
-  // Unknown task: the elevate lane's resolve-then-authorize refuses before any elevation.
-  const unknownTask = await facadeError(() => fx.application.command('run.scratchpad.elevate', {
-    runId: 'run:p7-parent', taskId: 'task-never-created', entryIds: [`scratchpad-entry:${'0'.repeat(64)}`],
-  }, childPrincipal, null));
-  assert.equal(unknownTask?.code, 'application_unauthorized');
-  // Cross-run task (task exists but its runId differs from args.runId): the same constant.
-  const foreignHandle = await spawnMember(fx, { runId: 'run:p7-foreign' });
-  const foreignTask = fx.coordination.task(foreignHandle.taskId);
-  const crossRun = await facadeError(() => fx.application.command('run.scratchpad.elevate', {
-    runId: 'run:p7-parent', taskId: foreignTask.id, entryIds: [`scratchpad-entry:${'0'.repeat(64)}`],
-  }, childPrincipal, null));
-  assert.equal(crossRun?.code, 'application_unauthorized');
-  assert.equal(crossRun?.message, unknownTask?.message, 'unknown ≡ cross-run at the seam — no existence leak');
   // attention.watch foreign run: the lane's OWN landed law — attention_scope_forbidden.
   const foreignWatch = await facadeError(() => fx.application.command('run.attention.watch', {
     runId: 'run:p7-foreign',

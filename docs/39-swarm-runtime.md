@@ -715,7 +715,6 @@ permissions the view names — one table, four surfaces that cannot disagree:
 | `run.knowledge.seed` | contribute | pin a durable fact — typed, grounded, evidence-linked — that peers must be able to find |
 | `run.board.post` / `run.board.read` | contribute / read | keep runnable state on, and read back, the board bound to the participant's OWN run |
 | `run.scratchpad.append` / `run.scratchpad.read` | contribute / read | note working state (the shared scope is visible to peers) and read it or the shared scope back |
-| `run.scratchpad.elevate` | contribute | elevate one's own scratchpad entries to candidate Findings |
 | `evidence.search` | read | find a fact or a contribution by text, participant, kind or path across the deployment |
 
 **Retired from the participant surface, with the reason.** A verb without a participant situation
@@ -726,8 +725,6 @@ is not kept alive by an advertisement the loop cannot use:
   lane.
 - `scratchpad.settle` — the scratchpad settles when the run's tasks are terminal, which is the
   workflow terminal sweep, never a live participant's act mid-loop.
-- `scratchpad.elevate` (the embedded wrapper) — superseded for participants by
-  `run.scratchpad.elevate`, whose task identity the runtime binds server-side.
 - Context packs (`context.pack_granted`, orientation ratings) — run/attempt grant receipts of the
   wave lane. The swarm's pack is the recruit-time shared context (`basis`) plus
   `swarm.context_updated`, both of which already reach the participant.
@@ -1183,7 +1180,7 @@ the #503 brief block) but pinned only for three retired verbs. `swarm-knowledge.
 derives the whole knowledge/scratchpad/board/context/package family from the canonical registry
 and asserts the participant bridge refuses every member the brief does not teach — 22 rows at
 this writing: the wave-settlement lane (`knowledge.settlement_lease`,
-`scratchpad.settle`, the kernel `scratchpad.elevate`), the S-2 orchestrator board and package
+`scratchpad.settle`), the S-2 orchestrator board and package
 tools, the worker `board.claim`/`board.report` wire frames, the orchestrator knowledge reads
 (`knowledge.recall`, `knowledge.horizon`), and the context engine (`context.eval`/`map`/`reduce`/
 `retry`). A new family verb lands red until it is taught to participants or classified off their

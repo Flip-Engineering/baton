@@ -22,7 +22,7 @@ const MATRIX = Object.freeze([
   // surfaces that serve each row, and surface-resolution.mjs proves it at the gate.
   ['run.scratchpad', 'ordinary', ['embedded'], 'observe', 'projectScratchpadView'],
   ['decision.list', 'ordinary', ['embedded', 'mcp'], 'observe', 'application.decisionList'],
-  // MCP-W2 fold (mcp-packaging-decisions v1.0): scratchpad.elevate / scratchpad.settle /
+  // MCP-W2 fold (mcp-packaging-decisions v1.0): scratchpad.settle /
   // knowledge.promote LEAVE the reflex matrix — they are the ordinary-surface settlement tools.
   ['knowledge.recall', 'ordinary', ['embedded', 'mcp'], 'observe', 'recallKnowledge'],
   ['knowledge.horizon', 'ordinary', ['embedded', 'mcp'], 'observe', 'taskHorizon + workflowHorizon + projectHorizon'],

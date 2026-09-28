@@ -158,21 +158,6 @@ test('KS1: replay is exactly-once and same-key-different-fields conflicts', () =
 // server-derived authority (stage: dispatch missing)
 // ===========================================================================
 
-test('KS3: scratchpad.elevate maps to coordinator.elevateTaskScratchpad with normalized args', async (t) => {
-  const { application, driver } = appHarness(t, { default: { outcome: 'completed', edits: [{ path: 'reports/a.md', content: 'a\n' }] } });
-  const calls = spyCoordinator(driver, ['elevateTaskScratchpad', 'settleWorkflowScratchpad']);
-  const code = await application.command('scratchpad.elevate', {
-    runId: 'run-x', taskId: 'task-x', workerId: 'w-1', expectedScratchpadFence: 0,
-    entryIds: [`scratchpad-entry:${'a'.repeat(64)}`],
-  }, principal('wave-owner')).then(() => null, (error) => error?.code ?? 'thrown');
-  assert.notEqual(code, 'application_command_unavailable');
-  assert.equal(calls.elevateTaskScratchpad.length, 1, 'the coordinator method is reached exactly once');
-  const [taskIdArg, entryIdsArg] = calls.elevateTaskScratchpad[0];
-  assert.equal(taskIdArg, 'task-x', 'the command normalizes to the coordinator wrapper signature');
-  assert.deepEqual(entryIdsArg, [`scratchpad-entry:${'a'.repeat(64)}`]);
-  assert.equal(calls.settleWorkflowScratchpad.length, 0, 'no alternate method is called');
-});
-
 test('KS3: scratchpad.settle maps to coordinator.settleWorkflowScratchpad', async (t) => {
   const { application, driver } = appHarness(t, { default: { outcome: 'completed', edits: [{ path: 'reports/a.md', content: 'a\n' }] } });
   const calls = spyCoordinator(driver, ['settleWorkflowScratchpad', 'elevateTaskScratchpad']);
@@ -365,8 +350,8 @@ test('KS8: a not-ready elevation refusal is recorded in settlement.errors and cl
 // KS9 — structural surface gate (regression pin; amended for the MCP-W2 fold)
 // ===========================================================================
 
-test('KS9: the three rows are mcp-enabled in the registry, CLI, and recursive gate', async () => {
-  const names = ['scratchpad.elevate', 'scratchpad.settle', 'knowledge.settlement_lease'];
+test('KS9: the settlement rows are mcp-enabled in the registry, CLI, and recursive gate', async () => {
+  const names = ['scratchpad.settle', 'knowledge.settlement_lease'];
   const rows = APPLICATION_SEMANTIC_REGISTRY.canonicalOperations;
   for (const name of names) {
     if (name === 'knowledge.settlement_lease') continue; // pinned by KS9b once the row lands
@@ -377,16 +362,16 @@ test('KS9: the three rows are mcp-enabled in the registry, CLI, and recursive ga
     // and the settlement capability class (knowledge.settlement_lease).
     assert.deepEqual([...(row.surfaces ?? [])].sort(), ['embedded', 'mcp'], `${name} surfaces carry mcp`);
   }
-  for (const derived of ['scratchpad_elevate', 'scratchpad_settle', 'knowledge_settlement_lease']) {
+  for (const derived of ['scratchpad_settle', 'knowledge_settlement_lease']) {
     assert.equal(CLI_WEB_COMMANDS.has(derived), false, `CLI excludes ${derived}`);
   }
   assert.deepEqual([...RUN_ORCHESTRATOR_CAPABILITIES], ['run.context', 'run.start', 'run.status', 'run.stop']);
 });
 
-test('KS9: the four names stay out of the recursive-dispatch allowlists (source pin)', async () => {
+test('KS9: the settlement names stay out of the recursive-dispatch allowlists (source pin)', async () => {
   const source = readFileSync(join(import.meta.dirname, '..', 'src', 'application.mjs'), 'utf8');
   const effectSet = source.slice(source.indexOf('recursiveEffectCommands'), source.indexOf('recursiveEffectCommands') + 200);
-  for (const name of ['scratchpad.elevate', 'scratchpad.settle', 'knowledge.promote', 'knowledge.settlement_lease']) {
+  for (const name of ['scratchpad.settle', 'knowledge.promote', 'knowledge.settlement_lease']) {
     assert.equal(effectSet.includes(`'${name}'`), false, `${name} stays out of recursiveEffectCommands`);
   }
   assert.deepEqual([...RUN_ORCHESTRATOR_CAPABILITIES], ['run.context', 'run.start', 'run.status', 'run.stop'],

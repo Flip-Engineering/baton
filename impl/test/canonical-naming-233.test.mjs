@@ -50,7 +50,7 @@ const WEB_DIRECT_PORT_OPERATIONS = Object.freeze([
   // #227 wire-card coverage (2026-08-15): the workflow-surface direct ports — the MCP web
   // bridge facade requires them on the resident card; the web lane now admits them.
   'run.message.send', 'run.message.receipt', 'run.attention.watch',
-  'run.scratchpad.read', 'run.scratchpad.elevate',
+  'run.scratchpad.read',
   'run.knowledge.seed',
   // Issue #99/#179 (harvest-accessor contract Decision 5): the accessor's two direct ports,
   // web-bus admitted beside the CLI dispatch projection that reads it (#566 composition).

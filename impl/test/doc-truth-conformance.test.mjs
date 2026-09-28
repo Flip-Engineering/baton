@@ -40,7 +40,6 @@ const FACADE_PORTS = [
   'run.message.receipt',
   'run.attention.watch',
   'run.scratchpad.read',
-  'run.scratchpad.elevate',
   'run.knowledge.seed',
 ];
 

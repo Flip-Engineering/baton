@@ -116,7 +116,7 @@ test('a server given an admission predicate advertises only the tools whose comm
 
 test('the resident wire card keeps the host-local settlement tools off the bridge, by their own commands', () => {
   const { facade } = facadeWith(WIRE_CARD);
-  for (const command of ['scratchpad.elevate', 'scratchpad.settle', 'knowledge.settlement_lease']) {
+  for (const command of ['scratchpad.settle', 'knowledge.settlement_lease']) {
     assert.equal(facade._admits(command), false, `${command} is host-local`);
   }
   assert.equal(facade._admits('swarm.recruit'), true);
@@ -440,7 +440,7 @@ test('U-G3: the bridge does not advertise the settlement tools, and MCP.md says 
   const mcp = server(t, { admitsCommand: (command) => facade._admits(command) });
   await ready(mcp);
   const names = (await request(mcp, 'l3', 'tools/list', {})).result.tools.map((tool) => tool.name);
-  const SETTLEMENT = ['baton_scratchpad_elevate', 'baton_scratchpad_settle',
+  const SETTLEMENT = ['baton_scratchpad_settle',
     'baton_knowledge_settlement_lease'];
   for (const tool of SETTLEMENT) {
     assert.equal(names.includes(tool), false, `${tool} is host-local and stays off the bridge inventory`);

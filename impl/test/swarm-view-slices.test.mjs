@@ -183,7 +183,6 @@ test('updates names the kinds this caller may send with the permission that admi
     { command: 'run.knowledge.seed', permission: 'contribute' },
     { command: 'run.scratchpad.append', permission: 'contribute' },
     { command: 'run.scratchpad.read', permission: 'read' },
-    { command: 'run.scratchpad.elevate', permission: 'contribute' },
     { command: 'evidence.search', permission: 'read' },
   ]);
   assert.equal(advertised.includes('swarm.work_updated'), false, 'organizing is not advertised to a builder');
