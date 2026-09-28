@@ -122,6 +122,34 @@ assert sys.stdin.read()==''
         self.assertEqual(resumed[resumed.index('--resume')+1],'omp-native')
         self.assertEqual(resumed[resumed.index('--session-dir')+1],args[args.index('--session-dir')+1])
 
+    def test_omp_frame_retention_uses_exact_json_type(self):
+        self.call('worker','omp-worker','root','omp','model','low',str(self.cwd),'omp-branch','base')
+        retained = [
+            '{"type":null,"probe":"null"}',
+            '{"type":123,"probe":"number"}',
+            '{"type":["message_update"],"probe":"array"}',
+            '{"probe":"message_update"}',
+            r'{"type":"message_update\u0000suffix","probe":"nul suffix"}',
+            '{invalid JSON containing message_update}',
+        ]
+        omitted = [
+            '  {"message":{"content":"prefix"},"type":"message_update"}  ',
+            r'{"typ\u0065":"message_\u0075pdate","probe":"escaped"}',
+        ]
+        final_text = "Final answer with apostrophe ' and unicode λ🙂."
+        terminal = json.dumps({'type':'agent_end','isTerminal':True,'messages':[
+            {'role':'assistant','content':[{'type':'text','text':final_text}]}]})
+        (self.cwd/'events.jsonl').write_text('\n'.join(retained+omitted+[terminal])+'\n')
+        self.worker.write_text('#!'+sys.executable+'\n'+'''import pathlib,sys
+sys.stdin.readline()
+sys.stdin.readline()
+print(pathlib.Path('events.jsonl').read_text(),end='',flush=True)
+assert sys.stdin.read()==''
+''')
+        self.call('turn','omp-worker','retained-turn',str(self.worker),'model','low',str(self.cwd),str(self.task),str(self.log),'')
+        self.assertEqual(self.log.read_text().splitlines(),retained+[terminal])
+        self.assertEqual(json.loads(self.call('delivery','retained-turn'))['body'],final_text)
+
     def test_omp_empty_terminal_envelope_delivers_streamed_trial_report(self):
         # Actual issue-608-reclaim native output, 2026-09-27 cutover trial.
         events = (ROOT / 'bend2/test/fixtures/issue608-omp-report.jsonl').read_text()
