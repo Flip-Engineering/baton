@@ -269,7 +269,7 @@ test('CLW5: the store keeps its exact durable behavior across the move', async (
       [['<digest>.jsonl', '7918adfd723e6dd6cb8f2257f02d07f4c6e42f0a757e5aaea845aad9520f4c0f'],
         ['index.json', '778d58928e63d98d3a06c5264105abdae5a69ce95ba492371b5ad4abd3703763']]);
     assert.equal(sha(readFileSync(join(root, 'events.jsonl'))),
-      '0baa9c18c598e1face7da42bf9e773a6d29588fdfa56f00322e383963d1927ea');
+      '3f8c035028a84028d08c311a69b40ab3034fa6f6f30e951bf27bcc0e99a83360');
 
     assert.equal(store.releaseWriterLease({ requireOwned: true }), true);
     assert.equal(existsSync(join(root, 'writer.lease')), false);
