@@ -181,7 +181,7 @@ test('generic MCP invoke dispatches native and operator application capabilities
   assert.equal(raw.quotaCalls.filter((row) => row.tool === 'baton_surface_invoke').length, 1);
 });
 
-test('generic MCP invoke refuses embedded-only authority and requires action coordinates', async () => {
+test('generic MCP invoke scopes embedded authority and sends Run guidance', async () => {
   const raw = baseServer();
   const server = wrapProductionMcpServer(raw, { runtime: new ProductionConvergenceRuntime() });
   const embedded = await call(server, 'baton_surface_invoke', {
@@ -190,21 +190,12 @@ test('generic MCP invoke refuses embedded-only authority and requires action coo
   assert.equal(embedded.result.isError, true);
   assert.equal(embedded.result.structuredContent.error.code, 'surface_embedded_only');
 
-  const missingAction = await call(server, 'baton_surface_invoke', {
-    name: 'run.send', args: { runId: 'run:a', message: 'go' }, idempotencyKey: 'action:1',
+  const guidance = await call(server, 'baton_surface_invoke', {
+    name: 'run.send', args: { runId: 'run:a', message: 'go' }, idempotencyKey: 'guidance:1',
   }, 32);
-  assert.equal(missingAction.result.isError, true);
-  assert.equal(missingAction.result.structuredContent.error.code, 'surface_action_id_required');
-
-  const action = await call(server, 'baton_surface_invoke', {
-    name: 'run.send',
-    args: { runId: 'run:a', actionId: 'action:send', message: 'go' },
-    idempotencyKey: 'action:2',
-  }, 33);
-  assert.equal(action.result.structuredContent.result.name, 'run.act');
-  assert.deepEqual(action.result.structuredContent.result.args, {
-    runId: 'run:a', actionId: 'action:send', inputs: { message: 'go' },
-  });
+  assert.notEqual(guidance.result.isError, true);
+  assert.equal(guidance.result.structuredContent.result.name, 'run.send');
+  assert.deepEqual(guidance.result.structuredContent.result.args, { runId: 'run:a', message: 'go' });
 });
 
 test('meta tools fail closed through existing MCP principal authority', async () => {

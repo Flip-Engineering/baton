@@ -82,9 +82,6 @@ for (const row of cliNative) {
 // advertising it) read as "no served implementation", and the third check below fired on a row that
 // was served.
 for (const name of cliDispatchCommandNames()) servedCliSet.add(name);
-// What the three projections above still do not carry is served by the CLI spelling
-// surface-resolution.mjs resolves for the operation — a semantic-action verb (`baton run interrupt`
-// compiles to the run.do action) or a host verb the CLI runs in process.
 const cliSurfaceExceptions = registryCli
   .filter((key) => !servedCliSet.has(key) && cliWitnesses.get(key) === null)
   .map((key) => Object.freeze({ key, classification: 'unserved' }));
@@ -121,36 +118,21 @@ const liveMcpTools = new Set(mcpCombinedToolNames());
 const liveMcpDispatch = new Set(mcpDispatchToolNames());
 const registryMcp = APPLICATION_SEMANTIC_REGISTRY.canonicalOperations
   .filter((operation) => operation.surfaces.includes('mcp'));
-const actionKinds = new Set(Object.keys(APPLICATION_SEMANTIC_REGISTRY.actions));
-const runDo = APPLICATION_SEMANTIC_REGISTRY.canonicalOperations.find((operation) => operation.key === 'run.do');
-const runDoNames = runDo ? [runDo.names.mcp, runDo.key,
-  ...(runDo.aliases ?? []).filter((alias) => alias.surface.startsWith('mcp.')).map((alias) => alias.name)] : [];
-const runDoLive = runDoNames.some((name) => liveMcpTools.has(name));
 function directMcpOperationPresent(operation) {
   const names = [operation.names.mcp, operation.key,
     ...(operation.aliases ?? []).filter((alias) => alias.surface.startsWith('mcp.')).map((alias) => alias.name)];
   return names.some((name) => liveMcpTools.has(name));
 }
-function actionDispatchedOnMcp(operation) {
-  return !directMcpOperationPresent(operation) && runDoLive && actionKinds.has(operation.liveMethod);
-}
-const indirectMcp = registryMcp.filter(actionDispatchedOnMcp).map((operation) => Object.freeze({
-  key: operation.key, action: operation.liveMethod, via: 'run.do',
-}));
-// An MCP-declaring registry operation absent from the operator composition is served by the SEAT
-// bridge the resident admits (mcp-web-bridge ORDINARY_COMMANDS) — the seat-side class the census
-// recorded by hand. An operation that neither the composition, nor the run.do action path, nor the
-// bridge admits is a real divergence and refuses here.
 const seatBridgeCommands = new Set(ORDINARY_COMMANDS);
 const mcpSurfaceExceptions = registryMcp
-  .filter((operation) => !directMcpOperationPresent(operation) && !actionDispatchedOnMcp(operation))
+  .filter((operation) => !directMcpOperationPresent(operation))
   .map((operation) => Object.freeze({
     key: operation.key,
     classification: seatBridgeCommands.has(operation.key) ? 'seat_side' : null,
   }));
 const unclassifiedMcp = mcpSurfaceExceptions.filter((row) => row.classification === null);
 if (unclassifiedMcp.length > 0) {
-  throw new Error(`control-surface-audit: registry declares MCP operations with no direct tool, no run.do action path and no seat-bridge admission: ${unclassifiedMcp.map((row) => row.key).sort().join(', ')}`);
+  throw new Error(`control-surface-audit: registry declares MCP operations with no direct tool, no seat-bridge admission: ${unclassifiedMcp.map((row) => row.key).sort().join(', ')}`);
 }
 
 // APPLICATION_TOOL contains compatibility/internal dispatcher spellings in addition to advertised
@@ -199,8 +181,7 @@ process.stdout.write(`${JSON.stringify({
     mcpDeclared: registryMcp.length,
     mcpAssembledTools: liveMcpTools.size,
     mcpApplicationDispatchEntries: liveMcpDispatch.size,
-    mcpDirectDeclared: registryMcp.length - indirectMcp.length,
-    mcpActionDispatched: indirectMcp,
+    mcpDirectDeclared: registryMcp.length,
     mcpSurfaceExceptions,
     mcpDispatchOnlyAliases: dispatchAliasRows,
   },

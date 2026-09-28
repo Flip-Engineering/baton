@@ -530,7 +530,6 @@ async function driveWave(context, writes, driverPolicy = {}) {
   const dbg = process.env.KS_DEBUG ? (m) => console.error(`[dbg ${((Date.now() - driveWave.t0) / 1000).toFixed(1)}s] ${m}`) : () => {};
   driveWave.t0 = Date.now();
   const waveDriver = createWaveDriver(context.baton, {
-    steering: 'nudge-on-checkpoint', finalization: 'claim-on-stall',
     pollIntervalMs: 50, stallTimeoutMs: 3_000, settleTimeoutMs: 2_000,
     saltObjectives: false, preflight: false,
     onProgress: (line) => dbg(`progress ${line}`),

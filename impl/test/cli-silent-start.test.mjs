@@ -416,7 +416,6 @@ test('PT-7 pin [canonical-aliases-unchanged] — canonical aliases resolve to HE
   eq(['run', 'list'], ['runs', 'list'], 'stage[alias-list] run list must keep resolving to runs list');
   eq(['run', 'member', 'view', 'RUN123'], ['run', 'workstreams', 'RUN123'], 'stage[alias-member-view] run member view must keep resolving like run workstreams');
   eq(['run', 'member', 'interrupt', 'reviewer'], ['run', 'interrupt', 'reviewer'], 'stage[alias-member-interrupt] run member interrupt must keep resolving like run interrupt');
-  assert.equal(parseBatonCli(['run', 'do', 'RUN123', 'ACT1'])?.name, 'run.act', 'stage[alias-do] run do must keep resolving to run.act');
 
   // (b) every recognized first-token (except the bare member prefix — PT-5's red row) still
   // dispatches at bare position to its own handling: never the objective-first run.start.

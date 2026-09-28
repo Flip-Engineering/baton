@@ -77,7 +77,6 @@ function server(t, options = {}) {
     repoId: REPO_ID,
     card: () => ({ schemaVersion: 1, repoId: REPO_ID, commands: Object.keys(APPLICATION_COMMAND_DEFINITIONS) }),
     async authorizeReplay() { return true; },
-    async actionAuthority() { return { schemaVersion: 1, actionId: 'a', kind: 'stop', effect: 'run_stop', requiredCapabilities: ['emergency_stop'], authorityDigest: 'x' }; },
     async command(name) { return { schemaVersion: 1, command: name }; },
     async contextEval() { throw new Error('unused'); },
     async decisionList() { return { decisions: [] }; },
@@ -264,19 +263,6 @@ test('U-E17: a session refresh that moves expiresAt re-pins instead of breaking 
   assert.equal(sessionCalls(), 2, 'each dispatch attests exactly once against the CURRENT session');
 });
 
-test('U-E17: one attestation round trip per tool call — the dispatch entries share it by requestId', async () => {
-  const { facade, sessionCalls } = refreshedSessionFacade({});
-  // A run.act-shaped dispatch: actionAuthority then command, one transport request id.
-  const facadeWithAuthority = facade;
-  facadeWithAuthority.client.actionAuthority = async () => ({
-    schemaVersion: 1, actionId: 'a', kind: 'stop', effect: 'run_stop',
-    requiredCapabilities: ['emergency_stop'], authorityDigest: 'x',
-  });
-  await facadeWithAuthority.actionAuthority({ runId: 'run:1', actionId: 'a' }, PRINCIPAL, CONTEXT);
-  await facadeWithAuthority.command('run.act', { runId: 'run:1', actionId: 'a' }, PRINCIPAL, CONTEXT);
-  assert.equal(sessionCalls(), 1, 'actionAuthority and command of ONE dispatch share the single attestation');
-});
-
 test('U-E17: a genuine authority change still refuses by name', async () => {
   for (const [label, overrides] of [
     ['a different session identity', { sessionId: 'someone-else' }],
@@ -385,48 +371,6 @@ test('Issue #479: baton_deployment_doctor carries the stopping section when the 
       `${label}: the stopping section is the client's own, carried verbatim`);
     assert.equal(readiness.ready, expectedReady);
   }
-});
-
-// ---------------------------------------------------------------------------
-// #287 U-E17 through the REAL dispatch path: the northbound mints one dispatch
-// identity per tool call and hands it to the run.act authority read and to the
-// command that follows, so the facade attests ONCE per tool call. RED at the
-// pre-fix HEAD: the two entries carried different identities (the JSON-RPC id
-// and the admitted callId), so every run.act cost two session round trips.
-// ---------------------------------------------------------------------------
-
-test('U-E17: one session round trip for a whole run.act tool call over the northbound path', async (t) => {
-  const sessionCalls = [];
-  const card = { repoId: REPO_ID, commands: WIRE_CARD, agentExperience: { registryDigest: APPLICATION_SEMANTIC_REGISTRY.digest } };
-  const client = {
-    repoId: REPO_ID,
-    async session() { sessionCalls.push(1); return SESSION; },
-    async doctor() { return { ready: true, application: card }; },
-    async actionAuthority(args) {
-      return {
-        schemaVersion: 1, actionId: args.actionId, kind: 'stop', effect: 'run_stop',
-        requiredCapabilities: ['emergency_stop'], authorityDigest: 'a'.repeat(64),
-      };
-    },
-    async command(name) { return { schemaVersion: 1, command: name }; },
-  };
-  const facade = new BatonWebApplicationFacade(client, card, SESSION);
-  const mcp = server(t, {
-    application: facade, surface: 'application', bindApplicationContext: true,
-    admitsCommand: (command) => facade._admits(command),
-    principal: {
-      userId: SESSION.identity.userId, sessionId: SESSION.identity.sessionId,
-      capabilities: ['observe', 'control', 'emergency_stop'], repoIds: [REPO_ID],
-      expiresAt: SESSION.expiresAt, revoked: false,
-    },
-  });
-  await ready(mcp);
-  const response = await request(mcp, 'act-1', 'tools/call', {
-    name: 'baton_run_act', arguments: { runId: 'run:1', actionId: 'action-1', inputs: {} },
-  });
-  assert.equal(response.result.isError, false, `the run.act call is served: ${JSON.stringify(response.result)}`);
-  assert.equal(sessionCalls.length, 1,
-    'the whole tool call — authority read and command — attests against the session exactly once');
 });
 
 // ---------------------------------------------------------------------------

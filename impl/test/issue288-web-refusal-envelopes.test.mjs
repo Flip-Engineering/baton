@@ -1,9 +1,3 @@
-// Issue #288, the web refusal envelopes: U-E15 (a malformed /v1/action-authority envelope is a 400
-// naming the judged field, never 403), U-F13 (a 401 says which credential is missing or unusable and
-// how to obtain a fresh one), U-E16 (a failed command outcome is never wrapped in a 200 ok:true),
-// U-F14 (an idempotency conflict names the axis that moved) and U-F3 (a permanent deployment
-// condition is refused typed with retryable:false and its remedy; the unclassified fallthrough is
-// the transient row).
 import assert from 'node:assert/strict';
 import { EventEmitter } from 'node:events';
 import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
@@ -64,12 +58,6 @@ function fixture({ command } = {}) {
       if (command) return command(name, args);
       return { schemaVersion: 1, runId: args?.runId ?? 'run-issue288', phase: 'running' };
     },
-    async actionAuthority() {
-      return {
-        schemaVersion: 1, actionId: 'act-1', kind: 'approve', effect: 'plan_approval',
-        requiredCapabilities: ['observe'], authorityDigest: 'a'.repeat(64),
-      };
-    },
   };
   const web = new WebNorthbound({
     coordinator: {}, coordination, sessions, application,
@@ -94,58 +82,6 @@ const envelope = (overrides = {}) => ({
   schemaVersion: 1, commandId: 'issue288-cmd-1', idempotencyKey: 'issue288-key-1',
   command: 'run_status', args: { runId: 'run-issue288' }, repoId: REPO_ID, origin: ORIGIN,
   ...overrides,
-});
-
-// -------------------------------------------------------------------------------------------
-// U-E15 — envelope validation on the authority preflight refuses 400 and names the field.
-// -------------------------------------------------------------------------------------------
-
-test('U-E15: a malformed action-authority envelope is a 400 naming the field, never a 403', async () => {
-  const { web, issued } = fixture();
-  const cases = [
-    [{ runId: 'run-issue288', actionId: 'act-1' }, 'inputs'],
-    [{ runId: 'run-issue288', actionId: 'act-1', inputs: {}, bogus: true }, 'bogus'],
-  ];
-  for (const [args, field] of cases) {
-    const response = await send(web, {
-      path: '/v1/action-authority',
-      body: { schemaVersion: 1, repoId: REPO_ID, idempotencyKey: 'issue288-preflight', args },
-      headers: { authorization: `Bearer ${issued.token}` },
-    });
-    assert.equal(response.status, 400, `${field}: a malformed envelope is a bad request, never forbidden`);
-    assert.notEqual(response.body.error.code, 'forbidden');
-    assert.equal(response.body.error.field, field, `${field}: the judged field is named`);
-    assert.ok(response.body.error.message.length > 0);
-  }
-});
-
-test('U-E15: an unknown top-level key is refused as such, not as a permission problem', async () => {
-  const { web, issued } = fixture();
-  const response = await send(web, {
-    path: '/v1/action-authority',
-    body: {
-      schemaVersion: 1, repoId: REPO_ID, idempotencyKey: 'issue288-preflight',
-      args: { runId: 'r', actionId: 'a', inputs: {} }, audit: 'yes',
-    },
-    headers: { authorization: `Bearer ${issued.token}` },
-  });
-  assert.equal(response.status, 400);
-  assert.equal(response.body.error.code, 'invalid_command');
-});
-
-test('U-E15: the capability precondition is the one 403, and it names required, held and missing', async () => {
-  const { web, issue } = fixture();
-  const response = await send(web, {
-    path: '/v1/action-authority',
-    body: { schemaVersion: 1, repoId: REPO_ID, idempotencyKey: 'issue288-preflight', args: { runId: 'r', actionId: 'a', inputs: {} } },
-    headers: { authorization: `Bearer ${issue(['control']).token}` },
-  });
-  assert.equal(response.status, 403);
-  assert.equal(response.body.error.code, 'forbidden');
-  assert.equal(response.body.error.field, 'capability');
-  assert.deepEqual(response.body.error.detail.missing, ['observe']);
-  assert.equal(response.body.error.detail.required.includes('observe'), true);
-  assert.equal(response.body.error.detail.held.includes('observe'), false);
 });
 
 // -------------------------------------------------------------------------------------------
@@ -394,12 +330,6 @@ function swarmFixture() {
         actor: `web:${principal.userId}:${principal.sessionId}`,
         principalId: principal.userId, sessionId: principal.sessionId,
       }, context);
-    },
-    async actionAuthority() {
-      return {
-        schemaVersion: 1, actionId: 'act-1', kind: 'approve', effect: 'plan_approval',
-        requiredCapabilities: ['observe'], authorityDigest: 'a'.repeat(64),
-      };
     },
   };
   const web = new WebNorthbound({

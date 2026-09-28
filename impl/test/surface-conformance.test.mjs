@@ -31,7 +31,7 @@ test('SC8 (C8): the registry-pinned serialization order normalizes and catches a
   assert.ok(Array.isArray(order.envelope) && order.envelope[0] === 'schemaVersion');
   // The normalization emits the pinned keys leading, in pinned order, trailing keys after.
   const scrambled = {
-    origin: 'https://c.test', args: {}, command: 'run_do', schemaVersion: 1,
+    origin: 'https://c.test', args: {}, command: 'run_approve', schemaVersion: 1,
     repoId: 'repo-a', idempotencyKey: 'k', commandId: 'c', runId: 'r', extra: 1,
   };
   const normalized = canonicalizeSerialization(order.envelope, scrambled);
@@ -45,10 +45,5 @@ test('SC8 (C8): the registry-pinned serialization order normalizes and catches a
   const violations = serializationOrderViolations(order.envelope, scrambled);
   assert.equal(violations.length, 1);
   assert.equal(violations[0].actual[0], 'origin');
-  // The registry-owned nested `do` block and its `{kind, actionId}` coordinate pin likewise.
-  assert.deepEqual(
-    Object.keys(canonicalizeSerialization(order.do, { inputs: {}, action: {} })),
-    ['action', 'inputs'],
-  );
-  assert.equal(serializationOrderViolations(order.action, { actionId: 'a', kind: 'approve_plan' }).length, 1);
+
 });

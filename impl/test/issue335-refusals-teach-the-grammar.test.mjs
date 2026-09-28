@@ -63,7 +63,7 @@ function webRouteClient(routes = SERVED_ROUTES) {
         ok: true,
         application: {
           schemaVersion: 1, repoId: 'repo-issue335',
-          commands: ['application.help', 'runs.list', 'run.start', 'run.inspect', 'run.act', 'run.stop'],
+          commands: ['application.help', 'runs.list', 'run.start', 'run.inspect', 'run.stop'],
           readiness: { schemaVersion: 1, ready: true, routes },
         },
       };

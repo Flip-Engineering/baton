@@ -139,11 +139,7 @@ test('M2-6: candidate_selection serializes as select_candidate wherever the kind
   assert.match(src('application.mjs') + src('application-observation.mjs'), /return \{ kind: 'select_candidate' \}/u);
 });
 
-test('H5: the do-path requires reason while the named-verb/CLI path keeps it optional (§4.2)', () => {
-  // The D2 do-path actions schema-require `reason` (a live F12 instance, preserved per §2).
-  assert.ok(REGISTRY.actions.stop.inputSchema.required.includes('reason'));
-  // The named-verb/D3/CLI path keeps `reason` optional — no precondition is added or removed (§2);
-  // the divergence is documented and resolved as M2 cross-surface identity work, not a schema flip.
+test('H5: run stop accepts an omitted CLI reason', () => {
   assert.doesNotThrow(() => parseBatonCli(['run', 'stop', 'run-x']));
 });
 

@@ -80,17 +80,14 @@ async function startedRun(application, runId, objective) {
     route: { harness: 'mock', model: 'model-a', effort: 'low' }, scope: ['impl/**'],
   }, principal('owner'));
   await application.approve(proposed.runId, proposed.plan.digest, principal('approver'));
-  const outline = await application.inspect({ runId: proposed.runId, depth: 'outline' }, principal('sender'));
-  const send = outline.outline.actions.find((action) => action.kind === 'send');
-  assert.ok(send, 'the running Run advertises the send action');
-  return send.actionId;
+
 }
 
 test('U-F14: a replayed control with a different message names the axis that moved', async () => {
   const { application } = fixture('replay');
-  const actionId = await startedRun(application, 'run-f14', 'F14 axis naming');
-  const act = (inputs, idempotencyKey) => application.command('run.act', {
-    runId: 'run-f14', actionId, inputs,
+  await startedRun(application, 'run-f14', 'F14 axis naming');
+  const act = (inputs, idempotencyKey) => application.command('run.send', {
+    runId: 'run-f14', ...inputs,
   }, principal('sender'), { transport: 'direct', requestId: `f14-${idempotencyKey}`, idempotencyKey });
 
   await act({ message: 'first guidance' }, 'f14-key');
@@ -104,13 +101,13 @@ test('U-F14: a replayed control with a different message names the axis that mov
 
 test('U-F14: a replayed control with a different session names the session, not the message', async () => {
   const { application } = fixture('session');
-  const actionId = await startedRun(application, 'run-f14-session', 'F14 session axis');
+  await startedRun(application, 'run-f14-session', 'F14 session axis');
   const inputs = { message: 'same words' };
-  await application.command('run.act', { runId: 'run-f14-session', actionId, inputs },
+  await application.command('run.send', { runId: 'run-f14-session', ...inputs },
     principal('sender'), { transport: 'direct', requestId: 'f14-session-first', idempotencyKey: 'f14-session-key' });
   const otherSession = { actor: 'direct:sender', principalId: 'sender', sessionId: 'a-different-session' };
-  const refusal = await application.command('run.act', {
-    runId: 'run-f14-session', actionId, inputs,
+  const refusal = await application.command('run.send', {
+    runId: 'run-f14-session', ...inputs,
   }, otherSession, { transport: 'direct', requestId: 'f14-session-second', idempotencyKey: 'f14-session-key' }).then(() => null, (error) => error);
   assert.equal(refusal?.code, 'application_control_conflict');
   assert.match(refusal.message, /the source\.sessionId moved/u,

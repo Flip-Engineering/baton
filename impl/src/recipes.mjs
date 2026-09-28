@@ -33,16 +33,14 @@ const ROLE_FIELDS = Object.freeze(['role', 'exact', 'scope', 'objectiveTemplate'
 const EXACT_FIELDS = Object.freeze(['harness', 'model', 'effort']);
 const TEMPLATE_FIELDS = Object.freeze(['task', 'constraints']);
 const POLICY_FIELDS = Object.freeze([
-  'steering', 'finalization', 'pollIntervalMs', 'stallTimeoutMs',
-  'settleTimeoutMs', 'unproductiveNudgeBudget', 'preflight',
+  'pollIntervalMs', 'stallTimeoutMs',
+  'settleTimeoutMs', 'preflight',
 ]);
 const RUN_OPTION_FIELDS = Object.freeze([
   'task', 'idempotencyKey', 'manifestPath', 'evidencePath', 'callbacks', 'overrides',
 ]);
 const OVERRIDE_FIELDS = Object.freeze(['constraints', 'effort', 'scope']);
 const CALLBACK_FIELDS = Object.freeze(['onDecision']);
-const STEERING_MODES = Object.freeze(new Set(['nudge-on-checkpoint', 'none']));
-const FINALIZATIONS = Object.freeze(new Set(['none', 'claim-on-stall']));
 const IDEMPOTENCY_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,255}$/u;
 
 // The recipe policy allowlist is the DATA-only subset of createWaveDriver's policy (R-DC-6): no
@@ -51,12 +49,9 @@ const IDEMPOTENCY_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,255}$/u;
 // defaults mirror createWaveDriver's documented production cadence. #163 law: no hardCapMs —
 // a recipe policy naming the retired clock cap refuses as an unknown field.
 const DEFAULT_RECIPE_POLICY = Object.freeze({
-  steering: 'nudge-on-checkpoint',
-  finalization: 'none',
   pollIntervalMs: 20_000,
   stallTimeoutMs: 20 * 60_000,
   settleTimeoutMs: 5_000,
-  unproductiveNudgeBudget: 1,
   preflight: true,
 });
 
@@ -120,18 +115,9 @@ function admitPolicy(raw) {
   }
   assertClosed(source, POLICY_FIELDS, 'recipe policy');
   const merged = { ...DEFAULT_RECIPE_POLICY, ...source };
-  if (!STEERING_MODES.has(merged.steering)) {
-    throw recipeError(`recipe policy "steering" is invalid: ${String(merged.steering)}`, 'recipe_schema_invalid');
-  }
-  if (!FINALIZATIONS.has(merged.finalization)) {
-    throw recipeError(`recipe policy "finalization" is invalid: ${String(merged.finalization)}`, 'recipe_schema_invalid');
-  }
   assertPositiveInt(merged.pollIntervalMs, 'recipe policy "pollIntervalMs"');
   assertPositiveInt(merged.stallTimeoutMs, 'recipe policy "stallTimeoutMs"');
   assertPositiveInt(merged.settleTimeoutMs, 'recipe policy "settleTimeoutMs"');
-  if (!Number.isSafeInteger(merged.unproductiveNudgeBudget) || merged.unproductiveNudgeBudget < 0) {
-    throw recipeError('recipe policy "unproductiveNudgeBudget" must be a non-negative integer', 'recipe_schema_invalid');
-  }
   if (typeof merged.preflight !== 'boolean') {
     throw recipeError('recipe policy "preflight" must be a boolean', 'recipe_schema_invalid');
   }
@@ -550,12 +536,9 @@ const IMPLEMENT_CONSTRAINTS = Object.freeze([
   'SCRATCHPAD_WRITE is printed TEXT, never a tool; entries are EXACTLY note{text} | plan{objective,steps[{text,state}],supersedes} | doubt{question,context} | link{label,relation,target} (+ expectedFence:"current", unique idempotencyKey).',
 ]);
 const IMPLEMENT_DEFAULT_POLICY = Object.freeze({
-  steering: 'nudge-on-checkpoint',
-  finalization: 'claim-on-stall',
   pollIntervalMs: 20_000,
   stallTimeoutMs: 20 * 60_000,
   settleTimeoutMs: 15_000,
-  unproductiveNudgeBudget: 1,
   preflight: true,
 });
 

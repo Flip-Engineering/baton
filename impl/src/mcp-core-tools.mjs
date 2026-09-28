@@ -86,7 +86,7 @@ const CORE_TABLE = Object.freeze([
   }),
   Object.freeze({
     name: 'baton_run',
-    description: 'One Run: start, view (the one read, depth/section/role axes), list, send, stop, answer (settles attention), do (the advertised action executor, L2).',
+    description: 'One Run: start, view (the one read, depth/section/role axes), list, send, stop, answer (settles attention).',
     verbs: Object.freeze([
       Object.freeze({
         verb: 'start', requires: Object.freeze(['intent', 'idempotencyKey']),
@@ -121,11 +121,6 @@ const CORE_TABLE = Object.freeze([
         verb: 'answer', requires: Object.freeze(['runId', 'requestId', 'answer', 'idempotencyKey']),
         dispatch: Object.freeze([Object.freeze({ tool: 'baton_decision_answer' })]),
         replaces: Object.freeze(['baton_decision_answer']),
-      }),
-      Object.freeze({
-        verb: 'do', requires: Object.freeze(['runId', 'actionId', 'inputs', 'idempotencyKey']),
-        dispatch: Object.freeze([Object.freeze({ tool: 'baton_run_act' })]),
-        replaces: Object.freeze(['baton_run_act', 'baton_run_do']),
       }),
     ]),
   }),

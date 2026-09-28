@@ -195,7 +195,7 @@ function card(overrides) {
   return {
     schemaVersion: 1,
     repoId: overrides.repoId ?? 'repo-placeholder',
-    commands: ['application.help', 'runs.list', 'run.start', 'run.inspect', 'run.act', 'run.stop'],
+    commands: ['application.help', 'runs.list', 'run.start', 'run.inspect', 'run.stop'],
     agentExperience: { registryDigest: CLI_REGISTRY_DIGEST },
     resident: { schemaVersion: 1, deploymentId: 'deploy-issue288', incarnation: 'incarnation-issue288' },
     ...overrides,

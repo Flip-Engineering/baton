@@ -45,16 +45,15 @@ test('the catalog preserves application, live MCP-native, CLI-native and embedde
 
 });
 
-test('action-dispatched operations use the existing run.do authority and require action coordinates', () => {
+test('Run guidance dispatches its dedicated application command', () => {
   const send = resolveUnifiedCapability('run.send');
   const prepared = prepareApplicationSurfaceInvocation(send, {
-    runId: 'run:a', actionId: 'action:send', message: 'go',
+    runId: 'run:a', message: 'go',
   }, { surface: 'cli' });
-  assert.equal(prepared.command, 'run.act');
-  assert.equal(prepared.path, 'run.do');
+  assert.equal(prepared.command, 'run.send');
+  assert.equal(prepared.path, 'direct_application_command');
   assert.equal(prepared.args.runId, 'run:a');
-  assert.equal(prepared.args.actionId, 'action:send');
-  assert.deepEqual(prepared.args.inputs, { message: 'go' });
+  assert.deepEqual(prepared.args, { runId: 'run:a', message: 'go' });
 });
 
 test('direct and generic reachability reflect existing live transports rather than declarations alone', () => {
@@ -79,7 +78,7 @@ test('canonical names outrank compatibility aliases and preserve each live comma
   const liveNames = new Set(mcpCombinedToolNames());
   for (const row of closure.shadowed) {
     assert.ok(liveNames.has(row.name), `${row.name} is an advertised command`);
-    assert.equal(row.ownerKind, 'canonical');
+    assert.ok(['canonical', 'transport'].includes(row.ownerKind));
     assert.equal(row.shadowedKind, 'alias');
     assert.equal(resolveSurfaceCapability(row.name).id, row.owner);
   }

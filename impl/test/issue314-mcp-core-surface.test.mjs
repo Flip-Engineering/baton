@@ -101,11 +101,6 @@ const CORE = Object.freeze([
           runId: ID_SCHEMA, requestId: { type: 'string', minLength: 1, maxLength: 4096 },
           answer: { type: 'object' }, idempotencyKey: IDEM_SCHEMA,
         } },
-      do: { requires: ['runId', 'actionId', 'inputs', 'idempotencyKey'], mutation: true, long: false,
-        fields: {
-          runId: ID_SCHEMA, actionId: ID_SCHEMA, inputs: { type: 'object' },
-          idempotencyKey: IDEM_SCHEMA,
-        } },
     },
   },
   {
@@ -269,9 +264,7 @@ const MIGRATION = Object.freeze({
   baton_deployment_doctor: { tool: 'baton_deployment', verb: 'doctor' },
   baton_evidence_search: { tool: 'baton_knowledge', verb: 'search' },
   baton_knowledge_settlement_lease: { surface: 'knowledge.settlement_lease (descriptor kernel profile — never bridged, U-G3)' },
-  baton_run_act: { tool: 'baton_run', verb: 'do' },
   baton_run_attention_watch: { retired: 'baton_wakes subscribe (kinds/swarms filter) replaces the blocking attention watch (#294)' },
-  baton_run_do: { tool: 'baton_run', verb: 'do' },
   baton_run_episode: { tool: 'baton_run', verb: 'view' },
   baton_run_inspect: { tool: 'baton_run', verb: 'view' },
   baton_run_knowledge_seed: { tool: 'baton_knowledge', verb: 'seed' },
@@ -339,9 +332,6 @@ function servedSurface(t) {
     repoId: REPO_ID,
     card: () => ({ schemaVersion: 1, repoId: REPO_ID, commands: Object.keys(APPLICATION_COMMAND_DEFINITIONS) }),
     async authorizeReplay() { return true; },
-    async actionAuthority() {
-      return { schemaVersion: 1, actionId: 'a', kind: 'stop', effect: 'run_stop', requiredCapabilities: ['emergency_stop'], authorityDigest: 'x' };
-    },
     async command(name) { return { schemaVersion: 1, command: name }; },
     async contextEval() { throw new Error('unused'); },
     async decisionList() { return { decisions: [] }; },

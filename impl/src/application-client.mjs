@@ -42,34 +42,6 @@ function outlineActions(view) {
   return Array.isArray(view?.outline?.actions) ? view.outline.actions : [];
 }
 
-function automaticActionInputs(action) {
-  if (!action || action.priority !== 'recommended' || action.destructive === true
-    || action.irreversible === true || action.kind?.startsWith('answer_')) return null;
-  const schema = action.inputSchema;
-  if (!schema || schema.type !== 'object' || !schema.properties
-    || typeof schema.properties !== 'object' || Array.isArray(schema.properties)) return null;
-  const required = Array.isArray(schema.required) ? schema.required : [];
-  const inputs = {};
-  for (const field of required) {
-    const property = schema.properties[field];
-    if (!property || !Object.hasOwn(property, 'default')) return null;
-    inputs[field] = property.default;
-  }
-  return inputs;
-}
-
-function advertisedActionInputs(action, supplied) {
-  const inputs = { ...supplied };
-  const properties = action?.inputSchema?.properties;
-  if (!properties || typeof properties !== 'object' || Array.isArray(properties)) return inputs;
-  for (const [field, property] of Object.entries(properties)) {
-    if (!Object.hasOwn(inputs, field) && property && Object.hasOwn(property, 'default')) {
-      inputs[field] = structuredClone(property.default);
-    }
-  }
-  return inputs;
-}
-
 function abortSignal(value) {
   return value !== undefined && !(value instanceof AbortSignal);
 }
@@ -671,18 +643,10 @@ export class BatonRun {
     if (options.signal?.aborted || current?.terminal) return current;
 
     const actions = outlineActions(current);
+    if (canonicalRunPhase(current?.outline?.phase) === 'awaiting_approval') return this.approve();
     if (current?.outline?.attention?.state === 'required'
       || actions.some((action) => action.kind?.startsWith('answer_'))) return current;
-    for (const action of actions) {
-      const inputs = automaticActionInputs(action);
-      if (inputs !== null) return this.act(action.actionId, inputs);
-    }
-    // An advertised action that is not safe to invoke automatically is an intentional pause,
-    // even when the Run also offers a change-aware continuation. Do not long-poll past an
-    // explicit repository edit, operator choice, or emergency-only action.
-    if (actions.some((action) => !['emergency', 'optional'].includes(action.priority))) {
-      return current;
-    }
+
     if (!current?.continuation) return current;
     if (!options.signal) return this.wait();
     const { operation, arguments: args } = current.continuation;
@@ -710,11 +674,11 @@ export class BatonRun {
       // automatically is advanced only by the caller: no event changes it while the caller
       // decides, so return it instead of long-polling a state no event ends.
       if (providerSettled(before?.outline?.phase)
-        && !outlineActions(before).some((action) => automaticActionInputs(action) !== null)) {
+        && !outlineActions(before).some((action) => action.kind === 'approve_plan')) {
         return before;
       }
       const hadAction = outlineActions(before)
-        .some((action) => automaticActionInputs(action) !== null);
+        .some((action) => action.kind === 'approve_plan');
       const next = await this.drive(options);
       if (options.signal?.aborted || next?.terminal
         || next?.outline?.attention?.state === 'required'
@@ -722,33 +686,23 @@ export class BatonRun {
       if (next?.viewDigest === before?.viewDigest
         && !(before?.continuation && next?.timedOut === true && !hadAction)) return next;
       if (!next?.continuation && !outlineActions(next)
-        .some((action) => automaticActionInputs(action) !== null)) return next;
+        .some((action) => action.kind === 'approve_plan')) return next;
     }
   }
 
-  async act(action, inputs = {}) {
-    if (!nonempty(action) || !inputs || typeof inputs !== 'object' || Array.isArray(inputs)) {
-      throw clientError('Run action is invalid');
-    }
-    let descriptor = outlineActions(this.#last)
-      .find((candidate) => candidate.actionId === action || candidate.kind === action);
-    if (!descriptor) {
-      await this.inspect();
-      descriptor = outlineActions(this.#last)
-        .find((candidate) => candidate.actionId === action || candidate.kind === action);
-    }
-    if (!descriptor) throw clientError(`Run action ${action} is unavailable`, 'application_action_unavailable');
-    this.#last = await this.#application.command('run.act', {
-      runId: this.id, actionId: descriptor.actionId,
-      inputs: advertisedActionInputs(descriptor, inputs),
+  async approve() {
+    const advertised = outlineActions(this.#last).find((action) => action.kind === 'approve_plan');
+    const status = advertised?.planDigest ? advertised
+      : await this.#application.command('run.status', { runId: this.id });
+    this.#last = await this.#application.command('run.approve', {
+      runId: this.id, planDigest: status.planDigest ?? status.plan?.digest ?? status.planPreview?.digest,
     });
-    return this.#last;
+    return this.#last?.outline ? this.#last : this.inspect();
   }
-
-  approve() { return this.act('approve_plan'); }
-  select(role, reason = 'Select this verified Candidate for the next gated stage.') {
+  async select(role, reason = 'Select this verified Candidate for the next gated stage.') {
     if (!nonempty(role) || !nonempty(reason)) throw clientError('Workflow Candidate selection is invalid');
-    return this.act('select_candidate', { role, reason });
+    this.#last = await this.#application.command('run.select', { runId: this.id, role, reason });
+    return this.#last?.outline ? this.#last : this.inspect();
   }
   candidates() { return this.inspect({ depth: 'section', section: 'candidates' }); }
 
@@ -799,24 +753,10 @@ export class BatonRun {
       && !['nudge', 'now', 'turn'].includes(options.delivery)) {
       throw clientError('Run guidance delivery is invalid');
     }
-    const actions = await this.actions();
-    const descriptor = actions.find((action) => action.kind === 'send');
-    if (!descriptor) {
-      throw clientError('Run has no active semantic recipient for guidance',
-        'application_action_unavailable');
-    }
-    const recipient = options.recipient
-      ?? descriptor.inputSchema?.properties?.recipient?.default;
-    if (!nonempty(recipient)) {
-      throw clientError('Run guidance recipient is ambiguous; select an advertised role',
-        'application_control_recipient_ambiguous');
-    }
-    return this.act(descriptor.actionId, {
-      message, recipient,
-      delivery: options.delivery
-        ?? descriptor.inputSchema?.properties?.delivery?.default
-        ?? 'nudge',
+    this.#last = await this.#application.command('run.send', {
+      runId: this.id, message, ...options,
     });
+    return this.#last;
   }
 
   async interrupt(options = {}) {
@@ -825,24 +765,10 @@ export class BatonRun {
       || (options.reason !== undefined && !nonempty(options.reason))) {
       throw clientError('Run interrupt is invalid');
     }
-    const actions = await this.actions();
-    const descriptor = actions.find((action) => action.kind === 'interrupt');
-    if (!descriptor) {
-      throw clientError('Run has no active semantic recipient to interrupt',
-        'application_action_unavailable');
-    }
-    const recipient = options.recipient
-      ?? descriptor.inputSchema?.properties?.recipient?.default;
-    if (!nonempty(recipient)) {
-      throw clientError('Run interrupt recipient is ambiguous; select an advertised role',
-        'application_control_recipient_ambiguous');
-    }
-    return this.act(descriptor.actionId, {
-      recipient,
-      reason: options.reason
-        ?? descriptor.inputSchema?.properties?.reason?.default
-        ?? 'Interrupt the current work turn.',
+    this.#last = await this.#application.command('run.interrupt', {
+      runId: this.id, ...options,
     });
+    return this.#last;
   }
 
   async steer(target, message, options = {}) {

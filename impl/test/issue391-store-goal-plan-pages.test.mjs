@@ -290,7 +290,6 @@ test('(e) the runs.list readsite walks the summary pages to the whole bounded se
   app._findRun = () => current;
   app._buildView = async () => view;
   app._withContextProjection = (base, built) => built;
-  app._semanticActions = () => [];
   app._progressTiming = () => ({});
   app._resolveSpillObjective = (objective) => objective;
   app.driver = { coordination };

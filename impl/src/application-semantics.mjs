@@ -137,7 +137,7 @@ export const APPLICATION_LIFECYCLE_ENUMS = Object.freeze({
 
 // docs/36 §4.2 H10 / §10 C8 — the canonical serialization order. A serialization-layer
 // normalization emits the web command envelope, the outline top-level, and the registry-owned
-// nested objects (the L2 `do` block and its `{kind, actionId}` coordinate) with their pinned keys
+// objects with their declared keys
 // leading, in this exact order. This is PRESENTATION ONLY (R-CX-11/R-KM-13): parsers stay
 // order-insensitive, and every digest/replay identity stays on the sorted-key canonical form
 // (`application.mjs` `canonical()`), so this pin never touches an authority digest. Arrays whose
@@ -152,8 +152,6 @@ export const APPLICATION_SERIALIZATION_ORDER = Object.freeze({
     'nextActions', 'attention', 'blockedInteraction', 'progressClass', 'requiredAction',
     'route', 'verification', 'budget',
   ]),
-  do: Object.freeze(['action', 'inputs']),
-  action: Object.freeze(['kind', 'actionId']),
 });
 
 const objectSchema = (properties, required = Object.keys(properties)) => ({
@@ -246,10 +244,6 @@ const operations = {
     }, ['runId']),
     helpTopic: 'run.workstreams', idempotent: true, destructive: false,
   },
-  'run.act': {
-    inputSchema: objectSchema({ runId: id, actionId: id, inputs: objectSchema({}, []) }, ['runId', 'actionId', 'inputs']),
-    helpTopic: 'run.act', idempotent: true, destructive: true,
-  },
   'run.stop': {
     inputSchema: objectSchema({ runId: id, reason: { type: 'string', minLength: 1 } }),
     helpTopic: 'run.stop', idempotent: true, destructive: true, emergency: true,
@@ -278,63 +272,6 @@ const sections = [
 ].map(([sectionId, summary]) => ({ id: sectionId, summary }));
 
 const actions = {
-  approve_plan: {
-    label: 'Approve exact Plan', summary: 'Approve the currently displayed Plan and let Baton dispatch it.',
-    inputSchema: objectSchema({}, []), serverDerived: ['planDigest'], effect: 'provider_call',
-    destructive: false, irreversible: false, idempotent: true, priority: 'recommended',
-    helpTopic: 'run.act.approve_plan', expectedDepth: 'outline',
-  },
-  answer_approval: {
-    label: 'Answer worker approval', summary: 'Allow, deny, or cancel the exact pending worker tool request advertised by this Run.',
-    inputSchema: objectSchema({ decision: { type: 'string', enum: ['allow', 'deny', 'cancel'] } }, ['decision']),
-    serverDerived: ['requestId', 'workerId'], effect: 'worker_tool_authorization',
-    destructive: true, irreversible: false, idempotent: true, priority: 'required',
-    helpTopic: 'run.act.answer_approval', expectedDepth: 'outline',
-  },
-  answer_question: {
-    label: 'Answer worker question', summary: 'Send bounded text to the exact pending worker question advertised by this Run.',
-    inputSchema: objectSchema({ text: { type: 'string', minLength: 1 } }, ['text']),
-    serverDerived: ['requestId', 'workerId'], effect: 'provider_control',
-    destructive: false, irreversible: false, idempotent: true, priority: 'required',
-    helpTopic: 'run.act.answer_question', expectedDepth: 'outline',
-  },
-  answer_decision: {
-    label: 'Answer worker decision',
-    summary: 'Choose an option (or send bounded free-form text, when the request allows it) for the exact pending typed decision request advertised by this Run.',
-    inputSchema: objectSchema({
-      optionId: { type: 'string', minLength: 1 },
-      text: { type: 'string', minLength: 1 },
-    }, []),
-    serverDerived: ['requestId', 'workerId'], effect: 'provider_control',
-    destructive: false, irreversible: false, idempotent: true, priority: 'required',
-    helpTopic: 'run.act.answer_decision', expectedDepth: 'outline',
-  },
-  nudge_turn: {
-    label: 'Nudge paused turn',
-    summary: 'Admit a fresh provider turn on the exact paused task and unpark it in place.',
-    inputSchema: objectSchema({
-      message: { type: 'string', minLength: 1, default: 'Continue the current turn.' },
-    }, []),
-    serverDerived: ['pauseId', 'workerId', 'taskId', 'turnEpoch'], effect: 'provider_control',
-    destructive: false, irreversible: false, idempotent: true, priority: 'required',
-    helpTopic: 'run.act.nudge_turn', expectedDepth: 'outline', genericCli: true,
-  },
-  wait_turn: {
-    label: 'Wait on paused turn',
-    summary: 'Record a non-consuming receipt against the exact paused turn checkpoint without changing its state.',
-    inputSchema: objectSchema({}, []),
-    serverDerived: ['pauseId', 'workerId', 'taskId', 'turnEpoch'], effect: 'provider_control',
-    destructive: false, irreversible: false, idempotent: true, priority: 'optional',
-    helpTopic: 'run.act.wait_turn', expectedDepth: 'outline', genericCli: true,
-  },
-  claim_turn: {
-    label: 'Claim paused turn',
-    summary: 'Re-run the live trust gate against the exact paused task and resolve it to completed or failed — a final evaluation that can kill the worker; refuses claim_premature_liveness while the worker shows read-only liveness without an in-scope diff.',
-    inputSchema: objectSchema({}, []),
-    serverDerived: ['pauseId', 'workerId', 'taskId', 'turnEpoch'], effect: 'provider_control',
-    destructive: true, irreversible: false, idempotent: true, priority: 'recommended',
-    helpTopic: 'run.act.claim_turn', expectedDepth: 'outline', genericCli: true,
-  },
   send: {
     label: 'Guide active work',
     summary: 'Send guidance to the current semantic work recipient without exposing worker or fence coordinates.',
@@ -344,8 +281,9 @@ const actions = {
       delivery: { type: 'string', enum: ['nudge', 'now', 'turn'], default: 'nudge' },
     }, ['message']),
     serverDerived: ['worker', 'task', 'fence', 'control', 'providerRequest'],
+    requiredCapabilities: ['control', 'observe'],
     effect: 'provider_control', destructive: false, irreversible: false,
-    idempotent: true, priority: 'optional', helpTopic: 'run.act.send', expectedDepth: 'outline',
+    idempotent: true, priority: 'optional', helpTopic: 'run.send', expectedDepth: 'outline',
   },
   interrupt: {
     label: 'Interrupt active work',
@@ -358,8 +296,9 @@ const actions = {
       },
     }, []),
     serverDerived: ['worker', 'task', 'fence', 'control', 'providerRequest'],
+    requiredCapabilities: ['control', 'observe'],
     effect: 'provider_control', destructive: true, irreversible: false,
-    idempotent: true, priority: 'optional', helpTopic: 'run.act.interrupt', expectedDepth: 'outline',
+    idempotent: true, priority: 'optional', helpTopic: 'run.interrupt', expectedDepth: 'outline',
   },
   select_candidate: {
     label: 'Select verified candidate',
@@ -369,46 +308,12 @@ const actions = {
       reason: { type: 'string', minLength: 1 },
     }, ['role', 'reason']),
     serverDerived: ['candidateId', 'candidateDigest', 'taskId', 'resultSha', 'evidenceDigest'],
+    requiredCapabilities: ['control', 'observe'],
     effect: 'candidate_selection', destructive: false, irreversible: false,
     idempotent: true, priority: 'required',
-    helpTopic: 'run.act.select_candidate', expectedDepth: 'outline',
-  },
-  stop: {
-    label: 'Stop and reap Run', summary: 'Close this Run dispatch authority and reap its exact owned resources.',
-    inputSchema: objectSchema({ reason: { type: 'string', minLength: 1 } }, ['reason']),
-    serverDerived: ['workerIds', 'fences'], effect: 'run_cleanup', destructive: true,
-    irreversible: false, idempotent: true, priority: 'emergency', helpTopic: 'run.stop', expectedDepth: 'outline',
+    helpTopic: 'run.select', expectedDepth: 'outline',
   },
 };
-
-const APPLICATION_ACTION_CAPABILITY_SOURCE = {
-  approve_plan: ['approve', 'observe'],
-  answer_approval: ['approve', 'observe'],
-  answer_question: ['control', 'observe'],
-  answer_decision: ['control', 'observe'],
-  nudge_turn: ['control', 'observe'],
-  wait_turn: ['control', 'observe'],
-  claim_turn: ['control', 'observe'],
-  send: ['control', 'observe'],
-  interrupt: ['control', 'observe'],
-  select_candidate: ['control', 'observe'],
-  stop: ['emergency_stop', 'observe'],
-};
-
-export const APPLICATION_ACTION_CAPABILITIES = freeze(Object.fromEntries(
-  Object.entries(APPLICATION_ACTION_CAPABILITY_SOURCE)
-    .map(([kind, capabilities]) => [kind, [...capabilities].sort()]),
-));
-
-if (Object.keys(actions).sort().join('\0')
-  !== Object.keys(APPLICATION_ACTION_CAPABILITIES).sort().join('\0')) {
-  throw new Error('application semantic action capability registry is incomplete');
-}
-
-const authorizedActions = Object.fromEntries(Object.entries(actions).map(([kind, definition]) => [
-  kind,
-  { ...definition, requiredCapabilities: APPLICATION_ACTION_CAPABILITIES[kind] },
-]));
 
 const OPERATION_ALIASES = {
   'run.list': {
@@ -435,10 +340,6 @@ const OPERATION_ALIASES = {
     operation: 'run.interrupt',
     cli: { canonical: ['run', 'member', 'interrupt'], legacy: ['run', 'interrupt'] },
   },
-  'run.do': {
-    operation: 'run.act',
-    cli: { canonical: ['run', 'do'], legacy: ['run', 'do'] },
-  },
 };
 
 const OPERATION_CANONICAL_NAMES = {
@@ -448,22 +349,13 @@ const OPERATION_CANONICAL_NAMES = {
   'run.inspect': 'run.view',
   'run.episode': 'run.view',
   'run.workstreams': 'run.member.view',
-  'run.act': 'run.do',
   'run.stop': 'run.stop',
 };
 
 const ACTION_OPERATIONS = {
-  approve_plan: 'run.approve',
-  answer_approval: 'run.answer',
-  answer_question: 'run.answer',
-  answer_decision: 'run.answer',
-  nudge_turn: 'run.answer',
-  wait_turn: 'run.answer',
-  claim_turn: 'run.answer',
   send: 'run.send',
   interrupt: 'run.interrupt',
   select_candidate: 'run.select',
-  stop: 'run.stop',
 };
 
 function annotateRegistryEntries() {
@@ -479,7 +371,7 @@ function annotateRegistryEntries() {
       reconcilable: { value: name !== 'application.shutdown', enumerable: false },
     });
   }
-  for (const [kind, definition] of Object.entries(authorizedActions)) {
+  for (const [kind, definition] of Object.entries(actions)) {
     Object.defineProperties(definition, {
       operation: { value: ACTION_OPERATIONS[kind], enumerable: false },
       deprecated: { value: false, enumerable: false },
@@ -504,14 +396,13 @@ const cliCommands = [
   ['run.episode', 'run.episode', null, 'baton run episode RUN_ID [CHAPTER] [--workstream ROLE --generation N] [--content | --evidence] [--page-cursor CURSOR] [--cursor N --wait DURATION]'],
   ['run.result', 'run.episode', null, 'baton run result RUN_ID [--workstream ROLE --generation N] [--evidence] [--cursor N --wait DURATION]'],
   ['run.workstreams', 'run.workstreams', null, 'baton run workstreams RUN_ID [ROLE --generation N] [--cursor N --wait DURATION]'],
-  ['run.do', 'run.act', null, 'baton run do RUN_ID ACTION_ID [--inputs JSON]'],
-  ['run.stop', 'run.stop', 'stop', 'baton run stop RUN_ID [--reason REASON]'],
+  ['run.stop', 'run.stop', null, 'baton run stop RUN_ID [--reason REASON]'],
   ['run.status', null, null, 'baton run status RUN_ID [--wait DURATION | --follow [--wait DURATION]]'],
-  ['run.approve', null, 'approve_plan', 'baton run approve RUN_ID --plan DIGEST'],
+  ['run.approve', null, null, 'baton run approve RUN_ID --plan DIGEST'],
   ['run.answer', null, null, 'baton run answer RUN_ID REQUEST_ID (--allow | --deny | --cancel | --text TEXT | --option OPTION_ID)'],
-  ['run.answer.approval', null, 'answer_approval', 'baton run answer RUN_ID REQUEST_ID (--allow | --deny | --cancel)'],
-  ['run.answer.question', null, 'answer_question', 'baton run answer RUN_ID REQUEST_ID --text TEXT'],
-  ['run.answer.decision', null, 'answer_decision', 'baton run answer RUN_ID REQUEST_ID (--option OPTION_ID | --text TEXT)'],
+  ['run.answer.approval', null, null, 'baton run answer RUN_ID REQUEST_ID (--allow | --deny | --cancel)'],
+  ['run.answer.question', null, null, 'baton run answer RUN_ID REQUEST_ID --text TEXT'],
+  ['run.answer.decision', null, null, 'baton run answer RUN_ID REQUEST_ID (--option OPTION_ID | --text TEXT)'],
   ['run.send', null, 'send', 'baton run send RUN_ID TEXT [--to RECIPIENT] [--nudge | --now | --turn]'],
   ['run.interrupt', null, 'interrupt', 'baton run interrupt RUN_ID [--to RECIPIENT] [--reason REASON]'],
   ['run.evidence', null, null, 'baton run evidence RUN_ID'],
@@ -545,7 +436,7 @@ const cli = {
   commands: cliCommands,
   helpTopics: {
     application: {
-      commandIds: ['run.objective', 'run.show', 'run.do', 'run.stop'],
+      commandIds: ['run.objective', 'run.show', 'run.stop'],
       usage: [
         'baton serve',
         'baton setup',
@@ -643,8 +534,7 @@ const cli = {
       ],
     },
     run: {
-      commandIds: ['run.objective', 'run.start.exact', 'run.show', 'run.progress', 'run.events', 'run.output',
-        'run.do', 'run.stop', 'run.status',
+      commandIds: ['run.objective', 'run.start.exact', 'run.show', 'run.progress', 'run.events', 'run.output', 'run.stop', 'run.status',
         'run.approve', 'run.answer', 'run.interrupt', 'run.evidence', 'run.select'],
       selectorRule: 'manualRoute',
       paragraphs: [
@@ -679,18 +569,14 @@ const cli = {
       ],
     },
     'run.workstreams': { aliasFor: 'run.inspect.workstreams' },
-    'run.act': {
-      commandIds: ['run.do'],
-      paragraphs: ['Invokes one action advertised by the current Run outline.'],
-    },
-    'run.act.send': {
+    'run.send': {
       commandIds: ['run.send'],
       paragraphs: [
         'Recipient defaults to work when exactly one active semantic member is eligible. Parallel Runs require an advertised role; worker IDs and fences are never accepted.',
         'Nudge is the default. Now redirects the current turn when the harness supports it; turn requests a distinct provider turn only where current Run authority permits it.',
       ],
     },
-    'run.act.interrupt': {
+    'run.interrupt': {
       commandIds: ['run.interrupt'],
       paragraphs: [
         'Selective interrupt ends only the addressed current turn and preserves unrelated members. Whole-Run cleanup and exact reap remain baton run stop.',
@@ -722,10 +608,10 @@ const core = {
   depths: ['outline', 'index', 'section', 'item', 'content', 'evidence'],
   sections,
   operations,
-  actions: authorizedActions,
+  actions,
   cli,
   defaultOperations: ['application.help', 'runs.list', 'run.start', 'run.inspect', 'run.episode',
-    'run.workstreams', 'run.act', 'run.stop'],
+    'run.workstreams', 'run.stop'],
   advanced: {
     defaultVisible: false,
     operations: ['fleet_spawn', 'fleet_send', 'fleet_wait', 'fleet_respond', 'fleet_interrupt',
@@ -960,22 +846,17 @@ const CANONICAL_OPERATION_SPECS = [
       timeoutMs: { type: 'integer', minimum: 1 },
     }, ['runId']),
   }],
-  ['run.do', {
-    op: 'run.act', effect: 'action_dispatch', capabilities: ['control', 'observe'],
-    outputView: 'outline', example: 'baton run do RUN_ID ACTION_ID',
-  }],
   ['run.approve', {
-    action: 'approve_plan', outputView: 'outline', example: 'baton run approve RUN_ID --plan DIGEST',
+    effect: 'provider_call', capabilities: ['approve', 'observe'], inputSchema: objectSchema({ runId: id, planDigest: id }), outputView: 'outline', example: 'baton run approve RUN_ID --plan DIGEST',
   }],
   ['run.answer', {
-    action: 'answer_question', effect: 'provider_control',
+    inputSchema: objectSchema({ runId: id, requestId: id, answer: objectSchema({}, []) }), effect: 'provider_control',
     capabilities: ['approve', 'control', 'observe'], outputView: 'outline',
-    helpTopic: 'run.act.answer_question', example: 'baton run answer RUN_ID REQUEST_ID --text TEXT',
-    // The wire command's answer envelope ({decision|text|optionId}) beside the action's own field.
+    helpTopic: 'run.answer', example: 'baton run answer RUN_ID REQUEST_ID --text TEXT',
     transportFields: ['requestId', 'answer'],
   }],
-  ['run.send', { action: 'send', outputView: 'outline', example: 'baton run send RUN_ID TEXT' }],
-  ['run.interrupt', { action: 'interrupt', outputView: 'outline', example: 'baton run interrupt RUN_ID' }],
+  ['run.send', { action: 'send', transportFields: ['runId'], outputView: 'outline', example: 'baton run send RUN_ID TEXT' }],
+  ['run.interrupt', { action: 'interrupt', transportFields: ['runId'], outputView: 'outline', example: 'baton run interrupt RUN_ID' }],
   ['run.stop', {
     op: 'run.stop', effect: 'run_cleanup', capabilities: ['emergency_stop', 'observe'],
     outputView: 'outline', emergency: true, example: 'baton run stop RUN_ID',
@@ -996,14 +877,14 @@ const CANONICAL_OPERATION_SPECS = [
     }, ['runId']),
     example: 'baton run debug RUN_ID',
   }],
-  ['run.select', { action: 'select_candidate', outputView: 'outline', example: 'baton run select RUN_ID ROLE --reason R' }],
+  ['run.select', { action: 'select_candidate', transportFields: ['runId'], outputView: 'outline', example: 'baton run select RUN_ID ROLE --reason R' }],
   ['run.member.view', {
     op: 'run.workstreams', effect: 'member_read', capabilities: ['observe'], outputView: 'section',
     example: 'baton run member view RUN_ID',
   }],
   ['run.member.interrupt', {
     action: 'interrupt', effect: 'provider_control', capabilities: ['control', 'observe'],
-    outputView: 'outline', helpTopic: 'run.act.interrupt', example: 'baton run member interrupt RUN_ID ROLE',
+    outputView: 'outline', helpTopic: 'run.interrupt', example: 'baton run member interrupt RUN_ID ROLE',
   }],
   ['run.scratchpad', {
     profile: 'ordinary', surfaces: ['embedded'], effect: 'observe',
@@ -1346,11 +1227,10 @@ const SURFACE_ALIAS_ROWS = Object.freeze([
   ['run.answer', 'cli', 'baton run answer question'],
   ['run.answer', 'embedded', 'BatonRun.answer'],
   ['run.approve', 'embedded', 'BatonRun.approve'],
-  ['run.do', 'application.commands', 'run.act'],
-  ['run.do', 'embedded', 'BatonRun.act'],
   ['run.evidence', 'embedded', 'BatonRun.evidence'],
   ['run.debug', 'embedded', 'BatonRun.debug'],
   ['run.interrupt', 'embedded', 'BatonRun.interrupt'],
+  ['run.member.interrupt', 'mcp.baton', 'baton_run_interrupt'],
   ['run.list', 'application.commands', 'runs.list'],
   ['run.list', 'embedded', 'BatonRuns.list'],
   ['run.member.view', 'application.commands', 'run.workstreams'],
@@ -1429,17 +1309,7 @@ const SURFACE_ALIAS_ROWS = Object.freeze([
   ['run.watch', 'embedded', 'BatonRun.followOnce'],
   ['run.watch', 'embedded', 'BatonRun.output'],
   ['run.watch', 'embedded', 'BatonRun.progress'],
-  // docs/36 §9 M4 (M4b — the transport flip) — the retained legacy MCP (`baton_*`/`fleet_*`) and
-  // Web (`_`-joined) transport names become first-class registry aliases, exactly as M4a relocated
-  // the cli/embedded rows. The conformance harness resolves them here, which is what retires their
-  // M0 ledger rows (§8.4 removal-only): the divergence is now derivable registry data, not an
-  // unledgered fact. The canonical transports are admitted beside these; both reach one operation.
-  ['run.do', 'mcp.web-bridge', 'run.act'],
   ['run.view', 'mcp.web-bridge', 'run.inspect'],
-  // row-conformance-core (R7/R11) — the bridge forwards the application.commands wire spelling
-  // (mcp-web-bridge.mjs ORDINARY_COMMANDS) for the full card: the ten remaining names are
-  // name-shape divergences only (identical dispatch), now resolved as mcp.web-bridge surface
-  // aliases per the run.act/run.inspect precedent — their ledger rows retire (SC6 removal-only).
   ['run.view', 'mcp.web-bridge', 'run.episode'],
   ['run.view', 'mcp.web-bridge', 'run.status'],
   ['run.view', 'mcp.web-bridge', 'run.wait'],
@@ -1451,7 +1321,6 @@ const SURFACE_ALIAS_ROWS = Object.freeze([
   // 2026-09-14 audit (U-G4): baton_decision_list dispatches application.decisionList; the
   // run.attention.list row it used to alias was a ghost with no surface of its own and is gone.
   ['decision.list', 'mcp.baton', 'baton_decision_list'],
-  ['run.do', 'mcp.baton', 'baton_run_act'],
   ['run.list', 'mcp.baton', 'baton_runs'],
   ['run.member.view', 'mcp.baton', 'baton_run_workstreams'],
   ['run.view', 'mcp.baton', 'baton_run_episode'],
@@ -1466,7 +1335,6 @@ const SURFACE_ALIAS_ROWS = Object.freeze([
   ['run.view', 'mcp.fleet', 'fleet_run_status'],
   ['run.view', 'mcp.fleet', 'fleet_run_wait'],
   ['run.watch', 'mcp.fleet', 'fleet_run_follow'],
-  ['run.do', 'web', 'run_act'],
   ['run.list', 'web', 'runs_list'],
   ['run.member.view', 'web', 'run_workstreams'],
   ['run.view', 'web', 'run_episode'],
@@ -1477,7 +1345,7 @@ const SURFACE_ALIAS_ROWS = Object.freeze([
 ]);
 
 function buildCanonicalOperation([key, spec]) {
-  const source = spec.op ? operations[spec.op] : spec.action ? authorizedActions[spec.action] : null;
+  const source = spec.op ? operations[spec.op] : spec.action ? actions[spec.action] : null;
   const profile = spec.profile ?? 'ordinary';
   if (!APPLICATION_OPERATION_PROFILES.includes(profile)) {
     throw new TypeError(`invalid canonical operation profile: ${profile}`);
@@ -1548,7 +1416,7 @@ const surfaceAliases = freeze(SURFACE_ALIAS_ROWS.map(([canonicalKey, surface, na
 })));
 
 // docs/36 §8.1 digest split (R-OP-11). authorityDigest covers schemas / capabilities / effects /
-// enums / profiles / durability — `actionId` freshness and the MCP bridge pin bind it alone.
+// enums, profiles, and durability. The MCP bridge binds this digest.
 // presentationDigest covers aliases / help / examples / ordering and moves without invalidating a
 // live session. The two projections share no field, so an alias, help, or example edit provably
 // cannot move authorityDigest (M4A-3).
@@ -1572,7 +1440,7 @@ const authorityProjection = {
     destructive: definition.destructive,
     emergency: definition.emergency ?? false,
   }])),
-  actions: Object.fromEntries(Object.entries(authorizedActions).map(([kind, definition]) => [kind, {
+  actions: Object.fromEntries(Object.entries(actions).map(([kind, definition]) => [kind, {
     inputSchema: definition.inputSchema,
     effect: definition.effect,
     destructive: definition.destructive,

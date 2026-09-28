@@ -21,7 +21,6 @@
 //
 // Clocks are fixed (FIXED_NOW) in every fixture — no wall-clock time bombs.
 
-import { memberSource } from './seam-member-source.mjs';
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
@@ -597,9 +596,7 @@ test('F1: wave.mjs classifies a `paused` member as `turn_checkpoint` through pro
   assert.equal(overridden.members[0].attention, 'blocked_interaction:answer_required');
 });
 
-test('F3: the coordinator exposes still-unconsumed pause records for the `turn_checkpoint` '
-  + 'attention entry, carrying the `requestId: pauseId` that _semanticActions\' guard requires; '
-  + 'a resolved pause disappears from the projection', async () => {
+test('F3: the coordinator exposes unresolved pause records and removes a resolved pause from the projection', async () => {
   const kit = await pausedKit();
   const rows = kit.coordinator.pausedTurns({ taskId: kit.task.id });
   assert.equal(rows.length, 1);
@@ -622,18 +619,3 @@ test('F3: the coordinator exposes still-unconsumed pause records for the `turn_c
   assert.deepEqual(kit.coordinator.pausedTurns({ taskId: kit.task.id }), []);
 });
 
-test('F4: the pre-existing `nudge` literals stay the BARE prompt lane — the new act adds no '
-  + 'MCP tool, no enum member, and redefines none of them (rule 16 / Part H)', () => {
-  const mcp = readFileSync(join(SRC, 'mcp-northbound.mjs'), 'utf8');
-  const occurrences = (haystack, needle) => haystack.split(needle).length - 1;
-  // fleet_send.mode plus its own validation echo
-  assert.equal(occurrences(mcp, "['turn', 'steer', 'nudge']"), 2);
-  // No new act verb was smuggled into the MCP surface.
-  for (const smuggled of ['nudge_turn', 'wait_turn', 'claim_turn', 'turn_checkpoint']) {
-    assert.ok(!mcp.includes(smuggled), `${smuggled} must not appear as an MCP schema literal`);
-  }
-  // And the bare lane still logs `control.nudge` — the collision this contract forecloses wiring to.
-  // Issue #259 slice 12: the literal's member (`_deliver`) lives in runtime-effects.mjs now; the
-  // pin follows the member wherever the seam map places it.
-  assert.ok(memberSource('_deliver').includes("mode === 'nudge' ? 'control.nudge'"));
-});

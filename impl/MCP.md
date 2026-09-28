@@ -183,7 +183,6 @@ rendered from it, never retyped here):
 | `baton_runs` | `baton_run {verb: "list"}` |
 | `baton_run_message_send` | `baton_run {verb: "send"}` |
 | `baton_decision_answer` | `baton_run {verb: "answer"}` |
-| `baton_run_act` / `baton_run_do` | `baton_run {verb: "do"}` |
 | `baton_run_knowledge_seed` | `baton_knowledge {verb: "seed"}` |
 | `baton_evidence_search` | `baton_knowledge {verb: "search"}` |
 | `baton_swarm_create` / `list` / `view` / `update` / `recruit` / `guide` / `capture` / `check` | `baton_swarm` with the same verb |
@@ -308,7 +307,7 @@ that owns the runs, never over a borrowed bridge session.
 | Operation | Profile | MCP tool | Annotation |
 |---|---|---|---|
 | `baton_deployment {verb: doctor}` | `ordinary` | `baton_deployment` | idempotent |
-| `baton_run {verb: start|view|list|send|stop|answer|do}` | `ordinary` | `baton_run` | destructive |
+| `baton_run {verb: start|view|list|send|stop|answer}` | `ordinary` | `baton_run` | destructive |
 | `baton_swarm {verb: create|list|view|update|recruit|guide|capture}` | `ordinary` | `baton_swarm` | effectful |
 | `baton_waves {verb: start|list|progress|send|stop}` | `ordinary` | `baton_waves` | destructive |
 | `baton_knowledge {verb: search|seed}` | `ordinary` | `baton_knowledge` | effectful |

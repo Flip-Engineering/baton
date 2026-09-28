@@ -107,8 +107,8 @@ test('AX8: SIGINT then SIGHUP await exact GLM process, worktree, branch, writer,
   }, principal('owner'));
   const proposed = await application.command('run.inspect', { runId, depth: 'outline' }, principal('owner'));
   const approve = proposed.outline.actions.find((action) => action.kind === 'approve_plan');
-  await application.command('run.act', {
-    runId, actionId: approve.actionId, inputs: {},
+  await application.command('run.approve', {
+    runId, planDigest: approve.planDigest,
   }, principal('owner'));
 
   const handle = await until(() => {

@@ -28,7 +28,7 @@ function fixture() {
   const app = Object.create(BatonApplication.prototype);
   Object.assign(app, {
     ready: Promise.resolve(), principals: { observer: principal }, authorize: async () => true,
-    _closed: null, _followControllers: new Set(), _semanticActions: () => [], _findRun: () => current,
+    _closed: null, _followControllers: new Set(), _findRun: () => current,
     _buildView: async () => ({
       cursor: 41, phase, narrative: 'bounded', progress: {}, attention: [], route: null,
       budget: null, ownership: { workers: 0 }, stop: null,

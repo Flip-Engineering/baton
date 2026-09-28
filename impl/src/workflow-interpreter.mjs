@@ -59,7 +59,7 @@ const SPEC_FIELDS = ['schemaVersion', 'idempotencyKey', 'members', 'steering', '
 const MEMBER_FIELDS = ['role', 'exact', 'scope', 'objectiveRef', 'report'];
 const EXACT_FIELDS = ['harness', 'model', 'effort'];
 const STEERING_FIELDS = [
-  'approveOnAdvertisedPlan', 'nudgeOnCheckpoint', 'claimOnStall', 'messageOnSpawn',
+  'approveOnAdvertisedPlan', 'messageOnSpawn',
   'elevateWhenNotes', 'answerDecisions', 'signalOnMembersDone',
 ];
 
@@ -232,18 +232,6 @@ function admitSteering(steering) {
   if (steering.approveOnAdvertisedPlan !== undefined) {
     if (typeof steering.approveOnAdvertisedPlan !== 'boolean') throw steeringUnknown('the steering policy "approveOnAdvertisedPlan" must be a boolean');
     out.approveOnAdvertisedPlan = steering.approveOnAdvertisedPlan;
-  }
-  if (steering.claimOnStall !== undefined) {
-    if (typeof steering.claimOnStall !== 'boolean') throw steeringUnknown('the steering policy "claimOnStall" must be a boolean');
-    out.claimOnStall = steering.claimOnStall;
-  }
-  if (steering.nudgeOnCheckpoint !== undefined) {
-    const nudge = assertObject(steering.nudgeOnCheckpoint, steeringUnknown, 'nudgeOnCheckpoint');
-    for (const key of Object.keys(nudge)) {
-      if (key !== 'message') throw steeringUnknown(`the steering policy "nudgeOnCheckpoint" carries the unknown field "${key}"`);
-    }
-    if (typeof nudge.message !== 'string' || nudge.message.length === 0) throw steeringUnknown('the steering policy "nudgeOnCheckpoint" requires a "message" string');
-    out.nudgeOnCheckpoint = { message: nudge.message };
   }
   if (steering.messageOnSpawn !== undefined) {
     const message = assertObject(steering.messageOnSpawn, steeringUnknown, 'messageOnSpawn');
@@ -681,7 +669,7 @@ export async function runWorkflow(baton, specOrPath, options = {}) {
   const steering = [];
   const steeringState = {
     approved: new Set(), messaged: new Map(), msgAttempts: new Map(), msgDone: new Set(),
-    elevated: new Set(), nudgedReqs: new Set(), nudgedRoles: new Set(), claimedRoles: new Set(),
+    elevated: new Set(),
     answeredKeys: new Set(), handledDecisionKeys: new Set(), deniedDecisionKeys: new Set(), awaitingDecisionByRole: new Map(), signaled: false,
   };
 
@@ -897,11 +885,10 @@ async function driveLane(wave, spec, driver, steering, s, reportByRole) {
     }
   }
   // status() carries the goal planDigest (approveOnAdvertisedPlan), decision options (answerDecisions),
-  // the checkpoint attention (nudge/claim), and taskId/workerId (elevate). Pure messageOnSpawn /
+  // and taskId/workerId (elevate). Pure messageOnSpawn /
   // signalOnMembersDone / no-steering waves poll inspect-only. Members poll in parallel, so even the
   // two-command read stays cheap with a full roster.
-  const needStatus = Boolean(st.answerDecisions || st.elevateWhenNotes || st.approveOnAdvertisedPlan
-    || st.nudgeOnCheckpoint || st.claimOnStall);
+  const needStatus = Boolean(st.answerDecisions || st.elevateWhenNotes || st.approveOnAdvertisedPlan);
 
   const unreadable = new Set();
   // Issue #199: the instant each member was first seen in a FAILED phase with no durable cause.
@@ -951,10 +938,6 @@ async function driveLane(wave, spec, driver, steering, s, reportByRole) {
         await answerDecision(handle, role, decision, st.answerDecisions.policy, steering, s, key);
       }
     }
-
-    // 4. checkpoint — nudge (nudgeOnCheckpoint) then claim (claimOnStall), each once.
-    const checkpoint = Array.isArray(v.attention) ? v.attention.find((a) => a?.kind === 'turn_checkpoint' && typeof a?.requestId === 'string') : null;
-    if (checkpoint) await handleCheckpoint(handle, role, checkpoint, st, steering, s);
 
     // 5. elevateWhenNotes — read the worker tier, elevate once per (runId, role).
     if (st.elevateWhenNotes && !s.elevated.has(role)) await tryElevate(handle, role, v, st.elevateWhenNotes, steering, s);
@@ -1110,27 +1093,6 @@ async function answerDecision(handle, role, decision, policy, steering, s, key) 
   }
   s.answeredKeys.add(key);
   steering.push({ trigger: 'answerDecisions', role, requestId, optionId: match.value, outcome: 'answered' });
-}
-
-async function handleCheckpoint(handle, role, checkpoint, st, steering, s) {
-  const rid = checkpoint.requestId;
-  // A pausable member mints a fresh checkpoint requestId per re-park, so nudge dedup is keyed by
-  // ROLE (nudge once), not requestId — then the next re-park is claimed (claimOnStall). A pure
-  // claim policy (no nudgeOnCheckpoint) claims on the first claim-carrying checkpoint.
-  const nudgeReady = st.nudgeOnCheckpoint && !s.nudgedRoles.has(role) && !s.claimedRoles.has(role);
-  const claimReady = st.claimOnStall && !s.claimedRoles.has(role) && (s.nudgedRoles.has(role) || checkpoint.claim != null);
-  if (nudgeReady && !(claimReady && !st.nudgeOnCheckpoint)) {
-    s.nudgedReqs.add(rid);
-    s.nudgedRoles.add(role);
-    try { await handle.act('nudge_turn', { message: st.nudgeOnCheckpoint.message }); } catch { /* delivery best-effort */ }
-    steering.push({ trigger: 'nudgeOnCheckpoint', role, requestId: rid });
-    return;
-  }
-  if (claimReady) {
-    s.claimedRoles.add(role);
-    try { await handle.act('claim_turn', {}); } catch { /* claim is terminal on a stale checkpoint */ }
-    steering.push({ trigger: 'claimOnStall', role, requestId: rid });
-  }
 }
 
 async function tryElevate(handle, role, v, policy, steering, s) {

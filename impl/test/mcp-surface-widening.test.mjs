@@ -15,7 +15,7 @@ import assert from 'node:assert/strict';
 
 const WIRE_CARD = [
   'swarm.list', 'swarm.create', 'swarm.view', 'swarm.watch', 'swarm.update', 'swarm.recruit', 'swarm.guide', 'swarm.capture', 'swarm.stop', 'application.help', 'runs.list',
-  'run.start', 'run.inspect', 'run.act', 'run.stop', 'run.status',
+  'run.start', 'run.inspect', 'run.stop', 'run.status',
   'run.follow', 'run.wait', 'run.approve', 'run.answer',
   'run.evidence',
   'run.episode', 'run.workstreams',

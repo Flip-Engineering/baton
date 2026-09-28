@@ -33,18 +33,6 @@ baton surface watch RUN_ID [--wave-id WAVE] [--after-cursor N] [--attention-curs
 
 Application operations use the existing authenticated resident Web command plane when that command is actually admitted there. Exact legacy application commands such as `run.status`, `run.wait`, `run.episode` and `runs.list` retain their established connected CLI/Web path even when the exhaustive catalogue also sees them as live MCP transport rows. MCP-native and MCP-only application capabilities use `--mcp-config PATH`, or `BATON_MCP_CONFIG`, which opens the configured existing MCP authority and invokes the additive `baton_surface_invoke` adapter. The CLI never fabricates a Web route for a command that Baton's Web admission table does not serve.
 
-An action advertised by a current Run is invoked by including its current `actionId` in `--args`. The adapter lowers it to the existing closed `run.do` shape:
-
-```json
-{
-  "runId": "run:...",
-  "actionId": "action:...",
-  "otherInput": "..."
-}
-```
-
-The remaining fields become the action's `inputs`. Baton does not invent or guess an action identifier.
-
 `baton surface watch` is a bounded composite read, not a new event bus. On the connected CLI it waits through the existing `run.follow` command and then reads the established attention, Run, optional Wave, and decision-shaped attention projections. With `--mcp-config` it calls the same composed MCP tool against the configured existing application authority.
 
 ## MCP
@@ -69,11 +57,10 @@ A capability may be reachable by:
 
 1. a live direct canonical or legacy CLI/MCP transport;
 2. an existing authenticated Web command used by the CLI;
-3. an authorized current-Run `run.do` action;
-4. an MCP descriptor used by the CLI for MCP-native or MCP-only capabilities;
-5. `baton_surface_invoke` over the existing application or fleet/kernel authority;
-6. a host-local CLI command where remote operation would be nonsensical or unsafe;
-7. an embedded-only worker/kernel operation retained in the catalogue but not promoted into operator authority.
+3. an MCP descriptor used by the CLI for MCP-native or MCP-only capabilities;
+4. `baton_surface_invoke` over the existing application or fleet/kernel authority;
+5. a host-local CLI command where remote operation would be nonsensical or unsafe;
+6. an embedded-only worker/kernel operation retained in the catalogue but not promoted into operator authority.
 
 Host-local setup, credential installation and resident bootstrap are intentionally not remote MCP mutations. Worker-internal grant/fence operations and embedded-only kernel primitives remain scoped to their existing authority. Every existing **operator-facing** capability must be reachable through both CLI and MCP, while all embedded-only capabilities remain visible and explicitly classified rather than silently dropped.
 

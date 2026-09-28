@@ -147,7 +147,7 @@ test('AX1: one closed semantic registry defines the compact ordinary vocabulary,
   assert.equal(value.schemaVersion, 1);
   assert.match(value.digest, /^[a-f0-9]{64}$/u);
   assert.deepEqual(Object.keys(value.operations).sort(), [
-    'application.help', 'run.act', 'run.episode', 'run.inspect', 'run.start', 'run.stop',
+    'application.help', 'run.episode', 'run.inspect', 'run.start', 'run.stop',
     'run.workstreams', 'runs.list',
   ]);
   assert.deepEqual(value.depths, [
@@ -391,88 +391,6 @@ test('AX3: contextual help is registry-derived, progressive, live-authorized, an
   }, principal('owner')), expectCode('application_unauthorized'));
 });
 
-test('AX4/AX8: actions are closed and self-describing, bind to one live Run, reauthorize before effects, and keep stop immediate', async (t) => {
-  const f = fixture('actions');
-  cleanup(t, f.application);
-  const runId = 'run-phase67-actions';
-  const siblingRunId = 'run-phase67-sibling';
-  await f.application.command('run.start', { intent: intent(runId) }, principal('owner'));
-  await f.application.command('run.start', { intent: intent(siblingRunId) }, principal('owner'));
-  const outline = await f.application.command('run.inspect', { runId, depth: 'outline' }, principal('owner'));
-  const approve = outline.outline.actions.find((action) => action.kind === 'approve_plan');
-  assert.ok(approve);
-  for (const field of ['actionId', 'kind', 'label', 'summary', 'inputSchema', 'effect',
-    'destructive', 'irreversible', 'idempotent', 'freshness', 'help']) {
-    assert.equal(Object.hasOwn(approve, field), true, `action descriptor omitted ${field}`);
-  }
-  assert.equal(approve.inputSchema.additionalProperties, false);
-  assert.deepEqual(approve.serverDerived.sort(), ['planDigest']);
-  assert.equal(Object.hasOwn(approve.inputSchema.properties, 'planDigest'), false);
-
-  f.driver.coordination.recordWebAudit({
-    kind: 'operator_read_authorized', resourceClass: 'application_card',
-  }, { actor: 'web:transport-noise', key: 'phase67:transport-noise' });
-  const afterTransportNoise = await f.application.command(
-    'run.inspect', { runId, depth: 'outline' }, principal('owner'),
-  );
-  assert.ok(afterTransportNoise.cursor > outline.cursor);
-  assert.equal(afterTransportNoise.viewDigest, outline.viewDigest);
-  assert.equal(
-    afterTransportNoise.outline.actions.find((action) => action.kind === 'approve_plan').actionId,
-    approve.actionId,
-  );
-
-  await assert.rejects(f.application.command('run.act', {
-    runId, actionId: approve.actionId, inputs: { planDigest: 'a'.repeat(64) },
-  }, principal('owner')), expectCode('application_action_input_invalid'));
-  assert.equal(f.driver.coordinator.list().length, 0);
-
-  await assert.rejects(f.application.command('run.act', {
-    runId: siblingRunId, actionId: approve.actionId, inputs: {},
-  }, principal('owner')), expectCode('application_action_scope_mismatch'));
-  assert.equal(f.driver.coordinator.list().length, 0);
-
-  f.authorization.active = false;
-  await assert.rejects(f.application.command('run.act', {
-    runId, actionId: approve.actionId, inputs: {},
-  }, principal('owner')), expectCode('application_unauthorized'));
-  assert.equal(f.driver.coordinator.list().length, 0);
-
-  f.authorization.active = true;
-  const admitted = await f.application.command('run.act', {
-    runId, actionId: approve.actionId, inputs: {},
-  }, principal('owner'));
-  assert.equal(['running', 'work_completed'].includes(admitted.outline.phase), true);
-  assert.equal(f.driver.coordinator.list().length, 1);
-
-  const running = await f.application.command('run.inspect', { runId, depth: 'outline' }, principal('owner'));
-  assert.deepEqual(running.outline.route.requested, { harness: 'mock', model: 'model-a', effort: 'low' });
-  assert.deepEqual(running.outline.route.resolved, { harness: 'mock@1.0.0', model: 'model-a', effort: 'low' });
-  assert.equal(running.outline.route.launchEnforcement.harness.state, 'matched');
-  assert.equal(running.outline.route.launchEnforcement.model.state, 'matched');
-  assert.equal(running.outline.route.launchEnforcement.effort.state, 'matched');
-  for (const axis of ['harness', 'model', 'effort']) {
-    assert.deepEqual(running.outline.route.providerAttestation[axis], { observed: null, state: 'pending' });
-  }
-  assert.equal(running.outline.narrative.includes('w-'), false, 'outline narrative must not leak worker coordinates');
-  const stop = running.outline.actions.find((action) => action.kind === 'stop');
-  assert.ok(stop, 'Run stop must appear in the first outline');
-  assert.equal(stop.priority, 'emergency');
-  assert.equal(stop.destructive, true);
-  assert.equal(stop.serverDerived.includes('workerIds'), true);
-  assert.equal(Object.hasOwn(stop.inputSchema.properties, 'workerIds'), false);
-
-  const stopped = await f.application.command('run.stop', {
-    runId, reason: 'Exercise the pinned emergency alias without section traversal.',
-  }, principal('owner'));
-  assert.equal(stopped.phase, 'stopped');
-  assert.equal(stopped.stop.receipt.remainingCount, 0);
-  const stoppedOutline = await f.application.command('run.inspect', { runId, depth: 'outline' }, principal('owner'));
-  for (const axis of ['harness', 'model', 'effort']) {
-    assert.equal(stoppedOutline.outline.route.providerAttestation[axis].state, 'not_observed_before_stop');
-  }
-});
-
 test('AX4b: a real application Run explains one durable budget root cause across outline and cascade sections', async (t) => {
   const f = fixture('terminal-cause-budget', {
     delayMs: 0,
@@ -484,7 +402,7 @@ test('AX4b: a real application Run explains one durable budget root cause across
   await f.application.command('run.start', { intent: intent(runId) }, principal('owner'));
   let outline = await f.application.command('run.inspect', { runId, depth: 'outline' }, principal('owner'));
   const approve = outline.outline.actions.find((action) => action.kind === 'approve_plan');
-  await f.application.command('run.act', { runId, actionId: approve.actionId, inputs: {} }, principal('owner'));
+  await f.application.command('run.approve', { runId, planDigest: approve.planDigest }, principal('owner'));
 
   for (let attempt = 0; attempt < 200; attempt += 1) {
     outline = await f.application.command('run.inspect', { runId, depth: 'outline' }, principal('owner'));
@@ -533,7 +451,7 @@ test('AX4c: a provider wire failure has one safe actionable cause across outline
   await f.application.command('run.start', { intent: intent(runId) }, principal('owner'));
   let outline = await f.application.command('run.inspect', { runId, depth: 'outline' }, principal('owner'));
   const approve = outline.outline.actions.find((action) => action.kind === 'approve_plan');
-  await f.application.command('run.act', { runId, actionId: approve.actionId, inputs: {} }, principal('owner'));
+  await f.application.command('run.approve', { runId, planDigest: approve.planDigest }, principal('owner'));
 
   for (let attempt = 0; attempt < 200; attempt += 1) {
     outline = await f.application.command('run.inspect', { runId, depth: 'outline' }, principal('owner'));
@@ -611,8 +529,7 @@ test('AX1/AX6/AX7: cards, CLI, MCP, and browser project one digest; default inve
   assert.deepEqual(show.args, { runId: 'run-phase67-cli', depth: 'outline' });
 
   const browser = operatorAsset('/control/app.js').body;
-  assert.match(browser, /actionId/u);
-  assert.match(browser, /inputSchema/u);
+  assert.match(browser, /run_approve/u);
   for (const adapterCascade of ['run_adopt', 'run_integrate', 'run_recover']) {
     assert.equal(browser.includes(adapterCascade), false, `browser hard-coded ${adapterCascade}`);
   }

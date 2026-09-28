@@ -15,7 +15,6 @@
  *   U-E8/U-F15 an unknown `baton run <verb>` in the verb position never starts a Run: typos are
  *              refused with the canonical verb set + the nearest suggestion, and a Run identifier
  *              in the second position makes the refusal name the VERB.
- *   U-E5/G9/I7 the pre-filled action.do envelope is accepted by act() for every action kind, and
  *              the caller-scoped actions ride every inspection depth.
  *   U-E10/I9   the run list and the attention/child pages are bounded by the deployment byte
  *              ceiling with a continuation, never by a row count.
@@ -25,7 +24,7 @@ import { readFileSync } from 'node:fs';
 import test from 'node:test';
 import { fileURLToPath } from 'node:url';
 
-import { APPLICATION_COMMAND_DEFINITIONS, actionDoInputs, normalizeActionInputs } from '../src/application.mjs';
+import { APPLICATION_COMMAND_DEFINITIONS, } from '../src/application.mjs';
 import {
   APPLICATION_SEMANTIC_REGISTRY, buildCanonicalOperationTable, canonicalOperationFields,
   canonicalOperationForCommand,
@@ -175,61 +174,6 @@ test('U-E8/U-F15: unknown run verbs refuse with the canonical set, and a Run id 
   const member = refusal(['run', 'member']);
   assert.match(member.error.message, /expected run member view, send, stop, or interrupt/u,
     'stage[member-prefix] the bare member noun teaches its subverbs');
-});
-
-// ── U-E5 / U-I7 — the pre-filled action.do envelope is accepted for every kind ─────────────────
-
-test('U-E5: the minted action.do envelope is accepted by act() for every action kind', () => {
-  const kinds = Object.keys(APPLICATION_SEMANTIC_REGISTRY.actions);
-  assert.ok(kinds.length > 0, 'stage[action-kinds] the registry declares its action kinds');
-  const target = { requestId: 'req-1', pauseId: 'pause-1', planDigest: 'a'.repeat(64) };
-  const failures = [];
-  for (const kind of kinds) {
-    const definition = APPLICATION_SEMANTIC_REGISTRY.actions[kind];
-    const envelope = actionDoInputs(kind, target, definition.inputSchema);
-    try {
-      normalizeActionInputs({ kind, target }, envelope);
-    } catch (error) {
-      failures.push(`${kind}: ${error.code} ${error.message}`);
-    }
-  }
-  assert.deepEqual(failures, [], `stage[do-envelope-accepted] ${failures.join(' | ')}`);
-});
-
-test('U-E5: a server-derived identity that does not name the advertised target refuses by field', () => {
-  assert.throws(
-    () => normalizeActionInputs(
-      { kind: 'answer_question', target: { requestId: 'req-2' } },
-      { requestId: 'req-1', response: { text: 'hello' } },
-    ),
-    (error) => error.code === 'application_action_input_invalid' && error.detail?.field === 'requestId',
-    'stage[request-id-verified] a mismatched requestId refuses naming the field',
-  );
-  const merged = normalizeActionInputs(
-    { kind: 'answer_question', target: { requestId: 'req-1' } },
-    { requestId: 'req-1', response: { text: 'hello' } },
-  );
-  assert.deepEqual(merged, { text: 'hello' },
-    'stage[response-unwrapped] the response payload becomes the action inputs');
-  const turn = normalizeActionInputs(
-    { kind: 'nudge_turn', target: { pauseId: 'pause-1' } },
-    { requestId: 'pause-1', response: { kind: 'continue' } },
-  );
-  assert.deepEqual(turn, {}, 'stage[turn-response-kind] the turn response kind is the envelope, not an input');
-});
-
-// ── U-G9 — actions ride every inspection depth ────────────────────────────────────────────────
-
-test('U-G9: the caller-scoped actions are attached at every inspection depth', () => {
-  const source = sourceOf('application.mjs');
-  const inspect = source.slice(source.indexOf('async inspect(rawRequest'));
-  const region = inspect.slice(0, inspect.indexOf('async help(rawRequest'));
-  assert.match(region, /const callerActions = this\._semanticActions\(/u,
-    'stage[actions-computed-once] the caller-scoped actions are computed once per inspection');
-  const attachments = [...region.matchAll(/\.\.\.base, actions: callerActions,/gu)].length;
-  assert.ok(attachments >= 6,
-    `stage[actions-every-depth] every non-outline envelope carries the actions (found ${attachments}, need >= 6)`);
-  assert.match(region, /actions: semanticActions,/u, 'stage[outline-actions] the outline keeps its own projection');
 });
 
 // ── U-E10 / U-I9 — byte-derived pages, no count ceilings ────────────────────────────────────────

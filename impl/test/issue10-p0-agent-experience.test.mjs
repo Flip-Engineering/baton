@@ -136,33 +136,6 @@ test('I10-P0-3: connected doctor exposes sanitized deployment and exact route re
   assert.deepEqual(await connected.route(ROUTE_A), readiness.routes[0]);
 });
 
-test('I10-P0-5: state-eligible semantic actions are filtered by authenticated capabilities', () => {
-  const application = Object.create(BatonApplication.prototype);
-  application.driver = { coordination: { runStop: () => ({ state: 'stopping' }) } };
-  application._contextTargets = () => [];
-  application._contextState = () => ({ currentCells: [], currentCalls: [] });
-  application._semanticActionId = (_current, _view, _principal, kind) => `action-${kind}`;
-  const current = { goal: { runId: 'run-a' }, plan: { digest: 'a'.repeat(64) }, profile: { digest: 'b'.repeat(64) } };
-  const view = { phase: 'awaiting_plan_approval', nextActions: [], attention: [] };
-  const principal = { principalId: 'reader', sessionId: 'reader-session' };
-  const context = (capabilities) => ({
-    transport: 'web', requestId: 'issue10-projection', idempotencyKey: 'issue10-projection',
-    capabilityAuthority: northboundCapabilityToken('web'), capabilities,
-  });
-
-  assert.deepEqual(application._semanticActions(current, view, principal, context(['observe'])), []);
-  assert.deepEqual(
-    application._semanticActions(current, view, principal, context(['approve', 'observe']))
-      .map(({ kind }) => kind),
-    ['approve_plan'],
-  );
-  assert.deepEqual(
-    application._semanticActions(current, view, principal, ['observe']).map(({ kind }) => kind),
-    ['approve_plan', 'stop'],
-    'an untrusted capability array must not narrow the authority projection',
-  );
-});
-
 test('I10-P0-6: exact-route CLI selection uses the connected sanitized readiness projection', async () => {
   const ready = { ...ROUTE_A, state: 'ready', summary: 'Exact route is ready.' };
   const blocked = {

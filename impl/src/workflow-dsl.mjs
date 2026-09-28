@@ -44,8 +44,6 @@ export const WAVEFILE_DIRECTIVES = Object.freeze({
   objectiveRef: { arity: 1, tokens: ['<path>'], field: 'members[].objectiveRef' },
   report: { arity: 1, tokens: ['<path>'], field: 'members[].report' },
   approveOnAdvertisedPlan: { arity: '0–1', tokens: ['true|false'], field: 'steering.approveOnAdvertisedPlan' },
-  claimOnStall: { arity: '0–1', tokens: ['true|false'], field: 'steering.claimOnStall' },
-  nudgeOnCheckpoint: { arity: 1, tokens: ['"<message>"'], field: 'steering.nudgeOnCheckpoint.message' },
   messageOnSpawn: { arity: 2, tokens: ['<kind>', '"<body>"'], field: 'steering.messageOnSpawn', enum: 'MESSAGE_KINDS' },
   elevateWhenNotes: { arity: 2, tokens: ['<kinds>', '<maxEntries>'], field: 'steering.elevateWhenNotes', enum: 'SCRATCHPAD_KINDS' },
   answerDecisions: { arity: 2, tokens: ['"<pattern>"', '"<value>"'], field: 'steering.answerDecisions.policy' },
@@ -56,7 +54,7 @@ export const WAVEFILE_DIRECTIVES = Object.freeze({
 const DIRECTIVE_NAMES = new Set(Object.keys(WAVEFILE_DIRECTIVES));
 const CLOSED_LIST = '<closed directive list>';
 const STEERING_DIRECTIVES = new Set([
-  'approveOnAdvertisedPlan', 'claimOnStall', 'nudgeOnCheckpoint', 'messageOnSpawn',
+  'approveOnAdvertisedPlan', 'messageOnSpawn',
   'elevateWhenNotes', 'answerDecisions', 'signalOnMembersDone',
 ]);
 const MEMBER_SUB_FIELDS = new Set(['harness', 'model', 'effort', 'objectiveRef', 'report']);
@@ -340,7 +338,7 @@ function dispatch(directive, tokens, line, state, repoRoot) {
     return;
   }
 
-  if (directive === 'approveOnAdvertisedPlan' || directive === 'claimOnStall') {
+  if (directive === 'approveOnAdvertisedPlan') {
     closeCurrentMember(state);
     let value = true;
     if (args.length === 1) {
@@ -351,14 +349,6 @@ function dispatch(directive, tokens, line, state, repoRoot) {
       throw refuse(CODE_STEERING, line, directive, 'true|false', `wavefile line ${line}: ${directive} takes at most one boolean`);
     }
     state.steering[directive] = value;
-    return;
-  }
-
-  if (directive === 'nudgeOnCheckpoint') {
-    closeCurrentMember(state);
-    const message = requireArg(tokens, 1, line, directive);
-    if (tokens.length !== 2) throw refuse(CODE_SPEC, line, directive, 'nudgeOnCheckpoint "<message>"', `wavefile line ${line}: ${directive} takes one message`);
-    state.steering.nudgeOnCheckpoint = { message };
     return;
   }
 
@@ -502,8 +492,6 @@ export function compileWavefile(text, options = {}) {
 
   const steering = {};
   if (state.steering.approveOnAdvertisedPlan !== undefined) steering.approveOnAdvertisedPlan = state.steering.approveOnAdvertisedPlan;
-  if (state.steering.claimOnStall !== undefined) steering.claimOnStall = state.steering.claimOnStall;
-  if (state.steering.nudgeOnCheckpoint !== undefined) steering.nudgeOnCheckpoint = state.steering.nudgeOnCheckpoint;
   if (state.steering.messageOnSpawn !== undefined) steering.messageOnSpawn = state.steering.messageOnSpawn;
   if (state.steering.elevateWhenNotes !== undefined) steering.elevateWhenNotes = state.steering.elevateWhenNotes;
   if (Object.keys(state.answerPolicy).length > 0) steering.answerDecisions = { policy: state.answerPolicy };

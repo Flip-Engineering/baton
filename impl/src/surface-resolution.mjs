@@ -1,26 +1,5 @@
-// Canonical surface resolution (2026-09-14 audit, U-N1/U-N2/U-N5; issue #289).
-//
-// The canonical operation registry (application-semantics.mjs) marks each operation with the
-// surfaces that serve it. Before this module, nothing checked those claims: a row could claim
-// `cli` with no parser verb (run.attention.list, run.scratchpad.append), claim `mcp` with no
-// advertised tool (run.attention.list), or claim `web` with no admitted transport
-// (context.eval), and every gate stayed green because each hand-kept list was compared against
-// itself. This module resolves each claimed surface to the concrete NAME that surface serves —
-// the shipped MCP tool table, the CLI parser, the web command map — and reports every claim that
-// resolves to nothing.
-//
-// The three witnesses are the shipped surfaces themselves, never a second registry projection:
-//   cli — parseBatonCli(operation.example) compiles, and (when it compiles to a command) the
-//         name it compiles to is a name the CLI actually dispatches (web-client whitelist or a
-//         host-local verb). A row whose taught example does not parse is a surface lie.
-//   web — the operation's web transport (or canonical dot name) is admitted by the web command
-//         map, or the operation is an authorized action the advertised run.do lane reaches.
-//   mcp — an advertised tool dispatches the operation's bus command (every shipped table), or the
-//         operation is an authorized action the advertised run.do tool reaches.
-// `embedded` is the registry's own in-process identity (the row's liveMethod) and needs no
-// further witness.
 import { APPLICATION_SEMANTIC_REGISTRY, applicationOperationAliasMap } from './application-semantics.mjs';
-import { commandForTool, mcpCombinedToolNames, mcpToolCommandPairs } from './mcp-northbound.mjs';
+import { mcpCombinedToolNames, mcpToolCommandPairs } from './mcp-northbound.mjs';
 import { HOST_LOCAL_CLI_COMMANDS, cliBusCommand, cliDispatches, parseBatonCli } from './application-cli.mjs';
 import { webAdmittedCommandNames } from './web-northbound.mjs';
 
@@ -34,25 +13,16 @@ export function busCommandFor(operation) {
   return Object.hasOwn(aliases, operation.key) ? aliases[operation.key] : operation.key;
 }
 
-/** True when the operation is a semantic action dispatched through the advertised run.do lane. */
-function runsThroughAct(operation) {
-  const actions = APPLICATION_SEMANTIC_REGISTRY.actions;
-  return typeof operation.liveMethod === 'string' && Object.hasOwn(actions, operation.liveMethod);
-}
 
-/** The witness for the web surface: the admitted transport for the operation, or the generic
- * run.act lane for an authorized action. */
 export function webWitness(operation) {
   const admitted = new Set(webAdmittedCommandNames());
   for (const name of [operation.names?.web, operation.names?.canonical, operation.key]) {
     if (typeof name === 'string' && admitted.has(name)) return name;
   }
-  if (runsThroughAct(operation) && admitted.has('run_act')) return 'run.act';
   return null;
 }
 
-/** The witness for the mcp surface: an advertised tool dispatching the bus command, or the
- * generic run.act tool for an authorized action. */
+
 export function mcpWitness(operation) {
   const bus = busCommandFor(operation);
   for (const { tool, command } of mcpToolCommandPairs()) {
@@ -63,7 +33,6 @@ export function mcpWitness(operation) {
       if (tool === operation.names.mcp) return tool;
     }
   }
-  if (runsThroughAct(operation) && commandForTool('baton_run_act') === 'run.act') return 'baton_run_act';
   return null;
 }
 
@@ -118,7 +87,7 @@ export function cliWitness(operation) {
     }
     return { reason: `its taught example dispatches ${String(name)}, which the CLI does not serve` };
   }
-  // Non-command parse results (doctor, route, serve, credential-install, semantic-action, follow,
+  // Non-command parse results (doctor, route, serve, credential-install, follow,
   // adopt, integrate, …) are in-process CLI verbs: the compile itself is the witness.
   return { example, kind: parsed?.kind ?? 'unknown', name: null };
 }

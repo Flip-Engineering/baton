@@ -265,7 +265,6 @@ test('SP-2a: approve_plan carries its canonical summary — the summary-less blo
     { kind: 'approve_plan', summary: 'Plan approval is required to proceed' },
     'requiredAction never inherits the summary-less one-liner shape',
   );
-  assert.equal(typeof view.requiredAction.actionId, 'string', 'approve_plan is advertised on this view');
 });
 
 test('SP-2b: answer_decision carries the requestId in its summary', async (t) => {
@@ -288,10 +287,9 @@ test('SP-2b: answer_decision carries the requestId in its summary', async (t) =>
   assert.ok(decision, 'the answer_decision attention entry is present');
   assert.equal(view.requiredAction.kind, 'answer_decision');
   assert.equal(view.requiredAction.summary, decision.requestId, 'the requestId names the decision to answer');
-  assert.equal(typeof view.requiredAction.actionId, 'string', 'answer_decision is advertised with a valid requestId');
 });
 
-test('SP-2c: actionId is present iff advertised — a not-advertised block yields {kind, summary} with NO actionId, never a fabricated token', () => {
+test('SP-2c: required action describes the blocking question', () => {
   const attention = [{
     kind: 'answer_question', workerId: 'w1', requestId: null, question: 'not advertised',
   }];
@@ -302,12 +300,12 @@ test('SP-2c: actionId is present iff advertised — a not-advertised block yield
     phase: 'running', attention,
     actions: [{ kind: 'answer_question', actionId: 'advertised-token' }],
   });
-  assert.equal(advertised.actionId, 'advertised-token', 'the advertised token is carried verbatim');
+  assert.deepEqual(advertised, { kind: 'answer_question', summary: 'not advertised' });
   const cleared = projectRequiredAction({ phase: 'running', attention: [], actions: [] });
   assert.equal(cleared, null, 'absent when no blocking condition holds');
 });
 
-test('SP-2d: executing the advertised actionId resolves the block end-to-end', async (t) => {
+test('SP-2d: dedicated approval resolves the block end-to-end', async (t) => {
   const { application } = harness(t, {
     default: { outcome: 'completed', edits: [{ path: 'out.txt', content: 'done\n', delayMs: 300 }] },
   });
@@ -318,45 +316,11 @@ test('SP-2d: executing the advertised actionId resolves the block end-to-end', a
   const view = await application.status(started.runId, owner);
   assert.equal(view.progressClass.class, 'blocked_interaction:approve_plan');
   assert.equal(view.requiredAction.kind, 'approve_plan');
-  const acted = await application.act({
-    runId: started.runId,
-    actionId: view.requiredAction.actionId,
-    inputs: { planDigest: started.plan.digest },
-  }, owner);
+  const acted = await application.approve(started.runId, started.plan.digest, owner);
   assert.notEqual(acted.phase, 'awaiting_plan_approval', 'the advertised act resolves the block');
   const after = await application.status(started.runId, owner);
   assert.notEqual(after.progressClass.class, 'blocked_interaction:approve_plan');
   assert.notEqual(after.requiredAction?.kind, 'approve_plan');
-});
-
-test('SP-2e: a stale actionId after a view change refuses with the existing taxonomy (the re-read caveat exercised)', async (t) => {
-  const { application } = harness(t, {
-    default: { outcome: 'completed', edits: [{ path: 'out.txt', content: 'done\n', delayMs: 300 }] },
-  });
-  const owner = principal('owner');
-  const started = await application.start({
-    objective: 'SP-2e (marker:default): write the output file', profile: 'standard', route: ROUTE, scope: ['**'],
-  }, owner);
-  const view = await application.status(started.runId, owner);
-  const staleActionId = view.requiredAction.actionId;
-  assert.equal(typeof staleActionId, 'string');
-  await application.approve(started.runId, started.plan.digest, principal('approver'));
-  await assert.rejects(
-    () => application.act({
-      runId: started.runId, actionId: staleActionId, inputs: { planDigest: started.plan.digest },
-    }, owner),
-    (error) => error.code === 'application_action_scope_mismatch'
-      && /inspect the Run/u.test(error.message ?? ''),
-    'a consumer must re-read before acting on a stale view',
-  );
-  await assert.rejects(
-    () => application.actionAuthority({
-      runId: started.runId, actionId: staleActionId, inputs: { planDigest: started.plan.digest },
-    }, owner),
-    (error) => error.code === 'application_action_scope_mismatch'
-      && /inspect the Run/u.test(error.message ?? ''),
-    'the authority preflight refusal names the same re-inspect remedy at its own site',
-  );
 });
 
 // ---------------------------------------------------------------------------
@@ -405,7 +369,6 @@ test('SP-3b: a web run_view round-trip includes progressClass/requiredAction on 
   assert.ok(outline, 'the outline is present on the web response');
   assert.equal(outline.progressClass.class, 'blocked_interaction:approve_plan');
   assert.equal(outline.requiredAction.kind, 'approve_plan');
-  assert.equal(typeof outline.requiredAction.actionId, 'string');
 });
 
 test('SP-3c: an MCP baton_run_inspect tool response includes progressClass/requiredAction on the outline', async (t) => {

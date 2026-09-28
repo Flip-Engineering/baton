@@ -8,33 +8,12 @@ import { coreCommandFacts, CORE_TOOL_NAMES } from './mcp-core-tools.mjs';
 import { APPLICATION_SEMANTIC_REGISTRY } from './application-semantics.mjs';
 import { SWARM_COMMAND_DEFINITIONS } from './swarm-contract.mjs';
 import { SWARM_BRIDGE_ENV_KEYS } from './swarm-native-bridge.mjs';
-import { hasNorthboundCapabilityAuthority } from './northbound-capability-authority.mjs';
 import { WAKE_CLASSES, parseWakeFilter, wakeMatches } from './wake-stream.mjs';
 
-// REFLEX-4 slice A (docs/32 §3.4, issue #19): application.context_eval is absent from
-// ORDINARY_COMMANDS because it is not an APPLICATION_COMMAND_DEFINITIONS entry at all (see the
-// note above that table in application.mjs) — there is no `application.command(...)` string
-// dispatch for this Web bridge to forward. It is reachable only as a direct method call,
-// `application.contextEval(...)`, today.
-// docs/36 §8.3 L8 / D8 (R-OP-15b), M4b — the remote_bridge profile projection of the registry: the
-// same five operations. The bridge forwards the legacy application-command spelling it dispatches
-// (the canonical `baton_*` tools route to these same commands), so there is NO reachability change
-// this phase; the retained legacy names resolve to their canonical operation as registry aliases
-// (`run.act`→`run.do`, `run.inspect`→`run.view`), which is what retires their M0 ledger rows.
-// canonical operation ← legacy application command (both reach one remote operation): run.view ←
-// run.inspect, run.do ← run.act; the others are already one spelling. The registry owns these as
-// aliases (retiring the mcp.web-bridge ledger rows); the bridge forwards the legacy spelling.
-// #227 (operator-ordered direct landing, 2026-08-15): the facade carries the WIRE's registry —
-// the resident admits every verb below (WAVE_WEB_ENTRIES + the application table); the old
-// five-verb allowlist forced every harness to hand-roll a BatonWebClient proxy. The wire card
-// (doctor.application.commands) is the authority: every listed command EXCEPT shutdown
-// (never proxied — host-side lifecycle only).
-// Exported for the surface audit (#533): the audit row derives from THIS constant — the one
-// table the bridge admits by — instead of re-scraping this file's text and pinning a stale copy.
 export const ORDINARY_COMMANDS = Object.freeze([
   'application.help',
-  'run.start', 'run.inspect', 'run.act', 'run.stop', 'run.status',
-  'run.follow', 'run.wait', 'run.approve', 'run.answer',
+  'run.start', 'run.inspect', 'run.stop', 'run.status',
+  'run.follow', 'run.wait', 'run.approve', 'run.answer', 'run.send', 'run.interrupt', 'run.select',
   'run.evidence',
   'run.episode', 'run.workstreams',
   'run.message.send', 'run.message.receipt', 'run.attention.watch',
@@ -53,7 +32,7 @@ const BRIDGE_FLOOR_COMMANDS = Object.freeze(
   Object.keys(APPLICATION_SEMANTIC_REGISTRY.operations),
 );
 const MUTATIONS = new Set([
-  'run.start', 'run.act', 'run.stop', 'run.answer', 'run.approve',
+  'run.start', 'run.stop', 'run.answer', 'run.approve', 'run.send', 'run.interrupt', 'run.select',
   'run.message.send', 'run.scratchpad.append', 'run.scratchpad.elevate',
   'run.knowledge.seed',
   'waves.start', 'waves.send', 'waves.stop', 'waves.run',
@@ -90,11 +69,7 @@ function validPrincipal(value, bound) {
   return value && SAFE_RUN_ID.test(value.principalId ?? '') && SAFE_RUN_ID.test(value.sessionId ?? '')
     && value.principalId === bound.userId && value.sessionId === bound.sessionId;
 }
-function validOutline(value, runId) {
-  return value && value.schemaVersion === 1 && value.runId === runId && value.depth === 'outline'
-    && value.outline && typeof value.outline === 'object' && !Array.isArray(value.outline)
-    && typeof value.outline.phase === 'string' && Array.isArray(value.outline.actions);
-}
+
 
 // ── the wake subscription plane (issue #294) ────────────────────────────────────────────────────
 //
@@ -538,13 +513,7 @@ export class BatonWebApplicationFacade {
     return this._sessionAuthority(await this.client.session());
   }
 
-  /** U-E17 (#287): one session round trip per tool call at most. Every facade entry of ONE
-   * transport dispatch (actionAuthority → authorizeReplay → command) carries the same
-   * server-minted dispatch identity as its context requestId, so the dispatch shares a single
-   * attestation; a context with a different identity attests afresh, and the entry is replaced
-   * (never a timer, never a TTL — the dispatch is the freshness epoch). The attestation is a
-   * fast local check, not the access boundary: the resident re-authenticates the bearer session
-   * on every forwarded command. */
+
   async _attestSession(principal, context = null) {
     if (!validPrincipal(principal, this._principal)) {
       throw bridgeError('Remote Baton MCP principal is invalid', 'application_unauthorized');
@@ -568,65 +537,12 @@ export class BatonWebApplicationFacade {
     })}`;
   }
 
-  async actionAuthority(args, principal, context = null) {
-    await this._attestSession(principal, context);
-    const idempotencyKey = this._mutationKey('run.act', args, principal);
-    if (typeof this.client.actionAuthority === 'function') {
-      return this.client.actionAuthority(args, idempotencyKey);
-    }
-    const outline = await this.client.command(
-      'run.inspect', { runId: args.runId, depth: 'outline' },
-      `mcp-web-${digest({ repoId: this.repoId, idempotencyKey, stage: 'authority-outline' })}`,
-    );
-    if (!validOutline(outline, args.runId)) {
-      throw bridgeError('Remote Baton returned an invalid Run outline');
-    }
-    const action = outline.outline.actions.find((candidate) => candidate.actionId === args.actionId);
-    if (!action || typeof action.kind !== 'string' || typeof action.effect !== 'string'
-      || !Array.isArray(action.requiredCapabilities)) {
-      throw bridgeError('Remote Baton action authority is unavailable',
-        'application_action_scope_mismatch');
-    }
-    const payload = {
-      schemaVersion: 1, actionId: action.actionId, kind: action.kind,
-      effect: action.effect, requiredCapabilities: [...action.requiredCapabilities].sort(),
-    };
-    return Object.freeze({ ...payload, authorityDigest: digest(payload) });
-  }
-
   async authorizeReplay(name, args, principal, context) {
     if (!this._admits(name)) throw this._notAdmitted(name);
     if (!validContext(context)) {
       throw bridgeError('Remote Baton MCP replay authority is invalid', 'application_unauthorized');
     }
     await this._attestSession(principal, context);
-    if (name === 'run.act') {
-      const semantic = context.semanticAuthority;
-      const definition = APPLICATION_SEMANTIC_REGISTRY.actions[semantic?.kind];
-      const payload = semantic && {
-        schemaVersion: semantic.schemaVersion,
-        actionId: semantic.actionId,
-        kind: semantic.kind,
-        effect: semantic.effect,
-        requiredCapabilities: semantic.requiredCapabilities,
-      };
-      if (!hasNorthboundCapabilityAuthority('mcp', context.capabilityAuthority)
-        || semantic?.schemaVersion !== 1 || semantic.actionId !== args?.actionId
-        || !definition || semantic.effect !== definition.effect
-        || !Array.isArray(semantic.requiredCapabilities)
-        || semantic.requiredCapabilities.join('\0') !== definition.requiredCapabilities.join('\0')
-        || semantic.authorityDigest !== digest(payload)
-        || !Array.isArray(context.capabilities)
-        || new Set(context.capabilities).size !== context.capabilities.length
-        || [...context.capabilities].sort().join('\0')
-          !== [...this._principal.capabilities].sort().join('\0')
-        || !semantic.requiredCapabilities.every(
-          (capability) => context.capabilities.includes(capability),
-        )) {
-        throw bridgeError('Remote Baton MCP replay authority is invalid',
-          'application_unauthorized');
-      }
-    }
     const doctor = await this.client.doctor();
     const card = doctor?.application;
     if (doctor?.ready !== true || card?.repoId !== this.repoId

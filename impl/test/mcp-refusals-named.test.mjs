@@ -76,8 +76,8 @@ test('the repo and idempotency-key refusals name their field and rule', async (t
   assert.equal(repoError.code, 'invalid_repo');
   assert.equal(repoError.field, 'repoId');
   assert.match(repoError.message, /repoId/u);
-  const keyError = toolErrorOf(await request(mcp, 4, 'tools/call', { name: 'baton_run_act', arguments: {
-    repoId: REPO_ID, runId: 'run:named-refusals', actionId: 'act:named-refusals', inputs: {}, idempotencyKey: 'bad key!',
+  const keyError = toolErrorOf(await request(mcp, 4, 'tools/call', { name: 'baton_run_stop', arguments: {
+    repoId: REPO_ID, runId: 'run:named-refusals', reason: 'Stop this run', idempotencyKey: 'bad key!',
   } }));
   assert.equal(keyError.code, 'invalid_idempotency_key');
   assert.equal(keyError.field, 'idempotencyKey');
@@ -170,15 +170,15 @@ test('an unknown tool name answers with the nearest advertised tool and the full
   assert.equal(data.requested, 'baton_run_approve');
   assert.ok(typeof data.nearest === 'string' && data.tools.includes(data.nearest), 'the nearest match is itself an advertised tool');
   assert.deepEqual(data.tools, [...data.tools].sort(), 'the advertised set rides sorted');
-  assert.ok(data.tools.includes('baton_run_act') && data.tools.includes('baton_runs'), 'the advertised set names the tools an agent most naturally reaches for');
+  assert.ok(data.tools.includes('baton_run_stop') && data.tools.includes('baton_runs'), 'the advertised set names the tools an agent most naturally reaches for');
 });
 
 test('a near-miss tool name resolves its transposition to the real tool', async (t) => {
   const mcp = server(t);
   await ready(mcp);
-  const response = await request(mcp, 13, 'tools/call', { name: 'baton_run_acty', arguments: { repoId: REPO_ID } });
-  assert.equal(response.error.data.nearest, 'baton_run_act');
-  assert.match(response.error.message, /nearest advertised tool is baton_run_act/u);
+  const response = await request(mcp, 13, 'tools/call', { name: 'baton_run_stopp', arguments: { repoId: REPO_ID } });
+  assert.equal(response.error.data.nearest, 'baton_run_stop');
+  assert.match(response.error.message, /nearest advertised tool is baton_run_stop/u);
 });
 
 test('malformed tools/call frames keep the bare protocol refusal', async (t) => {

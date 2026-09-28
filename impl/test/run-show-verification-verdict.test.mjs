@@ -253,7 +253,7 @@ async function driveToFailed(context, runId) {
   let outline = await inspectOutline(context.application, runId);
   const approve = outline.outline.actions.find((action) => action.kind === 'approve_plan');
   assert.ok(approve, 'the fresh run offers plan approval');
-  await context.application.command('run.act', { runId, actionId: approve.actionId, inputs: {} }, principal('owner'));
+  await context.application.command('run.approve', { runId, planDigest: approve.planDigest }, principal('owner'));
   for (let attempt = 0; attempt < 600; attempt += 1) {
     outline = await inspectOutline(context.application, runId);
     // 'inconclusive' is terminal too (#334): a verification the base shares rests there with no

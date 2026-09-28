@@ -209,7 +209,7 @@ const READ_ONLY_COMMANDS = new Set([
   'run_scratchpad_read', 'run.scratchpad.read',
 ]);
 const BOUNDED_OBSERVATION_AUDITS = new Set([
-  'command_replayed', 'action_authority_read', 'operator_read_authorized',
+  'command_replayed', 'operator_read_authorized',
 ]);
 const TOP_LEVEL = new Set(['schemaVersion', 'commandId', 'idempotencyKey', 'command', 'args', 'repoId', 'runId', 'expectedFence', 'origin', 'clientObservedCursor', 'frame']);
 // Advertised schema (ARG_FIELDS) excludes transportHidden. Acceptance during validateEnvelope
@@ -1701,40 +1701,6 @@ export class WebNorthbound {
     // reads share the admitted observation (replay), differing reads never share a scope (so a
     // changed axis reads fresh instead of conflicting). Keyed verbs keep the caller-key scope.
     const scopeKey = hash({ userId: ctx.principal.userId, command: envelope.command, repoId: envelope.repoId, idempotencyKey: envelope.idempotencyKey ?? requestDigest });
-    let semanticAuthority = null;
-    if (APPLICATION_COMMAND[envelope.command] === 'run.act') {
-      const prior = this.coordination.webCommandByScope?.(scopeKey) ?? null;
-      if (prior && prior.requestDigest !== requestDigest) {
-        try { this._audit('idempotency_refused', ctx, { command: envelope.command, repoId: envelope.repoId, reason: 'idempotency_conflict' }); }
-        catch { return error(503, 'temporarily_unavailable'); }
-        return idempotencyConflictRefusal(prior, envelope);
-      }
-      try {
-        semanticAuthority = prior?.semanticAuthority ?? await this.application.actionAuthority(
-          envelope.args,
-          { actor: webActor, principalId: ctx.principal.userId, sessionId: ctx.principal.sessionId },
-          {
-            transport: 'web', requestId: String(envelope.commandId),
-            idempotencyKey: `web.command:${envelope.commandId}`,
-            capabilityAuthority: northboundCapabilityToken('web'),
-            capabilities: [...ctx.principal.capabilities],
-          },
-        );
-      } catch (cause) {
-        const failure = dispatchFailure(cause, envelope.command);
-        try { this._audit('authorization_refused', ctx, { command: envelope.command, repoId: envelope.repoId }); }
-        catch { return error(503, 'temporarily_unavailable'); }
-        return result(failure.httpStatus, failure.body);
-      }
-      if (!Array.isArray(semanticAuthority?.requiredCapabilities)
-        || !semanticAuthority.requiredCapabilities.every(
-          (capability) => ctx.principal.capabilities.includes(capability),
-        )) {
-        try { this._audit('authorization_refused', ctx, { command: envelope.command, repoId: envelope.repoId }); }
-        catch { return error(503, 'temporarily_unavailable'); }
-        return error(403, 'forbidden');
-      }
-    }
     if (this.edge) {
       const key = ctx.principal.credentialId;
       const commandCost = ({ spawn: 10, capability_invoke: 10, drain: 10, send: 2, interrupt: 2, kill: 2, respond: 2 }[envelope.command] ?? 1);
@@ -1760,7 +1726,6 @@ export class WebNorthbound {
         // the ledger never carries request content). Older rows without it degrade to naming
         // `request` as the axis.
         requestAxes: requestAxes(envelope),
-        ...(semanticAuthority ? { semanticAuthority } : {}),
       }, { actor: webActor, key: `web.admit:${scopeKey}` });
     } catch {
       return error(503, 'temporarily_unavailable');
@@ -1776,12 +1741,6 @@ export class WebNorthbound {
       return idempotencyConflictRefusal(
         this.coordination.webCommandByScope?.(scopeKey) ?? null, envelope,
       );
-    }
-    if (APPLICATION_COMMAND[envelope.command] === 'run.act'
-      && admission.command.semanticAuthority?.authorityDigest !== semanticAuthority?.authorityDigest) {
-      try { this._audit('authorization_refused', ctx, { command: envelope.command, repoId: envelope.repoId }); }
-      catch { return error(503, 'temporarily_unavailable'); }
-      return error(409, 'application_action_authority_invalid');
     }
     if (admission.result === 'replay') {
       try { this._audit('command_replayed', ctx, { command: envelope.command, repoId: envelope.repoId, commandId: admission.command.commandId }); } catch { return error(503, 'temporarily_unavailable'); }
@@ -1808,10 +1767,6 @@ export class WebNorthbound {
       }
       if (admission.command.status === 'admitted' && (RECONCILABLE.has(envelope.command)
         || (envelope.command === 'spawn' && envelope.args.goalPlan))) {
-        if (APPLICATION_COMMAND[envelope.command] === 'run.act'
-          && admission.command.sessionId !== ctx.principal.sessionId) {
-          return error(403, 'forbidden');
-        }
         const commandId = admission.command.commandId;
         const admittedActor = actor({ userId: admission.command.userId, sessionId: admission.command.sessionId });
         const admittedPrincipal = { ...ctx.principal, userId: admission.command.userId, sessionId: admission.command.sessionId };
@@ -1821,7 +1776,6 @@ export class WebNorthbound {
           replayed = APPLICATION_COMMAND[envelope.command]
             ? await this._dispatchApplicationOnce(
               admittedEnvelope, admittedActor, commandId, admittedPrincipal,
-              admission.command.semanticAuthority ?? null,
             )
             : await this._dispatch(admittedEnvelope, admittedActor, admittedPrincipal);
         } catch (cause) {
@@ -1865,9 +1819,6 @@ export class WebNorthbound {
             idempotencyKey: `web.command:${envelope.commandId}`,
             capabilityAuthority: northboundCapabilityToken('web'),
             capabilities: [...ctx.principal.capabilities],
-            ...(APPLICATION_COMMAND[envelope.command] === 'run.act' ? {
-              semanticAuthority: admission.command.semanticAuthority,
-            } : {}),
             ...(lease ? { sessionAuthority: {
               schemaVersion: 1,
               authorityDigest: lease.session.authorityDigest,
@@ -1893,7 +1844,6 @@ export class WebNorthbound {
         : APPLICATION_COMMAND[envelope.command]
           ? await this._dispatchApplicationOnce(
             envelope, webActor, envelope.commandId, ctx.principal,
-            admission.command.semanticAuthority ?? null,
           )
           : await this._dispatch(envelope, webActor, ctx.principal);
     } catch (cause) {
@@ -1937,18 +1887,18 @@ export class WebNorthbound {
     return pending;
   }
 
-  _dispatchApplicationOnce(envelope, webActor, commandId, principal, semanticAuthority = null) {
+  _dispatchApplicationOnce(envelope, webActor, commandId, principal) {
     const existing = this._applicationDispatches.get(commandId);
     if (existing) return existing;
     const admittedEnvelope = commandId === envelope.commandId ? envelope : { ...envelope, commandId };
     const pending = Promise.resolve().then(
-      () => this._dispatch(admittedEnvelope, webActor, principal, semanticAuthority),
+      () => this._dispatch(admittedEnvelope, webActor, principal),
     );
     this._applicationDispatches.set(commandId, pending);
     return pending;
   }
 
-  async _dispatch(envelope, webActor, principal, semanticAuthority = null) {
+  async _dispatch(envelope, webActor, principal) {
     const a = envelope.args;
     const needsGoalPlanPrincipal = ['goal_define', 'plan_propose', 'plan_approve', 'goal_plan_status'].includes(envelope.command)
       || (envelope.command === 'spawn' && Boolean(a.goalPlan));
@@ -1977,9 +1927,6 @@ export class WebNorthbound {
         idempotencyKey: `web.command:${envelope.commandId}`,
         capabilityAuthority: northboundCapabilityToken('web'),
         capabilities: [...principal.capabilities],
-        ...(APPLICATION_COMMAND[envelope.command] === 'run.act' ? {
-          semanticAuthority,
-        } : {}),
         ...(lease ? { sessionAuthority: {
           schemaVersion: 1,
           authorityDigest: lease.session.authorityDigest,
@@ -2167,7 +2114,7 @@ export class WebNorthbound {
     if (req.method === 'GET' && url.pathname.startsWith('/v1/commands/')) {
       return this._handleCommandStatus(req, res, url, origin);
     }
-    if (req.method === 'OPTIONS' && ['/v1/commands', '/v1/stream-tickets', '/v1/action-authority'].includes(url.pathname)) {
+    if (req.method === 'OPTIONS' && ['/v1/commands', '/v1/stream-tickets'].includes(url.pathname)) {
       if (!this.allowedOrigins.has(origin)) return this._write(res, error(403, 'forbidden'));
       res.writeHead(204, {
         'access-control-allow-origin': origin, 'access-control-allow-credentials': 'true',
@@ -2263,92 +2210,6 @@ export class WebNorthbound {
         return;
       }
       return this._write(res, await this.stream.issue(principal, origin, streamScope), origin);
-    }
-    if (req.method === 'POST' && url.pathname === '/v1/action-authority') {
-      if (url.search || req.headers['content-type']?.split(';')[0].trim().toLowerCase() !== 'application/json') {
-        return this._write(res, error(400, 'invalid_command'), origin);
-      }
-      let principal;
-      try { principal = await this.authenticate?.(req) ?? null; } catch { principal = null; }
-      let body;
-      try { body = await this._readBody(req); }
-      catch { return this._write(res, error(400, 'invalid_command'), origin); }
-      const ctx = {
-        principal, origin, csrfToken: req.headers['x-baton-csrf'] ?? null,
-        remoteAddress: req.edgeAddressDigest ? 'canonical' : (req.socket?.remoteAddress ?? null),
-        addressDigest: req.edgeAddressDigest ?? null,
-        transport: req.edgeIdentity?.transport ?? (req.socket?.encrypted ? 'https' : 'http'),
-      };
-      const authFailure = this._authenticate(ctx);
-      if (authFailure) return this._write(res, authFailure, origin);
-      if (!isRecord(body)
-        || Object.keys(body).sort().join(',') !== ['args', 'idempotencyKey', 'repoId', 'schemaVersion'].join(',')
-        || body.schemaVersion !== 1) {
-        return this._write(res, error(400, 'invalid_command'), origin);
-      }
-      const envelope = {
-        schemaVersion: 1,
-        commandId: 'action-authority-preflight',
-        idempotencyKey: body.idempotencyKey,
-        command: 'run_act',
-        args: body.args,
-        repoId: body.repoId,
-        runId: body.args?.runId,
-        origin,
-      };
-      // U-E15 (issue #288): a malformed envelope is a 400 naming the judged field — the SAME
-      // typed refusal /v1/commands returns from the same validator — and only the capability
-      // precondition (a real permission fact) is 403. Before this, both collapsed into one bare
-      // `forbidden` and an agent chased a permission it did not lack.
-      const validation = validateEnvelope(envelope);
-      if (validation) {
-        return this._write(res, typeof validation === 'string'
-          ? error(400, 'invalid_command', validation)
-          : error(400, validation.code, validation.message, validation.field,
-            validation.detail == null ? {} : { detail: validation.detail }), origin);
-      }
-      if (!Array.isArray(principal.capabilities) || !principal.capabilities.includes('observe')) {
-        return this._write(res, error(403, 'forbidden',
-          'forbidden: action authority refused by the capability precondition', 'capability',
-          { detail: capabilityRefusalDetail(['observe'], principal.capabilities) }), origin);
-      }
-      const authorizationFailure = this._authorize(ctx, envelope);
-      if (authorizationFailure) return this._write(res, authorizationFailure, origin);
-      if (!this.application) return this._write(res, applicationUnavailableRefusal(), origin);
-      const scopeKey = hash({
-        userId: principal.userId, command: envelope.command,
-        repoId: envelope.repoId, idempotencyKey: envelope.idempotencyKey,
-      });
-      const requestDigest = hash(canonicalRequest(envelope));
-      const prior = this.coordination.webCommandByScope?.(scopeKey) ?? null;
-      if (prior && prior.requestDigest !== requestDigest) {
-        return this._write(res, idempotencyConflictRefusal(prior, envelope), origin);
-      }
-      let semanticAuthority;
-      try {
-        semanticAuthority = prior?.semanticAuthority ?? await this.application.actionAuthority(
-          envelope.args,
-          {
-            actor: actor(principal), principalId: principal.userId,
-            sessionId: principal.sessionId,
-          },
-          {
-            transport: 'web', requestId: String(envelope.commandId),
-            idempotencyKey: `web.command:${envelope.commandId}`,
-            capabilityAuthority: northboundCapabilityToken('web'),
-            capabilities: [...principal.capabilities],
-          },
-        );
-      } catch (cause) {
-        const failure = dispatchFailure(cause, envelope.command);
-        return this._write(res, result(failure.httpStatus, failure.body), origin);
-      }
-      if (!Array.isArray(semanticAuthority?.requiredCapabilities)) {
-        return this._write(res, error(409, 'application_action_authority_invalid'), origin);
-      }
-      try { this._audit('action_authority_read', ctx, { repoId: envelope.repoId }); }
-      catch { return this._write(res, error(503, 'temporarily_unavailable'), origin); }
-      return this._write(res, result(200, { ok: true, semanticAuthority }), origin);
     }
     if (req.method === 'POST' && url.pathname === '/v1/root-attention/claude-code') {
       return this._handleRootAttention(req, res, origin);
