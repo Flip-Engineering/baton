@@ -71,7 +71,6 @@ const ADMISSION = Object.freeze({
   'run.objective': { lane: 'run.objective', class: 'admission', value: SPILL_BODY_BYTES, unit: 'bytes', graceful: 'spill-digest-citation', enforcedAt: 'application run.start admission' },
   'wave.member.objective': { lane: 'wave.member.objective', class: 'admission', value: SPILL_BODY_BYTES, unit: 'bytes', graceful: 'spill-digest-citation', enforcedAt: 'application startWave/attachWave member admission' },
   'view.resultpin.page': { lane: 'view.resultpin.page', class: 'view', value: 262144, unit: 'bytes', graceful: 'shed-flagged' },
-
   // Issue #366 (with #286 G-41): the ONE bound a run-stop target set is judged against at
   // ADMISSION, and its derivation is the ledger itself. A run stop's target set is a projection of
   // the ledger — every target is a task/worker the ledger already holds, and each such row costs

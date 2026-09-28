@@ -54,7 +54,7 @@ export function readConvergenceState(stateRoot) {
   if (value === null) return null;
   if (!record(value) || value.schemaVersion !== 1 || !Array.isArray(value.events)
     || !record(value.projection) || !Array.isArray(value.subscriptions)
-    || !Array.isArray(value.members) || !record(value.recovery)
+    || !Array.isArray(value.members)
     || !Array.isArray(value.terminalPins) || !record(value.evaluation)) {
     throw new BatonControlError(
       'convergence_state_invalid',

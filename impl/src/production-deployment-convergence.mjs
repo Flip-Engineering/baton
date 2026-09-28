@@ -48,7 +48,7 @@ const durableProjectors = () => [
 /**
  * Durable form of the additive convergence runtime. The existing Baton deployment remains the
  * execution and authorization authority; this class persists only convergence receipts,
- * subscriptions, member-attempt metadata and recovery bookkeeping.
+ * subscriptions and member-attempt metadata.
  */
 export class DurableProductionConvergenceRuntime extends ProductionConvergenceRuntime {
   #persisting = false;
