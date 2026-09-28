@@ -2,7 +2,7 @@ import { contextProgramIsPure } from './context-authority.mjs';
 import { normalizeContextProgram } from './context-program.mjs';
 import { APPLICATION_SEMANTIC_REGISTRY, canonicalRunPhase, providerSettled } from './application-semantics.mjs';
 import { createRecipes } from './recipes.mjs';
-import { attachWave, createWave } from './wave.mjs';
+import { createWave } from './wave.mjs';
 import { createSwarms } from './swarm-client.mjs';
 
 function clientError(message, code = 'application_client_invalid') {
