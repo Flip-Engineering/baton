@@ -55,6 +55,9 @@
 #      and Receive.exit_status. A failed step stays the answer, and an unsettled turn reports to
 #      its parent or names the log and inbox that continue it.
 # M-18 bound: L.push_argv. The push argv names the declared remote at the destination position.
+# The adapter dispatch is bound under M-2, M-5 and M-11: Turn.input and Turn.launch select the
+# adapter by the harness the session recorded, and Turn.claude_launch and Turn.muse_launch start a
+# session when none is recorded and carry the recorded one otherwise.
 #
 # No entry carries a replay residue. M-5, M-7 and M-8 were bound to the replay experiments until
 # the store transaction and the command admission above replaced them; the replay prototype's own
@@ -72,6 +75,10 @@ import ./land.bend as Land
 import ./recruit.bend as Recruit
 import ./store.bend as Store
 import ../host/sqlite.bend as DB
+import ../harness/codex-worker.bend as Codex
+import ../harness/omp-worker.bend as Omp
+import ../harness/claude-worker.bend as Claude
+import ../harness/muse-worker.bend as Muse
 import ../host/laws.bend as HostLaws
 import ../json/laws.bend as JsonLaws
 import ../json/canonical.bend as J
@@ -800,4 +807,147 @@ law m8_an_unregistered_worker_is_refused_before_any_turn:
   {Turn.worker_checked(db, worker, id, cmd, model, effort, cwd, task, log, session, harness, True{}) == IO.die(Maybe<Turn.Outcome>,2,"Worker has no recorded parent and workspace; register it before starting a turn.") : IO(Maybe<Turn.Outcome>)}
 
 def m8_an_unregistered_worker_is_refused_before_any_turn(db, worker, id, cmd, model, effort, cwd, task, log, session, harness):
+  {==}
+
+# ---------------------------------------------------------------------------
+# The coordinator's adapter dispatch. The harness the session recorded selects
+# the adapter that receives its input and supervises its turn, and a turn with
+# no recorded session starts one while a turn with one resumes it.
+
+law m11_omp_input_reaches_the_omp_adapter:
+  for +handle: U32
+  for +prompt: String
+  {Turn.input(handle, prompt, "omp\n") == Omp.input(handle, prompt) : IO(Result<&1,&1,U32 & String,Unit>)}
+
+def m11_omp_input_reaches_the_omp_adapter(handle, prompt):
+  {==}
+
+law m11_muse_input_reaches_the_muse_adapter:
+  for +handle: U32
+  for +prompt: String
+  {Turn.input(handle, prompt, "muse\n") == Muse.input(handle, prompt) : IO(Result<&1,&1,U32 & String,Unit>)}
+
+def m11_muse_input_reaches_the_muse_adapter(handle, prompt):
+  {==}
+
+law m11_codex_input_reaches_the_codex_adapter:
+  for +handle: U32
+  for +prompt: String
+  {Turn.input(handle, prompt, "codex\n") == Codex.input(handle, prompt) : IO(Result<&1,&1,U32 & String,Unit>)}
+
+def m11_codex_input_reaches_the_codex_adapter(handle, prompt):
+  {==}
+
+law m11_any_other_harness_input_reaches_the_claude_adapter:
+  for +handle: U32
+  for +prompt: String
+  {Turn.input(handle, prompt, "claude-code\n") == Claude.input(handle, prompt) : IO(Result<&1,&1,U32 & String,Unit>)}
+
+def m11_any_other_harness_input_reaches_the_claude_adapter(handle, prompt):
+  {==}
+
+law m2_omp_launch_reaches_the_omp_adapter:
+  for +sessions: String
+  for +cmd: String
+  for +model: String
+  for +effort: String
+  for +cwd: String
+  for +log: String
+  for +session: String
+  for +task: String
+  {Turn.launch(sessions, cmd, model, effort, cwd, log, session, "omp\n", task) == Omp.start_worker(cmd, model, effort, cwd, log, sessions, session, String.is_empty(session)) : IO(Result<&1,&1,U32 & String,U32>)}
+
+def m2_omp_launch_reaches_the_omp_adapter(sessions, cmd, model, effort, cwd, log, session, task):
+  {==}
+
+law m2_muse_launch_reaches_the_muse_adapter:
+  for +sessions: String
+  for +cmd: String
+  for +model: String
+  for +effort: String
+  for +cwd: String
+  for +log: String
+  for +session: String
+  for +task: String
+  {Turn.launch(sessions, cmd, model, effort, cwd, log, session, "muse\n", task) == Turn.muse_launch(cmd, model, effort, cwd, log ++ ".stderr", session, task, String.is_empty(session)) : IO(Result<&1,&1,U32 & String,U32>)}
+
+def m2_muse_launch_reaches_the_muse_adapter(sessions, cmd, model, effort, cwd, log, session, task):
+  {==}
+
+law m2_codex_launch_reaches_the_codex_adapter:
+  for +sessions: String
+  for +cmd: String
+  for +model: String
+  for +effort: String
+  for +cwd: String
+  for +log: String
+  for +session: String
+  for +task: String
+  {Turn.launch(sessions, cmd, model, effort, cwd, log, session, "codex\n", task) == Codex.start_worker(cmd, model, effort, cwd, log ++ ".stderr", session, String.is_empty(session)) : IO(Result<&1,&1,U32 & String,U32>)}
+
+def m2_codex_launch_reaches_the_codex_adapter(sessions, cmd, model, effort, cwd, log, session, task):
+  {==}
+
+law m2_any_other_harness_launch_reaches_the_claude_adapter:
+  for +sessions: String
+  for +cmd: String
+  for +model: String
+  for +effort: String
+  for +cwd: String
+  for +log: String
+  for +session: String
+  for +task: String
+  {Turn.launch(sessions, cmd, model, effort, cwd, log, session, "claude-code\n", task) == Turn.claude_launch(cmd, model, effort, cwd, log ++ ".stderr", session, String.is_empty(session)) : IO(Result<&1,&1,U32 & String,U32>)}
+
+def m2_any_other_harness_launch_reaches_the_claude_adapter(sessions, cmd, model, effort, cwd, log, session, task):
+  {==}
+
+law m5_a_fresh_claude_turn_starts_a_session:
+  for +cmd: String
+  for +model: String
+  for +effort: String
+  for +cwd: String
+  for +stderr: String
+  for +session: String
+  {Turn.claude_launch(cmd, model, effort, cwd, stderr, session, True{}) == Claude.start_worker(cmd, model, effort, cwd, stderr) : IO(Result<&1,&1,U32 & String,U32>)}
+
+def m5_a_fresh_claude_turn_starts_a_session(cmd, model, effort, cwd, stderr, session):
+  {==}
+
+law m5_a_resumable_claude_turn_carries_the_recorded_session:
+  for +cmd: String
+  for +model: String
+  for +effort: String
+  for +cwd: String
+  for +stderr: String
+  for +session: String
+  {Turn.claude_launch(cmd, model, effort, cwd, stderr, session, False{}) == Claude.resume_worker(cmd, model, effort, cwd, stderr, session) : IO(Result<&1,&1,U32 & String,U32>)}
+
+def m5_a_resumable_claude_turn_carries_the_recorded_session(cmd, model, effort, cwd, stderr, session):
+  {==}
+
+law m5_a_fresh_muse_turn_starts_a_session:
+  for +cmd: String
+  for +model: String
+  for +effort: String
+  for +cwd: String
+  for +stderr: String
+  for +session: String
+  for +task: String
+  {Turn.muse_launch(cmd, model, effort, cwd, stderr, session, task, True{}) == Muse.start_worker(cmd, model, effort, cwd, stderr, task) : IO(Result<&1,&1,U32 & String,U32>)}
+
+def m5_a_fresh_muse_turn_starts_a_session(cmd, model, effort, cwd, stderr, session, task):
+  {==}
+
+law m5_a_resumable_muse_turn_carries_the_recorded_session:
+  for +cmd: String
+  for +model: String
+  for +effort: String
+  for +cwd: String
+  for +stderr: String
+  for +session: String
+  for +task: String
+  {Turn.muse_launch(cmd, model, effort, cwd, stderr, session, task, False{}) == Muse.resume_worker(cmd, model, effort, cwd, stderr, session, task) : IO(Result<&1,&1,U32 & String,U32>)}
+
+def m5_a_resumable_muse_turn_carries_the_recorded_session(cmd, model, effort, cwd, stderr, session, task):
   {==}
