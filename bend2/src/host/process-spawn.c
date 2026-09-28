@@ -28,7 +28,7 @@ static BatonChild **baton_children;
 static size_t baton_child_count, baton_child_capacity;
 
 enum { BP_SPAWN, BP_WRITE, BP_CLOSE, BP_READ, BP_WAIT, BP_SIGNAL, BP_PID,
-       BP_RETAIN, BP_ATTACH, BP_RELEASE, BP_ACK, BP_KEEPER, BP_EXITED };
+       BP_RETAIN, BP_ATTACH, BP_RELEASE, BP_ACK, BP_KEEPER, BP_INPUT_CLOSED };
 
 static int baton_pipe(int fds[2]) {
   if (pipe(fds)) return errno;
@@ -108,9 +108,9 @@ pipes:
 #endif
 
 enum { BR_HELLO=1, BR_CHANGE, BR_EXIT, BR_REPLY, BR_WRITE, BR_CLOSE,
-       BR_SIGNAL, BR_RELEASE, BR_ACK };
+       BR_SIGNAL, BR_RELEASE, BR_ACK, BR_INPUT_CLOSED };
 typedef struct { uint32_t op; int32_t error; uint64_t serial,length; int64_t value; } BrFrame;
-typedef struct { int32_t pid,exited,status,released; } BrState;
+typedef struct { int32_t pid,exited,status,released,input_closed; } BrState;
 typedef struct {
   char magic[8]; uint64_t lengths[6]; uint32_t keep_stdin,reserved;
 } BrManifestHeader;
@@ -120,7 +120,7 @@ typedef struct BrBuffer {
   uint64_t serial,generation; int close_input,change;
 } BrBuffer;
 typedef struct BatonRetained {
-  int socket,spool,error,exited,status;
+  int socket,spool,error,exited,status,input_closed;
   uint64_t version,serial,reply_serial;
   int reply_error;
   off_t offset;
@@ -132,7 +132,7 @@ typedef struct {
   int listener,client,input,lock,watch,wake[2],spool,finishing,change_queued;
   uint64_t generation;
   pid_t native_pid,recovery_pid;
-  int exited,status,released;
+  int exited,status,released,input_closed;
   char *directory,*incoming;
   size_t incoming_size,incoming_capacity;
   BrManifest manifest;
@@ -298,6 +298,7 @@ static void *br_receiver(void *argument) {
     if(frame.op==BR_CHANGE) retained->version++;
     else if(frame.op==BR_EXIT) {retained->exited=1;retained->status=(int)frame.value;retained->version++;}
     else if(frame.op==BR_REPLY) {retained->reply_serial=frame.serial;retained->reply_error=frame.error;}
+    else if(frame.op==BR_INPUT_CLOSED) retained->input_closed=1;
     else retained->error=EPROTO;
     pthread_cond_broadcast(&retained->changed);pthread_mutex_unlock(&retained->state);
   }
@@ -319,7 +320,7 @@ static int br_attach_socket(BatonChild *child,const char *directory,int socket,i
   BatonRetained *retained=error?NULL:calloc(1,sizeof(*retained));
   if(!error && !retained) error=ENOMEM;
   if(error) {if(spool>=0)close(spool);close(socket);return error;}
-  retained->socket=socket;retained->spool=spool;retained->exited=state.exited;retained->status=state.status;
+  retained->socket=socket;retained->spool=spool;retained->exited=state.exited;retained->status=state.status;retained->input_closed=state.input_closed;
   pthread_mutex_init(&retained->state,NULL);pthread_mutex_init(&retained->command,NULL);
   pthread_mutex_init(&retained->reader,NULL);pthread_cond_init(&retained->changed,NULL);
   error=pthread_create(&retained->receiver,NULL,br_receiver,retained);
@@ -390,9 +391,9 @@ static void br_read_line(BatonProcessCall *call) {
 static void baton_retained_call(BatonProcessCall *call) {
   BatonRetained *retained=call->child->retained;
   if(call->kind==BP_READ) {br_read_line(call);return;}
-  if(call->kind==BP_EXITED) {
+  if(call->kind==BP_INPUT_CLOSED) {
     pthread_mutex_lock(&retained->state);
-    call->error=retained->error;call->signal=(u32)retained->exited;
+    call->error=retained->error;call->signal=(u32)(retained->input_closed || retained->exited);
     pthread_mutex_unlock(&retained->state);return;
   }
   if(call->kind==BP_WAIT) {
@@ -481,8 +482,14 @@ static int br_command(BrKeeper *keeper,BrFrame frame,const char *payload) {
   int error=0;
   if(frame.op==BR_WRITE || frame.op==BR_CLOSE) {
     if(frame.op==BR_CLOSE && frame.length) return EPROTO;
-    return br_queue(&keeper->writes,&keeper->writes_tail,payload,(size_t)frame.length,
-                    frame.serial,keeper->generation,frame.op==BR_CLOSE);
+    error=br_queue(&keeper->writes,&keeper->writes_tail,payload,(size_t)frame.length,
+                   frame.serial,keeper->generation,frame.op==BR_CLOSE);
+    if(!error && frame.op==BR_CLOSE && !keeper->input_closed) {
+      /* Accepted closure also covers input still queued before the close. */
+      keeper->input_closed=1;
+      error=br_send(keeper,(BrFrame){.op=BR_INPUT_CLOSED},NULL);
+    }
+    return error;
   }
   if(frame.length) return EPROTO;
   if(frame.op==BR_SIGNAL) {
@@ -606,7 +613,7 @@ static int br_keep(BrKeeper *keeper) {
         if(keeper->client>=0) {BrFrame busy={.op=BR_HELLO,.error=EBUSY};br_write_all(socket,&busy,sizeof(busy));close(socket);}
         else {
           keeper->client=socket;keeper->generation++;br_nonblock(socket);
-          BrState state={keeper->native_pid,keeper->exited,keeper->status,keeper->released};
+          BrState state={keeper->native_pid,keeper->exited,keeper->status,keeper->released,keeper->input_closed};
           if((error=br_send(keeper,(BrFrame){.op=BR_HELLO,.length=sizeof(state)},&state)))return error;
         }
       } else if(errno!=EINTR && errno!=EAGAIN)return errno;
@@ -670,8 +677,11 @@ static int br_keeper(const char *directory,int lock) {
   if((error=br_wait_start(&keeper,keeper.native_pid,'N')))goto done;
   if((error=br_queue(&keeper.writes,&keeper.writes_tail,keeper.manifest.field[3],
                     (size_t)keeper.manifest.header.lengths[3],0,0,0)))goto done;
-  if(!keeper.manifest.header.keep_stdin && (error=br_queue(&keeper.writes,&keeper.writes_tail,NULL,0,0,0,1)))goto done;
-  BrState state={keeper.native_pid,0,0,0};
+  if(!keeper.manifest.header.keep_stdin) {
+    if((error=br_queue(&keeper.writes,&keeper.writes_tail,NULL,0,0,0,1)))goto done;
+    keeper.input_closed=1;
+  }
+  BrState state={keeper.native_pid,0,0,0,keeper.input_closed};
   if((error=br_send(&keeper,(BrFrame){.op=BR_HELLO,.length=sizeof(state)},&state)))goto done;
   error=br_keep(&keeper);
 done:
@@ -778,7 +788,7 @@ static void baton_process_call(IoWork *w) {
   }
   if(child->retained) { baton_retained_call(call);return; }
   if(call->kind==BP_RELEASE || call->kind==BP_ACK) { call->error=EINVAL;return; }
-  if(call->kind==BP_EXITED) {call->signal=(u32)child->reaped;return;}
+  if(call->kind==BP_INPUT_CLOSED) {call->signal=(u32)(child->input<0 || child->reaped);return;}
   if(call->kind==BP_WRITE) {
     size_t offset=0;
     while(offset<call->length) {
@@ -830,7 +840,7 @@ static Term baton_process_pack(Env e, IoWork *w) {
   Term value=term_pak(CID_UNIT,0);
   if(!call->error) {
     if(call->kind==BP_SPAWN || call->kind==BP_ATTACH) value=(Term)call->handle;
-    else if(call->kind==BP_EXITED) value=(Term)call->signal;
+    else if(call->kind==BP_INPUT_CLOSED) value=(Term)call->signal;
     else if(call->kind==BP_WAIT) value=io_str(e,call->text,call->length);
 #ifdef CID_SOME
     else if(call->kind==BP_READ) value=call->eof ? term_pak(CID_NONE,0)
@@ -893,7 +903,7 @@ static Term baton_process_begin(Env e, Term *f, IoWork *w, int kind) {
     call->handle=(u32)f[0];
     if(call->handle>=baton_child_count || !baton_children[call->handle]) {free(call);return io_fail(e,EBADF,NULL);}
     call->child=baton_children[call->handle];
-    if(call->child->reaped && !call->child->retained && kind!=BP_WRITE && kind!=BP_EXITED) {free(call);return io_fail(e,ECHILD,NULL);}
+    if(call->child->reaped && !call->child->retained && kind!=BP_WRITE && kind!=BP_INPUT_CLOSED) {free(call);return io_fail(e,ECHILD,NULL);}
     if(kind==BP_PID) {Term pid=io_done(e,(Term)call->child->pid);free(call);return pid;}
     if(kind==BP_WRITE) {u64 length=0;call->text=io_cstr(e,f[1],&length);call->length=length;}
     if(kind==BP_SIGNAL) call->signal=(u32)f[1];
@@ -942,8 +952,8 @@ BP_EFFECT(baton_process_acknowledge,CID_PROCESSCHILD_ACKNOWLEDGE,BP_ACK)
 #ifdef CID_PROCESSCHILD_KEEPER
 BP_EFFECT(baton_process_keeper,CID_PROCESSCHILD_KEEPER,BP_KEEPER)
 #endif
-#ifdef CID_PROCESSCHILD_EXITED
-BP_EFFECT(baton_process_exited,CID_PROCESSCHILD_EXITED,BP_EXITED)
+#ifdef CID_PROCESSCHILD_INPUT_CLOSED
+BP_EFFECT(baton_process_input_closed,CID_PROCESSCHILD_INPUT_CLOSED,BP_INPUT_CLOSED)
 #endif
 #undef BP_EFFECT
 static void __attribute__((constructor)) baton_process_signals(void){signal(SIGPIPE,SIG_IGN);}
