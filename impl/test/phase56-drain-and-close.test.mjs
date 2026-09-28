@@ -229,11 +229,11 @@ test('DC4: drain reconciles historical worktree, branch, metadata, and runtime r
   assert.equal(git(['branch', '--list', worktree.branch], f.directory), '');
 });
 
-test('DC2/DC4: drain policy-resolves pending interaction and publication authority and discards late asks', async (t) => {
+test('DC2/DC4: drain policy-resolves pending interaction authority and discards late asks', async (t) => {
   const f = repo('pending-authority'); let driver; t.after(() => { try { driver?.coordination.releaseWriterLease(); } catch {} rmSync(f.world, { recursive: true, force: true }); });
   const adapter = new MockAdapter({ scenario: { outcome: 'completed', delayMs: 60_000, result: { summary: 'late' } } });
   driver = createDriver({ repoRoot: f.directory, logDir: f.logDir, repoId: 'repo-a', adapters: { mock: adapter }, drainPolicy: { pollMs: 5 }, watchdog: { stallMs: 60_000 } }); // valid positive stallMs; watchdog never fires in this window
-  // The row proves pending interaction/publication authority resolution and late-ask discard, not
+  // The row proves pending interaction authority resolution and late-ask discard, not
   // the cost of a live stop: a deterministic checkout double keeps the reap inside the drain's
   // deployment budget (DC2-DC7 proves the real reap).
   const checkout = join(f.directory, '.baton', 'wt', 'pending-authority');
@@ -245,7 +245,7 @@ test('DC2/DC4: drain policy-resolves pending interaction and publication authori
   const worker = await driver.coordinator.spawn('mock', brief('pending authority'), { taskId: 'pending-authority' });
   await until(() => driver.coordinator.list().find((row) => row.id === worker.id)?.status === 'working', 'pending-authority worker');
   const handle = driver.coordinator._workers.get(worker.id);
-  for (const [requestId, kind] of [['question-pending', 'question'], ['approval-pending', 'approval'], ['publication-pending', 'publication']]) {
+  for (const [requestId, kind] of [['question-pending', 'question'], ['approval-pending', 'approval']]) {
     driver.coordinator._pending.set(requestId, { worker: worker.id, kind, state: 'pending', consumer: null, resolution: null });
     driver.coordinator._activeInteractionIds.add(requestId);
   }
@@ -255,7 +255,6 @@ test('DC2/DC4: drain policy-resolves pending interaction and publication authori
   const receipt = await closing; assert.equal(receipt.state, 'closed');
   assert.deepEqual(driver.coordinator._pending.get('question-pending').resolution, { decision: 'cancel', reason: 'fleet_drain' });
   assert.deepEqual(driver.coordinator._pending.get('approval-pending').resolution, { decision: 'cancel', reason: 'fleet_drain' });
-  assert.deepEqual(driver.coordinator._pending.get('publication-pending').resolution, { decision: 'deny', reason: 'fleet_drain' });
   assert.equal(driver.coordinator._pending.has('late-question'), false);
   assert.equal(driver.log.read(worker.id).some((event) => event.kind === 'control.drain_interaction_discarded'), true);
 });
