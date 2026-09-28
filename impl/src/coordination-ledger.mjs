@@ -1505,7 +1505,6 @@ export function _representationEvidence(store, evidence, requestState, source, e
   if (!evidence || typeof evidence !== 'object' || Array.isArray(evidence)
     || Object.keys(evidence).sort().join(',') !== evidenceFields.sort().join(',')) fail('representation evidence shape is invalid');
   const coordinates = [evidence.invoke, evidence.reverify];
-  if (coordinates.length > store._representationPolicy.maxEvidenceRefs) fail('representation evidence exceeded deployment ceiling', 'representation_oversize');
   const sources = coordinates.map((coordinate) => {
     if (!coordinate || typeof coordinate !== 'object' || Array.isArray(coordinate)
       || Object.keys(coordinate).sort().join(',') !== coordinateFields.sort().join(',')
@@ -1548,8 +1547,6 @@ export function _representationEvidence(store, evidence, requestState, source, e
   const primaryDigests = Array.isArray(invoked.payload.digests)
     ? invoked.payload.digests.filter((value) => value === source.artifact.digest)
     : [];
-  if ((Array.isArray(invoked.payload.refs) && invoked.payload.refs.length > store._representationPolicy.maxSourceRefs)
-    || (Array.isArray(invoked.payload.digests) && invoked.payload.digests.length > store._representationPolicy.maxSourceRefs)) fail('representation source references exceeded deployment ceiling', 'representation_oversize');
   if (invoked.payload.inputDigest !== requestState.request.sourceArguments.digest
     || invoked.payload.resultDigest !== source.resultDigest
     || !Array.isArray(invoked.payload.refs) || primaryRefs.length !== 1

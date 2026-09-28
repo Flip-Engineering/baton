@@ -44,9 +44,9 @@ test('RG3/RG6: the ACI result and artifact identify a policy decision, never com
 });
 
 test('RG4: deployment bounds, cancellation, confinement, and language scope fail typed', async () => {
-  assert.throws(() => new AtlasRepresentationCeiling({ artifactRoot: artifactRoot() }), /maxArtifactBytes/);
-  const atlas = make({ maxArtifactBytes: 32 });
-  await assert.rejects(atlas.invoke('representation.ceiling', { path: 'src/a.js' }, ctx), (error) => error.code === 'artifact_too_large');
+  const atlas = make();
+  const published = await atlas.invoke('representation.ceiling', { path: 'src/a.js' }, ctx);
+  assert.ok(published.refs.length >= 1, '#530: the policy artifact is published whatever its size');
   const normal = make(); const abort = new AbortController(); abort.abort();
   await assert.rejects(normal.invoke('representation.ceiling', { path: 'src/a.js' }, { ...ctx, signal: abort.signal }), (error) => error.code === 'cancelled');
   await assert.rejects(normal.invoke('representation.ceiling', { path: '../a.js' }, ctx), (error) => error.code === 'path_escape');

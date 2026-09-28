@@ -68,7 +68,7 @@ test('GR6: a capability-specific durable reconciliation closes an outer pending 
   assert.equal(effects, 1); assert.equal(reconciliations, 1);
 });
 
-test('GR3/GR4: producer output preflight refuses an oversized outer ACI result before receipt or graph effects', async () => {
+test('GR3/GR4 (#530): the producer carries no output preflight, so the invocation is published', async () => {
   const repo = root('preflight-repo'); execFileSync('git', ['init', '-q'], { cwd: repo });
   const artifact = { handle: `art:sha256:${'a'.repeat(64)}`, kind: 'structural_delta', digest: 'a'.repeat(64), bytes: 32, mediaType: 'application/vnd.baton.atlas-structural+json' };
   const sourceResult = { op: 'diff.structural', status: 'ok', summary: 'tiny', payload: [], refs: [artifact], cost: { tokens_out: 1, wall_ms: 0, usd: 0, underlying: 'fixture' }, provenance: { deterministic: true, artifactDigest: artifact.digest } };
@@ -79,19 +79,19 @@ test('GR3/GR4: producer output preflight refuses an oversized outer ACI result b
     resume: async () => sourceResult,
     reverify: async () => ({ ok: true, primaryRef: artifact, resultProjection: projection, resultProjectionDigest: canonicalSha(projection), observedDigest: artifact.digest }),
   };
-  const policy = { schemaVersion: 1, repoId: 'repo-phase61', maxArgumentBytes: 64 * 1024, maxSourceRefs: 4, maxSourceRefBytes: 16 * 1024, maxEvidenceRefs: 2, maxReceiptBytes: 64 * 1024, maxGraphBatchBytes: 256 * 1024, maxResultItems: 1, maxResultRefs: 1, maxResultBytes: 64 * 1024 };
+  const policy = { schemaVersion: 1, repoId: 'repo-phase61' };
   const driver = createDriver({ repoRoot: repo, repoId: 'repo-phase61', logDir: root('preflight-log'), adapters: {}, capabilities: { 'atlas-structural': source }, representationProduction: { policy, artifactRoot: root('preflight-receipts'), authorize: async () => true, resolveEnvironment: async () => ({ schemaVersion: 1, kind: 'tree_delta', repoId: 'repo-phase61', beforeTreeSha: 'a'.repeat(40), beforeOverlayDigest: 'b'.repeat(64), afterTreeSha: 'c'.repeat(40), afterOverlayDigest: 'd'.repeat(64) }) }, maxCapabilityBudgetTokens: 10_000, maxCapabilityEnvelopeBytes: 1024 * 1024 });
   const taskId = `preflight-${'x'.repeat(246)}`;
   driver.coordination.createTask({ id: taskId, deps: [], reservedWorkerId: 'preflight-worker' }, { actor: 'orchestrator', key: 'task:create:preflight' });
   driver.coordination.claimTask(taskId, 'preflight-worker', 1, { actor: 'orchestrator', key: 'task:claim:preflight' });
-  await assert.rejects(driver.coordinator.invokeCapability('atlas-representation-producer', 'representation.produce', { producerKind: 'structural_delta', taskId, sourceArgs: { beforePath: 'a.mjs', afterPath: 'b.mjs', language: 'javascript' } }, { actor: 'orchestrator', repoId: 'repo-phase61', idempotencyKey: 'representation:preflight', budgetTokens: 250 }),
-    (error) => error.code === 'capability_result_oversize' && /admitted ACI output envelope/.test(error.message));
-  assert.equal(driver.coordination.events().some((event) => event.kind === 'knowledge.representation_produced'), false);
+  const produced = await driver.coordinator.invokeCapability('atlas-representation-producer', 'representation.produce', { producerKind: 'structural_delta', taskId, sourceArgs: { beforePath: 'a.mjs', afterPath: 'b.mjs', language: 'javascript' } }, { actor: 'orchestrator', repoId: 'repo-phase61', idempotencyKey: 'representation:preflight', budgetTokens: 8_000 });
+  assert.equal(produced.status, 'ok', '#530: the producer carries no output envelope — the caller budget is the one bound');
+  assert.equal(driver.coordination.events().some((event) => event.kind === 'knowledge.representation_produced'), true);
   driver.close();
 });
 
 test('GR1/GR2/GR8: initial source-card substitution, dishonest resume, and a symlinked receipt root fail closed', async () => {
-  const policy = { schemaVersion: 1, repoId: 'repo-phase61', maxArgumentBytes: 64 * 1024, maxSourceRefs: 4, maxSourceRefBytes: 16 * 1024, maxEvidenceRefs: 2, maxReceiptBytes: 64 * 1024, maxGraphBatchBytes: 256 * 1024, maxResultItems: 1, maxResultRefs: 1, maxResultBytes: 64 * 1024 };
+  const policy = { schemaVersion: 1, repoId: 'repo-phase61' };
   const target = root('symlink-target'); const parent = root('symlink-parent'); const link = join(parent, 'receipt-link'); symlinkSync(target, link, 'dir');
   const coordination = Object.fromEntries(['representationProductionAdmission', 'prepareRepresentationProduction', 'recordRepresentationProduction', 'representationProduction', 'representationProductionByRequest', 'reverifyRepresentationProduction'].map((name) => [name, () => null]));
   assert.throws(() => new AtlasRepresentationProducer({ coordination, policy, artifactRoot: link, authorize: async () => true, resolveEnvironment: async () => ({}) }), /must not be a symlink/);
@@ -129,11 +129,7 @@ test('GR1-GR7: createDriver produces and reverifies one graph-backed structural 
   const sourceArtifacts = root('producer-source-artifacts'); const receiptRoot = root('producer-receipts');
   mkdirSync(sourceArtifacts, { recursive: true });
   let sourceClockCalls = 0; let sourceClock = 0; const structural = new AtlasStructuralDelta({ artifactRoot: sourceArtifacts, now: () => { sourceClockCalls += 1; sourceClock += sourceClockCalls; return sourceClock; } });
-  const representationPolicy = {
-    schemaVersion: 1, repoId: 'repo-phase61', maxArgumentBytes: 64 * 1024,
-    maxSourceRefs: 8, maxSourceRefBytes: 16 * 1024, maxEvidenceRefs: 2, maxReceiptBytes: 64 * 1024,
-    maxGraphBatchBytes: 256 * 1024, maxResultItems: 1, maxResultRefs: 1, maxResultBytes: 64 * 1024,
-  };
+  const representationPolicy = { schemaVersion: 1, repoId: 'repo-phase61' };
   let authorizationEnabled = true; let resolverCalls = 0; let driftOnConfirm = false;
   const treeEnvironment = { schemaVersion: 1, kind: 'tree_delta', repoId: 'repo-phase61', beforeTreeSha: 'a'.repeat(40), beforeOverlayDigest: 'b'.repeat(64), afterTreeSha: 'c'.repeat(40), afterOverlayDigest: 'd'.repeat(64) };
   const driver = createDriver({
@@ -192,9 +188,9 @@ test('GR1-GR7: createDriver produces and reverifies one graph-backed structural 
   await assert.rejects(driver.coordinator.invokeCapability('atlas-representation-producer', 'representation.produce', { ...args, taskId: 'representation-forbidden' }, { ...invokeCtx, idempotencyKey: 'representation:forbidden' }), (error) => error.code === 'representation_forbidden');
   authorizationEnabled = true;
   await assert.rejects(driver.coordinator.invokeCapability('atlas-representation-producer', 'representation.produce', { ...args, taskId: 'representation-forbidden', sourceArgs: { ...args.sourceArgs, unknown: true } }, { ...invokeCtx, idempotencyKey: 'representation:malformed' }), (error) => error.code === 'representation_request_invalid');
-  await assert.rejects(driver.coordinator.invokeCapability('atlas-representation-producer', 'representation.produce', { ...args, taskId: 'representation-forbidden', sourceArgs: { ...args.sourceArgs, language: 'x'.repeat(70 * 1024) } }, { ...invokeCtx, idempotencyKey: 'representation:oversize' }), (error) => error.code === 'representation_oversize');
-  await assert.rejects(driver.coordinator.invokeCapability('atlas-representation-producer', 'representation.produce', { ...args, taskId: 'representation-forbidden' }, { ...invokeCtx, repoId: 'repo-other', idempotencyKey: 'representation:cross-repo' }), (error) => error.code === 'representation_context_invalid');
   assert.equal(resolverCalls, resolverBeforeRefusals, 'refused requests cannot trigger environment resolution');
+  await assert.rejects(driver.coordinator.invokeCapability('atlas-representation-producer', 'representation.produce', { ...args, taskId: 'representation-forbidden', sourceArgs: { ...args.sourceArgs, language: 'x'.repeat(70 * 1024) } }, { ...invokeCtx, idempotencyKey: 'representation:oversize' }), (error) => error.code !== 'representation_oversize', '#530: source arguments past the old producer ceiling reach the source instead');
+  await assert.rejects(driver.coordinator.invokeCapability('atlas-representation-producer', 'representation.produce', { ...args, taskId: 'representation-forbidden' }, { ...invokeCtx, repoId: 'repo-other', idempotencyKey: 'representation:cross-repo' }), (error) => error.code === 'representation_context_invalid');
 
   addTask('representation-environment-race'); const graphBeforeDrift = driver.coordination.events().filter((event) => event.kind === 'knowledge.representation_produced').length;
   driftOnConfirm = true;
@@ -269,8 +265,8 @@ test('GR1-GR6: real SCIP and bounded CPG producers preserve their exact R2/R3 so
   mkdirSync(join(beforeRoot, 'src'), { recursive: true }); mkdirSync(join(afterRoot, 'src'), { recursive: true });
   writeFileSync(join(beforeRoot, 'src', 'change.mjs'), 'export function value(x) { return x }\n');
   writeFileSync(join(afterRoot, 'src', 'change.mjs'), 'export function value(x) { const y = x + 1; return y }\n');
-  const cpg = new AtlasCpgDelta({ artifactRoot: root('multi-cpg-artifacts'), maxSourceBytes: 64 * 1024, maxGraphBytes: 512 * 1024, maxDeltaBytes: 512 * 1024, maxImpactDepth: 8, maxReachDefPairs: 4096, maxScopes: 128, maxScopeDepth: 32, maxBindings: 512, maxBindingOccurrences: 4096 });
-  const representationPolicy = { schemaVersion: 1, repoId: 'repo-phase61', maxArgumentBytes: 64 * 1024, maxSourceRefs: 8, maxSourceRefBytes: 16 * 1024, maxEvidenceRefs: 2, maxReceiptBytes: 64 * 1024, maxGraphBatchBytes: 256 * 1024, maxResultItems: 1, maxResultRefs: 1, maxResultBytes: 64 * 1024 };
+  const cpg = new AtlasCpgDelta({ artifactRoot: root('multi-cpg-artifacts') });
+  const representationPolicy = { schemaVersion: 1, repoId: 'repo-phase61' };
   let environmentIndexEpoch = indexEpoch; let environmentOverlayDigest = overlayDigest;
   const driver = createDriver({
     repoRoot: repo, repoId: 'repo-phase61', logDir: root('multi-log'), adapters: {},

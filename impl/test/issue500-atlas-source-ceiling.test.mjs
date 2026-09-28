@@ -40,12 +40,12 @@ test('500-atlas-a (#530): the Atlas index constructs and declares no source, fil
   assert.equal(atlas.card().ceilings, undefined, 'and the card declares none');
 });
 
-test('500-atlas-b: AtlasStructuralDelta default maxSourceBytes is the 16 MiB ledger event ceiling', (t) => {
+test('500-atlas-b (#530): the structural delta constructs no source ceiling', (t) => {
   const artifacts = mkdtempSync(join(tmpdir(), 'baton-500-atlas-b-'));
   t.after(() => rmSync(artifacts, { recursive: true, force: true }));
   const atlas = new AtlasStructuralDelta({ artifactRoot: artifacts });
-  assert.equal(atlas.maxSourceBytes, 16 * 1024 * 1024,
-    'default maxSourceBytes is 16 MiB (the ledger event ceiling)');
+  assert.equal(atlas.maxSourceBytes, undefined, 'no source byte ceiling is constructed');
+  assert.equal(atlas.card().ceilings, undefined, 'and the card declares none');
 });
 
 test('500-atlas-c (#530): no source is skipped for its size — every supported file is indexed', async (t) => {
@@ -63,7 +63,7 @@ test('500-atlas-c (#530): no source is skipped for its size — every supported 
   assert.deepEqual(built.payload.map((file) => file.path).sort(), ['src/big.mjs', 'src/small.mjs']);
 });
 
-test('500-atlas-d: structural delta names the ceiling in its oversized-source refusal', async (t) => {
+test('500-atlas-d (#530): the structural delta diffs a source past the old byte ceiling', async (t) => {
   const artifacts = mkdtempSync(join(tmpdir(), 'baton-500-atlas-d-'));
   t.after(() => rmSync(artifacts, { recursive: true, force: true }));
   const atlas = new AtlasStructuralDelta({ artifactRoot: artifacts, maxSourceBytes: 8 });
@@ -71,16 +71,7 @@ test('500-atlas-d: structural delta names the ceiling in its oversized-source re
     'before.mjs': 'export const x = 1;\n',
     'after.mjs': 'export const x = 2;\n',
   });
-  await assert.rejects(
-    atlas.invoke('diff.structural', { beforePath: 'before.mjs', afterPath: 'after.mjs' },
-      { beforeRoot: root, afterRoot: root, budgetTokens: 10_000 }),
-    (error) => {
-      assert.equal(error.code, 'invalid_source');
-      assert.match(error.message, /8-byte source ceiling/,
-        'the refusal names the byte ceiling');
-      assert.doesNotMatch(error.message, /binary/,
-        'an oversized refusal does not mention binary');
-      return true;
-    },
-  );
+  const result = await atlas.invoke('diff.structural', { beforePath: 'before.mjs', afterPath: 'after.mjs' },
+    { beforeRoot: root, afterRoot: root, budgetTokens: 10_000 });
+  assert.ok(result.refs.length >= 1, 'the diff is published whatever the source size');
 });

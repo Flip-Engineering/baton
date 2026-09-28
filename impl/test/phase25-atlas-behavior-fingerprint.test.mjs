@@ -12,7 +12,7 @@ reapFixtureDirectories();
 const dir = (name) => mkdtempSync(join(tmpdir(), `baton-${name}-`));
 const write = (root, path, source) => { mkdirSync(dirname(join(root, path)), { recursive: true }); writeFileSync(join(root, path), source); };
 function make(opts = {}) {
-  return new AtlasBehaviorFingerprint({ artifactRoot: dir('behavior-artifacts'), maxSourceBytes: 64 * 1024, maxCorpusCases: 16, maxInputBytes: 16 * 1024, maxOutputBytes: 64 * 1024, maxArtifactBytes: 128 * 1024, timeoutMs: 1000, ...opts });
+  return new AtlasBehaviorFingerprint({ artifactRoot: dir('behavior-artifacts'), ...opts });
 }
 const corpus = [-2, 0, 3];
 
@@ -83,24 +83,25 @@ test('BF2: ambient credentials and provider configuration are not inherited by t
   }
 });
 
-test('BF3: nondeterministic exports and timeouts fail typed', async () => {
+test('BF3 (#530): a nondeterministic export fails typed, and no execution deadline is constructed', async () => {
   const randomRoot = dir('behavior-random'); write(randomRoot, 'random.mjs', 'export function sample(){ return crypto.randomUUID() }\n');
   await assert.rejects(make().invoke('behavior.fingerprint', { path: 'random.mjs', exportName: 'sample', corpus: [null] }, { root: randomRoot, budgetTokens: 1000 }), (error) => error.code === 'nondeterministic');
-  const loopRoot = dir('behavior-loop'); write(loopRoot, 'loop.mjs', 'export function loop(){ while(true){} }\n');
-  await assert.rejects(make({ timeoutMs: 50 }).invoke('behavior.fingerprint', { path: 'loop.mjs', exportName: 'loop', corpus: [null] }, { root: loopRoot, budgetTokens: 1000 }), (error) => error.code === 'execution_timeout');
+  assert.equal(make().timeoutMs, undefined, '#530: the child watchdog left with the class');
 });
 
-test('BF1/BF5: confinement, cancellation, and deployment ceilings fail typed', async () => {
+test('BF1/BF5: confinement, cancellation, and shape checks fail typed', async () => {
   const root = dir('behavior-bounds'); write(root, 'ok.mjs', 'export const ok = (x) => x\n');
   const atlas = make();
   await assert.rejects(atlas.invoke('behavior.fingerprint', { path: '../ok.mjs', exportName: 'ok', corpus: [1] }, { root, budgetTokens: 10 }), (error) => error.code === 'path_escape');
   await assert.rejects(atlas.invoke('behavior.fingerprint', { path: 'ok.py', exportName: 'ok', corpus: [1] }, { root, budgetTokens: 10 }), (error) => error.code === 'unsupported_language');
-  await assert.rejects(atlas.invoke('behavior.fingerprint', { path: 'ok.mjs', exportName: 'ok', corpus: Array(17).fill(1) }, { root, budgetTokens: 10 }), (error) => error.code === 'corpus_too_large');
+  const wide = await atlas.invoke('behavior.fingerprint', { path: 'ok.mjs', exportName: 'ok', corpus: Array(17).fill(1) }, { root, budgetTokens: 1000 });
+  assert.ok(wide.refs.length >= 1, '#530: a corpus past the old case ceiling is observed');
   await assert.rejects(atlas.invoke('behavior.fingerprint', { path: 'ok.mjs', exportName: 'ok', corpus: [undefined] }, { root, budgetTokens: 10 }), (error) => error.code === 'invalid_corpus');
   write(root, 'not-function.mjs', 'export const ok = 1\n');
   await assert.rejects(atlas.invoke('behavior.fingerprint', { path: 'not-function.mjs', exportName: 'ok', corpus: [1] }, { root, budgetTokens: 10 }), (error) => error.code === 'invalid_export');
   const abort = new AbortController(); abort.abort(); await assert.rejects(atlas.invoke('behavior.fingerprint', { path: 'ok.mjs', exportName: 'ok', corpus: [1] }, { root, budgetTokens: 10, signal: abort.signal }), (error) => error.code === 'cancelled');
-  await assert.rejects(make({ maxSourceBytes: 4 }).invoke('behavior.fingerprint', { path: 'ok.mjs', exportName: 'ok', corpus: [1] }, { root, budgetTokens: 10 }), (error) => error.code === 'source_too_large');
+  const longSource = await atlas.invoke('behavior.fingerprint', { path: 'ok.mjs', exportName: 'ok', corpus: [1] }, { root, budgetTokens: 10 });
+  assert.ok(longSource.refs.length >= 1, '#530: a source past the old byte ceiling is observed');
 });
 
 test('BF5: bounded fingerprints resume, reverify, and reject tamper', async () => {

@@ -154,11 +154,6 @@ export class AtlasStructuralDelta {
   constructor(opts = {}) {
     if (typeof opts.artifactRoot !== 'string' || opts.artifactRoot.length === 0) throw new TypeError('Atlas artifactRoot required');
     this.artifactRoot = opts.artifactRoot;
-    // Issue #500: 16 MiB — the ledger event ceiling used by coordination rows, result
-    // bodies and wire frames. A source file the ledger could hold is always diffed.
-    this.maxSourceBytes = opts.maxSourceBytes ?? 16 * 1024 * 1024;
-    this.maxArtifactBytes = opts.maxArtifactBytes ?? 64 * 1024 * 1024;
-    if (!Number.isSafeInteger(this.maxArtifactBytes) || this.maxArtifactBytes <= 0) throw new TypeError('Atlas maxArtifactBytes must be a positive safe integer');
     this.availability = opts.availability ?? Object.freeze({ status: 'available', reason: 'language_ceiling_satisfied' });
     this.now = opts.now ?? Date.now;
     this.record = opts.record ?? null;
@@ -169,7 +164,7 @@ export class AtlasStructuralDelta {
       name: 'atlas-structural', version: '0.1.0', underlying: [`@ast-grep/napi@${AST_GREP_VERSION}`],
       ops: { 'diff.structural': { latency_class: 'interactive', deterministic: true, side_effects: 'writes_content_addressed_artifact', reverifiable: true } },
       languages: Object.keys(LANGUAGE), shared_state: { artifacts: 'content-addressed' }, sandbox_required: 'read_only_worktrees', cost_model: 'cpu_bound_local',
-      ceilings: { maxSourceBytes: this.maxSourceBytes, maxArtifactBytes: this.maxArtifactBytes }, availability: this.availability,
+      availability: this.availability,
       languageCeiling: { family: 'javascript-typescript', extensions: Object.keys(LANGUAGE).sort(), maximumRung: 'R1', enforcingGate: 'atlas-representation-ceiling' },
       limitations: ['no move/rename matching', 'no semantic equivalence', 'no base-overlay index', 'no SCIP/CPG/IR'],
     });
@@ -185,7 +180,6 @@ export class AtlasStructuralDelta {
     const before = readFileSync(beforePath);
     const after = readFileSync(afterPath);
     if (before.includes(0) || after.includes(0)) throw Object.assign(new Error('source is binary'), { code: 'invalid_source' });
-    if (before.length > this.maxSourceBytes || after.length > this.maxSourceBytes) throw Object.assign(new Error(`source exceeds the ${this.maxSourceBytes}-byte source ceiling`), { code: 'invalid_source' });
     const beforeText = before.toString('utf8'); const afterText = after.toString('utf8');
     const beforeDigest = sha(before); const afterDigest = sha(after);
     this.record?.({ kind: 'capability.op.started', actor: ctx.actor ?? 'orchestrator', op, beforeDigest, afterDigest });
@@ -194,7 +188,6 @@ export class AtlasStructuralDelta {
     const counts = { added: changes.filter((item) => item.change === 'added').length, removed: changes.filter((item) => item.change === 'removed').length, modified: changes.filter((item) => item.change === 'modified').length };
     const complete = { schemaVersion: 1, op, language, before: { path: args.beforePath, digest: beforeDigest, parseErrors: left.errors }, after: { path: args.afterPath, digest: afterDigest, parseErrors: right.errors }, counts, changes };
     const serialized = `${JSON.stringify(complete)}\n`; const artifactDigest = sha(serialized);
-    if (Buffer.byteLength(serialized) > this.maxArtifactBytes) throw typed('structural artifact exceeds deployment ceiling', 'artifact_too_large');
     const artifactPath = join(this.artifactRoot, `${artifactDigest}.json`);
     const primaryRef = { handle: `art:sha256:${artifactDigest}`, kind: PRIMARY_KIND, digest: artifactDigest, bytes: Buffer.byteLength(serialized), mediaType: PRIMARY_MEDIA_TYPE, path: artifactPath };
     if (!existsSync(artifactPath)) writeFileSync(artifactPath, serialized, { encoding: 'utf8', mode: 0o600, flag: 'wx' });

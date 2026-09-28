@@ -15,7 +15,7 @@ const MAP = Object.freeze({
   symbol_snapshot: Object.freeze({ capability: 'atlas-index', version: '0.1.0', operation: 'scip.export', rung: 'R2', representationType: 'scip_symbol_snapshot', artifactKind: 'scip_json', mediaType: 'application/scip+json', sideEffects: 'writes_content_addressed_artifact' }),
   cpg_semantic_delta: Object.freeze({ capability: 'atlas-cpg-delta', version: '0.1.0', operation: 'cpg.delta', rung: 'R3', representationType: 'bounded_cpg_semantic_delta', artifactKind: 'cpg_delta', mediaType: 'application/vnd.baton.atlas-cpg-delta+json', sideEffects: 'writes_content_addressed_artifacts' }),
 });
-const POLICY_FIELDS = Object.freeze(['schemaVersion', 'repoId', 'maxArgumentBytes', 'maxSourceRefs', 'maxSourceRefBytes', 'maxEvidenceRefs', 'maxReceiptBytes', 'maxGraphBatchBytes', 'maxResultItems', 'maxResultRefs', 'maxResultBytes']);
+const POLICY_FIELDS = Object.freeze(['schemaVersion', 'repoId']);
 
 const typed = (message, code) => Object.assign(new Error(message), { code });
 const record = (value) => value !== null && typeof value === 'object' && !Array.isArray(value);
@@ -61,13 +61,7 @@ function terminalEvidence(attested) {
 function validatePolicy(value) {
   const policy = clone(value);
   if (!record(policy) || Object.keys(policy).sort().join(',') !== [...POLICY_FIELDS].sort().join(',')
-    || policy.schemaVersion !== 1 || typeof policy.repoId !== 'string' || !SAFE_ID.test(policy.repoId)
-    || POLICY_FIELDS.filter((key) => !['schemaVersion', 'repoId'].includes(key)).some((key) => !Number.isSafeInteger(policy[key]) || policy[key] <= 0)
-    || policy.maxArgumentBytes > 1024 * 1024 || policy.maxSourceRefs > 256 || policy.maxSourceRefBytes > 64 * 1024
-    || policy.maxEvidenceRefs < 2 || policy.maxEvidenceRefs > 1024
-    || policy.maxReceiptBytes > 16 * 1024 * 1024 || policy.maxGraphBatchBytes > 16 * 1024 * 1024
-    || policy.maxResultItems > 1024 || policy.maxResultRefs > 256
-    || policy.maxResultBytes > 16 * 1024 * 1024) throw new TypeError('representation production policy is invalid');
+    || policy.schemaVersion !== 1 || typeof policy.repoId !== 'string' || !SAFE_ID.test(policy.repoId)) throw new TypeError('representation production policy is invalid');
   return Object.freeze(policy);
 }
 function validateEnvironment(kind, value, repoId) {
@@ -102,7 +96,7 @@ export class AtlasRepresentationProducer {
   card() {
     return Object.freeze({
       name: PRODUCER_NAME, version: '0.1.0',
-      ops: { [OPERATION]: { latency_class: 'interactive', deterministic: true, side_effects: ['source_artifact.write', 'representation_receipt.write', 'coordination.append', 'knowledge.derive'], reverifiable: true, preflight_output: true } },
+      ops: { [OPERATION]: { latency_class: 'interactive', deterministic: true, side_effects: ['source_artifact.write', 'representation_receipt.write', 'coordination.append', 'knowledge.derive'], reverifiable: true } },
       mappings: clone(MAP), policyDigest: this.policyDigest,
       authority: { grounding: 'derived_only', edit: false, workerControl: false, route: false, verification: false, merge: false, approval: false, integration: false, publication: false, deployment: false, policyAuthoring: false, proof: false },
     });
@@ -123,9 +117,7 @@ export class AtlasRepresentationProducer {
       || (args.runId !== undefined && args.runId !== null && (typeof args.runId !== 'string' || !SAFE_ID.test(args.runId)))
       || !record(args.sourceArgs) || !jsonValue(args.sourceArgs)
       || Object.keys(args.sourceArgs).some((key) => !sourceFields.includes(key))) throw typed('representation production request is invalid', 'representation_request_invalid');
-    const argumentBytes = bytes(args.sourceArgs);
-    if (argumentBytes > this.policy.maxArgumentBytes) throw typed('representation source arguments exceed deployment ceiling', 'representation_oversize');
-    const sourceArgs = Object.freeze(clone(args.sourceArgs));
+    const argumentBytes = bytes(args.sourceArgs); const sourceArgs = Object.freeze(clone(args.sourceArgs));
     return Object.freeze({
       taskId: args.taskId, runId: args.runId ?? null, producerKind: args.producerKind, sourceArgs,
       sourceArguments: Object.freeze({ digest: digest({ args: sourceArgs }), bytes: argumentBytes }),
@@ -195,10 +187,8 @@ export class AtlasRepresentationProducer {
       && typeof result.cursor === 'string' && result.cursor.length > 0;
     if (!record(result) || (result.status !== 'ok' && !honestlyResumable)) throw typed('representation source must produce one complete or honestly resumable non-partial result', result?.status === 'partial' ? 'representation_source_partial' : 'representation_source_incomplete');
     const selected = result.refs.filter((ref) => ref.kind === mapping.artifactKind && ref.mediaType === mapping.mediaType);
-    if (result.refs.length > this.policy.maxSourceRefs) throw typed('representation source references exceed deployment ceiling', 'representation_oversize');
     if (selected.length !== 1) throw typed('representation source did not return one exact mapped primary artifact', 'representation_source_ref_invalid');
     const primary = publicRef(selected[0]);
-    if (bytes(primary) > this.policy.maxSourceRefBytes) throw typed('representation source reference exceeds deployment ceiling', 'representation_oversize');
     const expectedProjection = stableResultProjection(result); const expectedProjectionDigest = digest(expectedProjection);
     const check = reverify.result?.payload?.[0];
     if (reverify.result?.status !== 'ok' || check?.ok !== true || !same(check.primaryRef, primary)
@@ -225,7 +215,6 @@ export class AtlasRepresentationProducer {
   _writeReceipt(receipt, expectedRef, preparedSerialized = null) {
     const serialized = preparedSerialized ?? canonicalText(receipt); const receiptDigest = digest(serialized);
     if (serialized !== canonicalText(receipt)) throw typed('prepared representation receipt serialization is not canonical', 'representation_receipt_integrity');
-    if (Buffer.byteLength(serialized) > this.policy.maxReceiptBytes) throw typed('representation receipt exceeds deployment ceiling', 'representation_oversize');
     if (!same(expectedRef, { kind: RECEIPT_KIND, mediaType: RECEIPT_MEDIA, handle: `art:sha256:${receiptDigest}`, digest: receiptDigest, bytes: Buffer.byteLength(serialized) })) throw typed('prepared representation receipt disagrees with exact content bytes', 'representation_receipt_integrity');
     const path = join(this.artifactRoot, `${receiptDigest}.json`);
     if (!existsSync(path)) writeFileSync(path, serialized, { encoding: 'utf8', mode: 0o600, flag: 'wx' });
@@ -257,16 +246,7 @@ export class AtlasRepresentationProducer {
       authority: { edit: false, workerControl: false, route: false, verification: false, merge: false, approval: false, integration: false, publication: false, deployment: false, policyAuthoring: false, proof: false },
     };
     const result = { op: OPERATION, status: 'ok', summary: `produced derived ${document.rung} representation for ${document.taskId}`, payload: [document], refs: [publicRef(receiptRef)], cost: { tokens_out: Math.ceil(bytes(document) / 4), wall_ms: 0, usd: 0, underlying: 'baton:cairn-representation-v1' }, provenance: { deterministic: true, repoId: this.policy.repoId, identityDigest: document.identityDigest, representationId: document.representationId, eventSeq: document.eventSeq, policyDigest: this.policyDigest, grounding: 'derived', editAuthority: false, workerAuthority: false, routingMutationAuthority: false, verificationAuthority: false, mergeAuthority: false, approvalAuthority: false, integrationAuthority: false, publicationAuthority: false, deploymentAuthority: false, policyAuthoringAuthority: false, proofAuthority: false } };
-    if (result.payload.length > this.policy.maxResultItems || result.refs.length > this.policy.maxResultRefs
-      || bytes(result) > this.policy.maxResultBytes) throw typed('representation result exceeds deployment ceiling', 'representation_oversize');
     return Object.freeze(result);
-  }
-  _preflightResult(result, ctx) {
-    const policy = ctx?.aciOutputPolicy;
-    if (!record(policy) || !Number.isSafeInteger(policy.maxEnvelopeBytes) || policy.maxEnvelopeBytes <= 0
-      || !Number.isSafeInteger(policy.maxPayloadBytes) || policy.maxPayloadBytes <= 0) throw typed('representation producer requires registry output preflight authority', 'representation_preflight_unavailable');
-    if (Buffer.byteLength(JSON.stringify(result)) > policy.maxEnvelopeBytes
-      || Buffer.byteLength(JSON.stringify(result.payload)) > policy.maxPayloadBytes) throw typed('representation result exceeds the admitted ACI output envelope', 'capability_result_oversize');
   }
   async invoke(op, args, ctx) {
     if (op !== OPERATION) throw typed('unsupported representation producer operation', 'unsupported_op');
@@ -292,9 +272,7 @@ export class AtlasRepresentationProducer {
     const source = this._source(mapping, card, invoked, reverified);
     await this._confirmEnvironment(base, environment);
     const fields = { request, requestDigest, source, evidence: { invoke: terminalEvidence(invoked), reverify: terminalEvidence(reverified) } };
-    if (bytes(fields) > this.policy.maxGraphBatchBytes) throw typed('representation graph batch exceeds deployment ceiling', 'representation_oversize');
     const prepared = this.coordination.prepareRepresentationProduction(fields, auth);
-    this._preflightResult(this._result({ ...prepared.projection, eventSeq: prepared.eventSeq }, prepared.receiptRef), ctx);
     const receiptRef = this._writeReceipt(prepared.receipt, prepared.receiptRef, prepared.receiptSerialized);
     const recorded = this.coordination.recordRepresentationProduction(fields, publicRef(receiptRef), auth);
     return this._result(recorded.representation, recorded.representation.receiptRef);

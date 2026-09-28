@@ -52,8 +52,8 @@ test('EG5/EG7: ACI artifact is a policy Decision with no proof or authority clai
 });
 
 test('EG6: deployment bounds, cancellation, domain validation, and unsupported ops fail typed', async () => {
-  assert.throws(() => new AtlasEGraphEvaluation({ artifactRoot: artifactRoot() }), /maxArtifactBytes/);
-  await assert.rejects(make({ maxArtifactBytes: 32 }).invoke('egraph.evaluate', { domain: 'whole_repo' }, ctx), (error) => error.code === 'artifact_too_large');
+  const published = await make().invoke('egraph.evaluate', { domain: 'whole_repo' }, ctx);
+  assert.equal(published.payload[0].decision, 'retired_native', '#530: the evaluation artifact is published whatever its size');
   const abort = new AbortController(); abort.abort(); await assert.rejects(make().invoke('egraph.evaluate', { domain: 'whole_repo' }, { ...ctx, signal: abort.signal }), (error) => error.code === 'cancelled');
   await assert.rejects(make().invoke('egraph.evaluate', { domain: 'source_file' }, ctx), (error) => error.code === 'unsupported_domain');
   await assert.rejects(make().invoke('egraph.magic', { domain: 'whole_repo' }, ctx), (error) => error.code === 'unsupported_op');

@@ -252,12 +252,6 @@ export class AtlasCodeIndex {
     this.artifactRoot = opts.artifactRoot;
     this.indexRoot = join(opts.artifactRoot, 'indexes'); this.resultRoot = join(opts.artifactRoot, 'results');
     this.repoId = opts.repoId ?? null;
-    // Epic #81 (O-5): deployment orientation-result storage ceiling (constructive, never a clock).
-    // Applies to result artifacts only (the base index is exempt — it is the authority, not
-    // orientation storage). Refuses BEFORE write past the bound; reclaims by reachability.
-    this.maxOrientationStorageBytes = opts.maxOrientationStorageBytes ?? null;
-    if (this.maxOrientationStorageBytes !== null && (!Number.isSafeInteger(this.maxOrientationStorageBytes) || this.maxOrientationStorageBytes <= 0)) throw new TypeError('Atlas maxOrientationStorageBytes must be a positive safe integer');
-    this._orientationStorageBytes = 0; this._orientationArtifactDigests = new Set();
     // Epic #81 (O-5): a digest -> worktreeRoot authority binding so resume re-authorizes (a copied
     // cursor conveys no authority). Process-local: the CAS is content-addressed; this binds the
     // admission scope to the artifact for the serving process.
@@ -299,20 +293,11 @@ export class AtlasCodeIndex {
   }
   _write(root, value) {
     const serialized = `${stable(value)}\n`; const digest = sha(serialized); const path = join(root, `${digest}.json`);
-    // Epic #81 (O-5): orientation-result storage ceiling — refuses BEFORE write once cumulative
-    // result bytes cross the deployment bound. The base index (indexRoot) and the index.build
-    // manifest are exempt: they are the authority, not orientation storage. create-if-absent:
-    // only new digests accrue.
-    const countsAsOrientationStorage = root === this.resultRoot && value?.op !== 'index.build';
-    if (countsAsOrientationStorage && this.maxOrientationStorageBytes !== null && !this._orientationArtifactDigests.has(digest)) {
-      if (this._orientationStorageBytes + Buffer.byteLength(serialized) > this.maxOrientationStorageBytes) throw typed('orientation storage ceiling exceeded before write', 'orientation_storage_exhausted');
-    }
+    // #530: the orientation-result storage ceiling left the tree; the store keeps the artifacts it
+    // writes and reclaims by reachability.
     try { writeFileSync(path, serialized, { encoding: 'utf8', mode: 0o600, flag: 'wx' }); }
     catch (error) { if (error?.code !== 'EEXIST') throw error; }
     this._readArtifact(path, digest, Buffer.from(serialized));
-    if (countsAsOrientationStorage && this.maxOrientationStorageBytes !== null && !this._orientationArtifactDigests.has(digest)) {
-      this._orientationArtifactDigests.add(digest); this._orientationStorageBytes += Buffer.byteLength(serialized);
-    }
     return { digest, path, bytes: Buffer.byteLength(serialized) };
   }
   _loadScipArtifact(ref) {

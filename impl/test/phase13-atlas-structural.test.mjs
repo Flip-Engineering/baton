@@ -52,7 +52,7 @@ test('AT5: syntax errors produce partial evidence, never a complete claim', asyn
   assert.ok(result.provenance.parseErrors.after > 0);
 });
 
-test('AT2: traversal, escaping symlink, binary, and oversized sources refuse before evidence', async () => {
+test('AT2: traversal, escaping symlink, and binary sources refuse before evidence', async () => {
   const f = fixture('x', 'x', 'mjs', { maxSourceBytes: 4 });
   await assert.rejects(f.atlas.invoke('diff.structural', { ...f.args, beforePath: '../outside.mjs' }, f.ctx), (error) => error.code === 'path_escape');
   writeFileSync(join(f.root, 'outside.mjs'), 'x'); symlinkSync(join(f.root, 'outside.mjs'), join(f.left, 'link.mjs'));
@@ -60,7 +60,8 @@ test('AT2: traversal, escaping symlink, binary, and oversized sources refuse bef
   writeFileSync(join(f.left, 'subject.mjs'), Buffer.from([0, 1]));
   await assert.rejects(f.atlas.invoke('diff.structural', f.args, f.ctx), (error) => error.code === 'invalid_source');
   writeFileSync(join(f.left, 'subject.mjs'), '12345');
-  await assert.rejects(f.atlas.invoke('diff.structural', f.args, f.ctx), (error) => error.code === 'invalid_source');
+  const built = await f.atlas.invoke('diff.structural', f.args, f.ctx);
+  assert.ok(built.refs.length >= 1, '#530: a source past the old byte ceiling is diffed');
 });
 
 test('AT6/AT7: bounded payload keeps a complete content-addressed artifact and re-verifies', async () => {

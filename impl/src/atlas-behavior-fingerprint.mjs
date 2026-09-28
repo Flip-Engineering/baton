@@ -69,18 +69,17 @@ for (let caseIndex = 0; caseIndex < corpus.length; caseIndex += 1) {
 finish({ observations });
 `;
 
-function executeNode(nodePath, args, { timeoutMs, maxOutputBytes, signal, env, input }) {
+function executeNode(nodePath, args, { signal, env, input }) {
   return new Promise((resolve, reject) => {
     let settled = false; let stdout = ''; let stderr = ''; let failure = null;
     const child = spawn(nodePath, args, { stdio: ['pipe', 'pipe', 'pipe'], env });
     const finish = (error, value) => {
-      if (settled) return; settled = true; clearTimeout(timer); signal?.removeEventListener('abort', onAbort);
+      if (settled) return; settled = true; signal?.removeEventListener('abort', onAbort);
       if (error) reject(error); else resolve(value);
     };
     const stop = (error) => { failure ??= error; try { child.kill('SIGKILL'); } catch { /* already gone */ } };
     const append = (which, chunk) => {
       if (which === 'stdout') stdout += chunk; else stderr += chunk;
-      if (Buffer.byteLength(stdout) + Buffer.byteLength(stderr) > maxOutputBytes) stop(typed('behavior child output exceeds deployment budget', 'output_too_large'));
     };
     child.stdout.setEncoding('utf8'); child.stderr.setEncoding('utf8');
     child.stdout.on('data', (chunk) => append('stdout', chunk)); child.stderr.on('data', (chunk) => append('stderr', chunk));
@@ -90,7 +89,6 @@ function executeNode(nodePath, args, { timeoutMs, maxOutputBytes, signal, env, i
       if (code !== 0) { finish(typed(`behavior child exited ${code}${childSignal ? ` (${childSignal})` : ''}: ${stderr.slice(-1000)}`, 'execution_failed')); return; }
       finish(null, stdout);
     });
-    const timer = setTimeout(() => stop(typed('behavior observation exceeded execution deadline', 'execution_timeout')), timeoutMs);
     const onAbort = () => stop(typed('behavior observation cancelled', 'cancelled'));
     if (signal?.aborted) onAbort(); else signal?.addEventListener('abort', onAbort, { once: true });
     child.stdin.on('error', () => {}); child.stdin.end(input);
@@ -112,7 +110,7 @@ function validatePath(path) {
   return path;
 }
 
-function target(root, path, maxSourceBytes) {
+function target(root, path) {
   if (typeof root !== 'string' || root.length === 0) throw new TypeError('behavior root required');
   const realRoot = realpathSync(root); let realTarget;
   try { realTarget = realpathSync(resolve(realRoot, validatePath(path))); }
@@ -120,13 +118,13 @@ function target(root, path, maxSourceBytes) {
   const rel = relative(realRoot, realTarget);
   if (rel === '' || rel === '..' || rel.startsWith(`..${process.platform === 'win32' ? '\\' : '/'}`) || isAbsolute(rel)) throw typed('behavior target escapes root', 'path_escape');
   if (!statSync(realTarget).isFile()) throw typed('behavior target must be a file', 'target_unavailable');
-  const source = readFileSync(realTarget); if (source.byteLength > maxSourceBytes) throw typed('behavior source exceeds deployment budget', 'source_too_large');
+  const source = readFileSync(realTarget);
   return { realTarget, source, sourceDigest: sha(source) };
 }
 
-function corpusBytes(corpus, maxCorpusCases, maxInputBytes) {
+function corpusBytes(corpus) {
   if (!Array.isArray(corpus)) throw new TypeError('behavior corpus must be an array');
-  if (corpus.length === 0 || corpus.length > maxCorpusCases) throw typed('behavior corpus exceeds deployment case budget', 'corpus_too_large');
+  if (corpus.length === 0) throw typed('behavior corpus is empty', 'invalid_corpus');
   const json = (value, seen = new Set()) => {
     if (value === null || typeof value === 'string' || typeof value === 'boolean') return;
     if (typeof value === 'number') { if (!Number.isFinite(value)) throw typed('behavior corpus must contain finite JSON numbers', 'invalid_corpus'); return; }
@@ -142,23 +140,14 @@ function corpusBytes(corpus, maxCorpusCases, maxInputBytes) {
   json(corpus);
   let serialized;
   try { serialized = JSON.stringify(corpus); } catch { throw typed('behavior corpus must be JSON serializable', 'invalid_corpus'); }
-  if (serialized === undefined || Buffer.byteLength(serialized) > maxInputBytes) throw typed('behavior corpus exceeds deployment byte budget', 'corpus_too_large');
+  if (serialized === undefined) throw typed('behavior corpus must be JSON serializable', 'invalid_corpus');
   return { serialized, digest: sha(serialized) };
 }
 
 export class AtlasBehaviorFingerprint {
   constructor(opts = {}) {
     if (!opts.artifactRoot) throw new TypeError('behavior artifactRoot required');
-    for (const key of ['maxSourceBytes', 'maxCorpusCases', 'maxInputBytes', 'maxOutputBytes', 'maxArtifactBytes', 'timeoutMs']) {
-      if (!Number.isSafeInteger(opts[key]) || opts[key] <= 0) throw new TypeError(`${key} must be deployment-derived`);
-    }
     this.artifactRoot = opts.artifactRoot;
-    this.maxSourceBytes = opts.maxSourceBytes;
-    this.maxCorpusCases = opts.maxCorpusCases;
-    this.maxInputBytes = opts.maxInputBytes;
-    this.maxOutputBytes = opts.maxOutputBytes;
-    this.maxArtifactBytes = opts.maxArtifactBytes;
-    this.timeoutMs = opts.timeoutMs;
     this.nodePath = opts.nodePath ?? process.execPath;
     this.now = opts.now ?? Date.now;
     this.record = opts.record ?? null;
@@ -189,7 +178,7 @@ export class AtlasBehaviorFingerprint {
         '--permission', `--allow-fs-read=${sandbox}`, '--input-type=module', '-e', RUNNER,
         pathToFileURL(targetPath).href, exportName, encoded,
       ], {
-        timeoutMs: this.timeoutMs, maxOutputBytes: this.maxOutputBytes, signal: ctx?.signal, input: nonce,
+        signal: ctx?.signal, input: nonce,
         env: { LANG: 'C', LC_ALL: 'C', TZ: 'UTC', NODE_NO_WARNINGS: '1' },
       });
       const frames = stdout.split('\n').filter((line) => line.startsWith('BATON_BEHAVIOR_RESULT:'));
@@ -201,11 +190,10 @@ export class AtlasBehaviorFingerprint {
       if (envelope.error) throw typed(`behavior runner failed: ${envelope.error.message}`, envelope.error.code === 'EXPORT_NOT_FUNCTION' ? 'invalid_export' : 'execution_failed');
       if (!Array.isArray(envelope.observations)) throw typed('behavior child result frame has invalid schema', 'observation_protocol');
       const observations = envelope.observations;
-      if (Buffer.byteLength(JSON.stringify(observations)) > this.maxOutputBytes) throw typed('behavior observations exceed deployment budget', 'output_too_large');
       if (observations.some((item) => item.kind === 'throw' && item.code === 'ERR_ACCESS_DENIED')) throw typed('target attempted an operation denied by the permission sandbox', 'sandbox_violation');
       return { observations, nodeVersion: envelope.nodeVersion };
     } catch (error) {
-      if (['sandbox_violation', 'output_too_large', 'execution_failed', 'observation_protocol', 'invalid_export', 'execution_timeout', 'cancelled'].includes(error?.code)) throw error;
+      if (['sandbox_violation', 'execution_failed', 'observation_protocol', 'invalid_export', 'cancelled'].includes(error?.code)) throw error;
       if (error?.name === 'AbortError' || error?.code === 'ABORT_ERR') throw typed('behavior observation cancelled', 'cancelled');
       throw typed(`behavior child failed: ${error?.message ?? error}`, error?.message?.includes('EXPORT_NOT_FUNCTION') ? 'invalid_export' : 'execution_failed');
     } finally {
@@ -215,7 +203,7 @@ export class AtlasBehaviorFingerprint {
 
   async _observe(root, path, exportName, corpus, ctx) {
     if (typeof exportName !== 'string' || !/^[A-Za-z_$][\w$]*$/.test(exportName)) throw typed('valid named export required', 'invalid_export');
-    const resolved = target(root, path, this.maxSourceBytes); const input = corpusBytes(corpus, this.maxCorpusCases, this.maxInputBytes);
+    const resolved = target(root, path); const input = corpusBytes(corpus);
     const first = await this._once(resolved.source, exportName, input.serialized, ctx); abort(ctx);
     const second = await this._once(resolved.source, exportName, input.serialized, ctx);
     if (first.nodeVersion !== second.nodeVersion || stable(first.observations) !== stable(second.observations)) throw typed('target observations differ across isolated repetitions', 'nondeterministic');
@@ -228,7 +216,6 @@ export class AtlasBehaviorFingerprint {
 
   _writeResult(op, artifact, items, ctx, started) {
     const serialized = `${JSON.stringify(artifact)}\n`; const digest = sha(serialized);
-    if (Buffer.byteLength(serialized) > this.maxArtifactBytes) throw typed('behavior artifact exceeds deployment budget', 'artifact_too_large');
     const path = join(this.artifactRoot, `${digest}.json`);
     if (existsSync(path) && sha(readFileSync(path)) !== digest) throw typed('behavior artifact integrity failure', 'artifact_integrity');
     if (!existsSync(path)) writeFileSync(path, serialized, { mode: 0o600, flag: 'wx' });

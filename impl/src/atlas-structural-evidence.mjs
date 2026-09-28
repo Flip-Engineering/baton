@@ -16,20 +16,19 @@ const confined = (value) => {
   if (path === '..' || path.startsWith(`..${sep}`)) throw Object.assign(new Error('structural evidence path escapes its tree'), { code: 'path_escape' });
   return slash(path);
 };
-const source = (root, path, ceiling) => {
+const source = (root, path) => {
   const full = join(root, path); const stat = lstatSync(full);
-  if (!stat.isFile() || stat.isSymbolicLink() || stat.size > ceiling) throw Object.assign(new Error('structural evidence source exceeds its ceiling'), { code: 'invalid_source' });
+  if (!stat.isFile() || stat.isSymbolicLink()) throw Object.assign(new Error('structural evidence source is not a regular file'), { code: 'invalid_source' });
   return readFileSync(full, 'utf8');
 };
 const signatures = (text) => [...text.matchAll(/(?:^|\n)\s*(?:export\s+(?:default\s+)?)?(?:(?:async\s+)?function\s+[A-Za-z_$][\w$]*\s*\([^)]*\)|class\s+[A-Za-z_$][\w$]*(?:\s+extends\s+[^\s{]+)?|interface\s+[A-Za-z_$][\w$]*(?:\s+extends\s+[^\n{]+)?|type\s+[A-Za-z_$][\w$]*\s*=|(?:const|let|var)\s+[A-Za-z_$][\w$]*\s*=)/g)]
   .map((match) => match[0].trim().replace(/\s+/g, ' ').replace(/\s*([(),=:])\s*/g, '$1')).sort();
 
 export class AtlasStructuralEvidence {
-  constructor({ structural, artifactRoot, maxArtifactBytes, maxSourceBytes }) {
+  constructor({ structural, artifactRoot }) {
     if (!structural || typeof structural.invoke !== 'function') throw new TypeError('structural evidence requires atlas-structural');
     if (typeof artifactRoot !== 'string' || artifactRoot.length === 0) throw new TypeError('structural evidence artifactRoot required');
-    if (!Number.isSafeInteger(maxArtifactBytes) || maxArtifactBytes <= 0 || !Number.isSafeInteger(maxSourceBytes) || maxSourceBytes <= 0) throw new TypeError('structural evidence ceilings required');
-    this.structural = structural; this.artifactRoot = artifactRoot; this.maxArtifactBytes = maxArtifactBytes; this.maxSourceBytes = maxSourceBytes;
+    this.structural = structural; this.artifactRoot = artifactRoot;
     mkdirSync(artifactRoot, { recursive: true, mode: 0o700 });
   }
 
@@ -46,15 +45,15 @@ export class AtlasStructuralEvidence {
         if (beforeExists && afterExists) {
           const result = await this.structural.invoke('diff.structural', { beforePath: path, afterPath: path }, { beforeRoot, afterRoot, budgetTokens, actor: 'policy' });
           for (const item of result.payload) counts[item.change] += 1;
-          const beforeSignatures = signatures(source(beforeRoot, path, this.maxSourceBytes));
-          const afterSignatures = signatures(source(afterRoot, path, this.maxSourceBytes));
+          const beforeSignatures = signatures(source(beforeRoot, path));
+          const afterSignatures = signatures(source(afterRoot, path));
           const changedSignature = stable(beforeSignatures) !== stable(afterSignatures);
           fileClass = changedSignature ? 'signature_changed' : result.payload.length > 0 ? 'logic_changed' : 'pure_reformat';
           signatureChanged ||= changedSignature; logicChanged ||= result.payload.length > 0;
           refs.push(...result.refs.map((ref) => ({ handle: ref.handle, kind: ref.kind, digest: ref.digest, bytes: ref.bytes, mediaType: ref.mediaType })));
         } else {
           counts[beforeExists ? 'removed' : 'added'] = 1;
-          const text = source(beforeExists ? beforeRoot : afterRoot, path, this.maxSourceBytes);
+          const text = source(beforeExists ? beforeRoot : afterRoot, path);
           fileClass = signatures(text).length > 0 ? 'signature_changed' : 'logic_changed';
           signatureChanged ||= fileClass === 'signature_changed'; logicChanged ||= fileClass === 'logic_changed';
         }
@@ -65,14 +64,12 @@ export class AtlasStructuralEvidence {
     const document = {
       schemaVersion: 1, kind: 'structural-class', operation: 'diff.structural', rung: 'R1', changeClass, files, sourceRefs: refs,
       languageCeiling: { family: 'javascript-typescript', status: supported === 0 ? 'honest_empty' : 'applied', extensions: [...EXTENSIONS].sort() },
-      ceiling: { maxArtifactBytes: this.maxArtifactBytes, maxSourceBytes: this.maxSourceBytes, enforcingGate: 'atlas-representation-ceiling' },
     };
     const serialized = `${stable(document)}\n`; const bytes = Buffer.byteLength(serialized);
-    if (bytes > this.maxArtifactBytes) throw Object.assign(new Error('structural-class artifact exceeds deployment ceiling'), { code: 'artifact_too_large' });
     const digest = sha(serialized); const path = join(this.artifactRoot, `${digest}.json`);
     if (!existsSync(path)) writeFileSync(path, serialized, { encoding: 'utf8', mode: 0o600, flag: 'wx' });
     const observed = readFileSync(path);
     if (observed.length !== bytes || sha(observed) !== digest) throw Object.assign(new Error('structural-class artifact integrity failure'), { code: 'artifact_integrity' });
-    return Object.freeze({ changeClass, files, digest, bytes, path, handle: `art:sha256:${digest}`, mediaType: 'application/vnd.baton.atlas-structural-class+json', languageCeiling: document.languageCeiling, ceiling: document.ceiling });
+    return Object.freeze({ changeClass, files, digest, bytes, path, handle: `art:sha256:${digest}`, mediaType: 'application/vnd.baton.atlas-structural-class+json', languageCeiling: document.languageCeiling });
   }
 }

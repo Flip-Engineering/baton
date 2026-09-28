@@ -17,11 +17,7 @@ function canonical(value) {
   return Object.fromEntries(Object.keys(value).sort().map((key) => [key, canonical(value[key])]));
 }
 const sha = (value) => createHash('sha256').update(typeof value === 'string' ? value : JSON.stringify(canonical(value))).digest('hex');
-const policy = (overrides = {}) => ({
-  schemaVersion: 1, repoId: 'repo-phase61', maxArgumentBytes: 64 * 1024,
-  maxSourceRefs: 8, maxSourceRefBytes: 16 * 1024, maxEvidenceRefs: 2, maxReceiptBytes: 64 * 1024,
-  maxGraphBatchBytes: 256 * 1024, maxResultItems: 1, maxResultRefs: 1, maxResultBytes: 64 * 1024, ...overrides,
-});
+const policy = (overrides = {}) => ({ schemaVersion: 1, repoId: 'repo-phase61', ...overrides });
 
 function fixture({ taskId = 'representation-task', runId = null, policy: configuredPolicy = policy(), producerKind = 'structural_delta', supportingRefs = [], duplicatePrimary = false } = {}) {
   const root = mkdtempSync(join(tmpdir(), 'baton-phase61-representation-'));
@@ -187,34 +183,18 @@ test('GR3/GR4: admission is closed, repository/task/run scoped, and requires an 
     (error) => error.code === 'representation_task_unavailable');
 });
 
-test('GR3: arguments, source refs, evidence, receipt, graph batch, and results fail at max+1', () => {
-  const argumentsMax = fixture({ policy: policy({ maxArgumentBytes: 48 }) });
-  assert.throws(() => argumentsMax.coordination.representationProductionAdmission({
+test('GR3 (#530): no representation ceiling refuses the values those ceilings bounded', () => {
+  const argumentsMax = fixture();
+  assert.equal(argumentsMax.coordination.representationProductionAdmission({
     ...argumentsMax.request, sourceArguments: { ...argumentsMax.request.sourceArguments, bytes: 49 },
-  }, { ...argumentsMax.auth, key: 'representation.produce:max-plus-one-arguments' }),
-    (error) => error.code === 'representation_oversize');
-
-  const sourceMax = fixture({ policy: policy({ maxSourceRefBytes: 32 }) });
-  assert.throws(() => sourceMax.prepare(), (error) => error.code === 'representation_oversize');
-
-  const sourceCountMax = fixture({ producerKind: 'cpg_semantic_delta', policy: policy({ maxSourceRefs: 2 }), supportingRefs: [
+  }, { ...argumentsMax.auth, key: 'representation.produce:big-arguments' }).requestDigest.length, 64);
+  const many = fixture({ producerKind: 'cpg_semantic_delta', supportingRefs: [
     { kind: 'cpg_slice', handle: `art:sha256:${'a'.repeat(64)}`, digest: 'a'.repeat(64), bytes: 64 },
     { kind: 'cpg_slice', handle: `art:sha256:${'b'.repeat(64)}`, digest: 'b'.repeat(64), bytes: 64 },
   ] });
-  assert.throws(() => sourceCountMax.prepare(), (error) => error.code === 'representation_oversize');
-
-  const evidenceMax = fixture({ policy: policy({ maxEvidenceRefs: 1 }) });
-  assert.throws(() => evidenceMax.prepare(), (error) => error.code === 'representation_oversize');
-
-  const prepared = fixture(); const exact = prepared.prepare();
-  const receiptMax = fixture({ policy: policy({ maxReceiptBytes: exact.receiptRef.bytes - 1 }) });
-  assert.throws(() => receiptMax.prepare(), (error) => error.code === 'representation_oversize');
-
-  const graphMax = fixture({ policy: policy({ maxGraphBatchBytes: 128 }) });
-  assert.throws(() => graphMax.prepare(), (error) => error.code === 'representation_oversize');
-
-  const resultMax = fixture({ policy: policy({ maxResultBytes: 128 }) });
-  assert.throws(() => resultMax.prepare(), (error) => error.code === 'representation_oversize');
+  assert.equal(many.record().representation.node.grounding, 'derived');
+  const plain = fixture({ taskId: 'ceiling-plain' });
+  assert.equal(plain.record().representation.node.grounding, 'derived');
 });
 
 test('GR4/GR6: exact retry is zero-append, changed same-key input conflicts, and same identity coalesces', () => {

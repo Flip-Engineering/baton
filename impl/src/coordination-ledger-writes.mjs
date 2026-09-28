@@ -85,21 +85,13 @@ function validRoutePolicy(policy) {
 // an appended event, so none can exceed the ledger's event count) — the ledger is the physical
 // resource, and a second literal ceiling on top of it refused operations the ledger had already
 // accepted, including on replay, where it made a self-written ledger unloadable.
-const REPRESENTATION_POLICY_FIELDS = [
-  'maxArgumentBytes', 'maxEvidenceRefs', 'maxGraphBatchBytes', 'maxReceiptBytes',
-  'maxResultBytes', 'maxResultItems', 'maxResultRefs', 'maxSourceRefBytes', 'maxSourceRefs', 'repoId', 'schemaVersion',
-];
+const REPRESENTATION_POLICY_FIELDS = ['repoId', 'schemaVersion'];
 
 function validRepresentationPolicy(policy) {
   if (!policy || typeof policy !== 'object' || Array.isArray(policy)
     || Object.keys(policy).sort().join(',') !== [...REPRESENTATION_POLICY_FIELDS].sort().join(',')
     || policy.schemaVersion !== 1 || !/^[A-Za-z0-9._:-]{1,256}$/.test(policy.repoId ?? '')) return false;
-  const numeric = REPRESENTATION_POLICY_FIELDS.filter((field) => !['repoId', 'schemaVersion'].includes(field));
-  if (numeric.some((field) => !Number.isSafeInteger(policy[field]) || policy[field] <= 0)) return false;
-  return policy.maxArgumentBytes <= 16 * 1024 * 1024 && policy.maxSourceRefs <= 256 && policy.maxSourceRefBytes <= 16 * 1024 * 1024
-    && policy.maxEvidenceRefs <= 100_000 && policy.maxReceiptBytes <= 16 * 1024 * 1024
-    && policy.maxGraphBatchBytes <= 16 * 1024 * 1024 && policy.maxResultItems <= 1024
-    && policy.maxResultRefs <= 256 && policy.maxResultBytes <= 16 * 1024 * 1024;
+  return true;
 }
 
 function writerProcessStartIdentity(pid) {

@@ -35,11 +35,14 @@ test('CT3/CT5: configured sanitizer cuts flow while unrelated unresolved calls f
 
 test('CT4/CT6: deployment bounds, cancellation, and parse partials are enforced', async () => {
   const f = fixture(`function readInput(){}\nfunction send(v){}\nfunction run(){send(readInput())}\n`);
-  await assert.rejects(f.atlas.invoke('cpg.taint', { ...f.args, depth: 17 }, f.ctx), (error) => error.code === 'taint_depth_exceeded');
+  const deeper = await f.atlas.invoke('cpg.taint', { ...f.args, depth: 17 }, f.ctx);
+  assert.equal(deeper.payload.length, 1, '#530: a depth past the old ceiling is admitted');
   const abort = new AbortController(); abort.abort(); await assert.rejects(f.atlas.invoke('cpg.taint', f.args, { ...f.ctx, signal: abort.signal }), (error) => error.code === 'cancelled');
   const broken = fixture(`function readInput( { send(readInput()) }`); const partial = await broken.atlas.invoke('cpg.taint', broken.args, broken.ctx); assert.equal(partial.status, 'partial');
-  const tiny = fixture(`function readInput(){} function send(v){} function run(){send(readInput())}`, { maxPaths: 1, maxResultBytes: 64 }); await assert.rejects(tiny.atlas.invoke('cpg.taint', tiny.args, tiny.ctx), (error) => error.code === 'taint_result_too_large');
-  const paths = fixture(`function readInput(){} function send(v){} function run(){send(readInput());send(readInput())}`, { maxPaths: 1 }); await assert.rejects(paths.atlas.invoke('cpg.taint', paths.args, paths.ctx), (error) => error.code === 'taint_paths_exceeded');
+  const tiny = fixture(`function readInput(){} function send(v){} function run(){send(readInput())}`, { maxPaths: 1, maxResultBytes: 64 });
+  assert.equal((await tiny.atlas.invoke('cpg.taint', tiny.args, tiny.ctx)).payload.length, 1, '#530: the result is published past the old ceilings');
+  const paths = fixture(`function readInput(){} function send(v){} function run(){send(readInput());send(readInput())}`, { maxPaths: 1 });
+  assert.ok((await paths.atlas.invoke('cpg.taint', paths.args, paths.ctx)).payload.length > 1, '#530: both configured paths are published');
 });
 
 test('CT7: bounded result resumes, detects tamper, and reverifies', async () => {

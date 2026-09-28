@@ -93,11 +93,7 @@ function bounded(items, budgetTokens) {
 export class AtlasStructuralRewrite {
   constructor(opts = {}) {
     if (typeof opts.artifactRoot !== 'string' || opts.artifactRoot.length === 0) throw new TypeError('Atlas artifactRoot required');
-    if (!Number.isSafeInteger(opts.maxSourceBytes) || opts.maxSourceBytes <= 0) throw new TypeError('Atlas maxSourceBytes must be a deployment-derived positive safe integer');
-    if (!Number.isSafeInteger(opts.maxArtifactBytes) || opts.maxArtifactBytes <= 0) throw new TypeError('Atlas maxArtifactBytes must be a deployment-derived positive safe integer');
     this.artifactRoot = opts.artifactRoot;
-    this.maxSourceBytes = opts.maxSourceBytes;
-    this.maxArtifactBytes = opts.maxArtifactBytes;
     this.record = opts.record ?? null;
     this.now = opts.now ?? Date.now;
     mkdirSync(join(this.artifactRoot, 'manifests'), { recursive: true, mode: 0o700 });
@@ -136,7 +132,7 @@ export class AtlasStructuralRewrite {
     const language = String(args.language ?? EXTENSION[extname(args.path).toLowerCase()] ?? '').toLowerCase();
     if (!LANGUAGE[language]) throw typed(`unsupported Atlas language ${language}`, 'unsupported_language');
     const bytes = readFileSync(sourcePath);
-    if (bytes.includes(0) || bytes.length > this.maxSourceBytes) throw typed('source is binary or exceeds Atlas limit', 'invalid_source');
+    if (bytes.includes(0)) throw typed('source is binary', 'invalid_source');
     let source;
     try { source = new TextDecoder('utf-8', { fatal: true }).decode(bytes); } catch { throw typed('source is not valid UTF-8', 'invalid_source'); }
     const inputDigest = sha(bytes); const patternDigest = sha(args.pattern);
@@ -164,7 +160,6 @@ export class AtlasStructuralRewrite {
     if (op === 'rewrite.structural') {
       try { proposedSource = parsed.commitEdits(edits.map(({ matchIndex: _index, ...edit }) => edit)); }
       catch { throw typed('structural edits could not be committed', 'invalid_replacement'); }
-      if (Buffer.byteLength(proposedSource) > this.maxSourceBytes) throw typed('proposed source exceeds Atlas limit', 'output_too_large');
       outputDigest = sha(proposedSource);
       outputErrors = collectErrors(parse(LANGUAGE[language], proposedSource).root());
     }
@@ -172,7 +167,6 @@ export class AtlasStructuralRewrite {
     const items = op === 'search.structural' ? matchRecords : edits.map((edit) => ({ matchIndex: edit.matchIndex, range: matchRecords[edit.matchIndex].range, insertedText: edit.insertedText, insertedDigest: sha(edit.insertedText) }));
     const manifest = { schemaVersion: 1, op, language, path: args.path, inputDigest, patternDigest, replacementDigest, outputDigest, parseErrors: { input: inputErrors, output: outputErrors }, items };
     const serialized = `${JSON.stringify(manifest)}\n`; const manifestDigest = sha(serialized);
-    if (Buffer.byteLength(serialized) > this.maxArtifactBytes) throw typed('structural manifest exceeds Atlas artifact budget', 'result_too_large');
     const manifestPath = this._writeArtifact('manifests', manifestDigest, 'json', serialized);
     const refs = [{ handle: `art:sha256:${manifestDigest}`, kind: op === 'search.structural' ? 'structural_search' : 'structural_rewrite_manifest', digest: manifestDigest, bytes: Buffer.byteLength(serialized), mediaType: 'application/vnd.baton.atlas-structural-rewrite+json', path: manifestPath }];
     if (proposedSource !== null) {

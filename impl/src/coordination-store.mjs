@@ -150,10 +150,7 @@ export function coordinationReplayFailure(root) {
 // an appended event, so none can exceed the ledger's event count) — the ledger is the physical
 // resource, and a second literal ceiling on top of it refused operations the ledger had already
 // accepted, including on replay, where it made a self-written ledger unloadable.
-const REPRESENTATION_POLICY_FIELDS = [
-  'maxArgumentBytes', 'maxEvidenceRefs', 'maxGraphBatchBytes', 'maxReceiptBytes',
-  'maxResultBytes', 'maxResultItems', 'maxResultRefs', 'maxSourceRefBytes', 'maxSourceRefs', 'repoId', 'schemaVersion',
-];
+const REPRESENTATION_POLICY_FIELDS = ['repoId', 'schemaVersion'];
 
 
 // KG-3/KG-4 (v2-P1-3, P2-7). The preview policy is a two-level split: `policy.recall` names the

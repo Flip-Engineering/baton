@@ -85,7 +85,8 @@ test('AR2/AR8: traversal, escaping symlink, invalid UTF-8, size, and cancellatio
   writeFileSync(join(f.root, 'bad.js'), Buffer.from([0xff]));
   await assert.rejects(f.atlas.invoke('search.structural', { path: 'bad.js', pattern: '$A' }, f.ctx), (error) => error.code === 'invalid_source');
   const small = fixture('function enormous() { return 1 }', { maxSourceBytes: 4 });
-  await assert.rejects(small.atlas.invoke('search.structural', { path: small.path, pattern: '$A' }, small.ctx), (error) => error.code === 'invalid_source');
+  const searched = await small.atlas.invoke('search.structural', { path: small.path, pattern: '$A' }, small.ctx);
+  assert.ok(searched.refs.length >= 1, '#530: a source past the old byte ceiling is searched');
   const abort = new AbortController(); abort.abort();
   await assert.rejects(f.atlas.invoke('search.structural', { path: f.path, pattern: '$A' }, { ...f.ctx, signal: abort.signal }), (error) => error.code === 'cancelled');
 });
@@ -97,7 +98,8 @@ test('AR2/AR9: invalid operations/patterns and non-regular sources fail typed', 
   await assert.rejects(f.atlas.invoke('unknown', { path: f.path, pattern: '$A' }, f.ctx), (error) => error.code === 'unsupported_op');
 });
 
-test('AR2/AR7: a deployment-derived manifest ceiling stops capture-amplification', async () => {
+test('AR2/AR7 (#530): the manifest publishes whatever its size', async () => {
   const f = fixture(`export function run() { return deeply(nested(value)) }\n`, { maxArtifactBytes: 128 });
-  await assert.rejects(f.atlas.invoke('search.structural', { path: f.path, pattern: '$A' }, f.ctx), (error) => error.code === 'result_too_large');
+  const result = await f.atlas.invoke('search.structural', { path: f.path, pattern: '$A' }, f.ctx);
+  assert.ok(result.refs.length >= 1, '#530: the manifest is published past the old byte ceiling');
 });

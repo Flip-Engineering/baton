@@ -222,7 +222,6 @@ const repo = (name, files) => {
 const atlasConfig = (root) => ({
   artifactRoot: join(root, 'atlas-artifacts'),
   maxArtifactBytes: 256 * 1024,
-  maxSourceBytes: 64 * 1024,
 });
 const driver = (root, overrides = {}) => createDriver({
   repoRoot: root,
@@ -822,30 +821,18 @@ test('OR-C5 [stage: retirement-honesty-missing]: a lawfully reclaimed page retur
     'reclaimed pages are honestly retired (today: unknown_cursor — there is no retention contract at all)');
 });
 
-test('OR-C6 [stage: storage-ceiling-missing]: orientation storage refuses BEFORE write with orientation_storage_exhausted past the deployment byte ceiling', async () => {
+test('OR-C6 (#530): orientation storage keeps every result artifact, whatever its size', async () => {
   const root = repo('c6', { 'src/a.js': 'export const alpha = 1\nexport const beta = 2\n' });
-  // The deployment-wide byte ceiling knob (maxOrientationStorageBytes) is the O-5 constructive
-  // control this epic adds; today no quota, roots, or reclamation exist at all.
-  const index = new AtlasCodeIndex({
-    artifactRoot: join(tmpDir('c6-artifacts'), 'atlas'), maxArtifactBytes: 256 * 1024,
-    maxSourceBytes: 64 * 1024, maxOrientationStorageBytes: 600,
-  });
+  // The deployment-wide storage ceiling (maxOrientationStorageBytes) left with the class: the store
+  // keeps every create-if-absent artifact it writes and reclaims by reachability.
+  const index = new AtlasCodeIndex({ artifactRoot: join(tmpDir('c6-artifacts'), 'atlas') });
+  assert.equal(index.maxOrientationStorageBytes, undefined, 'no storage ceiling is constructed');
   const built = await index.invoke('index.build', {}, { budgetTokens: 10_000, baseRoot: root });
   const epoch = built.provenance.index_epoch;
-  // T-12: positive control first — writes BELOW the ceiling MUST succeed, so a hair-trigger
-  // refuse-everything implementation fails here; the refusal may only fire once the ceiling is
-  // actually crossed.
-  const first = await index.invoke('search.lexical', { indexEpoch: epoch, query: 'orientation-ceiling-probe-0' }, { budgetTokens: 2_000, baseRoot: root, worktreeRoot: root })
-    .then(() => 'admitted', (error) => error?.code ?? 'thrown');
-  assert.equal(first, 'admitted', 'positive control: writes below the ceiling succeed (blue-team T-12)');
-  let refusal = null; let admitted = 1;
-  for (let i = 1; i < 12 && refusal === null; i += 1) {
-    refusal = await index.invoke('search.lexical', { indexEpoch: epoch, query: `orientation-ceiling-probe-${i}` }, { budgetTokens: 2_000, baseRoot: root, worktreeRoot: root })
-      .then(() => { admitted += 1; return null; }, (error) => error?.code ?? 'thrown');
+  for (let i = 0; i < 12; i += 1) {
+    const admitted = await index.invoke('search.lexical', { indexEpoch: epoch, query: `orientation-ceiling-probe-${i}` }, { budgetTokens: 2_000, baseRoot: root, worktreeRoot: root });
+    assert.equal(typeof admitted.status, 'string', `write ${i} is admitted — no storage ceiling refuses it`);
   }
-  assert.equal(refusal, 'orientation_storage_exhausted',
-    'past the deployment byte ceiling the next write refuses BEFORE append (today: create-if-absent CAS writes are unbounded)');
-  assert.ok(admitted >= 1, 'the ceiling refuses only once it is actually crossed, never up-front');
 });
 
 // ===========================================================================

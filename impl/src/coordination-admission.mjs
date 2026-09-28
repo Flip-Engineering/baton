@@ -582,7 +582,6 @@ export function _representationRequest(store, request, auth, integrity = false, 
     || !/^[a-f0-9]{64}$/.test(request.sourceArguments.digest ?? '')
     || !Number.isSafeInteger(request.sourceArguments.bytes) || request.sourceArguments.bytes <= 0
     || !boundedText(auth?.actor, 256) || !boundedText(idempotencyKey, 512)) fail('representation production request is malformed');
-  if (request.sourceArguments.bytes > store._representationPolicy.maxArgumentBytes) fail('representation arguments exceeded deployment ceiling', 'representation_oversize');
   const mapping = REPRESENTATION_PRODUCERS[request.producerKind]; const environment = request.environment;
   const deltaFields = ['afterOverlayDigest', 'afterTreeSha', 'beforeOverlayDigest', 'beforeTreeSha', 'kind', 'repoId', 'schemaVersion'];
   const indexFields = ['indexEpoch', 'kind', 'overlayDigest', 'repoId', 'schemaVersion', 'treeSha'];
@@ -624,7 +623,6 @@ export function _representationSource(store, source, requestState, evidence, eve
     || source.artifact.handle !== `art:sha256:${source.artifact.digest}`
     || !Number.isSafeInteger(source.artifact.bytes) || source.artifact.bytes <= 0
     || [source.resultDigest, source.resultProjectionDigest, source.reverifyResultDigest].some((value) => !/^[a-f0-9]{64}$/.test(value ?? ''))) fail('representation source projection is malformed');
-  if (canonicalBytes(source.artifact) > store._representationPolicy.maxSourceRefBytes) fail('representation source reference exceeded deployment ceiling', 'representation_oversize');
   store._representationEvidence(evidence, requestState, source, event, integrity);
   return clone(source);
 }
@@ -664,7 +662,6 @@ export function _representationGraphTemplate(store, fields, auth, integrity = fa
     kind: 'representation-receipt', mediaType: 'application/vnd.baton.representation-receipt+json',
     handle: `art:sha256:${receiptDigest}`, digest: receiptDigest, bytes: Buffer.byteLength(receiptSerialized),
   };
-  if (receiptRef.bytes > store._representationPolicy.maxReceiptBytes) fail('representation receipt exceeded deployment ceiling', 'representation_oversize');
   const sourceArtifactId = `representation-source:${canonicalDigest({ repoId: fields.request.repoId, digest: source.artifact.digest })}`;
   const receiptArtifactId = `representation-receipt:${receiptDigest}`;
   const provenance = [clone(fields.evidence.invoke), clone(fields.evidence.reverify)];
@@ -713,8 +710,6 @@ export function _representationGraphTemplate(store, fields, auth, integrity = fa
     sourceArtifact, receiptArtifact, nodes, edges, graphDigest,
   };
   const payload = { ...core, productionDigest: canonicalDigest(core) };
-  if (canonicalBytes(payload) > store._representationPolicy.maxGraphBatchBytes) fail('representation graph batch exceeded deployment ceiling', 'representation_oversize');
-  if (canonicalBytes(projection) > store._representationPolicy.maxResultBytes) fail('representation result exceeded deployment ceiling', 'representation_oversize');
   return freeze({ requestState, source, receipt, receiptSerialized, receiptRef, identityDigest, representationId, projection, payload });
 }
 

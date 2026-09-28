@@ -40,8 +40,7 @@ function bounded(items, tokens) {
 export class AtlasEGraphEvaluation {
   constructor(opts = {}) {
     if (typeof opts.artifactRoot !== 'string' || opts.artifactRoot.length === 0) throw new TypeError('e-graph evaluation artifactRoot required');
-    if (!Number.isSafeInteger(opts.maxArtifactBytes) || opts.maxArtifactBytes <= 0) throw new TypeError('maxArtifactBytes must be deployment-derived');
-    this.artifactRoot = opts.artifactRoot; this.maxArtifactBytes = opts.maxArtifactBytes; this.now = opts.now ?? Date.now; this.record = opts.record ?? null;
+    this.artifactRoot = opts.artifactRoot; this.now = opts.now ?? Date.now; this.record = opts.record ?? null;
     mkdirSync(this.artifactRoot, { recursive: true, mode: 0o700 });
   }
 
@@ -75,7 +74,6 @@ export class AtlasEGraphEvaluation {
       meaning: 'policy_decision_not_equivalence_or_semantic_proof',
     };
     const artifact = { schemaVersion: 1, op, decisionId: DECISION_ID, items: [item] }; const serialized = `${JSON.stringify(artifact)}\n`; const digest = sha(serialized);
-    if (Buffer.byteLength(serialized) > this.maxArtifactBytes) throw typed('e-graph evaluation artifact exceeds deployment budget', 'artifact_too_large');
     const artifactPath = join(this.artifactRoot, `${digest}.json`);
     if (existsSync(artifactPath) && sha(readFileSync(artifactPath)) !== digest) throw typed('e-graph evaluation artifact integrity failure', 'artifact_integrity');
     if (!existsSync(artifactPath)) writeFileSync(artifactPath, serialized, { mode: 0o600, flag: 'wx' });

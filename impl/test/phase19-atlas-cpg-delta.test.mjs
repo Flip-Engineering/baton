@@ -45,7 +45,8 @@ test('CD2/CD5: rename is remove/add and unresolved calls do not fabricate caller
 
 test('CD4/CD6: impact depth, cancellation, and parse health are enforced', async () => {
   const f = fixture(`function a(){return 1}\n`, `function a(){return 2}\n`);
-  await assert.rejects(f.atlas.invoke('cpg.delta', { ...f.args, impactDepth: 9 }, f.ctx), (error) => error.code === 'impact_depth_exceeded');
+  const deeper = await f.atlas.invoke('cpg.delta', { ...f.args, impactDepth: 9 }, f.ctx);
+  assert.equal(deeper.provenance.impactDepth, 9, '#530: an impact depth past the old ceiling is admitted');
   const abort = new AbortController(); abort.abort(); await assert.rejects(f.atlas.invoke('cpg.delta', f.args, { ...f.ctx, signal: abort.signal }), (error) => error.code === 'cancelled');
   const broken = fixture(`function a(){return 1}\n`, `function a( { return 2 }`); const partial = await broken.atlas.invoke('cpg.delta', broken.args, broken.ctx); assert.equal(partial.status, 'partial');
 });
@@ -60,9 +61,10 @@ test('CD7: bounded delta resumes, detects tamper, and reverifies', async () => {
   await assert.rejects(f.atlas.resume({ digest, path }, `atlas-cpg-delta:${digest}:0`, { budgetTokens: 1000 }), (error) => error.code === 'artifact_integrity');
 });
 
-test('CD6: delta artifact ceiling is deployment-bound', async () => {
+test('CD6 (#530): the delta carries no artifact ceiling', async () => {
   const f = fixture(`function a(){return 1}\n`, `function a(){let x=1; return x}\n`, { maxDeltaBytes: 64 });
-  await assert.rejects(f.atlas.invoke('cpg.delta', f.args, f.ctx), (error) => error.code === 'delta_too_large');
+  const result = await f.atlas.invoke('cpg.delta', f.args, f.ctx);
+  assert.ok(result.refs[0].bytes > 64, '#530: the delta artifact is published past the old byte ceiling');
 });
 
 test('CD3/CD4/PS7: literal branch pruning surfaces CFG and reaching-definition edge changes', async () => {

@@ -33,7 +33,6 @@ const repo = (name, files) => {
 const atlas = (root) => ({
   artifactRoot: join(root, 'atlas-artifacts'),
   maxArtifactBytes: 256 * 1024,
-  maxSourceBytes: 64 * 1024,
 });
 const driver = (root, overrides = {}) => createDriver({
   repoRoot: root,
@@ -100,8 +99,10 @@ test('AT-2: createDriver composes the full opted-in Atlas set with budgets, ceil
   // cards keep the artifact ceiling each of them enforces.
   const indexCard = cards.find((card) => card.name === 'atlas-index');
   assert.equal(indexCard.ceilings, undefined, 'the index carries no source, file, result or artifact ceiling');
-  assert.ok(cards.filter((card) => card.name !== 'atlas-index')
-    .every((card) => card.ceilings && Number.isSafeInteger(card.ceilings.maxArtifactBytes)));
+  assert.equal(cards.find((card) => card.name === 'atlas-structural').ceilings, undefined,
+    'the structural card carries no source or artifact ceiling');
+  assert.equal(cards.find((card) => card.name === 'cartographer').ceilings.maxArtifactBytes, 256 * 1024,
+    'the cartographer declares the deployment artifact ceiling it was given');
   const structural = cards.find((card) => card.name === 'atlas-structural');
   assert.equal(structural.ops['diff.structural'].reverifiable, true);
   assert.equal(structural.languageCeiling.family, 'javascript-typescript');
@@ -170,10 +171,8 @@ test('AT-3: gate verification writes bounded structural CAS + ledger evidence an
   assert.ok(structuralEvent);
   assert.equal(structuralEvent.payload.changeClass, 'signature_changed');
   assert.match(structuralEvent.payload.digest, /^[a-f0-9]{64}$/);
-  assert.ok(structuralEvent.payload.bytes <= atlas(root).maxArtifactBytes);
   assert.equal(existsSync(structuralEvent.payload.path), true);
   const artifact = JSON.parse(readFileSync(structuralEvent.payload.path, 'utf8'));
-  assert.equal(artifact.ceiling.maxArtifactBytes, atlas(root).maxArtifactBytes);
   assert.ok(artifact.files.some((file) => file.path === 'impl/value.mjs'));
   const verdictEvent = composed.log.read(structuralEvent.payload.worker).find((event) => event.kind === 'verify.reverified');
   assert.equal(verdictEvent.payload.accept, true, 'structural class informs but never adjudicates');
