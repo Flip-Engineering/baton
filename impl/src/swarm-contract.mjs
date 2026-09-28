@@ -95,7 +95,7 @@ export const SWARM_VIEW_PROJECTIONS = Object.freeze({
   knowledge: Object.freeze({ rows: Object.freeze(['knowledge']), participant: null }),
   // The shared-context notes a swarm writes with `swarm.context_updated` — the whiteboard docs/39
   // §Communication intends (a peer reads the note, not the whole record): the rows the fold keeps,
-  // in ledger order, each carrying its key, body, groupId, version, actor, seq and ts (#427).
+  // in ledger order, each carrying its key, body, version, actor, seq and ts (#427).
   context: Object.freeze({ rows: Object.freeze(['context']), participant: null }),
   // The deployment-level situation (#311): the one block the recruit brief's situation section
   // and this projection both derive — this swarm's peers with their scopes, the can-act seats of
