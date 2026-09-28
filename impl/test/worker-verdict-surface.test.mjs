@@ -102,7 +102,6 @@ import { FenceTable } from '../src/fence.mjs';
 import { coordinationForLog } from '../src/coordination-store.mjs';
 import { MockAdapter } from '../src/adapter.mjs';
 import { bindBaton, createDriver } from '../src/index.mjs';
-import * as recipesNs from '../src/recipes.mjs';
 import { collectSeamInventory } from '../scripts/seam-inventory.mjs';
 
 // ---------------------------------------------------------------------------

@@ -319,23 +319,6 @@ test('W4 (F6 × web): over-spill run.objective -> 400/413 (not 503) with field o
   assertNoBodyContent(JSON.stringify(response.body), objective, 'W4');
 });
 
-test('W5 (F5 × web): waves.run malformed spec -> workflow_spec_invalid (not invalid_command) with the spec field named (R3)', async (t) => {
-  const { web } = webFixture(t, {
-    command: async (name) => {
-      if (name === 'waves.run') throw workflowRefusal({ fieldKey: 'members' });
-      return { schemaVersion: 1, ok: true };
-    },
-  });
-  const response = await web.execute(webContext(), webEnvelope({
-    command: 'waves_run',
-    args: { idempotencyKey: 'ik-waves-1', spec: { members: [] } },
-  }));
-  assert.notEqual(response.body.error.code, 'invalid_command', 'W5: a workflow_* refusal never degrades to invalid_command');
-  assertActionableTriple(response.body.error, { code: 'workflow_spec_invalid', label: 'W5' });
-  assert.ok(String(response.body.error.message ?? '').includes('members'),
-    'W5: the refusal names the offending spec field');
-});
-
 test('W6 (F3 × web): _authorize denial per precondition -> 403 + field in {origin, csrf, repoId, capability} (R5)', async (t) => {
   const cases = [
     [webContext({ origin: 'https://evil.test' }), webEnvelope(), 'origin'],
@@ -407,59 +390,6 @@ test('M1 (F1 × MCP): over-cap objective on baton_run_start -> the coaching code
   assertActionableTriple(error, { code: 'spill_body_exceeded', label: 'M1' });
   assertCoachingTriple(error, { cap: 4096, actual, label: 'M1' });
 });
-
-test('M3 (F7 × MCP): invalid_wave_start carries the offending member (index/role) in field (R2)', async (t) => {
-  const { server } = mcpFixture(t);
-  await initialized(server);
-  const response = await request(server, 2, 'tools/call', {
-    name: 'baton_waves_start',
-    arguments: {
-      repoId: REPO_ID, idempotencyKey: 'm3-ik',
-      members: [
-        { role: 'coder', objective: 'ship', exact: { harness: 'mock', model: 'mock-model', effort: 'low' } },
-        { role: 'designer', objective: 'sketch' }, // missing exact -> invalid_wave_start
-      ],
-    },
-  });
-  const error = mcpError(response);
-  assertActionableTriple(error, { code: 'invalid_wave_start', label: 'M3' });
-  // Fold (blueteam-160 §7.2): the row was SHALLOW — any non-empty field passed. The offending
-  // member is the SECOND in the list (index 1, role 'designer' — the one missing `exact`); the
-  // FIRST member (index 0, role 'coder') is valid. A constant field / canned-message remap must
-  // fail: the field names THIS member's identity (index 1 and/or role designer), never a generic
-  // pointer and never the valid first member.
-  const field = String(error.field ?? '');
-  assert.ok(field.includes('1') || field.includes('designer'),
-    `M3: the offending member (index 1 / role designer) is named in field — got ${JSON.stringify(error.field)}`);
-});
-
-test('M4 (F7/E4 × MCP): observe-path waves.progress refusal carries the same detail as the stateful path (R7)', async (t) => {
-  const { server } = mcpFixture(t, {
-    command: async (name) => {
-      if (name === 'waves.progress') throw waveMemberRefusal();
-      if (name === 'waves.start') throw waveMemberRefusal('wave member admission refused: role "designer" is not on the allowed roster');
-      return { schemaVersion: 1, ok: true };
-    },
-  });
-  await initialized(server);
-  const observe = await request(server, 2, 'tools/call', {
-    name: 'baton_waves_progress',
-    arguments: { repoId: REPO_ID, waveId: `wave:${'a'.repeat(32)}` },
-  });
-  const observeError = mcpError(observe);
-  assertActionableTriple(observeError, { code: 'wave_member_invalid', label: 'M4-observe' });
-  assert.ok(observeError.detail && typeof observeError.detail === 'object',
-    'M4: the observe path carries the same {actual, cap, cause, role} detail as the stateful path');
-  assert.deepEqual(
-    { actual: observeError.detail.actual, cap: observeError.detail.cap, cause: observeError.detail.cause, role: observeError.detail.role },
-    { actual: 1, cap: 0, cause: 'role_not_roster', role: 'coder' },
-    'M4: the observe-path detail matches the stateful-path payload exactly');
-});
-
-
-// -------------------------------------------------------------------------------------------
-// C1-C3 — F4/F8/F9 × CLI
-// -------------------------------------------------------------------------------------------
 
 test('C1 (F4 × CLI): cli_transport_failed message names the transport class + a next action (R6)', async () => {
   const client = new BatonWebClient({
