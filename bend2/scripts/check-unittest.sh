@@ -7,14 +7,20 @@
 # inside each checked tree, once per selected file per tree. A passing run
 # exits 0 and prints nothing. A failing run prints one line per failing
 # case as four hex-encoded fields separated by single spaces: the selected
-# file, the test id, the failure type (assertion, error, missing-file or
-# import-error), and the stable semantic code ("-"). It exits 1. Identical
-# failures in two trees print identical lines, so the gate can tell a new
-# failure from one the target shows too.
+# file, the test id, the failure type (assertion, error, unexpected-success,
+# missing-file or import-error), and the stable semantic code ("-"). It exits
+# 1. Identical failures in two trees print identical lines, so the gate can
+# tell a new failure from one the target shows too.
+#
+# A run that executed no test, or that skipped any test, prints a line that
+# is not a failure identity and exits 1. A test decorated with
+# unittest.expectedFailure prints nothing when it fails, as unittest reports
+# that as an expected failure, and is named with the unexpected-success kind
+# when it passes.
 #
 # stdout carries only identity lines: any other stdout line makes the run
-# unjudged, and an unjudged run blocks the landing. Diagnostics go to
-# stderr.
+# unjudged, and an unjudged run blocks the landing whatever the other tree
+# printed. Diagnostics go to stderr.
 #
 # The test files under bend2/test drive the coordinator binary at
 # .scratch/bend2/baton2 and skip when it is missing, so a selection under
@@ -48,6 +54,10 @@ def hx(s):
 
 def identity(path, test, kind):
     print(f"{hx(path)} {hx(test)} {hx(kind)} {hx('-')}")
+
+
+def unjudged(path, detail):
+    print(f"check-unittest: unjudged: {path}: {detail}")
 
 
 path = sys.argv[1]
@@ -92,5 +102,14 @@ for test, _ in result.failures:
     identity(path, test.id(), "assertion")
 for test, _ in result.errors:
     identity(path, test.id(), "error")
-sys.exit(1 if result.failures or result.errors else 0)
+for test in result.unexpectedSuccesses:
+    identity(path, test.id(), "unexpected-success")
+ran = result.testsRun - len(result.skipped)
+for test, _ in result.skipped:
+    unjudged(path, f"{test.id()}: skipped")
+if ran <= 0:
+    unjudged(path, "no test ran")
+bad = bool(result.failures or result.errors or result.unexpectedSuccesses
+           or result.skipped or ran <= 0)
+sys.exit(1 if bad else 0)
 PY
