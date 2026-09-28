@@ -63,7 +63,7 @@ test('SP3/SP4: derived, cross-repo, expired, under-cited, stale-grounding, polic
   const under = store.postScratchFact({ namespace: 'x', key: 'under', value: 'never copied', grounding: 'observed', envRef: { repoId: 'repo-a', treeSha: 'cafe1234' } }, { actor: 'w-a', key: 'under' });
   store.readScratch('under', { repoId: 'repo-a', treeSha: 'cafe1234' }, { taskId: 'a' }, { actor: 'w-a', key: 'under:read' });
   const expired = store.postScratchFact({ namespace: 'x', key: 'expired', value: 'never copied', grounding: 'observed', envRef: { repoId: 'repo-a', treeSha: 'cafe1234' } }, { actor: 'w-a', key: 'expired' }); store.expireScratchFact(expired.fact.id, { actor: 'policy', key: 'expired:expire' });
-  store.recordDriver('publication.authorized', { taskId: 'a' }, { actor: 'policy', key: 'policy:positive' });
+  store.recordDriver('follow_up.requested', { taskId: 'a' }, { actor: 'policy', key: 'policy:positive' });
   store.recordDriver('integration.refused', { taskId: 'a' }, { actor: 'worker:forged', key: 'worker:failure' });
   store.recordDriver('route.observed', { taskId: 'a' }, { actor: 'operator:alice', key: 'arbitrary' });
   const stale = store.postScratchFact({ namespace: 'x', key: 'stale-grounding', value: 'never copied', grounding: 'observed', envRef: { repoId: 'repo-a', treeSha: 'cafe1234' } }, { actor: 'w-a', key: 'stale' });
