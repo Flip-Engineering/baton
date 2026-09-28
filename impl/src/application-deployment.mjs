@@ -1587,12 +1587,10 @@ function commandCandidates(name, extras = []) {
 function codexCommand() {
   const candidates = commandCandidates('codex', [join(dirname(process.execPath), 'codex')]);
   for (const candidate of candidates) {
-    // #500: the capability probe is bounded at 5 s with a 1 MiB answer ceiling; an
-    // unresponsive or chatty --help fails this candidate and the loop probes the next.
+    // #530: the capability probe runs to completion — a candidate that answers is taken, and a
+    // candidate that does not leaves the loop probing the next one.
     try {
-      execFileSync(candidate, ['app-server', '--help'], {
-        stdio: 'ignore', timeout: 5_000, maxBuffer: 1024 * 1024,
-      });
+      execFileSync(candidate, ['app-server', '--help'], { stdio: 'ignore' });
       return candidate;
     } catch { /* keep probing exact candidates */ }
   }
@@ -1602,12 +1600,10 @@ function codexCommand() {
 function museCommand() {
   const candidates = commandCandidates('muse', [join(dirname(process.execPath), 'muse')]);
   for (const candidate of candidates) {
-    // #500: the capability probe is bounded at 5 s with a 1 MiB answer ceiling; an
-    // unresponsive or chatty --help fails this candidate and the loop probes the next.
+    // #530: the capability probe runs to completion — a candidate that answers is taken, and a
+    // candidate that does not leaves the loop probing the next one.
     try {
-      execFileSync(candidate, ['exec', '--help'], {
-        stdio: 'ignore', timeout: 5_000, maxBuffer: 1024 * 1024,
-      });
+      execFileSync(candidate, ['exec', '--help'], { stdio: 'ignore' });
       return candidate;
     } catch { /* keep probing exact candidates */ }
   }
