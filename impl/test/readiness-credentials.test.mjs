@@ -348,6 +348,9 @@ function repository() {
   return root;
 }
 
+// #530 family C: the verdict's window is the CREDENTIAL's own expiry, so every fixture credential
+// here exposes one — the vendor-TTL constant that used to synthesize it left route-liveness.mjs.
+const FIXTURE_CREDENTIAL_EXPIRY_MS = Date.now() + 28 * 60 * 1000;
 async function openFixture({ routes = [ROUTE_LOW], adapters, extraAdvanced = {} }) {
   const repo = repository();
   const deploymentRoot = tmpDir('deployment');
@@ -363,6 +366,7 @@ async function openFixture({ routes = [ROUTE_LOW], adapters, extraAdvanced = {} 
         adapters,
         verification: { command: 'true', arguments: [] },
         ...extraAdvanced,
+        liveness: { credentialExpiresAt: () => FIXTURE_CREDENTIAL_EXPIRY_MS, ...(extraAdvanced.liveness ?? {}) },
       },
     }, (driverOptions) => { driver = createDriver(driverOptions); return driver; }));
   } catch (error) {
@@ -620,12 +624,16 @@ test('RT-2b (stage: #47 cache missing): a STALE liveness window re-probes exactl
   // The stale-window leg of RT-2's own acceptance text needs a deployment clock: the tier's
   // consult compares expiresAt against `now`, so the suite injects it (advanced.liveness.now,
   // header seam) and advances it past the window without any wall-clock movement.
-  let clock = Date.parse('2026-08-03T00:00:00.000Z');
+  const clockStart = Date.parse('2026-08-03T00:00:00.000Z');
+  // #530 family C: the window is the CREDENTIAL's own expiry, injected here as the fixture's own
+  // credential TTL. It is a fixture value, not a contract constant — the liveness module carries none.
+  const credentialExpiry = clockStart + 28 * 60 * 1000;
+  let clock = clockStart;
   const adapter = new ProbeAdapter({ route: ROUTE_LOW, mode: 'complete' });
   const fixture = await openFixture({
     routes: [ROUTE_LOW],
     adapters: { grok: adapter },
-    extraAdvanced: { liveness: { now: () => clock } },
+    extraAdvanced: { liveness: { now: () => clock, credentialExpiresAt: () => credentialExpiry } },
   });
   try {
     if (fixture.wiringError?.code === 'deployment_config_invalid') {
@@ -637,9 +645,10 @@ test('RT-2b (stage: #47 cache missing): a STALE liveness window re-probes exactl
       'stage #47: the first (cache-absent) consult performs exactly one probe (§4.1.3)');
     const first = routeRow(await fixture.deployment.doctor(), ROUTE_LOW);
     assert.equal(first?.liveness?.state ?? null, 'verified', 'the cold probe verifies the route');
+    assert.equal(ms(first?.liveness?.expiresAt), credentialExpiry,
+      'the verdict carries the credential\'s OWN expiry — never a vendor TTL constant (#530 family C)');
     const windowMs = ms(first?.liveness?.expiresAt) - ms(first?.liveness?.verifiedAt);
-    assert.ok(windowMs > 0 && windowMs <= 28 * 60 * 1000,
-      'the grok window is positive and bounded by the observed 28-min vendor TTL (§4.1.3)');
+    assert.ok(windowMs > 0, 'the window is positive: the credential expires ahead of its verification');
 
     clock += windowMs + 1; // the verified window lapses; the wall clock never moves.
     await spawnWorker(fixture.deployment, ROUTE_LOW, 'rt2b-stale');

@@ -13,12 +13,6 @@ import { observeAdapterEvents } from './adapter.mjs';
 // invalid_grant fan-out (fold F-1), typed probe receipts on the shared evidence path (F-4).
 
 const PROBE_WORKER_PREFIX = 'liveness-probe-';
-// Vendor-derived window defaults (configurable deployment-side): grok OIDC-subscription routes are
-// bounded by the observed 28-min credential TTL; claude routes by the observed 4.4h access TTL;
-// static-key routes default long because the key is non-expiring.
-const GROK_WINDOW_MS = 28 * 60 * 1000;
-const CLAUDE_WINDOW_MS = Math.round(4.4 * 60 * 60 * 1000);
-const STATIC_KEY_WINDOW_MS = 24 * 60 * 60 * 1000;
 const DEFAULT_PROBE_TIMEOUT_MS = FRAME_LIMITS['route.probe_deadline_ms'].value;
 const DEFAULT_FAILURE_WINDOW_MS = 10 * 60 * 1000;
 // #375: the capture the verdict is read over — a resource guard declared in the ONE registry
@@ -104,10 +98,11 @@ function blockedError(row) {
 }
 
 export class RouteLiveness {
-  constructor({ now, probeTimeoutMs, failureWindowMs, coordinator, coordination, adapters, log } = {}) {
+  constructor({ now, probeTimeoutMs, failureWindowMs, coordinator, coordination, adapters, log, credentialExpiresAt } = {}) {
     this.now = now ?? Date.now;
     this.probeTimeoutMs = probeTimeoutMs ?? DEFAULT_PROBE_TIMEOUT_MS;
     this.failureWindowMs = failureWindowMs ?? DEFAULT_FAILURE_WINDOW_MS;
+    this.credentialExpiresAt = credentialExpiresAt ?? null;
     this._coordinator = coordinator;
     this._coordination = coordination;
     this._adapters = adapters ?? {};
@@ -177,7 +172,7 @@ export class RouteLiveness {
     const key = routeKey(route);
     const row = this._cache.get(key);
     const now = this.now();
-    if (row?.state === 'verified' && row.expiresAt > now) return row;
+    if (row?.state === 'verified' && !(Number.isSafeInteger(row.expiresAt) && row.expiresAt <= now)) return row;
     if (row?.state === 'failed' && now - row.failedAt < this.failureWindowMs) {
       throw blockedError(row);
     }
@@ -199,12 +194,6 @@ export class RouteLiveness {
     });
     this._flights.set(key, flight);
     return flight;
-  }
-
-  _windowFor(route) {
-    if (route.harness === 'grok') return GROK_WINDOW_MS;
-    if (route.harness === 'claude-code') return CLAUDE_WINDOW_MS;
-    return STATIC_KEY_WINDOW_MS;
   }
 
   _summaryFor(route, code) {
@@ -299,9 +288,14 @@ export class RouteLiveness {
   _verify(route, credentialKey, started, probeId, { truncated = false } = {}) {
     const latencyMs = this.now() - started;
     const verifiedAt = this.now();
-    const expiresAt = verifiedAt + this._windowFor(route);
+    // #530 family C ruling: the verdict's expiry is the credential's OWN. Claude's cache exposes
+    // expiresAt; a static-key route exposes none and therefore carries no expiry at all. The three
+    // vendor-TTL windows that synthesized this value (grok 28 min, claude 4.4 h, static 24 h) left
+    // the tree with this change.
+    const ownExpiry = this.credentialExpiresAt?.(route) ?? null;
+    const expiresAt = Number.isSafeInteger(ownExpiry) && ownExpiry > verifiedAt ? ownExpiry : null;
     const liveness = Object.freeze({
-      state: 'verified', verifiedAt, expiresAt, probeId, latencyMs, credentialKey,
+      state: 'verified', verifiedAt, ...(expiresAt === null ? {} : { expiresAt }), probeId, latencyMs, credentialKey,
       // #375: the capture that verified the route hit the bound — the row says so, so a reader
       // never mistakes a cut capture for the provider's whole answer.
       ...(truncated ? { truncated: true } : {}),
@@ -311,7 +305,7 @@ export class RouteLiveness {
       route: Object.freeze({ harness: route.harness, model: route.model, effort: route.effort }),
       probeId, latencyMs,
       observedAt: new Date(verifiedAt).toISOString(),
-      expiresAt: new Date(expiresAt).toISOString(),
+      ...(expiresAt === null ? {} : { expiresAt: new Date(expiresAt).toISOString() }),
       credentialKey,
       // Fold F-4: the probe's content check rides the shared verify.reverified-sourced evidence
       // path — never a bespoke probe-only verifier.
@@ -442,10 +436,11 @@ export class RouteLiveness {
     let projected;
     if (!row) {
       projected = { state: 'unverified', credentialKey: routeCredentialKey(route.harness) };
-    } else if (row.state === 'verified' && row.expiresAt > now) {
+    } else if (row.state === 'verified' && !(Number.isSafeInteger(row.expiresAt) && row.expiresAt <= now)) {
       projected = { ...row };
     } else if (row.state === 'verified') {
-      // The window lapsed: advisory shows the honest not-live state, never stale-verified.
+      // The credential's own expiry lapsed: advisory shows the honest not-live state, never
+      // stale-verified. A credential that exposes no expiry carries none, so its row stays live.
       projected = { ...row, state: 'unverified' };
     } else if (row.state === 'unsupported') {
       // A route whose adapter cannot execute a probe is honest-unsupported: advisory shows the

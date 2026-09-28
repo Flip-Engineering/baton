@@ -297,6 +297,13 @@ export class ClaudeCredentialCache {
     });
   }
 
+  /** #530 family C: the credential's OWN expiry, or null when this cache holds none. The liveness
+   * verdict's window rides THIS instant — never a vendor-TTL constant of the liveness module's own. */
+  liveExpiresAt() {
+    const credential = this.credential;
+    return credential && Number.isSafeInteger(credential.expiresAt) ? credential.expiresAt : null;
+  }
+
   async ensureFresh() {
     if (this.revocationLatched) {
       throw credentialError('authentication_refresh_required', 'Claude credential refresh is blocked until explicit login/refresh');

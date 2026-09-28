@@ -303,6 +303,14 @@ export class GrokCredentialCache {
     });
   }
 
+  /** #530 family C: the credential's OWN expiry, or null when this cache holds none — a
+   * non-expiring entry (the vendor sentinel) names no instant a verdict can carry. */
+  liveExpiresAt() {
+    const credential = this.credential;
+    if (!credential || credential.expiresAt === MAX_MS_EPOCH) return null;
+    return Number.isSafeInteger(credential.expiresAt) ? credential.expiresAt : null;
+  }
+
   async ensureFresh() {
     if (this.revocationLatched) {
       throw credentialError('authentication_refresh_required', 'Grok credential refresh is blocked until explicit login/refresh');

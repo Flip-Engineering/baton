@@ -103,7 +103,7 @@ const TABLE_FIELDS = Object.freeze(['category', 'summary', 'remediation', 'retry
 const NOW = 1_786_579_200_000;
 const PROBE_TIMEOUT_MS = 60_000;        // the deployed probe watchdog — ≤120s (G2)
 const FAILURE_WINDOW_MS = 60_000;       // the re-probe cadence bound (route-liveness.mjs:17)
-const GROK_WINDOW_MS = 28 * 60 * 1000;  // the observed grok credential TTL (route-liveness.mjs:13)
+const CREDENTIAL_TTL_MS = 28 * 60 * 1000; // the credential's OWN TTL this fixture exposes
 const VERDICTS = Object.freeze(['probe-verified', 'unverified', 'failed']);
 
 // ── Hermetic tmp roots ─────────────────────────────────────────────────────────────────────
@@ -638,25 +638,48 @@ test('A6p (pin): all five provider-spawn surfaces still consult assertRouteReady
   }
 });
 
-test('P-stale (pin): the landed staleness law — a lapsed verified window projects unverified with the recorded measurement, never stale-verified, and a never-probed route reads unverified (D2, route-liveness.mjs:366-371)', async () => {
+test('P-stale (pin): the landed staleness law — a lapsed verified window projects unverified with the recorded measurement, never stale-verified, and a never-probed route reads unverified (D2, route-liveness.mjs project())', async () => {
   let nowMs = NOW;
   const adapter = new LivenessAdapter({ route: ROUTE, mode: 'complete' });
+  // #530 family C ruling: the row's expiry is the CREDENTIAL's own, read per verdict. The vendor
+  // TTL windows this row used to pin left route-liveness.mjs with that change.
   const liveness = new RouteLiveness({
     now: () => nowMs,
     probeTimeoutMs: PROBE_TIMEOUT_MS,
     failureWindowMs: FAILURE_WINDOW_MS,
     adapters: { grok: adapter },
+    credentialExpiresAt: () => NOW + CREDENTIAL_TTL_MS,
   });
   const row = await bounded('P-stale: liveness.ensure (the probe)', liveness.ensure(ROUTE));
   assert.equal(row.state, 'verified', 'a fresh content-verified probe verifies');
-  assert.equal(liveness.project(ROUTE).state, 'verified', 'within the window the projection is verified');
-  nowMs = NOW + GROK_WINDOW_MS + 1;
+  assert.equal(row.expiresAt, NOW + CREDENTIAL_TTL_MS, 'the verdict carries the credential\'s own expiry');
+  assert.equal(liveness.project(ROUTE).state, 'verified', 'within the credential lifetime the projection is verified');
+  nowMs = NOW + CREDENTIAL_TTL_MS + 1;
   const lapsed = liveness.project(ROUTE);
-  assert.equal(lapsed.state, 'unverified', 'a lapsed window projects unverified — never stale-verified');
+  assert.equal(lapsed.state, 'unverified', 'a lapsed credential projects unverified — never stale-verified');
   assert.equal(lapsed.verifiedAt, NOW, 'the lapsed projection reports the recorded verifiedAt from content');
-  assert.equal(lapsed.expiresAt, NOW + GROK_WINDOW_MS, 'the lapsed projection reports the recorded expiresAt from content');
+  assert.equal(lapsed.expiresAt, NOW + CREDENTIAL_TTL_MS, 'the lapsed projection reports the recorded expiresAt from content');
   const never = liveness.project(ROUTE_CODEX);
   assert.equal(never.state, 'unverified', 'a never-probed route projects unverified');
+});
+
+test('P-noexpiry (pin): a credential that exposes no expiry carries none, and its verified row never lapses', async () => {
+  let nowMs = NOW;
+  const adapter = new LivenessAdapter({ route: ROUTE, mode: 'complete' });
+  // A static-key route: the credential exposes no expiry, so no window is synthesized for it.
+  const liveness = new RouteLiveness({
+    now: () => nowMs,
+    probeTimeoutMs: PROBE_TIMEOUT_MS,
+    failureWindowMs: FAILURE_WINDOW_MS,
+    adapters: { grok: adapter },
+    credentialExpiresAt: () => null,
+  });
+  const row = await bounded('P-noexpiry: liveness.ensure (the probe)', liveness.ensure(ROUTE));
+  assert.equal(row.state, 'verified', 'a fresh content-verified probe verifies');
+  assert.equal(Object.hasOwn(row, 'expiresAt'), false, 'no expiry is written for a credential that has none');
+  nowMs = NOW + 365 * 24 * 60 * 60 * 1000;
+  assert.equal(liveness.project(ROUTE).state, 'verified',
+    'a credential that exposes no expiry has no window to lapse');
 });
 
 // ════════════════════════════════════════════════════════════════════════════════════════════
