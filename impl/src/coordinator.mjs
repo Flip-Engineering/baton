@@ -83,8 +83,8 @@ export { DependencyCycleError, SupervisedProcesses, guidanceSender } from './run
 import {
   closedVerificationVerdict, noop, pathInScope,
 } from './runtime-observation.mjs';
-import { ModelSelectionError, PublicationError, WORKTREE_FAILURE, normalizeRunId } from './runtime-effects.mjs';
-export { ModelSelectionError, PublicationError };
+import { ModelSelectionError, WORKTREE_FAILURE, normalizeRunId } from './runtime-effects.mjs';
+export { ModelSelectionError };
 import { KILL_RULES, LOGICAL_CALL_PHASES, ORIENTATION_DELIVERY, PUSH_REFUSAL_CODES, REARM_KINDS, RUN_TIMELINE_OPERATIONAL_KINDS, IntegrationError, SessionSelectionError, TERMINAL_TASK_STATUSES, addSafeTokenCounts, boundedProcessObservation, canonical, canonicalDigest, cardSupportsSession, decisionRef, deepFreeze, logicalCallTransition, minimalBrief, normalizeSessionRequest, officialCoordinateMatches, providerProcessingFailureCode, replayProviderGovernanceRoute, startupReconcilerNext, startupReconcilerRecord, throwIfProviderCancelled, typedTerminalCode, validLogicalCallId, validLogicalCallPhase, validWorkspaceOwnerBoundPayload, workspaceOwnerExpectation } from './runtime-recovery.mjs';
 export { PUSH_REFUSAL_CODES, REARM_KINDS, IntegrationError, SessionSelectionError } from './runtime-recovery.mjs';
 // Issue #66 (K2): the frozen doubt refusal family — the closed 8-code vocabulary every doubt
@@ -1552,7 +1552,7 @@ export class Coordinator {
       }
     }
     for (const [requestId, record] of [...this._pending]) {
-      if ((record.kind === 'approval' || record.kind === 'publication') && record.state === 'pending' && record.deadlineAt != null && now >= record.deadlineAt) {
+      if (record.kind === 'approval' && record.state === 'pending' && record.deadlineAt != null && now >= record.deadlineAt) {
         this._bestEffort(this._trackAuthorityPromise(() => this._resolveRecord(requestId, { decision: 'deny' }, 'policy')), 'interaction_expiry');
       } else if (record.kind === 'decision' && record.state === 'pending' && record.deadlineAt != null && now >= record.deadlineAt) {
         this._bestEffort(this._trackAuthorityPromise(() => this._expireDecision(requestId, record)), 'interaction_expiry');
@@ -3046,11 +3046,6 @@ export class Coordinator {
       manifestCore: request.manifestCore,
       policy: request.policy,
     });
-  }
-
-  /** AC6: create an approval-gated exact-SHA publication request. No side effect occurs here. */
-    requestPublication(workerId, target = {}, actor = 'orchestrator') {
-    return runtimeObservation.requestPublication(this, this._recorder, workerId, target, actor);
   }
 
   /** Worker ids are checked against the live table and every worker the log knows (#267). */

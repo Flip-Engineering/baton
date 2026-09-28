@@ -23,7 +23,7 @@ import { validProcessClosedPayload } from './process-lifecycle.mjs';
 import { PROVIDER_FAULT_CODES, routeQuotaScope } from './provider-faults.mjs';
 import { providerGovernanceRoute } from './provider-governance.mjs';
 import * as runtimeBriefing from './runtime-briefing.mjs';
-import { PublicationError, WORKTREE_FAILURE } from './runtime-effects.mjs';
+import { WORKTREE_FAILURE } from './runtime-effects.mjs';
 import { observeSteeringEvidence } from './runtime-redrive.mjs';
 import {
   CLOSED_VERIFIER_DIAGNOSTICS, CLOSED_VERIFIER_EXECUTIONS, CLOSED_VERIFIER_OWNERS,
@@ -622,7 +622,7 @@ export async function _cancelPendingForDrain(coordinator, recorder) {
       coordinator._resolveInteractionAuthority(requestId, record); record.consumer = 'policy';
       record.resolution = record.kind === 'decision'
         ? { disposition: 'superseded', answer: null, reason: 'fleet_drain' }
-        : { decision: record.kind === 'publication' ? 'deny' : 'cancel', reason: 'fleet_drain' };
+        : { decision: 'cancel', reason: 'fleet_drain' };
       if (handle?.pendingQuestionId === requestId) handle.pendingQuestionId = null;
       if (handle?.pendingApprovalId === requestId) handle.pendingApprovalId = null;
       if (handle?.pendingDecisionId === requestId) handle.pendingDecisionId = null;
@@ -1144,50 +1144,6 @@ export function _completeRetryCancelled(coordinator, recorder, admission, comple
       coordinator._poisonCoordination(coordinationError);
       throw coordinationError;
     }
-  }
-
-export function requestPublication(coordinator, recorder, workerId, target = {}, actor = 'orchestrator') {
-    coordinator.tick();
-    const handle = coordinator._getWorker(workerId);
-    const task = coordinator._tasks.get(handle.taskId);
-    if (!task?.integration?.afterSha) {
-      throw new PublicationError('publication requires a locally integrated result', 'result_not_integrated');
-    }
-    const remote = target.remote;
-    const ref = target.ref;
-    const sha = target.sha ?? task.integration.afterSha;
-    if (typeof remote !== 'string' || !/^[A-Za-z0-9][A-Za-z0-9._-]*$/.test(remote)) {
-      throw new PublicationError('remote must be a credential-free git remote name', 'invalid_remote');
-    }
-    if (typeof ref !== 'string' || !/^refs\/heads\/[A-Za-z0-9._\/-]+$/.test(ref) || ref.includes('..')) {
-      throw new PublicationError('ref must be a full, safe refs/heads/* name', 'invalid_ref');
-    }
-    if (sha !== task.integration.afterSha) {
-      throw new PublicationError('publication SHA must equal the integrated result SHA', 'sha_mismatch');
-    }
-    const stamp = coordinator._fences.bumpHuman(workerId);
-    let requestId;
-    do { requestId = `publication-${workerId}-${++coordinator._publicationSeq}`; }
-    while (coordinator._pending.has(requestId) || coordinator._replayedIds.requests.has(requestId));
-    const publication = Object.freeze({ remote, ref, sha });
-    const deadlineAt = coordinator._now() + coordinator._approvalTimeoutMs;
-    const record = {
-      kind: 'publication', worker: workerId, state: 'pending', resolution: null, consumer: null,
-      turnEpochAtAsk: stamp.turnEpoch, fenceAtAsk: stamp.fence,
-      deadlineAt, publication,
-    };
-    const requestedEvent = recorder.log.append({
-      worker: workerId, harness: coordinator._harnessOf(handle.vendor), turnEpoch: stamp.turnEpoch,
-      kind: 'publication.requested', actor,
-      payload: { requestId, ...publication, fence: stamp.fence, deadlineAt },
-    });
-    const evidence = recorder.mapEvent(requestedEvent);
-    recorder.recordDriver('publication.requested', {
-      taskId: task.id, workerId, requestId, publication, fence: stamp.fence, deadlineAt, evidence,
-    }, `driver.publication.requested:${task.id}:${requestId}`, actor);
-    coordinator._pending.set(requestId, record);
-    coordinator._activeInteractionIds.add(requestId);
-    return { ok: true, requestId, fence: stamp.fence, target: publication };
   }
 
 export function _workerPolicyProjection(coordinator, recorder, handle) {

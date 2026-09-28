@@ -855,25 +855,6 @@ export function integrationAuthority(store, taskId, operationalEvent) {
   return freeze({ decisionEvent: decisionEvent.seq, driverEvent: driverEvent.seq, artifactEvent: artifactEvent.seq, evidence: evidence.coordinationSeq });
 }
 
-/** Moved from `CoordinationStore.publicationAuthority` (issue #259 slice 1). State: the store, passed explicitly. */
-export function publicationAuthority(store, taskId, operationalEvent) {
-  if (typeof taskId !== 'string' || !operationalEvent || operationalEvent.kind !== 'publication.completed') return null;
-  const evidence = store._evidence.get(`${operationalEvent.worker}:${operationalEvent.seq}`);
-  if (!evidence || evidence.digest !== digest(operationalEvent) || evidence.kind !== 'publication.completed') return null;
-  const nodeId = `decision:publish:${taskId}:${operationalEvent.seq}`;
-  const node = store._knowledgeNodes.get(nodeId);
-  if (!node || node.promotion?.trigger !== 'publication') return null;
-  const decisionEvent = store._events[node.observedSeq - 1];
-  const driverEvent = store._events[node.observedSeq];
-  if (decisionEvent?.kind !== 'knowledge.promoted' || decisionEvent.payload?.id !== nodeId) return null;
-  if (driverEvent?.kind !== 'driver.recorded' || driverEvent.payload?.kind !== 'publication.completed') return null;
-  if (driverEvent.idempotencyKey !== `${decisionEvent.idempotencyKey}:driver`) return null;
-  if (driverEvent.payload?.taskId !== taskId) return null;
-  if (driverEvent.payload?.evidence?.coordinationSeq !== evidence.coordinationSeq) return null;
-  if (digest(driverEvent.payload?.publication) !== digest(operationalEvent.payload)) return null;
-  return freeze({ decisionEvent: decisionEvent.seq, driverEvent: driverEvent.seq, evidence: evidence.coordinationSeq });
-}
-
 /** Moved from `CoordinationStore.scratchpadFence` (issue #259 slice 1). State: `this._scratchpadFences`, passed explicitly. */
 export function scratchpadFence(state, runId, scope) {
   return state.get(scratchpadScopeKey(runId, scope)) ?? 0;
