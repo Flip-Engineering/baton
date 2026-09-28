@@ -4815,9 +4815,12 @@ export async function openBatonDeployment(rawOptions, createDriver) {
   // (RT-2b's stale-window oracle) and advanced.liveness.probeTimeoutMs bounds the probe watchdog
   // (RT-3b's ≤120s enforcement). Defaults derive from vendor physical bounds.
   const rawLiveness = advanced.liveness ?? {};
-  closed(rawLiveness, ['failureWindowMs', 'now', 'probeTimeoutMs'], 'advanced liveness');
+  closed(rawLiveness, ['failureWindowMs', 'now', 'probeTimeoutMs', 'credentialExpiresAt'], 'advanced liveness');
   if (rawLiveness.now !== undefined && typeof rawLiveness.now !== 'function') {
     throw deploymentError('advanced liveness.now must be a function');
+  }
+  if (rawLiveness.credentialExpiresAt !== undefined && typeof rawLiveness.credentialExpiresAt !== 'function') {
+    throw deploymentError('advanced liveness.credentialExpiresAt must be a function');
   }
   for (const field of ['probeTimeoutMs', 'failureWindowMs']) {
     if (rawLiveness[field] !== undefined
@@ -5080,6 +5083,13 @@ export async function openBatonDeployment(rawOptions, createDriver) {
     now: rawLiveness.now ?? Date.now,
     probeTimeoutMs: rawLiveness.probeTimeoutMs ?? 120_000,
     failureWindowMs: rawLiveness.failureWindowMs ?? 10 * 60 * 1000,
+    // #530 family C ruling: the probe verdict's expiry is the credential's OWN — Claude's cache and
+    // the grok OIDC credential both expose one, and a route whose credential exposes none (a
+    // static-key route) carries no expiry at all. Read live per verdict, so a refreshed
+    // credential's new expiry is the one that lands rather than an open-time snapshot.
+    credentialExpiresAt: rawLiveness.credentialExpiresAt ?? ((route) => (route?.harness === 'claude-code'
+      ? (claudeCredentialCache?.liveExpiresAt?.() ?? null)
+      : route?.harness === 'grok' ? (grokCredentialCache?.liveExpiresAt?.() ?? null) : null)),
   });
   // #341 part 2: ONE ledger-derived provider-refusal index for this deployment, built here where
   // the ledger, the adapter cards and the route inventory are all in hand. The readiness rows, the
