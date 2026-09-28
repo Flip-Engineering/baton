@@ -229,11 +229,6 @@ const VIEW = Object.freeze({
   'view.run.bytes': { lane: 'view.run.bytes', class: 'view', value: 524288, unit: 'bytes', graceful: 'shed-flagged' },
   'view.review_source.bytes': { lane: 'view.review_source.bytes', class: 'view', value: 4194304, unit: 'bytes', graceful: 'shed-flagged' },
   'view.attention_text.bytes': { lane: 'view.attention_text.bytes', class: 'view', value: 4096, unit: 'bytes', graceful: 'shed-flagged' },
-  // Issue #66 (D7): the doubt review surface. The open-doubts read sheds at the same item
-  // bound as the knowledge slice it extends; the byte row is the honest render bound for one
-  // answered record (question + context + resolution + wrappers), a shed flag, never a wire cap.
-  'view.open_doubts.items': { lane: 'view.open_doubts.items', class: 'view', value: 8, unit: 'items', graceful: 'shed-flagged' },
-  'view.open_doubts.bytes': { lane: 'view.open_doubts.bytes', class: 'view', value: 8192, unit: 'bytes', graceful: 'shed-flagged' },
   // OMP's historical final-message slice counts JavaScript string units, not UTF-8 bytes.
   'view.omp.final_summary': { lane: 'view.omp.final_summary', class: 'view', value: 4096, unit: 'code_units', graceful: null },
   // Issue #79 (D2): the worker-delivery push bounds. The ITEM count is the wire bound (8 = the

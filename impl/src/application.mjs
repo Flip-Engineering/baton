@@ -272,84 +272,6 @@ export const APPLICATION_COMMAND_DEFINITIONS = Object.freeze({
   }
 }
 
-// Issue #66 (D2/K4b): the resolve-binding memory of the knowledge.promote_doubt command seam —
-// per-coordinator, keyed by the resolve idempotency key, holding the request binding digest and
-// the receipt. The same resolve key with a byte-identical request replays its receipt; a CHANGED
-// request binding refuses doubt_promote_conflict before the coordinator's state guard could
-// preempt with doubt_promote_stale.
-const DOUBT_RESOLVE_BINDINGS = new WeakMap();
-
-// Issue #66 (D3): the knowledge.doubts read — orchestrator-addressed, wave-scoped, sorted
-// raisedSeq DESC with doubtId ASC breaking ties, paged by the {c, d} keyset cursor, and shed at
-// the declared item bound with the explicit flag.
-function knowledgeDoubtsPage(coordination, args, principal) {
-  const waveId = typeof args?.waveId === 'string' && args.waveId.length > 0 ? args.waveId : null;
-  if (args?.waveId !== undefined && waveId === null) {
-    throw applicationError('knowledge.doubts waveId is invalid', 'application_doubts_invalid');
-  }
-  const state = args?.state;
-  if (state !== undefined && !['reviewed', 'answered', 'dismissed', 'carried'].includes(state)) {
-    throw applicationError('knowledge.doubts state filter is invalid', 'application_doubts_invalid');
-  }
-  let cursor = null;
-  if (args?.before !== undefined && args.before !== null) {
-    const before = args.before;
-    if (!before || typeof before !== 'object' || Array.isArray(before)
-      || Object.keys(before).sort().join(',') !== 'c,d'
-      || !Number.isSafeInteger(before.c) || typeof before.d !== 'string') {
-      throw applicationError('knowledge.doubts keyset cursor is invalid', 'application_doubts_invalid');
-    }
-    cursor = { c: before.c, d: before.d };
-  }
-  const maxItems = FRAME_LIMITS['view.open_doubts.items'].value;
-  const limit = args?.limit === undefined || args?.limit === null
-    ? maxItems
-    : Number.isSafeInteger(args.limit) && args.limit >= 1 ? Math.min(args.limit, maxItems) : null;
-  if (limit === null) {
-    throw applicationError('knowledge.doubts limit is invalid', 'application_doubts_invalid');
-  }
-  // Authority (D3/HOLE-4): the wave's active settlement lease admits its own session; the
-  // orchestrator actor reads every wave. A caller holding neither refuses typed — never
-  // application_command_unavailable.
-  const runId = waveId === null ? null : `run-settlement:${waveId}`;
-  if (principal.actor !== 'orchestrator') {
-    let admitted = false;
-    if (runId !== null) {
-      try {
-        coordinationLedger.settlementReviewAuthority(coordination, runId, {
-          principalId: principal.principalId, sessionId: principal.sessionId,
-          authorityDigest: digest({
-            kind: 'authenticated-worker-session',
-            principalId: principal.principalId, sessionId: principal.sessionId,
-          }),
-        });
-        admitted = true;
-      } catch (error) {
-        if (error?.code !== 'doubt_promote_not_authorized' && error?.code !== 'run_orchestrator_session_mismatch') throw error;
-      }
-    }
-    if (!admitted) {
-      throw applicationError('the doubt review surface is orchestrator-addressed', 'doubt_surface_unavailable');
-    }
-  }
-  let rows = coordinationLedger.doubtsProjection(coordination);
-  if (waveId !== null) rows = rows.filter((row) => row.waveId === waveId);
-  if (state !== undefined) rows = rows.filter((row) => row.state === state);
-  rows = rows.filter((row) => cursor === null
-    || row.raisedSeq < cursor.c
-    || (row.raisedSeq === cursor.c && compareCanonicalStrings(row.doubtId, cursor.d) > 0));
-  rows.sort((a, b) => (b.raisedSeq - a.raisedSeq) || compareCanonicalStrings(a.doubtId, b.doubtId));
-  const page = rows.slice(0, limit);
-  return {
-    runId,
-    waveId,
-    doubts: page,
-    openDoubtsTruncated: rows.length > page.length,
-    nextBefore: page.length > 0
-      ? { c: page[page.length - 1].raisedSeq, d: page[page.length - 1].doubtId }
-      : null,
-  };
-}
 // docs/36 §9 M4 (M4b) — the canonical grammar names advertised beside the retained legacy commands
 // on `card().commands`. Derived once from registry v2: every ordinary canonical operation whose
 // legacy application-command spelling is a live command definition. These are NOT keys of
@@ -5752,15 +5674,14 @@ export class BatonApplication {
     if (name === 'run.steer') {
       return this.steer(args, principal);
     }
-    // KG settlement D2 — the four settlement commands are embedded-only DIRECT ports (not in
+    // KG settlement D2 — the settlement commands are embedded-only DIRECT ports (not in
     // APPLICATION_COMMAND_DEFINITIONS, so the byte-stable command-table key set is unchanged, and
     // never advertised on MCP/CLI/web). They are top-level only: dispatched here BEFORE the
     // recursive-session gate, and deliberately absent from the capability-backed recursive
     // allowlists below. The actor is server-derived 'orchestrator'; the settlement session is
     // derived from the calling principal.
     if (name === 'scratchpad.elevate' || name === 'scratchpad.settle'
-      || name === 'knowledge.settlement_lease'
-      || name === 'knowledge.promote_doubt' || name === 'knowledge.doubts') {
+      || name === 'knowledge.settlement_lease') {
       return this._settlementCommand(name, args, principal);
     }
     // MCP-W1 (mcp-packaging-decisions v1.0): wave ergonomics on the ordinary surface. Like the
@@ -5901,7 +5822,7 @@ export class BatonApplication {
     });
   }
 
-  // KG settlement D2: the four embedded settlement commands. The actor is server-derived
+  // KG settlement D2: the embedded settlement commands. The actor is server-derived
   // 'orchestrator' inside the coordinator wrappers; the settlement session is derived here from
   // the CALLING principal (never from caller fields) — principalId/sessionId with a hub-minted
   // authorityDigest — so the lease it materializes binds to the caller who acquired it.
@@ -5920,39 +5841,6 @@ export class BatonApplication {
     if (name === 'scratchpad.settle') {
       return coordinator.settleWorkflowScratchpad(args.runId,
         { expectedScratchpadFence: args.expectedScratchpadFence, skips: args.skips });
-    }
-    if (name === 'knowledge.promote_doubt') {
-      // Issue #66 (D4): the resolve act rides the coordinator's own gate; the seam's own
-      // exactly-once memory wraps it (the binding map above).
-      const runId = args?.runId;
-      const doubtId = args?.doubtId;
-      const disposition = args?.disposition;
-      if (!validId(runId) || !validId(doubtId) || !['answered', 'dismissed'].includes(disposition)) {
-        throw applicationError('knowledge.promote_doubt request is invalid', 'application_promote_doubt_invalid');
-      }
-      const resolution = args?.resolution ?? null;
-      const dismissalReason = args?.dismissalReason ?? null;
-      if ((resolution !== null && (typeof resolution !== 'string' || resolution.includes('\0')))
-        || (dismissalReason !== null && (typeof dismissalReason !== 'string' || dismissalReason.includes('\0')))) {
-        throw applicationError('knowledge.promote_doubt request fields are invalid', 'application_promote_doubt_invalid');
-      }
-      const binding = digest({ dismissalReason, disposition, resolution, runId });
-      const resolveKey = `knowledge.doubt_resolved:${doubtId}`;
-      const prior = DOUBT_RESOLVE_BINDINGS.get(coordinator)?.get(resolveKey);
-      if (prior) {
-        if (prior.binding !== binding) {
-          throw applicationError('the resolve key is already committed with a changed request binding', 'doubt_promote_conflict');
-        }
-        return clone(prior.receipt);
-      }
-      const receipt = coordinator.resolveDoubt(runId, doubtId, disposition, session, { resolution, dismissalReason });
-      const bindings = DOUBT_RESOLVE_BINDINGS.get(coordinator) ?? new Map();
-      bindings.set(resolveKey, { binding, receipt: clone(receipt) });
-      DOUBT_RESOLVE_BINDINGS.set(coordinator, bindings);
-      return receipt;
-    }
-    if (name === 'knowledge.doubts') {
-      return knowledgeDoubtsPage(this.driver?.coordination, args, principal);
     }
     // knowledge.settlement_lease
     return coordinator.settlementLease(args.waveId, session, { members: args.members });
