@@ -61,8 +61,6 @@ function fixture(overrides = {}) {
     async resumeCapability(name, op, ref, cursor, ctx) { calls.push({ action: 'resume', name, capabilityOp: op, ref, cursor, ctx }); return { op, status: 'ok' }; },
     async reverifyCapability(name, op, claim, args, ctx) { calls.push({ action: 'reverify', name, capabilityOp: op, claim, args, ctx }); return { op, status: 'ok' }; },
     async orientWorker(workerId, args, note, ctx) { calls.push({ action: 'push', workerId, args, note, ctx }); return { ok: true, result: 'ok', sliceDigest: 'a'.repeat(64) }; },
-    async decideReuse(request, ctx) { calls.push({ action: 'reuse_decide', request, ctx }); return { ok: true, result: 'recorded', decision: { id: 'reuse-decision:test' } }; },
-    async recheckReuseDecision(request, ctx) { calls.push({ action: 'reuse_recheck', request, ctx }); return { ok: true, result: 'guarded', targets: [] }; },
     ...overrides.coordinator,
   };
   const coordination = new CoordinationStore(root());
