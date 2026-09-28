@@ -4415,6 +4415,11 @@ class BatonDeployment {
        * call that recorded it and stays silent on a repeat, so the sink that just failed is never
        * the sink a flood of lines is written into. */
       streamError: (streamError) => this.recordStreamError(streamError),
+      /** Issue #631: the controller's live wait rows, for the second signal's record — the same
+       * derivation the drain's own `control.stop_waiting_on` rows use. */
+      waits: () => {
+        try { return this.#driver?.coordinator?.currentStopWaits?.() ?? []; } catch { return []; }
+      },
     });
     return this.#stopRecords;
   }

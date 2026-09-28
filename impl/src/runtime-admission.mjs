@@ -888,16 +888,29 @@ export function closeAuthority(coordinator, recorder) {
     // and remain drain-required while idle so resumable/persistent harnesses cannot be orphaned.
     // The local-resource predicate is the whole test: a worker that still holds one is authority
     // this fence holds, and a reap that released a hold (with the refusal named durably) does not.
+    // Issue #631: a stop that cannot converge logs what it still waits on, by participant. The
+    // refusal carries the controller's own live wait rows (`currentStopWaits`, the same derivation
+    // the drain's `control.stop_waiting_on` rows use), so the host's `describeStopWait` turns them
+    // into one `host.stop_waiting` row naming each participant and its holds — the fact the
+    // 2026-09-28T19:07Z resident stop never wrote before the operator SIGKILLed it.
+    const waits = () => {
+      try { return coordinator.currentStopWaits(); } catch { return []; }
+    };
+    const refuse = (message) => {
+      throw Object.assign(new Error(message), {
+        code: 'coordinator_not_drained', detail: { waitingOn: waits() },
+      });
+    };
     const active = [...coordinator._workers.values()]
       .filter((worker) => coordinator._ownsLocalResources(worker));
-    if (active.length > 0) throw Object.assign(new Error(`coordinator still owns ${active.length} active worker(s); kill/reap before close`), { code: 'coordinator_not_drained' });
-    if (coordinator._authorityOps > 0) throw Object.assign(new Error(`coordinator still has ${coordinator._authorityOps} authority operation(s) in flight`), { code: 'coordinator_not_drained' });
-    if (coordinator._hasPendingInteractionAuthority()) throw Object.assign(new Error('coordinator still owns pending interaction authority'), { code: 'coordinator_not_drained' });
-    if (coordinator._startupCleanupPending > 0) throw Object.assign(new Error('coordinator owned-resource reconciliation is pending'), { code: 'coordinator_not_drained' });
-    if (coordinator._startupCleanupError) throw Object.assign(new Error('coordinator owned-resource reconciliation is incomplete'), { code: 'coordinator_not_drained' });
-    if (coordinator._drainHistoricalReconcilePromise) throw Object.assign(new Error('coordinator historical resource reconciliation is pending'), { code: 'coordinator_not_drained' });
+    if (active.length > 0) refuse(`coordinator still owns ${active.length} active worker(s); kill/reap before close`);
+    if (coordinator._authorityOps > 0) refuse(`coordinator still has ${coordinator._authorityOps} authority operation(s) in flight`);
+    if (coordinator._hasPendingInteractionAuthority()) refuse('coordinator still owns pending interaction authority');
+    if (coordinator._startupCleanupPending > 0) refuse('coordinator owned-resource reconciliation is pending');
+    if (coordinator._startupCleanupError) refuse('coordinator owned-resource reconciliation is incomplete');
+    if (coordinator._drainHistoricalReconcilePromise) refuse('coordinator historical resource reconciliation is pending');
     if (!['disabled', 'ready'].includes(coordinator._startupRecoveryState) && !(coordinator._drainHistoricalReconciled && coordinator._drainReceipt)) {
-      throw Object.assign(new Error('coordinator startup recovery authority is not settled'), { code: 'coordinator_not_drained' });
+      refuse('coordinator startup recovery authority is not settled');
     }
     coordinator._drainState = 'draining';
     coordinator._closed = true;

@@ -246,7 +246,7 @@ async function wedgedDrainFixture(t, label, idempotencyKey) {
   return { driver, handle, timeoutMs, idempotencyKey };
 }
 
-test('360c: the drain names the wait it observes durably, and converges once the hold clears', async (t) => {
+test('360c: the drain names the wait it observes durably, releases a dead participant\'s hold and converges (issue #631)', async (t) => {
   const { driver, handle, idempotencyKey } = await wedgedDrainFixture(t, 'c', 'issue360c-drain');
   const draining = driver.coordinator.drain({ actor: 'orchestrator', repoId: 'repo-a', idempotencyKey });
   // Issue #583: the drain waits until it converges, and it names the wait it OBSERVES — the durable
@@ -263,7 +263,7 @@ test('360c: the drain names the wait it observes durably, and converges once the
   assert.equal(payload.status, 'dead');
   const entry = (payload.waiting ?? []).find((candidate) => candidate?.resource === 'local_resources:localAuthority');
   assert.ok(entry, 'the durable row names the waited resource');
-  assert.equal(entry.reaper, 'exact-close-cleanup', 'the entry names the reaper it waits on');
+  assert.equal(entry.reaper, 'drain-reap', 'the entry names the drain\'s own reap as the reaper (#631)');
   assert.ok(!Number.isNaN(Date.parse(entry.since)), 'the durable row carries since');
   assert.ok(Array.isArray(payload.released), 'the durable row carries the released rows');
 
@@ -272,9 +272,16 @@ test('360c: the drain names the wait it observes durably, and converges once the
     .filter((event) => event.kind === 'control.stop_waiting_on').at(-1).payload;
   assert.deepEqual(replayed, payload, 'the enriched fields replay byte-for-byte');
 
-  // The hold the scripted failure keeps is exactly what the drain is waiting on: release it and the
-  // drain converges on the same observed fact.
-  driver.coordinator._workers.get(handle.id).localAuthority = false;
+  // Issue #631: the drain finishes once every participant's process has exited. The stale hold the
+  // scripted failure keeps is released by the drain itself — never waited on, and never a bare
+  // delete: the custody boundary preserves the checkout and the release is named durably.
   const receipt = await draining;
-  assert.equal(receipt.remainingCount, 0, 'the drain converged once the hold cleared');
+  assert.equal(receipt.remainingCount, 0, 'the drain converged on the observed process exit');
+  const releasedRows = driver.coordinator.releasedResources()
+    .filter((row) => row.workerId === handle.id)
+    .map((row) => `${row.resource}:${row.how}`);
+  assert.ok(releasedRows.includes('local_resources:localAuthority:orphaned'),
+    'the drain released the dead participant\'s stale hold and named it orphaned');
+  assert.equal(driver.coordinator._ownsLocalResources(driver.coordinator._workers.get(handle.id)), false,
+    'the dead participant holds nothing after the drain released it');
 });

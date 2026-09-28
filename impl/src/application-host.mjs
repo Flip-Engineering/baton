@@ -187,11 +187,13 @@ function describeDrainOutcome(application) {
 /** Owns process-signal admission until one operation and its authoritative shutdown both settle. */
 export class SignalLifecycleOwner {
   constructor(options) {
-    closedKeys(options, ['signalEmitter', 'shutdown'], ['announce', 'admittedTrigger', 'withdrawn'], 'signal lifecycle configuration');
+    closedKeys(options, ['signalEmitter', 'shutdown'], ['announce', 'admittedTrigger', 'withdrawn', 'escalate', 'exit'], 'signal lifecycle configuration');
     if (typeof options.signalEmitter?.on !== 'function' || typeof options.signalEmitter?.off !== 'function'
       || typeof options.shutdown !== 'function'
       || (options.announce !== undefined && typeof options.announce !== 'function')
       || (options.withdrawn !== undefined && typeof options.withdrawn !== 'function')
+      || (options.escalate !== undefined && typeof options.escalate !== 'function')
+      || (options.exit !== undefined && typeof options.exit !== 'function')
       || (options.admittedTrigger !== undefined && !['SIGINT', 'SIGTERM', 'SIGHUP'].includes(options.admittedTrigger))) {
       throw hostError('signal lifecycle configuration is invalid');
     }
@@ -211,7 +213,27 @@ export class SignalLifecycleOwner {
     // narration may not delay (or wedge) the drain it describes; the shutdown authority reads the
     // returned promise through its own bookkeeping.
     this.announce = options.announce ?? null;
+    // Issue #631: the second signal's escalation, and the process exit it ends with. Both optional:
+    // a bare lifecycle escalates and ends nothing — the caller that owns the process supplies `exit`.
+    this.escalate = options.escalate ?? null;
+    this.exit = options.exit ?? null;
+    this.escalated = false;
     this._run = null;
+  }
+
+  /** Issue #631 (ruling 2026-09-28T20:38Z): the operator's second signal. It records what the stop
+   * still waits on, by participant, and then ends the resident process — it kills no seat, because
+   * the seats' own processes are left to the next start's recovery. The observed run: the
+   * 2026-09-28T19:12Z SIGINT after SIGTERM did nothing, and the operator SIGKILLed the resident
+   * twelve minutes into its drain. Best-effort: an escalation that cannot narrate still ends it. */
+  async _escalate(kind) {
+    if (this.escalated === true) return;
+    this.escalated = true;
+    try { if (this.escalate !== null) await this.escalate(kind); }
+    catch { /* the escalation still ends the process */ }
+    const code = { SIGHUP: 129, SIGINT: 130, SIGTERM: 143 }[kind] ?? 1;
+    if (this.exit === null) return; // a bare lifecycle owns no process to end; the serve path supplies this.
+    try { this.exit(code); } catch { /* the caller owns the process */ }
   }
 
   run(operation) {
@@ -236,7 +258,12 @@ export class SignalLifecycleOwner {
       };
       const admitSignal = (kind) => {
         signalCount += 1;
-        if (trigger) return;
+        // Issue #631: a second signal is the operator's escalation — record what the stop still
+        // waits on, then end the process. A signal after the first is never a silent no-op again.
+        if (trigger) {
+          if (signalCount === 2) void this._escalate(kind);
+          return;
+        }
         trigger = Object.freeze({ kind, detail: null });
         admittedStopTrigger ??= kind; // #351: the FIRST admitted signal is the stop's trigger
         controller.abort(trigger);
@@ -339,7 +366,7 @@ export class BatonWebHost {
       || (options.report !== undefined && typeof options.report !== 'function')
       || (options.stopRecords !== undefined && (!record(options.stopRecords)
         || !['requested', 'stopped'].every((name) => typeof options.stopRecords[name] === 'function')
-        || !['waiting', 'stage', 'participants']
+        || !['waiting', 'stage', 'participants', 'waits']
           .every((name) => options.stopRecords[name] === undefined || typeof options.stopRecords[name] === 'function')))
       || (!tcp && !local)
       || (tcp && (typeof options.listen.host !== 'string' || options.listen.host.length === 0
@@ -751,6 +778,24 @@ export class BatonWebHost {
     return shuttingDown;
   }
 
+  /** Issue #631 (ruling 2026-09-28T20:38Z): what the stop still waits on, by participant, written
+   * when a SECOND signal escalates the stop — and then the caller ends the process. It kills no
+   * seat: the seats' own processes are left to the next start's recovery. */
+  async escalateStop(kind) {
+    let wait = null;
+    try {
+      const rows = this.stopRecords?.waits?.() ?? [];
+      wait = rows.length === 0 ? null : describeStopWait({ waitingOn: rows });
+    } catch { wait = null; }
+    if (wait === null) {
+      this._say(`baton serve: a second signal ends the stop; nothing is still waited on (${kind})`);
+      return;
+    }
+    const forced = await this._recordStop('waiting', { wait });
+    this._say(forced?.line
+      ?? `baton serve: a second signal ends the stop, still waiting on ${wait.on}`);
+  }
+
   async serve(signalEmitter = process, onListening = () => {}) {
     if (!signalEmitter || typeof signalEmitter.on !== 'function' || typeof signalEmitter.off !== 'function') {
       throw hostError('signal emitter is invalid');
@@ -761,6 +806,8 @@ export class BatonWebHost {
       shutdown: () => this.shutdown(),
       announce: (trigger) => this._announceIntent(trigger),
       withdrawn: () => this.withdrawn === true,
+      escalate: (kind) => this.escalateStop(kind),
+      exit: (code) => { process.exit(code); },
     });
     const lifecycle = await owner.run(async ({ signal }) => {
       let resolveServer;
