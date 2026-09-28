@@ -53,14 +53,6 @@ ordinary-CLI inventory. The conformance suite fails if they drift from served tr
 | `swarm.update` | `ordinary` | `baton swarm update` | `baton swarm update SWARM_ID swarm.contribution_recorded --payload "finding"` |
 | `swarm.view` | `ordinary` | `baton swarm view` | `baton swarm view SWARM_ID` |
 | `swarm.watch` | `ordinary` | `baton swarm watch` | `baton swarm watch SWARM_ID` |
-| `waves.compile` | `ordinary` | `baton waves compile` | `baton waves compile path/to/spec.dsl` |
-| `waves.harvest` | `ordinary` | `baton waves harvest` | `baton waves harvest run:1 --onto /srv/checkout` |
-| `waves.list` | `ordinary` | `baton waves list` | `baton waves list` |
-| `waves.progress` | `ordinary` | `baton waves progress` | `baton waves progress WAVE_ID --cursor 0` |
-| `waves.run` | `ordinary` | `baton waves run` | `baton waves run path/to/spec.json` |
-| `waves.send` | `ordinary` | `baton waves send` | `baton waves send RUN_ID --message TEXT` |
-| `waves.start` | `ordinary` | `baton waves start` | `baton waves start --members JSON` |
-| `waves.stop` | `ordinary` | `baton waves stop` | `baton waves stop RUN_ID --reason TEXT` |
 
 <!-- END GENERATED: cli-verb-inventory -->
 
@@ -89,7 +81,6 @@ unknown-verb refusal names, so the three can never disagree about the verb set a
 | `baton evidence search` | `evidence search` | Search the deployment’s evidence and contributions by swarm, participant, kind, path or free text. |
 | `baton services list` | `services list` | List the deployment’s configured provider services: models, derived routes, and subscription-window usage with its reset instant. |
 | `baton deployment watch (or wakes-since)` | `deployment watch --follow` | Attach to the deployment wake stream and print one JSON frame per coordination row; `wakes-since` reads one bounded page instead. |
-| `baton waves` | `waves list` | Run, compile, start, stop and inspect workflow waves. |
 | `baton runs list [--cursor CURSOR]` | `runs list` | List the Runs this authenticated connection may observe. |
 | `baton help [TOPIC]` | `help` | Render one help topic; `baton --help` is the application overview. |
 | `baton application help [TOPIC]` | `application help` | The application help verb, spelled under its own noun. |

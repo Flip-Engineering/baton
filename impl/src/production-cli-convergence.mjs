@@ -100,10 +100,6 @@ function validateWatchArgs(args, target) {
     || typeof args.runId !== 'string' || !/^[A-Za-z0-9._:-]{1,256}$/u.test(args.runId)) {
     throw new BatonControlError('surface_watch_invalid', 'surface watch requires a valid runId', { field: 'runId' });
   }
-  if (args.waveId !== undefined
-    && (typeof args.waveId !== 'string' || !/^[A-Za-z0-9._:-]{1,256}$/u.test(args.waveId))) {
-    throw new BatonControlError('surface_watch_invalid', 'surface watch waveId is invalid', { field: 'waveId' });
-  }
   for (const field of ['afterCursor', 'attentionCursor']) {
     if (args[field] !== undefined && (!Number.isSafeInteger(args[field]) || args[field] < 0)) {
       throw new BatonControlError('surface_watch_invalid', `${field} must be a non-negative safe integer`, { field });
@@ -123,7 +119,6 @@ function validateWatchArgs(args, target) {
   }
   return Object.freeze({
     runId: args.runId,
-    waveId: args.waveId ?? null,
     afterCursor: args.afterCursor ?? 0,
     attentionCursor: args.attentionCursor ?? 0,
     kind: args.kind ?? null,
@@ -179,17 +174,15 @@ export function wrapProductionCliClient(client, { runtime = new ProductionConver
         };
       }
       if (key === 'surfaceSnapshot') {
-        return async ({ runId = null, waveId = null } = {}) => {
-          // #250: a frame is BOUNDED reads — never the list projections. runs.list and
-          // waves.list are the #210/#216 furnaces (101.8s per waves_list measured on the
-          // campaign ledger); firing them per frame (the default 1s refresh) wedges the
-          // resident. The un-scoped frame reads doctor (pulse/routes); scoped frames add
-          // their bounded projections. The visual model consumes run.value.workstreams +
-          // doctor only — the roster rides the run-scoped frame, never runs.list.
+        return async ({ runId = null } = {}) => {
+          // #250: a frame is BOUNDED reads — never the list projections. runs.list is the
+          // #210/#216 furnace; firing it per frame (the default 1s refresh) wedges the resident.
+          // The un-scoped frame reads doctor (pulse/routes); scoped frames add their bounded
+          // projections. The visual model consumes run.value.workstreams + doctor only — the
+          // roster rides the run-scoped frame, never runs.list.
           const requests = {
             doctor: Promise.resolve().then(() => target.doctor()),
             ...(runId ? { run: Promise.resolve().then(() => target.command('run.inspect', { runId, depth: 'outline' })) } : {}),
-            ...(waveId ? { wave: Promise.resolve().then(() => target.command('waves.progress', { waveId })) } : {}),
           };
           const entries = Object.entries(requests);
           const values = await Promise.allSettled(entries.map(([, promise]) => promise));
@@ -211,7 +204,6 @@ export function wrapProductionCliClient(client, { runtime = new ProductionConver
             throw new BatonControlError('surface_visualization_invalid', `view must be one of ${[...VISUAL_VIEWS].join(', ')}`, { field: 'view' });
           }
           const runId = input.runId ?? null;
-          const waveId = input.waveId ?? null;
           const width = input.width ?? 96;
           const follow = input.follow === true;
           const afterCursor = input.afterCursor ?? 0;
@@ -225,7 +217,7 @@ export function wrapProductionCliClient(client, { runtime = new ProductionConver
               { field: 'runId' },
             );
           }
-          const snapshot = await receiver.surfaceSnapshot({ runId, waveId });
+          const snapshot = await receiver.surfaceSnapshot({ runId });
           // The swarm family (docs/38, issue #315): the same bounded read the operator
           // seat consumes, so the visualization serves the same rows. A resident without
           // a readable swarm family is carried as a named unavailability, never as blank.
@@ -236,7 +228,6 @@ export function wrapProductionCliClient(client, { runtime = new ProductionConver
           if (follow) {
             watch = await receiver.surfaceWatch({
               runId,
-              ...(waveId === null ? {} : { waveId }),
               afterCursor,
               attentionCursor,
               ...(kind === null ? {} : { kind }),
@@ -292,7 +283,6 @@ export function wrapProductionCliClient(client, { runtime = new ProductionConver
               refresh: Object.freeze({
                 view,
                 runId,
-                waveId,
                 width,
                 follow,
                 afterCursor: nextAfterCursor,
@@ -324,11 +314,6 @@ export function wrapProductionCliClient(client, { runtime = new ProductionConver
             run: Promise.resolve().then(() => target.command('run.inspect', {
               runId: args.runId, depth: 'outline',
             })),
-            ...(args.waveId === null ? {} : {
-              wave: Promise.resolve().then(() => target.command('waves.progress', {
-                waveId: args.waveId,
-              })),
-            }),
           };
           const entries = Object.entries(requests);
           const outcomes = await Promise.allSettled(entries.map(([, promise]) => promise));
@@ -348,7 +333,6 @@ export function wrapProductionCliClient(client, { runtime = new ProductionConver
             kind: 'baton.surface_watch',
             source: 'cli_authenticated_web',
             runId: args.runId,
-            waveId: args.waveId,
             afterCursor: args.afterCursor,
             attentionCursor: args.attentionCursor,
             nextAfterCursor: Number.isSafeInteger(follow?.cursor)
