@@ -250,6 +250,22 @@ def started(+db: String, +worker: String, +id: String, +log: String, prompt: Str
         first : Result<&1,&1,U32 & String,Maybe<String>> <- P.ProcessChild.read_line(handle)
         consume(db,worker,id,log,handle,harness,"0\n","","","","",sender,first)
 
+# The retained process sends its initial input once. Reattachment reads the same
+# attempt from its first frame so native completion can be reconstructed.
+def retained_output(db: String, worker: String, id: String, log: String, +harness: String, +handle: U32) -> IO(Outcome):
+  do IO<Outcome>:
+    sender : Chan(Result<&1,&1,U32 & String,Unit>) <- IO.fork(Result<&1,&1,U32 & String,Unit>,IO.pure(Result<&1,&1,U32 & String,Unit>,Done{Unit{}}))
+    first : Result<&1,&1,U32 & String,Maybe<String>> <- P.ProcessChild.read_line(handle)
+    consume(db,worker,id,log,handle,harness,"0\n","","","","",sender,first)
+
+def retained(+db: String, +worker: String, directory: String, +cmd: String, +model: String, +effort: String, cwd: String, +log: String, +session: String, +harness: String, +sessions: String, +prompt: String, lock: U32, recovery: String) -> IO(Result<&1,&1,U32 & String,P.RetainedStart>):
+  do IO<Result<&1,&1,U32 & String,P.RetainedStart>>:
+    alternate : String <- IO.try(String,DB.Sql.query(db,"SELECT CASE WHEN " ++ C.q(sessions) ++ "=" ++ C.q(db ++ ".sessions") ++ " THEN CASE WHEN parent IS NULL THEN " ++ C.q(db ++ ".root-sessions") ++ " ELSE " ++ C.q(db ++ ".session-") ++ " || lower(hex(id)) END ELSE " ++ C.q(db ++ ".sessions") ++ " END FROM sessions WHERE id=" ++ C.q(worker) ++ ";"))
+    +native : String <- Omp.resume_file(sessions,Tx.trim_nl(alternate),session,Bool.and(String.eq(harness,"omp\n"),Bool.not(String.is_empty(session))))
+    args : String <- IO.pure(String,Bool.pick(String,String.eq(harness,"omp\n"),Omp.argv(cmd,model,effort,sessions,native,String.is_empty(native)),Codex.argv(cmd,model,effort,native,String.is_empty(native))))
+    input : String <- IO.pure(String,Bool.pick(String,String.eq(harness,"omp\n"),Omp.prompt(prompt),prompt))
+    P.ProcessChild.retain(directory,args,cwd,log ++ ".stderr",input,Bool.pick(U32,String.eq(harness,"omp\n"),1,0),lock,recovery)
+
 def claude_launch(cmd: String, model: String, effort: String, cwd: String, stderr: String, session: String, fresh: Bool) -> IO(Result<&1,&1,U32 & String,U32>):
   match fresh:
     case True{}: Claude.start_worker(cmd,model,effort,cwd,stderr)

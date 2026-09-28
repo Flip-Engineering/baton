@@ -21,12 +21,20 @@ def pending(+db: String, worker: String, handle: U32, +cursor: String) -> IO(Str
     +next : String <- IO.try(String,DB.Sql.query(db,"SELECT coalesce((SELECT seq FROM messages WHERE recipient=" ++ C.q(worker) ++ " AND kind='guidance' AND receipt IS NULL AND seq>CAST(" ++ C.q(cursor) ++ " AS INTEGER) ORDER BY seq LIMIT 1),CAST(" ++ C.q(cursor) ++ " AS INTEGER));"))
     send(db,handle,cursor,next,String.eq(cursor,next))
 
-def continued(db: String, worker: String, handle: U32, cursor: String, ended: Bool) -> IO(String):
+# Completed attempts can be replayed while later work owns the session.
+def pending_live(db: String, worker: String, handle: U32, cursor: String, exited: U32) -> IO(String):
+  match exited:
+    case 0: pending(db,worker,handle,cursor)
+    case other: IO.pure(String,cursor)
+
+def continued(db: String, worker: String, +handle: U32, cursor: String, ended: Bool) -> IO(String):
   match ended:
     case True{}: do IO<String>:
       closed : Unit <- IO.try(Unit,P.ProcessChild.close_stdin(handle))
       IO.pure(String,cursor)
-    case False{}: pending(db,worker,handle,cursor)
+    case False{}: do IO<String>:
+      exited : U32 <- IO.try(U32,P.ProcessChild.exited(handle))
+      pending_live(db,worker,handle,cursor,exited)
 
 # A native steer response records acceptance; the cursor covers this process's sends.
 def observe(+db: String, +worker: String, handle: U32, +event: String, cursor: String, enabled: Bool) -> IO(String):
