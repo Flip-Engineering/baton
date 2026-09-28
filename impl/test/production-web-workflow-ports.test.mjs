@@ -132,10 +132,10 @@ test('workflow Web port adapter refuses undeclared, credential-shaped and mismat
   const secret = await executeProductionWorkflowWebPort(
     second.northbound,
     ctx,
-    envelope('run_scratchpad_elevate', {
-      runId: 'run:a', taskId: 'task:a', entryIds: [{ token: 'not-accepted' }],
+    envelope('run_message_send', {
+      runId: 'run:a', kind: 'nudge', body: { token: 'not-accepted' },
     }, 'secret'),
-    PRODUCTION_WORKFLOW_WEB_PORTS.run_scratchpad_elevate,
+    PRODUCTION_WORKFLOW_WEB_PORTS.run_message_send,
   );
   assert.equal(secret.status, 400);
   assert.equal(secret.body.error.code, 'invalid_command');

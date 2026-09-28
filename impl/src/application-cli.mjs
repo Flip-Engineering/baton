@@ -71,7 +71,7 @@ const CLI_CARD_WAVE_PORTS = Object.freeze([
 ]);
 const CLI_CARD_LEDGERED_PORTS = Object.freeze([
   'run.message.send', 'run.message.receipt', 'run.attention.watch', 'run.scratchpad.read',
-  'run.scratchpad.elevate', 'run.knowledge.seed',
+  'run.knowledge.seed',
   'waves.compile',
   // Issue #99/#179: the accessor's two ledgered direct ports (Decision 5).
   'run.resultpin', 'waves.harvest',
@@ -4280,21 +4280,6 @@ export function parseBatonCli(rawArgs) {
       return {
         kind: 'command', name: 'run.scratchpad.append',
         args: { runId: runIdValue, scope, ...(kind === null ? {} : { kind }), body },
-        idempotencyKey,
-      };
-    }
-    if (sub === 'elevate') {
-      const runIdValue = id(args.shift(), 'Run ID');
-      const taskId = take(args, '--task', { required: true });
-      const entriesRaw = take(args, '--entries', { required: true });
-      noRemainder(args);
-      id(taskId, 'task ID');
-      let entryIds;
-      try { entryIds = JSON.parse(entriesRaw); } catch { throw cliError('--entries must be JSON'); }
-      if (!Array.isArray(entryIds)) throw cliError('--entries must be a JSON array');
-      return {
-        kind: 'command', name: 'run.scratchpad.elevate',
-        args: { runId: runIdValue, taskId, entryIds },
         idempotencyKey,
       };
     }

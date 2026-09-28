@@ -1013,9 +1013,6 @@ const sessionAuthoritySchema = objectSchema({
 
 // S-3 is a registry delta, not a second inventory. Consumers use this ordered key projection to
 // select exactly the rows whose live shared-layer methods are surfaced by the matrix.
-// MCP-W2 (mcp-packaging-decisions v1.0): scratchpad.elevate / scratchpad.settle /
-// knowledge.promote leave the REFLEX matrix — they are the ordinary-surface settlement tools
-// (their MCP tools live in the ordinary table), so the matrix projection no longer derives them.
 export const SURFACING_MATRIX_KEYS = Object.freeze([
   'run.scratchpad', 'decision.list',
   'package.admit', 'package.attach', 'package.read', 'repl.manifest', 'repl.binding',
@@ -1024,24 +1021,16 @@ export const SURFACING_MATRIX_KEYS = Object.freeze([
 const SURFACING_MATRIX_AUTHORITY = Object.freeze({
   'run.scratchpad': 'viewer-scoped worker and shared slices',
   'decision.list': 'Run-scoped observe authorization; deadlineAt is projected',
-  'scratchpad.elevate': 'orchestrator-admit; candidate Finding mint is unchanged',
-  'scratchpad.settle': 'orchestrator-admit',
   'package.admit': 'S-2 session authority and package-to-Run binding',
   'package.attach': 'S-2 session authority; run/worker scope grammar',
   'package.read': 'resolved content remains provenance-marked untrusted prose',
   'repl.manifest': 'worker manifests remain restricted to the worker own layer',
   'repl.binding': 'binding version CAS remains authoritative',
   'repl.cite': 'role-scoped citation projection',
-  'knowledge.promote': 'run-orchestrator lease gates workflow Finding admission',
   'knowledge.recall': 'deployment-bounded recall policy',
   'knowledge.horizon': 'viewer-scoped; non-orchestrators must be owned workers',
 });
 
-// KG settlement D2: knowledge.promote's liveMethod names the store admission gate (KS3). It is
-// assembled rather than written as one literal so kg-activation's A5 source-scan — which asserts
-// no src surface OUTSIDE the store/coordinator textually references the gate as a live call — reads
-// this registry label as the pure metadata it is, never a call site.
-const KNOWLEDGE_PROMOTE_LIVE_METHOD = `admitWorkflow${'Finding'}`;
 
 // Every §6 canonical operation: an authority `source` (an `operations` name or an `actions` kind
 // the entry inherits schema/effect/capabilities/durability from) plus the fields the source cannot
@@ -1264,26 +1253,6 @@ const CANONICAL_OPERATION_SPECS = [
     authorityFields: ['packageDigest'], serverDerived: ['viewer'],
     liveMethod: 'contextPackageBranch + projectContextPackageBranch',
   }],
-  ['scratchpad.elevate', {
-    profile: 'kernel', surfaces: ['embedded', 'mcp'], effect: 'control', capabilities: ['control'],
-    outputView: 'outline', helpTopic: 'run', inputSchema: objectSchema({
-      runId: id, taskId: id, workerId: id,
-      expectedScratchpadFence: { type: 'integer', minimum: 0 },
-      entryIds: { type: 'array', uniqueItems: true,
-        items: { type: 'string', pattern: '^scratchpad-entry:[a-f0-9]{64}$' } },
-    }, ['runId', 'taskId', 'workerId', 'expectedScratchpadFence', 'entryIds']),
-    authorityFields: ['runId', 'taskId', 'workerId', 'expectedScratchpadFence'],
-    serverDerived: ['actor'], liveMethod: 'elevateTaskScratchpad',
-  }],
-  ['scratchpad.settle', {
-    profile: 'kernel', surfaces: ['embedded', 'mcp'], effect: 'control', capabilities: ['control'],
-    outputView: 'outline', helpTopic: 'run', inputSchema: objectSchema({
-      runId: id, expectedScratchpadFence: { type: 'integer', minimum: 0 },
-      skips: { type: 'array', items: { type: 'object' } },
-    }, ['runId', 'expectedScratchpadFence', 'skips']),
-    authorityFields: ['runId', 'expectedScratchpadFence'], serverDerived: ['actor'],
-    liveMethod: 'settleWorkflowScratchpad',
-  }],
   ['repl.manifest', {
     profile: 'kernel', surfaces: ['embedded'], effect: 'control', capabilities: ['control'],
     outputView: 'outline', helpTopic: 'run', inputSchema: objectSchema({
@@ -1307,25 +1276,6 @@ const CANONICAL_OPERATION_SPECS = [
     inputSchema: objectSchema({ runId: id, citation: { type: 'string', minLength: 1 } },
       ['runId', 'citation']),
     authorityFields: ['runId'], serverDerived: ['viewer'], liveMethod: 'resolveReplCitation',
-  }],
-  ['knowledge.promote', {
-    profile: 'kernel', surfaces: ['embedded', 'mcp'], effect: 'control', capabilities: ['control'],
-    outputView: 'outline', helpTopic: 'run', inputSchema: objectSchema({
-      runId: id, candidateFindingId: id, policy: { type: 'object' }, lease: { type: 'object' },
-    }, ['runId', 'candidateFindingId', 'policy', 'lease']),
-    authorityFields: ['runId', 'lease'], serverDerived: ['repoId', 'actor'],
-    liveMethod: KNOWLEDGE_PROMOTE_LIVE_METHOD,
-  }],
-  // KG settlement D2 embedded kernel: materialize the wave settlement run + parent task + lease,
-  // sweep prior expired leases, and candidate each elevated note. The session is server-derived
-  // from the calling principal; the row is embedded-only like its settlement siblings.
-  ['knowledge.settlement_lease', {
-    profile: 'kernel', surfaces: ['embedded', 'mcp'], effect: 'control', capabilities: ['control'],
-    outputView: 'outline', helpTopic: 'run', inputSchema: objectSchema({
-      waveId: id, members: { type: 'array', items: id },
-    }, ['waveId']),
-    authorityFields: ['waveId'], serverDerived: ['actor', 'principalId', 'sessionId'],
-    liveMethod: 'settlementLease',
   }],
   // Issue #66 (D4): answer or dismiss one raised doubt. Embedded-only like its settlement
   // siblings; the resolve authority is the server-re-derived run-orchestrator lease — never a
@@ -1527,15 +1477,6 @@ const CANONICAL_OPERATION_SPECS = [
       runId: id, scope: { type: 'string', pattern: '^(?:shared|worker:[A-Za-z0-9._:-]{1,256})$' },
       cursor: { type: 'integer', minimum: 0 },
     }, ['runId', 'scope']),
-  }],
-  ['run.scratchpad.elevate', {
-    profile: 'ordinary', surfaces: ['embedded', 'mcp', 'cli'], effect: 'control',
-    capabilities: ['control', 'observe'], outputView: 'outline', helpTopic: 'run',
-    example: 'baton run scratchpad elevate RUN_ID --task TASK_ID --entries JSON',
-    inputSchema: objectSchema({
-      runId: id, taskId: id,
-      entryIds: { type: 'array', uniqueItems: true, items: { type: 'string', pattern: '^scratchpad-entry:[a-f0-9]{64}$' } },
-    }, ['runId', 'taskId', 'entryIds']),
   }],
   // #158 (H2.1) / 2026-09-14 audit U-E3: ONE row. The duplicate declaration (the first was
   // observe-only, string-body, body-required; the second control-classed, JSON-bodied,

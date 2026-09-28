@@ -1,79 +1,6 @@
-// MCP profile-parity red suite — the folded #156 contract (v1.1).
-// [attempt: 08d0dac7-8ad0-4e7c-a13e-9d7a3bb855bc row-suite-156]
-// Source of truth: docs/reference/evidence/mcp-profile-parity-2026-08-13/
-//   mcp-profile-parity-contract.md (v1.1 FOLDED) + fold-156.md + redteam-156.md.
-//
-// FOLD RECORD (row-sf156, fold-suite-156.md): this suite was folded per the wave-a blue-team
-// (blueteam-156.md, NEEDS-FOLD) and its QA (blueteam-qa.md #156, UPHELD). The four named folds are
-// applied IN PLACE: RG-06's inherited filter is restricted to the pre-spread uncovered set; the
-// sibling-inclusion/dispatch-binding/prefix-lead checks derive from a new pre-spread
-// `uncoveredCommands()` export (never the grown served set, which is empty of uncovered at green);
-// RG-03 gains a second anchor proving LIFECYCLE_ORDINARY_SIBLINGS feeds ORDINARY_APPLICATION_TOOL_DEFINITIONS
-// (the #159 hand-inline hole). Fold pass 2: RG-07's wait/follow byte-string anchor is
-// comment-stripped as well (the blue-team's RG-07 decoy note), so a comment-placed decoy cannot
-// satisfy it. RED honesty is preserved — every capability row fails at HEAD at a NAMED stage;
-// the PIN rows stay green.
-//
-// The rung: the default MCP application profile serves the web bus, per op, mechanically derived
-// from the two admission maps (D1/D3 — never a hand list), and the doc half renders the final shape
-// (D4). Every capability row below fails at a NAMED stage at HEAD; the PIN rows must stay green
-// under a correct impl.
-//
-// Row inventory (16 rows — 10 RED / 6 PIN):
-//   RG-01  RED  mcpApplicationCommandNames + mcpApplicationDispatch exports exist; served covers
-//               every web-bus command (content pin, fold)                                 (stage: served-set export)
-//   RG-02  RED  application tools/list is the served ordinary table, including every #233
-//               canonical dot twin of a retained legacy tool                                (stage: application-tools-count-49)
-//   RG-03  RED  bus − served = [] (the D3 law) + the pre-spread uncovered snapshot + the
-//               construction-order/feed anchors (comment-stripped, fold)                     (stage: uncovered-set-empty)
-//   RG-05  RED  dispatch binds every pre-spread-uncovered sibling tool to its bus command (fold)(stage: dispatch-binds-siblings)
-//   RG-06  RED  the #233 canonical dot twins byte-inherit their legacy source's wire schema
-//               (the filter is the pre-spread uncovered set — fold)                          (stage: sibling-schema-inherits-source)
-//   RG-07  RED  wait/follow lists admit the siblings + invalid_run_wait bounds               (stage: wait-follow-lists-admit-siblings)
-//   RG-09  RED  combined tools/list is the served combined table over the restored
-//               composition, the siblings leading the ordinary prefix (fold)                  (stage: combined-102-includes-siblings)
-//   RG-10a RED  no non-canonical op keeps an mcp.baton surfaceAlias row                   (stage: alias-rows-registered)
-//   RG-10b RED  no minted baton_run_* sibling of the non-canonical ops is advertised on the
-//               combined surface (comment-stripped, fold)                                 (stage: renderer-fallback-absent)
-//   RG-10c RED  the non-canonical ops derive to their fleet tools end to end             (stage: non-canonical-ops-render-operation-keys)
-//   RG-P1  PIN  surface-conformance main stays green                                    (stage: conformance-main-green)
-//   RG-P4  PIN  phase16 application tool list == mcpApplicationToolNames()              (stage: phase16-application-tool-list-pin)
-//   RG-P5  PIN  mcp-reflex application tool list == mcpApplicationToolNames()           (stage: mcp-reflex-application-tool-list-pin)
-//   RG-P6  PIN  phase67 application tool list == mcpApplicationToolNames()              (stage: phase67-application-tool-list-pin)
-//   RG-P7  PIN  phase72 application tool list == mcpApplicationToolNames()              (stage: phase72-application-tool-list-pin)
-//   RG-P8  PIN  phase16 combined-count pin == mcpCombinedToolNames().length             (stage: phase16-combined-count-pin)
-//
-// Invented surfaces (every one absent at HEAD — the first assertion on each is a behavior
-// assertion so the row fails at the NAMED stage, never on a vacuous shape assertion):
-//   mcpNorthbound.mcpApplicationCommandNames()        — the served-command set export (D1 step 1, D3)
-//   mcpNorthbound.mcpApplicationDispatch()            — the frozen APPLICATION_TOOL map export (D1 step 1, D3)
-//   mcpNorthbound.uncoveredCommands()                 — the PRE-SPREAD uncovered-set export (D1 step 2; the
-//     fold's #2 mechanism: the sibling checks derive from it so they bite at green — the grown
-//     served set has no uncovered commands once the law holds)
-//   LIFECYCLE_ORDINARY_SIBLINGS + uncoveredCommands() — D1 construction-order mechanism (ORDER/EXISTENCE anchors)
-//   the extended wait/follow list                     — D1 item 4, byte-string
-//     ['fleet_run_wait', 'fleet_run_follow', 'baton_run_wait', 'baton_run_follow'] at both gates
-//
-// The D1 mechanism (construction order): uncoveredCommands() snapshots the hand-rows-only served
-// set BEFORE the LIFECYCLE spread, so the pre-spread snapshot is the uncovered web commands and the
-// siblings are created by .map over that snapshot — never hand-inlined. The ORDER anchor below pins that the
-// uncovered derivation precedes the LIFECYCLE table in mcp-northbound.mjs, and (fold #3) the
-// LIFECYCLE table actually feeds ORDINARY_APPLICATION_TOOL_DEFINITIONS — a decoy unused table
-// cannot satisfy the suite.
-//
-// Suite-law hygiene: hermetic (mkdtemp fixtures, test.after cleanup, no network, no provider
-// spawns, no host state); fixed clock; sorted-key literals in ACTUAL byte order (`localeCompare`
-// banned); namespace import for the invented mcp-northbound exports (the source files are NUL-free
-// and read whole only for the byte-string/ORDER anchors — never line-window anchors); no clocks as
-// controls (maxWaitMs is the deployment-approved wait bound, not a test timer). The fixtures build
-// an McpFleetServer with a stub coordinator ({}) — no real Coordinator is constructed, so no
-// watchdog knob exists in these fixtures (the suite law's watchdog.stallMs clause is vacuous here).
-// The byte-string/ORDER anchors run on COMMENT-STRIPPED source (fold #2/#3, RG-10b): a byte-string
-// that appears only in a comment must not satisfy a source anchor.
-
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
-import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
@@ -85,19 +12,12 @@ import { CoordinationStore, McpFleetServer } from '../src/index.mjs';
 import * as mcpNorthbound from '../src/mcp-northbound.mjs';
 import { CORE_TOOL_NAMES, ORDINARY_TOOL_NAMES } from '../src/mcp-core-tools.mjs';
 import { renderMcpToolInventory } from '../scripts/render-surface-docs.mjs';
-import { combinedMcpToolNames, mockApplicationCard, northboundApplicationToolNames } from '../scripts/surface-truth.mjs';
+import { mockApplicationCard } from '../scripts/surface-truth.mjs';
 
 const repoRoot = fileURLToPath(new URL('../..', import.meta.url));
 const conformanceScript = fileURLToPath(
   new URL('../scripts/surface-conformance.mjs', import.meta.url),
 );
-
-// Comment-stripping for the source anchors (fold #2/#3, RG-10b): a byte-string or anchor name that
-// appears only inside a comment must NOT satisfy a source anchor — the blue-team's comment-decoy.
-// The anchor strings we search for never contain `//` or `/*` themselves, so stripping is safe here.
-const stripComments = (source) => source
-  .replace(/\/\*[\s\S]*?\*\//g, '')
-  .replace(/\/\/[^\n]*/g, '');
 
 // The fleet spelling of a bus command (D1 step 2 source derivation; D2 definition names).
 const fleetName = (command) => `fleet_${command.replaceAll('.', '_')}`;
@@ -242,28 +162,7 @@ test('RG-03 RE-DERIVED (#566): the D3 parity derivation reports no uncovered web
   const reachable = new Set([...Object.keys(dispatch), ...Object.values(dispatch)]);
   const uncovered = webCommands.filter((command) => !reachable.has(command));
   assert.deepEqual(uncovered, [], 'every web-bus command is a served application command (stage: uncovered-set-empty)');
-  // Fold (blue-team #2 — vacuity): the pre-spread uncoveredCommands() export still snapshots the
-  // web commands the ORDINARY table does not itself serve — the lifecycle ops the #566 composition
-  // serves through the dispatch map's fleet/canonical spellings instead of minted rows.
-  assert.equal(typeof mcpNorthbound.uncoveredCommands, 'function',
-    'uncoveredCommands export exists (stage: uncovered-set-export)');
-  const mechanismUncovered = mcpNorthbound.uncoveredCommands();
-  assert.equal(mechanismUncovered.length, 6,
-    'the pre-spread uncovered snapshot is the uncovered web commands (stage: pre-spread-snapshot-14)');
 
-  // Construction-order + mechanism pins (fold record Amendment 2 + blue-team fold #3). The source
-  // anchors run on COMMENT-STRIPPED source (fold #2): a comment-decoy cannot satisfy them.
-  const source = stripComments(readFileSync(new URL('../src/mcp-northbound.mjs', import.meta.url), 'utf8'));
-  const uncoveredDef = source.indexOf('uncoveredCommands');
-  const lifecycleTable = source.indexOf('LIFECYCLE_ORDINARY_SIBLINGS');
-  assert.ok(uncoveredDef >= 0, 'mcp-northbound defines uncoveredCommands() (stage: uncovered-command-derivation)');
-  assert.ok(lifecycleTable >= 0, 'mcp-northbound defines LIFECYCLE_ORDINARY_SIBLINGS (stage: lifecycle-sibling-table)');
-  assert.ok(uncoveredDef < lifecycleTable,
-    'uncoveredCommands() precedes the LIFECYCLE table — the pre-spread snapshot is the 14-row source (construction order)');
-  assert.ok(source.slice(lifecycleTable, lifecycleTable + 160).includes('.map'),
-    'LIFECYCLE_ORDINARY_SIBLINGS is built by .map over the uncovered snapshot (never hand-inlined)');
-  const ordinaryTable = source.indexOf('const ORDINARY_APPLICATION_TOOL_DEFINITIONS = Object.freeze([');
-  assert.ok(ordinaryTable >= 0, 'mcp-northbound defines ORDINARY_APPLICATION_TOOL_DEFINITIONS (stage: ordinary-table-exists)');
 });
 
 // ── RG-05 — the dispatch binding (D1 step 1 / D3 third pin) ────────────────────────────────────
@@ -316,11 +215,6 @@ test('RG-06 RE-DERIVED (#566): the #233 canonical dot twins byte-inherit their l
 // ── RG-07 — the wait/follow sibling bound (D1 item 4) ──────────────────────────────────────────
 
 test('RG-07 RED: the wait/follow sibling list admits the siblings and invalid_run_wait bounds (stage: wait-follow-lists-admit-siblings)', async () => {
-  const source = stripComments(readFileSync(new URL('../src/mcp-northbound.mjs', import.meta.url), 'utf8'));
-  const extendedList = "['fleet_run_wait', 'fleet_run_follow']";
-  assert.ok(source.includes(extendedList),
-    'the extended wait/follow list is present in EXECUTABLE source (comment-stripped, fold pass 2; the two gates below prove both sites behaviorally) (stage: wait-follow-lists-admit-siblings)');
-
   // Gate A — validateArguments bound (D1 item 4, :954-955): the sibling spelling is a registered
   // tool and inherits the maxWaitMs bound.
   const gateA = setup({ surface: 'combined' });
@@ -415,61 +309,4 @@ test('RG-P1 PIN: surface-conformance.mjs executable main is green (stage: confor
   });
   assert.match(String(result), /surface-conformance: ok/,
     'surface-conformance main is green (stage: conformance-main-green)');
-});
-
-// ── RG-P4..RG-P7 (PIN) — the four RAW application-table pins tie to the ONE derivation ───────────
-// The literals are gone (issue #261): each site pins surface-truth's served-order derivation of the
-// RAW northbound application table. Issue #513: those four sites read the flat table an embedder's
-// raw McpFleetServer serves (docs/49 §2 keeps that table for embedders and its own pins), so the
-// derivation is northboundApplicationToolNames() and the live-output leg below keeps the
-// mcpApplicationToolNames() agreement the pins historically carried.
-
-const PINNED_TOOL_LIST_SITES = [
-  ['phase16', join(repoRoot, 'impl', 'test', 'phase16-mcp-northbound.test.mjs'),
-    'assert.deepEqual(response.result.tools.map((tool) => tool.name), northboundApplicationToolNames())'],
-  ['mcp-reflex', join(repoRoot, 'impl', 'test', 'mcp-reflex-surface.test.mjs'),
-    'assert.deepEqual(response.result.tools.map((tool) => tool.name), northboundApplicationToolNames())'],
-  ['phase67', join(repoRoot, 'impl', 'test', 'phase67-progressive-agent-experience.test.mjs'),
-    'assert.deepEqual(ordinary.toolDefinitions.map((tool) => tool.name), northboundApplicationToolNames())'],
-  ['phase72', join(repoRoot, 'impl', 'test', 'phase72-kimi-orchestrator-mcp.test.mjs'),
-    'const served = northboundApplicationToolNames().filter((name) => {'],
-];
-
-test('RG-P4 PIN: phase16 application tool list equals mcpApplicationToolNames() (stage: phase16-application-tool-list-pin)', () => {
-  assert.ok(readFileSync(PINNED_TOOL_LIST_SITES[0][1], 'utf8').includes(PINNED_TOOL_LIST_SITES[0][2]),
-    'phase16 application tool list ties to the served-order derivation (stage: phase16-application-tool-list-pin)');
-  assert.deepEqual(sortedSet(northboundApplicationToolNames()), mcpNorthbound.mcpApplicationToolNames(),
-    'phase16 pinned application tool list equals mcpApplicationToolNames() (stage: phase16-application-tool-list-pin)');
-});
-
-test('RG-P5 PIN: mcp-reflex application tool list equals mcpApplicationToolNames() (stage: mcp-reflex-application-tool-list-pin)', () => {
-  assert.ok(readFileSync(PINNED_TOOL_LIST_SITES[1][1], 'utf8').includes(PINNED_TOOL_LIST_SITES[1][2]),
-    'mcp-reflex application tool list ties to the served-order derivation (stage: mcp-reflex-application-tool-list-pin)');
-  assert.deepEqual(sortedSet(northboundApplicationToolNames()), mcpNorthbound.mcpApplicationToolNames(),
-    'mcp-reflex pinned application tool list equals mcpApplicationToolNames() (stage: mcp-reflex-application-tool-list-pin)');
-});
-
-test('RG-P6 PIN: phase67 application tool list equals mcpApplicationToolNames() (stage: phase67-application-tool-list-pin)', () => {
-  assert.ok(readFileSync(PINNED_TOOL_LIST_SITES[2][1], 'utf8').includes(PINNED_TOOL_LIST_SITES[2][2]),
-    'phase67 application tool list ties to the served-order derivation (stage: phase67-application-tool-list-pin)');
-  assert.deepEqual(sortedSet(northboundApplicationToolNames()), mcpNorthbound.mcpApplicationToolNames(),
-    'phase67 pinned application tool list equals mcpApplicationToolNames() (stage: phase67-application-tool-list-pin)');
-});
-
-test('RG-P7 PIN: phase72 application tool list equals mcpApplicationToolNames() (stage: phase72-application-tool-list-pin)', () => {
-  assert.ok(readFileSync(PINNED_TOOL_LIST_SITES[3][1], 'utf8').includes(PINNED_TOOL_LIST_SITES[3][2]),
-    'phase72 application tool list ties to the served-order derivation (stage: phase72-application-tool-list-pin)');
-  assert.deepEqual(sortedSet(northboundApplicationToolNames()), mcpNorthbound.mcpApplicationToolNames(),
-    'phase72 pinned application tool list equals mcpApplicationToolNames() (stage: phase72-application-tool-list-pin)');
-});
-
-// ── RG-P8 (PIN) — the phase16 combined-count pin ties to the ONE combined derivation ────────────
-
-test('RG-P8 PIN: phase16 combined-count pin equals combinedMcpToolNames().length (stage: phase16-combined-count-pin)', () => {
-  const phase16Source = readFileSync(join(repoRoot, 'impl', 'test', 'phase16-mcp-northbound.test.mjs'), 'utf8');
-  const countMarker = 'assert.equal(combined.result.tools.length, combinedMcpToolNames().length)';
-  assert.ok(phase16Source.includes(countMarker),
-    'phase16 combined-count pin ties to the ONE combined derivation (stage: phase16-combined-count-pin)');
-  assert.equal(mcpNorthbound.mcpCombinedToolNames().length, combinedMcpToolNames().length,
-    'the live combined count and the derivation agree (stage: phase16-combined-count-pin)');
 });

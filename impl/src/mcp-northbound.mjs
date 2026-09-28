@@ -159,11 +159,7 @@ const CAPABILITY = Object.freeze({
     .map((tool) => [tool, canonicalOperationForCommand('services.list').capabilities])),
   baton_context_eval: ['observe'],
   baton_decision_answer: ['approve', 'observe'],
-  // MCP-W1/W2/W3 (mcp-packaging-decisions v1.0): the ordinary-surface wave ergonomics, doctor, and
-  // settlement tools. These ride explicit `_dispatch` branches (never APPLICATION_COMMAND_DEFINITIONS
-  // keys), so their capability classes are registered here like the reflex tools. waves.stop is
-  // the member stop lane (emergency_stop); the settlement lease requires the explicit settlement
-  // capability class (single-orchestrator posture — never a default).
+  // Wave and doctor tools use explicit dispatch branches and capability classes.
   baton_waves_start: ['control', 'observe'],
   baton_waves_progress: ['observe'],
   baton_waves_send: ['control', 'observe'],
@@ -204,7 +200,7 @@ const STATEFUL = new Set(['fleet_spawn', 'fleet_goal_define', 'fleet_plan_propos
   'baton_context_eval', 'baton_decision_answer',
   ...SURFACING_MATRIX_MCP_ROWS.filter((operation) => operation.effect === 'control')
     .map((operation) => operation.names.mcp),
-  // MCP-W1/W2: waves.start and the settlement tools are stateful (control effects ride the mcp.call
+  // MCP-W1/W2: waves.start  are stateful (control effects ride the mcp.call
   // admission ledger exactly like the matrix control tools). waves.send/waves.stop deliberately are
   // NOT — their wire schemas carry no idempotencyKey (send/stop are per-runId member lanes whose
   // durable idempotency lives in the member run's own stop/steer primitives), so they dispatch
@@ -216,7 +212,7 @@ for (const [tool, , definition] of ORDINARY_APPLICATION_ENTRIES) if (definition.
 const RECONCILABLE = new Set(['fleet_goal_define', 'fleet_plan_propose', 'fleet_plan_approve', 'baton_context_eval', 'baton_decision_answer',
   ...SURFACING_MATRIX_MCP_ROWS.filter((operation) => operation.effect === 'control')
     .map((operation) => operation.names.mcp),
-  // MCP-W1/W2: waves.start and the settlement tools replay idempotently on retry.
+  // MCP-W1/W2: waves.start  replay idempotently on retry.
   'baton_waves_start',
 
   ...MCP_APPLICATION_ENTRIES.filter(([, , definition]) => definition.mcpStateful && definition.reconcilable).map(([tool]) => tool)]);
@@ -1723,7 +1719,7 @@ function validateArguments(name, args, maxWaitMs = null) {
     return 'invalid_knowledge_horizon';
   }
   // MCP-W1/W2/W3 (mcp-packaging-decisions v1.0): hand-rolled shape guards for the ordinary-surface
-  // wave ergonomics, doctor, and settlement tools (the reflex discipline — Part I: no schema
+  // wave ergonomics, doctor tools (the reflex discipline — Part I: no schema
   // evaluator, hand-rolled validation stays the authority). These tools are explicit `_dispatch`
   // branches, so their args never pass through validateApplicationCommandArgs.
   if (name === 'baton_waves_start') {
@@ -2162,7 +2158,7 @@ export class McpFleetServer {
         protocolVersion: PROTOCOL_VERSION,
         capabilities: { tools: { listChanged: false } },
         serverInfo: { name: 'baton', version: '0.1.0' },
-        instructions: `${flipFace('smile')} baton — reflexive multi-agent orchestration. Waves are the primary surface (start/attach/steer); settlement lanes arrive through the envelope tools. See MCP.md.${repoSentence}${wakeSentence} ${briefingSentence}`,
+        instructions: `${flipFace('smile')} baton — reflexive multi-agent orchestration. Waves provide start, attach and steer operations. See MCP.md.${repoSentence}${wakeSentence} ${briefingSentence}`,
       });
     }
     if (method === 'notifications/initialized') {
