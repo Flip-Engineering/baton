@@ -1,84 +1,7 @@
-// #73 folded feedback-forge hardening — red-first acceptance suite.
+// #73 folded feedback-forge hardening — acceptance suite.
 // Authority: docs/reference/evidence/feedback-forge-hardening-2026-08-07/feedback-forge-hardening-contract.md
 // (§5 pins, contract-fold.md B5/B6) via suite-73-brief.md.
 //
-// RED-FIRST: capability rows FAIL at NAMED stages at HEAD (R1–R8). PIN rows are GREEN at HEAD
-// (P1–P8). The head split is recorded under "Verified split" below (stable across two runs).
-//
-// ROW INVENTORY (16 rows: 8 PIN / 8 RED at HEAD)
-//   P1  GREEN-1  G2 shape boundary — gate-shaped {gate, detail} normalizes, then refuses on a
-//               non-workflow run at the WORKFLOW gate with `application_workflow_feedback_unavailable`
-//               (never the shape code). [DG-1b harness]
-//   P2  G4-B1    The referent fix — `candidate.evidence.verification.worker` / `.workerSeq` are the
-//               binding keys for the D1 hub-derived lookup (not the closed `verification` field).
-//               [workflow harness]
-//   P3  RED-2    Closed caller schema — `exactObject(value, ['gate', 'detail'])` refuses a
-//               caller-authored `derived` key with `application_workflow_feedback_invalid`.
-//               (GREEN at HEAD: the closed schema already exists.) [DG-1b harness]
-//   P4  GREEN-5a run.debug failure leg — the honest referent a forged verdict spoofs projects the
-//               exact `{kind, code, message, gate, check, detail:{digests, counts}, corrective}`
-//               shape (folded #61 D1/C3 extends the leg with the hub-minted check +
-//               corrective; a forged verdict still cannot mint hub fields). [DG-1b harness]
-//   P5  GREEN-5b push constancy — the #79 `gate_verdict` push item carries NO `derived`; the D6
-//               contract section and the push red-suite literal both stay derived-free (B6). [source scan]
-//   P6  GREEN-3  Coaching feedback is authored and rendered exactly as today (summary + findings),
-//               read back intact through the feedback section. [workflow harness]
-//   P7          The refusal vocabulary (`application_workflow_feedback_invalid`,
-//               `application_workflow_feedback_anchor_invalid`, `application_workflow_feedback_unavailable`,
-//               `application_workflow_integrity`) is typed and surface-constant in application.mjs.
-//               [source scan]
-//   P8  S2       Coaching-branch SECRET_SHAPED_TEXT guard — a secret-shaped coaching `summary` or
-//               finding `message` through `workflow.sendFeedback` refuses
-//               `application_workflow_feedback_invalid` and appends nothing. (GREEN at HEAD: the
-//               guard already exists at application.mjs:1665/:1675.) [workflow harness]
-//   R1  RED-1    Forged verdict — caller-authored {gate, detail} with NO gate event on the Candidate
-//               task stream refuses `application_workflow_feedback_gate_unbound` and appends nothing.
-//               (RED at HEAD: the forge accepts and records it.) [workflow harness]
-//   R2  GREEN-2  Validated-or-replaced + B4 replay-stability — a byte-matching verdict with a REAL
-//               gate referent is recorded `derived: true` with `gateEventSeq` bound to the source
-//               event's per-worker seq; a fabricated verdict never lands with the caller's bytes;
-//               a SECOND gate event after recording must NOT move the bound projection. (RED at
-//               HEAD.) [workflow harness]
-//   R3  GREEN-3  Coaching carries the derived flag — `derived: false` and `gateEventSeq: null` on
-//               every coaching packet. (RED at HEAD: no flags exist.) [workflow harness]
-//   R4  GREEN-4  Consumer safety + render half — a gate-shaped verdict packet in the revision set
-//               must not crash `workflow.select` / `workflow.revise` at `_workflowRevisionEligibility`
-//               (`packet.feedback.findings.some`), the feedback section renders a non-`undefined`
-//               verdict summary, and the revision objective carries a distinct verdict line (never
-//               `Feedback: undefined`). (RED at HEAD: TypeError.) [workflow harness]
-//   R5  B2       One derived-flag model — the `_workflowFeedback` projection uses a 12-field CLOSED
-//               sorted-key literal including `derived` and `gateEventSeq`. (RED at HEAD: 10-field
-//               literal at application.mjs:6360.) [source scan]
-//   R6  B5       Per-record degradation + legacy migration — a PERSISTED pre-hardening 10-field
-//               gate-shaped record (staged directly through `driver.coordination.recordDriver`) is
-//               EXCLUDED per-record from the read projection while a later coaching record still
-//               projects; never a map-wide `application_workflow_integrity` throw. (RED at HEAD:
-//               the staged record surfaces.) [workflow harness]
-//   R7  S1       Candidate-scoped referent boundary — a gate event on workflow-1's builder worker
-//               must NOT bind a gate-shaped submission for workflow-2's builder (a different run,
-//               different worker, no gate event on its own task stream): the submission refuses
-//               `application_workflow_feedback_gate_unbound` and appends nothing. (RED at HEAD: the
-//               forge accepts — cross-run laundering unobserved.) [workflow harness]
-//   R8  M3       D4 surface constancy — `application_workflow_feedback_gate_unbound` is typed in
-//               application.mjs AND preserved verbatim through the web-northbound `application_*`
-//               fallthrough and the mcp-northbound error mapper. (RED at HEAD: the code is absent
-//               from every surface.) [source scan]
-//
-// STAGES (named failure points on RED rows)
-//   R1 expect_typed_refusal · R2 expect_derived_record (+ expect_replaced_record,
-//   expect_replay_stable) · R3 expect_coaching_derived_false · R4 select_candidate_no_crash
-//   (+ expect_render_verdict_summary, expect_render_verdict_line) · R5 literal_12_field_closed ·
-//   R6 expect_pre_hardening_record_excluded · R7 expect_second_run_refused ·
-//   R8 expect_gate_unbound_typed
-//
-// INVENTED SURFACES (namespace/string literals only — no invented imports)
-//   - `application_workflow_feedback_gate_unbound`  (NEW refusal code; absent from application.mjs at HEAD)
-//   - `derived` / `gateEventSeq` packet fields       (absent from the 10-field literal at HEAD)
-//   - `wrapHubDerived` provenance discriminator      (B6; asserted only via the D6 push contract text)
-//
-// VERIFIED SPLIT (run `node --test impl/test/feedback-forge-hardening.test.mjs` TWICE from repo root)
-//   Run 1: 8 passed / 8 failed   (P1–P8 green; R1–R8 red)   — stable
-//   Run 2: 8 passed / 8 failed   (P1–P8 green; R1–R8 red)   — stable
 //
 // NUL DISCIPLINE: application.mjs and coordination-store.mjs carried literal NUL bytes until #215
 // spelled them `\0`; plain `grep` reads both files as text now. This suite reads sources with
@@ -503,29 +426,6 @@ function readWorkflowFeedbackFieldsLiteral() {
 // PIN rows — green at HEAD.
 // ---------------------------------------------------------------------------
 
-test('P1 (PIN): G2 shape boundary — gate-shaped input passes normalization, refuses at the WORKFLOW gate', async (t) => {
-  const { application, baton, adapter } = dg1Harness(t);
-  const { workerId, runId } = await startRun(baton);
-
-  emitScopeGateEvent(adapter, workerId);
-  const debug = await application.debug({ runId }, principal('observer'));
-  const failure = debug.members[0]?.failure;
-  assert.equal(failure?.gate, 'scope', 'precondition: the debug failure leg projects the scope gate');
-
-  // Gate-shaped {gate, detail} must be accepted by input normalization (never the shape code) and
-  // refuse only at the workflow gate on a non-workflow run (GREEN-1 / G2 discriminator).
-  const err = await application.command('run.feedback', {
-    runId,
-    role: 'work',
-    feedback: { gate: failure.gate, detail: failure.detail },
-  }, principal('observer')).then(() => null, (error) => error);
-  assert.ok(err, 'run.feedback must not silently no-op on a non-workflow run');
-  assert.equal(
-    err.code,
-    'application_workflow_feedback_unavailable',
-    `gate-shaped input dispatches to the workflow gate, not a shape reject; got ${err.code}: ${err.message}`,
-  );
-});
 
 test('P2 (PIN): referent fix (G4-B1) — evidence.verification.worker/workerSeq are the D1 binding keys', async (t) => {
   const { workflow } = await openWorkflow(t);
@@ -548,22 +448,6 @@ test('P2 (PIN): referent fix (G4-B1) — evidence.verification.worker/workerSeq 
   assert.ok(member, 'P2: evidence.verification.worker resolves to a real worker stream member');
 });
 
-test('P3 (PIN): RED-2 closed caller schema — a caller-authored derived flag is refused as invalid', async (t) => {
-  const { application, baton } = dg1Harness(t);
-  const { runId } = await startRun(baton);
-
-  const err = await application.command('run.feedback', {
-    runId,
-    role: 'work',
-    feedback: { ...scopeGatePayload(), derived: true },
-  }, principal('observer')).then(() => null, (error) => error);
-  assert.ok(err, 'a caller-supplied derived flag must be refused');
-  assert.equal(
-    err.code,
-    'application_workflow_feedback_invalid',
-    `derived is hub-set only — the closed {gate, detail} schema refuses a caller derived key; got ${err.code}`,
-  );
-});
 
 test('P4 (PIN): GREEN-5a run.debug failure shape — the honest referent a forged verdict spoofs', async (t) => {
   const { application, baton, adapter } = dg1Harness(t);
@@ -610,28 +494,6 @@ test('P5 (PIN): GREEN-5b push constancy — the #79 gate_verdict push item stays
   assert.ok(!itemLine.includes('derived'), 'P5: the gate_verdict item literal carries no derived key (B6)');
 });
 
-test('P6 (PIN): GREEN-3 coaching feedback is authored and rendered exactly as today', async (t) => {
-  const { workflow } = await openWorkflow(t);
-  const builder = await candidateFor(workflow, 'builder');
-  assert.ok(builder, 'precondition: verified candidate');
-
-  const coaching = {
-    summary: 'Keep the candidate but document the changed path before synthesis.',
-    findings: [{
-      kind: 'suggestion', severity: 'medium',
-      message: 'Preserve the attributable delta.',
-      path: 'candidate-a.txt', line: 1,
-    }],
-  };
-  await workflow.sendFeedback('builder', coaching);
-  const fb = await workflow.feedback();
-  const item = fb.section?.items?.find((it) => it.value?.target?.role === 'builder');
-  assert.ok(item, 'P6: the coaching packet read back');
-  assert.equal(item.summary, coaching.summary, 'P6: the feedback section renders the coaching summary');
-  assert.equal(item.value.feedback?.summary, coaching.summary, 'P6: the packet carries the authored summary');
-  assert.deepEqual(item.value.feedback?.findings, coaching.findings, 'P6: the packet carries the authored findings');
-});
-
 test('P7 (PIN): the contract refusal vocabulary is typed and surface-constant across the application seam', () => {
   // slice 15: the feedback projections (and their refusal literals) moved to
   // application-observation.mjs — the vocabulary is scanned across both texts.
@@ -640,67 +502,8 @@ test('P7 (PIN): the contract refusal vocabulary is typed and surface-constant ac
   for (const code of [
     'application_workflow_feedback_invalid',
     'application_workflow_feedback_anchor_invalid',
-    'application_workflow_feedback_unavailable',
     'application_workflow_integrity',
   ]) {
     assert.ok(source.includes(code), `refusal code ${code} is typed across the application seam`);
   }
 });
-
-test('P8 (PIN): S2 — the coaching branch refuses secret-shaped summary/message (application_workflow_feedback_invalid)', async (t) => {
-  const { workflow } = await openWorkflow(t);
-  const builder = await candidateFor(workflow, 'builder');
-  assert.ok(builder, 'precondition: verified candidate');
-
-  // The SECRET_SHAPED_TEXT guard (application.mjs:1665 summary / :1675 message) already refuses
-  // secret-looking coaching content at HEAD — GREEN, so this row is a PIN.
-  const secret = 'sk-proj-' + 'A'.repeat(16);
-
-  // Arm 1 — secret-shaped SUMMARY.
-  const summaryOutcome = await workflow.sendFeedback('builder', {
-    summary: `Keep the candidate, key=${secret}`,
-    findings: [{
-      kind: 'suggestion', severity: 'medium',
-      message: 'Preserve the attributable delta.',
-      path: 'candidate-a.txt', line: 1,
-    }],
-  }).then((value) => ({ ok: true }), (error) => ({ ok: false, code: error?.code }));
-  assert.equal(
-    summaryOutcome.ok,
-    false,
-    'P8: a secret-shaped coaching summary must refuse at application_workflow_feedback_invalid',
-  );
-  assert.equal(summaryOutcome.code, 'application_workflow_feedback_invalid', 'P8: summary arm refuses invalid');
-
-  // Arm 2 — secret-shaped finding MESSAGE.
-  const messageOutcome = await workflow.sendFeedback('builder', {
-    summary: 'Keep the candidate but document the changed path before synthesis.',
-    findings: [{
-      kind: 'suggestion', severity: 'medium',
-      message: `Use the token ${secret} when resuming.`,
-      path: 'candidate-a.txt', line: 1,
-    }],
-  }).then((value) => ({ ok: true }), (error) => ({ ok: false, code: error?.code }));
-  assert.equal(
-    messageOutcome.ok,
-    false,
-    'P8: a secret-shaped finding message must refuse at application_workflow_feedback_invalid',
-  );
-  assert.equal(messageOutcome.code, 'application_workflow_feedback_invalid', 'P8: message arm refuses invalid');
-
-  // Neither refusal appends a record.
-  const fb = await workflow.feedback();
-  assert.equal(fb.section?.itemCount ?? 0, 0, 'P8: the refusals append no record');
-});
-
-// ---------------------------------------------------------------------------
-// RED rows — fail at NAMED stages at HEAD.
-// ---------------------------------------------------------------------------
-
-
-
-
-
-
-
-

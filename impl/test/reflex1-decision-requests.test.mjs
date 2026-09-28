@@ -736,7 +736,7 @@ test('MCP: fleet_run_answer accepts the typed {optionId} form and forwards it to
   const coordination = new CoordinationStore(join(dir, 'coordination'), { clock: () => new Date(NOW).toISOString() });
   const principal = {
     userId: 'operator-a', sessionId: 'stdio-a',
-    capabilities: ['control', 'observe', 'approve', 'emergency_stop', 'adopt_result', 'review', 'integrate_result'],
+    capabilities: ['control', 'observe', 'approve', 'emergency_stop'],
     repoIds: ['repo-reflex1'], expiresAt: new Date(NOW + 60_000).toISOString(), revoked: false,
   };
   const server = new McpFleetServer({

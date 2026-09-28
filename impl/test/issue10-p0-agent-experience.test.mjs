@@ -136,33 +136,6 @@ test('I10-P0-3: connected doctor exposes sanitized deployment and exact route re
   assert.deepEqual(await connected.route(ROUTE_A), readiness.routes[0]);
 });
 
-test('I10-P0-4: client integrate helper materializes every advertised default including reason', async () => {
-  const calls = [];
-  const baton = bindBatonPort({
-    async command(name, args) {
-      calls.push({ name, args });
-      if (name === 'run.inspect') return {
-        runId: 'run-a', depth: 'outline', outline: { actions: [{
-          actionId: 'integrate-a', kind: 'integrate', choices: ['ff-only', 'structured'],
-          inputSchema: { type: 'object', required: ['strategy', 'reason'], properties: {
-            strategy: { type: 'string', enum: ['ff-only', 'structured'], default: 'ff-only' },
-            reason: { type: 'string', default: 'Apply the adopted verified result.' },
-          } },
-        }] },
-      };
-      return { runId: 'run-a', depth: 'outline', outline: { actions: [] } };
-    },
-  });
-
-  await baton.runs.open('run-a').integrate();
-  assert.deepEqual(calls.at(-1), {
-    name: 'run.act', args: {
-      runId: 'run-a', actionId: 'integrate-a',
-      inputs: { strategy: 'ff-only', reason: 'Apply the adopted verified result.' },
-    },
-  });
-});
-
 test('I10-P0-5: state-eligible semantic actions are filtered by authenticated capabilities', () => {
   const application = Object.create(BatonApplication.prototype);
   application.driver = { coordination: { runStop: () => ({ state: 'stopping' }) } };

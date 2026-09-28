@@ -142,12 +142,9 @@ test('M2-6: candidate_selection serializes as select_candidate wherever the kind
 test('H5: the do-path requires reason while the named-verb/CLI path keeps it optional (§4.2)', () => {
   // The D2 do-path actions schema-require `reason` (a live F12 instance, preserved per §2).
   assert.ok(REGISTRY.actions.stop.inputSchema.required.includes('reason'));
-  assert.ok(REGISTRY.actions.stop_member.inputSchema.required.includes('reason'));
-  assert.ok(REGISTRY.actions.stop_member.inputSchema.required.includes('role'));
   // The named-verb/D3/CLI path keeps `reason` optional — no precondition is added or removed (§2);
   // the divergence is documented and resolved as M2 cross-surface identity work, not a schema flip.
   assert.doesNotThrow(() => parseBatonCli(['run', 'stop', 'run-x']));
-  assert.doesNotThrow(() => parseBatonCli(['run', 'member', 'stop', 'run-x', 'role-a']));
 });
 
 test('story member-state surfaces re-report the canonical §7.2 vocabulary', () => {

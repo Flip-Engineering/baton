@@ -29,16 +29,10 @@ ordinary-CLI inventory. The conformance suite fails if they drift from served tr
 | `run.evidence` | `ordinary` | `baton run evidence` | `baton run evidence RUN_ID` |
 | `run.knowledge.seed` | `ordinary` | `baton run knowledge seed` | `baton run knowledge seed RUN_ID --type Finding --grounding observed --body TEXT` |
 | `run.list` | `ordinary` | `baton run list` | `baton run list` |
-| `run.member.send` | `ordinary` | `baton run member send` | `baton run member send RUN_ID ROLE TEXT` |
-| `run.member.stop` | `ordinary` | `baton run member stop` | `baton run member stop RUN_ID ROLE` |
 | `run.member.view` | `ordinary` | `baton run member view` | `baton run member view RUN_ID` |
 | `run.message.receipt` | `ordinary` | `baton run message receipt` | `baton run message receipt MESSAGE_ID` |
 | `run.message.send` | `ordinary` | `baton run message send` | `baton run message send RUN_ID --kind inform --body TEXT` |
-| `run.recover` | `ordinary` | `baton run recover` | `baton run recover RUN_ID` |
 | `run.resultpin` | `ordinary` | `baton run resultpin` | `baton run resultpin run:1` |
-| `run.resume` | `ordinary` | `baton run resume` | `baton run resume RUN_ID --reason R` |
-| `run.retry` | `ordinary` | `baton run retry` | `baton run retry RUN_ID --reason R` |
-| `run.review` | `ordinary` | `baton run review` | `baton run review RUN_ID --exact codex/gpt-5.6-sol@low --reason R` |
 | `run.scratchpad.elevate` | `ordinary` | `baton run scratchpad elevate` | `baton run scratchpad elevate RUN_ID --task TASK_ID --entries JSON` |
 | `run.scratchpad.read` | `ordinary` | `baton run scratchpad read` | `baton run scratchpad read RUN_ID --scope shared --cursor 0` |
 | `run.send` | `ordinary` | `baton run send` | `baton run send RUN_ID TEXT` |
@@ -59,7 +53,6 @@ ordinary-CLI inventory. The conformance suite fails if they drift from served tr
 | `swarm.update` | `ordinary` | `baton swarm update` | `baton swarm update SWARM_ID swarm.contribution_recorded --payload "finding"` |
 | `swarm.view` | `ordinary` | `baton swarm view` | `baton swarm view SWARM_ID` |
 | `swarm.watch` | `ordinary` | `baton swarm watch` | `baton swarm watch SWARM_ID` |
-| `waves.attach` | `ordinary` | `baton waves attach` | `baton waves attach WAVE_ID --members JSON` |
 | `waves.compile` | `ordinary` | `baton waves compile` | `baton waves compile path/to/spec.dsl` |
 | `waves.harvest` | `ordinary` | `baton waves harvest` | `baton waves harvest run:1 --onto /srv/checkout` |
 | `waves.list` | `ordinary` | `baton waves list` | `baton waves list` |

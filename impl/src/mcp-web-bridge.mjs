@@ -34,15 +34,14 @@ import { WAKE_CLASSES, parseWakeFilter, wakeMatches } from './wake-stream.mjs';
 export const ORDINARY_COMMANDS = Object.freeze([
   'application.help',
   'run.start', 'run.inspect', 'run.act', 'run.stop', 'run.status',
-  'run.follow', 'run.wait', 'run.approve', 'run.answer', 'run.feedback',
-  'run.evidence', 'run.adopt', 'run.retry_verification', 'run.resume_work',
-  'run.review', 'run.integrate', 'run.export', 'run.recover',
-  'run.episode', 'run.workstreams', 'run.workstream.notify', 'run.workstream.stop',
+  'run.follow', 'run.wait', 'run.approve', 'run.answer',
+  'run.evidence',
+  'run.episode', 'run.workstreams',
   'run.message.send', 'run.message.receipt', 'run.attention.watch',
   'run.scratchpad.read', 'run.scratchpad.append', 'run.scratchpad.elevate',
   'run.knowledge.seed',
   'runs.list',
-  'waves.attach', 'waves.start', 'waves.list', 'waves.progress', 'waves.send',
+  'waves.start', 'waves.list', 'waves.progress', 'waves.send',
   'waves.stop', 'waves.run', 'waves.compile',
 ]);
 // SA4 (#227): the CONSTRUCTOR floor is the REGISTRY's own remote_bridge projection — the closed
@@ -54,9 +53,7 @@ const BRIDGE_FLOOR_COMMANDS = Object.freeze(
   Object.keys(APPLICATION_SEMANTIC_REGISTRY.operations),
 );
 const MUTATIONS = new Set([
-  'run.start', 'run.act', 'run.stop', 'run.answer', 'run.approve', 'run.feedback',
-  'run.adopt', 'run.retry_verification', 'run.resume_work', 'run.review', 'run.integrate',
-  'run.export', 'run.recover', 'run.workstream.notify', 'run.workstream.stop',
+  'run.start', 'run.act', 'run.stop', 'run.answer', 'run.approve',
   'run.message.send', 'run.scratchpad.append', 'run.scratchpad.elevate',
   'run.knowledge.seed',
   'waves.start', 'waves.send', 'waves.stop', 'waves.run',

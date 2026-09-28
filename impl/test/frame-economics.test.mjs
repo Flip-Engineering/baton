@@ -52,12 +52,11 @@
 //   handshake-digest-missing    connectBaton never verifies limitsRegistryDigest
 //   single-source-not-landed    cataloged lane literals live outside limits.mjs today
 //   truncation-marker-missing   boundedAttentionText drops capBytes's truncated flag (OQ2)
-//   wave-member-spill-missing   the wave-start/wave-attach member doors wall oversize
-//                               objectives today (application.mjs:11506 validText 4,096-byte
-//                               default → application_wave_start_invalid; the char check
-//                               :1854-1855 → application_wave_attach_invalid) instead of
-//                               admitting with byte-measured spill (wave.member.objective,
-//                               OQ5; v1.2 blue-team blocker 4)
+//   wave-member-spill-missing   the wave-start member door walls oversize objectives today
+//                               (application.mjs:11506 validText 4,096-byte default →
+//                               application_wave_start_invalid) instead of admitting with
+//                               byte-measured spill (wave.member.objective, OQ5; v1.2
+//                               blue-team blocker 4)
 //
 // SUITE-PINNED API SURFACE (the contract names behavior, not module names; the epic's
 // implementation is expected to ship this surface — adjust here if the epic renames it):
@@ -87,8 +86,8 @@
 //     message endsWith it). Typed codes are the registry rows' refusalCode values:
 //       graceful lanes beyond the spill ceiling  -> 'spill_body_exceeded' (cap = 1048576)
 //       run.legacy_send.body                     -> 'run_legacy_send_exceeded' (v1.2: the legacy
-//                                                   run.send / run.act send / run.workstream.notify /
-//                                                   waves.send message door at its LIVE 16,384)
+//                                                   run.send / run.act send / waves.send message
+//                                                   door at its LIVE 16,384)
 //       decision.text                            -> 'decision_text_exceeded'
 //       scratchpad.entry.body                    -> 'scratchpad_entry_exceeded'
 //   CoordinationStore gains (Decision 4, mirroring the context-pack trio):
@@ -154,13 +153,12 @@
 //     fail at once the registry exists. The E5 fixture's positive arm is smoke-verified to
 //     connect today (the mismatch arm is the red one).
 //   * RESOLVED (contract v1.2, blue-team blocker 2): the legacy-alias door (run.send /
-//     run.act send / run.workstream.notify / waves.send message args at 16,384:
-//     application.mjs:1797/:2930, coordination-store.mjs:4292, schemas
-//     application-semantics.mjs:299/:523/:1596 + mcp-northbound.mjs:357/:412/:485) is cataloged
-//     as the named admission lane run.legacy_send.body at its LIVE 16,384 value, hard with
-//     coaching. F1's alias-door exemptions are REMOVED — a cataloged lane's literals must not
-//     hide behind an exemption; the nine door hits retire on import like every other cataloged
-//     literal. B16 pins the coaching shape on the run.workstream.notify door.
+//     run.act send / waves.send message args at 16,384: application.mjs:1797/:2930,
+//     coordination-store.mjs:4292, schemas application-semantics.mjs:299/:523/:1596 +
+//     mcp-northbound.mjs:357/:412/:485) is cataloged as the named admission lane
+//     run.legacy_send.body at its LIVE 16,384 value, hard with coaching. F1's alias-door
+//     exemptions are REMOVED — a cataloged lane's literals must not hide behind an exemption;
+//     the door hits retire on import like every other cataloged literal.
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
@@ -634,7 +632,6 @@ test('B3 (#530): a run objective past the old spill ceiling is ADMITTED with a d
     `the objective is admitted; only the run view may refuse it whole (${outcome.error?.code ?? 'no error'})`);
   await shutdownQuietly(application);
 });
-
 // ===========================================================================
 // C — the spill lane (stage: spill-lane-missing / spill-query-kind-missing /
 //     wave-driver-advisory-missing)
@@ -871,10 +868,10 @@ test('C9 (#530): a body past the old 1 MiB spill ceiling is ADMITTED with a spil
 
 test('C10 (v1.2, blue-team blocker 4): a MULTIBYTE wave member above the old 4 KiB head cap is admitted WHOLE through the REAL wave-start admission — never walled, never spilled (#358)', async () => {
   const { application, driver } = appFixture('c10');
-  // 4,100 chars / 8,200 bytes — over 4,096 in BOTH measures, so TODAY both member doors wall it
-  // (wave-start walls bytes via validText's 4,096 default at application.mjs:11506; attach walls
-  // CHARS at :1854-1855) — and it discriminates byte from char accounting under the correct
-  // implementation (a char-measured "spill" records 4,100, never 8,200).
+  // 4,100 chars / 8,200 bytes — over 4,096 in BOTH measures, so TODAY the member door walls it
+  // by bytes via validText's 4,096 default at application.mjs:11506 — and it discriminates byte
+  // from char accounting under the correct implementation (a char-measured "spill" records
+  // 4,100, never 8,200).
   const objective = 'é'.repeat(4100);
   const started = await application.startWave({
     idempotencyKey: 'fe-c10-wave',
@@ -882,8 +879,8 @@ test('C10 (v1.2, blue-team blocker 4): a MULTIBYTE wave member above the old 4 K
   }, principal('owner')).then((value) => value, (error) => ({ admissionError: error }));
   assert.ok(!started?.admissionError,
     `stage: wave-member-spill-missing — the wave-start member door WALLS the oversize objective today `
-    + `(application_wave_start_invalid via validText's 4,096-byte default, application.mjs:11506; `
-    + `the attach door walls chars at :1854-1855) instead of admitting with spill like run.objective — `
+    + `(application_wave_start_invalid via validText's 4,096-byte default, application.mjs:11506) `
+    + `instead of admitting with spill like run.objective — `
     + `OQ5 passes the member THROUGH, so no wall may survive behind the advisory: `
     + `${started?.admissionError?.code ?? started?.admissionError}`);
   assert.match(started?.waveId ?? '', /^wave:[a-f0-9]{32}$/, 'the wave starts');
@@ -891,19 +888,6 @@ test('C10 (v1.2, blue-team blocker 4): a MULTIBYTE wave member above the old 4 K
     'the oversize member is ADMITTED and produces a Run — never refused (no wave_driver_objective_oversize, no application_wave_start_invalid)');
   const minted = driver.coordination.events().find((event) => event.kind === 'spill.minted');
   assert.equal(minted ?? null, null, '#358: no head cap — an 8,200-byte member mints NO spill; it is admitted whole');
-  // Second door: the waves.attach member validation must not wall the same oversize member on
-  // SIZE either. Transparent run-view resolution (Decision 4 item 4) keeps objective-matching
-  // intact; any outcome except the size refusal is honest here — the pin is the absent wall.
-  const attached = await application.attachWave({
-    waveId: started.waveId,
-    members: [{ role: 'alpha', objective }],
-    timeoutMs: 5_000,
-  }, principal('owner')).then((value) => value, (error) => ({ admissionError: error }));
-  assert.notEqual(attached?.admissionError?.code ?? null, 'application_wave_attach_invalid',
-    'the waves.attach member door never draws a SIZE refusal — the char wall at '
-    + 'application.mjs:1854-1855 must not survive behind the driver advisory (the named wrong '
-    + 'implementation of blue-team blocker 4)');
-  void attached;
   await shutdownQuietly(application);
 });
 

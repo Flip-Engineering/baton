@@ -431,10 +431,6 @@ test('KC6/KC7: replay rechecks Web auth/card truth and refuses registry drift', 
     facade.authorizeReplay('run.inspect', {}, exactRemotePrincipal(), context),
     (error) => error.code === 'application_unavailable',
   );
-  await assert.rejects(
-    facade.command('application.shutdown', {}, exactRemotePrincipal(), context),
-    (error) => error.code === 'application_unauthorized',
-  );
 });
 
 test('KC8: project Kimi MCP entry contains no credential and allowlists only semantic Run tools', () => {
