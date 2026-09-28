@@ -13,6 +13,7 @@ sh bend2/scripts/build-native.sh bend2/tests/git.bend .scratch/bend2/git-test
 .scratch/bend2/git-test
 sh bend2/scripts/build-native.sh bend2/tests/land.bend .scratch/bend2/land-test
 .scratch/bend2/land-test
-$PYTHON3 -m unittest discover -s bend2/test -p '*.py'
-$PYTHON3 bend2/test/mcp-root.py
-$PYTHON3 bend2/test/end-to-end.py
+for test in bend2/test/*.py; do
+  printf '%s\n' "$test"
+  "$PYTHON3" "$test"
+done

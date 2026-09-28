@@ -15,8 +15,7 @@ MCP_SCRIPT = ROOT / 'bend2/scripts/mcp-root.mjs'
 
 def send_mcp(proc, msg):
     body = json.dumps(msg).encode()
-    header = f'Content-Length: {len(body)}\r\n\r\n'.encode()
-    proc.stdin.write(header + body)
+    proc.stdin.write(body + b'\n')
     proc.stdin.flush()
 
 
@@ -24,6 +23,7 @@ _mcp_buf = {}
 
 
 def read_mcp(proc, timeout=5):
+    """Read one newline-delimited MCP message and answer client pings."""
     fd = proc.stdout.fileno()
     if fd not in _mcp_buf:
         os.set_blocking(fd, False)
@@ -32,10 +32,10 @@ def read_mcp(proc, timeout=5):
     buf = _mcp_buf[fd]
     deadline = time.monotonic() + timeout
 
-    while b'\r\n\r\n' not in buf:
+    while b'\n' not in buf:
         remaining = deadline - time.monotonic()
         if remaining <= 0:
-            raise TimeoutError(f'Timed out reading header, got: {buf!r}')
+            raise TimeoutError(f'Timed out reading message: {buf!r}')
         ready, _, _ = select.select([fd], [], [], min(remaining, 0.5))
         if ready:
             chunk = os.read(fd, 4096)
@@ -43,31 +43,13 @@ def read_mcp(proc, timeout=5):
                 raise EOFError('MCP server closed stdout')
             buf += chunk
 
-    header_end = buf.index(b'\r\n\r\n')
-    header = buf[:header_end].decode()
-    buf = buf[header_end + 4:]
-
-    content_length = None
-    for line in header.splitlines():
-        if line.lower().startswith('content-length:'):
-            content_length = int(line.split(':', 1)[1].strip())
-    if content_length is None:
-        raise ValueError(f'No Content-Length in header: {header!r}')
-
-    while len(buf) < content_length:
-        remaining = deadline - time.monotonic()
-        if remaining <= 0:
-            raise TimeoutError('Timed out reading body')
-        ready, _, _ = select.select([fd], [], [], min(remaining, 0.5))
-        if ready:
-            chunk = os.read(fd, 4096)
-            if not chunk:
-                raise EOFError('Unexpected EOF reading body')
-            buf += chunk
-
-    body = buf[:content_length]
-    _mcp_buf[fd] = buf[content_length:]
-    return json.loads(body.decode())
+    body, rest = buf.split(b'\n', 1)
+    _mcp_buf[fd] = rest
+    message = json.loads(body)
+    if message.get('method') == 'ping':
+        send_mcp(proc, {'jsonrpc': '2.0', 'id': message['id'], 'result': {}})
+        return read_mcp(proc, timeout)
+    return message
 
 
 class EndToEnd(unittest.TestCase):
@@ -109,7 +91,14 @@ class EndToEnd(unittest.TestCase):
             stdin=subprocess.PIPE, stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
         )
-        self.addCleanup(lambda: (proc.terminate(), proc.wait()))
+        def cleanup():
+            proc.terminate()
+            proc.wait()
+            _mcp_buf.pop(proc.stdout.fileno(), None)
+            proc.stdin.close()
+            proc.stdout.close()
+            proc.stderr.close()
+        self.addCleanup(cleanup)
         return proc
 
     def initialize_mcp(self, proc):
@@ -122,7 +111,10 @@ class EndToEnd(unittest.TestCase):
             },
         })
         resp = read_mcp(proc)
+        self.assertEqual(resp['id'], 1)
         send_mcp(proc, {'jsonrpc': '2.0', 'method': 'notifications/initialized'})
+        send_mcp(proc, {'jsonrpc': '2.0', 'id': 'channel-tools', 'method': 'tools/list'})
+        self.assertEqual(read_mcp(proc)['id'], 'channel-tools')
         return resp
 
     def test_recruit_report_notify_land(self):
@@ -150,7 +142,7 @@ class EndToEnd(unittest.TestCase):
         notification = read_mcp(proc, timeout=5)
         self.assertEqual(notification['method'], 'notifications/claude/channel')
         self.assertIn('Feature implemented', notification['params']['content'])
-        self.assertIn('turn-1', notification['params']['meta']['messageIds'])
+        self.assertEqual(json.loads(notification['params']['meta']['messageIds']), ['turn-1'])
 
         # 5. Root acknowledges the report.
         send_mcp(proc, {
