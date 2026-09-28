@@ -369,15 +369,24 @@ def matching_turn(matches: Bool) -> IO(Unit):
     case True{}: IO.pure(Unit,Unit{})
     case False{}: IO.die(Unit,2,"The turn ID already belongs to a different worker or message kind.")
 
+# The turn identity is admitted only when the message it names was sent by this
+# worker as a report: the count is zero for every other sender or kind.
+def id_owner_sql(id: String, worker: String) -> String:
+  "SELECT count(*) FROM messages WHERE id=" ++ C.q(id) ++ " AND (sender<>" ++ C.q(worker) ++ " OR kind<>'report');"
+
+# The turn identity is admitted only when the store already holds that message.
+def turn_present_sql(id: String) -> String:
+  "SELECT count(*) FROM messages WHERE id=" ++ C.q(id) ++ ";"
+
 def worker_checked(+db: String, +worker: String, +id: String, cmd: String, model: String, effort: String, cwd: String, task: String, log: String, session: String, +harness: String, missing: Bool) -> IO(Maybe<Outcome>):
   match missing:
     case True{}: IO.die(Maybe<Outcome>,2,"Worker has no recorded parent and workspace; register it before starting a turn.")
     case False{}:
       do IO<Maybe<Outcome>>:
         supported : Unit <- supported_harness(Bool.or(String.eq(harness,"omp\n"),Bool.or(String.eq(harness,"codex\n"),Bool.or(String.eq(harness,"claude-code\n"),String.eq(harness,"muse\n")))))
-        foreign : String <- IO.try(String,DB.Sql.query(db,"SELECT count(*) FROM messages WHERE id=" ++ C.q(id) ++ " AND (sender<>" ++ C.q(worker) ++ " OR kind<>'report');"))
+        foreign : String <- IO.try(String,DB.Sql.query(db,id_owner_sql(id,worker)))
         identity : Unit <- matching_turn(String.eq(foreign,"0\n"))
-        found : String <- IO.try(String,DB.Sql.query(db,"SELECT count(*) FROM messages WHERE id=" ++ C.q(id) ++ ";"))
+        found : String <- IO.try(String,DB.Sql.query(db,turn_present_sql(id)))
         choose(db,worker,id,cmd,model,effort,cwd,task,log,session,harness,String.eq(found,"1\n"))
 
 def complete_locked(+db: String, +worker: String, +id: String, +log: String, lock: U32, result: Maybe<Outcome>) -> IO(Unit):

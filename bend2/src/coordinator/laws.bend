@@ -27,14 +27,18 @@
 # M-3c bound: L.outcome_json and L.ff_answer. Each answer names the outcome the landing reached.
 # M-4  bound: Deb.debris_argv, Deb.debris_note, Deb.debris_note_of and the create-worktree stage
 #      readers. The dropped set is named and the work the stages made is kept.
-# M-5  bound: P.argv, J.json_text, C.sql(Pending/Inbox/Delivery/Bind), Root.wake_sql,
-#      Receive.pending_count_sql, Turn.remember, Land.require_branch and the canonical encoder.
-#      Owed messages are named in the store's own sequence order and remain owed until receipt.
-# M-7  bound: C.schema, C.sql(Report) and C.sql(Ack). The store validates the sender it records
-#      against the sessions it holds, and a report routes to the sender's recorded parent.
-# M-8  bound: Receive.acquired, Turn.acquired, Turn.matching_turn, C.sql(Ack), C.sql(Worker) and
-#      C.sql(Attach). One native owner per session, a turn identity bound to one worker, and every
-#      write bound to the stored row it names.
+# M-5  bound: Store.commit and Store.committed, C.sql(Pending/Inbox/Delivery/Bind),
+#      Root.wake_sql, Receive.pending_count_sql, P.argv, J.json_text, Turn.remember and
+#      Land.require_branch. A report and its parent delivery are written in one transaction, a
+#      transaction that did not commit delivers nothing, and owed messages are named in the
+#      store's own sequence order and remain owed until receipt.
+# M-7  bound: Turn.id_owner_sql, C.schema, C.sql(Report) and C.sql(Ack). The store validates the
+#      sender it records against the sessions it holds, a turn identity is admitted only for a
+#      report the worker itself wrote, and a report routes to the sender's recorded parent.
+# M-8  bound: Turn.worker_checked, Turn.turn_present_sql, Receive.acquired, Turn.acquired,
+#      Turn.matching_turn, C.sql(Ack), C.sql(Worker) and C.sql(Attach). One native owner per
+#      session, a turn identity admitted only for a message the store holds, and every write
+#      bound to the stored row it names.
 # M-10 partly bound: L.check_argv and L.append_when. The judged selection is the caller's, and a
 #      failure the decision kept stays in the answer. The retention and continuation clause over
 #      owed data is stated under M-5 above; the application-wide cutoff clause is open.
@@ -52,10 +56,12 @@
 #      its parent or names the log and inbox that continue it.
 # M-18 bound: L.push_argv. The push argv names the declared remote at the destination position.
 #
-# Not bound. The replay modules under bend2/src/replay are the earlier experiments; the entry
-# graph does not import them, so this module binds no entry to their functions. The clauses
-# laws-trace.md records as host assumptions - durability, crash windows, provider idempotency,
-# interface delivery and process lifetime - are outside what a Bend term decides.
+# No entry carries a replay residue. M-5, M-7 and M-8 were bound to the replay experiments until
+# the store transaction and the command admission above replaced them; the replay prototype's own
+# laws have left this module's import graph. The replay modules under bend2/src/replay remain in
+# the tree and the entry graph does not import them, so no operative law is stated over them. The
+# clauses laws-trace.md records as host assumptions - durability, crash windows, provider
+# idempotency, interface delivery and process lifetime - are outside what a Bend term decides.
 import Base
 import ./root.bend as Root
 import ./turn.bend as Turn
@@ -64,8 +70,11 @@ import ./receive.bend as Receive
 import ./guidance.bend as Guidance
 import ./land.bend as Land
 import ./recruit.bend as Recruit
+import ./store.bend as Store
+import ../host/sqlite.bend as DB
 import ../host/laws.bend as HostLaws
 import ../json/laws.bend as JsonLaws
+import ../json/canonical.bend as J
 import ../git/laws.bend as GitLaws
 import ../git/types.bend as T
 import ../git/text.bend as Tx
@@ -661,4 +670,134 @@ law m8_attach_never_overwrites_a_worker_row:
   {C.sql(C.Attach{id, harness, native, endpoint}) == "INSERT INTO sessions(id,harness,native,endpoint) VALUES(" ++ C.q(id) ++ "," ++ C.q(harness) ++ "," ++ C.q(native) ++ "," ++ C.q(endpoint) ++ ") ON CONFLICT(id) DO UPDATE SET id=CASE WHEN sessions.parent IS NULL THEN sessions.id ELSE NULL END,harness=excluded.harness,native=excluded.native,endpoint=excluded.endpoint;" ++ C.session_result(id) : String}
 
 def m8_attach_never_overwrites_a_worker_row(id, harness, native, endpoint):
+  {==}
+
+# ---------------------------------------------------------------------------
+# The coordinator's landing and push commands.
+
+# M-18: the answer for a completed push names the branch it pushed and the
+# remote the caller declared, so the destination the answer reports is the
+# destination the push ran against.
+law m18_pushed_answer_names_the_declared_remote:
+  for +branch: String
+  for +remote: String
+  {Land.push_ok(True{}, branch, remote) == IO.print("{\"status\":\"pushed\",\"branch\":" ++ J.string_literal(branch) ++ ",\"remote\":" ++ J.string_literal(remote) ++ "}") : IO(Unit)}
+
+def m18_pushed_answer_names_the_declared_remote(branch, remote):
+  {==}
+
+# M-3c: a rejected push is answered rejected with the remote it named, and it
+# never answers that anything landed.
+law m3c_rejected_push_is_not_a_landing:
+  for +branch: String
+  for +remote: String
+  {Land.push_ok(False{}, branch, remote) == IO.print("{\"status\":\"rejected\",\"reason\":" ++ J.string_literal(Tx.cmd_failed(Tx.str_cat("git push to ", remote))) ++ "}") : IO(Unit)}
+
+def m3c_rejected_push_is_not_a_landing(branch, remote):
+  {==}
+
+# M-2: a git executable that could not run answers its own observed detail,
+# never a status.
+law m2_unusable_git_answers_its_own_detail:
+  for +detail: String
+  for +branch: String
+  for +remote: String
+  {Land.push_pick(T.GBroken{detail}, branch, remote) == IO.die(Unit, 1, detail) : IO(Unit)}
+
+def m2_unusable_git_answers_its_own_detail(detail, branch, remote):
+  {==}
+
+# M-2: a git command that ran is answered from its own exit code.
+law m2_push_answer_follows_the_observed_exit_code:
+  for +code: U32
+  for +out: String
+  for +branch: String
+  for +remote: String
+  {Land.push_pick(T.GRun{code, out}, branch, remote) == Land.push_ok(U32.is_eq(code, 0), branch, remote) : IO(Unit)}
+
+def m2_push_answer_follows_the_observed_exit_code(code, out, branch, remote):
+  {==}
+
+# M-14: a Git refusal is rendered with its own vocabulary row, so the caller
+# reads the rule that refused the landing.
+law m14_git_refusal_renders_its_own_text:
+  for +error: T.GitFail
+  {Land.show_checked_outcome(Fail{error}) == IO.die(Unit, 1, T.fail_text(error)) : IO(Unit)}
+
+def m14_git_refusal_renders_its_own_text(error):
+  {==}
+
+# M-3c: a judged landing answers the outcome the landing reached.
+law m3c_checked_landing_answers_the_outcome_it_reached:
+  for +outcome: T.LandOutcome
+  {Land.show_checked_outcome(Done{outcome}) == Land.show_outcome(outcome) : IO(Unit)}
+
+def m3c_checked_landing_answers_the_outcome_it_reached(outcome):
+  {==}
+
+# ---------------------------------------------------------------------------
+# M-5 over the store's report and delivery transaction, and M-7 and M-8 over
+# the command admission that checks the worker and the turn identity.
+
+# M-5: a report row and its pending parent delivery are written in one
+# transaction. The schema, the report insert that names the sender's recorded
+# parent as its recipient, and the commit are the whole of it.
+law m5_a_report_and_its_delivery_are_one_transaction:
+  for +db: String
+  for +id: String
+  for +sender: String
+  for +body: String
+  {Store.commit(db, C.Report{id, sender, body}) == DB.Sql.query(db, "BEGIN IMMEDIATE;" ++ C.schema() ++ ("INSERT INTO messages(id,sender,recipient,kind,body) VALUES(" ++ C.q(id) ++ "," ++ C.q(sender) ++ ",(SELECT parent FROM sessions WHERE id=" ++ C.q(sender) ++ "),'report'," ++ C.q(body) ++ ")" ++ C.message_upsert() ++ C.message_result(id)) ++ "COMMIT;") : IO(Result<&1,&1,U32 & String,String>)}
+
+def m5_a_report_and_its_delivery_are_one_transaction(db, id, sender, body):
+  {==}
+
+# M-5: a transaction that did not commit delivers nothing and answers its own
+# failure, so no delivery is attempted without the write that records it.
+law m5_a_failed_transaction_delivers_nothing:
+  for +db: String
+  for +command: C.Command
+  for +code: U32
+  for +text: String
+  {Store.committed(db, command, Fail{(code, text)}) == IO.pure(Result<&1,&1,U32 & String,String>, Fail{(code, text)}) : IO(Result<&1,&1,U32 & String,String>)}
+
+def m5_a_failed_transaction_delivers_nothing(db, command, code, text):
+  {==}
+
+# M-7: a turn identity is admitted only for a report the worker itself wrote.
+# The admission reads the store's own sender and kind, so a caller cannot start
+# a turn under another worker's message identity.
+law m7_a_turn_id_is_admitted_only_for_this_workers_report:
+  for +id: String
+  for +worker: String
+  {Turn.id_owner_sql(id, worker) == "SELECT count(*) FROM messages WHERE id=" ++ C.q(id) ++ " AND (sender<>" ++ C.q(worker) ++ " OR kind<>'report');" : String}
+
+def m7_a_turn_id_is_admitted_only_for_this_workers_report(id, worker):
+  {==}
+
+# M-8: a turn identity is admitted only for a message the store already holds.
+law m8_a_turn_is_admitted_only_for_a_message_the_store_holds:
+  for +id: String
+  {Turn.turn_present_sql(id) == "SELECT count(*) FROM messages WHERE id=" ++ C.q(id) ++ ";" : String}
+
+def m8_a_turn_is_admitted_only_for_a_message_the_store_holds(id):
+  {==}
+
+# M-8: a worker with no recorded parent and workspace is refused before any
+# turn work, and the refusal names the registration that would admit it.
+law m8_an_unregistered_worker_is_refused_before_any_turn:
+  for +db: String
+  for +worker: String
+  for +id: String
+  for +cmd: String
+  for +model: String
+  for +effort: String
+  for +cwd: String
+  for +task: String
+  for +log: String
+  for +session: String
+  for +harness: String
+  {Turn.worker_checked(db, worker, id, cmd, model, effort, cwd, task, log, session, harness, True{}) == IO.die(Maybe<Turn.Outcome>,2,"Worker has no recorded parent and workspace; register it before starting a turn.") : IO(Maybe<Turn.Outcome>)}
+
+def m8_an_unregistered_worker_is_refused_before_any_turn(db, worker, id, cmd, model, effort, cwd, task, log, session, harness):
   {==}
