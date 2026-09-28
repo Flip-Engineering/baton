@@ -96,6 +96,54 @@ python3 bend2/scripts/measure-omp-stream.py \
 Use a separate output directory for each run. The source-revision argument
 records the caller's build association; the script also hashes the executable.
 
+## Real native acceptance
+
+The focused run built revision `3ad294cc7e2f47f815bafa1eb53c9163efd6437f`
+in its own clone. Its runtime source is unchanged from `8ba4b1cd`. The generated
+executable's SHA-256 begins `5518f42b`, matching the executable used by the final
+full check and paired measurements. The [acceptance artifact](measurements/2026-09-28-native-receive.json)
+records the compiler, generated C and executable hashes, task text, message
+hashes, receipts and process results.
+
+A Codex root used the existing subscription login with requested model
+`gpt-6-astra` and effort `low`. Two OMP workers used
+`deepseek/deepseek-flash` with requested effort `low`; both observed model IDs
+matched that route. Codex events supplied its native identity and no observed
+model value.
+
+The workers reviewed the direct-turn and path fixes, stream classification,
+SQL escaping and measurement driver. Each then received a follow-up in its
+existing native conversation. Four complete reports reached the root and
+matched the native terminal text byte for byte. All ten messages received
+acknowledgments. Six root starts retained one native ID, and each OMP worker
+retained its ID across its two turns. All source checkouts remained unchanged.
+The sessions and delivery checks completed in 417.72 seconds after the build.
+
+The root assessed each report against source, qualifying claims about
+transaction scope, conversation directories, SQL NULL handling and build
+provenance. The source reviews found no demonstrated additional runtime defect
+in this focused change. Their receipts establish reviewed messages; the
+controlled tests and separate measurements establish execution behavior.
+
+The acceptance extractor was subsequently corrected to support OMP terminal
+envelopes with an empty message list by using the preceding complete assistant
+message. Five extraction fixtures and a recheck of all four retained real
+reports passed at `c3fff9cd`. The runtime binary remained unchanged.
+
+This run exercises delivery and conversation reuse. It does not exercise
+landing, publication or host restart. Its tasks differ from the initial broad
+review, so their elapsed times provide no paired speed comparison. The initial
+review exposed output backlog after native review text had already been saved;
+the controlled stream measurements isolate the processing improvement.
+
+After the focused acceptance passed, the initial run was still consuming older
+output. Both of its native reviews were complete in their conversation files.
+Its database, logs, full review text and process identities were retained, then
+its owned receiver and completed OMP process were stopped. Their helpers and
+the driver exited. That baseline run is incomplete and its driver exited 1.
+The artifact retains the stop record and file hashes. Existing trial and
+resident processes were outside this cleanup.
+
 ## Measurement and remaining scope
 
 The [coordinator comparison](comparison-2026-09-28.md) measures retained
