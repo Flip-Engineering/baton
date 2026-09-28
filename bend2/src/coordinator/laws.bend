@@ -31,6 +31,8 @@ import ./turn.bend as Turn
 import ./commands.bend as C
 import ./receive.bend as Receive
 import ./guidance.bend as Guidance
+import ./land.bend as Land
+import ./recruit.bend as Recruit
 import ../git/laws.bend as GitLaws
 import ../git/types.bend as T
 import ../git/text.bend as Tx
@@ -459,4 +461,75 @@ law m12_nothing_owed_answers_at_once:
   {Receive.continue_if(again, False{}) == IO.pure(Result<&1,&1,U32 & String,Unit>, Done{Unit{}}) : IO(Result<&1,&1,U32 & String,Unit>)}
 
 def m12_nothing_owed_answers_at_once(again):
+  {==}
+
+# ---------------------------------------------------------------------------
+# Recruitment and the coordinator's landing commands.
+
+# M-11: the workspace a worker records is the path the caller gave. A relative
+# path resolves from the repository and a rooted path is not re-rooted.
+law m11_rooted_workspace_is_the_given_path:
+  for +repo: String
+  for +path: String
+  {Recruit.absolute(repo, path, True{}) == path : String}
+
+def m11_rooted_workspace_is_the_given_path(repo, path):
+  {==}
+
+law m11_relative_workspace_resolves_from_the_repository:
+  for +repo: String
+  for +path: String
+  {Recruit.absolute(repo, path, False{}) == repo ++ "/" ++ path : String}
+
+def m11_relative_workspace_resolves_from_the_repository(repo, path):
+  {==}
+
+# M-2: a git command that reached a status answers its own observed output.
+law m2_git_status_answers_the_observed_output:
+  for +what: String
+  for +code: U32
+  for +out: String
+  {Recruit.git_status(what, code, out, True{}) == IO.pure(String, out) : IO(String)}
+
+def m2_git_status_answers_the_observed_output(what, code, out):
+  {==}
+
+# M-14: a git command that failed refuses with its own code and names the
+# command that failed.
+law m14_failed_git_command_names_itself:
+  for +what: String
+  for +code: U32
+  for +out: String
+  {Recruit.git_status(what, code, out, False{}) == IO.die(String, code, Tx.cmd_failed(what)) : IO(String)}
+
+def m14_failed_git_command_names_itself(what, code, out):
+  {==}
+
+# M-14: a landing command for a session the store does not hold is refused
+# with the rule that refused it.
+law m14_unregistered_worker_refuses_with_its_rule:
+  {Land.require_worker(False{}) == IO.die(Unit, 2, "The worker session is not registered.") : IO(Unit)}
+
+def m14_unregistered_worker_refuses_with_its_rule():
+  {==}
+
+law m14_worker_without_branch_refuses_with_its_rule:
+  for +branch: String
+  {Land.require_branch_pick(True{}, branch) == IO.die(String, 2, "The worker has no recorded branch.") : IO(String)}
+
+def m14_worker_without_branch_refuses_with_its_rule(branch):
+  {==}
+
+law m14_empty_branch_is_the_missing_branch_case:
+  {Land.require_branch(SNil{}) == IO.die(String, 2, "The worker has no recorded branch.") : IO(String)}
+
+def m14_empty_branch_is_the_missing_branch_case():
+  {==}
+
+law m14_a_recorded_branch_is_answered_as_stored:
+  for +h: Char
+  for +t: String
+  {Land.require_branch(SCon{h, t}) == IO.pure(String, SCon{h, t}) : IO(String)}
+
+def m14_a_recorded_branch_is_answered_as_stored(h, t):
   {==}
