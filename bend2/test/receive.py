@@ -1,8 +1,10 @@
 """Native inbox delivery with controlled harness processes and real coordinator state."""
 import json
+import os
 import pathlib
 import select
 import shlex
+import signal
 import socket
 import subprocess
 import sys
@@ -14,7 +16,7 @@ import unittest
 ROOT = pathlib.Path(__file__).resolve().parents[2]
 EXE = ROOT / '.scratch/bend2/baton2'
 
-FIXTURE = r'''import json,pathlib,re,socket,subprocess,sys
+FIXTURE = r'''import json,os,pathlib,re,socket,subprocess,sys
 home=pathlib.Path(__file__).resolve().parent
 config=json.loads((home/'fixture.json').read_text())
 args=sys.argv[1:]
@@ -41,9 +43,24 @@ client=socket.create_connection(('127.0.0.1',config['port']),timeout=10)
 client.settimeout(20)
 stream=client.makefile('rwb',buffering=0)
 def reply(value): stream.write((json.dumps(value)+'\n').encode())
-reply({'session':model,'native':native,'resume':resume,'args':args,'prompt':prompt})
+def progress(action):
+    print(json.dumps({'type':'fixture_progress','marker':action['progress'],'native_pid':os.getpid()}),flush=True)
+    reply({'progress_written':action['progress']})
+reply({'pid':os.getpid(),'ppid':os.getppid(),'session':model,'native':native,'resume':resume,'args':args,'prompt':prompt})
 while True:
-    action=json.loads(stream.readline())
+    line=stream.readline()
+    if not line: break
+    action=json.loads(line)
+    if action.get('exit_fixture'): break
+    if action.get('progress'):
+        progress(action)
+        continue
+    if action.get('read_steer'):
+        frame=json.loads(sys.stdin.readline())
+        assert frame['type']=='steer',frame
+        print(json.dumps({'type':'response','command':'steer','success':True,'id':frame['id']}),flush=True)
+        reply({'steer_received':frame})
+        continue
     if action.get('turn'):
         task=home/'self-turn-task'
         task.write_text('Synchronous task for the active session.')
@@ -63,17 +80,25 @@ while True:
         for ident in re.findall(r'^Message \([^\n]*\) from [^\n]* \[id: (.*?)\]:$',prompt,re.M):
             subprocess.run([config['exe'],config['db'],'ack',ident,model,'native-reviewed'],check=True,stdout=subprocess.DEVNULL)
     failure=action.get('fail',False)
+    body=action.get('body','native review complete')
     if omp:
-        print(json.dumps({'type':'agent_end','isTerminal':True,'is_error':failure,'messages':[{'role':'assistant','content':[{'type':'text','text':'native review complete'}]}]}),flush=True)
-        sys.stdin.read()
+        print(json.dumps({'type':'agent_end','isTerminal':True,'is_error':failure,'messages':[{'role':'assistant','content':[{'type':'text','text':body}]}]}),flush=True)
+        remaining_input=sys.stdin.read()
     elif failure:
         print(json.dumps({'type':'turn.failed','error':{'message':'fixture provider failed'}}),flush=True)
     else:
-        print(json.dumps({'type':'item.completed','item':{'type':'agent_message','text':'native review complete'}}),flush=True)
+        print(json.dumps({'type':'item.completed','item':{'type':'agent_message','text':body}}),flush=True)
         print(json.dumps({'type':'turn.completed'}),flush=True)
     if action.get('hold_exit'):
-        reply({'terminal_written':True})
-        json.loads(stream.readline())
+        terminal={'terminal_written':True}
+        if action.get('report_input'): terminal['input_after_prompt']=remaining_input if omp else ''
+        reply(terminal)
+        while True:
+            line=stream.readline()
+            if not line: break
+            action=json.loads(line)
+            if not action.get('progress'): break
+            progress(action)
     break
 stream.close()
 client.close()
@@ -120,7 +145,7 @@ class Receive(unittest.TestCase):
     def close_children(self):
         for stream, connection in self.controls:
             try:
-                stream.write(b'{"ack":false,"fail":true}\n')
+                stream.write(b'{"exit_fixture":true}\n')
             except (OSError, ValueError):
                 pass
             try:
@@ -128,6 +153,22 @@ class Receive(unittest.TestCase):
             except OSError:
                 pass
             connection.close()
+        # A killed observer leaves its keeper and recovery outside Popen's tree.
+        # Stop this fixture's processes together so cleanup cannot spawn recovery.
+        deadline = time.monotonic() + 5
+        while True:
+            owned = self.owned_processes()
+            if not owned:
+                break
+            self.assertLess(time.monotonic(), deadline,
+                            'fixture processes survived cleanup: ' + repr(owned))
+            for action in (signal.SIGSTOP, signal.SIGKILL):
+                for process in owned:
+                    try:
+                        os.kill(process['pid'], action)
+                    except ProcessLookupError:
+                        pass
+            time.sleep(.01)
         for child in self.children:
             if child.poll() is None:
                 child.terminate()
@@ -136,6 +177,26 @@ class Receive(unittest.TestCase):
             except subprocess.TimeoutExpired:
                 child.kill()
                 child.communicate()
+
+    def owned_processes(self):
+        result = subprocess.run(['ps', '-axo', 'pid=,ppid=,stat=,command='],
+                                capture_output=True, text=True, check=True)
+        found = []
+        for line in result.stdout.splitlines():
+            fields = line.strip().split(None, 3)
+            if len(fields) == 4 and str(self.directory) in fields[3] and not fields[2].startswith('Z'):
+                found.append({'pid': int(fields[0]), 'ppid': int(fields[1]),
+                              'status': fields[2], 'command': fields[3]})
+        return found
+
+    def eventually(self, observation, description):
+        deadline = time.monotonic() + 10
+        while True:
+            result = observation()
+            if result:
+                return result
+            self.assertLess(time.monotonic(), deadline, description)
+            time.sleep(.01)
 
     def coord(self, *args, ok=True):
         result = subprocess.run([str(EXE), str(self.db), *map(str, args)],
@@ -170,12 +231,16 @@ class Receive(unittest.TestCase):
     def message(self, ident, recipient, body='Review this input.'):
         return self.coord('message', ident, 'root', recipient, 'guidance', body)
 
-    def accept(self, session):
+    def accept_any(self):
         connection, _ = self.server.accept()
         connection.settimeout(10)
         stream = connection.makefile('rwb', buffering=0)
         self.controls.append((stream, connection))
         started = json.loads(stream.readline())
+        return stream, started
+
+    def accept(self, session):
+        stream, started = self.accept_any()
         self.assertEqual(started['session'], session)
         return stream, started
 
@@ -193,6 +258,202 @@ class Receive(unittest.TestCase):
     def assert_no_start(self):
         self.assertEqual(select.select([self.server], [], [], .15)[0], [],
                          'another native process started while its session was active')
+
+    def exercise_observer_loss(self, harness, retry, terminal_before_loss=False, evidence=None):
+        evidence = evidence if evidence is not None else {}
+        evidence.update({'harness': harness, 'retryRequested': retry,
+                         'terminalBeforeObserverLoss': terminal_before_loss})
+        self.coord('attach', 'root', 'codex', 'native-root', self.endpoint('root'))
+        self.worker(harness=harness)
+        self.coord('message', 'first', 'root', 'parent', 'task', 'The original input must be sent once.')
+        observer = self.spawn(*self.receive_args('parent'))
+        original, started = self.accept('parent')
+        evidence.update({'firstSupervisor': observer.pid, 'firstNative': started['pid'],
+                         'keeper': started['ppid'], 'originalPrompt': started['prompt']})
+        native = self.eventually(lambda: self.coord('session', 'parent')['native'],
+                                 'original native identity was not recorded')
+        self.assertEqual(native, started['native'])
+        evidence['recordedNativeId'] = native
+        # Reports remain queued while OMP is active; guidance may be steered live.
+        self.coord('message', 'second', 'root', 'parent', 'report', 'Queued before observer loss.')
+        original_body = 'Original completion retained through observer loss: ' + harness
+        log = self.directory / 'parent.jsonl'
+        if terminal_before_loss:
+            self.action(original, body=original_body, hold_exit=True, report_input=True)
+            self.assertEqual(json.loads(original.readline()),
+                             {'terminal_written': True, 'input_after_prompt': ''})
+            self.eventually(lambda: log.exists() and original_body in log.read_text(),
+                            'terminal event was not observed before killing the observer')
+            evidence['turnsBeforeLoss'] = self.coord('turns', 'parent')
+        observer.kill()
+        observer.wait(timeout=5)
+        evidence['supervisorExit'] = observer.returncode
+        evidence['survivingNative'] = [p for p in self.owned_processes() if p['pid'] == started['pid']]
+        self.assertTrue(evidence['survivingNative'], 'original native exited with its observer')
+        if retry:
+            queued = self.coord(*self.receive_args('parent'))
+            evidence['retryStatus'] = queued['status']
+            self.assertEqual(queued['status'], 'queued')
+        self.coord('message', 'third', 'root', 'parent', 'report', 'Queued after observer loss.')
+        marker = 'output from original native after observer loss: ' + harness
+        self.action(original, progress=marker)
+        self.assertEqual(json.loads(original.readline()), {'progress_written': marker})
+        self.eventually(lambda: log.exists() and marker in log.read_text(),
+                        'automatic recovery did not retain output from the original native')
+        evidence['postLossOutputRetained'] = True
+        if not terminal_before_loss:
+            self.action(original, body=original_body, hold_exit=True, report_input=True)
+            self.assertEqual(json.loads(original.readline()),
+                             {'terminal_written': True, 'input_after_prompt': ''})
+        evidence['originalPromptRepeated'] = False
+        self.eventually(lambda: original_body in log.read_text(), 'original terminal output was lost')
+        evidence['duplicateNativeSession'] = bool(select.select([self.server], [], [], .15)[0])
+        self.assertFalse(evidence['duplicateNativeSession'],
+                         'another native started before the original process exited')
+        if retry:
+            after_terminal = self.coord(*self.receive_args('parent'))
+            evidence['retryAfterTerminalStatus'] = after_terminal['status']
+            self.assertEqual(after_terminal['status'], 'queued')
+            self.assert_no_start()
+        evidence['pendingBeforeNativeExit'] = self.coord('inbox', 'parent')
+        self.assertEqual([m['id'] for m in evidence['pendingBeforeNativeExit']], ['second', 'third'])
+        self.action(original)
+        self.assertEqual(original.readline(), b'')
+
+        arrivals = {}
+        for _ in range(2):
+            control, event = self.accept_any()
+            self.assertNotIn(event['session'], arrivals, 'duplicate session launched during recovery')
+            arrivals[event['session']] = (control, event)
+        self.assertEqual(set(arrivals), {'parent', 'root'})
+        continuation, resumed = arrivals['parent']
+        parent, notified = arrivals['root']
+        evidence['continuation'] = resumed
+        evidence['parentNotification'] = notified
+        evidence['originalExitedBeforeContinuation'] = not any(
+            p['pid'] == started['pid'] for p in self.owned_processes())
+        self.assertTrue(evidence['originalExitedBeforeContinuation'])
+        self.assertEqual(resumed['native'], native)
+        self.assertNotEqual(resumed['pid'], started['pid'])
+        self.assertIn('[id: second]', resumed['prompt'])
+        self.assertIn('[id: third]', resumed['prompt'])
+        self.assertNotIn('[id: first]', resumed['prompt'])
+        self.assertIn(original_body, notified['prompt'])
+        evidence['parentNotified'] = True
+        follow_up_body = 'Queued inputs completed after recovery: ' + harness
+        self.action(continuation, body=follow_up_body)
+        self.assertEqual(continuation.readline(), b'')
+        self.action(parent)
+        self.assertEqual(parent.readline(), b'')
+        parent_again, next_notification = self.accept('root')
+        self.assertIn(follow_up_body, next_notification['prompt'])
+        self.action(parent_again)
+        self.assertEqual(parent_again.readline(), b'')
+        self.eventually(lambda: not self.coord('inbox', 'parent') and not self.coord('inbox', 'root'),
+                        'recovered work or its parent notification remained pending')
+        evidence['pendingInputDrained'] = True
+        turns = self.coord('turns', 'parent')
+        evidence['turnsAfterRecovery'] = turns
+        self.assertEqual([t['reportBody'] for t in turns], [original_body, follow_up_body])
+        self.assertTrue(all(t['receipt'] == 'native-reviewed' for t in turns))
+        if evidence.get('turnsBeforeLoss'):
+            self.assertEqual(turns[0]['id'], evidence['turnsBeforeLoss'][0]['id'])
+        evidence['originalCompletionRetained'] = turns[0]['reportBody'] == original_body
+        evidence['retainedNativeFrames'] = [json.loads(line) for line in log.read_text().splitlines()]
+        self.assertEqual(self.coord('session', 'parent')['native'], native)
+        self.eventually(lambda: not self.owned_processes(), 'fixture keeper or recovery did not exit')
+        return evidence
+
+    def test_observer_loss_retry_preserves_native_and_drains_pending_messages(self):
+        for harness in ('codex', 'omp'):
+            with self.subTest(harness=harness):
+                # Each harness needs a separate database and native identity.
+                fixture = Receive()
+                try:
+                    fixture.setUp()
+                    fixture.exercise_observer_loss(harness, retry=True)
+                finally:
+                    fixture.doCleanups()
+
+    def test_observer_loss_recovers_without_a_retry(self):
+        for harness in ('codex', 'omp'):
+            with self.subTest(harness=harness):
+                fixture = Receive()
+                try:
+                    fixture.setUp()
+                    fixture.exercise_observer_loss(harness, retry=False)
+                finally:
+                    fixture.doCleanups()
+
+    def test_observer_loss_after_terminal_keeps_lock_until_native_exit(self):
+        for harness in ('codex', 'omp'):
+            with self.subTest(harness=harness):
+                fixture = Receive()
+                try:
+                    fixture.setUp()
+                    fixture.exercise_observer_loss(harness, retry=True, terminal_before_loss=True)
+                finally:
+                    fixture.doCleanups()
+
+    def test_completed_omp_attempt_replay_leaves_guidance_for_current_native(self):
+        self.coord('attach', 'root', 'codex', 'native-root', self.endpoint('root'))
+        self.worker(harness='omp')
+        self.coord('message', 'first', 'root', 'parent', 'task', 'Original work.')
+        observer = self.spawn(*self.receive_args('parent'))
+        original, first = self.accept('parent')
+        self.coord('message', 'second', 'root', 'parent', 'task', 'Work queued before original completion.')
+        self.action(original, body='Original report survives completed-attempt replay.')
+        self.assertEqual(original.readline(), b'')
+        arrivals = {}
+        for _ in range(2):
+            stream, started = self.accept_any()
+            self.assertNotIn(started['session'], arrivals)
+            arrivals[started['session']] = (stream, started)
+        self.assertEqual(set(arrivals), {'root', 'parent'})
+        parent, notification = arrivals['root']
+        current, second = arrivals['parent']
+        self.assertIn('Original report survives completed-attempt replay.', notification['prompt'])
+        self.assertEqual(second['native'], first['native'])
+        marker = 'current native state observed before observer loss'
+        self.action(current, progress=marker)
+        self.assertEqual(json.loads(current.readline()), {'progress_written': marker})
+        log = self.directory / 'parent.jsonl'
+        self.eventually(lambda: marker in log.read_text(), 'current native state was not observed')
+        original_report = self.coord('turns', 'parent')[0]
+        self.coord('message', 'later-guidance', 'root', 'parent', 'guidance',
+                   'Guidance belongs to the current native process.')
+        observer.kill()
+        observer.wait(timeout=5)
+        # Both keepers lost this observer. The old attempt can finish while the
+        # current native process still owns its task and accepts pending guidance.
+        self.eventually(lambda: not any(p['pid'] == first['ppid'] for p in self.owned_processes()),
+                        'completed OMP attempt could not finish replay while guidance was pending')
+        self.assertTrue(any(p['pid'] == second['pid'] for p in self.owned_processes()))
+        self.assertIn('later-guidance', [m['id'] for m in self.coord('inbox', 'parent')])
+        self.action(current, read_steer=True)
+        accepted = json.loads(current.readline())['steer_received']
+        self.assertEqual(accepted['id'], 'later-guidance')
+        self.assertEqual(accepted['message'], 'Guidance belongs to the current native process.')
+        self.eventually(lambda: 'later-guidance' not in [m['id'] for m in self.coord('inbox', 'parent')],
+                        'native steer response did not record guidance acceptance')
+        self.action(current, body='Current task completed after accepting guidance.')
+        self.assertEqual(current.readline(), b'')
+        self.action(parent)
+        self.assertEqual(parent.readline(), b'')
+        parent_again, notification = self.accept('root')
+        self.assertIn('Current task completed after accepting guidance.', notification['prompt'])
+        self.action(parent_again)
+        self.assertEqual(parent_again.readline(), b'')
+        self.eventually(lambda: not self.coord('inbox', 'parent') and not self.coord('inbox', 'root'),
+                        'replayed completion or current work remained pending')
+        turns = self.coord('turns', 'parent')
+        self.assertEqual([turn['reportBody'] for turn in turns], [
+            'Original report survives completed-attempt replay.',
+            'Current task completed after accepting guidance.',
+        ])
+        self.assertEqual(turns[0]['id'], original_report['id'])
+        self.assertTrue(all(turn['receipt'] == 'native-reviewed' for turn in turns))
+        self.eventually(lambda: not self.owned_processes(), 'keeper or recovery did not exit after replay')
 
     def test_busy_direct_receive_drains_new_input_and_preserves_native_session(self):
         self.worker()
@@ -335,6 +596,25 @@ class Receive(unittest.TestCase):
         self.assertNotEqual(failed_report['id'], success_report['id'])
         self.assertNotEqual(startup_report['id'], success_report['id'])
 
+    def test_receive_startup_failure_notifies_parent_and_retains_input(self):
+        self.coord('attach', 'root', 'codex', 'native-root', self.endpoint('root'))
+        self.worker()
+        self.coord('message', 'input', 'root', 'parent', 'task', 'Input for a missing executable.')
+        failed = self.spawn(*self.receive_args('parent', self.directory / 'missing executable'))
+        try:
+            parent, notified = self.accept('root')
+        except socket.timeout:
+            if failed.poll() is not None:
+                stdout, stderr = failed.communicate()
+                self.fail(f'startup failure did not notify parent; receive exited {failed.returncode}: '
+                          f'{stderr or stdout}')
+            raise
+        self.assertIn('could not start', notified['prompt'])
+        self.action(parent)
+        self.finish(failed, ok=False)
+        self.assertEqual([m['id'] for m in self.coord('inbox', 'parent')], ['input'])
+        self.assertEqual(self.coord('inbox', 'root'), [])
+
     def test_root_failure_after_success_retains_failure_and_quoted_commands(self):
         self.message('first', 'root')
         first = self.spawn(*self.receive_args('root'))
@@ -352,6 +632,27 @@ class Receive(unittest.TestCase):
         self.assertIn('fixture provider failed', stdout)
         self.assertEqual([m['id'] for m in self.coord('inbox', 'root')], ['second'])
         self.assertEqual(self.coord('turns', 'root'), [])
+
+    def test_root_failed_receive_can_retry_the_same_pending_input(self):
+        self.message('input', 'root')
+        failed = self.spawn(*self.receive_args('root'))
+        control, original = self.accept('root')
+        self.action(control, fail=True, ack=False)
+        self.finish(failed, ok=False)
+        self.assertEqual([m['id'] for m in self.coord('inbox', 'root')], ['input'])
+        retry = self.spawn(*self.receive_args('root'))
+        try:
+            control, resumed = self.accept('root')
+        except socket.timeout:
+            if retry.poll() is not None:
+                stdout, stderr = retry.communicate()
+                self.fail(f'root retry exited {retry.returncode}: {stderr or stdout}')
+            raise
+        self.assertEqual(resumed['native'], original['native'])
+        self.assertIn('[id: input]', resumed['prompt'])
+        self.action(control)
+        self.finish(retry)
+        self.assertEqual(self.coord('inbox', 'root'), [])
 
     def test_turn_and_receive_share_ownership_and_omp_session_file(self):
         self.worker(harness='omp')
