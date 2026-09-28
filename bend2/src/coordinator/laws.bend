@@ -33,6 +33,8 @@ import ./receive.bend as Receive
 import ./guidance.bend as Guidance
 import ./land.bend as Land
 import ./recruit.bend as Recruit
+import ../host/laws.bend as HostLaws
+import ../json/laws.bend as JsonLaws
 import ../git/laws.bend as GitLaws
 import ../git/types.bend as T
 import ../git/text.bend as Tx
