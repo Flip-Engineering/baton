@@ -1,6 +1,4 @@
 import { APPLICATION_SEMANTIC_REGISTRY, canonicalRunPhase, providerSettled } from './application-semantics.mjs';
-import { createRecipes } from './recipes.mjs';
-import { createWave } from './wave.mjs';
 import { createSwarms } from './swarm-client.mjs';
 
 function clientError(message, code = 'application_client_invalid') {
@@ -109,13 +107,10 @@ export function prepareRunStart(objective, options) {
   if (!promptText(objective)) throw clientError('Run objective is required');
   exactOptions(options, new Set([
     'runId', 'resultIntent', 'profile', 'scope', 'model', 'harness', 'effort', 'exact', 'driverKind',
-    // 93B: wave binding (waveId/waveRole) + the pre-loop wave.started payload (waveStart) ride
-    // run.start; like driverKind they describe who is driving, not what the run is.
-    'waveId', 'waveRole', 'waveStart',
     // #102 Decision 1: the cell declaration the run's nodes are minted from.
     'cell',
   ]), 'start');
-  for (const field of ['runId', 'profile', 'model', 'harness', 'effort', 'driverKind', 'waveId', 'waveRole']) {
+  for (const field of ['runId', 'profile', 'model', 'harness', 'effort', 'driverKind']) {
     if (options[field] !== undefined && !nonempty(options[field])) {
       throw clientError(`Run ${field} is invalid`);
     }
@@ -123,14 +118,6 @@ export function prepareRunStart(objective, options) {
   if (options.cell !== undefined
     && (!options.cell || typeof options.cell !== 'object' || Array.isArray(options.cell))) {
     throw clientError('Run cell is invalid');
-  }
-  if (options.waveStart !== undefined) {
-    exactOptions(options.waveStart, new Set(['roster', 'idempotencyKey']), 'wave start');
-    if (!nonempty(options.waveStart.idempotencyKey) || !Array.isArray(options.waveStart.roster)
-      || options.waveStart.roster.length === 0 || options.waveStart.roster.length > 64
-      || options.waveStart.roster.some((role) => !nonempty(role))) {
-      throw clientError('Run waveStart is invalid');
-    }
   }
   if (options.scope !== undefined && (!Array.isArray(options.scope) || options.scope.length === 0
     || options.scope.length > 64 || options.scope.some((value) => !nonempty(value))
@@ -158,7 +145,7 @@ export function prepareRunStart(objective, options) {
     throw clientError('manual routing requires model and effort together');
   }
   const intent = { objective: objective.normalize('NFKC').trim(), resultIntent };
-  for (const key of ['runId', 'profile', 'scope', 'driverKind', 'waveId', 'waveRole', 'waveStart', 'cell']) {
+  for (const key of ['runId', 'profile', 'scope', 'driverKind', 'cell']) {
     if (options[key] !== undefined) intent[key] = options[key];
   }
   if (options.exact !== undefined) intent.route = options.exact;
@@ -1118,35 +1105,11 @@ export class BatonClient {
 
   get repoRoot() { return this.#repoRoot; }
 
-  get waves() {
-    return Object.freeze({
-      start: (options = {}) => createWave(this, options),
-      // #170 (D4): the read-only compile seam — a wavefile text lowers to the closed IR object
-      // baton.recipes.runWorkflow accepts (the four-surface seam's embedded leg).
-      compile: (text, options = {}) => this.#application.command('waves.compile', {
-        specDsl: text, ...(options?.repoRoot ? { repoRoot: options.repoRoot } : {}),
-      }),
-    });
-  }
 
   // Swarm SDK (docs/39-swarm-runtime.md): the living-swarm facade bound to this client's command
   // port, so `client.swarms.create(...)`/`open(id)`/`list()` ride the same authority as every
   // other verb — no second transport, no client-computed permissions.
   get swarms() { return createSwarms(this.#application); }
-
-  // #183: waves.start's terminal-replay gate — delegated to the application's wave registry read.
-  // createWave calls this before member validation so a terminal key refuses typed, never silently
-  // replays (the live-wave dedupe is preserved on the run.start path).
-  async _assertWaveStartReplayable(waveId) {
-    if (typeof this.#application.assertWaveStartReplayable !== 'function') return;
-    return this.#application.assertWaveStartReplayable(waveId);
-  }
-
-  // Composition v2 rule 3: the recipes library is an embedded-facade accessor over the shipped
-  // waves/driver machinery — recipes as data + closed run options, never a new command family.
-  get recipes() {
-    return createRecipes(this, this.#repoRoot);
-  }
 
   help(topic = 'application', depth = 'outline') {
     if (!nonempty(topic)
@@ -1161,22 +1124,6 @@ export class BatonClient {
       throw clientError('Deployment doctor is unavailable', 'application_doctor_unavailable');
     }
     return this.#application.doctor();
-  }
-
-  // KG settlement D3: the wave driver's settle-window ritual entry. INTERNAL deployment plumbing
-  // (underscore-prefixed, never a user-facing surface) — the driver holds only this facade, so it
-  // rides the embedded-only knowledge.settlement_lease command from the deployment's own top-level
-  // principal. Server-side it sweeps prior expired leases, elevates each member's note+plan,
-  // materializes the wave settlement lease, and candidates each elevated note.
-  async _runSettlementRitual(waveId, memberRunIds) {
-    return this.#application.command('knowledge.settlement_lease', { waveId, members: memberRunIds });
-  }
-
-  // D9 (epic #103): the wave driver's post-close wave.closed append. INTERNAL deployment plumbing
-  // (underscore-prefixed, never a user-facing surface) — same embedded command path as the
-  // settlement ritual, so the durable campaign-state record mints in the guaranteed close window.
-  async _appendWaveClosed(record) {
-    return this.#application.command('_wave.closed', { record });
   }
 
 
@@ -1246,10 +1193,6 @@ export function bindBaton(application, principal) {
     // Issue #114: surface the repository root to the client so baton.recipes.runWorkflow's D4
     // harvest can read the authoritative result sha (the driver knows the repo; the facade did not).
     repoRoot: application?.driver?.repoRoot ?? application?.driver?.coordinator?._repoRoot ?? null,
-    // #183: the terminal-replay gate, exposed to createWave's waves.start path.
-    ...(typeof application.assertWaveStartReplayable === 'function'
-      ? { assertWaveStartReplayable: (waveId) => application.assertWaveStartReplayable(waveId) }
-      : {}),
   }));
 }
 

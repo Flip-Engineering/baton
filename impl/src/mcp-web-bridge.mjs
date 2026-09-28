@@ -41,8 +41,6 @@ export const ORDINARY_COMMANDS = Object.freeze([
   'run.scratchpad.read', 'run.scratchpad.append', 'run.scratchpad.elevate',
   'run.knowledge.seed',
   'runs.list',
-  'waves.start', 'waves.list', 'waves.progress', 'waves.send',
-  'waves.stop', 'waves.run', 'waves.compile',
 ]);
 // SA4 (#227): the CONSTRUCTOR floor is the REGISTRY's own remote_bridge projection — the closed
 // operation set (docs/36 §8.3 L8 / D8, R-OP-15b) the registry itself says a remote bridge
@@ -56,7 +54,6 @@ const MUTATIONS = new Set([
   'run.start', 'run.act', 'run.stop', 'run.answer', 'run.approve',
   'run.message.send', 'run.scratchpad.append', 'run.scratchpad.elevate',
   'run.knowledge.seed',
-  'waves.start', 'waves.send', 'waves.stop', 'waves.run',
 ]);
 const SAFE_RUN_ID = /^[A-Za-z0-9._:-]{1,256}$/u;
 
