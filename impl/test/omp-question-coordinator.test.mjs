@@ -56,7 +56,7 @@ async function fixture(t, { model = 'm', governed = false } = {}) {
     },
     referee: async () => ({ reverified: true, passed: true, observedExit: 0 }),
     ...(governed ? { providerGovernance: {
-      schemaVersion: 1, maxWireFrameBytes: 2 * 1024 * 1024,
+      schemaVersion: 1,
       maxProviderCallsPerTurn: 10, maxToolCallsPerTurn: 10,
       routes: [{ harness: 'omp', model, effort: 'high', mode: 'observe',
         terminalReserve: { tokens: 100, usd: 0.01 } }],

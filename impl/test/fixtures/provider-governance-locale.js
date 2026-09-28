@@ -6,7 +6,6 @@ if (process.argv[2] === 'run') {
   });
   const normalized = normalizeProviderGovernancePolicy({
     schemaVersion: 1,
-    maxWireFrameBytes: 1024,
     maxProviderCallsPerTurn: 1,
     maxToolCallsPerTurn: 1,
     routes: [route('i'), route('I')],

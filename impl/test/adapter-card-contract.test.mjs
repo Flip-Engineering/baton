@@ -15,10 +15,9 @@ import assert from 'node:assert/strict';
 import { ClaudeAdapter, CodexAdapter, GlmAdapter, MockAdapter } from '../src/adapter.mjs';
 import {
   ADAPTER_CARD_AXES, ADAPTER_VERB_KEYS, assertAdapterCard, completeLegacySubprocessCard,
-  defaultWireFrameBytes, missingAdapterCardAxes,
+  missingAdapterCardAxes,
 } from '../src/adapter-contract.mjs';
 import { CLI_ADAPTERS } from '../src/cli-adapters.mjs';
-import { FRAME_LIMITS } from '../src/limits.mjs';
 import { normalizeWorkerPolicyCard, resolveWorkerPolicy } from '../src/worker-policy.mjs';
 
 // The tier's own declaration, before the contract completes it — the input `card()` completes.
@@ -60,12 +59,9 @@ test('A-G10: the legacy completion is derived from the card, declares the unobse
   const completed = completeLegacySubprocessCard(LEGACY_CARD());
   assert.deepEqual(missingAdapterCardAxes(completed), [], 'the completed legacy card is consumable');
   assert.doesNotThrow(() => normalizeWorkerPolicyCard(completed.workerPolicy));
-  // Declared, never fabricated: every axis the tier cannot observe reads `unavailable`, and the
-  // frame ceiling is the limits registry's number (never a second copy of it).
+  // Declared, never fabricated: every axis the tier cannot observe reads `unavailable`.
   assert.equal(completed.governance.usage.tokens, 'unavailable');
   assert.equal(completed.governance.usage.usd, 'unavailable');
-  assert.equal(completed.governance.maxWireFrameBytes, FRAME_LIMITS['wire.frame'].value);
-  assert.equal(completed.governance.maxWireFrameBytes, defaultWireFrameBytes());
   assert.equal(completed.modelSelection.mode, 'unavailable');
   assert.equal(completed.workerPolicy.autonomy.observation, 'unavailable');
   assert.equal(completed.workerPolicy.containment.observation, 'unavailable');

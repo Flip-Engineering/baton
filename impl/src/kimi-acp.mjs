@@ -8,9 +8,7 @@ import {
 import { attestWorkerPolicyObservation } from './worker-policy.mjs';
 import { normalizeConcurrencyCeiling } from './concurrency-policy.mjs';
 import { TOOL_EVIDENCE_UNOBSERVED, toolCallArgumentDigest, toolCallResultDigest } from './verifier-diagnostics.mjs';
-import { FRAME_LIMITS } from './limits.mjs';
 
-const DEFAULT_MAX_WIRE_FRAME_BYTES = FRAME_LIMITS['wire.frame'].value;
 const DEFAULT_MAX_EVENT_PAYLOAD_BYTES = 64 * 1024;
 const DEFAULT_STREAM_CHUNK_BYTES = 4 * 1024;
 
@@ -109,15 +107,13 @@ export class KimiAcpCli {
     this._reapOwnedProcessGroup = options.reapOwnedProcessGroup;
     this._ceiling = normalizeConcurrencyCeiling(options.ceiling, 'KimiAcpCli concurrencyCeiling');
     this._maxContext = options.maxContext ?? null;
-    this._maxWireFrameBytes = options.maxWireFrameBytes ?? DEFAULT_MAX_WIRE_FRAME_BYTES;
     this._maxEventPayloadBytes = options.maxEventPayloadBytes ?? DEFAULT_MAX_EVENT_PAYLOAD_BYTES;
     this._streamChunkBytes = options.streamChunkBytes
       ?? Math.min(DEFAULT_STREAM_CHUNK_BYTES, Math.floor(this._maxEventPayloadBytes / 2));
-    if (!Number.isSafeInteger(this._maxWireFrameBytes) || this._maxWireFrameBytes <= 0
-      || !Number.isSafeInteger(this._maxEventPayloadBytes) || this._maxEventPayloadBytes < 1024
+    if (!Number.isSafeInteger(this._maxEventPayloadBytes) || this._maxEventPayloadBytes < 1024
       || !Number.isSafeInteger(this._streamChunkBytes) || this._streamChunkBytes < 256
       || this._streamChunkBytes > this._maxEventPayloadBytes) {
-      throw new TypeError('KimiAcpCli: wire/event byte ceilings must be positive safe integers');
+      throw new TypeError('KimiAcpCli: event byte ceilings must be positive safe integers');
     }
     this._catalog = catalogFrom(options.modelCatalog ?? { 'kimi-code/k3': ['low', 'high', 'max'] });
     this._defaultModel = options.model ?? (this._catalog.size === 1 ? [...this._catalog.keys()][0] : null);
@@ -144,7 +140,6 @@ export class KimiAcpCli {
         usage: { tokens: 'unavailable', usd: 'unavailable', terminalSeal: 'unavailable' },
         providerCalls: { observation: 'unavailable', enforcement: 'unavailable' },
         toolCalls: { observation: 'native', enforcement: 'unavailable' },
-        maxWireFrameBytes: this._maxWireFrameBytes,
         contentStream: { mode: 'bounded-coalescing', flushBytes: this._streamChunkBytes },
       },
       modelSelection: {

@@ -31,7 +31,7 @@ const brief = () => ({
   verification: { command: 'true', expectExit: 0 }, budget: { tokens: 1_000, usd: 10, wallMin: 1 },
 });
 const providerPolicy = {
-  schemaVersion: 1, maxWireFrameBytes: 1024 * 1024, maxProviderCallsPerTurn: 2, maxToolCallsPerTurn: 2,
+  schemaVersion: 1, maxProviderCallsPerTurn: 2, maxToolCallsPerTurn: 2,
   routes: [{ harness: 'stub', model: 'stub-1', effort: 'low', terminalReserve: { tokens: 80, usd: 1 }, mode: 'observe' }],
 };
 const workerResult = { status: 'completed', summary: 'done', artifacts: { files: [] }, verification: { command: 'true', claimedExit: 0 }, openQuestions: [] };
@@ -52,7 +52,6 @@ function adapter(overrides = {}) {
         usage: { tokens: 'native', usd: 'native', tokenMetric: 'stub-total', terminalSeal: 'native' },
         providerCalls: { observation: 'native', enforcement: 'unavailable' },
         toolCalls: { observation: 'native', enforcement: 'unavailable' },
-        maxWireFrameBytes: 1024 * 1024,
       },
     }),
     async spawn(...args) { calls.spawn.push(args); return overrides.spawn ? overrides.spawn(value, ...args) : { ok: true }; },

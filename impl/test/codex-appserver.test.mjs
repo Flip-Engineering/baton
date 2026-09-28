@@ -47,7 +47,6 @@ function makeAdapter(extra = {}) {
     stopDeadlineMs: extra.stopDeadlineMs,
     ceiling: 4,
     maxContext: 272000,
-    maxWireFrameBytes: extra.maxWireFrameBytes,
     versionProbe: extra.versionProbe ?? (() => 'fake-codex/0.144.0-test'),
   });
 }
@@ -123,7 +122,6 @@ test('XA14/XA15: card() reports harness codex, the injected version, and the nat
     usage: { tokens: 'native', usd: 'unavailable', tokenMetric: 'codex_thread_total_tokens', terminalSeal: 'native' },
     providerCalls: { observation: 'native', enforcement: 'unavailable' },
     toolCalls: { observation: 'native', enforcement: 'unavailable' },
-    maxWireFrameBytes: 1024 * 1024,
   });
   assert.deepEqual(card.permissions, {
     mode: 'never', sandbox: 'danger-full-access', boundary: 'Unattended full host permissions by default; containment is a separate deployment boundary',
@@ -548,18 +546,20 @@ test('XA17: malformed JSON lines and unknown-method notifications never crash th
   }
 });
 
-test('wire P0: one oversized tool-item notification is bounded, credential-free, and the same worker still completes', async () => {
-  const adapter = makeAdapter({ maxWireFrameBytes: 1024 });
+test('wire P0: one oversized tool-item notification is parsed whole, digest-bounded, and the same worker still completes', async () => {
+  const adapter = makeAdapter();
   const events = collect(adapter);
   const worker = 'wire-oversize-notification';
   try {
     const ack = await adapter.spawn(worker, makeBrief('FAKE:OVERSIZE_ITEM continue after telemetry loss'), { worktree: freshWorktree() });
     assert.equal(ack.ok, true);
-    const truncated = await until(events, (event) => event.kind === 'error' && event.payload.code === 'wire_notification_truncated');
-    assert.equal(truncated.payload.serverMethod, 'item/completed');
-    assert.ok(truncated.payload.observedBytes > truncated.payload.byteCeiling);
-    assert.match(truncated.payload.remediation, /terminal turn result/i);
-    assert.doesNotMatch(JSON.stringify(truncated), /fixture-output-secret-must-not-echo/);
+    // #627: no wire-byte ceiling exists — the whole notification reaches the mapping, and the
+    // completed tool item's own digest row is what bounds what the ledger carries.
+    const item = await until(events, (event) => event.kind === 'content.tool_call'
+      && String(event.payload.callId).endsWith('-huge-tool'));
+    assert.equal(item.payload.exitCode, 0);
+    assert.match(item.payload.resultDigest, /^exit=0 bytes=\d+/);
+    assert.doesNotMatch(JSON.stringify(item), /fixture-output-secret-must-not-echo/);
     const terminal = await until(events, (event) => event.kind === 'lifecycle.turn_completed');
     assert.equal(terminal.payload.result.status, 'completed');
     assert.equal(events.some((event) => event.kind === 'lifecycle.crashed'), false);
@@ -567,30 +567,6 @@ test('wire P0: one oversized tool-item notification is bounded, credential-free,
     await cleanup(adapter, worker);
   }
 });
-
-for (const [label, directive, spawnAccepted] of [
-  ['RPC response', 'FAKE:OVERSIZE_RESPONSE', false],
-  ['late-id ambiguous frame', 'FAKE:OVERSIZE_AMBIGUOUS', true],
-]) {
-  test(`wire P0: oversized ${label} fails closed and exactly reaps the provider process`, async () => {
-    const adapter = makeAdapter({ maxWireFrameBytes: 1024 });
-    const events = collect(adapter);
-    const worker = `wire-fatal-${directive}`;
-    try {
-      const ack = await adapter.spawn(worker, makeBrief(directive), { worktree: freshWorktree() });
-      assert.equal(ack.ok, spawnAccepted);
-      const crashed = await until(events, (event) => event.kind === 'lifecycle.crashed');
-      assert.equal(crashed.payload.code, 'wire_frame_oversize');
-      assert.match(crashed.payload.remediation, /terminated and reaped/i);
-      await until(events, (event) => event.kind === 'lifecycle.process_closed');
-      assert.equal(events.some((event) => event.kind === 'lifecycle.process_reap_unconfirmed'), false);
-      assert.equal(events.some((event) => event.kind === 'lifecycle.turn_completed'), false);
-      assert.doesNotMatch(JSON.stringify(events), /oversized-response-|ambiguous-frame-/);
-    } finally {
-      await cleanup(adapter, worker);
-    }
-  });
-}
 
 // ---------------------------------------------------------------------------
 // Anti-wedge (live-schema-informed): server->client requests OUTSIDE the mapped table (the real

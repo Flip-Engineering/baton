@@ -1,14 +1,12 @@
 // The native bridge tells the truth about its own refusals (issue #283, deliverables 4 and 7): every
-// refusal the bridge raises — an over-cap frame, a request the closed argument vocabulary refuses —
-// lands on the runtime's durable `swarm.operation_refused` lane, wakes a parked watch, and shows on
-// the participant's own row as `lastRefusal` until a later operation of the same command succeeds.
-// The refusal text says on its FIRST LINE that nothing was recorded and what to change. An ANSWER
-// too large for the negotiated ceiling is never truncated: the DEFAULT read (no projection) is
-// answered narrowed — the widest projection that measurably fits, named on the answer (#457) — and
-// an EXPLICIT projection that does not fit is refused typed with the projection that MEASURABLY
-// fits, never a second hardcoded bound: the client buffers under the bound the bridge published to
-// its environment. Fixture pattern from swarm-runtime.test.mjs
-// (a real CoordinationStore under a controllable coordinator) so the bridge talks to a REAL runtime.
+// refusal the bridge raises — a request the closed argument vocabulary refuses, one naming another
+// swarm, one arriving without an active token — lands on the runtime's durable
+// `swarm.operation_refused` lane, wakes a parked watch, and shows on the participant's own row as
+// `lastRefusal` until a later operation of the same command succeeds. The refusal text says on its
+// FIRST LINE that nothing was recorded and what to change. An answer is bounded by nothing (issue
+// #627): the bridge reads a request and writes its answer whole, whatever the size of either.
+// Fixture pattern from swarm-runtime.test.mjs (a real CoordinationStore under a controllable
+// coordinator) so the bridge talks to a REAL runtime.
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdtempSync, rmSync } from 'node:fs';
@@ -16,7 +14,7 @@ import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { CoordinationStore } from '../src/coordination-store.mjs';
 import { SwarmRuntime, SWARM_PERMISSIONS } from '../src/swarm-runtime.mjs';
-import { SWARM_VIEW_PROJECTION_NAMES, SWARM_BRIDGE_REFUSAL_COMMAND } from '../src/swarm-contract.mjs';
+import { SWARM_BRIDGE_REFUSAL_COMMAND } from '../src/swarm-contract.mjs';
 import { createSwarmNativeBridge, swarmBridgeCommand, SWARM_BRIDGE_ENV_KEYS } from '../src/swarm-native-bridge.mjs';
 
 const owner = { actor: 'owner', principalId: 'owner', sessionId: 'owner-session' };
@@ -55,14 +53,13 @@ const refusalRows = (store) => store.eventsView()
 const firstLine = (message) => message.split('\n')[0];
 
 // A swarm with one participant and a bridge token issued for it, over the REAL runtime.
-async function linked(t, { maxFrameBytes = 512 * 1024 } = {}) {
+async function linked(t) {
   const f = fixture(t);
   await f.call('create', { purpose: 'Bridge refusals are the swarm\'s own record' });
   await f.call('recruit', { participantId: 'alpha', objective: 'Build, and be refused by the bridge', permissions: SWARM_PERMISSIONS });
   const runId = f.store.swarm('baton').participants.alpha.runId;
   const bridge = createSwarmNativeBridge({
     dispatch: ({ command, args, principal, context }) => f.runtime.command(command, args, principal, context),
-    maxFrameBytes,
   });
   t.after(async () => { await bridge.close(); });
   const issued = await bridge.issue({ swarmId: 'baton', participantId: 'alpha', runId });
@@ -109,6 +106,7 @@ test('every bridge refusal lands on the durable refusal lane, reaches the wake f
     'a later operation of the same command that succeeds clears the standing refusal');
   assert.equal(refusalRows(f.store).length, 1, 'nothing else was recorded: one refusal, one row');
   assert.equal((await f.call('view', {}, principalFor(f, 'alpha'))).caller.lastRefusal, null);
+  assert.equal(SWARM_BRIDGE_REFUSAL_COMMAND, 'swarm.bridge_refusal', 'the report verb is not a swarm command');
 });
 
 test('a refusal the runtime already recorded is never recorded twice, and an unattributable one is not recorded at all', async (t) => {
@@ -131,68 +129,6 @@ test('a refusal the runtime already recorded is never recorded twice, and an una
   assert.equal(anonymous.code, 'swarm_bridge_token_invalid');
   assert.equal(firstLine(anonymous.message), 'Nothing was recorded: use an active bridge token for this participant');
   assert.equal(refusalRows(f.store).length, 1, 'no row was minted for an unattributable refusal');
-});
-
-test('an explicit over-size projection is refused typed with the projection that measurably fits, and the default read answers narrow', async (t) => {
-  const f = await linked(t, { maxFrameBytes: 4096 });
-  await f.call('update', {
-    event: 'swarm.contribution_recorded',
-    payload: { contributionId: 'c-big', participantId: 'alpha', body: 'x'.repeat(24 * 1024) },
-  });
-
-  // Issue #457: the DEFAULT read names no projection — it is the seat's own first look at its
-  // swarm, and it ANSWERS, narrowed and loud (#349), never refused. The refusal below is the
-  // answer to an EXPLICIT over-size projection, which is the caller's own request to narrow.
-  const answered = await f.send('swarm.view', { swarmId: 'baton' });
-  assert.deepEqual(answered.narrowed, { from: 'full', to: answered.projection, reason: 'bridge-frame' });
-  assert.notEqual(answered.projection, 'full');
-  const overBound = await f.send('swarm.view', { swarmId: 'baton', projection: 'full' }).then(() => null, (error) => error);
-  assert.equal(overBound.code, 'swarm_bridge_frame_exceeded');
-  assert.equal(overBound.status, 413);
-  assert.equal(overBound.detail.direction, 'response');
-  assert.equal(overBound.detail.rule, 'bridge-frame');
-  assert.equal(overBound.detail.value, 4096, 'the ceiling is the bridge\'s own negotiated bound');
-  assert.ok(SWARM_VIEW_PROJECTION_NAMES.includes(overBound.detail.fits), 'a real projection is named');
-  assert.ok(overBound.detail.measured.every((name) => SWARM_VIEW_PROJECTION_NAMES.includes(name)),
-    'the advice is measured over the declared vocabulary, not a second list');
-  assert.match(firstLine(overBound.message),
-    new RegExp(`^Nothing was recorded: ask again with projection: ${overBound.detail.fits} \\(\\d+ bytes fits `, 'u'),
-    'the first line says nothing was recorded and names the projection to ask for');
-  assert.ok(overBound.detail.fitsBytes <= overBound.detail.value,
-    'the named projection MEASURABLY fits the negotiated ceiling');
-
-  // The advice is not a promise the bridge cannot keep: asking with it WORKS.
-  const narrower = await f.send('swarm.view', { swarmId: 'baton', projection: overBound.detail.fits });
-  assert.equal(narrower.projection, overBound.detail.fits);
-
-  // The over-bound answer was refused, never truncated, and the refusal is on the durable lane —
-  // carrying the advice the seat was given (issue #457: `detail.fits`), so the root reads what the
-  // seat was told instead of re-running the bridge's measurement.
-  const row = refusalRows(f.store).at(-1);
-  assert.deepEqual({ ...row.payload, seq: undefined },
-    { kind: 'swarm.operation_refused', swarmId: 'baton', command: 'swarm.view', event: null,
-      code: 'swarm_bridge_frame_exceeded', field: null, rule: 'bridge-frame', participantId: 'alpha',
-      detail: { fits: overBound.detail.fits }, seq: undefined });
-  assert.equal(f.store.swarm('baton').contributions['c-big'].body.length, 24 * 1024,
-    'the answer was refused; the record it answered about is untouched');
-});
-
-test('the client buffers under the bound the bridge published, so a raised ceiling is not a second number', async (t) => {
-  const f = await linked(t, { maxFrameBytes: 4096 });
-  assert.equal(f.issued.env[SWARM_BRIDGE_ENV_KEYS.frameBytes], '4096', 'issue() publishes the negotiated bound');
-  assert.equal(f.issued.receipt.frameBytes, 4096);
-  assert.equal(f.bridge.inspect().frameBytes, 4096);
-  // The body stays under the published 4096-byte ceiling with the row content the view now carries
-  // (issue #433 adds `reviewState` to every contribution row): the row is what this test prices,
-  // not the ceiling it answers under.
-  // #441 lane C (3de7f9d8) added the ONE derivation's `files`/`decision`/`reviewState` to the
-  // contributions row: a 1900-byte body now renders 4159 bytes against this fixture's 4096 cap, so
-  // the fixture body shrinks — the pin is that the CLIENT buffers under the published bound, not
-  // that a particular body length fits.
-  await f.call('update', { event: 'swarm.contribution_recorded', payload: { contributionId: 'c-fit', participantId: 'alpha', body: 'y'.repeat(1700) } });
-  const view = await f.send('swarm.view', { swarmId: 'baton', projection: 'contributions' });
-  assert.deepEqual(view.contributions.map((row) => row.contributionId), ['c-fit']);
-  assert.equal(SWARM_BRIDGE_REFUSAL_COMMAND, 'swarm.bridge_refusal', 'the report verb is not a swarm command');
 });
 
 // A participant's principal, for the in-process reads a test needs beside the bridge.

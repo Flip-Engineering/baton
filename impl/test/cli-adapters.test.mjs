@@ -479,7 +479,7 @@ test('_onData emits each terminal event exactly once and ignores trailing output
   assert.deepEqual(seen, ['lifecycle.turn_started', 'resource.provider_call', 'content.message', 'lifecycle.turn_completed']);
 });
 
-test('_onData orders authoritative usage before terminal and oversized frames fail closed without echoing provider bytes', () => {
+test('_onData orders authoritative usage before terminal and parses a large frame whole', () => {
   const ordered = new CodexCli();
   const events = [];
   ordered.onEvent((event) => events.push(event));
@@ -487,67 +487,18 @@ test('_onData orders authoritative usage before terminal and oversized frames fa
   assert.deepEqual(events.map((event) => event.kind), ['resource.tokens', 'lifecycle.turn_completed']);
   assert.equal(events[0].payload.counterId, events[1].payload.usageSeal.counterId);
 
-  const bounded = new CodexCli({ maxWireFrameBytes: 32 });
-  const failures = [];
-  bounded.onEvent((event) => failures.push(event));
+  // #627: no wire-byte ceiling exists — a frame of ANY size is parsed and delivered whole.
+  const large = new CodexCli();
+  const delivered = [];
+  large.onEvent((event) => delivered.push(event));
   const session = { worker: 'w2', terminal: false, turnEpoch: 1, buf: '', logicalSequence: 0 };
-  bounded._onData(session, `{"secret":"${'x'.repeat(64)}"}\n`);
-  assert.equal(session.buf, '');
-  assert.equal(session.turnSettled, true);
-  assert.equal(failures.length, 1);
-  assert.deepEqual(failures[0].payload, {
-    error: 'provider wire frame exceeded configured byte ceiling', code: 'wire_frame_oversize', phase: 'wire',
-    usageSeal: { tokens: 'unavailable', usd: 'unavailable', counterId: null, tokenMetric: null },
-  });
-  assert.doesNotMatch(JSON.stringify(failures), /xxxxxxxx/);
-});
-
-test('oversized one-shot wire frame kills and exactly reaps the owned process group before kill.confirmed', async (t) => {
-  const child = spawn(process.execPath, ['-e', 'setInterval(() => {}, 1000)'], {
-    detached: true,
-    stdio: 'ignore',
-  });
-  t.after(() => {
-    try { process.kill(-child.pid, 'SIGKILL'); } catch { /* already exactly reaped */ }
-  });
-  await once(child, 'spawn');
-
-  const adapter = new CodexCli({ maxWireFrameBytes: 32 });
-  const events = [];
-  let resolveConfirmed;
-  const confirmed = new Promise((resolve) => { resolveConfirmed = resolve; });
-  adapter.onEvent((event) => {
-    events.push(event);
-    if (event.kind === 'kill.confirmed') resolveConfirmed(event);
-  });
-  const session = {
-    worker: 'wire-close-worker', child, terminal: false, turnSettled: false,
-    processClosePending: false, processClosedEmitted: false, processGeneration: 1,
-    processReapTimeoutMs: 2000, turnEpoch: 1, buf: '', logicalSequence: 0,
-    spawnError: null, timeoutFailure: null,
-  };
-  adapter._sessions.set(session.worker, session);
-  child.once('close', (code, signal) => adapter._onClose(session, code, signal));
-
-  adapter._onData(session, `{"secret":"${'z'.repeat(64)}"}\n`);
-  let timeout;
-  const killEvent = await Promise.race([
-    confirmed,
-    new Promise((_, reject) => { timeout = setTimeout(() => reject(new Error('kill confirmation timed out after oversized-frame close')), 3000); }),
-  ]).finally(() => clearTimeout(timeout));
-
-  assert.equal(session.terminal, true);
-  assert.equal(session.processClosedEmitted, true);
-  assert.deepEqual(events.map((event) => event.kind), [
-    'lifecycle.crashed', 'lifecycle.process_closed', 'kill.confirmed',
-  ]);
-  assert.equal(events.filter((event) => event.kind === 'kill.confirmed').length, 1);
-  assert.equal(events.filter((event) => event.kind === 'lifecycle.process_reap_unconfirmed').length, 0);
-  assert.equal(killEvent.actor, 'worker');
-  assert.equal(killEvent.payload.terminalCause, 'wire_frame_oversize');
-  assert.deepEqual(killEvent.payload.usageSeal, {
-    tokens: 'unavailable', usd: 'unavailable', counterId: null, tokenMetric: null,
-  });
+  const text = 'x'.repeat(64 * 1024);
+  large._onData(session, `${JSON.stringify({ type: 'item.completed', item: { type: 'agent_message', text } })}\n`);
+  assert.equal(session.buf, '', 'the whole line is consumed');
+  assert.equal(session.logicalSequence, 1);
+  assert.equal(delivered.find((event) => event.kind === 'content.message').payload.text, text,
+    'a frame of any size reaches the ledger whole — no byte cut, no refusal');
+  assert.equal(delivered.some((event) => event.kind === 'lifecycle.crashed'), false);
 });
 
 test('_onData handles a split terminal line arriving across two chunks without duplicating it', () => {
@@ -614,7 +565,7 @@ test('A-G3: kill() of a live one-shot generation reports unconfirmed until the p
   });
   await once(child, 'spawn');
 
-  const adapter = new CodexCli({ maxWireFrameBytes: 32 });
+  const adapter = new CodexCli();
   const events = [];
   let resolveConfirmed;
   const confirmed = new Promise((resolve) => { resolveConfirmed = resolve; });

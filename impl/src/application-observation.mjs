@@ -827,21 +827,6 @@ export function projectVerdictSurface(events) {
       ? VERDICT_CORRECTIVE_TABLE[liveCode] : null,
   };
 }
-// Diagnostics DG-1a (DIAG-3 / #28 deferral): one aggregated wire.frame_degraded summary
-// (counts + last code), never raw frames — #53 writeReceipts whitelist amendment.
-export function debugFrameDegradedSummary(events) {
-  const degraded = events.filter((event) => event.kind === 'wire.frame_degraded');
-  if (degraded.length === 0) return null;
-  const last = degraded.at(-1);
-  return {
-    kind: 'wire.frame_degraded',
-    result: 'degraded',
-    code: 'frame_degraded',
-    at: last.ts,
-    count: degraded.length,
-    lastCode: 'frame_degraded',
-  };
-}
 export function normalizePrincipal(value, label) {
   // Issue #535: the principal is an AUTHORIZATION boundary, so its shape stays closed — an
   // undeclared field is a forged grant, never a forward-compatible extension.
@@ -4800,13 +4785,10 @@ export function _debugMember(application, dispatch, runId, limit) {
       .filter((event) => event.kind === 'content.message')
       .slice(-limit)
       .map((event) => ({ at: event.ts, text: boundedAttentionText(event.payload?.text) }));
-    // #53 writeReceipts whitelist + DIAG-3 amendment: scratchpad/authority receipts, then at most
-    // one aggregated wire.frame_degraded summary (counts + last code — never raw frames).
+    // #53 writeReceipts whitelist + DIAG-3 amendment: scratchpad/authority receipts.
     const writeReceipts = events
       .filter((event) => event.kind === 'scratchpad.write_result' || event.kind === 'authority.rejected')
       .map((event) => application._debugReceipt(event));
-    const frameDegraded = debugFrameDegradedSummary(events);
-    if (frameDegraded) writeReceipts.push(frameDegraded);
     // #53 failure + DIAG-2 amendment: gate refusal wins when present (structured {gate, detail});
     // otherwise stream-death/crash (lifecycle.crashed) as the #53 closed {kind, code, message}.
     const gateRefusal = debugGateRefusal(events);
@@ -4842,7 +4824,7 @@ export function _debugMember(application, dispatch, runId, limit) {
 // Rule 2: `code` = `result` for scratchpad receipts, and the `authority.rejected` reason for
 // interaction rejections. Raw receipt payloads carry banned internals (scratchpadFence,
 // eventSeq, current, evidence); this is a field whitelist, never a passthrough.
-// DIAG-3 also admits wire.frame_degraded only via debugFrameDegradedSummary (aggregated).
+//
 export function _debugReceipt(application, event) {
     if (event.kind === 'scratchpad.write_result') {
       const result = event.payload?.result ?? null;

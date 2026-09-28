@@ -129,7 +129,6 @@ function brief({ blocked = false } = {}) {
 
 const governance = {
   schemaVersion: 1,
-  maxWireFrameBytes: 1024 * 1024,
   maxProviderCallsPerTurn: 20,
   maxToolCallsPerTurn: 20,
   routes: [{
@@ -171,7 +170,6 @@ function sessionAdapter({
           },
           providerCalls: { observation: 'native', enforcement: 'unavailable' },
           toolCalls: { observation: 'native', enforcement: 'unavailable' },
-          maxWireFrameBytes: 1024 * 1024,
         },
       };
     },

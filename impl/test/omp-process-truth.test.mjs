@@ -1,4 +1,4 @@
-// OMP process truth — the audit A-E1 / A-E10 / A-E11 rows (issue #281, lane `process-truth`).
+// OMP process truth — the audit A-E1 / A-E11 rows (issue #281, lane `process-truth`).
 //
 // A-E1 (CONFIRMED, omp-rpc.mjs:169 pre-fix). The child was spawned with `{cwd, env, stdio}` and
 // no `detached`, so it sat in BATON'S OWN process group; the `ProcessCloseReapLatch` built on
@@ -8,12 +8,10 @@
 // cli-adapters.mjs:307, acp-json-rpc-process.mjs:79) and the Claude session escalates
 // SIGTERM→SIGKILL over `killGraceMs` (claude-session.mjs:1580-1586).
 //
-// A-E10 (CONFIRMED). `this.maxFrameBytes` was assigned at omp-rpc.mjs:143 and read NOWHERE:
-// `_onStdout` accumulated the buffer with no size check while the card advertised
-// `governance.maxWireFrameBytes`. Every sibling enforces its ceiling (cli-adapters.mjs:363-377,
-// claude-session.mjs:1005-1014, codex-appserver.mjs:448-490, grok-acp.mjs:352-358,
-// acp-json-rpc-process.mjs:203-207) — and the ceiling itself is the registry's declared wire lane
-// (limits.mjs 'wire.frame'), never an adapter-local literal.
+// A-E10 (superseded by #627). The wire-frame byte ceiling and its adapter-local
+// `maxWireFrameBytes` option were removed: the adapter no longer bounds, narrows or refuses a
+// frame, and `_onStdout` parses whatever the transport delivers, whole. The rows that pinned the
+// enforced ceiling are gone with it; A-E11 below is the surviving half of the same audit lane.
 //
 // A-E11 (CONFIRMED). `spawn()`'s respawn guard tested only `existing && !existing.closed`, so a
 // generation whose close was NOT confirmed (its group still owned) could be replaced; and the
@@ -32,7 +30,6 @@ import { PassThrough } from 'node:stream';
 import { OmpRpcCli, OmpRpcProcess } from '../src/omp-rpc.mjs';
 import { KILL_ESCALATION_GRACE_MS } from '../src/process-lifecycle.mjs';
 import { ClaudeSessionCli } from '../src/claude-session.mjs';
-import { FRAME_LIMITS } from '../src/limits.mjs';
 
 const line = (frame) => `${JSON.stringify(frame)}\n`;
 const MODEL = 'deepseek/deepseek-v4-flash';
@@ -191,50 +188,6 @@ test('A-E1: kill.confirmed is withheld while the group reap is unconfirmed', asy
   assert.equal(events.processClosed, true);
 });
 
-// ---------------------------------------------------------------------------
-// A-E10 — the advertised wire ceiling is enforced, from the registry row
-// ---------------------------------------------------------------------------
-
-test('A-E10: the default wire ceiling is the registry row, not an adapter-local literal', () => {
-  const { adapter } = adapterFixture({ spawnFn: () => new FakeChild() });
-  assert.equal(adapter._maxWireFrameBytes, FRAME_LIMITS['wire.frame'].value,
-    'the declared wire lane is the one source for the frame bound (Decision 8)');
-  assert.equal(adapter.card().governance.maxWireFrameBytes, FRAME_LIMITS['wire.frame'].value,
-    'the card advertises exactly the bound the adapter holds');
-});
-
-test('A-E10: _onStdout enforces the ceiling — the oversize frame is never buffered, parsed or delivered', async () => {
-  const child = new FakeChild();
-  const limit = 512;
-  const { adapter, events } = adapterFixture({
-    spawnFn: () => child,
-    options: { maxWireFrameBytes: limit, maxEventPayloadBytes: 256 },
-  });
-  const spawnPromise = adapter.spawn('w-wire', { goal: 'g' }, { model: MODEL, reasoningEffort: 'high', worktree: '/tmp' });
-  const session = adapter._sessions.get('w-wire');
-  session.process._onStdout(line({ type: 'ready', protocolVersion: 1 }));
-  assert.equal(adapter.card().governance.maxWireFrameBytes, limit, 'the card advertises the enforced bound');
-
-  const oversized = JSON.stringify({ type: 'content.message', phase: 'update', text: 'x'.repeat(4_096) });
-  assert.ok(Buffer.byteLength(oversized) > limit, 'the fixture frame really is over the ceiling');
-  session.process._onStdout(`${oversized}\n`);
-  await new Promise((resolve) => setImmediate(resolve));
-
-  assert.equal(session.process.wireFailure?.code, 'wire_frame_oversize', 'the breach is named, not swallowed');
-  assert.equal(session.process.wireFailure.limitBytes, limit);
-  assert.equal(session.process._buffer, '', 'the oversize line is never retained (no unbounded accumulation)');
-  assert.equal(events.some((event) => JSON.stringify(event.payload ?? {}).includes('xxxxxxxxxx')),
-    false, 'a frame over the declared ceiling is never parsed or delivered');
-  assert.deepEqual(child.signals, ['SIGKILL'], 'the breached transport generation is killed');
-  // The fake child's kill lands its exit fact immediately (the real one dies by the same signal).
-  await spawnPromise.catch(() => {});
-  await new Promise((resolve) => setImmediate(resolve));
-  const crash = events.find((event) => event.kind === 'lifecycle.crashed');
-  assert.ok(crash, 'the session publishes a cert for the wire death');
-  assert.equal(crash.payload.code, 'wire_frame_oversize', 'the cert carries the typed code');
-  assert.equal(crash.payload.phase, 'wire');
-  assert.equal(crash.payload.limitBytes, limit, 'and the bound that was breached');
-});
 
 // ---------------------------------------------------------------------------
 // A-E11 — the respawn guard and the pending-spawn reservation identity

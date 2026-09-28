@@ -25,9 +25,7 @@ import { attestWorkerPolicyObservation } from './worker-policy.mjs';
 import { normalizeConcurrencyCeiling } from './concurrency-policy.mjs';
 import { typedAcpRefusal } from './acp-json-rpc-process.mjs';
 import { TOOL_EVIDENCE_UNOBSERVED, toolCallArgumentDigest, toolCallResultDigest } from './verifier-diagnostics.mjs';
-import { FRAME_LIMITS } from './limits.mjs';
 
-const DEFAULT_MAX_WIRE_FRAME_BYTES = FRAME_LIMITS['wire.frame'].value;
 const GROK_TOKEN_METRIC = 'grok_prompt_meta_total_tokens';
 const TERMINAL_TOOL_CALL_PHASES = new Set(['completed', 'failed', 'cancelled']);
 
@@ -164,10 +162,6 @@ export class GrokAcpCli {
     if (!Number.isSafeInteger(this._maxEventPayloadBytes) || this._maxEventPayloadBytes < 1024) {
       throw new TypeError('GrokAcpCli: maxEventPayloadBytes must be an integer of at least 1024 bytes');
     }
-    this._maxWireFrameBytes = opts.maxWireFrameBytes ?? DEFAULT_MAX_WIRE_FRAME_BYTES;
-    if (!Number.isSafeInteger(this._maxWireFrameBytes) || this._maxWireFrameBytes <= 0) {
-      throw new TypeError('GrokAcpCli: maxWireFrameBytes must be a positive safe integer');
-    }
 
     // GA15: probed once, synchronously, cached; never throws.
     const versionProbe = opts.versionProbe ?? (() => execFileSync(this._cmd, ['--version']).toString().trim());
@@ -199,7 +193,6 @@ export class GrokAcpCli {
         usage: { tokens: 'native', usd: 'unavailable', tokenMetric: GROK_TOKEN_METRIC, terminalSeal: 'native' },
         providerCalls: { observation: 'unavailable', enforcement: 'unavailable' },
         toolCalls: { observation: 'native', enforcement: 'unavailable' },
-        maxWireFrameBytes: this._maxWireFrameBytes,
       },
       modelSelection: {
         mode: 'exact', configuredDefault: this._model ?? null, available: null, family: 'grok',
@@ -343,13 +336,8 @@ export class GrokAcpCli {
       while ((nl = session.buf.indexOf('\n')) !== -1) {
         const line = session.buf.slice(0, nl);
         session.buf = session.buf.slice(nl + 1);
-        if (Buffer.byteLength(line, 'utf8') > this._maxWireFrameBytes) {
-          this._wireFrameFailure(session);
-          return;
-        }
         this._onLine(session, line);
       }
-      if (!session.closed && Buffer.byteLength(session.buf, 'utf8') > this._maxWireFrameBytes) this._wireFrameFailure(session);
     });
     session.child.stderr.on('data', () => {}); // nothing on this wire is diagnosed from stderr
     // Writable stream errors (notably an approval racing process exit) are asynchronous and
@@ -358,18 +346,6 @@ export class GrokAcpCli {
     session.child.stdin.on('error', (error) => { session.stdinError = error; });
     session.child.on('close', (code, signal) => this._onClose(session, code, signal));
     session.child.on('error', (error) => this._onProcessError(session, error));
-  }
-
-  _wireFrameFailure(session) {
-    if (session.closed || session.processFailure) return;
-    session.buf = '';
-    session.processFailure = {
-      error: 'provider wire frame exceeded configured byte ceiling',
-      code: 'wire_frame_oversize',
-      phase: 'wire',
-      usageSeal: unavailableUsageSeal(),
-    };
-    this._killChild(session);
   }
 
   async _onClose(session, code, signal) {

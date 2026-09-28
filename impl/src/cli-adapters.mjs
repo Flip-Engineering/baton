@@ -15,7 +15,6 @@
 
 import { execFileSync, spawn } from 'node:child_process';
 import { guardChildPipes, normalizeProcessGeneration, ProcessCloseReapLatch, processStartedPayload } from './process-lifecycle.mjs';
-import { FRAME_LIMITS } from './limits.mjs';
 import { sanitizeVerifierDiagnosticText } from './verifier-diagnostics.mjs';
 import { usdToNanos } from './usd.mjs';
 import { attestWorkerPolicyObservation } from './worker-policy.mjs';
@@ -24,14 +23,6 @@ import { assertAdapterCard } from './adapter-contract.mjs';
 import { assertCardProviderRefusals, providerRefusalsForHarness } from './provider-refusals.mjs';
 import { normalizeConcurrencyCeiling } from './concurrency-policy.mjs';
 
-const DEFAULT_MAX_WIRE_FRAME_BYTES = FRAME_LIMITS['wire.frame'].value;
-// Issue #326: the stderr tail bound derives from the ONE frame registry (never a fresh
-// constant) — one 128th of the wire-frame ceiling, the same 8 KiB the referee's failure
-// capsule uses — so a CLI that dies before its first JSONL leaves provider-failure evidence
-// under one shared ceiling instead of an unbounded log.
-// #342: exported so the native RPC/ACP process adapters (omp first) keep the SAME tail — one
-// derivation of the bound and one redaction, never a second copy per adapter.
-export const MAX_STDERR_TAIL_BYTES = Math.floor(FRAME_LIMITS['wire.frame'].value / 128);
 const CODEX_TOKEN_METRIC = 'codex_turn_input_plus_output_tokens';
 const CLAUDE_TOKEN_METRIC = 'anthropic_input_plus_output_tokens_excluding_cache';
 
@@ -68,31 +59,11 @@ function nativeUsage(usage, usd, tokenMetric, counterId) {
   };
 }
 
-function fixedWireFailure(base) {
-  return {
-    crashed: true,
-    event: {
-      ...base,
-      kind: 'lifecycle.crashed',
-      payload: {
-        error: 'provider wire frame exceeded configured byte ceiling',
-        code: 'wire_frame_oversize',
-        phase: 'wire',
-        usageSeal: unavailableUsageSeal(),
-      },
-    },
-  };
-}
-
-// Issue #326: the session's stderr tail. Bytes appended past the derived bound drop from the
-// FRONT, so the tail always holds the process's last words (the complaint it died with).
-// Synthetic sessions (unit-driven _onData/_onClose) carry no buffer; they read as empty.
+// Issue #326: the session's stderr tail. Every byte the process wrote is kept, in order, so the
+// crash row carries the process's own words; synthetic sessions (unit-driven _onData/_onClose)
+// carry no buffer and read as empty.
 export function appendStderrTail(session, chunk) {
-  const next = `${session.stderrTailRaw ?? ''}${chunk}`;
-  const bytes = Buffer.from(next, 'utf8');
-  session.stderrTailRaw = bytes.length <= MAX_STDERR_TAIL_BYTES
-    ? next
-    : bytes.subarray(bytes.length - MAX_STDERR_TAIL_BYTES).toString('utf8');
+  session.stderrTailRaw = `${session.stderrTailRaw ?? ''}${chunk}`;
 }
 
 // Issue #326: the crash-time composition. Redaction is the #299 derivation the referee's
@@ -293,9 +264,6 @@ function makeResult(status, usage, summary, usd) {
 class CliAdapter {
   /** @param {{harness,version,ceiling,maxContext,cmd,args,parse,env,verbs}} cfg */
   constructor(cfg) {
-    const maxWireFrameBytes = cfg.maxWireFrameBytes ?? DEFAULT_MAX_WIRE_FRAME_BYTES;
-    if (!Number.isSafeInteger(maxWireFrameBytes) || maxWireFrameBytes <= 0) throw new TypeError('maxWireFrameBytes must be a positive safe integer');
-    cfg.maxWireFrameBytes = maxWireFrameBytes;
     cfg.ceiling = normalizeConcurrencyCeiling(cfg.ceiling, `${cfg.harness ?? 'cli'} concurrencyCeiling`);
     this._cfg = cfg;
     this._live = cfg.live ?? false; // real runs must opt in; tests never spawn a real CLI
@@ -464,10 +432,6 @@ class CliAdapter {
     let nl;
     while ((nl = session.buf.indexOf('\n')) !== -1) {
       const line = session.buf.slice(0, nl); session.buf = session.buf.slice(nl + 1);
-      if (Buffer.byteLength(line, 'utf8') > this._cfg.maxWireFrameBytes) {
-        this._failWireFrame(session);
-        return;
-      }
       if (!line.trim()) continue;
       if (session.turnSettled) continue; // once the turn settles, trailing output cannot duplicate it
       let obj; try { obj = JSON.parse(line); } catch { continue; }
@@ -478,18 +442,6 @@ class CliAdapter {
       if (parsed.terminal || parsed.crashed) this._finish(session, parsed);
       else for (const event of parsed.events ?? (parsed.event ? [parsed.event] : [])) this._emit(event);
     }
-    if (!session.turnSettled && Buffer.byteLength(session.buf, 'utf8') > this._cfg.maxWireFrameBytes) this._failWireFrame(session);
-  }
-
-  _failWireFrame(session) {
-    if (session.turnSettled) return;
-    session.buf = '';
-    const base = { worker: session.worker, harness: this._cfg.harness, turnEpoch: session.turnEpoch, actor: 'worker' };
-    this._finish(session, fixedWireFailure(base));
-    session.wireFailure = true;
-    session.stopping = true;
-    session.killMode = 'kill';
-    this._signal(session.worker, 'SIGKILL');
   }
 
   async _onClose(session, code, signal) {
@@ -500,19 +452,12 @@ class CliAdapter {
     if (!processClose) { session.terminal = true; return; }
     const wasStopping = session.stopping === true;
     const timeoutFailure = session.timeoutFailure;
-    const wireFailure = session.wireFailure === true;
     const turnSettled = session.turnSettled === true;
     const spawnError = session.spawnError;
     const closeDerived = () => {
       if (timeoutFailure) {
         this._emit({ worker: session.worker, harness: this._cfg.harness, turnEpoch: session.turnEpoch, actor: 'worker', kind: 'lifecycle.crashed', payload: timeoutFailure });
         session.turnSettled = true;
-      } else if (wireFailure) {
-        // The oversize frame is a provider failure, but the adapter also initiated a real
-        // process-group kill. Preserve both facts: lifecycle.crashed describes the turn while
-        // kill.confirmed is emitted only after exact group reaping succeeds. A coordinator that
-        // begins/joins stop handling after the crash must not wait forever for confirmation.
-        return;
       } else if (wasStopping) {
         session.turnSettled = true;
       } else if (turnSettled) {
@@ -528,7 +473,7 @@ class CliAdapter {
       }
     };
     if (wasStopping) {
-      const terminalCause = timeoutFailure ? 'timeout' : wireFailure ? 'wire_frame_oversize' : null;
+      const terminalCause = timeoutFailure ? 'timeout' : null;
       processClose.authorizeStop(
         session.killMode === 'kill' ? 'kill.confirmed' : 'control.interrupt_confirmed',
         { signal, ...(terminalCause ? { terminalCause } : {}), usageSeal: unavailableUsageSeal() },
@@ -572,7 +517,7 @@ class CliAdapter {
     const s = this._sessions.get(worker);
     if (!s?.processClose || s.processClose.confirmed) return { ok: true, terminal: true };
     s.stopping = true; s.killMode = 'kill';
-    const terminalCause = s.timeoutFailure ? 'timeout' : s.wireFailure ? 'wire_frame_oversize' : null;
+    const terminalCause = s.timeoutFailure ? 'timeout' : null;
     const auth = await s.processClose.authorizeStop('kill.confirmed', {
       signal: s.processClose.closeFact?.signal ?? 'SIGKILL',
       ...(terminalCause ? { terminalCause } : {}), usageSeal: unavailableUsageSeal(),
@@ -601,13 +546,11 @@ export class CodexCli extends CliAdapter {
     const approvalPolicy = opts.approvalPolicy ?? 'never';
     super({
       harness: 'codex', version: opts.version ?? '0.144.0', ceiling: opts.ceiling, maxContext: 272000, live: opts.live,
-      maxWireFrameBytes: opts.maxWireFrameBytes,
       reapOwnedProcessGroup: opts.reapOwnedProcessGroup,
       governance: {
         usage: { tokens: 'native', usd: 'unavailable', tokenMetric: CODEX_TOKEN_METRIC, terminalSeal: 'native' },
         providerCalls: { observation: 'native', enforcement: 'unavailable' },
         toolCalls: { observation: 'native', enforcement: 'unavailable' },
-        maxWireFrameBytes: opts.maxWireFrameBytes ?? DEFAULT_MAX_WIRE_FRAME_BYTES,
       },
       modelSelection: {
         mode: 'exact', configuredDefault: opts.model ?? null, available: null, family: 'openai',
@@ -663,13 +606,11 @@ export class ClaudeCli extends CliAdapter {
     const permissionMode = opts.permissionMode === undefined ? 'bypassPermissions' : opts.permissionMode;
     super({
       harness: opts.harness ?? 'claude-code', version: opts.version ?? '2.1.206', ceiling: opts.ceiling, maxContext: 200000, live: opts.live,
-      maxWireFrameBytes: opts.maxWireFrameBytes,
       reapOwnedProcessGroup: opts.reapOwnedProcessGroup,
       governance: {
         usage: { tokens: 'native', usd: 'native', tokenMetric: CLAUDE_TOKEN_METRIC, terminalSeal: 'native' },
         providerCalls: { observation: 'native', enforcement: 'unavailable' },
         toolCalls: { observation: 'native', enforcement: 'unavailable' },
-        maxWireFrameBytes: opts.maxWireFrameBytes ?? DEFAULT_MAX_WIRE_FRAME_BYTES,
       },
       modelSelection: {
         mode: 'exact', configuredDefault: opts.model ?? null, available: null,
@@ -730,7 +671,7 @@ export class ZCodeCli extends ClaudeCli {
     const token = opts.authToken ?? process.env.Z_AI_API_KEY ?? process.env.ZHIPU_API_KEY;
     super({
       harness: 'glm-via-claude', version: opts.version ?? 'claude-cli+zai-anthropic', ceiling: opts.ceiling,
-      model: opts.model, maxWireFrameBytes: opts.maxWireFrameBytes, live: opts.live,
+      model: opts.model, live: opts.live,
       reapOwnedProcessGroup: opts.reapOwnedProcessGroup,
       permissionMode: opts.permissionMode, env: {
         ANTHROPIC_BASE_URL: opts.baseUrl ?? 'https://api.z.ai/api/anthropic',
@@ -751,13 +692,11 @@ export class PiCli extends CliAdapter {
   constructor(opts = {}) {
     super({
       harness: 'pi', version: opts.version ?? '0.0.0', ceiling: opts.ceiling, maxContext: opts.maxContext ?? 128000, live: opts.live,
-      maxWireFrameBytes: opts.maxWireFrameBytes,
       reapOwnedProcessGroup: opts.reapOwnedProcessGroup,
       governance: {
         usage: { tokens: 'unavailable', usd: 'unavailable', tokenMetric: null, terminalSeal: 'native' },
         providerCalls: { observation: 'unavailable', enforcement: 'unavailable' },
         toolCalls: { observation: 'unavailable', enforcement: 'unavailable' },
-        maxWireFrameBytes: opts.maxWireFrameBytes ?? DEFAULT_MAX_WIRE_FRAME_BYTES,
       },
       modelSelection: {
         mode: 'exact', configuredDefault: opts.model ?? null, available: opts.model ? [opts.model] : null,
@@ -821,13 +760,11 @@ export class MuseCli extends CliAdapter {
       harness: 'muse',
       version: opts.version ?? observedMuseVersion(opts.cmd ?? 'muse', opts.versionProbe),
       ceiling: opts.ceiling, maxContext: opts.maxContext ?? 200000, live: opts.live,
-      maxWireFrameBytes: opts.maxWireFrameBytes,
       reapOwnedProcessGroup: opts.reapOwnedProcessGroup,
       governance: {
         usage: { tokens: 'unavailable', usd: 'unavailable', tokenMetric: null, terminalSeal: 'native' },
         providerCalls: { observation: 'native', enforcement: 'unavailable' },
         toolCalls: { observation: 'native', enforcement: 'unavailable' },
-        maxWireFrameBytes: opts.maxWireFrameBytes ?? DEFAULT_MAX_WIRE_FRAME_BYTES,
       },
       modelSelection: {
         mode: 'exact', configuredDefault: opts.model ?? null, available: null,

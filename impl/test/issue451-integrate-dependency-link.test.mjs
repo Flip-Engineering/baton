@@ -12,8 +12,8 @@
 //       where `package.json` + `node_modules` sit, never a hard-coded name) and the landing's own
 //       regenerators — scripts that import a package out of that install — run inside it;
 //   (b) a regenerator that dies refuses `integrate_change_invalid` carrying `{script, exit,
-//       stderrTail}`, bounded and redacted the #326 way (the tail keeps the LAST words, a
-//       credential-shaped value never crosses, and the raw head of an oversized stream is gone);
+//       stderrTail}`, redacted the #326 way (#627 dropped the adapter's byte ceiling: the tail is
+//       whatever the ONE sanitizer keeps, and a credential-shaped value never crosses);
 //   (c) ONE derivation: the lane worktree and the integration checkout resolve the same dependency
 //       directories from the same function, and an explicitly configured set still wins;
 //   (d) the CLI renders the tail under the refusal line (#265/doc39) instead of a bare cause.
@@ -27,8 +27,8 @@ import { dirname, join } from 'node:path';
 
 import { CoordinationStore } from '../src/coordination-store.mjs';
 import { SwarmRuntime } from '../src/swarm-runtime.mjs';
-import { MAX_STDERR_TAIL_BYTES } from '../src/cli-adapters.mjs';
 import { parseBatonCli, runBatonCli } from '../src/application-cli.mjs';
+import { sanitizeVerifierDiagnosticText } from '../src/verifier-diagnostics.mjs';
 
 // The one derivation the fix introduces is read through a dynamic import: at HEAD the export does
 // not exist, and a static named import would fail the whole FILE to link — every row must report
@@ -82,12 +82,20 @@ const EARLY_MARKER = 'early-head-of-the-stream';
 const FINAL_MARKER = 'final-marker-last-words';
 const CREDENTIAL_SHAPED = `ghp_${'A'.repeat(30)}`;
 
-/** A regenerator that dies the way a broken landing step does: a long stderr (whose head must be
- * dropped by the bound), a credential-shaped value (which must be redacted), and last words. */
+/** A stream long enough that the retired adapter ceiling would have had to cut it (#627): the
+ * refusal must carry the ONE sanitizer's derivation of the WHOLE capture. */
+const LONG_STREAM_BYTES = 64 * 1024;
+
+/** The bytes the failing regenerator writes to stderr, in ONE capture: that long stream, a
+ * credential-shaped value, and the step's last words. */
+const FAILING_STREAM = `${EARLY_MARKER}\n${'x'.repeat(LONG_STREAM_BYTES)}\n${CREDENTIAL_SHAPED}\n${FINAL_MARKER}\n`;
+
+/** A regenerator that dies the way a broken landing step does, writing exactly FAILING_STREAM. */
 function failingRegeneratorSource() {
   return "import { writeSync } from 'node:fs';\n"
-    + `writeSync(2, '${EARLY_MARKER}\\n' + 'x'.repeat(${3 * MAX_STDERR_TAIL_BYTES}) + '\\n');\n`
-    + `writeSync(2, '${CREDENTIAL_SHAPED}\\n${FINAL_MARKER}\\n');\n`
+    + `const stream = ${JSON.stringify(FAILING_STREAM)};\n`
+    + 'let written = 0;\n'
+    + 'while (written < stream.length) written += writeSync(2, stream.slice(written));\n'
     + 'process.exit(3);\n';
 }
 
@@ -229,7 +237,7 @@ test('451a: an install under a sub-directory is linked and the landing regenerat
 
 // ── (b) the refusal carries the cause ───────────────────────────────────────────────────────────
 
-test('451b: a failing regenerator refuses typed with script, exit and a bounded redacted tail', needsGit, async (t) => {
+test('451b: a failing regenerator refuses typed with script, exit and the whole capture\'s redacted tail', needsGit, async (t) => {
   const w = await world(t, { installAt: 'impl', regenerator: 'failing' });
   const headBefore = git(w.repo, 'rev-parse', 'master');
 
@@ -242,14 +250,14 @@ test('451b: a failing regenerator refuses typed with script, exit and a bounded 
   assert.equal(typeof error.detail.stderrTail, 'string', 'the tail is carried');
 
   const tail = error.detail.stderrTail;
+  // #627 removed the adapter's byte ceiling: the tail is the ONE #326 derivation over the WHOLE
+  // capture, so it equals the sanitizer applied to every byte the step wrote, redaction included.
+  assert.equal(tail, sanitizeVerifierDiagnosticText(FAILING_STREAM).text,
+    'the tail is the #299 redaction of the whole capture, never an adapter-side cut');
   assert.match(tail, new RegExp(FINAL_MARKER, 'u'), 'the tail keeps the stream\'s LAST words');
-  assert.doesNotMatch(tail, new RegExp(EARLY_MARKER, 'u'),
-    'the head of an oversized stream is dropped — the tail is bounded, never the whole capture');
   assert.doesNotMatch(tail, new RegExp(CREDENTIAL_SHAPED, 'u'),
     'a credential-shaped value never crosses (#299/#326 redaction)');
   assert.match(tail, /credential-shaped content redacted/u, 'the redaction is the one vocabulary');
-  assert.ok(Buffer.byteLength(tail, 'utf8') <= MAX_STDERR_TAIL_BYTES,
-    'the bound is the adapter\'s own (#326), never a second truncation rule');
   assert.equal(git(w.repo, 'rev-parse', 'master'), headBefore, 'a refused landing leaves the target alone');
 });
 

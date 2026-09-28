@@ -457,7 +457,6 @@ const SUBSTRATE_LANES = Object.freeze([
   ['scanner.window.scratchpad', 20480],
   ['scanner.window.context_read', 20480],
   ['scanner.window.message_send', 20480],
-  ['wire.frame', 1048576],
   ['credential.file', 16384],
   // #375: the liveness probe's capture bound — the substrate guard the probe verdict is judged
   // over. Its sibling deadline row (route.probe_deadline_ms, unit ms) is pinned by the #375 suite
@@ -533,6 +532,8 @@ test('A3: the substrate guards are declared, and no substrate row mints a refusa
     '#530: spill.body left the registry — the durable spill write no longer refuses a body for its size');
   assert.equal(limits.FRAME_LIMITS?.['worktree.linked_ownership_record'], undefined,
     '#530: the linked-ownership-record row left with the size clause it declared');
+  assert.equal(limits.FRAME_LIMITS?.['wire.frame'], undefined,
+    '#627: the wire.frame row left the registry — no frame byte ceiling is declared or enforced');
 });
 
 test('A4: the view class is declared with shed-flagged graceful degradation', async () => {

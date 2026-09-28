@@ -145,7 +145,6 @@ const SUBSTRATE = Object.freeze({
   'scanner.window.context_read': { lane: 'scanner.window.context_read', class: 'substrate', value: 20480, unit: 'bytes', graceful: null },
   'scanner.window.message_send': { lane: 'scanner.window.message_send', class: 'substrate', value: 20480, unit: 'bytes', graceful: null },
   'stream.omp.flush': { lane: 'stream.omp.flush', class: 'substrate', value: 4096, unit: 'bytes', graceful: null },
-  'wire.frame': { lane: 'wire.frame', class: 'substrate', value: 1048576, unit: 'bytes', graceful: null },
   'credential.file': { lane: 'credential.file', class: 'substrate', value: 16384, unit: 'bytes', graceful: null },
   'context_pack.body': { lane: 'context_pack.body', class: 'substrate', value: 8192, unit: 'bytes', graceful: null },
   // Issue #566 (F1): the integration publish-remote declaration ceiling.
@@ -197,36 +196,28 @@ const SUBSTRATE = Object.freeze({
 });
 
 // Issue #306 (lane B): the ONE list page the family's read rows draw — the item ceiling a page of
-// full-length prose bodies carries inside one wire frame (the seat-read page's own derivation,
-// hoisted so a second page row cannot re-derive it differently). Two rows read it: the seat read
-// verbs' page and the served-behind commit page.
-const LIST_PAGE_ITEMS = Math.floor(SUBSTRATE['wire.frame'].value / ADMISSION['message.send.body'].value);
+// full-length prose bodies carries (the seat-read page's own derivation, hoisted so a second page
+// row cannot re-derive it differently). Two rows read it: the seat read verbs' page and the
+// served-behind commit page.
+const LIST_PAGE_ITEMS = 512;
 // Issue #464 (the participant row's budget): a participant row carries the objective's FIRST
 // LINE — the line a peer decides on — never the objective itself. The whole text stays on the
 // `swarm.participant_joined` ledger row the join wrote, and the row NAMES it (`roleRef`, with
 // `roleBytes` the length a reader did not get), so nothing is lost and no surface pays a second
-// copy. The bound is DERIVED from the frame a ROSTER must fit, and that arithmetic is quadratic
-// because a seat's brief renders every peer's role line (`## Swarm situation`), in an answer the
-// bridge counts TWICE (the MCP envelope mirrors it):
-//   2 × 36 seats × 35 peer lines × bound ≤ wire.frame ⇒ bound ≤ 416 B
-// 160 B is the registry's own one-line bound for a role line (the `view.role.head` row below) and it
-// composes with the roster's own share to spare (36 × 35 × 160 × 2 = 403 200 B, 38 % of the frame).
+// copy. 160 B is the registry's own one-line bound for a role line (the `view.role.head` row
+// below): a seat's brief renders every peer's role line (`## Swarm situation`), so the roster's
+// share of the answer it rides in stays small.
 const ROLE_HEAD_BYTES = 160;
 
 // Issue #464 (the participant row's commit tail — the second half of the issue, after the role
 // head): the wrapper-attributed commits a participant row CARRIES. The live swarm measured one
 // seat's list at 195 049 B (1 241 rows) and the issue's participants page served 6 of 36 rows in
-// 664 761 B, so a roster cannot carry its seats' whole histories. The bound is fixed by the roster
-// the issue measured and by the bridge, which counts an answer TWICE (the MCP envelope mirrors the
-// content): 2 × 36 seats × bound × 216 B (a measured commit row: sha + workspaceId + paths + at +
-// seq) ≤ wire.frame ⇒ bound ≤ 67. The value is the family's ONE list page divided by eight — the
-// share a roster ROW may take of the page a whole read names, so this row moves with that one and
-// no second ceiling is typed here: 512 / 8 = 64, the largest eighth whose 36-seat arithmetic
-// still composes (2 × 36 × 64 × 216 = 995 328 B ≤ 1 048 576 B). A row keeps `commitsTotal` (how
-// many the seat really landed); the rest stays reachable through the seat's OWN scoped read —
-// `swarm.view {swarmId, participantId}`, the #343/#349 ladder on which heavy per-row fields ride
-// whole (docs/43 §4) — and a bridge PAGE, which carries no commit rows at all, is what lets a
-// roster larger than one frame still answer every peer.
+// 664 761 B, so a roster cannot carry its seats' whole histories. The value is the family's ONE
+// list page divided by eight — the share a roster ROW may take of the page a whole read names, so
+// this row moves with that one and no second ceiling is typed here: 512 / 8 = 64. A row keeps
+// `commitsTotal` (how many the seat really landed); the rest stays reachable through the seat's
+// OWN scoped read — `swarm.view {swarmId, participantId}`, the #343/#349 ladder on which heavy
+// per-row fields ride whole (docs/43 §4).
 const PARTICIPANT_COMMIT_PAGE_SHARE = 1 / 8;
 const PARTICIPANT_COMMITS_ITEMS = Math.floor(LIST_PAGE_ITEMS * PARTICIPANT_COMMIT_PAGE_SHARE);
 
@@ -278,13 +269,9 @@ const VIEW = Object.freeze({
   // derivation the view.run.bytes row serves for the run-view byte bound.
   'view.run.records': { lane: 'view.run.records', class: 'view', value: 100_000, unit: 'items', graceful: 'shed-flagged' },
   // Issue #441 (lane B): the seat read verbs' page. One row bounds BOTH list reads a seat makes
-  // through the bridge (`run.contributions.read`, `run.peers.read`) — the byte bound of the same
-  // answer is the `wire.frame` row the bridge already enforces, and this row is the ITEM ceiling a
-  // page carries on top of it. The value is the frame row expressed in the family's own prose-body
-  // admission (`message.send.body`): a page of full-length bodies is 512 rows, so a page of this
-  // size is always representable inside one frame, and a longer list PAGES from the seq it names
-  // (`truncated` + `cursor`) rather than shedding rows silently. Issue #311: the same ceiling
-  // bounds the situation projection's lists (`_situation` — peers, contracts, siblings,
+  // through the bridge (`run.contributions.read`, `run.peers.read`): a longer list PAGES from the
+  // seq it names (`truncated` + `cursor`) rather than shedding rows silently. Issue #311: the same
+  // ceiling bounds the situation projection's lists (`_situation` — peers, contracts, siblings,
   // published, commits), each counting its remainder in its own `…Omitted` field.
   'view.seat_read.items': { lane: 'view.seat_read.items', class: 'view', value: LIST_PAGE_ITEMS,
     unit: 'items', graceful: 'shed-flagged',
@@ -368,7 +355,7 @@ const CHECKPOINT = Object.freeze({
  * graceful, enforcedAt?, refusalCode?}. */
 export const FRAME_LIMITS = deepFreeze({ ...ADMISSION, ...SWARM_PEER, ...SUBSTRATE, ...VIEW, ...BRIEF, ...CHECKPOINT });
 
-export const FRAME_LIMITS_VERSION = '1.4.0';
+export const FRAME_LIMITS_VERSION = '1.5.0';
 /** Named-export `code` (a string) so the suite's `assertLimitsModule` helper — which reads
  * `module?.code ?? module` when stringifying its red-stage message — is safe once the module
  * exports it: without it, `${module}` throws

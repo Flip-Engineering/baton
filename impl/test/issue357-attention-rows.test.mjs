@@ -307,7 +307,7 @@ function coordinatorSetup(t) {
         acceptedAliases: [], acceptedPrefixes: [], reasoningEffort: ['low'], configuredEffort: 'low', serviceTier: null },
       governance: { usage: { tokens: 'native', usd: 'native', tokenMetric: 'mock-total', terminalSeal: 'native' },
         providerCalls: { observation: 'native', enforcement: 'unavailable' },
-        toolCalls: { observation: 'native', enforcement: 'unavailable' }, maxWireFrameBytes: 1024 * 1024 },
+        toolCalls: { observation: 'native', enforcement: 'unavailable' } },
     },
     _onEvent: null,
     card() { return this._card; },

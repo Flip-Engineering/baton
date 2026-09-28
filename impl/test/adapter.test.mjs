@@ -158,7 +158,6 @@ test('card() returns a well-formed HarnessCard for all four adapters', () => {
     usage: { tokens: 'native', usd: 'native', tokenMetric: 'mock_scenario_tokens', terminalSeal: 'native' },
     providerCalls: { observation: 'unavailable', enforcement: 'unavailable' },
     toolCalls: { observation: 'unavailable', enforcement: 'unavailable' },
-    maxWireFrameBytes: 1024 * 1024,
   });
 });
 

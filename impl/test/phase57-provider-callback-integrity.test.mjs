@@ -42,7 +42,6 @@ const brief = () => ({
 
 const providerGovernance = {
   schemaVersion: 1,
-  maxWireFrameBytes: 1024 * 1024,
   maxProviderCallsPerTurn: 20,
   maxToolCallsPerTurn: 20,
   routes: [{
@@ -67,7 +66,6 @@ function adapter() {
         usage: { tokens: 'native', usd: 'native', tokenMetric: 'stub-total', terminalSeal: 'native' },
         providerCalls: { observation: 'native', enforcement: 'unavailable' },
         toolCalls: { observation: 'native', enforcement: 'unavailable' },
-        maxWireFrameBytes: 1024 * 1024,
       },
     }),
     async spawn() { return { ok: true }; },

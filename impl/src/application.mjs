@@ -84,7 +84,6 @@ import {
   capabilityEligibleSemanticActions,
   clone,
   closedEnum,
-  debugFrameDegradedSummary,
   debugGateFromLiveCode,
   debugGateRefusal,
   debugTerminalCode,

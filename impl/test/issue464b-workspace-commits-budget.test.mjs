@@ -13,15 +13,15 @@
 //       bounded row is never mistaken for a complete history. The reach for the rest is the seat's
 //       OWN participantId-scoped read (the #343/#349 ladder: heavy per-row fields ride a read that
 //       names the participant), and it carries the whole list;
-//   (b) a bridge PAGE drops the commit rows entirely (they are heavy per-row fields, like
-//       lastToolRows and the native record) and keeps `commitsTotal` — the count and the reach are
-//       what a page carries;
-//   (c) a 36-seat fixture whose seats each carry 60 commits answers its participants projection in
-//       ONE page — served 36, no cursor — which is the acceptance ds-464 could not reproduce-fix.
+//   (b) a bridge READ answers the roster whole: every seat in ONE answer, each row carrying its
+//       bounded tail and its `commitsTotal` — the count, and the seat's own participantId-scoped
+//       read, are the reach for the rest (issue #627 removed the frame bound the bridge paged
+//       under, so a page record no longer exists);
+//   (c) a 36-seat fixture whose seats each carry 200 commits answers its participants projection in
+//       ONE read — all 36 rows — which is the acceptance ds-464 could not reproduce-fix.
 //
-// Red-first at HEAD (f5fc6c40): the row carried all 200 commits with no count at all, a page
-// carried every commit row it paged, and the 36-seat participants page served 29 of 36 rows with
-// `next: swarm-page:full:29`.
+// Red-first at HEAD (f5fc6c40): the row carried all 200 commits with no count at all, and the
+// 36-seat participants page served 29 of 36 rows with `next: swarm-page:full:29`.
 //
 // Hermetic: a real CoordinationStore and the real SwarmRuntime (plus the real native bridge for
 // (b)/(c)); commit attribution is written through the SAME `recordDriver('worktree.commit_recorded')`
@@ -37,9 +37,8 @@ import { join } from 'node:path';
 import { CoordinationStore } from '../src/coordination-store.mjs';
 import { SwarmRuntime, SWARM_PERMISSIONS } from '../src/swarm-runtime.mjs';
 import { FRAME_LIMITS } from '../src/limits.mjs';
-import { SWARM_VIEW_PROJECTIONS, projectSwarmView } from '../src/swarm-contract.mjs';
+import { SWARM_VIEW_PROJECTIONS } from '../src/swarm-contract.mjs';
 import { createSwarmNativeBridge, swarmBridgeCommand } from '../src/swarm-native-bridge.mjs';
-import { swarmViewBridgeFrameBytes } from '../src/web-northbound.mjs';
 
 const COMMIT_ROW = FRAME_LIMITS['view.workspace.commits'];
 /** The row's value — the ONE bound every assertion below reads (undefined at HEAD, where the
@@ -47,9 +46,6 @@ const COMMIT_ROW = FRAME_LIMITS['view.workspace.commits'];
 const COMMIT_BOUND = COMMIT_ROW?.value;
 const owner = { actor: 'direct:issue464b-root', principalId: 'issue464b-root', sessionId: 'issue464b-root' };
 const SWARM = 'commit-budget-464b';
-/** The bridge ceiling the issue was measured against — the registry's own wire frame, never a literal. */
-const WIRE_FRAME = FRAME_LIMITS['wire.frame'].value;
-const BRIDGE_FRAME = 64 * 1024;
 const wsId = (index) => `ws-${String(index).padStart(2, '0').repeat(16)}`.slice(0, 35);
 
 /** One attributed commit row as the runtime's fold reads it: the payload the projected wrapper's
@@ -108,14 +104,13 @@ function fixture(t) {
 
 /** The bridge fixture of issue #457 (the same real runtime and the real native bridge), with this
  * issue's own load: seats whose attributed commit lists are big enough to matter. */
-async function linked(t, { seats = 1, commitsPerSeat = 0, maxFrameBytes = BRIDGE_FRAME } = {}) {
+async function linked(t, { seats = 1, commitsPerSeat = 0 } = {}) {
   const f = fixture(t);
   await f.call('create', { purpose: 'A participant row carries a bounded commit tail (#464)' });
   for (let index = 0; index < seats; index += 1) await f.recruit(index);
   for (let index = 0; index < seats; index += 1) f.recordCommits(index, commitsPerSeat);
   const bridge = createSwarmNativeBridge({
     dispatch: ({ command, args, principal, context }) => f.runtime.command(command, args, principal, context),
-    maxFrameBytes,
   });
   t.after(async () => { await bridge.close(); });
   const runId = f.store.swarm(SWARM).participants.alpha.runId;
@@ -161,57 +156,46 @@ test('464b-a: a participant row carries the NEWEST bounded tail with commitsTota
   assert.equal(scopedRow.workspace.commitsTotal, 200);
 });
 
-test('464b-b: a bridge PAGE keeps the count and drops the commit rows', async (t) => {
+test('464b-b: a bridge read answers the roster whole, each row with its bounded tail and its count', async (t) => {
   const f = await linked(t, { seats: 24, commitsPerSeat: 40 });
   const whole = await f.call('view', { projection: 'participants' });
-  assert.ok(swarmViewBridgeFrameBytes(projectSwarmView(whole, 'participants')) > BRIDGE_FRAME,
-    'the fixture really exceeds the bridge frame');
 
-  const first = await f.send('swarm.view', { swarmId: SWARM, projection: 'participants' });
-  assert.equal(first.projection, 'participants');
-  assert.ok(first.page !== null && typeof first.page === 'object', 'the over-bound read is paged');
-  assert.ok(first.page.served >= 1 && first.page.served < whole.participants.length,
-    'the first page serves part of the family, not all of it');
-  assert.ok(first.page.next, 'the page names where the walk resumes');
-  for (const row of first.participants) {
-    assert.equal(Object.hasOwn(row.workspace, 'commits'), false,
-      'a page carries no commit rows: they are heavy per-row fields');
+  const answer = await f.send('swarm.view', { swarmId: SWARM, projection: 'participants' });
+  assert.equal(answer.projection, 'participants');
+  assert.equal(Object.hasOwn(answer, 'page'), false,
+    'a whole answer carries no page record: the roster is not walked');
+  assert.equal(Object.hasOwn(answer, 'narrowed'), false, 'and no narrowing record either');
+  assert.deepEqual(answer.participants.map((row) => row.participantId),
+    whole.participants.map((row) => row.participantId),
+    'every seat answers in the one read, each of them exactly once, in roster order');
+  for (const row of answer.participants) {
+    assert.equal(row.workspace.commits.length, 40,
+      'the commit rows ride the bridge answer as they ride the in-process read');
     assert.equal(row.workspace.commitsTotal, 40,
-      'the page keeps the count, so a reader still knows how many it did not carry');
+      'and the row names the whole count, so a reader still knows how many it did not carry');
   }
-
-  const walked = [...first.participants];
-  let page = first;
-  while (page.page.next !== null) {
-    page = await f.send('swarm.view', { swarmId: SWARM, projection: 'participants', cursor: page.page.next });
-    walked.push(...page.participants);
-  }
-  assert.equal(page.page.next, null, 'the walk ends at the last row');
-  assert.deepEqual([...new Set(walked.map((row) => row.participantId))].sort(),
-    whole.participants.map((row) => row.participantId).sort(),
-    'the walk serves every row — the commit drop costs no row');
-  assert.equal(walked.length, whole.participants.length, 'and serves each of them exactly once');
 });
 
-test('464b-c: a 36-seat swarm whose seats are busier than the bound still answers its participants projection in ONE frame', async (t) => {
+test('464b-c: a 36-seat swarm whose seats are busier than the bound still answers its participants projection in ONE read', async (t) => {
   // The seats carry MORE than a row may hold (200 > the registry bound), so this is the fixture
   // the issue measured: at HEAD the projection exceeded the frame, the walk paged (keeping every
   // commit row), and a seat's first look answered 11 of 36 peers. With the row bounded the whole
-  // roster rides one frame again.
-  const f = await linked(t, { seats: 36, commitsPerSeat: 200, maxFrameBytes: WIRE_FRAME });
+  // roster rides one answer.
+  const f = await linked(t, { seats: 36, commitsPerSeat: 200 });
   const whole = await f.call('view', { projection: 'participants' });
   assert.equal(whole.participants.length, 36);
 
   const answer = await f.send('swarm.view', { swarmId: SWARM, projection: 'participants' });
   assert.equal(answer.projection, 'participants');
-  assert.equal(answer.participants.length, 36, 'every seat answers in the ONE frame');
-  assert.equal(answer.page?.next ?? null, null, 'no cursor: nothing of the roster was left for a second page');
-  assert.ok(Buffer.byteLength(JSON.stringify({ ok: true, result: answer })) <= WIRE_FRAME,
-    'and the answer fits the frame it was measured against');
+  assert.equal(answer.participants.length, 36, 'every seat answers in the ONE read');
+  assert.equal(Object.hasOwn(answer, 'page'), false,
+    'no page record: nothing of the roster was left for a second answer');
   assert.equal(rowOf(whole, 'alpha').workspace.commitsTotal, 200,
     'the fixture really carries more history than one row may hold');
-  assert.equal(answer.participants.find((row) => row.participantId === 'alpha').workspace.commitsTotal, 200,
-    'each row still names its whole count');
+  const alpha = answer.participants.find((row) => row.participantId === 'alpha');
+  assert.equal(alpha.workspace.commitsTotal, 200, 'each row still names its whole count');
+  assert.equal(alpha.workspace.commits.length, COMMIT_BOUND,
+    'and carries the bounded tail that count is the reach for');
 });
 
 test('464b-d: the bound is the registry row\'s, and every projection reads the ONE derivation', async (t) => {

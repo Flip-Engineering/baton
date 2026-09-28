@@ -58,7 +58,7 @@ function waitFor(read, predicate, { timeoutMs = 10_000, label = 'frames' } = {})
   });
 }
 
-async function fixture(t, { frames = [], maxMessageBytes = null } = {}) {
+async function fixture(t, { frames = [] } = {}) {
   const resident = await startWakeResident({ token: TOKEN, frames, card: CARD, session: SESSION });
   t.after(() => resident.close());
   const directory = mkdtempSync(join(tmpdir(), 'baton-wake-mcp-'));
@@ -77,7 +77,6 @@ async function fixture(t, { frames = [], maxMessageBytes = null } = {}) {
     coordination: new CoordinationStore(join(directory, 'coordination')),
     pollMs: 25,
     commandTimeoutMs: 30_000,
-    ...(maxMessageBytes === null ? {} : { maxMessageBytes }),
   });
   const delivered = [];
   server.attachNotificationSink((frame) => { delivered.push(frame); });
@@ -210,7 +209,7 @@ test('a lagging stream tells the subscriber how much it lost, in the stream\'s o
   assert.equal(lagged.params.cursor, 51);
 });
 
-test('baton_wakes_since is the pull form: rows after the cursor, the new cursor, and a typed continuation', async (t) => {
+test('baton_wakes_since is the pull form: the rows after the cursor and the new cursor', async (t) => {
   const { call } = await fixture(t, {
     frames: [
       wakeFrame({ seq: 1, wakeClass: 'recruited', swarmId: 'swarm-a' }),
@@ -223,31 +222,22 @@ test('baton_wakes_since is the pull form: rows after the cursor, the new cursor,
   assert.equal(page.kind, 'baton.wake_page');
   assert.deepEqual(page.frames.map((frame) => frame.seq), [2, 3], 'rows after the cursor, filtered by class');
   assert.equal(page.cursor, 4, 'the new cursor is where the deployment actually stopped');
-  assert.equal(page.continuation, null, 'a page that fit the ceiling carries no continuation');
   const rest = frameOf(await call(4, 'baton_wakes_since', { since: page.cursor }));
   assert.deepEqual(rest.frames, [], 'resuming from the returned cursor repeats nothing');
   assert.equal(rest.cursor, 4);
 });
 
-test('the pull page is bounded by the transport frame ceiling, never by a row count', async (t) => {
-  // The ceiling is the server's own deployment-derived bound (the resident bridge passes 256 KiB);
-  // this fixture makes it small enough that the whole ledger cannot fit, so the typed continuation —
-  // not a constant page size — is what tells the caller how to fetch the rest.
+test('the pull page carries every row after the cursor, and the cursor is the last row', async (t) => {
   const frames = Array.from({ length: 6 }, (_, index) => wakeFrame({
     seq: index + 1, wakeClass: 'paused', swarmId: 'swarm-a', participantId: `participant-${index}`,
   }));
-  const { call } = await fixture(t, { frames, maxMessageBytes: 1_024 });
+  const { call } = await fixture(t, { frames });
   const page = frameOf(await call(3, 'baton_wakes_since', { since: 0 }));
-  assert.ok(page.frames.length > 0 && page.frames.length < frames.length,
-    `a partial page under a ${1_024}-byte ceiling (got ${page.frames.length} rows)`);
-  assert.equal(page.continuation.kind, 'baton.wakes_continuation', 'the continuation is typed');
-  assert.equal(page.continuation.reason, 'frame_ceiling');
-  assert.equal(page.continuation.nextSince, page.frames.at(-1).seq,
-    'the continuation resumes exactly after the last row returned');
-  assert.equal(page.continuation.remaining, frames.length - page.frames.length);
-  assert.equal(page.cursor, page.continuation.nextSince, 'the cursor IS the continuation cursor');
+  assert.equal(page.frames.length, frames.length, 'every row after the cursor rides one answer');
+  assert.deepEqual(page.frames.map((frame) => frame.seq), frames.map((frame) => frame.seq));
+  assert.equal(page.cursor, frames.length, 'the cursor is the last row carried');
   const next = frameOf(await call(4, 'baton_wakes_since', { since: page.cursor }));
-  assert.equal(next.frames[0].seq, page.frames.at(-1).seq + 1, 'the next page continues without a gap');
+  assert.deepEqual(next.frames, [], 'resuming from the cursor repeats nothing');
 });
 
 test('an unknown wake class refuses with the closed set, and no attachment is opened', async (t) => {

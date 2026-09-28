@@ -14,15 +14,17 @@
 // Rows:
 //   a  a row's `role` is its first line, byte-bounded, beside `roleBytes` and `roleRef`; the
 //      ledger row still carries the whole objective — nothing is lost, only pointed at;
-//   b  the 36-seat fixture's participants projection fits ONE frame: all 36 rows, no cursor;
-//   c  the CLI's full view of that fixture (the read that declares no frame) fits the frame too;
+//   b  the 36-seat fixture's participants projection answers all 36 rows in ONE read — every peer,
+//      with no page record and no narrowing record (issue #627 removed the frame bound the bridge
+//      used to narrow and page under);
+//   c  the CLI's own full view of that fixture carries every seat in one answer;
 //   d  an attention row naming a seat carries no copy of the objective: the reach is the
 //      participant row's own reference.
 //
 // Red-first at HEAD (observed before the change, output recorded in the contribution): (a)
 // `role` is the whole objective and `roleBytes`/`roleRef` do not exist; (b) the projection
-// measures 2.3 MB against a 1 MiB frame, so the answer is NARROWED and carries no participant
-// rows at all; (c) the whole record measures 4.66 MB — over the frame; (d) fails on its second
+// measures 2.3 MB, and under the wire.frame bound of the day the answer was NARROWED to a slice
+// carrying no participant rows at all; (c) the whole record measures 4.66 MB; (d) fails on its second
 // clause (there is no `roleRef` to reach the text by). (d)'s first clause is green at HEAD by
 // construction — the attention rows reference the participant by id and were MEASURED to carry
 // no objective text (11 KB across a 37-seat live swarm, the #441c (d) precedent for a
@@ -41,12 +43,10 @@ import {
 } from '../src/index.mjs';
 import { SwarmRuntime } from '../src/swarm-runtime.mjs';
 import { FRAME_LIMITS } from '../src/limits.mjs';
-import { swarmViewBridgeFrameBytes } from '../src/web-northbound.mjs';
 
 const owner = { actor: 'owner', principalId: 'owner', sessionId: 'owner-session' };
 const WEB_REPO = 'repo-a';
 const WEB_ORIGIN = 'https://control.example.test';
-const CEILING = FRAME_LIMITS['wire.frame'];
 // The ONE bound the row's role draws (`view.role.head`): a role is the objective's first line.
 const ROLE_HEAD = FRAME_LIMITS['view.role.head'];
 const SEATS = 36;
@@ -87,8 +87,8 @@ function fixture(t) {
   return { directory, store, runtime, call, recruit };
 }
 
-/** The REAL runtime behind the web bridge — the seam the bridge's own paging/narrowing answers
- * through (`WebNorthbound`), so the byte measures below are the ones a root's read crosses. */
+/** The REAL runtime behind the web bridge — the seam a root's read crosses (`WebNorthbound`), so
+ * the answers below are the ones a root's read pays. */
 function webFixture(t) {
   const f = fixture(t);
   const web = new WebNorthbound({
@@ -117,14 +117,11 @@ function webFixture(t) {
     },
     origin: WEB_ORIGIN, csrfToken: 'csrf-1', remoteAddress: '127.0.0.1', transport: 'https',
   });
-  // `frame` declared is what the bridge sends (a paged/narrowed answer); `frame` omitted is what
-  // the CLI's own web client sends (the whole record).
-  const read = async (args, { frame = true, step = 0 } = {}) => {
+  const read = async (args, step = 0) => {
     const response = await web.execute(context(), {
       schemaVersion: 1, commandId: `cmd-464-${step}`, idempotencyKey: `request-464-${step}`,
       command: 'swarm_view', repoId: WEB_REPO, origin: WEB_ORIGIN,
       args: { swarmId: 'baton', ...args },
-      ...(frame ? { frame: { lane: 'wire.frame' } } : {}),
     });
     assert.equal(response.status, 200, `the read is served (step ${step})`);
     return response.body.result;
@@ -184,43 +181,35 @@ test('464-a: a participant row carries the objective\'s first line, roleBytes an
   assert.equal(unicode.roleBytes, 300, 'roleBytes counts bytes, not characters');
   assert.equal(lead.roleBytes, Buffer.byteLength('Continue as lead'));
   assert.equal(lead.roleRef.seq, joinSeq('lead'));
-  // The bound's own derivation, pinned: a seat's brief renders every peer's role line (`##
-  // Swarm situation`) and the bridge counts an answer TWICE (the MCP envelope mirrors it).
-  assert.ok(2 * SEATS * (SEATS - 1) * ROLE_HEAD.value <= CEILING.value,
-    `2 × ${SEATS} seats × ${SEATS - 1} peer lines × ${ROLE_HEAD.value} B ≤ the ${CEILING.value} B ${CEILING.lane} — the quadratic, mirror-counted composition the bound is derived from`);
 });
 
-// ── 464-b / 464-c: the roster fits ONE frame, through the bridge and through the CLI's read ────
+// ── 464-b / 464-c: the roster answers every row, through the web bridge and the CLI's read ─────
 
-test('464-b: a 36-seat swarm\'s participants projection fits one frame', async (t) => {
+test('464-b: a 36-seat swarm\'s participants projection answers all 36 rows in one read', async (t) => {
   const f = webFixture(t);
-  await f.call('create', { purpose: 'A roster inside one frame (#464)' });
+  await f.call('create', { purpose: 'A roster of 36 seats in one answer (#464)' });
   for (let index = 0; index < SEATS; index += 1) await f.recruit(`seat-${index}`, objectiveOneLine(index));
   const answer = await f.read({ projection: 'participants' });
-  const bytes = swarmViewBridgeFrameBytes(answer);
-  assert.ok(bytes <= CEILING.value,
-    `the participants projection of a ${SEATS}-seat swarm fits the ${CEILING.lane} frame (measured ${bytes} B against ${CEILING.value} B) — measured 2.3 MB at HEAD`);
   assert.equal((answer.participants ?? []).length, SEATS,
     'the whole roster is served: a seat\'s first look answers every peer (#464 item 2)');
-  assert.equal(answer.page?.next ?? null, null,
-    'and no cursor is left: the roster did not have to be walked in pages');
+  assert.equal(Object.hasOwn(answer, 'page'), false,
+    'and no page record: the roster rides one answer, whatever its bytes');
+  assert.equal(answer.narrowed ?? null, null,
+    'no narrowing record: the answer IS the projection that was asked for');
   const roles = (answer.participants ?? []).map((row) => Buffer.byteLength(row.role ?? ''));
   assert.ok(Math.max(...roles) <= ROLE_HEAD.value, `every row's role is inside ${ROLE_HEAD.lane}`);
-  assert.equal(answer.narrowed ?? null, null,
-    'no narrowing record: the answer IS the projection that was asked for (#457 untouched)');
 });
 
-test('464-c: the CLI\'s full view of that fixture stays under the frame', async (t) => {
+test('464-c: the CLI\'s full view of that fixture carries every seat', async (t) => {
   const f = webFixture(t);
-  await f.call('create', { purpose: 'A whole record inside one frame (#464)' });
+  await f.call('create', { purpose: 'A whole record of 36 seats (#464)' });
   for (let index = 0; index < SEATS; index += 1) await f.recruit(`seat-${index}`, objectiveOneLine(index));
-  // The CLI's own read: no declared frame, no projection — the whole record (the bridge's
-  // `declaredRow === null` arm), which is the answer `baton swarm view` renders.
-  const answer = await f.read({}, { frame: false, step: 1 });
-  const bytes = swarmViewBridgeFrameBytes(answer);
-  assert.ok(bytes <= CEILING.value,
-    `the CLI's full view of a ${SEATS}-seat swarm stays under the ${CEILING.lane} frame (measured ${bytes} B against ${CEILING.value} B) — measured 4.66 MB at HEAD`);
+  // The CLI's own read: no projection — the whole record, which is the answer `baton swarm view`
+  // renders.
+  const answer = await f.read({}, 1);
+  assert.equal(answer.projection, 'full', 'a read that names no projection answers the whole record');
   assert.equal((answer.participants ?? []).length, SEATS, 'and it carries every seat');
+  assert.equal(Object.hasOwn(answer, 'page'), false, 'in one answer, with no page record');
 });
 
 // ── 464-d: no attention row re-renders a seat's objective ──────────────────────────────────────

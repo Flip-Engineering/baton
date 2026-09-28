@@ -230,7 +230,6 @@ async function createAdvancedShadow(target) {
       takeToolQuota: target.takeToolQuota,
       now: target.now,
       maxWaitMs: target.maxWaitMs,
-      maxMessageBytes: target.maxMessageBytes,
       maxObservationAudits: target.maxObservationAudits,
     });
     shadow.lifecycle = 'ready';

@@ -3,9 +3,10 @@
 // admission before any runtime effect (closed key sets refuse forged identity fields), derived
 // authority (the bridge owns no permission model — swarm.update contributions, organizer changes,
 // and every runtime refusal are the runtime's call), concurrent multi-participant traffic over one
-// server, wire.frame transport bounds, revocation/closure truth (including the close-during-issue
-// and revoke-during-body-read races, with no revoked-token history retained), and a token that
-// never reaches inspect(), receipts, server entries, or diagnostics. The dispatch double mirrors
+// server, a request and an answer carried whole whatever their bytes (issue #627 removed the
+// wire.frame transport bound), revocation/closure truth (including the close-during-issue and
+// revoke-during-body-read races, with no revoked-token history retained), and a token that never
+// reaches inspect(), receipts, server entries, or diagnostics. The dispatch double mirrors
 // the root SwarmRuntime participant path (context.runId membership resolution, per-event update
 // grants, author rules) because the live SwarmRuntime is root-owned and absent from this worktree.
 // The CLI entry's own intake is pinned against the real executable (#493): a large, quote-dense
@@ -23,7 +24,6 @@ import { fileURLToPath } from 'node:url';
 import { promisify } from 'node:util';
 import { createSwarmNativeBridge, swarmBridgeCommand, swarmBridgeMain, validateSwarmCommandArgs,
   SWARM_COMMANDS, SWARM_BRIDGE_ENV_KEYS } from '../src/swarm-native-bridge.mjs';
-import { FRAME_LIMITS } from '../src/limits.mjs';
 
 const execFileAsync = promisify(execFile);
 const BRIDGE_MODULE = fileURLToPath(new URL('../src/swarm-native-bridge.mjs', import.meta.url));
@@ -68,7 +68,6 @@ function createFakeSwarmRuntime() {
   const applied = []; // durable swarm.update effects, for author/permission truth
   const refusals = []; // refusal rows the bridge reported for the runtime to record durably
   const dispatch = async ({ command, args, principal, context }) => {
-    if (dispatch.huge) return { blob: 'x'.repeat(4096) }; // response-bound probe
     if (command === BRIDGE_REFUSAL_COMMAND) {
       refusals.push({ args: structuredClone(args), principal: { ...principal }, context: { ...context } });
       return { recorded: true, code: args.code };
@@ -145,7 +144,7 @@ async function withBridge(options, fn) {
  * commands reaching dispatch. */
 const dispatchedCommands = (runtime) => runtime.calls.map((call) => call.command);
 
-const post = (endpoint, token, payload, headers = {}) => new Promise((resolve, reject) => {
+const post = (endpoint, token, payload) => new Promise((resolve, reject) => {
   const target = new URL(endpoint);
   const body = Buffer.from(typeof payload === 'string' ? payload : JSON.stringify(payload), 'utf8');
   const req = httpRequest({
@@ -153,14 +152,12 @@ const post = (endpoint, token, payload, headers = {}) => new Promise((resolve, r
     method: 'POST',
     headers: {
       'content-type': 'application/json; charset=utf-8',
-      ...(Number.isSafeInteger(headers.contentLengthOverride)
-        ? { 'content-length': headers.contentLengthOverride }
-        : { 'content-length': body.length }),
+      'content-length': body.length,
       ...(token === null ? {} : { authorization: `Bearer ${token}` }),
     },
   }, resolve);
   req.on('error', reject);
-  req.end(headers.contentLengthOverride === undefined ? body : Buffer.alloc(0));
+  req.end(body);
 });
 
 const readResponse = (response) => new Promise((resolve, reject) => {
@@ -175,14 +172,14 @@ const call = (issued, command, args = {}) => swarmBridgeCommand({
 });
 
 /** A raw chunked POST: no content-length, `transfer-encoding: chunked`, written in pieces — the
- * transport an over-cap streamed body actually arrives on. Resolves with the raw response bytes
- * the moment the socket closes (a server that answers and then hangs up still delivered them). */
+ * transport a streamed body arrives on. `connection: close` makes the server hang up once it has
+ * answered, so the row reads the whole response without waiting on a kept-alive socket. */
 const chunkedPost = (endpoint, token, body, { chunkBytes }) => new Promise((resolve, reject) => {
   const target = new URL(endpoint);
   const socket = connect(Number(target.port), target.hostname, () => {
     socket.write(`POST ${target.pathname} HTTP/1.1\r\nHost: ${target.hostname}:${target.port}\r\n`
       + `content-type: application/json; charset=utf-8\r\ntransfer-encoding: chunked\r\n`
-      + `authorization: Bearer ${token}\r\n\r\n`);
+      + `connection: close\r\nauthorization: Bearer ${token}\r\n\r\n`);
     for (let at = 0; at < body.length; at += chunkBytes) {
       const piece = body.subarray(at, at + chunkBytes);
       socket.write(`${piece.length.toString(16)}\r\n`);
@@ -558,53 +555,6 @@ test('a token revoked while its request body is in flight is rechecked before di
 });
 
 // ============================================================
-// Transport bounds — the wire.frame substrate row
-// ============================================================
-
-test('request frames are bounded by the wire.frame row with a registry-composed refusal', async () => {
-  await withBridge({ maxFrameBytes: 1024 }, async ({ bridge, runtime }) => {
-    const issued = await bridge.issue({ swarmId: 'swarm-1', participantId: 'alpha', runId: 'run-alpha' });
-    // Schema-valid args whose bytes exceed the explicit server ceiling.
-    const error = await call(issued, 'swarm.guide', {
-      swarmId: 'swarm-1', participantId: 'beta', message: 'y'.repeat(2000), idempotencyKey: 'op-big',
-    }).then(() => null, (thrown) => thrown);
-    assert.equal(error.code, 'swarm_bridge_frame_exceeded');
-    assert.equal(error.status, 413);
-    assert.match(error.message, /wire\.frame is \d+ bytes \(cap 1024\)/u);
-    assert.equal(error.detail.lane, 'wire.frame');
-    assert.equal(error.detail.direction, 'request');
-    assert.equal(typeof error.detail.resourceReason, 'string');
-    // A lying declared content-length is refused without reading the body either.
-    const response = await post(issued.env[SWARM_BRIDGE_ENV_KEYS.url], issued.token,
-      { command: 'swarm.view', args: { swarmId: 'swarm-1' } }, { contentLengthOverride: 99_999_999 });
-    const payload = await readResponse(response);
-    assert.equal(payload.error.code, 'swarm_bridge_frame_exceeded');
-    assert.equal(runtime.calls.length, 0);
-    assert.equal(bridge.inspect().frameBytes, 1024);
-  });
-});
-
-test('response frames are bounded by the same row before anything is written', async () => {
-  await withBridge({ maxFrameBytes: 1024 }, async ({ bridge, runtime }) => {
-    runtime.dispatch.huge = true;
-    const issued = await bridge.issue({ swarmId: 'swarm-1', participantId: 'alpha', runId: 'run-alpha' });
-    const response = await post(issued.env[SWARM_BRIDGE_ENV_KEYS.url], issued.token, {
-      command: 'swarm.view', args: { swarmId: 'swarm-1' },
-    });
-    const payload = await readResponse(response);
-    assert.equal(payload.ok, false);
-    assert.equal(payload.error.code, 'swarm_bridge_frame_exceeded');
-    assert.equal(payload.error.detail.direction, 'response');
-  });
-});
-
-test('the default ceiling is the declared wire.frame value, never an invented number', async () => {
-  await withBridge({}, async ({ bridge }) => {
-    assert.equal(bridge.inspect().frameBytes, FRAME_LIMITS['wire.frame'].value);
-  });
-});
-
-// ============================================================
 // Closure — revoke, shutdown truth, unrelated processes untouched
 // ============================================================
 
@@ -941,24 +891,28 @@ test('a failed native mutation mints no receipt: the key was spent by the attemp
 });
 
 // ============================================================
-// Streamed over-cap bodies and identity-keyed commands (audit #292)
+// Streamed bodies and identity-keyed commands (audit #292)
 // ============================================================
 
-test('a chunked over-cap request body is answered with the typed 413 before the bridge hangs up', async () => {
-  await withBridge({ maxFrameBytes: 1024 }, async ({ bridge, runtime }) => {
+test('a chunked request body is read whole and answered before the bridge hangs up', async (t) => {
+  await withBridge({}, async ({ bridge, runtime }) => {
+    runtime.join({ swarmId: 'swarm-1', participantId: 'alpha', runId: 'run-alpha' });
     const issued = await bridge.issue({ swarmId: 'swarm-1', participantId: 'alpha', runId: 'run-alpha' });
-    // The streamed transport: no content-length, chunked transfer-encoding, written in pieces.
-    // Pre-fix the bridge destroyed the request before answering and the caller saw ECONNRESET.
+    // The streamed transport: no content-length, chunked transfer-encoding, written in pieces — the
+    // body is bigger than the frame the bridge enforced until #627, and it is read to its end and
+    // dispatched whole. Pre-fix the bridge destroyed the request before answering and the caller saw
+    // ECONNRESET.
+    const body = Buffer.from(JSON.stringify({ command: 'swarm.guide', args: {
+      swarmId: 'swarm-1', participantId: 'beta', message: 'y'.repeat(4000), idempotencyKey: 'op-chunked',
+    } }), 'utf8');
     const streamed = rawResponse(await chunkedPost(issued.env[SWARM_BRIDGE_ENV_KEYS.url], issued.token,
-      Buffer.from(JSON.stringify({ command: 'swarm.guide', args: {
-        swarmId: 'swarm-1', participantId: 'beta', message: 'y'.repeat(4000), idempotencyKey: 'op-chunked',
-      } }), 'utf8'), { chunkBytes: 256 }));
-    assert.equal(streamed.status, 413, 'the streamed over-cap body gets the typed 413, not a reset socket');
-    assert.equal(streamed.payload.ok, false);
-    assert.equal(streamed.payload.error.code, 'swarm_bridge_frame_exceeded');
-    assert.equal(streamed.payload.error.detail.direction, 'request');
-    assert.match(streamed.payload.error.message, /wire\.frame is \d+ bytes \(cap 1024\)/u);
-    assert.equal(runtime.calls.length, 0, 'a refused frame never reaches dispatch');
+      body, { chunkBytes: 256 }));
+    assert.equal(streamed.status, 200, 'the streamed body is answered, never a reset socket');
+    assert.equal(streamed.payload.ok, true);
+    assert.equal(streamed.payload.result.command, 'swarm.guide', 'the whole body reached dispatch');
+    const guided = runtime.calls.at(-1);
+    assert.equal(guided.command, 'swarm.guide');
+    assert.equal(guided.args.message.length, 4000, 'and the message crossed whole: the read cuts nothing');
   });
 });
 

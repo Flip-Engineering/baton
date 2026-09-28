@@ -13,10 +13,9 @@
 // The search is backed by a per-deployment index REBUILT from the coordination ledger on
 // every call (`rebuildEvidenceIndex` reads only `store.swarms()` and `store.eventsView()`),
 // never a second store of truth: there is nothing persisted, nothing cached, nothing to go
-// stale — a row exists in the index exactly when its ledger event exists. The page boundary
-// derives from the same `wire.frame` row the bridge answers under, and the cursor IS the
-// ledger head seq — never a page count, never a page cap (the #318 cursor law, kept across
-// the deployment).
+// stale — a row exists in the index exactly when its ledger event exists. Every matching row is
+// answered whole (issue #627 removed the frame byte ceiling), and the cursor IS the ledger head
+// seq — never a page count, never a page cap (the #318 cursor law, kept across the deployment).
 //
 // Row sources:
 //   knowledge    — `knowledge.node_added` / `knowledge.promoted` rows, attributed to their
@@ -35,7 +34,6 @@
 //   query         — case-insensitive substring over the body text plus the row's identities
 //                   (node/contribution id, refs, work).
 //   afterSeq      — the ledger seq to resume after; every returned row sorts after it.
-import { FRAME_LIMITS } from './limits.mjs';
 
 const ID_PATTERN = '^[A-Za-z0-9._:-]{1,256}$';
 
@@ -182,15 +180,11 @@ const textHaystackOf = (row) => [
 ].join('\n');
 
 /** Search a rebuilt index under the canonical filters. Rows read in ledger order past
- * `afterSeq`; the page is framed under the `wire.frame` row (the first row is always kept,
- * never dropped for size) and the cursor is the index head — a truncated page still names
- * where the ledger stands, so the next call resumes past what it saw. */
+ * `afterSeq`; every matching row is answered whole (issue #627) and the cursor is the index
+ * head, so the next call resumes past what it saw. */
 export function searchEvidenceIndex(index, rawArgs) {
   const filters = validateEvidenceSearchArgs(rawArgs);
-  const budget = FRAME_LIMITS['wire.frame'].value;
   const rows = [];
-  let bytes = 0;
-  let truncated = false;
   for (const row of index.rows) {
     if (row.seq <= filters.afterSeq) continue;
     if (filters.swarmId !== null && row.swarmId !== filters.swarmId) continue;
@@ -198,15 +192,14 @@ export function searchEvidenceIndex(index, rawArgs) {
     if (filters.kind !== null && row.kind !== filters.kind) continue;
     if (filters.path !== null && !pathHaystackOf(row).some((candidate) => candidate.includes(filters.path))) continue;
     if (filters.query !== null && !textHaystackOf(row).toLowerCase().includes(filters.query.toLowerCase())) continue;
-    const size = Buffer.byteLength(JSON.stringify(row), 'utf8');
-    if (rows.length > 0 && bytes + size > budget) { truncated = true; break; }
     rows.push(row);
-    bytes += size;
   }
   return {
     swarmId: filters.swarmId,
     query: { ...filters },
-    rows, cursor: index.headSeq, truncated,
+    // No frame bound remains (issue #627): no row is dropped for size, so `truncated` is always
+    // false; the cursor still names where the ledger stands.
+    rows, cursor: index.headSeq, truncated: false,
   };
 }
 

@@ -80,11 +80,6 @@ for (const [code, category, summary, remediation] of [
     'The selected provider route requires refreshed authentication.',
     'Refresh the harness-native login outside Baton, rerun baton doctor, then retry the Run.',
   ],
-  [
-    'wire_frame_oversize', 'provider_protocol',
-    'The provider emitted a frame that exceeded Baton\'s safe wire boundary.',
-    'Baton requires exact termination and reaping of the ambiguous session. Update or repair the harness integration, then retry the Run.',
-  ],
 ]) {
   test(`canonical provider cause ${code} has fixed actionable guidance and discards provider payload`, () => {
     const projected = projectTypedTerminalCause({

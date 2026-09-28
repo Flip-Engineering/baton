@@ -10,21 +10,22 @@
 // of the fix:
 //   a  the contributions projection carries `reviewState` from the ONE derivation (derived, never
 //      stored: a later review re-derives the state on the next read);
-//   b  the bounded watch carries EVERY admitted row since `afterSeq`, with `matchedSeq` the LAST
-//      carried row and `pendingSince` naming the first row the frame bound could not carry;
-//   b2 the frame bound really cuts: a cut frame names `pendingSince`, and re-arming at
-//      `matchedSeq` carries exactly the rows the cut left behind (no gap, no duplicate);
+//   b  the bounded watch carries EVERY admitted row since `afterSeq` — the wake frame holds no
+//      byte bound (#627), so `pendingSince` is always null and `matchedSeq` is the LAST row;
+//   b2 a frame whose rows alone exceed the ceiling the bridge enforced until #627 still carries
+//      all of them, and re-arming at `matchedSeq` finds nothing left behind it (no gap, no
+//      duplicate);
 //   c  the `unreviewed_contribution` attention row appears on the AUTHOR after one recruit-brief
 //      cadence and clears on a settling review;
-//   d  the paged read over the web bridge reproduces every contribution row — no gap, no
-//      duplicate — through `page.next`;
+//   d  the whole contributions read over the web bridge reproduces every contribution row in ONE
+//      answer — no gap, no duplicate;
 //   e  the CLI's bounded leg under `--wake-class contribution_recorded` answers a frame whose
 //      `events` carries both contributions, `matchedSeq` the second;
 //   f  a spent bounded watch answers an EMPTY frame: events [], matchedSeq null, pendingSince null;
 //   g  the contributions projection spawns no git at all — the read path rule of docs/46 §7.
 //
 // Fixtures: the light SwarmRuntime harness (swarm-runtime.test.mjs) for the rows that need no
-// transport; the real runtime behind WebNorthbound for the paged and CLI rows; the same
+// transport; the real runtime behind WebNorthbound for the web-bridge and CLI rows; the same
 // PATH-shim git instrument issue438-view-no-spawn uses for the no-spawn row (the spy is the
 // OS-level spawn, so it cannot be fooled by a second authority).
 import test from 'node:test';
@@ -46,7 +47,6 @@ import {
   swarmContributionReviewState,
 } from '../src/swarm-runtime.mjs';
 import { RuntimeIsolation } from '../src/runtime-isolation.mjs';
-import { FRAME_LIMITS } from '../src/limits.mjs';
 import { parseBatonCli, watchSwarmFiltered } from '../src/application-cli.mjs';
 
 const owner = { actor: 'owner', principalId: 'owner', sessionId: 'owner-session' };
@@ -145,9 +145,9 @@ test('433-a: the contributions projection carries reviewState from the ONE deriv
     'the completion evidence reads accepted through the ONE derivation — never a second reading');
 });
 
-// ── 433-b: every wake row since afterSeq, or pendingSince ──────────────────────────────────────
+// ── 433-b: every wake row since afterSeq rides the answer ───────────────────────────────────────
 
-test('433-b: the bounded watch carries EVERY wake row since afterSeq, or names pendingSince', async (t) => {
+test('433-b: the bounded watch carries EVERY wake row since afterSeq', async (t) => {
   const f = fixture(t);
   await f.call('create', { purpose: 'No lost wakes (#433)' });
   await f.recruit('alpha');
@@ -172,17 +172,17 @@ test('433-b: the bounded watch carries EVERY wake row since afterSeq, or names p
   assert.equal(wake.matchedSeq, wake.events.at(-1).seq,
     'land matchedSeq as the LAST carried row: re-arming with --after-seq matchedSeq loses nothing (docs/46 §3.3)');
   assert.equal(wake.pendingSince, null,
-    'land pendingSince: null when the frame bound cut nothing; the first uncarried row\'s seq when it did (docs/46 §3.2)');
+    'land pendingSince: docs/46 §3.2 read it as the first row a frame bound could not carry; the frame holds no bound now (#627), so it is always null');
 });
 
-// ── 433-b2: the frame bound cuts, and the cut is named ────────────────────────────────────────
+// ── 433-b2: a frame larger than the retired bound still carries every admitted row ─────────────
 
-test('433-b2: a frame the bound cut names pendingSince, and re-arming at matchedSeq carries the rest', async (t) => {
+test('433-b2: every admitted row rides one answer, and pendingSince stays null', async (t) => {
   const f = fixture(t);
-  await f.call('create', { purpose: 'A cut frame names where to resume (#433)' });
+  await f.call('create', { purpose: 'A frame carries every admitted row (#433)' });
   const before = (await f.call('view', { projection: 'outline' })).cursor;
-  // Admission rows big enough that the frame bound (the wire.frame substrate row) really cuts the
-  // tail: each join carries the scope it was recruited under, which the wake row names (issue #283).
+  // Admission rows whose scope text alone exceeds the ceiling the bridge enforced until #627: the
+  // frame this row reads is the size that bound used to cut.
   const TOTAL = 120;
   const scope = Array.from({ length: 500 }, (_, index) => `impl/src/lane-${index}/**/*.mjs`);
   for (let index = 0; index < TOTAL; index += 1) {
@@ -192,17 +192,19 @@ test('433-b2: a frame the bound cut names pendingSince, and re-arming at matched
   }
   const frame = (await f.call('watch', { afterSeq: before, timeoutMs: 5000 })).watch;
   assert.equal(frame.reason, 'event');
-  assert.ok(frame.events.length > 0 && frame.events.length < TOTAL,
-    `the frame bound really cut this frame (${frame.events.length} of ${TOTAL} rows carried)`);
+  assert.equal(frame.events.length, TOTAL,
+    'every admitted row since afterSeq rides the one frame — the answer holds no byte bound (#627)');
+  assert.deepEqual(frame.events.map((row) => row.seq),
+    Array.from({ length: TOTAL }, (_, index) => before + 1 + index),
+    'the carried rows are the whole admitted run, in ledger order, with no gap');
   assert.equal(frame.matchedSeq, frame.events.at(-1).seq,
     'matchedSeq is the LAST carried row, so the caller resumes exactly where the frame stopped');
-  assert.equal(frame.pendingSince, frame.matchedSeq + 1,
-    'pendingSince names the FIRST row the bound could not carry — a cut frame loses nothing silently (docs/46 §3.2)');
-  const rest = (await f.call('watch', { afterSeq: frame.matchedSeq, timeoutMs: 5000 })).watch;
-  assert.equal(rest.events[0].seq, frame.pendingSince,
-    're-arming at matchedSeq reads the pending row first: no gap between the two frames');
-  assert.equal(frame.events.length + rest.events.length, TOTAL,
-    'the two frames together carry every admitted row exactly once — no gap, no duplicate');
+  assert.equal(frame.pendingSince, null,
+    'pendingSince is always null: nothing is left behind the answer for a caller to come back for');
+  const rest = (await f.call('watch', { afterSeq: frame.matchedSeq, timeoutMs: 50 })).watch;
+  assert.deepEqual(rest.events, [],
+    're-arming at matchedSeq finds nothing: the whole admitted run was already carried');
+  assert.equal(rest.pendingSince, null);
 });
 
 // ── 433-c: the unreviewed_contribution attention row ──────────────────────────────────────────
@@ -267,7 +269,7 @@ test('433-c: an unreviewed_contribution attention row after one recruit-brief ca
     'a scoped read carries the author\'s own row');
 });
 
-// ── 433-d: the paged read over the web bridge reproduces every contribution row ────────────────
+// ── 433-d: the whole contributions read over the web bridge, in ONE answer ─────────────────────
 
 const webContext = () => ({
   principal: {
@@ -278,8 +280,8 @@ const webContext = () => ({
   origin: WEB_ORIGIN, csrfToken: 'csrf-1', remoteAddress: '127.0.0.1', transport: 'https',
 });
 
-/** The REAL runtime behind the web bridge (the seam a root's MCP read crosses), so the paged walk
- * below is the owner's own view, page by page. */
+/** The REAL runtime behind the web bridge (the seam a root's MCP read crosses), so the answer below
+ * is the owner's own view, whole. */
 function webFixture(t) {
   const f = fixture(t);
   const web = new WebNorthbound({
@@ -300,26 +302,25 @@ function webFixture(t) {
       },
     },
   });
-  const readPage = async ({ cursor = null, step = 0 }) => {
+  const read = async (args, step = 0) => {
     const response = await web.execute(webContext(), {
-      schemaVersion: 1, commandId: `cmd-page-${step}`, idempotencyKey: `page-${step}`,
+      schemaVersion: 1, commandId: `cmd-read-${step}`, idempotencyKey: `read-${step}`,
       command: 'swarm_view', repoId: WEB_REPO, origin: WEB_ORIGIN,
-      args: { swarmId: 'baton', ...(cursor === null ? {} : { cursor }) },
-      frame: { lane: 'wire.frame' },
+      args: { swarmId: 'baton', ...args },
     });
-    assert.equal(response.status, 200, `walk step ${step} is served`);
+    assert.equal(response.status, 200, `the read is served (step ${step})`);
     return response.body.result;
   };
-  return { ...f, web, readPage };
+  return { ...f, web, read };
 }
 
-test('433-d: the paged read over the bridge reproduces every contribution row, once', async (t) => {
+test('433-d: the web bridge answers every contribution row in ONE read, once each', async (t) => {
   const f = webFixture(t);
-  await f.call('create', { purpose: 'Paged contributions (#433)' });
+  await f.call('create', { purpose: 'The whole contributions read (#433)' });
   await f.recruit('builder');
   const builder = principal('w-1');
-  // Enough recorded material that the whole record exceeds the frame the bridge answers under, so
-  // the read really pages (issue #343) instead of narrowing.
+  // Enough recorded material that the answer is far larger than the ceiling the bridge enforced
+  // until #627: this read paged under that bound, and one answer carries the family now.
   const ROWS = 60;
   for (let index = 0; index < ROWS; index += 1) {
     await f.call('update', { event: 'swarm.contribution_recorded', payload: {
@@ -327,34 +328,23 @@ test('433-d: the paged read over the bridge reproduces every contribution row, o
       body: `${index}`.padEnd(20_000, 'x'),
     } }, builder);
   }
-  assert.ok(ROWS > 0);
   const whole = await f.call('view', { projection: 'contributions' });
   const expected = (whole.contributions ?? []).map((row) => row.contributionId).sort();
   assert.equal(expected.length, ROWS, 'the swarm really holds every contribution');
-  const walked = [];
-  let cursor = null;
-  let step = 0;
-  let ceiling = null;
-  for (;;) {
-    const served = await f.readPage({ cursor, step });
-    for (const row of served.contributions ?? []) {
-      assert.ok(SWARM_REVIEW_STATES.includes(row.reviewState),
-        'every paged contribution row carries the review state (docs/46 §2.1)');
-      walked.push(row.contributionId);
-    }
-    ceiling = served.page?.ceiling ?? ceiling;
-    cursor = served.page?.next ?? null;
-    step += 1;
-    assert.ok(step < 400, 'the walk terminates');
-    if (cursor === null) break;
+
+  const served = await f.read({ projection: 'contributions' }, 1);
+  for (const row of served.contributions ?? []) {
+    assert.ok(SWARM_REVIEW_STATES.includes(row.reviewState),
+      'every row of the answer carries the review state (docs/46 §2.1)');
   }
-  assert.ok(step > 1, `the record really paged (${step} pages), so the walk is the pager's, not a whole answer`);
+  assert.equal(Object.hasOwn(served, 'page'), false,
+    'a whole answer carries no page record: the read is not a step of a walk');
+  assert.equal(Object.hasOwn(served, 'narrowed'), false, 'and it is not a narrowed slice either');
+  const walked = (served.contributions ?? []).map((row) => row.contributionId);
+  assert.equal(walked.length, ROWS, 'the one answer carries every contribution row');
   assert.deepEqual([...walked].sort(), expected,
-    'walking page.next reproduces the whole contributions list — no gap (docs/46 §2.2)');
+    'and the rows are the whole contributions list — no gap (docs/46 §2.2)');
   assert.equal(new Set(walked).size, walked.length, 'and no duplicate');
-  assert.equal(ceiling?.lane, FRAME_LIMITS['wire.frame'].lane,
-    'the ceiling row is wire.frame, never a numeric page cap (docs/46 §2.2)');
-  assert.equal(ceiling?.value, FRAME_LIMITS['wire.frame'].value);
 });
 
 // ── 433-e / 433-f: the CLI's bounded leg renders the whole frame ───────────────────────────────
@@ -395,7 +385,7 @@ test('433-e: --wake-class contribution_recorded answers both contributions, matc
     'matchedSeq is the LAST carried row, so the next re-arm resumes past both');
   assert.equal(answer.watch.wakeClass, 'contribution_recorded',
     'the answer names the class it woke on, over the same closed table the follow leg prints');
-  assert.equal(answer.watch.pendingSince, null, 'nothing was left behind the frame bound');
+  assert.equal(answer.watch.pendingSince, null, 'the answer holds no byte bound: nothing is left behind it');
   assert.equal(answer.projection, 'outline', 'a wake is not a view read: the outline default stands');
 });
 

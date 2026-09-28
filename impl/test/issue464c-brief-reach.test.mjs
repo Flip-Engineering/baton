@@ -17,7 +17,8 @@
 //       itself, then the delegation edge from both ends, a shared group roster and a shared
 //       recorded checkout (the stronger relation wins);
 //   (c) a 39-seat fixture whose every brief is at least the 17 KB the probe measured answers its
-//       participants projection in ONE frame through the real bridge — served 39, no cursor;
+//       participants projection in ONE read through the real bridge — every seat, no page record
+//       (issue #627 removed the frame bound the bridge paged under);
 //   (d) the seat's own read still renders its brief text end to end, and the roster the same
 //       token reads carries the reach instead — the text is never on a roster row.
 //
@@ -62,11 +63,9 @@ const SWARM_BRIEF_EXPOSURE_CLASSES = swarmRuntime.SWARM_BRIEF_EXPOSURE_CLASSES ?
 const owner = { actor: 'direct:issue464c-root', principalId: 'issue464c-root', sessionId: 'issue464c-root' };
 const workerPrincipal = (workerId) => ({ actor: `worker:${workerId}`, principalId: `worker:${workerId}`, sessionId: workerId });
 const SWARM = 'brief-reach-464c';
-/** The bridge ceiling the issue was measured against — the registry's own wire frame, never a literal. */
-const WIRE_FRAME = FRAME_LIMITS['wire.frame'].value;
 /** The live shape the issue measured: ~17.5 KB of composed brief per participant row. */
 const LIVE_BRIEF_BYTES = 17 * 1024;
-/** The reach's own fixed shape — small, so a roster row's brief cannot be the reason a page cuts. */
+/** The reach's own fixed shape — small, so a roster row's brief cannot dominate the answer. */
 const REACH_KEYS = ['bytes', 'exposure', 'seq'];
 /** A marker no projection may ever carry by accident: it sits at the END of a one-line objective,
  * past the 160 B role head (#464 half 1), and names its own seat — so "this marker is absent"
@@ -145,19 +144,17 @@ function fixture(t) {
   return { directory, store, workers, runtime, call, workerOf, asParticipant, recruit, recordCommits, seatName };
 }
 
-/** The real runtime behind the real native bridge — the seam the probe measured through. The
- * bridge carries one JSON frame per direction, and its paging derivation measures the answer
- * MIRRORED (the MCP envelope counts the content twice); the live probe's page cut at ~24 of 39
- * rows of ~20 KB each. `commitsPerSeat` lets a fixture carry the live row's WHOLE load — the
- * ~17 KB composed brief beside the #464 commit tail — instead of only the half under test. */
-async function linked(t, { seats = 1, objectiveBytes = DEFAULT_OBJECTIVE_BYTES, commitsPerSeat = 0, maxFrameBytes = WIRE_FRAME } = {}) {
+/** The real runtime behind the real native bridge — the seam the probe measured through, where the
+ * live 39-seat roster of ~20 KB rows crossed the bridge whole. `commitsPerSeat` lets a fixture
+ * carry the live row's WHOLE load — the ~17 KB composed brief beside the #464 commit tail — so the
+ * roster measured below is the live shape the probe measured. */
+async function linked(t, { seats = 1, objectiveBytes = DEFAULT_OBJECTIVE_BYTES, commitsPerSeat = 0 } = {}) {
   const f = fixture(t);
   await f.call('create', { purpose: 'A participant row carries the brief reach (#464)' });
   for (let index = 0; index < seats; index += 1) await f.recruit(index, objectiveBytes);
   for (let index = 0; index < seats; index += 1) f.recordCommits(index, commitsPerSeat);
   const bridge = createSwarmNativeBridge({
     dispatch: ({ command, args, principal, context }) => f.runtime.command(command, args, principal, context),
-    maxFrameBytes,
   });
   t.after(async () => { await bridge.close(); });
   const runId = f.store.swarm(SWARM).participants.alpha.runId;
@@ -282,31 +279,25 @@ test('464c-b: the roster class equals the scoped read\'s class for the root, a p
     'a seat sharing the recorded checkout reads as `checkout` — stronger than group');
 });
 
-// ── 464c-c: a 39-seat roster of live-size rows answers ONE frame through the bridge ────────────
+// ── 464c-c: a 39-seat roster of live-size rows answers ONE read through the bridge ──────────────
 
-test('464c-c: a 39-seat swarm whose briefs are the live ~17 KB answers its participants projection in ONE frame', async (t) => {
+test('464c-c: a 39-seat swarm whose briefs are the live ~17 KB answers its participants projection in ONE read', async (t) => {
   // The LIVE row: the ~17 KB composed brief the probe measured, beside the #464 commit tail the
-  // second half bounded. At HEAD this roster is 951 489 B of JSON before a single commit row —
-  // plus ~14 KB of tail per seat — so the bridge's frame cut it and served the walk instead.
-  const f = await linked(t, { seats: 39, objectiveBytes: LIVE_BRIEF_BYTES, commitsPerSeat: 200, maxFrameBytes: WIRE_FRAME });
+  // second half bounded. This roster measured 951 489 B of JSON before a single commit row — plus
+  // ~14 KB of tail per seat — and under the bound #627 retired the bridge cut it into a walk.
+  const f = await linked(t, { seats: 39, objectiveBytes: LIVE_BRIEF_BYTES, commitsPerSeat: 200 });
   const joins = joinRows(f.store);
   assert.equal(joins.length, 39, 'the fixture really holds a 39-seat roster');
   const briefBytes = joins.map((event) => Buffer.byteLength(event.payload.brief, 'utf8'));
   assert.ok(Math.min(...briefBytes) >= LIVE_BRIEF_BYTES,
     `every seat's composed brief is at least the ${LIVE_BRIEF_BYTES} B the probe measured (min ${Math.min(...briefBytes)})`);
-  // The measure the bridge PAGES by counts an answer twice (its own note: "the MCP envelope
-  // mirrors it"), so the roster's brief text alone — which every row paid before this change —
-  // is over the frame by the bridge's own arithmetic.
-  assert.ok(2 * briefBytes.reduce((sum, bytes) => sum + bytes, 0) > WIRE_FRAME,
-    'the roster\'s brief text, counted the way the bridge counts an answer, exceeds the frame — the measured load is really in this fixture');
 
   const answer = await f.send('swarm.view', { swarmId: SWARM, projection: 'participants' });
   assert.equal(answer.projection, 'participants');
-  assert.equal(answer.participants.length, 39, 'every seat answers in the ONE frame');
-  assert.equal(answer.page?.next ?? null, null,
-    'no cursor: the roster did not have to be walked — a seat\'s first look answers every peer (#464 item 2)');
-  assert.ok(Buffer.byteLength(JSON.stringify({ ok: true, result: answer }), 'utf8') <= WIRE_FRAME,
-    `and the answer fits the ${FRAME_LIMITS['wire.frame'].lane} frame it was measured against`);
+  assert.equal(answer.participants.length, 39, 'every seat answers in the ONE read');
+  assert.equal(Object.hasOwn(answer, 'page'), false,
+    'no page record: a seat\'s first look answers every peer (#464 item 2)');
+  assert.equal(Object.hasOwn(answer, 'narrowed'), false, 'and no narrowing record either');
   for (const row of answer.participants) {
     assertReach(row, row.participantId);
     assert.equal(row.workspace.commitsTotal, 200, `${row.participantId}: the live row load really rides this fixture`);

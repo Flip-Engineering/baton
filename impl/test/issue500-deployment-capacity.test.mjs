@@ -19,9 +19,9 @@
 //               the bound it parses; one byte over, the credential reads as invalid)
 //   500-caps-F  the omp model catalog read answers a parsed selector map or an unreadable null
 //   500-caps-H  the bounds with no hermetic seam (process-boundary exec options, the
-//               process-local catalog memo, the published refusal text bound, the wire frame
-//               default, the verification output ceiling) keep their live literals — source
-//               pins, the same last-resort register as the scanner doc-comment rows
+//               process-local catalog memo, the published refusal text bound, the verification
+//               output ceiling) keep their live literals — source pins, the same last-resort
+//               register as the scanner doc-comment rows
 //
 // Hermetic: temp dirs under os.tmpdir(), one MockAdapter route, no provider process, no network.
 
@@ -175,31 +175,6 @@ test('500-caps-G: advanced.capacity accepts only hostCapacity', async (t) => {
   }
 });
 
-test('500-caps-C: the adapter wire frame corridor refuses outside 64 KiB–16 MiB and admits the bounds', async (t) => {
-  await assert.rejects(
-    openFailure('wire-below', { adapterOptions: { maxWireFrameBytes: 64 * 1024 - 1 }, routes: duplicateRoutes }),
-    (error) => {
-      assert.equal(error.code, 'deployment_config_invalid');
-      assert.match(error.message, /maxWireFrameBytes must be an integer between/);
-      return true;
-    },
-  );
-  await assert.rejects(
-    openFailure('wire-min', { adapterOptions: { maxWireFrameBytes: 64 * 1024 }, routes: duplicateRoutes }),
-    /duplicate/,
-    'the 64 KiB minimum passes the corridor (validation reached the routes check)',
-  );
-  await assert.rejects(
-    openFailure('wire-max', { adapterOptions: { maxWireFrameBytes: 16 * 1024 * 1024 }, routes: duplicateRoutes }),
-    /duplicate/,
-    'the 16 MiB maximum passes the corridor',
-  );
-  await assert.rejects(
-    openFailure('wire-above', { adapterOptions: { maxWireFrameBytes: 16 * 1024 * 1024 + 1 }, routes: duplicateRoutes }),
-    /maxWireFrameBytes must be an integer between/,
-    'one byte over the corridor refuses',
-  );
-});
 
 test('500-caps-D: the resident command deadline default is 30 s — pollMs sits on its boundary', async (t) => {
   await assert.rejects(
@@ -316,6 +291,5 @@ test('500-caps-H: the bounds with no hermetic seam keep their live literals (sou
   count(/progressNudgeWindowMs: 300_000,/u, 'steering nudge window', 1);
   count(/drainPolicy: \{ pollMs: 10 \},/u, 'drain policy', 1);
   count(/budgetPolicy: \{ terminalGraceMs: 2_000, \.\.\.budgetPolicy \},/u, 'budget terminal grace default', 1);
-  count(/const DEFAULT_DEPLOYMENT_WIRE_FRAME_BYTES = 8 \* 1024 \* 1024;/u, 'deployment wire frame default', 1);
   count(/maxOutputBytes: 1024 \* 1024,/u, 'verification capture output ceiling', 1);
 });

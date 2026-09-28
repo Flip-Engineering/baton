@@ -33,10 +33,6 @@ import { normalizeConcurrencyCeiling } from './concurrency-policy.mjs';
 import { normalizeOmpTaskFrame, normalizeOmpSubagentFrame } from './native-subagent-observations.mjs';
 import { classifyProviderFault } from './provider-faults.mjs';
 
-// The OMP wire ceiling is the registry's DECLARED wire lane (limits.mjs) — the one source for
-// every frame bound, never an adapter-local literal (Decision 8's no-re-declare law). A
-// deployment may still override it per instance through the constructor's maxFrameBytes.
-const DEFAULT_MAX_WIRE_FRAME_BYTES = FRAME_LIMITS['wire.frame'].value;
 const DEFAULT_MAX_EVENT_PAYLOAD_BYTES = 64 * 1024;
 const DEFAULT_STREAM_CHUNK_BYTES = FRAME_LIMITS['stream.omp.flush'].value;
 
@@ -148,7 +144,6 @@ export class OmpRpcProcess {
     this.env = options.env;
     this.waitAttemptMs = options.waitAttemptMs ?? 30_000; // per-attempt transport wait, NOT a fate bound
     this.reapTimeoutMs = options.reapTimeoutMs;           // exact-close reap bound (evidence, never fate)
-    this.maxFrameBytes = options.maxFrameBytes ?? DEFAULT_MAX_WIRE_FRAME_BYTES;
     // The SIGTERM→SIGKILL escalation window — the family derivation the Claude session uses
     // (process-lifecycle's KILL_ESCALATION_GRACE_MS), injectable per instance for tests.
     this.killGraceMs = options.killGraceMs ?? KILL_ESCALATION_GRACE_MS;
@@ -167,9 +162,6 @@ export class OmpRpcProcess {
     this._readyWaiters = [];
     this._readyFrame = null;
     this._buffer = '';
-    // The wire-breach observation: set once, never cleared — a session that produced a frame
-    // beyond the DECLARED ceiling has no honest continuation (see _wireFrameFailure).
-    this.wireFailure = null;
     this._killTimer = null;
     this._exited = false;
     this.failure = null;
@@ -386,24 +378,14 @@ export class OmpRpcProcess {
     return this.closePromise;
   }
 
-  /**
-   * The DECLARED wire ceiling is enforced on the way in (the sibling shape: cli-adapters
-   * `_onData`, claude-session, codex-appserver, grok-acp, acp-json-rpc-process): a decoded
-   * frame cannot be produced within the bound the card advertises, so the stream cannot be
-   * consumed without unbounded memory. That is a protocol-breach FACT, not a fate clock — it
-   * terminalizes exactly like a malformed child, and it is named so the crash cert says why.
-   */
+  /** Incremental NDJSON framing: every completed line is parsed whole. */
   _onStdout(chunk) {
-    if (this._exited || this.wireFailure) return;
+    if (this._exited) return;
     this._buffer += chunk;
     let index;
     while ((index = this._buffer.indexOf('\n')) >= 0) {
       const line = this._buffer.slice(0, index);
       this._buffer = this._buffer.slice(index + 1);
-      if (Buffer.byteLength(line, 'utf8') > this.maxFrameBytes) {
-        this._wireFrameFailure();
-        return;
-      }
       if (!line.trim()) continue;
       let frame;
       try { frame = JSON.parse(line); } catch { continue; }
@@ -419,23 +401,6 @@ export class OmpRpcProcess {
       }
       try { this.onFrame?.(frame); } catch { /* an observer defect never kills the member */ }
     }
-    // A partial line already past the ceiling can never decode inside it (the same post-loop
-    // check the siblings make on their retained buffer).
-    if (Buffer.byteLength(this._buffer, 'utf8') > this.maxFrameBytes) this._wireFrameFailure();
-  }
-
-  _wireFrameFailure() {
-    if (this._exited || this.wireFailure) return;
-    this._buffer = '';
-    this.wireFailure = Object.freeze({
-      error: 'omp wire frame exceeded the declared byte ceiling',
-      code: 'wire_frame_oversize',
-      limitBytes: this.maxFrameBytes,
-      phase: 'wire',
-    });
-    // The breach is terminal for this transport generation: no frame after it can be trusted to
-    // decode, so the group is killed now and the session's close handler publishes the cert.
-    this._signalGroup('SIGKILL');
   }
 
   _onExit(code, signal) {
@@ -483,7 +448,6 @@ export class OmpRpcCli {
     this._reapOwnedProcessGroup = options.reapOwnedProcessGroup;
     this._ceiling = normalizeConcurrencyCeiling(options.ceiling, 'OmpRpcCli concurrencyCeiling');
     this._maxContext = options.maxContext ?? null;
-    this._maxWireFrameBytes = options.maxWireFrameBytes ?? DEFAULT_MAX_WIRE_FRAME_BYTES;
     // The SIGTERM→SIGKILL escalation window handed to every spawned process: the family
     // derivation (process-lifecycle's KILL_ESCALATION_GRACE_MS — the same window the Claude
     // session's kill uses), injectable for tests.
@@ -539,7 +503,6 @@ export class OmpRpcCli {
         usage: { tokens: 'native', usd: 'native', tokenMetric: OMP_TOKEN_METRIC, terminalSeal: 'native' },
         providerCalls: { observation: 'unavailable', enforcement: 'unavailable' },
         toolCalls: { observation: 'native', enforcement: 'unavailable' },
-        maxWireFrameBytes: this._maxWireFrameBytes,
       },
       contentStream: { mode: 'bounded-coalescing', flushBytes: this._streamChunkBytes },
       modelSelection: {
@@ -1108,7 +1071,6 @@ export class OmpRpcCli {
         waitAttemptMs: this._requestTimeoutMs,
         reapTimeoutMs: options.processReapTimeoutMs,
         killGraceMs: this._killGraceMs,
-        maxFrameBytes: this._maxWireFrameBytes,
         spawnFn: this._spawnFn,
         processGeneration,
         reapOwnedProcessGroup: this._reapOwnedProcessGroup,
@@ -1213,34 +1175,28 @@ export class OmpRpcCli {
     session.closed = true;
     const turn = session.activeTurn;
     this._flushTurnStreams(session);
-    // The wire breach is a crash class of its own (the sibling `_wireFrameFailure` shape): the
-    // frame ceiling the card ADVERTISES was exceeded, so the cert names that fact and its bound —
-    // exit facts plus the typed code, never a silent death and never a fabricated terminal.
-    const wireFailure = session.process?.wireFailure ?? null;
     // #295: a fault the wire already carried is part of the death cert. When the provider refused
     // this turn and the transport then died, the cert must name THAT class (and its reset instant)
     // rather than a bare phase — the observed shape this closes is a rate-limited member whose
     // death read as an anonymous exit with no route and no reason.
     const providerFault = session.lastProviderFault;
-    if (!session.killConfirmed && (turn || wireFailure || providerFault)) {
+    if (!session.killConfirmed && (turn || providerFault)) {
       // The death-cert class: exit facts WITH the crash event — the #225 fields, native.
       // #201 A1: the RESUME HANDLE rides the cert — the observed session identity and
       // session-file (absent when never observed; never invented).
-      const certCode = wireFailure ? wireFailure.code : providerFault?.code ?? null;
+      const certCode = providerFault?.code ?? null;
       this._emit(session, 'lifecycle.crashed', {
-        phase: wireFailure ? wireFailure.phase : 'process_exit',
+        phase: 'process_exit',
         usageSeal: this._usageSeal(session),
         exitCode: outcome?.exitCode ?? null,
         signal: outcome?.signal ?? null,
         ...(certCode ? { code: certCode } : {}),
-        ...(wireFailure ? { limitBytes: wireFailure.limitBytes } : {}),
-        ...(!wireFailure && providerFault ? { detail: providerFault.detail } : {}),
-        error: wireFailure
-          ? wireFailure.error
-          : (outcome?.failure ? String(outcome.failure.message ?? outcome.failure)
-            : providerFault
-              ? providerFault.message
-              : 'omp rpc process exited during an active turn'),
+        ...(providerFault ? { detail: providerFault.detail } : {}),
+        error: outcome?.failure
+          ? String(outcome.failure.message ?? outcome.failure)
+          : providerFault
+            ? providerFault.message
+            : 'omp rpc process exited during an active turn',
         ...(session.observedSessionId ? { sessionId: session.observedSessionId } : {}),
         ...(session.observedSessionFile ? { sessionFile: session.observedSessionFile } : {}),
       });

@@ -1,6 +1,6 @@
 // Diagnostics epic v2 — DG-1 only (DIAG-3 + DIAG-2).
 // Authority: docs/reference/evidence/diagnostics-2026-07-31/diagnostics-decisions.md (v2 top).
-// Red-first: DG-1a (wire.frame_degraded + stream-death whitelisted summaries) and
+// Red-first: DG-1a (stream-death whitelisted summaries) and
 // DG-1b (trust-gate {gate, detail} honestly shaped).
 // Harness mirrors issue53-run-debug-red: real Coordinator + BatonApplication through
 // createDriver, with adapter.emit injection — never via the store directly.
@@ -144,37 +144,8 @@ const DIGEST_B = 'b'.repeat(64);
 const DIGEST_C = 'c'.repeat(64);
 
 // ---------------------------------------------------------------------------
-// DG-1a — DIAG-3: wire.frame_degraded + stream-death as whitelisted summaries
+// DG-1a — DIAG-3: stream-death as a whitelisted summary
 // ---------------------------------------------------------------------------
-
-test('DG-1a: wire.frame_degraded surfaces as a bounded whitelist summary (count + last code), never raw frames', async (t) => {
-  const { application, baton, adapter } = harness(t);
-  const { workerId, runId } = await startRun(baton);
-
-  emit(adapter, workerId, 'wire.frame_degraded', {
-    frameBytes: 200_000, ceilingBytes: 65_536, toolUseId: 'toolu_1',
-  });
-  emit(adapter, workerId, 'wire.frame_degraded', {
-    frameBytes: 180_000, ceilingBytes: 65_536, toolUseId: 'toolu_2',
-  });
-
-  const debug = await application.debug({ runId }, principal('observer'));
-  const member = debug.members[0];
-  const degraded = member.writeReceipts.filter((r) => r.kind === 'wire.frame_degraded');
-  assert.equal(degraded.length, 1, 'one aggregated summary, not one receipt per event');
-  const summary = degraded[0];
-  assert.equal(summary.result, 'degraded');
-  assert.equal(summary.code, 'frame_degraded');
-  assert.equal(summary.count, 2);
-  assert.equal(summary.lastCode, 'frame_degraded');
-  assert.equal(typeof summary.at, 'string');
-  // Never raw frames / never passthrough of receipt payload internals as free-form content.
-  assert.equal(summary.frameBytes, undefined);
-  assert.equal(summary.ceilingBytes, undefined);
-  assert.equal(summary.toolUseId, undefined);
-  const serialized = JSON.stringify(summary);
-  assert.ok(!serialized.includes('toolu_'), `raw toolUseId leaked: ${serialized}`);
-});
 
 test('DG-1a: stream-death/crash lands on the failure leg as a whitelisted summary', async (t) => {
   const { application, baton, adapter } = harness(t);
@@ -204,10 +175,6 @@ test('DG-1a: #53 closed-shape whitelist amendment is pinned by source-scan', () 
   assert.ok(
     /scratchpad\.write_result/.test(source) && /authority\.rejected/.test(source),
     'base #53 receipt kinds must remain in the projection',
-  );
-  assert.ok(
-    /wire\.frame_degraded/.test(source),
-    'DIAG-3 amendment must whitelist wire.frame_degraded in the debug projection',
   );
   // Gate diagnosis fields land on the failure leg (DIAG-2 amendment).
   assert.ok(
