@@ -13,12 +13,13 @@
 # the laws of this module and the modules it imports are stated over. No law in the entry's
 # import graph is stated over a module the entry does not reach.
 #
-# M-1  bound: C.session_result, C.message_result, C.sql(Report/Ask) and Root.result. The store's
-#      answer reads the row the transaction stored, keyed by the supplied identity, and a writer's
-#      answer names the stored result only for a delivery that reached exit 0.
-# M-2  bound: P.git_out, Tx.run_res, Turn.refusal_body, Turn.status_text, Recruit.git_status and the
-#      Git status and create-worktree stage readers, which carry an observed status or an
-#      unresolved one and never invent either.
+# M-1  bound: Store.commit and Store.committed, C.sql(Message/Report/Ask), C.session_result,
+#      C.message_result and Root.result. A write answers by re-selecting the row it stored, keyed
+#      by the caller's identity, and a writer's answer names the stored result only for a delivery
+#      that reached exit 0.
+# M-2  bound: P.git_out, Tx.run_res, Turn.refusal_body, Turn.status_text, Recruit.git_status, the
+#      Git status and create-worktree stage readers, and the adapter dispatch in Turn.input and
+#      Turn.launch. Each carries an observed status or an unresolved one and never invents either.
 # M-3a bound: L.pair_cv, L.pair_targ, L.pair_news, L.run_verdict, L.exit_verdict, L.check_argv and
 #      the Git status stages. A verdict that did not run blocks, a passing candidate contributes
 #      nothing, and each selected file is paired with the candidate and target verdicts of itself.
@@ -953,4 +954,23 @@ law m5_a_resumable_muse_turn_carries_the_recorded_session:
   {Turn.muse_launch(cmd, model, effort, cwd, stderr, session, task, False{}) == Muse.resume_worker(cmd, model, effort, cwd, stderr, session, task) : IO(Result<&1,&1,U32 & String,U32>)}
 
 def m5_a_resumable_muse_turn_carries_the_recorded_session(cmd, model, effort, cwd, stderr, session, task):
+  {==}
+
+# ---------------------------------------------------------------------------
+# M-1 over the whole write. A message command writes the row the caller named
+# and answers by re-selecting that row by the same identity, so the answer a
+# retry returns names the coordinates the transaction stored.
+
+law m1_a_message_write_answers_from_the_row_it_stored:
+  {C.sql(C.Message{"m1", "s1", "r1", "guidance", "body"}) == "INSERT INTO messages(id,sender,recipient,kind,body) VALUES('m1','s1','r1','guidance','body')" ++ C.message_upsert() ++ "SELECT json_object('id',id,'sender',sender,'recipient',recipient,'kind',kind,'body',body,'receipt',receipt) FROM messages WHERE id='m1';" : String}
+
+def m1_a_message_write_answers_from_the_row_it_stored():
+  {==}
+
+# M-1: a report answers from the row it stored, whose recipient the transaction
+# derived from the sender's recorded parent rather than from the caller.
+law m1_a_report_write_answers_from_the_row_it_stored:
+  {C.sql(C.Report{"m2", "s2", "body2"}) == "INSERT INTO messages(id,sender,recipient,kind,body) VALUES('m2','s2',(SELECT parent FROM sessions WHERE id='s2'),'report','body2')" ++ C.message_upsert() ++ "SELECT json_object('id',id,'sender',sender,'recipient',recipient,'kind',kind,'body',body,'receipt',receipt) FROM messages WHERE id='m2';" : String}
+
+def m1_a_report_write_answers_from_the_row_it_stored():
   {==}
