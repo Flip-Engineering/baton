@@ -4,8 +4,7 @@ const SAFE_COORDINATION_KINDS = new Set([
   'artifact.registered', 'artifact.superseded',
   'evidence.mapped', 'goal.version_defined', 'plan.approval_decided',
   'plan.node_budget_settled', 'plan.node_dispatched', 'plan.version_proposed',
-  'run.control_admitted', 'run.control_effect_started', 'run.control_provider_acked',
-  'run.control_settled', 'run.lineage_admitted', 'run.orchestrator_lease_issued',
+  'run.lineage_admitted', 'run.orchestrator_lease_issued',
   'run.orchestrator_lease_revoked',
 'run.sealed', 'run.stop_admitted', 'run.stop_completed',
   'run.verification_retry_admitted', 'run.verification_retry_completed',
@@ -46,10 +45,6 @@ const SUMMARIES = Object.freeze({
   'lifecycle.spawned': 'Provider work was spawned.',
   'lifecycle.turn_completed': 'A provider turn completed.',
   'lifecycle.turn_started': 'A provider turn started.',
-  'run.control_admitted': 'Run control was durably admitted.',
-  'run.control_effect_started': 'Run control crossed its provider-effect boundary.',
-  'run.control_provider_acked': 'The provider acknowledged Run control.',
-  'run.control_settled': 'Run control settled.',
   'control.interrupt_requested': 'One exact provider turn interruption was requested.',
   'control.interaction_superseded': 'A blocked interaction was durably superseded for semantic interrupt.',
   'control.interrupt_confirmed': 'One exact provider turn interruption was confirmed.',
@@ -142,7 +137,7 @@ function safeFacts(payload) {
 function category(kind) {
   if (kind.startsWith('run.stop_') || kind.startsWith('kill.')
     || kind.startsWith('lifecycle.process_')) return 'cleanup';
-  if (kind.startsWith('run.control_') || kind.startsWith('control.')) return 'control';
+  if (kind.startsWith('control.')) return 'control';
   if (kind.startsWith('plan.') || kind.startsWith('goal.')) return 'plan';
   if (kind.startsWith('verify.')) return 'verification';
   if (kind.startsWith('resource.')) return 'resource';

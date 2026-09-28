@@ -887,7 +887,7 @@ export function _resetProjection(store) {
   store._evidence = new Map(); store._scratchFacts = new Map(); store._scratchClaims = new Map(); store._scratchReads = [];
   store._knowledgeNodes = new Map(); store._knowledgeEdges = new Map(); store._knowledgeNodeHistory = new Map(); store._knowledgeEdgeHistory = new Map(); store._knowledgeReads = []; store._knowledgeRecallAssessments = new Map(); store._contamination = [];
   store._webCommands = new Map(); store._webCommandScopes = new Map(); store._mcpCalls = new Map(); store._mcpCallScopes = new Map();
-  store._fleetDrains = new Map(); store._runStops = new Map(); store._runStopByTarget = new Map(); store._runControls = new Map();
+  store._fleetDrains = new Map(); store._runStops = new Map(); store._runStopByTarget = new Map();
   store._runVerificationRetries = new Map();
   store._runOrchestratorLeases = new Map(); store._runLineages = new Map(); store._runLineageEventSeqs = new Map(); store._runChildrenByParent = new Map();
   store._recoveryDispatches = new Map(); store._taskTopologies = new Map();
@@ -2664,33 +2664,6 @@ export function _apply(store, event) {
   } else if (event.kind === 'fleet.drain_completed') {
     const old = store._validateFleetDrainCompletion(p, event, true);
     store._fleetDrains.set(p.drainId, freeze({ ...clone(old), status: 'completed', receipt: clone(p.receipt), completedEvent: event.seq, completedAt: event.ts }));
-  } else if (event.kind === 'run.control_admitted') {
-    store._validateRunControlAdmission(p, event, true);
-    store._runControls.set(p.controlId, freeze({
-      ...clone(p), actor: event.actor, status: 'admitted',
-      admittedEvent: event.seq, admittedAt: event.ts,
-      effect: null, effectEvent: null, effectAt: null,
-      providerAck: null, providerAckEvent: null, providerAckAt: null,
-      settlement: null, settledEvent: null, settledAt: null,
-    }));
-  } else if (event.kind === 'run.control_effect_started') {
-    const old = store._validateRunControlEffect(p, event, true);
-    store._runControls.set(p.controlId, freeze({
-      ...clone(old), status: 'effect_started', effect: clone(p),
-      effectEvent: event.seq, effectAt: event.ts,
-    }));
-  } else if (event.kind === 'run.control_provider_acked') {
-    const old = store._validateRunControlProviderAck(p, event, true);
-    store._runControls.set(p.controlId, freeze({
-      ...clone(old), status: 'provider_acked', providerAck: clone(p),
-      providerAckEvent: event.seq, providerAckAt: event.ts,
-    }));
-  } else if (event.kind === 'run.control_settled') {
-    const old = store._validateRunControlSettlement(p, event, true);
-    store._runControls.set(p.controlId, freeze({
-      ...clone(old), status: p.state, settlement: clone(p),
-      settledEvent: event.seq, settledAt: event.ts,
-    }));
   } else if (event.kind === 'run.stop_admitted') {
     store._validateRunStopAdmission(p, event, true);
     store._runStops.set(p.runId, freeze({
@@ -3508,7 +3481,7 @@ export function _scratchpadSnapshot(store) {
   });
 }
 
-export function snapshot(store) { return freeze({ tasks: [...store._tasks.values()].map(clone), runs: [...store._runs.values()].map(clone), ...(store._runStops.size > 0 ? { runStops: [...store._runStops.values()].map(clone) } : {}), ...(store._runControls.size > 0 ? { runControls: [...store._runControls.values()].map(clone) } : {}), ...(store._runLineagePolicy ? { runAuthority: store.runAuthoritySnapshot() } : {}), artifacts: [...store._artifacts.values()].map(clone), ...(store._recoveryAttemptsById.size > 0 ? { recoveryAttempts: [...store._recoveryAttemptsById.values()].map(clone) } : {}), ...(store._representationPolicy || store._representations.size > 0 ? { representations: [...store._representations.values()].map(clone) } : {}), ...(store._goalPlanPolicy || store._goals.size > 0 ? { goalPlan: { goals: [...store._goals.values()].map(clone), plans: [...store._plans.values()].map(clone), approvals: [...store._planApprovals.values()].map(clone), dispatches: [...store._planDispatches.values()].map(clone), budgetSettlements: [...store._planBudgetSettlements.values()].map(clone) } } : {}), ...(store._routePolicy ? { routeLearning: { policy: clone(store._routePolicy), observations: store.routeObservations() } } : {}), reuseDecisions: [...store._reuseDecisions.values()].map(clone), reuseRiskGuards: [...store._reuseRiskGuards.values()].map(clone), ...(store._reuseProviderGuards.size > 0 || store._reuseProviderContributions.size > 0 ? { reuseProviderGuards: [...store._reuseProviderGuards.values()].map(clone), reuseProviderContributions: [...store._reuseProviderContributions.values()].map(clone) } : {}), reusePolicy: { heads: [...store._reusePolicyHeads.values()].map(clone), transitions: store._reusePolicyTransitions.map(clone) }, ...(store._advisoryFeedCards.size > 0 || store._providerReceipts.size > 0 ? { provider: { receiptCount: store._providerReceipts.size, processingCount: store._providerProcessing.size, pendingCoordinateCount: store._providerPending.size } } : {}), evidence: [...store._evidence.values()].map(clone), scratch: { facts: [...store._scratchFacts.values()].map(clone), claims: [...store._scratchClaims.values()].map(clone), reads: store._scratchReads.map(clone) }, scratchpad: store._scratchpadSnapshot(), knowledge: { doubts: doubtsProjection(store), nodes: [...store._knowledgeNodes.values()].map(clone), edges: [...store._knowledgeEdges.values()].map(clone), reads: store._knowledgeReads.map(clone), ...(store._knowledgeRecallAssessments.size > 0 ? { assessments: [...store._knowledgeRecallAssessments.values()].map(clone) } : {}), contamination: store._contamination.map(clone) }, ...(store._swarms.size > 0 ? { swarms: swarmSnapshot(store._swarms).swarms } : {}), lastSeq: store._events.length }); }
+export function snapshot(store) { return freeze({ tasks: [...store._tasks.values()].map(clone), runs: [...store._runs.values()].map(clone), ...(store._runStops.size > 0 ? { runStops: [...store._runStops.values()].map(clone) } : {}), ...(store._runLineagePolicy ? { runAuthority: store.runAuthoritySnapshot() } : {}), artifacts: [...store._artifacts.values()].map(clone), ...(store._recoveryAttemptsById.size > 0 ? { recoveryAttempts: [...store._recoveryAttemptsById.values()].map(clone) } : {}), ...(store._representationPolicy || store._representations.size > 0 ? { representations: [...store._representations.values()].map(clone) } : {}), ...(store._goalPlanPolicy || store._goals.size > 0 ? { goalPlan: { goals: [...store._goals.values()].map(clone), plans: [...store._plans.values()].map(clone), approvals: [...store._planApprovals.values()].map(clone), dispatches: [...store._planDispatches.values()].map(clone), budgetSettlements: [...store._planBudgetSettlements.values()].map(clone) } } : {}), ...(store._routePolicy ? { routeLearning: { policy: clone(store._routePolicy), observations: store.routeObservations() } } : {}), reuseDecisions: [...store._reuseDecisions.values()].map(clone), reuseRiskGuards: [...store._reuseRiskGuards.values()].map(clone), ...(store._reuseProviderGuards.size > 0 || store._reuseProviderContributions.size > 0 ? { reuseProviderGuards: [...store._reuseProviderGuards.values()].map(clone), reuseProviderContributions: [...store._reuseProviderContributions.values()].map(clone) } : {}), reusePolicy: { heads: [...store._reusePolicyHeads.values()].map(clone), transitions: store._reusePolicyTransitions.map(clone) }, ...(store._advisoryFeedCards.size > 0 || store._providerReceipts.size > 0 ? { provider: { receiptCount: store._providerReceipts.size, processingCount: store._providerProcessing.size, pendingCoordinateCount: store._providerPending.size } } : {}), evidence: [...store._evidence.values()].map(clone), scratch: { facts: [...store._scratchFacts.values()].map(clone), claims: [...store._scratchClaims.values()].map(clone), reads: store._scratchReads.map(clone) }, scratchpad: store._scratchpadSnapshot(), knowledge: { doubts: doubtsProjection(store), nodes: [...store._knowledgeNodes.values()].map(clone), edges: [...store._knowledgeEdges.values()].map(clone), reads: store._knowledgeReads.map(clone), ...(store._knowledgeRecallAssessments.size > 0 ? { assessments: [...store._knowledgeRecallAssessments.values()].map(clone) } : {}), contamination: store._contamination.map(clone) }, ...(store._swarms.size > 0 ? { swarms: swarmSnapshot(store._swarms).swarms } : {}), lastSeq: store._events.length }); }
 
 export function goalPlanRun(store, repoId, runId) {
   if (!boundedText(repoId, 256) || !validRunId(runId)) throw new TypeError('goal/plan Run coordinates are invalid');
@@ -3686,96 +3659,6 @@ export function completeRunVerificationRetry(store, fields, auth) {
     retry: store.runVerificationRetry(fields.runId, fields.nodeKey),
     task: store.task(retry.taskId),
     artifacts: prepared.map((manifest) => store.artifact(manifest.id)),
-  });
-}
-
-export function pendingRunControls(state, limit = 1_000) {
-  if (!Number.isSafeInteger(limit) || limit <= 0 || limit > 100_000) {
-    throw new TypeError('run control scan limit is invalid');
-  }
-  return [...state.values()].filter((control) => (
-    ['admitted', 'effect_started', 'provider_acked'].includes(control.status)
-  ))
-    .sort((left, right) => left.admittedEvent - right.admittedEvent)
-    .slice(0, limit).map(clone);
-}
-
-export function beginRunControlEffect(store, fields, auth) {
-  const state = store._runControls.get(fields?.controlId);
-  if (state && state.status !== 'admitted') {
-    const prior = store._byKey.get(auth?.key);
-    if (!prior || prior.kind !== 'run.control_effect_started' || prior.actor !== auth?.actor
-      || canonicalDigest(prior.payload) !== canonicalDigest(fields)) {
-      throw new CoordinationRefusal('run control effect conflict', 'run_control_conflict');
-    }
-    return freeze({
-      ok: true, result: 'replay', event: clone(prior),
-      control: store.runControl(fields.controlId),
-    });
-  }
-  const preview = { actor: auth?.actor, idempotencyKey: auth?.key, payload: fields };
-  store._validateRunControlEffect(fields, preview);
-  if (store._byKey.has(auth.key)) {
-    throw new CoordinationRefusal('run control effect idempotency conflict',
-      'run_control_conflict');
-  }
-  const event = store._append('run.control_effect_started', clone(fields), auth);
-  return freeze({
-    ok: true, result: 'started', event: clone(event),
-    control: store.runControl(fields.controlId),
-  });
-}
-
-export function acknowledgeRunControl(store, fields, auth) {
-  const state = store._runControls.get(fields?.controlId);
-  if (state && !['effect_started'].includes(state.status)) {
-    const prior = store._byKey.get(auth?.key);
-    if (!prior || prior.kind !== 'run.control_provider_acked' || prior.actor !== auth?.actor
-      || canonicalDigest(prior.payload) !== canonicalDigest(fields)) {
-      throw new CoordinationRefusal('run control acknowledgement conflict',
-        'run_control_conflict');
-    }
-    return freeze({
-      ok: true, result: 'replay', event: clone(prior),
-      control: store.runControl(fields.controlId),
-    });
-  }
-  const preview = { actor: auth?.actor, idempotencyKey: auth?.key, payload: fields };
-  store._validateRunControlProviderAck(fields, preview);
-  if (store._byKey.has(auth.key)) {
-    throw new CoordinationRefusal('run control acknowledgement idempotency conflict',
-      'run_control_conflict');
-  }
-  const event = store._append('run.control_provider_acked', clone(fields), auth);
-  return freeze({
-    ok: true, result: 'acknowledged', event: clone(event),
-    control: store.runControl(fields.controlId),
-  });
-}
-
-export function settleRunControl(store, fields, auth) {
-  const state = store._runControls.get(fields?.controlId);
-  if (state && !['admitted', 'provider_acked'].includes(state.status)) {
-    const prior = store._byKey.get(auth?.key);
-    if (!prior || prior.kind !== 'run.control_settled' || prior.actor !== auth?.actor
-      || canonicalDigest(prior.payload) !== canonicalDigest(fields)) {
-      throw new CoordinationRefusal('run control settlement conflict', 'run_control_conflict');
-    }
-    return freeze({
-      ok: true, result: 'replay', event: clone(prior),
-      control: store.runControl(fields.controlId),
-    });
-  }
-  const preview = { actor: auth?.actor, idempotencyKey: auth?.key, payload: fields };
-  store._validateRunControlSettlement(fields, preview);
-  if (store._byKey.has(auth.key)) {
-    throw new CoordinationRefusal('run control settlement idempotency conflict',
-      'run_control_conflict');
-  }
-  const event = store._append('run.control_settled', clone(fields), auth);
-  return freeze({
-    ok: true, result: 'settled', event: clone(event),
-    control: store.runControl(fields.controlId),
   });
 }
 
