@@ -306,3 +306,65 @@ and completed the exact three-line journal. The journal was empty before the
 restart. The [ownership-law measurement record](measurements/2026-09-28-receive-ownership-laws.json)
 contains the compiler diagnostics for both negative controls and the validation
 artifact hashes. Local artifacts are under `.scratch/issue625/ownership-laws/`.
+
+## Entry-enforced composition
+
+Source `e037d1dd8401c15f4d6416eb3f0b84413026d65c` is based on
+`12c050a8bde15dfe40f87dd698d43e8eabcb75de` of `bend2-rewrite`. Its tree is
+`f7b3b81b08f870fc4f8719db8a7af8a574f6ba52`. The coordinator entry imports the
+operative laws and the three receive/session ownership laws described above.
+The native binary SHA-256 is
+`75389905515f464f4cd5d054166408d0d75fc6c2cc4839dc0235287633471a73`.
+
+The composed entry initially rejected the older M-17 statement because retained
+attempts supply a separate stderr path. That law now quantifies the actual stderr
+argument and checks the parent diagnostic against it. The proof-removal checker
+also stops when its baseline entry fails to compile; its isolated failure control
+produced one failed baseline row and no per-law results.
+
+Both law checkers passed. `laws-check.py` passed 30 checks, including four
+production mutations rejected by entry compilation. `laws-check.mjs` passed its
+baseline and all 50 proof-removal controls, including the three ownership laws.
+`check-native.sh` built the entry with its laws, then passed 127 Python tests,
+including 22 receive tests, and both Bend Git suites.
+
+The reference reproduction used commit `1f88f957761a2b2437e1e7a0cc670ba135315ebe`.
+Its tree `f8e382e7776254ef536628c5fcda5730a7d90817` and rebuilt binary SHA-256
+`7f301c9fd79555f0a0f6bfa5726d16fef13370d5799d91a696b7058434e3b632`
+exactly match bend2-git10's composed-tree measurement.
+
+| Probe | Reference tree | Entry-enforced composition |
+| --- | --- | --- |
+| Controlled Codex supervisor loss | Passed, 1.925 s | Passed, 2.191 s |
+| Controlled OMP supervisor loss | Passed, 2.105 s | Passed, 2.202 s |
+| Real OMP process-loss recovery | Passed, 19.385 s | Passed, 18.997 s |
+| Retained receive with missing conversation | Exit 1, input pending, 5.356 s | Exit 0, fallback completed, 1.971 s |
+
+These durations describe single validation runs. The composed probes overlapped
+other native suite stages. Both final supervisor-loss probes kept retries queued,
+retained the original native output and completion, drained pending input and
+notified the parent. Each original native process exited before continuation.
+
+The retained-receive probe preserved an existing tracked edit, launched fresh
+without `--resume`, supplied the pending task and Git status, recorded the new
+identity, and delivered both the recovery notice and completed turn to the parent.
+Both inboxes emptied. The same probe on the reference tree reproduced the missing
+fallback, with one refused launch and the original task still pending.
+
+The real OMP run used `deepseek/deepseek-flash` with low thinking. It refused
+recorded conversation `01a0e9b8-fc19-7000-a5e8-b91705fdb4d0`, recorded
+`ompsession-turn-1:recovery`, and finished under fresh conversation
+`01a0e9b9-1943-7000-885a-7981f4dbdbf6`. The task produced each of its three
+required lines once, in order. Only `journal.txt` changed. That journal was empty
+before the kill; the controlled receive probe supplies the existing-edit evidence.
+All final probes exited their owned processes, and independent process audits
+found no survivors. Source and binary hashes remained unchanged during the runs.
+
+The [entry-law measurement](measurements/2026-09-28-receive-entry-laws.json)
+records commands, source and executable hashes, negative-control diagnostics,
+native identities, process audits and artifact hashes. Final local artifacts are
+under `.scratch/issue625/consolidation/`. The reference artifacts are under
+`.scratch/issue625/reference/` in
+`/Users/wahargis/Development/Experiments/baton-bend2-f8-reference`.
+The earlier real Codex subscription runs retain their original source and binary
+pins. This composition's Codex supervisor-loss probe uses a controlled harness.
