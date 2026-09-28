@@ -1,14 +1,14 @@
 // Issue #285, lane custody-and-capacity — one row per giant-audit item this lane owns. Every row
 // is RED on the pre-fix source and GREEN after it:
 //
-//   G-32  ONE whole-repository listing maxBuffer, derived in one place and taken by every git call
+//   G-32  every whole-repository git listing is read without a buffer bound of the module's own
 //   G-6   pinBaseSha's receipt names the stash COMMIT, never the moving name `stash@{0}`
 //   G-4   contribution_check_unconfirmed carries the new-checkId remedy as gracefulPath
 //
 // The G-32 fixture is a real repository of enough paths: 6000 tracked paths of ~226 bytes put
 // every listing the cited calls run — `status` (~1.4 MB), `ls-tree -r --name-only -z` (~1.4 MB),
-// `ls-files -t -z` (~1.4 MB) — past Node's 1 MiB default buffer, so the pre-fix code fails with
-// ENOBUFS and nothing else. No clocks, no mocks of git.
+// `ls-files -t -z` (~1.4 MB) — past Node's 1 MiB default buffer, so a bounded reading fails with
+// ENOBUFS where the unbounded one completes. No clocks, no mocks of git.
 
 import test from 'node:test';
 import assert from 'node:assert/strict';
@@ -18,9 +18,7 @@ import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 
 import { ContributionService } from '../src/contribution-service.mjs';
-import {
-  DirtyRepoError, createFromBase, gitListingMaxBuffer, pinBaseSha,
-} from '../src/worktree.mjs';
+import { DirtyRepoError, createFromBase, pinBaseSha } from '../src/worktree.mjs';
 
 const SHA_40 = /^[a-f0-9]{40}$/u;
 const BULK_COUNT = 6000; // `git status` over these paths is ~1.4 MB, past Node's 1 MiB default
@@ -62,31 +60,22 @@ async function rejection(operation) {
 }
 
 // ============================================================
-// G-32 — one listing bound, derived in one place
+// G-32 — no buffer bound of the module's own on a whole-repository listing
 // ============================================================
 
-test('G-32: one derived bound carries every whole-repository git listing past Node\'s 1 MiB default', async (t) => {
+test('G-32 (#530): every whole-repository git listing is read unbounded', async (t) => {
   const { dir, baseSha } = makeRepo('g32', Array.from({ length: BULK_COUNT }, (_, index) => [bulkPath(index), 'x']));
   t.after(() => rmSync(dir, { recursive: true, force: true }));
-  const saved = process.env.BATON_GIT_LISTING_PATHS;
-  t.after(() => {
-    if (saved === undefined) delete process.env.BATON_GIT_LISTING_PATHS;
-    else process.env.BATON_GIT_LISTING_PATHS = saved;
-  });
-  delete process.env.BATON_GIT_LISTING_PATHS;
-  assert.ok(gitListingMaxBuffer() >= 64 * 1024 * 1024,
-    'the ONE bound is the documented whole-repository derivation, at least the 64 MiB literal it replaces');
-  // No git call carries a buffer literal of its own: the wrappers, and every call they serve, take
-  // the ONE derivation. The only other maxBuffer in worktree.mjs is its `/bin/ps` probe, which
-  // bounds one process line and postchecks it at 256 bytes — never a git listing.
+  // #530: the derived row-times-paths buffer and its BATON_GIT_LISTING_PATHS override left the
+  // tree, so every git call buffers without a bound of this module's own — the deployment's own
+  // repository listing is read whether it is small or large. The one other maxBuffer in the module
+  // is its `/bin/ps` probe, which bounds a single process line.
   const source = readFileSync(new URL('../src/worktree.mjs', import.meta.url), 'utf8');
-  const bounds = source.split('\n').filter((line) => /maxBuffer\s*:/u.test(line));
-  const derived = bounds.filter((line) => line.includes('gitListingMaxBuffer()'));
-  assert.ok(derived.length >= 1, 'worktree.mjs: the git wrapper takes the ONE derivation');
-  assert.equal(bounds.length - derived.length, 1,
-    'worktree.mjs: every other buffer bound is the documented non-listing probe');
-  for (const call of source.match(/execFileSync\(\s*'git'[\s\S]*?\);/gu) ?? []) {
-    assert.equal(/maxBuffer:\s*\d/u.test(call), false, 'worktree.mjs passes a per-call buffer literal to git');
+  const gitCalls = source.match(/execFileSync\(\s*'git'[\s\S]*?\);/gu) ?? [];
+  assert.ok(gitCalls.length > 0, 'the module really shells out to git');
+  for (const call of gitCalls) {
+    assert.match(call, /maxBuffer:\s*Infinity/u,
+      'every git call in worktree.mjs reads its listing without a buffer bound of its own');
   }
 
   // trackedPathsAtCommit + assertSparseIndexState — `ls-tree --name-only -z` and `ls-files -t -z`
@@ -95,18 +84,10 @@ test('G-32: one derived bound carries every whole-repository git listing past No
   assert.equal(existsSync(join(created.dir, bulkPath(0))), true);
   assert.equal(existsSync(join(created.dir, bulkPath(1))), false);
 
-  // isClean — `git status --porcelain` (~1.4 MB once every tracked path differs).
+  // isClean — `git status --porcelain` over every tracked path once every one of them differs.
   for (let index = 0; index < BULK_COUNT; index += 1) writeFileSync(join(dir, bulkPath(index)), 'xy');
   await assert.rejects(() => pinBaseSha(dir), DirtyRepoError,
     'the status listing completes instead of failing with ENOBUFS');
-
-  // The bound is configurable, and the wrappers really take it: 1000 paths' worth of bytes cannot
-  // hold this listing, so the same call refuses with the raw ENOBUFS that the derivation prevents.
-  process.env.BATON_GIT_LISTING_PATHS = '1000';
-  const configured = gitListingMaxBuffer();
-  assert.ok(configured < 2 * 1024 * 1024 && configured > 0, `the derived bound follows the deployment (${configured} bytes)`);
-  const refused = await rejection(() => pinBaseSha(dir));
-  assert.equal(refused?.code, 'ENOBUFS', 'the configured derivation gates the git call');
 });
 
 // ============================================================

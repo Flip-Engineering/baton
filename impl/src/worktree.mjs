@@ -26,7 +26,6 @@ import { sanitizeVerifierDiagnosticText } from './verifier-diagnostics.mjs';
 // Issue #428: the one custody predicate — a second inline opinion about whether cleanup may
 // destroy a shared checkout is exactly the drift the surface gate refuses.
 import { isPhysicalWorkspaceId, PHYSICAL_WORKSPACE_ID_TOKEN_SOURCE } from './shared-workspace-custody.mjs';
-import { FRAME_LIMITS } from './limits.mjs';
 
 // ---------------------------------------------------------------------------
 // Errors (W7 — typed, never a bare Error wrapping raw stderr)
@@ -88,38 +87,14 @@ export class StructuredMergeError extends Error {
 // Internal helpers
 // ---------------------------------------------------------------------------
 
-// G-32: ONE bound for every git invocation whose stdout is a whole-repository listing —
-// `status`, `ls-tree` and `ls-files` at any scope. The two wrappers below take it from here; no
-// call writes a buffer size of its own. It is derived, not picked:
-// the widest row those commands emit, times the number of paths this deployment serves. That row
-// is `ls-tree -r -l -z`'s — mode, type, object id, size, tab, path, NUL — whose header is under 64
-// bytes and whose path no checkout-able entry exceeds (PATH_MAX, 1024), so 1088 bytes covers any
-// row. The product bounds a buffer, it controls no work: a listing larger than it fails with
-// ENOBUFS rather than being silently truncated, so a deployment whose repository tracks more
-// paths than the default raises BATON_GIT_LISTING_PATHS.
-const GIT_LISTING_ROW_BYTES = 1088;
-const DEFAULT_GIT_LISTING_PATHS = 61_696; // 1088 bytes/row x 61696 paths is the 64 MiB bound this module trusted once
-const GIT_LISTING_PATHS_ENV = 'BATON_GIT_LISTING_PATHS';
-
-/** The ONE maxBuffer for a whole-repository git listing (G-32). */
-export function gitListingMaxBuffer() {
-  const configured = process.env[GIT_LISTING_PATHS_ENV];
-  if (configured === undefined || configured === '') {
-    return GIT_LISTING_ROW_BYTES * DEFAULT_GIT_LISTING_PATHS;
-  }
-  if (!/^[1-9][0-9]*$/u.test(configured)) {
-    throw new TypeError(`${GIT_LISTING_PATHS_ENV} must be a positive decimal path count`);
-  }
-  const bound = GIT_LISTING_ROW_BYTES * Number(configured);
-  if (!Number.isSafeInteger(bound)) {
-    throw new TypeError(`${GIT_LISTING_PATHS_ENV} exceeds the largest listing bound Node can address`);
-  }
-  return bound;
-}
+// G-32: a git invocation whose stdout is a whole-repository listing — `status`, `ls-tree` and
+// `ls-files` at any scope — buffers with no bound of this module's own (#530: the derived
+// row-times-paths buffer and its BATON_GIT_LISTING_PATHS override left the tree). The child's
+// stdout is the deployment's own repository listing, and a caller may still pass `opts.maxBuffer`.
 
 function sh(cmd, args, cwd) {
   return execFileSync(cmd, args, {
-    cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], maxBuffer: gitListingMaxBuffer(),
+    cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], maxBuffer: Infinity,
     ...(cmd === 'git' ? { env: localGitEnv() } : {}),
   }).trim();
 }
@@ -131,9 +106,7 @@ function localGitEnv(extra = {}) {
 }
 
 function gitFile(args, cwd, opts = {}, extraEnv = {}) {
-  // The listing bound is the default for every git call. A caller may raise it in `opts` for a
-  // listing it knows is larger than the deployment's path count; no caller does today.
-  return execFileSync('git', args, { maxBuffer: gitListingMaxBuffer(), ...opts, cwd, env: localGitEnv(extraEnv) });
+  return execFileSync('git', args, { maxBuffer: Infinity, ...opts, cwd, env: localGitEnv(extraEnv) });
 }
 
 /** Issue #573: the environment for a REMOTE-directed git call — the landing's pre-flight probe,
@@ -149,7 +122,7 @@ function publishGitEnv(extra = {}) {
 }
 
 function gitRemote(args, cwd, opts = {}, extraEnv = {}) {
-  return execFileSync('git', args, { maxBuffer: gitListingMaxBuffer(), ...opts, cwd, env: publishGitEnv(extraEnv) });
+  return execFileSync('git', args, { maxBuffer: Infinity, ...opts, cwd, env: publishGitEnv(extraEnv) });
 }
 
 function isClean(dir) {
@@ -641,9 +614,6 @@ function removeExactWorktreeRegistration(repoRoot, worktreePath) {
   return true;
 }
 
-/** The ceiling on one seat's linked-worktree ownership record (#568). Declared ONCE in the frame
- * registry and read here, so no module re-declares a cataloged byte literal (#89 Decision 8). */
-const LINKED_WORKTREE_RECORD_BYTES = FRAME_LIMITS['worktree.linked_ownership_record'].value;
 
 function absoluteGitPath(cwd, selector) {
   const raw = sh('git', ['rev-parse', '--path-format=absolute', selector], cwd);
@@ -661,10 +631,11 @@ function parseLinkedWorktreeOwnership(repoRoot, physicalOwnerId) {
   const recordPath = seatLinkedWorktreeOwnershipPath(repoRoot, physicalOwnerId);
   if (!existsSync(recordPath)) return Object.freeze({ recordPath, rows: Object.freeze([]) });
   const stat = lstatSync(recordPath);
-  if (!stat.isFile() || stat.isSymbolicLink() || (stat.mode & 0o077) !== 0
-    || stat.size > LINKED_WORKTREE_RECORD_BYTES) {
+  // #530: the record's size clause left with its registry row. The private-file check (regular,
+  // not a symlink, owner-only) and the row validation below stay.
+  if (!stat.isFile() || stat.isSymbolicLink() || (stat.mode & 0o077) !== 0) {
     throw new WorkspaceOwnerDiagnostic(
-      'linked worktree ownership record is not a private bounded file',
+      'linked worktree ownership record is not a private file',
       'linked_worktree_ownership_invalid',
     );
   }
@@ -3036,7 +3007,7 @@ export async function landContribution(repoRoot, request) {
         try {
           execFileSync(process.execPath, ['--check', join(checkout.dir, path)], {
             cwd: checkout.dir, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'],
-            maxBuffer: gitListingMaxBuffer(),
+            maxBuffer: Infinity,
           });
         } catch (error) {
           throw Object.assign(

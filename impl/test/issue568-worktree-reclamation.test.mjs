@@ -323,6 +323,52 @@ test('568-E: restart reclaims a recorded external worktree and preserves dirty d
   assert.equal(git(f.repo, ['rev-parse', reclaimed.payload.ref]), reclaimed.payload.sha);
 });
 
+// #530: the ownership record's size clause left with its registry row, so the reclamation reads a
+// record of any size; its row validation stays, and a malformed row still refuses and retains the
+// checkout the record names.
+test('568-E2 (#530): an ownership record past the old 1 MiB bound is read, and a malformed row refuses', async (t) => {
+  const f = fixture(t, 'external-record-size');
+  const before = authority('record-size-deployment', 'controller-before');
+  const after = authority('record-size-deployment', 'controller-after');
+  const workspace = await ownedWorkspace(f, before, 'record-size');
+  const seat = projectedSeat(f, workspace, 'issue568-record-size');
+  const external = join(dirname(f.repo), 'seat-created-record-size');
+  addLinkedWorktree(seat, workspace, external);
+  const recordPath = seatLinkedWorktreeOwnershipPath(f.repo, workspace.receipt.physicalOwnerId);
+  const row = readFileSync(recordPath, 'utf8').trim();
+  const keep = { ownerAuthority: after, snapshotUncommitted: true, beforeOwnerCleanup: () => true };
+
+  // The integrity check first: one malformed row refuses the record, and the checkout is retained.
+  const malformed = JSON.stringify({ ...JSON.parse(row), schemaVersion: 2 });
+  writeFileSync(recordPath, `${row}\n${malformed}\n`, { mode: 0o600 });
+  const refused = reconcile(f.repo, [], keep);
+  assert.deepEqual(refused.diagnostics.map((entry) => entry.code), ['linked_worktree_ownership_invalid'],
+    'the malformed record refuses typed');
+  assert.equal(refused.retainedContentOwners.includes(workspace.receipt.physicalOwnerId), true,
+    'and the owner is retained rather than reclaimed');
+  assert.equal(existsSync(external), true, 'the checkout a record the pass cannot read is retained');
+  assert.notEqual(physicalWorkspaceOwnerReceipt(f.repo, workspace.receipt.physicalOwnerId), null,
+    'and the owner receipt stays with it');
+
+  // With every row valid, a record past the removed 1 MiB bound is read whole and reclaimed. The
+  // real row comes first; the padding rows name paths no registration knows, so the pass reads
+  // them and moves on.
+  const stale = (index) => JSON.stringify({
+    ...JSON.parse(row),
+    worktreePath: `${external}-stale-${index}`,
+    worktreeGitDir: `${external}-stale-${index}.git`,
+    registrationNonce: `${String(index).padStart(8, '0')}${'a'.repeat(32)}`,
+  });
+  const padded = [row];
+  while (Buffer.byteLength(padded.join('\n')) < 1024 * 1024) padded.push(stale(padded.length));
+  assert.ok(Buffer.byteLength(padded.join('\n')) > 1024 * 1024, 'the fixture record really exceeds the removed bound');
+  writeFileSync(recordPath, `${padded.join('\n')}\n`, { mode: 0o600 });
+  const read = reconcile(f.repo, [], keep);
+  assert.deepEqual(read.errors, []);
+  assert.equal(existsSync(external), false, 'the checkout the oversized record names is reclaimed');
+  assert.equal(existsSync(recordPath), false, 'the record is released with the checkout');
+});
+
 test('568-F: active owner retains its recorded external worktree', async (t) => {
   const f = fixture(t, 'external-active');
   const current = authority('external-active-deployment', 'controller-current');

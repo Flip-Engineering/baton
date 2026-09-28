@@ -1025,7 +1025,6 @@ export function openWakeStream({
 // ── the loopback WebSocket binding (RFC 6455) ───────────────────────────────────────────────────
 
 const WS_GUID = '258EAFA5-E914-47DA-95CA-C5AB0DC85B11';
-const WS_MAX_FRAME_BYTES = FRAME_LIMITS['wire.frame'].value;
 
 function acceptKey(key) {
   return createHash('sha1').update(`${key}${WS_GUID}`).digest('base64');
@@ -1051,7 +1050,9 @@ function closeFrame(code) {
 
 /** Incremental WS frame reader: one socket chunk may carry half a frame or three frames, so the
  * codec keeps the tail and never assumes a chunk boundary. Client frames MUST be masked
- * (RFC 6455 §5.3) — an unmasked client frame is a protocol error, not a lenient case. */
+ * (RFC 6455 §5.3) — an unmasked client frame is a protocol error, not a lenient case. A frame's
+ * size is not refused (#530): the reader takes whatever length the frame's own header declares,
+ * and the writer emits a message of any size as the frames it needs. */
 function createFrameReader({ onText, onControl, onProtocolError }) {
   let buffered = Buffer.alloc(0);
   return (chunk) => {
@@ -1067,11 +1068,8 @@ function createFrameReader({ onText, onControl, onProtocolError }) {
         length = buffered.readUInt16BE(offset); offset += 2;
       } else if (length === 127) {
         if (buffered.length < offset + 8) return;
-        const wide = buffered.readBigUInt64BE(offset); offset += 8;
-        if (wide > BigInt(WS_MAX_FRAME_BYTES)) return onProtocolError(1009);
-        length = Number(wide);
+        length = Number(buffered.readBigUInt64BE(offset)); offset += 8;
       }
-      if (length > WS_MAX_FRAME_BYTES) return onProtocolError(1009);
       if (!masked) return onProtocolError(1002);
       if (buffered.length < offset + 4 + length) return;
       const mask = buffered.subarray(offset, offset + 4); offset += 4;

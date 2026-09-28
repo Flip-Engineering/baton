@@ -21,7 +21,6 @@ const CLAUDE_WINDOW_MS = Math.round(4.4 * 60 * 60 * 1000);
 const STATIC_KEY_WINDOW_MS = 24 * 60 * 60 * 1000;
 const DEFAULT_PROBE_TIMEOUT_MS = FRAME_LIMITS['route.probe_deadline_ms'].value;
 const DEFAULT_FAILURE_WINDOW_MS = 10 * 60 * 1000;
-const PROBE_PROMPT_MAX_BYTES = 1024;
 // #375: the capture the verdict is read over — a resource guard declared in the ONE registry
 // (limits.mjs), never a literal of this module (Decision 8's no-re-declare law).
 const PROBE_CAPTURE_MAX_BYTES = FRAME_LIMITS['route.probe_capture'].value;
@@ -230,9 +229,6 @@ export class RouteLiveness {
     const probeId = `${PROBE_WORKER_PREFIX}${randomBytes(10).toString('hex')}`;
     const expectedLine = `${route.model}-probe ok`;
     const prompt = `Reply with exactly one line: '${expectedLine}'. Nothing else.`;
-    if (Buffer.byteLength(prompt, 'utf8') > PROBE_PROMPT_MAX_BYTES) {
-      return this._fail(route, credentialKey, 'probe_oversize', started, probeId);
-    }
 
     const pending = { settled: false, sawSpawned: false, terminalResolve: null, timer: null };
     const terminal = new Promise((resolve) => { pending.terminalResolve = resolve; });

@@ -121,6 +121,20 @@ test('a declared loopback binding serves the same wake stream to an authenticate
   await new Promise((resolve) => setTimeout(resolve, 400));
   assert.deepEqual([...new Set(frames.map((frame) => frame.wakeClass))].sort(),
     ['contribution_recorded', 'recruited'], 'only the filtered classes cross the binding');
+  // #530: the reader takes a frame of whatever size its own header declares. A client frame past
+  // the old 1 MiB guard leaves the feed open — the frame is read, not refused, and the next wake
+  // still crosses.
+  socket.send('x'.repeat(2 * 1024 * 1024));
+  store.recordSwarm('swarm.contribution_recorded',
+    { swarmId, participantId: 'worker', contributionId: 'contribution-2', body: 'after a large client frame' },
+    { actor: 'test:worker', key: 'binding:5' });
+  const aliveBy = Date.now() + 20_000;
+  while (!frames.some((frame) => frame.subject?.id === 'contribution-2')) {
+    if (Date.now() > aliveBy) {
+      throw new Error(`the feed closed under a large client frame: ${JSON.stringify(frames)}`);
+    }
+    await new Promise((resolve) => setTimeout(resolve, 25));
+  }
 
   socket.close();
   await host.shutdown();

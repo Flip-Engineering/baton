@@ -150,9 +150,6 @@ const SUBSTRATE = Object.freeze({
   'context_pack.body': { lane: 'context_pack.body', class: 'substrate', value: 8192, unit: 'bytes', graceful: null },
   // Issue #566 (F1): the integration publish-remote declaration ceiling.
   'deployment.publish_remote': { lane: 'deployment.publish_remote', class: 'substrate', value: 2048, unit: 'bytes', graceful: null },
-  // Issue #568: the ceiling on one seat's linked-worktree ownership record — the private durable
-  // JSON-lines file the reclamation pass reads and validates before it removes a linked checkout.
-  'worktree.linked_ownership_record': { lane: 'worktree.linked_ownership_record', class: 'substrate', value: 1048576, unit: 'bytes', graceful: null },
   // #375: the liveness probe's two resource guards (§4.1.2), declared ONCE here like every other
   // substrate bound — the capture a probe verdict is judged over, and the deadline after which a
   // probe settles UNKNOWN (a timer adjudicates no claim: a probe that outlived its bound says
@@ -238,7 +235,6 @@ const VIEW = Object.freeze({
   'view.scratchpad.bytes': { lane: 'view.scratchpad.bytes', class: 'view', value: 32768, unit: 'bytes', graceful: 'shed-flagged' },
   'view.scratchpad.items': { lane: 'view.scratchpad.items', class: 'view', value: 64, unit: 'items', graceful: 'shed-flagged' },
   'view.scratchpad.cache_keys': { lane: 'view.scratchpad.cache_keys', class: 'view', value: 256, unit: 'items', graceful: 'shed-flagged' },
-  'view.profile.bytes': { lane: 'view.profile.bytes', class: 'view', value: 262144, unit: 'bytes', graceful: 'shed-flagged' },
   'view.run.bytes': { lane: 'view.run.bytes', class: 'view', value: 524288, unit: 'bytes', graceful: 'shed-flagged' },
   'view.review_source.bytes': { lane: 'view.review_source.bytes', class: 'view', value: 4194304, unit: 'bytes', graceful: 'shed-flagged' },
   'view.attention_text.bytes': { lane: 'view.attention_text.bytes', class: 'view', value: 4096, unit: 'bytes', graceful: 'shed-flagged' },

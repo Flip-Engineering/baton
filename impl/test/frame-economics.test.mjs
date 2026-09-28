@@ -481,7 +481,6 @@ const VIEW_LANES = Object.freeze([
   ['view.scratchpad.bytes', 32768, 'bytes'],
   ['view.scratchpad.items', 64, 'items'],
   ['view.scratchpad.cache_keys', 256, 'items'],
-  ['view.profile.bytes', 262144, 'bytes'],
   ['view.run.bytes', 524288, 'bytes'],
   ['view.review_source.bytes', 4194304, 'bytes'],
   ['view.attention_text.bytes', 4096, 'bytes'],
@@ -542,6 +541,8 @@ test('A3: the substrate guards are declared, and no substrate row mints a refusa
   }
   assert.equal(limits.FRAME_LIMITS?.['spill.body'], undefined,
     '#530: spill.body left the registry — the durable spill write no longer refuses a body for its size');
+  assert.equal(limits.FRAME_LIMITS?.['worktree.linked_ownership_record'], undefined,
+    '#530: the linked-ownership-record row left with the size clause it declared');
 });
 
 test('A4: the view class is declared with shed-flagged graceful degradation', async () => {
@@ -554,6 +555,8 @@ test('A4: the view class is declared with shed-flagged graceful degradation', as
     assert.equal(row.unit, unit);
     assert.equal(row.graceful ?? null, 'shed-flagged', `${lane} degrades shed-flagged (ground truth 8)`);
   }
+  assert.equal(limits.FRAME_LIMITS?.['view.profile.bytes'], undefined,
+    '#530: view.profile.bytes left — its last reader, the profile byte ceiling, left with the class');
 });
 
 test('A5: FRAME_LIMITS_DIGEST is canonical-derivation stable and byte-stable across processes', async () => {
