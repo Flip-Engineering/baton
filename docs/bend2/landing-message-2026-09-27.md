@@ -57,12 +57,14 @@ The proof compared the complete message, the target parent and both tree IDs.
 The parent equals the starting target. The worker and landed tree IDs both
 equal `c94d88fb29fd0886e040f49911e9a7ae33efad71`.
 
-The assigned checkout retains the task, native output, worker report, database,
-Git repository, proof driver and `evidence.json` under
-`.scratch/bend2/architect15-message/`. The proof uses a local scratch repository
-and the carried harness wrapper, which stores native state within this assigned
-checkout. It changes no live trial files or processes and publishes no remote
-branch.
+The proof used a local scratch repository and a harness wrapper that stored
+native state within the assigned checkout. The 2026-09-27 scratch cleanup
+retained the task, native output, worker report, database, proof driver and
+`evidence.json` in `.scratch/retained-evidence/bend2-evidence.tar.gz`, under their
+original `.scratch/bend2/architect15-message/` paths. Compact Git commit metadata
+is in `.scratch/retained-evidence/proof-commits.json`. The scratch Git repository
+and disposable native session caches were removed. The proof changed no live
+trial files or processes and published no remote branch.
 
 ## Trial landing confirmation
 
@@ -108,14 +110,66 @@ Commit `0c5e961f3d819e8ec2defda9d1f02f4d56be272b` adds an instruction to
 record the root's exact command line beside its answer in
 `$TRIAL_STATE/issue-N-root-land-checked.log`.
 
-At the recovery inspection, the live kit was at `0c5e961f` and the rendered
+At the 2026-09-27 recovery inspection, the live kit was at `0c5e961f` and the rendered
 `root-instructions.md` contained that instruction. A SQLite `mode=ro` read
 showed nine sessions and latest message sequence 37,
 `issue-617-landed-ea30fdd7`. The only root landing log was the #617 file.
-The instruction's effect remains to be checked on the next trial landing.
+The later #620 landing exercised the instruction, as recorded below.
 
 These recovery checks read the live trial's Git objects, database, instructions
 and landing log. They changed only the evidence document and scratch evidence
 inside the assigned workspace. No new native or JS test run was performed for
 this documentation correction. The generic deployment verification command
 was not run.
+
+## Issue 620 command and message confirmation
+
+The 2026-09-28 recovery inspection read
+`state/trial.db.trial/issue-620-root-land-checked.log` in the operator's
+`bend2-trial` directory. It contains the full command line followed by this
+answer:
+
+```json
+{"status":"landed","target":"bend2-trial","commit":"cd721550d4125fa7e07809664e7956c37740e11a"}
+```
+
+The command names `issue-620-lead`, target `bend2-trial`, the kit's absolute
+`check-node-test.sh` path, and these selected files:
+
+- `impl/test/issue620-unregistered-workspace.test.mjs`
+- `impl/test/issue568-worktree-reclamation.test.mjs`
+- `impl/test/workspace-preservation.test.mjs`
+
+The root commit's parent is the previous trial tip
+`ea30fdd703123cd3619f812aec6d8b4a3f018c78`. The worker tip
+`5d97a7eca57ea5b77c663cfeeabe81f720acde6f`, final lead tip
+`6c078da9a25140f3764cab98aff741ad75e9e932` and root landing all have tree
+`b46189d157046e6d90d5164d7f4e63d63d93375f`.
+
+The worker and lead branches share the first two commit objects, `ddb0db42`
+and `00caa2a9`. Each branch has three commits above the previous trial tip.
+Reading that range in topological order, oldest first, reproduces the complete
+root message:
+
+```text
+Issue #620: read tracked differences beneath an attested dependency root
+
+Issue #620: reclaim an administration-less workspace of an ended seat
+Issue #620: keep an ambient GIT_* variable out of the fixture's Git calls
+Issue #620: read tracked differences beneath an attested dependency root
+
+landed from bend2/issue-620-lead
+```
+
+The separate `issue-620-lead-land-checked.log` records the earlier `00caa2a9`
+landing. Its command, result and test summary apply to that intermediate
+revision. The final lead landing must be read from the native tool log and
+branch history; `contribution-da1dedb4ca515cfd9a2eb1e5c1b54c86` records that
+review and its selected-test reproduction. The root log establishes the
+command-and-answer evidence required by `0c5e961f`.
+
+This recovery check compared the complete root message, parsed the recorded
+command and answer, and checked commit parents and tree IDs with read-only Git
+commands. Its result is `.scratch/recovery18/landing-evidence.json` in the
+assigned checkout. No native or JS suite was rerun for this documentation
+change. Deployment verification remains unperformed.
