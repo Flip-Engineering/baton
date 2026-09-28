@@ -6,6 +6,8 @@ fields, as accept-hierarchy.py does. This command starts real native sessions.
 All coordinator state, cloned source and native logs remain below --output.
 By default the coordinator builds from that clone; BEND selects an installed
 compiler. --coordinator uses a supplied executable with unverified source linkage.
+--tasks accepts review-native and review-validation objects with initial text and
+optional followup text for both workers. Follow-ups verify worker session reuse.
 """
 import argparse
 import hashlib
@@ -49,16 +51,17 @@ def frames(path):
             yield value
 
 
-def omp_report(path):
-    latest = None
+def omp_reports(path):
     for frame in frames(path):
-        messages = ([frame.get('message', {})] if frame.get('type') == 'message_end'
-                    else frame.get('messages', []) if frame.get('type') == 'agent_end' else [])
+        if frame.get('type') != 'agent_end':
+            continue
+        latest = None
+        messages = frame.get('messages', [])
         for message in messages:
             if message.get('role') == 'assistant':
                 latest = '\n'.join(part['text'] for part in message.get('content', [])
                                    if part.get('type') == 'text')
-    return latest
+        yield latest
 
 
 def prepare_coordinator(source, repo, out, supplied):
@@ -103,7 +106,19 @@ def main():
     parser.add_argument('--source', type=Path, default=SOURCE)
     parser.add_argument('--revision', default='HEAD')
     parser.add_argument('--review-base', default='9e008263')
+    parser.add_argument('--tasks', type=Path, help='JSON with initial and optional followup worker tasks')
     args = parser.parse_args()
+    custom_tasks = json.loads(args.tasks.read_text()) if args.tasks else None
+    if custom_tasks is not None:
+        worker_names = {'review-native', 'review-validation'}
+        if not isinstance(custom_tasks, dict) or set(custom_tasks) != worker_names:
+            parser.error('--tasks must define review-native and review-validation')
+        for task in custom_tasks.values():
+            if (not isinstance(task, dict) or not {'initial'} <= set(task) <= {'initial', 'followup'}
+                    or any(not isinstance(text, str) or not text.strip() for text in task.values())):
+                parser.error('Each worker task needs nonempty initial text and optional followup text')
+        if len({('followup' in task) for task in custom_tasks.values()}) != 1:
+            parser.error('Provide followup tasks for both workers or neither')
     source = args.source.resolve()
     configured = json.loads(args.config.read_text())
     routes = {kind: {key: configured[kind][key] for key in ['executable', 'model', 'effort']}
@@ -129,7 +144,7 @@ def main():
            'coordinator_sha256': hashlib.sha256(binary.read_bytes()).hexdigest(),
            'coordinator_build': build,
            'driver_sha256': hashlib.sha256(Path(__file__).read_bytes()).hexdigest(),
-           'routes': routes, 'started_unix': time.time()}
+           'routes': routes, 'custom_tasks': custom_tasks, 'started_unix': time.time()}
     save(out / 'run.json', pin)
     processes = []
 
@@ -182,6 +197,10 @@ Do not send guidance during report delivery. End your turn after your review.
          'limitations and coverage of the new receive path. Identify concrete defects '
          'with file and line references; list the files you actually inspected.'),
     ]
+    if custom_tasks is not None:
+        workers = [(worker, marker, custom_tasks[worker]['initial'])
+                   for worker, marker, _ in workers]
+    has_followups = custom_tasks is not None and 'followup' in custom_tasks['review-native']
     root_task = out / 'root-bootstrap.md'
     root_task.write_text(common + f"""
 You are the Codex root for a native receive acceptance run. Two OMP reviewers,
@@ -194,7 +213,8 @@ before acknowledging that report ID with a receipt describing your assessment.
 Use the pending inbox to identify all report IDs addressed to root. Preserve each
 full body; do not acknowledge missing text. Your review may identify unresolved
 defects; acceptance of a report records that you read it, not approval of a change.
-Do not edit code, run tests or delegate further work. On root-followup, check both
+The reviewers may receive a second task in their existing native sessions.
+Do not edit code, run tests or delegate further work. On root-followup, check all
 retained reports and receipts, summarize the findings and acknowledge the follow-up.
 """)
     call('attach', 'operator', 'terminal', '', '')
@@ -202,6 +222,16 @@ retained reports and receipts, summarize the findings and acknowledge the follow
                 routes['codex']['model'], routes['codex']['effort'], str(repo), str(out / 'root.jsonl')]
     call('attach', 'root', 'codex', '', json.dumps(endpoint))
     tasks = {}
+
+    def worker_task(worker, marker, ident, focus):
+        task = out / f'{ident}.md'
+        task.write_text(common + f'\n{focus}\n\n'
+                        f'Begin your final response with {marker} and the full source revision {base}.\n'
+                        f'Before returning it, acknowledge {ident} as {worker} through the\n'
+                        'coordinator command provided by receive. Report findings or explain the\n'
+                        'specific checks that found no issue. Include material limitations.\n')
+        return task
+
     for worker, marker, focus in workers:
         workspace = out / worker
         call('recruit', worker, 'root', 'omp', routes['omp']['model'], routes['omp']['effort'],
@@ -210,13 +240,7 @@ retained reports and receipts, summarize the findings and acknowledge the follow
         endpoint = [str(binary), str(db), 'receive', worker, routes['omp']['executable'],
                     '', '', '', str(out / f'{worker}.jsonl')]
         call('connect', worker, '', json.dumps(endpoint))
-        task = out / f'{worker}.md'
-        task.write_text(common + f'\n{focus}\n\n'
-                        f'Begin your final response with {marker} and the full source revision {base}.\n'
-                        f'Before returning it, acknowledge task-{worker} as {worker} through the\n'
-                        'coordinator command provided by receive. Report findings or explain the\n'
-                        'specific checks that found no issue. Include material limitations.\n')
-        tasks[worker] = task
+        tasks[worker] = worker_task(worker, marker, f'task-{worker}', focus)
     try:
         print(f'Native receive acceptance: {out}', flush=True)
         finish_all([start_message('root-bootstrap', 'root', root_task)])
@@ -230,20 +254,39 @@ retained reports and receipts, summarize the findings and acknowledge the follow
         reviewed = snapshot(db)
         save(out / 'review-state.json', reviewed)
         assert next(row['native'] for row in reviewed['sessions'] if row['id'] == 'root') == root_native
-        for worker, marker, _ in workers:
-            session = next(row for row in reviewed['sessions'] if row['id'] == worker)
-            assert session['parent'] == 'root' and session['native']
-            assert session['model'] == routes['omp']['model']
-            assert session['effort'] == routes['omp']['effort']
-            reports = [row for row in reviewed['messages'] if row['sender'] == worker and row['kind'] == 'report']
-            assert len(reports) == 1, reports
-            report = reports[0]
-            assert report['recipient'] == 'root' and report['receipt']
-            assert marker in report['body'] and base in report['body']
-            assert report['body'] == omp_report(out / f'{worker}.jsonl')
-            assert next(row for row in reviewed['messages'] if row['id'] == f'task-{worker}')['receipt']
+        worker_natives = {worker: next(row['native'] for row in reviewed['sessions'] if row['id'] == worker)
+                          for worker, _, _ in workers}
+
+        def check_reports(state, count):
+            for worker, marker, _ in workers:
+                session = next(row for row in state['sessions'] if row['id'] == worker)
+                assert session['parent'] == 'root' and session['native'] == worker_natives[worker]
+                assert session['native']
+                assert session['model'] == routes['omp']['model']
+                assert session['effort'] == routes['omp']['effort']
+                reports = sorted((row for row in state['messages']
+                                  if row['sender'] == worker and row['kind'] == 'report'),
+                                 key=lambda row: row['seq'])
+                native_reports = list(omp_reports(out / f'{worker}.jsonl'))
+                assert len(reports) == len(native_reports) == count, reports
+                for report, text in zip(reports, native_reports):
+                    assert report['recipient'] == 'root' and report['receipt']
+                    assert marker in report['body'] and base in report['body']
+                    assert report['body'] == text
+                for prefix in ['task', 'followup'][:count]:
+                    assert next(row for row in state['messages'] if row['id'] == f'{prefix}-{worker}')['receipt']
+
+        check_reports(reviewed, 1)
+        if has_followups:
+            followups = [start_message(f'followup-{worker}', worker,
+                         worker_task(worker, marker, f'followup-{worker}', custom_tasks[worker]['followup']))
+                         for worker, marker, _ in workers]
+            finish_all(followups)
+            resumed = snapshot(db)
+            save(out / 'worker-followup-state.json', resumed)
+            check_reports(resumed, 2)
         followup = out / 'root-followup.md'
-        followup.write_text(common + '\nRead both retained reviewer reports and your receipts. '
+        followup.write_text(common + '\nRead all retained reviewer reports and your receipts. '
                             'Summarize what should be addressed next. Acknowledge root-followup '
                             'after this review, then finish your turn.\n')
         finish_all([start_message('root-followup', 'root', followup)])
@@ -260,6 +303,7 @@ retained reports and receipts, summarize the findings and acknowledge the follow
         save(out / 'evidence.json', {
             **pin, 'ended_unix': time.time(), 'state': final,
             'processes': [row for _, row in processes], 'root_native_threads': native_threads,
+            'worker_native_sessions': worker_natives, 'worker_followups_verified': has_followups,
             'assertions': ['Reports match the complete native assistant text.',
                            'Reports and task messages have native acceptance receipts.',
                            'The root retained its native session through reports and follow-up.',
