@@ -174,6 +174,22 @@ class CheckUnittest(unittest.TestCase):
         self.assert_unjudged(p)
         self.assertIn('test_skipped', p.stdout)
 
+    def test_skipped_subtest_does_not_report_empty_selection(self):
+        self.fixture('subtests.py', '''
+import unittest
+
+class Subtests(unittest.TestCase):
+    def test_parts(self):
+        with self.subTest(part='present'):
+            self.assertTrue(True)
+        with self.subTest(part='absent'):
+            self.skipTest('missing prerequisite')
+''')
+        p = run_script(self.tree, 'subtests.py')
+        self.assert_unjudged(p)
+        self.assertIn('skipped', p.stdout)
+        self.assertNotIn('no test ran', p.stdout)
+
     def test_identical_omissions_in_two_trees_stay_unjudged(self):
         self.fixture('skipped.py', SKIPPED)
         first = run_script(self.tree, 'skipped.py')

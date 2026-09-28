@@ -140,7 +140,7 @@ terminal envelope has an empty or missing message list, that completed message
 supplies the parent report.
 Codex uses `exec --json` and `exec resume SESSION`, with the task on stdin.
 Its thread event records the native session. The supervisor retains the
-current invocation's completed assistant messages and terminal event in memory
+current invocation's latest completed assistant message and terminal event in memory
 and produces the parent report from those retained events after process exit.
 Earlier successful turns in the same output log do not change the report.
 Codex events do not name the observed model; that field stays empty.
@@ -266,6 +266,10 @@ lead under the root, then connect its native receiver:
 .scratch/bend2/baton2 state.db connect lead '' '["/repo/.scratch/bend2/baton2","/repo/state.db","receive","lead","/path/to/omp","","","","/repo/lead-native.jsonl"]'
 ```
 
+A Kimi K3 lead uses `omp kimi-code/k3 high` for the harness, model and effort
+arguments. OMP supplies the configured `kimi-code` provider credentials. The
+same receiver endpoint selects the lead's registered route.
+
 The empty launch fields select the lead's recorded model, effort and workspace.
 Explicit fields override those values for that invocation. Connection preserves
 the lead's parent, branch and base. Supply its stored native ID when reconnecting.
@@ -293,6 +297,14 @@ The route file uses the `codex` and `omp` executable/model/effort entries descri
 below. Build the coordinator first; `--coordinator` selects another executable.
 The run retains native events, process records, SQLite messages, guidance receipts
 and both levels of checked landings in its output directory.
+
+`python3 bend2/scripts/accept-kimi-hierarchy.py --config routes.json --tasks tasks.json --output .scratch/kimi-hierarchy`
+builds the selected source in a scratch clone and runs a subscription Codex root,
+a Kimi OMP lead, and concurrent DeepSeek and Muse workers. The route file has
+`codex`, `lead`, `omp` and `muse` entries. The task file assigns each worker its
+source files and selected Python checks, and supplies the mid-task guidance.
+The command's `--help` describes both files. Native process overlap, steering,
+session reuse, report contents and both checked landing levels are verified.
 
 ## Source layout
 

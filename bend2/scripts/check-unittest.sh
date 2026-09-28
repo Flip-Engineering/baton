@@ -12,21 +12,20 @@
 # 1. Identical failures in two trees print identical lines, so the gate can
 # tell a new failure from one the target shows too.
 #
-# A run that executed no test, or that skipped any test, prints a line that
-# is not a failure identity and exits 1. A test decorated with
+# A selection containing no tests, or a run that skipped any test, prints a
+# line that is not a failure identity and exits 1. A test decorated with
 # unittest.expectedFailure prints nothing when it fails, as unittest reports
 # that as an expected failure, and is named with the unexpected-success kind
 # when it passes.
 #
-# stdout carries only identity lines: any other stdout line makes the run
-# unjudged, and an unjudged run blocks the landing whatever the other tree
-# printed. Diagnostics go to stderr.
+# stdout carries failure identities and unjudged markers. Any line outside
+# the identity format marks the run unjudged. Diagnostics go to stderr.
 #
 # The test files under bend2/test drive the coordinator binary at
 # .scratch/bend2/baton2 and skip when it is missing, so a selection under
 # bend2/test builds the binary in the checked tree first, from $BEND or the
-# documented compiler locations. A build failure prints no stdout and
-# exits 1 with no identity lines, which the gate reports as unjudged.
+# documented compiler locations. A build failure emits diagnostics on
+# stderr and exits 1.
 set -eu
 
 if [ "$#" -ne 1 ]; then
@@ -104,12 +103,12 @@ for test, _ in result.errors:
     identity(path, test.id(), "error")
 for test in result.unexpectedSuccesses:
     identity(path, test.id(), "unexpected-success")
-ran = result.testsRun - len(result.skipped)
+no_tests = result.testsRun == 0
 for test, _ in result.skipped:
     unjudged(path, f"{test.id()}: skipped")
-if ran <= 0:
+if no_tests:
     unjudged(path, "no test ran")
 bad = bool(result.failures or result.errors or result.unexpectedSuccesses
-           or result.skipped or ran <= 0)
+           or result.skipped or no_tests)
 sys.exit(1 if bad else 0)
 PY

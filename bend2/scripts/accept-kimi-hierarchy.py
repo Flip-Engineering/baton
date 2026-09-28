@@ -340,7 +340,10 @@ acknowledgments and checked landings. Run only the selected Python checks.
 If a task cannot be completed, explain the concrete failure in your parent report.
 """
     for seat in WORKERS:
-        (out / f'{seat}.md').write_text(common + '\nAllowed source files: ' +
+        workspace = (f'Your assigned workspace is {out / seat}, on branch hierarchy-{seat}.\n'
+                     'Run file edits, tests and Git commits in that workspace.\n'
+                     'REPO names the shared repository for coordinator recruitment and landing.\n')
+        (out / f'{seat}.md').write_text(common + '\n' + workspace + '\nAllowed source files: ' +
                                       ', '.join(tasks[seat]['files']) + '\n\n' + tasks[seat]['task'] + '\n')
     checks = sorted({path for seat in WORKERS for path in tasks[seat]['checks']})
     (out / 'lead.md').write_text(common + f"""
