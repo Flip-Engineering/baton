@@ -265,7 +265,7 @@ async function driveToFailed(context, runId) {
   return outline;
 }
 
-test('V5: an inconclusive run outline carries the verdict projection beside retry_verification', async (t) => {
+test('V5: an inconclusive run outline carries the verdict projection', async (t) => {
   const f = fixture('inconclusive', brokenRuntimePolicy());
   t.after(async () => {
     try { await f.application.shutdown(principal('cleanup')); }
@@ -283,8 +283,6 @@ test('V5: an inconclusive run outline carries the verdict projection beside retr
   assert.ok('gate' in verification && 'code' in verification && 'detail' in verification,
     'the shared {gate, code, check, detail, corrective} projection rides run show');
 
-  const kinds = outline.outline.actions.map((action) => action.kind);
-  assert.ok(kinds.includes('retry_verification'), `the verdict rides BESIDE retry_verification (actions: ${kinds.join(',')})`);
 });
 
 test('V6: the outline verdict never leaks paths or the checkpoint ref', async (t) => {

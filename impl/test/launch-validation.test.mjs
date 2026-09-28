@@ -611,7 +611,7 @@ function webPrincipal(overrides = {}) {
   return {
     userId: 'lv-web', sessionId: 'session-lv-web', credentialId: 'cred-lv-web', authMethod: 'cookie',
     csrfToken: 'csrf-lv', expiresAt: FAR_FUTURE_ISO, revoked: false,
-    capabilities: ['control', 'observe', 'approve', 'emergency_stop', 'adopt_result', 'review', 'integrate_result'],
+    capabilities: ['control', 'observe', 'approve', 'emergency_stop', 'review'],
     repoIds: [REPO], ...overrides,
   };
 }

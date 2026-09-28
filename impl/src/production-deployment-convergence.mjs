@@ -12,7 +12,6 @@ import {
   wrapProductionDeployment as wrapBaseProductionDeployment,
 } from './production-convergence.mjs';
 import {
-  AutomaticRecoveryController,
   DurableEventJournal,
   DurableMemberSupervisor,
   DurableNotificationBus,
@@ -49,7 +48,7 @@ const durableProjectors = () => [
 /**
  * Durable form of the additive convergence runtime. The existing Baton deployment remains the
  * execution and authorization authority; this class persists only convergence receipts,
- * subscriptions, member-attempt metadata and recovery bookkeeping.
+ * subscriptions and member-attempt metadata.
  */
 export class DurableProductionConvergenceRuntime extends ProductionConvergenceRuntime {
   #persisting = false;
@@ -77,10 +76,6 @@ export class DurableProductionConvergenceRuntime extends ProductionConvergenceRu
       members: stored?.members ?? [],
     });
     this.supervisor = this.members;
-    this.recovery = new AutomaticRecoveryController({
-      records: stored?.recovery ?? {},
-      retryBudget: options.retryBudget ?? 2,
-    });
     this.#terminalPins = new Set(stored?.terminalPins ?? []);
     this.#evaluation = clone(stored?.evaluation ?? {});
     this.#persistedSeq = stored?.events?.at(-1)?.seq ?? 0;
@@ -112,7 +107,6 @@ export class DurableProductionConvergenceRuntime extends ProductionConvergenceRu
       subscriptions: typeof this.notifications.snapshotSubscriptions === 'function'
         ? this.notifications.snapshotSubscriptions() : [],
       members: typeof this.members.snapshot === 'function' ? this.members.snapshot() : [],
-      recovery: this.recovery.snapshot(),
       terminalPins: [...this.#terminalPins].sort(),
       evaluation: clone(this.#evaluation),
     };
@@ -132,10 +126,9 @@ export class DurableProductionConvergenceRuntime extends ProductionConvergenceRu
     }
   }
 
-  observeApplicationCommand(input) {
-    const scheduled = this.recovery.consider({ ...input, runtime: this });
+  observeApplicationCommand() {
     this.persist();
-    return scheduled;
+    return 0;
   }
 
   registerTerminalPin(pin) {
@@ -189,7 +182,6 @@ export class DurableProductionConvergenceRuntime extends ProductionConvergenceRu
         persistedSeq: this.#persistedSeq,
         stateDigest: this.#stateDigest,
       },
-      recovery: this.recovery.snapshot(),
       evaluation: clone(this.#evaluation),
       terminalPins: [...this.#terminalPins].sort(),
     });

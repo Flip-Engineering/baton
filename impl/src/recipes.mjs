@@ -14,11 +14,11 @@
 // The invocation manifest is the ONE identity boundary (R-DC-1 dissolved). The wrapper is the SOLE
 // salt owner: it mints `salt` per new manifest, the renderer receives it as an input, and the
 // wrapper drives with `saltObjectives: false` — exactly one salt layer, never two. A retry with the
-// same idempotencyKey LOADS the durable manifest and attaches with those EXACT rendered members;
-// a different key mints a fresh manifest with a fresh salt.
+// same idempotencyKey mints a fresh member run over the key's own waveId; a different key mints a
+// fresh manifest with a fresh salt.
 
 import { createHash, randomUUID } from 'node:crypto';
-import { existsSync, readFileSync, writeFileSync } from 'node:fs';
+import { readFileSync, writeFileSync } from 'node:fs';
 
 import { createWaveDriver } from './wave-driver.mjs';
 import { runWorkflow } from './workflow-interpreter.mjs';
@@ -27,7 +27,6 @@ import { FRAME_LIMITS } from './limits.mjs';
 // The rendered objective rides the machinery's own objective lane (limits.mjs
 // wave.member.objective), read here from the registry — never re-declared — so a
 // fully-maxed card still passes through whole exactly as the wave driver admits it.
-const ATTACH_SETTLE_TIMEOUT_MS = 5_000;
 
 const RECIPE_TOP_FIELDS = Object.freeze(['name', 'version', 'members', 'policy']);
 const ROLE_FIELDS = Object.freeze(['role', 'exact', 'scope', 'objectiveTemplate', 'report']);
@@ -349,10 +348,6 @@ function writeManifest(path, manifest) {
   writeFileSync(path, `${JSON.stringify(manifest, null, 2)}\n`);
 }
 
-function loadManifest(path) {
-  return JSON.parse(readFileSync(path, 'utf8'));
-}
-
 // Rule 3: run options are closed and per-invocation. callbacks/signals/evidence NEVER serialize
 // into the recipe or its digest; overrides are the closed allowlist above.
 function validateRunOptions(invocation) {
@@ -426,8 +421,8 @@ function validateOverrides(overrides) {
 }
 
 // Fresh manifest → start path: the wrapper renders with ONE salt and drives with saltObjectives
-// false (the sole salt owner). The manifest is persisted before the run so a crash + same-key retry
-// attaches rather than double-starts.
+// false (the sole salt owner). The manifest is persisted before the run so its minted identity is
+// on disk; a same-key retry mints again, because the attach path left with the waves.attach surface.
 async function startRun(baton, manifest, opts, merged) {
   const driverPolicy = {
     ...merged.policy,
@@ -446,25 +441,6 @@ async function startRun(baton, manifest, opts, merged) {
   return { ...receipt, manifest };
 }
 
-// Loaded manifest → attach path: bind the prior wave's EXACT rendered members (the live
-// waves.attach rediscovery contract) and harvest. Zero runs.start — attach binds existing runs.
-async function attachRun(baton, manifest) {
-  const wave = await baton.waves.attach(manifest.waveId, manifest.renderedMembers);
-  const outcomes = await wave.settle({ timeoutMs: ATTACH_SETTLE_TIMEOUT_MS });
-  const stop = await wave.close({ reason: 'Recipes invocation manifest attached.' });
-  const evidence = wave.evidence();
-  return {
-    ...evidence,
-    remainingCount: stop?.remainingCount ?? evidence.stops.length,
-    residueUnknown: stop?.residueUnknown ?? false,
-    basis: 'attached',
-    nudges: [],
-    claims: [],
-    salt: manifest.salt,
-    pumpDrained: evidence.pumpDrained === true,
-    manifest,
-  };
-}
 
 // baton.recipes.run(recipe, {task, options}) — the generic runner. The recipe is data admitted once;
 // the manifest is the identity boundary; the driver is the shipped createWaveDriver.
@@ -473,11 +449,6 @@ async function runRecipe(baton, rawRecipe, invocation) {
   const opts = validateRunOptions(invocation);
   const digest = recipeDigest(baseRecipe);
 
-  // Same-key retry: load the durable manifest and attach — never re-start.
-  const existing = opts.manifestPath && existsSync(opts.manifestPath) ? loadManifest(opts.manifestPath) : null;
-  if (existing && existing.idempotencyKey === opts.idempotencyKey) {
-    return attachRun(baton, existing);
-  }
 
   // Fresh mint: merge overrides + re-validate (a post-merge breach refuses before any side effect),
   // then render with ONE salt. The digest is the BASE recipe's — overrides never enter it.

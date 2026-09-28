@@ -5,7 +5,6 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
 
-import { BatonApplication } from '../src/application.mjs';
 import { CoordinationStore } from '../src/coordination-store.mjs';
 import { Coordinator } from '../src/coordinator.mjs';
 import { FenceTable } from '../src/fence.mjs';
@@ -237,75 +236,9 @@ function seedAttempt(fixture, state) {
   return admission;
 }
 
-test('RAI1: application delegates attempt derivation and forwards only deployment-owned maxAttempts', async () => {
-  const calls = [];
-  const recoveryPolicy = {
-    mode: 'manual', maxAttempts: 7, timeoutMs: 4_321,
-    eligibleSessionModes: ['resume'], ambiguousDispatch: 'operator_required',
-  };
-  const goal = { goalId: 'goal-phase76', version: 1, digest: 'a'.repeat(64), runId };
-  const recoveryNode = {
-    key: 'recover', deps: ['work'],
-    capabilities: ['native_session_recovery'], effects: ['provider_call'],
-    routes: { harnesses: ['session'], models: ['model-a'], efforts: ['high'] },
-  };
-  const plan = { planId: 'plan-phase76', version: 1, digest: 'b'.repeat(64), nodes: [recoveryNode] };
-  const handle = {
-    id: 'worker-phase76', taskId: 'prior-phase76', runId, status: 'orphaned', vendor: 'session',
-    sessionRef: { id: 'native-phase76', persistence: 'native' },
-    sessionContext: { worktree: '/tmp/phase76', ownerTaskId: 'prior-phase76' },
-    modelResolved: 'model-a', effortResolved: 'high', processGeneration: 1,
-  };
-  const current = {
-    goal, plan, approval: { disposition: 'approved' },
-    profile: { digest: 'c'.repeat(64), recoveryPolicy },
-  };
-  const application = Object.create(BatonApplication.prototype);
-  Object.assign(application, {
-    ready: Promise.resolve(),
-    principals: { observer: { actor: 'direct:observer', principalId: 'observer', sessionId: 'observer-session' } },
-    driver: {
-      coordination: { events: () => [] },
-      coordinator: {
-        list: () => [{ ...handle }],
-        async recoverPlanBound(workerId, request) {
-          calls.push({ workerId, request });
-          return {
-            ok: true, result: 'attached', attempt: 4, workerId,
-            taskId: 'recovery-phase76', dispatchDisposition: 'dispatch_accepted',
-            processGeneration: 2,
-          };
-        },
-        recoveryDispatchState: () => ({ status: 'dispatch_accepted' }),
-      },
-    },
-    _assertOpen() {},
-    _assertRunMutable() {},
-    async _authorize() { return true; },
-    _findRun() { return current; },
-    async _goalPlanStatus() {
-      return {
-        nodes: [
-          { key: 'work', state: 'accepted', taskId: 'prior-phase76' },
-          { key: 'recover', state: 'ready', taskId: null },
-        ],
-      };
-    },
-    _buildView(_state, _observer, options) { return options; },
-  });
-
-  const view = await application.recover(runId, {
-    actor: 'direct:operator', principalId: 'operator', sessionId: 'operator-session',
-  });
-
-  assert.equal(calls.length, 1);
-  assert.equal(calls[0].workerId, handle.id);
-  assert.equal(calls[0].request.maxAttempts, recoveryPolicy.maxAttempts);
-  assert.equal(Object.hasOwn(calls[0].request, 'attempt'), false,
-    'the application must not derive a recovery attempt from a generic ledger count');
-  assert.equal(calls[0].request.timeoutMs, recoveryPolicy.timeoutMs);
-  assert.equal(view.recovery.attempt, 4, 'only the Coordinator-derived durable attempt is projected');
-});
+// RAI1 pinned application.recover, which left the tree with the twelve removed run
+// commands (#598 group A, run.recover). The Coordinator-side rows below keep their
+// coverage of the recovery-attempt integration.
 
 test('RAI2: durable admission precedes provider, operational-log, runtime, and adapter effects', async () => {
   const fixture = await recoverableSession('ordering-success');

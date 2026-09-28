@@ -175,7 +175,7 @@ test('MP4: baton_waves_stop dispatches with runId validation and the destructive
   assert.equal(bad.result.isError, true, 'a non-string runId refuses at the schema');
   const stopped = await call(server, 4, 'baton_waves_stop', { repoId: REPO_ID, runId: 'run-a', reason: 'member no longer needed' });
   assert.equal(stopped.result.isError, false, `waves.stop dispatches: ${resultText(stopped)}`);
-  const stopCall = commandCalls.find((call) => ['waves.stop', 'run.stop', 'run.member.stop', 'run.workstream.stop'].includes(call.name));
+  const stopCall = commandCalls.find((call) => ['waves.stop', 'run.stop'].includes(call.name));
   assert.ok(stopCall, 'the stop reaches the member lane');
   assert.equal(stopCall.args?.runId, 'run-a');
 });
@@ -208,35 +208,6 @@ test('MP5: decision.answer enforces the repository coordinate and returns alread
   assert.equal(unknown.result.isError, true, 'an unknown requestId refuses identically (no existence leak either direction)');
 });
 
-test('MP6: waves.attach over MCP returns runIds that accept waves.send/stop (resume-steer), with harvestReplayed on re-attach', async () => {
-  const { server, commandCalls } = setup({
-    applicationOverrides: {
-      command: async (name) => {
-        if (name === 'waves.attach') {
-          return {
-            outcomes: [{ role: 'a', phase: 'result_ready', resultSha: 'a'.repeat(40) }],
-            waveDriverDetached: true, harvestReplayed: false,
-          };
-        }
-        return { schemaVersion: 1 };
-      },
-    },
-  });
-  await initialized(server);
-  const attached = await call(server, 2, 'baton_waves_attach', {
-    repoId: REPO_ID, waveId: `wave:${'a'.repeat(32)}`, members: [{ role: 'a', objective: 'do a' }],
-  });
-  assert.equal(attached.result.isError, false, `attach must dispatch: ${resultText(attached)}`);
-  const payload = JSON.parse(resultText(attached));
-  assert.equal(payload.harvestReplayed ?? null, false, 'the response marks first-harvest vs replay');
-  const steered = await call(server, 3, 'baton_waves_send', {
-    repoId: REPO_ID, runId: 'run-a', message: 'continue with the second pass',
-  });
-  assert.equal(steered.result.isError, false, `waves.send works on the attached runIds (resume-steer): ${resultText(steered)}`);
-  const sendCall = commandCalls.find((call) => ['waves.send', 'run.send', 'run.steer', 'run.member.send'].includes(call.name));
-  assert.ok(sendCall, 'the send reaches the member lane');
-  assert.equal(sendCall.args?.runId, 'run-a', 'the send targets the attached member runId, not the wave');
-});
 
 // ===========================================================================
 // MCP-W2 — settlement tools via the S-2 envelope (stage: tools missing)

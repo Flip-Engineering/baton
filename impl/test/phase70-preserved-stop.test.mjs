@@ -8,7 +8,6 @@ import { Coordinator } from '../src/coordinator.mjs';
 import { coordinationForLog } from '../src/coordination-store.mjs';
 import { FenceTable } from '../src/fence.mjs';
 import { Log } from '../src/log.mjs';
-import { APPLICATION_SEMANTIC_REGISTRY } from '../src/application-semantics.mjs';
 
 const BASE = '1'.repeat(40);
 const PROGRESS = '2'.repeat(40);
@@ -233,11 +232,3 @@ test('PS2: closed-transport cleanup retains runtime and worktree authority when 
   assert.throws(() => coordinator.closeAuthority(), /kill\/reap before close/);
 });
 
-test('PS5-PS7: the unified semantic registry advertises a coordinate-free resume_work action', () => {
-  const action = APPLICATION_SEMANTIC_REGISTRY.actions.resume_work;
-  assert.equal(action.helpTopic, 'run.act.resume_work');
-  assert.deepEqual(action.inputSchema.required, ['reason']);
-  assert.deepEqual(Object.keys(action.inputSchema.properties), ['reason']);
-  assert.deepEqual(action.serverDerived, ['checkpoint', 'planNode', 'routePolicy', 'recoveryLineage']);
-  assert.match(action.summary, /orchestrator-selected harness, model, and effort/u);
-});

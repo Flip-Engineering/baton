@@ -310,21 +310,6 @@ const operations = {
     }, ['runId']),
     helpTopic: 'run.workstreams', idempotent: true, destructive: false,
   },
-  'run.workstream.notify': {
-    inputSchema: objectSchema({
-      runId: id, role: id, generation: { type: 'integer', minimum: 1 },
-      message: { type: 'string', minLength: 1 },
-      delivery: { type: 'string', enum: ['nudge', 'now', 'turn'] },
-    }, ['runId', 'role', 'message']),
-    helpTopic: 'run.workstreams', idempotent: true, destructive: false,
-  },
-  'run.workstream.stop': {
-    inputSchema: objectSchema({
-      runId: id, role: id, generation: { type: 'integer', minimum: 1 },
-      reason: { type: 'string', minLength: 1 },
-    }, ['runId', 'role']),
-    helpTopic: 'run.workstreams', idempotent: true, destructive: true,
-  },
   'run.act': {
     inputSchema: objectSchema({ runId: id, actionId: id, inputs: objectSchema({}, []) }, ['runId', 'actionId', 'inputs']),
     helpTopic: 'run.act', idempotent: true, destructive: true,
@@ -559,18 +544,6 @@ const actions = {
     effect: 'provider_control', destructive: true, irreversible: false,
     idempotent: true, priority: 'optional', helpTopic: 'run.act.interrupt', expectedDepth: 'outline',
   },
-  adopt_result: {
-    label: 'Adopt verified result', summary: 'Reverify and adopt the current accepted result without requiring caller-supplied result coordinates.',
-    inputSchema: objectSchema({
-      reason: {
-        type: 'string', minLength: 1,
-        default: 'Adopt the verified result.',
-      },
-    }, ['reason']),
-    serverDerived: ['nodeKey', 'resultSha', 'evidenceDigest'], effect: 'result_adoption',
-    destructive: false, irreversible: false, idempotent: true, priority: 'recommended',
-    helpTopic: 'run.act.adopt_result', expectedDepth: 'outline',
-  },
   select_candidate: {
     label: 'Select verified candidate',
     summary: 'Select one role-labeled immutable verified Workflow candidate for the next gated stage.',
@@ -582,118 +555,6 @@ const actions = {
     effect: 'candidate_selection', destructive: false, irreversible: false,
     idempotent: true, priority: 'required',
     helpTopic: 'run.act.select_candidate', expectedDepth: 'outline',
-  },
-  send_feedback: {
-    label: 'Send Candidate feedback',
-    summary: 'Attach source-bound typed feedback to one immutable verified Workflow candidate.',
-    inputSchema: objectSchema({
-      role: { type: 'string', minLength: 1 },
-      feedback: {
-        oneOf: [
-          { type: 'string', minLength: 1 },
-          {
-            type: 'object', additionalProperties: false, required: ['summary', 'findings'],
-            properties: {
-              summary: { type: 'string', minLength: 1 },
-              findings: {
-                type: 'array', minItems: 1,
-                items: {
-                  type: 'object', additionalProperties: false,
-                  required: ['kind', 'severity', 'message', 'path', 'line'],
-                  properties: {
-                    kind: { type: 'string', enum: ['defect', 'risk', 'suggestion', 'question', 'observation'] },
-                    severity: { type: 'string', enum: ['info', 'low', 'medium', 'high', 'critical'] },
-                    message: { type: 'string', minLength: 1 },
-                    path: { oneOf: [{ type: 'string', minLength: 1 }, { type: 'null' }] },
-                    line: { oneOf: [{ type: 'integer', minimum: 1 }, { type: 'null' }] },
-                  },
-                },
-              },
-            },
-          },
-        ],
-      },
-    }, ['role', 'feedback']),
-    serverDerived: [
-      'candidateId', 'candidateDigest', 'taskId', 'resultSha', 'retainedResultRef',
-      'treeIdentityDigest', 'changedPaths',
-    ],
-    effect: 'workflow_feedback', destructive: false, irreversible: false,
-    idempotent: true, priority: 'recommended',
-    helpTopic: 'run.act.send_feedback', expectedDepth: 'outline',
-  },
-  revise_candidate: {
-    label: 'Revise selected Candidate',
-    summary: 'Propose one exact successor Plan that corrects the selected immutable Candidate from its bound feedback.',
-    inputSchema: objectSchema({
-      reason: {
-        type: 'string', minLength: 1,
-        default: 'Revise the selected Candidate using its recorded feedback.',
-      },
-    }, ['reason']),
-    serverDerived: [
-      'predecessorPlan', 'revisionId', 'candidateId', 'candidateDigest', 'resultSha',
-      'retainedResultRef', 'feedbackIds', 'route', 'nodeBudget',
-    ],
-    effect: 'plan_proposal', destructive: false, irreversible: false,
-    idempotent: true, priority: 'recommended',
-    helpTopic: 'run.act.revise_candidate', expectedDepth: 'outline',
-  },
-  stop_member: {
-    label: 'Stop and reap Workflow member',
-    summary: 'Durably stop one role-addressed active Workflow member while leaving sibling Attempts untouched.',
-    inputSchema: objectSchema({
-      role: { type: 'string', minLength: 1 },
-      reason: { type: 'string', minLength: 1 },
-    }, ['role', 'reason']),
-    serverDerived: ['nodeKey', 'taskId', 'workerId', 'targetDigest', 'fence'],
-    effect: 'member_cleanup', destructive: true, irreversible: false,
-    idempotent: true, priority: 'emergency',
-    helpTopic: 'run.act.stop_member', expectedDepth: 'outline',
-  },
-  semantic_review: {
-    label: 'Start semantic review', summary: 'Start an independent review of the exact preserved result using one deployment-authorized route.',
-    inputSchema: objectSchema({
-      routeIndex: { type: 'integer', minimum: 0 },
-      reason: { type: 'string', minLength: 1 },
-    }, ['routeIndex', 'reason']),
-    serverDerived: ['route', 'resultSha', 'targetDigest'], effect: 'provider_call',
-    destructive: false, irreversible: false, idempotent: true, priority: 'recommended',
-    helpTopic: 'run.act.semantic_review', expectedDepth: 'outline',
-  },
-  integrate: {
-    label: 'Apply adopted result', summary: 'Reverify and apply the current adopted result to the caller repository using one deployment-authorized strategy.',
-    inputSchema: objectSchema({
-      strategy: { type: 'string', enum: ['ff-only', 'structured'] },
-      reason: {
-        type: 'string', minLength: 1,
-        default: 'Apply the adopted verified result.',
-      },
-    }, ['strategy', 'reason']),
-    serverDerived: ['evidenceDigest', 'resultSha'], effect: 'repository_edit',
-    destructive: true, irreversible: false, idempotent: true, priority: 'recommended',
-    helpTopic: 'run.act.integrate', expectedDepth: 'outline',
-  },
-  export_result: {
-    label: 'Export accepted result', summary: 'Reverify and materialize the exact accepted result under Batons export authority.',
-    inputSchema: objectSchema({}, []),
-    serverDerived: ['nodeKey', 'resultSha', 'evidenceDigest', 'exportId'], effect: 'filesystem_write',
-    destructive: false, irreversible: false, idempotent: true, priority: 'recommended',
-    helpTopic: 'run.act.export_result', expectedDepth: 'outline',
-  },
-  retry_verification: {
-    label: 'Retry trust-gate verification', summary: 'Re-run the pinned verification of the exact preserved candidate without another provider turn; candidate-failure confirmation is one-shot and instability-preserving.',
-    inputSchema: objectSchema({ reason: { type: 'string', minLength: 1 } }, ['reason']),
-    serverDerived: ['checkpointSha', 'checkpointRef', 'planDigest', 'baseSha', 'runtimeDigest', 'toolchainDigest', 'attempt'], effect: 'verification_retry',
-    destructive: false, irreversible: false, idempotent: true, priority: 'recommended',
-    helpTopic: 'run.act.retry_verification', expectedDepth: 'outline',
-  },
-  resume_work: {
-    label: 'Resume preserved work', summary: 'Restore preserved progress in a fresh task using an orchestrator-selected harness, model, and effort.',
-    inputSchema: objectSchema({ reason: { type: 'string', minLength: 1 } }, ['reason']),
-    serverDerived: ['checkpoint', 'planNode', 'routePolicy', 'recoveryLineage'], effect: 'provider_call',
-    destructive: false, irreversible: false, idempotent: true, priority: 'recommended',
-    helpTopic: 'run.act.resume_work', expectedDepth: 'outline',
   },
   stop: {
     label: 'Stop and reap Run', summary: 'Close this Run dispatch authority and reap its exact owned resources.',
@@ -720,16 +581,7 @@ const APPLICATION_ACTION_CAPABILITY_SOURCE = {
   claim_turn: ['control', 'observe'],
   send: ['control', 'observe'],
   interrupt: ['control', 'observe'],
-  adopt_result: ['adopt_result', 'observe'],
   select_candidate: ['control', 'observe'],
-  send_feedback: ['control', 'observe'],
-  revise_candidate: ['control', 'observe'],
-  stop_member: ['emergency_stop', 'observe'],
-  semantic_review: ['review', 'control', 'observe'],
-  integrate: ['integrate_result', 'observe'],
-  export_result: ['export_result', 'observe'],
-  retry_verification: ['retry_verification', 'observe'],
-  resume_work: ['resume_work', 'observe'],
   stop: ['emergency_stop', 'observe'],
 };
 
@@ -765,14 +617,6 @@ const OPERATION_ALIASES = {
     operation: 'run.workstreams',
     cli: { canonical: ['run', 'member', 'view'], legacy: ['run', 'workstreams'] },
   },
-  'run.member.send': {
-    operation: 'run.workstream.notify',
-    cli: { canonical: ['run', 'member', 'send'], legacy: ['run', 'notify'] },
-  },
-  'run.member.stop': {
-    operation: 'run.workstream.stop',
-    cli: { canonical: ['run', 'member', 'stop'], legacy: ['run', 'stop-member'] },
-  },
   // docs/36 §9 M3: `run.member.interrupt` is the member-addressed peer of the run-level
   // interrupt. It carries no new legacy transport name (UA5 byte-stability); the canonical CLI
   // prefix rewrites onto the existing `run interrupt` verb, which accepts a positional member
@@ -785,14 +629,6 @@ const OPERATION_ALIASES = {
     operation: 'run.act',
     cli: { canonical: ['run', 'do'], legacy: ['run', 'do'] },
   },
-  'run.resume': {
-    operation: 'run.resume_work',
-    cli: { canonical: ['run', 'resume'], legacy: ['run', 'resume'] },
-  },
-  'run.retry': {
-    operation: 'run.retry_verification',
-    cli: { canonical: ['run', 'retry'], legacy: ['run', 'retry'] },
-  },
 };
 
 const OPERATION_CANONICAL_NAMES = {
@@ -802,8 +638,6 @@ const OPERATION_CANONICAL_NAMES = {
   'run.inspect': 'run.view',
   'run.episode': 'run.view',
   'run.workstreams': 'run.member.view',
-  'run.workstream.notify': 'run.member.send',
-  'run.workstream.stop': 'run.member.stop',
   'run.act': 'run.do',
   'run.stop': 'run.stop',
 };
@@ -825,16 +659,7 @@ const ACTION_OPERATIONS = {
   claim_turn: 'run.answer',
   send: 'run.send',
   interrupt: 'run.interrupt',
-  adopt_result: 'run.adopt',
   select_candidate: 'run.select',
-  send_feedback: 'run.feedback',
-  revise_candidate: 'run.revise',
-  stop_member: 'run.member.stop',
-  semantic_review: 'run.review',
-  integrate: 'run.integrate',
-  export_result: 'run.export',
-  retry_verification: 'run.retry',
-  resume_work: 'run.resume',
   stop: 'run.stop',
 };
 
@@ -876,11 +701,9 @@ const cliCommands = [
   ['run.episode', 'run.episode', null, 'baton run episode RUN_ID [CHAPTER] [--workstream ROLE --generation N] [--content | --evidence] [--page-cursor CURSOR] [--cursor N --wait DURATION]'],
   ['run.result', 'run.episode', null, 'baton run result RUN_ID [--workstream ROLE --generation N] [--evidence] [--cursor N --wait DURATION]'],
   ['run.workstreams', 'run.workstreams', null, 'baton run workstreams RUN_ID [ROLE --generation N] [--cursor N --wait DURATION]'],
-  ['run.notify', 'run.workstream.notify', null, 'baton run notify RUN_ID ROLE TEXT [--generation N] [--nudge | --now | --turn]'],
   ['run.do', 'run.act', null, 'baton run do RUN_ID ACTION_ID [--inputs JSON]'],
   ['run.stop', 'run.stop', 'stop', 'baton run stop RUN_ID [--reason REASON]'],
   ['run.status', null, null, 'baton run status RUN_ID [--wait DURATION | --follow [--wait DURATION]]'],
-  ['run.recover', null, null, 'baton run recover RUN_ID'],
   ['run.approve', null, 'approve_plan', 'baton run approve RUN_ID --plan DIGEST'],
   ['run.answer', null, null, 'baton run answer RUN_ID REQUEST_ID (--allow | --deny | --cancel | --text TEXT | --option OPTION_ID)'],
   ['run.answer.approval', null, 'answer_approval', 'baton run answer RUN_ID REQUEST_ID (--allow | --deny | --cancel)'],
@@ -890,16 +713,7 @@ const cliCommands = [
   ['run.interrupt', null, 'interrupt', 'baton run interrupt RUN_ID [--to RECIPIENT] [--reason REASON]'],
   ['run.evidence', null, null, 'baton run evidence RUN_ID'],
   ['run.debug', null, null, 'baton run debug RUN_ID [--member ROLE] [--limit N]'],
-  ['run.adopt', null, 'adopt_result', 'baton run adopt RUN_ID --reason REASON'],
   ['run.select', null, 'select_candidate', 'baton run select RUN_ID ROLE --reason REASON'],
-  ['run.feedback', null, 'send_feedback', 'baton run feedback RUN_ID ROLE --text TEXT'],
-  ['run.revise', null, 'revise_candidate', 'baton run revise RUN_ID --reason REASON'],
-  ['run.stop-member', 'run.workstream.stop', 'stop_member', 'baton run stop-member RUN_ID ROLE [--generation N] [--reason REASON]'],
-  ['run.retry', null, 'retry_verification', 'baton run retry RUN_ID --reason REASON'],
-  ['run.resume', null, 'resume_work', 'baton run resume RUN_ID --reason REASON'],
-  ['run.review', null, 'semantic_review', 'baton run review RUN_ID --exact HARNESS/MODEL@EFFORT --reason REASON'],
-  ['run.integrate', null, 'integrate', 'baton run integrate RUN_ID --strategy ff-only|structured --reason REASON'],
-  ['run.export', null, 'export_result', 'baton run export RUN_ID DIR'],
 ].map(([id, operation, action, usage]) => ({
   id, subcommand: id.split('.')[1], ...(operation ? { operation } : { compatibility: true }),
   ...(action ? { action } : {}),
@@ -928,7 +742,7 @@ const cli = {
   commands: cliCommands,
   helpTopics: {
     application: {
-      commandIds: ['run.objective', 'run.show', 'run.do', 'run.stop', 'run.export'],
+      commandIds: ['run.objective', 'run.show', 'run.do', 'run.stop'],
       usage: [
         'baton serve',
         'baton setup',
@@ -1027,29 +841,12 @@ const cli = {
     },
     run: {
       commandIds: ['run.objective', 'run.start.exact', 'run.show', 'run.progress', 'run.events', 'run.output',
-        'run.do', 'run.stop', 'run.status', 'run.recover',
-        'run.approve', 'run.answer', 'run.send', 'run.interrupt', 'run.evidence', 'run.adopt', 'run.select',
-        'run.feedback', 'run.revise', 'run.stop-member', 'run.retry',
-        'run.resume', 'run.review', 'run.integrate', 'run.export'],
+        'run.do', 'run.stop', 'run.status',
+        'run.approve', 'run.answer', 'run.interrupt', 'run.evidence', 'run.select'],
       selectorRule: 'manualRoute',
       paragraphs: [
         'Run starts compile explicit change result intent. Use explore for one-route evidence or review for two-route evidence.',
         'Use baton help routing for exact and deployment-profile routing.',
-      ],
-    },
-    'run.act.retry_verification': {
-      commandIds: ['run.retry'],
-      paragraphs: [
-        'Retry is safe because Baton replays only the already-approved trust gate: it re-resolves the exact preserved candidate checkpoint, rebuilds fresh candidate and base sandboxes, and re-runs the pinned Plan command. It never launches or resumes an agent harness and consumes no provider turn.',
-        'Baton did not blame the agent route because the verifier itself could not complete (its command could not start, timed out, exceeded its output boundary, or the baseline also failed), so no candidate defect was proven; inconclusive verification never updates route statistics.',
-        'An initial candidate-owned failure may be confirmed exactly once under the identical Plan, command, base, runtime, toolchain, and candidate SHA/ref. Every outcome consumes that shot. A later pass remains explicitly passed-after-candidate-failure and never becomes a clean mechanical win.',
-      ],
-    },
-    'run.act.resume_work': {
-      commandIds: ['run.resume'],
-      paragraphs: [
-        'Baton restores the server-derived preserved checkpoint into a fresh owned task and lets the orchestrator select harness, model, and per-task effort from the approved route policy. The caller supplies only a reason; no Git coordinate, worktree path, provider credential, budget, or storage ceiling is accepted.',
-        'Preserved work is untrusted progress. It must pass the ordinary fresh verifier and every configured review, adoption, integration, and delivery gate before it can become a result.',
       ],
     },
     'run.start': { aliasFor: 'run' },
@@ -1073,9 +870,9 @@ const cli = {
     },
     'run.episode': { aliasFor: 'run.inspect.episode' },
     'run.inspect.workstreams': {
-      commandIds: ['run.workstreams', 'run.notify', 'run.stop-member'],
+      commandIds: ['run.workstreams'],
       paragraphs: [
-        'Workstreams expose stable semantic roles and durable workflow generations. Notify, result, Episode, and stop resolve their worker, task, fence, receipt, and transport coordinates inside Baton.',
+        'Workstreams expose stable semantic roles and durable workflow generations. Result and Episode resolve their worker, task, fence, receipt, and transport coordinates inside Baton.',
       ],
     },
     'run.workstreams': { aliasFor: 'run.inspect.workstreams' },
@@ -1125,7 +922,7 @@ const core = {
   actions: authorizedActions,
   cli,
   defaultOperations: ['application.help', 'runs.list', 'run.start', 'run.inspect', 'run.episode',
-    'run.workstreams', 'run.workstream.notify', 'run.workstream.stop', 'run.act', 'run.stop'],
+    'run.workstreams', 'run.act', 'run.stop'],
   advanced: {
     defaultVisible: false,
     operations: ['fleet_spawn', 'fleet_send', 'fleet_wait', 'fleet_respond', 'fleet_interrupt',
@@ -1340,13 +1137,6 @@ const CANONICAL_OPERATION_SPECS = [
     outputView: 'outline', helpTopic: 'connection', example: 'baton serve', idempotent: false,
     inputSchema: objectSchema({ configPath: { type: 'string', minLength: 1 } }, []),
   }],
-  ['deployment.shutdown', {
-    // 2026-09-14 audit (U-G7): no CLI verb reaches the host shutdown; the claim was a ghost.
-    profile: 'host', surfaces: ['embedded'], effect: 'host_shutdown',
-    capabilities: ['emergency_stop', 'host'], outputView: 'outline', helpTopic: 'run.stop',
-    destructive: true, emergency: true, reconcilable: false,
-    inputSchema: objectSchema({ reason: { type: 'string', minLength: 1 } }, []),
-  }],
   ['run.list', {
     op: 'runs.list', effect: 'run_read', capabilities: ['observe'], outputView: 'index',
     example: 'baton run list',
@@ -1365,9 +1155,6 @@ const CANONICAL_OPERATION_SPECS = [
   ['run.view', {
     op: 'run.inspect', effect: 'run_read', capabilities: ['observe'], outputView: 'outline',
     example: 'baton run view RUN_ID',
-    // S-1 v2 R-WG-3: mintWaveDetached + waveId are attach-only side-channels — declared-hidden
-    // so advertised MCP/web schemas exclude them while in-process validators still accept them.
-    transportHidden: ['mintWaveDetached', 'waveId'],
     // The run.view FOLD's transports: run.inspect, run.episode, run.status and run.wait all
     // resolve to this one operation (application.commands alias rows), and each carries selectors
     // of its own — the Episode chapter coordinates and the wait selector. Declared here so the
@@ -1419,34 +1206,14 @@ const CANONICAL_OPERATION_SPECS = [
     }, ['runId']),
     example: 'baton run debug RUN_ID',
   }],
-  ['run.review', { action: 'semantic_review', outputView: 'outline', example: 'baton run review RUN_ID --exact codex/gpt-5.6-sol@low --reason R' }],
-  ['run.adopt', { action: 'adopt_result', outputView: 'outline', example: 'baton run adopt RUN_ID --reason R' }],
-  ['run.integrate', { action: 'integrate', outputView: 'outline', example: 'baton run integrate RUN_ID --strategy ff-only --reason R' }],
-  ['run.export', { action: 'export_result', outputView: 'outline', example: 'baton run export RUN_ID DIR' }],
   ['run.select', { action: 'select_candidate', outputView: 'outline', example: 'baton run select RUN_ID ROLE --reason R' }],
-  ['run.feedback', { action: 'send_feedback', outputView: 'outline', example: 'baton run feedback RUN_ID ROLE --text TEXT' }],
-  ['run.revise', { action: 'revise_candidate', outputView: 'outline', example: 'baton run revise RUN_ID --reason R' }],
-  ['run.recover', {
-    effect: 'run_recovery', capabilities: ['observe', 'resume_work'], outputView: 'outline',
-    helpTopic: 'run', inputSchema: runIdSchema, example: 'baton run recover RUN_ID',
-  }],
-  ['run.resume', { action: 'resume_work', outputView: 'outline', example: 'baton run resume RUN_ID --reason R' }],
-  ['run.retry', { action: 'retry_verification', outputView: 'outline', example: 'baton run retry RUN_ID --reason R' }],
   ['run.member.view', {
     op: 'run.workstreams', effect: 'member_read', capabilities: ['observe'], outputView: 'section',
     example: 'baton run member view RUN_ID',
   }],
-  ['run.member.send', {
-    op: 'run.workstream.notify', effect: 'provider_control', capabilities: ['control', 'observe'],
-    outputView: 'outline', example: 'baton run member send RUN_ID ROLE TEXT',
-  }],
   ['run.member.interrupt', {
     action: 'interrupt', effect: 'provider_control', capabilities: ['control', 'observe'],
     outputView: 'outline', helpTopic: 'run.act.interrupt', example: 'baton run member interrupt RUN_ID ROLE',
-  }],
-  ['run.member.stop', {
-    op: 'run.workstream.stop', effect: 'member_cleanup', capabilities: ['emergency_stop', 'observe'],
-    outputView: 'outline', emergency: true, example: 'baton run member stop RUN_ID ROLE',
   }],
   ['run.scratchpad', {
     profile: 'ordinary', surfaces: ['embedded'], effect: 'observe',
@@ -1604,26 +1371,6 @@ const CANONICAL_OPERATION_SPECS = [
   }],
   // S-1 v2: portable attach-and-harvest. Observe-class; no emergency_stop. Transport returns a
   // closed {outcomes, waveDriverDetached} payload — live handles stay embedded-only.
-  ['waves.attach', {
-    profile: 'ordinary', effect: 'observe', capabilities: ['observe'],
-    surfaces: ['embedded', 'cli', 'mcp', 'web'],
-    outputView: 'outline', helpTopic: 'run',
-    example: 'baton waves attach WAVE_ID --members JSON',
-    transportHidden: ['mintWaveDetached'],
-    inputSchema: objectSchema({
-      waveId: id,
-      members: {
-        type: 'array', minItems: 1,
-        items: objectSchema({
-          role: id,
-          objective: { type: 'string', minLength: 1 },
-        }, ['role', 'objective']),
-      },
-      timeoutMs: { type: 'integer', minimum: 1 },
-      repoRoot: { type: 'string', minLength: 1 },
-      mintWaveDetached: { type: 'boolean', const: true },
-    }, ['waveId', 'members']),
-  }],
   // MCP-W1 (mcp-packaging-decisions v1.0): wave ergonomics on the ordinary surface. Each new row
   // rides an ordinary application command (waves.start detached {waveId, members:[{role, runId}]}
   // with per-MEMBER quota + profile-route admission; waves.progress paginated ≤16/page cursor+
@@ -1924,14 +1671,11 @@ const SURFACE_ALIAS_ROWS = Object.freeze([
   ['context.reduce', 'embedded', 'BatonRunContext.reduce'],
   ['context.retry', 'embedded', 'BatonContextCall.retry'],
   ['context.retry', 'embedded', 'BatonRunContext.retry'],
-  ['deployment.shutdown', 'application.commands', 'application.shutdown'],
   ['deployment.view', 'cli', 'baton route exact'],
   ['deployment.view', 'cli', 'baton route usage'],
   ['deployment.view', 'embedded', 'BatonClient.doctor'],
   ['deployment.view', 'embedded', 'BatonClient.route'],
   ['deployment.view', 'embedded', 'BatonClient.routes'],
-  ['run.adopt', 'embedded', 'BatonRun.adopt'],
-  ['run.adopt', 'embedded', 'BatonRun.apply'],
   ['run.answer', 'cli', 'baton run answer approval'],
   ['run.answer', 'cli', 'baton run answer decision'],
   ['run.answer', 'cli', 'baton run answer question'],
@@ -1941,21 +1685,9 @@ const SURFACE_ALIAS_ROWS = Object.freeze([
   ['run.do', 'embedded', 'BatonRun.act'],
   ['run.evidence', 'embedded', 'BatonRun.evidence'],
   ['run.debug', 'embedded', 'BatonRun.debug'],
-  ['run.export', 'embedded', 'BatonRun.export'],
-  ['run.feedback', 'embedded', 'BatonRun.feedback'],
-  ['run.feedback', 'embedded', 'BatonRun.sendFeedback'],
-  ['run.integrate', 'embedded', 'BatonRun.integrate'],
   ['run.interrupt', 'embedded', 'BatonRun.interrupt'],
   ['run.list', 'application.commands', 'runs.list'],
   ['run.list', 'embedded', 'BatonRuns.list'],
-  ['run.member.send', 'application.commands', 'run.workstream.notify'],
-  ['run.member.send', 'cli', 'baton run notify'],
-  ['run.member.send', 'embedded', 'BatonWorkstream.notify'],
-  ['run.member.stop', 'application.commands', 'run.workstream.stop'],
-  ['run.member.stop', 'cli', 'baton run stop-member'],
-  ['run.member.stop', 'embedded', 'BatonRun.stopMember'],
-  ['run.member.stop', 'embedded', 'BatonRunGroup.stopMembers'],
-  ['run.member.stop', 'embedded', 'BatonWorkstream.stop'],
   ['run.member.view', 'application.commands', 'run.workstreams'],
   ['run.member.view', 'cli', 'baton run workstreams'],
   ['run.member.view', 'embedded', 'BatonRun.members'],
@@ -1966,10 +1698,6 @@ const SURFACE_ALIAS_ROWS = Object.freeze([
   ['run.member.view', 'embedded', 'BatonWorkstreams.help'],
   ['run.member.view', 'embedded', 'BatonWorkstreams.list'],
   ['run.member.view', 'embedded', 'BatonWorkstreams.open'],
-  ['run.resume', 'application.commands', 'run.resume_work'],
-  ['run.retry', 'application.commands', 'run.retry_verification'],
-  ['run.review', 'embedded', 'BatonRun.review'],
-  ['run.revise', 'embedded', 'BatonRun.revise'],
   ['run.select', 'embedded', 'BatonRun.select'],
   ['run.send', 'embedded', 'BatonRun.send'],
   ['run.send', 'embedded', 'BatonRun.steer'],
@@ -2053,10 +1781,6 @@ const SURFACE_ALIAS_ROWS = Object.freeze([
   ['run.view', 'mcp.web-bridge', 'run.wait'],
   ['run.watch', 'mcp.web-bridge', 'run.follow'],
   ['run.list', 'mcp.web-bridge', 'runs.list'],
-  ['run.resume', 'mcp.web-bridge', 'run.resume_work'],
-  ['run.retry', 'mcp.web-bridge', 'run.retry_verification'],
-  ['run.member.send', 'mcp.web-bridge', 'run.workstream.notify'],
-  ['run.member.stop', 'mcp.web-bridge', 'run.workstream.stop'],
   ['run.member.view', 'mcp.web-bridge', 'run.workstreams'],
   ['application.help', 'mcp.baton', 'baton_help'],
   ['run.answer', 'mcp.baton', 'baton_decision_answer'],
@@ -2065,40 +1789,22 @@ const SURFACE_ALIAS_ROWS = Object.freeze([
   ['decision.list', 'mcp.baton', 'baton_decision_list'],
   ['run.do', 'mcp.baton', 'baton_run_act'],
   ['run.list', 'mcp.baton', 'baton_runs'],
-  ['run.member.send', 'mcp.baton', 'baton_workstream_notify'],
-  ['run.member.stop', 'mcp.baton', 'baton_workstream_stop'],
   ['run.member.view', 'mcp.baton', 'baton_run_workstreams'],
   ['run.view', 'mcp.baton', 'baton_run_episode'],
   ['run.view', 'mcp.baton', 'baton_run_inspect'],
-  ['run.adopt', 'mcp.fleet', 'fleet_run_adopt'],
   ['run.answer', 'mcp.fleet', 'fleet_run_answer'],
   ['run.approve', 'mcp.fleet', 'fleet_run_approve'],
   ['run.evidence', 'mcp.fleet', 'fleet_run_evidence'],
-  ['run.export', 'mcp.fleet', 'fleet_run_export'],
-  ['run.feedback', 'mcp.fleet', 'fleet_run_feedback'],
-  ['run.integrate', 'mcp.fleet', 'fleet_run_integrate'],
-  ['run.member.send', 'mcp.fleet', 'fleet_run_workstream_notify'],
-  ['run.member.stop', 'mcp.fleet', 'fleet_run_workstream_stop'],
   ['run.member.view', 'mcp.fleet', 'fleet_run_workstreams'],
-  ['run.recover', 'mcp.fleet', 'fleet_run_recover'],
-  ['run.review', 'mcp.fleet', 'fleet_run_review'],
   ['run.start', 'mcp.fleet', 'fleet_run_start'],
   ['run.stop', 'mcp.fleet', 'fleet_run_stop'],
   ['run.view', 'mcp.fleet', 'fleet_run_episode'],
   ['run.view', 'mcp.fleet', 'fleet_run_status'],
   ['run.view', 'mcp.fleet', 'fleet_run_wait'],
   ['run.watch', 'mcp.fleet', 'fleet_run_follow'],
-  // Issue #156 D2: the two new fleet definitions' spellings resolve here like the rest of the
-  // run family, so the conformance classifier never sees them as novel mcp.fleet names.
-  ['run.resume_work', 'mcp.fleet', 'fleet_run_resume_work'],
-  ['run.retry_verification', 'mcp.fleet', 'fleet_run_retry_verification'],
   ['run.do', 'web', 'run_act'],
   ['run.list', 'web', 'runs_list'],
-  ['run.member.send', 'web', 'run_workstream_notify'],
-  ['run.member.stop', 'web', 'run_workstream_stop'],
   ['run.member.view', 'web', 'run_workstreams'],
-  ['run.resume', 'web', 'run_resume_work'],
-  ['run.retry', 'web', 'run_retry_verification'],
   ['run.view', 'web', 'run_episode'],
   ['run.view', 'web', 'run_inspect'],
   ['run.view', 'web', 'run_status'],
