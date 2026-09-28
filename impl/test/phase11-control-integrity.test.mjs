@@ -446,13 +446,13 @@ test('#267: allocation is checked against replayed identifiers by value, never i
     log.append({ worker, harness: 'stub@1', turnEpoch: 1, actor: 'worker', kind: 'lifecycle.crashed', payload: { error: 'old' } });
   }
   log.append({
-    worker: 'w-1', harness: 'stub@1', turnEpoch: 1, actor: 'orchestrator', kind: 'publication.requested',
-    payload: { requestId: 'publication-w-1-1', remote: 'origin', ref: 'refs/heads/x', sha: 'a'.repeat(40), fence: 1, deadlineAt: 0 },
+    worker: 'w-1', harness: 'stub@1', turnEpoch: 1, actor: 'orchestrator', kind: 'control.stale_rejected',
+    payload: { op: 'respond', requestId: 'request-w-1-1', disposition: 'stale_discarded' },
   });
   const { coordinator } = harness({ log });
   assert.ok(coordinator._replayedIds.workers.has('w-3'), 'every replayed worker id is reserved by value');
   assert.ok(coordinator._replayedIds.tasks.has('task-7'), 'every replayed task id is reserved by value');
-  assert.ok(coordinator._replayedIds.requests.has('publication-w-1-1'), 'every replayed request id is reserved by value');
+  assert.ok(coordinator._replayedIds.requests.has('request-w-1-1'), 'every replayed request id is reserved by value');
   const first = await coordinator.spawn('stub', brief('first'));
   assert.equal(first.id, 'w-2');
   assert.equal(first.taskId, 'task-2');
