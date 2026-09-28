@@ -212,8 +212,6 @@ test('RV2 RED: SSE snapshot and event replay remove nested lease/session authori
     repoIds: [REPO],
     now: () => Date.parse(NOW),
     pollMs: 5,
-    maxFrameBytes: 1024 * 1024,
-    maxBufferedBytes: 1024 * 1024,
   });
   const outputs = [];
   t.after(() => {

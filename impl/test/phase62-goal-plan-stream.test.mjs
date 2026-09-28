@@ -107,7 +107,7 @@ function fixture(opts = {}) {
   const coordination = new CoordinationFixture();
   const stream = new WebEventStream({
     coordination, allowedOrigins: [ORIGIN], repoIds: [REPO], now: () => Date.parse('2026-07-13T12:00:00.000Z'),
-    credentialDigest: () => PRIVATE.credentialDigest, maxFrameBytes: 256 * 1024, maxBufferedBytes: 256 * 1024,
+    credentialDigest: () => PRIVATE.credentialDigest,
     pollMs: 5, ...opts,
   });
   return { coordination, stream };
