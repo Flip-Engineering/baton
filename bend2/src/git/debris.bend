@@ -60,7 +60,7 @@ def debris_note_of(s: String) -> String:
 def debris_rm_pick(ok: Bool, out: String, judged: String) -> IO(Debris):
   match ok:
     case True{}: IO.pure(Debris, DFine{debris_note_of(judged)})
-    case False{}: IO.pure(Debris, DFail{out})
+    case False{}: IO.pure(Debris, DFail{Tx.cmd_failed("git rm --cached")})
 
 def debris_rm_ok(g: T.GitOut, judged: String) -> IO(Debris):
   match g:
@@ -81,7 +81,7 @@ def debris_drop(index: String, dir: String, ps: List<String>, judged: String) ->
 def debris_none(none: Bool, out: String) -> IO(Debris):
   match none:
     case True{}: IO.pure(Debris, DFine{""})
-    case False{}: IO.pure(Debris, DFail{out})
+    case False{}: IO.pure(Debris, DFail{Tx.cmd_failed("git check-ignore --no-index")})
 
 def debris_judged_pick(some: Bool, none: Bool, out: String, index: String, dir: String) -> IO(Debris):
   match some:
@@ -119,7 +119,7 @@ def debris_added_ok(ok: Bool, out: String, repo: String, index: String, dir: Str
         ps : List<String> <- IO.pure(List<String>, debris_nul_list(out))
         r : Debris <- debris_judge(repo, index, dir, ps)
         IO.pure(Debris, r)
-    case False{}: IO.pure(Debris, DFail{out})
+    case False{}: IO.pure(Debris, DFail{Tx.cmd_failed("git diff --cached")})
 
 def debris_added_pick(g: T.GitOut, repo: String, index: String, dir: String) -> IO(Debris):
   match g:

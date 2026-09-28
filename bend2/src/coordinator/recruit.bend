@@ -28,15 +28,15 @@ def absolute(repo: String, path: String, rooted: Bool) -> String:
     case True{}: path
     case False{}: repo ++ "/" ++ path
 
-def git_status(code: U32, out: String, success: Bool) -> IO(String):
+def git_status(what: String, code: U32, out: String, success: Bool) -> IO(String):
   match success:
     case True{}: IO.pure(String,out)
-    case False{}: IO.die(String,code,out)
+    case False{}: IO.die(String,code,Tx.cmd_failed(what))
 
-def git_output(result: G.GitOut) -> IO(String):
+def git_output(what: String, result: G.GitOut) -> IO(String):
   match result:
     case G.GBroken{detail}: IO.die(String,1,detail)
-    case G.GRun{+code,out}: git_status(code,out,U32.is_eq(code,0))
+    case G.GRun{+code,out}: git_status(what,code,out,U32.is_eq(code,0))
 
 def require_parent(found: Bool) -> IO(Unit):
   match found:
@@ -64,9 +64,9 @@ def recruit(+db: String,+id: String,+parent: String,harness: String,model: Strin
     parent_row : String <- IO.try(String,Store.apply(db,C.Session{parent}))
     present : Unit <- require_parent(Bool.not(String.is_empty(parent_row)))
     root_result : G.GitOut <- Git.runGit(repo,["rev-parse","--show-toplevel"])
-    root : String <- git_output(root_result)
+    root : String <- git_output("git rev-parse --show-toplevel", root_result)
     base_result : G.GitOut <- Git.runGit(repo,["rev-parse","--verify","--end-of-options",base ++ "^{commit}"])
-    commit : String <- git_output(base_result)
+    commit : String <- git_output("git rev-parse --verify", base_result)
     existing : String <- IO.try(String,Store.apply(db,C.Session{id}))
     create(db,id,parent,harness,model,effort,repo,branch,absolute(root,path,Tx.starts_with(path,"/")),commit,Bool.not(String.is_empty(existing)))
 

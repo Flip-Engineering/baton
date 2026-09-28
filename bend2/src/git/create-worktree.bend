@@ -24,7 +24,7 @@ def cw_answer(r: CW) -> IO(Result<&1, &1, T.GitFail, T.WorktreeCreated>):
 def cw_stage4_ok(ok: Bool, out: String, bc2: String, br2: String, p2: String) -> CW:
   match ok:
     case True{}: CWDone{T.WCreated{br2, p2, bc2}}
-    case False{}: CWFail{T.FCmd{"create-worktree", Tx.trim_nl(out)}}
+    case False{}: CWFail{T.FCmd{"create-worktree", Tx.cmd_failed("git worktree add")}}
 
 def cw_stage4_pick(r: T.GitOut, bc: String, branch: String, path: String) -> CW:
   match r:

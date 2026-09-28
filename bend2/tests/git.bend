@@ -110,10 +110,21 @@ def finish(all: String) -> IO(Unit):
   +a2 = all
   finish_go(Tx.non_empty(a2), a2)
 
+def chk_refusal_names_cmd(missing: String) -> IO(String):
+  +m2 = missing
+  IO.bind(Result<&1, &1, T.GitFail, T.WtStatus>, String,
+    WS.worktreeStatus(m2),
+    r => IO.pure(String, WS.status_cmd_fail(r, "git rev-parse --abbrev-ref HEAD")))
+
+def run_all7(acc: String) -> IO(Unit):
+  +a7 = acc
+  IO.bind(String, Unit, chk_refusal_names_cmd("/tmp/bend2-git-no-repo"),
+    f7 => finish(Tx.str_cat(a7, f7)))
+
 def run_all6(b: String, acc: String) -> IO(Unit):
   +a6 = acc
   IO.bind(String, Unit, chk_status_dirty(".scratch/bend2-git-test/.scratch/bend2-git-wt", b),
-    f6 => finish(Tx.str_cat(a6, f6)))
+    f6 => run_all7(Tx.str_cat(a6, f6)))
 
 def run_all5(b: String, acc: String) -> IO(Unit):
   +a5 = acc

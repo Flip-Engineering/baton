@@ -22,7 +22,7 @@ def ws_answer(r: WS) -> IO(Result<&1, &1, T.GitFail, T.WtStatus>):
 def ws_stage3_ok(ok: Bool, out: String, branch: String, commit: String) -> WS:
   match ok:
     case True{}: WSDone{T.Wt{branch, commit, Tx.non_empty(out)}}
-    case False{}: WSFail{T.FCmd{"worktree-status", Tx.trim_nl(out)}}
+    case False{}: WSFail{T.FCmd{"worktree-status", Tx.cmd_failed("git status --porcelain")}}
 
 def ws_stage3_pick(r: T.GitOut, branch: String, commit: String) -> WS:
   match r:
@@ -44,7 +44,7 @@ def ws_go3(r: WS, path: String) -> IO(WS):
 def ws_stage2_ok(ok: Bool, out: String, branch: String) -> WS:
   match ok:
     case True{}: WSNext{branch, Tx.trim_nl(out)}
-    case False{}: WSFail{T.FCmd{"worktree-status", Tx.trim_nl(out)}}
+    case False{}: WSFail{T.FCmd{"worktree-status", Tx.cmd_failed("git rev-parse HEAD")}}
 
 def ws_stage2_pick(r: T.GitOut, branch: String, path: String) -> WS:
   match r:
@@ -66,7 +66,7 @@ def ws_go2(r: WS, path: String) -> IO(WS):
 def ws_stage1_ok(ok: Bool, out: String) -> WS:
   match ok:
     case True{}: WSNext{Tx.trim_nl(out), SNil{}}
-    case False{}: WSFail{T.FCmd{"worktree-status", Tx.trim_nl(out)}}
+    case False{}: WSFail{T.FCmd{"worktree-status", Tx.cmd_failed("git rev-parse --abbrev-ref HEAD")}}
 
 def ws_stage1_pick(r: T.GitOut, path: String) -> WS:
   match r:
@@ -100,3 +100,10 @@ def status_dirty_fail(r: Result<&1, &1, T.GitFail, T.WtStatus>, base: String) ->
       Bool.pick(String, dirty, "", "status: dirty flag missing after touch")
     case Done{made}: "status: bad"
     case Fail{fail}: Tx.str_cat("status refused: ", Tx.trim_nl(T.fail_text(fail)))
+
+# A refusal for a path Git cannot read names the command that failed; the
+# child's own message is on the coordinator's log.
+def status_cmd_fail(r: Result<&1, &1, T.GitFail, T.WtStatus>, cmd: String) -> String:
+  match r:
+    case Fail{fail}: Bool.pick(String, Tx.str_eq(T.fail_text(fail), Tx.str_cat("worktree-status: ", Tx.cmd_failed(cmd))), "", "status refusal did not name the failing command")
+    case Done{made}: "status: expected a refusal for a path Git cannot read"

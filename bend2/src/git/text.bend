@@ -129,6 +129,12 @@ def split_spaces(s: String) -> List<String>:
 def str_cat(a: String, b: String) -> String:
   a ++ b
 
+# A git command that fails captures no stdout under this contract: the child's
+# stderr goes to the coordinator's log. A refusal names the command that failed
+# so its message can be found there.
+def cmd_failed(what: String) -> String:
+  str_cat(what, " failed")
+
 def non_empty(s: String) -> Bool:
   match s:
     case SNil{}: False{}

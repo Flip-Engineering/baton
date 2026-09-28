@@ -427,7 +427,7 @@ def ld_busy_any(lines: List<String>, want: String) -> Bool:
 def ld_update_ok(ok: Bool, out: String, target: String, cand: String) -> Ld:
   match ok:
     case True{}: LdDone{T.LLanded{target, cand}}
-    case False{}: LdFail{T.FCmd{"land", out}}
+    case False{}: LdFail{T.FCmd{"land", Tx.cmd_failed("git update-ref")}}
 
 def ld_update_pick(g: T.GitOut, target: String, cand: String) -> Ld:
   match g:
@@ -481,7 +481,7 @@ def ld_adv_head(basis: String, scratch: String, last: Bool) -> IO(Ld):
 def ld_adv_rb_ok(ok: Bool, out: String, basis: String, cur: String, scratch: String, last: Bool) -> IO(Ld):
   match ok:
     case True{}: ld_adv_head(cur, scratch, last)
-    case False{}: ld_unmerged(scratch, out)
+    case False{}: ld_unmerged(scratch, Tx.cmd_failed("git rebase --onto"))
 
 def ld_adv_rb_pick(g: T.GitOut, basis: String, cur: String, scratch: String, last: Bool) -> IO(Ld):
   match g:
@@ -606,7 +606,7 @@ def ld_stage2(repo: String, target: String, worker: String, sha: String) -> IO(L
 def ld_wt_ok(ok: Bool, out: String, worker: String, sha: String, tip: String) -> Ld:
   match ok:
     case True{}: LdTip{worker, sha, tip}
-    case False{}: LdFail{T.FCmd{"land", out}}
+    case False{}: LdFail{T.FCmd{"land", Tx.cmd_failed("git worktree add --detach")}}
 
 def ld_wt_pick(g: T.GitOut, worker: String, sha: String, tip: String) -> Ld:
   match g:
@@ -627,7 +627,7 @@ def ld_stage3(repo: String, worker: String, sha: String, tip: String, scratch: S
 def ld_squash_ok(ok: Bool, out: String, worker: String, sha: String, tip: String, scratch: String) -> IO(Ld):
   match ok:
     case True{}: IO.pure(Ld, LdTip{worker, sha, tip})
-    case False{}: ld_unmerged(scratch, out)
+    case False{}: ld_unmerged(scratch, Tx.cmd_failed("git merge --squash"))
 
 def ld_squash_pick(g: T.GitOut, worker: String, sha: String, tip: String, scratch: String) -> IO(Ld):
   match g:
@@ -670,7 +670,7 @@ def nothing_go(lines: List<String>) -> Bool:
 def ld_commit_fail_go(nothing: Bool, out: String, worker: String, sha: String, tip: String) -> IO(Ld):
   match nothing:
     case True{}: IO.pure(Ld, LdDone{T.LAlready{sha}})
-    case False{}: IO.pure(Ld, LdFail{T.FCmd{"land", out}})
+    case False{}: IO.pure(Ld, LdFail{T.FCmd{"land", Tx.cmd_failed("git commit")}})
 
 def ld_commit_fail(out: String, worker: String, sha: String, tip: String) -> IO(Ld):
   +o2 = out
