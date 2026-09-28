@@ -162,7 +162,8 @@ def main():
     parser.add_argument('--source', type=Path, default=SOURCE)
     parser.add_argument('--revision', default='HEAD')
     parser.add_argument('--codex', default='codex')
-    parser.add_argument('--model', default='gpt-5.4')
+    parser.add_argument('--model', required=True,
+                        help='A model advertised by the local subscription Codex runtime')
     parser.add_argument('--effort', default='medium')
     args = parser.parse_args()
     if not hasattr(select, 'kqueue'):
