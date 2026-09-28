@@ -349,11 +349,11 @@ async function flush(times = 80) {
 }
 const sleep = (ms) => new Promise((resolve) => { setTimeout(resolve, ms); });
 
-// The F1 fold: the fixture clock is INJECTABLE so RETURN-TRIP drives the member-terminal
-// storm-coalescing window (ATTENTION_COALESCE_WINDOW_MS = 500) deterministically — advance()
-// past the window between the two emits, never a real `sleep(600)` (the #7 class the brief bans).
-// `createDriver` already forwards `opts.now` into the Coordinator (`this._now = opts.now ||
-// Date.now`, coordinator.mjs:996), so the controllable clock is purely a fixture seam.
+// The F1 fold: the fixture clock is INJECTABLE so a time-dependent fold is driven deterministically
+// rather than by a real sleep (the #7 class the brief bans). Member-terminal attention rows now
+// coalesce on their own kind and run alone — the delivery pass merges what is already pending and
+// waits for nothing. `createDriver` forwards `opts.now` into the Coordinator
+// (`this._now = opts.now || Date.now`), so the controllable clock is purely a fixture seam.
 function controllableClock(base = Date.now()) {
   let t = base;
   return {

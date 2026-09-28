@@ -38,9 +38,6 @@ import { normalizeWorkerPolicyRequest } from './worker-policy.mjs';
 
 export const PROVIDER_AUTH_EXPIRED = 'provider_auth_expired';
 
-export const ATTENTION_COALESCE_WINDOW_MS = 500;
-
-
 export function projectHorizonScratchpad(capture, viewer) {
   const role = viewer === 'orchestrator' ? 'orchestrator' : 'worker';
   const workerId = role === 'worker' ? viewer : null;
@@ -1284,8 +1281,7 @@ export function _mintMemberTerminal(coordinator, recorder, handle, task, result)
     };
     if (typeof task?.relation === 'string') reason.role = task.relation;
     const last = coordinator._attentionReasons.at(-1);
-    if (last && last.kind === 'member_terminal' && last.runId === runId
-      && (coordinator._now() - last.mintedAt) <= ATTENTION_COALESCE_WINDOW_MS) {
+    if (last && last.kind === 'member_terminal' && last.runId === runId) {
       last.count += 1;
       last.perPhase = { ...(last.perPhase ?? {}), run: (last.perPhase?.run ?? 0) + 1 };
       last.windowMs = coordinator._now() - last.mintedAt;
