@@ -1742,14 +1742,14 @@ test('UA3/UA6: startup scheduler dispatches an approved durable node after the a
   await application.shutdown(principal('shutdown-admin'));
 });
 
-test('UA4-UA8: accepted result is pinned and evidenced without changing the checkout', async () => {
-  const { application, driver, repo } = fixture('result-preservation', {
+test('UA4-UA8: accepted result is pinned, evidenced, and explicitly adopted without changing the checkout', async () => {
+  const { application, driver, repo } = fixture('result-adoption', {
     scenario: {
-      outcome: 'completed', delayMs: 10, summary: 'produced an accepted result',
+      outcome: 'completed', delayMs: 10, summary: 'produced an adoptable result',
       files: { 'impl/result.txt': 'accepted result\n' },
     },
   });
-  const runId = 'run-result-preservation';
+  const runId = 'run-result-adoption';
   const proposed = await application.start(intent({ runId }), principal('result-owner'));
   await application.approve(runId, proposed.plan.digest, principal('result-approver'));
   const finished = await application.wait(runId, principal('result-owner'), { timeoutMs: 5_000 });

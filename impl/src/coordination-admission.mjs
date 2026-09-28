@@ -1657,6 +1657,152 @@ export function _validateRunStopCompletion(store, p, event, integrity = false) {
   return stop;
 }
 
+export function _runResultAdoptionFailure(message, code = 'run_result_adoption_integrity', integrity = false) {
+  throw integrity ? new CoordinationIntegrityError(message, code) : new CoordinationRefusal(message, code);
+}
+
+export function _normalizeRunResultAdoptionRequest(store, fields, event, integrity = false) {
+  const fail = (message, code = 'run_result_adoption_invalid') => store._runResultAdoptionFailure(message, code, integrity);
+  const expected = ['evidenceDigest', 'nodeKey', 'reasonDigest', 'repoId', 'requestDigest', 'resultSha', 'runId', 'schemaVersion', 'taskId'];
+  if (!fields || typeof fields !== 'object' || Array.isArray(fields)
+    || Object.keys(fields).sort().join(',') !== expected.sort().join(',') || fields.schemaVersion !== 1
+    || !validRunId(fields.repoId) || !validRunId(fields.runId) || !boundedText(fields.nodeKey, 256)
+    || !boundedText(fields.taskId, 4_096) || !validResultSha(fields.resultSha)
+    || !/^[a-f0-9]{64}$/.test(fields.evidenceDigest ?? '') || !/^[a-f0-9]{64}$/.test(fields.reasonDigest ?? '')
+    || !/^[a-f0-9]{64}$/.test(fields.requestDigest ?? '')) fail('run result adoption request is invalid');
+  const requestCore = {
+    repoId: fields.repoId, runId: fields.runId, nodeKey: fields.nodeKey, taskId: fields.taskId,
+    resultSha: fields.resultSha, evidenceDigest: fields.evidenceDigest, reasonDigest: fields.reasonDigest,
+  };
+  if (fields.requestDigest !== canonicalDigest(requestCore)) fail('run result adoption request digest is invalid');
+  const expectedKey = `run.result_adoption:${fields.runId}:${fields.nodeKey}`;
+  if (event?.idempotencyKey !== expectedKey || !boundedText(event?.actor, 256)) fail('run result adoption authority is invalid');
+  return freeze({ ...clone(requestCore), requestDigest: fields.requestDigest });
+}
+
+export function _deriveRunResultAdoptionBinding(store, request, integrity = false) {
+  const fail = (message, code = 'run_result_adoption_unavailable') => store._runResultAdoptionFailure(message, code, integrity);
+  const task = store._tasks.get(request.taskId);
+  const dispatch = store._planTaskLinks.get(request.taskId);
+  const goalPlan = task?.brief?.goalPlan;
+  if (!task || task.runId !== request.runId || task.status !== 'completed' || task.acceptanceRevocation
+    || !dispatch || !goalPlan || dispatch.taskId !== task.id || dispatch.binding?.nodeKey !== request.nodeKey
+    || canonicalDigest(dispatch.binding) !== canonicalDigest(goalPlan)) {
+    fail('run result adoption requires the exact completed approved Plan task');
+  }
+  const goal = store._goals.get(store._goalVersionKey(goalPlan.goalId, goalPlan.goalVersion));
+  const plan = store._plans.get(store._planVersionKey(goalPlan.planId, goalPlan.planVersion));
+  const approval = store._planApprovals.get(store._planVersionKey(goalPlan.planId, goalPlan.planVersion));
+  const node = plan?.nodes?.find((row) => row.key === request.nodeKey);
+  if (!goal || !plan || !approval || approval.disposition !== 'approved' || !node
+    || goal.repoId !== request.repoId || goal.runId !== request.runId
+    || plan.repoId !== request.repoId || plan.runId !== request.runId
+    || goal.digest !== goalPlan.goalDigest || plan.digest !== goalPlan.planDigest
+    || approval.digest !== goalPlan.approvalDigest) {
+    fail('run result adoption Plan authority is unavailable');
+  }
+  const artifacts = task.artifactIds.map((id) => store._artifacts.get(id)).filter(Boolean);
+  const active = (artifact) => artifact.accepted === true && artifact.supersededBy === null
+    && !Object.hasOwn(artifact, 'acceptanceInvalidation');
+  const commits = artifacts.filter((artifact) => active(artifact) && artifact.kind === 'commit'
+    && artifact.refs?.sha === request.resultSha
+    && artifact.refs?.retainedResultRef === retainedResultRef(request.resultSha));
+  if (commits.length !== 1) fail('run result adoption requires one active accepted retained commit artifact');
+  const commit = commits[0];
+  const commitEvidence = new Set((commit.provenance ?? []).map((ref) => ref?.coordinationSeq).filter(Number.isSafeInteger));
+  const verifications = artifacts.filter((artifact) => active(artifact) && artifact.kind === 'verification'
+    && (artifact.provenance ?? []).some((ref) => commitEvidence.has(ref?.coordinationSeq)));
+  if (verifications.length !== 1) fail('run result adoption requires one active accepted verification artifact');
+  const verification = verifications[0];
+  const shared = (verification.provenance ?? []).map((ref) => ref?.coordinationSeq)
+    .filter((seq) => Number.isSafeInteger(seq) && commitEvidence.has(seq)).sort((a, b) => a - b);
+  if (shared.length !== 1) fail('run result adoption verification provenance is ambiguous');
+  const mapped = store._events[shared[0] - 1];
+  const source = mapped?.kind === 'evidence.mapped'
+    ? store._operationalRead?.(mapped.payload.worker, mapped.payload.workerSeq) : null;
+  if (!mapped || mapped.payload?.kind !== 'verify.reverified' || source?.kind !== 'verify.reverified'
+    || source.actor !== 'policy' || source.worker !== task.assignee || source.taskId !== task.id
+    || source.payload?.accept !== true || digest(source) !== mapped.payload.digest
+    || verification.refs?.worker !== mapped.payload.worker || verification.refs?.workerSeq !== mapped.payload.workerSeq) {
+    fail('run result adoption verification evidence is not the accepted task result');
+  }
+  return freeze({
+    taskVersion: task.version,
+    goal: { goalId: goal.goalId, version: goal.version, digest: goal.digest },
+    plan: { planId: plan.planId, version: plan.version, digest: plan.digest },
+    approvalDigest: approval.digest,
+    commitArtifact: { id: commit.id, digest: commit.digest },
+    verificationArtifact: { id: verification.id, digest: verification.digest },
+    verificationEvidence: {
+      coordinationSeq: mapped.seq, worker: mapped.payload.worker,
+      workerSeq: mapped.payload.workerSeq, digest: mapped.payload.digest,
+    },
+  });
+}
+
+export function _validateRunResultAdoptionAdmission(store, p, event, integrity = false) {
+  const fail = (message, code = 'run_result_adoption_integrity') => store._runResultAdoptionFailure(message, code, integrity);
+  const fields = ['adoptionDigest', 'binding', 'evidenceDigest', 'nodeKey', 'reasonDigest', 'repoId', 'requestDigest', 'resultSha', 'retainedResultRef', 'runId', 'schemaVersion', 'taskId'];
+  if (!p || typeof p !== 'object' || Array.isArray(p)
+    || Object.keys(p).sort().join(',') !== fields.sort().join(',') || p.schemaVersion !== 1
+    || !/^[a-f0-9]{64}$/.test(p.adoptionDigest ?? '')) fail('run result adoption admission is malformed');
+  const request = store._normalizeRunResultAdoptionRequest(Object.fromEntries(
+    ['schemaVersion', 'repoId', 'runId', 'nodeKey', 'taskId', 'resultSha', 'evidenceDigest', 'reasonDigest', 'requestDigest']
+      .map((key) => [key, p[key]]),
+  ), event, integrity);
+  if (p.retainedResultRef !== retainedResultRef(request.resultSha)) fail('run result adoption retained ref is invalid');
+  const binding = store._deriveRunResultAdoptionBinding(request, integrity);
+  if (canonicalDigest(p.binding) !== canonicalDigest(binding)) fail('run result adoption binding diverged');
+  const core = Object.fromEntries(Object.entries(p).filter(([key]) => key !== 'adoptionDigest'));
+  if (p.adoptionDigest !== canonicalDigest(core)) fail('run result adoption admission digest is invalid');
+  if (store._runResultAdoptions.has(store._runResultAdoptionKey(p.runId, p.nodeKey))) fail('run result adoption identity is already occupied');
+  return binding;
+}
+
+export function _validateRunResultAdoptionCompletion(store, p, event, integrity = false) {
+  const fail = (message, code = 'run_result_adoption_integrity') => store._runResultAdoptionFailure(message, code, integrity);
+  if (!p || typeof p !== 'object' || Array.isArray(p)
+    || Object.keys(p).sort().join(',') !== ['nodeKey', 'receipt', 'runId', 'schemaVersion'].join(',')
+    || p.schemaVersion !== 1 || !validRunId(p.runId) || !boundedText(p.nodeKey, 256)) {
+    fail('run result adoption completion is malformed');
+  }
+  const adoption = store._runResultAdoptions.get(store._runResultAdoptionKey(p.runId, p.nodeKey));
+  if (!adoption || adoption.status !== 'pending' || adoption.receipt !== null) fail('run result adoption completion has no pending admission');
+  if (event?.idempotencyKey !== `run.result_adoption.complete:${p.runId}:${p.nodeKey}` || event.actor !== adoption.actor) {
+    fail('run result adoption completion authority is invalid');
+  }
+  const binding = store._deriveRunResultAdoptionBinding(adoption, integrity);
+  if (canonicalDigest(binding) !== canonicalDigest(adoption.binding)) fail('run result adoption accepted authority changed before completion');
+  const receipt = p.receipt;
+  const receiptFields = ['binding', 'checks', 'effects', 'nodeKey', 'receiptDigest', 'repoId', 'result', 'runId', 'schemaVersion', 'scope', 'state', 'taskId'];
+  const bindingFields = ['admissionDigest', 'approvalDigest', 'commitArtifactDigest', 'commitArtifactId', 'evidenceDigest', 'goalDigest', 'planDigest', 'verificationArtifactDigest', 'verificationArtifactId'];
+  const checkFields = ['mainUnchanged', 'refPinned', 'taskAccepted', 'verificationAccepted', 'worktreeIndependent'];
+  const effectFields = ['indexChanged', 'mainHeadChanged', 'published', 'workingTreeChanged'];
+  if (!receipt || typeof receipt !== 'object' || Array.isArray(receipt)
+    || Object.keys(receipt).sort().join(',') !== receiptFields.sort().join(',') || receipt.schemaVersion !== 1
+    || receipt.state !== 'adopted' || receipt.scope !== 'run-result' || receipt.repoId !== adoption.repoId
+    || receipt.runId !== adoption.runId || receipt.nodeKey !== adoption.nodeKey || receipt.taskId !== adoption.taskId
+    || !receipt.binding || Object.keys(receipt.binding).sort().join(',') !== bindingFields.sort().join(',')
+    || canonicalDigest(receipt.binding) !== canonicalDigest({
+      admissionDigest: adoption.adoptionDigest, evidenceDigest: adoption.evidenceDigest,
+      goalDigest: adoption.binding.goal.digest, planDigest: adoption.binding.plan.digest,
+      approvalDigest: adoption.binding.approvalDigest,
+      commitArtifactId: adoption.binding.commitArtifact.id, commitArtifactDigest: adoption.binding.commitArtifact.digest,
+      verificationArtifactId: adoption.binding.verificationArtifact.id,
+      verificationArtifactDigest: adoption.binding.verificationArtifact.digest,
+    })
+    || !receipt.result || Object.keys(receipt.result).sort().join(',') !== ['ref', 'sha'].join(',')
+    || receipt.result.sha !== adoption.resultSha || receipt.result.ref !== adoption.retainedResultRef
+    || !receipt.checks || Object.keys(receipt.checks).sort().join(',') !== checkFields.sort().join(',')
+    || checkFields.some((field) => receipt.checks[field] !== true)
+    || !receipt.effects || Object.keys(receipt.effects).sort().join(',') !== effectFields.sort().join(',')
+    || effectFields.some((field) => receipt.effects[field] !== false)
+    || !/^[a-f0-9]{64}$/.test(receipt.receiptDigest ?? '')) fail('run result adoption receipt is invalid');
+  const { receiptDigest, ...core } = receipt;
+  if (receiptDigest !== canonicalDigest(core)) fail('run result adoption receipt digest is invalid');
+  return adoption;
+}
+
 
 
 
@@ -2196,6 +2342,30 @@ export function _effectiveRunOrchestratorLeaseState(store, lease, now = store._c
   if (task.status !== 'working') return freeze({ state: 'inactive', reason: 'parent_terminal' });
   if (store.runStop(lease.parent.runId)) return freeze({ state: 'inactive', reason: 'parent_run_stopping' });
   return freeze({ state: 'active', reason: null });
+}
+
+export function admitRunResultAdoption(store, fields, auth) {
+  const preview = { actor: auth?.actor, idempotencyKey: auth?.key };
+  const request = store._normalizeRunResultAdoptionRequest(fields, preview, false);
+  const prior = store._byKey.get(auth.key);
+  if (prior) {
+    if (prior.kind !== 'run.result_adoption_admitted' || prior.actor !== auth.actor
+      || prior.payload?.requestDigest !== request.requestDigest) {
+      throw new CoordinationRefusal('run result adoption idempotency conflict', 'run_result_adoption_conflict');
+    }
+    return freeze({ ok: true, result: 'replay', event: clone(prior), adoption: store.runResultAdoption(fields.runId, fields.nodeKey) });
+  }
+  if (store._runResultAdoptions.has(store._runResultAdoptionKey(fields.runId, fields.nodeKey))) {
+    throw new CoordinationRefusal('run result adoption identity conflict', 'run_result_adoption_conflict');
+  }
+  const binding = store._deriveRunResultAdoptionBinding(request, false);
+  const core = {
+    schemaVersion: 1, ...clone(request), retainedResultRef: retainedResultRef(request.resultSha), binding: clone(binding),
+  };
+  const payload = { ...core, adoptionDigest: canonicalDigest(core) };
+  store._validateRunResultAdoptionAdmission(payload, { ...preview, payload }, false);
+  const event = store._append('run.result_adoption_admitted', payload, auth);
+  return freeze({ ok: true, result: 'admitted', event: clone(event), adoption: store.runResultAdoption(fields.runId, fields.nodeKey) });
 }
 
 export function _runVerificationRetryFailure(message, code = 'run_verification_retry_integrity', integrity = false) {

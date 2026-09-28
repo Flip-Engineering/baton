@@ -131,7 +131,7 @@ function goldenHarness(fixture, workflow = false) {
   return {
     repoId: fixture.manifest.repoId,
     driver: { coordination: {
-      ...(workflow ? { events: () => [], eventsView: () => [] } : {}),
+      ...(workflow ? { events: () => [], eventsView: () => [] } : { runResultAdoption: () => null }),
       task: (id) => fixture.tasks[id] ?? null,
       artifact: (id) => fixture.artifacts[id] ?? null,
       runStop: () => null,

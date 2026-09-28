@@ -91,7 +91,7 @@ function substitutedArgv(example) {
 // D4 alias/kind normalization: the parse result → the row's operation key.
 //   {kind:'command', name}          → the parsed command name (a canonical or legacy spelling)
 //   {kind:'semantic-action', ...}    → run.<actionKind>
-//   {kind:'follow'|...}             → run.<kind>
+//   {kind:'adopt'|'export'|...}      → run.<kind>
 function parseResultToKey(result) {
   if (!result || typeof result !== 'object') return null;
   if (result.kind === 'command') return result.name ?? null;

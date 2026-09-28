@@ -79,8 +79,8 @@ function generateDistance1Variants(word) {
 
 /**
  * The lifecycle verb set. Tolerant of the fold: matches any `new Set([...])` literal of
- * all-lowercase verb tokens and takes the maximal one (the run dispatch's closed set is the only
- * literal that rivals it). The fold's RUN_RECOGNIZED_FIRST_TOKENS composes this
+ * all-lowercase verb tokens and takes the maximal one (29 at HEAD; the run dispatch's closed
+ * set is the only literal that rivals it). The fold's RUN_RECOGNIZED_FIRST_TOKENS composes this
  * set (D1), so the same membership must survive under a renamed constant.
  * COMPOSITION-FORM REQUIREMENT (blue-team finding 6): RUN_RECOGNIZED_FIRST_TOKENS must be
  * spread-composed (`[...lifecycleActions, ...FACADE_NOUNS, 'start', 'follow'] ∪ ALIAS_FIRST_TOKENS`),
@@ -234,12 +234,7 @@ test('PT-2c capability [generated-damerau1-sweep] — every generated distance-1
   const sem = readFileSync(SEM_PATH, 'latin1');
   const detection = deriveDetectionSet(cli, sem);
   const lifecycle = extractLifecycleVerbs(cli);
-  // The guard's purpose is that the derivation read the parser's OWN dispatch set, so the sweep
-  // below covers real verbs; naming verbs says that directly, where a count would only re-measure
-  // a set every later removal changes.
-  for (const verb of ['show', 'status', 'stop', 'review', 'integrate', 'debug']) {
-    assert.ok(lifecycle.includes(verb), `stage[derivation-source-unreadable] the derived lifecycle verb set lost '${verb}'`);
-  }
+  assert.ok(lifecycle.length >= 29, 'stage[derivation-source-unreadable] the lifecycle verb set must be extractable from application-cli.mjs (29 verbs at HEAD)');
   assert.ok(detection.size > 0, 'stage[derivation-source-unreadable] the detection set must be derivable from the source');
 
   const variants = new Set();

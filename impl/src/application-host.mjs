@@ -57,10 +57,10 @@ export const STOP_STAGES = Object.freeze({
   publicationWithdrawal: 'publication_withdrawal',
 });
 
-/** Issue #450: the first second of a stop. Every wait this host takes past it is named durably
- * (the #276/#351 promise the 222 s of silence between `host.stop_requested` and the web shutdown
- * broke); anything shorter is ordinary work and stays off the ledger. */
-const FIRST_WAIT_MS = 1_000;
+/** Issue #450: the narration read is a wait, and this host NAMES the wait the moment it takes it —
+ * a read that has not answered when the stop reaches here is one durable `host.stop_waiting` row
+ * naming {resource, reaper, since}, written at once rather than after a threshold of its own.
+ * Nothing here waits: the row is the fact, and the stop goes on. */
 
 /** Issue #276(1)/#437: the ONE line a host writes at signal receipt, naming what it will do before
  * any wait. The count comes from a NAMED read the caller supplies — the projection the resident
@@ -559,20 +559,20 @@ export class BatonWebHost {
     });
   }
 
-  /** Issue #450: the narration read is a wait, and this host NAMES every wait it takes past its
-   * first second and bounds it by the grace it declares for its own leg (`webDrainMs` — the same
-   * declared row the fleet-drain progress line reads). The read is a log line about what the stop
-   * will drain; a read that refuses or never answers must not hold the stop, and it must not be a
-   * silent 222 s either: past the first second the wait is one durable `host.stop_waiting` row
-   * naming {resource, reaper, since}, and past the grace the stop goes on and says so. The
-   * narration itself is still said whenever the read answers — `_announceIntent` says it. */
+  /** Issue #450: the narration read is a wait, and this host NAMES it at once. The read is a log
+   * line about what the stop will drain; a read that refuses or never answers must not hold the
+   * stop, and it must not be a silent 222 s either: the wait is one durable `host.stop_waiting`
+   * row naming {resource, reaper, since}, written as soon as the read has not answered, and past
+   * the grace this host declares for its own leg (`webDrainMs` — the same declared row the
+   * fleet-drain progress line reads) the stop goes on and says so. The narration itself is still
+   * said whenever the read answers — `_announceIntent` says it. */
   async _narrateIntent() {
     const answered = () => this._announced.then(() => true, () => true);
     const grace = (ms) => new Promise((resolve) => {
       const timer = setTimeout(() => resolve(false), ms);
       if (typeof timer.unref === 'function') timer.unref();
     });
-    if (await Promise.race([answered(), grace(FIRST_WAIT_MS)])) return;
+    if (await Promise.race([answered(), grace(0)])) return;
     const since = new Date().toISOString();
     try {
       const recorded = await this._recordStop('waiting', {

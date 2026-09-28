@@ -928,6 +928,18 @@ export class CoordinationStore {
 
   _validateRunStopCompletion(p, event, integrity = false) { return coordinationAdmission._validateRunStopCompletion(this, p, event, integrity); }
 
+  _runResultAdoptionKey(runId, nodeKey) { return coordinationLedger._runResultAdoptionKey(runId, nodeKey); }
+
+  _runResultAdoptionFailure(message, code = 'run_result_adoption_integrity', integrity = false) { return coordinationAdmission._runResultAdoptionFailure(message, code, integrity); }
+
+  _normalizeRunResultAdoptionRequest(fields, event, integrity = false) { return coordinationAdmission._normalizeRunResultAdoptionRequest(this, fields, event, integrity); }
+
+  _deriveRunResultAdoptionBinding(request, integrity = false) { return coordinationAdmission._deriveRunResultAdoptionBinding(this, request, integrity); }
+
+  _validateRunResultAdoptionAdmission(p, event, integrity = false) { return coordinationAdmission._validateRunResultAdoptionAdmission(this, p, event, integrity); }
+
+  _validateRunResultAdoptionCompletion(p, event, integrity = false) { return coordinationAdmission._validateRunResultAdoptionCompletion(this, p, event, integrity); }
+
 
 
 
@@ -1173,6 +1185,14 @@ export class CoordinationStore {
   runStop(runId) {
     return coordinationInternals.runStop(this, runId);
   }
+
+  runResultAdoption(runId, nodeKey) { return coordinationLedger.runResultAdoption(this, runId, nodeKey); }
+
+  pendingRunResultAdoptions(limit = 1_000) { return coordinationLedger.pendingRunResultAdoptions(this._runResultAdoptions, limit); }
+
+  admitRunResultAdoption(fields, auth) { return coordinationAdmission.admitRunResultAdoption(this, fields, auth); }
+
+  completeRunResultAdoption(fields, auth) { return coordinationLedger.completeRunResultAdoption(this, fields, auth); }
 
   // ==========================================================================
   // Phase 69 VR6 — durable verifier retry cascade (two-phase, response-loss safe)
