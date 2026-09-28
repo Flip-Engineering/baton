@@ -1,4 +1,4 @@
-import { execFileSync } from 'node:child_process';
+import { execFile, execFileSync } from 'node:child_process';
 
 const START_KEYS = ['generation', 'phase', 'pid', 'processGroupId', 'schemaVersion'];
 const CLOSE_KEYS = ['code', 'generation', 'pid', 'processGroupId', 'ready', 'schemaVersion', 'signal'];
@@ -73,6 +73,46 @@ export function observeProcessGroupIdentity(processGroupId, opts = {}) {
   const pidStart = match[3].trim();
   if (!pidStart || Buffer.byteLength(pidStart) > 256 || pidStart.includes('\0')) return null;
   return Object.freeze({ pid: processGroupId, processGroupId, pidStart });
+}
+
+/** `execFile` as a promise of `{ stdout }` — the asynchronous shape the #561 footprint sweep reads
+ * the process table with, so the read never freezes the loop that answers admissions. */
+const readProcessTable = (file, args, options) => new Promise((resolve, reject) => {
+  execFile(file, args, options, (error, stdout) => (error === null ? resolve({ stdout }) : reject(error)));
+});
+
+/**
+ * Issue #561: the bytes a seat's own process tree holds, per process group the caller names —
+ * the MEASUREMENT behind a worker lease's weight, so host admission judges one more seat by the
+ * memory the running seats actually occupy instead of a weight no one took. `rss` is KiB on both
+ * platforms this runs on (darwin's BSD ps, linux procps) and is summed over every member, so a
+ * seat's own children are part of what it holds. ONE ps read serves every group in the sweep, and
+ * it runs ASYNCHRONOUSLY: a reader that freezes the loop would be paid for out of the same turn
+ * the admission it feeds answers in. A group the kernel no longer lists, and a read that fails,
+ * are ABSENT from the answer: an unmeasured seat stays unmeasured, never guessed (the caller
+ * leaves the measurement it had).
+ */
+export async function observeProcessGroupFootprints(processGroupIds, opts = {}) {
+  const wanted = new Set((Array.isArray(processGroupIds) ? processGroupIds : []).filter(positiveSafe));
+  if (wanted.size === 0) return new Map();
+  const read = opts.execFile ?? readProcessTable;
+  let stdout;
+  try {
+    ({ stdout } = await read('/bin/ps', ['-Ao', 'pgid=,rss='], {
+      encoding: 'utf8', maxBuffer: 1 << 20, timeout: 2_000,
+    }));
+  } catch { return new Map(); }
+  const footprints = new Map();
+  for (const line of String(stdout).split('\n')) {
+    const match = /^\s*(\d+)\s+(\d+)\s*$/u.exec(line);
+    if (match === null) continue;
+    const processGroupId = Number(match[1]);
+    if (!wanted.has(processGroupId)) continue;
+    const kibibytes = Number(match[2]);
+    if (!Number.isSafeInteger(kibibytes) || kibibytes <= 0) continue;
+    footprints.set(processGroupId, (footprints.get(processGroupId) ?? 0) + kibibytes * 1024);
+  }
+  return footprints;
 }
 
 export function processAuthorityPayload(processRef, opts = {}) {
