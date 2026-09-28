@@ -270,7 +270,12 @@ const sections = [
   ['candidates', 'Immutable mechanically verified Workflow candidates and their exact role bindings.'],
   ['feedback', 'Typed source-bound Workflow feedback packets and their candidate targets.'],
   ['rounds', 'Append-only Workflow Plan rounds, immutable Candidate lineage, and current round state.'],
+<<<<<<< HEAD
   ['result', 'Accepted and adopted result state.'],
+=======
+  ['context', 'Immutable Context sessions, pure cells, coverage, and source-grounded evidence.'],
+  ['result', 'Accepted result state.'],
+>>>>>>> 105788d4 (#598 plane slice 2 of 6: the Run result-adoption flow leaves, end to end)
   ['delivery', 'Integration state.'],
   ['cleanup', 'Stop, process reaping, worktree, and runtime cleanup.'],
   ['knowledge', 'Run-related causal knowledge summaries and evidence links.'],

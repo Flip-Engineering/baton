@@ -1382,7 +1382,7 @@ export const CLI_TOP_LEVEL_VERBS = Object.freeze([
   Object.freeze({
     token: 'run', verb: 'baton run', argv: Object.freeze(['run', 'view', 'RUN_ID']), kind: 'command',
     parser: 'baton-cli',
-    summary: 'Start a Run from an objective, or observe, steer, review, adopt and export one (`baton help run`).',
+    summary: 'Start a Run from an objective, or observe, steer, review and integrate one (`baton help run`).',
   }),
   Object.freeze({
     token: 'review', verb: 'baton review OBJECTIVE',
@@ -1549,13 +1549,13 @@ export function batonCliHelp(topic = 'application') {
 export const BATON_CLI_HELP = batonCliHelp(APPLICATION_SEMANTIC_REGISTRY.cli.defaultHelpTopic);
 
 const RUN_VIEW_OUTPUT_KINDS = new Set([
-  'command', 'semantic-action', 'adopt', 'integrate',
+  'command', 'semantic-action', 'integrate',
 ]);
 
 function compactRunResult(result) {
   if (!record(result)) return null;
   const keys = [
-    'state', 'status', 'nodeKey', 'sha', 'verdict', 'summary', 'adopted',
+    'state', 'status', 'nodeKey', 'sha', 'verdict', 'summary',
     'reviewed', 'integrated', 'strategy',
   ];
   const projected = Object.fromEntries(keys
@@ -3806,7 +3806,7 @@ export function parseBatonCli(rawArgs) {
   const lifecycleActions = new Set(['show', 'do', 'recover', 'status', 'approve', 'answer', 'steer',
     'send', 'interrupt', 'progress', 'events', 'output', 'episode', 'workstreams', 'notify', 'result',
     'resultpin',
-    'stop', 'evidence', 'adopt', 'select', 'feedback', 'revise', 'stop-member',
+    'stop', 'evidence', 'select', 'feedback', 'revise', 'stop-member',
     'retry', 'resume', 'review', 'integrate', 'debug']);
   // The closed first-token set (contract D1): the lifecycle dispatch set, the facade nouns, the
   // start/follow spellings, and the canonical alias first-tokens. Composed by spread — never a
@@ -4055,10 +4055,6 @@ export function parseBatonCli(rawArgs) {
       },
       idempotencyKey,
     };
-  }
-  if (action === 'adopt') {
-    const reason = take(args, '--reason', { required: true }); noRemainder(args);
-    return { kind: 'adopt', runId, reason, idempotencyKey };
   }
   if (action === 'select') {
     const role = id(args.shift(), 'Workflow role');

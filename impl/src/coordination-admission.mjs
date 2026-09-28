@@ -1658,6 +1658,7 @@ export function _validateRunStopCompletion(store, p, event, integrity = false) {
   return stop;
 }
 
+<<<<<<< HEAD
 export function _runResultAdoptionFailure(message, code = 'run_result_adoption_integrity', integrity = false) {
   throw integrity ? new CoordinationIntegrityError(message, code) : new CoordinationRefusal(message, code);
 }
@@ -1804,6 +1805,12 @@ export function _validateRunResultAdoptionCompletion(store, p, event, integrity 
   return adoption;
 }
 
+=======
+export function _contextFailure(message, code, integrity = false) {
+  if (integrity) throw new CoordinationIntegrityError(message, code);
+  throw new CoordinationRefusal(message, code);
+}
+>>>>>>> 105788d4 (#598 plane slice 2 of 6: the Run result-adoption flow leaves, end to end)
 
 
 
@@ -2343,30 +2350,6 @@ export function _effectiveRunOrchestratorLeaseState(store, lease, now = store._c
   if (task.status !== 'working') return freeze({ state: 'inactive', reason: 'parent_terminal' });
   if (store.runStop(lease.parent.runId)) return freeze({ state: 'inactive', reason: 'parent_run_stopping' });
   return freeze({ state: 'active', reason: null });
-}
-
-export function admitRunResultAdoption(store, fields, auth) {
-  const preview = { actor: auth?.actor, idempotencyKey: auth?.key };
-  const request = store._normalizeRunResultAdoptionRequest(fields, preview, false);
-  const prior = store._byKey.get(auth.key);
-  if (prior) {
-    if (prior.kind !== 'run.result_adoption_admitted' || prior.actor !== auth.actor
-      || prior.payload?.requestDigest !== request.requestDigest) {
-      throw new CoordinationRefusal('run result adoption idempotency conflict', 'run_result_adoption_conflict');
-    }
-    return freeze({ ok: true, result: 'replay', event: clone(prior), adoption: store.runResultAdoption(fields.runId, fields.nodeKey) });
-  }
-  if (store._runResultAdoptions.has(store._runResultAdoptionKey(fields.runId, fields.nodeKey))) {
-    throw new CoordinationRefusal('run result adoption identity conflict', 'run_result_adoption_conflict');
-  }
-  const binding = store._deriveRunResultAdoptionBinding(request, false);
-  const core = {
-    schemaVersion: 1, ...clone(request), retainedResultRef: retainedResultRef(request.resultSha), binding: clone(binding),
-  };
-  const payload = { ...core, adoptionDigest: canonicalDigest(core) };
-  store._validateRunResultAdoptionAdmission(payload, { ...preview, payload }, false);
-  const event = store._append('run.result_adoption_admitted', payload, auth);
-  return freeze({ ok: true, result: 'admitted', event: clone(event), adoption: store.runResultAdoption(fields.runId, fields.nodeKey) });
 }
 
 export function _runVerificationRetryFailure(message, code = 'run_verification_retry_integrity', integrity = false) {
