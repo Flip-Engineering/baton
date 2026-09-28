@@ -13,7 +13,6 @@ const POLICY_FIELDS = Object.freeze([
 ]);
 const ROUTE_FIELDS = Object.freeze(['harness', 'model', 'effort', 'terminalReserve', 'mode']);
 const RESERVE_FIELDS = Object.freeze(['tokens', 'usd']);
-const MAX_ROUTES = 1024;
 
 const MAX_CALLS_PER_TURN = 100_000;
 const MAX_TERMINAL_RESERVE_TOKENS = 100_000_000;
@@ -82,7 +81,7 @@ function routeKey(harness, model, effort) {
 }
 
 function normalizeHarnesses(harnesses) {
-  if (!Array.isArray(harnesses) || harnesses.length === 0 || harnesses.length > MAX_ROUTES) {
+  if (!Array.isArray(harnesses) || harnesses.length === 0) {
     throw invalid('provider governance harness registry is invalid');
   }
   const normalized = [];
@@ -112,7 +111,7 @@ export function normalizeProviderGovernancePolicy(value, harnesses) {
     || !positiveSafeInteger(value.maxToolCallsPerTurn)
     || value.maxProviderCallsPerTurn > MAX_CALLS_PER_TURN
     || value.maxToolCallsPerTurn > MAX_CALLS_PER_TURN
-    || !Array.isArray(value.routes) || value.routes.length === 0 || value.routes.length > MAX_ROUTES) {
+    || !Array.isArray(value.routes) || value.routes.length === 0) {
     throw invalid();
   }
 

@@ -143,7 +143,6 @@ async function loadWakeStream(injected) {
   }
 }
 
-const WAKE_BUFFER_ITEMS = 64;
 
 function wakeClassRow(wakeStream, wakeClass) {
   const table = wakeStream?.WAKE_CLASS_TABLE;
@@ -184,7 +183,6 @@ function createWakeAttachment(wakeStream, connection) {
         // it with the concrete coordinates.
         next: typeof frame?.next === 'string' && frame.next.length > 0 ? frame.next : (row?.next ?? null),
       });
-      if (items.length > WAKE_BUFFER_ITEMS) items.splice(0, items.length - WAKE_BUFFER_ITEMS);
       if (resolveFirstFrame) { resolveFirstFrame(); resolveFirstFrame = null; }
     },
     onLagged: () => { state.lagged += 1; },

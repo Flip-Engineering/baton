@@ -53,7 +53,6 @@ import {
   ATTENTION_PAGE_BYTES,
   EPISODE_TOPICS,
   EXPLICIT_RESULT_CONSTRAINTS,
-  MAX_ATTENTION,
   MAX_RUN_RECORDS,
   MAX_RUN_VIEW_BYTES,
   MAX_SCRATCHPAD_VIEW_BYTES,
@@ -168,7 +167,6 @@ export {
 export { APPLICATION_SEMANTIC_REGISTRY } from './application-semantics.mjs';
 
 
-const MAX_PROFILES = 256;
 
 
 
@@ -1404,7 +1402,7 @@ export class BatonApplication {
     }
     exactObject(options.principals, ['planner', 'dispatcher', 'observer'], 'application_config_invalid', 'application principals');
     if (!options.profiles || typeof options.profiles !== 'object' || Array.isArray(options.profiles)
-      || Object.keys(options.profiles).length === 0 || Object.keys(options.profiles).length > MAX_PROFILES) {
+      || Object.keys(options.profiles).length === 0) {
       throw applicationError('application profiles are invalid', 'application_config_invalid');
     }
     this.driver = options.driver;
@@ -4818,7 +4816,7 @@ export class BatonApplication {
 
   _semanticBounds(current) {
     return deepFreeze({
-      maxItems: Math.min(current.profile.followPolicy.maxChanges, MAX_ATTENTION),
+      maxItems: current.profile.followPolicy.maxChanges,
       maxBytes: current.profile.followPolicy.maxResponseBytes,
       maxWaitMs: current.profile.followPolicy.maxWaitMs,
     });
