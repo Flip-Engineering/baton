@@ -3,20 +3,28 @@
 ## Workflow
 
 The operator talks to the root in a native harness session. The root asks Baton
-to recruit a worker with a task, harness and model. Baton creates a Git branch
-and worktree, starts the logged-in harness there, and supplies the task. The
-worker can ask its parent questions and report progress. Each completed turn
-sends its full report and work location to the parent, which decides whether
-to guide another turn, land the work, or stop the worker.
+to recruit a worker with a harness and model. Baton creates a Git branch and
+worktree and records the worker; a turn invocation starts the logged-in harness
+in that worktree and supplies the task. The worker can ask its parent questions
+and report progress. Each completed turn sends its full report and work
+location to the parent, which decides whether to guide another turn, land the
+work, or stop the worker.
 
 The first implementation runs on one host and one Git repository. The root
-session remains the place where the operator reads and directs agent work.
-The following describes the implementation to build; a live slice is still due.
+session remains the place where the operator reads and directs agent work. The
+coordinator under `bend2/` implements this design: the
+[Bend2 architecture](architecture.md) is the design of record for the
+implemented system, and [bend2/README.md](../../bend2/README.md) gives its build,
+commands and acceptance runs. A supervised live worker slice ran on 2026-09-26
+([live worker](live-worker-2026-09-26.md)), and a real root reviewed, landed and
+published a worker commit on 2026-09-27 ([root day](root-day-2026-09-27.md)).
 
 ## Parts and data
 
-One native Bend2 executable supplies a local service and a command client.
-Three modules implement the workflow:
+One native Bend2 executable supplies the coordinator commands. Each invocation
+opens the database named on its command line and performs one command; a `turn`
+or `receive` invocation stays in the foreground and supervises one native
+process. Three modules implement the workflow:
 
 | Part | Responsibility | Data kept |
 |---|---|---|
@@ -24,76 +32,120 @@ Three modules implement the workflow:
 | Harness adapters | Start or resume a subscription session, send input, observe questions, output and turn completion, stop on instruction, and inject parent notifications through the native harness. | Native connection handles in memory; session identity and complete output files on disk. Credentials remain with the harness. |
 | Git operations | Create worker worktrees, inspect changes, prepare a landing, run selected checks, and advance the target branch. | Worker branches and worktrees; landing input commit, target before, candidate commit, check output and result commit. |
 
-The coordinator stores current records and pending messages in a repository-local
-SQLite database. A transaction saves a report and its pending parent delivery
-together. This addresses lost reports across process exits and the observed
+The coordinator stores current records and pending messages in a SQLite database
+named on its command line. Each mutation runs inside one `BEGIN IMMEDIATE`
+transaction, and a report and its pending parent delivery are saved together.
+That transaction addresses lost reports across process exits and the observed
 unwoken turn-end condition (#572). Bend2 decides transitions; the SQLite C
 binding executes transactions. Reports and command receipts retain their IDs
 when retried. Large transcripts and check output are files referenced by those
 records. Git stores source history. Live process and worktree facts are read
 from the host and Git when needed.
 
-The service is the database's single writer. It binds local connections to
-session IDs for message routing and parentage. Workers report and ask through
-that identity; parent IDs route their reports and guidance. The agents share
-the local user's repository access. Session IDs establish routing, not a security
-boundary between these agents.
+Each command is its own process and opens the shared SQLite database. The
+database holds the coordination state, and its `BEGIN IMMEDIATE` transaction is
+the writer serialization point: SQLite admits one writer at a time. The approved
+design's resident service is not implemented, and the single-writer property
+comes from that transaction. Commands bind local connections to session IDs
+for message routing and parentage through the session row's parent and endpoint
+columns. Workers report and ask through that identity; parent IDs route their
+reports and guidance. The agents share the local user's repository access.
+Session IDs establish routing, not a security boundary between these agents.
 
 ## Commands and notifications
 
-The initial commands are `attach`, `recruit`, `guide`, `ask`, `report`, `status`,
-`land` and `stop`. `attach` binds the existing native root session and target
-branch. `recruit` takes a task and explicit harness/model/effort; its answer names
-the worker and workspace. Long operations return an operation ID; their result
-is delivered to the requesting agent. `status` shows the observed route, current
-operation, latest report and work location. Errors include the operation,
-observed failure and the available next action.
+The commands are `attach`, `recruit`, `connect`, `bind`, `message` and
+`message-file`, `report`, `ask` and `ask-file`, `observe-file`, `ack`, `session`,
+`delivery`, `pending`, `inbox`, `status`, `workers`, `turns`, `worktree`, `land`,
+`land-checked`, `push`, `turn` and `receive`. `attach ID HARNESS NATIVE
+ENDPOINT` records the session identity, its harness, its native session ID and
+its delivery endpoint. Worker branches come from `recruit`; the target branch is
+supplied to `land` and `land-checked`. `recruit` takes the worker identity,
+parent, harness, model, effort, repository, branch, worktree path and base; its
+answer names the worker and workspace, and the task arrives with the worker's
+first `turn`. Guidance is a `message` with kind `guidance`. The
+[Bend2 README](../../bend2/README.md) gives each command's arguments.
+
+Each command answers with JSON text as it completes. `turn` and `receive` are the
+long operations: each stays in the foreground while it supervises one native
+process. `status` shows the stored route, workspace and pending count. Errors
+name the observed failure and the next action.
 
 Every turn completion persists the harness's final output and wakes the parent,
 including turns that contain no explicit `report` call. A question is delivered
-while the worker session still exists. Guidance enters the harness's supported
-input queue or starts its next turn. The parent makes continuation decisions.
+while the worker session still exists. For OMP, the supervisor sends pending
+guidance as native `steer` frames on a response, message completion or tool
+event; the other harnesses receive further instructions when their next native
+turn starts. The parent makes continuation decisions.
 A worker's declaration that it is done or an explicit parent stop ends its work.
 Process failure reports the exit and retained workspace to the parent.
 
 A native attachment must demonstrate that a report can start a parent turn while
-the parent is idle. It acknowledges delivery only after native acceptance.
-Pending notifications survive disconnection and are sent on reconnection;
-repeated delivery carries the same message ID. Delivery acknowledgment means
-accepted input, not completed parent action. A lost acknowledgment can cause a
-repeated notification. The UI exposes an unavailable parent connection, and
-reconnecting resumes delivery. A log line or ordinary MCP tool response does
-not establish an unsolicited native wake.
+the parent is idle. The recipient records acceptance with `ack` after the
+message reaches its native session. A receipt records native acceptance of
+that message alone; it does not establish that the parent reviewed the message
+or that a branch landed, which the receipt body and the Git result establish
+separately. Pending notifications survive disconnection and are sent on
+reconnection; repeated delivery carries the same message ID. A delivery failure
+returns an error to the writer and leaves the message pending. `pending` lists
+it with the recipient's current endpoint, and `inbox` lists it; `delivery ID`
+reads the stored message and that endpoint without sending it, and `receive`
+reads the pending input and starts the native attempt. A lost acknowledgment
+can cause a repeated notification. A log line or ordinary MCP tool response
+does not establish an unsolicited native wake.
 
-After restart, the service opens pending records and reconciles native sessions,
-Git refs and worktrees. An uncertain process start is inspected before another
-session is started. A lost root connection is shown explicitly. A recorded
-status alone never establishes that a process is running or that work landed.
+After restart, a fresh process reads pending records and reconciles native
+sessions, Git refs and worktrees. An uncertain process start is inspected before
+another session is started. A lost root connection is reported when the root
+reattaches and its pending input replays. A recorded status alone never
+establishes that a process is running or that work landed. The
+[process-loss recovery run](host-restart-2026-09-28.md) validates recovery after
+every coordinator and harness process for two sessions is killed while the host
+stays up; host reboot and power-loss durability are not validated. The case of a
+supervisor that dies while its harness child survives is recorded in
+[native delivery](native-receive-2026-09-28.md) and
+[receive recovery](receive-recovery-2026-09-28.md).
 
 ## Preserving and landing work
 
 Each worker gets its own branch and worktree from an explicit base. Every report
 names that location and its current commit, including dirty-worktree information.
-Worktrees, untracked files and branch tips survive worker exit and service
+Worktrees, untracked files and branch tips survive worker exit and coordinator
 restart. Cleanup is explicit; the initial implementation retains workspaces.
 A worker may finish a turn with uncommitted work, which its parent can inspect
 and ask it to commit.
 
-`land-checked` takes a committed worker tip and the configured target. Git
-operations prepare a merge candidate in a separate worktree, preserving the
-worker's commits. Conflicts return their paths and the prepared worktree to the
-requesting agent. Each selected check runs on both the candidate and the target.
-Candidate failure identities absent from the target block the landing. An
-unjudged candidate run blocks; an unjudged target run blocks when its candidate
-run fails. Checks use task behavior as their specification.
+`land-checked WORKER_ID REPO TARGET_BRANCH CHECK FILES` takes a committed worker
+branch and the configured target. Git operations prepare a squashed candidate
+in a separate worktree, preserving the worker's commits. Conflicts return their
+unmerged paths and the prepared worktree to the requesting agent. Each selected
+check runs on both the candidate and the target. Candidate failure identities
+absent from the target block the landing. An unjudged candidate run blocks; an
+unjudged target run blocks when its candidate run fails. Checks use task
+behavior as their specification. The
+[checked-landing record](checked-landing-2026-09-28.md) and its
+[measurement artifact](measurements/2026-09-28-checked-landing.json) describe the
+gate and the target-movement scenario.
 
-A successful landing advances the target to the checked candidate only while
-its prior commit still matches. A changed target returns a retry instruction and
-retains the candidate and worker work. A new `land-checked` invocation prepares
-and checks a candidate against the current target. The target branch must be
-free of another checked-out worktree before a direct ref update. Recovery reads Git to resolve a lost acknowledgment;
-worker branches remain available. The result names the actual target commit.
-The first slice lands locally; remote publication is a later explicit operation.
+A successful landing advances the target to the checked candidate through a
+compare-and-swap ref update using the checked target commit as the expected old
+value, so it advances only while that commit still matches. A target that moved
+during the checks blocks that invocation and retains the candidate and worker
+work; a new `land-checked` invocation prepares and checks a candidate against the
+current target. A landed or already-merged answer removes the two scratch
+worktrees it prepared, and a blocked or conflicted answer keeps them until that
+worker's next attempt. The target branch must be free of another checked-out
+worktree before a direct ref update, and a held target returns its `target busy`
+failure. Recovery reads Git to resolve a lost acknowledgment; worker branches
+remain available. The result names the actual target commit.
+
+`push REPO BRANCH REMOTE` publishes an advanced target with Git's ordinary push
+and answers `pushed` with the branch and remote, or `rejected` with a
+generated reason naming the failed command. Retained runs read
+the advertised ref back with `git ls-remote` against a declared scratch bare
+remote, including a refused non-fast-forward push. Network publication to a
+repository remote remains the operator's explicit action
+([root day](root-day-2026-09-27.md), [live worker](live-worker-2026-09-26.md)).
 
 ## Deliberate omissions
 
@@ -106,10 +158,16 @@ use demonstrates the missing behavior.
 
 ## Implementation boundary
 
-Use the pinned Bend 2.0.25 toolchain initially. Its recorded
+The implementation uses the pinned Bend 2.0.25 toolchain. Its recorded
 [C-only effect example](examples/c-only-spawn.evidence.md) demonstrates a native
-foreign effect; process supervision, database transactions and harness wake
-still need executable implementations and tests. C supplies host primitives;
-Bend2 owns command meaning, delivery decisions and landing progression.
-Production libraries are ordinary imported modules. Tests have separate entry
-points and exercise behavior through the real executable.
+foreign effect. The host bindings under `bend2/src/host/` supply process
+supervision, SQLite transactions, file effects and the session lock, and the
+coordinator wakes a parent endpoint after a committed report. The
+[Bend2 architecture](architecture.md) states each module's responsibility and
+the laws the entry proves.
+[Native delivery validation](native-receive-2026-09-28.md) records a Codex root
+and two OMP workers over this path. C supplies host primitives; Bend2 owns
+command meaning, delivery decisions and landing progression. Production
+libraries are ordinary imported modules. Tests have separate entry points and
+exercise behavior through the real executable. `bend2/scripts/check-native.sh`
+builds and runs them.

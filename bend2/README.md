@@ -229,6 +229,27 @@ Reports remain pending until the recipient acknowledges them with `ack`. Native
 events append to `OUTPUT_LOG`, and report writers retain receiver output at
 `DATABASE.root.log`. A failed native turn leaves unacknowledged messages pending.
 
+When the Bend receive observer exits while its retained process owner and
+native process survive, the owner keeps the session lock, native stdin, and
+exit status, and starts a replacement observer with the recorded recovery
+command. The replacement attaches to the existing attempt directory, reads
+its output from the beginning under the original report ID and inbox cutoff,
+and a contending receive answers `queued`. The
+[detailed recovery description](../docs/bend2/receive-recovery-2026-09-28.md#attempt-ownership)
+records this observer-loss boundary.
+
+When a resumed attempt exits without a terminal event and its stderr records
+a refused conversation, receive stores a recovery input with the workspace
+Git status, clears the refused native identity, and records a parent notice.
+The next receive reads the pending task with that recovery input and starts
+a fresh attempt; native initialization records the fresh identity. Loss of the retained process owner while its native process survives
+requires separate recovery work and validation; the observer-loss evidence
+does not cover it ([recovery boundary](../docs/bend2/receive-recovery-2026-09-28.md#recovery-boundary)).
+Recovery after loss of all coordinator and harness processes is described in
+the [process-loss record](../docs/bend2/host-restart-2026-09-28.md); that run
+kills processes while the host, its filesystem, and its storage keep running.
+Host reboot and power-loss durability remain unvalidated.
+
 For OMP, register harness `omp` and use its executable, model and effort in the
 same endpoint. Each harness uses its existing login; a launch wrapper can set
 its documented configuration environment. Native initialization records the
