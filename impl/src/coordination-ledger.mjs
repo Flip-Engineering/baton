@@ -2662,17 +2662,6 @@ export function _apply(store, event) {
     store._runStops.set(p.runId, freeze({
       ...clone(old), status: 'stopped', receipt: clone(p.receipt), completedEvent: event.seq, completedAt: event.ts,
     }));
-  } else if (event.kind === 'run.verification_retry_admitted') {
-    store._validateRunVerificationRetryAdmission(p, event, true);
-    store._runVerificationRetries.set(store._runVerificationRetryKey(p.runId, p.nodeKey), freeze({
-      ...clone(p), actor: event.actor, status: 'pending', admittedEvent: event.seq, admittedAt: event.ts,
-      receipt: null, completedEvent: null, completedAt: null,
-    }));
-  } else if (event.kind === 'run.verification_retry_completed') {
-    const old = store._validateRunVerificationRetryCompletion(p, event, true);
-    store._runVerificationRetries.set(store._runVerificationRetryKey(p.runId, p.nodeKey), freeze({
-      ...clone(old), status: p.receipt.state, receipt: clone(p.receipt), completedEvent: event.seq, completedAt: event.ts,
-    }));
   } else if (event.kind === 'web.command_admitted') {
     const command = freeze({ ...clone(p), status: 'admitted', admittedEvent: event.seq, admittedAt: event.ts, outcome: null, completedEvent: null });
     store._webCommands.set(p.commandId, command);
@@ -3578,83 +3567,6 @@ export function goalPlanSummary(store, repoId, limit = 100_000, cursor = 0) {
     goals: page.rows.map((row) => clone(row.goal)),
     plans: page.rows.filter((row) => row.plan).map((row) => clone(row.plan)),
     truncated: page.truncated, nextCursor: page.nextCursor,
-  });
-}
-
-export function _runVerificationRetryKey(runId, nodeKey) { return `${runId}\0${nodeKey}`; }
-
-export function runVerificationRetry(store, runId, nodeKey) {
-  if (!validRunId(runId) || !boundedText(nodeKey, 256)) throw new TypeError('run verification retry coordinates are invalid');
-  return clone(store._runVerificationRetries.get(store._runVerificationRetryKey(runId, nodeKey)) ?? null);
-}
-
-export function pendingRunVerificationRetries(state, limit = 1_000) {
-  if (!Number.isSafeInteger(limit) || limit <= 0 || limit > 100_000) throw new TypeError('run verification retry scan limit is invalid');
-  return [...state.values()].filter((retry) => retry.status === 'pending')
-    .sort((a, b) => a.admittedEvent - b.admittedEvent).slice(0, limit).map(clone);
-}
-
-export function _readRetryVerificationEvidence(store, reference, integrity) {
-  const fail = (message, code = 'run_verification_retry_unavailable') => store._runVerificationRetryFailure(message, code, integrity);
-  if (!reference || typeof reference !== 'object' || Array.isArray(reference)
-    || !Number.isSafeInteger(reference.coordinationSeq)) fail('run verification retry evidence reference is invalid', 'run_verification_retry_invalid');
-  const mapped = store._events[reference.coordinationSeq - 1];
-  const source = mapped?.kind === 'evidence.mapped'
-    ? store._operationalRead?.(mapped.payload.worker, mapped.payload.workerSeq) : null;
-  if (!mapped || mapped.payload?.kind !== 'verify.reverified' || source?.kind !== 'verify.reverified'
-    || source.actor !== 'policy' || digest(source) !== mapped.payload.digest) {
-    fail('run verification retry evidence is not a mapped hub verification');
-  }
-  return { mapped, source };
-}
-
-export function completeRunVerificationRetry(store, fields, auth) {
-  if (!fields || typeof fields !== 'object' || Array.isArray(fields)
-    || Object.keys(fields).sort().join(',') !== ['attempt', 'manifests', 'nodeKey', 'receipt', 'runId', 'schemaVersion'].join(',')
-    || !Array.isArray(fields.manifests)) {
-    throw new CoordinationRefusal('run verification retry completion is invalid', 'run_verification_retry_invalid');
-  }
-  const { manifests, ...payload } = clone(fields);
-  const current = store._runVerificationRetries.get(store._runVerificationRetryKey(fields.runId, fields.nodeKey));
-  if (current && current.status !== 'pending' && current.attempt === fields.attempt) {
-    const prior = store._byKey.get(auth?.key);
-    if (!prior || prior.kind !== 'run.verification_retry_completed' || prior.actor !== auth?.actor
-      || canonicalDigest(prior.payload) !== canonicalDigest(payload)) {
-      throw new CoordinationRefusal('run verification retry completion conflict', 'run_verification_retry_conflict');
-    }
-    return freeze({ ok: true, result: 'replay', event: clone(prior), retry: store.runVerificationRetry(fields.runId, fields.nodeKey) });
-  }
-  const preview = { actor: auth?.actor, idempotencyKey: auth?.key, payload };
-  const retry = store._validateRunVerificationRetryCompletion(payload, preview, false);
-  if (store._byKey.has(auth.key)) throw new CoordinationRefusal('run verification retry completion idempotency conflict', 'run_verification_retry_conflict');
-  const accepted = payload.receipt.state === 'accepted';
-  if (accepted && manifests.length === 0) {
-    throw new CoordinationRefusal('an accepted retry must register its commit and verification artifacts', 'run_verification_retry_invalid');
-  }
-  if (!accepted && manifests.some((manifest) => manifest?.accepted === true)) {
-    throw new CoordinationRefusal('only an accepted retry may register accepted artifacts', 'run_verification_retry_invalid');
-  }
-  const task = store._tasks.get(retry.taskId);
-  const prepared = manifests.map((manifest) => store._prepareArtifact(manifest, accepted ? 'completed' : task.status));
-  const batchTs = store._clock();
-  const entries = [{ kind: 'run.verification_retry_completed', payload, auth, fixedTs: batchTs }];
-  if (accepted) {
-    entries.push({
-      kind: 'task.transitioned',
-      payload: { id: task.id, from: 'failed', to: 'completed', expectedVersion: task.version, newVersion: task.version + 1, evidence: clone(payload.receipt.evidence) },
-      auth: { actor: auth.actor, key: `${auth.key}:transition` }, fixedTs: batchTs,
-    });
-  }
-  entries.push(...prepared.map((manifest) => ({
-    kind: 'artifact.registered', payload: manifest,
-    auth: { actor: auth.actor, key: `${auth.key}:artifact:${manifest.id}` }, fixedTs: batchTs,
-  })));
-  const events = store._appendBatch(entries);
-  return freeze({
-    ok: true, result: 'completed', event: clone(events[0]),
-    retry: store.runVerificationRetry(fields.runId, fields.nodeKey),
-    task: store.task(retry.taskId),
-    artifacts: prepared.map((manifest) => store.artifact(manifest.id)),
   });
 }
 

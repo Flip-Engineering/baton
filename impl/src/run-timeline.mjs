@@ -7,7 +7,6 @@ const SAFE_COORDINATION_KINDS = new Set([
   'run.lineage_admitted', 'run.orchestrator_lease_issued',
   'run.orchestrator_lease_revoked',
   'run.stop_admitted', 'run.stop_completed',
-  'run.verification_retry_admitted', 'run.verification_retry_completed',
   'task.acceptance_revoked', 'task.claimed', 'task.created', 'task.resources_released',
   'task.transitioned',
 ]);
@@ -51,8 +50,6 @@ const SUMMARIES = Object.freeze({
   'control.session_preservation_reattached': 'The exact preserved provider session was reattached.',
   'run.stop_admitted': 'Run stop was durably admitted.',
   'run.stop_completed': 'Run stop completed with cleanup evidence.',
-  'run.verification_retry_admitted': 'Run result verification retry was durably admitted.',
-  'run.verification_retry_completed': 'Run result verification retry completed.',
   'task.claimed': 'Run work was claimed.',
   'task.created': 'Run work was created.',
   'task.transitioned': 'Run work changed lifecycle state.',
