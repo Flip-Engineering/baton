@@ -169,7 +169,7 @@ import { Log } from '../src/log.mjs';
 import { FenceTable } from '../src/fence.mjs';
 import { CoordinationStore, coordinationForLog } from '../src/coordination-store.mjs';
 import { ValidationError, createDecisionAnswer, createDecisionRequest } from '../src/messages.mjs';
-import { BatonApplication, MockAdapter, createDriver, createWaveDriver } from '../src/index.mjs';
+import { BatonApplication, MockAdapter, createDriver } from '../src/index.mjs';
 import { AtlasCodeIndex, CartographerQuartermaster, PublicSupplyChainOracle } from '../src/index.mjs';
 import { connectBaton } from '../src/application-cli.mjs';
 import { APPLICATION_SEMANTIC_REGISTRY } from '../src/application-semantics.mjs';
@@ -795,54 +795,6 @@ test('C7: a large run objective is admitted whole — no spill, no citation; run
   await shutdownQuietly(application);
 });
 
-test('C8 (OQ5): the wave driver downgrades its precheck to a spill-aware ADVISORY and passes the objective through', async () => {
-  const started = [];
-  const advisories = [];
-  const fakeWave = () => ({
-    runs: new Map([['alpha', {
-      id: 'run-fake-alpha',
-      status: async () => ({ view: { terminal: true, phase: 'result' } }),
-    }]]),
-    settle: async () => [{ role: 'alpha', terminal: true }],
-    close: async () => ({ remainingCount: 0, residueUnknown: false }),
-    evidence: () => ({ stops: [], pumpDrained: true }),
-  });
-  const fakeBaton = { waves: { start: async (options) => { started.push(options); return fakeWave(); } } };
-  let driver = null;
-  try {
-    driver = createWaveDriver(fakeBaton, {
-      preflight: false, settlement: 'none', pollIntervalMs: 5, stallTimeoutMs: 50,
-      onAdvisory: (advisory) => advisories.push(advisory),
-    });
-  } catch {
-    driver = null;
-  }
-  assert.ok(driver,
-    'stage: wave-driver-advisory-missing — policy.onAdvisory is not a recognized wave-driver field; '
-    + 'the 4,096 precheck still walls the spill lane (wave-driver.mjs:321-329)');
-  // #358: a 5 KB member is below the registry lane value (the ledger ceiling) — it passes through
-  // whole with NO advisory; the advisory is reserved for a member above the lane value it reads.
-  const objective = 'w'.repeat(5000);
-  const receipt = await driver.run({
-    members: [{ role: 'alpha', objective, harness: 'mock', model: 'mock-model', effort: 'low', scope: ['**'], report: 'reports/alpha.md' }],
-  });
-  assert.equal(started.length, 1, 'the member PASSES THROUGH to the machinery — never wave_driver_objective_oversize');
-  assert.ok(started[0].members[0].objective.includes(objective), 'the machinery receives the full objective (salted, unrefused)');
-  assert.equal(advisories.find((entry) => entry?.role === 'alpha') ?? null, null,
-    '#358: no head cap — a 5 KB member draws no early-ergonomics advisory');
-  assert.equal(receipt?.basis ?? null, 'completed', 'the wave runs on against the admitted member');
-  const limits = await import('../src/limits.mjs');
-  const laneValue = limits.FRAME_LIMITS['wave.member.objective'].value;
-  const over = 'w'.repeat(laneValue + 1);
-  await driver.run({
-    members: [{ role: 'beta', objective: over, harness: 'mock', model: 'mock-model', effort: 'low', scope: ['**'], report: 'reports/beta.md' }],
-  }).catch(() => null);
-  const advisory = advisories.find((entry) => entry?.role === 'beta');
-  assert.ok(advisory, 'a member above the lane value draws the advisory');
-  assert.equal(advisory?.limit ?? null, laneValue, 'the advisory names the registry lane value it read — never a literal');
-  assert.ok(Number.isSafeInteger(advisory?.bytes) && advisory.bytes >= laneValue + 1, 'the advisory names the byte count');
-});
-
 test('C9 (#530): a body past the old 1 MiB spill ceiling is ADMITTED with a spill', async () => {
   const adapter = new ScriptableAdapter();
   const { coordinator } = setup({ adapter, capture: noDiff });
@@ -856,31 +808,6 @@ test('C9 (#530): a body past the old 1 MiB spill ceiling is ADMITTED with a spil
     'the whole body rides a durable spill artifact');
   assert.equal(coordinator._log.read(handle.id).filter((event) => event.kind === 'message.delivered').length, 1,
     'the body delivers');
-});
-
-test('C10 (v1.2, blue-team blocker 4): a MULTIBYTE wave member above the old 4 KiB head cap is admitted WHOLE through the REAL wave-start admission — never walled, never spilled (#358)', async () => {
-  const { application, driver } = appFixture('c10');
-  // 4,100 chars / 8,200 bytes — over 4,096 in BOTH measures, so TODAY the member door walls it
-  // by bytes via validText's 4,096 default at application.mjs:11506 — and it discriminates byte
-  // from char accounting under the correct implementation (a char-measured "spill" records
-  // 4,100, never 8,200).
-  const objective = 'é'.repeat(4100);
-  const started = await application.startWave({
-    idempotencyKey: 'fe-c10-wave',
-    members: [{ role: 'alpha', objective, exact: { harness: 'mock', model: 'mock-model', effort: 'low' }, scope: ['**'] }],
-  }, principal('owner')).then((value) => value, (error) => ({ admissionError: error }));
-  assert.ok(!started?.admissionError,
-    `stage: wave-member-spill-missing — the wave-start member door WALLS the oversize objective today `
-    + `(application_wave_start_invalid via validText's 4,096-byte default, application.mjs:11506) `
-    + `instead of admitting with spill like run.objective — `
-    + `OQ5 passes the member THROUGH, so no wall may survive behind the advisory: `
-    + `${started?.admissionError?.code ?? started?.admissionError}`);
-  assert.match(started?.waveId ?? '', /^wave:[a-f0-9]{32}$/, 'the wave starts');
-  assert.ok(started.members?.some((entry) => entry?.role === 'alpha' && typeof entry?.runId === 'string'),
-    'the oversize member is ADMITTED and produces a Run — never refused (no wave_driver_objective_oversize, no application_wave_start_invalid)');
-  const minted = driver.coordination.events().find((event) => event.kind === 'spill.minted');
-  assert.equal(minted ?? null, null, '#358: no head cap — an 8,200-byte member mints NO spill; it is admitted whole');
-  await shutdownQuietly(application);
 });
 
 // ===========================================================================

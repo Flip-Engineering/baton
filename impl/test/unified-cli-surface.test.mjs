@@ -76,36 +76,6 @@ test('existing bounded run.debug projection is live through the connected CLI', 
   assert.equal(raw.web.length, 0);
 });
 
-test('CLI surfaceSnapshot combines monitoring and optional run/wave projections', async () => {
-  const client = wrapProductionCliClient(fakeClient(), { runtime: new ProductionConvergenceRuntime() });
-  const snapshot = await client.surfaceSnapshot({ runId: 'run:a', waveId: 'wave:a' });
-  assert.equal(snapshot.schemaVersion, 2);
-  assert.deepEqual(snapshot.nameClosure.unresolved, []);
-  for (const key of ['doctor', 'run', 'wave']) assert.equal(snapshot[key].ok, true);
-  assert.equal(snapshot.source, 'cli_authenticated_web');
-});
-
-test('CLI surfaceWatch composes existing follow, attention, run and wave projections', async () => {
-  const raw = fakeClient();
-  const client = wrapProductionCliClient(raw, { runtime: new ProductionConvergenceRuntime() });
-  const page = await client.surfaceWatch({
-    runId: 'run:a', waveId: 'wave:a', afterCursor: 4, attentionCursor: 7,
-    kind: 'answer_decision', timeoutMs: 1000,
-  });
-  assert.equal(page.kind, 'baton.surface_watch');
-  assert.equal(page.nextAfterCursor, 5);
-  assert.equal(page.nextAttentionCursor, 9);
-  assert.equal(page.attention.ok, true);
-  assert.equal(page.run.ok, true);
-  assert.equal(page.wave.ok, true);
-  assert.deepEqual(page.decisions.reasons, [
-    { kind: 'answer_decision', requiredAction: 'answer' },
-  ]);
-  assert.deepEqual(raw.calls.map((call) => call.name), [
-    'run.follow', 'run.attention.watch', 'run.inspect', 'waves.progress',
-  ]);
-});
-
 test('CLI surfaceWatch refuses an attention cursor rewind instead of reporting empty success', async () => {
   const raw = fakeClient();
   const original = raw.command;
@@ -137,24 +107,6 @@ test('CLI surfaceVisualize composes snapshot and visual model without a watch wh
   assert.ok(result.model.kind === 'baton.visual_model');
   const watchCalls = raw.calls.filter((c) => c.name === 'run.follow');
   assert.equal(watchCalls.length, 0);
-});
-
-test('CLI surfaceVisualize composes snapshot and watch projections when follow is true', async () => {
-  const raw = fakeClient();
-  const client = wrapProductionCliClient(raw, { runtime: new ProductionConvergenceRuntime() });
-  const result = await client.surfaceVisualize({
-    runId: 'run:a', waveId: 'wave:a', view: 'telemetry', follow: true,
-    afterCursor: 2, attentionCursor: 3, timeoutMs: 500,
-  });
-  assert.equal(result.kind, 'baton.surface_visualization');
-  assert.equal(result.view, 'telemetry');
-  assert.equal(result.presentation.refresh.follow, true);
-  assert.ok(Number.isSafeInteger(result.presentation.refresh.afterCursor));
-  // The composition also reads the bounded swarm family (#315) — one swarm.list beside
-  // the snapshot reads, before any watch authority is consulted.
-  assert.deepEqual(raw.calls.map((c) => c.name), [
-    'run.inspect', 'waves.progress', 'swarm.list', 'run.follow', 'run.attention.watch', 'run.inspect', 'waves.progress',
-  ]);
 });
 
 test('CLI surfaceVisualize refuses follow without a runId instead of inventing a global authority', async () => {

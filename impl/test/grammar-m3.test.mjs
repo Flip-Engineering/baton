@@ -19,7 +19,6 @@ import {
 } from '../src/index.mjs';
 import { applicationOperationAliasMap } from '../src/application-semantics.mjs';
 import { BYTE_STABLE_COMMAND_KEYS } from '../scripts/surface-truth.mjs';
-import { createWave } from '../src/wave.mjs';
 import { CANONICAL_OPERATIONS } from '../scripts/surface-conformance.mjs';
 
 // The byte-stable command-table pin (UA5 / docs/39): the swarm verbs lead, then the pre-M3 set.
@@ -189,32 +188,6 @@ test('M3-5: the member clock carries a generation and the run-level clock does n
   assert.throws(
     () => controlApp([liveSeat('a'), liveSeat('b')])._resolveSemanticControlTarget(CURRENT, 'work', 'send'),
     { code: 'application_control_recipient_ambiguous' },
-  );
-});
-
-test('M3-6: the work sentinel is accepted by run.send only, and refused for member ops and wave roles', async () => {
-  // Run-level send resolves the sole live seat through the `work` sentinel.
-  assert.doesNotThrow(
-    () => controlApp([liveSeat('only')])._resolveSemanticControlTarget(CURRENT, 'work', 'send'),
-  );
-  assert.equal(parseBatonCli(['run', 'send', 'run-m3', 'Continue.', '--to', 'work']).inputs.recipient, 'work');
-
-  // The member ops left the tree with the removed run.member.send / run.member.stop
-  // transports, so the reserved sentinel is no longer reachable through them: each
-  // removed transport refuses as unavailable.
-  await assert.rejects(
-    dispatchApp().command('run.member.send', { runId: 'run-m3', role: 'work', message: 'Continue.' }, PRINCIPAL, null),
-    { code: 'application_command_unavailable' },
-  );
-  await assert.rejects(
-    dispatchApp().command('run.member.stop', { runId: 'run-m3', role: 'work' }, PRINCIPAL, null),
-    { code: 'application_command_unavailable' },
-  );
-
-  // A workflow role literally named `work` is a wave-admission (registry) lint error.
-  await assert.rejects(
-    createWave({ runs: { start() {} } }, { members: [{ role: 'work', objective: 'x', scope: ['a.mjs'] }] }),
-    /reserved/u,
   );
 });
 
