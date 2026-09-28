@@ -34,15 +34,8 @@ export function foldCanonicalCase(value) {
 export const CANONICAL_ORDER_MIGRATION = Symbol('canonical-order-migration');
 
 export function normalizeCanonicalOrderPolicy(value) {
-  closedOptions(value, ['maxEventBytes', 'maxEvents', 'maxLedgerBytes', 'maxReceiptBytes'], 'canonical order policy');
-  for (const field of ['maxEventBytes', 'maxEvents', 'maxLedgerBytes', 'maxReceiptBytes']) {
-    if (!Number.isSafeInteger(value[field]) || value[field] <= 0) throw new TypeError(`canonical order policy ${field} is invalid`);
-  }
-  if (value.maxEventBytes > value.maxLedgerBytes) throw new TypeError('canonical order policy event bound exceeds its ledger bound');
-  return Object.freeze({
-    maxLedgerBytes: value.maxLedgerBytes, maxEventBytes: value.maxEventBytes,
-    maxEvents: value.maxEvents, maxReceiptBytes: value.maxReceiptBytes,
-  });
+  closedOptions(value, [], 'canonical order policy');
+  return Object.freeze({});
 }
 
 export function normalizeCanonicalOrderMigration(value, policy) {
@@ -50,24 +43,15 @@ export function normalizeCanonicalOrderMigration(value, policy) {
   if (!value || typeof value !== 'object' || Array.isArray(value) || !['adopt_compatible', 'reset_empty'].includes(value.mode)) {
     throw new TypeError('canonical order migration is invalid');
   }
-  const fields = value.mode === 'adopt_compatible'
-    ? ['expectedEvents', 'expectedPrefixDigest', 'maxEventBytes', 'maxEvents', 'maxLedgerBytes', 'maxReceiptBytes', 'mode']
-    : ['maxEventBytes', 'maxEvents', 'maxLedgerBytes', 'maxReceiptBytes', 'mode'];
+  const fields = value.mode === 'adopt_compatible' ? ['expectedEvents', 'expectedPrefixDigest', 'mode'] : ['mode'];
   closedOptions(value, fields, 'canonical order migration');
-  const requestedPolicy = normalizeCanonicalOrderPolicy({
-    maxLedgerBytes: value.maxLedgerBytes, maxEventBytes: value.maxEventBytes,
-    maxEvents: value.maxEvents, maxReceiptBytes: value.maxReceiptBytes,
-  });
-  for (const field of Object.keys(requestedPolicy)) {
-    if (requestedPolicy[field] > policy[field]) throw new TypeError('canonical order migration exceeds deployment policy');
-  }
   if (value.mode === 'adopt_compatible') {
     if (!/^[a-f0-9]{64}$/.test(value.expectedPrefixDigest ?? '')
-      || !Number.isSafeInteger(value.expectedEvents) || value.expectedEvents <= 0 || value.expectedEvents > requestedPolicy.maxEvents) {
+      || !Number.isSafeInteger(value.expectedEvents) || value.expectedEvents <= 0) {
       throw new TypeError('canonical order adoption identity is invalid');
     }
   }
-  return Object.freeze({ ...value, ...requestedPolicy });
+  return Object.freeze({ ...value });
 }
 
 export function sortCanonicalStrings(values) {

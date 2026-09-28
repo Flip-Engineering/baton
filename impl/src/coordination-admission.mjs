@@ -6300,29 +6300,6 @@ export function hasSwarmParticipantRun(state, runId) {
     .some((participant) => participant.runId === runId));
 }
 
-export function _assertOrientationReceiptCeiling(store, payload) {
-  if (!store._orientationReceiptCeilings) return;
-  const ceilings = store._orientationReceiptCeilings;
-  // #367: the per-attempt counter fold (built in the context.read arm of _apply) answers the
-  // count and cumulative-byte bounds in O(1) — the one canonicalBytes call below is for the
-  // INCOMING row; prior receipts are never re-scanned or re-serialized here.
-  const counter = store._contextReadAttemptCounters.get(contextReadAttemptKey(payload));
-  if ((counter?.count ?? 0) >= ceilings.maxReceiptsPerAttempt) {
-    throw new CoordinationRefusal('orientation receipt count ceiling exceeded', 'orientation_receipt_ceiling');
-  }
-  if ((counter?.bytes ?? 0) + canonicalBytes(payload) > ceilings.maxReceiptBytesPerAttempt) {
-    throw new CoordinationRefusal('orientation receipt byte ceiling exceeded', 'orientation_receipt_ceiling');
-  }
-}
-
-export function _assertOrientationProposalCeiling(store, workerId) {
-  if (!store._orientationReceiptCeilings) return;
-  const proposals = store.queryKnowledge({ types: ['Finding'] }).filter((node) => node.promotion?.trigger === 'orientation.overlay_proposed'
-    && (workerId === null || node.workerId === workerId));
-  if (proposals.length >= store._orientationReceiptCeilings.maxProposalsPerAttempt) {
-    throw new CoordinationRefusal('orientation proposal ceiling exceeded', 'orientation_receipt_ceiling');
-  }
-}
 
 export function checkScratch(store, resource, envRef) {
   if (!validEnvRef(envRef)) throw new CoordinationRefusal('scratch check requires immutable repoId/treeSha envRef', 'invalid_env_ref');
