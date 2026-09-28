@@ -394,7 +394,14 @@ class Land(unittest.TestCase):
         self.assertTrue(pathlib.Path(retry['dir']).is_dir())
         self.assertEqual(self.git('rev-parse', 'main').strip(), moved['commit'])
         self.assertEqual(self.git('show', 'main:file.txt').strip(), 'worker change for w3')
-        self.assertEqual(len(self.scratch_trees('w4')), 2)
+        self.assertEqual(self.scratch_trees('w4'), [pathlib.Path(retry['dir']).name])
+        unmerged = subprocess.run(
+            ['git', '-C', retry['dir'], 'diff', '--name-only', '--diff-filter=U'],
+            check=True, text=True, capture_output=True,
+        ).stdout.splitlines()
+        self.assertEqual(unmerged, ['file.txt'])
+        self.assertEqual(self.git('rev-parse', 'wd').strip(), worker)
+        self.assertEqual((self.repo / 'wt4' / 'file.txt').read_text(), 'worker change for w4')
 
     def test_conflicted_worker_relands_after_its_branch_is_rebased(self):
         self.waiting_checks()
