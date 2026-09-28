@@ -76,15 +76,8 @@ def main():
         directory = fixture.directory
 
         # A real repository with a real base commit, and one worktree per session.
-        repo = directory / 'repository'
-        repo.mkdir()
-        git('init', '-q', '-b', 'main', cwd=repo)
-        git('config', 'user.email', 'probe@example.invalid', cwd=repo)
-        git('config', 'user.name', 'Host restart probe', cwd=repo)
-        (repo / 'file.txt').write_text('base\n')
-        git('add', 'file.txt', cwd=repo)
-        git('commit', '-q', '-m', 'base', cwd=repo)
-        base = git('rev-parse', 'HEAD', cwd=repo)
+        repo = fixture.repo
+        base = fixture.base
 
         parent = 'root'
         for name in NAMES:
@@ -95,7 +88,7 @@ def main():
         # Input that must survive: one message per session, queued before any
         # endpoint is connected, so posting does not start a native turn.
         for name in NAMES:
-            fixture.message('pending-' + name, name, 'work after the power loss')
+            fixture.message('pending-' + name, name, 'work after process loss')
         for name in NAMES:
             fixture.coord('connect', name, 'native-' + name, fixture.endpoint(name))
 
@@ -119,8 +112,7 @@ def main():
             'inbox': {n: fixture.coord('inbox', n) for n in NAMES},
         }
 
-        # The power loss: supervisors and their harness children die where they
-        # stand, with no unwind and no release.
+        # Kill the supervisors and their harness children while the host stays up.
         for entry in evidence['started']:
             kill(entry['native'])
             kill(entry['supervisor'])
