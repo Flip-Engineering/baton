@@ -264,7 +264,7 @@ const sections = [
   ['candidates', 'Immutable mechanically verified Workflow candidates and their exact role bindings.'],
   ['feedback', 'Typed source-bound Workflow feedback packets and their candidate targets.'],
   ['rounds', 'Append-only Workflow Plan rounds, immutable Candidate lineage, and current round state.'],
-  ['result', 'Accepted and adopted result state.'],
+  ['result', 'Accepted result state.'],
   ['delivery', 'Integration state.'],
   ['cleanup', 'Stop, process reaping, worktree, and runtime cleanup.'],
   ['knowledge', 'Run-related causal knowledge summaries and evidence links.'],
