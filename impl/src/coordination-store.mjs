@@ -916,14 +916,6 @@ export class CoordinationStore {
     return coordinationReplay._validPreservedContinuationReceipt(receipt);
   }
 
-  _validateRunControlAdmission(p, event, integrity = false) { return coordinationAdmission._validateRunControlAdmission(this, p, event, integrity); }
-
-  _validateRunControlEffect(p, event, integrity = false) { return coordinationAdmission._validateRunControlEffect(this, p, event, integrity); }
-
-  _validateRunControlProviderAck(p, event, integrity = false) { return coordinationAdmission._validateRunControlProviderAck(this, p, event, integrity); }
-
-  _validateRunControlSettlement(p, event, integrity = false) { return coordinationAdmission._validateRunControlSettlement(this, p, event, integrity); }
-
   _validateRunStopAdmission(p, event, integrity = false) { return coordinationAdmission._validateRunStopAdmission(this, p, event, integrity); }
 
   _validateRunStopCompletion(p, event, integrity = false) { return coordinationAdmission._validateRunStopCompletion(this, p, event, integrity); }
@@ -1197,23 +1189,6 @@ export class CoordinationStore {
   admitRunVerificationRetry(fields, auth) { return coordinationAdmission.admitRunVerificationRetry(this, fields, auth); }
 
   completeRunVerificationRetry(fields, auth) { return coordinationLedger.completeRunVerificationRetry(this, fields, auth); }
-  runControl(controlId) {
-    return coordinationInternals.runControl(this._runControls, controlId);
-  }
-  runControls(runId, limit = 100_000) {
-    return coordinationInternals.runControls(this._runControls, runId, limit);
-  }
-
-  pendingRunControls(limit = 1_000) { return coordinationLedger.pendingRunControls(this._runControls, limit); }
-
-  admitRunControl(fields, auth) { return coordinationAdmission.admitRunControl(this, fields, auth); }
-
-  beginRunControlEffect(fields, auth) { return coordinationLedger.beginRunControlEffect(this, fields, auth); }
-
-  acknowledgeRunControl(fields, auth) { return coordinationLedger.acknowledgeRunControl(this, fields, auth); }
-
-  settleRunControl(fields, auth) { return coordinationLedger.settleRunControl(this, fields, auth); }
-
   pendingRunStops(limit = 1_000) { return coordinationLedger.pendingRunStops(this._runStops, limit); }
 
   admitRunStop(fields, auth) { return coordinationAdmission.admitRunStop(this, fields, auth); }

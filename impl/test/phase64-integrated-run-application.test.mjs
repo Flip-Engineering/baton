@@ -752,17 +752,11 @@ test('RC1/P91: Pythonic send settles durably', async () => {
     actualDelivery: 'nudge', sessionPreserved: false, continuation: null,
     onlyActiveMember: true, needsAttention: false,
   });
-  const records = driver.coordination.events().filter((event) => (
-    ['run.control_admitted', 'run.control_effect_started',
-      'run.control_provider_acked', 'run.control_settled'].includes(event.kind)
-  ));
-  assert.deepEqual(records.map((event) => event.kind), [
-    'run.control_admitted', 'run.control_effect_started',
-    'run.control_provider_acked', 'run.control_settled',
-  ]);
-  assert.equal(records.every((event) => /^control:[a-f0-9]{64}$/u.test(event.payload.controlId)), true);
-  assert.equal(driver.log.read(workerId).some((event) => event.kind === 'control.delivery_requested'
-    && /^control:[a-f0-9]{64}$/u.test(event.payload.controlId)), true);
+  assert.equal(driver.coordination.events().filter((event) => (
+    event.kind.startsWith('run.control_')
+  )).length, 0);
+  assert.equal(driver.log.read(workerId).some((event) => event.kind === 'control.nudge'
+    && event.payload.message === 'Keep the verification boundary explicit.'), true);
   await application.shutdown(principal('shutdown-admin'));
 });
 
@@ -801,13 +795,6 @@ test('P91 application: interrupt projects one paused attached member, then send 
   });
   assert.equal(driver.coordination.task(before.taskId).status, 'working');
   assert.equal(driver.coordination.runStop(proposed.runId), null);
-  const interruptControl = driver.coordination.runControls(proposed.runId)[0];
-  assert.equal(interruptControl.schemaVersion, 2);
-  assert.equal(interruptControl.turnDisposition, 'preserve_turn');
-  assert.equal(interruptControl.target.turnState, 'working');
-  assert.equal(interruptControl.target.preservationReceiptDigest, null);
-  assert.equal(interruptControl.target.sessionDigest, before.semanticControlBinding.sessionDigest);
-  assert.equal(interruptControl.providerAck.outcome.preservation.state, 'preserved');
   assert.equal(driver.coordination.events().some((event) => event.kind === 'evidence.mapped'
     && event.payload.kind === 'control.interrupt_confirmed'), true);
   const paused = await run.inspect();
@@ -823,13 +810,9 @@ test('P91 application: interrupt projects one paused attached member, then send 
   assert.equal(driver.coordinator.list()[0].worktree, before.worktree);
   assert.equal(driver.coordinator.list()[0].routeKey, before.routeKey);
   assert.equal(driver.coordination.snapshot().tasks.length, taskCount);
-  const sendControl = driver.coordination.runControls(proposed.runId)[1];
-  assert.equal(sendControl.schemaVersion, 2);
-  assert.equal(sendControl.target.turnState, 'interrupted');
-  assert.equal(sendControl.target.preservationReceiptDigest,
-    interruptControl.providerAck.outcome.preservation.receiptDigest);
-  assert.equal(sendControl.providerAck.outcome.actualDelivery, 'turn');
-  assert.equal(sendControl.providerAck.outcome.continuation.state, 'admitted');
+  assert.equal(driver.log.read(driver.coordinator.list()[0].id)
+    .some((event) => event.kind === 'lifecycle.turn_started'
+      && event.payload.followUp === true), true);
 
   const completed = await application.command(
     'run.wait', { runId: proposed.runId, timeoutMs: 5_000 }, principal('control-owner'),
@@ -914,14 +897,11 @@ test('P91 application restart: coordinate-free recovery attach-only reuses the p
     preservationDiagnostic: resumedDriver.coordinator._workers.get(workerId)
       ?.preservationAuthorityDiagnostic,
     receipt: resumedDriver.coordinator._workers.get(workerId)?.sessionPreservation,
-    controls: resumedDriver.coordination.runControls(proposed.runId),
   }));
   assert.deepEqual(beforeRecovery.nextActions, [{ kind: 'stop' }]);
 
   const replayHandle = resumedDriver.coordinator._workers.get(workerId);
   const exactReceipt = replayHandle.sessionPreservation;
-  const exactControls = resumedDriver.coordination.runControls(proposed.runId);
-  const runControls = resumedDriver.coordination.runControls.bind(resumedDriver.coordination);
   const reseal = (overrides) => {
     const core = { ...exactReceipt, ...overrides };
     delete core.receiptDigest;
@@ -1032,15 +1012,6 @@ test('P91 application restart: coordinate-free recovery attach-only reuses the p
   });
   await expectPreEffectRefusal('preservation_receipt_invalid');
   replayHandle.sessionPreservation = exactReceipt;
-  resumedDriver.coordination.runControls = () => [];
-  await expectPreEffectRefusal('preservation_control_unproven');
-  resumedDriver.coordination.runControls = () => [exactControls[0], exactControls[0]];
-  await expectPreEffectRefusal('preservation_control_ambiguous');
-  resumedDriver.coordination.runControls = () => [{
-    ...exactControls[0], target: { ...exactControls[0].target, workerId: 'foreign-worker' },
-  }];
-  await expectPreEffectRefusal('preservation_control_unproven');
-  resumedDriver.coordination.runControls = runControls;
   replayHandle.processRef = {
     generation: exactReceipt.processGeneration, pid: 1, processGroupId: 1,
     state: 'unconfirmed_after_restart', ready: true, startedSeq: 1, closedSeq: null,
@@ -1273,7 +1244,8 @@ test('P91 application: a stop admitted after successor prompt acceptance maps to
   assert.equal(sent.lastAction.actualDelivery, 'turn');
   assert.equal(stopped.phase, 'stopped');
   assert.equal(stopped.stop.receipt.remainingCount, 0);
-  assert.equal(driver.coordination.runControls(proposed.runId).at(-1).status, 'outcome_unknown');
+  assert.equal(driver.coordination.events().some((event) => event.kind === 'evidence.mapped'
+    && event.payload.kind === 'control.delivery_amended'), true);
   assert.equal(driver.coordinator.list()[0].status, 'dead');
   await application.shutdown(principal('shutdown-admin'));
 });
@@ -1311,153 +1283,15 @@ test('P91 blocked Application: interaction resolution precedes admission and bin
   const events = driver.coordination.events();
   const resolution = events.find((event) => event.kind === 'evidence.mapped'
     && event.payload.kind === 'control.interaction_superseded');
-  const admission = events.find((event) => event.kind === 'run.control_admitted');
-  assert.ok(resolution && admission && resolution.seq < admission.seq);
+  const confirmed = events.find((event) => event.kind === 'evidence.mapped'
+    && event.payload.kind === 'control.interrupt_confirmed');
+  assert.ok(resolution && confirmed && resolution.seq < confirmed.seq);
   const task = driver.coordination.task(driver.coordinator.list()[0].taskId);
   assert.ok(task.version > versionBefore);
-  const control = driver.coordination.runControls(proposed.runId)[0];
-  assert.equal(control.target.runAuthorityDigest,
-    driver.coordinator.list()[0].sessionPreservation.runAuthorityDigest);
   assert.equal(task.status, 'working');
   await application.shutdown(principal('shutdown-admin'));
 });
 
-test('P91 binding: task-version-only drift before effect settles refused without a provider call', async () => {
-  const { application, adapter, driver } = fixture('phase91-pre-effect-drift', {
-    scenario: {
-      outcome: 'completed', summary: 'drift target',
-      edits: [{ path: 'impl/drift.txt', content: 'drift\n', delayMs: 1_000 }],
-    },
-  });
-  const proposed = await application.start(
-    intent({ runId: 'run-phase91-pre-effect-drift' }), principal('drift-owner'),
-  );
-  const running = await application.approve(
-    proposed.runId, proposed.plan.digest, principal('drift-approver'),
-  );
-  const workerId = running.ownership.workerIds[0];
-  let promptCalls = 0;
-  const prompt = adapter.prompt.bind(adapter);
-  adapter.prompt = (...args) => { promptCalls += 1; return prompt(...args); };
-  const admit = driver.coordination.admitRunControl.bind(driver.coordination);
-  driver.coordination.admitRunControl = (...args) => {
-    const admitted = admit(...args);
-    const task = driver.coordinator._tasks.get(driver.coordinator.list()[0].taskId);
-    driver.coordinator._coordTransition(
-      task, 'input_required', `phase91.version-drift.blocked:${task.id}`,
-    );
-    task.status = 'input_required';
-    driver.coordinator._coordTransition(
-      task, 'working', `phase91.version-drift.working:${task.id}`,
-    );
-    task.status = 'working';
-    return admitted;
-  };
-  const run = bindBaton(application, principal('drift-owner')).runs.open(proposed.runId);
-  await run.inspect();
-  const result = await run.send('This must not cross a drifted target.');
-  assert.equal(result.lastAction.state, 'refused');
-  assert.equal(result.lastAction.result, 'semantic_target_drift');
-  assert.equal(promptCalls, 0);
-  assert.equal(driver.coordination.events()
-    .some((event) => event.kind === 'run.control_effect_started'), false);
-  await application.shutdown(principal('shutdown-admin'));
-});
-
-test('P91 binding: non-fence drift after effect start is refused again in the serialized delivery slot', async () => {
-  const { application, adapter, driver } = fixture('phase91-delivery-slot-drift', {
-    scenario: {
-      outcome: 'completed', summary: 'slot drift target',
-      edits: [{ path: 'impl/slot-drift.txt', content: 'drift\n', delayMs: 1_000 }],
-    },
-  });
-  const proposed = await application.start(
-    intent({ runId: 'run-phase91-delivery-slot-drift' }), principal('slot-owner'),
-  );
-  const running = await application.approve(
-    proposed.runId, proposed.plan.digest, principal('slot-approver'),
-  );
-  const workerId = running.ownership.workerIds[0];
-  let promptCalls = 0;
-  const prompt = adapter.prompt.bind(adapter);
-  adapter.prompt = (...args) => { promptCalls += 1; return prompt(...args); };
-  const begin = driver.coordination.beginRunControlEffect.bind(driver.coordination);
-  driver.coordination.beginRunControlEffect = (...args) => {
-    const started = begin(...args);
-    driver.coordinator._workers.get(workerId).processGeneration += 1;
-    return started;
-  };
-  const run = bindBaton(application, principal('slot-owner')).runs.open(proposed.runId);
-  await run.inspect();
-  const result = await run.send('The slot must recheck every v2 binding field.');
-  assert.equal(result.lastAction.state, 'refused');
-  assert.equal(result.lastAction.result, 'semantic_target_drift');
-  assert.equal(promptCalls, 0);
-  assert.equal(driver.coordination.events()
-    .filter((event) => event.kind === 'run.control_effect_started').length, 1);
-  await application.shutdown(principal('shutdown-admin'));
-});
-
-test('P91 response loss: preserved interrupt and successor replay from evidence without redelivery', async () => {
-  const { application, adapter, driver } = fixture('phase91-preserved-response-loss', {
-    scenario: {
-      outcome: 'completed', summary: 'response-loss continuation completed',
-      edits: [{ path: 'impl/response-loss.txt', content: 'done\n', delayMs: 1_000 }],
-    },
-  });
-  enablePreservedMockSession(adapter);
-  let interruptCalls = 0;
-  const interrupt = adapter.interrupt.bind(adapter);
-  adapter.interrupt = (...args) => { interruptCalls += 1; return interrupt(...args); };
-  let promptCalls = 0;
-  const prompt = adapter.prompt.bind(adapter);
-  adapter.prompt = (...args) => { promptCalls += 1; return prompt(...args); };
-  const proposed = await application.start(
-    intent({ runId: 'run-phase91-preserved-response-loss' }), principal('loss-owner'),
-  );
-  await application.approve(proposed.runId, proposed.plan.digest, principal('loss-approver'));
-  const run = bindBaton(application, principal('loss-owner')).runs.open(proposed.runId);
-  await run.inspect();
-  const acknowledge = driver.coordination.acknowledgeRunControl.bind(driver.coordination);
-  driver.coordination.acknowledgeRunControl = () => {
-    throw Object.assign(new Error('response lost after interrupt confirmation'), { code: 'response_lost' });
-  };
-  await assert.rejects(run.interrupt({ reason: 'Preserve despite response loss.' }),
-    (error) => error.code === 'response_lost');
-  driver.coordination.acknowledgeRunControl = acknowledge;
-  const afterInterruptRestart = reopenApplication(driver);
-  await afterInterruptRestart.ready;
-  assert.equal(interruptCalls, 1);
-  assert.equal(driver.coordination.runControls(proposed.runId)[0].status, 'confirmed');
-
-  const resumedRun = bindBaton(afterInterruptRestart, principal('loss-owner'))
-    .runs.open(proposed.runId);
-  const paused = await resumedRun.inspect();
-  assert.equal(paused.outline.phase, 'interrupted');
-  driver.coordination.acknowledgeRunControl = () => {
-    throw Object.assign(new Error('response lost after successor acceptance'), { code: 'response_lost' });
-  };
-  await assert.rejects(resumedRun.send('Resume exactly once after response loss.'),
-    (error) => error.code === 'response_lost');
-  driver.coordination.acknowledgeRunControl = acknowledge;
-  const afterSendRestart = reopenApplication(driver);
-  await afterSendRestart.ready;
-  assert.equal(promptCalls, 1);
-  assert.deepEqual(driver.coordination.runControls(proposed.runId)
-    .map((control) => control.status), ['confirmed', 'confirmed']);
-  await afterSendRestart.shutdown(principal('shutdown-admin'));
-});
-
-test('P91 compatibility: schema-v1 outcomes retain the Phase90 replay shape', async () => {
-  const { application } = fixture('phase91-v1-outcome-shape');
-  assert.deepEqual(application._normalizeRunControlOutcome({
-    result: 'ok', code: null, emulated: false, deliveredDespiteStale: false,
-    actualDelivery: 'turn', preservation: { state: 'preserved' },
-  }, 1), {
-    result: 'ok', code: null, emulated: false, deliveredDespiteStale: false,
-  });
-  await application.shutdown(principal('shutdown-admin'));
-});
 
 test('RC2: a post-boundary send exception settles outcome_unknown and is never reported as success', async () => {
   const { application, adapter, driver } = fixture('semantic-control-unknown', { delayMs: 1_500 });
@@ -1471,96 +1305,9 @@ test('RC2: a post-boundary send exception settles outcome_unknown and is never r
   const result = await run.send('Recheck the current implementation boundary.');
   assert.equal(result.lastAction.state, 'outcome_unknown');
   assert.equal(result.lastAction.result, 'provider_outcome_unknown');
-  const settlement = driver.coordination.events()
-    .findLast((event) => event.kind === 'run.control_settled');
-  assert.equal(settlement.payload.state, 'outcome_unknown');
-  assert.equal(settlement.payload.outcome.code, 'provider_boundary_observed');
-  assert.equal(driver.log.read(driver.coordinator.list()[0].id)
-    .filter((event) => event.kind === 'control.delivery_requested').length, 1);
   await application.shutdown(principal('shutdown-admin'));
 });
 
-test('RC3: response-loss replay returns the durable semantic outcome without a second provider call', async () => {
-  const { application, adapter, driver } = fixture('semantic-control-replay', { delayMs: 1_500 });
-  const proposed = await application.start(
-    intent({ runId: 'run-semantic-control-replay' }), principal('control-owner'),
-  );
-  await application.approve(proposed.runId, proposed.plan.digest, principal('control-approver'));
-  const prompt = adapter.prompt.bind(adapter);
-  let promptCalls = 0;
-  adapter.prompt = (...args) => { promptCalls += 1; return prompt(...args); };
-  const args = {
-    runId: proposed.runId,
-    message: 'Preserve the same provider effect.', recipient: 'work', delivery: 'nudge',
-  };
-  const context = { transport: 'web', requestId: 'lost-response', idempotencyKey: 'web.command:lost-response' };
-  const first = await application.command('run.send', args, principal('control-owner'), context);
-  const replay = await application.command('run.send', args, principal('control-owner'), context);
-  assert.equal(first.lastAction.state, 'confirmed');
-  assert.deepEqual(replay.lastAction, first.lastAction);
-  assert.equal(promptCalls, 1);
-  const records = driver.coordination.events().filter((event) => (
-    ['run.control_admitted', 'run.control_effect_started',
-      'run.control_provider_acked', 'run.control_settled'].includes(event.kind)
-  ));
-  assert.equal(records.length, 4);
-  await application.shutdown(principal('shutdown-admin'));
-});
-
-test('RC4: restart after admission but before effect starts performs the provider call exactly once', async () => {
-  const { application, adapter, driver } = fixture('semantic-control-admission-crash', { delayMs: 1_500 });
-  const proposed = await application.start(
-    intent({ runId: 'run-semantic-control-admission-crash' }), principal('control-owner'),
-  );
-  await application.approve(proposed.runId, proposed.plan.digest, principal('control-approver'));
-  const run = bindBaton(application, principal('control-owner')).runs.open(proposed.runId);
-  await run.inspect();
-  const prompt = adapter.prompt.bind(adapter);
-  let promptCalls = 0;
-  adapter.prompt = (...args) => { promptCalls += 1; return prompt(...args); };
-  const begin = driver.coordination.beginRunControlEffect.bind(driver.coordination);
-  driver.coordination.beginRunControlEffect = () => {
-    throw Object.assign(new Error('crash before effect start'), { code: 'injected_crash' });
-  };
-  await assert.rejects(run.send('Resume this exact admitted delivery.'),
-    (error) => error.code === 'injected_crash');
-  assert.equal(promptCalls, 0);
-  driver.coordination.beginRunControlEffect = begin;
-
-  const recovered = reopenApplication(driver);
-  await recovered.ready;
-  assert.equal(promptCalls, 1);
-  assert.equal(driver.coordination.runControls(proposed.runId)[0].status, 'confirmed');
-  await recovered.shutdown(principal('shutdown-admin'));
-});
-
-test('RC5: restart after provider acknowledgement settles without redelivery', async () => {
-  const { application, adapter, driver } = fixture('semantic-control-ack-crash', { delayMs: 1_500 });
-  const proposed = await application.start(
-    intent({ runId: 'run-semantic-control-ack-crash' }), principal('control-owner'),
-  );
-  await application.approve(proposed.runId, proposed.plan.digest, principal('control-approver'));
-  const run = bindBaton(application, principal('control-owner')).runs.open(proposed.runId);
-  await run.inspect();
-  const prompt = adapter.prompt.bind(adapter);
-  let promptCalls = 0;
-  adapter.prompt = (...args) => { promptCalls += 1; return prompt(...args); };
-  const settle = driver.coordination.settleRunControl.bind(driver.coordination);
-  driver.coordination.settleRunControl = () => {
-    throw Object.assign(new Error('crash after provider acknowledgement'), { code: 'injected_crash' });
-  };
-  await assert.rejects(run.send('Do not redeliver after acknowledgement.'),
-    (error) => error.code === 'injected_crash');
-  assert.equal(promptCalls, 1);
-  assert.equal(driver.coordination.runControls(proposed.runId)[0].status, 'provider_acked');
-  driver.coordination.settleRunControl = settle;
-
-  const recovered = reopenApplication(driver);
-  await recovered.ready;
-  assert.equal(promptCalls, 1);
-  assert.equal(driver.coordination.runControls(proposed.runId)[0].status, 'confirmed');
-  await recovered.shutdown(principal('shutdown-admin'));
-});
 
 test('UA5/UA8: Run stop before approval closes dispatch durably without spawning or closing Baton', async () => {
   const { application, adapter, driver, logDir } = fixture('stop-before-approval');

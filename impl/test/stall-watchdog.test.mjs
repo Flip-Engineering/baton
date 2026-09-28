@@ -147,7 +147,7 @@
 //    cleared at the turn-terminal seam (turn_completed AND the crash terminal), never at a
 //    non-terminal event; gates the D1 timer and rung-3 reap. [F2: the mirror-image is that a
 //    settled turn MUST clear it — the zombie flag would hold liveness forever]
-// 6. coordinator._armStallCycle(handle, task, {nudgeId, controlId}) — the stall-seam seam armed
+// 6. coordinator._armStallCycle(handle, task, {nudgeId}) — the stall-seam seam armed
 //    on control.steer / control.nudge; record {kind:'stall_seam', ..., answered:false,
 //    basis:'no_progress_evidence', lifetime}; working-compatible expiry on
 //    _progressNudgeWindowMs ?? 300_000.
@@ -973,7 +973,7 @@ test('E3 SW-10 (RED): a claimed stall (steer/nudge) arms the stall-seam cycle �
   // The orchestrator claims the stall by steering (control.steer / control.nudge arm the seam).
   try {
     await coordinator.send(handle.id, 'resume after review', 'steer',
-      { actor: 'orchestrator', controlId: `control:${'a'.repeat(64)}` });
+      { actor: 'orchestrator' });
   } catch { /* the steer may be refused — the seam is what this row pins */ }
   assert.equal(typeof coordinator._armStallCycle, 'function',
     'stage[stall-seam-cycle-missing]: a claim (control.steer / control.nudge) must arm the stall-seam cycle');
@@ -986,7 +986,7 @@ test('E4 SW-10 (RED): claim-then-idle dies — a scratchpad note inside the clai
   await stallSuspicion(coordinator, handle);
   try {
     await coordinator.send(handle.id, 'resume after review', 'steer',
-      { actor: 'orchestrator', controlId: `control:${'b'.repeat(64)}` });
+      { actor: 'orchestrator' });
   } catch { /* the steer may be refused — the seam is what this row pins */ }
   assert.equal(typeof coordinator._armStallCycle, 'function',
     'stage[stall-seam-answer-set-missing]: the stall-seam cycle must exist to be answered');
@@ -1044,7 +1044,7 @@ test('E6 SW-10 (RED): the claimed stall-seam cycle expires to a RECEIPTED reap �
     'stage[stall-seam-cycle-missing]: a claim (control.steer / control.nudge) must arm the stall-seam cycle');
   try {
     await coordinator.send(handle.id, 'resume after review', 'steer',
-      { actor: 'orchestrator', controlId: `control:${'a'.repeat(64)}` });
+      { actor: 'orchestrator' });
   } catch { /* the steer may be refused — the seam is what this row pins */ }
   clock.now = 100; // well past the claimed window (progressNudgeWindowMs 25)
   await sleep(80);
@@ -1110,7 +1110,7 @@ async function claimStalledWorker(coordinator, adapter, handle, timers) {
     'fixture check: the stall is declared before the claim');
   try {
     await coordinator.send(handle.id, 'resume after review', 'steer',
-      { actor: 'orchestrator', controlId: `control:${'c'.repeat(64)}` });
+      { actor: 'orchestrator' });
   } catch { /* the steer may be refused — the seam is what these rows pin */ }
 }
 
@@ -1201,7 +1201,7 @@ test('E7 SW-10 (RED): a qualifying D2 re-arm inside the claimed window calls _cl
   await stallSuspicion(coordinator, handle);
   try {
     await coordinator.send(handle.id, 'resume after review', 'steer',
-      { actor: 'orchestrator', controlId: `control:${'b'.repeat(64)}` });
+      { actor: 'orchestrator' });
   } catch { /* the steer may be refused — the seam is what this row pins */ }
   assert.equal(typeof coordinator._clearStall, 'function',
     'stage[stall-clear-missing]: the ONLY escape that clears the stall flag is _clearStall, called by a qualifying D2 re-arm inside the claimed window');

@@ -74,7 +74,7 @@ export const PROJECTION_CHECKPOINT_FIELDS = Object.freeze([
   '_knowledgeNodes', '_knowledgeEdges', '_knowledgeNodeHistory', '_knowledgeEdgeHistory',
   '_knowledgeReads', '_knowledgeRecallAssessments', '_contamination', '_webCommands',
   '_webCommandScopes', '_mcpCalls', '_mcpCallScopes', '_fleetDrains', '_runStops',
-  '_runStopByTarget', '_runControls',
+  '_runStopByTarget',
   '_runVerificationRetries', '_runOrchestratorLeases', '_runLineages',
   '_runLineageEventSeqs', '_runChildrenByParent', '_recoveryDispatches',
   '_taskTopologies', '_recoveryAttemptsById', '_recoveryAttemptHeads',
@@ -468,21 +468,6 @@ export function fleetDrain(state, id) { return clone(state.get(id) ?? null); }
 export function runStop(store, runId) {
   const authorityRunId = store._runStopByTarget.get(runId) ?? runId;
   return clone(store._runStops.get(authorityRunId) ?? null);
-}
-
-/** Moved from `CoordinationStore.runControl` (issue #259 slice 1). State: `this._runControls`, passed explicitly. */
-export function runControl(state, controlId) {
-  return clone(state.get(controlId) ?? null);
-}
-
-/** Moved from `CoordinationStore.runControls` (issue #259 slice 1). State: `this._runControls`, passed explicitly. */
-export function runControls(state, runId, limit = 100_000) {
-  if (!validRunId(runId) || !Number.isSafeInteger(limit) || limit <= 0 || limit > 100_000) {
-    throw new TypeError('run control query is invalid');
-  }
-  return [...state.values()].filter((control) => control.runId === runId)
-    .sort((left, right) => left.admittedEvent - right.admittedEvent)
-    .slice(0, limit).map(clone);
 }
 
 /** Moved from `CoordinationStore.webCommand` (issue #259 slice 1). State: `this._webCommands`, passed explicitly. */
