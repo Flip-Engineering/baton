@@ -44,6 +44,16 @@ def reply(value): stream.write((json.dumps(value)+'\n').encode())
 reply({'session':model,'native':native,'resume':resume,'args':args,'prompt':prompt})
 while True:
     action=json.loads(stream.readline())
+    if action.get('turn'):
+        task=home/'self-turn-task'
+        task.write_text('Synchronous task for the active session.')
+        command=[config['exe'],config['db'],'turn',model,action['turn'],sys.argv[0],model,'low',str(home),str(task),str(home/'self-turn.jsonl'),'']
+        try:
+            result=subprocess.run(command,capture_output=True,text=True,timeout=2)
+            reply({'code':result.returncode,'stdout':result.stdout,'stderr':result.stderr})
+        except subprocess.TimeoutExpired:
+            reply({'timed_out':True})
+        continue
     if action.get('message'):
         ident,recipient,body=action['message']
         result=subprocess.run([config['exe'],config['db'],'message',ident,model,recipient,'guidance',body],capture_output=True,text=True)
@@ -216,6 +226,29 @@ class Receive(unittest.TestCase):
         self.finish(first)
         self.assertEqual(self.coord('inbox', 'parent'), [])
 
+    def test_synchronous_self_turn_reports_busy_and_native_work_continues(self):
+        self.worker()
+        self.message('first', 'parent')
+        child = self.spawn(*self.receive_args('parent'))
+        control, _ = self.accept('parent')
+        self.action(control, turn='self-turn')
+        response = json.loads(control.readline())
+        self.assertFalse(response.get('timed_out'), 'synchronous self-turn waited for its own session lock')
+        self.assertNotEqual(response['code'], 0)
+        self.assertIn('active native turn', response['stderr'].lower())
+        self.assert_no_start()
+        self.action(control)
+        self.finish(child)
+        self.assertEqual(self.coord('inbox', 'parent'), [])
+        self.assertNotIn('self-turn', [report['id'] for report in self.coord('inbox', 'root')])
+        retried = self.spawn('turn', 'parent', 'self-turn', self.fixture, 'parent', 'low',
+                             self.directory, self.directory / 'self-turn-task',
+                             self.directory / 'self-turn.jsonl', '')
+        retry_control, _ = self.accept('parent')
+        self.action(retry_control)
+        self.finish(retried)
+        self.assertIn('self-turn', [report['id'] for report in self.coord('inbox', 'root')])
+
     def test_upward_failure_preserves_queued_input_processing(self):
         self.coord('attach', 'root', 'codex', 'native-root',
                    json.dumps([str(self.directory / 'missing receiver')]))
@@ -311,8 +344,13 @@ class Receive(unittest.TestCase):
         self.connect('parent')
         task = self.directory / 'initial task'
         task.write_text('Initial work without an inbox batch.')
-        child = self.spawn('turn', 'parent', 'initial-turn', self.fixture, 'parent', 'low',
-                           self.directory, task, self.directory / 'initial.jsonl', '')
+        alias = self.directory / 'database alias.db'
+        alias.symlink_to(self.db)
+        child = subprocess.Popen([str(EXE), str(alias), 'turn', 'parent', 'initial-turn',
+                                  str(self.fixture), 'parent', 'low', str(self.directory),
+                                  str(task), str(self.directory / 'initial.jsonl'), ''],
+                                 stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+        self.children.append(child)
         control, initial = self.accept('parent')
         self.message('follow-up', 'parent')
         self.assert_no_start()
