@@ -170,7 +170,7 @@ impl/test/mcp-bridge-admission.test.mjs:390-405).
 | verb | required fields | receipt |
 |---|---|---|
 | `subscribe` | — | the landed subscription receipt `{subscriptionId, since, kinds, swarms, participants, cursor, attachments}` |
-| `since` | — | one bounded page with the typed continuation (`boundWakePage`, impl/src/mcp-web-bridge.mjs:149-184) |
+| `since` | — | the whole page of wake rows after `since` (impl/src/mcp-web-bridge.mjs) |
 | `unsubscribe` | `subscriptionId` | `{subscriptionId, open: false, ...}` (as today) |
 
 The brief's six-family parenthetical (run, swarm, waves, surface, knowledge, deployment) is

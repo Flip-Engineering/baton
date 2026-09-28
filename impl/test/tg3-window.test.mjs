@@ -103,7 +103,6 @@ class ScriptableAdapter {
         usage: { tokens: 'native', usd: 'native', tokenMetric: 'mock-token', terminalSeal: 'native' },
         providerCalls: { observation: 'unavailable', enforcement: 'unavailable' },
         toolCalls: { observation: 'unavailable', enforcement: 'unavailable' },
-        maxWireFrameBytes: 1024 * 1024,
       },
     };
     this.calls = { spawn: [], prompt: [], interrupt: [], approve: [], answer: [], kill: [] };
@@ -143,7 +142,6 @@ function passingReferee() {
 // validity-tracked without strict binding, exactly as the real deployment runs.
 const OBSERVE_POLICY = {
   schemaVersion: 1,
-  maxWireFrameBytes: 4 * 1024 * 1024,
   maxProviderCallsPerTurn: 1000,
   maxToolCallsPerTurn: 1000,
   routes: [{

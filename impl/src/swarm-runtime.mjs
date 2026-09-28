@@ -5029,10 +5029,8 @@ export class SwarmRuntime {
     let cursor = afterSeq;
     if (cursor > this.store.ledgerHeadSeq()) refuse('Swarm cursor is ahead of this deployment', 'swarm_cursor_invalid');
     const deadline = performance.now() + (args.timeoutMs ?? 30000);
-    // The frame bound is the ONE substrate row (docs/46 §3.2) — never a fresh constant — and the
-    // frame is byte-measured the way `evidence.search` measures: the FIRST admitted row is always
-    // kept, and the tail the bound cut is NAMED by `pendingSince` instead of being dropped.
-    const frameBytes = FRAME_LIMITS['wire.frame'].value;
+    // Issue #627: no frame byte bound remains — every admitted row rides the wake whole, so the
+    // frame's own size never decides what a watcher sees.
     for (;;) {
       const swarm = this._swarm(args.swarmId);
       this._permit(swarm, principal, context, 'read');
@@ -5078,26 +5076,18 @@ export class SwarmRuntime {
         const row = swarm.participants[event.payload?.participantId];
         return row ? { participantId: row.participantId, route: row.route ?? null, scope: row.scope ?? null } : {};
       };
-      const carried = [];
-      let bytes = 0;
-      for (const event of admitted) {
-        const row = { seq: event.seq, kind: event.kind,
-          payloadKind: event.payload?.kind ?? null, ...recruited(event) };
-        const size = Buffer.byteLength(JSON.stringify(row), 'utf8');
-        if (carried.length > 0 && bytes + size > frameBytes) break;
-        carried.push(row);
-        bytes += size;
-      }
+      const carried = admitted.map((event) => ({ seq: event.seq, kind: event.kind,
+        payloadKind: event.payload?.kind ?? null, ...recruited(event) }));
       if (carried.length > 0 || performance.now() >= deadline) return {
         ...this.inspect(swarm, principal, context, null, args.projection),
         watch: {
           reason: carried.length > 0 ? 'event' : 'timeout', afterSeq,
           // The LAST carried row's seq (docs/46 §3.3): re-arming with `--after-seq matchedSeq`
-          // loses nothing, whether the frame bound cut the tail or not.
+          // loses nothing — with no frame bound (issue #627), every admitted row is carried.
           matchedSeq: carried.length > 0 ? carried[carried.length - 1].seq : null,
-          // The first row the bound could not carry, so a caller that reads one frame knows
-          // exactly where to resume — nothing is ever silently lost (docs/46 §3.2).
-          pendingSince: carried.length < admitted.length ? admitted[carried.length].seq : null,
+          // No frame bound remains (issue #627): nothing is ever left behind the answer, so this
+          // field stays null (the frame shape a caller reads, docs/46 §3.2).
+          pendingSince: null,
           // The FIRST row that woke the watch keeps its meaning for one release of CLI
           // compatibility (docs/46 §3.4); `events` is the whole frame. A wake that IS a
           // recruitment also names the route and scope the seat was started under (issue #283
@@ -5304,12 +5294,11 @@ export class SwarmRuntime {
 
   /** Record one refusal the NATIVE BRIDGE raised before dispatch (issue #283 root comment 2) as
    * the same durable `swarm.operation_refused` row a refused mutation leaves — the bridge's own
-   * admission (an over-cap frame, a request the closed argument vocabulary refuses) is a refusal a
-   * participant must be able to learn about, and the swarm's refusal lane is where it is legible.
-   * The report is the bridge's, so every field is validated here: a malformed report is refused
-   * rather than recorded as if it were a refusal, and an absent command or participant is null on
-   * the row, never invented. A bridge-frame refusal's ADVICE rides the row as `detail.fits` (#457):
-   * the root sees what the seat was told without reproducing the bridge's measurement. */
+   * admission (a request the closed argument vocabulary refuses) is a refusal a participant must
+   * be able to learn about, and the swarm's refusal lane is where it is legible. The report is the
+   * bridge's, so every field is validated here: a malformed report is refused rather than recorded
+   * as if it were a refusal, and an absent command or participant is null on the row, never
+   * invented. */
   _recordBridgeRefusal(report, principal) {
     if (this.watchController.signal.aborted) refuse('Swarm runtime is closed', 'swarm_runtime_closed');
     const text = (value) => (typeof value === 'string' && value.length > 0 ? value : null);
@@ -5321,20 +5310,10 @@ export class SwarmRuntime {
       refuse('Swarm bridge refusal report must name the refusal code', 'swarm_command_invalid',
         { field: 'code', rule: 'bridge-report-shape' });
     }
-    // The projection a bridge-frame refusal TOLD the seat would fit (issue #457): the row carries
-    // what the seat was told, so a root reads the advice from the swarm's own record instead of
-    // re-running the bridge's measurement. The report is the bridge's and the vocabulary is the
-    // contract's, so only a DECLARED projection name is admitted; anything else refuses the report.
-    const fits = text(report.fits);
-    if (fits !== null && !Object.hasOwn(SWARM_VIEW_PROJECTIONS, fits)) {
-      refuse('Swarm bridge refusal report names an unknown projection', 'swarm_command_invalid',
-        { field: 'fits', rule: 'bridge-report-shape' });
-    }
     const row = {
       swarmId: text(report.swarmId), command: text(report.command), event: text(report.event),
       code: text(report.code), field: text(report.field), rule: text(report.rule),
       participantId: text(report.participantId),
-      ...(fits === null ? {} : { detail: { fits } }),
     };
     // The bridge's own refusal identity is its own report, and the seat is named by the report
     // (its token table), so the same refused request records exactly once however often it retries.
@@ -5382,8 +5361,8 @@ export class SwarmRuntime {
 
   /** Retrieval over what was exchanged (#318 deliverable 5, #312): the swarm's seeded facts,
    * found by free text, participant or knowledge kind, read straight off the coordination ledger
-   * so every row carries its seq/ts and the cursor IS the ledger seq. The page boundary derives
-   * from the same `wire.frame` row the bridge answers under — never a numeric page cap. */
+   * so every row carries its seq/ts and the cursor IS the ledger seq. Every matching row is
+   * answered whole (issue #627) — never a numeric page cap. */
   _evidenceSearch(swarm, args, caller) {
     const participantByRun = new Map(Object.values(swarm.participants)
       .filter((row) => row.runId).map((row) => [row.runId, row.participantId]));
@@ -5393,11 +5372,8 @@ export class SwarmRuntime {
     const participantId = typeof args.participantId === 'string' && args.participantId.length > 0
       ? args.participantId : null;
     const afterSeq = Number.isSafeInteger(args.afterSeq) && args.afterSeq >= 0 ? args.afterSeq : 0;
-    const budget = FRAME_LIMITS['wire.frame'].value;
     const rows = [];
-    let bytes = 0;
     let cursor = afterSeq;
-    let truncated = false;
     for (const event of this.store.eventsView(afterSeq + 1)) {
       cursor = event.seq;
       if (event.kind !== 'knowledge.node_added' && event.kind !== 'knowledge.promoted') continue;
@@ -5411,13 +5387,12 @@ export class SwarmRuntime {
       const row = { seq: event.seq, ts: event.ts, nodeId: payload.id ?? null, kind: payload.type ?? null,
         grounding: payload.grounding ?? null, body: payload.body ?? null,
         participantId: owner, runId: payload.runId };
-      const size = Buffer.byteLength(JSON.stringify(row), 'utf8');
-      if (rows.length > 0 && bytes + size > budget) { truncated = true; break; }
       rows.push(row);
-      bytes += size;
     }
+    // No frame bound remains (issue #627): every matching row is carried, so `truncated` is
+    // always false and `cursor` is the last seq the walk read.
     return { swarmId: swarm.swarmId, query: { text, participantId, kind, afterSeq },
-      rows, cursor, truncated };
+      rows, cursor, truncated: false };
   }
 
   /** The seat read verbs (#441 lane B). Admission is the SAME closed contract the bridge ran
@@ -5460,22 +5435,19 @@ export class SwarmRuntime {
   /** `run.contributions.read` (#441 item 2): the swarm's contributions since a seq, in ledger
    * order, each with the review state the fold derives — read through the ONE exported derivation
    * (`contributionLedgerRows`), so the #433 contributions projection reuses it instead of
-   * re-deriving review state. The page's item ceiling and its byte budget are registry rows
-   * (`view.seat_read.items` and the `wire.frame` the bridge enforces); a cut tail is named by
-   * `truncated` and `cursor` is the seq to continue from — nothing is dropped silently. */
+   * re-deriving review state. The page's item ceiling is the ONE cut left (`view.seat_read.items`,
+   * the registry row) — issue #627 removed the frame byte budget the page was also measured
+   * against; a cut tail is named by `truncated` and `cursor` is the seq to continue from —
+   * nothing is dropped silently. */
   _contributionsRead(swarm, args) {
     const since = args.since === undefined ? 0 : args.since;
     const pageItems = FRAME_LIMITS['view.seat_read.items'].value;
-    const budget = FRAME_LIMITS['wire.frame'].value;
     const rows = [];
-    let bytes = 0;
     let cursor = since;
     let truncated = false;
     for (const row of contributionLedgerRows(swarm, { since })) {
-      const size = Buffer.byteLength(JSON.stringify(row), 'utf8');
-      if (rows.length > 0 && (rows.length >= pageItems || bytes + size > budget)) { truncated = true; break; }
+      if (rows.length > 0 && rows.length >= pageItems) { truncated = true; break; }
       rows.push(row);
-      bytes += size;
       cursor = row.seq;
     }
     return { swarmId: swarm.swarmId, since, rows, cursor, truncated };

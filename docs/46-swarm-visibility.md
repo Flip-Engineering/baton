@@ -137,12 +137,9 @@ read — no row is ever rewritten.
 ### 2.2 Cursorable in the #312 vocabulary
 
 The `contributions` projection answers in ledger order, each row carrying its `seq`, under the
-one cursor vocabulary the family already serves: when the answer cannot fit the declared frame,
-it pages with `page {cursor, next, total, served, ceiling}` (#343's shape; the ceiling row is
-`wire.frame`, never a numeric page cap), and walking `page.next` reproduces the whole list with
-no gap and no duplicate. The bridge's existing frame measuring (`narrowSwarmViewForBridge` /
-`pageSwarmViewForBridge`, swarm-native-bridge.mjs) is the one cut — the projection never invents
-a second pager.
+one cursor vocabulary the family already serves: a longer list pages with
+`page {cursor, next, total, served, ceiling}` (#343's shape, never a numeric page cap), and
+walking `page.next` reproduces the whole list with no gap and no duplicate.
 
 ### 2.3 The `unreviewed_contribution` attention row
 

@@ -75,7 +75,6 @@ class ScriptableAdapter {
         usage: { tokens: 'native', usd: 'native', tokenMetric: 'mock-total', terminalSeal: 'native' },
         providerCalls: { observation: 'native', enforcement: 'unavailable' },
         toolCalls: { observation: 'native', enforcement: 'unavailable' },
-        maxWireFrameBytes: 1024 * 1024,
       },
     };
     this.calls = { spawn: [], prompt: [], interrupt: [], kill: [] };
@@ -192,7 +191,7 @@ const quota = (adapter, handle) => emitTurn(adapter, handle, {
 // A governed deployment: one exact route with a terminal reserve the member's declared budget must
 // keep clear. `terminalReserve` is the only difference between the admitted and the refused case.
 const governedPolicy = (terminalReserve) => ({
-  schemaVersion: 1, maxWireFrameBytes: 1024 * 1024, maxProviderCallsPerTurn: 4, maxToolCallsPerTurn: 4,
+  schemaVersion: 1, maxProviderCallsPerTurn: 4, maxToolCallsPerTurn: 4,
   routes: [{ harness: 'mock', model: 'mock-model', effort: 'low', terminalReserve, mode: 'observe' }],
 });
 

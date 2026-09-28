@@ -32,7 +32,6 @@ const brief = (budget = { tokens: 100, usd: 2, wallMin: 1 }) => ({
 });
 const policy = (route = {}) => ({
   schemaVersion: 1,
-  maxWireFrameBytes: 1024 * 1024,
   maxProviderCallsPerTurn: 2,
   maxToolCallsPerTurn: 2,
   routes: [{
@@ -41,7 +40,7 @@ const policy = (route = {}) => ({
   }],
 });
 
-function adapter({ strict = false, bind = strict, maxWireFrameBytes = 1024 * 1024, stopSeal = null, emulatedSteer = false } = {}) {
+function adapter({ strict = false, bind = strict, stopSeal = null, emulatedSteer = false } = {}) {
   const calls = { spawn: 0, prompt: 0, promptModes: [], kill: 0, interrupt: 0, bind: 0, lastBinding: null };
   const value = {
     calls,
@@ -57,7 +56,6 @@ function adapter({ strict = false, bind = strict, maxWireFrameBytes = 1024 * 102
         usage: { tokens: 'native', usd: 'native', tokenMetric: 'stub-total', terminalSeal: 'native' },
         providerCalls: { observation: 'native', enforcement: strict ? 'native_pre_effect' : 'unavailable' },
         toolCalls: { observation: 'native', enforcement: strict ? 'approval_pre_effect' : 'unavailable' },
-        maxWireFrameBytes,
       },
     }),
     ...(bind ? { bindProviderGovernance(envelope) { calls.bind += 1; calls.lastBinding = envelope; return { ok: true, bindingDigest: envelope.bindingDigest }; } } : {}),
@@ -124,13 +122,6 @@ test('PG1: an exact harness/model/effort tuple absent from deployment policy nev
   const handle = await f.coordinator.spawn('stub', brief(), { taskId: 'pg-route-absent', model: 'stub-1', effort: 'low' });
   assert.equal(ad.calls.spawn, 0); assert.equal(f.worktreeCreates(), 0);
   assert.equal(f.log.read(handle.id).find((event) => event.kind === 'resource.provider_turn_refused').payload.code, 'exact_provider_route_unconfigured');
-});
-
-test('PG2/PG6: observation mode still refuses an adapter whose native frame bound exceeds policy', async () => {
-  const ad = adapter({ maxWireFrameBytes: 2 * 1024 * 1024 }); const f = system(ad);
-  const handle = await f.coordinator.spawn('stub', brief(), { taskId: 'pg-wire-bound', model: 'stub-1', effort: 'low' });
-  assert.equal(ad.calls.spawn, 0); assert.equal(f.worktreeCreates(), 0);
-  assert.equal(f.log.read(handle.id).find((event) => event.kind === 'resource.provider_turn_refused').payload.code, 'wire_frame_bound_unavailable');
 });
 
 test('PG2: strict route refuses when card lacks pre-effect provider/tool enforcement', async () => {

@@ -21,7 +21,6 @@ import { normalizeConcurrencyCeiling } from './concurrency-policy.mjs';
 import { normalizeClaudeToolProgressFrame } from './native-subagent-observations.mjs';
 import { FRAME_LIMITS } from './limits.mjs';
 
-const DEFAULT_MAX_WIRE_FRAME_BYTES = FRAME_LIMITS['wire.frame'].value;
 const CLAUDE_TOKEN_METRIC = 'anthropic_input_plus_output_tokens_excluding_cache';
 
 // Part B / F7 (issue #16): the emulated up-channel grammar. This scans ONLY the model's own
@@ -469,8 +468,6 @@ function claudeExpiredCredentialResult(obj) {
 export class ClaudeSessionCli {
   /** @param {{cmd,args,env,harness,version,ceiling:number|null,maxContext,approvals,sessionId,killGraceMs,model}} opts */
   constructor(opts = {}) {
-    const maxWireFrameBytes = opts.maxWireFrameBytes ?? DEFAULT_MAX_WIRE_FRAME_BYTES;
-    if (!Number.isSafeInteger(maxWireFrameBytes) || maxWireFrameBytes <= 0) throw new TypeError('maxWireFrameBytes must be a positive safe integer');
     const approvals = opts.approvals ?? false;
     const permissionMode = opts.permissionMode === undefined
       ? (approvals ? 'acceptEdits' : 'bypassPermissions')
@@ -491,7 +488,6 @@ export class ClaudeSessionCli {
       killGraceMs: opts.killGraceMs ?? 5000,
       model: opts.model,
       permissionMode,
-      maxWireFrameBytes,
       authenticationProbe: opts.authenticationProbe ?? spawnSync,
       providerSecrets: Object.freeze((opts.providerSecrets ?? []).filter((value) => typeof value === 'string' && value.length > 0)),
       providerSecretsProbe: opts.providerSecretsProbe,
@@ -578,7 +574,6 @@ export class ClaudeSessionCli {
         usage: { tokens: 'native', usd: 'native', tokenMetric: CLAUDE_TOKEN_METRIC, terminalSeal: 'native' },
         providerCalls: { observation: 'native', enforcement: 'unavailable' },
         toolCalls: { observation: 'native', enforcement: 'unavailable' },
-        maxWireFrameBytes: this._cfg.maxWireFrameBytes,
       },
       modelSelection: {
         mode: 'exact',
@@ -805,7 +800,6 @@ export class ClaudeSessionCli {
       timeoutFailure: null,
       processFailure: null,
       buf: '',
-      discardingFrame: null, // issue #28: session-scoped latch for oversized tool_result discard
       stderrCanaryTail: '',
       spawnedEmitted: false,
       sessionIdWire: null,
@@ -922,82 +916,17 @@ export class ClaudeSessionCli {
     if (beginsTurn) this._emit(session, 'lifecycle.turn_started', {});
   }
 
-  /**
-   * Issue #28: first ≤256 bytes of a frame. Used only to classify tool_result degradation
-   * candidates — never to retain content.
-   */
-  _wireFrameHead(text) {
-    const buf = Buffer.from(String(text ?? ''), 'utf8');
-    return buf.subarray(0, Math.min(256, buf.length)).toString('utf8');
-  }
-
-  /** tool_result wire frames are `user` frames whose head carries a tool_result content block. */
-  _isToolResultFrameHead(text) {
-    const head = this._wireFrameHead(text);
-    return head.includes('"type":"user"') && head.includes('"tool_result"');
-  }
-
-  _parseToolUseIdFromHead(text) {
-    const head = this._wireFrameHead(text);
-    const match = head.match(/"tool_use_id"\s*:\s*"([^"]+)"/u);
-    return match ? match[1] : null;
-  }
-
-  _emitFrameDegraded(session, frameBytes, toolUseId) {
-    if (session.terminal) return;
-    this._emit(session, 'wire.frame_degraded', {
-      frameBytes,
-      ceilingBytes: this._cfg.maxWireFrameBytes,
-      toolUseId: toolUseId ?? null,
-    });
-  }
-
-  /**
-   * Issue #28 discard latch: once an oversized tool_result head is recognized, every byte
-   * through the terminating newline is dropped (counted exactly). A frame larger than 2× the
-   * ceiling cannot re-trigger on its own tail.
-   * @returns {string} any remainder after the discarded frame (may be empty)
-   */
-  _consumeDiscardLatch(session, data) {
-    const nl = data.indexOf('\n');
-    if (nl === -1) {
-      session.discardingFrame.bytesSeen += Buffer.byteLength(data, 'utf8');
-      return '';
-    }
-    session.discardingFrame.bytesSeen += Buffer.byteLength(data.slice(0, nl + 1), 'utf8');
-    const frameBytes = session.discardingFrame.bytesSeen;
-    const toolUseId = session.discardingFrame.toolUseId ?? null;
-    session.discardingFrame = null;
-    this._emitFrameDegraded(session, frameBytes, toolUseId);
-    return data.slice(nl + 1);
-  }
-
   _onData(session, chunk) {
     let data = String(chunk);
-    // Active discard latch — drop through the terminating newline before normal framing.
-    if (session.discardingFrame) {
-      data = this._consumeDiscardLatch(session, data);
-      if (!data) return;
-    }
 
     session.buf += data;
     let nl;
     while ((nl = session.buf.indexOf('\n')) !== -1) {
       const line = session.buf.slice(0, nl);
       session.buf = session.buf.slice(nl + 1);
-      // Rule 4: provider-secret check runs before degradation (ordering preserved).
+      // Rule 4: provider-secret check runs on the raw line before parsing.
       if (this._containsProviderSecret(line)) {
         this._providerSecretFailure(session);
-        return;
-      }
-      const lineBytes = Buffer.byteLength(line, 'utf8');
-      if (lineBytes > this._cfg.maxWireFrameBytes) {
-        // Completed-line ingestion site: degrade tool_result, else honest kill.
-        if (this._isToolResultFrameHead(line)) {
-          this._emitFrameDegraded(session, lineBytes + 1, this._parseToolUseIdFromHead(line));
-          continue;
-        }
-        this._wireFrameFailure(session);
         return;
       }
       if (!line.trim()) continue;
@@ -1014,19 +943,8 @@ export class ClaudeSessionCli {
         return;
       }
     }
-    // Partial-buffer ingestion site — secret check first, then size (else-if preserved).
+    // Partial-buffer ingestion site — secret check on the retained tail.
     if (!session.terminal && this._containsProviderSecret(session.buf)) this._providerSecretFailure(session);
-    else if (!session.terminal && Buffer.byteLength(session.buf, 'utf8') > this._cfg.maxWireFrameBytes) {
-      if (this._isToolResultFrameHead(session.buf)) {
-        session.discardingFrame = {
-          bytesSeen: Buffer.byteLength(session.buf, 'utf8'),
-          toolUseId: this._parseToolUseIdFromHead(session.buf),
-        };
-        session.buf = '';
-      } else {
-        this._wireFrameFailure(session);
-      }
-    }
   }
 
   _containsProviderSecret(value) {
@@ -1045,7 +963,6 @@ export class ClaudeSessionCli {
   _providerSecretFailure(session) {
     if (session.terminal || session.processFailure) return;
     session.buf = '';
-    session.discardingFrame = null;
     session.processFailure = {
       error: 'provider output contained protected credential material',
       code: 'provider_output_secret',
@@ -1069,19 +986,6 @@ export class ClaudeSessionCli {
     }
     const maxSecretBytes = Math.max(...secrets.map((secret) => Buffer.byteLength(secret, 'utf8')));
     session.stderrCanaryTail = candidate.slice(-Math.max(0, maxSecretBytes - 1));
-  }
-
-  _wireFrameFailure(session) {
-    if (session.terminal || session.processFailure) return;
-    session.buf = '';
-    session.discardingFrame = null;
-    session.processFailure = {
-      error: 'provider wire frame exceeded configured byte ceiling',
-      code: 'wire_frame_oversize',
-      phase: 'wire',
-      usageSeal: unavailableUsageSeal(),
-    };
-    this._signal(session, 'SIGKILL');
   }
 
   _handleWireObject(session, obj) {
@@ -1214,8 +1118,7 @@ export class ClaudeSessionCli {
    * Issue #299: a tool_result frame completes the call its requested row opened. The row carries
    * what the worker was TOLD — exit status, byte counts, first lines of the result — bounded and
    * redacted by the one derivation the referee's evidence path uses; the raw result text never
-   * reaches the durable ledger. (Oversized frames are already degraded before ingestion, issue
-   * #28, so this handler only ever sees frames within the wire ceiling.)
+   * reaches the durable ledger.
    */
   _handleToolResults(session, obj) {
     const content = obj.message?.content;

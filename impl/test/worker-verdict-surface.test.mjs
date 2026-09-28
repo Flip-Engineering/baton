@@ -229,7 +229,6 @@ const NAMED_SOURCE_PATTERNS = [
   /^Baton objective\/result policy /u,
   /Do not claim completion without the deployment verification command/u,
   /^Work only within: /u,
-  /HARD CONSTRAINT \(wire_frame_oversize/u,
   /commit at natural subsystem boundaries/u,
   /^Do NOT git commit/u,
   /SCRATCHPAD_WRITE/u,

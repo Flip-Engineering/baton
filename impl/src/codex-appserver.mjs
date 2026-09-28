@@ -20,142 +20,8 @@ import { attestWorkerPolicyObservation } from './worker-policy.mjs';
 import { TOOL_EVIDENCE_UNOBSERVED, toolCallArgumentDigest, toolCallResultDigest } from './verifier-diagnostics.mjs';
 import { normalizeConcurrencyCeiling } from './concurrency-policy.mjs';
 import { normalizeCodexFrame } from './native-subagent-observations.mjs';
-import { FRAME_LIMITS } from './limits.mjs';
 
-const DEFAULT_MAX_WIRE_FRAME_BYTES = FRAME_LIMITS['wire.frame'].value;
 const CODEX_TOKEN_METRIC = 'codex_thread_total_tokens';
-const MAX_NOTIFICATION_METHOD_PREFIX_CHARS = 512;
-
-// These app-server methods are server notifications, never JSON-RPC responses or requests.
-// Their payloads are telemetry/content and a later turn/completed notification remains the
-// authoritative lifecycle boundary. In particular, command output may be repeated in a very
-// large item/completed frame by real Codex versions. An oversized frame for any other method is
-// ambiguous and therefore fatal: it might contain a response id or a server request that Baton
-// must correlate/answer.
-const DISCARDABLE_OVERSIZE_NOTIFICATIONS = new Set([
-  'item/completed',
-  'item/agentMessage/delta',
-  'item/plan/delta',
-  'item/reasoning/summaryTextDelta',
-  'item/reasoning/summaryPartAdded',
-  'item/reasoning/textDelta',
-  'item/commandExecution/outputDelta',
-  'item/commandExecution/terminalInteraction',
-  'item/fileChange/outputDelta',
-  'item/fileChange/patchUpdated',
-  'item/mcpToolCall/progress',
-  'command/exec/outputDelta',
-  'process/outputDelta',
-  'turn/diff/updated',
-]);
-
-function saturatingByteCount(current, addition) {
-  return Math.min(Number.MAX_SAFE_INTEGER, current + addition);
-}
-
-/**
- * Classify only a closed, method-first notification header. JSON object member order is normally
- * irrelevant, but accepting params-first here would require retaining the whole oversized frame
- * to discover whether it later contains an id. Fail closed on that ambiguity instead.
- */
-function discardableNotificationMethod(prefix) {
-  const match = /^\s*\{\s*"method"\s*:\s*"((?:[^"\\]|\\.)*)"/.exec(
-    prefix.slice(0, MAX_NOTIFICATION_METHOD_PREFIX_CHARS),
-  );
-  if (!match) return null;
-  let method;
-  try {
-    method = JSON.parse(`"${match[1]}"`);
-  } catch {
-    return null;
-  }
-  return DISCARDABLE_OVERSIZE_NOTIFICATIONS.has(method) ? method : null;
-}
-
-function newOversizeStructure() {
-  return {
-    stack: [], rootStarted: false, complete: false, invalid: false,
-    inString: false, escaped: false, captureKey: false, key: '', expectTopKey: false,
-    sawMethod: false, sawId: false,
-  };
-}
-
-/**
- * Constant-space structural scan for the discarded remainder. It is deliberately not a JSON
- * value materializer. Its safety job is narrower: reject broken nesting, trailing syntax, a
- * duplicate method, or any top-level id that would turn the apparent notification into an RPC
- * request/response. Nested item ids are ordinary telemetry and do not trigger this guard.
- */
-function scanOversizeStructure(state, text) {
-  for (const char of text) {
-    if (state.invalid) return;
-    if (state.complete) {
-      if (!/\s/.test(char)) state.invalid = true;
-      continue;
-    }
-    if (state.inString) {
-      if (state.escaped) {
-        state.escaped = false;
-        if (state.captureKey) state.key += `\\${char}`;
-        continue;
-      }
-      if (char === '\\') {
-        state.escaped = true;
-        continue;
-      }
-      if (char !== '"') {
-        if (state.captureKey) {
-          state.key += char;
-          if (state.key.length > 128) state.invalid = true;
-        }
-        continue;
-      }
-      state.inString = false;
-      if (state.captureKey) {
-        let key;
-        try { key = JSON.parse(`"${state.key}"`); } catch { state.invalid = true; return; }
-        if (key === 'id') state.sawId = true;
-        if (key === 'method') {
-          if (state.sawMethod) state.invalid = true;
-          state.sawMethod = true;
-        }
-        state.captureKey = false;
-        state.key = '';
-        state.expectTopKey = false;
-      }
-      continue;
-    }
-
-    if (!state.rootStarted) {
-      if (/\s/.test(char)) continue;
-      if (char !== '{') { state.invalid = true; return; }
-      state.rootStarted = true;
-      state.stack.push('{');
-      state.expectTopKey = true;
-      continue;
-    }
-    if (char === '"') {
-      state.inString = true;
-      state.captureKey = state.stack.length === 1 && state.stack[0] === '{' && state.expectTopKey;
-      state.key = '';
-      continue;
-    }
-    if (char === '{' || char === '[') {
-      if (state.stack.length >= 256) { state.invalid = true; return; }
-      state.stack.push(char);
-      continue;
-    }
-    if (char === '}' || char === ']') {
-      const expected = char === '}' ? '{' : '[';
-      if (state.stack.pop() !== expected) { state.invalid = true; return; }
-      if (state.stack.length === 0) state.complete = true;
-      continue;
-    }
-    if (char === ',' && state.stack.length === 1 && state.stack[0] === '{') {
-      state.expectTopKey = true;
-    }
-  }
-}
 
 function unavailableUsageSeal() {
   return { tokens: 'unavailable', usd: 'unavailable', counterId: null, tokenMetric: null };
@@ -247,8 +113,6 @@ export class CodexAppServerCli {
     this._model = opts.model;
     this._sandbox = opts.sandbox ?? 'danger-full-access';
     this._approvalPolicy = opts.approvalPolicy ?? 'never';
-    this._maxWireFrameBytes = opts.maxWireFrameBytes ?? DEFAULT_MAX_WIRE_FRAME_BYTES;
-    if (!Number.isSafeInteger(this._maxWireFrameBytes) || this._maxWireFrameBytes <= 0) throw new TypeError('maxWireFrameBytes must be a positive safe integer');
 
     // XA15: probed once, synchronously, at construction; cached; never throws (a harness card
     // must always be producible even when `codex` isn't installed on this machine).
@@ -282,7 +146,6 @@ export class CodexAppServerCli {
         usage: { tokens: 'native', usd: 'unavailable', tokenMetric: CODEX_TOKEN_METRIC, terminalSeal: 'native' },
         providerCalls: { observation: 'native', enforcement: 'unavailable' },
         toolCalls: { observation: 'native', enforcement: 'unavailable' },
-        maxWireFrameBytes: this._maxWireFrameBytes,
       },
       modelSelection: {
         mode: 'exact', configuredDefault: this._model ?? null, available: null, family: 'openai',
@@ -394,8 +257,6 @@ export class CodexAppServerCli {
 
   _attachChild(session) {
     session.buf ??= '';
-    session.bufBytes = Buffer.byteLength(session.buf, 'utf8');
-    session.discardingOversizeNotification = null;
     session.child.stdout.setEncoding('utf8');
     session.child.stdout.on('data', (chunk) => this._onWireData(session, chunk));
     session.child.stderr.on('data', () => {}); // discard; nothing on this wire is diagnosed from stderr
@@ -406,54 +267,7 @@ export class CodexAppServerCli {
     session.child.on('error', (error) => this._onProcessError(session, error));
   }
 
-  _notificationPrefix(session, segment) {
-    const fromBuffer = session.buf.slice(0, MAX_NOTIFICATION_METHOD_PREFIX_CHARS);
-    const remaining = MAX_NOTIFICATION_METHOD_PREFIX_CHARS - fromBuffer.length;
-    return remaining > 0 ? fromBuffer + segment.slice(0, remaining) : fromBuffer;
-  }
-
-  _beginOversizeNotificationDiscard(session, segment, segmentBytes) {
-    const method = discardableNotificationMethod(this._notificationPrefix(session, segment));
-    if (!method) return false;
-    const structure = newOversizeStructure();
-    scanOversizeStructure(structure, session.buf);
-    scanOversizeStructure(structure, segment);
-    session.discardingOversizeNotification = {
-      method,
-      bytes: saturatingByteCount(session.bufBytes, segmentBytes),
-      structure,
-    };
-    session.buf = '';
-    session.bufBytes = 0;
-    return true;
-  }
-
-  _completeOversizeNotificationDiscard(session) {
-    const discarded = session.discardingOversizeNotification;
-    session.discardingOversizeNotification = null;
-    if (!discarded || session.terminal) return;
-    if (discarded.structure.invalid || !discarded.structure.complete
-      || discarded.structure.inString || discarded.structure.sawId
-      || !discarded.structure.sawMethod) {
-      this._wireFrameFailure(session);
-      return;
-    }
-    this._emit(session, 'error', {
-      message: 'oversized Codex provider notification discarded; turn lifecycle remains active',
-      code: 'wire_notification_truncated',
-      correlated: false,
-      serverMethod: discarded.method,
-      observedBytes: discarded.bytes,
-      byteCeiling: this._maxWireFrameBytes,
-      remediation: 'Use the terminal turn result; inspect provider-side output artifacts instead of replaying the dropped telemetry frame.',
-    });
-  }
-
-  /**
-   * Incremental NDJSON framing. At most maxWireFrameBytes of one ordinary frame is retained.
-   * Once a closed telemetry notification crosses that ceiling, bytes are counted and discarded
-   * until newline without growing session memory; the following frame is then parsed normally.
-   */
+  /** Incremental NDJSON framing: every completed line is parsed whole. */
   _onWireData(session, rawChunk) {
     if (session.terminal || session.processFailure) return;
     const chunk = typeof rawChunk === 'string' ? rawChunk : rawChunk.toString('utf8');
@@ -461,54 +275,13 @@ export class CodexAppServerCli {
     while (offset < chunk.length && !session.terminal && !session.processFailure) {
       const newline = chunk.indexOf('\n', offset);
       const end = newline === -1 ? chunk.length : newline;
-      const segment = chunk.slice(offset, end);
-      const segmentBytes = Buffer.byteLength(segment, 'utf8');
-
-      if (session.discardingOversizeNotification) {
-        session.discardingOversizeNotification.bytes = saturatingByteCount(
-          session.discardingOversizeNotification.bytes,
-          segmentBytes,
-        );
-        scanOversizeStructure(session.discardingOversizeNotification.structure, segment);
-        if (newline === -1) return;
-        this._completeOversizeNotificationDiscard(session);
-        offset = newline + 1;
-        continue;
-      }
-
-      if (session.bufBytes + segmentBytes > this._maxWireFrameBytes) {
-        if (!this._beginOversizeNotificationDiscard(session, segment, segmentBytes)) {
-          this._wireFrameFailure(session);
-          return;
-        }
-        if (newline === -1) return;
-        this._completeOversizeNotificationDiscard(session);
-        offset = newline + 1;
-        continue;
-      }
-
-      session.buf += segment;
-      session.bufBytes += segmentBytes;
+      session.buf += chunk.slice(offset, end);
       if (newline === -1) return;
       const line = session.buf;
       session.buf = '';
-      session.bufBytes = 0;
       this._onLine(session, line);
       offset = newline + 1;
     }
-  }
-
-  _wireFrameFailure(session) {
-    if (session.terminal || session.processFailure) return;
-    session.buf = '';
-    session.processFailure = {
-      error: 'provider wire frame exceeded configured byte ceiling',
-      code: 'wire_frame_oversize',
-      phase: 'wire',
-      remediation: 'The frame could affect RPC correlation, so Baton terminated and reaped this Codex session. Retry with an updated Codex app-server.',
-      usageSeal: unavailableUsageSeal(),
-    };
-    this._killChild(session);
   }
 
   async _onClose(session, code, signal) {

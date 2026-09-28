@@ -54,7 +54,6 @@ import {
   attachedToExistingCheckout, isPhysicalWorkspaceId } from './shared-workspace-custody.mjs';
 import { normalizeVerifierFailureCapsule } from './verifier-diagnostics.mjs';
 import { HOST_CAPACITY_BYPASS } from './host-capacity.mjs';
-import { MAX_STDERR_TAIL_BYTES } from './cli-adapters.mjs';
 // Issue #459: the supervised gate run takes the host verify lease through the suite runner's OWN
 // seam (`impl/scripts/suite-host-lease.mjs`) — the same admission a seat's suite takes, with the
 // same bound and the same nested-child proof — so the landing holds exactly the lease a verdict

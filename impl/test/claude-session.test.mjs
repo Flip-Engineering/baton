@@ -170,7 +170,6 @@ test('card declares steer as NATIVE (erratum E2: mid-turn stream-json injection 
     usage: { tokens: 'native', usd: 'native', tokenMetric: 'anthropic_input_plus_output_tokens_excluding_cache', terminalSeal: 'native' },
     providerCalls: { observation: 'native', enforcement: 'unavailable' },
     toolCalls: { observation: 'native', enforcement: 'unavailable' },
-    maxWireFrameBytes: 1024 * 1024,
   });
 });
 

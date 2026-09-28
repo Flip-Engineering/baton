@@ -23,7 +23,6 @@ function route(overrides = {}) {
 function policy(overrides = {}) {
   return {
     schemaVersion: 1,
-    maxWireFrameBytes: 256 * 1024,
     maxProviderCallsPerTurn: 32,
     maxToolCallsPerTurn: 64,
     routes: [
@@ -54,7 +53,7 @@ test('normalization exposes only a deeply immutable path-free projection and det
   assert.equal(Object.isFrozen(normalized.projection.routes), true);
   assert.equal(Object.isFrozen(normalized.projection.routes[0].terminalReserve), true);
   assert.deepEqual(Object.keys(normalized.projection).sort(), [
-    'maxProviderCallsPerTurn', 'maxToolCallsPerTurn', 'maxWireFrameBytes', 'routes', 'schemaVersion',
+    'maxProviderCallsPerTurn', 'maxToolCallsPerTurn', 'routes', 'schemaVersion',
   ]);
   assert.equal(JSON.stringify(normalized).includes('/Users/private'), false);
   assert.equal(JSON.stringify(normalized).includes('apiKey'), false);
@@ -97,7 +96,7 @@ test('route lookup is exact across harness, model, and effort and exposes no pub
 test('policy, route, and terminal reserve shapes are closed', () => {
   const base = policy();
   rejects({ ...base, extra: true });
-  const missing = { ...base }; delete missing.maxWireFrameBytes; rejects(missing);
+  const missing = { ...base }; delete missing.maxProviderCallsPerTurn; rejects(missing);
   rejects({ ...base, schemaVersion: 2 });
   rejects({ ...base, routes: base.routes.map((item, index) => index === 0 ? { ...item, apiKey: 'secret' } : item) });
   rejects({ ...base, routes: base.routes.map((item, index) => index === 0 ? { ...item, terminalReserve: { ...item.terminalReserve, secret: 'hidden' } } : item) });
@@ -105,13 +104,11 @@ test('policy, route, and terminal reserve shapes are closed', () => {
   rejects({ ...base, routes: base.routes.map((item, index) => index === 0 ? { ...item, mode: 'advisory' } : item) });
 });
 
-test('wire, provider-call, and tool-call ceilings require positive bounded safe integers', () => {
+test('provider-call and tool-call ceilings require positive bounded safe integers', () => {
   const invalid = [0, -1, 1.5, Number.MAX_SAFE_INTEGER + 1, Infinity, NaN, '1', null];
-  for (const field of ['maxWireFrameBytes', 'maxProviderCallsPerTurn', 'maxToolCallsPerTurn']) {
+  for (const field of ['maxProviderCallsPerTurn', 'maxToolCallsPerTurn']) {
     for (const value of invalid) rejects(policy({ [field]: value }));
   }
-  assert.doesNotThrow(() => normalizeProviderGovernancePolicy(policy({ maxWireFrameBytes: 16 * 1024 * 1024 }), harnesses));
-  rejects(policy({ maxWireFrameBytes: 16 * 1024 * 1024 + 1 }));
   for (const field of ['maxProviderCallsPerTurn', 'maxToolCallsPerTurn']) {
     assert.doesNotThrow(() => normalizeProviderGovernancePolicy(policy({ [field]: 100_000 }), harnesses));
     rejects(policy({ [field]: 100_001 }));
@@ -155,7 +152,6 @@ test('governance cards are closed and reject contradictory capability claims', (
       usage: { tokens: 'native', usd: 'unavailable', tokenMetric: 'input_plus_output', terminalSeal: 'native' },
       providerCalls: { observation: 'native', enforcement: 'unavailable' },
       toolCalls: { observation: 'native', enforcement: 'approval_pre_effect' },
-      maxWireFrameBytes: 1024,
     },
   };
   assert.deepEqual(validateProviderGovernanceCard(card), card.governance);
@@ -166,14 +162,12 @@ test('governance cards are closed and reject contradictory capability claims', (
     { ...card.governance, usage: { ...card.governance.usage, tokens: 'unavailable' } },
     { ...card.governance, providerCalls: { observation: 'unavailable', enforcement: 'native_pre_effect' } },
     { ...card.governance, toolCalls: { observation: 'unavailable', enforcement: 'approval_pre_effect' } },
-    { ...card.governance, maxWireFrameBytes: 16 * 1024 * 1024 + 1 },
   ]) assert.throws(() => validateProviderGovernanceCard({ governance }), /provider governance card/);
 });
 
 test('digest binds every public governance field and exact route reserve/mode', () => {
   const base = normalizeProviderGovernancePolicy(policy(), harnesses).digest;
   const variants = [
-    policy({ maxWireFrameBytes: 256 * 1024 + 1 }),
     policy({ maxProviderCallsPerTurn: 33 }),
     policy({ maxToolCallsPerTurn: 65 }),
     policy({ routes: [route({ terminalReserve: { tokens: 10_001, usd: 0.25 } }), policy().routes[1]] }),

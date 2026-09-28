@@ -42,7 +42,6 @@ const brief = () => ({
 
 const policy = ({ mode = 'observe', reserve = { tokens: 80, usd: 1 }, maxProviderCallsPerTurn = 2 } = {}) => ({
   schemaVersion: 1,
-  maxWireFrameBytes: 1024 * 1024,
   maxProviderCallsPerTurn,
   maxToolCallsPerTurn: 2,
   routes: [{ harness: 'stub', model: 'stub-1', effort: 'low', terminalReserve: reserve, mode }],
@@ -66,7 +65,6 @@ function adapter({ strict = false } = {}) {
         usage: { tokens: 'native', usd: 'native', tokenMetric: 'stub-total', terminalSeal: 'native' },
         providerCalls: { observation: 'native', enforcement: strict ? 'native_pre_effect' : 'unavailable' },
         toolCalls: { observation: 'native', enforcement: strict ? 'approval_pre_effect' : 'unavailable' },
-        maxWireFrameBytes: 1024 * 1024,
       },
     }),
     ...(strict ? {

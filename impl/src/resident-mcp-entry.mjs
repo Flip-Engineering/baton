@@ -4,7 +4,6 @@ import { join } from 'node:path';
 import { CoordinationStore } from './coordination-store.mjs';
 import { createBatonWebMcpServer, wakeAutoSubscription } from './mcp-web-bridge.mjs';
 import { serveMcpStdio } from './mcp-northbound.mjs';
-import { FRAME_LIMITS } from './limits.mjs';
 import { assertCliMcpControlParity, normalizeControlSurfaceError } from './control-surface-unification.mjs';
 import { wrapProductionMcpServer } from './production-mcp-complete.mjs';
 import { assertUnifiedCapabilityCoverage } from './surface-capability-catalog.mjs';
@@ -82,11 +81,8 @@ async function openWithStartupRetry(stateRoot, claudeRoot) {
   for (;;) {
     try {
       const coordination = new CoordinationStore(join(stateRoot, 'coordination'));
-      // Issue #343: the bridge frame IS the declared wire.frame substrate row — the same ceiling
-      // the resident narrows swarm.view answers against (web-northbound.mjs), so a narrowed
-      // answer fits instead of tripping the oversize refusal. No number is re-declared here.
       return await createBatonWebMcpServer({
-        coordination, cwd: process.cwd(), maxMessageBytes: FRAME_LIMITS['wire.frame'].value,
+        coordination, cwd: process.cwd(),
         // Issue #529 (docs/54 §4): the session's wake auto-subscription is derived from the
         // environment the deployment published this seat's bridge under. The Claude root
         // channel carries no seat coordinates and takes no swarm wake subscription.

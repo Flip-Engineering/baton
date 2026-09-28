@@ -320,7 +320,7 @@ test('GP6/GP8: exact terminal usage settles and releases each plan budget dimens
   const driver = make('metered-budget', {
     adapters: { mock: adapter },
     providerGovernance: {
-      schemaVersion: 1, maxWireFrameBytes: 1024 * 1024, maxProviderCallsPerTurn: 2, maxToolCallsPerTurn: 2,
+      schemaVersion: 1, maxProviderCallsPerTurn: 2, maxToolCallsPerTurn: 2,
       routes: [{ harness: 'mock', model: 'model-a', effort: 'low', terminalReserve: { tokens: 1, usd: 0.01 }, mode: 'observe' }],
     },
   });

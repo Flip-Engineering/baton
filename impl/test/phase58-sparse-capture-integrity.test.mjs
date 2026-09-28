@@ -389,7 +389,6 @@ function nativeResumeProbe() {
         usage: { tokens: 'native', usd: 'native', tokenMetric: 'phase58-probe-total', terminalSeal: 'native' },
         providerCalls: { observation: 'unavailable', enforcement: 'unavailable' },
         toolCalls: { observation: 'unavailable', enforcement: 'unavailable' },
-        maxWireFrameBytes: 1024 * 1024,
       },
     }),
     async spawn(worker, _brief, opts) {

@@ -521,7 +521,7 @@ test('AX4b: a real application Run explains one durable budget root cause across
   }
 });
 
-test('AX4c: a provider wire failure has one safe actionable cause across outline, execution, and cleanup', async (t) => {
+test('AX4c: a provider failure with an unclassified code has one safe actionable cause across outline, execution, and cleanup', async (t) => {
   const f = fixture('terminal-cause-wire');
   cleanup(t, f.application);
   f.adapter.spawn = async () => ({
@@ -541,10 +541,12 @@ test('AX4c: a provider wire failure has one safe actionable cause across outline
     await new Promise((resolve) => setTimeout(resolve, 10));
   }
   assert.equal(outline.outline.phase, 'failed');
+  // #627: `wire_frame_oversize` lost its typed guidance row with the wire bound, so it projects
+  // the closed generic provider-failure shape — one cause, the same on every surface.
   const expected = {
-    kind: 'provider_failure', code: 'wire_frame_oversize', category: 'provider_protocol',
-    summary: 'The provider emitted a frame that exceeded Baton\'s safe wire boundary.',
-    remediation: 'Baton requires exact termination and reaping of the ambiguous session. Update or repair the harness integration, then retry the Run.',
+    kind: 'provider_failure', code: 'wire_frame_oversize', category: 'provider_failure',
+    summary: 'The provider route failed.',
+    remediation: "Inspect the Run's bounded evidence and provider readiness, then retry or select another exact route.",
     retryable: true,
   };
   assert.deepEqual(outline.outline.terminalCause, expected);

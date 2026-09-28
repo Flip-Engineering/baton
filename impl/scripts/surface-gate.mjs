@@ -136,7 +136,7 @@ export async function checkMcpDispatchResolvability() {
         ],
         repoIds: [GATE_REPO_ID], expiresAt: new Date(Date.now() + 60_000).toISOString(), revoked: false,
       },
-      repoIds: [GATE_REPO_ID], maxWaitMs: 1_000, maxMessageBytes: 256 * 1024, takeToolQuota: () => ({ ok: true }),
+      repoIds: [GATE_REPO_ID], maxWaitMs: 1_000, takeToolQuota: () => ({ ok: true }),
     });
     // Probe the SHIPPED server: both distribution entry points wrap before serving, so an
     // advertised tool is only real if it survives this wrapper's tools/list (2026-09-14 audit,

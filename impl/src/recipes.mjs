@@ -542,7 +542,7 @@ export function redriveMembers(manifest, roles, { newIdempotencyKey, carryForwar
 const IMPLEMENT_TASK_TEMPLATE = 'Implement the assigned contract rung. The task that follows is your sole work authority.\n\n{task}';
 const IMPLEMENT_CONSTRAINTS = Object.freeze([
   'Work red-first: write the failing test first, then implement until green.',
-  'HARD CONSTRAINT (wire_frame_oversize, issue #28): never read a whole file over ~1500 lines; grep -an to locate, then read targeted ranges.',
+  'HARD CONSTRAINT: never read a whole file over ~1500 lines; grep -an to locate, then read targeted ranges.',
   'Do NOT git commit — the orchestrator harvests your worktree.',
   'Match existing code style; minimal diffs; no new application commands, registry entries, or MCP/CLI/web surfaces.',
   // Issue #62: the scratchpad's four closed entry kinds, verbatim — an entry outside these

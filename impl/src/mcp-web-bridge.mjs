@@ -1,6 +1,5 @@
 import { createHash, randomUUID } from 'node:crypto';
 
-import { FRAME_LIMITS } from './limits.mjs';
 import { BatonWebClient, discoverBatonConnection } from './application-cli.mjs';
 import { createLocalSocketFetch } from './local-web-transport.mjs';
 import { McpFleetServer, coreMutationAnswer, coreWakeHandoff, coreWakeHandoffFilter } from './mcp-northbound.mjs';
@@ -150,46 +149,6 @@ function wakeFilterParams(params) {
     swarms: filter.swarms === null ? null : [...filter.swarms],
     participants: filter.participants === null ? null : [...filter.participants],
     since: filter.since,
-  });
-}
-
-/** One bounded page in the ONE filter vocabulary. The bound is the transport's own frame ceiling,
- * never a constant page size: rows are returned whole until the next one would exceed it, and the
- * typed continuation names the cursor that resumes exactly after the last row returned. */
-export function boundWakePage(page, maxFrameBytes) {
-  if (page === null || typeof page !== 'object' || Array.isArray(page) || !Array.isArray(page.frames)) {
-    throw bridgeError('Remote Baton returned an invalid wake page', 'wake_page_invalid');
-  }
-  if (!Number.isSafeInteger(maxFrameBytes) || maxFrameBytes <= 0) {
-    throw bridgeError('Remote Baton wake page ceiling is unavailable', 'wake_stream_unavailable');
-  }
-  const frames = page.frames.filter((frame) => frame !== null && typeof frame === 'object' && !Array.isArray(frame));
-  const lagged = page.lagged !== null && typeof page.lagged === 'object' && !Array.isArray(page.lagged) ? page.lagged : null;
-  const head = Number.isSafeInteger(page.cursor) ? page.cursor : null;
-  const skeleton = {
-    schemaVersion: 1, kind: 'baton.wake_page', cursor: head,
-    swarms: Array.isArray(page.swarms) ? [...page.swarms] : [], frames: [], lagged, continuation: null,
-  };
-  let used = Buffer.byteLength(JSON.stringify(skeleton));
-  const kept = [];
-  for (const frame of frames) {
-    // The comma separating it from the previous row is part of what the frame costs.
-    const cost = Buffer.byteLength(JSON.stringify(frame)) + 1;
-    if (used + cost > maxFrameBytes) break;
-    used += cost;
-    kept.push(frame);
-  }
-  const remaining = frames.length - kept.length;
-  const last = kept.length === 0 ? null : kept[kept.length - 1].seq;
-  const continuation = remaining === 0 ? null : Object.freeze({
-    kind: 'baton.wakes_continuation', reason: 'frame_ceiling',
-    nextSince: Number.isSafeInteger(last) ? last : head, remaining,
-  });
-  return Object.freeze({
-    ...skeleton,
-    cursor: continuation === null ? head : continuation.nextSince,
-    frames: Object.freeze(kept),
-    continuation,
   });
 }
 
@@ -739,14 +698,12 @@ export class BatonWebApplicationFacade {
     return this._wakes.unsubscribe(params?.subscriptionId);
   }
 
-  /** The pull form: ONE bounded page after `since`, with the typed continuation that names the
-   * cursor to resume at when the page was cut by the transport's frame ceiling. */
-  async wakeSince(params, { maxFrameBytes }) {
+  /** The pull form: the page after `since`, answered whole. */
+  async wakeSince(params) {
     if (typeof this.client.wakesSince !== 'function') {
       throw bridgeError('this Baton connection cannot read the deployment wake stream', 'wake_stream_unavailable');
     }
-    const page = await this.client.wakesSince(wakeFilterParams(params));
-    return boundWakePage(page, maxFrameBytes);
+    return this.client.wakesSince(wakeFilterParams(params));
   }
 
   /** The session is over: the resident connection this plane held is released. */
@@ -786,11 +743,6 @@ export async function openBatonWebConnection(options = {}) {
     ...(connection.socketPath === undefined ? {} : { socketPath: connection.socketPath }),
     commandTimeoutMs: options.commandTimeoutMs ?? 120_000,
     pollMs: options.pollMs ?? 250,
-    // Issue #349: the bridge is the caller that answers under the MCP wire frame, so it DECLARES
-    // that frame on the swarm.view envelopes it forwards — the one declaration that lets the
-    // resident narrow the answer to fit. The CLI's own client declares none and receives the
-    // whole answer; the row is the registry's declared substrate row, never a second constant.
-    frameFor: (command) => (command === 'swarm.view' ? { lane: FRAME_LIMITS['wire.frame'].lane } : null),
     fetchImpl,
     clock: options.clock ?? options.now ?? Date.now,
     sleep: options.sleep ?? ((ms) => new Promise((resolve) => setTimeout(resolve, ms))),
@@ -888,7 +840,6 @@ export async function createBatonWebMcpServer(options) {
     now,
     admitsCommand: (command) => application._admits(command),
     maxWaitMs: options.maxWaitMs ?? 30_000,
-    maxMessageBytes: options.maxMessageBytes ?? 256 * 1024,
     takeToolQuota,
     // Issue #529 (docs/54 §4): the auto-subscription the entry derived for THIS session from its
     // environment (`wakeAutoSubscription`). A caller that keeps no wake stream, or that wants a

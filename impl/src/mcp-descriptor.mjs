@@ -226,7 +226,6 @@ export function createMcpServerFromDescriptor(descriptor) {
     repoIds: [descriptor.repo],
     now: () => Date.now(),
     maxWaitMs: 25_000,
-    maxMessageBytes: 256 * 1024,
     takeToolQuota: async () => ({ ok: true }),
   };
 }

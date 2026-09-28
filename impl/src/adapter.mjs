@@ -544,7 +544,6 @@ export class MockAdapter {
         usage: { tokens: 'native', usd: 'native', tokenMetric: MOCK_TOKEN_METRIC, terminalSeal: 'native' },
         providerCalls: { observation: 'unavailable', enforcement: 'unavailable' },
         toolCalls: { observation: 'unavailable', enforcement: 'unavailable' },
-        maxWireFrameBytes: 1024 * 1024,
       },
       // SC8: canonical 8-verb card. steer rides prompt(mode:'steer'), approve/answer ride the
       // respond flow — all genuinely implemented here; pause has no implementation and says so.

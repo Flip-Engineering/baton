@@ -132,7 +132,6 @@ test('GA14/GA15: card() reports harness grok, injected version, steer:emulated, 
     usage: { tokens: 'native', usd: 'unavailable', tokenMetric: 'grok_prompt_meta_total_tokens', terminalSeal: 'native' },
     providerCalls: { observation: 'unavailable', enforcement: 'unavailable' },
     toolCalls: { observation: 'native', enforcement: 'unavailable' },
-    maxWireFrameBytes: 1024 * 1024,
   });
   assert.deepEqual(card.permissions, {
     mode: 'always-approve', sandbox: 'off',

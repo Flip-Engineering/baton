@@ -870,8 +870,8 @@ const wakeFilterTokens = {
 const CANONICAL_OPERATION_SPECS = [
   // Issue #318 (retrieval, #312): the deployment evidence search. One canonical operation, every
   // surface deriving its name from THIS row (`baton evidence search` / baton_evidence_search); the
-  // dispatch reads the coordination ledger directly and derives its page boundary from the
-  // wire.frame row — the cursor is the ledger seq, never a page count. The field contract is the
+  // dispatch reads the coordination ledger directly — the cursor is the ledger seq, never a page
+  // count. The field contract is the
   // operation's own (evidence-search.mjs, `EVIDENCE_SEARCH_FILTERS`): every filter is optional, the
   // swarm is a filter and not a scope (absent searches the whole deployment), and an unset filter is
   // simply ABSENT — the shape every surface sends (#338).
@@ -1652,12 +1652,6 @@ const PROVIDER_TERMINAL_GUIDANCE = freeze({
     category: 'provider_authentication',
     summary: 'The selected provider route requires refreshed authentication.',
     remediation: 'Refresh the harness-native login outside Baton, rerun baton doctor, then retry the Run.',
-    retryable: true,
-  },
-  wire_frame_oversize: {
-    category: 'provider_protocol',
-    summary: 'The provider emitted a frame that exceeded Baton\'s safe wire boundary.',
-    remediation: 'Baton requires exact termination and reaping of the ambiguous session. Update or repair the harness integration, then retry the Run.',
     retryable: true,
   },
   provider_crashed: {

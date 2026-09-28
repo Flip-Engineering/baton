@@ -1922,12 +1922,7 @@ export class McpFleetServer {
     this.boundRepoId = this.bindApplicationContext ? [...this.repoIds][0] : null;
     this.now = opts.now ?? Date.now;
     this.maxWaitMs = opts.maxWaitMs ?? 25_000;
-    // A deployment-derived frame ceiling is normally injected; a server without one degrades to
-    // the documented 256 KiB default (the MP18 stdio factory and the descriptor-driven path rely
-    // on this posture).
-    this.maxMessageBytes = opts.maxMessageBytes ?? 256 * 1024;
     if (!Number.isSafeInteger(this.maxWaitMs) || this.maxWaitMs <= 0) throw new TypeError('maxWaitMs must be a positive safe integer');
-    if (!Number.isSafeInteger(this.maxMessageBytes) || this.maxMessageBytes <= 0) throw new TypeError('maxMessageBytes must be a deployment-derived positive safe integer');
     // Issue #294: server-initiated frames ride the SAME transport as responses. A server whose
     // driver attached no sink refuses a wake subscription instead of accepting one it could never
     // deliver; the stdio driver and the resident bridge both attach theirs.
@@ -2869,25 +2864,9 @@ export class McpFleetServer {
     }
     else if (name === 'baton_wakes_since') {
       if (typeof this.application?.wakeSince !== 'function') throw wakeStreamUnavailable('read');
-      value = await this.application.wakeSince(clone(args), { maxFrameBytes: this.maxMessageBytes });
+      value = await this.application.wakeSince(clone(args));
     }
     if (value?.result === 'stale_fence') throw Object.assign(new Error('stale fence'), { mcpCode: 'stale_fence' });
-    if (APPLICATION_TOOL[name] && Buffer.byteLength(JSON.stringify(toolResult(value))) > this.maxMessageBytes) {
-      // #530: the wire.frame lane is graceful — an answer past it is ADMITTED as a durable spill and
-      // the frame carries the citation its reader follows, so no read is refused for the size of its
-      // answer. Baton's own producers spill their prose lanes the same way.
-      const observed = Buffer.byteLength(JSON.stringify(toolResult(value)));
-      const serialized = JSON.stringify(toolResult(value));
-      const coordination = this.application?.driver?.coordination ?? null;
-      const minted = typeof coordination?.mintSpill === 'function'
-        ? coordination.mintSpill({ body: serialized, lane: FRAME_LIMITS['wire.frame'].lane },
-          { actor: 'mcp:application', key: `mcp.frame.spill:${name}:${observed}` })
-        : null;
-      const spill = minted?.spill ?? null;
-      if (spill !== null) {
-        value = { spilled: true, bytes: observed, digest: spill.digest, spill: spill.spillId, read: 'run.spill.read' };
-      }
-    }
     return normalized(GOAL_PLAN_MUTATIONS.has(name) ? sanitizeGoalPlanProjection(value) : value);
   }
 
@@ -2981,14 +2960,10 @@ export async function serveMcpStdio(server, opts = {}) {
   if (!(server instanceof McpFleetServer)) throw new TypeError('serveMcpStdio requires McpFleetServer');
   const input = opts.input ?? process.stdin;
   const output = opts.output ?? process.stdout;
-  const maxLineBytes = opts.maxLineBytes ?? server.maxMessageBytes;
-  if (!Number.isSafeInteger(maxLineBytes) || maxLineBytes <= 0) throw new TypeError('maxLineBytes must be a positive safe integer');
   // Issue #294: the wake subscriptions this session holds deliver through this exact output.
   server.attachNotificationSink((frame) => writeFrame(output, frame));
   let buffered = Buffer.alloc(0);
-  let discardingOversize = false;
-  const processLine = async (line, oversized = false) => {
-    if (oversized || line.length > maxLineBytes) return writeFrame(output, protocolError(null, -32700, 'Parse error'));
+  const processLine = async (line) => {
     let message;
     try { message = JSON.parse(new TextDecoder('utf-8', { fatal: true }).decode(line)); }
     catch { return writeFrame(output, protocolError(null, -32700, 'Parse error')); }
@@ -3001,33 +2976,19 @@ export async function serveMcpStdio(server, opts = {}) {
       let offset = 0;
       while (offset < bytes.length) {
         const newline = bytes.indexOf(0x0a, offset);
-        if (discardingOversize) {
-          if (newline === -1) break;
-          await processLine(Buffer.alloc(0), true);
-          discardingOversize = false;
-          offset = newline + 1;
-          continue;
-        }
         if (newline === -1) {
           const tail = bytes.subarray(offset);
-          if (buffered.length + tail.length > maxLineBytes) {
-            buffered = Buffer.alloc(0);
-            discardingOversize = true;
-          } else buffered = Buffer.concat([buffered, tail]);
+          buffered = Buffer.concat([buffered, tail]);
           break;
         }
         const segment = bytes.subarray(offset, newline);
-        if (buffered.length + segment.length > maxLineBytes) await processLine(Buffer.alloc(0), true);
-        else {
-          let line = buffered.length === 0 ? segment : Buffer.concat([buffered, segment]);
-          if (line.at(-1) === 0x0d) line = line.subarray(0, -1);
-          await processLine(line);
-        }
+        let line = buffered.length === 0 ? segment : Buffer.concat([buffered, segment]);
+        if (line.at(-1) === 0x0d) line = line.subarray(0, -1);
+        await processLine(line);
         buffered = Buffer.alloc(0);
         offset = newline + 1;
       }
     }
-    if (discardingOversize) await processLine(Buffer.alloc(0), true);
     if (buffered.length > 0) await processLine(buffered);
   } finally {
     await server.close();

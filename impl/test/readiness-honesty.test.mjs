@@ -93,9 +93,9 @@ const GENERIC_SUMMARY = 'The provider route failed.';
 const PROBE_CODES = Object.freeze([
   'provider_unreachable', 'probe_content_mismatch', 'probe_oversize', 'provider_quota',
 ]);
-// The four codes already typed at HEAD (the table A3p pins as unchanged).
+// The three codes already typed at HEAD (the table A3p pins as unchanged).
 const EXISTING_CODES = Object.freeze([
-  'authentication_required', 'authentication_refresh_required', 'wire_frame_oversize', 'provider_crashed',
+  'authentication_required', 'authentication_refresh_required', 'provider_crashed',
 ]);
 const TABLE_FIELDS = Object.freeze(['category', 'summary', 'remediation', 'retryable']);
 // A fixed injected epoch for probe/liveness fixtures (deterministic; never the real clock).
@@ -546,7 +546,7 @@ test('A1p (pin): the static substrate is unchanged — a static-ready route read
   }
 });
 
-test('A3p (pin): the four existing PROVIDER_TERMINAL_GUIDANCE rows each carry {category, summary, remediation, retryable} (G6, the unchanged typed vocabulary)', () => {
+test('A3p (pin): the three existing PROVIDER_TERMINAL_GUIDANCE rows each carry {category, summary, remediation, retryable} (G6, the unchanged typed vocabulary)', () => {
   const semanticsSource = readFileSync(join(srcDir, 'application-semantics.mjs'), 'utf8');
   const guidance = sliceBetween(stripComments(semanticsSource),
     /const PROVIDER_TERMINAL_GUIDANCE/u, /const GENERIC_PROVIDER_TERMINAL_GUIDANCE/u);

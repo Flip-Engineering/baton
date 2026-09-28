@@ -1632,15 +1632,6 @@ function museCommand() {
   throw deploymentError('Muse route requires a compatible muse executable with exec --json support');
 }
 
-/** Issue #28: deliberate wire ceilings are deployment-owned (64KiB–16MiB governance range). */
-const MIN_ADAPTER_WIRE_FRAME_BYTES = 64 * 1024;
-const MAX_ADAPTER_WIRE_FRAME_BYTES = 16 * 1024 * 1024;
-// #500 (extending the #28 pin): the deployment default inside that corridor is 8 MiB — what
-// the claude-session families resolve to when neither advanced.adapterOptions nor
-// BATON_CLAUDE_MAX_WIRE_FRAME_BYTES speaks. Operator-declared; the #500 pin test records all
-// three bounds.
-const DEFAULT_DEPLOYMENT_WIRE_FRAME_BYTES = 8 * 1024 * 1024;
-
 /**
  * `advanced.adapterOptions` is the deployment CALLER's channel for adapter configuration.
  * `concurrencyCeiling` is optional and defaults to nothing at all: a built-in route with no
@@ -1650,17 +1641,8 @@ const DEFAULT_DEPLOYMENT_WIRE_FRAME_BYTES = 8 * 1024 * 1024;
  */
 function normalizeAdapterOptions(value) {
   if (value === undefined) return Object.freeze({});
-  closed(value, ['concurrencyCeiling', 'maxWireFrameBytes'], 'advanced adapterOptions');
+  closed(value, ['concurrencyCeiling'], 'advanced adapterOptions');
   const options = {};
-  if (value.maxWireFrameBytes !== undefined) {
-    const n = value.maxWireFrameBytes;
-    if (!Number.isSafeInteger(n) || n < MIN_ADAPTER_WIRE_FRAME_BYTES || n > MAX_ADAPTER_WIRE_FRAME_BYTES) {
-      throw deploymentError(
-        'advanced.adapterOptions.maxWireFrameBytes must be an integer between 64KiB and 16MiB',
-      );
-    }
-    options.maxWireFrameBytes = n;
-  }
   if (value.concurrencyCeiling !== undefined) {
     try {
       const ceiling = normalizeConcurrencyCeiling(value.concurrencyCeiling, 'advanced.adapterOptions.concurrencyCeiling');
@@ -1670,19 +1652,6 @@ function normalizeAdapterOptions(value) {
     }
   }
   return Object.freeze(options);
-}
-
-/**
- * Resolve the claude-session-family wire ceiling: explicit advanced.adapterOptions wins,
- * then BATON_CLAUDE_MAX_WIRE_FRAME_BYTES, then the deployment default (8MiB).
- */
-function resolveSessionWireCeiling(adapterOptions = {}) {
-  if (Number.isSafeInteger(adapterOptions.maxWireFrameBytes)) {
-    return adapterOptions.maxWireFrameBytes;
-  }
-  const envCeiling = Number.parseInt(process.env.BATON_CLAUDE_MAX_WIRE_FRAME_BYTES ?? '', 10);
-  if (Number.isSafeInteger(envCeiling) && envCeiling > 0) return envCeiling;
-  return DEFAULT_DEPLOYMENT_WIRE_FRAME_BYTES;
 }
 
 class DeepseekSessionCli extends GlmSessionCli {
@@ -1737,7 +1706,6 @@ function builtInAdapters(routes, repoRoot, adapterOptions = {}, claudeCredential
   const adapters = {};
   const kimiCommand = existingRegular(join(operatorHome(), '.kimi-code', 'bin', 'kimi'))
     ? join(operatorHome(), '.kimi-code', 'bin', 'kimi') : 'kimi';
-  const maxWireFrameBytes = resolveSessionWireCeiling(adapterOptions);
   const grouped = new Map();
   for (const route of routes) {
     const provider = route.provider ?? (route.harness === 'claude-code' ? 'claude' : route.harness);
@@ -1761,7 +1729,7 @@ function builtInAdapters(routes, repoRoot, adapterOptions = {}, claudeCredential
       // CliAdapter base, whose `live` defaults to false so unit tests never spawn a real
       // CLI; without opting in here every muse run crashed at spawn (#323).
       adapters[key] = new MuseCli({
-        cmd: museCommand(), model: route.model, ceiling, maxWireFrameBytes, live: true,
+        cmd: museCommand(), model: route.model, ceiling, live: true,
       });
     } else if (route.harness === 'grok') {
       adapters[key] = new GrokAcpCli({
@@ -1785,10 +1753,9 @@ function builtInAdapters(routes, repoRoot, adapterOptions = {}, claudeCredential
       });
     } else if (route.harness === 'claude-code' && (route.provider ?? 'claude') === 'claude') {
       // Wave workloads legitimately produce multi-MiB stream-json frames (large ranged reads,
-      // suite outputs). Issue #28: deployment-owned ceiling (default 8MiB) plus graceful
-      // degradation for oversized tool_result frames (discard + wire.frame_degraded receipt).
+      // suite outputs); every frame is read whole.
       adapters[key] = new ClaudeSessionCli({
-        model: route.model, approvals: false, ceiling, maxWireFrameBytes,
+        model: route.model, approvals: false, ceiling,
         ...(claudeCredentialCache ? {
           credentialController: claudeCredentialCache,
           providerSecretsProbe: () => [claudeCredentialCache.credential?.accessToken].filter(Boolean),
@@ -1804,7 +1771,7 @@ function builtInAdapters(routes, repoRoot, adapterOptions = {}, claudeCredential
       const credential = kimiThroughClaudeCredential();
       if (!existingRegular(credential)) throw deploymentError('Kimi-through-Claude requires the private Baton Kimi credential file');
       adapters[key] = new KimiSessionCli({
-        authTokenFile: credential, repoRoot, model: route.model, approvals: false, ceiling, maxWireFrameBytes,
+        authTokenFile: credential, repoRoot, model: route.model, approvals: false, ceiling,
       });
     } else if (route.harness === 'deepseek') {
       const allowedModels = new Set(['deepseek-v4-flash', 'deepseek-v4-pro[1m]']);
@@ -1813,7 +1780,7 @@ function builtInAdapters(routes, repoRoot, adapterOptions = {}, claudeCredential
       }
       adapters[key] = new DeepseekSessionCli({
         ...deepseekCredentialProjection(repoRoot),
-        model: 'deepseek-v4-flash', approvals: false, ceiling, maxWireFrameBytes,
+        model: 'deepseek-v4-flash', approvals: false, ceiling,
       });
     } else if (route.harness === 'glm') {
       const allowedModels = new Set(['glm-5.2', 'glm-5.3']);
@@ -1826,7 +1793,7 @@ function builtInAdapters(routes, repoRoot, adapterOptions = {}, claudeCredential
         authTokenFile: credential, authTokenJsonPointer: '/glm_key', harness: 'glm',
         // glm-5.2 stays the construction default; per-run route.model (e.g. glm-5.3) flows
         // through the dialect.
-        model: 'glm-5.2', approvals: false, ceiling, maxWireFrameBytes,
+        model: 'glm-5.2', approvals: false, ceiling,
       });
     } else {
       throw deploymentError(`unsupported built-in route ${route.harness}`);
@@ -1866,9 +1833,8 @@ function applicationProfile(repoId, routes, verification) {
     verification: {
       command: verification.command, arguments: verification.arguments,
       cwd: '.', envAllowlist: ['PATH'], expectExit: 0, expectResult: 'exit_code',
-      // #500: a verification capture is read to a 1 MiB output ceiling — the registry's
-      // wire.frame row's own value, so a full capture stays representable in one delivery
-      // frame. Operator-declared; the #500 pin test records the value.
+      // #500: a verification capture is read to a 1 MiB output ceiling. Operator-declared; the
+      // #500 pin test records the value.
       timeoutMs: DEFAULT_BUDGET.wallMin * 60_000, maxOutputBytes: 1024 * 1024,
       requiredPredecessorEvidence: [],
     },

@@ -25,7 +25,6 @@
 //
 // The live CLI tier (cli-adapters.mjs) renders every card through `assertAdapterCard`, so a tier
 // that loses an axis refuses where it is constructed.
-import { FRAME_LIMITS } from './limits.mjs';
 import { normalizeWorkerPolicyCard } from './worker-policy.mjs';
 // #387: the provider-refusal axis is declared beside the vocabulary it checks
 // (provider-refusals.mjs) in the same {axis, consumes, validate} shape; this table admits it by
@@ -49,13 +48,8 @@ function closed(value, fields) {
   return isRecord(value) && Object.keys(value).every((field) => fields.includes(field));
 }
 
-/** The frame ceiling a tier that never declares one still has to answer for: the substrate
- * registry's own number, so no tier re-declares a byte bound. */
-export function defaultWireFrameBytes() {
-  return FRAME_LIMITS['wire.frame'].value;
-}
 
-const GOVERNANCE_FIELDS = Object.freeze(['usage', 'providerCalls', 'toolCalls', 'maxWireFrameBytes']);
+const GOVERNANCE_FIELDS = Object.freeze(['usage', 'providerCalls', 'toolCalls']);
 const MODEL_SELECTION_FIELDS = Object.freeze([
   'mode', 'configuredDefault', 'available', 'family', 'acceptedPrefixes', 'acceptedAliases',
   'reasoningEffort', 'serviceTier', 'provenance', 'refreshedAt',
@@ -70,11 +64,10 @@ const PERMISSION_FIELDS = Object.freeze(['mode', 'sandbox', 'boundary']);
 export const ADAPTER_CARD_AXES = Object.freeze([
   Object.freeze({
     axis: 'governance',
-    consumes: 'route/usage admission reads card.governance.usage and card.governance.maxWireFrameBytes',
+    consumes: 'route/usage admission reads card.governance.usage and card.governance.providerCalls',
     validate: (value, harness) => {
       if (!closed(value, GOVERNANCE_FIELDS)
-        || !isRecord(value.usage) || !isRecord(value.providerCalls) || !isRecord(value.toolCalls)
-        || !Number.isSafeInteger(value.maxWireFrameBytes) || value.maxWireFrameBytes <= 0) {
+        || !isRecord(value.usage) || !isRecord(value.providerCalls) || !isRecord(value.toolCalls)) {
         throw contractError(`adapter card for ${harness} has an unusable governance block`, { axis: 'governance' });
       }
     },
@@ -169,7 +162,6 @@ export function completeLegacySubprocessCard(card) {
       usage: Object.freeze({ tokens: 'unavailable', usd: 'unavailable', tokenMetric: null, terminalSeal: 'unavailable' }),
       providerCalls: Object.freeze({ observation: 'unavailable', enforcement: 'unavailable' }),
       toolCalls: Object.freeze({ observation: 'unavailable', enforcement: 'unavailable' }),
-      maxWireFrameBytes: defaultWireFrameBytes(),
     }),
     modelSelection: card.modelSelection ?? Object.freeze({
       mode: 'unavailable', configuredDefault: null, available: null, family: card.harness ?? null,

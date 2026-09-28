@@ -7,7 +7,6 @@ import { usdFromNanos, usdToNanos } from './usd.mjs';
 
 const POLICY_FIELDS = Object.freeze([
   'schemaVersion',
-  'maxWireFrameBytes',
   'maxProviderCallsPerTurn',
   'maxToolCallsPerTurn',
   'routes',
@@ -16,7 +15,6 @@ const ROUTE_FIELDS = Object.freeze(['harness', 'model', 'effort', 'terminalReser
 const RESERVE_FIELDS = Object.freeze(['tokens', 'usd']);
 const MAX_ROUTES = 1024;
 const MAX_IDENTIFIER_BYTES = 128;
-const MAX_WIRE_FRAME_BYTES = 16 * 1024 * 1024;
 const MAX_CALLS_PER_TURN = 100_000;
 const MAX_TERMINAL_RESERVE_TOKENS = 100_000_000;
 const MAX_TERMINAL_RESERVE_USD = 1_000_000;
@@ -112,10 +110,8 @@ export function normalizeProviderGovernancePolicy(value, harnesses) {
   const knownHarnesses = normalizeHarnesses(harnesses);
   const known = new Set(knownHarnesses);
   if (!exactFields(value, POLICY_FIELDS) || value.schemaVersion !== 1
-    || !positiveSafeInteger(value.maxWireFrameBytes)
     || !positiveSafeInteger(value.maxProviderCallsPerTurn)
     || !positiveSafeInteger(value.maxToolCallsPerTurn)
-    || value.maxWireFrameBytes > MAX_WIRE_FRAME_BYTES
     || value.maxProviderCallsPerTurn > MAX_CALLS_PER_TURN
     || value.maxToolCallsPerTurn > MAX_CALLS_PER_TURN
     || !Array.isArray(value.routes) || value.routes.length === 0 || value.routes.length > MAX_ROUTES) {
@@ -160,7 +156,6 @@ export function normalizeProviderGovernancePolicy(value, harnesses) {
 
   const projection = deepFreeze({
     schemaVersion: 1,
-    maxWireFrameBytes: value.maxWireFrameBytes,
     maxProviderCallsPerTurn: value.maxProviderCallsPerTurn,
     maxToolCallsPerTurn: value.maxToolCallsPerTurn,
     routes,
@@ -188,7 +183,7 @@ export function validateProviderGovernanceCard(card) {
   const providerCalls = governance?.providerCalls;
   const toolCalls = governance?.toolCalls;
   const exact = (value, fields) => exactFields(value, fields);
-  if (!exact(governance, ['usage', 'providerCalls', 'toolCalls', 'maxWireFrameBytes'])
+  if (!exact(governance, ['usage', 'providerCalls', 'toolCalls'])
     || !exact(usage, ['tokens', 'usd', 'tokenMetric', 'terminalSeal'])
     || !exact(providerCalls, ['observation', 'enforcement'])
     || !exact(toolCalls, ['observation', 'enforcement'])
@@ -196,7 +191,6 @@ export function validateProviderGovernanceCard(card) {
     || !SEAL_AVAILABILITY.has(usage.terminalSeal)
     || !USAGE_AVAILABILITY.has(providerCalls.observation) || !PROVIDER_ENFORCEMENT.has(providerCalls.enforcement)
     || !USAGE_AVAILABILITY.has(toolCalls.observation) || !TOOL_ENFORCEMENT.has(toolCalls.enforcement)
-    || !positiveSafeInteger(governance.maxWireFrameBytes) || governance.maxWireFrameBytes > MAX_WIRE_FRAME_BYTES
     || (usage.tokens === 'native' ? !boundedIdentifier(usage.tokenMetric) : usage.tokenMetric !== null)
     || (providerCalls.enforcement === 'native_pre_effect' && providerCalls.observation !== 'native')
     || (toolCalls.enforcement === 'approval_pre_effect' && toolCalls.observation !== 'native')) {

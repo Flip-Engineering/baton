@@ -50,8 +50,6 @@
 //                                     completion. Optional suffix: BIG_TOOL_RESULT:<bytes>[:id]
 //                                     [:chunks] — `chunks` writes the frame across multiple
 //                                     stdout writes (partial-buffer / discard-latch path).
-//   "OVERSIZE_ASSISTANT"           -> emits one oversized non-tool_result (assistant) frame then
-//                                     exits without a result (caller must observe wire kill).
 //   "BIG_TOOL_RESULT_SECRET"       -> like BIG_TOOL_RESULT but plants FAKE_CLAUDE_SECRET (or a
 //                                     fixed probe token) in the frame HEAD for secret-precedence
 //                                     tests.
@@ -166,13 +164,6 @@ function buildToolResultLine({
       },
     };
   return JSON.stringify(frame);
-}
-
-function buildOversizeAssistantLine(payloadBytes = 1_100_000) {
-  return JSON.stringify({
-    type: 'assistant',
-    message: { content: [{ type: 'text', text: 'y'.repeat(Math.max(0, payloadBytes)) }] },
-  });
 }
 
 function parseBigToolResultMarker(text) {
@@ -322,14 +313,6 @@ function startNonApprovalTurn(text) {
     emitResult({ text: `completed-after-big-tool-result:${bigTool.toolUseId}` });
     currentTurn = null;
     drainQueue();
-    return;
-  }
-
-  const oversizeAssistant = text.match(/OVERSIZE_ASSISTANT(?::(\d+))?/);
-  if (oversizeAssistant) {
-    const payloadBytes = oversizeAssistant[1] ? Number.parseInt(oversizeAssistant[1], 10) : 1_100_000;
-    sendRawLine(buildOversizeAssistantLine(payloadBytes));
-    // No result — the adapter must terminate via wire_frame_oversize.
     return;
   }
 

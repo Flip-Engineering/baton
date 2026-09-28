@@ -190,7 +190,7 @@ test('deployment search pages by the ledger seq cursor, alone and beside filters
   assert.equal(head.truncated, false);
 });
 
-test('deployment search frames pages under the wire.frame ceiling and always keeps the first row', (t) => {
+test('deployment search answers every matching row whole, in ledger order', (t) => {
   const big = (seq, marker) => ({ seq, ts: '2026-09-16T00:00:00.000Z', source: 'knowledge', swarmId: 'swarm-east',
     participantId: 'ada', runId: 'run-a', nodeId: `knowledge:Finding:${seq}`, kind: 'Finding', grounding: 'observed',
     body: `${marker}${'x'.repeat(600 * 1024)}` });
@@ -198,10 +198,10 @@ test('deployment search frames pages under the wire.frame ceiling and always kee
     { seq: 12, ts: '2026-09-16T00:00:00.000Z', source: 'contribution', swarmId: 'swarm-east', participantId: 'ada',
       contributionId: 'c-small', workId: null, refs: null, kind: null, body: 'small' }] };
   const page = searchEvidenceIndex(index, {});
-  assert.equal(page.rows.length, 1, 'two 600 KiB rows cannot share a 1 MiB wire frame');
-  assert.match(page.rows[0].body, /^first-/, 'the first row is always kept, never dropped for size');
-  assert.equal(page.truncated, true);
-  assert.equal(page.cursor, 12, 'a truncated page still cursors at the ledger head');
+  assert.equal(page.rows.length, 3, 'a frame of any size is answered whole');
+  assert.match(page.rows[0].body, /^first-/);
+  assert.equal(page.truncated, false);
+  assert.equal(page.cursor, 12, 'the cursor is the ledger head');
 });
 
 test('deployment search refuses unknown fields and invalid shapes with a typed code', async (t) => {

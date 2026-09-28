@@ -18,7 +18,6 @@ import { armSteeringCycle } from './runtime-redrive.mjs';
 import { spawn } from 'node:child_process';
 import { realpathSync } from 'node:fs';
 import { isAbsolute, join } from 'node:path';
-import { MAX_STDERR_TAIL_BYTES } from './cli-adapters.mjs';
 import { normalizeBrowserUseUrl } from './browser-use.mjs';
 import { normalizeConcurrencyCeiling } from './concurrency-policy.mjs';
 import { goalPlanDigest, GoalPlanValidationError, normalizeGoalPlanContext } from './goal-plan.mjs';
@@ -178,8 +177,6 @@ function defaultAccept(verdict, acceptOpts) {
   return !!(verdict && verdict.reverified === true && verdict.observedExit === acceptOpts.expectExit);
 }
 
-const SUPERVISED_STREAM_TAIL_BYTES = MAX_STDERR_TAIL_BYTES;
-
 export class SupervisedProcesses {
   constructor() {
     /** @type {Map<string, {id: string, pid: number|null, label: string, child: object, settled: Promise}>} */
@@ -281,8 +278,7 @@ export class SupervisedProcesses {
     // through is killed at once, so cancelAndReap's loop never misses it.
     if (this._fenced) killGroup('SIGKILL');
     let stdout = ''; let stderr = ''; let timedOut = false;
-    const tail = (current, chunk) => (current.length + chunk.length <= SUPERVISED_STREAM_TAIL_BYTES
-      ? current + chunk : (current + chunk).slice(-SUPERVISED_STREAM_TAIL_BYTES));
+    const tail = (current, chunk) => current + chunk;
     child.stdout?.setEncoding('utf8');
     child.stderr?.setEncoding('utf8');
     child.stdout?.on('data', (chunk) => { stdout = tail(stdout, chunk); });
@@ -1291,9 +1287,6 @@ export function _providerCapabilityRefusal(coordinator, recorder, handle, route)
     const adapter = coordinator._adapters[handle.vendor];
     const governance = adapter?.card()?.governance;
     if (!governance) return 'provider_governance_card_unavailable';
-    if (!Number.isSafeInteger(governance.maxWireFrameBytes)
-      || governance.maxWireFrameBytes <= 0
-      || governance.maxWireFrameBytes > coordinator._providerGovernance.projection.maxWireFrameBytes) return 'wire_frame_bound_unavailable';
     if (route.mode !== 'strict') return null;
     if (governance.usage?.terminalSeal !== 'native') return 'terminal_usage_seal_unavailable';
     if (route.terminalReserve.tokens > 0 && governance.usage?.tokens !== 'native') return 'native_token_usage_unavailable';
@@ -1313,7 +1306,6 @@ export function _bindStrictProviderGovernance(coordinator, recorder, handle, rou
       harness: handle.vendor,
       model: handle.modelResolved,
       effort: handle.effortResolved,
-      maxWireFrameBytes: coordinator._providerGovernance.projection.maxWireFrameBytes,
       maxProviderCallsPerTurn: coordinator._providerGovernance.projection.maxProviderCallsPerTurn,
       maxToolCallsPerTurn: coordinator._providerGovernance.projection.maxToolCallsPerTurn,
       terminalReserve: { ...route.terminalReserve },
