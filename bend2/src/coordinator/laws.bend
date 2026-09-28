@@ -32,6 +32,7 @@ import ./commands.bend as C
 import ./receive.bend as Receive
 import ../git/laws.bend as GitLaws
 import ../git/types.bend as T
+import ../git/text.bend as Tx
 import ../replay/laws.bend as ReplayLaws
 
 # ---------------------------------------------------------------------------
@@ -259,3 +260,133 @@ law m11_terminal_reads_the_records_own_event:
 def m11_terminal_reads_the_records_own_event(event):
   {==}
 
+
+# ---------------------------------------------------------------------------# ---------------------------------------------------------------------------
+# The turn supervisor. A turn is refused before it starts when the session
+# already has an owner or the worker is not registered, and every outcome the
+# supervisor produces is read from what it observed.
+
+law m8_one_native_owner_refuses_a_second_turn:
+  for +db: String
+  for +worker: String
+  for +id: String
+  for +cmd: String
+  for +model: String
+  for +effort: String
+  for +cwd: String
+  for +task: String
+  for +log: String
+  for +session: String
+  for +missing: Bool
+  {Turn.acquired(db, worker, id, cmd, model, effort, cwd, task, log, session, missing, None{}) == IO.die(Unit,2,"Session already has an active native turn; send a message to queue input.") : IO(Unit)}
+
+def m8_one_native_owner_refuses_a_second_turn(db, worker, id, cmd, model, effort, cwd, task, log, session, missing):
+  {==}
+
+law m14_missing_adapter_refuses_with_its_rule:
+  {Turn.supported_harness(False{}) == IO.die(Unit,2,"No turn adapter for the worker's recorded harness.") : IO(Unit)}
+
+def m14_missing_adapter_refuses_with_its_rule():
+  {==}
+
+law m8_turn_identity_belongs_to_one_worker:
+  {Turn.matching_turn(False{}) == IO.die(Unit,2,"The turn ID already belongs to a different worker or message kind.") : IO(Unit)}
+
+def m8_turn_identity_belongs_to_one_worker():
+  {==}
+
+law m2_unresumable_session_is_never_a_refusal:
+  for +event: String
+  for +text: String
+  {Turn.refusal_body(False{}, event, text) == False{} : Bool}
+
+def m2_unresumable_session_is_never_a_refusal(event, text):
+  {==}
+
+law m2_refusal_needs_the_harness_own_line:
+  for +text: String
+  {Turn.refusal_body(True{}, SNil{}, text) == Tx.starts_with(Tx.trim_nl(text), "Error: Session") : Bool}
+
+def m2_refusal_needs_the_harness_own_line(text):
+  {==}
+
+law m2_refusal_needs_an_absent_event:
+  for +h: Char
+  for +t: String
+  for +text: String
+  {Turn.refusal_body(True{}, SCon{h, t}, text) == False{} : Bool}
+
+def m2_refusal_needs_an_absent_event(h, t, text):
+  {==}
+
+law m5_retained_error_survives_a_later_success:
+  for +previous: String
+  for +value: String
+  {Turn.remember(previous, Done{value}) == previous : String}
+
+def m5_retained_error_survives_a_later_success(previous, value):
+  {==}
+
+law m5_the_first_error_is_the_retained_one:
+  for +code: U32
+  for +text: String
+  {Turn.remember(SNil{}, Fail{(code, text)}) == Turn.error_text((code, text)) : String}
+
+def m5_the_first_error_is_the_retained_one(code, text):
+  {==}
+
+law m5_a_recorded_error_is_not_overwritten:
+  for +h: Char
+  for +t: String
+  for +code: U32
+  for +text: String
+  {Turn.remember(SCon{h, t}, Fail{(code, text)}) == SCon{h, t} : String}
+
+def m5_a_recorded_error_is_not_overwritten(h, t, code, text):
+  {==}
+
+law m17_a_failed_step_is_the_answer:
+  for +code: U32
+  for +text: String
+  for closed: Result<&1,&1,U32 & String,Unit>
+  {Turn.send_result(Fail{(code, text)}, closed) == Fail{(code, text)} : Result<&1,&1,U32 & String,Unit>}
+
+def m17_a_failed_step_is_the_answer(code, text, closed):
+  {==}
+
+law m17_a_successful_step_yields_the_closing_answer:
+  for closed: Result<&1,&1,U32 & String,Unit>
+  {Turn.send_result(Done{Unit{}}, closed) == closed : Result<&1,&1,U32 & String,Unit>}
+
+def m17_a_successful_step_yields_the_closing_answer(closed):
+  {==}
+
+law m17_a_failed_step_is_never_masked_in_a_combination:
+  for +code: U32
+  for +text: String
+  for second: Result<&1,&1,U32 & String,Unit>
+  {Turn.combine(Fail{(code, text)}, second) == Fail{(code, text)} : Result<&1,&1,U32 & String,Unit>}
+
+def m17_a_failed_step_is_never_masked_in_a_combination(code, text, second):
+  {==}
+
+law m17_a_combination_reports_the_only_failure_it_has:
+  for +code: U32
+  for +text: String
+  {Turn.combine(Done{Unit{}}, Fail{(code, text)}) == Fail{(code, text)} : Result<&1,&1,U32 & String,Unit>}
+
+def m17_a_combination_reports_the_only_failure_it_has(code, text):
+  {==}
+
+law m17_two_successful_steps_are_a_success:
+  {Turn.combine(Done{Unit{}}, Done{Unit{}}) == Done{Unit{}} : Result<&1,&1,U32 & String,Unit>}
+
+def m17_two_successful_steps_are_a_success():
+  {==}
+
+law m13_an_open_input_is_not_closed:
+  for +handle: U32
+  {Turn.close_input(handle, True{}) == IO.pure(Result<&1,&1,U32 & String,Unit>, Done{Unit{}}) : IO(Result<&1,&1,U32 & String,Unit>)}
+
+def m13_an_open_input_is_not_closed(handle):
+  {==}
