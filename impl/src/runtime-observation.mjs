@@ -758,30 +758,6 @@ export function _exactProcesslessPreservationAuthority(coordinator, recorder, ha
       'planBindingDigest', 'runAuthorityDigest'].some((field) => receipt[field] !== current[field])) {
       return { ok: false, result: 'preservation_receipt_stale' };
     }
-    const controls = typeof recorder.coordination?.runControls === 'function'
-      ? recorder.coordination.runControls(task.runId, 100_000) : [];
-    const exactControls = controls.filter((control) => (
-      control?.schemaVersion === 2 && control.status === 'confirmed'
-      && control.operation === 'interrupt' && control.turnDisposition === 'preserve_turn'
-      && control.runId === task.runId && control.target?.workerId === handle.id
-      && control.target?.taskId === task.id
-      && control.target?.turnEpoch === receipt.turnEpoch
-      && control.target?.sessionDigest === receipt.sessionDigest
-      && control.target?.processGeneration === receipt.processGeneration
-      && control.target?.worktreeDigest === receipt.worktreeDigest
-      && control.target?.routeDigest === receipt.routeDigest
-      && control.target?.planBindingDigest === receipt.planBindingDigest
-      && control.target?.runAuthorityDigest === receipt.runAuthorityDigest
-      && control.providerAck?.state === 'confirmed'
-      && control.providerAck?.outcome?.preservation?.receiptDigest === receipt.receiptDigest
-      && control.settlement?.state === 'confirmed'
-      && control.settlement?.outcome?.preservation?.receiptDigest === receipt.receiptDigest
-      && control.settledEvent !== null
-    ));
-    if (exactControls.length !== 1) {
-      return { ok: false, result: exactControls.length === 0
-        ? 'preservation_control_unproven' : 'preservation_control_ambiguous' };
-    }
     const adapter = coordinator._adapters[handle.vendor];
     if (!adapter) return { ok: false, result: 'session_not_resumable' };
     let card;
@@ -791,7 +767,7 @@ export function _exactProcesslessPreservationAuthority(coordinator, recorder, ha
       || canonicalDigest(card) !== receipt.adapterCardDigest) {
       return { ok: false, result: 'preservation_card_mismatch' };
     }
-    return { ok: true, receipt, card, control: exactControls[0], processless };
+    return { ok: true, receipt, card, processless };
   }
 
 export function _failWorkerPolicyObservation(coordinator, recorder, handle, turnEpoch, mismatches, observation = null) {
@@ -1316,10 +1292,6 @@ export async function _send(coordinator, recorder, workerId, message, mode, opts
       });
     }
     coordinator.tick();
-    if (opts.controlId !== undefined
-      && !/^control:[a-f0-9]{64}$/u.test(opts.controlId)) {
-      throw new TypeError('send control identity is invalid');
-    }
     const handle = coordinator._getWorker(workerId);
     // SC4a: per-worker delivery serialization — deliveries reach the adapter strictly in
     // send()-call order (a slow steer emulation must never be overtaken by a fast nudge), and a
@@ -1631,7 +1603,7 @@ export function _mintStallDeclared(coordinator, recorder, handle) {
     });
   }
 
-export function _armStallCycle(coordinator, recorder, handle, task, { nudgeId, controlId }) {
+export function _armStallCycle(coordinator, recorder, handle, task, { nudgeId }) {
     if (!handle || !handle.watchdogActions?.has('stall')) return false;
     const windowMs = Number.isSafeInteger(coordinator._progressNudgeWindowMs)
       ? coordinator._progressNudgeWindowMs : 300_000;
@@ -1640,7 +1612,6 @@ export function _armStallCycle(coordinator, recorder, handle, task, { nudgeId, c
       worker: handle.id,
       taskId: task?.id ?? handle.taskId,
       nudgeId: nudgeId ?? null,
-      controlId: controlId ?? null,
       mintedAt: coordinator._now(),
       windowMs,
       answered: false,
