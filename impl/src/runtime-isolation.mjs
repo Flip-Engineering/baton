@@ -443,6 +443,8 @@ export class RuntimeIsolation {
     this.credentialFiles = opts.credentialFiles ?? {};
     this.credentialTrees = opts.credentialTrees ?? {};
     this.credentialDocuments = opts.credentialDocuments ?? {};
+    // #203: the family-independent gh credential document every seat's private HOME receives.
+    this.ghCredential = opts.ghCredential ?? null;
     // #346: every LIVE lease, keyed by worker id — the registry the deployment's refresh
     // re-projection walks. Removed with the lease, so a reaped worker is never written to.
     this.leases = new Map();
@@ -588,6 +590,13 @@ export class RuntimeIsolation {
       projectedTreeCount += projected.count;
       frameRedactors.push(projected.redactProviderFrame);
     }
+
+    // #203: the gh credential the deployment read at the root, projected into the seat's private
+    // HOME. gh resolves `$HOME/.config/gh/hosts.yml`, so a member worktree's own `gh` holds the
+    // operator's GitHub credential the private HOME cannot otherwise reach; with no such credential
+    // the seat's gh is left exactly as it was.
+    const ghDocument = credentialDocumentOf(this.ghCredential);
+    if (ghDocument) writeCredentialDocument(home, ghDocument);
 
     const projectedFileAxis = projectedFileCount + projectedDocumentCount;
     const projectedCredentialCount = projectedEnvCount + projectedFileAxis + projectedTreeCount;

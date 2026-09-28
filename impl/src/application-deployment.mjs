@@ -1122,6 +1122,35 @@ function trackedTreeBounds(repoRoot, treeish) {
   });
 }
 
+/** #203: the operator's GitHub token, read at the root through gh's own keyring lookup. macOS
+ * resolves the login keychain under the real $HOME, so a member worktree's private HOME reaches
+ * no keychain item — the same barrier #328 records for muse. Absent gh, an unauthenticated
+ * operator, or a read that answers nothing leaves this null. */
+export function operatorGhToken({ exec = execFileSync, home = operatorHome() } = {}) {
+  let token;
+  try {
+    token = exec('gh', ['auth', 'token'], {
+      encoding: 'utf8', timeout: 5_000, stdio: ['ignore', 'pipe', 'ignore'],
+      env: { ...process.env, HOME: home },
+    });
+  } catch { return null; }
+  const trimmed = typeof token === 'string' ? token.trim() : '';
+  return trimmed.length > 0 ? trimmed : null;
+}
+
+/** #203: the gh credential a member worktree's own `gh` resolves, as the ONE credential document
+ * the runtime projects into every seat's private HOME. gh reads `$HOME/.config/gh/hosts.yml`, so
+ * the file lands at that HOME-relative path; the operator's keyring, which the private HOME cannot
+ * reach, is never consulted by the seat. Null when no operator token is available, and a seat's gh
+ * then stays exactly as it was. */
+export function ghCredentialDocument({ token = operatorGhToken() } = {}) {
+  if (typeof token !== 'string' || token.length === 0) return null;
+  const content = `github.com:\n    oauth_token: ${token}\n    git_protocol: https\n`;
+  return Object.freeze({
+    read: () => Object.freeze({ relativePath: '.config/gh/hosts.yml', content }),
+  });
+}
+
 function defaultCredentialProjection(repoRoot, {
   projectNativeKimi = false, claudeCredentialCache = null, grokCredentialCache = null,
   museCredentialPath = null, museKeychainRead = null, ompCatalogRead = null,
@@ -1172,9 +1201,12 @@ function defaultCredentialProjection(repoRoot, {
       read: () => claudeCredentialCache.projectionDocument(),
     });
   }
+  // #203: the gh credential every member worktree's own `gh` resolves — read at the root and
+  // projected into each seat's private HOME by RuntimeIsolation (see ghCredentialDocument).
+  const ghCredential = ghCredentialDocument();
   return Object.freeze({
     credentialEnv: Object.freeze(credentialEnv), credentialFiles: credentials,
-    credentialTrees, credentialDocuments: Object.freeze(credentialDocuments),
+    credentialTrees, credentialDocuments: Object.freeze(credentialDocuments), ghCredential,
     repoRoot, museKeychainRead, ompCatalogRead,
   });
 }
@@ -1975,6 +2007,8 @@ async function projectedAdapterAuthentication(adapters, repoRoot, runtimeRoot, p
     // #346: the readiness probe runs against the SAME credential projection a real lease gets —
     // the file under the probe's CLAUDE_CONFIG_DIR, never an env token the worker would not hold.
     credentialDocuments: projection.credentialDocuments,
+    // #203: the gh credential document every seat's private HOME receives.
+    ghCredential: projection.ghCredential,
   });
   const results = new Map();
   for (const [name, adapter] of Object.entries(adapters)) {
@@ -6384,6 +6418,8 @@ export async function openBatonDeployment(rawOptions, createDriver) {
       // #346: the live credential document channel — the file the runtime writes into each
       // worker's own config dir and rewrites in place when the cache adopts a refresh.
       credentialDocuments: projection.credentialDocuments,
+      // #203: the gh credential document every seat's private HOME receives.
+      ghCredential: projection.ghCredential,
     },
     goalPlanAuthority: deploymentGoalPlanAuthority(repository.repoId),
     contextProgram: contextRuntime.driverConfiguration(),
