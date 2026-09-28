@@ -429,15 +429,12 @@ function legacyCoordinator() {
   const ok = { ok: true };
   return {
     spawn: async () => ({ ok: true, workerId: 'legacy-spawned' }),
-    spawnScratchOracle: async () => ok,
     send: async () => ok,
     interrupt: async () => ok,
     kill: async () => ok,
     drain: async () => ok,
     respond: async () => ok,
     invokeCapabilityNorthbound: async () => ok,
-    decideReuse: async () => ok,
-    recheckReuseDecision: async () => ok,
   };
 }
 
@@ -691,11 +688,6 @@ function legacyFamilies(label) {
   const workerId = `worker-${label}`;
   return [
     { command: 'spawn', args: { harness: 'mock', brief: { goal: 'x' } }, runId: `run-${label}-spawn` },
-    {
-      command: 'scratch_oracle',
-      args: { scratchFactId: 'fact-1', harness: 'mock', verification: { command: 'true', expectExit: 0 } },
-      runId: `run-${label}-oracle`,
-    },
     { command: 'send', args: { workerId, message: 'm', mode: 'turn' }, runId: `run-${label}-send`, extra: { expectedFence: 1 } },
     { command: 'interrupt', args: { workerId, then: 'continue' }, runId: `run-${label}-interrupt`, extra: { expectedFence: 1 } },
     { command: 'kill', args: { workerId }, runId: `run-${label}-kill`, extra: { expectedFence: 1 } },
@@ -705,16 +697,6 @@ function legacyFamilies(label) {
       command: 'capability_invoke',
       args: { action: 'invoke', name: 'read', op: 'read', args: {}, budgetTokens: 100 },
       runId: `run-${label}-capability`,
-    },
-    {
-      command: 'reuse_decide',
-      args: { need: 'need-1', choice: 'build', rationale: 'r', dossier: {}, sbom: {}, budgetTokens: 100 },
-      runId: `run-${label}-reuse-decide`,
-    },
-    {
-      command: 'reuse_recheck',
-      args: { decisionId: 'decision-1', expectedValidityVersion: 1, trigger: 'ttl_expired', budgetTokens: 100 },
-      runId: `run-${label}-reuse-recheck`,
     },
   ].map(({ command, args, runId, extra = {} }) => ({ command, args, runId, extra }));
 }

@@ -63,10 +63,10 @@ async function initialized(server) {
   assert.deepEqual(await server.handle({ jsonrpc: '2.0', method: 'notifications/initialized' }), null);
 }
 
-test('MN1/MN4/CI6/PF7: handshake and deterministic closed nineteen-tool inventory', async () => {
+test('MN1/MN4/CI6/PF7: handshake and deterministic closed tool inventory', async () => {
   const { server } = setup(); await initialized(server);
   const response = await request(server, 2, 'tools/list', {});
-  assert.deepEqual(response.result.tools.map((tool) => tool.name), ['fleet_spawn', 'fleet_scratch_oracle', 'fleet_goal_define', 'fleet_plan_propose', 'fleet_plan_approve', 'fleet_goal_plan_status', 'fleet_send', 'fleet_wait', 'fleet_respond', 'fleet_interrupt', 'fleet_result', 'fleet_list', 'fleet_capabilities', 'fleet_provider_status', 'fleet_capability_invoke', 'fleet_reuse_decide', 'fleet_reuse_recheck', 'fleet_kill', 'fleet_drain']);
+  assert.deepEqual(response.result.tools.map((tool) => tool.name), ['fleet_spawn', 'fleet_goal_define', 'fleet_plan_propose', 'fleet_plan_approve', 'fleet_goal_plan_status', 'fleet_send', 'fleet_wait', 'fleet_respond', 'fleet_interrupt', 'fleet_result', 'fleet_list', 'fleet_capabilities', 'fleet_provider_status', 'fleet_capability_invoke', 'fleet_kill', 'fleet_drain']);
   assert.equal(response.result.tools.every((tool) => tool.inputSchema.additionalProperties === false), true);
   assert.equal(response.result.tools.every((tool) => tool.execution.taskSupport === 'forbidden'), true);
   assert.equal(response.result.tools[0].inputSchema.properties.modelPolicy.additionalProperties, false);
@@ -339,26 +339,6 @@ test('CI6: capability cards are observed and invoke, resume, and reverify preser
     assert.match(ctx.idempotencyKey, /^mcp\.call:[0-9a-f-]+$/);
   }
   assert.equal(new Set(contexts.map((ctx) => ctx.idempotencyKey)).size, 3);
-});
-
-test('RD10: authenticated MCP reuse decision preserves principal actor, repo, budget, and durable call identity', async () => {
-  const { server, calls } = setup(); await initialized(server);
-  const args = { repoId: 'repo-a', idempotencyKey: 'reuse-mcp', need: 'JWT verification', choice: 'borrow', rationale: 'Exact green evidence.', dossier: { claim: {}, args: {} }, sbom: { claim: {}, args: {} }, budgetTokens: 4_000 };
-  const response = await request(server, 2, 'tools/call', { name: 'fleet_reuse_decide', arguments: args });
-  assert.equal(response.result.isError, false); assert.equal(calls.length, 1);
-  assert.deepEqual(calls[0].slice(0, 2), ['decideReuse', { need: args.need, choice: args.choice, rationale: args.rationale, dossier: args.dossier, sbom: args.sbom }]);
-  assert.equal(calls[0][2].actor, 'mcp:operator-a:stdio-a'); assert.equal(calls[0][2].repoId, 'repo-a'); assert.equal(calls[0][2].budgetTokens, 4_000); assert.match(calls[0][2].idempotencyKey, /^mcp\.call:[0-9a-f-]+$/);
-});
-
-test('RI10: authenticated MCP reuse recheck preserves principal authority and rejects forged evidence fields', async () => {
-  const { server, calls } = setup(); await initialized(server);
-  const args = { repoId: 'repo-a', idempotencyKey: 'recheck-mcp', decisionId: 'reuse-decision:test', expectedValidityVersion: 2, trigger: 'ttl_expired', budgetTokens: 4_000 };
-  const response = await request(server, 2, 'tools/call', { name: 'fleet_reuse_recheck', arguments: args });
-  assert.equal(response.result.isError, false);
-  assert.deepEqual(calls[0][0], 'recheckReuseDecision'); assert.deepEqual(calls[0][1], { decisionId: args.decisionId, expectedValidityVersion: 2, trigger: 'ttl_expired', budgetTokens: 4_000 });
-  assert.equal(calls[0][2].actor, 'mcp:operator-a:stdio-a'); assert.equal(calls[0][2].repoId, 'repo-a');
-  const forged = await request(server, 3, 'tools/call', { name: 'fleet_reuse_recheck', arguments: { ...args, idempotencyKey: 'recheck-forged', advisoryIds: ['forged'] } });
-  assert.equal(forged.result.isError, true); assert.equal(calls.length, 1);
 });
 
 test('OR9: authenticated MCP capability push is fenced and preserves the injected actor', async () => {

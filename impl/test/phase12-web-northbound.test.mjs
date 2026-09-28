@@ -350,40 +350,6 @@ test('UA5/WN: application read authorization refusal is typed, non-leaking, and 
   assert.equal(coordination.events().some((event) => event.kind.startsWith('web.command_')), false);
 });
 
-test('RD10: authenticated web reuse decision preserves principal actor, repo, budget, and durable idempotency', async () => {
-  const { web, calls } = fixture();
-  const args = { need: 'JWT verification', choice: 'borrow', rationale: 'Exact green evidence.', dossier: { claim: {}, args: {} }, sbom: { claim: {}, args: {} }, budgetTokens: 4_000 };
-  const response = await web.execute(context(), envelope({ commandId: 'reuse-web', idempotencyKey: 'reuse-web-idem', command: 'reuse_decide', args }));
-  assert.equal(response.status, 200); assert.equal(calls.length, 1);
-  assert.deepEqual(calls[0], { action: 'reuse_decide', request: args, ctx: { actor: 'web:user-1:session-1', repoId: 'repo-a', budgetTokens: 4_000, idempotencyKey: 'web.command:reuse-web' } });
-});
-
-test('RD10/WN6: reuse decisions consume exact edge cost 20 and exhausted quota refuses before dispatch', async () => {
-  const now = () => Date.parse('2026-07-11T12:00:00.000Z');
-  const { web, calls } = fixture({ edgePolicy: {
-    addressKey: 'phase38-address-key', now, limits: { cost: 20, principal: 10 },
-  } });
-  const args = { need: 'JWT verification', choice: 'borrow', rationale: 'Exact green evidence.', dossier: { claim: {}, args: {} }, sbom: { claim: {}, args: {} }, budgetTokens: 4_000 };
-  const accepted = await web.execute(context(), envelope({ commandId: 'reuse-cost-20', idempotencyKey: 'reuse-cost-20', command: 'reuse_decide', args }));
-  assert.equal(accepted.status, 200);
-  assert.equal(calls.length, 1);
-
-  const refused = await web.execute(context(), envelope({ commandId: 'after-reuse-cost', idempotencyKey: 'after-reuse-cost', command: 'list', args: {} }));
-  assert.equal(refused.status, 429);
-  assert.equal(refused.body.error.code, 'rate_limited');
-  assert.equal(calls.length, 1, 'quota refusal occurs before coordinator dispatch');
-});
-
-test('RI10: authenticated web recheck preserves actor/repo/idempotency and accepts no advisory facts', async () => {
-  const { web, calls } = fixture();
-  const args = { decisionId: 'reuse-decision:test', expectedValidityVersion: 1, trigger: 'advisory_refresh', budgetTokens: 4_000 };
-  const response = await web.execute(context(), envelope({ commandId: 'reuse-recheck-web', idempotencyKey: 'reuse-recheck-web', command: 'reuse_recheck', args }));
-  assert.equal(response.status, 200);
-  assert.deepEqual(calls, [{ action: 'reuse_recheck', request: args, ctx: { actor: 'web:user-1:session-1', repoId: 'repo-a', budgetTokens: 4_000, idempotencyKey: 'web.command:reuse-recheck-web' } }]);
-  const forged = await web.execute(context(), envelope({ commandId: 'reuse-recheck-forged', idempotencyKey: 'reuse-recheck-forged', command: 'reuse_recheck', args: { ...args, advisoryIds: ['forged'] } }));
-  assert.equal(forged.status, 400); assert.equal(calls.length, 1);
-});
-
 test('CI6: capability cards require observe while bounded invocation requires control and forwards the authenticated actor', async () => {
   const { web, calls } = fixture();
   const cards = await web.execute(context({ principal: principal({ capabilities: ['observe'] }) }), envelope({

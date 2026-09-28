@@ -357,9 +357,9 @@ test('RG-09 RE-DERIVED (#566): combined tools/list is the served combined table 
   const { server } = setup({ surface: 'combined' });
   await initialized(server);
   const names = (await request(server, 2, 'tools/list', {})).result.tools.map((tool) => tool.name);
-  // Issue #566 composition: the combined surface carries the restored ordinary table plus the
-  // fleet/advanced/reflex families and the #233 canonical dot twins.
-  assert.equal(names.length, 122, 'combined tools/list count 122 (stage: combined-102-includes-siblings)'); // the #598 removal of the check verb and the group A command removal each dropped their rows from the served tables
+  // Issue #566 composition: the combined surface carries the restored ordinary table (55 + the
+  // harvest pair) plus the fleet/advanced/reflex families and the #233 canonical dot twins — the
+  // 14 minted baton_run_* lifecycle siblings left with the regression restore.
   assert.equal(typeof mcpNorthbound.uncoveredCommands, 'function',
     'uncoveredCommands export exists (stage: uncovered-set-export)');
   assert.deepEqual(sortedSet(names), mcpNorthbound.mcpCombinedToolNames(),
