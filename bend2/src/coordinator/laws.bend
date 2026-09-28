@@ -29,10 +29,10 @@
 # M-4  bound: Deb.debris_argv, Deb.debris_note, Deb.debris_note_of and the create-worktree stage
 #      readers. The dropped set is named and the work the stages made is kept.
 # M-5  bound: Store.commit and Store.committed, C.sql(Pending/Inbox/Delivery/Bind),
-#      Root.wake_sql, Receive.pending_count_sql, P.argv, J.json_text, Turn.remember and
-#      Land.require_branch. A report and its parent delivery are written in one transaction, a
-#      transaction that did not commit delivers nothing, and owed messages are named in the
-#      store's own sequence order and remain owed until receipt.
+#      Root.wake_sql, Receive.pending_count_sql, P.argv, Turn.remember and Land.require_branch. A
+#      report and its parent delivery are written in one transaction, a transaction that did not
+#      commit delivers nothing, and owed messages are named in the store's own sequence order and
+#      remain owed until receipt. J.json_text is supplementary, not operative: see below.
 # M-7  bound: Turn.id_owner_sql, C.schema, C.sql(Report) and C.sql(Ack). The store validates the
 #      sender it records against the sessions it holds, a turn identity is admitted only for a
 #      report the worker itself wrote, and a report routes to the sender's recorded parent.
@@ -50,15 +50,23 @@
 # M-13 bound: Root.after, Guidance.relevant and Turn.close_input. The commit path itself invokes
 #      the recipient's registered endpoint, at the frames that carry guidance.
 # M-14 bound: T.fail_text, Receive.registered, Receive.exit_status, Turn.supported_harness,
-#      Land.require_worker, Land.require_branch_pick, Recruit.git_status and the Git status,
-#      create-worktree and debris refusal readers. Each refusal names its own rule and subject.
+#      Land.require_worker, Land.require_branch_pick and Recruit.git_status. Each refusal names its
+#      own rule and subject. The Git status and create-worktree reader laws are supplementary: see
+#      below.
 # M-17 bound: Turn.combine, Turn.send_result, Turn.remember, Turn.result_missing, Turn.diagnostic
 #      and Receive.exit_status. A failed step stays the answer, and an unsettled turn reports to
 #      its parent or names the log and inbox that continue it.
-# M-18 bound: L.push_argv. The push argv names the declared remote at the destination position.
+# M-18 bound: L.push_argv and L.push_git. The push argv names the declared remote at the
+#      destination position, and the push effect runs exactly that argv.
 # The adapter dispatch is bound under M-2, M-5 and M-11: Turn.input and Turn.launch select the
 # adapter by the harness the session recorded, and Turn.claude_launch and Turn.muse_launch start a
 # session when none is recorded and carry the recorded one otherwise.
+#
+# Supplementary laws. Three groups are checked by the same compile and are not operative runtime
+# coverage. The six laws in bend2/src/json/laws.bend are corpus-only: each fixes one value from
+# the encoder's corpus rather than quantifying over every value the encoder can be given. The ten
+# laws marked Supplementary in bend2/src/git/laws.bend's own sections are over readers that only
+# the tree's own test entry calls. No clause of any operative entry rests on those sixteen laws.
 #
 # No entry carries a replay residue. M-5, M-7 and M-8 were bound to the replay experiments until
 # the store transaction and the command admission above replaced them; the replay prototype's own

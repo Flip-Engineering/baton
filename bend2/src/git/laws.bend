@@ -3,6 +3,13 @@
 # this module, and the coordinator entry imports that, so every compile of the entry verifies
 # every law here.
 #
+# Two groups in this file are marked Supplementary in their own section comments: the seven laws
+# over WS.status_clean_fail, WS.status_dirty_fail and WS.status_cmd_fail, and the three over
+# CW.is_branch_exists_fail, CW.is_path_exists_fail and CW.is_unknown_base_fail. Those ten laws are
+# over readers that only bend2/tests/git.bend calls. Their proofs are checked with every other
+# law here, and they are not operative runtime coverage. Every other law in this file is stated
+# over a function a command in the entry's import graph reaches.
+#
 # Policies: docs/bend2/laws-proposed.md. Reference: docs/bend2/reference/README.md, bend 2.0.25.
 import Base
 import ./types.bend as T
@@ -449,6 +456,13 @@ law m2_ws_fail_answers_the_refusal:
 def m2_ws_fail_answers_the_refusal():
   {==}
 
+# ---------------------------------------------------------------------------
+# Supplementary. The seven status-reader laws below are stated over
+# WS.status_clean_fail, WS.status_dirty_fail and WS.status_cmd_fail. Their
+# proofs are checked with every other law in this file, and they are not
+# operative runtime coverage: no command in the entry's import graph calls
+# these readers, only the tree's own test entry bend2/tests/git.bend.
+#
 # M-14: a clean worktree at the expected commit reports no failure.
 law m14_ws_clean_match_is_silent:
   {WS.status_clean_fail(Done{T.Wt{"b", "c", False{}}}, "c") == "" : String}
@@ -581,6 +595,13 @@ law m14_cw_stage4_fail_names_the_command:
 def m14_cw_stage4_fail_names_the_command(out, bc, br, p):
   {==}
 
+# ---------------------------------------------------------------------------
+# Supplementary. The three reader laws below are stated over
+# CW.is_branch_exists_fail, CW.is_path_exists_fail and CW.is_unknown_base_fail.
+# Their proofs are checked with every other law in this file, and they are not
+# operative runtime coverage: only the tree's own test entry calls them. The
+# stage laws above them are operative, because createWorktree calls the stages.
+#
 # M-14: the branch-exists reader stays silent only for that refusal.
 law m14_cw_branch_reader_names_the_branch:
   {CW.is_branch_exists_fail(Fail{T.FBranchExists{"b"}}) == "" : String}
@@ -959,25 +980,30 @@ def m4_failed_keeps_the_trees(fail, repo, scratch):
   {==}
 
 # ---------------------------------------------------------------------------
-# M-18: the push runs at the destination the argv names. The projectors read
-# the destination and refspec positions of the argv the push runs.
+# M-18: the push runs at the destination the argv names. The push argv is
+# formed once, by L.push_argv, and the push effect runs exactly that argv.
+# The destination-position claim is carried by the full equation at the top of
+# this file, which names the remote and the branch in their positions; no
+# helper function exists only to read one position out.
 
-# M-18: the destination position of the push argv is the declared remote.
-law m18_push_remote_is_the_destination:
+# M-18: the push effect runs the argv the declared remote and branch form.
+law m18_the_push_runs_the_declared_argv:
+  for repo: String
   for branch: String
   for remote: String
-  {L.push_remote(L.push_argv(branch, remote)) == remote : String}
+  {L.push_git(repo, branch, remote) == P.runGit(repo, L.push_argv(branch, remote)) : IO(T.GitOut)}
 
-def m18_push_remote_is_the_destination(branch, remote):
+def m18_the_push_runs_the_declared_argv(repo, branch, remote):
   {==}
 
-# M-18: the refspec position of the push argv is the declared branch.
-law m18_push_refspec_is_the_branch:
+# M-18: the destination position of that argv holds the declared remote, read
+# through Base's own list readers.
+law m18_the_destination_position_holds_the_declared_remote:
   for branch: String
   for remote: String
-  {L.push_refspec(L.push_argv(branch, remote)) == branch : String}
+  {List.head(&1, String, List.tail(&1, String, L.push_argv(branch, remote))) == Some{remote} : Maybe<String>}
 
-def m18_push_refspec_is_the_branch(branch, remote):
+def m18_the_destination_position_holds_the_declared_remote(branch, remote):
   {==}
 
 # ---------------------------------------------------------------------------
