@@ -4,10 +4,13 @@
 The route JSON uses codex and omp objects with executable, model and effort
 fields, as accept-hierarchy.py does. This command starts real native sessions.
 All coordinator state, cloned source and native logs remain below --output.
+By default the coordinator builds from that clone; BEND selects an installed
+compiler. --coordinator uses a supplied executable with unverified source linkage.
 """
 import argparse
 import hashlib
 import json
+import os
 from pathlib import Path
 import shlex
 import shutil
@@ -58,12 +61,45 @@ def omp_report(path):
     return latest
 
 
+def prepare_coordinator(source, repo, out, supplied):
+    binary = out / 'baton2'
+    if supplied is not None:
+        shutil.copy2(supplied.resolve(), binary)
+        binary.chmod(0o700)
+        return binary, {'mode': 'caller_supplied', 'path': str(supplied.resolve()),
+                        'source_linkage': 'Unverified by this driver.'}
+    environment = dict(os.environ)
+    compiler = environment.get('BEND')
+    if compiler:
+        compiler = str(Path(shutil.which(compiler) or compiler).resolve())
+    else:
+        compiler = next((str(path) for path in [source / '.bend/bin/bend',
+                        source / 'node_modules/.bend/bin/bend'] if path.is_file()), None)
+    if compiler:
+        environment['BEND'] = compiler
+    argv = ['sh', str(repo / 'bend2/scripts/build-native.sh'),
+            'bend2/src/coordinator/main.bend', str(binary)]
+    with (out / 'build.log').open('w') as log:
+        subprocess.run(argv, cwd=repo, env=environment, stdout=log,
+                       stderr=subprocess.STDOUT, check=True)
+    provenance = {'mode': 'built_from_selected_clone', 'command': argv,
+                  'build_log': str(out / 'build.log'),
+                  'generated_c_sha256': hashlib.sha256(binary.with_suffix('.c').read_bytes()).hexdigest()}
+    if compiler:
+        provenance['compiler'] = {'path': compiler,
+                                  'version': command([compiler, 'version'],
+                                                     env={**environment, 'BEND_NO_TELEMETRY': '1'}),
+                                  'executable_sha256': hashlib.sha256(Path(compiler).read_bytes()).hexdigest()}
+    return binary, provenance
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__,
                                      formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument('--config', type=Path, required=True)
     parser.add_argument('--output', type=Path, required=True)
-    parser.add_argument('--coordinator', type=Path, default=SOURCE / '.scratch/bend2/baton2')
+    parser.add_argument('--coordinator', type=Path,
+                        help='Use a supplied binary; its source linkage is not verified by the driver')
     parser.add_argument('--source', type=Path, default=SOURCE)
     parser.add_argument('--revision', default='HEAD')
     parser.add_argument('--review-base', default='9e008263')
@@ -84,15 +120,14 @@ def main():
         parser.error('Commit new runtime source files before selecting the acceptance revision')
     out = args.output.resolve()
     out.mkdir(parents=True, exist_ok=False)
-    binary = out / 'baton2'
-    shutil.copy2(args.coordinator.resolve(), binary)
-    binary.chmod(0o700)
     db = out / 'state.db'
     repo = out / 'repo'
     command(['git', 'clone', '--shared', '--no-checkout', source, repo])
     command(['git', '-C', repo, 'checkout', '--detach', base])
+    binary, build = prepare_coordinator(source, repo, out, args.coordinator)
     pin = {'source': base, 'review_base': review_base, 'source_directory': str(source),
            'coordinator_sha256': hashlib.sha256(binary.read_bytes()).hexdigest(),
+           'coordinator_build': build,
            'driver_sha256': hashlib.sha256(Path(__file__).read_bytes()).hexdigest(),
            'routes': routes, 'started_unix': time.time()}
     save(out / 'run.json', pin)

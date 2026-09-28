@@ -65,6 +65,22 @@ def host_observation():
     return {'load_average': list(os.getloadavg()), 'top_cpu_processes': rows[:12]}
 
 
+def dependency_metadata(source, directory):
+    package = json.loads((source / 'impl/package.json').read_text())
+    names = sorted(set(package.get('dependencies', {})) | set(package.get('optionalDependencies', {})))
+    packages = {}
+    for name in names:
+        path = directory / name / 'package.json'
+        if path.is_file():
+            packages[name] = {'version': json.loads(path.read_text()).get('version'),
+                              'package_json_sha256': digest(path)}
+        else:
+            packages[name] = {'installed': False}
+    return {'directory': str(directory), 'contents_pinned': False,
+            'scope': 'Declared direct dependency package metadata; installed contents and transitive dependencies are not pinned.',
+            'packages': packages}
+
+
 class Old:
     def __init__(self, node, source, store, workers, cwd, env):
         self.stderr = (cwd / f'old-{time.time_ns()}.stderr').open('w')
@@ -158,6 +174,7 @@ def main():
     dependencies = args.old_repo.resolve() / 'impl/node_modules'
     if dependencies.exists():
         (source / 'impl/node_modules').symlink_to(dependencies, target_is_directory=True)
+    old_dependencies = dependency_metadata(source, dependencies)
     home = run / 'home'
     home.mkdir()
     env = {'PATH': os.environ.get('PATH', '/usr/bin:/bin'), 'HOME': str(home), 'LANG': 'en_US.UTF-8'}
@@ -320,6 +337,7 @@ def main():
             'final_counts': final_counts, 'startup': startup, 'replay': replay, 'memory': memory,
             'summary': summary, 'samples': samples,
             'host_before': host_before, 'host_after': host_observation(),
+            'old_dependencies': old_dependencies,
         }
         output = run / 'results.json'
         output.write_text(json.dumps(report, indent=2) + '\n')
