@@ -30,6 +30,7 @@ import ./root.bend as Root
 import ./turn.bend as Turn
 import ./commands.bend as C
 import ./receive.bend as Receive
+import ./guidance.bend as Guidance
 import ../git/laws.bend as GitLaws
 import ../git/types.bend as T
 import ../git/text.bend as Tx
@@ -389,4 +390,73 @@ law m13_an_open_input_is_not_closed:
   {Turn.close_input(handle, True{}) == IO.pure(Result<&1,&1,U32 & String,Unit>, Done{Unit{}}) : IO(Result<&1,&1,U32 & String,Unit>)}
 
 def m13_an_open_input_is_not_closed(handle):
+  {==}
+
+# ---------------------------------------------------------------------------
+# Guidance delivery and the receive path.
+
+# M-13: a harness that reads every frame carries guidance at every frame; OMP
+# carries guidance at the frames that open a response, complete a message or
+# run a tool, and at its terminal event. Its cumulative text updates are not a
+# guidance boundary, so guidance waits for the next one.
+law m13_every_frame_is_a_boundary_for_a_reading_harness:
+  for +kind: String
+  {Guidance.relevant(kind, False{}) == True{} : Bool}
+
+def m13_every_frame_is_a_boundary_for_a_reading_harness(kind):
+  {==}
+
+law m13_omp_text_update_is_not_a_guidance_boundary:
+  {Guidance.relevant("message_update\n", True{}) == False{} : Bool}
+
+def m13_omp_text_update_is_not_a_guidance_boundary():
+  {==}
+
+law m13_omp_terminal_event_is_a_guidance_boundary:
+  {Guidance.relevant("agent_end\n", True{}) == True{} : Bool}
+
+def m13_omp_terminal_event_is_a_guidance_boundary():
+  {==}
+
+# M-12: a delivery whose cursor already names the next message sends nothing
+# and answers at once, so one message is never sent twice.
+law m12_a_named_cursor_sends_nothing:
+  for +db: String
+  for +handle: U32
+  for +cursor: String
+  for +next: String
+  {Guidance.send(db, handle, cursor, next, True{}) == IO.pure(String, cursor) : IO(String)}
+
+def m12_a_named_cursor_sends_nothing(db, handle, cursor, next):
+  {==}
+
+# M-14: a session that is not registered is refused with the rule that refused
+# it and with the action that registers it.
+law m14_unregistered_session_refuses_with_its_rule:
+  {Receive.registered(False{}) == IO.die(Unit,2,"Session is not registered; attach a root or recruit a worker before receiving messages.") : IO(Unit)}
+
+def m14_unregistered_session_refuses_with_its_rule():
+  {==}
+
+# M-17: a failed native receive names the retained log and the pending inbox
+# that continue it, and a receive that did not fail reports its completion.
+law m17_failed_receive_names_its_continuation:
+  {Receive.exit_status(True{}) == IO.pure(Result<&1,&1,U32 & String,Unit>, Fail{(1,"Native receive failed; read the retained native log and pending inbox.")}) : IO(Result<&1,&1,U32 & String,Unit>)}
+
+def m17_failed_receive_names_its_continuation():
+  {==}
+
+law m17_clean_receive_reports_completion:
+  {Receive.exit_status(False{}) == IO.pure(Result<&1,&1,U32 & String,Unit>, Done{Unit{}}) : IO(Result<&1,&1,U32 & String,Unit>)}
+
+def m17_clean_receive_reports_completion():
+  {==}
+
+# M-12: with no input still owed the receiver answers at once and does not
+# re-enter delivery.
+law m12_nothing_owed_answers_at_once:
+  for again: Unit -> IO(Result<&1,&1,U32 & String,Unit>)
+  {Receive.continue_if(again, False{}) == IO.pure(Result<&1,&1,U32 & String,Unit>, Done{Unit{}}) : IO(Result<&1,&1,U32 & String,Unit>)}
+
+def m12_nothing_owed_answers_at_once(again):
   {==}
