@@ -43,8 +43,9 @@ stops it. A recovered seat is work the runtime can perform, so it performs it.
 
 ## What stays
 
-- The resume-from carry itself (#385/#452/#453): the snapshot apply, the `bound` case, the
-  `workspace.carried_from` row, and the refusal classes for a carry that cannot run.
+- The resume-from carry itself (#385/#452/#453/#621): the `bound` case, the successor checkout
+  created at the predecessor's preserved snapshot revision, the `workspace.carried_from` row, and
+  the refusal classes for a carry that cannot run.
 - The parked-guidance carry into a successor brief (#337): a resume-from recruit still composes the
   predecessor's parked guidance into the brief and marks each message delivered.
 - `swarm.resume_decision_requested` and `swarm.resume_decision_answered` remain in the event fold,

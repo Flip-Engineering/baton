@@ -28,7 +28,7 @@ import { pathInScopes } from './path-scope.mjs';
 import { FRAME_LIMITS, composeFrameLimitRefusal, frameLimitRefusalPath } from './limits.mjs';
 import { canonicalOperationForCommand } from './application-semantics.mjs';
 import { workspaceCustodyRecord, workspaceHolders } from './shared-workspace-custody.mjs';
-import { workspaceChangedPaths, workspaceExists, applySnapshotToWorktree, sweepIntegrationCheckouts } from './worktree.mjs';
+import { workspaceChangedPaths, workspaceExists, sweepIntegrationCheckouts } from './worktree.mjs';
 import { WorktreePreserver } from './worktree-preserve.mjs';
 import { hostCapacityShortfall, HOST_CAPACITY_BYPASS } from './host-capacity.mjs';
 // Issue #459: the landing's two out-of-process steps run through the resident's own supervised
@@ -1010,14 +1010,6 @@ const sliceUtf8 = (text, maxBytes) => {
   if (bytes.length <= maxBytes) return text;
   return new TextDecoder('utf-8', { fatal: false })
     .decode(bytes.subarray(0, maxBytes)).replace(/\uFFFD+$/u, '');
-};
-/** Issue #453: the bound one failed carry's cause is recorded with (#326's discipline — a
- * readable tail, never a whole git dump). The cause carries git's own last words about the file
- * it could not apply, so the tail is the half that matters. */
-const CARRY_REASON_BYTES = 512;
-const boundedCarryText = (value) => {
-  const text = typeof value === 'string' ? value : '';
-  return text.length <= CARRY_REASON_BYTES ? text : text.slice(-CARRY_REASON_BYTES);
 };
 // #444: the closed axes a recruit's route comparison may order on — `quality` (the default: the
 // route's MEASURED Artificial Analysis intelligence index) and `design` (the best Design Arena Elo
@@ -6579,32 +6571,36 @@ export class SwarmRuntime {
    * workspace facts. The row's fields, the brief's `## Inheritance` lines and the refusal all read
    * this plan, so the three can never tell two stories. `how` is drawn from the closed set
    * (`SWARM_CARRY_HOW` in swarm-state.mjs):
-   *   `bound`   — the successor binds the predecessor's own checkout; nothing is applied.
-   *   `applied` — the checkout is gone and the snapshot's own diff goes into the successor's new one.
+   *   `bound`   — the successor binds the predecessor's own checkout.
+   *   `applied` — the checkout is gone, so the successor's own checkout is created at the recorded
+   *               snapshot's revision (`worktreeBase`), which is where the predecessor's work is.
    *   `skipped` — nothing was carried, and `reason` says why (`missing` names the inputs the carry
-   *               lacked — `repoRoot`, `baseSha`, `snapshotSha`, or `snapshotPaths` when the
-   *               snapshot's own diff could not be read at all).
+   *               lacked — `repoRoot`, or `snapshotCommit` when the repository cannot resolve the
+   *               recorded snapshot's commit).
    * `content` says whether the snapshot holds work a skip would lose; unknown content reads as
    * content (a refusal over a guess), and the caller turns that into the typed refusal. */
   _workspaceCarryPlan({ exists, changedPaths, snapshotSha, snapshotPaths, missing }) {
     if (exists) {
       return Object.freeze({ how: 'bound', paths: Object.freeze([...changedPaths]),
-        snapshotSha: null, reason: null, content: false });
+        snapshotSha: null, worktreeBase: null, reason: null, content: false });
     }
     if (snapshotSha === null) {
       return Object.freeze({ how: 'skipped', paths: Object.freeze([]), snapshotSha: null,
-        reason: Object.freeze({ missing: Object.freeze(['snapshotSha']) }),
+        worktreeBase: null, reason: Object.freeze({ missing: Object.freeze(['snapshotSha']) }),
         content: changedPaths.length > 0 });
     }
-    // The snapshot's own diff is the only honest source for "what the snapshot holds": unreadable
-    // is not empty, so it reads as content the successor would lose.
-    const content = snapshotPaths === null ? true : snapshotPaths.length > 0;
     if (missing.length > 0) {
+      // The successor's checkout cannot be created at the snapshot's revision, so the work is out
+      // of reach: the plan carries content whether or not the changed-path list could be read.
       return Object.freeze({ how: 'skipped', paths: Object.freeze([]), snapshotSha,
-        reason: Object.freeze({ missing: Object.freeze([...missing]) }), content });
+        worktreeBase: null, reason: Object.freeze({ missing: Object.freeze([...missing]) }),
+        content: true });
     }
+    // The snapshot's changed paths are the row's `paths`; when neither the custody row nor the
+    // snapshot's own diff answers, the row's paths are empty and the work still reaches the
+    // successor, because its checkout is created at the snapshot commit itself.
     return Object.freeze({ how: 'applied', paths: Object.freeze([...(snapshotPaths ?? [])]),
-      snapshotSha, reason: null, content: false });
+      snapshotSha, worktreeBase: snapshotSha, reason: null, content: false });
   }
 
   /** The predecessor's workspace state for a resume-from recruit (#385): whether the checkout
@@ -6653,47 +6649,27 @@ export class SwarmRuntime {
       snapshotRow = payload;
     }
     const snapshotSha = typeof snapshotRow?.sha === 'string' ? snapshotRow.sha : null;
-    const baseSha = sessionContext?.baseSha ?? null;
+    // The base the snapshot's changed paths are read against: the live handle's own context, else
+    // the base the custody row recorded (#568) for a checkout whose owner metadata is gone. It is
+    // read for that diff and for nothing else, so a base that is gone costs the paths and never the
+    // carry.
+    const baseSha = sessionContext?.baseSha ?? snapshotRow?.baseSha ?? null;
     const snapshotPaths = exists || snapshotSha === null ? null
       : this._snapshotChangedPaths(repoRoot, baseSha, snapshotSha, snapshotRow?.paths ?? null);
     const missing = [];
     if (!exists && snapshotSha !== null) {
       if (repoRoot === null) missing.push('repoRoot');
-      if (baseSha === null) missing.push('baseSha');
-      if (repoRoot !== null && baseSha !== null && snapshotPaths === null) missing.push('snapshotPaths');
+      else if (!GIT_SHA.test(snapshotSha)
+        || !gitQuery(['cat-file', '-e', `${snapshotSha}^{commit}`], repoRoot).ok) {
+        missing.push('snapshotCommit');
+      }
     }
     // A live predecessor carries nothing (#318), so it has no plan: the brief says nothing about a
     // checkout the successor never gets, and the recruit writes no row.
     const carry = predecessorLive ? null
       : this._workspaceCarryPlan({ exists, changedPaths, snapshotSha, snapshotPaths, missing });
     return { workspaceId, exists, changedPaths, sessionContext, liveHolders, deadHolders, predecessorLive,
-      snapshotSha, baseSha, carry };
-  }
-
-  /** Issue #453: perform the snapshot carry the plan named, into the checkout the bind just
-   * created. Returns the plan with its OUTCOME — `applied`, or `skipped` naming the input that was
-   * missing or the apply's bounded cause — and never throws: the caller decides what a skip with
-   * content means (the typed refusal). `content` on the returned plan says whether the work would
-   * be lost, so the caller's refusal test is the same one the pre-effect refusal uses. */
-  _applyWorkspaceCarry(plan, { repoRoot, targetDir, baseSha }) {
-    const missing = [];
-    if (repoRoot === null) missing.push('repoRoot');
-    if (targetDir === null) missing.push('targetDir');
-    if (baseSha === null) missing.push('baseSha');
-    const content = plan.content || plan.paths.length > 0;
-    if (missing.length > 0) {
-      return { ...plan, how: 'skipped', paths: [], reason: { missing }, content };
-    }
-    try {
-      applySnapshotToWorktree(repoRoot, plan.snapshotSha, targetDir, baseSha);
-    } catch (error) {
-      // The bounded cause the worktree authority attached (#326's discipline, #453): the refusal
-      // names git's own words instead of a swallowed `[]`.
-      return { ...plan, how: 'skipped', paths: [],
-        reason: { error: boundedCarryText(error?.detail ?? error?.message ?? String(error)) },
-        content: true };
-    }
-    return { ...plan, how: 'applied', paths: [...plan.paths], reason: null, content: false };
+      snapshotSha, carry };
   }
 
   /** #308 × #453 × #490: withdraw a recruit whose effect refused AFTER the seat had already joined
@@ -7548,13 +7524,11 @@ export class SwarmRuntime {
     if (!carry || typeof workspaceId !== 'string' || workspaceId.length === 0) return [];
     const lines = [`- Carried workspace ${workspaceId} [how: ${carry.how}]`
       + (carry.paths.length > 0 ? `: ${carry.paths.join(', ')}` : '')];
-    if (carry.how === 'applied' && typeof carry.snapshotSha === 'string') {
-      lines.push(`  applied from snapshot ${carry.snapshotSha}`);
+    if (carry.how === 'applied' && typeof carry.worktreeBase === 'string') {
+      lines.push(`  the checkout starts at the snapshot revision ${carry.worktreeBase}`);
     }
     if (carry.how === 'skipped') {
-      lines.push(`  nothing was carried — ${carry.reason?.error
-        ? `the apply refused: ${carry.reason.error}`
-        : `missing: ${(carry.reason?.missing ?? []).join(', ')}`}`);
+      lines.push(`  nothing was carried — missing: ${(carry.reason?.missing ?? []).join(', ')}`);
     }
     return lines;
   }
@@ -8852,8 +8826,9 @@ export class SwarmRuntime {
           ? this._inheritancePredecessor(this._swarm(args.swarmId), args.resumeFrom)
           : null;
         // Issue #385: a resumeFrom successor inherits the predecessor's workspace when it is
-        // available — same physical checkout (case 1) or changes applied from a snapshot (case 2).
-        // When neither path is possible, the recruit is refused before any membership is written.
+        // available — the same physical checkout (case 1), or its own checkout created at the
+        // predecessor's preserved snapshot (case 2). When neither path is possible, the recruit is
+        // refused before any membership is written.
         let predecessorWs = null;
         if (predecessor && !workspace) {
           predecessorWs = this._predecessorWorkspace(current, predecessor.participantId);
@@ -9013,9 +8988,16 @@ export class SwarmRuntime {
         // reports nothing carries no facts, and the receipt names none (never a guess).
         let spawned = null;
         try {
+          // #621: a carry whose predecessor checkout is gone starts this Run's own checkout at the
+          // predecessor's preserved snapshot revision. It is the only request field this recruit
+          // sends for that plan; a `bound`, `skipped` or absent plan names no revision, because the
+          // checkout either already exists or is not created at all.
+          const worktreeBase = predecessorWs?.carry?.how === 'applied'
+            ? predecessorWs.carry.worktreeBase : null;
           spawned = await this.startRun({ runId, objective: brief, options: runOptions,
             swarmId: args.swarmId, participantId: args.participantId, sharedContext,
-            ...(workspace ? { workspace } : {}), ...(autoWake === null ? {} : { autoWake }) }, principal, context);
+            ...(workspace ? { workspace } : {}), ...(worktreeBase === null ? {} : { worktreeBase }),
+            ...(autoWake === null ? {} : { autoWake }) }, principal, context);
         const worker = this.coordinator.list().find((row) => row.runId === runId);
         if (!worker) refuse('Recruitment admitted but worker binding is not yet available', 'swarm_participant_unbound', { runId });
         // The checkout this binding observed is recorded with the seat: the first recruit into a
@@ -9055,38 +9037,14 @@ export class SwarmRuntime {
         }
         // Issue #425: the new lease learns the checkout's live writer before its seat can act.
         this._settleCheckoutWriterState();
-        // Issue #385 + #453: record the workspace carry after binding, from the plan the brief was
-        // composed with — case 1 binds the predecessor's checkout (`how: 'bound'`), case 2 applies
-        // the snapshot's own diff to the checkout this bind just created (`how: 'applied'`), and a
-        // carry that cannot happen records `how: 'skipped'` with its reason — or refuses, when the
-        // snapshot holds work the successor would lose.
+        // Issue #385 + #453 + #621: record the workspace carry after binding, from the plan the
+        // brief was composed with — case 1 binds the predecessor's checkout (`how: 'bound'`), case
+        // 2 starts the successor's own checkout at the predecessor's snapshot revision
+        // (`how: 'applied'`), and a carry whose inputs are missing records `how: 'skipped'` with its
+        // reason. A skip that would lose the work refuses pre-effect, before this seat joined.
         if (predecessorWs && predecessor && !predecessorWs.predecessorLive) {
           const carriedWorkspaceId = checkout?.workspaceId ?? predecessorWs.workspaceId;
-          let carry = predecessorWs.carry;
-          if (carry.how === 'applied') {
-            carry = this._applyWorkspaceCarry(carry, {
-              // The repository root the deployment's own authority names (#453), and the checkout
-              // the bind just created — the seat's own session context answers for it, and the
-              // shared attachment answers for a successor bound to the predecessor's checkout,
-              // where nothing is applied anyway.
-              repoRoot: this._repositoryRoot(checkout?.sessionContext?.repoRoot,
-                worker.sessionContext?.repoRoot),
-              targetDir: checkout?.sessionContext?.worktree
-                ?? worker.sessionContext?.worktree ?? worker.worktree ?? null,
-              baseSha: predecessorWs.baseSha,
-            });
-          }
-          if (carry.how === 'skipped' && carry.content) {
-            // #453: the work would be lost. The refusal below is what withdraws the seat and stops
-            // its Run (#490: the ONE window, with `swarm_workspace_carry_failed` as the settlement's
-            // code), and the root gets a typed refusal naming the snapshot and the reason — never a
-            // successor that lost the work.
-            refuse('Predecessor snapshot cannot be carried into the successor workspace',
-              'swarm_workspace_carry_failed', {
-                predecessor: predecessor.participantId, snapshotSha: predecessorWs.snapshotSha,
-                reason: carry.reason,
-              });
-          }
+          const carry = predecessorWs.carry;
           writes.push(this._write('workspace.carried_from', {
             swarmId: args.swarmId, participantId: args.participantId,
             workspaceId: carriedWorkspaceId, predecessor: predecessor.participantId,

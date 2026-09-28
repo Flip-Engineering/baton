@@ -108,16 +108,20 @@ function fixture(t) {
       let workspaceId = carried?.workspaceId ?? null;
       let worktree = carriedCheckout !== null && existsSync(carriedCheckout) ? carriedCheckout : null;
       if (worktree === null) {
+        // #621: the recruit names the revision a fresh successor checkout starts at — the
+        // predecessor's preserved snapshot when its checkout is gone.
+        const freshBase = request.worktreeBase ?? baseSha;
         const receipt = allocatePhysicalWorkspaceOwner(repo, {
           runId: request.runId, attemptId: `attempt-${workers.length + 1}`,
-          logicalTaskId: request.participantId, processGeneration: 1, baseSha,
+          logicalTaskId: request.participantId, processGeneration: 1, baseSha: freshBase,
         }, deployment);
         workspaceId = receipt.physicalOwnerId;
-        worktree = (await createFromBase(repo, workspaceId, baseSha, { ownerReceipt: receipt })).dir;
+        worktree = (await createFromBase(repo, workspaceId, freshBase, { ownerReceipt: receipt })).dir;
       }
       const workerId = `w-${workers.length + 1}`;
       const sessionContext = carried?.sessionContext
-        ?? { ownerTaskId: workspaceId, worktree, branch: `baton/${workspaceId}`, baseSha };
+        ?? { ownerTaskId: workspaceId, worktree, branch: `baton/${workspaceId}`,
+          baseSha: request.worktreeBase ?? baseSha };
       checkouts.set(workerId, { workspaceId, worktree, sessionContext });
       workers.push({ id: workerId, taskId: `t-${workers.length + 1}`, runId: request.runId,
         status: 'working', paused: false, terminalCause: null, sessionContext, worktree });
@@ -241,6 +245,10 @@ test('452-a2: a root-stopped seat whose checkout is gone but whose lane branch h
   const fresh = f.checkoutOf('charlie');
   assert.ok(existsSync(join(fresh.worktree, 'alpha-work.txt')),
     'the snapshot\'s change set landed in the successor\'s fresh checkout');
+  assert.equal(git(fresh.worktree, ['rev-parse', 'HEAD']), snapshotSha,
+    'because that checkout starts at the snapshot revision the stop recorded');
+  assert.equal(fresh.sessionContext.baseSha, snapshotSha,
+    'and records that same revision as its base');
 });
 
 // ─────────────────────────────────────────────────────────────────────────────

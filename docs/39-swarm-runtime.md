@@ -950,16 +950,17 @@ second of the provider's 429.
 
 **A successor carries its predecessor's workspace (#385).** `--resume-from <seat>` whose worker
 is dead binds the predecessor's retained checkout (#428 custody) when no other live worker holds
-it, else carries the change set of the predecessor's last snapshot into a fresh checkout, and
-records `workspace.carried_from {participantId, workspaceId, predecessor, how, paths, snapshotSha |
-null, reason}`; the brief's `## Inheritance from <seat>` names the carried paths and the `how`.
-`how` is a closed set (#453): `bound` (the retained checkout itself), `applied` (the snapshot's
-change set applied into a fresh checkout), `skipped` (nothing carried, `reason` names why — a
-snapshot with no changed path, or paths missing from the snapshot). A carry is a fact or a
-refusal, never a silent no-op: a snapshot that cannot apply refuses pre-effect
-`swarm_workspace_carry_failed` and the successor is not admitted. A predecessor that is
-still working keeps its checkout — the successor starts fresh and inherits guidance only (#318);
-a checkout held by a foreign live worker refuses `swarm_workspace_unavailable`.
+it; otherwise the successor's own checkout is created at the predecessor's last snapshot revision
+(#621), and the recruit records `workspace.carried_from {participantId, workspaceId, predecessor,
+how, paths, snapshotSha | null, reason}`; the brief's `## Inheritance from <seat>` names the carried
+paths and the `how`. `how` is a closed set (#453): `bound` (the retained checkout itself),
+`applied` (the successor's own checkout starts at the snapshot revision, so its content and `HEAD`
+are the predecessor's work), `skipped` (nothing carried, `reason` names why — no recorded snapshot,
+or a snapshot revision the repository cannot resolve). A carry is a fact or a refusal, never a
+silent no-op: a skip whose snapshot holds work refuses pre-effect `swarm_workspace_carry_failed` and
+the successor is not admitted. A predecessor that is still working keeps its checkout — the
+successor starts fresh and inherits guidance only (#318); a checkout held by a foreign live worker
+refuses `swarm_workspace_unavailable`.
 
 **A seat reads its issue through a context package (#441 lanes A and B; docs/47).** `swarm recruit
 … --issue N [--doc PATH …]` reads the issue through the root's own `gh` credential and admits ONE

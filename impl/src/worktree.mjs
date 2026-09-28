@@ -3328,41 +3328,11 @@ function publishedTip(repoRoot, remote, ref) {
   return line === null ? null : line.split(/\s+/u)[0] ?? null;
 }
 
-/** #453: the bounded cause of a failed snapshot carry — kept on the error so the refusal that
- * answers it names the reason instead of swallowing it into an empty carry. */
-function snapshotCarryFailure(cwd, error) {
-  const tail = gitStepTail(error);
-  return Object.assign(new Error(`snapshot carry into ${cwd} failed: ${tail}`), {
-    code: 'snapshot_carry_failed', detail: tail, cause: error,
-  });
-}
-
 /** The bounded, redacted tail of a failed publish push: the shared sanitizer's vocabulary plus a
  * URL-userinfo mask it carries no row for, so a declared remote with embedded credentials never
  * crosses into a recorded refusal verbatim. */
 function redactPushTail(tail) {
   return sanitizeVerifierDiagnosticText(tail).text.replace(/:\/\/[^/\s]+@/gu, '://***@');
-}
-
-/** Apply the diff between baseSha and snapshotSha from the repository into a target worktree.
- * Used when a predecessor's workspace was removed but its snapshot commit is available. Returns
- * the changed paths the target now holds; a failure throws with its bounded cause on `detail`
- * (#453), never a silently empty carry. */
-export function applySnapshotToWorktree(repoRoot, snapshotSha, targetDir, baseSha) {
-  let patch;
-  try {
-    patch = gitFile(['diff', '--binary', baseSha, snapshotSha], repoRoot, { encoding: 'buffer' });
-  } catch (error) {
-    throw snapshotCarryFailure(targetDir, error);
-  }
-  if (patch.length > 0) {
-    try {
-      gitFile(['apply', '--whitespace=nowarn'], targetDir, { input: patch, stdio: 'pipe' });
-    } catch (error) {
-      throw snapshotCarryFailure(targetDir, error);
-    }
-  }
-  return changedPathsFromBase(targetDir, baseSha);
 }
 
 

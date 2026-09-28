@@ -7,10 +7,10 @@
 // `workspace.carried_from {paths: [], snapshotSha: b8fb794d}` while the successor's checkout held
 // neither file: the carry branch resolved `repoRoot` from `this.situationGit.repoRoot`, which the
 // deployment never wires (application.mjs `_swarmRuntime()` passes `integration: {repoRoot,
-// publishRemote}` and a `situationGit` with only `head`/`commitsSince`), so
-// `applySnapshotToWorktree` was never called —
-// silently, because a missing input skipped the apply and a failing apply was caught to `[]` — and
-// the row still claimed a carry.
+// publishRemote}` and a `situationGit` with only `head`/`commitsSince`), so the carry never put
+// the work anywhere — silently, because a missing input skipped it and a failing one was caught to
+// `[]` — and the row still claimed a carry. Since #621 the carry does not patch the successor's
+// checkout at all: it starts that checkout at the snapshot revision.
 //
 // The contract this file pins:
 //   (a) a predecessor whose checkout is gone and whose snapshot holds an untracked new file: the
@@ -19,12 +19,12 @@
 //       from the snapshot commit itself;
 //   (bound) a predecessor whose checkout still exists is carried as `how: 'bound'` with the paths
 //       the shared checkout holds;
-//   (b) an apply that cannot run is a TYPED refusal naming the reason (git's own words) — no
-//       successor is left working under a checkout that lost the work, and no
-//       `workspace.carried_from` row claims otherwise;
-//   (e) the incident's own class — an input the carry cannot derive (no repository root anywhere,
-//       or a restart that lost the predecessor's recorded base) — refuses PRE-EFFECT: no successor
-//       joins, no checkout is created, and `reason.missing` names the inputs;
+//   (b) a snapshot that cannot be applied onto the successor's checkout — the #621 incident, where
+//       the target had moved past the predecessor's base — is no longer a refusal: the successor's
+//       own checkout starts at the snapshot revision and holds that work;
+//   (e) an input the carry cannot derive (no repository root anywhere, or a snapshot commit the
+//       repository cannot resolve) refuses PRE-EFFECT: no successor joins, no checkout is created,
+//       and `reason.missing` names the inputs;
 //   (c) `worktree.snapshotted.paths` names the SNAPSHOT's own changed paths (tracked and untracked
 //       alike), never a pre-snapshot working-tree list that reads 0 for untracked files;
 //   (d) the row's new fields are durable, validated fold state, and a pre-#453 row still folds.
@@ -136,8 +136,11 @@ function world(t, { successorBase = null, repoRoot = true, predecessorContext = 
       const index = workers.length + 1;
       const id = `w-${index}`;
       const predecessor = request.participantId === 'alpha';
-      const base = request.workspace?.sessionContext?.baseSha ?? (predecessor ? baseSha
-        : (typeof successorBase === 'function' ? successorBase() : successorBase ?? baseSha));
+      // #621: the recruit names the revision a fresh successor checkout starts at, which is the
+      // preserved snapshot when the predecessor's checkout is gone.
+      const base = request.worktreeBase ?? request.workspace?.sessionContext?.baseSha
+        ?? (predecessor ? baseSha
+          : (typeof successorBase === 'function' ? successorBase() : successorBase ?? baseSha));
       // A successor bound to the predecessor's checkout adopts it; a fresh recruit gets its own.
       const checkout = request.workspace?.sessionContext
         ? {
@@ -172,9 +175,12 @@ const workerOf = (w, runId) => w.workers.find((row) => row.runId === runId) ?? n
  * way the incident did: snapshot the checkout onto its lane branch through the real capture
  * primitive, remove the checkout, and record the snapshot row the removal is backed by. `paths`
  * records the snapshot's own changed paths where the caller asks for the #453 row shape; `null`
- * records the row a pre-#453 deployment wrote.
+ * records the row a pre-#453 deployment wrote — a row with no paths still names the base the
+ * snapshot's diff is read against (#568), which is the shape a run with no live predecessor handle
+ * reads it from. `recordedSha` writes a row naming another revision — the shape where the recorded
+ * snapshot cannot be resolved in the repository.
  */
-async function snapshotAndRemove(w, { worker, paths = null }) {
+async function snapshotAndRemove(w, { worker, paths = null, recordedSha = null }) {
   const checkout = w.checkouts.get(worker.sessionContext.ownerTaskId);
   const captured = await captureCommit(w.repo, checkout.workspaceId, {
     expectedWorktreePath: checkout.dir, expectedBaseSha: checkout.baseSha,
@@ -184,14 +190,15 @@ async function snapshotAndRemove(w, { worker, paths = null }) {
   assert.equal(existsSync(checkout.dir), false, 'the predecessor checkout is gone after the snapshot');
   w.store.recordDriver('worktree.snapshotted', {
     workspaceId: checkout.workspaceId, participantId: null, workerId: worker.id, taskId: worker.taskId,
-    sha: captured.sha, branch: checkout.branch, snapshotted: true, stopSeq: null,
+    sha: recordedSha ?? captured.sha, branch: checkout.branch, snapshotted: true, stopSeq: null,
+    baseSha: checkout.baseSha,
     ...(paths === null ? {} : { paths }),
   }, { actor: 'policy', key: `worktree.snapshotted:${worker.id}:${captured.sha}` });
   return { checkout, sha: captured.sha };
 }
 
 /** One dead predecessor whose checkout is gone and whose snapshot holds `CARRIED` + `TRACKED_EDIT`. */
-async function deadPredecessorWithSnapshot(w, { snapshotPaths = null } = {}) {
+async function deadPredecessorWithSnapshot(w, { snapshotPaths = null, recordedSha = null } = {}) {
   await w.call('create', { swarmId: SWARM, purpose: 'Carry a crash snapshot' });
   const alpha = await w.call('recruit', { swarmId: SWARM, participantId: 'alpha', objective: 'build alpha' });
   const worker = workerOf(w, alpha.runId);
@@ -199,7 +206,7 @@ async function deadPredecessorWithSnapshot(w, { snapshotPaths = null } = {}) {
   mkdirSync(join(checkout.dir, 'impl'), { recursive: true });
   writeFileSync(join(checkout.dir, CARRIED), CARRIED_BODY);
   writeFileSync(join(checkout.dir, 'base.txt'), TRACKED_EDIT);
-  const snapshot = await snapshotAndRemove(w, { worker, paths: snapshotPaths });
+  const snapshot = await snapshotAndRemove(w, { worker, paths: snapshotPaths, recordedSha });
   worker.status = 'dead';
   return { worker, ...snapshot };
 }
@@ -282,12 +289,13 @@ test('453-bound: a predecessor whose checkout still exists is carried as `bound`
 });
 
 // ——————————————————————————————————————————————————————————————————
-// (b) an apply that cannot run refuses typed
+// (b) a snapshot the successor's moved checkout cannot take arrives anyway
 // ——————————————————————————————————————————————————————————————————
 
-test('453-b: a snapshot that cannot apply refuses typed — no row, no successor handed the loss', async (t) => {
-  // The deployment target moved past the predecessor's base: the successor's fresh checkout
-  // already carries the same path with other content, so the snapshot diff cannot apply.
+test('453-b: a snapshot that cannot apply onto the moved target starts the successor at the snapshot', async (t) => {
+  // The deployment target moved past the predecessor's base and carries the same path with other
+  // content: a patch of the snapshot's diff could not apply onto a checkout of that target. The
+  // successor's own checkout starts at the snapshot revision instead, so the work arrives whole.
   const moved = {};
   const w = world(t, { tag: 'b', successorBase: () => moved.sha });
   const { sha } = await deadPredecessorWithSnapshot(w, { snapshotPaths: [CARRIED] });
@@ -297,41 +305,36 @@ test('453-b: a snapshot that cannot apply refuses typed — no row, no successor
   execFileSync('git', ['commit', '-qm', 'target moved past the predecessor base'], { cwd: w.repo });
   moved.sha = git(w.repo, ['rev-parse', 'HEAD']);
 
-  // Issue #572: the recruit performs the whole recovery, so the apply that cannot run refuses the
-  // RECRUIT that would start the seat rather than a later answer — and the seat is withdrawn.
-  await assert.rejects(
-    w.call('recruit', {
-      swarmId: SWARM, participantId: 'bravo', objective: 'continue alpha', resumeFrom: 'alpha',
-    }),
-    (error) => {
-      assert.equal(error.code, 'swarm_workspace_carry_failed',
-        `the refusal is typed, never a silent successor: ${error.message}`);
-      assert.equal(error.detail?.predecessor, 'alpha');
-      assert.equal(error.detail?.snapshotSha, sha, 'the refusal names the snapshot it could not carry');
-      assert.equal(typeof error.detail?.reason?.error, 'string', 'and the reason class');
-      assert.ok(error.detail.reason.error.length > 0, 'the reason names the git failure');
-      assert.match(error.detail.reason.error, /already exists/u,
-        `the reason carries git's own words: ${error.detail.reason.error}`);
-      return true;
-    });
+  // Issue #572: the recruit performs the whole recovery in one command, so the carry a successor
+  // receives is the one its own checkout was created with.
+  await w.call('recruit', {
+    swarmId: SWARM, participantId: 'bravo', objective: 'continue alpha', resumeFrom: 'alpha',
+  });
 
-  assert.deepEqual(rowsOf(w.store, 'workspace.carried_from'), [],
-    'no row claims a carry that did not happen');
   const checkout = w.checkouts.get(w.workers[1].sessionContext.ownerTaskId);
-  assert.equal(readFileSync(join(checkout.dir, CARRIED), 'utf8'),
-    'the target already carries this path\n', 'nothing was half-applied into the successor checkout');
-  assert.notEqual(w.store.swarm(SWARM).participants.bravo?.status, 'active',
-    'the seat the refused recruit could not start is not left as a live member');
+  assert.equal(git(checkout.dir, ['rev-parse', 'HEAD']), sha,
+    'the successor checkout starts at the recorded snapshot revision');
+  assert.notEqual(git(checkout.dir, ['rev-parse', 'HEAD']), moved.sha,
+    'never at the target the predecessor never worked on');
+  assert.equal(readFileSync(join(checkout.dir, CARRIED), 'utf8'), CARRIED_BODY,
+    'the successor checkout holds the work the moved target could not receive as a patch');
+  assert.equal(readFileSync(join(checkout.dir, 'base.txt'), 'utf8'), TRACKED_EDIT,
+    'and the snapshot\'s tracked change');
 
+  const carried = rowsOf(w.store, 'workspace.carried_from');
+  assert.equal(carried.length, 1, 'ONE carry row for the successor');
+  assert.equal(carried[0].payload.how, 'applied');
+  assert.equal(carried[0].payload.snapshotSha, sha);
+  assert.deepEqual([...carried[0].payload.paths], [CARRIED], 'the row names the carried path');
 });
 
 // ——————————————————————————————————————————————————————————————————
 // (e) the incident's own class: an input the carry cannot derive from
 // ——————————————————————————————————————————————————————————————————
 
-test('453-e: a carry with no derivable repository root refuses PRE-EFFECT, naming the inputs', async (t) => {
+test('453-e: a carry with no derivable repository root refuses PRE-EFFECT, naming the input', async (t) => {
   // Nothing names a root: no landing authority, no situation seam, and no predecessor handle
-  // (the restart case) — so both the root and the base the diff needs are absent.
+  // (the restart case) — so the repository the successor's checkout must start from is unknown.
   const w = world(t, { tag: 'e', repoRoot: false, predecessorContext: false });
   await deadPredecessorWithSnapshot(w, { snapshotPaths: [CARRIED] });
 
@@ -341,8 +344,8 @@ test('453-e: a carry with no derivable repository root refuses PRE-EFFECT, namin
     }),
     (error) => {
       assert.equal(error.code, 'swarm_workspace_carry_failed');
-      assert.deepEqual([...error.detail.reason.missing], ['repoRoot', 'baseSha'],
-        'the reason names exactly the inputs the carry lacked');
+      assert.deepEqual([...error.detail.reason.missing], ['repoRoot'],
+        'the reason names exactly the input the carry lacked');
       return true;
     });
 
@@ -353,9 +356,32 @@ test('453-e: a carry with no derivable repository root refuses PRE-EFFECT, namin
   assert.deepEqual(rowsOf(w.store, 'workspace.carried_from'), [], 'no row claims a carry');
 });
 
-test('453-e2: a restart that lost the predecessor handle refuses rather than guessing a base', async (t) => {
+test('453-e2: a restart that lost the predecessor handle starts the successor at the snapshot', async (t) => {
+  // The predecessor's handle is gone, so no live session context names a base; the row records the
+  // snapshot's own paths, so nothing has to derive them. The revision the successor starts at is the
+  // snapshot itself, so losing the handle no longer costs the successor its predecessor's work.
   const w = world(t, { tag: 'e2', predecessorContext: false });
-  await deadPredecessorWithSnapshot(w, { snapshotPaths: [CARRIED] });
+  const { sha } = await deadPredecessorWithSnapshot(w, { snapshotPaths: [CARRIED] });
+
+  await w.call('recruit', {
+    swarmId: SWARM, participantId: 'bravo', objective: 'continue alpha', resumeFrom: 'alpha',
+  });
+
+  const checkout = w.checkouts.get(w.workers[1].sessionContext.ownerTaskId);
+  assert.equal(git(checkout.dir, ['rev-parse', 'HEAD']), sha,
+    'the successor starts at the snapshot revision the removal recorded');
+  assert.equal(readFileSync(join(checkout.dir, CARRIED), 'utf8'), CARRIED_BODY,
+    'and holds the predecessor\'s work');
+  const carried = rowsOf(w.store, 'workspace.carried_from');
+  assert.equal(carried.length, 1, 'ONE carry row for the successor');
+  assert.equal(carried[0].payload.how, 'applied');
+  assert.equal(carried[0].payload.snapshotSha, sha);
+});
+
+test('453-e3: a snapshot revision the repository cannot resolve refuses PRE-EFFECT, naming it', async (t) => {
+  // The custody row names a commit this repository does not hold, so no checkout can start there.
+  const w = world(t, { tag: 'e3' });
+  await deadPredecessorWithSnapshot(w, { snapshotPaths: [CARRIED], recordedSha: SNAPSHOT_SHA });
 
   await assert.rejects(
     w.call('recruit', {
@@ -363,12 +389,36 @@ test('453-e2: a restart that lost the predecessor handle refuses rather than gue
     }),
     (error) => {
       assert.equal(error.code, 'swarm_workspace_carry_failed');
-      assert.deepEqual([...error.detail.reason.missing], ['baseSha'],
-        'the recorded base is what a snapshot diff must be taken against — never a guessed one');
+      assert.deepEqual([...error.detail.reason.missing], ['snapshotCommit'],
+        'the reason names the input it could not resolve');
+      assert.equal(error.detail.snapshotSha, SNAPSHOT_SHA);
       return true;
     });
   assert.equal(w.store.swarm(SWARM).participants.bravo, undefined, 'no seat joins');
+  assert.equal(w.workers.length, 1, 'and no successor checkout is created');
   assert.deepEqual(rowsOf(w.store, 'workspace.carried_from'), [], 'no row claims a carry');
+});
+
+test('453-e4: a handle-less carry with no recorded paths derives them from the row\'s base', async (t) => {
+  // The #568 shape: the predecessor's handle is gone and the custody row names the snapshot without
+  // the snapshot's own diff. The base the row carries is what that diff is read against, so the
+  // carry row still names the paths the successor received.
+  const w = world(t, { tag: 'e4', predecessorContext: false });
+  const { sha } = await deadPredecessorWithSnapshot(w, { snapshotPaths: null });
+
+  await w.call('recruit', {
+    swarmId: SWARM, participantId: 'bravo', objective: 'continue alpha', resumeFrom: 'alpha',
+  });
+
+  const checkout = w.checkouts.get(w.workers[1].sessionContext.ownerTaskId);
+  assert.equal(git(checkout.dir, ['rev-parse', 'HEAD']), sha,
+    'the successor starts at the snapshot revision the removal recorded');
+  const carried = rowsOf(w.store, 'workspace.carried_from');
+  assert.equal(carried.length, 1, 'ONE carry row for the successor');
+  assert.equal(carried[0].payload.how, 'applied');
+  assert.equal(carried[0].payload.snapshotSha, sha);
+  assert.deepEqual([...carried[0].payload.paths], ['base.txt', CARRIED].sort(),
+    'the row names the snapshot\'s changed paths, derived from the base the custody row recorded');
 });
 
 // ——————————————————————————————————————————————————————————————————

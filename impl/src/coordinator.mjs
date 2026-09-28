@@ -2158,7 +2158,16 @@ export class Coordinator {
     const derivedResumeAuthorized = opts.derivedResumePlanToken === this._derivedResumePlanToken
       && opts.preservedResume != null && worktreeBaseSha !== null;
     const derivedRevisionAuthorized = opts.derivedRevisionPlanToken === this._derivedRevisionPlanToken;
-    if (opts.goalPlan && !derivedResumeAuthorized && !derivedRevisionAuthorized && (opts.refines != null || (opts.taskType != null && opts.taskType !== 'general')
+    // Issue #621: a `swarm.recruit --resume-from` dispatch whose predecessor checkout is gone is
+    // the other sanctioned plan-gated pairing — the successor's Run holds the predecessor's
+    // preserved snapshot revision as its own checkout base. Observed 2026-09-27
+    // (mcp-598-updates → mcp-598-updates2) and 2026-09-28 08:55Z (digest-lead16za →
+    // digest-lead16zb), both refused as `swarm_workspace_carry_failed`. The same private-token
+    // discipline as the neighbours: the deployment's own carry token, and a non-null base.
+    const derivedCarryAuthorized = opts.derivedCarryPlanToken === this._derivedCarryPlanToken
+      && opts.preservedResume == null && worktreeBaseSha !== null;
+    if (opts.goalPlan && !derivedResumeAuthorized && !derivedRevisionAuthorized
+      && !derivedCarryAuthorized && (opts.refines != null || (opts.taskType != null && opts.taskType !== 'general')
       || opts.review != null || worktreeBaseSha !== null || sessionRequest.mode !== 'new' || modelPolicy !== null)) {
       throw Object.assign(new Error('plan-gated execution fields require explicit plan authority'), { code: 'plan_execution_mismatch' });
     }
