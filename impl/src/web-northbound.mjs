@@ -2388,6 +2388,9 @@ export function createLocalAuthenticatedWebServer(northbound) {
     req.edgeIdentity = Object.freeze({ transport: 'local', address: 'owner-local-socket' });
     northbound.handle(req, res);
   });
+  // Issue #636: resident 23592 lost queued recruit POSTs after a synchronous stall.
+  // Keep owner-local connections open until their peer or the host closes them.
+  server.keepAliveTimeout = 0;
   server.batonWakes = northbound.wakes;
   server.batonAuthenticate = northbound.authenticate;
   server.batonShutdown = (shutdownOpts = {}) => northbound.shutdown({ ...shutdownOpts, server });

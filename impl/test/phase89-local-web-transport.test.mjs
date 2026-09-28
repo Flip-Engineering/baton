@@ -3,6 +3,9 @@ import { mkdtempSync, rmSync, statSync } from 'node:fs';
 import { fixtureSocketRoot } from './fixture-root.mjs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { once } from 'node:events';
+import { createServer } from 'node:http';
+import { Worker } from 'node:worker_threads';
 import test from 'node:test';
 
 import {
@@ -78,6 +81,57 @@ function fixture(t) {
   });
   return { calls, host, issued, socketPath };
 }
+
+test('636: an owner-local recruit queued during a resident stall reaches dispatch', async (t) => {
+  const f = fixture(t);
+  await f.host.start();
+  // The 2026-09-28 23:47Z successor batch lost six POSTs while resident 23592 was
+  // busy. A separate client can write during the resident event-loop stall.
+  const worker = new Worker(`
+    const { parentPort, workerData } = require('node:worker_threads');
+    (async () => {
+      const { BatonWebClient, createLocalSocketFetch } = await import(workerData.module);
+      const client = new BatonWebClient({
+        baseUrl: workerData.origin, origin: workerData.origin,
+        repoId: workerData.repoId, token: workerData.token,
+        commandTimeoutMs: null, pollMs: 1,
+        fetchImpl: createLocalSocketFetch({ socketPath: workerData.socketPath }),
+        clock: Date.now, sleep: ms => new Promise(resolve => setTimeout(resolve, ms)),
+      });
+      await client.doctor();
+      parentPort.postMessage({ ready: true });
+      parentPort.once('message', async () => {
+        try {
+          const answer = await client.command('swarm.recruit', {
+            swarmId: 's-636', participantId: 'successor-636', objective: 'Continue the retained work',
+            idempotencyKey: 'recruit-636',
+          }, 'recruit-636');
+          parentPort.postMessage({ answer });
+        } catch (error) {
+          parentPort.postMessage({ error: { code: error.code, detail: error.detail } });
+        }
+      });
+    })().catch(error => { throw error; });
+  `, { eval: true, workerData: {
+    module: new URL('../src/index.mjs', import.meta.url).href,
+    origin: ORIGIN, repoId: REPO, token: f.issued.token, socketPath: f.socketPath,
+  } });
+  t.after(async () => {
+    await worker.terminate();
+    await f.host.shutdown();
+  });
+  assert.deepEqual((await once(worker, 'message'))[0], { ready: true });
+  const response = once(worker, 'message');
+  const defaults = createServer();
+  const idleWindow = defaults.keepAliveTimeout + (defaults.keepAliveTimeoutBuffer ?? 0);
+  worker.postMessage('recruit');
+  Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, idleWindow);
+  const [received] = await response;
+  assert.equal(received.error, undefined, JSON.stringify(received.error));
+  assert.deepEqual(received.answer, { schemaVersion: 1, items: [], continuation: null });
+  assert.deepEqual(f.calls.map(call => [call.name, call.args.participantId]),
+    [['swarm.recruit', 'successor-636']]);
+});
 
 test('RL1: authenticated Web commands traverse one owner-only Unix socket without TCP', async (t) => {
   const f = fixture(t);
