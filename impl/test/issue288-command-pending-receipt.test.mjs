@@ -154,7 +154,6 @@ test('U-F3 × MCP: a permanent deployment condition keeps its typed code and is 
   const cases = [
     ['application_unavailable', /no retry can succeed/u],
     ['application_run_view_oversize', /narrow the read/u],
-    ['application_run_lookup_oversize', /bounded page/u],
   ];
   for (const [code, remedy] of cases) {
     const server = mcpFixture(async () => { throw Object.assign(new Error('deployment detail'), { code }); });

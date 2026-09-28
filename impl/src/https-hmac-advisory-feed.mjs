@@ -41,8 +41,8 @@ export class HttpsHmacAdvisoryFeedSource extends HmacAdvisoryWebhookSource {
     const poll = opts.poll;
     let origin; let operation;
     try { origin = new URL(poll?.origin); operation = new URL(poll?.operation, origin); } catch { throw new TypeError('HTTPS advisory poll configuration is invalid'); }
-    const numeric = ['maxPages', 'maxItems', 'maxPageBytes', 'maxTotalBytes', 'maxWallMs', 'maxBackoffMs', 'maxClockSkewMs'];
-    if (!exact(poll, ['origin', 'operation', 'initialSequence', 'maxPages', 'maxItems', 'maxPageBytes', 'maxTotalBytes', 'maxWallMs', 'maxBackoffMs', 'maxClockSkewMs'])
+    const numeric = ['maxItems', 'maxWallMs', 'maxBackoffMs', 'maxClockSkewMs'];
+    if (!exact(poll, ['origin', 'operation', 'initialSequence', 'maxItems', 'maxWallMs', 'maxBackoffMs', 'maxClockSkewMs'])
       || origin.protocol !== 'https:' || origin.href !== `${origin.origin}/` || operation.origin !== origin.origin || operation.pathname !== poll.operation || operation.search || operation.hash
       || !/^\/[A-Za-z0-9._~!$&'()*+,;=:@%/-]{1,2048}$/.test(poll.operation) || poll.operation.includes('//') || poll.operation.split('/').some((part) => ['.', '..'].includes(part))
       || !Number.isSafeInteger(poll.initialSequence) || poll.initialSequence < 0 || numeric.some((key) => !Number.isSafeInteger(poll[key]) || poll[key] <= 0)
@@ -54,7 +54,7 @@ export class HttpsHmacAdvisoryFeedSource extends HmacAdvisoryWebhookSource {
 
   card() {
     const base = super.card();
-    return { ...base, modes: ['poll', 'webhook'], poll: { origin: this.poll.origin, operation: this.poll.operation, cursorKind: 'sequence', initialSequence: this.poll.initialSequence, redirects: 'deny', maxPages: this.poll.maxPages, maxItems: this.poll.maxItems, maxPageBytes: this.poll.maxPageBytes, maxTotalBytes: this.poll.maxTotalBytes, maxWallMs: this.poll.maxWallMs, maxBackoffMs: this.poll.maxBackoffMs, maxClockSkewMs: this.poll.maxClockSkewMs } };
+    return { ...base, modes: ['poll', 'webhook'], poll: { origin: this.poll.origin, operation: this.poll.operation, cursorKind: 'sequence', initialSequence: this.poll.initialSequence, redirects: 'deny', maxItems: this.poll.maxItems, maxWallMs: this.poll.maxWallMs, maxBackoffMs: this.poll.maxBackoffMs, maxClockSkewMs: this.poll.maxClockSkewMs } };
   }
 
   _pageSignature(fields) { return createHmac('sha256', this.secret).update(pollDomain(fields)).digest('hex'); }

@@ -144,7 +144,6 @@ import {
   resultIntentFromConstraints,
   runActivity,
   runProgress,
-  runViewNarrowedRead,
   runWorkerOwnership,
   safeScopePath,
   sanitizeHex64,
@@ -4785,41 +4784,12 @@ export class BatonApplication {
       action: { command: 'run.export', result: admitted.result === 'replay' ? 'replayed' : 'completed', exportId },
     });
     const response = deepFreeze({ ...clone(view), export: receipt, delivery });
-    if (Buffer.byteLength(JSON.stringify(response)) > MAX_RUN_VIEW_BYTES) {
-      throw applicationError('Run export response exceeds its deployment byte ceiling', 'application_export_oversize');
-    }
     return response;
   }
 
   _finalizeRunView(current, view, options = {}) {
     return applicationObservation._finalizeRunView(this, current, view, options);
   }
-
-  /** The ONE oversize refusal (issue #489): the byte count, the section that dominates the view,
-   * the sections a narrowed read already shed, and the narrowing that WORKS — never a bare
-   * "exceeds deployment policy" and never a remedy the deployment refuses. */
-  _runViewOversizeRefusal(runId, view, observed, shed) {
-    const measured = Object.entries(view)
-      .map(([section, value]) => Object.freeze({
-        section, bytes: Buffer.byteLength(JSON.stringify(value ?? null), 'utf8'),
-      }))
-      .sort((left, right) => (right.bytes - left.bytes) || (left.section < right.section ? -1 : 1));
-    const largest = measured[0] ?? Object.freeze({ section: 'view', bytes: observed });
-    const error = applicationError(
-      `Run view is ${observed} bytes, over the deployment's ${MAX_RUN_VIEW_BYTES}-byte view ceiling;`
-      + ` the largest section is ${largest.section} (${largest.bytes} bytes)`
-      + (shed.length === 0 ? '' : `, already shed: ${shed.map((row) => row.section).join(', ')}`)
-      + ` — narrow the read (${runViewNarrowedRead(runId)}) or raise the deployment ceiling`,
-      'application_run_view_oversize',
-      { field: 'depth', cap: MAX_RUN_VIEW_BYTES, actual: observed, unit: 'bytes',
-        section: largest.section, sectionBytes: largest.bytes,
-        ...(shed.length === 0 ? {} : { shed: clone(shed) }),
-        gracefulPath: 'depth:outline' },
-    );
-    error.cap = MAX_RUN_VIEW_BYTES; error.actual = observed; error.unit = 'bytes';
-    return error;
-  }
-
   _planningView(current, cause = null, principal = this.principals.observer, options = {}) {
     return applicationObservation._planningView(this, current, cause, principal, options);
   }

@@ -16,7 +16,7 @@ function source(overrides = {}) {
     providerId: 'fixture.https', adapterId: 'fixture-https-v1', version: '1', secret, keyFingerprint,
     callback: { method: 'POST', path: '/v1/webhook' }, privateCas, authorization: 'Bearer private-fixture-token',
     ceilings: { maxDeliveryBytes: 4096, maxCoordinates: 4, maxAdvisoryIds: 8, maxIdentityBytes: 256, maxHeaderCount: 32, maxHeaderBytes: 8192, maxClockSkewMs: 300_000 },
-    poll: { origin: 'https://provider.example', operation: '/v1/full', initialSequence: 1, maxPages: 2, maxItems: 4, maxPageBytes: 4096, maxTotalBytes: 16_384, maxWallMs: 1000, maxBackoffMs: 1000, maxClockSkewMs: 300_000 },
+    poll: { origin: 'https://provider.example', operation: '/v1/full', initialSequence: 1, maxItems: 4, maxWallMs: 1000, maxBackoffMs: 1000, maxClockSkewMs: 300_000 },
     now: () => Date.parse('2026-07-13T08:00:01.000Z'), ...overrides,
   });
 }

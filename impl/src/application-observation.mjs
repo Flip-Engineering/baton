@@ -2637,10 +2637,6 @@ export function _buildWorkflowEvidence(application, current, view) {
       },
     };
     const manifest = deepFreeze({ ...core, manifestDigest: digest(core) });
-    if (Buffer.byteLength(JSON.stringify(manifest)) > MAX_RUN_VIEW_BYTES) {
-      throw applicationError('Workflow evidence exceeds its deployment byte ceiling',
-        'application_evidence_oversize');
-    }
     return manifest;
   }
 export function _performRunVerificationRetry(application, admission) {

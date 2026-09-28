@@ -9,7 +9,7 @@ const fingerprint = sha('phase43-test-key');
 const card = (overrides = {}) => ({
   schemaVersion: 1, providerId: 'fixture.osv', adapterId: 'fixture-hmac-v1', version: '1', modes: ['poll', 'webhook'], ecosystem: 'npm', semantics: 'authenticated_hint',
   auth: { scheme: 'injected-test', keyFingerprints: [fingerprint] }, ceilings: { maxDeliveryBytes: 1024, maxCoordinates: 4, maxAdvisoryIds: 8, maxIdentityBytes: 256 },
-  poll: { origin: 'https://fixture.invalid', operation: '/v1/full', cursorKind: 'sequence', initialSequence: 1, redirects: 'deny', maxPages: 2, maxItems: 4, maxPageBytes: 1024, maxTotalBytes: 2048, maxWallMs: 1000, maxBackoffMs: 1000, maxClockSkewMs: 300_000 }, ...overrides,
+  poll: { origin: 'https://fixture.invalid', operation: '/v1/full', cursorKind: 'sequence', initialSequence: 1, redirects: 'deny', maxItems: 4, maxWallMs: 1000, maxBackoffMs: 1000, maxClockSkewMs: 300_000 }, ...overrides,
 });
 const receipt = (raw, overrides = {}) => ({
   schemaVersion: 1, providerId: 'fixture.osv', deliveryId: 'delivery-1', rawDigest: sha(raw), rawBytes: raw.length,
@@ -96,8 +96,8 @@ test('PF1/PF2: missing poll authority refuses, and a poll result past the declar
     schemaVersion: 1, providerId: 'fixture.osv', pollId: 'poll-over', observedAt: '2026-07-13T04:00:00.000Z',
     window: { fromSequence: 1, toSequence: 5 }, finalSequence: 5, cursorDigest: sha('cursor'),
     authReceiptDigest: sha('poll-auth'), keyFingerprint: fingerprint,
-    // Three pages over the declared maxPages of 2, five items over maxItems of 4, one page over
-    // maxPageBytes of 1024, and 3073 bytes over maxTotalBytes of 2048.
+    // Three pages and 3073 bytes, over the page and total maxima the declaration no longer carries,
+    // and five items over the declared maxItems of 4.
     pages: [
       { raw: Buffer.alloc(1025), items: items.slice(0, 2) },
       { raw: Buffer.alloc(1024), items: items.slice(2, 4) },

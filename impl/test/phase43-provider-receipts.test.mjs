@@ -22,7 +22,7 @@ function feedSource(state = {}) {
   const card = Object.freeze({
     schemaVersion: 1, providerId: 'fixture.osv', adapterId: 'fixture-v1', version: '1', modes: ['poll', 'webhook'], ecosystem: 'npm', semantics: 'authenticated_hint',
     auth: { scheme: 'injected-test', keyFingerprints: [fingerprint] }, ceilings: { maxDeliveryBytes: 4096, maxCoordinates: 4, maxAdvisoryIds: 8, maxIdentityBytes: 256 },
-    poll: { origin: 'https://fixture.invalid', operation: '/v1/full', cursorKind: 'sequence', initialSequence: 1, redirects: 'deny', maxPages: 2, maxItems: 8, maxPageBytes: 4096, maxTotalBytes: 16384, maxWallMs: 1000, maxBackoffMs: 1000, maxClockSkewMs: 300_000 },
+    poll: { origin: 'https://fixture.invalid', operation: '/v1/full', cursorKind: 'sequence', initialSequence: 1, redirects: 'deny', maxItems: 8, maxWallMs: 1000, maxBackoffMs: 1000, maxClockSkewMs: 300_000 },
   });
   return {
     card: () => card,
