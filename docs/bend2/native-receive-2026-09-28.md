@@ -155,9 +155,11 @@ median command times for its process-per-command path.
 Claude's interactive channel adapter and the retained earlier Codex and OMP
 entry points still require Node. Existing configurations keep those endpoints
 until explicitly reconnected. The controlled tests establish process behavior
-while the supervisor runs. Host restart and power-loss recovery require
-separate validation. The supervisor-loss probe below reproduces a duplicate
-native session.
+while the supervisor runs. Recovery after loss of all coordinator and harness
+processes is validated separately in
+[`host-restart-2026-09-28.md`](host-restart-2026-09-28.md). Host reboot and
+power-loss durability remain unvalidated.
+The supervisor-loss probe below reproduces a duplicate native session.
 
 ## Supervisor loss with a surviving child
 
