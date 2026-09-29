@@ -21,18 +21,20 @@ q = shlex.quote
 def run(*args, **kw):
     return subprocess.run([str(a) for a in args], check=True, **kw)
 
-def executable(variable, default):
+def executable(variable, default, required=True):
     value = os.environ.get(variable, default)
     found = shutil.which(value)
     if not found:
-        sys.exit(f'{variable}: executable unavailable: {value}')
+        if required:
+            sys.exit(f'{variable}: executable unavailable: {value}')
+        return value
     return str(pathlib.Path(found).absolute())
 
 run('git', '-C', repo, 'rev-parse', '--git-dir', stdout=subprocess.DEVNULL)
 node = executable('NODE', 'node')
 codex = executable('BATON_CODEX', 'codex')
 omp = executable('BATON_OMP', 'omp')
-muse = executable('BATON_MUSE', 'muse')
+muse = executable('BATON_MUSE', 'muse', required=False)
 # The trial uses the operator's existing subscription login.
 codex_argv = [codex, '-c', 'forced_login_method="chatgpt"']
 env = {k: v for k, v in os.environ.items() if k not in ('OPENAI_API_KEY', 'CODEX_API_KEY')}
