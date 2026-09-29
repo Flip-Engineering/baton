@@ -28,7 +28,8 @@ static BatonChild **baton_children;
 static size_t baton_child_count, baton_child_capacity;
 
 enum { BP_SPAWN, BP_WRITE, BP_CLOSE, BP_READ, BP_WAIT, BP_SIGNAL, BP_PID,
-       BP_RETAIN, BP_ATTACH, BP_RELEASE, BP_ACK, BP_KEEPER, BP_INPUT_CLOSED };
+       BP_RETAIN, BP_ATTACH, BP_RELEASE, BP_ACK, BP_KEEPER, BP_INPUT_CLOSED,
+       BP_CONTROL_WRITE, BP_CONTROL_SIGNAL };
 
 static int baton_pipe(int fds[2]) {
   if (pipe(fds)) return errno;
@@ -108,7 +109,8 @@ pipes:
 #endif
 
 enum { BR_HELLO=1, BR_CHANGE, BR_EXIT, BR_REPLY, BR_WRITE, BR_CLOSE,
-       BR_SIGNAL, BR_RELEASE, BR_ACK, BR_INPUT_CLOSED };
+       BR_SIGNAL, BR_RELEASE, BR_ACK, BR_INPUT_CLOSED,
+       BR_ATTACH, BR_CONTROL_WRITE, BR_CONTROL_SIGNAL };
 typedef struct { uint32_t op; int32_t error; uint64_t serial,length; int64_t value; } BrFrame;
 typedef struct { int32_t pid,exited,status,released,input_closed; } BrState;
 typedef struct {
@@ -118,7 +120,15 @@ typedef struct { BrManifestHeader header; char *field[6]; } BrManifest;
 typedef struct BrBuffer {
   struct BrBuffer *next; char *data; size_t length,offset;
   uint64_t serial,generation; int close_input,change;
+  struct BrControl *control;
 } BrBuffer;
+typedef struct BrControl {
+  struct BrControl *next;
+  int socket,pending,answered;
+  char *incoming;
+  size_t size,capacity,sent;
+  BrFrame reply;
+} BrControl;
 typedef struct BatonRetained {
   int socket,spool,error,exited,status,input_closed;
   uint64_t version,serial,reply_serial;
@@ -137,7 +147,7 @@ typedef struct {
   size_t incoming_size,incoming_capacity;
   BrManifest manifest;
   BrBuffer *writes,*writes_tail,*outgoing,*outgoing_tail;
-
+  BrControl *controls;
 } BrKeeper;
 
 static char *br_path(const char *directory,const char *name) {
@@ -447,8 +457,14 @@ typedef struct { int kind,status; pid_t pid; uint64_t generation; } BrWake;
 typedef struct { BrWake event; int descriptor; } BrWaiter;
 static void *br_waiter(void *argument) {
   BrWaiter *waiter=argument;
-  pid_t result;
-  do {result=waitpid(waiter->event.pid,&waiter->event.status,0);} while(result<0 && errno==EINTR);
+  int result;
+  if(waiter->event.kind=='N') {
+    /* Keep the native PID reserved until the keeper handles exit and signals. */
+    siginfo_t info;
+    do {result=waitid(P_PID,waiter->event.pid,&info,WEXITED|WNOWAIT);} while(result<0 && errno==EINTR);
+  } else {
+    do {result=waitpid(waiter->event.pid,&waiter->event.status,0);} while(result<0 && errno==EINTR);
+  }
   if(result<0) waiter->event.status=-1;
   br_write_all(waiter->descriptor,&waiter->event,sizeof(waiter->event));
   close(waiter->descriptor);free(waiter);return NULL;
@@ -482,6 +498,8 @@ static int br_command(BrKeeper *keeper,BrFrame frame,const char *payload) {
   int error=0;
   if(frame.op==BR_WRITE || frame.op==BR_CLOSE) {
     if(frame.op==BR_CLOSE && frame.length) return EPROTO;
+    if(frame.op==BR_WRITE && (keeper->input_closed || keeper->exited))
+      return br_reply(keeper,frame.serial,keeper->generation,EPIPE);
     error=br_queue(&keeper->writes,&keeper->writes_tail,payload,(size_t)frame.length,
                    frame.serial,keeper->generation,frame.op==BR_CLOSE);
     if(!error && frame.op==BR_CLOSE && !keeper->input_closed) {
@@ -554,7 +572,11 @@ static int br_flush_commands(BrKeeper *keeper) {
       else {buffer->offset+=(size_t)n;if(buffer->offset<buffer->length)break;}
     }
     if(error && !buffer->serial)br_note(keeper,"initial-input-error",error);
-    int reply=br_reply(keeper,buffer->serial,buffer->generation,error);
+    int reply=0;
+    if(buffer->control) {
+      buffer->control->pending=0;buffer->control->answered=1;
+      buffer->control->reply=(BrFrame){.op=BR_REPLY,.serial=buffer->serial,.error=error};
+    } else reply=br_reply(keeper,buffer->serial,buffer->generation,error);
     keeper->writes=buffer->next;if(!keeper->writes)keeper->writes_tail=NULL;
     free(buffer->data);free(buffer);
     if(reply) return reply;
@@ -575,6 +597,85 @@ static int br_flush_responses(BrKeeper *keeper) {
     free(buffer->data);free(buffer);
   }
   return 0;
+}
+static void br_control_close(BrControl *control) {
+  if(control->socket>=0)close(control->socket);
+  control->socket=-1;
+}
+static void br_control_reply(BrControl *control,uint64_t serial,int error) {
+  control->reply=(BrFrame){.op=BR_REPLY,.serial=serial,.error=error};
+  control->answered=1;
+}
+static int br_control_command(BrKeeper *keeper,BrControl *control,BrFrame frame,const char *payload) {
+  const char *end=memchr(payload,0,(size_t)frame.length);
+  int error=0;
+  if(!end || strcmp(payload,keeper->directory))error=EINVAL;
+  else if(keeper->finishing)error=ESHUTDOWN;
+  if(error) {br_control_reply(control,frame.serial,error);return 0;}
+  size_t identity=(size_t)(end-payload)+1;
+  if(frame.op==BR_ATTACH) {
+    if(frame.length!=identity || frame.serial)error=EPROTO;
+    else if(keeper->client>=0)error=EBUSY;
+    if(error) {
+      control->reply=(BrFrame){.op=BR_HELLO,.error=error};control->answered=1;
+    } else {
+      keeper->client=control->socket;control->socket=-1;keeper->generation++;
+      BrState state={keeper->native_pid,keeper->exited,keeper->status,keeper->released,keeper->input_closed};
+      return br_send(keeper,(BrFrame){.op=BR_HELLO,.length=sizeof(state)},&state);
+    }
+  } else if(!frame.serial)br_control_reply(control,frame.serial,EPROTO);
+  else if(frame.op==BR_CONTROL_WRITE) {
+    if(keeper->input_closed || keeper->exited)error=EPIPE;
+    else {
+      error=br_queue(&keeper->writes,&keeper->writes_tail,payload+identity,
+                     (size_t)frame.length-identity,frame.serial,0,0);
+      if(!error) {keeper->writes_tail->control=control;control->pending=1;}
+    }
+    if(error)br_control_reply(control,frame.serial,error);
+  } else if(frame.op==BR_CONTROL_SIGNAL) {
+    if(frame.length!=identity || frame.value<=0 || frame.value>=NSIG)error=EINVAL;
+    else if(keeper->exited)error=ESRCH;
+    else if(kill(-keeper->native_pid,(int)frame.value))error=errno;
+    br_control_reply(control,frame.serial,error);
+  } else br_control_reply(control,frame.serial,EINVAL);
+  return 0;
+}
+static int br_control_read(BrKeeper *keeper,BrControl *control) {
+  char buffer[8192];ssize_t n=read(control->socket,buffer,sizeof(buffer));
+  if(n<0 && (errno==EINTR || errno==EAGAIN))return 0;
+  if(n<=0) {br_control_close(control);return 0;}
+  if(control->answered || control->pending) {br_control_close(control);return 0;}
+  if((size_t)n>SIZE_MAX-control->size) {br_control_close(control);return 0;}
+  size_t size=control->size+(size_t)n;
+  if(size>control->capacity) {
+    char *next=realloc(control->incoming,size);
+    if(!next)return ENOMEM;
+    control->incoming=next;control->capacity=size;
+  }
+  memcpy(control->incoming+control->size,buffer,(size_t)n);control->size=size;
+  if(size>=sizeof(BrFrame)) {
+    BrFrame frame;memcpy(&frame,control->incoming,sizeof(frame));
+    if(frame.length>SIZE_MAX-sizeof(frame)) {br_control_close(control);return 0;}
+    size_t complete=sizeof(frame)+(size_t)frame.length;
+    if(size>complete) {br_control_close(control);return 0;}
+    if(size==complete) {
+      int error=br_control_command(keeper,control,frame,control->incoming+sizeof(frame));
+      free(control->incoming);control->incoming=NULL;control->size=control->capacity=0;
+      return error;
+    }
+  }
+  return 0;
+}
+static void br_control_flush(BrControl *control) {
+  if(!control->answered || control->socket<0)return;
+  while(control->sent<sizeof(control->reply)) {
+    ssize_t n=write(control->socket,(char *)&control->reply+control->sent,sizeof(control->reply)-control->sent);
+    if(n<0 && errno==EINTR)continue;
+    if(n<0 && errno==EAGAIN)return;
+    if(n<=0) {br_control_close(control);return;}
+    control->sent+=(size_t)n;
+  }
+  br_control_close(control);
 }
 static int br_watch_file(int spool,const char *path) {
 #ifdef __APPLE__
@@ -601,52 +702,75 @@ static int br_keep(BrKeeper *keeper) {
   for(;;) {
     int error=br_flush_commands(keeper);if(error)return error;
     br_flush_responses(keeper);
+    BrControl **link=&keeper->controls;size_t count=5;
+    while(*link) {
+      BrControl *control=*link;br_control_flush(control);
+      if(control->socket<0 && !control->pending) {
+        *link=control->next;free(control->incoming);free(control);
+      } else {count++;link=&control->next;}
+    }
     if(keeper->finishing && !keeper->outgoing) return 0;
-    struct pollfd fds[5]={{keeper->listener,POLLIN,0},{keeper->client,POLLIN|(keeper->outgoing?POLLOUT:0),0},
-      {keeper->watch,POLLIN,0},{keeper->wake[0],POLLIN,0},{keeper->writes?keeper->input:-1,POLLOUT,0}};
-    int ready;do {ready=poll(fds,5,-1);} while(ready<0 && errno==EINTR);
-    if(ready<0)return errno;
+    struct pollfd *fds=calloc(count,sizeof(*fds));
+    BrControl **clients=calloc(count,sizeof(*clients));
+    if(!fds || !clients) {free(fds);free(clients);return ENOMEM;}
+    fds[0]=(struct pollfd){keeper->listener,POLLIN,0};
+    fds[1]=(struct pollfd){keeper->client,POLLIN|(keeper->outgoing?POLLOUT:0),0};
+    fds[2]=(struct pollfd){keeper->watch,POLLIN,0};
+    fds[3]=(struct pollfd){keeper->wake[0],POLLIN,0};
+    fds[4]=(struct pollfd){keeper->writes?keeper->input:-1,POLLOUT,0};
+    size_t index=5;
+    for(BrControl *control=keeper->controls;control;control=control->next,index++) {
+      clients[index]=control;fds[index]=(struct pollfd){control->socket,POLLIN|(control->answered?POLLOUT:0),0};
+    }
+    int ready;do {ready=poll(fds,(nfds_t)count,-1);} while(ready<0 && errno==EINTR);
+    if(ready<0) {error=errno;goto polled;}
     if(fds[0].revents&POLLIN) {
       int socket=accept(keeper->listener,NULL,NULL);
       if(socket>=0) {
         fcntl(socket,F_SETFD,FD_CLOEXEC);
-        if(keeper->client>=0) {BrFrame busy={.op=BR_HELLO,.error=EBUSY};br_write_all(socket,&busy,sizeof(busy));close(socket);}
-        else {
-          keeper->client=socket;keeper->generation++;br_nonblock(socket);
-          BrState state={keeper->native_pid,keeper->exited,keeper->status,keeper->released,keeper->input_closed};
-          if((error=br_send(keeper,(BrFrame){.op=BR_HELLO,.length=sizeof(state)},&state)))return error;
-        }
-      } else if(errno!=EINTR && errno!=EAGAIN)return errno;
+        BrControl *control=calloc(1,sizeof(*control));
+        if(!control) {close(socket);error=ENOMEM;goto polled;}
+        control->socket=socket;br_nonblock(socket);control->next=keeper->controls;keeper->controls=control;
+      } else if(errno!=EINTR && errno!=EAGAIN) {error=errno;goto polled;}
     }
     if(keeper->client>=0 && fds[1].fd==keeper->client && fds[1].revents&(POLLIN|POLLHUP|POLLERR)) {
-      if((error=br_read_commands(keeper)))return error;
+      if((error=br_read_commands(keeper)))goto polled;
     }
     if(fds[2].revents&POLLIN) {
       br_watch_drain(keeper->watch);
       if(!keeper->change_queued && keeper->client>=0) {
-        if((error=br_send(keeper,(BrFrame){.op=BR_CHANGE},NULL)))return error;
+        if((error=br_send(keeper,(BrFrame){.op=BR_CHANGE},NULL)))goto polled;
         keeper->outgoing_tail->change=1;keeper->change_queued=1;
       }
     }
     if(fds[3].revents&POLLIN) {
       BrWake event;
-      if((error=br_read_all(keeper->wake[0],&event,sizeof(event))))return error;
+      if((error=br_read_all(keeper->wake[0],&event,sizeof(event))))goto polled;
       if(event.kind=='N') {
-        if(event.status<0)return ECHILD;
+        if(event.status<0) {error=ECHILD;goto polled;}
+        pid_t reaped;
+        do {reaped=waitpid(keeper->native_pid,&event.status,0);} while(reaped<0 && errno==EINTR);
+        if(reaped<0) {error=errno;goto polled;}
         keeper->status=event.status;keeper->exited=1;
         char text[64];int n=snprintf(text,sizeof(text),"%d\n",keeper->status);
-        if((error=br_file(keeper->directory,"status",text,(size_t)n,1)))return error;
-        if((error=br_send(keeper,(BrFrame){.op=BR_EXIT,.value=keeper->status},NULL)))return error;
+        if((error=br_file(keeper->directory,"status",text,(size_t)n,1)))goto polled;
+        if((error=br_send(keeper,(BrFrame){.op=BR_EXIT,.value=keeper->status},NULL)))goto polled;
       } else if(event.kind=='R' && event.generation==keeper->generation && keeper->client<0) {
         char text[96];int n=snprintf(text,sizeof(text),"pid %d exited before attach: wait status %d\n",event.pid,event.status);
         br_file(keeper->directory,"observer-error",text,(size_t)n,0);
       }
     }
+    for(size_t i=5;i<count;i++) if(fds[i].revents&(POLLIN|POLLHUP|POLLERR)) {
+      if((error=br_control_read(keeper,clients[i])))goto polled;
+    }
+polled:
+    free(fds);free(clients);if(error)return error;
   }
 }
 static int br_keeper(const char *directory,int lock) {
   BrKeeper keeper={.listener=-1,.client=3,.input=-1,.lock=lock,.watch=-1,.wake={-1,-1},.spool=-1,.generation=1};
-  keeper.directory=(char *)directory;
+  keeper.directory=realpath(directory,NULL);
+  if(!keeper.directory)return errno;
   int error=br_manifest_read(directory,&keeper.manifest);
   if(error)return error;
   fcntl(keeper.client,F_SETFD,FD_CLOEXEC);fcntl(lock,F_SETFD,FD_CLOEXEC);
@@ -763,17 +887,37 @@ static void baton_retained_begin_call(BatonProcessCall *call) {
   if(call->kind==BP_KEEPER) call->error=br_keeper(call->directory,(int)call->lock);
   else if(call->kind==BP_RETAIN) call->error=br_retain(call);
   else {
-    BrManifest manifest={0};call->error=br_manifest_read(call->directory,&manifest);
+    char *directory=realpath(call->directory,NULL);
+    BrManifest manifest={0};call->error=directory?br_manifest_read(directory,&manifest):errno;
     struct sockaddr_un address;
     if(!call->error)call->error=br_socket_address(&address,manifest.field[5]);
     int socket_fd=-1;
     if(!call->error) {socket_fd=socket(AF_UNIX,SOCK_STREAM,0);if(socket_fd<0)call->error=errno;else fcntl(socket_fd,F_SETFD,FD_CLOEXEC);}
     if(!call->error && connect(socket_fd,(struct sockaddr *)&address,sizeof(address)))call->error=errno;
-    if(!call->error) {call->error=br_attach_socket(call->child,call->directory,socket_fd,NULL);socket_fd=-1;}
-    if(socket_fd>=0)close(socket_fd);br_manifest_free(&manifest);
+    if(!call->error) {
+      size_t identity=strlen(directory)+1;
+      uint32_t op=call->kind==BP_ATTACH?BR_ATTACH:call->kind==BP_CONTROL_WRITE?BR_CONTROL_WRITE:BR_CONTROL_SIGNAL;
+      BrFrame frame={.op=op,.serial=call->kind==BP_ATTACH?0:1,.length=identity,.value=call->signal};
+      if(call->kind==BP_CONTROL_WRITE) {
+        if(call->length>UINT64_MAX-identity)call->error=EOVERFLOW;
+        else frame.length+=call->length;
+      }
+      if(!call->error)call->error=br_write_all(socket_fd,&frame,sizeof(frame));
+      if(!call->error)call->error=br_write_all(socket_fd,directory,identity);
+      if(!call->error && call->kind==BP_CONTROL_WRITE)call->error=br_write_all(socket_fd,call->text,call->length);
+      if(!call->error && call->kind==BP_ATTACH) {
+        call->error=br_attach_socket(call->child,directory,socket_fd,NULL);socket_fd=-1;
+      } else if(!call->error) {
+        BrFrame reply;call->error=br_read_all(socket_fd,&reply,sizeof(reply));
+        if(!call->error && (reply.op!=BR_REPLY || reply.serial!=frame.serial || reply.length))call->error=EPROTO;
+        if(!call->error)call->error=reply.error;
+      }
+    }
+    if(socket_fd>=0)close(socket_fd);br_manifest_free(&manifest);free(directory);
   }
   if(call->error) {
-    const char *operation=call->kind==BP_RETAIN?"retain":call->kind==BP_ATTACH?"attach":"keeper";
+    const char *operation=call->kind==BP_RETAIN?"retain":call->kind==BP_ATTACH?"attach":
+      call->kind==BP_CONTROL_WRITE?"control_write":call->kind==BP_CONTROL_SIGNAL?"control_signal":"keeper";
     size_t n=strlen(call->directory)+128;call->detail=malloc(n);
     if(call->detail)snprintf(call->detail,n,"%s %s: %s; inspect manifest, keeper-error and observer.log",operation,call->directory,strerror(call->error));
   }
@@ -783,7 +927,7 @@ static void baton_process_call(IoWork *w) {
   BatonProcessCall *call=(BatonProcessCall *)w->data;
   BatonChild *child=call->child;
   if(call->kind==BP_SPAWN) { baton_child_spawn(call);return; }
-  if(call->kind==BP_RETAIN || call->kind==BP_ATTACH || call->kind==BP_KEEPER) {
+  if(call->kind==BP_RETAIN || call->kind==BP_ATTACH || call->kind==BP_KEEPER || call->kind==BP_CONTROL_WRITE || call->kind==BP_CONTROL_SIGNAL) {
     baton_retained_begin_call(call);return;
   }
   if(child->retained) { baton_retained_call(call);return; }
@@ -895,10 +1039,12 @@ static Term baton_process_begin(Env e, Term *f, IoWork *w, int kind) {
       call->recovery=io_cstr(e,f[7],&length);call->recovery_length=length;
     }
   }
-  if(kind==BP_RETAIN || kind==BP_ATTACH || kind==BP_KEEPER) {
+  if(kind==BP_RETAIN || kind==BP_ATTACH || kind==BP_KEEPER || kind==BP_CONTROL_WRITE || kind==BP_CONTROL_SIGNAL) {
     u64 length=0;call->directory=io_cstr(e,f[0],&length);
     if(strlen(call->directory)!=length)call->error=EINVAL;
     if(kind==BP_KEEPER)call->lock=(u32)f[1];
+    if(kind==BP_CONTROL_WRITE) {call->text=io_cstr(e,f[1],&length);call->length=length;}
+    if(kind==BP_CONTROL_SIGNAL)call->signal=(u32)f[1];
   } else if(kind!=BP_SPAWN) {
     call->handle=(u32)f[0];
     if(call->handle>=baton_child_count || !baton_children[call->handle]) {free(call);return io_fail(e,EBADF,NULL);}
@@ -954,6 +1100,12 @@ BP_EFFECT(baton_process_keeper,CID_PROCESSCHILD_KEEPER,BP_KEEPER)
 #endif
 #ifdef CID_PROCESSCHILD_INPUT_CLOSED
 BP_EFFECT(baton_process_input_closed,CID_PROCESSCHILD_INPUT_CLOSED,BP_INPUT_CLOSED)
+#endif
+#ifdef CID_PROCESSCHILD_CONTROL_WRITE
+BP_EFFECT(baton_process_control_write,CID_PROCESSCHILD_CONTROL_WRITE,BP_CONTROL_WRITE)
+#endif
+#ifdef CID_PROCESSCHILD_CONTROL_SIGNAL
+BP_EFFECT(baton_process_control_signal,CID_PROCESSCHILD_CONTROL_SIGNAL,BP_CONTROL_SIGNAL)
 #endif
 #undef BP_EFFECT
 static void __attribute__((constructor)) baton_process_signals(void){signal(SIGPIPE,SIG_IGN);}
