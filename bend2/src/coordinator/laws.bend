@@ -97,7 +97,6 @@ import ../json/canonical.bend as J
 import ../git/laws.bend as GitLaws
 import ../git/types.bend as T
 import ../git/text.bend as Tx
-import ../replay/laws.bend as ReplayLaws
 import ../harness/laws.bend as HarnessLaws
 
 # ---------------------------------------------------------------------------
@@ -557,6 +556,20 @@ law m14_unregistered_worker_refuses_with_its_rule:
   {Land.require_worker(False{}) == IO.die(Unit, 2, "The worker session is not registered.") : IO(Unit)}
 
 def m14_unregistered_worker_refuses_with_its_rule():
+  {==}
+
+# M-14: a recruit command for a parent the store does not hold is refused with
+# the rule that refused it, and a held parent admits the recruit.
+law m14_unregistered_parent_refuses_with_its_rule:
+  {Recruit.require_parent(False{}) == IO.die(Unit, 2, "The parent session is not registered.") : IO(Unit)}
+
+def m14_unregistered_parent_refuses_with_its_rule():
+  {==}
+
+law m14_registered_parent_admits_the_recruit:
+  {Recruit.require_parent(True{}) == IO.pure(Unit,Unit{}) : IO(Unit)}
+
+def m14_registered_parent_admits_the_recruit():
   {==}
 
 law m14_worker_without_branch_refuses_with_its_rule:

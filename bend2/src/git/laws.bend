@@ -843,6 +843,88 @@ def m3a_publication_invokes_checked_pair(repo, target, cand, basis):
   {==}
 
 # ---------------------------------------------------------------------------
+# M-3c and M-3a: the checked landing's own composition and the answer it
+# returns. The stages and the publication are bound above; these laws bind the
+# sequence that runs them and the mapping from the pipeline's state to the
+# caller's answer. Git's work inside each stage, its object identites and the
+# host's report of each exit status remain host assumptions.
+
+# M-3a: the checked landing runs every stage once, in its own order, on the
+# candidate and target trees its arguments name. The composition is written
+# here independently of L.land_checked, so a caller that skipped a stage,
+# reordered two, or handed a stage the other tree's path breaks this proof.
+def checked_landing_stages(repo: String, target: String, worker: String, script: String, files: List<String>, scratch: String) -> IO(Result<&1, &1, T.GitFail, T.LandOutcome>):
+  +r2 = repo
+  +t2 = target
+  +k2 = script
+  +s2 = scratch
+  do IO<Result<&1, &1, T.GitFail, T.LandOutcome>>:
+    a : L.Ld <- L.ld_stage1(r2, t2, worker)
+    b : L.Ld <- L.ld_go1(a, r2, t2)
+    c : L.Ld <- L.ld_go2(b, r2, s2)
+    d : L.Ld <- L.ld_go3(c, s2)
+    e : L.Ld <- L.ld_go4(d, r2, s2)
+    f : L.Ld <- L.ld_go5(e, r2, t2, k2, files, s2)
+    settled : L.Ld <- L.ld_settle(f, r2, s2)
+    L.ld_answer(settled)
+
+law m3a_the_checked_landing_runs_every_stage_in_order:
+  for repo: String
+  for target: String
+  for worker: String
+  for script: String
+  for files: List<String>
+  for scratch: String
+  {L.land_checked(repo, target, worker, script, files, scratch) == checked_landing_stages(repo, target, worker, script, files, scratch) : IO(Result<&1, &1, T.GitFail, T.LandOutcome>)}
+
+def m3a_the_checked_landing_runs_every_stage_in_order(repo, target, worker, script, files, scratch):
+  {==}
+
+# M-3c: a landed state answers landed with its own outcome, and a failed state
+# answers its own failure.
+law m3c_a_landed_state_answers_its_own_outcome:
+  for target: String
+  for commit: String
+  {L.ld_answer(L.LdDone{T.LLanded{target, commit}}) == IO.pure(Result<&1, &1, T.GitFail, T.LandOutcome>, Done{T.LLanded{target, commit}}) : IO(Result<&1, &1, T.GitFail, T.LandOutcome>)}
+
+def m3c_a_landed_state_answers_its_own_outcome(target, commit):
+  {==}
+
+law m3c_a_failed_state_answers_its_own_failure:
+  for fail: T.GitFail
+  {L.ld_answer(L.LdFail{fail}) == IO.pure(Result<&1, &1, T.GitFail, T.LandOutcome>, Fail{fail}) : IO(Result<&1, &1, T.GitFail, T.LandOutcome>)}
+
+def m3c_a_failed_state_answers_its_own_failure(fail):
+  {==}
+
+# M-3c: the three states a stage leaves behind when the landing stopped before
+# it finished are not outcomes. The answer names that fact and the stage.
+law m3c_a_resolved_worker_alone_is_not_an_outcome:
+  for worker: String
+  for sha: String
+  {L.ld_answer(L.LdWk{worker, sha}) == IO.pure(Result<&1, &1, T.GitFail, T.LandOutcome>, Fail{T.FCmd{"land", "unreachable stage"}}) : IO(Result<&1, &1, T.GitFail, T.LandOutcome>)}
+
+def m3c_a_resolved_worker_alone_is_not_an_outcome(worker, sha):
+  {==}
+
+law m3c_a_prepared_tip_alone_is_not_an_outcome:
+  for worker: String
+  for sha: String
+  for tip: String
+  {L.ld_answer(L.LdTip{worker, sha, tip}) == IO.pure(Result<&1, &1, T.GitFail, T.LandOutcome>, Fail{T.FCmd{"land", "unreachable stage"}}) : IO(Result<&1, &1, T.GitFail, T.LandOutcome>)}
+
+def m3c_a_prepared_tip_alone_is_not_an_outcome(worker, sha, tip):
+  {==}
+
+law m3c_a_prepared_candidate_alone_is_not_an_outcome:
+  for tip: String
+  for cand: String
+  {L.ld_answer(L.LdCand{tip, cand}) == IO.pure(Result<&1, &1, T.GitFail, T.LandOutcome>, Fail{T.FCmd{"land", "unreachable stage"}}) : IO(Result<&1, &1, T.GitFail, T.LandOutcome>)}
+
+def m3c_a_prepared_candidate_alone_is_not_an_outcome(tip, cand):
+  {==}
+
+# ---------------------------------------------------------------------------
 # M-3b: publication compares the target against the basis that was checked.
 
 # M-3a: a changed target returns a retry result with no publication effect.
