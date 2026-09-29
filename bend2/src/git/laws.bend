@@ -849,10 +849,12 @@ def m3a_publication_invokes_checked_pair(repo, target, cand, basis):
 # caller's answer. Git's work inside each stage, its object identites and the
 # host's report of each exit status remain host assumptions.
 
-# M-3a: the checked landing runs every stage once, in its own order, on the
-# candidate and target trees its arguments name. The composition is written
-# here independently of L.land_checked, so a caller that skipped a stage,
-# reordered two, or handed a stage the other tree's path breaks this proof.
+# M-3a: the checked landing calls each stage dispatch entry once, in its own
+# order, on the candidate and target trees its arguments name. The composition
+# is written here independently of L.land_checked, so a composition that dropped
+# an entry, reordered two, or handed an entry the other tree's path breaks this
+# proof. What each entry does with the state it is handed is a separate
+# obligation, bound by the m10 laws over the ld_go entries.
 def checked_landing_stages(repo: String, target: String, worker: String, script: String, files: List<String>, scratch: String) -> IO(Result<&1, &1, T.GitFail, T.LandOutcome>):
   +r2 = repo
   +t2 = target
