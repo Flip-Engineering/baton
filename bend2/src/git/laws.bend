@@ -1131,6 +1131,29 @@ law m10_run_check_runs_its_argv_in_its_own_directory:
 def m10_run_check_runs_its_argv_in_its_own_directory(dir, script, file):
   {==}
 
+# M-10: the verdict a checked file carries is the verdict its own FV holds, so
+# a reader that always answered pass would break this proof.
+law m10_the_verdict_of_a_pair_is_the_verdict_it_carries:
+  for file: String
+  for verdict: L.Verdict
+  {L.fv_verdict(L.FV{file, verdict}) == verdict : L.Verdict}
+
+def m10_the_verdict_of_a_pair_is_the_verdict_it_carries(file, verdict):
+  {==}
+
+# M-10: a check that reached a normal exit reads its own status: the verdict is
+# exit_verdict of the comparison of that status against zero, so a nonzero exit
+# cannot read as a pass. The invocation's own output, and the host's report of
+# its exit status, remain host assumptions.
+law m10_a_normal_exit_reads_its_own_status:
+  for code: U32
+  for out: String
+  for file: String
+  {L.run_verdict(T.RRun{T.SExit{code}, out}, file) == L.exit_verdict(U32.is_eq(code, 0), out, file) : L.FV}
+
+def m10_a_normal_exit_reads_its_own_status(code, out, file):
+  {==}
+
 # M-10: the candidate tree that is checked is the scratch tree, the target tree
 # is its "-target" sibling, and the pairs reach the verdict unchanged.
 def ld_tree_judged(repo: String, target: String, script: String, files: List<String>, scratch: String, tip: String, cand: String, tw: String) -> IO(L.Ld):
