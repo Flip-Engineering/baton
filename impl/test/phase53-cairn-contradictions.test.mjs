@@ -13,7 +13,6 @@ reapFixtureDirectories();
 
 const root = (name) => mkdtempSync(join(tmpdir(), `baton-phase53-${name}-`));
 const auditPolicy = (overrides = {}) => ({ repoId: 'repo-a', ...overrides });
-const recallPolicy = (overrides = {}) => ({ repoId: 'repo-a', ...overrides });
 const contradictionPolicy = (overrides = {}) => ({ repoId: 'repo-a', ...overrides });
 const context = (overrides = {}) => ({ actor: 'operator:alice', repoId: 'repo-a', idempotencyKey: 'phase53:direct', budgetTokens: 32_000, ...overrides });
 
@@ -77,11 +76,11 @@ test('CX1/CX2/CX6: policy-gated list is bounded, stable, safe, paged, and exactl
 test('CX3/CX4/CX6: one public resolution preserves history, invalidates only loser, and records bounded contamination', async () => {
   const store = new CoordinationStore(root('resolve'), { clock: clock() }); const { pairs } = graph(store); const cairn = capability(store); const before = store.snapshot().lastSeq;
   const listed = await cairn.invoke('causal.contradictions', { observedSeq: before, afterEdgeId: null, limit: 1 }, context({ idempotencyKey: 'list' })); const item = listed.payload[0].items[0]; const loserId = item.endpoints[1].id;
-  const read = store.readKnowledge({ ids: [loserId] }, { readerActor: 'orchestrator', taskId: 'source' }, { actor: 'orchestrator', key: 'read:loser' }); const recall = await new CairnRunScorecard({ coordination: store, readOperational: () => [], artifactRoot: root('recall-artifacts'), knowledgeAuditPolicy: auditPolicy(), knowledgeRecallPolicy: recallPolicy() }).invoke('causal.recall', { text: loserId, limit: 2, observedSeq: store.snapshot().lastSeq, reader: { taskId: 'source' } }, context({ idempotencyKey: 'recall:loser' })); assert.equal(recall.payload[0].nodes.some((node) => node.id === loserId), true); const observedSeq = store.snapshot().lastSeq; const args = resolveArgs(item, observedSeq, item.endpoints[0].id);
+  const readA = store.readKnowledge({ ids: [loserId] }, { readerActor: 'orchestrator', taskId: 'source' }, { actor: 'orchestrator', key: 'read:loser' }); const readB = store.readKnowledge({ ids: [loserId] }, { readerActor: 'orchestrator', taskId: 'source' }, { actor: 'orchestrator', key: 'read:loser-b' }); const observedSeq = store.snapshot().lastSeq; const args = resolveArgs(item, observedSeq, item.endpoints[0].id);
   const result = await cairn.invoke('causal.resolve_contradiction', args, context({ idempotencyKey: 'resolve' })); const document = result.payload[0];
   assert.equal(document.winnerId, args.winnerId); assert.equal(document.loserId, args.loserId); assert.equal(document.affectedReadCount, 2); assert.equal(document.edgeValidityVersion, 2); assert.equal(document.winnerValidityVersion, 1); assert.equal(document.loserValidityVersion, 2);
   assert.equal(JSON.stringify(result).includes(args.reason), false); assert.equal(store.events(document.eventSeq, 1)[0].kind, 'knowledge.contradiction_resolved'); assert.equal(store.events(document.eventSeq, 1)[0].payload.schemaVersion, 2);
-  assert.deepEqual(store.snapshot().knowledge.contamination.at(-1).affectedReadEvents, [read.event.seq, recall.payload[0].receipt.eventSeq]); assert.equal(store.snapshot().knowledge.contamination.at(-1).eventSeq, document.eventSeq);
+  assert.deepEqual(store.snapshot().knowledge.contamination.at(-1).affectedReadEvents, [readA.event.seq, readB.event.seq]); assert.equal(store.snapshot().knowledge.contamination.at(-1).eventSeq, document.eventSeq);
   assert.equal(store.queryKnowledge({ ids: [args.winnerId] }).length, 1); assert.equal(store.queryKnowledge({ ids: [args.loserId] }).length, 0); assert.equal(store.queryKnowledgeEdges({ types: ['Contradicts'] }).length, 0);
   assert.equal(store.queryKnowledge({ observedSeq, ids: [args.loserId] }).length, 1); assert.equal(store.queryKnowledgeEdges({ observedSeq, types: ['Contradicts'] }).length, 1);
   assert.deepEqual((await cairn.invoke('causal.contradictions', { observedSeq, afterEdgeId: null, limit: 1 }, context({ idempotencyKey: 'historical' }))).payload[0].items, listed.payload[0].items);

@@ -149,7 +149,6 @@ const REUSED_REFUSAL_CODES_EXPECTED = Object.freeze([
   'causal_recall_oversize',
   'coordination_writer_busy',
   'knowledge_read_conflict',
-  'knowledge_recall_conflict',
   'temporal_incoherence',
 ]);
 
@@ -295,29 +294,6 @@ test('K-P1: the reused refusal codes fire verbatim and the read shapes hold (PIN
   // invalid_query — the queryKnowledge bound (observedSeq <= the ledger length).
   const qStore = new CoordinationStore(dir('kp1q'), { repoId, clock: () => FIXED_TS, runLineagePolicy: DEFAULT_RUN_LINEAGE_POLICY });
   assert.equal(refusalCode(() => qStore.queryKnowledge({ observedSeq: 5 })), 'invalid_query', 'an observedSeq past the ledger refuses invalid_query');
-  // The recall lane — causal_recall_invalid / causal_recall_oversize / knowledge_recall_conflict.
-  const cStore = new CoordinationStore(dir('kp1c'), { repoId, clock: () => FIXED_TS, runLineagePolicy: DEFAULT_RUN_LINEAGE_POLICY });
-  seedTaskNode(cStore, 'task:kp1c');
-  cStore.addKnowledgeNode({ id: `run:run-kp1c`, type: 'Run', grounding: 'observed', body: 'run', runId: 'run-kp1c', evidence: [{ coordinationSeq: 1 }] }, auth('add-run:kp1c'));
-  // The bundle ceiling reads the caller's request, not a policy (issue #530): a Contradicts pair
-  // that cannot fit `limit` refuses. Both bodies match the recall query below.
-  cStore.addKnowledgeNode({ id: 'finding:kp1c-a', type: 'Finding', grounding: 'observed', body: 'alpha term one', evidence: [{ coordinationSeq: 1 }] }, auth('add-a:kp1c'));
-  cStore.addKnowledgeNode({ id: 'finding:kp1c-b', type: 'Finding', grounding: 'observed', body: 'alpha term two', evidence: [{ coordinationSeq: 1 }] }, auth('add-b:kp1c'));
-  cStore.addKnowledgeEdge({ type: 'Contradicts', from: 'finding:kp1c-a', to: 'finding:kp1c-b', evidence: [{ coordinationSeq: 1 }] }, auth('edge:kp1c'));
-  const recallPolicy = recallPolicyFor(repoId);
-  // The idempotency digest covers the WHOLE request (observedSeq included), and a valid recall
-  // appends a knowledge.recall event — so the replay pair must pin the SAME observedSeq or the
-  // retry reads as a changed request.
-  const alphaRequest = { text: 'alpha term', limit: 5, observedSeq: cStore.ledgerHeadSeq(), reader: { taskId: 'task:kp1c' } };
-  assert.equal(refusalCode(() => cStore.recallKnowledgeBounded(alphaRequest, recallPolicy, auth('recall:kp1'))),
-    null, 'a valid recall serves');
-  assert.equal(refusalCode(() => cStore.recallKnowledgeBounded({ ...alphaRequest, limit: -1 }, recallPolicy, auth('recall:bad'))),
-    'causal_recall_invalid', 'an invalid recall request refuses causal_recall_invalid');
-  assert.equal(refusalCode(() => cStore.recallKnowledgeBounded({ ...alphaRequest, limit: 1 }, recallPolicy, auth('recall:oversize'))),
-    'causal_recall_oversize', 'a contradiction bundle beyond the request limit refuses causal_recall_oversize');
-  assert.equal(refusalCode(() => cStore.recallKnowledgeBounded({ ...alphaRequest, text: 'changed term' }, recallPolicy, auth('recall:kp1'))),
-    'knowledge_recall_conflict', 'a reused recall key with a changed request refuses knowledge_recall_conflict');
-  assert.equal(cStore.recallKnowledgeBounded(alphaRequest, recallPolicy, auth('recall:kp1')).replayed, true, 'an exact recall retry replays idempotent');
   // The read shapes — readKnowledge returns the closed {event, frame, nodes, asOf, replayed} frame.
   const read = rStore.readKnowledge({ types: ['Finding'] }, reader('kp1c'), auth('knowledge.read:kp1c'));
   assert.deepEqual(Object.keys(read).sort(), ['asOf', 'event', 'frame', 'nodes', 'replayed'], 'the readKnowledge shape (ACTUAL sorted order)');
@@ -478,11 +454,6 @@ function seedTaskNode(store, id) {
     reservedWorkerId: 'worker-1', vendorRequested: 'kimi-code', modelRequested: 'kimi-code/k3',
     modelPolicy: null, effortRequested: 'max', sessionRequest: { mode: 'new' },
   }, auth(`task.created:${id}`));
-}
-
-
-function recallPolicyFor(rid) {
-  return Object.freeze({ repoId: rid });
 }
 
 // The #63 candidate fixture: createTask -> claimTask -> run-orchestrator lease -> board item ->

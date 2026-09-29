@@ -285,7 +285,7 @@ test('CL4: the store reaches every moved member through its own delegate, with i
   const wired = delegates();
   assert.ok(wired.size > 0, 'the ledger port carries delegates');
   for (const [name, delegate] of wired) {
-    assert.equal(delegate.helper, name === '#knowledgeRecallPreview' ? 'knowledgeRecallPreview' : name,
+    assert.equal(delegate.helper, name,
       `${name}: the delegate names the member's own body`);
     if (name.startsWith('#')) continue;
     const descriptor = Object.getOwnPropertyDescriptor(CoordinationStore.prototype, name)
