@@ -11,9 +11,9 @@ import { resolve } from 'node:path';
 // the campaign ledger). At the default 1s refresh the operator seat wedges the resident.
 //
 // The contract: a frame's snapshot NEVER issues the list projections. The un-scoped frame
-// reads doctor only (the pulse/routes seam); a run-scoped frame adds run.inspect; a
-// wave-scoped frame adds waves.progress. Fleet roster (when needed) rides the bounded
-// coordinator seams — NOT runs.list/waves.list.
+// reads doctor only (the pulse/routes seam) and a run-scoped frame adds run.inspect. Fleet
+// roster (when needed) rides the bounded coordinator seams, never runs.list or waves.list.
+// The wave-scoped frame left with the wave command surface (#598 wave stage 1).
 //
 // RED   = the seam's source contains `runs.list` and `waves.list` command fires.
 // GREEN = neither string appears in the surfaceSnapshot body; the scoped reads remain.
@@ -31,5 +31,4 @@ test('FRAME-BOUNDED (#250): the CLI surfaceSnapshot never fires the list project
     'the frame seam must not fire waves.list (the #210/#216 furnace — 101.8s measured per call)');
   // the scoped reads stay: run.inspect for run frames, waves.progress for wave frames
   assert.ok(seam.includes('run.inspect'), 'run-scoped frames still read run.inspect (bounded)');
-  assert.ok(seam.includes('waves.progress'), 'wave-scoped frames still read waves.progress (bounded)');
 });

@@ -12,14 +12,14 @@ import { resolve } from 'node:path';
 // lineage row, and receipt in the store to read one integer.
 //
 // RED   = `snapshot().lastSeq` appears in application.mjs.
-// GREEN = every lastSeq consumer calls eventCursor() — zero full-store clones for scalars.
+// GREEN = no callsite in application.mjs deep-clones the store for a scalar.
 
 test('LASTSEQ-CURSOR (#210): no callsite clones the whole store to read a scalar', () => {
   const src = readFileSync(resolve(import.meta.dirname, '../src/application.mjs'), 'utf8');
   const offenders = [...src.matchAll(/coordination\.snapshot\(\)\.lastSeq/g)].length;
   assert.equal(offenders, 0,
     `${offenders} callsites deep-clone the entire store to read lastSeq — a scalar the store exposes O(1) as eventCursor() (the #227 accessor)`);
-  // and the cursor path is actually used
-  assert.ok(src.includes('eventCursor()'),
-    'the bounded eventCursor() accessor is the lastSeq read path');
+  // The accessor itself is live elsewhere (application-observation.mjs, attention-dispatcher.mjs,
+  // swarm-runtime.mjs, wake-stream.mjs) and every application.mjs caller of it left with the wave
+  // command surface (#598 wave stage 1), so this file asserts only the offender count.
 });
