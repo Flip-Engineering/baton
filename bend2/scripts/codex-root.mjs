@@ -70,7 +70,12 @@ function systemInstructions() {
     `  ${COORD} ${DB} land-checked WORKER REPO TARGET CHECK FILES — gated landing`,
     `  ${COORD} ${DB} push REPO BRANCH REMOTE — push a branch to a remote after landing`,
     `  ${COORD} ${DB} worktree WORKER — show a worker's Git state`,
+    `  ${COORD} ${DB} record FINDING_ID root CLAIM message:MESSAGE_ID LIMITS — record your finding`,
+    `  ${COORD} ${DB} knowledge root — list all findings visible to you with evidence and promotion history`,
+    `  ${COORD} ${DB} promote PROMOTION_ID root SOURCE root FINDING_ID — promote from SOURCE into the root scope`,
     '',
+    'Author findings from reviewed evidence. Cite an existing retained message you sent or received and state the claim\'s limits.',
+    'Review a finding before explicitly promoting it from its recorded source scope. Its original author remains recorded.',
     'When you receive a worker report, review it and acknowledge it.',
     'If the worker made changes, inspect its worktree state and land them when ready.',
   ].join('\n');
