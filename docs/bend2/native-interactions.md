@@ -23,7 +23,8 @@ request ID and attempt directory come from the retained request. The parent
 cannot select another attempt through this command.
 
 `stdin-written` means that all response bytes reached the retained process's
-stdin pipe. OMP supplies no separate UI-response acknowledgment. Native output
+stdin pipe. The SQL query's row framing supplies the JSON-line terminator.
+OMP supplies no separate UI-response acknowledgment. Native output
 and the eventual report establish subsequent progress. Transport failure can
 follow a partial or completed write; retry uses the same stored native request
 ID. OMP ignores responses for requests that have already resolved.
@@ -47,12 +48,15 @@ frames, responses, cancellation/exit state, messages and reports remain readable
 in the coordinator database and retained native log.
 
 This path supports retained OMP children. OMP root requests with no registered
-parent retain their raw frame and expose an unsupported-interaction diagnostic.
+parent retain their raw frame and record an unsupported-interaction error. That
+error makes `receive` fail after the native process exits. A native process
+waiting for the unanswered request can remain waiting until explicitly stopped.
 Direct `turn`, Codex `exec`, Claude and Muse have no native reply mapping here.
 Keeper loss and host restart remain outside the surviving-owner recovery proof.
 
 The operative [request laws](../../bend2/src/coordinator/native-request-laws.bend)
-constrain the called dispatch and failed-persistence branches. SQLite validation,
+constrain response admission, recorded attempt/frame selection, dispatch,
+failed persistence and failed writes in the called functions. SQLite validation,
 socket identity, byte delivery, native PID ownership and provider behavior are
 runtime boundaries. [Receive tests](../../bend2/test/receive.py) exercise parent
 routing, matched replies and observer recovery;
