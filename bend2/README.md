@@ -206,6 +206,26 @@ runs persistence, recruitment, Git, OS-process and controlled-protocol tests. A 
 process fixture verifies supervision; a real subscription worker and a native
 root acceptance receipt are required for the live-slice result.
 
+## Shared knowledge
+
+Agents record findings with a claim, a retained evidence message and stated
+limits. The evidence reference must name an existing message the author sent
+or received. An unpublished finding is visible to its author and immediate
+parent. `knowledge READER` returns the complete visible list, including the
+cited message body and promotion history.
+
+```sh
+.scratch/bend2/baton2 state.db record finding1 worker1 'Observed claim' message:report1 'Observed limits'
+.scratch/bend2/baton2 state.db knowledge root
+.scratch/bend2/baton2 state.db promote promotion1 root worker1 root finding1
+```
+
+After reviewing the evidence, the destination scope's owner can explicitly
+promote the exact finding from its named source scope. A shared scope includes
+its owner, the owner's immediate parent and the owner's subtree. Higher
+promotion names the scope that already carries the finding. The original
+author and each promotion's source, destination and promoter remain recorded.
+
 ## Native root delivery
 
 Register a root and its native receiver endpoint using absolute paths. This
