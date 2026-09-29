@@ -255,8 +255,8 @@ class StrictJsonParser {
   value() {
     const char = this.text[this.offset];
     if (char === '"') return this.string();
-    if (char === '{') return this.object(depth);
-    if (char === '[') return this.array(depth);
+    if (char === '{') return this.object();
+    if (char === '[') return this.array();
     if (char === 't' && this.take('true')) return true;
     if (char === 'f' && this.take('false')) return false;
     if (char === 'n' && this.take('null')) return null;
