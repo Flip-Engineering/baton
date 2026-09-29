@@ -475,7 +475,6 @@ function stopPerformer({ stop, outcome }) {
   application.driver = {
     coordination: {
       runStop: () => stop,
-      pendingRunVerificationRetries: () => [],
       completeRunStop(runId, receipt) {
         completions.push({ runId, receipt });
         return { stop: { ...stop, status: 'stopped', receipt } };

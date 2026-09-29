@@ -2947,7 +2947,6 @@ export function processIsAlive(pid) {
  * same one, so a renewed owner carries exactly the powers the open gave it. */
 const OWNER_SESSION_CAPABILITIES = Object.freeze([
   'observe', 'control', 'approve', 'emergency_stop',
-  'retry_verification',
   'goal:define', 'goal:observe', 'plan:propose', 'plan:approve',
 ]);
 /** Issue #559: the fraction of the declared owner-session lifetime at which the resident renews

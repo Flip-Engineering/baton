@@ -1,6 +1,6 @@
 // Run-show verification verdict (issue #334): `baton run show RUN_ID` at the default
-// (outline) depth carries the worker-verdict-surface projection beside retry_verification
-// for a failed or inconclusive verification, with the bounded sanitized failure tail.
+// (outline) depth carries the worker-verdict-surface projection for a failed or inconclusive
+// verification, with the bounded sanitized failure tail.
 //
 // Motivating case: a run whose referee recorded outcome inconclusive / failureOwnership
 // baseline_or_environment / diagnosticCode verification_exit_mismatch read only "failed"
@@ -14,7 +14,7 @@
 //   V3  pure bounded tail (over-bound capsule text stays within the capsule bound)
 //   V4  pure honest absence (passed/pending states and missing verdict project null;
 //       an unmappable code escalates check/corrective to null)
-//   V5  e2e inconclusive run: outline.verification rides beside retry_verification
+//   V5  e2e inconclusive run: outline.verification carries the inconclusive state, the closed code and the shared projection
 //   V6  e2e outline.verification never leaks paths or the checkpoint ref
 //   V7  e2e failed candidate run still carries its own corrective (failing_check_fix)
 //

@@ -13,8 +13,8 @@
 //          hardening requirements (there is no change to harden).
 //   334-4  application run phase: an inconclusive verdict with failureOwnership
 //          baseline_or_environment (base red, candidate not to blame) reads phase
-//          'inconclusive' — never 'failed' — with the retry_verification action still offered
-//          and the progress summary naming the ownership.
+//          'inconclusive' and verification.state 'inconclusive', and the progress
+//          summary names the ownership.
 //   334-5  end to end: a read_only_evidence exploration whose worker changed nothing completes
 //          even though the deployment's pinned verification would fail if it ran.
 //   334-6  brief renderer: a read_only_evidence brief states exactly what acceptance will check.
