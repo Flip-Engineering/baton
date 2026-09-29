@@ -27,7 +27,8 @@ phase gates. Its acceptance is the concrete workflow below.
 ## Records and visibility
 
 The root froze the first-slice command contract as v3 on 2026-09-29.
-The planned command forms are:
+The API contract is stable; feature publication and acceptance remain pending.
+The command forms are:
 
 ```text
 baton2 DATABASE record FINDING_ID AUTHOR CLAIM EVIDENCE LIMITS
@@ -55,19 +56,22 @@ Scopes use the existing coordinator session parentage:
 | Candidate finding | Its author and the author's immediate reviewing parent. |
 | Finding promoted to a shared scope | The owning session, its immediate parent, and its subtree. |
 
-The destination owner promotes a source it can read. Wider sharing requires
-another explicit promotion. Recording, reading, reporting, acknowledging a
+The destination owner promotes a source it can read. Promotion checks membership
+in the named source scope. For an unpublished candidate, the promoter must be
+the author or the author's immediate parent. Wider sharing requires another
+explicit promotion. Recording, reading, reporting, acknowledging a
 message and completing a turn do not promote a finding. `knowledge READER`
 returns the complete visible list, including each finding's evidence message body
 and full promotion provenance. A fresh or restarted worker can retrieve records
 independently of its native conversation memory and whether review messages were
 acknowledged.
 
-Read rows carry `id`, `author`, `claim`, `evidence`, `limits`, `destinations` and
-`promotions`. Each promotion names `finding`, `source`, `destination` and
-`promotedBy`. The read also exposes the referenced evidence message body. The
+Read rows carry `id`, `author`, `claim`, `evidence`, `evidenceMessage`, `limits`,
+`destinations` and `promotions`. `evidenceMessage` exposes the referenced message's
+`id`, `sender`, `recipient` and `body`. Each promotion names `finding`, `author`,
+`source`, `destination` and `promotedBy`. The
 parent review notice uses the existing `question` message kind and contains only
-the finding ID and author; the parent retrieves the finding through `knowledge`.
+`{finding, author}`; the parent retrieves the finding through `knowledge`.
 
 ## Trusted-local boundary
 
