@@ -7,6 +7,8 @@ adds an underlying executable pin when executable is a launcher script.
 --tasks supplies deepseek/muse task text, files and checks, guidance text, and
 optional file_checks with path, contains and absent lists. Selected checks run as
 Python files in each checked tree. This command starts real native sessions.
+Final worker and target changes must stay within the run's assigned files.
+Worker assigned files must match their latest landing and the final target.
 """
 import argparse
 import hashlib
@@ -168,8 +170,61 @@ def native_id(frame):
     return None
 
 
-def verify(out, state, run, helpers):
+def git_entry(repo, revision, path):
+    """Return the stored mode, object and path, including absence after deletion."""
+    return command(['git', '-C', repo, 'ls-tree', revision, '--', path])
+
+
+def verify_landings(out, run, sessions):
     repo, base = out / 'repo', run['source']
+    tips = {seat: command(['git', '-C', repo, 'rev-parse', branch]) for seat, branch in
+            [('target', 'bend2-trial'), ('lead', 'hierarchy-lead'),
+             ('deepseek', 'hierarchy-deepseek'), ('muse', 'hierarchy-muse')]}
+    receipts = {path.name: json.loads(path.read_text()) for path in out.glob('landing-*.json')}
+    landings = {'root': receipts['landing-root.json']}
+    assert landings['root']['status'] == 'landed' and landings['root']['target'] == 'bend2-trial'
+    assert tips['target'] == landings['root']['commit']
+    tree = lambda revision: command(['git', '-C', repo, 'rev-parse', f'{revision}^{{tree}}'])
+    assert tree(tips['target']) == tree(tips['lead'])
+    assigned = {seat: set(run['tasks'][seat]['files']) for seat in WORKERS}
+    allowed = set.union(*assigned.values())
+    changed = set(command(['git', '-C', repo, 'diff', '--name-only', '--no-renames',
+                           base, tips['target']]).splitlines())
+    assert changed and changed <= allowed, ('Unassigned target changes', changed)
+    selected = {}
+
+    def ancestor(older, newer):
+        return command(['git', '-C', repo, 'merge-base', older, newer]) == older
+
+    for seat in WORKERS:
+        base = sessions[seat]['base']
+        assert ancestor(base, tips[seat]), ('Worker lost its recorded base', seat)
+        changed = set(command(['git', '-C', repo, 'diff', '--name-only', '--no-renames',
+                               base, tips[seat]]).splitlines())
+        assert changed <= allowed, ('Unassigned worker changes', seat, changed)
+        assert changed & assigned[seat], ('Worker left no change in its assigned files', seat)
+        candidates = [(name, receipt) for name, receipt in receipts.items()
+                      if (name == f'landing-{seat}.json' or name.startswith(f'landing-{seat}-'))
+                      and receipt['status'] == 'landed']
+        assert candidates, ('Missing successful worker landing', seat)
+        latest_name, latest = candidates[0]
+        for name, receipt in candidates:
+            assert receipt['target'] == 'hierarchy-lead' and ancestor(receipt['commit'], tips['lead'])
+            if ancestor(latest['commit'], receipt['commit']):
+                latest_name, latest = name, receipt
+            else:
+                assert ancestor(receipt['commit'], latest['commit']), 'Worker landings have divergent histories'
+        landings[seat], selected[seat] = latest, latest_name
+        for path in assigned[seat]:
+            entry = git_entry(repo, tips[seat], path)
+            assert entry == git_entry(repo, latest['commit'], path), ('Worker correction was not landed', seat, path)
+            assert entry == git_entry(repo, tips['target'], path), ('Target changed worker content or mode', seat, path)
+    return {'tips': tips, 'landings': landings, 'landing_receipts': receipts,
+            'selected_worker_receipts': selected}
+
+
+def verify(out, state, run, helpers):
+    repo = out / 'repo'
     sessions = {row['id']: row for row in state['sessions']}
     messages = {row['id']: row for row in state['messages']}
     processes = records(out)
@@ -226,34 +281,17 @@ def verify(out, state, run, helpers):
                   and 'unexpected-success-guidance' in json.dumps(frame.get('args', frame.get('input', {})))
                   and 'message-file' in json.dumps(frame.get('args', frame.get('input', {})))]
     assert lead_calls, 'Guidance command missing from actual lead tool-call arguments'
-    landings = {seat: json.loads((out / f'landing-{seat}.json').read_text())
-                for seat in [*WORKERS, 'root']}
-    for seat, landing in landings.items():
-        assert landing['status'] == 'landed', (seat, landing)
-        assert landing['target'] == ('bend2-trial' if seat == 'root' else 'hierarchy-lead')
-    tips = {seat: command(['git', '-C', repo, 'rev-parse', branch]) for seat, branch in
-            [('target', 'bend2-trial'), ('lead', 'hierarchy-lead'),
-             ('deepseek', 'hierarchy-deepseek'), ('muse', 'hierarchy-muse')]}
-    tree = lambda revision: command(['git', '-C', repo, 'rev-parse', f'{revision}^{{tree}}'])
-    assert tips['target'] == landings['root']['commit'] and tree(tips['target']) == tree(tips['lead'])
+    landed = verify_landings(out, run, sessions)
+    tips = landed['tips']
     for workspace in [repo, out / 'lead']:
         assert not command(['git', '-C', workspace, 'status', '--porcelain'])
     for seat in WORKERS:
-        allowed = set(run['tasks'][seat]['files'])
-        changed = set(command(['git', '-C', repo, 'diff', '--name-only', base, tips[seat]]).splitlines())
-        assert changed and changed <= allowed, (seat, changed, allowed)
-        command(['git', '-C', repo, 'merge-base', '--is-ancestor', base, tips[seat]])
         assert not command(['git', '-C', out / seat, 'status', '--porcelain'])
-        for path in allowed:
-            assert command(['git', '-C', repo, 'rev-parse', f'{tips[seat]}:{path}']) == command(
-                ['git', '-C', repo, 'rev-parse', f'{landings[seat]["commit"]}:{path}'])
-            assert command(['git', '-C', repo, 'rev-parse', f'{tips[seat]}:{path}']) == command(
-                ['git', '-C', repo, 'rev-parse', f'{tips["target"]}:{path}'])
     for check in run['tasks'].get('file_checks', []):
         text = command(['git', '-C', repo, 'show', f'{tips["target"]}:{check["path"]}'])
         assert all(value in text for value in check.get('contains', [])), check
         assert all(value not in text for value in check.get('absent', [])), check
-    return {'processes': processes, 'tips': tips, 'landings': landings,
+    return {'processes': processes, **landed,
             'worker_overlap_seconds': overlap, 'guidance_observation': observed,
             'concurrent_native_processes': concurrency, 'lead_guidance_calls': lead_calls,
             'native_steer_event': steer, 'state': state}
@@ -369,7 +407,9 @@ when child reports invoke your native session. No waiting for worker completion.
 For each worker report, inspect its actual diff and check output, acknowledge it,
 and run `B2 DB land-checked WORKER REPO hierarchy-lead CHECK FILES`, with the worker's
 selected checks in one quoted space-separated FILES argument. Save the exact JSON
-answer in STATE/landing-WORKER.json. Require status landed. Worker checks:
+answer in STATE/landing-WORKER.json. For a correction, preserve earlier answers
+and save the new answer as STATE/landing-WORKER-CORRECTION.json with a distinct
+CORRECTION suffix. Require status landed. Worker checks:
 deepseek: {json.dumps(tasks['deepseek']['checks'])}
 muse: {json.dumps(tasks['muse']['checks'])}
 Once both landings succeed, inspect the composed lead tree and run the selected
