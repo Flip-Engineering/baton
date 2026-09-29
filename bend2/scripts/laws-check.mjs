@@ -187,6 +187,20 @@ const MUTATIONS = [
     law: 'm17_restart_records_before_releasing_and_waking',
   },
   {
+    name: 'm10-checks-run-on-an-unprepared-tree',
+    file: join('bend2', 'src', 'git', 'land.bend'),
+    find: 'case T.GRun{code, out}: ld_tree_runs(U32.is_eq(code, 0), repo, target, script, files, scratch, tip, cand, tw)',
+    replace: 'case T.GRun{code, out}: ld_tree_runs(True{}, repo, target, script, files, scratch, tip, cand, tw)',
+    law: 'm10_unprepared_tree_blocks_by_name',
+  },
+  {
+    name: 'm10-preparation-status-inverted',
+    file: join('bend2', 'src', 'git', 'land.bend'),
+    find: 'case T.GRun{code, out}: ld_tree_runs(U32.is_eq(code, 0), repo, target, script, files, scratch, tip, cand, tw)',
+    replace: 'case T.GRun{code, out}: ld_tree_runs(Bool.not(U32.is_eq(code, 0)), repo, target, script, files, scratch, tip, cand, tw)',
+    law: 'm10_prepared_tree_runs_the_checks',
+  },
+  {
     name: 'm17-recovery-native-guard-dropped',
     file: join('bend2', 'src', 'coordinator', 'receive.bend'),
     find: '" AND native=" ++ C.q(native) ++ ";"',
