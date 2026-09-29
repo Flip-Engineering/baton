@@ -1332,3 +1332,180 @@ law m10_a_broken_tree_preparation_fails_with_its_detail:
 
 def m10_a_broken_tree_preparation_fails_with_its_detail(detail, repo, target, script, files, scratch, tip, cand, tw):
   {==}
+
+# ---------------------------------------------------------------------------
+# M-10: the state each stage entry is handed selects the arm that runs. The
+# composition above binds that every entry is called once, in order, on the
+# right trees; these laws bind what each entry does with the state it is
+# handed: the arm that runs the entry's own stage with the values it holds, and
+# the arm that carries a landing which already reached an outcome through
+# unchanged, so a settled landing is not re-processed by a later entry. The
+# stages themselves are bound above under M-10 and M-3a; Git's work inside each
+# stage and the host's report of each exit status remain host assumptions. Each
+# entry's remaining arms answer the unreachable refusal and are not restated
+# here.
+
+# M-10: the entry holding a resolved worker runs the target tip stage with the
+# repo and target it was given.
+law m10_ld_go1_runs_the_target_tip_stage:
+  for worker: String
+  for sha: String
+  for repo: String
+  for target: String
+  {L.ld_go1(L.LdWk{worker, sha}, repo, target) == L.ld_stage2(repo, target, worker, sha) : IO(L.Ld)}
+
+def m10_ld_go1_runs_the_target_tip_stage(worker, sha, repo, target):
+  {==}
+
+# M-10: the entry holding a prepared tip runs the candidate worktree stage with
+# the repo and scratch it was given.
+law m10_ld_go2_runs_the_candidate_worktree_stage:
+  for worker: String
+  for sha: String
+  for tip: String
+  for repo: String
+  for scratch: String
+  {L.ld_go2(L.LdTip{worker, sha, tip}, repo, scratch) == L.ld_stage3(repo, worker, sha, tip, scratch) : IO(L.Ld)}
+
+def m10_ld_go2_runs_the_candidate_worktree_stage(worker, sha, tip, repo, scratch):
+  {==}
+
+# M-10: the entry holding a prepared tip runs the squash stage on the scratch
+# tree it was given.
+law m10_ld_go3_runs_the_squash_stage:
+  for worker: String
+  for sha: String
+  for tip: String
+  for scratch: String
+  {L.ld_go3(L.LdTip{worker, sha, tip}, scratch) == L.ld_stage4(scratch, worker, sha, tip) : IO(L.Ld)}
+
+def m10_ld_go3_runs_the_squash_stage(worker, sha, tip, scratch):
+  {==}
+
+# M-10: the entry holding a prepared tip runs the history stage with the repo
+# and scratch it was given.
+law m10_ld_go4_runs_the_history_stage:
+  for worker: String
+  for sha: String
+  for tip: String
+  for repo: String
+  for scratch: String
+  {L.ld_go4(L.LdTip{worker, sha, tip}, repo, scratch) == L.ld_stage5(repo, scratch, worker, sha, tip) : IO(L.Ld)}
+
+def m10_ld_go4_runs_the_history_stage(worker, sha, tip, repo, scratch):
+  {==}
+
+# M-10: the entry holding a prepared candidate runs the checks stage: the seven
+# arguments are the repo, target, script, files and scratch the entry was
+# given, then the candidate state's own tip and cand. This is the arm that runs
+# the checks.
+law m10_ld_go5_runs_the_checks_stage:
+  for tip: String
+  for cand: String
+  for repo: String
+  for target: String
+  for script: String
+  for files: List<String>
+  for scratch: String
+  {L.ld_go5(L.LdCand{tip, cand}, repo, target, script, files, scratch) == L.ld_stage6(repo, target, script, files, scratch, tip, cand) : IO(L.Ld)}
+
+def m10_ld_go5_runs_the_checks_stage(tip, cand, repo, target, script, files, scratch):
+  {==}
+
+# M-10: a settled landing passes through every entry unchanged: an entry handed
+# a landing that already answered an outcome answers the same outcome again and
+# runs no stage, and an entry handed a failure answers the same failure.
+
+law m10_ld_go1_keeps_a_settled_landing:
+  for made: T.LandOutcome
+  for repo: String
+  for target: String
+  {L.ld_go1(L.LdDone{made}, repo, target) == IO.pure(L.Ld, L.LdDone{made}) : IO(L.Ld)}
+
+def m10_ld_go1_keeps_a_settled_landing(made, repo, target):
+  {==}
+
+law m10_ld_go1_keeps_a_failed_landing:
+  for fail: T.GitFail
+  for repo: String
+  for target: String
+  {L.ld_go1(L.LdFail{fail}, repo, target) == IO.pure(L.Ld, L.LdFail{fail}) : IO(L.Ld)}
+
+def m10_ld_go1_keeps_a_failed_landing(fail, repo, target):
+  {==}
+
+law m10_ld_go2_keeps_a_settled_landing:
+  for made: T.LandOutcome
+  for repo: String
+  for scratch: String
+  {L.ld_go2(L.LdDone{made}, repo, scratch) == IO.pure(L.Ld, L.LdDone{made}) : IO(L.Ld)}
+
+def m10_ld_go2_keeps_a_settled_landing(made, repo, scratch):
+  {==}
+
+law m10_ld_go2_keeps_a_failed_landing:
+  for fail: T.GitFail
+  for repo: String
+  for scratch: String
+  {L.ld_go2(L.LdFail{fail}, repo, scratch) == IO.pure(L.Ld, L.LdFail{fail}) : IO(L.Ld)}
+
+def m10_ld_go2_keeps_a_failed_landing(fail, repo, scratch):
+  {==}
+
+law m10_ld_go3_keeps_a_settled_landing:
+  for made: T.LandOutcome
+  for scratch: String
+  {L.ld_go3(L.LdDone{made}, scratch) == IO.pure(L.Ld, L.LdDone{made}) : IO(L.Ld)}
+
+def m10_ld_go3_keeps_a_settled_landing(made, scratch):
+  {==}
+
+law m10_ld_go3_keeps_a_failed_landing:
+  for fail: T.GitFail
+  for scratch: String
+  {L.ld_go3(L.LdFail{fail}, scratch) == IO.pure(L.Ld, L.LdFail{fail}) : IO(L.Ld)}
+
+def m10_ld_go3_keeps_a_failed_landing(fail, scratch):
+  {==}
+
+law m10_ld_go4_keeps_a_settled_landing:
+  for made: T.LandOutcome
+  for repo: String
+  for scratch: String
+  {L.ld_go4(L.LdDone{made}, repo, scratch) == IO.pure(L.Ld, L.LdDone{made}) : IO(L.Ld)}
+
+def m10_ld_go4_keeps_a_settled_landing(made, repo, scratch):
+  {==}
+
+law m10_ld_go4_keeps_a_failed_landing:
+  for fail: T.GitFail
+  for repo: String
+  for scratch: String
+  {L.ld_go4(L.LdFail{fail}, repo, scratch) == IO.pure(L.Ld, L.LdFail{fail}) : IO(L.Ld)}
+
+def m10_ld_go4_keeps_a_failed_landing(fail, repo, scratch):
+  {==}
+
+law m10_ld_go5_keeps_a_settled_landing:
+  for made: T.LandOutcome
+  for repo: String
+  for target: String
+  for script: String
+  for files: List<String>
+  for scratch: String
+  {L.ld_go5(L.LdDone{made}, repo, target, script, files, scratch) == IO.pure(L.Ld, L.LdDone{made}) : IO(L.Ld)}
+
+def m10_ld_go5_keeps_a_settled_landing(made, repo, target, script, files, scratch):
+  {==}
+
+law m10_ld_go5_keeps_a_failed_landing:
+  for fail: T.GitFail
+  for repo: String
+  for target: String
+  for script: String
+  for files: List<String>
+  for scratch: String
+  {L.ld_go5(L.LdFail{fail}, repo, target, script, files, scratch) == IO.pure(L.Ld, L.LdFail{fail}) : IO(L.Ld)}
+
+def m10_ld_go5_keeps_a_failed_landing(fail, repo, target, script, files, scratch):
+  {==}

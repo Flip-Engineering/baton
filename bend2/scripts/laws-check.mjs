@@ -382,6 +382,20 @@ const MUTATIONS = [
     replace: 'case False{}: IO.pure(Unit,Unit{})',
     law: 'm14_unregistered_parent_refuses_with_its_rule',
   },
+  {
+    name: 'm10-ld-go5-skips-the-checks-stage',
+    file: join('bend2', 'src', 'git', 'land.bend'),
+    find: 'case LdCand{tip, cand}: ld_stage6(repo, target, script, files, scratch, tip, cand)',
+    replace: 'case LdCand{tip, cand}: ld_unreach()',
+    law: 'm10_ld_go5_runs_the_checks_stage',
+  },
+  {
+    name: 'm10-ld-go1-drops-a-settled-landing',
+    file: join('bend2', 'src', 'git', 'land.bend'),
+    find: 'def ld_go1(r: Ld, repo: String, target: String) -> IO(Ld):\n  match r:\n    case LdDone{made}: IO.pure(Ld, LdDone{made})',
+    replace: 'def ld_go1(r: Ld, repo: String, target: String) -> IO(Ld):\n  match r:\n    case LdDone{made}: ld_unreach()',
+    law: 'm10_ld_go1_keeps_a_settled_landing',
+  },
 ];
 
 for (const mutation of MUTATIONS) {
