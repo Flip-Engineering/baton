@@ -2,9 +2,9 @@
 
 ## Decision and implementation status
 
-The operator's #642 decision, relayed by root on 2026-09-29, adopts three
-coordinator operations: record a finding, read visible context, and explicitly
-promote an exact finding. Agents generate findings and review their evidence.
+Following the operator question about shared knowledge, the root assigned three
+coordinator operations on 2026-09-29 under #642: record a finding, read visible
+context, and explicitly promote an exact finding. Agents generate findings and review their evidence.
 The coordinator stores the records and applies visibility and promotion rules.
 These operations are planned; published `4676778a` implements sessions,
 messages and turns, without this knowledge workflow.
