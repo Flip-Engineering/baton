@@ -1,0 +1,60 @@
+# Native OMP questions
+
+Retained OMP child receivers route native `input`, `select`, `confirm` and
+`editor` requests to their registered parent. The parent inbox contains a
+`question` message with the complete native request, its coordinator request ID,
+the reply command and the expected response shape.
+
+```sh
+baton2 state.db native-reply PARENT REQUEST '{"value":"chosen answer"}'
+baton2 state.db native-reply-file PARENT REQUEST response.json
+```
+
+Input and editor responses contain one string `value`. Select responses contain
+one `value` matching a supplied option. Confirm responses contain one boolean
+`confirmed`. Every supported method also accepts `{"cancelled":true}`. The file
+form preserves multiline responses and accepts `-` for stdin. A `confirm` request
+is an OMP extension UI interaction. Harness approval settings remain unchanged.
+
+The coordinator checks the recorded parent and request before retaining an
+immutable response. A conflicting response fails. An identical retry returns
+the recorded write result or attempts the original pending write. The native
+request ID and attempt directory come from the retained request. The parent
+cannot select another attempt through this command.
+
+`stdin-written` means that all response bytes reached the retained process's
+stdin pipe. OMP supplies no separate UI-response acknowledgment. Native output
+and the eventual report establish subsequent progress. Transport failure can
+follow a partial or completed write; retry uses the same stored native request
+ID. OMP ignores responses for requests that have already resolved.
+Simultaneous identical callers can write the same response more than once while
+the write result is pending. The stored logical answer remains immutable, and
+every transmitted response carries the original native request ID.
+
+Parent message acceptance remains separate from a native reply. The keeper
+retains the existing native process and observer while external reply commands
+use its input queue. A parent wake runs concurrently with native observation.
+The receiver settles that wake after outcome/report delivery and pending-input
+continuation, before acknowledging keeper completion. This permits a parent to
+answer and then wait for the child's report. Delivery failure remains distinct
+from native completion.
+
+Observer recovery replays the request log and the durable response record.
+Completed writes are retained; an unwritten stored response can continue through
+the original keeper. Native cancellation, accepted stdin closure and actual
+process exit prevent a late response from entering a later attempt. Full request
+frames, responses, cancellation/exit state, messages and reports remain readable
+in the coordinator database and retained native log.
+
+This path supports retained OMP children. OMP root requests with no registered
+parent retain their raw frame and expose an unsupported-interaction diagnostic.
+Direct `turn`, Codex `exec`, Claude and Muse have no native reply mapping here.
+Keeper loss and host restart remain outside the surviving-owner recovery proof.
+
+The operative [request laws](../../bend2/src/coordinator/native-request-laws.bend)
+constrain the called dispatch and failed-persistence branches. SQLite validation,
+socket identity, byte delivery, native PID ownership and provider behavior are
+runtime boundaries. [Receive tests](../../bend2/test/receive.py) exercise parent
+routing, matched replies and observer recovery;
+[host tests](../../bend2/test/retained-control.py) exercise the shared input queue,
+attempt identity, signaling and native reaping.

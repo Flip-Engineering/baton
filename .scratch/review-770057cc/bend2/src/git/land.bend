@@ -1,0 +1,961 @@
+# land: one squashed landing of a committed worker tip onto a target branch.
+# The candidate is prepared in a scratch worktree detached at the target tip,
+# so the worker's own commits and worktree stay untouched. Each selected
+# check file runs on the candidate and on a detached tree at the target tip;
+# a candidate failure blocks unless the target run shows the same failure
+# identity (file, test, failure type, code) as AGENTS.md requires. A run with
+# no verdict blocks. The target advances through update-ref with the observed
+# tip as the old value, so the branch moves only while it still matches the
+# prepared basis. A target that moved meanwhile returns a retry instruction
+# and keeps the checked candidate worktree for the requester. A landing whose
+# worker commit the target already contains answers LAlready without
+# preparing anything. LAlready names the worker commit on the fast-forward and
+# the checked path alike.
+#
+# One branch commit retains its full message. Several branch commits use the
+# tip subject and list every subject since the merge-base with the target.
+# The body names the worker branch and any added path the landing dropped.
+#
+# Publication is the last step: push_git pushes the landed target to the
+# remote the deployment declares and answers the push's own exit and output,
+# so a refused or non-fast-forward push is named as a failure and never read
+# as a published landing.
+#
+# Check contract: check is the path of a shell script, run as
+#   /bin/sh <check> <selected-file>
+# inside the checked tree, one run per selected file per tree. A passing run
+# exits 0. A failing run names each failure on one stdout line as four
+# hex-encoded fields separated by single spaces: file, test, failure type,
+# and the stable semantic code ("-" when the tool supplies none). Hex
+# encoding lets any name travel through the space-separated line, so an exact
+# line match after validation is an exact identity match. Any other output
+# line on stdout makes the run unjudged, and an unjudged run blocks the landing
+# and names the line that made it unjudged. Stderr goes to the coordinator's log.
+#
+# The scratch worktrees one attempt prepares, the candidate and the target tree
+# named by appending "-target", are removed when the landing answers landed or
+# already. A refused or conflicted attempt keeps them for the requester, and
+# that worker's next attempt drops them.
+
+import Base
+import ./types.bend as T
+import ./text.bend as Tx
+import ./process.bend as Git
+import ./debris.bend as Deb
+
+# How one selected check file behaved on one tree: pass, fail with the hex
+# identity block its output carried, or no verdict.
+# The fast-forward landing below is the coordinator's current entry point;
+# land_checked is the gated landing described in target-architecture.md.
+
+
+type FFLD is Data:
+  FFDone{outcome: T.LandOutcome}
+  FFNext{workerCommit: String, targetBefore: String}
+
+def ff_answer(r: FFLD) -> IO(T.LandOutcome):
+  match r:
+    case FFDone{outcome}: IO.pure(T.LandOutcome, outcome)
+    case FFNext{wc, tb}: IO.pure(T.LandOutcome, T.LBlocked{"unreachable stage"})
+
+# Stage 1: resolve the worker branch to a commit.
+def ff_stage1_ok(ok: Bool, out: String) -> FFLD:
+  match ok:
+    case True{}: FFNext{Tx.trim_nl(out), ""}
+    case False{}: FFDone{T.LBlocked{"worker branch not found"}}
+
+def ff_stage1_pick(r: T.GitOut) -> FFLD:
+  match r:
+    case T.GRun{code, out}: ff_stage1_ok(U32.is_eq(code, 0), out)
+    case T.GBroken{detail}: FFDone{T.LBlocked{detail}}
+
+def ff_stage1(repo: String, workerBranch: String) -> IO(FFLD):
+  +wb = workerBranch
+  +rp = repo
+  do IO<FFLD>:
+    r : T.GitOut <- Git.runGit(rp, Con{"rev-parse", Con{"--verify", Con{"--quiet", Con{Tx.str_cat("refs/heads/", wb), Nil{}}}}})
+    IO.pure(FFLD, ff_stage1_pick(r))
+
+# Stage 2: check if the target already contains the worker commit.
+def ff_stage2_ancestor(ok: Bool, wc: String) -> FFLD:
+  match ok:
+    case True{}: FFDone{T.LAlready{wc}}
+    case False{}: FFNext{wc, ""}
+
+def ff_stage2_pick(r: T.GitOut, wc: String) -> FFLD:
+  match r:
+    case T.GRun{code, out}: ff_stage2_ancestor(U32.is_eq(code, 0), wc)
+    case T.GBroken{detail}: FFDone{T.LBlocked{detail}}
+
+def ff_stage2(wc: String, repo: String, target: String) -> IO(FFLD):
+  +wc2 = wc
+  +rp = repo
+  +tg = target
+  do IO<FFLD>:
+    r : T.GitOut <- Git.runGit(rp, Con{"merge-base", Con{"--is-ancestor", Con{wc2, Con{tg, Nil{}}}}})
+    IO.pure(FFLD, ff_stage2_pick(r, wc2))
+
+def ff_go2(r: FFLD, repo: String, target: String) -> IO(FFLD):
+  match r:
+    case FFDone{outcome}: IO.pure(FFLD, FFDone{outcome})
+    case FFNext{wc, tb}: ff_stage2(wc, repo, target)
+
+# Stage 3: record the current target HEAD.
+def ff_stage3_ok(ok: Bool, out: String, wc: String) -> FFLD:
+  match ok:
+    case True{}: FFNext{wc, Tx.trim_nl(out)}
+    case False{}: FFDone{T.LBlocked{"target branch not found"}}
+
+def ff_stage3_pick(r: T.GitOut, wc: String) -> FFLD:
+  match r:
+    case T.GRun{code, out}: ff_stage3_ok(U32.is_eq(code, 0), out, wc)
+    case T.GBroken{detail}: FFDone{T.LBlocked{detail}}
+
+def ff_stage3(wc: String, repo: String, target: String) -> IO(FFLD):
+  +wc2 = wc
+  +rp = repo
+  +tg = target
+  do IO<FFLD>:
+    r : T.GitOut <- Git.runGit(rp, Con{"rev-parse", Con{"--verify", Con{"--quiet", Con{Tx.str_cat("refs/heads/", tg), Nil{}}}}})
+    IO.pure(FFLD, ff_stage3_pick(r, wc2))
+
+def ff_go3(r: FFLD, repo: String, target: String) -> IO(FFLD):
+  match r:
+    case FFDone{outcome}: IO.pure(FFLD, FFDone{outcome})
+    case FFNext{wc, tb}: ff_stage3(wc, repo, target)
+
+# Stage 4: verify the target is an ancestor of the worker (fast-forward).
+def ff_stage4_ff(ok: Bool, wc: String, tb: String) -> FFLD:
+  match ok:
+    case True{}: FFNext{wc, tb}
+    case False{}: FFDone{T.LBlocked{"not a fast-forward; rebase the worker branch onto the target"}}
+
+def ff_stage4_pick(r: T.GitOut, wc: String, tb: String) -> FFLD:
+  match r:
+    case T.GRun{code, out}: ff_stage4_ff(U32.is_eq(code, 0), wc, tb)
+    case T.GBroken{detail}: FFDone{T.LBlocked{detail}}
+
+def ff_stage4(wc: String, tb: String, repo: String, target: String) -> IO(FFLD):
+  +wc2 = wc
+  +tb2 = tb
+  +rp = repo
+  +tg = target
+  do IO<FFLD>:
+    r : T.GitOut <- Git.runGit(rp, Con{"merge-base", Con{"--is-ancestor", Con{tg, Con{wc2, Nil{}}}}})
+    IO.pure(FFLD, ff_stage4_pick(r, wc2, tb2))
+
+def ff_go4(r: FFLD, repo: String, target: String) -> IO(FFLD):
+  match r:
+    case FFDone{outcome}: IO.pure(FFLD, FFDone{outcome})
+    case FFNext{wc, tb}: ff_stage4(wc, tb, repo, target)
+
+# Stage 5: CAS update-ref to advance the target branch.
+def ff_stage5_ok(ok: Bool, wc: String, target: String) -> FFLD:
+  match ok:
+    case True{}: FFDone{T.LLanded{target, wc}}
+    case False{}: FFDone{T.LBlocked{"target moved during landing; retry"}}
+
+def ff_stage5_pick(r: T.GitOut, wc: String, target: String) -> FFLD:
+  match r:
+    case T.GRun{code, out}: ff_stage5_ok(U32.is_eq(code, 0), wc, target)
+    case T.GBroken{detail}: FFDone{T.LBlocked{detail}}
+
+def ff_stage5(wc: String, tb: String, repo: String, target: String) -> IO(FFLD):
+  +wc2 = wc
+  +tb2 = tb
+  +rp = repo
+  +tg = target
+  do IO<FFLD>:
+    r : T.GitOut <- Git.runGit(rp, Con{"update-ref", Con{Tx.str_cat("refs/heads/", tg), Con{wc2, Con{tb2, Nil{}}}}})
+    IO.pure(FFLD, ff_stage5_pick(r, wc2, tg))
+
+def ff_go5(r: FFLD, repo: String, target: String) -> IO(FFLD):
+  match r:
+    case FFDone{outcome}: IO.pure(FFLD, FFDone{outcome})
+    case FFNext{wc, tb}: ff_stage5(wc, tb, repo, target)
+
+def land_fast_forward(repo: String, workerBranch: String, target: String) -> IO(T.LandOutcome):
+  +rp = repo
+  +tg = target
+  do IO<T.LandOutcome>:
+    r1 : FFLD <- ff_stage1(rp, workerBranch)
+    r2 : FFLD <- ff_go2(r1, rp, tg)
+    r3 : FFLD <- ff_go3(r2, rp, tg)
+    r4 : FFLD <- ff_go4(r3, rp, tg)
+    r5 : FFLD <- ff_go5(r4, rp, tg)
+    ff_answer(r5)
+
+def outcome_json(o: T.LandOutcome) -> String:
+  match o:
+    case T.LLanded{target, commit}: "{\"status\":\"landed\",\"target\":\"" ++ target ++ "\",\"commit\":\"" ++ commit ++ "\"}"
+    case T.LAlready{commit}: "{\"status\":\"already\",\"commit\":\"" ++ commit ++ "\"}"
+    case T.LConflict{files, dir}: "{\"status\":\"conflict\",\"files\":\"" ++ files ++ "\",\"dir\":\"" ++ dir ++ "\"}"
+    case T.LBlocked{reason}: "{\"status\":\"blocked\",\"reason\":\"" ++ reason ++ "\"}"
+
+type Verdict is Data:
+  VPass{}
+  VFail{hex: String}
+  VNone{why: String}
+
+# One selected file paired with its verdict.
+type FV is Data:
+  FV{file: String, v: Verdict}
+
+# One selected file with its candidate and target verdicts.
+type PV is Data:
+  PV{file: String, cv: Verdict, tv: Verdict}
+
+# The landing pipeline state: finished, refused, or carrying the values the
+# next stage needs; sha is the worker commit stage 1 resolved.
+type Ld is Data:
+  LdDone{made: T.LandOutcome}
+  LdFail{fail: T.GitFail}
+  LdWk{worker: String, sha: String}
+  LdTip{worker: String, sha: String, tip: String}
+  LdCand{tip: String, cand: String}
+
+def ld_unreach() -> IO(Ld):
+  IO.pure(Ld, LdFail{T.FCmd{"land", "unreachable stage"}})
+
+# The check argv for one selected file.
+def check_argv(script: String, file: String) -> List<String>:
+  +s2 = script
+  Con{"/bin/sh", Con{s2, Con{file, Nil{}}}}
+
+# One output line as a failure identity: exactly four hex-encoded fields.
+def hex_digit_ok(c: Char) -> Bool:
+  +code = Char.to_u32(c)
+  +lo1 = U32.is_lt(47, code)
+  +hi1 = U32.is_lt(code, 58)
+  +is_dg = Bool.pick(Bool, lo1, hi1, False{})
+  +lo2 = U32.is_lt(96, code)
+  +hi2 = U32.is_lt(code, 103)
+  +is_lo = Bool.pick(Bool, lo2, hi2, False{})
+  +lo3 = U32.is_lt(64, code)
+  +hi3 = U32.is_lt(code, 71)
+  +is_up = Bool.pick(Bool, lo3, hi3, False{})
+  +dg_or_lo = Bool.pick(Bool, is_dg, True{}, is_lo)
+  Bool.pick(Bool, dg_or_lo, True{}, is_up)
+
+def hex_ok_go(s: String, ok: Bool) -> Bool:
+  match s:
+    case SNil{}: ok
+    case SCon{c, rest}:
+      +o2 = Bool.pick(Bool, ok, hex_digit_ok(c), False{})
+      hex_ok_go(rest, o2)
+
+def hex_ok(s: String) -> Bool:
+  +s2 = s
+  +ne = Tx.non_empty(s2)
+  hex_ok_go(s2, ne)
+
+def count_go(fs: List<String>, n: U32) -> U32:
+  match fs:
+    case Nil{}: n
+    case Con{h, rest}:
+      +n2 = U32.add(n, 1)
+      count_go(rest, n2)
+
+def all_hex_go(fs: List<String>, ok: Bool) -> Bool:
+  match fs:
+    case Nil{}: ok
+    case Con{h, rest}:
+      +o2 = Bool.pick(Bool, ok, hex_ok(h), False{})
+      all_hex_go(rest, o2)
+
+def fields_ok(n: U32, hexok: Bool) -> Bool:
+  +n4 = Bool.pick(Bool, U32.is_eq(n, 4), hexok, False{})
+  n4
+
+def line_ok(line: String) -> Bool:
+  +l2 = line
+  fields_ok(count_go(Tx.split_spaces(l2), 0), all_hex_go(Tx.split_spaces(l2), True{}))
+
+# The first line of a run's output that is not a failure identity, so an
+# unjudged verdict carries its cause: the offending line, or the fact that the
+# check printed nothing.
+def first_bad_go(lines: List<String>, acc: String) -> String:
+  match lines:
+    case Nil{}: acc
+    case Con{line, rest}:
+      +l2 = line
+      +a2 = acc
+      Bool.pick(String, String.is_empty(a2), Bool.pick(String, line_ok(l2), first_bad_go(rest, a2), l2), a2)
+
+def first_bad(block: String) -> String:
+  first_bad_go(Tx.split_lines(block), "")
+
+def unjudged_why(block: String) -> String:
+  +b2 = block
+  Bool.pick(String, String.is_empty(b2), "the check printed nothing", Tx.str_cat("check output is not failure identities: ", first_bad(b2)))
+
+def block_ok_go(lines: List<String>, ok: Bool) -> Bool:
+  match lines:
+    case Nil{}: ok
+    case Con{line, rest}:
+      +l2 = line
+      +o2 = Bool.pick(Bool, ok, line_ok(l2), False{})
+      block_ok_go(rest, o2)
+
+def block_ok(block: String) -> Bool:
+  +b2 = block
+  block_ok_go(Tx.split_lines(b2), Tx.non_empty(b2))
+
+def block_has_go(lines: List<String>, want: String) -> Bool:
+  match lines:
+    case Nil{}: False{}
+    case Con{h, rest}:
+      +w2 = want
+      +hit = Tx.str_eq(h, w2)
+      Bool.pick(Bool, hit, True{}, block_has_go(rest, w2))
+
+def block_has(block: String, want: String) -> Bool:
+  block_has_go(Tx.split_lines(block), want)
+
+def exit_fail_ok(ok: Bool, +block: String, file: String) -> FV:
+  match ok:
+    case True{}: FV{file, VFail{block}}
+    case False{}: FV{file, VNone{unjudged_why(block)}}
+
+def exit_fail(block: String, file: String) -> FV:
+  +b2 = block
+  exit_fail_ok(block_ok(b2), b2, file)
+
+def exit_verdict(ok: Bool, out: String, file: String) -> FV:
+  match ok:
+    case True{}: FV{file, VPass{}}
+    case False{}: exit_fail(Tx.join("\n", Tx.split_lines(out)), file)
+
+def run_verdict(r: T.RunRes, file: String) -> FV:
+  match r:
+    case T.RRun{T.SExit{code}, out}: exit_verdict(U32.is_eq(code, 0), out, file)
+    case T.RRun{T.SSignal{num}, out}: FV{file, VNone{"check killed by signal"}}
+    case T.RSpawn{detail}: FV{file, VNone{detail}}
+
+def run_check(dir: String, script: String, file: String) -> IO(FV):
+  +d2 = dir
+  +s2 = script
+  +f2 = file
+  do IO<FV>:
+    r : T.RunRes <- Git.runFull(check_argv(s2, f2), d2)
+    IO.pure(FV, run_verdict(r, f2))
+
+# The list with the element prepended only when the flag holds.
+def append_when(keep: Bool, f: String, acc: List<String>) -> List<String>:
+  match keep:
+    case True{}: Con{f, acc}
+    case False{}: acc
+
+# The candidate failure lines its target run does not show.
+def new_lines_go(cand: List<String>, targ: String, acc: List<String>) -> List<String>:
+  match cand:
+    case Nil{}: List.reverse(&1, String, acc)
+    case Con{h, rest}:
+      +h2 = h
+      +t2 = targ
+      new_lines_go(rest, t2, append_when(Bool.not(block_has(t2, h2)), h2, acc))
+
+# The line naming one unjudged run; it never matches a hex identity line, so
+# an unjudged run always blocks.
+def unjudged_line(side: String, why: String) -> String:
+  Tx.str_cat("?unjudged ", T.str_cat3(side, ": ", why))
+
+def pair_targ(hex: String, tv: Verdict, file: String, acc: List<String>) -> List<String>:
+  match tv:
+    case VPass{}: Con{Tx.str_cat("?uncovered: ", hex), acc}
+    case VFail{thex}: new_lines_go(Tx.split_lines(hex), thex, acc)
+    case VNone{why}: Con{unjudged_line("target", T.str_cat3(file, ": ", why)), acc}
+
+def pair_cv(cv: Verdict, tv: Verdict, file: String, acc: List<String>) -> List<String>:
+  match cv:
+    case VPass{}: acc
+    case VFail{hex}: pair_targ(hex, tv, file, acc)
+    case VNone{why}: Con{unjudged_line("candidate", T.str_cat3(file, ": ", why)), acc}
+
+def pair_news(pv: PV, acc: List<String>) -> List<String>:
+  match pv:
+    case PV{file, cv, tv}: pair_cv(cv, tv, file, acc)
+
+def pairs_news_go(pvs: List<PV>, acc: List<String>) -> List<String>:
+  match pvs:
+    case Nil{}: List.reverse(&1, String, acc)
+    case Con{pv, rest}: pairs_news_go(rest, pair_news(pv, acc))
+
+def fv_verdict(fv: FV) -> Verdict:
+  match fv:
+    case FV{file, v}: v
+
+# Per selected file: one check run on the candidate, then one on the target.
+def run_pair_go(script: String, files: List<String>, candTree: String, targTree: String, acc: List<PV>) -> IO(List<PV>):
+  match files:
+    case Nil{}: IO.pure(List<PV>, List.reverse(&1, PV, acc))
+    case Con{f, rest}:
+      +s2 = script
+      +ct2 = candTree
+      +tt2 = targTree
+      +f2 = f
+      do IO<List<PV>>:
+        cfv : FV <- run_check(ct2, s2, f2)
+        tfv : FV <- run_check(tt2, s2, f2)
+        run_pair_go(s2, rest, ct2, tt2, Con{PV{f2, fv_verdict(cfv), fv_verdict(tfv)}, acc})
+
+def pairs_news(pvs: List<PV>) -> List<String>:
+  pairs_news_go(pvs, Nil{})
+
+def run_pairs(script: String, files: List<String>, candTree: String, targTree: String) -> IO(List<PV>):
+  +s2 = script
+  +ct2 = candTree
+  +tt2 = targTree
+  run_pair_go(s2, files, ct2, tt2, Nil{})
+
+# The branch line a worktree report carries when it holds the target.
+def ld_busy_branch(target: String) -> String:
+  Tx.str_cat("branch refs/heads/", target)
+
+def ld_busy_any(lines: List<String>, want: String) -> Bool:
+  match lines:
+    case Nil{}: False{}
+    case Con{h, rest}:
+      +w2 = want
+      +hit = Tx.str_eq(h, w2)
+      Bool.pick(Bool, hit, True{}, ld_busy_any(rest, w2))
+
+def ld_update_ok(ok: Bool, out: String, target: String, cand: String) -> Ld:
+  match ok:
+    case True{}: LdDone{T.LLanded{target, cand}}
+    case False{}: LdFail{T.FCmd{"land", "git update-ref failed; inspect the target and rerun land-checked to prepare and check a new candidate"}}
+
+def ld_update_pick(g: T.GitOut, target: String, cand: String) -> Ld:
+  match g:
+    case T.GRun{code, out}: ld_update_ok(U32.is_eq(code, 0), Tx.trim_nl(out), target, cand)
+    case T.GBroken{detail}: LdFail{T.FCmd{"land", detail}}
+
+def ld_conflict_of(has: Bool, paths: String, scratch: String, why: String) -> Ld:
+  match has:
+    case True{}: LdDone{T.LConflict{paths, scratch}}
+    case False{}: LdFail{T.FCmd{"land", why}}
+
+def ld_unmerged_pick_go(paths: String, scratch: String, why: String) -> Ld:
+  +p2 = paths
+  ld_conflict_of(Tx.non_empty(p2), p2, scratch, why)
+
+def ld_unmerged_pick(g: T.GitOut, scratch: String, why: String) -> Ld:
+  match g:
+    case T.GRun{code, out}: ld_unmerged_pick_go(Tx.join("\n", Tx.split_lines(out)), scratch, why)
+    case T.GBroken{detail}: LdFail{T.FCmd{"land", detail}}
+
+def ld_unmerged(scratch: String, why: String) -> IO(Ld):
+  +sc = scratch
+  +w2 = why
+  do IO<Ld>:
+    g : T.GitOut <- Git.runGit(sc, ["diff", "--name-only", "--diff-filter=U"])
+    IO.pure(Ld, ld_unmerged_pick(g, sc, w2))
+
+def ld_update_argv(target: String, cand: String, basis: String) -> List<String>:
+  ["update-ref", Tx.str_cat("refs/heads/", target), cand, basis]
+
+def ld_adv_update(repo: String, target: String, cand: String, basis: String) -> IO(Ld):
+  +r2 = repo
+  +t2 = target
+  +c2 = cand
+  +b2 = basis
+  do IO<Ld>:
+    g : T.GitOut <- Git.runGit(r2, ld_update_argv(t2, c2, b2))
+    IO.pure(Ld, ld_update_pick(g, t2, c2))
+
+def ld_adv_same(same: Bool, repo: String, target: String, cand: String, basis: String) -> IO(Ld):
+  match same:
+    case True{}: ld_adv_update(repo, target, cand, basis)
+    case False{}: IO.pure(Ld, LdDone{T.LBlocked{"target moved during checked landing; rerun land-checked to prepare and check against the current target"}})
+
+def ld_adv_tip_pick(g: T.GitOut, repo: String, target: String, cand: String, basis: String) -> IO(Ld):
+  match g:
+    case T.GRun{code, out}:
+      +b2 = basis
+      +o2 = Tx.trim_nl(out)
+      Bool.pick(IO(Ld), U32.is_eq(code, 0),
+        ld_adv_same(Tx.str_eq(o2, b2), repo, target, cand, b2),
+        IO.pure(Ld, LdFail{T.FCmd{"land", "the target commit could not be read before publication"}}))
+    case T.GBroken{detail}: IO.pure(Ld, LdFail{T.FCmd{"land", detail}})
+
+def ld_adv_tip(repo: String, target: String, cand: String, basis: String) -> IO(Ld):
+  +r2 = repo
+  +t2 = target
+  +c2 = cand
+  +b2 = basis
+  do IO<Ld>:
+    g : T.GitOut <- Git.runGit(r2, ["rev-parse", "--verify", Tx.str_cat(t2, "^{commit}")])
+    ld_adv_tip_pick(g, r2, t2, c2, b2)
+
+def ld_adv_busy_go(busy: Bool, repo: String, target: String, cand: String, basis: String) -> IO(Ld):
+  match busy:
+    case True{}: IO.pure(Ld, LdFail{T.FTargetBusy{target}})
+    case False{}: ld_adv_tip(repo, target, cand, basis)
+
+def ld_adv_busy(g: T.GitOut, repo: String, target: String, cand: String, basis: String) -> IO(Ld):
+  match g:
+    case T.GRun{code, out}:
+      +t3 = target
+      ld_adv_busy_go(ld_busy_any(Tx.split_lines(out), ld_busy_branch(t3)), repo, t3, cand, basis)
+    case T.GBroken{detail}: IO.pure(Ld, LdFail{T.FCmd{"land", detail}})
+
+# Publish the checked candidate against its checked basis. A changed target
+# returns an explicit retry result; the next invocation prepares both trees.
+def ld_advance(repo: String, target: String, cand: String, basis: String) -> IO(Ld):
+  +r2 = repo
+  +t2 = target
+  +c2 = cand
+  +b2 = basis
+  do IO<Ld>:
+    gl : T.GitOut <- Git.runGit(r2, ["worktree", "list", "--porcelain"])
+    ld_adv_busy(gl, r2, t2, c2, b2)
+
+# Stage 1 resolves the worker commit; the pipeline carries the resolved sha
+# so the LAlready answer names the worker commit.
+def ld_resolved_ok(ok: Bool, out: String, worker: String) -> IO(Ld):
+  match ok:
+    case True{}: IO.pure(Ld, LdWk{worker, Tx.trim_nl(out)})
+    case False{}: IO.pure(Ld, LdFail{T.FUnknownBase{worker}})
+
+def ld_resolved_pick(g: T.GitOut, worker: String) -> IO(Ld):
+  match g:
+    case T.GRun{code, out}: ld_resolved_ok(U32.is_eq(code, 0), out, worker)
+    case T.GBroken{detail}: IO.pure(Ld, LdFail{T.FCmd{"land", detail}})
+
+def ld_stage1(repo: String, target: String, worker: String) -> IO(Ld):
+  +r2 = repo
+  +t2 = target
+  +w2 = worker
+  do IO<Ld>:
+    g : T.GitOut <- Git.runGit(r2, ["rev-parse", "--verify", "--quiet", Tx.str_cat(w2, "^{commit}")])
+    ld_resolved_pick(g, w2)
+
+# Stage 2 resolves the target tip the candidate is prepared on.
+def ld_tip_ok(ok: Bool, tip: String, worker: String, sha: String) -> Ld:
+  match ok:
+    case True{}: LdTip{worker, sha, tip}
+    case False{}: LdFail{T.FCmd{"land", "unknown target"}}
+
+def ld_tip_of(g: T.GitOut, worker: String, sha: String) -> Ld:
+  match g:
+    case T.GRun{code, out}: ld_tip_ok(U32.is_eq(code, 0), Tx.trim_nl(out), worker, sha)
+    case T.GBroken{detail}: LdFail{T.FCmd{"land", detail}}
+
+def ld_stage2(repo: String, target: String, worker: String, sha: String) -> IO(Ld):
+  +r2 = repo
+  +t2 = target
+  +w2 = worker
+  do IO<Ld>:
+    g : T.GitOut <- Git.runGit(r2, ["rev-parse", "--verify", Tx.str_cat(t2, "^{commit}")])
+    IO.pure(Ld, ld_tip_of(g, w2, sha))
+
+# Stage 3 creates the candidate worktree, detached at the target tip.
+def ld_wt_ok(ok: Bool, out: String, worker: String, sha: String, tip: String) -> Ld:
+  match ok:
+    case True{}: LdTip{worker, sha, tip}
+    case False{}: LdFail{T.FCmd{"land", Tx.cmd_failed("git worktree add --detach")}}
+
+def ld_wt_pick(g: T.GitOut, worker: String, sha: String, tip: String) -> Ld:
+  match g:
+    case T.GRun{code, out}: ld_wt_ok(U32.is_eq(code, 0), Tx.trim_nl(out), worker, sha, tip)
+    case T.GBroken{detail}: LdFail{T.FCmd{"land", detail}}
+
+def ld_stage3(repo: String, worker: String, sha: String, tip: String, scratch: String) -> IO(Ld):
+  +r2 = repo
+  +w2 = worker
+  +t2 = tip
+  +s2 = scratch
+  do IO<Ld>:
+    g : T.GitOut <- Git.runGit(r2, ["worktree", "add", "--detach", s2, t2])
+    IO.pure(Ld, ld_wt_pick(g, w2, sha, t2))
+
+# Stage 4 stages the worker's tree on the target tip; a conflict leaves the
+# unmerged paths in the scratch worktree for the requester.
+def ld_squash_ok(ok: Bool, out: String, worker: String, sha: String, tip: String, scratch: String) -> IO(Ld):
+  match ok:
+    case True{}: IO.pure(Ld, LdTip{worker, sha, tip})
+    case False{}: ld_unmerged(scratch, Tx.cmd_failed("git merge --squash"))
+
+def ld_squash_pick(g: T.GitOut, worker: String, sha: String, tip: String, scratch: String) -> IO(Ld):
+  match g:
+    case T.GRun{code, out}: ld_squash_ok(U32.is_eq(code, 0), Tx.trim_nl(out), worker, sha, tip, scratch)
+    case T.GBroken{detail}: IO.pure(Ld, LdFail{T.FCmd{"land", detail}})
+
+def ld_stage4(scratch: String, worker: String, sha: String, tip: String) -> IO(Ld):
+  +sc = scratch
+  +w2 = worker
+  do IO<Ld>:
+    g : T.GitOut <- Git.runGit(sc, ["merge", "--squash", w2])
+    ld_squash_pick(g, w2, sha, tip, sc)
+
+def ld_cand_of(ok: Bool, cand: String, tip: String) -> Ld:
+  match ok:
+    case True{}: LdCand{tip, cand}
+    case False{}: LdFail{T.FCmd{"land", "no candidate commit"}}
+
+def ld_cand_pick(g: T.GitOut, tip: String) -> Ld:
+  match g:
+    case T.GRun{code, out}: ld_cand_of(U32.is_eq(code, 0), Tx.trim_nl(out), tip)
+    case T.GBroken{detail}: LdFail{T.FCmd{"land", detail}}
+
+def ld_cand_read(tip: String, scratch: String) -> IO(Ld):
+  +t2 = tip
+  +sc = scratch
+  do IO<Ld>:
+    g : T.GitOut <- Git.runGit(sc, ["rev-parse", "HEAD"])
+    IO.pure(Ld, ld_cand_pick(g, t2))
+
+def line_nothing(line: String) -> Bool:
+  Tx.starts_with(line, "nothing to commit")
+
+def nothing_go(lines: List<String>) -> Bool:
+  match lines:
+    case Nil{}: False{}
+    case Con{h, rest}:
+      Bool.pick(Bool, line_nothing(h), True{}, nothing_go(rest))
+
+def ld_commit_fail_go(nothing: Bool, out: String, worker: String, sha: String, tip: String) -> IO(Ld):
+  match nothing:
+    case True{}: IO.pure(Ld, LdDone{T.LAlready{sha}})
+    case False{}: IO.pure(Ld, LdFail{T.FCmd{"land", Tx.cmd_failed("git commit")}})
+
+def ld_commit_fail(out: String, worker: String, sha: String, tip: String) -> IO(Ld):
+  +o2 = out
+  ld_commit_fail_go(nothing_go(Tx.split_lines(o2)), o2, worker, sha, tip)
+
+def ld_commit_ok(ok: Bool, out: String, scratch: String, worker: String, sha: String, tip: String) -> IO(Ld):
+  match ok:
+    case True{}: ld_cand_read(tip, scratch)
+    case False{}: ld_commit_fail(out, worker, sha, tip)
+
+def ld_commit_next(g: T.GitOut, scratch: String, worker: String, sha: String, tip: String) -> IO(Ld):
+  match g:
+    case T.GRun{code, out}: ld_commit_ok(U32.is_eq(code, 0), Tx.trim_nl(out), scratch, worker, sha, tip)
+    case T.GBroken{detail}: IO.pure(Ld, LdFail{T.FCmd{"land", detail}})
+
+# Stage 5 drops the added paths this repository's own ignore rules exclude,
+# constructs the message from the worker history above the target merge-base,
+# and commits with the worker branch and dropped paths named in the body.
+def ld_message(workerMessage: String, worker: String, paths: String) -> String:
+  Tx.trim_nl(workerMessage) ++ "\n\nlanded from " ++ worker ++ Deb.debris_note(paths)
+
+def ld_commit_now(text: String, worker: String, sha: String, tip: String, scratch: String, paths: String) -> IO(Ld):
+  +t2 = text
+  +w2 = worker
+  +p2 = paths
+  +sc = scratch
+  do IO<Ld>:
+    g : T.GitOut <- Git.runGit(sc, ["commit", "-q", "-m", ld_message(t2, w2, p2)])
+    ld_commit_next(g, sc, w2, sha, tip)
+
+def ld_msg_ok(ok: Bool, text: String, worker: String, sha: String, tip: String, scratch: String, paths: String) -> IO(Ld):
+  match ok:
+    case True{}: ld_commit_now(text, worker, sha, tip, scratch, paths)
+    case False{}: IO.pure(Ld, LdFail{T.FCmd{"land", "the worker commit message could not be read"}})
+
+def ld_msg_pick(g: T.GitOut, worker: String, sha: String, tip: String, scratch: String, paths: String) -> IO(Ld):
+  match g:
+    case T.GRun{code, out}: ld_msg_ok(U32.is_eq(code, 0), out, worker, sha, tip, scratch, paths)
+    case T.GBroken{detail}: IO.pure(Ld, LdFail{T.FCmd{"land", detail}})
+
+def ld_single_msg_read(worker: String, sha: String, tip: String, scratch: String, paths: String) -> IO(Ld):
+  +w2 = worker
+  +s2 = sha
+  +sc = scratch
+  +p2 = paths
+  do IO<Ld>:
+    g : T.GitOut <- Git.runGit(sc, ["log", "-1", "--format=%B", s2])
+    ld_msg_pick(g, w2, s2, tip, sc, p2)
+
+# Git emits the tip first in topological order. The body lists oldest first.
+def ld_subjects_tail(rest: List<String>, +subject: String, worker: String, sha: String, tip: String, scratch: String, paths: String) -> IO(Ld):
+  match rest:
+    case Nil{}: ld_single_msg_read(worker, sha, tip, scratch, paths)
+    case Con{h, tail}: ld_commit_now(subject ++ "\n\n" ++ Tx.join("\n", List.reverse(&1, String, Con{subject, Con{h, tail}})), worker, sha, tip, scratch, paths)
+
+def ld_subjects(lines: List<String>, worker: String, sha: String, tip: String, scratch: String, paths: String) -> IO(Ld):
+  match lines:
+    case Nil{}: IO.pure(Ld, LdFail{T.FCmd{"land", "the worker history above the target merge-base is empty"}})
+    case Con{subject, rest}: ld_subjects_tail(rest, subject, worker, sha, tip, scratch, paths)
+
+def ld_history_ok(ok: Bool, text: String, worker: String, sha: String, tip: String, scratch: String, paths: String) -> IO(Ld):
+  match ok:
+    case True{}: ld_subjects(Tx.split_lines(text), worker, sha, tip, scratch, paths)
+    case False{}: IO.pure(Ld, LdFail{T.FCmd{"land", "the worker commit subjects could not be read: " ++ text}})
+
+def ld_history_pick(g: T.GitOut, worker: String, sha: String, tip: String, scratch: String, paths: String) -> IO(Ld):
+  match g:
+    case T.GRun{code, out}: ld_history_ok(U32.is_eq(code, 0), out, worker, sha, tip, scratch, paths)
+    case T.GBroken{detail}: IO.pure(Ld, LdFail{T.FCmd{"land", detail}})
+
+def ld_history_base_ok(ok: Bool, base: String, +worker: String, +sha: String, +tip: String, +scratch: String, +paths: String) -> IO(Ld):
+  match ok:
+    case False{}: IO.pure(Ld, LdFail{T.FCmd{"land", "the worker and target merge-base could not be read: " ++ base}})
+    case True{}: do IO<Ld>:
+      g : T.GitOut <- Git.runGit(scratch, ["log", "--topo-order", "--format=%s", Tx.trim_nl(base) ++ ".." ++ sha])
+      ld_history_pick(g, worker, sha, tip, scratch, paths)
+
+def ld_history_base(g: T.GitOut, worker: String, sha: String, tip: String, scratch: String, paths: String) -> IO(Ld):
+  match g:
+    case T.GRun{code, out}: ld_history_base_ok(U32.is_eq(code, 0), out, worker, sha, tip, scratch, paths)
+    case T.GBroken{detail}: IO.pure(Ld, LdFail{T.FCmd{"land", detail}})
+
+def ld_msg_read(+worker: String, +sha: String, +tip: String, +scratch: String, +paths: String) -> IO(Ld):
+  do IO<Ld>:
+    g : T.GitOut <- Git.runGit(scratch, ["merge-base", sha, tip])
+    ld_history_base(g, worker, sha, tip, scratch, paths)
+
+def ld_debris_go(d: Deb.Debris, scratch: String, worker: String, sha: String, tip: String) -> IO(Ld):
+  match d:
+    case Deb.DFine{paths}: ld_msg_read(worker, sha, tip, scratch, paths)
+    case Deb.DFail{detail}: IO.pure(Ld, LdFail{T.FCmd{"land", "debris judgment failed: " ++ detail}})
+
+def ld_stage5(repo: String, scratch: String, worker: String, sha: String, tip: String) -> IO(Ld):
+  +r2 = repo
+  +sc = scratch
+  do IO<Ld>:
+    d : Deb.Debris <- Deb.drop_added_ignored(r2, "", sc)
+    ld_debris_go(d, sc, worker, sha, tip)
+
+# The gate: every unjudged run and every candidate failure line the target
+# run does not show blocks; otherwise the advance starts.
+def ld_judged_news(news: List<String>, repo: String, target: String, scratch: String, tip: String, cand: String) -> IO(Ld):
+  match news:
+    case Nil{}: ld_advance(repo, target, cand, tip)
+    case Con{h, rest}: IO.pure(Ld, LdDone{T.LBlocked{Tx.str_cat("new failures: ", Tx.join("; ", news))}})
+
+def ld_judged(pvs: List<PV>, repo: String, target: String, scratch: String, tip: String, cand: String) -> IO(Ld):
+  ld_judged_news(pairs_news(pvs), repo, target, scratch, tip, cand)
+
+def ld_tree_runs(ok: Bool, repo: String, target: String, script: String, files: List<String>, scratch: String, tip: String, cand: String, tw: String) -> IO(Ld):
+  match ok:
+    case True{}:
+      +s2 = scratch
+      do IO<Ld>:
+        pvs : List<PV> <- run_pairs(script, files, s2, tw)
+        ld_judged(pvs, repo, target, s2, tip, cand)
+    case False{}: IO.pure(Ld, LdFail{T.FCmd{"land", "target worktree failed"}})
+
+def ld_tree_ok(g: T.GitOut, repo: String, target: String, script: String, files: List<String>, scratch: String, tip: String, cand: String, tw: String) -> IO(Ld):
+  match g:
+    case T.GRun{code, out}: ld_tree_runs(U32.is_eq(code, 0), repo, target, script, files, scratch, tip, cand, tw)
+    case T.GBroken{detail}: IO.pure(Ld, LdFail{T.FCmd{"land", detail}})
+
+# Stage 6 prepares a detached tree at the target tip beside the candidate and
+# runs the selected checks on both trees.
+def ld_stage6(repo: String, target: String, script: String, files: List<String>, scratch: String, tip: String, cand: String) -> IO(Ld):
+  +r2 = repo
+  +sc = scratch
+  +t2 = tip
+  +tw = Tx.str_cat(sc, "-target")
+  do IO<Ld>:
+    g : T.GitOut <- Git.runGit(r2, ["worktree", "add", "--detach", tw, t2])
+    ld_tree_ok(g, r2, target, script, files, sc, t2, cand, tw)
+
+def ld_answer(r: Ld) -> IO(Result<&1, &1, T.GitFail, T.LandOutcome>):
+  match r:
+    case LdDone{made}: IO.pure(Result<&1, &1, T.GitFail, T.LandOutcome>, Done{made})
+    case LdFail{fail}: IO.pure(Result<&1, &1, T.GitFail, T.LandOutcome>, Fail{fail})
+    case LdWk{worker, sha}: IO.pure(Result<&1, &1, T.GitFail, T.LandOutcome>, Fail{T.FCmd{"land", "unreachable stage"}})
+    case LdTip{worker, sha, tip}: IO.pure(Result<&1, &1, T.GitFail, T.LandOutcome>, Fail{T.FCmd{"land", "unreachable stage"}})
+    case LdCand{tip, cand}: IO.pure(Result<&1, &1, T.GitFail, T.LandOutcome>, Fail{T.FCmd{"land", "unreachable stage"}})
+
+def ld_go1(r: Ld, repo: String, target: String) -> IO(Ld):
+  match r:
+    case LdDone{made}: IO.pure(Ld, LdDone{made})
+    case LdFail{fail}: IO.pure(Ld, LdFail{fail})
+    case LdWk{worker, sha}: ld_stage2(repo, target, worker, sha)
+    case LdTip{worker, sha, tip}: ld_unreach()
+    case LdCand{tip, cand}: ld_unreach()
+
+def ld_go2(r: Ld, repo: String, scratch: String) -> IO(Ld):
+  match r:
+    case LdDone{made}: IO.pure(Ld, LdDone{made})
+    case LdFail{fail}: IO.pure(Ld, LdFail{fail})
+    case LdWk{worker, sha}: ld_unreach()
+    case LdTip{worker, sha, tip}: ld_stage3(repo, worker, sha, tip, scratch)
+    case LdCand{tip, cand}: ld_unreach()
+
+def ld_go3(r: Ld, scratch: String) -> IO(Ld):
+  match r:
+    case LdDone{made}: IO.pure(Ld, LdDone{made})
+    case LdFail{fail}: IO.pure(Ld, LdFail{fail})
+    case LdWk{worker, sha}: ld_unreach()
+    case LdTip{worker, sha, tip}: ld_stage4(scratch, worker, sha, tip)
+    case LdCand{tip, cand}: ld_unreach()
+
+def ld_go4(r: Ld, repo: String, scratch: String) -> IO(Ld):
+  match r:
+    case LdDone{made}: IO.pure(Ld, LdDone{made})
+    case LdFail{fail}: IO.pure(Ld, LdFail{fail})
+    case LdWk{worker, sha}: ld_unreach()
+    case LdTip{worker, sha, tip}: ld_stage5(repo, scratch, worker, sha, tip)
+    case LdCand{tip, cand}: ld_unreach()
+
+def ld_go5(r: Ld, repo: String, target: String, script: String, files: List<String>, scratch: String) -> IO(Ld):
+  match r:
+    case LdDone{made}: IO.pure(Ld, LdDone{made})
+    case LdFail{fail}: IO.pure(Ld, LdFail{fail})
+    case LdWk{worker, sha}: ld_unreach()
+    case LdTip{worker, sha, tip}: ld_unreach()
+    case LdCand{tip, cand}: ld_stage6(repo, target, script, files, scratch, tip, cand)
+
+# The scratch trees one attempt prepared live under the repository's scratch
+# root, the candidate and its "-target" sibling. PREFIX is the part of their
+# name that belongs to the worker rather than to the attempt.
+def scratch_prefix(repo: String, worker: String) -> String:
+  T.str_cat3(repo, "/.scratch/bend2-land-", Tx.str_cat(worker, "-"))
+
+# The path one worktree-list line names: the line with its label matched off,
+# or the empty string for a line that does not carry the label.
+def wt_path_go(line: String, label: String) -> String:
+  match line label:
+    case SNil{} SNil{}: ""
+    case SNil{} SCon{lc, lr}: ""
+    case SCon{c, rest} SNil{}: line
+    case SCon{c, rest} SCon{lc, lr}:
+      Bool.pick(String, Char.is_eq(c, lc), wt_path_go(rest, lr), "")
+
+def wt_path(line: String) -> String:
+  wt_path_go(line, "worktree ")
+
+def scratch_remove1(repo: String, dir: String) -> IO(Unit):
+  +r2 = repo
+  +d2 = dir
+  do IO<Unit>:
+    _g : T.GitOut <- Git.runGit(r2, ["worktree", "remove", "--force", d2])
+    IO.pure(Unit, Unit{})
+
+# The trees one attempt prepared: the candidate and its "-target" sibling.
+# A landed or already-merged attempt removes exactly these two; any other
+# answer keeps them.
+def settle_paths(scratch: String) -> List<String>:
+  +s2 = scratch
+  Con{s2, Con{Tx.str_cat(s2, "-target"), Nil{}}}
+
+def drop_list(repo: String, dirs: List<String>) -> IO(Unit):
+  match dirs:
+    case Nil{}:
+      +r2 = repo
+      do IO<Unit>:
+        _p : T.GitOut <- Git.runGit(r2, ["worktree", "prune"])
+        IO.pure(Unit, Unit{})
+    case Con{d, rest}:
+      +r2 = repo
+      do IO<Unit>:
+        _a : Unit <- scratch_remove1(r2, d)
+        drop_list(r2, rest)
+
+# One attempt's two trees, removed together.
+def drop_scratch(repo: String, scratch: String) -> IO(Unit):
+  +r2 = repo
+  +s2 = scratch
+  drop_list(r2, settle_paths(s2))
+
+# One worktree-list line: a registered tree under the worker's prefix belongs
+# to an earlier attempt the worker has now replaced.
+def sweep_one(prefix: String, repo: String, line: String) -> IO(Unit):
+  +p2 = prefix
+  +r2 = repo
+  +path = wt_path(line)
+  Bool.pick(IO(Unit), Tx.starts_with(path, p2), scratch_remove1(r2, path), IO.pure(Unit, Unit{}))
+
+def sweep_lines(prefix: String, repo: String, lines: List<String>) -> IO(Unit):
+  match lines:
+    case Nil{}: IO.pure(Unit, Unit{})
+    case Con{h, rest}:
+      +p2 = prefix
+      +r2 = repo
+      do IO<Unit>:
+        _s : Unit <- sweep_one(p2, r2, h)
+        sweep_lines(p2, r2, rest)
+
+def sweep_out(g: T.GitOut, prefix: String, repo: String) -> IO(Unit):
+  match g:
+    case T.GRun{code, out}: sweep_lines(prefix, repo, Tx.split_lines(out))
+    case T.GBroken{detail}: IO.pure(Unit, Unit{})
+
+# The trees a refused or conflicted attempt of this worker kept: a landed
+# attempt's are already gone, so every registered tree under PREFIX is one the
+# worker's next attempt supersedes.
+def sweep_scratch(repo: String, prefix: String) -> IO(Unit):
+  +r2 = repo
+  +p2 = prefix
+  do IO<Unit>:
+    gl : T.GitOut <- Git.runGit(r2, ["worktree", "list", "--porcelain"])
+    sweep_out(gl, p2, r2)
+
+# The scratch path one attempt prepares: the trees the worker's earlier attempt
+# kept are dropped first, so a refused or conflicted attempt's trees live only
+# until the worker tries again.
+def open_scratch(repo: String, worker: String, ts: String) -> IO(String):
+  +r2 = repo
+  +w2 = worker
+  +p2 = scratch_prefix(r2, w2)
+  do IO<String>:
+    _sweep : Unit <- sweep_scratch(r2, p2)
+    IO.pure(String, Tx.str_cat(p2, ts))
+
+# The landing's own trees settle with its answer: a landed or already-merged
+# attempt needs them no longer, and a refused, conflicted or failed attempt
+# keeps them.
+def ld_settle(r: Ld, repo: String, scratch: String) -> IO(Ld):
+  match r:
+    case LdDone{T.LLanded{target, commit}}:
+      +r2 = repo
+      +s2 = scratch
+      do IO<Ld>:
+        _d : Unit <- drop_scratch(r2, s2)
+        IO.pure(Ld, LdDone{T.LLanded{target, commit}})
+    case LdDone{T.LAlready{commit}}:
+      +r2 = repo
+      +s2 = scratch
+      do IO<Ld>:
+        _d : Unit <- drop_scratch(r2, s2)
+        IO.pure(Ld, LdDone{T.LAlready{commit}})
+    case LdDone{made}: IO.pure(Ld, LdDone{made})
+    case LdFail{fail}: IO.pure(Ld, LdFail{fail})
+    case LdWk{worker, sha}: IO.pure(Ld, LdWk{worker, sha})
+    case LdTip{worker, sha, tip}: IO.pure(Ld, LdTip{worker, sha, tip})
+    case LdCand{tip, cand}: IO.pure(Ld, LdCand{tip, cand})
+
+# land prepares the candidate, judges it against the target and advances the
+# target branch. The scratch path must not exist. A landed answer removes the
+# trees it prepared; a refused or conflicted answer keeps them for the
+# requester until that worker's next attempt.
+def land_checked(repo: String, target: String, worker: String, script: String, files: List<String>, scratch: String) -> IO(Result<&1, &1, T.GitFail, T.LandOutcome>):
+  +r2 = repo
+  +t2 = target
+  +w2 = worker
+  +k2 = script
+  +s2 = scratch
+  do IO<Result<&1, &1, T.GitFail, T.LandOutcome>>:
+    a : Ld <- ld_stage1(r2, t2, w2)
+    b : Ld <- ld_go1(a, r2, t2)
+    c : Ld <- ld_go2(b, r2, s2)
+    d : Ld <- ld_go3(c, s2)
+    e : Ld <- ld_go4(d, r2, s2)
+    f : Ld <- ld_go5(e, r2, t2, k2, files, s2)
+    settled : Ld <- ld_settle(f, r2, s2)
+    ld_answer(settled)
+
+# The coordinator's current entry point: the fast-forward landing.
+def land(repo: String, workerBranch: String, target: String) -> IO(T.LandOutcome):
+  land_fast_forward(repo, workerBranch, target)
+
+# The push argv: the declared remote is the destination and the branch is the
+# refspec. Nothing reads a default remote.
+def push_argv(branch: String, remote: String) -> List<String>:
+  Con{"push", Con{remote, Con{branch, Nil{}}}}
+
+# The landed target pushed to the remote the deployment declares. The answer
+# is the push's own exit and output: a non-zero code is the remote's refusal
+# (a non-fast-forward is the common one) and the caller names it, never reads
+# it as a landing.
+def push_git(repo: String, branch: String, remote: String) -> IO(T.GitOut):
+  +r2 = repo
+  +b2 = branch
+  +rm = remote
+  do IO<T.GitOut>:
+    g : T.GitOut <- Git.runGit(r2, push_argv(b2, rm))
+    IO.pure(T.GitOut, g)

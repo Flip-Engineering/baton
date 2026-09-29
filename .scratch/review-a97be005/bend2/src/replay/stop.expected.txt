@@ -1,0 +1,3 @@
+RESULT|stop-policy-bearing|admitted=true|refusal=none|classification=none|quarantine=false|targets=2|cursor=3|owed=2|remedy=none
+RESULT|stop-missing-policy|admitted=false|refusal=unspecified|classification=missing_policy_basis|quarantine=false|targets=0|cursor=2|owed=1|remedy=none
+RESULT|stop-corrupt-row|admitted=false|refusal=unspecified|classification=corrupt_source_bytes|quarantine=true|targets=0|cursor=2|owed=1|remedy=quarantine

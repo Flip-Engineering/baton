@@ -1,0 +1,63 @@
+{
+ "limit": 64,
+ "flood_requested": 120,
+ "native": {
+  "role": "native",
+  "pid": 87728,
+  "ppid": 87711,
+  "pgid": 87728
+ },
+ "observer_ready": true,
+ "keeper_pid": 87711,
+ "control_address": "/tmp/baton-retained-6zBFyd/control",
+ "lock_before_flood": {
+  "rc": 0,
+  "stdout": "busy",
+  "stderr": ""
+ },
+ "opened": 120,
+ "keeper_after_flood": {
+  "ps": "",
+  "alive": false
+ },
+ "observer_after_flood": {
+  "returncode": 32
+ },
+ "native_after_flood": {
+  "ps": "S",
+  "alive": true
+ },
+ "attempt_files": [
+  "keeper.log",
+  "launch",
+  "manifest",
+  "native.pid",
+  "native.stderr",
+  "stdout"
+ ],
+ "file:keeper.log": "",
+ "file:keeper-error": null,
+ "file:observer-error": null,
+ "file:status": null,
+ "file:launch": "launch\n",
+ "file:native.pid": "87728\n",
+ "lock_after_flood": {
+  "rc": 0,
+  "stdout": "acquired",
+  "stderr": ""
+ },
+ "late_control": {
+  "rc": 61,
+  "stdout": "control-write-start",
+  "stderr": "control_write /Users/wahargis/Development/Experiments/baton-resident/.git/baton/application-v3/runtime/w-265/tmp/git11-emfile-cstjs5d4/attempt: Connection refused; inspect manifest, keeper-error and observer.log"
+ },
+ "observer_stdout_tail": [
+  "early-release-refused",
+  "observer-write-start",
+  "observer-write-complete"
+ ],
+ "observer_stderr": "Broken pipe\n",
+ "native_still_orphan": {
+  "ps": "S"
+ }
+}

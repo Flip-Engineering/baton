@@ -1,0 +1,14 @@
+# arch-replay-basis.expect — the required logical behaviour per case, read by neither half.
+#
+# EXPECT|<case-id>|<admitted>|<classification>|<quarantine>|<cursor>|<owed>|<doctor>
+#
+# The requirement is ARCH-CLOSE-11 with M-5, M-14 and M-17: startup, doctor and recovery validate
+# against one recorded policy basis and classify the cause of a refusal before offering repair. A
+# basis that changed out from under a recorded row is a different cause from a row whose own payload
+# does not bind, and a row that is self-consistent reconstructs from its own bytes and folds.
+# `doctor` is the verdict the diagnostic path must reach: a ledger the deployment's own basis refuses
+# is never reported clean, and a ledger that basis admits is never reported refused.
+EXPECT|lease-same-basis|true|none|false|3|1|clean
+EXPECT|lease-changed-basis|false|authorization_basis_changed|false|2|0|refused
+EXPECT|lease-missing-basis|true|none|false|3|1|clean
+EXPECT|lease-invalid-row|false|invalid_payload|false|2|0|refused
