@@ -78,9 +78,9 @@ first = state / 'first-task.md'
 if not first.exists():
     first.write_text(template.read_text())
 run(coord, db, 'attach', 'operator', 'terminal', '', '')
-saved_root = subprocess.check_output([str(coord), str(db), 'session', 'root'],
-                                    text=True, env=env).strip()
-root_session = json.loads(saved_root) if saved_root else {}
+sessions = json.loads(subprocess.check_output([str(coord), str(db), 'status'],
+                                             text=True, env=env))
+root_session = next((session for session in sessions if session['id'] == 'root'), {})
 native_root = root_session.get('native', '') if root_session.get('harness') == 'codex' else ''
 root_log = state / 'root-native.jsonl'
 root_endpoint = [str(coord), str(db), 'receive', 'root', str(wrapper),
