@@ -164,16 +164,6 @@ export { APPLICATION_SEMANTIC_REGISTRY } from './application-semantics.mjs';
 
 const MAX_REVIEW_SOURCE_BYTES = FRAME_LIMITS['view.review_source.bytes'].value;
 
-// #153 follow-on (2026-08-13): the production cadence for the shipped waves.run path when the
-// caller omits driver options — mirrors the wave driver's documented production policy
-// (wave-driver.mjs DEFAULT_POLICY: a multi-hour wave). The interpreter's own DEFAULT_DRIVER
-// stays the suite-pinned fast policy.
-// #163 law (operator ruling 2026-08-14): hardCapMs ships ONLY as the null sentinel -
-// the production cadence is uncapped; the drive settles on terminality, handled-decision
-// stuck, or observed quiescence, never on a wall clock.
-const PRODUCTION_WORKFLOW_DRIVER = Object.freeze({
-  pollIntervalMs: 20_000, stallTimeoutMs: 20 * 60_000, hardCapMs: null,
-});
 const RESULT_INTENTS = Object.freeze(new Set(['change', 'read_only_evidence']));
 // Issue #31 §2.2(4): the closed set of run drivers. Only the wave path exists today — an
 // MCP/embedded explicit registration channel is a named future extension, not built here.

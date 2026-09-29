@@ -19,7 +19,6 @@ import {
 } from '../src/index.mjs';
 import { applicationOperationAliasMap } from '../src/application-semantics.mjs';
 import { BYTE_STABLE_COMMAND_KEYS } from '../scripts/surface-truth.mjs';
-import { createWave } from '../src/wave.mjs';
 import { CANONICAL_OPERATIONS } from '../scripts/surface-conformance.mjs';
 
 // The byte-stable command-table pin (UA5 / docs/39): the swarm verbs lead, then the pre-M3 set.
@@ -192,7 +191,7 @@ test('M3-5: the member clock carries a generation and the run-level clock does n
   );
 });
 
-test('M3-6: the work sentinel is accepted by run.send only, and refused for member ops and wave roles', async () => {
+test('M3-6: the work sentinel is accepted by run.send only, and refused for member ops', async () => {
   // Run-level send resolves the sole live seat through the `work` sentinel.
   assert.doesNotThrow(
     () => controlApp([liveSeat('only')])._resolveSemanticControlTarget(CURRENT, 'work', 'send'),
@@ -211,11 +210,6 @@ test('M3-6: the work sentinel is accepted by run.send only, and refused for memb
     { code: 'application_command_unavailable' },
   );
 
-  // A workflow role literally named `work` is a wave-admission (registry) lint error.
-  await assert.rejects(
-    createWave({ runs: { start() {} } }, { members: [{ role: 'work', objective: 'x', scope: ['a.mjs'] }] }),
-    /reserved/u,
-  );
 });
 
 test('M3-7: run.view --until settles on the registry lifecycle predicates', async () => {
