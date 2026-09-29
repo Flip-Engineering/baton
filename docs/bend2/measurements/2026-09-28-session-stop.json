@@ -1,0 +1,782 @@
+{
+  "record": "Real retained OMP terminal session stop, 2026-09-28",
+  "issue": 639,
+  "shared_native_control_issue": 641,
+  "result": "passed",
+  "live_source": {
+    "source": "e7ecde14255ebcb7ffe66565108cd84cf9e8e78a",
+    "tree": "864265d60d185d237bc7e83a807144e2b88f67b9",
+    "binary_sha256": "7b7c0095fc67a2e51671df8c07f41e855b600eeddef556eb0705a953e66017c0",
+    "build_log_sha256": "b4c3ff1bf07b24889022a4ea62f164496cbf7059c7fedbbabee7055f72156182",
+    "source_files": {
+      "bend2/src/coordinator/commands.bend": "4d05b1549f1793d46368b5cb3ed7da8364d89c598e2cf7d8118110cf5cb43205",
+      "bend2/src/coordinator/guidance.bend": "0e28c9176699b33cdfc8524dda0f8aa33f78221a4f32443f7aa6d4c9b9c6bc78",
+      "bend2/src/coordinator/land.bend": "09141027f7f56e5e4c00d4207a46732f8eb58eff953ef295863e4f153a7c637e",
+      "bend2/src/coordinator/laws.bend": "fbeabb4abc2d23f6a1be51a6606f1874b5daf6894a75cb1c2e1ca36b66632945",
+      "bend2/src/coordinator/main.bend": "09c70fe9d81340568da907a671a58aaf35f3f4293649a7ac042276184aa437df",
+      "bend2/src/coordinator/native-request-laws.bend": "dd2a207c5e6497606452b39e3f027c07d025e2fc9c8ee48b658f8fbaa0cf43e8",
+      "bend2/src/coordinator/native-requests.bend": "f72859eb0236f92e913d679cc13592942472bbdc3597bb4ca8fea4276101b422",
+      "bend2/src/coordinator/receive-laws.bend": "d74df65025c92f27930651074509b6a4089aa5122ebcd42981edd521e1994ec1",
+      "bend2/src/coordinator/receive.bend": "d37dda980b86b2f7d2c5070e794e57537695447b038f7bfff104f382c1a94849",
+      "bend2/src/coordinator/recruit.bend": "a134caf95839e01d74e2ab77698071151147c393b4c3729e701e97e3a2cb04e8",
+      "bend2/src/coordinator/root.bend": "e4791b20583d0142f06bb242073f911dec7b6d36edeb598de27062aa6c455cf3",
+      "bend2/src/coordinator/stop-laws.bend": "aa15011703d66f34d463b9ff8a874bf9233f636f723ecab093ce4b49c80344c7",
+      "bend2/src/coordinator/stop.bend": "6eb84c786507dbf3b28185e1f1a493cab704f1e134284cbd6b0ccc9c2d68f567",
+      "bend2/src/coordinator/store.bend": "152ce115b9c548bfc906b946b2873bb81b82d9843cd906d24a525e862f9c0eef",
+      "bend2/src/coordinator/turn.bend": "e16ebb3feb22ce53638a06c2f91ae33cf5b0cd730a0ff8333bf1b345225f929b",
+      "bend2/src/git/create-worktree.bend": "7af23d0811e3fd4dad534fb03726cc37e6acb90b9816f5a6e3d0b8d2d9a26ba6",
+      "bend2/src/git/debris.bend": "b40638ed974bcbdc8d022cfeef06be95f983f25c82073f8f093e7430db24c73e",
+      "bend2/src/git/land.bend": "770f9aecd321382b7d0f7a5bc3a5b2e1b8c4ec952e826441a1946ce4a008df30",
+      "bend2/src/git/laws.bend": "51a13cf995aec942b78475c4663318388cfad82e81a8a325b3948495fa302da6",
+      "bend2/src/git/process.bend": "335831cce95c0f18d4953a45822b878b29ff9f65c29c2f4bf761af9618c96422",
+      "bend2/src/git/process.c": "4682f3008546596ff0b1c221559207787c490f83887c66fc066b1e6111041e90",
+      "bend2/src/git/status.bend": "a4e23036f7ac786003b7398955ba305b8f9ad4594d14d5f58368c74200d6fd76",
+      "bend2/src/git/text.bend": "8d196988c3de906644bec70cc4cb72cf7c728d86fd4fe5f183954499946c3da6",
+      "bend2/src/git/types.bend": "0ce65dc2e7d441a4f06761efcdcc8208c00a52d896169401221e851e7b66c6bb",
+      "bend2/src/harness/claude-worker.bend": "dc80ed7e6437293382042f8d612ddb0b815d886c5f693e3f7c29a3e71ebb81b7",
+      "bend2/src/harness/codex-worker.bend": "8ecf1ca3f87a8953e007ea76a684055890d94fa147a58e92c65e1aa37a38fe90",
+      "bend2/src/harness/laws.bend": "3d4679ed128e632f13acc3ac9b7b71b0a4e237cd2002994bb9b4e31b7cfde317",
+      "bend2/src/harness/muse-worker.bend": "f2d6ad4153a2d69ef35fd8faa2eb4c4ebf9c1eab78a9582c6f3304e00af8f545",
+      "bend2/src/harness/omp-worker.bend": "d6953649c65c2e7ec713a2b6d10ef566c94cdd4abdc84048774920187bb309ba",
+      "bend2/src/host/files.bend": "c1236bffcfe19bd5afa84805505afb913662d452f536ff64bd99a506ca415a41",
+      "bend2/src/host/files.c": "d49ea4bb91aa71bb1071a44ff2e98651d788e40c0a87f73b5b1b742ba71c528f",
+      "bend2/src/host/laws.bend": "482b786d7cbe2c1aa475b75c7ef3a2bdaf368588ef6f40c4ba1fb21e69c744ca",
+      "bend2/src/host/process-spawn.c": "30c8cbc4ef9b5907de02b1c763e6e14537b6f16b37995b9183b530bc2e5c695a",
+      "bend2/src/host/process.bend": "1e8d83cccc546610724e7de44b38a9f6d1eb5a822807244d8bc9447c87915d70",
+      "bend2/src/host/session-lock.bend": "aac010773938d59c93fc3dfbd8d92650ab22e63e412e114fc58963eb1a6b525e",
+      "bend2/src/host/session-lock.c": "9b8920b4a177fd4a4b4fce06265a5026a569cfaaa8f02ab408e12ef84a36076c",
+      "bend2/src/host/sqlite.bend": "c9fafd5ccc6eca3c92047e1620ab1b14af7a7978dd646ff9c08aa8355df37d77",
+      "bend2/src/host/sqlite.c": "c14aea20a4dc28f47b7b857dcc17c2af3beca5eeed6cac26e8172ffc5bc3cfcf",
+      "bend2/src/host/text.bend": "491f846dd13341bde787ec65e4d5c53bbc90ba21f8bd3581f5e9294140fa7e89",
+      "bend2/src/host/text.c": "42bb0487ce127059d70d7e7db222ff156f35ddbe8e26188b23f3099624e02336",
+      "bend2/src/json/canonical.bend": "4471ed6b795b4763223bf012e9375a78d126159e376930b671dd8bd9921bbf4c",
+      "bend2/src/json/canonical.expected.txt": "0da920a3e7ad1cab91a6cc06b6af407cead2fac630a2220592bec7893684acb8",
+      "bend2/src/json/laws.bend": "0cf665d39d43d08c0642824d349a2bb60986ed0be0154e737a2c4720ad8dfff1",
+      "bend2/src/json/uint-decoder.bend": "9e151b9480f7a381d9d53f979411f90eff09ef71487d4a2f37a94635a8500932",
+      "bend2/src/json/uint-decoder.expected.txt": "01e94c34014ce6cb1d0f357b2b264b195583a06b825da594c3557369b6c30e4a",
+      "bend2/src/replay/basis.bend": "4d86dde1aa626f61fd60092123deafff1b90398a13c5a66bf287e55aa3732938",
+      "bend2/src/replay/basis.expected.txt": "14caeef4093216d809c48a9b36478d687fed0e1214487f69b34ccacc15e7d375",
+      "bend2/src/replay/cursor.bend": "582542b3504cff26235e12e9ab7c3692be73e060cb8ca82a4a0f27f924955216",
+      "bend2/src/replay/cursor.expected.txt": "084828d9315995d9c327d0ae2e49a6f0a98bb387eca848b0f988206bce767f6b",
+      "bend2/src/replay/laws.bend": "59d37e5562f45e32ad7570abb7ecf73981346acb6954057dc5d5773a5d91bfb2",
+      "bend2/src/replay/mutation.bend": "a6aa4b71825e0a8959f7489025e4caed29d5c0432e36c0e7e16e138a74e20f11",
+      "bend2/src/replay/mutation.expected.txt": "8cd64c08c673dd3b6e22132d852bd431dcb2b0f5bec4b4c3875a186f8310847d",
+      "bend2/src/replay/stop.bend": "e2ea0f4b418e0fc44dc44ffa9793ecef827b61c3edb95171831cf9740ba78b80",
+      "bend2/src/replay/stop.expected.txt": "65b6b7465fe642aa021008fb8bcb6c0b766f5675996e1cf8fbe2e2fcd8083b9f",
+      "bend2/src/replay/vocabulary.bend": "deff817d5848b2bac91a4c19b621cbf891bfbcdc2974851cc53290dc93e3fedb",
+      "bend2/src/replay/vocabulary.expected.txt": "f4a47ada4fe65ef5ec9cf15d1e98b91418fc613b4a580fb34eb7adf2aa4a9d85"
+    },
+    "driver_sha256": "bc7d5ba157c7edd55a2e4c1d5d3adb8f3cf0cbc8ea2df1783503e118dfc317c9",
+    "wrapper_sha256": "6fd02fe67944df5cdf90e7381647fcf67a5b0e958e6c6ac0d09172690e272ca3",
+    "helper_sha256": "3f360a350b8946a3e4ff633e6996e5100eece9b9c0ed0e5f18de51686d605139",
+    "omp_path": "/opt/homebrew/Cellar/omp/17.4.0/bin/omp",
+    "omp_sha256": "861ac3d7a76499dbc36e6ec8769b58b61a962daac2b4775ce545474d9030e6ba"
+  },
+  "compiler": {
+    "path": "/Users/wahargis/Development/Experiments/bend2-trial/.bend/bin/bend",
+    "version": "2.0.25"
+  },
+  "route": {
+    "requested_model": "deepseek/deepseek-flash",
+    "requested_effort": "low",
+    "observed_provider": "deepseek",
+    "observed_model": "deepseek-flash",
+    "observed_effort": "low",
+    "observation": "OMP get_state response; coordinator observedEffort is empty",
+    "omp_version": "17.4.0"
+  },
+  "scope": "One real retained OMP child, deterministic local parent, useful uncommitted review, IPC fault-injection milestone, queued correction, ordinary terminal stop. The controlled helper wait is not a task-performance measurement.",
+  "tasks": {
+    "task": "Review the terminal session stop implementation in bend2/src/coordinator/stop.bend and its receive integration against docs/bend2/native-interactions.md. Read only the relevant source. Write concise useful source review notes to stop-review.md in your assigned workspace, covering what is implemented, receipt preservation, and any concrete mismatch. Keep the file uncommitted. Acknowledge message stop-task with the provided coordinator command after accepting the task. Then execute this exact read-only source audit helper in your assigned workspace: /opt/homebrew/opt/python@3.14/bin/python3.14 /Users/wahargis/Development/Experiments/baton-bend2-session-stop-639/.scratch/issue639/real-omp-1/source-audit.py\nThe helper exposes an IPC milestone for an authorized terminal-stop acceptance test. It waits for the parent to inject the stop; the parent will stop your actual session and preserve your unfinished review. Do not change other files, commit, recruit, push, or stop processes yourself.",
+    "queued_correction": "After the audit, append CORRECTION_EXECUTED to stop-review.md and acknowledge this correction. This queued input is retained for terminal-stop validation."
+  },
+  "identity": {
+    "session": "worker",
+    "parent": "root",
+    "parent_endpoint": "Deterministic local Python receiver",
+    "native": "01a0eac8-4871-7000-985b-9d5267e45977",
+    "attempt": "receive:worker:1:5b0ab8bb89938755e4ecab4b10bd8cd3",
+    "stop_id": "operator-stop",
+    "native_launches": [
+      {
+        "unix": 1790645386.54589,
+        "pid": 40168,
+        "ppid": 40163,
+        "pgid": 40168,
+        "argv": [
+          "/opt/homebrew/Cellar/omp/17.4.0/bin/omp",
+          "--mode",
+          "rpc",
+          "--model",
+          "deepseek/deepseek-flash",
+          "--thinking",
+          "low",
+          "--approval-mode",
+          "yolo",
+          "--session-dir",
+          "/Users/wahargis/Development/Experiments/baton-bend2-session-stop-639/.scratch/issue639/real-omp-1/state.db.session-776f726b6572",
+          "--no-extensions",
+          "--no-skills",
+          "--no-rules",
+          "--no-lsp",
+          "--no-pty",
+          "--tools",
+          "read,bash"
+        ]
+      }
+    ]
+  },
+  "processes": {
+    "before_stop": [
+      {
+        "pid": 40168,
+        "ppid": 40163,
+        "pgid": 40168,
+        "started": "Mon Sep 28 18:29:46 2026"
+      },
+      {
+        "pid": 46194,
+        "ppid": 40168,
+        "pgid": 40168,
+        "started": "Mon Sep 28 18:29:49 2026"
+      },
+      {
+        "pid": 73973,
+        "ppid": 40168,
+        "pgid": 73973,
+        "started": "Mon Sep 28 18:31:10 2026"
+      }
+    ],
+    "roles": [
+      "OMP native",
+      "Configured SSH child",
+      "Source audit tool"
+    ],
+    "observer": {
+      "pid": 40133,
+      "ppid": 40070,
+      "pgid": 24227,
+      "started": "Mon Sep 28 18:29:46 2026"
+    },
+    "keeper": {
+      "pid": 40163,
+      "ppid": 40133,
+      "pgid": 40163,
+      "started": "Mon Sep 28 18:29:46 2026"
+    },
+    "remaining_observed": [],
+    "remaining_custody": [],
+    "scope": "Host signal targets the native process group. Separate-group tool exit is observed OMP cleanup in this run; arbitrary escaped descendants and remote SSH server processes are outside this audit."
+  },
+  "timing": {
+    "writer_started_unix": 1790645386.308434,
+    "writer_ended_unix": 1790645502.308584,
+    "writer_elapsed_seconds": 116.00014996528625,
+    "stop_started_unix": 1790645470.9908428,
+    "stop_returned_unix": 1790645471.04779,
+    "stop_command_seconds": 0.05694723129272461,
+    "stop_answer_to_writer_return_seconds": 31.260793924331665,
+    "boundary": "Writer interval includes review, explicit IPC milestone wait, stop and parent delivery; excludes clone/recruit/build. This is controlled lifecycle acceptance, not a task-performance comparison."
+  },
+  "stop_request": {
+    "session": "worker",
+    "stopId": "operator-stop",
+    "reason": "Preserve the unfinished source review at its audit milestone.",
+    "status": "requested",
+    "attempt": "receive:worker:1:5b0ab8bb89938755e4ecab4b10bd8cd3",
+    "requestedSignal": 15,
+    "submittedSignal": 15,
+    "controlError": null,
+    "nativeStatus": null,
+    "reportId": "stop-result:6f70657261746f722d73746f70",
+    "stoppedInputs": 1,
+    "pendingReports": 0
+  },
+  "final_stop": {
+    "id": "operator-stop",
+    "reason": "Preserve the unfinished source review at its audit milestone.",
+    "status": "stopped",
+    "attempt": "receive:worker:1:5b0ab8bb89938755e4ecab4b10bd8cd3",
+    "requestedSignal": 15,
+    "submittedSignal": 15,
+    "nativeStatus": "exit 143",
+    "reportId": "stop-result:6f70657261746f722d73746f70"
+  },
+  "native_terminal_event": null,
+  "writer_exit": 1,
+  "driver_exit": 0,
+  "force_used": false,
+  "failure_cleanup_used": false,
+  "messages": [
+    {
+      "seq": 1,
+      "id": "stop-task",
+      "sender": "root",
+      "recipient": "worker",
+      "kind": "task",
+      "body": "Review the terminal session stop implementation in bend2/src/coordinator/stop.bend and its receive integration against docs/bend2/native-interactions.md. Read only the relevant source. Write concise useful source review notes to stop-review.md in your assigned workspace, covering what is implemented, receipt preservation, and any concrete mismatch. Keep the file uncommitted. Acknowledge message stop-task with the provided coordinator command after accepting the task. Then execute this exact read-only source audit helper in your assigned workspace: /opt/homebrew/opt/python@3.14/bin/python3.14 /Users/wahargis/Development/Experiments/baton-bend2-session-stop-639/.scratch/issue639/real-omp-1/source-audit.py\nThe helper exposes an IPC milestone for an authorized terminal-stop acceptance test. It waits for the parent to inject the stop; the parent will stop your actual session and preserve your unfinished review. Do not change other files, commit, recruit, push, or stop processes yourself.",
+      "receipt": "accepted-stop-task"
+    },
+    {
+      "seq": 2,
+      "id": "stop-correction",
+      "sender": "root",
+      "recipient": "worker",
+      "kind": "task",
+      "body": "After the audit, append CORRECTION_EXECUTED to stop-review.md and acknowledge this correction. This queued input is retained for terminal-stop validation.",
+      "receipt": null
+    },
+    {
+      "seq": 3,
+      "id": "stop-result:6f70657261746f722d73746f70",
+      "sender": "worker",
+      "recipient": "root",
+      "kind": "report",
+      "body": "{\"type\":\"session-stopped\",\"session\":\"worker\",\"stopId\":\"operator-stop\",\"reason\":\"Preserve the unfinished source review at its audit milestone.\",\"attempt\":\"receive:worker:1:5b0ab8bb89938755e4ecab4b10bd8cd3\",\"requestedSignal\":15,\"nativeStatus\":\"exit 143\",\"nativeEvent\":null,\"observationError\":null,\"output\":\"/Users/wahargis/Development/Experiments/baton-bend2-session-stop-639/.scratch/issue639/real-omp-1/native.jsonl\",\"workspace\":\"/Users/wahargis/Development/Experiments/baton-bend2-session-stop-639/.scratch/issue639/real-omp-1/worker\",\"branch\":\"stop-worker\",\"native\":\"01a0eac8-4871-7000-985b-9d5267e45977\"}",
+      "receipt": "Parent retained report"
+    },
+    {
+      "seq": 4,
+      "id": "receive:worker:1:5b0ab8bb89938755e4ecab4b10bd8cd3",
+      "sender": "worker",
+      "recipient": "root",
+      "kind": "report",
+      "body": "Worker process ended without a native result (exit 143). Output: /Users/wahargis/Development/Experiments/baton-bend2-session-stop-639/.scratch/issue639/real-omp-1/native.jsonl. Stderr: /Users/wahargis/Development/Experiments/baton-bend2-session-stop-639/.scratch/issue639/real-omp-1/state.db.attempt-726563656976653a776f726b65723a313a3562306162386262383939333837353565346563616234623130626438636433/native.stderr",
+      "receipt": "Parent retained report"
+    },
+    {
+      "seq": 5,
+      "id": "receive:worker:1:5b0ab8bb89938755e4ecab4b10bd8cd3:exit",
+      "sender": "worker",
+      "recipient": "root",
+      "kind": "report",
+      "body": "Worker process ended with exit 143",
+      "receipt": "Parent retained report"
+    }
+  ],
+  "final_worker_inbox": [
+    {
+      "id": "stop-correction",
+      "sender": "root",
+      "recipient": "worker",
+      "kind": "task",
+      "body": "After the audit, append CORRECTION_EXECUTED to stop-review.md and acknowledge this correction. This queued input is retained for terminal-stop validation.",
+      "stopId": "operator-stop",
+      "executionDisposition": "stopped"
+    }
+  ],
+  "final_parent_inbox": [],
+  "after_stop_refusal": {
+    "argv": [
+      "message",
+      "after-stop",
+      "root",
+      "worker",
+      "task",
+      "Must not launch."
+    ],
+    "started_unix": 1790645502.572899,
+    "ended_unix": 1790645502.585124,
+    "exit": 2,
+    "stdout": "",
+    "stderr": "Session is terminally stopped; input was not committed. Read its session and retained inbox, or recruit a new session.\n"
+  },
+  "work": {
+    "path": "/Users/wahargis/Development/Experiments/baton-bend2-session-stop-639/.scratch/issue639/real-omp-1/worker/stop-review.md",
+    "sha256": "7aa646b8c0cd4e9462cd200e8edc2f14d802e7736ab4262dd4908df806912c19",
+    "bytes": 6430,
+    "status": "?? stop-review.md\n"
+  },
+  "observations": {
+    "stop_rows": [
+      {
+        "session": "worker",
+        "id": "operator-stop",
+        "reason": "Preserve the unfinished source review at its audit milestone.",
+        "attempt": "receive:worker:1:5b0ab8bb89938755e4ecab4b10bd8cd3",
+        "directory": "/Users/wahargis/Development/Experiments/baton-bend2-session-stop-639/.scratch/issue639/real-omp-1/state.db.attempt-726563656976653a776f726b65723a313a3562306162386262383939333837353565346563616234623130626438636433",
+        "signal": 15,
+        "applied_signal": 15,
+        "control_error": "",
+        "outcome": "stopped",
+        "native_status": "exit 143",
+        "report_id": "stop-result:6f70657261746f722d73746f70"
+      }
+    ],
+    "execution_rows": [
+      {
+        "session": "worker",
+        "id": "receive:worker:1:5b0ab8bb89938755e4ecab4b10bd8cd3",
+        "mode": "retained",
+        "directory": "/Users/wahargis/Development/Experiments/baton-bend2-session-stop-639/.scratch/issue639/real-omp-1/state.db.attempt-726563656976653a776f726b65723a313a3562306162386262383939333837353565346563616234623130626438636433",
+        "phase": "exited",
+        "status": "exit 143"
+      }
+    ],
+    "recovery_input_count": 0,
+    "review_hash_unchanged": true,
+    "queued_correction_marker_absent": true
+  },
+  "usage": {
+    "records": 14,
+    "input": 36371,
+    "output": 12285,
+    "cacheRead": 409728,
+    "cacheWrite": 0,
+    "totalTokens": 458384,
+    "reasoningTokens": 8543,
+    "native_reported_cost_total": 0.028111668,
+    "scope": "Sum of emitted OMP assistant message_end usage; reasoningTokens is separately reported and not added to totalTokens. Cost is native-reported, not independently billed."
+  },
+  "focused_validation": {
+    "runtime_binary_sha256": "7b7c0095fc67a2e51671df8c07f41e855b600eeddef556eb0705a953e66017c0",
+    "suites": [
+      {
+        "name": "stop",
+        "tests": 9,
+        "seconds": 3.291
+      },
+      {
+        "name": "receive",
+        "tests": 27,
+        "seconds": 21.625
+      },
+      {
+        "name": "turn",
+        "tests": 14,
+        "seconds": 6.652
+      },
+      {
+        "name": "coordinator",
+        "tests": 19,
+        "seconds": 4.899
+      }
+    ],
+    "runtime_law_controls": [
+      {
+        "check": "baseline",
+        "passed": true
+      },
+      {
+        "law": "stopped_receive_cannot_acquire_an_owner",
+        "control": "proof-removal",
+        "passed": true
+      },
+      {
+        "law": "stopped_admission_releases_without_launch",
+        "control": "proof-removal",
+        "passed": true
+      },
+      {
+        "law": "stop_admission_transaction_preserves_terminal_state",
+        "control": "proof-removal",
+        "passed": true
+      },
+      {
+        "law": "force_stop_keeps_the_recorded_live_attempt",
+        "control": "proof-removal",
+        "passed": true
+      },
+      {
+        "law": "ordinary_stop_submits_term_to_its_attempt",
+        "control": "proof-removal",
+        "passed": true
+      },
+      {
+        "law": "explicit_force_submits_kill_to_its_attempt",
+        "control": "proof-removal",
+        "passed": true
+      },
+      {
+        "law": "idle_stop_submits_no_signal",
+        "control": "proof-removal",
+        "passed": true
+      },
+      {
+        "law": "stop_acceptance_does_not_wait_for_completion",
+        "control": "proof-removal",
+        "passed": true
+      },
+      {
+        "law": "stop_reconcile_selects_the_recorded_signal_and_attempt",
+        "control": "proof-removal",
+        "passed": true
+      },
+      {
+        "name": "stop-reconcile-forces-every-request",
+        "file": "bend2/src/coordinator/stop.bend",
+        "find": "SELECT s.signal FROM session_stops",
+        "replace": "SELECT 9 FROM session_stops",
+        "law": "stop_reconcile_selects_the_recorded_signal_and_attempt",
+        "control": "implementation-mutation",
+        "passed": true
+      },
+      {
+        "name": "stop-reconcile-compares-signal-numbers",
+        "file": "bend2/src/coordinator/stop.bend",
+        "find": "s.applied_signal<>s.signal",
+        "replace": "s.applied_signal<s.signal",
+        "law": "stop_reconcile_selects_the_recorded_signal_and_attempt",
+        "control": "implementation-mutation",
+        "passed": true
+      },
+      {
+        "name": "native-reply-admits-stopped-worker",
+        "file": "bend2/src/coordinator/native-requests.bend",
+        "find": " AND NOT EXISTS(SELECT 1 FROM session_stops WHERE session=r.worker)",
+        "replace": "",
+        "law": "native_reply_sql_checks_parent_method_and_immutable_answer",
+        "control": "implementation-mutation",
+        "passed": true
+      },
+      {
+        "name": "native-reply-resends-to-stopped-worker",
+        "file": "bend2/src/coordinator/native-requests.bend",
+        "find": " AND NOT EXISTS(SELECT 1 FROM session_stops WHERE session=native_requests.worker)",
+        "replace": "",
+        "law": "native_reply_send_reads_recorded_request",
+        "control": "implementation-mutation",
+        "passed": true
+      },
+      {
+        "name": "stop-admission-ignores-terminal-state",
+        "file": "bend2/src/coordinator/stop.bend",
+        "find": "'starting','' WHERE NOT EXISTS(SELECT 1 FROM session_stops WHERE session=",
+        "replace": "'starting','' WHERE EXISTS(SELECT 1 FROM session_stops WHERE session=",
+        "law": "stop_admission_transaction_preserves_terminal_state",
+        "control": "implementation-mutation",
+        "passed": true
+      },
+      {
+        "name": "ordinary-stop-submits-force",
+        "file": "bend2/src/coordinator/stop.bend",
+        "find": "P.ProcessChild.control_signal(directory,other)",
+        "replace": "P.ProcessChild.control_signal(directory,9)",
+        "law": "ordinary_stop_submits_term_to_its_attempt",
+        "control": "implementation-mutation",
+        "passed": true
+      },
+      {
+        "name": "force-stop-selects-another-attempt",
+        "file": "bend2/src/coordinator/stop.bend",
+        "find": "e.id=session_stops.attempt",
+        "replace": "e.id<>session_stops.attempt",
+        "law": "force_stop_keeps_the_recorded_live_attempt",
+        "control": "implementation-mutation",
+        "passed": true
+      },
+      {
+        "name": "stopped-receive-reports-success",
+        "file": "bend2/src/coordinator/receive.bend",
+        "find": "case True{}: IO.pure(Result<&1,&1,U32 & String,Unit>,Fail{(2,\"Session is terminally stopped; queued input will not execute. Read its session and retained inbox.\")})",
+        "replace": "case True{}: IO.pure(Result<&1,&1,U32 & String,Unit>,Done{Unit{}})",
+        "law": "stopped_receive_cannot_acquire_an_owner",
+        "control": "implementation-mutation",
+        "passed": true
+      },
+      {
+        "name": "m17-recovery-native-guard-dropped",
+        "file": "bend2/src/coordinator/receive.bend",
+        "find": "\" AND native=\" ++ C.q(native) ++ \" AND NOT \" ++ C.stopped_session_sql(C.q(session)) ++ \";\"",
+        "replace": "\";\"",
+        "law": "m17_recovery_input_is_one_guarded_transaction",
+        "control": "implementation-mutation",
+        "passed": true
+      }
+    ],
+    "proof_scope": "Equations bind real command/IO construction; source mutations and fixtures cover the selected policy boundaries. Foreign process, filesystem and SQLite behavior remains a host obligation."
+  },
+  "post_run_presentation": {
+    "source": "5fc3ffb7d3940a96a0cf04a97afc4c913756ad56",
+    "tree": "daed11230f69d7d0466f26cbbd8f113001b6c7e3",
+    "binary_sha256": "9d3b97c334ad4cf3f5beea2befca527cc185c073f2cc4a24ee01194a14f7a5f4",
+    "changes": "Idle stop requestedSignal is null in its answer and omitted from the session projection. Documents stoppedInputs and exact missing-higher-parent behavior. Adds result-query law and negative control. Native stopping mechanics unchanged.",
+    "stop_tests": {
+      "tests": 9,
+      "seconds": 3.746,
+      "exit": 0
+    },
+    "law_controls": [
+      {
+        "check": "baseline",
+        "passed": true
+      },
+      {
+        "law": "stopped_receive_cannot_acquire_an_owner",
+        "control": "proof-removal",
+        "passed": true
+      },
+      {
+        "law": "stopped_admission_releases_without_launch",
+        "control": "proof-removal",
+        "passed": true
+      },
+      {
+        "law": "stop_admission_transaction_preserves_terminal_state",
+        "control": "proof-removal",
+        "passed": true
+      },
+      {
+        "law": "force_stop_keeps_the_recorded_live_attempt",
+        "control": "proof-removal",
+        "passed": true
+      },
+      {
+        "law": "ordinary_stop_submits_term_to_its_attempt",
+        "control": "proof-removal",
+        "passed": true
+      },
+      {
+        "law": "explicit_force_submits_kill_to_its_attempt",
+        "control": "proof-removal",
+        "passed": true
+      },
+      {
+        "law": "idle_stop_submits_no_signal",
+        "control": "proof-removal",
+        "passed": true
+      },
+      {
+        "law": "stop_acceptance_does_not_wait_for_completion",
+        "control": "proof-removal",
+        "passed": true
+      },
+      {
+        "law": "stop_reconcile_selects_the_recorded_signal_and_attempt",
+        "control": "proof-removal",
+        "passed": true
+      },
+      {
+        "law": "stop_result_reads_recorded_execution_status",
+        "control": "proof-removal",
+        "passed": true
+      },
+      {
+        "name": "idle-stop-claims-a-requested-signal",
+        "file": "bend2/src/coordinator/stop.bend",
+        "find": "'requestedSignal',CASE WHEN attempt='' THEN NULL ELSE signal END,",
+        "replace": "'requestedSignal',signal,",
+        "law": "stop_result_reads_recorded_execution_status",
+        "control": "implementation-mutation",
+        "passed": true
+      }
+    ],
+    "native_rerun": false,
+    "earlier_test_attempt": {
+      "exit": 120,
+      "log_bytes": 0,
+      "cause": "Unresolved; isolated idle test and subsequent complete stop suite passed. Original empty log retained locally."
+    }
+  },
+  "reproduction": {
+    "driver": "/Users/wahargis/Development/Experiments/baton-bend2-session-stop-639/.scratch/issue639/accept-real-stop.py",
+    "argv": [
+      "python3",
+      ".scratch/issue639/accept-real-stop.py",
+      "--source",
+      "/Users/wahargis/Development/Experiments/baton-bend2-session-stop-639",
+      "--revision",
+      "e7ecde14255ebcb7ffe66565108cd84cf9e8e78a",
+      "--exe",
+      ".scratch/bend2/baton2",
+      "--build-log",
+      ".scratch/issue639/build-law-final.log",
+      "--output",
+      ".scratch/issue639/real-omp-1"
+    ],
+    "requirements": "Build exact live source with Bend2.0.25; use a new output directory and configured DeepSeek OMP route. Original output is retained. Driver is a retained local acceptance artifact."
+  },
+  "limits": [
+    "One retained real OMP child and deterministic local parent.",
+    "Retained Codex, force, observer-loss force, old-schema reply migration and stopped-parent notices have controlled fixture coverage.",
+    "No live Codex stop, recursive stop, native parent review, Git landing, remote publication or resident/trial mutation in this run.",
+    "Full composed publication gates are recorded by the root integration separately."
+  ],
+  "artifacts": {
+    "native.jsonl": {
+      "path": "/Users/wahargis/Development/Experiments/baton-bend2-session-stop-639/.scratch/issue639/real-omp-1/native.jsonl",
+      "sha256": "ac1a4781cb26884d89f33272c1dfeef5ea6c668da2e65932ce7cbe490dd14b02",
+      "bytes": 1140024
+    },
+    "parent-deliveries.jsonl": {
+      "path": "/Users/wahargis/Development/Experiments/baton-bend2-session-stop-639/.scratch/issue639/real-omp-1/parent-deliveries.jsonl",
+      "sha256": "0c162958ba33bd88bdc453d1e2da7e2911f20826e587842d8ab0ac77f23e0c1c",
+      "bytes": 2297
+    },
+    "launches.jsonl": {
+      "path": "/Users/wahargis/Development/Experiments/baton-bend2-session-stop-639/.scratch/issue639/real-omp-1/launches.jsonl",
+      "sha256": "e8331715a5ed2418b82c3843f9b9934e1d0ee21d8b210f67b415e6e045c57a20",
+      "bytes": 471
+    },
+    "task.stdout": {
+      "path": "/Users/wahargis/Development/Experiments/baton-bend2-session-stop-639/.scratch/issue639/real-omp-1/task.stdout",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "bytes": 0
+    },
+    "task.stderr": {
+      "path": "/Users/wahargis/Development/Experiments/baton-bend2-session-stop-639/.scratch/issue639/real-omp-1/task.stderr",
+      "sha256": "2dbd08456b1414c0d3bcf14069ed77974aaa8a8e21bd6a4215edd5898cc26c11",
+      "bytes": 279
+    },
+    "journal.jsonl": {
+      "path": "/Users/wahargis/Development/Experiments/baton-bend2-session-stop-639/.scratch/issue639/real-omp-1/journal.jsonl",
+      "sha256": "a7668939dc4e719d5a4d03edec78221ccff11960aefe88befee1fcd649ac75d8",
+      "bytes": 2155
+    },
+    "commands.json": {
+      "path": "/Users/wahargis/Development/Experiments/baton-bend2-session-stop-639/.scratch/issue639/real-omp-1/commands.json",
+      "sha256": "33a4234259422b1087682255c33505f6ec887c96ee2d6011b6b3094e4c9c176e",
+      "bytes": 13529
+    },
+    "before-stop-processes.json": {
+      "path": "/Users/wahargis/Development/Experiments/baton-bend2-session-stop-639/.scratch/issue639/real-omp-1/before-stop-processes.json",
+      "sha256": "f062e83a4f4dc5ac13d378801c99eced28cb8bb1dbb145ba731e419bd03d2e59",
+      "bytes": 3134
+    },
+    "after-stop-processes.json": {
+      "path": "/Users/wahargis/Development/Experiments/baton-bend2-session-stop-639/.scratch/issue639/real-omp-1/after-stop-processes.json",
+      "sha256": "7492ed4fbf5d54a95b7d2936fa7abfede5e4a4052f485998135e0eafb9dfd6c6",
+      "bytes": 233044
+    },
+    "custody-after-stop.json": {
+      "path": "/Users/wahargis/Development/Experiments/baton-bend2-session-stop-639/.scratch/issue639/real-omp-1/custody-after-stop.json",
+      "sha256": "37517e5f3dc66819f61f5a7bb8ace1921282415f10551d2defa5c3eb0985b570",
+      "bytes": 3
+    },
+    "observations.json": {
+      "path": "/Users/wahargis/Development/Experiments/baton-bend2-session-stop-639/.scratch/issue639/real-omp-1/observations.json",
+      "sha256": "1fe61b003b8ed4d755cc67c0b4a7046520024e2ce40397cdc5ebe496aa3fa067",
+      "bytes": 7751
+    },
+    "evidence": {
+      "path": "/Users/wahargis/Development/Experiments/baton-bend2-session-stop-639/.scratch/issue639/real-omp-1/evidence.json",
+      "sha256": "6f247582e74d7e40e0c615e1991f1382175f251291ce550560767af213b75351",
+      "bytes": 27530
+    },
+    "pins": {
+      "path": "/Users/wahargis/Development/Experiments/baton-bend2-session-stop-639/.scratch/issue639/real-omp-1/pins.json",
+      "sha256": "43d9b81503cb4c14399805a0fdbf3693b66c3be2bc0ff603379d46c217980e20",
+      "bytes": 7950
+    },
+    "database": {
+      "path": "/Users/wahargis/Development/Experiments/baton-bend2-session-stop-639/.scratch/issue639/real-omp-1/state.db",
+      "sha256": "d47a80ebd8104dc12b3a87c1349442f4b4212bf730b8922ac33c9066175ee116",
+      "bytes": 65536
+    },
+    "review": {
+      "path": "/Users/wahargis/Development/Experiments/baton-bend2-session-stop-639/.scratch/issue639/real-omp-1/worker/stop-review.md",
+      "sha256": "7aa646b8c0cd4e9462cd200e8edc2f14d802e7736ab4262dd4908df806912c19",
+      "bytes": 6430
+    },
+    "driver": {
+      "path": "/Users/wahargis/Development/Experiments/baton-bend2-session-stop-639/.scratch/issue639/accept-real-stop.py",
+      "sha256": "bc7d5ba157c7edd55a2e4c1d5d3adb8f3cf0cbc8ea2df1783503e118dfc317c9",
+      "bytes": 16854
+    },
+    "helper": {
+      "path": "/Users/wahargis/Development/Experiments/baton-bend2-session-stop-639/.scratch/issue639/real-omp-1/source-audit.py",
+      "sha256": "3f360a350b8946a3e4ff633e6996e5100eece9b9c0ed0e5f18de51686d605139",
+      "bytes": 1127
+    },
+    "wrapper": {
+      "path": "/Users/wahargis/Development/Experiments/baton-bend2-session-stop-639/.scratch/issue639/real-omp-1/omp-wrapper",
+      "sha256": "6fd02fe67944df5cdf90e7381647fcf67a5b0e958e6c6ac0d09172690e272ca3",
+      "bytes": 459
+    },
+    "live_build": {
+      "path": "/Users/wahargis/Development/Experiments/baton-bend2-session-stop-639/.scratch/issue639/build-law-final.log",
+      "sha256": "b4c3ff1bf07b24889022a4ea62f164496cbf7059c7fedbbabee7055f72156182",
+      "bytes": 160
+    },
+    "independent_audit": {
+      "path": "/Users/wahargis/Development/Experiments/baton-bend2-session-stop-639/.scratch/issue639/independent/real-stop-review.json",
+      "sha256": "3715787f8ed8f57936919090be9cc2e1c7dc2c23e57e5b9252f91791f46a0153",
+      "bytes": 8380
+    },
+    "runtime_controls": {
+      "path": "/Users/wahargis/Development/Experiments/baton-bend2-session-stop-639/.scratch/issue639/law-controls-runtime-results.json",
+      "sha256": "e6a3edf9c4ba5342c5c827b9d4bc097a69692cd9e7aeff0fbb7adc048f0bd528",
+      "bytes": 107375
+    },
+    "presentation_controls": {
+      "path": "/Users/wahargis/Development/Experiments/baton-bend2-session-stop-639/.scratch/issue639/law-controls-results.json",
+      "sha256": "da505dd37b4a41c8a21ec15dd4ef726dbeb9e692e1fba6639c2801aa3a4fea8b",
+      "bytes": 17044
+    },
+    "presentation_build": {
+      "path": "/Users/wahargis/Development/Experiments/baton-bend2-session-stop-639/.scratch/issue639/build-presentation.log",
+      "sha256": "b4c3ff1bf07b24889022a4ea62f164496cbf7059c7fedbbabee7055f72156182",
+      "bytes": 160
+    },
+    "presentation_tests": {
+      "path": "/Users/wahargis/Development/Experiments/baton-bend2-session-stop-639/.scratch/issue639/stop-presentation-retry.log",
+      "sha256": "e9b220fcdf26dc1e596cec9757c27fe35dd99f4b48278839f86c74122cba47ef",
+      "bytes": 4118
+    },
+    "independent/stop-composed.log": {
+      "path": "/Users/wahargis/Development/Experiments/baton-bend2-session-stop-639/.scratch/issue639/independent/stop-composed.log",
+      "sha256": "438a50bbc46b11ae8e15b6b6262fd95d14443a1700e6252f1b96dfc4ed6d3ebe",
+      "bytes": 1572
+    },
+    "independent/evidence-composed.json": {
+      "path": "/Users/wahargis/Development/Experiments/baton-bend2-session-stop-639/.scratch/issue639/independent/evidence-composed.json",
+      "sha256": "f2b84d8535f46d9ec3257aa8661075cca792b0e3f325c2c41631ece0ace6fa4f",
+      "bytes": 1543
+    },
+    "receive-composed.log": {
+      "path": "/Users/wahargis/Development/Experiments/baton-bend2-session-stop-639/.scratch/issue639/receive-composed.log",
+      "sha256": "6afef2a0dc46ef5759763f8ea4fea2f39596e042864914e7325cc47b9280b14a",
+      "bytes": 127
+    },
+    "turn-composed.log": {
+      "path": "/Users/wahargis/Development/Experiments/baton-bend2-session-stop-639/.scratch/issue639/turn-composed.log",
+      "sha256": "134626b25e57f8ddf9cba5f6d448a1593d5da207d06599d4ba4acc3d77e19903",
+      "bytes": 113
+    },
+    "coordinator-composed.log": {
+      "path": "/Users/wahargis/Development/Experiments/baton-bend2-session-stop-639/.scratch/issue639/coordinator-composed.log",
+      "sha256": "05d3f1cf7726ed549babbcd11d35430c3654eda2e4ef64d334c08c6dee3b80bd",
+      "bytes": 118
+    },
+    "attempt/keeper.log": {
+      "path": "/Users/wahargis/Development/Experiments/baton-bend2-session-stop-639/.scratch/issue639/real-omp-1/state.db.attempt-726563656976653a776f726b65723a313a3562306162386262383939333837353565346563616234623130626438636433/keeper.log",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "bytes": 0
+    },
+    "attempt/launch": {
+      "path": "/Users/wahargis/Development/Experiments/baton-bend2-session-stop-639/.scratch/issue639/real-omp-1/state.db.attempt-726563656976653a776f726b65723a313a3562306162386262383939333837353565346563616234623130626438636433/launch",
+      "sha256": "46ef88e17c41da5cc0cd057b46d6167f549c0762c12fcc6729537bee72a7733a",
+      "bytes": 7
+    },
+    "attempt/manifest": {
+      "path": "/Users/wahargis/Development/Experiments/baton-bend2-session-stop-639/.scratch/issue639/real-omp-1/state.db.attempt-726563656976653a776f726b65723a313a3562306162386262383939333837353565346563616234623130626438636433/manifest",
+      "sha256": "96652cc6fb89f3c8bc7ff17ad6111cddbc7ac61af713cebf520dd9a900c0792d",
+      "bytes": 6000
+    },
+    "attempt/status": {
+      "path": "/Users/wahargis/Development/Experiments/baton-bend2-session-stop-639/.scratch/issue639/real-omp-1/state.db.attempt-726563656976653a776f726b65723a313a3562306162386262383939333837353565346563616234623130626438636433/status",
+      "sha256": "cd609bfc64302c0342db000dd54d0471dc10d545f5d40c08f9953347333cca1c",
+      "bytes": 6
+    },
+    "attempt/released": {
+      "path": "/Users/wahargis/Development/Experiments/baton-bend2-session-stop-639/.scratch/issue639/real-omp-1/state.db.attempt-726563656976653a776f726b65723a313a3562306162386262383939333837353565346563616234623130626438636433/released",
+      "sha256": "fdc935e6a3f33abdcfb4f5d7a335d408b2b988e7a5f8411d9f73349d1fab39be",
+      "bytes": 9
+    },
+    "attempt/acknowledged": {
+      "path": "/Users/wahargis/Development/Experiments/baton-bend2-session-stop-639/.scratch/issue639/real-omp-1/state.db.attempt-726563656976653a776f726b65723a313a3562306162386262383939333837353565346563616234623130626438636433/acknowledged",
+      "sha256": "da4769119aa609d7631dc3331f1ff2ac9c59e1f0a6e282a44c8964523b271e69",
+      "bytes": 13
+    },
+    "attempt/native.pid": {
+      "path": "/Users/wahargis/Development/Experiments/baton-bend2-session-stop-639/.scratch/issue639/real-omp-1/state.db.attempt-726563656976653a776f726b65723a313a3562306162386262383939333837353565346563616234623130626438636433/native.pid",
+      "sha256": "1066fcff9c3244481ab94a7befc589f30233c4519220b9339df8404233122420",
+      "bytes": 6
+    },
+    "attempt/native.stderr": {
+      "path": "/Users/wahargis/Development/Experiments/baton-bend2-session-stop-639/.scratch/issue639/real-omp-1/state.db.attempt-726563656976653a776f726b65723a313a3562306162386262383939333837353565346563616234623130626438636433/native.stderr",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "bytes": 0
+    }
+  }
+}
