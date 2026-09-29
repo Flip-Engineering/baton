@@ -228,6 +228,48 @@ const MUTATIONS = [
     replace: '";"',
     law: 'm17_recovery_input_is_one_guarded_transaction',
   },
+  {
+    name: 'm3a-composition-skips-stage-four',
+    file: join('bend2', 'src', 'git', 'land.bend'),
+    find: '    e : Ld <- ld_go4(d, r2, s2)',
+    replace: '    e : Ld <- IO.pure(Ld, d)',
+    law: 'm3a_the_checked_landing_runs_every_stage_in_order',
+  },
+  {
+    name: 'm3a-composition-skips-the-settle',
+    file: join('bend2', 'src', 'git', 'land.bend'),
+    find: '    settled : Ld <- ld_settle(f, r2, s2)',
+    replace: '    settled : Ld <- IO.pure(Ld, f)',
+    law: 'm3a_the_checked_landing_runs_every_stage_in_order',
+  },
+  {
+    name: 'm3c-landed-state-answers-a-failure',
+    file: join('bend2', 'src', 'git', 'land.bend'),
+    find: '    case LdDone{made}: IO.pure(Result<&1, &1, T.GitFail, T.LandOutcome>, Done{made})',
+    replace: '    case LdDone{made}: IO.pure(Result<&1, &1, T.GitFail, T.LandOutcome>, Fail{T.FCmd{"land", "landed"}})',
+    law: 'm3c_a_landed_state_answers_its_own_outcome',
+  },
+  {
+    name: 'm3c-failed-state-answers-a-landing',
+    file: join('bend2', 'src', 'git', 'land.bend'),
+    find: '    case LdFail{fail}: IO.pure(Result<&1, &1, T.GitFail, T.LandOutcome>, Fail{fail})',
+    replace: '    case LdFail{fail}: IO.pure(Result<&1, &1, T.GitFail, T.LandOutcome>, Done{T.LAlready{""}})',
+    law: 'm3c_a_failed_state_answers_its_own_failure',
+  },
+  {
+    name: 'm3c-unfinished-stage-answers-an-outcome',
+    file: join('bend2', 'src', 'git', 'land.bend'),
+    find: '    case LdCand{tip, cand}: IO.pure(Result<&1, &1, T.GitFail, T.LandOutcome>, Fail{T.FCmd{"land", "unreachable stage"}})',
+    replace: '    case LdCand{tip, cand}: IO.pure(Result<&1, &1, T.GitFail, T.LandOutcome>, Done{T.LAlready{"none"}})',
+    law: 'm3c_a_prepared_candidate_alone_is_not_an_outcome',
+  },
+  {
+    name: 'm14-unregistered-parent-admits-the-recruit',
+    file: join('bend2', 'src', 'coordinator', 'recruit.bend'),
+    find: 'case False{}: IO.die(Unit,2,"The parent session is not registered.")',
+    replace: 'case False{}: IO.pure(Unit,Unit{})',
+    law: 'm14_unregistered_parent_refuses_with_its_rule',
+  },
 ];
 
 for (const mutation of MUTATIONS) {
