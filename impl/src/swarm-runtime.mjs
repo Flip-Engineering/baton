@@ -6184,9 +6184,17 @@ export class SwarmRuntime {
       catch { changedPaths = []; }
     }
     const predecessorWorkerId = predecessor.bindings?.at?.(-1)?.workerId ?? null;
+    // Issue #364/#442: the settled loss supersedes the replayed handle, exactly as the view reads
+    // it. A drained or restart-lost seat's reconstructed handle carries a STATUS out of the ledger,
+    // not a process — a cancelled task reads `idle` — so a live-looking status there is not a live
+    // seat. A predecessor whose runtime loss or provider fault is the newest fact about its
+    // binding (#364/#442's own currency rule) is not live: its preserved checkout is carried, never
+    // read as still in use (#318).
+    const predecessorSettledLost = this._runtimeLostCurrent(predecessor) !== null
+      || this._participantFaultCurrent(predecessor) !== null;
     const predecessorWorkerDead = predecessorWorkerId !== null
-      && !this.coordinator.list().some((h) => h.id === predecessorWorkerId
-        && ['pending', 'working', 'blocked', 'idle', 'stopping'].includes(h.status));
+      && (predecessorSettledLost || !this.coordinator.list().some((h) => h.id === predecessorWorkerId
+        && ['pending', 'working', 'blocked', 'idle', 'stopping'].includes(h.status)));
     // A live predecessor is still USING its checkout: the successor never binds or carries it
     // (it starts fresh and inherits guidance, the #318 contract); a dead predecessor's checkout
     // is carriable unless some OTHER live worker holds it. `liveHolders` therefore names the
