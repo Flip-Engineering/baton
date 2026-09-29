@@ -20,6 +20,7 @@ import ../host/process.bend as P
 import ../host/session-lock.bend as Lock
 import ./turn.bend as Turn
 import ./root.bend as Root
+import ./native-requests.bend as NativeRequests
 import ./commands.bend as C
 import ../host/sqlite.bend as DB
 
@@ -95,10 +96,11 @@ law m17_not_refused_conversation_completes_the_attempt:
   for +handle: U32
   for -lock: Maybe<U32>
   for +outcome: Turn.Outcome
+  for -deliveries: List<Chan(Result<&1,&1,U32 & String,String>)>
   for -again: Unit -> IO(Result<&1,&1,U32 & String,Unit>)
-  {Receive.complete_or_restart(db,session,id,log,stderr,cursor,native,cwd,handle,lock,outcome,again,False{}) == Receive.completed(db,session,id,log,stderr,cursor,handle,lock,outcome,again) : IO(Result<&1,&1,U32 & String,Unit>)}
+  {Receive.complete_or_restart(db,session,id,log,stderr,cursor,native,cwd,handle,lock,outcome,deliveries,again,False{}) == Receive.completed(db,session,id,log,stderr,cursor,handle,lock,outcome,deliveries,again) : IO(Result<&1,&1,U32 & String,Unit>)}
 
-def m17_not_refused_conversation_completes_the_attempt(db,session,id,log,stderr,cursor,native,cwd,handle,lock,outcome,again):
+def m17_not_refused_conversation_completes_the_attempt(db,session,id,log,stderr,cursor,native,cwd,handle,lock,outcome,deliveries,again):
   {==}
 
 # M-17: the branch taken when the recorded conversation is refused (gone =
@@ -115,10 +117,11 @@ law m17_refused_conversation_restarts_the_attempt:
   for +handle: U32
   for -lock: Maybe<U32>
   for outcome: Turn.Outcome
+  for -deliveries: List<Chan(Result<&1,&1,U32 & String,String>)>
   for -again: Unit -> IO(Result<&1,&1,U32 & String,Unit>)
-  {Receive.complete_or_restart(db,session,id,log,stderr,cursor,native,cwd,handle,lock,outcome,again,True{}) == Receive.restart_pending(db,session,id,native,cwd,handle,lock,again) : IO(Result<&1,&1,U32 & String,Unit>)}
+  {Receive.complete_or_restart(db,session,id,log,stderr,cursor,native,cwd,handle,lock,outcome,deliveries,again,True{}) == Receive.restart_pending(db,session,id,native,cwd,handle,lock,deliveries,again) : IO(Result<&1,&1,U32 & String,Unit>)}
 
-def m17_refused_conversation_restarts_the_attempt(db,session,id,log,stderr,cursor,native,cwd,handle,lock,outcome,again):
+def m17_refused_conversation_restarts_the_attempt(db,session,id,log,stderr,cursor,native,cwd,handle,lock,outcome,deliveries,again):
   {==}
 
 # M-17: the receive entry's own dispatch. The branch argument is the refusal
@@ -127,10 +130,10 @@ def m17_refused_conversation_restarts_the_attempt(db,session,id,log,stderr,curso
 # the branches is the derived attempt ++ "/native.stderr". The written-out
 # dispatch below is the whole obligation: reading a different predicate, or
 # passing the undecorated attempt, breaks this proof.
-def observed_dispatch(db: String, session: String, id: String, log: String, cursor: String, +native: String, cwd: String, +attempt: String, handle: U32, lock: Maybe<U32>, +outcome: Turn.Outcome, again: Unit -> IO(Result<&1,&1,U32 & String,Unit>)) -> IO(Result<&1,&1,U32 & String,Unit>):
+def observed_dispatch(db: String, session: String, id: String, log: String, cursor: String, +native: String, cwd: String, +attempt: String, handle: U32, lock: Maybe<U32>, +outcome: Turn.Outcome, deliveries: List<Chan(Result<&1,&1,U32 & String,String>)>, again: Unit -> IO(Result<&1,&1,U32 & String,Unit>)) -> IO(Result<&1,&1,U32 & String,Unit>):
   do IO<Result<&1,&1,U32 & String,Unit>>:
     gone : Bool <- Turn.refusal(attempt ++ "/native", Bool.not(String.is_empty(native)), outcome)
-    Receive.complete_or_restart(db,session,id,log,attempt ++ "/native.stderr",cursor,native,cwd,handle,lock,outcome,again,gone)
+    Receive.complete_or_restart(db,session,id,log,attempt ++ "/native.stderr",cursor,native,cwd,handle,lock,outcome,deliveries,again,gone)
 
 law m17_the_observed_dispatch_is_the_refusal_it_read:
   for +db: String
@@ -144,17 +147,18 @@ law m17_the_observed_dispatch_is_the_refusal_it_read:
   for +handle: U32
   for -lock: Maybe<U32>
   for +outcome: Turn.Outcome
+  for -deliveries: List<Chan(Result<&1,&1,U32 & String,String>)>
   for -again: Unit -> IO(Result<&1,&1,U32 & String,Unit>)
-  {Receive.observed(db,session,id,log,cursor,native,cwd,attempt,handle,lock,outcome,again) == observed_dispatch(db,session,id,log,cursor,native,cwd,attempt,handle,lock,outcome,again) : IO(Result<&1,&1,U32 & String,Unit>)}
+  {Receive.observed(db,session,id,log,cursor,native,cwd,attempt,handle,lock,outcome,deliveries,again) == observed_dispatch(db,session,id,log,cursor,native,cwd,attempt,handle,lock,outcome,deliveries,again) : IO(Result<&1,&1,U32 & String,Unit>)}
 
-def m17_the_observed_dispatch_is_the_refusal_it_read(db,session,id,log,cursor,native,cwd,attempt,handle,lock,outcome,again):
+def m17_the_observed_dispatch_is_the_refusal_it_read(db,session,id,log,cursor,native,cwd,attempt,handle,lock,outcome,deliveries,again):
   {==}
 
 # M-17: the restart reads the recovery-input row, records the recovery, and
 # only then releases the observer and the native process, delivers the wake
-# and acknowledges it. The written-out order below is the whole obligation: a
+# and settles question deliveries before acknowledging it. The written-out order is the whole obligation: a
 # reordering of any two steps breaks this proof.
-def restart_records_before_releasing_and_waking(+db: String, +session: String, +id: String, native: String, cwd: String, +handle: U32, lock: Maybe<U32>, again: Unit -> IO(Result<&1,&1,U32 & String,Unit>)) -> IO(Result<&1,&1,U32 & String,Unit>):
+def restart_records_before_releasing_and_waking(+db: String, +session: String, +id: String, native: String, cwd: String, +handle: U32, lock: Maybe<U32>, deliveries: List<Chan(Result<&1,&1,U32 & String,String>)>, again: Unit -> IO(Result<&1,&1,U32 & String,Unit>)) -> IO(Result<&1,&1,U32 & String,Unit>):
   do IO<Result<&1,&1,U32 & String,Unit>>:
     recorded : String <- IO.try(String,DB.Sql.query(db,"SELECT EXISTS(SELECT 1 FROM messages WHERE id=" ++ C.q(id ++ ":recovery-input") ++ ");"))
     saved : Unit <- Receive.record_recovery(db,session,id,native,cwd,String.eq(recorded,"1\n"))
@@ -163,8 +167,9 @@ def restart_records_before_releasing_and_waking(+db: String, +session: String, +
     delivery_task : Chan(Result<&1,&1,U32 & String,String>) <- IO.fork(Result<&1,&1,U32 & String,String>,Root.deliver(db,id ++ ":recovery","1",""))
     next : Result<&1,&1,U32 & String,Unit> <- again(Unit{})
     delivered : Result<&1,&1,U32 & String,String> <- IO.join(Result<&1,&1,U32 & String,String>,delivery_task)
+    questions : Result<&1,&1,U32 & String,Unit> <- NativeRequests.settle(deliveries)
     acknowledged : Unit <- IO.try(Unit,P.ProcessChild.acknowledge(handle))
-    IO.pure(Result<&1,&1,U32 & String,Unit>,Turn.combine(Root.wake_result(delivered),next))
+    IO.pure(Result<&1,&1,U32 & String,Unit>,Turn.combine(Root.wake_result(delivered),Turn.combine(questions,next)))
 
 law m17_restart_records_before_releasing_and_waking:
   for +db: String
@@ -174,10 +179,11 @@ law m17_restart_records_before_releasing_and_waking:
   for +cwd: String
   for +handle: U32
   for -lock: Maybe<U32>
+  for -deliveries: List<Chan(Result<&1,&1,U32 & String,String>)>
   for -again: Unit -> IO(Result<&1,&1,U32 & String,Unit>)
-  {Receive.restart_pending(db,session,id,native,cwd,handle,lock,again) == restart_records_before_releasing_and_waking(db,session,id,native,cwd,handle,lock,again) : IO(Result<&1,&1,U32 & String,Unit>)}
+  {Receive.restart_pending(db,session,id,native,cwd,handle,lock,deliveries,again) == restart_records_before_releasing_and_waking(db,session,id,native,cwd,handle,lock,deliveries,again) : IO(Result<&1,&1,U32 & String,Unit>)}
 
-def m17_restart_records_before_releasing_and_waking(db,session,id,native,cwd,handle,lock,again):
+def m17_restart_records_before_releasing_and_waking(db,session,id,native,cwd,handle,lock,deliveries,again):
   {==}
 
 # M-17: a recovery-input row already recorded writes nothing, so a replayed

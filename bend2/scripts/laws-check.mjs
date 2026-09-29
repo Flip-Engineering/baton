@@ -252,8 +252,8 @@ const MUTATIONS = [
   {
     name: 'm17-refused-conversation-completes-instead',
     file: join('bend2', 'src', 'coordinator', 'receive.bend'),
-    find: 'case True{}: restart_pending(db,session,id,native,cwd,handle,lock,again)',
-    replace: 'case True{}: completed(db,session,id,log,stderr,cursor,handle,lock,outcome,again)',
+    find: 'case True{}: restart_pending(db,session,id,native,cwd,handle,lock,deliveries,again)',
+    replace: 'case True{}: completed(db,session,id,log,stderr,cursor,handle,lock,outcome,deliveries,again)',
     law: 'm17_refused_conversation_restarts_the_attempt',
   },
   {
