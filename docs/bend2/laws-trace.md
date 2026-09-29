@@ -15,6 +15,15 @@ over runtime functions. Every entry compile verifies their proofs, including the
 [receive ownership laws](../../bend2/src/coordinator/receive-laws.bend) under M-8.
 The broader application obligations below retain their stated scope. The compiler
 TODOs in the separate model `laws.bend` are discharged by `laws-proof.bend`.
+The entry compile also checks sixteen supplementary laws, labelled as such in their own modules
+and in the coordinator's coverage header. Six are corpus-only: each law in
+[the canonical encoder's laws](../../bend2/src/json/laws.bend) fixes one value from the encoder's
+corpus rather than quantifying over every value the encoder can be given. Ten are test-reader
+laws: the seven over `WS.status_clean_fail`, `WS.status_dirty_fail` and `WS.status_cmd_fail` and
+the three over `CW.is_branch_exists_fail`, `CW.is_path_exists_fail` and `CW.is_unknown_base_fail`
+in [the Git laws](../../bend2/src/git/laws.bend) are over readers only the tree's own test entry
+calls. Every entry compile checks these proofs with the operative ones, and none of the sixteen
+establishes operative runtime coverage or carries a clause of an operative entry.
 
 Language evidence uses [the reference pin](reference/README.md),
 `bendlang/bend@a49524265bdfa5753a4bf38e25f0574a705dd868`, Bend 2.0.25.
@@ -27,8 +36,9 @@ It also checks the coordinator entry and receive ownership laws over the real
 runtime's busy admission, recorded-attempt attachment and shared canonical session
 identity. Negative controls mutate those production functions and compile the entry
 while retaining the laws. `node bend2/scripts/laws-check.mjs <bend>` removes each
-runtime law's proof in turn and requires the entry compile to fail. These IO equations rely
-on the host effect contract; kernel locking, inherited descriptor custody and
+runtime law's proof in turn and requires the entry compile to fail, and it applies its
+implementation mutations: changing an implementation that a named law judges must fail that law.
+These IO equations rely on the host effect contract; kernel locking, inherited descriptor custody and
 native-exit-only release are exercised by the [receive process tests and probes](receive-recovery-2026-09-28.md).
 It is a bounded evidence check. Root owns the separate deployment command
 `npm test --prefix impl`; this lane did not execute it. The check runs under
@@ -78,14 +88,14 @@ historical JavaScript test proves the complete approved prohibition.
 | M-3b | Extracted. CL-05/14, LEDG-3: `swarm-state.mjs` duplicate contribution/integration guards; keyed ledger append | `swarm-state.test.mjs` contribution duplicate; `issue296-swarm-integrate.test.mjs` 296h; `phase11-coordination-store.test.mjs` duplicate key | Logical-effect identity theorem pending |
 | M-3c | Partly enforced. CL-10, LEDG-3: `worktree.mjs` empty-range refusal and ledger retry return | LEDG-3 duplicate-key test; CL-10 empty-range arm has a test gap | Attempt/outcome attribution theorem pending |
 | M-4 | Extracted. CUST-1/4/6/11: `shared-workspace-custody.mjs`; `worktree.mjs` removal and physical-owner publication | `workspace-preservation.test.mjs` dirty/ignored content and live-holder rows; `phase92.2-physical-workspace-owner-red.test.mjs` failure-atomic publication | Disposal proof over actual observation, generation and effect pending |
-| M-5 | Partly enforced. CL-07: `swarm-state.mjs` review append; LEDG-1/7/10/19: ledger/replay; WAKE-3/5, PROP-2: stream obligations | `swarm-state.test.mjs` opposing reviews; `issue296-swarm-integrate.test.mjs` 296f; ledger/stream inventory rows | Two quantified pure-model review lemmas checked; application recovery/compaction/delivery proof pending |
+| M-5 | Partly enforced. CL-07: `swarm-state.mjs` review append; LEDG-1/7/10/19: ledger/replay; WAKE-3/5, PROP-2: stream obligations | `swarm-state.test.mjs` opposing reviews; `issue296-swarm-integrate.test.mjs` 296f; ledger/stream inventory rows | Two quantified pure-model review lemmas checked; application recovery/compaction/delivery proof pending. The six canonical-encoder laws in `bend2/src/json/laws.bend` are supplementary corpus-only pins |
 | M-7 | Partly enforced. AB-09/14, CL-02, PM-11/07, CUST-8, AB-05: `swarm-native-bridge.mjs` token-derived identity; runtime/fold attribution | `swarm-native-bridge.test.mjs`; `issue292-coupling-truth.test.mjs`; `shared-workspace-custody.test.mjs` T5 | Actual authentication/attribution theorem pending |
 | M-8 | Partly enforced. PM-08, AB-04/05/06/10/11/12, CAP-7/12/14, PR-01, CL-15: runtime grants, claim and lease instance checks; native receive session ownership (#625) | `issue423-claims-proposals-state.test.mjs`; `issue373-read-only-recruit.test.mjs`; `bend2/test/receive.py` and the supervisor-loss probes; PM-08 refusal has a test gap | Receive admission, attachment and canonical session identity IO equations checked against actual runtime functions by every entry compile, with host assumptions; full resource/action/time authority and granting-authority proofs pending |
-| M-10 | Partly enforced. CAP-2/3/15, DEV-1, PROP-1, AB-12: `host-capacity.mjs` worker admission; other cutoff boundaries | `issue297-issue307-host-capacity.test.mjs` HC-2; remaining inventory rows | Retained pure-model worker lemma checked; application-wide cutoff/data retention proof pending |
+| M-10 | Partly enforced. CAP-2/3/15, DEV-1, PROP-1, AB-12: `host-capacity.mjs` worker admission; other cutoff boundaries | `issue297-issue307-host-capacity.test.mjs` HC-2; remaining inventory rows | Retained pure-model worker lemma checked; application-wide cutoff/data retention proof pending. The check execution and the checked trees are checked at the pin: every selected file runs on the candidate tree first and on the target tree second and is paired with its own two verdicts, the target tree is the candidate scratch tree's `-target` sibling, and the pairs the checks produced are the ones the verdict judges. The check subprocess and the kernel remain host assumptions |
 | M-11 | Extracted. CL-17: `swarm-event-schemas.mjs` and `swarm-contract.mjs` separate caller kinds from driver facts | `swarm-refusals.test.mjs`, fabricated driver-row refusal | Actual decoder-to-effect theorem pending |
 | M-12 | Extracted. DEV-2, LEDG-6: managed-work acceptance and durable intent boundary | `issue290-ledger-sync.test.mjs` covers persistence; DEV-2 cites the operator contract | Acknowledgment/managed-completion dependency proof pending |
 | M-13 | Extracted. DEV-3, WAKE-8: native attachment and `wake-stream.mjs` attribution | `wake-stream.test.mjs` attachment covering hosted swarms | Actual agent-interface delivery and re-arm independence proof pending |
-| M-14 | Partly enforced. DEV-4, CS-05/16/17: `swarm-contract.mjs`, `swarm-refusals.mjs`, `contribution-contract.mjs` | `issue372-closed-sets-taught.test.mjs`; `issue430-swarm-refusal-set.test.mjs`; `issue371-contract-example.test.mjs` | Checked pure-model obligations: the composed refusal's field, rule and remedy follow the vocabulary row the validator judges by, and the rendered context redacts. The application's own refusal rows are not imported |
+| M-14 | Partly enforced. DEV-4, CS-05/16/17: `swarm-contract.mjs`, `swarm-refusals.mjs`, `contribution-contract.mjs` | `issue372-closed-sets-taught.test.mjs`; `issue430-swarm-refusal-set.test.mjs`; `issue371-contract-example.test.mjs` | Checked pure-model obligations: the composed refusal's field, rule and remedy follow the vocabulary row the validator judges by, and the rendered context redacts. The application's own refusal rows are not imported. The ten Git status and create-worktree reader laws in `bend2/src/git/laws.bend` are supplementary test-reader laws |
 | M-17 | Proposed CX-6, as narrowed in the approved set | No complete enforcement test claimed | Retained responsibility, recoverable handoff and authorized-suspension theorem pending |
 | M-18 | Proposed destination prohibition from #556 | The approved record cites a prior destination model; it is not rerun or claimed as application evidence here | Checked pure-model decision: a declared deployment dispatches to exactly the declared remote, an undeclared one refuses with the undeclared code, and a publishing outcome carries no code. Dispatch, delivery and outcome remain host effects |
 
@@ -230,14 +240,14 @@ primitive the target architecture owes before the application proof can exist.
 |---|---|
 | M-1 | Blocked: LANG-CAP-01. The pin has no durable sync, atomic rename or metadata operation, and `lang-cap-durability.evidence.md` measures write and close with no durability receipt in the result. Model only until an authored C effect family exists. |
 | M-2 | Blocked: LANG-CAP-08 (no HTTP or TLS library) and LANG-CAP-01 (no durable attempt record). |
-| M-3a | Blocked: LANG-CAP-07 (git runs as a subprocess, which needs the LANG-CAP-05 process family) and the host's compare-and-swap. |
+| M-3a | Blocked: LANG-CAP-07 (git runs as a subprocess, which needs the LANG-CAP-05 process family) and the host's compare-and-swap. The publication argv and the invocation that runs it are checked at the pin; the git process, its atomic old-value comparison and the host's report of its exit status remain host assumptions. |
 | M-3b | Blocked: LANG-CAP-01 (no atomic rename, so no durable idempotency disposition). |
 | M-3c | Checkable: given an injected prior outcome, truthful replay is a pure relation. |
 | M-4 | Blocked: LANG-CAP-01 (no stat metadata, directory traversal, permissions or atomic publication). |
 | M-5 | Checked: two model obligations discharged, and the real append is driven by the transition witness. The recovery, compaction, replay and delivery clauses remain open. |
 | M-7 | Blocked: LANG-CAP-10 (no hashing, HMAC, constant-time comparison or secure random bytes) and the authority store's durability. |
 | M-8 | Partly checkable: the no-elevation-by-delegation subset invariant is expressible over the permission set; the instance, revocation and atomic-check halves are blocked by LANG-CAP-10 and LANG-CAP-01. |
-| M-10 | Checked: one model obligation discharged, and the real admission decision is read by the transition witness. The cancellation and retention clauses are blocked by LANG-CAP-09. |
+| M-10 | Checked: one model obligation discharged, and the real admission decision is read by the transition witness. The check execution is checked over the real pipeline: the trees the checks run on, the tree stage 6 prepares and the pairs the verdict judges are equated with the production functions. The check subprocess and its filesystem effects remain host assumptions, and the cancellation and retention clauses are blocked by LANG-CAP-09. |
 | M-11 | Partly checkable: the caller/driver kind disjointness. Driver provenance is blocked by LANG-CAP-06 (no JSON codec) and LANG-CAP-05. |
 | M-12 | Blocked: LANG-CAP-05 (no process family) and LANG-CAP-01 (no durable intent). |
 | M-13 | Blocked: LANG-CAP-09 (no name cancels a computation, races two or sets a deadline). |
