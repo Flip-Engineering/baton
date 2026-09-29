@@ -72,25 +72,24 @@ test('P93A2-RAW1: raw JSON text, bytes, duplicate keys, and byte authority behav
   assert.equal(fromBytes.program.programDigest, fromValue.program.programDigest);
   const duplicated = text.replace('{', '{"schemaVersion":1,"schemaVersion":1,');
   assert.throws(() => normalize(duplicated, f.authority), invalid);
-  const oversized = ' '.repeat(f.authority.maxProgramBytes + 1);
-  assert.throws(() => normalize(oversized, f.authority), invalid);
 });
 
-test('P93A2-RAW2: raw JSON text at exactly maxProgramBytes is accepted', () => {
+test('P93A2-RAW2: a raw source past the removed byte authority is read whole', () => {
   const f = programFixture();
   const text = JSON.stringify(f.baseSource());
-  const padLength = f.authority.maxProgramBytes - Buffer.byteLength(text, 'utf8');
-  const padded = text.replace('{', `{${' '.repeat(padLength)}`);
-  assert.equal(Buffer.byteLength(padded, 'utf8'), f.authority.maxProgramBytes);
+  // 1 MiB was this fixture's injected maxProgramBytes before #530; the pad takes the source past it.
+  const removedAuthorityBytes = 1024 * 1024;
+  const padded = text.replace('{', `{${' '.repeat(removedAuthorityBytes)}`);
+  assert.ok(Buffer.byteLength(padded, 'utf8') > removedAuthorityBytes);
   const result = normalize(padded, f.authority);
   assert.equal(result.program.programDigest, normalize(f.baseSource(), f.authority).program.programDigest);
 });
 
-test('P93A2-BYTES1: policy maxProgramBytes bounds the normalized canonical Program', () => {
+test('P93A2-BYTES1: no declared number binds the normalized canonical Program bytes', () => {
   const f = programFixture();
-  const tight = f.makePolicy({ maxProgramBytes: 100 });
-  assert.throws(() => normalize(f.baseSource({ policy: tight }), f.authority),
-    (error) => error instanceof ProgramIrError && /maxProgramBytes/u.test(error.message));
+  const ok = normalize(f.baseSource(), f.authority);
+  // 100 was the removed policy maxProgramBytes in this row's first form; the Program is past it.
+  assert.ok(canonicalProgramBytes(ok.program, f.authority).byteLength > 100);
 });
 
 test('P93A2-VC1: verificationContracts validate, refuse duplicates and malformed refs, and sort by contractDigest', () => {
@@ -115,30 +114,32 @@ test('P93A2-VC1: verificationContracts validate, refuse duplicates and malformed
     [first.contractDigest, second.contractDigest]);
 });
 
-test('P93A2-BOUND1: at-boundary counts for branches, candidates, and program nodes are accepted', () => {
+test('P93A2-BOUND1: counts past the removed ceilings are accepted', () => {
   const f = programFixture();
-  const branches = ['a', 'b', 'c', 'd'].map((name) => [name, 'selA', 'vs']);
-  assert.equal(branches.length, f.parallelPolicy.maxParallelBranches);
+  // The numbers a pre-#530 policy declared here: maxParallelBranches 4, maxJoinMembers 8,
+  // maxProgramNodes 64. Every case is past its number and normalizes whole.
+  const branches = ['a', 'b', 'c', 'd', 'e'].map((name) => [name, 'selA', 'vs']);
+  assert.equal(branches.length, 5);
   assert.doesNotThrow(() => normalize(f.source([
     f.nodes.value('vs', f.stringValue('s')),
     f.nodes.select('selA', [['k', 'vs']]),
     f.nodes.parallel('par', branches, { kind: 'all_terminal' }),
-  ], { nodeKey: 'par' }, { policy: f.parallelPolicy }), f.authority));
+  ], { nodeKey: 'par' }), f.authority));
 
-  const candidates = Array.from({ length: f.policy.maxJoinMembers }, (_unused, index) => [`c${index}`, 'vs']);
+  const candidates = Array.from({ length: 9 }, (_unused, index) => [`c${index}`, 'vs']);
   assert.doesNotThrow(() => normalize(f.source([
     f.nodes.value('vs', f.stringValue('s')),
     f.nodes.select('main', candidates),
   ], { nodeKey: 'main' }), f.authority));
 
-  const steps = Array.from({ length: f.policy.maxProgramNodes }, () => 'main');
+  const steps = Array.from({ length: 65 }, () => 'main');
   assert.doesNotThrow(() => normalize(f.source([
     f.nodes.value('vs', f.stringValue('s')),
     f.nodes.select('main', [['k', 'vs']]),
     f.nodes.sequence('seq', steps, { nodeKey: 'vs', port: 'value' }),
   ], { nodeKey: 'seq' }), f.authority));
 
-  const crowd = Array.from({ length: f.policy.maxProgramNodes - 1 },
+  const crowd = Array.from({ length: 65 },
     (_unused, index) => f.nodes.value(`v${index}`, f.stringValue('x')));
   assert.doesNotThrow(() => normalize(f.source([
     ...crowd,
@@ -172,69 +173,25 @@ test('P93A2-P1: ProgramPolicy shape, kind, version, digest formats, and policyDi
   }
 });
 
-test('P93A2-P2: ProgramPolicy numerics fail program_policy_invalid and require the authority', () => {
+test('P93A2-P2: the policy body is the bound digests, a declared number refuses, and the authority is required', () => {
   const f = programFixture();
   const { policyDigest: _digest, ...body } = f.policy;
   const make = (overrides) => {
     const candidate = { ...body, ...overrides };
     return { ...candidate, policyDigest: canonicalProgramDigest(candidate, f.authority) };
   };
-  for (const bad of [
-    { maxProgramNodes: 0 }, { maxProgramNodes: -1 }, { maxProgramNodes: 1.5 },
-    { maxProgramBytes: Number.MAX_SAFE_INTEGER + 1 }, { maxJoinMembers: '8' },
-    { maxParallelBranches: 0 }, { maxParallelBranches: -2 }, { maxParallelBranches: 4.5 },
-    { maxParallelBranches: '4' }, { maxTraceBytes: null }, { maxEvidenceRefs: 0 },
-  ]) {
-    assert.throws(() => normalizeProgramPolicy(make(bad), f.authority), policyInvalid, JSON.stringify(bad));
-  }
-  assert.throws(() => normalizeProgramPolicy(make({ maxParallelBranches: 4 })), policyInvalid);
-  assert.throws(() => normalizeProgramPolicy(make({}), undefined), policyInvalid);
-  const NUMERIC_FIELDS = [
+  const removedFields = [
     'maxProgramBytes', 'maxProgramNodes', 'maxProgramDepth', 'maxSchemaDefinitions', 'maxValueBytes',
     'maxResultBytes', 'maxEvidenceRefs', 'maxRepeatRounds', 'maxChildDepth', 'maxEffectInstances',
-    'maxJoinMembers', 'maxJoinComparisons', 'maxStateRevisions', 'maxTraceBytes',
+    'maxJoinMembers', 'maxJoinComparisons', 'maxStateRevisions', 'maxTraceBytes', 'maxParallelBranches',
   ];
-  for (const field of NUMERIC_FIELDS) {
-    for (const value of [0, -1, 1.5, '8']) {
-      assert.throws(() => normalizeProgramPolicy(make({ [field]: value }), f.authority),
-        policyInvalid, `${field}=${JSON.stringify(value)}`);
-    }
+  for (const field of removedFields) {
+    assert.throws(() => normalizeProgramPolicy(make({ [field]: 1 }), f.authority), invalid, field);
   }
-  for (const value of [0, -1, 1.5, '8']) {
-    assert.throws(() => normalizeProgramPolicy(make({ maxParallelBranches: value }), f.authority),
-      policyInvalid, `maxParallelBranches=${JSON.stringify(value)}`);
-  }
+  assert.throws(() => normalizeProgramPolicy(make({}), undefined), policyInvalid);
 });
 
-test('P93A2-P3: serial Programs refuse a non-null maxParallelBranches and parallel refuses null', () => {
-  const f = programFixture();
-  assert.throws(
-    () => normalize(f.baseSource({ policy: f.parallelPolicy }), f.authority),
-    (error) => error instanceof ProgramIrError && error.code === 'program_invalid'
-      && /maxParallelBranches/u.test(error.message));
-  const parNodes = [
-    f.nodes.value('vs', f.stringValue('s')),
-    f.nodes.select('selA', [['k', 'vs']]),
-    f.nodes.parallel('par', [['a', 'selA', 'vs']], { kind: 'all_terminal' }),
-  ];
-  assert.throws(
-    () => normalize(f.source(parNodes, { nodeKey: 'par' }), f.authority),
-    (error) => error instanceof ProgramIrError && error.code === 'program_invalid'
-      && /maxParallelBranches/u.test(error.message));
-  assert.doesNotThrow(() => normalize(
-    f.source(parNodes, { nodeKey: 'par' }, { policy: f.parallelPolicy }), f.authority));
-  // §93.20 amended: serial classification keys on parallel nodes reachable from root. An
-  // unreachable parallel node is inert and never forces a non-null maxParallelBranches.
-  const unreachable = [
-    f.nodes.value('vs', f.stringValue('s')),
-    f.nodes.select('selA', [['k', 'vs']]),
-    f.nodes.parallel('par', [['a', 'selA', 'vs']], { kind: 'all_terminal' }),
-    f.nodes.select('main', [['a', 'vs']]),
-  ];
-  assert.doesNotThrow(() => normalize(f.source(unreachable, { nodeKey: 'main' }), f.authority));
-});
-
-test('P93A2-C1: catalog v2 accepts one valid role and rejects duplicate, empty, and over-bound roles', () => {
+test('P93A2-C1: catalog v2 accepts one valid role and rejects duplicate and empty roles', () => {
   const f = programFixture();
   assert.deepEqual(normalizeRoleCatalog(f.catalogSource, { authority: f.authority, policy: f.policy }),
     f.catalog);
@@ -243,10 +200,6 @@ test('P93A2-C1: catalog v2 accepts one valid role and rejects duplicate, empty, 
     (error) => error instanceof ProgramIrError && /duplicate/u.test(error.message));
   assert.throws(() => normalizeRoleCatalog(
     f.makeCatalogSource([]), { authority: f.authority, policy: f.policy }), invalid);
-  const crowd = Array.from({ length: f.policy.maxProgramNodes + 1 },
-    (_unused, index) => ({ ...f.role, role: `role.${index}` }));
-  assert.throws(() => normalizeRoleCatalog(
-    f.makeCatalogSource(crowd), { authority: f.authority, policy: f.policy }), invalid);
   assert.throws(() => normalizeRoleCatalog(
     { ...f.catalogSource, schemaVersion: 1 }, { authority: f.authority, policy: f.policy }), invalid);
   assert.throws(() => normalizeRoleCatalog(
@@ -527,10 +480,9 @@ test('P93A2-N1: every source node kind rejects unknown fields and every exact fi
       ['nodeKey', 'program', 'input', 'bound', 'resultSchema']],
   };
   for (const [kind, [node, required]] of Object.entries(cases)) {
-    const policy = kind === 'parallel' || kind === 'await' ? f.parallelPolicy : f.policy;
     const wrap = (candidate) => f.source(
       [f.nodes.select('main', [['a', 'v']]), f.nodes.value('v', f.stringValue('x')), candidate],
-      { nodeKey: 'main' }, { policy });
+      { nodeKey: 'main' });
     assert.throws(() => normalize(wrap({ ...node, bogus: 1 }), f.authority),
       (error) => error instanceof ProgramIrError && error.code === 'program_invalid'
         && /field set/u.test(error.message), `${kind} unknown field`);
@@ -802,7 +754,7 @@ test('P93A2-A1: await accepts only parallel/child handles with compatible joins'
     f.nodes.await('aw', 'par', awaitJoin),
     f.nodes.sequence('seq', ['par', 'aw'], { nodeKey: 'aw', port: 'settlement' }, f.refs.envelope),
   ];
-  const parallelOverrides = { policy: f.parallelPolicy, resultSchema: f.refs.envelope };
+  const parallelOverrides = { resultSchema: f.refs.envelope };
   assert.throws(() => normalize(f.source(
     parNodes({ kind: 'all_terminal' }, { kind: 'operator_selected' }), { nodeKey: 'seq' },
     parallelOverrides), f.authority),
@@ -826,14 +778,14 @@ test('P93A2-A2: first_verified preference names must resolve to admitted members
     f.nodes.parallel('par', [['a', 'selA', 'vs'], ['b', 'selB', 'vs']], join),
   ];
   assert.doesNotThrow(() => normalize(
-    f.source(valid, { nodeKey: 'par' }, { policy: f.parallelPolicy }), f.authority));
+    f.source(valid, { nodeKey: 'par' }), f.authority));
   const nonMember = [
     f.nodes.value('vs', f.stringValue('s')),
     f.nodes.select('selA', [['k', 'vs']]),
     f.nodes.parallel('par', [['a', 'selA', 'vs']], { kind: 'first_verified', preference: ['ghost'] }),
   ];
   assert.throws(() => normalize(
-    f.source(nonMember, { nodeKey: 'par' }, { policy: f.parallelPolicy }), f.authority),
+    f.source(nonMember, { nodeKey: 'par' }), f.authority),
     (error) => error instanceof ProgramIrError && /preference/iu.test(error.message));
   assert.throws(() => normalize(f.source([
     f.nodes.value('vs', f.stringValue('s')),
@@ -873,19 +825,18 @@ test('P93A2-SEL1: settlement_value requires exactly one settlement_envelope cand
     f.nodes.parallel('par', [['a', 'selA', 'vs']], { kind: 'all_terminal' }),
     f.nodes.await('aw', 'par', { kind: 'all_terminal' }),
   ];
-  const overrides = { policy: f.parallelPolicy };
   assert.throws(() => normalize(f.source([
     ...parAwait,
     f.nodes.value('env', f.envelopeValue()),
     f.nodes.select('main', [['one', 'aw', 'settlement'], ['two', 'env']], selector, f.refs.string),
     f.nodes.sequence('seq', ['par', 'aw', 'main'], { nodeKey: 'main', port: 'value' }),
-  ], { nodeKey: 'seq' }, overrides), f.authority),
+  ], { nodeKey: 'seq' }), f.authority),
     (error) => error instanceof ProgramIrError && /exactly one/iu.test(error.message));
   const ok = normalize(f.source([
     ...parAwait,
     f.nodes.select('main', [['chosen', 'aw', 'settlement']], selector, f.refs.string),
     f.nodes.sequence('seq', ['par', 'aw', 'main'], { nodeKey: 'main', port: 'value' }),
-  ], { nodeKey: 'seq' }, overrides), f.authority);
+  ], { nodeKey: 'seq' }), f.authority);
   const select = ok.program.nodes.find((node) => node.kind === 'select' && node.selector.kind === 'settlement_value');
   assert.equal(select.selector.member.kind, 'self');
   const branchSelector = { ...selector, member: { kind: 'branch', name: 'a' } };
@@ -893,20 +844,20 @@ test('P93A2-SEL1: settlement_value requires exactly one settlement_envelope cand
     ...parAwait,
     f.nodes.select('main', [['chosen', 'aw', 'settlement']], branchSelector, f.refs.string),
     f.nodes.sequence('seq', ['par', 'aw', 'main'], { nodeKey: 'main', port: 'value' }),
-  ], { nodeKey: 'seq' }, overrides), f.authority));
+  ], { nodeKey: 'seq' }), f.authority));
   const badBranch = { ...selector, member: { kind: 'branch', name: 'ghost' } };
   assert.throws(() => normalize(f.source([
     ...parAwait,
     f.nodes.select('main', [['chosen', 'aw', 'settlement']], badBranch, f.refs.string),
     f.nodes.sequence('seq', ['par', 'aw', 'main'], { nodeKey: 'main', port: 'value' }),
-  ], { nodeKey: 'seq' }, overrides), f.authority),
+  ], { nodeKey: 'seq' }), f.authority),
     (error) => error instanceof ProgramIrError && /member/iu.test(error.message));
   const mapMember = { ...selector, member: { kind: 'map', index: 0 } };
   assert.throws(() => normalize(f.source([
     ...parAwait,
     f.nodes.select('main', [['chosen', 'aw', 'settlement']], mapMember, f.refs.string),
     f.nodes.sequence('seq', ['par', 'aw', 'main'], { nodeKey: 'main', port: 'value' }),
-  ], { nodeKey: 'seq' }, overrides), f.authority), invalid);
+  ], { nodeKey: 'seq' }), f.authority), invalid);
 });
 
 test('P93A2-RV1: settlement_value selector accepts requiredVerification "not_required"', () => {
@@ -921,12 +872,11 @@ test('P93A2-RV1: settlement_value selector accepts requiredVerification "not_req
     f.nodes.parallel('par', [['a', 'selA', 'vs']], { kind: 'all_terminal' }),
     f.nodes.await('aw', 'par', { kind: 'all_terminal' }),
   ];
-  const overrides = { policy: f.parallelPolicy };
   const ok = normalize(f.source([
     ...parAwait,
     f.nodes.select('main', [['chosen', 'aw', 'settlement']], selector, f.refs.string),
     f.nodes.sequence('seq', ['par', 'aw', 'main'], { nodeKey: 'main', port: 'value' }),
-  ], { nodeKey: 'seq' }, overrides), f.authority);
+  ], { nodeKey: 'seq' }), f.authority);
   const select = ok.program.nodes.find((node) => node.kind === 'select' && node.selector.kind === 'settlement_value');
   assert.equal(select.selector.requiredVerification, 'not_required');
 });
@@ -972,17 +922,13 @@ test('P93A2-SEL2: selector grammar pins evidence_ranked criteria and settlement_
   }), f.authority);
   const select = ranked.program.nodes.find((node) => node.kind === 'select');
   assert.deepEqual(select.selector.criteria.map((criterion) => criterion.order), [0, 1]);
-  // replica-C finding: criteria are a Program-level array bounded by policy.maxJoinMembers,
-  // never maxEvidenceRefs — maxJoinMembers rows pass, maxJoinMembers+1 fails even though it
-  // is within maxEvidenceRefs.
-  const boundCriteria = (count) => Array.from({ length: count },
+  // #530: criteria are a Program-level array with no declared ceiling. Eight was the removed
+  // policy maxJoinMembers; twenty criteria carry orders 0..19 and normalize.
+  const criteria = Array.from({ length: 20 },
     (_unused, index) => ({ contractDigest: f.sha256(`criterion ${index}`), required: true, order: index }));
   assert.doesNotThrow(() => normalize(selectWith({
-    kind: 'evidence_ranked', criteria: boundCriteria(f.policy.maxJoinMembers), tie: 'unresolved',
+    kind: 'evidence_ranked', criteria, tie: 'unresolved',
   }), f.authority));
-  assert.throws(() => normalize(selectWith({
-    kind: 'evidence_ranked', criteria: boundCriteria(f.policy.maxJoinMembers + 1), tie: 'unresolved',
-  }), f.authority), invalid);
   const base = { kind: 'settlement_value', member: { kind: 'self' } };
   assert.throws(() => normalize(selectWith({
     ...base, requiredExecution: 'failed', requiredVerification: 'passed',
@@ -1021,7 +967,7 @@ test('P93A2-DUP1: duplicate names are refused for collect items, select candidat
     f.nodes.value('vs', f.stringValue('s')),
     f.nodes.select('selA', [['k', 'vs']]),
     f.nodes.parallel('par', [['a', 'selA', 'vs'], ['a', 'selA', 'vs']], { kind: 'all_terminal' }),
-  ], { nodeKey: 'par' }, { policy: f.parallelPolicy }), f.authority),
+  ], { nodeKey: 'par' }), f.authority),
     (error) => error instanceof ProgramIrError && /duplicate name/iu.test(error.message));
 });
 
@@ -1033,7 +979,7 @@ test('P93A2-PERM1: preference order is semantic identity; unsorted set-like inpu
     f.nodes.select('selB', [['k', 'vs']]),
     f.nodes.parallel('par', [['a', 'selA', 'vs'], ['b', 'selB', 'vs']],
       { kind: 'first_verified', preference }),
-  ], { nodeKey: 'par' }, { policy: f.parallelPolicy });
+  ], { nodeKey: 'par' });
   const ab = normalize(withPreference(['a', 'b']), f.authority);
   const ba = normalize(withPreference(['b', 'a']), f.authority);
   assert.notEqual(ab.program.programDigest, ba.program.programDigest);
@@ -1069,13 +1015,13 @@ test('P93A2-PERM1: preference order is semantic identity; unsorted set-like inpu
     f.nodes.select('selA', [['k', 'vs']]),
     f.nodes.select('selB', [['k', 'vs']]),
     f.nodes.parallel('par', [['a', 'selA', 'vs'], ['b', 'selB', 'vs']], { kind: 'all_terminal' }),
-  ], { nodeKey: 'par' }, { policy: f.parallelPolicy }), f.authority);
+  ], { nodeKey: 'par' }), f.authority);
   const parReversed = normalize(f.source([
     f.nodes.value('vs', f.stringValue('s')),
     f.nodes.select('selA', [['k', 'vs']]),
     f.nodes.select('selB', [['k', 'vs']]),
     f.nodes.parallel('par', [['b', 'selB', 'vs'], ['a', 'selA', 'vs']], { kind: 'all_terminal' }),
-  ], { nodeKey: 'par' }, { policy: f.parallelPolicy }), f.authority);
+  ], { nodeKey: 'par' }), f.authority);
   assert.equal(parReversed.program.programDigest, parOrdered.program.programDigest);
 });
 
@@ -1109,7 +1055,7 @@ test('P93A2-J2: await may repeat a byte-identical non-all_terminal join embedded
     f.nodes.await('aw', 'par', join),
     f.nodes.sequence('seq', ['par', 'aw'], { nodeKey: 'aw', port: 'settlement' }, f.refs.envelope),
   ];
-  const overrides = { policy: f.parallelPolicy, resultSchema: f.refs.envelope };
+  const overrides = { resultSchema: f.refs.envelope };
   assert.doesNotThrow(() => normalize(
     f.source(parAwait({ kind: 'operator_selected' }), { nodeKey: 'seq' }, overrides), f.authority));
 });
@@ -1131,7 +1077,7 @@ test('P93A2-DOM1: await, predicate-operand, repeat.initial, and child.input domi
     f.nodes.sequence('seq', ['br', 'aw'], { nodeKey: 'vs', port: 'value' }),
   ];
   assert.throws(() => normalize(
-    f.source(awaitNodes, { nodeKey: 'seq' }, { policy: f.parallelPolicy }), f.authority),
+    f.source(awaitNodes, { nodeKey: 'seq' }), f.authority),
     dominanceInvalid);
   // Predicate-operand dominance: br2's predicate reads selT, which only dominates br1's then-arm.
   const predicateNodes = [
@@ -1227,7 +1173,7 @@ test('P93A2-J1: join grammar pins kind vocabulary, digest sets, and preference l
     f.nodes.value('vs', f.stringValue('s')),
     f.nodes.select('selA', [['k', 'vs']]),
     f.nodes.parallel('par', [['a', 'selA', 'vs']], join),
-  ], { nodeKey: 'par' }, { policy: f.parallelPolicy });
+  ], { nodeKey: 'par' });
   assert.throws(() => normalize(parallelWith({ kind: 'majority' }), f.authority), invalid);
   assert.throws(() => normalize(parallelWith({ kind: 'all_terminal', extra: 1 }), f.authority), invalid);
   const digestOne = f.sha256('contract one');
@@ -1260,9 +1206,9 @@ test('P93A2-PR1: predicate shape violations fail at grammar time', () => {
   assert.throws(() => normalize(branchWith(missingValue), f.authority), invalid);
   assert.throws(() => normalize(branchWith({ kind: 'and', predicates: [isTrue] }), f.authority),
     (error) => error instanceof ProgramIrError && /2/iu.test(error.message));
-  assert.throws(() => normalize(branchWith({
-    kind: 'or', predicates: Array.from({ length: f.policy.maxJoinMembers + 1 }, () => isTrue),
-  }), f.authority), invalid);
+  assert.doesNotThrow(() => normalize(branchWith({
+    kind: 'or', predicates: Array.from({ length: 9 }, () => isTrue),
+  }), f.authority));
   assert.throws(() => normalize(branchWith({ kind: 'not', predicates: [isTrue, isTrue] }), f.authority),
     invalid);
   assert.throws(() => normalize(branchWith({
@@ -1273,7 +1219,7 @@ test('P93A2-PR1: predicate shape violations fail at grammar time', () => {
   }), f.authority), invalid);
 });
 
-test('P93A2-PR2: predicate schema checks, arity bounds, and recursion depth run at normalization', () => {
+test('P93A2-PR2: predicate schema checks run at normalization', () => {
   const f = programFixture();
   const branchWith = (predicate) => f.source([
     f.nodes.value('vs', f.stringValue('s')),
@@ -1324,66 +1270,11 @@ test('P93A2-PR2: predicate schema checks, arity bounds, and recursion depth run 
   assert.doesNotThrow(() => normalize(branchWith({
     kind: 'exists', value: { nodeKey: 'vs', port: 'value' },
   }), f.authority));
+  // #530: predicate nesting has no declared depth ceiling. Sixteen was the removed policy
+  // maxProgramDepth; a thirty-two-level chain normalizes.
   let deep = { kind: 'is_true', value: { nodeKey: 'vb', port: 'value' } };
-  for (let index = 0; index < f.policy.maxProgramDepth; index += 1) deep = { kind: 'not', predicate: deep };
-  assert.throws(() => normalize(branchWith(deep), f.authority),
-    (error) => error instanceof ProgramIrError && /depth/iu.test(error.message));
-  let shallow = { kind: 'is_true', value: { nodeKey: 'vb', port: 'value' } };
-  for (let index = 0; index < f.policy.maxProgramDepth - 1; index += 1) shallow = { kind: 'not', predicate: shallow };
-  assert.doesNotThrow(() => normalize(branchWith(shallow), f.authority));
-});
-
-test('P93A2-B1: branch, item, step, and node counts obey policy bounds', () => {
-  const f = programFixture();
-  const branches = ['a', 'b', 'c', 'd', 'e'].map((name) => [name, 'selA', 'vs']);
-  assert.throws(() => normalize(f.source([
-    f.nodes.value('vs', f.stringValue('s')),
-    f.nodes.select('selA', [['k', 'vs']]),
-    f.nodes.parallel('par', branches, { kind: 'all_terminal' }),
-  ], { nodeKey: 'par' }, { policy: f.parallelPolicy }), f.authority),
-    (error) => error instanceof ProgramIrError && /maxParallelBranches/u.test(error.message));
-  // §93.20/§93.9 + code (wave-3.5 decision 7): an UNREACHABLE parallel's branch count is bounded
-  // by the pure shape ceiling maxProgramNodes, never by the concurrency authority
-  // maxParallelBranches — an inert node grants no execution authority. 'par' here is never
-  // referenced from root ('main'), so it is unreachable; the serial policy's
-  // maxParallelBranches=null is consistent with §93.20's reachable-parallel invariant.
-  const inertBranches = (count) => Array.from(
-    { length: count }, (_unused, index) => [`b${index}`, 'selA', 'vs']);
-  assert.throws(() => normalize(f.source([
-    f.nodes.value('vs', f.stringValue('s')),
-    f.nodes.select('selA', [['k', 'vs']]),
-    f.nodes.parallel('par', inertBranches(f.policy.maxProgramNodes + 1), { kind: 'all_terminal' }),
-    f.nodes.select('main', [['a', 'vs']]),
-  ], { nodeKey: 'main' }), f.authority),
-    (error) => error instanceof ProgramIrError && /maxProgramNodes/u.test(error.message));
-  assert.doesNotThrow(() => normalize(f.source([
-    f.nodes.value('vs', f.stringValue('s')),
-    f.nodes.select('selA', [['k', 'vs']]),
-    f.nodes.parallel('par', inertBranches(f.policy.maxProgramNodes), { kind: 'all_terminal' }),
-    f.nodes.select('main', [['a', 'vs']]),
-  ], { nodeKey: 'main' }), f.authority));
-  const items = Array.from({ length: f.policy.maxJoinMembers + 1 },
-    (_unused, index) => [`item${index}`, 'vs']);
-  assert.throws(() => normalize(f.source([
-    f.nodes.value('vs', f.stringValue('s')),
-    f.nodes.collect('col', items),
-    f.nodes.select('main', [['k', 'vs']]),
-  ], { nodeKey: 'main' }), f.authority),
-    (error) => error instanceof ProgramIrError && /maxJoinMembers/u.test(error.message));
-  const steps = Array.from({ length: f.policy.maxProgramNodes + 1 }, () => 'main');
-  assert.throws(() => normalize(f.source([
-    f.nodes.value('vs', f.stringValue('s')),
-    f.nodes.select('main', [['k', 'vs']]),
-    f.nodes.sequence('seq', steps, { nodeKey: 'vs', port: 'value' }),
-  ], { nodeKey: 'seq' }), f.authority),
-    (error) => error instanceof ProgramIrError && /maxProgramNodes/u.test(error.message));
-  const crowd = Array.from({ length: f.policy.maxProgramNodes },
-    (_unused, index) => f.nodes.value(`v${index}`, f.stringValue('x')));
-  assert.throws(() => normalize(f.source([
-    ...crowd,
-    f.nodes.select('main', [['a', 'v0']]),
-  ], { nodeKey: 'main' }), f.authority),
-    (error) => error instanceof ProgramIrError && /maxProgramNodes/u.test(error.message));
+  for (let index = 0; index < 32; index += 1) deep = { kind: 'not', predicate: deep };
+  assert.doesNotThrow(() => normalize(branchWith(deep), f.authority));
 });
 
 test('P93A2-D1: a control-produced port read outside its dominating settlement is refused', () => {
@@ -1468,7 +1359,7 @@ test('P93A2-D3: settle-then-read positions are settlement-domain-checked, not do
     f.nodes.parallel('par', [['a', 'selA', 'vs'], ['b', 'selA', 'selT']], { kind: 'all_terminal' }),
   ];
   assert.throws(() => normalize(
-    f.source(parExploit, { nodeKey: 'par' }, { policy: f.parallelPolicy }), f.authority),
+    f.source(parExploit, { nodeKey: 'par' }), f.authority),
     settlementInvalid);
   // Exploit (branch.{then,otherwise}.result): br2's then-arm control is selA, but its result
   // names selT, which selA's settlement never produces.
@@ -1513,7 +1404,7 @@ test('P93A2-D3: settle-then-read positions are settlement-domain-checked, not do
     ], { kind: 'all_terminal' }),
   ];
   assert.throws(() => normalize(
-    f.source(parLaundered, { nodeKey: 'par' }, { policy: f.parallelPolicy }), f.authority),
+    f.source(parLaundered, { nodeKey: 'par' }), f.authority),
     settlementInvalid);
   // Laundered exploit (branch.{then,otherwise}.result via one collect hop): br2's then-arm
   // control is selA, but its result names colBad.value, and colBad reads selT, which selA's
@@ -1581,12 +1472,12 @@ test('P93A2-PORT: producer port vocabulary is pinned per node kind', () => {
     ...controlLeaves,
     f.nodes.parallel('par', [['a', 'selA', 'vs'], ['b', 'selB', 'vs']], { kind: 'all_terminal' }),
     f.nodes.await('aw', 'par', { kind: 'all_terminal' }),
-    f.nodes.child('ch', { nodeKey: 'vs', port: 'value' }, f.parallelPolicy.policyDigest),
+    f.nodes.child('ch', { nodeKey: 'vs', port: 'value' }, f.policy.policyDigest),
     f.nodes.repeat('rep', { nodeKey: 'vs', port: 'value' },
-      { kind: 'is_true', value: { nodeKey: 'vb', port: 'value' } }, f.parallelPolicy.policyDigest),
+      { kind: 'is_true', value: { nodeKey: 'vb', port: 'value' } }, f.policy.policyDigest),
     f.nodes.select('reader', [candidate]),
     f.nodes.sequence('seq', ['par', 'aw', 'ch', 'rep', 'reader'], { nodeKey: 'reader', port: 'value' }),
-  ], { nodeKey: 'seq' }, { policy: f.parallelPolicy, ...overrides });
+  ], { nodeKey: 'seq' }, { ...overrides });
   for (const candidate of [
     ['bad', 'par', 'value'], ['bad', 'par', 'settlement'],
     ['bad', 'ch', 'value'], ['bad', 'ch', 'settlement'],

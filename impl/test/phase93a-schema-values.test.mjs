@@ -8,11 +8,8 @@ import {
   validateTypedValue, validateValueRef, valueSchemaRef,
 } from '../src/program-ir/index.mjs';
 
-const authorityInput = {
-  maxJoinMembers: 64, maxProgramBytes: 128 * 1024, maxProgramDepth: 32,
-  maxProgramNodes: 256, maxSchemaDefinitions: 64, maxValueBytes: 32 * 1024,
-};
-const authority = createProgramValueAuthority(authorityInput);
+// #530: the injected authority is the deployment's identity; it carries no size, count or depth.
+const authority = createProgramValueAuthority({});
 const sha = (bytes) => createHash('sha256').update(bytes).digest('hex');
 const define = (name, form, definition, version = 1) => createValueSchemaDefinition({
   schemaVersion: 1, kind: 'baton.value_schema', name, version, form, definition,
@@ -96,7 +93,7 @@ test('P93A1-V1: schema identities, registry order, name/version uniqueness, and 
     schemaVersion: 1, kind: 'baton.value_schema', name: 'bad', version: 1, form: 'string',
     definition: { type: 'string', minBytes: 0, maxBytes: 2, format: 'text', enum: null, default: '' },
   }, authority), /field set/u);
-  assert.throws(() => createProgramValueAuthority({ ...authorityInput, callerLimit: 1 }),
+  assert.throws(() => createProgramValueAuthority({ callerLimit: 1 }),
     { code: 'program_invalid' });
   assert.equal(Object.isFrozen(authority), true);
 });

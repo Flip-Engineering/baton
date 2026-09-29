@@ -16,10 +16,9 @@ import {
 const sha256 = (text) => createHash('sha256').update(text, 'utf8').digest('hex');
 
 export function programFixture() {
-  const authority = createProgramValueAuthority({
-    maxJoinMembers: 64, maxProgramBytes: 1024 * 1024, maxProgramDepth: 32,
-    maxProgramNodes: 4096, maxSchemaDefinitions: 64, maxValueBytes: 64 * 1024,
-  });
+  // #530: the injected authority is the deployment's identity for this domain; it carries no size,
+  // count or depth, and a submitted Program is normalized whole.
+  const authority = createProgramValueAuthority({});
   const define = (name, form, definition) => createValueSchemaDefinition({
     schemaVersion: 1, kind: 'baton.value_schema', name, version: 1, form, definition,
   }, authority);
@@ -80,15 +79,9 @@ export function programFixture() {
     routeCardSetDigest: sha256('fixture route card set'),
     artifactPolicyDigest: sha256('fixture artifact policy'),
     lifecyclePolicyDigest: sha256('fixture lifecycle policy'),
-    maxProgramBytes: 262144, maxProgramNodes: 64, maxProgramDepth: 16,
-    maxSchemaDefinitions: 32, maxValueBytes: 16384, maxResultBytes: 16384,
-    maxEvidenceRefs: 16, maxParallelBranches: null, maxRepeatRounds: 8,
-    maxChildDepth: 4, maxEffectInstances: 16, maxJoinMembers: 8,
-    maxJoinComparisons: 64, maxStateRevisions: 128, maxTraceBytes: 65536,
     ...overrides,
   }, authority);
   const policy = makePolicy();
-  const parallelPolicy = makePolicy({ maxParallelBranches: 4 });
 
   const workerPolicyRequest = {
     schemaVersion: 1,
@@ -224,7 +217,7 @@ export function programFixture() {
       childHandle: childHandleSchema, collectResult: collectResultSchema,
       collectOuter: collectOuterSchema,
     },
-    policy, makePolicy, parallelPolicy, catalog, catalogSource, makeCatalogSource,
+    policy, makePolicy, catalog, catalogSource, makeCatalogSource,
     approvalTemplate, manifest, verificationContract, role, nodeTemplate, nodeTemplateDigest,
     workerPolicyRequest, workerPolicyRequestDigest, childProgramRef,
     typed, stringValue, booleanValue, stringsValue, envelopeValue,
