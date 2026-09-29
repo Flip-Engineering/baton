@@ -64,22 +64,12 @@ export function normalizeProgramSource(source, { authority: valueAuthority } = {
   if (parsed.language !== 'baton-program-ir-v1') fail('Program source language is invalid');
 
   const policy = normalizeProgramPolicy(parsed.policy, deployed);
-  // §93.5 admission constraint: array maxItems may not exceed the injected value authority's,
-  // so a ProgramPolicy above the authority ceiling dies at policy admission with the field named,
-  // not at every node with a bare "array schema bounds are invalid".
-  if (policy.maxJoinMembers > deployed.maxJoinMembers) {
-    fail('ProgramPolicy maxJoinMembers exceeds the injected value authority maxJoinMembers; '
-      + 'a Program array bound would be unregistrable on this deployment', 'program_policy_invalid');
-  }
   const manifest = normalizeManifestRef(parsed.manifest, 'Program manifest');
-  if (!Array.isArray(parsed.schemas) || parsed.schemas.length > policy.maxSchemaDefinitions) {
-    fail('Program source schemas must contain at most maxSchemaDefinitions entries');
-  }
+  if (!Array.isArray(parsed.schemas)) fail('Program source schemas must be an array');
   const registry = createSchemaRegistry(parsed.schemas, deployed);
   const resultSchema = valueSchemaRef(resolveSchemaRef(parsed.resultSchema, registry, deployed));
-  if (!Array.isArray(parsed.verificationContracts)
-    || parsed.verificationContracts.length > policy.maxSchemaDefinitions) {
-    fail('Program source verificationContracts must contain 0..maxSchemaDefinitions entries');
+  if (!Array.isArray(parsed.verificationContracts)) {
+    fail('Program source verificationContracts must be an array');
   }
   const verificationContracts = parsed.verificationContracts.map((contract, index) => (
     normalizeVerificationContractRef(contract, `Program verificationContracts[${index}]`)
@@ -92,13 +82,12 @@ export function normalizeProgramSource(source, { authority: valueAuthority } = {
     compareProgramIdentityKeys(left.contractDigest, right.contractDigest)));
   const roleCatalog = normalizeRoleCatalog(parsed.roleCatalog, { authority: deployed, policy });
 
-  if (!Array.isArray(parsed.nodes) || parsed.nodes.length < 1
-    || parsed.nodes.length > policy.maxProgramNodes) {
-    fail('Program source nodes must contain 1..maxProgramNodes entries');
+  if (!Array.isArray(parsed.nodes) || parsed.nodes.length < 1) {
+    fail('Program source nodes must contain at least 1 entry');
   }
   const records = new Map();
   for (const node of parsed.nodes) {
-    validateSourceNode(node, { policy });
+    validateSourceNode(node);
     if (records.has(node.nodeKey)) fail(`Program nodes contain a duplicate nodeKey ${node.nodeKey}`);
     records.set(node.nodeKey, { source: node, kind: node.kind });
   }
@@ -140,35 +129,6 @@ export function normalizeProgramSource(source, { authority: valueAuthority } = {
   }
   const rootKey = parsed.root.nodeKey;
 
-  // §93.20 amended: serial classification keys on parallel nodes reachable from root through
-  // control edges. An unreachable parallel node is inert and never forces maxParallelBranches
-  // to be non-null.
-  const controlReachable = new Set();
-  const reachStack = [rootKey];
-  while (reachStack.length > 0) {
-    const key = reachStack.pop();
-    if (controlReachable.has(key)) continue;
-    controlReachable.add(key);
-    for (const ref of records.get(key).controlRefs) reachStack.push(ref.nodeKey);
-  }
-  const hasReachableParallel = [...controlReachable]
-    .some((key) => records.get(key).kind === 'parallel');
-  if (!hasReachableParallel && policy.maxParallelBranches !== null) {
-    fail('ProgramPolicy maxParallelBranches must be null for a Program without a reachable parallel node');
-  }
-  if (hasReachableParallel && policy.maxParallelBranches === null) {
-    fail('ProgramPolicy maxParallelBranches must be a positive integer for a Program with a reachable parallel node');
-  }
-  // §93.20 amended: a reachable parallel's branch count is additionally bounded by the
-  // concurrency authority maxParallelBranches now that reachability is known; an unreachable
-  // (inert) parallel keeps only the pure-shape maxProgramNodes ceiling already enforced in
-  // control-nodes.mjs, since it grants no execution authority.
-  for (const key of controlReachable) {
-    const record = records.get(key);
-    if (record.kind === 'parallel' && record.source.branches.length > policy.maxParallelBranches) {
-      fail(`Program parallel node ${key} branches must contain 1..maxParallelBranches entries`);
-    }
-  }
   const dataEdges = new Map();
   const controlEdges = new Map();
   const unionEdges = new Map();
@@ -402,7 +362,7 @@ export function normalizeProgramSource(source, { authority: valueAuthority } = {
     }
     if (record.kind === 'branch') {
       const predicate = validatePredicate(node.predicate,
-        { policy, authority: deployed, resolvePort, label: `${label}.predicate` });
+        { authority: deployed, resolvePort, label: `${label}.predicate` });
       const then = {
         control: controlRefFor(node.then.control), result: portRefFor(node.then.result),
       };
@@ -432,7 +392,7 @@ export function normalizeProgramSource(source, { authority: valueAuthority } = {
         };
       }).sort((left, right) => compareProgramIdentityKeys(left.name, right.name));
       const join = validateJoin(node.join,
-        { policy, memberNames: branches.map((branch) => branch.name), label: `${label}.join` });
+        { memberNames: branches.map((branch) => branch.name), label: `${label}.join` });
       const { schema: outputSchema, definition } = resolveSchema(node.outputSchema);
       if (definition.name !== 'baton.parallel_handle') {
         fail(`${label}.outputSchema must be registered as "baton.parallel_handle"`);
@@ -449,7 +409,7 @@ export function normalizeProgramSource(source, { authority: valueAuthority } = {
       }
       const memberNames = producerRecord.kind === 'parallel'
         ? producerRecord.source.branches.map((branch) => branch.name) : null;
-      const join = validateJoin(node.join, { policy, memberNames, label: `${label}.join` });
+      const join = validateJoin(node.join, { memberNames, label: `${label}.join` });
       if (producerRecord.kind === 'child') {
         if (join.kind !== 'all_terminal') {
           fail(`${label} on a child handle must use the all_terminal join`);
@@ -474,7 +434,7 @@ export function normalizeProgramSource(source, { authority: valueAuthority } = {
         .map((candidate) => ({ name: candidate.name, value: portRefFor(candidate.value) }))
         .sort((left, right) => compareProgramIdentityKeys(left.name, right.name));
       const selector = validateSelector(node.selector,
-        { policy, candidateNames: candidates.map((candidate) => candidate.name), label: `${label}.selector` });
+        { candidateNames: candidates.map((candidate) => candidate.name), label: `${label}.selector` });
       const { schema: outputSchema, definition } = resolveSchema(node.outputSchema);
       if (selector.kind === 'settlement_value') {
         const envelopeCandidates = candidates.filter((candidate) => (
@@ -519,7 +479,7 @@ export function normalizeProgramSource(source, { authority: valueAuthority } = {
             resultSchema: resolveSchema(node.body.resultSchema).schema,
           },
           continueWhen: validatePredicate(node.continueWhen,
-            { policy, authority: deployed, resolvePort, label: `${label}.continueWhen` }),
+            { authority: deployed, resolvePort, label: `${label}.continueWhen` }),
           bound: canonicalBound(node.bound, 'repeat'),
           resultSchema: resolveSchema(node.resultSchema).schema,
         },
@@ -596,9 +556,6 @@ export function normalizeProgramSource(source, { authority: valueAuthority } = {
   };
   const programDigest = canonicalProgramDigest(programSansDigest, deployed);
   const program = { ...programSansDigest, programDigest, programId: `program:${programDigest}` };
-  if (canonicalProgramBytes(program, deployed).byteLength > policy.maxProgramBytes) {
-    fail('Program exceeds the ProgramPolicy maxProgramBytes bound');
-  }
   const ownershipSansDigest = {
     schemaVersion: 1, kind: 'baton.static_effect_ownership', programDigest, entries: [],
   };

@@ -118,12 +118,10 @@ function normalizeDefinitionBody(value, deployed) {
     }
     const minBytes = nonnegativeInteger(input.minBytes, 'string schema minBytes');
     const maxBytes = nonnegativeInteger(input.maxBytes, 'string schema maxBytes');
-    if (maxBytes < minBytes || maxBytes > deployed.maxValueBytes) fail('string schema byte bounds are invalid');
+    if (maxBytes < minBytes) fail('string schema byte bounds are invalid');
     let enumValues = null;
     if (input.enum !== null) {
-      if (!Array.isArray(input.enum) || input.enum.length > deployed.maxSchemaDefinitions) {
-        fail('string schema enum is invalid');
-      }
+      if (!Array.isArray(input.enum)) fail('string schema enum is invalid');
       enumValues = input.enum.map((entry) => normalizeProgramString(entry, 'string schema enum value'));
       const canonical = new Set(enumValues.map((entry) => canonicalValueText(entry, deployed)));
       if (canonical.size !== enumValues.length) fail('string schema enum contains duplicates');
@@ -135,12 +133,12 @@ function normalizeDefinitionBody(value, deployed) {
     if (input.type !== form || typeof input.unique !== 'boolean') fail('array schema type or uniqueness is invalid');
     const minItems = nonnegativeInteger(input.minItems, 'array schema minItems');
     const maxItems = nonnegativeInteger(input.maxItems, 'array schema maxItems');
-    if (maxItems < minItems || maxItems > deployed.maxJoinMembers) fail('array schema bounds are invalid');
+    if (maxItems < minItems) fail('array schema bounds are invalid');
     definition = { type: form, items: schemaRef(input.items), minItems, maxItems, unique: input.unique };
   } else if (form === 'object') {
     exact(input, ['type', 'properties', 'additionalProperties'], 'object schema definition');
-    if (input.type !== form || input.additionalProperties !== false || !Array.isArray(input.properties)
-      || input.properties.length > deployed.maxSchemaDefinitions) fail('object schema definition is invalid');
+    if (input.type !== form || input.additionalProperties !== false
+      || !Array.isArray(input.properties)) fail('object schema definition is invalid');
     const properties = input.properties.map((property) => {
       exact(property, ['name', 'schema', 'required'], 'object schema property');
       if (typeof property.required !== 'boolean') fail('object schema property.required is invalid');
@@ -153,15 +151,14 @@ function normalizeDefinitionBody(value, deployed) {
     definition = { type: form, properties, additionalProperties: false };
   } else {
     exact(input, ['type', 'discriminator', 'variants'], 'union schema definition');
-    if (input.type !== form || !Array.isArray(input.variants) || input.variants.length === 0
-      || input.variants.length > deployed.maxSchemaDefinitions) fail('union schema definition is invalid');
+    if (input.type !== form || !Array.isArray(input.variants) || input.variants.length === 0) {
+      fail('union schema definition is invalid');
+    }
     const discriminator = safeId(input.discriminator, 'union schema discriminator');
     const variants = input.variants.map((variant) => {
       exact(variant, ['tag', 'schema'], 'union schema variant');
       const tag = normalizeProgramString(variant.tag, 'union schema variant tag');
-      if (tag.length === 0 || Buffer.byteLength(tag, 'utf8') > deployed.maxValueBytes) {
-        fail('union schema variant tag is invalid');
-      }
+      if (tag.length === 0) fail('union schema variant tag is invalid');
       return { tag, schema: schemaRef(variant.schema) };
     });
     variants.sort((left, right) => compareProgramIdentityKeys(left.tag, right.tag));
@@ -288,7 +285,7 @@ function assertUnionContracts(definitions, byId) {
 export function createSchemaRegistry(input, valueAuthority) {
   const deployed = authority(valueAuthority);
   if (utilTypes.isProxy(input)) fail('Schema registry cannot be a Proxy');
-  if (!Array.isArray(input) || input.length > deployed.maxSchemaDefinitions) fail('Schema registry is invalid');
+  if (!Array.isArray(input)) fail('Schema registry is invalid');
   preflightReferenceCycles(input, deployed);
   const definitions = input.map((definition) => normalizeDefinition(definition, deployed));
   definitions.sort((left, right) => compareProgramIdentityKeys(left.schemaId, right.schemaId));
