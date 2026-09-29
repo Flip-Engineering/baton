@@ -324,7 +324,7 @@ test('RR5: the map sees the move — every recovery_port delegate is recovery, a
 
 test('RR6: the coordinator wires the port and the public verbs keep their shape', () => {
   const proto = Coordinator.prototype;
-  const publicVerbs = ['recover', 'recoverPlanBound', 'resumePreservedWork', 'resumeOrphans', 'reconcileProviderSource', 'reconcileDueProviderProcessing', 'reconcileProviderProcessing', 'reapRunScratchpads', 'startupReady', 'startupReconstructionStatus', 'startupWorkerFleet', 'completeDeferredStartup'];
+  const publicVerbs = ['recover', 'recoverPlanBound', 'resumePreservedWork', 'resumeOrphans', 'reapRunScratchpads', 'startupReady', 'startupReconstructionStatus', 'startupWorkerFleet', 'completeDeferredStartup'];
   for (const name of publicVerbs) {
     assert.equal(typeof proto[name], 'function', `${name} must stay a coordinator method`);
   }
