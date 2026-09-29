@@ -144,6 +144,55 @@ const MUTATIONS = [
     replace: 'match cv:\n    case VPass{}: Con{"uncovered", acc}',
     law: 'm3a_passing_candidate_contributes_nothing',
   },
+  {
+    name: 'm10-first-check-reads-the-target-tree',
+    file: join('bend2', 'src', 'git', 'land.bend'),
+    find: 'cfv : FV <- run_check(ct2, s2, f2)',
+    replace: 'cfv : FV <- run_check(tt2, s2, f2)',
+    law: 'm10_run_pairs_checks_each_file_on_its_own_tree',
+  },
+  {
+    name: 'm10-target-tree-is-the-candidate-tree',
+    file: join('bend2', 'src', 'git', 'land.bend'),
+    find: '+tw = Tx.str_cat(sc, "-target")',
+    replace: '+tw = sc',
+    law: 'm10_stage_six_checks_the_prepared_target_sibling',
+  },
+  {
+    name: 'm10-judged-call-checks-the-other-tree',
+    file: join('bend2', 'src', 'git', 'land.bend'),
+    find: 'pvs : List<PV> <- run_pairs(script, files, s2, tw)',
+    replace: 'pvs : List<PV> <- run_pairs(script, files, tw, s2)',
+    law: 'm10_the_candidate_tree_and_the_target_sibling_are_judged',
+  },
+  {
+    name: 'm10-verdict-ignores-the-pairs',
+    file: join('bend2', 'src', 'git', 'land.bend'),
+    find: 'ld_judged_news(pairs_news(pvs), repo, target, scratch, tip, cand)',
+    replace: 'ld_judged_news(Nil{}, repo, target, scratch, tip, cand)',
+    law: 'm10_the_verdict_judges_the_pairs_the_checks_produced',
+  },
+  {
+    name: 'm17-restart-completes-a-dead-native',
+    file: join('bend2', 'src', 'coordinator', 'receive.bend'),
+    find: 'case True{}: restart_pending(db,session,id,native,cwd,handle,lock,again)',
+    replace: 'case True{}: completed(db,session,id,log,stderr,cursor,handle,lock,outcome,again)',
+    law: 'm17_dead_native_restarts_the_attempt',
+  },
+  {
+    name: 'm17-restart-drops-the-recovery-record',
+    file: join('bend2', 'src', 'coordinator', 'receive.bend'),
+    find: 'saved : Unit <- record_recovery(db,session,id,native,cwd,String.eq(recorded,"1\\n"))',
+    replace: 'saved : Unit <- IO.pure(Unit,Unit{})',
+    law: 'm17_restart_records_before_releasing_and_waking',
+  },
+  {
+    name: 'm17-recovery-native-guard-dropped',
+    file: join('bend2', 'src', 'coordinator', 'receive.bend'),
+    find: '" AND native=" ++ C.q(native) ++ ";"',
+    replace: '";"',
+    law: 'm17_recovery_input_is_one_guarded_transaction',
+  },
 ];
 
 for (const mutation of MUTATIONS) {

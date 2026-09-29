@@ -1046,3 +1046,97 @@ law m10_unjudged_candidate_names_file_and_cause:
 
 def m10_unjudged_candidate_names_file_and_cause():
   {==}
+
+# ---------------------------------------------------------------------------
+# M-10: the checked trees carry the check execution into the verdict. Stage 6
+# prepares the target tree as the candidate scratch tree's "-target" sibling,
+# the selected checks run on those two trees, and the pairs the checks produced
+# are the ones the verdict judges. Each right-hand side below is written here
+# independently of the function it judges. The publication argv and the advance
+# that runs it are stated above under M-3a.
+
+# M-10: every selected file runs on the candidate tree first and on the target
+# tree second, and each pair carries that file's own two verdicts. The step is
+# composed here independently of L.run_pair_go, so a run that reads the other
+# tree, drops a file or pairs the file with the other tree's verdict breaks this
+# proof. The same step holds at every position of the selection, because the
+# tail stays the production recursion.
+def run_pair_step_of(script: String, file: String, rest: List<String>, candTree: String, targTree: String) -> IO(List<L.PV>):
+  +s2 = script
+  +ct2 = candTree
+  +tt2 = targTree
+  +f2 = file
+  do IO<List<L.PV>>:
+    cfv : L.FV <- L.run_check(ct2, s2, f2)
+    tfv : L.FV <- L.run_check(tt2, s2, f2)
+    L.run_pair_go(s2, rest, ct2, tt2, Con{L.PV{f2, L.fv_verdict(cfv), L.fv_verdict(tfv)}, Nil{}})
+
+law m10_run_pairs_checks_each_file_on_its_own_tree:
+  for script: String
+  for file: String
+  for rest: List<String>
+  for candTree: String
+  for targTree: String
+  {L.run_pair_go(script, Con{file, rest}, candTree, targTree, Nil{}) == run_pair_step_of(script, file, rest, candTree, targTree) : IO(List<L.PV>)}
+
+def m10_run_pairs_checks_each_file_on_its_own_tree(script, file, rest, candTree, targTree):
+  {==}
+
+# M-10: the candidate tree that is checked is the scratch tree, the target tree
+# is its "-target" sibling, and the pairs reach the verdict unchanged.
+def ld_tree_judged(repo: String, target: String, script: String, files: List<String>, scratch: String, tip: String, cand: String, tw: String) -> IO(L.Ld):
+  +s2 = scratch
+  do IO<L.Ld>:
+    pvs : List<L.PV> <- L.run_pairs(script, files, s2, tw)
+    L.ld_judged(pvs, repo, target, s2, tip, cand)
+
+law m10_the_candidate_tree_and_the_target_sibling_are_judged:
+  for repo: String
+  for target: String
+  for script: String
+  for files: List<String>
+  for scratch: String
+  for tip: String
+  for cand: String
+  for tw: String
+  {L.ld_tree_runs(True{}, repo, target, script, files, scratch, tip, cand, tw) == ld_tree_judged(repo, target, script, files, scratch, tip, cand, tw) : IO(L.Ld)}
+
+def m10_the_candidate_tree_and_the_target_sibling_are_judged(repo, target, script, files, scratch, tip, cand, tw):
+  {==}
+
+# M-10: the verdict judges the pairs the checks produced, and nothing else.
+law m10_the_verdict_judges_the_pairs_the_checks_produced:
+  for pvs: List<L.PV>
+  for repo: String
+  for target: String
+  for scratch: String
+  for tip: String
+  for cand: String
+  {L.ld_judged(pvs, repo, target, scratch, tip, cand) == L.ld_judged_news(L.pairs_news(pvs), repo, target, scratch, tip, cand) : IO(L.Ld)}
+
+def m10_the_verdict_judges_the_pairs_the_checks_produced(pvs, repo, target, scratch, tip, cand):
+  {==}
+
+# M-10: stage 6 prepares one detached tree at the target tip, named as the
+# candidate scratch tree's "-target" sibling, and checks through it.
+def stage_six_checks_the_sibling(repo: String, target: String, script: String, files: List<String>, scratch: String, tip: String, cand: String) -> IO(L.Ld):
+  +r2 = repo
+  +sc = scratch
+  +t2 = tip
+  +tw = Tx.str_cat(sc, "-target")
+  do IO<L.Ld>:
+    g : T.GitOut <- P.runGit(r2, ["worktree", "add", "--detach", tw, t2])
+    L.ld_tree_ok(g, r2, target, script, files, sc, t2, cand, tw)
+
+law m10_stage_six_checks_the_prepared_target_sibling:
+  for repo: String
+  for target: String
+  for script: String
+  for files: List<String>
+  for scratch: String
+  for tip: String
+  for cand: String
+  {L.ld_stage6(repo, target, script, files, scratch, tip, cand) == stage_six_checks_the_sibling(repo, target, script, files, scratch, tip, cand) : IO(L.Ld)}
+
+def m10_stage_six_checks_the_prepared_target_sibling(repo, target, script, files, scratch, tip, cand):
+  {==}
