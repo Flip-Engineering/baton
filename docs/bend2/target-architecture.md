@@ -7,8 +7,9 @@ to recruit a worker with a harness and model. Baton creates a Git branch and
 worktree and records the worker; a `turn` or `receive` invocation starts the
 logged-in harness in that worktree and supplies the task. The worker can ask its
 parent questions and report progress. Each completed turn sends its full report and work
-location to the parent, which decides whether to guide another turn, land the
-work, or stop the worker.
+location to the parent, which decides whether to guide another turn or land the
+work. A turn ends when its native process ends, and the parent ends a worker's
+work by not starting another turn.
 
 The first implementation runs on one host and one Git repository. The root
 session remains the place where the operator reads and directs agent work. The
@@ -29,7 +30,7 @@ process. Three modules implement the workflow:
 | Part | Responsibility | Data kept |
 |---|---|---|
 | Coordinator | Accept root and worker commands, deliver messages, resume sessions, and recover unfinished operations. | Repository and target branch; attached root endpoint; worker ID, parent, requested and observed route, native session ID, worktree, branch and base commit; pending inputs and full reports with delivery acknowledgments. |
-| Harness adapters | Start or resume a subscription session, send input, observe questions, output and turn completion, stop on instruction, and inject parent notifications through the native harness. | Native connection handles in memory; session identity and complete output files on disk. Credentials remain with the harness. |
+| Harness adapters | Start or resume a subscription session, deliver the task, send pending guidance through the native harness during an OMP turn, and observe output, terminal events and native session identity. Harness launch arguments grant approvals, so no adapter reads or answers a native question or approval request. | Native connection handles in memory; session identity and complete output files on disk. Credentials remain with the harness. |
 | Git operations | Create worker worktrees, inspect changes, prepare a landing, run selected checks, and advance the target branch. | Worker branches and worktrees; landing input commit, target before, candidate commit, check output and result commit. |
 
 The coordinator stores current records and pending messages in a SQLite database
@@ -72,13 +73,19 @@ process. `status` shows the stored route, workspace and pending count. Errors
 name the observed failure and the next action.
 
 Every turn completion persists the harness's final output and wakes the parent,
-including turns that contain no explicit `report` call. A question is delivered
-while the worker session still exists. For OMP, the supervisor sends pending
-guidance as native `steer` frames on a response, message completion or tool
-event; the other harnesses receive further instructions when their next native
-turn starts. The parent makes continuation decisions.
-A worker's declaration that it is done or an explicit parent stop ends its work.
-Process failure reports the exit and retained workspace to the parent.
+including turns that contain no explicit `report` call. `ask` and `ask-file`
+store a message of kind `question` addressed to the worker's recorded parent and
+invoke that parent's registered endpoint after the transaction commits, the same
+path `report` takes. For OMP, the supervisor sends pending guidance as native
+`steer` frames on a response, message completion or tool event; the other
+harnesses receive pending input when `receive` composes their next native turn,
+and their inbox remains readable. The parent makes continuation decisions: it
+guides another turn, lands the work, or leaves the worker without a further turn.
+A worker's work ends when its native process ends with no further turn started for
+it. No coordinator command stops or cancels a running turn; killing a `receive`
+observer leaves the retained process owner, the native process and its work in
+place, so it is not an operator stop procedure. Process failure reports the exit
+and retained workspace to the parent.
 
 A native attachment must demonstrate that a report can start a parent turn while
 the parent is idle. The recipient records acceptance with `ack` after the
