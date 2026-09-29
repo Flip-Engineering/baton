@@ -151,3 +151,12 @@ law stop_reconcile_selects_the_recorded_signal_and_attempt:
 
 def stop_reconcile_selects_the_recorded_signal_and_attempt(db,session,attempt,directory):
   {==}
+
+# The answer reads the stored operation and distinguishes an idle stop from a
+# requested native signal. SQLite rendering is exercised by the idle fixture.
+law stop_result_reads_recorded_execution_status:
+  for +session: String
+  {Stop.result_sql(session) == "SELECT json_object('session',session,'stopId',id,'reason',reason,'status',outcome,'attempt',nullif(attempt,''),'requestedSignal',CASE WHEN attempt='' THEN NULL ELSE signal END,'submittedSignal',nullif(applied_signal,0),'controlError',nullif(control_error,''),'nativeStatus',nullif(native_status,''),'reportId',nullif(report_id,''),'stoppedInputs',(SELECT count(*) FROM messages WHERE recipient=session_stops.session AND receipt IS NULL AND kind IN ('task','guidance','recovery')),'pendingReports',(SELECT count(*) FROM messages WHERE recipient=session_stops.session AND receipt IS NULL AND kind IN ('report','question'))) FROM session_stops WHERE session=" ++ C.q(session) ++ ";" : String}
+
+def stop_result_reads_recorded_execution_status(session):
+  {==}

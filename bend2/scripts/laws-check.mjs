@@ -131,6 +131,13 @@ for (const { law, file } of rows) {
 // it claims to bind, and it is reported as a failure.
 const MUTATIONS = [
   {
+    name: 'idle-stop-claims-a-requested-signal',
+    file: join('bend2', 'src', 'coordinator', 'stop.bend'),
+    find: "'requestedSignal',CASE WHEN attempt='' THEN NULL ELSE signal END,",
+    replace: "'requestedSignal',signal,",
+    law: 'stop_result_reads_recorded_execution_status',
+  },
+  {
     name: 'stop-reconcile-forces-every-request',
     file: join('bend2', 'src', 'coordinator', 'stop.bend'),
     find: 'SELECT s.signal FROM session_stops',
