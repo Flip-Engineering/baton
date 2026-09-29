@@ -1093,38 +1093,6 @@ export async function inspectPreservedResult(coordinator, recorder, workerId, ex
     return entry;
   }
 
-export function _completeRetryCancelled(coordinator, recorder, admission, completionAuth) {
-    const receiptCore = {
-      schemaVersion: 1,
-      scope: 'run-verification-retry',
-      state: 'cancelled',
-      repoId: admission.repoId,
-      runId: admission.runId,
-      nodeKey: admission.nodeKey,
-      taskId: admission.taskId,
-      attempt: admission.attempt,
-      originOutcome: admission.originOutcome,
-      admissionDigest: admission.admissionDigest,
-      outcome: { disposition: { candidate: null, base: null }, runtimeDigest: null, verdictDigest: null },
-      stability: null,
-      evidence: null,
-      result: null,
-      checkpoint: {
-        state: 'pinned', sha: admission.checkpointSha, originOutcome: admission.originOutcome,
-      },
-    };
-    const receipt = { ...receiptCore, receiptDigest: canonicalDigest(receiptCore) };
-    try {
-      return recorder.coordination.completeRunVerificationRetry({
-        schemaVersion: 1, runId: admission.runId, nodeKey: admission.nodeKey,
-        attempt: admission.attempt, receipt, manifests: [],
-      }, completionAuth).retry.receipt;
-    } catch (coordinationError) {
-      coordinator._poisonCoordination(coordinationError);
-      throw coordinationError;
-    }
-  }
-
 export function _workerPolicyProjection(coordinator, recorder, handle) {
     if (!handle.workerPolicyResolution) {
       return handle.workerPolicyRequest

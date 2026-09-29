@@ -1297,8 +1297,6 @@ export class BatonApplication {
     this._detached = false;
     this._runStopPromises = new Map();
     this._workflowMemberStopPromises = new Map();
-    this._runRetryPromises = new Map();
-    this._runRetryControllers = new Map();
     this._runEffectChains = new Map();
     this._semanticReviewPromises = new Map();
     // Deliberate shared checkouts, per recruited Run: the swarm resolved a participant's LIVE
@@ -1316,7 +1314,6 @@ export class BatonApplication {
     this.ready = Promise.resolve().then(() => this._reconcileProfileRegistry())
       .then(() => this._reconcileRunStops())
       .then(() => this._reconcileWorkflowMemberStops())
-      .then(() => this._reconcileRunVerificationRetries())
       .then(() => this._reconcileApprovedRuns())
       .then(() => this._reconcileSemanticReviews());
   }
@@ -3095,39 +3092,6 @@ export class BatonApplication {
   }
 
 
-  _performRunVerificationRetry(admission) {
-    return applicationObservation._performRunVerificationRetry(this, admission);
-  }
-
-  _cancelRunVerificationRetry(pending) {
-    return applicationObservation._cancelRunVerificationRetry(this, pending);
-  }
-
-  async _reconcileRunVerificationRetries() {
-    this._assertOpen();
-    if (typeof this.driver.coordination.pendingRunVerificationRetries !== 'function'
-      || typeof this.driver.coordinator.retryVerification !== 'function') return;
-    for (const pending of this.driver.coordination.pendingRunVerificationRetries()) {
-      if (this.driver.coordination.runStop?.(pending.runId)) {
-        this._cancelRunVerificationRetry(pending);
-        continue;
-      }
-      try {
-        await this._performRunVerificationRetry(pending);
-      } catch (error) {
-        if (['verification_retry_conflict', 'verification_retry_unavailable', 'application_retry_cancelled'].includes(error?.code)) {
-          // The admission no longer matches current deployment authority (e.g. a corrected
-          // verifier runtime after restart). Settle it as cancelled so the Run stays actionable
-          // through a fresh admission instead of blocking readiness.
-          if (this.driver.coordination.runVerificationRetry(pending.runId, pending.nodeKey)?.status === 'pending') {
-            this._cancelRunVerificationRetry(pending);
-          }
-          continue;
-        }
-        throw error;
-      }
-    }
-  }
 
 
 
@@ -3488,33 +3452,10 @@ export class BatonApplication {
       if (phase === 'failed' || phase === 'degraded') cellTerminalPhase = phase;
     }
 
-    // VR6/RV: inconclusive runtime repair remains repeatable while a candidate-owned diagnostic
-    // checkpoint gets exactly one confirmation. The origin is pinned on the checkpoint so a later
-    // inconclusive confirmation cannot be mistaken for a fresh runtime-repair allowance.
+    // #635 (V5): the outline's verification state derives from the verdict's own outcome: a failed
+    // phase whose referee outcome is inconclusive projects verification.state 'inconclusive'.
     const verdictOutcome = result?.verdict?.outcome ?? null;
-    const durableRetry = this.driver.coordination.runVerificationRetry?.(runId, node.key) ?? null;
-    let retryProjection = null;
-    const originOutcome = result?.checkpoint?.originOutcome ?? verdictOutcome;
-    const candidateConfirmationUnspent = originOutcome === 'candidate_failed' && durableRetry === null;
-    const runtimeRepairable = originOutcome === 'inconclusive' && verdictOutcome === 'inconclusive';
-    if ((candidateConfirmationUnspent || runtimeRepairable) && result?.checkpoint?.state === 'pinned') {
-      let candidatePreserved = false;
-      if (workerId && typeof this.driver.coordinator.inspectCheckpoint === 'function') {
-        candidatePreserved = (await this.driver.coordinator.inspectCheckpoint(workerId)).state === 'pinned';
-      }
-      const attempt = originOutcome === 'candidate_failed' ? 1 : durableRetry
-        ? (durableRetry.status === 'pending' ? durableRetry.attempt : durableRetry.attempt + 1)
-        : 1;
-      const available = candidatePreserved && !runStop
-        && projection.approval?.disposition === 'approved'
-        && typeof this.driver.coordinator.retryVerification === 'function'
-        && typeof this.driver.coordination.admitRunVerificationRetry === 'function'
-        && (originOutcome === 'candidate_failed' ? durableRetry === null
-          : (!durableRetry || ['pending', 'inconclusive', 'cancelled'].includes(durableRetry.status)));
-      retryProjection = {
-        available, attempt, checkpointSha: result.checkpoint.sha, candidatePreserved, originOutcome,
-      };
-    }
+
     // PS5: while a cancelled Run's pinned checkpoint and approved Plan remain current, the view
     // reports the preserved work as available. Preservation is not acceptance: the projection
     // never carries an adopted result.
@@ -3716,7 +3657,7 @@ export class BatonApplication {
     const verificationState = ['work_completed', 'reviewing', 'completed'].includes(phase)
       ? resultStability === 'passed_after_candidate_failure' ? 'mechanically_verified_unstable' : 'mechanically_verified'
       : phase === 'inconclusive' ? 'inconclusive'
-        : phase === 'failed' ? (retryProjection && verdictOutcome === 'inconclusive' ? 'inconclusive' : 'failed') : 'pending';
+        : phase === 'failed' ? (verdictOutcome === 'inconclusive' ? 'inconclusive' : 'failed') : 'pending';
     const resourcesSettled = ownedWorkers.length === 0;
     const progress = { ...runProgress({
       phase, approval: projection.approval, node,
@@ -3777,15 +3718,6 @@ export class BatonApplication {
         state: verificationState,
         stability: resultStability,
         verdict: this._closedVerdictProjection(result, planNode, phase, workerId),
-        ...(retryProjection ? {
-          retry: retryProjection,
-          checkpoint: { sha: retryProjection.checkpointSha },
-          dispositions: {
-            candidate: result?.verdict?.execution?.state ?? null,
-            base: result?.verdict?.baseExecution?.state ?? null,
-          },
-          runtimeDigest: result?.verdict?.runtimeDigest ?? null,
-        } : {}),
       },
       semanticReview,
       progress,
@@ -4361,7 +4293,7 @@ export class BatonApplication {
       const semanticActions = callerActions;
       const requiredAction = projectRequiredAction({ phase: view.phase, attention });
       // Issue #334: for a failed or inconclusive verification the outline carries the
-      // shared verdict projection beside retry_verification — WHAT was checked, the
+      // shared verdict projection — WHAT was checked, the
       // corrective class, and the referee's failureCapsule as the bounded sanitized
       // tail — so run show never reads a bare failed string. Any other state projects
       // null and the outline carries no verification block (recorded absence).

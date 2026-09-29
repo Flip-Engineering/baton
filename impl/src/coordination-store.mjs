@@ -1157,29 +1157,6 @@ export class CoordinationStore {
     return coordinationInternals.runStop(this, runId);
   }
 
-  // ==========================================================================
-  // Phase 69 VR6 — durable verifier retry cascade (two-phase, response-loss safe)
-  // ==========================================================================
-
-  _runVerificationRetryKey(runId, nodeKey) { return coordinationLedger._runVerificationRetryKey(runId, nodeKey); }
-
-  _runVerificationRetryFailure(message, code = 'run_verification_retry_integrity', integrity = false) { return coordinationAdmission._runVerificationRetryFailure(message, code, integrity); }
-
-  runVerificationRetry(runId, nodeKey) { return coordinationLedger.runVerificationRetry(this, runId, nodeKey); }
-
-  pendingRunVerificationRetries(limit = 1_000) { return coordinationLedger.pendingRunVerificationRetries(this._runVerificationRetries, limit); }
-
-  _readRetryVerificationEvidence(reference, integrity) { return coordinationLedger._readRetryVerificationEvidence(this, reference, integrity); }
-
-  _normalizeRunVerificationRetryRequest(fields, event, integrity = false) { return coordinationAdmission._normalizeRunVerificationRetryRequest(this, fields, event, integrity); }
-
-  _validateRunVerificationRetryAdmission(p, event, integrity = false) { return coordinationAdmission._validateRunVerificationRetryAdmission(this, p, event, integrity); }
-
-  _validateRunVerificationRetryCompletion(p, event, integrity = false) { return coordinationAdmission._validateRunVerificationRetryCompletion(this, p, event, integrity); }
-
-  admitRunVerificationRetry(fields, auth) { return coordinationAdmission.admitRunVerificationRetry(this, fields, auth); }
-
-  completeRunVerificationRetry(fields, auth) { return coordinationLedger.completeRunVerificationRetry(this, fields, auth); }
   pendingRunStops(limit = 1_000) { return coordinationLedger.pendingRunStops(this._runStops, limit); }
 
   admitRunStop(fields, auth) { return coordinationAdmission.admitRunStop(this, fields, auth); }

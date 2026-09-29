@@ -1611,10 +1611,6 @@ export function _normalizeResumeRequest(coordinator, recorder, opts) {
     });
   }
 
-export function retryVerification(coordinator, recorder, workerId, opts) {
-    return coordinator._withAuthorityOp(() => coordinator._retryVerification(workerId, opts));
-  }
-
 export function _assertNoCycle(coordinator, recorder, taskId, deps) {
     const graph = new Map();
     for (const [id, t] of coordinator._tasks) graph.set(id, t.deps);

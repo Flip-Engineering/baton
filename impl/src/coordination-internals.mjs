@@ -75,7 +75,7 @@ export const PROJECTION_CHECKPOINT_FIELDS = Object.freeze([
   '_knowledgeReads', '_knowledgeRecallAssessments', '_contamination', '_webCommands',
   '_webCommandScopes', '_mcpCalls', '_mcpCallScopes', '_fleetDrains', '_runStops',
   '_runStopByTarget',
-  '_runVerificationRetries', '_runOrchestratorLeases', '_runLineages',
+  '_runOrchestratorLeases', '_runLineages',
   '_runLineageEventSeqs', '_runChildrenByParent', '_recoveryDispatches',
   '_taskTopologies', '_recoveryAttemptsById', '_recoveryAttemptHeads',
   '_providerReceipts', '_providerDeliveryIds', '_providerProcessing', '_providerPending',
@@ -247,7 +247,6 @@ export function _runIdentityHasEffects(store, runId, ignoredSeq = null) {
     || [...store._tasks.values()].some((task) => task.runId === runId)
     || [...store._goals.values()].some((goal) => goal.runId === runId)
     || [...store._plans.values()].some((plan) => plan.runId === runId)
-    || [...store._runVerificationRetries.values()].some((row) => row.runId === runId)
     || [...store._recoveryAttemptsById.values()].some((row) => row.runId === runId)) return true;
   return store._events.some((row) => row.seq !== ignoredSeq && (
     row.payload?.runId === runId || row.payload?.childRunId === runId

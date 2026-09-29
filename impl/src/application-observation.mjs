@@ -1883,21 +1883,6 @@ export function _performRunStop(application, stop) {
       if (current.status === 'stopped') return current.receipt;
       const targetRunIds = current.targetRunIds ?? [stop.runId];
 
-      // VR6: stop cancels an in-flight verifier retry exactly and settles its durable admission.
-      for (const targetRunId of targetRunIds) {
-        for (const controller of application._runRetryControllers.get(targetRunId) ?? []) controller.abort();
-      }
-      if (typeof application.driver.coordination.pendingRunVerificationRetries === 'function') {
-        for (const pending of application.driver.coordination.pendingRunVerificationRetries()
-          .filter((row) => targetRunIds.includes(row.runId))) {
-          try { application._cancelRunVerificationRetry(pending); }
-          catch (error) {
-            // The in-flight performer may have settled the same admission concurrently; a
-            // deterministic identical cancellation replays, anything else already completed it.
-            if (error?.code !== 'run_verification_retry_conflict') throw error;
-          }
-        }
-      }
       const outcome = await application.driver.coordinator.stopRunTargets(current.targetWorkerIds, current.actor);
       if (outcome.targetCount !== current.targetWorkerIds.length
         || outcome.remainingCount !== 0
@@ -2083,68 +2068,6 @@ export function _buildWorkflowEvidence(application, current, view) {
     };
     const manifest = deepFreeze({ ...core, manifestDigest: digest(core) });
     return manifest;
-  }
-export function _performRunVerificationRetry(application, admission) {
-    const key = `${admission.runId}\0${admission.nodeKey}\0${admission.attempt}`;
-    const existing = application._runRetryPromises.get(key);
-    if (existing) return existing;
-    const controller = new AbortController();
-    const controllers = application._runRetryControllers.get(admission.runId) ?? new Set();
-    controllers.add(controller);
-    application._runRetryControllers.set(admission.runId, controllers);
-    const operation = (async () => {
-      const current = application.driver.coordination.runVerificationRetry(admission.runId, admission.nodeKey);
-      if (!current || current.attempt !== admission.attempt) {
-        throw applicationError('Run verification retry admission is unavailable', 'application_retry_incomplete');
-      }
-      if (current.status !== 'pending') return current.receipt;
-      const task = application.driver.coordination.task(current.taskId);
-      if (!task?.assignee) throw applicationError('Run verification retry worker authority is unavailable', 'application_retry_incomplete');
-      try {
-        return await application.driver.coordinator.retryVerification(task.assignee, {
-          runId: current.runId, nodeKey: current.nodeKey, attempt: current.attempt, signal: controller.signal,
-        });
-      } catch (error) {
-        if (error?.code === 'verification_retry_cancelled') {
-          throw applicationError('Run verification retry was cancelled by stop authority', 'application_retry_cancelled');
-        }
-        throw error;
-      }
-    })();
-    application._runRetryPromises.set(key, operation);
-    operation.finally(() => {
-      if (application._runRetryPromises.get(key) === operation) application._runRetryPromises.delete(key);
-      controllers.delete(controller);
-      if (controllers.size === 0 && application._runRetryControllers.get(admission.runId) === controllers) {
-        application._runRetryControllers.delete(admission.runId);
-      }
-    }).catch(() => {});
-    return operation;
-  }
-export function _cancelRunVerificationRetry(application, pending) {
-    const receiptCore = {
-      schemaVersion: 1,
-      scope: 'run-verification-retry',
-      state: 'cancelled',
-      repoId: pending.repoId,
-      runId: pending.runId,
-      nodeKey: pending.nodeKey,
-      taskId: pending.taskId,
-      attempt: pending.attempt,
-      originOutcome: pending.originOutcome,
-      admissionDigest: pending.admissionDigest,
-      outcome: { disposition: { candidate: null, base: null }, runtimeDigest: null, verdictDigest: null },
-      stability: null,
-      evidence: null,
-      result: null,
-      checkpoint: {
-        state: 'pinned', sha: pending.checkpointSha, originOutcome: pending.originOutcome,
-      },
-    };
-    const receipt = { ...receiptCore, receiptDigest: digest(receiptCore) };
-    return application.driver.coordination.completeRunVerificationRetry({
-      schemaVersion: 1, runId: pending.runId, nodeKey: pending.nodeKey, attempt: pending.attempt, receipt, manifests: [],
-    }, { actor: pending.actor, key: `run.verification_retry.complete:${pending.runId}:${pending.nodeKey}:${pending.attempt}` });
   }
 /**
    * Issue #489: judge a composed Run view against the deployment's projection ceiling — AFTER
