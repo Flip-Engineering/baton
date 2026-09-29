@@ -180,6 +180,20 @@ const MUTATIONS = [
     law: 'm10_run_check_runs_its_argv_in_its_own_directory',
   },
   {
+    name: 'm10-pair-verdict-is-always-a-pass',
+    file: join('bend2', 'src', 'git', 'land.bend'),
+    find: 'case FV{file, v}: v',
+    replace: 'case FV{file, v}: VPass{}',
+    law: 'm10_the_verdict_of_a_pair_is_the_verdict_it_carries',
+  },
+  {
+    name: 'm10-normal-exit-forced-to-pass',
+    file: join('bend2', 'src', 'git', 'land.bend'),
+    find: 'case T.RRun{T.SExit{code}, out}: exit_verdict(U32.is_eq(code, 0), out, file)',
+    replace: 'case T.RRun{T.SExit{code}, out}: exit_verdict(True{}, out, file)',
+    law: 'm10_a_normal_exit_reads_its_own_status',
+  },
+  {
     name: 'm17-refused-conversation-completes-instead',
     file: join('bend2', 'src', 'coordinator', 'receive.bend'),
     find: 'case True{}: restart_pending(db,session,id,native,cwd,handle,lock,again)',
