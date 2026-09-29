@@ -5,8 +5,8 @@
 Following the operator question about shared knowledge, the root assigned three
 coordinator operations on 2026-09-29 under #642: record a finding, read visible
 context, and explicitly promote an exact finding. Agents generate findings and
-review their evidence.
-The coordinator stores the records and applies visibility and promotion rules.
+review their evidence. The coordinator stores the records and applies visibility
+and promotion rules.
 These operations are planned; published `4676778a` implements sessions,
 messages and turns, without this knowledge workflow.
 
@@ -26,18 +26,20 @@ phase gates. Its acceptance is the concrete workflow below.
 
 ## Records and visibility
 
-The implementation lead's planned command forms are:
+The root froze the first-slice command contract as v3 on 2026-09-29.
+The planned command forms are:
 
 ```text
 baton2 DATABASE record FINDING_ID AUTHOR CLAIM EVIDENCE LIMITS
 baton2 DATABASE knowledge READER
-baton2 DATABASE promote PROMOTION_ID PROMOTER DESTINATION FINDING
+baton2 DATABASE promote PROMOTION_ID PROMOTER SOURCE DESTINATION FINDING
 ```
 
-`AUTHOR`, `READER`, `PROMOTER` and `DESTINATION` name coordinator sessions.
-`FINDING` names an existing finding. The coordinator obtains its source scope
-and provenance from the stored record. These argument names describe declared
-actors under the trusted-local boundary below.
+`AUTHOR`, `READER`, `PROMOTER`, `SOURCE` and `DESTINATION` name coordinator
+sessions. `FINDING` names an existing finding. Promotion explicitly names its
+source and destination scopes and retains the finding's stored provenance.
+These argument names describe declared actors under the trusted-local boundary
+below.
 
 A finding preserves its immutable claim, original declared author, source scope,
 evidence references and stated limitations. A correction creates a new finding
@@ -56,13 +58,15 @@ Scopes use the existing coordinator session parentage:
 The destination owner promotes a source it can read. Wider sharing requires
 another explicit promotion. Recording, reading, reporting, acknowledging a
 message and completing a turn do not promote a finding. `knowledge READER`
-applies the scope rule to every returned finding, including its evidence reference
-and metadata. A fresh or restarted worker can retrieve visible records independently
-of its native conversation memory and whether review messages were acknowledged.
+returns the complete visible list, including each finding's evidence message body
+and full promotion provenance. A fresh or restarted worker can retrieve records
+independently of its native conversation memory and whether review messages were
+acknowledged.
 
 Read rows carry `id`, `author`, `claim`, `evidence`, `limits`, `destinations` and
 `promotions`. Each promotion names `finding`, `source`, `destination` and
-`promotedBy`. The parent review notice is an ordinary message containing only
+`promotedBy`. The read also exposes the referenced evidence message body. The
+parent review notice uses the existing `question` message kind and contains only
 the finding ID and author; the parent retrieves the finding through `knowledge`.
 
 ## Trusted-local boundary
@@ -81,22 +85,19 @@ body into a broadly visible message.
 
 ## Evidence and existing primitives
 
-Use the existing SQLite store and coordinator messages. Initial evidence kinds
-are retained report/message records and immutable Git evidence needed by the
-acceptance task. Planned reference forms are `message:<id>` and `git:<40 hex>`.
-A message reference must identify an existing row whose sender or recipient is
-the declared finding author. A Git reference names an immutable object identity
-that a reader resolves in the repository. The claim and limitations supply any
-repository, path and observation context needed to interpret that evidence.
-Promotion preserves the reference. Admitting a Git reference does not establish
-that its object has been resolved or its contents verified. A reader reports a
-missing or unreadable object accurately; an agent's assertion does not establish
-an executed check or verified result.
+Use the existing SQLite store and coordinator messages. `EVIDENCE` accepts only
+`message:<ID>`. Recording checks in the same transaction that the message exists
+and that the declared finding author is its sender or recipient. The immutable
+message body carries the report, Git commit and path identities, check evidence,
+and relevant observation context. Agents resolve and review that evidence.
+An agent's assertion does not establish an executed check or verified result;
+review reports missing or unreadable underlying evidence accurately.
 
-Promotion must account for the evidence's visibility in the destination. It
-cannot silently expose other source-scope material or promise evidence the
-reader cannot obtain. Evidence retention uses existing stores; this slice adds
-no generic artifact registry or capture subsystem.
+Promotion preserves the evidence reference and shares its message body with
+the finding's destination scope. Every reader who can read the finding receives
+that body through `knowledge`, including readers who were not parties to the
+original message. Evidence retention uses existing stores; this slice adds no
+generic artifact registry or capture subsystem.
 
 The parent receives review requests through ordinary committed messages and
 native delivery. A message receipt establishes acceptance of that message.
@@ -106,19 +107,22 @@ remain agent work. There is no automatic promotion.
 
 ## Acceptance
 
-A real worker investigates repository behavior and records findings referencing
-its actual report/message and immutable Git evidence. Its parent reviews and
-explicitly promotes an exact finding. A sibling retrieves the promoted record
-with original author, promoting actor, evidence and both scopes; a local-only
-candidate remains absent from that sibling's supported scoped reads.
+A real worker investigates repository behavior and records a finding referencing
+an actual message whose body carries the report and immutable Git evidence.
+Its parent reviews and explicitly promotes that exact finding. A sibling retrieves
+the promoted record with original author, promoting actor, evidence message body
+and both scopes; a local-only candidate remains absent from that sibling's
+supported scoped reads.
 
 A newly recruited worker retrieves and uses the finding without receiving a
 copied claim in its task. A restarted worker retrieves the same record after
 review messages have been acknowledged. Retained command results, native output
 and database records establish what each worker received and used.
 
-Executable checks cover declared actor/scope mismatches, inaccessible or missing
-evidence, exact retries, conflicting identities, and fresh-process reads. Laws
-bind the actual storage, query, promotion dispatch and notification functions.
+Executable checks cover declared actor/scope mismatches, missing evidence messages,
+authors who are not evidence-message parties, complete visible reads, exact retries,
+conflicting identities, and fresh-process reads. Agent acceptance checks resolution
+of the underlying Git and check evidence. Laws bind the actual storage, query,
+promotion dispatch and notification functions.
 Tests preserve the trusted-local limitation; they do not claim authenticated
 caller isolation. Host reboot and power-loss durability require separate evidence.
