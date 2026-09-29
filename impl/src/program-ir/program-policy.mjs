@@ -1,10 +1,14 @@
 // Phase 93a.2 ProgramPolicy shape (§93.20). One baton.program_policy schema v1 binds the admitted
-// lower authorities by digest and carries the deployment-owned numeric ceilings. The 93a.2 slice
-// validates the exact field set, the digest formats, the numeric domains, and recomputes
-// policyDigest; the like-for-like lower-authority binding proofs (including the route-card
-// concurrencyCeiling minimum for maxParallelBranches) are Phase 93E scope and are not rederived
-// here. Authority and numeric-domain violations fail program_policy_invalid; every other
+// lower authorities by digest. The 93a.2 slice validates the exact field set, the digest formats,
+// and recomputes policyDigest; the like-for-like lower-authority binding proofs are Phase 93E
+// scope and are not rederived here. Authority violations fail program_policy_invalid; every other
 // violation fails program_invalid, always before any effect.
+//
+// #530: the fourteen declared size, count and depth numbers and the nullable maxParallelBranches
+// leave. Each one bounded a submitted Program, and each one refused work; seven of them
+// (maxResultBytes, maxRepeatRounds, maxChildDepth, maxEffectInstances, maxJoinComparisons,
+// maxStateRevisions, maxTraceBytes) no normalizer read at all. What stays is the identity the
+// deployment owns: the eight lower-authority digests and policyDigest.
 
 import {
   canonicalProgramDigest, deepFreezeProgramValue, isProgramValueAuthority,
@@ -16,26 +20,14 @@ const DIGEST_FIELDS = Object.freeze([
   'canonicalOrderPolicyDigest', 'contextPolicyDigest', 'workflowPolicyDigest', 'goalPolicyDigest',
   'capacityPolicyDigest', 'routeCardSetDigest', 'artifactPolicyDigest', 'lifecyclePolicyDigest',
 ]);
-const NUMERIC_FIELDS = Object.freeze([
-  'maxProgramBytes', 'maxProgramNodes', 'maxProgramDepth', 'maxSchemaDefinitions', 'maxValueBytes',
-  'maxResultBytes', 'maxEvidenceRefs', 'maxRepeatRounds', 'maxChildDepth', 'maxEffectInstances',
-  'maxJoinMembers', 'maxJoinComparisons', 'maxStateRevisions', 'maxTraceBytes',
-]);
 const POLICY_FIELDS = Object.freeze([
-  'schemaVersion', 'kind', ...DIGEST_FIELDS, ...NUMERIC_FIELDS, 'maxParallelBranches', 'policyDigest',
+  'schemaVersion', 'kind', ...DIGEST_FIELDS, 'policyDigest',
 ]);
 const policies = new WeakSet();
 
 function authority(value) {
   if (!isProgramValueAuthority(value)) {
     fail('ProgramPolicy validation requires deployment-injected authority', 'program_policy_invalid');
-  }
-  return value;
-}
-
-function numeric(value, label) {
-  if (!Number.isSafeInteger(value) || value <= 0) {
-    fail(`ProgramPolicy ${label} must be a positive safe integer`, 'program_policy_invalid');
   }
   return value;
 }
@@ -54,12 +46,6 @@ export function normalizeProgramPolicy(value, valueAuthority) {
   for (const field of DIGEST_FIELDS) {
     policy[field] = digestValue(normalized[field], `ProgramPolicy ${field}`);
   }
-  for (const field of NUMERIC_FIELDS) policy[field] = numeric(normalized[field], field);
-  if (normalized.maxParallelBranches !== null) {
-    policy.maxParallelBranches = numeric(normalized.maxParallelBranches, 'maxParallelBranches');
-  } else {
-    policy.maxParallelBranches = null;
-  }
   policy.policyDigest = digestValue(normalized.policyDigest, 'ProgramPolicy policyDigest');
   const { policyDigest: _omitted, ...sansDigest } = policy;
   if (policy.policyDigest !== canonicalProgramDigest(sansDigest, deployed)) {
@@ -70,7 +56,7 @@ export function normalizeProgramPolicy(value, valueAuthority) {
   return frozen;
 }
 
-// Test/builder convenience: computes policyDigest over the supplied 24-field body, then runs the
+// Test/builder convenience: computes policyDigest over the supplied ten-field body, then runs the
 // full normalizer so a convenience-built policy is byte-identical to a normalized one.
 export function createProgramPolicy(value, valueAuthority) {
   const deployed = authority(valueAuthority);

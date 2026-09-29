@@ -1,10 +1,12 @@
 import { createHash } from 'node:crypto';
 import { TextDecoder, types as utilTypes } from 'node:util';
 
-const AUTHORITY_FIELDS = Object.freeze([
-  'maxJoinMembers', 'maxProgramBytes', 'maxProgramDepth', 'maxProgramNodes',
-  'maxSchemaDefinitions', 'maxValueBytes',
-]);
+// #530: the six injected bounds (maxJoinMembers, maxProgramBytes, maxProgramDepth,
+// maxProgramNodes, maxSchemaDefinitions, maxValueBytes) leave. The authority is the deployment's
+// injected identity for this domain — every entry point requires it — and it carries no size,
+// count or depth to refuse a Program with. What stays is its shape: a plain object, no unknown
+// keys, so an injected bound refuses at construction rather than silently doing nothing.
+const AUTHORITY_FIELDS = Object.freeze([]);
 const authorities = new WeakSet();
 const utf8Decoder = new TextDecoder('utf-8', { fatal: true, ignoreBOM: true });
 
@@ -39,14 +41,7 @@ function ownDataObject(value, fields, label) {
 
 export function createProgramValueAuthority(value) {
   ownDataObject(value, AUTHORITY_FIELDS, 'Program value authority');
-  const result = {};
-  for (const field of AUTHORITY_FIELDS) {
-    if (!Number.isSafeInteger(value[field]) || value[field] <= 0) {
-      fail(`Program value authority ${field} is invalid`, 'program_policy_invalid');
-    }
-    result[field] = value[field];
-  }
-  Object.freeze(result);
+  const result = Object.freeze({});
   authorities.add(result);
   return result;
 }
@@ -128,13 +123,9 @@ function plainObjectDescriptors(value, label) {
   return Object.keys(descriptors);
 }
 
-function normalizeChecked(value, authority, byteLimit) {
+function normalizeChecked(value) {
   const active = new Set();
-  let nodes = 0;
-  const visit = (item, depth, label) => {
-    nodes += 1;
-    if (nodes > authority.maxProgramNodes) fail('Program canonical value exceeds its node authority');
-    if (depth > authority.maxProgramDepth) fail('Program canonical value exceeds its depth authority');
+  const visit = (item, label) => {
     if (item === null || typeof item === 'boolean') return item;
     if (typeof item === 'string') return normalizeProgramString(item, label);
     if (typeof item === 'number') {
@@ -148,7 +139,7 @@ function normalizeChecked(value, authority, byteLimit) {
     try {
       if (Array.isArray(item)) {
         denseArrayDescriptors(item, label);
-        return item.map((child, index) => visit(child, depth + 1, `${label}[${index}]`));
+        return item.map((child, index) => visit(child, `${label}[${index}]`));
       }
       const rawKeys = plainObjectDescriptors(item, label);
       const normalizedKeys = new Map();
@@ -160,7 +151,7 @@ function normalizeChecked(value, authority, byteLimit) {
       const result = {};
       for (const key of [...normalizedKeys.keys()].sort(compareProgramIdentityKeys)) {
         Object.defineProperty(result, key, {
-          value: visit(item[normalizedKeys.get(key)], depth + 1, `${label}.${key}`),
+          value: visit(item[normalizedKeys.get(key)], `${label}.${key}`),
           enumerable: true, configurable: true, writable: true,
         });
       }
@@ -169,9 +160,8 @@ function normalizeChecked(value, authority, byteLimit) {
       active.delete(item);
     }
   };
-  const normalized = visit(value, 0, 'Program canonical value');
+  const normalized = visit(value, 'Program canonical value');
   const bytes = Buffer.from(serializeCanonical(normalized), 'utf8');
-  if (bytes.byteLength > byteLimit) fail('Program canonical value exceeds its byte authority');
   return { normalized, bytes };
 }
 
@@ -193,18 +183,23 @@ export function deepFreezeProgramValue(value) {
   return Object.freeze(value);
 }
 
+// #530: the two normalizers and the two byte helpers were judged against the authority's value and
+// Program byte bounds. They keep their domain names (value vs Program) and share one body.
 export function normalizeCanonicalValue(value, authority) {
-  const checked = normalizeChecked(value, requireAuthority(authority), authority.maxValueBytes);
+  requireAuthority(authority);
+  const checked = normalizeChecked(value);
   return deepFreezeProgramValue(checked.normalized);
 }
 
 export function normalizeCanonicalProgramValue(value, authority) {
-  const checked = normalizeChecked(value, requireAuthority(authority), authority.maxProgramBytes);
+  requireAuthority(authority);
+  const checked = normalizeChecked(value);
   return deepFreezeProgramValue(checked.normalized);
 }
 
 export function canonicalValueBytes(value, authority) {
-  const checked = normalizeChecked(value, requireAuthority(authority), authority.maxValueBytes);
+  requireAuthority(authority);
+  const checked = normalizeChecked(value);
   return Buffer.from(checked.bytes);
 }
 
@@ -217,7 +212,8 @@ export function canonicalValueDigest(value, authority) {
 }
 
 export function canonicalProgramBytes(value, authority) {
-  const checked = normalizeChecked(value, requireAuthority(authority), authority.maxProgramBytes);
+  requireAuthority(authority);
+  const checked = normalizeChecked(value);
   return Buffer.from(checked.bytes);
 }
 
@@ -225,13 +221,12 @@ export function canonicalProgramDigest(value, authority) {
   return createHash('sha256').update(canonicalProgramBytes(value, authority)).digest('hex');
 }
 
-function rawText(raw, authority) {
+function rawText(raw) {
   if (utilTypes.isProxy(raw)) fail('Raw Program JSON cannot be a Proxy');
   let bytes;
   if (typeof raw === 'string') bytes = Buffer.from(raw, 'utf8');
   else if (Buffer.isBuffer(raw) || raw instanceof Uint8Array) bytes = Buffer.from(raw);
   else fail('Raw Program JSON must be a string or UTF-8 bytes');
-  if (bytes.byteLength > authority.maxProgramBytes) fail('Raw Program JSON exceeds its byte authority');
   try {
     return typeof raw === 'string' ? raw : utf8Decoder.decode(bytes);
   } catch {
@@ -240,11 +235,9 @@ function rawText(raw, authority) {
 }
 
 class StrictJsonParser {
-  constructor(text, authority) {
+  constructor(text) {
     this.text = text;
-    this.authority = authority;
     this.offset = 0;
-    this.nodes = 0;
   }
 
   parse() {
@@ -259,14 +252,11 @@ class StrictJsonParser {
     while (/[\t\n\r ]/u.test(this.text[this.offset] ?? '')) this.offset += 1;
   }
 
-  value(depth) {
-    this.nodes += 1;
-    if (this.nodes > this.authority.maxProgramNodes) fail('Raw Program JSON exceeds its node authority');
-    if (depth > this.authority.maxProgramDepth) fail('Raw Program JSON exceeds its depth authority');
+  value() {
     const char = this.text[this.offset];
     if (char === '"') return this.string();
-    if (char === '{') return this.object(depth);
-    if (char === '[') return this.array(depth);
+    if (char === '{') return this.object();
+    if (char === '[') return this.array();
     if (char === 't' && this.take('true')) return true;
     if (char === 'f' && this.take('false')) return false;
     if (char === 'n' && this.take('null')) return null;
@@ -303,7 +293,7 @@ class StrictJsonParser {
     fail('Raw Program JSON has an unterminated string');
   }
 
-  object(depth) {
+  object() {
     this.offset += 1;
     this.space();
     const result = Object.create(null);
@@ -322,7 +312,7 @@ class StrictJsonParser {
       this.space();
       if (this.text[this.offset++] !== ':') fail('Raw Program JSON object is missing a colon');
       this.space();
-      result[key] = this.value(depth + 1);
+      result[key] = this.value();
       this.space();
       const separator = this.text[this.offset++];
       if (separator === '}') return result;
@@ -331,14 +321,13 @@ class StrictJsonParser {
     }
   }
 
-  array(depth) {
+  array() {
     this.offset += 1;
     this.space();
     const result = [];
     if (this.text[this.offset] === ']') { this.offset += 1; return result; }
     while (true) {
-      if (result.length >= this.authority.maxProgramNodes) fail('Raw Program JSON array exceeds its node authority');
-      result.push(this.value(depth + 1));
+      result.push(this.value());
       this.space();
       const separator = this.text[this.offset++];
       if (separator === ']') return result;
@@ -362,9 +351,9 @@ class StrictJsonParser {
 }
 
 export function parseRawProgramJson(raw, authority) {
-  const deployed = requireAuthority(authority);
-  const parsed = new StrictJsonParser(rawText(raw, deployed), deployed).parse();
-  const checked = normalizeChecked(parsed, deployed, deployed.maxProgramBytes);
+  requireAuthority(authority);
+  const parsed = new StrictJsonParser(rawText(raw)).parse();
+  const checked = normalizeChecked(parsed);
   return deepFreezeProgramValue(checked.normalized);
 }
 

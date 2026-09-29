@@ -1,6 +1,6 @@
 // Phase 93a.2 closed source-grammar validators for Program control nodes (§93.3, §93.4, §93.9).
 // These validators are stage-2 (source schema) checks used by normalize-program.mjs: exact field
-// sets, closed discriminators, reference shapes, and policy bounds. Schema-aware predicate checks,
+// sets, closed discriminators and reference shapes. Schema-aware predicate checks,
 // join/selector member resolution, and derived schemas are enforced by the normalizer at canonical
 // construction time through the injected resolvePort/member callbacks. This module also hosts the
 // shared closed-grammar scalar helpers used by the other Phase 93a.2 modules. No I/O, no clocks,
@@ -86,11 +86,11 @@ export function nodeKey(value, label = 'Program nodeKey') {
   return value;
 }
 
-export function boundedText(value, label, maxBytes) {
+export function boundedText(value, label, maxBytes = null) {
   const normalized = normalizeProgramString(value, label).trim();
   if (normalized.length === 0) fail(`${label} must be non-empty`);
   if ([...normalized].some((char) => char.charCodeAt(0) === 0)) fail(`${label} contains NUL`);
-  if (Buffer.byteLength(normalized, 'utf8') > maxBytes) fail(`${label} exceeds its byte bound`);
+  if (maxBytes !== null && Buffer.byteLength(normalized, 'utf8') > maxBytes) fail(`${label} exceeds its byte bound`);
   if (SECRET_SHAPED_TEXT.some((pattern) => pattern.test(normalized))) {
     fail(`${label} contains credential-shaped content`);
   }
@@ -112,9 +112,9 @@ function normalizePath(value, label) {
 }
 
 // Set-like by path (§93.4): reject duplicate normalized paths, sort by unsigned UTF-16.
-export function normalizePathArray(value, label, { min, max }) {
-  if (!Array.isArray(value) || value.length < min || value.length > max) {
-    fail(`${label} must contain ${min}..${max} entries`);
+export function normalizePathArray(value, label, { min }) {
+  if (!Array.isArray(value) || value.length < min) {
+    fail(`${label} must contain at least ${min} entries`);
   }
   const paths = value.map((entry, index) => normalizePath(entry, `${label}[${index}]`));
   if (new Set(paths).size !== paths.length) fail(`${label} contains duplicate paths`);
@@ -122,9 +122,9 @@ export function normalizePathArray(value, label, { min, max }) {
 }
 
 // Set-like SafeId array: reject duplicates, sort by unsigned UTF-16 name.
-export function normalizeSafeIdSet(value, label, { min, max }) {
-  if (!Array.isArray(value) || value.length < min || value.length > max) {
-    fail(`${label} must contain ${min}..${max} entries`);
+export function normalizeSafeIdSet(value, label, { min }) {
+  if (!Array.isArray(value) || value.length < min) {
+    fail(`${label} must contain at least ${min} entries`);
   }
   const names = value.map((entry, index) => safeId(entry, `${label}[${index}]`));
   if (new Set(names).size !== names.length) fail(`${label} contains duplicates`);
@@ -161,9 +161,8 @@ function sameSchema(left, right, authority) {
 // it must return { portRef, definition } for the referenced producer port, and the schema-aware
 // checks (boolean is_true, identical equality schemas, string/string or array/item contains) run.
 export function validatePredicate(predicate, {
-  policy, authority = null, resolvePort = null, depth = 1, label = 'Predicate',
+  authority = null, resolvePort = null, label = 'Predicate',
 }) {
-  if (depth > policy.maxProgramDepth) fail(`${label} recursion exceeds the Program depth bound`);
   if (!predicate || typeof predicate !== 'object' || Array.isArray(predicate)) {
     fail(`${label} must be an object`);
   }
@@ -204,14 +203,13 @@ export function validatePredicate(predicate, {
   }
   if (kind === 'and' || kind === 'or') {
     exactFields(predicate, ['kind', 'predicates'], `${label} ${kind}`);
-    if (!Array.isArray(predicate.predicates) || predicate.predicates.length < 2
-      || predicate.predicates.length > policy.maxJoinMembers) {
-      fail(`${label} ${kind} requires 2..maxJoinMembers predicates`);
+    if (!Array.isArray(predicate.predicates) || predicate.predicates.length < 2) {
+      fail(`${label} ${kind} requires at least 2 predicates`);
     }
     return {
       kind,
       predicates: predicate.predicates.map((child, index) => validatePredicate(child, {
-        policy, authority, resolvePort, depth: depth + 1, label: `${label} ${kind}[${index}]`,
+        authority, resolvePort, label: `${label} ${kind}[${index}]`,
       })),
     };
   }
@@ -220,7 +218,7 @@ export function validatePredicate(predicate, {
     return {
       kind,
       predicate: validatePredicate(predicate.predicate, {
-        policy, authority, resolvePort, depth: depth + 1, label: `${label} not`,
+        authority, resolvePort, label: `${label} not`,
       }),
     };
   }
@@ -239,18 +237,18 @@ export function predicatePortRefs(predicate) {
   return [];
 }
 
-function digestSet(value, label, { min, max }) {
-  if (!Array.isArray(value) || value.length < min || value.length > max) {
-    fail(`${label} must contain ${min}..${max} entries`);
+function digestSet(value, label, { min }) {
+  if (!Array.isArray(value) || value.length < min) {
+    fail(`${label} must contain at least ${min} entries`);
   }
   const digests = value.map((entry, index) => digestValue(entry, `${label}[${index}]`));
   if (new Set(digests).size !== digests.length) fail(`${label} contains duplicates`);
   return digests.sort(compareProgramIdentityKeys);
 }
 
-function preferenceList(value, label, { min, max }, memberNames) {
-  if (!Array.isArray(value) || value.length < min || value.length > max) {
-    fail(`${label} must contain ${min}..${max} entries`);
+function preferenceList(value, label, { min }, memberNames) {
+  if (!Array.isArray(value) || value.length < min) {
+    fail(`${label} must contain at least ${min} entries`);
   }
   const names = value.map((entry, index) => safeId(entry, `${label}[${index}]`));
   if (new Set(names).size !== names.length) fail(`${label} contains duplicates`);
@@ -265,7 +263,7 @@ function preferenceList(value, label, { min, max }, memberNames) {
 }
 
 // §93.9 join union. memberNames is injected at canonical construction (parallel branch names).
-export function validateJoin(join, { policy, memberNames = null, label = 'Join' }) {
+export function validateJoin(join, { memberNames = null, label = 'Join' }) {
   if (!join || typeof join !== 'object' || Array.isArray(join)) fail(`${label} must be an object`);
   const kind = join.kind;
   if (kind === 'all_terminal' || kind === 'operator_selected') {
@@ -277,7 +275,7 @@ export function validateJoin(join, { policy, memberNames = null, label = 'Join' 
     return {
       kind,
       contractDigests: digestSet(join.contractDigests, `${label} all_verified.contractDigests`,
-        { min: 1, max: policy.maxEvidenceRefs }),
+        { min: 1 }),
     };
   }
   if (kind === 'first_verified') {
@@ -285,7 +283,7 @@ export function validateJoin(join, { policy, memberNames = null, label = 'Join' 
     return {
       kind,
       preference: preferenceList(join.preference, `${label} first_verified.preference`,
-        { min: 1, max: policy.maxJoinMembers }, memberNames),
+        { min: 1 }, memberNames),
     };
   }
   fail(`${label} kind is unknown`);
@@ -310,7 +308,7 @@ function settlementMember(value, label) {
 }
 
 // §93.9 selector union. candidateNames is injected at canonical construction (select candidates).
-export function validateSelector(selector, { policy, candidateNames = null, label = 'Selector' }) {
+export function validateSelector(selector, { candidateNames = null, label = 'Selector' }) {
   if (!selector || typeof selector !== 'object' || Array.isArray(selector)) {
     fail(`${label} must be an object`);
   }
@@ -324,7 +322,7 @@ export function validateSelector(selector, { policy, candidateNames = null, labe
     return {
       kind,
       preference: preferenceList(selector.preference, `${label} first_verified.preference`,
-        { min: 1, max: policy.maxJoinMembers }, candidateNames),
+        { min: 1 }, candidateNames),
     };
   }
   if (kind === 'all_verified') {
@@ -332,14 +330,13 @@ export function validateSelector(selector, { policy, candidateNames = null, labe
     return {
       kind,
       contractDigests: digestSet(selector.contractDigests, `${label} all_verified.contractDigests`,
-        { min: 1, max: policy.maxEvidenceRefs }),
+        { min: 1 }),
     };
   }
   if (kind === 'evidence_ranked') {
     exactFields(selector, ['kind', 'criteria', 'tie'], `${label} evidence_ranked`);
     if (selector.tie !== 'unresolved') fail(`${label} evidence_ranked.tie must be "unresolved"`);
-    if (!Array.isArray(selector.criteria) || selector.criteria.length < 1
-      || selector.criteria.length > policy.maxJoinMembers) {
+    if (!Array.isArray(selector.criteria) || selector.criteria.length < 1) {
       fail(`${label} evidence_ranked.criteria is invalid`);
     }
     const criteria = selector.criteria.map((criterion, index) => {
@@ -411,9 +408,9 @@ function policyBoundShape(value, expectedName, label) {
   digestValue(value.policyDigest, `${label}.policyDigest`);
 }
 
-function namedPortArray(value, label, { min, max, boundName }) {
-  if (!Array.isArray(value) || value.length < min || value.length > max) {
-    fail(`${label} must contain ${min}..${boundName} entries`);
+function namedPortArray(value, label, { min }) {
+  if (!Array.isArray(value) || value.length < min) {
+    fail(`${label} must contain at least ${min} entries`);
   }
   const names = new Set();
   for (const [index, entry] of value.entries()) {
@@ -438,9 +435,9 @@ const SOURCE_FIELDS = Object.freeze({
 });
 
 // Stage-2 source-node validation (§93.9): exact field set (a source collect carries no
-// outputSchema, so supplying one is an unknown-field error), closed kinds, reference shapes, and
-// policy bounds. Deep schema, digest, and graph checks belong to the normalizer.
-export function validateSourceNode(node, { policy }) {
+// outputSchema, so supplying one is an unknown-field error), closed kinds and reference shapes.
+// Deep schema, digest, and graph checks belong to the normalizer.
+export function validateSourceNode(node) {
   if (!node || typeof node !== 'object' || Array.isArray(node)) fail('Program node must be an object');
   const kind = node.kind;
   if (typeof kind !== 'string' || !SOURCE_NODE_KINDS.includes(kind)) {
@@ -455,27 +452,20 @@ export function validateSourceNode(node, { policy }) {
     }
     schemaRefShape(node.schema, `${label}.schema`);
   } else if (kind === 'sequence') {
-    if (!Array.isArray(node.steps) || node.steps.length < 1
-      || node.steps.length > policy.maxProgramNodes) {
-      fail(`${label}.steps must contain 1..maxProgramNodes entries`);
+    if (!Array.isArray(node.steps) || node.steps.length < 1) {
+      fail(`${label}.steps must contain at least 1 entry`);
     }
     node.steps.forEach((step, index) => sourceControlRef(step, `${label}.steps[${index}]`));
     sourcePortRef(node.result, `${label}.result`);
     schemaRefShape(node.outputSchema, `${label}.outputSchema`);
   } else if (kind === 'branch') {
-    validatePredicate(node.predicate, { policy, label: `${label}.predicate` });
+    validatePredicate(node.predicate, { label: `${label}.predicate` });
     branchArm(node.then, `${label}.then`);
     branchArm(node.otherwise, `${label}.otherwise`);
     schemaRefShape(node.outputSchema, `${label}.outputSchema`);
   } else if (kind === 'parallel') {
-    // §93.20 amended: reachability is not known at this per-node stage, so this shape check only
-    // enforces the unconditional pure-shape ceiling (a node can never carry more branches than the
-    // Program can carry nodes). The tighter policy.maxParallelBranches bound applies only to a
-    // parallel reachable from root, and is enforced by normalize-program.mjs once reachability is
-    // known; an unreachable (inert) parallel is bounded by maxProgramNodes alone.
-    if (!Array.isArray(node.branches) || node.branches.length < 1
-      || node.branches.length > policy.maxProgramNodes) {
-      fail(`${label}.branches must contain 1..maxProgramNodes entries`);
+    if (!Array.isArray(node.branches) || node.branches.length < 1) {
+      fail(`${label}.branches must contain at least 1 entry`);
     }
     const names = new Set();
     for (const [index, branch] of node.branches.entries()) {
@@ -487,22 +477,22 @@ export function validateSourceNode(node, { policy }) {
       sourcePortRef(branch.result, `${label}.branches[${index}].result`);
       schemaRefShape(branch.resultSchema, `${label}.branches[${index}].resultSchema`);
     }
-    validateJoin(node.join, { policy, label: `${label}.join` });
+    validateJoin(node.join, { label: `${label}.join` });
     schemaRefShape(node.outputSchema, `${label}.outputSchema`);
   } else if (kind === 'await') {
     sourcePortRef(node.target, `${label}.target`);
-    validateJoin(node.join, { policy, label: `${label}.join` });
+    validateJoin(node.join, { label: `${label}.join` });
     schemaRefShape(node.outputSchema, `${label}.outputSchema`);
   } else if (kind === 'collect') {
-    namedPortArray(node.items, `${label}.items`, { min: 1, max: policy.maxJoinMembers, boundName: 'maxJoinMembers' });
+    namedPortArray(node.items, `${label}.items`, { min: 1 });
   } else if (kind === 'select') {
-    namedPortArray(node.candidates, `${label}.candidates`, { min: 1, max: policy.maxJoinMembers, boundName: 'maxJoinMembers' });
-    validateSelector(node.selector, { policy, label: `${label}.selector` });
+    namedPortArray(node.candidates, `${label}.candidates`, { min: 1 });
+    validateSelector(node.selector, { label: `${label}.selector` });
     schemaRefShape(node.outputSchema, `${label}.outputSchema`);
   } else if (kind === 'repeat') {
     sourcePortRef(node.initial, `${label}.initial`);
     childProgramRefShape(node.body, `${label}.body`);
-    validatePredicate(node.continueWhen, { policy, label: `${label}.continueWhen` });
+    validatePredicate(node.continueWhen, { label: `${label}.continueWhen` });
     policyBoundShape(node.bound, 'program_repeat_rounds', `${label}.bound`);
     schemaRefShape(node.resultSchema, `${label}.resultSchema`);
   } else if (kind === 'child') {
