@@ -173,11 +173,18 @@ const MUTATIONS = [
     law: 'm10_the_verdict_judges_the_pairs_the_checks_produced',
   },
   {
-    name: 'm17-restart-completes-a-dead-native',
+    name: 'm10-check-runs-in-the-script-directory',
+    file: join('bend2', 'src', 'git', 'land.bend'),
+    find: 'r : T.RunRes <- Git.runFull(check_argv(s2, f2), d2)',
+    replace: 'r : T.RunRes <- Git.runFull(check_argv(s2, f2), s2)',
+    law: 'm10_run_check_runs_its_argv_in_its_own_directory',
+  },
+  {
+    name: 'm17-refused-conversation-completes-instead',
     file: join('bend2', 'src', 'coordinator', 'receive.bend'),
     find: 'case True{}: restart_pending(db,session,id,native,cwd,handle,lock,again)',
     replace: 'case True{}: completed(db,session,id,log,stderr,cursor,handle,lock,outcome,again)',
-    law: 'm17_dead_native_restarts_the_attempt',
+    law: 'm17_refused_conversation_restarts_the_attempt',
   },
   {
     name: 'm17-restart-drops-the-recovery-record',

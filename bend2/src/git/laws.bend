@@ -1110,6 +1110,27 @@ law m10_run_pairs_starts_from_an_empty_accumulator:
 def m10_run_pairs_starts_from_an_empty_accumulator(script, files, candTree, targTree):
   {==}
 
+# M-10: one check runs in the directory it is given, with the argv that names
+# its own selected file, and the result the invocation returned becomes that
+# file's verdict. This is the dispatch the walk above calls. The subprocess
+# itself and the host's report of its exit and output remain host assumptions.
+def run_check_in_its_directory(dir: String, script: String, file: String) -> IO(L.FV):
+  +d2 = dir
+  +s2 = script
+  +f2 = file
+  do IO<L.FV>:
+    r : T.RunRes <- P.runFull(L.check_argv(s2, f2), d2)
+    IO.pure(L.FV, L.run_verdict(r, f2))
+
+law m10_run_check_runs_its_argv_in_its_own_directory:
+  for dir: String
+  for script: String
+  for file: String
+  {L.run_check(dir, script, file) == run_check_in_its_directory(dir, script, file) : IO(L.FV)}
+
+def m10_run_check_runs_its_argv_in_its_own_directory(dir, script, file):
+  {==}
+
 # M-10: the candidate tree that is checked is the scratch tree, the target tree
 # is its "-target" sibling, and the pairs reach the verdict unchanged.
 def ld_tree_judged(repo: String, target: String, script: String, files: List<String>, scratch: String, tip: String, cand: String, tw: String) -> IO(L.Ld):
