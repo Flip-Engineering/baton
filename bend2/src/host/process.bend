@@ -31,6 +31,15 @@ def ProcessChild.retain(directory: String, argv: String, cwd: String, stderr: St
 def ProcessChild.attach(directory: String) -> IO(Result<&1,&1,U32 & String,U32>):
   import "./process-spawn.c"
 
+# These commands address the retained attempt without replacing its observer.
+# A write succeeds after all bytes enter stdin; native acceptance is separate.
+def ProcessChild.control_write(directory: String, data: String) -> IO(Result<&1,&1,U32 & String,Unit>):
+  import "./process-spawn.c"
+
+# Success records the signal syscall. Actual exit remains a separate observation.
+def ProcessChild.control_signal(directory: String, sig: U32) -> IO(Result<&1,&1,U32 & String,Unit>):
+  import "./process-spawn.c"
+
 def ProcessChild.release(handle: U32) -> IO(Result<&1,&1,U32 & String,Unit>):
   import "./process-spawn.c"
 
