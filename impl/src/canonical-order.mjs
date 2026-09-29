@@ -33,16 +33,15 @@ export function foldCanonicalCase(value) {
  * coordination-store.mjs with the constructor that reads it (issue #259 slice 7). */
 export const CANONICAL_ORDER_MIGRATION = Symbol('canonical-order-migration');
 
+/** #530: a deployment's declared policy carries no size or count limits — the canonical-order
+ * policy is the declaration that the mode is on, and nothing else. The thresholds it used to
+ * declare judged the deployment's OWN ledger, events and receipt rather than a caller's input,
+ * and each one refused work, so they left with the rest of the class. What stays here is shape:
+ * a plain object, no unknown keys. Canonical ordering, the mode and version, the pinned prefix
+ * digest and the exact expected-event identity are untouched. */
 export function normalizeCanonicalOrderPolicy(value) {
-  closedOptions(value, ['maxEventBytes', 'maxEvents', 'maxLedgerBytes', 'maxReceiptBytes'], 'canonical order policy');
-  for (const field of ['maxEventBytes', 'maxEvents', 'maxLedgerBytes', 'maxReceiptBytes']) {
-    if (!Number.isSafeInteger(value[field]) || value[field] <= 0) throw new TypeError(`canonical order policy ${field} is invalid`);
-  }
-  if (value.maxEventBytes > value.maxLedgerBytes) throw new TypeError('canonical order policy event bound exceeds its ledger bound');
-  return Object.freeze({
-    maxLedgerBytes: value.maxLedgerBytes, maxEventBytes: value.maxEventBytes,
-    maxEvents: value.maxEvents, maxReceiptBytes: value.maxReceiptBytes,
-  });
+  closedOptions(value, [], 'canonical order policy');
+  return Object.freeze({});
 }
 
 export function normalizeCanonicalOrderMigration(value, policy) {
@@ -51,23 +50,18 @@ export function normalizeCanonicalOrderMigration(value, policy) {
     throw new TypeError('canonical order migration is invalid');
   }
   const fields = value.mode === 'adopt_compatible'
-    ? ['expectedEvents', 'expectedPrefixDigest', 'maxEventBytes', 'maxEvents', 'maxLedgerBytes', 'maxReceiptBytes', 'mode']
-    : ['maxEventBytes', 'maxEvents', 'maxLedgerBytes', 'maxReceiptBytes', 'mode'];
+    ? ['expectedEvents', 'expectedPrefixDigest', 'mode']
+    : ['mode'];
   closedOptions(value, fields, 'canonical order migration');
-  const requestedPolicy = normalizeCanonicalOrderPolicy({
-    maxLedgerBytes: value.maxLedgerBytes, maxEventBytes: value.maxEventBytes,
-    maxEvents: value.maxEvents, maxReceiptBytes: value.maxReceiptBytes,
-  });
-  for (const field of Object.keys(requestedPolicy)) {
-    if (requestedPolicy[field] > policy[field]) throw new TypeError('canonical order migration exceeds deployment policy');
-  }
   if (value.mode === 'adopt_compatible') {
+    // The adoption identity is exact, never a bound: the migration names the event count and the
+    // prefix digest it expects to find, and the ledger must match both byte for byte.
     if (!/^[a-f0-9]{64}$/.test(value.expectedPrefixDigest ?? '')
-      || !Number.isSafeInteger(value.expectedEvents) || value.expectedEvents <= 0 || value.expectedEvents > requestedPolicy.maxEvents) {
+      || !Number.isSafeInteger(value.expectedEvents) || value.expectedEvents <= 0) {
       throw new TypeError('canonical order adoption identity is invalid');
     }
   }
-  return Object.freeze({ ...value, ...requestedPolicy });
+  return Object.freeze({ ...value });
 }
 
 export function sortCanonicalStrings(values) {

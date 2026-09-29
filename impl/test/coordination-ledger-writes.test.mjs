@@ -292,7 +292,8 @@ test('CLW5: the store keeps its exact durable behavior across the move', async (
   // The canonical-order receipt: minted by the moved _writeCanonicalReceipt under the held lease.
   const canonicalRoot = mkdtempSync(join(tmpdir(), 'baton-clw5-b-'));
   try {
-    const policy = { maxEventBytes: 65_536, maxEvents: 1_000, maxLedgerBytes: 1_048_576, maxReceiptBytes: 65_536 };
+    // #530: the declaration is the mode; the pinned receipt below records the empty policy.
+    const policy = Object.freeze({});
     const store = new CoordinationStore(canonicalRoot, { clock: CLOCK, canonicalOrderPolicy: policy });
     store.claimWriterLease();
     const created = store.createTask(
@@ -302,9 +303,9 @@ test('CLW5: the store keeps its exact durable behavior across the move', async (
     const receiptPath = join(canonicalRoot, 'canonical-order-receipt.json');
     assert.equal(existsSync(receiptPath), true);
     assert.equal(createHash('sha256').update(readFileSync(receiptPath)).digest('hex'),
-      'a1d6aed1549cc499337b8faa4d3eaf5869e360883c0324cacf2b2d95b5d64dcc');
+      '677e5e10e5e56354cbd368bf3154d89905e9befddba4d3c00aaee442e2ff17ea');
     assert.equal(store.canonicalOrderReceipt().receiptDigest,
-      '30a459b6aeca6de33664920032450eeaa15195ca0a374f18dd6ada5ff0290464');
+      'a8b68aad631f5c8f679757ba49376a0a6ed834b92fe1503ed3770b929c4f93c6');
     assert.equal(createHash('sha256').update(readFileSync(join(canonicalRoot, 'events.jsonl'))).digest('hex'),
       'f79c48e1d54ef9858f9743f2fd32499156bb35f38a923d43ac7ec2f54d815418');
     store.releaseWriterLease();
