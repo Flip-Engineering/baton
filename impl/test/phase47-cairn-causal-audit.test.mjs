@@ -53,7 +53,7 @@ test('CA2: generic edge evidence, validity, and replay tamper fail closed', () =
 
 test('CA2: final promotion validation and request-bound idempotency fail before append', () => {
   const dir = root('promotion-preflight'); const store = new CoordinationStore(dir, { clock: clock() }); const created = store.createTask(task('source'), { actor: 'orchestrator', key: 'task' }); const before = readFileSync(join(dir, 'events.jsonl'), 'utf8');
-  assert.throws(() => store.promoteKnowledgeNode({ id: 'outcome:bad', type: 'Finding', grounding: 'verified', body: 'bad', evidence: [{ coordinationSeq: created.event.seq }] }, { kind: 'Finding', trigger: 'verified_task_outcome' }, { actor: 'policy', key: 'bad-promotion' }), (error) => error.code === 'missing_endpoint');
+  assert.throws(() => store.addKnowledgeNode({ id: 'outcome:bad', type: 'Finding', grounding: 'verified', body: 'bad', evidence: [{ coordinationSeq: created.event.seq }], promotion: { kind: 'Finding', trigger: 'verified_task_outcome' } }, { actor: 'policy', key: 'bad-promotion' }), (error) => error.code === 'missing_endpoint');
   assert.equal(store.snapshot().lastSeq, 1); assert.equal(readFileSync(join(dir, 'events.jsonl'), 'utf8'), before);
   const first = store.addKnowledgeNode({ id: 'finding:bound', type: 'Finding', grounding: 'observed', body: 'first', evidence: [{ coordinationSeq: created.event.seq }] }, { actor: 'policy', key: 'bound-node' });
   assert.throws(() => store.addKnowledgeNode({ id: 'finding:bound', type: 'Finding', grounding: 'observed', body: 'changed', evidence: [{ coordinationSeq: created.event.seq }] }, { actor: 'policy', key: 'bound-node' }), (error) => error.code === 'knowledge_node_conflict');

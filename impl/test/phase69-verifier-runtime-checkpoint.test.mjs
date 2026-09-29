@@ -237,7 +237,7 @@ function repo() {
   return dir;
 }
 
-test('VR4/VR5: an inconclusive live gate checkpoints the commit without teaching a route loss or promoting a counterexample', async (t) => {
+test('VR4/VR5: an inconclusive live gate checkpoints the commit without teaching a route loss', async (t) => {
   const repository = repo();
   const logDir = root('log');
   t.after(() => { rmSync(repository, { recursive: true, force: true }); rmSync(logDir, { recursive: true, force: true }); });
@@ -268,8 +268,6 @@ test('VR4/VR5: an inconclusive live gate checkpoints the commit without teaching
   assert.equal(execFileSync('git', ['rev-parse', '--verify', `${outcome.checkpoint.ref}^{commit}`], { cwd: repository, encoding: 'utf8' }).trim(), outcome.capturedSha);
   assert.equal(outcome.retainedResultRef, null, 'a checkpoint is never an accepted result ref');
   assert.equal(driver.router.getStat(outcome.routeKey, 'general'), null, 'unresolved verification cannot teach a route loss');
-  assert.equal(driver.coordination.queryKnowledge({ types: ['Counterexample'] }).some((node) => node.taskId === 'phase69-inconclusive'), false);
-  assert.equal(driver.coordination.queryKnowledge({ types: ['Question'] }).some((node) => node.taskId === 'phase69-inconclusive'), true);
 
   await driver.drainAndClose('phase69-replay');
   const replay = createDriver({ repoRoot: repository, logDir, adapters: { mock: adapter } });

@@ -115,7 +115,7 @@ test('a server given an admission predicate advertises only the tools whose comm
 
 test('the resident wire card keeps the host-local settlement tools off the bridge, by their own commands', () => {
   const { facade } = facadeWith(WIRE_CARD);
-  for (const command of ['scratchpad.elevate', 'scratchpad.settle', 'knowledge.settlement_lease']) {
+  for (const command of ['scratchpad.elevate', 'scratchpad.settle']) {
     assert.equal(facade._admits(command), false, `${command} is host-local`);
   }
   assert.equal(facade._admits('swarm.recruit'), true);
@@ -384,16 +384,15 @@ test('U-G3: the bridge does not advertise the settlement tools, and MCP.md says 
   const mcp = server(t, { admitsCommand: (command) => facade._admits(command) });
   await ready(mcp);
   const names = (await request(mcp, 'l3', 'tools/list', {})).result.tools.map((tool) => tool.name);
-  const SETTLEMENT = ['baton_scratchpad_elevate', 'baton_scratchpad_settle',
-    'baton_knowledge_settlement_lease'];
+  const SETTLEMENT = ['baton_scratchpad_elevate', 'baton_scratchpad_settle'];
   for (const tool of SETTLEMENT) {
     assert.equal(names.includes(tool), false, `${tool} is host-local and stays off the bridge inventory`);
     assert.equal(mcp.toolNames.has(tool), false, `${tool} is not dispatchable over the bridge either`);
   }
   // A direct call refuses at the guard — it never reaches the resident as a settlement op.
-  const refused = await request(mcp, 'c9', 'tools/call', { name: 'baton_knowledge_settlement_lease', arguments: { repoId: REPO_ID, waveId: 'wave:1' } });
+  const refused = await request(mcp, 'c9', 'tools/call', { name: 'baton_scratchpad_settle', arguments: { repoId: REPO_ID, runId: 'run:1', expectedScratchpadFence: 0, skips: [] } });
   assert.equal(refused.error?.code, -32602, 'the host-local settlement op refuses as an unknown tool on the bridge');
-  assert.equal(forwarded.some((row) => row.name === 'knowledge.settlement_lease'), false, 'nothing settlement-shaped crosses the wire');
+  assert.equal(forwarded.some((row) => row.name === 'scratchpad.settle'), false, 'nothing settlement-shaped crosses the wire');
   const { readFileSync } = await import('node:fs');
   const doc = readFileSync(new URL('../MCP.md', import.meta.url), 'utf8');
   const section = doc.slice(doc.indexOf('## Admit knowledge'), doc.indexOf('## Tool inventory'));

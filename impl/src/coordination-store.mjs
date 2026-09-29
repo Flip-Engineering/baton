@@ -1213,15 +1213,6 @@ export class CoordinationStore {
   // stable across re-drive. Idempotency by caller key, replay-exact.
   createAndClaimSettlementTask(fields, auth) { return coordinationLedger.createAndClaimSettlementTask(this, fields, auth); }
 
-  // Sweep (KG settlement D3 step 0, DRIVER-TRIGGERED, NO TIMERS): at wave close, retire every
-  // PRIOR settlement lease (a wave other than the one now closing) that carries no admission — its
-  // review window is over precisely because a later wave has closed, so the window is bounded by
-  // driver cadence, not a wall clock. Revokes with reason `review_window_expired`, cancels the
-  // settlement task. Bounded ≤ maxLeases per pass;
-  // so repeated driver passes finish the residue. The currently-closing wave is excluded so its own
-  // freshly-materialized lease is never swept (re-drive stays exactly-once).
-  sweepSettlementLeases(repoId, options = {}) { return coordinationLedger.sweepSettlementLeases(this, repoId, options); }
-
   claimTask(id, worker, expectedVersion, auth, attribution = {}) { return coordinationLedger.claimTask(this, id, worker, expectedVersion, auth, attribution); }
 
   transitionTask(id, to, expectedVersion, auth, evidence = null) { return coordinationLedger.transitionTask(this, id, to, expectedVersion, auth, evidence); }
@@ -1539,8 +1530,6 @@ export class CoordinationStore {
   addKnowledgeNode(fields, auth) { return coordinationLedger.addKnowledgeNode(this, fields, auth); }
 
   _prepareKnowledgeNode(fields, promotion = null, validate = true) { return coordinationAdmission._prepareKnowledgeNode(this, fields, promotion, validate); }
-
-  promoteKnowledgeNode(fields, promotion, auth) { return coordinationLedger.promoteKnowledgeNode(this, fields, promotion, auth); }
 
   addKnowledgeEdge(fields, auth) { return coordinationLedger.addKnowledgeEdge(this, fields, auth); }
 

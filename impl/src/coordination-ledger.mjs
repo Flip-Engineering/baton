@@ -2460,7 +2460,7 @@ export function _apply(store, event) {
       store._setKnowledgeNode(event, target.id, freeze({ ...clone(target), validTo: event.ts, validityVersion: target.validityVersion + 1, invalidatedBy: event.seq }));
       store._contamination.push(freeze({ nodeId: target.id, invalidationEvent: event.seq, affectedReadEvents: clone(p.affectedReadEvents), eventSeq: event.seq, ts: event.ts }));
     }
-  } else if (event.kind === 'knowledge.node_added' || event.kind === 'knowledge.promoted') {
+  } else if (event.kind === 'knowledge.node_added') {
     store._validateKnowledgeNodePayload(p, event, true);
     store._setKnowledgeNode(event, p.id, freeze({ ...clone(p), observedSeq: event.seq, observedAt: event.ts, ...eventTime(store._events, p.evidence, event), validFrom: p.validFrom ?? event.ts, validTo: p.validTo ?? null, validityVersion: 1 }));
     for (const sourceId of p.informedBy ?? []) {
@@ -3596,35 +3596,6 @@ export function createAndClaimSettlementTask(store, fields, auth) {
   return freeze({ ok: true, result: 'claimed', createdEvent: clone(createdEvent), claimedEvent: clone(claimedEvent), event: clone(createdEvent), task });
 }
 
-export function sweepSettlementLeases(store, repoId, options = {}) {
-  const maxLeases = Number.isSafeInteger(options?.maxLeases) && options.maxLeases > 0
-    ? Math.min(options.maxLeases, 16) : 16;
-  const currentTaskId = options?.currentWaveId ? `settlement-task:${options.currentWaveId}` : null;
-  const candidates = [...store._runOrchestratorLeases.values()]
-    .filter((lease) => lease.status === 'active' && lease.repoId === repoId
-      && store._tasks.get(lease.parent?.taskId)?.relation === 'settlement'
-      && lease.parent?.taskId !== currentTaskId)
-    .sort((a, b) => compareCanonicalStrings(a.leaseId, b.leaseId))
-    .slice(0, maxLeases);
-  const revoked = [];
-  const cancelled = [];
-  for (const lease of candidates) {
-    store.revokeRunOrchestratorLease(
-      { schemaVersion: 1, leaseId: lease.leaseId, leaseDigest: lease.leaseDigest, reason: 'review_window_expired' },
-      { actor: 'orchestrator', key: `run.orchestrator_lease_revoked:${lease.leaseId}` },
-    );
-    revoked.push(lease.leaseId);
-    const task = store._tasks.get(lease.parent.taskId);
-    if (task && !TERMINAL.has(task.status)) {
-      store.transitionTask(task.id, 'cancelled', task.version,
-        { actor: 'orchestrator', key: `task.cancelled:settlement-sweep:${task.id}` },
-        { cause: 'review_window_expired' });
-      cancelled.push(task.id);
-    }
-  }
-  return freeze({ ok: true, revoked, cancelled, remaining: candidates.length === maxLeases });
-}
-
 export function claimTask(store, id, worker, expectedVersion, auth, attribution = {}) {
   const selected = store._tasks.get(id);
   if (selected?.relation === 'recovery') {
@@ -4712,19 +4683,6 @@ export function addKnowledgeNode(store, fields, auth) {
   }
   const fixedTs = store._clock(); store._validateKnowledgeNodePayload(payload, { seq: store._events.length + 1, ts: fixedTs }, false);
   const event = store._append('knowledge.node_added', payload, auth, fixedTs);
-  return { ok: true, event: clone(event), node: clone(store._knowledgeNodes.get(payload.id)) };
-}
-
-export function promoteKnowledgeNode(store, fields, promotion, auth) {
-  if (typeof promotion?.kind !== 'string' || promotion.kind.length === 0) throw new CoordinationRefusal('knowledge promotion kind required', 'invalid_promotion');
-  const payload = store._prepareKnowledgeNode(fields, promotion, false);
-  const prior = store._byKey.get(auth?.key);
-  if (prior) {
-    if (prior.kind !== 'knowledge.promoted' || canonicalDigest(prior.payload) !== canonicalDigest(payload)) throw new CoordinationRefusal('knowledge promotion idempotency conflict', 'knowledge_promotion_conflict');
-    return { ok: true, result: 'idempotent', event: clone(prior), node: clone(store._knowledgeNodes.get(prior.payload.id)) };
-  }
-  const fixedTs = store._clock(); store._validateKnowledgeNodePayload(payload, { seq: store._events.length + 1, ts: fixedTs }, false);
-  const event = store._append('knowledge.promoted', payload, auth, fixedTs);
   return { ok: true, event: clone(event), node: clone(store._knowledgeNodes.get(payload.id)) };
 }
 

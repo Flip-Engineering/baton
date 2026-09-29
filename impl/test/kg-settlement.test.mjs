@@ -177,55 +177,21 @@ test('KS3: scratchpad.settle maps to coordinator.settleWorkflowScratchpad', asyn
   assert.deepEqual(fieldsArg, { expectedScratchpadFence: 0, skips: [] });
   assert.equal(calls.elevateTaskScratchpad.length, 0, 'no alternate method is called');
 });
-
-
-
-test('KS3: knowledge.settlement_lease materializes the bundle with the session derived from the calling principal', async (t) => {
-  const { application, driver } = appHarness(t, { default: { outcome: 'completed', edits: [{ path: 'reports/a.md', content: 'a\n' }] } });
-  const store = driver.coordination;
-  const result = await application.command('knowledge.settlement_lease', { waveId: WAVE_ID }, principal('wave-owner'));
-  // The closed return shape: {runId, taskId, lease: {id, digest, issuedEvent}} — the exact
-  // coordinates knowledge.promote consumes (no alternate shapes accepted).
-  const coordinates = result?.runId !== undefined ? result : (result?.value ?? result?.outline ?? {});
-  assert.equal(coordinates.runId, SETTLEMENT_RUN_ID);
-  assert.equal(coordinates.taskId, SETTLEMENT_TASK_ID);
-  assert.ok(typeof coordinates.lease?.id === 'string' && coordinates.lease.id.startsWith('run-orchestrator-lease:'), 'lease.id present');
-  assert.match(coordinates.lease?.digest ?? '', /^[a-f0-9]{64}$/u, 'lease.digest present');
-  assert.ok(Number.isSafeInteger(coordinates.lease?.issuedEvent), 'lease.issuedEvent present');
-  const view = store.runOrchestrationView(SETTLEMENT_RUN_ID);
-  assert.ok(view && view.recipientAuthority.counts.active >= 1, 'the lease is materialized active');
-  const leases = store._runOrchestratorLeases ?? new Map();
-  const lease = [...leases.values()].find((row) => row.parent?.runId === SETTLEMENT_RUN_ID);
-  assert.ok(lease, 'lease row readable');
-  assert.equal(lease.session?.principalId, 'wave-owner', 'session derived from the calling principal, never caller fields');
-  assert.equal(lease.session?.sessionId, 'session-wave-owner');
-  const second = await application.command('knowledge.settlement_lease', { waveId: WAVE_ID }, principal('wave-owner'));
-  assert.ok(second, 'idempotent per waveId');
-  const viewAfter = store.runOrchestrationView(SETTLEMENT_RUN_ID);
-  const total = viewAfter.recipientAuthority.counts.active + viewAfter.recipientAuthority.counts.expired + viewAfter.recipientAuthority.counts.revoked + viewAfter.recipientAuthority.counts.inactive;
-  assert.equal(total, 1, 'no second lease on replay');
-});
-
-
-
-
 // ===========================================================================
 // KS9 — structural surface gate (regression pin; amended for the MCP-W2 fold)
 // ===========================================================================
 
-test('KS9: the three rows are mcp-enabled in the registry, CLI, and recursive gate', async () => {
-  const names = ['scratchpad.elevate', 'scratchpad.settle', 'knowledge.settlement_lease'];
+test('KS9: the two settlement rows are mcp-enabled in the registry, CLI, and recursive gate', async () => {
+  const names = ['scratchpad.elevate', 'scratchpad.settle'];
   const rows = APPLICATION_SEMANTIC_REGISTRY.canonicalOperations;
   for (const name of names) {
-    if (name === 'knowledge.settlement_lease') continue; // pinned by KS9b once the row lands
     const row = rows.find((entry) => entry.key === name);
     assert.ok(row, `${name} registry row exists`);
     // Deliberate amendment (mcp-packaging-decisions v1.0 MCP-W2): the rows gain `mcp` in
-    // `surfaces`; the MCP enablement carries the S-2 sessionAuthority envelope requirement
-    // and the settlement capability class (knowledge.settlement_lease).
+    // `surfaces`; the MCP enablement carries the S-2 sessionAuthority envelope requirement.
     assert.deepEqual([...(row.surfaces ?? [])].sort(), ['embedded', 'mcp'], `${name} surfaces carry mcp`);
   }
-  for (const derived of ['scratchpad_elevate', 'scratchpad_settle', 'knowledge_settlement_lease']) {
+  for (const derived of ['scratchpad_elevate', 'scratchpad_settle']) {
     assert.equal(CLI_WEB_COMMANDS.has(derived), false, `CLI excludes ${derived}`);
   }
   assert.deepEqual([...RUN_ORCHESTRATOR_CAPABILITIES], ['run.context', 'run.start', 'run.status', 'run.stop']);
@@ -234,17 +200,11 @@ test('KS9: the three rows are mcp-enabled in the registry, CLI, and recursive ga
 test('KS9: the four names stay out of the recursive-dispatch allowlists (source pin)', async () => {
   const source = readFileSync(join(import.meta.dirname, '..', 'src', 'application.mjs'), 'utf8');
   const effectSet = source.slice(source.indexOf('recursiveEffectCommands'), source.indexOf('recursiveEffectCommands') + 200);
-  for (const name of ['scratchpad.elevate', 'scratchpad.settle', 'knowledge.promote', 'knowledge.settlement_lease']) {
+  for (const name of ['scratchpad.elevate', 'scratchpad.settle', 'knowledge.promote']) {
     assert.equal(effectSet.includes(`'${name}'`), false, `${name} stays out of recursiveEffectCommands`);
   }
   assert.deepEqual([...RUN_ORCHESTRATOR_CAPABILITIES], ['run.context', 'run.start', 'run.status', 'run.stop'],
     'the capability allowlist is unchanged — the capability-backed recursive gate does not admit the ritual');
-});
-
-test('KS9b: the knowledge.settlement_lease registry row exists and is mcp-enabled (stage: row missing)', async () => {
-  const row = APPLICATION_SEMANTIC_REGISTRY.canonicalOperations.find((entry) => entry.key === 'knowledge.settlement_lease');
-  assert.ok(row, 'the settlement_lease row lands with the implementation');
-  assert.deepEqual([...(row.surfaces ?? [])].sort(), ['embedded', 'mcp'], 'mcp-enabled like its siblings (MCP-W2 fold)');
 });
 
 // ---------------------------------------------------------------------------

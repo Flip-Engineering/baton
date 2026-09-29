@@ -639,9 +639,9 @@ const aliases = freeze({
 // the audit, and every renderer compute surface names one way (R-OP-10, M4A-2).
 export function deriveSurfaceNames(key) {
   const parts = key.split('.');
-  // A noun/verb part is lowercase alphanumeric; an underscore is permitted inside a compound verb
-  // (e.g. the embedded-only `knowledge.settlement_lease`), never as a leading or transport-splitting
-  // character. Underscore-free keys derive byte-identically to before.
+  // A noun/verb part is lowercase alphanumeric; an underscore is permitted inside a compound verb,
+  // never as a leading or transport-splitting character. Underscore-free keys derive byte-identically
+  // to before.
   if (parts.length < 2 || parts.some((part) => !/^[a-z][a-z0-9_]*$/u.test(part))) {
     throw new TypeError(`invalid canonical operation key: ${key}`);
   }
@@ -922,17 +922,6 @@ const CANONICAL_OPERATION_SPECS = [
     }, ['runId', 'expectedScratchpadFence', 'skips']),
     authorityFields: ['runId', 'expectedScratchpadFence'], serverDerived: ['actor'],
     liveMethod: 'settleWorkflowScratchpad',
-  }],
-  // KG settlement D2 embedded kernel: materialize the wave settlement run + parent task + lease,
-  // sweep prior expired leases, and candidate each elevated note. The session is server-derived
-  // from the calling principal; the row is embedded-only like its settlement siblings.
-  ['knowledge.settlement_lease', {
-    profile: 'kernel', surfaces: ['embedded', 'mcp'], effect: 'control', capabilities: ['control'],
-    outputView: 'outline', helpTopic: 'run', inputSchema: objectSchema({
-      waveId: id, members: { type: 'array', items: id },
-    }, ['waveId']),
-    authorityFields: ['waveId'], serverDerived: ['actor', 'principalId', 'sessionId'],
-    liveMethod: 'settlementLease',
   }],
   ['knowledge.recall', {
     profile: 'ordinary', surfaces: ['embedded', 'mcp'], effect: 'observe',

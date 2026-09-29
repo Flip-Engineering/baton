@@ -14,7 +14,7 @@ const requiredCoordinationMethods = [
   'activateReusePolicy', 'reuseRiskGuard', 'recordReuseRiskGuard', 'reuseRiskAdmission',
   'recordReuseTtlInvalidation', 'reuseTtlAdmission', 'claimScratch', 'postScratchFact',
   'readScratch', 'activeScratchClaims', 'expireScratchClaim', 'addKnowledgeNode',
-  'promoteKnowledgeNode', 'readKnowledge', 'writeScratchpad', 'elevateTaskScratchpad',
+  'readKnowledge', 'writeScratchpad', 'elevateTaskScratchpad',
   'settleWorkflowScratchpad', 'reapRunScratchpads', 'scratchpadSnapshotBatch',
   'scratchpadSnapshot',
 ];
