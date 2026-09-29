@@ -329,8 +329,8 @@ const MUTATIONS = [
   {
     name: 'knowledge-record-statement-drops-the-notice',
     file: join('bend2', 'src', 'coordinator', 'knowledge.bend'),
-    find: '  finding_statement(id,author,claim,evidence,limits) ++ notice_statement(id,author) ++ knowledge_row(id)',
-    replace: '  finding_statement(id,author,claim,evidence,limits) ++ knowledge_row(id)',
+    find: '  finding_statement(id,author,claim,evidence,limits) ++ notice_statement(id,author,claim,evidence,limits) ++ knowledge_answer(id,author,claim,evidence,limits)',
+    replace: '  finding_statement(id,author,claim,evidence,limits) ++ knowledge_answer(id,author,claim,evidence,limits)',
     law: 'm1_the_record_statement_carries_the_finding_the_notice_and_the_answer',
   },
   {
@@ -339,6 +339,20 @@ const MUTATIONS = [
     find: '    delivery : Result<&1,&1,U32 & String,String> <- Root.deliver(db,notice_id(id),"1",saved)',
     replace: '    delivery : Result<&1,&1,U32 & String,String> <- IO.pure(Result<&1,&1,U32 & String,String>,Done{saved})',
     law: 'm1_the_record_io_queries_delivers_and_answers',
+  },
+  {
+    name: 'knowledge-answer-ignores-its-finding-coordinates',
+    file: join('bend2', 'src', 'coordinator', 'knowledge.bend'),
+    find: '" AND author=" ++ C.q(author) ++ " AND claim=" ++ C.q(claim) ++ " AND evidence=" ++ C.q(evidence) ++ " AND limits=" ++ C.q(limits) ++ ";"',
+    replace: '";"',
+    law: 'm1_the_finding_answer_is_the_row_it_wrote',
+  },
+  {
+    name: 'knowledge-notice-ignores-the-finding-coordinates',
+    file: join('bend2', 'src', 'coordinator', 'knowledge.bend'),
+    find: 'WHERE EXISTS(SELECT 1 FROM knowledge WHERE id=" ++ C.q(id) ++ " AND author=" ++ C.q(author) ++ " AND claim=" ++ C.q(claim) ++ " AND evidence=" ++ C.q(evidence) ++ " AND limits=" ++ C.q(limits) ++ ")',
+    replace: 'WHERE EXISTS(SELECT 1 FROM knowledge WHERE id=" ++ C.q(id) ++ ")',
+    law: 'm14_the_notice_carries_the_question_kind_and_the_reference',
   },
   {
     name: 'knowledge-read-io-ignores-the-query',

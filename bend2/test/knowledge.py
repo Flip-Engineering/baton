@@ -172,6 +172,27 @@ class Knowledge(unittest.TestCase):
                          self.call('promote', 'promotion-3', 'root', 'worker', 'root', 'finding-5'))
         self.call('promote', 'promotion-3', 'root', 'worker', 'root', 'finding-1', success=False)
 
+    def test_a_mismatched_evidence_repeat_is_refused_and_keeps_the_stored_row(self):
+        evidence = self.evidence('report-9', 'worker')
+        self.call('record', 'finding-8', 'worker', 'a', evidence, 'c')
+        notices = [m['id'] for m in self.call('inbox', 'root') if m['kind'] == 'question']
+        self.assertEqual(notices, ['finding-8:notice'])
+        # An existing id repeated with the same author, claim and limits but an
+        # evidence the author cannot cite is refused, not answered with the
+        # stored row and not redelivered.
+        absent = self.call('record', 'finding-8', 'worker', 'a', 'message:absent', 'c', success=False)
+        self.assertIn('No knowledge row was written', absent.stderr)
+        unrelated = self.call('record', 'finding-8', 'worker', 'a',
+                              self.evidence('report-10', 'sibling'), 'c', success=False)
+        self.assertIn('No knowledge row was written', unrelated.stderr)
+        after = [m['id'] for m in self.call('inbox', 'root') if m['kind'] == 'question']
+        self.assertEqual(after, notices)
+        stored = self.read('worker')
+        self.assertEqual(self.ids(stored), ['finding-8'])
+        self.assertEqual(stored[0]['evidence'], evidence)
+        repeated = self.call('record', 'finding-8', 'worker', 'a', evidence, 'c')
+        self.assertEqual((repeated['id'], repeated['evidence']), ('finding-8', evidence))
+
     def test_the_usage_names_the_three_knowledge_verbs(self):
         p = self.call('nonsense-verb', success=False)
         for verb in ('record FINDING_ID AUTHOR CLAIM EVIDENCE LIMITS', 'knowledge READER',
