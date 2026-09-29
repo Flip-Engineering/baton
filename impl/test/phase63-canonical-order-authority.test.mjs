@@ -32,10 +32,16 @@ test('canonical request identity preserves prototype-named JSON fields', () => {
 
 const root = (name) => mkdtempSync(join(tmpdir(), `baton-phase63-${name}-`));
 const sha256 = (value) => createHash('sha256').update(value).digest('hex');
-const policy = Object.freeze({
+// #530: the deployment's declaration is the mode. Canonical ordering is on when the policy object
+// is declared, and the object carries no size or count of its own.
+const policy = Object.freeze({});
+// The four numbers a pre-#530 deployment declared in that object. Nothing reads them now; they
+// stay here to build the receipt such a deployment retained on disk.
+const legacyPolicy = Object.freeze({
   maxLedgerBytes: 1024 * 1024, maxEventBytes: 64 * 1024,
   maxEvents: 1_000, maxReceiptBytes: 64 * 1024,
 });
+const task = (id) => ({ id, brief: { goal: id }, deps: [], refines: null, taskType: 'phase63', reservedWorkerId: `w-${id}` });
 
 test('CO1: canonical case fold is deterministic for Unicode, Turkish I, and fullwidth dot', () => {
   assert.equal(foldCanonicalCase('Straße'), 'straße');
@@ -44,8 +50,6 @@ test('CO1: canonical case fold is deterministic for Unicode, Turkish I, and full
   assert.equal(foldCanonicalCase('．GIT'.normalize('NFKC')), '.git');
   assert.throws(() => foldCanonicalCase(null), TypeError);
 });
-const migration = (fields) => ({ ...fields, ...policy });
-const task = (id) => ({ id, brief: { goal: id }, deps: [], refines: null, taskType: 'phase63', reservedWorkerId: `w-${id}` });
 
 test('CO1: canonical comparator is exact UTF-16 code-unit order with closed inputs', () => {
   const values = ['Z', 'a', 'ä', 'Å', 'I', 'ı', 'İ', 'i', '\u{1F600}', '\uE000', 'e\u0301', 'é'];
@@ -97,6 +101,8 @@ test('CO4/CO5: empty bootstrap and explicit compatible adoption pin immutable le
   assert.equal(emptyReceipt.throughSeq, 0);
   assert.equal(emptyReceipt.prefixBytes, 0);
   assert.equal(emptyReceipt.prefixDigest, sha256(''));
+  assert.deepEqual(emptyReceipt.policy, {});
+  assert.deepEqual(emptyReceipt.cutPolicy, {});
   first.releaseWriterLease({ requireOwned: true });
 
   const legacyRoot = root('legacy');
@@ -110,7 +116,7 @@ test('CO4/CO5: empty bootstrap and explicit compatible adoption pin immutable le
 
   const receipt = migrateCanonicalOrderLedger(legacyRoot, {
     policy,
-    migration: migration({ mode: 'adopt_compatible', expectedPrefixDigest: sha256(raw), expectedEvents: 1 }),
+    migration: { mode: 'adopt_compatible', expectedPrefixDigest: sha256(raw), expectedEvents: 1 },
     clock: () => '2026-07-14T02:01:00.000Z',
   });
   const adopted = new CoordinationStore(legacyRoot, { canonicalOrderPolicy: policy });
@@ -130,40 +136,37 @@ test('CO4/CO5: empty bootstrap and explicit compatible adoption pin immutable le
   replay.releaseWriterLease({ requireOwned: true });
 });
 
-test('CO5/CO6: adoption request is exact, bounded, and cannot reset non-empty history', () => {
+test('CO5/CO6: adoption request is exact and cannot reset non-empty history', () => {
   const directory = root('adoption-reds');
   const legacy = new CoordinationStore(directory);
   legacy.createTask(task('legacy'), { actor: 'orchestrator', key: 'legacy:create' });
   legacy.releaseWriterLease({ requireOwned: true });
   const raw = readFileSync(join(directory, 'events.jsonl'));
-  const attempt = (request, configuredPolicy = policy) => {
-    assert.throws(() => migrateCanonicalOrderLedger(directory, { policy: configuredPolicy, migration: migration(request) }), (error) => error instanceof CoordinationRefusal || error instanceof TypeError);
+  const attempt = (request) => {
+    assert.throws(() => migrateCanonicalOrderLedger(directory, { policy, migration: request }), (error) => error instanceof CoordinationRefusal || error instanceof TypeError);
     assert.equal(existsSync(join(directory, 'writer.lease')), false);
     assert.equal(existsSync(join(directory, 'canonical-order-receipt.json')), false);
   };
   attempt({ mode: 'adopt_compatible', expectedPrefixDigest: '0'.repeat(64), expectedEvents: 1 });
   attempt({ mode: 'adopt_compatible', expectedPrefixDigest: sha256(raw), expectedEvents: 2 });
   attempt({ mode: 'reset_empty' });
-  attempt({ mode: 'adopt_compatible', expectedPrefixDigest: sha256(raw), expectedEvents: 1 }, { ...policy, maxLedgerBytes: Math.max(policy.maxEventBytes, raw.byteLength - 1) });
-  assert.throws(() => migrateCanonicalOrderLedger(directory, { policy: { ...policy, maxEvents: 0 }, migration: migration({ mode: 'adopt_compatible', expectedPrefixDigest: sha256(raw), expectedEvents: 1 }) }), TypeError);
-  assert.equal(existsSync(join(directory, 'writer.lease')), false);
-  assert.throws(() => new CoordinationStore(directory, { canonicalOrderPolicy: policy, canonicalOrderMigration: migration({ mode: 'adopt_compatible', expectedPrefixDigest: sha256(raw), expectedEvents: 1 }) }), /offline-only/);
+  attempt({ mode: 'adopt_compatible', expectedPrefixDigest: sha256(raw), expectedEvents: 1, maxEvents: 1_000 });
+  assert.throws(() => new CoordinationStore(directory, { canonicalOrderPolicy: policy, canonicalOrderMigration: { mode: 'adopt_compatible', expectedPrefixDigest: sha256(raw), expectedEvents: 1 } }), /offline-only/);
 });
 
-test('CO4/CO6: exact migration retry is immutable and changed cut authority conflicts', () => {
+test('CO4/CO6: exact migration retry is immutable and a changed adoption identity conflicts', () => {
   const directory = root('retry');
   const legacy = new CoordinationStore(directory);
   legacy.createTask(task('legacy'), { actor: 'orchestrator', key: 'legacy:create' });
   legacy.releaseWriterLease({ requireOwned: true });
   const raw = readFileSync(join(directory, 'events.jsonl'));
-  const request = migration({ mode: 'adopt_compatible', expectedPrefixDigest: sha256(raw), expectedEvents: 1 });
+  const request = { mode: 'adopt_compatible', expectedPrefixDigest: sha256(raw), expectedEvents: 1 };
   const first = migrateCanonicalOrderLedger(directory, { policy, migration: request, clock: () => '2026-07-14T02:02:00.000Z' });
   const receiptBytes = readFileSync(join(directory, 'canonical-order-receipt.json'));
   const retry = migrateCanonicalOrderLedger(directory, { policy, migration: request, clock: () => '2026-07-14T02:03:00.000Z' });
   assert.deepEqual(retry, first);
   assert.deepEqual(readFileSync(join(directory, 'canonical-order-receipt.json')), receiptBytes);
-  const narrower = { ...request, maxEvents: request.maxEvents - 1 };
-  assert.throws(() => migrateCanonicalOrderLedger(directory, { policy, migration: narrower }), (error) => error instanceof CoordinationRefusal && error.code === 'canonical_order_migration_invalid');
+  assert.throws(() => migrateCanonicalOrderLedger(directory, { policy, migration: { ...request, expectedEvents: 2 } }), (error) => error instanceof CoordinationRefusal && error.code === 'canonical_order_migration_invalid');
   assert.equal(existsSync(join(directory, 'writer.lease')), false);
 });
 
@@ -173,7 +176,7 @@ test('CO4/CO6: receipt and adopted prefix tampering fail before writer authority
   legacy.createTask(task('legacy'), { actor: 'orchestrator', key: 'legacy:create' });
   legacy.releaseWriterLease({ requireOwned: true });
   const raw = readFileSync(join(adoptedRoot, 'events.jsonl'));
-  migrateCanonicalOrderLedger(adoptedRoot, { policy, migration: migration({ mode: 'adopt_compatible', expectedPrefixDigest: sha256(raw), expectedEvents: 1 }) });
+  migrateCanonicalOrderLedger(adoptedRoot, { policy, migration: { mode: 'adopt_compatible', expectedPrefixDigest: sha256(raw), expectedEvents: 1 } });
   writeFileSync(join(adoptedRoot, 'events.jsonl'), Buffer.from(raw.toString('utf8').replaceAll('legacy', 'forged')));
   assert.throws(() => new CoordinationStore(adoptedRoot, { canonicalOrderPolicy: policy }), (error) => error instanceof CoordinationRefusal && error.code === 'canonical_order_integrity');
   assert.equal(existsSync(join(adoptedRoot, 'writer.lease')), false);
@@ -189,37 +192,67 @@ test('CO4/CO6: receipt and adopted prefix tampering fail before writer authority
   assert.equal(existsSync(join(receiptRoot, 'writer.lease')), false);
 });
 
-test('CO5/CO6: unknown history, receipt symlinks, and oversize receipts fail closed', () => {
+test('CO5/CO6: unknown history and receipt symlinks fail closed', () => {
   const unknownRoot = root('unknown-kind');
   const unknown = { schemaVersion: 1, seq: 1, ts: '2026-07-14T02:05:00.000Z', kind: 'attacker.unknown', actor: 'orchestrator', idempotencyKey: 'unknown:1', payload: {} };
   const unknownBytes = Buffer.from(`${JSON.stringify(unknown)}\n`);
   writeFileSync(join(unknownRoot, 'events.jsonl'), unknownBytes);
-  assert.throws(() => migrateCanonicalOrderLedger(unknownRoot, { policy, migration: migration({ mode: 'adopt_compatible', expectedPrefixDigest: sha256(unknownBytes), expectedEvents: 1 }) }), (error) => error instanceof CoordinationIntegrityError && error.code === 'unsupported_event_kind');
+  assert.throws(() => migrateCanonicalOrderLedger(unknownRoot, { policy, migration: { mode: 'adopt_compatible', expectedPrefixDigest: sha256(unknownBytes), expectedEvents: 1 } }), (error) => error instanceof CoordinationIntegrityError && error.code === 'unsupported_event_kind');
   assert.equal(existsSync(join(unknownRoot, 'canonical-order-receipt.json')), false);
   assert.equal(existsSync(join(unknownRoot, 'writer.lease')), false);
-
-  const eventRoot = root('oversize-event');
-  const legacy = new CoordinationStore(eventRoot); legacy.createTask(task('oversize'), { actor: 'orchestrator', key: 'oversize:create' }); legacy.releaseWriterLease({ requireOwned: true });
-  const eventBytes = readFileSync(join(eventRoot, 'events.jsonl'));
-  const eventPolicy = { ...policy, maxEventBytes: eventBytes.byteLength - 1 };
-  assert.throws(() => migrateCanonicalOrderLedger(eventRoot, { policy: eventPolicy, migration: { ...eventPolicy, mode: 'adopt_compatible', expectedPrefixDigest: sha256(eventBytes), expectedEvents: 1 } }), (error) => error instanceof CoordinationRefusal && error.code === 'canonical_order_migration_invalid');
-  assert.equal(existsSync(join(eventRoot, 'canonical-order-receipt.json')), false);
-  assert.equal(existsSync(join(eventRoot, 'writer.lease')), false);
 
   const symlinkRoot = root('receipt-symlink'); const target = join(symlinkRoot, 'outside.json');
   writeFileSync(target, '{}\n'); symlinkSync(target, join(symlinkRoot, 'canonical-order-receipt.json'));
   assert.throws(() => new CoordinationStore(symlinkRoot, { canonicalOrderPolicy: policy }), (error) => error instanceof CoordinationRefusal && error.code === 'canonical_order_integrity');
   unlinkSync(join(symlinkRoot, 'canonical-order-receipt.json'));
 
-  const tinyRoot = root('tiny-receipt'); const tinyPolicy = { ...policy, maxReceiptBytes: 64 };
-  const tiny = new CoordinationStore(tinyRoot, { canonicalOrderPolicy: tinyPolicy });
-  assert.throws(() => tiny.claimWriterLease(), (error) => error instanceof CoordinationRefusal && error.code === 'canonical_order_integrity');
-  assert.equal(existsSync(join(tinyRoot, 'canonical-order-receipt.json')), false);
-  assert.equal(existsSync(join(tinyRoot, 'writer.lease')), false);
-
   const resetRoot = root('reset-empty');
-  const reset = migrateCanonicalOrderLedger(resetRoot, { policy, migration: migration({ mode: 'reset_empty' }) });
+  const reset = migrateCanonicalOrderLedger(resetRoot, { policy, migration: { mode: 'reset_empty' } });
   assert.equal(reset.mode, 'empty_bootstrap'); assert.equal(reset.throughSeq, 0);
+});
+
+test('#530: a retained receipt carrying the pre-#530 numeric policy still opens with its digest intact', () => {
+  const directory = root('legacy-policy-receipt');
+  const store = new CoordinationStore(directory, { canonicalOrderPolicy: policy, clock: () => '2026-07-14T02:07:00.000Z' });
+  store.claimWriterLease();
+  store.releaseWriterLease({ requireOwned: true });
+  const receiptPath = join(directory, 'canonical-order-receipt.json');
+  const receipt = JSON.parse(readFileSync(receiptPath, 'utf8'));
+  const core = { ...receipt, policy: { ...legacyPolicy }, cutPolicy: { ...legacyPolicy } };
+  delete core.receiptDigest;
+  const retained = { ...core, receiptDigest: sha256(JSON.stringify(canonicalJson(core))) };
+  writeFileSync(receiptPath, `${JSON.stringify(canonicalJson(retained))}\n`);
+
+  const reopened = new CoordinationStore(directory, { canonicalOrderPolicy: policy });
+  reopened.claimWriterLease();
+  const read = reopened.canonicalOrderReceipt();
+  assert.deepEqual(read, retained);
+  assert.equal(read.receiptDigest, retained.receiptDigest);
+  assert.deepEqual(read.policy, { ...legacyPolicy });
+  reopened.releaseWriterLease({ requireOwned: true });
+});
+
+test('#530: a ledger whose event exceeds the removed 64 KiB bound adopts whole', () => {
+  const directory = root('beyond-removed-bound');
+  const legacy = new CoordinationStore(directory);
+  legacy.createTask(
+    { id: 'oversize', brief: { goal: 'b'.repeat(70 * 1024) }, deps: [], refines: null, taskType: 'phase63', reservedWorkerId: 'w-oversize' },
+    { actor: 'orchestrator', key: 'oversize:create' },
+  );
+  legacy.releaseWriterLease({ requireOwned: true });
+  const raw = readFileSync(join(directory, 'events.jsonl'));
+  assert.ok(raw.byteLength > 64 * 1024, `the one event is past the removed bound (${raw.byteLength} B)`);
+  const receipt = migrateCanonicalOrderLedger(directory, {
+    policy,
+    migration: { mode: 'adopt_compatible', expectedPrefixDigest: sha256(raw), expectedEvents: 1 },
+  });
+  assert.equal(receipt.mode, 'adopt_compatible');
+  assert.equal(receipt.throughSeq, 1);
+  assert.equal(receipt.prefixBytes, raw.byteLength);
+  const adopted = new CoordinationStore(directory, { canonicalOrderPolicy: policy });
+  adopted.claimWriterLease();
+  assert.equal(adopted.snapshot().lastSeq, 1);
+  adopted.releaseWriterLease({ requireOwned: true });
 });
 
 test('CO4/CO6: empty bootstrap is private and removes only stale receipt temporaries while leased', () => {

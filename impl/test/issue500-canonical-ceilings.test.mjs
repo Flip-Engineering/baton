@@ -5,25 +5,19 @@ import {
   canonicalJson, normalizeCanonicalOrderPolicy, sortCanonicalStrings,
 } from '../src/canonical-order.mjs';
 
-// Issue #500 declared the canonical-order implementation ceilings; #530 removed them. This file
-// now pins what replaced them: the policy's own coherence rule (an event bound may not exceed its
-// ledger bound) and a JSON helper that serializes whatever structure it is given, at any depth.
+// Issue #500 declared the canonical-order implementation ceilings; #530 removed them, and the
+// numbers a deployment declared in the policy left with them. What the policy carries now is the
+// declaration itself: declaring the object turns canonical ordering on, and the object holds no
+// size or count. A JSON helper that serializes whatever structure it is given, at any depth,
+// replaced the bounded one.
 
-const GIB = 1024 * 1024 * 1024;
-const MIB16 = 16 * 1024 * 1024;
-const MIB1 = 1024 * 1024;
-
-const policy = (fields) => ({
-  maxLedgerBytes: GIB, maxEventBytes: MIB16, maxEvents: 1_000_000, maxReceiptBytes: MIB1, ...fields,
-});
-
-test('500-canonical: the policy accepts any positive bounds and keeps its own coherence rule', () => {
-  assert.deepEqual(normalizeCanonicalOrderPolicy(policy({})), policy({}));
-  assert.deepEqual(normalizeCanonicalOrderPolicy(policy({ maxLedgerBytes: GIB * 64, maxEventBytes: MIB16 * 4, maxReceiptBytes: MIB1 * 8 })),
-    policy({ maxLedgerBytes: GIB * 64, maxEventBytes: MIB16 * 4, maxReceiptBytes: MIB1 * 8 }),
-    '#530: no implementation ceiling refuses a deployment a larger bound');
-  assert.throws(() => normalizeCanonicalOrderPolicy(policy({ maxEventBytes: GIB + 1 })), TypeError,
-    'an event bound over the ledger bound refuses — the policy must be coherent with itself');
+test('500-canonical: the policy is the mode declaration, and an unknown key refuses', () => {
+  const declaration = normalizeCanonicalOrderPolicy({});
+  assert.deepEqual(declaration, {});
+  assert.equal(Object.isFrozen(declaration), true);
+  assert.throws(() => normalizeCanonicalOrderPolicy({ maxEvents: 1_000 }), TypeError,
+    '#530: a declared size or count is not part of the declaration');
+  assert.throws(() => normalizeCanonicalOrderPolicy(null), TypeError);
 });
 
 test('500-canonical: canonicalJson serializes any depth and refuses only a non-JSON shape', () => {
