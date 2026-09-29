@@ -76,6 +76,7 @@
 # idempotency, interface delivery and process lifetime - are outside what a Bend term decides.
 import Base
 import ./receive-laws.bend as ReceiveLaws
+import ./knowledge-laws.bend as KnowledgeLaws
 import ./root.bend as Root
 import ./turn.bend as Turn
 import ./commands.bend as C

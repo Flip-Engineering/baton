@@ -27,6 +27,9 @@ type Command is Data:
   Status{}
   Workers{}
   Turns{id: String}
+  KnowledgeRecord{id: String, author: String, claim: String, evidence: String, limits: String}
+  KnowledgeRead{reader: String}
+  KnowledgePromote{id: String, promoter: String, source: String, destination: String, finding: String}
   Invalid{}
 
 def escape_char(+head: Char, tail: String, quote: Bool) -> String:
@@ -112,6 +115,9 @@ def sql(command: Command) -> String:
     case Push{repo,branch,remote}: ""
     case Recruit{id,parent,harness,model,effort,repo,branch,path,base}: ""
     case Worktree{id}: ""
+    case KnowledgeRecord{id,author,claim,evidence,limits}: ""
+    case KnowledgeRead{reader}: ""
+    case KnowledgePromote{id,promoter,source,destination,finding}: ""
     case Invalid{}: ""
 
 def parse(args: List<String>) -> Command:
@@ -125,7 +131,8 @@ def parse(args: List<String>) -> Command:
       Bool.pick(Command, String.eq(verb,"session"),Session{id},
       Bool.pick(Command, String.eq(verb,"delivery"),Delivery{id},
       Bool.pick(Command, String.eq(verb,"worktree"),Worktree{id},
-      Bool.pick(Command, String.eq(verb,"turns"),Turns{id},Invalid{})))))
+      Bool.pick(Command, String.eq(verb,"turns"),Turns{id},
+      Bool.pick(Command, String.eq(verb,"knowledge"),KnowledgeRead{id},Invalid{}))))))
     case +verb <> +id <> +one <> +two <> Nil{}:
       Bool.pick(Command, String.eq(verb,"report"),Report{id,one,two},
       Bool.pick(Command, String.eq(verb,"ack"),Ack{id,one,two},
@@ -141,7 +148,7 @@ def parse(args: List<String>) -> Command:
       Bool.pick(Command, String.eq(verb,"land-checked"),LandChecked{id,one,two,three,four},
       Bool.pick(Command, String.eq(verb,"bind"),Bind{id,one,two,three,four},
       Bool.pick(Command, String.eq(verb,"message"),Message{id,one,two,three,four},
-      Bool.pick(Command, String.eq(verb,"message-file"),MessageFile{id,one,two,three,four},Invalid{}))))
+      Bool.pick(Command, String.eq(verb,"message-file"),MessageFile{id,one,two,three,four},Bool.pick(Command, String.eq(verb,"record"),KnowledgeRecord{id,one,two,three,four},Bool.pick(Command, String.eq(verb,"promote"),KnowledgePromote{id,one,two,three,four},Invalid{}))))))
     case +verb <> session <> cmd <> model <> effort <> cwd <> log <> message <> Nil{}:
       Bool.pick(Command,String.eq(verb,"receive"),Receive{session,cmd,model,effort,cwd,log,message},Invalid{})
     case +verb <> +worker <> +id <> +cmd <> +model <> +effort <> +cwd <> +task <> +log <> +session <> Nil{}:
