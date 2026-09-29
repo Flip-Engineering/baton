@@ -34,7 +34,6 @@ session = json.loads(subprocess.check_output([b2, db, 'session', lead], text=Tru
 log = pathlib.Path(os.environ['TRIAL_STATE']) / (lead + '-native.jsonl')
 endpoint = [b2, db, 'receive', lead, os.environ['TRIAL_OMP'], '', '', '', str(log)]
 subprocess.run([b2, db, 'connect', lead, session['native'], json.dumps(endpoint)], check=True)
-subprocess.run([*endpoint, ''], check=True)
 PY
 cp "$TRIAL_LEAD_INSTRUCTIONS" "$TRIAL_STATE/issue-N-lead-task.md"
 ```
@@ -103,7 +102,8 @@ Record the root's own call as evidence: write the exact command line and its ans
 
 The adapter runs the repository's selected tests on both trees. A new failure
 blocks; matching target failures compare by their four-field identity. An
-unjudged run blocks. Inspect a refused landing and resolve its named cause.
+unjudged candidate blocks; an unjudged target blocks when the candidate fails.
+Inspect a refused landing and resolve its named cause.
 A conflict retains its scratch checkout; request that the lead rebase its branch
 onto the current target and resolve the conflict, then review the result. A
 change with no applicable test needs the operator to choose its selected check.
@@ -141,9 +141,9 @@ the saved Codex session and delivers pending root messages. It refreshes these
 instructions, the lead instructions and `task-template.md`, and preserves
 `first-task.md`. Read the current root instructions before acting on an older task.
 
-For an interrupted lead, inspect its session, messages, branch and worker history,
-then reconnect its endpoint and run `receive` with an empty final message ID,
-using the registration example above. This can deliver pending messages immediately.
-Resume a worker through its lead, using
-the worker's stored native ID and retained workspace. Check existing commits and
-reports before requesting more work.
+For an interrupted lead, inspect its session, inbox, branch and worker history.
+Invoke the endpoint stored in `session issue-N-lead` with an empty final message
+ID to replay pending input using its recorded native identity and workspace.
+Reconnect only when the endpoint changes. Request new work through the correction
+workflow above; the lead uses that workflow for its OMP workers too. A surviving
+retained receive owner automatically replaces a lost observer.
