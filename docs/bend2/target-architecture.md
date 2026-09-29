@@ -67,10 +67,18 @@ registered receiver; a direct `turn` takes the task file as an argument.
 Guidance is a `message` with kind `guidance`. The
 [Bend2 README](../../bend2/README.md) gives each command's arguments.
 
-Each command answers with JSON text as it completes. `turn` and `receive` are the
-long operations: each stays in the foreground while it supervises one native
-process. `status` shows the stored route, workspace and pending count. Errors
-name the observed failure and the next action.
+Each command answers with JSON text as it completes. The message-writing
+commands (`report`, `ask`, `ask-file`, `message`, `message-file`, and an
+`observe-file` whose event is terminal) wait for the recipient's configured
+endpoint to exit before they answer: the commit path invokes that endpoint
+(`bend2/src/coordinator/root.bend`) and waits on the process it spawned. The wait
+lasts as long as the receiver's own work, so a caller starts these commands in
+the background and ends its native turn, as the [Bend2
+README](../../bend2/README.md) and [trial lead
+instructions](../../bend2/trial/lead-instructions.md) describe. `turn` and
+`receive` are the supervisor operations: each stays in the foreground while it
+supervises one native process. `status` shows the stored route, workspace and
+pending count. Errors name the observed failure and the next action.
 
 Every turn completion persists the harness's final output and wakes the parent,
 including turns that contain no explicit `report` call. `ask` and `ask-file`
@@ -89,10 +97,13 @@ and retained workspace to the parent.
 
 A native attachment must demonstrate that a report can start a parent turn while
 the parent is idle. The recipient records acceptance with `ack` after the
-message reaches its native session. A receipt records native acceptance of
-that message alone; it does not establish that the parent reviewed the message
-or that a branch landed, which the receipt body and the Git result establish
-separately. Pending notifications survive disconnection and are sent on
+message reaches its native session; the receipt body is the acceptance text the
+recipient supplies. An acceptance receipt establishes that the recipient
+recorded acceptance of that message and nothing about the work itself. Parent
+review is a separate action: the parent reads the report and inspects the branch
+and worktree with `worktree`. Landing is established by the `land-checked`
+answer, whose `landed`, `already`, `conflict` and `blocked` statuses report the
+Git and check result. Pending notifications survive disconnection and are sent on
 reconnection; repeated delivery carries the same message ID. A delivery failure
 returns an error to the writer and leaves the message pending. `pending` lists
 it with the recipient's current endpoint, and `inbox` lists it; `delivery ID`
