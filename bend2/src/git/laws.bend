@@ -1051,17 +1051,20 @@ def m10_unjudged_candidate_names_file_and_cause():
 # M-10: the checked trees carry the check execution into the verdict. Stage 6
 # prepares the target tree as the candidate scratch tree's "-target" sibling,
 # the selected checks run on those two trees, and the pairs the checks produced
-# are the ones the verdict judges. Each right-hand side below is written here
-# independently of the function it judges. The publication argv and the advance
+# are the ones the verdict judges. The path each check runs in, and the pair it
+# produces, are pinned here. Git's creation of those trees at the candidate and
+# target revisions, the check subprocess itself, and the host's report of its
+# exit and output remain host assumptions. The publication argv and the advance
 # that runs it are stated above under M-3a.
 
 # M-10: every selected file runs on the candidate tree first and on the target
 # tree second, and each pair carries that file's own two verdicts. The step is
-# composed here independently of L.run_pair_go, so a run that reads the other
-# tree, drops a file or pairs the file with the other tree's verdict breaks this
-# proof. The same step holds at every position of the selection, because the
-# tail stays the production recursion.
-def run_pair_step_of(script: String, file: String, rest: List<String>, candTree: String, targTree: String) -> IO(List<L.PV>):
+# composed here independently of L.run_pair_go and quantified over the
+# accumulator, so it holds at every position of the selection; a run that reads
+# the other tree, drops a file or pairs the file with the other tree's verdict
+# breaks this proof. The trace begins at the empty accumulator and ends with the
+# reversed pairs, stated below.
+def run_pair_step_of(script: String, file: String, rest: List<String>, candTree: String, targTree: String, acc: List<L.PV>) -> IO(List<L.PV>):
   +s2 = script
   +ct2 = candTree
   +tt2 = targTree
@@ -1069,7 +1072,7 @@ def run_pair_step_of(script: String, file: String, rest: List<String>, candTree:
   do IO<List<L.PV>>:
     cfv : L.FV <- L.run_check(ct2, s2, f2)
     tfv : L.FV <- L.run_check(tt2, s2, f2)
-    L.run_pair_go(s2, rest, ct2, tt2, Con{L.PV{f2, L.fv_verdict(cfv), L.fv_verdict(tfv)}, Nil{}})
+    L.run_pair_go(s2, rest, ct2, tt2, Con{L.PV{f2, L.fv_verdict(cfv), L.fv_verdict(tfv)}, acc})
 
 law m10_run_pairs_checks_each_file_on_its_own_tree:
   for script: String
@@ -1077,9 +1080,34 @@ law m10_run_pairs_checks_each_file_on_its_own_tree:
   for rest: List<String>
   for candTree: String
   for targTree: String
-  {L.run_pair_go(script, Con{file, rest}, candTree, targTree, Nil{}) == run_pair_step_of(script, file, rest, candTree, targTree) : IO(List<L.PV>)}
+  for acc: List<L.PV>
+  {L.run_pair_go(script, Con{file, rest}, candTree, targTree, acc) == run_pair_step_of(script, file, rest, candTree, targTree, acc) : IO(List<L.PV>)}
 
-def m10_run_pairs_checks_each_file_on_its_own_tree(script, file, rest, candTree, targTree):
+def m10_run_pairs_checks_each_file_on_its_own_tree(script, file, rest, candTree, targTree, acc):
+  {==}
+
+# M-10: the walk ends by reversing the accumulated pairs, and no file is added
+# or dropped at the end.
+law m10_the_selection_walk_ends_with_the_reversed_pairs:
+  for script: String
+  for candTree: String
+  for targTree: String
+  for acc: List<L.PV>
+  {L.run_pair_go(script, Nil{}, candTree, targTree, acc) == IO.pure(List<L.PV>, List.reverse(&1, L.PV, acc)) : IO(List<L.PV>)}
+
+def m10_the_selection_walk_ends_with_the_reversed_pairs(script, candTree, targTree, acc):
+  {==}
+
+# M-10: the checked selection is the walk over the selected files, started at
+# the empty accumulator.
+law m10_run_pairs_starts_from_an_empty_accumulator:
+  for script: String
+  for files: List<String>
+  for candTree: String
+  for targTree: String
+  {L.run_pairs(script, files, candTree, targTree) == L.run_pair_go(script, files, candTree, targTree, Nil{}) : IO(List<L.PV>)}
+
+def m10_run_pairs_starts_from_an_empty_accumulator(script, files, candTree, targTree):
   {==}
 
 # M-10: the candidate tree that is checked is the scratch tree, the target tree
@@ -1141,10 +1169,13 @@ law m10_stage_six_checks_the_prepared_target_sibling:
 def m10_stage_six_checks_the_prepared_target_sibling(repo, target, script, files, scratch, tip, cand):
   {==}
 
-# M-10: the prepared worktree's result decides whether the checks run. A zero
-# exit runs them on the trees stage 6 prepared; any other status fails the
-# attempt by name, so no check ever runs against a tree that was not prepared.
-law m10_prepared_tree_runs_the_checks:
+# M-10: the prepared worktree's exit status decides whether the checks run. The
+# dispatch compares that status against zero, so a status the comparison rejects
+# reaches the blocked answer m10_target_tree_failure_blocks states, and no check
+# runs against a tree that was not prepared. A broken invocation fails with its
+# own detail.
+law m10_the_prepared_tree_status_decides_whether_the_checks_run:
+  for code: U32
   for out: String
   for repo: String
   for target: String
@@ -1154,13 +1185,13 @@ law m10_prepared_tree_runs_the_checks:
   for tip: String
   for cand: String
   for tw: String
-  {L.ld_tree_ok(T.GRun{0, out}, repo, target, script, files, scratch, tip, cand, tw) == L.ld_tree_runs(True{}, repo, target, script, files, scratch, tip, cand, tw) : IO(L.Ld)}
+  {L.ld_tree_ok(T.GRun{code, out}, repo, target, script, files, scratch, tip, cand, tw) == L.ld_tree_runs(U32.is_eq(code, 0), repo, target, script, files, scratch, tip, cand, tw) : IO(L.Ld)}
 
-def m10_prepared_tree_runs_the_checks(out, repo, target, script, files, scratch, tip, cand, tw):
+def m10_the_prepared_tree_status_decides_whether_the_checks_run(code, out, repo, target, script, files, scratch, tip, cand, tw):
   {==}
 
-law m10_unprepared_tree_blocks_by_name:
-  for out: String
+law m10_a_broken_tree_preparation_fails_with_its_detail:
+  for detail: String
   for repo: String
   for target: String
   for script: String
@@ -1169,7 +1200,7 @@ law m10_unprepared_tree_blocks_by_name:
   for tip: String
   for cand: String
   for tw: String
-  {L.ld_tree_ok(T.GRun{1, out}, repo, target, script, files, scratch, tip, cand, tw) == IO.pure(L.Ld, L.LdFail{T.FCmd{"land", "target worktree failed"}}) : IO(L.Ld)}
+  {L.ld_tree_ok(T.GBroken{detail}, repo, target, script, files, scratch, tip, cand, tw) == IO.pure(L.Ld, L.LdFail{T.FCmd{"land", detail}}) : IO(L.Ld)}
 
-def m10_unprepared_tree_blocks_by_name(out, repo, target, script, files, scratch, tip, cand, tw):
+def m10_a_broken_tree_preparation_fails_with_its_detail(detail, repo, target, script, files, scratch, tip, cand, tw):
   {==}
