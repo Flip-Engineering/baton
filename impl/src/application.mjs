@@ -5017,10 +5017,6 @@ export class BatonApplication {
       return this._settlementCommand(name, args, principal);
     }
     if (name === 'deployment.doctor') return this.doctorReadiness();
-    // Epic #103 (D9/D2): the two internal post-close seams the wave driver calls between the
-    // receipt build and the receipt write. Underscore-prefixed, top-level only, actor derived
-    // server-side as 'orchestrator'; never advertised on any user-facing surface.
-    if (name === '_wave.closed') return this.appendWaveClosedInternal(args, principal);
     validateApplicationCommandArgs(name, args);
     if (Object.hasOwn(SWARM_COMMAND_DEFINITIONS, name)) return this._swarmCommand(name, args, principal, context);
     const recursiveReadCommands = new Set(['application.help', 'run.inspect', 'run.episode',
@@ -5183,20 +5179,6 @@ export class BatonApplication {
     return coordinator.settlementLease(args.waveId, session, { members: args.members });
   }
 
-
-  // Epic #103 (D9): the wave driver's post-close wave.closed append seam. The actor is
-  // server-derived 'orchestrator' and the idempotency key is minted per attempt, so an injected
-  // duplicate append for the SAME waveId reaches the store's wave_already_closed refusal (the
-  // exactly-once key is the waveId, never the content digest — F10/F12).
-  appendWaveClosedInternal(args, principal) {
-    const coordination = this.driver?.coordination;
-    const record = args?.record ?? null;
-    const waveId = record && typeof record === 'object' && typeof record.waveId === 'string'
-      ? record.waveId : 'unknown';
-    return coordination.appendWaveClosed(record, {
-      actor: 'orchestrator', key: `wave.closed:${waveId}:${randomUUID()}`,
-    });
-  }
 
 
   // -------------------------------------------------------------------------

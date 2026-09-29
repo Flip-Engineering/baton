@@ -75,10 +75,6 @@ function referencedBytes(value) {
   return Buffer.byteLength(typeof value === 'string' ? value : JSON.stringify(value), 'utf8');
 }
 
-/** Issue #290: the wave.started roster well-formedness rule, shared by the replay fold and the
- * prospective write gate so the two can never drift — the fold refuses a genuinely malformed
- * roster (neither a well-formed object-array nor a well-formed string-array) as an integrity
- * failure; the write gate refuses the same payloads typed BEFORE the durable append. */
 
 
 /** Issue #290: the default ledger group-commit — one fsync per drain tick regardless of how
@@ -1353,34 +1349,6 @@ export class CoordinationStore {
   recordAuthorityRejected(payload, auth) { return coordinationLedger.recordAuthorityRejected(this, payload, auth); }
 
 
-  // -------------------------------------------------------------------------
-  // D9 (epic #103) — the wave.closed campaign-state record. A wave driver appends exactly one
-  // closed-shape record per wave in the guaranteed post-close window; the replay fold derives a
-  // _waveClosures map by waveId. The record is advisory (non-gating) and clock-free: its own event
-  // seq is the epoch anchor for closedAtEventSeq (G10).
-  // -------------------------------------------------------------------------
-
-  _validateWaveClosedPayload(fields) { return coordinationAdmission._validateWaveClosedPayload(fields); }
-
-  appendWaveClosed(fields, auth) { return coordinationLedger.appendWaveClosed(this, fields, auth); }
-
-  waveClosure(waveId) {
-    return coordinationInternals.waveClosure(this._waveClosures, waveId);
-  }
-  /** #286 G-31: the CURRENT run -> wave binding (last write wins), the one reading of "which wave
-   * does this run sit in now" that the coordinator's `_waveIdOf`/`_waveRoleOf` share. */
-  waveBinding(runId) {
-    return coordinationInternals.waveBinding(this._waveBindings, runId);
-  }
-  waveClosures() {
-    return coordinationInternals.waveClosures(this._waveClosures);
-  }
-
-  // D2.3 (epic #132): the wave registry projection read — the open+closed rows of the
-  // replay-derived _waveRegistry map, cloned so a reader never mutates the projection.
-  waveRegistry() {
-    return coordinationInternals.waveRegistry(this._waveRegistry);
-  }
 
   /** Issue #465(2): the ONE reader of a spill row — the digest-addressed identity the fold kept
    * (spillId, digest, `bytes` — the body's exact length — lane, the observed seqs) with the body
@@ -1523,9 +1491,6 @@ export class CoordinationStore {
 
   _taskByRun(runId) {
     return coordinationInternals._taskByRun(this._tasks, runId);
-  }
-  _waveMembershipOf(runId) {
-    return coordinationInternals._waveMembershipOf(this._events, runId);
   }
 
   // -------------------------------------------------------------------------

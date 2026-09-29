@@ -696,40 +696,11 @@ export function createWaveDriver(baton, rawPolicy = null) {
       },
       settlement: { errors: (settlementResult?.errors ?? []).slice(0, 8) },
     };
-    // D9 (epic #103): the campaign-state record + post-close briefing mint. Both run in the
-    // driver's guaranteed post-close window — AFTER wave.close() (the finally above) and the
-    // receipt build, BEFORE the receipt file write (D9 §mint-site). They are advisory, never
-    // gating: a typed refusal is captured into the bounded settlement.errors (≤ 8) and the wave
-    // stays closed (D5b). The record's own event seq is the landing's epoch anchor — no clocks.
+    // D9 (epic #103): the post-close briefing mint, in the driver's guaranteed post-close window —
+    // AFTER wave.close() (the finally above) and the receipt build, BEFORE the receipt file write.
+    // Advisory, never gating: a typed refusal is captured into the bounded settlement.errors (≤ 8)
+    // and the wave stays closed (D5b).
     const campaignErrors = [...(receipt.settlement.errors ?? [])];
-    const closedWaveId = typeof wave?.waveId === 'string' ? wave.waveId : null;
-    if (closedWaveId && typeof baton._appendWaveClosed === 'function') {
-      const record = {
-        waveId: closedWaveId,
-        receiptDigest: canonicalDigest(receipt),
-        rings: [], lanes: [], parked: [], blockedOn: [],
-        knowledge: {
-          candidates: receipt.knowledge?.candidates ?? 0,
-          candidatesAwaitingAdmission: receipt.knowledge?.candidatesAwaitingAdmission ?? 0,
-          settlementRunId: receipt.knowledge?.settlementRunId ?? null,
-        },
-        settlementErrors: (receipt.settlement?.errors ?? []).slice(0, 8),
-      };
-      try {
-        await baton._appendWaveClosed(record);
-      } catch (error) {
-        campaignErrors.push({ member: null, step: 'wave-closed', code: error?.code ?? 'wave_closed_failed' });
-      }
-      if (policy.injectDuplicateWaveClosed === true) {
-        // F12/A9-2 seam: force a SECOND append for the same waveId — refused wave_already_closed,
-        // captured, non-gating (D9 honesty rule 3).
-        try {
-          await baton._appendWaveClosed(record);
-        } catch (error) {
-          campaignErrors.push({ member: null, step: 'wave-closed', code: error?.code ?? 'wave_closed_failed' });
-        }
-      }
-    }
     if (typeof baton._mintCampaignBriefing === 'function') {
       try {
         await baton._mintCampaignBriefing();

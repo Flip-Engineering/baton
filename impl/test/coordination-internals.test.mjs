@@ -195,12 +195,11 @@ test('CI2: the committed map, the delegates, and the exports are one bijection',
     moved.set(`${member.name}#${member.ordinal}`, port === 'surface:internals_port' ? 'coordinationInternals' : 'coordinationReplay');
   }
   const counts = [...moved.values()].reduce((acc, namespace) => ({ ...acc, [namespace]: (acc[namespace] ?? 0) + 1 }), {});
-  // #286 added three internals helpers (waveBinding, orientationReadHead, orientationReadLatest)
-  // and their store delegates, and issue #259 slice 2 relocated the last 14 members two suite-pinned
+  // #286 added the two orientation read helpers (orientationReadHead, orientationReadLatest) and
+  // their store delegates, and issue #259 slice 2 relocated the last 14 members two suite-pinned
   // source scans had keyed to the store file; the census is the point, so it moves with them. Slice 7
-  // then moved the two orientation read delegates (orientationReadHead, orientationReadLatest) to the
-  // ledger-writes port with the store's effect bucket — they still reach the same internals helpers,
-  // one module call away — so the internals census is 101.
+  // then moved the two orientation read delegates to the ledger-writes port with the store's effect
+  // bucket — they still reach the same internals helpers, one module call away.
   assert.ok(counts.coordinationInternals > 0 && counts.coordinationReplay > 0,
     'the map must show the moved surface and recovery buckets — every store member whose body left');
 

@@ -174,15 +174,11 @@ test('broadcast independently collects each sender once and rebuilds fan-in afte
   assert.equal(receipt.reply.body,'A finding');
 });
 
-test('current wave membership permits peer initiation across member runs, refuses foreign groups', async () => {
+test('peer initiation follows the run: members of one run exchange, foreign runs refuse', async () => {
   const fx=laneFixture();
   const a=await fx.coordinator.spawn('mock',makeBrief(),{runId:'run:a'});
-  const b=await fx.coordinator.spawn('mock',makeBrief(),{runId:'run:b'});
+  const b=await fx.coordinator.spawn('mock',makeBrief(),{runId:'run:a'});
   const c=await fx.coordinator.spawn('mock',makeBrief(),{runId:'run:foreign'});
-  for (const [runId,waveId] of [['run:a','wave:ours'],['run:b','wave:ours'],['run:foreign','wave:theirs']]) {
-    fx.coordinator._coordination.recordDriver('steering.registered', {runId,driverKind:'wave',waveId,waveRole:runId},
-      {actor:'orchestrator',key:`steering:${runId}`});
-  }
   emit(fx,a,{to:{workerId:b.id},body:'Join this investigation.'});
   await flush();
   assert.equal(sent(fx,a).ok,true);
@@ -195,17 +191,10 @@ test('current wave membership permits peer initiation across member runs, refuse
   await flush();
   assert.equal(rejected(fx,c),'message_target_not_member');
   // A member admitted after the conversation starts participates without an upfront roster.
-  const late=await fx.coordinator.spawn('mock',makeBrief(),{runId:'run:b'});
+  const late=await fx.coordinator.spawn('mock',makeBrief(),{runId:'run:a'});
   emit(fx,a,{to:{workerId:late.id},body:'A new lead for you.'});
   await flush();
   assert.equal(sent(fx,a).ok,true);
-  fx.coordinator._coordination.appendWaveClosed({ waveId:'wave:ours', receiptDigest:'a'.repeat(64),
-    rings:[], lanes:[], parked:[], blockedOn:[], settlementErrors:[],
-    knowledge:{candidates:0,candidatesAwaitingAdmission:0,settlementRunId:null},
-  },{actor:'orchestrator',key:'wave.close:ours'});
-  emit(fx,a,{to:{workerId:late.id},body:'The wave has closed.'});
-  await flush();
-  assert.equal(rejected(fx,a),'message_target_not_member');
 });
 
 test('queued peer delivery rechecks membership when a recipient stops', async () => {

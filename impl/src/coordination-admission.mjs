@@ -11,7 +11,7 @@
 import { createHash } from 'node:crypto';
 import { existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { ARTIFACT_LIFECYCLE_FIELDS, KNOWLEDGE_EDGE_TYPES, KNOWLEDGE_GROUNDINGS, KNOWLEDGE_NODE_TYPES, assertWaveStartedRoster, providerAttemptDelay, resourceOverlap, validEnvRef, validKnowledgePromotionPolicy, validKnowledgeRecallAssessmentPolicy, validKnowledgeRecallPolicy, validKnowledgeScratchCorrectionPolicy } from './coordination-ledger.mjs';
+import { ARTIFACT_LIFECYCLE_FIELDS, KNOWLEDGE_EDGE_TYPES, KNOWLEDGE_GROUNDINGS, KNOWLEDGE_NODE_TYPES, providerAttemptDelay, resourceOverlap, validEnvRef, validKnowledgePromotionPolicy, validKnowledgeRecallAssessmentPolicy, validKnowledgeRecallPolicy, validKnowledgeScratchCorrectionPolicy } from './coordination-ledger.mjs';
 import { buildWorkflowRoleCatalog, normalizeWorkflowDefinition, validateWorkflowDefinitionLegacy, validateWorkflowDefinitionV3, workflowAttemptRoute, workflowCatalogRole } from './workflow-definition.mjs';
 import { CANONICAL_ORDER_VERSION, canonicalJson, compareCanonicalStrings, normalizeCanonicalOrderPolicy } from './canonical-order.mjs';
 import { CoordinationIntegrityError, CoordinationRefusal, KNOWLEDGE_CANDIDATE_TRIGGERS, TERMINAL, boundedText, canonical, canonicalBytes, canonicalDigest, clone, digest, freeze, promotionActor, sha256Bytes, validKnowledgeContradictionPolicy, validRunId } from './coordination-internals.mjs';
@@ -203,12 +203,6 @@ export function _validateRecordedPayload(kind, payload) {
   if (kind === 'driver.recorded') {
     if (typeof payload.kind !== 'string' || payload.kind.length === 0) {
       throw new CoordinationRefusal('driver.recorded requires a non-empty payload kind', 'coordination_record_invalid');
-    }
-    if (payload.kind === 'wave.started') {
-      try { assertWaveStartedRoster(payload); }
-      catch (error) {
-        throw Object.assign(new CoordinationRefusal('driver.recorded wave.started roster is malformed', 'coordination_record_invalid'), { cause: error });
-      }
     }
   }
 }
@@ -2261,47 +2255,6 @@ export function reuseTtlAdmission(store, key, requestDigest) {
   const prior = store._byKey.get(key); if (!prior) return null;
   if (prior.kind !== 'knowledge.reuse_ttl_invalidated' || prior.payload?.requestDigest !== requestDigest) throw new CoordinationRefusal('reuse TTL idempotency conflict', 'reuse_ttl_conflict');
   return freeze({ ok: true, result: 'idempotent', event: clone(prior), decision: store.reuseDecision(prior.payload.decisionId) });
-}
-
-export function _validateWaveClosedPayload(fields) {
-  if (!fields || typeof fields !== 'object' || Array.isArray(fields)) {
-    throw new CoordinationRefusal('wave.closed payload is invalid', 'wave_closed_invalid');
-  }
-  const closedShape = ['blockedOn', 'knowledge', 'lanes', 'parked', 'receiptDigest', 'rings', 'settlementErrors', 'waveId'];
-  const keys = Object.keys(fields);
-  if (keys.length !== 8 || keys.slice().sort().join(',') !== closedShape.join(',')) {
-    throw new CoordinationRefusal('wave.closed payload must be the closed 8-key shape', 'wave_closed_invalid');
-  }
-  if (typeof fields.waveId !== 'string' || fields.waveId.length === 0
-    || typeof fields.receiptDigest !== 'string' || !/^[a-f0-9]{64}$/u.test(fields.receiptDigest)) {
-    throw new CoordinationRefusal('wave.closed identity is invalid', 'wave_closed_invalid');
-  }
-  if (!Array.isArray(fields.rings) || fields.rings.length > 8
-    || fields.rings.some((entry) => !entry || typeof entry !== 'object' || Array.isArray(entry) || typeof entry.id !== 'string')) {
-    throw new CoordinationRefusal('wave.closed rings block is invalid', 'wave_closed_invalid');
-  }
-  if (!Array.isArray(fields.lanes) || fields.lanes.length > 16
-    || fields.lanes.some((entry) => !entry || typeof entry !== 'object' || Array.isArray(entry) || typeof entry.lane !== 'string')) {
-    throw new CoordinationRefusal('wave.closed lanes block is invalid', 'wave_closed_invalid');
-  }
-  if (!Array.isArray(fields.parked) || fields.parked.length > 8
-    || fields.parked.some((entry) => !entry || typeof entry !== 'object' || Array.isArray(entry) || typeof entry.id !== 'string')) {
-    throw new CoordinationRefusal('wave.closed parked block is invalid', 'wave_closed_invalid');
-  }
-  if (!Array.isArray(fields.blockedOn) || fields.blockedOn.length > 8
-    || fields.blockedOn.some((entry) => !entry || typeof entry !== 'object' || Array.isArray(entry) || typeof entry.item !== 'string')) {
-    throw new CoordinationRefusal('wave.closed blockedOn block is invalid', 'wave_closed_invalid');
-  }
-  if (!fields.knowledge || typeof fields.knowledge !== 'object' || Array.isArray(fields.knowledge)
-    || !['candidates', 'candidatesAwaitingAdmission', 'settlementRunId']
-      .every((key) => Object.hasOwn(fields.knowledge, key))) {
-    throw new CoordinationRefusal('wave.closed knowledge block is invalid', 'wave_closed_invalid');
-  }
-  if (!Array.isArray(fields.settlementErrors) || fields.settlementErrors.length > 8
-    || fields.settlementErrors.some((entry) => !entry || typeof entry !== 'object' || Array.isArray(entry) || typeof entry.code !== 'string')) {
-    throw new CoordinationRefusal('wave.closed settlementErrors block is invalid', 'wave_closed_invalid');
-  }
-  return clone(fields);
 }
 
 export function _resolvedSpill(store, spillId) {

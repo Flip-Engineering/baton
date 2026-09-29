@@ -5153,17 +5153,6 @@ export class Coordinator {
     return runtimeObservation.readScratch(this, this._recorder, workerId, resource, envRef, opts);
   }
 
-  // #286 G-31/G-45: BOTH readers take the CURRENT binding from the store's `_waveBindings` fold —
-  // one reading of an append-only log's current state, last write wins (coordination-internals
-  // states the law). Scanning for the first `steering.registered` for the run answered with the
-  // superseded wave after a re-registration, and copied the whole ledger twice per peer message.
-    _waveRoleOf(runId) {
-    return runtimeObservation._waveRoleOf(this, this._recorder, runId);
-  }
-
-    _waveIdOf(runId) {
-    return runtimeObservation._waveIdOf(this, this._recorder, runId);
-  }
 
   /** Decision 2/8: a worker (re)attachment is a durable generation record so replay can derive
    * which grants a replacement generation invalidates. Called at spawn. */
