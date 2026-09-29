@@ -98,9 +98,11 @@ def knowledge_item(+reader: String) -> String:
 def read_sql(+reader: String) -> String:
   reader_chain(reader) ++ "SELECT coalesce(json_group_array(json(item)),json('[]')) FROM (SELECT " ++ knowledge_item(reader) ++ " AS item FROM knowledge k WHERE " ++ knowledge_visible(reader) ++ " ORDER BY k.rowid);"
 
-# The stored finding, read back by the identity the writer supplied.
-def knowledge_row(id: String) -> String:
-  "SELECT json_object('id',id,'author',author,'claim',claim,'evidence',evidence,'limits',limits) FROM knowledge WHERE id=" ++ C.q(id) ++ ";"
+# The stored finding, read back only when it is this invocation's own finding:
+# the same id with different coordinates is refused rather than answered with
+# another row's content, so a mismatched repeat cannot redeliver its notice.
+def knowledge_answer(+id: String, +author: String, +claim: String, +evidence: String, +limits: String) -> String:
+  "SELECT json_object('id',id,'author',author,'claim',claim,'evidence',evidence,'limits',limits) FROM knowledge WHERE id=" ++ C.q(id) ++ " AND author=" ++ C.q(author) ++ " AND claim=" ++ C.q(claim) ++ " AND evidence=" ++ C.q(evidence) ++ " AND limits=" ++ C.q(limits) ++ ";"
 
 # Evidence is a reference to an existing retained message the author is a party
 # to. Nothing else is an accepted reference in this slice.
@@ -117,17 +119,18 @@ def notice_body(+id: String, +author: String) -> String:
   "json_object('finding'," ++ C.q(id) ++ ",'author'," ++ C.q(author) ++ ")"
 
 # The notice rides the existing question kind, so a parent already handed off or
-# stopped still receives it under the dispatch family it already serves.
-def notice_statement(+id: String, +author: String) -> String:
-  "INSERT INTO messages(id,sender,recipient,kind,body) SELECT " ++ C.q(notice_id(id)) ++ "," ++ C.q(author) ++ "," ++ notice_target(author) ++ ",'question'," ++ notice_body(id,author) ++ " WHERE EXISTS(SELECT 1 FROM knowledge WHERE id=" ++ C.q(id) ++ ") AND " ++ notice_target(author) ++ " IS NOT NULL"
+# stopped still receives it under the dispatch family it already serves. It is
+# written only for this invocation's own finding coordinates.
+def notice_statement(+id: String, +author: String, +claim: String, +evidence: String, +limits: String) -> String:
+  "INSERT INTO messages(id,sender,recipient,kind,body) SELECT " ++ C.q(notice_id(id)) ++ "," ++ C.q(author) ++ "," ++ notice_target(author) ++ ",'question'," ++ notice_body(id,author) ++ " WHERE EXISTS(SELECT 1 FROM knowledge WHERE id=" ++ C.q(id) ++ " AND author=" ++ C.q(author) ++ " AND claim=" ++ C.q(claim) ++ " AND evidence=" ++ C.q(evidence) ++ " AND limits=" ++ C.q(limits) ++ ") AND " ++ notice_target(author) ++ " IS NOT NULL"
   ++ " ON CONFLICT(id) DO UPDATE SET id=CASE WHEN messages.sender=excluded.sender AND messages.recipient=excluded.recipient AND messages.kind=excluded.kind AND messages.body=excluded.body THEN messages.id ELSE NULL END;"
 
 def finding_statement(+id: String, +author: String, claim: String, +evidence: String, limits: String) -> String:
   "INSERT INTO knowledge(id,author,claim,evidence,limits) SELECT " ++ C.q(id) ++ "," ++ C.q(author) ++ "," ++ C.q(claim) ++ "," ++ C.q(evidence) ++ "," ++ C.q(limits) ++ " WHERE EXISTS(SELECT 1 FROM sessions WHERE id=" ++ C.q(author) ++ ") AND " ++ evidence_ok(author,evidence)
   ++ " ON CONFLICT(id) DO UPDATE SET id=CASE WHEN knowledge.author=excluded.author AND knowledge.claim=excluded.claim AND knowledge.evidence=excluded.evidence AND knowledge.limits=excluded.limits THEN knowledge.id ELSE NULL END;"
 
-def record_statements(+id: String, +author: String, +claim: String, +evidence: String, limits: String) -> String:
-  finding_statement(id,author,claim,evidence,limits) ++ notice_statement(id,author) ++ knowledge_row(id)
+def record_statements(+id: String, +author: String, +claim: String, +evidence: String, +limits: String) -> String:
+  finding_statement(id,author,claim,evidence,limits) ++ notice_statement(id,author,claim,evidence,limits) ++ knowledge_answer(id,author,claim,evidence,limits)
 
 # A promotion is admitted only for the destination scope's own owner.
 def promotion_admitted(promoter: String, destination: String) -> String:

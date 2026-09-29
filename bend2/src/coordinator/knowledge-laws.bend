@@ -93,13 +93,18 @@ law m8_a_reader_reads_the_promotions_visible_to_it:
 def m8_a_reader_reads_the_promotions_visible_to_it(reader):
   {==}
 
-# M-1: a record answers the finding it stored, read back by the identity the
-# writer supplied.
+# M-1: a record answers its own finding, read back by its full coordinates. A
+# repeat of an existing id with different coordinates therefore cannot answer
+# another row's content, and cannot redeliver that row's notice.
 law m1_the_finding_answer_is_the_row_it_wrote:
   for id: String
-  {K.knowledge_row(id) == "SELECT json_object('id',id,'author',author,'claim',claim,'evidence',evidence,'limits',limits) FROM knowledge WHERE id=" ++ C.q(id) ++ ";" : String}
+  for author: String
+  for claim: String
+  for evidence: String
+  for limits: String
+  {K.knowledge_answer(id, author, claim, evidence, limits) == "SELECT json_object('id',id,'author',author,'claim',claim,'evidence',evidence,'limits',limits) FROM knowledge WHERE id=" ++ C.q(id) ++ " AND author=" ++ C.q(author) ++ " AND claim=" ++ C.q(claim) ++ " AND evidence=" ++ C.q(evidence) ++ " AND limits=" ++ C.q(limits) ++ ";" : String}
 
-def m1_the_finding_answer_is_the_row_it_wrote(id):
+def m1_the_finding_answer_is_the_row_it_wrote(id, author, claim, evidence, limits):
   {==}
 
 # M-8: evidence names an existing retained message the author is a party to.
@@ -148,9 +153,12 @@ law m8_only_the_destination_owner_admits_a_promotion:
 law m14_the_notice_carries_the_question_kind_and_the_reference:
   for id: String
   for author: String
-  {K.notice_statement(id, author) == "INSERT INTO messages(id,sender,recipient,kind,body) SELECT " ++ C.q(K.notice_id(id)) ++ "," ++ C.q(author) ++ "," ++ K.notice_target(author) ++ ",'question'," ++ K.notice_body(id,author) ++ " WHERE EXISTS(SELECT 1 FROM knowledge WHERE id=" ++ C.q(id) ++ ") AND " ++ K.notice_target(author) ++ " IS NOT NULL" ++ " ON CONFLICT(id) DO UPDATE SET id=CASE WHEN messages.sender=excluded.sender AND messages.recipient=excluded.recipient AND messages.kind=excluded.kind AND messages.body=excluded.body THEN messages.id ELSE NULL END;" : String}
+  for claim: String
+  for evidence: String
+  for limits: String
+  {K.notice_statement(id, author, claim, evidence, limits) == "INSERT INTO messages(id,sender,recipient,kind,body) SELECT " ++ C.q(K.notice_id(id)) ++ "," ++ C.q(author) ++ "," ++ K.notice_target(author) ++ ",'question'," ++ K.notice_body(id,author) ++ " WHERE EXISTS(SELECT 1 FROM knowledge WHERE id=" ++ C.q(id) ++ " AND author=" ++ C.q(author) ++ " AND claim=" ++ C.q(claim) ++ " AND evidence=" ++ C.q(evidence) ++ " AND limits=" ++ C.q(limits) ++ ") AND " ++ K.notice_target(author) ++ " IS NOT NULL" ++ " ON CONFLICT(id) DO UPDATE SET id=CASE WHEN messages.sender=excluded.sender AND messages.recipient=excluded.recipient AND messages.kind=excluded.kind AND messages.body=excluded.body THEN messages.id ELSE NULL END;" : String}
 
-def m14_the_notice_carries_the_question_kind_and_the_reference(id, author):
+def m14_the_notice_carries_the_question_kind_and_the_reference(id, author, claim, evidence, limits):
   {==}
 
 def m8_only_the_destination_owner_admits_a_promotion(promoter, destination):
@@ -167,7 +175,6 @@ law m8_a_promotion_source_carries_the_exact_finding:
 
 def m8_a_promotion_source_carries_the_exact_finding(promoter, source):
   {==}
-
 # M-1: a promotion answers this call's own promotion, so the same id with
 # different coordinates cannot answer another row's content.
 law m1_the_promotion_answer_is_this_calls_promotion:
@@ -220,7 +227,7 @@ law m1_the_record_statement_carries_the_finding_the_notice_and_the_answer:
   for claim: String
   for evidence: String
   for limits: String
-  {K.record_statements(id, author, claim, evidence, limits) == K.finding_statement(id,author,claim,evidence,limits) ++ K.notice_statement(id,author) ++ K.knowledge_row(id) : String}
+  {K.record_statements(id, author, claim, evidence, limits) == K.finding_statement(id,author,claim,evidence,limits) ++ K.notice_statement(id,author,claim,evidence,limits) ++ K.knowledge_answer(id,author,claim,evidence,limits) : String}
 
 def m1_the_record_statement_carries_the_finding_the_notice_and_the_answer(id, author, claim, evidence, limits):
   {==}
