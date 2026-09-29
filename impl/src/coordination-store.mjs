@@ -579,7 +579,6 @@ export class CoordinationStore {
 
   _resetProjection() { return coordinationLedger._resetProjection(this); }
 
-  _configureAdvisoryFeedCards(cards) { return coordinationAdmission._configureAdvisoryFeedCards(cards); }
   _reloadProjection() {
     return coordinationReplay._reloadProjection(this);
   }
