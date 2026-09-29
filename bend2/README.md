@@ -258,6 +258,13 @@ existing root with `connect`; the trial launcher preserves it automatically.
 Codex retains conversations in its configured storage. OMP roots use
 `DATABASE.root-sessions`.
 
+Retained OMP children send native input, selection, confirmation and editor
+questions to their registered parent. The question names its request ID and
+response shape. Use `native-reply PARENT REQUEST RESPONSE_JSON` or
+`native-reply-file PARENT REQUEST PATH` to answer through the existing keeper.
+`stdin-written` records transport completion; subsequent native output records
+progress. See [native interaction semantics and limits](../docs/bend2/native-interactions.md).
+
 The earlier `codex-root.mjs` and `omp-root.mjs` entry points remain available for
 existing configurations. Native `receive` supplies the session ownership and
 queued delivery described here. The trial launcher uses that native path.

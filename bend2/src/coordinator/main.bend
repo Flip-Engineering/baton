@@ -6,6 +6,7 @@ import ./laws.bend as Laws
 import ./store.bend as Store
 import ./turn.bend as Turn
 import ./receive.bend as Receive
+import ./native-requests.bend as NativeRequests
 import ./recruit.bend as Recruit
 import ./land.bend as Land
 import ./commands.bend as C
@@ -63,7 +64,7 @@ def run(db: String, command: C.Command) -> IO(Unit):
 def execute(db: String, command: C.Command) -> IO(Unit):
   match command:
     case C.Invalid{}:
-      IO.die(Unit,2,"usage: baton2 DATABASE COMMAND ARGS\nattach ID HARNESS NATIVE ENDPOINT\nrecruit ID PARENT HARNESS MODEL EFFORT REPO BRANCH PATH BASE\nworktree ID\nconnect ID NATIVE ENDPOINT\nbind ID NATIVE HARNESS MODEL EFFORT\nmessage ID SENDER RECIPIENT KIND BODY\nmessage-file ID SENDER RECIPIENT KIND PATH\nobserve-file ID WORKER PATH\nreport ID WORKER BODY\nask ID WORKER BODY\nask-file ID WORKER PATH\nsession ID\ndelivery ID\npending\ninbox RECIPIENT\nack ID RECIPIENT NATIVE_RECEIPT\nstatus\nworkers\nturns WORKER_ID\nland WORKER_ID REPO TARGET_BRANCH\nland-checked WORKER_ID REPO TARGET_BRANCH CHECK FILES\npush REPO BRANCH REMOTE\nturn WORKER TURN_ID HARNESS_CMD MODEL EFFORT CWD TASK_FILE OUTPUT_LOG RESUME_SESSION\nreceive SESSION HARNESS_CMD MODEL EFFORT CWD OUTPUT_LOG MESSAGE_ID\nEmpty receive MODEL/EFFORT/CWD use recorded values; empty MESSAGE_ID reads the pending inbox.\nPATH - reads stdin; empty RESUME_SESSION starts a new native session")
+      IO.die(Unit,2,"usage: baton2 DATABASE COMMAND ARGS\nattach ID HARNESS NATIVE ENDPOINT\nrecruit ID PARENT HARNESS MODEL EFFORT REPO BRANCH PATH BASE\nworktree ID\nconnect ID NATIVE ENDPOINT\nbind ID NATIVE HARNESS MODEL EFFORT\nmessage ID SENDER RECIPIENT KIND BODY\nmessage-file ID SENDER RECIPIENT KIND PATH\nobserve-file ID WORKER PATH\nreport ID WORKER BODY\nask ID WORKER BODY\nask-file ID WORKER PATH\nnative-reply PARENT REQUEST RESPONSE_JSON\nnative-reply-file PARENT REQUEST PATH\nsession ID\ndelivery ID\npending\ninbox RECIPIENT\nack ID RECIPIENT NATIVE_RECEIPT\nstatus\nworkers\nturns WORKER_ID\nland WORKER_ID REPO TARGET_BRANCH\nland-checked WORKER_ID REPO TARGET_BRANCH CHECK FILES\npush REPO BRANCH REMOTE\nturn WORKER TURN_ID HARNESS_CMD MODEL EFFORT CWD TASK_FILE OUTPUT_LOG RESUME_SESSION\nreceive SESSION HARNESS_CMD MODEL EFFORT CWD OUTPUT_LOG MESSAGE_ID\nEmpty receive MODEL/EFFORT/CWD use recorded values; empty MESSAGE_ID reads the pending inbox.\nPATH - reads stdin; empty RESUME_SESSION starts a new native session")
     case C.Recruit{id,parent,harness,model,effort,repo,branch,path,base}:
       Recruit.recruit(db,id,parent,harness,model,effort,repo,branch,path,base)
     case C.Land{worker,repo,target}:
@@ -81,6 +82,11 @@ def execute(db: String, command: C.Command) -> IO(Unit):
       do IO<Unit>:
         event : String <- IO.try(String,T.Text.read(path))
         run(db,C.Observe{id,worker,event})
+    case C.NativeReply{parent,id,response}: NativeRequests.reply(db,parent,id,response)
+    case C.NativeReplyFile{parent,id,path}:
+      do IO<Unit>:
+        response : String <- IO.try(String,T.Text.read(path))
+        NativeRequests.reply(db,parent,id,response)
     case C.AskFile{id,worker,path}:
       do IO<Unit>:
         body : String <- IO.try(String,T.Text.read(path))

@@ -16,6 +16,8 @@ type Command is Data:
   Report{id: String, sender: String, body: String}
   Ask{id: String, worker: String, body: String}
   AskFile{id: String, worker: String, path: String}
+  NativeReply{parent: String, id: String, response: String}
+  NativeReplyFile{parent: String, id: String, path: String}
   Ack{id: String, recipient: String, receipt: String}
   Session{id: String}
   Delivery{id: String}
@@ -105,6 +107,8 @@ def sql(command: Command) -> String:
     case ObserveFile{id,worker,path}: ""
     case MessageFile{id,sender,recipient,kind,path}: ""
     case AskFile{id,worker,path}: ""
+    case NativeReply{parent,id,response}: ""
+    case NativeReplyFile{parent,id,path}: ""
     case RunTurn{worker,id,cmd,model,effort,cwd,task,log,session}: ""
     case Receive{session,cmd,model,effort,cwd,log,message}: ""
     case Land{worker,repo,target}: ""
@@ -127,6 +131,8 @@ def parse(args: List<String>) -> Command:
       Bool.pick(Command, String.eq(verb,"worktree"),Worktree{id},
       Bool.pick(Command, String.eq(verb,"turns"),Turns{id},Invalid{})))))
     case +verb <> +id <> +one <> +two <> Nil{}:
+      Bool.pick(Command, String.eq(verb,"native-reply"),NativeReply{id,one,two},
+      Bool.pick(Command, String.eq(verb,"native-reply-file"),NativeReplyFile{id,one,two},
       Bool.pick(Command, String.eq(verb,"report"),Report{id,one,two},
       Bool.pick(Command, String.eq(verb,"ack"),Ack{id,one,two},
       Bool.pick(Command, String.eq(verb,"observe-file"),ObserveFile{id,one,two},
@@ -134,7 +140,7 @@ def parse(args: List<String>) -> Command:
       Bool.pick(Command, String.eq(verb,"land"),Land{id,one,two},
       Bool.pick(Command, String.eq(verb,"push"),Push{id,one,two},
       Bool.pick(Command, String.eq(verb,"ask"),Ask{id,one,two},
-      Bool.pick(Command, String.eq(verb,"ask-file"),AskFile{id,one,two},Invalid{}))))))))
+      Bool.pick(Command, String.eq(verb,"ask-file"),AskFile{id,one,two},Invalid{}))))))))))
     case +verb <> +id <> +one <> +two <> +three <> Nil{}:
       Bool.pick(Command, String.eq(verb,"attach"),Attach{id,one,two,three},Invalid{})
     case +verb <> +id <> +one <> +two <> +three <> +four <> Nil{}:

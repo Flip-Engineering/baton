@@ -4,6 +4,7 @@ import ./store.bend as Store
 import ./root.bend as Root
 import ../host/session-lock.bend as Lock
 import ./guidance.bend as Guidance
+import ./native-requests.bend as NativeRequests
 import ../host/sqlite.bend as DB
 import ../host/text.bend as T
 import ../host/process.bend as P
@@ -194,7 +195,7 @@ def append_frame(log: String, line: String, keep: Bool) -> IO(Result<&1,&1,U32 &
 def frame_kind(db: String, line: String, omp: Bool) -> IO(String):
   match omp:
     case False{}: IO.pure(String,"")
-    case True{}: IO.try(String,DB.Sql.query(db,"WITH frame(value) AS (VALUES(" ++ C.q(line) ++ ")) SELECT CASE WHEN json_valid(value) THEN CASE json_extract(value,'$.type') WHEN 'message_update' THEN 'message_update' WHEN 'response' THEN 'response' WHEN 'message_end' THEN 'message_end' WHEN 'tool_execution_start' THEN 'tool_execution_start' WHEN 'tool_execution_end' THEN 'tool_execution_end' WHEN 'agent_end' THEN 'agent_end' ELSE '' END ELSE '' END FROM frame;"))
+    case True{}: IO.try(String,DB.Sql.query(db,"WITH frame(value) AS (VALUES(" ++ C.q(line) ++ ")) SELECT CASE WHEN json_valid(value) THEN CASE json_extract(value,'$.type') WHEN 'message_update' THEN 'message_update' WHEN 'response' THEN 'response' WHEN 'message_end' THEN 'message_end' WHEN 'tool_execution_start' THEN 'tool_execution_start' WHEN 'tool_execution_end' THEN 'tool_execution_end' WHEN 'agent_end' THEN 'agent_end' WHEN 'extension_ui_request' THEN 'extension_ui_request' ELSE '' END ELSE '' END FROM frame;"))
 
 # The live #379 trial filled the disk with OMP's cumulative message_update
 # snapshots. message_end supplies the complete message; keep every other frame.
@@ -216,21 +217,22 @@ def codex_frames(db: String, +previous: String, +line: String, codex: Bool) -> I
       IO.pure(String,Tx.trim_nl(value))
 
 @unsafe
-def consume(+db: String, +worker: String, +id: String, +log: String, +handle: U32, +harness: String, cursor: String, last_message: String, terminal: String, codex_log: String, first_error: String, sender: Chan(Result<&1,&1,U32 & String,Unit>), result: Result<&1,&1,U32 & String,Maybe<String>>) -> IO(Outcome):
+def consume(+db: String, +worker: String, +id: String, +log: String, +handle: U32, +harness: String, cursor: String, last_message: String, terminal: String, codex_log: String, +first_error: String, sender: Chan(Result<&1,&1,U32 & String,Unit>), +attempt: String, deliveries: List<Chan(Result<&1,&1,U32 & String,String>)>, result: Result<&1,&1,U32 & String,Maybe<String>>) -> IO(Outcome & List<Chan(Result<&1,&1,U32 & String,String>)>):
   match result:
-    case Fail{error}: do IO<Outcome>:
+    case Fail{error}: do IO<Outcome & List<Chan(Result<&1,&1,U32 & String,String>)>>:
       closed : Result<&1,&1,U32 & String,Unit> <- P.ProcessChild.close_stdin(handle)
       sent : Result<&1,&1,U32 & String,Unit> <- IO.join(Result<&1,&1,U32 & String,Unit>,sender)
       waited : Result<&1,&1,U32 & String,String> <- P.ProcessChild.wait(handle)
-      IO.pure(Outcome,Ended{status_text(waited),terminal,"Native output read failed: " ++ error_text(error)})
+      IO.pure(Outcome & List<Chan(Result<&1,&1,U32 & String,String>)>,(Ended{status_text(waited),terminal,"Native output read failed: " ++ error_text(error)},deliveries))
     case Done{None{}}:
-      do IO<Outcome>:
+      do IO<Outcome & List<Chan(Result<&1,&1,U32 & String,String>)>>:
         sent : Result<&1,&1,U32 & String,Unit> <- IO.join(Result<&1,&1,U32 & String,Unit>,sender)
         status : Result<&1,&1,U32 & String,String> <- P.ProcessChild.wait(handle)
         event : String <- codex_finished(db,worker,id,codex_log,terminal,String.eq(harness,"codex\n"))
-        IO.pure(Outcome,Ended{status_text(status),event,remember_write(first_error,sent)})
+        closed : Result<&1,&1,U32 & String,String> <- NativeRequests.closed(db,attempt,Bool.not(String.is_empty(attempt)))
+        IO.pure(Outcome & List<Chan(Result<&1,&1,U32 & String,String>)>,(Ended{status_text(status),event,remember(remember_write(first_error,sent),closed)},deliveries))
     case Done{Some{+line}}:
-      do IO<Outcome>:
+      do IO<Outcome & List<Chan(Result<&1,&1,U32 & String,String>)>>:
         +kind : String <- frame_kind(db,line,String.eq(harness,"omp\n"))
         written : Result<&1,&1,U32 & String,Unit> <- record_frame(log,line,kind)
         +relevant : Bool <- IO.pure(Bool,Guidance.relevant(kind,String.eq(harness,"omp\n")))
@@ -240,8 +242,16 @@ def consume(+db: String, +worker: String, +id: String, +log: String, +handle: U3
         observed : Result<&1,&1,U32 & String,String> <- observe_event(db,worker,id,event,relevant)
         ended : String <- terminal_event(db,event,terminal,relevant)
         codex_state : String <- codex_frames(db,codex_log,line,String.eq(harness,"codex\n"))
-        next : Result<&1,&1,U32 & String,Maybe<String>> <- P.ProcessChild.read_line(handle)
-        consume(db,worker,id,log,handle,harness,next_cursor,message,ended,codex_state,remember(remember_write(first_error,written),observed),sender,next)
+        questions : List<Chan(Result<&1,&1,U32 & String,String>)> & String <- NativeRequests.observe(db,worker,id,attempt,line,deliveries,Bool.and(Bool.not(String.is_empty(attempt)),String.eq(kind,"extension_ui_request\n")))
+        NativeRequests.with_observation(Outcome & List<Chan(Result<&1,&1,U32 & String,String>)>,questions,wakes => question_error => do IO<Outcome & List<Chan(Result<&1,&1,U32 & String,String>)>>:
+          next : Result<&1,&1,U32 & String,Maybe<String>> <- P.ProcessChild.read_line(handle)
+          consume(db,worker,id,log,handle,harness,next_cursor,message,ended,codex_state,remember(remember_write(Bool.pick(String,String.is_empty(first_error),question_error,first_error),written),observed),sender,attempt,wakes,next))
+
+def direct_observed(observation: Outcome & List<Chan(Result<&1,&1,U32 & String,String>)>) -> IO(Outcome):
+  (outcome,deliveries)=observation
+  do IO<Outcome>:
+    settled : Result<&1,&1,U32 & String,Unit> <- NativeRequests.settle(deliveries)
+    IO.pure(Outcome,outcome)
 
 def started(+db: String, +worker: String, +id: String, +log: String, prompt: String, +harness: String, result: Result<&1,&1,U32 & String,U32>) -> IO(Outcome):
   match result:
@@ -250,15 +260,16 @@ def started(+db: String, +worker: String, +id: String, +log: String, prompt: Str
       do IO<Outcome>:
         sender : Chan(Result<&1,&1,U32 & String,Unit>) <- IO.fork(Result<&1,&1,U32 & String,Unit>,send_prompt(handle,prompt,harness))
         first : Result<&1,&1,U32 & String,Maybe<String>> <- P.ProcessChild.read_line(handle)
-        consume(db,worker,id,log,handle,harness,"0\n","","","","",sender,first)
+        observation : Outcome & List<Chan(Result<&1,&1,U32 & String,String>)> <- consume(db,worker,id,log,handle,harness,"0\n","","","","",sender,"",Nil{},first)
+        direct_observed(observation)
 
 # The retained process sends its initial input once. Reattachment reads the same
 # attempt from its first frame so native completion can be reconstructed.
-def retained_output(db: String, worker: String, id: String, log: String, +harness: String, +handle: U32) -> IO(Outcome):
-  do IO<Outcome>:
+def retained_output(db: String, worker: String, id: String, log: String, +harness: String, attempt: String, +handle: U32) -> IO(Outcome & List<Chan(Result<&1,&1,U32 & String,String>)>):
+  do IO<Outcome & List<Chan(Result<&1,&1,U32 & String,String>)>>:
     sender : Chan(Result<&1,&1,U32 & String,Unit>) <- IO.fork(Result<&1,&1,U32 & String,Unit>,IO.pure(Result<&1,&1,U32 & String,Unit>,Done{Unit{}}))
     first : Result<&1,&1,U32 & String,Maybe<String>> <- P.ProcessChild.read_line(handle)
-    consume(db,worker,id,log,handle,harness,"0\n","","","","",sender,first)
+    consume(db,worker,id,log,handle,harness,"0\n","","","","",sender,attempt,Nil{},first)
 
 def retained(+db: String, +worker: String, +directory: String, +cmd: String, +model: String, +effort: String, cwd: String, +session: String, +harness: String, +sessions: String, +prompt: String, lock: U32, recovery: String) -> IO(Result<&1,&1,U32 & String,P.RetainedStart>):
   do IO<Result<&1,&1,U32 & String,P.RetainedStart>>:

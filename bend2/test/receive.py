@@ -7,6 +7,7 @@ import shlex
 import signal
 import socket
 import sqlite3
+import struct
 import subprocess
 import sys
 import tempfile
@@ -17,14 +18,27 @@ import unittest
 ROOT = pathlib.Path(__file__).resolve().parents[2]
 EXE = ROOT / '.scratch/bend2/baton2'
 
-FIXTURE = r'''import json,os,pathlib,re,socket,subprocess,sys
+FIXTURE = r'''import json,os,pathlib,re,socket,subprocess,sys,time
 home=pathlib.Path(__file__).resolve().parent
 config=json.loads((home/'fixture.json').read_text())
 args=sys.argv[1:]
-if args[:1]==['parent_endpoint']:
+if args[:1] in (['parent_endpoint'],['answering_parent']):
     messages=json.loads(subprocess.check_output([config['exe'],config['db'],'inbox','root'],text=True))
+    if args[0]=='answering_parent': messages=[message for message in messages if message['id']==args[1]]
     for message in messages:
+        if args[0]=='answering_parent' and message['kind']=='question':
+            request=json.loads(message['body'])
+            result=subprocess.run([config['exe'],config['db'],'native-reply','root',request['requestId'],json.dumps(config['native_answer'])],capture_output=True,text=True)
+            with (home/'parent-answers.jsonl').open('a') as answered:
+                answered.write(json.dumps({'request':request,'code':result.returncode,'stdout':result.stdout,'stderr':result.stderr})+'\n')
+            if result.returncode: sys.exit(result.returncode)
+            subprocess.run([config['exe'],config['db'],'ack',message['id'],'root','parent-received'],check=True,stdout=subprocess.DEVNULL)
+            (home/'parent-awaiting-delivery').write_text(str(os.getpid()))
+            while not (home/'parent-report-delivered').exists(): time.sleep(.01)
+            (home/'parent-question-complete').write_text('report received\n')
         subprocess.run([config['exe'],config['db'],'ack',message['id'],'root','parent-received'],check=True,stdout=subprocess.DEVNULL)
+        if args[0]=='answering_parent' and message['kind']=='report':
+            (home/'parent-report-delivered').write_text(json.dumps(message))
         with (home/'parent-deliveries.jsonl').open('a') as delivered:
             delivered.write(json.dumps(message)+'\n')
     print(json.dumps({'received':args[1]}))
@@ -83,6 +97,16 @@ while True:
         assert frame['type']=='steer',frame
         print(json.dumps({'type':'response','command':'steer','success':True,'id':frame['id']}),flush=True)
         reply({'steer_received':frame})
+        continue
+    if action.get('native_request'):
+        print(json.dumps(action['native_request']),flush=True)
+        reply({'request_written':action['native_request']})
+        continue
+    if action.get('read_native_reply'):
+        frame=json.loads(sys.stdin.readline())
+        assert frame['type']=='extension_ui_response',frame
+        print(json.dumps({'type':'fixture_progress','marker':'native continued after reply','reply_id':frame['id']}),flush=True)
+        reply({'native_reply':frame})
         continue
     if action.get('turn'):
         task=home/'self-turn-task'
@@ -281,6 +305,223 @@ class Receive(unittest.TestCase):
     def assert_no_start(self):
         self.assertEqual(select.select([self.server], [], [], .15)[0], [],
                          'another native process started while its session was active')
+
+    def native_requests(self):
+        with sqlite3.connect(f'{self.db.as_uri()}?mode=ro', uri=True) as database:
+            database.row_factory = sqlite3.Row
+            if not database.execute("SELECT 1 FROM sqlite_master WHERE name='native_requests'").fetchone():
+                return []
+            return [dict(row) for row in database.execute('SELECT * FROM native_requests ORDER BY rowid')]
+
+    def native_question(self, stream, event):
+        self.action(stream, native_request=event)
+        self.assertEqual(json.loads(stream.readline()), {'request_written': event})
+        return self.eventually(lambda: next((row for row in self.native_requests()
+                                            if row['native_id'] == event['id']), None),
+                               'native request was not retained')
+
+    def start_question_worker(self, answering=False):
+        self.worker(harness='omp')
+        self.coord('attach', 'root', 'codex', 'native-root',
+                   json.dumps([str(self.fixture), 'answering_parent' if answering else 'parent_endpoint']))
+        self.coord('message', 'question-task', 'root', 'parent', 'task', 'Ask for the required input and complete the task.')
+        observer = self.spawn(*self.receive_args('parent'))
+        stream, started = self.accept('parent')
+        return observer, stream, started
+
+    def test_native_question_parent_answers_and_waits_for_full_report(self):
+        config_path = self.directory / 'fixture.json'
+        config = json.loads(config_path.read_text())
+        config['native_answer'] = {'value': 'Keep the existing work.\nUse the selected branch.'}
+        config_path.write_text(json.dumps(config))
+        observer, stream, started = self.start_question_worker(answering=True)
+        event = {'type': 'extension_ui_request', 'id': 'input request Ω', 'method': 'input',
+                 'title': 'Which work should continue?', 'placeholder': 'A complete answer'}
+        request = self.native_question(stream, event)
+        answers = self.directory / 'parent-answers.jsonl'
+        self.eventually(lambda: answers.exists() and answers.read_text(), 'parent did not answer its native question')
+        answer = json.loads(answers.read_text().splitlines()[0])
+        self.assertEqual(answer['request']['nativeRequest'], event)
+        self.assertEqual(answer['request']['requestId'], request['id'])
+        self.assertEqual(answer['code'], 0, answer['stderr'])
+        self.assertEqual(json.loads(answer['stdout'])['status'], 'stdin-written')
+        self.assertIsNone(observer.poll())
+        self.eventually(lambda: (self.directory / 'parent-awaiting-delivery').exists(),
+                        'answering parent did not wait for actual report delivery')
+        self.assertFalse((self.directory / 'parent-question-complete').exists())
+        self.action(stream, read_native_reply=True)
+        self.assertEqual(json.loads(stream.readline()), {'native_reply': {
+            'type': 'extension_ui_response', 'id': event['id'], **config['native_answer']}})
+        self.assertTrue(any(p['pid'] == started['pid'] and p['ppid'] == started['ppid']
+                            for p in self.owned_processes()))
+        body = 'The requested input was applied.\nThe complete native report is retained.'
+        self.action(stream, body=body)
+        self.finish(observer)
+        self.eventually(lambda: not self.owned_processes(), 'question worker did not exit naturally')
+        self.assertEqual(self.coord('inbox', 'root'), [])
+        self.assertEqual(self.coord('inbox', 'parent'), [])
+        self.assertEqual(self.coord('delivery', request['id'])['receipt'], 'parent-received')
+        self.assertEqual([turn['reportBody'] for turn in self.coord('turns', 'parent')], [body])
+        self.assertEqual(json.loads((self.directory / 'parent-report-delivered').read_text())['body'], body)
+        self.assertTrue((self.directory / 'parent-question-complete').exists())
+
+    def test_native_root_question_reports_unsupported_without_answering(self):
+        self.coord('attach', 'root', 'omp', '', '')
+        self.coord('message', 'root-question-task', 'root', 'root', 'task', 'Inspect the native request.')
+        observer = self.spawn(*self.receive_args('root'))
+        stream, started = self.accept('root')
+        event = {'type': 'extension_ui_request', 'id': 'root-needs-input',
+                 'method': 'input', 'title': 'No registered parent'}
+        self.action(stream, native_request=event)
+        self.assertEqual(json.loads(stream.readline()), {'request_written': event})
+        self.eventually(lambda: event['id'] in (self.directory / 'root.jsonl').read_text(),
+                        'unsupported root request was not retained')
+        self.action(stream, body='The fixture ends its request without an answer.',
+                    hold_exit=True, report_input=True)
+        self.assertEqual(json.loads(stream.readline()),
+                         {'terminal_written': True, 'input_after_prompt': ''})
+        self.action(stream, exit_fixture=True)
+        output, _ = self.finish(observer, ok=False)
+        self.assertIn('unsupported for a session without a registered parent', output)
+        self.assertEqual(self.native_requests(), [])
+        self.eventually(lambda: not self.owned_processes(), 'root fixture did not exit naturally')
+
+    def test_native_question_survives_observer_loss_and_matches_one_reply(self):
+        observer, stream, started = self.start_question_worker()
+        event = {'type': 'extension_ui_request', 'id': 'choose-branch', 'method': 'select',
+                 'title': 'Choose a branch', 'options': ['preserve current', 'new branch']}
+        request = self.native_question(stream, event)
+        self.eventually(lambda: self.coord('delivery', request['id'])['receipt'], 'question did not reach parent')
+        observer.kill()
+        observer.wait(timeout=5)
+        marker = 'original native waiting for its answer after observer loss'
+        self.action(stream, progress=marker)
+        self.assertEqual(json.loads(stream.readline()), {'progress_written': marker})
+        log = self.directory / 'parent.jsonl'
+        self.eventually(lambda: marker in log.read_text(), 'recovered observer did not consume surviving output')
+        self.assertEqual([row['id'] for row in self.native_requests()], [request['id']])
+        self.assertEqual(self.coord(*self.receive_args('parent'))['status'], 'queued')
+        self.assert_no_start()
+        for parent, response in [('parent', {'value': 'preserve current'}),
+                                 ('root', {'value': 'unlisted branch'}),
+                                 ('root', {'confirmed': True}),
+                                 ('root', {'value': 'preserve current', 'cancelled': True})]:
+            refused = self.coord('native-reply', parent, request['id'], json.dumps(response), ok=False)
+            self.assertNotEqual(refused.returncode, 0)
+        for malformed in ['not JSON', '{"value":42}']:
+            self.assertNotEqual(self.coord('native-reply', 'root', request['id'], malformed, ok=False).returncode, 0)
+        reply_path = self.directory / 'native answer.json'
+        reply_path.write_text(json.dumps({'value': 'preserve current'}))
+        result = self.coord('native-reply-file', 'root', request['id'], str(reply_path))
+        self.assertEqual(result['status'], 'stdin-written')
+        self.action(stream, read_native_reply=True)
+        self.assertEqual(json.loads(stream.readline()), {'native_reply': {
+            'type': 'extension_ui_response', 'id': event['id'], 'value': 'preserve current'}})
+        recovered = self.eventually(lambda: [p for p in self.owned_processes()
+                                             if p['ppid'] == started['ppid'] and '--recover-receive' in p['command']],
+                                   'keeper did not attach a replacement observer')[0]
+        os.kill(recovered['pid'], signal.SIGKILL)
+        marker = 'native output after the delivered answer and second observer loss'
+        self.action(stream, progress=marker)
+        self.assertEqual(json.loads(stream.readline()), {'progress_written': marker})
+        self.eventually(lambda: marker in log.read_text(), 'second observer did not resume the original native output')
+        self.assertEqual(self.coord('native-reply-file', 'root', request['id'], str(reply_path))['status'],
+                         'stdin-written')
+        conflicting = self.coord('native-reply', 'root', request['id'], '{"value":"new branch"}', ok=False)
+        self.assertNotEqual(conflicting.returncode, 0)
+        self.assertTrue(any(p['pid'] == started['pid'] and p['ppid'] == started['ppid']
+                            for p in self.owned_processes()))
+        self.assertEqual(self.coord('session', 'parent')['native'], started['native'])
+        body = 'The original native completed after the selected reply.'
+        self.action(stream, body=body, hold_exit=True, report_input=True)
+        self.assertEqual(json.loads(stream.readline()), {'terminal_written': True, 'input_after_prompt': ''})
+        self.action(stream, exit_fixture=True)
+        self.eventually(lambda: not self.owned_processes(), 'recovered question worker did not exit naturally')
+        self.assertEqual(self.coord('inbox', 'root'), [])
+        self.assertEqual(self.coord('inbox', 'parent'), [])
+        self.assertEqual([turn['reportBody'] for turn in self.coord('turns', 'parent')], [body])
+
+    def test_native_reply_saved_before_write_is_sent_by_recovered_observer(self):
+        observer, stream, started = self.start_question_worker()
+        event = {'type': 'extension_ui_request', 'id': 'pending-answer', 'method': 'input',
+                 'title': 'Answer after reconnecting the keeper'}
+        request = self.native_question(stream, event)
+        self.eventually(lambda: self.coord('delivery', request['id'])['receipt'], 'parent did not receive request')
+        manifest = (pathlib.Path(request['attempt']) / 'manifest').read_bytes()
+        header = struct.Struct('=8s6Q2I')
+        magic, *fields = header.unpack_from(manifest)
+        self.assertEqual(magic, b'BATONRP1')
+        lengths = fields[:6]
+        offset = header.size + sum(lengths[:5])
+        address = pathlib.Path(os.fsdecode(manifest[offset:offset + lengths[5]]))
+        unavailable = address.with_name('controlled-unavailable-socket')
+        self.assertFalse(unavailable.exists())
+        address.rename(unavailable)
+        try:
+            failed = self.coord('native-reply', 'root', request['id'], '{"value":"retained answer"}', ok=False)
+            self.assertNotEqual(failed.returncode, 0)
+            saved = self.native_requests()[0]
+            self.assertEqual(json.loads(saved['reply']), {'type': 'extension_ui_response',
+                                                         'id': event['id'], 'value': 'retained answer'})
+            self.assertEqual(saved['written'], 0)
+        finally:
+            unavailable.rename(address)
+        observer.kill()
+        observer.wait(timeout=5)
+        self.action(stream, read_native_reply=True)
+        self.assertEqual(json.loads(stream.readline()), {'native_reply': {
+            'type': 'extension_ui_response', 'id': event['id'], 'value': 'retained answer'}})
+        self.eventually(lambda: self.native_requests()[0]['written'] == 1,
+                        'recovery did not record transport completion')
+        self.assertEqual(self.native_requests()[0]['id'], request['id'])
+        self.assertEqual(self.native_requests()[0]['attempt'], request['attempt'])
+        self.assertTrue(any(p['pid'] == started['pid'] and p['ppid'] == started['ppid']
+                            for p in self.owned_processes()))
+        self.assertEqual(self.coord('session', 'parent')['native'], started['native'])
+        self.assertEqual(self.coord(*self.receive_args('parent'))['status'], 'queued')
+        self.assert_no_start()
+        body = 'The same native continued with its durable pending answer.'
+        self.action(stream, body=body, hold_exit=True, report_input=True)
+        self.assertEqual(json.loads(stream.readline()), {'terminal_written': True, 'input_after_prompt': ''})
+        self.action(stream, exit_fixture=True)
+        self.eventually(lambda: not self.owned_processes(), 'recovered reply processes did not exit naturally')
+        self.assertEqual(self.coord('inbox', 'root'), [])
+        self.assertEqual(self.coord('inbox', 'parent'), [])
+        self.assertEqual([turn['reportBody'] for turn in self.coord('turns', 'parent')], [body])
+
+    def test_native_question_cancellation_and_confirmation_keep_native_identity(self):
+        observer, stream, started = self.start_question_worker()
+        for ident, method, response in [('confirm-no', 'confirm', {'confirmed': False}),
+                                        ('editor-value', 'editor', {'value': 'Keep existing work.\nFinish Ω and 雨.'}),
+                                        ('editor-cancel', 'editor', {'cancelled': True})]:
+            event = {'type': 'extension_ui_request', 'id': ident, 'method': method, 'title': ident}
+            request = self.native_question(stream, event)
+            self.assertEqual(self.coord('native-reply', 'root', request['id'], json.dumps(response))['status'],
+                             'stdin-written')
+            self.action(stream, read_native_reply=True)
+            self.assertEqual(json.loads(stream.readline()), {'native_reply': {
+                'type': 'extension_ui_response', 'id': ident, **response}})
+        event = {'type': 'extension_ui_request', 'id': 'cancelled-input', 'method': 'input', 'title': 'Dismissed'}
+        request = self.native_question(stream, event)
+        cancel = {'type': 'extension_ui_request', 'method': 'cancel', 'targetId': event['id']}
+        self.action(stream, native_request=cancel)
+        self.assertEqual(json.loads(stream.readline()), {'request_written': cancel})
+        self.eventually(lambda: next(row for row in self.native_requests() if row['id'] == request['id'])['closed'],
+                        'native cancellation did not close its request')
+        refused = self.coord('native-reply', 'root', request['id'], '{"value":"too late"}', ok=False)
+        self.assertNotEqual(refused.returncode, 0)
+        late = self.native_question(stream, {'type': 'extension_ui_request', 'id': 'closed-input',
+                                            'method': 'input', 'title': 'Input closes before this answer'})
+        self.assertTrue(any(p['pid'] == started['pid'] for p in self.owned_processes()))
+        self.action(stream, body='Native cancellations and confirmations completed.', hold_exit=True, report_input=True)
+        self.assertEqual(json.loads(stream.readline()), {'terminal_written': True, 'input_after_prompt': ''})
+        refused = self.coord('native-reply', 'root', late['id'], '{"value":"after input closed"}', ok=False)
+        self.assertNotEqual(refused.returncode, 0)
+        self.assertEqual(next(row for row in self.native_requests() if row['id'] == late['id'])['written'], 0)
+        self.action(stream, exit_fixture=True)
+        self.finish(observer)
+        self.eventually(lambda: not self.owned_processes(), 'native question keeper did not exit naturally')
+        self.assertEqual(self.coord('inbox', 'root'), [])
 
     def exercise_missing_omp_fallback(self, observer_losses):
         self.worker(harness='omp')
