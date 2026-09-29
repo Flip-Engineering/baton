@@ -6,12 +6,14 @@
 # compiler reports the foreign dependencies. Host exclusivity, descriptor custody, and
 # release after actual native process exit remain runtime obligations witnessed
 # by the receive tests.
-# The M-17 laws below constrain the recovery sequencing of a dead native
-# attempt: the branch each outcome takes, the order in which the replacement
-# is recorded, the observer and the native process are released and the wake
-# is delivered, and the one guarded transaction that writes the workspace
-# note. SQLite's own transaction and changes() semantics remain a host
-# obligation witnessed by the receive tests.
+# The M-17 laws below constrain the recovery sequencing of the native receive
+# path: the branch a not-refused and a refused recorded conversation each take,
+# the order in which the recovery input is recorded, the observer and the native
+# process are released and the wake is delivered, and the one guarded
+# transaction that writes the workspace note. These equations prove neither
+# process liveness nor that a replacement identity exists. SQLite's own
+# transaction and changes() semantics remain a host obligation witnessed by the
+# receive tests.
 import Base
 import ./receive.bend as Receive
 import ../host/process.bend as P
@@ -71,16 +73,17 @@ def session_admission_uses_canonical_identity(A,database,session,next):
   {==}
 
 # ---------------------------------------------------------------------------
-# M-17: a dead native attempt is replaced by a fresh one, and the replacement
-# is recorded before the observer is released and before the wake is
-# delivered. These laws constrain the recovery sequencing of the native
-# receive path: the branch a live and a dead attempt each take, the order of
-# the record, release and wake steps, and the one guarded transaction that
-# writes the workspace note under the attempt identity.
+# M-17: a receive whose recorded conversation is not refused completes the
+# attempt; a receive whose recorded conversation is refused dispatches to the
+# restart branch; the restart records the recovery input and clears the refused
+# native identity before the observer release and the wake; the fresh
+# replacement identity is recorded later by its caller. These equations prove
+# neither process liveness nor that a replacement identity exists.
 
-# M-17: a live native attempt completes on the completing branch and records
-# no recovery.
-law m17_live_native_completes_the_attempt:
+# M-17: the branch taken when the recorded conversation is not refused
+# (gone = False, which includes a turn that failed) completes the attempt and
+# records no recovery.
+law m17_not_refused_conversation_completes_the_attempt:
   for +db: String
   for +session: String
   for +id: String
@@ -95,12 +98,12 @@ law m17_live_native_completes_the_attempt:
   for -again: Unit -> IO(Result<&1,&1,U32 & String,Unit>)
   {Receive.complete_or_restart(db,session,id,log,stderr,cursor,native,cwd,handle,lock,outcome,again,False{}) == Receive.completed(db,session,id,log,stderr,cursor,handle,lock,outcome,again) : IO(Result<&1,&1,U32 & String,Unit>)}
 
-def m17_live_native_completes_the_attempt(db,session,id,log,stderr,cursor,native,cwd,handle,lock,outcome,again):
+def m17_not_refused_conversation_completes_the_attempt(db,session,id,log,stderr,cursor,native,cwd,handle,lock,outcome,again):
   {==}
 
-# M-17: a dead native attempt restarts, naming the attempt's own native
-# identity and workspace rather than the completing branch's arguments.
-law m17_dead_native_restarts_the_attempt:
+# M-17: the branch taken when the recorded conversation is refused (gone =
+# True) restarts, naming the attempt's own native identity and workspace.
+law m17_refused_conversation_restarts_the_attempt:
   for +db: String
   for +session: String
   for +id: String
@@ -115,7 +118,36 @@ law m17_dead_native_restarts_the_attempt:
   for -again: Unit -> IO(Result<&1,&1,U32 & String,Unit>)
   {Receive.complete_or_restart(db,session,id,log,stderr,cursor,native,cwd,handle,lock,outcome,again,True{}) == Receive.restart_pending(db,session,id,native,cwd,handle,lock,again) : IO(Result<&1,&1,U32 & String,Unit>)}
 
-def m17_dead_native_restarts_the_attempt(db,session,id,log,stderr,cursor,native,cwd,handle,lock,outcome,again):
+def m17_refused_conversation_restarts_the_attempt(db,session,id,log,stderr,cursor,native,cwd,handle,lock,outcome,again):
+  {==}
+
+# M-17: the receive entry's own dispatch. The branch argument is the refusal
+# predicate Turn.refusal(attempt ++ "/native",
+# Bool.not(String.is_empty(native)), outcome), and the stderr path handed to
+# the branches is the derived attempt ++ "/native.stderr". The written-out
+# dispatch below is the whole obligation: reading a different predicate, or
+# passing the undecorated attempt, breaks this proof.
+def observed_dispatch(db: String, session: String, id: String, log: String, cursor: String, +native: String, cwd: String, +attempt: String, handle: U32, lock: Maybe<U32>, +outcome: Turn.Outcome, again: Unit -> IO(Result<&1,&1,U32 & String,Unit>)) -> IO(Result<&1,&1,U32 & String,Unit>):
+  do IO<Result<&1,&1,U32 & String,Unit>>:
+    gone : Bool <- Turn.refusal(attempt ++ "/native", Bool.not(String.is_empty(native)), outcome)
+    Receive.complete_or_restart(db,session,id,log,attempt ++ "/native.stderr",cursor,native,cwd,handle,lock,outcome,again,gone)
+
+law m17_the_observed_dispatch_is_the_refusal_it_read:
+  for +db: String
+  for +session: String
+  for +id: String
+  for +log: String
+  for +cursor: String
+  for +native: String
+  for +cwd: String
+  for +attempt: String
+  for +handle: U32
+  for -lock: Maybe<U32>
+  for +outcome: Turn.Outcome
+  for -again: Unit -> IO(Result<&1,&1,U32 & String,Unit>)
+  {Receive.observed(db,session,id,log,cursor,native,cwd,attempt,handle,lock,outcome,again) == observed_dispatch(db,session,id,log,cursor,native,cwd,attempt,handle,lock,outcome,again) : IO(Result<&1,&1,U32 & String,Unit>)}
+
+def m17_the_observed_dispatch_is_the_refusal_it_read(db,session,id,log,cursor,native,cwd,attempt,handle,lock,outcome,again):
   {==}
 
 # M-17: the restart reads the recovery-input row, records the recovery, and
@@ -149,7 +181,7 @@ def m17_restart_records_before_releasing_and_waking(db,session,id,native,cwd,han
   {==}
 
 # M-17: a recovery-input row already recorded writes nothing, so a replayed
-# attempt preserves the newer native identity.
+# attempt leaves the session's recorded identity as it stands.
 law m17_recorded_recovery_writes_nothing:
   for db: String
   for session: String
