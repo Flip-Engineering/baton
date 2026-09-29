@@ -6,10 +6,8 @@ import { canonicalValueDigest, canonicalValueText, createProgramValueAuthority }
 import { canonicalJson, compareCanonicalStrings } from '../src/canonical-order.mjs';
 import vectors from './fixtures/phase93a-canonical-vectors.mjs';
 
-const authority = createProgramValueAuthority({
-  maxJoinMembers: 64, maxProgramBytes: 64 * 1024, maxProgramDepth: 32,
-  maxProgramNodes: 256, maxSchemaDefinitions: 64, maxValueBytes: 16 * 1024,
-});
+// #530: the injected authority is the deployment's identity; it carries no size, count or depth.
+const authority = createProgramValueAuthority({});
 
 test('P93A1-C1: immutable fixtures cover JCS UTF-16 ordering and numeric boundaries', () => {
   assert.equal(Object.isFrozen(vectors), true);

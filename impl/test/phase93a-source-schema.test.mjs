@@ -6,10 +6,8 @@ import {
   deepFreezeProgramValue, normalizeCanonicalValue, parseRawProgramJson,
 } from '../src/program-ir/index.mjs';
 
-const authority = createProgramValueAuthority({
-  maxJoinMembers: 64, maxProgramBytes: 64 * 1024, maxProgramDepth: 32,
-  maxProgramNodes: 256, maxSchemaDefinitions: 64, maxValueBytes: 16 * 1024,
-});
+// #530: the injected authority is the deployment's identity; it carries no size, count or depth.
+const authority = createProgramValueAuthority({});
 
 test('P93A1-S1: raw JSON rejects duplicate keys, Unicode faults, and invalid numbers before semantics', () => {
   for (const raw of [
@@ -22,17 +20,15 @@ test('P93A1-S1: raw JSON rejects duplicate keys, Unicode faults, and invalid num
   assert.equal(parseRawProgramJson('-0', authority), 0);
 });
 
-test('P93A1-S1b: maxProgramNodes bounds raw and in-memory values independently of byte authority', () => {
-  const threeNodes = createProgramValueAuthority({
-    maxJoinMembers: 64, maxProgramBytes: 64 * 1024, maxProgramDepth: 32,
-    maxProgramNodes: 3, maxSchemaDefinitions: 64, maxValueBytes: 16 * 1024,
-  });
-  assert.deepEqual(parseRawProgramJson('[0,1]', threeNodes), [0, 1]);
-  assert.deepEqual(normalizeCanonicalValue([0, 1], threeNodes), [0, 1]);
-  assert.throws(() => parseRawProgramJson('[0,1,2]', threeNodes), /node authority/u);
-  assert.throws(() => normalizeCanonicalValue([0, 1, 2], threeNodes), /node authority/u);
-  assert.throws(() => parseRawProgramJson('{"a":0,"b":1,"c":2}', threeNodes), /node authority/u);
-  assert.throws(() => normalizeCanonicalValue({ a: 0, b: 1, c: 2 }, threeNodes), /node authority/u);
+test('P93A1-S1b: raw and in-memory values are read whole, with no node authority to refuse them', () => {
+  // maxProgramNodes was the injected node authority before #530; a thousand-element array and a
+  // thousand-key object parse and normalize identically.
+  const array = Array.from({ length: 1_000 }, (_unused, index) => index);
+  assert.deepEqual(parseRawProgramJson(JSON.stringify(array), authority), array);
+  assert.deepEqual(normalizeCanonicalValue(array, authority), array);
+  const object = Object.fromEntries(array.map((index) => [`k${index}`, index]));
+  assert.deepEqual(parseRawProgramJson(JSON.stringify(object), authority), object);
+  assert.deepEqual(normalizeCanonicalValue(object, authority), object);
 });
 
 test('P93A1-S1c: authority, raw JSON, and registry Proxy boundaries reject without traps', () => {
@@ -48,10 +44,7 @@ test('P93A1-S1c: authority, raw JSON, and registry Proxy boundaries reject witho
   };
   for (const attempt of [
     (() => {
-      const observed = trapped({
-        maxJoinMembers: 64, maxProgramBytes: 1024, maxProgramDepth: 8,
-        maxProgramNodes: 8, maxSchemaDefinitions: 8, maxValueBytes: 1024,
-      });
+      const observed = trapped({});
       return { observed, run: () => createProgramValueAuthority(observed.proxy) };
     })(),
     (() => {

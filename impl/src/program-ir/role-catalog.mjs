@@ -99,19 +99,18 @@ function normalizeArtifactRef(value, label) {
   };
 }
 
-function normalizeNodeTemplate(value, { deployed, policy, roleRequestText }) {
+function normalizeNodeTemplate(value, { deployed, roleRequestText }) {
   const label = 'NodeTemplate';
   exactFields(value, [
     'definitionOfDone', 'pathScope', 'contextScope', 'risk', 'verificationContract',
     'capabilities', 'effects', 'requiredEffects', 'workerPolicyRequest',
   ], label);
-  if (!Array.isArray(value.definitionOfDone) || value.definitionOfDone.length < 1
-    || value.definitionOfDone.length > policy.maxEvidenceRefs) {
-    fail(`${label}.definitionOfDone must contain 1..maxEvidenceRefs entries`);
+  if (!Array.isArray(value.definitionOfDone) || value.definitionOfDone.length < 1) {
+    fail(`${label}.definitionOfDone must contain at least 1 entry`);
   }
   const definitionOfDone = value.definitionOfDone.map((entry, index) => boundedText(
-    entry, `${label}.definitionOfDone[${index}]`, policy.maxValueBytes));
-  const setBound = { min: 0, max: policy.maxEvidenceRefs };
+    entry, `${label}.definitionOfDone[${index}]`));
+  const setBound = { min: 0 };
   const capabilities = normalizeSafeIdSet(value.capabilities, `${label}.capabilities`, setBound);
   const effects = normalizeSafeIdSet(value.effects, `${label}.effects`, setBound);
   const requiredEffects = normalizeSafeIdSet(value.requiredEffects, `${label}.requiredEffects`, setBound);
@@ -124,10 +123,8 @@ function normalizeNodeTemplate(value, { deployed, policy, roleRequestText }) {
   }
   return {
     definitionOfDone,
-    pathScope: normalizePathArray(value.pathScope, `${label}.pathScope`,
-      { min: 1, max: policy.maxEvidenceRefs }),
-    contextScope: normalizePathArray(value.contextScope, `${label}.contextScope`,
-      { min: 1, max: policy.maxEvidenceRefs }),
+    pathScope: normalizePathArray(value.pathScope, `${label}.pathScope`, { min: 1 }),
+    contextScope: normalizePathArray(value.contextScope, `${label}.contextScope`, { min: 1 }),
     risk: safeId(value.risk, `${label}.risk`),
     verificationContract: normalizeVerificationContractRef(value.verificationContract,
       `${label}.verificationContract`),
@@ -138,13 +135,13 @@ function normalizeNodeTemplate(value, { deployed, policy, roleRequestText }) {
   };
 }
 
-function normalizeTemplateBinding(value, { deployed, policy, roleRequestText }) {
+function normalizeTemplateBinding(value, { deployed, roleRequestText }) {
   if (!value || typeof value !== 'object' || Array.isArray(value)) {
     fail('TemplateBinding must be an object');
   }
   if (value.kind === 'inline') {
     exactFields(value, ['kind', 'nodeTemplate', 'nodeTemplateDigest'], 'TemplateBinding inline');
-    const nodeTemplate = normalizeNodeTemplate(value.nodeTemplate, { deployed, policy, roleRequestText });
+    const nodeTemplate = normalizeNodeTemplate(value.nodeTemplate, { deployed, roleRequestText });
     const nodeTemplateDigest = digestValue(value.nodeTemplateDigest,
       'TemplateBinding inline.nodeTemplateDigest');
     if (nodeTemplateDigest !== canonicalProgramDigest(nodeTemplate, deployed)) {
@@ -166,7 +163,7 @@ function normalizeTemplateBinding(value, { deployed, policy, roleRequestText }) 
   fail('TemplateBinding kind is unknown');
 }
 
-function normalizeRole(value, { deployed, policy }) {
+function normalizeRole(value, { deployed }) {
   const label = 'Role';
   exactFields(value, [
     'role', 'routeRequest', 'serviceTierRequest', 'workerPolicyRequest',
@@ -181,7 +178,7 @@ function normalizeRole(value, { deployed, policy }) {
   }
   const roleRequestText = canonicalValueText(request, deployed);
   const templateBinding = normalizeTemplateBinding(value.templateBinding,
-    { deployed, policy, roleRequestText });
+    { deployed, roleRequestText });
   const nodeTemplateDigest = digestValue(value.nodeTemplateDigest, `${label}.nodeTemplateDigest`);
   if (nodeTemplateDigest !== templateBinding.nodeTemplateDigest) {
     fail(`${label}.nodeTemplateDigest does not match its template binding`);
@@ -206,16 +203,15 @@ export function isProgramRoleCatalog(value) {
 
 export function normalizeRoleCatalog(value, { authority: valueAuthority, policy } = {}) {
   const deployed = authority(valueAuthority);
-  const programPolicy = requirePolicy(policy);
+  requirePolicy(policy);
   const normalized = normalizeCanonicalProgramValue(value, deployed);
   exactFields(normalized, ['schemaVersion', 'kind', 'roles', 'catalogDigest'], 'Role catalog');
   if (normalized.schemaVersion !== 2) fail('Role catalog schemaVersion must be 2');
   if (normalized.kind !== 'baton.program_role_catalog') fail('Role catalog kind is invalid');
-  if (!Array.isArray(normalized.roles) || normalized.roles.length < 1
-    || normalized.roles.length > programPolicy.maxProgramNodes) {
-    fail('Role catalog roles must contain 1..maxProgramNodes entries');
+  if (!Array.isArray(normalized.roles) || normalized.roles.length < 1) {
+    fail('Role catalog roles must contain at least 1 entry');
   }
-  const roles = normalized.roles.map((role) => normalizeRole(role, { deployed, policy: programPolicy }));
+  const roles = normalized.roles.map((role) => normalizeRole(role, { deployed }));
   const names = roles.map((role) => role.role);
   if (new Set(names).size !== names.length) fail('Role catalog contains a duplicate role');
   roles.sort((left, right) => compareProgramIdentityKeys(left.role, right.role));
