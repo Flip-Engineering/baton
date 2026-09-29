@@ -17,13 +17,14 @@ function root(t) {
   return directory;
 }
 
-/** Simulate the older ledger that found the poison: a durable driver.recorded wave.started whose
- * roster the fold refuses. Written as raw bytes exactly like the pre-fix store would have. */
-function landLegacyWaveEvent(directory, seq, key) {
+/** Simulate the older ledger that landed the poison: a durable driver.recorded
+ * recovery.continuation_intent whose payload the fold refuses (it is missing every field the
+ * closed shape requires). Written as raw bytes exactly like the pre-fix store would have. */
+function landLegacyPoisonEvent(directory, seq, key) {
   appendFileSync(join(directory, 'events.jsonl'), `${JSON.stringify({
     schemaVersion: 1, seq, ts: '2026-09-14T00:00:00.000Z', kind: 'driver.recorded',
     actor: 'legacy-store', idempotencyKey: key,
-    payload: { kind: 'wave.started', waveId: 'w-legacy', roster: 'garbage' },
+    payload: { kind: 'recovery.continuation_intent', workerId: 'legacy-worker' },
   })}\n`);
 }
 
@@ -45,7 +46,7 @@ test('I290-Q1: the live poison names its seq and the quarantine verb resumes the
 
   // Quarantining a seq the poison did not name refuses typed.
   const result = store.quarantineProjectionEvent(1, {
-    reason: 'fold refusal on a durable audit wave; quarantining per the repair contract',
+    reason: 'fold refusal on a durable audit row; quarantining per the repair contract',
     actor: 'operator:issue290',
   });
   assert.equal(result.ok, true);
@@ -72,26 +73,26 @@ test('I290-Q1: the live poison names its seq and the quarantine verb resumes the
 test('I290-Q2: a poisoned older ledger restarts after the standalone verb quarantines the named seq', async (t) => {
   const directory = root(t);
   const first = new CoordinationStore(directory);
-  first.recordDriver('before.wave', { value: 0 }, { actor, key: 'issue290:q2:before' });
+  first.recordDriver('before.poison', { value: 0 }, { actor, key: 'issue290:q2:before' });
   first.releaseWriterLease({ requireOwned: true });
-  landLegacyWaveEvent(directory, 2, 'issue290:q2:legacy-wave');
+  landLegacyPoisonEvent(directory, 2, 'issue290:q2:legacy-poison');
 
   // Restart refuses; the startup failure names the fold code AND the offending seq.
   let failure = null;
   assert.throws(() => new CoordinationStore(directory, {
     startupProgress: (entry) => { failure = entry; },
-  }), (error) => error?.code === 'wave_registry_invalid');
+  }), (error) => error?.code === 'recovery_dispatch_integrity');
   assert.equal(failure?.state, 'failed');
-  assert.equal(failure?.failure?.code, 'wave_registry_invalid');
+  assert.equal(failure?.failure?.code, 'recovery_dispatch_integrity');
   assert.equal(failure?.failure?.seq, 2, 'the failure must name the seq the operator must quarantine');
 
 
   const repaired = await quarantineCoordinationLedgerEvent(directory, {
-    seq: 2, reason: 'audit #290 legacy wave roster', actor: 'operator:issue290',
+    seq: 2, reason: 'audit #290 legacy recovery payload', actor: 'operator:issue290',
   });
   assert.equal(repaired.ok, true);
   assert.equal(repaired.entry.seq, 2);
-  assert.equal(repaired.entry.causeCode, 'wave_registry_invalid',
+  assert.equal(repaired.entry.causeCode, 'recovery_dispatch_integrity',
     'the verb proves the quarantine is warranted by replaying before it records anything');
 
   // After the repair the ledger replays clean, so ANY further quarantine attempt is refused by
@@ -104,7 +105,7 @@ test('I290-Q2: a poisoned older ledger restarts after the standalone verb quaran
   assert.equal(reopened.startupStatus().state, 'ready');
   assert.deepEqual(reopened.startupStatus().quarantined, [2],
     'startupStatus exposes the quarantined seqs');
-  assert.equal(reopened.waveRegistry().some((row) => row.waveId === 'w-legacy'), false,
+  assert.equal(reopened.recoveryDispatchState('legacy-worker'), null,
     'the quarantined fold is skipped on replay');
   assert.equal(reopened.snapshot().lastSeq, 2, 'the event stays parsed in the ledger');
   const after = reopened.recordDriver('after.repair', { value: 3 }, { actor, key: 'issue290:q2:after' });
@@ -129,9 +130,9 @@ test('I290-Q3: the standalone verb refuses a ledger that replays clean or names 
 
   const poisoned = root(t);
   const store = new CoordinationStore(poisoned);
-  store.recordDriver('before.wave', {}, { actor, key: 'issue290:q3:before' });
+  store.recordDriver('before.poison', {}, { actor, key: 'issue290:q3:before' });
   store.releaseWriterLease({ requireOwned: true });
-  landLegacyWaveEvent(poisoned, 2, 'issue290:q3:legacy-wave');
+  landLegacyPoisonEvent(poisoned, 2, 'issue290:q3:legacy-poison');
   await assert.rejects(() => quarantineCoordinationLedgerEvent(poisoned, {
     seq: 1, reason: 'the poison names seq 2, not 1', actor: 'operator:issue290',
   }), (error) => error?.code === 'coordination_quarantine_refused'

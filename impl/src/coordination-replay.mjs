@@ -1587,8 +1587,8 @@ export function reapRunScratchpads(store, runId, { deadlineAt = null, now = () =
  * #286 G-31: "the claimant's current generation" is read from the SAME replay fold the rest of the
  * store reads (`_workerGenerations`, last write wins — a replacement generation is a correction, so
  * the first binding is dead state). Rescanning `store._events` here was a second reading of one
- * fact: the two could only ever disagree by drifting, and `coordination-internals.waveBinding` is
- * the same law for the run -> wave binding. */
+ * fact: the two could only ever disagree by drifting, and every fold in this store reads its state
+ * the same last-write-wins way. */
 export function orphans(store, { liveWorkers = [] } = {}) {
   const live = new Set(Array.isArray(liveWorkers) ? liveWorkers : []);
   const lastGeneration = store._workerGenerations;

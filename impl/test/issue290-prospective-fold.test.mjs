@@ -17,23 +17,30 @@ function root(t) {
   return directory;
 }
 
-test('I290-F1: a malformed wave roster is refused before the durable append, never poisoning replay', (t) => {
+test('I290-F1: a malformed driver.recorded payload is refused before the durable append, never poisoning replay', (t) => {
   const directory = root(t);
   const store = new CoordinationStore(directory);
-  // The audit repro: a driver.recorded wave.started whose roster is neither a well-formed
-  // object-array nor a well-formed string-array. Pre-fix this appended durably, then the fold
-  // refused with wave_registry_invalid and the projection was poisoned.
-  for (const roster of ['garbage', [null], { waveId: 'not-an-array' }, [42]]) {
-    assert.throws(() => store.recordDriver('wave.started', { waveId: 'w1', roster }, {
-      actor, key: `issue290:bad-roster:${JSON.stringify(roster)}`,
+  // The audit repro: a driver.recorded payload the fold refuses. Pre-fix it appended durably, then
+  // the fold refused and the projection was poisoned. Two rules still refuse prospectively: a
+  // payload that names no usable kind, and the recovery-dispatch kinds that own a dedicated
+  // atomic API.
+  for (const kind of [undefined, null, 42, '']) {
+    assert.throws(() => store.recordDriver(kind, { value: 1 }, {
+      actor, key: `issue290:bad-kind:${JSON.stringify(kind)}`,
     }), (error) => error?.code === 'coordination_record_invalid',
-    `roster ${JSON.stringify(roster)} must be refused before the append`);
-    assert.equal(existsSync(join(directory, 'events.jsonl')), false,
-      'a refused prospective fold must never reach the durable ledger');
+    `payload kind ${JSON.stringify(kind)} must be refused before the append`);
   }
+  for (const kind of ['recovery.continuation_intent', 'recovery.dispatch_accepted', 'recovery.dispatch_refused']) {
+    assert.throws(() => store.recordDriver(kind, { value: 1 }, {
+      actor, key: `issue290:recovery-api:${kind}`,
+    }), (error) => error?.code === 'recovery_dispatch_api_required',
+    `the recovery-dispatch kind ${kind} must refuse the pass-through recording path`);
+  }
+  assert.equal(existsSync(join(directory, 'events.jsonl')), false,
+    'a refused prospective fold must never reach the durable ledger');
   // The store keeps its authority: a well-formed event lands as seq 1.
-  const landed = store.recordDriver('wave.started', { waveId: 'w1', roster: ['member-a'] }, {
-    actor, key: 'issue290:good-roster',
+  const landed = store.recordDriver('observation', { value: 1 }, {
+    actor, key: 'issue290:good-payload',
   });
   assert.equal(landed.event.seq, 1);
   store.releaseWriterLease({ requireOwned: true });

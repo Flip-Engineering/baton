@@ -71,20 +71,6 @@ export const PROJECTION_REFERENCES = Object.freeze({
 });
 
 
-/** Issue #290: the wave.started roster well-formedness rule, shared by the replay fold and the
- * prospective write gate so the two can never drift — the fold refuses a genuinely malformed
- * roster (neither a well-formed object-array nor a well-formed string-array) as an integrity
- * failure; the write gate refuses the same payloads typed BEFORE the durable append. */
-export function assertWaveStartedRoster(payload) {
-  const roster = payload?.roster;
-  const objectRoster = Array.isArray(roster) && roster.length > 0
-    && roster.every((member) => member !== null && typeof member === 'object' && !Array.isArray(member));
-  const stringRoster = Array.isArray(roster) && roster.length > 0
-    && roster.every((member) => typeof member === 'string');
-  if (!objectRoster && !stringRoster) {
-    throw new CoordinationIntegrityError('wave.started roster is malformed', 'wave_registry_invalid');
-  }
-}
 
 
 
@@ -896,16 +882,7 @@ export function _resetProjection(store) {
   store._providerSequences = new Map(); store._providerSourceHealth = new Map();
   store._taskResourceReleases = new Map();
   store._spills = new Map();
-  // D9 (epic #103): replay-derived wave.closed campaign-state records by waveId. Rebuilt by
-  // re-applying the log in _apply; the record's own event seq is the epoch anchor.
-  store._waveClosures = new Map();
-  // D2.3 (epic #132): replay-derived wave.started registry rows by waveId — the in-flight wave
-  // set for THIS deployment. Rebuilt by re-applying the log in _apply; wave.closed closes rows.
-  store._waveRegistry = new Map();
   store._swarms = new Map();
-  // #286 G-31: the current run -> wave binding, last write wins (see the fold in _apply) — the
-  // one reading of "which wave does this run sit in NOW" that the wave readers share.
-  store._waveBindings = new Map();
   // Epic #78: the per-worker generation records a replacement generation corrects (last write wins).
   store._workerGenerations = new Map();
   // KG-1 Part A rule 5 (P1-1 fix): a store-level, global, replay-derived counter generalized
@@ -2112,40 +2089,11 @@ export function _apply(store, event) {
     }
     if (p?.kind === 'steering.registered' && typeof p?.runId === 'string') {
       store._steeringRuns.add(p.runId);
-      // #286 G-31: the current wave binding for this run — LAST write wins. An append-only log's
-      // current state is its most recent record: a re-registration under a new wave is a
-      // correction, and a reader that returned the first binding would resurrect the superseded
-      // wave (the roster, the message lane and the wave readers all read this one value).
-      store._waveBindings.set(p.runId, freeze({
-        runId: p.runId, waveId: p.waveId ?? null, waveRole: p.waveRole ?? null,
-        registeredEvent: event.seq,
-      }));
     }
     if (p?.kind === 'recovery.continuation_intent') {
       store._recoveryDispatches.set(p.workerId, store._validateRecoveryContinuationPayload(p, event, true));
     } else if (['recovery.dispatch_accepted', 'recovery.dispatch_refused'].includes(p?.kind)) {
       store._recoveryDispatches.set(p.workerId, store._validateRecoveryDispositionPayload(p, event, true));
-    } else if (p?.kind === 'wave.started') {
-      // D2.3 (epic #132): the wave registry projection fold. The roster is consumed as a
-      // member-object array only when well-formed; a legacy string-array roster (the shape the
-      // pre-#132 mint produced) keeps its raw strings and waves.list renders each string with
-      // route/scope null (B2/F13). wave_registry_invalid is reserved for genuinely malformed
-      // NEW-shape records only — a roster that is neither a well-formed object-array nor a
-      // well-formed string-array. The per-deployment private store only ever receives THIS
-      // deployment's records, so no row can carry a foreign deploymentId (D3/B3).
-      // Issue #290: the well-formedness rule lives in ONE place (assertWaveStartedRoster),
-      // shared with the prospective write gate, so the fold and the pre-append refusal of a
-      // malformed roster can never drift apart.
-      assertWaveStartedRoster(p);
-      const roster = p?.roster;
-      store._waveRegistry.set(p.waveId, freeze({
-        closedAtEventSeq: null,
-        deploymentId: p.deploymentId ?? null,
-        roster: [...roster],
-        startedAtEventSeq: event.seq,
-        state: 'open',
-        waveId: p.waveId,
-      }));
     }
   } else if (event.kind === 'authority.rejected') {
     // Decision 5: authority refusals are their own append-only event kind — the typed reason
@@ -2695,19 +2643,6 @@ export function _apply(store, event) {
     // Append-only MCP security/audit record; it deliberately owns no tool authority.
   } else if (event.kind === 'web.audit') {
     // Append-only security/audit record; it deliberately owns no command authority.
-  } else if (event.kind === 'wave.closed') {
-    // D9 (epic #103): the durable campaign-state record at wave close, replay-derived by
-    // waveId; the record's own event seq is the epoch anchor (closedAtEventSeq) — no clocks.
-    const closure = store._validateWaveClosedPayload(p);
-    store._waveClosures.set(closure.waveId, freeze({ ...clone(closure), closedAtEventSeq: event.seq }));
-    // D2.3/B1 (epic #132): the same top-level record closes the registry row — state flips to
-    // 'closed' with the record's OWN event seq, so waves.list reads only open rows.
-    const registryRow = store._waveRegistry.get(closure.waveId);
-    if (registryRow) {
-      store._waveRegistry.set(closure.waveId, freeze({
-        ...clone(registryRow), closedAtEventSeq: event.seq, state: 'closed',
-      }));
-    }
   } else if (event.kind === 'spill.minted') {
     // Decision 4: a digest-addressed durable spill artifact. Content-addressed (spillId =
     // spill:sha256:<digest of the body's UTF-8 bytes>), idempotent by auth key, replay-derived.
@@ -4396,15 +4331,6 @@ export function recordAuthorityRejected(store, payload, auth) {
 
 
 
-export function appendWaveClosed(store, fields, auth) {
-  const payload = store._validateWaveClosedPayload(fields);
-  if (store._waveClosures.has(payload.waveId)) {
-    throw new CoordinationRefusal('wave is already closed', 'wave_already_closed');
-  }
-  const event = store._append('wave.closed', payload, auth);
-  const record = store._waveClosures.get(payload.waveId) ?? null;
-  return { ok: true, event: clone(event), record: record ? clone(record) : null };
-}
 
 /** #511: the outcome of the request a colliding identity already names, read off the recorded row
  * itself — never a live re-derivation: the row, the seat it resolved to when it names one, and the

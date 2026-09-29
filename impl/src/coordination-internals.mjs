@@ -85,13 +85,6 @@ export const PROJECTION_CHECKPOINT_FIELDS = Object.freeze([
   '_workerGenerations',
   // Decision 4: digest-addressed spill artifacts (mint/materialize; durable, replay-derived).
   '_spills',
-  // D9 (epic #103): replay-derived wave.closed campaign-state records by waveId.
-  '_waveClosures',
-  // D2.3 (epic #132): replay-derived wave.started registry rows by waveId.
-  '_waveRegistry',
-  // #286 G-31: the CURRENT run -> wave binding (last write wins), folded from `steering.registered`.
-  // It answers "which wave does this run sit in NOW" — the one reading `_waveIdOf`/`_waveRoleOf` share.
-  '_waveBindings',
   '_swarms',
   // Issue #33: task-ephemeral scratchpad entries, scope indexes/fences, live elevation
   // commitments, and bounded prose-free reap receipts are one ledger projection.
@@ -515,40 +508,6 @@ export function reuseSubjectHead(store, subjectDigest) { const id = store._reuse
 /** Moved from `CoordinationStore.reuseRiskGuard` (issue #259 slice 1). State: `this._reuseRiskGuards`, passed explicitly. */
 export function reuseRiskGuard(state, coordinate) { return clone(state.get(canonicalDigest(coordinate)) ?? null); }
 
-/** Moved from `CoordinationStore.waveClosure` (issue #259 slice 1). State: `this._waveClosures`, passed explicitly. */
-export function waveClosure(state, waveId) {
-  if (typeof waveId !== 'string' || waveId.length === 0) return null;
-  return clone(state.get(waveId) ?? null);
-}
-
-/** Moved from `CoordinationStore.waveClosures` (issue #259 slice 1). State: `this._waveClosures`, passed explicitly. */
-export function waveClosures(state) {
-  return [...state.values()].map(clone);
-}
-
-// ---------------------------------------------------------------------------
-// Reading CURRENT state from the append-only log (issue #286 G-31).
-//
-// An append-only log has no updates: a later record for the same key is a correction, and the
-// current fact is the LAST one. Every reader that asks "what is true now" therefore reads the
-// last record, never the first — a first-binding reader answers with a superseded value, which
-// for the wave binding means a run whose wave was re-declared still routes, closes and seats by
-// its stale wave. The rule is one reading per fact, taken from the replay fold that already folds
-// last-write-wins (`_waveBindings`, `_workerGenerations`), so a reader cannot disagree with the
-// fold or with another reader.
-// ---------------------------------------------------------------------------
-
-/** The current run -> wave binding, from the `_waveBindings` replay fold (last write wins). */
-export function waveBinding(state, runId) {
-  if (typeof runId !== 'string' || runId.length === 0) return null;
-  return clone(state.get(runId) ?? null);
-}
-
-
-/** Moved from `CoordinationStore.waveRegistry` (issue #259 slice 1). State: `this._waveRegistry`, passed explicitly. */
-export function waveRegistry(state) {
-  return [...state.values()].map(clone);
-}
 
 /** Moved from `CoordinationStore.swarm` (issue #259 slice 1). State: `this._swarms`, passed explicitly. */
 export function swarm(state, swarmId) { return readSwarm(state, swarmId); }
@@ -612,18 +571,6 @@ export function workerGeneration(state, workerId) {
 export function _taskByRun(state, runId) {
   for (const task of state.values()) {
     if (task.runId === runId) return task;
-  }
-  return null;
-}
-
-/** Moved from `CoordinationStore._waveMembershipOf` (issue #259 slice 1). State: `this._events`, passed explicitly. */
-export function _waveMembershipOf(state, runId) {
-  for (const event of state) {
-    if (event.kind !== 'driver.recorded' || event.payload?.kind !== 'steering.registered') continue;
-    const record = event.payload;
-    if (record.runId === runId && record.waveId != null) {
-      return { waveId: record.waveId, waveRole: record.waveRole ?? null, recordSeq: event.seq };
-    }
   }
   return null;
 }

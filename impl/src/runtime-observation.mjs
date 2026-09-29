@@ -1156,12 +1156,7 @@ export function _messagePeers(coordinator, recorder, leftId, rightId) {
     const left = coordinator._activeMessageMember(leftId);
     const right = coordinator._activeMessageMember(rightId);
     if (!left?.runId || !right?.runId) return false;
-    if (left.runId === right.runId) return true;
-    const waveId = coordinator._waveIdOf(left.runId);
-    if (!waveId || waveId !== coordinator._waveIdOf(right.runId)) return false;
-    // #286 G-37/G-45: the store already folds wave closures by waveId; asking it is O(1), and the
-    // per-message scan was the third full-ledger copy this path paid for one delivery.
-    return recorder.coordination.waveClosure(waveId) === null;
+    return left.runId === right.runId;
   }
 
 export function messageReceipt(coordinator, recorder, messageId) {
@@ -2633,14 +2628,6 @@ export function readScratch(coordinator, recorder, workerId, resource, envRef, o
       readerActor: opts.actor ?? 'orchestrator', readerWorker: workerId,
       taskId: handle.taskId, runId: opts.runId ?? null,
     }, { actor: opts.actor ?? 'orchestrator', key: opts.idempotencyKey });
-  }
-
-export function _waveRoleOf(coordinator, recorder, runId) {
-    return recorder.coordination.waveBinding(runId)?.waveRole ?? null;
-  }
-
-export function _waveIdOf(coordinator, recorder, runId) {
-    return recorder.coordination.waveBinding(runId)?.waveId ?? null;
   }
 
 export function recordWorkerGeneration(coordinator, recorder, handle) {

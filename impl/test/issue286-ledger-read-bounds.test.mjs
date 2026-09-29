@@ -34,7 +34,7 @@ test.after(() => { for (const dir of dirs) rmSync(dir, { recursive: true, force:
 
 /** The counting double: a real store that records every counted read with its name and arguments.
  * `unbounded()` is the count of no-argument `eventsView()` calls — each one a full-ledger copy. */
-const COUNTED = ['eventsView', 'waveBinding', 'waveClosure', 'orientationReadHead'];
+const COUNTED = ['eventsView', 'orientationReadHead'];
 function countingStore(store) {
   const reads = [];
   const proxy = new Proxy(store, {
@@ -139,12 +139,8 @@ function emitMessage(fx, worker, fields) {
 test('G45-R1: one peer exchange copies the ledger zero times', async () => {
   const fx = laneFixture();
   const a = await fx.coordinator.spawn('mock', makeBrief(), { runId: 'run:a' });
-  const b = await fx.coordinator.spawn('mock', makeBrief(), { runId: 'run:b' });
-  const foreign = await fx.coordinator.spawn('mock', makeBrief(), { runId: 'run:foreign' });
-  for (const [runId, waveId] of [['run:a', 'wave:ours'], ['run:b', 'wave:ours'], ['run:foreign', 'wave:theirs']]) {
-    fx.store.recordDriver('steering.registered', { runId, driverKind: 'wave', waveId, waveRole: runId },
-      { actor: 'orchestrator', key: `steering:${runId}` });
-  }
+  const b = await fx.coordinator.spawn('mock', makeBrief(), { runId: 'run:a' });
+  const foreign = await fx.coordinator.spawn('mock', makeBrief(), { runId: 'run:b' });
 
   // The baseline is taken AFTER construction: the coordinator's one legitimate full pass is its own
   // replay rebuild (`_replay`), which must see every event once. What this pin forbids is a
@@ -154,27 +150,15 @@ test('G45-R1: one peer exchange copies the ledger zero times', async () => {
   emitMessage(fx, a, { to: { workerId: b.id }, body: 'Which interface can we share?' });
   await flush();
   const root = sent(fx, a);
-  assert.equal(root?.ok, true, 'the in-wave peer message still delivers');
+  assert.equal(root?.ok, true, 'the peer message between two members of one run still delivers');
   assert.equal(fx.unbounded(), baseline, 'a peer delivery copies the ledger zero times');
-  // Two membership checks per delivery (send-time admission, then the delivery-time recheck), each
-  // asking the store's projections: one binding per member and one closure per check.
-  assert.equal(fx.named('waveBinding', before), 4, 'the wave question is a folded lookup, never a scan');
-  assert.equal(fx.named('waveClosure', before), 2, 'the closure question reads the closure projection');
+  // Peer membership is an in-memory worker/run read — the exchange asks the store nothing at all.
+  assert.equal(fx.reads.length, before, 'the peer question reads no store projection');
 
   const afterDelivery = fx.unbounded();
   emitMessage(fx, a, { to: { workerId: foreign.id }, body: 'Unauthorized peer send' });
   await flush();
-  assert.equal(fx.unbounded(), afterDelivery, 'the foreign-wave refusal copies the ledger zero times too');
-
-  // A closed wave is answered from the store's own closure projection — still no copy.
-  fx.store.appendWaveClosed({
-    waveId: 'wave:ours', receiptDigest: 'a'.repeat(64), rings: [], lanes: [], parked: [], blockedOn: [],
-    settlementErrors: [],
-    knowledge: { candidates: 0, candidatesAwaitingAdmission: 0, settlementRunId: null },
-  }, { actor: 'orchestrator', key: 'wave.close:ours' });
-  emitMessage(fx, a, { to: { workerId: b.id }, body: 'The wave has closed.' });
-  await flush();
-  assert.equal(fx.unbounded(), afterDelivery, 'the closed-wave refusal copies the ledger zero times');
+  assert.equal(fx.unbounded(), afterDelivery, 'the foreign-run refusal copies the ledger zero times too');
 });
 
 test('G45-R2: the terminal-event read asks the store for one element, never the world', () => {
