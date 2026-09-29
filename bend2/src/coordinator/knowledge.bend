@@ -1,0 +1,185 @@
+# The shared knowledge workflow: an agent records an evidence-backed finding,
+# reads the findings its scope allows, and promotes one explicitly from the
+# scope it is shared in into the acting session's own scope. The store is the
+# existing SQLite database, parentage is the sessions table, and the notice a
+# record sends its author's immediate parent is an ordinary message of the
+# existing question kind. The actor checks below are declared-actor checks
+# inside that database: they claim no authentication boundary and no
+# confidentiality against a party that can write it.
+#
+# Scope: a scope's members are its owner, the owner's immediate parent, and
+# every session in the owner's subtree. A finding is readable by its author and
+# by the author's immediate parent, and by every member of a scope it has been
+# promoted into. A promotion is admitted only for the destination scope's own
+# owner, and only of the exact finding the named source scope carries.
+#
+# Evidence: the evidence a finding carries is a reference to an existing
+# retained message the author is a party to. The read exposes that message's
+# identity, sender, recipient and body, so the cited evidence travels with the
+# finding and a promotion shares that cited evidence and nothing else.
+import Base
+import ./commands.bend as C
+import ./root.bend as Root
+import ../host/sqlite.bend as DB
+import ../host/text.bend as T
+
+# The notice a record writes for the author's immediate parent.
+def notice_id(finding: String) -> String:
+  finding ++ ":notice"
+
+# The knowledge tables. Every knowledge command creates them in its own
+# transaction, so the workflow needs no separate migration step and the store's
+# own schema stays as it was.
+def knowledge_schema() -> String:
+  "CREATE TABLE IF NOT EXISTS knowledge (id TEXT UNIQUE NOT NULL, author TEXT NOT NULL, claim TEXT NOT NULL, evidence TEXT NOT NULL, limits TEXT NOT NULL);"
+  ++ "CREATE TABLE IF NOT EXISTS knowledge_promotions (id TEXT UNIQUE NOT NULL, finding TEXT NOT NULL, author TEXT NOT NULL, source TEXT NOT NULL, destination TEXT NOT NULL, promoted_by TEXT NOT NULL);"
+
+def commit_sql(statements: String) -> String:
+  "BEGIN IMMEDIATE;" ++ C.schema() ++ knowledge_schema() ++ statements ++ "COMMIT;"
+
+# The answer a write gives: the stored row as it stands, or a refusal naming the
+# rule that refused it.
+def answer_when(empty: Bool, text: String) -> IO(Unit):
+  match empty:
+    case True{}: IO.die(Unit,1,"No knowledge row was written: name a registered author, evidence naming an existing message the author is a party to, and an unused or identical row id.")
+    case False{}: IO.write(text)
+
+def write_answer(+text: String) -> IO(Unit):
+  answer_when(String.is_empty(text),text)
+
+# The reader's own session and every session above it.
+def reader_chain(reader: String) -> String:
+  "WITH RECURSIVE chain(id) AS (SELECT " ++ C.q(reader) ++ " UNION ALL SELECT s.parent FROM sessions s JOIN chain c ON s.id=c.id WHERE s.parent IS NOT NULL) "
+
+# True when the scope SCOPE, given as an SQL expression, counts READER as a
+# member: READER owns it, READER is its owner's immediate parent, or READER is
+# in its owner's subtree. The chain CTE holds READER and its ancestors, so
+# membership by subtree is the scope's appearance in that chain.
+def membership(+scope: String, +reader: String) -> String:
+  "(EXISTS(SELECT 1 FROM chain c WHERE c.id=" ++ scope ++ ") OR EXISTS(SELECT 1 FROM sessions d WHERE d.id=" ++ scope ++ " AND d.parent=" ++ C.q(reader) ++ "))"
+
+# The destination scope of the promotion under test, named p.
+def scope_membership(+reader: String) -> String:
+  membership("p.destination",reader)
+
+# The scope a promotion is drawn from, named by its owner.
+def source_membership(+actor: String, +source: String) -> String:
+  membership(C.q(source),actor)
+
+# A finding the reader authored, or whose author's immediate parent is the reader.
+def authored_visible(+reader: String) -> String:
+  "k.author=" ++ C.q(reader) ++ " OR EXISTS(SELECT 1 FROM sessions a WHERE a.id=k.author AND a.parent=" ++ C.q(reader) ++ ")"
+
+# A finding promoted into a scope the reader belongs to.
+def promoted_visible(+reader: String) -> String:
+  "EXISTS(SELECT 1 FROM knowledge_promotions p WHERE p.finding=k.id AND " ++ scope_membership(reader) ++ ")"
+
+def knowledge_visible(+reader: String) -> String:
+  authored_visible(reader) ++ " OR " ++ promoted_visible(reader)
+
+# The scope owners a visible finding is promoted into, for this reader.
+def knowledge_destinations(+reader: String) -> String:
+  "(SELECT coalesce(json_group_array(p.destination),json('[]')) FROM knowledge_promotions p WHERE p.finding=k.id AND " ++ scope_membership(reader) ++ ")"
+
+# The full provenance of each of those promotions: the exact finding, its
+# original author, the scope it was drawn from, the scope it went to, and the
+# actor that promoted it.
+def knowledge_promotions(+reader: String) -> String:
+  "(SELECT coalesce(json_group_array(json(item)),json('[]')) FROM (SELECT json_object('finding',p.finding,'author',p.author,'source',p.source,'destination',p.destination,'promotedBy',p.promoted_by) AS item FROM knowledge_promotions p WHERE p.finding=k.id AND " ++ scope_membership(reader) ++ "))"
+
+# The cited message, exposed whole so the evidence travels with the finding. The
+# argument is the SQL expression holding the reference, quoted by its caller.
+def evidence_message(+evidence: String) -> String:
+  "(SELECT json_object('id',id,'sender',sender,'recipient',recipient,'body',body) FROM messages WHERE id=substr(" ++ evidence ++ ",9))"
+
+def knowledge_item(+reader: String) -> String:
+  "json_object('id',k.id,'author',k.author,'claim',k.claim,'evidence',k.evidence,'evidenceMessage'," ++ evidence_message("k.evidence") ++ ",'limits',k.limits,'destinations'," ++ knowledge_destinations(reader) ++ ",'promotions'," ++ knowledge_promotions(reader) ++ ")"
+
+def read_sql(+reader: String) -> String:
+  reader_chain(reader) ++ "SELECT coalesce(json_group_array(json(item)),json('[]')) FROM (SELECT " ++ knowledge_item(reader) ++ " AS item FROM knowledge k WHERE " ++ knowledge_visible(reader) ++ " ORDER BY k.rowid);"
+
+# The stored finding, read back by the identity the writer supplied.
+def knowledge_row(id: String) -> String:
+  "SELECT json_object('id',id,'author',author,'claim',claim,'evidence',evidence,'limits',limits) FROM knowledge WHERE id=" ++ C.q(id) ++ ";"
+
+# Evidence is a reference to an existing retained message the author is a party
+# to. Nothing else is an accepted reference in this slice.
+def evidence_ok(+author: String, +evidence: String) -> String:
+  "(substr(" ++ C.q(evidence) ++ ",1,8)='message:' AND EXISTS(SELECT 1 FROM messages WHERE id=substr(" ++ C.q(evidence) ++ ",9) AND (sender=" ++ C.q(author) ++ " OR recipient=" ++ C.q(author) ++ ")))"
+
+# The immediate parent of an author. A session with no recorded parent records
+# the finding and sends no notice.
+def notice_target(+author: String) -> String:
+  "(SELECT parent FROM sessions WHERE id=" ++ C.q(author) ++ ")"
+
+# The notice's body: the finding and its author, and nothing else.
+def notice_body(+id: String, +author: String) -> String:
+  "json_object('finding'," ++ C.q(id) ++ ",'author'," ++ C.q(author) ++ ")"
+
+# The notice rides the existing question kind, so a parent already handed off or
+# stopped still receives it under the dispatch family it already serves.
+def notice_statement(+id: String, +author: String) -> String:
+  "INSERT INTO messages(id,sender,recipient,kind,body) SELECT " ++ C.q(notice_id(id)) ++ "," ++ C.q(author) ++ "," ++ notice_target(author) ++ ",'question'," ++ notice_body(id,author) ++ " WHERE EXISTS(SELECT 1 FROM knowledge WHERE id=" ++ C.q(id) ++ ") AND " ++ notice_target(author) ++ " IS NOT NULL"
+  ++ " ON CONFLICT(id) DO UPDATE SET id=CASE WHEN messages.sender=excluded.sender AND messages.recipient=excluded.recipient AND messages.kind=excluded.kind AND messages.body=excluded.body THEN messages.id ELSE NULL END;"
+
+def finding_statement(+id: String, +author: String, claim: String, +evidence: String, limits: String) -> String:
+  "INSERT INTO knowledge(id,author,claim,evidence,limits) SELECT " ++ C.q(id) ++ "," ++ C.q(author) ++ "," ++ C.q(claim) ++ "," ++ C.q(evidence) ++ "," ++ C.q(limits) ++ " WHERE EXISTS(SELECT 1 FROM sessions WHERE id=" ++ C.q(author) ++ ") AND " ++ evidence_ok(author,evidence)
+  ++ " ON CONFLICT(id) DO UPDATE SET id=CASE WHEN knowledge.author=excluded.author AND knowledge.claim=excluded.claim AND knowledge.evidence=excluded.evidence AND knowledge.limits=excluded.limits THEN knowledge.id ELSE NULL END;"
+
+def record_statements(+id: String, +author: String, +claim: String, +evidence: String, limits: String) -> String:
+  finding_statement(id,author,claim,evidence,limits) ++ notice_statement(id,author) ++ knowledge_row(id)
+
+# A promotion is admitted only for the destination scope's own owner.
+def promotion_admitted(promoter: String, destination: String) -> String:
+  C.q(promoter) ++ "=" ++ C.q(destination)
+
+# The source carries the exact finding when it is the finding's own author's
+# scope and the promoter can read the unpublished candidate, or when it is a
+# scope the finding was already promoted into and the promoter is a member of
+# that scope. Descendants of an author do not reach an unpublished candidate
+# through the general membership rule.
+def source_carries(+promoter: String, +source: String) -> String:
+  "((" ++ C.q(source) ++ "=k.author AND (" ++ authored_visible(promoter) ++ ")) OR EXISTS(SELECT 1 FROM knowledge_promotions prev WHERE prev.finding=k.id AND prev.destination=" ++ C.q(source) ++ " AND " ++ membership("prev.destination",promoter) ++ "))"
+
+def promotion_statement(+id: String, +promoter: String, +source: String, +destination: String, finding: String) -> String:
+  reader_chain(promoter) ++ "INSERT INTO knowledge_promotions(id,finding,author,source,destination,promoted_by) SELECT " ++ C.q(id) ++ ",k.id,k.author," ++ C.q(source) ++ "," ++ C.q(destination) ++ "," ++ C.q(promoter) ++ " FROM knowledge k WHERE k.id=" ++ C.q(finding) ++ " AND " ++ promotion_admitted(promoter,destination) ++ " AND " ++ source_carries(promoter,source)
+  ++ " ON CONFLICT(id) DO UPDATE SET id=CASE WHEN knowledge_promotions.finding=excluded.finding AND knowledge_promotions.author=excluded.author AND knowledge_promotions.source=excluded.source AND knowledge_promotions.destination=excluded.destination AND knowledge_promotions.promoted_by=excluded.promoted_by THEN knowledge_promotions.id ELSE NULL END;"
+
+# The stored promotion, read back only when it is this call's own promotion:
+# the same id with different coordinates is refused rather than answered with
+# another row's content.
+def promotion_answer(+id: String, +promoter: String, +source: String, +destination: String, +finding: String) -> String:
+  "SELECT json_object('id',id,'finding',finding,'author',author,'source',source,'destination',destination,'promotedBy',promoted_by) FROM knowledge_promotions WHERE id=" ++ C.q(id) ++ " AND finding=" ++ C.q(finding) ++ " AND source=" ++ C.q(source) ++ " AND destination=" ++ C.q(destination) ++ " AND promoted_by=" ++ C.q(promoter) ++ ";"
+
+def promote_statements(+id: String, +promoter: String, +source: String, +destination: String, +finding: String) -> String:
+  promotion_statement(id,promoter,source,destination,finding) ++ promotion_answer(id,promoter,source,destination,finding)
+
+# A committed record whose notice could not be delivered refuses with the retry
+# path; the write itself stands.
+def answered(delivery: Result<&1,&1,U32 & String,String>) -> IO(Unit):
+  match delivery:
+    case Fail{error}: IO.die(Unit,1,"The row is committed and its notice is undelivered. Read the pending inbox and retry the delivery.")
+    case Done{output}: write_answer(output)
+
+# Record: one transaction writes the finding and the notice, the notice is then
+# delivered as an ordinary message, and the answer is the stored finding.
+def record(+db: String, +id: String, author: String, claim: String, evidence: String, limits: String) -> IO(Unit):
+  do IO<Unit>:
+    saved : String <- IO.try(String,DB.Sql.query(db,commit_sql(record_statements(id,author,claim,evidence,limits))))
+    delivery : Result<&1,&1,U32 & String,String> <- Root.deliver(db,notice_id(id),"1",saved)
+    answered(delivery)
+
+# Read: the findings the reader's scopes allow, as a JSON array. A reader with
+# no registered session sees nothing and is answered the empty array.
+def read(db: String, reader: String) -> IO(Unit):
+  do IO<Unit>:
+    visible : String <- IO.try(String,DB.Sql.query(db,commit_sql(read_sql(reader))))
+    IO.write(visible)
+
+# Promote: one transaction writes the promotion of that exact finding from the
+# named source scope into the destination scope, and the answer is the stored
+# promotion.
+def promote(+db: String, +id: String, promoter: String, source: String, destination: String, finding: String) -> IO(Unit):
+  do IO<Unit>:
+    saved : String <- IO.try(String,DB.Sql.query(db,commit_sql(promote_statements(id,promoter,source,destination,finding))))
+    write_answer(saved)

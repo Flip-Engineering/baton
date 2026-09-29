@@ -78,6 +78,7 @@ import Base
 import ./receive-laws.bend as ReceiveLaws
 import ./stop-laws.bend as StopLaws
 import ./native-request-laws.bend as NativeRequestLaws
+import ./knowledge-laws.bend as KnowledgeLaws
 import ./root.bend as Root
 import ./turn.bend as Turn
 import ./commands.bend as C
