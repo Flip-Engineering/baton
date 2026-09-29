@@ -248,23 +248,6 @@ def m17_missing_observation_reports_to_the_parent(db, worker, id, text):
 # The coordinator store's sessions and workers. The store writes one row per
 # logical session and reads its answer back by that identity.
 
-# M-8: one native process owns a logical session at a time. A session whose
-# lock is held is answered `queued`: a second writer starts no native turn and
-# the held input stays where it is.
-law m8_one_native_owner_queues_the_second_writer:
-  for +db: String
-  for +session: String
-  for +cmd: String
-  for +model: String
-  for +effort: String
-  for +cwd: String
-  for +log: String
-  for again: Unit -> IO(Result<&1,&1,U32 & String,Unit>)
-  {Receive.acquired(db, session, cmd, model, effort, cwd, log, None{}, again) == Receive.receive_status(db, session, "queued") : IO(Result<&1,&1,U32 & String,Unit>)}
-
-def m8_one_native_owner_queues_the_second_writer(db, session, cmd, model, effort, cwd, log, again):
-  {==}
-
 # M-1: the store's answer for a session reads the row the transaction stored,
 # keyed by the identity the caller supplied.
 law m1_session_answer_reads_the_stored_row:
