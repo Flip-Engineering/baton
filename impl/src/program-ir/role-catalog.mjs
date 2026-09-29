@@ -61,7 +61,7 @@ function normalizeServiceTierRequest(value, label) {
   if (value.mode === 'exact') {
     return {
       mode: 'exact',
-      value: boundedText(value.value, `${label}.value`, 1024),
+      value: boundedText(value.value, `${label}.value`),
       authorizationDigest: digestValue(value.authorizationDigest, `${label}.authorizationDigest`),
     };
   }
@@ -94,7 +94,7 @@ function normalizeArtifactRef(value, label) {
     kind: 'artifact_ref',
     artifactId: value.artifactId,
     artifactDigest,
-    mediaType: boundedText(value.mediaType, `${label}.mediaType`, 1024),
+    mediaType: boundedText(value.mediaType, `${label}.mediaType`),
     bytes: nonnegativeInteger(value.bytes, `${label}.bytes`),
   };
 }

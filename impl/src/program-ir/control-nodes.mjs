@@ -86,11 +86,12 @@ export function nodeKey(value, label = 'Program nodeKey') {
   return value;
 }
 
-export function boundedText(value, label, maxBytes = null) {
+// #530: the byte cap this helper carried left with the class. It validates shape only: normalized
+// non-empty text, no NUL, and no credential-shaped content.
+export function boundedText(value, label) {
   const normalized = normalizeProgramString(value, label).trim();
   if (normalized.length === 0) fail(`${label} must be non-empty`);
   if ([...normalized].some((char) => char.charCodeAt(0) === 0)) fail(`${label} contains NUL`);
-  if (maxBytes !== null && Buffer.byteLength(normalized, 'utf8') > maxBytes) fail(`${label} exceeds its byte bound`);
   if (SECRET_SHAPED_TEXT.some((pattern) => pattern.test(normalized))) {
     fail(`${label} contains credential-shaped content`);
   }
