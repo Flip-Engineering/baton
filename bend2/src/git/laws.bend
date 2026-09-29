@@ -1140,3 +1140,36 @@ law m10_stage_six_checks_the_prepared_target_sibling:
 
 def m10_stage_six_checks_the_prepared_target_sibling(repo, target, script, files, scratch, tip, cand):
   {==}
+
+# M-10: the prepared worktree's result decides whether the checks run. A zero
+# exit runs them on the trees stage 6 prepared; any other status fails the
+# attempt by name, so no check ever runs against a tree that was not prepared.
+law m10_prepared_tree_runs_the_checks:
+  for out: String
+  for repo: String
+  for target: String
+  for script: String
+  for files: List<String>
+  for scratch: String
+  for tip: String
+  for cand: String
+  for tw: String
+  {L.ld_tree_ok(T.GRun{0, out}, repo, target, script, files, scratch, tip, cand, tw) == L.ld_tree_runs(True{}, repo, target, script, files, scratch, tip, cand, tw) : IO(L.Ld)}
+
+def m10_prepared_tree_runs_the_checks(out, repo, target, script, files, scratch, tip, cand, tw):
+  {==}
+
+law m10_unprepared_tree_blocks_by_name:
+  for out: String
+  for repo: String
+  for target: String
+  for script: String
+  for files: List<String>
+  for scratch: String
+  for tip: String
+  for cand: String
+  for tw: String
+  {L.ld_tree_ok(T.GRun{1, out}, repo, target, script, files, scratch, tip, cand, tw) == IO.pure(L.Ld, L.LdFail{T.FCmd{"land", "target worktree failed"}}) : IO(L.Ld)}
+
+def m10_unprepared_tree_blocks_by_name(out, repo, target, script, files, scratch, tip, cand, tw):
+  {==}
