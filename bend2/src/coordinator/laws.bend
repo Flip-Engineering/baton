@@ -253,7 +253,7 @@ def m17_missing_observation_reports_to_the_parent(db, worker, id, text):
 # keyed by the identity the caller supplied.
 law m1_session_answer_reads_the_stored_row:
   for +id: String
-  {C.session_result(id) == "SELECT json_object('id',id,'parent',parent,'harness',harness,'model',model,'effort',effort,'native',native,'observedHarness',observed_harness,'observedModel',observed_model,'observedEffort',observed_effort,'endpoint',endpoint,'workspace',workspace,'branch',branch,'base',base) FROM sessions WHERE id=" ++ C.q(id) ++ ";" : String}
+  {C.session_result(id) == "SELECT json_patch(json_object('id',id,'parent',parent,'harness',harness,'model',model,'effort',effort,'native',native,'observedHarness',observed_harness,'observedModel',observed_model,'observedEffort',observed_effort,'endpoint',endpoint,'workspace',workspace,'branch',branch,'base',base)," ++ C.session_state_sql("sessions.id") ++ ") FROM sessions WHERE id=" ++ C.q(id) ++ ";" : String}
 
 def m1_session_answer_reads_the_stored_row(id):
   {==}
@@ -261,7 +261,7 @@ def m1_session_answer_reads_the_stored_row(id):
 # M-1: a message answer likewise reads the stored row by the supplied identity.
 law m1_message_answer_reads_the_stored_row:
   for +id: String
-  {C.message_result(id) == "SELECT json_object('id',id,'sender',sender,'recipient',recipient,'kind',kind,'body',body,'receipt',receipt) FROM messages WHERE id=" ++ C.q(id) ++ ";" : String}
+  {C.message_result(id) == "SELECT json_patch(json_object('id',id,'sender',sender,'recipient',recipient,'kind',kind,'body',body,'receipt',receipt)," ++ C.input_state_sql("messages") ++ ") FROM messages WHERE id=" ++ C.q(id) ++ ";" : String}
 
 def m1_message_answer_reads_the_stored_row(id):
   {==}
@@ -596,7 +596,7 @@ def m5_pending_delivery_is_ordered_by_sequence():
 
 law m5_inbox_holds_only_unacknowledged_messages_in_order:
   for +id: String
-  {C.sql(C.Inbox{id}) == "SELECT coalesce(json_group_array(json(item)),json('[]')) FROM (SELECT json_object('id',id,'sender',sender,'recipient',recipient,'kind',kind,'body',body) AS item FROM messages WHERE recipient=" ++ C.q(id) ++ " AND receipt IS NULL ORDER BY seq);" : String}
+  {C.sql(C.Inbox{id}) == "SELECT coalesce(json_group_array(json(item)),json('[]')) FROM (SELECT json_patch(json_object('id',id,'sender',sender,'recipient',recipient,'kind',kind,'body',body)," ++ C.input_state_sql("messages") ++ ") AS item FROM messages WHERE recipient=" ++ C.q(id) ++ " AND receipt IS NULL ORDER BY seq);" : String}
 
 def m5_inbox_holds_only_unacknowledged_messages_in_order(id):
   {==}
@@ -611,7 +611,7 @@ def m5_delivery_carries_the_recipients_current_endpoint(id):
 law m5_wake_reads_the_first_owed_message_after_the_cursor:
   for +session: String
   for +cursor: String
-  {Root.wake_sql(session, cursor) == "SELECT coalesce((SELECT id FROM messages WHERE recipient=" ++ C.q(session) ++ " AND receipt IS NULL AND seq>CAST(" ++ C.q(cursor) ++ " AS INTEGER) ORDER BY seq LIMIT 1),'');" : String}
+  {Root.wake_sql(session, cursor) == "SELECT coalesce((SELECT id FROM messages WHERE recipient=" ++ C.q(session) ++ " AND receipt IS NULL AND seq>CAST(" ++ C.q(cursor) ++ " AS INTEGER) AND NOT " ++ C.stopped_session_sql(C.q(session)) ++ " ORDER BY seq LIMIT 1),'');" : String}
 
 def m5_wake_reads_the_first_owed_message_after_the_cursor(session, cursor):
   {==}
@@ -619,7 +619,7 @@ def m5_wake_reads_the_first_owed_message_after_the_cursor(session, cursor):
 law m5_owed_input_is_counted_after_the_cursor:
   for +session: String
   for +cursor: String
-  {Receive.pending_count_sql(session, cursor) == "SELECT count(*) FROM messages WHERE recipient=" ++ C.q(session) ++ " AND receipt IS NULL AND seq>CAST(" ++ C.q(cursor) ++ " AS INTEGER);" : String}
+  {Receive.pending_count_sql(session, cursor) == "SELECT count(*) FROM messages WHERE recipient=" ++ C.q(session) ++ " AND receipt IS NULL AND seq>CAST(" ++ C.q(cursor) ++ " AS INTEGER) AND NOT " ++ C.stopped_session_sql(C.q(session)) ++ ";" : String}
 
 def m5_owed_input_is_counted_after_the_cursor(session, cursor):
   {==}
@@ -628,7 +628,8 @@ def m5_owed_input_is_counted_after_the_cursor(session, cursor):
 # session. The store's own schema declares that reference, so the database
 # refuses a message from an unknown sender.
 law m7_the_store_validates_the_sender_it_records:
-  {C.schema() == "CREATE TABLE IF NOT EXISTS sessions (id TEXT PRIMARY KEY NOT NULL, parent TEXT REFERENCES sessions(id), harness TEXT NOT NULL, model TEXT NOT NULL DEFAULT '', effort TEXT NOT NULL DEFAULT '', native TEXT NOT NULL DEFAULT '', observed_harness TEXT NOT NULL DEFAULT '', observed_model TEXT NOT NULL DEFAULT '', observed_effort TEXT NOT NULL DEFAULT '', endpoint TEXT NOT NULL DEFAULT '', workspace TEXT NOT NULL DEFAULT '', branch TEXT NOT NULL DEFAULT '', base TEXT NOT NULL DEFAULT '');" ++ "CREATE TABLE IF NOT EXISTS messages (seq INTEGER PRIMARY KEY AUTOINCREMENT, id TEXT UNIQUE NOT NULL, sender TEXT NOT NULL REFERENCES sessions(id), recipient TEXT NOT NULL REFERENCES sessions(id), kind TEXT NOT NULL, body TEXT NOT NULL, receipt TEXT);" ++ "CREATE TABLE IF NOT EXISTS turns (id TEXT PRIMARY KEY NOT NULL REFERENCES messages(id), worker TEXT NOT NULL REFERENCES sessions(id), event TEXT NOT NULL);" : String}
+  {C.schema() == "CREATE TABLE IF NOT EXISTS sessions (id TEXT PRIMARY KEY NOT NULL, parent TEXT REFERENCES sessions(id), harness TEXT NOT NULL, model TEXT NOT NULL DEFAULT '', effort TEXT NOT NULL DEFAULT '', native TEXT NOT NULL DEFAULT '', observed_harness TEXT NOT NULL DEFAULT '', observed_model TEXT NOT NULL DEFAULT '', observed_effort TEXT NOT NULL DEFAULT '', endpoint TEXT NOT NULL DEFAULT '', workspace TEXT NOT NULL DEFAULT '', branch TEXT NOT NULL DEFAULT '', base TEXT NOT NULL DEFAULT '');" ++ "CREATE TABLE IF NOT EXISTS messages (seq INTEGER PRIMARY KEY AUTOINCREMENT, id TEXT UNIQUE NOT NULL, sender TEXT NOT NULL REFERENCES sessions(id), recipient TEXT NOT NULL REFERENCES sessions(id), kind TEXT NOT NULL, body TEXT NOT NULL, receipt TEXT);" ++ "CREATE TABLE IF NOT EXISTS turns (id TEXT PRIMARY KEY NOT NULL REFERENCES messages(id), worker TEXT NOT NULL REFERENCES sessions(id), event TEXT NOT NULL);" ++ "CREATE TABLE IF NOT EXISTS executions (session TEXT PRIMARY KEY NOT NULL REFERENCES sessions(id), id TEXT NOT NULL, mode TEXT NOT NULL, directory TEXT NOT NULL, phase TEXT NOT NULL, status TEXT NOT NULL DEFAULT '');"
+  ++ "CREATE TABLE IF NOT EXISTS session_stops (session TEXT PRIMARY KEY NOT NULL REFERENCES sessions(id), id TEXT UNIQUE NOT NULL, reason TEXT NOT NULL, attempt TEXT NOT NULL DEFAULT '', directory TEXT NOT NULL DEFAULT '', signal INTEGER NOT NULL DEFAULT 15, applied_signal INTEGER NOT NULL DEFAULT 0, control_error TEXT NOT NULL DEFAULT '', outcome TEXT NOT NULL, native_status TEXT NOT NULL DEFAULT '', report_id TEXT NOT NULL DEFAULT '');" : String}
 
 def m7_the_store_validates_the_sender_it_records():
   {==}
@@ -954,7 +955,7 @@ def m5_a_resumable_muse_turn_carries_the_recorded_session(cmd, model, effort, cw
 # retry returns names the coordinates the transaction stored.
 
 law m1_a_message_write_answers_from_the_row_it_stored:
-  {C.sql(C.Message{"m1", "s1", "r1", "guidance", "body"}) == "INSERT INTO messages(id,sender,recipient,kind,body) VALUES('m1','s1','r1','guidance','body')" ++ C.message_upsert() ++ "SELECT json_object('id',id,'sender',sender,'recipient',recipient,'kind',kind,'body',body,'receipt',receipt) FROM messages WHERE id='m1';" : String}
+  {C.sql(C.Message{"m1", "s1", "r1", "guidance", "body"}) == "INSERT INTO messages(id,sender,recipient,kind,body) SELECT 'm1','s1','r1','guidance','body' WHERE NOT (" ++ C.stopped_session_sql("'r1'") ++ " AND " ++ C.execution_input_sql("'guidance'") ++ ") OR EXISTS(SELECT 1 FROM messages WHERE id='m1')" ++ C.message_upsert() ++ "SELECT json_object('error','session-stopped','session','r1') WHERE NOT EXISTS(SELECT 1 FROM messages WHERE id='m1') AND " ++ C.stopped_session_sql("'r1'") ++ " AND " ++ C.execution_input_sql("'guidance'") ++ ";" ++ C.message_result("m1") : String}
 
 def m1_a_message_write_answers_from_the_row_it_stored():
   {==}
@@ -962,7 +963,7 @@ def m1_a_message_write_answers_from_the_row_it_stored():
 # M-1: a report answers from the row it stored, whose recipient the transaction
 # derived from the sender's recorded parent rather than from the caller.
 law m1_a_report_write_answers_from_the_row_it_stored:
-  {C.sql(C.Report{"m2", "s2", "body2"}) == "INSERT INTO messages(id,sender,recipient,kind,body) VALUES('m2','s2',(SELECT parent FROM sessions WHERE id='s2'),'report','body2')" ++ C.message_upsert() ++ "SELECT json_object('id',id,'sender',sender,'recipient',recipient,'kind',kind,'body',body,'receipt',receipt) FROM messages WHERE id='m2';" : String}
+  {C.sql(C.Report{"m2", "s2", "body2"}) == "INSERT INTO messages(id,sender,recipient,kind,body) VALUES('m2','s2',(SELECT parent FROM sessions WHERE id='s2'),'report','body2')" ++ C.message_upsert() ++ "SELECT json_patch(json_object('id',id,'sender',sender,'recipient',recipient,'kind',kind,'body',body,'receipt',receipt)," ++ C.input_state_sql("messages") ++ ") FROM messages WHERE id='m2';" : String}
 
 def m1_a_report_write_answers_from_the_row_it_stored():
   {==}
