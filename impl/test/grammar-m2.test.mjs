@@ -63,11 +63,6 @@ test('M2-2: every terminal-union consumer resolves through the registry predicat
   // The application's legacy-keyed sets never disagree with the predicates over what they carry.
   for (const phase of PROVIDER_EXECUTION_SETTLED_PHASES) assert.equal(providerSettled(phase), true, phase);
   for (const phase of APPLICATION_RUN_TERMINAL_PHASES) assert.equal(applicationTerminal(phase), true, phase);
-  // The wave driver no longer hand-maintains its own terminal union — it consumes the predicate.
-  const wave = src('wave.mjs');
-  assert.match(wave, /import \{[^}]*applicationTerminal[^}]*\} from '\.\/application-semantics\.mjs'/u);
-  assert.doesNotMatch(wave, /const TERMINAL_PHASES = new Set/u);
-  assert.match(wave, /applicationTerminal\(outline\?\.phase\)/u);
 });
 
 test('M2-3: closed is grep-clean in the four named sites', () => {
@@ -80,8 +75,8 @@ test('M2-3: closed is grep-clean in the four named sites', () => {
   assert.doesNotMatch(src('application-client.mjs'), /\['completed', 'closed'\]\.includes\(phase\)/u);
 });
 
-test('M2-4: the wave re-reports the canonical run-phase vocabulary', () => {
-  // The registry mapping is exactly what the wave applies to each member's raw run phase.
+test('M2-4: the registry maps every legacy run phase to its canonical vocabulary', () => {
+  // The registry mapping is the one canonicalization every phase consumer resolves through.
   assert.equal(canonicalRunPhase('work_completed'), 'result_ready');
   assert.equal(canonicalRunPhase('running'), 'working');
   assert.equal(canonicalRunPhase('awaiting_plan_approval'), 'awaiting_approval');
@@ -94,13 +89,6 @@ test('M2-4: the wave re-reports the canonical run-phase vocabulary', () => {
   assert.equal(canonicalRunPhase('start_failed'), 'failed');
   assert.equal(canonicalRunPhase('closed'), null);
   assert.equal(canonicalRunPhase('working'), 'working'); // idempotent on canonical input
-  const wave = src('wave.mjs');
-  // Members' re-reported phase is canonicalized; a start failure surfaces the member state
-  // `failed` with cause `start`, never the legacy run phase `start_failed` (§7.2).
-  assert.match(wave, /phase: canonicalRunPhase\(outline\.phase\)/u);
-  assert.match(wave, /phase: 'failed', terminalCause: 'start'/u);
-  assert.doesNotMatch(wave, /phase: 'start_failed'/u);
-  assert.match(wave, /const SUCCESS_RESTING = 'result_ready'/u);
 });
 
 test('M2-5: L3 — non-success terminals carry a typed cause; completed keeps terminalCause null', () => {

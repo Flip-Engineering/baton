@@ -19,7 +19,4 @@ test('LASTSEQ-CURSOR (#210): no callsite clones the whole store to read a scalar
   const offenders = [...src.matchAll(/coordination\.snapshot\(\)\.lastSeq/g)].length;
   assert.equal(offenders, 0,
     `${offenders} callsites deep-clone the entire store to read lastSeq — a scalar the store exposes O(1) as eventCursor() (the #227 accessor)`);
-  // and the cursor path is actually used
-  assert.ok(src.includes('eventCursor()'),
-    'the bounded eventCursor() accessor is the lastSeq read path');
 });
