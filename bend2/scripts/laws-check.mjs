@@ -131,6 +131,62 @@ for (const { law, file } of rows) {
 // it claims to bind, and it is reported as a failure.
 const MUTATIONS = [
   {
+    name: 'native-reply-parent-predicate-removed',
+    file: join('bend2', 'src', 'coordinator', 'native-requests.bend'),
+    find: ' AND r.parent=" ++ C.q(parent) ++ " AND r.closed IS NULL',
+    replace: ' AND r.closed IS NULL',
+    law: 'native_reply_sql_checks_parent_method_and_immutable_answer',
+  },
+  {
+    name: 'native-reply-confirm-method-bypassed',
+    file: join('bend2', 'src', 'coordinator', 'native-requests.bend'),
+    find: "r.method='confirm' AND json_type(supplied.value,'$.confirmed')",
+    replace: "1=1 AND json_type(supplied.value,'$.confirmed')",
+    law: 'native_reply_sql_checks_parent_method_and_immutable_answer',
+  },
+  {
+    name: 'native-reply-conflict-accepted',
+    file: join('bend2', 'src', 'coordinator', 'native-requests.bend'),
+    find: 'id=CASE WHEN reply IS NULL OR reply=(SELECT frame FROM valid) THEN id ELSE NULL END',
+    replace: 'id=id',
+    law: 'native_reply_sql_checks_parent_method_and_immutable_answer',
+  },
+  {
+    name: 'native-reply-send-bypasses-open-request',
+    file: join('bend2', 'src', 'coordinator', 'native-requests.bend'),
+    find: 'dispatch(Tx.trim_nl(attempt),frame,String.eq(allowed,"1\\n"))',
+    replace: 'dispatch(Tx.trim_nl(attempt),frame,True{})',
+    law: 'native_reply_send_reads_recorded_request',
+  },
+  {
+    name: 'native-reply-write-failure-marked-success',
+    file: join('bend2', 'src', 'coordinator', 'native-requests.bend'),
+    find: 'case Fail{error}: IO.pure(Result<&1,&1,U32 & String,String>,Fail{error})',
+    replace: 'case Fail{error}: DB.Sql.query(db,"UPDATE native_requests SET written=1 WHERE id=" ++ C.q(id) ++ ";")',
+    law: 'native_reply_failed_write_has_no_success_marker',
+  },
+  {
+    name: 'native-reply-bypasses-response-admission',
+    file: join('bend2', 'src', 'coordinator', 'native-requests.bend'),
+    find: 'reply_result(db,id,String.eq(accepted,"1\\n"),String.eq(written,"1\\n"))',
+    replace: 'reply_result(db,id,True{},String.eq(written,"1\\n"))',
+    law: 'native_reply_dispatch_follows_response_admission',
+  },
+  {
+    name: 'native-reply-refusal-writes',
+    file: join('bend2', 'src', 'coordinator', 'native-requests.bend'),
+    find: 'case False{}: IO.pure(Result<&1,&1,U32 & String,Unit>,Fail{(1,"Native request is closed, unavailable, or belongs to another parent.")})',
+    replace: 'case False{}: P.ProcessChild.control_write(attempt,frame)',
+    law: 'native_reply_refusal_cannot_write',
+  },
+  {
+    name: 'native-reply-attempt-substituted',
+    file: join('bend2', 'src', 'coordinator', 'native-requests.bend'),
+    find: 'case True{}: P.ProcessChild.control_write(attempt,frame)',
+    replace: 'case True{}: P.ProcessChild.control_write("another-attempt",frame)',
+    law: 'native_reply_uses_recorded_attempt_and_frame',
+  },
+  {
     name: 'm18-push-destination-substituted',
     file: join('bend2', 'src', 'git', 'land.bend'),
     find: 'Con{"push", Con{remote, Con{branch, Nil{}}}}',
