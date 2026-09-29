@@ -110,6 +110,8 @@ class Stop(unittest.TestCase):
         self.assertEqual(stopped['status'], 'stopped')
         self.assertIsNone(stopped['attempt'])
         self.assertIsNone(stopped['nativeStatus'])
+        self.assertIsNone(stopped['requestedSignal'])
+        self.assertNotIn('requestedSignal', self.coord('session', 'parent')['stop'])
         self.assertEqual(stopped['stoppedInputs'], 1)
         self.assertEqual(self.rows('SELECT * FROM messages'), before)
         self.assertEqual(self.stop(), stopped)
