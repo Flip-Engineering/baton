@@ -15,7 +15,7 @@
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -634,10 +634,4 @@ test('D4: wake reasons minted after a member\'s terminal transition carry member
     assert.equal(reason.memberState, 'terminal-at-mint',
       'a reason minted after terminalization is epoch-marked, never presented as live');
   }
-});
-
-test('D5 (pin): the wave driver\'s stall machinery is NOT consumed by the inbox in v1 (additive only)', () => {
-  const driverSource = readFileSync(join(import.meta.dirname, '..', 'src', 'wave-driver.mjs'), 'utf8');
-  assert.equal(driverSource.includes('attentionFollow'), false,
-    'the driver keeps its own stall clock in v1 — the inbox is additive for orchestrators');
 });

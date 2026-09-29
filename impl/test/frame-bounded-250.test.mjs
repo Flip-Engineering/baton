@@ -29,7 +29,7 @@ test('FRAME-BOUNDED (#250): the CLI surfaceSnapshot never fires the list project
     'the frame seam must not fire runs.list (the #210 furnace — a frame is bounded reads)');
   assert.ok(!seam.includes("'waves.list'") && !seam.includes('"waves.list"'),
     'the frame seam must not fire waves.list (the #210/#216 furnace — 101.8s measured per call)');
-  // the scoped reads stay: run.inspect for run frames, waves.progress for wave frames
+  // the scoped read stays: run.inspect for run frames. The wave-scoped read left with the wave
+  // surface, so the seam's only scoped projection is the run one.
   assert.ok(seam.includes('run.inspect'), 'run-scoped frames still read run.inspect (bounded)');
-  assert.ok(seam.includes('waves.progress'), 'wave-scoped frames still read waves.progress (bounded)');
 });

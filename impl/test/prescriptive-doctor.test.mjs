@@ -89,7 +89,6 @@ import { fixtureSocketRoot } from './fixture-root.mjs';
 
 const srcDir = fileURLToPath(new URL('../src', import.meta.url));
 const deploymentSource = readFileSync(join(srcDir, 'application-deployment.mjs'), 'utf8');
-const waveDriverSource = readFileSync(join(srcDir, 'wave-driver.mjs'), 'utf8');
 
 // ── The closed v1.1 catalog + constants (ground truth from §4.1/§4.4) ───────────────────────
 const PRESCRIPTIVE_WARNING_CODES = Object.freeze([

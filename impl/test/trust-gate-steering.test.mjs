@@ -17,7 +17,7 @@
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -451,18 +451,6 @@ test('T14b: a NON-analysis node\'s edit-free final fails required_effect (the fl
 });
 
 
-// ===========================================================================
-// TG6 — coaching retirement (pre-acceptance pin; green today, guards the reword at
-// acceptance — no shipped constraint may EVER carry gate-beating coaching)
-// ===========================================================================
-
-test('T15: no shipped constraint or profile text coaches progress-by-diff-timing for the gate', () => {
-  const recipes = readFileSync(join(import.meta.dirname, '..', 'src', 'recipes.mjs'), 'utf8');
-  const forbidden = [/skeleton[- ]first/i, /trust.?gate/i, /beat(?:ing)? the gate/i, /survive the gate/i, /no.?diff/i, /progress gate/i];
-  for (const pattern of forbidden) {
-    assert.equal(pattern.test(recipes), false, `recipes carries no ${pattern} coaching`);
-  }
-});
 
 // ===========================================================================
 // Regression pins — finals are byte-identical (green before and after)

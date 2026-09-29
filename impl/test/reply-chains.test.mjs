@@ -963,9 +963,6 @@ test('H6 PIN (RC-10/D9): a chain-replying worker is mid-turn working — no wait
   assert.deepEqual([...WAITING_ON_KINDS], ['capacity_ceiling', 'dispatch_pending', 'plan_approval', 'provider_stalled', 'spawning'],
     'the closed five waiting kinds are byte-unchanged (G9/D9) — no new kind for chains');
   assert.ok(Object.isFrozen(WAITING_ON_KINDS), 'WAITING_ON_KINDS stays frozen');
-  const waveSrc = readFileSync(fileURLToPath(new URL('../src/wave-driver.mjs', import.meta.url)), 'utf8');
-  assert.ok(waveSrc.includes("answer_decision: 'decision', answer_question: 'question', answer_approval: 'approval'"),
-    'the closed three blocking-interaction kinds are byte-unchanged (wave-driver.mjs:189-191) — a message reply is not an interaction kind');
   // a worker that has replied in a chain is mid-turn working: no pending interaction, task phase unmoved
   const fx = laneFixture();
   const coordinator = fx.coordinator;

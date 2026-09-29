@@ -33,7 +33,6 @@ import { coordinationForLog } from '../src/coordination-store.mjs';
 import { Coordinator } from '../src/coordinator.mjs';
 import { FenceTable } from '../src/fence.mjs';
 import { Log } from '../src/log.mjs';
-import { createWave } from '../src/wave.mjs';
 
 const FIXED_NOW = '2026-07-23T00:00:00.000Z';
 const SRC = fileURLToPath(new URL('../src/', import.meta.url));
@@ -477,17 +476,13 @@ test('D2: claim resolves to exactly `completed` or `failed` — the gate\'s only
   assert.equal(coordinator._pausedTurns.get(pauseId).resolution.act, 'claim');
 });
 
-test('D3: no act-layer name COLLIDES with `wave.settle` — the rename from v1\'s `settle` is total; '
+test('D3: no act-layer name COLLIDES with the wave collector\'s `settle` — the rename from v1\'s '
   + '31-a\'s `turn.settled` fold kind is a legitimate, differently-named survivor', async () => {
   const source = readFileSync(join(SRC, 'coordinator.mjs'), 'utf8');
   // The act is `claimTurn`, and no `settleTurn`/`settlePause`-shaped act exists.
   assert.ok(/\basync claimTurn\(/.test(source));
   assert.ok(!/\bsettleTurn\b|\bsettlePause\b|\bpauseSettle\b/.test(source),
     'no steering act may carry a `settle` name at this layer');
-  // The wave collector keeps its distinct name. Its cancellable observation behavior is
-  // covered by wave-observer-lifetime; the argument spelling is not this naming contract.
-  const wave = readFileSync(join(SRC, 'wave.mjs'), 'utf8');
-  assert.ok(/\basync function settle\(/.test(wave), 'wave.settle remains the outcome collector');
 });
 
 // ============================================================
@@ -568,33 +563,6 @@ test('E3: `lifecycle.turn_completed` CLEARS the watchdog for a pausable card (it
 // ============================================================
 // Part F — honest `paused` projections + turn_checkpoint attention (rules 12-16)
 // ============================================================
-
-test('F1: wave.mjs classifies a `paused` member as `turn_checkpoint` through progress(), with no '
-  + 'explicit attention override and no wave source change beyond that one branch', async () => {
-  const statuses = { alpha: { phase: 'paused', attention: undefined } };
-  const baton = {
-    runs: {
-      start: async (objective) => ({
-        approve: async () => {},
-        status: async () => ({ view: statuses.alpha }),
-        complete: async () => new Promise(() => {}),
-        objective,
-      }),
-    },
-  };
-  const wave = await createWave(baton, {
-    members: [{ role: 'alpha', objective: 'do the thing', scope: ['impl/**'] }],
-  });
-  const snapshot = await wave.progress();
-  assert.equal(snapshot.members[0].phase, 'paused');
-  assert.equal(snapshot.members[0].attention, 'turn_checkpoint');
-  assert.equal(snapshot.members[0].terminal, false, 'a checkpoint is not an outcome');
-
-  // An explicit attention override still wins — the branch is a DEFAULT, never an escalation.
-  statuses.alpha = { phase: 'paused', attention: 'blocked_interaction:answer_required' };
-  const overridden = await wave.progress();
-  assert.equal(overridden.members[0].attention, 'blocked_interaction:answer_required');
-});
 
 test('F3: the coordinator exposes unresolved pause records and removes a resolved pause from the projection', async () => {
   const kit = await pausedKit();
