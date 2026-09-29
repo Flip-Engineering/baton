@@ -145,38 +145,6 @@ const CORE_TABLE = Object.freeze([
     ]),
   }),
   Object.freeze({
-    name: 'baton_waves',
-    description: 'One wave cohort: start (detached, per-member quota), list, progress (paged), send, stop — member-targeted by runId.',
-    verbs: Object.freeze([
-      Object.freeze({
-        verb: 'start', requires: Object.freeze(['members', 'idempotencyKey']),
-        dispatch: Object.freeze([Object.freeze({ tool: 'baton_waves_start' })]),
-        replaces: Object.freeze(['baton_waves_start']),
-        wake: wakeHandoff(['attention', 'paused']),
-      }),
-      Object.freeze({
-        verb: 'list', requires: Object.freeze([]),
-        dispatch: Object.freeze([Object.freeze({ tool: 'baton_waves_list' })]),
-        replaces: Object.freeze(['baton_waves_list']),
-      }),
-      Object.freeze({
-        verb: 'progress', requires: Object.freeze(['waveId']),
-        dispatch: Object.freeze([Object.freeze({ tool: 'baton_waves_progress' })]),
-        replaces: Object.freeze(['baton_waves_progress']),
-      }),
-      Object.freeze({
-        verb: 'send', requires: Object.freeze(['runId', 'message']),
-        dispatch: Object.freeze([Object.freeze({ tool: 'baton_waves_send' })]),
-        replaces: Object.freeze(['baton_waves_send']),
-      }),
-      Object.freeze({
-        verb: 'stop', requires: Object.freeze(['runId', 'reason']),
-        dispatch: Object.freeze([Object.freeze({ tool: 'baton_waves_stop' })]),
-        replaces: Object.freeze(['baton_waves_stop']),
-      }),
-    ]),
-  }),
-  Object.freeze({
     name: 'baton_knowledge',
     description: 'The knowledge layer: search the deployment evidence and contributions (seq cursor), seed one content-addressed node inside a run horizon.',
     verbs: Object.freeze([

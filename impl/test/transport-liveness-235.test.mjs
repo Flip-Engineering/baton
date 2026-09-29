@@ -7,7 +7,7 @@ import { join } from 'node:path';
 import { PassThrough } from 'node:stream';
 
 import { OmpRpcCli } from '../src/omp-rpc.mjs';
-import { createDriver, createWave } from '../src/index.mjs';
+import { createDriver } from '../src/index.mjs';
 
 import { reapFixtureDirectories } from '../scripts/suite-hygiene.mjs';
 
@@ -301,59 +301,3 @@ test('TRANSPORT-LIVENESS/COORDINATOR: never-trafficked active turn projects prov
   await driver.drainAndClose('test');
 });
 
-// ---------------------------------------------------------------------------
-// Case 3 — WAVE SETTLE: the never-trafficked member settles 'provider_silent', distinctly.
-// Fixture shape from wave-settle-error-surfacing.test.mjs (a Baton client facade whose
-// member run views carry the #235 attention entry).
-// ---------------------------------------------------------------------------
-
-test('TRANSPORT-LIVENESS/WAVE-SETTLE: never-trafficked member settles provider_silent with named steering evidence', async () => {
-  const neverTrafficked = {
-    kind: 'provider_silent', workerId: 'w-silent', summary: 'no provider traffic observed this turn',
-    note: 'provider_dial_never_observed', lastTrafficAt: null,
-  };
-  const outlines = {
-    silent_member: { schemaVersion: 1, runId: 'run-silent', phase: 'running', attention: [neverTrafficked] },
-    trafficked_member: { schemaVersion: 1, runId: 'run-trafficked', phase: 'running', attention: [] },
-  };
-  const facade = {
-    runs: {
-      start: async (objective, options) => ({
-        approve: async () => ({}),
-        complete: async () => ({}),
-        status: async () => ({ view: outlines[options.waveRole] ?? { phase: 'running' } }),
-        stop: async () => ({}),
-      }),
-      list: async () => ({ items: [] }),
-    },
-  };
-
-  const wave = await createWave(facade, {
-    members: [
-      { role: 'silent_member', objective: 'never dialed', harness: 'worker', model: 'm', effort: 'low', scope: ['out.md'] },
-      { role: 'trafficked_member', objective: 'live traffic', harness: 'worker', model: 'm', effort: 'low', scope: ['out.md'] },
-    ],
-    approve: true,
-  });
-  const outcomes = await wave.settle({ timeoutMs: 300 });
-
-  const silent = outcomes.find((o) => o.role === 'silent_member');
-  const trafficked = outcomes.find((o) => o.role === 'trafficked_member');
-  assert.ok(silent && trafficked, `both members must settle (got ${JSON.stringify(outcomes.map((o) => o.role))})`);
-
-  // THE PIN: the settle receipt classifies the never-trafficked member distinctly — never a
-  // plain 'silent' read that hides a wedged member among healthy ones.
-  assert.equal(silent.progressClass, 'provider_silent',
-    `the never-trafficked member settles provider_silent (got ${JSON.stringify(silent)})`);
-  assert.equal(silent.phase, 'working', 'evidence-only: the class changes no termination state');
-
-  // A trafficked sibling carries NO provider_silent claim — the class is evidence-scoped.
-  assert.notEqual(trafficked.progressClass, 'provider_silent',
-    `a trafficked member never reads provider_silent (got ${JSON.stringify(trafficked)})`);
-
-  // The steering evidence names the member.
-  const named = wave.evidence().steering.find((s) => s.evidence === 'provider_silent');
-  assert.ok(named, `steering evidence must name the provider-silent member (got ${JSON.stringify(wave.evidence().steering)})`);
-  assert.equal(named.role, 'silent_member');
-  assert.equal(named.summary, 'no provider traffic observed this turn');
-});

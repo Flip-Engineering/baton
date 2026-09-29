@@ -41,20 +41,20 @@ const KERNEL_WEB_COMMANDS = Object.freeze([
   'run_scratchpad_append',
 ]);
 
-// The web direct ports (wave lane + the folded scratchpad write + deployment.doctor): each row
-// is admitted under BOTH its canonical dot-name and its derived underscore transport. The dot
-// names are pinned frozen here; the transports are derived through the ONE seam.
+// The web direct ports (the folded scratchpad write, deployment.doctor and the workflow-surface
+// accessor ports): each row is admitted under BOTH its canonical dot-name and its derived
+// underscore transport. The dot names are pinned frozen here; the transports are derived through
+// the ONE seam.
 const WEB_DIRECT_PORT_OPERATIONS = Object.freeze([
-  'waves.start', 'waves.progress', 'waves.send', 'waves.stop', 'waves.list',
-  'waves.run', 'waves.compile', 'run.scratchpad.append', 'deployment.doctor',
+  'run.scratchpad.append', 'deployment.doctor',
   // #227 wire-card coverage (2026-08-15): the workflow-surface direct ports — the MCP web
   // bridge facade requires them on the resident card; the web lane now admits them.
   'run.message.send', 'run.message.receipt', 'run.attention.watch',
   'run.scratchpad.read', 'run.scratchpad.elevate',
   'run.knowledge.seed',
-  // Issue #99/#179 (harvest-accessor contract Decision 5): the accessor's two direct ports,
+  // Issue #99/#179 (harvest-accessor contract Decision 5): the accessor's direct port,
   // web-bus admitted beside the CLI dispatch projection that reads it (#566 composition).
-  'run.resultpin', 'waves.harvest',
+  'run.resultpin',
 ]);
 
 // The retained legacy MCP spellings for mcp:true definitions (hand baton_* ordinary tools).
@@ -109,22 +109,6 @@ test('ADMISSION: deployment.doctor is admitted on the web lane — not refused a
   }
 });
 
-// ---------------------------------------------------------------------------
-// Case 2: waves.run and waves_run BOTH admit (regression guard)
-// ---------------------------------------------------------------------------
-
-test('ADMISSION: waves.run and waves_run BOTH admit on the web lane', () => {
-  const { canonical, web } = canonicalAndTransportNames('waves.run');
-  assert.equal(canonical, 'waves.run');
-  assert.equal(web, 'waves_run');
-  for (const command of [canonical, web]) {
-    assert.equal(
-      validateWebCommandEnvelope(envelopeFor(command, { specPath: 'wave.wavefile' })),
-      null,
-      `${command} must pass web admission cleanly`,
-    );
-  }
-});
 
 // ---------------------------------------------------------------------------
 // Case 3: the web closed set — admitted names == the ONE derivation, exactly

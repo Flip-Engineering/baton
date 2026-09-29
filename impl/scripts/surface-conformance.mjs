@@ -25,7 +25,6 @@ import {
   mcpDispatchToolNames,
 } from '../src/mcp-northbound.mjs';
 import { CORE_TOOL_NAMES } from '../src/mcp-core-tools.mjs';
-import { WAVEFILE_DIRECTIVES } from '../src/workflow-dsl.mjs';
 
 // docs/36 §6.1 / M4A-2 — `deriveSurfaceNames` is imported, not redefined: the registry, the audit,
 // and this harness compute every surface name through the ONE function, so they cannot drift.
@@ -47,13 +46,6 @@ const SURFACES = new Set([
   'mcp',
 ]);
 
-// D2 — the six wave direct-port verbs (contract-fold v1.1 D2 / G3): the wave verbs admitted on the
-// web bus WITHOUT an APPLICATION_COMMAND_DEFINITIONS entry. The R2 card is the web-admitted
-// application-command names ∪ these six; the pinned 31 excludes the post-contract waves_compile
-// addition (#170), which the D1 web leg reconciles at landing.
-const WAVE_DIRECT_PORT_VERBS = Object.freeze([
-  'waves.list', 'waves.progress', 'waves.run', 'waves.send', 'waves.start', 'waves.stop',
-]);
 
 // docs/36 §6 explicit exclusions / §8.3 profiles (R-OP-2, R-OP-10) — the kernel and authoring
 // command literals are NOT canonical grammar operations: they are profile-scoped surfaces the
@@ -439,10 +431,9 @@ function cliOrdinaryKeys() {
 }
 
 // D2 — the application-command admission set, deduped and sorted in codepoint order, in canonical
-// DOT names: the same 31 names the card advertises (web-northbound.mjs:1521). The single source is
-// the D1 webBusAdmittedCommandNames() accessor (exported by web-northbound.mjs at landing); the
-// fallback below is the interim derivation — web-admitted APPLICATION_COMMAND_DEFINITIONS names ∪
-// the six wave direct ports — that matches the R2 card exactly until the accessor lands.
+// DOT names: the same names the card advertises. The single source is the D1
+// webBusAdmittedCommandNames() accessor (exported by web-northbound.mjs); the fallback below is the
+// web-admitted APPLICATION_COMMAND_DEFINITIONS names.
 function webBusNames() {
   const admitted = webNorthbound?.webBusAdmittedCommandNames?.();
   if (Array.isArray(admitted)) return [...admitted].sort();
@@ -450,13 +441,12 @@ function webBusNames() {
     ...Object.entries(APPLICATION_COMMAND_DEFINITIONS)
       .filter(([, definition]) => definition.web)
       .map(([name]) => name),
-    ...WAVE_DIRECT_PORT_VERBS,
   ].sort();
 }
 
 // D3 #3 — the web-refused CLI whitelist verbs: CLI_WEB_COMMANDS names that are NOT web-admitted
-// (absent from the web.bus card). These are the eight facade ports (contracted via #87+#48) plus
-// the post-contract waves_compile (#170), each of which needs a divergence-ledger row.
+// (absent from the web.bus card) — the facade ports contracted via #87+#48, each of which needs a
+// divergence-ledger row.
 function cliWebRefusedVerbs() {
   const admitted = new Set(webBusNames());
   return [...CLI_WEB_COMMANDS].filter((name) => !admitted.has(name)).sort();
@@ -671,25 +661,6 @@ export function lintProseInventories(options = {}) {
 
 // ── Executable main (CS-1 / R-CS-6) ─────────────────────────────────────────
 
-// #170 (D4/P8) — the wavefile leg: the documented 16-directive table ⇄ the compiler's accepted set
-// (the #159 three-way invariant's parsed/documented half; the admitted half is the round-trip pin).
-const WAVEFILE_DOCUMENTED = new Set([
-  'wave', 'member', 'harness', 'model', 'effort', 'scope', 'objectiveRef', 'report',
-  'approveOnAdvertisedPlan', 'messageOnSpawn',
-  'elevateWhenNotes', 'answerDecisions', 'signalOnMembersDone', 'harvest',
-]);
-
-export function checkWavefileGrammar() {
-  const accepted = Object.keys(WAVEFILE_DIRECTIVES);
-  const findings = [];
-  for (const name of accepted) {
-    if (!WAVEFILE_DOCUMENTED.has(name)) findings.push(`wavefile directive undocumented: ${name}`);
-  }
-  for (const name of WAVEFILE_DOCUMENTED) {
-    if (!accepted.includes(name)) findings.push(`wavefile directive unaccepted: ${name}`);
-  }
-  return findings;
-}
 
 export function runSurfaceConformanceMain() {
   const findings = [];
@@ -719,9 +690,6 @@ export function runSurfaceConformanceMain() {
     if (KERNEL_AUTHORING_WEB_LITERALS.includes(name)) {
       findings.push(`web-name collision: ${name} is a kernel/authoring literal`);
     }
-  }
-  for (const finding of checkWavefileGrammar()) {
-    findings.push(`wavefile grammar: ${finding}`);
   }
   return findings;
 }

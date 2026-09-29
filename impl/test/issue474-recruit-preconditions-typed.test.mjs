@@ -486,8 +486,6 @@ test('474-f: the recruit\'s judgement and the deployment\'s Run-start grammar ne
     { model: ROUTE.model, effort: ROUTE.effort }, { harness: 'omp', model: ROUTE.model, effort: ROUTE.effort },
     { resultIntent: 'change' }, { resultIntent: 'read_only_evidence' }, { resultIntent: 'nope' },
     { profile: '' }, { profile: 'impl' }, { driverKind: 'inline' }, { bogus: 1 },
-    { waveStart: { roster: ['a'], idempotencyKey: 'wave-1' } }, { waveStart: { roster: [] } },
-    { waveStart: { roster: ['a'], idempotencyKey: 'wave-1', extra: 1 } },
   ];
   for (const [index, selection] of selections.entries()) {
     let deployment = null;

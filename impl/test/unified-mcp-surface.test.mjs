@@ -69,7 +69,6 @@ function baseServer(overrides = {}) {
           reasons: [{ kind: 'answer_decision', requiredAction: 'answer' }],
         };
         if (name === 'run.inspect') return { runId: args.runId, phase: 'working' };
-        if (name === 'waves.progress') return { waveId: args.waveId, phase: 'working' };
         return { name, args };
       },
     },
@@ -223,11 +222,11 @@ test('surface snapshot combines existing readiness, workers, routes, telemetry a
   assert.ok(snapshot.coverage.categories.notifications.mcp > 0);
 });
 
-test('surface watch composes existing follow, attention, decisions and Wave progress with monotonic cursors', async () => {
+test('surface watch composes existing follow, attention and decisions with monotonic cursors', async () => {
   const raw = baseServer();
   const server = wrapProductionMcpServer(raw, { runtime: new ProductionConvergenceRuntime() });
   const response = await call(server, 'baton_surface_watch', {
-    runId: 'run:a', waveId: 'wave:a', afterCursor: 4, attentionCursor: 7,
+    runId: 'run:a', afterCursor: 4, attentionCursor: 7,
     kind: 'answer_decision', timeoutMs: 1000,
   }, 51);
   const page = response.result.structuredContent;
@@ -235,9 +234,8 @@ test('surface watch composes existing follow, attention, decisions and Wave prog
   assert.equal(page.nextAfterCursor, 5);
   assert.equal(page.nextAttentionCursor, 9);
   assert.equal(page.decisions.decisions[0].state, 'pending');
-  assert.equal(page.wave.waveId, 'wave:a');
   assert.deepEqual(raw.applicationCalls.map((entry) => entry.name), [
-    'run.follow', 'run.attention.watch', 'decision.list', 'waves.progress',
+    'run.follow', 'run.attention.watch', 'decision.list',
   ]);
 });
 

@@ -169,7 +169,23 @@ export const EXPLICIT_RESULT_CONSTRAINTS = Object.freeze({
 // `driver.recorded` envelope; no dedicated projection map (docs/35 §2.2 rule 4: "stays an
 // event log"). Its ONLY consumer in 31-a is the degenerate-auto-settle liveness scan.
 export const APPLICATION_STEERING_REGISTERED_KIND = 'steering.registered';
-export const APPLICATION_WAVE_DRIVER_DETACHED_KIND = 'wave.driver_detached';
+// The `action.do` envelope fields each kind pre-fills (2026-09-14 audit, U-E5). They are
+// SERVER-DERIVED — `requestId` is the resolved action target's own identity and `response` is the
+// payload shape the action consumes — so act() accepts them beside the schema's own properties.
+// A kind absent from this table pre-fills nothing and accepts nothing extra.
+export const ACTION_INPUT_ENVELOPE = Object.freeze({
+  approve_plan: Object.freeze(['planDigest']),
+  answer_approval: Object.freeze(['requestId', 'response']),
+  answer_question: Object.freeze(['requestId', 'response']),
+  answer_decision: Object.freeze(['requestId', 'response']),
+  nudge_turn: Object.freeze(['requestId', 'response']),
+  wait_turn: Object.freeze(['requestId', 'response']),
+  claim_turn: Object.freeze(['requestId', 'response']),
+});
+// The turn kinds' pre-filled response discriminator (the coordinator's own vocabulary).
+export const ACTION_TURN_RESPONSE_KIND = Object.freeze({
+  nudge_turn: 'continue', wait_turn: 'wait', claim_turn: 'settle',
+});
 export const READ_ONLY_RESULT_DEFINITION = Object.freeze([
   'A bounded evidence-backed textual/result capsule answers the declared read-only objective.',
   'Sources, derivations, contradictions, verification, and cleanup remain inspectable.',
@@ -4434,21 +4450,9 @@ export async function _activeWorkstream(application, rawRequest, principal) {
     });
     return { current, view, binding };
   }
-export function _waveDriverDetached(application, waveId) {
-    const events = application.driver.coordination.eventsView();
-    return events.some((event) => (
-      event.kind === 'driver.recorded'
-      && event.payload?.kind === APPLICATION_WAVE_DRIVER_DETACHED_KIND
-      && event.payload?.waveId === waveId
-    ));
-  }
 // WLS-1: single-pass steering-registered index for the roster projections. ONE eventsView()
-// read builds (a) runId → {waveId, waveRole, route, cell} and (b) (waveId,waveRole) → runId, so
-// waves.list / waves.progress serve every member from the maps instead of rescanning the log
-// per member (the 87k-event × member-count furnace that times out the bus command budget).
+// read builds (a) runId → {waveId, waveRole, route, cell} and (b) (waveId,waveRole) → runId.
 // Per-invocation only — never cached across calls (event-log-derived honesty, no staleness).
-// First-match-wins preserves the per-record iteration order of _runWaveId/_runWaveRole/
-// _runWaveRoute/_runIdForWaveMember exactly.
 export function _runWaveIndex(application) {
     // #229 (live capture 2026-08-20): waves.list/progress rebuilt this index with a FULL
     // 140k-event scan per call, on the resident's single event loop — multi-second bursts
@@ -4481,56 +4485,6 @@ export function _runWaveIndex(application) {
     application._runWaveIndexMemo = { revision, cursor: revision, byRunId, byWaveRole };
     return { byRunId, byWaveRole };
   }
-// 93B: the durable referent for "this run belongs to waveId" is its own steering.registered
-// record — no separate per-run projection map, same event-log-only discipline as the liveness
-// scan this mirrors (coordinator.mjs's `hasDriver` check).
-export function _runWaveId(application, runId, index = null) {
-    if (index !== null) {
-      const entry = index.byRunId.get(runId);
-      return entry !== undefined && entry.waveId !== undefined ? entry.waveId : null;
-    }
-    const events = application.driver.coordination.eventsView();
-    for (const event of events) {
-      if (event.kind === 'driver.recorded' && event.payload?.kind === APPLICATION_STEERING_REGISTERED_KIND
-        && event.payload?.runId === runId && event.payload?.waveId !== undefined) {
-        return event.payload.waveId;
-      }
-    }
-    return null;
-  }
-// The wave member's role is the steering-registered `waveRole` (93B) — the durable referent,
-// same event-log-only discipline as _runWaveId.
-export function _runWaveRole(application, runId, index = null) {
-    if (index !== null) {
-      const entry = index.byRunId.get(runId);
-      return entry !== undefined && entry.waveRole !== undefined ? entry.waveRole : null;
-    }
-    const events = application.driver.coordination.eventsView();
-    for (const event of events) {
-      if (event.kind === 'driver.recorded' && event.payload?.kind === APPLICATION_STEERING_REGISTERED_KIND
-        && event.payload?.runId === runId && event.payload?.waveRole !== undefined) {
-        return event.payload.waveRole;
-      }
-    }
-    return null;
-  }
-// Issue #74 (D3/A6): the member's EXACT route — the steering-registered `route` (minted by
-// start(), same event-log-only discipline as _runWaveId/_runWaveRole). This is how waves.list
-// recovers the seat map for interpreter-seam waves whose registry roster is a role-only string.
-export function _runWaveRoute(application, runId, index = null) {
-    if (index !== null) {
-      const entry = index.byRunId.get(runId);
-      return entry !== undefined && entry.route !== undefined ? clone(entry.route) : null;
-    }
-    const events = application.driver.coordination.eventsView();
-    for (const event of events) {
-      if (event.kind === 'driver.recorded' && event.payload?.kind === APPLICATION_STEERING_REGISTERED_KIND
-        && event.payload?.runId === runId && event.payload?.route !== undefined) {
-        return clone(event.payload.route);
-      }
-    }
-    return null;
-  }
 // #102 Decision 6: the run's cell declaration — the steering-registered `cell` (minted by
 // start(), same event-log-only discipline as _runWaveId/_runWaveRole/_runWaveRoute). It reads
 // through the memoized wave index, so this adds no durable read of its own (the AO3 census
@@ -4544,56 +4498,4 @@ export function _runCellDeclaration(application, runId, index = null) {
     if (!Number.isSafeInteger(raw.quorum) || raw.quorum < 1 || raw.quorum > raw.size) return null;
     if (typeof raw.strict !== 'boolean') return null;
     return clone(raw);
-  }
-/** #216 (row-git-batch): pre-resolve every completed member's preserved-result ref on the
-   * page in ONE coordinator batch (one worktrees.resolveResults → one git process). Returns a
-   * Map<`${workerId}\0${expectedSha}`, inspection> the view builds consume, or null when the
-   * page has no resolvable member or the coordinator lacks the batch seam. Purely memory/log
-   * reads per member (the coordinator's own task authority) — never a git spawn. */
-export async function _pagePreservedInspections(application, page, waveIndex) {
-    if (typeof application.driver.coordinator.inspectPreservedResults !== 'function') return null;
-    if (typeof application.driver.coordinator.result !== 'function') return null;
-    const workers = application.driver.coordinator.list();
-    const entries = [];
-    for (const row of page) {
-      for (const member of row.roster ?? []) {
-        const role = typeof member === 'string' ? member : member?.role ?? null;
-        const runId = application._runIdForWaveMember(row.waveId, role, waveIndex);
-        if (runId === null) continue;
-        const worker = workers.find((candidate) => candidate.runId === runId);
-        if (!worker?.id) continue;
-        let memberResult;
-        try { memberResult = await application.driver.coordinator.result(worker.id); }
-        catch { continue; }
-        if (memberResult?.status === 'completed' && typeof memberResult.capturedSha === 'string'
-          && memberResult.retainedResultRef) {
-          entries.push({ workerId: worker.id, expectedSha: memberResult.capturedSha });
-        }
-      }
-    }
-    if (entries.length === 0) return null;
-    const inspected = await application.driver.coordinator.inspectPreservedResults(entries);
-    const map = new Map();
-    for (let index = 0; index < entries.length; index += 1) {
-      map.set(`${entries[index].workerId}\0${entries[index].expectedSha}`, inspected[index]);
-    }
-    return map;
-  }
-// The member's run is the steering-registered runId for (waveId, waveRole) — the durable
-// referent, same event-log-only discipline as _runWaveId/_runWaveRole.
-export function _runIdForWaveMember(application, waveId, waveRole, index = null) {
-    if (waveId == null || waveRole == null) return null;
-    if (index !== null) {
-      const roles = index.byWaveRole.get(waveId);
-      const runId = roles?.get(waveRole);
-      return runId !== undefined ? runId : null;
-    }
-    const events = application.driver.coordination.eventsView();
-    for (const event of events) {
-      if (event.kind === 'driver.recorded' && event.payload?.kind === APPLICATION_STEERING_REGISTERED_KIND
-        && event.payload?.waveId === waveId && event.payload?.waveRole === waveRole) {
-        return event.payload.runId;
-      }
-    }
-    return null;
   }

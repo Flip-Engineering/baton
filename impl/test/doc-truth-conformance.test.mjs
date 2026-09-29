@@ -411,54 +411,6 @@ test('R9 (fleet-run-answer-accepts-decision): the answer schema is decision-free
     `R9 (fleet-run-answer-accepts-decision): ${failures.join(' | ')}`);
 });
 
-// ── R10 (D3 #6 / D4 MCP leg): MCP.md wave examples are fenced json blocks that are executable ───
-
-test('R10 (mcp-wave-examples-omit-repoId): Orchestrate-a-wave examples are fenced json blocks naming real tools with executable shapes', () => {
-  const mcpDoc = readFileSync(new URL('../MCP.md', import.meta.url), 'utf8');
-  const start = mcpDoc.indexOf('## Orchestrate a wave');
-  assert.ok(start >= 0, 'R10: Orchestrate-a-wave section exists');
-  const rest = mcpDoc.slice(start);
-  const next = rest.indexOf('\n## ', 2);
-  const section = next >= 0 ? rest.slice(0, next) : rest;
-  const fenced = [...section.matchAll(/```json\n([\s\S]*?)```/gu)];
-  assert.ok(fenced.length > 0,
-    'R10 (mcp-wave-examples-omit-repoId): the wave examples must be fenced json blocks');
-  // Tool-name law: every backtick-named wave tool in the section is a real MCP tool — a fenced
-  // example naming a nonexistent tool fails here.
-  const allowlist = new Set(mcpCombinedToolNames());
-  const backticked = [...section.matchAll(/`(baton_waves_[a-z_]+|baton_decision_answer)`/gu)]
-    .map((match) => match[1]);
-  for (const name of backticked) {
-    assert.ok(allowlist.has(name), `R10: section names ${name}, which is not an MCP tool`);
-  }
-  // Admission law — each fenced example is an executable shape: it carries a tool-specific field
-  // (a repoId-only block is not an executable wave example) AND is admitted by at least one real
-  // wave tool (required ⊆ keys ⊆ properties from the tool's actual inputSchema). An example the
-  // admission refuses fails here.
-  const waveTools = combinedMcpServer().toolDefinitions.filter((tool) => WAVE_TOOL_NAMES.has(tool.name));
-  assert.equal(waveTools.length, WAVE_TOOL_NAMES.size, 'R10: every wave tool is on the combined surface');
-  const unadmitted = [];
-  for (const [, body] of fenced) {
-    const shape = JSON.parse(body);
-    assert.ok('repoId' in shape, 'R10: each wave example carries repoId');
-    assert.equal(Object.keys(shape)[0], 'repoId', 'R10: repoId comes first');
-    const keys = Object.keys(shape);
-    if (!keys.some((key) => key !== 'repoId' && key !== 'idempotencyKey')) {
-      unadmitted.push(`${JSON.stringify(shape)}: no tool-specific field`);
-      continue;
-    }
-    const admitted = waveTools.some((tool) => {
-      const { required, properties } = tool.inputSchema;
-      return required.every((key) => keys.includes(key)) && keys.every((key) => key in properties);
-    });
-    if (!admitted) unadmitted.push(`${JSON.stringify(shape)}: refused by every wave tool admission`);
-  }
-  assert.deepEqual(unadmitted, [],
-    `R10 (mcp-wave-examples-omit-repoId): unadmitted wave example shapes — ${unadmitted.join(' | ')}`);
-});
-
-// ── substrate pin (must stay GREEN at HEAD) ─────────────────────────────────────────────────────
-
 test('P-CS1-b: node impl/scripts/surface-conformance.mjs has an executable main that is green', () => {
   const result = execFileSync(process.execPath, [conformanceScript], {
     cwd: repoRoot,

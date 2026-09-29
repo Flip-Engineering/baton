@@ -131,14 +131,12 @@ export function parseUnifiedSurfaceCli(argv) {
   }
   if (action === 'snapshot' || action === 'status') {
     const runId = take(args, '--run-id');
-    const waveId = take(args, '--wave-id');
     const mcpConfig = take(args, '--mcp-config');
     noRemainder(args);
-    return Object.freeze({ kind: 'surface_snapshot', runId, waveId, mcpConfig });
+    return Object.freeze({ kind: 'surface_snapshot', runId, mcpConfig });
   }
   if (action === 'watch') {
     const runId = boundedId(args.shift(), 'runId');
-    const waveIdRaw = take(args, '--wave-id');
     const afterCursor = integer(take(args, '--after-cursor'), 'afterCursor');
     const attentionCursor = integer(take(args, '--attention-cursor'), 'attentionCursor');
     const kindRaw = take(args, '--kind');
@@ -148,7 +146,6 @@ export function parseUnifiedSurfaceCli(argv) {
     return Object.freeze({
       kind: 'surface_watch',
       runId,
-      waveId: waveIdRaw === null ? null : boundedId(waveIdRaw, 'waveId'),
       afterCursor,
       attentionCursor,
       attentionKind: kindRaw === null ? null : boundedId(kindRaw, 'kind'),
@@ -159,7 +156,6 @@ export function parseUnifiedSurfaceCli(argv) {
   if (action === 'visualize') {
     const viewRaw = take(args, '--view');
     const runId = take(args, '--run-id');
-    const waveId = take(args, '--wave-id');
     const widthRaw = take(args, '--width');
     const follow = hasFlag(args, '--follow');
     const afterCursor = integer(take(args, '--after-cursor'), 'afterCursor');
@@ -172,7 +168,6 @@ export function parseUnifiedSurfaceCli(argv) {
       kind: 'surface_visualize',
       view: viewRaw === null ? null : boundedId(viewRaw, 'view'),
       runId: runId === null ? null : boundedId(runId, 'runId'),
-      waveId: waveId === null ? null : boundedId(waveId, 'waveId'),
       width: integer(widthRaw, 'width', { minimum: 40, maximum: 240 }),
       follow,
       afterCursor,
@@ -247,18 +242,16 @@ export async function executeUnifiedSurfaceCli(parsed, { client = null, mcpCall 
       if (typeof mcpCall !== 'function') fail('cli_config_invalid', 'MCP surface snapshot is unavailable');
       return mcpCall(parsed.mcpConfig, 'baton_surface_snapshot', {
         ...(parsed.runId ? { runId: parsed.runId } : {}),
-        ...(parsed.waveId ? { waveId: parsed.waveId } : {}),
       });
     }
     if (!client || typeof client.surfaceSnapshot !== 'function') {
       fail('cli_config_invalid', 'authenticated Baton client is unavailable');
     }
-    return client.surfaceSnapshot({ runId: parsed.runId, waveId: parsed.waveId });
+    return client.surfaceSnapshot({ runId: parsed.runId });
   }
   if (parsed.kind === 'surface_watch') {
     const args = {
       runId: parsed.runId,
-      ...(parsed.waveId === null ? {} : { waveId: parsed.waveId }),
       ...(parsed.afterCursor === null ? {} : { afterCursor: parsed.afterCursor }),
       ...(parsed.attentionCursor === null ? {} : { attentionCursor: parsed.attentionCursor }),
       ...(parsed.attentionKind === null ? {} : { kind: parsed.attentionKind }),
@@ -277,7 +270,6 @@ export async function executeUnifiedSurfaceCli(parsed, { client = null, mcpCall 
     const args = {
       ...(parsed.view !== null ? { view: parsed.view } : {}),
       ...(parsed.runId !== null ? { runId: parsed.runId } : {}),
-      ...(parsed.waveId !== null ? { waveId: parsed.waveId } : {}),
       ...(parsed.width !== null ? { width: parsed.width } : {}),
       follow: parsed.follow,
       ...(parsed.afterCursor !== null ? { afterCursor: parsed.afterCursor } : {}),

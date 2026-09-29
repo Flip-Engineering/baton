@@ -25,11 +25,11 @@ test('surface CLI parses catalog, describe, invoke, snapshot and watch as closed
   assert.equal(invoke.args.body, 'hello');
   assert.equal(parseUnifiedSurfaceCli(['surface', 'snapshot', '--run-id', 'run:a']).kind, 'surface_snapshot');
   const watch = parseUnifiedSurfaceCli([
-    'surface', 'watch', 'run:a', '--wave-id', 'wave:a', '--after-cursor', '4',
+    'surface', 'watch', 'run:a', '--after-cursor', '4',
     '--attention-cursor', '7', '--kind', 'answer_decision', '--timeout', '1200',
   ]);
   assert.deepEqual(watch, {
-    kind: 'surface_watch', runId: 'run:a', waveId: 'wave:a', afterCursor: 4,
+    kind: 'surface_watch', runId: 'run:a', afterCursor: 4,
     attentionCursor: 7, attentionKind: 'answer_decision', timeoutMs: 1200, mcpConfig: null,
   });
   assert.throws(
@@ -153,7 +153,7 @@ test('embedded-only worker capability remains visible but cannot be promoted by 
 
 test('surface visualize parses all fields including --follow boolean flag', () => {
   const full = parseUnifiedSurfaceCli([
-    'surface', 'visualize', '--view', 'telemetry', '--run-id', 'run:a', '--wave-id', 'wave:a',
+    'surface', 'visualize', '--view', 'telemetry', '--run-id', 'run:a',
     '--width', '120', '--follow', '--after-cursor', '4', '--attention-cursor', '7',
     '--kind', 'answer_decision', '--timeout', '2000',
   ]);
@@ -161,7 +161,6 @@ test('surface visualize parses all fields including --follow boolean flag', () =
     kind: 'surface_visualize',
     view: 'telemetry',
     runId: 'run:a',
-    waveId: 'wave:a',
     width: 120,
     follow: true,
     afterCursor: 4,

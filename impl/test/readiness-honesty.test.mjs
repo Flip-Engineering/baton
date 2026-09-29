@@ -74,7 +74,7 @@ import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import { openBatonDeployment } from '../src/application-deployment.mjs';
-import { createDriver, createWaveDriver } from '../src/index.mjs';
+import { createDriver } from '../src/index.mjs';
 import { RouteLiveness } from '../src/route-liveness.mjs';
 import { projectTypedTerminalCause } from '../src/application-semantics.mjs';
 import { FRAME_LIMITS } from '../src/limits.mjs';
@@ -432,31 +432,6 @@ function routeRow(readiness, route) {
     && row.model === route.model && row.effort === route.effort) ?? null;
 }
 
-// The §4.2.2 wave-preflight consumer, driven exactly as wave-driver.mjs drives it, with the wave
-// itself stopped at the fixture boundary (the D3 refusal is asserted before any member spawn).
-async function runWavePreflight(deployment, route, members = 2) {
-  const facade = {
-    doctor: () => deployment.doctor(),
-    waves: {
-      start: async () => {
-        throw Object.assign(new Error('fixture stop after preflight'), { code: 'fixture_preflight_passed' });
-      },
-    },
-  };
-  const wave = createWaveDriver(facade, { preflight: true });
-  const request = {
-    members: Array.from({ length: members }, (_, index) => ({
-      role: `member-${index}`, objective: `fixture wave member ${index}`, exact: route,
-    })),
-  };
-  return bounded('runWavePreflight: wave.run', wave.run(request)).then(
-    () => 'resolved',
-    (error) => {
-      if (isWaitBoundFailure(error)) throw error;
-      return error?.code ?? String(error?.message ?? error);
-    },
-  );
-}
 
 // ── Source-scan hygiene ─────────────────────────────────────────────────────────────────────
 // Scan CODE, not comments (so an explanatory mention of `probedAt`/`forceProbe` in a comment
@@ -609,26 +584,6 @@ test('A4p (pin): a quota/capacity worker-turn death fires NO invalid_grant crede
   }
 });
 
-test('A5p (pin): the landed preflight still refuses a static-blocked member with wave_driver_route_unready, and matchRoute performs no route substitution (RT-5p, D3)', async () => {
-  const orphan = Object.freeze({ harness: 'codex', model: 'gpt-5.6-sol', effort: 'high' });
-  const adapter = new LivenessAdapter({ route: ROUTE, mode: 'complete' });
-  const absentAdapter = new LivenessAdapter({ route: orphan, mode: 'complete', credentialState: 'absent' });
-  const fixture = await openFixture({ routes: [ROUTE, orphan], adapters: { grok: adapter, codex: absentAdapter } });
-  try {
-    assert.equal(fixture.wiringError, null, 'fixture must open');
-    const outcome = await runWavePreflight(fixture.deployment, orphan, 2);
-    assert.equal(outcome, 'wave_driver_route_unready',
-      'a static-blocked member is refused at preflight with the typed code (the seam the tier extends)');
-  } finally {
-    await fixture.close();
-  }
-  // No substitution: matchRoute selects only the member's own route (wave-driver.mjs:161-172).
-  const waveSource = stripComments(readFileSync(join(srcDir, 'wave-driver.mjs'), 'utf8'));
-  const matchSlice = methodSlice(waveSource, /function matchRoute\(/u);
-  for (const token of ['fallback', 'alternate', 'substitute', 'router']) {
-    assert.equal(matchSlice.includes(token), false, `matchRoute performs no ${token} selection — the member's exact route is the sole authority`);
-  }
-});
 
 test('A6p (pin): all five provider-spawn surfaces still consult assertRouteReady — the existing static gate is not weakened by the liveness fold (G1, A6 sibling)', () => {
   const code = stripComments(deploymentSource);

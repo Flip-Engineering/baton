@@ -352,19 +352,6 @@ test('A1-resultpin-dispatch (stage: ports absent): run.resultpin dispatches ahea
     'run.resultpin dispatches and reaches the host policy seam (RED: application_command_unavailable today)');
 });
 
-test('A2-harvest-dispatch (stage: ports absent): waves.harvest dispatches for both XOR sources', async (t) => {
-  const fx = await facadeFixture(t, { authorize: REFUSE_ALL });
-  const owner = principalOf('owner');
-  for (const args of [
-    { resultSha: 'a'.repeat(40) },
-    { runId: 'run:a2' },
-  ]) {
-    const refusal = await facadeError(() => fx.application.command('waves.harvest', args, owner, null));
-    assert.equal(refusal?.code, 'application_unauthorized',
-      `waves.harvest ${JSON.stringify(args)} dispatches and reaches the host policy seam (RED today)`);
-  }
-});
-
 test('A3-resultpin-closure (stage: ports absent): shape failures refuse application_run_resultpin_invalid before authorize', async (t) => {
   const fx = await facadeFixture(t, { authorize: REFUSE_ALL });
   const owner = principalOf('owner');
@@ -384,35 +371,6 @@ test('A3-resultpin-closure (stage: ports absent): shape failures refuse applicat
     assert.equal(typeof refusal?.code, 'string', 'every refusal carries a string .code — no bare TypeError escapes');
   }
 });
-
-test('A4-harvest-closure (stage: ports absent): shape failures refuse application_waves_harvest_invalid before authorize', async (t) => {
-  const fx = await facadeFixture(t, { authorize: REFUSE_ALL });
-  const owner = principalOf('owner');
-  const closed = ['onto', 'resultSha', 'runId'];
-  assert.deepEqual(closed, [...closed].sort(), 'the args literal is a sorted-key closed shape (M2)');
-  const cases = [
-    [{ }, 'absent source'],
-    [{ runId: 'run:a4', resultSha: 'a'.repeat(40) }, 'ambiguous source'],
-    [{ resultSha: 'short' }, 'malformed resultSha'],
-    [{ resultSha: 'a'.repeat(64) }, '64-hex resultSha refuses at the shape gate (sha1-only v1)'],
-    [{ resultSha: 'a'.repeat(40), onto: 7 }, 'non-string onto'],
-    [{ resultSha: 'a'.repeat(40), onto: '' }, 'empty onto'],
-    [{ runId: 7 }, 'non-string runId'],
-    [{ resultSha: 'a'.repeat(40), extra: 1 }, 'extra field'],
-  ];
-  for (const [args, label] of cases) {
-    const refusal = await facadeError(() => fx.application.command('waves.harvest', args, owner, null));
-    assert.equal(refusal?.code, 'application_waves_harvest_invalid', `${label} → ${refusal?.code}`);
-    assert.equal(typeof refusal?.code, 'string', 'every refusal carries a string .code — no bare TypeError escapes');
-  }
-});
-
-// ===========================================================================
-// Section B — HA-02: the stale-base law. baseSha is the RECORDED capture base
-// (task.sessionContext.baseSha), NEVER HEAD, NEVER pin^. changedPaths is the
-// recorded-base delta even after main advances. The ancestry cross-check is the
-// pin_base_mismatch gate. (stage: projection absent)
-// ===========================================================================
 
 test('B1-stale-base (stage: projection absent): the projection owns the RECORDED-base diff after main advances', async (t) => {
   const fx = await facadeFixture(t, { adapter: new MockAdapter({ scenario: { outcome: 'completed', edits: TWO_EDITS } }) });
@@ -614,201 +572,6 @@ test('D6-foreign-run (stage: ports absent): the host policy refuses an unauthori
 // (stage: harvest absent)
 // ===========================================================================
 
-test('E1-harvest-receipt (stage: harvest absent): onto rules, applied-clean, then already_integrated', async (t) => {
-  const fx = await facadeFixture(t, { adapter: new MockAdapter({ scenario: { outcome: 'completed', edits: TWO_EDITS } }) });
-  const rec = await ceremonyRun(fx, { runId: 'run:e1' });
-  assert.equal(rec.view?.phase, 'work_completed');
-  assert.equal(rec.view?.result?.preservation?.state, 'pinned');
-  const owner = rec.owner;
-  const oracle = fx.driver.coordinator._worktrees.changedPathsAtCommit(rec.baseSha, rec.resultSha);
-
-  // onto-invalid: a string onto that does not realpath-equal the main checkout.
-  const ontoInvalid = await facadeError(() => fx.application.command('waves.harvest', { resultSha: rec.resultSha, onto: '/some/other/checkout' }, owner, null));
-  assert.equal(ontoInvalid?.code, 'harvest_onto_invalid',
-    'an onto that is not the main checkout refuses harvest_onto_invalid (RED: harvest absent)');
-
-  // onto-equals-main: the realpath-equality variant applies clean.
-  const receipt = await fx.application.command('waves.harvest', { resultSha: rec.resultSha, onto: fx.repo }, owner, null);
-  assert.equal(receipt?.ok, true, 'the receipt succeeds');
-  assert.equal(receipt?.result, 'applied-clean', 'the merge applied cleanly');
-  assert.equal(receipt?.reason, null, 'reason is null on applied-clean');
-  assert.match(receipt?.afterSha, /^[a-f0-9]{40}$/u, 'afterSha is 40-hex');
-  assert.deepEqual(receipt?.classes, ['clean_textual'], 'the class-name projection is clean_textual');
-  assert.equal(receipt?.baseSha, rec.baseSha, 'the receipt certifies the RECORDED-base delta');
-  assert.deepEqual(receipt?.changedPaths, oracle, 'changedPaths is the recorded diff');
-  assert.equal(receipt?.resultSha, rec.resultSha, 'resultSha matches the pin');
-  assert.equal(git(['rev-parse', 'HEAD'], fx.repo), receipt.afterSha, 'onto HEAD lands at afterSha');
-  assert.equal(git(['status', '--porcelain'], fx.repo), '', 'the main checkout is clean after the apply');
-  // The applied delta is byte-visible on main.
-  assert.equal(readFileSync(join(fx.repo, 'reports/a.md'), 'utf8'), 'alpha\n', 'the pin content is on main');
-  assert.equal(readFileSync(join(fx.repo, 'reports/b.md'), 'utf8'), 'beta\n', 'the pin content is on main');
-
-  // Retry of the same pin: contained → already_integrated (no new merge commit).
-  const headAfterApply = git(['rev-parse', 'HEAD'], fx.repo);
-  const retry = await fx.application.command('waves.harvest', { resultSha: rec.resultSha }, owner, null);
-  assert.equal(retry?.ok, true, 'the retry succeeds');
-  assert.equal(retry?.result, 'skipped', 'the retry is skipped');
-  assert.equal(retry?.reason, 'already_integrated', 'the pin is already contained');
-  assert.equal(git(['rev-parse', 'HEAD'], fx.repo), headAfterApply, 'the skip creates no merge commit');
-});
-
-test('E2-harvest-runid (stage: harvest absent): the runId source resolves the same receipt', async (t) => {
-  const fx = await facadeFixture(t, { adapter: new MockAdapter({ scenario: { outcome: 'completed', edits: TWO_EDITS } }) });
-  const rec = await ceremonyRun(fx, { runId: 'run:e2' });
-  assert.equal(rec.view?.phase, 'work_completed');
-  const owner = rec.owner;
-  const oracle = fx.driver.coordinator._worktrees.changedPathsAtCommit(rec.baseSha, rec.resultSha);
-  const receipt = await fx.application.command('waves.harvest', { runId: 'run:e2' }, owner, null);
-  assert.equal(receipt?.ok, true);
-  assert.equal(receipt?.result, 'applied-clean');
-  assert.equal(receipt?.baseSha, rec.baseSha, 'the runId source attributes the recorded base');
-  assert.deepEqual(receipt?.changedPaths, oracle, 'the runId source reports the same delta');
-  assert.equal(receipt?.resultSha, rec.resultSha, 'the runId source resolves the same pin');
-  assert.equal(git(['rev-parse', 'HEAD'], fx.repo), receipt?.afterSha, 'main lands at afterSha');
-  assert.equal(git(['status', '--porcelain'], fx.repo), '', 'main is clean');
-});
-
-// ===========================================================================
-// Section F — HA-06: the three-way probe. An untouched-file divergent edit survives
-// the clean apply; a touched-file divergent edit REFUSES harvest_conflict naming the
-// exact conflicted paths, leaving onto untouched and clean.
-// (stage: harvest absent)
-// ===========================================================================
-
-test('F1-three-way-survival (stage: harvest absent): a divergent untouched file survives the clean apply', async (t) => {
-  const fx = await facadeFixture(t, { adapter: new MockAdapter({ scenario: { outcome: 'completed', edits: TWO_EDITS } }) });
-  const rec = await ceremonyRun(fx, { runId: 'run:f1' });
-  assert.equal(rec.view?.phase, 'work_completed');
-  const owner = rec.owner;
-  // Advance main with a divergent edit to a file the pin did NOT touch.
-  writeFileSync(join(fx.repo, 'notes.md'), 'main divergent\n');
-  git(['add', '-A'], fx.repo);
-  git(['commit', '-q', '-m', 'main divergent notes'], fx.repo);
-  const mainDivergent = git(['rev-parse', 'HEAD'], fx.repo);
-  assert.notEqual(mainDivergent, rec.baseSha, 'fixture: main diverged past the recorded base');
-  assert.notEqual(git(['merge-base', mainDivergent, rec.resultSha], fx.repo), null,
-    'fixture: a three-way merge base exists (divergence is not a rewrite)');
-
-  const receipt = await fx.application.command('waves.harvest', { resultSha: rec.resultSha }, owner, null);
-  assert.equal(receipt?.ok, true);
-  assert.equal(receipt?.result, 'applied-clean', 'the three-way merge applied cleanly');
-  assert.equal(receipt?.baseSha, rec.baseSha, 'the recorded base anchored the merge');
-  assert.deepEqual(receipt?.changedPaths, fx.driver.coordinator._worktrees.changedPathsAtCommit(rec.baseSha, rec.resultSha), 'the recorded diff was applied');
-  assert.equal(git(['rev-parse', 'HEAD'], fx.repo), receipt?.afterSha, 'main landed at afterSha');
-  // The untouched file's divergent content survived.
-  assert.equal(readFileSync(join(fx.repo, 'notes.md'), 'utf8'), 'main divergent\n', 'the untouched divergent edit survives');
-  assert.equal(readFileSync(join(fx.repo, 'reports/a.md'), 'utf8'), 'alpha\n', 'the pin content landed');
-  assert.equal(git(['status', '--porcelain'], fx.repo), '', 'main is clean');
-});
-
-test('F2-three-way-conflict (stage: harvest absent): a touched-file divergent edit refuses harvest_conflict naming the paths', async (t) => {
-  const fx = await facadeFixture(t, { adapter: new MockAdapter({ scenario: { outcome: 'completed', edits: TWO_EDITS } }) });
-  const rec = await ceremonyRun(fx, { runId: 'run:f2' });
-  assert.equal(rec.view?.phase, 'work_completed');
-  const owner = rec.owner;
-  // Advance main with a divergent edit to a file the pin DID touch. The pin created
-  // reports/ in the worker worktree — main must be given the same path so the add/add
-  // divergent file is a genuine three-way conflict (ENOENT would be a fixture bug).
-  mkdirSync(join(fx.repo, 'reports'), { recursive: true });
-  writeFileSync(join(fx.repo, 'reports/a.md'), 'main conflicting alpha\n');
-  git(['add', '-A'], fx.repo);
-  git(['commit', '-q', '-m', 'main conflicting a'], fx.repo);
-  const ontoHead = git(['rev-parse', 'HEAD'], fx.repo);
-
-  const refusal = await facadeRefusal(() => fx.application.command('waves.harvest', { resultSha: rec.resultSha }, owner, null));
-  assert.equal(refusal?.code, 'harvest_conflict', 'a conflicting harvest refuses harvest_conflict (RED: harvest absent)');
-  assert.ok(Array.isArray(refusal?.conflicts), 'the refusal carries a conflict list');
-  assert.equal(refusal.conflicts.length, 1, 'exactly the touched file conflicts');
-  assert.equal(refusal.conflicts[0]?.path, 'reports/a.md', 'the conflicted path is named');
-  assert.equal(typeof refusal.conflicts[0]?.class, 'string', 'each conflict carries a class');
-  assert.equal(refusal?.ontoHeadSha, ontoHead, 'ontoHeadSha is the untouched main HEAD');
-  assert.equal(refusal?.resultSha, rec.resultSha, 'resultSha names the pin');
-  assert.equal(git(['rev-parse', 'HEAD'], fx.repo), ontoHead, 'onto is UNTOUCHED by the refused harvest');
-  assert.equal(git(['status', '--porcelain'], fx.repo), '', 'onto is clean after the probe (no stage, no merge)');
-  assert.equal(readFileSync(join(fx.repo, 'reports/a.md'), 'utf8'), 'main conflicting alpha\n', 'the divergent main content is untouched');
-});
-
-// ===========================================================================
-// Section G — HA-07: the skipped receipts. already_integrated is covered by E1's
-// retry row; empty_delta needs a net-zero self-committed pin (edits cancel out).
-// (stage: harvest absent)
-// ===========================================================================
-
-test('G2-empty-delta (stage: harvest absent): a net-zero self-committed pin is skipped/empty_delta', async (t) => {
-  const netZero = [
-    { path: 'x.md', content: 'world\n' },
-    { path: 'x.md', content: 'hello\n' },
-  ];
-  const fx = await facadeFixture(t, { adapter: new MockAdapter({ scenario: { outcome: 'completed', edits: netZero } }) });
-  const rec = await ceremonyRun(fx, { runId: 'run:g2' });
-  assert.equal(rec.view?.phase, 'work_completed');
-  assert.equal(rec.view?.result?.preservation?.state, 'pinned', 'the net-zero run still preserves a pin');
-  const owner = rec.owner;
-  assert.deepEqual(fx.driver.coordinator._worktrees.changedPathsAtCommit(rec.baseSha, rec.resultSha), [],
-    'fixture: the recorded delta is empty');
-  const headBefore = git(['rev-parse', 'HEAD'], fx.repo);
-
-  const receipt = await fx.application.command('waves.harvest', { resultSha: rec.resultSha }, owner, null);
-  assert.equal(receipt?.ok, true);
-  assert.equal(receipt?.result, 'skipped', 'an empty delta is skipped');
-  assert.equal(receipt?.reason, 'empty_delta', 'the skip reason is empty_delta');
-  assert.deepEqual(receipt?.changedPaths, [], 'the receipt reports the empty delta');
-  assert.equal(git(['rev-parse', 'HEAD'], fx.repo), headBefore, 'no merge commit is created');
-  assert.equal(git(['status', '--porcelain'], fx.repo), '', 'main is clean');
-});
-
-// ===========================================================================
-// Section H — HA-08: MCP projections. New tools register (33→35 / 84→86), dispatch
-// with the connection-derived principal, and the COMPLETE refusal vocabulary reaches
-// the wire as itself (never command_outcome_unknown). Kernel→harvest translations
-// are pinned row-by-row. (stage: tools absent / wire vocabulary absent)
-// ===========================================================================
-
-const NEW_TOOLS = [
-  ['baton_run_resultpin', 'run.resultpin', { readOnlyHint: true, idempotentHint: true }],
-  ['baton_waves_harvest', 'waves.harvest', { readOnlyHint: false, idempotentHint: true }],
-];
-
-test('H1-tools (stage: tools absent): the two ordinary tools register with closed schemas, _meta digests, and honest annotations', async () => {
-  const names = mcpApplicationToolNames();
-  for (const [tool] of NEW_TOOLS) {
-    assert.ok(names.includes(tool), `${tool} joins the ordinary application surface (33 → 35)`);
-  }
-  // Issue #566 restores the ordinary definitions and canonical dot spellings. These count
-  // assertions supplement the closed-set derivation in canonical-naming-233.test.mjs.
-  assert.equal(new Set(names).size, names.length, 'the ordinary table carries no duplicate spellings');
-  assert.ok(names.length > 0, 'the restored ordinary table includes both harvest tools');
-  const combined = mcpCombinedToolNames();
-  assert.ok(combined.includes('baton_run_resultpin'), 'combined surface gains baton_run_resultpin');
-  assert.ok(combined.includes('baton_waves_harvest'), 'combined surface gains baton_waves_harvest');
-  assert.equal(new Set(combined).size, combined.length, 'the combined table carries no duplicate spellings');
-  assert.ok(combined.length > names.length, 'the combined table is larger than the ordinary table');
-  const { server } = mockAppServer();
-  await initialized(server);
-  const list = await wireRequest(server, 2, 'tools/list', {});
-  const tools = new Map((list.result?.tools ?? []).map((tool) => [tool.name, tool]));
-  for (const [tool, , hints] of NEW_TOOLS) {
-    const row = tools.get(tool);
-    assert.ok(row, `${tool} is advertised in tools/list`);
-    assert.equal(row.inputSchema?.additionalProperties, false, `${tool} schema is closed`);
-    assert.equal(row._meta?.['baton/registryDigest'], APPLICATION_SEMANTIC_REGISTRY.digest,
-      `${tool} carries the registry-digest _meta stamp`);
-    assert.equal(row.annotations?.readOnlyHint, hints.readOnlyHint, `${tool} readOnlyHint`);
-    assert.equal(row.annotations?.idempotentHint, hints.idempotentHint, `${tool} idempotentHint`);
-    assert.equal(row.annotations?.destructiveHint, false);
-    assert.equal(row.annotations?.openWorldHint, false);
-    const properties = Object.keys(row.inputSchema?.properties ?? {});
-    for (const banned of ['idempotencyKey', 'sessionAuthority', 'lease', 'principalId', 'sessionId', 'capabilities']) {
-      assert.equal(properties.includes(banned), false,
-        `${tool} carries no wire ${banned} — authority comes from the connection, replay safety lives server-side`);
-    }
-  }
-  assert.deepEqual(Object.keys(tools.get('baton_run_resultpin').inputSchema.properties).sort(),
-    ['repoId', 'runId'], 'baton_run_resultpin schema is {repoId, runId}');
-  assert.deepEqual(Object.keys(tools.get('baton_waves_harvest').inputSchema.properties).sort(),
-    ['onto', 'repoId', 'resultSha', 'runId'], 'baton_waves_harvest schema is {onto, repoId, resultSha, runId}');
-});
-
 test('H2-dispatch (stage: tools absent): baton_run_resultpin dispatches the facade command with the CONNECTION principal', async (t) => {
   const fx = await facadeFixture(t, { adapter: new MockAdapter({ scenario: { outcome: 'completed', edits: TWO_EDITS } }) });
   const rec = await ceremonyRun(fx, { runId: 'run:h2' });
@@ -869,50 +632,6 @@ test('H4-translations (stage: wire vocabulary absent): the kernel codes map to t
   }
 });
 
-test('H5-capabilities (stage: tools absent): observe admits run.resultpin; waves.harvest demands control', async () => {
-  const { server } = mockAppServer({ principal: mockPrincipal({ capabilities: ['observe'] }) });
-  await initialized(server);
-  const admit = await wireCall(server, 2, 'baton_run_resultpin', { repoId: REPO, runId: 'run:h5' });
-  assert.equal(admit.result?.isError, false,
-    'an observe-only principal is admitted to the read projection (RED: tools absent)');
-  const deny = await wireCall(server, 3, 'baton_waves_harvest', { repoId: REPO, resultSha: 'a'.repeat(40) });
-  assert.equal(deny.result?.isError, true,
-    'an observe-only principal is refused the effectful harvest (RED: tools absent)');
-  assert.match(resultText(deny), /forbidden|unauthorized|capability/u,
-    'the refusal names the capability gate — never a silent apply');
-});
-
-// ===========================================================================
-// Section I — HA-09: CLI verbs + registry + conformance regeneration.
-// Positive parse rows are red (stage: CLI verb absent); negative rows and the
-// episode guard are green regression guards; the conformance guard must STAY green
-// (landing tools without regenerating flips it red).
-// ===========================================================================
-
-test('I1-cli-parse (stage: CLI verb absent): the new verbs parse to the pinned command shapes', () => {
-  const parsed = parseBatonCli(['run', 'resultpin', 'run:1']);
-  assert.equal(parsed?.kind, 'command', 'run resultpin RUN_ID is a command dispatch');
-  assert.equal(parsed?.name, 'run.resultpin');
-  assert.equal(parsed?.args?.runId, 'run:1');
-
-  const sha = 'a'.repeat(40);
-  const bySha = parseBatonCli(['waves', 'harvest', sha]);
-  assert.equal(bySha?.kind, 'command');
-  assert.equal(bySha?.name, 'waves.harvest');
-  assert.equal(bySha?.args?.resultSha, sha);
-
-  const byRun = parseBatonCli(['waves', 'harvest', 'run:1']);
-  assert.equal(byRun?.kind, 'command');
-  assert.equal(byRun?.name, 'waves.harvest');
-  assert.equal(byRun?.args?.runId, 'run:1');
-
-  const withOnto = parseBatonCli(['waves', 'harvest', 'run:1', '--onto', '/x']);
-  assert.equal(withOnto?.kind, 'command');
-  assert.equal(withOnto?.name, 'waves.harvest');
-  assert.equal(withOnto?.args?.runId, 'run:1');
-  assert.equal(withOnto?.args?.onto, '/x');
-});
-
 test('I2-cli-negative (GUARD, green today): malformed verb spellings refuse at the parser', () => {
   // The two-token `baton run resultpin` is today's run-start objective shorthand and its
   // post-implementation fate is unspecified by Decision 5 (only `baton run resultpin
@@ -928,37 +647,6 @@ test('I2-cli-negative (GUARD, green today): malformed verb spellings refuse at t
   ]) {
     assert.throws(() => parseBatonCli(argv), `${argv.join(' ')} refuses at the parser`);
   }
-});
-
-test('I3-cli-web (stage: CLI verb absent): the dispatch gate admits both new keys', () => {
-  assert.ok(CLI_WEB_COMMANDS.has('run.resultpin'), 'CLI_WEB_COMMANDS gates run.resultpin in');
-  assert.ok(CLI_WEB_COMMANDS.has('waves.harvest'), 'CLI_WEB_COMMANDS gates waves.harvest in');
-});
-
-test('I4-registry (stage: rows absent): two canonical operations with pinned profiles, surfaces, capabilities, names', () => {
-  const registry = APPLICATION_SEMANTIC_REGISTRY;
-  const expectations = [
-    ['run.resultpin', ['embedded', 'mcp', 'cli'], ['observe'], true, 'baton run resultpin', 'baton_run_resultpin'],
-    ['waves.harvest', ['embedded', 'mcp', 'cli'], ['control', 'observe'], true, 'baton waves harvest', 'baton_waves_harvest'],
-  ];
-  for (const [key, surfaces, capabilities, idempotent, cli, mcp] of expectations) {
-    const op = registry.canonicalOperations.find((entry) => entry.key === key);
-    assert.ok(op, `registry row ${key} exists`);
-    assert.equal(op.profile, 'ordinary', `${key} profile`);
-    assert.deepEqual([...op.surfaces].sort(), [...surfaces].sort(), `${key} surfaces`);
-    assert.deepEqual([...(op.capabilities ?? [])].sort(), [...capabilities].sort(), `${key} capabilities`);
-    assert.equal(op.idempotent ?? true, idempotent, `${key} idempotent`);
-    assert.equal(op.names?.cli, cli, `${key} derived CLI spelling`);
-    assert.equal(op.names?.mcp, mcp, `${key} derived MCP spelling`);
-  }
-  // The dispatch gate and the served inventory pick both up.
-  const served = servedCliOrdinaryKeys();
-  for (const [key] of expectations) {
-    assert.ok(served.includes(key), `servedCliOrdinaryKeys() renders ${key}`);
-  }
-  // The episode spelling stays LAWFUL: run.result is never a canonical key.
-  assert.equal(registry.canonicalOperations.some((entry) => entry.key === 'run.result'), false,
-    'no run.result canonical row — the episode result-chapter spelling is UNTOUCHED (green guard)');
 });
 
 test('I5-cli-episode (GUARD, green today): the occupied episode spelling is untouched', () => {
@@ -981,39 +669,6 @@ test('I6-conformance (GUARD, green today, MUST stay green): the docs/conformance
 // ===========================================================================
 // Section J — HA-12: a real-but-unpinned commit refuses pin_not_found, and the
 // runId source re-verifies its recorded ref the same way. (stage: harvest absent)
-// ===========================================================================
-
-test('J1-unpinned-sha (stage: harvest absent): a real commit without an ownership pin refuses pin_not_found', async (t) => {
-  const fx = await facadeFixture(t);
-  const owner = principalOf('owner');
-  // A real commit that is NOT preserved under refs/baton/results/.
-  execFileSync('git', ['checkout', '-q', '-b', 'side'], { cwd: fx.repo });
-  writeFileSync(join(fx.repo, 'side.md'), 'side\n');
-  git(['add', '-A'], fx.repo);
-  git(['commit', '-q', '-m', 'side commit'], fx.repo);
-  const realSha = git(['rev-parse', 'HEAD'], fx.repo);
-  execFileSync('git', ['checkout', '-q', 'main'], { cwd: fx.repo });
-
-  const refusal = await facadeError(() => fx.application.command('waves.harvest', { resultSha: realSha }, owner, null));
-  assert.equal(refusal?.code, 'pin_not_found',
-    'a real-but-unpinned commit refuses pin_not_found (RED: harvest absent)');
-});
-
-test('J2-runid-reverification (stage: harvest absent): a released recorded ref refuses pin_not_found on the runId source', async (t) => {
-  const fx = await facadeFixture(t, { adapter: new MockAdapter({ scenario: { outcome: 'completed', edits: TWO_EDITS } }) });
-  const rec = await ceremonyRun(fx, { runId: 'run:j2' });
-  const owner = rec.owner;
-  assert.equal(rec.view?.result?.preservation?.state, 'pinned');
-  fx.driver.coordinator._worktrees.releaseResult(rec.ref);
-  const refusal = await facadeError(() => fx.application.command('waves.harvest', { runId: 'run:j2' }, owner, null));
-  assert.equal(refusal?.code, 'pin_not_found',
-    'the runId source re-verifies the recorded ref and refuses a released pin (RED: harvest absent)');
-});
-
-// ===========================================================================
-// Section K — HA-11: multi-pin independence. Two ceremonies with main advanced
-// between produce DISTINCT pins; each run.resultpin resolves its OWN pin; releasing
-// one leaves the other live. (stage: projection absent)
 // ===========================================================================
 
 test('K1-multi-pin (stage: projection absent): two ceremonies own distinct pins, each resolved by its own run', async (t) => {
@@ -1061,65 +716,6 @@ test('K2-released-coexists (stage: projection absent): releasing one pin leaves 
 // harvest_base_diverged naming the four shas. (stage: harvest absent)
 // ===========================================================================
 
-test('L1-receipt-honesty (stage: harvest absent): applied-clean certifies the recorded diff after main advanced', async (t) => {
-  const fx = await facadeFixture(t, { adapter: new MockAdapter({ scenario: { outcome: 'completed', edits: TWO_EDITS } }) });
-  const rec = await ceremonyRun(fx, { runId: 'run:l1' });
-  assert.equal(rec.view?.phase, 'work_completed');
-  const owner = rec.owner;
-  const oracle = fx.driver.coordinator._worktrees.changedPathsAtCommit(rec.baseSha, rec.resultSha);
-  // Advance main with an unrelated commit AFTER the ceremony.
-  writeFileSync(join(fx.repo, 'post.md'), 'post\n');
-  git(['add', '-A'], fx.repo);
-  git(['commit', '-q', '-m', 'post-ceremony advance'], fx.repo);
-  const headAfter = git(['rev-parse', 'HEAD'], fx.repo);
-  assert.notEqual(headAfter, rec.baseSha);
-
-  const receipt = await fx.application.command('waves.harvest', { resultSha: rec.resultSha }, owner, null);
-  assert.equal(receipt?.ok, true);
-  assert.equal(receipt?.result, 'applied-clean');
-  assert.equal(receipt?.baseSha, rec.baseSha, 'the receipt names the RECORDED base, not HEAD');
-  assert.notEqual(receipt?.baseSha, headAfter, 'baseSha is not HEAD');
-  assert.deepEqual(receipt?.changedPaths, oracle,
-    'changedPaths is the recorded diff — the post-ceremony commit is NOT in it');
-  assert.equal(git(['rev-parse', 'HEAD'], fx.repo), receipt?.afterSha, 'main landed at afterSha');
-  assert.equal(git(['status', '--porcelain'], fx.repo), '', 'main is clean');
-});
-
-test('L2-diverged (stage: harvest absent): a rewound main refuses harvest_base_diverged naming the four shas', async (t) => {
-  const fx = await facadeFixture(t, { adapter: new MockAdapter({ scenario: { outcome: 'completed', edits: TWO_EDITS } }) });
-  const repo = fx.repo;
-  // Advance main to a second commit BEFORE the ceremony so the recorded base is R2.
-  writeFileSync(join(repo, 'r2.md'), 'second\n');
-  git(['add', '-A'], repo);
-  git(['commit', '-q', '-m', 'second commit'], repo);
-  const rec = await ceremonyRun(fx, { runId: 'run:l2' });
-  assert.equal(rec.view?.phase, 'work_completed');
-  const owner = rec.owner;
-  assert.equal(rec.baseSha, git(['rev-parse', 'HEAD'], repo), 'fixture: the recorded base is the main HEAD at capture');
-  // Rewind main to its ancestor R1: merge-base(R1, pin) = R1 ≠ recorded base.
-  const r1 = git(['rev-parse', 'HEAD~1'], repo);
-  execFileSync('git', ['reset', '--hard', r1], { cwd: repo });
-  const ontoHead = git(['rev-parse', 'HEAD'], repo);
-  assert.equal(ontoHead, r1, 'fixture: main is rewound');
-
-  const refusal = await facadeRefusal(() => fx.application.command('waves.harvest', { resultSha: rec.resultSha }, owner, null));
-  assert.equal(refusal?.code, 'harvest_base_diverged',
-    'a main not descended from the recorded base refuses harvest_base_diverged (RED: harvest absent)');
-  const mergeBase = git(['merge-base', ontoHead, rec.resultSha], repo);
-  assert.equal(mergeBase, r1, 'fixture: the real merge-base is R1');
-  for (const sha of [rec.baseSha, mergeBase, ontoHead, rec.resultSha]) {
-    assert.ok(refusal?.message?.includes(sha), `the refusal names ${sha.slice(0, 8)} (baseSha/mergeBaseSha/ontoHeadSha/resultSha)`);
-  }
-  assert.equal(git(['rev-parse', 'HEAD'], repo), ontoHead, 'onto is UNTOUCHED by the refused harvest');
-  assert.equal(git(['status', '--porcelain'], repo), '', 'onto is clean');
-});
-
-// ===========================================================================
-// Section M — HA-10 static laws: the byte-stable command table is untouched, and the
-// suite's closed-shape literals are sorted-key literals in ACTUAL sorted order.
-// (guards, green today)
-// ===========================================================================
-
 test('M1-static (GUARD, green today): the byte-stable command table gains no keys', () => {
   for (const key of ['run.resultpin', 'waves.harvest']) {
     assert.equal(Object.hasOwn(APPLICATION_COMMAND_DEFINITIONS, key), false,
@@ -1148,37 +744,3 @@ test('M2-static (GUARD, green today): the suite pins the closed-shape sorted-key
 // run_orchestrator_command_forbidden). (stage: ports absent)
 // ===========================================================================
 
-test('N1-control-policy (stage: ports absent): the host policy owns both commands', async (t) => {
-  const fx = await facadeFixture(t, { authorize: policyOn(new Set(['run:known'])) });
-  const owner = principalOf('owner');
-  for (const [args, code] of [
-    [{ runId: 'run:unknown' }, 'application_unauthorized'],
-    [{ resultSha: 'a'.repeat(40) }, 'application_unauthorized'],
-  ]) {
-    const refusal = await facadeError(() => fx.application.command('waves.harvest', args, owner, null));
-    assert.equal(refusal?.code, code, `waves.harvest ${JSON.stringify(args)} is policy-refused`);
-  }
-  const refusal = await facadeError(() => fx.application.command('run.resultpin', { runId: 'run:unknown' }, owner, null));
-  assert.equal(refusal?.code, 'application_unauthorized', 'run.resultpin is policy-refused');
-});
-
-test('N2-pre-gate (stage: ports absent): shape failures dispatch ahead of the recursive-session gate', async (t) => {
-  // goalPlan: false makes the store's createTask gate inert (workflow-surface's
-  // authorityOn fixture), so the lease ceremony stages store-directly.
-  const fx = await facadeFixture(t, { goalPlan: false });
-  const lease = authorityOn(fx, { runId: 'run:n2', principalId: 'reviewer', sessionId: 'session-reviewer' });
-  const recursiveContext = {
-    schemaVersion: 1, requestId: 'ha-n2', idempotencyKey: 'ha-n2',
-    sessionAuthority: lease.sessionAuthority,
-  };
-  const reviewer = principalOf('reviewer');
-  const expected = [
-    ['run.resultpin', {}, 'application_run_resultpin_invalid'],
-    ['waves.harvest', { runId: 'run:n2', bad: 1 }, 'application_waves_harvest_invalid'],
-  ];
-  for (const [name, args, code] of expected) {
-    const refusal = await facadeError(() => fx.application.command(name, args, reviewer, recursiveContext));
-    assert.equal(refusal?.code, code,
-      `${name} dispatches ahead of the recursive-session gate — never run_orchestrator_command_forbidden (RED: ports absent)`);
-  }
-});

@@ -636,19 +636,20 @@ test('A3-2 stage[web-append-admission-missing]: the direct-port admission is the
   const capabilityRegion = table('const COMMAND_CAPABILITY', 'const ARG_FIELDS');
   const argFieldsRegion = table('const ARG_FIELDS', 'const ACCEPTED_ARG_FIELDS');
   const applicationCommandRegion = table('const APPLICATION_COMMAND', 'function validateEnvelope');
-  // Fold (blueteam A3-2 fixture-fragility): WEB_DIRECT_PORT_COMMANDS is DERIVED from WAVE_WEB_ENTRIES
-  // (`new Set(WAVE_WEB_ENTRIES.map(([transport]) => transport))`, web-northbound.mjs:62), so the
-  // append transport must land in WAVE_WEB_ENTRIES — the old `table('const WEB_DIRECT_PORT_COMMANDS',
-  // '// ')` truncated at the first comment token and could never see a derived transport.
-  const waveEntriesRegion = table('const WAVE_WEB_ENTRIES', ']);');
+  // Fold (blueteam A3-2 fixture-fragility): WEB_DIRECT_PORT_COMMANDS is DERIVED from
+  // DIRECT_PORT_WEB_ENTRIES (`new Set([...DIRECT_PORT_WEB_ENTRIES.flatMap(...)])`,
+  // web-northbound.mjs:123-125), so the append transport must land in that array — the old
+  // `table('const WEB_DIRECT_PORT_COMMANDS', '// ')` truncated at the first comment token and
+  // could never see a derived transport.
+  const directPortRegion = table('const DIRECT_PORT_WEB_ENTRIES', ']);');
   stageAssert(/run_scratchpad_append/u.test(capabilityRegion), 'web-append-admission-missing',
     'COMMAND_CAPABILITY (web-northbound.mjs:87-94) must carry run_scratchpad_append — the admission is four tables, and a missing capability row is a #157 ghost');
   stageAssert(/run_scratchpad_append/u.test(argFieldsRegion), 'web-append-admission-missing',
     'ARG_FIELDS/ACCEPTED_ARG_FIELDS (web-northbound.mjs:112-148) must carry the closed {runId, scope, kind, body, idempotencyKey} accepted set');
   stageAssert(/run_scratchpad_append/u.test(applicationCommandRegion), 'web-append-admission-missing',
     'APPLICATION_COMMAND (web-northbound.mjs:149-151) must route run_scratchpad_append to the application command');
-  stageAssert(/run_scratchpad_append/u.test(waveEntriesRegion), 'web-append-admission-missing',
-    'WAVE_WEB_ENTRIES (web-northbound.mjs:37-47) — the direct-port source WEB_DIRECT_PORT_COMMANDS is derived from — must carry run_scratchpad_append (H2.1, the FOURTH table); at HEAD only the waves_* transports are admitted, so every append envelope is refused `unsupported command` before the dispatch');
+  stageAssert(/run_scratchpad_append/u.test(directPortRegion), 'web-append-admission-missing',
+    'DIRECT_PORT_WEB_ENTRIES (web-northbound.mjs:59-64) — the direct-port source WEB_DIRECT_PORT_COMMANDS is derived from — must carry run_scratchpad_append (H2.1, the FOURTH table)');
 });
 
 // ---------------------------------------------------------------------------

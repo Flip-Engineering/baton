@@ -39,7 +39,7 @@ const NATIVE_QUERY_TOOLS = new Set([
   'fleet_goal_plan_status', 'baton_decision_list', 'baton_deployment_doctor',
 ]);
 const NATIVE_EMERGENCY_TOOLS = new Set([
-  'fleet_kill', 'fleet_drain', 'baton_waves_stop',
+  'fleet_kill', 'fleet_drain',
 ]);
 const QUERY_NAME = /(?:_read|_list|_view|_status|_progress|_compile|_receipt|_watch|_recall|_horizon|_cite|_result|_capabilities|_wait)$/u;
 const MUTATION_NAME = /(?:_post|_close|_drop|_reorder|_retitle|_promote|_admit|_attach|_elevate|_settle|_seed|_append)$/u;
@@ -278,9 +278,6 @@ function validateWatchArgs(args, target) {
   if (!safeId(args.runId)) {
     throw new BatonControlError('surface_watch_invalid', 'surface watch requires a valid runId', { field: 'runId' });
   }
-  if (args.waveId !== undefined && !safeId(args.waveId)) {
-    throw new BatonControlError('surface_watch_invalid', 'surface watch waveId is invalid', { field: 'waveId' });
-  }
   for (const field of ['afterCursor', 'attentionCursor']) {
     if (args[field] !== undefined && (!Number.isSafeInteger(args[field]) || args[field] < 0)) {
       throw new BatonControlError('surface_watch_invalid', `${field} must be a non-negative safe integer`, { field });
@@ -298,7 +295,6 @@ function validateWatchArgs(args, target) {
   }
   return Object.freeze({
     runId: args.runId,
-    waveId: args.waveId ?? null,
     afterCursor: args.afterCursor ?? 0,
     attentionCursor: args.attentionCursor ?? 0,
     kind: args.kind ?? null,
@@ -334,14 +330,10 @@ async function surfaceWatch(target, runtime, input, message) {
   const decisions = typeof target.application.decisionList === 'function'
     ? await target.application.decisionList({ runId: args.runId }, principal, context)
     : Object.freeze({ available: false, reason: 'decision_list_not_available_in_profile' });
-  const wave = args.waveId === null ? null : await target.application.command(
-    'waves.progress', { waveId: args.waveId }, principal, context,
-  );
   return Object.freeze({
     schemaVersion: 1,
     kind: 'baton.surface_watch',
     runId: args.runId,
-    waveId: args.waveId,
     afterCursor: args.afterCursor,
     attentionCursor: args.attentionCursor,
     nextAfterCursor: Number.isSafeInteger(follow?.cursor)
@@ -351,7 +343,6 @@ async function surfaceWatch(target, runtime, input, message) {
     follow: clone(follow),
     attention: clone(attention),
     decisions: clone(decisions),
-    wave: clone(wave),
     convergence: runtime.audit(),
   });
 }
@@ -365,9 +356,6 @@ function validateVisualizeArgs(args, target) {
   }
   if (args.runId !== undefined && !safeId(args.runId)) {
     throw new BatonControlError('surface_visualization_invalid', 'visualization runId is invalid', { field: 'runId' });
-  }
-  if (args.waveId !== undefined && !safeId(args.waveId)) {
-    throw new BatonControlError('surface_visualization_invalid', 'visualization waveId is invalid', { field: 'waveId' });
   }
   if (args.width !== undefined && (!Number.isSafeInteger(args.width) || args.width < 40 || args.width > 240)) {
     throw new BatonControlError('surface_visualization_invalid', 'width must be an integer between 40 and 240', { field: 'width' });
@@ -390,7 +378,6 @@ function validateVisualizeArgs(args, target) {
   return Object.freeze({
     view,
     runId: args.runId ?? null,
-    waveId: args.waveId ?? null,
     width: args.width ?? 96,
     follow: args.follow === true,
     afterCursor: args.afterCursor ?? 0,
@@ -423,7 +410,6 @@ async function surfaceVisualize(target, runtime, args, message) {
   if (validated.follow) {
     watch = await surfaceWatch(target, runtime, {
       runId: validated.runId,
-      ...(validated.waveId === null ? {} : { waveId: validated.waveId }),
       afterCursor: validated.afterCursor,
       attentionCursor: validated.attentionCursor,
       ...(validated.kind === null ? {} : { kind: validated.kind }),
@@ -483,7 +469,6 @@ async function surfaceVisualize(target, runtime, args, message) {
         tool: 'baton_surface_visualize',
         view: validated.view,
         runId: validated.runId,
-        waveId: validated.waveId,
         width: validated.width,
         follow: validated.follow,
         afterCursor: nextAfterCursor,
@@ -689,7 +674,7 @@ async function handleMeta(target, shadow, runtime, message) {
       response = toolResult(message.id, await surfaceWatch(target, runtime, args, message));
     } else if (name === 'baton_surface_visualize') {
       const args = closedArgs(message, [
-        'view', 'runId', 'waveId', 'width', 'follow', 'afterCursor', 'attentionCursor',
+        'view', 'runId', 'width', 'follow', 'afterCursor', 'attentionCursor',
         'kind', 'timeoutMs',
       ]);
       response = await surfaceVisualize(target, runtime, args, message);
