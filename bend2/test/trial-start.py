@@ -87,6 +87,15 @@ class TrialStartTests(unittest.TestCase):
                                         'HEAD'], text=True).strip()
         self.assertEqual(target, head)
 
+    def test_default_trial_starts_when_optional_muse_is_unavailable(self):
+        missing = str(self.home / 'not-installed-muse')
+        self.env['BATON_MUSE'] = missing
+        self.assert_attached(self.launch(), '')
+        configured = subprocess.check_output([
+            'sh', '-c', '. "$1"; printf "%s" "$TRIAL_MUSE"', 'sh',
+            str(self.state / 'environment.sh')], text=True)
+        self.assertEqual(configured, missing)
+
     def test_reattach_preserves_native_identity_and_operator_task(self):
         self.coordinator('attach', 'root', 'codex', 'existing-native-session',
                          '["/old/receiver"]')
