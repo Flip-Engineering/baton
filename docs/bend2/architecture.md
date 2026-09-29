@@ -228,10 +228,12 @@ the moved target, after which a new landing request judges the revised work.
 
 `landed` names the new target commit; `already` names the worker commit that
 needs no further landing. Landing retains the worker branch and workspace.
-`push REPO BRANCH REMOTE` then runs Git's ordinary push and reports `pushed` or `rejected` with the command output. The acceptance
-run verifies publication with `git ls-remote` against its declared scratch bare
-remote, including refusal after the remote moves incompatibly. Repository
-network publication is the operator's explicit operation.
+`push REPO BRANCH REMOTE` then runs Git's ordinary push. Its JSON answer reports
+`pushed` with the branch and remote, or `rejected` with a generated reason naming
+the failed command. The acceptance run verifies publication with `git ls-remote`
+against its declared scratch bare remote, including refusal after the remote
+moves incompatibly. Repository network publication is the operator's explicit
+operation.
 
 ## Recovery and current limits
 
