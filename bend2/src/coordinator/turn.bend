@@ -1,6 +1,7 @@
 import Base
 import ./commands.bend as C
 import ./store.bend as Store
+import ./stop.bend as Stop
 import ./root.bend as Root
 import ../host/session-lock.bend as Lock
 import ./guidance.bend as Guidance
@@ -88,20 +89,25 @@ def prepare(+db: String, +worker: String, id: String, log: String, stderr: Strin
     parent : String <- IO.try(String,DB.Sql.query(db,"SELECT parent IS NOT NULL FROM sessions WHERE id=" ++ C.q(worker) ++ ";"))
     prepare_parent(db,worker,id,log,stderr,outcome,String.eq(parent,"1\n"))
 
-def worker_finished(+db: String, +id: String) -> IO(Result<&1,&1,U32 & String,Unit>):
+def record_exit(db: String, worker: String, id: String, log: String, outcome: Outcome) -> IO(Unit):
+  match outcome:
+    case Ended{status,event,error}: Stop.exited(db,worker,id,status,event,error,log)
+
+def worker_finished(+db: String, worker: String, +id: String) -> IO(Result<&1,&1,U32 & String,Unit>):
   do IO<Result<&1,&1,U32 & String,Unit>>:
     +saved : String <- IO.try(String,Store.commit(db,C.Delivery{id}))
     diagnostic_delivery : Result<&1,&1,U32 & String,String> <- Root.deliver(db,id ++ ":observation","1","")
     delivered : Result<&1,&1,U32 & String,String> <- Root.deliver(db,id,"1",saved)
     exit_delivery : Result<&1,&1,U32 & String,String> <- Root.deliver(db,id ++ ":exit","1","")
+    stopped : Result<&1,&1,U32 & String,Unit> <- Stop.deliver(db,worker,id)
     written : Unit <- IO.write(saved)
-    IO.pure(Result<&1,&1,U32 & String,Unit>,delivery_result(remember(remember(remember("",diagnostic_delivery),delivered),exit_delivery)))
+    IO.pure(Result<&1,&1,U32 & String,Unit>,combine(delivery_result(remember(remember(remember("",diagnostic_delivery),delivered),exit_delivery)),stopped))
 
 def finish_parent(db: String, worker: String, id: String, log: String, outcome: Outcome, parent: Bool) -> IO(Result<&1,&1,U32 & String,Unit>):
   match outcome:
     case Ended{+status,+event,error}:
       match parent:
-        case True{}: worker_finished(db,id)
+        case True{}: worker_finished(db,worker,id)
         case False{}: do IO<Result<&1,&1,U32 & String,Unit>>:
           output : String <- IO.try(String,DB.Sql.query(db,"SELECT json_object('session'," ++ C.q(worker) ++ ",'status'," ++ C.q(status) ++ ",'event',CASE WHEN " ++ C.q(event) ++ "='' THEN NULL ELSE json(" ++ C.q(event) ++ ") END,'error'," ++ C.q(error) ++ ");"))
           written : Unit <- IO.write(output)
@@ -363,7 +369,7 @@ def task_read(db: String, worker: String, id: String, cmd: String, model: String
     case Fail{error}: IO.pure(Outcome,Ended{"input failed","","Worker task could not be read: " ++ error_text(error)})
     case Done{prompt}: supervise(db,worker,id,cmd,model,effort,cwd,task,log,session,harness,sessions,prompt)
 
-def choose(+db: String, worker: String, +id: String, cmd: String, model: String, effort: String, cwd: String, +task: String, log: String, session: String, harness: String, replay: Bool) -> IO(Maybe<Outcome>):
+def choose(+db: String, +worker: String, +id: String, cmd: String, model: String, effort: String, cwd: String, +task: String, log: String, session: String, harness: String, replay: Bool) -> IO(Maybe<Outcome>):
   match replay:
     case True{}:
       do IO<Maybe<Outcome>>:
@@ -371,6 +377,8 @@ def choose(+db: String, worker: String, +id: String, cmd: String, model: String,
         written : Unit <- IO.write(saved)
         IO.pure(Maybe<Outcome>,None{})
     case False{}: do IO<Maybe<Outcome>>:
+      allowed : Bool <- Stop.admit(db,worker,id,"direct","")
+      admitted : Unit <- Stop.admitted(allowed)
       prompt : Result<&1,&1,U32 & String,String> <- T.Text.read(task)
       result : Outcome <- task_read(db,worker,id,cmd,model,effort,cwd,task,log,session,harness,db ++ ".sessions",prompt)
       IO.pure(Maybe<Outcome>,Some{result})
@@ -411,6 +419,7 @@ def complete_locked(+db: String, +worker: String, +id: String, +log: String, loc
       released : Unit <- IO.try(Unit,Lock.SessionLock.release(lock))
       IO.try(Unit,Root.wake_pending(db,worker,"0"))
     case Some{+outcome}: do IO<Unit>:
+      exited : Unit <- record_exit(db,worker,id,log,outcome)
       prepared : Unit <- prepare(db,worker,id,log,log ++ ".stderr",outcome)
       released : Unit <- IO.try(Unit,Lock.SessionLock.release(lock))
       delivery_task : Chan(Result<&1,&1,U32 & String,Unit>) <- IO.fork(Result<&1,&1,U32 & String,Unit>,finish(db,worker,id,log,outcome))

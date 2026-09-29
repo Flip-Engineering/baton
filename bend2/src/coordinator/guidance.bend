@@ -16,9 +16,9 @@ def send(+db: String, handle: U32, cursor: String, +next: String, same: Bool) ->
       sent : Unit <- IO.try(Unit,P.ProcessChild.write(handle,frame))
       IO.pure(String,next)
 
-def pending(+db: String, worker: String, handle: U32, +cursor: String) -> IO(String):
+def pending(+db: String, +worker: String, handle: U32, +cursor: String) -> IO(String):
   do IO<String>:
-    +next : String <- IO.try(String,DB.Sql.query(db,"SELECT coalesce((SELECT seq FROM messages WHERE recipient=" ++ C.q(worker) ++ " AND kind='guidance' AND receipt IS NULL AND seq>CAST(" ++ C.q(cursor) ++ " AS INTEGER) ORDER BY seq LIMIT 1),CAST(" ++ C.q(cursor) ++ " AS INTEGER));"))
+    +next : String <- IO.try(String,DB.Sql.query(db,"SELECT coalesce((SELECT seq FROM messages WHERE recipient=" ++ C.q(worker) ++ " AND kind='guidance' AND receipt IS NULL AND NOT " ++ C.stopped_session_sql(C.q(worker)) ++ " AND seq>CAST(" ++ C.q(cursor) ++ " AS INTEGER) ORDER BY seq LIMIT 1),CAST(" ++ C.q(cursor) ++ " AS INTEGER));"))
     send(db,handle,cursor,next,String.eq(cursor,next))
 
 # Replay observes receipts after this attempt stops accepting input.
