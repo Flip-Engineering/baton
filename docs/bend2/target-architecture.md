@@ -4,9 +4,9 @@
 
 The operator talks to the root in a native harness session. The root asks Baton
 to recruit a worker with a harness and model. Baton creates a Git branch and
-worktree and records the worker; a turn invocation starts the logged-in harness
-in that worktree and supplies the task. The worker can ask its parent questions
-and report progress. Each completed turn sends its full report and work
+worktree and records the worker; a `turn` or `receive` invocation starts the
+logged-in harness in that worktree and supplies the task. The worker can ask its
+parent questions and report progress. Each completed turn sends its full report and work
 location to the parent, which decides whether to guide another turn, land the
 work, or stop the worker.
 
@@ -44,10 +44,9 @@ from the host and Git when needed.
 
 Each command is its own process and opens the shared SQLite database. The
 database holds the coordination state, and its `BEGIN IMMEDIATE` transaction is
-the writer serialization point: SQLite admits one writer at a time. The approved
-design's resident service is not implemented, and the single-writer property
-comes from that transaction. Commands bind local connections to session IDs
-for message routing and parentage through the session row's parent and endpoint
+the writer serialization point: SQLite admits one writer at a time. Commands
+bind local connections to session IDs for message routing and parentage through
+the session row's parent and endpoint
 columns. Workers report and ask through that identity; parent IDs route their
 reports and guidance. The agents share the local user's repository access.
 Session IDs establish routing, not a security boundary between these agents.
@@ -62,8 +61,9 @@ ENDPOINT` records the session identity, its harness, its native session ID and
 its delivery endpoint. Worker branches come from `recruit`; the target branch is
 supplied to `land` and `land-checked`. `recruit` takes the worker identity,
 parent, harness, model, effort, repository, branch, worktree path and base; its
-answer names the worker and workspace, and the task arrives with the worker's
-first `turn`. Guidance is a `message` with kind `guidance`. The
+answer names the worker and workspace. A `message-file` supplies the task to a
+registered receiver; a direct `turn` takes the task file as an argument.
+Guidance is a `message` with kind `guidance`. The
 [Bend2 README](../../bend2/README.md) gives each command's arguments.
 
 Each command answers with JSON text as it completes. `turn` and `receive` are the
@@ -94,12 +94,14 @@ reads the pending input and starts the native attempt. A lost acknowledgment
 can cause a repeated notification. A log line or ordinary MCP tool response
 does not establish an unsolicited native wake.
 
-After restart, a fresh process reads pending records and reconciles native
-sessions, Git refs and worktrees. An uncertain process start is inspected before
-another session is started. A lost root connection is reported when the root
-reattaches and its pending input replays. A recorded status alone never
-establishes that a process is running or that work landed. The
-[process-loss recovery run](host-restart-2026-09-28.md) validates recovery after
+Recovery uses explicit command invocations. The caller reads the stored session
+and pending messages, inspects the workspace with `worktree` and checks Git refs.
+Reconnecting updates the native identity and endpoint; `receive` reads the
+pending input and resumes the recorded conversation. The trial launcher performs
+those attachment and receive calls for its root. Endpoint invocation failures
+return an error to the message writer and retain pending input. Status reads
+stored bindings; live process state and landed commits require host and Git
+observations. The [process-loss recovery run](host-restart-2026-09-28.md) validates recovery after
 every coordinator and harness process for two sessions is killed while the host
 stays up; host reboot and power-loss durability are not validated. The case of a
 supervisor that dies while its harness child survives is recorded in
@@ -136,7 +138,7 @@ current target. A landed or already-merged answer removes the two scratch
 worktrees it prepared, and a blocked or conflicted answer keeps them until that
 worker's next attempt. The target branch must be free of another checked-out
 worktree before a direct ref update, and a held target returns its `target busy`
-failure. Recovery reads Git to resolve a lost acknowledgment; worker branches
+failure. The caller reads Git to resolve a lost acknowledgment; worker branches
 remain available. The result names the actual target commit.
 
 `push REPO BRANCH REMOTE` publishes an advanced target with Git's ordinary push

@@ -7,8 +7,8 @@ workers. Use your session ID as every worker's parent. Review and land their wor
 onto your registered lead branch. Report that branch to the root for its review
 and final landing onto `bend2-trial`.
 
-Set `LEAD_ID` and `LEAD_BRANCH` to the values in your assignment in each shell
-that uses them. Acknowledge each task and reviewed worker report with
+Export `LEAD_ID` and `LEAD_BRANCH` with the values in your assignment in each
+shell that uses them. Acknowledge each task and reviewed worker report with
 `"$B2" "$DB" ack MESSAGE_ID "$LEAD_ID" RECEIPT`. Your native supervisor sends your
 final response to the root after every turn. Write progress or completion facts
 in that response; the supervisor supplies the report message.
@@ -34,8 +34,24 @@ registered branch remains the source of the root's eventual landing. Inspect
 that branch explicitly after it advances; your detached checkout keeps its old
 commit until you update it.
 
-Write the task at `$TRIAL_STATE/issue-N-worker-A-task.md`. Start its turn in the
-background with standard streams redirected:
+Register the OMP worker's native receiver once after recruitment:
+
+```sh
+python3 - <<'PY'
+import json, os, pathlib, subprocess
+b2, db = os.environ['B2'], os.environ['DB']
+worker = 'issue-N-worker-A'
+session = json.loads(subprocess.check_output([b2, db, 'session', worker], text=True))
+log = pathlib.Path(os.environ['TRIAL_STATE']) / (worker + '-native.jsonl')
+endpoint = [b2, db, 'receive', worker, os.environ['TRIAL_OMP'], '', '', '', str(log)]
+subprocess.run([b2, db, 'connect', worker, session['native'], json.dumps(endpoint)], check=True)
+PY
+```
+
+The receiver uses the recorded model, effort, workspace and native session.
+It appends successive turns to the same native log. Preserve the recorded native
+ID if you reconnect the endpoint. Supply the task in
+`$TRIAL_STATE/issue-N-worker-A-task.md`, then send it in a background process:
 
 ```sh
 python3 - <<'PY'
@@ -43,21 +59,58 @@ import os, pathlib, subprocess
 state = pathlib.Path(os.environ['TRIAL_STATE'])
 with (state / 'issue-N-worker-A-supervisor.log').open('ab') as log:
     child = subprocess.Popen([
-        os.environ['B2'], os.environ['DB'], 'turn',
-        'issue-N-worker-A', 'issue-N-worker-A-turn-1',
-        os.environ['TRIAL_OMP'], 'deepseek/deepseek-flash', 'low',
-        str(state / 'issue-N-worker-A'), str(state / 'issue-N-worker-A-task.md'),
-        str(state / 'issue-N-worker-A-native-1.jsonl'), '',
+        os.environ['B2'], os.environ['DB'], 'message-file',
+        'issue-N-worker-A-task-1', os.environ['LEAD_ID'], 'issue-N-worker-A',
+        'task', str(state / 'issue-N-worker-A-task.md'),
     ], stdin=subprocess.DEVNULL, stdout=log, stderr=log, start_new_session=True)
 print(child.pid)
 PY
 ```
 
-For Muse, recruit with harness `muse` and its model, and use `$TRIAL_MUSE` and the
-same model in `turn`. End your turn after starting the worker; its report invokes
-your registered native receiver and resumes your native session. Start independent
-child turns concurrently and review each report when it arrives. The coordinator
-serializes turns for each session.
+The message invokes the registered receiver. An active OMP worker keeps its
+current turn and receives the queued task after that process exits. The worker
+acknowledges accepted input with `ack`; each final response reports to you
+automatically. The retained receive owner preserves the native process and
+output if its Bend observer exits. Read the recovery boundary in
+`$TRIAL_SOURCE/docs/bend2/receive-recovery-2026-09-28.md` for its validated scope.
+
+End your turn after starting independent workers concurrently. Their reports
+invoke your registered receiver and resume your native session for review.
+
+## Muse workers
+
+Muse uses direct `turn` supervision. Recruit a separate worker with its harness
+and model:
+
+```sh
+base=$(git -C "$TRIAL_REPO" rev-parse "$LEAD_BRANCH")
+"$B2" "$DB" recruit issue-N-worker-M "$LEAD_ID" muse muse-spark-1.3-contributor low \
+  "$TRIAL_REPO" bend2/issue-N-worker-M "$TRIAL_STATE/issue-N-worker-M" "$base"
+```
+
+Write its task at `$TRIAL_STATE/issue-N-worker-M-task.md` and start its turn:
+
+```sh
+python3 - <<'PY'
+import os, pathlib, subprocess
+state = pathlib.Path(os.environ['TRIAL_STATE'])
+with (state / 'issue-N-worker-M-supervisor.log').open('ab') as log:
+    child = subprocess.Popen([
+        os.environ['B2'], os.environ['DB'], 'turn',
+        'issue-N-worker-M', 'issue-N-worker-M-turn-1',
+        os.environ['TRIAL_MUSE'], 'muse-spark-1.3-contributor', 'low',
+        str(state / 'issue-N-worker-M'), str(state / 'issue-N-worker-M-task.md'),
+        str(state / 'issue-N-worker-M-native-1.jsonl'), '',
+    ], stdin=subprocess.DEVNULL, stdout=log, stderr=log, start_new_session=True)
+print(child.pid)
+PY
+```
+
+For a Muse correction after its turn ends, read the `native` field with
+`session issue-N-worker-M`. Repeat the background `turn` with a fresh turn ID,
+task file and log path, and pass that native ID as its final argument. Retain the
+workspace. The receive observer-recovery guarantee applies to OMP and Codex;
+Muse uses the direct-turn process lifetime described in the recovery boundary.
 
 ## Guide, review and land
 
@@ -68,10 +121,12 @@ OMP accepts guidance during a running worker turn:
   guidance 'The additional requirement and its reason'
 ```
 
-Read the message receipt to establish native acceptance. To continue a completed
-worker, read its `native` field using `session WORKER`, write the next task file,
-and start another background `turn` with a fresh turn ID and log path and that
-native ID as the final argument. Retain its workspace.
+Read the message receipt to establish native acceptance. For an OMP correction,
+write a new task file and repeat the background `message-file` example with a
+fresh message ID and the new file path. Keep the worker ID and registered
+endpoint. The receiver selects its saved native conversation and workspace for
+each turn. Use `kind=task` for the next turn's work and `kind=guidance` for OMP
+steering during a turn.
 
 On each report, inspect the actual branch diff and run the selected tests. Read
 `workers`, `turns WORKER`, `worktree WORKER` and `inbox LEAD_ID` as needed.

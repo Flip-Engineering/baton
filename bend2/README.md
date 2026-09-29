@@ -300,7 +300,7 @@ with `worktree`, and land and publish reviewed work with `land`, `land-checked`
 and `push`. A report's receipt records the root's acceptance; committing the
 report alone leaves that receipt empty.
 
-## OMP leads
+## OMP leads and workers
 
 A recruited OMP session can receive reports from its own workers. Recruit the
 lead under the root, then connect its native receiver:
@@ -328,9 +328,30 @@ lands their branches onto `lead-branch`. Detach the lead's checkout before a
 landing advances that branch. The root can then review and land the lead's
 registered branch through the same landing command.
 
-Start independent child turns in the background and end the parent turn so
-that incoming reports can resume it. The coordinator serializes native turns
-for each session. OMP leads retain conversations in
+Use the same receiver path for OMP children. After recruitment, register each
+child's endpoint once and send its initial task:
+
+```sh
+.scratch/bend2/baton2 state.db recruit worker1 lead omp deepseek/deepseek-flash low REPO worker-branch WORKER_WORKTREE lead-branch
+.scratch/bend2/baton2 state.db connect worker1 '' '["/repo/.scratch/bend2/baton2","/repo/state.db","receive","worker1","/path/to/omp","","","","/repo/worker1-native.jsonl"]'
+.scratch/bend2/baton2 state.db message-file worker1-task-1 lead worker1 task /repo/worker1-task.md
+```
+
+For a correction, send another `message-file` with a fresh message ID and task
+file to the same worker. Receive resumes its stored native conversation, uses
+its recorded route and workspace, and appends to its native log. A receiver that
+finds an active turn returns `queued`; newly pending work starts after native exit.
+The worker acknowledges accepted messages with `ack` and its final response
+reports to the lead automatically.
+
+Run the task-sending commands in background processes with standard streams
+redirected, then end the parent turn so incoming reports can resume it. The
+[trial lead instructions](trial/lead-instructions.md) give the launch examples.
+The coordinator serializes native turns for each session. Muse children use
+the direct `turn` command and an explicit native session ID for continuation.
+Retained receive supports OMP and Codex within its documented
+[recovery boundary](../docs/bend2/receive-recovery-2026-09-28.md#recovery-boundary).
+OMP leads and workers using receive retain conversations in
 `DATABASE.session-HEX_ID`, with the session ID encoded as lowercase UTF-8 hex.
 This preserves conversation storage used by the earlier OMP adapter.
 
