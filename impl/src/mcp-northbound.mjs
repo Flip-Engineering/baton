@@ -155,8 +155,7 @@ const CAPABILITY = Object.freeze({
   baton_decision_answer: ['approve', 'observe'],
   // MCP-W1/W2/W3 (mcp-packaging-decisions v1.0): the ordinary-surface doctor and settlement tools.
   // These ride explicit `_dispatch` branches (never APPLICATION_COMMAND_DEFINITIONS keys), so their
-  // capability classes are registered here like the reflex tools. The settlement lease requires the
-  // explicit settlement capability class (single-orchestrator posture — never a default).
+  // capability classes are registered here like the reflex tools.
   baton_deployment_doctor: ['observe'],
   // Issue #294: the deployment wake stream's consumers. A wake read is observation; a subscription
   // is a filter over the session's own ONE attachment, never a second authority (which is why the
@@ -166,7 +165,6 @@ const CAPABILITY = Object.freeze({
   baton_wakes_since: ['observe'],
   baton_scratchpad_elevate: ['control', 'observe'],
   baton_scratchpad_settle: ['control', 'observe'],
-  baton_knowledge_settlement_lease: ['settlement'],
   // Issue #99/#179: observe admits the read projection; the effectful harvest demands control.
   baton_run_resultpin: ['observe'],
   // Facade-projection epic (#87+#48): the six ordinary workflow-surface tools (Decision 10's
@@ -193,13 +191,13 @@ const STATEFUL = new Set(['fleet_spawn', 'fleet_goal_define', 'fleet_plan_propos
   'baton_decision_answer',
   ...SURFACING_MATRIX_MCP_ROWS.filter((operation) => operation.effect === 'control')
     .map((operation) => operation.names.mcp),
-  'baton_scratchpad_elevate', 'baton_scratchpad_settle', 'baton_knowledge_settlement_lease',
+  'baton_scratchpad_elevate', 'baton_scratchpad_settle',
   ...MCP_APPLICATION_ENTRIES.filter(([, , definition]) => definition.mcpStateful).map(([tool]) => tool)]);
 for (const [tool, , definition] of ORDINARY_APPLICATION_ENTRIES) if (definition.mcpStateful) STATEFUL.add(tool);
 const RECONCILABLE = new Set(['fleet_goal_define', 'fleet_plan_propose', 'fleet_plan_approve', 'baton_decision_answer',
   ...SURFACING_MATRIX_MCP_ROWS.filter((operation) => operation.effect === 'control')
     .map((operation) => operation.names.mcp),
-  'baton_scratchpad_elevate', 'baton_scratchpad_settle', 'baton_knowledge_settlement_lease',
+  'baton_scratchpad_elevate', 'baton_scratchpad_settle',
   ...MCP_APPLICATION_ENTRIES.filter(([, , definition]) => definition.mcpStateful && definition.reconcilable).map(([tool]) => tool)]);
 for (const [tool, , definition] of ORDINARY_APPLICATION_ENTRIES) if (definition.mcpStateful && definition.reconcilable) RECONCILABLE.add(tool);
 const GOAL_PLAN_MUTATIONS = new Set(['fleet_goal_define', 'fleet_plan_propose', 'fleet_plan_approve']);
@@ -703,8 +701,7 @@ const LEGACY_ORDINARY_APPLICATION_TOOL_DEFINITIONS = Object.freeze([
   },
   // MCP-W2 (mcp-packaging-decisions v1.0): the settlement ops become MCP tools behind the
   // S-2 sessionAuthority envelope. The envelope is the authenticated connection's proof (never a
-  // caller field); knowledge.settlement_lease requires
-  // an explicit settlement capability class on the MCP principal (single-orchestrator posture).
+  // caller field).
   {
     name: 'baton_scratchpad_elevate',
     description: 'Elevate one terminal task\'s scratchpad entries into candidate Findings (S-2 settlement lane).',
@@ -722,15 +719,6 @@ const LEGACY_ORDINARY_APPLICATION_TOOL_DEFINITIONS = Object.freeze([
       ...repo, ...idem, runId, expectedScratchpadFence: { type: 'integer', minimum: 0 },
       skips: { type: 'array', items: { type: 'object' } },
     }, ['repoId', 'idempotencyKey', 'runId', 'expectedScratchpadFence', 'skips']),
-    annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
-  },
-  {
-
-    name: 'baton_knowledge_settlement_lease',
-    description: 'Mint the wave settlement lease + candidacy bundle from the host\'s fixed principal. ENABLED ONLY for a descriptor principal carrying an explicit settlement capability class (single-orchestrator posture); the session is derived from the host, never tool arguments.',
-    inputSchema: schema({
-      ...repo, ...idem, waveId: runId, members: { type: 'array', items: runId },
-    }, ['repoId', 'idempotencyKey', 'waveId']),
     annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
   },
   // Issue #206: the message lane's ordinary tools (restored per the final-landing ruling).
@@ -1238,7 +1226,6 @@ const REFLEX_READ_ONLY_TOOLS = new Set(SURFACING_MATRIX_MCP_ROWS
 const ORDINARY_EXPLICIT_TOOLS = new Set([
   'baton_deployment_doctor',
   'baton_scratchpad_elevate', 'baton_scratchpad_settle',
-  'baton_knowledge_settlement_lease',
   'baton_run_message_send', 'baton_run_message_receipt', 'baton_run_attention_watch',
   'baton_run_scratchpad_read', 'baton_run_scratchpad_elevate', 'baton_run_scratchpad_append',
   'baton_run_knowledge_seed',
@@ -1250,7 +1237,6 @@ const ORDINARY_EXPLICIT_TOOLS = new Set([
 // branches encode); deployment.doctor is a direct method, not a bridged string command.
 const EXPLICIT_TOOL_COMMANDS = Object.freeze({
   baton_scratchpad_elevate: 'scratchpad.elevate', baton_scratchpad_settle: 'scratchpad.settle',
-  baton_knowledge_settlement_lease: 'knowledge.settlement_lease',
   baton_run_message_send: 'run.message.send', baton_run_message_receipt: 'run.message.receipt',
   baton_run_attention_watch: 'run.attention.watch', baton_run_scratchpad_read: 'run.scratchpad.read',
   baton_run_scratchpad_elevate: 'run.scratchpad.elevate', baton_run_scratchpad_append: 'run.scratchpad.append',
@@ -1601,9 +1587,6 @@ function validateArguments(name, args, maxWaitMs = null) {
     || !Number.isSafeInteger(args.expectedScratchpadFence) || args.expectedScratchpadFence < 0
     || (Object.hasOwn(args, 'skips') && !Array.isArray(args.skips)))) {
     return 'invalid_scratchpad_settle';
-  }
-  if (name === 'baton_knowledge_settlement_lease' && !nonempty(args.waveId)) {
-    return 'invalid_settlement_lease';
   }
   // Facade-projection epic (#87+#48, Decision 10): the six ordinary workflow-surface tools'
   // hand-rolled shape guards (the wave-tools idiom — the guards are the authority, never a
@@ -2330,8 +2313,7 @@ export class McpFleetServer {
       }, this._applicationDispatchContext(args, callId, principal));
     }
     // MCP-W2: the settlement tools via the S-2 sessionAuthority envelope. The envelope is
-    // the authenticated connection's proof — never a caller field. The settlement lease requires
-    // the settlement capability class (already enforced by _authority).
+    // the authenticated connection's proof — never a caller field.
     else if (name === 'baton_scratchpad_elevate') {
       value = await this.application.command('scratchpad.elevate', {
         runId: args.runId, taskId: args.taskId, workerId: args.workerId,
@@ -2353,15 +2335,6 @@ export class McpFleetServer {
       }, this._applicationDispatchContext(args, callId, principal));
     }
 
-    else if (name === 'baton_knowledge_settlement_lease') {
-      value = await this.application.command('knowledge.settlement_lease', {
-        waveId: args.waveId, ...(Object.hasOwn(args, 'members') ? { members: clone(args.members) } : {}),
-      }, {
-        actor: actor ?? `mcp:${principal.userId}:${principal.sessionId}`,
-        principalId: principal.userId,
-        sessionId: principal.sessionId,
-      }, this._applicationDispatchContext(args, callId, principal));
-    }
     // Facade-projection epic (#87+#48, Decision 10): the six ordinary workflow-surface tools
     // dispatch their facade commands with the CONNECTION-derived principal (never tool args) and
     // the application context (transport mcp + capability authority). None carries a wire

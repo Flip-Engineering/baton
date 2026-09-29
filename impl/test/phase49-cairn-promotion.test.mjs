@@ -23,7 +23,7 @@ function completed(store, id, actor = 'orchestrator') {
   const created = store.createTask(task(id), { actor, key: `task:${id}` });
   store.claimTask(id, `w-${id}`, 1, { actor: 'orchestrator', key: `claim:${id}` });
   store.transitionTask(id, 'completed', 2, { actor: 'policy', key: `complete:${id}` });
-  const outcome = store.promoteKnowledgeNode({ id: `outcome:${id}`, taskId: id, type: 'Finding', grounding: 'verified', body: `Task ${id} passed its hub verification`, evidence: [{ coordinationSeq: created.event.seq }] }, { kind: 'Finding', trigger: 'verified_task_outcome' }, { actor: 'policy', key: `outcome:${id}` });
+  const outcome = store.addKnowledgeNode({ id: `outcome:${id}`, taskId: id, type: 'Finding', grounding: 'verified', body: `Task ${id} passed its hub verification`, evidence: [{ coordinationSeq: created.event.seq }], promotion: { kind: 'Finding', trigger: 'verified_task_outcome' } }, { actor: 'policy', key: `outcome:${id}` });
   return { created, outcome };
 }
 

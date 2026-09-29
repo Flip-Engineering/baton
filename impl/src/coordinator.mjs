@@ -4915,20 +4915,6 @@ export class Coordinator {
     return runtimeObservation.elevateTaskScratchpad(this, this._recorder, taskId, entryIds);
   }
 
-  // The member's primary (worker-claimed) task for a wave member run — the elevation target.
-    _settlementMemberTask(runId) {
-    return runtimeObservation._settlementMemberTask(this, this._recorder, runId);
-  }
-
-  // knowledge.settlement_lease (D2 embedded kernel + D3 ritual server side): sweep prior expired
-  // settlement leases, elevate each member's note+plan, materialize the wave settlement run/task/
-  // lease bound to the CALLING session, and candidate each elevated note. Idempotent per waveId;
-  // `members` absent is the direct admission-prep call (always mints a lease); a members list mints
-  // only when ≥1 note is elevated (honest-empty otherwise). Step refusals are collected, never thrown.
-    settlementLease(waveId, session, options = {}) {
-    return runtimeObservation.settlementLease(this, this._recorder, waveId, session, options);
-  }
-
   // -------------------------------------------------------------------------
   // KG-1 Part A: three horizon projections over the one Cairn KG plus package/binding
   // state (rule 1) — no new store, no new query engine. interactionGeneration/decisionSettleCount
@@ -5491,15 +5477,6 @@ export class Coordinator {
       this._settlePlanNodeBudget(task.id);
       if (terminal.routeObservation && this._route && typeof this._route.record === 'function') this._route.record(terminal.routeObservation.routeKey, terminal.routeObservation.taskType, terminal.routeObservation.verifiedWin, { family: terminal.routeObservation.modelFamily, taskId: terminal.routeObservation.taskId, now: Date.parse(terminal.routeObservation.observedAt) });
       this._expireScratchClaims(handle, task, `task_${terminalStatus}`);
-      const artifactEvidence = terminal.artifacts.map((artifact) => ({ artifactId: artifact.id }));
-      trustPhase = 'promotion';
-      this._coordination.promoteKnowledgeNode({
-        id: `outcome:${task.id}:${verifyEvent.seq}`,
-        taskId: task.id,
-        type: accept ? 'Finding' : inconclusive ? 'Question' : 'Counterexample',
-        body: accept ? `Task ${task.id} passed its hub verification` : inconclusive ? `Task ${task.id} needs another verification attempt` : `Task ${task.id} failed its hub verification`,
-        grounding: inconclusive ? 'observed' : 'verified', evidence: [{ coordinationSeq: evidence.coordinationSeq }, ...artifactEvidence],
-      }, { kind: accept ? 'Finding' : inconclusive ? 'Question' : 'Counterexample', trigger: 'verified_task_outcome' }, { actor: 'policy', key: `knowledge.outcome:${task.id}:${verifyEvent.seq}` });
       trustPhase = 'complete';
       task.status = accept ? 'completed' : 'failed';
       task.capturedSha = captured?.sha ?? null;
@@ -5569,7 +5546,7 @@ export class Coordinator {
           durable = this._coordination.task(task.id);
         }
       }
-      if (['evidence_mapping', 'terminal_batch', 'promotion'].includes(trustPhase)) this._poisonCoordination(err);
+      if (['evidence_mapping', 'terminal_batch'].includes(trustPhase)) this._poisonCoordination(err);
       task.status = durable?.status ?? 'failed';
       if (task.status !== 'completed') task.verdict = null;
       if (['forbidden_effect_observed', 'required_effect_absent', 'worker_path_scope_violation'].includes(code)) {

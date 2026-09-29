@@ -431,10 +431,11 @@ function replicaFixture(storeOpts = {}, coordOpts = {}, options = {}) {
     // verified_task_outcome auto-promotion — mints the VerifiedBy edge (finding:P1 -> task:task:P1)
     // that A4-R1's endpoint-closure pins. The primary is self-owned (no federation opts), so a
     // correct implementation promotes normally (A2-P1).
-    primary.promoteKnowledgeNode({
+    primary.addKnowledgeNode({
       id: 'finding:P1', type: 'Finding', grounding: 'observed', body: 'primary fact',
       evidence: [{ coordinationSeq: 1 }], taskId: 'task:P1',
-    }, { kind: 'Finding', trigger: 'verified_task_outcome' }, auth('promote:primary'));
+      promotion: { kind: 'Finding', trigger: 'verified_task_outcome' },
+    }, auth('promote:primary'));
   } else {
     primary.addKnowledgeNode({
       id: 'finding:P1', type: 'Finding', grounding: 'observed', body: 'primary fact',

@@ -280,10 +280,11 @@ test('A6b: the author\'s own task never counts toward minScratchReaders (no self
       routeKey: '["mock","fixture","mock-model","low"]',
     });
     store.transitionTask(id, 'completed', 2, { actor: 'policy', key: `complete:${id}` });
-    store.promoteKnowledgeNode({
+    store.addKnowledgeNode({
       id: `outcome:${id}`, taskId: id, type: 'Finding', grounding: 'verified',
       body: `Task ${id} passed its hub verification`, evidence: [{ coordinationSeq: 1 }],
-    }, { kind: 'Finding', trigger: 'verified_task_outcome' }, { actor: 'policy', key: `outcome:${id}` });
+      promotion: { kind: 'Finding', trigger: 'verified_task_outcome' },
+    }, { actor: 'policy', key: `outcome:${id}` });
   };
   complete('a', 'w-a');
   complete('b', 'w-b');

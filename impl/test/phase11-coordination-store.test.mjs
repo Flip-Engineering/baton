@@ -424,13 +424,6 @@ test('CK8/CK9: completed public task maps verification evidence, terminal state,
   assert.equal(snapshot.artifacts.filter((artifact) => artifact.kind !== 'report').every((artifact) => artifact.accepted === true && artifact.provenance.length === 1), true);
   assert.equal(snapshot.artifacts.find((artifact) => artifact.kind === 'report').accepted, false, 'worker artifact claims stay explicitly untrusted');
   assert.equal(snapshot.tasks[0].artifactIds.length, 3);
-  assert.equal(snapshot.knowledge.nodes.some((node) => node.type === 'Finding' && node.id.startsWith('outcome:durable-complete')), true);
-  assert.equal(snapshot.knowledge.edges.some((edge) => edge.type === 'VerifiedBy' && edge.from.startsWith('outcome:durable-complete') && edge.to === 'task:durable-complete'), true);
-  assert.equal(driver.coordination.events().some((event) => event.kind === 'knowledge.promoted' && event.payload.promotion?.trigger === 'verified_task_outcome'), true);
-  const recalled = driver.coordinator.recallKnowledge({ types: ['Finding'] }, { workerId: handle.id, runId: 'run-durable' }, { actor: 'orchestrator', idempotencyKey: 'recall-durable-outcome' });
-  assert.equal(recalled.nodes.length, 1);
-  assert.match(recalled.frame, /UNTRUSTED_RECALLED_MEMORY/);
-  assert.equal(driver.coordination.traceKnowledge(recalled.nodes[0].id).edges.some((edge) => edge.type === 'ReadBy' && edge.to === 'task:durable-complete'), true);
   const replay = new CoordinationStore(driver.coordination.root, {
     operationalRead: (worker, seq) => driver.log.read(worker, seq).find((event) => event.seq === seq) ?? null,
   });

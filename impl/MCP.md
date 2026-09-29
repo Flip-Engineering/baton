@@ -87,8 +87,7 @@ A bounded closed JSON descriptor:
   admitted ONLY against these (the deployment profile's routes and scopes).
 - `surface` — `application` (the ordinary surface: runs, waves, decisions, settlement) is the
   documented default. `advanced`/`combined` are explicit kernel-control deployments.
-- `principal` — the fixed host identity. `settlement` capability is NEVER defaulted: it enables
-  `knowledge.settlement_lease` on this principal (single-orchestrator posture — see below).
+- `principal` — the fixed host identity.
 
 The value every tool call passes as `repoId` is the descriptor's `repo` string, verbatim — the
 server derives no other spelling, and a call naming anything else is refused. The server states
@@ -196,7 +195,7 @@ rendered from it, never retyped here):
 | `baton_swarm_stop` | surface: `swarm.stop` (the `emergency_stop` class) |
 | `baton_swarm_integrate` | surface: `swarm.integrate` (the root's landing verb) |
 | `baton_waves_compile` / `run` | surface: `waves.compile` / `waves.run` |
-| `baton_scratchpad_elevate` / `baton_scratchpad_settle` / `baton_knowledge_settlement_lease` | descriptor kernel profile, never bridged — the landed U-G3 posture, unchanged |
+| `baton_scratchpad_elevate` / `baton_scratchpad_settle` | descriptor kernel profile, never bridged — the landed U-G3 posture, unchanged |
 | `baton_run_attention_watch` | **retired** — `baton_wakes {verb: "subscribe"}` replaces it |
 | `baton_swarm_watch` | **retired from MCP** — `baton_wakes {verb: "subscribe", swarms: [id]}` replaces it; the CLI keeps `baton swarm watch` |
 
@@ -285,20 +284,11 @@ The settlement ops work through MCP behind the S-2 `sessionAuthority` envelope.
 
 - `baton_scratchpad_elevate` elevates terminal scratchpad entries into candidate Findings.
 - `baton_scratchpad_settle` settles the shared scratchpad partition with explicit skips.
-- `baton_knowledge_settlement_lease` mints the wave settlement lease (settlement capability).
 
-
-- `baton_knowledge_settlement_lease` derives the session from the host's FIXED principal and is
-  enabled ONLY when the descriptor's principal carries an explicit `settlement` capability class
-  (never defaulted). **Trust posture:** an MCP host IS one orchestrator authority; multi-principal
-  MCP hosts must NOT enable this tool.
-
-**Where these run.** The settlement tools are descriptor-deployment tools: they are served by
-a descriptor-driven MCP server whose principal carries the `settlement` capability class. The
-resident bridge (`baton serve` + `baton-mcp-web`) does NOT admit them — they are host-local kernel
-operations — so a bridge-attached client never sees them in its `tools/list`, and calling one over
-the bridge refuses at the dispatch guard as an unknown tool. Settlement happens on the deployment
-that owns the runs, never over a borrowed bridge session.
+**Where these run.** The settlement tools are descriptor-deployment tools served by a descriptor-driven MCP server.
+The resident bridge (`baton serve` + `baton-mcp-web`) does NOT admit them — they are host-local kernel operations.
+A bridge-attached client never sees them in its `tools/list`, and calling one over the bridge refuses at the dispatch guard as an unknown tool.
+Settlement happens on the deployment that owns the runs, never over a borrowed bridge session.
 
 ## Tool inventory
 

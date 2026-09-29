@@ -4853,10 +4853,8 @@ export class BatonApplication {
     // APPLICATION_COMMAND_DEFINITIONS, so the byte-stable command-table key set is unchanged, and
     // never advertised on MCP/CLI/web). They are top-level only: dispatched here BEFORE the
     // recursive-session gate, and deliberately absent from the capability-backed recursive
-    // allowlists below. The actor is server-derived 'orchestrator'; the settlement session is
-    // derived from the calling principal.
-    if (name === 'scratchpad.elevate' || name === 'scratchpad.settle'
-      || name === 'knowledge.settlement_lease') {
+    // allowlists below. The actor is server-derived 'orchestrator'.
+    if (name === 'scratchpad.elevate' || name === 'scratchpad.settle') {
       return this._settlementCommand(name, args, principal);
     }
     if (name === 'deployment.doctor') return this.doctorReadiness();
@@ -4966,18 +4964,9 @@ export class BatonApplication {
   }
 
   // KG settlement D2: the embedded settlement commands. The actor is server-derived
-  // 'orchestrator' inside the coordinator wrappers; the settlement session is derived here from
-  // the CALLING principal (never from caller fields) — principalId/sessionId with a hub-minted
-  // authorityDigest — so the lease it materializes binds to the caller who acquired it.
+  // 'orchestrator' inside the coordinator wrappers.
   _settlementCommand(name, args, principal) {
     const coordinator = this.driver.coordinator;
-    const session = {
-      principalId: principal.principalId, sessionId: principal.sessionId,
-      authorityDigest: digest({
-        kind: 'authenticated-worker-session',
-        principalId: principal.principalId, sessionId: principal.sessionId,
-      }),
-    };
     if (name === 'scratchpad.elevate') {
       return coordinator.elevateTaskScratchpad(args.taskId, args.entryIds);
     }
@@ -4985,8 +4974,6 @@ export class BatonApplication {
       return coordinator.settleWorkflowScratchpad(args.runId,
         { expectedScratchpadFence: args.expectedScratchpadFence, skips: args.skips });
     }
-    // knowledge.settlement_lease
-    return coordinator.settlementLease(args.waveId, session, { members: args.members });
   }
 
 
