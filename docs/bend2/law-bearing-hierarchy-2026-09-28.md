@@ -108,8 +108,10 @@ the reviewed lead tree. Native/session/report/steering assertions and clean
 workspaces remain required. Native parent review establishes task attribution;
 the script does not classify authorship from intermediate commits.
 
-Repair commit: `061411c972a2ae7d69307b94e23b1fc95714a6b2`. The curated
-measurement records the full retained-run verification path and hash.
+Original repair commit: `061411c972a2ae7d69307b94e23b1fc95714a6b2`.
+The same driver and test patch is composed in
+`97a0bc6dd43f66247c855bf9ebbc0f127201ebe1`. The curated measurement records
+the full retained-run verification path and hash.
 The full retained-run verification records the original failed driver hash and
 the repaired verifier hash separately. No native model calls were repeated for
 this repair.
