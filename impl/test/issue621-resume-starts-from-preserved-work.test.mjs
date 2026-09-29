@@ -340,3 +340,52 @@ test('621-B: a successor of a reclamation-removed checkout works in that preserv
     `${PROBE_BODY}and continued by bravo`.trim(),
     'the captured revision holds what the successor wrote on top of the carried checkout');
 });
+
+// ——————————————————————————————————————————————————————————————————
+// (C) the resident's own drain ended the seat and removed its checkout
+// ——————————————————————————————————————————————————————————————————
+//
+// OBSERVED (2026-09-28T23:38:34Z, the deployment's fleet drain that preceded the resident restart
+// at 23:40Z; then backlog-lead17zc → backlog-lead17zd): the drain cancelled the seat's task and
+// removed its checkout with the snapshot recorded, and the swarm's own record shows the loss
+// (`swarm.participant_runtime_lost`, seq 423026) before the successor was recruited at 23:47:35Z.
+// The successor still started at the target (master 49b1ee60), no `workspace.carried_from` row was
+// written, and the preserved revision 249128ac was never checked out: the predecessor's replayed
+// worker handle read `idle` — a status out of the ledger, not a process (#364's own words) — so the
+// carry read the seat as LIVE and #318's "a live predecessor carries nothing" suppressed it.
+
+test('621-C: a successor of a drained seat whose checkout the drain removed starts at the snapshot', async (t) => {
+  const s = scratch(t, 'c');
+  const first = await incarnation(t, { ...s, label: 'c1' });
+  t.after(() => first.close());
+  const predecessor = await predecessorSeat(first);
+
+  // The fleet drain the resident runs before it restarts: it cancels the seat's task and removes
+  // its checkout, recording the snapshot the removal is backed by (#428).
+  await first.driver.drainAndClose('issue621:test');
+  assert.equal(existsSync(predecessor.checkout), false, 'the drain removed the seat\'s checkout');
+
+  const second = await incarnation(t, { ...s, label: 'c2' });
+  t.after(() => second.close());
+  const snapshot = snapshotRowFor(second.driver, predecessor.workspaceId);
+  assert.ok(snapshot?.sha, 'the drain is backed by a preserved snapshot revision');
+  const preservedTip = git(s.repo, ['rev-parse', predecessor.laneBranch]);
+  assert.equal(preservedTip, snapshot.sha,
+    'the preserved lane branch holds the revision the removal recorded');
+
+  const bravo = await second.command('swarm.recruit', {
+    swarmId: SWARM, participantId: 'bravo', objective: 'Continue the alpha lane',
+    options: selection, resumeFrom: 'alpha', idempotencyKey: 'recruit:bravo',
+  });
+  const successor = await workingSeat(second.driver, bravo.runId);
+
+  assert.equal(git(successor.worktree, ['rev-parse', 'HEAD']), preservedTip,
+    'the successor starts with the preserved work checked out');
+  assert.equal(successor.sessionContext.baseSha, preservedTip,
+    'the successor\'s recorded base is the revision its checkout starts at');
+
+  const carried = carryRows(second.driver);
+  assert.equal(carried.length, 1, 'ONE carry row for the successor');
+  assert.equal(carried[0].payload.how, 'applied');
+  assert.equal(carried[0].payload.snapshotSha, preservedTip);
+});
