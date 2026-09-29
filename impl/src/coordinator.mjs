@@ -73,7 +73,6 @@ import { capBytesToScalar } from './runtime-event-handlers/observation-events.mj
 import { WorkerNotFoundError } from './runtime-api.mjs';
 export { WorkerNotFoundError };
 import * as coordinationLedger from './coordination-ledger.mjs';
-import { CoordinationRefusal } from './coordination-internals.mjs';
 import {
   coachingError, resolveCardModel, SupervisedProcesses,
 } from './runtime-admission.mjs';
@@ -85,20 +84,6 @@ import { ModelSelectionError, WORKTREE_FAILURE, normalizeRunId } from './runtime
 export { ModelSelectionError };
 import { KILL_RULES, LOGICAL_CALL_PHASES, ORIENTATION_DELIVERY, PUSH_REFUSAL_CODES, REARM_KINDS, RUN_TIMELINE_OPERATIONAL_KINDS, IntegrationError, SessionSelectionError, TERMINAL_TASK_STATUSES, addSafeTokenCounts, boundedProcessObservation, canonical, canonicalDigest, cardSupportsSession, decisionRef, deepFreeze, logicalCallTransition, minimalBrief, normalizeSessionRequest, officialCoordinateMatches, providerProcessingFailureCode, replayProviderGovernanceRoute, startupReconcilerNext, startupReconcilerRecord, throwIfProviderCancelled, typedTerminalCode, validLogicalCallId, validLogicalCallPhase, validWorkspaceOwnerBoundPayload, workspaceOwnerExpectation } from './runtime-recovery.mjs';
 export { PUSH_REFUSAL_CODES, REARM_KINDS, IntegrationError, SessionSelectionError } from './runtime-recovery.mjs';
-// Issue #66 (K2): the frozen doubt refusal family — the closed 8-code vocabulary every doubt
-// review refusal carries, in ACTUAL sorted order (canonical byte order; the comparator family
-// never locales).
-export const DOUBT_REFUSAL_CODES = Object.freeze([
-  'doubt_carry_conflict',
-  'doubt_dismissal_invalid',
-  'doubt_promote_conflict',
-  'doubt_promote_invalid',
-  'doubt_promote_not_authorized',
-  'doubt_promote_stale',
-  'doubt_promote_unknown',
-  'doubt_surface_unavailable',
-]);
-
 export { REDRIVE_REFUSAL_CODES, REDRIVE_SCOPES } from './runtime-redrive.mjs';
 
 
@@ -4942,30 +4927,6 @@ export class Coordinator {
   // only when ≥1 note is elevated (honest-empty otherwise). Step refusals are collected, never thrown.
     settlementLease(waveId, session, options = {}) {
     return runtimeObservation.settlementLease(this, this._recorder, waveId, session, options);
-  }
-
-  // knowledge.promote_doubt (issue #66 D4): the resolve act. The authority is the ACTIVE
-  // run-orchestrator lease of the settlement run, re-derived server-side from the caller's
-  // session (HOLE-3 — never a caller field). The guard order is authority → shape → size →
-  // unknown → stale, and a refusal transitions nothing.
-  resolveDoubt(runId, doubtId, disposition, session, fields = {}) {
-    this.tick();
-    const store = this._recorder.coordination;
-    coordinationLedger.settlementReviewAuthority(store, runId, session);
-    if (disposition === 'answered') {
-      if (typeof fields?.resolution !== 'string' || fields.resolution.length === 0) {
-        throw new CoordinationRefusal('an answered doubt requires a resolution', 'doubt_promote_invalid');
-      }
-    } else if (disposition === 'dismissed') {
-      if (!coordinationLedger.DOUBT_DISMISSAL_REASONS.includes(fields?.dismissalReason)) {
-        throw new CoordinationRefusal('the dismissal reason is outside the closed enum', 'doubt_dismissal_invalid');
-      }
-    } else {
-      throw new CoordinationRefusal('the disposition is outside the closed enum', 'doubt_promote_invalid');
-    }
-    return coordinationLedger.resolveSettlementDoubt(store,
-      { runId, doubtId, disposition, resolution: fields?.resolution ?? null, dismissalReason: fields?.dismissalReason ?? null },
-      { actor: 'orchestrator', key: `knowledge.doubt_resolved:${doubtId}` });
   }
 
   // -------------------------------------------------------------------------
