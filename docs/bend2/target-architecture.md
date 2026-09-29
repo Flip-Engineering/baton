@@ -8,8 +8,8 @@ worktree and records the worker; a `turn` or `receive` invocation starts the
 logged-in harness in that worktree and supplies the task. The worker can ask its
 parent questions and report progress. Each completed turn sends its full report and work
 location to the parent, which decides whether to guide another turn or land the
-work. A turn ends when its native process ends, and the parent ends a worker's
-work by not starting another turn.
+work. A turn ends when its native process exits. A retained receiver runs queued
+input after the current process exits.
 
 The first implementation runs on one host and one Git repository. The root
 session remains the place where the operator reads and directs agent work. The
@@ -30,7 +30,7 @@ process. Three modules implement the workflow:
 | Part | Responsibility | Data kept |
 |---|---|---|
 | Coordinator | Accept root and worker commands, deliver messages, resume sessions, and recover unfinished operations. | Repository and target branch; attached root endpoint; worker ID, parent, requested and observed route, native session ID, worktree, branch and base commit; pending inputs and full reports with delivery acknowledgments. |
-| Harness adapters | Start or resume a subscription session, deliver the task, send pending guidance through the native harness during an OMP turn, and observe output, terminal events and native session identity. Each harness launches with interactive approval disabled (`bend2/src/harness/omp-worker.bend`, `claude-worker.bend`, `laws.bend`). The adapter and command paths build no reply to a native question or approval request; a worker asks its parent with `ask` or `ask-file`. | Native connection handles in memory; session identity and complete output files on disk. Credentials remain with the harness. |
+| Harness adapters | Start or resume a subscription session, deliver the task, send pending guidance through the native harness during an OMP turn, and observe output, terminal events and native session identity. Each harness launches with interactive approval disabled (see `bend2/src/harness/`). The adapter and command paths build no reply to a native question or approval request; a worker asks its parent with `ask` or `ask-file`. | Native connection handles in memory; session identity and complete output files on disk. Credentials remain with the harness. |
 | Git operations | Create worker worktrees, inspect changes, prepare a landing, run selected checks, and advance the target branch. | Worker branches and worktrees; landing input commit, target before, candidate commit, check output and result commit. |
 
 The coordinator stores current records and pending messages in a SQLite database
@@ -72,12 +72,12 @@ commands (`report`, `ask`, `ask-file`, `message`, `message-file`, and an
 `observe-file` whose event is terminal) wait for the recipient's configured
 endpoint to exit before they answer: the commit path invokes that endpoint
 (`bend2/src/coordinator/root.bend`) and waits on the process it spawned. The wait
-lasts as long as the receiver's own work, so a caller starts these commands in
-the background and ends its native turn, as the [Bend2
+lasts as long as the receiver's own work. Start commands that invoke lengthy
+native work in the background and end the sender's turn, as the [Bend2
 README](../../bend2/README.md) and [trial lead
 instructions](../../bend2/trial/lead-instructions.md) describe. `turn` and
 `receive` are the supervisor operations: each stays in the foreground while it
-supervises one native process. `status` shows the stored route, workspace and
+supervises native work. `status` shows the stored route, workspace and
 pending count. Errors name the observed failure and the next action.
 
 Every turn completion persists the harness's final output and wakes the parent,
@@ -88,11 +88,11 @@ path `report` takes. For OMP, the supervisor sends pending guidance as native
 `steer` frames on a response, message completion or tool event. `receive` admits
 OMP and Codex workers and composes pending input into the next native turn it
 starts for those sessions. Muse and Claude Code workers run under the direct
-`turn` command, whose task file supplies their next turn; any worker's inbox
-with `inbox`. The parent makes continuation decisions: it
-guides another turn, lands the work, or leaves the worker without a further turn.
-A worker's work ends when its native process ends with no further turn started for
-it. No coordinator command stops or cancels a running turn; killing a `receive`
+`turn` command, whose task file supplies their next turn. Each worker's pending
+input remains readable with `inbox`. The parent sends guidance, requests further
+work and reviews completed work for landing. After the native process exits,
+`receive` releases session ownership and checks for new pending input.
+No coordinator command stops or cancels a running turn; killing a `receive`
 observer leaves the retained process owner, the native process and its work in
 place, so it is not an operator stop procedure. Process failure reports the exit
 and retained workspace to the parent.
@@ -103,9 +103,11 @@ message reaches its native session; the receipt body is the acceptance text the
 recipient supplies. An acceptance receipt establishes that the recipient
 recorded acceptance of that message and nothing about the work itself. Parent
 review is a separate action: the parent reads the report and inspects the branch
-and worktree with `worktree`. Landing is established by the `land-checked`
-answer, whose `landed`, `already`, `conflict` and `blocked` statuses report the
-Git and check result. Pending notifications survive disconnection and are sent on
+and worktree with `worktree`. A `land-checked` answer of `landed` names the
+advanced target commit; `already` names a worker commit already in the target.
+The `conflict` and `blocked` answers describe unresolved landing attempts. The
+caller reads the actual Git ref and check results to verify the resulting state.
+Pending notifications survive disconnection and are sent on
 reconnection; repeated delivery carries the same message ID. A delivery failure
 returns an error to the writer and leaves the message pending. `pending` lists
 it with the recipient's current endpoint, and `inbox` lists it; `delivery ID`
