@@ -18,16 +18,22 @@
 //   500-caps-E  the muse auth.json read enforces the registry's credential.file boundary (at
 //               the bound it parses; one byte over, the credential reads as invalid)
 //   500-caps-F  the omp model catalog read answers a parsed selector map or an unreadable null
-//   500-caps-H  the bounds with no hermetic seam (process-boundary exec options, the
-//               process-local catalog memo, the published refusal text bound, the verification
-//               output ceiling) keep their live literals — source pins, the same last-resort
-//               register as the scanner doc-comment rows
+//   500-caps-J  the PATH probe resolves a bare verification command through PATH: the open
+//               proceeds on a command only PATH holds, and refuses typed when no entry does
+//   500-caps-K  the catalog read takes the harness's whole answer — a listing past the removed
+//               8 MiB ceiling parses every row, the last one included
+//   500-caps-L  the catalog read carries no deadline — a stub answering later than the removed
+//               20 s is read, and the row measures that delay
+//   500-caps-M  a harness that cannot list its models still reads as null (the typed blocked row)
+//   500-caps-H  the bounds with no hermetic seam (the process-local catalog memo, the published
+//               refusal text bound, the verification output ceiling) keep their live literals —
+//               source pins, the same last-resort register as the scanner doc-comment rows
 //
 // Hermetic: temp dirs under os.tmpdir(), one MockAdapter route, no provider process, no network.
 
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, utimesSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
@@ -271,14 +277,162 @@ test('500-caps-F: the omp model catalog read answers a parsed selector map or an
   assert.equal(ompModelCatalog({ catalogRead: () => '{}' }), null, 'a modelless catalog reads as null');
 });
 
+/** Run `fn` with the named environment variables set, restoring each one after. The discovery
+ * paths read PATH (the `which` probe; the catalog's own `omp` child) and HOME (the catalog
+ * memo's key) from the process environment. */
+function withEnv(vars, fn) {
+  const saved = new Map(Object.keys(vars).map((key) => [key, process.env[key]]));
+  Object.assign(process.env, vars);
+  try { return fn(); } finally {
+    for (const [key, value] of saved) {
+      if (value === undefined) delete process.env[key]; else process.env[key] = value;
+    }
+  }
+}
+
+async function withEnvAsync(vars, fn) {
+  const saved = new Map(Object.keys(vars).map((key) => [key, process.env[key]]));
+  Object.assign(process.env, vars);
+  try { return await fn(); } finally {
+    for (const [key, value] of saved) {
+      if (value === undefined) delete process.env[key]; else process.env[key] = value;
+    }
+  }
+}
+
+/** A stub `omp` on PATH. The default catalog read execs `omp models --json --no-extensions` and
+ * takes whatever it answers, so this stub IS the discovery path under test:
+ *   'file'   — the catalog document in BATON_TEST_OMP_CATALOG_FILE, verbatim;
+ *   'refuse' — a non-zero exit (a harness that cannot list its models);
+ *   'late'   — a minimal catalog written after 21 s, past the removed 20 s deadline. */
+function writeOmpStub(binDir) {
+  const stub = join(binDir, 'omp');
+  writeFileSync(stub, `#!${process.execPath}
+const mode = process.env.BATON_TEST_OMP_MODE ?? 'file';
+const answer = () => {
+  if (mode === 'refuse') process.exit(3);
+  process.stdout.write(mode === 'late'
+    ? '{"models":[{"provider":"p","id":"late"}]}'
+    : require('node:fs').readFileSync(process.env.BATON_TEST_OMP_CATALOG_FILE, 'utf8'));
+};
+if (mode === 'late') setTimeout(answer, 21_000); else answer();
+`);
+  chmodSync(stub, 0o755);
+  return stub;
+}
+
+/** A catalog document of `rows` models, each padded past 200 bytes. */
+function writeCatalog(path, rows) {
+  const pad = 'x'.repeat(200);
+  const models = Array.from({ length: rows }, (_, i) => ({ provider: 'p', id: `m${i}`, pad }));
+  writeFileSync(path, JSON.stringify({ models }));
+  return path;
+}
+
+/** The home the catalog memo keys on: a models.yml whose mtime no other row of this file uses, so
+ * a row's own read is never answered by another row's memo. */
+function catalogHome(label, mtime) {
+  const home = tmp(`catalog-home-${label}`);
+  mkdirSync(join(home, '.omp', 'agent'), { recursive: true });
+  const modelsYml = join(home, '.omp', 'agent', 'models.yml');
+  writeFileSync(modelsYml, 'models: {}\n');
+  utimesSync(modelsYml, mtime, mtime);
+  return home;
+}
+
+test('500-caps-J: the PATH probe resolves a bare verification command through PATH', async (t) => {
+  const binDir = join(tmp('which-bin'), 'bin');
+  mkdirSync(binDir, { recursive: true });
+  const probe = join(binDir, 'baton-500-which-probe');
+  writeFileSync(probe, `#!${process.execPath}\nprocess.exit(0);\n`);
+  chmodSync(probe, 0o755);
+
+  // A bare name (no separator) is resolved through which(1) over PATH, never against a literal
+  // path, and the fixture repository carries no such file.
+  await assert.rejects(
+    openFailure('which-absent', {
+      deploymentRoot: join(tmp('owner-which-absent'), 'deployment'),
+      adapters: { [ROUTE.harness]: fixtureAdapter(ROUTE.harness) },
+      routes: [ROUTE],
+      verification: { command: 'baton-500-which-probe', arguments: [] },
+    }),
+    (error) => {
+      assert.equal(error.code, 'deployment_preflight_failed');
+      assert.match(error.message, /The verification executable baton-500-which-probe is unavailable/u,
+        'the refusal names the command no PATH entry holds');
+      return true;
+    },
+    'a command no PATH entry holds refuses at the preflight',
+  );
+
+  await withEnvAsync({ PATH: `${binDir}:${process.env.PATH}` }, async () => {
+    const deployment = await openDeployment(t, 'which-present', {
+      advanced: { verification: { command: 'baton-500-which-probe', arguments: [] } },
+    });
+    const doctor = await deployment.doctor();
+    assert.equal(doctor.verification.state, 'ready',
+      'the same bare command reads ready once the probe finds it on PATH');
+    assert.equal(doctor.verification.command, 'baton-500-which-probe');
+  });
+});
+
+test("500-caps-K: the catalog read takes the harness's whole answer, whatever its size", () => {
+  const binDir = join(tmp('catalog-bin'), 'bin');
+  mkdirSync(binDir, { recursive: true });
+  writeOmpStub(binDir);
+  const catalogPath = writeCatalog(join(tmp('catalog-body'), 'catalog.json'), 40_000);
+  const bytes = readFileSync(catalogPath).byteLength;
+  assert.ok(bytes > 8 * 1024 * 1024,
+    `the fixture answer is ${bytes} bytes — past the 8 MiB ceiling this read no longer carries`);
+
+  const catalog = withEnv({
+    PATH: `${binDir}:${process.env.PATH}`, HOME: catalogHome('big', 1_700_000_000),
+    BATON_TEST_OMP_MODE: 'file', BATON_TEST_OMP_CATALOG_FILE: catalogPath,
+  }, () => ompModelCatalog());
+
+  assert.ok(catalog instanceof Map, 'the whole answer parsed into a selector map');
+  assert.equal(catalog.size, 40_000, 'every model row of the answer is in the map');
+  assert.equal(catalog.get('p/m39999')?.id, 'm39999',
+    'the row at the END of the answer survives — nothing was cut at a ceiling');
+});
+
+test('500-caps-L: the catalog read carries no deadline', () => {
+  const binDir = join(tmp('catalog-late-bin'), 'bin');
+  mkdirSync(binDir, { recursive: true });
+  writeOmpStub(binDir);
+
+  const started = Date.now();
+  const catalog = withEnv({
+    PATH: `${binDir}:${process.env.PATH}`, HOME: catalogHome('late', 1_800_000_000),
+    BATON_TEST_OMP_MODE: 'late',
+  }, () => ompModelCatalog());
+  const elapsed = Date.now() - started;
+
+  assert.ok(elapsed >= 20_000, `the stub answered after ${elapsed} ms — past the removed deadline`);
+  assert.equal(catalog?.get('p/late')?.id, 'late',
+    'the late answer is read whole, never cut at a deadline');
+});
+
+test('500-caps-M: a harness that cannot list its models still reads as null', () => {
+  const binDir = join(tmp('catalog-refuse-bin'), 'bin');
+  mkdirSync(binDir, { recursive: true });
+  writeOmpStub(binDir);
+
+  const catalog = withEnv({
+    PATH: `${binDir}:${process.env.PATH}`, HOME: catalogHome('refuse', 1_900_000_000),
+    BATON_TEST_OMP_MODE: 'refuse',
+  }, () => ompModelCatalog());
+
+  assert.equal(catalog, null,
+    'a refused run reads as null, which readiness renders as the typed blocked row');
+});
+
 test('500-caps-H: the bounds with no hermetic seam keep their live literals (source pins)', () => {
   const source = readFileSync(new URL('../src/application-deployment.mjs', import.meta.url), 'utf8');
   const count = (pattern, label, expected) => {
     const hits = [...source.matchAll(new RegExp(pattern.source, 'gu'))];
     assert.equal(hits.length, expected, `${label}: expected ${expected} occurrence(s), found ${hits.length}`);
   };
-  count(/timeout: 20_000, maxBuffer: 8 \* 1024 \* 1024,/u, 'omp catalog exec bound', 1);
-  count(/encoding: 'utf8', timeout: 5_000,/u, 'which PATH probe deadline', 1);
   // MAX_KIMI_CREDENTIAL_METADATA_BYTES, MAX_GROK_CREDENTIAL_METADATA_BYTES and
   // MAX_MUSE_AUTH_FILE_BYTES read FRAME_LIMITS['credential.file'].value (#500, ea9040d6) rather
   // than a live literal; issue500-credential-divergence.test.mjs S500-2 pins that reference.
