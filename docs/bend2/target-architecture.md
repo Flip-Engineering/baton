@@ -30,7 +30,7 @@ process. Three modules implement the workflow:
 | Part | Responsibility | Data kept |
 |---|---|---|
 | Coordinator | Accept root and worker commands, deliver messages, resume sessions, and recover unfinished operations. | Repository and target branch; attached root endpoint; worker ID, parent, requested and observed route, native session ID, worktree, branch and base commit; pending inputs and full reports with delivery acknowledgments. |
-| Harness adapters | Start or resume a subscription session, deliver the task, send pending guidance through the native harness during an OMP turn, and observe output, terminal events and native session identity. Harness launch arguments grant approvals, so no adapter reads or answers a native question or approval request. | Native connection handles in memory; session identity and complete output files on disk. Credentials remain with the harness. |
+| Harness adapters | Start or resume a subscription session, deliver the task, send pending guidance through the native harness during an OMP turn, and observe output, terminal events and native session identity. Each harness launches with interactive approval disabled (`bend2/src/harness/omp-worker.bend`, `claude-worker.bend`, `laws.bend`). The adapter and command paths build no reply to a native question or approval request; a worker asks its parent with `ask` or `ask-file`. | Native connection handles in memory; session identity and complete output files on disk. Credentials remain with the harness. |
 | Git operations | Create worker worktrees, inspect changes, prepare a landing, run selected checks, and advance the target branch. | Worker branches and worktrees; landing input commit, target before, candidate commit, check output and result commit. |
 
 The coordinator stores current records and pending messages in a SQLite database
@@ -85,9 +85,11 @@ including turns that contain no explicit `report` call. `ask` and `ask-file`
 store a message of kind `question` addressed to the worker's recorded parent and
 invoke that parent's registered endpoint after the transaction commits, the same
 path `report` takes. For OMP, the supervisor sends pending guidance as native
-`steer` frames on a response, message completion or tool event; the other
-harnesses receive pending input when `receive` composes their next native turn,
-and their inbox remains readable. The parent makes continuation decisions: it
+`steer` frames on a response, message completion or tool event. `receive` admits
+OMP and Codex workers and composes pending input into the next native turn it
+starts for those sessions. Muse and Claude Code workers run under the direct
+`turn` command, whose task file supplies their next turn; any worker's inbox
+with `inbox`. The parent makes continuation decisions: it
 guides another turn, lands the work, or leaves the worker without a further turn.
 A worker's work ends when its native process ends with no further turn started for
 it. No coordinator command stops or cancels a running turn; killing a `receive`
