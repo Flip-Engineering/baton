@@ -147,6 +147,15 @@ def started(+db: String, +session: String, +id: String, +log: String, cursor: St
       released : Unit <- IO.try(Unit,Lock.SessionLock.release(lock))
       finish_pending(db,session,id,log,cursor,outcome,Nil{},again,u => IO.pure(Unit,Unit{}))
 
+def start_admitted(+db: String, +session: String, +id: String, cmd: String, route: String, thinking: String, +workspace: String, +log: String, +lock: U32, cursor: String, +native: String, +attempt: String, +harness: String, storage: String, prompt: String, recovery: String, again: Unit -> IO(Result<&1,&1,U32 & String,Unit>), allowed: Bool) -> IO(Result<&1,&1,U32 & String,Unit>):
+  match allowed:
+    case False{}: do IO<Result<&1,&1,U32 & String,Unit>>:
+      released : Unit <- IO.try(Unit,Lock.SessionLock.release(lock))
+      IO.pure(Result<&1,&1,U32 & String,Unit>,Fail{(2,"Session is terminally stopped; queued input will not execute. Read its session and retained inbox.")})
+    case True{}: do IO<Result<&1,&1,U32 & String,Unit>>:
+      start : P.RetainedStart <- IO.try(P.RetainedStart,Turn.retained(db,session,attempt,cmd,route,thinking,workspace,native,harness,storage,prompt,lock,recovery))
+      started(db,session,id,log,cursor,native,workspace,attempt,harness,lock,start,again)
+
 def selected(+db: String, +session: String, +cmd: String, +model: String, +effort: String, +cwd: String, +log: String, +lock: U32, +cursor: String, present: Bool, again: Unit -> IO(Result<&1,&1,U32 & String,Unit>)) -> IO(Result<&1,&1,U32 & String,Unit>):
   match present:
     case False{}: do IO<Result<&1,&1,U32 & String,Unit>>:
@@ -169,9 +178,7 @@ def selected(+db: String, +session: String, +cmd: String, +model: String, +effor
       +attempt : String <- IO.pure(String,Tx.trim_nl(directory))
       recovery : String <- IO.pure(String,P.argv([executable,"--recover-receive",db,session,id,cursor,cmd,route,thinking,workspace,log,harness,attempt,native]))
       allowed : Bool <- Stop.admit(db,session,id,"retained",attempt)
-      admitted : Unit <- Stop.admitted(allowed)
-      start : P.RetainedStart <- IO.try(P.RetainedStart,Turn.retained(db,session,attempt,cmd,route,thinking,workspace,native,harness,Tx.trim_nl(storage),instructions(executable,db,session) ++ body,lock,recovery))
-      started(db,session,id,log,cursor,native,workspace,attempt,harness,lock,start,again)
+      start_admitted(db,session,id,cmd,route,thinking,workspace,log,lock,cursor,native,attempt,harness,Tx.trim_nl(storage),instructions(executable,db,session) ++ body,recovery,again,allowed)
 
 def acquired(+db: String, +session: String, cmd: String, model: String, effort: String, cwd: String, log: String, result: Maybe<U32>, again: Unit -> IO(Result<&1,&1,U32 & String,Unit>)) -> IO(Result<&1,&1,U32 & String,Unit>):
   match result:
@@ -185,15 +192,20 @@ def registered(exists: Bool) -> IO(Unit):
     case True{}: IO.pure(Unit,Unit{})
     case False{}: IO.die(Unit,2,"Session is not registered; attach a root or recruit a worker before receiving messages.")
 
+def available(+db: String, +session: String, cmd: String, model: String, effort: String, cwd: String, log: String, again: Unit -> IO(Result<&1,&1,U32 & String,Unit>), closed: Bool) -> IO(Result<&1,&1,U32 & String,Unit>):
+  match closed:
+    case True{}: IO.pure(Result<&1,&1,U32 & String,Unit>,Fail{(2,"Session is terminally stopped; queued input will not execute. Read its session and retained inbox.")})
+    case False{}: Lock.SessionLock.acquire_session(Result<&1,&1,U32 & String,Unit>,db,session,
+      +database => lock => acquired(database,session,cmd,model,effort,cwd,log,lock,again))
+
 # MESSAGE_ID names the wake. The lock owner reads all pending inputs together.
 @unsafe
 def run(+db: String, +session: String, +cmd: String, +model: String, +effort: String, +cwd: String, +log: String, message: String) -> IO(Result<&1,&1,U32 & String,Unit>):
   do IO<Result<&1,&1,U32 & String,Unit>>:
     recorded : String <- IO.try(String,Store.commit(db,C.Session{session}))
     exists : Unit <- registered(Bool.not(String.is_empty(recorded)))
-    open : Unit <- Stop.open_session(db,session)
-    Lock.SessionLock.acquire_session(Result<&1,&1,U32 & String,Unit>,db,session,
-      +database => lock => acquired(database,session,cmd,model,effort,cwd,log,lock,u => run(db,session,cmd,model,effort,cwd,log,"")))
+    closed : Bool <- Stop.stopped(db,session)
+    available(db,session,cmd,model,effort,cwd,log,u => run(db,session,cmd,model,effort,cwd,log,""),closed)
 
 def attach_recorded(directory: String, next: @+handle: U32 -> IO(Result<&1,&1,U32 & String,Unit>)) -> IO(Result<&1,&1,U32 & String,Unit>):
   do IO<Result<&1,&1,U32 & String,Unit>>:

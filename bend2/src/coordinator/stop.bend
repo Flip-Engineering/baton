@@ -28,16 +28,11 @@ def require_open(closed: Bool) -> IO(Unit):
     case False{}: IO.pure(Unit,Unit{})
     case True{}: IO.die(Unit,2,"Session is terminally stopped. Read its session and retained inbox; recruit a new session for new work.")
 
-def open_session(+db: String, +session: String) -> IO(Unit):
-  do IO<Unit>:
-    closed : Bool <- stopped(db,session)
-    require_open(closed)
-
 def admitted(allowed: Bool) -> IO(Unit):
   require_open(Bool.not(allowed))
 
 def result_sql(+session: String) -> String:
-  "SELECT json_object('session',session,'stopId',id,'reason',reason,'status',outcome,'attempt',nullif(attempt,''),'requestedSignal',signal,'submittedSignal',nullif(applied_signal,0),'controlError',nullif(control_error,''),'nativeStatus',nullif(native_status,''),'reportId',nullif(report_id,''),'stoppedInputs',(SELECT count(*) FROM messages WHERE recipient=session_stops.session AND receipt IS NULL AND kind IN ('task','guidance')),'pendingReports',(SELECT count(*) FROM messages WHERE recipient=session_stops.session AND receipt IS NULL AND kind IN ('report','question'))) FROM session_stops WHERE session=" ++ C.q(session) ++ ";"
+  "SELECT json_object('session',session,'stopId',id,'reason',reason,'status',outcome,'attempt',nullif(attempt,''),'requestedSignal',signal,'submittedSignal',nullif(applied_signal,0),'controlError',nullif(control_error,''),'nativeStatus',nullif(native_status,''),'reportId',nullif(report_id,''),'stoppedInputs',(SELECT count(*) FROM messages WHERE recipient=session_stops.session AND receipt IS NULL AND kind IN ('task','guidance','recovery')),'pendingReports',(SELECT count(*) FROM messages WHERE recipient=session_stops.session AND receipt IS NULL AND kind IN ('report','question'))) FROM session_stops WHERE session=" ++ C.q(session) ++ ";"
 
 # A direct owner is unsupported. Refusal leaves the session and inbox unchanged.
 def supported_sql(+session: String) -> String:

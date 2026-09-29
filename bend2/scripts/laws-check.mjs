@@ -131,6 +131,62 @@ for (const { law, file } of rows) {
 // it claims to bind, and it is reported as a failure.
 const MUTATIONS = [
   {
+    name: 'stop-reconcile-forces-every-request',
+    file: join('bend2', 'src', 'coordinator', 'stop.bend'),
+    find: 'SELECT s.signal FROM session_stops',
+    replace: 'SELECT 9 FROM session_stops',
+    law: 'stop_reconcile_selects_the_recorded_signal_and_attempt',
+  },
+  {
+    name: 'stop-reconcile-compares-signal-numbers',
+    file: join('bend2', 'src', 'coordinator', 'stop.bend'),
+    find: 's.applied_signal<>s.signal',
+    replace: 's.applied_signal<s.signal',
+    law: 'stop_reconcile_selects_the_recorded_signal_and_attempt',
+  },
+  {
+    name: 'native-reply-admits-stopped-worker',
+    file: join('bend2', 'src', 'coordinator', 'native-requests.bend'),
+    find: ' AND NOT EXISTS(SELECT 1 FROM session_stops WHERE session=r.worker)',
+    replace: '',
+    law: 'native_reply_sql_checks_parent_method_and_immutable_answer',
+  },
+  {
+    name: 'native-reply-resends-to-stopped-worker',
+    file: join('bend2', 'src', 'coordinator', 'native-requests.bend'),
+    find: ' AND NOT EXISTS(SELECT 1 FROM session_stops WHERE session=native_requests.worker)',
+    replace: '',
+    law: 'native_reply_send_reads_recorded_request',
+  },
+  {
+    name: 'stop-admission-ignores-terminal-state',
+    file: join('bend2', 'src', 'coordinator', 'stop.bend'),
+    find: "'starting','' WHERE NOT EXISTS(SELECT 1 FROM session_stops WHERE session=",
+    replace: "'starting','' WHERE EXISTS(SELECT 1 FROM session_stops WHERE session=",
+    law: 'stop_admission_transaction_preserves_terminal_state',
+  },
+  {
+    name: 'ordinary-stop-submits-force',
+    file: join('bend2', 'src', 'coordinator', 'stop.bend'),
+    find: 'P.ProcessChild.control_signal(directory,other)',
+    replace: 'P.ProcessChild.control_signal(directory,9)',
+    law: 'ordinary_stop_submits_term_to_its_attempt',
+  },
+  {
+    name: 'force-stop-selects-another-attempt',
+    file: join('bend2', 'src', 'coordinator', 'stop.bend'),
+    find: 'e.id=session_stops.attempt',
+    replace: 'e.id<>session_stops.attempt',
+    law: 'force_stop_keeps_the_recorded_live_attempt',
+  },
+  {
+    name: 'stopped-receive-reports-success',
+    file: join('bend2', 'src', 'coordinator', 'receive.bend'),
+    find: 'case True{}: IO.pure(Result<&1,&1,U32 & String,Unit>,Fail{(2,"Session is terminally stopped; queued input will not execute. Read its session and retained inbox.")})',
+    replace: 'case True{}: IO.pure(Result<&1,&1,U32 & String,Unit>,Done{Unit{}})',
+    law: 'stopped_receive_cannot_acquire_an_owner',
+  },
+  {
     name: 'native-reply-parent-predicate-removed',
     file: join('bend2', 'src', 'coordinator', 'native-requests.bend'),
     find: ' AND r.parent=" ++ C.q(parent) ++ " AND r.closed IS NULL',
@@ -280,7 +336,7 @@ const MUTATIONS = [
   {
     name: 'm17-recovery-native-guard-dropped',
     file: join('bend2', 'src', 'coordinator', 'receive.bend'),
-    find: '" AND native=" ++ C.q(native) ++ ";"',
+    find: '" AND native=" ++ C.q(native) ++ " AND NOT " ++ C.stopped_session_sql(C.q(session)) ++ ";"',
     replace: '";"',
     law: 'm17_recovery_input_is_one_guarded_transaction',
   },

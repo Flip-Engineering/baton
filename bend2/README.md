@@ -265,6 +265,15 @@ response shape. Use `native-reply PARENT REQUEST RESPONSE_JSON` or
 `stdin-written` records transport completion; subsequent native output records
 progress. See [native interaction semantics and limits](../docs/bend2/native-interactions.md).
 
+Use `stop SESSION STOP_ID REASON` to end a retained OMP or Codex session. The
+command records a terminal stop, prevents further queued execution and submits
+TERM to its current native process group. `force-stop SESSION STOP_ID` explicitly
+submits KILL to the same still-owned attempt. `session`, `inbox` and `pending`
+retain the work, messages, receipts and stop state. The stop answer distinguishes
+signal submission from actual exit; the observer reports completion to the
+parent. Active direct `turn` execution returns an unsupported-stop refusal.
+See [session stop behavior](../docs/bend2/native-interactions.md#terminal-session-stop).
+
 The earlier `codex-root.mjs` and `omp-root.mjs` entry points remain available for
 existing configurations. Native `receive` supplies the session ownership and
 queued delivery described here. The trial launcher uses that native path.

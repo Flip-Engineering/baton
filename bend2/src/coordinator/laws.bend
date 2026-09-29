@@ -76,6 +76,7 @@
 # idempotency, interface delivery and process lifetime - are outside what a Bend term decides.
 import Base
 import ./receive-laws.bend as ReceiveLaws
+import ./stop-laws.bend as StopLaws
 import ./native-request-laws.bend as NativeRequestLaws
 import ./root.bend as Root
 import ./turn.bend as Turn

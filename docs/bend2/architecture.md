@@ -246,7 +246,9 @@ produce repeated input. Messages awaiting receipts are derived from SQLite.
 The real recovery runs killed the owned coordinator, adapter and native
 processes and resumed every tested session with pending work. They did not
 reboot the machine or the shared resident. There is no automatic host-start
-reconciliation, process discovery, worker cleanup or coordinator stop command.
+reconciliation, process discovery or worker cleanup. `stop` ends a retained OMP
+or Codex session, with explicit `force-stop` for the same owned attempt. Native
+output, receipts and workspace remain available; queued execution is stopped.
 Worktrees survive landing, turn end and process loss. Cleanup remains an
 explicit operator action after determining the work is no longer needed.
 

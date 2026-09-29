@@ -92,10 +92,12 @@ starts for those sessions. Muse and Claude Code workers run under the direct
 input remains readable with `inbox`. The parent sends guidance, requests further
 work and reviews completed work for landing. After the native process exits,
 `receive` releases session ownership and checks for new pending input.
-No coordinator command stops or cancels a running turn; killing a `receive`
-observer leaves the retained process owner, the native process and its work in
-place, so it is not an operator stop procedure. Process failure reports the exit
-and retained workspace to the parent.
+`stop` ends a retained OMP or Codex session and prevents queued execution.
+`force-stop` explicitly signals the same still-owned attempt. Active direct
+`turn` execution returns an unsupported-stop refusal. The retained observer
+records actual exit and delivers a stop report to the parent while preserving
+output, receipts and workspace. Killing only a `receive` observer starts
+observation recovery through the keeper.
 
 A native attachment must demonstrate that a report can start a parent turn while
 the parent is idle. The recipient records acceptance with `ack` after the

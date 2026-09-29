@@ -16,6 +16,7 @@
 # receive tests.
 import Base
 import ./receive.bend as Receive
+import ./stop.bend as Stop
 import ../host/process.bend as P
 import ../host/session-lock.bend as Lock
 import ./turn.bend as Turn
@@ -126,14 +127,17 @@ def m17_refused_conversation_restarts_the_attempt(db,session,id,log,stderr,curso
 
 # M-17: the receive entry's own dispatch. The branch argument is the refusal
 # predicate Turn.refusal(attempt ++ "/native",
-# Bool.not(String.is_empty(native)), outcome), and the stderr path handed to
+# Bool.not(String.is_empty(native)), outcome) while the session remains open.
+# The exit and terminal stop are recorded before dispatch. The stderr path handed to
 # the branches is the derived attempt ++ "/native.stderr". The written-out
 # dispatch below is the whole obligation: reading a different predicate, or
 # passing the undecorated attempt, breaks this proof.
-def observed_dispatch(db: String, session: String, id: String, log: String, cursor: String, +native: String, cwd: String, +attempt: String, handle: U32, lock: Maybe<U32>, +outcome: Turn.Outcome, deliveries: List<Chan(Result<&1,&1,U32 & String,String>)>, again: Unit -> IO(Result<&1,&1,U32 & String,Unit>)) -> IO(Result<&1,&1,U32 & String,Unit>):
+def observed_dispatch(+db: String, +session: String, +id: String, +log: String, cursor: String, +native: String, cwd: String, +attempt: String, handle: U32, lock: Maybe<U32>, +outcome: Turn.Outcome, deliveries: List<Chan(Result<&1,&1,U32 & String,String>)>, again: Unit -> IO(Result<&1,&1,U32 & String,Unit>)) -> IO(Result<&1,&1,U32 & String,Unit>):
   do IO<Result<&1,&1,U32 & String,Unit>>:
+    exited : Unit <- Turn.record_exit(db,session,id,log,outcome)
+    closed : Bool <- Stop.stopped(db,session)
     gone : Bool <- Turn.refusal(attempt ++ "/native", Bool.not(String.is_empty(native)), outcome)
-    Receive.complete_or_restart(db,session,id,log,attempt ++ "/native.stderr",cursor,native,cwd,handle,lock,outcome,deliveries,again,gone)
+    Receive.complete_or_restart(db,session,id,log,attempt ++ "/native.stderr",cursor,native,cwd,handle,lock,outcome,deliveries,again,Bool.and(gone,Bool.not(closed)))
 
 law m17_the_observed_dispatch_is_the_refusal_it_read:
   for +db: String
@@ -226,7 +230,7 @@ def m17_unrecorded_recovery_writes_the_workspace_note(db,session,id,native,cwd):
 def recovery_input_transaction(db: String, +session: String, +id: String, native: String, note: String) -> IO(Unit):
   do IO<Unit>:
     saved : String <- IO.try(String,DB.Sql.query(db,"BEGIN IMMEDIATE;"
-      ++ "INSERT OR IGNORE INTO messages(id,sender,recipient,kind,body) SELECT " ++ C.q(id ++ ":recovery-input") ++ ",id,id,'recovery'," ++ C.q(note) ++ " FROM sessions WHERE id=" ++ C.q(session) ++ " AND native=" ++ C.q(native) ++ ";"
+      ++ "INSERT OR IGNORE INTO messages(id,sender,recipient,kind,body) SELECT " ++ C.q(id ++ ":recovery-input") ++ ",id,id,'recovery'," ++ C.q(note) ++ " FROM sessions WHERE id=" ++ C.q(session) ++ " AND native=" ++ C.q(native) ++ " AND NOT " ++ C.stopped_session_sql(C.q(session)) ++ ";"
       ++ "UPDATE sessions SET native='' WHERE id=" ++ C.q(session) ++ " AND changes()=1;"
       ++ "INSERT OR IGNORE INTO messages(id,sender,recipient,kind,body) SELECT " ++ C.q(id ++ ":recovery") ++ ",id,parent,'report'," ++ C.q("The recorded conversation could not be resumed; pending input will continue in a fresh conversation with the workspace's current state.") ++ " FROM sessions WHERE id=" ++ C.q(session) ++ " AND parent IS NOT NULL AND EXISTS(SELECT 1 FROM messages WHERE id=" ++ C.q(id ++ ":recovery-input") ++ ");COMMIT;"))
     IO.pure(Unit,Unit{})

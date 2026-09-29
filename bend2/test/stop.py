@@ -57,6 +57,8 @@ class Stop(unittest.TestCase):
     accept = receive.Receive.accept
     action = receive.Receive.action
     finish = receive.Receive.finish
+    native_requests = receive.Receive.native_requests
+    native_question = receive.Receive.native_question
 
     def configure(self, parent_endpoint=True):
         self.fixture.write_text('#!' + sys.executable + '\n' + FIXTURE)
@@ -238,6 +240,53 @@ class Stop(unittest.TestCase):
         self.assertEqual(message['body'], 'Who reviews the retained work?')
         self.assertIsNone(message['receipt'])
         self.assertEqual(self.coord('inbox', 'root')[0]['executionDisposition'], 'retained-for-stopped-session')
+
+    def test_stop_refuses_pending_native_answer_while_original_native_is_alive(self):
+        observer, stream, started = self.begin(resist=True)
+        event = {'type': 'extension_ui_request', 'id': 'question-before-stop',
+                 'method': 'input', 'title': 'An answer is pending when the session stops'}
+        request = self.native_question(stream, event)
+        self.eventually(lambda: self.coord('delivery', request['id'])['receipt'],
+                        'parent did not receive the native question')
+        self.assertIsNone(self.native_requests()[0]['closed'])
+        stopped = self.stop()
+        self.assertEqual(stopped['status'], 'requested')
+        self.assertEqual(json.loads(stream.readline()), {'signal': 15})
+        refused = self.coord('native-reply', 'root', request['id'], '{"value":"continue anyway"}', ok=False)
+        self.assertNotEqual(refused.returncode, 0)
+        row = self.native_requests()[0]
+        self.assertEqual(json.loads(row['event']), event)
+        self.assertIsNone(row['reply'])
+        self.assertEqual(row['written'], 0)
+        self.assertTrue(any(p['pid'] == started['pid'] and p['ppid'] == started['ppid']
+                            for p in self.owned_processes()))
+        body = 'Native work ended after the stop request.'
+        self.action(stream, body=body, hold_exit=True, report_input=True)
+        self.assertEqual(json.loads(stream.readline()), {'terminal_written': True, 'input_after_prompt': ''})
+        self.assertEqual(self.coord('session', 'parent')['stop']['status'], 'requested')
+        self.action(stream, exit_fixture=True)
+        self.finish(observer)
+        self.assertEqual(self.completed()['nativeStatus'], 'exit 0')
+        self.eventually(lambda: not self.owned_processes(), 'stopped native question processes remained')
+        self.assertEqual(self.coord('session', 'parent')['native'], started['native'])
+        self.assertEqual(self.coord('delivery', request['id'])['receipt'], 'parent-received')
+        self.assertEqual([turn['reportBody'] for turn in self.coord('turns', 'parent')], [body])
+
+    def test_native_reply_initializes_stop_schema_in_existing_request_database(self):
+        initial = self.coord('native-reply', 'root', 'unknown-request', '{"value":"answer"}', ok=False)
+        self.assertNotEqual(initial.returncode, 0)
+        self.assertTrue(self.rows("SELECT name FROM sqlite_master WHERE name='native_requests'"))
+        self.assertEqual(self.owned_processes(), [])
+        with sqlite3.connect(self.db) as database:
+            database.executescript('DROP TABLE executions; DROP TABLE session_stops;')
+        refused = self.coord('native-reply', 'root', 'unknown-request', '{"value":"answer"}', ok=False)
+        self.assertNotEqual(refused.returncode, 0)
+        self.assertIn('Native reply refused', refused.stderr)
+        self.assertNotIn('no such table', refused.stderr)
+        self.assertEqual({row['name'] for row in self.rows(
+            "SELECT name FROM sqlite_master WHERE name IN ('executions','session_stops')")},
+            {'executions', 'session_stops'})
+        self.assertEqual(self.owned_processes(), [])
 
 
 if __name__ == '__main__':
