@@ -11,7 +11,7 @@
 import { createHash } from 'node:crypto';
 import { existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { ARTIFACT_LIFECYCLE_FIELDS, KNOWLEDGE_EDGE_TYPES, KNOWLEDGE_GROUNDINGS, KNOWLEDGE_NODE_TYPES, providerAttemptDelay, resourceOverlap, validEnvRef, validKnowledgePromotionPolicy, validKnowledgeRecallAssessmentPolicy, validKnowledgeRecallPolicy, validKnowledgeScratchCorrectionPolicy } from './coordination-ledger.mjs';
+import { ARTIFACT_LIFECYCLE_FIELDS, KNOWLEDGE_EDGE_TYPES, KNOWLEDGE_GROUNDINGS, KNOWLEDGE_NODE_TYPES, providerAttemptDelay, resourceOverlap, validEnvRef, validKnowledgePromotionPolicy, validKnowledgeScratchCorrectionPolicy } from './coordination-ledger.mjs';
 import { buildWorkflowRoleCatalog, normalizeWorkflowDefinition, validateWorkflowDefinitionLegacy, validateWorkflowDefinitionV3, workflowAttemptRoute, workflowCatalogRole } from './workflow-definition.mjs';
 import { CANONICAL_ORDER_VERSION, canonicalJson, compareCanonicalStrings, normalizeCanonicalOrderPolicy } from './canonical-order.mjs';
 import { CoordinationIntegrityError, CoordinationRefusal, KNOWLEDGE_CANDIDATE_TRIGGERS, TERMINAL, boundedText, canonical, canonicalBytes, canonicalDigest, clone, digest, freeze, promotionActor, sha256Bytes, validKnowledgeContradictionPolicy, validRunId } from './coordination-internals.mjs';
@@ -26,9 +26,6 @@ import { usdFromNanos, usdToNanos } from './usd.mjs';
 import { validProcessClosedPayload, validProcessStartedPayload, validRecoveryProcessAbsentPayload, validRecoveryProcessReapedPayload } from './process-lifecycle.mjs';
 
 // ── relocated primitives ─────────────────────────────────────────────────────────────────────────
-
-
-
 
 
 const SCRATCH_CORRECTION_ADMIN_EVENTS = new Set(['evidence.mapped', 'web.command_admitted', 'mcp.call_admitted']);
@@ -76,12 +73,8 @@ const REPL_CELL_ID = /^cell:[a-f0-9]{64}$/u;
 const REPL_CELL_MEDIA_TYPE = 'application/vnd.baton.context-value+json';
 
 
-
-
-
 // Short-circuiting JSON-compatible own-data-property walker. It deliberately never reads a
 // property before checking its descriptor and never invokes JSON.stringify on untrusted input.
-
 
 
 /** Decision 3: a size refusal on a cataloged admission lane carries {cap, actual, unit,
@@ -1370,26 +1363,6 @@ export function _validateRunStopCompletion(store, p, event, integrity = false) {
 }
 
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 export function _validateTaskResourceReleasePayload(store, payload, event, integrity = false) {
   const fail = (message) => {
     if (integrity) throw new CoordinationIntegrityError(message, 'task_resource_release_integrity');
@@ -1545,29 +1518,6 @@ export function _validateTaskResourceReleasePayload(store, payload, event, integ
     releaseEvent: event.seq, releasedAt: event.ts,
   });
 }
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 
 
 export function _assertRunAdmissionOpen(store, runId, integrity = false) {
@@ -1798,48 +1748,6 @@ export function _validatePlanBudgetSettlement(store, p, event, integrity = false
 }
 
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 /** R11/F5 — the per-member fan-out admission. A #94-style dynamic wave's members carry DISTINCT
  * runIds, and a binding is keyed `(runId, scope, name)`, so one `shared` admission renders only
  * into the members of that one run. The workflow tier is realized by replicating the source
@@ -1853,14 +1761,6 @@ export function _validatePlanBudgetSettlement(store, p, event, integrity = false
  * the source must be a `shared` manifest. The replication copies that principal verbatim, so a
  * fan-out cannot name an authority it does not already hold, and every member event is attributed
  * to the orchestrator that authored the object. */
-
-
-
-
-
-
-
-
 
 
 export function previewPlanDispatch(store, gate, route, preservedResumeClaim = null) { return store._planDispatchState(gate, route, preservedResumeClaim); }
@@ -2101,9 +2001,6 @@ export function hasSwarmParticipantRun(state, runId) {
 }
 
 
-
-
-
 export function checkScratch(store, resource, envRef) {
   if (!validEnvRef(envRef)) throw new CoordinationRefusal('scratch check requires immutable repoId/treeSha envRef', 'invalid_env_ref');
   const claims = [...store._scratchClaims.values()].filter((claim) => claim.active && claim.envRef.repoId === envRef.repoId && resourceOverlap(claim.resource, resource)).map((claim) => ({
@@ -2114,11 +2011,6 @@ export function checkScratch(store, resource, envRef) {
   }));
   return freeze({ clear: claims.length === 0, claims, facts });
 }
-
-
-
-
-
 
 
 export function _knowledgeFailure(message, code, integrity = false) {
@@ -2473,42 +2365,3 @@ export function _validateContaminationRecord(store, fields, event, integrity = f
     || !Array.isArray(fields.affectedReadEvents) || new Set(fields.affectedReadEvents).size !== fields.affectedReadEvents.length || canonicalDigest(fields.affectedReadEvents) !== canonicalDigest(reads)) store._knowledgeFailure('knowledge contamination record is invalid', 'contamination_integrity', integrity);
 }
 
-export function _validateKnowledgeRecallPayload(store, payload, event, integrity = false) {
-  const fail = (message, code = 'knowledge_recall_integrity') => store._knowledgeFailure(message, code, integrity);
-  const fields = ['schemaVersion', 'readerActor', 'readerWorker', 'taskId', 'runId', 'query', 'policy', 'policyDigest', 'observedSeq', 'observedAt', 'asOf', 'nodeIds', 'validityVersions', 'scores', 'contradictionEdgeIds', 'requestDigest', 'resultProjectionDigest', 'receiptDigest'];
-  if (!payload || Object.keys(payload).sort().join(',') !== fields.sort().join(',') || payload.schemaVersion !== 1 || payload.readerActor !== event.actor || !validKnowledgeRecallPolicy(payload.policy)
-    || payload.policyDigest !== canonicalDigest(payload.policy) || !/^[a-f0-9]{64}$/.test(payload.requestDigest ?? '') || !/^[a-f0-9]{64}$/.test(payload.resultProjectionDigest ?? '')
-    || payload.observedSeq !== payload.query?.observedSeq || payload.asOf !== payload.query?.asOf || payload.observedAt !== store.observationTime(payload.observedSeq)) fail('knowledge recall receipt shape is invalid');
-  const core = Object.fromEntries(Object.entries(payload).filter(([key]) => key !== 'receiptDigest'));
-  if (!/^[a-f0-9]{64}$/.test(payload.receiptDigest ?? '') || payload.receiptDigest !== canonicalDigest(core)) fail('knowledge recall receipt binding is invalid');
-  const expectedRequestDigest = canonicalDigest({ query: payload.query, reader: { readerActor: payload.readerActor, taskId: payload.taskId ?? null, runId: payload.runId ?? null }, policyDigest: payload.policyDigest });
-  if (payload.requestDigest !== expectedRequestDigest) fail('knowledge recall request identity is invalid');
-  const taskId = payload.taskId ?? null; const runId = payload.runId ?? null; const task = taskId === null ? null : store._tasks.get(taskId);
-  const readerWorkerAtReceipt = task?.claimedEvent && task.claimedEvent < event.seq ? task.assignee : null;
-  if ((taskId !== null && (!task || payload.readerWorker !== readerWorkerAtReceipt || runId !== null))
-    || (runId !== null && (!store._knowledgeNodes.has(`run:${runId}`) || taskId !== null || payload.readerWorker !== null))
-    || (taskId === null && runId === null && payload.readerWorker !== null)) fail('knowledge recall reader projection is invalid');
-  let projection; try { projection = store._buildKnowledgeRecall(payload.query, payload.policy); } catch (error) { if (integrity) throw new CoordinationIntegrityError('knowledge recall projection cannot be rebuilt', 'knowledge_recall_integrity'); throw error; }
-  const expectedScores = projection.nodes.map((node) => ({ id: node.id, score: node.score, reasonDigest: node.reasonDigest }));
-  if (canonicalDigest(payload.nodeIds) !== canonicalDigest(projection.nodes.map((node) => node.id))
-    || canonicalDigest(payload.validityVersions) !== canonicalDigest(Object.fromEntries(projection.nodes.map((node) => [node.id, node.validityVersion])))
-    || canonicalDigest(payload.scores) !== canonicalDigest(expectedScores) || canonicalDigest(payload.contradictionEdgeIds) !== canonicalDigest(projection.contradictions.map((edge) => edge.edgeId))
-    || payload.resultProjectionDigest !== projection.projectionDigest) fail('knowledge recall ranked projection diverged');
-  return projection;
-}
-
-export function _validateKnowledgeRecallAssessmentPayload(store, payload, event, integrity = false) {
-  const fail = (message, code = 'knowledge_recall_assessment_integrity') => store._knowledgeFailure(message, code, integrity);
-  const fields = ['schemaVersion', 'repoId', 'observedSeq', 'observedAt', 'policy', 'policyDigest', 'requestDigest', 'assessments', 'causationClaimed', 'projectionDigest', 'receiptDigest'];
-  if (!payload || Object.keys(payload).sort().join(',') !== fields.sort().join(',') || payload.schemaVersion !== 1 || !validKnowledgeRecallAssessmentPolicy(payload.policy) || payload.repoId !== payload.policy.repoId || payload.policyDigest !== canonicalDigest(payload.policy)
-    || payload.observedAt !== store.observationTime(payload.observedSeq) || payload.causationClaimed !== false || !Array.isArray(payload.assessments) || payload.assessments.length === 0) fail('knowledge recall assessment batch shape is invalid');
-  let rebuilt; try { rebuilt = store._buildKnowledgeRecallAssessment(payload.repoId, payload.observedSeq, payload.policy, event.actor, event.seq); } catch { fail('knowledge recall assessment batch cannot be rebuilt'); }
-  const projection = { schemaVersion: 1, repoId: payload.repoId, observedSeq: payload.observedSeq, observedAt: payload.observedAt, policyDigest: payload.policyDigest, requestDigest: payload.requestDigest, assessments: payload.assessments, causationClaimed: false };
-  if (payload.requestDigest !== rebuilt.requestDigest || payload.projectionDigest !== canonicalDigest(projection) || canonicalDigest(payload.assessments) !== canonicalDigest(rebuilt.assessments)) fail('knowledge recall assessment batch diverged');
-  for (const row of payload.assessments) {
-    const { assessmentDigest, ...core } = row ?? {}; if (!/^[a-f0-9]{64}$/.test(assessmentDigest ?? '') || assessmentDigest !== canonicalDigest(core)) fail('knowledge recall assessment row binding is invalid');
-  }
-  const { receiptDigest, ...receiptCore } = payload;
-  if (!/^[a-f0-9]{64}$/.test(receiptDigest ?? '') || receiptDigest !== canonicalDigest(receiptCore)) fail('knowledge recall assessment batch binding is invalid');
-  return freeze({ ...clone(rebuilt), eventSeq: event.seq, receiptDigest: payload.receiptDigest });
-}

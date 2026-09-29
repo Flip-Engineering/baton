@@ -72,7 +72,7 @@ export const PROJECTION_CHECKPOINT_FIELDS = Object.freeze([
   '_reuseProviderContributions', '_reuseProviderCoordinateContributions',
   '_reuseProviderGuards', '_evidence', '_scratchFacts', '_scratchClaims', '_scratchReads',
   '_knowledgeNodes', '_knowledgeEdges', '_knowledgeNodeHistory', '_knowledgeEdgeHistory',
-  '_knowledgeReads', '_knowledgeRecallAssessments', '_contamination', '_webCommands',
+  '_knowledgeReads', '_contamination', '_webCommands',
   '_webCommandScopes', '_mcpCalls', '_mcpCallScopes', '_fleetDrains', '_runStops',
   '_runStopByTarget',
   '_runOrchestratorLeases', '_runLineages',
@@ -637,45 +637,6 @@ export function _cachePreview(store, key, value, previewPolicy) {
     store._previewCache.delete(oldest);
   }
   return value;
-}
-
-/** Moved from `CoordinationStore._recallAssessmentCandidate` (issue #259 slice 1). State: the store, passed explicitly. */
-export function _recallAssessmentCandidate(store, receipt, observedSeq) {
-  if (!receipt || receipt.kind !== 'knowledge.recall' || receipt.seq > observedSeq || typeof receipt.payload?.taskId !== 'string' || receipt.payload.runId !== null || typeof receipt.payload.readerWorker !== 'string') return null;
-  const task = store._tasks.get(receipt.payload.taskId); const terminal = Number.isSafeInteger(task?.terminalEvent) ? store._events[task.terminalEvent - 1] : null;
-  if (!task || typeof task.runId !== 'string' || task.runId.length === 0 || !terminal || terminal.seq > observedSeq || terminal.seq <= receipt.seq || terminal.kind !== 'task.transitioned' || terminal.payload?.id !== task.id || terminal.payload?.to !== task.status) return null;
-  const mappedSeq = terminal.payload?.evidence?.coordinationSeq; const mapped = Number.isSafeInteger(mappedSeq) ? store._events[mappedSeq - 1] : null;
-  if (!mapped || mapped.seq <= receipt.seq || mapped.seq >= terminal.seq || mapped.kind !== 'evidence.mapped' || mapped.payload?.kind !== 'verify.reverified'
-    || canonicalDigest({ ...clone(mapped.payload), coordinationSeq: mapped.seq }) !== canonicalDigest(terminal.payload.evidence)) return null;
-  const source = store._operationalRead?.(mapped.payload.worker, mapped.payload.workerSeq);
-  if (!source || digest(source) !== mapped.payload.digest || source.kind !== 'verify.reverified' || source.worker !== receipt.payload.readerWorker || mapped.payload.worker !== receipt.payload.readerWorker
-    || source.taskId !== task.id || source.runId !== task.runId || source.harness !== task.harnessResolved || source.modelResolved !== task.modelResolved || source.effortResolved !== task.effortResolved || source.routeKey !== task.routeKey) return null;
-  const outcome = task.status === 'completed' && source.payload?.accept === true
-    ? 'verified_pass_after_recall'
-    : task.status === 'failed' && source.payload?.accept === false
-      ? 'verified_fail_after_recall'
-      : null;
-  if (outcome === null) return null;
-  const exposure = {
-    nodeIds: clone(receipt.payload.nodeIds), validityVersions: clone(receipt.payload.validityVersions), scores: clone(receipt.payload.scores), contradictionEdgeIds: clone(receipt.payload.contradictionEdgeIds),
-    queryDigest: receipt.payload.query ? canonicalDigest(receipt.payload.query) : null, requestDigest: receipt.payload.requestDigest, resultProjectionDigest: receipt.payload.resultProjectionDigest,
-  };
-  const core = {
-    schemaVersion: 1, recallEventSeq: receipt.seq, recallReceiptDigest: receipt.payload.receiptDigest,
-    readerActor: receipt.payload.readerActor, readerWorker: receipt.payload.readerWorker, taskId: task.id, runId: task.runId,
-    historicalExposureDigest: canonicalDigest(exposure), ...exposure,
-    verificationEventSeq: mapped.seq, verificationDigest: mapped.payload.digest, terminalEventSeq: terminal.seq, terminalStatus: task.status,
-    routeDigest: canonicalDigest({ harnessResolved: task.harnessResolved, modelResolved: task.modelResolved, effortResolved: task.effortResolved, routeKey: task.routeKey }),
-    outcome, causationClaimed: false,
-  };
-  const assessmentId = `recall-assessment:${canonicalDigest({ repoId: receipt.payload.policy.repoId, recallEventSeq: receipt.seq, verificationEventSeq: mapped.seq, terminalEventSeq: terminal.seq, outcome })}`;
-  const bound = { assessmentId, ...core }; return freeze({ ...bound, assessmentDigest: canonicalDigest(bound) });
-}
-
-/** Moved from `CoordinationStore.recallAssessments` (issue #259 slice 1). State: the store, passed explicitly. */
-export function recallAssessments(store, { nodeId = null, taskId = null, observedSeq = store._events.length } = {}) {
-  if ((nodeId !== null && typeof nodeId !== 'string') || (taskId !== null && typeof taskId !== 'string') || !Number.isSafeInteger(observedSeq) || observedSeq < 0 || observedSeq > store._events.length) throw new CoordinationRefusal('knowledge recall assessment query is invalid', 'causal_assessment_invalid');
-  return [...store._knowledgeRecallAssessments.values()].filter((row) => row.eventSeq <= observedSeq && (nodeId === null || row.nodeIds.includes(nodeId)) && (taskId === null || row.taskId === taskId)).sort((a, b) => a.recallEventSeq - b.recallEventSeq).map(clone);
 }
 
 /** Moved from `CoordinationStore.KNOWLEDGE_CANDIDATE_TRIGGERS` (issue #259 slice 1). Reads no store state. */
