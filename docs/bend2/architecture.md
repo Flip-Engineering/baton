@@ -81,9 +81,8 @@ The database, executable paths and root endpoint are trusted local inputs.
 `recruit` takes an explicit parent, harness, model, effort, repository, branch,
 worktree path and base. It creates the branch and worktree, resolves the base to
 a commit, then records the worker. A matching repeat returns the existing worker.
-`worker` registers an existing workspace; it can retain a checkout after a
-registration failure. `bind` records observed native identity and route;
-`connect` updates a native connection while retaining parentage and requested
+`bind` records observed native identity and route; `connect` updates a native
+connection while retaining parentage and requested
 route.
 
 A separate `turn` command takes the worker, unique turn ID, native executable,
@@ -112,9 +111,9 @@ Start failures, output-observation failures and exits without a native result
 also produce parent reports. The parent decides the next task; a turn ending
 does not remove the worker or workspace.
 
-Workers can use `ask` and `report`, including file variants, to address their
-parent. `message` and `message-file` route other inputs. During an OMP turn the
-supervisor sends pending guidance as native `steer` frames on response, message
+Workers use `ask` or `ask-file` for parent questions and `report` for explicit
+parent reports. `message` and `message-file` route other inputs. During an OMP turn
+the supervisor sends pending guidance as native `steer` frames on response, message
 completion and tool events. A successful native steer response records its
 receipt. Guidance during a silent tool operation waits for the next relevant
 native event. Other worker harnesses currently receive further instructions

@@ -144,8 +144,9 @@ Land a reviewed worker onto your lead branch using the trial check adapter:
 
 Pass all selected test paths separated by spaces in one argument, including
 existing behavior tests for changed production code. The adapter compares typed
-verdicts on both trees; new failures and unjudged checks block. Resolve the named
-cause of a refused landing. For a conflict, guide the worker to rebase onto the
+verdicts on both trees. New failures and unjudged candidate runs block; an
+unjudged target blocks when the candidate fails. Resolve the named cause of a
+refused landing. For a conflict, guide the worker to rebase onto the
 current lead branch and review the resolution. Ask the root to choose a check
 when the change has no applicable test. Keep the shared check adapter intact.
 
