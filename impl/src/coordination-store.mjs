@@ -865,32 +865,6 @@ export class CoordinationStore {
 
   _validateReuseTtlPayload(p, event, integrity = false) { return coordinationAdmission._validateReuseTtlPayload(this, p, event, integrity); }
 
-  _providerCoordinateKey(repoId, coordinate) { return coordinationLedger._providerCoordinateKey(repoId, coordinate); }
-  _providerSourceKey(repoId, providerId, sourceEpoch) { return coordinationLedger._providerSourceKey(repoId, providerId, sourceEpoch); }
-
-  _providerPendingFor(repoId, coordinate) { return coordinationLedger._providerPendingFor(this, repoId, coordinate); }
-  _providerAdverseCeilings(repoId) {
-    return coordinationInternals._providerAdverseCeilings(this._reusePolicyTransitions, repoId);
-  }
-
-  _providerAdverseTargets(repoId, coordinate, ceilings = this._providerAdverseCeilings(repoId)) { return coordinationLedger._providerAdverseTargets(this, repoId, coordinate, ceilings); }
-  _providerContribution(row, processing, policy) {
-    return coordinationInternals._providerContribution(row, processing, policy);
-  }
-
-  _providerAggregate(repoId, coordinate, contribution, policy) { return coordinationLedger._providerAggregate(this, repoId, coordinate, contribution, policy); }
-
-  _providerAggregateTarget(repoId, coordinate) { return coordinationLedger._providerAggregateTarget(this, repoId, coordinate); }
-
-  _validateProviderDeliveryPayload(p, event, integrity = false) { return coordinationAdmission._validateProviderDeliveryPayload(this, p, event, integrity); }
-
-  _validateProviderReconciliationPayload(p, event, integrity = false) { return coordinationAdmission._validateProviderReconciliationPayload(this, p, event, integrity); }
-
-  _validateProviderDeferralPayload(p, event, integrity = false) { return coordinationAdmission._validateProviderDeferralPayload(this, p, event, integrity); }
-
-  _validateProviderGreenPayload(p, event, integrity = false) { return coordinationAdmission._validateProviderGreenPayload(this, p, event, integrity); }
-
-  _validateProviderAdversePayload(p, event, integrity = false) { return coordinationAdmission._validateProviderAdversePayload(this, p, event, integrity); }
   _setKnowledgeNode(event, id, value) {
     return coordinationInternals._setKnowledgeNode(this, event, id, value);
   }
@@ -1271,30 +1245,6 @@ export class CoordinationStore {
   reusePolicyState(repoId) { return coordinationLedger.reusePolicyState(this._reusePolicyHeads, repoId); }
   activateReusePolicy(fields, auth) { return coordinationLedger.activateReusePolicy(this, fields, auth); }
 
-  providerReceipt(id) { return coordinationLedger.providerReceipt(this._providerReceipts, id); }
-  providerProcessing(id) {
-    return coordinationInternals.providerProcessing(this._providerProcessing, id);
-  }
-  providerSourceHealth(repoId, providerId, sourceEpoch) { return coordinationLedger.providerSourceHealth(this, repoId, providerId, sourceEpoch); }
-  providerAttemptPolicy() { return coordinationLedger.providerAttemptPolicy(this._providerAttemptPolicy); }
-  pendingProviderReconciliation(repoId, coordinate) { return coordinationLedger.pendingProviderReconciliation(this, repoId, coordinate); }
-  dueProviderProcessing(repoId, at) {
-    return coordinationInternals.dueProviderProcessing(this, repoId, at);
-  }
-
-  recordProviderProcessingDeferral(fields, auth) { return coordinationLedger.recordProviderProcessingDeferral(this, fields, auth); }
-
-  readProviderStatus(repoId, request, ceilings) { return coordinationLedger.readProviderStatus(this, repoId, request, ceilings); }
-
-  recordProviderSourceReconciliation(fields, auth) { return coordinationLedger.recordProviderSourceReconciliation(this, fields, auth); }
-
-  providerProcessingAdmission(key, requestDigest) { return coordinationAdmission.providerProcessingAdmission(this, key, requestDigest); }
-
-  recordProviderGreenCompletion(fields, auth) { return coordinationLedger.recordProviderGreenCompletion(this, fields, auth); }
-
-  recordProviderAdverseCompletion(fields, auth) { return coordinationLedger.recordProviderAdverseCompletion(this, fields, auth); }
-
-  recordProviderDelivery(fields, auth) { return coordinationLedger.recordProviderDelivery(this, fields, auth); }
   reuseDecision(id) {
     return coordinationInternals.reuseDecision(this._reuseDecisions, id);
   }
@@ -1305,8 +1255,6 @@ export class CoordinationStore {
   reuseRiskGuard(coordinate) {
     return coordinationInternals.reuseRiskGuard(this._reuseRiskGuards, coordinate);
   }
-  reuseProviderGuard(repoId, coordinate) { return coordinationLedger.reuseProviderGuard(this, repoId, coordinate); }
-  reuseAdverseState(repoId, coordinate) { return coordinationLedger.reuseAdverseState(this, repoId, coordinate); }
   reuseDecisionAdmission(key, requestDigest) { return coordinationAdmission.reuseDecisionAdmission(this, key, requestDigest); }
 
   reuseRiskAdmission(key, requestDigest) { return coordinationAdmission.reuseRiskAdmission(this, key, requestDigest); }

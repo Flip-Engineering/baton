@@ -40,7 +40,6 @@ function rawServer() {
       _story: story,
       list() { return [{ workerId: 'worker:a', state: 'working' }]; },
       capabilityCards() { return []; },
-      readProviderStatus() { return { providers: [] }; },
     },
     async handle(message) {
       if (message.method === 'initialize') return { jsonrpc: '2.0', id: message.id, result: { instructions: 'baton', capabilities: { tools: {} }, serverInfo: { name: 'baton', version: '0.1.0' } } };

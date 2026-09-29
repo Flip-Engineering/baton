@@ -369,27 +369,9 @@ export function replayProviderGovernanceRoute(event, vendor, model, effort) {
   };
 }
 
-export function providerProcessingFailureCode(error) {
-  if (['provider_index_changed', 'reuse_policy_reconciliation_required', 'reuse_evidence_diverged'].includes(error?.code)) return error.code;
-  if (typeof error?.code === 'string' && error.code.startsWith('capability_')) return 'capability_refused';
-  return 'provider_processing_failed';
-}
-
 export function typedTerminalCode(value, fallback) {
   return typeof value === 'string' && value.length > 0 && value.length <= 256
     && /^[a-z0-9][a-z0-9._-]*$/i.test(value) ? value : fallback;
-}
-
-export function throwIfProviderCancelled(signal) {
-  if (signal?.aborted) throw Object.assign(new Error('provider processing cancelled'), { code: 'cancelled' });
-}
-
-export function officialCoordinateMatches(identity, coordinate) {
-  if (!identity || !coordinate) return false;
-  const fields = Object.keys(identity).sort().join(',');
-  if (!['ecosystem,package,version', 'ecosystem,package,system,version'].includes(fields)) return false;
-  return identity.ecosystem === coordinate.ecosystem && identity.package === coordinate.package && identity.version === coordinate.version
-    && (!Object.hasOwn(identity, 'system') || (coordinate.ecosystem === 'npm' && identity.system === 'NPM'));
 }
 
 export function decisionRef(ref, kind, mediaType) {

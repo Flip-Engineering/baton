@@ -136,7 +136,7 @@ test('M4B-7: the advanced and authoring surfaces advertise supported commands', 
   assert.deepEqual(fleetTools, [
     'fleet_spawn', 'fleet_goal_define', 'fleet_plan_propose', 'fleet_plan_approve',
     'fleet_goal_plan_status', 'fleet_send', 'fleet_wait', 'fleet_respond', 'fleet_interrupt', 'fleet_result',
-    'fleet_list', 'fleet_capabilities', 'fleet_provider_status', 'fleet_capability_invoke',
+    'fleet_list', 'fleet_capabilities', 'fleet_capability_invoke',
     'fleet_kill', 'fleet_drain',
   ]);
 

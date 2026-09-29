@@ -267,11 +267,6 @@ export function validKnowledgeScratchCorrectionPolicy(policy) {
     && Number.isSafeInteger(policy.minScratchReaders) && policy.minScratchReaders > 0;
 }
 
-export function providerAttemptDelay(policy, windowAttempt) {
-  const exponent = Math.min(windowAttempt - 1, Math.ceil(Math.log2(policy.maxBackoffMs / policy.initialBackoffMs)));
-  return Math.min(policy.maxBackoffMs, policy.initialBackoffMs * (2 ** exponent));
-}
-
 export function validEnvRef(envRef) { return envRef && typeof envRef.repoId === 'string' && envRef.repoId.length > 0 && typeof envRef.treeSha === 'string' && /^[A-Fa-f0-9]{4,128}$/.test(envRef.treeSha); }
 
 function globRegex(pattern) {
@@ -883,7 +878,6 @@ export function _resetProjection(store) {
   store._representations = new Map(); store._representationRequests = new Map();
   store._goals = new Map(); store._goalHeads = new Map(); store._plans = new Map(); store._planHeads = new Map();
   store._planApprovals = new Map(); store._planDispatches = new Map(); store._planTaskLinks = new Map(); store._planBudgetSettlements = new Map();
-  store._reuseProviderContributions = new Map(); store._reuseProviderCoordinateContributions = new Map(); store._reuseProviderGuards = new Map();
   store._evidence = new Map(); store._scratchFacts = new Map(); store._scratchClaims = new Map(); store._scratchReads = [];
   store._knowledgeNodes = new Map(); store._knowledgeEdges = new Map(); store._knowledgeNodeHistory = new Map(); store._knowledgeEdgeHistory = new Map(); store._knowledgeReads = []; store._knowledgeRecallAssessments = new Map(); store._contamination = [];
   store._webCommands = new Map(); store._webCommandScopes = new Map(); store._mcpCalls = new Map(); store._mcpCallScopes = new Map();
@@ -892,8 +886,6 @@ export function _resetProjection(store) {
   store._runOrchestratorLeases = new Map(); store._runLineages = new Map(); store._runLineageEventSeqs = new Map(); store._runChildrenByParent = new Map();
   store._recoveryDispatches = new Map(); store._taskTopologies = new Map();
   store._recoveryAttemptsById = new Map(); store._recoveryAttemptHeads = new Map();
-  store._providerReceipts = new Map(); store._providerDeliveryIds = new Map(); store._providerProcessing = new Map(); store._providerPending = new Map();
-  store._providerSequences = new Map(); store._providerSourceHealth = new Map();
   store._taskResourceReleases = new Map();
   store._spills = new Map();
   // D9 (epic #103): replay-derived wave.closed campaign-state records by waveId. Rebuilt by
@@ -1562,14 +1554,6 @@ export function _reusePolicyTargets(store, repoId, policyHash, ceilings = {}) {
     guardTargets.push({ coordinateKey, coordinate: guard.coordinate, guardDigest: guard.guardDigest, priorPolicyHash: guard.policyHash, expectedPolicyValidityVersion: guard.policyValidityVersion ?? 1, riskFindingId: finding && !finding.validTo ? riskFindingId : null, affectedRiskFindingReadEvents: finding && !finding.validTo ? readsFor(riskFindingId) : [] });
     if (guardTargets.length > maxGuards || observedPolicyHashes.size > maxHashes) { derivationOverflow = true; break; }
   }
-  for (const [coordinateKey, guard] of store._reuseProviderGuards) {
-    if (!examine()) break;
-    if (guard.repoId === repoId && /^[a-f0-9]{64}$/.test(guard.policyHash ?? '')) observedPolicyHashes.add(guard.policyHash);
-    if (guard.repoId !== repoId || (guard.policyHash === policyHash && guard.policyStale !== true && guard.requiredPolicyHash == null)) continue;
-    const riskFindingId = `finding:reuse-provider-aggregate:${guard.guardDigest}`; const finding = store._knowledgeNodes.get(riskFindingId);
-    guardTargets.push({ guardKind: 'provider', coordinateKey, coordinate: guard.coordinate, guardDigest: guard.guardDigest, priorPolicyHash: guard.policyHash, expectedPolicyValidityVersion: guard.policyValidityVersion ?? 1, riskFindingId: finding && !finding.validTo ? riskFindingId : null, affectedRiskFindingReadEvents: finding && !finding.validTo ? readsFor(riskFindingId) : [] });
-    if (guardTargets.length > maxGuards || observedPolicyHashes.size > maxHashes) { derivationOverflow = true; break; }
-  }
   const priorConstraint = priorHead?.constraintId ? store._knowledgeNodes.get(priorHead.constraintId) : null;
   const priorConstraintTarget = priorConstraint && !priorConstraint.validTo ? { nodeId: priorConstraint.id, expectedValidityVersion: priorConstraint.validityVersion, affectedReadEvents: readsFor(priorConstraint.id) } : null;
   return {
@@ -1600,49 +1584,6 @@ export function _reuseRiskTargets(store, coordinate, snapshot) {
     });
   }
   return targets.sort((a, b) => compareCanonicalStrings(a.decisionId, b.decisionId));
-}
-
-export function _providerCoordinateKey(repoId, coordinate) { return canonicalDigest({ repoId, coordinate }); }
-
-export function _providerSourceKey(repoId, providerId, sourceEpoch) { return canonicalDigest({ repoId, providerId, sourceEpoch }); }
-
-export function _providerPendingFor(store, repoId, coordinate) {
-  const ids = store._providerPending.get(store._providerCoordinateKey(repoId, coordinate)) ?? new Set();
-  return [...ids].map((id) => store._providerProcessing.get(id)).filter(Boolean).sort((a, b) => compareCanonicalStrings(a.id, b.id));
-}
-
-export function _providerAdverseTargets(store, repoId, coordinate, ceilings = store._providerAdverseCeilings(repoId)) {
-  const targets = []; let examinedStateRows = 0; let affectedReads = 0; let derivationOverflow = false;
-  const examine = (count = 1) => { examinedStateRows += count; if (examinedStateRows > ceilings.maxStateRows) derivationOverflow = true; return !derivationOverflow; };
-  const readsFor = (nodeId) => {
-    const rows = [];
-    for (const read of store._knowledgeReads) { if (!examine()) break; if (read.nodeIds.includes(nodeId)) rows.push(read.eventSeq); }
-    affectedReads += rows.length; if (affectedReads > ceilings.maxAffectedReads) derivationOverflow = true; return rows;
-  };
-  for (const decision of store._reuseDecisions.values()) {
-    if (!examine()) break;
-    if (decision.envRef?.repoId !== repoId || canonicalDigest(decision.coordinate) !== canonicalDigest(coordinate)) continue;
-    const node = store._knowledgeNodes.get(decision.nodeId); if (!node || node.validTo) continue;
-    const findingId = `finding:dependency-dossier:${decision.dossierRef.digest}`; const finding = store._knowledgeNodes.get(findingId);
-    targets.push({ decisionId: decision.id, nodeId: decision.nodeId, subjectDigest: decision.subjectDigest, expectedValidityVersion: node.validityVersion, dossierFindingId: finding && !finding.validTo ? findingId : null, affectedDecisionReadEvents: readsFor(decision.nodeId), affectedFindingReadEvents: finding && !finding.validTo ? readsFor(findingId) : [] });
-    if (targets.length > ceilings.maxDecisionTargets || derivationOverflow) { derivationOverflow = true; break; }
-  }
-  return { targets: targets.sort((a, b) => compareCanonicalStrings(a.decisionId, b.decisionId)), examinedStateRows, affectedReads, derivationOverflow };
-}
-
-export function _providerAggregate(store, repoId, coordinate, contribution, policy) {
-  const coordinateKey = store._providerCoordinateKey(repoId, coordinate); const ids = new Set(store._reuseProviderCoordinateContributions.get(coordinateKey) ?? []); ids.add(contribution.id);
-  const contributions = [...ids].map((id) => id === contribution.id ? contribution : store._reuseProviderContributions.get(id)).filter(Boolean).sort((a, b) => compareCanonicalStrings(a.id, b.id));
-  const prior = store._reuseProviderGuards.get(coordinateKey); const asOf = contributions.map((item) => item.asOf).sort().at(-1);
-  const core = { repoId, coordinate: clone(coordinate), blocked: true, contributionIds: contributions.map((item) => item.id), advisoryIds: [...new Set(contributions.flatMap((item) => item.advisoryIds))].sort(), maliciousAdvisoryIds: [...new Set(contributions.flatMap((item) => item.maliciousAdvisoryIds))].sort(), asOf, policyHash: policy.hash, policyVersion: policy.version, policyValidityVersion: (prior?.policyValidityVersion ?? 0) + 1, policyStale: false, requiredPolicyHash: null };
-  return freeze({ ...core, guardDigest: canonicalDigest(core) });
-}
-
-export function _providerAggregateTarget(store, repoId, coordinate) {
-  const guard = store._reuseProviderGuards.get(store._providerCoordinateKey(repoId, coordinate)); if (!guard) return null;
-  const nodeId = `finding:reuse-provider-aggregate:${guard.guardDigest}`; const node = store._knowledgeNodes.get(nodeId);
-  if (!node || node.validTo) return null;
-  return { nodeId, expectedValidityVersion: node.validityVersion, affectedReadEvents: store._knowledgeReads.filter((read) => read.nodeIds.includes(nodeId)).map((read) => read.eventSeq) };
 }
 
 export function _knowledgeVersionsAt(history, observedSeq, observedAt) {
@@ -2181,11 +2122,7 @@ export function _apply(store, event) {
       const edgeId = `knowledge-edge:affects:${p.constraintId}:${target.nodeId}`; store._setKnowledgeEdge(event, edgeId, freeze({ id: edgeId, type: 'Affects', from: p.constraintId, to: target.nodeId, evidence: [{ coordinationSeq: event.seq }], observedSeq: event.seq, observedAt: event.ts, eventTimeSeq: event.seq, eventTime: event.ts, validFrom: event.ts, validTo: null, validityVersion: 1 }));
     }
     for (const target of p.guardTargets) {
-      if (target.guardKind === 'provider') {
-        const guard = store._reuseProviderGuards.get(target.coordinateKey); store._reuseProviderGuards.set(target.coordinateKey, freeze({ ...clone(guard), policyStale: true, requiredPolicyHash: p.policy.hash, policyValidTo: event.ts, policyValidityVersion: (guard.policyValidityVersion ?? 1) + 1, policyInvalidatedBy: event.seq }));
-      } else {
-        const guard = store._reuseRiskGuards.get(target.coordinateKey); store._reuseRiskGuards.set(target.coordinateKey, freeze({ ...clone(guard), policyStale: true, inheritedAdverse: true, inheritedFromGuardDigest: guard.inheritedFromGuardDigest ?? guard.guardDigest, inheritedFactDigest: guard.inheritedFactDigest ?? guard.factDigest, inheritedPolicyHash: guard.inheritedPolicyHash ?? guard.policyHash, inheritedAdvisoryIds: clone(guard.inheritedAdvisoryIds ?? guard.advisoryIds), inheritedMaliciousAdvisoryIds: clone(guard.inheritedMaliciousAdvisoryIds ?? guard.maliciousAdvisoryIds), inheritedEventSeq: guard.inheritedEventSeq ?? guard.eventSeq, requiredPolicyHash: p.policy.hash, policyValidTo: event.ts, policyValidityVersion: (guard.policyValidityVersion ?? 1) + 1, policyInvalidatedBy: event.seq }));
-      }
+      const guard = store._reuseRiskGuards.get(target.coordinateKey); store._reuseRiskGuards.set(target.coordinateKey, freeze({ ...clone(guard), policyStale: true, inheritedAdverse: true, inheritedFromGuardDigest: guard.inheritedFromGuardDigest ?? guard.guardDigest, inheritedFactDigest: guard.inheritedFactDigest ?? guard.factDigest, inheritedPolicyHash: guard.inheritedPolicyHash ?? guard.policyHash, inheritedAdvisoryIds: clone(guard.inheritedAdvisoryIds ?? guard.advisoryIds), inheritedMaliciousAdvisoryIds: clone(guard.inheritedMaliciousAdvisoryIds ?? guard.maliciousAdvisoryIds), inheritedEventSeq: guard.inheritedEventSeq ?? guard.eventSeq, requiredPolicyHash: p.policy.hash, policyValidTo: event.ts, policyValidityVersion: (guard.policyValidityVersion ?? 1) + 1, policyInvalidatedBy: event.seq }));
       if (target.riskFindingId) {
         const node = store._knowledgeNodes.get(target.riskFindingId); store._setKnowledgeNode(event, target.riskFindingId, freeze({ ...clone(node), validTo: event.ts, validityVersion: node.validityVersion + 1, invalidatedBy: event.seq }));
         store._contamination.push(freeze({ nodeId: target.riskFindingId, invalidationEvent: event.seq, affectedReadEvents: clone(target.affectedRiskFindingReadEvents), eventSeq: event.seq, ts: event.ts }));
@@ -3418,7 +3355,7 @@ export function _scratchpadSnapshot(store) {
   });
 }
 
-export function snapshot(store) { return freeze({ tasks: [...store._tasks.values()].map(clone), ...(store._runStops.size > 0 ? { runStops: [...store._runStops.values()].map(clone) } : {}), ...(store._runLineagePolicy ? { runAuthority: store.runAuthoritySnapshot() } : {}), artifacts: [...store._artifacts.values()].map(clone), ...(store._recoveryAttemptsById.size > 0 ? { recoveryAttempts: [...store._recoveryAttemptsById.values()].map(clone) } : {}), ...(store._representationPolicy || store._representations.size > 0 ? { representations: [...store._representations.values()].map(clone) } : {}), ...(store._goalPlanPolicy || store._goals.size > 0 ? { goalPlan: { goals: [...store._goals.values()].map(clone), plans: [...store._plans.values()].map(clone), approvals: [...store._planApprovals.values()].map(clone), dispatches: [...store._planDispatches.values()].map(clone), budgetSettlements: [...store._planBudgetSettlements.values()].map(clone) } } : {}), ...(store._routePolicy ? { routeLearning: { policy: clone(store._routePolicy), observations: store.routeObservations() } } : {}), reuseDecisions: [...store._reuseDecisions.values()].map(clone), reuseRiskGuards: [...store._reuseRiskGuards.values()].map(clone), ...(store._reuseProviderGuards.size > 0 || store._reuseProviderContributions.size > 0 ? { reuseProviderGuards: [...store._reuseProviderGuards.values()].map(clone), reuseProviderContributions: [...store._reuseProviderContributions.values()].map(clone) } : {}), reusePolicy: { heads: [...store._reusePolicyHeads.values()].map(clone), transitions: store._reusePolicyTransitions.map(clone) }, ...(store._advisoryFeedCards.size > 0 || store._providerReceipts.size > 0 ? { provider: { receiptCount: store._providerReceipts.size, processingCount: store._providerProcessing.size, pendingCoordinateCount: store._providerPending.size } } : {}), evidence: [...store._evidence.values()].map(clone), scratch: { facts: [...store._scratchFacts.values()].map(clone), claims: [...store._scratchClaims.values()].map(clone), reads: store._scratchReads.map(clone) }, scratchpad: store._scratchpadSnapshot(), knowledge: { doubts: doubtsProjection(store), nodes: [...store._knowledgeNodes.values()].map(clone), edges: [...store._knowledgeEdges.values()].map(clone), reads: store._knowledgeReads.map(clone), ...(store._knowledgeRecallAssessments.size > 0 ? { assessments: [...store._knowledgeRecallAssessments.values()].map(clone) } : {}), contamination: store._contamination.map(clone) }, ...(store._swarms.size > 0 ? { swarms: swarmSnapshot(store._swarms).swarms } : {}), lastSeq: store._events.length }); }
+export function snapshot(store) { return freeze({ tasks: [...store._tasks.values()].map(clone), ...(store._runStops.size > 0 ? { runStops: [...store._runStops.values()].map(clone) } : {}), ...(store._runLineagePolicy ? { runAuthority: store.runAuthoritySnapshot() } : {}), artifacts: [...store._artifacts.values()].map(clone), ...(store._recoveryAttemptsById.size > 0 ? { recoveryAttempts: [...store._recoveryAttemptsById.values()].map(clone) } : {}), ...(store._representationPolicy || store._representations.size > 0 ? { representations: [...store._representations.values()].map(clone) } : {}), ...(store._goalPlanPolicy || store._goals.size > 0 ? { goalPlan: { goals: [...store._goals.values()].map(clone), plans: [...store._plans.values()].map(clone), approvals: [...store._planApprovals.values()].map(clone), dispatches: [...store._planDispatches.values()].map(clone), budgetSettlements: [...store._planBudgetSettlements.values()].map(clone) } } : {}), ...(store._routePolicy ? { routeLearning: { policy: clone(store._routePolicy), observations: store.routeObservations() } } : {}), reuseDecisions: [...store._reuseDecisions.values()].map(clone), reuseRiskGuards: [...store._reuseRiskGuards.values()].map(clone), reusePolicy: { heads: [...store._reusePolicyHeads.values()].map(clone), transitions: store._reusePolicyTransitions.map(clone) }, evidence: [...store._evidence.values()].map(clone), scratch: { facts: [...store._scratchFacts.values()].map(clone), claims: [...store._scratchClaims.values()].map(clone), reads: store._scratchReads.map(clone) }, scratchpad: store._scratchpadSnapshot(), knowledge: { doubts: doubtsProjection(store), nodes: [...store._knowledgeNodes.values()].map(clone), edges: [...store._knowledgeEdges.values()].map(clone), reads: store._knowledgeReads.map(clone), ...(store._knowledgeRecallAssessments.size > 0 ? { assessments: [...store._knowledgeRecallAssessments.values()].map(clone) } : {}), contamination: store._contamination.map(clone) }, ...(store._swarms.size > 0 ? { swarms: swarmSnapshot(store._swarms).swarms } : {}), lastSeq: store._events.length }); }
 
 export function goalPlanRun(store, repoId, runId) {
   if (!boundedText(repoId, 256) || !validRunId(runId)) throw new TypeError('goal/plan Run coordinates are invalid');
@@ -4103,14 +4040,8 @@ export function currentReuseDecision(store, subjectDigest) {
   if (!node || node.validTo || !Number.isFinite(observed) || observed >= Date.parse(decision.dossierSnapshot?.expiresAt ?? '')) return null;
   const guard = store._reuseRiskGuards.get(canonicalDigest(decision.coordinate));
   if (guard?.blocked === true && (decision.choice === 'borrow' || decision.dossierSnapshot?.factDigest !== guard.factDigest)) return null;
-  if (store._reuseProviderGuards.get(store._providerCoordinateKey(decision.envRef?.repoId, decision.coordinate))?.blocked === true) return null;
-  if (store._providerPendingFor(decision.envRef?.repoId, decision.coordinate).length > 0) return null;
   return decision;
 }
-
-export function reuseProviderGuard(store, repoId, coordinate) { return clone(store._reuseProviderGuards.get(store._providerCoordinateKey(repoId, coordinate)) ?? null); }
-
-export function reuseAdverseState(store, repoId, coordinate) { const manual = store.reuseRiskGuard(coordinate); const provider = store.reuseProviderGuard(repoId, coordinate); return freeze({ blocked: manual?.blocked === true || provider?.blocked === true, manual, provider }); }
 
 export function recordReuseRiskGuard(store, fields, auth) {
   if (typeof auth?.actor !== 'string' || auth.actor.length === 0 || typeof auth?.key !== 'string' || auth.key.length === 0) throw new TypeError('reuse risk actor and idempotency key required');

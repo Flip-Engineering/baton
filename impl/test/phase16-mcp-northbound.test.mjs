@@ -64,7 +64,7 @@ async function initialized(server) {
 test('MN1/MN4/CI6/PF7: handshake and deterministic closed tool inventory', async () => {
   const { server } = setup(); await initialized(server);
   const response = await request(server, 2, 'tools/list', {});
-  assert.deepEqual(response.result.tools.map((tool) => tool.name), ['fleet_spawn', 'fleet_goal_define', 'fleet_plan_propose', 'fleet_plan_approve', 'fleet_goal_plan_status', 'fleet_send', 'fleet_wait', 'fleet_respond', 'fleet_interrupt', 'fleet_result', 'fleet_list', 'fleet_capabilities', 'fleet_provider_status', 'fleet_capability_invoke', 'fleet_kill', 'fleet_drain']);
+  assert.deepEqual(response.result.tools.map((tool) => tool.name), ['fleet_spawn', 'fleet_goal_define', 'fleet_plan_propose', 'fleet_plan_approve', 'fleet_goal_plan_status', 'fleet_send', 'fleet_wait', 'fleet_respond', 'fleet_interrupt', 'fleet_result', 'fleet_list', 'fleet_capabilities', 'fleet_capability_invoke', 'fleet_kill', 'fleet_drain']);
   assert.equal(response.result.tools.every((tool) => tool.inputSchema.additionalProperties === false), true);
   assert.equal(response.result.tools.every((tool) => tool.execution.taskSupport === 'forbidden'), true);
   assert.equal(response.result.tools[0].inputSchema.properties.modelPolicy.additionalProperties, false);

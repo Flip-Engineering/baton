@@ -69,8 +69,7 @@ export const PROJECTION_CHECKPOINT_FIELDS = Object.freeze([
   '_reusePolicyTransitions', '_routeObservations', '_representations',
   '_representationRequests', '_goals', '_goalHeads', '_plans', '_planHeads',
   '_planApprovals', '_planDispatches', '_planTaskLinks', '_planBudgetSettlements',
-  '_reuseProviderContributions', '_reuseProviderCoordinateContributions',
-  '_reuseProviderGuards', '_evidence', '_scratchFacts', '_scratchClaims', '_scratchReads',
+  '_evidence', '_scratchFacts', '_scratchClaims', '_scratchReads',
   '_knowledgeNodes', '_knowledgeEdges', '_knowledgeNodeHistory', '_knowledgeEdgeHistory',
   '_knowledgeReads', '_knowledgeRecallAssessments', '_contamination', '_webCommands',
   '_webCommandScopes', '_mcpCalls', '_mcpCallScopes', '_fleetDrains', '_runStops',
@@ -78,8 +77,6 @@ export const PROJECTION_CHECKPOINT_FIELDS = Object.freeze([
   '_runVerificationRetries', '_runOrchestratorLeases', '_runLineages',
   '_runLineageEventSeqs', '_runChildrenByParent', '_recoveryDispatches',
   '_taskTopologies', '_recoveryAttemptsById', '_recoveryAttemptHeads',
-  '_providerReceipts', '_providerDeliveryIds', '_providerProcessing', '_providerPending',
-  '_providerSequences', '_providerSourceHealth',
   '_taskResourceReleases',
   // Epic #78: the per-worker generation records a replacement generation corrects (last write wins).
   '_workerGenerations',
@@ -487,22 +484,6 @@ export function mcpCallByScope(store, scopeKey) {
 
 /** Moved from `CoordinationStore.artifact` (issue #259 slice 1). State: `this._artifacts`, passed explicitly. */
 export function artifact(state, id) { return clone(state.get(id) ?? null); }
-
-/** Moved from `CoordinationStore.providerProcessing` (issue #259 slice 1). State: `this._providerProcessing`, passed explicitly. */
-export function providerProcessing(state, id) { return clone(state.get(id) ?? null); }
-
-
-/** Moved from `CoordinationStore.dueProviderProcessing` (issue #259 slice 1). State: the store, passed explicitly. */
-export function dueProviderProcessing(store, repoId, at) {
-  if (!store._providerAttemptPolicy || !boundedText(repoId, 256) || !Number.isFinite(Date.parse(at)) || new Date(Date.parse(at)).toISOString() !== at) throw new CoordinationRefusal('provider due-read authority is invalid', 'provider_attempt_unavailable');
-  const due = []; let examined = 0;
-  for (const row of store._providerProcessing.values()) {
-    examined += 1; if (examined > store._providerAttemptPolicy.maxStateRows) throw new CoordinationRefusal('provider due derivation exceeded deployment ceiling', 'provider_attempt_oversize');
-    if (row.repoId !== repoId || row.status !== 'pending' || (row.attemptCount ?? 0) - (row.attemptWindowStart ?? 0) >= store._providerAttemptPolicy.maxAttempts || (row.nextAttemptAt && Date.parse(row.nextAttemptAt) > Date.parse(at))) continue;
-    due.push(row.id);
-  }
-  return due.sort().slice(0, store._providerAttemptPolicy.maxBatch);
-}
 
 /** Moved from `CoordinationStore.reuseDecision` (issue #259 slice 1). State: `this._reuseDecisions`, passed explicitly. */
 export function reuseDecision(state, id) { return clone(state.get(id) ?? null); }

@@ -401,7 +401,6 @@ const EXERCISED_OPTIONS = Object.freeze({
 // on, never a claim that the option is inert: the row names the path that would exercise it.
 const UNEXERCISED_OPTIONS = Object.freeze({
   recorderPort: 'the observation-layer port the effect and recovery seams share; passed through by createDriver and composed over the wrapped authorities by the Coordinator constructor when absent',
-  advisoryFeedSources: 'consulted by advisory feed projections, which need a feed card',
   approvalTimeoutMs: 'an interaction deadline, reached only by a pending approval',
   atlas: 'assembled only when the atlas capability is opted in',
   budgetPolicy: 'a threshold policy, reached only by a budget-crossing run',
@@ -421,11 +420,7 @@ const UNEXERCISED_OPTIONS = Object.freeze({
   now: 'the deployment clock seam; cases use the default',
   progressNudgeWindowMs: 'the stall window, reached only by a stalled turn',
   providerGovernance: 'consulted on a provider call under a governance policy',
-  providerPolling: 'a supervisor, started only with a reuse policy and poll cards',
-  providerProcessingSchedule: 'a supervisor, started only with its bounded retry policy',
   providerQuotaAuthority: 'consulted on a provider quota refusal',
-  providerRead: 'consulted by provider status reads',
-  providerReconciliation: 'consulted by provider reconciliation',
   recoveryMaxAttempts: 'reached only by a death-cert retry',
   recoveryTimeoutMs: 'reached only by a recovery attempt',
   repoId: 'the deployment identity; supplied implicitly by every case',

@@ -35,7 +35,7 @@ import {
 } from './surface-mcp-authority.mjs';
 
 const NATIVE_QUERY_TOOLS = new Set([
-  'fleet_wait', 'fleet_result', 'fleet_list', 'fleet_capabilities', 'fleet_provider_status',
+  'fleet_wait', 'fleet_result', 'fleet_list', 'fleet_capabilities',
   'fleet_goal_plan_status', 'baton_decision_list', 'baton_deployment_doctor',
 ]);
 const NATIVE_EMERGENCY_TOOLS = new Set([

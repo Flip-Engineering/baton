@@ -39,7 +39,7 @@ const IMPORTED_BACK = Object.freeze(['closedVerificationVerdict', 'noop', 'pathI
 
 const RECLASSIFIED = Object.freeze([
   ['drain', 'admission'], ['_semanticControlBinding', 'surface'], ['_isReviewAuthority', 'admission'],
-  ['_attentionPage', 'admission'], ['_send', 'surface'], ['readProviderStatus', 'admission'],
+  ['_attentionPage', 'admission'], ['_send', 'surface'],
   ['claimScratch', 'admission'], ['postScratchFact', 'admission'], ['writeScratchpad', 'admission'],
   ['_answerContextRead', 'admission'],
 ]);

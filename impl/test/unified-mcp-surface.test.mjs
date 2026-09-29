@@ -32,7 +32,6 @@ function baseServer(overrides = {}) {
     coordinator: {
       list: () => [{ workerId: 'worker:1' }],
       capabilityCards: () => [{ harness: 'fake', concurrencyCeiling: 2 }],
-      readProviderStatus: () => ({ providers: [] }),
     },
     coordination: {},
     applicationCalls,
@@ -209,7 +208,7 @@ test('meta tools fail closed through existing MCP principal authority', async ()
   assert.ok(raw.audits.some((entry) => entry.kind === 'tool_refused'));
 });
 
-test('surface snapshot combines existing readiness, workers, routes, telemetry and convergence state', async () => {
+test('surface snapshot combines existing readiness, workers, routes and convergence state', async () => {
   const raw = baseServer();
   const server = wrapProductionMcpServer(raw, { runtime: new ProductionConvergenceRuntime() });
   const response = await call(server, 'baton_surface_snapshot', { runId: 'run:a' }, 5);
@@ -218,7 +217,6 @@ test('surface snapshot combines existing readiness, workers, routes, telemetry a
   assert.deepEqual(snapshot.nameClosure.unresolved, []);
   assert.equal(snapshot.workers.ok, true);
   assert.equal(snapshot.routeCapabilities.ok, true);
-  assert.equal(snapshot.providerTelemetry.ok, true);
   assert.equal(snapshot.run.ok, true);
   assert.ok(snapshot.coverage.categories.notifications.mcp > 0);
 });

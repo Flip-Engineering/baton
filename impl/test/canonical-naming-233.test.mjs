@@ -36,7 +36,7 @@ import { mcpCombinedToolNames, mcpDispatchToolNames } from '../src/mcp-northboun
 // command table. Pinned frozen: the closed-set pin below must fail if one is removed silently.
 const KERNEL_WEB_COMMANDS = Object.freeze([
   'spawn', 'send', 'interrupt', 'kill', 'drain', 'respond',
-  'list', 'result', 'wait', 'capabilities', 'provider_status', 'capability_invoke',
+  'list', 'result', 'wait', 'capabilities', 'capability_invoke',
   'goal_define', 'plan_propose', 'plan_approve', 'goal_plan_status',
   'run_scratchpad_append',
 ]);

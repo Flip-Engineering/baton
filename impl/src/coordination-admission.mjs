@@ -11,7 +11,7 @@
 import { createHash } from 'node:crypto';
 import { existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { ARTIFACT_LIFECYCLE_FIELDS, KNOWLEDGE_EDGE_TYPES, KNOWLEDGE_GROUNDINGS, KNOWLEDGE_NODE_TYPES, assertWaveStartedRoster, providerAttemptDelay, resourceOverlap, validEnvRef, validKnowledgePromotionPolicy, validKnowledgeRecallAssessmentPolicy, validKnowledgeRecallPolicy, validKnowledgeScratchCorrectionPolicy } from './coordination-ledger.mjs';
+import { ARTIFACT_LIFECYCLE_FIELDS, KNOWLEDGE_EDGE_TYPES, KNOWLEDGE_GROUNDINGS, KNOWLEDGE_NODE_TYPES, assertWaveStartedRoster, resourceOverlap, validEnvRef, validKnowledgePromotionPolicy, validKnowledgeRecallAssessmentPolicy, validKnowledgeRecallPolicy, validKnowledgeScratchCorrectionPolicy } from './coordination-ledger.mjs';
 import { buildWorkflowRoleCatalog, normalizeWorkflowDefinition, validateWorkflowDefinitionLegacy, validateWorkflowDefinitionV3, workflowAttemptRoute, workflowCatalogRole } from './workflow-definition.mjs';
 import { CANONICAL_ORDER_VERSION, canonicalJson, compareCanonicalStrings, normalizeCanonicalOrderPolicy } from './canonical-order.mjs';
 import { CoordinationIntegrityError, CoordinationRefusal, KNOWLEDGE_CANDIDATE_TRIGGERS, TERMINAL, boundedText, canonical, canonicalBytes, canonicalDigest, clone, digest, freeze, promotionActor, sha256Bytes, validKnowledgeContradictionPolicy, validRunId } from './coordination-internals.mjs';
@@ -38,8 +38,6 @@ const CONTRADICTION_ADMIN_EVENTS = new Set(['evidence.mapped', 'web.command_admi
 const PROMOTION_DECISION_KINDS = new Set(['control.stop_requested', 'follow_up.requested']);
 
 const PROMOTION_FAILURE_KINDS = new Set(['recovery.claimed_without_spawn']);
-
-const PROVIDER_FAILURE_CODES = new Set(['provider_index_changed', 'reuse_policy_reconciliation_required', 'reuse_evidence_diverged', 'capability_refused', 'provider_processing_failed']);
 
 const REPRESENTATION_PRODUCERS = Object.freeze({
   structural_delta: Object.freeze({ capability: 'atlas-structural', version: '0.1.0', operation: 'diff.structural', artifactKind: 'structural_delta', mediaType: 'application/vnd.baton.atlas-structural+json', rung: 'R1', representationType: 'ast_cst_structural_delta', body: 'Derived Atlas structural delta representation', environmentKind: 'tree_delta' }),
@@ -150,17 +148,6 @@ export function _validateCanonicalReceipt(store, receipt, bytes, ledger) {
   }
   if ((receipt.mode === 'empty_bootstrap') !== (receipt.throughSeq === 0)) store._canonicalOrderFail('canonical-order receipt mode conflicts with its prefix');
   return freeze(clone(receipt));
-}
-
-export function _configureAdvisoryFeedCards(cards) {
-  if (!Array.isArray(cards)) throw new TypeError('advisory feed cards must be an array');
-  const configured = new Map();
-  for (const value of cards) {
-    const card = clone(value); const cardDigest = card?.cardDigest; if (card && typeof card === 'object') delete card.cardDigest;
-    if (!boundedText(card?.providerId, 128) || !/^[a-f0-9]{64}$/.test(cardDigest ?? '') || canonicalDigest(card) !== cardDigest || configured.has(card.providerId)) throw new TypeError('advisory feed card is invalid');
-    configured.set(card.providerId, freeze({ card: freeze(card), cardDigest }));
-  }
-  return configured;
 }
 
 export function _assertWriterLease(store) {
@@ -774,7 +761,6 @@ export function _validateReuseDecisionPayload(store, p, event, integrity = false
     || p.affectedReadEvents.some((seq) => !Number.isSafeInteger(seq) || seq < 1 || seq >= event.seq)) fail('reuse affected-reader projection is invalid', 'reuse_decision_integrity');
   const coordinate = p.coordinate;
   if (!coordinate || Object.keys(coordinate).sort().join(',') !== 'ecosystem,package,version' || coordinate.ecosystem !== 'npm' || !boundedText(coordinate.package, 256) || !boundedText(coordinate.version, 256)) fail('reuse decision exact package coordinate is invalid', 'invalid_reuse_coordinate');
-  if (store._providerPendingFor(p.envRef.repoId, coordinate).length > 0) fail('exact package coordinate has an unresolved authenticated provider delivery', 'reuse_provider_pending');
   if (!/^[a-f0-9]{64}$/.test(p.indexEpoch ?? '') || !/^[a-f0-9]{64}$/.test(p.requestDigest ?? '') || !/^[a-f0-9]{64}$/.test(p.evidenceProjectionDigest ?? '')
     || !/^[a-f0-9]{64}$/.test(p.subjectDigest ?? '') || !/^[a-f0-9]{64}$/.test(p.decisionDigest ?? '') || !/^[a-f0-9]{64}$/.test(p.decisionArtifactDigest ?? '')
     || p.subjectDigest !== canonicalDigest({ envRef: p.envRef, indexEpoch: p.indexEpoch, need: p.need, coordinate, policyHash: p.dossierSnapshot?.policyHash })) fail('reuse decision subject identity is invalid', 'reuse_decision_integrity');
@@ -806,7 +792,6 @@ export function _validateReuseDecisionPayload(store, p, event, integrity = false
     if (p.choice === 'borrow') fail('exact package coordinate is blocked by a newer advisory observation', 'reuse_risk_guarded');
     if (asOf < Date.parse(riskGuard.asOf) || dossier.factDigest !== riskGuard.factDigest) fail('reuse decision evidence predates the active advisory guard', 'reuse_risk_guarded');
   }
-  if (store._reuseProviderGuards.get(store._providerCoordinateKey(p.envRef.repoId, coordinate))?.blocked === true) fail('exact package coordinate is blocked by retained official provider evidence', 'reuse_provider_guarded');
   if (p.choice === 'borrow' && dossier.recommendation !== 'borrow_candidate') fail('blocked dossier cannot authorize borrowing', 'reuse_borrow_blocked');
   const sbom = p.sbomSnapshot;
   if (!sbom || sbom.grounding !== 'actual_lockfile' || !/^[a-f0-9]{64}$/.test(sbom.lockfileDigest ?? '')
@@ -925,7 +910,7 @@ export function _validateReusePolicyPayload(store, p, event, integrity = false) 
   const affectedReads = [...p.decisionTargets, ...p.bindingTargets, ...p.findingTargets, ...(p.priorConstraintTarget ? [p.priorConstraintTarget] : [])].reduce((sum, target) => sum + target.affectedReadEvents.length, 0) + p.guardTargets.reduce((sum, target) => sum + target.affectedRiskFindingReadEvents.length, 0);
   if (p.derivationOverflow || p.examinedStateRows > ceilings.maxStateRows || p.observedPolicyHashes.length > ceilings.maxObservedPolicyHashes || p.decisionTargets.length + p.bindingTargets.length > ceilings.maxDecisionTargets || p.findingTargets.length > ceilings.maxDecisionTargets + ceilings.maxGuardTargets || p.guardTargets.length > ceilings.maxGuardTargets || affectedReads > ceilings.maxAffectedReads) fail('reuse policy target projection exceeded deployment ceiling', 'reuse_policy_oversize');
   for (const target of [...p.decisionTargets, ...p.bindingTargets, ...p.findingTargets, ...(p.priorConstraintTarget ? [p.priorConstraintTarget] : [])]) if (eventAt < Date.parse(store._knowledgeNodes.get(target.nodeId)?.validFrom ?? '')) fail('reuse policy transition predates a target');
-  for (const target of p.guardTargets) { const guard = target.guardKind === 'provider' ? store._reuseProviderGuards.get(target.coordinateKey) : store._reuseRiskGuards.get(target.coordinateKey); if (eventAt < Date.parse(guard?.asOf ?? '')) fail('reuse policy transition predates a guard'); }
+  for (const target of p.guardTargets) { const guard = store._reuseRiskGuards.get(target.coordinateKey); if (eventAt < Date.parse(guard?.asOf ?? '')) fail('reuse policy transition predates a guard'); }
   const targetSet = { decisionTargets: p.decisionTargets, bindingTargets: p.bindingTargets, findingTargets: p.findingTargets, guardTargets: p.guardTargets, priorConstraintTarget: p.priorConstraintTarget, observedPolicyHashes: p.observedPolicyHashes, examinedStateRows: p.examinedStateRows, derivationOverflow: p.derivationOverflow };
   if (p.targetSetDigest !== canonicalDigest(targetSet)) fail('reuse policy target digest is invalid');
   const version = p.expectedPolicyVersion + 1; const expectedConstraint = `constraint:reuse-policy:${canonicalDigest({ repoId: p.repoId, policyHash: policy.hash, version })}`;
@@ -1027,166 +1012,6 @@ export function _validateReuseTtlPayload(store, p, event, integrity = false) {
   if (canonicalDigest(expectedTarget) !== canonicalDigest(p.target)) fail('reuse TTL target projection is invalid', 'reuse_ttl_integrity');
   const core = { requestDigest: p.requestDigest, decisionId: p.decisionId, expectedValidityVersion: p.expectedValidityVersion, effectiveAt: p.effectiveAt, actor: p.actor, repoId: p.repoId, trigger: p.trigger, target: p.target };
   if (p.invalidationDigest !== canonicalDigest(core)) fail('reuse TTL invalidation digest is invalid', 'reuse_ttl_integrity');
-}
-
-export function _validateProviderDeliveryPayload(store, p, event, integrity = false) {
-  const fail = (message, code) => { throw integrity ? new CoordinationIntegrityError(message, code) : new CoordinationRefusal(message, code); };
-  if (!p || Object.keys(p).sort().join(',') !== ['contentIdentity', 'processingId', 'receipt', 'receiptDigest', 'receiptId', 'repoId', 'schemaVersion'].sort().join(',') || p.schemaVersion !== 1
-    || !boundedText(p.repoId, 256) || !/^provider:[A-Za-z0-9._:-]{1,128}$/.test(event.actor ?? '')) fail('provider delivery authority is invalid', 'provider_delivery_integrity');
-  const receipt = p.receipt; const fields = ['schemaVersion', 'providerId', 'sourceEpoch', 'cardDigest', 'mode', 'deliveryId', 'rawDigest', 'rawBytes', 'authReceiptDigest', 'keyFingerprint', 'occurredAt', 'receivedAt', 'sequence', 'coordinates', 'advisoryIds', 'verificationDigest'];
-  if (!receipt || Object.keys(receipt).sort().join(',') !== fields.sort().join(',') || receipt.schemaVersion !== 1 || event.actor !== `provider:${receipt.providerId}`
-    || !boundedText(receipt.providerId, 128) || !boundedText(receipt.deliveryId, 4_096) || !/^[a-f0-9]{64}$/.test(receipt.sourceEpoch ?? '') || receipt.sourceEpoch !== receipt.cardDigest
-    || !/^[a-f0-9]{64}$/.test(receipt.rawDigest ?? '') || !/^[a-f0-9]{64}$/.test(receipt.authReceiptDigest ?? '') || !/^[a-f0-9]{64}$/.test(receipt.keyFingerprint ?? '')
-    || !/^[a-f0-9]{64}$/.test(receipt.verificationDigest ?? '') || receipt.receivedAt !== event.ts || !Number.isFinite(Date.parse(receipt.occurredAt)) || new Date(Date.parse(receipt.occurredAt)).toISOString() !== receipt.occurredAt
-    || (receipt.sequence !== null && (!Number.isSafeInteger(receipt.sequence) || receipt.sequence < 0))) fail('provider delivery receipt is invalid', 'provider_delivery_integrity');
-  const configured = store._advisoryFeedCards.get(receipt.providerId);
-  if (!configured) fail('provider source card is required for replay', 'provider_card_required');
-  const card = configured.card;
-  if (configured.cardDigest !== receipt.cardDigest || !card.modes?.includes(receipt.mode) || !card.auth?.keyFingerprints?.includes(receipt.keyFingerprint)
-    || !Number.isSafeInteger(receipt.rawBytes) || receipt.rawBytes <= 0 || receipt.rawBytes > card.ceilings?.maxDeliveryBytes) fail('provider delivery is not bound to its source card', 'provider_card_mismatch');
-  if (integrity && store._loading === true && ['hmac-sha256', 'ed25519'].includes(card.auth?.scheme)) {
-    if (typeof store._advisoryReceiptReverify !== 'function') fail('native provider receipt requires private CAS replay before readiness', 'provider_cas_replay_required');
-    const replayReceipt = { schemaVersion: 1, providerId: receipt.providerId, sourceEpoch: receipt.sourceEpoch, cardDigest: receipt.cardDigest, mode: receipt.mode, deliveryId: receipt.deliveryId, rawDigest: receipt.rawDigest, rawBytes: receipt.rawBytes, authReceiptDigest: receipt.authReceiptDigest, keyFingerprint: receipt.keyFingerprint, occurredAt: receipt.occurredAt, sequence: receipt.sequence, coordinates: clone(receipt.coordinates), advisoryIds: clone(receipt.advisoryIds), source: { handle: `art:sha256:${receipt.rawDigest}`, digest: receipt.rawDigest, bytes: receipt.rawBytes, mediaType: 'application/json' }, contentDigest: receipt.verificationDigest };
-    let reverified; try { reverified = store._advisoryReceiptReverify(replayReceipt); } catch (error) { throw integrity ? new CoordinationIntegrityError('native provider receipt private CAS replay failed', error?.code ?? 'provider_cas_invalid') : error; }
-    if (reverified && typeof reverified.then === 'function') fail('native provider receipt replay must be synchronous', 'provider_cas_replay_required');
-    if (canonicalDigest(reverified) !== canonicalDigest(replayReceipt)) fail('native provider receipt private CAS replay diverged', 'provider_cas_invalid');
-  }
-  const coordinateKey = (coordinate) => `${coordinate?.ecosystem}\0${coordinate?.package}\0${coordinate?.version}`;
-  const sortedCoordinates = Array.isArray(receipt.coordinates) && JSON.stringify(receipt.coordinates.map(coordinateKey)) === JSON.stringify([...new Set(receipt.coordinates.map(coordinateKey))].sort());
-  if (!sortedCoordinates || receipt.coordinates.length === 0 || receipt.coordinates.length > card.ceilings.maxCoordinates || receipt.coordinates.some((coordinate) => !coordinate || Object.keys(coordinate).sort().join(',') !== 'ecosystem,package,version'
-    || coordinate.ecosystem !== card.ecosystem || !boundedText(coordinate.package, 256) || !boundedText(coordinate.version, 256))) fail('provider delivery coordinates are invalid', 'provider_delivery_integrity');
-  if (!Array.isArray(receipt.advisoryIds) || receipt.advisoryIds.length > card.ceilings.maxAdvisoryIds || JSON.stringify(receipt.advisoryIds) !== JSON.stringify([...new Set(receipt.advisoryIds)].sort())
-    || receipt.advisoryIds.some((id) => !boundedText(id, card.ceilings.maxIdentityBytes))) fail('provider advisory identities are invalid', 'provider_delivery_integrity');
-  const expectedIdentity = canonicalDigest({ repoId: p.repoId, providerId: receipt.providerId, sourceEpoch: receipt.sourceEpoch, coordinates: receipt.coordinates, advisoryIds: receipt.advisoryIds });
-  const expectedProcessingId = `provider-processing:${expectedIdentity}`; const expectedReceiptId = `provider-receipt:${canonicalDigest({ repoId: p.repoId, providerId: receipt.providerId, sourceEpoch: receipt.sourceEpoch, deliveryId: receipt.deliveryId, rawDigest: receipt.rawDigest })}`;
-  if (p.contentIdentity !== expectedIdentity || p.processingId !== expectedProcessingId || p.receiptId !== expectedReceiptId || p.receiptDigest !== canonicalDigest({ repoId: p.repoId, receipt })) fail('provider delivery identities are invalid', 'provider_delivery_integrity');
-  const deliveryKey = canonicalDigest({ repoId: p.repoId, providerId: receipt.providerId, sourceEpoch: receipt.sourceEpoch, deliveryId: receipt.deliveryId });
-  const priorId = store._providerDeliveryIds.get(deliveryKey);
-  if (priorId) fail('provider delivery identity already exists in the ledger', 'provider_delivery_duplicate');
-  const sourceKey = store._providerSourceKey(p.repoId, receipt.providerId, receipt.sourceEpoch); const priorSequence = receipt.sequence === null ? null : store._providerSequences.get(sourceKey)?.get(receipt.sequence);
-  if (priorSequence && priorSequence.rawDigest !== receipt.rawDigest) fail('provider sequence was rebound to different authenticated bytes', 'provider_sequence_conflict');
-  return { deliveryKey, sourceKey };
-}
-
-export function _validateProviderReconciliationPayload(store, p, event, integrity = false) {
-  const fail = (message, code = 'provider_reconciliation_integrity') => { throw integrity ? new CoordinationIntegrityError(message, code) : new CoordinationRefusal(message, code); };
-  const fields = ['schemaVersion', 'requestDigest', 'completionDigest', 'repoId', 'providerId', 'sourceEpoch', 'expectedHealthEvent', 'proof', 'receiptIds', 'sequenceRows', 'completedAt'];
-  if (!p || Object.keys(p).sort().join(',') !== fields.sort().join(',') || p.schemaVersion !== 1 || !boundedText(p.repoId, 256) || !boundedText(p.providerId, 128) || !/^[a-f0-9]{64}$/.test(p.sourceEpoch ?? '') || !/^[a-f0-9]{64}$/.test(p.requestDigest ?? '') || !/^[a-f0-9]{64}$/.test(p.completionDigest ?? '') || p.completedAt !== event.ts || event.actor !== `provider-poller:${p.providerId}`) fail('provider reconciliation authority is invalid');
-  const configured = store._advisoryFeedCards.get(p.providerId); if (!configured || configured.cardDigest !== p.sourceEpoch || !configured.card.modes?.includes('poll')) fail('provider poll card is unavailable', 'provider_card_mismatch');
-  const proof = p.proof; const proofFields = ['schemaVersion', 'providerId', 'sourceEpoch', 'cardDigest', 'pollId', 'observedAt', 'window', 'finalSequence', 'cursorDigest', 'authReceiptDigest', 'keyFingerprint', 'pageDigests', 'itemDigests', 'totalBytes', 'receiptRawDigests', 'proofDigest'];
-  if (!proof || Object.keys(proof).sort().join(',') !== proofFields.sort().join(',') || proof.schemaVersion !== 1 || proof.providerId !== p.providerId || proof.sourceEpoch !== p.sourceEpoch || proof.cardDigest !== p.sourceEpoch || !boundedText(proof.pollId, configured.card.ceilings.maxIdentityBytes)
-    || !Number.isFinite(Date.parse(proof.observedAt)) || new Date(Date.parse(proof.observedAt)).toISOString() !== proof.observedAt || Date.parse(proof.observedAt) > Date.parse(event.ts) || !proof.window || Object.keys(proof.window).sort().join(',') !== 'fromSequence,toSequence'
-    || !Number.isSafeInteger(proof.window.fromSequence) || !Number.isSafeInteger(proof.window.toSequence) || proof.window.fromSequence < configured.card.poll.initialSequence || proof.window.toSequence < proof.window.fromSequence || proof.finalSequence !== proof.window.toSequence
-    || !/^[a-f0-9]{64}$/.test(proof.cursorDigest ?? '') || !/^[a-f0-9]{64}$/.test(proof.authReceiptDigest ?? '') || !configured.card.auth.keyFingerprints.includes(proof.keyFingerprint) || !/^[a-f0-9]{64}$/.test(proof.proofDigest ?? '')) fail('provider poll proof is invalid');
-  const proofCore = Object.fromEntries(Object.entries(proof).filter(([key]) => key !== 'proofDigest')); if (proof.proofDigest !== canonicalDigest(proofCore)) fail('provider poll proof digest is invalid');
-  if (typeof store._advisoryPollReverify !== 'function') fail('provider poll replay authority is required', 'provider_poll_replay_required');
-  let reverified; try { reverified = store._advisoryPollReverify(clone(proof)); } catch (error) { fail('provider poll replay failed', error?.code ?? 'provider_poll_replay_invalid'); }
-  if (reverified && typeof reverified.then === 'function') fail('provider poll replay must be synchronous', 'provider_poll_replay_required');
-  if (canonicalDigest(reverified) !== canonicalDigest(proof)) fail('provider poll replay diverged', 'provider_poll_replay_invalid');
-  const sourceKey = store._providerSourceKey(p.repoId, p.providerId, p.sourceEpoch); const health = store._providerSourceHealth.get(sourceKey);
-  if (!health || health.status !== 'reconciliation_required' || health.lastEvent !== p.expectedHealthEvent || proof.finalSequence < health.highSequence || proof.window.fromSequence > (health.firstGap?.from ?? health.highSequence)) fail('provider source health changed before reconciliation', 'provider_reconciliation_stale');
-  const degradedEvent = store._events[p.expectedHealthEvent - 1];
-  const observedAt = Date.parse(proof.observedAt); const completedAt = Date.parse(event.ts); const degradedAt = Date.parse(degradedEvent?.ts);
-  if (!degradedEvent || degradedEvent.seq !== p.expectedHealthEvent || observedAt + configured.card.poll.maxClockSkewMs < degradedAt || observedAt + configured.card.poll.maxWallMs + configured.card.poll.maxClockSkewMs < completedAt) fail('provider poll is not fresh for degraded source health', 'provider_reconciliation_stale');
-  const sequenceMap = store._providerSequences.get(sourceKey) ?? new Map(); const expectedRows = []; const expectedReceipts = [];
-  for (let sequence = proof.window.fromSequence; sequence <= proof.window.toSequence; sequence += 1) { const row = sequenceMap.get(sequence); const receipt = row ? store._providerReceipts.get(row.receiptId) : null; if (!row || !receipt || receipt.providerId !== p.providerId || receipt.sourceEpoch !== p.sourceEpoch) fail('provider poll sequence window is incomplete', 'provider_reconciliation_incomplete'); expectedRows.push(clone(row)); expectedReceipts.push(receipt); }
-  if (canonicalDigest(p.sequenceRows) !== canonicalDigest(expectedRows) || JSON.stringify(p.receiptIds) !== JSON.stringify(expectedReceipts.map((row) => row.id)) || JSON.stringify(proof.receiptRawDigests) !== JSON.stringify(expectedReceipts.map((row) => row.rawDigest))) fail('provider poll receipt projection is incomplete', 'provider_reconciliation_incomplete');
-  const expectedRequestDigest = canonicalDigest({ actor: event.actor, repoId: p.repoId, providerId: p.providerId, sourceEpoch: p.sourceEpoch, expectedHealthEvent: p.expectedHealthEvent, proofDigest: proof.proofDigest, trigger: 'provider_full_poll_reconciliation' }); if (p.requestDigest !== expectedRequestDigest) fail('provider reconciliation request identity is invalid');
-  const core = Object.fromEntries(Object.entries(p).filter(([key]) => key !== 'completionDigest')); if (p.completionDigest !== canonicalDigest(core)) fail('provider reconciliation completion digest is invalid');
-  return { sourceKey, health };
-}
-
-export function _validateProviderDeferralPayload(store, p, event, integrity = false) {
-  const fail = (message, code = 'provider_deferral_integrity') => { throw integrity ? new CoordinationIntegrityError(message, code) : new CoordinationRefusal(message, code); };
-  const fields = ['schemaVersion', 'requestDigest', 'deferralDigest', 'policyDigest', 'repoId', 'processingId', 'providerId', 'sourceEpoch', 'expectedProcessingVersion', 'expectedLastReceiptEvent', 'attempt', 'failureCode', 'delayMs', 'nextAttemptAt'];
-  if (!p || Object.keys(p).sort().join(',') !== fields.sort().join(',') || p.schemaVersion !== 1 || !store._providerAttemptPolicy || p.policyDigest !== canonicalDigest(store._providerAttemptPolicy)
-    || !/^[a-f0-9]{64}$/.test(p.requestDigest ?? '') || !/^[a-f0-9]{64}$/.test(p.deferralDigest ?? '') || !boundedText(p.repoId, 256) || !boundedText(p.processingId, 256) || !boundedText(p.providerId, 128)
-    || !/^[a-f0-9]{64}$/.test(p.sourceEpoch ?? '') || !Number.isSafeInteger(p.expectedProcessingVersion) || !Number.isSafeInteger(p.expectedLastReceiptEvent) || !Number.isSafeInteger(p.attempt)
-    || !PROVIDER_FAILURE_CODES.has(p.failureCode) || !Number.isSafeInteger(p.delayMs) || !Number.isFinite(Date.parse(p.nextAttemptAt)) || new Date(Date.parse(p.nextAttemptAt)).toISOString() !== p.nextAttemptAt
-    || !Number.isFinite(Date.parse(event.ts)) || new Date(Date.parse(event.ts)).toISOString() !== event.ts || !boundedText(event.idempotencyKey, 512) || event.actor !== `provider-reconciler:${p.providerId}`) fail('provider deferral shape is invalid');
-  const processing = store._providerProcessing.get(p.processingId); if (!processing || processing.status !== 'pending' || processing.repoId !== p.repoId || processing.providerId !== p.providerId || processing.sourceEpoch !== p.sourceEpoch || processing.version !== p.expectedProcessingVersion || processing.lastReceiptEvent !== p.expectedLastReceiptEvent) fail('provider deferral target is stale', 'provider_processing_stale');
-  if (processing.nextAttemptAt && Date.parse(event.ts) < Date.parse(processing.nextAttemptAt)) fail('provider deferral was recorded before it became due', 'provider_processing_not_due');
-  const expectedAttempt = (processing.attemptCount ?? 0) + 1; const windowAttempt = expectedAttempt - (processing.attemptWindowStart ?? 0); const expectedDelay = providerAttemptDelay(store._providerAttemptPolicy, windowAttempt);
-  if (p.attempt !== expectedAttempt || windowAttempt > store._providerAttemptPolicy.maxAttempts || p.delayMs !== expectedDelay || p.nextAttemptAt !== new Date(Date.parse(event.ts) + expectedDelay).toISOString()) fail('provider deferral policy derivation is invalid');
-  const requestCore = { actor: event.actor, idempotencyKey: event.idempotencyKey, repoId: p.repoId, processingId: p.processingId, providerId: p.providerId, sourceEpoch: p.sourceEpoch, expectedProcessingVersion: p.expectedProcessingVersion, expectedLastReceiptEvent: p.expectedLastReceiptEvent, attempt: p.attempt, failureCode: p.failureCode, policyDigest: p.policyDigest };
-  if (p.requestDigest !== canonicalDigest(requestCore)) fail('provider deferral request identity is invalid'); const core = Object.fromEntries(Object.entries(p).filter(([key]) => key !== 'deferralDigest')); if (p.deferralDigest !== canonicalDigest(core)) fail('provider deferral digest is invalid');
-  return processing;
-}
-
-export function _validateProviderGreenPayload(store, p, event, integrity = false) {
-  const fail = (message, code) => { throw integrity ? new CoordinationIntegrityError(message, code) : new CoordinationRefusal(message, code); };
-  const fields = ['schemaVersion', 'requestDigest', 'completionDigest', 'processingId', 'expectedProcessingVersion', 'repoId', 'providerId', 'sourceEpoch', 'receiptIds', 'policy', 'indexBinding', 'observations', 'result'];
-  if (!p || Object.keys(p).sort().join(',') !== fields.sort().join(',') || p.schemaVersion !== 1 || p.result !== 'ignored_non_adverse' || !/^[a-f0-9]{64}$/.test(p.requestDigest ?? '') || !/^[a-f0-9]{64}$/.test(p.completionDigest ?? '')) fail('provider green completion shape is invalid', 'provider_processing_integrity');
-  const processing = store._providerProcessing.get(p.processingId);
-  if (!processing || processing.status !== 'pending' || processing.version !== p.expectedProcessingVersion || processing.repoId !== p.repoId || processing.providerId !== p.providerId || processing.sourceEpoch !== p.sourceEpoch
-    || JSON.stringify(processing.receiptIds) !== JSON.stringify(p.receiptIds)) fail('provider green completion target is stale or mismatched', 'provider_processing_stale');
-  if (event.actor !== `provider-reconciler:${p.providerId}`) fail('provider reconciler actor is invalid', 'provider_processing_integrity');
-  const head = store._reusePolicyHeads.get(p.repoId); const policyFields = ['hash', 'version', 'constraintId'];
-  if (!head || !p.policy || Object.keys(p.policy).sort().join(',') !== policyFields.sort().join(',') || p.policy.hash !== head.policyHash || p.policy.version !== head.version || p.policy.constraintId !== head.constraintId) fail('provider processing policy changed', 'reuse_policy_reconciliation_required');
-  const bindingFields = ['schemaVersion', 'repoId', 'treeSha', 'indexEpoch', 'atlasCardDigest', 'bindingDigest'];
-  if (!p.indexBinding || Object.keys(p.indexBinding).sort().join(',') !== bindingFields.sort().join(',') || p.indexBinding.schemaVersion !== 1 || p.indexBinding.repoId !== p.repoId || !/^[a-f0-9]{4,128}$/.test(p.indexBinding.treeSha ?? '')
-    || !/^[a-f0-9]{64}$/.test(p.indexBinding.indexEpoch ?? '') || !/^[a-f0-9]{64}$/.test(p.indexBinding.atlasCardDigest ?? '') || p.indexBinding.bindingDigest !== canonicalDigest(Object.fromEntries(Object.entries(p.indexBinding).filter(([key]) => key !== 'bindingDigest')))) fail('provider index binding is invalid', 'provider_index_changed');
-  if (!Array.isArray(p.observations) || p.observations.length !== processing.coordinates.length || JSON.stringify(p.observations.map((row) => row.coordinate)) !== JSON.stringify(processing.coordinates)) fail('provider green coordinate set is incomplete', 'provider_processing_integrity');
-  for (const row of p.observations) {
-    const rowFields = ['coordinate', 'dossierRef', 'snapshot', 'advisoryIds', 'maliciousAdvisoryIds', 'reverifyEvidence', 'officialDigest'];
-    const snapshotFields = ['identity', 'recommendation', 'policyHash', 'policy', 'factDigest', 'asOf', 'expiresAt', 'indexEpoch', 'overlayDigest'];
-    if (!row || Object.keys(row).sort().join(',') !== rowFields.sort().join(',') || !row.snapshot || Object.keys(row.snapshot).sort().join(',') !== snapshotFields.sort().join(',') || row.snapshot.recommendation !== 'borrow_candidate' || row.snapshot.policyHash !== p.policy.hash || row.snapshot.indexEpoch !== p.indexBinding.indexEpoch
-      || !officialCoordinateMatches(row.snapshot?.identity, row.coordinate) || !/^[a-f0-9]{64}$/.test(row.snapshot?.factDigest ?? '') || !/^[a-f0-9]{64}$/.test(row.officialDigest ?? '')) fail('provider official green observation is invalid', 'provider_processing_integrity');
-    if (Object.keys(row.dossierRef ?? {}).sort().join(',') !== ['kind', 'mediaType', 'handle', 'digest', 'bytes'].sort().join(',') || row.dossierRef.kind !== 'dependency-dossier' || row.dossierRef.mediaType !== 'application/vnd.baton.dependency-dossier+json' || row.dossierRef.handle !== `art:sha256:${row.dossierRef.digest}` || !/^[a-f0-9]{64}$/.test(row.dossierRef.digest ?? '') || !Number.isSafeInteger(row.dossierRef.bytes) || row.dossierRef.bytes <= 0) fail('provider official dossier reference is invalid', 'provider_processing_integrity');
-    if (!Array.isArray(row.advisoryIds) || JSON.stringify(row.advisoryIds) !== JSON.stringify([...new Set(row.advisoryIds)].sort()) || !Array.isArray(row.maliciousAdvisoryIds) || JSON.stringify(row.maliciousAdvisoryIds) !== JSON.stringify([...new Set(row.maliciousAdvisoryIds)].sort())) fail('provider official advisory identities are invalid', 'provider_processing_integrity');
-    const asOf = Date.parse(row.snapshot.asOf); const expires = Date.parse(row.snapshot.expiresAt); const at = Date.parse(event.ts); if (!Number.isFinite(asOf) || !Number.isFinite(expires) || !Number.isFinite(at) || asOf > at || at >= expires) fail('provider official observation is stale or incoherent', 'provider_processing_integrity');
-    const evidenceSeq = row.reverifyEvidence?.coordinationSeq; const mapped = Number.isSafeInteger(evidenceSeq) ? store._events[evidenceSeq - 1] : null; const authoritative = mapped ? store._evidence.get(`${mapped.payload?.worker}:${mapped.payload?.workerSeq}`) : null; const source = mapped ? store._operationalRead?.(mapped.payload?.worker, mapped.payload?.workerSeq) : null;
-    const projection = { processingId: p.processingId, coordinate: row.coordinate, dossierDigest: row.dossierRef.digest, factDigest: row.snapshot.factDigest, policyHash: p.policy.hash, indexBindingDigest: p.indexBinding.bindingDigest, recommendation: row.snapshot.recommendation, asOf: row.snapshot.asOf, expiresAt: row.snapshot.expiresAt, advisoryIds: row.advisoryIds, maliciousAdvisoryIds: row.maliciousAdvisoryIds };
-    if (!mapped || mapped.kind !== 'evidence.mapped' || mapped.seq >= event.seq || mapped.payload?.kind !== 'knowledge.reuse_provider_reverified' || !authoritative || canonicalDigest(authoritative) !== canonicalDigest(row.reverifyEvidence)
-      || !source || source.kind !== 'knowledge.reuse_provider_reverified' || digest(source) !== mapped.payload.digest || source.actor !== event.actor || canonicalDigest(source.payload) !== canonicalDigest({ ...projection, officialDigest: canonicalDigest(projection) }) || row.officialDigest !== canonicalDigest(projection)) fail('provider official reverify evidence is invalid', 'provider_processing_integrity');
-  }
-  const core = Object.fromEntries(Object.entries(p).filter(([key]) => key !== 'completionDigest'));
-  if (p.completionDigest !== canonicalDigest(core)) fail('provider green completion digest is invalid', 'provider_processing_integrity');
-}
-
-export function _validateProviderAdversePayload(store, p, event, integrity = false) {
-  const fail = (message, code = 'provider_processing_integrity') => { throw integrity ? new CoordinationIntegrityError(message, code) : new CoordinationRefusal(message, code); };
-  const fields = ['schemaVersion', 'requestDigest', 'completionDigest', 'processingId', 'expectedProcessingVersion', 'repoId', 'providerId', 'sourceEpoch', 'receiptIds', 'policy', 'indexBinding', 'observations', 'result'];
-  if (!p || Object.keys(p).sort().join(',') !== fields.sort().join(',') || p.schemaVersion !== 1 || p.result !== 'guarded_adverse' || !/^[a-f0-9]{64}$/.test(p.requestDigest ?? '') || !/^[a-f0-9]{64}$/.test(p.completionDigest ?? '')) fail('provider adverse completion shape is invalid');
-  const processing = store._providerProcessing.get(p.processingId);
-  if (!processing || processing.status !== 'pending' || processing.version !== p.expectedProcessingVersion || processing.repoId !== p.repoId || processing.providerId !== p.providerId || processing.sourceEpoch !== p.sourceEpoch || JSON.stringify(processing.receiptIds) !== JSON.stringify(p.receiptIds)) fail('provider adverse completion target is stale or mismatched', 'provider_processing_stale');
-  if (event.actor !== `provider-reconciler:${p.providerId}`) fail('provider reconciler actor is invalid');
-  const head = store._reusePolicyHeads.get(p.repoId); const policyFields = ['hash', 'version', 'constraintId'];
-  if (!head || !p.policy || Object.keys(p.policy).sort().join(',') !== policyFields.sort().join(',') || p.policy.hash !== head.policyHash || p.policy.version !== head.version || p.policy.constraintId !== head.constraintId) fail('provider processing policy changed', 'reuse_policy_reconciliation_required');
-  const bindingFields = ['schemaVersion', 'repoId', 'treeSha', 'indexEpoch', 'atlasCardDigest', 'bindingDigest'];
-  if (!p.indexBinding || Object.keys(p.indexBinding).sort().join(',') !== bindingFields.sort().join(',') || p.indexBinding.schemaVersion !== 1 || p.indexBinding.repoId !== p.repoId || !/^[a-f0-9]{4,128}$/.test(p.indexBinding.treeSha ?? '') || !/^[a-f0-9]{64}$/.test(p.indexBinding.indexEpoch ?? '') || !/^[a-f0-9]{64}$/.test(p.indexBinding.atlasCardDigest ?? '') || p.indexBinding.bindingDigest !== canonicalDigest(Object.fromEntries(Object.entries(p.indexBinding).filter(([key]) => key !== 'bindingDigest')))) fail('provider index binding is invalid', 'provider_index_changed');
-  if (!Array.isArray(p.observations) || p.observations.length !== processing.coordinates.length || JSON.stringify(p.observations.map((row) => row.coordinate)) !== JSON.stringify(processing.coordinates) || !p.observations.some((row) => row.adverse === true)) fail('provider adverse coordinate set is incomplete');
-  const ceilings = store._providerAdverseCeilings(p.repoId);
-  for (const row of p.observations) {
-    const rowFields = ['coordinate', 'dossierRef', 'snapshot', 'advisoryIds', 'maliciousAdvisoryIds', 'reverifyEvidence', 'officialDigest', 'adverse', 'contribution', 'aggregate', 'priorAggregateTarget', 'targets', 'targetSetDigest', 'examinedStateRows'];
-    const snapshotFields = ['identity', 'recommendation', 'policyHash', 'policy', 'factDigest', 'asOf', 'expiresAt', 'indexEpoch', 'overlayDigest'];
-    if (!row || Object.keys(row).sort().join(',') !== rowFields.sort().join(',') || !row.snapshot || Object.keys(row.snapshot).sort().join(',') !== snapshotFields.sort().join(',') || ![true, false].includes(row.adverse) || row.adverse !== (row.snapshot.recommendation !== 'borrow_candidate') || row.snapshot.policyHash !== p.policy.hash || row.snapshot.indexEpoch !== p.indexBinding.indexEpoch || !officialCoordinateMatches(row.snapshot.identity, row.coordinate) || !/^[a-f0-9]{64}$/.test(row.snapshot.factDigest ?? '') || !/^[a-f0-9]{64}$/.test(row.officialDigest ?? '')) fail('provider official observation is invalid');
-    if (Object.keys(row.dossierRef ?? {}).sort().join(',') !== ['kind', 'mediaType', 'handle', 'digest', 'bytes'].sort().join(',') || row.dossierRef.kind !== 'dependency-dossier' || row.dossierRef.mediaType !== 'application/vnd.baton.dependency-dossier+json' || row.dossierRef.handle !== `art:sha256:${row.dossierRef.digest}` || !/^[a-f0-9]{64}$/.test(row.dossierRef.digest ?? '') || !Number.isSafeInteger(row.dossierRef.bytes) || row.dossierRef.bytes <= 0) fail('provider official dossier reference is invalid');
-    if (!Array.isArray(row.advisoryIds) || JSON.stringify(row.advisoryIds) !== JSON.stringify([...new Set(row.advisoryIds)].sort()) || row.advisoryIds.some((id) => !boundedText(id, 256)) || !Array.isArray(row.maliciousAdvisoryIds) || JSON.stringify(row.maliciousAdvisoryIds) !== JSON.stringify([...new Set(row.maliciousAdvisoryIds)].sort()) || row.maliciousAdvisoryIds.some((id) => !row.advisoryIds.includes(id)) || (row.adverse && row.advisoryIds.length === 0)) fail('provider official advisory identities are invalid');
-    const asOf = Date.parse(row.snapshot.asOf); const expires = Date.parse(row.snapshot.expiresAt); const at = Date.parse(event.ts); if (!Number.isFinite(asOf) || !Number.isFinite(expires) || !Number.isFinite(at) || asOf > at || at >= expires) fail('provider official observation is stale or incoherent');
-    const evidenceSeq = row.reverifyEvidence?.coordinationSeq; const mapped = Number.isSafeInteger(evidenceSeq) ? store._events[evidenceSeq - 1] : null; const authoritative = mapped ? store._evidence.get(`${mapped.payload?.worker}:${mapped.payload?.workerSeq}`) : null; const source = mapped ? store._operationalRead?.(mapped.payload?.worker, mapped.payload?.workerSeq) : null;
-    const projection = { processingId: p.processingId, coordinate: row.coordinate, dossierDigest: row.dossierRef.digest, factDigest: row.snapshot.factDigest, policyHash: p.policy.hash, indexBindingDigest: p.indexBinding.bindingDigest, recommendation: row.snapshot.recommendation, asOf: row.snapshot.asOf, expiresAt: row.snapshot.expiresAt, advisoryIds: row.advisoryIds, maliciousAdvisoryIds: row.maliciousAdvisoryIds };
-    if (!mapped || mapped.kind !== 'evidence.mapped' || mapped.seq >= event.seq || mapped.payload?.kind !== 'knowledge.reuse_provider_reverified' || !authoritative || canonicalDigest(authoritative) !== canonicalDigest(row.reverifyEvidence) || !source || source.kind !== 'knowledge.reuse_provider_reverified' || digest(source) !== mapped.payload.digest || source.actor !== event.actor || canonicalDigest(source.payload) !== canonicalDigest({ ...projection, officialDigest: canonicalDigest(projection) }) || row.officialDigest !== canonicalDigest(projection)) fail('provider official reverify evidence is invalid');
-    const targetProjection = row.adverse ? store._providerAdverseTargets(p.repoId, row.coordinate, ceilings) : { targets: [], examinedStateRows: 0, affectedReads: 0, derivationOverflow: false };
-    const expectedPriorAggregateTarget = row.adverse ? store._providerAggregateTarget(p.repoId, row.coordinate) : null; const aggregateReads = expectedPriorAggregateTarget?.affectedReadEvents.length ?? 0;
-    if (targetProjection.derivationOverflow || targetProjection.targets.length > ceilings.maxDecisionTargets || targetProjection.affectedReads + aggregateReads > ceilings.maxAffectedReads || targetProjection.examinedStateRows > ceilings.maxStateRows) fail('provider adverse target projection exceeded deployment ceiling', 'reuse_risk_oversize');
-    if (canonicalDigest(row.targets) !== canonicalDigest(targetProjection.targets) || canonicalDigest(row.priorAggregateTarget) !== canonicalDigest(expectedPriorAggregateTarget) || row.examinedStateRows !== targetProjection.examinedStateRows || row.targetSetDigest !== canonicalDigest({ targets: row.targets, priorAggregateTarget: row.priorAggregateTarget, examinedStateRows: row.examinedStateRows })) fail('provider adverse target projection is invalid');
-    if (row.adverse) {
-      const expectedContribution = store._providerContribution(row, processing, p.policy); const existingContribution = store._reuseProviderContributions.get(expectedContribution.id);
-      if (canonicalDigest(row.contribution) !== canonicalDigest(expectedContribution) || (existingContribution && canonicalDigest(existingContribution) !== canonicalDigest(expectedContribution))) fail('provider adverse contribution identity conflicts', 'provider_contribution_conflict');
-      const expectedAggregate = store._providerAggregate(p.repoId, row.coordinate, expectedContribution, p.policy);
-      if (expectedAggregate.contributionIds.length > ceilings.maxGuardTargets || canonicalDigest(row.aggregate) !== canonicalDigest(expectedAggregate)) fail('provider adverse aggregate is invalid', 'reuse_risk_oversize');
-      const officialNodeId = `source:provider-official:${row.officialDigest}`; const findingId = `finding:reuse-provider:${expectedContribution.id.slice('provider-contribution:'.length)}`; const aggregateFindingId = `finding:reuse-provider-aggregate:${expectedAggregate.guardDigest}`;
-      if (store._knowledgeNodes.has(officialNodeId)) fail('provider official Source identity is preoccupied', 'reuse_namespace_conflict');
-      if (!existingContribution && store._knowledgeNodes.has(findingId)) fail('provider contribution Finding identity is preoccupied', 'reuse_namespace_conflict');
-      if (store._knowledgeNodes.has(aggregateFindingId)) fail('provider aggregate Finding identity is preoccupied', 'reuse_namespace_conflict');
-      for (const target of row.targets) if (store._knowledgeEdges.has(`knowledge-edge:affects:${aggregateFindingId}:${target.nodeId}`)) fail('provider adverse Affects identity is preoccupied', 'reuse_namespace_conflict');
-    } else if (row.contribution !== null || row.aggregate !== null || row.priorAggregateTarget !== null || row.targets.length !== 0 || row.examinedStateRows !== 0) fail('provider green coordinate cannot carry adverse authority');
-  }
-  const core = Object.fromEntries(Object.entries(p).filter(([key]) => key !== 'completionDigest'));
-  if (p.completionDigest !== canonicalDigest(core)) fail('provider adverse completion digest is invalid');
-  const exactEvent = { schemaVersion: 1, seq: event.seq, ts: event.ts, kind: 'knowledge.reuse_provider_guarded', actor: event.actor, idempotencyKey: event.idempotencyKey, payload: p };
-  if (Buffer.byteLength(`${JSON.stringify(exactEvent)}\n`) > ceilings.maxEventBytes) fail('provider adverse completion exceeded event byte ceiling', 'reuse_risk_oversize');
 }
 
 export function _validateFleetDrainAdmission(p, event, integrity = false) {
@@ -2225,12 +2050,6 @@ export function _prepareArtifact(store, fields, terminalStatus) {
     if (!verified) throw new CoordinationRefusal('accepted artifact requires accepted hub-verification provenance', 'unverified_provenance');
   }
   return manifest;
-}
-
-export function providerProcessingAdmission(store, key, requestDigest) {
-  const prior = store._byKey.get(key); if (!prior) return null;
-  if (!['provider.processing_checked', 'knowledge.reuse_provider_guarded'].includes(prior.kind) || prior.payload?.requestDigest !== requestDigest) throw new CoordinationRefusal('provider processing idempotency conflict', 'provider_processing_conflict');
-  return freeze({ ok: true, result: 'idempotent', event: clone(prior), processing: store.providerProcessing(prior.payload.processingId) });
 }
 
 export function reuseDecisionAdmission(store, key, requestDigest) {

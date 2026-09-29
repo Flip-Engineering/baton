@@ -64,7 +64,7 @@ const WAVE_DIRECT_PORT_VERBS = Object.freeze([
 // grammar names stay disjoint from these.
 export const KERNEL_PROFILE_LITERALS = Object.freeze([
   'spawn', 'send', 'interrupt', 'kill', 'drain', 'respond',
-  'list', 'result', 'wait', 'capabilities', 'provider_status',
+  'list', 'result', 'wait', 'capabilities',
   'capability_invoke',
 ]);
 export const AUTHORING_PROFILE_LITERALS = Object.freeze([

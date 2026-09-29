@@ -178,7 +178,7 @@ function acceptedArgs(definition, commandName) {
 
 const COMMAND_CAPABILITY = Object.freeze({
   spawn: 'control', send: 'control', interrupt: 'control', kill: 'emergency_stop', drain: 'emergency_stop', respond: 'approve',
-  list: 'observe', result: 'observe', wait: 'observe', capabilities: 'observe', provider_status: 'observe', capability_invoke: 'control',
+  list: 'observe', result: 'observe', wait: 'observe', capabilities: 'observe', capability_invoke: 'control',
   goal_define: 'goal:define', plan_propose: 'plan:propose', plan_approve: 'plan:approve', goal_plan_status: 'goal:observe',
   // #158 (H2.1): the scratchpad WRITE direct port's capability classes (matches the MCP capability map).
   run_scratchpad_append: ['control', 'observe'],
@@ -196,7 +196,7 @@ const RECONCILABLE = new Set(['goal_define', 'plan_propose', 'plan_approve',
     .filter(([, , definition]) => definition.reconcilable).map(([transport]) => transport)]);
 const GOAL_PLAN_MUTATIONS = new Set(['goal_define', 'plan_propose', 'plan_approve']);
 const READ_ONLY_COMMANDS = new Set([
-  'list', 'result', 'wait', 'capabilities', 'provider_status', 'goal_plan_status',
+  'list', 'result', 'wait', 'capabilities', 'goal_plan_status',
   ...[...WEB_APPLICATION_ENTRIES, ...CANONICAL_WEB_ENTRIES]
     .filter(([, , definition]) => definition.mcpStateful === false)
     .map(([transport]) => transport),
@@ -224,7 +224,6 @@ const ARG_FIELDS = Object.freeze({
   result: new Set(['workerId']),
   wait: new Set(['timeoutMs']),
   capabilities: new Set(),
-  provider_status: new Set(['providerId', 'after', 'limit']),
   capability_invoke: new Set(['name', 'op', 'action', 'args', 'budgetTokens', 'ref', 'cursor', 'claim', 'workerId', 'note']),
   goal_define: new Set(['objective', 'definitionOfDone', 'constraints', 'risk', 'budget', 'predecessor']),
   plan_propose: new Set(['goal', 'predecessor', 'nodes']),
@@ -971,9 +970,6 @@ function validateEnvelope(envelope) {
   }
 
   if (['send', 'interrupt', 'kill', 'result'].includes(envelope.command) && !string(envelope.args.workerId)) return `${envelope.command} requires workerId`;
-  if (envelope.command === 'provider_status' && ((Object.hasOwn(envelope.args, 'providerId') && !/^[A-Za-z0-9._:-]{1,128}$/.test(envelope.args.providerId ?? ''))
-    || (Object.hasOwn(envelope.args, 'after') && !/^provider-processing:[a-f0-9]{64}$/.test(envelope.args.after ?? ''))
-    || (Object.hasOwn(envelope.args, 'limit') && (!Number.isSafeInteger(envelope.args.limit) || envelope.args.limit <= 0)))) return 'provider_status requires bounded provider, cursor, and limit';
   if (envelope.command === 'send' && (!string(envelope.args.message) || !['turn', 'steer', 'nudge'].includes(envelope.args.mode))) return 'send requires message and a valid mode';
   if (envelope.command === 'respond' && (!string(envelope.args.requestId) || !Object.hasOwn(envelope.args, 'answer'))) return 'respond requires requestId and answer';
 

@@ -63,7 +63,7 @@ const COORDINATION_MUTATORS = new Set([
   'recordDriver', 'registerArtifact', 'supersedeArtifact', 'claimScratch', 'postScratchFact',
   'readScratch', 'expireScratchClaim', 'expireScratchFact', 'addKnowledgeNode', 'promoteKnowledgeNode',
   'addKnowledgeEdge', 'readKnowledge', 'invalidateKnowledge', 'recordContamination', 'recordReuseDecision',
-  'recordReuseRiskGuard', 'recordReuseTtlInvalidation', 'activateReusePolicy', 'recordProviderDelivery', 'recordProviderGreenCompletion', 'recordProviderAdverseCompletion', 'recordProviderSourceReconciliation', 'recordProviderProcessingDeferral',
+  'recordReuseRiskGuard', 'recordReuseTtlInvalidation', 'activateReusePolicy',
   'admitFleetDrain', 'recordFleetDrainDisposition', 'completeFleetDrain',
   'issueRunOrchestratorLease', 'revokeRunOrchestratorLease', 'admitRunLineage',
   'recordRepresentationProduction',
@@ -432,42 +432,6 @@ export function constructor(coordinator, opts) {
     }
     coordinator._atlasStructuralEvidence = opts.atlasStructuralEvidence ?? null;
     if (coordinator._atlasStructuralEvidence !== null && typeof coordinator._atlasStructuralEvidence.classify !== 'function') throw new TypeError('Coordinator Atlas structural evidence authority is invalid');
-    coordinator._providerReconciliation = null;
-    if (opts.providerReconciliation !== undefined) {
-      const config = opts.providerReconciliation; const authority = config?.indexAuthority; const card = authority?.card?.();
-      if (!config || Object.keys(config).sort().join(',') !== ['budgetTokens', 'indexAuthority', 'repoId'].sort().join(',') || !Number.isSafeInteger(config.budgetTokens) || config.budgetTokens <= 0
-        || typeof config.repoId !== 'string' || !authority || typeof authority.current !== 'function' || typeof authority.reverify !== 'function'
-        || !card || Object.keys(card).sort().join(',') !== ['schemaVersion', 'authorityId', 'repoId', 'atlasCardDigest'].sort().join(',') || card.schemaVersion !== 1 || card.repoId !== config.repoId
-        || typeof card.authorityId !== 'string' || !/^[a-f0-9]{64}$/.test(card.atlasCardDigest ?? '')) throw new TypeError('provider reconciliation requires deployment-owned index authority');
-      const cq = coordinator._capabilities?.cards?.().find((item) => item.name === 'cartographer-quartermaster');
-      if (!cq?.ops?.['reuse.vet'] || cq.actions?.reverify !== true) throw new TypeError('provider reconciliation requires reverifiable Quartermaster reuse.vet');
-      const activePolicy = opts.coordination.reusePolicyState(config.repoId);
-      if (!cq.reusePolicy || !activePolicy || activePolicy.policyHash !== cq.reusePolicy.hash) throw new TypeError('provider reconciliation requires the active Quartermaster policy');
-      for (const method of ['providerProcessingAdmission', 'recordProviderGreenCompletion', 'recordProviderAdverseCompletion', 'reusePolicyState']) if (typeof opts.coordination[method] !== 'function') throw new TypeError(`Coordinator coordination store is missing ${method}()`);
-      coordinator._providerReconciliation = Object.freeze({ repoId: config.repoId, budgetTokens: config.budgetTokens, indexAuthority: authority, card: Object.freeze({ ...card }) });
-    }
-    coordinator._providerProcessingSchedule = null;
-    coordinator._providerProcessingScanActive = false;
-    if (opts.providerProcessingSchedule !== undefined) {
-      const config = opts.providerProcessingSchedule; const fields = ['repoId', 'intervalMs', 'maxBatch', 'maxAttempts', 'initialBackoffMs', 'maxBackoffMs', 'maxStateRows'];
-      if (!config || Object.keys(config).sort().join(',') !== fields.sort().join(',') || typeof config.repoId !== 'string' || config.repoId.length === 0
-        || Object.entries(config).filter(([key]) => key !== 'repoId').some(([, value]) => !Number.isSafeInteger(value) || value <= 0)
-        || config.initialBackoffMs > config.maxBackoffMs || config.intervalMs > 24 * 60 * 60 * 1_000 || config.maxBatch > 10_000 || config.maxBatch > config.maxStateRows || config.maxAttempts > 1_000_000 || config.maxBackoffMs > 24 * 60 * 60 * 1_000 || config.maxStateRows > 1_000_000
-        || !coordinator._providerReconciliation || coordinator._providerReconciliation.repoId !== config.repoId
-        || typeof opts.coordination.providerAttemptPolicy !== 'function' || typeof opts.coordination.dueProviderProcessing !== 'function' || typeof opts.coordination.recordProviderProcessingDeferral !== 'function') throw new TypeError('provider processing schedule requires bounded deployment retry and reconciliation authority');
-      const { repoId, ...policy } = config;
-      if (canonicalDigest(opts.coordination.providerAttemptPolicy()) !== canonicalDigest(policy)) throw new TypeError('provider processing schedule disagrees with durable attempt policy');
-      coordinator._providerProcessingSchedule = Object.freeze({ ...config });
-    }
-    coordinator._providerRead = null;
-    if (opts.providerRead !== undefined) {
-      const config = opts.providerRead;
-      if (!config || Object.keys(config).sort().join(',') !== ['maxBytes', 'maxProcessing', 'maxProviders', 'maxStateRows', 'repoId'].sort().join(',')
-        || typeof config.repoId !== 'string' || config.repoId.length === 0 || Object.entries(config).filter(([key]) => key !== 'repoId').some(([, value]) => !Number.isSafeInteger(value) || value <= 0)
-        || config.maxProviders > 10_000 || config.maxProcessing > 100_000 || config.maxStateRows > 1_000_000 || config.maxBytes > 16 * 1024 * 1024
-        || typeof opts.coordination.readProviderStatus !== 'function' || advisoryCards.length === 0) throw new TypeError('provider reads require one deployment repository, provider cards, and positive ceilings');
-      coordinator._providerRead = Object.freeze({ ...config });
-    }
     const rawCoordination = opts.coordination;
     coordinator._coordination = new Proxy(rawCoordination, {
       get: (target, property, receiver) => {
@@ -2081,9 +2045,6 @@ export async function decideReuse(coordinator, recorder, request, ctx = {}) {
     }
     if (request.choice === 'borrow' && recorder.coordination.reuseRiskGuard(coordinate)?.blocked === true) {
       throw Object.assign(new Error('exact package coordinate is blocked by an advisory observation'), { code: 'reuse_risk_guarded' });
-    }
-    if (typeof recorder.coordination.pendingProviderReconciliation === 'function' && recorder.coordination.pendingProviderReconciliation(ctx.repoId, coordinate).length > 0) {
-      throw Object.assign(new Error('exact package coordinate has an unresolved authenticated provider delivery'), { code: 'reuse_provider_pending' });
     }
     const dossierRef = decisionRef(request.dossier.claim?.refs?.[0], 'dependency-dossier', 'application/vnd.baton.dependency-dossier+json');
     const sbomRef = decisionRef(request.sbom.claim?.refs?.[0], 'lockfile-sbom', 'application/vnd.cyclonedx+json');
