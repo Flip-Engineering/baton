@@ -61,6 +61,12 @@
 # The adapter dispatch is bound under M-2, M-5 and M-11: Turn.input and Turn.launch select the
 # adapter by the harness the session recorded, and Turn.claude_launch and Turn.muse_launch start a
 # session when none is recorded and carry the recorded one otherwise.
+# The shared knowledge path binds M-1, M-8 and M-14 in knowledge-laws.bend:
+# Knowledge.commit_sql, finding_statement, record, read and promote carry the
+# transaction, evidence, scoped visibility and explicit promotion decisions.
+# The entry states its three knowledge dispatch laws over execute itself.
+# SQLite execution and persistence remain host assumptions; declared session
+# scopes select context inside the trusted local database.
 #
 # Supplementary laws. Three groups are checked by the same compile and are not operative runtime
 # coverage. The six laws in bend2/src/json/laws.bend are corpus-only: each fixes one value from

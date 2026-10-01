@@ -545,6 +545,65 @@ const MUTATIONS = [
   },
 ];
 
+MUTATIONS.push(
+  {
+    "name": "knowledge-insertion-skips-the-evidence-check",
+    "file": "bend2/src/coordinator/knowledge.bend",
+    "find": "++ \") AND \" ++ evidence_ok(author,evidence)",
+    "replace": "++ \") AND 1\"",
+    "law": "m8_finding_insertion_checks_the_author_evidence_and_retry"
+  },
+  {
+    "name": "knowledge-insertion-skips-the-author-check",
+    "file": "bend2/src/coordinator/knowledge.bend",
+    "find": "++ \" WHERE EXISTS(SELECT 1 FROM sessions WHERE id=\" ++ C.q(author) ++ \") AND \" ++ evidence_ok(author,evidence)",
+    "replace": "++ \" WHERE \" ++ evidence_ok(author,evidence)",
+    "law": "m8_finding_insertion_checks_the_author_evidence_and_retry"
+  },
+  {
+    "name": "knowledge-insertion-accepts-a-conflicting-retry",
+    "file": "bend2/src/coordinator/knowledge.bend",
+    "find": "++ \" ON CONFLICT(id) DO UPDATE SET id=CASE WHEN knowledge.author=excluded.author AND knowledge.claim=excluded.claim AND knowledge.evidence=excluded.evidence AND knowledge.limits=excluded.limits THEN knowledge.id ELSE NULL END;\"",
+    "replace": "++ \" ON CONFLICT(id) DO UPDATE SET id=knowledge.id;\"",
+    "law": "m8_finding_insertion_checks_the_author_evidence_and_retry"
+  },
+  {
+    "name": "knowledge-transaction-skips-the-existing-schema",
+    "file": "bend2/src/coordinator/knowledge.bend",
+    "find": "\"BEGIN IMMEDIATE;\" ++ C.schema() ++ knowledge_schema() ++ statements ++ \"COMMIT;\"",
+    "replace": "\"BEGIN IMMEDIATE;\" ++ knowledge_schema() ++ statements ++ \"COMMIT;\"",
+    "law": "m1_knowledge_statements_share_one_schema_ready_transaction"
+  },
+  {
+    "name": "knowledge-schema-drops-the-limits-column",
+    "file": "bend2/src/coordinator/knowledge.bend",
+    "find": "claim TEXT NOT NULL, evidence TEXT NOT NULL, limits TEXT NOT NULL);",
+    "replace": "claim TEXT NOT NULL, evidence TEXT NOT NULL);",
+    "law": "m1_the_knowledge_schema_retains_findings_and_promotions"
+  },
+  {
+    "name": "knowledge-record-dispatch-skips-the-effect",
+    "file": "bend2/src/coordinator/main.bend",
+    "find": "      Knowledge.record(db,id,author,claim,evidence,limits)",
+    "replace": "      IO.pure(Unit,Unit{})",
+    "law": "m14_the_record_command_runs_the_knowledge_record"
+  },
+  {
+    "name": "knowledge-read-dispatch-skips-the-query",
+    "file": "bend2/src/coordinator/main.bend",
+    "find": "      Knowledge.read(db,reader)",
+    "replace": "      IO.pure(Unit,Unit{})",
+    "law": "m14_the_knowledge_command_runs_the_scoped_read"
+  },
+  {
+    "name": "knowledge-promote-dispatch-skips-the-effect",
+    "file": "bend2/src/coordinator/main.bend",
+    "find": "      Knowledge.promote(db,id,promoter,source,destination,finding)",
+    "replace": "      IO.pure(Unit,Unit{})",
+    "law": "m14_the_promote_command_runs_the_explicit_promotion"
+  },
+);
+
 for (const mutation of MUTATIONS) {
   const copied = join(SCRATCH, mutation.file);
   cpSync(join(ROOT, mutation.file), copied);

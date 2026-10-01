@@ -267,7 +267,7 @@ runtime facilities are outside this design:
 | Delegation grants, exclusive writer couplings and contribution review roles | The implementation serves trusted local agents with the user's repository access. Native review and explicit Git operations supply the demonstrated review path. |
 | Contribution capture, integration queue and deployment-wide test selection | Workers commit branches and the root supplies a check script and selection to a foreground landing. The root can inspect the actual branch and result directly. |
 | HTTP/web operator surface and general MCP command bridge | The operator works through native sessions, using native receive and the Claude channel adapter for delivery. |
-| Knowledge stores, packages, scratchpad elevation and composed recruitment briefs | Task files, native conversation context and coordinator messages carry the working context used in these runs. |
+| Knowledge packages, scratchpad elevation and composed recruitment briefs | Agents record findings backed by retained messages and explicitly promote them between session scopes. Task files and ordinary messages carry task-specific context. |
 | Wake subscriptions and resident recovery machinery | The report writer invokes the registered root endpoint after commit. Reattachment reads the pending messages and resumes native context. |
 | Automatic workspace reclamation | Recovery uses the retained worker workspace. A completed turn or landing does not establish that the worker has no further work. |
 | Old-state migration and old protocol compatibility | Bend2 has its own database and command interface; the rewrite's acceptance is the real root-day sequence. |
@@ -283,6 +283,10 @@ These omissions do not define a compatibility backlog. Add behavior when a real
 use fails without it, following `AGENTS.md`.
 
 ## Acceptance
+
+The [shared knowledge workflow](knowledge-context-2026-09-29.md) adds recording,
+scoped retrieval and explicit promotion in the existing coordinator database.
+Its real producer, parent-review and consumer acceptance remains pending.
 
 The root-day acceptance exercises real OMP, Codex, Claude Code and Muse workers;
 OMP guidance during a turn; report-triggered Codex, OMP and Claude root turns;

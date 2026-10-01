@@ -7,8 +7,9 @@ coordinator operations on 2026-09-29 under #642: record a finding, read visible
 context, and explicitly promote an exact finding. Agents generate findings and
 review their evidence. The coordinator stores the records and applies visibility
 and promotion rules.
-These operations are planned; published `4676778a` implements sessions,
-messages and turns, without this knowledge workflow.
+This tree includes the three operations and their operative laws. Published
+`5dd13985` includes sessions, messages, turns, terminal stops and native replies.
+Knowledge publication remains pending real producer and consumer acceptance.
 
 This decision amends the knowledge-store omission in
 [the current architecture](architecture.md) and
@@ -130,3 +131,28 @@ of the underlying Git and check evidence. Laws bind the actual storage, query,
 promotion dispatch and notification functions.
 Tests preserve the trusted-local limitation; they do not claim authenticated
 caller isolation. Host reboot and power-loss durability require separate evidence.
+
+The staged driver is `bend2/scripts/accept-knowledge-context.py`. Its `prepare`
+command pins the source, supplied coordinator, build log, native executable and
+route in an isolated clone. Preparation starts no model sessions. Its `produce`,
+`consume` and `fresh-consumer` commands each start one OMP turn and retain full
+native output, coordinator calls, message deliveries and database snapshots.
+The parent reviews the producer's evidence, explicitly promotes one finding and
+acknowledges pending messages before consumption. The second finding remains a
+local visibility control. The fresh consumer conversation reuses the logical
+session and workspace with a new native identity; it checks retrieval after
+earlier receipts. This stage establishes fresh-conversation retrieval.
+
+## Law review
+
+The prepared core at `53bd8b38` corrected conflicting reuse of a finding ID with
+missing or unrelated evidence. The answer and notice now require the invocation's
+full finding coordinates.
+
+On the composed source, a copied insertion with its evidence condition removed
+still compiled against the initial knowledge laws. The insertion law now binds
+the declared author, cited evidence and exact retry condition to the actual
+`finding_statement` function. The same mutation fails that law. Additional laws
+bind schema creation, transaction composition and the three entry dispatch arms.
+The negative-control runner retains those implementation mutations alongside
+proof removal checks.

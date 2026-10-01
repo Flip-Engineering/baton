@@ -62,10 +62,6 @@ def membership(+scope: String, +reader: String) -> String:
 def scope_membership(+reader: String) -> String:
   membership("p.destination",reader)
 
-# The scope a promotion is drawn from, named by its owner.
-def source_membership(+actor: String, +source: String) -> String:
-  membership(C.q(source),actor)
-
 # A finding the reader authored, or whose author's immediate parent is the reader.
 def authored_visible(+reader: String) -> String:
   "k.author=" ++ C.q(reader) ++ " OR EXISTS(SELECT 1 FROM sessions a WHERE a.id=k.author AND a.parent=" ++ C.q(reader) ++ ")"
@@ -99,8 +95,7 @@ def read_sql(+reader: String) -> String:
   reader_chain(reader) ++ "SELECT coalesce(json_group_array(json(item)),json('[]')) FROM (SELECT " ++ knowledge_item(reader) ++ " AS item FROM knowledge k WHERE " ++ knowledge_visible(reader) ++ " ORDER BY k.rowid);"
 
 # The stored finding, read back only when it is this invocation's own finding:
-# the same id with different coordinates is refused rather than answered with
-# another row's content, so a mismatched repeat cannot redeliver its notice.
+# the id, author, claim, evidence and limits must all match this invocation.
 def knowledge_answer(+id: String, +author: String, +claim: String, +evidence: String, +limits: String) -> String:
   "SELECT json_object('id',id,'author',author,'claim',claim,'evidence',evidence,'limits',limits) FROM knowledge WHERE id=" ++ C.q(id) ++ " AND author=" ++ C.q(author) ++ " AND claim=" ++ C.q(claim) ++ " AND evidence=" ++ C.q(evidence) ++ " AND limits=" ++ C.q(limits) ++ ";"
 
@@ -149,8 +144,7 @@ def promotion_statement(+id: String, +promoter: String, +source: String, +destin
   ++ " ON CONFLICT(id) DO UPDATE SET id=CASE WHEN knowledge_promotions.finding=excluded.finding AND knowledge_promotions.author=excluded.author AND knowledge_promotions.source=excluded.source AND knowledge_promotions.destination=excluded.destination AND knowledge_promotions.promoted_by=excluded.promoted_by THEN knowledge_promotions.id ELSE NULL END;"
 
 # The stored promotion, read back only when it is this call's own promotion:
-# the same id with different coordinates is refused rather than answered with
-# another row's content.
+# the id, finding, source, destination and promoting actor must all match.
 def promotion_answer(+id: String, +promoter: String, +source: String, +destination: String, +finding: String) -> String:
   "SELECT json_object('id',id,'finding',finding,'author',author,'source',source,'destination',destination,'promotedBy',promoted_by) FROM knowledge_promotions WHERE id=" ++ C.q(id) ++ " AND finding=" ++ C.q(finding) ++ " AND source=" ++ C.q(source) ++ " AND destination=" ++ C.q(destination) ++ " AND promoted_by=" ++ C.q(promoter) ++ ";"
 

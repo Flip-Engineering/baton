@@ -14,6 +14,32 @@ import ./knowledge.bend as K
 import ./root.bend as Root
 import ../host/sqlite.bend as DB
 
+law m1_the_knowledge_schema_retains_findings_and_promotions:
+  {K.knowledge_schema() == "CREATE TABLE IF NOT EXISTS knowledge (id TEXT UNIQUE NOT NULL, author TEXT NOT NULL, claim TEXT NOT NULL, evidence TEXT NOT NULL, limits TEXT NOT NULL);" ++ "CREATE TABLE IF NOT EXISTS knowledge_promotions (id TEXT UNIQUE NOT NULL, finding TEXT NOT NULL, author TEXT NOT NULL, source TEXT NOT NULL, destination TEXT NOT NULL, promoted_by TEXT NOT NULL);" : String}
+
+def m1_the_knowledge_schema_retains_findings_and_promotions():
+  {==}
+
+law m1_knowledge_statements_share_one_schema_ready_transaction:
+  for statements: String
+  {K.commit_sql(statements) == "BEGIN IMMEDIATE;" ++ C.schema() ++ K.knowledge_schema() ++ statements ++ "COMMIT;" : String}
+
+def m1_knowledge_statements_share_one_schema_ready_transaction(statements):
+  {==}
+
+# The insertion checks its declared author and cited evidence and preserves an
+# existing row only when every finding coordinate matches.
+law m8_finding_insertion_checks_the_author_evidence_and_retry:
+  for id: String
+  for author: String
+  for claim: String
+  for evidence: String
+  for limits: String
+  {K.finding_statement(id,author,claim,evidence,limits) == "INSERT INTO knowledge(id,author,claim,evidence,limits) SELECT " ++ C.q(id) ++ "," ++ C.q(author) ++ "," ++ C.q(claim) ++ "," ++ C.q(evidence) ++ "," ++ C.q(limits) ++ " WHERE EXISTS(SELECT 1 FROM sessions WHERE id=" ++ C.q(author) ++ ") AND " ++ K.evidence_ok(author,evidence) ++ " ON CONFLICT(id) DO UPDATE SET id=CASE WHEN knowledge.author=excluded.author AND knowledge.claim=excluded.claim AND knowledge.evidence=excluded.evidence AND knowledge.limits=excluded.limits THEN knowledge.id ELSE NULL END;" : String}
+
+def m8_finding_insertion_checks_the_author_evidence_and_retry(id,author,claim,evidence,limits):
+  {==}
+
 # M-8: the reader's own session and every session above it. The chain CTE is
 # what membership by subtree is tested against.
 law m8_the_reader_chain_is_the_reader_and_its_ancestors:
@@ -40,14 +66,6 @@ law m8_the_destination_membership_is_the_promotions_destination_scope:
   {K.scope_membership(reader) == K.membership("p.destination",reader) : String}
 
 def m8_the_destination_membership_is_the_promotions_destination_scope(reader):
-  {==}
-
-law m8_the_source_membership_is_the_named_source_scope:
-  for actor: String
-  for source: String
-  {K.source_membership(actor, source) == K.membership(C.q(source),actor) : String}
-
-def m8_the_source_membership_is_the_named_source_scope(actor, source):
   {==}
 
 # M-8: the candidate scope: a finding the reader authored, or one whose author's
@@ -94,8 +112,7 @@ def m8_a_reader_reads_the_promotions_visible_to_it(reader):
   {==}
 
 # M-1: a record answers its own finding, read back by its full coordinates. A
-# repeat of an existing id with different coordinates therefore cannot answer
-# another row's content, and cannot redeliver that row's notice.
+# finding identity and every coordinate must match this invocation.
 law m1_the_finding_answer_is_the_row_it_wrote:
   for id: String
   for author: String

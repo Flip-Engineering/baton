@@ -178,9 +178,15 @@ repository remote remains the operator's explicit action
 The initial scope excludes a Baton conversation UI, old-state import, protocol
 compatibility, shadow parity, automatic model routing, resource scheduling,
 review roles, contribution approval gates, law registries, dependency boards,
-knowledge stores, remote workers and automatic cleanup. Repository instructions
+remote workers and automatic cleanup. Repository instructions
 and normal task messages carry working context. Add another facility when actual
 use demonstrates the missing behavior.
+
+The [shared knowledge workflow](knowledge-context-2026-09-29.md) adds immutable
+findings with retained evidence messages, reader-relative session scopes and
+explicit source-to-destination promotion. Agents generate and review findings.
+The coordinator uses its existing SQLite database and parent message delivery.
+Real producer and consumer acceptance remains pending.
 
 ## Implementation boundary
 

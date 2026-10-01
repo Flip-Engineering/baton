@@ -107,6 +107,38 @@ def execute(db: String, command: C.Command) -> IO(Unit):
         run(db,C.Message{id,sender,recipient,kind,body})
     case valid: run(db,valid)
 
+law m14_the_record_command_runs_the_knowledge_record:
+  for db: String
+  for id: String
+  for author: String
+  for claim: String
+  for evidence: String
+  for limits: String
+  {execute(db,C.KnowledgeRecord{id,author,claim,evidence,limits}) == Knowledge.record(db,id,author,claim,evidence,limits) : IO(Unit)}
+
+def m14_the_record_command_runs_the_knowledge_record(db,id,author,claim,evidence,limits):
+  {==}
+
+law m14_the_knowledge_command_runs_the_scoped_read:
+  for db: String
+  for reader: String
+  {execute(db,C.KnowledgeRead{reader}) == Knowledge.read(db,reader) : IO(Unit)}
+
+def m14_the_knowledge_command_runs_the_scoped_read(db,reader):
+  {==}
+
+law m14_the_promote_command_runs_the_explicit_promotion:
+  for db: String
+  for id: String
+  for promoter: String
+  for source: String
+  for destination: String
+  for finding: String
+  {execute(db,C.KnowledgePromote{id,promoter,source,destination,finding}) == Knowledge.promote(db,id,promoter,source,destination,finding) : IO(Unit)}
+
+def m14_the_promote_command_runs_the_explicit_promotion(db,id,promoter,source,destination,finding):
+  {==}
+
 def keeper(directory: String, lock: Maybe<&2,U32>) -> IO(Unit):
   match lock:
     case None{}: IO.die(Unit,2,"Invalid inherited process lock.")

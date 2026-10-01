@@ -199,6 +199,31 @@ class Knowledge(unittest.TestCase):
                      'promote PROMOTION_ID PROMOTER SOURCE DESTINATION FINDING'):
             self.assertIn(verb, p.stderr)
 
+    def test_a_stopped_reviewing_parent_retains_the_notice_and_notifies_its_parent(self):
+        self.call('connect', 'root', 'root-session', json.dumps(['/usr/bin/true']))
+        self.call('recruit', 'reviewer', 'root', 'omp', 'fixture-model', 'high',
+                  str(self.repo), 'reviewer-branch', str(self.checkouts / 'reviewer'), self.base)
+        self.worker('researcher', parent='reviewer')
+        evidence = self.evidence('retained-check', 'researcher')
+        self.call('stop', 'reviewer', 'end-review', 'Reviewing session ended.')
+        finding = ('record', 'handoff-finding', 'researcher', 'measured claim', evidence, 'fixture')
+        recorded = self.call(*finding)
+        self.assertEqual(self.call(*finding), recorded)
+        self.assertEqual(self.ids(self.read('reviewer')), ['handoff-finding'])
+        self.assertEqual(self.read('root'), [])
+        notice = self.call('delivery', 'handoff-finding:notice')
+        self.assertEqual(notice['recipient'], 'reviewer')
+        self.assertIsNone(notice['receipt'])
+        body = {'finding': 'handoff-finding', 'author': 'researcher'}
+        self.assertEqual(json.loads(notice['body']), body)
+        handoffs = [json.loads(row['body']) for row in self.call('inbox', 'root')
+                    if row['kind'] == 'report']
+        matches = [row for row in handoffs if row.get('originalMessage') == 'handoff-finding:notice']
+        self.assertEqual(len(matches), 1)
+        self.assertEqual(matches[0]['originalKind'], 'question')
+        self.assertEqual(json.loads(matches[0]['originalBody']), body)
+        self.assertEqual(self.read('reviewer')[0]['promotions'], [])
+
 
 if __name__ == '__main__':
     unittest.main()

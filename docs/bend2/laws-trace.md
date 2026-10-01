@@ -13,6 +13,12 @@ and the real worker admission against those models on an enumerated corpus.
 The coordinator entry imports [operative application laws](../../bend2/src/coordinator/laws.bend)
 over runtime functions. Every entry compile verifies their proofs, including the
 [receive ownership laws](../../bend2/src/coordinator/receive-laws.bend) under M-8.
+The [knowledge laws](../../bend2/src/coordinator/knowledge-laws.bend) bind the
+actual finding insertion, retained evidence predicate, reader scopes, explicit
+promotion, transaction composition and notification IO. The coordinator entry
+also proves its three knowledge command dispatches. These equations check the
+SQL and IO terms the implementation generates. SQLite execution and persistence
+remain host assumptions, and declared session scopes select trusted local context.
 The broader application obligations below retain their stated scope. The compiler
 TODOs in the separate model `laws.bend` are discharged by `laws-proof.bend`.
 The entry compile also checks sixteen supplementary laws, labelled as such in their own modules
