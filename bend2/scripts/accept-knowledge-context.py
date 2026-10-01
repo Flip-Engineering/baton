@@ -146,8 +146,14 @@ Run this existing focused behavior check using the provided compiled coordinator
   python3 -m unittest bend2.test.receive.Receive.test_native_question_parent_answers_and_waits_for_full_report
 Retain its exact command, exit status and complete stdout/stderr in
 .scratch/knowledge-check.txt. Record the source commit and relevant file paths.
+Capture stdout and stderr separately when describing which stream emitted a
+byte. Ordinary commands can collect commit, status and paths without an
+interactive read. Preserve any failed tool command and report its recovery.
 Use those observations to identify one precise fact useful to an operator
 answering a native OMP question. State its limits accurately.
+Distinguish transport completion, native progress, message acceptance and the
+parent agent's own decision to wait for a report. Check each statement against
+the called functions and distinguish fixture behavior from a runtime guarantee.
 First publish an evidence report with `{cli} report {EVIDENCE} producer BODY`.
 Its body must include the actual command/output/status, source commit and files;
 parent review will resolve those references. Then record finding {FINDING} with:
