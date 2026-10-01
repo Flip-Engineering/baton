@@ -26,6 +26,8 @@ object:
 
 ## Answer
 
+Choose one response form for the request:
+
 ```sh
 baton2 state.db native-reply parent REQUEST_ID '{"value":"Keep the existing work.\nUse the selected branch."}'
 baton2 state.db native-reply-file parent REQUEST_ID answer.json
@@ -37,19 +39,21 @@ supplied option; `confirm` takes one boolean `confirmed`. Every method also acce
 `{"cancelled":true}`. `native-reply-file` reads the file it names, and `-` reads standard
 input, which keeps a multiline answer intact.
 
-A successful answer writes `{"status":"stdin-written"}` to standard output and exits 0.
+A first successful answer writes
+`{"request":"REQUEST_ID","status":"stdin-written"}` to standard output and exits 0.
+An identical retry after a completed write returns `{"status":"stdin-written"}`.
 The coordinator checks the recorded parent and the recorded method before it retains one
-immutable response. An identical retry answers with the recorded write result; a
-different answer for the same request fails. The frame goes to the attempt directory
+immutable response. An identical retry with a pending write attempts that original write;
+a different answer for the same request fails. The frame goes to the attempt directory
 stored in the request row.
 
 ## What a successful answer reports
 
 `stdin-written` reports that the coordinator handed the response frame to the retained
 process's stdin pipe. The frame is one JSON line, `extension_ui_response`, carrying the
-original native request ID. Native continuation is separate: the retained harness reads
-that frame from its stdin and acts on it, and the coordinator observer stays alive past
-the write. The retained child's own report is what shows progress after the answer.
+original native request ID. Native output and the retained child's eventual report establish
+whether it consumed and acted on that frame. The observer continues to track native work
+after the write.
 
 ## Accept the question and wait for the report
 
