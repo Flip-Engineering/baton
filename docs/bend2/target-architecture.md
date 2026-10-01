@@ -186,7 +186,12 @@ The [shared knowledge workflow](knowledge-context-2026-09-29.md) adds immutable
 findings with retained evidence messages, reader-relative session scopes and
 explicit source-to-destination promotion. Agents generate and review findings.
 The coordinator uses its existing SQLite database and parent message delivery.
-Real producer and consumer acceptance remains pending.
+Recording notifies the author's immediate parent, when present. Promotion commits a notice to
+the destination-scope owner, which chooses further ensemble distribution. The
+[real acceptance run](knowledge-context-2026-10-01.md) covers evidence review,
+explicit promotion, owner notices, sibling consumption by finding ID, retrieval
+in a fresh conversation and a separately promoted immutable correction. Its
+report states the parent-collector and investigated Python-fixture boundaries.
 
 ## Implementation boundary
 
