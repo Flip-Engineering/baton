@@ -5,8 +5,9 @@
 effort. Optional observed_model names the expected native model; native_executable
 adds an underlying executable pin when executable is a launcher script.
 --tasks supplies deepseek/muse task text, files and checks, guidance text, and
-optional file_checks with path, contains and absent lists. Selected checks run as
-Python files in each checked tree. This command starts real native sessions.
+optional file_checks with path, contains and absent lists. Selected checks run
+through bend2/scripts/check-unittest.sh in each checked tree. This command starts
+real native sessions.
 Final worker and target changes must stay within the run's assigned files.
 Worker assigned files must match their latest landing and the final target.
 """
@@ -25,6 +26,7 @@ import time
 
 SOURCE = Path(__file__).resolve().parents[2]
 WORKERS = ('deepseek', 'muse')
+ADAPTER = 'bend2/scripts/check-unittest.sh'
 
 
 def save(path, value):
@@ -173,6 +175,26 @@ def native_id(frame):
 def git_entry(repo, revision, path):
     """Return the stored mode, object and path, including absence after deletion."""
     return command(['git', '-C', repo, 'ls-tree', revision, '--', path])
+
+
+def hierarchy_check(compiler):
+    """The checked-landing CHECK the gate runs as `/bin/sh CHECK SELECTED_FILE`.
+
+    The gate runs it with the checked tree as the working directory, once per
+    selected file. It passes the selected file to the shared
+    bend2/scripts/check-unittest.sh adapter, which builds the coordinator for
+    bend2/test selections and refuses a skipped or empty selection. BEND names
+    the installed compiler that build resolves.
+    """
+    return ('set -eu\n'
+            f'BEND={shlex.quote(str(compiler))}\n'
+            'export BEND\n'
+            f'adapter={ADAPTER}\n'
+            'if [ ! -f "$adapter" ]; then\n'
+            '  echo "check-unittest adapter missing at $adapter under $(pwd)" >&2\n'
+            '  exit 2\n'
+            'fi\n'
+            'exec /bin/sh "$adapter" "$1"\n')
 
 
 def verify_landings(out, run, sessions):
@@ -360,8 +382,10 @@ def main():
                            [sys.executable, out / 'acceptance.py', 'native', seat, out]) + ' "$@"\n')
         wrapper.chmod(0o700)
         wrappers[seat] = str(wrapper)
+    compiler = build.get('compiler', {}).get('path')
+    assert compiler, 'the coordinator build recorded no compiler for checked landings'
     check = out / 'check.sh'
-    check.write_text('set -eu\nmkdir -p .scratch/bend2\npython3 "$1"\n')
+    check.write_text(hierarchy_check(compiler))
     (out / 'guidance.txt').write_text(tasks['guidance'])
     lead_endpoint = [str(binary), str(db), 'receive', 'lead', wrappers['lead'], '', '', '', str(out / 'lead.jsonl')]
     save(out / 'lead-endpoint.json', lead_endpoint)
