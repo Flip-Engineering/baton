@@ -41,7 +41,8 @@ input, which keeps a multiline answer intact.
 
 A first successful answer writes
 `{"request":"REQUEST_ID","status":"stdin-written"}` to standard output and exits 0.
-An identical retry after a completed write returns `{"status":"stdin-written"}`.
+An identical retry while the request remains open after a completed write returns
+`{"status":"stdin-written"}`.
 The coordinator checks the recorded parent and the recorded method before it retains one
 immutable response. An identical retry with a pending write attempts that original write;
 a different answer for the same request fails. The frame goes to the attempt directory
