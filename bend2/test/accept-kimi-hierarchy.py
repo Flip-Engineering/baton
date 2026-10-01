@@ -1,7 +1,9 @@
-"""Hierarchy acceptance checks final file scope and correction landing contents."""
+"""Hierarchy acceptance checks final file scope, correction landings, and the generated CHECK."""
 import importlib.util
 import json
+import os
 from pathlib import Path
+import shutil
 import subprocess
 import tempfile
 import unittest
@@ -10,6 +12,40 @@ ROOT = Path(__file__).resolve().parents[2]
 SPEC = importlib.util.spec_from_file_location('hierarchy', ROOT / 'bend2/scripts/accept-kimi-hierarchy.py')
 DRIVER = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(DRIVER)
+
+ADAPTER = Path('bend2/scripts/check-unittest.sh')
+
+PASSING = '''
+import pathlib
+import unittest
+
+class Executed(unittest.TestCase):
+    def test_body_runs(self):
+        pathlib.Path('executed.marker').write_text('ran')
+        self.assertEqual(1, 1)
+'''
+
+SKIPPED = '''
+import unittest
+
+class Skipped(unittest.TestCase):
+    @unittest.skip('prerequisite absent')
+    def test_skipped(self):
+        self.fail('never')
+'''
+
+EMPTY = 'import unittest\n'
+
+
+def compiler():
+    """The installed Bend compiler the native fixture build uses."""
+    value = os.environ.get('BEND')
+    if value:
+        return str(Path(shutil.which(value) or value).resolve())
+    for candidate in (ROOT / '.bend/bin/bend', ROOT / 'node_modules/.bend/bin/bend'):
+        if candidate.is_file():
+            return str(candidate)
+    raise AssertionError('No Bend compiler for the native fixture build')
 
 
 class HierarchyHistory(unittest.TestCase):
@@ -137,6 +173,66 @@ class HierarchyHistory(unittest.TestCase):
         self.publish_target()
         with self.assertRaisesRegex(AssertionError, 'content or mode'):
             self.verify()
+
+
+class GeneratedCheck(unittest.TestCase):
+    """The generated hierarchy CHECK routes each selected file through the adapter."""
+
+    def setUp(self):
+        self.scratch = ROOT / '.scratch'
+        self.scratch.mkdir(exist_ok=True)
+        self.fixture = Path(tempfile.mkdtemp(prefix='hierarchy-check-', dir=self.scratch))
+        self.addCleanup(shutil.rmtree, self.fixture, ignore_errors=True)
+
+    def install_adapter(self):
+        adapter = self.fixture / ADAPTER
+        adapter.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(ROOT / ADAPTER, adapter)
+
+    def select(self, name, body):
+        path = self.fixture / name
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(body)
+        return name
+
+    def check(self, selected):
+        script = self.fixture / 'check.sh'
+        script.write_text(DRIVER.hierarchy_check(compiler()))
+        return subprocess.run(['/bin/sh', str(script), selected],
+                              cwd=self.fixture, text=True, capture_output=True)
+
+    def test_generated_check_runs_the_selected_test_body(self):
+        self.install_adapter()
+        selected = self.select('selected/executed.py', PASSING)
+        result = self.check(selected)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(result.stdout, '')
+        self.assertTrue((self.fixture / 'executed.marker').is_file(),
+                        'the selected test body did not run')
+
+    def test_generated_check_refuses_a_skipped_selection(self):
+        self.install_adapter()
+        selected = self.select('selected/skipped.py', SKIPPED)
+        result = self.check(selected)
+        self.assertEqual(result.returncode, 1, result.stderr)
+        self.assertIn('unjudged', result.stdout)
+
+    def test_generated_check_refuses_an_empty_selection(self):
+        self.install_adapter()
+        selected = self.select('selected/empty.py', EMPTY)
+        result = self.check(selected)
+        self.assertEqual(result.returncode, 1, result.stderr)
+        self.assertIn('unjudged', result.stdout)
+
+    def test_generated_check_builds_and_runs_selected_native_tests(self):
+        shutil.copytree(ROOT / 'bend2', self.fixture / 'bend2')
+        coordinator = self.fixture / '.scratch/bend2/baton2'
+        self.assertFalse(coordinator.exists(), 'the fixture tree started with a coordinator')
+        result = self.check('bend2/test/receive.py')
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(result.stdout, '')
+        self.assertNotIn('unjudged', result.stdout + result.stderr)
+        self.assertTrue(coordinator.is_file(), 'the adapter did not build the coordinator')
 
 
 if __name__ == '__main__':
