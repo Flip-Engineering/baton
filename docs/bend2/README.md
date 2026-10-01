@@ -12,6 +12,10 @@ removal and implementation mutations. Native tests and real runs measure host ef
 [Shared findings](knowledge-context-2026-09-29.md) describes recording, retrieval,
 promotion and destination-owner notification.
 [Knowledge acceptance](knowledge-context-2026-10-01.md) records their real use.
+[Hierarchy checker repair](hierarchy-checker-2026-10-01.md) records a reviewed
+worker landing, native promotion notice and failed Muse launch.
+[Coordinator comparison](coordinator-comparison-2026-10-01.md) measures the
+current original and rewritten coordination operations.
 
 Historical reviews and language experiments remain reference material. The current
 mandate and operative implementation determine the work.
