@@ -511,7 +511,7 @@ const MUTATIONS = [
   {
     name: 'knowledge-record-io-skips-the-notice-delivery',
     file: join('bend2', 'src', 'coordinator', 'knowledge.bend'),
-    find: '    delivery : Result<&1,&1,U32 & String,String> <- Root.deliver(db,notice_id(id),"1",saved)',
+    find: '    delivery : Result<&1,&1,U32 & String,String> <- deliver_record(db,id,saved)',
     replace: '    delivery : Result<&1,&1,U32 & String,String> <- IO.pure(Result<&1,&1,U32 & String,String>,Done{saved})',
     law: 'm1_the_record_io_queries_delivers_and_answers',
   },
@@ -546,6 +546,20 @@ const MUTATIONS = [
 ];
 
 MUTATIONS.push(
+  {
+    name: 'knowledge-empty-record-result-delivers-the-old-notice',
+    file: join('bend2', 'src', 'coordinator', 'knowledge.bend'),
+    find: '    case SNil{}: IO.pure(Result<&1,&1,U32 & String,String>,Done{SNil{}})',
+    replace: '    case SNil{}: Root.deliver(db,notice_id(id),"1",SNil{})',
+    law: 'm1_an_empty_record_result_is_a_pure_answer',
+  },
+  {
+    name: 'knowledge-stored-record-result-skips-its-notice',
+    file: join('bend2', 'src', 'coordinator', 'knowledge.bend'),
+    find: '    case SCon{h,t}: Root.deliver(db,notice_id(id),"1",SCon{h,t})',
+    replace: '    case SCon{h,t}: IO.pure(Result<&1,&1,U32 & String,String>,Done{SCon{h,t}})',
+    law: 'm1_a_stored_record_result_delivers_its_notice',
+  },
   {
     "name": "knowledge-insertion-skips-the-evidence-check",
     "file": "bend2/src/coordinator/knowledge.bend",

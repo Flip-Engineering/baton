@@ -149,6 +149,13 @@ The prepared core at `53bd8b38` corrected conflicting reuse of a finding ID with
 missing or unrelated evidence. The answer and notice now require the invocation's
 full finding coordinates.
 
+The composed review also exercised a real local parent endpoint. A conflicting
+retry exited with failure while invoking the old notice endpoint again. Record
+delivery now branches on the coordinate-bound stored result: an empty answer
+returns a pure result, and a stored finding invokes its own notice endpoint.
+The executable regression checks the actual endpoint log for missing and
+unrelated evidence retries and permits an exact retry to repeat delivery.
+
 On the composed source, a copied insertion with its evidence condition removed
 still compiled against the initial knowledge laws. The insertion law now binds
 the declared author, cited evidence and exact retry condition to the actual

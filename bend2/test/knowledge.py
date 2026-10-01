@@ -10,6 +10,7 @@ import json
 import pathlib
 import sqlite3
 import subprocess
+import sys
 import tempfile
 import unittest
 
@@ -198,6 +199,27 @@ class Knowledge(unittest.TestCase):
         for verb in ('record FINDING_ID AUTHOR CLAIM EVIDENCE LIMITS', 'knowledge READER',
                      'promote PROMOTION_ID PROMOTER SOURCE DESTINATION FINDING'):
             self.assertIn(verb, p.stderr)
+
+    def test_a_refused_record_retry_leaves_parent_endpoint_delivery_unchanged(self):
+        evidence = self.evidence('endpoint-evidence', 'worker')
+        unrelated = self.evidence('endpoint-unrelated', 'sibling')
+        deliveries = pathlib.Path(self.temp.name) / 'deliveries.txt'
+        endpoint = pathlib.Path(self.temp.name) / 'endpoint.py'
+        endpoint.write_text('import pathlib,sys\n'
+                            'with pathlib.Path(sys.argv[1]).open("a") as stream:\n'
+                            '    stream.write(sys.argv[2] + "\\n")\n')
+        self.call('connect', 'root', 'root-session',
+                  json.dumps([sys.executable, str(endpoint), str(deliveries)]))
+        record = ('record', 'endpoint-finding', 'worker', 'claim', evidence, 'limits')
+        first = self.call(*record)
+        before = deliveries.read_text()
+        self.assertEqual(before, 'endpoint-finding:notice\n')
+        for bad_evidence in ('message:absent', unrelated):
+            self.call('record', 'endpoint-finding', 'worker', 'claim', bad_evidence,
+                      'limits', success=False)
+            self.assertEqual(deliveries.read_text(), before)
+        self.assertEqual(self.call(*record), first)
+        self.assertEqual(deliveries.read_text(), before + before)
 
     def test_a_stopped_reviewing_parent_retains_the_notice_and_notifies_its_parent(self):
         self.call('connect', 'root', 'root-session', json.dumps(['/usr/bin/true']))

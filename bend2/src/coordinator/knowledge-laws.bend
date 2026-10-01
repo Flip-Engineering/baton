@@ -302,10 +302,28 @@ def m1_the_promote_statement_carries_the_promotion_and_its_answer(id, promoter, 
 
 # M-1: the record's own IO sequence: one committing query, then the delivery of
 # the notice it wrote, then the answer.
+law m1_an_empty_record_result_is_a_pure_answer:
+  for db: String
+  for id: String
+  {K.deliver_record(db,id,SNil{}) == IO.pure(Result<&1,&1,U32 & String,String>,Done{SNil{}}) : IO(Result<&1,&1,U32 & String,String>)}
+
+def m1_an_empty_record_result_is_a_pure_answer(db,id):
+  {==}
+
+law m1_a_stored_record_result_delivers_its_notice:
+  for db: String
+  for id: String
+  for h: Char
+  for t: String
+  {K.deliver_record(db,id,SCon{h,t}) == Root.deliver(db,K.notice_id(id),"1",SCon{h,t}) : IO(Result<&1,&1,U32 & String,String>)}
+
+def m1_a_stored_record_result_delivers_its_notice(db,id,h,t):
+  {==}
+
 def record_io(+db: String, +id: String, author: String, claim: String, evidence: String, limits: String) -> IO(Unit):
   do IO<Unit>:
     saved : String <- IO.try(String,DB.Sql.query(db,K.commit_sql(K.record_statements(id,author,claim,evidence,limits))))
-    delivery : Result<&1,&1,U32 & String,String> <- Root.deliver(db,K.notice_id(id),"1",saved)
+    delivery : Result<&1,&1,U32 & String,String> <- K.deliver_record(db,id,saved)
     K.answered(delivery)
 
 law m1_the_record_io_queries_delivers_and_answers:

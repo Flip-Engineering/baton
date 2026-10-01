@@ -160,10 +160,15 @@ def answered(delivery: Result<&1,&1,U32 & String,String>) -> IO(Unit):
 
 # Record: one transaction writes the finding and the notice, the notice is then
 # delivered as an ordinary message, and the answer is the stored finding.
+def deliver_record(db: String, id: String, saved: String) -> IO(Result<&1,&1,U32 & String,String>):
+  match saved:
+    case SNil{}: IO.pure(Result<&1,&1,U32 & String,String>,Done{SNil{}})
+    case SCon{h,t}: Root.deliver(db,notice_id(id),"1",SCon{h,t})
+
 def record(+db: String, +id: String, author: String, claim: String, evidence: String, limits: String) -> IO(Unit):
   do IO<Unit>:
     saved : String <- IO.try(String,DB.Sql.query(db,commit_sql(record_statements(id,author,claim,evidence,limits))))
-    delivery : Result<&1,&1,U32 & String,String> <- Root.deliver(db,notice_id(id),"1",saved)
+    delivery : Result<&1,&1,U32 & String,String> <- deliver_record(db,id,saved)
     answered(delivery)
 
 # Read: the findings the reader's scopes allow, as a JSON array. A reader with
