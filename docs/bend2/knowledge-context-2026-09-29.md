@@ -7,9 +7,10 @@ coordinator operations on 2026-09-29 under #642: record a finding, read visible
 context, and explicitly promote an exact finding. Agents generate findings and
 review their evidence. The coordinator stores the records and applies visibility
 and promotion rules.
-This tree includes the three operations and their operative laws. Published
-`5dd13985` includes sessions, messages, turns, terminal stops and native replies.
-Knowledge publication remains pending real producer and consumer acceptance.
+This tree includes the three operations, destination-owner notification and their
+operative laws. [The real acceptance run](knowledge-context-2026-10-01.md)
+records producer investigation, reviewed promotion, sibling use, fresh-conversation
+retrieval and an immutable correction. Publication uses the root's exact-tree gates.
 
 This decision amends the knowledge-store omission in
 [the current architecture](architecture.md) and
@@ -28,7 +29,8 @@ phase gates. Its acceptance is the concrete workflow below.
 ## Records and visibility
 
 The root froze the first-slice command contract as v3 on 2026-09-29.
-The API contract is stable; feature publication and acceptance remain pending.
+The command contract is stable. The acceptance report identifies the measured
+source and runtime boundaries.
 The command forms are:
 
 ```text

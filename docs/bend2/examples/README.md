@@ -1,10 +1,15 @@
-# examples — compiled proof of one capability claim each
+# Bend2 examples
+
+[Native question replies](native-question-reply.md) shows the operator commands for
+answering retained OMP child questions and accepting their messages.
+
+## Language examples
 
 Each example in this directory exists to prove or disprove one specific claim about what Bend2 can
 express at the pinned reference (`../reference/README.md`). The toolchain is at `<worktree>/.bend/`;
 see `../reference/README.md` for the install command.
 
-## Convention
+### Convention
 
 | File | Holds |
 |---|---|
@@ -27,7 +32,7 @@ bend docs/bend2/examples/<claim-slug>.bend -o .scratch/<name>   # native build
 A document under `docs/bend2/` that leans on a language capability cites the example whose evidence
 file runs it, and names the pin.
 
-## Index
+### Index
 
 | Example | Claim |
 |---|---|
