@@ -289,15 +289,42 @@ law m8_the_promotion_statement_carries_the_admission_and_the_source:
 def m8_the_promotion_statement_carries_the_admission_and_the_source(id, promoter, source, destination, finding):
   {==}
 
-law m1_the_promote_statement_carries_the_promotion_and_its_answer:
+law m1_the_promote_statement_carries_the_promotion_notice_and_answer:
   for id: String
   for promoter: String
   for source: String
   for destination: String
   for finding: String
-  {K.promote_statements(id, promoter, source, destination, finding) == K.promotion_statement(id,promoter,source,destination,finding) ++ K.promotion_answer(id,promoter,source,destination,finding) : String}
+  {K.promote_statements(id, promoter, source, destination, finding) == K.promotion_statement(id,promoter,source,destination,finding) ++ K.promotion_notice_statement(id,promoter,source,destination,finding) ++ K.promotion_answer(id,promoter,source,destination,finding) : String}
 
-def m1_the_promote_statement_carries_the_promotion_and_its_answer(id, promoter, source, destination, finding):
+def m1_the_promote_statement_carries_the_promotion_notice_and_answer(id, promoter, source, destination, finding):
+  {==}
+
+# M-14: each promotion notice has its own identity and full sharing coordinates.
+law m14_the_promotion_notice_names_the_promotion:
+  for id: String
+  {K.promotion_notice_id(id) == id ++ ":promotion-notice" : String}
+
+def m14_the_promotion_notice_names_the_promotion(id):
+  {==}
+
+law m14_the_promotion_notice_body_names_its_provenance:
+  {K.promotion_notice_body() == "json_object('promotion',p.id,'finding',p.finding,'author',p.author,'source',p.source,'destination',p.destination,'promotedBy',p.promoted_by)" : String}
+
+def m14_the_promotion_notice_body_names_its_provenance():
+  {==}
+
+# M-1 and M-8: the exact committed promotion supplies a question to its owner.
+# Conflicting message identity rolls back the same transaction.
+law m8_the_promotion_notice_addresses_its_exact_destination_owner:
+  for id: String
+  for promoter: String
+  for source: String
+  for destination: String
+  for finding: String
+  {K.promotion_notice_statement(id,promoter,source,destination,finding) == "INSERT INTO messages(id,sender,recipient,kind,body) SELECT " ++ C.q(K.promotion_notice_id(id)) ++ ",p.promoted_by,p.destination,'question'," ++ K.promotion_notice_body() ++ " FROM knowledge_promotions p WHERE p.id=" ++ C.q(id) ++ " AND p.finding=" ++ C.q(finding) ++ " AND p.source=" ++ C.q(source) ++ " AND p.destination=" ++ C.q(destination) ++ " AND p.promoted_by=" ++ C.q(promoter) ++ " ON CONFLICT(id) DO UPDATE SET id=CASE WHEN messages.sender=excluded.sender AND messages.recipient=excluded.recipient AND messages.kind=excluded.kind AND messages.body=excluded.body THEN messages.id ELSE NULL END;" : String}
+
+def m8_the_promotion_notice_addresses_its_exact_destination_owner(id,promoter,source,destination,finding):
   {==}
 
 # M-1: the record's own IO sequence: one committing query, then the delivery of
@@ -352,13 +379,34 @@ law m8_the_read_io_queries_the_visible_findings_and_answers:
 def m8_the_read_io_queries_the_visible_findings_and_answers(db, reader):
   {==}
 
-# M-1: the promote's own IO sequence: one committing query, then the answer.
+# M-1: a refused promotion has no endpoint effect. An admitted promotion
+# delivers its own notice through the existing receive and handoff path.
+law m1_an_empty_promotion_result_is_a_pure_answer:
+  for db: String
+  for id: String
+  {K.deliver_promotion(db,id,SNil{}) == IO.pure(Result<&1,&1,U32 & String,String>,Done{SNil{}}) : IO(Result<&1,&1,U32 & String,String>)}
+
+def m1_an_empty_promotion_result_is_a_pure_answer(db,id):
+  {==}
+
+law m1_a_stored_promotion_result_delivers_its_notice:
+  for db: String
+  for id: String
+  for h: Char
+  for t: String
+  {K.deliver_promotion(db,id,SCon{h,t}) == Root.deliver(db,K.promotion_notice_id(id),"1",SCon{h,t}) : IO(Result<&1,&1,U32 & String,String>)}
+
+def m1_a_stored_promotion_result_delivers_its_notice(db,id,h,t):
+  {==}
+
+# M-1: the promotion commits its row and notice, delivers, then answers.
 def promote_io(+db: String, +id: String, +promoter: String, +source: String, +destination: String, +finding: String) -> IO(Unit):
   do IO<Unit>:
     saved : String <- IO.try(String,DB.Sql.query(db,K.commit_sql(K.promote_statements(id,promoter,source,destination,finding))))
-    K.write_answer(saved)
+    delivery : Result<&1,&1,U32 & String,String> <- K.deliver_promotion(db,id,saved)
+    K.answered(delivery)
 
-law m1_the_promote_io_queries_the_promotion_and_answers:
+law m1_the_promote_io_queries_delivers_and_answers:
   for db: String
   for id: String
   for promoter: String
@@ -367,7 +415,7 @@ law m1_the_promote_io_queries_the_promotion_and_answers:
   for finding: String
   {K.promote(db, id, promoter, source, destination, finding) == promote_io(db,id,promoter,source,destination,finding) : IO(Unit)}
 
-def m1_the_promote_io_queries_the_promotion_and_answers(db, id, promoter, source, destination, finding):
+def m1_the_promote_io_queries_delivers_and_answers(db, id, promoter, source, destination, finding):
   {==}
 
 # M-14: the three verbs build the three knowledge commands, including their

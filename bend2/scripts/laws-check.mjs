@@ -616,6 +616,62 @@ MUTATIONS.push(
     "replace": "      IO.pure(Unit,Unit{})",
     "law": "m14_the_promote_command_runs_the_explicit_promotion"
   },
+  {
+    name: 'knowledge-promotion-notice-loses-its-identity',
+    file: join('bend2', 'src', 'coordinator', 'knowledge.bend'),
+    find: '  id ++ ":promotion-notice"',
+    replace: '  id',
+    law: 'm14_the_promotion_notice_names_the_promotion',
+  },
+  {
+    name: 'knowledge-promotion-notice-drops-the-destination',
+    file: join('bend2', 'src', 'coordinator', 'knowledge.bend'),
+    find: "  \"json_object('promotion',p.id,'finding',p.finding,'author',p.author,'source',p.source,'destination',p.destination,'promotedBy',p.promoted_by)\"",
+    replace: "  \"json_object('promotion',p.id,'finding',p.finding,'author',p.author,'source',p.source,'promotedBy',p.promoted_by)\"",
+    law: 'm14_the_promotion_notice_body_names_its_provenance',
+  },
+  {
+    name: 'knowledge-promotion-notice-addresses-the-source',
+    file: join('bend2', 'src', 'coordinator', 'knowledge.bend'),
+    find: ",p.promoted_by,p.destination,'question',",
+    replace: ",p.promoted_by,p.source,'question',",
+    law: 'm8_the_promotion_notice_addresses_its_exact_destination_owner',
+  },
+  {
+    name: 'knowledge-promotion-notice-ignores-the-source-coordinate',
+    file: join('bend2', 'src', 'coordinator', 'knowledge.bend'),
+    find: '++ " AND p.source=" ++ C.q(source) ++ " AND p.destination="',
+    replace: '++ " AND p.destination="',
+    law: 'm8_the_promotion_notice_addresses_its_exact_destination_owner',
+  },
+  {
+    name: 'knowledge-promotion-composition-skips-the-notice',
+    file: join('bend2', 'src', 'coordinator', 'knowledge.bend'),
+    find: '  promotion_statement(id,promoter,source,destination,finding) ++ promotion_notice_statement(id,promoter,source,destination,finding) ++ promotion_answer(id,promoter,source,destination,finding)',
+    replace: '  promotion_statement(id,promoter,source,destination,finding) ++ promotion_answer(id,promoter,source,destination,finding)',
+    law: 'm1_the_promote_statement_carries_the_promotion_notice_and_answer',
+  },
+  {
+    name: 'knowledge-empty-promotion-result-delivers-the-old-notice',
+    file: join('bend2', 'src', 'coordinator', 'knowledge.bend'),
+    find: 'def deliver_promotion(db: String, id: String, saved: String) -> IO(Result<&1,&1,U32 & String,String>):\n  match saved:\n    case SNil{}: IO.pure(Result<&1,&1,U32 & String,String>,Done{SNil{}})',
+    replace: 'def deliver_promotion(db: String, id: String, saved: String) -> IO(Result<&1,&1,U32 & String,String>):\n  match saved:\n    case SNil{}: Root.deliver(db,promotion_notice_id(id),"1",SNil{})',
+    law: 'm1_an_empty_promotion_result_is_a_pure_answer',
+  },
+  {
+    name: 'knowledge-stored-promotion-result-skips-its-notice',
+    file: join('bend2', 'src', 'coordinator', 'knowledge.bend'),
+    find: '    case SCon{h,t}: Root.deliver(db,promotion_notice_id(id),"1",SCon{h,t})',
+    replace: '    case SCon{h,t}: IO.pure(Result<&1,&1,U32 & String,String>,Done{SCon{h,t}})',
+    law: 'm1_a_stored_promotion_result_delivers_its_notice',
+  },
+  {
+    name: 'knowledge-promotion-io-skips-the-notice-delivery',
+    file: join('bend2', 'src', 'coordinator', 'knowledge.bend'),
+    find: '    delivery : Result<&1,&1,U32 & String,String> <- deliver_promotion(db,id,saved)',
+    replace: '    delivery : Result<&1,&1,U32 & String,String> <- IO.pure(Result<&1,&1,U32 & String,String>,Done{saved})',
+    law: 'm1_the_promote_io_queries_delivers_and_answers',
+  },
 );
 
 for (const mutation of MUTATIONS) {

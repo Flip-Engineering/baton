@@ -15,7 +15,8 @@ over runtime functions. Every entry compile verifies their proofs, including the
 [receive ownership laws](../../bend2/src/coordinator/receive-laws.bend) under M-8.
 The [knowledge laws](../../bend2/src/coordinator/knowledge-laws.bend) bind the
 actual finding insertion, retained evidence predicate, reader scopes, explicit
-promotion, transaction composition and notification IO. The coordinator entry
+promotion, destination-owner promotion notices, transaction composition and
+notification IO. The coordinator entry
 also proves its three knowledge command dispatches. These equations check the
 SQL and IO terms the implementation generates. SQLite execution and persistence
 remain host assumptions, and declared session scopes select trusted local context.

@@ -3,7 +3,8 @@
 # scope it is shared in into the acting session's own scope. The store is the
 # existing SQLite database, parentage is the sessions table, and the notice a
 # record sends its author's immediate parent is an ordinary message of the
-# existing question kind. The actor checks below are declared-actor checks
+# existing question kind. Promotion notifies the destination owner through the
+# same message and delivery path. The actor checks below are declared-actor checks
 # inside that database: they claim no authentication boundary and no
 # confidentiality against a party that can write it.
 #
@@ -148,8 +149,22 @@ def promotion_statement(+id: String, +promoter: String, +source: String, +destin
 def promotion_answer(+id: String, +promoter: String, +source: String, +destination: String, +finding: String) -> String:
   "SELECT json_object('id',id,'finding',finding,'author',author,'source',source,'destination',destination,'promotedBy',promoted_by) FROM knowledge_promotions WHERE id=" ++ C.q(id) ++ " AND finding=" ++ C.q(finding) ++ " AND source=" ++ C.q(source) ++ " AND destination=" ++ C.q(destination) ++ " AND promoted_by=" ++ C.q(promoter) ++ ";"
 
+# The destination owner receives the promotion reference and decides whether to
+# notify ensembles within its scope. The original finding remains in knowledge.
+def promotion_notice_id(id: String) -> String:
+  id ++ ":promotion-notice"
+
+def promotion_notice_body() -> String:
+  "json_object('promotion',p.id,'finding',p.finding,'author',p.author,'source',p.source,'destination',p.destination,'promotedBy',p.promoted_by)"
+
+# A notice is written only for this invocation's exact stored promotion. Its
+# sender and recipient name the destination owner that admitted the promotion.
+def promotion_notice_statement(+id: String, +promoter: String, +source: String, +destination: String, +finding: String) -> String:
+  "INSERT INTO messages(id,sender,recipient,kind,body) SELECT " ++ C.q(promotion_notice_id(id)) ++ ",p.promoted_by,p.destination,'question'," ++ promotion_notice_body() ++ " FROM knowledge_promotions p WHERE p.id=" ++ C.q(id) ++ " AND p.finding=" ++ C.q(finding) ++ " AND p.source=" ++ C.q(source) ++ " AND p.destination=" ++ C.q(destination) ++ " AND p.promoted_by=" ++ C.q(promoter)
+  ++ " ON CONFLICT(id) DO UPDATE SET id=CASE WHEN messages.sender=excluded.sender AND messages.recipient=excluded.recipient AND messages.kind=excluded.kind AND messages.body=excluded.body THEN messages.id ELSE NULL END;"
+
 def promote_statements(+id: String, +promoter: String, +source: String, +destination: String, +finding: String) -> String:
-  promotion_statement(id,promoter,source,destination,finding) ++ promotion_answer(id,promoter,source,destination,finding)
+  promotion_statement(id,promoter,source,destination,finding) ++ promotion_notice_statement(id,promoter,source,destination,finding) ++ promotion_answer(id,promoter,source,destination,finding)
 
 # A committed record whose notice could not be delivered refuses with the retry
 # path; the write itself stands.
@@ -178,10 +193,15 @@ def read(db: String, reader: String) -> IO(Unit):
     visible : String <- IO.try(String,DB.Sql.query(db,commit_sql(read_sql(reader))))
     IO.write(visible)
 
-# Promote: one transaction writes the promotion of that exact finding from the
-# named source scope into the destination scope, and the answer is the stored
-# promotion.
+# Promote: one transaction writes the promotion and its destination notice,
+# then delivers the notice and answers the stored promotion.
+def deliver_promotion(db: String, id: String, saved: String) -> IO(Result<&1,&1,U32 & String,String>):
+  match saved:
+    case SNil{}: IO.pure(Result<&1,&1,U32 & String,String>,Done{SNil{}})
+    case SCon{h,t}: Root.deliver(db,promotion_notice_id(id),"1",SCon{h,t})
+
 def promote(+db: String, +id: String, promoter: String, source: String, destination: String, finding: String) -> IO(Unit):
   do IO<Unit>:
     saved : String <- IO.try(String,DB.Sql.query(db,commit_sql(promote_statements(id,promoter,source,destination,finding))))
-    write_answer(saved)
+    delivery : Result<&1,&1,U32 & String,String> <- deliver_promotion(db,id,saved)
+    answered(delivery)

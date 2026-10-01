@@ -76,6 +76,7 @@ function systemInstructions() {
     '',
     'Author findings from reviewed evidence. Cite an existing retained message you sent or received and state the claim\'s limits.',
     'Review a finding before explicitly promoting it from its recorded source scope. Its original author remains recorded.',
+    'A promotion notice names a finding shared into your scope. Retrieve it with knowledge, review its evidence and decide which workers should receive a message about it.',
     'When you receive a worker report, review it and acknowledge it.',
     'If the worker made changes, inspect its worktree state and land them when ready.',
   ].join('\n');

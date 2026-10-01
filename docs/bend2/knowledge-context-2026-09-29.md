@@ -74,6 +74,21 @@ Read rows carry `id`, `author`, `claim`, `evidence`, `evidenceMessage`, `limits`
 parent review notice uses the existing `question` message kind and contains only
 `{finding, author}`; the parent retrieves the finding through `knowledge`.
 
+A promotion writes an ordinary `question` notice to the destination scope's owner
+in the same transaction as the promotion. Its identity is
+`PROMOTION_ID:promotion-notice`, and its body names `promotion`, `finding`,
+`author`, `source`, `destination` and `promotedBy`. The owner retrieves the finding,
+reviews its evidence and decides which ensembles or workers need a message about
+it. Promotion makes the finding readable within its destination scope. Each
+worker notification is a separate orchestrator action.
+
+The notice uses the registered destination endpoint. A notice created during
+the owner's active receive remains pending for its continuing receive. A stopped
+owner retains the notice and its parent receives the existing stopped-input
+handoff. An exact retry preserves the notice and its receipt, and delivers the
+notice while it remains unacknowledged. A refused promotion does not deliver an
+earlier notice with the same promotion identity.
+
 ## Trusted-local boundary
 
 The CLI and database remain trusted local interfaces. Commands check declared

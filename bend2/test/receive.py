@@ -123,6 +123,10 @@ while True:
         result=subprocess.run([config['exe'],config['db'],'message',ident,model,recipient,'guidance',body],capture_output=True,text=True)
         reply({'code':result.returncode,'stdout':result.stdout,'stderr':result.stderr})
         continue
+    if action.get('promote'):
+        result=subprocess.run([config['exe'],config['db'],'promote',*action['promote']],capture_output=True,text=True)
+        reply({'code':result.returncode,'stdout':result.stdout,'stderr':result.stderr})
+        continue
     if action.get('ack',True):
         for ident in re.findall(r'^Message \([^\n]*\) from [^\n]* \[id: (.*?)\]:$',prompt,re.M):
             subprocess.run([config['exe'],config['db'],'ack',ident,model,'native-reviewed'],check=True,stdout=subprocess.DEVNULL)
@@ -997,6 +1001,32 @@ class Receive(unittest.TestCase):
         self.action(second)
         self.finish(first)
         self.assertEqual(self.coord('inbox', 'parent'), [])
+
+    def test_a_native_self_promotion_returns_and_continues_with_its_notice(self):
+        self.worker()
+        self.coord('report', 'self-evidence', 'parent', 'Evidence reviewed by this session.')
+        self.coord('record', 'self-finding', 'parent', 'Reviewed finding',
+                   'message:self-evidence', 'fixture')
+        self.connect('parent')
+        first = self.spawn('message', 'first', 'root', 'parent', 'guidance', 'first input')
+        control, original = self.accept('parent')
+        self.action(control, promote=['self-share', 'parent', 'parent', 'parent', 'self-finding'])
+        response = json.loads(control.readline())
+        self.assertEqual(response['code'], 0, response['stderr'])
+        self.assertEqual(json.loads(response['stdout'])['id'], 'self-share')
+        self.assert_no_start()
+        notice = self.coord('delivery', 'self-share:promotion-notice')
+        self.assertIsNone(notice['receipt'])
+        self.action(control)
+        second, started = self.accept('parent')
+        self.assertEqual(started['native'], original['native'])
+        self.assertIn('[id: self-share:promotion-notice]', started['prompt'])
+        self.assertIn(notice['body'], started['prompt'])
+        self.action(second)
+        self.finish(first)
+        self.assertEqual(self.coord('inbox', 'parent'), [])
+        self.assertEqual(self.coord('delivery', 'self-share:promotion-notice')['receipt'],
+                         'native-reviewed')
 
     def test_synchronous_self_turn_reports_busy_and_native_work_continues(self):
         self.worker()
