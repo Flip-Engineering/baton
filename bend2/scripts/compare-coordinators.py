@@ -81,6 +81,42 @@ def dependency_metadata(source, directory):
             'packages': packages}
 
 
+def assert_bend_status(rows, expected_sessions, pending):
+    """Check stored metadata and each recipient's pending input against the fixture."""
+    assert isinstance(rows, list), 'Bend2 status must return a session array'
+    assert all(isinstance(row, dict) for row in rows), 'Bend2 status contains a non-object row'
+    identities = [row.get('id') for row in rows]
+    assert len(identities) == len(set(identities)), 'Bend2 status repeats a session identity'
+    assert set(identities) == set(expected_sessions), 'Bend2 status has different session identities'
+    for row in rows:
+        ident = row['id']
+        for field, expected in expected_sessions[ident].items():
+            assert field in row, f'Bend2 status {ident} omits {field}'
+            assert row[field] == expected, f'Bend2 status {ident} has incorrect {field}'
+        assert type(row.get('pending')) is int, f'Bend2 status {ident} needs an integer pending count'
+        assert row['pending'] == pending[ident], f'Bend2 status {ident} has incorrect pending count'
+
+
+def assert_original_status(value, workers, guides):
+    """Check the controlled original participants and their parked guidance identities."""
+    assert value.get('projection') == 'participants', 'Original status uses the participants projection'
+    rows = value['participants']
+    identities = [row['participantId'] for row in rows]
+    assert len(identities) == len(set(identities)), 'Original status repeats a participant identity'
+    assert set(identities) == set(workers), 'Original status has different worker identities'
+    for row in rows:
+        ident = row['participantId']
+        assert 'parentId' in row and row['parentId'] is None, f'Original fixture {ident} has a parent'
+        assert 'route' in row and row['route'] is None, f'Original fixture {ident} has a requested route'
+        expected = {key for key, (worker, _) in guides.items() if worker == ident}
+        actual = row['guidance']
+        ids = [guide['messageId'] for guide in actual]
+        assert len(ids) == len(set(ids)), f'Original status {ident} repeats guidance'
+        assert set(ids) == expected, f'Original status {ident} has different guidance identities'
+        assert all(guide['delivery']['state'] == 'parked' for guide in actual), \
+            f'Original status {ident} has incorrect guidance state'
+
+
 class Old:
     def __init__(self, node, source, store, workers, cwd, env):
         self.stderr = (cwd / f'old-{time.time_ns()}.stderr').open('w')
@@ -216,10 +252,22 @@ def main():
         execute(['git', '-C', str(benchmark_repo), 'add', 'seed.txt'])
         execute(['git', '-C', str(benchmark_repo), 'commit', '-q', '-m', 'seed'])
         benchmark_base = execute(['git', '-C', str(benchmark_repo), 'rev-parse', 'HEAD']).stdout.decode().strip()
+        expected_sessions = {'root': {
+            'id': 'root', 'parent': None, 'harness': 'controlled-root', 'model': '', 'effort': '',
+            'native': 'root-session', 'observedHarness': '', 'observedModel': '', 'observedEffort': '',
+            'endpoint': '', 'workspace': '', 'branch': '', 'base': '',
+        }}
         for index in range(args.workers):
             bend('recruit', f'worker-{index}', 'root', 'controlled-oneshot', 'controlled-model',
                  'high', str(benchmark_repo), f'branch-{index}',
                  str(run / f'workspace-{index}'), benchmark_base)
+            expected_sessions[f'worker-{index}'] = {
+                'id': f'worker-{index}', 'parent': 'root', 'harness': 'controlled-oneshot',
+                'model': 'controlled-model', 'effort': 'high', 'native': '',
+                'observedHarness': '', 'observedModel': '', 'observedEffort': '', 'endpoint': '',
+                'workspace': str(run / f'workspace-{index}'), 'branch': f'branch-{index}',
+                'base': benchmark_base,
+            }
 
         def perform(system, operation, unique):
             worker = f'worker-{unique % args.workers}'
@@ -243,6 +291,17 @@ def main():
                 identities = {row['participantId' if system == 'old' else 'id'] for row in rows}
                 assert identities == {f'worker-{index}' for index in range(args.workers)}
                 return value, timing
+            if operation == 'status_read':
+                if system == 'old':
+                    value, timing = old.call('workers')
+                    assert_original_status(value, set(expected_sessions) - {'root'}, expected_old_guides)
+                else:
+                    value, timing = bend('status')
+                    pending = {ident: sum(worker == ident for worker, _ in expected_guides.values())
+                               for ident in expected_sessions}
+                    pending['root'] = len(expected_reports)
+                    assert_bend_status(value, expected_sessions, pending)
+                return value, timing
             if operation == 'reports_read':
                 value, timing = old.call('reports') if system == 'old' else bend('inbox', 'root')
                 rows = value['contributions'] if system == 'old' else value
@@ -255,7 +314,7 @@ def main():
             for system in ('old', 'bend2'):
                 perform(system, 'report_write', index)
         seeded_bytes = {'old_store': retained_bytes(old_store), 'bend2_db': db.stat().st_size}
-        operations = ['roster_read', 'reports_read', 'guidance_write', 'report_write']
+        operations = ['roster_read', 'status_read', 'reports_read', 'guidance_write', 'report_write']
         rng = random.Random(args.seed)
         for iteration in range(args.warmups + args.samples):
             rng.shuffle(operations)
@@ -288,11 +347,13 @@ def main():
             recovered, _ = old.call('verify')
             assert {row['messageId']: (row['participantId'], row['message'])
                     for row in recovered['guides']} == expected_old_guides
+            perform('old', 'status_read', 0)
             replay.append({'old_process_ready_ms': old.startup_ms,
                            'old_rss_bytes': old.ready['rss_bytes'], 'old_first_read_ms': timing['wall_ms']})
             old.close()
             old = None
             perform('bend2', 'reports_read', 0)
+            perform('bend2', 'status_read', 0)
         memory = {'old_after_workload_rss_bytes': verified['rss_bytes']}
         if platform.system() == 'Darwin':
             result = execute(['/usr/bin/time', '-l', args.binary, db, 'workers'], cwd=run, env=env)
@@ -328,16 +389,19 @@ def main():
                 'old': 'Production SwarmRuntime.command with real CoordinationStore, retained Node process, controlled worker ports, private stdio transport.',
                 'bend2': 'Production executable and SQLite store; one new process per command; empty root endpoint.',
                 'mapping': {'roster_read': 'swarm.view projection=participants / workers',
+                            'status_read': 'swarm.view projection=participants / status',
                             'reports_read': 'swarm.view projection=contributions / inbox root',
                             'guidance_write': 'swarm.guide retained for one-shot worker / message guidance',
                             'report_write': 'swarm.update contribution_recorded / report to parent'},
                 'old_durability': 'Real fsync wrapper; durable_ms includes scheduled group fsync before helper response. dispatch_ms ends when the runtime returns.',
                 'timing': 'Monotonic wall time including caller JSON parsing on both sides; deterministic interleaving; warmups excluded; p95 nearest rank; no cache flush.',
-                'correctness': 'Every roster and report read checked; exact Unicode body and report IDs checked before and after three old process restarts; guidance bodies checked in retained records.',
+                'correctness': 'Every roster, status and report read checked; Bend2 status checks all session identities, stored metadata and per-recipient pending counts; original status checks worker identities, absent requested route/parent and parked guidance IDs; exact Unicode body and report IDs checked before and after three old process restarts; guidance bodies checked in retained records.',
                 'limitations': ['Old worker recruitment uses controlled ports; no provider or native process launch.',
                                'Old Web/CLI transport, auth, host-capacity service and delivery endpoints are excluded.',
                                'Bend2 root native delivery is excluded; reports remain pending.',
                                'Report records differ: old contributions include review machinery; Bend2 messages include recipient receipts.',
+                               'Original status_read repeats the participants projection used by roster_read; it carries workers and the swarm frame, with absent requested parent/route in this controlled setup, and no equivalent root session or pending-report counter. Bend2 status carries all sessions, requested/observed routes, native/workspace metadata and per-recipient pending counts; it omits full latest reports and last-turn fields.',
+                               'Status assertions cover this unstopped fixture; stored session presence does not establish live native processes.',
                                'Writes grow both stores during samples; raw iteration order and sizes are retained.',
                                'RSS compares an old retained runtime with one native roster process; this is not whole-deployment RSS.',
                                'Measurements do not establish live end-to-end worker, landing, or publication performance.'],

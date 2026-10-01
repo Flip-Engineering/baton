@@ -1,0 +1,184 @@
+"""Check comparison status assertions against production commands and incorrect answers."""
+import copy
+import hashlib
+import importlib.util
+import json
+import os
+import pathlib
+import shutil
+import subprocess
+import tempfile
+import unittest
+
+ROOT = pathlib.Path(__file__).resolve().parents[2]
+EXE = ROOT / '.scratch/bend2/baton2'
+SPEC = importlib.util.spec_from_file_location('comparison_driver',
+                                            ROOT / 'bend2/scripts/compare-coordinators.py')
+DRIVER = importlib.util.module_from_spec(SPEC)
+SPEC.loader.exec_module(DRIVER)
+
+
+class NativeStatus(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        cls.temp = tempfile.TemporaryDirectory(dir=ROOT / '.scratch/bend2')
+        cls.addClassCleanup(cls.temp.cleanup)
+        cls.path = pathlib.Path(cls.temp.name)
+        cls.db = cls.path / 'state.db'
+        cls.repo = cls.path / 'repo'
+        for args in (['git', 'init', '-q', '-b', 'main', str(cls.repo)],
+                     ['git', '-C', str(cls.repo), 'config', 'user.email', 'fixture@example.invalid'],
+                     ['git', '-C', str(cls.repo), 'config', 'user.name', 'Comparison fixture']):
+            subprocess.run(args, check=True, capture_output=True)
+        (cls.repo / 'seed.txt').write_text('seed\n')
+        subprocess.run(['git', '-C', str(cls.repo), 'add', 'seed.txt'], check=True, capture_output=True)
+        subprocess.run(['git', '-C', str(cls.repo), 'commit', '-qm', 'Create status fixture'],
+                       check=True, capture_output=True)
+        base = subprocess.check_output(['git', '-C', str(cls.repo), 'rev-parse', 'HEAD'],
+                                       text=True).strip()
+        cls.call('attach', 'root', 'fixture-root', 'root-login', '')
+        cls.expected = {'root': {
+            'id': 'root', 'parent': None, 'harness': 'fixture-root', 'model': '', 'effort': '',
+            'native': 'root-login', 'observedHarness': '', 'observedModel': '', 'observedEffort': '',
+            'endpoint': '', 'workspace': '', 'branch': '', 'base': '',
+        }}
+        for ident, parent, harness, model, effort in (
+                ('alpha', 'root', 'omp', 'requested-alpha', 'high'),
+                ('beta', 'alpha', 'codex', 'requested-beta', 'low')):
+            workspace = str(cls.path / ident)
+            branch = ident + '-branch'
+            cls.call('recruit', ident, parent, harness, model, effort,
+                     str(cls.repo), branch, workspace, base)
+            observed = {'native': ident + '-login', 'observedHarness': 'observed-' + harness,
+                        'observedModel': 'observed-' + model, 'observedEffort': 'medium'}
+            cls.call('bind', ident, observed['native'], observed['observedHarness'],
+                     observed['observedModel'], observed['observedEffort'])
+            cls.expected[ident] = {
+                'id': ident, 'parent': parent, 'harness': harness, 'model': model, 'effort': effort,
+                **observed, 'endpoint': '', 'workspace': workspace, 'branch': branch, 'base': base,
+            }
+        cls.call('report', 'alpha-report-1', 'alpha', 'Full Unicode λ report\n')
+        cls.call('report', 'alpha-report-2', 'alpha', 'Second root report')
+        cls.call('report', 'beta-report', 'beta', 'Report to the immediate parent')
+        cls.call('message', 'alpha-guide', 'root', 'alpha', 'guidance', 'Review the task')
+        cls.call('message', 'beta-guide-1', 'alpha', 'beta', 'guidance', 'Continue')
+        cls.call('message', 'beta-guide-2', 'alpha', 'beta', 'guidance', 'Check the result')
+        cls.before_ack = cls.call('status')
+        cls.call('ack', 'alpha-report-1', 'root', 'Reviewed first report')
+        cls.call('ack', 'alpha-guide', 'alpha', 'Accepted guidance')
+        for ident in cls.expected:
+            endpoint = json.dumps(['/usr/bin/true', ident])
+            cls.call('connect', ident, cls.expected[ident]['native'], endpoint)
+            cls.expected[ident]['endpoint'] = endpoint
+        cls.pending = {'root': 1, 'alpha': 1, 'beta': 2}
+        cls.valid = cls.call('status')
+
+    @classmethod
+    def call(cls, *args):
+        result = subprocess.run([str(EXE), str(cls.db), *map(str, args)],
+                                capture_output=True, text=True)
+        if result.returncode:
+            raise AssertionError(result.stderr)
+        return json.loads(result.stdout)
+
+    def test_production_status_keeps_metadata_and_counts_only_unaccepted_input(self):
+        before_metadata = copy.deepcopy(self.expected)
+        for row in before_metadata.values():
+            row['endpoint'] = ''
+        DRIVER.assert_bend_status(self.before_ack, before_metadata,
+                                  {'root': 2, 'alpha': 2, 'beta': 2})
+        DRIVER.assert_bend_status(self.valid, self.expected, self.pending)
+        before = hashlib.sha256(self.db.read_bytes()).hexdigest()
+        again = self.call('status')
+        DRIVER.assert_bend_status(again, self.expected, self.pending)
+        self.assertEqual(again, self.valid)
+        self.assertEqual(hashlib.sha256(self.db.read_bytes()).hexdigest(), before)
+        workers = self.call('workers')
+        self.assertEqual({row['id'] for row in workers}, {'alpha', 'beta'})
+        self.assertEqual({row['latestReportId'] for row in workers},
+                         {'alpha-report-2', 'beta-report'})
+
+    def test_missing_extra_and_duplicate_sessions_are_refused(self):
+        responses = [self.valid[1:], self.valid + [copy.deepcopy(self.valid[0])]]
+        extra = copy.deepcopy(self.valid)
+        extra[0]['id'] = 'unknown-session'
+        responses.append(extra)
+        for response in responses:
+            with self.subTest(identities=[row['id'] for row in response]):
+                with self.assertRaises(AssertionError):
+                    DRIVER.assert_bend_status(response, self.expected, self.pending)
+
+    def test_missing_nullable_field_and_incorrect_metadata_are_refused(self):
+        response = copy.deepcopy(self.valid)
+        del next(row for row in response if row['id'] == 'root')['parent']
+        with self.assertRaises(AssertionError):
+            DRIVER.assert_bend_status(response, self.expected, self.pending)
+        changes = {'parent': 'root', 'harness': 'wrong-harness', 'model': 'wrong-model',
+                   'effort': 'high', 'native': 'wrong-login', 'observedHarness': 'wrong-observation',
+                   'observedModel': 'wrong-observation', 'observedEffort': 'low',
+                   'endpoint': '', 'workspace': str(self.path / 'alpha'),
+                   'branch': 'alpha-branch', 'base': 'wrong-base'}
+        for field, value in changes.items():
+            with self.subTest(field=field):
+                response = copy.deepcopy(self.valid)
+                next(row for row in response if row['id'] == 'beta')[field] = value
+                with self.assertRaises(AssertionError):
+                    DRIVER.assert_bend_status(response, self.expected, self.pending)
+
+    def test_incorrect_pending_counts_are_refused_per_recipient(self):
+        for value in (0, '1', True):
+            with self.subTest(value=value):
+                response = copy.deepcopy(self.valid)
+                next(row for row in response if row['id'] == 'root')['pending'] = value
+                with self.assertRaises(AssertionError):
+                    DRIVER.assert_bend_status(response, self.expected, self.pending)
+        response = copy.deepcopy(self.valid)
+        next(row for row in response if row['id'] == 'alpha')['pending'] = 2
+        next(row for row in response if row['id'] == 'beta')['pending'] = 1
+        with self.assertRaises(AssertionError):
+            DRIVER.assert_bend_status(response, self.expected, self.pending)
+
+
+class OriginalStatus(unittest.TestCase):
+    def test_participants_and_parked_guidance_use_the_original_production_helper(self):
+        with tempfile.TemporaryDirectory(dir=ROOT / '.scratch/bend2') as temp:
+            path = pathlib.Path(temp)
+            (path / 'home').mkdir()
+            env = {'PATH': os.environ.get('PATH', '/usr/bin:/bin'),
+                   'HOME': str(path / 'home'), 'LANG': 'en_US.UTF-8'}
+            old = DRIVER.Old(shutil.which('node'), ROOT, path / 'store', 2, path, env)
+            try:
+                old.call('setup')
+                workers = {'worker-0', 'worker-1'}
+                answer, _ = old.call('workers')
+                DRIVER.assert_original_status(answer, workers, {})
+                guides = {}
+                for ident in sorted(workers):
+                    text = 'Retained Unicode λ guidance to ' + ident
+                    saved, _ = old.call('guide', id=ident + '-guide', worker=ident, body=text)
+                    guides[saved['guide']['messageId']] = (ident, text)
+                answer, _ = old.call('workers')
+                DRIVER.assert_original_status(answer, workers, guides)
+                wrong = copy.deepcopy(answer)
+                wrong['participants'].append(copy.deepcopy(wrong['participants'][0]))
+                with self.assertRaises(AssertionError):
+                    DRIVER.assert_original_status(wrong, workers, guides)
+                wrong = copy.deepcopy(answer)
+                wrong['participants'][0]['guidance'][0]['delivery']['state'] = 'delivered'
+                with self.assertRaises(AssertionError):
+                    DRIVER.assert_original_status(wrong, workers, guides)
+                wrong = copy.deepcopy(answer)
+                left, right = wrong['participants']
+                left['guidance'], right['guidance'] = right['guidance'], left['guidance']
+                with self.assertRaises(AssertionError):
+                    DRIVER.assert_original_status(wrong, workers, guides)
+            finally:
+                old.close()
+            self.assertEqual(old.process.returncode, 0)
+            self.assertTrue(old.process.stdin.closed)
+            self.assertTrue(old.process.stdout.closed)
+            self.assertTrue(old.stderr.closed)
+
+
+if __name__ == '__main__':
+    unittest.main()
