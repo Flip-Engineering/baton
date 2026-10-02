@@ -63,6 +63,94 @@ def frames(path):
             yield value
 
 
+def process_snapshot():
+    result = subprocess.run(['/bin/ps', '-axo', 'pid=,ppid=,lstart=,stat=,command='],
+                            capture_output=True, text=True)
+    if result.returncode:
+        raise RuntimeError(f'Process inspection exited {result.returncode}: {result.stderr}')
+    table = {}
+    for line in result.stdout.splitlines():
+        fields = line.split(None, 8)
+        if len(fields) != 9:
+            raise RuntimeError('Process inspection returned an incomplete row')
+        pid, parent = int(fields[0]), int(fields[1])
+        table[pid] = {'pid': pid, 'ppid': parent, 'started_local': ' '.join(fields[2:7]),
+                      'state': fields[7], 'command': fields[8]}
+    if os.getpid() not in table:
+        raise RuntimeError('Process inspection omitted the observer')
+    return table
+
+
+def inspect_processes(out, native, known, whole_run=True):
+    try:
+        table = process_snapshot()
+    except (OSError, RuntimeError, ValueError) as error:
+        return {'checked': False, 'error': str(error), 'observed_unix': time.time()}
+    expected = {}
+    recorded = {row[key] for row in native for key in ('pid', 'child_pid') if key in row}
+    for row in native:
+        for pid_key, start_key in [('pid', 'started_local'), ('child_pid', 'child_started_local')]:
+            if row.get(start_key):
+                expected[row[pid_key]] = row[start_key]
+    selected = {pid for pid, row in table.items() if pid != os.getpid() and (
+        (whole_run or pid in recorded) and str(out.resolve()) in row['command']
+        or known.get(pid) == row['started_local']
+        or expected.get(pid) == row['started_local'])}
+    while True:
+        descendants = {pid for pid, row in table.items()
+                       if pid != os.getpid() and row['ppid'] in selected} - selected
+        if not descendants:
+            break
+        selected.update(descendants)
+    known.update({pid: table[pid]['started_local'] for pid in selected})
+    uncertain = []
+    for row in native:
+        for pid_key, start_key, end_key in [('pid', 'started_local', 'ended_unix'),
+                                           ('child_pid', 'child_started_local', 'child_ended_unix')]:
+            pid = row.get(pid_key)
+            identity = row.get(start_key) or known.get(pid)
+            if (pid in table and pid not in selected and end_key not in row
+                    and identity is None):
+                uncertain.append({'seat': row['seat'], 'pid': pid, 'record_field': pid_key,
+                                  'reason': 'Recorded process start identity is unavailable'})
+    processes = [{key: table[pid][key] for key in ('pid', 'ppid', 'started_local', 'state')}
+                 for pid in sorted(selected)]
+    for process in processes:
+        process['active'] = 'Z' not in process['state']
+    return {'checked': True, 'observed_unix': time.time(), 'processes': processes,
+            'uncertain': uncertain}
+
+
+def retain_process_start(row, pid_key, start_key):
+    try:
+        process = process_snapshot().get(row[pid_key])
+        if process:
+            row[start_key] = process['started_local']
+    except (OSError, RuntimeError, ValueError) as error:
+        row[start_key + '_inspection_error'] = str(error)
+
+
+def successful_receipts(native):
+    return bool(native) and all(
+        row.get('exit_code') == 0 and row.get('child_exit_code') == 0
+        and 'ended_unix' in row and 'child_ended_unix' in row
+        and 'wrapper_error' not in row for row in native)
+
+
+def close_failed_run(out, terminal, native, inspection):
+    if (not terminal or terminal['id'] != 'hierarchy-failed' or not inspection['checked']
+            or inspection['processes'] or inspection['uncertain']):
+        return False
+    unknown = [{key: row.get(key) for key in
+                ('seat', 'pid', 'started_local', 'child_pid', 'child_started_local',
+                 'exit_code', 'child_exit_code', 'ended_unix', 'child_ended_unix')}
+               for row in native if row.get('exit_code') is None or row.get('child_exit_code') is None]
+    save(out / 'failure-closure.json', {'status': 'failed', 'terminal_id': terminal['id'],
+         'closed_unix': time.time(), 'inspection': inspection, 'unknown_native_exits': unknown,
+         'process_record_sha256': {path.name: digest(path) for path in out.glob('native-*.process.json')}})
+    return True
+
+
 def native_wrapper(seat, out, arguments):
     run = json.loads((out / 'run.json').read_text())
     route = run['routes'][{'root': 'codex', 'deepseek': 'omp'}.get(seat, seat)]
@@ -81,9 +169,12 @@ def native_wrapper(seat, out, arguments):
            'events': str(stem.with_suffix('.events.jsonl'))}
     save(stem.with_suffix('.process.json'), row)
     try:
+        retain_process_start(row, 'pid', 'started_local')
+        save(stem.with_suffix('.process.json'), row)
         child = subprocess.Popen(argv, stdout=subprocess.PIPE, env=environment)
         row['child_pid'] = child.pid
         row['child_started_unix'] = time.time()
+        retain_process_start(row, 'child_pid', 'child_started_local')
         save(stem.with_suffix('.process.json'), row)
 
         def reap():
@@ -140,8 +231,13 @@ def start_workers(out):
 
 
 def observe_tool(out):
+    known = {}
     while True:
         rows = records(out, 'deepseek')
+        inspection = inspect_processes(out, rows, known, whole_run=False)
+        if not inspection['checked']:
+            raise RuntimeError(inspection['error'])
+        present = {row['pid']: row['started_local'] for row in inspection['processes'] if row['active']}
         for row in rows:
             events = Path(row['events'])
             if events.exists():
@@ -150,12 +246,18 @@ def observe_tool(out):
                 if first:
                     if 'child_ended_unix' in row:
                         raise RuntimeError('DeepSeek completed before the lead observed its tool event')
-                    proof = {'observed_unix': time.time(), 'process': row['pid'], 'event': first}
+                    identity = row.get('child_started_local') or known.get(row.get('child_pid'))
+                    if present.get(row.get('child_pid')) != identity or identity is None:
+                        raise RuntimeError('DeepSeek tool event has no observed active native child')
+                    proof = {'observed_unix': time.time(), 'process': row['pid'], 'event': first,
+                             'inspection': inspection}
                     save(out / 'guidance-observation.json', proof)
                     print(json.dumps(proof))
                     return
         if rows and all('ended_unix' in row for row in rows):
             raise RuntimeError('DeepSeek ended without a usable active tool event')
+        if rows and not inspection['processes'] and not inspection['uncertain']:
+            raise RuntimeError('DeepSeek processes are absent; native completion receipts are unknown')
         time.sleep(0.1)
 
 
@@ -251,7 +353,7 @@ def verify(out, state, run, helpers):
     sessions = {row['id']: row for row in state['sessions']}
     messages = {row['id']: row for row in state['messages']}
     processes = records(out)
-    assert processes and all(row.get('exit_code') == 0 for row in processes), processes
+    assert successful_receipts(processes), processes
     for seat, parent, harness, route_key in [('root', None, 'codex', 'codex'),
             ('lead', 'root', 'omp', 'lead'), ('deepseek', 'lead', 'omp', 'omp'),
             ('muse', 'lead', 'muse', 'muse')]:
@@ -485,11 +587,16 @@ an active session. Your own repository checkout is detached; leave it detached.
                                     start_new_session=True)
             save(out / 'seed-process.json', {'pid': seed.pid, 'started_unix': time.time()})
             print(f'Kimi hierarchy started: {out}', flush=True)
+            known_processes = {}
             while True:
                 state = helpers.snapshot(db)
                 terminal = next((row for row in state['messages']
                                  if row['id'] in ['hierarchy-complete', 'hierarchy-failed']), None)
                 native = records(out)
+                inspection = inspect_processes(out, native, known_processes)
+                if not inspection['checked']:
+                    save(out / 'process-inspection-error.json', inspection)
+                    raise RuntimeError(inspection['error'])
                 if not (out / 'concurrent-native-processes.json').exists():
                     first = [records(out, seat)[:1] for seat in WORKERS]
                     if all(first) and all('child_pid' in rows[0] and 'child_ended_unix' not in rows[0]
@@ -503,7 +610,10 @@ an active session. Your own repository checkout is detached; leave it detached.
                                 and all(parents.get(int(row[0])) == int(row[1]) for row in rows)):
                             save(out / 'concurrent-native-processes.json', {'observed_unix': time.time(),
                                  'child_pids': child_pids, 'processes': rows})
-                if terminal and native and all('ended_unix' in row for row in native):
+                if close_failed_run(out, terminal, native, inspection):
+                    break
+                if (terminal and terminal['id'] == 'hierarchy-complete' and native
+                        and all('ended_unix' in row for row in native)):
                     break
                 if seed.poll() not in (None, 0):
                     raise RuntimeError(f'Seed exited {seed.returncode}; inspect seed.log')
