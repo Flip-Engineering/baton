@@ -1,9 +1,10 @@
 # Baton terminology
 
 These names describe coordination responsibilities and task organization in
-Baton. Task briefs and shared context assign the responsibilities and describe
-the groups. The [current architecture](architecture.md) describes their existing
-session, message and Git operations.
+Baton. Task briefs and shared context describe responsibilities and groups;
+runtime records assign Conductor roles and Ensemble membership for messaging.
+The [current architecture](architecture.md) describes their session, message
+and Git operations.
 
 ## Naming legend
 
@@ -25,11 +26,12 @@ delegated work. Conductors recruit Players, give guidance, review reports and
 changes, and coordinate landings. A Player may perform implementation or review
 work while also carrying a Conductor responsibility.
 
-Conductor responsibilities are assigned in the task brief or shared context.
-The session's `parent` field records message routing and parentage. A Principal
-Conductor's session can have `parent=null`. A human operator session can also
-have `parent=null`; it remains an operator identity. Read the assigned agent
-responsibility to identify a Conductor.
+Conductor responsibilities are assigned in the task brief or shared context
+and recorded with `role SESSION conductor`. The session's `parent` field
+records message routing and parentage. A Principal Conductor's session can
+have `parent=null`. A human operator session can also have `parent=null`;
+`role SESSION operator` explicitly identifies it. Read the assigned agent
+responsibility to distinguish Principal and Associate Conductors.
 
 Existing documentation and commands use these labels:
 
@@ -41,17 +43,21 @@ Existing documentation and commands use these labels:
 
 These labels remain valid command arguments and example session IDs. A logical
 session ID associates messages, parentage and workspaces. A native session ID
-identifies the harness conversation. Role names are descriptions carried in
-briefs and shared context; runtime records retain their existing identifiers.
+identifies the harness conversation. Runtime role records use `player`,
+`conductor` and `operator`; an unassigned session is a Player. Principal and
+Associate responsibilities remain described in briefs and shared context.
+Runtime records retain their existing session identifiers.
 
 ## Groups and shared context
 
 An Ensemble brief states its purpose, member Players and coordination owner.
 A Section identifies an Ensemble's capability-specific subgroup, such as
 implementation, validation or documentation. The Orchestra comprises the
-coordinated system's Conductors, Players, Ensembles and Sections. Group
-descriptions use the existing sessions and parent links to identify the agents
-and their coordination responsibilities.
+coordinated system's Conductors, Players, Ensembles and Sections. An Ensemble's
+stored owner, coupling and member session IDs govern peer messaging.
+[Messaging](messaging.md) defines its hierarchy and tight-coupling routes.
+Section descriptions use the existing sessions and parent links to identify
+capability-specific members and their coordination responsibilities.
 
 A declared knowledge scope ID is an existing logical session ID, and that
 session owns the scope. An Ensemble brief can name its coordinating Player's

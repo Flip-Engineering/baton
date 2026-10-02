@@ -4,6 +4,8 @@
 [Current architecture](architecture.md) is the design of record.
 [Naming legend](terminology.md) defines Principal Conductor, Associate Conductor,
 Ensemble, Section, Player and Orchestra over the existing sessions and task context.
+[Messaging](messaging.md) defines hierarchy routes, explicit Ensemble coupling,
+stored responsibilities and retained delivery.
 [Target architecture](target-architecture.md) and [rewrite plan](rewrite-plan.md)
 record the earlier proposal and first working slice.
 
