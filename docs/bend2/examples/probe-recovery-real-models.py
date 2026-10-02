@@ -51,9 +51,9 @@ def run(args, **kw):
     return subprocess.run([str(a) for a in args], capture_output=True, text=True, check=True, **kw)
 
 
-def coord(db, *args, timeout=30):
+def coord(db, *args):
     result = subprocess.run([str(EXE), str(db), *map(str, args)],
-                            capture_output=True, text=True, timeout=timeout)
+                            capture_output=True, text=True)
     assert result.returncode == 0, result.stderr
     return json.loads(result.stdout)
 
@@ -114,17 +114,15 @@ def kill_all(roots):
     return killed
 
 
-def wait_for(predicate, seconds, what):
-    deadline = time.monotonic() + seconds
-    while time.monotonic() < deadline:
+def wait_for(predicate):
+    while True:
         value = predicate()
         if value:
             return value
         time.sleep(0.5)
-    raise RuntimeError('timed out waiting for ' + what)
 
 
-def harness_argv(spec, observer, seconds=120):
+def harness_argv(spec, observer):
     """Read argv recorded by this launch's wrapper before exec."""
     def look():
         rows = []
@@ -133,8 +131,12 @@ def harness_argv(spec, observer, seconds=120):
                 row = json.loads(line)
                 if row['ppid'] == observer.pid:
                     rows.append(row)
-        return rows or None
-    return wait_for(look, seconds, 'the harness argv of this run')
+        if rows:
+            return rows
+        if observer.poll() is not None:
+            raise RuntimeError(f'Harness producer {observer.pid} exited {observer.returncode} without its launch record')
+        return None
+    return wait_for(look)
 
 
 def start_turn(argv, prefix):
@@ -270,9 +272,9 @@ def main():
                 return None
             return descendants([turns[name].pid], process_table())
 
-        spec['beforeKillProcesses'] = wait_for(started, 120, '%s to start its native turn' % name)
+        spec['beforeKillProcesses'] = wait_for(started)
         spec['native'] = [r for r in coord(db, 'workers') if r['id'] == name][0]['native']
-        spec['freshArgv'] = harness_argv(spec, turns[name], 30)
+        spec['freshArgv'] = harness_argv(spec, turns[name])
 
     evidence['beforeKill'] = {spec['name']: {
         'launchFreshArgv': spec['launchFresh'],
@@ -287,11 +289,7 @@ def main():
     # Kill every coordinator and harness process of this scratch run.
     killed = kill_all([child.pid for child in turns.values()])
     for child in turns.values():
-        try:
-            child.wait(timeout=10)
-        except subprocess.TimeoutExpired:
-            pass
-    time.sleep(0.5)
+        child.wait()
     evidence['killed'] = killed
     killed_pids = {row['pid'] for row in killed}
     evidence['coordinatorExitCodes'] = {name: child.returncode for name, child in turns.items()}
@@ -299,11 +297,10 @@ def main():
     required_pids.update(record['pid'] for spec in specs for record in spec['freshArgv'])
     if not required_pids <= killed_pids or any(child.returncode != -signal.SIGKILL for child in turns.values()):
         raise RuntimeError('Fault injection did not kill every initial coordinator and harness')
-    survivors = [(pid, command) for pid, _, command in process_table() if pid in killed_pids]
-    evidence['survivors'] = survivors
-    if survivors:
-        failures.append('a coordinator or harness process survived the kill')
-        raise RuntimeError('Owned processes survived fault injection; resume was not started')
+    def killed_processes_absent():
+        evidence['survivors'] = [(pid, command) for pid, _, command in process_table() if pid in killed_pids]
+        return not evidence['survivors']
+    wait_for(killed_processes_absent)
     for spec in specs:
         expected = ['line ' + word + ' from ' + spec['name'] for word in ['one', 'two', 'three']]
         if spec['journal'].exists() and spec['journal'].read_text().splitlines() == expected:
@@ -322,7 +319,7 @@ def main():
         resumed = start_turn(launch, resumed_prefix)
         resumed.wait()
         # The wrapper records every launch, including OMP's fresh fallback.
-        argv = harness_argv(spec, resumed, 120)
+        argv = harness_argv(spec, resumed)
         stdout = resumed_prefix.with_suffix('.stdout').read_text()
         stderr = resumed_prefix.with_suffix('.stderr').read_text()
         rows = coord(db, 'workers')

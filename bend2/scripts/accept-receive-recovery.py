@@ -48,7 +48,7 @@ def digest(path):
 def command(argv, **kwargs):
     result = subprocess.run(list(map(str, argv)), capture_output=True, text=True, **kwargs)
     if result.returncode:
-        raise RuntimeError(f'{argv[0]} exited {result.returncode}: {result.stderr[-2000:]}')
+        raise RuntimeError(f'{argv[0]} exited {result.returncode}: {result.stderr}')
     return result.stdout.strip()
 
 

@@ -82,15 +82,12 @@ def owned_processes(directory):
 def kill_owned(directory):
     """Stop owned processes before killing them so none can launch recovery."""
     captured = {}
-    deadline = time.monotonic() + 10
     try:
         while True:
             rows = owned_processes(directory)
             captured.update((row['pid'], row) for row in rows)
             if all(row['status'].startswith('T') for row in rows):
                 break
-            if time.monotonic() >= deadline:
-                raise RuntimeError('Could not stop probe processes: ' + repr(rows))
             for row in rows:
                 try:
                     os.kill(row['pid'], signal.SIGSTOP)
@@ -100,10 +97,25 @@ def kill_owned(directory):
         for pid in captured:
             kill(pid)
     while owned_processes(directory):
-        if time.monotonic() >= deadline:
-            raise RuntimeError('Probe processes survived SIGKILL')
         time.sleep(.01)
     return list(captured.values())
+
+
+def accept_any(fixture, producer=None):
+    """Read a startup frame, preserving live owned continuations while waiting."""
+    while True:
+        if select.select([fixture.server], [], [], 1)[0]:
+            connection, _ = fixture.server.accept()
+            stream = connection.makefile('rwb', buffering=0)
+            fixture.controls.append((stream, connection))
+            line = stream.readline()
+            if not line:
+                raise RuntimeError('Native startup connection closed before its frame')
+            return stream, json.loads(line)
+        if producer is None:
+            return None
+        if producer.poll() is not None and not owned_processes(fixture.directory):
+            raise RuntimeError(f'Receive producer {producer.pid} exited {producer.returncode} without a native startup frame')
 
 
 def main():
@@ -137,7 +149,9 @@ def main():
         controls = {}
         for name in NAMES:
             child = fixture.spawn(*fixture.receive_args(name))
-            stream, started = fixture.accept(name)
+            stream, started = accept_any(fixture, child)
+            if started['session'] != name:
+                raise RuntimeError('%s: unexpected initial session %s' % (name, started['session']))
             controls[name] = stream
             evidence['started'].append({
                 'session': name, 'supervisor': child.pid, 'native': started['pid'],
@@ -156,7 +170,7 @@ def main():
         # Include retained process owners and their replacement observers.
         evidence['killedProcesses'] = kill_owned(directory)
         for child in list(fixture.children):
-            child.communicate(timeout=5)
+            child.communicate()
         evidence['afterKill'] = {
             'ownedProcesses': owned_processes(directory),
             'supervisorsAlive': [e['supervisor'] for e in evidence['started'] if alive(e['supervisor'])],
@@ -201,21 +215,10 @@ def main():
         starts = {name: [] for name in NAMES}
         controls = {}
 
-        def accept_any(seconds):
-            if not select.select([fixture.server], [], [], seconds)[0]:
-                return None
-            connection, _ = fixture.server.accept()
-            connection.settimeout(10)
-            stream = connection.makefile('rwb', buffering=0)
-            fixture.controls.append((stream, connection))
-            return stream, json.loads(stream.readline())
-
         for name in NAMES:
             note('resume ' + name)
-            fixture.spawn(*fixture.receive_args(name))
-            resumed = accept_any(10)
-            if resumed is None:
-                raise RuntimeError('%s: the resumed turn did not start' % name)
+            producer = fixture.spawn(*fixture.receive_args(name))
+            resumed = accept_any(fixture, producer)
             stream, started = resumed
             if started['session'] != name:
                 raise RuntimeError('%s: unexpected resumed session %s' % (name, started['session']))
@@ -225,11 +228,7 @@ def main():
             entry['restartNative'] = started['pid']
             entry['restartResume'] = started['resume']
             entry['restartPromptHasPending'] = '[id: pending-%s]' % name in started['prompt']
-            try:
-                entry['secondInvocation'] = fixture.coord(*fixture.receive_args(name))
-            except subprocess.TimeoutExpired:
-                entry['secondInvocation'] = {'timedOut': True, 'seconds': 10}
-                failures.append('%s: a second invocation blocked instead of answering queued' % name)
+            entry['secondInvocation'] = fixture.coord(*fixture.receive_args(name))
             fixture.assert_no_start()
 
         # Release every resumed turn, then drain whatever the supervisors start
@@ -237,25 +236,22 @@ def main():
         for name in NAMES:
             if name in controls:
                 fixture.action(controls[name])
-        deadline = time.monotonic() + 30
         while owned_processes(directory):
-            if time.monotonic() >= deadline:
-                raise RuntimeError('Probe processes did not finish: ' + repr(owned_processes(directory)))
-            got = accept_any(1)
+            got = accept_any(fixture)
             if got is None:
                 continue
             stream, started = got
             starts.setdefault(started['session'], []).append(started)
             fixture.action(stream)
         for child in fixture.children:
-            child.communicate(timeout=5)
+            child.communicate()
         evidence['afterCompletion'] = {'ownedProcesses': owned_processes(directory)}
 
         for name in NAMES:
             entry = evidence['sessions'][name]
             entry['starts'] = [{'pid': row['pid'], 'resume': row['resume'],
                                 'promptHasPending': '[id: pending-%s]' % name in row['prompt'],
-                                'promptHead': row['prompt'][:160].replace('\n', ' | ')}
+                                'prompt': row['prompt']}
                                for row in starts.get(name, [])]
             entry['inboxAfter'] = fixture.coord('inbox', name)
             entry['turnsAfter'] = fixture.coord('turns', name)

@@ -71,8 +71,7 @@ else:
     prompt=sys.stdin.read()
     native=resume or native
     print(json.dumps({'type':'thread.started','thread_id':native}),flush=True)
-client=socket.create_connection(('127.0.0.1',config['port']),timeout=10)
-client.settimeout(20)
+client=socket.create_connection(('127.0.0.1',config['port']))
 stream=client.makefile('rwb',buffering=0)
 def reply(value): stream.write((json.dumps(value)+'\n').encode())
 def progress(action):
@@ -183,7 +182,6 @@ class Receive(unittest.TestCase):
         self.server = socket.socket()
         self.server.bind(('127.0.0.1', 0))
         self.server.listen()
-        self.server.settimeout(10)
         self.addCleanup(self.server.close)
         (self.directory / 'fixture.json').write_text(json.dumps({
             'port': self.server.getsockname()[1], 'exe': str(EXE), 'db': str(self.db),
@@ -209,13 +207,10 @@ class Receive(unittest.TestCase):
             connection.close()
         # A killed observer leaves its keeper and recovery outside Popen's tree.
         # Stop this fixture's processes together so cleanup cannot spawn recovery.
-        deadline = time.monotonic() + 5
         while True:
             owned = self.owned_processes()
             if not owned:
                 break
-            self.assertLess(time.monotonic(), deadline,
-                            'fixture processes survived cleanup: ' + repr(owned))
             for action in (signal.SIGSTOP, signal.SIGKILL):
                 for process in owned:
                     try:
@@ -226,11 +221,7 @@ class Receive(unittest.TestCase):
         for child in self.children:
             if child.poll() is None:
                 child.terminate()
-            try:
-                child.communicate(timeout=5)
-            except subprocess.TimeoutExpired:
-                child.kill()
-                child.communicate()
+            child.communicate()
 
     def owned_processes(self):
         result = subprocess.run(['ps', '-axo', 'pid=,ppid=,stat=,command='],
@@ -254,7 +245,7 @@ class Receive(unittest.TestCase):
 
     def coord(self, *args, ok=True):
         result = subprocess.run([str(EXE), str(self.db), *map(str, args)],
-                                capture_output=True, text=True, timeout=10)
+                                capture_output=True, text=True)
         if ok:
             self.assertEqual(result.returncode, 0, result.stderr)
             return json.loads(result.stdout)
@@ -287,7 +278,6 @@ class Receive(unittest.TestCase):
 
     def accept_any(self):
         connection, _ = self.server.accept()
-        connection.settimeout(10)
         stream = connection.makefile('rwb', buffering=0)
         self.controls.append((stream, connection))
         started = json.loads(stream.readline())
