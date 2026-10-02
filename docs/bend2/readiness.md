@@ -35,7 +35,7 @@ processes are closed; two Bend2 native exit statuses remain unknown.
 The measured Bend2 revision admitted an invalid endpoint filename through
 `connect`. The [repair for #648](connect-admission-2026-10-02.md) validates the JSON argv before changing the
 binding, preserves pending input and the previous native identity, and returns
-an actionable refusal. Six imported laws constrain admission and refusal;
+an actionable refusal. Eight imported laws constrain admission and refusal;
 four native tests exercise the actual stored state and endpoint process.
 Exact-tree build, negative controls and native checks govern publication.
 

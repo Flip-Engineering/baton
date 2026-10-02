@@ -22,7 +22,7 @@ the native identity and endpoint or returning the binding. Invalid input returns
 the structured `invalid-endpoint` error. `Store.committed` classifies that refusal
 before endpoint delivery and returns exit status 2.
 
-The entry imports six [connection laws](../../bend2/src/coordinator/connect-laws.bend)
+The entry imports eight [connection laws](../../bend2/src/coordinator/connect-laws.bend)
 over the real admission, SQL construction and refusal functions. Negative controls
 remove the update guard, admit non-text arguments and remove refusal classification.
 SQLite executes the predicate; the [native tests](../../bend2/test/connect.py)
@@ -46,6 +46,29 @@ It binds source, executable and complete build, test and probe output hashes.
 The initial declaration-order compile failure and corrected fixture expectation
 remain retained. Canonical publication requires the build, complete law negative
 controls and native checks on the composed tree.
+
+## Classification control
+
+The first composed gate at `e13cfb65` passed its build and all 356 proof-removal
+controls. One of 82 implementation mutations still compiled: removal of the
+invalid-endpoint classification branch. That negative-control run failed and
+blocked publication. Its log has SHA256
+`a3186844bded8f4695736bde16050fcd5ed69d35f8d16593fac34f161fd2426c`.
+
+Two additional laws evaluate the real `Store.refused` and `Store.committed`
+functions on the complete saved refusal output from the CLI probe. Targeted
+baselines compiled; removing classification failed at each new law in isolated
+entries. The full entry also rejected that mutation with the witnesses included.
+The eight-check experiment has metadata SHA256
+`fd1fcee8d5c125ef3422ebfcc197928c2f4f027ff011f229d09961bf94a0b66d`
+under `.scratch/refusal-classification-20261002T104125.738844Z` in the root
+delivery worktree.
+
+A proposed symbolic-suffix statement failed baseline normalization. Small false
+generic and concrete prefix statements both rejected and did not explain the
+earlier full-entry acceptance. The retained observations establish the scoped
+correction; they do not identify a general checker defect. The corrected composed
+tree requires a fresh complete gate run.
 
 ## Boundary
 

@@ -57,3 +57,17 @@ law refused_connections_return_the_structured_error:
 
 def refused_connections_return_the_structured_error(db,id,native,endpoint,saved):
   {==}
+
+law connect_invalid_endpoint_output_is_refused:
+  {Store.refused("{\"error\":\"invalid-endpoint\",\"session\":\"lead\",\"condition\":\"Use an empty endpoint to disconnect, or a nonempty JSON array of text arguments with a nonempty executable and no NUL characters.\",\"next\":\"Pass the JSON argv array itself as one ENDPOINT argument; inspect session and inbox, then retry retained input after connecting.\"}\n") == True{} : Bool}
+
+def connect_invalid_endpoint_output_is_refused():
+  {==}
+
+law connect_invalid_endpoint_output_returns_exit_two:
+  for db: String
+  for command: C.Command
+  {Store.committed(db,command,Done{"{\"error\":\"invalid-endpoint\",\"session\":\"lead\",\"condition\":\"Use an empty endpoint to disconnect, or a nonempty JSON array of text arguments with a nonempty executable and no NUL characters.\",\"next\":\"Pass the JSON argv array itself as one ENDPOINT argument; inspect session and inbox, then retry retained input after connecting.\"}\n"}) == IO.pure(Result<&1,&1,U32 & String,String>,Fail{(2,"{\"error\":\"invalid-endpoint\",\"session\":\"lead\",\"condition\":\"Use an empty endpoint to disconnect, or a nonempty JSON array of text arguments with a nonempty executable and no NUL characters.\",\"next\":\"Pass the JSON argv array itself as one ENDPOINT argument; inspect session and inbox, then retry retained input after connecting.\"}\n")}) : IO(Result<&1,&1,U32 & String,String>)}
+
+def connect_invalid_endpoint_output_returns_exit_two(db,command):
+  {==}
