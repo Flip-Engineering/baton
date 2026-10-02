@@ -343,8 +343,11 @@ same endpoint. Each harness uses its existing login; a launch wrapper can set
 its documented configuration environment. Native initialization records the
 session ID. Subsequent turns resume that ID. Keep it when reconnecting an
 existing Conductor with `connect`; the trial launcher preserves it automatically.
-Codex retains conversations in its configured storage. The OMP session `root`
-uses `DATABASE.root-sessions`; other OMP sessions use `DATABASE.session-HEX_ID`.
+Codex retains conversations in its configured storage. Native OMP receive uses
+`DATABASE.root-sessions` for parentless sessions and `DATABASE.session-HEX_ID`
+for sessions with a parent. The Node OMP adapter uses `DATABASE.root-sessions`
+for logical ID `root` and `DATABASE.session-HEX_ID` for other IDs. Each directory
+stores conversations by their native identity; the path does not assign a role.
 
 Retained OMP children send native input, selection, confirmation and editor
 questions to their registered parent. The question names its request ID and

@@ -207,9 +207,12 @@ that the transition occurred, so replay of the refused attempt preserves the new
 identity. Fresh completion has its own attempt ID.
 
 Native initialization binds the session ID in the existing row. Later turns
-resume it. Codex retains conversations in its configured storage. The logical
-OMP session `root` uses `DATABASE.root-sessions`; other OMP sessions use
-`DATABASE.session-HEX_ID`, preserving storage from the earlier adapter.
+resume it. Codex retains conversations in its configured storage. Native OMP
+receive uses `DATABASE.root-sessions` for parentless sessions and
+`DATABASE.session-HEX_ID` for sessions with a parent. The Node OMP adapter uses
+`DATABASE.root-sessions` for logical ID `root` and `DATABASE.session-HEX_ID` for
+other IDs. Each directory stores conversations by their native identity; its
+path does not assign a Conductor role.
 The trial launcher preserves the
 Conductor ID, registers its native endpoint and replays pending input. A launch
 wrapper supplies harness-specific configuration or login settings.
