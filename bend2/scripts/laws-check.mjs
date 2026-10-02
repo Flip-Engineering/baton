@@ -35,7 +35,7 @@ function resolveBend() {
 const BEND = resolveBend();
 
 function run(args, cwd) {
-  return execFileSync(BEND, args, { env: ENV, cwd, encoding: 'utf8', maxBuffer: 64 * 1024 * 1024 });
+  return execFileSync(BEND, args, { env: ENV, cwd, encoding: 'utf8', maxBuffer: Infinity });
 }
 
 function compile(cwd) {
