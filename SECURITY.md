@@ -1,6 +1,6 @@
 # Security disclosure
 
-Report vulnerabilities through this repository's private security advisories.
+Contact a repository maintainer to arrange a private security disclosure.
 
 Baton2 coordinates local agents with repository access. Native harnesses manage
 their own authentication and conversation storage. The coordinator records local
