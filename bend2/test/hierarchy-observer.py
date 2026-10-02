@@ -151,6 +151,32 @@ class HierarchyObserver(unittest.TestCase):
         with self.assertRaisesRegex(RuntimeError, 'completion receipts are unknown'):
             DRIVER.observe_tool(self.out)
 
+    def test_an_unregistered_command_mentioning_output_path_is_not_owned(self):
+        row, _ = self.interrupted()
+        other = self.child()
+        inspection = DRIVER.inspect_processes(self.out, [row], {})
+        self.assertEqual(inspection['processes'], [])
+        self.assertIsNone(other.poll())
+        self.assertTrue(DRIVER.close_failed_run(self.out, FAILED, [row], inspection))
+
+    def test_recorded_seed_and_worker_launchers_block_whole_run_closure(self):
+        row, _ = self.interrupted()
+        seed, worker = self.child(owned=False), self.child(owned=False)
+        table = DRIVER.process_snapshot()
+        DRIVER.save(self.out / 'seed-process.json',
+                    {'pid': seed.pid, 'started_local': table[seed.pid]['started_local']})
+        DRIVER.save(self.out / 'worker-launches.json',
+                    [{'seat': 'muse', 'pid': worker.pid, 'started_local': table[worker.pid]['started_local']}])
+        known = {}
+        inspection = DRIVER.inspect_processes(self.out, [row], known)
+        self.assertEqual({process['pid'] for process in inspection['processes']}, {seed.pid, worker.pid})
+        self.assertFalse(DRIVER.close_failed_run(self.out, FAILED, [row], inspection))
+        for child in (seed, worker):
+            child.stdin.close()
+            child.wait()
+        inspection = DRIVER.inspect_processes(self.out, [row], known)
+        self.assertTrue(DRIVER.close_failed_run(self.out, FAILED, [row], inspection))
+
     def test_active_child_tool_event_retains_actual_process_identity(self):
         wrapper, child = self.child(), self.child()
         row = self.row(wrapper, child)

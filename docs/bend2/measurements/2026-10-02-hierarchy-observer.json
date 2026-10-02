@@ -1,7 +1,7 @@
 {
   "baseline_guidance_proof": {
-    "observed_unix": 1790937888.330815,
-    "process": 13150,
+    "observed_unix": 1790938170.837332,
+    "process": 13373,
     "event": {
       "type": "tool_execution_start"
     }
@@ -11,20 +11,20 @@
   "repaired_failure_closure": {
     "status": "failed",
     "terminal_id": "hierarchy-failed",
-    "closed_unix": 1790937888.377273,
+    "closed_unix": 1790938170.858985,
     "inspection": {
       "checked": true,
-      "observed_unix": 1790937888.377239,
+      "observed_unix": 1790938170.8589609,
       "processes": [],
       "uncertain": []
     },
     "unknown_native_exits": [
       {
         "seat": "deepseek",
-        "pid": 13150,
-        "started_local": "Fri Oct 2 03:44:48 2026",
-        "child_pid": 13151,
-        "child_started_local": "Fri Oct 2 03:44:48 2026",
+        "pid": 13373,
+        "started_local": "Fri Oct 2 03:49:30 2026",
+        "child_pid": 13374,
+        "child_started_local": "Fri Oct 2 03:49:30 2026",
         "exit_code": null,
         "child_exit_code": null,
         "ended_unix": null,
@@ -32,16 +32,16 @@
       }
     ],
     "process_record_sha256": {
-      "native-deepseek.process.json": "bf5cebb0920b95b73fa65f4139ec914dc82d86bd4804df263ec847a39ec9f9e4"
+      "native-deepseek.process.json": "c61a34900a56be8095f8295639014e5d7141e49627e015f57e92eb45224d3cbc"
     }
   },
   "raw_record_unchanged": true,
   "baseline": "e13cfb659a08e686ed87c31dbfc5586abfda5f9a",
   "baseline_driver_sha256": "67e5aa7cfaf9154c238d902821fc1c1ac942c977dcf0077c5685f1e3f1353080",
-  "repaired_driver_sha256": "978ad6164f5c03e52f690a38228a86d9807f3d401d2e701f684be17ed82ecc18",
+  "repaired_driver_sha256": "790d00f93733c41901ee9df05dfa985639eb3807c972eab2f1c0009830c7f623",
   "fixture_pids": [
-    13150,
-    13151
+    13373,
+    13374
   ],
   "fixture_exit_codes": [
     -15,

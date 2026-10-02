@@ -64,18 +64,18 @@ def frames(path):
 
 
 def process_snapshot():
-    result = subprocess.run(['/bin/ps', '-axo', 'pid=,ppid=,lstart=,stat=,command='],
+    result = subprocess.run(['/bin/ps', '-axo', 'pid=,ppid=,lstart=,stat='],
                             capture_output=True, text=True)
     if result.returncode:
         raise RuntimeError(f'Process inspection exited {result.returncode}: {result.stderr}')
     table = {}
     for line in result.stdout.splitlines():
-        fields = line.split(None, 8)
-        if len(fields) != 9:
+        fields = line.split()
+        if len(fields) != 8:
             raise RuntimeError('Process inspection returned an incomplete row')
         pid, parent = int(fields[0]), int(fields[1])
         table[pid] = {'pid': pid, 'ppid': parent, 'started_local': ' '.join(fields[2:7]),
-                      'state': fields[7], 'command': fields[8]}
+                      'state': fields[7]}
     if os.getpid() not in table:
         raise RuntimeError('Process inspection omitted the observer')
     return table
@@ -84,17 +84,22 @@ def process_snapshot():
 def inspect_processes(out, native, known, whole_run=True):
     try:
         table = process_snapshot()
+        owners = list(native)
+        if whole_run:
+            seed_path, launches_path = out / 'seed-process.json', out / 'worker-launches.json'
+            if seed_path.exists():
+                owners.append({'seat': 'seed', **json.loads(seed_path.read_text())})
+            if launches_path.exists():
+                owners.extend(json.loads(launches_path.read_text()))
     except (OSError, RuntimeError, ValueError) as error:
         return {'checked': False, 'error': str(error), 'observed_unix': time.time()}
     expected = {}
-    recorded = {row[key] for row in native for key in ('pid', 'child_pid') if key in row}
-    for row in native:
+    for row in owners:
         for pid_key, start_key in [('pid', 'started_local'), ('child_pid', 'child_started_local')]:
             if row.get(start_key):
                 expected[row[pid_key]] = row[start_key]
     selected = {pid for pid, row in table.items() if pid != os.getpid() and (
-        (whole_run or pid in recorded) and str(out.resolve()) in row['command']
-        or known.get(pid) == row['started_local']
+        known.get(pid) == row['started_local']
         or expected.get(pid) == row['started_local'])}
     while True:
         descendants = {pid for pid, row in table.items()
@@ -104,7 +109,7 @@ def inspect_processes(out, native, known, whole_run=True):
         selected.update(descendants)
     known.update({pid: table[pid]['started_local'] for pid in selected})
     uncertain = []
-    for row in native:
+    for row in owners:
         for pid_key, start_key, end_key in [('pid', 'started_local', 'ended_unix'),
                                            ('child_pid', 'child_started_local', 'child_ended_unix')]:
             pid = row.get(pid_key)
@@ -225,7 +230,9 @@ def start_workers(out):
         with (out / f'{seat}.command.log').open('w') as log:
             child = subprocess.Popen(argv, stdout=log, stderr=subprocess.STDOUT,
                                      cwd=out / 'lead', start_new_session=True)
-        launched.append({'seat': seat, 'pid': child.pid, 'started_unix': time.time(), 'argv': argv})
+        launch = {'seat': seat, 'pid': child.pid, 'started_unix': time.time(), 'argv': argv}
+        retain_process_start(launch, 'pid', 'started_local')
+        launched.append(launch)
         save(out / 'worker-launches.json', launched)
     print(json.dumps(launched))
 
@@ -585,7 +592,9 @@ an active session. Your own repository checkout is detached; leave it detached.
                                      'operator', 'root', 'task', str(out / 'root.md')],
                                     cwd=repo, env=environment, stdout=log, stderr=subprocess.STDOUT,
                                     start_new_session=True)
-            save(out / 'seed-process.json', {'pid': seed.pid, 'started_unix': time.time()})
+            seed_record = {'pid': seed.pid, 'started_unix': time.time()}
+            retain_process_start(seed_record, 'pid', 'started_local')
+            save(out / 'seed-process.json', seed_record)
             print(f'Kimi hierarchy started: {out}', flush=True)
             known_processes = {}
             while True:
@@ -610,7 +619,7 @@ an active session. Your own repository checkout is detached; leave it detached.
                                 and all(parents.get(int(row[0])) == int(row[1]) for row in rows)):
                             save(out / 'concurrent-native-processes.json', {'observed_unix': time.time(),
                                  'child_pids': child_pids, 'processes': rows})
-                if close_failed_run(out, terminal, native, inspection):
+                if seed.poll() is not None and close_failed_run(out, terminal, native, inspection):
                     break
                 if (terminal and terminal['id'] == 'hierarchy-complete' and native
                         and all('ended_unix' in row for row in native)):

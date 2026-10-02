@@ -11,8 +11,9 @@ failure and the operator's separate closure remain in
 ## Helper behavior
 
 `bend2/scripts/accept-kimi-hierarchy.py` inspects the process table with
-`/bin/ps`. It records wrapper and child start identities, retains observed owned
-processes by PID and start identity, and includes their observed descendants.
+`/bin/ps`. It records wrapper, child, seed and worker-launcher start identities,
+retains owned processes by recorded or previously observed PID and start
+identity, and includes their observed descendants.
 The observer excludes itself. Each selected process carries its state and an
 active flag; a zombie remains present and has an inactive flag.
 
@@ -20,7 +21,9 @@ A failed terminal report and successfully established owned process absence
 produce `failure-closure.json`. That receipt records the failed result, process
 inspection, unknown native exits and hashes of the original process records.
 The original records retain their missing timestamps and exit codes. A surviving
-owned child prevents closure. A present recorded PID with an unavailable start
+owned child or launcher prevents closure. The main observer also requires an
+observed exit from its held seed process before closing the failed loop. A
+present recorded PID with an unavailable start
 identity remains uncertain. Failed or incomplete inspection reports an error
 and cannot establish absence.
 
@@ -54,7 +57,10 @@ The observer fixtures exercise interrupted-record closure, a surviving child,
 failed inspection, changed and unavailable start identities, stale and active
 tool events, incomplete success receipts, and ordinary native-wrapper completion
 using a controlled Python child. A separate live seat leaves an absent DeepSeek
-observable as absent. Inspection failure uses the captured result of
+observable as absent. A command that mentions the output directory remains
+unowned until a recorded identity or observed descendant establishes ownership.
+Recorded seed and worker launchers prevent closure while present. Inspection
+failure uses the captured result of
 a real failing subprocess. These fixtures run without provider sessions or a
 coordinator build. `check-native.sh` includes them through its existing Python
 test-file selection.
