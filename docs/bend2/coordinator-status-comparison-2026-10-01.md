@@ -96,6 +96,16 @@ records unchanged source and executable hashes, absent launcher and driver
 processes, and no remaining comparative command process. Driver stderr and all
 four original-helper stderr files were empty. No benchmark repeat ran.
 
+After this measurement, review found fixed subprocess, helper-read and
+helper-shutdown deadlines in the driver. The later #530 correction removes
+those deadlines, the timed kill escalation and stderr truncation. The driver
+reads each response through line or EOF completion and closes owned stdin
+before waiting for normal helper exit. Deliberately constructed failed-launch
+and non-ready-startup probes found open owned resources on the prior driver
+and verified cleanup after the repair; the measured `6ccb2a6d` comparison
+completed normally. The measurements here remain pinned to `9ba8ff74`; the
+changed driver has no repeated performance measurement.
+
 ## Usage and limits
 
 For this workload, Bend2 `status` returned 4,135 bytes and `workers` returned

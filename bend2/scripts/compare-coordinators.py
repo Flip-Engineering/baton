@@ -18,7 +18,6 @@ import pathlib
 import platform
 import random
 import re
-import select
 import shutil
 import subprocess
 import tarfile
@@ -31,10 +30,10 @@ HELPER = pathlib.Path(__file__).with_name('compare-old-coordinator.mjs')
 
 def execute(argv, cwd=None, env=None):
     result = subprocess.run([str(item) for item in argv], cwd=cwd, env=env,
-                            capture_output=True, timeout=120)
+                            capture_output=True)
     if result.returncode:
         raise RuntimeError(f'{argv[0]} exited {result.returncode}: '
-                           f'{result.stderr.decode(errors="replace")[-4000:]}')
+                           f'{result.stderr.decode(errors="replace")}')
     return result
 
 
@@ -121,24 +120,26 @@ class Old:
     def __init__(self, node, source, store, workers, cwd, env):
         self.stderr = (cwd / f'old-{time.time_ns()}.stderr').open('w')
         started = time.perf_counter_ns()
-        self.process = subprocess.Popen([node, str(HELPER), str(source), str(store), str(workers)],
-                                        cwd=cwd, env=env, stdin=subprocess.PIPE,
-                                        stdout=subprocess.PIPE, stderr=self.stderr, text=True)
+        try:
+            self.process = subprocess.Popen([node, str(HELPER), str(source), str(store), str(workers)],
+                                            cwd=cwd, env=env, stdin=subprocess.PIPE,
+                                            stdout=subprocess.PIPE, stderr=self.stderr, text=True)
+        except BaseException:
+            self.stderr.close()
+            raise
         try:
             self.ready = self.read()
+            if not self.ready.get('ready'):
+                raise RuntimeError(f'Old helper did not become ready: {self.ready}')
         except BaseException:
             self.close()
             raise
         self.startup_ms = (time.perf_counter_ns() - started) / 1e6
-        if not self.ready.get('ready'):
-            raise RuntimeError(f'Old helper did not become ready: {self.ready}')
 
     def read(self):
-        if not select.select([self.process.stdout], [], [], 120)[0]:
-            raise RuntimeError('Old helper exceeded the measurement timeout')
         line = self.process.stdout.readline()
         if not line:
-            raise RuntimeError(f'Old helper exited; see {self.stderr.name}')
+            raise RuntimeError(f'Old helper stdout reached EOF; see {self.stderr.name}')
         value = json.loads(line)
         if 'error' in value:
             raise RuntimeError(json.dumps(value['error']))
@@ -156,19 +157,12 @@ class Old:
 
     def close(self):
         try:
-            if self.process.poll() is None:
-                try:
-                    if not self.process.stdin.closed:
-                        self.process.stdin.write('{"op":"close"}\n')
-                        self.process.stdin.flush()
-                        self.process.stdin.close()
-                    self.process.wait(timeout=10)
-                except (BrokenPipeError, subprocess.TimeoutExpired):
-                    pass
-                finally:
-                    if self.process.poll() is None:
-                        self.process.kill()
-                        self.process.wait()
+            try:
+                if not self.process.stdin.closed:
+                    self.process.stdin.close()
+            except BrokenPipeError:
+                pass
+            self.process.wait()
         finally:
             for stream in (self.process.stdin, self.process.stdout, self.stderr):
                 if stream is not None and not stream.closed:

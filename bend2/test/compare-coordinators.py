@@ -7,8 +7,10 @@ import os
 import pathlib
 import shutil
 import subprocess
+import sys
 import tempfile
 import unittest
+from unittest import mock
 
 ROOT = pathlib.Path(__file__).resolve().parents[2]
 EXE = ROOT / '.scratch/bend2/baton2'
@@ -159,6 +161,10 @@ class OriginalStatus(unittest.TestCase):
                     guides[saved['guide']['messageId']] = (ident, text)
                 answer, _ = old.call('workers')
                 DRIVER.assert_original_status(answer, workers, guides)
+                with self.assertRaisesRegex(RuntimeError, 'Unknown operation unsupported-operation'):
+                    old.call('unsupported-operation')
+                answer, _ = old.call('workers')
+                DRIVER.assert_original_status(answer, workers, guides)
                 wrong = copy.deepcopy(answer)
                 wrong['participants'].append(copy.deepcopy(wrong['participants'][0]))
                 with self.assertRaises(AssertionError):
@@ -178,6 +184,99 @@ class OriginalStatus(unittest.TestCase):
             self.assertTrue(old.process.stdin.closed)
             self.assertTrue(old.process.stdout.closed)
             self.assertTrue(old.stderr.closed)
+
+    def test_stdout_eof_is_reported_and_the_production_helper_is_reaped(self):
+        with tempfile.TemporaryDirectory(dir=ROOT / '.scratch/bend2') as temp:
+            path = pathlib.Path(temp)
+            (path / 'home').mkdir()
+            env = {'PATH': os.environ.get('PATH', '/usr/bin:/bin'),
+                   'HOME': str(path / 'home'), 'LANG': 'en_US.UTF-8'}
+            old = DRIVER.Old(shutil.which('node'), ROOT, path / 'store', 2, path, env)
+            try:
+                old.call('setup')
+                old.process.stdin.close()
+                with self.assertRaisesRegex(RuntimeError, 'stdout reached EOF'):
+                    old.read()
+            finally:
+                old.close()
+            self.assertEqual(old.process.returncode, 0)
+            self.assertTrue(old.process.stdin.closed)
+            self.assertTrue(old.process.stdout.closed)
+            self.assertTrue(old.stderr.closed)
+
+
+class HelperCompletion(unittest.TestCase):
+    def test_failed_launch_closes_the_owned_stderr_handle(self):
+        with tempfile.TemporaryDirectory(dir=ROOT / '.scratch/bend2') as temp:
+            path = pathlib.Path(temp)
+            handles = []
+            launch = subprocess.Popen
+
+            def capture_stderr(*args, **kwargs):
+                handles.append(kwargs['stderr'])
+                return launch(*args, **kwargs)
+
+            try:
+                with mock.patch.object(DRIVER.subprocess, 'Popen', capture_stderr):
+                    with self.assertRaises(FileNotFoundError):
+                        DRIVER.Old(str(path / 'missing-executable'), ROOT, path / 'store',
+                                   1, path, os.environ.copy())
+                self.assertTrue(handles)
+                self.assertTrue(all(handle.closed for handle in handles))
+            finally:
+                for handle in handles:
+                    handle.close()
+
+    def test_subprocess_completion_preserves_success_and_complete_error_output(self):
+        result = DRIVER.execute([sys.executable, '-c', "print('Completed Unicode λ')"])
+        self.assertEqual(result.stdout.decode().strip(), 'Completed Unicode λ')
+        stderr = 'Failure starts here\n' + 'x' * 6000 + '\nFailure ends here\n'
+        with self.assertRaises(RuntimeError) as caught:
+            DRIVER.execute([sys.executable, '-c',
+                            'import sys; sys.stderr.write(' + repr(stderr) + '); sys.exit(7)'])
+        self.assertIn('exited 7', str(caught.exception))
+        self.assertIn(stderr, str(caught.exception))
+
+    def test_startup_eof_and_invalid_greeting_close_owned_processes_and_handles(self):
+        fixtures = {
+            'eof': ("import sys\nsys.stderr.write('Startup fixture failed\\n')\nsys.exit(9)\n",
+                    'stdout reached EOF', 9),
+            'invalid-greeting': ("import sys\nprint('{\"ready\": false}', flush=True)\nsys.stdin.read()\n",
+                                 'did not become ready', 0),
+        }
+        for name, (source, error, exit_code) in fixtures.items():
+            with self.subTest(name=name), tempfile.TemporaryDirectory(dir=ROOT / '.scratch/bend2') as temp:
+                path = pathlib.Path(temp)
+                helper = path / 'helper.py'
+                helper.write_text(source)
+                processes = []
+                launch = subprocess.Popen
+
+                def capture_process(*args, **kwargs):
+                    process = launch(*args, **kwargs)
+                    processes.append((process, kwargs['stderr']))
+                    return process
+
+                try:
+                    with mock.patch.object(DRIVER, 'HELPER', helper), \
+                            mock.patch.object(DRIVER.subprocess, 'Popen', capture_process):
+                        with self.assertRaisesRegex(RuntimeError, error) as caught:
+                            DRIVER.Old(sys.executable, ROOT, path / 'store', 1, path, os.environ.copy())
+                    process, stderr = processes[0]
+                    self.assertEqual(process.returncode, exit_code)
+                    self.assertTrue(process.stdin.closed)
+                    self.assertTrue(process.stdout.closed)
+                    self.assertTrue(stderr.closed)
+                    if name == 'eof':
+                        self.assertIn(str(stderr.name), str(caught.exception))
+                        self.assertEqual(pathlib.Path(stderr.name).read_text(), 'Startup fixture failed\n')
+                finally:
+                    for process, stderr in processes:
+                        if not process.stdin.closed:
+                            process.stdin.close()
+                        process.wait()
+                        process.stdout.close()
+                        stderr.close()
 
 
 if __name__ == '__main__':
