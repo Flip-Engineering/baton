@@ -66,7 +66,7 @@ def record(+db: String, player: String, turn: String, attempt: String, event: St
   match parent:
     case False{}: do IO<List<Chan(Result<&1,&1,U32 & String,String>)> & String>:
       shown : Unit <- IO.print("Native OMP UI request is unsupported for a session without a registered parent; its full frame remains in the native log.")
-      IO.pure(List<Chan(Result<&1,&1,U32 & String,String>)> & String,(tasks,"Native OMP UI request has no registered parent; root interaction is unsupported."))
+      IO.pure(List<Chan(Result<&1,&1,U32 & String,String>)> & String,(tasks,"Native OMP UI request has no registered parent; interaction requires a registered parent."))
     case True{}: do IO<List<Chan(Result<&1,&1,U32 & String,String>)> & String>:
       result : Result<&1,&1,U32 & String,String> <- DB.Sql.query(db,"BEGIN IMMEDIATE;" ++ schema() ++ request_sql(player,turn,attempt,event) ++ "COMMIT;")
       saved(db,tasks,result)
