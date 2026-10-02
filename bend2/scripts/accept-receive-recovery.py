@@ -189,9 +189,13 @@ def main():
     binary = out / 'baton2'
     shutil.copy2(supplied, binary)
     shutil.copy2(build_log, out / 'build.log')
+    seed = out / 'seed'
+    command(['git', 'clone', '--shared', '--no-checkout', source, seed])
+    command(['git', '-C', seed, 'checkout', '--detach', base])
+    assert command(['git', '-C', seed, 'rev-parse', 'HEAD']) == base
+    assert not command(['git', '-C', seed, 'branch', '--show-current'])
     repo = out / 'repo'
-    command(['git', 'clone', '--shared', '--no-checkout', source, repo])
-    command(['git', '-C', repo, 'checkout', '-b', 'accept-receive-recovery', base])
+    branch = 'accept-receive-recovery'
     manifest = {str(path.relative_to(source)): digest(path)
                 for path in sorted((source / 'bend2/src').rglob('*')) if path.is_file()}
     save(out / 'runtime-source-manifest.json', manifest)
@@ -204,6 +208,8 @@ def main():
     wrapper.chmod(0o700)
     pin = {
         'source': base, 'source_directory': str(source), 'started_unix': time.time(),
+        'seed_repository': str(seed), 'seed_revision': base, 'seed_detached': True,
+        'worker_workspace': str(repo), 'worker_branch': branch,
         'runtime_source_manifest_sha256': digest(out / 'runtime-source-manifest.json'),
         'runtime_source_files': manifest,
         'coordinator_sha256': digest(binary), 'coordinator_supplied': str(supplied),
@@ -227,7 +233,7 @@ def main():
         return row
 
     def call(*argv):
-        return command([binary, db, *argv], cwd=repo)
+        return command([binary, db, *argv], cwd=seed)
 
     def owned():
         rows = process_rows()
@@ -328,8 +334,17 @@ both your previous commit hash and the new one. Do not repeat the checkpoint too
             parent = [sys.executable, str(helper), 'parent']
             call('attach', 'root', 'terminal', '', json.dumps(parent))
             call('role', 'root', 'conductor')
-            call('worker', 'worker', 'root', 'codex', args.model, args.effort,
-                 str(repo), 'accept-receive-recovery', base)
+            worker = json.loads(call('recruit', 'worker', 'root', 'codex', args.model,
+                                     args.effort, str(seed), branch, str(repo), base))
+            for field, value in {'id': 'worker', 'parent': 'root', 'harness': 'codex',
+                                 'model': args.model, 'effort': args.effort,
+                                 'workspace': str(repo), 'branch': branch, 'base': base}.items():
+                assert worker[field] == value, worker
+            workspace = json.loads(call('worktree', 'worker'))
+            assert workspace == {'id': 'worker', 'workspace': str(repo), 'branch': branch,
+                                 'commit': base, 'dirty': False}, workspace
+            save(out / 'recruitment.json', {'seed': str(seed), 'session': worker,
+                                           'worktree': workspace})
             call('message-file', INITIAL, 'root', 'worker', 'task', str(initial_task))
             call('connect', 'worker', '', json.dumps([str(binary), str(db), *receive]))
             with (out / 'observer.log').open('w') as log:
