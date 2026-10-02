@@ -30,7 +30,7 @@ Retained receive preserves a running native turn across observer loss, keeps
 output and completion, continues queued input and delivers the parent report.
 Separate direct-turn process-loss qualifications resumed Codex's recorded
 conversation and exercised OMP's fresh fallback when its conversation was
-missing. [Recovery evidence](native-recovery-qualification-2026-10-02/README.md)
+missing. Both direct-turn interruptions preceded a file edit. [Recovery evidence](native-recovery-qualification-2026-10-02/README.md)
 records the exact interruption points and host boundaries.
 
 Keeper loss, host restart and power loss require separate qualification. Agent
