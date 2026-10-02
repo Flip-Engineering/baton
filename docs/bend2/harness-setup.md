@@ -66,6 +66,14 @@ The [trial launcher](../../bend2/scripts/trial-start.sh) accepts `BATON_CODEX`,
 corresponding commands on PATH. OMP and Codex are required by that launcher;
 Muse is required when assigning its route to a Player.
 
+Its arguments are `REPOSITORY BEND2_CHECKOUT DATABASE CHECK_PROGRAM`. Select
+`bend2/scripts/check-unittest.sh` for Python or `bend2/scripts/check-node-test.sh`
+for an external JS repository with the required typed suite verdict. Each issue
+task must name its selected test paths. Set `BEND` to an installed compiler
+when selected checks under `bend2/test/` need to build the coordinator in
+their checked trees; the launcher resolves it to an absolute executable path
+in the emitted shell settings.
+
 ## First use and recovery
 
 Follow [installation](installation.md) for the coordinator and host dependencies.

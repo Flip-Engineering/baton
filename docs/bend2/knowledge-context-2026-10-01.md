@@ -5,7 +5,9 @@
 Issue #642 was exercised on 2026-10-01 at source
 `46a4bc3f9716117f74fd69ce0e09fc080d8441eb`, with Bend 2.0.25 and coordinator
 SHA-256 `8aa2ac152783febdf6d3193b5caa432adc84f66a2f0131ef70dbd69e22e8c83a`.
-The consolidated tree retains identical runtime files. The
+The knowledge implementation in `bend2/src/coordinator/knowledge.bend` and its
+operative laws in `knowledge-laws.bend` remain byte-identical through
+`463f2b4c0e79986962a7305a1c19d5e1f5160ea9`. The
 [machine evidence](measurements/2026-10-01-knowledge-context.json) identifies the
 source tree, executable and driver hashes, native identities, message receipts,
 promotion provenance, retained artifacts and private landing.
