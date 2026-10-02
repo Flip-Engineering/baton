@@ -113,7 +113,7 @@ class Knowledge(unittest.TestCase):
         self.assertEqual(promoted, {'id': 'promotion-1', 'finding': 'finding-3', 'author': 'grand',
                                     'source': 'grand', 'destination': 'worker', 'promotedBy': 'worker'})
         seen = self.read('grand')
-        self.assertEqual(seen[0]['destinations'], ['player'])
+        self.assertEqual(seen[0]['destinations'], ['worker'])
         self.assertEqual(seen[0]['promotions'],
                          [{'finding': 'finding-3', 'author': 'grand', 'source': 'grand',
                            'destination': 'worker', 'promotedBy': 'worker'}])

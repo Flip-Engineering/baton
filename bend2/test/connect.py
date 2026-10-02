@@ -36,7 +36,7 @@ class Connect(unittest.TestCase):
         self.call('attach', 'operator', 'fixture', '', '')
         self.call('role', 'operator', 'operator')
         self.call('attach', 'lead', 'fixture', 'native-kept', '')
-        self.call('role', 'lead', 'associate-conductor')
+        self.call('role', 'lead', 'principal-conductor')
         self.call(*self.task)
         self.call('connect', 'lead', 'native-kept', self.endpoint)
 

@@ -303,7 +303,7 @@ class Coordinator(unittest.TestCase):
     def test_parallel_reports_have_one_durable_record_per_id(self):
         def report(i):
             return self.call('report', f'turn-{i % 4}', 'worker', f'body-{i % 4}')
-        with concurrent.futures.ThreadPoolExecutor(max_players=4) as pool:
+        with concurrent.futures.ThreadPoolExecutor(max_workers=4) as pool:
             list(pool.map(report, range(12)))
         rows = self.call('inbox', 'root')
         self.assertEqual({r['id'] for r in rows}, {f'turn-{i}' for i in range(4)})
