@@ -6,8 +6,9 @@ Develop the native coordinator on `bend2-rewrite`. Read
 Use a separate owned branch and worktree for each change. Preserve other agents'
 source, branches, worktrees, uncommitted work and retained execution evidence.
 
-There is currently no project LICENSE file. Distribution terms require a
-maintainer decision. The vendored Bend reference has its own upstream license.
+Baton2 project source is licensed under the [Apache License 2.0](LICENSE).
+Preserve [project attribution](NOTICE) and the vendored Bend reference's upstream
+license notices in distributions.
 
 ## Build dependencies
 
