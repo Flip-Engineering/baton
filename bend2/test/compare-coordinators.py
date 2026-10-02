@@ -101,7 +101,7 @@ class NativeStatus(unittest.TestCase):
         DRIVER.assert_bend_status(again, self.expected, self.pending)
         self.assertEqual(again, self.valid)
         self.assertEqual(hashlib.sha256(self.db.read_bytes()).hexdigest(), before)
-        players = self.call('workers')
+        players = self.call('players')
         self.assertEqual({row['id'] for row in players}, {'root', 'alpha', 'beta'})
         self.assertEqual({row['latestReportId'] for row in players},
                          {None, 'alpha-report-2', 'beta-report'})

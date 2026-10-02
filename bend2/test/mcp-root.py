@@ -22,7 +22,7 @@ def send_mcp(proc, msg):
 
 _mcp_buf = {}
 
-def read_mcp(proc, timeout=5):
+def read_mcp(proc, timeout=5, handle_ping=True):
     """Read one newline-delimited MCP message, as the native Claude client does."""
     fd = proc.stdout.fileno()
     if fd not in _mcp_buf:
@@ -43,7 +43,7 @@ def read_mcp(proc, timeout=5):
     body, rest = buf.split(b'\n', 1)
     _mcp_buf[fd] = rest
     message = json.loads(body)
-    if message.get('method') == 'ping':
+    if handle_ping and message.get('method') == 'ping':
         send_mcp(proc, {'jsonrpc': '2.0', 'id': message['id'], 'result': {}})
         return read_mcp(proc, timeout)
     return message
@@ -118,6 +118,9 @@ class McpRoot(unittest.TestCase):
         send_mcp(proc, {'jsonrpc': '2.0', 'method': 'notifications/initialized'})
         send_mcp(proc, {'jsonrpc': '2.0', 'id': 'channel-tools', 'method': 'tools/list'})
         self.assertEqual(read_mcp(proc)['id'], 'channel-tools')
+        ready = read_mcp(proc, handle_ping=False)
+        self.assertEqual((ready['id'], ready['method']), ('conductor-channel-ready', 'ping'))
+        send_mcp(proc, {'jsonrpc': '2.0', 'id': ready['id'], 'result': {}})
 
     def test_initialize_advertises_channel_capability(self):
         proc = self.start_mcp()
@@ -204,6 +207,9 @@ class McpRoot(unittest.TestCase):
                   {'id': 'selected-guide', 'player': 'child', 'body': 'Selected guidance.'})
         guidance = json.loads(self.coord('inbox', 'child'))
         self.assertEqual([(row['sender'], row['recipient']) for row in guidance], [(associate, 'child')])
+        self.coord('report', 'associate-finished', associate, 'Report to empty-ID parent.')
+        parent_inbox = self.tool(proc, 'baton2_inbox', {'recipient': ''})
+        self.assertEqual([row['id'] for row in parent_inbox], ['associate-finished'])
 
     def test_pending_report_triggers_channel_notification(self):
         self.coord('attach', 'root', 'native-test', 'root-session', 'root-endpoint')
@@ -341,12 +347,7 @@ class McpRoot(unittest.TestCase):
         proc1.terminate()
         proc1.wait()
 
-        proc2 = subprocess.Popen(
-            ['node', str(MCP_SCRIPT), str(self.db), str(EXE)],
-            stdin=subprocess.PIPE, stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-        )
-        self.addCleanup(lambda: (proc2.terminate(), proc2.wait()))
+        proc2 = self.start_mcp()
 
         send_mcp(proc2, {
             'jsonrpc': '2.0', 'id': 1, 'method': 'initialize',

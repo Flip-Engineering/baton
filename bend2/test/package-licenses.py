@@ -136,6 +136,24 @@ class PackageLicenses(unittest.TestCase):
             manifested = next(row for row in manifest['files'] if row['path'] == entry['path'])
             self.assertEqual({key: entry[key] for key in ('path', 'bytes', 'sha256')}, manifested)
 
+    def test_archive_keeps_canonical_and_compatibility_adapter_bytes(self):
+        scripts = self.source / 'bend2/scripts'
+        scripts.mkdir(parents=True)
+        names = [harness + '-' + suffix + '.mjs'
+                 for harness in ('codex', 'omp', 'mcp') for suffix in ('conductor', 'root')]
+        for name in names:
+            shutil.copyfile(ROOT / 'bend2/scripts' / name, scripts / name)
+        PACKAGE.stage_adapters(self.payload)
+        archive, provenance = self.archive_fixture()
+        prefix, manifest = SMOKE.extract(archive, provenance, self.home / 'adapter-extraction')
+        entries = {row['path']: row for row in manifest['files']}
+        for name in names:
+            path = 'libexec/baton2/' + name
+            data = (ROOT / 'bend2/scripts' / name).read_bytes()
+            self.assertEqual((prefix / path).read_bytes(), data)
+            self.assertEqual(entries[path], {'path': path, 'bytes': len(data),
+                                            'sha256': hashlib.sha256(data).hexdigest()})
+
     def test_archive_license_hash_mismatch_refuses_extraction(self):
         archive, provenance = self.archive_fixture(change_license_hash=True)
         with self.assertRaisesRegex(RuntimeError, 'Artifact file differs from manifest: notices/baton2-LICENSE'):

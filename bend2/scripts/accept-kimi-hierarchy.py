@@ -87,6 +87,8 @@ def inspect_processes(out, native, known, whole_run=True):
         owners = list(native)
         if whole_run:
             seed_path, launches_path = out / 'seed-process.json', out / 'player-launches.json'
+            if not launches_path.exists():
+                launches_path = out / 'worker-launches.json'
             if seed_path.exists():
                 owners.append({'seat': 'seed', **json.loads(seed_path.read_text())})
             if launches_path.exists():
@@ -343,7 +345,7 @@ def verify_landings(out, run, sessions):
         changed = set(command(['git', '-C', repo, 'diff', '--name-only', '--no-renames',
                                base, tips[seat]]).splitlines())
         assert changed <= allowed, ('Unassigned Player changes', seat, changed)
-        assert changed & assigned[seat], ('Worker left no change in its assigned files', seat)
+        assert changed & assigned[seat], ('Player left no change in its assigned files', seat)
         candidates = [(name, receipt) for name, receipt in receipts.items()
                       if (name == f'landing-{seat}.json' or name.startswith(f'landing-{seat}-'))
                       and receipt['status'] == 'landed']
@@ -354,11 +356,11 @@ def verify_landings(out, run, sessions):
             if ancestor(latest['commit'], receipt['commit']):
                 latest_name, latest = name, receipt
             else:
-                assert ancestor(receipt['commit'], latest['commit']), 'Worker landings have divergent histories'
+                assert ancestor(receipt['commit'], latest['commit']), 'Player landings have divergent histories'
         landings[seat], selected[seat] = latest, latest_name
         for path in assigned[seat]:
             entry = git_entry(repo, tips[seat], path)
-            assert entry == git_entry(repo, latest['commit'], path), ('Worker correction was not landed', seat, path)
+            assert entry == git_entry(repo, latest['commit'], path), ('Player correction was not landed', seat, path)
             assert entry == git_entry(repo, tips['target'], path), ('Target changed Player content or mode', seat, path)
     return {'tips': tips, 'landings': landings, 'landing_receipts': receipts,
             'selected_player_receipts': selected}
@@ -597,7 +599,7 @@ and run `B2 DB land-checked PLAYER REPO hierarchy-lead CHECK FILES`, with the pl
 selected checks in one quoted space-separated FILES argument. Save the exact JSON
 answer in STATE/landing-PLAYER.json. For a correction, preserve earlier answers
 and save the new answer as STATE/landing-PLAYER-CORRECTION.json with a distinct
-CORRECTION suffix. Require status landed. Worker checks:
+CORRECTION suffix. Require status landed. Player checks:
 deepseek: {json.dumps(tasks['deepseek']['checks'])}
 muse: {json.dumps(tasks['muse']['checks'])}
 Once both landings succeed, inspect the composed Associate Conductor tree and run the selected

@@ -471,7 +471,7 @@ function handleToolCall(msg) {
         result = coord('status');
         break;
       case 'baton2_inbox':
-        result = coord('inbox', args?.recipient || sessionId);
+        result = coord('inbox', args?.recipient ?? sessionId);
         break;
       case 'baton2_ack':
         result = coord('ack', args.id, sessionId, args.receipt);
