@@ -244,7 +244,10 @@ def scenario_landing_publishing(config, out, binary):
     db = run_dir / "state.db"
     plain, _ = write_checks(run_dir)
     coord(binary, db, "attach", "root", "omp", "", "")
-    coord(binary, db, "message", "review-setup", "root", "root", "guidance",
+    coord(binary, db, "role", "root", "conductor")
+    coord(binary, db, "attach", "operator", "terminal", "", "")
+    coord(binary, db, "role", "operator", "operator")
+    coord(binary, db, "message", "review-setup", "operator", "root", "guidance",
           "Remember this instruction for this acceptance run: when a worker report arrives, "
           "inspect its worktree, branch diff and committed file contents, then acknowledge "
           "the report naming what you reviewed. Do not land, push, edit, or launch workers. "
@@ -343,6 +346,7 @@ def scenario_target_move(config, out, binary):
     db = run_dir / "state.db"
     plain, waiting = write_checks(run_dir)
     coord(binary, db, "attach", "root", "external", "", "")
+    coord(binary, db, "role", "root", "conductor")
     turn_worker(binary, db, repo, run_dir, route_omp, "w1", "wa", base, "data/a.txt", "alpha", "t1")
     turn_worker(binary, db, repo, run_dir, route_omp, "w2", "wb", base, "data/b.txt", "beta", "t2")
     first, answer, wait_log = land_under_a_move(binary, db, repo, run_dir, waiting, plain,
@@ -371,6 +375,7 @@ def scenario_conflict_recovery(config, out, binary):
     db = run_dir / "state.db"
     plain, waiting = write_checks(run_dir)
     coord(binary, db, "attach", "root", "external", "", "")
+    coord(binary, db, "role", "root", "conductor")
     turn_worker(binary, db, repo, run_dir, route_omp, "w3", "wc", base, "data/shared.txt", "three", "t1")
     turn_worker(binary, db, repo, run_dir, route_omp, "w4", "wd", base, "data/shared.txt", "four", "t2")
     first, answer, wait_log = land_under_a_move(binary, db, repo, run_dir, waiting, plain,
@@ -383,7 +388,7 @@ def scenario_conflict_recovery(config, out, binary):
     if target != first or git(repo, "show", "main:data/shared.txt") != "three":
         raise Failed("the conflict changed the first worker landing")
     say(f"target after the conflict: {target} with data/shared.txt = {git(repo, 'show', 'main:data/shared.txt')}")
-    say("the root guides the worker:")
+    say("the acceptance driver sends guidance as the declared root conductor:")
     guidance = coord_json(binary, db, "message", "g1", "root", "w4", "guidance",
                           f"Your landing onto main conflicted: the target moved to {target} and "
                           "data/shared.txt now carries another worker's line. Rebase your branch "

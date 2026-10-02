@@ -237,6 +237,7 @@ def main():
                    'old_initial_rss_bytes': old.ready['rss_bytes']}
         old.call('setup')
         bend('attach', 'root', 'controlled-root', 'root-session', '')
+        bend('role', 'root', 'conductor')
         # Recruited sessions need a real repository and base commit.
         benchmark_repo = run / 'benchmark-repo'
         execute(['git', 'init', '-q', '-b', 'main', str(benchmark_repo)])

@@ -100,7 +100,10 @@ def main():
     def coord(*values):
         return subprocess.run([str(exe),str(db),*map(str,values)],check=True,capture_output=True,text=True)
     coord('attach','root','omp','','')
-    coord('message','initial','root','root','task','Run the controlled probe.')
+    coord('role','root','conductor')
+    coord('attach','operator','terminal','','')
+    coord('role','operator','operator')
+    coord('message','initial','operator','root','task','Run the controlled probe.')
     stdout=(directory/'stdout.log').open('w')
     stderr=(directory/'stderr.log').open('w')
     child=subprocess.Popen([str(exe),str(db),'receive','root',str(fixture),'fixture','low',str(directory),str(log),''],stdout=stdout,stderr=stderr)

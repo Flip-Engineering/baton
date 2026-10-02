@@ -80,6 +80,7 @@ first = state / 'first-task.md'
 if not first.exists():
     first.write_text(template.read_text())
 run(coord, db, 'attach', 'operator', 'terminal', '', '')
+run(coord, db, 'role', 'operator', 'operator')
 sessions = json.loads(subprocess.check_output([str(coord), str(db), 'status'],
                                              text=True, env=env))
 root_session = next((session for session in sessions if session['id'] == 'root'), {})
@@ -88,6 +89,7 @@ root_log = state / 'root-native.jsonl'
 root_endpoint = [str(coord), str(db), 'receive', 'root', str(wrapper),
                  'gpt-6-astra', 'low', str(repo), str(root_log)]
 run(coord, db, 'attach', 'root', 'codex', native_root, json.dumps(root_endpoint))
+run(coord, db, 'role', 'root', 'conductor')
 run(*root_endpoint, '', env=env)
 print(f'Attached trial root. Task file: {first}')
 print(f'Current root instructions: {state / "root-instructions.md"}')

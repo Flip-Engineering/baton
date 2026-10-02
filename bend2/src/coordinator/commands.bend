@@ -11,6 +11,11 @@ type Command is Data:
   Worker{id: String, parent: String, harness: String, model: String, effort: String, workspace: String, branch: String, base: String}
   Connect{id: String, native: String, endpoint: String}
   Bind{id: String, native: String, harness: String, model: String, effort: String}
+  Role{session: String, role: String}
+  RoleRead{session: String}
+  Ensemble{id: String, owner: String, coupling: String}
+  EnsembleRead{id: String}
+  EnsembleMember{id: String, owner: String, session: String, action: String}
   Message{id: String, sender: String, recipient: String, kind: String, body: String}
   MessageFile{id: String, sender: String, recipient: String, kind: String, path: String}
   Observe{id: String, worker: String, event: String}
@@ -50,12 +55,18 @@ def escaped(s: String) -> String:
 def q(s: String) -> String:
   "'" ++ escaped(s) ++ "'"
 
+def messaging_schema() -> String:
+  "CREATE TABLE IF NOT EXISTS session_roles (session TEXT PRIMARY KEY NOT NULL REFERENCES sessions(id),role TEXT NOT NULL CHECK(role IN ('player','conductor','operator')));"
+  ++ "CREATE TABLE IF NOT EXISTS ensembles (id TEXT PRIMARY KEY NOT NULL,owner TEXT NOT NULL REFERENCES sessions(id),coupling TEXT NOT NULL DEFAULT 'loose' CHECK(coupling IN ('loose','tight')));"
+  ++ "CREATE TABLE IF NOT EXISTS ensemble_members (ensemble TEXT NOT NULL REFERENCES ensembles(id),session TEXT NOT NULL REFERENCES sessions(id),PRIMARY KEY(ensemble,session));"
+
 def schema() -> String:
   "CREATE TABLE IF NOT EXISTS sessions (id TEXT PRIMARY KEY NOT NULL, parent TEXT REFERENCES sessions(id), harness TEXT NOT NULL, model TEXT NOT NULL DEFAULT '', effort TEXT NOT NULL DEFAULT '', native TEXT NOT NULL DEFAULT '', observed_harness TEXT NOT NULL DEFAULT '', observed_model TEXT NOT NULL DEFAULT '', observed_effort TEXT NOT NULL DEFAULT '', endpoint TEXT NOT NULL DEFAULT '', workspace TEXT NOT NULL DEFAULT '', branch TEXT NOT NULL DEFAULT '', base TEXT NOT NULL DEFAULT '');"
   ++ "CREATE TABLE IF NOT EXISTS messages (seq INTEGER PRIMARY KEY AUTOINCREMENT, id TEXT UNIQUE NOT NULL, sender TEXT NOT NULL REFERENCES sessions(id), recipient TEXT NOT NULL REFERENCES sessions(id), kind TEXT NOT NULL, body TEXT NOT NULL, receipt TEXT);"
   ++ "CREATE TABLE IF NOT EXISTS turns (id TEXT PRIMARY KEY NOT NULL REFERENCES messages(id), worker TEXT NOT NULL REFERENCES sessions(id), event TEXT NOT NULL);"
   ++ "CREATE TABLE IF NOT EXISTS executions (session TEXT PRIMARY KEY NOT NULL REFERENCES sessions(id), id TEXT NOT NULL, mode TEXT NOT NULL, directory TEXT NOT NULL, phase TEXT NOT NULL, status TEXT NOT NULL DEFAULT '');"
   ++ "CREATE TABLE IF NOT EXISTS session_stops (session TEXT PRIMARY KEY NOT NULL REFERENCES sessions(id), id TEXT UNIQUE NOT NULL, reason TEXT NOT NULL, attempt TEXT NOT NULL DEFAULT '', directory TEXT NOT NULL DEFAULT '', signal INTEGER NOT NULL DEFAULT 15, applied_signal INTEGER NOT NULL DEFAULT 0, control_error TEXT NOT NULL DEFAULT '', outcome TEXT NOT NULL, native_status TEXT NOT NULL DEFAULT '', report_id TEXT NOT NULL DEFAULT '');"
+  ++ messaging_schema()
 
 def stopped_session_sql(session: String) -> String:
   "EXISTS(SELECT 1 FROM session_stops WHERE session=" ++ session ++ ")"
@@ -91,6 +102,53 @@ def observe_sql(+id: String, +worker: String, +event: String) -> String:
   ++ "INSERT INTO turns(id,worker,event) SELECT " ++ q(id) ++ "," ++ q(worker) ++ "," ++ q(event) ++ " WHERE EXISTS(SELECT 1 FROM sessions WHERE id=" ++ q(worker) ++ " AND parent IS NOT NULL) AND " ++ terminal(event) ++ " ON CONFLICT(id) DO UPDATE SET id=CASE WHEN turns.worker=excluded.worker AND turns.event=excluded.event THEN turns.id ELSE NULL END;"
   ++ "SELECT json_object('worker',id,'native',native,'eventType',coalesce(json_extract(" ++ q(event) ++ ",'$.type'),json_extract(" ++ q(event) ++ ",'$.payload_type')),'reportId',CASE WHEN parent IS NOT NULL AND " ++ terminal(event) ++ " THEN " ++ q(id) ++ " ELSE NULL END) FROM sessions WHERE id=" ++ q(worker) ++ ";"
 
+def assigned_role(session: String) -> String:
+  "coalesce((SELECT role FROM session_roles WHERE session=" ++ session ++ "),'player')"
+
+# UNION makes ancestry finite even if a database has malformed cyclic parentage.
+def ancestors(+session: String) -> String:
+  "WITH RECURSIVE ancestors(id) AS (SELECT parent FROM sessions WHERE id=" ++ session ++ " AND parent IS NOT NULL UNION SELECT s.parent FROM sessions s JOIN ancestors a ON s.id=a.id WHERE s.parent IS NOT NULL) SELECT id FROM ancestors"
+
+def descendant(+ancestor: String, session: String) -> String:
+  "EXISTS(SELECT 1 FROM (" ++ ancestors(session) ++ ") WHERE id=" ++ ancestor ++ ")"
+
+def depth(session: String) -> String:
+  "(SELECT count(*) FROM (" ++ ancestors(session) ++ "))"
+
+def peers(+left: String, +right: String) -> String:
+  "(" ++ left ++ "<>" ++ right ++ " AND NOT " ++ descendant(left,right) ++ " AND NOT " ++ descendant(right,left) ++ " AND NOT (" ++ assigned_role(left) ++ "='conductor' AND " ++ assigned_role(right) ++ "='conductor' AND " ++ depth(left) ++ "<>" ++ depth(right) ++ "))"
+
+def tight_peers(+sender: String, +recipient: String) -> String:
+  "(" ++ peers(sender,recipient) ++ " AND " ++ assigned_role(sender) ++ "<>'operator' AND " ++ assigned_role(recipient) ++ "<>'operator' AND EXISTS(SELECT 1 FROM ensemble_members a JOIN ensemble_members b ON b.ensemble=a.ensemble JOIN ensembles e ON e.id=a.ensemble WHERE a.session=" ++ sender ++ " AND b.session=" ++ recipient ++ " AND e.coupling='tight' AND " ++ assigned_role("e.owner") ++ "='conductor'))"
+
+def operator_route(+sender: String, +recipient: String) -> String:
+  "((" ++ assigned_role(sender) ++ "='operator' AND " ++ assigned_role(recipient) ++ "='conductor' AND EXISTS(SELECT 1 FROM sessions WHERE id=" ++ recipient ++ " AND parent IS NULL)) OR (" ++ assigned_role(recipient) ++ "='operator' AND " ++ assigned_role(sender) ++ "='conductor' AND EXISTS(SELECT 1 FROM sessions WHERE id=" ++ sender ++ " AND parent IS NULL)))"
+
+def message_route(+sender: String, +recipient: String) -> String:
+  "(EXISTS(SELECT 1 FROM sessions WHERE id=" ++ sender ++ ") AND EXISTS(SELECT 1 FROM sessions WHERE id=" ++ recipient ++ ") AND " ++ sender ++ "<>" ++ recipient ++ " AND ((" ++ assigned_role(sender) ++ "<>'operator' AND " ++ assigned_role(recipient) ++ "<>'operator' AND (coalesce((SELECT parent FROM sessions WHERE id=" ++ sender ++ ")=" ++ recipient ++ ",0) OR (" ++ assigned_role(sender) ++ "='conductor' AND " ++ descendant(sender,recipient) ++ ") OR " ++ tight_peers(sender,recipient) ++ ")) OR " ++ operator_route(sender,recipient) ++ "))"
+
+def exact_message(+id: String, +sender: String, +recipient: String, +kind: String, +body: String) -> String:
+  "EXISTS(SELECT 1 FROM messages WHERE id=" ++ q(id) ++ " AND sender=" ++ q(sender) ++ " AND recipient=" ++ q(recipient) ++ " AND kind=" ++ q(kind) ++ " AND body=" ++ q(body) ++ ")"
+
+def matching_message_result(+id: String, sender: String, recipient: String, kind: String, body: String) -> String:
+  "SELECT json_patch(json_object('id',id,'sender',sender,'recipient',recipient,'kind',kind,'body',body,'receipt',receipt)," ++ input_state_sql("messages") ++ ") FROM messages WHERE id=" ++ q(id) ++ " AND " ++ exact_message(id,sender,recipient,kind,body) ++ ";"
+
+def message_sql(+id: String, +sender: String, +recipient: String, +kind: String, +body: String) -> String:
+  "INSERT INTO messages(id,sender,recipient,kind,body) SELECT " ++ q(id) ++ "," ++ q(sender) ++ "," ++ q(recipient) ++ "," ++ q(kind) ++ "," ++ q(body) ++ " WHERE (" ++ message_route(q(sender),q(recipient)) ++ " AND NOT (" ++ stopped_session_sql(q(recipient)) ++ " AND " ++ execution_input_sql(q(kind)) ++ ")) OR " ++ exact_message(id,sender,recipient,kind,body) ++ message_upsert()
+  ++ "SELECT json_object('error','message-route-denied','sender'," ++ q(sender) ++ ",'recipient'," ++ q(recipient) ++ ",'condition','Use an immediate parent, a conductor descendant route, an explicitly tight Ensemble peer, or the operator and top-level conductor route.','next','Inspect session roles and Ensemble membership; send through your immediate conductor when a direct route is unavailable.') WHERE NOT " ++ message_route(q(sender),q(recipient)) ++ " AND NOT " ++ exact_message(id,sender,recipient,kind,body) ++ ";"
+  ++ "SELECT json_object('error','session-stopped','session'," ++ q(recipient) ++ ") WHERE NOT " ++ exact_message(id,sender,recipient,kind,body) ++ " AND " ++ message_route(q(sender),q(recipient)) ++ " AND " ++ stopped_session_sql(q(recipient)) ++ " AND " ++ execution_input_sql(q(kind)) ++ ";" ++ matching_message_result(id,sender,recipient,kind,body)
+
+def role_sql(+session: String, +role: String) -> String:
+  "INSERT INTO session_roles(session,role) SELECT " ++ q(session) ++ "," ++ q(role) ++ " WHERE EXISTS(SELECT 1 FROM sessions WHERE id=" ++ q(session) ++ " AND (" ++ q(role) ++ "<>'operator' OR parent IS NULL)) AND " ++ q(role) ++ " IN ('player','conductor','operator') ON CONFLICT(session) DO UPDATE SET role=excluded.role;SELECT json_object('session',session,'role',role) FROM session_roles WHERE session=" ++ q(session) ++ " AND role=" ++ q(role) ++ ";"
+
+def ensemble_sql(+id: String, +owner: String, +coupling: String) -> String:
+  "INSERT INTO ensembles(id,owner,coupling) SELECT " ++ q(id) ++ "," ++ q(owner) ++ "," ++ q(coupling) ++ " WHERE " ++ assigned_role(q(owner)) ++ "='conductor' AND " ++ q(coupling) ++ " IN ('loose','tight') ON CONFLICT(id) DO UPDATE SET id=CASE WHEN ensembles.owner=excluded.owner THEN ensembles.id ELSE NULL END,coupling=excluded.coupling;SELECT json_object('id',id,'owner',owner,'coupling',coupling,'members',(SELECT json_group_array(session) FROM ensemble_members WHERE ensemble=ensembles.id)) FROM ensembles WHERE id=" ++ q(id) ++ " AND owner=" ++ q(owner) ++ " AND coupling=" ++ q(coupling) ++ ";"
+
+def ensemble_member_sql(+id: String, +owner: String, +session: String, +action: String) -> String:
+  "DELETE FROM ensemble_members WHERE ensemble=" ++ q(id) ++ " AND session=" ++ q(session) ++ " AND " ++ q(action) ++ "='remove' AND EXISTS(SELECT 1 FROM ensembles WHERE id=" ++ q(id) ++ " AND owner=" ++ q(owner) ++ ");"
+  ++ "INSERT OR IGNORE INTO ensemble_members(ensemble,session) SELECT " ++ q(id) ++ "," ++ q(session) ++ " WHERE " ++ q(action) ++ "='add' AND EXISTS(SELECT 1 FROM ensembles WHERE id=" ++ q(id) ++ " AND owner=" ++ q(owner) ++ ") AND " ++ assigned_role(q(owner)) ++ "='conductor' AND " ++ assigned_role(q(session)) ++ "<>'operator' AND EXISTS(SELECT 1 FROM sessions WHERE id=" ++ q(session) ++ ");"
+  ++ "SELECT json_object('ensemble'," ++ q(id) ++ ",'owner'," ++ q(owner) ++ ",'session'," ++ q(session) ++ ",'membership'," ++ q(action) ++ ") WHERE EXISTS(SELECT 1 FROM ensembles WHERE id=" ++ q(id) ++ " AND owner=" ++ q(owner) ++ ") AND ((" ++ q(action) ++ "='add' AND EXISTS(SELECT 1 FROM ensemble_members WHERE ensemble=" ++ q(id) ++ " AND session=" ++ q(session) ++ ")) OR (" ++ q(action) ++ "='remove' AND NOT EXISTS(SELECT 1 FROM ensemble_members WHERE ensemble=" ++ q(id) ++ " AND session=" ++ q(session) ++ ")));"
+
 def sql(command: Command) -> String:
   match command:
     case Observe{id,worker,event}: observe_sql(id,worker,event)
@@ -102,9 +160,15 @@ def sql(command: Command) -> String:
       "UPDATE sessions SET native=" ++ q(native) ++ ",endpoint=" ++ q(endpoint) ++ " WHERE id=" ++ q(id) ++ ";" ++ session_result(id)
     case Bind{+id, native, harness, model, effort}:
       "UPDATE sessions SET native=" ++ q(native) ++ ",observed_harness=" ++ q(harness) ++ ",observed_model=" ++ q(model) ++ ",observed_effort=" ++ q(effort) ++ " WHERE id=" ++ q(id) ++ ";" ++ session_result(id)
+    case Role{session,role}: role_sql(session,role)
+    case RoleRead{session}:
+      "SELECT json_object('session',id,'role'," ++ assigned_role("id") ++ ") FROM sessions WHERE id=" ++ q(session) ++ ";"
+    case Ensemble{id,owner,coupling}: ensemble_sql(id,owner,coupling)
+    case EnsembleRead{id}:
+      "SELECT json_object('id',id,'owner',owner,'coupling',coupling,'members',(SELECT json_group_array(session) FROM ensemble_members WHERE ensemble=ensembles.id)) FROM ensembles WHERE id=" ++ q(id) ++ ";"
+    case EnsembleMember{id,owner,session,action}: ensemble_member_sql(id,owner,session,action)
     case Message{+id, sender, +recipient, +kind, body}:
-      "INSERT INTO messages(id,sender,recipient,kind,body) SELECT " ++ q(id) ++ "," ++ q(sender) ++ "," ++ q(recipient) ++ "," ++ q(kind) ++ "," ++ q(body) ++ " WHERE NOT (" ++ stopped_session_sql(q(recipient)) ++ " AND " ++ execution_input_sql(q(kind)) ++ ") OR EXISTS(SELECT 1 FROM messages WHERE id=" ++ q(id) ++ ")" ++ message_upsert()
-      ++ "SELECT json_object('error','session-stopped','session'," ++ q(recipient) ++ ") WHERE NOT EXISTS(SELECT 1 FROM messages WHERE id=" ++ q(id) ++ ") AND " ++ stopped_session_sql(q(recipient)) ++ " AND " ++ execution_input_sql(q(kind)) ++ ";" ++ message_result(id)
+      message_sql(id,sender,recipient,kind,body)
     case Report{+id, +sender, body}:
       "INSERT INTO messages(id,sender,recipient,kind,body) VALUES(" ++ q(id) ++ "," ++ q(sender) ++ ",(SELECT parent FROM sessions WHERE id=" ++ q(sender) ++ "),'report'," ++ q(body) ++ ")" ++ message_upsert() ++ message_result(id)
     case Ask{+id, +worker, body}:
@@ -150,16 +214,16 @@ def parse(args: List<String>) -> Command:
       Bool.pick(Command, String.eq(verb,"workers"),Workers{},
       Bool.pick(Command, String.eq(verb,"pending"),Pending{},Invalid{})))
     case +verb <> +id <> Nil{}:
-      Bool.pick(Command, String.eq(verb,"inbox"),Inbox{id},
+      Bool.pick(Command, String.eq(verb,"role"),RoleRead{id},Bool.pick(Command, String.eq(verb,"ensemble"),EnsembleRead{id},Bool.pick(Command, String.eq(verb,"inbox"),Inbox{id},
       Bool.pick(Command, String.eq(verb,"session"),Session{id},
       Bool.pick(Command, String.eq(verb,"delivery"),Delivery{id},
       Bool.pick(Command, String.eq(verb,"worktree"),Worktree{id},
       Bool.pick(Command, String.eq(verb,"turns"),Turns{id},
-      Bool.pick(Command, String.eq(verb,"knowledge"),KnowledgeRead{id},Invalid{}))))))
+      Bool.pick(Command, String.eq(verb,"knowledge"),KnowledgeRead{id},Invalid{}))))))))
     case +verb <> session <> id <> Nil{}:
-      Bool.pick(Command,String.eq(verb,"force-stop"),ForceStop{session,id},Invalid{})
+      Bool.pick(Command,String.eq(verb,"role"),Role{session,id},Bool.pick(Command,String.eq(verb,"ensemble"),Ensemble{session,id,"loose"},Bool.pick(Command,String.eq(verb,"force-stop"),ForceStop{session,id},Invalid{})))
     case +verb <> +id <> +one <> +two <> Nil{}:
-      Bool.pick(Command, String.eq(verb,"native-reply"),NativeReply{id,one,two},
+      Bool.pick(Command, String.eq(verb,"ensemble"),Ensemble{id,one,two},Bool.pick(Command, String.eq(verb,"native-reply"),NativeReply{id,one,two},
       Bool.pick(Command, String.eq(verb,"native-reply-file"),NativeReplyFile{id,one,two},
       Bool.pick(Command, String.eq(verb,"stop"),Stop{id,one,two},
       Bool.pick(Command, String.eq(verb,"report"),Report{id,one,two},
@@ -169,9 +233,9 @@ def parse(args: List<String>) -> Command:
       Bool.pick(Command, String.eq(verb,"land"),Land{id,one,two},
       Bool.pick(Command, String.eq(verb,"push"),Push{id,one,two},
       Bool.pick(Command, String.eq(verb,"ask"),Ask{id,one,two},
-      Bool.pick(Command, String.eq(verb,"ask-file"),AskFile{id,one,two},Invalid{})))))))))))
+      Bool.pick(Command, String.eq(verb,"ask-file"),AskFile{id,one,two},Invalid{}))))))))))))
     case +verb <> +id <> +one <> +two <> +three <> Nil{}:
-      Bool.pick(Command, String.eq(verb,"attach"),Attach{id,one,two,three},Invalid{})
+      Bool.pick(Command, String.eq(verb,"ensemble-member"),EnsembleMember{id,one,two,three},Bool.pick(Command, String.eq(verb,"attach"),Attach{id,one,two,three},Invalid{}))
     case +verb <> +id <> +one <> +two <> +three <> +four <> Nil{}:
       Bool.pick(Command, String.eq(verb,"land-checked"),LandChecked{id,one,two,three,four},
       Bool.pick(Command, String.eq(verb,"bind"),Bind{id,one,two,three,four},

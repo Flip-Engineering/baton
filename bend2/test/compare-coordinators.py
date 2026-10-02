@@ -39,6 +39,7 @@ class NativeStatus(unittest.TestCase):
         base = subprocess.check_output(['git', '-C', str(cls.repo), 'rev-parse', 'HEAD'],
                                        text=True).strip()
         cls.call('attach', 'root', 'fixture-root', 'root-login', '')
+        cls.call('role', 'root', 'conductor')
         cls.expected = {'root': {
             'id': 'root', 'parent': None, 'harness': 'fixture-root', 'model': '', 'effort': '',
             'native': 'root-login', 'observedHarness': '', 'observedModel': '', 'observedEffort': '',
@@ -59,6 +60,7 @@ class NativeStatus(unittest.TestCase):
                 'id': ident, 'parent': parent, 'harness': harness, 'model': model, 'effort': effort,
                 **observed, 'endpoint': '', 'workspace': workspace, 'branch': branch, 'base': base,
             }
+        cls.call('role', 'alpha', 'conductor')
         cls.call('report', 'alpha-report-1', 'alpha', 'Full Unicode λ report\n')
         cls.call('report', 'alpha-report-2', 'alpha', 'Second root report')
         cls.call('report', 'beta-report', 'beta', 'Report to the immediate parent')

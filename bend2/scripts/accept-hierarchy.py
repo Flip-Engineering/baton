@@ -154,7 +154,8 @@ Landings compose from the registered branch, even while your workspace is detach
 You are the Codex root. Exercise one OMP lead with two children and checked landings.
 The task files are STATE/lead.md, STATE/worker-a.md and STATE/worker-b.md.
 Recruit lead under root with harness omp, OMP_MODEL/OMP_EFFORT, repository REPO,
-branch hierarchy-lead, path STATE/lead, base hierarchy-target. Then attach its endpoint:
+branch hierarchy-lead, path STATE/lead, base hierarchy-target. Assign its responsibility
+with `B2 DB role lead conductor`, then attach its endpoint:
 OMP_ROOT_MODEL="$OMP_MODEL" OMP_ROOT_THINKING="$OMP_EFFORT" node
   "$SOURCE/bend2/scripts/omp-root.mjs" "$DB" "$B2" "$OMP" --session lead --attach
 (run this as one shell command). Start the lead task in the background with redirected
@@ -175,6 +176,7 @@ Do not create hierarchy-complete until the final checked landing and tests succe
 End your turn. No push, no changes outside the scratch directory.
 """)
     call('attach', 'operator', 'terminal', '', '')
+    call('role', 'operator', 'operator')
     run('node', SOURCE / 'bend2/scripts/codex-root.mjs', db, coord, wrappers['codex'],
         '--attach', env={**env, 'CODEX_ROOT_MODEL': routes['codex']['model']})
     with (out / 'seed.log').open('w') as log:

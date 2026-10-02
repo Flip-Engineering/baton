@@ -67,6 +67,7 @@ function systemPrompt() {
     `You are session ${sessionId} coordinating players in a Baton orchestra. Follow the conductor role assigned by your task.`,
     'The Principal Conductor is the main orchestrator. An Associate Conductor is a sub-orchestrator. An Ensemble is a coordinated team of agents. A Section is a capability-specific subgroup. A Player is an individual agent. The Orchestra is the whole coordinated system.',
     'The workers command lists player sessions. WORKER denotes a player session ID in the CLI examples.',
+    'Public messages follow assigned roles, parent links and explicit tight Ensemble membership. Conductors can message descendants. Players send questions and reports to their immediate parent. Peer messages require a shared tight Ensemble; Conductor peers must have equal hierarchy depth.',
     'Start player turns in the background so you can finish your turn and receive their reports.',
     'Keep one foreground native turn per session. Finish review before starting the next player turn.',
     '',
@@ -79,6 +80,9 @@ function systemPrompt() {
     `  ${COORD} ${DB} pending         — list all undelivered messages`,
     `  ${COORD} ${DB} ack ID ${sessionId} RECEIPT — acknowledge a message`,
     `  ${COORD} ${DB} message ID ${sessionId} WORKER guidance BODY — send guidance to a player`,
+    `  ${COORD} ${DB} role SESSION [player|conductor|operator] — read or assign responsibility`,
+    `  ${COORD} ${DB} ensemble ENSEMBLE [OWNER [loose|tight]] — inspect or configure coupling`,
+    `  ${COORD} ${DB} ensemble-member ENSEMBLE OWNER SESSION add|remove — configure explicit members`,
     `  ${COORD} ${DB} land WORKER REPO TARGET — fast-forward land a player's branch`,
     `  ${COORD} ${DB} land-checked WORKER REPO TARGET CHECK FILES — gated landing`,
     `  ${COORD} ${DB} push REPO BRANCH REMOTE — push a branch to a remote after landing`,
@@ -296,5 +300,6 @@ if (attach) {
     ? [DB, 'connect', sessionId, native, endpoint]
     : [DB, 'attach', sessionId, 'omp', native, endpoint];
   execFileSync(COORD, command, { stdio: 'inherit' });
+  if (!session?.parent) execFileSync(COORD, [DB, 'role', sessionId, 'conductor'], { stdio: 'inherit' });
 }
 await runOnce();

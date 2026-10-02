@@ -30,6 +30,7 @@ class Coordinator(unittest.TestCase):
         self.base = subprocess.run(['git', '-C', str(self.repo), 'rev-parse', 'HEAD'],
                                    check=True, capture_output=True, text=True).stdout.strip()
         self.call('attach', 'root', 'native-test', 'root-session', 'native-endpoint')
+        self.call('role', 'root', 'conductor')
         self.worker('worker')
 
     def tearDown(self):

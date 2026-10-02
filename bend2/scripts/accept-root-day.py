@@ -194,6 +194,7 @@ class Acceptance:
     def guidance(self):
         c = self.case('guidance')
         c.coord('attach', 'root', 'external', '', '')
+        c.coord('role', 'root', 'conductor')
         c.recruit('omp')
         p = c.turn('omp', 'Read bend2/README.md, bend2/src/coordinator/turn.bend and '
                    'bend2/src/harness/omp-worker.bend. Review how guidance reaches an OMP '
@@ -207,7 +208,7 @@ class Acceptance:
         report = c.completed(p, 'guided')
         delivery = c.coord('delivery', 'guide')
         assert delivery['receipt'] and marker in report['body'], (delivery, report)
-        c.evidence({'guidance': delivery, 'report': report})
+        c.evidence({'guidance': delivery, 'guidance_origin': 'acceptance-driver', 'report': report})
 
     def root_tap(self, c, kind):
         wrapper = c.path / 'native-root'
@@ -241,6 +242,8 @@ sys.exit(p.wait())
             attach = ['node', ROOT / f'bend2/scripts/{kind}-root.mjs', c.db,
                       self.coordinator, tap, '--attach']
             run(attach, env=self.env)
+            c.coord('attach', 'operator', 'terminal', '', '')
+            c.coord('role', 'operator', 'operator')
             assert not (c.path / 'starts.jsonl').exists(), 'empty attach started a native turn'
             c.recruit('omp')
             marker = self.ident + '-root-' + kind
@@ -255,7 +258,7 @@ sys.exit(p.wait())
             original = c.coord('session', 'root')['native']
             assert original
             (c.path / 'native.jsonl').rename(c.path / 'first-native.jsonl')
-            p = c.start(c.command('message', 'root-interrupted', 'root', 'root', 'guidance',
+            p = c.start(c.command('message', 'root-interrupted', 'operator', 'root', 'guidance',
                         'Read bend2/scripts/mcp-root.mjs and bend2/src/coordinator/root.bend '
                         'completely and review recovery. Then acknowledge root-interrupted with '
                         'a source finding and the review label remembered from our earlier turn. '
@@ -277,8 +280,11 @@ sys.exit(p.wait())
         c = self.case('root-claude-code')
         session = str(uuid.uuid4())
         c.coord('attach', 'root', 'claude-code', session, '')
+        c.coord('role', 'root', 'conductor')
+        c.coord('attach', 'operator', 'terminal', '', '')
+        c.coord('role', 'operator', 'operator')
         marker = self.ident + '-root-claude'
-        c.coord('message', 'root-setup', 'root', 'root', 'guidance',
+        c.coord('message', 'root-setup', 'operator', 'root', 'guidance',
                 f'Remember root review label {marker}. Acknowledge root-setup with this label. '
                 'When worker reports arrive, acknowledge each with the root review label and '
                 'the complete text of that worker report as your receipt. Do not poll, edit files, '
