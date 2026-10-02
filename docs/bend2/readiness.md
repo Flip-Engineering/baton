@@ -39,6 +39,19 @@ an actionable refusal. Eight imported laws constrain admission and refusal;
 four native tests exercise the actual stored state and endpoint process.
 Exact-tree build, negative controls and native checks govern publication.
 
+The [repair for #650](recruit-conflict-2026-10-02.md) reports a conflicting worker
+assignment with its existing and requested fields. Exact retries preserve the
+registered endpoint, pending input and workspace; conflicting retries preserve
+the stored assignment. Six native recruitment tests exercise these effects.
+
+The [repair for #649](hierarchy-observer-2026-10-02.md) records failed process
+closure separately from incomplete native exit receipts. An unfinished wrapper
+without a recorded child identity remains uncertain. Sixteen controlled observer
+and harness fixtures exercise these decisions. The hierarchy helper checks both
+recorded worker harnesses before launching either worker. Native background
+process custody and a complete run on a frozen candidate still require
+qualification.
+
 The comparison distinguishes requested routes, actual native observations,
 review corrections, landings, usage and process closure. It retains caller
 mistakes, dependency setup, capacity context and differences in provider output
