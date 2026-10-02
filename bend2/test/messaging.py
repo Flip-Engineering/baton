@@ -31,19 +31,19 @@ class Messaging(unittest.TestCase):
                             f'with pathlib.Path({str(self.deliveries)!r}).open("a") as f:\n'
                             ' f.write(sys.argv[-1]+"\\n")\n')
         self.endpoint = json.dumps([sys.executable, str(endpoint)])
-        for name, role in [('root', 'conductor'), ('other-root', 'conductor'),
+        for name, role in [('root', 'principal-conductor'), ('other-root', 'principal-conductor'),
                            ('operator', 'operator')]:
             self.call('attach', name, 'fixture', '', self.endpoint)
             self.call('role', name, role)
-        for name, parent, role in [('lead-a', 'root', 'conductor'),
-                                   ('lead-b', 'root', 'conductor'),
+        for name, parent, role in [('lead-a', 'root', 'associate-conductor'),
+                                   ('lead-b', 'root', 'associate-conductor'),
                                    ('leaf-a', 'lead-a', 'player'),
                                    ('leaf-b', 'lead-b', 'player'),
-                                   ('deep-lead', 'lead-a', 'conductor'),
+                                   ('deep-lead', 'lead-a', 'associate-conductor'),
                                    ('deep-leaf', 'deep-lead', 'player')]:
             self.call('recruit', name, parent, 'fixture', 'model', 'low', str(self.repo),
                       name + '-branch', str(self.directory / name), 'HEAD')
-            if role == 'conductor':
+            if role == 'associate-conductor':
                 self.call('role', name, role)
             self.call('connect', name, '', self.endpoint)
 
@@ -115,7 +115,7 @@ class Messaging(unittest.TestCase):
         self.send('lead-peer', 'lead-a', 'lead-b')
         self.call('recruit', 'other-lead', 'other-root', 'fixture', 'model', 'low',
                   str(self.repo), 'other-lead-branch', str(self.directory / 'other-lead'), 'HEAD')
-        self.call('role', 'other-lead', 'conductor')
+        self.call('role', 'other-lead', 'associate-conductor')
         self.call('ensemble-member', 'leads', 'root', 'other-lead', 'add')
         self.send('cross-parent-conductors', 'lead-a', 'other-lead')
         self.call('ensemble-member', 'leads', 'root', 'deep-lead', 'add')
@@ -142,14 +142,14 @@ class Messaging(unittest.TestCase):
         self.call('role', 'leaf-a', 'operator', success=False)
         self.assertEqual(self.call('role', 'leaf-a')['role'], 'player')
         self.ensemble('null-peers', 'root', 'unassigned')
-        self.call('role', 'unassigned', 'conductor')
+        self.call('role', 'unassigned', 'principal-conductor')
         self.send('childless-conductor', 'root', 'unassigned')
         self.call('ensemble-member', 'null-peers', 'root', 'operator', 'add', success=False)
 
     def test_closed_declarations_and_ownership_preserve_existing_policy(self):
         self.call('role', 'root', 'unknown', success=False)
-        self.call('role', 'missing', 'conductor', success=False)
-        self.assertEqual(self.call('role', 'root')['role'], 'conductor')
+        self.call('role', 'missing', 'principal-conductor', success=False)
+        self.assertEqual(self.call('role', 'root')['role'], 'principal-conductor')
         self.call('ensemble', 'bad', 'leaf-a', 'tight', success=False)
         self.call('ensemble', 'bad', 'root', 'unknown', success=False)
         self.ensemble('owned', 'leaf-a', 'leaf-b')

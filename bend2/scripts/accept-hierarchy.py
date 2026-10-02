@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Exercise a native Codex root, an OMP lead, and two OMP workers in a clone."""
+"""Exercise a native Codex Principal Conductor, an OMP Associate Conductor, and two OMP Players in a clone."""
 import argparse
 import json
 import os
@@ -82,7 +82,7 @@ Use the existing native logins through the supplied launchers. Do not change cre
 toolchains, global configuration or anything outside this scratch directory.
 Only the small Python checks described below run; never run the repository's JS suite.
 Use coordinator commands for recruitment, reports, guidance and checked landing.
-Preserve all native sessions, worker branches and worktrees. Do not push.
+Preserve all native sessions, Player branches and worktrees. Do not push.
 """
     (out / 'worker-a.md').write_text(common + """
 Implement a useful standalone text-summary word counter at
@@ -105,9 +105,9 @@ and an unterminated final line. Run the tests, review and commit your two files,
 report the commit and exact test output, then end your turn.
 """)
     (out / 'lead.md').write_text(common + """
-You are the OMP lead named lead, parent root. Your workspace is STATE/lead and your
+You are the OMP Associate Conductor named lead, parent root. Your workspace is STATE/lead and your
 registered branch is hierarchy-lead. Deliver the two text-summary utilities through
-two child workers. You review and land their commits; do not implement their files.
+two child Players. You review and land their commits; do not implement their files.
 The native adapter automatically sends your final response to root after each turn.
 Do not send a duplicate report manually. Acknowledge messages addressed to lead.
 
@@ -122,7 +122,7 @@ Acknowledge lead-task with `B2 DB ack lead-task lead "Task received; starting bo
 3. Start child-a in the background with stdout/stderr redirected and a new process
    session: `B2 DB turn child-a child-a-turn OMP OMP_MODEL OMP_EFFORT STATE/child-a
    STATE/worker-a.md STATE/child-a.jsonl ""`. Python subprocess.Popen with
-   start_new_session=True is suitable; do not wait for the worker to finish.
+   start_new_session=True is suitable; do not wait for the Player to finish.
 4. Observe child-a.jsonl until its first tool_execution_start frame, then send
    `B2 DB message token-rule lead child-a guidance BODY` with this exact requirement:
    "Count whitespace-separated tokens using str.split(). A hyphen stays inside a
@@ -141,23 +141,23 @@ and child-b.jsonl, and end with a progress report. No waiting for completion.
 On the child-b report: inspect its actual diff and tests, acknowledge it, land it
 onto hierarchy-lead selecting only test_lines.py with the same adapter. Inspect the
 lead branch tree and run both Python files on that tree. Report LEAD_READY with both
-worker SHAs, both landing SHAs, the exact lead branch SHA and guidance receipt.
+Player SHAs, both landing SHAs, the exact lead branch SHA and guidance receipt.
 
 For these two newly added standalone test files, write STATE/check-added.sh once:
 `set -eu; if [ -f "$1" ]; then python3 "$1"; else exit 0; fi`.
 Use this absolute path as CHECK for all landings, including the root's. The absent
 test on the target is an explicit no-op; every present test must run and pass.
-Successful land-checked returns a squash commit different from the worker SHA.
+Successful land-checked returns a squash commit different from the Player SHA.
 Landings compose from the registered branch, even while your workspace is detached.
 """)
     (out / 'root.md').write_text(common + """
-You are the Codex root. Exercise one OMP lead with two children and checked landings.
+You are the Codex Principal Conductor, session root. Exercise one OMP Associate Conductor with two children and checked landings.
 The task files are STATE/lead.md, STATE/worker-a.md and STATE/worker-b.md.
 Recruit lead under root with harness omp, OMP_MODEL/OMP_EFFORT, repository REPO,
 branch hierarchy-lead, path STATE/lead, base hierarchy-target. Assign its responsibility
-with `B2 DB role lead conductor`, then attach its endpoint:
-OMP_ROOT_MODEL="$OMP_MODEL" OMP_ROOT_THINKING="$OMP_EFFORT" node
-  "$SOURCE/bend2/scripts/omp-root.mjs" "$DB" "$B2" "$OMP" --session lead --attach
+with `B2 DB role lead associate-conductor`, then attach its endpoint:
+OMP_CONDUCTOR_MODEL="$OMP_MODEL" OMP_CONDUCTOR_THINKING="$OMP_EFFORT" node
+  "$SOURCE/bend2/scripts/omp-conductor.mjs" "$DB" "$B2" "$OMP" --session lead --attach
 (run this as one shell command). Start the lead task in the background with redirected
 output using `B2 DB message-file lead-task root lead task STATE/lead.md` in a new
 process session. Acknowledge this root task and end your turn. Do not wait for the lead.
@@ -165,7 +165,7 @@ process session. Acknowledge this root task and end your turn. Do not wait for t
 Every lead turn reports back and invokes your native session. Review and acknowledge
 each progress report, then end your turn while the children work. Do not send guidance
 back during a report-delivery call or launch another turn for a working session.
-On LEAD_READY, independently inspect both workers, their parent bindings, the guidance
+On LEAD_READY, independently inspect both Players, their parent bindings, the guidance
 receipt, the lead branch diff and selected checks. Land lead onto hierarchy-target
 using land-checked, STATE/check-added.sh, and one quoted, space-separated FILES argument containing
 bend2/examples/text-summary/test_words.py bend2/examples/text-summary/test_lines.py.
@@ -177,8 +177,8 @@ End your turn. No push, no changes outside the scratch directory.
 """)
     call('attach', 'operator', 'terminal', '', '')
     call('role', 'operator', 'operator')
-    run('node', SOURCE / 'bend2/scripts/codex-root.mjs', db, coord, wrappers['codex'],
-        '--attach', env={**env, 'CODEX_ROOT_MODEL': routes['codex']['model']})
+    run('node', SOURCE / 'bend2/scripts/codex-conductor.mjs', db, coord, wrappers['codex'],
+        '--attach', env={**env, 'CODEX_CONDUCTOR_MODEL': routes['codex']['model']})
     with (out / 'seed.log').open('w') as log:
         seed = subprocess.Popen([str(coord), str(db), 'message-file', 'hierarchy-task',
                                  'operator', 'root', 'task', str(out / 'root.md')],

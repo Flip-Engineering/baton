@@ -100,7 +100,7 @@ def main():
     def coord(*values):
         return subprocess.run([str(exe),str(db),*map(str,values)],check=True,capture_output=True,text=True)
     coord('attach','root','omp','','')
-    coord('role','root','conductor')
+    coord('role', 'root', 'principal-conductor')
     coord('attach','operator','terminal','','')
     coord('role','operator','operator')
     coord('message','initial','operator','root','task','Run the controlled probe.')

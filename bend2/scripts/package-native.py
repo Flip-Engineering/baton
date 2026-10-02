@@ -233,6 +233,15 @@ def reuse_gates(path, expected_sha, compiler, logs, initial):
     return destination, summary
 
 
+def stage_adapters(payload):
+    directory = payload / 'libexec/baton2'
+    directory.mkdir(parents=True)
+    for harness in ('codex', 'omp', 'mcp'):
+        for suffix in ('conductor', 'root'):
+            name = harness + '-' + suffix + '.mjs'
+            shutil.copyfile(ROOT / 'bend2/scripts' / name, directory / name)
+
+
 def stage_notices(payload, archive_notices, kind='development'):
     directory = payload / 'notices'
     directory.mkdir()
@@ -343,6 +352,7 @@ def package(args):
         (payload / 'bin').mkdir(parents=True)
         shutil.copyfile(binary, payload / 'bin/baton2')
         (payload / 'bin/baton2').chmod(0o755)
+        stage_adapters(payload)
         shutil.copytree(logs, payload / 'logs')
         terms = stage_notices(payload, notices, identity['kind'])
         generated_dir = output / 'generated'

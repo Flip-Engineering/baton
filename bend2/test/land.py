@@ -49,11 +49,11 @@ class Land(unittest.TestCase):
             return json.loads(p.stdout)
         return p.stderr
 
-    def recruit_and_commit(self, worker='w1', branch='w1-branch', path='wt'):
-        self.call('recruit', worker, 'root', 'omp', 'model', 'high',
+    def recruit_and_commit(self, player='w1', branch='w1-branch', path='wt'):
+        self.call('recruit', player, 'root', 'omp', 'model', 'high',
                   self.repo, branch, path, self.base)
         wt = self.repo / path
-        (wt / 'file.txt').write_text(f'worker change for {worker}')
+        (wt / 'file.txt').write_text(f'worker change for {player}')
         subprocess.run(
             ['git', '-C', str(wt), 'add', 'file.txt'],
             check=True, capture_output=True,
@@ -179,9 +179,9 @@ class Land(unittest.TestCase):
         self.assertEqual(second['commit'], commit)
         self.assertEqual(self.git('rev-parse', 'main').strip(), first['commit'])
 
-    def scratch_trees(self, worker):
+    def scratch_trees(self, player):
         """The scratch trees an attempt by WORKER left under the repository."""
-        return sorted(p.name for p in (self.repo / '.scratch').glob(f'bend2-land-{worker}-*'))
+        return sorted(p.name for p in (self.repo / '.scratch').glob(f'bend2-land-{player}-*'))
 
     def test_landed_attempt_removes_its_scratch_trees(self):
         (self.repo / 'check-pass.sh').write_text('exit 0\n')
@@ -340,13 +340,13 @@ class Land(unittest.TestCase):
         self.assertNotIn('error', answer, str(answer.get('error')))
         return moved, answer['result']
 
-    def recruit_and_write(self, worker, branch, path, name, body):
-        self.call('recruit', worker, 'root', 'omp', 'model', 'high',
+    def recruit_and_write(self, player, branch, path, name, body):
+        self.call('recruit', player, 'root', 'omp', 'model', 'high',
                   self.repo, branch, path, self.base)
         wt = self.repo / path
         (wt / name).write_text(body)
         subprocess.run(['git', '-C', str(wt), 'add', name], check=True, capture_output=True)
-        subprocess.run(['git', '-C', str(wt), 'commit', '-q', '-m', f'{worker} writes {name}'],
+        subprocess.run(['git', '-C', str(wt), 'commit', '-q', '-m', f'{player} writes {name}'],
                        check=True, capture_output=True)
         return self.git('rev-parse', branch).strip()
 
@@ -354,14 +354,14 @@ class Land(unittest.TestCase):
         self.waiting_checks()
         self.git('checkout', '-q', '--detach')
         self.recruit_and_write('w1', 'wa', 'wt1', 'a.txt', 'alpha\n')
-        worker = self.recruit_and_write('w2', 'wb', 'wt2', 'b.txt', 'beta\n')
+        player = self.recruit_and_write('w2', 'wb', 'wt2', 'b.txt', 'beta\n')
         moved, under = self.land_under_a_move('w2', 'w1')
         self.assertEqual(moved['status'], 'landed')
         self.assertEqual(under['status'], 'blocked')
         self.assertIn('target moved', under['reason'])
         self.assertIn('rerun land-checked', under['reason'])
         self.assertEqual(self.git('rev-parse', 'main').strip(), moved['commit'])
-        self.assertEqual(self.git('rev-parse', 'wb').strip(), worker)
+        self.assertEqual(self.git('rev-parse', 'wb').strip(), player)
         self.assertEqual((self.repo / 'wt2' / 'b.txt').read_text(), 'beta\n')
         self.assertNotIn('b.txt', self.git('ls-tree', '--name-only', 'main').splitlines())
         self.assertEqual(len(self.scratch_trees('w2')), 2)
@@ -378,13 +378,13 @@ class Land(unittest.TestCase):
         self.waiting_checks()
         self.git('checkout', '-q', '--detach')
         self.recruit_and_commit('w3', 'wc', 'wt3')
-        worker = self.recruit_and_commit('w4', 'wd', 'wt4')
+        player = self.recruit_and_commit('w4', 'wd', 'wt4')
         moved, under = self.land_under_a_move('w4', 'w3')
         self.assertEqual(moved['status'], 'landed')
         self.assertEqual(under['status'], 'blocked')
         self.assertIn('target moved', under['reason'])
         self.assertEqual(self.git('rev-parse', 'main').strip(), moved['commit'])
-        self.assertEqual(self.git('rev-parse', 'wd').strip(), worker)
+        self.assertEqual(self.git('rev-parse', 'wd').strip(), player)
         self.assertEqual((self.repo / 'wt4' / 'file.txt').read_text(), 'worker change for w4')
         self.assertEqual(len(self.scratch_trees('w4')), 2)
         retry = self.call('land-checked', 'w4', self.repo, 'main',
@@ -400,19 +400,19 @@ class Land(unittest.TestCase):
             check=True, text=True, capture_output=True,
         ).stdout.splitlines()
         self.assertEqual(unmerged, ['file.txt'])
-        self.assertEqual(self.git('rev-parse', 'wd').strip(), worker)
+        self.assertEqual(self.git('rev-parse', 'wd').strip(), player)
         self.assertEqual((self.repo / 'wt4' / 'file.txt').read_text(), 'worker change for w4')
 
-    def test_conflicted_worker_relands_after_its_branch_is_rebased(self):
+    def test_conflicted_player_relands_after_its_branch_is_rebased(self):
         self.waiting_checks()
         self.git('checkout', '-q', '--detach')
         self.recruit_and_commit('w5', 'we', 'wt5')
-        worker = self.recruit_and_commit('w6', 'wf', 'wt6')
+        player = self.recruit_and_commit('w6', 'wf', 'wt6')
         moved, under = self.land_under_a_move('w6', 'w5')
         self.assertEqual(under['status'], 'blocked')
         self.assertIn('target moved', under['reason'])
         self.assertEqual(self.git('rev-parse', 'main').strip(), moved['commit'])
-        self.assertEqual(self.git('rev-parse', 'wf').strip(), worker)
+        self.assertEqual(self.git('rev-parse', 'wf').strip(), player)
         self.assertEqual(len(self.scratch_trees('w6')), 2)
         retry = self.call('land-checked', 'w6', self.repo, 'main',
                           'check-plain.sh', 'file.txt')
@@ -513,10 +513,10 @@ class Land(unittest.TestCase):
             data += part
         return connection, json.loads(data)
 
-    def start_landing(self, worker, check, selected):
+    def start_landing(self, player, check, selected):
         """Start a checked landing in the background; return its process."""
         return subprocess.Popen(
-            [str(EXE), str(self.db), 'land-checked', worker, str(self.repo),
+            [str(EXE), str(self.db), 'land-checked', player, str(self.repo),
              'main', check, selected],
             text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
 
@@ -530,9 +530,9 @@ class Land(unittest.TestCase):
             process.kill()
             process.communicate()
 
-    def scratch_paths(self, worker):
+    def scratch_paths(self, player):
         """The scratch trees an attempt by WORKER left under the repository."""
-        return sorted((self.repo / '.scratch').glob(f'bend2-land-{worker}-*'))
+        return sorted((self.repo / '.scratch').glob(f'bend2-land-{player}-*'))
 
     def test_target_moving_under_a_held_candidate_blocks_and_keeps_it(self):
         # Two worker changes that pass alone but fail together. The candidate

@@ -1,5 +1,5 @@
 #!/bin/sh
-# Build and attach the root of a local Bend2 trial.
+# Build and attach the Principal Conductor of a local Bend2 trial.
 set -eu
 exec python3 - "$@" <<'PY'
 import os
@@ -63,8 +63,10 @@ settings = {
     'TRIAL_SOURCE': str(source), 'TRIAL_STATE': str(state),
     'TRIAL_TARGET': 'bend2-trial', 'TRIAL_CHECK': str(check),
     'TRIAL_OMP': omp, 'TRIAL_MUSE': muse, 'TRIAL_NODE': node,
-    'TRIAL_ROOT_INSTRUCTIONS': str(state / 'root-instructions.md'),
-    'TRIAL_LEAD_INSTRUCTIONS': str(state / 'lead-instructions.md'),
+    'TRIAL_PRINCIPAL_INSTRUCTIONS': str(state / 'principal-conductor-instructions.md'),
+    'TRIAL_ASSOCIATE_INSTRUCTIONS': str(state / 'associate-conductor-instructions.md'),
+    'TRIAL_ROOT_INSTRUCTIONS': str(state / 'principal-conductor-instructions.md'),
+    'TRIAL_LEAD_INSTRUCTIONS': str(state / 'associate-conductor-instructions.md'),
 }
 if bend:
     settings['BEND'] = bend
@@ -75,21 +77,26 @@ context = ('\n\n## This trial\n\n'
     + f'Source the shell settings from {q(str(envfile))} in each shell call.\n'
     + f'The repository is {repo}; the Bend2 tools are at {source}.\n'
     + f'The check program is {check}. Each issue must name its selected test files.\n')
-for name in ['root-instructions.md', 'lead-instructions.md']:
-    (state / name).write_text((source / 'bend2/trial' / name).read_text() + context)
+for name, legacy in [('principal-conductor-instructions.md', 'root-instructions.md'),
+                     ('associate-conductor-instructions.md', 'lead-instructions.md')]:
+    selected = source / 'bend2/trial' / name
+    if not selected.is_file():
+        selected = source / 'bend2/trial' / legacy
+    (state / name).write_text(selected.read_text() + context)
+    (state / legacy).write_text(f'Read {state / name} for the current trial instructions.\n')
 template = state / 'task-template.md'
 template.write_text(
-    f'Read {state / "root-instructions.md"} for the current trial workflow before acting.\n'
+    f'Read {state / "principal-conductor-instructions.md"} for the current trial workflow before acting.\n'
     + f'Source {envfile} in each shell call.\n'
-    + 'Run the issue below through one OMP lead, which recruits and reviews its own workers. '
-      'The root reviews and lands the lead branch, publishes bend2-trial and reports to operator.\n\n'
+    + 'Run the issue through one OMP Associate Conductor, which recruits and reviews its Players. '
+      'The Principal Conductor reviews and lands the Associate Conductor branch, publishes bend2-trial and reports to operator.\n\n'
     + '## Assigned issue\n\n'
     + 'Replace this paragraph with the issue number, requested outcome and constraints. '
       'An unassigned template requests no issue work.\n\n'
     + '## Selected checks\n\n'
     + f'The configured check program is {check}. '
       'Name the selected test paths for this issue, separated by spaces. '
-      'Include the selected paths in each worker assignment and in the root landing review.\n')
+      'Include the selected paths in each Player assignment and in the Principal Conductor landing review.\n')
 first = state / 'first-task.md'
 if not first.exists():
     first.write_text(template.read_text())
@@ -103,14 +110,14 @@ root_log = state / 'root-native.jsonl'
 root_endpoint = [str(coord), str(db), 'receive', 'root', str(wrapper),
                  'gpt-6-astra', 'low', str(repo), str(root_log)]
 run(coord, db, 'attach', 'root', 'codex', native_root, json.dumps(root_endpoint))
-run(coord, db, 'role', 'root', 'conductor')
+run(coord, db, 'role', 'root', 'principal-conductor')
 run(*root_endpoint, '', env=env)
-print(f'Attached trial root. Task file: {first}')
-print(f'Current root instructions: {state / "root-instructions.md"}')
-print(f'Current lead instructions: {state / "lead-instructions.md"}')
+print(f'Attached trial Principal Conductor. Task file: {first}')
+print(f'Current Principal Conductor instructions: {state / "principal-conductor-instructions.md"}')
+print(f'Current Associate Conductor instructions: {state / "associate-conductor-instructions.md"}')
 print(f'Refreshed issue template: {template}')
 print('Copy the template to an issue task file and fill in the assigned issue before sending it.')
-print('Existing first-task.md is preserved. Begin any older task by reading the current root instructions.')
+print('Existing first-task.md is preserved. Begin any older task by reading the current Principal Conductor instructions.')
 print('For the first task, edit first-task.md to name the assigned issue, then seed it:')
 print(shlex.join([str(coord), str(db), 'message-file', 'trial-first-task',
                   'operator', 'root', 'task', str(first)]))
@@ -119,8 +126,8 @@ print(shlex.join([str(coord), str(db), 'message-file', 'issue-N-task',
                   'operator', 'root', 'task', str(state / 'issue-N-task.md')]))
 print('Read landing reports:')
 print(shlex.join([str(coord), str(db), 'inbox', 'operator']))
-print(f'Native root responses: {db}.root.log')
-print(f'Native root events: {root_log}')
+print(f'Native Principal Conductor responses: {db}.root.log')
+print(f'Native Principal Conductor events: {root_log}')
 print('Rebuild this kit between lanes after the native turns and their supervisors have exited.')
-print('Keep bend2-trial and each lead branch unchecked-out while land-checked advances them.')
+print('Keep bend2-trial and each Associate Conductor branch unchecked-out while land-checked advances them.')
 PY

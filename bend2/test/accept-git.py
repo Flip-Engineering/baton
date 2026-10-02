@@ -34,35 +34,35 @@ class GitAcceptance(unittest.TestCase):
         })
         env_patch.start()
         self.addCleanup(env_patch.stop)
-        worker_patch = mock.patch.object(DRIVER, 'turn_worker', self.controlled_worker)
-        worker_patch.start()
-        self.addCleanup(worker_patch.stop)
+        player_patch = mock.patch.object(DRIVER, 'turn_player', self.controlled_player)
+        player_patch.start()
+        self.addCleanup(player_patch.stop)
         self.config = {'omp': {'executable': 'controlled-worker', 'model': 'fixture', 'effort': 'low'}}
 
-    def controlled_worker(self, binary, db, repo, run_dir, route, worker, branch, base,
+    def controlled_player(self, binary, db, repo, run_dir, route, player, branch, base,
                           path, line, turn, guided=False, session=''):
-        DRIVER.coord(binary, db, 'recruit', worker, 'root', 'omp', route['model'],
-                     route['effort'], repo, branch, f'wt-{worker}', base)
-        worktree = repo / f'wt-{worker}'
+        DRIVER.coord(binary, db, 'recruit', player, 'root', 'omp', route['model'],
+                     route['effort'], repo, branch, f'wt-{player}', base)
+        worktree = repo / f'wt-{player}'
         if guided:
-            self.assertEqual(session, 'controlled-' + worker)
-            inbox = DRIVER.coord_json(binary, db, 'inbox', worker)
+            self.assertEqual(session, 'controlled-' + player)
+            inbox = DRIVER.coord_json(binary, db, 'inbox', player)
             self.assertEqual([message['id'] for message in inbox], ['g1'])
             self.assertIn('three and four', inbox[0]['body'])
             result = subprocess.run(['git', '-C', str(worktree), 'rebase', 'main'],
                                     capture_output=True, text=True)
             self.assertNotEqual(result.returncode, 0)
-            self.resumed.append({'worker': worker, 'native': session, 'turn': turn})
+            self.resumed.append({'player': player, 'native': session, 'turn': turn})
         else:
-            DRIVER.coord(binary, db, 'bind', worker, 'controlled-' + worker, 'omp', 'fixture', 'low')
+            DRIVER.coord(binary, db, 'bind', player, 'controlled-' + player, 'omp', 'fixture', 'low')
         (worktree / path).write_text(line + '\n')
         DRIVER.git(worktree, 'add', path)
         if guided:
             DRIVER.git(worktree, 'rebase', '--continue')
-            DRIVER.coord(binary, db, 'ack', 'g1', worker, 'controlled-worker-reviewed')
+            DRIVER.coord(binary, db, 'ack', 'g1', player, 'controlled-worker-reviewed')
         else:
-            DRIVER.git(worktree, 'commit', '-q', '-m', f'{worker} writes {line}')
-        DRIVER.coord(binary, db, 'report', turn, worker, f'controlled {worker} committed {line}')
+            DRIVER.git(worktree, 'commit', '-q', '-m', f'{player} writes {line}')
+        DRIVER.coord(binary, db, 'report', turn, player, f'controlled {player} committed {line}')
         return worktree
 
     def test_target_move_preserves_first_attempt_and_explicit_retry_lands(self):
@@ -84,12 +84,12 @@ class GitAcceptance(unittest.TestCase):
         scenario = self.out / 'conflict-recovery'
         first = json.loads((scenario / 'land-w4.out').read_text())
         self.assertEqual(first['status'], 'blocked')
-        self.assertEqual(self.resumed, [{'worker': 'w4', 'native': 'controlled-w4', 'turn': 't3'}])
+        self.assertEqual(self.resumed, [{'player': 'w4', 'native': 'controlled-w4', 'turn': 't3'}])
         repo = scenario / 'repo'
         self.assertEqual(DRIVER.git(repo, 'show', 'main:data/shared.txt'), 'three and four')
         delivery = DRIVER.coord_json(EXE, scenario / 'state.db', 'delivery', 'g1')
         self.assertEqual(delivery['receipt'], 'controlled-worker-reviewed')
-        self.assertEqual(DRIVER.coord_json(EXE, scenario / 'state.db', 'session', 'w4')['native'],
+        self.assertEqual(DRIVER.coord_json(EXE, scenario / 'state.db', 'player', 'w4')['native'],
                          'controlled-w4')
 
 

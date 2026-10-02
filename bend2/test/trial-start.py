@@ -101,11 +101,11 @@ class TrialStartTests(unittest.TestCase):
         self.git('commit', '-qm', 'Selected behavior fixture')
         return selected.relative_to(self.repo).as_posix()
 
-    def recruit_worker(self):
+    def recruit_player(self):
         base = self.git('rev-parse', 'bend2-trial')
         lead = self.trial_call('recruit', 'lead', 'root', 'omp', 'fixture/model', 'low',
                                self.repo, 'lead-branch', self.home / 'lead', base)
-        self.trial_call('role', 'lead', 'conductor')
+        self.trial_call('role', 'lead', 'associate-conductor')
         self.git('checkout', '-q', '--detach', repo=lead['workspace'])
         return self.trial_call('recruit', 'worker', 'lead', 'omp', 'fixture/model', 'low',
                                self.repo, 'worker-branch', self.home / 'worker', base)
@@ -117,6 +117,7 @@ class TrialStartTests(unittest.TestCase):
         root = sessions['root']
         self.assertEqual(root['harness'], 'codex')
         self.assertEqual(root['native'], native)
+        self.assertEqual((root['kind'], root['role']), ('player', 'principal-conductor'))
         self.assertEqual(json.loads(root['endpoint']), [
             str(self.state / 'baton2'), str(self.db), 'receive', 'root',
             str(self.state / 'codex-subscription.sh'), 'gpt-6-astra', 'low',
@@ -130,6 +131,15 @@ class TrialStartTests(unittest.TestCase):
 
     def test_first_launch_attaches_root_without_starting_an_empty_turn(self):
         self.assert_attached(self.launch(), '')
+        settings = self.trial_command('sh', '-c',
+            'printf "%s\\n" "$TRIAL_PRINCIPAL_INSTRUCTIONS" "$TRIAL_ROOT_INSTRUCTIONS" '
+            '"$TRIAL_ASSOCIATE_INSTRUCTIONS" "$TRIAL_LEAD_INSTRUCTIONS"')
+        self.assertEqual(settings.returncode, 0, settings.stderr)
+        principal, legacy_root, associate, legacy_lead = settings.stdout.splitlines()
+        self.assertEqual(principal, legacy_root)
+        self.assertEqual(associate, legacy_lead)
+        self.assertTrue(principal.endswith('/principal-conductor-instructions.md'))
+        self.assertTrue(associate.endswith('/associate-conductor-instructions.md'))
         self.assertIn('Assigned issue', (self.state / 'first-task.md').read_text())
         target = subprocess.check_output(['git', '-C', str(self.repo), 'rev-parse',
                                           'bend2-trial'], text=True).strip()
@@ -156,7 +166,7 @@ class TrialStartTests(unittest.TestCase):
         (self.state / 'root-instructions.md').write_text('old instructions\n')
         self.assert_attached(self.launch(), 'existing-native-session')
         self.assertEqual(first.read_bytes(), task)
-        self.assertIn('Bend2 trial root',
+        self.assertIn('principal-conductor-instructions.md',
                       (self.state / 'root-instructions.md').read_text())
 
     def test_missing_check_refuses_before_state_login_or_build(self):
@@ -186,39 +196,39 @@ class TrialStartTests(unittest.TestCase):
         self.check.chmod(0o600)
         self.assert_attached(self.launch(), '')
         self.git('checkout', '-q', '--detach')
-        worker = self.recruit_worker()
-        workspace = pathlib.Path(worker['workspace'])
+        player = self.recruit_player()
+        workspace = pathlib.Path(player['workspace'])
         (workspace / 'worker-change.txt').write_text('reviewed worker change\n')
         self.git('add', 'worker-change.txt', repo=workspace)
         self.git('commit', '-qm', 'Worker change', repo=workspace)
-        worker_tip = self.git('rev-parse', 'HEAD', repo=workspace)
+        player_tip = self.git('rev-parse', 'HEAD', repo=workspace)
         for session, target in (('worker', 'lead-branch'), ('lead', 'bend2-trial')):
             result = self.trial_call('land-checked', session, self.repo, target, self.check, selected)
             self.assertEqual(result['status'], 'landed', result)
             self.assertEqual(self.git('show', target + ':worker-change.txt'), 'reviewed worker change')
-        self.assertEqual(self.git('rev-parse', 'HEAD', repo=workspace), worker_tip)
+        self.assertEqual(self.git('rev-parse', 'HEAD', repo=workspace), player_tip)
         rows = [json.loads(line) for line in (self.home / 'checks.jsonl').read_text().splitlines()]
         self.assertEqual(len(rows), 4)
         self.assertTrue(all(row['BEND'] == str(self.harness) for row in rows))
         self.assertTrue(all(pathlib.Path(row['file']).relative_to(row['cwd']).as_posix() == selected
                             for row in rows))
 
-    def test_selected_python_failure_preserves_target_and_worker(self):
+    def test_selected_python_failure_preserves_target_and_player(self):
         selected = self.selected_check_repository()
         self.env['BEND'] = str(self.harness)
         self.assert_attached(self.launch(), '')
         self.git('checkout', '-q', '--detach')
-        worker = self.recruit_worker()
-        workspace = pathlib.Path(worker['workspace'])
+        player = self.recruit_player()
+        workspace = pathlib.Path(player['workspace'])
         (workspace / 'value.txt').write_text('broken\n')
         self.git('add', 'value.txt', repo=workspace)
         self.git('commit', '-qm', 'Broken worker change', repo=workspace)
         target_tip = self.git('rev-parse', 'lead-branch')
-        worker_tip = self.git('rev-parse', 'HEAD', repo=workspace)
+        player_tip = self.git('rev-parse', 'HEAD', repo=workspace)
         result = self.trial_call('land-checked', 'worker', self.repo, 'lead-branch', self.check, selected)
         self.assertEqual(result['status'], 'blocked', result)
         self.assertEqual(self.git('rev-parse', 'lead-branch'), target_tip)
-        self.assertEqual(self.git('rev-parse', 'HEAD', repo=workspace), worker_tip)
+        self.assertEqual(self.git('rev-parse', 'HEAD', repo=workspace), player_tip)
         self.assertEqual((workspace / 'value.txt').read_text(), 'broken\n')
         self.assertEqual(self.git('status', '--porcelain', repo=workspace), '')
 

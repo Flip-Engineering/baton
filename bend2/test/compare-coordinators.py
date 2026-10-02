@@ -43,11 +43,11 @@ class NativeStatus(unittest.TestCase):
         base = subprocess.check_output(['git', '-C', str(cls.repo), 'rev-parse', 'HEAD'],
                                        text=True).strip()
         cls.call('attach', 'root', 'fixture-root', 'root-login', '')
-        cls.call('role', 'root', 'conductor')
+        cls.call('role', 'root', 'principal-conductor')
         cls.expected = {'root': {
             'id': 'root', 'parent': None, 'harness': 'fixture-root', 'model': '', 'effort': '',
             'native': 'root-login', 'observedHarness': '', 'observedModel': '', 'observedEffort': '',
-            'endpoint': '', 'workspace': '', 'branch': '', 'base': '',
+            'endpoint': '', 'workspace': '', 'branch': '', 'base': '', 'kind': 'player', 'role': 'principal-conductor',
         }}
         for ident, parent, harness, model, effort in (
                 ('alpha', 'root', 'omp', 'requested-alpha', 'high'),
@@ -62,9 +62,9 @@ class NativeStatus(unittest.TestCase):
                      observed['observedModel'], observed['observedEffort'])
             cls.expected[ident] = {
                 'id': ident, 'parent': parent, 'harness': harness, 'model': model, 'effort': effort,
-                **observed, 'endpoint': '', 'workspace': workspace, 'branch': branch, 'base': base,
+                **observed, 'endpoint': '', 'workspace': workspace, 'branch': branch, 'base': base, 'kind': 'player', 'role': 'associate-conductor' if ident == 'alpha' else 'player',
             }
-        cls.call('role', 'alpha', 'conductor')
+        cls.call('role', 'alpha', 'associate-conductor')
         cls.call('report', 'alpha-report-1', 'alpha', 'Full Unicode λ report\n')
         cls.call('report', 'alpha-report-2', 'alpha', 'Second root report')
         cls.call('report', 'beta-report', 'beta', 'Report to the immediate parent')
@@ -101,10 +101,10 @@ class NativeStatus(unittest.TestCase):
         DRIVER.assert_bend_status(again, self.expected, self.pending)
         self.assertEqual(again, self.valid)
         self.assertEqual(hashlib.sha256(self.db.read_bytes()).hexdigest(), before)
-        workers = self.call('workers')
-        self.assertEqual({row['id'] for row in workers}, {'alpha', 'beta'})
-        self.assertEqual({row['latestReportId'] for row in workers},
-                         {'alpha-report-2', 'beta-report'})
+        players = self.call('players')
+        self.assertEqual({row['id'] for row in players}, {'root', 'alpha', 'beta'})
+        self.assertEqual({row['latestReportId'] for row in players},
+                         {None, 'alpha-report-2', 'beta-report'})
 
     def test_missing_extra_and_duplicate_sessions_are_refused(self):
         responses = [self.valid[1:], self.valid + [copy.deepcopy(self.valid[0])]]
@@ -149,16 +149,16 @@ class NativeStatus(unittest.TestCase):
 
 class OriginalStatusContract(unittest.TestCase):
     def test_participant_identity_and_parked_guidance_corruptions_are_refused(self):
-        workers = {'worker-0', 'worker-1'}
+        players = {'worker-0', 'worker-1'}
         guides = {'guide-0': ('worker-0', 'First guidance'),
                   'guide-1': ('worker-1', 'Second guidance')}
         answer = {'projection': 'participants', 'participants': [
             {'participantId': ident, 'parentId': None, 'route': None,
              'guidance': [{'messageId': 'guide-' + ident[-1],
                            'delivery': {'state': 'parked'}}]}
-            for ident in sorted(workers)
+            for ident in sorted(players)
         ]}
-        DRIVER.assert_original_status(answer, workers, guides)
+        DRIVER.assert_original_status(answer, players, guides)
         changes = []
         wrong = copy.deepcopy(answer)
         wrong['projection'] = 'contributions'
@@ -178,7 +178,7 @@ class OriginalStatusContract(unittest.TestCase):
         changes.append(wrong)
         for response in changes:
             with self.subTest(response=response), self.assertRaises(AssertionError):
-                DRIVER.assert_original_status(response, workers, guides)
+                DRIVER.assert_original_status(response, players, guides)
 
 
 class HelperCompletion(unittest.TestCase):

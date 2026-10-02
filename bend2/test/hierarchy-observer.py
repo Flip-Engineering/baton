@@ -70,7 +70,7 @@ from pathlib import Path
 out=Path(__file__).parent
 with (out/'cli.calls.jsonl').open('a') as log:
     log.write(json.dumps(sys.argv[1:])+'\\n')
-if sys.argv[2]=='session':
+if sys.argv[2]=='player':
     print(json.dumps(json.loads((out/'sessions.json').read_text())[sys.argv[3]]))
 elif sys.argv[2]=='turn':
     (out/(sys.argv[3]+'.turn.argv.json')).write_text(json.dumps(sys.argv))
@@ -207,19 +207,19 @@ else:
         self.assertIsNone(other.poll())
         self.assertTrue(DRIVER.close_failed_run(self.out, FAILED, [row], inspection))
 
-    def test_recorded_seed_and_worker_launchers_block_whole_run_closure(self):
+    def test_recorded_seed_and_player_launchers_block_whole_run_closure(self):
         row, _ = self.interrupted()
-        seed, worker = self.child(owned=False), self.child(owned=False)
+        seed, player = self.child(owned=False), self.child(owned=False)
         table = DRIVER.process_snapshot()
         DRIVER.save(self.out / 'seed-process.json',
                     {'pid': seed.pid, 'started_local': table[seed.pid]['started_local']})
-        DRIVER.save(self.out / 'worker-launches.json',
-                    [{'seat': 'muse', 'pid': worker.pid, 'started_local': table[worker.pid]['started_local']}])
+        DRIVER.save(self.out / 'player-launches.json',
+                    [{'seat': 'muse', 'pid': player.pid, 'started_local': table[player.pid]['started_local']}])
         known = {}
         inspection = DRIVER.inspect_processes(self.out, [row], known)
-        self.assertEqual({process['pid'] for process in inspection['processes']}, {seed.pid, worker.pid})
+        self.assertEqual({process['pid'] for process in inspection['processes']}, {seed.pid, player.pid})
         self.assertFalse(DRIVER.close_failed_run(self.out, FAILED, [row], inspection))
-        for child in (seed, worker):
+        for child in (seed, player):
             child.stdin.close()
             child.wait()
         inspection = DRIVER.inspect_processes(self.out, [row], known)
@@ -262,15 +262,15 @@ else:
         self.assertEqual(wrapper.wait(), 0)
         self.assertTrue(DRIVER.successful_receipts(DRIVER.records(self.out)))
 
-    def test_recorded_muse_harness_mismatch_refuses_before_either_worker_launch(self):
+    def test_recorded_muse_harness_mismatch_refuses_before_either_player_launch(self):
         self.coordinator('omp')
         with self.assertRaisesRegex(RuntimeError, "muse has recorded harness 'omp'; expected 'muse'"):
-            DRIVER.start_workers(self.out)
+            DRIVER.start_players(self.out)
         calls = [json.loads(line) for line in (self.out / 'cli.calls.jsonl').read_text().splitlines()]
         self.assertTrue(calls)
-        self.assertTrue(all(call[1] == 'session' for call in calls))
+        self.assertTrue(all(call[1] == 'player' for call in calls))
         self.assertEqual(json.loads((self.out / 'sessions.json').read_text())['muse']['harness'], 'omp')
-        self.assertFalse((self.out / 'worker-launches.json').exists())
+        self.assertFalse((self.out / 'player-launches.json').exists())
         self.assertFalse(list(self.out.glob('*.turn.argv.json')))
         self.assertFalse(list(self.out.glob('*.command.log')))
 
@@ -288,10 +288,10 @@ else:
 
         with mock.patch.object(DRIVER.subprocess, 'Popen', side_effect=launch):
             with contextlib.redirect_stdout(io.StringIO()):
-                DRIVER.start_workers(self.out)
+                DRIVER.start_players(self.out)
         for child in launched:
             self.assertEqual(child.wait(), 0)
-        saved = {row['seat']: row for row in json.loads((self.out / 'worker-launches.json').read_text())}
+        saved = {row['seat']: row for row in json.loads((self.out / 'player-launches.json').read_text())}
         self.assertEqual(set(saved), {'deepseek', 'muse'})
         for seat, route in [('deepseek', routes['omp']), ('muse', routes['muse'])]:
             expected = [str(self.out / 'baton2'), str(self.out / 'state.db'), 'turn', seat,
