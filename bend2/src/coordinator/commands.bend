@@ -86,6 +86,14 @@ def session_result_where(condition: String) -> String:
 def session_result(id: String) -> String:
   session_result_where("id=" ++ q(id))
 
+def worker_matches(parent: String, harness: String, model: String, effort: String, workspace: String, branch: String, base: String) -> String:
+  "(parent IS " ++ q(parent) ++ " AND harness=" ++ q(harness) ++ " AND model=" ++ q(model) ++ " AND effort=" ++ q(effort) ++ " AND workspace=" ++ q(workspace) ++ " AND branch=" ++ q(branch) ++ " AND base=" ++ q(base) ++ ")"
+
+def worker_sql(+id: String, +parent: String, +harness: String, +model: String, +effort: String, +workspace: String, +branch: String, +base: String) -> String:
+  "INSERT INTO sessions(id,parent,harness,model,effort,workspace,branch,base) VALUES(" ++ q(id) ++ "," ++ q(parent) ++ "," ++ q(harness) ++ "," ++ q(model) ++ "," ++ q(effort) ++ "," ++ q(workspace) ++ "," ++ q(branch) ++ "," ++ q(base) ++ ") ON CONFLICT(id) DO NOTHING;"
+  ++ "SELECT json_object('error','worker-assignment-conflict','session',id,'existing',json_object('parent',parent,'harness',harness,'model',model,'effort',effort,'workspace',workspace,'branch',branch,'base',base),'requested',json_object('parent'," ++ q(parent) ++ ",'harness'," ++ q(harness) ++ ",'model'," ++ q(model) ++ ",'effort'," ++ q(effort) ++ ",'workspace'," ++ q(workspace) ++ ",'branch'," ++ q(branch) ++ ",'base'," ++ q(base) ++ "),'condition','A recruited session keeps its recorded assignment.','next','Read session ID and worktree ID. Retry recruit with the recorded assignment, or recruit a new ID with a new branch and unused path; retain the original work.') FROM sessions WHERE id=" ++ q(id) ++ " AND NOT " ++ worker_matches(parent,harness,model,effort,workspace,branch,base) ++ ";"
+  ++ session_result_where("id=" ++ q(id) ++ " AND " ++ worker_matches(parent,harness,model,effort,workspace,branch,base))
+
 # Empty endpoints disconnect. Other endpoints are native argv JSON, with one
 # executable and text arguments representable by the host's process interface.
 def endpoint_admitted(+endpoint: String) -> String:
@@ -168,7 +176,7 @@ def sql(command: Command) -> String:
     case Attach{+id, harness, native, endpoint}:
       "INSERT INTO sessions(id,harness,native,endpoint) VALUES(" ++ q(id) ++ "," ++ q(harness) ++ "," ++ q(native) ++ "," ++ q(endpoint) ++ ") ON CONFLICT(id) DO UPDATE SET id=CASE WHEN sessions.parent IS NULL THEN sessions.id ELSE NULL END,harness=excluded.harness,native=excluded.native,endpoint=excluded.endpoint;" ++ session_result(id)
     case Worker{+id, parent, harness, model, effort, workspace, branch, base}:
-      "INSERT INTO sessions(id,parent,harness,model,effort,workspace,branch,base) VALUES(" ++ q(id) ++ "," ++ q(parent) ++ "," ++ q(harness) ++ "," ++ q(model) ++ "," ++ q(effort) ++ "," ++ q(workspace) ++ "," ++ q(branch) ++ "," ++ q(base) ++ ") ON CONFLICT(id) DO UPDATE SET id=CASE WHEN sessions.parent=excluded.parent AND sessions.harness=excluded.harness AND sessions.model=excluded.model AND sessions.effort=excluded.effort AND sessions.workspace=excluded.workspace AND sessions.branch=excluded.branch AND sessions.base=excluded.base THEN sessions.id ELSE NULL END;" ++ session_result(id)
+      worker_sql(id,parent,harness,model,effort,workspace,branch,base)
     case Connect{+id,native,endpoint}:
       connect_sql(id,native,endpoint)
     case Bind{+id, native, harness, model, effort}:

@@ -131,6 +131,41 @@ for (const { law, file } of rows) {
 // it claims to bind, and it is reported as a failure.
 const MUTATIONS = [
   {
+    name: 'worker-retry-ignores-harness',
+    file: join('bend2', 'src', 'coordinator', 'commands.bend'),
+    find: '++ " AND harness=" ++ q(harness)',
+    replace: '++ " AND harness=harness"',
+    law: 'm8_worker_retry_compares_the_complete_assignment',
+  },
+  {
+    name: 'worker-retry-ignores-model',
+    file: join('bend2', 'src', 'coordinator', 'commands.bend'),
+    find: '++ " AND model=" ++ q(model)',
+    replace: '++ " AND model=model"',
+    law: 'm8_worker_retry_compares_the_complete_assignment',
+  },
+  {
+    name: 'worker-retry-overwrites-assigned-harness',
+    file: join('bend2', 'src', 'coordinator', 'commands.bend'),
+    find: ') ON CONFLICT(id) DO NOTHING;',
+    replace: ') ON CONFLICT(id) DO UPDATE SET harness=excluded.harness;',
+    law: 'm8_worker_registration_is_bound_to_the_stored_row',
+  },
+  {
+    name: 'worker-conflict-also-returns-a-session',
+    file: join('bend2', 'src', 'coordinator', 'commands.bend'),
+    find: 'session_result_where("id=" ++ q(id) ++ " AND " ++ worker_matches(parent,harness,model,effort,workspace,branch,base))',
+    replace: 'session_result(id)',
+    law: 'm8_worker_registration_is_bound_to_the_stored_row',
+  },
+  {
+    name: 'worker-conflict-loses-exit-classification',
+    file: join('bend2', 'src', 'coordinator', 'store.bend'),
+    find: 'Tx.starts_with(saved,"{\\"error\\":\\"worker-assignment-conflict\\"")',
+    replace: 'False{}',
+    law: 'm14_worker_conflict_output_is_refused',
+  },
+  {
     name: 'connect-removes-endpoint-update-admission',
     file: join('bend2', 'src', 'coordinator', 'commands.bend'),
     find: '" WHERE id=" ++ q(id) ++ " AND " ++ endpoint_admitted(endpoint) ++ ";"',
