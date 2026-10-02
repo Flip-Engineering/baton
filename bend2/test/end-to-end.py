@@ -10,7 +10,7 @@ import unittest
 
 ROOT = pathlib.Path(__file__).resolve().parents[2]
 EXE = ROOT / '.scratch/bend2/baton2'
-MCP_SCRIPT = ROOT / 'bend2/scripts/mcp-root.mjs'
+MCP_SCRIPT = ROOT / 'bend2/scripts/mcp-conductor.mjs'
 
 
 def send_mcp(proc, msg):
@@ -130,9 +130,9 @@ class EndToEnd(unittest.TestCase):
                        check=True, capture_output=True)
         subprocess.run(['git', '-C', str(wt), 'commit', '-q', '-m', 'worker feature'],
                        check=True, capture_output=True)
-        worker_commit = self.git('rev-parse', 'w1-branch').strip()
+        player_commit = self.git('rev-parse', 'w1-branch').strip()
 
-        # 3. Worker reports its result.
+        # 3. Player reports its result.
         self.coord('report', 'turn-1', 'w1', 'Feature implemented and committed.')
 
         # 4. Start the MCP server; the root receives the report as a channel notification.
@@ -163,7 +163,7 @@ class EndToEnd(unittest.TestCase):
             'params': {
                 'name': 'baton2_land',
                 'arguments': {
-                    'worker': 'w1',
+                    'player': 'w1',
                     'repo': str(self.repo),
                     'target': 'main',
                 },
@@ -174,11 +174,11 @@ class EndToEnd(unittest.TestCase):
             land_resp = read_mcp(proc, timeout=10)
         land_result = json.loads(land_resp['result']['content'][0]['text'])
         self.assertEqual(land_result['status'], 'landed')
-        self.assertEqual(land_result['commit'], worker_commit)
+        self.assertEqual(land_result['commit'], player_commit)
 
         # 7. Verify the target branch advanced.
         main_tip = self.git('rev-parse', 'main').strip()
-        self.assertEqual(main_tip, worker_commit)
+        self.assertEqual(main_tip, player_commit)
 
 
 if __name__ == '__main__':

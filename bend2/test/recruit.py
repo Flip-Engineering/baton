@@ -1,4 +1,4 @@
-"""Worker recruitment and status against independent, temporary Git repositories."""
+"""Player recruitment and status against independent, temporary Git repositories."""
 from contextlib import closing
 import json
 import pathlib
@@ -38,9 +38,9 @@ class Recruit(unittest.TestCase):
             self.assertEqual(p.stdout,'')
         return json.loads(p.stdout) if ok else p.stderr
 
-    def recruit(self,worker='worker',branch='worker-branch',path='work λ',parent='root',ok=True,
+    def recruit(self,player='worker',branch='worker-branch',path='work λ',parent='root',ok=True,
                 harness='omp',model='zai/glm-5.3-flash',effort='high',base=None,exit_code=None):
-        return self.call('recruit',worker,parent,harness,model,effort,self.repo,branch,path,
+        return self.call('recruit',player,parent,harness,model,effort,self.repo,branch,path,
                          self.base if base is None else base,ok=ok,exit_code=exit_code)
 
     def state(self):
@@ -57,7 +57,7 @@ class Recruit(unittest.TestCase):
         self.assertEqual(row['parent'],'root')
         self.assertEqual(row['base'],self.base)
         self.assertEqual(self.recruit(),row)
-        self.assertEqual(self.call('session','worker',cwd=self.directory),row)
+        self.assertEqual(self.call('player','worker',cwd=self.directory),row)
         clean=self.call('worktree','worker',cwd=self.directory)
         self.assertEqual(clean['branch'],'worker-branch')
         self.assertEqual(clean['commit'],self.base)
@@ -70,22 +70,22 @@ class Recruit(unittest.TestCase):
         error=self.recruit(path='already here',ok=False)
         self.assertIn('path exists',error)
         self.assertNotIn('worker-branch',self.git('branch','--list'))
-        self.call('session','worker',ok=False)
+        self.call('player','worker',ok=False)
 
-    def test_missing_parent_and_conflicting_worker_id_preserve_existing_work(self):
+    def test_missing_parent_and_conflicting_player_id_preserve_existing_work(self):
         self.recruit(parent='missing',ok=False)
         self.assertFalse((self.repo/'work λ').exists())
         self.recruit()
         self.recruit(branch='another-branch',path='another-path',ok=False)
         self.assertFalse((self.repo/'another-path').exists())
         self.assertNotIn('another-branch',self.git('branch','--list'))
-        self.assertEqual(self.call('session','worker')['branch'],'worker-branch')
+        self.assertEqual(self.call('player','worker')['branch'],'worker-branch')
 
     def test_assignment_conflicts_name_both_values_and_preserve_work_and_input(self):
         assigned=self.recruit()
         workspace=pathlib.Path(assigned['workspace'])
         self.call('attach','other-parent','codex','','')
-        self.call('role','root','conductor')
+        self.call('role', 'root', 'principal-conductor')
         self.call('message','pending-task','root','worker','task',"Keep this task λ\n")
         endpoint=json.dumps(['/usr/bin/true','retained worker endpoint'])
         self.call('connect','worker','native-kept',endpoint)
@@ -99,7 +99,7 @@ class Recruit(unittest.TestCase):
         other_base=self.git('rev-parse','HEAD').strip()
 
         before=self.state()
-        session=self.call('session','worker')
+        session=self.call('player','worker')
         work=self.call('worktree','worker')
         self.assertTrue(work['dirty'])
         self.assertNotEqual(work['commit'],self.base)
@@ -119,14 +119,14 @@ class Recruit(unittest.TestCase):
             with self.subTest(field=field):
                 refused=json.loads(self.recruit(**{argument:value},ok=False,exit_code=2))
                 requested={**original,field:str(self.repo/value) if argument=='path' else value}
-                self.assertEqual(refused['error'],'worker-assignment-conflict')
+                self.assertEqual(refused['error'],'player-assignment-conflict')
                 self.assertEqual(refused['session'],'worker')
                 self.assertEqual(refused['existing'],original)
                 self.assertEqual(refused['requested'],requested)
                 for action in ('session ID','worktree ID','new ID','new branch','unused path'):
                     self.assertIn(action,refused['next'])
                 self.assertEqual(self.state(),before)
-                self.assertEqual(self.call('session','worker'),session)
+                self.assertEqual(self.call('player','worker'),session)
                 self.assertEqual(self.call('worktree','worker'),work)
                 self.assertEqual(self.git('show-ref'),refs)
                 self.assertEqual(self.git('worktree','list','--porcelain'),worktrees)
@@ -136,18 +136,18 @@ class Recruit(unittest.TestCase):
         self.assertEqual(self.state(),before)
 
     def test_recruiting_an_existing_root_id_reports_the_null_parent_conflict(self):
-        original=self.call('session','root')
+        original=self.call('player','root')
         before=self.state()
-        refused=json.loads(self.recruit(worker='root',ok=False,exit_code=2))
-        self.assertEqual(refused['error'],'worker-assignment-conflict')
+        refused=json.loads(self.recruit(player='root',ok=False,exit_code=2))
+        self.assertEqual(refused['error'],'player-assignment-conflict')
         self.assertIsNone(refused['existing']['parent'])
         self.assertEqual(refused['requested']['parent'],'root')
-        self.assertEqual(self.call('session','root'),original)
+        self.assertEqual(self.call('player','root'),original)
         self.assertEqual(self.state(),before)
         self.assertFalse((self.repo/'work λ').exists())
         self.assertNotIn('worker-branch',self.git('branch','--list'))
 
-    def test_failed_worker_leaves_dirty_work_available(self):
+    def test_failed_player_leaves_dirty_work_available(self):
         self.recruit()
         workspace = self.repo / 'work λ'
         (workspace / 'partial.txt').write_text('uncommitted work in progress')
@@ -168,10 +168,10 @@ class Recruit(unittest.TestCase):
         self.assertEqual((workspace / 'partial.txt').read_text(), 'uncommitted work in progress')
         self.assertTrue((workspace / 'committed.txt').exists())
 
-    def test_refused_retries_preserve_endpoint_identity_pending_task_and_worker_work(self):
+    def test_refused_retries_preserve_endpoint_identity_pending_task_and_player_work(self):
         assigned=self.recruit()
         workspace=pathlib.Path(assigned['workspace'])
-        self.call('role','root','conductor')
+        self.call('role', 'root', 'principal-conductor')
         task=('message','pending-task','root','worker','task',"Keep this fixture task λ\n")
         self.call(*task)
         self.assertIsNone(self.call('delivery','pending-task')['receipt'])
@@ -199,7 +199,7 @@ class Recruit(unittest.TestCase):
         (workspace/'untracked λ.txt').write_bytes(b'retained untracked work\n')
 
         before=self.state()
-        session=self.call('session','worker')
+        session=self.call('player','worker')
         work=self.call('worktree','worker')
         refs=self.git('show-ref')
         worktrees=self.git('worktree','list','--porcelain')
@@ -222,7 +222,7 @@ class Recruit(unittest.TestCase):
         fields=('parent','harness','model','effort','workspace','branch','base')
         original={key:assigned[key] for key in fields}
         conflict=json.loads(self.recruit(harness='muse',ok=False,exit_code=2))
-        self.assertEqual(conflict['error'],'worker-assignment-conflict')
+        self.assertEqual(conflict['error'],'player-assignment-conflict')
         self.assertEqual(conflict['session'],'worker')
         self.assertEqual(conflict['existing'],original)
         self.assertEqual(conflict['requested'],{**original,'harness':'muse'})
@@ -230,7 +230,7 @@ class Recruit(unittest.TestCase):
             self.assertIn(action,conflict['next'])
 
         self.assertEqual(self.state(),before)
-        self.assertEqual(self.call('session','worker'),session)
+        self.assertEqual(self.call('player','worker'),session)
         self.assertEqual(self.call('worktree','worker'),work)
         self.assertEqual(self.git('show-ref'),refs)
         self.assertEqual(self.git('worktree','list','--porcelain'),worktrees)

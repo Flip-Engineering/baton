@@ -343,6 +343,12 @@ def package(args):
         (payload / 'bin').mkdir(parents=True)
         shutil.copyfile(binary, payload / 'bin/baton2')
         (payload / 'bin/baton2').chmod(0o755)
+        adapters = payload / 'libexec/baton2'
+        adapters.mkdir(parents=True)
+        for harness in ('codex', 'omp', 'mcp'):
+            for suffix in ('conductor', 'root'):
+                shutil.copyfile(ROOT / 'bend2/scripts' / (harness + '-' + suffix + '.mjs'),
+                                adapters / (harness + '-' + suffix + '.mjs'))
         shutil.copytree(logs, payload / 'logs')
         terms = stage_notices(payload, notices, identity['kind'])
         generated_dir = output / 'generated'

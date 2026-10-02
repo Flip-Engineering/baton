@@ -209,7 +209,7 @@ def main():
     pin = {
         'source': base, 'source_directory': str(source), 'started_unix': time.time(),
         'seed_repository': str(seed), 'seed_revision': base, 'seed_detached': True,
-        'worker_workspace': str(repo), 'worker_branch': branch,
+        'player_workspace': str(repo), 'player_branch': branch,
         'runtime_source_manifest_sha256': digest(out / 'runtime-source-manifest.json'),
         'runtime_source_files': manifest,
         'coordinator_sha256': digest(binary), 'coordinator_supplied': str(supplied),
@@ -265,7 +265,7 @@ Your first tool command must be exactly:
 This local tool completes the driver's observer-loss injection and returns.
 After it returns, inspect bend2/src/coordinator/receive.bend and main.bend.
 Create {DOCUMENT} as a short useful usage example covering a registered Codex
-worker's receive command, pending inbox inspection and message acknowledgment.
+Player's receive command, pending inbox inspection and message acknowledgment.
 Use shell placeholders for paths. Check every documented command against the
 current parser. Commit this one document with a clear commit message, acknowledge
 {INITIAL}, then return a final response beginning RECOVERY_INITIAL_DONE with the
@@ -333,17 +333,17 @@ both your previous commit hash and the new one. Do not repeat the checkpoint too
                                 pass
             parent = [sys.executable, str(helper), 'parent']
             call('attach', 'root', 'terminal', '', json.dumps(parent))
-            call('role', 'root', 'conductor')
-            worker = json.loads(call('recruit', 'worker', 'root', 'codex', args.model,
+            call('role', 'root', 'principal-conductor')
+            player = json.loads(call('recruit', 'worker', 'root', 'codex', args.model,
                                      args.effort, str(seed), branch, str(repo), base))
             for field, value in {'id': 'worker', 'parent': 'root', 'harness': 'codex',
                                  'model': args.model, 'effort': args.effort,
                                  'workspace': str(repo), 'branch': branch, 'base': base}.items():
-                assert worker[field] == value, worker
+                assert player[field] == value, player
             workspace = json.loads(call('worktree', 'worker'))
             assert workspace == {'id': 'worker', 'workspace': str(repo), 'branch': branch,
                                  'commit': base, 'dirty': False}, workspace
-            save(out / 'recruitment.json', {'seed': str(seed), 'session': worker,
+            save(out / 'recruitment.json', {'seed': str(seed), 'session': player,
                                            'worktree': workspace})
             call('message-file', INITIAL, 'root', 'worker', 'task', str(initial_task))
             call('connect', 'worker', '', json.dumps([str(binary), str(db), *receive]))

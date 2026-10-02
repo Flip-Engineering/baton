@@ -37,10 +37,10 @@ class Knowledge(unittest.TestCase):
         self.base = subprocess.run(['git', '-C', str(self.repo), 'rev-parse', 'HEAD'],
                                    check=True, capture_output=True, text=True).stdout.strip()
         self.call('attach', 'root', 'native-test', 'root-session', 'native-endpoint')
-        self.call('role', 'root', 'conductor')
-        self.worker('worker')
-        self.worker('grand', parent='worker')
-        self.worker('sibling')
+        self.call('role', 'root', 'principal-conductor')
+        self.player('worker')
+        self.player('grand', parent='worker')
+        self.player('sibling')
 
     def tearDown(self):
         self.temp.cleanup()
@@ -53,7 +53,7 @@ class Knowledge(unittest.TestCase):
         self.assertNotEqual(p.returncode, 0, p.stdout)
         return p
 
-    def worker(self, name, parent='root'):
+    def player(self, name, parent='root'):
         return self.call('recruit', name, parent, 'requested-harness', 'requested-model', 'high',
                          str(self.repo), name + '-branch', str(self.checkouts / name), self.base)
 
@@ -113,7 +113,7 @@ class Knowledge(unittest.TestCase):
         self.assertEqual(promoted, {'id': 'promotion-1', 'finding': 'finding-3', 'author': 'grand',
                                     'source': 'grand', 'destination': 'worker', 'promotedBy': 'worker'})
         seen = self.read('grand')
-        self.assertEqual(seen[0]['destinations'], ['worker'])
+        self.assertEqual(seen[0]['destinations'], ['player'])
         self.assertEqual(seen[0]['promotions'],
                          [{'finding': 'finding-3', 'author': 'grand', 'source': 'grand',
                            'destination': 'worker', 'promotedBy': 'worker'}])
@@ -226,7 +226,7 @@ class Knowledge(unittest.TestCase):
         self.call('connect', 'root', 'root-session', json.dumps(['/usr/bin/true']))
         self.call('recruit', 'reviewer', 'root', 'omp', 'fixture-model', 'high',
                   str(self.repo), 'reviewer-branch', str(self.checkouts / 'reviewer'), self.base)
-        self.worker('researcher', parent='reviewer')
+        self.player('researcher', parent='reviewer')
         evidence = self.evidence('retained-check', 'researcher')
         self.call('stop', 'reviewer', 'end-review', 'Reviewing session ended.')
         finding = ('record', 'handoff-finding', 'researcher', 'measured claim', evidence, 'fixture')
@@ -335,7 +335,7 @@ class Knowledge(unittest.TestCase):
         self.call('connect', 'root', 'root-session', json.dumps(['/usr/bin/true']))
         self.call('recruit', 'reviewer', 'root', 'omp', 'fixture-model', 'high',
                   str(self.repo), 'reviewer-branch', str(self.checkouts / 'reviewer'), self.base)
-        self.worker('researcher', parent='reviewer')
+        self.player('researcher', parent='reviewer')
         self.call('record', 'stopped-share-finding', 'researcher', 'measured claim',
                   self.evidence('stopped-share-evidence', 'researcher'), 'fixture')
         self.call('stop', 'reviewer', 'end-reviewer', 'Reviewing session ended.')

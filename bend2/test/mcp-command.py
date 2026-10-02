@@ -7,7 +7,7 @@ import tempfile
 import unittest
 
 ROOT = pathlib.Path(__file__).resolve().parents[2]
-MCP_SCRIPT = ROOT / 'bend2/scripts/mcp-root.mjs'
+MCP_SCRIPT = ROOT / 'bend2/scripts/mcp-conductor.mjs'
 
 CHILD = '''import json
 from pathlib import Path
@@ -51,7 +51,7 @@ class McpCommand(unittest.TestCase):
             self.assertEqual(result.returncode, 0, result.stderr)
             replies = [json.loads(line) for line in result.stdout.splitlines()]
             self.assertEqual([row['id'] for row in replies], [1, 2])
-            self.assertEqual(replies[0]['result']['serverInfo']['name'], 'baton-root')
+            self.assertEqual(replies[0]['result']['serverInfo']['name'], 'baton-conductor')
             self.assertTrue(completed.exists(), 'the coordinator child did not finish its operation')
             self.assertEqual(json.loads(completed.read_text()), {'exit_code': code})
             return replies[1]['result']

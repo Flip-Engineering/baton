@@ -48,7 +48,7 @@ class Stop(unittest.TestCase):
     eventually = receive.Receive.eventually
     coord = receive.Receive.coord
     spawn = receive.Receive.spawn
-    worker = receive.Receive.worker
+    player = receive.Receive.player
     receive_args = receive.Receive.receive_args
     endpoint = receive.Receive.endpoint
     connect = receive.Receive.connect
@@ -77,7 +77,7 @@ class Stop(unittest.TestCase):
 
     def begin(self, harness='omp', resist=False):
         self.configure()
-        self.worker(harness=harness)
+        self.player(harness=harness)
         self.coord('message', 'initial', 'root', 'parent', 'task', 'Make useful progress.')
         observer = self.spawn(*self.receive_args('parent'))
         stream, started = self.accept('parent')
@@ -85,7 +85,7 @@ class Stop(unittest.TestCase):
         self.assertEqual(json.loads(stream.readline()), {'accepted': True})
         self.action(stream, progress='output before terminal stop')
         self.assertEqual(json.loads(stream.readline()), {'progress_written': 'output before terminal stop'})
-        self.eventually(lambda: self.coord('session', 'parent')['native'] == started['native'],
+        self.eventually(lambda: self.coord('player', 'parent')['native'] == started['native'],
                         'native identity was not recorded')
         if resist:
             self.action(stream, resist_term=True)
@@ -97,13 +97,13 @@ class Stop(unittest.TestCase):
 
     def completed(self):
         def answer():
-            state = self.coord('session', 'parent').get('stop', {})
+            state = self.coord('player', 'parent').get('stop', {})
             return state if state.get('status') == 'stopped' and state.get('nativeStatus') else None
         return self.eventually(answer, 'stopped native process was not reaped')
 
     def test_idle_stop_preserves_input_refuses_new_execution_and_retries(self):
         self.configure()
-        self.worker(harness='omp')
+        self.player(harness='omp')
         self.coord('message', 'queued', 'root', 'parent', 'task', 'Queued work remains visible.')
         before = self.rows('SELECT * FROM messages')
         stopped = self.stop()
@@ -111,7 +111,7 @@ class Stop(unittest.TestCase):
         self.assertIsNone(stopped['attempt'])
         self.assertIsNone(stopped['nativeStatus'])
         self.assertIsNone(stopped['requestedSignal'])
-        self.assertNotIn('requestedSignal', self.coord('session', 'parent')['stop'])
+        self.assertNotIn('requestedSignal', self.coord('player', 'parent')['stop'])
         self.assertEqual(stopped['stoppedInputs'], 1)
         self.assertEqual(self.rows('SELECT * FROM messages'), before)
         self.assertEqual(self.stop(), stopped)
@@ -124,7 +124,7 @@ class Stop(unittest.TestCase):
         self.assertEqual(self.rows('SELECT * FROM messages'), before)
         self.assertEqual(self.coord('inbox', 'parent')[0]['executionDisposition'], 'stopped')
         self.assertEqual(next(s for s in self.coord('status') if s['id'] == 'parent')['pending'], 0)
-        self.assertEqual(self.coord('workers')[0]['pendingCount'], 0)
+        self.assertEqual(self.coord('players')[0]['pendingCount'], 0)
         refused = self.coord(*self.receive_args('parent'), ok=False)
         self.assertNotEqual(refused.returncode, 0)
         self.assertEqual(self.rows('SELECT * FROM executions'), [])
@@ -149,7 +149,7 @@ class Stop(unittest.TestCase):
         self.assertEqual(completed['nativeStatus'], 'signal 15')
         self.assertEqual(self.rows("SELECT id,body,receipt FROM messages WHERE recipient='parent' ORDER BY seq"), original)
         self.assertIn('Progress before stop.', work.read_text())
-        self.assertEqual(self.coord('session', 'parent')['native'], started['native'])
+        self.assertEqual(self.coord('player', 'parent')['native'], started['native'])
         self.assertIn('output before terminal stop', (self.directory / 'parent.jsonl').read_text())
         report = self.rows('SELECT * FROM messages WHERE id=?', [completed['reportId']])[0]
         self.assertEqual(report['receipt'], 'parent-received')
@@ -189,13 +189,13 @@ class Stop(unittest.TestCase):
         self.assertEqual(completed['nativeStatus'], 'signal 9')
         self.eventually(lambda: not self.owned_processes(), 'stopped recovery processes remained')
         self.assertEqual(len((self.directory / 'native-launches.jsonl').read_text().splitlines()), 1)
-        self.assertEqual(self.coord('session', 'parent')['native'], started['native'])
+        self.assertEqual(self.coord('player', 'parent')['native'], started['native'])
         self.assertEqual(self.coord('force-stop', 'parent', 'operator-stop')['nativeStatus'], 'signal 9')
         self.assertEqual(self.rows('SELECT * FROM messages WHERE id=?', [completed['reportId']])[0]['receipt'], 'parent-received')
 
     def test_active_direct_turn_refuses_stop_without_mutating_input(self):
         self.configure()
-        self.worker(harness='codex')
+        self.player(harness='codex')
         task = self.directory / 'task'
         task.write_text('Finish this direct turn.')
         direct = self.spawn('turn', 'parent', 'direct-turn', str(self.fixture), 'parent', 'low',
@@ -210,7 +210,7 @@ class Stop(unittest.TestCase):
 
     def test_child_report_retry_notifies_stopped_parents_parent_once(self):
         self.configure()
-        self.worker(harness='omp')
+        self.player(harness='omp')
         self.coord('recruit', 'child', 'parent', 'omp', 'child', 'low', str(self.repo),
                    'child-branch', str(self.checkouts / 'child'), self.base)
         self.coord('report', 'child-report', 'child', 'Committed work is ready for review.')
@@ -233,7 +233,7 @@ class Stop(unittest.TestCase):
 
     def test_stopped_root_retains_question_with_explicit_delivery_condition(self):
         self.configure(parent_endpoint=False)
-        self.worker(harness='omp')
+        self.player(harness='omp')
         self.coord('stop', 'root', 'stop-root', 'End root session.')
         result = self.coord('ask', 'question', 'parent', 'Who reviews the retained work?', ok=False)
         self.assertNotEqual(result.returncode, 0)
@@ -265,12 +265,12 @@ class Stop(unittest.TestCase):
         body = 'Native work ended after the stop request.'
         self.action(stream, body=body, hold_exit=True, report_input=True)
         self.assertEqual(json.loads(stream.readline()), {'terminal_written': True, 'input_after_prompt': ''})
-        self.assertEqual(self.coord('session', 'parent')['stop']['status'], 'requested')
+        self.assertEqual(self.coord('player', 'parent')['stop']['status'], 'requested')
         self.action(stream, exit_fixture=True)
         self.finish(observer)
         self.assertEqual(self.completed()['nativeStatus'], 'exit 0')
         self.eventually(lambda: not self.owned_processes(), 'stopped native question processes remained')
-        self.assertEqual(self.coord('session', 'parent')['native'], started['native'])
+        self.assertEqual(self.coord('player', 'parent')['native'], started['native'])
         self.assertEqual(self.coord('delivery', request['id'])['receipt'], 'parent-received')
         self.assertEqual([turn['reportBody'] for turn in self.coord('turns', 'parent')], [body])
 

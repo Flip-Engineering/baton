@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Run the Bend2 root's working day against configured, logged-in native routes."""
+"""Run the Bend2 Principal Conductor's working day against configured, logged-in native routes."""
 import argparse
 import errno
 import json
@@ -112,20 +112,20 @@ class Case:
             row = db.execute(f'SELECT * FROM {table} WHERE id=?', (ident,)).fetchone()
             return dict(row) if row else None
 
-    def recruit(self, kind, worker='w1'):
+    def recruit(self, kind, player='w1'):
         route = self.a.routes[kind]
-        worktree = self.path / worker
-        branch = 'accept-' + self.a.ident + '-' + self.path.name + '-' + worker
-        self.coord('recruit', worker, 'root', kind, route['model'], route['effort'],
+        worktree = self.path / player
+        branch = 'accept-' + self.a.ident + '-' + self.path.name + '-' + player
+        self.coord('recruit', player, 'root', kind, route['model'], route['effort'],
                    ROOT, branch, worktree, 'HEAD')
         return worktree
 
-    def turn(self, kind, task, ident, worker='w1', resume=''):
+    def turn(self, kind, task, ident, player='w1', resume=''):
         route = self.a.routes[kind]
         taskfile = self.path / (ident + '.txt')
         taskfile.write_text(task)
-        return self.start(self.command('turn', worker, ident, route['executable'],
-                          route['model'], route['effort'], self.path / worker,
+        return self.start(self.command('turn', player, ident, route['executable'],
+                          route['model'], route['effort'], self.path / player,
                           taskfile, self.path / (ident + '.jsonl'), resume), ident)
 
     def completed(self, process, ident):
@@ -152,9 +152,9 @@ class Acceptance:
         self.config = args.config.resolve()
         self.routes = json.loads(self.config.read_text())
         self.env = dict(os.environ)
-        self.env.update(CODEX_ROOT_MODEL=self.routes['codex']['model'],
-                        OMP_ROOT_MODEL=self.routes['omp']['model'],
-                        OMP_ROOT_THINKING=self.routes['omp']['effort'])
+        self.env.update(CODEX_CONDUCTOR_MODEL=self.routes['codex']['model'],
+                        OMP_CONDUCTOR_MODEL=self.routes['omp']['model'],
+                        OMP_CONDUCTOR_THINKING=self.routes['omp']['effort'])
         self.coordinator = args.coordinator.resolve() if args.coordinator else self.output / 'baton2'
         if not args.coordinator:
             print('Building native coordinator', flush=True)
@@ -167,7 +167,7 @@ class Acceptance:
         self.cases.append(case)
         return case
 
-    def workers(self):
+    def players(self):
         for kind in ['omp', 'codex', 'claude-code', 'muse']:
             c = self.case('worker-' + kind)
             c.coord('attach', 'root', 'external', '', '')
@@ -178,15 +178,15 @@ class Acceptance:
                        'Explain native-session recovery with source references. Read the files '
                        'before reporting. Do not edit files, launch agents, or access the network.', 'interrupted')
             observe(p, lambda: any(tool_started(e) for e in events(c.path / 'interrupted.jsonl'))
-                    and c.row('sessions', 'w1')['native'], 'worker tool start and session binding')
-            before = c.coord('session', 'w1')
+                    and c.row('sessions', 'w1')['native'], 'Player tool start and session binding')
+            before = c.coord('player', 'w1')
             kill_tree(p, c.path / 'crash.json')
             p = c.turn(kind, 'Continue the interrupted review. Begin your final report with the '
                        'exact review label from the earlier task, using your native conversation. '
                        'Explain one concrete recovery step. Do not search for the label, edit files, '
                        'or launch agents.', 'resumed', resume=before['native'])
             report = c.completed(p, 'resumed')
-            after = c.coord('session', 'w1')
+            after = c.coord('player', 'w1')
             assert after['native'] == before['native'], (before, after)
             assert label in report['body'], report
             c.evidence({'before': before, 'after': after, 'report': report})
@@ -194,10 +194,10 @@ class Acceptance:
     def guidance(self):
         c = self.case('guidance')
         c.coord('attach', 'root', 'external', '', '')
-        c.coord('role', 'root', 'conductor')
+        c.coord('role', 'root', 'principal-conductor')
         c.recruit('omp')
         p = c.turn('omp', 'Read bend2/README.md, bend2/src/coordinator/turn.bend and '
-                   'bend2/src/harness/omp-worker.bend. Review how guidance reaches an OMP '
+                   'bend2/src/harness/omp-player.bend. Review how guidance reaches an OMP '
                    'turn and identify a documentation improvement. Read all three files. '
                    'Do not edit files, launch agents, or access the network.', 'guided')
         observe(p, lambda: any(e.get('type') == 'tool_execution_start'
@@ -235,11 +235,11 @@ sys.exit(p.wait())
         wrapper.chmod(0o700)
         return wrapper
 
-    def native_roots(self):
+    def native_conductors(self):
         for kind in ['codex', 'omp']:
             c = self.case('root-' + kind)
             tap = self.root_tap(c, kind)
-            attach = ['node', ROOT / f'bend2/scripts/{kind}-root.mjs', c.db,
+            attach = ['node', ROOT / f'bend2/scripts/{kind}-conductor.mjs', c.db,
                       self.coordinator, tap, '--attach']
             run(attach, env=self.env)
             c.coord('attach', 'operator', 'terminal', '', '')
@@ -249,17 +249,17 @@ sys.exit(p.wait())
             marker = self.ident + '-root-' + kind
             p = c.turn('omp', 'Do not use tools or edit files. Reply exactly with this report: '
                        f'Root: remember review label {marker} for later turns, acknowledge report '
-                       f'root-report with this label, and do not edit, land, push or start workers.',
+                       f'root-report with this label, and do not edit, land, push or start Players.',
                        'root-report')
             report = c.completed(p, 'root-report')
             starts = list(events(c.path / 'starts.jsonl'))
             assert starts[0]['writerPid'] == p.pid, starts
             assert marker in (report['receipt'] or ''), report
-            original = c.coord('session', 'root')['native']
+            original = c.coord('player', 'root')['native']
             assert original
             (c.path / 'native.jsonl').rename(c.path / 'first-native.jsonl')
             p = c.start(c.command('message', 'root-interrupted', 'operator', 'root', 'guidance',
-                        'Read bend2/scripts/mcp-root.mjs and bend2/src/coordinator/root.bend '
+                        'Read bend2/scripts/mcp-conductor.mjs and bend2/src/coordinator/delivery.bend '
                         'completely and review recovery. Then acknowledge root-interrupted with '
                         'a source finding and the review label remembered from our earlier turn. '
                         'Do not search for the label, edit files or launch agents.'), 'root-interrupted')
@@ -272,7 +272,7 @@ sys.exit(p.wait())
             (c.path / 'resumed.out').write_text(resumed)
             report = c.coord('delivery', 'root-interrupted')
             assert marker in (report['receipt'] or ''), report
-            assert original == c.coord('session', 'root')['native']
+            assert original == c.coord('player', 'root')['native']
             assert c.coord('inbox', 'root') == []
             c.evidence({'native': original, 'starts': starts, 'pending': pending, 'resumed': report})
 
@@ -280,42 +280,42 @@ sys.exit(p.wait())
         c = self.case('root-claude-code')
         session = str(uuid.uuid4())
         c.coord('attach', 'root', 'claude-code', session, '')
-        c.coord('role', 'root', 'conductor')
+        c.coord('role', 'root', 'principal-conductor')
         c.coord('attach', 'operator', 'terminal', '', '')
         c.coord('role', 'operator', 'operator')
         marker = self.ident + '-root-claude'
         c.coord('message', 'root-setup', 'operator', 'root', 'guidance',
                 f'Remember root review label {marker}. Acknowledge root-setup with this label. '
-                'When worker reports arrive, acknowledge each with the root review label and '
-                'the complete text of that worker report as your receipt. Do not poll, edit files, '
-                'land, push or launch workers.')
+                'When Player reports arrive, acknowledge each with the root review label and '
+                'the complete text of that Player report as your receipt. Do not poll, edit files, '
+                'land, push or launch Players.')
         config = c.path / 'mcp.json'
-        save(config, {'mcpServers': {'baton-root': {'command': 'node', 'args': [
-            str(ROOT / 'bend2/scripts/mcp-root.mjs'), str(c.db), str(self.coordinator)]}}})
+        save(config, {'mcpServers': {'baton-conductor': {'command': 'node', 'args': [
+            str(ROOT / 'bend2/scripts/mcp-conductor.mjs'), str(c.db), str(self.coordinator)]}}})
         route = self.routes['claude-code']
         def start(resume):
             phase = 'resumed' if resume else 'initial'
             args = [route['executable'], '--resume' if resume else '--session-id', session,
                     '--model', route['model'], '--effort', route['effort'],
                     '--dangerously-skip-permissions', '--strict-mcp-config', '--mcp-config', str(config),
-                    '--dangerously-load-development-channels', 'server:baton-root',
+                    '--dangerously-load-development-channels', 'server:baton-conductor',
                     '--debug-file', str(c.path / (phase + '.debug')), '--ax-screen-reader']
             if not resume:
-                args.append('Act as the Bend2 root. Handle the baton-root channel messages using its tools.')
+                args.append('Act as the Bend2 Principal Conductor. Handle the baton-conductor channel messages using its tools.')
             terminal = Terminal(args, c.path / (phase + '.terminal'), self.env)
             c.processes.append(terminal)
             return terminal
         terminal = start(False)
         observe(terminal, lambda: c.row('messages', 'root-setup')['receipt'], 'Claude root setup receipt')
         c.recruit('omp')
-        p = c.turn('omp', 'Do not use tools or change files. Reply exactly: Worker report live-channel.', 'live')
+        p = c.turn('omp', 'Do not use tools or change files. Reply exactly: Player report live-channel.', 'live')
         c.completed(p, 'live')
         observe(terminal, lambda: c.row('messages', 'live')['receipt'], 'live channel acceptance')
         live = c.coord('delivery', 'live')
         assert marker in live['receipt'] and 'live-channel' in live['receipt'], live
         kill_tree(terminal, c.path / 'crash.json')
-        native = c.coord('session', 'w1')['native']
-        p = c.turn('omp', 'Do not use tools or change files. Reply exactly: Worker report recovered-channel.',
+        native = c.coord('player', 'w1')['native']
+        p = c.turn('omp', 'Do not use tools or change files. Reply exactly: Player report recovered-channel.',
                    'pending', resume=native)
         p.wait()  # Dead endpoint returns an error; the committed report is the recovery input.
         pending = c.coord('delivery', 'pending')
@@ -403,12 +403,13 @@ def main():
                         help='JSON route entries: executable, model, effort for omp/codex/claude-code/muse')
     parser.add_argument('--output', type=Path, required=True, help='new directory for retained evidence')
     parser.add_argument('--coordinator', type=Path, help='existing native executable; default builds current source')
-    parser.add_argument('--stage', choices=['workers', 'guidance', 'native-roots', 'claude-channel', 'git'],
+    parser.add_argument('--stage', choices=['players', 'workers', 'guidance', 'native-conductors', 'native-roots', 'claude-channel', 'git'],
                         help='run one stage while investigating a failed acceptance run')
     args = parser.parse_args()
     acceptance = Acceptance(args)
     try:
-        stages = [args.stage] if args.stage else ['workers', 'guidance', 'native-roots', 'claude-channel', 'git']
+        stage = {'workers': 'players', 'native-roots': 'native-conductors'}.get(args.stage, args.stage)
+        stages = [stage] if stage else ['players', 'guidance', 'native-conductors', 'claude-channel', 'git']
         for stage in stages:
             print('START ' + stage, flush=True)
             getattr(acceptance, stage.replace('-', '_'))()

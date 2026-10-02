@@ -1,21 +1,21 @@
 #!/usr/bin/env python3
 """The Git acceptance segment of the root-day runs.
 
-Three scenarios run real OMP workers through the coordinator, on scratch
+Three scenarios run real OMP Players through the coordinator, on scratch
 repositories, with no network remote. Each scenario is green only when the Git
 path it exercises answers as the design says.
 
-  landing-publishing  one real worker commits; a real OMP root session reads
-                      the worker's report, inspects its worktree and
+  landing-publishing  one real Player commits; a real OMP Principal Conductor session reads
+                      the Player's report, inspects its worktree and
                       acknowledges it; the gated landing lands the change; the
                       coordinator publishes the landed target and git ls-remote
                       reads the advertised ref back; a remote moved
                       independently makes the next push refuse.
-  target-move         two real workers branch from one target; the target
+  target-move         two real Players branch from one target; the target
                       moves under the second landing while its gate runs; it
                       refuses that attempt, and a fresh checked landing
                       lands on top of the first with both changes.
-  conflict-recovery   two real workers write one file; the second landing
+  conflict-recovery   two real Players write one file; the second landing
                       conflicts; the root guides it with a coordinator
                       message; the worker's resumed turn rebases and resolves;
                       the revised branch lands.
@@ -25,7 +25,7 @@ Usage:
           [--coordinator EXE] [--scenarios all|landing-publishing,target-move,conflict-recovery]
 
 The config carries the route entries the driver uses; this segment reads the
-``omp`` entry for both the workers and the root session, and refuses by name
+``omp`` entry for both the Players and the root session, and refuses by name
 when it is absent:
 
   {"omp": {"executable": "/opt/homebrew/bin/omp", "model": "...", "effort": "high"}}
@@ -168,54 +168,54 @@ def write_checks(run_dir):
     return plain, waiting
 
 
-def turn_worker(binary, db, repo, run_dir, route_omp, worker, branch, base,
+def turn_player(binary, db, repo, run_dir, route_omp, player, branch, base,
                 path, line, turn, guided=False, session=""):
     """One real turn for WORKER, committing in its own recruited worktree."""
-    coord(binary, db, "recruit", worker, "root", "omp", route_omp["model"],
-          route_omp["effort"], repo, branch, f"wt-{worker}", base)
-    worktree = repo / f"wt-{worker}"
-    task = run_dir / f"task-{worker}-{turn}.txt"
+    coord(binary, db, "recruit", player, "root", "omp", route_omp["model"],
+          route_omp["effort"], repo, branch, f"wt-{player}", base)
+    worktree = repo / f"wt-{player}"
+    task = run_dir / f"task-{player}-{turn}.txt"
     if guided:
         task.write_text(
-            f"You are worker {worker}. Your working directory is {worktree}.\n"
-            "The root left you guidance. Read it by running:\n"
-            f"  {binary} {db} inbox {worker}\n"
+            f"You are Player {player}. Your working directory is {worktree}.\n"
+            "The Principal Conductor left you guidance. Read it by running:\n"
+            f"  {binary} {db} inbox {player}\n"
             "Then do exactly this and nothing else:\n"
             "1. Run: git rebase main\n"
             f"2. The rebase stops on {path}. Write that file so it contains the single line: {line}\n"
             f"3. Run: git add {path}\n"
             "4. Run: GIT_EDITOR=true git rebase --continue\n"
-            f"5. Reply with one line: done {worker}\n")
+            f"5. Reply with one line: done {player}\n")
     else:
         task.write_text(
-            f"You are worker {worker}. Your working directory is {worktree}.\n"
+            f"You are Player {player}. Your working directory is {worktree}.\n"
             "Do exactly this and nothing else:\n"
             f"1. Write the file {path} so it contains the single line: {line}\n"
             f"2. Run: git add {path}\n"
-            f"3. Run: git commit -m '{worker} writes {line}'\n"
-            f"4. Reply with one line: done {worker}\n")
-    out, code, err = coord(binary, db, "turn", worker, turn, route_omp["executable"],
+            f"3. Run: git commit -m '{player} writes {line}'\n"
+            f"4. Reply with one line: done {player}\n")
+    out, code, err = coord(binary, db, "turn", player, turn, route_omp["executable"],
                            route_omp["model"], route_omp["effort"], worktree,
-                           task, run_dir / f"turn-{worker}-{turn}.jsonl", session, check=False)
-    (run_dir / f"turn-{worker}-{turn}.report").write_text(out + err)
+                           task, run_dir / f"turn-{player}-{turn}.jsonl", session, check=False)
+    (run_dir / f"turn-{player}-{turn}.report").write_text(out + err)
     if code != 0:
-        raise Failed(f"the turn of {worker} failed: {err.strip() or out.strip()}")
+        raise Failed(f"the turn of {player} failed: {err.strip() or out.strip()}")
     committed = git(worktree, "log", "-1", "--format=%h")
     content = git(worktree, "show", f"HEAD:{path}")
     if content != line:
-        raise Failed(f"worker {worker} committed {content!r}, expected {line!r}")
-    say(f"worker {worker}: branch {branch} at {committed}, {path} = {content}")
+        raise Failed(f"Player {player} committed {content!r}, expected {line!r}")
+    say(f"Player {player}: branch {branch} at {committed}, {path} = {content}")
     say(f"  report: {out}")
     return worktree
 
 
 def adapter_env(route_omp):
-    return {**os.environ, "OMP_ROOT_MODEL": route_omp["model"],
-            "OMP_ROOT_THINKING": route_omp["effort"]}
+    return {**os.environ, "OMP_CONDUCTOR_MODEL": route_omp["model"],
+            "OMP_CONDUCTOR_THINKING": route_omp["effort"]}
 
 
 def root_attach(binary, db, run_dir, route_omp):
-    done = subprocess.run(["node", "bend2/scripts/omp-root.mjs", str(db), str(binary),
+    done = subprocess.run(["node", "bend2/scripts/omp-conductor.mjs", str(db), str(binary),
                            route_omp["executable"], "--attach"],
                           cwd=ROOT, capture_output=True, text=True, env=adapter_env(route_omp))
     (run_dir / "root-attach.log").write_text(done.stdout + done.stderr)
@@ -225,7 +225,7 @@ def root_attach(binary, db, run_dir, route_omp):
 
 def root_turn(binary, db, run_dir, route_omp):
     """One real OMP root turn over the pending messages."""
-    done = subprocess.run(["node", "bend2/scripts/omp-root.mjs", str(db), str(binary),
+    done = subprocess.run(["node", "bend2/scripts/omp-conductor.mjs", str(db), str(binary),
                            route_omp["executable"]],
                           cwd=ROOT, capture_output=True, text=True, env=adapter_env(route_omp))
     (run_dir / "root-turn.out").write_text(done.stdout)
@@ -238,33 +238,33 @@ def root_turn(binary, db, run_dir, route_omp):
 def scenario_landing_publishing(config, out, binary):
     run_dir = out / "landing-publishing"
     run_dir.mkdir(parents=True)
-    say("=== landing-publishing: real worker, native root review, gated landing, publication ===")
+    say("=== landing-publishing: real Player, native Principal Conductor review, gated landing, publication ===")
     say(f"artifacts {run_dir}")
     route_omp = route(config, "omp")
     repo, base = seed_repo(run_dir)
     db = run_dir / "state.db"
     plain, _ = write_checks(run_dir)
     coord(binary, db, "attach", "root", "omp", "", "")
-    coord(binary, db, "role", "root", "conductor")
+    coord(binary, db, "role", "root", "principal-conductor")
     coord(binary, db, "attach", "operator", "terminal", "", "")
     coord(binary, db, "role", "operator", "operator")
     coord(binary, db, "message", "review-setup", "operator", "root", "guidance",
-          "Remember this instruction for this acceptance run: when a worker report arrives, "
+          "Remember this instruction for this acceptance run: when a Player report arrives, "
           "inspect its worktree, branch diff and committed file contents, then acknowledge "
-          "the report naming what you reviewed. Do not land, push, edit, or launch workers. "
+          "the report naming what you reviewed. Do not land, push, edit, or launch Players. "
           "The acceptance driver performs the Git acts after your review. "
           "Acknowledge review-setup and end this turn. Do not poll or wait in a tool. "
-          "The adapter starts your next turn when a worker report is committed.")
+          "The adapter starts your next turn when a Player report is committed.")
     root_attach(binary, db, run_dir, route_omp)
     remote = run_dir / "remote.git"
     subprocess.run(["git", "init", "-q", "--bare", str(remote)], check=True)
     git(repo, "remote", "add", "acceptance-remote", str(remote))
-    turn_worker(binary, db, repo, run_dir, route_omp, "w1", "wa", base, "data/a.txt", "alpha", "t1")
+    turn_player(binary, db, repo, run_dir, route_omp, "w1", "wa", base, "data/a.txt", "alpha", "t1")
     delivery = coord_json(binary, db, "delivery", "t1")
     if not delivery.get("receipt"):
-        raise Failed("the root did not acknowledge the worker's report")
+        raise Failed("the root did not acknowledge the Player's report")
     say(f"report t1 acknowledged with receipt {delivery['receipt']}")
-    say(f"the root's session: {coord(binary, db, 'session', 'root')[0]}")
+    say(f"the root's session: {coord(binary, db, 'player', 'root')[0]}")
     if git(repo, "rev-parse", "main") != base:
         raise Failed("the root advanced the target before the requested checked landing")
     answer, _, _ = coord(binary, db, "land-checked", "w1", repo, "main", plain, "data/seed.txt")
@@ -280,7 +280,7 @@ def scenario_landing_publishing(config, out, binary):
     if advertised.split("\t")[0] != landed:
         raise Failed("the remote does not advertise the landed commit")
     if git(repo, "show", "main:data/a.txt") != "alpha":
-        raise Failed("the landed tree lost the first worker change")
+        raise Failed("the landed tree lost the first Player change")
     say(f"landed tree data/a.txt = {git(repo, 'show', 'main:data/a.txt')}")
     git(repo, "push", "-q", "--force", "acceptance-remote",
         f"{git(repo, 'rev-parse', 'wa')}:refs/heads/main")
@@ -296,10 +296,10 @@ def scenario_landing_publishing(config, out, binary):
 
 def land_under_a_move(binary, db, repo, run_dir, waiting, plain, selected, under, mover):
     """Move the target during UNDER's check and verify its refused attempt."""
-    worker = coord_json(binary, db, "session", under)
-    before = {"branch": git(repo, "rev-parse", worker["branch"]),
-              "head": git(worker["workspace"], "rev-parse", "HEAD"),
-              "status": git(worker["workspace"], "status", "--porcelain")}
+    player = coord_json(binary, db, "player", under)
+    before = {"branch": git(repo, "rev-parse", player["branch"]),
+              "head": git(player["workspace"], "rev-parse", "HEAD"),
+              "status": git(player["workspace"], "status", "--porcelain")}
     wait_log = run_dir / "wait-observed.log"
     wait_log.write_text("")
     ready = run_dir / "check-started.log"
@@ -344,17 +344,17 @@ def land_under_a_move(binary, db, repo, run_dir, waiting, plain, selected, under
         raise Failed(f"the moved-target landing exited {child.returncode}: {answer}\n{error}")
     expect_json(answer, '"status":"blocked"', "the moved-target attempt")
     expect_json(answer, "rerun land-checked", "the explicit retry instruction")
-    after = {"branch": git(repo, "rev-parse", worker["branch"]),
-             "head": git(worker["workspace"], "rev-parse", "HEAD"),
-             "status": git(worker["workspace"], "status", "--porcelain")}
+    after = {"branch": git(repo, "rev-parse", player["branch"]),
+             "head": git(player["workspace"], "rev-parse", "HEAD"),
+             "status": git(player["workspace"], "status", "--porcelain")}
     if git(repo, "rev-parse", "main") != first or before != after:
-        raise Failed("the refused attempt changed the moved target or worker work")
+        raise Failed("the refused attempt changed the moved target or Player work")
     scratch = sorted((repo / ".scratch").glob(f"bend2-land-{under}-*"))
     if len(scratch) != 2 or not all(path.is_dir() for path in scratch):
         raise Failed("the refused attempt did not retain its candidate and target worktrees")
     (run_dir / f"land-{under}-preserved.json").write_text(json.dumps({
-        "target": first, "worker_before": before, "worker_after": after,
-        "workspace": worker["workspace"],
+        "target": first, "player_before": before, "player_after": after,
+        "workspace": player["workspace"],
         "scratch": [{"path": str(path), "head": git(path, "rev-parse", "HEAD")}
                     for path in scratch],
     }, indent=2) + "\n")
@@ -371,9 +371,9 @@ def scenario_target_move(config, out, binary):
     db = run_dir / "state.db"
     plain, waiting = write_checks(run_dir)
     coord(binary, db, "attach", "root", "external", "", "")
-    coord(binary, db, "role", "root", "conductor")
-    turn_worker(binary, db, repo, run_dir, route_omp, "w1", "wa", base, "data/a.txt", "alpha", "t1")
-    turn_worker(binary, db, repo, run_dir, route_omp, "w2", "wb", base, "data/b.txt", "beta", "t2")
+    coord(binary, db, "role", "root", "principal-conductor")
+    turn_player(binary, db, repo, run_dir, route_omp, "w1", "wa", base, "data/a.txt", "alpha", "t1")
+    turn_player(binary, db, repo, run_dir, route_omp, "w2", "wb", base, "data/b.txt", "beta", "t2")
     first, answer, wait_log = land_under_a_move(binary, db, repo, run_dir, waiting, plain,
                                                 "data/seed.txt", "w2", "w1")
     say(f"blocked attempt: {answer}")
@@ -386,10 +386,10 @@ def scenario_target_move(config, out, binary):
     if git(repo, "rev-parse", "main^") != first:
         raise Failed("the second landing does not sit on the first")
     if git(repo, "show", "main:data/a.txt") != "alpha":
-        raise Failed("the landed tree lost the first worker change")
+        raise Failed("the landed tree lost the first Player change")
     say(f"landed tree data/a.txt = {git(repo, 'show', 'main:data/a.txt')}")
     if git(repo, "show", "main:data/b.txt") != "beta":
-        raise Failed("the landed tree lost the second worker change")
+        raise Failed("the landed tree lost the second Player change")
     say(f"landed tree data/b.txt = {git(repo, 'show', 'main:data/b.txt')}")
     say(git(repo, "log", "--oneline", "main"))
 
@@ -397,16 +397,16 @@ def scenario_target_move(config, out, binary):
 def scenario_conflict_recovery(config, out, binary):
     run_dir = out / "conflict-recovery"
     run_dir.mkdir(parents=True)
-    say("=== conflict-recovery: the root guides a conflicted worker, which rebases and lands ===")
+    say("=== conflict-recovery: the root guides a conflicted Player, which rebases and lands ===")
     say(f"artifacts {run_dir}")
     route_omp = route(config, "omp")
     repo, base = seed_repo(run_dir)
     db = run_dir / "state.db"
     plain, waiting = write_checks(run_dir)
     coord(binary, db, "attach", "root", "external", "", "")
-    coord(binary, db, "role", "root", "conductor")
-    turn_worker(binary, db, repo, run_dir, route_omp, "w3", "wc", base, "data/shared.txt", "three", "t1")
-    turn_worker(binary, db, repo, run_dir, route_omp, "w4", "wd", base, "data/shared.txt", "four", "t2")
+    coord(binary, db, "role", "root", "principal-conductor")
+    turn_player(binary, db, repo, run_dir, route_omp, "w3", "wc", base, "data/shared.txt", "three", "t1")
+    turn_player(binary, db, repo, run_dir, route_omp, "w4", "wd", base, "data/shared.txt", "four", "t2")
     first, answer, wait_log = land_under_a_move(binary, db, repo, run_dir, waiting, plain,
                                             "data/seed.txt", "w4", "w3")
     say(f"blocked attempt: {answer}")
@@ -419,24 +419,24 @@ def scenario_conflict_recovery(config, out, binary):
     say(f"what the gate's check observed: {wait_log.read_text().strip()}")
     target = git(repo, "rev-parse", "main")
     if target != first or git(repo, "show", "main:data/shared.txt") != "three":
-        raise Failed("the conflict changed the first worker landing")
+        raise Failed("the conflict changed the first Player landing")
     say(f"target after the conflict: {target} with data/shared.txt = {git(repo, 'show', 'main:data/shared.txt')}")
-    say("the acceptance driver sends guidance as the declared root conductor:")
+    say("the acceptance driver sends guidance as the declared Principal Conductor:")
     guidance = coord_json(binary, db, "message", "g1", "root", "w4", "guidance",
                           f"Your landing onto main conflicted: the target moved to {target} and "
                           "data/shared.txt now carries another worker's line. Rebase your branch "
                           "onto main, resolve data/shared.txt so its single line is: three and "
                           "four, and commit the rebase.")
     say(f"  {json.dumps(guidance)}")
-    say(f"  the worker's inbox: {coord(binary, db, 'inbox', 'w4')[0]}")
-    session = json.loads(coord(binary, db, "session", "w4")[0]).get("native")
+    say(f"  the Player's inbox: {coord(binary, db, 'inbox', 'w4')[0]}")
+    session = json.loads(coord(binary, db, "player", "w4")[0]).get("native")
     if not session:
-        raise Failed("the worker has no recorded native session")
+        raise Failed("the Player has no recorded native session")
     say(f"  resuming native session {session}")
-    turn_worker(binary, db, repo, run_dir, route_omp, "w4", "wd", base, "data/shared.txt",
+    turn_player(binary, db, repo, run_dir, route_omp, "w4", "wd", base, "data/shared.txt",
                 "three and four", "t3", guided=True, session=session)
-    if coord_json(binary, db, "session", "w4")["native"] != session:
-        raise Failed("the resolving worker changed native sessions")
+    if coord_json(binary, db, "player", "w4")["native"] != session:
+        raise Failed("the resolving Player changed native sessions")
     if git(repo, "rev-parse", "wd^") != target:
         raise Failed("the revised branch is not rebased onto the moved target")
     answer, _, _ = coord(binary, db, "land-checked", "w4", repo, "main", plain, "data/shared.txt")

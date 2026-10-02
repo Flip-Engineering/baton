@@ -124,8 +124,8 @@ class HierarchyHistory(unittest.TestCase):
 
     def test_correction_merges_keep_initial_and_latest_landings(self):
         result = self.verify()
-        self.assertEqual(result['selected_worker_receipts']['deepseek'], 'landing-deepseek-correction.json')
-        self.assertEqual(result['selected_worker_receipts']['muse'], 'landing-muse-correction.json')
+        self.assertEqual(result['selected_player_receipts']['deepseek'], 'landing-deepseek-correction.json')
+        self.assertEqual(result['selected_player_receipts']['muse'], 'landing-muse-correction.json')
         initial = json.loads((self.out / 'landing-deepseek.json').read_text())
         self.assertEqual(result['landing_receipts']['landing-deepseek.json'], initial)
         self.assertNotEqual(result['landings']['deepseek']['commit'], initial['commit'])
@@ -138,13 +138,13 @@ class HierarchyHistory(unittest.TestCase):
         self.land('deepseek', '-next')
         self.publish_target()
         result = self.verify()
-        self.assertEqual(result['selected_worker_receipts']['deepseek'], 'landing-deepseek-next.json')
+        self.assertEqual(result['selected_player_receipts']['deepseek'], 'landing-deepseek-next.json')
         self.assertEqual(self.git('show', 'hierarchy-deepseek:muse.txt'), 'corrected muse')
 
-    def test_unlanded_worker_change_outside_run_scope_fails(self):
+    def test_unlanded_player_change_outside_run_scope_fails(self):
         self.git('checkout', '-q', 'hierarchy-deepseek')
         self.commit({'outside.txt': 'unassigned worker change'})
-        with self.assertRaisesRegex(AssertionError, 'Unassigned worker changes'):
+        with self.assertRaisesRegex(AssertionError, 'Unassigned Player changes'):
             self.verify()
 
     def test_unlanded_assigned_file_correction_fails(self):
@@ -182,12 +182,12 @@ class HierarchyHistory(unittest.TestCase):
         self.land('deepseek', '-delete')
         self.publish_target()
         result = self.verify()
-        self.assertEqual(result['selected_worker_receipts']['deepseek'],
+        self.assertEqual(result['selected_player_receipts']['deepseek'],
                          'landing-deepseek-delete.json')
-        worker = result['tips']['deepseek']
+        player = result['tips']['deepseek']
         landed = result['landings']['deepseek']['commit']
         target = result['tips']['target']
-        self.assertEqual(DRIVER.git_entry(self.repo, worker, 'deep.txt'), '',
+        self.assertEqual(DRIVER.git_entry(self.repo, player, 'deep.txt'), '',
                          'the worker branch stores the deleted file')
         self.assertEqual(DRIVER.git_entry(self.repo, landed, 'deep.txt'), '',
                          'the selected receipt does not store the deletion')
@@ -217,10 +217,10 @@ class HierarchyHistory(unittest.TestCase):
     def test_divergent_successful_correction_receipts_are_refused(self):
         for name in ['landing-deepseek.json', 'landing-deepseek-correction.json']:
             self.assertEqual(json.loads((self.out / name).read_text())['status'], 'landed')
-        worker = self.git('rev-parse', 'hierarchy-deepseek')
-        assigned = DRIVER.git_entry(self.repo, worker, 'deep.txt')
+        player = self.git('rev-parse', 'hierarchy-deepseek')
+        assigned = DRIVER.git_entry(self.repo, player, 'deep.txt')
         self.assertNotEqual(assigned, '', 'the worker tip has no assigned content')
-        original = self.git('show', f'{worker}:deep.txt')
+        original = self.git('show', f'{player}:deep.txt')
         self.git('checkout', '-q', 'hierarchy-lead')
         self.git('checkout', '-q', '-b', 'diverge-a')
         transient = self.commit({'deep.txt': 'divergent a'})
@@ -247,7 +247,7 @@ class HierarchyHistory(unittest.TestCase):
         lead = self.git('rev-parse', 'hierarchy-lead')
         for commit in (first, second):
             self.assertEqual(self.git('merge-base', commit, lead), commit)
-            self.assertEqual(DRIVER.git_entry(self.repo, worker, 'deep.txt'),
+            self.assertEqual(DRIVER.git_entry(self.repo, player, 'deep.txt'),
                              DRIVER.git_entry(self.repo, commit, 'deep.txt'))
             self.assertEqual(DRIVER.git_entry(self.repo, target, 'deep.txt'),
                              DRIVER.git_entry(self.repo, commit, 'deep.txt'))
