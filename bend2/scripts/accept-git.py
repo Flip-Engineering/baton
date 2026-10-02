@@ -13,6 +13,7 @@ path it exercises answers as the design says.
                       independently makes the next push refuse.
   target-move         two real workers branch from one target; the target
                       moves under the second landing while its gate runs; it
+                      refuses that attempt, and a fresh checked landing
                       lands on top of the first with both changes.
   conflict-recovery   two real workers write one file; the second landing
                       conflicts; the root guides it with a coordinator
@@ -294,16 +295,21 @@ def scenario_landing_publishing(config, out, binary):
 
 
 def land_under_a_move(binary, db, repo, run_dir, waiting, plain, selected, under, mover):
-    """Start UNDER's landing, move the target with MOVER's, answer UNDER's."""
+    """Move the target during UNDER's check and verify its refused attempt."""
+    worker = coord_json(binary, db, "session", under)
+    before = {"branch": git(repo, "rev-parse", worker["branch"]),
+              "head": git(worker["workspace"], "rev-parse", "HEAD"),
+              "status": git(worker["workspace"], "status", "--porcelain")}
     wait_log = run_dir / "wait-observed.log"
     wait_log.write_text("")
     ready = run_dir / "check-started.log"
     env = {**os.environ, "BATON_WAIT_LOG": str(wait_log),
            "BATON_WAIT_BASE": git(repo, "rev-parse", "main"), "BATON_WAIT_READY": str(ready)}
-    with (run_dir / f"land-{under}.out").open("w") as opening:
+    with (run_dir / f"land-{under}.out").open("w") as opening, \
+            (run_dir / f"land-{under}.err").open("w") as errors:
         child = subprocess.Popen([str(binary), str(db), "land-checked", under, str(repo),
                                   "main", str(waiting), selected],
-                                 stdout=opening, stderr=subprocess.STDOUT, text=True, env=env)
+                                 stdout=opening, stderr=errors, text=True, env=env)
         try:
             while not ready.exists():
                 if child.poll() is not None:
@@ -333,13 +339,32 @@ def land_under_a_move(binary, db, repo, run_dir, waiting, plain, selected, under
                         pass
                 child.wait()
     answer = (run_dir / f"land-{under}.out").read_text().strip()
+    if child.returncode != 0:
+        error = (run_dir / f"land-{under}.err").read_text()
+        raise Failed(f"the moved-target landing exited {child.returncode}: {answer}\n{error}")
+    expect_json(answer, '"status":"blocked"', "the moved-target attempt")
+    expect_json(answer, "rerun land-checked", "the explicit retry instruction")
+    after = {"branch": git(repo, "rev-parse", worker["branch"]),
+             "head": git(worker["workspace"], "rev-parse", "HEAD"),
+             "status": git(worker["workspace"], "status", "--porcelain")}
+    if git(repo, "rev-parse", "main") != first or before != after:
+        raise Failed("the refused attempt changed the moved target or worker work")
+    scratch = sorted((repo / ".scratch").glob(f"bend2-land-{under}-*"))
+    if len(scratch) != 2 or not all(path.is_dir() for path in scratch):
+        raise Failed("the refused attempt did not retain its candidate and target worktrees")
+    (run_dir / f"land-{under}-preserved.json").write_text(json.dumps({
+        "target": first, "worker_before": before, "worker_after": after,
+        "workspace": worker["workspace"],
+        "scratch": [{"path": str(path), "head": git(path, "rev-parse", "HEAD")}
+                    for path in scratch],
+    }, indent=2) + "\n")
     return first, answer, wait_log
 
 
 def scenario_target_move(config, out, binary):
     run_dir = out / "target-move"
     run_dir.mkdir(parents=True)
-    say("=== target-move: the target moves under the second landing, clean rebase ===")
+    say("=== target-move: blocked attempt, fresh checked landing ===")
     say(f"artifacts {run_dir}")
     route_omp = route(config, "omp")
     repo, base = seed_repo(run_dir)
@@ -351,8 +376,12 @@ def scenario_target_move(config, out, binary):
     turn_worker(binary, db, repo, run_dir, route_omp, "w2", "wb", base, "data/b.txt", "beta", "t2")
     first, answer, wait_log = land_under_a_move(binary, db, repo, run_dir, waiting, plain,
                                                 "data/seed.txt", "w2", "w1")
-    say(f"second landing: {answer}")
-    expect_json(answer, '"status":"landed"', "the second landing")
+    say(f"blocked attempt: {answer}")
+    answer, _, err = coord(binary, db, "land-checked", "w2", repo, "main", plain, "data/seed.txt")
+    (run_dir / "land-w2-retry.out").write_text(answer + "\n")
+    (run_dir / "land-w2-retry.err").write_text(err + "\n")
+    say(f"fresh checked landing: {answer}")
+    expect_json(answer, '"status":"landed"', "the fresh checked landing")
     say(f"what the gate's check observed: {wait_log.read_text().strip()}")
     if git(repo, "rev-parse", "main^") != first:
         raise Failed("the second landing does not sit on the first")
@@ -380,7 +409,11 @@ def scenario_conflict_recovery(config, out, binary):
     turn_worker(binary, db, repo, run_dir, route_omp, "w4", "wd", base, "data/shared.txt", "four", "t2")
     first, answer, wait_log = land_under_a_move(binary, db, repo, run_dir, waiting, plain,
                                             "data/seed.txt", "w4", "w3")
-    say(f"conflicted landing: {answer}")
+    say(f"blocked attempt: {answer}")
+    answer, _, err = coord(binary, db, "land-checked", "w4", repo, "main", plain, "data/seed.txt")
+    (run_dir / "land-w4-retry.out").write_text(answer + "\n")
+    (run_dir / "land-w4-retry.err").write_text(err + "\n")
+    say(f"fresh conflicted landing: {answer}")
     expect_json(answer, '"status":"conflict"', "the conflicted landing")
     expect_json(answer, "data/shared.txt", "the conflict answer")
     say(f"what the gate's check observed: {wait_log.read_text().strip()}")
