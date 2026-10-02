@@ -1,52 +1,60 @@
 # Baton2
 
-Baton2 is the Bend2 rewrite of Baton, a system for coordinating coding agents, preserving their
-work, reviewing contributions, and publishing verified changes. Development takes place on the
-`bend2-rewrite` branch.
+Baton2 coordinates coding agents in a parent hierarchy. Orchestrators recruit workers,
+send tasks and guidance, receive retained reports, review committed changes, run checked
+landings, and publish to an explicitly selected Git remote. Agents can record findings
+with evidence and promote them into a shared scope for other agents to retrieve.
 
-The target is a native application written in Bend2 with C host effects for operating-system
-services. The migration plan covers the decision core, durable state, worker lifecycle,
-verification, publication, and CLI, MCP, and web interfaces. Its final phase removes the temporary
-JavaScript boundary and the Node runtime.
+The coordinator and Git operations compile from Bend2 into a native executable with C
+bindings for SQLite and operating-system services. Claude Code, Codex, OMP and Muse run
+through their native harnesses. The [implemented architecture](docs/bend2/architecture.md)
+describes their process ownership, report delivery and recovery.
 
-The rewrite is in development. This branch contains the current JavaScript implementation,
-the target design, and compiled language examples. Production migration depends on the evidence
-gates in the [rewrite plan](docs/bend2/rewrite-plan.md).
+Baton2 is in development on `bend2-rewrite`. The
+[readiness record](docs/bend2/readiness.md) distinguishes verified capabilities, observed
+failures and the work required before release.
 
-## Development contract
+## Build and use
 
-The [16 approved prohibitions](docs/bend2/laws-proposed.md) are Baton2's development contracts.
-They cover recoverable acceptance, uncertain external effects, truthful evidence, work
-preservation, authorization, continuation responsibility, and publication to the designated
-shared destination. The [approval record](docs/bend2/authorization.md) identifies the reviewed
-revision and its binding entries.
+Build with Bend 2.0.25, clang and SQLite development headers:
 
-The [language review](docs/bend2/language-review.md) records what the pinned compiler and runtime
-establish. Filesystem durability, process supervision and cancellation, JSON, HTTP/TLS, and
-cryptography have named prerequisites. Architecture changes and migration phases must satisfy
-their recorded proofs before taking production authority.
+```sh
+sh bend2/scripts/build-native.sh
+.scratch/bend2/baton2 state.db status
+```
+
+Set `BEND` to an installed compiler path when it is outside `.bend/bin/bend` or
+`node_modules/.bend/bin/bend`. The [native command guide](bend2/README.md) covers
+recruitment, harness configuration, messages, knowledge, review and Git operations.
+
+Conductors direct subordinate Players. Peer messages require membership in an
+explicitly designated tight Ensemble; Conductor peers also share a hierarchy depth.
+The [messaging contract](docs/bend2/messaging.md) defines the permitted routes and retries.
+
+## Verification
+
+The coordinator entry imports operative laws over the real implementation functions.
+Compiling the coordinator entry verifies their proofs. The negative control also removes proofs
+and changes implementations to verify that the compiler rejects those changes.
+
+```sh
+node bend2/scripts/laws-check.mjs
+sh bend2/scripts/check-native.sh
+```
+
+The native checks exercise storage, actual subprocesses, harness protocols, recovery,
+messages, knowledge and Git operations. Published run records state the source pins,
+host conditions and limits of each measurement.
 
 ## Design and evidence
 
-- [Rewrite plan](docs/bend2/rewrite-plan.md): migration phases, entry conditions, verification, and rollback.
-- [Target architecture](docs/bend2/target-architecture.md): subsystem ownership and interfaces.
-- [Architecture review](docs/bend2/architecture-review.md): proposed changes and their consequences.
-- [Migration readiness](docs/bend2/go-no-go.md): evidence available and remaining prerequisites.
-- [Language reference](docs/bend2/reference/README.md): vendored `bendlang/bend` commit
-  `a49524265bdfa5753a4bf38e25f0574a705dd868` and Bend 2.0.25.
-- [Compiled examples](docs/bend2/examples/index.md): capability probes with commands and observed results.
+- [Implemented architecture](docs/bend2/architecture.md): ownership, commands and recovery.
+- [Shared knowledge](docs/bend2/knowledge-context-2026-09-29.md): evidence, scope and promotion.
+- [Naming legend](docs/bend2/terminology.md): agent roles and coordinated groups.
+- [Approved laws](docs/bend2/laws-proposed.md) and [authorization](docs/bend2/authorization.md): the development contract.
+- [Language reference](docs/bend2/reference/README.md): pinned compiler and runtime.
+- [Historical migration review](docs/bend2/go-no-go.md): the earlier prototype decision and its evidence.
 
-## Working with this branch
-
-[CONTRIBUTING.md](CONTRIBUTING.md) describes the repository workflow.
-[AGENTS.md](AGENTS.md) defines its writing rules.
-[SYSTEM.md](SYSTEM.md) describes the current Baton implementation.
-
-Run the current implementation's verification from the repository root:
-
-```sh
-npm test --prefix impl
-```
-
-Language probes follow the [example convention](docs/bend2/examples/README.md).
-Each records its toolchain, commands, output, and the scope of its conclusion.
+[CONTRIBUTING.md](CONTRIBUTING.md) describes repository development.
+[AGENTS.md](AGENTS.md) defines the writing rules. The retained JavaScript implementation
+and its verification instructions are described in [SYSTEM.md](SYSTEM.md).
