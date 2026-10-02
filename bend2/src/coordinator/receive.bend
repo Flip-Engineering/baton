@@ -25,7 +25,9 @@ def shell(value: String) -> String:
 
 def instructions(executable: String, database: String, +session: String) -> String:
   +command = shell(executable) ++ " " ++ shell(database)
-  "You are session " ++ session ++ " in a Bend2 coordinator. Review the pending messages and direct your workers.\n"
+  "You are session " ++ session ++ " in a Baton orchestra. A Player is an individual agent. Review pending messages and follow your task.\n"
+  ++ "The Principal Conductor is the main orchestrator. An Associate Conductor is a sub-orchestrator. An Ensemble is a coordinated team of agents. A Section is a capability-specific subgroup. The Orchestra is the whole coordinated system. When coordinating players, direct their work according to your task.\n"
+  ++ "The workers command lists player sessions. WORKER denotes a player session ID in the CLI examples.\n"
   ++ "Coordinator CLI:\n  " ++ command ++ " inbox " ++ shell(session) ++ "\n  " ++ command ++ " ack MESSAGE_ID " ++ shell(session) ++ " RECEIPT\n"
   ++ "Acknowledge each message after accepting it.\n  " ++ command ++ " status\n  " ++ command ++ " workers\n  " ++ command ++ " session ID\n  " ++ command ++ " worktree ID\n  " ++ command ++ " turns ID\n"
   ++ "  " ++ command ++ " recruit WORKER " ++ shell(session) ++ " HARNESS MODEL EFFORT REPO BRANCH PATH BASE\n"
@@ -33,8 +35,8 @@ def instructions(executable: String, database: String, +session: String) -> Stri
   ++ "  " ++ command ++ " native-reply " ++ shell(session) ++ " REQUEST RESPONSE_JSON\n  " ++ command ++ " native-reply-file " ++ shell(session) ++ " REQUEST PATH\n"
   ++ "  " ++ command ++ " record FINDING_ID " ++ shell(session) ++ " CLAIM message:MESSAGE_ID LIMITS\n  " ++ command ++ " knowledge " ++ shell(session) ++ "\n"
   ++ "  " ++ command ++ " promote PROMOTION_ID " ++ shell(session) ++ " SOURCE " ++ shell(session) ++ " FINDING_ID\n"
-  ++ "Author findings from reviewed evidence. Cite an existing retained message you sent or received and state the claim's limits. knowledge lists every finding visible to your session, with its cited evidence and promotion history. Review a finding before explicitly promoting it from its recorded SOURCE into your own scope; its original author remains recorded. A promotion notice names a finding shared into your scope. Retrieve it with knowledge, review its evidence and decide which workers should receive a message about it.\n"
-  ++ "Start long worker turns in the background and finish your native turn so their reports can continue your session.\n\n"
+  ++ "Author findings from reviewed evidence. Cite an existing retained message you sent or received and state the claim's limits. knowledge lists every finding visible to your session, with its cited evidence and promotion history. Review a finding before explicitly promoting it from its recorded SOURCE into your own scope; its original author remains recorded. A promotion notice names a finding shared into your scope. Retrieve it with knowledge, review its evidence and decide which players should receive a message about it.\n"
+  ++ "Start long player turns in the background and finish your native turn so their reports can continue your session.\n\n"
 
 def receive_status(db: String, session: String, status: String) -> IO(Result<&1,&1,U32 & String,Unit>):
   do IO<Result<&1,&1,U32 & String,Unit>>:
@@ -193,7 +195,7 @@ def acquired(+db: String, +session: String, cmd: String, model: String, effort: 
 def registered(exists: Bool) -> IO(Unit):
   match exists:
     case True{}: IO.pure(Unit,Unit{})
-    case False{}: IO.die(Unit,2,"Session is not registered; attach a root or recruit a worker before receiving messages.")
+    case False{}: IO.die(Unit,2,"Session is not registered; attach a conductor or recruit a player before receiving messages.")
 
 def available(+db: String, +session: String, cmd: String, model: String, effort: String, cwd: String, log: String, again: Unit -> IO(Result<&1,&1,U32 & String,Unit>), closed: Bool) -> IO(Result<&1,&1,U32 & String,Unit>):
   match closed:
