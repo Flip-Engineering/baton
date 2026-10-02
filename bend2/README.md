@@ -46,6 +46,14 @@ comparison of retained coordination operations with a pinned old Baton checkout.
 The [measurement report](../docs/bend2/comparison-2026-09-28.md) records its
 workload, source revisions, results and limits.
 
+The historical helper integration requires an explicit local repository and revision.
+It retains the exported source, complete helper output and process results:
+
+```sh
+python3 bend2/test/external/compare-original.py --old-repo /path/to/old/baton \
+  --old-ref FULL_COMMIT --output /fresh/owned/comparison-test
+```
+
 ## Coordinator storage
 
 The executable stores sessions and messages and supervises foreground Claude

@@ -1,4 +1,8 @@
-"""Check comparison status assertions against production commands and incorrect answers."""
+"""Check native status, comparison assertions and helper completion.
+
+Historical production integration runs explicitly through
+external/compare-original.py with --old-repo, --old-ref and --output.
+"""
 import copy
 import hashlib
 import importlib.util
@@ -143,68 +147,38 @@ class NativeStatus(unittest.TestCase):
             DRIVER.assert_bend_status(response, self.expected, self.pending)
 
 
-class OriginalStatus(unittest.TestCase):
-    def test_participants_and_parked_guidance_use_the_original_production_helper(self):
-        with tempfile.TemporaryDirectory(dir=ROOT / '.scratch/bend2') as temp:
-            path = pathlib.Path(temp)
-            (path / 'home').mkdir()
-            env = {'PATH': os.environ.get('PATH', '/usr/bin:/bin'),
-                   'HOME': str(path / 'home'), 'LANG': 'en_US.UTF-8'}
-            old = DRIVER.Old(shutil.which('node'), ROOT, path / 'store', 2, path, env)
-            try:
-                old.call('setup')
-                workers = {'worker-0', 'worker-1'}
-                answer, _ = old.call('workers')
-                DRIVER.assert_original_status(answer, workers, {})
-                guides = {}
-                for ident in sorted(workers):
-                    text = 'Retained Unicode λ guidance to ' + ident
-                    saved, _ = old.call('guide', id=ident + '-guide', worker=ident, body=text)
-                    guides[saved['guide']['messageId']] = (ident, text)
-                answer, _ = old.call('workers')
-                DRIVER.assert_original_status(answer, workers, guides)
-                with self.assertRaisesRegex(RuntimeError, 'Unknown operation unsupported-operation'):
-                    old.call('unsupported-operation')
-                answer, _ = old.call('workers')
-                DRIVER.assert_original_status(answer, workers, guides)
-                wrong = copy.deepcopy(answer)
-                wrong['participants'].append(copy.deepcopy(wrong['participants'][0]))
-                with self.assertRaises(AssertionError):
-                    DRIVER.assert_original_status(wrong, workers, guides)
-                wrong = copy.deepcopy(answer)
-                wrong['participants'][0]['guidance'][0]['delivery']['state'] = 'delivered'
-                with self.assertRaises(AssertionError):
-                    DRIVER.assert_original_status(wrong, workers, guides)
-                wrong = copy.deepcopy(answer)
-                left, right = wrong['participants']
-                left['guidance'], right['guidance'] = right['guidance'], left['guidance']
-                with self.assertRaises(AssertionError):
-                    DRIVER.assert_original_status(wrong, workers, guides)
-            finally:
-                old.close()
-            self.assertEqual(old.process.returncode, 0)
-            self.assertTrue(old.process.stdin.closed)
-            self.assertTrue(old.process.stdout.closed)
-            self.assertTrue(old.stderr.closed)
-
-    def test_stdout_eof_is_reported_and_the_production_helper_is_reaped(self):
-        with tempfile.TemporaryDirectory(dir=ROOT / '.scratch/bend2') as temp:
-            path = pathlib.Path(temp)
-            (path / 'home').mkdir()
-            env = {'PATH': os.environ.get('PATH', '/usr/bin:/bin'),
-                   'HOME': str(path / 'home'), 'LANG': 'en_US.UTF-8'}
-            old = DRIVER.Old(shutil.which('node'), ROOT, path / 'store', 2, path, env)
-            try:
-                old.call('setup')
-                old.process.stdin.close()
-                with self.assertRaisesRegex(RuntimeError, 'stdout reached EOF'):
-                    old.read()
-            finally:
-                old.close()
-            self.assertEqual(old.process.returncode, 0)
-            self.assertTrue(old.process.stdin.closed)
-            self.assertTrue(old.process.stdout.closed)
-            self.assertTrue(old.stderr.closed)
+class OriginalStatusContract(unittest.TestCase):
+    def test_participant_identity_and_parked_guidance_corruptions_are_refused(self):
+        workers = {'worker-0', 'worker-1'}
+        guides = {'guide-0': ('worker-0', 'First guidance'),
+                  'guide-1': ('worker-1', 'Second guidance')}
+        answer = {'projection': 'participants', 'participants': [
+            {'participantId': ident, 'parentId': None, 'route': None,
+             'guidance': [{'messageId': 'guide-' + ident[-1],
+                           'delivery': {'state': 'parked'}}]}
+            for ident in sorted(workers)
+        ]}
+        DRIVER.assert_original_status(answer, workers, guides)
+        changes = []
+        wrong = copy.deepcopy(answer)
+        wrong['projection'] = 'contributions'
+        changes.append(wrong)
+        wrong = copy.deepcopy(answer)
+        wrong['participants'].append(copy.deepcopy(wrong['participants'][0]))
+        changes.append(wrong)
+        wrong = copy.deepcopy(answer)
+        wrong['participants'].pop()
+        changes.append(wrong)
+        wrong = copy.deepcopy(answer)
+        wrong['participants'][0]['guidance'][0]['delivery']['state'] = 'delivered'
+        changes.append(wrong)
+        wrong = copy.deepcopy(answer)
+        left, right = wrong['participants']
+        left['guidance'], right['guidance'] = right['guidance'], left['guidance']
+        changes.append(wrong)
+        for response in changes:
+            with self.subTest(response=response), self.assertRaises(AssertionError):
+                DRIVER.assert_original_status(response, workers, guides)
 
 
 class HelperCompletion(unittest.TestCase):
