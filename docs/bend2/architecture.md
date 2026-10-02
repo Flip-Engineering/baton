@@ -285,8 +285,12 @@ use fails without it, following `AGENTS.md`.
 ## Acceptance
 
 The [shared knowledge workflow](knowledge-context-2026-09-29.md) adds recording,
-scoped retrieval and explicit promotion in the existing coordinator database.
-Its real producer, parent-review and consumer acceptance remains pending.
+scoped retrieval, explicit promotion and destination-owner notification in the
+existing coordinator database. The [real acceptance](knowledge-context-2026-10-01.md)
+records producer investigation, root evidence review, promotion, sibling retrieval,
+fresh-conversation retrieval after receipts and separately promoted correction.
+Its root endpoint collected notices; scope selection used trusted declared actors.
+The owner chooses which ensembles receive further messages.
 
 The root-day acceptance exercises real OMP, Codex, Claude Code and Muse workers;
 OMP guidance during a turn; report-triggered Codex, OMP and Claude root turns;

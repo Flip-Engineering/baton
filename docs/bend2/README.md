@@ -16,6 +16,8 @@ promotion and destination-owner notification.
 worker landing, native promotion notice and failed Muse launch.
 [Coordinator comparison](coordinator-comparison-2026-10-01.md) measures the
 current original and rewritten coordination operations.
+[Stored status comparison](coordinator-status-comparison-2026-10-01.md) measures
+session metadata and pending counts alongside the existing worker roster.
 
 Historical reviews and language experiments remain reference material. The current
 mandate and operative implementation determine the work.
