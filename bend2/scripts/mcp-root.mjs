@@ -127,12 +127,12 @@ const TOOLS = [
   },
   {
     name: 'baton2_guide',
-    description: 'Send guidance to a worker through the coordinator.',
+    description: 'Send guidance to a player through the coordinator.',
     inputSchema: {
       type: 'object',
       properties: {
         id: { type: 'string', description: 'Message ID (unique)' },
-        worker: { type: 'string', description: 'Worker session ID' },
+        worker: { type: 'string', description: 'Player session ID' },
         body: { type: 'string', description: 'Guidance text' },
       },
       required: ['id', 'worker', 'body'],
@@ -141,21 +141,21 @@ const TOOLS = [
   },
   {
     name: 'baton2_worker_status',
-    description: 'Show a worker\'s Git worktree state (branch, commit, dirty).',
+    description: 'Show a player\'s Git worktree state (branch, commit, dirty).',
     inputSchema: {
       type: 'object',
-      properties: { worker: { type: 'string', description: 'Worker session ID' } },
+      properties: { worker: { type: 'string', description: 'Player session ID' } },
       required: ['worker'],
       additionalProperties: false,
     },
   },
   {
     name: 'baton2_land',
-    description: 'Land a worker\'s committed changes onto a target branch (fast-forward only).',
+    description: 'Land a player\'s committed changes onto a target branch (fast-forward only).',
     inputSchema: {
       type: 'object',
       properties: {
-        worker: { type: 'string', description: 'Worker session ID' },
+        worker: { type: 'string', description: 'Player session ID' },
         repo: { type: 'string', description: 'Repository path' },
         target: { type: 'string', description: 'Target branch name' },
       },
@@ -165,11 +165,11 @@ const TOOLS = [
   },
   {
     name: 'baton2_land_checked',
-    description: 'Land a worker\'s changes onto a target branch with a check script gate.',
+    description: 'Land a player\'s changes onto a target branch with a check script gate.',
     inputSchema: {
       type: 'object',
       properties: {
-        worker: { type: 'string', description: 'Worker session ID' },
+        worker: { type: 'string', description: 'Player session ID' },
         repo: { type: 'string', description: 'Repository path' },
         target: { type: 'string', description: 'Target branch name' },
         check: { type: 'string', description: 'Check script path' },
@@ -181,15 +181,15 @@ const TOOLS = [
   },
   {
     name: 'baton2_workers',
-    description: 'List all workers with their harness, route, workspace, latest report and pending message count.',
+    description: 'List all players with their harness, route, workspace, latest report and pending message count.',
     inputSchema: { type: 'object', properties: {}, additionalProperties: false },
   },
   {
     name: 'baton2_turns',
-    description: 'List all turns for a worker with event type, report body and receipt status.',
+    description: 'List all turns for a player with event type, report body and receipt status.',
     inputSchema: {
       type: 'object',
-      properties: { worker: { type: 'string', description: 'Worker session ID' } },
+      properties: { worker: { type: 'string', description: 'Player session ID' } },
       required: ['worker'],
       additionalProperties: false,
     },
@@ -319,7 +319,7 @@ function handleMessage(msg) {
         experimental: { 'claude/channel': {} },
       },
       serverInfo: { name: 'baton-root', version: '0.1.0' },
-      instructions: 'Bend2 coordinator root attachment. Use baton2_inbox or baton2_pending to see pending messages. Use baton2_ack to acknowledge delivery. Use baton2_guide to direct workers. Use baton2_workers to list workers and baton2_turns to see a worker\'s turn history. Use baton2_land or baton2_land_checked to land a worker\'s changes.',
+      instructions: 'Baton Principal Conductor attachment. Use baton2_inbox or baton2_pending to see pending messages. Use baton2_ack to acknowledge delivery. Use baton2_guide to direct players. Use baton2_workers to list players and baton2_turns to see a player\'s turn history. Use baton2_land or baton2_land_checked to land a player\'s changes.',
     });
     return;
   }
