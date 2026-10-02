@@ -1,6 +1,8 @@
 """Worker recruitment and status against independent, temporary Git repositories."""
+from contextlib import closing
 import json
 import pathlib
+import sqlite3
 import subprocess
 import tempfile
 import unittest
@@ -27,13 +29,24 @@ class Recruit(unittest.TestCase):
     def git(self,*args):
         return subprocess.run(['git','-C',str(self.repo),*args],check=True,text=True,capture_output=True).stdout
 
-    def call(self,*args,ok=True,cwd=None):
+    def call(self,*args,ok=True,cwd=None,exit_code=None):
         p=subprocess.run([str(EXE),str(self.db),*map(str,args)],text=True,capture_output=True,cwd=cwd or ROOT)
         self.assertEqual(p.returncode==0,ok,p.stderr)
+        if exit_code is not None:
+            self.assertEqual(p.returncode,exit_code,p.stdout+p.stderr)
+            self.assertEqual(p.stdout,'')
         return json.loads(p.stdout) if ok else p.stderr
 
-    def recruit(self,worker='worker',branch='worker-branch',path='work λ',parent='root',ok=True):
-        return self.call('recruit',worker,parent,'omp','zai/glm-5.3-flash','high',self.repo,branch,path,self.base,ok=ok)
+    def recruit(self,worker='worker',branch='worker-branch',path='work λ',parent='root',ok=True,
+                harness='omp',model='zai/glm-5.3-flash',effort='high',base=None,exit_code=None):
+        return self.call('recruit',worker,parent,harness,model,effort,self.repo,branch,path,
+                         self.base if base is None else base,ok=ok,exit_code=exit_code)
+
+    def state(self):
+        with closing(sqlite3.connect(self.db)) as db:
+            return {name:db.execute('SELECT * FROM '+name).fetchall() for name in
+                    ('sessions','messages','turns','executions','session_stops',
+                     'session_roles','ensembles','ensemble_members')}
 
     def test_recruit_creates_registers_and_reads_workspace_from_another_cwd(self):
         row=self.recruit()
@@ -65,6 +78,72 @@ class Recruit(unittest.TestCase):
         self.assertFalse((self.repo/'another-path').exists())
         self.assertNotIn('another-branch',self.git('branch','--list'))
         self.assertEqual(self.call('session','worker')['branch'],'worker-branch')
+
+    def test_assignment_conflicts_name_both_values_and_preserve_work_and_input(self):
+        assigned=self.recruit()
+        workspace=pathlib.Path(assigned['workspace'])
+        self.call('attach','other-parent','codex','','')
+        self.call('role','root','conductor')
+        self.call('message','pending-task','root','worker','task',"Keep this task λ\n")
+        endpoint=json.dumps(['/usr/bin/true','retained worker endpoint'])
+        self.call('connect','worker','native-kept',endpoint)
+        self.call('bind','worker','native-kept','observed-harness','observed-model','low')
+        (workspace/'committed.txt').write_text('committed worker work\n')
+        for args in [('add','committed.txt'),('commit','-q','-m','worker change')]:
+            subprocess.run(['git','-C',str(workspace),*args],check=True,capture_output=True)
+        (workspace/'committed.txt').write_text('uncommitted worker change\n')
+        (workspace/'untracked λ.txt').write_bytes(b'retained untracked work\n')
+        self.git('commit','-q','--allow-empty','-m','another base')
+        other_base=self.git('rev-parse','HEAD').strip()
+
+        before=self.state()
+        session=self.call('session','worker')
+        work=self.call('worktree','worker')
+        self.assertTrue(work['dirty'])
+        self.assertNotEqual(work['commit'],self.base)
+        refs=self.git('show-ref')
+        worktrees=self.git('worktree','list','--porcelain')
+        files={p.name:p.read_bytes() for p in workspace.iterdir() if p.is_file()}
+        self.assertEqual(self.recruit(),session)
+        self.assertEqual(self.state(),before)
+
+        changes=[('parent','other-parent','parent'),('harness','muse','harness'),
+                 ('model',"another/provider's-model λ",'model'),('effort','low','effort'),
+                 ('path','another path λ','workspace'),('branch','another-branch','branch'),
+                 ('base',other_base,'base')]
+        fields=('parent','harness','model','effort','workspace','branch','base')
+        original={key:assigned[key] for key in fields}
+        for argument,value,field in changes:
+            with self.subTest(field=field):
+                refused=json.loads(self.recruit(**{argument:value},ok=False,exit_code=2))
+                requested={**original,field:str(self.repo/value) if argument=='path' else value}
+                self.assertEqual(refused['error'],'worker-assignment-conflict')
+                self.assertEqual(refused['session'],'worker')
+                self.assertEqual(refused['existing'],original)
+                self.assertEqual(refused['requested'],requested)
+                for action in ('session ID','worktree ID','new ID','new branch','unused path'):
+                    self.assertIn(action,refused['next'])
+                self.assertEqual(self.state(),before)
+                self.assertEqual(self.call('session','worker'),session)
+                self.assertEqual(self.call('worktree','worker'),work)
+                self.assertEqual(self.git('show-ref'),refs)
+                self.assertEqual(self.git('worktree','list','--porcelain'),worktrees)
+                self.assertEqual({p.name:p.read_bytes() for p in workspace.iterdir() if p.is_file()},files)
+                self.assertFalse((self.repo/'another path λ').exists())
+        self.assertEqual(self.recruit(),session)
+        self.assertEqual(self.state(),before)
+
+    def test_recruiting_an_existing_root_id_reports_the_null_parent_conflict(self):
+        original=self.call('session','root')
+        before=self.state()
+        refused=json.loads(self.recruit(worker='root',ok=False,exit_code=2))
+        self.assertEqual(refused['error'],'worker-assignment-conflict')
+        self.assertIsNone(refused['existing']['parent'])
+        self.assertEqual(refused['requested']['parent'],'root')
+        self.assertEqual(self.call('session','root'),original)
+        self.assertEqual(self.state(),before)
+        self.assertFalse((self.repo/'work λ').exists())
+        self.assertNotIn('worker-branch',self.git('branch','--list'))
 
     def test_failed_worker_leaves_dirty_work_available(self):
         self.recruit()

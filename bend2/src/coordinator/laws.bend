@@ -669,9 +669,23 @@ law m8_acknowledgement_is_bound_to_its_recipient:
 def m8_acknowledgement_is_bound_to_its_recipient(id, recipient, receipt):
   {==}
 
-# M-8: registering a worker is bound to the stored row. A repeat that names the
-# stored values is answered from that row; any other value for the identity
-# fails the write rather than replacing the stored worker.
+# Worker assignment retries compare all stored fields. SQLite evaluates the
+# predicate and transaction; native recruitment tests verify row and Git state.
+law m8_worker_retry_compares_the_complete_assignment:
+  for parent: String
+  for harness: String
+  for model: String
+  for effort: String
+  for workspace: String
+  for branch: String
+  for base: String
+  {C.worker_matches(parent,harness,model,effort,workspace,branch,base) == "(parent IS " ++ C.q(parent) ++ " AND harness=" ++ C.q(harness) ++ " AND model=" ++ C.q(model) ++ " AND effort=" ++ C.q(effort) ++ " AND workspace=" ++ C.q(workspace) ++ " AND branch=" ++ C.q(branch) ++ " AND base=" ++ C.q(base) ++ ")" : String}
+
+def m8_worker_retry_compares_the_complete_assignment(parent,harness,model,effort,workspace,branch,base):
+  {==}
+
+# Existing assignments receive no update. The answer identifies a conflict or
+# returns the stored session after the complete assignment matches.
 law m8_worker_registration_is_bound_to_the_stored_row:
   for +id: String
   for +parent: String
@@ -681,9 +695,25 @@ law m8_worker_registration_is_bound_to_the_stored_row:
   for +workspace: String
   for +branch: String
   for +base: String
-  {C.sql(C.Worker{id, parent, harness, model, effort, workspace, branch, base}) == "INSERT INTO sessions(id,parent,harness,model,effort,workspace,branch,base) VALUES(" ++ C.q(id) ++ "," ++ C.q(parent) ++ "," ++ C.q(harness) ++ "," ++ C.q(model) ++ "," ++ C.q(effort) ++ "," ++ C.q(workspace) ++ "," ++ C.q(branch) ++ "," ++ C.q(base) ++ ") ON CONFLICT(id) DO UPDATE SET id=CASE WHEN sessions.parent=excluded.parent AND sessions.harness=excluded.harness AND sessions.model=excluded.model AND sessions.effort=excluded.effort AND sessions.workspace=excluded.workspace AND sessions.branch=excluded.branch AND sessions.base=excluded.base THEN sessions.id ELSE NULL END;" ++ C.session_result(id) : String}
+  {C.sql(C.Worker{id, parent, harness, model, effort, workspace, branch, base}) == "INSERT INTO sessions(id,parent,harness,model,effort,workspace,branch,base) VALUES(" ++ C.q(id) ++ "," ++ C.q(parent) ++ "," ++ C.q(harness) ++ "," ++ C.q(model) ++ "," ++ C.q(effort) ++ "," ++ C.q(workspace) ++ "," ++ C.q(branch) ++ "," ++ C.q(base) ++ ") ON CONFLICT(id) DO NOTHING;"
+  ++ "SELECT json_object('error','worker-assignment-conflict','session',id,'existing',json_object('parent',parent,'harness',harness,'model',model,'effort',effort,'workspace',workspace,'branch',branch,'base',base),'requested',json_object('parent'," ++ C.q(parent) ++ ",'harness'," ++ C.q(harness) ++ ",'model'," ++ C.q(model) ++ ",'effort'," ++ C.q(effort) ++ ",'workspace'," ++ C.q(workspace) ++ ",'branch'," ++ C.q(branch) ++ ",'base'," ++ C.q(base) ++ "),'condition','The session ID is already registered with a different assignment.','next','Read session ID and worktree ID. Retry recruit with the recorded assignment, or recruit a new ID with a new branch and unused path; retain the original work.') FROM sessions WHERE id=" ++ C.q(id) ++ " AND NOT " ++ C.worker_matches(parent,harness,model,effort,workspace,branch,base) ++ ";"
+  ++ C.session_result_where("id=" ++ C.q(id) ++ " AND " ++ C.worker_matches(parent,harness,model,effort,workspace,branch,base)) : String}
 
 def m8_worker_registration_is_bound_to_the_stored_row(id, parent, harness, model, effort, workspace, branch, base):
+  {==}
+
+law m14_worker_conflict_output_is_refused:
+  {Store.refused("{\"error\":\"worker-assignment-conflict\",\"session\":\"worker\",\"existing\":{\"harness\":\"omp\"},\"requested\":{\"harness\":\"muse\"}}") == True{} : Bool}
+
+def m14_worker_conflict_output_is_refused():
+  {==}
+
+law m14_worker_conflict_returns_the_structured_refusal:
+  for db: String
+  for command: C.Command
+  {Store.committed(db,command,Done{"{\"error\":\"worker-assignment-conflict\",\"session\":\"worker\",\"existing\":{\"harness\":\"omp\"},\"requested\":{\"harness\":\"muse\"}}"}) == IO.pure(Result<&1,&1,U32 & String,String>,Fail{(2,"{\"error\":\"worker-assignment-conflict\",\"session\":\"worker\",\"existing\":{\"harness\":\"omp\"},\"requested\":{\"harness\":\"muse\"}}")}) : IO(Result<&1,&1,U32 & String,String>)}
+
+def m14_worker_conflict_returns_the_structured_refusal(db,command):
   {==}
 
 # M-8: attaching a root is bound to the row it names. The conflict clause

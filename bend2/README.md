@@ -132,6 +132,11 @@ with no receipt remains in the worker's inbox for a later delivery attempt.
 and worktree, then records the worker under its parent. A relative `PATH` is
 resolved from `REPO`; the stored workspace path is absolute. The base is stored
 as a commit ID. A matching repeated recruitment returns the existing worker.
+Conflicting assignment fields return `worker-assignment-conflict` with exit
+status 2, the existing and requested assignments, and a next-step instruction.
+The recorded assignment, binding, pending input, branch and workspace remain
+available. Read `session ID` and `worktree ID`, retry the recorded assignment,
+or recruit a new ID with a new branch and unused path.
 `worktree ID` reads its current Git branch, commit and dirty state.
 
 `land WORKER_ID REPO TARGET_BRANCH` looks up the worker's branch from the
