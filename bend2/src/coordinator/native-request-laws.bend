@@ -80,7 +80,7 @@ def native_reply_dispatch_follows_response_admission(db,parent,id,response):
 
 def refusal_context(db: String, +id: String) -> IO(Result<&1,&1,U32 & String,String>):
   do IO<Result<&1,&1,U32 & String,String>>:
-    context : String <- IO.try(String,DB.Sql.query(db,"SELECT coalesce((SELECT json_object('request',id,'worker',worker,'parent',parent,'method',method,'closed',closed,'stdinWritten',written,'responseStored',reply IS NOT NULL,'sessionStopped',EXISTS(SELECT 1 FROM session_stops WHERE session=native_requests.worker)) FROM native_requests WHERE id=" ++ C.q(id) ++ "),json_object('request'," ++ C.q(id) ++ ",'condition','unknown-request'));"))
+    context : String <- IO.try(String,DB.Sql.query(db,"SELECT coalesce((SELECT json_object('request',id,'player',worker,'parent',parent,'method',method,'closed',closed,'stdinWritten',written,'responseStored',reply IS NOT NULL,'sessionStopped',EXISTS(SELECT 1 FROM session_stops WHERE session=native_requests.worker)) FROM native_requests WHERE id=" ++ C.q(id) ++ "),json_object('request'," ++ C.q(id) ++ ",'condition','unknown-request'));"))
     IO.pure(Result<&1,&1,U32 & String,String>,Fail{(1,"Native reply refused. Use the recorded parent and response shape; closed requests and stopped sessions cannot accept replies. " ++ context)})
 
 law native_reply_unadmitted_response_cannot_send:

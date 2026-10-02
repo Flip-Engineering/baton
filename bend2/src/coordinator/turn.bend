@@ -2,7 +2,7 @@ import Base
 import ./commands.bend as C
 import ./store.bend as Store
 import ./stop.bend as Stop
-import ./root.bend as Root
+import ./delivery.bend as Delivery
 import ../host/session-lock.bend as Lock
 import ./guidance.bend as Guidance
 import ./native-requests.bend as NativeRequests
@@ -10,10 +10,10 @@ import ../host/sqlite.bend as DB
 import ../host/text.bend as T
 import ../host/process.bend as P
 import ../git/text.bend as Tx
-import ../harness/claude-worker.bend as Claude
-import ../harness/omp-worker.bend as Omp
-import ../harness/muse-worker.bend as Muse
-import ../harness/codex-worker.bend as Codex
+import ../harness/claude-player.bend as Claude
+import ../harness/omp-player.bend as Omp
+import ../harness/muse-player.bend as Muse
+import ../harness/codex-player.bend as Codex
 import ../git/process.bend as GitProc
 import ../git/types.bend as G
 
@@ -34,25 +34,25 @@ def remember_write(previous: String, result: Result<&1,&1,U32 & String,Unit>) ->
     case Fail{error}: remember(previous,Fail{error})
     case Done{unit}: previous
 
-def report(db: String, worker: String, id: String, body: String) -> IO(Unit):
+def report(db: String, player: String, id: String, body: String) -> IO(Unit):
   do IO<Unit>:
-    saved : String <- IO.try(String,Store.commit(db,C.Report{id,worker,body}))
+    saved : String <- IO.try(String,Store.commit(db,C.Report{id,player,body}))
     IO.write(saved)
 
-def diagnostic(db: String, worker: String, id: String, text: String, empty: Bool) -> IO(Unit):
+def diagnostic(db: String, player: String, id: String, text: String, empty: Bool) -> IO(Unit):
   match empty:
     case True{}: IO.pure(Unit,Unit{})
-    case False{}: report(db,worker,id ++ ":observation","Native output observation failed: " ++ text)
+    case False{}: report(db,player,id ++ ":observation","Native output observation failed: " ++ text)
 
-def result_missing(db: String, worker: String, id: String, log: String, stderr: String, status: String, found: Bool) -> IO(Unit):
+def result_missing(db: String, player: String, id: String, log: String, stderr: String, status: String, found: Bool) -> IO(Unit):
   match found:
     case True{}: IO.pure(Unit,Unit{})
-    case False{}: report(db,worker,id,"Worker process ended without a native result (" ++ status ++ "). Output: " ++ log ++ ". Stderr: " ++ stderr)
+    case False{}: report(db,player,id,"Player process ended without a native result (" ++ status ++ "). Output: " ++ log ++ ". Stderr: " ++ stderr)
 
-def exit_failure(db: String, worker: String, id: String, status: String, success: Bool) -> IO(Unit):
+def exit_failure(db: String, player: String, id: String, status: String, success: Bool) -> IO(Unit):
   match success:
     case True{}: IO.pure(Unit,Unit{})
-    case False{}: report(db,worker,id ++ ":exit","Worker process ended with " ++ status)
+    case False{}: report(db,player,id ++ ":exit","Player process ended with " ++ status)
 
 def failed(+status: String, +event: String, error: String) -> Bool:
   Bool.or(Bool.not(String.eq(status,"exit 0")),Bool.or(String.is_empty(event),Bool.not(String.is_empty(error))))
@@ -65,59 +65,59 @@ def combine(first: Result<&1,&1,U32 & String,Unit>, second: Result<&1,&1,U32 & S
 def delivery_result(+error: String) -> Result<&1,&1,U32 & String,Unit>:
   Bool.pick(Result<&1,&1,U32 & String,Unit>,String.is_empty(error),Done{Unit{}},Fail{(1,error)})
 
-def prepare_finished(+db: String, +worker: String, +id: String, log: String, stderr: String, +error: String, +status: String) -> IO(Unit):
+def prepare_finished(+db: String, +player: String, +id: String, log: String, stderr: String, +error: String, +status: String) -> IO(Unit):
   do IO<Unit>:
     result : String <- IO.try(String,DB.Sql.query(db,"SELECT count(*) FROM turns WHERE id=" ++ C.q(id) ++ ";"))
-    noted : Unit <- diagnostic(db,worker,id,error,String.is_empty(error))
-    missing : Unit <- result_missing(db,worker,id,log,stderr,status,String.eq(result,"1\n"))
-    exit_failure(db,worker,id,status,String.eq(status,"exit 0"))
+    noted : Unit <- diagnostic(db,player,id,error,String.is_empty(error))
+    missing : Unit <- result_missing(db,player,id,log,stderr,status,String.eq(result,"1\n"))
+    exit_failure(db,player,id,status,String.eq(status,"exit 0"))
 
-def prepare_worker(db: String, worker: String, id: String, log: String, stderr: String, error: String, status: String, early: Bool) -> IO(Unit):
+def prepare_player(db: String, player: String, id: String, log: String, stderr: String, error: String, status: String, early: Bool) -> IO(Unit):
   match early:
-    case False{}: prepare_finished(db,worker,id,log,stderr,error,status)
-    case True{}: report(db,worker,id,error)
+    case False{}: prepare_finished(db,player,id,log,stderr,error,status)
+    case True{}: report(db,player,id,error)
 
-def prepare_parent(db: String, worker: String, id: String, log: String, stderr: String, outcome: Outcome, parent: Bool) -> IO(Unit):
+def prepare_parent(db: String, player: String, id: String, log: String, stderr: String, outcome: Outcome, parent: Bool) -> IO(Unit):
   match outcome:
     case Ended{+status,event,error}:
       match parent:
         case False{}: IO.pure(Unit,Unit{})
-        case True{}: prepare_worker(db,worker,id,log,stderr,error,status,Bool.or(String.eq(status,"start failed"),String.eq(status,"input failed")))
+        case True{}: prepare_player(db,player,id,log,stderr,error,status,Bool.or(String.eq(status,"start failed"),String.eq(status,"input failed")))
 
 # Failure reports are committed while this invocation still owns the session.
-def prepare(+db: String, +worker: String, id: String, log: String, stderr: String, outcome: Outcome) -> IO(Unit):
+def prepare(+db: String, +player: String, id: String, log: String, stderr: String, outcome: Outcome) -> IO(Unit):
   do IO<Unit>:
-    parent : String <- IO.try(String,DB.Sql.query(db,"SELECT parent IS NOT NULL FROM sessions WHERE id=" ++ C.q(worker) ++ ";"))
-    prepare_parent(db,worker,id,log,stderr,outcome,String.eq(parent,"1\n"))
+    parent : String <- IO.try(String,DB.Sql.query(db,"SELECT parent IS NOT NULL FROM sessions WHERE id=" ++ C.q(player) ++ ";"))
+    prepare_parent(db,player,id,log,stderr,outcome,String.eq(parent,"1\n"))
 
-def record_exit(db: String, worker: String, id: String, log: String, outcome: Outcome) -> IO(Unit):
+def record_exit(db: String, player: String, id: String, log: String, outcome: Outcome) -> IO(Unit):
   match outcome:
-    case Ended{status,event,error}: Stop.exited(db,worker,id,status,event,error,log)
+    case Ended{status,event,error}: Stop.exited(db,player,id,status,event,error,log)
 
-def worker_finished(+db: String, worker: String, +id: String) -> IO(Result<&1,&1,U32 & String,Unit>):
+def player_finished(+db: String, player: String, +id: String) -> IO(Result<&1,&1,U32 & String,Unit>):
   do IO<Result<&1,&1,U32 & String,Unit>>:
     +saved : String <- IO.try(String,Store.commit(db,C.Delivery{id}))
-    diagnostic_delivery : Result<&1,&1,U32 & String,String> <- Root.deliver(db,id ++ ":observation","1","")
-    delivered : Result<&1,&1,U32 & String,String> <- Root.deliver(db,id,"1",saved)
-    exit_delivery : Result<&1,&1,U32 & String,String> <- Root.deliver(db,id ++ ":exit","1","")
-    stopped : Result<&1,&1,U32 & String,Unit> <- Stop.deliver(db,worker,id)
+    diagnostic_delivery : Result<&1,&1,U32 & String,String> <- Delivery.deliver(db,id ++ ":observation","1","")
+    delivered : Result<&1,&1,U32 & String,String> <- Delivery.deliver(db,id,"1",saved)
+    exit_delivery : Result<&1,&1,U32 & String,String> <- Delivery.deliver(db,id ++ ":exit","1","")
+    stopped : Result<&1,&1,U32 & String,Unit> <- Stop.deliver(db,player,id)
     written : Unit <- IO.write(saved)
     IO.pure(Result<&1,&1,U32 & String,Unit>,combine(delivery_result(remember(remember(remember("",diagnostic_delivery),delivered),exit_delivery)),stopped))
 
-def finish_parent(db: String, worker: String, id: String, log: String, outcome: Outcome, parent: Bool) -> IO(Result<&1,&1,U32 & String,Unit>):
+def finish_parent(db: String, player: String, id: String, log: String, outcome: Outcome, parent: Bool) -> IO(Result<&1,&1,U32 & String,Unit>):
   match outcome:
     case Ended{+status,+event,error}:
       match parent:
-        case True{}: worker_finished(db,worker,id)
+        case True{}: player_finished(db,player,id)
         case False{}: do IO<Result<&1,&1,U32 & String,Unit>>:
-          output : String <- IO.try(String,DB.Sql.query(db,"SELECT json_object('session'," ++ C.q(worker) ++ ",'status'," ++ C.q(status) ++ ",'event',CASE WHEN " ++ C.q(event) ++ "='' THEN NULL ELSE json(" ++ C.q(event) ++ ") END,'error'," ++ C.q(error) ++ ");"))
+          output : String <- IO.try(String,DB.Sql.query(db,"SELECT json_object('session'," ++ C.q(player) ++ ",'status'," ++ C.q(status) ++ ",'event',CASE WHEN " ++ C.q(event) ++ "='' THEN NULL ELSE json(" ++ C.q(event) ++ ") END,'error'," ++ C.q(error) ++ ");"))
           written : Unit <- IO.write(output)
           IO.pure(Result<&1,&1,U32 & String,Unit>,Done{Unit{}})
 
-def finish(+db: String, +worker: String, id: String, log: String, outcome: Outcome) -> IO(Result<&1,&1,U32 & String,Unit>):
+def finish(+db: String, +player: String, id: String, log: String, outcome: Outcome) -> IO(Result<&1,&1,U32 & String,Unit>):
   do IO<Result<&1,&1,U32 & String,Unit>>:
-    parent : String <- IO.try(String,DB.Sql.query(db,"SELECT parent IS NOT NULL FROM sessions WHERE id=" ++ C.q(worker) ++ ";"))
-    finish_parent(db,worker,id,log,outcome,String.eq(parent,"1\n"))
+    parent : String <- IO.try(String,DB.Sql.query(db,"SELECT parent IS NOT NULL FROM sessions WHERE id=" ++ C.q(player) ++ ";"))
+    finish_parent(db,player,id,log,outcome,String.eq(parent,"1\n"))
 
 def status_text(result: Result<&1,&1,U32 & String,String>) -> String:
   match result:
@@ -149,11 +149,11 @@ def send_prompt(+handle: U32,prompt: String,+harness: String) -> IO(Result<&1,&1
     closed : Result<&1,&1,U32 & String,Unit> <- close_input(handle,String.eq(harness,"omp\n"))
     IO.pure(Result<&1,&1,U32 & String,Unit>,send_result(sent,closed))
 
-def codex_report(db: String, worker: String, id: String, event: String, empty: Bool) -> IO(Unit):
+def codex_report(db: String, player: String, id: String, event: String, empty: Bool) -> IO(Unit):
   match empty:
     case True{}: IO.pure(Unit,Unit{})
     case False{}: do IO<Unit>:
-      saved : String <- IO.try(String,Store.commit(db,C.Observe{id,worker,event}))
+      saved : String <- IO.try(String,Store.commit(db,C.Observe{id,player,event}))
       IO.pure(Unit,Unit{})
 
 def codex_result_sql(source: String) -> String:
@@ -161,12 +161,12 @@ def codex_result_sql(source: String) -> String:
   "SELECT json_object('type','result','is_error',json_extract(e.value,'$.type')='turn.failed','nativeEvent',json(e.value),'result',CASE WHEN json_extract(e.value,'$.type')='turn.failed' THEN json_extract(e.value,'$.error.message') ELSE (SELECT json_extract(m.value,'$.item.text') FROM json_each(" ++ events ++ ") m WHERE m.key<e.key AND json_extract(m.value,'$.type')='item.completed' AND json_extract(m.value,'$.item.type')='agent_message' ORDER BY m.key DESC LIMIT 1) END) FROM json_each(" ++ events ++ ") e WHERE json_extract(e.value,'$.type') IN ('turn.completed','turn.failed') ORDER BY e.key DESC LIMIT 1;"
 
 # Keep this invocation's latest Codex assistant message and terminal event.
-def codex_finished(+db: String, worker: String, id: String, source: String, previous: String, codex: Bool) -> IO(String):
+def codex_finished(+db: String, player: String, id: String, source: String, previous: String, codex: Bool) -> IO(String):
   match codex:
     case False{}: IO.pure(String,previous)
     case True{}: do IO<String>:
       +event : String <- IO.try(String,DB.Sql.query(db,codex_result_sql(source)))
-      saved : Unit <- codex_report(db,worker,id,event,String.is_empty(event))
+      saved : Unit <- codex_report(db,player,id,event,String.is_empty(event))
       IO.pure(String,event)
 
 # The live issue-608-reclaim turn emitted its report in message_end, then an
@@ -187,9 +187,9 @@ def omp_terminal(db: String, +event: String, +message: String, enabled: Bool) ->
       normalized : String <- IO.try(String,DB.Sql.query(db,"SELECT CASE WHEN json_extract(" ++ C.q(event) ++ ",'$.type')='agent_end' AND coalesce(json_extract(" ++ C.q(event) ++ ",'$.isTerminal'),1)=1 AND coalesce(json_array_length(" ++ C.q(event) ++ ",'$.messages'),0)=0 AND " ++ C.q(message) ++ "<>'' THEN json_set(" ++ C.q(event) ++ ",'$.messages',json_array(json(" ++ C.q(message) ++ "))) ELSE " ++ C.q(event) ++ " END;"))
       IO.pure(String,Tx.trim_nl(normalized))
 
-def observe_event(db: String, worker: String, id: String, line: String, relevant: Bool) -> IO(Result<&1,&1,U32 & String,String>):
+def observe_event(db: String, player: String, id: String, line: String, relevant: Bool) -> IO(Result<&1,&1,U32 & String,String>):
   match relevant:
-    case True{}: Store.commit(db,C.Observe{id,worker,line})
+    case True{}: Store.commit(db,C.Observe{id,player,line})
     case False{}: IO.pure(Result<&1,&1,U32 & String,String>,Done{""})
 
 def append_frame(log: String, line: String, keep: Bool) -> IO(Result<&1,&1,U32 & String,Unit>):
@@ -223,7 +223,7 @@ def codex_frames(db: String, +previous: String, +line: String, codex: Bool) -> I
       IO.pure(String,Tx.trim_nl(value))
 
 @unsafe
-def consume(+db: String, +worker: String, +id: String, +log: String, +handle: U32, +harness: String, cursor: String, last_message: String, terminal: String, codex_log: String, +first_error: String, sender: Chan(Result<&1,&1,U32 & String,Unit>), +attempt: String, deliveries: List<Chan(Result<&1,&1,U32 & String,String>)>, result: Result<&1,&1,U32 & String,Maybe<String>>) -> IO(Outcome & List<Chan(Result<&1,&1,U32 & String,String>)>):
+def consume(+db: String, +player: String, +id: String, +log: String, +handle: U32, +harness: String, cursor: String, last_message: String, terminal: String, codex_log: String, +first_error: String, sender: Chan(Result<&1,&1,U32 & String,Unit>), +attempt: String, deliveries: List<Chan(Result<&1,&1,U32 & String,String>)>, result: Result<&1,&1,U32 & String,Maybe<String>>) -> IO(Outcome & List<Chan(Result<&1,&1,U32 & String,String>)>):
   match result:
     case Fail{error}: do IO<Outcome & List<Chan(Result<&1,&1,U32 & String,String>)>>:
       closed : Result<&1,&1,U32 & String,Unit> <- P.ProcessChild.close_stdin(handle)
@@ -234,7 +234,7 @@ def consume(+db: String, +worker: String, +id: String, +log: String, +handle: U3
       do IO<Outcome & List<Chan(Result<&1,&1,U32 & String,String>)>>:
         sent : Result<&1,&1,U32 & String,Unit> <- IO.join(Result<&1,&1,U32 & String,Unit>,sender)
         status : Result<&1,&1,U32 & String,String> <- P.ProcessChild.wait(handle)
-        event : String <- codex_finished(db,worker,id,codex_log,terminal,String.eq(harness,"codex\n"))
+        event : String <- codex_finished(db,player,id,codex_log,terminal,String.eq(harness,"codex\n"))
         closed : Result<&1,&1,U32 & String,String> <- NativeRequests.closed(db,attempt,Bool.not(String.is_empty(attempt)))
         IO.pure(Outcome & List<Chan(Result<&1,&1,U32 & String,String>)>,(Ended{status_text(status),event,remember(remember_write(first_error,sent),closed)},deliveries))
     case Done{Some{+line}}:
@@ -242,16 +242,16 @@ def consume(+db: String, +worker: String, +id: String, +log: String, +handle: U3
         +kind : String <- frame_kind(db,line,String.eq(harness,"omp\n"))
         written : Result<&1,&1,U32 & String,Unit> <- record_frame(log,line,kind)
         +relevant : Bool <- IO.pure(Bool,Guidance.relevant(kind,String.eq(harness,"omp\n")))
-        next_cursor : String <- Guidance.observe(db,worker,handle,line,cursor,Bool.and(String.eq(harness,"omp\n"),relevant))
+        next_cursor : String <- Guidance.observe(db,player,handle,line,cursor,Bool.and(String.eq(harness,"omp\n"),relevant))
         +message : String <- omp_message(db,line,last_message,Bool.and(String.eq(harness,"omp\n"),relevant))
         +event : String <- omp_terminal(db,line,message,Bool.and(String.eq(harness,"omp\n"),relevant))
-        observed : Result<&1,&1,U32 & String,String> <- observe_event(db,worker,id,event,relevant)
+        observed : Result<&1,&1,U32 & String,String> <- observe_event(db,player,id,event,relevant)
         ended : String <- terminal_event(db,event,terminal,relevant)
         codex_state : String <- codex_frames(db,codex_log,line,String.eq(harness,"codex\n"))
-        questions : List<Chan(Result<&1,&1,U32 & String,String>)> & String <- NativeRequests.observe(db,worker,id,attempt,line,deliveries,Bool.and(Bool.not(String.is_empty(attempt)),String.eq(kind,"extension_ui_request\n")))
+        questions : List<Chan(Result<&1,&1,U32 & String,String>)> & String <- NativeRequests.observe(db,player,id,attempt,line,deliveries,Bool.and(Bool.not(String.is_empty(attempt)),String.eq(kind,"extension_ui_request\n")))
         NativeRequests.with_observation(Outcome & List<Chan(Result<&1,&1,U32 & String,String>)>,questions,wakes => question_error => do IO<Outcome & List<Chan(Result<&1,&1,U32 & String,String>)>>:
           next : Result<&1,&1,U32 & String,Maybe<String>> <- P.ProcessChild.read_line(handle)
-          consume(db,worker,id,log,handle,harness,next_cursor,message,ended,codex_state,remember(remember_write(Bool.pick(String,String.is_empty(first_error),question_error,first_error),written),observed),sender,attempt,wakes,next))
+          consume(db,player,id,log,handle,harness,next_cursor,message,ended,codex_state,remember(remember_write(Bool.pick(String,String.is_empty(first_error),question_error,first_error),written),observed),sender,attempt,wakes,next))
 
 def direct_observed(observation: Outcome & List<Chan(Result<&1,&1,U32 & String,String>)>) -> IO(Outcome):
   (outcome,deliveries)=observation
@@ -259,27 +259,27 @@ def direct_observed(observation: Outcome & List<Chan(Result<&1,&1,U32 & String,S
     settled : Result<&1,&1,U32 & String,Unit> <- NativeRequests.settle(deliveries)
     IO.pure(Outcome,outcome)
 
-def started(+db: String, +worker: String, +id: String, +log: String, prompt: String, +harness: String, result: Result<&1,&1,U32 & String,U32>) -> IO(Outcome):
+def started(+db: String, +player: String, +id: String, +log: String, prompt: String, +harness: String, result: Result<&1,&1,U32 & String,U32>) -> IO(Outcome):
   match result:
-    case Fail{error}: IO.pure(Outcome,Ended{"start failed","","Worker process could not start: " ++ error_text(error)})
+    case Fail{error}: IO.pure(Outcome,Ended{"start failed","","Player process could not start: " ++ error_text(error)})
     case Done{+handle}:
       do IO<Outcome>:
         sender : Chan(Result<&1,&1,U32 & String,Unit>) <- IO.fork(Result<&1,&1,U32 & String,Unit>,send_prompt(handle,prompt,harness))
         first : Result<&1,&1,U32 & String,Maybe<String>> <- P.ProcessChild.read_line(handle)
-        observation : Outcome & List<Chan(Result<&1,&1,U32 & String,String>)> <- consume(db,worker,id,log,handle,harness,"0\n","","","","",sender,"",Nil{},first)
+        observation : Outcome & List<Chan(Result<&1,&1,U32 & String,String>)> <- consume(db,player,id,log,handle,harness,"0\n","","","","",sender,"",Nil{},first)
         direct_observed(observation)
 
 # The retained process sends its initial input once. Reattachment reads the same
 # attempt from its first frame so native completion can be reconstructed.
-def retained_output(db: String, worker: String, id: String, log: String, +harness: String, attempt: String, +handle: U32) -> IO(Outcome & List<Chan(Result<&1,&1,U32 & String,String>)>):
+def retained_output(db: String, player: String, id: String, log: String, +harness: String, attempt: String, +handle: U32) -> IO(Outcome & List<Chan(Result<&1,&1,U32 & String,String>)>):
   do IO<Outcome & List<Chan(Result<&1,&1,U32 & String,String>)>>:
     sender : Chan(Result<&1,&1,U32 & String,Unit>) <- IO.fork(Result<&1,&1,U32 & String,Unit>,IO.pure(Result<&1,&1,U32 & String,Unit>,Done{Unit{}}))
     first : Result<&1,&1,U32 & String,Maybe<String>> <- P.ProcessChild.read_line(handle)
-    consume(db,worker,id,log,handle,harness,"0\n","","","","",sender,attempt,Nil{},first)
+    consume(db,player,id,log,handle,harness,"0\n","","","","",sender,attempt,Nil{},first)
 
-def retained(+db: String, +worker: String, +directory: String, +cmd: String, +model: String, +effort: String, cwd: String, +session: String, +harness: String, +sessions: String, +prompt: String, lock: U32, recovery: String) -> IO(Result<&1,&1,U32 & String,P.RetainedStart>):
+def retained(+db: String, +player: String, +directory: String, +cmd: String, +model: String, +effort: String, cwd: String, +session: String, +harness: String, +sessions: String, +prompt: String, lock: U32, recovery: String) -> IO(Result<&1,&1,U32 & String,P.RetainedStart>):
   do IO<Result<&1,&1,U32 & String,P.RetainedStart>>:
-    alternate : String <- IO.try(String,DB.Sql.query(db,"SELECT CASE WHEN " ++ C.q(sessions) ++ "=" ++ C.q(db ++ ".sessions") ++ " THEN CASE WHEN parent IS NULL THEN " ++ C.q(db ++ ".root-sessions") ++ " ELSE " ++ C.q(db ++ ".session-") ++ " || lower(hex(id)) END ELSE " ++ C.q(db ++ ".sessions") ++ " END FROM sessions WHERE id=" ++ C.q(worker) ++ ";"))
+    alternate : String <- IO.try(String,DB.Sql.query(db,"SELECT CASE WHEN " ++ C.q(sessions) ++ "=" ++ C.q(db ++ ".sessions") ++ " THEN CASE WHEN parent IS NULL THEN " ++ C.q(db ++ ".root-sessions") ++ " ELSE " ++ C.q(db ++ ".session-") ++ " || lower(hex(id)) END ELSE " ++ C.q(db ++ ".sessions") ++ " END FROM sessions WHERE id=" ++ C.q(player) ++ ";"))
     +native : String <- Omp.resume_file(sessions,Tx.trim_nl(alternate),session,Bool.and(String.eq(harness,"omp\n"),Bool.not(String.is_empty(session))))
     args : String <- IO.pure(String,Bool.pick(String,String.eq(harness,"omp\n"),Omp.argv(cmd,model,effort,sessions,native,String.is_empty(native)),Codex.argv(cmd,model,effort,native,String.is_empty(native))))
     input : String <- IO.pure(String,Bool.pick(String,String.eq(harness,"omp\n"),Omp.prompt(prompt),prompt))
@@ -287,21 +287,21 @@ def retained(+db: String, +worker: String, +directory: String, +cmd: String, +mo
 
 def claude_launch(cmd: String, model: String, effort: String, cwd: String, stderr: String, session: String, fresh: Bool) -> IO(Result<&1,&1,U32 & String,U32>):
   match fresh:
-    case True{}: Claude.start_worker(cmd,model,effort,cwd,stderr)
-    case False{}: Claude.resume_worker(cmd,model,effort,cwd,stderr,session)
+    case True{}: Claude.start_player(cmd,model,effort,cwd,stderr)
+    case False{}: Claude.resume_player(cmd,model,effort,cwd,stderr,session)
 
 def muse_launch(cmd: String, model: String, effort: String, cwd: String, stderr: String, session: String, task: String, fresh: Bool) -> IO(Result<&1,&1,U32 & String,U32>):
   match fresh:
-    case True{}: Muse.start_worker(cmd,model,effort,cwd,stderr,task)
-    case False{}: Muse.resume_worker(cmd,model,effort,cwd,stderr,session,task)
+    case True{}: Muse.start_player(cmd,model,effort,cwd,stderr,task)
+    case False{}: Muse.resume_player(cmd,model,effort,cwd,stderr,session,task)
 
 def launch(sessions: String, +cmd: String, +model: String, +effort: String, +cwd: String, +log: String, +session: String, +harness: String, task: String) -> IO(Result<&1,&1,U32 & String,U32>):
   Bool.pick(IO(Result<&1,&1,U32 & String,U32>), String.eq(harness,"omp\n"),
-    Omp.start_worker(cmd,model,effort,cwd,log,sessions,session,String.is_empty(session)),
+    Omp.start_player(cmd,model,effort,cwd,log,sessions,session,String.is_empty(session)),
   Bool.pick(IO(Result<&1,&1,U32 & String,U32>), String.eq(harness,"muse\n"),
     muse_launch(cmd,model,effort,cwd,log ++ ".stderr",session,task,String.is_empty(session)),
   Bool.pick(IO(Result<&1,&1,U32 & String,U32>), String.eq(harness,"codex\n"),
-    Codex.start_worker(cmd,model,effort,cwd,log ++ ".stderr",session,String.is_empty(session)),
+    Codex.start_player(cmd,model,effort,cwd,log ++ ".stderr",session,String.is_empty(session)),
     claude_launch(cmd,model,effort,cwd,log ++ ".stderr",session,String.is_empty(session)))))
 
 # The state the workspace holds when a turn restarts: the work an interrupted
@@ -348,39 +348,39 @@ def refusal(+log: String, resumable: Bool, +outcome: Outcome) -> IO(Bool):
 
 # The refused conversation is gone, so the pending input runs fresh and names
 # the state the workspace holds; the fresh turn records its own identity.
-def restart(+db: String, +worker: String, +id: String, +log: String, +note: String, +harness: String, child: Result<&1,&1,U32 & String,U32>) -> IO(Outcome):
+def restart(+db: String, +player: String, +id: String, +log: String, +note: String, +harness: String, child: Result<&1,&1,U32 & String,U32>) -> IO(Outcome):
   do IO<Outcome>:
-    noted : Unit <- report(db,worker,id ++ ":recovery","The recorded conversation could not be resumed; the turn restarted in a fresh conversation that names the workspace's current state.")
-    started(db,worker,id,log,note,harness,child)
+    noted : Unit <- report(db,player,id ++ ":recovery","The recorded conversation could not be resumed; the turn restarted in a fresh conversation that names the workspace's current state.")
+    started(db,player,id,log,note,harness,child)
 
-def supervise_gone(+db: String, +worker: String, +id: String, +cmd: String, +model: String, +effort: String, +cwd: String, +task: String, +log: String, +harness: String, +sessions: String, +prompt: String, +first: Outcome, gone: Bool) -> IO(Outcome):
+def supervise_gone(+db: String, +player: String, +id: String, +cmd: String, +model: String, +effort: String, +cwd: String, +task: String, +log: String, +harness: String, +sessions: String, +prompt: String, +first: Outcome, gone: Bool) -> IO(Outcome):
   match gone:
     case False{}: IO.pure(Outcome,first)
     case True{}: do IO<Outcome>:
       note : String <- refused_note(cwd,prompt)
       child : Result<&1,&1,U32 & String,U32> <- launch(sessions,cmd,model,effort,cwd,log,"",harness,task)
-      restart(db,worker,id,log,note,harness,child)
+      restart(db,player,id,log,note,harness,child)
 
-def supervise_retry(+db: String, +worker: String, +id: String, +cmd: String, +model: String, +effort: String, +cwd: String, +task: String, +log: String, +harness: String, +sessions: String, +native: String, +prompt: String, +first: Outcome) -> IO(Outcome):
+def supervise_retry(+db: String, +player: String, +id: String, +cmd: String, +model: String, +effort: String, +cwd: String, +task: String, +log: String, +harness: String, +sessions: String, +native: String, +prompt: String, +first: Outcome) -> IO(Outcome):
   do IO<Outcome>:
     resumable : Bool <- IO.pure(Bool, Bool.not(String.is_empty(native)))
     gone : Bool <- refusal(log,resumable,first)
-    supervise_gone(db,worker,id,cmd,model,effort,cwd,task,log,harness,sessions,prompt,first,gone)
+    supervise_gone(db,player,id,cmd,model,effort,cwd,task,log,harness,sessions,prompt,first,gone)
 
-def supervise(+db: String, +worker: String, +id: String, +cmd: String, +model: String, +effort: String, +cwd: String, +task: String, +log: String, +session: String, +harness: String, +sessions: String, +prompt: String) -> IO(Outcome):
+def supervise(+db: String, +player: String, +id: String, +cmd: String, +model: String, +effort: String, +cwd: String, +task: String, +log: String, +session: String, +harness: String, +sessions: String, +prompt: String) -> IO(Outcome):
   do IO<Outcome>:
-    alternate : String <- IO.try(String,DB.Sql.query(db,"SELECT CASE WHEN " ++ C.q(sessions) ++ "=" ++ C.q(db ++ ".sessions") ++ " THEN CASE WHEN parent IS NULL THEN " ++ C.q(db ++ ".root-sessions") ++ " ELSE " ++ C.q(db ++ ".session-") ++ " || lower(hex(id)) END ELSE " ++ C.q(db ++ ".sessions") ++ " END FROM sessions WHERE id=" ++ C.q(worker) ++ ";"))
+    alternate : String <- IO.try(String,DB.Sql.query(db,"SELECT CASE WHEN " ++ C.q(sessions) ++ "=" ++ C.q(db ++ ".sessions") ++ " THEN CASE WHEN parent IS NULL THEN " ++ C.q(db ++ ".root-sessions") ++ " ELSE " ++ C.q(db ++ ".session-") ++ " || lower(hex(id)) END ELSE " ++ C.q(db ++ ".sessions") ++ " END FROM sessions WHERE id=" ++ C.q(player) ++ ";"))
     +native : String <- Omp.resume_file(sessions,Tx.trim_nl(alternate),session,Bool.and(String.eq(harness,"omp\n"),Bool.not(String.is_empty(session))))
     child : Result<&1,&1,U32 & String,U32> <- launch(sessions,cmd,model,effort,cwd,log,native,harness,task)
-    first : Outcome <- started(db,worker,id,log,prompt,harness,child)
-    supervise_retry(db,worker,id,cmd,model,effort,cwd,task,log,harness,sessions,native,prompt,first)
+    first : Outcome <- started(db,player,id,log,prompt,harness,child)
+    supervise_retry(db,player,id,cmd,model,effort,cwd,task,log,harness,sessions,native,prompt,first)
 
-def task_read(db: String, worker: String, id: String, cmd: String, model: String, effort: String, cwd: String, task: String, log: String, session: String, harness: String, sessions: String, result: Result<&1,&1,U32 & String,String>) -> IO(Outcome):
+def task_read(db: String, player: String, id: String, cmd: String, model: String, effort: String, cwd: String, task: String, log: String, session: String, harness: String, sessions: String, result: Result<&1,&1,U32 & String,String>) -> IO(Outcome):
   match result:
-    case Fail{error}: IO.pure(Outcome,Ended{"input failed","","Worker task could not be read: " ++ error_text(error)})
-    case Done{prompt}: supervise(db,worker,id,cmd,model,effort,cwd,task,log,session,harness,sessions,prompt)
+    case Fail{error}: IO.pure(Outcome,Ended{"input failed","","Player task could not be read: " ++ error_text(error)})
+    case Done{prompt}: supervise(db,player,id,cmd,model,effort,cwd,task,log,session,harness,sessions,prompt)
 
-def choose(+db: String, +worker: String, +id: String, cmd: String, model: String, effort: String, cwd: String, +task: String, log: String, session: String, harness: String, replay: Bool) -> IO(Maybe<Outcome>):
+def choose(+db: String, +player: String, +id: String, cmd: String, model: String, effort: String, cwd: String, +task: String, log: String, session: String, harness: String, replay: Bool) -> IO(Maybe<Outcome>):
   match replay:
     case True{}:
       do IO<Maybe<Outcome>>:
@@ -388,66 +388,66 @@ def choose(+db: String, +worker: String, +id: String, cmd: String, model: String
         written : Unit <- IO.write(saved)
         IO.pure(Maybe<Outcome>,None{})
     case False{}: do IO<Maybe<Outcome>>:
-      allowed : Bool <- Stop.admit(db,worker,id,"direct","")
+      allowed : Bool <- Stop.admit(db,player,id,"direct","")
       admitted : Unit <- Stop.admitted(allowed)
       prompt : Result<&1,&1,U32 & String,String> <- T.Text.read(task)
-      result : Outcome <- task_read(db,worker,id,cmd,model,effort,cwd,task,log,session,harness,db ++ ".sessions",prompt)
+      result : Outcome <- task_read(db,player,id,cmd,model,effort,cwd,task,log,session,harness,db ++ ".sessions",prompt)
       IO.pure(Maybe<Outcome>,Some{result})
 
 def supported_harness(supported: Bool) -> IO(Unit):
   match supported:
     case True{}: IO.pure(Unit,Unit{})
-    case False{}: IO.die(Unit,2,"No turn adapter for the worker's recorded harness.")
+    case False{}: IO.die(Unit,2,"No turn adapter for the player's recorded harness.")
 
 def matching_turn(matches: Bool) -> IO(Unit):
   match matches:
     case True{}: IO.pure(Unit,Unit{})
-    case False{}: IO.die(Unit,2,"The turn ID already belongs to a different worker or message kind.")
+    case False{}: IO.die(Unit,2,"The turn ID already belongs to a different player or message kind.")
 
 # The turn identity is admitted only when the message it names was sent by this
-# worker as a report: the count is zero for every other sender or kind.
-def id_owner_sql(id: String, worker: String) -> String:
-  "SELECT count(*) FROM messages WHERE id=" ++ C.q(id) ++ " AND (sender<>" ++ C.q(worker) ++ " OR kind<>'report');"
+# player as a report: the count is zero for every other sender or kind.
+def id_owner_sql(id: String, player: String) -> String:
+  "SELECT count(*) FROM messages WHERE id=" ++ C.q(id) ++ " AND (sender<>" ++ C.q(player) ++ " OR kind<>'report');"
 
 # The turn identity is admitted only when the store already holds that message.
 def turn_present_sql(id: String) -> String:
   "SELECT count(*) FROM messages WHERE id=" ++ C.q(id) ++ ";"
 
-def worker_checked(+db: String, +worker: String, +id: String, cmd: String, model: String, effort: String, cwd: String, task: String, log: String, session: String, +harness: String, missing: Bool) -> IO(Maybe<Outcome>):
+def player_checked(+db: String, +player: String, +id: String, cmd: String, model: String, effort: String, cwd: String, task: String, log: String, session: String, +harness: String, missing: Bool) -> IO(Maybe<Outcome>):
   match missing:
-    case True{}: IO.die(Maybe<Outcome>,2,"Worker has no recorded parent and workspace; register it before starting a turn.")
+    case True{}: IO.die(Maybe<Outcome>,2,"Player has no recorded parent and workspace; register it before starting a turn.")
     case False{}:
       do IO<Maybe<Outcome>>:
         supported : Unit <- supported_harness(Bool.or(String.eq(harness,"omp\n"),Bool.or(String.eq(harness,"codex\n"),Bool.or(String.eq(harness,"claude-code\n"),String.eq(harness,"muse\n")))))
-        foreign : String <- IO.try(String,DB.Sql.query(db,id_owner_sql(id,worker)))
+        foreign : String <- IO.try(String,DB.Sql.query(db,id_owner_sql(id,player)))
         identity : Unit <- matching_turn(String.eq(foreign,"0\n"))
         found : String <- IO.try(String,DB.Sql.query(db,turn_present_sql(id)))
-        choose(db,worker,id,cmd,model,effort,cwd,task,log,session,harness,String.eq(found,"1\n"))
+        choose(db,player,id,cmd,model,effort,cwd,task,log,session,harness,String.eq(found,"1\n"))
 
-def complete_locked(+db: String, +worker: String, +id: String, +log: String, lock: U32, result: Maybe<Outcome>) -> IO(Unit):
+def complete_locked(+db: String, +player: String, +id: String, +log: String, lock: U32, result: Maybe<Outcome>) -> IO(Unit):
   match result:
     case None{}: do IO<Unit>:
       released : Unit <- IO.try(Unit,Lock.SessionLock.release(lock))
-      IO.try(Unit,Root.wake_pending(db,worker,"0"))
+      IO.try(Unit,Delivery.wake_pending(db,player,"0"))
     case Some{+outcome}: do IO<Unit>:
-      exited : Unit <- record_exit(db,worker,id,log,outcome)
-      prepared : Unit <- prepare(db,worker,id,log,log ++ ".stderr",outcome)
+      exited : Unit <- record_exit(db,player,id,log,outcome)
+      prepared : Unit <- prepare(db,player,id,log,log ++ ".stderr",outcome)
       released : Unit <- IO.try(Unit,Lock.SessionLock.release(lock))
-      delivery_task : Chan(Result<&1,&1,U32 & String,Unit>) <- IO.fork(Result<&1,&1,U32 & String,Unit>,finish(db,worker,id,log,outcome))
-      wake : Result<&1,&1,U32 & String,Unit> <- Root.wake_pending(db,worker,"0")
+      delivery_task : Chan(Result<&1,&1,U32 & String,Unit>) <- IO.fork(Result<&1,&1,U32 & String,Unit>,finish(db,player,id,log,outcome))
+      wake : Result<&1,&1,U32 & String,Unit> <- Delivery.wake_pending(db,player,"0")
       finished : Result<&1,&1,U32 & String,Unit> <- IO.join(Result<&1,&1,U32 & String,Unit>,delivery_task)
       IO.pass(Unit,combine(finished,wake))
 
-def acquired(+db: String, +worker: String, +id: String, cmd: String, model: String, effort: String, cwd: String, task: String, +log: String, session: String, missing: Bool, lock: Maybe<U32>) -> IO(Unit):
+def acquired(+db: String, +player: String, +id: String, cmd: String, model: String, effort: String, cwd: String, task: String, +log: String, session: String, missing: Bool, lock: Maybe<U32>) -> IO(Unit):
   match lock:
     case None{}: IO.die(Unit,2,"Session already has an active native turn; send a message to queue input.")
     case Some{handle}: do IO<Unit>:
-      harness : String <- IO.try(String,DB.Sql.query(db,"SELECT harness FROM sessions WHERE id=" ++ C.q(worker) ++ ";"))
-      result : Maybe<Outcome> <- worker_checked(db,worker,id,cmd,model,effort,cwd,task,log,session,harness,missing)
-      complete_locked(db,worker,id,log,handle,result)
+      harness : String <- IO.try(String,DB.Sql.query(db,"SELECT harness FROM sessions WHERE id=" ++ C.q(player) ++ ";"))
+      result : Maybe<Outcome> <- player_checked(db,player,id,cmd,model,effort,cwd,task,log,session,harness,missing)
+      complete_locked(db,player,id,log,handle,result)
 
-def run(+db: String, +worker: String, id: String, cmd: String, model: String, effort: String, cwd: String, task: String, log: String, session: String) -> IO(Unit):
+def run(+db: String, +player: String, id: String, cmd: String, model: String, effort: String, cwd: String, task: String, log: String, session: String) -> IO(Unit):
   do IO<Unit>:
-    recorded : String <- IO.try(String,Store.commit(db,C.Session{worker}))
-    Lock.SessionLock.acquire_session(Unit,db,worker,
-      +database => lock => acquired(database,worker,id,cmd,model,effort,cwd,task,log,session,String.is_empty(recorded),lock))
+    recorded : String <- IO.try(String,Store.commit(db,C.Session{player}))
+    Lock.SessionLock.acquire_session(Unit,db,player,
+      +database => lock => acquired(database,player,id,cmd,model,effort,cwd,task,log,session,String.is_empty(recorded),lock))

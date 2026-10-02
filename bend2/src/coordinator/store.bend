@@ -1,22 +1,25 @@
 import Base
 import ../host/sqlite.bend as DB
 import ./commands.bend as C
-import ./root.bend as Root
+import ./delivery.bend as Delivery
 import ../git/text.bend as Tx
 
 def accepted(db: String, command: C.Command, saved: String, stopped: Bool) -> IO(Result<&1,&1,U32 & String,String>):
   match stopped:
     case True{}: IO.pure(Result<&1,&1,U32 & String,String>,Fail{(2,"Session is terminally stopped; input was not committed. Read its session and retained inbox, or recruit a new session.")})
-    case False{}: Root.after(db,command,saved)
+    case False{}: Delivery.after(db,command,saved)
 
-# Root delivery starts after the message transaction commits.
+# Endpoint delivery starts after the message transaction commits.
 def route_accepted(db: String, command: C.Command, +saved: String, denied: Bool) -> IO(Result<&1,&1,U32 & String,String>):
   match denied:
     case True{}: IO.pure(Result<&1,&1,U32 & String,String>,Fail{(2,saved)})
     case False{}: accepted(db,command,saved,Tx.starts_with(saved,"{\"error\":\"session-stopped\""))
 
+def naming_refused(+saved: String) -> Bool:
+  Bool.or(Tx.starts_with(saved,"{\"error\":\"invalid-role\""),Tx.starts_with(saved,"{\"error\":\"section-refused\""))
+
 def refused(+saved: String) -> Bool:
-  Bool.or(Tx.starts_with(saved,"{\"error\":\"worker-assignment-conflict\""),Bool.or(Tx.starts_with(saved,"{\"error\":\"message-route-denied\""),Tx.starts_with(saved,"{\"error\":\"invalid-endpoint\"")))
+  Bool.or(naming_refused(saved),Bool.or(Tx.starts_with(saved,"{\"error\":\"player-assignment-conflict\""),Bool.or(Tx.starts_with(saved,"{\"error\":\"message-route-denied\""),Tx.starts_with(saved,"{\"error\":\"invalid-endpoint\""))))
 
 def committed(db: String, command: C.Command, result: Result<&1,&1,U32 & String,String>) -> IO(Result<&1,&1,U32 & String,String>):
   match result:
