@@ -21,6 +21,8 @@ sh bend2/scripts/check-native.sh
 The build uses `.bend/bin/bend` or `node_modules/.bend/bin/bend`. Set `BEND` to
 another installed compiler path if needed. It emits C and links the native
 executable at `.scratch/bend2/baton2`. Host bindings execute on Bend IO workers.
+The [native installation procedure](../docs/bend2/installation.md) covers staging,
+runtime paths, dependencies and retained state.
 
 `bend2/src/coordinator/laws.bend` states the sixteen operative entries of
 [the approved laws](../docs/bend2/laws-proposed.md) over the functions this
