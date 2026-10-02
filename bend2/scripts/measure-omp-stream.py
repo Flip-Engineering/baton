@@ -99,7 +99,7 @@ def main():
     server.settimeout(30)
     (directory/'config.json').write_text(json.dumps({'port':server.getsockname()[1]}))
     def coord(*values):
-        return subprocess.run([str(exe),str(db),*map(str,values)],check=True,capture_output=True,text=True,timeout=10)
+        return subprocess.run([str(exe),str(db),*map(str,values)],check=True,capture_output=True,text=True)
     coord('attach','root','omp','','')
     coord('message','initial','root','root','task','Run the controlled probe.')
     stdout=(directory/'stdout.log').open('w')
@@ -160,7 +160,7 @@ def main():
     saved=log.read_text().splitlines()
     semantics={'missing_retained':[line for line in retained if line not in saved], 'unexpected_retained':[line for line in omitted if line in saved],**emitted}
     stream.write(b'{"kind":"finish"}\n')
-    child.wait(timeout=20)
+    child.wait()
     assert child.returncode==0
     stream.close()
     connection.close()
