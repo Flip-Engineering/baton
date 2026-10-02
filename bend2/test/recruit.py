@@ -4,6 +4,7 @@ import json
 import pathlib
 import sqlite3
 import subprocess
+import sys
 import tempfile
 import unittest
 
@@ -165,5 +166,99 @@ class Recruit(unittest.TestCase):
         self.assertTrue((workspace / 'partial.txt').exists())
         self.assertEqual((workspace / 'partial.txt').read_text(), 'uncommitted work in progress')
         self.assertTrue((workspace / 'committed.txt').exists())
+
+    def test_refused_retries_preserve_endpoint_identity_pending_task_and_worker_work(self):
+        assigned=self.recruit()
+        workspace=pathlib.Path(assigned['workspace'])
+        self.call('role','root','conductor')
+        task=('message','pending-task','root','worker','task',"Keep this fixture task λ\n")
+        self.call(*task)
+        self.assertIsNone(self.call('delivery','pending-task')['receipt'])
+
+        endpoint_file=self.directory/'endpoint.py'
+        endpoint_file.write_text(
+            'import json,pathlib,subprocess,sys\n'
+            'exe,db,log,*arguments=sys.argv[1:]\n'
+            'with pathlib.Path(log).open("a") as output:\n'
+            ' output.write(json.dumps(arguments,ensure_ascii=False)+"\\n")\n'
+            'result=subprocess.run([exe,db,"ack",arguments[-1],"worker","accepted"],capture_output=True)\n'
+            'sys.stdout.buffer.write(result.stdout)\n'
+            'sys.stderr.buffer.write(result.stderr)\n'
+            'raise SystemExit(result.returncode)\n')
+        self.deliveries=self.directory/'deliveries.jsonl'
+        self.arguments=["λ ' whitespace\n",'']
+        endpoint=json.dumps([sys.executable,str(endpoint_file),str(EXE),str(self.db),
+                             str(self.deliveries),*self.arguments],ensure_ascii=False)
+        self.call('connect','worker','native-kept',endpoint)
+
+        (workspace/'committed.txt').write_text('committed worker work\n')
+        for args in [('add','committed.txt'),('commit','-q','-m','worker change')]:
+            subprocess.run(['git','-C',str(workspace),*args],check=True,capture_output=True)
+        (workspace/'committed.txt').write_text('uncommitted worker change\n')
+        (workspace/'untracked λ.txt').write_bytes(b'retained untracked work\n')
+
+        before=self.state()
+        session=self.call('session','worker')
+        work=self.call('worktree','worker')
+        refs=self.git('show-ref')
+        worktrees=self.git('worktree','list','--porcelain')
+        files={p.name:p.read_bytes() for p in workspace.iterdir() if p.is_file()}
+        self.assertEqual(session['native'],'native-kept')
+        self.assertEqual(session['endpoint'],endpoint)
+        self.assertTrue(work['dirty'])
+        self.assertNotEqual(work['commit'],self.base)
+        self.assertEqual(len(self.call('inbox','worker')),1)
+
+        filename=self.directory/'worker-endpoint.json'
+        filename.write_text(endpoint)
+        refused=json.loads(self.call('connect','worker','native-replacement',str(filename),
+                                     ok=False,exit_code=2))
+        self.assertEqual(refused['error'],'invalid-endpoint')
+        self.assertEqual(refused['session'],'worker')
+        self.assertIn('JSON',refused['condition'])
+        self.assertIn('ENDPOINT',refused['next'])
+
+        fields=('parent','harness','model','effort','workspace','branch','base')
+        original={key:assigned[key] for key in fields}
+        conflict=json.loads(self.recruit(harness='muse',ok=False,exit_code=2))
+        self.assertEqual(conflict['error'],'worker-assignment-conflict')
+        self.assertEqual(conflict['session'],'worker')
+        self.assertEqual(conflict['existing'],original)
+        self.assertEqual(conflict['requested'],{**original,'harness':'muse'})
+        for action in ('session ID','worktree ID','new ID','new branch','unused path'):
+            self.assertIn(action,conflict['next'])
+
+        self.assertEqual(self.state(),before)
+        self.assertEqual(self.call('session','worker'),session)
+        self.assertEqual(self.call('worktree','worker'),work)
+        self.assertEqual(self.git('show-ref'),refs)
+        self.assertEqual(self.git('worktree','list','--porcelain'),worktrees)
+        self.assertEqual({p.name:p.read_bytes() for p in workspace.iterdir() if p.is_file()},files)
+        self.assertFalse(self.deliveries.exists())
+        pending=self.call('inbox','worker')
+        self.assertEqual([row['id'] for row in pending],['pending-task'])
+        self.assertEqual(pending[0]['body'],task[-1])
+
+        self.assertEqual(self.recruit(),session)
+        self.assertEqual(self.state(),before)
+        self.assertEqual(self.git('show-ref'),refs)
+        self.assertFalse(self.deliveries.exists())
+
+        self.call(*task)
+        self.assertEqual(json.loads(self.deliveries.read_text()),self.arguments+['pending-task'])
+        delivered=self.call('delivery','pending-task')
+        self.assertEqual(delivered['body'],task[-1])
+        self.assertEqual(delivered['receipt'],'accepted')
+        self.assertEqual(delivered['endpoint'],endpoint)
+        self.assertEqual(self.call('inbox','worker'),[])
+        with closing(sqlite3.connect(self.db)) as db:
+            self.assertEqual(db.execute(
+                "SELECT sender,recipient,kind,body,receipt FROM messages WHERE id='pending-task'"
+            ).fetchone(),('root','worker','task',task[-1],'accepted'))
+
+        after_delivery=self.state()
+        self.call(*task)
+        self.assertEqual(self.state(),after_delivery)
+        self.assertEqual(len(self.deliveries.read_text().splitlines()),1)
 
 if __name__=='__main__': unittest.main()
