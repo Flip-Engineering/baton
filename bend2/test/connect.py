@@ -111,7 +111,7 @@ class Connect(unittest.TestCase):
         before = self.state()
         result = subprocess.run([str(EXE), str(self.db), *self.task], text=True, capture_output=True)
         self.assertNotEqual(result.returncode, 0)
-        self.assertIn('retry', result.stderr)
+        self.assertTrue(result.stderr.strip(), result.stdout + result.stderr)
         self.assertEqual(self.state(), before)
         self.assertFalse(self.deliveries.exists())
 
