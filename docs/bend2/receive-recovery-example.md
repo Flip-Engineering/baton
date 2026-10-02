@@ -41,3 +41,28 @@ fresh conversation using the current workspace state.
 Command argument order is defined in `bend2/src/coordinator/commands.bend`;
 dispatch and receive behavior are defined in `main.bend` and `receive.bend`
 in the same directory.
+
+## Contributor note: busy receive and observer recovery
+
+When the session lock is busy, `acquired` in
+`bend2/src/coordinator/receive.bend` returns successfully with
+`{"session":"worker","status":"queued"}`. This reports lock contention;
+message acceptance is recorded by `ack`. The active receive checks for
+unacknowledged input beyond its original inbox cutoff when finishing the turn.
+
+For retained Codex and OMP receive attempts, the keeper's `br_disconnected`
+function in `bend2/src/host/process-spawn.c` starts the saved recovery command
+when its observer disconnects before completion acknowledgment.
+`bend2/src/coordinator/main.bend` dispatches `--recover-receive` to `recover`
+in `bend2/src/coordinator/receive.bend`, preserving the attempt directory,
+turn ID, and inbox cutoff. `ProcessChild.attach` reconnects to the keeper;
+`retained_output` in `bend2/src/coordinator/turn.bend` reads the retained
+output from its first frame to reconstruct completion. The native process
+and its initial prompt remain owned by the existing retained attempt.
+
+This recovery covers observer loss while the retained keeper and attempt
+remain available. It requires the keeper's control endpoint and retained
+files to be accessible. Keeper loss and host restart are outside this
+implemented recovery scope. Refusal to resume a recorded native conversation
+uses the separate `restart_pending` path in `receive.bend`, which records
+recovery input and starts a fresh conversation.
