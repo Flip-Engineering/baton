@@ -107,7 +107,7 @@ def connect_sql(+id: String, native: String, +endpoint: String) -> String:
 def message_result(id: String) -> String:
   "SELECT json_patch(json_object('id',id,'sender',sender,'recipient',recipient,'kind',kind,'body',body,'receipt',receipt)," ++ input_state_sql("messages") ++ ") FROM messages WHERE id=" ++ q(id) ++ ";"
 
-# A repeated ID returns its first result. Reusing it for different input fails the transaction.
+# A repeated ID preserves the original message fields. Different input fails the transaction.
 def message_upsert() -> String:
   " ON CONFLICT(id) DO UPDATE SET id=CASE WHEN messages.sender=excluded.sender AND messages.recipient=excluded.recipient AND messages.kind=excluded.kind AND messages.body=excluded.body THEN messages.id ELSE NULL END;"
 

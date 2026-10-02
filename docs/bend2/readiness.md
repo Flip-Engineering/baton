@@ -4,7 +4,8 @@
 
 Baton2 has a native coordinator, harness supervision, retained messaging, scoped
 knowledge and checked Git landing. Development and verification use `bend2-rewrite`.
-A release candidate has not been qualified by the current comparison work.
+The current native hierarchy qualification passed. Release candidate installation,
+publication and process-loss recovery remain to be qualified together.
 
 The September prototype [go/no-go record](go-no-go.md) remains historical evidence.
 The [implemented architecture](architecture.md) describes the current acceptance
@@ -15,8 +16,8 @@ publication. Qualification uses current native workflow and recovery evidence.
 
 | Capability | Evidence and boundary |
 | --- | --- |
-| Compilation with operative laws | At `ec0e144d`, the entry imports the implementation laws. Exact-tree verification passed 350 proof-removal controls, 79 implementation mutations and 210 Python tests across 20 suites, plus two Bend suites. Compiler proofs bind the stated functions; runtime tests exercise their host effects. |
-| Native orchestration | [Hierarchy acceptance](hierarchy-2026-10-02.md) records a subscription Codex root, Kimi K3 lead, concurrent DeepSeek and Muse workers, native steering and both reviewed landing levels on its recorded source. |
+| Compilation with operative laws | At `204972f7`, the entry imports the implementation laws. Exact-tree verification passed 361 proof-removal controls, 87 implementation mutations and 232 Python tests across 22 suites, plus two Bend suites. Compiler proofs bind the stated functions; runtime tests exercise their host effects. |
+| Native orchestration | [Fresh qualification](native-qualification-2026-10-02/README.md) records runtime `204972f7`, a subscription Codex root, Kimi K3 lead, concurrent DeepSeek and Muse workers, native steering, saved-session corrections and both reviewed landing levels. [Earlier hierarchy acceptance](hierarchy-2026-10-02.md) retains its separate source and task boundaries. |
 | Messaging policy | [Messaging](messaging.md) records descendant and immediate-parent routes, explicit tight Ensemble peers, same-depth Conductor peers and preservation of accepted retries. These are declared local coordination identities. |
 | Shared knowledge | [Knowledge acceptance](knowledge-context-2026-10-01.md) records evidence review, explicit promotion, destination-owner notification, sibling retrieval and fresh-conversation retrieval. The destination owner decides further distribution to Ensembles. |
 | Retained recovery | [Architecture](architecture.md#recovery-and-current-limits) links the native receive and recovery runs. Their records state which owned processes were stopped and which identities, pending inputs, outputs and reports survived. |
@@ -49,20 +50,34 @@ closure separately from incomplete native exit receipts. An unfinished wrapper
 without a recorded child identity remains uncertain. Sixteen controlled observer
 and harness fixtures exercise these decisions. The hierarchy helper checks both
 recorded worker harnesses before launching either worker. Native background
-process custody and a complete run on a frozen candidate still require
-qualification.
+process custody was exercised by the fresh qualification on its frozen runtime
+and tasks. The observer fixtures remain the evidence for failed and uncertain
+closure decisions.
 
 Generated lead instructions include saved-native direct-turn corrections for
 both helper workers, with retained logs and detached process ownership. They
 require prior completion evidence, the saved identity and unchanged route
-bindings. Static review verified the command and prompt; real qualification
-remains pending.
+bindings. The fresh qualification exercised four Muse correction turns with the
+same saved native identity. All 25 native invocations recorded wrapper and child
+exits of zero. Recorded processes and run-associated process paths were absent
+after completion; the operator acknowledged the final report.
+
+The Codex root independently requested the stored-base correction. One external
+operator review task corrected current-receipt wording and the acknowledgment
+actor. Two correction landings conflicted after earlier squash landings; Kimi
+resumed Muse to merge the current lead and repeat checked landing. These are
+recorded integration costs. The final worker files match the checked target,
+which changed only the assigned regression and example. This run exercised a
+local isolated target branch and did not exercise remote publication or owned
+process loss.
 
 The comparison distinguishes requested routes, actual native observations,
 review corrections, landings, usage and process closure. It retains caller
 mistakes, dependency setup, capacity context and differences in provider output
 capture. Unequal outcomes and process lifetimes prevent a causal workflow speed
-or cost claim. The frozen whole-run predicates remain failed.
+or cost claim. The matched comparison's frozen whole-run predicates remain
+failed. The later qualification uses its own frozen task set and records a
+successful hierarchy outcome.
 
 ## Release gates
 

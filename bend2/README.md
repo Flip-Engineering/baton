@@ -71,7 +71,7 @@ prepares and checks against the current target.
 
 Commands return JSON. `report` saves the full
 body and pending parent delivery in one SQLite transaction. A matching retry
-returns the first result, including its delivery receipt. Conflicting reuse of
+returns the stored message with its current delivery receipt. Conflicting reuse of
 an ID fails. `ack` records native acceptance after the adapter observes it.
 
 `observe-file ID WORKER PATH` consumes one
