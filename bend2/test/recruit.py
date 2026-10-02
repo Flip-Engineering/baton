@@ -57,6 +57,7 @@ class Recruit(unittest.TestCase):
         self.assertEqual(row['parent'],'root')
         self.assertEqual(row['base'],self.base)
         self.assertEqual(self.recruit(),row)
+        self.assertEqual(self.call('session','worker',cwd=self.directory),row)
         clean=self.call('worktree','worker',cwd=self.directory)
         self.assertEqual(clean['branch'],'worker-branch')
         self.assertEqual(clean['commit'],self.base)
