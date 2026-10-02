@@ -58,6 +58,7 @@ prepares and checks against the current target.
 
 ```sh
 .scratch/bend2/baton2 state.db attach root claude-code ROOT_SESSION ENDPOINT
+.scratch/bend2/baton2 state.db role root conductor
 .scratch/bend2/baton2 state.db recruit worker1 root omp MODEL high REPO BRANCH WORKTREE BASE
 .scratch/bend2/baton2 state.db bind worker1 NATIVE_SESSION omp OBSERVED_MODEL high
 .scratch/bend2/baton2 state.db report turn1 worker1 BODY
@@ -95,6 +96,19 @@ behavior; `ask-file` reads the question from a path or `-` for stdin.
 existing worker connection while retaining its parent and requested route. Each CLI invocation opens the same
 database, and SQLite serializes transactions.
 Workspaces and source files are retained by these commands.
+
+Public messages follow [the messaging contract](../docs/bend2/messaging.md).
+Declare a Conductor with `role SESSION conductor`; unassigned sessions are
+Players. A Conductor can message descendants, and subordinate agents can
+message their immediate parent. Peer messages require shared tight Ensemble
+membership; Conductor peers also require the same hierarchy depth. An
+explicit operator identity communicates with top-level Conductors.
+
+`ensemble ID OWNER` declares loose coupling. Add members with
+`ensemble-member ID OWNER SESSION add`, then use `ensemble ID OWNER tight`
+when the task requires direct peer communication. `role SESSION` and
+`ensemble ID` read the declarations. Previously accepted input remains
+available after configuration changes.
 
 During an OMP turn, send guidance with:
 
@@ -243,6 +257,7 @@ example creates a new Codex root:
 
 ```sh
 /repo/.scratch/bend2/baton2 /repo/state.db attach root codex '' '["/repo/.scratch/bend2/baton2","/repo/state.db","receive","root","/path/to/codex","gpt-6-astra","low","/repo","/repo/root-native.jsonl"]'
+/repo/.scratch/bend2/baton2 /repo/state.db role root conductor
 /repo/.scratch/bend2/baton2 /repo/state.db receive root /path/to/codex gpt-6-astra low /repo /repo/root-native.jsonl ''
 ```
 
@@ -355,6 +370,7 @@ native receiver:
 
 ```sh
 .scratch/bend2/baton2 state.db recruit lead root omp deepseek/deepseek-flash low REPO lead-branch LEAD_WORKTREE BASE
+.scratch/bend2/baton2 state.db role lead conductor
 .scratch/bend2/baton2 state.db connect lead '' '["/repo/.scratch/bend2/baton2","/repo/state.db","receive","lead","/path/to/omp","","","","/repo/lead-native.jsonl"]'
 ```
 

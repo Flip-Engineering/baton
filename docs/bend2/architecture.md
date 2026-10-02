@@ -18,7 +18,8 @@ Git operations.
 An Associate Conductor (`lead`) coordinates delegated work. The
 [naming legend](terminology.md) defines the coordination roles, Ensembles,
 Sections and Orchestra. Briefs and shared context describe group membership
-using the existing sessions and parent links.
+and task responsibilities. Stored roles, Ensemble membership and coupling
+govern [public message routes](messaging.md).
 
 The native executable is invoked as `baton2 DATABASE COMMAND ARGS`. Each
 invocation opens the named SQLite database and performs its command. A `turn`
@@ -49,13 +50,19 @@ and their frozen-output checks remain optional reference programs.
 
 ## Store and identity
 
-The database holds three tables:
+The core session and message records are:
 
 | Table | Meaning |
 | --- | --- |
 | `sessions` | A logical root or worker, parent, requested route, observed route, native session ID, delivery endpoint, workspace, branch and resolved base commit. |
 | `messages` | Ordered messages with caller-supplied unique IDs, sender, recipient, kind, full body and optional native acceptance receipt. |
 | `turns` | A completed turn's report ID, worker and native terminal event. |
+| `session_roles` | An explicit Player, Conductor or operator assignment; an unassigned session is a Player. |
+| `ensembles` | A declared Conductor owner and loose or tight coupling. |
+| `ensemble_members` | Registered agent session IDs belonging to an Ensemble. |
+
+Execution, stop, native request and knowledge records retain the state described
+in their workflow sections.
 
 A store mutation runs schema creation and its command SQL inside
 `BEGIN IMMEDIATE` and `COMMIT`. Report creation saves the full body addressed to
@@ -63,7 +70,8 @@ the worker's recorded parent. Native terminal observation also records the turn.
 Root delivery starts after the transaction commits. A delivery failure leaves
 the message available in the database and returns an error to the writer.
 
-A matching retry of a message ID returns its retained result and receipt.
+A matching retry of a message ID, sender, recipient, kind and body returns its
+retained result and receipt.
 Conflicting reuse of an ID fails. A repeated completed turn ID returns its
 existing report. Retrying failed work uses a new turn ID and may resume the
 same native session. `ack ID RECIPIENT RECEIPT` records the recipient's native
@@ -82,10 +90,11 @@ All processes operate with the local user's access. Session IDs and parent links
 supply routing. They do not create an authorization boundary between agents.
 The database, executable paths and root endpoint are trusted local inputs.
 
-Conductor responsibility comes from the assigned task. An agent Principal
-Conductor and a human operator session can both have `parent=null`; the operator
-session retains its operator identity. Declared knowledge scope IDs are logical
-session IDs, whose owners and parent links determine visibility.
+Conductor responsibility comes from the assigned task and is recorded with
+`role SESSION conductor`. An agent Principal Conductor and a human operator
+session can both have `parent=null`; `role SESSION operator` explicitly declares
+the operator identity. Declared knowledge scope IDs are logical session IDs,
+whose owners and parent links determine visibility.
 
 ## Workers and turns
 
@@ -123,7 +132,14 @@ also produce parent reports. The parent decides the next task; a turn ending
 does not remove the worker or workspace.
 
 Workers use `ask` or `ask-file` for parent questions and `report` for explicit
-parent reports. `message` and `message-file` route other inputs. During an OMP turn
+parent reports. `message` and `message-file` admit inputs from a Conductor to
+any descendant, from a subordinate to its immediate parent, between explicitly
+tight Ensemble peers, and between an operator and a top-level Conductor.
+Conductor peers require equal hierarchy depth. Ancestor and descendant
+relationships cannot qualify as peers. Loose coupling is the default.
+A denied route stores no message and invokes no recipient endpoint. Accepted
+pending input remains deliverable after role or membership changes.
+During an OMP turn
 the supervisor sends pending guidance as native `steer` frames on response, message
 completion and tool events. A successful native steer response records its
 receipt. Guidance during a silent tool operation waits for the next relevant

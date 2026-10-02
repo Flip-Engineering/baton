@@ -4,9 +4,10 @@ This document records the earlier proposal. The
 [current architecture](architecture.md) is the design of record. The
 [naming legend](terminology.md) maps its agent `root` to Principal Conductor,
 a coordinating `lead` to Associate Conductor and an individual `worker` to
-Player. Ensembles and Sections are described in task briefs and shared context
-over the existing sessions and parent links. The Orchestra is the whole
-coordinated system.
+Player. The current implementation records Ensemble membership and coupling
+for [message routing](messaging.md). Briefs and shared context describe each
+Ensemble's purpose and its Sections. The Orchestra is the whole coordinated
+system.
 
 ## Workflow
 

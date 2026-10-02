@@ -5,8 +5,10 @@ current comments, and the relevant code before assigning work. Coordinate overla
 with the operator's root; the JS swarms continue alongside this lane. Source the
 trial's `environment.sh` in each shell call and use its absolute tool paths.
 
-Use the native Codex subscription session attached by `trial-start.sh`. Recruit
-one OMP lead for the issue. The lead recruits its own workers, reviews their work,
+You are the Principal Conductor in the native Codex subscription session
+attached by `trial-start.sh`. The launcher records `root` as a Conductor and
+`operator` as the human operator. Recruit one OMP Associate Conductor for the
+issue. The lead recruits its own Players, reviews their work,
 and lands it onto its branch. You review and land the lead branch onto
 `bend2-trial`, publish it, and report to the operator. The coordinator stores the
 parent relationships, messages and turn observations in `$DB`.
@@ -26,6 +28,7 @@ these examples with the assigned issue number:
 base=$(git -C "$TRIAL_REPO" rev-parse "$TRIAL_TARGET")
 "$B2" "$DB" recruit issue-N-lead root omp deepseek/deepseek-flash low \
   "$TRIAL_REPO" bend2/issue-N-lead "$TRIAL_STATE/issue-N-lead" "$base"
+"$B2" "$DB" role issue-N-lead conductor
 python3 - <<'PY'
 import json, os, pathlib, subprocess
 lead = 'issue-N-lead'
@@ -44,6 +47,12 @@ comments, requested outcome, relevant files, constraints and selected test files
 Read the issue with `gh` in `$TRIAL_REPO` and include its text so the lead and its
 workers can act from their task files. State any operator decision on the issue.
 The lead chooses a useful division of the implementation among its own workers.
+Public messages can address any descendant; upward messages go to the immediate
+Conductor. Peer coordination requires an explicitly tight Ensemble. Create a
+loose Ensemble with `ensemble ID OWNER`, add its registered members with
+`ensemble-member ID OWNER SESSION add`, and select `tight` only when the task
+needs direct peer communication. Conductor peers also require equal hierarchy
+depth. Read `role SESSION` and `ensemble ID` when inspecting a refused route.
 Use the lead's native tool log as its landing record in the assignment and review.
 Do not ask the lead to write a separate landing-record file.
 The OMP adapter stores the native log under `$DB.session-<hex of lead ID>/`; match the
