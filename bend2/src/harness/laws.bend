@@ -10,10 +10,10 @@
 import Base
 import ../host/process.bend as P
 import ../json/canonical.bend as J
-import ./codex-worker.bend as Codex
-import ./omp-worker.bend as Omp
-import ./claude-worker.bend as Claude
-import ./muse-worker.bend as Muse
+import ./codex-player.bend as Codex
+import ./omp-player.bend as Omp
+import ./claude-player.bend as Claude
+import ./muse-player.bend as Muse
 
 # ---------------------------------------------------------------------------
 # M-2: an unresolved external attempt stays unresolved until justified. A fresh
@@ -27,7 +27,7 @@ law m2_codex_fresh_start_is_the_spawn_attempt:
   for +cwd: String
   for +stderr: String
   for session: String
-  {Codex.start_worker(cmd, model, effort, cwd, stderr, session, True{}) == P.ProcessChild.spawn(P.argv(List.append(&1,String,[cmd,"exec"],Codex.arguments(model,effort))),cwd,stderr) : IO(Result<&1,&1,U32 & String,U32>)}
+  {Codex.start_player(cmd, model, effort, cwd, stderr, session, True{}) == P.ProcessChild.spawn(P.argv(List.append(&1,String,[cmd,"exec"],Codex.arguments(model,effort))),cwd,stderr) : IO(Result<&1,&1,U32 & String,U32>)}
 
 def m2_codex_fresh_start_is_the_spawn_attempt(cmd, model, effort, cwd, stderr, session):
   {==}
@@ -40,7 +40,7 @@ law m2_omp_fresh_start_is_the_spawn_attempt:
   for +log: String
   for +sessions: String
   for session: String
-  {Omp.start_worker(cmd, model, effort, cwd, log, sessions, session, True{}) == P.ProcessChild.spawn(P.argv(Omp.arguments(cmd,model,effort,sessions)),cwd,log ++ ".stderr") : IO(Result<&1,&1,U32 & String,U32>)}
+  {Omp.start_player(cmd, model, effort, cwd, log, sessions, session, True{}) == P.ProcessChild.spawn(P.argv(Omp.arguments(cmd,model,effort,sessions)),cwd,log ++ ".stderr") : IO(Result<&1,&1,U32 & String,U32>)}
 
 def m2_omp_fresh_start_is_the_spawn_attempt(cmd, model, effort, cwd, log, sessions, session):
   {==}
@@ -51,7 +51,7 @@ law m2_claude_start_is_the_spawn_attempt:
   for +effort: String
   for +cwd: String
   for +stderr: String
-  {Claude.start_worker(cmd, model, effort, cwd, stderr) == P.ProcessChild.spawn(P.argv(Claude.arguments(cmd,model,effort)),cwd,stderr) : IO(Result<&1,&1,U32 & String,U32>)}
+  {Claude.start_player(cmd, model, effort, cwd, stderr) == P.ProcessChild.spawn(P.argv(Claude.arguments(cmd,model,effort)),cwd,stderr) : IO(Result<&1,&1,U32 & String,U32>)}
 
 def m2_claude_start_is_the_spawn_attempt(cmd, model, effort, cwd, stderr):
   {==}
@@ -63,7 +63,7 @@ law m2_muse_start_is_the_spawn_attempt:
   for +cwd: String
   for +stderr: String
   for +task: String
-  {Muse.start_worker(cmd, model, effort, cwd, stderr, task) == P.ProcessChild.spawn(P.argv(Muse.arguments(cmd,model,effort,task)),cwd,stderr) : IO(Result<&1,&1,U32 & String,U32>)}
+  {Muse.start_player(cmd, model, effort, cwd, stderr, task) == P.ProcessChild.spawn(P.argv(Muse.arguments(cmd,model,effort,task)),cwd,stderr) : IO(Result<&1,&1,U32 & String,U32>)}
 
 def m2_muse_start_is_the_spawn_attempt(cmd, model, effort, cwd, stderr, task):
   {==}
@@ -80,7 +80,7 @@ law m5_codex_resume_carries_the_accepted_session:
   for +cwd: String
   for +stderr: String
   for +session: String
-  {Codex.start_worker(cmd, model, effort, cwd, stderr, session, False{}) == P.ProcessChild.spawn(P.argv(List.append(&1,String,[cmd,"exec","resume",session],Codex.arguments(model,effort))),cwd,stderr) : IO(Result<&1,&1,U32 & String,U32>)}
+  {Codex.start_player(cmd, model, effort, cwd, stderr, session, False{}) == P.ProcessChild.spawn(P.argv(List.append(&1,String,[cmd,"exec","resume",session],Codex.arguments(model,effort))),cwd,stderr) : IO(Result<&1,&1,U32 & String,U32>)}
 
 def m5_codex_resume_carries_the_accepted_session(cmd, model, effort, cwd, stderr, session):
   {==}
@@ -93,7 +93,7 @@ law m5_omp_resume_carries_the_accepted_session:
   for +log: String
   for +sessions: String
   for +session: String
-  {Omp.start_worker(cmd, model, effort, cwd, log, sessions, session, False{}) == P.ProcessChild.spawn(P.argv(List.append(&1,String,Omp.arguments(cmd,model,effort,sessions),["--resume",session])),cwd,log ++ ".stderr") : IO(Result<&1,&1,U32 & String,U32>)}
+  {Omp.start_player(cmd, model, effort, cwd, log, sessions, session, False{}) == P.ProcessChild.spawn(P.argv(List.append(&1,String,Omp.arguments(cmd,model,effort,sessions),["--resume",session])),cwd,log ++ ".stderr") : IO(Result<&1,&1,U32 & String,U32>)}
 
 def m5_omp_resume_carries_the_accepted_session(cmd, model, effort, cwd, log, sessions, session):
   {==}
@@ -105,7 +105,7 @@ law m5_claude_resume_carries_the_accepted_session:
   for +cwd: String
   for +stderr: String
   for +session: String
-  {Claude.resume_worker(cmd, model, effort, cwd, stderr, session) == P.ProcessChild.spawn(P.argv(List.append(&1,String,Claude.arguments(cmd,model,effort),["--resume",session])),cwd,stderr) : IO(Result<&1,&1,U32 & String,U32>)}
+  {Claude.resume_player(cmd, model, effort, cwd, stderr, session) == P.ProcessChild.spawn(P.argv(List.append(&1,String,Claude.arguments(cmd,model,effort),["--resume",session])),cwd,stderr) : IO(Result<&1,&1,U32 & String,U32>)}
 
 def m5_claude_resume_carries_the_accepted_session(cmd, model, effort, cwd, stderr, session):
   {==}
@@ -118,7 +118,7 @@ law m5_muse_resume_carries_the_accepted_session:
   for +stderr: String
   for +session: String
   for +task: String
-  {Muse.resume_worker(cmd, model, effort, cwd, stderr, session, task) == P.ProcessChild.spawn(P.argv(List.append(&1,String,Muse.arguments(cmd,model,effort,task),["--session-id",session])),cwd,stderr) : IO(Result<&1,&1,U32 & String,U32>)}
+  {Muse.resume_player(cmd, model, effort, cwd, stderr, session, task) == P.ProcessChild.spawn(P.argv(List.append(&1,String,Muse.arguments(cmd,model,effort,task),["--session-id",session])),cwd,stderr) : IO(Result<&1,&1,U32 & String,U32>)}
 
 def m5_muse_resume_carries_the_accepted_session(cmd, model, effort, cwd, stderr, session, task):
   {==}
