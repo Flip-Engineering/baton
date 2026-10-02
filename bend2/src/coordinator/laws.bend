@@ -487,7 +487,7 @@ def m12_a_named_cursor_sends_nothing(db, handle, cursor, next):
 # M-14: a session that is not registered is refused with the rule that refused
 # it and with the action that registers it.
 law m14_unregistered_session_refuses_with_its_rule:
-  {Receive.registered(False{}) == IO.die(Unit,2,"Session is not registered; attach a root or recruit a worker before receiving messages.") : IO(Unit)}
+  {Receive.registered(False{}) == IO.die(Unit,2,"Session is not registered; attach a conductor or recruit a player before receiving messages.") : IO(Unit)}
 
 def m14_unregistered_session_refuses_with_its_rule():
   {==}
