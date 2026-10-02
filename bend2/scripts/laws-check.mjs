@@ -163,7 +163,7 @@ const MUTATIONS = [
     file: join('bend2', 'src', 'coordinator', 'store.bend'),
     find: 'Tx.starts_with(saved,"{\\"error\\":\\"worker-assignment-conflict\\"")',
     replace: 'False{}',
-    law: 'm14_worker_conflict_output_is_refused',
+    law: 'committed_message_routes_refuse_before_endpoint_delivery',
   },
   {
     name: 'connect-removes-endpoint-update-admission',
