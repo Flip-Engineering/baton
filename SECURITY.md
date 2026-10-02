@@ -1,17 +1,11 @@
 # Security disclosure
 
-## Audit (2026-08-20, pre-org-transfer)
+Report vulnerabilities through this repository's private security advisories.
 
-- **Secrets**: full-history scan (2,383 commits, all blobs) — zero real credentials. The 22
-  credential-shaped strings in the tree are redaction-verifier test fixtures (pins that
-  inject canary shapes to assert the sanitizers redact them).
-- **Personal info**: historical commits contain the original author's local filesystem
-  paths (`/Users/<author>` in captured evidence) and unix owner names in `ls`-style
-  runtime captures — the natural residue of an event-sourced campaign run on one machine.
-  Current-tree occurrences were scrubbed at transfer time; history retains them.
-  Commit authorship (name/email) is intentionally preserved — this is attributed work.
-- **Live secrets never in the repo**: session tokens and connection credentials live
-  under `~/.config/baton/` (untracked local state, `.git/baton/` runtime state does not
-  transfer).
+Baton2 coordinates local agents with repository access. Native harnesses manage
+their own authentication and conversation storage. The coordinator records local
+session identities, parent links and message-routing roles.
+[Messaging](docs/bend2/messaging.md) describes those routing rules.
 
-Report vulnerabilities via the repo's private security advisories.
+The [original security audit](https://github.com/Flip-Engineering/baton/blob/f85647ccd6990d19b0aabdb2c834cab203d9b91d/SECURITY.md)
+records observations made on 2026-08-20.
