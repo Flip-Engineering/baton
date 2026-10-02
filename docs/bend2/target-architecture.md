@@ -1,5 +1,13 @@
 # Baton Bend2 design
 
+This document records the earlier proposal. The
+[current architecture](architecture.md) is the design of record. The
+[naming legend](terminology.md) maps its agent `root` to Principal Conductor,
+a coordinating `lead` to Associate Conductor and an individual `worker` to
+Player. Ensembles and Sections are described in task briefs and shared context
+over the existing sessions and parent links. The Orchestra is the whole
+coordinated system.
+
 ## Workflow
 
 The operator talks to the root in a native harness session. The root asks Baton
@@ -187,7 +195,7 @@ findings with retained evidence messages, reader-relative session scopes and
 explicit source-to-destination promotion. Agents generate and review findings.
 The coordinator uses its existing SQLite database and parent message delivery.
 Recording notifies the author's immediate parent, when present. Promotion
-commits a notice to the destination-scope owner, which chooses further ensemble
+commits a notice to the destination-scope owner, which chooses further Ensemble
 distribution. The [real acceptance run](knowledge-context-2026-10-01.md) covers
 evidence review, explicit promotion, owner notices, sibling consumption by finding ID, retrieval
 in a fresh conversation and a separately promoted immutable correction. Its

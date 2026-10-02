@@ -1,8 +1,11 @@
 # Bend2 design
 
 [MANDATE.md](MANDATE.md) states the current rewrite goal.
-[Target architecture](target-architecture.md) describes the parts and data.
-[Rewrite plan](rewrite-plan.md) names the requested seats and first working slice.
+[Current architecture](architecture.md) is the design of record.
+[Naming legend](terminology.md) defines Principal Conductor, Associate Conductor,
+Ensemble, Section, Player and Orchestra over the existing sessions and task context.
+[Target architecture](target-architecture.md) and [rewrite plan](rewrite-plan.md)
+record the earlier proposal and first working slice.
 
 The coordinator entry imports its operative law modules. Every native build checks
 the proofs over the called functions. [Law trace](laws-trace.md) identifies those
