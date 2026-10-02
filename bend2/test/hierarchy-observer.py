@@ -57,6 +57,29 @@ class HierarchyObserver(unittest.TestCase):
         DRIVER.save(self.out / 'native-deepseek.process.json', row)
         return row
 
+    def coordinator(self, muse_harness):
+        routes = {'omp': {'model': 'deepseek/deepseek-flash', 'effort': 'low'},
+                  'muse': {'model': 'muse-spark-1.3-contributor', 'effort': 'low'}}
+        DRIVER.save(self.out / 'run.json', {'routes': routes})
+        DRIVER.save(self.out / 'sessions.json',
+                    {'deepseek': {'harness': 'omp'}, 'muse': {'harness': muse_harness}})
+        (self.out / 'lead').mkdir()
+        cli = self.out / 'baton2'
+        cli.write_text('#!' + sys.executable + '\n' + '''import json,sys
+from pathlib import Path
+out=Path(__file__).parent
+with (out/'cli.calls.jsonl').open('a') as log:
+    log.write(json.dumps(sys.argv[1:])+'\\n')
+if sys.argv[2]=='session':
+    print(json.dumps(json.loads((out/'sessions.json').read_text())[sys.argv[3]]))
+elif sys.argv[2]=='turn':
+    (out/(sys.argv[3]+'.turn.argv.json')).write_text(json.dumps(sys.argv))
+else:
+    sys.exit(2)
+''')
+        cli.chmod(0o700)
+        return routes
+
     def interrupted(self, surviving=False):
         wrapper, child = self.child(), self.child()
         row = self.row(wrapper, child)
@@ -213,6 +236,45 @@ class HierarchyObserver(unittest.TestCase):
         wrapper.stdin.close()
         self.assertEqual(wrapper.wait(), 0)
         self.assertTrue(DRIVER.successful_receipts(DRIVER.records(self.out)))
+
+    def test_recorded_muse_harness_mismatch_refuses_before_either_worker_launch(self):
+        self.coordinator('omp')
+        with self.assertRaisesRegex(RuntimeError, "muse has recorded harness 'omp'; expected 'muse'"):
+            DRIVER.start_workers(self.out)
+        calls = [json.loads(line) for line in (self.out / 'cli.calls.jsonl').read_text().splitlines()]
+        self.assertTrue(calls)
+        self.assertTrue(all(call[1] == 'session' for call in calls))
+        self.assertEqual(json.loads((self.out / 'sessions.json').read_text())['muse']['harness'], 'omp')
+        self.assertFalse((self.out / 'worker-launches.json').exists())
+        self.assertFalse(list(self.out.glob('*.turn.argv.json')))
+        self.assertFalse(list(self.out.glob('*.command.log')))
+
+    def test_matching_recorded_harnesses_preserve_native_launch_arguments(self):
+        routes = self.coordinator('muse')
+        original = subprocess.Popen
+        launched = []
+
+        def launch(argv, *args, **kwargs):
+            child = original(argv, *args, **kwargs)
+            if len(argv) > 2 and argv[2] == 'turn':
+                launched.append(child)
+                self.children.append(child)
+            return child
+
+        with mock.patch.object(DRIVER.subprocess, 'Popen', side_effect=launch):
+            with contextlib.redirect_stdout(io.StringIO()):
+                DRIVER.start_workers(self.out)
+        for child in launched:
+            self.assertEqual(child.wait(), 0)
+        saved = {row['seat']: row for row in json.loads((self.out / 'worker-launches.json').read_text())}
+        self.assertEqual(set(saved), {'deepseek', 'muse'})
+        for seat, route in [('deepseek', routes['omp']), ('muse', routes['muse'])]:
+            expected = [str(self.out / 'baton2'), str(self.out / 'state.db'), 'turn', seat,
+                        seat + '-turn', str(self.out / (seat + '-native')), route['model'], route['effort'],
+                        str(self.out / seat), str(self.out / (seat + '.md')), str(self.out / (seat + '.jsonl')), '']
+            received = json.loads((self.out / (seat + '.turn.argv.json')).read_text())
+            self.assertEqual(received, expected)
+            self.assertEqual(saved[seat]['argv'], received)
 
 
 if __name__ == '__main__':

@@ -39,7 +39,8 @@ and checked-landing checks.
 
 The [before/after receipt](measurements/2026-10-02-hierarchy-observer.json) binds
 the baseline helper from `e13cfb659a08e686ed87c31dbfc5586abfda5f9a` and the repaired
-helper by SHA256. Its deliberately constructed interrupted-wrapper record and
+observer helper at `96ddb520381d03d25ca9da5037735576d0d4c6c0` by SHA256. Its
+deliberately constructed interrupted-wrapper record and
 historical tool event refer to two actual controlled subprocesses. The fixture
 terminates its wrapper and releases its child through stdin EOF, then reaps both.
 The baseline accepted the stale event and its terminal predicate remained false.
@@ -65,6 +66,21 @@ a real failing subprocess. These fixtures run without provider sessions or a
 coordinator build. `check-native.sh` includes them through its existing Python
 test-file selection.
 
+## Recorded harness qualification
+
+The matched native run recruited Muse with `omp`, then its Muse executable
+received OMP arguments and exited before producing native frames. After the
+observer probe, `start_workers` gained a preflight that reads both stored sessions
+and checks their assigned harnesses against the helper's native wrappers. A
+mismatch reports the worker, recorded harness and expected harness before either
+worker launch. The refusal asks the lead to preserve the run and report the
+recruitment mismatch to its parent. Stored assignments remain unchanged.
+
+Controlled CLI fixtures check the refusal and exact matching-harness launch
+arguments. Both matching fixture children are reaped. The retained observer probe
+continues to name the earlier helper pin; its source and raw records remain
+unchanged. Background native process custody requires separate qualification.
+
 ## Boundaries
 
 Process observations are snapshots. `ps` supplies start identities at its displayed
@@ -72,4 +88,4 @@ time resolution. The constructed records exercise observer decisions; they do
 not reproduce the provider broker's process termination. The retained real run
 remains failed. Its frozen driver, raw native records and missing exits are
 unchanged. Worker recruitment and background native process custody require
-separate qualification.
+real native qualification.

@@ -221,6 +221,13 @@ def native_wrapper(seat, out, arguments):
 
 def start_workers(out):
     run = json.loads((out / 'run.json').read_text())
+    for seat in WORKERS:
+        assigned = json.loads(command([out / 'baton2', out / 'state.db', 'session', seat]))
+        expected = 'omp' if seat == 'deepseek' else 'muse'
+        if assigned.get('harness') != expected:
+            raise RuntimeError(f"{seat} has recorded harness {assigned.get('harness')!r}; "
+                               f"expected {expected!r} for its native wrapper. Preserve this run "
+                               "and report the recruitment mismatch to the parent.")
     launched = []
     for seat in WORKERS:
         route = run['routes']['omp' if seat == 'deepseek' else 'muse']
