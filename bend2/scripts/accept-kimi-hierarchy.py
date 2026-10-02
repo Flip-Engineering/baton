@@ -547,6 +547,49 @@ tool event. Then YOU must issue this coordinator command in your native tool cal
 Inspect its result and finish this delegation turn with a progress report. Continue
 when child reports invoke your native session. No waiting for worker completion.
 
+Both helper workers use direct turns. A guidance message to an ended worker stays
+pending and does not launch its correction. Review the worker's report and its
+retained child completion and PID/start evidence before writing a correction task
+under STATE. Missing completion or native identity requires a blocked parent report.
+Tell the worker to read `B2 DB inbox WORKER` and acknowledge accepted messages with
+`B2 DB ack MESSAGE_ID WORKER RECEIPT`. Preserve the worker's registered harness,
+model, effort, workspace and native identity. Keep its supplied native wrapper.
+Compare the saved harness/model/effort with the original route before launching;
+report any disagreement to root while preserving the run's stored assignment.
+Choose an unused correction suffix for the task, turn ID, native log, command log
+and later landing receipt. Preserve the initial task, report, logs and receipts.
+For either worker, source environment.sh and use this detached Python launch;
+replace worker and correction with the selected worker and unused suffix:
+
+```sh
+"$PYTHON" - <<'PY'
+import json, os, pathlib, subprocess
+worker, correction = 'muse', 'review-1'
+state = pathlib.Path(os.environ['STATE'])
+b2, db = os.environ['B2'], os.environ['DB']
+session = json.loads(subprocess.check_output([b2, db, 'session', worker], text=True))
+if not session['native']:
+    raise SystemExit('No saved native identity; preserve the run and report blocked to root.')
+prefix = 'DEEPSEEK' if worker == 'deepseek' else 'MUSE'
+name = worker + '-correction-' + correction
+task = state / (name + '.md')
+with (state / (name + '.command.log')).open('xb') as log:
+    child = subprocess.Popen([
+        b2, db, 'turn', worker, name, str(state / (worker + '-native')),
+        os.environ[prefix + '_MODEL'], os.environ[prefix + '_EFFORT'],
+        session['workspace'], str(task), str(state / (name + '.jsonl')),
+        session['native'],
+    ], stdin=subprocess.DEVNULL, stdout=log, stderr=log,
+       cwd=session['workspace'], start_new_session=True)
+print(child.pid)
+PY
+```
+
+Inspect the launch result and end your lead turn while the correction continues.
+Its native final response reports to you automatically and resumes your session.
+Review and acknowledge that report, check the correction and perform its checked
+landing. Retain the original report and each separate correction report.
+
 For each worker report, inspect its actual diff and check output, acknowledge it,
 and run `B2 DB land-checked WORKER REPO hierarchy-lead CHECK FILES`, with the worker's
 selected checks in one quoted space-separated FILES argument. Save the exact JSON
