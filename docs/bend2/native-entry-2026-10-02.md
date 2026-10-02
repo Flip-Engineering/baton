@@ -34,7 +34,8 @@ original integration to `bend2/test/external/compare-original.py`, with required
 `--old-repo`, `--old-ref` and `--output`. Eight self-contained native comparison
 tests passed. The separate historical integration passed both cases on
 `6ccb2a6daf396fb9ce050cc91476ac49791b64c9`; a startup-failure control retained
-complete helper output, diagnostics and process exit records.
+complete helper output, diagnostics and process exit records. Available installed
+dependencies were recorded separately and were unpinned to that source revision.
 
 ## Actual compiler and landing run
 
@@ -50,7 +51,7 @@ The selected `bend2/test/recruit.py` suite ran in four distinct checked trees
 through public Player-to-Associate and Associate-to-Principal landing. Each tree
 compiled `bend2/src/coordinator/main.bend`, which imports its operative laws.
 Recorded compiler and clang wrappers executed the pinned real tools. Every
-recorded invocation matched the same 60 coordinator source files. The five
+recorded invocation matched the same 60 native source files. The five
 retained generated C files, including the initial build, have SHA256
 `f724c1604610883f11907366630cbbb2c828fa5d551ec221e92b727fcb247f9d`.
 
@@ -61,8 +62,10 @@ retained generated C files, including the initial build, have SHA256
 | Checked trial target | `f3d3d8f81dc3324c562ffb4080e57317d2843b59` |
 
 Both landing results were `landed`. The final target contained the exact Player
-file; its branch and clean workspace remained intact. Player, Associate and
-operator reports were acknowledged by their intended recipients. The driver
+file; its branch and clean workspace remained intact. The Player report reached
+its Associate Conductor, the Associate report reached its Principal Conductor,
+and the Principal report reached the operator. Each recipient acknowledged its
+report. The driver
 exited 0 after 107.169 seconds; its 52 captured command/tool/login PIDs were
 absent. The reviewed regression was imported into `bend2-rewrite` as `24f93c59`.
 
