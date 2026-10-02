@@ -1,4 +1,4 @@
-# Coordinator landing: look up a worker's branch from the database and land
+# Coordinator landing: look up a player's branch from the database and land
 # its committed tip onto a target branch with a fast-forward update-ref.
 
 import Base
@@ -10,14 +10,14 @@ import ../git/types.bend as G
 import ../git/text.bend as Tx
 import ../json/canonical.bend as J
 
-def require_worker(found: Bool) -> IO(Unit):
+def require_player(found: Bool) -> IO(Unit):
   match found:
     case True{}: IO.pure(Unit, Unit{})
-    case False{}: IO.die(Unit, 2, "The worker session is not registered.")
+    case False{}: IO.die(Unit, 2, "The player session is not registered.")
 
 def require_branch_pick(empty: Bool, branch: String) -> IO(String):
   match empty:
-    case True{}: IO.die(String, 2, "The worker has no recorded branch.")
+    case True{}: IO.die(String, 2, "The player has no recorded branch.")
     case False{}: IO.pure(String, branch)
 
 def require_branch(+branch: String) -> IO(String):
@@ -39,11 +39,11 @@ def line(+s: String) -> String:
 def show_outcome(o: G.LandOutcome) -> IO(Unit):
   IO.print(GitLand.outcome_json(o))
 
-def land_worker(+db: String, +worker: String, +repo: String, +target: String) -> IO(Unit):
+def land_player(+db: String, +player: String, +repo: String, +target: String) -> IO(Unit):
   do IO<Unit>:
-    worker_row : String <- IO.try(String, Store.apply(db, C.Session{worker}))
-    present : Unit <- require_worker(Bool.not(String.is_empty(worker_row)))
-    branch_raw : String <- IO.try(String, DB.Sql.query(db, "SELECT branch FROM sessions WHERE id=" ++ C.q(worker) ++ ";"))
+    player_row : String <- IO.try(String, Store.apply(db, C.Session{player}))
+    present : Unit <- require_player(Bool.not(String.is_empty(player_row)))
+    branch_raw : String <- IO.try(String, DB.Sql.query(db, "SELECT branch FROM sessions WHERE id=" ++ C.q(player) ++ ";"))
     branch : String <- require_branch(line(branch_raw))
     outcome : G.LandOutcome <- GitLand.land(repo, branch, target)
     show_outcome(outcome)
@@ -54,26 +54,26 @@ def show_checked_outcome(result: Result<&1,&1,G.GitFail,G.LandOutcome>) -> IO(Un
     case Done{outcome}: show_outcome(outcome)
 
 # One attempt's scratch path comes from the Git landing module, which drops the
-# trees the worker's earlier attempt kept before this attempt prepares its own.
-def run_checked(+db: String, +worker: String, +repo: String, +target: String, +check: String, +files: String, +branch: String) -> IO(Unit):
+# trees the player's earlier attempt kept before this attempt prepares its own.
+def run_checked(+db: String, +player: String, +repo: String, +target: String, +check: String, +files: String, +branch: String) -> IO(Unit):
   do IO<Unit>:
     ts_raw : String <- IO.try(String, DB.Sql.query(db, "" ++ "SELECT hex(randomblob(8));"))
     ts : String <- IO.pure(String, line(ts_raw))
-    scratch : String <- GitLand.open_scratch(repo, worker, ts)
+    scratch : String <- GitLand.open_scratch(repo, player, ts)
     result : Result<&1,&1,G.GitFail,G.LandOutcome> <- GitLand.land_checked(repo, target, branch, check, Tx.split_spaces(files), scratch)
     show_checked_outcome(result)
 
-# The checked landing: the worker's branch is squashed onto the target and
+# The checked landing: the player's branch is squashed onto the target and
 # the selected checks run on the candidate and on the target before the
 # target advances. FILES is space-separated; CHECK runs as /bin/sh CHECK
 # FILE inside each checked tree.
-def land_checked_worker(+db: String, +worker: String, +repo: String, +target: String, +check: String, +files: String) -> IO(Unit):
+def land_checked_player(+db: String, +player: String, +repo: String, +target: String, +check: String, +files: String) -> IO(Unit):
   do IO<Unit>:
-    worker_row : String <- IO.try(String, Store.apply(db, C.Session{worker}))
-    present : Unit <- require_worker(Bool.not(String.is_empty(worker_row)))
-    branch_raw : String <- IO.try(String, DB.Sql.query(db, "SELECT branch FROM sessions WHERE id=" ++ C.q(worker) ++ ";"))
+    player_row : String <- IO.try(String, Store.apply(db, C.Session{player}))
+    present : Unit <- require_player(Bool.not(String.is_empty(player_row)))
+    branch_raw : String <- IO.try(String, DB.Sql.query(db, "SELECT branch FROM sessions WHERE id=" ++ C.q(player) ++ ";"))
     branch : String <- require_branch(line(branch_raw))
-    run_checked(db, worker, repo, target, check, files, branch)
+    run_checked(db, player, repo, target, check, files, branch)
 
 def push_ok(ok: Bool, branch: String, remote: String) -> IO(Unit):
   match ok:

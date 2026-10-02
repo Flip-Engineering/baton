@@ -14,7 +14,7 @@
 # import graph is stated over a module the entry does not reach.
 #
 # M-1  bound: Store.commit and Store.committed, C.sql(Message/Report/Ask), C.session_result,
-#      C.message_result and Root.result. A write answers by re-selecting the row it stored, keyed
+#      C.message_result and Delivery.result. A write answers by re-selecting the row it stored, keyed
 #      by the caller's identity, and a writer's answer names the stored result only for a delivery
 #      that reached exit 0.
 # M-2  bound: P.git_out, Tx.run_res, Turn.refusal_body, Turn.status_text, Recruit.git_status, the
@@ -29,15 +29,15 @@
 # M-4  bound: Deb.debris_argv, Deb.debris_note, Deb.debris_note_of and the create-worktree stage
 #      readers. The dropped set is named and the work the stages made is kept.
 # M-5  bound: Store.commit and Store.committed, C.sql(Pending/Inbox/Delivery/Bind),
-#      Root.wake_sql, Receive.pending_count_sql, P.argv, Turn.remember and Land.require_branch. A
+#      Delivery.wake_sql, Receive.pending_count_sql, P.argv, Turn.remember and Land.require_branch. A
 #      report and its parent delivery are written in one transaction, a transaction that did not
 #      commit delivers nothing, and owed messages are named in the store's own sequence order and
 #      remain owed until receipt. J.json_text is supplementary, not operative: see below.
 # M-7  bound: Turn.id_owner_sql, C.schema, C.sql(Report) and C.sql(Ack). The store validates the
 #      sender it records against the sessions it holds, a turn identity is admitted only for a
-#      report the worker itself wrote, and a report routes to the sender's recorded parent.
-# M-8  bound: Turn.worker_checked, Turn.turn_present_sql, Receive.acquired, Turn.acquired,
-#      Turn.matching_turn, C.sql(Ack), C.sql(Worker) and C.sql(Attach). One native owner per
+#      report the player itself wrote, and a report routes to the sender's recorded parent.
+# M-8  bound: Turn.player_checked, Turn.turn_present_sql, Receive.acquired, Turn.acquired,
+#      Turn.matching_turn, C.sql(Ack), C.sql(Player) and C.sql(Attach). One native owner per
 #      session, a turn identity admitted only for a message the store holds, and every write
 #      bound to the stored row it names.
 # M-10 partly bound: L.check_argv and L.append_when. The judged selection is the caller's, and a
@@ -45,12 +45,12 @@
 #      owed data is stated under M-5 above; the application-wide cutoff clause is open.
 # M-11 bound: C.terminal, C.sql(Report), L.exit_verdict, L.run_verdict, Recruit.absolute and
 #      Tx.run_res. A verdict, a terminal event and a workspace come from what was observed.
-# M-12 bound: Root.after, Root.launch, Guidance.send, Receive.continue_if and Turn.close_input. A
+# M-12 bound: Delivery.after, Delivery.launch, Guidance.send, Receive.continue_if and Turn.close_input. A
 #      command that owes no delivery answers from its own committed result.
-# M-13 bound: Root.after, Guidance.relevant and Turn.close_input. The commit path itself invokes
+# M-13 bound: Delivery.after, Guidance.relevant and Turn.close_input. The commit path itself invokes
 #      the recipient's registered endpoint, at the frames that carry guidance.
 # M-14 bound: T.fail_text, Receive.registered, Receive.exit_status, Turn.supported_harness,
-#      Land.require_worker, Land.require_branch_pick and Recruit.git_status. Each refusal names its
+#      Land.require_player, Land.require_branch_pick and Recruit.git_status. Each refusal names its
 #      own rule and subject. The Git status and create-worktree reader laws are supplementary: see
 #      below.
 # M-17 bound: Turn.combine, Turn.send_result, Turn.remember, Turn.result_missing, Turn.diagnostic
@@ -87,7 +87,8 @@ import ./native-request-laws.bend as NativeRequestLaws
 import ./knowledge-laws.bend as KnowledgeLaws
 import ./messaging-laws.bend as MessagingLaws
 import ./connect-laws.bend as ConnectLaws
-import ./root.bend as Root
+import ./naming-laws.bend as NamingLaws
+import ./delivery.bend as Delivery
 import ./turn.bend as Turn
 import ./commands.bend as C
 import ./receive.bend as Receive
@@ -96,10 +97,10 @@ import ./land.bend as Land
 import ./recruit.bend as Recruit
 import ./store.bend as Store
 import ../host/sqlite.bend as DB
-import ../harness/codex-worker.bend as Codex
-import ../harness/omp-worker.bend as Omp
-import ../harness/claude-worker.bend as Claude
-import ../harness/muse-worker.bend as Muse
+import ../harness/codex-player.bend as Codex
+import ../harness/omp-player.bend as Omp
+import ../harness/claude-player.bend as Claude
+import ../harness/muse-player.bend as Muse
 import ../host/laws.bend as HostLaws
 import ../json/laws.bend as JsonLaws
 import ../json/canonical.bend as J
@@ -118,7 +119,7 @@ law m1_clean_delivery_answers_the_stored_identity:
   for +saved: String
   for +log: String
   for +out: String
-  {Root.result(saved, log, T.RRun{T.SExit{0}, out}) == Done{saved} : Result<&1,&1,U32 & String,String>}
+  {Delivery.result(saved, log, T.RRun{T.SExit{0}, out}) == Done{saved} : Result<&1,&1,U32 & String,String>}
 
 def m1_clean_delivery_answers_the_stored_identity(saved, log, out):
   {==}
@@ -127,7 +128,7 @@ law m1_failed_delivery_is_not_an_acceptance:
   for +saved: String
   for +log: String
   for +out: String
-  {Root.result(saved, log, T.RRun{T.SExit{1}, out}) == Fail{(1,"Message committed; session delivery failed. Read " ++ log ++ " and retry delivery from the pending inbox.")} : Result<&1,&1,U32 & String,String>}
+  {Delivery.result(saved, log, T.RRun{T.SExit{1}, out}) == Fail{(1,"Message committed; session delivery failed. Read " ++ log ++ " and retry delivery from the pending inbox.")} : Result<&1,&1,U32 & String,String>}
 
 def m1_failed_delivery_is_not_an_acceptance(saved, log, out):
   {==}
@@ -136,7 +137,7 @@ law m1_unstarted_delivery_is_not_an_acceptance:
   for +saved: String
   for +log: String
   for +detail: String
-  {Root.result(saved, log, T.RSpawn{detail}) == Fail{(1,"Message committed; session delivery failed. Read " ++ log ++ " and retry delivery from the pending inbox.")} : Result<&1,&1,U32 & String,String>}
+  {Delivery.result(saved, log, T.RSpawn{detail}) == Fail{(1,"Message committed; session delivery failed. Read " ++ log ++ " and retry delivery from the pending inbox.")} : Result<&1,&1,U32 & String,String>}
 
 def m1_unstarted_delivery_is_not_an_acceptance(saved, log, detail):
   {==}
@@ -150,7 +151,7 @@ def m1_unstarted_delivery_is_not_an_acceptance(saved, log, detail):
 law m12_no_delivery_owes_no_wait:
   for +db: String
   for +saved: String
-  {Root.after(db, C.Status{}, saved) == IO.pure(Result<&1,&1,U32 & String,String>, Done{saved}) : IO(Result<&1,&1,U32 & String,String>)}
+  {Delivery.after(db, C.Status{}, saved) == IO.pure(Result<&1,&1,U32 & String,String>, Done{saved}) : IO(Result<&1,&1,U32 & String,String>)}
 
 def m12_no_delivery_owes_no_wait(db, saved):
   {==}
@@ -160,7 +161,7 @@ law m12_absent_receiver_answers_at_once:
   for +id: String
   for +saved: String
   for +argv: String
-  {Root.launch(db, id, saved, argv, True{}) == IO.pure(Result<&1,&1,U32 & String,String>, Done{saved}) : IO(Result<&1,&1,U32 & String,String>)}
+  {Delivery.launch(db, id, saved, argv, True{}) == IO.pure(Result<&1,&1,U32 & String,String>, Done{saved}) : IO(Result<&1,&1,U32 & String,String>)}
 
 def m12_absent_receiver_answers_at_once(db, id, saved, argv):
   {==}
@@ -177,7 +178,7 @@ law m13_report_invokes_the_registered_endpoint:
   for +sender: String
   for +body: String
   for +saved: String
-  {Root.after(db, C.Report{id, sender, body}, saved) == Root.deliver(db, id, "1", saved) : IO(Result<&1,&1,U32 & String,String>)}
+  {Delivery.after(db, C.Report{id, sender, body}, saved) == Delivery.deliver(db, id, "1", saved) : IO(Result<&1,&1,U32 & String,String>)}
 
 def m13_report_invokes_the_registered_endpoint(db, id, sender, body, saved):
   {==}
@@ -185,12 +186,12 @@ def m13_report_invokes_the_registered_endpoint(db, id, sender, body, saved):
 law m13_ask_invokes_the_registered_endpoint:
   for +db: String
   for +id: String
-  for +worker: String
+  for +player: String
   for +body: String
   for +saved: String
-  {Root.after(db, C.Ask{id, worker, body}, saved) == Root.deliver(db, id, "1", saved) : IO(Result<&1,&1,U32 & String,String>)}
+  {Delivery.after(db, C.Ask{id, player, body}, saved) == Delivery.deliver(db, id, "1", saved) : IO(Result<&1,&1,U32 & String,String>)}
 
-def m13_ask_invokes_the_registered_endpoint(db, id, worker, body, saved):
+def m13_ask_invokes_the_registered_endpoint(db, id, player, body, saved):
   {==}
 
 law m13_message_invokes_the_registered_endpoint:
@@ -201,7 +202,7 @@ law m13_message_invokes_the_registered_endpoint:
   for +kind: String
   for +body: String
   for +saved: String
-  {Root.after(db, C.Message{id, sender, recipient, kind, body}, saved) == Root.deliver(db, id, "1", saved) : IO(Result<&1,&1,U32 & String,String>)}
+  {Delivery.after(db, C.Message{id, sender, recipient, kind, body}, saved) == Delivery.deliver(db, id, "1", saved) : IO(Result<&1,&1,U32 & String,String>)}
 
 def m13_message_invokes_the_registered_endpoint(db, id, sender, recipient, kind, body, saved):
   {==}
@@ -209,60 +210,60 @@ def m13_message_invokes_the_registered_endpoint(db, id, sender, recipient, kind,
 law m13_terminal_event_invokes_the_registered_endpoint:
   for +db: String
   for +id: String
-  for +worker: String
+  for +player: String
   for +event: String
   for +saved: String
-  {Root.after(db, C.Observe{id, worker, event}, saved) == Root.deliver(db, id, C.terminal(event), saved) : IO(Result<&1,&1,U32 & String,String>)}
+  {Delivery.after(db, C.Observe{id, player, event}, saved) == Delivery.deliver(db, id, C.terminal(event), saved) : IO(Result<&1,&1,U32 & String,String>)}
 
-def m13_terminal_event_invokes_the_registered_endpoint(db, id, worker, event, saved):
+def m13_terminal_event_invokes_the_registered_endpoint(db, id, player, event, saved):
   {==}
 
 # ---------------------------------------------------------------------------
-# M-17: no silent abandonment of accepted, unsettled work. A worker process
+# M-17: no silent abandonment of accepted, unsettled work. A player process
 # that ended with a failure reports to its parent, and an unsettled delivery
 # names the inbox and the log that continue it.
 
-law m17_failed_worker_end_reports_to_the_parent:
+law m17_failed_player_end_reports_to_the_parent:
   for +db: String
-  for +worker: String
+  for +player: String
   for +id: String
   for +status: String
-  {Turn.exit_failure(db, worker, id, status, False{}) == Turn.report(db, worker, id ++ ":exit", "Worker process ended with " ++ status) : IO(Unit)}
+  {Turn.exit_failure(db, player, id, status, False{}) == Turn.report(db, player, id ++ ":exit", "Player process ended with " ++ status) : IO(Unit)}
 
-def m17_failed_worker_end_reports_to_the_parent(db, worker, id, status):
+def m17_failed_player_end_reports_to_the_parent(db, player, id, status):
   {==}
 
 law m17_missing_native_result_reports_to_the_parent:
   for +db: String
-  for +worker: String
+  for +player: String
   for +id: String
   for +log: String
   for +stderr: String
   for +status: String
-  {Turn.result_missing(db, worker, id, log, stderr, status, False{}) == Turn.report(db, worker, id, "Worker process ended without a native result (" ++ status ++ "). Output: " ++ log ++ ". Stderr: " ++ stderr) : IO(Unit)}
+  {Turn.result_missing(db, player, id, log, stderr, status, False{}) == Turn.report(db, player, id, "Player process ended without a native result (" ++ status ++ "). Output: " ++ log ++ ". Stderr: " ++ stderr) : IO(Unit)}
 
-def m17_missing_native_result_reports_to_the_parent(db, worker, id, log, stderr, status):
+def m17_missing_native_result_reports_to_the_parent(db, player, id, log, stderr, status):
   {==}
 
 law m17_missing_observation_reports_to_the_parent:
   for +db: String
-  for +worker: String
+  for +player: String
   for +id: String
   for +text: String
-  {Turn.diagnostic(db, worker, id, text, False{}) == Turn.report(db, worker, id ++ ":observation", "Native output observation failed: " ++ text) : IO(Unit)}
+  {Turn.diagnostic(db, player, id, text, False{}) == Turn.report(db, player, id ++ ":observation", "Native output observation failed: " ++ text) : IO(Unit)}
 
-def m17_missing_observation_reports_to_the_parent(db, worker, id, text):
+def m17_missing_observation_reports_to_the_parent(db, player, id, text):
   {==}
 
 # ---------------------------------------------------------------------------
-# The coordinator store's sessions and workers. The store writes one row per
+# The coordinator store's sessions and players. The store writes one row per
 # logical session and reads its answer back by that identity.
 
 # M-1: the store's answer for a session reads the row the transaction stored,
 # keyed by the identity the caller supplied.
 law m1_session_answer_reads_the_stored_row:
   for +id: String
-  {C.session_result(id) == "SELECT json_patch(json_object('id',id,'parent',parent,'harness',harness,'model',model,'effort',effort,'native',native,'observedHarness',observed_harness,'observedModel',observed_model,'observedEffort',observed_effort,'endpoint',endpoint,'workspace',workspace,'branch',branch,'base',base)," ++ C.session_state_sql("sessions.id") ++ ") FROM sessions WHERE id=" ++ C.q(id) ++ ";" : String}
+  {C.session_result(id) == "SELECT json_patch(json_object('id',id,'parent',parent,'harness',harness,'model',model,'effort',effort,'native',native,'observedHarness',observed_harness,'observedModel',observed_model,'observedEffort',observed_effort,'endpoint',endpoint,'workspace',workspace,'branch',branch,'base',base,'kind'," ++ C.session_kind("sessions.id") ++ ",'role'," ++ C.public_role("sessions.id") ++ ")," ++ C.session_state_sql("sessions.id") ++ ") FROM sessions WHERE id=" ++ C.q(id) ++ ";" : String}
 
 def m1_session_answer_reads_the_stored_row(id):
   {==}
@@ -320,12 +321,12 @@ def m11_terminal_reads_the_records_own_event(event):
 
 # ---------------------------------------------------------------------------# ---------------------------------------------------------------------------
 # The turn supervisor. A turn is refused before it starts when the session
-# already has an owner or the worker is not registered, and every outcome the
+# already has an owner or the player is not registered, and every outcome the
 # supervisor produces is read from what it observed.
 
 law m8_one_native_owner_refuses_a_second_turn:
   for +db: String
-  for +worker: String
+  for +player: String
   for +id: String
   for +cmd: String
   for +model: String
@@ -335,21 +336,21 @@ law m8_one_native_owner_refuses_a_second_turn:
   for +log: String
   for +session: String
   for +missing: Bool
-  {Turn.acquired(db, worker, id, cmd, model, effort, cwd, task, log, session, missing, None{}) == IO.die(Unit,2,"Session already has an active native turn; send a message to queue input.") : IO(Unit)}
+  {Turn.acquired(db, player, id, cmd, model, effort, cwd, task, log, session, missing, None{}) == IO.die(Unit,2,"Session already has an active native turn; send a message to queue input.") : IO(Unit)}
 
-def m8_one_native_owner_refuses_a_second_turn(db, worker, id, cmd, model, effort, cwd, task, log, session, missing):
+def m8_one_native_owner_refuses_a_second_turn(db, player, id, cmd, model, effort, cwd, task, log, session, missing):
   {==}
 
 law m14_missing_adapter_refuses_with_its_rule:
-  {Turn.supported_harness(False{}) == IO.die(Unit,2,"No turn adapter for the worker's recorded harness.") : IO(Unit)}
+  {Turn.supported_harness(False{}) == IO.die(Unit,2,"No turn adapter for the player's recorded harness.") : IO(Unit)}
 
 def m14_missing_adapter_refuses_with_its_rule():
   {==}
 
-law m8_turn_identity_belongs_to_one_worker:
-  {Turn.matching_turn(False{}) == IO.die(Unit,2,"The turn ID already belongs to a different worker or message kind.") : IO(Unit)}
+law m8_turn_identity_belongs_to_one_player:
+  {Turn.matching_turn(False{}) == IO.die(Unit,2,"The turn ID already belongs to a different player or message kind.") : IO(Unit)}
 
-def m8_turn_identity_belongs_to_one_worker():
+def m8_turn_identity_belongs_to_one_player():
   {==}
 
 law m2_unresumable_session_is_never_a_refusal:
@@ -520,7 +521,7 @@ def m12_nothing_owed_answers_at_once(again):
 # ---------------------------------------------------------------------------
 # Recruitment and the coordinator's landing commands.
 
-# M-11: the workspace a worker records is the path the caller gave. A relative
+# M-11: the workspace a player records is the path the caller gave. A relative
 # path resolves from the repository and a rooted path is not re-rooted.
 law m11_rooted_workspace_is_the_given_path:
   for +repo: String
@@ -561,10 +562,10 @@ def m14_failed_git_command_names_itself(what, code, out):
 
 # M-14: a landing command for a session the store does not hold is refused
 # with the rule that refused it.
-law m14_unregistered_worker_refuses_with_its_rule:
-  {Land.require_worker(False{}) == IO.die(Unit, 2, "The worker session is not registered.") : IO(Unit)}
+law m14_unregistered_player_refuses_with_its_rule:
+  {Land.require_player(False{}) == IO.die(Unit, 2, "The player session is not registered.") : IO(Unit)}
 
-def m14_unregistered_worker_refuses_with_its_rule():
+def m14_unregistered_player_refuses_with_its_rule():
   {==}
 
 # M-14: a recruit command for a parent the store does not hold is refused with
@@ -581,15 +582,15 @@ law m14_registered_parent_admits_the_recruit:
 def m14_registered_parent_admits_the_recruit():
   {==}
 
-law m14_worker_without_branch_refuses_with_its_rule:
+law m14_player_without_branch_refuses_with_its_rule:
   for +branch: String
-  {Land.require_branch_pick(True{}, branch) == IO.die(String, 2, "The worker has no recorded branch.") : IO(String)}
+  {Land.require_branch_pick(True{}, branch) == IO.die(String, 2, "The player has no recorded branch.") : IO(String)}
 
-def m14_worker_without_branch_refuses_with_its_rule(branch):
+def m14_player_without_branch_refuses_with_its_rule(branch):
   {==}
 
 law m14_empty_branch_is_the_missing_branch_case:
-  {Land.require_branch(SNil{}) == IO.die(String, 2, "The worker has no recorded branch.") : IO(String)}
+  {Land.require_branch(SNil{}) == IO.die(String, 2, "The player has no recorded branch.") : IO(String)}
 
 def m14_empty_branch_is_the_missing_branch_case():
   {==}
@@ -634,7 +635,7 @@ def m5_delivery_carries_the_recipients_current_endpoint(id):
 law m5_wake_reads_the_first_owed_message_after_the_cursor:
   for +session: String
   for +cursor: String
-  {Root.wake_sql(session, cursor) == "SELECT coalesce((SELECT id FROM messages WHERE recipient=" ++ C.q(session) ++ " AND receipt IS NULL AND seq>CAST(" ++ C.q(cursor) ++ " AS INTEGER) AND NOT " ++ C.stopped_session_sql(C.q(session)) ++ " ORDER BY seq LIMIT 1),'');" : String}
+  {Delivery.wake_sql(session, cursor) == "SELECT coalesce((SELECT id FROM messages WHERE recipient=" ++ C.q(session) ++ " AND receipt IS NULL AND seq>CAST(" ++ C.q(cursor) ++ " AS INTEGER) AND NOT " ++ C.stopped_session_sql(C.q(session)) ++ " ORDER BY seq LIMIT 1),'');" : String}
 
 def m5_wake_reads_the_first_owed_message_after_the_cursor(session, cursor):
   {==}
@@ -669,9 +670,9 @@ law m8_acknowledgement_is_bound_to_its_recipient:
 def m8_acknowledgement_is_bound_to_its_recipient(id, recipient, receipt):
   {==}
 
-# Worker assignment retries compare all stored fields. SQLite evaluates the
+# Player assignment retries compare all stored fields. SQLite evaluates the
 # predicate and transaction; native recruitment tests verify row and Git state.
-law m8_worker_retry_compares_the_complete_assignment:
+law m8_player_retry_compares_the_complete_assignment:
   for parent: String
   for harness: String
   for model: String
@@ -679,14 +680,14 @@ law m8_worker_retry_compares_the_complete_assignment:
   for workspace: String
   for branch: String
   for base: String
-  {C.worker_matches(parent,harness,model,effort,workspace,branch,base) == "(parent IS " ++ C.q(parent) ++ " AND harness=" ++ C.q(harness) ++ " AND model=" ++ C.q(model) ++ " AND effort=" ++ C.q(effort) ++ " AND workspace=" ++ C.q(workspace) ++ " AND branch=" ++ C.q(branch) ++ " AND base=" ++ C.q(base) ++ ")" : String}
+  {C.player_matches(parent,harness,model,effort,workspace,branch,base) == "(parent IS " ++ C.q(parent) ++ " AND harness=" ++ C.q(harness) ++ " AND model=" ++ C.q(model) ++ " AND effort=" ++ C.q(effort) ++ " AND workspace=" ++ C.q(workspace) ++ " AND branch=" ++ C.q(branch) ++ " AND base=" ++ C.q(base) ++ ")" : String}
 
-def m8_worker_retry_compares_the_complete_assignment(parent,harness,model,effort,workspace,branch,base):
+def m8_player_retry_compares_the_complete_assignment(parent,harness,model,effort,workspace,branch,base):
   {==}
 
 # Existing assignments receive no update. The answer identifies a conflict or
 # returns the stored session after the complete assignment matches.
-law m8_worker_registration_is_bound_to_the_stored_row:
+law m8_player_registration_is_bound_to_the_stored_row:
   for +id: String
   for +parent: String
   for +harness: String
@@ -695,38 +696,38 @@ law m8_worker_registration_is_bound_to_the_stored_row:
   for +workspace: String
   for +branch: String
   for +base: String
-  {C.sql(C.Worker{id, parent, harness, model, effort, workspace, branch, base}) == "INSERT INTO sessions(id,parent,harness,model,effort,workspace,branch,base) VALUES(" ++ C.q(id) ++ "," ++ C.q(parent) ++ "," ++ C.q(harness) ++ "," ++ C.q(model) ++ "," ++ C.q(effort) ++ "," ++ C.q(workspace) ++ "," ++ C.q(branch) ++ "," ++ C.q(base) ++ ") ON CONFLICT(id) DO NOTHING;"
-  ++ "SELECT json_object('error','worker-assignment-conflict','session',id,'existing',json_object('parent',parent,'harness',harness,'model',model,'effort',effort,'workspace',workspace,'branch',branch,'base',base),'requested',json_object('parent'," ++ C.q(parent) ++ ",'harness'," ++ C.q(harness) ++ ",'model'," ++ C.q(model) ++ ",'effort'," ++ C.q(effort) ++ ",'workspace'," ++ C.q(workspace) ++ ",'branch'," ++ C.q(branch) ++ ",'base'," ++ C.q(base) ++ "),'condition','The session ID is already registered with a different assignment.','next','Read session ID and worktree ID. Retry recruit with the recorded assignment, or recruit a new ID with a new branch and unused path; retain the original work.') FROM sessions WHERE id=" ++ C.q(id) ++ " AND NOT " ++ C.worker_matches(parent,harness,model,effort,workspace,branch,base) ++ ";"
-  ++ C.session_result_where("id=" ++ C.q(id) ++ " AND " ++ C.worker_matches(parent,harness,model,effort,workspace,branch,base)) : String}
+  {C.sql(C.Player{id, parent, harness, model, effort, workspace, branch, base}) == "INSERT INTO sessions(id,parent,harness,model,effort,workspace,branch,base) VALUES(" ++ C.q(id) ++ "," ++ C.q(parent) ++ "," ++ C.q(harness) ++ "," ++ C.q(model) ++ "," ++ C.q(effort) ++ "," ++ C.q(workspace) ++ "," ++ C.q(branch) ++ "," ++ C.q(base) ++ ") ON CONFLICT(id) DO NOTHING;"
+  ++ "SELECT json_object('error','player-assignment-conflict','session',id,'existing',json_object('parent',parent,'harness',harness,'model',model,'effort',effort,'workspace',workspace,'branch',branch,'base',base),'requested',json_object('parent'," ++ C.q(parent) ++ ",'harness'," ++ C.q(harness) ++ ",'model'," ++ C.q(model) ++ ",'effort'," ++ C.q(effort) ++ ",'workspace'," ++ C.q(workspace) ++ ",'branch'," ++ C.q(branch) ++ ",'base'," ++ C.q(base) ++ "),'condition','The session ID is already registered with a different assignment.','next','Read session ID and worktree ID. Retry recruit with the recorded assignment, or recruit a new ID with a new branch and unused path; retain the original work.') FROM sessions WHERE id=" ++ C.q(id) ++ " AND NOT " ++ C.player_matches(parent,harness,model,effort,workspace,branch,base) ++ ";"
+  ++ C.session_result_where("id=" ++ C.q(id) ++ " AND " ++ C.player_matches(parent,harness,model,effort,workspace,branch,base)) : String}
 
-def m8_worker_registration_is_bound_to_the_stored_row(id, parent, harness, model, effort, workspace, branch, base):
+def m8_player_registration_is_bound_to_the_stored_row(id, parent, harness, model, effort, workspace, branch, base):
   {==}
 
-law m14_worker_conflict_output_is_refused:
-  {Store.refused("{\"error\":\"worker-assignment-conflict\",\"session\":\"worker\",\"existing\":{\"harness\":\"omp\"},\"requested\":{\"harness\":\"muse\"}}") == True{} : Bool}
+law m14_player_conflict_output_is_refused:
+  {Store.refused("{\"error\":\"player-assignment-conflict\",\"session\":\"worker\",\"existing\":{\"harness\":\"omp\"},\"requested\":{\"harness\":\"muse\"}}") == True{} : Bool}
 
-def m14_worker_conflict_output_is_refused():
+def m14_player_conflict_output_is_refused():
   {==}
 
-law m14_worker_conflict_returns_the_structured_refusal:
+law m14_player_conflict_returns_the_structured_refusal:
   for db: String
   for command: C.Command
-  {Store.committed(db,command,Done{"{\"error\":\"worker-assignment-conflict\",\"session\":\"worker\",\"existing\":{\"harness\":\"omp\"},\"requested\":{\"harness\":\"muse\"}}"}) == IO.pure(Result<&1,&1,U32 & String,String>,Fail{(2,"{\"error\":\"worker-assignment-conflict\",\"session\":\"worker\",\"existing\":{\"harness\":\"omp\"},\"requested\":{\"harness\":\"muse\"}}")}) : IO(Result<&1,&1,U32 & String,String>)}
+  {Store.committed(db,command,Done{"{\"error\":\"player-assignment-conflict\",\"session\":\"worker\",\"existing\":{\"harness\":\"omp\"},\"requested\":{\"harness\":\"muse\"}}"}) == IO.pure(Result<&1,&1,U32 & String,String>,Fail{(2,"{\"error\":\"player-assignment-conflict\",\"session\":\"worker\",\"existing\":{\"harness\":\"omp\"},\"requested\":{\"harness\":\"muse\"}}")}) : IO(Result<&1,&1,U32 & String,String>)}
 
-def m14_worker_conflict_returns_the_structured_refusal(db,command):
+def m14_player_conflict_returns_the_structured_refusal(db,command):
   {==}
 
 # M-8: attaching a root is bound to the row it names. The conflict clause
 # updates only a row with no parent, so an attach cannot replace a recruited
-# worker's identity, and the worker keeps its parentage and placement.
-law m8_attach_never_overwrites_a_worker_row:
+# player's identity, and the player keeps its parentage and placement.
+law m8_attach_never_overwrites_a_player_row:
   for +id: String
   for +harness: String
   for +native: String
   for +endpoint: String
   {C.sql(C.Attach{id, harness, native, endpoint}) == "INSERT INTO sessions(id,harness,native,endpoint) VALUES(" ++ C.q(id) ++ "," ++ C.q(harness) ++ "," ++ C.q(native) ++ "," ++ C.q(endpoint) ++ ") ON CONFLICT(id) DO UPDATE SET id=CASE WHEN sessions.parent IS NULL THEN sessions.id ELSE NULL END,harness=excluded.harness,native=excluded.native,endpoint=excluded.endpoint;" ++ C.session_result(id) : String}
 
-def m8_attach_never_overwrites_a_worker_row(id, harness, native, endpoint):
+def m8_attach_never_overwrites_a_player_row(id, harness, native, endpoint):
   {==}
 
 # ---------------------------------------------------------------------------
@@ -794,7 +795,7 @@ def m3c_checked_landing_answers_the_outcome_it_reached(outcome):
 
 # ---------------------------------------------------------------------------
 # M-5 over the store's report and delivery transaction, and M-7 and M-8 over
-# the command admission that checks the worker and the turn identity.
+# the command admission that checks the player and the turn identity.
 
 # M-5: a report row and its pending parent delivery are written in one
 # transaction. The schema, the report insert that names the sender's recorded
@@ -821,15 +822,15 @@ law m5_a_failed_transaction_delivers_nothing:
 def m5_a_failed_transaction_delivers_nothing(db, command, code, text):
   {==}
 
-# M-7: a turn identity is admitted only for a report the worker itself wrote.
+# M-7: a turn identity is admitted only for a report the player itself wrote.
 # The admission reads the store's own sender and kind, so a caller cannot start
-# a turn under another worker's message identity.
-law m7_a_turn_id_is_admitted_only_for_this_workers_report:
+# a turn under another player's message identity.
+law m7_a_turn_id_is_admitted_only_for_this_players_report:
   for +id: String
-  for +worker: String
-  {Turn.id_owner_sql(id, worker) == "SELECT count(*) FROM messages WHERE id=" ++ C.q(id) ++ " AND (sender<>" ++ C.q(worker) ++ " OR kind<>'report');" : String}
+  for +player: String
+  {Turn.id_owner_sql(id, player) == "SELECT count(*) FROM messages WHERE id=" ++ C.q(id) ++ " AND (sender<>" ++ C.q(player) ++ " OR kind<>'report');" : String}
 
-def m7_a_turn_id_is_admitted_only_for_this_workers_report(id, worker):
+def m7_a_turn_id_is_admitted_only_for_this_players_report(id, player):
   {==}
 
 # M-8: a turn identity is admitted only for a message the store already holds.
@@ -840,11 +841,11 @@ law m8_a_turn_is_admitted_only_for_a_message_the_store_holds:
 def m8_a_turn_is_admitted_only_for_a_message_the_store_holds(id):
   {==}
 
-# M-8: a worker with no recorded parent and workspace is refused before any
+# M-8: a player with no recorded parent and workspace is refused before any
 # turn work, and the refusal names the registration that would admit it.
-law m8_an_unregistered_worker_is_refused_before_any_turn:
+law m8_an_unregistered_player_is_refused_before_any_turn:
   for +db: String
-  for +worker: String
+  for +player: String
   for +id: String
   for +cmd: String
   for +model: String
@@ -854,9 +855,9 @@ law m8_an_unregistered_worker_is_refused_before_any_turn:
   for +log: String
   for +session: String
   for +harness: String
-  {Turn.worker_checked(db, worker, id, cmd, model, effort, cwd, task, log, session, harness, True{}) == IO.die(Maybe<Turn.Outcome>,2,"Worker has no recorded parent and workspace; register it before starting a turn.") : IO(Maybe<Turn.Outcome>)}
+  {Turn.player_checked(db, player, id, cmd, model, effort, cwd, task, log, session, harness, True{}) == IO.die(Maybe<Turn.Outcome>,2,"Player has no recorded parent and workspace; register it before starting a turn.") : IO(Maybe<Turn.Outcome>)}
 
-def m8_an_unregistered_worker_is_refused_before_any_turn(db, worker, id, cmd, model, effort, cwd, task, log, session, harness):
+def m8_an_unregistered_player_is_refused_before_any_turn(db, player, id, cmd, model, effort, cwd, task, log, session, harness):
   {==}
 
 # ---------------------------------------------------------------------------
@@ -905,7 +906,7 @@ law m2_omp_launch_reaches_the_omp_adapter:
   for +log: String
   for +session: String
   for +task: String
-  {Turn.launch(sessions, cmd, model, effort, cwd, log, session, "omp\n", task) == Omp.start_worker(cmd, model, effort, cwd, log, sessions, session, String.is_empty(session)) : IO(Result<&1,&1,U32 & String,U32>)}
+  {Turn.launch(sessions, cmd, model, effort, cwd, log, session, "omp\n", task) == Omp.start_player(cmd, model, effort, cwd, log, sessions, session, String.is_empty(session)) : IO(Result<&1,&1,U32 & String,U32>)}
 
 def m2_omp_launch_reaches_the_omp_adapter(sessions, cmd, model, effort, cwd, log, session, task):
   {==}
@@ -933,7 +934,7 @@ law m2_codex_launch_reaches_the_codex_adapter:
   for +log: String
   for +session: String
   for +task: String
-  {Turn.launch(sessions, cmd, model, effort, cwd, log, session, "codex\n", task) == Codex.start_worker(cmd, model, effort, cwd, log ++ ".stderr", session, String.is_empty(session)) : IO(Result<&1,&1,U32 & String,U32>)}
+  {Turn.launch(sessions, cmd, model, effort, cwd, log, session, "codex\n", task) == Codex.start_player(cmd, model, effort, cwd, log ++ ".stderr", session, String.is_empty(session)) : IO(Result<&1,&1,U32 & String,U32>)}
 
 def m2_codex_launch_reaches_the_codex_adapter(sessions, cmd, model, effort, cwd, log, session, task):
   {==}
@@ -959,7 +960,7 @@ law m5_a_fresh_claude_turn_starts_a_session:
   for +cwd: String
   for +stderr: String
   for +session: String
-  {Turn.claude_launch(cmd, model, effort, cwd, stderr, session, True{}) == Claude.start_worker(cmd, model, effort, cwd, stderr) : IO(Result<&1,&1,U32 & String,U32>)}
+  {Turn.claude_launch(cmd, model, effort, cwd, stderr, session, True{}) == Claude.start_player(cmd, model, effort, cwd, stderr) : IO(Result<&1,&1,U32 & String,U32>)}
 
 def m5_a_fresh_claude_turn_starts_a_session(cmd, model, effort, cwd, stderr, session):
   {==}
@@ -971,7 +972,7 @@ law m5_a_resumable_claude_turn_carries_the_recorded_session:
   for +cwd: String
   for +stderr: String
   for +session: String
-  {Turn.claude_launch(cmd, model, effort, cwd, stderr, session, False{}) == Claude.resume_worker(cmd, model, effort, cwd, stderr, session) : IO(Result<&1,&1,U32 & String,U32>)}
+  {Turn.claude_launch(cmd, model, effort, cwd, stderr, session, False{}) == Claude.resume_player(cmd, model, effort, cwd, stderr, session) : IO(Result<&1,&1,U32 & String,U32>)}
 
 def m5_a_resumable_claude_turn_carries_the_recorded_session(cmd, model, effort, cwd, stderr, session):
   {==}
@@ -984,7 +985,7 @@ law m5_a_fresh_muse_turn_starts_a_session:
   for +stderr: String
   for +session: String
   for +task: String
-  {Turn.muse_launch(cmd, model, effort, cwd, stderr, session, task, True{}) == Muse.start_worker(cmd, model, effort, cwd, stderr, task) : IO(Result<&1,&1,U32 & String,U32>)}
+  {Turn.muse_launch(cmd, model, effort, cwd, stderr, session, task, True{}) == Muse.start_player(cmd, model, effort, cwd, stderr, task) : IO(Result<&1,&1,U32 & String,U32>)}
 
 def m5_a_fresh_muse_turn_starts_a_session(cmd, model, effort, cwd, stderr, session, task):
   {==}
@@ -997,7 +998,7 @@ law m5_a_resumable_muse_turn_carries_the_recorded_session:
   for +stderr: String
   for +session: String
   for +task: String
-  {Turn.muse_launch(cmd, model, effort, cwd, stderr, session, task, False{}) == Muse.resume_worker(cmd, model, effort, cwd, stderr, session, task) : IO(Result<&1,&1,U32 & String,U32>)}
+  {Turn.muse_launch(cmd, model, effort, cwd, stderr, session, task, False{}) == Muse.resume_player(cmd, model, effort, cwd, stderr, session, task) : IO(Result<&1,&1,U32 & String,U32>)}
 
 def m5_a_resumable_muse_turn_carries_the_recorded_session(cmd, model, effort, cwd, stderr, session, task):
   {==}

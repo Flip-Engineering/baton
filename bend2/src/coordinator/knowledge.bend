@@ -20,7 +20,7 @@
 # finding and a promotion shares that cited evidence and nothing else.
 import Base
 import ./commands.bend as C
-import ./root.bend as Root
+import ./delivery.bend as Delivery
 import ../host/sqlite.bend as DB
 import ../host/text.bend as T
 
@@ -178,7 +178,7 @@ def answered(delivery: Result<&1,&1,U32 & String,String>) -> IO(Unit):
 def deliver_record(db: String, id: String, saved: String) -> IO(Result<&1,&1,U32 & String,String>):
   match saved:
     case SNil{}: IO.pure(Result<&1,&1,U32 & String,String>,Done{SNil{}})
-    case SCon{h,t}: Root.deliver(db,notice_id(id),"1",SCon{h,t})
+    case SCon{h,t}: Delivery.deliver(db,notice_id(id),"1",SCon{h,t})
 
 def record(+db: String, +id: String, author: String, claim: String, evidence: String, limits: String) -> IO(Unit):
   do IO<Unit>:
@@ -198,7 +198,7 @@ def read(db: String, reader: String) -> IO(Unit):
 def deliver_promotion(db: String, id: String, saved: String) -> IO(Result<&1,&1,U32 & String,String>):
   match saved:
     case SNil{}: IO.pure(Result<&1,&1,U32 & String,String>,Done{SNil{}})
-    case SCon{h,t}: Root.deliver(db,promotion_notice_id(id),"1",SCon{h,t})
+    case SCon{h,t}: Delivery.deliver(db,promotion_notice_id(id),"1",SCon{h,t})
 
 def promote(+db: String, +id: String, promoter: String, source: String, destination: String, finding: String) -> IO(Unit):
   do IO<Unit>:

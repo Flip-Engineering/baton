@@ -11,7 +11,7 @@
 import Base
 import ./commands.bend as C
 import ./knowledge.bend as K
-import ./root.bend as Root
+import ./delivery.bend as Delivery
 import ../host/sqlite.bend as DB
 
 law m1_the_knowledge_schema_retains_findings_and_promotions:
@@ -342,7 +342,7 @@ law m1_a_stored_record_result_delivers_its_notice:
   for id: String
   for h: Char
   for t: String
-  {K.deliver_record(db,id,SCon{h,t}) == Root.deliver(db,K.notice_id(id),"1",SCon{h,t}) : IO(Result<&1,&1,U32 & String,String>)}
+  {K.deliver_record(db,id,SCon{h,t}) == Delivery.deliver(db,K.notice_id(id),"1",SCon{h,t}) : IO(Result<&1,&1,U32 & String,String>)}
 
 def m1_a_stored_record_result_delivers_its_notice(db,id,h,t):
   {==}
@@ -394,7 +394,7 @@ law m1_a_stored_promotion_result_delivers_its_notice:
   for id: String
   for h: Char
   for t: String
-  {K.deliver_promotion(db,id,SCon{h,t}) == Root.deliver(db,K.promotion_notice_id(id),"1",SCon{h,t}) : IO(Result<&1,&1,U32 & String,String>)}
+  {K.deliver_promotion(db,id,SCon{h,t}) == Delivery.deliver(db,K.promotion_notice_id(id),"1",SCon{h,t}) : IO(Result<&1,&1,U32 & String,String>)}
 
 def m1_a_stored_promotion_result_delivers_its_notice(db,id,h,t):
   {==}

@@ -6,6 +6,7 @@ import ../git/process.bend as Process
 import ../git/text.bend as Tx
 import ../git/types.bend as T
 
+# The historical .root.log pathname remains the delivery log for existing databases.
 # The endpoint is an argv JSON array. The committed message ID is its last argument.
 def endpoint_sql(id: String, condition: String) -> String:
   "SELECT coalesce((SELECT (SELECT group_concat(length(CAST(value AS BLOB)) || ':' || value,'') FROM json_each(s.endpoint)) FROM messages m JOIN sessions s ON s.id=m.recipient WHERE m.id=" ++ C.q(id) ++ " AND m.receipt IS NULL AND CASE WHEN json_valid(s.endpoint) THEN json_type(s.endpoint)='array' ELSE 0 END AND " ++ condition ++ "),'');"
@@ -75,9 +76,9 @@ def deliver(+db: String, +id: String, +condition: String, saved: String) -> IO(R
 def after(db: String, command: C.Command, saved: String) -> IO(Result<&1,&1,U32 & String,String>):
   match command:
     case C.Report{id,sender,body}: deliver(db,id,"1",saved)
-    case C.Ask{id,worker,body}: deliver(db,id,"1",saved)
+    case C.Ask{id,player,body}: deliver(db,id,"1",saved)
     case C.Message{id,sender,recipient,kind,body}: deliver(db,id,"1",saved)
-    case C.Observe{id,worker,event}: deliver(db,id,C.terminal(event),saved)
+    case C.Observe{id,player,event}: deliver(db,id,C.terminal(event),saved)
     case other: IO.pure(Result<&1,&1,U32 & String,String>,Done{saved})
 
 def wake_result(result: Result<&1,&1,U32 & String,String>) -> Result<&1,&1,U32 & String,Unit>:

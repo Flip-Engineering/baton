@@ -1,6 +1,6 @@
 import Base
 import ./commands.bend as C
-import ./root.bend as Root
+import ./delivery.bend as Delivery
 import ../host/sqlite.bend as DB
 import ../host/process.bend as P
 import ../git/text.bend as Tx
@@ -12,8 +12,8 @@ def with_observation(-A: Type, observation: List<Chan(Result<&1,&1,U32 & String,
 def schema() -> String:
   "CREATE TABLE IF NOT EXISTS native_requests (id TEXT PRIMARY KEY NOT NULL,worker TEXT NOT NULL REFERENCES sessions(id),parent TEXT NOT NULL REFERENCES sessions(id),attempt TEXT NOT NULL,native_id TEXT NOT NULL,method TEXT NOT NULL,event TEXT NOT NULL,reply TEXT,written INTEGER NOT NULL DEFAULT 0,closed TEXT,UNIQUE(attempt,native_id));"
 
-def request_sql(+worker: String, +turn: String, +attempt: String, +event: String) -> String:
-  "WITH frame(value) AS (VALUES(" ++ C.q(event) ++ ")) INSERT INTO native_requests(id,worker,parent,attempt,native_id,method,event) SELECT " ++ C.q(turn ++ ":native:") ++ " || lower(hex(json_extract(value,'$.id'))),s.id,s.parent," ++ C.q(attempt) ++ ",json_extract(value,'$.id'),json_extract(value,'$.method'),value FROM frame,sessions s WHERE s.id=" ++ C.q(worker) ++ " AND s.harness='omp' AND json_type(value,'$.id')='text' AND json_extract(value,'$.method') IN ('input','select','confirm','editor') ON CONFLICT(attempt,native_id) DO UPDATE SET id=CASE WHEN native_requests.worker=excluded.worker AND native_requests.parent=excluded.parent AND native_requests.event=excluded.event THEN native_requests.id ELSE NULL END;"
+def request_sql(+player: String, +turn: String, +attempt: String, +event: String) -> String:
+  "WITH frame(value) AS (VALUES(" ++ C.q(event) ++ ")) INSERT INTO native_requests(id,worker,parent,attempt,native_id,method,event) SELECT " ++ C.q(turn ++ ":native:") ++ " || lower(hex(json_extract(value,'$.id'))),s.id,s.parent," ++ C.q(attempt) ++ ",json_extract(value,'$.id'),json_extract(value,'$.method'),value FROM frame,sessions s WHERE s.id=" ++ C.q(player) ++ " AND s.harness='omp' AND json_type(value,'$.id')='text' AND json_extract(value,'$.method') IN ('input','select','confirm','editor') ON CONFLICT(attempt,native_id) DO UPDATE SET id=CASE WHEN native_requests.worker=excluded.worker AND native_requests.parent=excluded.parent AND native_requests.event=excluded.event THEN native_requests.id ELSE NULL END;"
   ++ "UPDATE native_requests SET closed=coalesce(closed,'native-cancelled') WHERE attempt=" ++ C.q(attempt) ++ " AND native_id=json_extract(" ++ C.q(event) ++ ",'$.targetId') AND json_extract(" ++ C.q(event) ++ ",'$.method')='cancel';"
   ++ "INSERT INTO messages(id,sender,recipient,kind,body) SELECT id,worker,parent,'question',json_object('nativeRequest',json(event),'requestId',id,'replyCommand',json_array('native-reply',parent,id),'replyFormat',CASE WHEN method='confirm' THEN '{\"confirmed\":true} or {\"confirmed\":false} or {\"cancelled\":true}' ELSE '{\"value\":\"answer\"} or {\"cancelled\":true}' END,'completion','stdin-written records transport completion; native continuation is observed separately') FROM native_requests WHERE attempt=" ++ C.q(attempt) ++ " AND native_id=json_extract(" ++ C.q(event) ++ ",'$.id')" ++ C.message_upsert()
   ++ "SELECT id FROM native_requests WHERE attempt=" ++ C.q(attempt) ++ " AND native_id=json_extract(" ++ C.q(event) ++ ",'$.id') AND closed IS NULL;"
@@ -39,7 +39,7 @@ def send(+db: String, +id: String) -> IO(Result<&1,&1,U32 & String,String>):
 def deliver_pending(db: String, id: String, state: String) -> IO(Result<&1,&1,U32 & String,String>):
   match state:
     case "reply\n": send(db,id)
-    case "question\n": Root.deliver(db,id,"1","")
+    case "question\n": Delivery.deliver(db,id,"1","")
     case other: IO.pure(Result<&1,&1,U32 & String,String>,Done{""})
 
 def deliver(+db: String, +id: String) -> IO(Result<&1,&1,U32 & String,String>):
@@ -62,21 +62,21 @@ def saved(db: String, tasks: List<Chan(Result<&1,&1,U32 & String,String>)>, resu
       next : List<Chan(Result<&1,&1,U32 & String,String>)> <- fork_saved(db,Tx.trim_nl(id),tasks,String.is_empty(id))
       IO.pure(List<Chan(Result<&1,&1,U32 & String,String>)> & String,(next,""))
 
-def record(+db: String, worker: String, turn: String, attempt: String, event: String, tasks: List<Chan(Result<&1,&1,U32 & String,String>)>, parent: Bool) -> IO(List<Chan(Result<&1,&1,U32 & String,String>)> & String):
+def record(+db: String, player: String, turn: String, attempt: String, event: String, tasks: List<Chan(Result<&1,&1,U32 & String,String>)>, parent: Bool) -> IO(List<Chan(Result<&1,&1,U32 & String,String>)> & String):
   match parent:
     case False{}: do IO<List<Chan(Result<&1,&1,U32 & String,String>)> & String>:
       shown : Unit <- IO.print("Native OMP UI request is unsupported for a session without a registered parent; its full frame remains in the native log.")
       IO.pure(List<Chan(Result<&1,&1,U32 & String,String>)> & String,(tasks,"Native OMP UI request has no registered parent; root interaction is unsupported."))
     case True{}: do IO<List<Chan(Result<&1,&1,U32 & String,String>)> & String>:
-      result : Result<&1,&1,U32 & String,String> <- DB.Sql.query(db,"BEGIN IMMEDIATE;" ++ schema() ++ request_sql(worker,turn,attempt,event) ++ "COMMIT;")
+      result : Result<&1,&1,U32 & String,String> <- DB.Sql.query(db,"BEGIN IMMEDIATE;" ++ schema() ++ request_sql(player,turn,attempt,event) ++ "COMMIT;")
       saved(db,tasks,result)
 
-def observe(+db: String, +worker: String, turn: String, attempt: String, +event: String, tasks: List<Chan(Result<&1,&1,U32 & String,String>)>, enabled: Bool) -> IO(List<Chan(Result<&1,&1,U32 & String,String>)> & String):
+def observe(+db: String, +player: String, turn: String, attempt: String, +event: String, tasks: List<Chan(Result<&1,&1,U32 & String,String>)>, enabled: Bool) -> IO(List<Chan(Result<&1,&1,U32 & String,String>)> & String):
   match enabled:
     case False{}: IO.pure(List<Chan(Result<&1,&1,U32 & String,String>)> & String,(tasks,""))
     case True{}: do IO<List<Chan(Result<&1,&1,U32 & String,String>)> & String>:
-      parent : String <- IO.try(String,DB.Sql.query(db,"SELECT CASE WHEN parent IS NULL AND json_extract(" ++ C.q(event) ++ ",'$.method') IN ('input','select','confirm','editor') THEN 0 ELSE 1 END FROM sessions WHERE id=" ++ C.q(worker) ++ ";"))
-      record(db,worker,turn,attempt,event,tasks,String.eq(parent,"1\n"))
+      parent : String <- IO.try(String,DB.Sql.query(db,"SELECT CASE WHEN parent IS NULL AND json_extract(" ++ C.q(event) ++ ",'$.method') IN ('input','select','confirm','editor') THEN 0 ELSE 1 END FROM sessions WHERE id=" ++ C.q(player) ++ ";"))
+      record(db,player,turn,attempt,event,tasks,String.eq(parent,"1\n"))
 
 def closed(db: String, attempt: String, enabled: Bool) -> IO(Result<&1,&1,U32 & String,String>):
   match enabled:
@@ -95,7 +95,7 @@ def settle(tasks: List<Chan(Result<&1,&1,U32 & String,String>)>) -> IO(Result<&1
     case task <> rest: do IO<Result<&1,&1,U32 & String,Unit>>:
       result : Result<&1,&1,U32 & String,String> <- IO.join(Result<&1,&1,U32 & String,String>,task)
       others : Result<&1,&1,U32 & String,Unit> <- settle(rest)
-      IO.pure(Result<&1,&1,U32 & String,Unit>,combine(Root.wake_result(result),others))
+      IO.pure(Result<&1,&1,U32 & String,Unit>,combine(Delivery.wake_result(result),others))
 
 # The native ID and destination are read from the original request. A response
 # contains exactly one method value or an explicit cancellation.
@@ -104,7 +104,7 @@ def response_sql(+parent: String, +id: String, +response: String) -> String:
 
 def refused(db: String, +id: String) -> IO(Result<&1,&1,U32 & String,String>):
   do IO<Result<&1,&1,U32 & String,String>>:
-    context : String <- IO.try(String,DB.Sql.query(db,"SELECT coalesce((SELECT json_object('request',id,'worker',worker,'parent',parent,'method',method,'closed',closed,'stdinWritten',written,'responseStored',reply IS NOT NULL,'sessionStopped',EXISTS(SELECT 1 FROM session_stops WHERE session=native_requests.worker)) FROM native_requests WHERE id=" ++ C.q(id) ++ "),json_object('request'," ++ C.q(id) ++ ",'condition','unknown-request'));"))
+    context : String <- IO.try(String,DB.Sql.query(db,"SELECT coalesce((SELECT json_object('request',id,'player',worker,'parent',parent,'method',method,'closed',closed,'stdinWritten',written,'responseStored',reply IS NOT NULL,'sessionStopped',EXISTS(SELECT 1 FROM session_stops WHERE session=native_requests.worker)) FROM native_requests WHERE id=" ++ C.q(id) ++ "),json_object('request'," ++ C.q(id) ++ ",'condition','unknown-request'));"))
     IO.pure(Result<&1,&1,U32 & String,String>,Fail{(1,"Native reply refused. Use the recorded parent and response shape; closed requests and stopped sessions cannot accept replies. " ++ context)})
 
 def reply_result(db: String, id: String, accepted: Bool, already: Bool) -> IO(Result<&1,&1,U32 & String,String>):
