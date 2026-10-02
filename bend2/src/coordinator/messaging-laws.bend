@@ -196,7 +196,7 @@ law committed_message_routes_refuse_before_endpoint_delivery:
   for db: String
   for command: C.Command
   for +saved: String
-  {Store.committed(db,command,Done{saved}) == Store.route_accepted(db,command,saved,Tx.starts_with(saved,"{\"error\":\"message-route-denied\"")) : IO(Result<&1,&1,U32 & String,String>)}
+  {Store.committed(db,command,Done{saved}) == Store.route_accepted(db,command,saved,Bool.or(Tx.starts_with(saved,"{\"error\":\"message-route-denied\""),Tx.starts_with(saved,"{\"error\":\"invalid-endpoint\""))) : IO(Result<&1,&1,U32 & String,String>)}
 
 def committed_message_routes_refuse_before_endpoint_delivery(db,command,saved):
   {==}

@@ -86,6 +86,7 @@ import ./stop-laws.bend as StopLaws
 import ./native-request-laws.bend as NativeRequestLaws
 import ./knowledge-laws.bend as KnowledgeLaws
 import ./messaging-laws.bend as MessagingLaws
+import ./connect-laws.bend as ConnectLaws
 import ./root.bend as Root
 import ./turn.bend as Turn
 import ./commands.bend as C

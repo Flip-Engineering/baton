@@ -219,11 +219,12 @@ class Coordinator(unittest.TestCase):
 
     def test_worker_connection_retains_parentage_and_requested_route(self):
         self.call('message', 'guide-1', 'root', 'worker', 'guide', 'Continue.')
-        self.call('connect', 'worker', 'worker-native-session', 'worker-supervisor-endpoint')
+        endpoint = json.dumps(['/usr/bin/true', 'worker-supervisor-endpoint'])
+        self.call('connect', 'worker', 'worker-native-session', endpoint)
         binding = self.call('session', 'worker')
         self.assertEqual(binding['parent'], 'root')
         self.assertEqual(binding['harness'], 'requested-harness')
-        self.assertEqual(self.call('delivery', 'guide-1')['endpoint'], 'worker-supervisor-endpoint')
+        self.assertEqual(self.call('delivery', 'guide-1')['endpoint'], endpoint)
         self.call('report', 'worker-turn', 'worker', 'ready')
         self.assertEqual(self.call('delivery', 'worker-turn')['recipient'], 'root')
 

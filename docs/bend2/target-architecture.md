@@ -127,6 +127,15 @@ reads the pending input and starts the native attempt. A lost acknowledgment
 can cause a repeated notification. A log line or ordinary MCP tool response
 does not establish an unsolicited native wake.
 
+`connect ID NATIVE ENDPOINT` accepts an empty endpoint for disconnection, or a
+nonempty JSON argv array containing text arguments and a nonempty executable.
+Arguments preserve Unicode, whitespace and empty values. Connect refuses NUL
+characters. The caller passes the JSON array itself
+as one argument. Invalid endpoint configuration returns a structured refusal
+with exit status 2 and preserves the previous native identity, endpoint and
+pending input. A successful connection permits an exact retained-message retry
+to invoke the configured endpoint.
+
 Recovery uses explicit command invocations. The caller reads the stored session
 and pending messages, inspects the workspace with `worktree` and checks Git refs.
 Reconnecting updates the native identity and endpoint; `receive` reads the
