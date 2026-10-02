@@ -10,9 +10,11 @@ import shutil
 import subprocess
 import sys
 
-if len(sys.argv) != 4:
-    sys.exit('usage: trial-start.sh REPOSITORY BEND2_CHECKOUT DATABASE')
-repo, source, db = (pathlib.Path(p).expanduser().resolve() for p in sys.argv[1:])
+if len(sys.argv) != 5:
+    sys.exit('usage: trial-start.sh REPOSITORY BEND2_CHECKOUT DATABASE CHECK_PROGRAM')
+repo, source, db, check = (pathlib.Path(p).expanduser().resolve() for p in sys.argv[1:])
+if not check.is_file():
+    sys.exit(f'CHECK_PROGRAM: file unavailable: {check}')
 state = pathlib.Path(str(db) + '.trial')
 state.mkdir(parents=True, exist_ok=True)
 db.parent.mkdir(parents=True, exist_ok=True)
@@ -35,9 +37,14 @@ node = executable('NODE', 'node')
 codex = executable('BATON_CODEX', 'codex')
 omp = executable('BATON_OMP', 'omp')
 muse = executable('BATON_MUSE', 'muse', required=False)
+bend = executable('BEND', os.environ['BEND']) if os.environ.get('BEND') else None
+if bend:
+    bend = str(pathlib.Path(bend).resolve())
 # The trial uses the operator's existing subscription login.
 codex_argv = [codex, '-c', 'forced_login_method="chatgpt"']
 env = {k: v for k, v in os.environ.items() if k not in ('OPENAI_API_KEY', 'CODEX_API_KEY')}
+if bend:
+    env['BEND'] = bend
 run(*codex_argv, 'login', 'status', env=env)
 coord = state / 'baton2'
 run('sh', source / 'bend2/scripts/build-native.sh',
@@ -54,17 +61,20 @@ if not exists:
 settings = {
     'B2': str(coord), 'DB': str(db), 'TRIAL_REPO': str(repo),
     'TRIAL_SOURCE': str(source), 'TRIAL_STATE': str(state),
-    'TRIAL_TARGET': 'bend2-trial', 'TRIAL_CHECK': str(source / 'bend2/scripts/check-node-test.sh'),
+    'TRIAL_TARGET': 'bend2-trial', 'TRIAL_CHECK': str(check),
     'TRIAL_OMP': omp, 'TRIAL_MUSE': muse, 'TRIAL_NODE': node,
     'TRIAL_ROOT_INSTRUCTIONS': str(state / 'root-instructions.md'),
     'TRIAL_LEAD_INSTRUCTIONS': str(state / 'lead-instructions.md'),
 }
+if bend:
+    settings['BEND'] = bend
 envfile = state / 'environment.sh'
 envfile.write_text(''.join(f'export {key}={q(value)}\n' for key, value in settings.items()))
 # Refresh the standing instructions while preserving operator-edited tasks.
 context = ('\n\n## This trial\n\n'
     + f'Source the shell settings from {q(str(envfile))} in each shell call.\n'
-    + f'The repository is {repo}; the Bend2 tools are at {source}.\n')
+    + f'The repository is {repo}; the Bend2 tools are at {source}.\n'
+    + f'The check program is {check}. Each issue must name its selected test files.\n')
 for name in ['root-instructions.md', 'lead-instructions.md']:
     (state / name).write_text((source / 'bend2/trial' / name).read_text() + context)
 template = state / 'task-template.md'
@@ -75,7 +85,11 @@ template.write_text(
       'The root reviews and lands the lead branch, publishes bend2-trial and reports to operator.\n\n'
     + '## Assigned issue\n\n'
     + 'Replace this paragraph with the issue number, requested outcome and constraints. '
-      'An unassigned template requests no issue work.\n')
+      'An unassigned template requests no issue work.\n\n'
+    + '## Selected checks\n\n'
+    + f'The configured check program is {check}. '
+      'Name the selected test paths for this issue, separated by spaces. '
+      'Include the selected paths in each worker assignment and in the root landing review.\n')
 first = state / 'first-task.md'
 if not first.exists():
     first.write_text(template.read_text())

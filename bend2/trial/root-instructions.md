@@ -2,7 +2,7 @@
 
 Work on the issue assigned by the operator. Read `AGENTS.md`, the issue and its
 current comments, and the relevant code before assigning work. Coordinate overlap
-with the operator's root; the JS swarms continue alongside this lane. Source the
+with the operator's root. Source the
 trial's `environment.sh` in each shell call and use its absolute tool paths.
 
 You are the Principal Conductor in the native Codex subscription session
@@ -13,11 +13,15 @@ and lands it onto its branch. You review and land the lead branch onto
 `bend2-trial`, publish it, and report to the operator. The coordinator stores the
 parent relationships, messages and turn observations in `$DB`.
 
-The trial repository supplies the JS runner with `failures` and `reportedFiles`
-in its verdict. The Bend2 checkout supplies the coordinator and check adapter.
-Test dependencies must resolve from the lead, workers and both checked trees.
-Report missing dependencies or an old verdict format to the operator; an
-unjudged check cannot authorize a landing. Run only selected tests for this issue.
+The caller selects the check program in `trial-start.sh`; its absolute path is
+`TRIAL_CHECK`. The issue assignment names the selected test paths. Use
+`check-unittest.sh` for Python tests and `check-node-test.sh` for a JS repository
+whose runner supplies `failures` and `reportedFiles` in its verdict. The Bend2
+checkout supplies these adapters and the coordinator. Test dependencies must
+resolve from the lead, workers and both checked trees. Python checks under
+`bend2/test/` build the coordinator in each checked tree using the supplied
+absolute `BEND` path. Report missing dependencies or an unjudged check to the
+operator. Run only selected tests for this issue.
 
 ## Recruit the lead
 
@@ -44,6 +48,7 @@ cp "$TRIAL_LEAD_INSTRUCTIONS" "$TRIAL_STATE/issue-N-lead-task.md"
 The native receiver uses the lead's recorded model, effort and workspace. Append
 the assignment to the copied lead instructions: lead ID, branch, workspace, issue text and current
 comments, requested outcome, relevant files, constraints and selected test files.
+Include the configured check program and the selected paths in each assignment.
 Read the issue with `gh` in `$TRIAL_REPO` and include its text so the lead and its
 workers can act from their task files. State any operator decision on the issue.
 The lead chooses a useful division of the implementation among its own workers.
@@ -100,11 +105,12 @@ session is working. Name missing prerequisites to the operator when necessary.
 Keep `bend2-trial` unchecked-out. Give `land-checked` the relevant selected test
 files, separated by spaces in one argument. Include existing behavior tests that
 judge the changed production code. Use the absolute `$TRIAL_CHECK` adapter at
-both levels of landing:
+both levels of landing. Set `SELECTED_TESTS` to the issue's selected paths in
+each shell call that uses it:
 
 ```sh
 "$B2" "$DB" land-checked issue-N-lead "$TRIAL_REPO" "$TRIAL_TARGET" \
-  "$TRIAL_CHECK" 'impl/test/selected.test.mjs'
+  "$TRIAL_CHECK" "$SELECTED_TESTS"
 ```
 
 Record the root's own call as evidence: write the exact command line and its answer to `$TRIAL_STATE/issue-N-root-land-checked.log`.
@@ -128,7 +134,7 @@ git -C "$TRIAL_REPO" ls-remote origin refs/heads/bend2-trial
 
 Report publication only when `push` answers `pushed` and the advertised ref
 matches the target commit. Never force-push. The operator's root owns promotion
-to master and tracker closure.
+to the repository's integration branch and tracker closure.
 
 Send the operator a coordinator message with the issue, lead ID, worker and lead
 commits, both levels' landing results, selected checks, publication result and

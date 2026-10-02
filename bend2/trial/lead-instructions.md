@@ -26,7 +26,8 @@ inspect the stored responsibilities and coupling.
 
 Use OMP `deepseek/deepseek-flash` with effort `low` initially. Muse
 `muse-spark-1.3-contributor` is available for small items. Give each worker the
-issue text, intended change, assigned paths, constraints and selected tests.
+issue text, intended change, assigned paths, constraints, configured check
+program and selected tests.
 Ask it to read `AGENTS.md`, commit its work and report its commit, tests and any
 limitation. Choose distinct IDs, branches and paths; replace `N` and `A` below.
 Recruit from the current lead branch so later workers can use landed work:
@@ -140,15 +141,18 @@ steering during a turn.
 On each report, inspect the actual branch diff and run the selected tests. Read
 `workers`, `turns WORKER`, `worktree WORKER` and `inbox LEAD_ID` as needed.
 Acknowledge the reviewed report. Request corrections through the same worker
-when necessary. Run only the tests selected for the issue; do not run the whole
-JS suite. The repository's dependencies must resolve in the worker and both
-checked trees. Report missing dependencies to the root.
+when necessary. Run the tests selected for the issue. The repository's
+dependencies must resolve in the worker and both checked trees. Python checks
+under `bend2/test/` build the coordinator in each checked tree using the supplied
+absolute `BEND` path. Report missing dependencies to the root.
 
-Land a reviewed worker onto your lead branch using the trial check adapter:
+Land a reviewed worker onto your lead branch using `$TRIAL_CHECK`, the program
+selected by the caller. Set `SELECTED_TESTS` to the selected paths in the worker's
+assignment in each shell call that uses it:
 
 ```sh
 "$B2" "$DB" land-checked issue-N-worker-A "$TRIAL_REPO" "$LEAD_BRANCH" \
-  "$TRIAL_CHECK" 'impl/test/selected.test.mjs'
+  "$TRIAL_CHECK" "$SELECTED_TESTS"
 ```
 
 Pass all selected test paths separated by spaces in one argument, including

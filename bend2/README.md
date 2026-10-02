@@ -520,13 +520,16 @@ push credentials available there:
 
 ```sh
 BEND=/path/to/bend sh /path/to/bend2-checkout/bend2/scripts/trial-start.sh \
-  /path/to/repository /path/to/bend2-checkout /path/to/trial.db
+  /path/to/repository /path/to/bend2-checkout /path/to/trial.db \
+  /path/to/bend2-checkout/bend2/scripts/check-unittest.sh
 ```
 
-The repository path should name a current-master checkout, from which the trial
-branch is created. The Bend2 checkout supplies the tools. The JS check adapter
-requires the repository runner's typed verdict fields, `failures` and
-`reportedFiles`; the historical JS runner on `bend2-rewrite` lacks them.
+The repository path names the task checkout, from whose `HEAD` the trial branch
+is created. The Bend2 checkout supplies the tools. The fourth argument selects
+the check program. Use `check-unittest.sh` for Python tests. Use
+`check-node-test.sh` for an external JS repository whose runner supplies typed
+`failures` and `reportedFiles` verdict fields. Each issue task names its selected
+test paths, separated by spaces in one argument to `land-checked`.
 
 The launcher builds the coordinator beside the database, creates `bend2-trial`
 from the repository's `HEAD` if that branch is absent, and attaches a Codex
@@ -534,10 +537,11 @@ from the repository's `HEAD` if that branch is absent, and attaches a Codex
 `BATON_OMP` and `BATON_MUSE` can name native executables or local launch wrappers;
 the defaults are `codex`, `omp` and `muse` on `PATH`. Node, Python 3, Git and the
 native build prerequisites must be available. The repository's test dependencies
-must resolve from the worker and the candidate/target worktrees when selected JS
-tests run. Installing packages only in the original checkout does not establish
-that those other trees can resolve them. A missing module produces an unjudged
-check that blocks landing.
+must resolve from the worker and the candidate/target worktrees. Set `BEND` to
+an installed compiler for Python checks under `bend2/test/`; the launcher
+resolves it to an absolute path in `environment.sh`, and those checks build the
+coordinator in each checked tree. A missing dependency or failed build produces an unjudged check that
+blocks landing.
 
 The launcher writes current root and lead instructions, an issue task template,
 and a first task file. Copy the printed template to an issue task file, fill in
@@ -547,7 +551,7 @@ and connects an OMP lead through native `receive`. The lead follows
 [the lead instructions](trial/lead-instructions.md), recruits workers and lands
 their reviewed changes onto its branch. Worker reports resume the lead; lead
 reports resume the Codex root. The root reviews and lands the lead branch through
-`check-node-test.sh`, pushes `bend2-trial` to `origin`, and records an operator
+the selected check program, pushes `bend2-trial` to `origin`, and records an operator
 report with the issue and advertised commit. Keep each landing target branch
 unchecked-out. The launcher prints the operator inbox command and root log path.
 
@@ -555,4 +559,4 @@ Rebuild the kit between lanes after native turns and supervisors have exited.
 Running the launcher with the same paths preserves the database, native root
 identity and first task file, refreshes the instructions and issue template, and
 delivers pending root messages. The trial target is `bend2-trial`; the operator's
-root owns promotion to master.
+root owns promotion to the repository's integration branch and tracker closure.
