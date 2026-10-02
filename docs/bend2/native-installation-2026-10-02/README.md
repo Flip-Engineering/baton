@@ -26,7 +26,7 @@ The public CLI exercised stored messaging, recruitment and a retained receive
 through an explicitly supplied controlled OMP fixture. The keeper reexecuted the
 staged coordinator. The task was acknowledged; its full report reached the parent
 and was acknowledged; both inboxes emptied. The worker's committed change landed
-through checked Git landing.
+through the public `land` command.
 
 The first scratch consumer expected the wrong successful receive response shape
 and failed after native delivery had completed. That attempt's source and output
