@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Build a Darwin arm64 development artifact with exact-source gate evidence."""
+"""Build a Darwin arm64 native artifact with exact-source gate evidence."""
 import argparse
 import datetime
 import hashlib
@@ -233,6 +233,68 @@ def reuse_gates(path, expected_sha, compiler, logs, initial):
     return destination, summary
 
 
+def stage_notices(payload, archive_notices, kind='development'):
+    directory = payload / 'notices'
+    directory.mkdir()
+    terms = {'baton_root_license': None, 'baton_root_notice': None,
+             'bend_reference_license': 'notices/bend-reference-LICENSE',
+             'bend_compiler_runtime_license': {'path': 'notices/bend-2.0.25-LICENSE',
+                                              'url': COMPILER_LICENSE_URL,
+                                              'sha256': COMPILER_LICENSE_SHA256}}
+    distribution = ['This is a Baton2 native ' + kind + ' artifact.']
+    for name, field in (('LICENSE', 'baton_root_license'), ('NOTICE', 'baton_root_notice')):
+        source = ROOT / name
+        if source.is_file():
+            destination = directory / ('baton2-' + name)
+            shutil.copyfile(source, destination)
+            terms[field] = {'source_path': name,
+                            'path': destination.relative_to(payload).as_posix(),
+                            **file_info(destination)}
+            distribution.append('baton2-' + name + ' contains the Baton2 project '
+                                + name.lower() + ' copied from root ' + name + '.')
+    if terms['baton_root_license'] is None:
+        distribution.extend(['This source snapshot has no root LICENSE.',
+                             'The maintainer must resolve Baton2 distribution terms before a public release.'])
+    reference = ROOT / 'docs/bend2/reference/upstream/LICENSE'
+    require(sha256(reference) == COMPILER_LICENSE_SHA256, 'The upstream Bend license differs from its versioned pin')
+    shutil.copyfile(reference, directory / 'bend-reference-LICENSE')
+    shutil.copyfile(reference, directory / 'bend-2.0.25-LICENSE')
+    for path, data in archive_notices:
+        destination = directory / 'compiler-archive' / path
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        destination.write_bytes(data)
+    distribution.extend([
+        'bend-2.0.25-LICENSE is the pinned upstream compiler/runtime license at ' + COMPILER_LICENSE_URL + '.',
+        'bend-reference-LICENSE applies to the separately pinned Bend reference.',
+        'compiler-archive/ retains any license and notice files found in the verified Bend archive.'])
+    (directory / 'distribution.md').write_text('\n'.join(distribution) + '\n')
+    return terms
+
+
+def check_project_terms(terms, source_files, files):
+    sources = {entry['path']: entry for entry in source_files}
+    staged = {entry['path']: entry for entry in files}
+    for name, field in (('LICENSE', 'baton_root_license'), ('NOTICE', 'baton_root_notice')):
+        source = sources.get(name)
+        path = 'notices/baton2-' + name
+        expected = None if source is None else {
+            'source_path': name, 'path': path, 'bytes': source['bytes'], 'sha256': source['sha256']}
+        require(terms[field] == expected, 'Baton2 ' + name + ' terms differ from the source inventory')
+        file_expected = None if expected is None else {
+            key: expected[key] for key in ('path', 'bytes', 'sha256')}
+        require(staged.get(path) == file_expected, 'Baton2 ' + name + ' file differs from its terms')
+
+
+def artifact_identity(release_version):
+    if release_version is None:
+        return {'archive_root': ARCHIVE_ROOT, 'kind': 'development'}
+    require(re.fullmatch(r'[A-Za-z0-9][A-Za-z0-9._+-]*', release_version) is not None,
+            'Release version must be a single identifier starting with a letter or digit and containing letters, digits, dots, underscores, plus signs or hyphens')
+    require((ROOT / 'LICENSE').is_file(), 'Release packaging requires the project root LICENSE')
+    return {'archive_root': 'baton2-' + release_version + '-darwin-arm64',
+            'kind': 'release', 'version': release_version}
+
+
 def package(args):
     output = args.output.resolve()
     output.mkdir(parents=True, exist_ok=False)
@@ -241,9 +303,10 @@ def package(args):
     result = {'status': 'running', 'source_directory': str(ROOT), 'output': str(output)}
     write_json(output / 'result.json', result)
     try:
-        require(platform.system() == 'Darwin' and platform.machine() == 'arm64', 'This development artifact requires a Darwin arm64 build host')
+        require(platform.system() == 'Darwin' and platform.machine() == 'arm64', 'This native artifact requires a Darwin arm64 build host')
         initial = snapshot()
         same_source(initial, initial)
+        identity = artifact_identity(args.release_version)
         compiler = args.bend.resolve()
         env = dict(os.environ, BEND=str(compiler), BEND_NO_TELEMETRY='1')
         if args.gate_receipt:
@@ -276,38 +339,26 @@ def package(args):
         final = snapshot()
         same_source(final, initial)
         require(final['binary_sha256'] == summary['after']['binary_sha256'], 'The gated native executable changed before packaging')
-        payload = output / ARCHIVE_ROOT
+        payload = output / identity['archive_root']
         (payload / 'bin').mkdir(parents=True)
-        (payload / 'notices').mkdir()
         shutil.copyfile(binary, payload / 'bin/baton2')
         (payload / 'bin/baton2').chmod(0o755)
         shutil.copytree(logs, payload / 'logs')
-        reference = ROOT / 'docs/bend2/reference/upstream/LICENSE'
-        require(sha256(reference) == COMPILER_LICENSE_SHA256, 'The upstream Bend license differs from its versioned pin')
-        shutil.copyfile(reference, payload / 'notices/bend-reference-LICENSE')
-        shutil.copyfile(reference, payload / 'notices/bend-2.0.25-LICENSE')
-        for path, data in notices:
-            destination = payload / 'notices/compiler-archive' / path
-            destination.parent.mkdir(parents=True, exist_ok=True)
-            destination.write_bytes(data)
-        (payload / 'notices/distribution.md').write_text(
-            'This is a Baton native development artifact. The repository has no root LICENSE.\n'
-            'The maintainer must resolve Baton distribution terms before a public release.\n'
-            'bend-2.0.25-LICENSE is the pinned upstream compiler/runtime license at ' + COMPILER_LICENSE_URL + '.\n'
-            'bend-reference-LICENSE applies to the separately pinned Bend reference.\n'
-            'compiler-archive/ retains any license and notice files found in the verified Bend archive.\n')
+        terms = stage_notices(payload, notices, identity['kind'])
         generated_dir = output / 'generated'
         generated_dir.mkdir()
         shutil.copyfile(generated, generated_dir / 'baton2.c')
         files = [{'path': path.relative_to(payload).as_posix(), **file_info(path)}
                  for path in sorted(payload.rglob('*')) if path.is_file()]
         source_files = [{'path': name, **file_info(ROOT / name)}
-                        for name in git('ls-files', 'bend2', 'docs/bend2/reference', '.github/workflows/bend2-native.yml').splitlines()
+                        for name in git('ls-files', 'bend2', 'docs/bend2/reference', '.github/workflows/bend2-native.yml',
+                                        'LICENSE', 'NOTICE').splitlines()
                         if (ROOT / name).is_file()]
+        check_project_terms(terms, source_files, files)
         manifest = {
-            'schema': 'baton2-native-artifact-v1', 'archive_root': ARCHIVE_ROOT,
+            'schema': 'baton2-native-artifact-v1', **identity,
             'created_at': datetime.datetime.now(datetime.timezone.utc).isoformat(),
-            'kind': 'development', 'platform': 'darwin-arm64',
+            'platform': 'darwin-arm64',
             'source': {'commit': final['head'], 'tree': final['tree'], 'bend2_tree': final['bend2_tree'],
                        'directory': str(ROOT), 'status': final['status'], 'files': source_files},
             'binary': {'path': 'bin/baton2', **file_info(binary)}, 'files': files,
@@ -317,15 +368,13 @@ def package(args):
                       'linked_libraries': libraries},
             'gates': {'receipt': 'logs/summary.json', **file_info(receipt),
                       'validation': summary['validation'], 'reused': bool(args.gate_receipt)},
-            'terms': {'baton_root_license': None, 'bend_reference_license': 'notices/bend-reference-LICENSE',
-                      'bend_compiler_runtime_license': {'path': 'notices/bend-2.0.25-LICENSE',
-                                                       'url': COMPILER_LICENSE_URL, 'sha256': COMPILER_LICENSE_SHA256}},
+            'terms': terms,
         }
         write_json(payload / 'manifest.json', manifest)
         shutil.copyfile(payload / 'manifest.json', output / 'manifest.json')
-        destination = output / (ARCHIVE_ROOT + '-' + final['head'] + '.tar.gz')
+        destination = output / (identity['archive_root'] + '-' + final['head'] + '.tar.gz')
         with tarfile.open(destination, 'x:gz') as artifact:
-            artifact.add(payload, arcname=ARCHIVE_ROOT)
+            artifact.add(payload, arcname=identity['archive_root'])
         require(sha256(payload / 'bin/baton2') == final['binary_sha256'], 'The staged executable changed')
         same_source(snapshot(), final)
         archive_sha = sha256(destination)
@@ -346,6 +395,7 @@ def main():
     parser.add_argument('--output', required=True, type=Path, help='new owned output directory, retained on failure')
     parser.add_argument('--bend', required=True, type=Path)
     parser.add_argument('--compiler-archive', required=True, type=Path, help='preserved official Darwin arm64 Bend 2.0.25 archive')
+    parser.add_argument('--release-version', help='version identifier for a release archive; requires the project root LICENSE')
     parser.add_argument('--gate-receipt', type=Path, help='reuse a completed exact-source three-gate summary')
     parser.add_argument('--gate-receipt-sha256', help='required SHA256 pin when reusing a gate receipt')
     args = parser.parse_args()
