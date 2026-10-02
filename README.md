@@ -54,3 +54,9 @@ and recovery limits.
 [Contributing](CONTRIBUTING.md) covers source acceptance.
 [Readiness](docs/bend2/readiness.md) records qualification and remaining release
 requirements. Development uses the `bend2-rewrite` branch.
+
+## License
+
+Baton2 project source is licensed under the [Apache License 2.0](LICENSE).
+[NOTICE](NOTICE) records project attribution. The [upstream Bend reference](docs/bend2/reference/upstream/LICENSE)
+and compiler/runtime retain their separate license notices.
