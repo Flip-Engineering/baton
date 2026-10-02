@@ -70,6 +70,19 @@ earlier full-entry acceptance. The retained observations establish the scoped
 correction; they do not identify a general checker defect. The corrected composed
 tree requires a fresh complete gate run.
 
+The next composed gate at `f90717ac` passed its build and all 361 proof-removal
+controls. It ran 87 implementation mutations and 449 compiles. The classification
+mutation rejected compilation at
+`committed_message_routes_refuse_before_endpoint_delivery`; the control expected
+`connect_invalid_endpoint_output_is_refused`. This name mismatch produced one
+failed control and blocked publication. Native checks did not run after that
+failure. The retained log has SHA256
+`cbd8055c4ef5f7ab6564f1109df77d887ef34376fe519c6ef99d10584559f8df`.
+
+The control now names the measured full-entry rejection. Its branch-removal
+mutation and both concrete witnesses remain in place. Complete exact-tree
+verification governs the composed correction's publication.
+
 ## Boundary
 
 Admission validates the native argv representation. A well-formed endpoint can

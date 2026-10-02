@@ -184,7 +184,7 @@ const MUTATIONS = [
     file: join('bend2', 'src', 'coordinator', 'store.bend'),
     find: 'Bool.or(Tx.starts_with(saved,"{\\"error\\":\\"message-route-denied\\""),Tx.starts_with(saved,"{\\"error\\":\\"invalid-endpoint\\""))',
     replace: 'Tx.starts_with(saved,"{\\"error\\":\\"message-route-denied\\"")',
-    law: 'connect_invalid_endpoint_output_is_refused',
+    law: 'committed_message_routes_refuse_before_endpoint_delivery',
   },
   {
     name: 'message-admission-removes-route-guard',
