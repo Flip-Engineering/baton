@@ -14,6 +14,9 @@ promotion and destination-owner notification.
 [Knowledge acceptance](knowledge-context-2026-10-01.md) records their real use.
 [Hierarchy checker repair](hierarchy-checker-2026-10-01.md) records a reviewed
 worker landing, native promotion notice and failed Muse launch.
+[Native Kimi hierarchy](hierarchy-2026-10-02.md) records concurrent DeepSeek and
+Muse work, mid-task steering, reviewed correction landings, shared finding use
+in Muse's original conversation, and the root's checked landing.
 [Coordinator comparison](coordinator-comparison-2026-10-01.md) measures the
 current original and rewritten coordination operations.
 [Stored status comparison](coordinator-status-comparison-2026-10-01.md) measures
