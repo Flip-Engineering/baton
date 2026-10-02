@@ -48,7 +48,7 @@ process exit prevent a late response from entering a later attempt. Full request
 frames, responses, cancellation/exit state, messages and reports remain readable
 in the coordinator database and retained native log.
 
-This path supports retained OMP children. OMP root requests with no registered
+This path supports retained OMP children. OMP Conductor requests with no registered
 parent retain their raw frame and record an unsupported-interaction error. That
 error makes `receive` fail after the native process exits. A native process
 waiting for the unanswered request can remain waiting until explicitly stopped.
@@ -67,10 +67,10 @@ attempt identity, signaling and native reaping.
 ## Terminal session stop
 
 ```sh
-baton2 state.db stop WORKER stop-review-1 'The parent ended this task.'
-baton2 state.db session WORKER
-baton2 state.db inbox WORKER
-baton2 state.db force-stop WORKER stop-review-1
+baton2 state.db stop PLAYER stop-review-1 'The parent ended this task.'
+baton2 state.db session PLAYER
+baton2 state.db inbox PLAYER
+baton2 state.db force-stop PLAYER stop-review-1
 ```
 
 `stop` records a terminal state for a retained OMP or Codex session. Current

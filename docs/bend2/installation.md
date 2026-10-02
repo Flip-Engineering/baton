@@ -56,7 +56,7 @@ describes the qualified routes and subscription wrapper.
 ## Retained state
 
 Retain the database, its companion files, native conversation storage, output
-logs, repository and worker worktrees at their recorded paths. Completion and landing
-retain the worker's branch and workspace. Reuse the recorded native identity
+logs, repository and Player worktrees at their recorded paths. Completion and landing
+retain the Player's branch and workspace. Reuse the recorded native identity
 when continuing its conversation. The [architecture](architecture.md#recovery-and-current-limits)
 states the implemented recovery boundaries and the fresh-conversation fallback.

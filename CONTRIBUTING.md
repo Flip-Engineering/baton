@@ -45,7 +45,7 @@ for acceptance. A changed tree requires its own acceptance result.
 A selected repository landing uses `land-checked`. The check program runs on
 both the target and candidate. A candidate failure that passes on the target
 blocks landing. A target movement requires a new checked landing against the
-current target. Preserve the worker's committed and uncommitted work during
+current target. Preserve the Player's committed and uncommitted work during
 review and conflict correction.
 
 ## Publication

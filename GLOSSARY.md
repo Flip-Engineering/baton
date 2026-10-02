@@ -10,8 +10,10 @@
 | Orchestra | The whole coordinated system. |
 
 The [terminology guide](docs/bend2/terminology.md) describes responsibilities,
-stored roles, group membership and shared knowledge scopes. Existing command
-arguments and example session IDs `root`, `lead` and `worker` remain valid.
+stored roles, group membership and shared knowledge scopes. `players` includes
+both Conductor responsibilities, `section` records a capability-specific group,
+and `orchestra` reads the coordinated state. Example session IDs `root`, `lead`
+and `worker` remain valid.
 
 A logical session ID associates parentage, messages and workspaces. A native
 session ID identifies the harness conversation. A receive endpoint is the

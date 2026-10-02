@@ -1,4 +1,4 @@
-# Receive messages for a Codex worker
+# Receive messages for a Codex Player
 
 This example assumes `worker` is registered with the `codex` harness and has
 recorded model, effort, and workspace values. Replace the path placeholders
@@ -20,7 +20,7 @@ The three empty arguments use the recorded model, effort, and workspace.
 The final empty argument reads the pending inbox. Receive supplies pending
 messages to the native turn and forwards its final assistant text to the parent.
 
-Within the worker turn, inspect pending messages and acknowledge each message
+Within the Player turn, inspect pending messages and acknowledge each message
 after accepting it. Replace `MESSAGE_ID` with the ID from the inbox and use a
 receipt describing acceptance:
 

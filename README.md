@@ -5,6 +5,11 @@ recruits agents, sends tasks and guidance, receives reports, reviews committed
 changes, lands them onto a Git branch and publishes that branch to an explicit
 remote. Associate Conductors coordinate delegated teams.
 
+`players` lists agents and their Conductor responsibilities. Ensembles record
+team membership and coupling; Sections group an Ensemble's Players by
+capability. `orchestra` reads the coordinated system's state. The
+[terminology guide](docs/bend2/terminology.md) describes these commands.
+
 The native coordinator is implemented in Bend 2.0.25 and stores coordination
 state in SQLite. Its entry imports laws over the implementation functions;
 compilation verifies their proofs. Native harnesses provide model access and
@@ -46,7 +51,7 @@ notifies the destination owner, who decides further distribution to Ensembles.
 review, visibility and promotion.
 
 Checked landing prepares a candidate, runs selected checks on the target and
-candidate, and advances the target through a compare-and-swap update. Worker
+candidate, and advances the target through a compare-and-swap update. Player
 branches and workspaces remain available after completion and landing. The
 [architecture](docs/bend2/architecture.md) describes subsystem responsibilities
 and recovery limits.

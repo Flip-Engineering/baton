@@ -29,8 +29,9 @@ depth even when their membership is explicit. The operator identity is separate
 from peer membership.
 
 Roles and coupling are stored in the existing SQLite database. A session with
-no role assignment is a Player. A Conductor assignment records coordination
-responsibility; task context identifies Principal and Associate responsibilities.
+no role assignment is a Player. A Conductor with no parent is displayed as a
+Principal Conductor; a Conductor with a parent is displayed as an Associate
+Conductor. Explicit tier assignments require the matching parentage.
 An operator assignment requires a session with no parent (`parent=NULL`).
 That parent value alone grants no operator route.
 
@@ -39,8 +40,8 @@ That parent value alone grants no operator route.
 After attaching or recruiting the sessions, declare their responsibilities:
 
 ```sh
-baton2 state.db role root conductor
-baton2 state.db role lead conductor
+baton2 state.db role root principal-conductor
+baton2 state.db role lead associate-conductor
 baton2 state.db role operator operator
 baton2 state.db role lead
 ```
@@ -73,6 +74,11 @@ The Ensemble ID retains its owner. Membership names registered agents; operator
 identities remain outside these peer groups. `role SESSION` and `ensemble ID`
 read the current declarations.
 
+Sections group capability-specific members of an Ensemble. Section membership
+uses its Ensemble owner and existing member records. Public peer routes use
+explicit tight Ensemble membership; knowledge visibility uses session scopes.
+See [terminology](terminology.md) for Section and Orchestra controls.
+
 ## Reports and retained input
 
 `ask`, `ask-file` and `report` address the sender's recorded immediate parent.
@@ -102,11 +108,11 @@ retained receive leaves unaccepted input pending; after native exit it checks
 for input to start the next turn. Pending input remains in the inbox until
 acceptance is recorded.
 
-The OMP worker turn path accepts guidance during a native turn at response,
+The OMP Player turn path accepts guidance during a native turn at response,
 completed-message and tool-event boundaries. Guidance during a silent operation
 waits for the next such event. Codex and OMP retained receive can start the next
-turn from pending input. Other worker harnesses use an explicitly started native
-turn. Claude root delivery uses Channels. The [architecture](architecture.md)
+turn from pending input. Other Player harnesses use an explicitly started native
+turn. Claude Conductor delivery uses Channels. The [architecture](architecture.md)
 describes their protocol and recovery boundaries.
 
 Ensemble membership selects which peer messages may be sent. Messages still
