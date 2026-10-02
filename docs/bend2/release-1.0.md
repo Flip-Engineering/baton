@@ -10,8 +10,9 @@ upstream Bend compiler/runtime and reference notices remain separate.
 The qualified workflow uses a subscription Codex Principal Conductor, an OMP
 Kimi K3 Associate Conductor, and concurrent OMP DeepSeek Flash and Muse Spark
 1.3 contributor Players. It includes native guidance, saved-conversation
-corrections, review, checks on target and candidate trees, both landing levels
-and explicit Git publication. [Harness setup](harness-setup.md) records launch
+corrections, review, checks on target and candidate trees, and both landing
+levels. Separate [native Git qualification](native-git-qualification-2026-10-02/README.md)
+exercised publication to an owned local bare remote. [Harness setup](harness-setup.md) records launch
 paths and login requirements. Codex uses the ChatGPT subscription login.
 
 Conductors message descendants; subordinate agents message their immediate
