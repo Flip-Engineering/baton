@@ -91,9 +91,15 @@ process.stdin.on('end', () => {
 
 // Coordinator CLI helper.
 function coord(...args) {
-  return execFileSync(coordinatorExe, [dbPath, ...args], {
-    encoding: 'utf8', timeout: 10000,
-  }).trim();
+  try {
+    return execFileSync(coordinatorExe, [dbPath, ...args], {
+      encoding: 'utf8', maxBuffer: Infinity,
+    }).trim();
+  } catch (error) {
+    const status = Number.isInteger(error.status) ? `\nexit code: ${error.status}` : '';
+    error.message += `${status}\nstdout:\n${error.stdout ?? ''}\nstderr:\n${error.stderr ?? ''}`;
+    throw error;
+  }
 }
 
 // Tool definitions exposed to the root session.
@@ -407,7 +413,7 @@ function handleToolCall(msg) {
     });
   } catch (e) {
     sendResponse(msg.id, {
-      content: [{ type: 'text', text: `Error: ${e.stderr || e.message}` }],
+      content: [{ type: 'text', text: `Error: ${e.message}` }],
       isError: true,
     });
   }
