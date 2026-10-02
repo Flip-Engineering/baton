@@ -3,7 +3,7 @@
 
 Example:
   python3 bend2/scripts/compare-coordinators.py --old-repo /path/to/old/baton \
-    --old-ref 8120395a --samples 25 --workers 9 --reports 58
+    --old-ref 8120395a --samples 25 --players 9 --reports 58
 
 The old runtime stays loaded with controlled worker ports. Every Bend2 operation
 uses its ordinary executable. Scratch stores and raw results are retained.
@@ -96,18 +96,18 @@ def assert_bend_status(rows, expected_sessions, pending):
         assert row['pending'] == pending[ident], f'Bend2 status {ident} has incorrect pending count'
 
 
-def assert_original_status(value, workers, guides):
+def assert_original_status(value, players, guides):
     """Check the controlled original participants and their parked guidance identities."""
     assert value.get('projection') == 'participants', 'Original status uses the participants projection'
     rows = value['participants']
     identities = [row['participantId'] for row in rows]
     assert len(identities) == len(set(identities)), 'Original status repeats a participant identity'
-    assert set(identities) == set(workers), 'Original status has different worker identities'
+    assert set(identities) == set(players), 'Original status has different worker identities'
     for row in rows:
         ident = row['participantId']
         assert 'parentId' in row and row['parentId'] is None, f'Original fixture {ident} has a parent'
         assert 'route' in row and row['route'] is None, f'Original fixture {ident} has a requested route'
-        expected = {key for key, (worker, _) in guides.items() if worker == ident}
+        expected = {key for key, (player, _) in guides.items() if player == ident}
         actual = row['guidance']
         ids = [guide['messageId'] for guide in actual]
         assert len(ids) == len(set(ids)), f'Original status {ident} repeats guidance'
@@ -117,11 +117,11 @@ def assert_original_status(value, workers, guides):
 
 
 class Old:
-    def __init__(self, node, source, store, workers, cwd, env):
+    def __init__(self, node, source, store, players, cwd, env):
         self.stderr = (cwd / f'old-{time.time_ns()}.stderr').open('w')
         started = time.perf_counter_ns()
         try:
-            self.process = subprocess.Popen([node, str(HELPER), str(source), str(store), str(workers)],
+            self.process = subprocess.Popen([node, str(HELPER), str(source), str(store), str(players)],
                                             cwd=cwd, env=env, stdin=subprocess.PIPE,
                                             stdout=subprocess.PIPE, stderr=self.stderr, text=True)
         except BaseException:
@@ -180,14 +180,14 @@ def main():
     parser.add_argument('--binary', type=pathlib.Path, default=ROOT / '.scratch/bend2/baton2')
     parser.add_argument('--samples', type=int, default=25)
     parser.add_argument('--warmups', type=int, default=3)
-    parser.add_argument('--workers', type=int, default=9)
+    parser.add_argument('--players', '--workers', dest='players', type=int, default=9)
     parser.add_argument('--reports', type=int, default=58)
     parser.add_argument('--body-bytes', type=int, default=4096)
     parser.add_argument('--seed', type=int, default=20260928)
     parser.add_argument('--output-root', type=pathlib.Path, default=ROOT / '.scratch/comparison')
     args = parser.parse_args()
-    if min(args.samples, args.workers, args.body_bytes) < 1 or min(args.warmups, args.reports) < 0:
-        parser.error('samples, workers and body-bytes must be positive; warmups and reports nonnegative')
+    if min(args.samples, args.players, args.body_bytes) < 1 or min(args.warmups, args.reports) < 0:
+        parser.error('samples, players and body-bytes must be positive; warmups and reports nonnegative')
     node = shutil.which('node')
     if node is None:
         parser.error('node is required')
@@ -232,12 +232,12 @@ def main():
 
     old = None
     try:
-        old = Old(node, source, old_store, args.workers, run, env)
+        old = Old(node, source, old_store, args.players, run, env)
         startup = {'old_initial_process_ready_ms': old.startup_ms,
                    'old_initial_rss_bytes': old.ready['rss_bytes']}
         old.call('setup')
         bend('attach', 'root', 'controlled-root', 'root-session', '')
-        bend('role', 'root', 'conductor')
+        bend('role', 'root', 'principal-conductor')
         # Recruited sessions need a real repository and base commit.
         benchmark_repo = run / 'benchmark-repo'
         execute(['git', 'init', '-q', '-b', 'main', str(benchmark_repo)])
@@ -250,9 +250,9 @@ def main():
         expected_sessions = {'root': {
             'id': 'root', 'parent': None, 'harness': 'controlled-root', 'model': '', 'effort': '',
             'native': 'root-session', 'observedHarness': '', 'observedModel': '', 'observedEffort': '',
-            'endpoint': '', 'workspace': '', 'branch': '', 'base': '',
+            'endpoint': '', 'workspace': '', 'branch': '', 'base': '', 'kind': 'player', 'role': 'principal-conductor',
         }}
-        for index in range(args.workers):
+        for index in range(args.players):
             bend('recruit', f'worker-{index}', 'root', 'controlled-oneshot', 'controlled-model',
                  'high', str(benchmark_repo), f'branch-{index}',
                  str(run / f'workspace-{index}'), benchmark_base)
@@ -261,30 +261,30 @@ def main():
                 'model': 'controlled-model', 'effort': 'high', 'native': '',
                 'observedHarness': '', 'observedModel': '', 'observedEffort': '', 'endpoint': '',
                 'workspace': str(run / f'workspace-{index}'), 'branch': f'branch-{index}',
-                'base': benchmark_base,
+                'base': benchmark_base, 'kind': 'player', 'role': 'player',
             }
 
         def perform(system, operation, unique):
-            worker = f'worker-{unique % args.workers}'
+            player = f'worker-{unique % args.players}'
             identifier = f'{operation}-{unique}'
             text = request_body(identifier)
             if operation == 'report_write':
                 expected_reports[identifier] = text
                 if system == 'old':
-                    return old.call('report', id=identifier, worker=worker, body=text)
-                return bend('report', identifier, worker, text)
+                    return old.call('report', id=identifier, worker=player, body=text)
+                return bend('report', identifier, player, text)
             if operation == 'guidance_write':
-                expected_guides[identifier] = (worker, text)
+                expected_guides[identifier] = (player, text)
                 if system == 'old':
-                    value, timing = old.call('guide', id=identifier, worker=worker, body=text)
-                    expected_old_guides[value['guide']['messageId']] = (worker, text)
+                    value, timing = old.call('guide', id=identifier, worker=player, body=text)
+                    expected_old_guides[value['guide']['messageId']] = (player, text)
                     return value, timing
-                return bend('message', identifier, 'root', worker, 'guidance', text)
+                return bend('message', identifier, 'root', player, 'guidance', text)
             if operation == 'roster_read':
-                value, timing = old.call('workers') if system == 'old' else bend('workers')
+                value, timing = old.call('workers') if system == 'old' else bend('players')
                 rows = value['participants'] if system == 'old' else value
                 identities = {row['participantId' if system == 'old' else 'id'] for row in rows}
-                assert identities == {f'worker-{index}' for index in range(args.workers)}
+                assert identities == ({f'worker-{index}' for index in range(args.players)} | ({'root'} if system == 'bend2' else set()))
                 return value, timing
             if operation == 'status_read':
                 if system == 'old':
@@ -292,7 +292,7 @@ def main():
                     assert_original_status(value, set(expected_sessions) - {'root'}, expected_old_guides)
                 else:
                     value, timing = bend('status')
-                    pending = {ident: sum(worker == ident for worker, _ in expected_guides.values())
+                    pending = {ident: sum(player == ident for player, _ in expected_guides.values())
                                for ident in expected_sessions}
                     pending['root'] = len(expected_reports)
                     assert_bend_status(value, expected_sessions, pending)
@@ -331,13 +331,13 @@ def main():
             key: value[1] for key, value in expected_guides.items()}
         assert {row['id']: (row['recipient'], row['body']) for row in pending
                 if row['kind'] == 'guidance'} == expected_guides
-        final_counts = {'workers': args.workers, 'reports': len(expected_reports),
+        final_counts = {'players': args.players, 'reports': len(expected_reports),
                         'guidance': len(expected_guides), 'old_events': verified['events']}
         old.close()
         old = None
         replay = []
         for _ in range(3):
-            old = Old(node, source, old_store, args.workers, run, env)
+            old = Old(node, source, old_store, args.players, run, env)
             _, timing = perform('old', 'reports_read', 0)
             recovered, _ = old.call('verify')
             assert {row['messageId']: (row['participantId'], row['message'])
@@ -351,7 +351,7 @@ def main():
             perform('bend2', 'status_read', 0)
         memory = {'old_after_workload_rss_bytes': verified['rss_bytes']}
         if platform.system() == 'Darwin':
-            result = execute(['/usr/bin/time', '-l', args.binary, db, 'workers'], cwd=run, env=env)
+            result = execute(['/usr/bin/time', '-l', args.binary, db, 'players'], cwd=run, env=env)
             match = re.search(rb'(\d+)\s+maximum resident set size', result.stderr)
             if match:
                 memory['bend2_roster_process_peak_rss_bytes'] = int(match[1])
@@ -383,7 +383,7 @@ def main():
             'method': {
                 'old': 'Production SwarmRuntime.command with real CoordinationStore, retained Node process, controlled worker ports, private stdio transport.',
                 'bend2': 'Production executable and SQLite store; one new process per command; empty root endpoint.',
-                'mapping': {'roster_read': 'swarm.view projection=participants / workers',
+                'mapping': {'roster_read': 'swarm.view projection=participants / players',
                             'status_read': 'swarm.view projection=participants / status',
                             'reports_read': 'swarm.view projection=contributions / inbox root',
                             'guidance_write': 'swarm.guide retained for one-shot worker / message guidance',
@@ -391,7 +391,8 @@ def main():
                 'old_durability': 'Real fsync wrapper; durable_ms includes scheduled group fsync before helper response. dispatch_ms ends when the runtime returns.',
                 'timing': 'Monotonic wall time including caller JSON parsing on both sides; deterministic interleaving; warmups excluded; p95 nearest rank; no cache flush.',
                 'correctness': 'Every roster, status and report read checked; Bend2 status checks all session identities, stored metadata and per-recipient pending counts; original status checks worker identities, absent requested route/parent and parked guidance IDs; exact Unicode body and report IDs checked before and after three old process restarts; guidance bodies checked in retained records.',
-                'limitations': ['Old worker recruitment uses controlled ports; no provider or native process launch.',
+                'limitations': ['The canonical Players roster includes the Principal Conductor as well as recruited Players; the original roster contains its recruited participants.',
+                               'Old worker recruitment uses controlled ports; no provider or native process launch.',
                                'Old Web/CLI transport, auth, host-capacity service and delivery endpoints are excluded.',
                                'Bend2 root native delivery is excluded; reports remain pending.',
                                'Report records differ: old contributions include review machinery; Bend2 messages include recipient receipts.',

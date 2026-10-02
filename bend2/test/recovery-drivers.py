@@ -233,7 +233,7 @@ with socket.create_connection(('127.0.0.1',int(sys.argv[1]))) as stream:
         db = self.directory / 'state.db'
         with patch.object(models, 'EXE', EXE):
             models.coord(db, 'attach', 'root', 'terminal', '', '')
-            models.coord(db, 'role', 'root', 'conductor')
+            models.coord(db, 'role', 'root', 'principal-conductor')
             models.coord(db, 'attach', 'operator', 'terminal', '', '')
             models.coord(db, 'role', 'operator', 'operator')
             models.coord(db, 'message', 'pending', 'operator', 'root', 'task', TEXT)
@@ -251,7 +251,7 @@ with socket.create_connection(('127.0.0.1',int(sys.argv[1]))) as stream:
         fixture.setUp()
         self.addCleanup(fixture.doCleanups)
         host.report_pid(fixture)
-        fixture.worker('controlled')
+        fixture.player('controlled')
         fixture.message('pending', 'controlled', TEXT)
         observer = fixture.spawn(*fixture.receive_args('controlled'))
         _, started = host.accept_any(fixture, observer)

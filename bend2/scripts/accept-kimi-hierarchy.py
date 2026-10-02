@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Run a native Codex root, Kimi OMP lead, and concurrent DeepSeek/Muse workers.
+"""Run a native Codex Principal Conductor, Kimi OMP Associate Conductor, and concurrent DeepSeek/Muse Players.
 
 --config supplies codex, lead, omp and muse routes with executable, model and
 effort. Optional observed_model names the expected native model; native_executable
@@ -8,8 +8,8 @@ adds an underlying executable pin when executable is a launcher script.
 optional file_checks with path, contains and absent lists. Selected checks run
 through bend2/scripts/check-unittest.sh in each checked tree. This command starts
 real native sessions.
-Final worker and target changes must stay within the run's assigned files.
-Worker assigned files must match their latest landing and the final target.
+Final Player and target changes must stay within the run's assigned files.
+Player assigned files must match their latest landing and the final target.
 """
 import argparse
 import hashlib
@@ -25,7 +25,7 @@ import threading
 import time
 
 SOURCE = Path(__file__).resolve().parents[2]
-WORKERS = ('deepseek', 'muse')
+PLAYERS = ('deepseek', 'muse')
 ADAPTER = 'bend2/scripts/check-unittest.sh'
 
 
@@ -86,7 +86,9 @@ def inspect_processes(out, native, known, whole_run=True):
         table = process_snapshot()
         owners = list(native)
         if whole_run:
-            seed_path, launches_path = out / 'seed-process.json', out / 'worker-launches.json'
+            seed_path, launches_path = out / 'seed-process.json', out / 'player-launches.json'
+            if not launches_path.exists():
+                launches_path = out / 'worker-launches.json'
             if seed_path.exists():
                 owners.append({'seat': 'seed', **json.loads(seed_path.read_text())})
             if launches_path.exists():
@@ -221,17 +223,17 @@ def native_wrapper(seat, out, arguments):
         raise
 
 
-def start_workers(out):
+def start_players(out):
     run = json.loads((out / 'run.json').read_text())
-    for seat in WORKERS:
-        assigned = json.loads(command([out / 'baton2', out / 'state.db', 'session', seat]))
+    for seat in PLAYERS:
+        assigned = json.loads(command([out / 'baton2', out / 'state.db', 'player', seat]))
         expected = 'omp' if seat == 'deepseek' else 'muse'
         if assigned.get('harness') != expected:
             raise RuntimeError(f"{seat} has recorded harness {assigned.get('harness')!r}; "
                                f"expected {expected!r} for its native wrapper. Preserve this run "
                                "and report the recruitment mismatch to the parent.")
     launched = []
-    for seat in WORKERS:
+    for seat in PLAYERS:
         route = run['routes']['omp' if seat == 'deepseek' else 'muse']
         argv = [str(out / 'baton2'), str(out / 'state.db'), 'turn', seat, f'{seat}-turn',
                 str(out / f'{seat}-native'), route['model'], route['effort'],
@@ -242,7 +244,7 @@ def start_workers(out):
         launch = {'seat': seat, 'pid': child.pid, 'started_unix': time.time(), 'argv': argv}
         retain_process_start(launch, 'pid', 'started_local')
         launched.append(launch)
-        save(out / 'worker-launches.json', launched)
+        save(out / 'player-launches.json', launched)
     print(json.dumps(launched))
 
 
@@ -327,7 +329,7 @@ def verify_landings(out, run, sessions):
     assert tips['target'] == landings['root']['commit']
     tree = lambda revision: command(['git', '-C', repo, 'rev-parse', f'{revision}^{{tree}}'])
     assert tree(tips['target']) == tree(tips['lead'])
-    assigned = {seat: set(run['tasks'][seat]['files']) for seat in WORKERS}
+    assigned = {seat: set(run['tasks'][seat]['files']) for seat in PLAYERS}
     allowed = set.union(*assigned.values())
     changed = set(command(['git', '-C', repo, 'diff', '--name-only', '--no-renames',
                            base, tips['target']]).splitlines())
@@ -337,31 +339,31 @@ def verify_landings(out, run, sessions):
     def ancestor(older, newer):
         return command(['git', '-C', repo, 'merge-base', older, newer]) == older
 
-    for seat in WORKERS:
+    for seat in PLAYERS:
         base = sessions[seat]['base']
-        assert ancestor(base, tips[seat]), ('Worker lost its recorded base', seat)
+        assert ancestor(base, tips[seat]), ('Player lost its recorded base', seat)
         changed = set(command(['git', '-C', repo, 'diff', '--name-only', '--no-renames',
                                base, tips[seat]]).splitlines())
-        assert changed <= allowed, ('Unassigned worker changes', seat, changed)
-        assert changed & assigned[seat], ('Worker left no change in its assigned files', seat)
+        assert changed <= allowed, ('Unassigned Player changes', seat, changed)
+        assert changed & assigned[seat], ('Player left no change in its assigned files', seat)
         candidates = [(name, receipt) for name, receipt in receipts.items()
                       if (name == f'landing-{seat}.json' or name.startswith(f'landing-{seat}-'))
                       and receipt['status'] == 'landed']
-        assert candidates, ('Missing successful worker landing', seat)
+        assert candidates, ('Missing successful Player landing', seat)
         latest_name, latest = candidates[0]
         for name, receipt in candidates:
             assert receipt['target'] == 'hierarchy-lead' and ancestor(receipt['commit'], tips['lead'])
             if ancestor(latest['commit'], receipt['commit']):
                 latest_name, latest = name, receipt
             else:
-                assert ancestor(receipt['commit'], latest['commit']), 'Worker landings have divergent histories'
+                assert ancestor(receipt['commit'], latest['commit']), 'Player landings have divergent histories'
         landings[seat], selected[seat] = latest, latest_name
         for path in assigned[seat]:
             entry = git_entry(repo, tips[seat], path)
-            assert entry == git_entry(repo, latest['commit'], path), ('Worker correction was not landed', seat, path)
-            assert entry == git_entry(repo, tips['target'], path), ('Target changed worker content or mode', seat, path)
+            assert entry == git_entry(repo, latest['commit'], path), ('Player correction was not landed', seat, path)
+            assert entry == git_entry(repo, tips['target'], path), ('Target changed Player content or mode', seat, path)
     return {'tips': tips, 'landings': landings, 'landing_receipts': receipts,
-            'selected_worker_receipts': selected}
+            'selected_player_receipts': selected}
 
 
 def verify(out, state, run, helpers):
@@ -384,7 +386,7 @@ def verify(out, state, run, helpers):
         assert seen == {session['native']}, (seat, seen, session['native'])
     assert len(records(out, 'root')) > 1 and len(records(out, 'lead')) > 1
     assert all(row['receipt'] for row in state['messages'] if row['recipient'] != 'operator')
-    for seat in WORKERS:
+    for seat in PLAYERS:
         report = messages[f'{seat}-turn']
         assert report['sender'] == seat and report['recipient'] == 'lead' and report['receipt']
         assert report['body'] and any(row['id'] == report['id'] for row in state['turns'])
@@ -401,9 +403,9 @@ def verify(out, state, run, helpers):
     assert guidance['sender'] == 'lead' and guidance['recipient'] == 'deepseek'
     assert guidance['body'] == run['tasks']['guidance']
     assert receipt['command'] == 'steer' and receipt['success'] is True
-    worker_runs = {seat: records(out, seat) for seat in WORKERS}
-    assert all(worker_runs.values()), worker_runs
-    deepseek, muse = (worker_runs[seat][0] for seat in WORKERS)
+    player_runs = {seat: records(out, seat) for seat in PLAYERS}
+    assert all(player_runs.values()), player_runs
+    deepseek, muse = (player_runs[seat][0] for seat in PLAYERS)
     overlap = min(deepseek['child_ended_unix'], muse['child_ended_unix']) - max(
         deepseek['child_started_unix'], muse['child_started_unix'])
     assert overlap > 0, overlap
@@ -426,14 +428,14 @@ def verify(out, state, run, helpers):
     tips = landed['tips']
     for workspace in [repo, out / 'lead']:
         assert not command(['git', '-C', workspace, 'status', '--porcelain'])
-    for seat in WORKERS:
+    for seat in PLAYERS:
         assert not command(['git', '-C', out / seat, 'status', '--porcelain'])
     for check in run['tasks'].get('file_checks', []):
         text = command(['git', '-C', repo, 'show', f'{tips["target"]}:{check["path"]}'])
         assert all(value in text for value in check.get('contains', [])), check
         assert all(value not in text for value in check.get('absent', [])), check
     return {'processes': processes, **landed,
-            'worker_overlap_seconds': overlap, 'guidance_observation': observed,
+            'player_overlap_seconds': overlap, 'guidance_observation': observed,
             'concurrent_native_processes': concurrency, 'lead_guidance_calls': lead_calls,
             'native_steer_event': steer, 'state': state}
 
@@ -448,7 +450,7 @@ def main():
     args = parser.parse_args()
     tasks = json.loads(args.tasks.read_text())
     assert isinstance(tasks['guidance'], str) and tasks['guidance'].strip()
-    for seat in WORKERS:
+    for seat in PLAYERS:
         assert tasks[seat]['task'].strip() and tasks[seat]['files'] and tasks[seat]['checks']
         for path in tasks[seat]['files'] + tasks[seat]['checks']:
             assert not Path(path).is_absolute() and '..' not in Path(path).parts and ' ' not in path
@@ -495,7 +497,7 @@ def main():
                            'status_sha256': hashlib.sha256(login_text.encode()).hexdigest()}}
     save(out / 'run.json', run)
     wrappers = {}
-    for seat in ['root', 'lead', *WORKERS]:
+    for seat in ['root', 'lead', *PLAYERS]:
         wrapper = out / f'{seat}-native'
         wrapper.write_text('#!/bin/sh\nexec ' + ' '.join(shlex.quote(str(value)) for value in
                            [sys.executable, out / 'acceptance.py', 'native', seat, out]) + ' "$@"\n')
@@ -509,8 +511,10 @@ def main():
     lead_endpoint = [str(binary), str(db), 'receive', 'lead', wrappers['lead'], '', '', '', str(out / 'lead.jsonl')]
     save(out / 'lead-endpoint.json', lead_endpoint)
     settings = {'B2': str(binary), 'DB': str(db), 'REPO': str(repo), 'STATE': str(out),
-                'CHECK': str(check), 'PYTHON': sys.executable}
-    for seat, key in [('LEAD', 'lead'), ('DEEPSEEK', 'omp'), ('MUSE', 'muse')]:
+                'CHECK': str(check), 'PYTHON': sys.executable,
+                'ASSOCIATE_ID': 'lead', 'ASSOCIATE_BRANCH': 'hierarchy-lead',
+                'LEAD_ID': 'lead', 'LEAD_BRANCH': 'hierarchy-lead'}
+    for seat, key in [('ASSOCIATE', 'lead'), ('LEAD', 'lead'), ('DEEPSEEK', 'omp'), ('MUSE', 'muse')]:
         settings.update({seat + '_MODEL': routes[key]['model'], seat + '_EFFORT': routes[key]['effort']})
     (out / 'environment.sh').write_text(''.join(f'export {key}={shlex.quote(value)}\n' for key, value in settings.items()))
     common = f"""Work only inside {out}; source {out / 'environment.sh'} in each shell.
@@ -520,15 +524,15 @@ run's sessions, branches and worktrees. Do not push. Use coordinator recruitment
 acknowledgments and checked landings. Run only the selected Python checks.
 If a task cannot be completed, explain the concrete failure in your parent report.
 """
-    for seat in WORKERS:
+    for seat in PLAYERS:
         workspace = (f'Your assigned workspace is {out / seat}, on branch hierarchy-{seat}.\n'
                      'Run file edits, tests and Git commits in that workspace.\n'
                      'REPO names the shared repository for coordinator recruitment and landing.\n')
         (out / f'{seat}.md').write_text(common + '\n' + workspace + '\nAllowed source files: ' +
                                       ', '.join(tasks[seat]['files']) + '\n\n' + tasks[seat]['task'] + '\n')
-    checks = sorted({path for seat in WORKERS for path in tasks[seat]['checks']})
+    checks = sorted({path for seat in PLAYERS for path in tasks[seat]['checks']})
     (out / 'lead.md').write_text(common + f"""
-You are the Kimi lead, session lead under root. Deliver the two assigned changes
+You are the Kimi Associate Conductor, session lead under Principal Conductor root. Deliver the two assigned changes
 through DeepSeek and Muse. Review their actual diffs and tests, then land them.
 Your native final responses report to root automatically. Acknowledge each incoming
 task/report after reading it. Do not issue a duplicate manual report.
@@ -538,44 +542,44 @@ DEEPSEEK_MODEL/DEEPSEEK_EFFORT and MUSE_MODEL/MUSE_EFFORT. Use repository REPO,
 branches hierarchy-deepseek and hierarchy-muse, workspaces STATE/deepseek and
 STATE/muse, and base hierarchy-lead. Command:
 `B2 DB recruit ID lead HARNESS MODEL EFFORT REPO BRANCH WORKSPACE hierarchy-lead`.
-Detach your lead workspace so land-checked can advance hierarchy-lead.
-Run `PYTHON STATE/acceptance.py start-workers STATE` once to start both registered
-workers concurrently. It records their coordinator processes and returns promptly.
+Detach your Associate Conductor workspace so land-checked can advance hierarchy-lead.
+Run `PYTHON STATE/acceptance.py start-players STATE` once to start both registered
+Players concurrently. It records their coordinator processes and returns promptly.
 Run `PYTHON STATE/acceptance.py observe-tool STATE` to observe DeepSeek's first
 tool event. Then YOU must issue this coordinator command in your native tool call:
 `B2 DB message-file unexpected-success-guidance lead deepseek guidance STATE/guidance.txt`.
 Inspect its result and finish this delegation turn with a progress report. Continue
-when child reports invoke your native session. No waiting for worker completion.
+when child reports invoke your native session. No waiting for player completion.
 
-Both helper workers use direct turns. A guidance message to an ended worker stays
-pending and does not launch its correction. Review the worker's report and its
+Both helper Players use direct turns. A guidance message to an ended player stays
+pending and does not launch its correction. Review the player's report and its
 retained child completion and PID/start evidence before writing a correction task
 under STATE. Missing completion or native identity requires a blocked parent report.
-Tell the worker to read `B2 DB inbox WORKER` and acknowledge accepted messages with
-`B2 DB ack MESSAGE_ID WORKER RECEIPT`. Preserve the worker's registered harness,
+Tell the player to read `B2 DB inbox PLAYER` and acknowledge accepted messages with
+`B2 DB ack MESSAGE_ID PLAYER RECEIPT`. Preserve the player's registered harness,
 model, effort, workspace and native identity. Keep its supplied native wrapper.
 Compare the saved harness/model/effort with the original route before launching;
 report any disagreement to root while preserving the run's stored assignment.
 Choose an unused correction suffix for the task, turn ID, native log, command log
 and later landing receipt. Preserve the initial task, report, logs and receipts.
-For either worker, source environment.sh and use this detached Python launch;
-replace worker and correction with the selected worker and unused suffix:
+For either player, source environment.sh and use this detached Python launch;
+replace player and correction with the selected player and unused suffix:
 
 ```sh
 "$PYTHON" - <<'PY'
 import json, os, pathlib, subprocess
-worker, correction = 'muse', 'review-1'
+player, correction = 'muse', 'review-1'
 state = pathlib.Path(os.environ['STATE'])
 b2, db = os.environ['B2'], os.environ['DB']
-session = json.loads(subprocess.check_output([b2, db, 'session', worker], text=True))
+session = json.loads(subprocess.check_output([b2, db, 'player', player], text=True))
 if not session['native']:
     raise SystemExit('No saved native identity; preserve the run and report blocked to root.')
-prefix = 'DEEPSEEK' if worker == 'deepseek' else 'MUSE'
-name = worker + '-correction-' + correction
+prefix = 'DEEPSEEK' if player == 'deepseek' else 'MUSE'
+name = player + '-correction-' + correction
 task = state / (name + '.md')
 with (state / (name + '.command.log')).open('xb') as log:
     child = subprocess.Popen([
-        b2, db, 'turn', worker, name, str(state / (worker + '-native')),
+        b2, db, 'turn', player, name, str(state / (player + '-native')),
         os.environ[prefix + '_MODEL'], os.environ[prefix + '_EFFORT'],
         session['workspace'], str(task), str(state / (name + '.jsonl')),
         session['native'],
@@ -585,36 +589,36 @@ print(child.pid)
 PY
 ```
 
-Inspect the launch result and end your lead turn while the correction continues.
+Inspect the launch result and end your Associate Conductor turn while the correction continues.
 Its native final response reports to you automatically and resumes your session.
 Review and acknowledge that report, check the correction and perform its checked
 landing. Retain the original report and each separate correction report.
 
-For each worker report, inspect its actual diff and check output, acknowledge it,
-and run `B2 DB land-checked WORKER REPO hierarchy-lead CHECK FILES`, with the worker's
+For each player report, inspect its actual diff and check output, acknowledge it,
+and run `B2 DB land-checked PLAYER REPO hierarchy-lead CHECK FILES`, with the player's
 selected checks in one quoted space-separated FILES argument. Save the exact JSON
-answer in STATE/landing-WORKER.json. For a correction, preserve earlier answers
-and save the new answer as STATE/landing-WORKER-CORRECTION.json with a distinct
-CORRECTION suffix. Require status landed. Worker checks:
+answer in STATE/landing-PLAYER.json. For a correction, preserve earlier answers
+and save the new answer as STATE/landing-PLAYER-CORRECTION.json with a distinct
+CORRECTION suffix. Require status landed. Player checks:
 deepseek: {json.dumps(tasks['deepseek']['checks'])}
 muse: {json.dumps(tasks['muse']['checks'])}
-Once both landings succeed, inspect the composed lead tree and run the selected
+Once both landings succeed, inspect the composed Associate Conductor tree and run the selected
 checks there using CHECK. Verify the native steering receipt and required regression.
-Report LEAD_READY with actual worker/landing/lead SHAs and review/test evidence.
+Report LEAD_READY with actual player/landing/lead SHAs and review/test evidence.
 If blocked, report LEAD_BLOCKED with the evidence. Keep working source changes
-limited to the worker task files; you review and integrate their implementations.
+limited to the player task files; you review and integrate their implementations.
 """)
     (out / 'root.md').write_text(common + f"""
-You are the subscription Codex root. Recruit lead under root, harness omp,
-LEAD_MODEL/LEAD_EFFORT, REPO, branch hierarchy-lead, workspace STATE/lead,
+You are the subscription Codex Principal Conductor, session root. Recruit lead under root, harness omp,
+ASSOCIATE_MODEL/ASSOCIATE_EFFORT, REPO, branch hierarchy-lead, workspace STATE/lead,
 base bend2-trial. Connect its native endpoint from STATE/lead-endpoint.json using
-`B2 DB role lead conductor`, then
+`B2 DB role lead associate-conductor`, then
 `B2 DB connect lead '' ENDPOINT_JSON`. Start `B2 DB message-file lead-task root lead
 task STATE/lead.md` in a new background process session with stdout/stderr redirected
 to STATE/lead-task.command.log. Acknowledge hierarchy-task, then finish this turn.
 
-Each lead report resumes this same native root. Read and acknowledge progress.
-On LEAD_READY, independently inspect both worker diffs, their bindings, guidance
+Each Associate Conductor report resumes this same native Principal Conductor. Read and acknowledge progress.
+On LEAD_READY, independently inspect both Player diffs, their bindings, guidance
 receipt, the lead branch diff, and all selected checks. Run checked landing of
 lead onto bend2-trial with CHECK and this one quoted FILES argument:
 {' '.join(checks)}
@@ -637,7 +641,7 @@ an active session. Your own repository checkout is detached; leave it detached.
     endpoint = [str(binary), str(db), 'receive', 'root', wrappers['root'], routes['codex']['model'],
                 routes['codex']['effort'], str(repo), str(out / 'root.jsonl')]
     call('attach', 'root', 'codex', '', json.dumps(endpoint))
-    call('role', 'root', 'conductor')
+    call('role', 'root', 'principal-conductor')
     try:
         with (out / 'seed.log').open('w') as log:
             seed = subprocess.Popen([str(binary), str(db), 'message-file', 'hierarchy-task',
@@ -659,7 +663,7 @@ an active session. Your own repository checkout is detached; leave it detached.
                     save(out / 'process-inspection-error.json', inspection)
                     raise RuntimeError(inspection['error'])
                 if not (out / 'concurrent-native-processes.json').exists():
-                    first = [records(out, seat)[:1] for seat in WORKERS]
+                    first = [records(out, seat)[:1] for seat in PLAYERS]
                     if all(first) and all('child_pid' in rows[0] and 'child_ended_unix' not in rows[0]
                                           for rows in first):
                         child_pids = [rows[0]['child_pid'] for rows in first]
@@ -695,7 +699,7 @@ an active session. Your own repository checkout is detached; leave it detached.
 if __name__ == '__main__':
     if len(sys.argv) > 1 and sys.argv[1] == 'native':
         sys.exit(native_wrapper(sys.argv[2], Path(sys.argv[3]), sys.argv[4:]))
-    elif len(sys.argv) == 3 and sys.argv[1] in ['start-workers', 'observe-tool']:
-        {'start-workers': start_workers, 'observe-tool': observe_tool}[sys.argv[1]](Path(sys.argv[2]))
+    elif len(sys.argv) == 3 and sys.argv[1] in ['start-players', 'start-workers', 'observe-tool']:
+        {'start-players': start_players, 'start-workers': start_players, 'observe-tool': observe_tool}[sys.argv[1]](Path(sys.argv[2]))
     else:
         main()

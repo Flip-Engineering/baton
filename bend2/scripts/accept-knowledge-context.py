@@ -134,7 +134,7 @@ def task_text(out, phase):
 Read AGENTS.md. Do not recruit, push, promote findings, change credentials or
 global configuration, stop processes, or run model sessions yourself. Preserve
 the existing source. Use the scoped knowledge command for retrieval; do not read
-the coordinator SQLite file or another worker's workspace. Acknowledge this
+the coordinator SQLite file or another Player's workspace. Acknowledge this
 task after accepting it with `{cli} ack {phase}-task {session} RECEIPT`.
 End your native turn after completing the task so the parent receives its report.
 '''
@@ -213,7 +213,7 @@ def visible_finding(out, reader):
 def verify_phase(out, phase, run, before):
     quiet(out)
     session = 'producer' if phase == 'produce' else 'consumer'
-    current = call(out, 'session', session)
+    current = call(out, 'player', session)
     assert current['native'] and current['observedModel'] == run['route']['model'], current
     assert call(out, 'inbox', session) == []
     new = [row for row in records(out) if row['wrapper_pid'] not in before]
@@ -267,7 +267,7 @@ def run_phase(out, phase):
             if (out / 'state.db').exists():
                 raise RuntimeError('Producer phase requires a new prepared database path')
             call(out, 'attach', 'root', 'terminal', '', json.dumps(run['parent_endpoint']))
-            call(out, 'role', 'root', 'conductor')
+            call(out, 'role', 'root', 'principal-conductor')
             recruit(out, run, 'producer')
         else:
             predecessor = 'produce' if phase == 'consume' else 'consume'
@@ -278,7 +278,7 @@ def run_phase(out, phase):
             if phase == 'consume':
                 recruit(out, run, 'consumer')
             else:
-                current = call(out, 'session', 'consumer')
+                current = call(out, 'player', 'consumer')
                 if call(out, 'inbox', 'consumer'):
                     raise RuntimeError('Consumer still owes input acceptance')
                 save(out / 'before-fresh-context.json', inspect_run(out))

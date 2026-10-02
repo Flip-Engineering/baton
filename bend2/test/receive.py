@@ -190,7 +190,7 @@ class Receive(unittest.TestCase):
         self.controls = []
         self.addCleanup(self.close_children)
         self.coord('attach', 'root', 'codex', 'native-root', '')
-        self.coord('role', 'root', 'conductor')
+        self.coord('role', 'root', 'principal-conductor')
         self.coord('attach', 'operator', 'terminal', '', '')
         self.coord('role', 'operator', 'operator')
 
@@ -257,7 +257,7 @@ class Receive(unittest.TestCase):
         self.children.append(child)
         return child
 
-    def worker(self, name='parent', harness='codex'):
+    def player(self, name='parent', harness='codex'):
         """Recruit the session into a fixture repository of this run."""
         return self.coord('recruit', name, 'root', harness, name, 'low', str(self.repo),
                           name + '-branch', str(self.checkouts / name), self.base)
@@ -270,7 +270,7 @@ class Receive(unittest.TestCase):
         return json.dumps([str(EXE), str(self.db), *self.receive_args(session)[:-1]])
 
     def connect(self, session):
-        native = self.coord('session', session)['native']
+        native = self.coord('player', session)['native']
         self.coord('connect', session, native, self.endpoint(session))
 
     def message(self, ident, recipient, body='Review this input.'):
@@ -317,8 +317,8 @@ class Receive(unittest.TestCase):
                                             if row['native_id'] == event['id']), None),
                                'native request was not retained')
 
-    def start_question_worker(self, answering=False):
-        self.worker(harness='omp')
+    def start_question_player(self, answering=False):
+        self.player(harness='omp')
         self.coord('attach', 'root', 'codex', 'native-root',
                    json.dumps([str(self.fixture), 'answering_parent' if answering else 'parent_endpoint']))
         self.coord('message', 'question-task', 'root', 'parent', 'task', 'Ask for the required input and complete the task.')
@@ -331,7 +331,7 @@ class Receive(unittest.TestCase):
         config = json.loads(config_path.read_text())
         config['native_answer'] = {'value': 'Keep the existing work.\nUse the selected branch.'}
         config_path.write_text(json.dumps(config))
-        observer, stream, started = self.start_question_worker(answering=True)
+        observer, stream, started = self.start_question_player(answering=True)
         event = {'type': 'extension_ui_request', 'id': 'input request Ω', 'method': 'input',
                  'title': 'Which work should continue?', 'placeholder': 'A complete answer'}
         request = self.native_question(stream, event)
@@ -384,7 +384,7 @@ class Receive(unittest.TestCase):
         self.eventually(lambda: not self.owned_processes(), 'root fixture did not exit naturally')
 
     def test_native_question_survives_observer_loss_and_matches_one_reply(self):
-        observer, stream, started = self.start_question_worker()
+        observer, stream, started = self.start_question_player()
         event = {'type': 'extension_ui_request', 'id': 'choose-branch', 'method': 'select',
                  'title': 'Choose a branch', 'options': ['preserve current', 'new branch']}
         request = self.native_question(stream, event)
@@ -428,7 +428,7 @@ class Receive(unittest.TestCase):
         self.assertNotEqual(conflicting.returncode, 0)
         self.assertTrue(any(p['pid'] == started['pid'] and p['ppid'] == started['ppid']
                             for p in self.owned_processes()))
-        self.assertEqual(self.coord('session', 'parent')['native'], started['native'])
+        self.assertEqual(self.coord('player', 'parent')['native'], started['native'])
         body = 'The original native completed after the selected reply.'
         self.action(stream, body=body, hold_exit=True, report_input=True)
         self.assertEqual(json.loads(stream.readline()), {'terminal_written': True, 'input_after_prompt': ''})
@@ -439,7 +439,7 @@ class Receive(unittest.TestCase):
         self.assertEqual([turn['reportBody'] for turn in self.coord('turns', 'parent')], [body])
 
     def test_native_reply_saved_before_write_is_sent_by_recovered_observer(self):
-        observer, stream, started = self.start_question_worker()
+        observer, stream, started = self.start_question_player()
         event = {'type': 'extension_ui_request', 'id': 'pending-answer', 'method': 'input',
                  'title': 'Answer after reconnecting the keeper'}
         request = self.native_question(stream, event)
@@ -474,7 +474,7 @@ class Receive(unittest.TestCase):
         self.assertEqual(self.native_requests()[0]['attempt'], request['attempt'])
         self.assertTrue(any(p['pid'] == started['pid'] and p['ppid'] == started['ppid']
                             for p in self.owned_processes()))
-        self.assertEqual(self.coord('session', 'parent')['native'], started['native'])
+        self.assertEqual(self.coord('player', 'parent')['native'], started['native'])
         self.assertEqual(self.coord(*self.receive_args('parent'))['status'], 'queued')
         self.assert_no_start()
         body = 'The same native continued with its durable pending answer.'
@@ -487,7 +487,7 @@ class Receive(unittest.TestCase):
         self.assertEqual([turn['reportBody'] for turn in self.coord('turns', 'parent')], [body])
 
     def test_native_question_cancellation_and_confirmation_keep_native_identity(self):
-        observer, stream, started = self.start_question_worker()
+        observer, stream, started = self.start_question_player()
         for ident, method, response in [('confirm-no', 'confirm', {'confirmed': False}),
                                         ('editor-value', 'editor', {'value': 'Keep existing work.\nFinish Ω and 雨.'}),
                                         ('editor-cancel', 'editor', {'cancelled': True})]:
@@ -521,7 +521,7 @@ class Receive(unittest.TestCase):
         self.assertEqual(self.coord('inbox', 'root'), [])
 
     def exercise_missing_omp_fallback(self, observer_losses):
-        self.worker(harness='omp')
+        self.player(harness='omp')
         workspace = self.checkouts / 'parent'
         journal = workspace / 'seed.txt'
         partial = 'seed\nWork completed before the conversation was lost.\n'
@@ -552,7 +552,7 @@ class Receive(unittest.TestCase):
         launches = [json.loads(line) for line in launches_path.read_text().splitlines()]
         self.assertEqual([row['resume'] for row in launches], [missing, ''])
         self.assertFalse(any(p['pid'] == launches[0]['pid'] for p in self.owned_processes()))
-        self.eventually(lambda: self.coord('session', 'parent')['native'] == started['native'],
+        self.eventually(lambda: self.coord('player', 'parent')['native'] == started['native'],
                         'fresh conversation identity was not recorded')
 
         def recovery_reports():
@@ -582,7 +582,7 @@ class Receive(unittest.TestCase):
             self.assertTrue(any(p['pid'] == started['pid'] for p in self.owned_processes()))
             self.assertEqual(self.coord(*receive)['status'], 'queued')
             self.assert_no_start()
-            self.assertEqual(self.coord('session', 'parent')['native'], started['native'])
+            self.assertEqual(self.coord('player', 'parent')['native'], started['native'])
             self.assertIn('original-task', [m['id'] for m in self.coord('inbox', 'parent')])
             self.assertEqual([row['id'] for row in recovery_reports()], [diagnostic['id']])
             actual = [json.loads(line) for line in launches_path.read_text().splitlines()]
@@ -611,7 +611,7 @@ class Receive(unittest.TestCase):
         delivered_bodies = {message['id']: message['body'] for message in delivered}
         self.assertEqual(delivered_bodies[diagnostic['id']], diagnostic['body'])
         self.assertEqual(delivered_bodies[turns[0]['id']], body)
-        self.assertEqual(self.coord('session', 'parent')['native'], started['native'])
+        self.assertEqual(self.coord('player', 'parent')['native'], started['native'])
         actual = [json.loads(line) for line in launches_path.read_text().splitlines()]
         self.assertEqual([row['pid'] for row in actual], [row['pid'] for row in launches])
 
@@ -647,7 +647,7 @@ class Receive(unittest.TestCase):
         self.finish(observer)
         self.assertEqual(self.coord('inbox', 'root'), [])
         self.assertEqual(self.coord('turns', 'root'), [])
-        self.assertEqual(self.coord('session', 'root')['native'], started['native'])
+        self.assertEqual(self.coord('player', 'root')['native'], started['native'])
         self.assertEqual(journal.read_text(), partial + 'Root task completed.\n')
         with sqlite3.connect(f'{self.db.as_uri()}?mode=ro', uri=True) as database:
             self.assertEqual(database.execute("SELECT id FROM messages WHERE kind='report'").fetchall(), [])
@@ -656,7 +656,7 @@ class Receive(unittest.TestCase):
         self.eventually(lambda: not self.owned_processes(), 'root fallback processes did not exit naturally')
 
     def test_stale_shared_omp_refusal_does_not_restart_an_unrelated_failure(self):
-        self.worker(harness='omp')
+        self.player(harness='omp')
         native = 'existing-omp-conversation'
         storage = pathlib.Path(str(self.db) + '.session-' + 'parent'.encode().hex())
         storage.mkdir()
@@ -672,7 +672,7 @@ class Receive(unittest.TestCase):
         result = self.coord(*self.receive_args('parent'), ok=False)
         self.assertNotEqual(result.returncode, 0)
         self.assertEqual([m['id'] for m in self.coord('inbox', 'parent')], ['task'])
-        self.assertEqual(self.coord('session', 'parent')['native'], native)
+        self.assertEqual(self.coord('player', 'parent')['native'], native)
         reports = self.coord('inbox', 'root')
         self.assertFalse(any(m['id'].endswith(':recovery') for m in reports))
         launches = [json.loads(line) for line in (self.directory / 'native-launches.jsonl').read_text().splitlines()]
@@ -690,13 +690,13 @@ class Receive(unittest.TestCase):
         evidence.update({'harness': harness, 'retryRequested': retry,
                          'terminalBeforeObserverLoss': terminal_before_loss})
         self.coord('attach', 'root', 'codex', 'native-root', self.endpoint('root'))
-        self.worker(harness=harness)
+        self.player(harness=harness)
         self.coord('message', 'first', 'root', 'parent', 'task', 'The original input must be sent once.')
         observer = self.spawn(*self.receive_args('parent'))
         original, started = self.accept('parent')
         evidence.update({'firstSupervisor': observer.pid, 'firstNative': started['pid'],
                          'keeper': started['ppid'], 'originalPrompt': started['prompt']})
-        native = self.eventually(lambda: self.coord('session', 'parent')['native'],
+        native = self.eventually(lambda: self.coord('player', 'parent')['native'],
                                  'original native identity was not recorded')
         self.assertEqual(native, started['native'])
         evidence['recordedNativeId'] = native
@@ -786,7 +786,7 @@ class Receive(unittest.TestCase):
             self.assertEqual(turns[0]['id'], evidence['turnsBeforeLoss'][0]['id'])
         evidence['originalCompletionRetained'] = turns[0]['reportBody'] == original_body
         evidence['retainedNativeFrames'] = [json.loads(line) for line in log.read_text().splitlines()]
-        self.assertEqual(self.coord('session', 'parent')['native'], native)
+        self.assertEqual(self.coord('player', 'parent')['native'], native)
         self.eventually(lambda: not self.owned_processes(), 'fixture keeper or recovery did not exit')
         return evidence
 
@@ -823,7 +823,7 @@ class Receive(unittest.TestCase):
 
     def test_completed_omp_attempt_replay_leaves_guidance_for_current_native(self):
         self.coord('attach', 'root', 'codex', 'native-root', self.endpoint('root'))
-        self.worker(harness='omp')
+        self.player(harness='omp')
         self.coord('message', 'first', 'root', 'parent', 'task', 'Original work.')
         observer = self.spawn(*self.receive_args('parent'))
         original, first = self.accept('parent')
@@ -883,7 +883,7 @@ class Receive(unittest.TestCase):
 
     def test_omp_recovery_after_input_closes_defers_guidance_until_native_exit(self):
         self.coord('attach', 'root', 'codex', 'native-root', self.endpoint('root'))
-        self.worker(harness='omp')
+        self.player(harness='omp')
         self.coord('message', 'original', 'root', 'parent', 'task', 'Original work.')
         observer = self.spawn(*self.receive_args('parent'))
         original, started = self.accept('parent')
@@ -949,7 +949,7 @@ class Receive(unittest.TestCase):
             self.assertNotIn('Broken pipe', recovery_log.read_text())
 
     def test_busy_direct_receive_drains_new_input_and_preserves_native_session(self):
-        self.worker()
+        self.player()
         self.message('first', 'parent')
         first = self.spawn(*self.receive_args('parent'))
         control, started = self.accept('parent')
@@ -968,7 +968,7 @@ class Receive(unittest.TestCase):
 
     def test_distinct_sessions_start_before_either_finishes(self):
         for name in ['left', 'right']:
-            self.worker(name)
+            self.player(name)
             self.message(name + '-input', name)
         left = self.spawn(*self.receive_args('left'))
         left_control, _ = self.accept('left')
@@ -980,7 +980,7 @@ class Receive(unittest.TestCase):
         self.finish(right)
 
     def test_native_self_message_is_refused_without_disrupting_the_active_turn(self):
-        self.worker()
+        self.player()
         self.connect('parent')
         first = self.spawn('message', 'first', 'root', 'parent', 'guidance', 'first input')
         control, _ = self.accept('parent')
@@ -995,7 +995,7 @@ class Receive(unittest.TestCase):
         self.assertEqual(self.coord('inbox', 'parent'), [])
 
     def test_a_native_self_promotion_returns_and_continues_with_its_notice(self):
-        self.worker()
+        self.player()
         self.coord('report', 'self-evidence', 'parent', 'Evidence reviewed by this session.')
         self.coord('record', 'self-finding', 'parent', 'Reviewed finding',
                    'message:self-evidence', 'fixture')
@@ -1021,7 +1021,7 @@ class Receive(unittest.TestCase):
                          'native-reviewed')
 
     def test_synchronous_self_turn_reports_busy_and_native_work_continues(self):
-        self.worker()
+        self.player()
         self.message('first', 'parent')
         child = self.spawn(*self.receive_args('parent'))
         control, _ = self.accept('parent')
@@ -1046,7 +1046,7 @@ class Receive(unittest.TestCase):
     def test_upward_failure_preserves_queued_input_processing(self):
         self.coord('attach', 'root', 'codex', 'native-root',
                    json.dumps([str(self.directory / 'missing receiver')]))
-        self.worker()
+        self.player()
         self.connect('parent')
         first = self.spawn('message', 'first', 'root', 'parent', 'guidance', 'first input')
         control, _ = self.accept('parent')
@@ -1061,7 +1061,7 @@ class Receive(unittest.TestCase):
 
     def test_queued_failure_joins_concurrent_ancestor_delivery(self):
         self.coord('attach', 'root', 'codex', 'native-root', self.endpoint('root'))
-        self.worker()
+        self.player()
         self.connect('parent')
         first = self.spawn('message', 'first', 'root', 'parent', 'guidance', 'first input')
         control, _ = self.accept('parent')
@@ -1092,7 +1092,7 @@ class Receive(unittest.TestCase):
         self.assertEqual(self.coord('inbox', 'root'), [])
 
     def test_startup_and_terminal_failures_leave_input_available_for_retry(self):
-        self.worker()
+        self.player()
         self.message('input', 'parent')
         missing = self.coord(*self.receive_args('parent', self.directory / 'missing executable'), ok=False)
         self.assertNotEqual(missing.returncode, 0)
@@ -1116,7 +1116,7 @@ class Receive(unittest.TestCase):
 
     def test_receive_startup_failure_notifies_parent_and_retains_input(self):
         self.coord('attach', 'root', 'codex', 'native-root', self.endpoint('root'))
-        self.worker()
+        self.player()
         self.coord('message', 'input', 'root', 'parent', 'task', 'Input for a missing executable.')
         failed = self.spawn(*self.receive_args('parent', self.directory / 'missing executable'))
         try:
@@ -1173,7 +1173,7 @@ class Receive(unittest.TestCase):
         self.assertEqual(self.coord('inbox', 'root'), [])
 
     def test_turn_and_receive_share_ownership_and_omp_session_file(self):
-        self.worker(harness='omp')
+        self.player(harness='omp')
         self.coord('message', 'preexisting', 'root', 'parent', 'report', 'Already pending before turn.')
         self.connect('parent')
         task = self.directory / 'initial task'
@@ -1199,7 +1199,7 @@ class Receive(unittest.TestCase):
         self.assertEqual(self.coord('inbox', 'parent'), [])
 
     def test_terminal_event_retains_ownership_until_native_process_exit(self):
-        self.worker()
+        self.player()
         self.connect('parent')
         task = self.directory / 'task'
         task.write_text('Initial work.')
@@ -1217,7 +1217,7 @@ class Receive(unittest.TestCase):
         self.finish(child)
 
     def test_replayed_turn_wakes_input_queued_while_returning_saved_report(self):
-        self.worker()
+        self.player()
         report = self.directory / 'large report'
         report.write_text('retained report\n' * 30000)
         self.coord('report', 'saved-turn', 'parent', report.read_text())

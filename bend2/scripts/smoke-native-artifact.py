@@ -44,13 +44,19 @@ class Commands:
         self.output, self.cwd, self.environment, self.actor = output, cwd, environment, actor
         self.number = 0
 
-    def call(self, name, argv, expected=0):
+    def call(self, name, argv, expected=0, input_data=None):
         self.number += 1
         prefix = self.output / 'commands' / f'{self.actor}-{os.getpid()}-{self.number}-{name}'
         row = {'argv': list(map(str, argv)), 'cwd': str(self.cwd), 'started_unix': time.time()}
+        if input_data is not None:
+            prefix.with_suffix('.stdin').write_text(input_data)
+            row['stdin'] = record(prefix.with_suffix('.stdin'), self.output)
         with prefix.with_suffix('.stdout').open('wb') as stdout, prefix.with_suffix('.stderr').open('wb') as stderr:
             child = subprocess.Popen(row['argv'], cwd=self.cwd, env=self.environment,
+                                     stdin=subprocess.PIPE if input_data is not None else subprocess.DEVNULL,
                                      stdout=stdout, stderr=stderr)
+            if input_data is not None:
+                child.communicate(input_data.encode())
             row['pid'], row['exit_code'] = child.pid, child.wait()
         row['ended_unix'] = time.time()
         row.update({stream: record(prefix.with_suffix('.' + stream), self.output)
@@ -222,26 +228,66 @@ def main():
         config = {'output': str(output), 'exe': str(binary), 'db': str(db), 'git': git, 'ps': ps,
                   'task': 'Exercise installed retained receive λ\nKeep the complete task body.\n',
                   'report': 'Complete installed native report λ\nFull second line.\n',
-                  'work': 'Retained installed worker work λ\n', 'native': 'artifact-native'}
+                  'work': 'Retained installed Player work λ\n', 'native': 'artifact-native'}
         save(config_path, config)
         native = output / 'controlled-native'
         native.write_text('#!/bin/sh\nexec ' + shlex.join([sys.executable, str(helper), '--fixture-native', str(config_path)]) + ' "$@"\n')
         native.chmod(0o755)
         endpoint = json.dumps([sys.executable, str(helper), '--fixture-parent', str(config_path)])
         cli('attach', 'attach', 'root', 'fixture', 'artifact-root', endpoint)
-        cli('role', 'role', 'root', 'conductor')
-        worker = cli('recruit', 'recruit', 'worker', 'root', 'omp', 'fixture/artifact', 'low', repo,
+        cli('role', 'role', 'root', 'principal-conductor')
+        player = cli('recruit', 'recruit', 'worker', 'root', 'omp', 'fixture/artifact', 'low', repo,
                      'artifact-worker', 'worker tree', base)
-        workspace = Path(worker['workspace'])
-        require(workspace.parent == repo and worker['base'] == base, 'Recruit returned another workspace or base')
+        workspace = Path(player['workspace'])
+        require(workspace.parent == repo and player['base'] == base, 'Recruit returned another workspace or base')
+        adapters = prefix / 'libexec/baton2'
+        node = shutil.which('node')
+        require(node is not None, 'The extracted Conductor control smoke requires Node 22 or later')
+        require(all((adapters / (harness + '-' + suffix + '.mjs')).is_file()
+                    for harness in ('codex', 'omp', 'mcp') for suffix in ('conductor', 'root')),
+                'The archive must contain canonical Conductor adapters and stored-endpoint compatibility entries')
+        tools = [
+            ('player', 'baton2_player', {'player': 'worker'}),
+            ('players', 'baton2_players', {}),
+            ('role', 'baton2_role', {'session': 'root'}),
+            ('ensemble', 'baton2_ensemble', {'ensemble': 'artifact-ensemble', 'coupling': 'loose'}),
+            ('ensemble-member', 'baton2_ensemble_member', {'ensemble': 'artifact-ensemble', 'player': 'worker', 'action': 'add'}),
+            ('section', 'baton2_section', {'ensemble': 'artifact-ensemble', 'section': 'git', 'capability': 'repository changes'}),
+            ('section-member', 'baton2_section_member', {'ensemble': 'artifact-ensemble', 'section': 'git', 'player': 'worker', 'action': 'add'}),
+            ('orchestra', 'baton2_orchestra', {}),
+        ]
+        requests = [{'jsonrpc': '2.0', 'id': 'initialize', 'method': 'initialize', 'params': {}},
+                    {'jsonrpc': '2.0', 'id': 'tools', 'method': 'tools/list'}]
+        requests.extend({'jsonrpc': '2.0', 'id': label, 'method': 'tools/call',
+                         'params': {'name': tool, 'arguments': args}} for label, tool, args in tools)
+        replies = [json.loads(line) for line in commands.call('mcp-conductor-controls',
+            [node, adapters / 'mcp-conductor.mjs', db, '--session', 'root'],
+            input_data=''.join(json.dumps(request) + '\n' for request in requests)).splitlines()]
+        responses = {reply['id']: reply for reply in replies}
+        require(set(responses) == {request['id'] for request in requests}, 'MCP control replies lost a request')
+        require(all('error' not in reply and not reply['result'].get('isError') for reply in replies),
+                'A staged Conductor control refused the declared configuration')
+        require(responses['initialize']['result']['serverInfo']['name'] == 'baton-conductor',
+                'The staged adapter did not advertise its canonical Conductor identity')
+        controls = {label: json.loads(responses[label]['result']['content'][0]['text']) for label, _, _ in tools}
+        require(controls['player']['role'] == 'player' and controls['player']['kind'] == 'player',
+                'The staged Player inspection lost its runtime responsibility')
+        require({entry['id'] for entry in controls['players']} == {'root', 'worker'}, 'The Player roster lost a Conductor or Player')
+        require(controls['role']['role'] == 'principal-conductor', 'The Principal Conductor tier was not recorded')
+        section = cli('section-read', 'section', 'artifact-ensemble', 'git')
+        require(section == {'ensemble': 'artifact-ensemble', 'id': 'git', 'capability': 'repository changes', 'members': ['worker']},
+                'The declared Section lost its capability or membership')
+        require(controls['orchestra']['ensembles'][0]['sections'] == [section], 'The Orchestra lost its nested Section')
+        save(output / 'conductor-controls.json', {'adapter': record(adapters / 'mcp-conductor.mjs', output),
+                                                'responses': responses, 'section': section})
         cli('message', 'message', 'artifact-task', 'root', 'worker', 'task', config['task'])
         require(cli('inbox-before', 'inbox', 'worker')[0]['body'] == config['task'], 'Stored task changed')
         report = cli('receive', 'receive', 'worker', native, '', '', '', working / 'native.jsonl', 'artifact-task')
         require(report['kind'] == 'report' and report['body'] == config['report'], 'Receive returned another full report')
-        session = cli('session', 'session', 'worker')
+        session = cli('player', 'player', 'worker')
         require(session['native'] == config['native'] and session['observedModel'] == 'fixture/artifact',
                 'Recorded native identity or observed route differs')
-        require(cli('worker-inbox', 'inbox', 'worker') == [] and cli('parent-inbox', 'inbox', 'root') == [],
+        require(cli('player-inbox', 'inbox', 'worker') == [] and cli('parent-inbox', 'inbox', 'root') == [],
                 'Task or parent report remains unacknowledged')
         require(cli('task-delivery', 'delivery', 'artifact-task')['receipt'] == 'artifact-worker-accepted',
                 'Task acknowledgment was not retained')

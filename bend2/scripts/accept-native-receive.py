@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Review a source revision with two OMP workers and a native Codex root.
+"""Review a source revision with two OMP Players and a native Codex Principal Conductor.
 
 The route JSON uses codex and omp objects with executable, model and effort
 fields, as accept-hierarchy.py does. This command starts real native sessions.
@@ -7,7 +7,7 @@ All coordinator state, cloned source and native logs remain below --output.
 By default the coordinator builds from that clone; BEND selects an installed
 compiler. --coordinator uses a supplied executable with unverified source linkage.
 --tasks accepts review-native and review-validation objects with initial text and
-optional followup text for both workers. Follow-ups verify worker session reuse.
+optional followup text for both Players. Follow-ups verify Player session reuse.
 """
 import argparse
 import hashlib
@@ -112,19 +112,19 @@ def main():
     parser.add_argument('--source', type=Path, default=SOURCE)
     parser.add_argument('--revision', default='HEAD')
     parser.add_argument('--review-base', default='9e008263')
-    parser.add_argument('--tasks', type=Path, help='JSON with initial and optional followup worker tasks')
+    parser.add_argument('--tasks', type=Path, help='JSON with initial and optional followup Player tasks')
     args = parser.parse_args()
     custom_tasks = json.loads(args.tasks.read_text()) if args.tasks else None
     if custom_tasks is not None:
-        worker_names = {'review-native', 'review-validation'}
-        if not isinstance(custom_tasks, dict) or set(custom_tasks) != worker_names:
+        player_names = {'review-native', 'review-validation'}
+        if not isinstance(custom_tasks, dict) or set(custom_tasks) != player_names:
             parser.error('--tasks must define review-native and review-validation')
         for task in custom_tasks.values():
             if (not isinstance(task, dict) or not {'initial'} <= set(task) <= {'initial', 'followup'}
                     or any(not isinstance(text, str) or not text.strip() for text in task.values())):
-                parser.error('Each worker task needs nonempty initial text and optional followup text')
+                parser.error('Each Player task needs nonempty initial text and optional followup text')
         if len({('followup' in task) for task in custom_tasks.values()}) != 1:
-            parser.error('Provide followup tasks for both workers or neither')
+            parser.error('Provide followup tasks for both Players or neither')
     source = args.source.resolve()
     configured = json.loads(args.config.read_text())
     routes = {kind: {key: configured[kind][key] for key in ['executable', 'model', 'effort']}
@@ -190,7 +190,7 @@ Coordinator acknowledgment commands may write this run's database at {db}.
 Do not send a separate report command: native receive forwards your final text.
 Do not send guidance during report delivery. End your turn after your review.
 """
-    workers = [
+    players = [
         ('review-native', 'NATIVE_RECEIVE_REVIEW',
          'Review bend2/src/coordinator/receive.bend and its changes to turn, store, root, '
          'host process supervision and session locking. Trace concurrent incoming messages, '
@@ -206,8 +206,8 @@ Do not send guidance during report delivery. End your turn after your review.
          'with file and line references; list the files you actually inspected.'),
     ]
     if custom_tasks is not None:
-        workers = [(worker, marker, custom_tasks[worker]['initial'])
-                   for worker, marker, _ in workers]
+        players = [(player, marker, custom_tasks[player]['initial'])
+                   for player, marker, _ in players]
     has_followups = custom_tasks is not None and 'followup' in custom_tasks['review-native']
     root_task = out / 'root-bootstrap.md'
     root_task.write_text(common + f"""
@@ -230,27 +230,27 @@ retained reports and receipts, summarize the findings and acknowledge the follow
     endpoint = [str(binary), str(db), 'receive', 'root', routes['codex']['executable'],
                 routes['codex']['model'], routes['codex']['effort'], str(repo), str(out / 'root.jsonl')]
     call('attach', 'root', 'codex', '', json.dumps(endpoint))
-    call('role', 'root', 'conductor')
+    call('role', 'root', 'principal-conductor')
     tasks = {}
 
-    def worker_task(worker, marker, ident, focus):
+    def player_task(player, marker, ident, focus):
         task = out / f'{ident}.md'
         task.write_text(common + f'\n{focus}\n\n'
                         f'Begin your final response with {marker} and the full source revision {base}.\n'
-                        f'Before returning it, acknowledge {ident} as {worker} through the\n'
+                        f'Before returning it, acknowledge {ident} as {player} through the\n'
                         'coordinator command provided by receive. Report findings or explain the\n'
                         'specific checks that found no issue. Include material limitations.\n')
         return task
 
-    for worker, marker, focus in workers:
-        workspace = out / worker
-        call('recruit', worker, 'root', 'omp', routes['omp']['model'], routes['omp']['effort'],
-             str(repo), worker, str(workspace), base)
-        # Empty route and workspace arguments exercise the registered worker binding.
-        endpoint = [str(binary), str(db), 'receive', worker, routes['omp']['executable'],
-                    '', '', '', str(out / f'{worker}.jsonl')]
-        call('connect', worker, '', json.dumps(endpoint))
-        tasks[worker] = worker_task(worker, marker, f'task-{worker}', focus)
+    for player, marker, focus in players:
+        workspace = out / player
+        call('recruit', player, 'root', 'omp', routes['omp']['model'], routes['omp']['effort'],
+             str(repo), player, str(workspace), base)
+        # Empty route and workspace arguments exercise the registered Player binding.
+        endpoint = [str(binary), str(db), 'receive', player, routes['omp']['executable'],
+                    '', '', '', str(out / f'{player}.jsonl')]
+        call('connect', player, '', json.dumps(endpoint))
+        tasks[player] = player_task(player, marker, f'task-{player}', focus)
     try:
         print(f'Native receive acceptance: {out}', flush=True)
         finish_all([start_message('root-bootstrap', 'root', root_task)])
@@ -259,38 +259,38 @@ retained reports and receipts, summarize the findings and acknowledge the follow
         root_native = next(row['native'] for row in initial['sessions'] if row['id'] == 'root')
         assert root_native
         assert next(row for row in initial['messages'] if row['id'] == 'root-bootstrap')['receipt']
-        children = [start_message(f'task-{worker}', worker, tasks[worker]) for worker, _, _ in workers]
+        children = [start_message(f'task-{player}', player, tasks[player]) for player, _, _ in players]
         finish_all(children)
         reviewed = snapshot(db)
         save(out / 'review-state.json', reviewed)
         assert next(row['native'] for row in reviewed['sessions'] if row['id'] == 'root') == root_native
-        worker_natives = {worker: next(row['native'] for row in reviewed['sessions'] if row['id'] == worker)
-                          for worker, _, _ in workers}
+        player_natives = {player: next(row['native'] for row in reviewed['sessions'] if row['id'] == player)
+                          for player, _, _ in players}
 
         def check_reports(state, count):
-            for worker, marker, _ in workers:
-                session = next(row for row in state['sessions'] if row['id'] == worker)
-                assert session['parent'] == 'root' and session['native'] == worker_natives[worker]
+            for player, marker, _ in players:
+                session = next(row for row in state['sessions'] if row['id'] == player)
+                assert session['parent'] == 'root' and session['native'] == player_natives[player]
                 assert session['native']
                 assert session['model'] == routes['omp']['model']
                 assert session['effort'] == routes['omp']['effort']
                 reports = sorted((row for row in state['messages']
-                                  if row['sender'] == worker and row['kind'] == 'report'),
+                                  if row['sender'] == player and row['kind'] == 'report'),
                                  key=lambda row: row['seq'])
-                native_reports = list(omp_reports(out / f'{worker}.jsonl'))
+                native_reports = list(omp_reports(out / f'{player}.jsonl'))
                 assert len(reports) == len(native_reports) == count, reports
                 for report, text in zip(reports, native_reports):
                     assert report['recipient'] == 'root' and report['receipt']
                     assert marker in report['body'] and base in report['body']
                     assert report['body'] == text
                 for prefix in ['task', 'followup'][:count]:
-                    assert next(row for row in state['messages'] if row['id'] == f'{prefix}-{worker}')['receipt']
+                    assert next(row for row in state['messages'] if row['id'] == f'{prefix}-{player}')['receipt']
 
         check_reports(reviewed, 1)
         if has_followups:
-            followups = [start_message(f'followup-{worker}', worker,
-                         worker_task(worker, marker, f'followup-{worker}', custom_tasks[worker]['followup']))
-                         for worker, marker, _ in workers]
+            followups = [start_message(f'followup-{player}', player,
+                         player_task(player, marker, f'followup-{player}', custom_tasks[player]['followup']))
+                         for player, marker, _ in players]
             finish_all(followups)
             resumed = snapshot(db)
             save(out / 'worker-followup-state.json', resumed)
@@ -307,17 +307,17 @@ retained reports and receipts, summarize the findings and acknowledge the follow
         native_threads = [row['thread_id'] for row in root_events if row.get('type') == 'thread.started']
         assert native_threads and set(native_threads) == {root_native}
         assert all(row['receipt'] for row in final['messages'])
-        for workspace in [repo, *(out / worker for worker, _, _ in workers)]:
+        for workspace in [repo, *(out / player for player, _, _ in players)]:
             assert not command(['git', '-C', workspace, 'status', '--porcelain']), workspace
             assert command(['git', '-C', workspace, 'rev-parse', 'HEAD']) == base
         save(out / 'evidence.json', {
             **pin, 'ended_unix': time.time(), 'state': final,
             'processes': [row for _, row in processes], 'root_native_threads': native_threads,
-            'worker_native_sessions': worker_natives, 'worker_followups_verified': has_followups,
+            'player_native_sessions': player_natives, 'player_followups_verified': has_followups,
             'assertions': ['Reports match the complete native assistant text.',
                            'Reports and task messages have native acceptance receipts.',
                            'The root retained its native session through reports and follow-up.',
-                           'Worker parent, requested route and source revision were retained.',
+                           'Player parent, requested route and source revision were retained.',
                            'All cloned source workspaces remain unchanged.'],
             'limitations': ['This run does not establish overlap between root deliveries.',
                             'Provider latency and review conclusions depend on the native sessions.',

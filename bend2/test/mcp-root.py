@@ -1,4 +1,4 @@
-"""Integration test for the Bend2 Channels MCP root adapter."""
+"""Integration test for the Bend2 Channels MCP Conductor adapter."""
 import json
 import os
 import pathlib
@@ -11,7 +11,7 @@ import unittest
 
 ROOT = pathlib.Path(__file__).resolve().parents[2]
 EXE = ROOT / '.scratch/bend2/baton2'
-MCP_SCRIPT = ROOT / 'bend2/scripts/mcp-root.mjs'
+MCP_SCRIPT = ROOT / 'bend2/scripts/mcp-conductor.mjs'
 
 
 def send_mcp(proc, msg):
@@ -22,7 +22,7 @@ def send_mcp(proc, msg):
 
 _mcp_buf = {}
 
-def read_mcp(proc, timeout=5):
+def read_mcp(proc, timeout=5, handle_ping=True):
     """Read one newline-delimited MCP message, as the native Claude client does."""
     fd = proc.stdout.fileno()
     if fd not in _mcp_buf:
@@ -43,7 +43,7 @@ def read_mcp(proc, timeout=5):
     body, rest = buf.split(b'\n', 1)
     _mcp_buf[fd] = rest
     message = json.loads(body)
-    if message.get('method') == 'ping':
+    if handle_ping and message.get('method') == 'ping':
         send_mcp(proc, {'jsonrpc': '2.0', 'id': message['id'], 'result': {}})
         return read_mcp(proc, timeout)
     return message
@@ -86,9 +86,9 @@ class McpRoot(unittest.TestCase):
             self.assertEqual(p.returncode, 0, p.stderr)
         return p.stdout.strip()
 
-    def start_mcp(self):
+    def start_mcp(self, session='root', script=MCP_SCRIPT):
         proc = subprocess.Popen(
-            ['node', str(MCP_SCRIPT), str(self.db), str(EXE)],
+            ['node', str(script), str(self.db), str(EXE), '--session', session],
             stdin=subprocess.PIPE, stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
         )
@@ -118,12 +118,98 @@ class McpRoot(unittest.TestCase):
         send_mcp(proc, {'jsonrpc': '2.0', 'method': 'notifications/initialized'})
         send_mcp(proc, {'jsonrpc': '2.0', 'id': 'channel-tools', 'method': 'tools/list'})
         self.assertEqual(read_mcp(proc)['id'], 'channel-tools')
+        ready = read_mcp(proc, handle_ping=False)
+        self.assertEqual((ready['id'], ready['method']), ('conductor-channel-ready', 'ping'))
+        send_mcp(proc, {'jsonrpc': '2.0', 'id': ready['id'], 'result': {}})
 
     def test_initialize_advertises_channel_capability(self):
         proc = self.start_mcp()
         resp = self.initialize(proc)
         self.assertEqual(resp['result']['capabilities']['experimental'], {'claude/channel': {}})
-        self.assertEqual(resp['result']['serverInfo']['name'], 'baton-root')
+        self.assertEqual(resp['result']['serverInfo']['name'], 'baton-conductor')
+
+    def tool(self, proc, name, arguments=None, ok=True):
+        send_mcp(proc, {'jsonrpc': '2.0', 'id': name, 'method': 'tools/call',
+                        'params': {'name': name, 'arguments': arguments or {}}})
+        result = read_mcp(proc)
+        while 'method' in result:
+            result = read_mcp(proc)
+        self.assertEqual(result['id'], name)
+        if ok:
+            self.assertNotIn('isError', result['result'], result)
+        return json.loads(result['result']['content'][0]['text'])
+
+    def test_canonical_schemas_and_section_orchestra_controls(self):
+        self.coord('attach', 'principal', 'claude-code', 'native-principal', '')
+        self.coord('role', 'principal', 'principal-conductor')
+        self.register('player-id', 'principal', 'omp', 'model', 'low')
+        proc = self.start_mcp('principal')
+        self.initialize(proc)
+        send_mcp(proc, {'jsonrpc': '2.0', 'id': 'schemas', 'method': 'tools/list'})
+        tools = {item['name']: item for item in read_mcp(proc)['result']['tools']}
+        self.assertIn('baton2_players', tools)
+        self.assertIn('baton2_player_status', tools)
+        self.assertNotIn('baton2_workers', tools)
+        self.assertNotIn('baton2_worker_status', tools)
+        for tool in tools.values():
+            self.assertNotIn('worker', tool['inputSchema'].get('properties', {}))
+        selected = self.tool(proc, 'baton2_player', {'player': 'player-id'})
+        self.assertEqual((selected['kind'], selected['role']), ('player', 'player'))
+        self.assertEqual(self.tool(proc, 'baton2_role', {'session': 'principal'})['role'],
+                         'principal-conductor')
+        self.assertEqual({row['id'] for row in self.tool(proc, 'baton2_players')},
+                         {'principal', 'player-id'})
+        self.tool(proc, 'baton2_ensemble', {'ensemble': 'team', 'coupling': 'loose'})
+        self.tool(proc, 'baton2_ensemble_member',
+                  {'ensemble': 'team', 'player': 'player-id', 'action': 'add'})
+        declared = self.tool(proc, 'baton2_section',
+                             {'ensemble': 'team', 'section': 'git', 'capability': 'repository changes'})
+        self.assertEqual(declared, {'ensemble': 'team', 'id': 'git',
+                                    'capability': 'repository changes', 'members': []})
+        member = self.tool(proc, 'baton2_section_member',
+                          {'ensemble': 'team', 'section': 'git', 'player': 'player-id', 'action': 'add'})
+        self.assertEqual(member['player'], 'player-id')
+        section = self.tool(proc, 'baton2_section', {'ensemble': 'team', 'section': 'git'})
+        self.assertEqual(section['members'], ['player-id'])
+        orchestra = self.tool(proc, 'baton2_orchestra')
+        self.assertEqual(orchestra['ensembles'][0]['sections'], [section])
+        self.assertEqual({row['id'] for row in orchestra['players']}, {'principal', 'player-id'})
+        self.assertEqual(orchestra['operators'], [])
+        # Stored tool calls retain input compatibility, while schemas advertise Players.
+        old = self.tool(proc, 'baton2_workers')
+        self.assertEqual([row['id'] for row in old], ['player-id'])
+
+    def test_selected_associate_receives_and_guides_with_empty_parent(self):
+        associate = "delegated's λ"
+        self.coord('attach', '', 'codex', 'native-parent', '')
+        self.coord('role', '', 'principal-conductor')
+        self.register(associate, '', 'claude-code', 'model', 'low', branch='associate-branch')
+        self.coord('connect', associate, 'native-associate', '')
+        self.register('child', associate, 'omp', 'model', 'low')
+        proc = self.start_mcp(associate, ROOT / 'bend2/scripts/mcp-root.mjs')
+        initialized = self.initialize(proc)
+        self.assertIn('Associate Conductor', initialized['result']['instructions'])
+        self.activate(proc)
+        selected = json.loads(self.coord('player', associate))
+        self.assertEqual((selected['parent'], selected['native'], selected['role']),
+                         ('', 'native-associate', 'associate-conductor'))
+        endpoint = json.loads(selected['endpoint'])
+        self.assertIn(str(MCP_SCRIPT), endpoint)
+        self.assertEqual(endpoint[endpoint.index('--session') + 1], associate)
+        self.coord('report', 'associate-report', 'child', 'Delivered to the selected Associate.')
+        notification = read_mcp(proc)
+        self.assertEqual(notification['params']['meta']['recipient'], associate)
+        self.assertEqual(json.loads(notification['params']['meta']['messageIds']), ['associate-report'])
+        self.tool(proc, 'baton2_ack', {'id': 'associate-report', 'receipt': 'selected-reviewed'})
+        self.assertEqual(json.loads(self.coord('inbox', associate)), [])
+        self.assertEqual(json.loads(self.coord('inbox', '')), [])
+        self.tool(proc, 'baton2_guide',
+                  {'id': 'selected-guide', 'player': 'child', 'body': 'Selected guidance.'})
+        guidance = json.loads(self.coord('inbox', 'child'))
+        self.assertEqual([(row['sender'], row['recipient']) for row in guidance], [(associate, 'child')])
+        self.coord('report', 'associate-finished', associate, 'Report to empty-ID parent.')
+        parent_inbox = self.tool(proc, 'baton2_inbox', {'recipient': ''})
+        self.assertEqual([row['id'] for row in parent_inbox], ['associate-finished'])
 
     def test_pending_report_triggers_channel_notification(self):
         self.coord('attach', 'root', 'native-test', 'root-session', 'root-endpoint')
@@ -209,7 +295,7 @@ class McpRoot(unittest.TestCase):
             resp = read_mcp(proc, timeout=5)
         self.assertEqual(json.loads(resp['result']['content'][0]['text']), [])
 
-    def test_guide_sends_message_to_worker_inbox(self):
+    def test_guide_sends_message_to_player_inbox(self):
         # Set up root and worker sessions
         self.coord('attach', 'root', 'native-test', 'root-session', 'root-endpoint')
         self.register('w1', 'root', 'omp', 'model', 'high', '/wt', 'br', 'base')
@@ -226,7 +312,7 @@ class McpRoot(unittest.TestCase):
                 'name': 'baton2_guide',
                 'arguments': {
                     'id': 'guide-1',
-                    'worker': 'w1',
+                    'player': 'w1',
                     'body': 'Focus on the login endpoint first.',
                 },
             },
@@ -261,12 +347,7 @@ class McpRoot(unittest.TestCase):
         proc1.terminate()
         proc1.wait()
 
-        proc2 = subprocess.Popen(
-            ['node', str(MCP_SCRIPT), str(self.db), str(EXE)],
-            stdin=subprocess.PIPE, stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-        )
-        self.addCleanup(lambda: (proc2.terminate(), proc2.wait()))
+        proc2 = self.start_mcp()
 
         send_mcp(proc2, {
             'jsonrpc': '2.0', 'id': 1, 'method': 'initialize',
@@ -284,7 +365,7 @@ class McpRoot(unittest.TestCase):
         self.assertIn('Pending across restart', notif2['params']['content'])
         self.assertIn('turn-1', notif2['params']['meta']['messageIds'])
 
-    def test_workers_and_turns_tools_return_coordinator_data(self):
+    def test_players_and_turns_tools_return_coordinator_data(self):
         self.coord('attach', 'root', 'native-test', 'root-session', 'root-endpoint')
         self.register('w1', 'root', 'omp', 'model', 'high', '/wt', 'br', 'base')
         event = pathlib.Path(self.temp.name) / 'event.json'
@@ -305,13 +386,13 @@ class McpRoot(unittest.TestCase):
                 resp = read_mcp(proc, timeout=5)
             return resp
 
-        workers_resp = tool_call(30, 'baton2_workers')
-        workers = json.loads(workers_resp['result']['content'][0]['text'])
-        self.assertEqual(len(workers), 1)
-        self.assertEqual(workers[0]['id'], 'w1')
-        self.assertEqual(workers[0]['latestReport'], 'done')
+        players_resp = tool_call(30, 'baton2_players')
+        players = json.loads(players_resp['result']['content'][0]['text'])
+        self.assertEqual({player['id'] for player in players}, {'root', 'w1'})
+        reported = next(player for player in players if player['id'] == 'w1')
+        self.assertEqual(reported['latestReport'], 'done')
 
-        turns_resp = tool_call(31, 'baton2_turns', {'worker': 'w1'})
+        turns_resp = tool_call(31, 'baton2_turns', {'player': 'w1'})
         turns = json.loads(turns_resp['result']['content'][0]['text'])
         self.assertEqual(len(turns), 1)
         self.assertEqual(turns[0]['id'], 'turn-1')

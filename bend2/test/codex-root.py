@@ -1,7 +1,8 @@
-"""Integration test for the Bend2 Codex root adapter."""
+"""Integration test for the Bend2 Codex Conductor adapter."""
 import json
 import os
 import pathlib
+import shlex
 import subprocess
 import sys
 import tempfile
@@ -9,11 +10,11 @@ import unittest
 
 ROOT = pathlib.Path(__file__).resolve().parents[2]
 EXE = ROOT / '.scratch/bend2/baton2'
-CODEX_ROOT_SCRIPT = ROOT / 'bend2/scripts/codex-root.mjs'
+CODEX_CONDUCTOR_SCRIPT = ROOT / 'bend2/scripts/codex-conductor.mjs'
 
 
 class CodexRootAdapter(unittest.TestCase):
-    """Test the Codex root adapter's report-triggered delivery and message formatting."""
+    """Test the Codex Conductor adapter's report-triggered delivery and message formatting."""
 
     def setUp(self):
         if not EXE.exists():
@@ -51,7 +52,7 @@ class CodexRootAdapter(unittest.TestCase):
             self.assertEqual(p.returncode, 0, p.stderr)
         return p.stdout.strip()
 
-    def test_worker_terminal_starts_attached_root_without_a_listener(self):
+    def test_player_terminal_starts_attached_root_without_a_listener(self):
         temp = pathlib.Path(self.temp.name)
         received = temp / 'received.txt'
         native = temp / 'root.py'
@@ -62,16 +63,16 @@ class CodexRootAdapter(unittest.TestCase):
             'print(json.dumps({"type":"item.completed","item":{"type":"agent_message","text":"Reviewed."}}))\n' +
             'print(json.dumps({"type":"turn.completed"}))\n')
         native.chmod(0o700)
-        attached = subprocess.run(['node', str(CODEX_ROOT_SCRIPT), str(self.db), str(EXE), str(native), '--attach'], capture_output=True, text=True)
+        attached = subprocess.run(['node', str(CODEX_CONDUCTOR_SCRIPT), str(self.db), str(EXE), str(native), '--attach'], capture_output=True, text=True)
         self.assertEqual(attached.returncode, 0, attached.stderr)
         self.assertFalse(received.exists())
         self.register('w1', 'root', 'claude-code', 'model', 'low', str(temp), 'branch', 'base')
-        worker = temp / 'worker.py'
-        worker.write_text('#!' + sys.executable + '\nimport sys,json\nsys.stdin.read()\nprint(json.dumps({"type":"result","result":"Completed live task."}))\n')
-        worker.chmod(0o700)
+        player = temp / 'worker.py'
+        player.write_text('#!' + sys.executable + '\nimport sys,json\nsys.stdin.read()\nprint(json.dumps({"type":"result","result":"Completed live task."}))\n')
+        player.chmod(0o700)
         task = temp / 'task.txt'
         task.write_text('Task')
-        self.coord('turn', 'w1', 'finished', str(worker), 'model', 'low', str(temp), str(task), str(temp / 'worker.jsonl'), '')
+        self.coord('turn', 'w1', 'finished', str(player), 'model', 'low', str(temp), str(task), str(temp / 'worker.jsonl'), '')
         self.assertIn('Completed live task.', received.read_text())
         self.assertEqual(json.loads(self.coord('delivery', 'finished'))['receipt'], 'native-reviewed')
         self.assertIn('Reviewed.', pathlib.Path(str(self.db) + '.root.log').read_text())
@@ -81,7 +82,7 @@ class CodexRootAdapter(unittest.TestCase):
         native = temp / 'root.py'
         native.write_text('#!' + sys.executable + '\nimport sys,json\nsys.stdin.read()\nprint(json.dumps({"type":"turn.failed","error":{"message":"provider failed"}}))\nsys.exit(23)\n')
         native.chmod(0o700)
-        attached = subprocess.run(['node', str(CODEX_ROOT_SCRIPT), str(self.db), str(EXE), str(native), '--attach'], capture_output=True, text=True)
+        attached = subprocess.run(['node', str(CODEX_CONDUCTOR_SCRIPT), str(self.db), str(EXE), str(native), '--attach'], capture_output=True, text=True)
         self.assertEqual(attached.returncode, 0, attached.stderr)
         self.register('w1', 'root', 'codex', 'model', 'low', str(temp), 'branch', 'base')
         failed = subprocess.run([str(EXE), str(self.db), 'report', 'failed-delivery', 'w1', 'Retained report'], capture_output=True, text=True)
@@ -103,14 +104,14 @@ class CodexRootAdapter(unittest.TestCase):
             f'subprocess.run({[str(EXE), str(self.db), "ack"]!r}+[ident,"root","reviewed"],check=True,stdout=subprocess.DEVNULL)\n' +
             'print(\'{"type": "item.completed", "item": {"type": "agent_message", "text": "Reviewed"}}\')\n')
         native.chmod(0o700)
-        args = ['node', str(CODEX_ROOT_SCRIPT), str(self.db), str(EXE), str(native), '--attach']
+        args = ['node', str(CODEX_CONDUCTOR_SCRIPT), str(self.db), str(EXE), str(native), '--attach']
         for message in ['first', 'second']:
             attached = subprocess.run(args, text=True, capture_output=True)
             self.assertEqual(attached.returncode, 0, attached.stderr)
             if message == 'first':
                 self.register('sender', 'root', 'fixture', 'model', 'low')
             self.coord('report', message, 'sender', 'Review this message.')
-            self.assertEqual(json.loads(self.coord('session', 'root'))['native'], 'native-root')
+            self.assertEqual(json.loads(self.coord('player', 'root'))['native'], 'native-root')
         argv = [json.loads(line) for line in calls.read_text().splitlines()]
         self.assertEqual(len(argv), 2)
         self.assertEqual(argv[1][:3], ['exec', 'resume', 'native-root'])
@@ -119,11 +120,70 @@ class CodexRootAdapter(unittest.TestCase):
     def test_adapter_exits_cleanly_with_no_pending_messages(self):
         """With no root and no messages, the adapter exits 0."""
         p = subprocess.run(
-            ['node', str(CODEX_ROOT_SCRIPT), str(self.db), str(EXE), 'false-codex', '--once'],
+            ['node', str(CODEX_CONDUCTOR_SCRIPT), str(self.db), str(EXE), 'false-codex', '--once'],
             text=True, capture_output=True, timeout=10,
         )
         self.assertEqual(p.returncode, 0)
         self.assertIn('no pending messages', p.stderr)
+
+    def test_associate_selected_identity_workspace_parent_and_subscription(self):
+        """A selected Associate resumes, reports to its empty-ID parent and quotes its CLI."""
+        temp = pathlib.Path(self.temp.name)
+        self.db = temp / "state's λ.db"
+        associate = "delegated's λ"
+        self.coord('attach', '', 'codex', 'parent-native', '')
+        self.coord('role', '', 'principal-conductor')
+        self.register(associate, '', 'codex', 'stored-model', 'low', branch='associate-branch')
+        self.coord('connect', associate, 'saved-codex', '')
+        self.register('child', associate, 'fixture', 'child-model', 'low')
+        calls = temp / 'selected.json'
+        native = temp / 'selected.py'
+        native.write_text('#!' + sys.executable + '\nimport json,os,pathlib,subprocess,sys\n'
+            + f'pathlib.Path({str(calls)!r}).write_text(json.dumps({{"argv":sys.argv[1:],"cwd":os.getcwd(),"prompt":sys.stdin.read(),"api_keys":[k for k in ("OPENAI_API_KEY","CODEX_API_KEY") if k in os.environ]}}))\n'
+            + f'subprocess.run({[str(EXE), str(self.db), "ack", "selected-report", associate, "selected-reviewed"]!r},check=True,stdout=subprocess.DEVNULL)\n'
+            + 'print(json.dumps({"type":"thread.started","thread_id":"saved-codex"}),flush=True)\n'
+            + 'print(json.dumps({"type":"item.completed","item":{"type":"agent_message","text":"Selected Associate reviewed."}}),flush=True)\n')
+        native.chmod(0o700)
+        attached = subprocess.run(['node', str(CODEX_CONDUCTOR_SCRIPT), str(self.db), str(EXE),
+                                   str(native), '--session', associate, '--attach'],
+                                  text=True, capture_output=True,
+                                  env={**os.environ, 'OPENAI_API_KEY': 'fixture-only',
+                                       'CODEX_API_KEY': 'fixture-only'})
+        self.assertEqual(attached.returncode, 0, attached.stderr)
+        self.assertFalse(calls.exists())
+        reported = subprocess.run([str(EXE), str(self.db), 'report', 'selected-report',
+                                   'child', 'Selected child report'], text=True, capture_output=True,
+                                  env={**os.environ, 'OPENAI_API_KEY': 'fixture-only',
+                                       'CODEX_API_KEY': 'fixture-only'})
+        self.assertEqual(reported.returncode, 0, reported.stderr)
+        observed = json.loads(calls.read_text())
+        self.assertEqual(observed['argv'][:3], ['exec', 'resume', 'saved-codex'])
+        self.assertEqual(observed['argv'][observed['argv'].index('--model') + 1], 'stored-model')
+        self.assertIn('forced_login_method="chatgpt"', observed['argv'])
+        self.assertEqual(observed['api_keys'], [])
+        self.assertEqual(observed['cwd'], str(self.checkouts / associate))
+        self.assertIn('Associate Conductor', observed['prompt'])
+        inbox = next(line.split(' — ', 1)[0].strip() for line in observed['prompt'].splitlines()
+                     if ' — show your pending messages' in line)
+        self.assertEqual(shlex.split(inbox), [str(EXE), str(self.db), 'inbox', associate])
+        self.assertEqual(json.loads(self.coord('role', associate))['role'], 'associate-conductor')
+        reports = json.loads(self.coord('inbox', ''))
+        self.assertEqual([(r['sender'], r['recipient'], r['body']) for r in reports],
+                         [(associate, '', 'Selected Associate reviewed.')])
+        self.assertEqual(json.loads(self.coord('inbox', associate)), [])
+
+    def test_stored_legacy_entry_and_model_environment_remain_valid(self):
+        temp = pathlib.Path(self.temp.name)
+        legacy = ROOT / 'bend2/scripts/codex-root.mjs'
+        attached = subprocess.run(['node', str(legacy), str(self.db), str(EXE),
+                                   'false-codex', '--attach'], text=True, capture_output=True,
+                                  env={**os.environ, 'CODEX_ROOT_MODEL': 'legacy-model'})
+        self.assertEqual(attached.returncode, 0, attached.stderr)
+        selected = json.loads(self.coord('player', 'root'))
+        endpoint = json.loads(selected['endpoint'])
+        self.assertIn('CODEX_CONDUCTOR_MODEL=legacy-model', endpoint)
+        self.assertIn(str(CODEX_CONDUCTOR_SCRIPT), endpoint)
+        self.assertEqual(selected['role'], 'principal-conductor')
 
     def test_adapter_formats_pending_report(self):
         """The adapter detects pending messages and formats them for Codex."""
@@ -145,7 +205,7 @@ class CodexRootAdapter(unittest.TestCase):
         mock_codex.chmod(0o755)
 
         p = subprocess.run(
-            ['node', str(CODEX_ROOT_SCRIPT), str(self.db), str(EXE), str(mock_codex), '--once'],
+            ['node', str(CODEX_CONDUCTOR_SCRIPT), str(self.db), str(EXE), str(mock_codex), '--once'],
             text=True, capture_output=True, timeout=15,
         )
 
@@ -177,7 +237,7 @@ class CodexRootAdapter(unittest.TestCase):
         mock_codex.chmod(0o755)
 
         p = subprocess.run(
-            ['node', str(CODEX_ROOT_SCRIPT), str(self.db), str(EXE), str(mock_codex), '--once'],
+            ['node', str(CODEX_CONDUCTOR_SCRIPT), str(self.db), str(EXE), str(mock_codex), '--once'],
             text=True, capture_output=True, timeout=15,
         )
         self.assertEqual(p.returncode, 0, f'stderr: {p.stderr}')
@@ -205,7 +265,7 @@ class CodexRootAdapter(unittest.TestCase):
         mock_codex.chmod(0o755)
 
         p = subprocess.run(
-            ['node', str(CODEX_ROOT_SCRIPT), str(self.db), str(EXE), str(mock_codex), '--once'],
+            ['node', str(CODEX_CONDUCTOR_SCRIPT), str(self.db), str(EXE), str(mock_codex), '--once'],
             text=True, capture_output=True, timeout=15,
         )
         self.assertEqual(p.returncode, 0, f'stderr: {p.stderr}')
@@ -213,7 +273,7 @@ class CodexRootAdapter(unittest.TestCase):
         stdin_content = (pathlib.Path(self.temp.name) / 'stdin.txt').read_text()
         self.assertIn('baton2', stdin_content)
         self.assertIn('status', stdin_content)
-        self.assertIn('workers', stdin_content)
+        self.assertIn('players', stdin_content)
         self.assertIn('land', stdin_content)
 
     def test_adapter_passes_json_and_exec_flags(self):
@@ -235,7 +295,7 @@ class CodexRootAdapter(unittest.TestCase):
         mock_codex.chmod(0o755)
 
         subprocess.run(
-            ['node', str(CODEX_ROOT_SCRIPT), str(self.db), str(EXE), str(mock_codex), '--once'],
+            ['node', str(CODEX_CONDUCTOR_SCRIPT), str(self.db), str(EXE), str(mock_codex), '--once'],
             text=True, capture_output=True, timeout=15,
         )
 
@@ -263,7 +323,7 @@ class CodexRootAdapter(unittest.TestCase):
         mock_codex.chmod(0o755)
 
         p = subprocess.run(
-            ['node', str(CODEX_ROOT_SCRIPT), str(self.db), str(EXE), str(mock_codex), '--once'],
+            ['node', str(CODEX_CONDUCTOR_SCRIPT), str(self.db), str(EXE), str(mock_codex), '--once'],
             text=True, capture_output=True, timeout=15,
         )
         self.assertEqual(p.returncode, 0, f'stderr: {p.stderr}')
@@ -317,7 +377,7 @@ class CodexRootEndToEnd(unittest.TestCase):
                        check=True, capture_output=True)
         subprocess.run(['git', '-C', str(wt), 'commit', '-q', '-m', 'worker feature'],
                        check=True, capture_output=True)
-        worker_commit = self.git('rev-parse', 'w1-branch').strip()
+        player_commit = self.git('rev-parse', 'w1-branch').strip()
 
         self.coord('report', 'turn-1', 'w1',
                    'Feature implemented. Committed feature.txt on w1-branch.')
@@ -336,7 +396,7 @@ class CodexRootEndToEnd(unittest.TestCase):
         mock_codex.chmod(0o755)
 
         p = subprocess.run(
-            ['node', str(CODEX_ROOT_SCRIPT), str(self.db), str(EXE),
+            ['node', str(CODEX_CONDUCTOR_SCRIPT), str(self.db), str(EXE),
              str(mock_codex), '--once'],
             text=True, capture_output=True, timeout=15,
         )
@@ -346,7 +406,7 @@ class CodexRootEndToEnd(unittest.TestCase):
         self.assertEqual(len(inbox), 0, 'Root inbox should be empty after ack')
 
         main_tip = self.git('rev-parse', 'main').strip()
-        self.assertEqual(main_tip, worker_commit)
+        self.assertEqual(main_tip, player_commit)
 
 
 if __name__ == '__main__':

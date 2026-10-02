@@ -18,8 +18,8 @@ class Turn(unittest.TestCase):
         self.task=self.cwd/'task.txt'
         self.task.write_text('Useful task with "quotes", unicode λ🙂,\nand multiple lines.')
         self.log=self.cwd/'turn.jsonl'
-        self.worker=self.cwd/'fixture-harness'
-        self.worker.write_text('#!'+sys.executable+'\n'+'''import json,sys,pathlib
+        self.player=self.cwd/'fixture-harness'
+        self.player.write_text('#!'+sys.executable+'\n'+'''import json,sys,pathlib
 line=sys.stdin.readline()
 prompt=json.loads(line)["message"]["content"]
 pathlib.Path("received.txt").write_text(prompt)
@@ -27,7 +27,7 @@ print(json.dumps({"type":"system","subtype":"init","session_id":"native-fixture"
 print(json.dumps({"type":"assistant","message":{"content":"text containing \\\"type\\\":\\\"result\\\""}}))
 print(json.dumps({"type":"result","result":"Task recorded.","session_id":"native-fixture","is_error":False}))
 ''')
-        self.worker.chmod(0o700)
+        self.player.chmod(0o700)
         self.repo = self.cwd / 'repository'
         self.repo.mkdir()
         self.checkouts = self.cwd / 'checkouts'
@@ -42,7 +42,7 @@ print(json.dumps({"type":"result","result":"Task recorded.","session_id":"native
         self.base = subprocess.run(['git', '-C', str(self.repo), 'rev-parse', 'HEAD'],
                                    check=True, capture_output=True, text=True).stdout.strip()
         self.call('attach','root','native-fixture','root-session','root-endpoint')
-        self.call('role','root','conductor')
+        self.call('role', 'root', 'principal-conductor')
         self.register('worker','root','claude-code','model','high',str(self.cwd),'branch','base')
 
     def register(self, name, parent, harness, model, effort, workspace=None, branch=None, base=None):
@@ -58,35 +58,35 @@ print(json.dumps({"type":"result","result":"Task recorded.","session_id":"native
         return p.stdout
 
     def run_turn(self,cmd=None):
-        return self.call('turn','worker','turn-1',str(cmd or self.worker),'model','high',str(self.cwd),str(self.task),str(self.log),'')
+        return self.call('turn','worker','turn-1',str(cmd or self.player),'model','high',str(self.cwd),str(self.task),str(self.log),'')
 
     def test_native_process_output_becomes_parent_report(self):
         self.run_turn()
         inbox=json.loads(self.call('inbox','root'))
         self.assertEqual([m['body'] for m in inbox],['Task recorded.'])
         self.assertEqual((self.cwd/'received.txt').read_text(),self.task.read_text())
-        self.assertEqual(json.loads(self.call('session','worker'))['native'],'native-fixture')
+        self.assertEqual(json.loads(self.call('player','worker'))['native'],'native-fixture')
         self.assertEqual(len(self.log.read_text().splitlines()),3)
 
     def test_completed_turn_retry_does_not_start_another_process(self):
         self.run_turn()
         before=self.log.read_text()
-        self.worker.unlink()
+        self.player.unlink()
         self.run_turn()
         self.assertEqual(self.log.read_text(),before)
         self.assertEqual(len(json.loads(self.call('inbox','root'))),1)
 
-    def test_turn_id_owned_by_another_worker_does_not_replay_its_report(self):
+    def test_turn_id_owned_by_another_player_does_not_replay_its_report(self):
         self.register('other','root','claude-code','model','high',str(self.cwd),'other-branch','base')
         self.call('report','turn-1','other','Other worker report')
-        p=subprocess.run([str(EXE),str(self.db),'turn','worker','turn-1',str(self.worker),'model','high',str(self.cwd),str(self.task),str(self.log),''],text=True,capture_output=True)
+        p=subprocess.run([str(EXE),str(self.db),'turn','worker','turn-1',str(self.player),'model','high',str(self.cwd),str(self.task),str(self.log),''],text=True,capture_output=True)
         self.assertNotEqual(p.returncode,0)
         self.assertFalse((self.cwd/'received.txt').exists())
         self.assertEqual(json.loads(self.call('delivery','turn-1'))['sender'],'other')
 
     def test_startup_output_and_large_input_are_drained_concurrently(self):
         self.task.write_text('large task '*40000)
-        self.worker.write_text('#!'+sys.executable+'\n'+'import json,sys\nprint(json.dumps({"type":"system","subtype":"init","session_id":"s","detail":"x"*400000}),flush=True)\nline=sys.stdin.readline()\nprompt=json.loads(line)["message"]["content"]\nprint(json.dumps({"type":"result","result":str(len(prompt))}))\n')
+        self.player.write_text('#!'+sys.executable+'\n'+'import json,sys\nprint(json.dumps({"type":"system","subtype":"init","session_id":"s","detail":"x"*400000}),flush=True)\nline=sys.stdin.readline()\nprompt=json.loads(line)["message"]["content"]\nprint(json.dumps({"type":"result","result":str(len(prompt))}))\n')
         self.run_turn()
         self.assertEqual(json.loads(self.call('inbox','root'))[0]['body'],str(len(self.task.read_text())))
 
@@ -97,7 +97,7 @@ print(json.dumps({"type":"result","result":"Task recorded.","session_id":"native
         self.assertEqual(inbox[0]['recipient'],'root')
 
     def test_exit_without_result_reports_failure_and_keeps_logs(self):
-        self.worker.write_text('#!'+sys.executable+'\nimport sys;sys.stdin.read();print("unframed startup failure");sys.stderr.write("diagnosis");raise SystemExit(7)\n')
+        self.player.write_text('#!'+sys.executable+'\nimport sys;sys.stdin.read();print("unframed startup failure");sys.stderr.write("diagnosis");raise SystemExit(7)\n')
         self.run_turn()
         inbox=json.loads(self.call('inbox','root'))
         self.assertTrue(any('without a native result' in m['body'] for m in inbox))
@@ -107,7 +107,7 @@ print(json.dumps({"type":"result","result":"Task recorded.","session_id":"native
 
     def test_omp_prompt_session_route_and_terminal_report(self):
         self.register('omp-worker','root','omp','requested-model','high',str(self.cwd),'omp-branch','base')
-        self.worker.write_text('#!'+sys.executable+'\n'+'''import json,sys,pathlib
+        self.player.write_text('#!'+sys.executable+'\n'+'''import json,sys,pathlib
 state=json.loads(sys.stdin.readline())
 assert state['type']=='get_state'
 prompt=json.loads(sys.stdin.readline())['message']
@@ -122,10 +122,10 @@ print(json.dumps({"type":"agent_end","isTerminal":False,"messages":[]}))
 print(json.dumps({"type":"agent_end","isTerminal":True,"messages":[{"role":"assistant","content":[{"type":"text","text":"First answer"}]},{"role":"assistant","content":[{"type":"thinking","thinking":"private"},{"type":"text","text":"Full final answer λ"}]}]}),flush=True)
 assert sys.stdin.read()==''
 ''')
-        self.call('turn','omp-worker','omp-turn',str(self.worker),'requested-model','high',str(self.cwd),str(self.task),str(self.log),'')
+        self.call('turn','omp-worker','omp-turn',str(self.player),'requested-model','high',str(self.cwd),str(self.task),str(self.log),'')
         self.assertEqual((self.cwd/'received.txt').read_text(),self.task.read_text())
         self.assertEqual(json.loads(self.call('inbox','root'))[0]['body'],'Full final answer λ')
-        session=json.loads(self.call('session','omp-worker'))
+        session=json.loads(self.call('player','omp-worker'))
         self.assertEqual(session['native'],'omp-native')
         self.assertEqual(session['observedModel'],'provider/actual-model')
         self.assertEqual(session['model'],'requested-model')
@@ -136,7 +136,7 @@ assert sys.stdin.read()==''
         args=json.loads((self.cwd/'argv.json').read_text())
         self.assertEqual(args[args.index('--mode')+1],'rpc')
         self.assertEqual(args[args.index('--session-dir')+1],str(self.db)+'.sessions')
-        self.call('turn','omp-worker','omp-turn-2',str(self.worker),'requested-model','high',str(self.cwd),str(self.task),str(self.cwd/'second.jsonl'),'omp-native')
+        self.call('turn','omp-worker','omp-turn-2',str(self.player),'requested-model','high',str(self.cwd),str(self.task),str(self.cwd/'second.jsonl'),'omp-native')
         resumed=json.loads((self.cwd/'argv.json').read_text())
         self.assertEqual(resumed[resumed.index('--resume')+1],'omp-native')
         self.assertEqual(resumed[resumed.index('--session-dir')+1],args[args.index('--session-dir')+1])
@@ -159,13 +159,13 @@ assert sys.stdin.read()==''
         terminal = json.dumps({'type':'agent_end','isTerminal':True,'messages':[
             {'role':'assistant','content':[{'type':'text','text':final_text}]}]})
         (self.cwd/'events.jsonl').write_text('\n'.join(retained+omitted+[terminal])+'\n')
-        self.worker.write_text('#!'+sys.executable+'\n'+'''import pathlib,sys
+        self.player.write_text('#!'+sys.executable+'\n'+'''import pathlib,sys
 sys.stdin.readline()
 sys.stdin.readline()
 print(pathlib.Path('events.jsonl').read_text(),end='',flush=True)
 assert sys.stdin.read()==''
 ''')
-        self.call('turn','omp-worker','retained-turn',str(self.worker),'model','low',str(self.cwd),str(self.task),str(self.log),'')
+        self.call('turn','omp-worker','retained-turn',str(self.player),'model','low',str(self.cwd),str(self.task),str(self.log),'')
         self.assertEqual(self.log.read_text().splitlines(),retained+[terminal])
         self.assertEqual(json.loads(self.call('delivery','retained-turn'))['body'],final_text)
 
@@ -186,19 +186,19 @@ assert sys.stdin.read()==''
         received = self.cwd / 'root-reports.jsonl'
         endpoint = json.dumps([sys.executable, str(receiver), str(self.db), str(received)])
         self.call('attach','root','native-fixture','root-session',endpoint)
-        self.worker.write_text('#!'+sys.executable+'\n'+'''import pathlib,sys
+        self.player.write_text('#!'+sys.executable+'\n'+'''import pathlib,sys
 sys.stdin.readline()
 sys.stdin.readline()
 print(pathlib.Path('events.jsonl').read_text(),end='',flush=True)
 assert sys.stdin.read()==''
 ''')
-        self.call('turn','omp-worker','trial-report',str(self.worker),'deepseek/deepseek-flash','low',str(self.cwd),str(self.task),str(self.log),'')
+        self.call('turn','omp-worker','trial-report',str(self.player),'deepseek/deepseek-flash','low',str(self.cwd),str(self.task),str(self.log),'')
         self.assertEqual(json.loads(self.call('delivery','trial-report'))['body'], expected)
         self.assertEqual(json.loads(self.call('inbox','root'))[0]['body'], expected)
         self.assertEqual(self.log.read_text(),events)
         self.assertEqual([json.loads(line) for line in received.read_text().splitlines()], [expected])
-        self.worker.unlink()
-        self.call('turn','omp-worker','trial-report',str(self.worker),'deepseek/deepseek-flash','low',str(self.cwd),str(self.task),str(self.log),'')
+        self.player.unlink()
+        self.call('turn','omp-worker','trial-report',str(self.player),'deepseek/deepseek-flash','low',str(self.cwd),str(self.task),str(self.log),'')
         self.assertEqual(len(json.loads(self.call('turns','omp-worker'))),1)
         self.assertEqual([json.loads(line) for line in received.read_text().splitlines()], [expected])
 
@@ -206,7 +206,7 @@ assert sys.stdin.read()==''
         self.register('omp-worker','root','omp','requested-model','low',str(self.cwd),'omp-branch','base')
         body='Change focus now: report the guidance label indigo λ.'
         self.call('message','guidance-1','root','omp-worker','guidance',body)
-        self.worker.write_text('#!'+sys.executable+'\n'+'''import json,sys,pathlib,sqlite3
+        self.player.write_text('#!'+sys.executable+'\n'+'''import json,sys,pathlib,sqlite3
 state=json.loads(sys.stdin.readline())
 prompt=json.loads(sys.stdin.readline())
 assert prompt['type']=='prompt'
@@ -221,7 +221,7 @@ print(json.dumps({'type':'response','command':'steer','success':True,'id':guide[
 print(json.dumps({'type':'agent_end','isTerminal':True,'messages':[{'role':'assistant','content':[{'type':'text','text':guide['message']}]}]}),flush=True)
 assert sys.stdin.read()==''
 ''')
-        self.call('turn','omp-worker','guided-turn',str(self.worker),'requested-model','low',str(self.cwd),str(self.task),str(self.log),'')
+        self.call('turn','omp-worker','guided-turn',str(self.player),'requested-model','low',str(self.cwd),str(self.task),str(self.log),'')
         self.assertEqual(json.loads((self.cwd/'guidance.json').read_text())['message'],body)
         receipt=json.loads(json.loads(self.call('delivery','guidance-1'))['receipt'])
         self.assertEqual(receipt,{'type':'response','command':'steer','success':True,'id':'guidance-1'})
@@ -230,7 +230,7 @@ assert sys.stdin.read()==''
 
     def test_muse_resumed_turn_reads_new_task_in_recorded_session(self):
         self.register('muse-worker','root','muse','requested-model','low',str(self.cwd),'muse-branch','base')
-        self.worker.write_text('#!'+sys.executable+'\n'+'''import json,sys,pathlib
+        self.player.write_text('#!'+sys.executable+'\n'+'''import json,sys,pathlib
 args=sys.argv
 assert args[1]=='exec'
 prompt=pathlib.Path(args[args.index('--prompt-file')+1]).read_text()
@@ -239,20 +239,20 @@ session=args[args.index('--session-id')+1] if '--session-id' in args else 'nativ
 print(json.dumps({'stream':{'kind':'session','id':session},'payload_type':'run.model.configured','payload':{'kind':'run_model_configured','model_id':'actual-muse'}}))
 print(json.dumps({'stream':{'kind':'session','id':session},'payload_type':'run.terminal.completed','payload':{'kind':'run_terminal','terminal':'completed','text':prompt}}))
 ''')
-        self.call('turn','muse-worker','muse-1',str(self.worker),'requested-model','low',str(self.cwd),str(self.task),str(self.log),'')
-        native=json.loads(self.call('session','muse-worker'))['native']
+        self.call('turn','muse-worker','muse-1',str(self.player),'requested-model','low',str(self.cwd),str(self.task),str(self.log),'')
+        native=json.loads(self.call('player','muse-worker'))['native']
         self.assertEqual(native,'native-muse')
         self.task.write_text('Continue with a new task λ.')
-        self.call('turn','muse-worker','muse-2',str(self.worker),'requested-model','low',str(self.cwd),str(self.task),str(self.cwd/'resumed.jsonl'),native)
+        self.call('turn','muse-worker','muse-2',str(self.player),'requested-model','low',str(self.cwd),str(self.task),str(self.cwd/'resumed.jsonl'),native)
         self.assertEqual((self.cwd/'received.txt').read_text(),self.task.read_text())
         reports=json.loads(self.call('inbox','root'))
         self.assertEqual([r['id'] for r in reports],['muse-1','muse-2'])
         self.assertEqual(reports[-1]['body'],self.task.read_text())
-        self.assertEqual(json.loads(self.call('session','muse-worker'))['native'],native)
+        self.assertEqual(json.loads(self.call('player','muse-worker'))['native'],native)
 
     def test_codex_terminal_report_uses_final_message_and_resumes_native_thread(self):
         self.register('codex-worker','root','codex','gpt-6-astra','low',str(self.cwd),'codex-branch','base')
-        self.worker.write_text('#!'+sys.executable+'\n'+'''import json,sys,pathlib
+        self.player.write_text('#!'+sys.executable+'\n'+'''import json,sys,pathlib
 args=sys.argv
 assert args[1]=='exec'
 assert '--ephemeral' not in args
@@ -265,32 +265,32 @@ print(json.dumps({'type':'item.completed','item':{'type':'command_execution','ag
 print(json.dumps({'type':'item.completed','item':{'type':'agent_message','text':prompt}}))
 print(json.dumps({'type':'turn.completed','usage':{'input_tokens':42,'output_tokens':7}}))
 ''')
-        self.call('turn','codex-worker','codex-1',str(self.worker),'gpt-6-astra','low',str(self.cwd),str(self.task),str(self.log),'')
-        session=json.loads(self.call('session','codex-worker'))
+        self.call('turn','codex-worker','codex-1',str(self.player),'gpt-6-astra','low',str(self.cwd),str(self.task),str(self.log),'')
+        session=json.loads(self.call('player','codex-worker'))
         self.assertEqual(session['native'],'native-codex')
         self.assertEqual(session['observedModel'],'')
         self.assertEqual(json.loads(self.call('inbox','root'))[0]['body'],self.task.read_text())
         self.task.write_text('Next instruction with trailing newline.\n')
-        self.call('turn','codex-worker','codex-2',str(self.worker),'gpt-6-astra','low',str(self.cwd),str(self.task),str(self.cwd/'second.jsonl'),session['native'])
+        self.call('turn','codex-worker','codex-2',str(self.player),'gpt-6-astra','low',str(self.cwd),str(self.task),str(self.cwd/'second.jsonl'),session['native'])
         args=json.loads((self.cwd/'argv.json').read_text())
         self.assertEqual(args[1:4],['exec','resume','native-codex'])
         self.assertEqual(args[args.index('-c')+1],'model_reasoning_effort="low"')
         self.assertEqual(args[-1],'-')
         self.assertEqual(json.loads(self.call('inbox','root'))[-1]['body'],self.task.read_text())
-        self.worker.unlink()
-        self.call('turn','codex-worker','codex-2',str(self.worker),'gpt-6-astra','low',str(self.cwd),str(self.task),str(self.cwd/'second.jsonl'),session['native'])
+        self.player.unlink()
+        self.call('turn','codex-worker','codex-2',str(self.player),'gpt-6-astra','low',str(self.cwd),str(self.task),str(self.cwd/'second.jsonl'),session['native'])
         self.assertEqual(len(json.loads(self.call('turns','codex-worker'))),2)
 
     def test_codex_failed_turn_retains_native_failure_for_parent(self):
         self.register('codex-worker','root','codex','gpt-6-astra','low',str(self.cwd),'codex-branch','base')
-        self.worker.write_text('#!'+sys.executable+'\n'+'''import json,sys
+        self.player.write_text('#!'+sys.executable+'\n'+'''import json,sys
 sys.stdin.read()
 print(json.dumps({'type':'thread.started','thread_id':'failed-codex'}))
 print(json.dumps({'type':'item.completed','item':{'type':'agent_message','text':'Unfinished work.'}}))
 print(json.dumps({'type':'turn.failed','error':{'message':'Provider refused request'}}))
 sys.exit(1)
 ''')
-        self.call('turn','codex-worker','codex-failed',str(self.worker),'gpt-6-astra','low',str(self.cwd),str(self.task),str(self.log),'')
+        self.call('turn','codex-worker','codex-failed',str(self.player),'gpt-6-astra','low',str(self.cwd),str(self.task),str(self.log),'')
         report=json.loads(self.call('delivery','codex-failed'))
         event=json.loads(report['body'])
         self.assertEqual(event['nativeEvent']['type'],'turn.failed')
@@ -302,7 +302,7 @@ sys.exit(1)
         # OMP answers "not found" for a conversation it never persisted; the
         # turn then runs fresh so the pending input still completes.
         self.register('omp-worker','root','omp','requested-model','low',str(self.cwd),'omp-branch','base')
-        self.worker.write_text('#!'+sys.executable+'\n'+'''import json,sys,pathlib
+        self.player.write_text('#!'+sys.executable+'\n'+'''import json,sys,pathlib
 args=sys.argv
 if '--resume' in args:
     sys.stderr.write('Error: Session "%s" not found.\\n' % args[args.index('--resume')+1])
@@ -314,8 +314,8 @@ print(json.dumps({'type':'response','command':'get_state','success':True,'id':st
 print(json.dumps({'type':'agent_end','isTerminal':True,'messages':[{'role':'assistant','content':[{'type':'text','text':'fresh answer'}]}]}),flush=True)
 assert sys.stdin.read()==''
 ''')
-        self.call('turn','omp-worker','omp-resume-gone',str(self.worker),'requested-model','low',str(self.cwd),str(self.task),str(self.log),'omp-native-gone')
-        self.assertEqual(json.loads(self.call('session','omp-worker'))['native'],'omp-fresh')
+        self.call('turn','omp-worker','omp-resume-gone',str(self.player),'requested-model','low',str(self.cwd),str(self.task),str(self.log),'omp-native-gone')
+        self.assertEqual(json.loads(self.call('player','omp-worker'))['native'],'omp-fresh')
         prompt=(self.cwd/'fresh-prompt.txt').read_text()
         self.assertIn(self.task.read_text(),prompt)
         self.assertIn('fresh conversation',prompt)
