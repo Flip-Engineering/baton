@@ -3,6 +3,13 @@
 The [architecture](../docs/bend2/architecture.md) describes the implemented
 coordinator, native harness adapters, Git operations and recovery.
 
+A Principal Conductor (`root`) coordinates the overall work. An Associate
+Conductor (`lead`) coordinates delegated work. Each individual agent is a
+Player (`worker`). Ensembles are coordinated teams, Sections are
+capability-specific subgroups, and the Orchestra is the whole coordinated
+system. The [naming legend](../docs/bend2/terminology.md) describes these roles
+and groups in task briefs and shared context over the existing sessions.
+
 ## Build and check
 
 With Bend 2.0.25, clang and SQLite development headers available:
@@ -225,6 +232,9 @@ promote the exact finding from its named source scope. A shared scope includes
 its owner, the owner's immediate parent and the owner's subtree. Higher
 promotion names the scope that already carries the finding. The original
 author and each promotion's source, destination and promoter remain recorded.
+Declared scope IDs are logical session IDs. An Ensemble or Section brief names
+the sessions involved; knowledge visibility follows the recorded parent links
+and promotions described above.
 
 ## Native root delivery
 
@@ -338,8 +348,10 @@ report alone leaves that receipt empty.
 
 ## OMP leads and workers
 
-A recruited OMP session can receive reports from its own workers. Recruit the
-lead under the root, then connect its native receiver:
+A recruited OMP Player assigned as an Associate Conductor can receive reports
+from its own Players. The examples use `lead` for that session and `root` for
+the Principal Conductor. Recruit the lead under the root, then connect its
+native receiver:
 
 ```sh
 .scratch/bend2/baton2 state.db recruit lead root omp deepseek/deepseek-flash low REPO lead-branch LEAD_WORKTREE BASE

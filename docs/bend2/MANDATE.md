@@ -3,11 +3,18 @@
 ## Goal
 
 Build a simplified, elegant, feature-complete and usable Baton in Bend2 on
-`bend2-rewrite`. A root agent works in its harness's native UI, including Claude
-Code, Codex and OMP. It recruits workers on other harnesses and models through
-subscription logins, guides them, receives their questions and turn reports,
+`bend2-rewrite`. A Principal Conductor, the main orchestrator (`root`), works in
+its harness's native UI, including Claude Code, Codex and OMP. It recruits
+Players (`worker` sessions) on other harnesses and models through subscription
+logins, guides them, receives their questions and turn reports,
 and lands their work into Git without losing it. The native harness owns the
 agent conversation and operator interaction. Baton supplies coordination.
+
+An Associate Conductor coordinates delegated work. Ensembles describe
+coordinated teams, Sections describe capability-specific subgroups, and the
+Orchestra describes the whole coordinated system. The
+[naming legend](terminology.md) defines these responsibilities over the existing
+sessions and parent links.
 
 The operator's current direction supersedes the earlier port and migration
 plan. The JavaScript implementation, state, ledger, laws, documentation and
@@ -26,8 +33,9 @@ repository work, receive its report in the root's native session, and land its
 change. Continue using the result for real work and simplify it as failures
 show what is needed.
 
-[Target architecture](target-architecture.md) describes the design.
-[Rewrite plan](rewrite-plan.md) names the first implementation assignments.
+[Current architecture](architecture.md) is the design of record.
+[Target architecture](target-architecture.md) and [rewrite plan](rewrite-plan.md)
+describe the earlier proposal and first implementation assignments.
 Acceptance requires real work and an improvement in simplicity and usability.
 Documented intentions, simulated workers and parity measurements alone cannot
 establish that result.

@@ -7,12 +7,18 @@ This document describes the implemented system.
 
 ## Scope and execution
 
-Bend2 coordinates native agent sessions on one host. A root recruits workers,
-reads their reports, sends guidance, reviews committed changes, lands them on a
+Bend2 coordinates native agent sessions on one host. A Principal Conductor
+(`root`) recruits Players (`worker` sessions), reads their reports, sends
+guidance, reviews committed changes, lands them on a
 local Git branch and publishes that branch to an explicit remote. Native
 harnesses supply model access and conversation storage through their existing
 logins. Bend2 supplies parent routing, retained messages, turn supervision and
 Git operations.
+
+An Associate Conductor (`lead`) coordinates delegated work. The
+[naming legend](terminology.md) defines the coordination roles, Ensembles,
+Sections and Orchestra. Briefs and shared context describe group membership
+using the existing sessions and parent links.
 
 The native executable is invoked as `baton2 DATABASE COMMAND ARGS`. Each
 invocation opens the named SQLite database and performs its command. A `turn`
@@ -75,6 +81,11 @@ Stored session presence does not establish a live process.
 All processes operate with the local user's access. Session IDs and parent links
 supply routing. They do not create an authorization boundary between agents.
 The database, executable paths and root endpoint are trusted local inputs.
+
+Conductor responsibility comes from the assigned task. An agent Principal
+Conductor and a human operator session can both have `parent=null`; the operator
+session retains its operator identity. Declared knowledge scope IDs are logical
+session IDs, whose owners and parent links determine visibility.
 
 ## Workers and turns
 
@@ -290,7 +301,7 @@ existing coordinator database. The [real acceptance](knowledge-context-2026-10-0
 records producer investigation, root evidence review, promotion, sibling retrieval,
 fresh-conversation retrieval after receipts and separately promoted correction.
 Its root endpoint collected notices; scope selection used trusted declared actors.
-The owner chooses which ensembles receive further messages.
+The owner chooses which Ensembles receive further messages.
 
 The root-day acceptance exercises real OMP, Codex, Claude Code and Muse workers;
 OMP guidance during a turn; report-triggered Codex, OMP and Claude root turns;
