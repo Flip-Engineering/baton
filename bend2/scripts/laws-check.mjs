@@ -131,6 +131,27 @@ for (const { law, file } of rows) {
 // it claims to bind, and it is reported as a failure.
 const MUTATIONS = [
   {
+    name: 'connect-removes-endpoint-update-admission',
+    file: join('bend2', 'src', 'coordinator', 'commands.bend'),
+    find: '" WHERE id=" ++ q(id) ++ " AND " ++ endpoint_admitted(endpoint) ++ ";"',
+    replace: '" WHERE id=" ++ q(id) ++ ";"',
+    law: 'connect_updates_and_answers_only_after_admission',
+  },
+  {
+    name: 'connect-admits-non-text-argv',
+    file: join('bend2', 'src', 'coordinator', 'commands.bend'),
+    find: " WHERE type<>'text' OR instr(value,char(0))>0)",
+    replace: ' WHERE instr(value,char(0))>0)',
+    law: 'connect_admission_requires_native_argv_or_explicit_disconnection',
+  },
+  {
+    name: 'connect-refusal-loses-exit-classification',
+    file: join('bend2', 'src', 'coordinator', 'store.bend'),
+    find: 'Bool.or(Tx.starts_with(saved,"{\\"error\\":\\"message-route-denied\\""),Tx.starts_with(saved,"{\\"error\\":\\"invalid-endpoint\\""))',
+    replace: 'Tx.starts_with(saved,"{\\"error\\":\\"message-route-denied\\"")',
+    law: 'connect_refusal_is_classified_before_delivery',
+  },
+  {
     name: 'message-admission-removes-route-guard',
     file: join('bend2', 'src', 'coordinator', 'commands.bend'),
     find: ' WHERE (" ++ message_route(q(sender),q(recipient)) ++ " AND NOT (',

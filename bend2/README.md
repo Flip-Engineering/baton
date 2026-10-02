@@ -93,7 +93,13 @@ behavior; `ask-file` reads the question from a path or `-` for stdin.
 `delivery ID` returns the message with its recipient's current native endpoint.
 `pending` returns undelivered messages with those current endpoints, and
 `session ID` reads one stored binding. `connect ID NATIVE ENDPOINT` updates an
-existing worker connection while retaining its parent and requested route. Each CLI invocation opens the same
+existing worker connection while retaining its parent and requested route.
+`ENDPOINT` is an empty string to disconnect, or the literal JSON argv array
+passed as one argument. The array contains a nonempty executable and text
+arguments with no NUL characters. An invalid endpoint returns `invalid-endpoint`
+with exit status 2 and keeps the stored binding and pending input. Inspect
+`session` and `inbox`, connect valid argv, and retry the retained message ID.
+Each CLI invocation opens the same
 database, and SQLite serializes transactions.
 Workspaces and source files are retained by these commands.
 
