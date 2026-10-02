@@ -4,9 +4,9 @@
 
 Baton2 has a native coordinator, harness supervision, retained messaging, scoped
 knowledge and checked Git landing. Development and verification use `bend2-rewrite`.
-The current native hierarchy and Git workflow qualifications passed. A same-host
-staged source build passed. Release distribution and process-loss recovery remain
-to be qualified together.
+The current native hierarchy, Git workflow and scoped process-loss recovery
+qualifications passed. A same-host staged source build passed. Native release
+distribution remains to be qualified.
 
 The September prototype [go/no-go record](go-no-go.md) remains historical evidence.
 The [implemented architecture](architecture.md) describes the current acceptance
@@ -21,7 +21,7 @@ publication. Qualification uses current native workflow and recovery evidence.
 | Native orchestration | [Fresh qualification](native-qualification-2026-10-02/README.md) records runtime `204972f7`, a subscription Codex root, Kimi K3 lead, concurrent DeepSeek and Muse workers, native steering, saved-session corrections and both reviewed landing levels. [Earlier hierarchy acceptance](hierarchy-2026-10-02.md) retains its separate source and task boundaries. |
 | Messaging policy | [Messaging](messaging.md) records descendant and immediate-parent routes, explicit tight Ensemble peers, same-depth Conductor peers and preservation of accepted retries. These are declared local coordination identities. |
 | Shared knowledge | [Knowledge acceptance](knowledge-context-2026-10-01.md) records evidence review, explicit promotion, destination-owner notification, sibling retrieval and fresh-conversation retrieval. The destination owner decides further distribution to Ensembles. |
-| Retained recovery | [Architecture](architecture.md#recovery-and-current-limits) links the native receive and recovery runs. Their records state which owned processes were stopped and which identities, pending inputs, outputs and reports survived. |
+| Retained recovery | [Current recovery qualification](native-recovery-qualification-2026-10-02/README.md) records real subscription Codex observer loss with a surviving child, queued retry, same-ID follow-up, two reviewed document commits and complete parent receipts on `7c32ff45`. Separate Codex and OMP direct-turn process-loss probes passed; OMP recorded a missing-conversation diagnostic and fresh fallback. Both direct probes interrupted before a file edit. Keeper loss and host restart remain separate boundaries. |
 | Native staging | [Installation qualification](native-installation-2026-10-02/README.md) records a clean `dd1de109` source build and a staged executable used from an unrelated directory with its original source path unavailable. Controlled receive, acknowledgment and Git checks passed on macOS 27.0 arm64; packaged distribution and other hosts remain to be qualified. |
 | Git workflow | [Native Git qualification](native-git-qualification-2026-10-02/README.md) records real OMP review, checked landing, advertised local bare-remote publication and rejected push, target-movement refusal and fresh checking, and conflict resolution in the saved conversation on `08e6bf38`. |
 | Coordination measurements | [Coordinator comparison](coordinator-comparison-2026-10-01.md) and [status comparison](coordinator-status-comparison-2026-10-01.md) retain operation samples and process boundaries. They show different tradeoffs; they do not establish a universal speed improvement. |
