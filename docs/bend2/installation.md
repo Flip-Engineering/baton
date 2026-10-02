@@ -2,7 +2,9 @@
 
 The native coordinator is built from `bend2-rewrite`. The source build and a
 staged executable were [qualified on macOS 27.0 arm64](native-installation-2026-10-02/README.md).
-The existing npm package and package smoke checks cover the JS implementation.
+The original npm package and its smoke checks are retained with the original
+implementation in Git history. [Native development artifacts](native-artifacts.md)
+use their own build, law controls, native checks and extracted-use procedure.
 
 ## Build and stage
 
@@ -48,7 +50,8 @@ external installation with its own dependencies and conversation storage. Codex
 uses the ChatGPT subscription login in the qualified workflow; the launch wrapper
 forces that login method and removes API-key variables. Kimi K3 runs through
 OMP's `kimi-code` provider on this host. The [native turn and receive commands](../../bend2/README.md#native-turns)
-describe the explicit harness arguments.
+describe the explicit harness arguments. [Harness setup](harness-setup.md)
+describes the qualified routes and subscription wrapper.
 
 ## Retained state
 

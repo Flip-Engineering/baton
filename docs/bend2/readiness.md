@@ -5,8 +5,9 @@
 Baton2 has a native coordinator, harness supervision, retained messaging, scoped
 knowledge and checked Git landing. Development and verification use `bend2-rewrite`.
 The current native hierarchy, Git workflow and scoped process-loss recovery
-qualifications passed. A same-host staged source build passed. Native release
-distribution remains to be qualified.
+qualifications passed. A same-host staged source build passed. The [native development artifact procedure](native-artifacts.md) binds packaging
+to complete exact-source gates and extracted use. Hosted artifact execution and
+release distribution require their own successful qualification.
 
 The September prototype [go/no-go record](go-no-go.md) remains historical evidence.
 The [implemented architecture](architecture.md) describes the current acceptance
@@ -17,7 +18,7 @@ publication. Qualification uses current native workflow and recovery evidence.
 
 | Capability | Evidence and boundary |
 | --- | --- |
-| Compilation with operative laws | At `dd1de109`, the entry imports the implementation laws. Exact-tree verification passed 361 proof-removal controls, 87 implementation mutations and 233 Python tests across 22 suites, plus two Bend suites. Compiler proofs bind the stated functions; runtime tests exercise their host effects. |
+| Compilation with operative laws | At `f85647cc`, the entry imports the implementation laws. Exact-tree verification passed 361 proof-removal controls, 87 implementation mutations and 248 Python tests across 25 suites, plus two Bend suites. Compiler proofs bind the stated functions; runtime tests exercise their host effects. |
 | Native orchestration | [Fresh qualification](native-qualification-2026-10-02/README.md) records runtime `204972f7`, a subscription Codex root, Kimi K3 lead, concurrent DeepSeek and Muse workers, native steering, saved-session corrections and both reviewed landing levels. [Earlier hierarchy acceptance](hierarchy-2026-10-02.md) retains its separate source and task boundaries. |
 | Messaging policy | [Messaging](messaging.md) records descendant and immediate-parent routes, explicit tight Ensemble peers, same-depth Conductor peers and preservation of accepted retries. These are declared local coordination identities. |
 | Shared knowledge | [Knowledge acceptance](knowledge-context-2026-10-01.md) records evidence review, explicit promotion, destination-owner notification, sibling retrieval and fresh-conversation retrieval. The destination owner decides further distribution to Ensembles. |
@@ -92,7 +93,8 @@ Before a 1.0 release:
 3. Qualify a frozen release candidate against the supported native workflows and
    the declared recovery boundaries.
 4. Document the supported host, installation, command entry point, harness setup
-   and retained-state recovery procedure for that candidate.
+   and retained-state recovery procedure for that candidate. The
+   [harness setup guide](harness-setup.md) records the measured native routes.
 5. Run the native build, complete law negative controls and native checks on the
    exact release tree, then verify the advertised source and release artifacts.
 

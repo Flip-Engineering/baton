@@ -22,7 +22,9 @@ The build uses `.bend/bin/bend` or `node_modules/.bend/bin/bend`. Set `BEND` to
 another installed compiler path if needed. It emits C and links the native
 executable at `.scratch/bend2/baton2`. Host bindings execute on Bend IO workers.
 The [native installation procedure](../docs/bend2/installation.md) covers staging,
-runtime paths, dependencies and retained state.
+runtime paths, dependencies and retained state. [Harness setup](../docs/bend2/harness-setup.md)
+describes the qualified routes. [Native artifacts](../docs/bend2/native-artifacts.md)
+describes the exact-source packaging and extracted-use gates.
 
 `bend2/src/coordinator/laws.bend` states the sixteen operative entries of
 [the approved laws](../docs/bend2/laws-proposed.md) over the functions this
