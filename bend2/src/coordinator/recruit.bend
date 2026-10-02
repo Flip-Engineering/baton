@@ -48,7 +48,7 @@ def register(db: String, id: String, parent: String, harness: String, model: Str
     case Fail{error}: IO.die(Unit,1,G.fail_text(error))
     case Done{G.WCreated{branch,path,base}}:
       do IO<Unit>:
-        saved : String <- IO.try(String,Store.apply(db,C.Worker{id,parent,harness,model,effort,path,branch,base}))
+        saved : String <- IO.try(String,Store.apply(db,C.Player{id,parent,harness,model,effort,path,branch,base}))
         IO.write(saved)
 
 def create(+db: String,id: String,parent: String,harness: String,model: String,effort: String,repo: String,branch: String,path: String,base: String,exists: Bool) -> IO(Unit):
@@ -78,7 +78,7 @@ def show_status(id: String,path: String,result: Result<&1,&1,G.GitFail,G.WtStatu
 
 def inspect_path(id: String,+path: String,missing: Bool) -> IO(Unit):
   match missing:
-    case True{}: IO.die(Unit,2,"The worker has no recorded workspace.")
+    case True{}: IO.die(Unit,2,"The player has no recorded workspace.")
     case False{}:
       do IO<Unit>:
         status : Result<&1,&1,G.GitFail,G.WtStatus> <- WS.worktreeStatus(path)

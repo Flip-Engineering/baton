@@ -16,30 +16,30 @@ def send(+db: String, handle: U32, cursor: String, +next: String, same: Bool) ->
       sent : Unit <- IO.try(Unit,P.ProcessChild.write(handle,frame))
       IO.pure(String,next)
 
-def pending(+db: String, +worker: String, handle: U32, +cursor: String) -> IO(String):
+def pending(+db: String, +player: String, handle: U32, +cursor: String) -> IO(String):
   do IO<String>:
-    +next : String <- IO.try(String,DB.Sql.query(db,"SELECT coalesce((SELECT seq FROM messages WHERE recipient=" ++ C.q(worker) ++ " AND kind='guidance' AND receipt IS NULL AND NOT " ++ C.stopped_session_sql(C.q(worker)) ++ " AND seq>CAST(" ++ C.q(cursor) ++ " AS INTEGER) ORDER BY seq LIMIT 1),CAST(" ++ C.q(cursor) ++ " AS INTEGER));"))
+    +next : String <- IO.try(String,DB.Sql.query(db,"SELECT coalesce((SELECT seq FROM messages WHERE recipient=" ++ C.q(player) ++ " AND kind='guidance' AND receipt IS NULL AND NOT " ++ C.stopped_session_sql(C.q(player)) ++ " AND seq>CAST(" ++ C.q(cursor) ++ " AS INTEGER) ORDER BY seq LIMIT 1),CAST(" ++ C.q(cursor) ++ " AS INTEGER));"))
     send(db,handle,cursor,next,String.eq(cursor,next))
 
 # Replay observes receipts after this attempt stops accepting input.
-def pending_live(db: String, worker: String, handle: U32, cursor: String, closed: U32) -> IO(String):
+def pending_live(db: String, player: String, handle: U32, cursor: String, closed: U32) -> IO(String):
   match closed:
-    case 0: pending(db,worker,handle,cursor)
+    case 0: pending(db,player,handle,cursor)
     case other: IO.pure(String,cursor)
 
-def continued(db: String, worker: String, +handle: U32, cursor: String, ended: Bool) -> IO(String):
+def continued(db: String, player: String, +handle: U32, cursor: String, ended: Bool) -> IO(String):
   match ended:
     case True{}: do IO<String>:
       closed : Unit <- IO.try(Unit,P.ProcessChild.close_stdin(handle))
       IO.pure(String,cursor)
     case False{}: do IO<String>:
       closed : U32 <- IO.try(U32,P.ProcessChild.input_closed(handle))
-      pending_live(db,worker,handle,cursor,closed)
+      pending_live(db,player,handle,cursor,closed)
 
 # A native steer response records acceptance; the cursor covers this process's sends.
-def observe(+db: String, +worker: String, handle: U32, +event: String, cursor: String, enabled: Bool) -> IO(String):
+def observe(+db: String, +player: String, handle: U32, +event: String, cursor: String, enabled: Bool) -> IO(String):
   match enabled:
     case False{}: IO.pure(String,cursor)
     case True{}: do IO<String>:
-      ended : String <- IO.try(String,DB.Sql.query(db,"UPDATE messages SET receipt=coalesce(receipt," ++ C.q(event) ++ ") WHERE recipient=" ++ C.q(worker) ++ " AND kind='guidance' AND id=json_extract(" ++ C.q(event) ++ ",'$.id') AND json_extract(" ++ C.q(event) ++ ",'$.type')='response' AND json_extract(" ++ C.q(event) ++ ",'$.command')='steer' AND json_extract(" ++ C.q(event) ++ ",'$.success')=1;SELECT CASE WHEN " ++ C.terminal(event) ++ " THEN 1 ELSE 0 END;"))
-      continued(db,worker,handle,cursor,String.eq(ended,"1\n"))
+      ended : String <- IO.try(String,DB.Sql.query(db,"UPDATE messages SET receipt=coalesce(receipt," ++ C.q(event) ++ ") WHERE recipient=" ++ C.q(player) ++ " AND kind='guidance' AND id=json_extract(" ++ C.q(event) ++ ",'$.id') AND json_extract(" ++ C.q(event) ++ ",'$.type')='response' AND json_extract(" ++ C.q(event) ++ ",'$.command')='steer' AND json_extract(" ++ C.q(event) ++ ",'$.success')=1;SELECT CASE WHEN " ++ C.terminal(event) ++ " THEN 1 ELSE 0 END;"))
+      continued(db,player,handle,cursor,String.eq(ended,"1\n"))

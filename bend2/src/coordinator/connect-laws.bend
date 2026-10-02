@@ -8,7 +8,7 @@ import ../git/text.bend as Tx
 
 law session_answer_preserves_the_supplied_admission_condition:
   for condition: String
-  {C.session_result_where(condition) == "SELECT json_patch(json_object('id',id,'parent',parent,'harness',harness,'model',model,'effort',effort,'native',native,'observedHarness',observed_harness,'observedModel',observed_model,'observedEffort',observed_effort,'endpoint',endpoint,'workspace',workspace,'branch',branch,'base',base)," ++ C.session_state_sql("sessions.id") ++ ") FROM sessions WHERE " ++ condition ++ ";" : String}
+  {C.session_result_where(condition) == "SELECT json_patch(json_object('id',id,'parent',parent,'harness',harness,'model',model,'effort',effort,'native',native,'observedHarness',observed_harness,'observedModel',observed_model,'observedEffort',observed_effort,'endpoint',endpoint,'workspace',workspace,'branch',branch,'base',base,'kind'," ++ C.session_kind("sessions.id") ++ ",'role'," ++ C.public_role("sessions.id") ++ ")," ++ C.session_state_sql("sessions.id") ++ ") FROM sessions WHERE " ++ condition ++ ";" : String}
 
 def session_answer_preserves_the_supplied_admission_condition(condition):
   {==}
@@ -42,7 +42,7 @@ def connect_updates_and_answers_only_after_admission(id,native,endpoint):
 
 law connect_refusal_is_classified_before_delivery:
   for +saved: String
-  {Store.refused(saved) == Bool.or(Tx.starts_with(saved,"{\"error\":\"worker-assignment-conflict\""),Bool.or(Tx.starts_with(saved,"{\"error\":\"message-route-denied\""),Tx.starts_with(saved,"{\"error\":\"invalid-endpoint\""))) : Bool}
+  {Store.refused(saved) == Bool.or(Store.naming_refused(saved),Bool.or(Tx.starts_with(saved,"{\"error\":\"player-assignment-conflict\""),Bool.or(Tx.starts_with(saved,"{\"error\":\"message-route-denied\""),Tx.starts_with(saved,"{\"error\":\"invalid-endpoint\"")))) : Bool}
 
 def connect_refusal_is_classified_before_delivery(saved):
   {==}

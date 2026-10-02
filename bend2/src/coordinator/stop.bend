@@ -1,6 +1,6 @@
 import Base
 import ./commands.bend as C
-import ./root.bend as Root
+import ./delivery.bend as Delivery
 import ../host/sqlite.bend as DB
 import ../host/process.bend as P
 import ../git/text.bend as Tx
@@ -102,8 +102,8 @@ def exited(+db: String, +session: String, +attempt: String, +status: String, +ev
 def deliver(+db: String, +session: String, +attempt: String) -> IO(Result<&1,&1,U32 & String,Unit>):
   do IO<Result<&1,&1,U32 & String,Unit>>:
     id : String <- IO.try(String,DB.Sql.query(db,"SELECT coalesce((SELECT report_id FROM session_stops WHERE session=" ++ C.q(session) ++ " AND attempt=" ++ C.q(attempt) ++ "),'');"))
-    result : Result<&1,&1,U32 & String,String> <- Root.deliver(db,Tx.trim_nl(id),"1","")
-    IO.pure(Result<&1,&1,U32 & String,Unit>,Root.wake_result(result))
+    result : Result<&1,&1,U32 & String,String> <- Delivery.deliver(db,Tx.trim_nl(id),"1","")
+    IO.pure(Result<&1,&1,U32 & String,Unit>,Delivery.wake_result(result))
 
 def reconcile_request(+db: String, +session: String) -> IO(Unit):
   do IO<Unit>:

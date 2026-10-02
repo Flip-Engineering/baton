@@ -63,18 +63,28 @@ def run(db: String, command: C.Command) -> IO(Unit):
     result : String <- IO.try(String, Store.apply(db,command))
     print_result(result)
 
+law stored_command_entry_uses_the_actual_store:
+  for db: String
+  for command: C.Command
+  {run(db,command) == (do IO<Unit>:
+    result : String <- IO.try(String,Store.apply(db,command))
+    print_result(result)) : IO(Unit)}
+
+def stored_command_entry_uses_the_actual_store(db,command):
+  {==}
+
 def execute(db: String, command: C.Command) -> IO(Unit):
   match command:
     case C.Invalid{}:
-      IO.die(Unit,2,"usage: baton2 DATABASE COMMAND ARGS\nattach ID HARNESS NATIVE ENDPOINT\nrecruit ID PARENT HARNESS MODEL EFFORT REPO BRANCH PATH BASE\nworktree ID\nconnect ID NATIVE ENDPOINT\nbind ID NATIVE HARNESS MODEL EFFORT\nrole SESSION [player|conductor|operator]\nensemble ID [OWNER [loose|tight]]\nensemble-member ID OWNER SESSION add|remove\nmessage ID SENDER RECIPIENT KIND BODY\nmessage-file ID SENDER RECIPIENT KIND PATH\nobserve-file ID WORKER PATH\nreport ID WORKER BODY\nask ID WORKER BODY\nask-file ID WORKER PATH\nnative-reply PARENT REQUEST RESPONSE_JSON\nnative-reply-file PARENT REQUEST PATH\nsession ID\ndelivery ID\npending\ninbox RECIPIENT\nack ID RECIPIENT NATIVE_RECEIPT\nstatus\nworkers\nturns WORKER_ID\nland WORKER_ID REPO TARGET_BRANCH\nland-checked WORKER_ID REPO TARGET_BRANCH CHECK FILES\npush REPO BRANCH REMOTE\nturn WORKER TURN_ID HARNESS_CMD MODEL EFFORT CWD TASK_FILE OUTPUT_LOG RESUME_SESSION\nstop SESSION STOP_ID REASON\nforce-stop SESSION STOP_ID\nreceive SESSION HARNESS_CMD MODEL EFFORT CWD OUTPUT_LOG MESSAGE_ID\nrecord FINDING_ID AUTHOR CLAIM EVIDENCE LIMITS\nknowledge READER\npromote PROMOTION_ID PROMOTER SOURCE DESTINATION FINDING\nEmpty receive MODEL/EFFORT/CWD use recorded values; empty MESSAGE_ID reads the pending inbox.\nPATH - reads stdin; empty RESUME_SESSION starts a new native session")
+      IO.die(Unit,2,"usage: baton2 DATABASE COMMAND ARGS\nattach ID HARNESS NATIVE ENDPOINT\nrecruit ID PARENT HARNESS MODEL EFFORT REPO BRANCH PATH BASE\nworktree ID\nconnect ID NATIVE ENDPOINT\nbind ID NATIVE HARNESS MODEL EFFORT\nrole SESSION [player|principal-conductor|associate-conductor|operator]\nensemble ID [OWNER [loose|tight]]\nensemble-member ID OWNER PLAYER add|remove\nsection ENSEMBLE SECTION [OWNER CAPABILITY]\nsection-member ENSEMBLE SECTION OWNER PLAYER add|remove\norchestra\nmessage ID SENDER RECIPIENT KIND BODY\nmessage-file ID SENDER RECIPIENT KIND PATH\nobserve-file ID PLAYER PATH\nreport ID PLAYER BODY\nask ID PLAYER BODY\nask-file ID PLAYER PATH\nnative-reply PARENT REQUEST RESPONSE_JSON\nnative-reply-file PARENT REQUEST PATH\nsession ID\ndelivery ID\npending\ninbox RECIPIENT\nack ID RECIPIENT NATIVE_RECEIPT\nstatus\nplayers\nplayer ID\nturns PLAYER_ID\nland PLAYER_ID REPO TARGET_BRANCH\nland-checked PLAYER_ID REPO TARGET_BRANCH CHECK FILES\npush REPO BRANCH REMOTE\nturn PLAYER TURN_ID HARNESS_CMD MODEL EFFORT CWD TASK_FILE OUTPUT_LOG RESUME_SESSION\nstop SESSION STOP_ID REASON\nforce-stop SESSION STOP_ID\nreceive SESSION HARNESS_CMD MODEL EFFORT CWD OUTPUT_LOG MESSAGE_ID\nrecord FINDING_ID AUTHOR CLAIM EVIDENCE LIMITS\nknowledge READER\npromote PROMOTION_ID PROMOTER SOURCE DESTINATION FINDING\nEmpty receive MODEL/EFFORT/CWD use recorded values; empty MESSAGE_ID reads the pending inbox.\nPATH - reads stdin; empty RESUME_SESSION starts a new native session")
     case C.Stop{session,id,reason}: Stop.run(db,session,id,reason,False{})
     case C.ForceStop{session,id}: Stop.run(db,session,id,"",True{})
     case C.Recruit{id,parent,harness,model,effort,repo,branch,path,base}:
       Recruit.recruit(db,id,parent,harness,model,effort,repo,branch,path,base)
-    case C.Land{worker,repo,target}:
-      Land.land_worker(db,worker,repo,target)
-    case C.LandChecked{worker,repo,target,check,files}:
-      Land.land_checked_worker(db,worker,repo,target,check,files)
+    case C.Land{player,repo,target}:
+      Land.land_player(db,player,repo,target)
+    case C.LandChecked{player,repo,target,check,files}:
+      Land.land_checked_player(db,player,repo,target,check,files)
     case C.Push{repo,branch,remote}:
       Land.push_branch(repo,branch,remote)
     case C.Worktree{id}: Recruit.inspect(db,id)
@@ -86,26 +96,71 @@ def execute(db: String, command: C.Command) -> IO(Unit):
       Knowledge.promote(db,id,promoter,source,destination,finding)
     case C.Receive{session,cmd,model,effort,cwd,log,message}:
       IO.try(Unit,Receive.run(db,session,cmd,model,effort,cwd,log,message))
-    case C.RunTurn{worker,id,cmd,model,effort,cwd,task,log,session}:
-      Turn.run(db,worker,id,cmd,model,effort,cwd,task,log,session)
-    case C.ObserveFile{id,worker,path}:
+    case C.RunTurn{player,id,cmd,model,effort,cwd,task,log,session}:
+      Turn.run(db,player,id,cmd,model,effort,cwd,task,log,session)
+    case C.ObserveFile{id,player,path}:
       do IO<Unit>:
         event : String <- IO.try(String,T.Text.read(path))
-        run(db,C.Observe{id,worker,event})
+        run(db,C.Observe{id,player,event})
     case C.NativeReply{parent,id,response}: NativeRequests.reply(db,parent,id,response)
     case C.NativeReplyFile{parent,id,path}:
       do IO<Unit>:
         response : String <- IO.try(String,T.Text.read(path))
         NativeRequests.reply(db,parent,id,response)
-    case C.AskFile{id,worker,path}:
+    case C.AskFile{id,player,path}:
       do IO<Unit>:
         body : String <- IO.try(String,T.Text.read(path))
-        run(db,C.Ask{id,worker,body})
+        run(db,C.Ask{id,player,body})
     case C.MessageFile{id,sender,recipient,kind,path}:
       do IO<Unit>:
         body : String <- IO.try(String,T.Text.read(path))
         run(db,C.Message{id,sender,recipient,kind,body})
     case valid: run(db,valid)
+
+law players_executes_the_stored_command:
+  for db: String
+  {execute(db,C.Players{}) == run(db,C.Players{}) : IO(Unit)}
+
+def players_executes_the_stored_command(db):
+  {==}
+
+law player_executes_the_stored_command:
+  for db: String
+  for id: String
+  {execute(db,C.PlayerRead{id}) == run(db,C.PlayerRead{id}) : IO(Unit)}
+
+def player_executes_the_stored_command(db,id):
+  {==}
+
+law orchestra_executes_the_stored_command:
+  for db: String
+  {execute(db,C.Orchestra{}) == run(db,C.Orchestra{}) : IO(Unit)}
+
+def orchestra_executes_the_stored_command(db):
+  {==}
+
+law section_executes_the_stored_command:
+  for db: String
+  for ensemble: String
+  for id: String
+  for owner: String
+  for capability: String
+  {execute(db,C.Section{ensemble,id,owner,capability}) == run(db,C.Section{ensemble,id,owner,capability}) : IO(Unit)}
+
+def section_executes_the_stored_command(db,ensemble,id,owner,capability):
+  {==}
+
+law section_member_executes_the_stored_command:
+  for db: String
+  for ensemble: String
+  for id: String
+  for owner: String
+  for player: String
+  for action: String
+  {execute(db,C.SectionMember{ensemble,id,owner,player,action}) == run(db,C.SectionMember{ensemble,id,owner,player,action}) : IO(Unit)}
+
+def section_member_executes_the_stored_command(db,ensemble,id,owner,player,action):
+  {==}
 
 law m14_the_record_command_runs_the_knowledge_record:
   for db: String

@@ -44,7 +44,7 @@ def ensemble_creation_defaults_to_loose(id,owner):
 law message_policy_schema_records_roles_coupling_and_membership:
   {C.messaging_schema() == "CREATE TABLE IF NOT EXISTS session_roles (session TEXT PRIMARY KEY NOT NULL REFERENCES sessions(id),role TEXT NOT NULL CHECK(role IN ('player','conductor','operator')));"
   ++ "CREATE TABLE IF NOT EXISTS ensembles (id TEXT PRIMARY KEY NOT NULL,owner TEXT NOT NULL REFERENCES sessions(id),coupling TEXT NOT NULL DEFAULT 'loose' CHECK(coupling IN ('loose','tight')));"
-  ++ "CREATE TABLE IF NOT EXISTS ensemble_members (ensemble TEXT NOT NULL REFERENCES ensembles(id),session TEXT NOT NULL REFERENCES sessions(id),PRIMARY KEY(ensemble,session));" : String}
+  ++ "CREATE TABLE IF NOT EXISTS ensemble_members (ensemble TEXT NOT NULL REFERENCES ensembles(id),session TEXT NOT NULL REFERENCES sessions(id),PRIMARY KEY(ensemble,session));" ++ C.section_schema() : String}
 
 def message_policy_schema_records_roles_coupling_and_membership():
   {==}
@@ -148,7 +148,9 @@ def message_admission_checks_routes_or_an_exact_accepted_retry(id,sender,recipie
 law role_declarations_validate_registered_sessions_and_closed_roles:
   for +session: String
   for +role: String
-  {C.role_sql(session,role) == "INSERT INTO session_roles(session,role) SELECT " ++ C.q(session) ++ "," ++ C.q(role) ++ " WHERE EXISTS(SELECT 1 FROM sessions WHERE id=" ++ C.q(session) ++ " AND (" ++ C.q(role) ++ "<>'operator' OR parent IS NULL)) AND " ++ C.q(role) ++ " IN ('player','conductor','operator') ON CONFLICT(session) DO UPDATE SET role=excluded.role;SELECT json_object('session',session,'role',role) FROM session_roles WHERE session=" ++ C.q(session) ++ " AND role=" ++ C.q(role) ++ ";" : String}
+  {C.role_sql(session,role) == "INSERT INTO session_roles(session,role) SELECT " ++ C.q(session) ++ "," ++ C.q(C.role_family(role)) ++ " WHERE " ++ C.role_admitted(session,role) ++ " ON CONFLICT(session) DO UPDATE SET role=excluded.role;"
+  ++ "SELECT json_object('error','invalid-role','session'," ++ C.q(session) ++ ",'requested'," ++ C.q(role) ++ ",'condition','Principal Conductors and operators require no parent; Associate Conductors require a parent.','next','Read session ID. Assign player, principal-conductor, associate-conductor or operator to match its recorded parentage; conductor remains a compatible family declaration.') WHERE NOT " ++ C.role_admitted(session,role) ++ ";"
+  ++ "SELECT json_object('session',id,'kind'," ++ C.session_kind("sessions.id") ++ ",'role'," ++ C.public_role("sessions.id") ++ ") FROM sessions WHERE id=" ++ C.q(session) ++ " AND " ++ C.role_admitted(session,role) ++ ";" : String}
 
 def role_declarations_validate_registered_sessions_and_closed_roles(session,role):
   {==}
@@ -157,7 +159,7 @@ law ensemble_declarations_validate_owner_and_closed_coupling:
   for +id: String
   for +owner: String
   for +coupling: String
-  {C.ensemble_sql(id,owner,coupling) == "INSERT INTO ensembles(id,owner,coupling) SELECT " ++ C.q(id) ++ "," ++ C.q(owner) ++ "," ++ C.q(coupling) ++ " WHERE " ++ C.assigned_role(C.q(owner)) ++ "='conductor' AND " ++ C.q(coupling) ++ " IN ('loose','tight') ON CONFLICT(id) DO UPDATE SET id=CASE WHEN ensembles.owner=excluded.owner THEN ensembles.id ELSE NULL END,coupling=excluded.coupling;SELECT json_object('id',id,'owner',owner,'coupling',coupling,'members',(SELECT json_group_array(session) FROM ensemble_members WHERE ensemble=ensembles.id)) FROM ensembles WHERE id=" ++ C.q(id) ++ " AND owner=" ++ C.q(owner) ++ " AND coupling=" ++ C.q(coupling) ++ ";" : String}
+  {C.ensemble_sql(id,owner,coupling) == "INSERT INTO ensembles(id,owner,coupling) SELECT " ++ C.q(id) ++ "," ++ C.q(owner) ++ "," ++ C.q(coupling) ++ " WHERE " ++ C.assigned_role(C.q(owner)) ++ "='conductor' AND " ++ C.q(coupling) ++ " IN ('loose','tight') ON CONFLICT(id) DO UPDATE SET id=CASE WHEN ensembles.owner=excluded.owner THEN ensembles.id ELSE NULL END,coupling=excluded.coupling;SELECT " ++ C.ensemble_row("ensembles") ++ " FROM ensembles WHERE id=" ++ C.q(id) ++ " AND owner=" ++ C.q(owner) ++ " AND coupling=" ++ C.q(coupling) ++ ";" : String}
 
 def ensemble_declarations_validate_owner_and_closed_coupling(id,owner,coupling):
   {==}
@@ -196,7 +198,7 @@ law committed_message_routes_refuse_before_endpoint_delivery:
   for db: String
   for command: C.Command
   for +saved: String
-  {Store.committed(db,command,Done{saved}) == Store.route_accepted(db,command,saved,Bool.or(Tx.starts_with(saved,"{\"error\":\"worker-assignment-conflict\""),Bool.or(Tx.starts_with(saved,"{\"error\":\"message-route-denied\""),Tx.starts_with(saved,"{\"error\":\"invalid-endpoint\"")))) : IO(Result<&1,&1,U32 & String,String>)}
+  {Store.committed(db,command,Done{saved}) == Store.route_accepted(db,command,saved,Bool.or(Store.naming_refused(saved),Bool.or(Tx.starts_with(saved,"{\"error\":\"player-assignment-conflict\""),Bool.or(Tx.starts_with(saved,"{\"error\":\"message-route-denied\""),Tx.starts_with(saved,"{\"error\":\"invalid-endpoint\""))))) : IO(Result<&1,&1,U32 & String,String>)}
 
 def committed_message_routes_refuse_before_endpoint_delivery(db,command,saved):
   {==}

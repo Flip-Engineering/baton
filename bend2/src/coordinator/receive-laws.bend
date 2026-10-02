@@ -20,7 +20,7 @@ import ./stop.bend as Stop
 import ../host/process.bend as P
 import ../host/session-lock.bend as Lock
 import ./turn.bend as Turn
-import ./root.bend as Root
+import ./delivery.bend as Delivery
 import ./native-requests.bend as NativeRequests
 import ./commands.bend as C
 import ../host/sqlite.bend as DB
@@ -168,12 +168,12 @@ def restart_records_before_releasing_and_waking(+db: String, +session: String, +
     saved : Unit <- Receive.record_recovery(db,session,id,native,cwd,String.eq(recorded,"1\n"))
     observer_released : Unit <- Receive.release_observer(lock)
     native_released : Unit <- IO.try(Unit,P.ProcessChild.release(handle))
-    delivery_task : Chan(Result<&1,&1,U32 & String,String>) <- IO.fork(Result<&1,&1,U32 & String,String>,Root.deliver(db,id ++ ":recovery","1",""))
+    delivery_task : Chan(Result<&1,&1,U32 & String,String>) <- IO.fork(Result<&1,&1,U32 & String,String>,Delivery.deliver(db,id ++ ":recovery","1",""))
     next : Result<&1,&1,U32 & String,Unit> <- again(Unit{})
     delivered : Result<&1,&1,U32 & String,String> <- IO.join(Result<&1,&1,U32 & String,String>,delivery_task)
     questions : Result<&1,&1,U32 & String,Unit> <- NativeRequests.settle(deliveries)
     acknowledged : Unit <- IO.try(Unit,P.ProcessChild.acknowledge(handle))
-    IO.pure(Result<&1,&1,U32 & String,Unit>,Turn.combine(Root.wake_result(delivered),Turn.combine(questions,next)))
+    IO.pure(Result<&1,&1,U32 & String,Unit>,Turn.combine(Delivery.wake_result(delivered),Turn.combine(questions,next)))
 
 law m17_restart_records_before_releasing_and_waking:
   for +db: String
