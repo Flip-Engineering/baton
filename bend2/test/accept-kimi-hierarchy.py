@@ -174,6 +174,88 @@ class HierarchyHistory(unittest.TestCase):
         with self.assertRaisesRegex(AssertionError, 'content or mode'):
             self.verify()
 
+    def test_landed_deletion_keeps_stored_absence_and_peer_content(self):
+        self.git('checkout', '-q', 'hierarchy-deepseek')
+        self.merge_target('deepseek', {})
+        self.git('rm', '-q', 'deep.txt')
+        self.commit({})
+        self.land('deepseek', '-delete')
+        self.publish_target()
+        result = self.verify()
+        self.assertEqual(result['selected_worker_receipts']['deepseek'],
+                         'landing-deepseek-delete.json')
+        worker = result['tips']['deepseek']
+        landed = result['landings']['deepseek']['commit']
+        target = result['tips']['target']
+        self.assertEqual(DRIVER.git_entry(self.repo, worker, 'deep.txt'), '',
+                         'the worker branch stores the deleted file')
+        self.assertEqual(DRIVER.git_entry(self.repo, landed, 'deep.txt'), '',
+                         'the selected receipt does not store the deletion')
+        self.assertEqual(DRIVER.git_entry(self.repo, target, 'deep.txt'), '',
+                         'the final target restored the deleted file')
+        self.assertNotEqual(DRIVER.git_entry(self.repo, target, 'muse.txt'), '',
+                            'the peer file is absent from the final target')
+        self.assertEqual(self.git('show', 'bend2-trial:muse.txt'), 'corrected muse')
+        initial = self.out / 'landing-deepseek.json'
+        self.assertEqual(result['landing_receipts']['landing-deepseek.json'],
+                         json.loads(initial.read_text()))
+
+    def test_unlanded_deletion_after_last_landing_is_refused(self):
+        last = json.loads((self.out / 'landing-deepseek-correction.json').read_text())
+        self.assertEqual(last['status'], 'landed')
+        self.assertNotEqual(DRIVER.git_entry(self.repo, last['commit'], 'deep.txt'), '',
+                            'the earlier receipt did not land the file')
+        target = self.git('rev-parse', 'bend2-trial')
+        self.assertNotEqual(DRIVER.git_entry(self.repo, target, 'deep.txt'), '',
+                            'the final target lost the previously landed file')
+        self.git('checkout', '-q', 'hierarchy-deepseek')
+        self.git('rm', '-q', 'deep.txt')
+        self.commit({})
+        with self.assertRaisesRegex(AssertionError, 'correction was not landed'):
+            self.verify()
+
+    def test_divergent_successful_correction_receipts_are_refused(self):
+        for name in ['landing-deepseek.json', 'landing-deepseek-correction.json']:
+            self.assertEqual(json.loads((self.out / name).read_text())['status'], 'landed')
+        worker = self.git('rev-parse', 'hierarchy-deepseek')
+        assigned = DRIVER.git_entry(self.repo, worker, 'deep.txt')
+        self.assertNotEqual(assigned, '', 'the worker tip has no assigned content')
+        original = self.git('show', f'{worker}:deep.txt')
+        self.git('checkout', '-q', 'hierarchy-lead')
+        self.git('checkout', '-q', '-b', 'diverge-a')
+        transient = self.commit({'deep.txt': 'divergent a'})
+        self.assertNotEqual(DRIVER.git_entry(self.repo, transient, 'deep.txt'), assigned,
+                            'the first fork did not commit its transient change')
+        first = self.commit({'deep.txt': original})
+        self.assertEqual(DRIVER.git_entry(self.repo, first, 'deep.txt'), assigned,
+                         'the first receipt does not restore the assigned content')
+        self.receipt('deepseek-diverge-a', 'hierarchy-lead', first)
+        self.git('checkout', '-q', 'hierarchy-lead')
+        self.git('checkout', '-q', '-b', 'diverge-b')
+        transient = self.commit({'deep.txt': 'divergent b'})
+        self.assertNotEqual(DRIVER.git_entry(self.repo, transient, 'deep.txt'), assigned,
+                            'the second fork did not commit its transient change')
+        second = self.commit({'deep.txt': original})
+        self.assertEqual(DRIVER.git_entry(self.repo, second, 'deep.txt'), assigned,
+                         'the second receipt does not restore the assigned content')
+        self.receipt('deepseek-diverge-b', 'hierarchy-lead', second)
+        self.git('checkout', '-q', 'hierarchy-lead')
+        self.git('merge', '--no-ff', '--no-edit', 'diverge-a')
+        self.git('merge', '--no-ff', '--no-edit', 'diverge-b')
+        self.publish_target()
+        target = self.git('rev-parse', 'bend2-trial')
+        lead = self.git('rev-parse', 'hierarchy-lead')
+        for commit in (first, second):
+            self.assertEqual(self.git('merge-base', commit, lead), commit)
+            self.assertEqual(DRIVER.git_entry(self.repo, worker, 'deep.txt'),
+                             DRIVER.git_entry(self.repo, commit, 'deep.txt'))
+            self.assertEqual(DRIVER.git_entry(self.repo, target, 'deep.txt'),
+                             DRIVER.git_entry(self.repo, commit, 'deep.txt'))
+        self.assertNotEqual(self.git('merge-base', first, second), first)
+        self.assertNotEqual(self.git('merge-base', first, second), second)
+        with self.assertRaisesRegex(AssertionError, 'divergent histories'):
+            self.verify()
+
 
 class GeneratedCheck(unittest.TestCase):
     """The generated hierarchy CHECK routes each selected file through the adapter."""
