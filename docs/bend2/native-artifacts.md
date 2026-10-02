@@ -1,7 +1,8 @@
-# Native development artifacts
+# Native artifacts
 
-`bend2/scripts/package-native.py` creates a Darwin arm64 development archive from
-committed, clean source. It runs these complete gates in order:
+`bend2/scripts/package-native.py` creates a Darwin arm64 archive from committed,
+clean source. Its default artifact is a development build. It runs these complete
+gates in order:
 
 ```sh
 sh bend2/scripts/build-native.sh
@@ -77,13 +78,31 @@ It records process completion. Its native harness is a provider-free fixture;
 real-model qualification has separate evidence. Preserve the output and restore
 the owned build clone after a failed smoke as well.
 
-The archive root is `baton2-development-darwin-arm64`. It contains `bin/baton2`,
+The default archive root is `baton2-development-darwin-arm64`. It contains `bin/baton2`,
 `manifest.json`, notices and complete gate logs. The manifest records source
 commit/tree and file hashes, compiler archive and installed library hashes,
 tool executables and versions, host and runner metadata, generated C and binary
 hashes, Mach-O load-command observations and gate results. Generated C is retained
 beside the archive. Credentials, conversation stores, databases and worker
 workspaces are outside the archive selection.
+
+Packaging copies the root `LICENSE` and `NOTICE` into `notices/baton2-LICENSE`
+and `notices/baton2-NOTICE` when those files exist. The manifest records their
+source paths, archive paths, byte sizes and SHA256 hashes, and includes the root
+files in its source inventory. A historical snapshot without a root `LICENSE`
+has a null `baton_root_license` entry and identifies its distribution terms as
+unresolved. A missing root `NOTICE` has a null `baton_root_notice` entry.
+Before writing the manifest, the packager requires project terms to match both
+the source inventory and the archived files. The extraction smoke verifies the
+resulting archive's file bytes against the manifest.
+
+`--release-version 1.0.0` selects archive root `baton2-1.0.0-darwin-arm64` and
+filename `baton2-1.0.0-darwin-arm64-<source-commit>.tar.gz`. Its manifest records
+`kind: release` and `version: 1.0.0`. A release version starts with a letter or
+digit and contains letters, digits, dots, underscores, plus signs or hyphens.
+Release packaging requires a root `LICENSE` before running the gates. Use the
+selected archive filename in the extraction smoke command. Publishing a release
+requires the completed gate and extracted-artifact evidence for its exact source.
 
 `--gate-receipt SUMMARY --gate-receipt-sha256 SHA256` reuses a completed receipt
 from the same clean source directory. Packaging verifies every gate command,
@@ -112,8 +131,9 @@ configuration target; hosted execution qualification requires its successful
 job and retained artifact evidence. Other operating systems and architectures
 need separate execution qualification.
 
-This procedure creates development artifacts. The repository has no root LICENSE;
-the maintainer must resolve Baton distribution terms before a public release.
+The CI procedure creates development artifacts. Baton2 uses
+[Apache License 2.0](../../LICENSE), with project attribution in the root
+[NOTICE](../../NOTICE).
 The [versioned Bend 2.0.25 compiler/runtime license](https://raw.githubusercontent.com/bendlang/bend/v2.0.25/LICENSE),
 SHA256 `0beb288abd3d067e231f3fbe7df1f8ee37344061fc67f22018150a19e4b26c35`,
 has the same bytes as the tracked reference license. Packaging verifies that pin
