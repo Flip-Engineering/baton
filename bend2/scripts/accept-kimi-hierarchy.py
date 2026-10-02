@@ -108,7 +108,9 @@ def inspect_processes(out, native, known, whole_run=True):
             break
         selected.update(descendants)
     known.update({pid: table[pid]['started_local'] for pid in selected})
-    uncertain = []
+    uncertain = [{'seat': row['seat'], 'pid': row['pid'], 'record_field': 'child_pid',
+                  'reason': 'Unfinished wrapper has no recorded native child identity'}
+                 for row in native if row.get('child_pid') is None and 'ended_unix' not in row]
     for row in owners:
         for pid_key, start_key, end_key in [('pid', 'started_local', 'ended_unix'),
                                            ('child_pid', 'child_started_local', 'child_ended_unix')]:

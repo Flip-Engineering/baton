@@ -66,6 +66,30 @@ a real failing subprocess. These fixtures run without provider sessions or a
 coordinator build. `check-native.sh` includes them through its existing Python
 test-file selection.
 
+## Missing child identity
+
+An unfinished wrapper can lose custody after starting its native child and
+before persisting `child_pid`. A controlled counterexample at helper source
+`a1407864073de13f805d76010570f6ed5275f9f9` terminated the actual wrapper while its
+Python child survived with parent PID 1. The observer received a copy of the
+unfinished record with the child fields omitted and had no previous process
+samples. It incorrectly wrote a failed closure while that child remained active.
+The [before receipt](measurements/2026-10-02-hierarchy-observer-missing-child-before.json)
+retains the false-absence result and the independently observed surviving child.
+
+An unfinished record missing `child_pid` now remains uncertain. The
+[after receipt](measurements/2026-10-02-hierarchy-observer-missing-child-after.json)
+records the same controlled counterexample with closure refused and raw record
+bytes unchanged. Each probe released its controlled child through stdin EOF and
+confirmed the original child identity had disappeared. Child exit codes remain
+unknown because the children were reparented after wrapper termination.
+
+The copied records reproduce the missing persisted identity; they do not place
+a signal precisely between the wrapper's `Popen` return and metadata write.
+Automatic closure remains unavailable for that incomplete record, including
+after its unidentified child exits. Additional custody evidence is needed to
+establish absence. The observer preserves that uncertainty.
+
 ## Recorded harness qualification
 
 The matched native run recruited Muse with `omp`, then its Muse executable

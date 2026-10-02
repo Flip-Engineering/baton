@@ -134,9 +134,14 @@ else:
         self.assertFalse((self.out / 'failure-closure.json').exists())
 
     def test_changed_start_identity_does_not_claim_an_unrelated_live_process(self):
+        wrapper = self.child(owned=False)
         child = self.child(owned=False)
-        row = {'seat': 'deepseek', 'pid': child.pid, 'started_local': 'prior process identity',
-               'started_unix': time.time()}
+        table = DRIVER.process_snapshot()
+        row = {'seat': 'deepseek', 'pid': wrapper.pid,
+               'started_local': table[wrapper.pid]['started_local'], 'child_pid': child.pid,
+               'child_started_local': 'prior process identity', 'started_unix': time.time()}
+        wrapper.stdin.close()
+        wrapper.wait()
         inspection = DRIVER.inspect_processes(self.out, [row], {})
         self.assertTrue(inspection['checked'])
         self.assertEqual(inspection['processes'], [])
@@ -145,13 +150,33 @@ else:
         self.assertTrue(DRIVER.close_failed_run(self.out, FAILED, [row], inspection))
 
     def test_unavailable_start_identity_does_not_establish_absence(self):
+        wrapper = self.child(owned=False)
         child = self.child(owned=False)
-        row = {'seat': 'deepseek', 'pid': child.pid, 'started_unix': time.time()}
+        row = {'seat': 'deepseek', 'pid': wrapper.pid, 'child_pid': child.pid,
+               'started_local': DRIVER.process_snapshot()[wrapper.pid]['started_local'],
+               'started_unix': time.time()}
+        wrapper.stdin.close()
+        wrapper.wait()
         inspection = DRIVER.inspect_processes(self.out, [row], {})
         self.assertTrue(inspection['checked'])
         self.assertEqual(inspection['processes'], [])
         self.assertEqual(inspection['uncertain'][0]['pid'], child.pid)
         self.assertFalse(DRIVER.close_failed_run(self.out, FAILED, [row], inspection))
+
+    def test_missing_child_pid_keeps_an_interrupted_wrapper_uncertain(self):
+        row, child = self.interrupted(surviving=True)
+        incomplete = {key: value for key, value in row.items() if not key.startswith('child_')}
+        path = self.out / 'native-deepseek.process.json'
+        DRIVER.save(path, incomplete)
+        before = path.read_bytes()
+        inspection = DRIVER.inspect_processes(self.out, [incomplete], {})
+        self.assertIsNone(child.poll())
+        self.assertEqual(inspection['processes'], [])
+        self.assertEqual(inspection['uncertain'][0]['record_field'], 'child_pid')
+        self.assertIn('no recorded native child identity', inspection['uncertain'][0]['reason'])
+        self.assertFalse(DRIVER.close_failed_run(self.out, FAILED, [incomplete], inspection))
+        self.assertFalse((self.out / 'failure-closure.json').exists())
+        self.assertEqual(path.read_bytes(), before)
 
     def test_stale_tool_event_cannot_claim_an_active_child(self):
         row, _ = self.interrupted()
