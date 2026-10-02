@@ -52,6 +52,12 @@ recorded worker harnesses before launching either worker. Native background
 process custody and a complete run on a frozen candidate still require
 qualification.
 
+Generated lead instructions include saved-native direct-turn corrections for
+both helper workers, with retained logs and detached process ownership. They
+require prior completion evidence, the saved identity and unchanged route
+bindings. Static review verified the command and prompt; real qualification
+remains pending.
+
 The comparison distinguishes requested routes, actual native observations,
 review corrections, landings, usage and process closure. It retains caller
 mistakes, dependency setup, capacity context and differences in provider output
