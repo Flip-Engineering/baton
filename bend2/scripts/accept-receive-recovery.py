@@ -327,6 +327,7 @@ both your previous commit hash and the new one. Do not repeat the checkpoint too
                                 pass
             parent = [sys.executable, str(helper), 'parent']
             call('attach', 'root', 'terminal', '', json.dumps(parent))
+            call('role', 'root', 'conductor')
             call('worker', 'worker', 'root', 'codex', args.model, args.effort,
                  str(repo), 'accept-receive-recovery', base)
             call('message-file', INITIAL, 'root', 'worker', 'task', str(initial_task))

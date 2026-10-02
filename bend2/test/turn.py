@@ -42,6 +42,7 @@ print(json.dumps({"type":"result","result":"Task recorded.","session_id":"native
         self.base = subprocess.run(['git', '-C', str(self.repo), 'rev-parse', 'HEAD'],
                                    check=True, capture_output=True, text=True).stdout.strip()
         self.call('attach','root','native-fixture','root-session','root-endpoint')
+        self.call('role','root','conductor')
         self.register('worker','root','claude-code','model','high',str(self.cwd),'branch','base')
 
     def register(self, name, parent, harness, model, effort, workspace=None, branch=None, base=None):

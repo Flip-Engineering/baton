@@ -192,6 +192,9 @@ class Receive(unittest.TestCase):
         self.controls = []
         self.addCleanup(self.close_children)
         self.coord('attach', 'root', 'codex', 'native-root', '')
+        self.coord('role', 'root', 'conductor')
+        self.coord('attach', 'operator', 'terminal', '', '')
+        self.coord('role', 'operator', 'operator')
 
     def close_children(self):
         for stream, connection in self.controls:
@@ -280,7 +283,7 @@ class Receive(unittest.TestCase):
         self.coord('connect', session, native, self.endpoint(session))
 
     def message(self, ident, recipient, body='Review this input.'):
-        return self.coord('message', ident, 'root', recipient, 'guidance', body)
+        return self.coord('message', ident, 'operator' if recipient == 'root' else 'root', recipient, 'guidance', body)
 
     def accept_any(self):
         connection, _ = self.server.accept()
@@ -371,7 +374,7 @@ class Receive(unittest.TestCase):
 
     def test_native_root_question_reports_unsupported_without_answering(self):
         self.coord('attach', 'root', 'omp', '', '')
-        self.coord('message', 'root-question-task', 'root', 'root', 'task', 'Inspect the native request.')
+        self.coord('message', 'root-question-task', 'operator', 'root', 'task', 'Inspect the native request.')
         observer = self.spawn(*self.receive_args('root'))
         stream, started = self.accept('root')
         event = {'type': 'extension_ui_request', 'id': 'root-needs-input',
@@ -638,7 +641,7 @@ class Receive(unittest.TestCase):
         partial = 'seed\nRoot work completed before conversation loss.\n'
         journal = self.repo / 'seed.txt'
         journal.write_text(partial)
-        self.coord('message', 'root-task', 'root', 'root', 'task', 'Keep existing root work and finish seed.txt.')
+        self.coord('message', 'root-task', 'operator', 'root', 'task', 'Keep existing root work and finish seed.txt.')
         receive = self.receive_args('root')
         receive[5] = str(self.repo)
         observer = self.spawn(*receive)
@@ -986,19 +989,18 @@ class Receive(unittest.TestCase):
         self.finish(left)
         self.finish(right)
 
-    def test_self_message_returns_and_continues_after_native_exit(self):
+    def test_native_self_message_is_refused_without_disrupting_the_active_turn(self):
         self.worker()
         self.connect('parent')
         first = self.spawn('message', 'first', 'root', 'parent', 'guidance', 'first input')
         control, _ = self.accept('parent')
         self.action(control, message=['self-message', 'parent', 'follow up'])
         response = json.loads(control.readline())
-        self.assertEqual(response['code'], 0, response['stderr'])
+        self.assertEqual(response['code'], 2, response['stderr'])
+        self.assertIn('message-route-denied', response['stderr'])
+        self.assertEqual([row['id'] for row in self.coord('inbox', 'parent')], ['first'])
         self.assert_no_start()
         self.action(control)
-        second, started = self.accept('parent')
-        self.assertIn('[id: self-message]', started['prompt'])
-        self.action(second)
         self.finish(first)
         self.assertEqual(self.coord('inbox', 'parent'), [])
 

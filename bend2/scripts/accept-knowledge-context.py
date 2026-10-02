@@ -267,6 +267,7 @@ def run_phase(out, phase):
             if (out / 'state.db').exists():
                 raise RuntimeError('Producer phase requires a new prepared database path')
             call(out, 'attach', 'root', 'terminal', '', json.dumps(run['parent_endpoint']))
+            call(out, 'role', 'root', 'conductor')
             recruit(out, run, 'producer')
         else:
             predecessor = 'produce' if phase == 'consume' else 'consume'

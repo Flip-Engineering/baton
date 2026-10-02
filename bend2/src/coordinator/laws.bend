@@ -85,6 +85,7 @@ import ./receive-laws.bend as ReceiveLaws
 import ./stop-laws.bend as StopLaws
 import ./native-request-laws.bend as NativeRequestLaws
 import ./knowledge-laws.bend as KnowledgeLaws
+import ./messaging-laws.bend as MessagingLaws
 import ./root.bend as Root
 import ./turn.bend as Turn
 import ./commands.bend as C
@@ -650,7 +651,7 @@ def m5_owed_input_is_counted_after_the_cursor(session, cursor):
 # refuses a message from an unknown sender.
 law m7_the_store_validates_the_sender_it_records:
   {C.schema() == "CREATE TABLE IF NOT EXISTS sessions (id TEXT PRIMARY KEY NOT NULL, parent TEXT REFERENCES sessions(id), harness TEXT NOT NULL, model TEXT NOT NULL DEFAULT '', effort TEXT NOT NULL DEFAULT '', native TEXT NOT NULL DEFAULT '', observed_harness TEXT NOT NULL DEFAULT '', observed_model TEXT NOT NULL DEFAULT '', observed_effort TEXT NOT NULL DEFAULT '', endpoint TEXT NOT NULL DEFAULT '', workspace TEXT NOT NULL DEFAULT '', branch TEXT NOT NULL DEFAULT '', base TEXT NOT NULL DEFAULT '');" ++ "CREATE TABLE IF NOT EXISTS messages (seq INTEGER PRIMARY KEY AUTOINCREMENT, id TEXT UNIQUE NOT NULL, sender TEXT NOT NULL REFERENCES sessions(id), recipient TEXT NOT NULL REFERENCES sessions(id), kind TEXT NOT NULL, body TEXT NOT NULL, receipt TEXT);" ++ "CREATE TABLE IF NOT EXISTS turns (id TEXT PRIMARY KEY NOT NULL REFERENCES messages(id), worker TEXT NOT NULL REFERENCES sessions(id), event TEXT NOT NULL);" ++ "CREATE TABLE IF NOT EXISTS executions (session TEXT PRIMARY KEY NOT NULL REFERENCES sessions(id), id TEXT NOT NULL, mode TEXT NOT NULL, directory TEXT NOT NULL, phase TEXT NOT NULL, status TEXT NOT NULL DEFAULT '');"
-  ++ "CREATE TABLE IF NOT EXISTS session_stops (session TEXT PRIMARY KEY NOT NULL REFERENCES sessions(id), id TEXT UNIQUE NOT NULL, reason TEXT NOT NULL, attempt TEXT NOT NULL DEFAULT '', directory TEXT NOT NULL DEFAULT '', signal INTEGER NOT NULL DEFAULT 15, applied_signal INTEGER NOT NULL DEFAULT 0, control_error TEXT NOT NULL DEFAULT '', outcome TEXT NOT NULL, native_status TEXT NOT NULL DEFAULT '', report_id TEXT NOT NULL DEFAULT '');" : String}
+  ++ "CREATE TABLE IF NOT EXISTS session_stops (session TEXT PRIMARY KEY NOT NULL REFERENCES sessions(id), id TEXT UNIQUE NOT NULL, reason TEXT NOT NULL, attempt TEXT NOT NULL DEFAULT '', directory TEXT NOT NULL DEFAULT '', signal INTEGER NOT NULL DEFAULT 15, applied_signal INTEGER NOT NULL DEFAULT 0, control_error TEXT NOT NULL DEFAULT '', outcome TEXT NOT NULL, native_status TEXT NOT NULL DEFAULT '', report_id TEXT NOT NULL DEFAULT '');" ++ C.messaging_schema() : String}
 
 def m7_the_store_validates_the_sender_it_records():
   {==}
@@ -976,9 +977,14 @@ def m5_a_resumable_muse_turn_carries_the_recorded_session(cmd, model, effort, cw
 # retry returns names the coordinates the transaction stored.
 
 law m1_a_message_write_answers_from_the_row_it_stored:
-  {C.sql(C.Message{"m1", "s1", "r1", "guidance", "body"}) == "INSERT INTO messages(id,sender,recipient,kind,body) SELECT 'm1','s1','r1','guidance','body' WHERE NOT (" ++ C.stopped_session_sql("'r1'") ++ " AND " ++ C.execution_input_sql("'guidance'") ++ ") OR EXISTS(SELECT 1 FROM messages WHERE id='m1')" ++ C.message_upsert() ++ "SELECT json_object('error','session-stopped','session','r1') WHERE NOT EXISTS(SELECT 1 FROM messages WHERE id='m1') AND " ++ C.stopped_session_sql("'r1'") ++ " AND " ++ C.execution_input_sql("'guidance'") ++ ";" ++ C.message_result("m1") : String}
+  for +id: String
+  for sender: String
+  for +recipient: String
+  for +kind: String
+  for body: String
+  {C.sql(C.Message{id,sender,recipient,kind,body}) == C.message_sql(id,sender,recipient,kind,body) : String}
 
-def m1_a_message_write_answers_from_the_row_it_stored():
+def m1_a_message_write_answers_from_the_row_it_stored(id,sender,recipient,kind,body):
   {==}
 
 # M-1: a report answers from the row it stored, whose recipient the transaction

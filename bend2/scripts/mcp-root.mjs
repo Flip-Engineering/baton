@@ -298,6 +298,7 @@ async function startDelivery() {
   let existing;
   try { existing = pendingRootSession(); } catch {}
   coord('attach', 'root', 'claude-code', existing?.native || '', endpoint);
+  coord('role', 'root', 'conductor');
 }
 
 function pendingRootSession() {

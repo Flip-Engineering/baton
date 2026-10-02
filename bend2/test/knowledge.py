@@ -37,6 +37,7 @@ class Knowledge(unittest.TestCase):
         self.base = subprocess.run(['git', '-C', str(self.repo), 'rev-parse', 'HEAD'],
                                    check=True, capture_output=True, text=True).stdout.strip()
         self.call('attach', 'root', 'native-test', 'root-session', 'native-endpoint')
+        self.call('role', 'root', 'conductor')
         self.worker('worker')
         self.worker('grand', parent='worker')
         self.worker('sibling')
@@ -305,7 +306,7 @@ class Knowledge(unittest.TestCase):
     def test_conflicting_promotion_notice_identity_rolls_back_the_promotion(self):
         self.call('record', 'rollback-finding', 'worker', 'claim',
                   self.evidence('rollback-evidence', 'worker'), 'limits')
-        self.call('message', 'conflict-share:promotion-notice', 'worker', 'sibling',
+        self.call('message', 'conflict-share:promotion-notice', 'root', 'sibling',
                   'guidance', 'Existing unrelated input.')
         self.call('promote', 'conflict-share', 'root', 'worker', 'root',
                   'rollback-finding', success=False)

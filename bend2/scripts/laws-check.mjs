@@ -131,6 +131,20 @@ for (const { law, file } of rows) {
 // it claims to bind, and it is reported as a failure.
 const MUTATIONS = [
   {
+    name: 'message-admission-removes-route-guard',
+    file: join('bend2', 'src', 'coordinator', 'commands.bend'),
+    find: ' WHERE (" ++ message_route(q(sender),q(recipient)) ++ " AND NOT (',
+    replace: ' WHERE (1 AND NOT (',
+    law: 'message_admission_checks_routes_or_an_exact_accepted_retry',
+  },
+  {
+    name: 'message-refusal-reaches-endpoint-delivery',
+    file: join('bend2', 'src', 'coordinator', 'store.bend'),
+    find: 'case True{}: IO.pure(Result<&1,&1,U32 & String,String>,Fail{(2,saved)})',
+    replace: 'case True{}: Root.after(db,command,saved)',
+    law: 'denied_message_routes_cannot_deliver',
+  },
+  {
     name: 'idle-stop-claims-a-requested-signal',
     file: join('bend2', 'src', 'coordinator', 'stop.bend'),
     find: "'requestedSignal',CASE WHEN attempt='' THEN NULL ELSE signal END,",

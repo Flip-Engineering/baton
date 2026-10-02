@@ -158,11 +158,13 @@ def main():
         return json.loads(command([binary, db, *argv], cwd=repo))
 
     def start_message(ident, recipient, task):
-        argv = list(map(str, [binary, db, 'message-file', ident, 'operator', recipient, 'task', task]))
+        sender = 'operator' if recipient == 'root' else 'root'
+        argv = list(map(str, [binary, db, 'message-file', ident, sender, recipient, 'task', task]))
         with (out / f'{ident}.command.log').open('w') as log:
             process = subprocess.Popen(argv, stdout=log, stderr=subprocess.STDOUT,
                                        cwd=repo, start_new_session=True)
-        record = {'message': ident, 'recipient': recipient, 'pid': process.pid,
+        record = {'message': ident, 'sender': sender, 'recipient': recipient,
+                  'dispatch_origin': 'acceptance-driver', 'pid': process.pid,
                   'started_unix': time.time(), 'command': argv}
         processes.append((process, record))
         save(out / 'processes.json', [row for _, row in processes])
@@ -224,9 +226,11 @@ Do not edit code, run tests or delegate further work. On root-followup, check al
 retained reports and receipts, summarize the findings and acknowledge the follow-up.
 """)
     call('attach', 'operator', 'terminal', '', '')
+    call('role', 'operator', 'operator')
     endpoint = [str(binary), str(db), 'receive', 'root', routes['codex']['executable'],
                 routes['codex']['model'], routes['codex']['effort'], str(repo), str(out / 'root.jsonl')]
     call('attach', 'root', 'codex', '', json.dumps(endpoint))
+    call('role', 'root', 'conductor')
     tasks = {}
 
     def worker_task(worker, marker, ident, focus):

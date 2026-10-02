@@ -447,6 +447,7 @@ limited to the worker task files; you review and integrate their implementations
 You are the subscription Codex root. Recruit lead under root, harness omp,
 LEAD_MODEL/LEAD_EFFORT, REPO, branch hierarchy-lead, workspace STATE/lead,
 base bend2-trial. Connect its native endpoint from STATE/lead-endpoint.json using
+`B2 DB role lead conductor`, then
 `B2 DB connect lead '' ENDPOINT_JSON`. Start `B2 DB message-file lead-task root lead
 task STATE/lead.md` in a new background process session with stdout/stderr redirected
 to STATE/lead-task.command.log. Acknowledge hierarchy-task, then finish this turn.
@@ -471,9 +472,11 @@ an active session. Your own repository checkout is detached; leave it detached.
         return json.loads(command([binary, db, *argv], cwd=repo, env=environment))
 
     call('attach', 'operator', 'terminal', '', '')
+    call('role', 'operator', 'operator')
     endpoint = [str(binary), str(db), 'receive', 'root', wrappers['root'], routes['codex']['model'],
                 routes['codex']['effort'], str(repo), str(out / 'root.jsonl')]
     call('attach', 'root', 'codex', '', json.dumps(endpoint))
+    call('role', 'root', 'conductor')
     try:
         with (out / 'seed.log').open('w') as log:
             seed = subprocess.Popen([str(binary), str(db), 'message-file', 'hierarchy-task',

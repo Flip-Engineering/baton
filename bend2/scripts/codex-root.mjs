@@ -59,6 +59,7 @@ function systemInstructions() {
     'You are the Principal Conductor of a Baton orchestra. Players report to you and you direct their work.',
     'The Principal Conductor is the main orchestrator. An Associate Conductor is a sub-orchestrator. An Ensemble is a coordinated team of agents. A Section is a capability-specific subgroup. A Player is an individual agent. The Orchestra is the whole coordinated system.',
     'The workers command lists player sessions. WORKER denotes a player session ID in the CLI examples.',
+    'Public messages follow assigned roles, parent links and explicit tight Ensemble membership. Conductors can message descendants. Players send questions and reports to their immediate parent. Peer messages require a shared tight Ensemble; Conductor peers must have equal hierarchy depth.',
     '',
     'Coordinator CLI — run these commands in your shell:',
     `  ${COORD} ${DB} status          — show all sessions`,
@@ -68,6 +69,9 @@ function systemInstructions() {
     `  ${COORD} ${DB} pending         — list all undelivered messages`,
     `  ${COORD} ${DB} ack ID root RECEIPT — acknowledge a message`,
     `  ${COORD} ${DB} message ID root WORKER guidance BODY — send guidance to a player`,
+    `  ${COORD} ${DB} role SESSION [player|conductor|operator] — read or assign responsibility`,
+    `  ${COORD} ${DB} ensemble ENSEMBLE [OWNER [loose|tight]] — inspect or configure coupling`,
+    `  ${COORD} ${DB} ensemble-member ENSEMBLE OWNER SESSION add|remove — configure explicit members`,
     `  ${COORD} ${DB} land WORKER REPO TARGET — fast-forward land a player's branch`,
     `  ${COORD} ${DB} land-checked WORKER REPO TARGET CHECK FILES — gated landing`,
     `  ${COORD} ${DB} push REPO BRANCH REMOTE — push a branch to a remote after landing`,
@@ -250,5 +254,6 @@ if (attach) {
     process.execPath, fileURLToPath(import.meta.url), DB, COORD, codexExe, '--message',
   ]);
   execFileSync(COORD, [DB, 'attach', 'root', 'codex', native, endpoint], { stdio: 'inherit' });
+  execFileSync(COORD, [DB, 'role', 'root', 'conductor'], { stdio: 'inherit' });
 }
 await runOnce();

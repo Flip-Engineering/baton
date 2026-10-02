@@ -107,7 +107,9 @@ class CodexRootAdapter(unittest.TestCase):
         for message in ['first', 'second']:
             attached = subprocess.run(args, text=True, capture_output=True)
             self.assertEqual(attached.returncode, 0, attached.stderr)
-            self.coord('message', message, 'root', 'root', 'guidance', 'Review this message.')
+            if message == 'first':
+                self.register('sender', 'root', 'fixture', 'model', 'low')
+            self.coord('report', message, 'sender', 'Review this message.')
             self.assertEqual(json.loads(self.coord('session', 'root'))['native'], 'native-root')
         argv = [json.loads(line) for line in calls.read_text().splitlines()]
         self.assertEqual(len(argv), 2)
