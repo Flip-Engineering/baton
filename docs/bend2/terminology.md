@@ -1,72 +1,84 @@
-# Baton terminology
+# Baton2 terminology
 
-These names describe coordination responsibilities and task organization in
-Baton. Task briefs and shared context describe responsibilities and groups;
-runtime records assign Conductor roles and Ensemble membership for messaging.
-The [current architecture](architecture.md) describes their session, message
-and Git operations.
+The coordinator records agent responsibilities, Ensemble membership and
+capability-specific Sections in SQLite. These names appear in its commands,
+JSON results and harness instructions. The [architecture](architecture.md)
+describes session, message and Git operations.
 
-## Naming legend
+## Names
 
-| Name | Meaning |
-| --- | --- |
-| Principal Conductor | The main orchestrator. |
-| Associate Conductor | A suborchestrator. |
-| Ensemble | A coordinated team. |
-| Section | A capability-specific subgroup. |
-| Player | An individual agent. |
-| Orchestra | The whole coordinated system. |
+| Name | Meaning | Runtime interface |
+| --- | --- | --- |
+| Principal Conductor | The main orchestrator. | `role ID principal-conductor` for a parentless agent. |
+| Associate Conductor | A suborchestrator. | `role ID associate-conductor` for an agent with a parent. |
+| Ensemble | A coordinated team. | `ensemble ID OWNER [loose\|tight]` and `ensemble-member`. |
+| Section | A capability-specific subgroup of an Ensemble. | `section ENSEMBLE SECTION OWNER CAPABILITY` and `section-member`. |
+| Player | An individual agent, including an agent with a Conductor responsibility. | `players` and `player ID`. |
+| Orchestra | The whole coordinated system represented by a coordination database. | `orchestra`. |
 
-## Coordination responsibilities
+## Players and Conductors
 
-A Player works through a native harness session. A Principal Conductor is the
-Player responsible for coordinating the overall work under the operator's
-direction. An Associate Conductor is a Player responsible for coordinating
-delegated work. Conductors recruit Players, give guidance, review reports and
-changes, and coordinate landings. A Player may perform implementation or review
-work while also carrying a Conductor responsibility.
+A Player works through a native harness session. Conductors recruit Players,
+give guidance, review reports and changes, and coordinate landings. A Conductor
+can also perform implementation or review work.
 
-Conductor responsibilities are assigned in the task brief or shared context
-and recorded with `role SESSION conductor`. The session's `parent` field
-records message routing and parentage. A Principal Conductor's session can
-have `parent=null`. A human operator session can also have `parent=null`;
-`role SESSION operator` explicitly identifies it. Read the assigned agent
-responsibility to distinguish Principal and Associate Conductors.
+`role ID principal-conductor` requires a session with no parent.
+`role ID associate-conductor` requires a session with a parent. The coordinator
+derives the displayed Conductor tier from the recorded parentage. Existing
+`conductor` assignments retain that behavior. An unassigned session has the
+`player` role. `role ID operator` identifies a parentless human operator session.
+The database can contain several Principal Conductors.
 
-Existing documentation and commands use these labels:
+`players` includes ordinary Players and both Conductor tiers, with their
+recorded routes, workspaces, pending input and latest reports. It excludes
+explicit operator identities. `player ID` reads one agent's recorded binding;
+`session ID` can also inspect an operator. Stored presence establishes a
+recorded session, and `worktree ID` reads its current Git state.
 
-| Existing label | Role mapping |
-| --- | --- |
-| `root`, when assigned to the main agent orchestrator | Principal Conductor. |
-| `lead`, when assigned to an agent coordinating delegated work | Associate Conductor. |
-| `worker`, when assigned to an individual agent | Player, which may also carry a Conductor responsibility. |
+A logical session ID associates messages, parentage and workspaces. A native
+session ID identifies the harness conversation. Session IDs are chosen by the
+caller; existing identifiers such as `root`, `lead` and `worker` remain valid.
+Saved native identities, pending messages and acceptance receipts keep their
+original values. The input spelling `workers` retains its previous subordinate
+roster for existing callers; first-party help and tools use `players`.
 
-These labels remain valid command arguments and example session IDs. A logical
-session ID associates messages, parentage and workspaces. A native session ID
-identifies the harness conversation. Runtime role records use `player`,
-`conductor` and `operator`; an unassigned session is a Player. Principal and
-Associate responsibilities remain described in briefs and shared context.
-Runtime records retain their existing session identifiers.
+## Ensembles and Sections
 
-## Groups and shared context
+An Ensemble records its Conductor owner, loose or tight coupling and member
+Players. New Ensembles use loose coupling. A Player can belong to several
+Ensembles. [Messaging](messaging.md) defines hierarchy routes and peer routes
+through explicit tight Ensemble membership.
 
-An Ensemble brief states its purpose, member Players and coordination owner.
-A Section identifies an Ensemble's capability-specific subgroup, such as
-implementation, validation or documentation. The Orchestra comprises the
-coordinated system's Conductors, Players, Ensembles and Sections. An Ensemble's
-stored owner, coupling and member session IDs govern peer messaging.
-[Messaging](messaging.md) defines its hierarchy and tight-coupling routes.
-Section descriptions use the existing sessions and parent links to identify
-capability-specific members and their coordination responsibilities.
+A Section records a capability label and members within one Ensemble. Its
+owner is the Ensemble's recorded owner. Section members must already belong
+to that Ensemble; removing Ensemble membership removes the corresponding
+Section memberships. The same Section ID can be used in different Ensembles.
+For example:
 
-A declared knowledge scope ID is an existing logical session ID, and that
-session owns the scope. An Ensemble brief can name its coordinating Player's
-session as its shared scope. Knowledge visibility follows the stored parent
-links and explicit promotions: a shared scope includes its owner, the owner's
-immediate parent and the owner's subtree. Section membership is described in
-the brief; knowledge visibility continues to follow those session relationships.
+```sh
+baton2 state.db ensemble delivery principal
+baton2 state.db ensemble-member delivery principal player-a add
+baton2 state.db section delivery validation principal 'native protocol review'
+baton2 state.db section-member delivery validation principal player-a add
+baton2 state.db section delivery validation
+```
 
-The destination scope owner reviews evidence, promotes a finding and chooses
-which Ensemble or Section members receive further task messages. The
+Section membership identifies capability-specific work. Messaging admission
+uses recorded parentage, Conductor responsibility and Ensemble coupling.
+
+## Orchestra and shared knowledge
+
+`orchestra` reads the database's Players, operators, Ensembles, Sections and
+execution state and pending counts in one snapshot. Separate databases have
+separate coordination state.
+
+A knowledge scope ID names an existing logical session, whose owner reviews
+the scope's findings. Visibility follows stored parent links and explicit
+promotions. A shared scope includes its owner, the owner's immediate parent
+and the owner's subtree. Ensemble and Section membership describe task
+organization; knowledge retrieval uses the recorded session relationships.
+
+Promotion notifies the destination scope owner. That owner decides which
+Ensembles, Sections or Players receive further task messages. The
 [shared knowledge workflow](knowledge-context-2026-09-29.md) describes recording,
-retrieval, promotion and owner notification.
+retrieval, evidence review and promotion.

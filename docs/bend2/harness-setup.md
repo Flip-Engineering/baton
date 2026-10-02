@@ -77,7 +77,7 @@ in the emitted shell settings.
 ## First use and recovery
 
 Follow [installation](installation.md) for the coordinator and host dependencies.
-Use [native root delivery](../../bend2/README.md#native-root-delivery) to register
+Use [native Conductor delivery](../../bend2/README.md#native-conductor-delivery) to register
 the receiver, then send the assigned task through the public message command.
 Use public `recruit` for subordinate sessions and record the returned workspace
 and base. Read `session SESSION` for the saved native identity before continuing
@@ -86,12 +86,12 @@ a Codex session.
 
 Inspect complete parent reports, native logs and acceptance receipts before
 landing work. `ack` records message acceptance; Git review and landing have
-their own results. Concurrent workers use separate logical sessions. Active
-OMP workers accept native guidance; other harnesses receive further instructions
+their own results. Concurrent Players use separate logical sessions. Active
+OMP Players accept native guidance; other harnesses receive further instructions
 through their next explicitly started turn.
 
 Retain the database and companion files, native output logs, harness conversation
-storage, repository, branches and worker worktrees. The
+storage, repository, branches and Player worktrees. The
 [recovery example](receive-recovery-example.md) describes observer loss with a
 surviving process owner and native child. The
 [current recovery qualification](native-recovery-qualification-2026-10-02/README.md)

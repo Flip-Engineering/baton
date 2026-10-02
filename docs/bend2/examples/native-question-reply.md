@@ -86,7 +86,7 @@ settles that wake after the outcome report is delivered.
 `native-reply` exits non-zero and writes a `Native reply refused.` line to standard error
 when the request is unknown, the caller is not the recorded parent, the response shape
 does not match the method, the request is closed by native cancellation or native exit,
-or the worker session is terminally stopped. A `stop` on the worker refuses later native
+or the Player session is terminally stopped. A `stop` on the Player refuses later native
 replies for that session.
 
 ## Source

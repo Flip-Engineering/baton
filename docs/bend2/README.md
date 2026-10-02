@@ -3,7 +3,7 @@
 [MANDATE.md](MANDATE.md) states the current rewrite goal.
 [Current architecture](architecture.md) is the design of record.
 [Naming legend](terminology.md) defines Principal Conductor, Associate Conductor,
-Ensemble, Section, Player and Orchestra over the existing sessions and task context.
+Ensemble, Section, Player and Orchestra and their runtime commands.
 [Messaging](messaging.md) defines hierarchy routes, explicit Ensemble coupling,
 stored responsibilities and retained delivery.
 [Target architecture](target-architecture.md) and [rewrite plan](rewrite-plan.md)
@@ -32,3 +32,6 @@ mandate and operative implementation determine the work.
 [reference/README.md](reference/README.md) identifies the vendored Bend toolchain
 and language reference. [language-review.md](language-review.md) and
 [examples/](examples/) contain capability experiments that can help implementation.
+
+Historical reports retain their measured command names, session IDs and source
+pins. The current terminology and command guide define the active interface.

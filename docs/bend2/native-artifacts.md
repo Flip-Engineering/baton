@@ -83,8 +83,19 @@ The default archive root is `baton2-development-darwin-arm64`. It contains `bin/
 commit/tree and file hashes, compiler archive and installed library hashes,
 tool executables and versions, host and runner metadata, generated C and binary
 hashes, Mach-O load-command observations and gate results. Generated C is retained
-beside the archive. Credentials, conversation stores, databases and worker
+beside the archive. Credentials, conversation stores, databases and Player
 workspaces are outside the archive selection.
+
+The archive includes the Codex, OMP and MCP Conductor adapters under
+`libexec/baton2/`. Canonical files use `*-conductor.mjs`; the corresponding
+`*-root.mjs` files forward existing endpoints. With no explicit executable
+argument, the adapters select the archive's `bin/baton2`. The manifest hashes
+all six files. Node 22 supports these Conductor controls.
+
+Extracted smoke invokes the staged MCP Conductor adapter and checks canonical
+Player inspection, the Principal Conductor role, Ensemble and Section membership
+and the nested Orchestra snapshot. These checks complement native retained
+receive, complete reports, acknowledgment and Git landing.
 
 Packaging copies the root `LICENSE` and `NOTICE` into `notices/baton2-LICENSE`
 and `notices/baton2-NOTICE` when those files exist. The manifest records their
