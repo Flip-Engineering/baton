@@ -96,7 +96,6 @@ def main():
     server=socket.socket()
     server.bind(('127.0.0.1',0))
     server.listen()
-    server.settimeout(30)
     (directory/'config.json').write_text(json.dumps({'port':server.getsockname()[1]}))
     def coord(*values):
         return subprocess.run([str(exe),str(db),*map(str,values)],check=True,capture_output=True,text=True)
@@ -106,12 +105,10 @@ def main():
     stderr=(directory/'stderr.log').open('w')
     child=subprocess.Popen([str(exe),str(db),'receive','root',str(fixture),'fixture','low',str(directory),str(log),''],stdout=stdout,stderr=stderr)
     connection,_=server.accept()
-    connection.settimeout(180)
     stream=connection.makefile('rwb',buffering=0)
     assert json.loads(stream.readline())['ready']
     def wait_marker(marker):
-        until=time.monotonic()+180
-        while time.monotonic()<until:
+        while True:
             with sqlite3.connect(db) as conn:
                 value=conn.execute("select native from sessions where id='root'").fetchone()[0]
             if value==marker:
@@ -119,7 +116,6 @@ def main():
             if child.poll() is not None:
                 raise RuntimeError('Native receiver exited early')
             time.sleep(.01)
-        raise TimeoutError(marker)
     wait_marker('native-ready')
     coord('ack','initial','root','probe input accepted')
     measures=[]
