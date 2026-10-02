@@ -1,60 +1,56 @@
 # Baton2
 
-Baton2 coordinates coding agents in a parent hierarchy. Orchestrators recruit workers,
-send tasks and guidance, receive retained reports, review committed changes, run checked
-landings, and publish to an explicitly selected Git remote. Agents can record findings
-with evidence and promote them into a shared scope for other agents to retrieve.
+Baton2 coordinates native coding agents on one host. A Principal Conductor
+recruits agents, sends tasks and guidance, receives reports, reviews committed
+changes, lands them onto a Git branch and publishes that branch to an explicit
+remote. Associate Conductors coordinate delegated teams.
 
-The coordinator and Git operations compile from Bend2 into a native executable with C
-bindings for SQLite and operating-system services. Claude Code, Codex, OMP and Muse run
-through their native harnesses. The [implemented architecture](docs/bend2/architecture.md)
-describes their process ownership, report delivery and recovery.
+The native coordinator is implemented in Bend 2.0.25 and stores coordination
+state in SQLite. Its entry imports laws over the implementation functions;
+compilation verifies their proofs. Native harnesses provide model access and
+conversation storage through their existing logins.
 
-Baton2 is in development on `bend2-rewrite`. The
-[readiness record](docs/bend2/readiness.md) distinguishes verified capabilities, observed
-failures and the work required before release.
+## Installation and use
 
-## Build and use
-
-Build with Bend 2.0.25, clang and SQLite development headers:
+The qualified host is macOS 27.0 arm64. Building requires Bend 2.0.25 with its
+library files, clang and SQLite development headers and libraries. Git supplies
+repository operations.
 
 ```sh
-sh bend2/scripts/build-native.sh
-.scratch/bend2/baton2 state.db status
+BEND=/absolute/path/to/bend sh bend2/scripts/build-native.sh
+.scratch/bend2/baton2 /absolute/path/to/state.db status
 ```
 
-Set `BEND` to an installed compiler path when it is outside `.bend/bin/bend` or
-`node_modules/.bend/bin/bend`. The [native command guide](bend2/README.md) covers
-recruitment, harness configuration, messages, knowledge, review and Git operations.
+Follow [installation](docs/bend2/installation.md) to stage the executable and
+retain its state, and [harness setup](docs/bend2/harness-setup.md) to configure
+native launch paths. The [command guide](bend2/README.md) describes recruitment,
+turns, receive endpoints, acknowledgments, knowledge and Git operations.
 
-Conductors direct subordinate Players. Peer messages require membership in an
-explicitly designated tight Ensemble; Conductor peers also share a hierarchy depth.
-The [messaging contract](docs/bend2/messaging.md) defines the permitted routes and retries.
+## Coordination
 
-## Verification
+Each agent session has a parent and an explicit route. Conductors send messages
+to descendants; subordinate agents send messages to their immediate Conductor.
+Peers communicate through explicitly designated tight Ensembles. Conductor
+peers also share a hierarchy depth. New Ensembles default to loose coupling.
+The [messaging guide](docs/bend2/messaging.md) describes admission and retries.
 
-The coordinator entry imports operative laws over the real implementation functions.
-Compiling the coordinator entry verifies their proofs. The negative control also removes proofs
-and changes implementations to verify that the compiler rejects those changes.
+Reports retain their complete bodies and native acceptance receipts. Registered
+receive endpoints deliver committed messages to Conductors. Retained receive
+owners preserve a native turn across observer loss and continue queued input.
+The [recovery guide](docs/bend2/receive-recovery-example.md) describes the tested
+boundary and pending-input behavior.
 
-```sh
-node bend2/scripts/laws-check.mjs
-sh bend2/scripts/check-native.sh
-```
+Agents record evidence-backed knowledge in session scopes. Explicit promotion
+notifies the destination owner, who decides further distribution to Ensembles.
+[Shared knowledge](docs/bend2/knowledge-context-2026-10-01.md) describes recording,
+review, visibility and promotion.
 
-The native checks exercise storage, actual subprocesses, harness protocols, recovery,
-messages, knowledge and Git operations. Published run records state the source pins,
-host conditions and limits of each measurement.
+Checked landing prepares a candidate, runs selected checks on the target and
+candidate, and advances the target through a compare-and-swap update. Worker
+branches and workspaces remain available after completion and landing. The
+[architecture](docs/bend2/architecture.md) describes subsystem responsibilities
+and recovery limits.
 
-## Design and evidence
-
-- [Implemented architecture](docs/bend2/architecture.md): ownership, commands and recovery.
-- [Shared knowledge](docs/bend2/knowledge-context-2026-09-29.md): evidence, scope and promotion.
-- [Naming legend](docs/bend2/terminology.md): agent roles and coordinated groups.
-- [Approved laws](docs/bend2/laws-proposed.md) and [authorization](docs/bend2/authorization.md): the development contract.
-- [Language reference](docs/bend2/reference/README.md): pinned compiler and runtime.
-- [Historical migration review](docs/bend2/go-no-go.md): the earlier prototype decision and its evidence.
-
-[CONTRIBUTING.md](CONTRIBUTING.md) describes repository development.
-[AGENTS.md](AGENTS.md) defines the writing rules. The retained JavaScript implementation
-and its verification instructions are described in [SYSTEM.md](SYSTEM.md).
+[Contributing](CONTRIBUTING.md) covers source acceptance.
+[Readiness](docs/bend2/readiness.md) records qualification and remaining release
+requirements. Development uses the `bend2-rewrite` branch.

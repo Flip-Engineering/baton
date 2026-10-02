@@ -1,145 +1,77 @@
-# Contributing to baton
+# Contributing to Baton2
 
-This document covers how changes to this repository are made, verified, and landed, including the
-workflow used to develop baton with baton itself. It assumes you have already read the
-[README](README.md) and, ideally, [SYSTEM.md](SYSTEM.md).
+Develop the native coordinator on `bend2-rewrite`. Read
+[AGENTS.md](AGENTS.md) for the code and writing rules, and
+[the architecture](docs/bend2/architecture.md) for module responsibilities.
+Use a separate owned branch and worktree for each change. Preserve other agents'
+source, branches, worktrees, uncommitted work and retained execution evidence.
 
-There is currently no LICENSE file in this repository. Check with the maintainers before assuming
-you can redistribute or reuse the code, even if you are contributing to it.
+There is currently no project LICENSE file. Distribution terms require a
+maintainer decision. The vendored Bend reference has its own upstream license.
 
-## Development environment
+## Build dependencies
 
-```bash
-cd impl && npm ci
-node scripts/run-suite.mjs         # the canonical gate, judged against expected-red-tests.json
-node scripts/surface-gate.mjs      # grammar lint, generated artifacts, MCP dispatch (--write regenerates)
+Install Bend 2.0.25 with its library files, clang, SQLite development headers
+and libraries, Python 3, Node and Git. The
+[pinned installer](docs/bend2/reference/toolchain/install-2.0.25.sh) installs the
+compiler and its libraries. Use a fresh owned `BEND_HOME` when installing a
+qualification toolchain. Set `BEND` to the selected compiler's absolute path.
+The [installation procedure](docs/bend2/installation.md) describes native output
+and runtime dependencies.
+
+## Laws and checks
+
+The coordinator entry imports `bend2/src/coordinator/laws.bend`. State an
+operative invariant over the actual implementation functions and prove it in
+that module. A build must verify every imported proof. Add runtime checks for
+host effects when the change needs them; compiler proofs and host execution
+have distinct boundaries.
+
+Run all three acceptance commands on the exact clean, committed tree:
+
+```sh
+BEND=/absolute/path/to/bend sh bend2/scripts/build-native.sh
+BEND=/absolute/path/to/bend node bend2/scripts/laws-check.mjs
+BEND=/absolute/path/to/bend sh bend2/scripts/check-native.sh
 ```
 
-Requires Node ≥ 20 (Node 22 is what the project's own residents run). The only runtime dependency
-is `@ast-grep/napi`. Install the pre-commit hook once per clone:
+`laws-check.mjs` removes individual proofs and mutates operative implementations
+in copied source trees. It requires each affected compilation to fail.
+`check-native.sh` runs the native tests and host-effect fixtures. Retain the
+commands, source revision, toolchain identity, complete outputs and exit statuses
+for acceptance. A changed tree requires its own acceptance result.
 
-```bash
-git config core.hooksPath .githooks
-```
+A selected repository landing uses `land-checked`. The check program runs on
+both the target and candidate. A candidate failure that passes on the target
+blocks landing. A target movement requires a new checked landing against the
+current target. Preserve the worker's committed and uncommitted work during
+review and conflict correction.
 
-`baton --help` lists every top-level verb; `baton help swarm`, `baton help run`, `baton help
-routing` and `baton help connection` render the topics in depth. The generated command inventories
-are [impl/CLI.md](impl/CLI.md) and [impl/MCP.md](impl/MCP.md); regenerate them with
-`node impl/scripts/surface-gate.mjs --write` after any surface change.
+## Publication
 
-## The test suite and its verdict
+Review the final diff, verify the three exact-tree gates, fetch the current
+remote branch and integrate its changes before publishing. Push `bend2-rewrite`
+fast-forward only. Verify the actual remote advertisement and distinguish local
+checks, source publication, hosted CI, artifact installation and a release.
 
-`run-suite.mjs` runs the parallel lane, then the process-heavy files listed in
-`impl/scripts/suite-lanes.json` serially, and judges the run against
-`impl/scripts/expected-red-tests.json`. Rows in that file are `file :: name`, each with a reason
-naming the issue it is waiting on; see [docs/42](docs/42-suite-legitimacy.md) for the full rule
-set.
+Native workflow qualification uses the harnesses' existing logins.
+[Harness setup](docs/bend2/harness-setup.md) documents the subscription-only Codex
+wrapper and the measured OMP and Muse routes. Run owned real-agent workflows
+separately from external compilation, tests and benchmarks. Keep failed runs
+and missing observations explicit in their evidence.
 
-A run is GREEN when every failure is listed in the manifest, no listed test unexpectedly passed or
-disappeared, and nothing hung (`BATON_SUITE_IDLE_MS`, default 10 minutes). Tests that describe not
-yet-implemented behavior are named with the `-red` suffix and land red on purpose; see
-[docs/44](docs/44-red-suffix-convention.md). They are removed from the manifest once the
-implementing change makes them pass.
+## Original implementation and historical records
 
-A partial run (a subset of test files) prints a `SUBSET verdict (n of m files)` line and is not a
-substitute for a full run. On a host that is also running development lanes, the suite takes a
-verify lease so two suite runs never compete for the same CPU cores (see
-[#333](https://github.com/Flip-Engineering/baton/issues/333)); `BATON_HOST_CAPACITY_DISABLED=1`
-bypasses that lease for a maintainer-run gate.
+The original JavaScript implementation and prototype are retained in Git
+history and the `master` branch. The preserved `evidence/pre-native-only-f85647cc`
+source also contains their branch-local tree before removal. Use a separate
+checkout at an explicit revision when comparing original Baton with Baton2.
+The comparison driver takes `--old-repo` and `--old-ref` and reads that source.
+The JS landing adapter reads the target repository's runner and selected tests.
 
-## Operating a resident
-
-`baton serve` hosts a standing, owner-local process for one repository. To restart it after a code
-change:
-
-1. Stop every active swarm participant with `baton swarm stop <swarm> <participant>`.
-2. Find the resident's process id by its working directory (never by matching a substring of the
-   command line) and send it `SIGTERM`.
-3. Wait for the `host.stopped` row to appear in the coordination ledger.
-4. Relaunch from a dedicated shell: `(nohup node scripts/baton.mjs serve > /tmp/baton-serve.log
-   2>&1 < /dev/null &)`.
-5. Before trusting the new process, run one `baton swarm recruit` on a low-cost route. A successful
-   `baton run` does not prove that recruiting a worker still works; check recruiting directly.
-
-[Issue #306](https://github.com/Flip-Engineering/baton/issues/306) and
-[docs/48](docs/48-reincarnation-in-place.md) describe reincarnation: replacing a running resident's
-process in place, without the manual stop-and-relaunch sequence above, while workers stay attached.
-Where it applies, prefer `baton deployment reincarnate <commit-ish>` over the manual restart.
-
-## The self-hosted development loop
-
-Since 2026-09-13, every change to this repository has been made by a worker recruited on a running
-baton resident and landed by a reviewer, using baton's own swarm runtime. This section describes
-that loop for anyone who wants to reproduce it, either on this repository or their own.
-
-1. **Serve a resident** on the commit you want to develop against, from a dedicated shell that does
-   nothing else:
-   ```bash
-   cd impl && (nohup node scripts/baton.mjs serve > /tmp/baton-serve.log 2>&1 < /dev/null &)
-   node scripts/baton.mjs doctor --check      # connection, served commit, route readiness, model profiles
-   ```
-   The log's last lines say `replayed (...)` then `answering (... checkpoint <state>; reconstructed
-   <ms>)`. A resident opening a large ledger publishes from its checkpoint in tens of seconds.
-
-2. **Create a swarm and recruit workers**, one issue per worker, with an exact route, a path scope,
-   and only the permissions the worker needs:
-   ```bash
-   node scripts/baton.mjs swarm create "Wave description" --swarm-id swarm-wave-N
-   node scripts/baton.mjs swarm recruit swarm-wave-N worker-1 "$(cat brief.txt)" \
-     --options '{"exact":{"harness":"omp","model":"deepseek/deepseek-flash","effort":"max"},"scope":["impl/src/example.mjs","impl/test/issue-example.test.mjs"]}'
-   # a sub-orchestrator that recruits its own workers:
-   node scripts/baton.mjs swarm recruit swarm-wave-N sub-orch-1 "$(cat brief-sub.txt)" \
-     --permissions '["read","communicate","contribute","review","organize","recruit","stop"]' \
-     --options '{"exact":{"harness":"omp","model":"kimi-code/k3","effort":"max"},"scope":["docs/example.md"]}'
-   ```
-   The recruit receipt names the worker's run, its worker process, and its workspace
-   (`.baton/wt/<workspaceId>`, on a lane branch `baton/<workspaceId>`). The brief a worker receives
-   is composed by the runtime: the objective, the swarm's current state, the routes it may recruit
-   on, the bridge verbs it holds, and a validated example of the contribution it should report.
-   Workers hold no GitHub credential; use `--issue N` to admit the cited issue and its referenced
-   docs as a context package, or pass the issue text directly in the objective.
-
-3. **Wait for a wake:**
-   ```bash
-   node scripts/baton.mjs swarm watch swarm-wave-N --after-seq <cursor> \
-     --wake-class contribution_recorded,dead --timeout-ms 1740000 --projection outline
-   ```
-   The response carries the wake row and the current outline. Re-arm the watch from the returned
-   sequence number.
-
-4. **Land the contribution.** The reported row's `commit.sha` names the real commit and
-   `commit.branch` the lane branch:
-   ```bash
-   git log --reverse master..baton/<workspaceId>            # the full range in order, never the tip alone
-   git cherry-pick <sha...>                                  # on a seam-inventory.json conflict, take theirs, then regenerate
-   node scripts/seam-inventory.mjs --write && node scripts/surface-gate.mjs --write && node scripts/render-surface-docs.mjs --write
-   BATON_SUITE_VERDICT_FILE=/tmp/verdict.json node scripts/run-suite.mjs test/<gate files>
-   ```
-   Pick the whole commit range in order, regenerate the shared artifacts, and run the gate files
-   implied by what changed before pushing.
-
-5. **Review and release the worker:**
-   ```bash
-   node scripts/baton.mjs swarm update swarm-wave-N swarm.contribution_reviewed \
-     --payload '{"contributionId":"<id>","decision":"accept","reason":"landed as <sha>"}'
-   node scripts/baton.mjs swarm stop swarm-wave-N worker-1 "landed"
-   ```
-   Smoke-test the changed surface on the landed commit before closing the tracking issue: a green
-   test file is not proof that the corresponding CLI or MCP command works end to end.
-
-**What a worker records.** One `swarm.contribution_recorded` event per landed change, with
-`body.subject`, `body.base {observedHead, rebasedOnto}`, `body.commit {sha, branch}`,
-`body.items[] {id, status: delivered | not_delivered, change, files, test, evidence}`,
-`body.needsFromOthers[]`, and `body.carriedForward[]`. A worker that needs a file outside its scope
-names it in `needsFromOthers`.
-
-**What a reviewer reads from the ledger.** Every worker's evidence is under
-`.git/baton/application-v3/state/w-<n>.jsonl`; the coordination ledger is
-`.../state/coordination/events.jsonl`. A failed turn is a typed event (for example,
-`lifecycle.turn_completed status=failed failure.code=provider_quota_exhausted`).
-
-## Filing issues
-
-Use the `bug` label for anything that breaks in real use. Add `priority:high` when the break stops
-the development loop itself (an unusable resident, a broken landing path, a broken suite). File
-issues before or alongside fixing them, so the fix is traceable to a stated problem.
+Earlier design and measurement records under `docs/`, `spec/` and `reviews/`
+retain their original source paths and revision pins. Read those paths at the
+recorded revision. The current design is
+[docs/bend2/architecture.md](docs/bend2/architecture.md), the current command
+entry is [bend2/README.md](bend2/README.md), and the current qualification status
+is [docs/bend2/readiness.md](docs/bend2/readiness.md).
