@@ -1,12 +1,18 @@
 """Hierarchy acceptance checks final file scope, correction landings, and the generated CHECK."""
 import importlib.util
+import errno
+import io
 import json
 import os
 from pathlib import Path
 import shutil
 import subprocess
+import sys
 import tempfile
+import threading
+from types import SimpleNamespace
 import unittest
+from unittest.mock import patch
 
 ROOT = Path(__file__).resolve().parents[2]
 SPEC = importlib.util.spec_from_file_location('hierarchy', ROOT / 'bend2/scripts/accept-kimi-hierarchy.py')
@@ -255,6 +261,140 @@ class HierarchyHistory(unittest.TestCase):
         self.assertNotEqual(self.git('merge-base', first, second), second)
         with self.assertRaisesRegex(AssertionError, 'divergent histories'):
             self.verify()
+
+
+class NativeRecording(unittest.TestCase):
+    def test_receipt_enospc_before_launch_keeps_the_child_absent(self):
+        with tempfile.TemporaryDirectory() as directory:
+            out = Path(directory)
+            DRIVER.save(out / 'run.json', {'routes': {'omp': {'executable': sys.executable}}})
+            with patch.object(DRIVER, 'save', side_effect=OSError(errno.ENOSPC, 'disk full')), \
+                    patch.object(DRIVER.subprocess, 'Popen') as launch:
+                with self.assertRaises(OSError) as raised:
+                    DRIVER.native_wrapper('deepseek', out, [])
+            self.assertEqual(raised.exception.errno, errno.ENOSPC)
+            launch.assert_not_called()
+            self.assertFalse(list(out.glob('native-*.process.json')))
+
+    def test_enospc_keeps_forwarding_and_fails_the_receipt(self):
+        ready = b'{"type":"ready"}\n'
+        item = b'{"type":"message_end","message":{"role":"assistant"}}\n'
+        terminal = b'{"type":"agent_end","isTerminal":true,"messages":[]}\n'
+        script = '''
+import sys
+for frame in (b'{"type":"ready"}\\n', b'{"type":"message_end","message":{"role":"assistant"}}\\n'):
+    sys.stdout.buffer.write(frame)
+    sys.stdout.buffer.flush()
+    if sys.stdin.buffer.readline() != b'continue\\n':
+        raise SystemExit(2)
+sys.stdout.buffer.write(b'{"type":"agent_end","isTerminal":true,"messages":[]}\\n')
+sys.stdout.buffer.flush()
+'''
+        original_open, original_save, original_popen = Path.open, DRIVER.save, subprocess.Popen
+        original_thread = threading.Thread
+
+        for sink in ('healthy', 'frames', 'events', 'process receipt'):
+            with self.subTest(sink=sink), tempfile.TemporaryDirectory() as directory:
+                out = Path(directory)
+                original_save(out / 'run.json', {'routes': {'omp': {'executable': sys.executable}}})
+                children, reapers = [], []
+                failed_receipt = False
+
+                class CaptureWriter:
+                    def __init__(self, stream):
+                        self.stream, self.wrote = stream, False
+
+                    def __getattr__(self, name):
+                        return getattr(self.stream, name)
+
+                    def __enter__(self):
+                        return self
+
+                    def __exit__(self, *error):
+                        self.stream.close()
+
+                    def write(self, value):
+                        if self.wrote:
+                            raise OSError(errno.ENOSPC, 'controlled capture disk full')
+                        self.wrote = True
+                        return self.stream.write(value)
+
+                class Forwarded(io.BytesIO):
+                    def write(self, value):
+                        result = super().write(value)
+                        if value in (ready, item):
+                            children[0].stdin.write(b'continue\n')
+                            children[0].stdin.flush()
+                        return result
+
+                def open_capture(path, *args, **kwargs):
+                    stream = original_open(path, *args, **kwargs)
+                    suffix = '.native.jsonl' if sink == 'frames' else '.events.jsonl'
+                    if sink in ('frames', 'events') and path.name.endswith(suffix):
+                        return CaptureWriter(stream)
+                    return stream
+
+                def save_receipt(path, value):
+                    nonlocal failed_receipt
+                    if sink == 'process receipt' and 'child_pid' in value and not failed_receipt:
+                        failed_receipt = True
+                        raise OSError(errno.ENOSPC, 'controlled receipt disk full')
+                    return original_save(path, value)
+
+                def spawn(argv, **kwargs):
+                    child = original_popen(argv, stdin=subprocess.PIPE, **kwargs)
+                    children.append(child)
+                    return child
+
+                def start_reaper(*args, **kwargs):
+                    thread = original_thread(*args, **kwargs)
+                    reapers.append(thread)
+                    return thread
+
+                forwarded, diagnostic = Forwarded(), io.StringIO()
+                try:
+                    with patch.object(Path, 'open', open_capture), \
+                            patch.object(DRIVER, 'save', save_receipt), \
+                            patch.object(DRIVER.subprocess, 'Popen', spawn), \
+                            patch.object(DRIVER, 'retain_process_start'), \
+                            patch.object(DRIVER, 'threading', SimpleNamespace(
+                                Thread=start_reaper, Lock=threading.Lock)), \
+                            patch.object(DRIVER, 'sys', SimpleNamespace(
+                                stdout=SimpleNamespace(buffer=forwarded), stderr=diagnostic)):
+                        status = DRIVER.native_wrapper('deepseek', out, ['-c', script])
+                finally:
+                    for child in children:
+                        child.stdin.close()
+                        child.wait()
+                        child.stdout.close()
+                    for reaper in reapers:
+                        reaper.join()
+
+                self.assertEqual(forwarded.getvalue(), ready + item + terminal)
+                self.assertEqual(children[0].returncode, 0)
+                row = json.loads(next(out.glob('native-*.process.json')).read_text())
+                if sink == 'healthy':
+                    self.assertEqual(status, 0)
+                    self.assertTrue(DRIVER.successful_receipts([row]))
+                    self.assertEqual(Path(row['frames']).read_bytes(), ready + item + terminal)
+                    continue
+                self.assertEqual(status, 1)
+                self.assertEqual(row['child_exit_code'], 0)
+                self.assertEqual(row['exit_code'], 1)
+                self.assertIn('child_ended_unix', row)
+                self.assertIn('ended_unix', row)
+                self.assertFalse(row['recording_complete'])
+                self.assertEqual(row['recording_error']['errno'], errno.ENOSPC)
+                self.assertIn('acceptance recording is incomplete', diagnostic.getvalue())
+                self.assertFalse(DRIVER.successful_receipts([{**row, 'exit_code': 0}]))
+                incomplete = {key: value for key, value in row.items() if key != 'recording_error'}
+                self.assertFalse(DRIVER.successful_receipts([{**incomplete, 'exit_code': 0}]))
+                capture = Path(row['frames']).read_bytes()
+                if sink == 'process receipt':
+                    self.assertEqual(capture, ready + item + terminal)
+                else:
+                    self.assertTrue(capture.startswith(ready))
+                    self.assertNotIn(terminal, capture)
 
 
 class GeneratedCheck(unittest.TestCase):
