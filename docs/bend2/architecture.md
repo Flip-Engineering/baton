@@ -311,12 +311,17 @@ fresh-conversation retrieval after receipts and separately promoted correction.
 Its Conductor endpoint collected notices; scope selection used trusted declared actors.
 The owner chooses which Ensembles receive further messages.
 
-The root-day acceptance exercises real OMP, Codex, Claude Code and Muse Players;
+The implemented paths support OMP, Codex, Claude Code and Muse Players;
 OMP guidance during a turn; report-triggered Codex, OMP and Claude Conductor turns;
 review, checked landing, target movement, conflict resolution and publication;
-and native Player and Conductor recovery after owned-process loss. The entry point
-and its route configuration are described in the Bend2 README. Native logs,
-SQLite rows, receipts and Git refs are the evidence from each run.
+and native Player and Conductor recovery after owned-process loss. The September
+2026 records below exercised selected paths at their listed source revisions. The
+[2026-09-27 root-day record](root-day-2026-09-27.md) starts from source base
+`3ddc0363e22acf287e23d9364f1195a0cf2e6c5c`; its report-triggered follow-up names
+worker source base `de2a9944`. Those runs apply to their recorded source revisions.
+The [current 1.0 scope](release-1.0.md) declares the qualified native routes and
+recovery boundaries. Native logs, SQLite rows, receipts and Git refs retain the
+evidence for each run.
 
 Historical runs are recorded in [Conductor delivery](root-day-2026-09-27.md),
 [Conductor recovery](root-recovery-2026-09-27.md),

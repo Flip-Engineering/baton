@@ -1,18 +1,22 @@
 # Receive messages for a Codex Player
 
 This example assumes `worker` is registered with the `codex` harness and has
-recorded model, effort, and workspace values. Replace the path placeholders
-with absolute paths to the existing executable, database, Codex executable,
-and output log.
+recorded model, effort, and workspace values. First follow
+[Codex subscription login](harness-setup.md#codex-subscription-login) to verify
+the existing ChatGPT login and create an executable launch wrapper at a retained
+absolute path. The wrapper unsets `OPENAI_API_KEY` and `CODEX_API_KEY` and forces
+ChatGPT login. Use that wrapper as the harness command for this receive and
+registered Codex endpoints. Replace the path placeholders with absolute paths
+to the coordinator, database, subscription wrapper and output log.
 
 ```sh
 BATON=/path/to/baton2
 DATABASE=/path/to/state.db
-CODEX=/path/to/codex
+CODEX_WRAPPER=/absolute/path/to/codex-chatgpt-wrapper
 OUTPUT_LOG=/path/to/worker-output.jsonl
 
 "$BATON" "$DATABASE" inbox worker
-"$BATON" "$DATABASE" receive worker "$CODEX" '' '' '' "$OUTPUT_LOG" ''
+"$BATON" "$DATABASE" receive worker "$CODEX_WRAPPER" '' '' '' "$OUTPUT_LOG" ''
 ```
 
 `receive` accepts `SESSION HARNESS_CMD MODEL EFFORT CWD OUTPUT_LOG MESSAGE_ID`.
