@@ -123,8 +123,9 @@ def notify(value):
 kind=sys.argv[1]
 if kind=='launch':
     args=sys.argv[2:]
+    native_args=args[2:] if args[:2]==['-c','forced_login_method="chatgpt"'] else args
     row={'kind':'launch','pid':os.getpid(),'ppid':os.getppid(),'unix':time.time(),
-         'argv':args,'resume':args[2] if args[:2]==['exec','resume'] else ''}
+         'argv':args,'resume':native_args[2] if native_args[:2]==['exec','resume'] else ''}
     append('launches.jsonl',row)
     notify(row)
     os.execv('/usr/bin/env',['env','-u','OPENAI_API_KEY','-u','CODEX_API_KEY',
