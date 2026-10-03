@@ -25,7 +25,7 @@ def shell(value: String) -> String:
 
 def instructions(executable: String, database: String, +session: String) -> String:
   +command = shell(executable) ++ " " ++ shell(database)
-  "You are session " ++ session ++ " in a Baton orchestra. A Player is an individual agent. Review pending messages and follow your task.\n"
+  "You are session " ++ session ++ " in a Baton2 Orchestra. A Player is an individual agent. Review pending messages and follow your task.\n"
   ++ "The Principal Conductor is the main orchestrator. An Associate Conductor is a sub-orchestrator. An Ensemble is a coordinated team of agents. A Section is a capability-specific subgroup. The Orchestra is the whole coordinated system. When coordinating players, direct their work according to your task.\n"
   ++ "The players command lists all Players, including Principal and Associate Conductors. PLAYER denotes a player session ID.\n"
   ++ "Public messages follow assigned roles, parent links and explicit tight Ensemble membership. A Conductor can message its descendants; report and ask reach your immediate parent. Peer messages require a shared tight Ensemble; Conductor peers must have equal hierarchy depth.\n"
