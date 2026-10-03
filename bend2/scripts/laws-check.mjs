@@ -130,6 +130,72 @@ for (const { law, file } of rows) {
 // mutation that still compiles means the law it names does not bind the code
 // it claims to bind, and it is reported as a failure.
 const MUTATIONS = [
+  { name: "native-detached-launch-skipped", file: join("bend2","src","coordinator","control.bend"), find: "Host.Control.launch(Tx.enc_argv([executable,\"--dispatch-message\",database,id]),database,id)", replace: "IO.pure(Result<&1,&1,U32 & String,String>,Done{\"{}\"})", law: "authorized_detached_delivery_launches_the_native_self_entry" },
+  { name: "native-detached-child-skips-delivery", file: join("bend2","src","coordinator","control.bend"), find: "Delivery.deliver(db,id,\"1\",\"\")", replace: "IO.pure(Result<&1,&1,U32 & String,String>,Done{\"{}\"})", law: "detached_self_entry_delivers_the_committed_message" },
+  { name: "native-start-conflict-refusal-skipped", file: join("bend2","src","coordinator","control.bend"), find: "case other: IO.die(Unit,2,other)", replace: "case other: IO.pure(Unit,Unit{})", law: "conflicting_principal_startup_refuses_before_task_dispatch" },
+  {
+    name: "native-start-admits-a-subordinate",
+    file: join("bend2", "src", "coordinator", "control.bend"),
+    find: " AND parent IS NULL AND harness=",
+    replace: " AND harness=",
+    law: "principal_startup_preserves_parentage_and_recorded_assignment",
+  },
+  {
+    name: "native-start-clears-recorded-conversation",
+    file: join("bend2", "src", "coordinator", "control.bend"),
+    find: "\"UPDATE sessions SET model=\"",
+    replace: "\"UPDATE sessions SET native='',model=\"",
+    law: "principal_assignment_mutates_only_configuration_under_admission",
+  },
+  {
+    name: "native-receiver-admits-unsupported-harness",
+    file: join("bend2", "src", "coordinator", "control.bend"),
+    find: " AND harness IN ('codex','omp')",
+    replace: "",
+    law: "native_receiver_checks_harness_stop_and_endpoint_admission",
+  },
+  {
+    name: "native-receiver-accepts-unchecked-endpoint",
+    file: join("bend2", "src", "coordinator", "control.bend"),
+    find: " ++ \" AND \" ++ C.endpoint_admitted(endpoint) ++ \")\"",
+    replace: " ++ \")\"",
+    law: "native_receiver_checks_harness_stop_and_endpoint_admission",
+  },
+  {
+    name: "native-detached-input-skips-message-commit",
+    file: join("bend2", "src", "coordinator", "control.bend"),
+    find: "Store.commit(db,C.Message{id,sender,recipient,kind,body})",
+    replace: "IO.pure(Result<&1,&1,U32 & String,String>,Done{\"{}\"})",
+    law: "detached_delivery_commits_before_launch_and_checks_refusals",
+  },
+  {
+    name: "native-detached-denial-reports-success",
+    file: join("bend2", "src", "coordinator", "control.bend"),
+    find: "def dispatch_admitted(+db: String, +id: String, +saved: String, denied: Bool) -> IO(String):\n  match denied:\n    case True{}: IO.die(String,2,saved)",
+    replace: "def dispatch_admitted(+db: String, +id: String, +saved: String, denied: Bool) -> IO(String):\n  match denied:\n    case True{}: IO.pure(String,saved)",
+    law: "denied_detached_input_cannot_launch_a_process",
+  },
+  {
+    name: "native-receiver-duplicates-wake-argument",
+    file: join("bend2", "src", "coordinator", "control.bend"),
+    find: "[executable,db,\"receive\",session,cmd,\"\",\"\",\"\",log]",
+    replace: "[executable,db,\"receive\",session,cmd,\"\",\"\",\"\",log,\"\"]",
+    law: "native_receiver_leaves_the_wake_argument_to_delivery",
+  },
+  {
+    name: "native-turn-clears-recorded-resume",
+    file: join("bend2", "src", "coordinator", "control.bend"),
+    find: "[executable,database,\"turn\",player,id,harness_cmd,model,effort,cwd,path,output,native]",
+    replace: "[executable,database,\"turn\",player,id,harness_cmd,model,effort,cwd,path,output,\"\"]",
+    law: "detached_turn_uses_the_recorded_assignment_and_native_identity",
+  },
+  {
+    name: "native-start-entry-skips-setup",
+    file: join("bend2", "src", "coordinator", "main.bend"),
+    find: "Control.start(db,session,harness,cmd,model,effort,cwd,log,id,task)",
+    replace: "IO.pure(String,\"{}\")",
+    law: "start_entry_executes_the_native_control",
+  },
   {
     name: "naming-entry-skips-the-store",
     file: join('bend2', 'src', 'coordinator', "main.bend"),

@@ -84,11 +84,11 @@ which requires the `Accept: application/octet-stream` request header. Retain the
 download directory, the versioned prefix and the fresh state directory. The
 first-use `status` command creates its database outside the immutable prefix.
 
-[Harness setup](harness-setup.md) covers the native routes and the Codex
+[Harness setup](harness-setup.md) covers the native routes and the released 1.0
 subscription wrapper. Retain existing native profiles and credentials at their
 configured paths.
 
-## Source build and historical staging
+## Source build and staging
 
 Build dependencies are an installed Bend 2.0.25 compiler with its library files,
 clang, and SQLite development headers and libraries. From the source checkout:
@@ -101,12 +101,14 @@ The entry imports its operative laws. This build verifies their proofs and
 creates `.scratch/bend2/baton2`. The [build and check instructions](../../bend2/README.md#build-and-check)
 describe the negative controls and native checks used for acceptance.
 
-Copy the executable to a prefix you own:
+Stage the executable and current Git identity helper in an unused prefix you own:
 
 ```sh
-BATON2_PREFIX="$HOME/.local"
-mkdir -p "$BATON2_PREFIX/bin"
+BATON2_PREFIX=/absolute/path/to/unused-prefix
+test ! -e "$BATON2_PREFIX"
+mkdir -p "$BATON2_PREFIX/bin" "$BATON2_PREFIX/libexec/baton2"
 cp .scratch/bend2/baton2 "$BATON2_PREFIX/bin/baton2"
+cp bend2/harness/git-series.mjs "$BATON2_PREFIX/libexec/baton2/git-series.mjs"
 chmod 755 "$BATON2_PREFIX/bin/baton2"
 export PATH="$BATON2_PREFIX/bin:$PATH"
 ```
@@ -128,31 +130,43 @@ workspaces and logs. The retained owner reexecutes the selected coordinator.
 baton2 /absolute/path/state.db status
 ```
 
-The compiled coordinator uses Git on PATH for repository operations. It runs
-independently of Python and of a Bend compiler. The packaged Node Conductor
-adapters are optional and require Node 22. The packaged Git identity helper at
-`PREFIX/libexec/baton2/git-series.py` and the documented Python launch wrappers
-require Python 3.11 or newer. A checked landing needs the caller's check program
-and its dependencies.
+Git must be available on PATH for repository operations. A checked landing needs
+the caller's check program and its dependencies. Each native harness remains an
+external installation with its own login, configuration and conversation storage.
+Current development source enforces Codex's ChatGPT subscription login in its
+native adapter and removes API-key variables. The public 1.0 archive requires the
+version-specific subscription wrapper in [harness setup](harness-setup.md).
+Kimi K3 runs through OMP's `kimi-code` provider on this host.
 
-External native harnesses remain separate installations with their own logins,
-configuration and conversation storage. Installing the coordinator supplies
-neither provider credentials nor harness wrappers. Codex uses the ChatGPT
-subscription login only, and its launch removes the API-key variables. The 1.0
-archive reaches that state through a launch wrapper described in
-[harness setup](harness-setup.md). The installed development build enforces the
-same subscription method in the compiled coordinator, so its Codex endpoint
-names the real Codex executable directly and uses the shipped Git identity
-helper. That route is qualified for the development source after the bound
-new-source installation qualification; the 1.0 archive and the earlier
-wrapper-based runs keep their original source-specific scope. The
-[native turn and receive commands](../../bend2/README.md#native-turns) describe
-the explicit harness arguments.
+## Start a Principal from current development source
 
-A registered compiled `receive` endpoint ends with the output-log path; normal
-delivery appends the message ID. Omit a final empty message ID from the
-registered argv. A manual `receive` invocation supplies that final empty string
-to read pending input.
+The commands below require the development build; the immutable 1.0 archive
+retains its original control interface. Save the task in a file and run:
+
+```sh
+baton2 /absolute/path/state.db start principal codex /absolute/path/to/codex \
+  gpt-6-astra high /absolute/path/repository /absolute/path/principal.jsonl \
+  initial-task /absolute/path/task.md
+baton2 /absolute/path/state.db status --pretty
+baton2 /absolute/path/state.db inbox operator --pretty
+```
+
+`start` assigns the Principal Conductor role and creates the parentless `operator`
+identity when absent. A compatible existing Principal keeps its native conversation,
+pending input and repository assignment. A conflicting assignment is refused.
+The launch result names the detached delivery PID; inspect messages, turns and
+logs for acceptance and completion.
+
+Recruit subordinate Players with `recruit`. Configure Codex and OMP receivers
+with `receiver SESSION HARNESS_COMMAND OUTPUT_LOG`, then use
+`dispatch-file ID SENDER RECIPIENT task TASK_FILE` for independent work.
+`dispatch-turn PLAYER TURN_ID HARNESS_COMMAND OUTPUT_LOG TASK_FILE` starts a
+Muse or Claude Player using its recorded model, effort, workspace and native ID.
+
+An existing model Git registry at `~/.config/baton/github-apps/series.json` is
+applied to native receiver and detached turn launches. `BATON2_GIT_REGISTRY`
+selects a different registry. This requires the packaged Node Git identity helper
+and Node 22.15 or later. Keep the registry and its credentials outside task files.
 
 ## Retained state
 
