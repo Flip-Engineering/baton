@@ -20,6 +20,8 @@ publication. Qualification uses current native workflow and recovery evidence.
 | --- | --- |
 | Compilation with operative laws | At `f85647cc`, the entry imports the implementation laws. Exact-tree verification passed 361 proof-removal controls, 87 implementation mutations and 248 Python tests across 25 suites, plus two Bend suites. Compiler proofs bind the stated functions; runtime tests exercise their host effects. |
 | Native orchestration | [Fresh qualification](native-qualification-2026-10-02/README.md) records runtime `204972f7`, a subscription Codex Principal Conductor, Kimi K3 Associate Conductor, concurrent DeepSeek and Muse Players, native steering, saved-session corrections and both reviewed landing levels. [Earlier hierarchy acceptance](hierarchy-2026-10-02.md) retains its separate source and task boundaries. |
+| Native naming and series identities | [V7 qualification](naming-series-native-qualification-2026-10-02.md) records canonical Player, Conductor, Ensemble, Section and Orchestra controls, a native question and steer, both checked landing levels and friendly series commit identities. Its checked target is `adf829b5`; authenticated remote publication has separate evidence. |
+| Independent native review | [GLM review](glm-native-review-2026-10-02.md) records a real OMP `zai/glm-5.3-flash` Player review and independent CLI fixture on `adf829b5`, with no source change. Native completion, Principal checks, scoped independent acceptance and operator acknowledgment passed. The custody observer omission and separately verified process closure remain explicit. |
 | Messaging policy | [Messaging](messaging.md) records descendant and immediate-parent routes, explicit tight Ensemble peers, same-depth Conductor peers and preservation of accepted retries. These are declared local coordination identities. |
 | Shared knowledge | [Knowledge acceptance](knowledge-context-2026-10-01.md) records evidence review, explicit promotion, destination-owner notification, sibling retrieval and fresh-conversation retrieval. The destination owner decides further distribution to Ensembles. |
 | Retained recovery | [Current recovery qualification](native-recovery-qualification-2026-10-02/README.md) records real subscription Codex observer loss with a surviving child, queued retry, same-ID follow-up, two reviewed document commits and complete parent receipts on `7c32ff45`. Separate Codex and OMP direct-turn process-loss probes passed; OMP recorded a missing-conversation diagnostic and fresh fallback. Both direct probes interrupted before a file edit. Keeper loss and host restart remain separate boundaries. |
@@ -65,7 +67,10 @@ Incomplete recording refuses qualification; an initial receipt failure starts
 no child. Twelve controlled recorder and hierarchy-history tests passed, with
 three recording failures reproduced against the original source. The disk-full
 native attempt at `839e3bd2` remains failed, with incomplete inner exit receipts
-and no checked landings. Fresh native qualification has its own acceptance gate.
+and no checked landings. [V7](naming-series-native-qualification-2026-10-02.md)
+completed the successful recorder lifecycle on repaired source `2a3581cd` and
+checked target `adf829b5`. Controlled recording failures and exact-tree
+publication gates retain their separate boundaries.
 
 Generated lead instructions include saved-native direct-turn corrections for
 both helper workers, with retained logs and detached process ownership. They
