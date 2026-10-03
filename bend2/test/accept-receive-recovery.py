@@ -117,7 +117,7 @@ class ReceiveAcceptance(unittest.TestCase):
         self.assertEqual(recruitment['session']['workspace'], str(repo))
         self.assertEqual(recruitment['worktree']['commit'], evidence['source'])
         self.assertEqual(recruitment['worktree']['dirty'], False)
-        self.assertEqual(evidence['worker_workspace'], str(repo))
+        self.assertEqual(evidence['player_workspace'], str(repo))
         self.assertEqual(len(evidence['repository_commits']), 2)
         self.assertEqual(evidence['remaining_processes'], [])
         self.assertEqual(git(repo, 'status', '--porcelain'), '')
