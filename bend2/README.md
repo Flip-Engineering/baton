@@ -150,13 +150,15 @@ for the full naming contract.
 
 ## Status and report inspection
 
-The native read commands format complete stored JSON with `--pretty`:
+The native read commands format complete JSON with `--pretty`:
 
 ```sh
 .scratch/bend2/baton2 state.db player worker1 --pretty
 .scratch/bend2/baton2 state.db orchestra --pretty
 .scratch/bend2/baton2 state.db delivery REPORT_ID --pretty
 .scratch/bend2/baton2 state.db turns worker1 --pretty
+.scratch/bend2/baton2 state.db worktree worker1 --pretty
+.scratch/bend2/baton2 state.db knowledge principal --pretty
 ```
 
 `player ID` reads one stored Player binding. `orchestra` returns the snapshot,
@@ -167,6 +169,12 @@ returns the stored message with its full body, receipt and current recipient
 endpoint. `turns PLAYER` lists native turn history with report bodies and
 receipts. Capture complete stdout and parse it when reviewing a report body;
 harness tool display can truncate long strings.
+
+When the parentless `operator` session has the operator role, a Principal's
+native terminal result is retained in its turn history and sent to that session.
+`start` registers this operator. `inbox operator --pretty` reads pending reports;
+`ack REPORT_ID operator RECEIPT` records the operator's review. Subordinate
+reports go to their recorded parent.
 
 During an OMP turn, send guidance with:
 

@@ -156,6 +156,8 @@ identity when absent. A compatible existing Principal keeps its native conversat
 pending input and repository assignment. A conflicting assignment is refused.
 The launch result names the detached delivery PID; inspect messages, turns and
 logs for acceptance and completion.
+The native terminal result is recorded in `turns PRINCIPAL --pretty` and sent
+to the operator inbox. Acknowledge each reviewed report with `ack`.
 
 Recruit subordinate Players with `recruit`. Configure Codex and OMP receivers
 with `receiver SESSION HARNESS_COMMAND OUTPUT_LOG`, then use
