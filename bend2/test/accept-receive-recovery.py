@@ -24,6 +24,8 @@ args=args[2:]
 if args==['login','status']:
     print('Logged in using ChatGPT')
     raise SystemExit(0)
+if args[:2]==['-c','forced_login_method="chatgpt"']:
+    args=args[2:]
 assert args[0]=='exec' and '--json' in args,args
 assert args[args.index('--model')+1]=='controlled-model',args
 resume=args[2] if args[1]=='resume' else ''

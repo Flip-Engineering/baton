@@ -27,7 +27,7 @@ law m2_codex_fresh_start_is_the_spawn_attempt:
   for +cwd: String
   for +stderr: String
   for session: String
-  {Codex.start_player(cmd, model, effort, cwd, stderr, session, True{}) == P.ProcessChild.spawn(P.argv(List.append(&1,String,[cmd,"exec"],Codex.arguments(model,effort))),cwd,stderr) : IO(Result<&1,&1,U32 & String,U32>)}
+  {Codex.start_player(cmd, model, effort, cwd, stderr, session, True{}) == P.ProcessChild.spawn(P.argv(List.append(&1,String,["/usr/bin/env","-u","OPENAI_API_KEY","-u","CODEX_API_KEY",cmd,"-c","forced_login_method=\"chatgpt\"","exec"],Codex.arguments(model,effort))),cwd,stderr) : IO(Result<&1,&1,U32 & String,U32>)}
 
 def m2_codex_fresh_start_is_the_spawn_attempt(cmd, model, effort, cwd, stderr, session):
   {==}
@@ -80,9 +80,31 @@ law m5_codex_resume_carries_the_accepted_session:
   for +cwd: String
   for +stderr: String
   for +session: String
-  {Codex.start_player(cmd, model, effort, cwd, stderr, session, False{}) == P.ProcessChild.spawn(P.argv(List.append(&1,String,[cmd,"exec","resume",session],Codex.arguments(model,effort))),cwd,stderr) : IO(Result<&1,&1,U32 & String,U32>)}
+  {Codex.start_player(cmd, model, effort, cwd, stderr, session, False{}) == P.ProcessChild.spawn(P.argv(List.append(&1,String,["/usr/bin/env","-u","OPENAI_API_KEY","-u","CODEX_API_KEY",cmd,"-c","forced_login_method=\"chatgpt\"","exec","resume",session],Codex.arguments(model,effort))),cwd,stderr) : IO(Result<&1,&1,U32 & String,U32>)}
 
 def m5_codex_resume_carries_the_accepted_session(cmd, model, effort, cwd, stderr, session):
+  {==}
+
+# Native Codex argv requests the ChatGPT subscription method and API-key removal.
+# The host's env executable and Codex enforce those requests during execution.
+law codex_fresh_argv_requests_chatgpt_and_key_removal:
+  for +cmd: String
+  for +model: String
+  for +effort: String
+  for session: String
+  {Codex.argv(cmd, model, effort, session, True{}) == P.argv(List.append(&1,String,["/usr/bin/env","-u","OPENAI_API_KEY","-u","CODEX_API_KEY",cmd,"-c","forced_login_method=\"chatgpt\"","exec"],Codex.arguments(model,effort))) : String}
+
+def codex_fresh_argv_requests_chatgpt_and_key_removal(cmd, model, effort, session):
+  {==}
+
+law codex_resume_argv_requests_chatgpt_and_key_removal:
+  for +cmd: String
+  for +model: String
+  for +effort: String
+  for +session: String
+  {Codex.argv(cmd, model, effort, session, False{}) == P.argv(List.append(&1,String,["/usr/bin/env","-u","OPENAI_API_KEY","-u","CODEX_API_KEY",cmd,"-c","forced_login_method=\"chatgpt\"","exec","resume",session],Codex.arguments(model,effort))) : String}
+
+def codex_resume_argv_requests_chatgpt_and_key_removal(cmd, model, effort, session):
   {==}
 
 law m5_omp_resume_carries_the_accepted_session:

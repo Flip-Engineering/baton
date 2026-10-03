@@ -7,8 +7,8 @@ def arguments(model: String, effort: String) -> List<String>:
 
 def argv(cmd: String, model: String, effort: String, session: String, fresh: Bool) -> String:
   match fresh:
-    case True{}: P.argv(List.append(&1,String,[cmd,"exec"],arguments(model,effort)))
-    case False{}: P.argv(List.append(&1,String,[cmd,"exec","resume",session],arguments(model,effort)))
+    case True{}: P.argv(List.append(&1,String,["/usr/bin/env","-u","OPENAI_API_KEY","-u","CODEX_API_KEY",cmd,"-c","forced_login_method=\"chatgpt\"","exec"],arguments(model,effort)))
+    case False{}: P.argv(List.append(&1,String,["/usr/bin/env","-u","OPENAI_API_KEY","-u","CODEX_API_KEY",cmd,"-c","forced_login_method=\"chatgpt\"","exec","resume",session],arguments(model,effort)))
 
 def start_player(cmd: String, model: String, effort: String, cwd: String, stderr: String, session: String, fresh: Bool) -> IO(Result<&1,&1,U32 & String,U32>):
   P.ProcessChild.spawn(argv(cmd,model,effort,session,fresh),cwd,stderr)

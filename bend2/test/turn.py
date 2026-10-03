@@ -6,6 +6,7 @@ import subprocess
 import sys
 import tempfile
 import unittest
+from unittest.mock import patch
 
 ROOT = pathlib.Path(__file__).resolve().parents[2]
 EXE = ROOT / '.scratch/bend2/baton2'
@@ -252,29 +253,46 @@ print(json.dumps({'stream':{'kind':'session','id':session},'payload_type':'run.t
 
     def test_codex_terminal_report_uses_final_message_and_resumes_native_thread(self):
         self.register('codex-worker','root','codex','gpt-6-astra','low',str(self.cwd),'codex-branch','base')
-        self.player.write_text('#!'+sys.executable+'\n'+'''import json,sys,pathlib
+        self.player.write_text('#!'+sys.executable+'\n'+'''import json,sys,pathlib,os
 args=sys.argv
-assert args[1]=='exec'
+native_args=args[3:] if args[1:3]==['-c','forced_login_method="chatgpt"'] else args[1:]
+assert native_args[0]=='exec'
 assert '--ephemeral' not in args
 pathlib.Path('argv.json').write_text(json.dumps(args))
 prompt=sys.stdin.read()
 pathlib.Path('received.txt').write_text(prompt)
+with pathlib.Path('native-launches.jsonl').open('a') as launches:
+    launches.write(json.dumps({'args':args[1:],'cwd':os.getcwd(),'prompt':prompt,
+                              'apiKeyVariablesPresent':[key for key in ('OPENAI_API_KEY','CODEX_API_KEY') if key in os.environ]})+'\\n')
 print(json.dumps({'type':'thread.started','thread_id':'native-codex'}))
 print(json.dumps({'type':'item.completed','item':{'type':'agent_message','text':'Working on it.'}}))
 print(json.dumps({'type':'item.completed','item':{'type':'command_execution','aggregated_output':'tool output'}}))
 print(json.dumps({'type':'item.completed','item':{'type':'agent_message','text':prompt}}))
 print(json.dumps({'type':'turn.completed','usage':{'input_tokens':42,'output_tokens':7}}))
 ''')
-        self.call('turn','codex-worker','codex-1',str(self.player),'gpt-6-astra','low',str(self.cwd),str(self.task),str(self.log),'')
+        with patch.dict(os.environ, {'OPENAI_API_KEY':'controlled-unused-key', 'CODEX_API_KEY':'controlled-unused-key'}):
+            self.call('turn','codex-worker','codex-1',str(self.player),'gpt-6-astra','low',str(self.cwd),str(self.task),str(self.log),'')
         session=json.loads(self.call('player','codex-worker'))
         self.assertEqual(session['native'],'native-codex')
         self.assertEqual(session['observedModel'],'')
         self.assertEqual(json.loads(self.call('inbox','root'))[0]['body'],self.task.read_text())
+        initial_prompt=self.task.read_text()
         self.task.write_text('Next instruction with trailing newline.\n')
-        self.call('turn','codex-worker','codex-2',str(self.player),'gpt-6-astra','low',str(self.cwd),str(self.task),str(self.cwd/'second.jsonl'),session['native'])
+        with patch.dict(os.environ, {'OPENAI_API_KEY':'controlled-unused-key', 'CODEX_API_KEY':'controlled-unused-key'}):
+            self.call('turn','codex-worker','codex-2',str(self.player),'gpt-6-astra','low',str(self.cwd),str(self.task),str(self.cwd/'second.jsonl'),session['native'])
         args=json.loads((self.cwd/'argv.json').read_text())
-        self.assertEqual(args[1:4],['exec','resume','native-codex'])
-        self.assertEqual(args[args.index('-c')+1],'model_reasoning_effort="low"')
+        launches=[json.loads(line) for line in (self.cwd/'native-launches.jsonl').read_text().splitlines()]
+        for launch, subcommand, prompt in zip(launches, [['exec'],['exec','resume','native-codex']], [initial_prompt,self.task.read_text()]):
+            self.assertEqual(launch['args'][:2], ['-c','forced_login_method="chatgpt"'])
+            self.assertEqual(launch['args'][2:2+len(subcommand)],subcommand)
+            configs=[launch['args'][i+1] for i,arg in enumerate(launch['args']) if arg=='-c']
+            self.assertEqual(configs,['forced_login_method="chatgpt"','model_reasoning_effort="low"'])
+            self.assertEqual(launch['args'][launch['args'].index('--model')+1],'gpt-6-astra')
+            self.assertEqual(launch['apiKeyVariablesPresent'],[])
+            self.assertEqual(launch['cwd'],str(self.cwd))
+            self.assertEqual(launch['prompt'],prompt)
+        self.assertEqual(len(launches),2)
+        self.assertEqual(json.loads(self.call('player','codex-worker'))['native'],session['native'])
         self.assertEqual(args[-1],'-')
         self.assertEqual(json.loads(self.call('inbox','root'))[-1]['body'],self.task.read_text())
         self.player.unlink()

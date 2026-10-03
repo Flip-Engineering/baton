@@ -14,6 +14,7 @@ import tempfile
 import threading
 import time
 import unittest
+from unittest.mock import patch
 
 ROOT = pathlib.Path(__file__).resolve().parents[2]
 EXE = ROOT / '.scratch/bend2/baton2'
@@ -45,7 +46,8 @@ if args[:1] in (['parent_endpoint'],['answering_parent']):
     sys.exit(0)
 omp='--mode' in args
 model=args[args.index('--model')+1]
-resume=args[args.index('--resume')+1] if '--resume' in args else (args[2] if args[:2]==['exec','resume'] else '')
+native_args=args[2:] if args[:2]==['-c','forced_login_method="chatgpt"'] else args
+resume=args[args.index('--resume')+1] if '--resume' in args else (native_args[2] if native_args[:2]==['exec','resume'] else '')
 if config.get('record_launches'):
     with (home/'native-launches.jsonl').open('a') as launches:
         launches.write(json.dumps({'pid':os.getpid(),'ppid':os.getppid(),'resume':resume,'args':args})+'\n')
@@ -77,7 +79,8 @@ def reply(value): stream.write((json.dumps(value)+'\n').encode())
 def progress(action):
     print(json.dumps({'type':'fixture_progress','marker':action['progress'],'native_pid':os.getpid()}),flush=True)
     reply({'progress_written':action['progress']})
-reply({'pid':os.getpid(),'ppid':os.getppid(),'session':model,'native':native,'resume':resume,'args':args,'prompt':prompt})
+reply({'pid':os.getpid(),'ppid':os.getppid(),'session':model,'native':native,'resume':resume,'args':args,'prompt':prompt,
+       'cwd':os.getcwd(),'apiKeyVariablesPresent':[key for key in ('OPENAI_API_KEY','CODEX_API_KEY') if key in os.environ]})
 while True:
     line=stream.readline()
     if not line: break
@@ -948,6 +951,37 @@ class Receive(unittest.TestCase):
         for recovery_log in self.directory.glob('state.db.attempt-*/observer.log'):
             self.assertNotIn('Broken pipe', recovery_log.read_text())
 
+    def test_codex_principal_receive_uses_subscription_and_saved_native_thread(self):
+        self.coord('attach','root','codex','','')
+        observed=[]
+        for ident, body in [('subscription-initial','First Principal input.\n'),
+                            ('subscription-followup','Review the saved Principal conversation.\n')]:
+            self.coord('message',ident,'operator','root','task',body)
+            with patch.dict(os.environ, {'OPENAI_API_KEY':'controlled-unused-key', 'CODEX_API_KEY':'controlled-unused-key'}):
+                observer=self.spawn(*self.receive_args('root'))
+                control, started=self.accept('root')
+                owned=self.owned_processes()
+                self.action(control, body=body)
+                self.finish(observer)
+            observed.append((started,owned,ident,body))
+        native=observed[0][0]['native']
+        for (started,owned,ident,body), subcommand in zip(observed,[['exec'],['exec','resume',native]]):
+            self.assertEqual(started['args'][:2],['-c','forced_login_method="chatgpt"'])
+            self.assertEqual(started['args'][2:2+len(subcommand)],subcommand)
+            configs=[started['args'][i+1] for i,arg in enumerate(started['args']) if arg=='-c']
+            self.assertEqual(configs,['forced_login_method="chatgpt"','model_reasoning_effort="low"'])
+            self.assertEqual(started['args'][started['args'].index('--model')+1],'root')
+            self.assertEqual(started['apiKeyVariablesPresent'],[])
+            self.assertEqual(started['cwd'],str(self.directory))
+            self.assertIn('[id: '+ident+']',started['prompt'])
+            self.assertIn(body,started['prompt'])
+            self.assertEqual(started['native'],native)
+            self.assertTrue(any(p['pid']==started['pid'] and p['ppid']==started['ppid'] for p in owned))
+        self.assertEqual(observed[0][0]['resume'],'')
+        self.assertEqual(observed[1][0]['resume'],native)
+        self.assertEqual(self.coord('player','root')['native'],native)
+        self.assertEqual(self.coord('inbox','root'),[])
+
     def test_busy_direct_receive_drains_new_input_and_preserves_native_session(self):
         self.player()
         self.message('first', 'parent')
@@ -1097,7 +1131,11 @@ class Receive(unittest.TestCase):
         missing = self.coord(*self.receive_args('parent', self.directory / 'missing executable'), ok=False)
         self.assertNotEqual(missing.returncode, 0)
         self.assertEqual([m['id'] for m in self.coord('inbox', 'parent')], ['input'])
-        startup_report = next(m for m in self.coord('inbox', 'root') if 'could not start' in m['body'])
+        startup_report = next(m for m in self.coord('inbox', 'root') if 'without a native result (exit 127)' in m['body'])
+        self.assertIn('Output: '+str(self.directory / 'parent.jsonl'), startup_report['body'])
+        startup_stderr = pathlib.Path(startup_report['body'].split(' Stderr: ', 1)[1]).read_text()
+        self.assertIn(str(self.directory / 'missing executable'), startup_stderr)
+        self.assertIn('No such file or directory', startup_stderr)
         failed = self.spawn(*self.receive_args('parent'))
         control, _ = self.accept('parent')
         self.action(control, fail=True, ack=False)
@@ -1127,7 +1165,12 @@ class Receive(unittest.TestCase):
                 self.fail(f'startup failure did not notify parent; receive exited {failed.returncode}: '
                           f'{stderr or stdout}')
             raise
-        self.assertIn('could not start', notified['prompt'])
+        startup_report = next(m for m in self.coord('inbox', 'root') if 'without a native result (exit 127)' in m['body'])
+        self.assertIn(startup_report['body'], notified['prompt'])
+        self.assertIn('Output: '+str(self.directory / 'parent.jsonl'), startup_report['body'])
+        startup_stderr = pathlib.Path(startup_report['body'].split(' Stderr: ', 1)[1]).read_text()
+        self.assertIn(str(self.directory / 'missing executable'), startup_stderr)
+        self.assertIn('No such file or directory', startup_stderr)
         self.action(parent)
         self.finish(failed, ok=False)
         self.assertEqual([m['id'] for m in self.coord('inbox', 'parent')], ['input'])
