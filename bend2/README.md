@@ -383,9 +383,19 @@ When a resumed attempt exits without a terminal event and its stderr records
 a refused conversation, receive stores a recovery input with the workspace
 Git status, clears the refused native identity, and records a parent notice.
 The next receive reads the pending task with that recovery input and starts
-a fresh attempt; native initialization records the fresh identity. Loss of the retained process owner while its native process survives
-requires separate recovery work and validation; the observer-loss evidence
-does not cover it ([recovery boundary](../docs/bend2/receive-recovery-2026-09-28.md#recovery-boundary)).
+a fresh attempt; native initialization records the fresh identity.
+
+If the retained process owner exits while the native process survives, the
+receive observer keeps its session guard and reads the original output. If both
+supervisors exit, a receive retry attaches to the recorded live attempt before
+launching a native process. A direct turn refuses an unreleased recorded
+retained attempt.
+Completion records an unknown native wait status when the retained owner cannot
+supply it. Pending input continues after the original attempt completes.
+Live native input and stop control require an available keeper socket. The earlier
+[observer-loss measurement](../docs/bend2/receive-recovery-2026-09-28.md#recovery-boundary)
+retains its recorded scope.
+
 Recovery after loss of all coordinator and harness processes is described in
 the [process-loss record](../docs/bend2/host-restart-2026-09-28.md); that run
 kills processes while the host, its filesystem, and its storage keep running.
