@@ -5,7 +5,7 @@ versioned Darwin arm64 archive that carries the complete native payload: the
 executable, the packaged Conductor adapters, the Git identity helper, notices,
 complete gate logs and the source/build manifest. [Baton2 1.0 scope](release-1.0.md)
 states the supported platform and the finite qualifications of the released
-workflow. A source build produces the same executable and remains the procedure
+workflow. A source build produces a native executable and remains the procedure
 for other hosts and architectures. The original npm package and its smoke checks
 are retained with the original implementation in Git history.
 [Native development artifacts](native-artifacts.md) describe archive packaging,
@@ -114,8 +114,8 @@ export PATH="$BATON2_PREFIX/bin:$PATH"
 ```
 
 The [historical installation qualification](native-installation-2026-10-02/README.md)
-measured this source-build procedure. Its staged prefix contained only
-`bin/baton2`, and its original build source path was unavailable during use. The
+measured an earlier source build and staged only `bin/baton2`. Its original build
+source path was unavailable during use. The
 released archive above carries the complete payload. The executable
 linked system SQLite and libSystem on the qualified host. Other operating
 systems and architectures need their own build and execution qualification.
