@@ -90,7 +90,9 @@ The archive includes the Codex, OMP and MCP Conductor adapters under
 `libexec/baton2/`. Canonical files use `*-conductor.mjs`; the corresponding
 `*-root.mjs` files forward existing endpoints. With no explicit executable
 argument, the adapters select the archive's `bin/baton2`. The manifest hashes
-all six files. Node 22 supports these Conductor controls.
+all six files. The archive also includes `git-series.mjs`, which selects the
+configured Git identity and App credentials. Node 22.15 or later supports the
+Conductor controls and the Git launcher's process replacement.
 
 Extracted smoke invokes the staged MCP Conductor adapter and checks canonical
 Player inspection, the Principal Conductor role, Ensemble and Section membership

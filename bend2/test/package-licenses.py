@@ -147,9 +147,9 @@ class PackageLicenses(unittest.TestCase):
                  for harness in ('codex', 'omp', 'mcp') for suffix in ('conductor', 'root')]
         for name in names:
             shutil.copyfile(ROOT / 'bend2/scripts' / name, scripts / name)
-        helper = self.source / 'bend2/harness/git-series.py'
+        helper = self.source / 'bend2/harness/git-series.mjs'
         helper.parent.mkdir(parents=True)
-        shutil.copyfile(ROOT / 'bend2/harness/git-series.py', helper)
+        shutil.copyfile(ROOT / 'bend2/harness/git-series.mjs', helper)
         PACKAGE.stage_adapters(self.payload)
         return names
 
@@ -167,16 +167,17 @@ class PackageLicenses(unittest.TestCase):
 
     def test_extracted_git_helper_selects_author_with_its_source_absent(self):
         self.stage_runtime_files()
-        data = (ROOT / 'bend2/harness/git-series.py').read_bytes()
+        data = (ROOT / 'bend2/harness/git-series.mjs').read_bytes()
         archive, provenance = self.archive_fixture()
         self.source.rename(self.home / 'retained source λ')
         self.assertFalse(self.source.exists())
         prefix, manifest = SMOKE.extract(archive, provenance, self.home / 'helper-extraction')
-        installed = prefix / 'libexec/baton2/git-series.py'
+        installed = prefix / 'libexec/baton2/git-series.mjs'
+        self.assertFalse((prefix / 'libexec/baton2/git-series.py').exists())
         expected = {'bytes': len(data), 'sha256': hashlib.sha256(data).hexdigest()}
         self.assertEqual(installed.read_bytes(), data)
-        source = next(row for row in manifest['source']['files'] if row['path'] == 'bend2/harness/git-series.py')
-        staged = next(row for row in manifest['files'] if row['path'] == 'libexec/baton2/git-series.py')
+        source = next(row for row in manifest['source']['files'] if row['path'] == 'bend2/harness/git-series.mjs')
+        staged = next(row for row in manifest['files'] if row['path'] == 'libexec/baton2/git-series.mjs')
         for entry in (source, staged):
             self.assertEqual({key: entry[key] for key in expected}, expected)
         self.assertEqual(manifest['source']['directory'], str(self.source))
@@ -200,7 +201,9 @@ class PackageLicenses(unittest.TestCase):
         working.mkdir()
         git = shutil.which('git')
         self.assertIsNotNone(git)
-        argv = [sys.executable, str(installed), 'launch', '--registry', str(registry),
+        node = shutil.which('node')
+        self.assertIsNotNone(node)
+        argv = [node, str(installed), 'launch', '--registry', str(registry),
                 '--series-key', 'gpt', '--', git, 'var', 'GIT_AUTHOR_IDENT']
         environment = {'PATH': os.environ.get('PATH', os.defpath), 'GIT_CONFIG_GLOBAL': os.devnull,
                        'GIT_CONFIG_NOSYSTEM': '1', 'GIT_CEILING_DIRECTORIES': str(self.home),
