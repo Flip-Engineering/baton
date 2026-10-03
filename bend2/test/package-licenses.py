@@ -2,10 +2,14 @@
 import hashlib
 import importlib.util
 import json
+import os
 import pathlib
 import shutil
+import subprocess
+import sys
 import tarfile
 import tempfile
+import time
 import unittest
 
 
@@ -47,8 +51,7 @@ class PackageLicenses(unittest.TestCase):
             return {'path': path.relative_to(directory).as_posix(),
                     'bytes': path.stat().st_size,
                     'sha256': hashlib.sha256(path.read_bytes()).hexdigest()}
-        source_files = [entry(self.source / name, self.source) for name in ('LICENSE', 'NOTICE')
-                        if (self.source / name).is_file()]
+        source_files = [entry(path, self.source) for path in sorted(self.source.rglob('*')) if path.is_file()]
         files = [entry(path, self.payload) for path in sorted(self.payload.rglob('*')) if path.is_file()]
         return source_files, files
 
@@ -66,6 +69,7 @@ class PackageLicenses(unittest.TestCase):
         if change_license_hash:
             next(row for row in files if row['path'] == 'notices/baton2-LICENSE')['sha256'] = '0' * 64
         manifest = {'schema': 'baton2-native-artifact-v1', **identity,
+                    'source': {'directory': str(self.source), 'files': source_files},
                     'files': files, 'binary': next(row for row in files if row['path'] == 'bin/baton2'),
                     'terms': terms}
         provenance = self.home / 'manifest.json'
@@ -136,14 +140,21 @@ class PackageLicenses(unittest.TestCase):
             manifested = next(row for row in manifest['files'] if row['path'] == entry['path'])
             self.assertEqual({key: entry[key] for key in ('path', 'bytes', 'sha256')}, manifested)
 
-    def test_archive_keeps_canonical_and_compatibility_adapter_bytes(self):
+    def stage_runtime_files(self):
         scripts = self.source / 'bend2/scripts'
         scripts.mkdir(parents=True)
         names = [harness + '-' + suffix + '.mjs'
                  for harness in ('codex', 'omp', 'mcp') for suffix in ('conductor', 'root')]
         for name in names:
             shutil.copyfile(ROOT / 'bend2/scripts' / name, scripts / name)
+        helper = self.source / 'bend2/harness/git-series.py'
+        helper.parent.mkdir(parents=True)
+        shutil.copyfile(ROOT / 'bend2/harness/git-series.py', helper)
         PACKAGE.stage_adapters(self.payload)
+        return names
+
+    def test_archive_keeps_canonical_and_compatibility_adapter_bytes(self):
+        names = self.stage_runtime_files()
         archive, provenance = self.archive_fixture()
         prefix, manifest = SMOKE.extract(archive, provenance, self.home / 'adapter-extraction')
         entries = {row['path']: row for row in manifest['files']}
@@ -153,6 +164,62 @@ class PackageLicenses(unittest.TestCase):
             self.assertEqual((prefix / path).read_bytes(), data)
             self.assertEqual(entries[path], {'path': path, 'bytes': len(data),
                                             'sha256': hashlib.sha256(data).hexdigest()})
+
+    def test_extracted_git_helper_selects_author_with_its_source_absent(self):
+        self.stage_runtime_files()
+        data = (ROOT / 'bend2/harness/git-series.py').read_bytes()
+        archive, provenance = self.archive_fixture()
+        self.source.rename(self.home / 'retained source λ')
+        self.assertFalse(self.source.exists())
+        prefix, manifest = SMOKE.extract(archive, provenance, self.home / 'helper-extraction')
+        installed = prefix / 'libexec/baton2/git-series.py'
+        expected = {'bytes': len(data), 'sha256': hashlib.sha256(data).hexdigest()}
+        self.assertEqual(installed.read_bytes(), data)
+        source = next(row for row in manifest['source']['files'] if row['path'] == 'bend2/harness/git-series.py')
+        staged = next(row for row in manifest['files'] if row['path'] == 'libexec/baton2/git-series.py')
+        for entry in (source, staged):
+            self.assertEqual({key: entry[key] for key in expected}, expected)
+        self.assertEqual(manifest['source']['directory'], str(self.source))
+
+        public = self.home / 'public series λ'
+        public.mkdir()
+        github = {'appId': 1001, 'clientId': 'fixture-client', 'slug': 'fixture-gpt',
+                  'botLogin': 'fixture-gpt[bot]', 'botId': 9001,
+                  'commitEmail': '9001+fixture-gpt[bot]@users.noreply.github.com',
+                  'installationId': 2001, 'repositoryFullName': 'Flip-Engineering/baton',
+                  'repositoryId': 3001,
+                  'permissions': {'contents': 'write', 'pull_requests': 'write', 'metadata': 'read'}}
+        identity = public / 'identity-series.json'
+        identity.write_text(json.dumps({'seriesKey': 'gpt', 'displaySeries': 'GPT', 'github': github}))
+        identity.chmod(0o600)
+        registry = self.home / 'series.json'
+        registry.write_text(json.dumps({'models': {}, 'series': {'gpt': str(public)}}))
+        registry.chmod(0o600)
+        self.assertFalse((public / 'private-key.pem').exists())
+        working = self.home / 'separate working directory λ'
+        working.mkdir()
+        git = shutil.which('git')
+        self.assertIsNotNone(git)
+        argv = [sys.executable, str(installed), 'launch', '--registry', str(registry),
+                '--series-key', 'gpt', '--', git, 'var', 'GIT_AUTHOR_IDENT']
+        environment = {'PATH': os.environ.get('PATH', os.defpath), 'GIT_CONFIG_GLOBAL': os.devnull,
+                       'GIT_CONFIG_NOSYSTEM': '1', 'GIT_CEILING_DIRECTORIES': str(self.home),
+                       'GIT_AUTHOR_NAME': 'Inherited sender',
+                       'GIT_AUTHOR_EMAIL': 'sender@example.invalid'}
+        started = time.time()
+        stdout, stderr = self.home / 'installed-author.stdout', self.home / 'installed-author.stderr'
+        with stdout.open('xb') as out, stderr.open('xb') as err:
+            child = subprocess.Popen(argv, cwd=working, env=environment, stdout=out, stderr=err)
+            code = child.wait()
+        receipt = {'argv': argv, 'cwd': str(working), 'pid': child.pid, 'exit_code': code,
+                   'started_unix': started, 'ended_unix': time.time(), 'source_absent': not self.source.exists(),
+                   'private_key_created': False, 'authentication': 'not invoked',
+                   'streams': [{'path': path.name, 'bytes': path.stat().st_size,
+                                'sha256': hashlib.sha256(path.read_bytes()).hexdigest()} for path in (stdout, stderr)]}
+        (self.home / 'installed-author.json').write_text(json.dumps(receipt, indent=2) + '\n')
+        self.assertEqual(code, 0, stderr.read_text())
+        self.assertTrue(stdout.read_text().startswith(github['botLogin'] + ' <' + github['commitEmail'] + '> '))
+        self.assertFalse((public / 'private-key.pem').exists())
 
     def test_archive_license_hash_mismatch_refuses_extraction(self):
         archive, provenance = self.archive_fixture(change_license_hash=True)
