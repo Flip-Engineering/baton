@@ -10,9 +10,9 @@ to complete exact-source gates and extracted use. Hosted artifact execution and
 release distribution require their own successful qualification.
 
 The September prototype [go/no-go record](go-no-go.md) remains historical evidence.
-The [implemented architecture](architecture.md) describes the current acceptance
-contract: a real orchestrator's working day with native agents, review, recovery and
-publication. Qualification uses current native workflow and recovery evidence.
+The [implemented architecture](architecture.md) defines the current native workflow,
+recovery and publication paths. The [1.0 scope](release-1.0.md) and the six release
+gates below define 1.0 acceptance. Full working-day use remains unqualified.
 
 ## Published evidence
 
