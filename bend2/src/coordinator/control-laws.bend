@@ -3,6 +3,11 @@ import ./control.bend as Control
 import ./commands.bend as C
 import ./store.bend as Store
 import ./delivery.bend as Delivery
+import ./recruit.bend as Recruit
+import ./knowledge.bend as Knowledge
+import ../git/status.bend as WS
+import ../git/types.bend as G
+import ../json/canonical.bend as J
 import ../host/control.bend as Host
 import ../host/session-lock.bend as Lock
 import ../host/text.bend as Text
@@ -250,7 +255,7 @@ law readable_snapshot_formats_all_stored_fields:
   for +db: String
   for command: C.Command
   {Control.pretty(db,command) == (do IO<String>:
-    +saved : String <- IO.try(String,Store.apply(db,command))
+    +saved : String <- Control.read_snapshot(db,command)
     Control.pretty_saved(db,saved,String.is_empty(saved))) : IO(String)}
 
 def readable_snapshot_formats_all_stored_fields(db,command):
@@ -391,4 +396,95 @@ law detached_turn_stdin_refuses_before_launch:
   {Control.task_path(path,True{}) == IO.die(String,2,"A detached turn requires a task file; save the task and pass its path.") : IO(String)}
 
 def detached_turn_stdin_refuses_before_launch(path):
+  {==}
+
+# These laws bind parsing, reader selection and result construction. SQLite and
+# Git execution are checked by the controlled native fixtures.
+law readable_knowledge_command_selects_the_existing_reader:
+  for reader: String
+  {C.parse(["knowledge",reader,"--pretty"]) == C.Pretty{C.KnowledgeRead{reader}} : C.Command}
+
+def readable_knowledge_command_selects_the_existing_reader(reader):
+  {==}
+
+law readable_worktree_command_selects_the_existing_reader:
+  for id: String
+  {C.parse(["worktree",id,"--pretty"]) == C.Pretty{C.Worktree{id}} : C.Command}
+
+def readable_worktree_command_selects_the_existing_reader(id):
+  {==}
+
+law readable_knowledge_uses_the_existing_visibility_query:
+  for db: String
+  for reader: String
+  {Control.read_snapshot(db,C.KnowledgeRead{reader}) == IO.try(String,DB.Sql.query(db,Knowledge.commit_sql(Knowledge.read_sql(reader)))) : IO(String)}
+
+def readable_knowledge_uses_the_existing_visibility_query(db,reader):
+  {==}
+
+law readable_worktree_inspects_the_recorded_workspace:
+  for db: String
+  for id: String
+  {Control.read_snapshot(db,C.Worktree{id}) == Recruit.inspect_result(db,id) : IO(String)}
+
+def readable_worktree_inspects_the_recorded_workspace(db,id):
+  {==}
+
+law worktree_result_preserves_all_inspection_fields:
+  for id: String
+  for path: String
+  for branch: String
+  for commit: String
+  for dirty: Bool
+  {Recruit.status_result(id,path,Done{G.Wt{branch,commit,dirty}}) == IO.pure(String,"{\"id\":" ++ J.string_literal(id) ++ ",\"workspace\":" ++ J.string_literal(path) ++ ",\"branch\":" ++ J.string_literal(branch) ++ ",\"commit\":" ++ J.string_literal(commit) ++ ",\"dirty\":" ++ Bool.pick(String,dirty,"true","false") ++ "}") : IO(String)}
+
+def worktree_result_preserves_all_inspection_fields(id,path,branch,commit,dirty):
+  {==}
+
+law worktree_result_preserves_git_failure:
+  for id: String
+  for path: String
+  for error: G.GitFail
+  {Recruit.status_result(id,path,Fail{error}) == IO.die(String,1,G.fail_text(error)) : IO(String)}
+
+def worktree_result_preserves_git_failure(id,path,error):
+  {==}
+
+law worktree_result_refuses_a_missing_session:
+  for id: String
+  for path: String
+  {Recruit.inspect_path_result(id,path,True{}) == IO.die(String,2,"The player has no recorded workspace.") : IO(String)}
+
+def worktree_result_refuses_a_missing_session(id,path):
+  {==}
+
+law worktree_result_reads_fresh_git_status:
+  for id: String
+  for +path: String
+  {Recruit.inspect_path_result(id,path,False{}) == (do IO<String>:
+    status : Result<&1,&1,G.GitFail,G.WtStatus> <- WS.worktreeStatus(path)
+    Recruit.status_result(id,path,status)) : IO(String)}
+
+def worktree_result_reads_fresh_git_status(id,path):
+  {==}
+
+law worktree_result_reads_the_registered_workspace:
+  for +db: String
+  for +id: String
+  {Recruit.inspect_result(db,id) == (do IO<String>:
+    ready : String <- IO.try(String,Store.apply(db,C.Session{id}))
+    +path : String <- IO.try(String,DB.Sql.query(db,"SELECT workspace FROM sessions WHERE id=" ++ C.q(id) ++ ";"))
+    Recruit.inspect_path_result(id,Recruit.line(path),String.is_empty(ready))) : IO(String)}
+
+def worktree_result_reads_the_registered_workspace(db,id):
+  {==}
+
+law ordinary_worktree_output_prints_the_same_inspection_result:
+  for db: String
+  for id: String
+  {Recruit.inspect(db,id) == (do IO<Unit>:
+    saved : String <- Recruit.inspect_result(db,id)
+    IO.print(saved)) : IO(Unit)}
+
+def ordinary_worktree_output_prints_the_same_inspection_result(db,id):
   {==}

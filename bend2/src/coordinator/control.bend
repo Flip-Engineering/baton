@@ -1,6 +1,8 @@
 import Base
 import ./commands.bend as C
 import ./store.bend as Store
+import ./recruit.bend as Recruit
+import ./knowledge.bend as Knowledge
 import ./delivery.bend as Delivery
 import ../host/sqlite.bend as DB
 import ../host/text.bend as Text
@@ -217,9 +219,15 @@ def pretty_saved(db: String, saved: String, empty: Bool) -> IO(String):
     case True{}: IO.die(String,1,"No matching session or message; inspect status and the requested ID.")
     case False{}: IO.try(String,DB.Sql.query(db,"SELECT json_pretty(" ++ C.q(Tx.trim_nl(saved)) ++ ");"))
 
+def read_snapshot(db: String, command: C.Command) -> IO(String):
+  match command:
+    case C.Worktree{id}: Recruit.inspect_result(db,id)
+    case C.KnowledgeRead{reader}: IO.try(String,DB.Sql.query(db,Knowledge.commit_sql(Knowledge.read_sql(reader))))
+    case other: IO.try(String,Store.apply(db,other))
+
 def pretty(+db: String, command: C.Command) -> IO(String):
   do IO<String>:
-    +saved : String <- IO.try(String,Store.apply(db,command))
+    +saved : String <- read_snapshot(db,command)
     pretty_saved(db,saved,String.is_empty(saved))
 
 law readable_status_formats_the_full_stored_status:
