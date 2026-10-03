@@ -51,6 +51,7 @@ type Command is Data:
   KnowledgeRecord{id: String, author: String, claim: String, evidence: String, limits: String}
   KnowledgeRead{reader: String}
   KnowledgePromote{id: String, promoter: String, source: String, destination: String, finding: String}
+  Help{}
   Invalid{}
 
 def escape_char(+head: Char, tail: String, quote: Bool) -> String:
@@ -325,16 +326,21 @@ def sql(command: Command) -> String:
     case KnowledgeRecord{id,author,claim,evidence,limits}: ""
     case KnowledgeRead{reader}: ""
     case KnowledgePromote{id,promoter,source,destination,finding}: ""
+    case Help{}: ""
     case Invalid{}: ""
+
+def help_verb(+verb: String) -> Bool:
+  Bool.or(String.eq(verb,"help"),String.eq(verb,"--help"))
 
 def parse(args: List<String>) -> Command:
   match args:
     case +verb <> Nil{}:
+      Bool.pick(Command,help_verb(verb),Help{},
       Bool.pick(Command, String.eq(verb,"status"),Status{},
       Bool.pick(Command, String.eq(verb,"workers"),LegacySubordinates{},
       Bool.pick(Command, String.eq(verb,"players"),Players{},
       Bool.pick(Command,String.eq(verb,"orchestra"),Orchestra{},
-      Bool.pick(Command, String.eq(verb,"pending"),Pending{},Invalid{})))))
+      Bool.pick(Command, String.eq(verb,"pending"),Pending{},Invalid{}))))))
     case +verb <> +id <> Nil{}:
       Bool.pick(Command,Bool.and(Bool.or(String.eq(verb,"players"),Bool.or(String.eq(verb,"orchestra"),String.eq(verb,"pending"))),String.eq(id,"--pretty")),Pretty{Bool.pick(Command,String.eq(verb,"players"),Players{},Bool.pick(Command,String.eq(verb,"orchestra"),Orchestra{},Pending{}))},Bool.pick(Command,Bool.and(String.eq(verb,"status"),String.eq(id,"--pretty")),StatusPretty{},Bool.pick(Command,String.eq(verb,"player"),PlayerRead{id},Bool.pick(Command, String.eq(verb,"role"),RoleRead{id},Bool.pick(Command, String.eq(verb,"ensemble"),EnsembleRead{id},Bool.pick(Command, String.eq(verb,"inbox"),Inbox{id},
       Bool.pick(Command, String.eq(verb,"session"),Session{id},
@@ -369,3 +375,26 @@ def parse(args: List<String>) -> Command:
       Bool.pick(Command,String.eq(verb,"start"),Start{player,id,cmd,model,effort,cwd,task,log,session},Bool.pick(Command,String.eq(verb,"turn"),RunTurn{player,id,cmd,model,effort,cwd,task,log,session},
       Bool.pick(Command,String.eq(verb,"recruit"),Recruit{player,id,cmd,model,effort,cwd,task,log,session},Invalid{})))
     case _: Invalid{}
+
+law help_word_selects_the_help_command:
+  {parse(["help"]) == Help{} : Command}
+
+def help_word_selects_the_help_command():
+  {==}
+
+law help_flag_selects_the_help_command:
+  {parse(["--help"]) == Help{} : Command}
+
+def help_flag_selects_the_help_command():
+  {==}
+
+law message_parser_preserves_the_complete_body:
+  for id: String
+  for sender: String
+  for recipient: String
+  for kind: String
+  for body: String
+  {parse(["message",id,sender,recipient,kind,body]) == Message{id,sender,recipient,kind,body} : Command}
+
+def message_parser_preserves_the_complete_body(id,sender,recipient,kind,body):
+  {==}

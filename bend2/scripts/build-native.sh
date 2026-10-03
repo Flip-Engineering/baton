@@ -19,5 +19,11 @@ entry=${1:-bend2/src/coordinator/main.bend}
 output=${2:-.scratch/bend2/baton2}
 mkdir -p "$(dirname -- "$output")"
 "$compiler" "$entry" -o "$output.c"
-"${CC:-clang}" -O1 -pthread "$output.c" -lsqlite3 -lm -o "$output"
+entry_path=$(CDPATH= cd -- "$(dirname -- "$entry")" && pwd)/$(basename -- "$entry")
+if [ "$entry_path" = "$root/bend2/src/coordinator/main.bend" ]; then
+  "${CC:-clang}" -O1 -pthread -Dmain=baton2_runtime_main -c "$output.c" -o "$output.o"
+  "${CC:-clang}" -O1 -pthread bend2/src/host/native-entry.c "$output.o" -lsqlite3 -lm -o "$output"
+else
+  "${CC:-clang}" -O1 -pthread "$output.c" -lsqlite3 -lm -o "$output"
+fi
 printf '%s\n' "$output"

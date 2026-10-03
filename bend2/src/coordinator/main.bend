@@ -75,10 +75,13 @@ law stored_command_entry_uses_the_actual_store:
 def stored_command_entry_uses_the_actual_store(db,command):
   {==}
 
+def usage() -> String:
+  "usage: baton2 DATABASE COMMAND ARGS\nstart SESSION HARNESS HARNESS_CMD MODEL EFFORT CWD OUTPUT_LOG TASK_ID TASK_FILE\nreceiver SESSION HARNESS_CMD OUTPUT_LOG\ndispatch-file ID SENDER RECIPIENT KIND PATH\ndispatch-turn PLAYER TURN_ID HARNESS_CMD OUTPUT_LOG TASK_FILE\nstatus --pretty\nattach ID HARNESS NATIVE ENDPOINT\nrecruit ID PARENT HARNESS MODEL EFFORT REPO BRANCH PATH BASE\nworktree ID\nconnect ID NATIVE ENDPOINT\nbind ID NATIVE HARNESS MODEL EFFORT\nrole SESSION [player|principal-conductor|associate-conductor|operator]\nensemble ID [OWNER [loose|tight]]\nensemble-member ID OWNER PLAYER add|remove\nsection ENSEMBLE SECTION [OWNER CAPABILITY]\nsection-member ENSEMBLE SECTION OWNER PLAYER add|remove\norchestra\nmessage ID SENDER RECIPIENT KIND BODY\nmessage-file ID SENDER RECIPIENT KIND PATH\nobserve-file ID PLAYER PATH\nreport ID PLAYER BODY\nask ID PLAYER BODY\nask-file ID PLAYER PATH\nnative-reply PARENT REQUEST RESPONSE_JSON\nnative-reply-file PARENT REQUEST PATH\nsession ID\ndelivery ID\npending\ninbox RECIPIENT\nack ID RECIPIENT NATIVE_RECEIPT\nstatus\nplayers\nplayer ID\nturns PLAYER_ID\nland PLAYER_ID REPO TARGET_BRANCH\nland-checked PLAYER_ID REPO TARGET_BRANCH CHECK FILES\npush REPO BRANCH REMOTE\nturn PLAYER TURN_ID HARNESS_CMD MODEL EFFORT CWD TASK_FILE OUTPUT_LOG RESUME_SESSION\nstop SESSION STOP_ID REASON\nforce-stop SESSION STOP_ID\nreceive SESSION HARNESS_CMD MODEL EFFORT CWD OUTPUT_LOG MESSAGE_ID\nrecord FINDING_ID AUTHOR CLAIM EVIDENCE LIMITS\nknowledge READER\npromote PROMOTION_ID PROMOTER SOURCE DESTINATION FINDING\nEmpty receive MODEL/EFFORT/CWD use recorded values; empty MESSAGE_ID reads the pending inbox.\nPATH - reads stdin; empty RESUME_SESSION starts a new native session"
+
 def execute(db: String, command: C.Command) -> IO(Unit):
   match command:
-    case C.Invalid{}:
-      IO.die(Unit,2,"usage: baton2 DATABASE COMMAND ARGS\nstart SESSION HARNESS HARNESS_CMD MODEL EFFORT CWD OUTPUT_LOG TASK_ID TASK_FILE\nreceiver SESSION HARNESS_CMD OUTPUT_LOG\ndispatch-file ID SENDER RECIPIENT KIND PATH\ndispatch-turn PLAYER TURN_ID HARNESS_CMD OUTPUT_LOG TASK_FILE\nstatus --pretty\nattach ID HARNESS NATIVE ENDPOINT\nrecruit ID PARENT HARNESS MODEL EFFORT REPO BRANCH PATH BASE\nworktree ID\nconnect ID NATIVE ENDPOINT\nbind ID NATIVE HARNESS MODEL EFFORT\nrole SESSION [player|principal-conductor|associate-conductor|operator]\nensemble ID [OWNER [loose|tight]]\nensemble-member ID OWNER PLAYER add|remove\nsection ENSEMBLE SECTION [OWNER CAPABILITY]\nsection-member ENSEMBLE SECTION OWNER PLAYER add|remove\norchestra\nmessage ID SENDER RECIPIENT KIND BODY\nmessage-file ID SENDER RECIPIENT KIND PATH\nobserve-file ID PLAYER PATH\nreport ID PLAYER BODY\nask ID PLAYER BODY\nask-file ID PLAYER PATH\nnative-reply PARENT REQUEST RESPONSE_JSON\nnative-reply-file PARENT REQUEST PATH\nsession ID\ndelivery ID\npending\ninbox RECIPIENT\nack ID RECIPIENT NATIVE_RECEIPT\nstatus\nplayers\nplayer ID\nturns PLAYER_ID\nland PLAYER_ID REPO TARGET_BRANCH\nland-checked PLAYER_ID REPO TARGET_BRANCH CHECK FILES\npush REPO BRANCH REMOTE\nturn PLAYER TURN_ID HARNESS_CMD MODEL EFFORT CWD TASK_FILE OUTPUT_LOG RESUME_SESSION\nstop SESSION STOP_ID REASON\nforce-stop SESSION STOP_ID\nreceive SESSION HARNESS_CMD MODEL EFFORT CWD OUTPUT_LOG MESSAGE_ID\nrecord FINDING_ID AUTHOR CLAIM EVIDENCE LIMITS\nknowledge READER\npromote PROMOTION_ID PROMOTER SOURCE DESTINATION FINDING\nEmpty receive MODEL/EFFORT/CWD use recorded values; empty MESSAGE_ID reads the pending inbox.\nPATH - reads stdin; empty RESUME_SESSION starts a new native session")
+    case C.Help{}: IO.write(usage())
+    case C.Invalid{}: IO.die(Unit,2,usage())
     case C.Stop{session,id,reason}: Stop.run(db,session,id,reason,False{})
     case C.ForceStop{session,id}: Stop.run(db,session,id,"",True{})
     case C.Start{session,harness,cmd,model,effort,cwd,log,id,task}:
@@ -227,6 +230,8 @@ def keeper(directory: String, lock: Maybe<&2,U32>) -> IO(Unit):
 
 def normal_cli(args: List<String>) -> IO(Unit):
   match args:
+    case +verb <> Nil{}:
+      Bool.pick(IO(Unit),C.help_verb(verb),execute("",C.Help{}),execute(verb,C.Invalid{}))
     case db <> rest: execute(db,C.parse(rest))
     case Nil{}: execute("",C.Invalid{})
 
@@ -341,4 +346,49 @@ law detached_internal_cli_delivers_the_named_message:
   {cli(["--dispatch-message",db,id]) == Control.deliver(db,id) : IO(Unit)}
 
 def detached_internal_cli_delivers_the_named_message(db,id):
+  {==}
+
+# These laws bind help and argument forwarding in the application entry. The
+# native C entry and runtime argument boundary require executable checks.
+law help_prints_product_usage_without_database_effects:
+  for db: String
+  {execute(db,C.Help{}) == IO.write(usage()) : IO(Unit)}
+
+def help_prints_product_usage_without_database_effects(db):
+  {==}
+
+law invalid_command_refuses_with_the_same_usage:
+  for db: String
+  {execute(db,C.Invalid{}) == IO.die(Unit,2,usage()) : IO(Unit)}
+
+def invalid_command_refuses_with_the_same_usage(db):
+  {==}
+
+law bare_help_word_selects_help_without_a_database:
+  {normal_cli(["help"]) == execute("",C.Help{}) : IO(Unit)}
+
+def bare_help_word_selects_help_without_a_database():
+  {==}
+
+law bare_help_flag_selects_help_without_a_database:
+  {normal_cli(["--help"]) == execute("",C.Help{}) : IO(Unit)}
+
+def bare_help_flag_selects_help_without_a_database():
+  {==}
+
+law database_cli_passes_the_complete_command_arguments:
+  for db: String
+  for verb: String
+  for args: List<String>
+  {normal_cli(db <> verb <> args) == execute(db,C.parse(verb <> args)) : IO(Unit)}
+
+def database_cli_passes_the_complete_command_arguments(db,verb,args):
+  {==}
+
+law native_main_passes_the_complete_runtime_arguments:
+  {main() == (do IO<Unit>:
+    args : List<String> <- IO.args()
+    cli(args)) : IO(Unit)}
+
+def native_main_passes_the_complete_runtime_arguments():
   {==}
