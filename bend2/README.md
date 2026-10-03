@@ -148,6 +148,37 @@ Ensembles, Sections and execution state and pending counts. Each database
 represents its own Orchestra. See [terminology](../docs/bend2/terminology.md)
 for the full naming contract.
 
+## Status and report inspection
+
+`player ID` reads one stored Player binding. Format the parsed JSON across
+lines for review:
+
+```sh
+.scratch/bend2/baton2 state.db player worker1 | python3 -m json.tool
+```
+
+`orchestra` returns the stored snapshot. For a displayed copy, parse the
+complete stdout and remove `latestReport` from the Players and operators
+records:
+
+```sh
+.scratch/bend2/baton2 state.db orchestra | python3 -c '
+import json, sys
+snapshot = json.load(sys.stdin)
+for row in snapshot["players"] + snapshot["operators"]:
+    row.pop("latestReport", None)
+print(json.dumps(snapshot, indent=2))
+'
+```
+
+The displayed copy retains `latestReportId`, execution state, route, pending
+counts and all Ensemble and Section records. The stored machine JSON keeps
+every field, and all command behavior is unchanged. `delivery REPORT_ID`
+returns the stored message with its full body, receipt and current recipient
+endpoint. `turns PLAYER` lists native turn history with report bodies and
+receipts. Capture complete stdout and parse it when reviewing a report body;
+harness tool display can truncate long strings.
+
 During an OMP turn, send guidance with:
 
 ```sh

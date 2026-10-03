@@ -33,8 +33,10 @@ env -u OPENAI_API_KEY -u CODEX_API_KEY "$BATON_CODEX_NATIVE" \
   -c forced_login_method=chatgpt login status
 ```
 
-The successful status is `Logged in using ChatGPT`. Create a launch wrapper at
-a retained absolute path, substituting the selected native executable:
+The successful status is `Logged in using ChatGPT`. For the Baton2 1.0
+archive (source `ea514a28e080317b223414af9a2327a6b53384e6`), create a launch
+wrapper at a retained absolute path, substituting the selected native
+executable:
 
 ```sh
 #!/bin/sh
@@ -43,10 +45,45 @@ exec /absolute/path/to/codex -c forced_login_method=chatgpt "$@"
 ```
 
 Make the wrapper executable and use its path as `HARNESS_COMMAND` for every
-Codex `turn` and registered `receive` endpoint. The
+Codex `turn` and registered `receive` endpoint of a 1.0 installation. The
 [trial launcher](../../bend2/scripts/trial-start.sh) creates this wrapper and
 removes the API-key variables from its launch environment. The native adapter
 uses `exec --json` and `exec resume SESSION`, with the task on stdin.
+
+## Development-source Codex endpoint
+
+Development source `6a7df0eedd57c7ce9c59cb836a405cc0dc658880` qualifies a
+compiled `receive` endpoint registered under the shipped Git identity helper.
+The helper ships at `PREFIX/libexec/baton2/git-series.py` in a native archive
+(`bend2/harness/git-series.py` in a source checkout; see
+[series Git identities](git-series-identities.md)) and requires Python 3.11 or
+newer; use an absolute path to such an interpreter as the first argv element.
+For the `gpt` series the helper removes `OPENAI_API_KEY` and `CODEX_API_KEY`
+from the launched environment, keeping the ChatGPT subscription login. The
+command after `--` names the compiled coordinator, the database, the `receive`
+arguments, and the real native executable:
+
+```json
+["/ABSOLUTE/python3", "PREFIX/libexec/baton2/git-series.py", "launch", "--registry", "/ABSOLUTE/series.json", "--model-key", "gpt-6-astra", "--", "/ABSOLUTE/baton2", "/ABSOLUTE/orchestra.db", "receive", "principal", "/ABSOLUTE/codex", "gpt-6-astra", "low", "/ABSOLUTE/workspace", "/ABSOLUTE/principal-native.jsonl"]
+```
+
+This route is qualified at the named development source. Coordinator dispatch
+with automatic Git series identity is under separate implementation; runs at
+other sources keep their own qualification scope. Record a run's observed
+exact bindings in that run's report.
+
+A registered compiled `receive` endpoint ends with `OUTPUT_LOG`; normal
+delivery appends `MESSAGE_ID`, so the registered argv omits a final empty
+`MESSAGE_ID`. A manual `receive` invocation supplies the final empty string
+to read pending input:
+
+```sh
+/ABSOLUTE/baton2 /ABSOLUTE/orchestra.db receive principal /ABSOLUTE/codex MODEL EFFORT /ABSOLUTE/workspace /ABSOLUTE/principal-native.jsonl ''
+```
+
+The packaged Node Conductor adapters ship beside the helper and remain
+available for their documented endpoints. Their presence qualifies no
+additional Node setup path; the qualified routes are the table above.
 
 ## OMP and Muse
 
@@ -79,10 +116,44 @@ in the emitted shell settings.
 Follow [installation](installation.md) for the coordinator and host dependencies.
 Use [native Conductor delivery](../../bend2/README.md#native-conductor-delivery) to register
 the receiver, then send the assigned task through the public message command.
+Register the qualified hierarchy through compiled `receive` with an absolute
+endpoint workspace: the Codex Principal Conductor, the OMP Associate Conductor
+and the OMP Player each keep a registered `receive` endpoint. The Muse Player
+uses direct `turn` and its recorded native session identity for later turns.
 Use public `recruit` for subordinate sessions and record the returned workspace
 and base. Read `session SESSION` for the saved native identity before continuing
-the conversation. The registered endpoint must use the subscription wrapper for
-a Codex session.
+the conversation.
+
+## Status and report inspection
+
+`player ID` reads one stored Player binding. Format the parsed JSON across
+lines for review:
+
+```sh
+/ABSOLUTE/baton2 /ABSOLUTE/orchestra.db player worker1 | python3 -m json.tool
+```
+
+`orchestra` returns the stored snapshot. For a displayed copy, parse the
+complete stdout and remove `latestReport` from the Players and operators
+records:
+
+```sh
+/ABSOLUTE/baton2 /ABSOLUTE/orchestra.db orchestra | python3 -c '
+import json, sys
+snapshot = json.load(sys.stdin)
+for row in snapshot["players"] + snapshot["operators"]:
+    row.pop("latestReport", None)
+print(json.dumps(snapshot, indent=2))
+'
+```
+
+The displayed copy retains `latestReportId`, execution state, route, pending
+counts and all Ensemble and Section records. The stored machine JSON keeps
+every field, and all command behavior is unchanged. `delivery REPORT_ID`
+returns the stored message with its full body, receipt and current recipient
+endpoint. `turns PLAYER` lists native turn history with report bodies and
+receipts. Capture complete stdout and parse it when reviewing a report body;
+harness tool display can truncate long strings.
 
 Inspect complete parent reports, native logs and acceptance receipts before
 landing work. `ack` records message acceptance; Git review and landing have
