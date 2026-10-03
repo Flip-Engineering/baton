@@ -5,6 +5,10 @@ credential helper. It selects a GitHub App for GPT, Muse, DeepSeek, Claude,
 GLM or Kimi and sets that bot's Git author and committer fields. Native
 execution keeps its exact model identifier.
 
+Native archives install the same helper at `PREFIX/libexec/baton2/git-series.py`
+beside the Conductor adapters. Run that file with Python 3.11 or later. A source
+checkout uses `bend2/harness/git-series.py`.
+
 The helper currently supports only `Flip-Engineering/baton`. Its App
 installation and issued token must match that repository ID and the
 `contents:write`, `pull_requests:write`, `metadata:read` permissions below.
@@ -73,8 +77,10 @@ an App JWT with installed `/usr/bin/openssl`.
 
 ## Model and series selection
 
-Set `GIT_SERIES` to the helper's absolute source path and `REGISTRY` to the
-registry's absolute path. A native wrapper binds the exact execution model:
+Set `GIT_SERIES` to the helper's absolute installed or source path and `REGISTRY`
+to the registry's absolute path. For an extracted native prefix, use
+`GIT_SERIES="$PREFIX/libexec/baton2/git-series.py"`. A native wrapper binds the
+exact execution model:
 
 ```sh
 exec python3 "$GIT_SERIES" launch --registry "$REGISTRY" \
