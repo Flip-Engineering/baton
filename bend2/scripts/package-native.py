@@ -240,7 +240,7 @@ def stage_adapters(payload):
         for suffix in ('conductor', 'root'):
             name = harness + '-' + suffix + '.mjs'
             shutil.copyfile(ROOT / 'bend2/scripts' / name, directory / name)
-    shutil.copyfile(ROOT / 'bend2/harness/git-series.py', directory / 'git-series.py')
+    shutil.copyfile(ROOT / 'bend2/harness/git-series.mjs', directory / 'git-series.mjs')
 
 
 def stage_notices(payload, archive_notices, kind='development'):

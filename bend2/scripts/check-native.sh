@@ -17,3 +17,4 @@ for test in bend2/test/*.py; do
   printf '%s\n' "$test"
   "$PYTHON3" "$test"
 done
+node --test bend2/test/git-series.mjs
