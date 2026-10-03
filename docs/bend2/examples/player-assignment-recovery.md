@@ -11,6 +11,8 @@ The recruitment and endpoint behavior below is specified in
 [connect-admission-2026-10-02.md](../connect-admission-2026-10-02.md). The Associate Conductor
 recruitment pattern is specified in
 [associate-conductor-instructions.md](../../../bend2/trial/associate-conductor-instructions.md).
+The native `receiver`, `dispatch-file` and `--pretty` examples require current
+development source; the immutable 1.0 archive retains its version-specific interface.
 
 ## Declared assignment
 
@@ -55,7 +57,7 @@ remains available for its parent.
 Read the stored session and the stored worktree before deciding:
 
 ```sh
-"$B2" "$DB" session issue-4-worker-a
+"$B2" "$DB" session issue-4-worker-a --pretty
 "$B2" "$DB" worktree issue-4-worker-a
 ```
 
@@ -67,24 +69,22 @@ dirty flag.
 
 Read the stored assignment and pass its fields back unchanged. A recomputed
 base from the Associate Conductor branch is not the stored base when the branch has advanced,
-and that call raises `player-assignment-conflict`. Extract the stored fields
-from the `session` JSON output and supply them to `recruit`, with `"$REPO"`
-as the repository argument:
+and that call raises `player-assignment-conflict`. Read the stored fields
+from the `session` output:
 
 ```sh
-"$B2" "$DB" session issue-4-worker-a
+"$B2" "$DB" session issue-4-worker-a --pretty
 ```
 
-```python
-import json
-import os
-import subprocess
+Set `STORED_PARENT`, `STORED_HARNESS`, `STORED_MODEL`, `STORED_EFFORT`,
+`STORED_BRANCH`, `STORED_WORKSPACE` and `STORED_BASE` to those field values,
+including the original commit in `base`. Then retry with `REPO` naming the
+same repository:
 
-b2, db, repo = os.environ["B2"], os.environ["DB"], os.environ["REPO"]
-stored = json.loads(subprocess.check_output([b2, db, "session", "issue-4-worker-a"], text=True))
-subprocess.run([b2, db, "recruit", "issue-4-worker-a",
-                stored["parent"], stored["harness"], stored["model"], stored["effort"],
-                repo, stored["branch"], stored["workspace"], stored["base"]], check=True)
+```sh
+"$B2" "$DB" recruit issue-4-worker-a "$STORED_PARENT" "$STORED_HARNESS" \
+  "$STORED_MODEL" "$STORED_EFFORT" "$REPO" "$STORED_BRANCH" \
+  "$STORED_WORKSPACE" "$STORED_BASE"
 ```
 
 This is the exact retry: every assignment field, including `base`, equals the
@@ -103,7 +103,19 @@ base=$(git -C "$REPO" rev-parse "$LEAD_BRANCH")
   "$REPO" bend2/issue-4-worker-b "$REPO-work/issue-4-worker-b" "$base"
 ```
 
-## Endpoint argument boundary
+## Native receiver and endpoint argument boundary
+
+For a Codex or OMP session, configure the receiver through the native command.
+Set `OMP_NATIVE` and `LEAD_LOG` to absolute executable and output-log paths:
+
+```sh
+"$B2" "$DB" receiver lead-1 "$OMP_NATIVE" "$LEAD_LOG"
+```
+
+`receiver` builds the endpoint from the selected coordinator and the session's
+recorded model, effort and workspace. It preserves the saved native identity.
+Its implementation is in
+[control.bend](../../../bend2/src/coordinator/control.bend).
 
 `connect` takes three arguments: session ID, native ID, and the JSON argv
 array itself as one `ENDPOINT` argument:
@@ -119,20 +131,16 @@ identity, endpoint, and pending input. The admission predicate is
 [commands.bend](../../../bend2/src/coordinator/commands.bend), and the checks
 are [connect.py](../../../bend2/test/connect.py).
 
-Build the endpoint value with `json.dumps` over the real argv array, and pass
-the resulting string as the single endpoint argument:
+`connect` is the lower-level endpoint registration command. The native
+`receiver` command supplies the correctly encoded argv for Codex and OMP.
+After configuring a valid receiver, retry the retained task with its original
+message fields and task file:
 
-```python
-import json
-import subprocess
-
-argv = ["/usr/bin/python3", "/opt/lead/receiver.py", "lead-1"]
-endpoint = json.dumps(argv)
-subprocess.run([b2, db, "connect", "lead-1", "native-1", endpoint], check=True)
+```sh
+"$B2" "$DB" dispatch-file retained-task "$PARENT_ID" lead-1 task "$TASK_FILE"
 ```
 
-After a valid endpoint is connected, resend the retained message ID. A
-repeated message ID with identical sender, recipient, kind, and body preserves
+A repeated message ID with identical sender, recipient, kind, and body preserves
 the original message fields and returns the stored message with its current
 receipt. `Commands.matching_message_result` in
 [commands.bend](../../../bend2/src/coordinator/commands.bend) selects the
@@ -159,8 +167,8 @@ lists the message.
 
 An empty endpoint disconnects delivery. A well-formed endpoint can still name
 an unavailable executable; delivery then fails and the input stays pending.
-The caller inspects `session` and `inbox`, connects valid argv, and retries
-the retained message ID.
+The caller inspects `session ID --pretty` and `inbox ID --pretty`, configures a
+valid receiver, and retries the retained message ID.
 
 The local CLI records the endpoint, message, and receipt rows. Native process
 custody follows the receiver and observer rules in
