@@ -128,13 +128,20 @@ class CodexRootAdapter(unittest.TestCase):
 
     def test_associate_selected_identity_workspace_parent_and_subscription(self):
         """A selected Associate resumes, reports to its empty-ID parent and quotes its CLI."""
+        self.assert_selected_associate_launch('saved-codex')
+
+    def test_fresh_associate_selected_identity_workspace_parent_and_subscription(self):
+        """A selected Associate starts a conversation with its recorded route."""
+        self.assert_selected_associate_launch('')
+
+    def assert_selected_associate_launch(self, native_id):
         temp = pathlib.Path(self.temp.name)
         self.db = temp / "state's λ.db"
         associate = "delegated's λ"
         self.coord('attach', '', 'codex', 'parent-native', '')
         self.coord('role', '', 'principal-conductor')
         self.register(associate, '', 'codex', 'stored-model', 'low', branch='associate-branch')
-        self.coord('connect', associate, 'saved-codex', '')
+        self.coord('connect', associate, native_id, '')
         self.register('child', associate, 'fixture', 'child-model', 'low')
         calls = temp / 'selected.json'
         native = temp / 'selected.py'
@@ -157,9 +164,14 @@ class CodexRootAdapter(unittest.TestCase):
                                        'CODEX_API_KEY': 'fixture-only'})
         self.assertEqual(reported.returncode, 0, reported.stderr)
         observed = json.loads(calls.read_text())
-        self.assertEqual(observed['argv'][:3], ['exec', 'resume', 'saved-codex'])
+        expected_prefix = ['exec', 'resume', native_id] if native_id else ['exec', '--json', '--model']
+        self.assertEqual(observed['argv'][:3], expected_prefix)
         self.assertEqual(observed['argv'][observed['argv'].index('--model') + 1], 'stored-model')
         self.assertIn('forced_login_method="chatgpt"', observed['argv'])
+        self.assertEqual([observed['argv'][index + 1]
+                          for index, value in enumerate(observed['argv'][:-1])
+                          if value == '-c' and observed['argv'][index + 1].startswith('model_reasoning_effort=')],
+                         ['model_reasoning_effort="low"'])
         self.assertEqual(observed['api_keys'], [])
         self.assertEqual(observed['cwd'], str(self.checkouts / associate))
         self.assertIn('Associate Conductor', observed['prompt'])

@@ -172,6 +172,7 @@ function runCodexTurn(prompt, session) {
       '--json',
       '--model', codexModel,
       '-c', 'forced_login_method="chatgpt"',
+      ...(session?.effort ? ['-c', `model_reasoning_effort=${JSON.stringify(session.effort)}`] : []),
       '--dangerously-bypass-approvals-and-sandbox',
     ];
 
