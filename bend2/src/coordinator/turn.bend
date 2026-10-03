@@ -87,8 +87,8 @@ def prepare_parent(db: String, player: String, id: String, log: String, stderr: 
 # Failure reports are committed while this invocation still owns the session.
 def prepare(+db: String, +player: String, id: String, log: String, stderr: String, outcome: Outcome) -> IO(Unit):
   do IO<Unit>:
-    parent : String <- IO.try(String,DB.Sql.query(db,"SELECT parent IS NOT NULL FROM sessions WHERE id=" ++ C.q(player) ++ ";"))
-    prepare_parent(db,player,id,log,stderr,outcome,String.eq(parent,"1\n"))
+    recipient : String <- IO.try(String,DB.Sql.query(db,"SELECT " ++ C.report_recipient(C.q(player)) ++ " IS NOT NULL;"))
+    prepare_parent(db,player,id,log,stderr,outcome,String.eq(recipient,"1\n"))
 
 def record_exit(db: String, player: String, id: String, log: String, outcome: Outcome) -> IO(Unit):
   match outcome:
@@ -116,8 +116,8 @@ def finish_parent(db: String, player: String, id: String, log: String, outcome: 
 
 def finish(+db: String, +player: String, id: String, log: String, outcome: Outcome) -> IO(Result<&1,&1,U32 & String,Unit>):
   do IO<Result<&1,&1,U32 & String,Unit>>:
-    parent : String <- IO.try(String,DB.Sql.query(db,"SELECT parent IS NOT NULL FROM sessions WHERE id=" ++ C.q(player) ++ ";"))
-    finish_parent(db,player,id,log,outcome,String.eq(parent,"1\n"))
+    recipient : String <- IO.try(String,DB.Sql.query(db,"SELECT " ++ C.report_recipient(C.q(player)) ++ " IS NOT NULL;"))
+    finish_parent(db,player,id,log,outcome,String.eq(recipient,"1\n"))
 
 def status_text(result: Result<&1,&1,U32 & String,String>) -> String:
   match result:

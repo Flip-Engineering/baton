@@ -155,11 +155,24 @@ def delivery_row() -> String:
 def terminal(+event: String) -> String:
   "(json_extract(" ++ q(event) ++ ",'$.payload.kind')='run_terminal' OR json_extract(" ++ q(event) ++ ",'$.type')='result' OR (json_extract(" ++ q(event) ++ ",'$.type')='agent_end' AND coalesce(json_extract(" ++ q(event) ++ ",'$.isTerminal'),1)=1))"
 
-def observe_sql(+id: String, +player: String, +event: String) -> String:
+# A child reports to its recorded parent. A parentless Conductor reports to the
+# registered operator when that session has the explicit operator responsibility.
+def report_recipient(+session: String) -> String:
+  "(SELECT CASE WHEN report_sender.parent IS NOT NULL THEN report_sender.parent WHEN " ++ assigned_role("report_sender.id") ++ "='conductor' THEN (SELECT report_operator.id FROM sessions report_operator WHERE report_operator.id='operator' AND report_operator.parent IS NULL AND " ++ assigned_role("report_operator.id") ++ "='operator') END FROM sessions report_sender WHERE report_sender.id=" ++ session ++ ")"
+
+def terminal_body(+event: String) -> String:
+  "CASE WHEN json_extract(" ++ q(event) ++ ",'$.is_error')=1 OR (json_extract(" ++ q(event) ++ ",'$.payload.kind')='run_terminal' AND json_extract(" ++ q(event) ++ ",'$.payload.terminal')<>'completed') THEN " ++ q(event) ++ " ELSE coalesce(json_extract(" ++ q(event) ++ ",'$.result'),CASE WHEN json_extract(" ++ q(event) ++ ",'$.payload.kind')='run_terminal' THEN json_extract(" ++ q(event) ++ ",'$.payload.text') END,(SELECT group_concat(json_extract(c.value,'$.text'),char(10)) FROM json_each((SELECT m.value FROM json_each(" ++ q(event) ++ ",'$.messages') m WHERE json_extract(m.value,'$.role')='assistant' ORDER BY m.key DESC LIMIT 1),'$.content') c WHERE json_extract(c.value,'$.type')='text')," ++ q(event) ++ ") END"
+
+def observe_identity_sql(+player: String, +event: String) -> String:
   "UPDATE sessions SET native=coalesce(CASE WHEN json_extract(" ++ q(event) ++ ",'$.type')='response' AND json_extract(" ++ q(event) ++ ",'$.command')='get_state' AND json_extract(" ++ q(event) ++ ",'$.success')=1 THEN json_extract(" ++ q(event) ++ ",'$.data.sessionId') END,CASE WHEN json_extract(" ++ q(event) ++ ",'$.type')='thread.started' THEN json_extract(" ++ q(event) ++ ",'$.thread_id') END,json_extract(" ++ q(event) ++ ",'$.session_id'),CASE WHEN json_extract(" ++ q(event) ++ ",'$.type')='session' THEN json_extract(" ++ q(event) ++ ",'$.id') END,CASE WHEN json_extract(" ++ q(event) ++ ",'$.stream.kind')='session' THEN json_extract(" ++ q(event) ++ ",'$.stream.id') END,native),observed_model=coalesce(CASE WHEN json_extract(" ++ q(event) ++ ",'$.type')='response' AND json_extract(" ++ q(event) ++ ",'$.command')='get_state' AND json_extract(" ++ q(event) ++ ",'$.success')=1 THEN json_extract(" ++ q(event) ++ ",'$.data.model.provider') || '/' || json_extract(" ++ q(event) ++ ",'$.data.model.id') END,CASE WHEN json_extract(" ++ q(event) ++ ",'$.payload_type')='run.model.configured' THEN json_extract(" ++ q(event) ++ ",'$.payload.model_id') END,CASE WHEN json_extract(" ++ q(event) ++ ",'$.message.provider') IS NOT NULL AND json_extract(" ++ q(event) ++ ",'$.message.model') IS NOT NULL THEN json_extract(" ++ q(event) ++ ",'$.message.provider') || '/' || json_extract(" ++ q(event) ++ ",'$.message.model') END,json_extract(" ++ q(event) ++ ",'$.message.model'),json_extract(" ++ q(event) ++ ",'$.model'),observed_model) WHERE id=" ++ q(player) ++ ";"
-  ++ "INSERT INTO messages(id,sender,recipient,kind,body) SELECT " ++ q(id) ++ ",id,parent,'report',CASE WHEN json_extract(" ++ q(event) ++ ",'$.is_error')=1 OR (json_extract(" ++ q(event) ++ ",'$.payload.kind')='run_terminal' AND json_extract(" ++ q(event) ++ ",'$.payload.terminal')<>'completed') THEN " ++ q(event) ++ " ELSE coalesce(json_extract(" ++ q(event) ++ ",'$.result'),CASE WHEN json_extract(" ++ q(event) ++ ",'$.payload.kind')='run_terminal' THEN json_extract(" ++ q(event) ++ ",'$.payload.text') END,(SELECT group_concat(json_extract(c.value,'$.text'),char(10)) FROM json_each((SELECT m.value FROM json_each(" ++ q(event) ++ ",'$.messages') m WHERE json_extract(m.value,'$.role')='assistant' ORDER BY m.key DESC LIMIT 1),'$.content') c WHERE json_extract(c.value,'$.type')='text')," ++ q(event) ++ ") END FROM sessions WHERE id=" ++ q(player) ++ " AND parent IS NOT NULL AND " ++ terminal(event) ++ message_upsert()
-  ++ "INSERT INTO turns(id,worker,event) SELECT " ++ q(id) ++ "," ++ q(player) ++ "," ++ q(event) ++ " WHERE EXISTS(SELECT 1 FROM sessions WHERE id=" ++ q(player) ++ " AND parent IS NOT NULL) AND " ++ terminal(event) ++ " ON CONFLICT(id) DO UPDATE SET id=CASE WHEN turns.worker=excluded.worker AND turns.event=excluded.event THEN turns.id ELSE NULL END;"
-  ++ "SELECT json_object('player',id,'native',native,'eventType',coalesce(json_extract(" ++ q(event) ++ ",'$.type'),json_extract(" ++ q(event) ++ ",'$.payload_type')),'reportId',CASE WHEN parent IS NOT NULL AND " ++ terminal(event) ++ " THEN " ++ q(id) ++ " ELSE NULL END) FROM sessions WHERE id=" ++ q(player) ++ ";"
+
+def observe_completion_sql(+id: String, +player: String, +event: String) -> String:
+  "INSERT INTO messages(id,sender,recipient,kind,body) SELECT " ++ q(id) ++ ",id," ++ report_recipient("sessions.id") ++ ",'report'," ++ terminal_body(event) ++ " FROM sessions WHERE id=" ++ q(player) ++ " AND " ++ report_recipient("sessions.id") ++ " IS NOT NULL AND " ++ terminal(event) ++ message_upsert()
+  ++ "INSERT INTO turns(id,worker,event) SELECT " ++ q(id) ++ "," ++ q(player) ++ "," ++ q(event) ++ " WHERE " ++ report_recipient(q(player)) ++ " IS NOT NULL AND " ++ terminal(event) ++ " ON CONFLICT(id) DO UPDATE SET id=CASE WHEN turns.worker=excluded.worker AND turns.event=excluded.event THEN turns.id ELSE NULL END;"
+  ++ "SELECT json_object('player',id,'native',native,'eventType',coalesce(json_extract(" ++ q(event) ++ ",'$.type'),json_extract(" ++ q(event) ++ ",'$.payload_type')),'reportId',CASE WHEN " ++ report_recipient("sessions.id") ++ " IS NOT NULL AND " ++ terminal(event) ++ " THEN " ++ q(id) ++ " ELSE NULL END) FROM sessions WHERE id=" ++ q(player) ++ ";"
+
+def observe_sql(+id: String, +player: String, +event: String) -> String:
+  observe_identity_sql(player,event) ++ observe_completion_sql(id,player,event)
 
 
 # UNION makes ancestry finite even if a database has malformed cyclic parentage.
@@ -265,7 +278,7 @@ def sql(command: Command) -> String:
     case Message{+id, sender, +recipient, +kind, body}:
       message_sql(id,sender,recipient,kind,body)
     case Report{+id, +sender, body}:
-      "INSERT INTO messages(id,sender,recipient,kind,body) VALUES(" ++ q(id) ++ "," ++ q(sender) ++ ",(SELECT parent FROM sessions WHERE id=" ++ q(sender) ++ "),'report'," ++ q(body) ++ ")" ++ message_upsert() ++ message_result(id)
+      "INSERT INTO messages(id,sender,recipient,kind,body) VALUES(" ++ q(id) ++ "," ++ q(sender) ++ "," ++ report_recipient(q(sender)) ++ ",'report'," ++ q(body) ++ ")" ++ message_upsert() ++ message_result(id)
     case Ask{+id, +player, body}:
       "INSERT INTO messages(id,sender,recipient,kind,body) VALUES(" ++ q(id) ++ "," ++ q(player) ++ ",(SELECT parent FROM sessions WHERE id=" ++ q(player) ++ "),'question'," ++ q(body) ++ ")" ++ message_upsert() ++ message_result(id)
     case Ack{+id, +recipient, receipt}:

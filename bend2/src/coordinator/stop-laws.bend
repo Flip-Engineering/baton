@@ -160,3 +160,19 @@ law stop_result_reads_recorded_execution_status:
 
 def stop_result_reads_recorded_execution_status(session):
   {==}
+
+
+law stopped_completion_reports_to_the_recorded_upstream_recipient:
+  for +session: String
+  for +attempt: String
+  for +status: String
+  for +event: String
+  for +error: String
+  for +log: String
+  {Stop.exited_sql(session,attempt,status,event,error,log) == (
+  "BEGIN IMMEDIATE;UPDATE executions SET phase='exited',status=" ++ C.q(status) ++ " WHERE session=" ++ C.q(session) ++ " AND id=" ++ C.q(attempt) ++ ";"
+  ++ "UPDATE session_stops SET outcome='stopped',native_status=" ++ C.q(status) ++ " WHERE session=" ++ C.q(session) ++ " AND attempt=" ++ C.q(attempt) ++ ";"
+  ++ "INSERT INTO messages(id,sender,recipient,kind,body) SELECT st.report_id,s.id," ++ C.report_recipient("s.id") ++ ",'report',json_object('type','session-stopped','session',s.id,'stopId',st.id,'reason',st.reason,'attempt',st.attempt,'requestedSignal',st.signal,'nativeStatus',st.native_status,'nativeEvent',CASE WHEN " ++ C.q(event) ++ "='' THEN NULL ELSE json(" ++ C.q(event) ++ ") END,'observationError',nullif(" ++ C.q(error) ++ ",''),'output'," ++ C.q(log) ++ ",'workspace',s.workspace,'branch',s.branch,'native',s.native) FROM session_stops st JOIN sessions s ON s.id=st.session WHERE st.session=" ++ C.q(session) ++ " AND st.attempt=" ++ C.q(attempt) ++ " AND st.report_id<>'' AND " ++ C.report_recipient("s.id") ++ " IS NOT NULL" ++ C.message_upsert() ++ "COMMIT;") : String}
+
+def stopped_completion_reports_to_the_recorded_upstream_recipient(session,attempt,status,event,error,log):
+  {==}

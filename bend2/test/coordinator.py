@@ -217,6 +217,99 @@ class Coordinator(unittest.TestCase):
         self.observe('bad-input', 'worker', '{"type":"result"', success=False)
         self.assertEqual(len(self.call('inbox', 'root')), 1)
 
+    def operator(self, role=True):
+        self.call('attach', 'operator', 'operator', '', '')
+        if role:
+            self.call('role', 'operator', 'operator')
+
+    def test_principal_terminal_and_public_report_reach_registered_operator(self):
+        self.operator()
+        text = "Principal result with apostrophe ' and Unicode λ🙂.\n" * 6000
+        event = {'type': 'result', 'session_id': 'principal-native', 'result': text, 'is_error': False}
+        raw = json.dumps(event)
+        observed = self.observe('principal-result', 'root', raw)
+        self.assertEqual(observed['reportId'], 'principal-result')
+        self.assertEqual(self.call('turns', 'root')[0]['reportBody'], text)
+        delivered = self.call('delivery', 'principal-result')
+        self.assertEqual((delivered['sender'], delivered['recipient'], delivered['kind'], delivered['body']),
+                         ('root', 'operator', 'report', text))
+        self.assertIsNone(delivered['receipt'])
+        self.assertEqual(self.call('inbox', 'operator')[0]['body'], text)
+        self.call('ack', 'principal-result', 'operator', 'operator-reviewed')
+        self.observe('principal-result', 'root', raw)
+        self.assertEqual(self.call('inbox', 'operator'), [])
+        self.assertEqual(self.call('delivery', 'principal-result')['receipt'], 'operator-reviewed')
+        changed = dict(event, result=text + 'changed')
+        self.observe('principal-result', 'root', json.dumps(changed), success=False)
+        self.assertEqual(self.call('turns', 'root')[0]['reportBody'], text)
+        manual = self.call('report', 'principal-manual', 'root', 'Reviewed report.')
+        self.assertEqual((manual['recipient'], manual['body']), ('operator', 'Reviewed report.'))
+        self.assertIsNone(self.call('session', 'root')['parent'])
+
+    def test_subordinate_reports_keep_immediate_parent_with_registered_operator(self):
+        self.operator()
+        for role in ('player', 'associate-conductor'):
+            with self.subTest(role=role):
+                self.call('role', 'worker', role)
+                ident = 'subordinate-' + role
+                event = {'type': 'result', 'result': 'Subordinate full result λ.', 'is_error': False}
+                self.observe(ident, 'worker', json.dumps(event))
+                self.assertEqual(self.call('delivery', ident)['recipient'], 'root')
+                self.assertEqual(self.call('delivery', ident)['body'], event['result'])
+        self.assertEqual(self.call('inbox', 'operator'), [])
+
+    def test_parentless_player_keeps_identity_without_operator_report(self):
+        self.operator()
+        self.call('attach', 'bare', 'codex', '', '')
+        event = {'type': 'result', 'session_id': 'bare-native', 'result': 'Bare result.', 'is_error': False}
+        self.assertIsNone(self.observe('bare-result', 'bare', json.dumps(event))['reportId'])
+        self.assertEqual(self.call('session', 'bare')['native'], 'bare-native')
+        self.assertEqual(self.call('turns', 'bare'), [])
+        self.assertEqual(self.call('inbox', 'operator'), [])
+        self.call('report', 'bare-manual', 'bare', 'No upstream recipient.', success=False)
+        self.assertEqual(self.call('inbox', 'operator'), [])
+
+    def test_principal_reporting_requires_explicit_registered_operator_role(self):
+        event = json.dumps({'type': 'result', 'result': 'Principal result.', 'is_error': False})
+        self.assertIsNone(self.observe('without-operator', 'root', event)['reportId'])
+        self.operator(role=False)
+        self.assertIsNone(self.observe('without-operator-role', 'root', event)['reportId'])
+        self.assertEqual(self.call('turns', 'root'), [])
+        self.assertEqual(self.call('inbox', 'operator'), [])
+        self.call('role', 'operator', 'operator')
+        self.assertEqual(self.observe('with-operator-role', 'root', event)['reportId'], 'with-operator-role')
+        self.assertEqual(self.call('delivery', 'with-operator-role')['recipient'], 'operator')
+
+    def test_empty_parent_identity_keeps_priority_over_operator(self):
+        self.operator()
+        self.call('attach', '', 'native-test', '', '')
+        self.call('role', '', 'principal-conductor')
+        self.player('empty-child', parent='')
+        event = json.dumps({'type': 'result', 'result': 'Result for empty parent λ.', 'is_error': False})
+        self.observe('empty-parent-result', 'empty-child', event)
+        self.assertEqual(self.call('delivery', 'empty-parent-result')['recipient'], '')
+        self.assertEqual(self.call('inbox', '')[0]['body'], 'Result for empty parent λ.')
+        self.assertEqual(self.call('inbox', 'operator'), [])
+
+    def test_stopped_principal_handoff_retains_child_input_and_notifies_operator(self):
+        self.operator()
+        self.call('attach', 'stopped-principal', 'codex', 'principal-native', '')
+        self.call('role', 'stopped-principal', 'principal-conductor')
+        self.player('stopped-child', parent='stopped-principal')
+        stopped = self.call('stop', 'stopped-principal', 'stop-principal', 'Review ended.')
+        self.assertIsNone(stopped['requestedSignal'])
+        self.call('report', 'child-retained-report', 'stopped-child', 'Full child result λ.', success=False)
+        original = self.call('delivery', 'child-retained-report')
+        self.assertEqual((original['recipient'], original['body'], original['receipt']),
+                         ('stopped-principal', 'Full child result λ.', None))
+        notice = self.call('inbox', 'operator')[0]
+        self.assertEqual((notice['sender'], notice['recipient'], notice['kind']),
+                         ('stopped-principal', 'operator', 'report'))
+        body = json.loads(notice['body'])
+        self.assertEqual((body['originalMessage'], body['originalBody'], body['originalSender']),
+                         ('child-retained-report', 'Full child result λ.', 'stopped-child'))
+        self.assertEqual(self.call('delivery', notice['id'])['receipt'], None)
+
     def test_player_connection_retains_parentage_and_requested_route(self):
         self.call('message', 'guide-1', 'root', 'worker', 'guide', 'Continue.')
         endpoint = json.dumps(['/usr/bin/true', 'worker-supervisor-endpoint'])

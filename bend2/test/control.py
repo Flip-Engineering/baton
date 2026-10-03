@@ -279,13 +279,20 @@ class Control(unittest.TestCase):
                                  (name, 'low', str(self.repo.resolve())))
                 endpoint = json.loads(player['endpoint'])
                 self.assertEqual(endpoint[-4:], ['', '', '', str(log.resolve())])
-                report = 'Reviewed native operator report λ.\nComplete report body.'
-                self.assertEqual(self.action(stream, public_report=[name + '-report', report])['code'], 0)
-                saved = self.call('delivery', name + '-report')
+                report = "Reviewed native operator report λ.\nIt's complete. 🙂\n" * 6000
+                self.finish(stream, report)
+                self.exited(name)
+                turns = self.eventually(lambda: self.call('turns', name))
+                self.assertEqual(len(turns), 1)
+                saved = self.call('delivery', turns[0]['id'])
                 self.assertEqual((saved['sender'], saved['recipient'], saved['kind'], saved['body']),
                                  (name, 'operator', 'report', report))
-                self.finish(stream)
-                self.exited(name)
+                self.assertEqual(turns[0]['reportBody'], report)
+                self.assertIsNone(saved['receipt'])
+                inbox = self.call('inbox', 'operator')
+                self.assertEqual(next(row for row in inbox if row['id'] == saved['id'])['body'], report)
+                self.call('ack', saved['id'], 'operator', 'operator-reviewed-native-result')
+                self.assertEqual(self.call('delivery', saved['id'])['receipt'], 'operator-reviewed-native-result')
                 self.assertEqual(self.call('delivery', name + '-task')['receipt'], 'fixture-native-reviewed')
 
     def test_start_upgrades_compatible_parentless_assignment_and_resumes_saved_native(self):

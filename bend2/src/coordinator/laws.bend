@@ -298,13 +298,13 @@ law m5_bind_preserves_parentage_and_placement:
 def m5_bind_preserves_parentage_and_placement(id, native, harness, model, effort):
   {==}
 
-# M-7: a report's recipient is the parent recorded against the sender. The
-# caller supplies the sender; the routing comes from the stored session.
+# M-7: a report's recipient comes from the stored parent or Principal's
+# registered operator. The caller supplies the sender and body.
 law m7_report_routes_to_the_recorded_parent:
   for +id: String
   for +sender: String
   for +body: String
-  {C.sql(C.Report{id, sender, body}) == "INSERT INTO messages(id,sender,recipient,kind,body) VALUES(" ++ C.q(id) ++ "," ++ C.q(sender) ++ ",(SELECT parent FROM sessions WHERE id=" ++ C.q(sender) ++ "),'report'," ++ C.q(body) ++ ")" ++ C.message_upsert() ++ C.message_result(id) : String}
+  {C.sql(C.Report{id, sender, body}) == "INSERT INTO messages(id,sender,recipient,kind,body) VALUES(" ++ C.q(id) ++ "," ++ C.q(sender) ++ "," ++ C.report_recipient(C.q(sender)) ++ ",'report'," ++ C.q(body) ++ ")" ++ C.message_upsert() ++ C.message_result(id) : String}
 
 def m7_report_routes_to_the_recorded_parent(id, sender, body):
   {==}
@@ -805,7 +805,7 @@ law m5_a_report_and_its_delivery_are_one_transaction:
   for +id: String
   for +sender: String
   for +body: String
-  {Store.commit(db, C.Report{id, sender, body}) == DB.Sql.query(db, "BEGIN IMMEDIATE;" ++ C.schema() ++ ("INSERT INTO messages(id,sender,recipient,kind,body) VALUES(" ++ C.q(id) ++ "," ++ C.q(sender) ++ ",(SELECT parent FROM sessions WHERE id=" ++ C.q(sender) ++ "),'report'," ++ C.q(body) ++ ")" ++ C.message_upsert() ++ C.message_result(id)) ++ "COMMIT;") : IO(Result<&1,&1,U32 & String,String>)}
+  {Store.commit(db, C.Report{id, sender, body}) == DB.Sql.query(db, "BEGIN IMMEDIATE;" ++ C.schema() ++ ("INSERT INTO messages(id,sender,recipient,kind,body) VALUES(" ++ C.q(id) ++ "," ++ C.q(sender) ++ "," ++ C.report_recipient(C.q(sender)) ++ ",'report'," ++ C.q(body) ++ ")" ++ C.message_upsert() ++ C.message_result(id)) ++ "COMMIT;") : IO(Result<&1,&1,U32 & String,String>)}
 
 def m5_a_report_and_its_delivery_are_one_transaction(db, id, sender, body):
   {==}
@@ -1020,9 +1020,85 @@ def m1_a_message_write_answers_from_the_row_it_stored(id,sender,recipient,kind,b
   {==}
 
 # M-1: a report answers from the row it stored, whose recipient the transaction
-# derived from the sender's recorded parent rather than from the caller.
+# derived from the sender's recorded parent or registered Principal operator.
 law m1_a_report_write_answers_from_the_row_it_stored:
-  {C.sql(C.Report{"m2", "s2", "body2"}) == "INSERT INTO messages(id,sender,recipient,kind,body) VALUES('m2','s2',(SELECT parent FROM sessions WHERE id='s2'),'report','body2')" ++ C.message_upsert() ++ "SELECT json_patch(json_object('id',id,'sender',sender,'recipient',recipient,'kind',kind,'body',body,'receipt',receipt)," ++ C.input_state_sql("messages") ++ ") FROM messages WHERE id='m2';" : String}
+  {C.sql(C.Report{"m2", "s2", "body2"}) == "INSERT INTO messages(id,sender,recipient,kind,body) VALUES('m2','s2'," ++ C.report_recipient("'s2'") ++ ",'report','body2')" ++ C.message_upsert() ++ "SELECT json_patch(json_object('id',id,'sender',sender,'recipient',recipient,'kind',kind,'body',body,'receipt',receipt)," ++ C.input_state_sql("messages") ++ ") FROM messages WHERE id='m2';" : String}
 
 def m1_a_report_write_answers_from_the_row_it_stored():
+  {==}
+
+
+# Principal completion uses the stored hierarchy and explicit operator role.
+# These equations bind generated SQL and IO order. SQLite evaluation and native
+# output capture remain host effects exercised by the controlled fixtures.
+law principal_reports_use_the_recorded_upstream_recipient:
+  for +session: String
+  {C.report_recipient(session) == ("(SELECT CASE WHEN report_sender.parent IS NOT NULL THEN report_sender.parent WHEN " ++ C.assigned_role("report_sender.id") ++ "='conductor' THEN (SELECT report_operator.id FROM sessions report_operator WHERE report_operator.id='operator' AND report_operator.parent IS NULL AND " ++ C.assigned_role("report_operator.id") ++ "='operator') END FROM sessions report_sender WHERE report_sender.id=" ++ session ++ ")") : String}
+
+def principal_reports_use_the_recorded_upstream_recipient(session):
+  {==}
+
+law terminal_reports_preserve_the_native_result:
+  for +event: String
+  {C.terminal_body(event) == (
+  "CASE WHEN json_extract(" ++ C.q(event) ++ ",'$.is_error')=1 OR (json_extract(" ++ C.q(event) ++ ",'$.payload.kind')='run_terminal' AND json_extract(" ++ C.q(event) ++ ",'$.payload.terminal')<>'completed') THEN " ++ C.q(event) ++ " ELSE coalesce(json_extract(" ++ C.q(event) ++ ",'$.result'),CASE WHEN json_extract(" ++ C.q(event) ++ ",'$.payload.kind')='run_terminal' THEN json_extract(" ++ C.q(event) ++ ",'$.payload.text') END,(SELECT group_concat(json_extract(c.value,'$.text'),char(10)) FROM json_each((SELECT m.value FROM json_each(" ++ C.q(event) ++ ",'$.messages') m WHERE json_extract(m.value,'$.role')='assistant' ORDER BY m.key DESC LIMIT 1),'$.content') c WHERE json_extract(c.value,'$.type')='text')," ++ C.q(event) ++ ") END") : String}
+
+def terminal_reports_preserve_the_native_result(event):
+  {==}
+
+law terminal_observation_records_the_report_and_turn:
+  for +id: String
+  for +player: String
+  for +event: String
+  {C.observe_completion_sql(id,player,event) == (
+  "INSERT INTO messages(id,sender,recipient,kind,body) SELECT " ++ C.q(id) ++ ",id," ++ C.report_recipient("sessions.id") ++ ",'report'," ++ C.terminal_body(event) ++ " FROM sessions WHERE id=" ++ C.q(player) ++ " AND " ++ C.report_recipient("sessions.id") ++ " IS NOT NULL AND " ++ C.terminal(event) ++ C.message_upsert()
+  ++ "INSERT INTO turns(id,worker,event) SELECT " ++ C.q(id) ++ "," ++ C.q(player) ++ "," ++ C.q(event) ++ " WHERE " ++ C.report_recipient(C.q(player)) ++ " IS NOT NULL AND " ++ C.terminal(event) ++ " ON CONFLICT(id) DO UPDATE SET id=CASE WHEN turns.worker=excluded.worker AND turns.event=excluded.event THEN turns.id ELSE NULL END;"
+  ++ "SELECT json_object('player',id,'native',native,'eventType',coalesce(json_extract(" ++ C.q(event) ++ ",'$.type'),json_extract(" ++ C.q(event) ++ ",'$.payload_type')),'reportId',CASE WHEN " ++ C.report_recipient("sessions.id") ++ " IS NOT NULL AND " ++ C.terminal(event) ++ " THEN " ++ C.q(id) ++ " ELSE NULL END) FROM sessions WHERE id=" ++ C.q(player) ++ ";") : String}
+
+def terminal_observation_records_the_report_and_turn(id,player,event):
+  {==}
+
+law observations_update_identity_before_recording_completion:
+  for id: String
+  for +player: String
+  for +event: String
+  {C.observe_sql(id,player,event) == C.observe_identity_sql(player,event) ++ C.observe_completion_sql(id,player,event) : String}
+
+def observations_update_identity_before_recording_completion(id,player,event):
+  {==}
+
+law completion_preparation_checks_the_upstream_recipient:
+  for +db: String
+  for +player: String
+  for id: String
+  for log: String
+  for stderr: String
+  for outcome: Turn.Outcome
+  {Turn.prepare(db,player,id,log,stderr,outcome) == (do IO<Unit>:
+    recipient : String <- IO.try(String,DB.Sql.query(db,"SELECT " ++ C.report_recipient(C.q(player)) ++ " IS NOT NULL;"))
+    Turn.prepare_parent(db,player,id,log,stderr,outcome,String.eq(recipient,"1\n"))) : IO(Unit)}
+
+def completion_preparation_checks_the_upstream_recipient(db,player,id,log,stderr,outcome):
+  {==}
+
+law completion_delivery_checks_the_upstream_recipient:
+  for +db: String
+  for +player: String
+  for id: String
+  for log: String
+  for outcome: Turn.Outcome
+  {Turn.finish(db,player,id,log,outcome) == (do IO<Result<&1,&1,U32 & String,Unit>>:
+    recipient : String <- IO.try(String,DB.Sql.query(db,"SELECT " ++ C.report_recipient(C.q(player)) ++ " IS NOT NULL;"))
+    Turn.finish_parent(db,player,id,log,outcome,String.eq(recipient,"1\n"))) : IO(Result<&1,&1,U32 & String,Unit>)}
+
+def completion_delivery_checks_the_upstream_recipient(db,player,id,log,outcome):
+  {==}
+
+law stopped_input_reports_use_the_recorded_upstream_recipient:
+  for +id: String
+  {Delivery.handoff_sql(id) == (
+  "BEGIN IMMEDIATE;INSERT INTO messages(id,sender,recipient,kind,body) SELECT 'stopped-input:' || lower(hex(m.id)),s.id," ++ C.report_recipient("s.id") ++ ",'report',json_object('type','stopped-recipient-input','recipient',s.id,'stopId',st.id,'originalMessage',m.id,'originalSender',m.sender,'originalKind',m.kind,'originalBody',m.body,'retainedWorkSession',m.sender,'disposition','The original message and work remain available. The stopped recipient has not accepted or reviewed this input.') FROM messages m JOIN sessions s ON s.id=m.recipient JOIN session_stops st ON st.session=s.id WHERE m.id=" ++ C.q(id) ++ " AND m.receipt IS NULL AND " ++ C.report_recipient("s.id") ++ " IS NOT NULL" ++ C.message_upsert()
+  ++ "SELECT coalesce((SELECT n.id FROM messages n WHERE n.id='stopped-input:' || lower(hex(" ++ C.q(id) ++ ")) AND (n.receipt IS NOT NULL OR EXISTS(SELECT 1 FROM sessions p WHERE p.id=n.recipient AND NOT EXISTS(SELECT 1 FROM session_stops WHERE session=p.id) AND CASE WHEN json_valid(p.endpoint) THEN json_type(p.endpoint)='array' AND json_array_length(p.endpoint)>0 ELSE 0 END))),'');COMMIT;") : String}
+
+def stopped_input_reports_use_the_recorded_upstream_recipient(id):
   {==}
