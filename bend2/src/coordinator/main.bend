@@ -12,6 +12,8 @@ import ./recruit.bend as Recruit
 import ./land.bend as Land
 import ./knowledge.bend as Knowledge
 import ./commands.bend as C
+import ./control.bend as Control
+import ./control-laws.bend as ControlLaws
 import ../host/text.bend as T
 import ../host/process.bend as P
 
@@ -76,9 +78,33 @@ def stored_command_entry_uses_the_actual_store(db,command):
 def execute(db: String, command: C.Command) -> IO(Unit):
   match command:
     case C.Invalid{}:
-      IO.die(Unit,2,"usage: baton2 DATABASE COMMAND ARGS\nattach ID HARNESS NATIVE ENDPOINT\nrecruit ID PARENT HARNESS MODEL EFFORT REPO BRANCH PATH BASE\nworktree ID\nconnect ID NATIVE ENDPOINT\nbind ID NATIVE HARNESS MODEL EFFORT\nrole SESSION [player|principal-conductor|associate-conductor|operator]\nensemble ID [OWNER [loose|tight]]\nensemble-member ID OWNER PLAYER add|remove\nsection ENSEMBLE SECTION [OWNER CAPABILITY]\nsection-member ENSEMBLE SECTION OWNER PLAYER add|remove\norchestra\nmessage ID SENDER RECIPIENT KIND BODY\nmessage-file ID SENDER RECIPIENT KIND PATH\nobserve-file ID PLAYER PATH\nreport ID PLAYER BODY\nask ID PLAYER BODY\nask-file ID PLAYER PATH\nnative-reply PARENT REQUEST RESPONSE_JSON\nnative-reply-file PARENT REQUEST PATH\nsession ID\ndelivery ID\npending\ninbox RECIPIENT\nack ID RECIPIENT NATIVE_RECEIPT\nstatus\nplayers\nplayer ID\nturns PLAYER_ID\nland PLAYER_ID REPO TARGET_BRANCH\nland-checked PLAYER_ID REPO TARGET_BRANCH CHECK FILES\npush REPO BRANCH REMOTE\nturn PLAYER TURN_ID HARNESS_CMD MODEL EFFORT CWD TASK_FILE OUTPUT_LOG RESUME_SESSION\nstop SESSION STOP_ID REASON\nforce-stop SESSION STOP_ID\nreceive SESSION HARNESS_CMD MODEL EFFORT CWD OUTPUT_LOG MESSAGE_ID\nrecord FINDING_ID AUTHOR CLAIM EVIDENCE LIMITS\nknowledge READER\npromote PROMOTION_ID PROMOTER SOURCE DESTINATION FINDING\nEmpty receive MODEL/EFFORT/CWD use recorded values; empty MESSAGE_ID reads the pending inbox.\nPATH - reads stdin; empty RESUME_SESSION starts a new native session")
+      IO.die(Unit,2,"usage: baton2 DATABASE COMMAND ARGS\nstart SESSION HARNESS HARNESS_CMD MODEL EFFORT CWD OUTPUT_LOG TASK_ID TASK_FILE\nreceiver SESSION HARNESS_CMD OUTPUT_LOG\ndispatch-file ID SENDER RECIPIENT KIND PATH\ndispatch-turn PLAYER TURN_ID HARNESS_CMD OUTPUT_LOG TASK_FILE\nstatus --pretty\nattach ID HARNESS NATIVE ENDPOINT\nrecruit ID PARENT HARNESS MODEL EFFORT REPO BRANCH PATH BASE\nworktree ID\nconnect ID NATIVE ENDPOINT\nbind ID NATIVE HARNESS MODEL EFFORT\nrole SESSION [player|principal-conductor|associate-conductor|operator]\nensemble ID [OWNER [loose|tight]]\nensemble-member ID OWNER PLAYER add|remove\nsection ENSEMBLE SECTION [OWNER CAPABILITY]\nsection-member ENSEMBLE SECTION OWNER PLAYER add|remove\norchestra\nmessage ID SENDER RECIPIENT KIND BODY\nmessage-file ID SENDER RECIPIENT KIND PATH\nobserve-file ID PLAYER PATH\nreport ID PLAYER BODY\nask ID PLAYER BODY\nask-file ID PLAYER PATH\nnative-reply PARENT REQUEST RESPONSE_JSON\nnative-reply-file PARENT REQUEST PATH\nsession ID\ndelivery ID\npending\ninbox RECIPIENT\nack ID RECIPIENT NATIVE_RECEIPT\nstatus\nplayers\nplayer ID\nturns PLAYER_ID\nland PLAYER_ID REPO TARGET_BRANCH\nland-checked PLAYER_ID REPO TARGET_BRANCH CHECK FILES\npush REPO BRANCH REMOTE\nturn PLAYER TURN_ID HARNESS_CMD MODEL EFFORT CWD TASK_FILE OUTPUT_LOG RESUME_SESSION\nstop SESSION STOP_ID REASON\nforce-stop SESSION STOP_ID\nreceive SESSION HARNESS_CMD MODEL EFFORT CWD OUTPUT_LOG MESSAGE_ID\nrecord FINDING_ID AUTHOR CLAIM EVIDENCE LIMITS\nknowledge READER\npromote PROMOTION_ID PROMOTER SOURCE DESTINATION FINDING\nEmpty receive MODEL/EFFORT/CWD use recorded values; empty MESSAGE_ID reads the pending inbox.\nPATH - reads stdin; empty RESUME_SESSION starts a new native session")
     case C.Stop{session,id,reason}: Stop.run(db,session,id,reason,False{})
     case C.ForceStop{session,id}: Stop.run(db,session,id,"",True{})
+    case C.Start{session,harness,cmd,model,effort,cwd,log,id,task}:
+      do IO<Unit>:
+        saved : String <- Control.start(db,session,harness,cmd,model,effort,cwd,log,id,task)
+        print_result(saved)
+    case C.Receiver{session,cmd,log}:
+      do IO<Unit>:
+        saved : String <- Control.receiver(db,session,cmd,log)
+        print_result(saved)
+    case C.DispatchFile{id,sender,recipient,kind,path}:
+      do IO<Unit>:
+        saved : String <- Control.dispatch_file(db,id,sender,recipient,kind,path)
+        print_result(saved)
+    case C.DispatchTurn{player,id,cmd,log,task}:
+      do IO<Unit>:
+        saved : String <- Control.dispatch_turn(db,player,id,cmd,log,task)
+        print_result(saved)
+    case C.StatusPretty{}:
+      do IO<Unit>:
+        saved : String <- Control.status_pretty(db)
+        print_result(saved)
+    case C.Pretty{read}:
+      do IO<Unit>:
+        saved : String <- Control.pretty(db,read)
+        print_result(saved)
     case C.Recruit{id,parent,harness,model,effort,repo,branch,path,base}:
       Recruit.recruit(db,id,parent,harness,model,effort,repo,branch,path,base)
     case C.Land{player,repo,target}:
@@ -209,6 +235,11 @@ def keeper_cli(directory: String, lock: String, args: List<String>, internal: Bo
     case True{}: keeper(directory,U32.read(lock))
     case False{}: normal_cli(args)
 
+def dispatch_cli(db: String, id: String, args: List<String>, keeper_flag: Bool, internal: Bool) -> IO(Unit):
+  match internal:
+    case True{}: Control.deliver(db,id)
+    case False{}: keeper_cli(db,id,args,keeper_flag)
+
 def recover_cli(db: String, session: String, id: String, cursor: String, cmd: String, model: String, effort: String, cwd: String, log: String, harness: String, directory: String, native: String, internal: Bool) -> IO(Unit):
   match internal:
     case True{}: IO.try(Unit,Receive.recover(db,session,id,cursor,cmd,model,effort,cwd,log,harness,directory,native))
@@ -217,7 +248,7 @@ def recover_cli(db: String, session: String, id: String, cursor: String, cmd: St
 def cli(args: List<String>) -> IO(Unit):
   match args:
     case +flag <> +directory <> +lock <> Nil{}:
-      keeper_cli(directory,lock,[flag,directory,lock],String.eq(flag,"--host-process-keeper"))
+      dispatch_cli(directory,lock,[flag,directory,lock],String.eq(flag,"--host-process-keeper"),String.eq(flag,"--dispatch-message"))
     case flag <> db <> session <> id <> cursor <> cmd <> model <> effort <> cwd <> log <> harness <> directory <> native <> Nil{}:
       recover_cli(db,session,id,cursor,cmd,model,effort,cwd,log,harness,directory,native,String.eq(flag,"--recover-receive"))
     case other: normal_cli(other)
@@ -226,3 +257,88 @@ def main() -> IO(Unit):
   do IO<Unit>:
     args : List<String> <- IO.args()
     cli(args)
+
+law start_entry_executes_the_native_control:
+  for db: String
+  for session: String
+  for harness: String
+  for cmd: String
+  for model: String
+  for effort: String
+  for cwd: String
+  for log: String
+  for id: String
+  for task: String
+  {execute(db,C.Start{session,harness,cmd,model,effort,cwd,log,id,task}) == (do IO<Unit>:
+    saved : String <- Control.start(db,session,harness,cmd,model,effort,cwd,log,id,task)
+    print_result(saved)) : IO(Unit)}
+
+def start_entry_executes_the_native_control(db,session,harness,cmd,model,effort,cwd,log,id,task):
+  {==}
+
+law receiver_entry_executes_the_native_control:
+  for db: String
+  for session: String
+  for cmd: String
+  for log: String
+  {execute(db,C.Receiver{session,cmd,log}) == (do IO<Unit>:
+    saved : String <- Control.receiver(db,session,cmd,log)
+    print_result(saved)) : IO(Unit)}
+
+def receiver_entry_executes_the_native_control(db,session,cmd,log):
+  {==}
+
+law dispatch_file_entry_executes_the_native_control:
+  for db: String
+  for id: String
+  for sender: String
+  for recipient: String
+  for kind: String
+  for path: String
+  {execute(db,C.DispatchFile{id,sender,recipient,kind,path}) == (do IO<Unit>:
+    saved : String <- Control.dispatch_file(db,id,sender,recipient,kind,path)
+    print_result(saved)) : IO(Unit)}
+
+def dispatch_file_entry_executes_the_native_control(db,id,sender,recipient,kind,path):
+  {==}
+
+law dispatch_turn_entry_executes_the_native_control:
+  for db: String
+  for player: String
+  for id: String
+  for cmd: String
+  for log: String
+  for task: String
+  {execute(db,C.DispatchTurn{player,id,cmd,log,task}) == (do IO<Unit>:
+    saved : String <- Control.dispatch_turn(db,player,id,cmd,log,task)
+    print_result(saved)) : IO(Unit)}
+
+def dispatch_turn_entry_executes_the_native_control(db,player,id,cmd,log,task):
+  {==}
+
+law status_pretty_entry_executes_the_native_control:
+  for db: String
+  {execute(db,C.StatusPretty{}) == (do IO<Unit>:
+    saved : String <- Control.status_pretty(db)
+    print_result(saved)) : IO(Unit)}
+
+def status_pretty_entry_executes_the_native_control(db):
+  {==}
+
+law readable_snapshot_entry_executes_its_stored_read:
+  for db: String
+  for read: C.Command
+  {execute(db,C.Pretty{read}) == (do IO<Unit>:
+    saved : String <- Control.pretty(db,read)
+    print_result(saved)) : IO(Unit)}
+
+def readable_snapshot_entry_executes_its_stored_read(db,read):
+  {==}
+
+law detached_internal_cli_delivers_the_named_message:
+  for db: String
+  for id: String
+  {cli(["--dispatch-message",db,id]) == Control.deliver(db,id) : IO(Unit)}
+
+def detached_internal_cli_delivers_the_named_message(db,id):
+  {==}

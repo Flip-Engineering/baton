@@ -47,11 +47,40 @@ baton2 /absolute/path/state.db status
 Git must be available on PATH for repository operations. A checked landing needs
 the caller's check program and its dependencies. Each native harness remains an
 external installation with its own dependencies and conversation storage. Codex
-uses the ChatGPT subscription login in the qualified workflow; the launch wrapper
-forces that login method and removes API-key variables. Kimi K3 runs through
+uses the ChatGPT subscription login; the native adapter forces that login method
+and removes API-key variables. Kimi K3 runs through
 OMP's `kimi-code` provider on this host. The [native turn and receive commands](../../bend2/README.md#native-turns)
 describe the explicit harness arguments. [Harness setup](harness-setup.md)
-describes the qualified routes and subscription wrapper.
+describes the qualified routes and native subscription launch.
+
+## Start a Principal
+
+Save its task in a file and run:
+
+```sh
+baton2 /absolute/path/state.db start principal codex /absolute/path/to/codex \
+  gpt-6-astra high /absolute/path/repository /absolute/path/principal.jsonl \
+  initial-task /absolute/path/task.md
+baton2 /absolute/path/state.db status --pretty
+baton2 /absolute/path/state.db inbox operator
+```
+
+`start` assigns the Principal Conductor role and creates the parentless `operator`
+identity when absent. A compatible existing Principal keeps its native conversation,
+pending input and repository assignment. A conflicting assignment is refused.
+The launch result names the detached delivery PID; inspect messages, turns and
+logs for acceptance and completion.
+
+Recruit subordinate Players with `recruit`. Configure Codex and OMP receivers
+with `receiver SESSION HARNESS_COMMAND OUTPUT_LOG`, then use
+`dispatch-file ID SENDER RECIPIENT task TASK_FILE` for independent work.
+`dispatch-turn PLAYER TURN_ID HARNESS_COMMAND OUTPUT_LOG TASK_FILE` starts a
+Muse or Claude Player using its recorded model, effort, workspace and native ID.
+
+An existing model Git registry at `~/.config/baton/github-apps/series.json` is
+applied to native receiver and detached turn launches. `BATON2_GIT_REGISTRY`
+selects a different registry. This requires the packaged Node Git identity helper
+and Node 22.15 or later. Keep the registry and its credentials outside task files.
 
 ## Retained state
 

@@ -33,20 +33,10 @@ env -u OPENAI_API_KEY -u CODEX_API_KEY "$BATON_CODEX_NATIVE" \
   -c forced_login_method=chatgpt login status
 ```
 
-The successful status is `Logged in using ChatGPT`. Create a launch wrapper at
-a retained absolute path, substituting the selected native executable:
-
-```sh
-#!/bin/sh
-unset OPENAI_API_KEY CODEX_API_KEY
-exec /absolute/path/to/codex -c forced_login_method=chatgpt "$@"
-```
-
-Make the wrapper executable and use its path as `HARNESS_COMMAND` for every
-Codex `turn` and registered `receive` endpoint. The
-[trial launcher](../../bend2/scripts/trial-start.sh) creates this wrapper and
-removes the API-key variables from its launch environment. The native adapter
-uses `exec --json` and `exec resume SESSION`, with the task on stdin.
+The successful status is `Logged in using ChatGPT`. Use that executable directly
+as `HARNESS_COMMAND`. The native Codex adapter removes `OPENAI_API_KEY` and
+`CODEX_API_KEY` and adds `forced_login_method="chatgpt"` for new and resumed turns.
+It uses `exec --json` and `exec resume SESSION`, with the task on stdin.
 
 ## OMP and Muse
 
@@ -78,11 +68,14 @@ in the emitted shell settings.
 
 Follow [installation](installation.md) for the coordinator and host dependencies.
 Use [native Conductor delivery](../../bend2/README.md#native-conductor-delivery) to register
-the receiver, then send the assigned task through the public message command.
+the receiver and dispatch the assigned task. `start` registers a Principal and its
+operator route, configures its native receiver and dispatches the task file.
 Use public `recruit` for subordinate sessions and record the returned workspace
 and base. Read `session SESSION` for the saved native identity before continuing
-the conversation. The registered endpoint must use the subscription wrapper for
-a Codex session.
+the conversation. Use `receiver SESSION HARNESS_COMMAND OUTPUT_LOG` to configure an existing Codex
+or OMP session. It preserves the stored native identity and resolves the executable
+and log path. `dispatch-file` sends an authorized task through that receiver;
+`dispatch-turn` starts a Muse or Claude Player with its recorded assignment.
 
 Inspect complete parent reports, native logs and acceptance receipts before
 landing work. `ack` records message acceptance; Git review and landing have

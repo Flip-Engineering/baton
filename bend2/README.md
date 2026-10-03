@@ -295,14 +295,27 @@ and promotions described above.
 
 ## Native Conductor delivery
 
-Register a Conductor and its native receiver endpoint using absolute paths. This
-example creates a new Codex Conductor:
+Start a Principal Conductor with a task file:
 
 ```sh
-/repo/.scratch/bend2/baton2 /repo/state.db attach root codex '' '["/repo/.scratch/bend2/baton2","/repo/state.db","receive","root","/path/to/codex","gpt-6-astra","low","/repo","/repo/root-native.jsonl"]'
-/repo/.scratch/bend2/baton2 /repo/state.db role root principal-conductor
-/repo/.scratch/bend2/baton2 /repo/state.db receive root /path/to/codex gpt-6-astra low /repo /repo/root-native.jsonl ''
+baton2 /repo/state.db start principal codex /path/to/codex gpt-6-astra high \
+  /repo /repo/principal-native.jsonl initial-task /repo/task.md
+baton2 /repo/state.db status --pretty
+baton2 /repo/state.db inbox operator
 ```
+
+`start` configures a native receiver and dispatches the task. It preserves a
+compatible existing Principal's saved conversation and pending input.
+`receiver SESSION HARNESS_COMMAND OUTPUT_LOG` generates the endpoint for an
+existing Codex or OMP session and preserves its saved native ID. It resolves
+executable and log paths and selects the recorded model, effort and workspace.
+The configured model Git registry applies to each launched session.
+
+`dispatch-file ID SENDER RECIPIENT KIND PATH` commits an authorized message and
+launches its delivery with regular output files. Independent dispatches can run
+concurrently. Its result names a launched PID; inspect inbox, turns and logs for
+completion. `dispatch-turn PLAYER TURN_ID HARNESS_COMMAND OUTPUT_LOG TASK_FILE`
+launches a recruited Muse or Claude Player with its recorded assignment.
 
 The command is `receive SESSION HARNESS_COMMAND MODEL EFFORT CWD OUTPUT_LOG
 MESSAGE_ID`. Empty model, effort and working-directory arguments use the
@@ -418,7 +431,7 @@ native receiver:
 ```sh
 .scratch/bend2/baton2 state.db recruit lead root omp deepseek/deepseek-flash low REPO lead-branch LEAD_WORKTREE BASE
 .scratch/bend2/baton2 state.db role lead associate-conductor
-.scratch/bend2/baton2 state.db connect lead '' '["/repo/.scratch/bend2/baton2","/repo/state.db","receive","lead","/path/to/omp","","","","/repo/lead-native.jsonl"]'
+baton2 /repo/state.db receiver lead /path/to/omp /repo/lead-native.jsonl
 ```
 
 A Kimi K3 Associate Conductor uses `omp kimi-code/k3 high` for the harness, model and effort
@@ -433,7 +446,7 @@ resume its native session. Each finished Associate Conductor turn submits its re
 the coordinator, which delivers the report to the Associate Conductor's parent. A failed native
 turn also reports its failure and leaves unacknowledged input available.
 
-Send the Associate Conductor's task with `message-file ID root lead task TASK_FILE`. The Associate Conductor
+Send the Associate Conductor's task with `dispatch-file ID root lead task TASK_FILE`. The Associate Conductor
 recruits children by passing `lead` as their parent, reviews their reports and
 lands their branches onto `lead-branch`. Detach the Associate Conductor's checkout before a
 landing advances that branch. The Conductor can then review and land the Associate Conductor's
@@ -444,7 +457,7 @@ child's endpoint once and send its initial task:
 
 ```sh
 .scratch/bend2/baton2 state.db recruit worker1 lead omp deepseek/deepseek-flash low REPO worker-branch PLAYER_WORKTREE lead-branch
-.scratch/bend2/baton2 state.db connect worker1 '' '["/repo/.scratch/bend2/baton2","/repo/state.db","receive","worker1","/path/to/omp","","","","/repo/worker1-native.jsonl"]'
+baton2 /repo/state.db receiver worker1 /path/to/omp /repo/worker1-native.jsonl
 .scratch/bend2/baton2 state.db message-file worker1-task-1 lead worker1 task /repo/worker1-task.md
 ```
 

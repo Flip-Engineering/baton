@@ -4,6 +4,12 @@ type Command is Data:
   Recruit{id: String, parent: String, harness: String, model: String, effort: String, repo: String, branch: String, path: String, base: String}
   Worktree{id: String}
   Receive{session: String, cmd: String, model: String, effort: String, cwd: String, log: String, message: String}
+  Start{session: String, harness: String, cmd: String, model: String, effort: String, cwd: String, log: String, id: String, task: String}
+  Receiver{session: String, cmd: String, log: String}
+  DispatchFile{id: String, sender: String, recipient: String, kind: String, path: String}
+  DispatchTurn{player: String, id: String, cmd: String, log: String, task: String}
+  StatusPretty{}
+  Pretty{read: Command}
   Stop{session: String, id: String, reason: String}
   ForceStop{session: String, id: String}
   RunTurn{player: String, id: String, cmd: String, model: String, effort: String, cwd: String, task: String, log: String, session: String}
@@ -292,6 +298,12 @@ def sql(command: Command) -> String:
     case ForceStop{session,id}: ""
     case RunTurn{player,id,cmd,model,effort,cwd,task,log,session}: ""
     case Receive{session,cmd,model,effort,cwd,log,message}: ""
+    case Start{session,harness,cmd,model,effort,cwd,log,id,task}: ""
+    case Receiver{session,cmd,log}: ""
+    case DispatchFile{id,sender,recipient,kind,path}: ""
+    case DispatchTurn{player,id,cmd,log,task}: ""
+    case StatusPretty{}: ""
+    case Pretty{read}: ""
     case Land{player,repo,target}: ""
     case LandChecked{player,repo,target,check,files}: ""
     case Push{repo,branch,remote}: ""
@@ -311,16 +323,16 @@ def parse(args: List<String>) -> Command:
       Bool.pick(Command,String.eq(verb,"orchestra"),Orchestra{},
       Bool.pick(Command, String.eq(verb,"pending"),Pending{},Invalid{})))))
     case +verb <> +id <> Nil{}:
-      Bool.pick(Command,String.eq(verb,"player"),PlayerRead{id},Bool.pick(Command, String.eq(verb,"role"),RoleRead{id},Bool.pick(Command, String.eq(verb,"ensemble"),EnsembleRead{id},Bool.pick(Command, String.eq(verb,"inbox"),Inbox{id},
+      Bool.pick(Command,Bool.and(Bool.or(String.eq(verb,"players"),Bool.or(String.eq(verb,"orchestra"),String.eq(verb,"pending"))),String.eq(id,"--pretty")),Pretty{Bool.pick(Command,String.eq(verb,"players"),Players{},Bool.pick(Command,String.eq(verb,"orchestra"),Orchestra{},Pending{}))},Bool.pick(Command,Bool.and(String.eq(verb,"status"),String.eq(id,"--pretty")),StatusPretty{},Bool.pick(Command,String.eq(verb,"player"),PlayerRead{id},Bool.pick(Command, String.eq(verb,"role"),RoleRead{id},Bool.pick(Command, String.eq(verb,"ensemble"),EnsembleRead{id},Bool.pick(Command, String.eq(verb,"inbox"),Inbox{id},
       Bool.pick(Command, String.eq(verb,"session"),Session{id},
       Bool.pick(Command, String.eq(verb,"delivery"),Delivery{id},
       Bool.pick(Command, String.eq(verb,"worktree"),Worktree{id},
       Bool.pick(Command, String.eq(verb,"turns"),Turns{id},
-      Bool.pick(Command, String.eq(verb,"knowledge"),KnowledgeRead{id},Invalid{})))))))))
-    case +verb <> session <> id <> Nil{}:
-      Bool.pick(Command,String.eq(verb,"section"),SectionRead{session,id},Bool.pick(Command,String.eq(verb,"role"),Role{session,id},Bool.pick(Command,String.eq(verb,"ensemble"),Ensemble{session,id,"loose"},Bool.pick(Command,String.eq(verb,"force-stop"),ForceStop{session,id},Invalid{}))))
+      Bool.pick(Command, String.eq(verb,"knowledge"),KnowledgeRead{id},Invalid{})))))))))))
+    case +verb <> +session <> +id <> Nil{}:
+      Bool.pick(Command,Bool.and(Bool.or(String.eq(verb,"player"),Bool.or(String.eq(verb,"session"),Bool.or(String.eq(verb,"inbox"),Bool.or(String.eq(verb,"delivery"),String.eq(verb,"turns"))))),String.eq(id,"--pretty")),Pretty{Bool.pick(Command,String.eq(verb,"player"),PlayerRead{session},Bool.pick(Command,String.eq(verb,"session"),Session{session},Bool.pick(Command,String.eq(verb,"inbox"),Inbox{session},Bool.pick(Command,String.eq(verb,"delivery"),Delivery{session},Turns{session}))))},Bool.pick(Command,String.eq(verb,"section"),SectionRead{session,id},Bool.pick(Command,String.eq(verb,"role"),Role{session,id},Bool.pick(Command,String.eq(verb,"ensemble"),Ensemble{session,id,"loose"},Bool.pick(Command,String.eq(verb,"force-stop"),ForceStop{session,id},Invalid{})))))
     case +verb <> +id <> +one <> +two <> Nil{}:
-      Bool.pick(Command, String.eq(verb,"ensemble"),Ensemble{id,one,two},Bool.pick(Command, String.eq(verb,"native-reply"),NativeReply{id,one,two},
+      Bool.pick(Command,String.eq(verb,"receiver"),Receiver{id,one,two},Bool.pick(Command, String.eq(verb,"ensemble"),Ensemble{id,one,two},Bool.pick(Command, String.eq(verb,"native-reply"),NativeReply{id,one,two},
       Bool.pick(Command, String.eq(verb,"native-reply-file"),NativeReplyFile{id,one,two},
       Bool.pick(Command, String.eq(verb,"stop"),Stop{id,one,two},
       Bool.pick(Command, String.eq(verb,"report"),Report{id,one,two},
@@ -330,17 +342,17 @@ def parse(args: List<String>) -> Command:
       Bool.pick(Command, String.eq(verb,"land"),Land{id,one,two},
       Bool.pick(Command, String.eq(verb,"push"),Push{id,one,two},
       Bool.pick(Command, String.eq(verb,"ask"),Ask{id,one,two},
-      Bool.pick(Command, String.eq(verb,"ask-file"),AskFile{id,one,two},Invalid{}))))))))))))
+      Bool.pick(Command, String.eq(verb,"ask-file"),AskFile{id,one,two},Invalid{})))))))))))))
     case +verb <> +id <> +one <> +two <> +three <> Nil{}:
       Bool.pick(Command,String.eq(verb,"section"),Section{id,one,two,three},Bool.pick(Command, String.eq(verb,"ensemble-member"),EnsembleMember{id,one,two,three},Bool.pick(Command, String.eq(verb,"attach"),Attach{id,one,two,three},Invalid{})))
     case +verb <> +id <> +one <> +two <> +three <> +four <> Nil{}:
-      Bool.pick(Command,String.eq(verb,"section-member"),SectionMember{id,one,two,three,four},Bool.pick(Command, String.eq(verb,"land-checked"),LandChecked{id,one,two,three,four},
+      Bool.pick(Command,String.eq(verb,"dispatch-turn"),DispatchTurn{id,one,two,three,four},Bool.pick(Command,String.eq(verb,"dispatch-file"),DispatchFile{id,one,two,three,four},Bool.pick(Command,String.eq(verb,"section-member"),SectionMember{id,one,two,three,four},Bool.pick(Command, String.eq(verb,"land-checked"),LandChecked{id,one,two,three,four},
       Bool.pick(Command, String.eq(verb,"bind"),Bind{id,one,two,three,four},
       Bool.pick(Command, String.eq(verb,"message"),Message{id,one,two,three,four},
-      Bool.pick(Command, String.eq(verb,"message-file"),MessageFile{id,one,two,three,four},Bool.pick(Command, String.eq(verb,"record"),KnowledgeRecord{id,one,two,three,four},Bool.pick(Command, String.eq(verb,"promote"),KnowledgePromote{id,one,two,three,four},Invalid{})))))))
+      Bool.pick(Command, String.eq(verb,"message-file"),MessageFile{id,one,two,three,four},Bool.pick(Command, String.eq(verb,"record"),KnowledgeRecord{id,one,two,three,four},Bool.pick(Command, String.eq(verb,"promote"),KnowledgePromote{id,one,two,three,four},Invalid{})))))))))
     case +verb <> session <> cmd <> model <> effort <> cwd <> log <> message <> Nil{}:
       Bool.pick(Command,String.eq(verb,"receive"),Receive{session,cmd,model,effort,cwd,log,message},Invalid{})
     case +verb <> +player <> +id <> +cmd <> +model <> +effort <> +cwd <> +task <> +log <> +session <> Nil{}:
-      Bool.pick(Command,String.eq(verb,"turn"),RunTurn{player,id,cmd,model,effort,cwd,task,log,session},
-      Bool.pick(Command,String.eq(verb,"recruit"),Recruit{player,id,cmd,model,effort,cwd,task,log,session},Invalid{}))
+      Bool.pick(Command,String.eq(verb,"start"),Start{player,id,cmd,model,effort,cwd,task,log,session},Bool.pick(Command,String.eq(verb,"turn"),RunTurn{player,id,cmd,model,effort,cwd,task,log,session},
+      Bool.pick(Command,String.eq(verb,"recruit"),Recruit{player,id,cmd,model,effort,cwd,task,log,session},Invalid{})))
     case _: Invalid{}
