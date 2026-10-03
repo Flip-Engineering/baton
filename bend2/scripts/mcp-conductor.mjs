@@ -130,6 +130,50 @@ const TOOLS = [
       required: ['player'], additionalProperties: false },
   },
   {
+    name: 'baton2_recruit',
+    description: 'Recruit a Player with a registered assignment and Git worktree.',
+    inputSchema: { type: 'object', properties: {
+      player: { type: 'string', description: 'New Player session ID' },
+      parent: { type: 'string', description: 'Parent session ID (default: attached Conductor)' },
+      harness: { type: 'string' }, model: { type: 'string' }, effort: { type: 'string' },
+      repo: { type: 'string', description: 'Repository path' },
+      branch: { type: 'string' }, workspace: { type: 'string', description: 'New worktree path' },
+      base: { type: 'string', description: 'Base Git revision' },
+    }, required: ['player', 'harness', 'model', 'effort', 'repo', 'branch', 'workspace', 'base'],
+    additionalProperties: false },
+  },
+  {
+    name: 'baton2_receiver',
+    description: 'Register a native receive endpoint for an explicit Codex or OMP Player session.',
+    inputSchema: { type: 'object', properties: {
+      player: { type: 'string', description: 'Registered Player session ID' },
+      command: { type: 'string', description: 'Native harness executable path or command name' },
+      log: { type: 'string', description: 'Native output log path' },
+    }, required: ['player', 'command', 'log'], additionalProperties: false },
+  },
+  {
+    name: 'baton2_dispatch_file',
+    description: 'Commit a file as authorized message input and launch delivery to its registered recipient.',
+    inputSchema: { type: 'object', properties: {
+      id: { type: 'string', description: 'Message ID' },
+      sender: { type: 'string', description: 'Sender session ID (default: attached Conductor)' },
+      recipient: { type: 'string', description: 'Recipient session ID' },
+      kind: { type: 'string', description: 'Message kind' },
+      path: { type: 'string', description: 'Message body file path' },
+    }, required: ['id', 'recipient', 'kind', 'path'], additionalProperties: false },
+  },
+  {
+    name: 'baton2_dispatch_turn',
+    description: 'Launch a recruited Player turn from a task file using its recorded model, effort and workspace.',
+    inputSchema: { type: 'object', properties: {
+      player: { type: 'string', description: 'Registered Player session ID' },
+      id: { type: 'string', description: 'Turn ID' },
+      command: { type: 'string', description: 'Native harness executable path or command name' },
+      log: { type: 'string', description: 'Native output log path' },
+      task: { type: 'string', description: 'Task file path' },
+    }, required: ['player', 'id', 'command', 'log', 'task'], additionalProperties: false },
+  },
+  {
     name: 'baton2_role',
     description: 'Read or assign a session responsibility.',
     inputSchema: { type: 'object', properties: {
@@ -397,7 +441,7 @@ function handleMessage(msg) {
         experimental: { 'claude/channel': {} },
       },
       serverInfo: { name: 'baton-conductor', version: '0.1.0' },
-      instructions: `Baton2 ${hasParent(selectedSession()) ? 'Associate' : 'Principal'} Conductor attachment for session ${sessionId}. Use baton2_inbox or baton2_pending to see pending messages. Use baton2_ack to acknowledge delivery. Use baton2_guide to direct Players. Use baton2_player and baton2_players to inspect Players and both Conductor tiers. Use baton2_role, baton2_ensemble, baton2_ensemble_member, baton2_section and baton2_section_member to configure responsibilities and membership. Use baton2_orchestra to inspect the system. Use baton2_turns for turn history and baton2_land or baton2_land_checked to land a Player's changes.`,
+      instructions: `Baton2 ${hasParent(selectedSession()) ? 'Associate' : 'Principal'} Conductor attachment for session ${sessionId}. Use baton2_recruit to assign a Player and its worktree. Use baton2_receiver to register a Player's Codex or OMP receive endpoint, then baton2_dispatch_file to send task or guidance files. Use baton2_dispatch_turn to launch a recruited Player's task file with its recorded route. Use baton2_inbox or baton2_pending to see pending messages. Use baton2_ack to acknowledge delivery. Use baton2_guide to direct Players. Use baton2_player and baton2_players to inspect Players and both Conductor tiers. Use baton2_role, baton2_ensemble, baton2_ensemble_member, baton2_section and baton2_section_member to configure responsibilities and membership. Use baton2_orchestra to inspect the system. Use baton2_turns for turn history and baton2_land or baton2_land_checked to land a Player's changes.`,
     });
     return;
   }
@@ -445,6 +489,20 @@ function handleToolCall(msg) {
     switch (name) {
       case 'baton2_player':
         result = coord('player', player);
+        break;
+      case 'baton2_recruit':
+        result = coord('recruit', player, args.parent ?? sessionId, args.harness, args.model,
+          args.effort, args.repo, args.branch, args.workspace, args.base);
+        break;
+      case 'baton2_receiver':
+        result = coord('receiver', player, args.command, args.log);
+        break;
+      case 'baton2_dispatch_file':
+        result = coord('dispatch-file', args.id, args.sender ?? sessionId,
+          args.recipient, args.kind, args.path);
+        break;
+      case 'baton2_dispatch_turn':
+        result = coord('dispatch-turn', player, args.id, args.command, args.log, args.task);
         break;
       case 'baton2_role':
         result = coord('role', args.session, ...(args.role === undefined ? [] : [args.role]));
