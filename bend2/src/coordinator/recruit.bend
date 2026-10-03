@@ -70,22 +70,39 @@ def recruit(+db: String,+id: String,+parent: String,harness: String,model: Strin
     existing : String <- IO.try(String,Store.apply(db,C.Session{id}))
     create(db,id,parent,harness,model,effort,repo,branch,absolute(root,path,Tx.starts_with(path,"/")),commit,Bool.not(String.is_empty(existing)))
 
-def show_status(id: String,path: String,result: Result<&1,&1,G.GitFail,G.WtStatus>) -> IO(Unit):
+def status_json(id: String,path: String,branch: String,commit: String,dirty: Bool) -> String:
+  "{\"id\":" ++ J.string_literal(id) ++ ",\"workspace\":" ++ J.string_literal(path) ++ ",\"branch\":" ++ J.string_literal(branch) ++ ",\"commit\":" ++ J.string_literal(commit) ++ ",\"dirty\":" ++ Bool.pick(String,dirty,"true","false") ++ "}"
+
+def status_result(id: String,path: String,result: Result<&1,&1,G.GitFail,G.WtStatus>) -> IO(String):
   match result:
-    case Fail{error}: IO.die(Unit,1,G.fail_text(error))
-    case Done{G.Wt{branch,commit,dirty}}:
-      IO.print("{\"id\":" ++ J.string_literal(id) ++ ",\"workspace\":" ++ J.string_literal(path) ++ ",\"branch\":" ++ J.string_literal(branch) ++ ",\"commit\":" ++ J.string_literal(commit) ++ ",\"dirty\":" ++ Bool.pick(String,dirty,"true","false") ++ "}")
+    case Fail{error}: IO.die(String,1,G.fail_text(error))
+    case Done{G.Wt{branch,commit,dirty}}: IO.pure(String,status_json(id,path,branch,commit,dirty))
 
-def inspect_path(id: String,+path: String,missing: Bool) -> IO(Unit):
-  match missing:
-    case True{}: IO.die(Unit,2,"The player has no recorded workspace.")
-    case False{}:
-      do IO<Unit>:
-        status : Result<&1,&1,G.GitFail,G.WtStatus> <- WS.worktreeStatus(path)
-        show_status(id,path,status)
-
-def inspect(+db: String,+id: String) -> IO(Unit):
+def show_status(id: String,path: String,result: Result<&1,&1,G.GitFail,G.WtStatus>) -> IO(Unit):
   do IO<Unit>:
+    saved : String <- status_result(id,path,result)
+    IO.print(saved)
+
+def inspect_path_result(id: String,+path: String,missing: Bool) -> IO(String):
+  match missing:
+    case True{}: IO.die(String,2,"The player has no recorded workspace.")
+    case False{}:
+      do IO<String>:
+        status : Result<&1,&1,G.GitFail,G.WtStatus> <- WS.worktreeStatus(path)
+        status_result(id,path,status)
+
+def inspect_path(id: String,path: String,missing: Bool) -> IO(Unit):
+  do IO<Unit>:
+    saved : String <- inspect_path_result(id,path,missing)
+    IO.print(saved)
+
+def inspect_result(+db: String,+id: String) -> IO(String):
+  do IO<String>:
     ready : String <- IO.try(String,Store.apply(db,C.Session{id}))
     +path : String <- IO.try(String,DB.Sql.query(db,"SELECT workspace FROM sessions WHERE id=" ++ C.q(id) ++ ";"))
-    inspect_path(id,line(path),String.is_empty(ready))
+    inspect_path_result(id,line(path),String.is_empty(ready))
+
+def inspect(db: String,id: String) -> IO(Unit):
+  do IO<Unit>:
+    saved : String <- inspect_result(db,id)
+    IO.print(saved)

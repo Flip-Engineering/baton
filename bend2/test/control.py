@@ -496,6 +496,54 @@ class Control(unittest.TestCase):
                          'No matching session or message; inspect status and the requested ID.')
         self.assertEqual(self.rows("SELECT * FROM sessions WHERE id='missing-player'"), [])
 
+    def test_pretty_knowledge_preserves_visibility_and_complete_finding(self):
+        self.root()
+        self.recruit('researcher', 'muse')
+        self.recruit('sibling', 'muse')
+        body = 'Retained evidence λ.\nFull details with "quotes".\n'
+        self.call('report', 'finding-evidence', 'researcher', body)
+        self.call('record', 'finding', 'researcher', 'Observed claim λ.',
+                  'message:finding-evidence', 'One controlled fixture.')
+        for reader in ('researcher', 'root', 'sibling', 'missing-reader'):
+            with self.subTest(reader=reader):
+                ordinary = self.call('knowledge', reader, raw=True)
+                before = self.rows('SELECT * FROM knowledge'), self.rows('SELECT * FROM knowledge_promotions'), self.rows('SELECT * FROM messages')
+                readable = self.call('knowledge', reader, '--pretty', raw=True)
+                value = json.loads(readable['stdout'])
+                self.assertEqual(value, json.loads(ordinary['stdout']))
+                self.assertEqual(before, (self.rows('SELECT * FROM knowledge'), self.rows('SELECT * FROM knowledge_promotions'), self.rows('SELECT * FROM messages')))
+                if reader in ('researcher', 'root'):
+                    self.assertEqual(value[0]['evidenceMessage']['body'], body)
+                    self.assertEqual(value[0]['limits'], 'One controlled fixture.')
+                    self.assertIn('\n', readable['stdout'].strip())
+                else:
+                    self.assertEqual(value, [])
+
+    def test_pretty_worktree_reads_fresh_status_and_preserves_fields(self):
+        self.root()
+        assignment = self.recruit('leaf-λ', 'muse')
+        for dirty in (False, True):
+            with self.subTest(dirty=dirty):
+                if dirty:
+                    (pathlib.Path(assignment['workspace']) / 'untracked λ.txt').write_text('retained work\n')
+                ordinary = self.call('worktree', 'leaf-λ', raw=True)
+                readable = self.call('worktree', 'leaf-λ', '--pretty', raw=True)
+                value = json.loads(readable['stdout'])
+                self.assertEqual(value, json.loads(ordinary['stdout']))
+                self.assertEqual(value, {'id': 'leaf-λ', 'workspace': assignment['workspace'],
+                                         'branch': 'leaf-λ-branch', 'commit': self.base, 'dirty': dirty})
+                self.assertIn('\n', readable['stdout'].strip())
+
+    def test_pretty_worktree_preserves_missing_session_refusal(self):
+        self.root()
+        ordinary = self.call('worktree', 'missing-player', ok=False)
+        readable = self.call('worktree', 'missing-player', '--pretty', ok=False)
+        self.assertEqual(readable['code'], 2)
+        self.assertEqual(readable['stdout'], ordinary['stdout'])
+        self.assertEqual(readable['stderr'], ordinary['stderr'])
+        self.assertEqual(readable['stderr'].strip(), 'The player has no recorded workspace.')
+        self.assertEqual(self.rows("SELECT * FROM sessions WHERE id='missing-player'"), [])
+
 
 if __name__ == '__main__':
     unittest.main()
