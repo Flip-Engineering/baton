@@ -20,6 +20,8 @@ REPOSITORY = 'Flip-Engineering/baton'
 PERMISSIONS = {'contents': 'write', 'pull_requests': 'write', 'metadata': 'read'}
 API_ROOT = 'https://api.github.com'
 SERIES = ('gpt', 'muse', 'deepseek', 'claude', 'glm', 'kimi')
+SERIES_LABELS = {'gpt': 'GPT', 'muse': 'Muse', 'deepseek': 'DeepSeek',
+                 'claude': 'Claude', 'glm': 'GLM', 'kimi': 'Kimi'}
 
 
 class Refusal(Exception):
@@ -60,8 +62,8 @@ def selected_identity(registry_path, model_key=None, series_key=None):
     directory = Path(directory).expanduser().resolve()
     identity = public_json(directory / 'identity-series.json')
     require(identity.get('seriesKey') == series_key, 'The selected identity belongs to another series.')
-    require(isinstance(identity.get('displaySeries'), str) and identity['displaySeries'],
-            'The public series identity is incomplete.')
+    require(identity.get('displaySeries') == SERIES_LABELS[series_key],
+            'The public displaySeries must match its selected series label.')
     github = identity.get('github', {})
     for field in ('appId', 'botId', 'installationId', 'repositoryId'):
         require(type(github.get(field)) is int and github[field] > 0,
@@ -117,8 +119,9 @@ def scoped_environment(registry_path, series_key, github, inherited):
     environment.pop('GH_TOKEN', None)
     environment.pop('GITHUB_TOKEN', None)
     # Each recipient launcher replaces the sender's inherited Git identity.
-    for key, value in {'GIT_AUTHOR_NAME': github['botLogin'], 'GIT_AUTHOR_EMAIL': github['commitEmail'],
-                       'GIT_COMMITTER_NAME': github['botLogin'],
+    name = 'Flip Baton - ' + SERIES_LABELS[series_key]
+    for key, value in {'GIT_AUTHOR_NAME': name, 'GIT_AUTHOR_EMAIL': github['commitEmail'],
+                       'GIT_COMMITTER_NAME': name,
                        'GIT_COMMITTER_EMAIL': github['commitEmail']}.items():
         environment[key] = value
     helper = '!' + shlex.join([sys.executable, str(Path(__file__).resolve()), 'helper',

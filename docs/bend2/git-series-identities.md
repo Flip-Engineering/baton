@@ -2,7 +2,9 @@
 
 `bend2/harness/git-series.py` is an optional process launcher and HTTPS
 credential helper. It selects a GitHub App for GPT, Muse, DeepSeek, Claude,
-GLM or Kimi and sets that bot's Git author and committer fields. Native
+GLM or Kimi. Commit author and committer names use the exact format
+`Flip Baton - GPT`, `Flip Baton - Muse`, `Flip Baton - DeepSeek`,
+`Flip Baton - Claude`, `Flip Baton - GLM` or `Flip Baton - Kimi`. Native
 execution keeps its exact model identifier.
 
 Native archives install the same helper at `PREFIX/libexec/baton2/git-series.py`
@@ -72,6 +74,10 @@ The bot login is `SLUG[bot]`; the commit email is
 `BOT_ID+SLUG[bot]@users.noreply.github.com`. Verify the bot ID through GitHub's
 public user metadata. GitHub's own action documents this
 [email format](https://github.com/actions/create-github-app-token#configure-git-cli-for-an-apps-bot-user).
+`displaySeries` must match the selected label: `GPT`, `Muse`, `DeepSeek`,
+`Claude`, `GLM` or `Kimi`. The helper adds `Flip Baton - ` to that verified
+label for commit names. GitHub controls the App account login's `[bot]` suffix;
+the bot login, numeric ID, noreply email and authenticated actor stay unchanged.
 The helper reads the fixed public filename and uses the adjacent key to sign
 an App JWT with installed `/usr/bin/openssl`.
 
