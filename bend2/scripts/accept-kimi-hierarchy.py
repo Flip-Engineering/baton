@@ -143,7 +143,8 @@ def successful_receipts(native):
     return bool(native) and all(
         row.get('exit_code') == 0 and row.get('child_exit_code') == 0
         and 'ended_unix' in row and 'child_ended_unix' in row
-        and 'wrapper_error' not in row for row in native)
+        and row.get('recording_complete', True)
+        and 'wrapper_error' not in row and 'recording_error' not in row for row in native)
 
 
 def close_failed_run(out, terminal, native, inspection):
@@ -177,6 +178,32 @@ def native_wrapper(seat, out, arguments):
            'frames': str(stem.with_suffix('.native.jsonl')),
            'events': str(stem.with_suffix('.events.jsonl'))}
     save(stem.with_suffix('.process.json'), row)
+    receipt_lock = threading.Lock()
+
+    def recording_failed(operation, error):
+        with receipt_lock:
+            first = 'recording_error' not in row
+            if first:
+                row['recording_error'] = {'operation': operation, 'error': repr(error),
+                                          'errno': error.errno}
+            row['recording_complete'] = False
+            if row.get('exit_code') == 0:
+                row['exit_code'] = 1
+        if first:
+            try:
+                print(f'Native recording failed during {operation}: {error}; '
+                      'acceptance recording is incomplete and native stdout continues to be forwarded.',
+                      file=sys.stderr, flush=True)
+            except OSError:
+                pass
+
+    def save_process():
+        try:
+            with receipt_lock:
+                save(stem.with_suffix('.process.json'), row)
+        except OSError as error:
+            recording_failed('process receipt', error)
+
     try:
         retain_process_start(row, 'pid', 'started_local')
         save(stem.with_suffix('.process.json'), row)
@@ -184,38 +211,65 @@ def native_wrapper(seat, out, arguments):
         row['child_pid'] = child.pid
         row['child_started_unix'] = time.time()
         retain_process_start(row, 'child_pid', 'child_started_local')
-        save(stem.with_suffix('.process.json'), row)
+        save_process()
 
         def reap():
-            row['child_exit_code'] = child.wait()
-            row['child_ended_unix'] = time.time()
-            save(stem.with_suffix('.process.json'), row)
+            code = child.wait()
+            with receipt_lock:
+                row.update(child_exit_code=code, child_ended_unix=time.time())
+            save_process()
 
         reaper = threading.Thread(target=reap)
         reaper.start()
-        with child.stdout, Path(row['frames']).open('wb') as log, Path(row['events']).open('w') as events:
-            for line in child.stdout:
-                received = time.time()
-                try:
-                    frame = json.loads(line)
-                except ValueError:
-                    frame = {}
-                if not isinstance(frame, dict):
-                    frame = {}
-                if harness != 'omp' or frame.get('type') != 'message_update':
-                    event = {key: frame[key] for key in ['type', 'command', 'id', 'success', 'payload_type', 'isTerminal']
-                             if key in frame}
-                    event.update(received_unix=received, offset=log.tell(), bytes=len(line))
-                    log.write(line)
-                    log.flush()
-                    events.write(json.dumps(event) + '\n')
-                    events.flush()
-                sys.stdout.buffer.write(line)
-                sys.stdout.buffer.flush()
+        log = events = None
+        capturing = True
+        try:
+            try:
+                log = Path(row['frames']).open('wb')
+                events = Path(row['events']).open('w')
+            except OSError as error:
+                capturing = False
+                recording_failed('capture open', error)
+                save_process()
+            with child.stdout:
+                for line in child.stdout:
+                    if capturing:
+                        received = time.time()
+                        try:
+                            frame = json.loads(line)
+                        except ValueError:
+                            frame = {}
+                        if not isinstance(frame, dict):
+                            frame = {}
+                        if harness != 'omp' or frame.get('type') != 'message_update':
+                            try:
+                                event = {key: frame[key] for key in ['type', 'command', 'id', 'success', 'payload_type', 'isTerminal']
+                                         if key in frame}
+                                event.update(received_unix=received, offset=log.tell(), bytes=len(line))
+                                log.write(line)
+                                log.flush()
+                                events.write(json.dumps(event) + '\n')
+                                events.flush()
+                            except OSError as error:
+                                capturing = False
+                                recording_failed('frame capture', error)
+                                save_process()
+                    sys.stdout.buffer.write(line)
+                    sys.stdout.buffer.flush()
+        finally:
+            for stream in (log, events):
+                if stream is not None:
+                    try:
+                        stream.close()
+                    except OSError as error:
+                        recording_failed('capture close', error)
         reaper.join()
         code = row['child_exit_code']
-        row.update(ended_unix=time.time(), exit_code=code)
-        save(stem.with_suffix('.process.json'), row)
+        row.update(ended_unix=time.time(), exit_code=1 if code == 0 and 'recording_error' in row else code,
+                   recording_complete='recording_error' not in row)
+        save_process()
+        if code == 0 and 'recording_error' in row:
+            return 1
         return code if code >= 0 else 128 - code
     except BaseException as error:
         row.update(wrapper_error=repr(error), ended_unix=time.time())
