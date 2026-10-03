@@ -59,6 +59,14 @@ process custody was exercised by the fresh qualification on its frozen runtime
 and tasks. The observer fixtures remain the evidence for failed and uncertain
 closure decisions.
 
+The [repair for #651](hierarchy-recorder-2026-10-02.md) preserves child stdout
+forwarding and natural completion when local qualification recording fails.
+Incomplete recording refuses qualification; an initial receipt failure starts
+no child. Twelve controlled recorder and hierarchy-history tests passed, with
+three recording failures reproduced against the original source. The disk-full
+native attempt at `839e3bd2` remains failed, with incomplete inner exit receipts
+and no checked landings. Fresh native qualification has its own acceptance gate.
+
 Generated lead instructions include saved-native direct-turn corrections for
 both helper workers, with retained logs and detached process ownership. They
 require prior completion evidence, the saved identity and unchanged route
