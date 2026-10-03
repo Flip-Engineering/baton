@@ -227,6 +227,65 @@ class Naming(unittest.TestCase):
         self.assertEqual(self.call('player', self.player)['native'], 'native preserved λ')
         self.assertEqual(self.call('inbox', self.player)[0]['body'], 'Full pending body λ\n')
 
+    def test_registered_empty_parent_id_keeps_null_parentage_tiers(self):
+        child = 'empty parent child'
+        self.call('attach', '', 'fixture', 'native: empty principal', '')
+        self.assertEqual(self.call('role', '', 'principal-conductor')['role'],
+                         'principal-conductor')
+        self.recruit(child, '', 'empty-parent')
+        self.assertEqual(self.call('role', child, 'associate-conductor')['role'],
+                         'associate-conductor')
+        self.assertIsNone(self.call('session', '')['parent'])
+        self.assertEqual(self.call('player', child)['parent'], '')
+        self.assertEqual(self.call('player', '')['native'], 'native: empty principal')
+        players = {row['id']: row for row in self.call('players')}
+        status = {row['id']: row for row in self.call('status')}
+        orchestra = {row['id']: row for row in self.call('orchestra')['players']}
+        for ident, tier in [('', 'principal-conductor'), (child, 'associate-conductor')]:
+            with self.subTest(ident=ident, tier=tier):
+                self.assertEqual(self.call('role', ident)['role'], tier)
+                self.assertEqual(self.call('player', ident)['role'], tier)
+                self.assertEqual(self.call('session', ident)['role'], tier)
+                self.assertEqual(status[ident]['role'], tier)
+                self.assertEqual(players[ident]['role'], tier)
+                self.assertEqual(orchestra[ident]['role'], tier)
+        self.assertEqual(players[child]['parent'], '')
+        self.assertEqual(players['']['native'], 'native: empty principal')
+        before = self.stored()
+        refusal = self.call('role', child, 'principal-conductor', error='invalid-role')
+        self.assertEqual(refusal['session'], child)
+        self.assertEqual(refusal['requested'], 'principal-conductor')
+        self.assertEqual(self.stored(), before)
+        with closing(sqlite3.connect(self.db)) as db:
+            self.assertEqual(db.execute('SELECT role FROM session_roles WHERE session=?',
+                                        (child,)).fetchone()[0], 'conductor')
+        task = self.call('message', 'empty-parent-task', '', child, 'task',
+                         'Queued parent task λ\n')
+        self.assertEqual((task['sender'], task['recipient'], task['kind'], task['body'],
+                          task['receipt']), ('', child, 'task', 'Queued parent task λ\n', None))
+        self.assertEqual([(row['id'], row['sender'], row['body'])
+                          for row in self.call('inbox', child)],
+                         [('empty-parent-task', '', 'Queued parent task λ\n')])
+        self.assertEqual(self.call('ack', 'empty-parent-task', child, 'accepted task λ')['receipt'],
+                         'accepted task λ')
+        delivered = self.call('delivery', 'empty-parent-task')
+        self.assertEqual(delivered['body'], 'Queued parent task λ\n')
+        self.assertEqual(delivered['receipt'], 'accepted task λ')
+        self.assertEqual(self.call('inbox', child), [])
+        report = self.call('report', 'empty-parent-report', child, 'Child report body λ\n')
+        self.assertEqual((report['sender'], report['recipient'], report['kind'],
+                          report['body'], report['receipt']),
+                         (child, '', 'report', 'Child report body λ\n', None))
+        self.assertEqual([(row['id'], row['sender'], row['body'])
+                          for row in self.call('inbox', '')],
+                         [('empty-parent-report', child, 'Child report body λ\n')])
+        self.assertEqual(self.call('ack', 'empty-parent-report', '', 'accepted report λ')['receipt'],
+                         'accepted report λ')
+        delivered = self.call('delivery', 'empty-parent-report')
+        self.assertEqual(delivered['body'], 'Child report body λ\n')
+        self.assertEqual(delivered['receipt'], 'accepted report λ')
+        self.assertEqual(self.call('inbox', ''), [])
+
 
 if __name__ == '__main__':
     unittest.main()
