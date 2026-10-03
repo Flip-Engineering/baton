@@ -218,7 +218,7 @@ class PackageLicenses(unittest.TestCase):
                                 'sha256': hashlib.sha256(path.read_bytes()).hexdigest()} for path in (stdout, stderr)]}
         (self.home / 'installed-author.json').write_text(json.dumps(receipt, indent=2) + '\n')
         self.assertEqual(code, 0, stderr.read_text())
-        self.assertTrue(stdout.read_text().startswith(github['botLogin'] + ' <' + github['commitEmail'] + '> '))
+        self.assertTrue(stdout.read_text().startswith('Flip Baton - GPT <' + github['commitEmail'] + '> '))
         self.assertFalse((public / 'private-key.pem').exists())
 
     def test_archive_license_hash_mismatch_refuses_extraction(self):

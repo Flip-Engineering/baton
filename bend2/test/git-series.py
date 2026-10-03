@@ -22,6 +22,8 @@ SPEC.loader.exec_module(MODEL)
 MODELS = ('gpt-6-astra', 'kimi-code/k3', 'deepseek/deepseek-flash', 'muse-spark-1.3-contributor')
 MODEL_SERIES = dict(zip(MODELS, ('gpt', 'kimi', 'deepseek', 'muse')))
 NEXT_MODEL = 'fixture/gpt-next-exact'
+LABELS = {'gpt': 'GPT', 'muse': 'Muse', 'deepseek': 'DeepSeek',
+          'claude': 'Claude', 'glm': 'GLM', 'kimi': 'Kimi'}
 
 
 class ModelGit(unittest.TestCase):
@@ -39,7 +41,7 @@ class ModelGit(unittest.TestCase):
             directory.mkdir()
             slug = 'fixture-series-' + key
             bot_id = 9000 + index
-            identity = {'seriesKey': key, 'displaySeries': key,
+            identity = {'seriesKey': key, 'displaySeries': LABELS[key],
                         'github': {'appId': 1000 + index, 'clientId': 'fixture-client-' + str(index),
                                    'slug': slug, 'botLogin': slug + '[bot]', 'botId': bot_id,
                                    'commitEmail': f'{bot_id}+{slug}[bot]@users.noreply.github.com',
@@ -106,7 +108,8 @@ class ModelGit(unittest.TestCase):
         for model in MODELS:
             with self.subTest(model=model):
                 environment = MODEL.scoped_environment(self.registry, MODEL_SERIES[model], self.identities[model], inherited)
-                self.assertEqual(environment['GIT_AUTHOR_NAME'], self.identities[model]['botLogin'])
+                self.assertEqual(environment['GIT_AUTHOR_NAME'], 'Flip Baton - ' + LABELS[MODEL_SERIES[model]])
+                self.assertEqual(environment['GIT_COMMITTER_NAME'], 'Flip Baton - ' + LABELS[MODEL_SERIES[model]])
                 self.assertEqual(environment['GIT_COMMITTER_EMAIL'], self.identities[model]['commitEmail'])
                 self.assertNotIn('GH_TOKEN', environment)
                 self.assertNotIn('GITHUB_TOKEN', environment)
@@ -264,8 +267,11 @@ class ModelGit(unittest.TestCase):
             with self.subTest(series=key):
                 with patch.dict(MODEL.os.environ, {}, clear=True), patch.object(MODEL.os, 'execvpe') as execute:
                     MODEL.launch(self.args(None, ['git', 'commit', '-m', 'Fixture commit text'], series=key))
-                self.assertEqual(execute.call_args.args[2]['GIT_AUTHOR_NAME'],
-                                 self.series_identities[key]['botLogin'])
+                environment = execute.call_args.args[2]
+                self.assertEqual(environment['GIT_AUTHOR_NAME'], 'Flip Baton - ' + LABELS[key])
+                self.assertEqual(environment['GIT_COMMITTER_NAME'], 'Flip Baton - ' + LABELS[key])
+                self.assertEqual(environment['GIT_AUTHOR_EMAIL'], self.series_identities[key]['commitEmail'])
+                self.assertEqual(environment['GIT_COMMITTER_EMAIL'], self.series_identities[key]['commitEmail'])
                 selected, directory, github = MODEL.selected_identity(self.registry, series_key=key)
                 self.assertEqual(selected, key)
                 self.assertEqual(github, self.series_identities[key])
@@ -331,6 +337,12 @@ class ModelGit(unittest.TestCase):
             MODEL.selected_identity(invalid_path, series_key='gpt')
         with self.assertRaises(MODEL.Refusal):
             MODEL.selected_identity(self.registry, series_key='unregistered-fixture-series')
+        for label in ('gpt', 'GPT\nExtra', 'GPT\rExtra', 'GPT\x00Extra', None):
+            with self.subTest(displaySeries=repr(label)):
+                identity = {'seriesKey': 'gpt', 'displaySeries': label, 'github': self.series_identities['gpt']}
+                metadata.write_text(json.dumps(identity))
+                with self.assertRaises(MODEL.Refusal):
+                    MODEL.selected_identity(invalid_path, series_key='gpt')
 
     def test_cli_parses_series_and_optional_exact_model_separately(self):
         variants = [(['--series-key', 'claude'], None, 'claude', False),
