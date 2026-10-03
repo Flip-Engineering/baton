@@ -7,10 +7,11 @@ GLM or Kimi. Commit author and committer names use the exact format
 `Flip Baton - Claude`, `Flip Baton - GLM` or `Flip Baton - Kimi`. Native
 execution keeps its exact model identifier.
 
-Native archives install the same helper at `PREFIX/libexec/baton2/git-series.mjs`
+Current development archives install the helper at `PREFIX/libexec/baton2/git-series.mjs`
 beside the Conductor adapters. Run that file with Node 22.15 or later on a POSIX
 host. A source checkout uses `bend2/harness/git-series.mjs`. The Python source
-remains a legacy reference.
+remains a legacy reference. The immutable 1.0 archive carries the earlier Python
+helper; its version-specific payload is described in [installation](installation.md).
 
 The helper currently supports only `Flip-Engineering/baton`. Its App
 installation and issued token must match that repository ID and the
@@ -82,12 +83,32 @@ the bot login, numeric ID, noreply email and authenticated actor stay unchanged.
 The helper reads the fixed public filename and uses the adjacent key to sign
 an RS256 App JWT with Node's built-in cryptography library.
 
-## Model and series selection
+## Native launch selection
+
+Current native controls select the registry at
+`~/.config/baton/github-apps/series.json`. `BATON2_GIT_REGISTRY` selects an
+explicit registry path. When a registry exists, `start` and `receiver` generate
+an endpoint using the installed Node helper and the recipient's recorded model.
+`dispatch-turn` applies the same selection to its direct native turn.
+
+```sh
+baton2 /absolute/path/state.db receiver lead /absolute/path/omp \
+  /absolute/path/lead-native.jsonl
+baton2 /absolute/path/state.db dispatch-file lead-task root lead task \
+  /absolute/path/lead-task.md
+```
+
+The helper replaces inherited Git identity in the launched session with the
+selected recipient series. Native tool calls inherit that identity. Registry
+configuration and keys remain outside the installed prefix and task files.
+Follow [harness setup](harness-setup.md#native-controls) for native startup.
+
+## Direct command selection
 
 Set `GIT_SERIES` to the helper's absolute installed or source path and `REGISTRY`
 to the registry's absolute path. For an extracted native prefix, use
-`GIT_SERIES="$PREFIX/libexec/baton2/git-series.mjs"`. A native wrapper binds the
-exact execution model:
+`GIT_SERIES="$PREFIX/libexec/baton2/git-series.mjs"`. For a direct harness launch,
+the helper can bind the exact execution model:
 
 ```sh
 exec node "$GIT_SERIES" launch --registry "$REGISTRY" \
@@ -116,8 +137,9 @@ command uses the ordinary command launch because it has no model argument.
 
 ## Process and publication boundaries
 
-Each Player or Conductor's native launcher must select its own series, since
-report delivery inherits the sender's environment. The launcher retains the
+The native controls select the recipient's series for receiver and detached
+turn launches. Direct commands and external MCP servers need their own explicit
+helper selection. The helper retains the
 current PID, workspace and standard streams and replaces inherited author, committer, credential helper,
 askpass and HTTP authorization headers within the child environment. It
 preserves noncredential runtime Git settings. An MCP Conductor must launch its

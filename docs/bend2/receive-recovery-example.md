@@ -1,35 +1,48 @@
 # Receive messages for a Codex Player
 
 This example assumes `worker` is registered with the `codex` harness and has
-recorded model, effort, and workspace values. First follow
+recorded model, effort, and workspace values. Current development source uses
+the native controls below. First follow
 [Codex subscription login](harness-setup.md#codex-subscription-login) to verify
-the existing ChatGPT login and create an executable launch wrapper at a retained
-absolute path. The wrapper unsets `OPENAI_API_KEY` and `CODEX_API_KEY` and forces
-ChatGPT login. Use that wrapper as the harness command for this receive and
-registered Codex endpoints. Replace the path placeholders with absolute paths
-to the coordinator, database, subscription wrapper and output log.
+the existing ChatGPT login. Its native Codex adapter removes `OPENAI_API_KEY`
+and `CODEX_API_KEY` and forces ChatGPT login for new and resumed turns. Replace
+the path placeholders with absolute paths to the coordinator, database, native
+Codex executable, output log and task file. Set the task's sender and ID to
+their retained values when retrying pending input.
 
 ```sh
 BATON=/path/to/baton2
 DATABASE=/path/to/state.db
-CODEX_WRAPPER=/absolute/path/to/codex-chatgpt-wrapper
+CODEX_NATIVE=/absolute/path/to/codex
 OUTPUT_LOG=/path/to/worker-output.jsonl
+PARENT=lead
+TASK_ID=worker-task-1
+TASK_FILE=/path/to/worker-task.md
 
-"$BATON" "$DATABASE" inbox worker
-"$BATON" "$DATABASE" receive worker "$CODEX_WRAPPER" '' '' '' "$OUTPUT_LOG" ''
+"$BATON" "$DATABASE" receiver worker "$CODEX_NATIVE" "$OUTPUT_LOG"
+"$BATON" "$DATABASE" inbox worker --pretty
+"$BATON" "$DATABASE" dispatch-file "$TASK_ID" "$PARENT" worker task "$TASK_FILE"
 ```
 
-`receive` accepts `SESSION HARNESS_CMD MODEL EFFORT CWD OUTPUT_LOG MESSAGE_ID`.
-The three empty arguments use the recorded model, effort, and workspace.
-The final empty argument reads the pending inbox. Receive supplies pending
-messages to the native turn and forwards its final assistant text to the parent.
+`receiver` generates the endpoint with the recorded model, effort, workspace
+and saved native identity. An existing model Git registry selects the installed
+Node identity helper automatically. `dispatch-file` commits the task and starts
+detached delivery through that endpoint. It returns the launched delivery PID.
+Receive supplies pending messages to the native turn and forwards its final
+assistant text to the parent.
+
+The immutable 1.0 archive requires its
+[released subscription wrapper](harness-setup.md#released-10-launch-requirement)
+as `HARNESS_CMD` for the lower-level
+`receive SESSION HARNESS_CMD MODEL EFFORT CWD OUTPUT_LOG MESSAGE_ID` command.
+Its interface and qualification retain that version's source scope.
 
 Within the Player turn, inspect pending messages and acknowledge each message
 after accepting it. Replace `MESSAGE_ID` with the ID from the inbox and use a
 receipt describing acceptance:
 
 ```sh
-"$BATON" "$DATABASE" inbox worker
+"$BATON" "$DATABASE" inbox worker --pretty
 "$BATON" "$DATABASE" ack MESSAGE_ID worker 'accepted for this turn'
 ```
 
@@ -46,7 +59,12 @@ Command argument order is defined in `bend2/src/coordinator/commands.bend`;
 dispatch and receive behavior are defined in `main.bend` and `receive.bend`
 in the same directory.
 
-## Contributor note: busy receive and observer recovery
+## Contributor note: released 1.0 observer recovery
+
+The implementation details below describe the observer-loss path at released
+source `ea514a28e080317b223414af9a2327a6b53384e6`. The
+[recovery qualification](native-recovery-qualification-2026-10-02/README.md)
+records the selected process-loss measurements and their boundaries.
 
 When the session lock is busy, `acquired` in
 `bend2/src/coordinator/receive.bend` returns successfully with

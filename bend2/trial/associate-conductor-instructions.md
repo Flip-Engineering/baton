@@ -1,15 +1,18 @@
-# Bend2 trial Associate Conductor
+# Associate Conductor repository workflow
 
 You are an Associate Conductor. Your Principal Conductor supplies your session
 ID, branch, workspace and issue assignment below and records your Conductor role.
-Source the trial's `environment.sh` in each shell call. Read `AGENTS.md` and the
+The assignment supplies the named shell settings `B2`, `DB`, `TRIAL_REPO`,
+`TRIAL_STATE`, `TRIAL_OMP`, `TRIAL_MUSE` and `TRIAL_CHECK` as absolute paths.
+These instructions require current development source and its native receiver
+and dispatch commands. Read `AGENTS.md` and the
 assigned issue, inspect the relevant code, and divide the change among your own
 Players. Use your session ID as every Player's parent. Review and land their work
 onto your registered Associate Conductor branch. Report that branch to your Principal Conductor for its review
-and final landing onto `bend2-trial`.
+and final landing onto the assigned integration branch.
 
-Export `ASSOCIATE_ID` and `ASSOCIATE_BRANCH` with the values in your assignment in each
-shell that uses them. Acknowledge each task and reviewed Player report with
+Set `ASSOCIATE_ID` and `ASSOCIATE_BRANCH` from your assignment. Acknowledge each
+task and reviewed Player report with
 `"$B2" "$DB" ack MESSAGE_ID "$ASSOCIATE_ID" RECEIPT`. Your native supervisor sends your
 final response to your Principal Conductor after every turn. Write progress or completion facts
 in that response; the supervisor supplies the report message.
@@ -53,50 +56,37 @@ commit until you update it.
 Register the OMP Player's native receiver once after recruitment:
 
 ```sh
-python3 - <<'PY'
-import json, os, pathlib, subprocess
-b2, db = os.environ['B2'], os.environ['DB']
-player = 'issue-N-worker-A'
-session = json.loads(subprocess.check_output([b2, db, 'session', player], text=True))
-log = pathlib.Path(os.environ['TRIAL_STATE']) / (player + '-native.jsonl')
-endpoint = [b2, db, 'receive', player, os.environ['TRIAL_OMP'], '', '', '', str(log)]
-subprocess.run([b2, db, 'connect', player, session['native'], json.dumps(endpoint)], check=True)
-PY
+"$B2" "$DB" receiver issue-N-worker-A "$TRIAL_OMP" \
+  "$TRIAL_STATE/issue-N-worker-A-native.jsonl"
 ```
 
 The receiver uses the recorded model, effort, workspace and native session.
 It appends successive turns to the same native log. Preserve the recorded native
-ID if you reconnect the endpoint. Supply the task in
-`$TRIAL_STATE/issue-N-worker-A-task.md`, then send it in a background process:
+ID when updating the endpoint. Supply the task in
+`$TRIAL_STATE/issue-N-worker-A-task.md`, then dispatch it:
 
 ```sh
-python3 - <<'PY'
-import os, pathlib, subprocess
-state = pathlib.Path(os.environ['TRIAL_STATE'])
-with (state / 'issue-N-worker-A-supervisor.log').open('ab') as log:
-    child = subprocess.Popen([
-        os.environ['B2'], os.environ['DB'], 'message-file',
-        'issue-N-worker-A-task-1', os.environ['ASSOCIATE_ID'], 'issue-N-worker-A',
-        'task', str(state / 'issue-N-worker-A-task.md'),
-    ], stdin=subprocess.DEVNULL, stdout=log, stderr=log, start_new_session=True)
-print(child.pid)
-PY
+"$B2" "$DB" dispatch-file issue-N-worker-A-task-1 "$ASSOCIATE_ID" issue-N-worker-A \
+  task "$TRIAL_STATE/issue-N-worker-A-task.md"
 ```
 
-The message invokes the registered receiver. An active OMP player keeps its
+The command commits the task and starts detached delivery, returning its
+launched PID. The message invokes the registered receiver. An active OMP Player
+keeps its
 current turn and receives the queued task after that process exits. The Player
 acknowledges accepted input with `ack`; each final response reports to you
 automatically. The retained receive owner preserves the native process and
-output if its Bend observer exits. Read the recovery boundary in
-`$TRIAL_SOURCE/docs/bend2/receive-recovery-2026-09-28.md` for its validated scope.
+output if its Bend observer exits. Read the
+[recovery boundary](../../docs/bend2/receive-recovery-2026-09-28.md#recovery-boundary)
+for its validated scope.
 
 End your turn after starting independent Players concurrently. Their reports
 invoke your registered receiver and resume your native session for review.
 
 ## Muse Players
 
-Muse uses direct `turn` supervision. Recruit a separate player with its harness
-and model:
+Muse uses direct-turn supervision through `dispatch-turn`. Recruit a separate
+Player with its harness and model:
 
 ```sh
 base=$(git -C "$TRIAL_REPO" rev-parse "$ASSOCIATE_BRANCH")
@@ -107,25 +97,14 @@ base=$(git -C "$TRIAL_REPO" rev-parse "$ASSOCIATE_BRANCH")
 Write its task at `$TRIAL_STATE/issue-N-worker-M-task.md` and start its turn:
 
 ```sh
-python3 - <<'PY'
-import os, pathlib, subprocess
-state = pathlib.Path(os.environ['TRIAL_STATE'])
-with (state / 'issue-N-worker-M-supervisor.log').open('ab') as log:
-    child = subprocess.Popen([
-        os.environ['B2'], os.environ['DB'], 'turn',
-        'issue-N-worker-M', 'issue-N-worker-M-turn-1',
-        os.environ['TRIAL_MUSE'], 'muse-spark-1.3-contributor', 'low',
-        str(state / 'issue-N-worker-M'), str(state / 'issue-N-worker-M-task.md'),
-        str(state / 'issue-N-worker-M-native-1.jsonl'), '',
-    ], stdin=subprocess.DEVNULL, stdout=log, stderr=log, start_new_session=True)
-print(child.pid)
-PY
+"$B2" "$DB" dispatch-turn issue-N-worker-M issue-N-worker-M-turn-1 "$TRIAL_MUSE" \
+  "$TRIAL_STATE/issue-N-worker-M-native-1.jsonl" "$TRIAL_STATE/issue-N-worker-M-task.md"
 ```
 
-For a Muse correction after its turn ends, read the `native` field with
-`session issue-N-worker-M`. Repeat the background `turn` with a fresh turn ID,
-task file and log path, and pass that native ID as its final argument. Retain the
-workspace. The receive observer-recovery guarantee applies to OMP and Codex;
+`dispatch-turn` selects the recorded model, effort, workspace and native identity.
+For a Muse correction after its turn ends, repeat `dispatch-turn` with a fresh
+turn ID, task file and log path. Retain the recorded workspace and conversation.
+The receive observer-recovery guarantee applies to OMP and Codex;
 Muse uses the direct-turn process lifetime described in the recovery boundary.
 
 ## Guide, review and land
@@ -137,24 +116,25 @@ OMP accepts guidance during a running Player turn:
   guidance 'The additional requirement and its reason'
 ```
 
-Read the message receipt to establish native acceptance. For an OMP correction,
-write a new task file and repeat the background `message-file` example with a
+Read `delivery MESSAGE_ID --pretty` for its receipt to establish native acceptance.
+For an OMP correction, write a new task file and repeat `dispatch-file` with a
 fresh message ID and the new file path. Keep the player ID and registered
 endpoint. The receiver selects its saved native conversation and workspace for
 each turn. Use `kind=task` for the next turn's work and `kind=guidance` for OMP
 steering during a turn.
 
 On each report, inspect the actual branch diff and run the selected tests. Read
-`Players`, `turns PLAYER`, `worktree PLAYER` and `inbox ASSOCIATE_ID` as needed.
+`players --pretty`, `turns PLAYER --pretty`, `worktree PLAYER` and
+`inbox ASSOCIATE_ID --pretty` as needed.
 Acknowledge the reviewed report. Request corrections through the same Player
 when necessary. Run the tests selected for the issue. The repository's
 dependencies must resolve in the Player and both checked trees. Python checks
 under `bend2/test/` build the coordinator in each checked tree using the supplied
 absolute `BEND` path. Report missing dependencies to your Principal Conductor.
 
-Land a reviewed Player onto your Associate Conductor branch using `$TRIAL_CHECK`, the program
-selected by the caller. Set `SELECTED_TESTS` to the selected paths in the Player's
-assignment in each shell call that uses it:
+Land a reviewed Player onto your Associate Conductor branch using `$TRIAL_CHECK`,
+the program selected by the caller. Set `SELECTED_TESTS` to the selected paths
+in the Player's assignment:
 
 ```sh
 "$B2" "$DB" land-checked issue-N-worker-A "$TRIAL_REPO" "$ASSOCIATE_BRANCH" \
@@ -174,5 +154,5 @@ Your completion report must name the issue, child IDs and parent bindings,
 Player commits, Player landing commits, exact Associate Conductor branch tip, tests, guidance
 receipts when used, and any remaining limitation. State that the branch is ready
 for Principal Conductor review only when the assigned work is complete. Keep workspaces and
-native sessions available for corrections. The Principal Conductor owns the final trial landing
+native sessions available for corrections. The Principal Conductor owns the final integration landing
 and remote publication.

@@ -23,13 +23,28 @@ repository operations.
 
 ```sh
 BEND=/absolute/path/to/bend sh bend2/scripts/build-native.sh
-.scratch/bend2/baton2 /absolute/path/to/state.db status
+.scratch/bend2/baton2 /absolute/path/to/state.db status --pretty
 ```
 
-Follow [installation](docs/bend2/installation.md) to stage the executable and
+Follow [installation](docs/bend2/installation.md) to stage the coordinator and helper and
 retain its state, and [harness setup](docs/bend2/harness-setup.md) to configure
 native launch paths. The [command guide](bend2/README.md) describes recruitment,
 turns, receive endpoints, acknowledgments, knowledge and Git operations.
+
+With the staged development build, save the Principal's task in a file and start
+its native subscription Codex session:
+
+```sh
+baton2 /absolute/path/state.db start principal codex /absolute/path/codex \
+  gpt-6-astra high /absolute/path/repository /absolute/path/principal-native.jsonl \
+  principal-task-1 /absolute/path/principal-task.md
+baton2 /absolute/path/state.db inbox operator --pretty
+```
+
+`start` records the Principal and operator, configures its receiver and starts
+detached task delivery. Inspect reports, receipts and turns for completion.
+The immutable 1.0 archive retains its version-specific interface and launch
+requirements in the installation guide.
 
 ## Coordination
 

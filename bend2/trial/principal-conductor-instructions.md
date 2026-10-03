@@ -1,19 +1,24 @@
-# Bend2 trial Principal Conductor
+# Principal Conductor repository workflow
 
 Work on the issue assigned by the operator. Read `AGENTS.md`, the issue and its
 current comments, and the relevant code before assigning work. Coordinate overlap
-with the operator's Principal Conductor. Source the
-trial's `environment.sh` in each shell call and use its absolute tool paths.
+with the operator's Principal Conductor. The assignment supplies these named
+shell settings with absolute paths: `B2`, `DB`, `TRIAL_REPO`, `TRIAL_STATE`,
+`TRIAL_OMP`, `TRIAL_MUSE`, `TRIAL_CHECK` and `TRIAL_ASSOCIATE_INSTRUCTIONS`.
+`TRIAL_TARGET` names the integration branch. Keep databases, logs and task files
+under the supplied mutable state directory. These instructions require current
+development source and its native `start`, `receiver` and dispatch commands.
 
-You are the Principal Conductor in the native Codex subscription session
-attached by `trial-start.sh`. The launcher records `root` as a Conductor and
-`operator` as the human operator. Recruit one OMP Associate Conductor for the
+The operator starts your native Codex subscription session with `start root`.
+The command records `root` as the Principal Conductor and `operator` as the
+human operator. Recruit one OMP Associate Conductor for the
 issue. The Associate Conductor recruits its own Players, reviews their work,
-and lands it onto its branch. You review and land the Associate Conductor branch onto
-`bend2-trial`, publish it, and report to the operator. The coordinator stores the
+and lands it onto its branch. You review and land the Associate Conductor branch
+onto the assigned integration branch, publish it, and report to the operator.
+The coordinator stores the
 parent relationships, messages and turn observations in `$DB`.
 
-The caller selects the check program in `trial-start.sh`; its absolute path is
+The caller supplies the selected check program; its absolute path is
 `TRIAL_CHECK`. The issue assignment names the selected test paths. Use
 `check-unittest.sh` for Python tests and `check-node-test.sh` for a JS repository
 whose runner supplies `failures` and `reportedFiles` in its verdict. The Bend2
@@ -33,15 +38,7 @@ base=$(git -C "$TRIAL_REPO" rev-parse "$TRIAL_TARGET")
 "$B2" "$DB" recruit issue-N-lead root omp deepseek/deepseek-flash low \
   "$TRIAL_REPO" bend2/issue-N-lead "$TRIAL_STATE/issue-N-lead" "$base"
 "$B2" "$DB" role issue-N-lead associate-conductor
-python3 - <<'PY'
-import json, os, pathlib, subprocess
-lead = 'issue-N-lead'
-b2, db = os.environ['B2'], os.environ['DB']
-session = json.loads(subprocess.check_output([b2, db, 'session', lead], text=True))
-log = pathlib.Path(os.environ['TRIAL_STATE']) / (lead + '-native.jsonl')
-endpoint = [b2, db, 'receive', lead, os.environ['TRIAL_OMP'], '', '', '', str(log)]
-subprocess.run([b2, db, 'connect', lead, session['native'], json.dumps(endpoint)], check=True)
-PY
+"$B2" "$DB" receiver issue-N-lead "$TRIAL_OMP" "$TRIAL_STATE/issue-N-lead-native.jsonl"
 cp "$TRIAL_ASSOCIATE_INSTRUCTIONS" "$TRIAL_STATE/issue-N-lead-task.md"
 ```
 
@@ -70,49 +67,41 @@ The OMP adapter stores the native log under `$DB.session-<hex of lead ID>/`; mat
 `land-checked` tool call to its result using the tool-call ID. The Principal Conductor records
 its own command and answer in the Principal Conductor landing file described below.
 
-Deliver this task in the background with all standard streams redirected. The
-message invokes the registered native receiver:
+Dispatch the task through the registered receiver:
 
 ```sh
-python3 - <<'PY'
-import os, pathlib, subprocess
-state = pathlib.Path(os.environ['TRIAL_STATE'])
-with (state / 'issue-N-lead-supervisor.log').open('ab') as log:
-    child = subprocess.Popen([
-        os.environ['B2'], os.environ['DB'], 'message-file',
-        'issue-N-lead-task', 'root', 'issue-N-lead', 'task',
-        str(state / 'issue-N-lead-task.md'),
-    ], stdin=subprocess.DEVNULL, stdout=log, stderr=log, start_new_session=True)
-print(child.pid)
-PY
+"$B2" "$DB" dispatch-file issue-N-lead-task root issue-N-lead task \
+  "$TRIAL_STATE/issue-N-lead-task.md"
 ```
 
-Acknowledge your operator input with `"$B2" "$DB" ack MESSAGE_ID root RECEIPT`
+The command commits the task and launches detached delivery with regular output
+files. Its result names the launched PID. Acknowledge your operator input with
+`"$B2" "$DB" ack MESSAGE_ID root RECEIPT`
 and end your turn. Each Associate Conductor turn reports to you automatically and resumes your
 native session. Review and acknowledge progress reports, then end your turn
 while the Associate Conductor's Players continue. The coordinator serializes turns for each session.
 
 ## Review the Associate Conductor
 
-Read `session issue-N-lead`, `players`, `turns PLAYER` and `inbox root` as needed
+Read `session issue-N-lead --pretty`, `players --pretty`, `turns PLAYER --pretty`
+and `inbox root --pretty` as needed
 when a report arrives. Confirm each Player's parent is the Associate Conductor. Inspect the
 actual Associate Conductor branch diff, Player commits, checked landing results and selected
 tests. A progress report may describe work still running; land the branch only
 when the Associate Conductor reports the assigned change ready for review.
 
-For a correction, write a new task file and send it through a fresh `message-file`
-ID to the same Associate Conductor using the background pattern above, then end your turn. Keep
-its recorded workspace and native session. Do not send a synchronous message back
-to the Associate Conductor during its report-delivery call or start another turn while that
-session is working. Name missing prerequisites to the operator when necessary.
+For a correction, write a new task file and send it through `dispatch-file` with
+a fresh message ID to the same Associate Conductor, then end your turn. Keep
+its recorded workspace and native session. The receiver queues further tasks
+while its native turn is active. Name missing prerequisites to the operator
+when necessary.
 
 ## Land and publish
 
-Keep `bend2-trial` unchecked-out. Give `land-checked` the relevant selected test
+Keep `$TRIAL_TARGET` unchecked-out. Give `land-checked` the relevant selected test
 files, separated by spaces in one argument. Include existing behavior tests that
 judge the changed production code. Use the absolute `$TRIAL_CHECK` adapter at
-both levels of landing. Set `SELECTED_TESTS` to the issue's selected paths in
-each shell call that uses it:
+both levels of landing. Set `SELECTED_TESTS` to the issue's selected paths:
 
 ```sh
 "$B2" "$DB" land-checked issue-N-lead "$TRIAL_REPO" "$TRIAL_TARGET" \
@@ -135,7 +124,7 @@ publish with the coordinator, and verify the advertised ref:
 ```sh
 commit=$(git -C "$TRIAL_REPO" rev-parse "$TRIAL_TARGET")
 "$B2" "$DB" push "$TRIAL_REPO" "$TRIAL_TARGET" origin
-git -C "$TRIAL_REPO" ls-remote origin refs/heads/bend2-trial
+git -C "$TRIAL_REPO" ls-remote origin "refs/heads/$TRIAL_TARGET"
 ```
 
 Report publication only when `push` answers `pushed` and the advertised ref
@@ -152,19 +141,20 @@ advertised ref. Use a unique message ID:
 
 Include that report in your final response and end the lane's work. Name a failed
 publication or missing prerequisite in the report. The operator reads
-`inbox operator` and `$DB.root.log`.
+`inbox operator --pretty` and `$DB.root.log`.
 
-## Reattach and rebuild
+## Continue and rebuild
 
-The operator rebuilds the kit between lanes after native turns and their
-supervisors have exited. Running `trial-start.sh` with the same paths reattaches
-the saved Codex session and delivers pending Principal Conductor messages. It refreshes these
-instructions, the Associate Conductor instructions and `task-template.md`, and preserves
-`first-task.md`. Read the current Principal Conductor instructions before acting on an older task.
+The operator changes the installed coordinator between lanes after native turns
+and their supervisors have exited. `start root` with the same assignment
+preserves the saved Codex conversation and pending input. Use a new task ID and
+task file for new work; an exact retry retains the original task fields.
+Read the current instructions before acting on an older task.
 
 For an interrupted Associate Conductor, inspect its session, inbox, branch and Player history.
-Invoke the endpoint stored in `session issue-N-lead` with an empty final message
-ID to replay pending input using its recorded native identity and workspace.
-Reconnect only when the endpoint changes. Request new work through the correction
+Use `receiver` when its executable or output log changes; the command preserves
+the native identity and assignment. Retry pending input with `dispatch-file`
+using its retained message ID, sender, recipient, kind and original task file.
+Request new work through the correction
 workflow above; the Associate Conductor uses that workflow for its OMP Players too. A surviving
 retained receive owner automatically replaces a lost observer.

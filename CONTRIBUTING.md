@@ -57,7 +57,8 @@ checks, source publication, hosted CI, artifact installation and a release.
 
 Native workflow qualification uses the harnesses' existing logins.
 [Harness setup](docs/bend2/harness-setup.md) documents the subscription-only Codex
-wrapper and the measured OMP and Muse routes. Run owned real-agent workflows
+native adapter and the measured OMP and Muse routes, with the immutable 1.0
+wrapper requirement scoped to that release. Run owned real-agent workflows
 separately from external compilation, tests and benchmarks. Keep failed runs
 and missing observations explicit in their evidence.
 
