@@ -29,7 +29,7 @@ explicitly and check its login method:
 ```sh
 BATON_CODEX_NATIVE=/absolute/path/to/codex
 env -u OPENAI_API_KEY -u CODEX_API_KEY "$BATON_CODEX_NATIVE" \
-  -c forced_login_method=chatgpt login status
+  -c 'forced_login_method="chatgpt"' login status
 ```
 
 The successful status is `Logged in using ChatGPT`. Current development source
@@ -47,7 +47,7 @@ at a retained absolute path, substituting the selected native executable:
 ```sh
 #!/bin/sh
 unset OPENAI_API_KEY CODEX_API_KEY
-exec /absolute/path/to/codex -c forced_login_method=chatgpt "$@"
+exec /absolute/path/to/codex -c 'forced_login_method="chatgpt"' "$@"
 ```
 
 Make the wrapper executable and use its path as `HARNESS_COMMAND` for every
