@@ -1,15 +1,16 @@
 # Series Git identities
 
-`bend2/harness/git-series.py` is an optional process launcher and HTTPS
+`bend2/harness/git-series.mjs` is an optional process launcher and HTTPS
 credential helper. It selects a GitHub App for GPT, Muse, DeepSeek, Claude,
 GLM or Kimi. Commit author and committer names use the exact format
 `Flip Baton - GPT`, `Flip Baton - Muse`, `Flip Baton - DeepSeek`,
 `Flip Baton - Claude`, `Flip Baton - GLM` or `Flip Baton - Kimi`. Native
 execution keeps its exact model identifier.
 
-Native archives install the same helper at `PREFIX/libexec/baton2/git-series.py`
-beside the Conductor adapters. Run that file with Python 3.11 or later. A source
-checkout uses `bend2/harness/git-series.py`.
+Native archives install the same helper at `PREFIX/libexec/baton2/git-series.mjs`
+beside the Conductor adapters. Run that file with Node 22.15 or later on a POSIX
+host. A source checkout uses `bend2/harness/git-series.mjs`. The Python source
+remains a legacy reference.
 
 The helper currently supports only `Flip-Engineering/baton`. Its App
 installation and issued token must match that repository ID and the
@@ -79,17 +80,17 @@ public user metadata. GitHub's own action documents this
 label for commit names. GitHub controls the App account login's `[bot]` suffix;
 the bot login, numeric ID, noreply email and authenticated actor stay unchanged.
 The helper reads the fixed public filename and uses the adjacent key to sign
-an App JWT with installed `/usr/bin/openssl`.
+an RS256 App JWT with Node's built-in cryptography library.
 
 ## Model and series selection
 
 Set `GIT_SERIES` to the helper's absolute installed or source path and `REGISTRY`
 to the registry's absolute path. For an extracted native prefix, use
-`GIT_SERIES="$PREFIX/libexec/baton2/git-series.py"`. A native wrapper binds the
+`GIT_SERIES="$PREFIX/libexec/baton2/git-series.mjs"`. A native wrapper binds the
 exact execution model:
 
 ```sh
-exec python3 "$GIT_SERIES" launch --registry "$REGISTRY" \
+exec node "$GIT_SERIES" launch --registry "$REGISTRY" \
   --model-key kimi-code/k3 --native-model -- /ABSOLUTE/PATH/omp "$@"
 ```
 
@@ -102,13 +103,14 @@ one series App.
 A Git command, coordinator or MCP server can select its series directly:
 
 ```sh
-python3 "$GIT_SERIES" launch --registry "$REGISTRY" --series-key gpt -- \
+node "$GIT_SERIES" launch --registry "$REGISTRY" --series-key gpt -- \
   git commit -m 'Describe the change'
 ```
 
 Omit `--native-model` for these commands. Git's `-m` supplies a commit message.
-For Codex, retain the subscription launcher and
-`forced_login_method="chatgpt"` configuration. The selected GPT series clears
+The compiled Codex `turn` and `receive` paths enforce the ChatGPT subscription
+login. A direct Codex command needs `-c 'forced_login_method="chatgpt"'` before
+its native subcommand. The selected GPT series clears
 `OPENAI_API_KEY` and `CODEX_API_KEY` across exact versions. A Codex login-status
 command uses the ordinary command launch because it has no model argument.
 
@@ -116,7 +118,7 @@ command uses the ordinary command launch because it has no model argument.
 
 Each Player or Conductor's native launcher must select its own series, since
 report delivery inherits the sender's environment. The launcher retains the
-current workspace and replaces inherited author, committer, credential helper,
+current PID, workspace and standard streams and replaces inherited author, committer, credential helper,
 askpass and HTTP authorization headers within the child environment. It
 preserves noncredential runtime Git settings. An MCP Conductor must launch its
 server through the helper so its coordinator tools inherit the selected
@@ -148,8 +150,10 @@ selected landing checks and repository protection provide review authority.
 
 ## Validation
 
-Run the controlled fixtures with `python3 bend2/test/git-series.py`. They use
-invented public metadata and replace signing, API calls and process execution
-with test doubles. Fixtures remain under `.scratch/git-series-fixtures/`.
-Actual signing, native tool inheritance, commit attribution and remote actor
-verification require separate live qualification.
+Run the controlled fixtures with `node --test bend2/test/git-series.mjs`. They
+use invented public metadata, a generated signing key, API response doubles and
+a controlled Node child. Fixtures remain under `.scratch/git-series-node-fixtures/`.
+The checks cover identity selection, credential restrictions, signature
+verification and PID, stream and exit preservation. Real App authentication,
+native tool inheritance, commit attribution and remote actor verification
+require separate qualification.
