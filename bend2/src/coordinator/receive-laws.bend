@@ -1,11 +1,11 @@
-# M-8 exclusive-claim application obligations for native receive (#625).
-# For a canonical coordinator database and session with a surviving keeper,
-# the runtime invariant is one native owner through actual exit and recovery
-# attachment to that owner's attempt. These equations constrain the busy
-# admission branch, the shared session identity, and recovery attachment. The
-# compiler reports the foreign dependencies. Host exclusivity, descriptor custody, and
-# release after actual native process exit remain runtime obligations witnessed
-# by the receive tests.
+# M-8 exclusive-claim application obligations for native receive (#625, #656).
+# For a canonical coordinator database and session, native admission holds
+# the session guard and resolves its current durable attempt before launching.
+# An unreleased attempt is observed through its recorded recovery arguments.
+# Completion is prepared before either observer or process custody is released.
+# The compiler verifies these branches and their order over real receive code.
+# Host flock custody, kernel birth/lifetime observations and retained stdout
+# remain runtime obligations witnessed by controlled and native measurements.
 # The M-17 laws below constrain the recovery sequencing of the native receive
 # path: the branch a not-refused and a refused recorded conversation each take,
 # the order in which the recovery input is recorded, the observer and the native
@@ -24,6 +24,7 @@ import ./delivery.bend as Delivery
 import ./native-requests.bend as NativeRequests
 import ./commands.bend as C
 import ../host/sqlite.bend as DB
+import ../git/text.bend as Tx
 
 # A busy session reports queued for every launch argument and continuation.
 law busy_receive_only_reports_queued:
@@ -244,4 +245,132 @@ law m17_recovery_input_is_one_guarded_transaction:
   {Receive.recovery_input(db,session,id,native,note) == recovery_input_transaction(db,session,id,native,note) : IO(Unit)}
 
 def m17_recovery_input_is_one_guarded_transaction(db,session,id,native,note):
+  {==}
+
+
+# M-8: one owner resolves the durable attempt before admitting another native.
+law acquired_native_owner_resolves_recorded_attempt:
+  for db: String
+  for session: String
+  for cmd: String
+  for model: String
+  for effort: String
+  for cwd: String
+  for log: String
+  for lock: U32
+  for again: Unit -> IO(Result<&1,&1,U32 & String,Unit>)
+  {Receive.acquired(db,session,cmd,model,effort,cwd,log,Some{lock},again) == Receive.acquired_recorded(db,session,cmd,model,effort,cwd,log,lock,again) : IO(Result<&1,&1,U32 & String,Unit>)}
+
+def acquired_native_owner_resolves_recorded_attempt(db,session,cmd,model,effort,cwd,log,lock,again):
+  {==}
+
+def recorded_attempt_before_pending(+db: String, +session: String, cmd: String, model: String, effort: String, cwd: String, log: String, +lock: U32, again: Unit -> IO(Result<&1,&1,U32 & String,Unit>)) -> IO(Result<&1,&1,U32 & String,Unit>):
+  do IO<Result<&1,&1,U32 & String,Unit>>:
+    +directory : String <- IO.try(String,DB.Sql.query(db,"SELECT coalesce((SELECT directory FROM executions WHERE session=" ++ C.q(session) ++ " AND mode='retained'),'');"))
+    +attempt : String <- IO.pure(String,Tx.trim_nl(directory))
+    recovery : Maybe<String> <- IO.try(Maybe<String>,P.ProcessChild.recovery_argv(attempt))
+    Receive.acquired_attempt(db,session,cmd,model,effort,cwd,log,lock,attempt,recovery,again)
+
+law native_admission_reads_current_attempt_before_pending_input:
+  for +db: String
+  for +session: String
+  for cmd: String
+  for model: String
+  for effort: String
+  for cwd: String
+  for log: String
+  for +lock: U32
+  for -again: Unit -> IO(Result<&1,&1,U32 & String,Unit>)
+  {Receive.acquired_recorded(db,session,cmd,model,effort,cwd,log,lock,again) == recorded_attempt_before_pending(db,session,cmd,model,effort,cwd,log,lock,again) : IO(Result<&1,&1,U32 & String,Unit>)}
+
+def native_admission_reads_current_attempt_before_pending_input(db,session,cmd,model,effort,cwd,log,lock,again):
+  {==}
+
+law surviving_attempt_recovery_preserves_its_guard:
+  for db: String
+  for session: String
+  for cmd: String
+  for model: String
+  for effort: String
+  for cwd: String
+  for log: String
+  for lock: U32
+  for directory: String
+  for args: String
+  for again: Unit -> IO(Result<&1,&1,U32 & String,Unit>)
+  {Receive.acquired_attempt(db,session,cmd,model,effort,cwd,log,lock,directory,Some{args},again) == Receive.recover_owned(db,session,directory,lock,String.split(args,Char.from_u32(0)),again) : IO(Result<&1,&1,U32 & String,Unit>)}
+
+def surviving_attempt_recovery_preserves_its_guard(db,session,cmd,model,effort,cwd,log,lock,directory,args,again):
+  {==}
+
+def completion_prepares_before_owner_release(+db: String, +session: String, +id: String, +log: String, stderr: String, cursor: String, +handle: U32, lock: Maybe<U32>, +outcome: Turn.Outcome, deliveries: List<Chan(Result<&1,&1,U32 & String,String>)>, again: Unit -> IO(Result<&1,&1,U32 & String,Unit>)) -> IO(Result<&1,&1,U32 & String,Unit>):
+  do IO<Result<&1,&1,U32 & String,Unit>>:
+    prepared : Unit <- Turn.prepare(db,session,id,log,stderr,outcome)
+    observer_released : Unit <- Receive.release_observer(lock)
+    native_released : Unit <- IO.try(Unit,P.ProcessChild.release(handle))
+    Receive.finish_pending(db,session,id,log,cursor,outcome,deliveries,again,u => IO.try(Unit,P.ProcessChild.acknowledge(handle)))
+
+law native_completion_is_committed_before_owner_release:
+  for +db: String
+  for +session: String
+  for +id: String
+  for +log: String
+  for +stderr: String
+  for +cursor: String
+  for +handle: U32
+  for -lock: Maybe<U32>
+  for +outcome: Turn.Outcome
+  for -deliveries: List<Chan(Result<&1,&1,U32 & String,String>)>
+  for -again: Unit -> IO(Result<&1,&1,U32 & String,Unit>)
+  {Receive.completed(db,session,id,log,stderr,cursor,handle,lock,outcome,deliveries,again) == completion_prepares_before_owner_release(db,session,id,log,stderr,cursor,handle,lock,outcome,deliveries,again) : IO(Result<&1,&1,U32 & String,Unit>)}
+
+def native_completion_is_committed_before_owner_release(db,session,id,log,stderr,cursor,handle,lock,outcome,deliveries,again):
+  {==}
+
+# Direct turns share the guard and check the retained attempt before Stop.admit
+# can replace its execution record or the direct task can launch a native.
+def direct_admission_checks_receive(+db: String, +player: String, +id: String, cmd: String, model: String, effort: String, cwd: String, task: String, +log: String, session: String, missing: Bool, handle: U32) -> IO(Unit):
+  do IO<Unit>:
+    retained : Unit <- Turn.retained_receive_guard(db,player)
+    harness : String <- IO.try(String,DB.Sql.query(db,"SELECT harness FROM sessions WHERE id=" ++ C.q(player) ++ ";"))
+    result : Maybe<Turn.Outcome> <- Turn.player_checked(db,player,id,cmd,model,effort,cwd,task,log,session,harness,missing)
+    Turn.complete_locked(db,player,id,log,handle,result)
+
+law direct_turn_checks_receive_before_admission:
+  for +db: String
+  for +player: String
+  for +id: String
+  for cmd: String
+  for model: String
+  for effort: String
+  for cwd: String
+  for task: String
+  for +log: String
+  for session: String
+  for missing: Bool
+  for handle: U32
+  {Turn.acquired(db,player,id,cmd,model,effort,cwd,task,log,session,missing,Some{handle}) == direct_admission_checks_receive(db,player,id,cmd,model,effort,cwd,task,log,session,missing,handle) : IO(Unit)}
+
+def direct_turn_checks_receive_before_admission(db,player,id,cmd,model,effort,cwd,task,log,session,missing,handle):
+  {==}
+
+def direct_receive_guard_reads_current(+db: String, player: String) -> IO(Unit):
+  do IO<Unit>:
+    directory : String <- IO.try(String,DB.Sql.query(db,"SELECT coalesce((SELECT directory FROM executions WHERE session=" ++ C.q(player) ++ " AND mode='retained'),'');"))
+    recovery : Maybe<String> <- IO.try(Maybe<String>,P.ProcessChild.recovery_argv(Tx.trim_nl(directory)))
+    Turn.retained_receive_admitted(recovery)
+
+law direct_turn_guard_reads_current_retained_attempt:
+  for +db: String
+  for player: String
+  {Turn.retained_receive_guard(db,player) == direct_receive_guard_reads_current(db,player) : IO(Unit)}
+
+def direct_turn_guard_reads_current_retained_attempt(db,player):
+  {==}
+
+law direct_turn_refuses_unreleased_receive:
+  for args: String
+  {Turn.retained_receive_admitted(Some{args}) == IO.die(Unit,2,"Session retains an interrupted native receive; run receive to observe its output and completion before starting a direct turn.") : IO(Unit)}
+
+def direct_turn_refuses_unreleased_receive(args):
   {==}

@@ -1,4 +1,5 @@
 """Native inbox delivery with controlled harness processes and real coordinator state."""
+import fcntl
 import json
 import os
 import pathlib
@@ -79,8 +80,17 @@ def reply(value): stream.write((json.dumps(value)+'\n').encode())
 def progress(action):
     print(json.dumps({'type':'fixture_progress','marker':action['progress'],'native_pid':os.getpid()}),flush=True)
     reply({'progress_written':action['progress']})
+guard_descriptors=None
+if config.get('inspect_session_guard'):
+    guard=pathlib.Path(str(pathlib.Path(config['db']).resolve())+'.lock-'+model.encode().hex()).stat()
+    guard_descriptors=[]
+    for descriptor in os.listdir('/dev/fd'):
+        try: info=os.fstat(int(descriptor))
+        except (ValueError,OSError): continue
+        if (info.st_dev,info.st_ino)==(guard.st_dev,guard.st_ino): guard_descriptors.append(int(descriptor))
 reply({'pid':os.getpid(),'ppid':os.getppid(),'session':model,'native':native,'resume':resume,'args':args,'prompt':prompt,
-       'cwd':os.getcwd(),'apiKeyVariablesPresent':[key for key in ('OPENAI_API_KEY','CODEX_API_KEY') if key in os.environ]})
+       'cwd':os.getcwd(),'apiKeyVariablesPresent':[key for key in ('OPENAI_API_KEY','CODEX_API_KEY') if key in os.environ],
+       'sessionGuardDescriptors':guard_descriptors})
 while True:
     line=stream.readline()
     if not line: break
@@ -821,6 +831,185 @@ class Receive(unittest.TestCase):
                 try:
                     fixture.setUp()
                     fixture.exercise_observer_loss(harness, retry=True, terminal_before_loss=True)
+                finally:
+                    fixture.doCleanups()
+
+    def selected_process(self, pid):
+        result = subprocess.run(['ps', '-p', str(pid), '-o', 'pid=,ppid=,lstart=,stat=,command='],
+                                capture_output=True, text=True)
+        self.assertEqual(result.stderr, '')
+        if not result.stdout.strip():
+            self.assertIn(result.returncode, (0, 1))
+            return None
+        self.assertEqual(result.returncode, 0, result.stderr)
+        fields = result.stdout.strip().split(None, 8)
+        self.assertIn(len(fields), (8, 9), result.stdout)
+        return {'pid': int(fields[0]), 'ppid': int(fields[1]), 'start': ' '.join(fields[2:7]),
+                'state': fields[7], 'command': fields[8] if len(fields) == 9 else ''}
+
+    def signal_selected(self, selected, action):
+        current = self.selected_process(selected['pid'])
+        self.assertIsNotNone(current, 'The selected process ended before loss injection.')
+        for field in ('pid', 'start', 'command'):
+            self.assertEqual(current[field], selected[field])
+        self.assertFalse(current['state'].startswith('Z'))
+        self.assertGreater(selected['pid'], 1)
+        self.assertNotEqual(selected['pid'], os.getpid())
+        os.kill(selected['pid'], action)
+
+    def session_guard_available(self, session):
+        path = pathlib.Path(str(self.db.resolve()) + '.lock-' + session.encode().hex())
+        with path.open('r+b') as stream:
+            try:
+                fcntl.flock(stream.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+                return True
+            except BlockingIOError:
+                return False
+
+    def exercise_keeper_loss(self, harness, observer_loss):
+        self.coord('connect', 'root', 'native-root', json.dumps([str(self.fixture), 'parent_endpoint']))
+        self.player(harness=harness)
+        config_path = self.directory / 'fixture.json'
+        config = json.loads(config_path.read_text())
+        config.update(record_launches=True, inspect_session_guard=True)
+        config_path.write_text(json.dumps(config))
+        self.coord('message', 'first', 'root', 'parent', 'task', 'Complete the original input.')
+        self.connect('parent')
+        observer = self.spawn(*self.receive_args('parent'))
+        original, started = self.accept('parent')
+        self.assertEqual(started['sessionGuardDescriptors'], [])
+        native_id = self.eventually(lambda: self.coord('player', 'parent')['native'],
+                                    'The original native identity was not recorded.')
+        self.assertEqual(native_id, started['native'])
+        self.coord('message', 'second', 'root', 'parent', 'report', 'The exact queued input.')
+        self.assertFalse(self.session_guard_available('parent'))
+        with sqlite3.connect(self.db) as database:
+            attempt = pathlib.Path(database.execute(
+                "SELECT directory FROM executions WHERE session='parent' AND mode='retained'"
+            ).fetchone()[0])
+        selected = {name: self.selected_process(pid) for name, pid in
+                    [('observer', observer.pid), ('keeper', started['ppid']), ('native', started['pid'])]}
+        self.assertTrue(all(selected.values()))
+        self.assertEqual(selected['observer']['ppid'], os.getpid())
+        self.assertEqual(selected['keeper']['ppid'], observer.pid)
+        self.assertEqual(selected['native']['ppid'], selected['keeper']['pid'])
+        self.assertIn(str(self.db), selected['observer']['command'])
+        self.assertIn('--host-process-keeper', selected['keeper']['command'])
+        self.assertIn(str(attempt), selected['keeper']['command'])
+        self.assertIn(str(self.fixture), selected['native']['command'])
+        self.assertEqual(int((attempt / 'native.pid').read_text()), started['pid'])
+        if observer_loss:
+            self.signal_selected(selected['observer'], signal.SIGSTOP)
+        self.signal_selected(selected['keeper'], signal.SIGKILL)
+        producer = observer
+        if observer_loss:
+            self.signal_selected(selected['observer'], signal.SIGKILL)
+            observer.wait()
+            self.assertEqual(observer.returncode, -signal.SIGKILL)
+            before_direct = (self.directory / 'native-launches.jsonl').read_bytes()
+            with sqlite3.connect(self.db) as database:
+                execution = database.execute("SELECT * FROM executions WHERE session='parent'").fetchone()
+            task = self.directory / 'direct-before-recovery.txt'
+            task.write_text('A direct task before adopting the surviving original.')
+            direct = self.spawn('turn', 'parent', 'direct-before-recovery', self.fixture, 'parent', 'low',
+                                self.directory, task, self.directory / 'direct-before-recovery.jsonl', native_id)
+            _, stderr = self.finish(direct, ok=False)
+            self.assertEqual(direct.returncode, 2)
+            self.assertIn('run receive', stderr)
+            self.assertEqual((self.directory / 'native-launches.jsonl').read_bytes(), before_direct)
+            with sqlite3.connect(self.db) as database:
+                self.assertEqual(database.execute("SELECT * FROM executions WHERE session='parent'").fetchone(),
+                                 execution, 'Direct admission replaced the unreleased Receive attempt.')
+            producer = self.spawn(*self.receive_args('parent'))
+        current = self.selected_process(started['pid'])
+        self.assertIsNotNone(current)
+        self.assertEqual(current['start'], selected['native']['start'])
+        self.assertFalse(current['state'].startswith('Z'))
+        marker = 'Surviving original stdout after keeper loss.'
+        self.action(original, progress=marker)
+        self.assertEqual(json.loads(original.readline()), {'progress_written': marker})
+        log = self.directory / 'parent.jsonl'
+        self.eventually(lambda: log.exists() and marker in log.read_text(),
+                        'The observer did not retain surviving native stdout.')
+        self.assertFalse(self.session_guard_available('parent'))
+        launches = self.directory / 'native-launches.jsonl'
+        before_retry = launches.read_bytes()
+        self.assertEqual(self.coord(*self.receive_args('parent'))['status'], 'queued')
+        self.assertEqual(launches.read_bytes(), before_retry)
+        body = 'Original result retained after keeper loss: ' + harness
+        self.action(original, body=body, hold_exit=True)
+        self.assertEqual(json.loads(original.readline()), {'terminal_written': True})
+        self.eventually(lambda: body in log.read_text(), 'The original terminal frame was not retained.')
+        self.assertEqual(self.coord(*self.receive_args('parent'))['status'], 'queued')
+        self.assertEqual(launches.read_bytes(), before_retry)
+        self.assertFalse(self.session_guard_available('parent'))
+        self.action(original)
+        self.assertEqual(original.readline(), b'')
+        continuation, resumed = self.accept('parent')
+        original_birth = self.selected_process(started['pid'])
+        self.assertTrue(original_birth is None or original_birth['start'] != selected['native']['start']
+                        or original_birth['state'].startswith('Z'),
+                        'Pending continuation overlapped the original native lifetime.')
+        self.assertEqual(resumed['sessionGuardDescriptors'], [])
+        self.assertEqual(resumed['native'], native_id)
+        if harness == 'codex':
+            self.assertEqual(resumed['resume'], native_id)
+        else:
+            self.assertEqual(json.loads(pathlib.Path(resumed['resume']).read_text().splitlines()[0])['id'],
+                             native_id)
+        self.assertIn('[id: second]', resumed['prompt'])
+        self.assertIn('The exact queued input.', resumed['prompt'])
+        self.assertNotIn('[id: first]', resumed['prompt'])
+        pending_body = 'Pending result after keeper loss: ' + harness
+        self.action(continuation, body=pending_body)
+        self.assertEqual(continuation.readline(), b'')
+        self.finish(producer, ok=False)
+        self.assertEqual(producer.returncode, 1)
+        self.assertEqual(self.coord('inbox', 'parent'), [])
+        turns = self.coord('turns', 'parent')
+        self.assertEqual([row['reportBody'] for row in turns], [body, pending_body])
+        self.assertTrue(all(row['receipt'] == 'parent-received' for row in turns))
+        with sqlite3.connect(self.db) as database:
+            accepted = database.execute("SELECT id,body,receipt FROM messages WHERE id IN ('first','second') ORDER BY seq").fetchall()
+        self.assertEqual(accepted, [('first', 'Complete the original input.', 'native-reviewed'),
+                                    ('second', 'The exact queued input.', 'native-reviewed')])
+        deliveries = [json.loads(line) for line in (self.directory / 'parent-deliveries.jsonl').read_text().splitlines()]
+        self.assertTrue(any(row['body'] == body for row in deliveries))
+        self.assertTrue(any(row['body'] == pending_body for row in deliveries))
+        self.assertTrue(any('unknown after keeper loss' in row['body'] for row in deliveries))
+        self.assertEqual(self.coord('player', 'parent')['native'], native_id)
+        self.eventually(lambda: not self.owned_processes(), 'A fixture owner did not exit naturally.')
+        self.assertTrue(self.session_guard_available('parent'))
+        task = self.directory / 'direct-after-recovery.txt'
+        task.write_text('A direct task after the retained Receive completed.')
+        direct = self.spawn('turn', 'parent', 'direct-after-recovery', self.fixture, 'parent', 'low',
+                            self.directory, task, self.directory / 'direct-after-recovery.jsonl', native_id)
+        current, started_direct = self.accept('parent')
+        self.assertEqual(started_direct['native'], native_id)
+        self.assertEqual(started_direct['sessionGuardDescriptors'], [])
+        self.action(current, body='Direct work after the retained Receive completed.')
+        self.assertEqual(current.readline(), b'')
+        self.finish(direct)
+        self.eventually(lambda: not self.owned_processes(), 'A direct owner did not exit naturally.')
+        self.assertTrue(self.session_guard_available('parent'))
+
+    def test_keeper_loss_preserves_original_and_drains_pending_input(self):
+        for harness in ('codex', 'omp'):
+            with self.subTest(harness=harness):
+                fixture = Receive()
+                try:
+                    fixture.setUp()
+                    fixture.exercise_keeper_loss(harness, observer_loss=False)
+                finally:
+                    fixture.doCleanups()
+
+    def test_keeper_and_observer_loss_adopts_original_before_pending_input(self):
+        for harness in ('codex', 'omp'):
+            with self.subTest(harness=harness):
+                fixture = Receive()
+                try:
+                    fixture.setUp()
+                    fixture.exercise_keeper_loss(harness, observer_loss=True)
                 finally:
                     fixture.doCleanups()
 

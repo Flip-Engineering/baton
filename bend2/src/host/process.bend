@@ -31,6 +31,14 @@ def ProcessChild.retain(directory: String, argv: String, cwd: String, stderr: St
 def ProcessChild.attach(directory: String) -> IO(Result<&1,&1,U32 & String,U32>):
   import "./process-spawn.c"
 
+# A newly acquired session guard remains held while a dead keeper's attempt is observed.
+def ProcessChild.attach_owned(directory: String, lock: U32) -> IO(Result<&1,&1,U32 & String,U32>):
+  import "./process-spawn.c"
+
+# An unacknowledged launched attempt returns its original recovery invocation.
+def ProcessChild.recovery_argv(directory: String) -> IO(Result<&1,&1,U32 & String,Maybe<String>>):
+  import "./process-spawn.c"
+
 # These commands address the retained attempt without replacing its observer.
 # A write succeeds after all bytes enter stdin; native acceptance is separate.
 def ProcessChild.control_write(directory: String, data: String) -> IO(Result<&1,&1,U32 & String,Unit>):

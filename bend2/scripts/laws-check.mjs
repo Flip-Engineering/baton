@@ -131,6 +131,62 @@ for (const { law, file } of rows) {
 // it claims to bind, and it is reported as a failure.
 const MUTATIONS = [
   {
+    name: 'direct-turn-skips-retained-receive-guard',
+    file: join('bend2','src','coordinator','turn.bend'),
+    find: '      retained : Unit <- retained_receive_guard(db,player)\n',
+    replace: '',
+    law: 'direct_turn_checks_receive_before_admission',
+  },
+  {
+    name: 'direct-turn-checks-receive-after-starting-task',
+    file: join('bend2','src','coordinator','turn.bend'),
+    find: '      retained : Unit <- retained_receive_guard(db,player)\n      harness : String <- IO.try(String,DB.Sql.query(db,"SELECT harness FROM sessions WHERE id=" ++ C.q(player) ++ ";"))\n      result : Maybe<Outcome> <- player_checked(db,player,id,cmd,model,effort,cwd,task,log,session,harness,missing)',
+    replace: '      harness : String <- IO.try(String,DB.Sql.query(db,"SELECT harness FROM sessions WHERE id=" ++ C.q(player) ++ ";"))\n      result : Maybe<Outcome> <- player_checked(db,player,id,cmd,model,effort,cwd,task,log,session,harness,missing)\n      retained : Unit <- retained_receive_guard(db,player)',
+    law: 'direct_turn_checks_receive_before_admission',
+  },
+  {
+    name: 'direct-turn-guard-reads-another-attempt-mode',
+    file: join('bend2','src','coordinator','turn.bend'),
+    find: ' AND mode=\'retained\'),\'\');',
+    replace: ' AND mode=\'direct\'),\'\');',
+    law: 'direct_turn_guard_reads_current_retained_attempt',
+  },
+  {
+    name: 'direct-turn-admits-unreleased-receive',
+    file: join('bend2','src','coordinator','turn.bend'),
+    find: '    case Some{args}: IO.die(Unit,2,"Session retains an interrupted native receive; run receive to observe its output and completion before starting a direct turn.")',
+    replace: '    case Some{args}: IO.pure(Unit,Unit{})',
+    law: 'direct_turn_refuses_unreleased_receive',
+  },
+  {
+    name: 'native-owner-skips-recorded-attempt',
+    file: join('bend2','src','coordinator','receive.bend'),
+    find: '    case Some{lock}: acquired_recorded(db,session,cmd,model,effort,cwd,log,lock,again)',
+    replace: '    case Some{lock}: acquired_pending(db,session,cmd,model,effort,cwd,log,lock,again)',
+    law: 'acquired_native_owner_resolves_recorded_attempt',
+  },
+  {
+    name: 'native-admission-reads-another-attempt-mode',
+    file: join('bend2','src','coordinator','receive.bend'),
+    find: ' AND mode=\'retained\'),\'\');',
+    replace: ' AND mode=\'direct\'),\'\');',
+    law: 'native_admission_reads_current_attempt_before_pending_input',
+  },
+  {
+    name: 'surviving-attempt-starts-new-native',
+    file: join('bend2','src','coordinator','receive.bend'),
+    find: '    case Some{args}: recover_owned(db,session,directory,lock,String.split(args,Char.from_u32(0)),again)',
+    replace: '    case Some{args}: acquired_pending(db,session,cmd,model,effort,cwd,log,lock,again)',
+    law: 'surviving_attempt_recovery_preserves_its_guard',
+  },
+  {
+    name: 'native-completion-releases-before-preparation',
+    file: join('bend2','src','coordinator','receive.bend'),
+    find: '    prepared : Unit <- Turn.prepare(db,session,id,log,stderr,outcome)\n    observer_released : Unit <- release_observer(lock)',
+    replace: '    observer_released : Unit <- release_observer(lock)\n    prepared : Unit <- Turn.prepare(db,session,id,log,stderr,outcome)',
+    law: 'native_completion_is_committed_before_owner_release',
+  },
+  {
     name: "naming-entry-skips-the-store",
     file: join('bend2', 'src', 'coordinator', "main.bend"),
     find: "    result : String <- IO.try(String, Store.apply(db,command))",

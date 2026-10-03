@@ -438,10 +438,23 @@ def complete_locked(+db: String, +player: String, +id: String, +log: String, loc
       finished : Result<&1,&1,U32 & String,Unit> <- IO.join(Result<&1,&1,U32 & String,Unit>,delivery_task)
       IO.pass(Unit,combine(finished,wake))
 
+def retained_receive_admitted(recovery: Maybe<String>) -> IO(Unit):
+  match recovery:
+    case None{}: IO.pure(Unit,Unit{})
+    case Some{args}: IO.die(Unit,2,"Session retains an interrupted native receive; run receive to observe its output and completion before starting a direct turn.")
+
+# The acquired canonical guard protects this check before direct admission.
+def retained_receive_guard(+db: String, player: String) -> IO(Unit):
+  do IO<Unit>:
+    directory : String <- IO.try(String,DB.Sql.query(db,"SELECT coalesce((SELECT directory FROM executions WHERE session=" ++ C.q(player) ++ " AND mode='retained'),'');"))
+    recovery : Maybe<String> <- IO.try(Maybe<String>,P.ProcessChild.recovery_argv(Tx.trim_nl(directory)))
+    retained_receive_admitted(recovery)
+
 def acquired(+db: String, +player: String, +id: String, cmd: String, model: String, effort: String, cwd: String, task: String, +log: String, session: String, missing: Bool, lock: Maybe<U32>) -> IO(Unit):
   match lock:
     case None{}: IO.die(Unit,2,"Session already has an active native turn; send a message to queue input.")
     case Some{handle}: do IO<Unit>:
+      retained : Unit <- retained_receive_guard(db,player)
       harness : String <- IO.try(String,DB.Sql.query(db,"SELECT harness FROM sessions WHERE id=" ++ C.q(player) ++ ";"))
       result : Maybe<Outcome> <- player_checked(db,player,id,cmd,model,effort,cwd,task,log,session,harness,missing)
       complete_locked(db,player,id,log,handle,result)
