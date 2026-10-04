@@ -405,8 +405,9 @@ returns its write Result, with fresh error state per call; each call owns
 its bytes and writes directly to fd 1 under the stdout stream lock. The
 measured forked completion paths (`Turn.player_finished`, parentless
 `Turn.finish_parent`, `Receive.receive_status`) combine the returned output
-failure after earlier delivery and stop results. The failure-report and
-warning paths commit first and treat the stdout copy as best effort.
+failure after earlier delivery and stop results. `Turn.report` commits
+before its best-effort stdout copy. The parentless native-request warning
+also uses best-effort output and preserves its original semantic error.
 Direct replay carries the write Result through guard release and queued
 wake before surfacing it. Evidence: the event-controlled baseline
 (closed-output baseline exits before continuation/join) and the corrected
