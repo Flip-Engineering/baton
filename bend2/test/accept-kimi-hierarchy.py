@@ -451,10 +451,26 @@ class GeneratedCheck(unittest.TestCase):
         coordinator = self.fixture / '.scratch/bend2/baton2'
         self.assertFalse(coordinator.exists(), 'the fixture tree started with a coordinator')
         result = self.check('bend2/test/receive.py')
-        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(result.returncode, 0, f'stdout:\n{result.stdout}\nstderr:\n{result.stderr}')
         self.assertEqual(result.stdout, '')
         self.assertNotIn('unjudged', result.stdout + result.stderr)
         self.assertTrue(coordinator.is_file(), 'the adapter did not build the coordinator')
+
+    def test_generated_check_preserves_failure_identity_and_traceback(self):
+        self.install_adapter()
+        selected = self.select('selected/broken.py', '''
+import unittest
+
+class Broken(unittest.TestCase):
+    def test_fails(self):
+        self.fail('generated selection failure')
+''')
+        result = self.check(selected)
+        self.assertEqual(result.returncode, 1, result.stderr)
+        identity = [bytes.fromhex(field).decode() for field in result.stdout.strip().split(' ')]
+        self.assertEqual(identity, [selected, 'bend2_selected_broken.Broken.test_fails', 'assertion', '-'])
+        self.assertIn('bend2_selected_broken.Broken.test_fails:', result.stderr)
+        self.assertIn('AssertionError: generated selection failure', result.stderr)
 
 
 if __name__ == '__main__':
