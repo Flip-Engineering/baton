@@ -327,6 +327,36 @@ law native_completion_is_committed_before_owner_release:
 def native_completion_is_committed_before_owner_release(db,session,id,log,stderr,cursor,handle,lock,outcome,deliveries,again):
   {==}
 
+# A completed attempt settles beside its queued continuation: the parent
+# delivery, native-request settle and attempt acknowledge join before the
+# continuation does, and the combined outcome keeps the same failure order.
+def settle_attempt_before_joining_continuation(+db: String, +session: String, id: String, log: String, cursor: String, +outcome: Turn.Outcome, deliveries: List<Chan(Result<&1,&1,U32 & String,String>)>, again: Unit -> IO(Result<&1,&1,U32 & String,Unit>), acknowledge: Unit -> IO(Unit)) -> IO(Result<&1,&1,U32 & String,Unit>):
+  do IO<Result<&1,&1,U32 & String,Unit>>:
+    failed : Bool <- Receive.outcome_failed(db,outcome)
+    delivery_task : Chan(Result<&1,&1,U32 & String,Unit>) <- IO.fork(Result<&1,&1,U32 & String,Unit>,Turn.finish(db,session,id,log,outcome))
+    continued_task : Chan(Result<&1,&1,U32 & String,Unit>) <- IO.fork(Result<&1,&1,U32 & String,Unit>,Receive.continue_pending(db,session,cursor,again))
+    finished : Result<&1,&1,U32 & String,Unit> <- IO.join(Result<&1,&1,U32 & String,Unit>,delivery_task)
+    questions : Result<&1,&1,U32 & String,Unit> <- NativeRequests.settle(deliveries)
+    acknowledged : Unit <- acknowledge(Unit{})
+    status : Result<&1,&1,U32 & String,Unit> <- Receive.exit_status(failed)
+    next : Result<&1,&1,U32 & String,Unit> <- IO.join(Result<&1,&1,U32 & String,Unit>,continued_task)
+    IO.pure(Result<&1,&1,U32 & String,Unit>,Turn.combine(finished,Turn.combine(questions,Turn.combine(next,status))))
+
+law completed_attempt_settles_before_continuation_joins:
+  for +db: String
+  for +session: String
+  for id: String
+  for log: String
+  for cursor: String
+  for +outcome: Turn.Outcome
+  for -deliveries: List<Chan(Result<&1,&1,U32 & String,String>)>
+  for -again: Unit -> IO(Result<&1,&1,U32 & String,Unit>)
+  for -acknowledge: Unit -> IO(Unit)
+  {Receive.finish_pending(db,session,id,log,cursor,outcome,deliveries,again,acknowledge) == settle_attempt_before_joining_continuation(db,session,id,log,cursor,outcome,deliveries,again,acknowledge) : IO(Result<&1,&1,U32 & String,Unit>)}
+
+def completed_attempt_settles_before_continuation_joins(db,session,id,log,cursor,outcome,deliveries,again,acknowledge):
+  {==}
+
 # Direct turns share the guard and check the retained attempt before Stop.admit
 # can replace its execution record or the direct task can launch a native.
 def direct_admission_checks_receive(+db: String, +player: String, +id: String, cmd: String, model: String, effort: String, cwd: String, task: String, +log: String, session: String, missing: Bool, handle: U32) -> IO(Unit):
