@@ -17,11 +17,9 @@ Deliberately not checked: equality between the advertised tool set and
 the native command catalogue, and any comparison against the adapter's
 implementation text. The CLI and MCP surfaces are intentionally different
 in coverage; the capability audit of the pinned revision records those
-decisions, and this module pins behavior so the declared surface stays
 free to change. mcp-command.py pins exact argument translation with a
 fixture coordinator; mcp-root.py pins channel notification and replay
-behavior, including the baton2_workers and baton2_worker_status replay
-aliases.
+behavior.
 """
 import json
 import pathlib
