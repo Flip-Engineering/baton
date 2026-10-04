@@ -25,6 +25,53 @@ import ./native-requests.bend as NativeRequests
 import ./commands.bend as C
 import ../host/sqlite.bend as DB
 import ../git/text.bend as Tx
+import ../host/text.bend as Text
+import ./store.bend as Store
+
+# Completion output returns its failure through the finish result. The caller
+# joins queued work before it reports that result. The host write is tested
+# with a pipe whose reader closes after both completion branches start.
+law completion_output_preserves_delivery_errors_and_returns_write_failure:
+  for +db: String
+  for player: String
+  for +id: String
+  {Turn.player_finished(db,player,id) == (do IO<Result<&1,&1,U32 & String,Unit>>:
+    +saved : String <- IO.try(String,Store.commit(db,C.Delivery{id}))
+    diagnostic_delivery : Result<&1,&1,U32 & String,String> <- Delivery.deliver(db,id ++ ":observation","1","")
+    delivered : Result<&1,&1,U32 & String,String> <- Delivery.deliver(db,id,"1",saved)
+    exit_delivery : Result<&1,&1,U32 & String,String> <- Delivery.deliver(db,id ++ ":exit","1","")
+    stopped : Result<&1,&1,U32 & String,Unit> <- Stop.deliver(db,player,id)
+    written : Result<&1,&1,U32 & String,Unit> <- Text.Text.control_output(saved)
+    IO.pure(Result<&1,&1,U32 & String,Unit>,Turn.combine(Turn.delivery_result(Turn.remember(Turn.remember(Turn.remember("",diagnostic_delivery),delivered),exit_delivery)),Turn.combine(stopped,written)))) : IO(Result<&1,&1,U32 & String,Unit>)}
+
+def completion_output_preserves_delivery_errors_and_returns_write_failure(db,player,id):
+  {==}
+
+law completion_without_parent_returns_output_failure:
+  for +db: String
+  for +player: String
+  for id: String
+  for log: String
+  for +status: String
+  for +event: String
+  for error: String
+  {Turn.finish_parent(db,player,id,log,Turn.Ended{status,event,error},False{}) == (do IO<Result<&1,&1,U32 & String,Unit>>:
+    output : String <- IO.try(String,DB.Sql.query(db,"SELECT json_object('session'," ++ C.q(player) ++ ",'status'," ++ C.q(status) ++ ",'event',CASE WHEN " ++ C.q(event) ++ "='' THEN NULL ELSE json(" ++ C.q(event) ++ ") END,'error'," ++ C.q(error) ++ ");"))
+    Text.Text.control_output(output)) : IO(Result<&1,&1,U32 & String,Unit>)}
+
+def completion_without_parent_returns_output_failure(db,player,id,log,status,event,error):
+  {==}
+
+law receive_status_returns_output_failure:
+  for +db: String
+  for +session: String
+  for +status: String
+  {Receive.receive_status(db,session,status) == (do IO<Result<&1,&1,U32 & String,Unit>>:
+    result : String <- IO.try(String,DB.Sql.query(db,"SELECT json_object('session'," ++ C.q(session) ++ ",'status'," ++ C.q(status) ++ ");"))
+    Text.Text.control_output(result)) : IO(Result<&1,&1,U32 & String,Unit>)}
+
+def receive_status_returns_output_failure(db,session,status):
+  {==}
 
 # A busy session reports queued for every launch argument and continuation.
 law busy_receive_only_reports_queued:

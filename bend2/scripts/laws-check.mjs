@@ -1002,6 +1002,13 @@ MUTATIONS.push(
   },
 );
 
+MUTATIONS.push(
+  {"name": "completion-output-skips-the-write", "file": "bend2/src/coordinator/turn.bend", "find": "T.Text.control_output(saved)", "replace": "IO.pure(Result<&1,&1,U32 & String,Unit>,Done{Unit{}})", "law": "completion_output_preserves_delivery_errors_and_returns_write_failure"},
+  {"name": "completion-output-hides-earlier-stop-failure", "file": "bend2/src/coordinator/turn.bend", "find": "combine(stopped,written)", "replace": "combine(written,stopped)", "law": "completion_output_preserves_delivery_errors_and_returns_write_failure"},
+  {"name": "parentless-completion-uses-global-output", "file": "bend2/src/coordinator/turn.bend", "find": "          T.Text.control_output(output)", "replace": "          written : Unit <- IO.write(output)\n          IO.pure(Result<&1,&1,U32 & String,Unit>,Done{Unit{}})", "law": "completion_without_parent_returns_output_failure"},
+  {"name": "receive-status-uses-global-output", "file": "bend2/src/coordinator/receive.bend", "find": "    Text.Text.control_output(result)", "replace": "    written : Unit <- IO.write(result)\n    IO.pure(Result<&1,&1,U32 & String,Unit>,Done{Unit{}})", "law": "receive_status_returns_output_failure"}
+);
+
 for (const mutation of MUTATIONS) {
   const copied = join(SCRATCH, mutation.file);
   cpSync(join(ROOT, mutation.file), copied);

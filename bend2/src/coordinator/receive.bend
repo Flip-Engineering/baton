@@ -9,6 +9,7 @@ import ../host/sqlite.bend as DB
 import ../host/session-lock.bend as Lock
 import ../host/process.bend as P
 import ../git/text.bend as Tx
+import ../host/text.bend as Text
 
 def field(+db: String, session: String, name: String, +supplied: String) -> IO(String):
   do IO<String>:
@@ -45,8 +46,7 @@ def instructions(executable: String, database: String, +session: String) -> Stri
 def receive_status(db: String, session: String, status: String) -> IO(Result<&1,&1,U32 & String,Unit>):
   do IO<Result<&1,&1,U32 & String,Unit>>:
     result : String <- IO.try(String,DB.Sql.query(db,"SELECT json_object('session'," ++ C.q(session) ++ ",'status'," ++ C.q(status) ++ ");"))
-    written : Unit <- IO.write(result)
-    IO.pure(Result<&1,&1,U32 & String,Unit>,Done{Unit{}})
+    Text.Text.control_output(result)
 
 def exit_status(failed: Bool) -> IO(Result<&1,&1,U32 & String,Unit>):
   match failed:
