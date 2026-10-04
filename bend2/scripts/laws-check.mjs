@@ -776,8 +776,8 @@ const MUTATIONS = [
   {
     name: 'knowledge-read-parses-as-another-verb',
     file: join('bend2', 'src', 'coordinator', 'commands.bend'),
-    find: 'String.eq(verb,"knowledge"),KnowledgeRead{id},Invalid{}',
-    replace: 'String.eq(verb,"knowledge"),Worktree{id},Invalid{}',
+    find: 'String.eq(verb,"knowledge"),KnowledgeRead{id},',
+    replace: 'String.eq(verb,"knowledge"),Worktree{id},',
     law: 'm14_the_knowledge_verb_reads_for_the_named_reader',
   },
   {
