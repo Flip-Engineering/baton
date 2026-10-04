@@ -7,6 +7,7 @@ import {
   FILE_LEVEL_FAILURE_TYPES, computeVerdict, createProgressDeadline, environmentPrerequisites,
   failureIdentity, formatEnvironment, formatVerdict, isHang, rowKey, verdictDocument,
 } from '../scripts/suite-verdict.mjs';
+import { failureKind } from '../src/suite-comparison.mjs';
 
 const row = (file, name, extra = {}) => ({ file, name, nesting: 0, ...extra });
 
@@ -130,4 +131,134 @@ test('the progress deadline re-arms on every observed event', () => {
   clock = 190; assert.equal(deadline.expired(), true);
   assert.equal(deadline.idleMs(), 100);
   assert.throws(() => createProgressDeadline({ timeoutMs: 0 }), TypeError);
+});
+
+// The check adapter (scripts/check-node-test.sh) reads document.reportedFiles to decide whether a
+// run judged the file it was handed, and reads document.failures, document.skipped and
+// document.green for the same judgement. These tests drive the production path the runner uses
+// (computeVerdict then verdictDocument) and pin what that document carries.
+
+test('reportedFiles names every file a lane represented by passing, failing, hanging, cancelling or skipping', () => {
+  const verdict = computeVerdict([{
+    lane: 'suite',
+    passed: [row('test/passed.test.mjs', 'one')],
+    failed: [
+      row('test/asserted.test.mjs', 'two', { failureType: 'testCodeFailure' }),
+      row('test/hung.test.mjs', '(file hung: no test event for 5 ms after start)', { failureType: 'fileHung' }),
+      row('test/cancelled.test.mjs', 'late', { failureType: 'cancelledByParent' }),
+    ],
+    skipped: [{ file: 'test/declined-helper.mjs', reason: 'not a test file' }],
+  }]);
+  assert.deepEqual(verdict.reportedFiles, [
+    'test/asserted.test.mjs', 'test/cancelled.test.mjs', 'test/declined-helper.mjs',
+    'test/hung.test.mjs', 'test/passed.test.mjs',
+  ]);
+  assert.equal(verdict.green, false);
+  assert.deepEqual(verdict.failed.map((entry) => [entry.file, entry.name, entry.failureType]), [
+    ['test/asserted.test.mjs', 'two', 'testCodeFailure'],
+    ['test/cancelled.test.mjs', 'late', 'cancelledByParent'],
+  ]);
+  assert.deepEqual(verdict.hung.map((entry) => [entry.file, entry.failureType]),
+    [['test/hung.test.mjs', 'fileHung']]);
+  assert.equal(verdict.cancelled, 1);
+  assert.deepEqual(verdict.skipped, [{ file: 'test/declined-helper.mjs', reason: 'not a test file' }]);
+});
+
+test('reportedFiles lists a repeated file once across rows and lanes and keeps each failure row distinct', () => {
+  const shared = 'test/shared.test.mjs';
+  const helper = 'test/helper.mjs';
+  const verdict = computeVerdict([
+    { lane: 'suite', passed: [row(shared, 'one')], failed: [], skipped: [{ file: helper, reason: 'not a test file' }] },
+    {
+      lane: 'changed',
+      passed: [row(shared, 'two')],
+      failed: [
+        row(shared, 'three', { failureType: 'testCodeFailure' }),
+        row(shared, 'four', { failureType: 'testCodeFailure' }),
+        row(shared, 'five', { failureType: 'testTimeoutFailure' }),
+      ],
+      skipped: [{ file: helper, reason: 'not a test file' }],
+    },
+  ]);
+  assert.deepEqual(verdict.reportedFiles, ['test/helper.mjs', 'test/shared.test.mjs']);
+  assert.equal(verdict.passed, 2, 'both passed rows count even when they name one file');
+  assert.deepEqual(verdict.failed.map((entry) => entry.name), ['three', 'four'],
+    'two failing tests in one file stay two rows');
+  assert.deepEqual(verdict.hung.map((entry) => entry.name), ['five']);
+  assert.equal(verdict.skipped.length, 2, 'each skipped row is reported as written');
+});
+
+test('verdictDocument carries the reported file set through JSON unchanged', () => {
+  const verdict = computeVerdict([
+    { lane: 'suite', passed: [row('test/one.test.mjs', 'a')], failed: [] },
+    {
+      lane: 'changed',
+      passed: [],
+      failed: [row('test/two.test.mjs', 'b', { failureType: 'testCodeFailure' })],
+      skipped: [{ file: 'test/helper.mjs', reason: 'not a test file' }],
+    },
+  ]);
+  const document = verdictDocument(verdict);
+  assert.deepEqual(document.reportedFiles, ['test/helper.mjs', 'test/one.test.mjs', 'test/two.test.mjs']);
+  // run-suite writes `${JSON.stringify(document, null, 2)}\n` to the verdict file the adapter reads.
+  const restored = JSON.parse(JSON.stringify(document));
+  assert.deepEqual(restored.reportedFiles, document.reportedFiles);
+  assert.deepEqual(restored.failures, document.failures);
+  assert.equal(restored.green, false);
+});
+
+test('the verdict document keeps failure identities, counts and green semantics beside reportedFiles', () => {
+  const verdict = computeVerdict([{
+    lane: 'suite',
+    passed: [row('test/passed.test.mjs', 'one')],
+    failed: [
+      row('test/a.test.mjs', 'boom', { failureType: 'testCodeFailure' }),
+      row('test/c.test.mjs', 'late', { failureType: 'cancelledByParent' }),
+      row('test/x.test.mjs', '(file crashed: exit status 7)', { failureType: 'fileCrashed' }),
+      row('test/y.test.mjs', '(file hung: no test event for 5 ms after start)', { failureType: 'fileHung' }),
+    ],
+    skipped: [{ file: 'test/helper.mjs', reason: 'not a test file' }],
+  }]);
+  const document = verdictDocument(verdict);
+  assert.deepEqual(document.failures.map((entry) => failureIdentity(entry)), [
+    'test/a.test.mjs :: boom :: assertion :: testCodeFailure',
+    'test/c.test.mjs :: late :: assertion :: cancelledByParent',
+    'test/x.test.mjs ::  :: crash :: fileCrashed',
+    'test/y.test.mjs ::  :: hang :: fileHung',
+  ]);
+  assert.equal(document.passed, 1);
+  assert.equal(document.failed.length, 3);
+  assert.equal(document.hung.length, 1);
+  assert.equal(document.failures.length, 4);
+  assert.equal(document.green, false);
+  assert.deepEqual(document.reportedFiles, [
+    'test/a.test.mjs', 'test/c.test.mjs', 'test/helper.mjs', 'test/passed.test.mjs',
+    'test/x.test.mjs', 'test/y.test.mjs',
+  ]);
+  assert.deepEqual(document.unexpected, document.failures.map((entry) => entry.key));
+  // The failure kind the adapter prints beside each identity (impl/src/suite-comparison.mjs).
+  assert.equal(failureKind('testCodeFailure'), 'assertion');
+  assert.equal(failureKind('cancelledByParent'), 'assertion');
+  assert.equal(failureKind('testTimeoutFailure'), 'hang');
+  assert.equal(failureKind('fileHung'), 'hang');
+  assert.equal(failureKind('fileCrashed'), 'crash');
+  assert.equal(failureKind('fixtureLeak'), 'leak');
+});
+
+test('green holds only while the run reports no failure and no hang', () => {
+  const clean = computeVerdict([{
+    lane: 'suite',
+    passed: [row('test/passed.test.mjs', 'one')],
+    failed: [],
+    skipped: [{ file: 'test/helper.mjs', reason: 'not a test file' }],
+  }]);
+  assert.equal(clean.green, true);
+  assert.deepEqual(clean.reportedFiles, ['test/helper.mjs', 'test/passed.test.mjs']);
+  assert.equal(verdictDocument(clean).green, true);
+  const cancelled = computeVerdict([{
+    lane: 'suite',
+    passed: [],
+    failed: [row('test/c.test.mjs', 'late', { failureType: 'cancelledByParent' })],
+  }]);
+  assert.equal(cancelled.green, false, 'a cancelled test is a failure');
 });
