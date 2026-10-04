@@ -47,7 +47,7 @@ class NativeStatus(unittest.TestCase):
         cls.expected = {'root': {
             'id': 'root', 'parent': None, 'harness': 'fixture-root', 'model': '', 'effort': '',
             'native': 'root-login', 'observedHarness': '', 'observedModel': '', 'observedEffort': '',
-            'endpoint': '', 'workspace': '', 'branch': '', 'base': '', 'kind': 'player', 'role': 'principal-conductor',
+            'endpoint': '', 'endpointArgv': None, 'workspace': '', 'branch': '', 'base': '', 'kind': 'player', 'role': 'principal-conductor',
         }}
         for ident, parent, harness, model, effort in (
                 ('alpha', 'root', 'omp', 'requested-alpha', 'high'),
@@ -62,7 +62,7 @@ class NativeStatus(unittest.TestCase):
                      observed['observedModel'], observed['observedEffort'])
             cls.expected[ident] = {
                 'id': ident, 'parent': parent, 'harness': harness, 'model': model, 'effort': effort,
-                **observed, 'endpoint': '', 'workspace': workspace, 'branch': branch, 'base': base, 'kind': 'player', 'role': 'associate-conductor' if ident == 'alpha' else 'player',
+                **observed, 'endpoint': '', 'endpointArgv': None, 'workspace': workspace, 'branch': branch, 'base': base, 'kind': 'player', 'role': 'associate-conductor' if ident == 'alpha' else 'player',
             }
         cls.call('role', 'alpha', 'associate-conductor')
         cls.call('report', 'alpha-report-1', 'alpha', 'Full Unicode λ report\n')
@@ -78,6 +78,7 @@ class NativeStatus(unittest.TestCase):
             endpoint = json.dumps(['/usr/bin/true', ident])
             cls.call('connect', ident, cls.expected[ident]['native'], endpoint)
             cls.expected[ident]['endpoint'] = endpoint
+            cls.expected[ident]['endpointArgv'] = json.loads(endpoint)
         cls.pending = {'root': 1, 'alpha': 1, 'beta': 2}
         cls.valid = cls.call('status')
 
@@ -93,6 +94,7 @@ class NativeStatus(unittest.TestCase):
         before_metadata = copy.deepcopy(self.expected)
         for row in before_metadata.values():
             row['endpoint'] = ''
+            row['endpointArgv'] = None
         DRIVER.assert_bend_status(self.before_ack, before_metadata,
                                   {'root': 2, 'alpha': 2, 'beta': 2})
         DRIVER.assert_bend_status(self.valid, self.expected, self.pending)
@@ -124,7 +126,7 @@ class NativeStatus(unittest.TestCase):
         changes = {'parent': 'root', 'harness': 'wrong-harness', 'model': 'wrong-model',
                    'effort': 'high', 'native': 'wrong-login', 'observedHarness': 'wrong-observation',
                    'observedModel': 'wrong-observation', 'observedEffort': 'low',
-                   'endpoint': '', 'workspace': str(self.path / 'alpha'),
+                   'endpoint': '', 'endpointArgv': ['wrong-argv'], 'workspace': str(self.path / 'alpha'),
                    'branch': 'alpha-branch', 'base': 'wrong-base'}
         for field, value in changes.items():
             with self.subTest(field=field):
