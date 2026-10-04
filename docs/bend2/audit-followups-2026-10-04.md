@@ -170,9 +170,11 @@ persisted assistant-message observations summed under the persisted entry
 identity, route provenance per observation, per-component absent/invalid
 honesty, malformed-line counting with sums omitted when nonzero, and
 ambiguity and identity-mismatch refusals. The correction history is
-preserved: entry selection over assistant role with object usage shape,
-persisted-ID identity with provider responseId conflicts excluded from
-unqualified totals, and route provenance per observation. Limits:
+preserved: entry selection over assistant role with object usage shape, and
+the reader ignores the provider responseId. Conflicts concern changed
+route or usage observations under the same persisted entry `id`; those
+conflicts suppress totals. Route provenance is preserved per observation.
+Limits:
 harness-recorded estimates with provider/model/source provenance, no billed
 amounts claimed, one session's current conversation. The measurements above
 stand as the source the projection was designed against.
@@ -324,19 +326,21 @@ Successor (commit 838bb887, independently accepted): the ACK callback now
 returns `ProcessChild.acknowledge`'s Result as a value instead of wrapping
 it in `IO.try`, which the compiler's `base.bend` confirms would halt
 (`IO.try` binds through `IO.pass`, and `IO.pass` on `Fail` calls `IO.die`).
-ACK runs before the continuation join, and the continuation is always
-joined after ACK returns, success or failure. The ACK failure combines as
+The scope of that change is the acknowledge callback path only. The
+continuation joining is scoped to an acknowledge callback returning a
+Result: the continuation is always joined after ACK returns, covering
+success or failure. The ACK failure combines as
 `combine(next, combine(ack, status))`, which equals the previous expression
 for a successful ACK. Real ACK-failure custody is proven by
 `test_ack_failure_still_joins_queued_continuation`: with the marker path
 staged as a directory, the production wrapper fails at the filesystem, the
-observer stays alive while the continuation is held live (the prefix binary
-exited 17, the halted errno, at exactly that assertion), then joins it;
-both reports are retained, no `acknowledged` file is fabricated, and the
-outcome carries `17: File exists`. The operative law
-`completed_attempt_settles_before_continuation_joins` covers the changed
-continuation/ACK combination. Preserved logs carry the `evidence-task5-`
-prefix.
+observer stays alive while the continuation is held live (47b2accc at the
+c14cb11d composition exited 17, the halted errno, at exactly that
+assertion), then joins it; both reports are retained, no `acknowledged`
+file is fabricated, and the outcome carries `17: File exists`. The operative
+law `completed_attempt_settles_before_continuation_joins` covers the
+changed continuation/ACK combination. Preserved logs carry the
+`evidence-task5-` prefix.
 
 Limits: controlled codex fixtures with small spools, not a live multi-GiB
 spool; the staged failure is EEXIST-on-directory standing in for any host
@@ -356,16 +360,29 @@ re-measured here: #658 named every pretty read in help and presents
 endpoint argv (native lane, landed 9084bc46); #663 sealed the managed
 completion, defers a later terminal, and keys the receipt to the seal
 (native lane), composed with the accepted #665 ACK successor on the native
-branch. Issue #659 is accepted and landed per the surface qualification
-task, but its subject is not established in this lane's available sources
-and is recorded here as unmapped rather than described.
+branch. Issue #659 is the immediate model-series configuration refusal
+before endpoint storage and turn launch: the `start`, `receiver`, and
+`dispatch-turn` admission check through the helper's `check` verb refuses
+an unmapped recorded model before any endpoint is stored or any native turn
+launches (native lane, from audit-native's task-2 report and its retained
+before/after reproductions).
 
 Open and pending: #664 stays open — the task3-era accept-receive-recovery
 failure and the receive-suite 31-case error lost their tracebacks to a
 batch pipeline that dropped the error stream, so both causes are unknown.
-The #666 cause (missed parent continuation, under audit-native
-investigation against composed #665 and #663) is pending, as is the final
-actual OMP 18.6 review.
+The original #666 cause remains UNKNOWN and #666 is not diagnosed: it is
+not causally diagnosed from the retained original stalls. The ordinary
+commit/release handoff is correctly ordered if release actually frees
+admission; what is missing is whether the own continuation reached
+acquisition and which descriptor or process held the guard. The sampler
+probe actively contended on the guard and its queued log entries precede
+the first root completion, so they represent earlier external deliveries
+and prove neither a queued self-continuation nor ordinary foreign-holder
+presence. The bounded accepted evidence is the completed checked module
+gate for 7335b96d, which covers #663 and #665 behavior on that composition.
+Both previously interrupted landings remain incomplete original records,
+and no re-arm mechanism is selected or approved. The final actual OMP 18.6
+review is pending.
 
 Checked-landing stall record, kept as three separate root observations: (1)
 root interrupted both stalled selected tests only after they stalled; the
@@ -378,10 +395,12 @@ The two-frame old-source startup mismatch belonged only to the separate
 native-owner developer fixture and stays separate from both checked
 landings.
 
-No success is inferred from interrupted checks or green reruns in this
-document. A serial continuation draft that would join parent delivery before
-queued own-task start is rejected: it blocks required parent/child
-concurrency, and no such draft is present in this worktree. Root's two
+Focused green reruns prove their bounded tested behavior only. Both
+interrupted native checked landings remain incomplete, and their original
+failure evidence stands unchanged. A serial continuation draft that would
+join parent delivery before queued own-task start is rejected: it blocks
+required parent/child concurrency, and no such draft is present in this
+worktree. Root's two
 pending guidance strands to audit-native (continuation-concurrency review
 and guard-release/admission interleaving) remain that lane's open work, not
 claims of this document.

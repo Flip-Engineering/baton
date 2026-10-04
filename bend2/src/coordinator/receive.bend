@@ -82,9 +82,9 @@ def release_observer(lock: Maybe<U32>) -> IO(Unit):
 # The queued continuation runs beside this attempt's own finish: the parent
 # delivery, native-request settle and attempt acknowledge join before the
 # continuation does, so a completed attempt releases while later work runs.
-# The acknowledge callback returns its Result as a value, so an acknowledge
-# failure still joins the queued continuation and surfaces in the combined
-# outcome instead of halting before it.
+# The acknowledge callback returns its Result as a value. An acknowledge
+# failure returns through that Result; the queued continuation is joined and
+# the failure is part of the combined outcome.
 def finish_pending(+db: String, +session: String, id: String, log: String, cursor: String, +outcome: Turn.Outcome, deliveries: List<Chan(Result<&1,&1,U32 & String,String>)>, again: Unit -> IO(Result<&1,&1,U32 & String,Unit>), acknowledge: Unit -> IO(Result<&1,&1,U32 & String,Unit>)) -> IO(Result<&1,&1,U32 & String,Unit>):
   do IO<Result<&1,&1,U32 & String,Unit>>:
     failed : Bool <- outcome_failed(db,outcome)
