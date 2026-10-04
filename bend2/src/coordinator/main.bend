@@ -135,7 +135,7 @@ def execute(db: String, command: C.Command) -> IO(Unit):
     case C.ObserveFile{id,player,path}:
       do IO<Unit>:
         event : String <- IO.try(String,T.Text.read(path))
-        run(db,C.Observe{id,player,event})
+        run(db,C.Observe{id,player,event,False{}})
     case C.NativeReply{parent,id,response}: NativeRequests.reply(db,parent,id,response)
     case C.NativeReplyFile{parent,id,path}:
       do IO<Unit>:
