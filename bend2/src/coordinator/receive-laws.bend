@@ -25,6 +25,118 @@ import ./native-requests.bend as NativeRequests
 import ./commands.bend as C
 import ../host/sqlite.bend as DB
 import ../git/text.bend as Tx
+import ../host/text.bend as Text
+import ./store.bend as Store
+
+law report_persists_before_best_effort_control_output:
+  for db: String
+  for player: String
+  for id: String
+  for body: String
+  {Turn.report(db,player,id,body) == (do IO<Unit>:
+    saved : String <- IO.try(String,Store.commit(db,C.Report{id,player,body}))
+    written : Result<&1,&1,U32 & String,Unit> <- Text.Text.control_output(saved)
+    IO.pure(Unit,Unit{})) : IO(Unit)}
+
+def report_persists_before_best_effort_control_output(db,player,id,body):
+  {==}
+
+law direct_replay_keeps_output_failure_for_completion:
+  for +db: String
+  for +player: String
+  for +id: String
+  for cmd: String
+  for model: String
+  for effort: String
+  for cwd: String
+  for +task: String
+  for log: String
+  for session: String
+  for harness: String
+  {Turn.choose(db,player,id,cmd,model,effort,cwd,task,log,session,harness,True{}) == (do IO<Result<&1,&1,U32 & String,Maybe<Turn.Outcome>>>:
+    +saved : String <- IO.try(String,Store.commit(db,C.Delivery{id}))
+    written : Result<&1,&1,U32 & String,Unit> <- Text.Text.control_output(saved)
+    IO.pure(Result<&1,&1,U32 & String,Maybe<Turn.Outcome>>,Turn.replay_result(written))) : IO(Result<&1,&1,U32 & String,Maybe<Turn.Outcome>>)}
+
+def direct_replay_keeps_output_failure_for_completion(db,player,id,cmd,model,effort,cwd,task,log,session,harness):
+  {==}
+
+law failed_replay_releases_and_wakes_before_reporting_output_error:
+  for db: String
+  for player: String
+  for lock: U32
+  for -output: Result<&1,&1,U32 & String,Unit>
+  {Turn.replay_finished(db,player,lock,output) == (do IO<Unit>:
+    released : Unit <- IO.try(Unit,Lock.SessionLock.release(lock))
+    wake : Result<&1,&1,U32 & String,Unit> <- Delivery.wake_pending(db,player,"0")
+    IO.pass(Unit,Turn.combine(output,wake))) : IO(Unit)}
+
+def failed_replay_releases_and_wakes_before_reporting_output_error(db,player,lock,output):
+  {==}
+
+law failed_replay_output_reaches_the_completion_boundary:
+  for db: String
+  for player: String
+  for id: String
+  for log: String
+  for lock: U32
+  for -error: U32 & String
+  {Turn.complete_locked(db,player,id,log,lock,Fail{error}) == Turn.replay_finished(db,player,lock,Fail{error}) : IO(Unit)}
+
+def failed_replay_output_reaches_the_completion_boundary(db,player,id,log,lock,error):
+  {==}
+
+law replay_output_failure_is_preserved:
+  for -error: U32 & String
+  {Turn.replay_result(Fail{error}) == Fail{error} : Result<&1,&1,U32 & String,Maybe<Turn.Outcome>>}
+
+def replay_output_failure_is_preserved(error):
+  {==}
+
+# Completion output returns its failure through the finish result. The caller
+# joins queued work before it reports that result. The host write is tested
+# with a pipe whose reader closes after both completion branches start.
+law completion_output_preserves_delivery_errors_and_returns_write_failure:
+  for +db: String
+  for player: String
+  for +id: String
+  {Turn.player_finished(db,player,id) == (do IO<Result<&1,&1,U32 & String,Unit>>:
+    +saved : String <- IO.try(String,Store.commit(db,C.Delivery{id}))
+    diagnostic_delivery : Result<&1,&1,U32 & String,String> <- Delivery.deliver(db,id ++ ":observation","1","")
+    delivered : Result<&1,&1,U32 & String,String> <- Delivery.deliver(db,id,"1",saved)
+    exit_delivery : Result<&1,&1,U32 & String,String> <- Delivery.deliver(db,id ++ ":exit","1","")
+    stopped : Result<&1,&1,U32 & String,Unit> <- Stop.deliver(db,player,id)
+    written : Result<&1,&1,U32 & String,Unit> <- Text.Text.control_output(saved)
+    IO.pure(Result<&1,&1,U32 & String,Unit>,Turn.combine(Turn.delivery_result(Turn.remember(Turn.remember(Turn.remember("",diagnostic_delivery),delivered),exit_delivery)),Turn.combine(stopped,written)))) : IO(Result<&1,&1,U32 & String,Unit>)}
+
+def completion_output_preserves_delivery_errors_and_returns_write_failure(db,player,id):
+  {==}
+
+law completion_without_parent_returns_output_failure:
+  for +db: String
+  for +player: String
+  for id: String
+  for log: String
+  for +status: String
+  for +event: String
+  for error: String
+  {Turn.finish_parent(db,player,id,log,Turn.Ended{status,event,error},False{}) == (do IO<Result<&1,&1,U32 & String,Unit>>:
+    output : String <- IO.try(String,DB.Sql.query(db,"SELECT json_object('session'," ++ C.q(player) ++ ",'status'," ++ C.q(status) ++ ",'event',CASE WHEN " ++ C.q(event) ++ "='' THEN NULL ELSE json(" ++ C.q(event) ++ ") END,'error'," ++ C.q(error) ++ ");"))
+    Text.Text.control_output(output)) : IO(Result<&1,&1,U32 & String,Unit>)}
+
+def completion_without_parent_returns_output_failure(db,player,id,log,status,event,error):
+  {==}
+
+law receive_status_returns_output_failure:
+  for +db: String
+  for +session: String
+  for +status: String
+  {Receive.receive_status(db,session,status) == (do IO<Result<&1,&1,U32 & String,Unit>>:
+    result : String <- IO.try(String,DB.Sql.query(db,"SELECT json_object('session'," ++ C.q(session) ++ ",'status'," ++ C.q(status) ++ ");"))
+    Text.Text.control_output(result)) : IO(Result<&1,&1,U32 & String,Unit>)}
+
+def receive_status_returns_output_failure(db,session,status):
+  {==}
 
 # A busy session reports queued for every launch argument and continuation.
 law busy_receive_only_reports_queued:
@@ -308,7 +420,7 @@ def completion_prepares_before_owner_release(+db: String, +session: String, +id:
     prepared : Unit <- Turn.prepare(db,session,id,log,stderr,outcome)
     observer_released : Unit <- Receive.release_observer(lock)
     native_released : Unit <- IO.try(Unit,P.ProcessChild.release(handle))
-    Receive.finish_pending(db,session,id,log,cursor,outcome,deliveries,again,u => IO.try(Unit,P.ProcessChild.acknowledge(handle)))
+    Receive.finish_pending(db,session,id,log,cursor,outcome,deliveries,again,u => P.ProcessChild.acknowledge(handle))
 
 law native_completion_is_committed_before_owner_release:
   for +db: String
@@ -327,13 +439,44 @@ law native_completion_is_committed_before_owner_release:
 def native_completion_is_committed_before_owner_release(db,session,id,log,stderr,cursor,handle,lock,outcome,deliveries,again):
   {==}
 
+# A completed attempt settles beside its queued continuation: the parent
+# delivery, native-request settle and attempt acknowledge join before the
+# continuation does, the acknowledge failure stays a combined value, and the
+# combined outcome keeps the same failure order for a successful acknowledge.
+def settle_attempt_before_joining_continuation(+db: String, +session: String, id: String, log: String, cursor: String, +outcome: Turn.Outcome, deliveries: List<Chan(Result<&1,&1,U32 & String,String>)>, again: Unit -> IO(Result<&1,&1,U32 & String,Unit>), acknowledge: Unit -> IO(Result<&1,&1,U32 & String,Unit>)) -> IO(Result<&1,&1,U32 & String,Unit>):
+  do IO<Result<&1,&1,U32 & String,Unit>>:
+    failed : Bool <- Receive.outcome_failed(db,outcome)
+    delivery_task : Chan(Result<&1,&1,U32 & String,Unit>) <- IO.fork(Result<&1,&1,U32 & String,Unit>,Turn.finish(db,session,id,log,outcome))
+    continued_task : Chan(Result<&1,&1,U32 & String,Unit>) <- IO.fork(Result<&1,&1,U32 & String,Unit>,Receive.continue_pending(db,session,cursor,again))
+    finished : Result<&1,&1,U32 & String,Unit> <- IO.join(Result<&1,&1,U32 & String,Unit>,delivery_task)
+    questions : Result<&1,&1,U32 & String,Unit> <- NativeRequests.settle(deliveries)
+    ack : Result<&1,&1,U32 & String,Unit> <- acknowledge(Unit{})
+    status : Result<&1,&1,U32 & String,Unit> <- Receive.exit_status(failed)
+    next : Result<&1,&1,U32 & String,Unit> <- IO.join(Result<&1,&1,U32 & String,Unit>,continued_task)
+    IO.pure(Result<&1,&1,U32 & String,Unit>,Turn.combine(finished,Turn.combine(questions,Turn.combine(next,Turn.combine(ack,status)))))
+
+law completed_attempt_settles_before_continuation_joins:
+  for +db: String
+  for +session: String
+  for id: String
+  for log: String
+  for cursor: String
+  for +outcome: Turn.Outcome
+  for -deliveries: List<Chan(Result<&1,&1,U32 & String,String>)>
+  for -again: Unit -> IO(Result<&1,&1,U32 & String,Unit>)
+  for -acknowledge: Unit -> IO(Result<&1,&1,U32 & String,Unit>)
+  {Receive.finish_pending(db,session,id,log,cursor,outcome,deliveries,again,acknowledge) == settle_attempt_before_joining_continuation(db,session,id,log,cursor,outcome,deliveries,again,acknowledge) : IO(Result<&1,&1,U32 & String,Unit>)}
+
+def completed_attempt_settles_before_continuation_joins(db,session,id,log,cursor,outcome,deliveries,again,acknowledge):
+  {==}
+
 # Direct turns share the guard and check the retained attempt before Stop.admit
 # can replace its execution record or the direct task can launch a native.
 def direct_admission_checks_receive(+db: String, +player: String, +id: String, cmd: String, model: String, effort: String, cwd: String, task: String, +log: String, session: String, missing: Bool, handle: U32) -> IO(Unit):
   do IO<Unit>:
     retained : Unit <- Turn.retained_receive_guard(db,player)
     harness : String <- IO.try(String,DB.Sql.query(db,"SELECT harness FROM sessions WHERE id=" ++ C.q(player) ++ ";"))
-    result : Maybe<Turn.Outcome> <- Turn.player_checked(db,player,id,cmd,model,effort,cwd,task,log,session,harness,missing)
+    result : Result<&1,&1,U32 & String,Maybe<Turn.Outcome>> <- Turn.player_checked(db,player,id,cmd,model,effort,cwd,task,log,session,harness,missing)
     Turn.complete_locked(db,player,id,log,handle,result)
 
 law direct_turn_checks_receive_before_admission:

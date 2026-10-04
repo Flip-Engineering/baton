@@ -278,10 +278,12 @@ the moved target, after which a new landing request judges the revised work.
 needs no further landing. Landing retains the Player branch and workspace.
 `push REPO BRANCH REMOTE` then runs Git's ordinary push. Its JSON answer reports
 `pushed` with the branch and remote, or `rejected` with a generated reason naming
-the failed command. The acceptance run verifies publication with `git ls-remote`
-against its declared scratch bare remote, including refusal after the remote
-moves incompatibly. Repository network publication is the operator's explicit
-operation.
+the failed command. `remote-tip REPO BRANCH REMOTE` reads the declared remote
+with `git ls-remote` and answers the advertised object, an absent branch, or the
+read's own exit status. The acceptance run verifies publication with
+`git ls-remote` against its declared scratch bare remote, including refusal after
+the remote moves incompatibly. Repository network publication is the operator's
+explicit operation.
 
 ## Recovery and current limits
 

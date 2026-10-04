@@ -9,6 +9,7 @@ import ../host/sqlite.bend as DB
 import ../host/session-lock.bend as Lock
 import ../host/process.bend as P
 import ../git/text.bend as Tx
+import ../host/text.bend as Text
 
 def field(+db: String, session: String, name: String, +supplied: String) -> IO(String):
   do IO<String>:
@@ -45,8 +46,7 @@ def instructions(executable: String, database: String, +session: String) -> Stri
 def receive_status(db: String, session: String, status: String) -> IO(Result<&1,&1,U32 & String,Unit>):
   do IO<Result<&1,&1,U32 & String,Unit>>:
     result : String <- IO.try(String,DB.Sql.query(db,"SELECT json_object('session'," ++ C.q(session) ++ ",'status'," ++ C.q(status) ++ ");"))
-    written : Unit <- IO.write(result)
-    IO.pure(Result<&1,&1,U32 & String,Unit>,Done{Unit{}})
+    Text.Text.control_output(result)
 
 def exit_status(failed: Bool) -> IO(Result<&1,&1,U32 & String,Unit>):
   match failed:
@@ -79,23 +79,30 @@ def release_observer(lock: Maybe<U32>) -> IO(Unit):
     case None{}: IO.pure(Unit,Unit{})
     case Some{handle}: IO.try(Unit,Lock.SessionLock.release(handle))
 
-def finish_pending(+db: String, +session: String, id: String, log: String, cursor: String, +outcome: Turn.Outcome, deliveries: List<Chan(Result<&1,&1,U32 & String,String>)>, again: Unit -> IO(Result<&1,&1,U32 & String,Unit>), acknowledge: Unit -> IO(Unit)) -> IO(Result<&1,&1,U32 & String,Unit>):
+# The queued continuation runs beside this attempt's own finish: the parent
+# delivery, native-request settle and attempt acknowledge join before the
+# continuation does, so a completed attempt releases while later work runs.
+# The acknowledge callback returns its Result as a value. An acknowledge
+# failure returns through that Result; the queued continuation is joined and
+# the failure is part of the combined outcome.
+def finish_pending(+db: String, +session: String, id: String, log: String, cursor: String, +outcome: Turn.Outcome, deliveries: List<Chan(Result<&1,&1,U32 & String,String>)>, again: Unit -> IO(Result<&1,&1,U32 & String,Unit>), acknowledge: Unit -> IO(Result<&1,&1,U32 & String,Unit>)) -> IO(Result<&1,&1,U32 & String,Unit>):
   do IO<Result<&1,&1,U32 & String,Unit>>:
     failed : Bool <- outcome_failed(db,outcome)
     delivery_task : Chan(Result<&1,&1,U32 & String,Unit>) <- IO.fork(Result<&1,&1,U32 & String,Unit>,Turn.finish(db,session,id,log,outcome))
-    next : Result<&1,&1,U32 & String,Unit> <- continue_pending(db,session,cursor,again)
+    continued_task : Chan(Result<&1,&1,U32 & String,Unit>) <- IO.fork(Result<&1,&1,U32 & String,Unit>,continue_pending(db,session,cursor,again))
     finished : Result<&1,&1,U32 & String,Unit> <- IO.join(Result<&1,&1,U32 & String,Unit>,delivery_task)
     questions : Result<&1,&1,U32 & String,Unit> <- NativeRequests.settle(deliveries)
-    acknowledged : Unit <- acknowledge(Unit{})
+    ack : Result<&1,&1,U32 & String,Unit> <- acknowledge(Unit{})
     status : Result<&1,&1,U32 & String,Unit> <- exit_status(failed)
-    IO.pure(Result<&1,&1,U32 & String,Unit>,Turn.combine(finished,Turn.combine(questions,Turn.combine(next,status))))
+    next : Result<&1,&1,U32 & String,Unit> <- IO.join(Result<&1,&1,U32 & String,Unit>,continued_task)
+    IO.pure(Result<&1,&1,U32 & String,Unit>,Turn.combine(finished,Turn.combine(questions,Turn.combine(next,Turn.combine(ack,status)))))
 
 def completed(+db: String, +session: String, +id: String, +log: String, stderr: String, cursor: String, +handle: U32, lock: Maybe<U32>, +outcome: Turn.Outcome, deliveries: List<Chan(Result<&1,&1,U32 & String,String>)>, again: Unit -> IO(Result<&1,&1,U32 & String,Unit>)) -> IO(Result<&1,&1,U32 & String,Unit>):
   do IO<Result<&1,&1,U32 & String,Unit>>:
     prepared : Unit <- Turn.prepare(db,session,id,log,stderr,outcome)
     observer_released : Unit <- release_observer(lock)
     native_released : Unit <- IO.try(Unit,P.ProcessChild.release(handle))
-    finish_pending(db,session,id,log,cursor,outcome,deliveries,again,u => IO.try(Unit,P.ProcessChild.acknowledge(handle)))
+    finish_pending(db,session,id,log,cursor,outcome,deliveries,again,u => P.ProcessChild.acknowledge(handle))
 
 # The recovery input records the workspace state and makes clearing the refused
 # identity atomic. Replaying the old attempt preserves a later native identity.
@@ -162,7 +169,7 @@ def started(+db: String, +session: String, +id: String, +log: String, cursor: St
       exited : Unit <- Turn.record_exit(db,session,id,log,outcome)
       prepared : Unit <- Turn.prepare(db,session,id,log,attempt ++ "/native.stderr",outcome)
       released : Unit <- IO.try(Unit,Lock.SessionLock.release(lock))
-      finish_pending(db,session,id,log,cursor,outcome,Nil{},again,u => IO.pure(Unit,Unit{}))
+      finish_pending(db,session,id,log,cursor,outcome,Nil{},again,u => IO.pure(Result<&1,&1,U32 & String,Unit>,Done{Unit{}}))
 
 def start_admitted(+db: String, +session: String, +id: String, cmd: String, route: String, thinking: String, +workspace: String, +log: String, +lock: U32, cursor: String, +native: String, +attempt: String, +harness: String, storage: String, prompt: String, recovery: String, again: Unit -> IO(Result<&1,&1,U32 & String,Unit>), allowed: Bool) -> IO(Result<&1,&1,U32 & String,Unit>):
   match allowed:

@@ -56,8 +56,11 @@
 # M-17 bound: Turn.combine, Turn.send_result, Turn.remember, Turn.result_missing, Turn.diagnostic
 #      and Receive.exit_status. A failed step stays the answer, and an unsettled turn reports to
 #      its parent or names the log and inbox that continue it.
-# M-18 bound: L.push_argv and L.push_git. The push argv names the declared remote at the
-#      destination position, and the push effect runs exactly that argv.
+# M-18 bound: L.push_argv and L.push_git, L.tip_ref, L.ls_remote_argv, L.tip_object and
+#      L.remote_tip_git, and Land.tip_json, Land.tip_object_tail, Land.tip_exit_tail, Land.tip_present,
+#      Land.tip_zero, Land.tip_run and Land.tip_pick. The push argv names the declared remote at the
+#      destination position; the remote-tip argv names the declared remote and one requested ref, and
+#      each read answer names the advertised object, the absent ref or the observed exit status.
 # The adapter dispatch is bound under M-2, M-5 and M-11: Turn.input and Turn.launch select the
 # adapter by the harness the session recorded, and Turn.claude_launch and Turn.muse_launch start a
 # session when none is recorded and carry the recorded one otherwise.
@@ -107,6 +110,7 @@ import ../json/canonical.bend as J
 import ../git/laws.bend as GitLaws
 import ../git/types.bend as T
 import ../git/text.bend as Tx
+import ../git/land.bend as GitLand
 import ../harness/laws.bend as HarnessLaws
 
 # ---------------------------------------------------------------------------
@@ -213,10 +217,32 @@ law m13_terminal_event_invokes_the_registered_endpoint:
   for +player: String
   for +event: String
   for +saved: String
-  {Delivery.after(db, C.Observe{id, player, event}, saved) == Delivery.deliver(db, id, C.terminal(event), saved) : IO(Result<&1,&1,U32 & String,String>)}
+  for +sealed: Bool
+  {Delivery.after(db, C.Observe{id, player, event, sealed}, saved) == Delivery.observe_delivery(db, id, event, saved, sealed) : IO(Result<&1,&1,U32 & String,String>)}
 
-def m13_terminal_event_invokes_the_registered_endpoint(db, id, player, event, saved):
+def m13_terminal_event_invokes_the_registered_endpoint(db, id, player, event, saved, sealed):
   {==}
+
+law the_sealed_observation_delivers_nothing:
+  for +db: String
+  for +id: String
+  for +event: String
+  for +saved: String
+  {Delivery.observe_delivery(db, id, event, saved, True{}) == IO.pure(Result<&1,&1,U32 & String,String>,Done{saved}) : IO(Result<&1,&1,U32 & String,String>)}
+
+def the_sealed_observation_delivers_nothing(db, id, event, saved):
+  {==}
+
+law the_live_observation_delivers_its_terminal:
+  for +db: String
+  for +id: String
+  for +event: String
+  for +saved: String
+  {Delivery.observe_delivery(db, id, event, saved, False{}) == Delivery.deliver(db, id, C.terminal(event), saved) : IO(Result<&1,&1,U32 & String,String>)}
+
+def the_live_observation_delivers_its_terminal(db, id, event, saved):
+  {==}
+
 
 # ---------------------------------------------------------------------------
 # M-17: no silent abandonment of accepted, unsettled work. A player process
@@ -263,7 +289,7 @@ def m17_missing_observation_reports_to_the_parent(db, player, id, text):
 # keyed by the identity the caller supplied.
 law m1_session_answer_reads_the_stored_row:
   for +id: String
-  {C.session_result(id) == "SELECT json_patch(json_object('id',id,'parent',parent,'harness',harness,'model',model,'effort',effort,'native',native,'observedHarness',observed_harness,'observedModel',observed_model,'observedEffort',observed_effort,'endpoint',endpoint,'workspace',workspace,'branch',branch,'base',base,'kind'," ++ C.session_kind("sessions.id") ++ ",'role'," ++ C.public_role("sessions.id") ++ ")," ++ C.session_state_sql("sessions.id") ++ ") FROM sessions WHERE id=" ++ C.q(id) ++ ";" : String}
+  {C.session_result(id) == "SELECT json_patch(json_object('id',id,'parent',parent,'harness',harness,'model',model,'effort',effort,'native',native,'observedHarness',observed_harness,'observedModel',observed_model,'observedEffort',observed_effort,'endpoint',endpoint,'endpointArgv'," ++ C.endpoint_argv("endpoint") ++ ",'workspace',workspace,'branch',branch,'base',base,'kind'," ++ C.session_kind("sessions.id") ++ ",'role'," ++ C.public_role("sessions.id") ++ ")," ++ C.session_state_sql("sessions.id") ++ ") FROM sessions WHERE id=" ++ C.q(id) ++ ";" : String}
 
 def m1_session_answer_reads_the_stored_row(id):
   {==}
@@ -776,6 +802,90 @@ law m2_push_answer_follows_the_observed_exit_code:
 def m2_push_answer_follows_the_observed_exit_code(code, out, branch, remote):
   {==}
 
+# ---------------------------------------------------------------------------
+# M-18: the declared remote-tip read answers what that remote advertised, the
+# absence of the requested ref, or the status the read failed with. Every
+# answer names the repository, branch and remote the caller declared.
+
+# M-18: an advertised tip is answered with its own object ID.
+law m18_the_advertised_remote_tip_names_its_object:
+  for +object: String
+  for +repo: String
+  for +branch: String
+  for +remote: String
+  {Land.tip_present(True{}, object, repo, branch, remote) == Land.tip_json("advertised", Land.tip_object_tail(object), repo, branch, remote) : IO(Unit)}
+
+def m18_the_advertised_remote_tip_names_its_object(object, repo, branch, remote):
+  {==}
+
+# M-18: an absent branch is answered absent, with no object.
+law m18_an_absent_remote_branch_is_answered_absent:
+  for +object: String
+  for +repo: String
+  for +branch: String
+  for +remote: String
+  {Land.tip_present(False{}, object, repo, branch, remote) == Land.tip_json("absent", "}", repo, branch, remote) : IO(Unit)}
+
+def m18_an_absent_remote_branch_is_answered_absent(object, repo, branch, remote):
+  {==}
+
+# M-2: a zero exit answers the advertisement the read returned.
+law m2_a_zero_exit_remote_read_answers_its_advertisement:
+  for +code: U32
+  for +object: String
+  for +repo: String
+  for +branch: String
+  for +remote: String
+  {Land.tip_zero(True{}, code, object, repo, branch, remote) == Land.tip_present(Bool.not(String.is_empty(object)), object, repo, branch, remote) : IO(Unit)}
+
+def m2_a_zero_exit_remote_read_answers_its_advertisement(code, object, repo, branch, remote):
+  {==}
+
+# M-2: a failed read answers its own exit status instead of an advertisement.
+law m2_a_failed_remote_read_answers_its_own_exit:
+  for +code: U32
+  for +object: String
+  for +repo: String
+  for +branch: String
+  for +remote: String
+  {Land.tip_zero(False{}, code, object, repo, branch, remote) == Land.tip_json("failed", Land.tip_exit_tail(code, remote), repo, branch, remote) : IO(Unit)}
+
+def m2_a_failed_remote_read_answers_its_own_exit(code, object, repo, branch, remote):
+  {==}
+
+# M-2: the failed-read tail carries the observed exit status and names the
+# command whose message is in the coordinator log.
+law m2_a_failed_remote_read_names_the_command_and_status:
+  for +code: U32
+  for +remote: String
+  {Land.tip_exit_tail(code, remote) == ",\"exit\":" ++ U32.show(code) ++ ",\"reason\":" ++ J.string_literal(Tx.cmd_failed(Tx.str_cat("git ls-remote ", remote))) ++ "}" : String}
+
+def m2_a_failed_remote_read_names_the_command_and_status(code, remote):
+  {==}
+
+# M-2: a read that ran is answered from its own exit code and answer text.
+law m2_the_remote_tip_answer_follows_the_observed_read:
+  for +code: U32
+  for +out: String
+  for +repo: String
+  for +branch: String
+  for +remote: String
+  {Land.tip_pick(T.GRun{code, out}, repo, branch, remote) == Land.tip_run(code, GitLand.tip_object(out, GitLand.tip_ref(branch)), repo, branch, remote) : IO(Unit)}
+
+def m2_the_remote_tip_answer_follows_the_observed_read(code, out, repo, branch, remote):
+  {==}
+
+# M-2: a git executable that could not run answers its own observed detail.
+law m2_an_unusable_git_answers_its_own_detail_for_the_read:
+  for +detail: String
+  for +repo: String
+  for +branch: String
+  for +remote: String
+  {Land.tip_pick(T.GBroken{detail}, repo, branch, remote) == IO.die(Unit, 1, detail) : IO(Unit)}
+
+def m2_an_unusable_git_answers_its_own_detail_for_the_read(detail, repo, branch, remote):
+  {==}
+
 # M-14: a Git refusal is rendered with its own vocabulary row, so the caller
 # reads the rule that refused the landing.
 law m14_git_refusal_renders_its_own_text:
@@ -855,7 +965,7 @@ law m8_an_unregistered_player_is_refused_before_any_turn:
   for +log: String
   for +session: String
   for +harness: String
-  {Turn.player_checked(db, player, id, cmd, model, effort, cwd, task, log, session, harness, True{}) == IO.die(Maybe<Turn.Outcome>,2,"Player has no recorded parent and workspace; register it before starting a turn.") : IO(Maybe<Turn.Outcome>)}
+  {Turn.player_checked(db, player, id, cmd, model, effort, cwd, task, log, session, harness, True{}) == IO.die(Result<&1,&1,U32 & String,Maybe<Turn.Outcome>>,2,"Player has no recorded parent and workspace; register it before starting a turn.") : IO(Result<&1,&1,U32 & String,Maybe<Turn.Outcome>>)}
 
 def m8_an_unregistered_player_is_refused_before_any_turn(db, player, id, cmd, model, effort, cwd, task, log, session, harness):
   {==}
@@ -1050,7 +1160,7 @@ law terminal_observation_records_the_report_and_turn:
   for +id: String
   for +player: String
   for +event: String
-  {C.observe_completion_sql(id,player,event) == (
+  {C.completion_sql(id,player,event) == (
   "INSERT INTO messages(id,sender,recipient,kind,body) SELECT " ++ C.q(id) ++ ",id," ++ C.report_recipient("sessions.id") ++ ",'report'," ++ C.terminal_body(event) ++ " FROM sessions WHERE id=" ++ C.q(player) ++ " AND " ++ C.report_recipient("sessions.id") ++ " IS NOT NULL AND " ++ C.terminal(event) ++ C.message_upsert()
   ++ "INSERT INTO turns(id,worker,event) SELECT " ++ C.q(id) ++ "," ++ C.q(player) ++ "," ++ C.q(event) ++ " WHERE " ++ C.report_recipient(C.q(player)) ++ " IS NOT NULL AND " ++ C.terminal(event) ++ " ON CONFLICT(id) DO UPDATE SET id=CASE WHEN turns.worker=excluded.worker AND turns.event=excluded.event THEN turns.id ELSE NULL END;"
   ++ "SELECT json_object('player',id,'native',native,'eventType',coalesce(json_extract(" ++ C.q(event) ++ ",'$.type'),json_extract(" ++ C.q(event) ++ ",'$.payload_type')),'reportId',CASE WHEN " ++ C.report_recipient("sessions.id") ++ " IS NOT NULL AND " ++ C.terminal(event) ++ " THEN " ++ C.q(id) ++ " ELSE NULL END) FROM sessions WHERE id=" ++ C.q(player) ++ ";") : String}
@@ -1062,9 +1172,113 @@ law observations_update_identity_before_recording_completion:
   for id: String
   for +player: String
   for +event: String
-  {C.observe_sql(id,player,event) == C.observe_identity_sql(player,event) ++ C.observe_completion_sql(id,player,event) : String}
+  for sealed: Bool
+  {C.observe_sql(id,player,event,sealed) == C.observe_identity_sql(player,event) ++ C.observe_completion_sql(id,player,event,sealed) : String}
 
-def observations_update_identity_before_recording_completion(id,player,event):
+def observations_update_identity_before_recording_completion(id,player,event,sealed):
+  {==}
+
+law the_sealed_managed_completion_records_nothing:
+  for +id: String
+  for +player: String
+  for +event: String
+  {C.observe_completion_sql(id,player,event,True{}) == "" : String}
+
+def the_sealed_managed_completion_records_nothing(id,player,event):
+  {==}
+
+law a_later_native_terminal_is_named_once:
+  for +event: String
+  for +terminal: String
+  {Turn.deferred_terminal_sql(event,terminal) == ("SELECT CASE WHEN json_valid(" ++ C.q(event) ++ ") THEN CASE WHEN " ++ C.q(event) ++ "='' THEN 0 WHEN " ++ C.q(terminal) ++ "='' THEN 0 WHEN " ++ C.q(event) ++ "=" ++ C.q(terminal) ++ " THEN 0 WHEN " ++ C.terminal(event) ++ " THEN 1 ELSE 0 END ELSE 0 END;") : String}
+
+def a_later_native_terminal_is_named_once(event,terminal):
+  {==}
+
+law the_deferred_note_names_the_sealed_report:
+  for +id: String
+  for +pending: String
+  {Turn.deferred_text(id,pending) == ("A later native terminal completed after the report " ++ id ++ " was sealed; the episode is retained in the native log" ++ Turn.deferred_pending(pending) ++ ".") : String}
+
+def the_deferred_note_names_the_sealed_report(id,pending):
+  {==}
+
+law the_deferred_note_names_the_pending_guidance:
+  for +pending: String
+  {Turn.deferred_pending(pending) == Bool.pick(String,String.is_empty(pending),""," and the deferred guidance " ++ pending ++ " stays pending for the next receive") : String}
+
+def the_deferred_note_names_the_pending_guidance(pending):
+  {==}
+
+law the_outstanding_guidance_reader_names_stored_guidance:
+  for +player: String
+  {Guidance.outstanding_sql(player) == ("coalesce((SELECT group_concat(id,',') FROM (SELECT id FROM messages WHERE recipient=" ++ C.q(player) ++ " AND kind='guidance' AND receipt IS NULL AND NOT " ++ C.stopped_session_sql(C.q(player)) ++ " ORDER BY seq)),'')") : String}
+
+def the_outstanding_guidance_reader_names_stored_guidance(player):
+  {==}
+
+law the_deferred_note_presence_reads_the_note_identity:
+  for +id: String
+  {Turn.deferred_recorded_sql(id) == ("SELECT CASE WHEN EXISTS(SELECT 1 FROM messages WHERE id=" ++ C.q(id ++ ":deferred") ++ ") THEN 1 ELSE 0 END;") : String}
+
+def the_deferred_note_presence_reads_the_note_identity(id):
+  {==}
+
+law the_deferred_pending_reader_names_the_outstanding_guidance:
+  for +player: String
+  {Turn.deferred_pending_sql(player) == ("SELECT " ++ Guidance.outstanding_sql(player) ++ ";") : String}
+
+def the_deferred_pending_reader_names_the_outstanding_guidance(player):
+  {==}
+
+law a_recorded_deferred_note_is_not_written_again:
+  for +db: String
+  for +player: String
+  for +id: String
+  {Turn.write_deferred(db,player,id,True{}) == IO.pure(Unit,Unit{}) : IO(Unit)}
+
+def a_recorded_deferred_note_is_not_written_again(db,player,id):
+  {==}
+
+law an_absent_deferred_note_names_the_outstanding_guidance:
+  for +db: String
+  for +player: String
+  for +id: String
+  {Turn.write_deferred(db,player,id,False{}) == (do IO<Unit>:
+    +pending : String <- IO.try(String,DB.Sql.query(db,Turn.deferred_pending_sql(player)))
+    noted : Unit <- Turn.report(db,player,id ++ ":deferred",Turn.deferred_text(id,Tx.trim_nl(pending)))
+    IO.pure(Unit,Unit{})) : IO(Unit)}
+
+def an_absent_deferred_note_names_the_outstanding_guidance(db,player,id):
+  {==}
+
+law the_first_native_terminal_keeps_the_managed_completion:
+  for +db: String
+  for +event: String
+  for +previous: String
+  {Turn.terminal_event(db,event,previous,True{}) == (do IO<String>:
+    selected : String <- IO.try(String,DB.Sql.query(db,"SELECT CASE WHEN json_valid(" ++ C.q(event) ++ ") THEN CASE WHEN " ++ C.terminal(event) ++ " THEN CASE WHEN " ++ C.q(previous) ++ "='' THEN " ++ C.q(event) ++ " ELSE " ++ C.q(previous) ++ " END ELSE " ++ C.q(previous) ++ " END ELSE " ++ C.q(previous) ++ " END;"))
+    IO.pure(String,Tx.trim_nl(selected))) : IO(String)}
+
+def the_first_native_terminal_keeps_the_managed_completion(db,event,previous):
+  {==}
+
+law a_response_before_the_first_terminal_records_guidance_acceptance:
+  for +db: String
+  for +player: String
+  for +event: String
+  {Guidance.accepted(db,player,event,False{}) == IO.try(String,DB.Sql.query(db,Guidance.accepted_sql(player,event) ++ Guidance.terminal_sql(event))) : IO(String)}
+
+def a_response_before_the_first_terminal_records_guidance_acceptance(db,player,event):
+  {==}
+
+law a_response_after_the_first_terminal_leaves_guidance_pending:
+  for +db: String
+  for +player: String
+  for +event: String
+  {Guidance.accepted(db,player,event,True{}) == IO.try(String,DB.Sql.query(db,Guidance.terminal_sql(event))) : IO(String)}
+
+def a_response_after_the_first_terminal_leaves_guidance_pending(db,player,event):
   {==}
 
 law completion_preparation_checks_the_upstream_recipient:
@@ -1101,4 +1315,17 @@ law stopped_input_reports_use_the_recorded_upstream_recipient:
   ++ "SELECT coalesce((SELECT n.id FROM messages n WHERE n.id='stopped-input:' || lower(hex(" ++ C.q(id) ++ ")) AND (n.receipt IS NOT NULL OR EXISTS(SELECT 1 FROM sessions p WHERE p.id=n.recipient AND NOT EXISTS(SELECT 1 FROM session_stops WHERE session=p.id) AND CASE WHEN json_valid(p.endpoint) THEN json_type(p.endpoint)='array' AND json_array_length(p.endpoint)>0 ELSE 0 END))),'');COMMIT;") : String}
 
 def stopped_input_reports_use_the_recorded_upstream_recipient(id):
+  {==}
+
+# The OMP setup filter decision (issue #662) reads the server's own answer, and
+# only the exact successful full-category delta selection activates the
+# projection: the response must carry the set_event_filter command, success,
+# an explicitly echoed null events value and delta message updates. A
+# successful answer without that selection is unconfirmed, a failed answer is
+# refused, and every other line leaves the mode unchanged. The nested CASE
+# keeps json extraction behind the validity check.
+law omp_filter_activation_requires_the_complete_echoed_selection:
+  {Turn.filter_mode_sql("x") == "SELECT CASE WHEN json_valid('x') THEN CASE WHEN json_extract('x','$.type')='response' AND json_extract('x','$.id')='baton:filter' AND json_extract('x','$.command')='set_event_filter' THEN CASE WHEN json_extract('x','$.success')=1 THEN CASE WHEN json_type('x','$.data.events')='null' AND json_extract('x','$.data.messageUpdates')='delta' THEN 'delta' ELSE 'unconfirmed' END ELSE 'refused' END ELSE '' END ELSE '' END;" : String}
+
+def omp_filter_activation_requires_the_complete_echoed_selection():
   {==}
