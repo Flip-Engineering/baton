@@ -27,7 +27,7 @@ def source_suffix(+native: String) -> String:
 # Two stores can each carry a file for the same native identity. Nothing records
 # which one the session wrote last, so the read names both and refuses.
 def source_ambiguous(first: String, second: String, +native: String) -> String:
-  "Two recorded conversations match the native identity " ++ native ++ ": " ++ first ++ " and " ++ second ++ "; the read does not choose one. Inspect both and remove the one that is not current, then retry."
+  "Two recorded conversations match the native identity " ++ native ++ ": " ++ first ++ " and " ++ second ++ "; the read does not choose one. Both conversations stay preserved; inspect them and repair the recorded source identity, then retry."
 
 def source_first_case(first: String, second: String, native: String, second_present: Bool) -> IO(String):
   match second_present:
@@ -301,7 +301,7 @@ law two_matching_conversations_are_named_and_refused:
   for first: String
   for second: String
   for +native: String
-  {source_ambiguous(first, second, native) ==   "Two recorded conversations match the native identity " ++ native ++ ": " ++ first ++ " and " ++ second ++ "; the read does not choose one. Inspect both and remove the one that is not current, then retry." : String}
+  {source_ambiguous(first, second, native) ==   "Two recorded conversations match the native identity " ++ native ++ ": " ++ first ++ " and " ++ second ++ "; the read does not choose one. Both conversations stay preserved; inspect them and repair the recorded source identity, then retry." : String}
 
 def two_matching_conversations_are_named_and_refused(first, second, native):
   {==}
