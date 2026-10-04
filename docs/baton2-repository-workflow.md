@@ -118,8 +118,9 @@ native turn leaves unacknowledged messages pending.
 selected checks on the candidate tree and on a tree at the target tip, and
 blocks on candidate failures the target run does not show. The answer is
 JSON with a `status` field: `landed` with the new target commit, `already`
-when the target contains the Player commit, `conflict` naming unmerged
-paths, or `blocked` with a reason. A moved target returns `blocked` naming
+when the target contains the Player commit, or when preparing the candidate
+leaves no change to commit, `conflict` naming unmerged paths, or `blocked`
+with a reason. A moved target returns `blocked` naming
 `land-checked` as the retry; the retry checks the new candidate and target
 before advancing the branch.
 
