@@ -41,7 +41,10 @@ as evidence (see section 5). After recording:
 - `baton2 $DB knowledge audit-evidence` returned the finding with its claim,
   limits, and cited evidence message.
 - `baton2 $DB knowledge audit-kimi` returned the same finding, confirming the
-  parent-scope read path.
+  parent-scope read path. audit-kimi additionally promoted the finding from
+  scope audit-evidence into scope audit-kimi during its receive turn, so the
+  author read now lists destination `audit-kimi` with that promotion.
+  Full post-record output is stored in `logs/evidence-knowledge-verify.txt`.
 
 Limits of this observation: the corpus holds exactly one finding and zero
 promotions, so it says nothing about filter behavior at scale or about
