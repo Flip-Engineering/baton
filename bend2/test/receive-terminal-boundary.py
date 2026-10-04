@@ -124,8 +124,14 @@ class ReceiveTerminalBoundary(RECEIVE.Receive):
         accepted = json.loads(original.readline())
         self.assertEqual(accepted['steer_received']['id'], 'replay-guidance')
         report = 'Report replayed after the accepted steer.'
-        self.action(original, body=report)
+        # Event barrier: the fixture prints its terminal and then holds its exit,
+        # so the manual re-invocation below meets a live native and its holder.
+        # Without the hold the replay commits, finishes the native and releases
+        # admission first, and the same invocation then finds no pending input.
+        self.action(original, body=report, hold_exit=True)
+        self.assertEqual(json.loads(original.readline()), {'terminal_written': True})
         self.assertEqual(self.coord(*self.receive_args('parent'))['status'], 'queued')
+        self.action(original, exit_fixture=True)
         arrivals = self.arrivals()
         self.assertEqual({event['session'] for _, event in arrivals}, {'root'})
         stream, event = arrivals[0]
