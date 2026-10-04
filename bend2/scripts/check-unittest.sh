@@ -97,10 +97,12 @@ except Exception:
 suite = unittest.defaultTestLoader.loadTestsFromModule(module)
 result = unittest.TestResult()
 suite.run(result)
-for test, _ in result.failures:
+for test, detail in result.failures:
     identity(path, test.id(), "assertion")
-for test, _ in result.errors:
+    print(f"{test.id()}:\n{detail}", file=sys.stderr)
+for test, detail in result.errors:
     identity(path, test.id(), "error")
+    print(f"{test.id()}:\n{detail}", file=sys.stderr)
 for test in result.unexpectedSuccesses:
     identity(path, test.id(), "unexpected-success")
 no_tests = result.testsRun == 0
