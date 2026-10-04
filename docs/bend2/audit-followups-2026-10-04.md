@@ -46,9 +46,9 @@ as evidence (see section 5). After recording:
   author read now lists destination `audit-kimi` with that promotion.
   Full post-record output is stored in `logs/evidence-knowledge-verify.txt`.
 
-Limits of this observation: the corpus holds exactly one finding and zero
-promotions, so it says nothing about filter behavior at scale or about
-promotion-chain visibility. No complete read was obstructive at this size.
+Limits of this observation: the corpus holds exactly one finding and one
+promotion, so it says nothing about filter behavior at scale or about
+multi-hop promotion-chain visibility. No complete read was obstructive at this size.
 A query filter over the visibility rule remains conditional on reads becoming
 obstructive. Smallest useful action: none; the existing read retrieves and
 carries evidence for the measured corpus. Re-measure once the run holds
