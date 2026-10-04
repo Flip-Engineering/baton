@@ -30,6 +30,7 @@ resume=args[args.index('--resume')+1] if '--resume' in args else (
     native_args[2] if native_args[:2]==['exec','resume'] else ''))
 native=resume or ('native-'+session)
 if omp:
+    json.loads(sys.stdin.readline())
     state=json.loads(sys.stdin.readline())
     prompt=json.loads(sys.stdin.readline())['message']
     storage=pathlib.Path(args[args.index('--session-dir')+1])

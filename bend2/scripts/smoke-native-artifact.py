@@ -81,8 +81,22 @@ def fixture(kind, config_path, arguments):
         print(json.dumps({'received': message['id']}))
         return
 
-    state = json.loads(sys.stdin.readline())
-    task = json.loads(sys.stdin.readline())
+    request = json.loads(sys.stdin.readline())
+    selection = 'absent'
+    if request.get('type') == 'set_event_filter':
+        selection = config.get('event_filter', 'delta')
+        if selection == 'delta':
+            require(request.get('events') is None and request.get('messageUpdates') == 'delta',
+                    'The setup filter request lost the documented delta selection')
+            print(json.dumps({'type': 'response', 'id': request.get('id'), 'command': 'set_event_filter',
+                              'success': True, 'data': {'events': None, 'messageUpdates': 'delta'}}), flush=True)
+        else:
+            print(json.dumps({'type': 'response', 'id': request.get('id'), 'command': 'set_event_filter',
+                              'success': False, 'error': 'Unknown request type set_event_filter'}), flush=True)
+        state = json.loads(sys.stdin.readline())
+        task = json.loads(sys.stdin.readline())
+    else:
+        state, task = request, json.loads(sys.stdin.readline())
     require(state.get('type') == 'get_state' and task.get('type') == 'prompt', 'Unexpected native startup requests')
     require(config['task'] in task['message'], 'The native prompt lost the task body')
     parent = commands.call('parent-identity', [config['ps'], '-ww', '-p', str(os.getppid()),
@@ -91,7 +105,8 @@ def fixture(kind, config_path, arguments):
             'Native parent did not reexecute the staged coordinator keeper')
     save(output / 'native-start.json', {'pid': os.getpid(), 'ppid': os.getppid(),
                                        'cwd': os.getcwd(), 'parent_identity': parent,
-                                       'task_sha256': hashlib.sha256(task['message'].encode()).hexdigest()})
+                                       'task_sha256': hashlib.sha256(task['message'].encode()).hexdigest(),
+                                       'event_filter': selection})
     print(json.dumps({'id': state['id'], 'type': 'response', 'command': 'get_state', 'success': True,
                       'data': {'sessionId': config['native'], 'model': {'provider': 'fixture', 'id': 'artifact'},
                                'thinkingLevel': 'low'}}), flush=True)
@@ -228,7 +243,8 @@ def main():
         config = {'output': str(output), 'exe': str(binary), 'db': str(db), 'git': git, 'ps': ps,
                   'task': 'Exercise installed retained receive λ\nKeep the complete task body.\n',
                   'report': 'Complete installed native report λ\nFull second line.\n',
-                  'work': 'Retained installed Player work λ\n', 'native': 'artifact-native'}
+                  'work': 'Retained installed Player work λ\n', 'native': 'artifact-native',
+                  'event_filter': 'delta'}
         save(config_path, config)
         native = output / 'controlled-native'
         native.write_text('#!/bin/sh\nexec ' + shlex.join([sys.executable, str(helper), '--fixture-native', str(config_path)]) + ' "$@"\n')
@@ -303,6 +319,8 @@ def main():
         cli('status', 'status')
         start = json.loads((output / 'native-start.json').read_text())
         complete = json.loads((output / 'native-complete.json').read_text())
+        require(start.get('event_filter') == config.get('event_filter', 'delta'),
+                'The controlled fixture negotiated a different event-filter selection')
         parent = json.loads((output / 'parent-delivery.json').read_text())
         require(complete['pid'] == start['pid'] and complete['stdin_eof'], 'Native completion record differs')
         require(parent['message']['body'] == config['report'], 'Parent report body differs')
