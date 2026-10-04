@@ -301,8 +301,18 @@ Limits of that driver: capture stopped at the first terminal and retained
 no numeric exit status or PID, so the measurement does not establish
 complete raw drain, natural process wait, retained recovery behavior, or
 real 18.6 steering. The installed 17.4.0 binary answered `unacknowledged`
-with a complete report. No global disk bound is stated. The final actual
-OMP 18.6 review is pending at writing time (section 9).
+with a complete report. No global disk bound is stated.
+
+Actual intermediate use, established without re-running provider turns: the
+GLM read-only review ran through the intermediate positive prefix (29a)
+and pinned OMP 18.6 with recorded native identity, the filter echo, a
+native mid-task steer, the full report, natural native exit 0, and process
+absence at completion; root's receipts are `logs/root-real-omp18-*.json`.
+The normalized 869,569-byte log is not raw performance data. Later
+Kimi/DeepSeek coordination used the positive 3f311d10 developer pair. The
+earlier tiny-workload raw filtered/unfiltered byte figures (66,488 against
+125,394) stay scoped to that original comparison. Final-source real-use
+qualification remains pending.
 
 ## 8. Receive lifecycle (#665, this lane)
 
@@ -367,9 +377,16 @@ an unmapped recorded model before any endpoint is stored or any native turn
 launches (native lane, from audit-native's task-2 report and its retained
 before/after reproductions).
 
-Open and pending: #664 stays open — the task3-era accept-receive-recovery
-failure and the receive-suite 31-case error lost their tracebacks to a
-batch pipeline that dropped the error stream, so both causes are unknown.
+Open and pending: #664 stays open, and both original causes remain
+unknown. The retained chronology is: the original task2 batch ran each
+suite with output piped through `tail -4`, which discarded the failed
+identity and streams; the later grep/head capture was a rerun whose empty
+output establishes nothing about the initial failure. The recovered 0.078s
+traceback (session line 357) belongs to the earlier task2-era
+clean-source-precondition invocation, not the task3-era 4.301s failure
+(session line 1035) — same test name, different invocations, so the task3
+cause/run association stays unknown. The original reports and findings
+stand as they are.
 The original #666 cause remains UNKNOWN and #666 is not diagnosed: it is
 not causally diagnosed from the retained original stalls. The ordinary
 commit/release handoff is correctly ordered if release actually frees
@@ -381,8 +398,28 @@ and prove neither a queued self-continuation nor ordinary foreign-holder
 presence. The bounded accepted evidence is the completed checked module
 gate for 7335b96d, which covers #663 and #665 behavior on that composition.
 Both previously interrupted landings remain incomplete original records,
-and no re-arm mechanism is selected or approved. The final actual OMP 18.6
-review is pending.
+and no re-arm mechanism is selected or approved.
+
+Output custody repair (#666 repair, landed 8e910637): `Text.control_output`
+returns its write Result, with fresh error state per call; each call owns
+its bytes and writes directly to fd 1 under the stdout stream lock. The
+measured forked completion paths (`Turn.player_finished`, parentless
+`Turn.finish_parent`, `Receive.receive_status`) combine the returned output
+failure after earlier delivery and stop results. The failure-report and
+warning paths commit first and treat the stdout copy as best effort.
+Direct replay carries the write Result through guard release and queued
+wake before surfacing it. Evidence: the event-controlled baseline
+(closed-output baseline exits before continuation/join) and the corrected
+regressions (completion output, native-failure preparation with retained
+original report, fresh per-call error state, direct replay release/wake)
+fail before and pass after; the finite module checked gate passed at the
+8e910637 landing. Preserved invariants: independent parent
+delivery/continuation concurrency and ACK-failure always-join; successful
+bytes covered. Scope limits: full-pipe backpressure and separate standalone
+CLI output remain outside qualification. The original historical missed-wake
+ordering remains unknown.
+
+The final actual OMP 18.6 review is pending.
 
 Checked-landing stall record, kept as three separate root observations: (1)
 root interrupted both stalled selected tests only after they stalled; the
