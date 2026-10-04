@@ -4,6 +4,7 @@ import ./delivery.bend as Delivery
 import ../host/sqlite.bend as DB
 import ../host/process.bend as P
 import ../git/text.bend as Tx
+import ../host/text.bend as Text
 
 def with_observation(-A: Type, observation: List<Chan(Result<&1,&1,U32 & String,String>)> & String, next: List<Chan(Result<&1,&1,U32 & String,String>)> -> String -> IO(A)) -> IO(A):
   (tasks,error)=observation
@@ -65,7 +66,7 @@ def saved(db: String, tasks: List<Chan(Result<&1,&1,U32 & String,String>)>, resu
 def record(+db: String, player: String, turn: String, attempt: String, event: String, tasks: List<Chan(Result<&1,&1,U32 & String,String>)>, parent: Bool) -> IO(List<Chan(Result<&1,&1,U32 & String,String>)> & String):
   match parent:
     case False{}: do IO<List<Chan(Result<&1,&1,U32 & String,String>)> & String>:
-      shown : Unit <- IO.print("Native OMP UI request is unsupported for a session without a registered parent; its full frame remains in the native log.")
+      shown : Result<&1,&1,U32 & String,Unit> <- Text.Text.control_output("Native OMP UI request is unsupported for a session without a registered parent; its full frame remains in the native log.\n")
       IO.pure(List<Chan(Result<&1,&1,U32 & String,String>)> & String,(tasks,"Native OMP UI request has no registered parent; interaction requires a registered parent."))
     case True{}: do IO<List<Chan(Result<&1,&1,U32 & String,String>)> & String>:
       result : Result<&1,&1,U32 & String,String> <- DB.Sql.query(db,"BEGIN IMMEDIATE;" ++ schema() ++ request_sql(player,turn,attempt,event) ++ "COMMIT;")
