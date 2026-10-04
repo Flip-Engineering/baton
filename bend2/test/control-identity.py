@@ -123,5 +123,26 @@ class ControlIdentity(unittest.TestCase):
         self.assertEqual(list(self.home.rglob('private-key.pem')), [])
 
 
+    def test_unmapped_recorded_model_refuses_configuration_before_launch(self):
+        self.root()
+        self.call('recruit', 'unmapped-receiver', 'root', 'omp', 'zai/glm-5.3-flash', 'low',
+                  self.repo, 'unmapped-receiver-branch', self.checkouts / 'unmapped-receiver', self.base)
+        self.call('recruit', 'unmapped-turn', 'root', 'muse', 'zai/glm-5.3-flash', 'low',
+                  self.repo, 'unmapped-turn-branch', self.checkouts / 'unmapped-turn', self.base)
+        self.call('message', 'unmapped-input', 'root', 'unmapped-receiver', 'guidance', 'Continue.')
+        refused = self.call('receiver', 'unmapped-receiver', self.fixture,
+                            self.directory / 'unmapped.jsonl', ok=False)
+        self.assertEqual(refused['code'], 2)
+        self.assertIn('Series Git operation refused', refused['stderr'])
+        self.assertIn('does not resolve the recorded model zai/glm-5.3-flash', refused['stderr'])
+        self.assertEqual(self.call('session', 'unmapped-receiver')['endpoint'], '')
+        self.assertEqual([row['id'] for row in self.call('inbox', 'unmapped-receiver')], ['unmapped-input'])
+        turn = self.call('dispatch-turn', 'unmapped-turn', 'muse-turn-1', self.fixture,
+                         self.directory / 'muse.jsonl', self.task, ok=False)
+        self.assertEqual(turn['code'], 2)
+        self.assertIn('does not resolve the recorded model zai/glm-5.3-flash', turn['stderr'])
+        self.assertEqual(self.controls, [])
+        self.assertEqual(self.call('turns', 'unmapped-turn'), [])
+
 if __name__ == '__main__':
     unittest.main()

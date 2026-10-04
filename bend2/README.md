@@ -362,6 +362,11 @@ executable and log paths and selects the recorded model, effort and workspace.
 The configured model Git registry applies to each launched session through the
 installed Node helper; see [series Git identities](../docs/bend2/git-series-identities.md).
 
+Each of these commands resolves the session's recorded model through the helper's
+`check` verb before it stores an endpoint or launches a turn. A registry that
+does not map that model key refuses with exit status 2 and leaves the stored
+endpoint and pending input unchanged.
+
 `dispatch-file ID SENDER RECIPIENT KIND PATH` commits an authorized message and
 launches its delivery with regular output files. Independent dispatches can run
 concurrently. Its result names a launched PID; inspect inbox, turns and logs for

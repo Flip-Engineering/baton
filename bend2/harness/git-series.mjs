@@ -208,6 +208,14 @@ export function launch(args, inherited = process.env, execute = exec_command) {
   execute(command[0], command, environment);
 }
 
+// Resolve the configured series identity for an exact model key without
+// launching a command. The coordinator runs this before it stores an endpoint or
+// a native turn that embeds the key, so an unmapped model is reported at the
+// configuration command that names it.
+export function check(args) {
+  selected_identity(path(args.registry), args.model_key);
+}
+
 export async function api(api_path, authorization, body = null, request = https.request) {
   require(api_path.startsWith('/') && !api_path.startsWith('//'), 'The GitHub API path is invalid.');
   return new Promise((accept, refuse) => {
@@ -336,14 +344,15 @@ export async function helper(args, input = process.stdin, output = process.stdou
 export function parse(argv) {
   const [verb, ...options] = argv;
   if (['--help', '-h'].includes(verb)) return { help: true };
-  require(['launch', 'helper', 'deny-askpass'].includes(verb), 'Select launch, helper or deny-askpass.');
+  require(['launch', 'helper', 'deny-askpass', 'check'].includes(verb), 'Select launch, helper, deny-askpass or check.');
   const args = { verb, model_key: null, series_key: null, native_model: false, command: [] };
   if (verb === 'deny-askpass') return args;
   for (let index = 0; index < options.length; index++) {
     const option = options[index], separator = option.indexOf('='), name = option.split('=')[0];
     if (['--help', '-h'].includes(option)) return { help: true };
     if (['--registry', '--model-key', '--series-key'].includes(name)) {
-      require(verb === 'launch' || name !== '--model-key', 'The helper does not take an exact model option.');
+      require(verb === 'launch' || verb === 'check' || name !== '--model-key',
+        'The helper does not take an exact model option.');
       const value = separator === -1 ? options[++index] : option.slice(separator + 1);
       require(value !== undefined, 'The selected option requires a value.');
       args[name.slice(2).replaceAll('-', '_')] = value;
@@ -360,6 +369,8 @@ export function parse(argv) {
   require(args.registry !== undefined, 'The registry option is required.');
   if (args.series_key !== null) require(SERIES.includes(args.series_key), 'The selected series is invalid.');
   if (verb === 'helper') require(args.series_key !== null && args.operation, 'The helper requires a series and operation.');
+  if (verb === 'check') require(args.model_key !== null && args.series_key === null,
+    'The check takes an exact model key and no series option.');
   return args;
 }
 
@@ -368,8 +379,10 @@ export async function main(argv = process.argv.slice(2)) {
     const args = parse(argv);
     if (args.help) {
       process.stdout.write('git-series.mjs launch --registry FILE [--model-key MODEL] [--series-key SERIES] [--native-model] -- COMMAND...\n'
+        + 'git-series.mjs check --registry FILE --model-key MODEL\n'
         + 'git-series.mjs helper --registry FILE --series-key SERIES get|store|erase\n');
     } else if (args.verb === 'launch') launch(args);
+    else if (args.verb === 'check') check(args);
     else if (args.verb === 'helper') await helper(args);
     else return 1;
     return 0;
