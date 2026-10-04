@@ -46,13 +46,38 @@ as evidence (see section 5). After recording:
   author read now lists destination `audit-kimi` with that promotion.
   Full post-record output is stored in `logs/evidence-knowledge-verify.txt`.
 
-Limits of this observation: the corpus holds exactly one finding and one
-promotion, so it says nothing about filter behavior at scale or about
-multi-hop promotion-chain visibility. No complete read was obstructive at this size.
-A query filter over the visibility rule remains conditional on reads becoming
-obstructive. Smallest useful action: none; the existing read retrieves and
-carries evidence for the measured corpus. Re-measure once the run holds
-several findings across scopes.
+Limits of the first observation: one finding and one promotion said nothing
+about filter behavior at scale or about multi-hop promotion-chain visibility.
+
+Extended measurement with two findings in two scopes: the corpus now also
+holds root's `audit-root-identity-refusal` (author audit-root, evidence
+`message:audit-kimi-guidance-1`, promoted into audit-root scope as
+`audit-root-promote-identity-1`). Native reads run after that promotion:
+
+- `baton2 $DB knowledge audit-evidence` returned both findings, each with
+  author, claim, limits, evidence reference, full evidence message, and
+  promotion history.
+- `baton2 $DB knowledge audit-kimi` and `baton2 $DB knowledge audit-root`
+  returned the same two findings.
+
+The scope rule explains each result: audit-evidence reads its own finding as
+author; it reads the root finding as a member of the audit-root scope, which
+counts every session in the owner's subtree, and audit-evidence sits in that
+subtree. audit-kimi reads the evidence finding as the author's immediate
+parent and through its promotion into audit-kimi scope. Full output is stored
+in `logs/evidence-knowledge-two-scope.txt`.
+
+Retrieval correctness for the dispatch-refusal repair: the read surfaces
+`audit-root-identity-refusal` (GLM dispatch refused by the configured
+identity helper before native startup) next to the unrelated measured-use
+finding, with the cited guidance message (audit-root to audit-kimi) and
+limits attached, which is enough to use the finding correctly and to avoid
+confusing it with the unrelated one.
+
+Conclusion: the successful small-corpus read justifies no query filter. The
+complete read of two findings is short and each finding carries its own
+evidence and limits. Limits: two findings, two promotion destinations, no
+multi-hop chain, no scale observation.
 
 ## 2. Token/cost visibility
 
@@ -79,13 +104,55 @@ not a usage field. Unavailable usage is therefore distinguishable from zero
 here: the fields do not exist, so a read projection must report unknown,
 never zero.
 
-Conclusion: a usage read projection currently has no native source to
-project on this route (Muse Spark contributor turn through the native
-session log). It remains conditional until a provider route emits usage
-fields in retained output. No billed-USD inference is possible from the
-retained state, and none was attempted. Smallest useful action when a route
-does emit usage: a read-only projection that normalizes available fields and
-preserves unknown values, without scheduling or stopping authority.
+Scope correction: the "no usage fields exist" claim above was scoped to the
+DB schema and the Muse native log. It does not cover the persisted OMP
+session sources, which do carry typed usage records.
+
+Extended measurement of the three persisted OMP session files (field and
+type records only, stored in `logs/evidence-omp-usage-fields.txt`; no
+conversation prose extracted):
+
+- Every assistant message record carries `message.usage` with integer
+  `input`, `output`, `cacheRead`, `cacheWrite`, and `totalTokens`, plus a
+  `cost` object with `input`, `output`, `cacheRead`, `cacheWrite`, `total`.
+  `totalTokens` equals the four token parts in every record checked on all
+  three routes, so it is derived, and a projection must not sum it with the
+  parts. `cacheWrite` is 0 in every record observed.
+- Provenance travels with each record: `message.model`, `message.provider`,
+  `message.api`, `role` (`assistant` throughout), plus outer record `id` and
+  `message.responseId`, all distinct per record, so no duplicate or replayed
+  usage records were observed.
+- Per-message values, not cumulative: `input` is not monotonic across any
+  file (kimi first 23680, last 392; deepseek first 29910, last 200; glm
+  first 28711, last 711). Per-message totals can be summed across a
+  conversation; cumulative values would double-count, and none were found.
+- `reasoningTokens` (integer) appears on most deepseek (160 of 195) and glm
+  (33 of 40) records and on no kimi record; its relation to `output` is not
+  established from the bytes, so a projection must carry it separately and
+  must not add it into any total.
+- Cost components: deepseek records carry nonzero float components with a
+  nonzero `total` on all 195 records. Kimi (103 records) and glm (40 records)
+  carry integer zero components. No record labels a currency unit; the only
+  currency/price/USD strings in the files sit inside conversation prose, not
+  usage metadata. A zero cost component cannot establish free or no charge,
+  and the unit-less float cannot be labeled USD.
+
+Per-route table (counts as of measurement; the files are live and append):
+
+| Route | Records | Token fields | reasoningTokens | Cost components |
+| --- | --- | --- | --- | --- |
+| audit-kimi (kimi-code/k3, anthropic-messages) | 103 | int input/output/cacheRead/cacheWrite/totalTokens | absent | int zeros |
+| audit-native (deepseek/deepseek-flash, openai-completions) | 195 | int input/output/cacheRead/cacheWrite/totalTokens | present on 160 | nonzero floats |
+| audit-surface (zai/glm-5.3-flash, openai-completions) | 40 | int input/output/cacheRead/cacheWrite/totalTokens | present on 33 | int zeros |
+
+Conclusion: the source structure supports an honest minimal native read
+projection of the recorded conversation: per-message token parts summed
+without the derived total, reasoning carried separately, cost components
+passed through with their provenance, unknown and zero preserved as
+recorded, no billed amounts claimed. This supersedes the initial limited
+conclusion for OMP routes; the DB-schema and Muse-log observations stand.
+Limits: live append-only files, three OMP routes, one run; no billing
+reconciliation; currency unlabeled.
 
 ## 3. Routine remote-tip inspection
 
@@ -120,8 +187,10 @@ Checked against operating needs observed in this run and the repository:
   (`audit-surface-task-1`, visible in `baton2 $DB pending`). No task lost
   ownership in this run. A derived outstanding-work view remains conditional
   on tasks actually losing ownership.
-- Finding correction/supersession relation. The corpus holds 1 finding and 1
-  promotion (audit-kimi-promote-1); no reader used a superseded claim. A stored correction
+- Finding correction/supersession relation. The corpus holds 3 findings and 2
+  promotions (audit-kimi-promote-1, audit-root-promote-identity-1); no reader
+  used a superseded claim. The two-scope reads in section 1 ran when the
+  corpus held 2 findings. A stored correction
   relation remains conditional on repeated use of a superseded claim. A
   correcting finding can already retain the original evidence under the
   current schema.
@@ -155,3 +224,20 @@ exist in DB schema or native log payloads; remote-tip readback is a
 hand-operated `git ls-remote` with no native reader). Limits: single-finding
 corpus, one provider route (Muse Spark contributor), one unpushed branch;
 no scale, promotion-chain, multi-route, or public-remote observations.
+That finding is immutable evidence and is left unchanged.
+
+## 6. Corrected finding record
+
+Finding `audit-evidence-measured-use-2-2026-10-04`, authored by
+audit-evidence, cites this lane's extension report message
+`audit-evidence-report-2` as evidence (`message:audit-evidence-report-2`).
+Claim: two-scope knowledge reads return both findings with evidence and
+promotion history to author, parent, and root scopes, so no query filter is
+justified at this corpus size; persisted OMP session files carry typed
+per-message usage (integer token parts with derived `totalTokens`,
+`reasoningTokens` on deepseek/glm, nonzero float cost only on deepseek, no
+currency label), which supports an honest unknown-preserving read
+projection. Limits: two findings, two promotions, three OMP routes in one
+run; live append-only session files; no billing reconciliation; no
+multi-hop chain or scale observation; original finding left immutable.
+Recording this finding brings the corpus to 3 findings.
