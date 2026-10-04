@@ -8,7 +8,7 @@ import ../git/text.bend as Tx
 
 law session_answer_preserves_the_supplied_admission_condition:
   for condition: String
-  {C.session_result_where(condition) == "SELECT json_patch(json_object('id',id,'parent',parent,'harness',harness,'model',model,'effort',effort,'native',native,'observedHarness',observed_harness,'observedModel',observed_model,'observedEffort',observed_effort,'endpoint',endpoint,'workspace',workspace,'branch',branch,'base',base,'kind'," ++ C.session_kind("sessions.id") ++ ",'role'," ++ C.public_role("sessions.id") ++ ")," ++ C.session_state_sql("sessions.id") ++ ") FROM sessions WHERE " ++ condition ++ ";" : String}
+  {C.session_result_where(condition) == "SELECT json_patch(json_object('id',id,'parent',parent,'harness',harness,'model',model,'effort',effort,'native',native,'observedHarness',observed_harness,'observedModel',observed_model,'observedEffort',observed_effort,'endpoint',endpoint,'endpointArgv'," ++ C.endpoint_argv("endpoint") ++ ",'workspace',workspace,'branch',branch,'base',base,'kind'," ++ C.session_kind("sessions.id") ++ ",'role'," ++ C.public_role("sessions.id") ++ ")," ++ C.session_state_sql("sessions.id") ++ ") FROM sessions WHERE " ++ condition ++ ";" : String}
 
 def session_answer_preserves_the_supplied_admission_condition(condition):
   {==}
@@ -70,4 +70,23 @@ law connect_invalid_endpoint_output_returns_exit_two:
   {Store.committed(db,command,Done{"{\"error\":\"invalid-endpoint\",\"session\":\"lead\",\"condition\":\"Use an empty endpoint to disconnect, or a nonempty JSON array of text arguments with a nonempty executable and no NUL characters.\",\"next\":\"Pass the JSON argv array itself as one ENDPOINT argument; inspect session and inbox, then retry retained input after connecting.\"}\n"}) == IO.pure(Result<&1,&1,U32 & String,String>,Fail{(2,"{\"error\":\"invalid-endpoint\",\"session\":\"lead\",\"condition\":\"Use an empty endpoint to disconnect, or a nonempty JSON array of text arguments with a nonempty executable and no NUL characters.\",\"next\":\"Pass the JSON argv array itself as one ENDPOINT argument; inspect session and inbox, then retry retained input after connecting.\"}\n")}) : IO(Result<&1,&1,U32 & String,String>)}
 
 def connect_invalid_endpoint_output_returns_exit_two(db,command):
+  {==}
+
+law endpoint_reads_present_the_stored_argv_array:
+  for +column: String
+  {C.endpoint_argv(column) == "CASE WHEN json_valid(" ++ column ++ ") THEN CASE WHEN json_type(" ++ column ++ ")='array' THEN json(" ++ column ++ ") ELSE NULL END ELSE NULL END" : String}
+
+def endpoint_reads_present_the_stored_argv_array(column):
+  {==}
+
+law delivery_rows_present_the_recipient_endpoint_argv:
+  {C.delivery_row() == "json_patch(json_object('id',m.id,'sender',m.sender,'recipient',m.recipient,'kind',m.kind,'body',m.body,'receipt',m.receipt,'harness',s.harness,'native',s.native,'endpoint',s.endpoint,'endpointArgv'," ++ C.endpoint_argv("s.endpoint") ++ ")," ++ C.input_state_sql("m") ++ ")" : String}
+
+def delivery_rows_present_the_recipient_endpoint_argv():
+  {==}
+
+law status_rows_present_the_stored_endpoint_argv:
+  {C.sql(C.Status{}) == "SELECT coalesce(json_group_array(json(item)),json('[]')) FROM (SELECT json_patch(json_object('id',id,'parent',parent,'harness',harness,'model',model,'effort',effort,'native',native,'observedHarness',observed_harness,'observedModel',observed_model,'observedEffort',observed_effort,'endpoint',endpoint,'endpointArgv'," ++ C.endpoint_argv("endpoint") ++ ",'workspace',workspace,'branch',branch,'base',base,'kind'," ++ C.session_kind("sessions.id") ++ ",'role'," ++ C.public_role("sessions.id") ++ ",'pending',(SELECT count(*) FROM messages WHERE recipient=sessions.id AND receipt IS NULL AND NOT (" ++ C.stopped_session_sql("sessions.id") ++ " AND " ++ C.execution_input_sql("messages.kind") ++ ")))," ++ C.session_state_sql("sessions.id") ++ ") AS item FROM sessions ORDER BY id);" : String}
+
+def status_rows_present_the_stored_endpoint_argv():
   {==}

@@ -157,6 +157,12 @@ class McpCommand(unittest.TestCase):
         self.command(tool='baton2_dispatch_turn', arguments=arguments,
                      session='associate', expected_args=argv)
 
+    def test_worker_argument_alias_replays_stored_calls(self):
+        # Stored tool calls may carry the pre-rename 'worker' argument name;
+        # the adapter forwards it to the native player position.
+        self.command(tool='baton2_player', arguments={'worker': 'player-id'},
+                     expected_args=['player', 'player-id'])
+
     def test_native_control_success_preserves_complete_output(self):
         stdout = '{"status":"dispatched"}\n' + 'coordinator output λ\n' * 100000 + 'complete\n'
         for tool, (arguments, argv) in self.native_controls().items():
