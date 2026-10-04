@@ -392,6 +392,12 @@ launching a native process. A direct turn refuses an unreleased recorded
 retained attempt.
 Completion records an unknown native wait status when the retained owner cannot
 supply it. Pending input continues after the original attempt completes.
+An adopted attempt with an unknown wait, no terminal result and no observation
+error retains interruption reports, releases its custody and retries all
+unacknowledged input using the recorded native identity. When that identity is
+accepted, Receive retains the original failure status after the continuation
+completes. The existing refused-conversation recovery applies if the harness
+rejects the identity.
 Live native input and stop control require an available keeper socket. The earlier
 [observer-loss measurement](../docs/bend2/receive-recovery-2026-09-28.md#recovery-boundary)
 retains its recorded scope.

@@ -278,12 +278,35 @@ with socket.create_connection(('127.0.0.1',int(sys.argv[1]))) as stream:
         report = json.loads(stdout.getvalue())
         self.assertEqual(report['failures'], [])
         self.assertEqual(report['afterCompletion']['ownedProcesses'], [])
+        self.assertEqual({row['session']: row['exit'] for row in report['afterCompletion']['recoveryReceives']},
+                         {name: 1 for name in host.NAMES})
+        messages = report['afterCompletion']['messages']
         for name, session in report['sessions'].items():
+            self.assertEqual(session['restartResume'], 'native-' + name)
             self.assertEqual(session['secondInvocation']['status'], 'queued')
             self.assertEqual(session['inboxAfter'], [])
+            original = next(message for message in report['beforeKill']['messages']
+                            if message['id'] == 'pending-' + name)
+            self.assertIsNone(original['receipt'])
+            accepted = next(message for message in messages if message['id'] == original['id'])
+            self.assertEqual(accepted['seq'], original['seq'])
+            self.assertEqual(accepted['body'], original['body'])
+            self.assertIsNotNone(accepted['receipt'])
             pending = [start for start in session['starts'] if '[id: pending-' + name + ']' in start['prompt']]
             self.assertTrue(pending)
             self.assertTrue(all(TEXT in start['prompt'] for start in pending))
+            self.assertTrue(all(start['resume'] == 'native-' + name for start in session['starts']))
+            interrupted = next(message for message in messages if message['sender'] == name
+                               and 'without a native result (unknown after keeper loss)' in message['body'])
+            exit_report = next(message for message in messages if message['id'] == interrupted['id'] + ':exit')
+            self.assertEqual(exit_report['body'], 'Player process ended with unknown after keeper loss')
+            self.assertEqual(interrupted['recipient'], 'root' if name == 'lead' else 'lead')
+            self.assertEqual(exit_report['recipient'], interrupted['recipient'])
+            self.assertIn('Output: ', interrupted['body'])
+            self.assertIn(' Stderr: ', interrupted['body'])
+            self.assertTrue(session['turnsAfter'])
+            self.assertTrue(all(turn['id'] not in (interrupted['id'], exit_report['id'])
+                                for turn in session['turnsAfter']))
         OBSERVATIONS.append({'name': self.id(), 'exit': status, 'stdout': stdout.getvalue(), 'stderr': stderr.getvalue()})
 
 
