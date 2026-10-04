@@ -10,7 +10,8 @@ and baton2_inbox return the same rows and fields the native CLI prints;
 a retained multi-line report body arrives complete through the inbox text
 content; a refused acknowledgement returns isError with the exit code and
 both captured CLI streams; the unadvertised baton2_workers replay alias
-returns the advertised baton2_players rows.
+returns the native legacy workers rows, the same rows and legacy field
+shape the CLI workers command prints.
 
 Deliberately not checked: equality between the advertised tool set and
 the native command catalogue, and any comparison against the adapter's
