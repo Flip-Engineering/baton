@@ -80,10 +80,23 @@ class RemoteTip(unittest.TestCase):
         self.assertNotEqual(answer['exit'], 0)
         self.assertEqual(answer['reason'], f'git ls-remote {missing} failed')
 
+    def test_a_leading_option_remote_is_read_as_the_remote_operand(self):
+        result = self.call('remote-tip', self.repo, 'main', '--get-url')
+        self.assertEqual(result.returncode, 0, result.stderr)
+        answer = json.loads(result.stdout)
+        self.assertEqual((answer['status'], answer['repo'], answer['branch'], answer['remote']),
+                         ('failed', str(self.repo), 'main', '--get-url'))
+        self.assertEqual(answer['reason'], 'git ls-remote --get-url failed')
+        self.assertNotEqual(answer['exit'], 0)
+        self.assertTrue(result.stderr.strip(), result.stdout)
+        self.assertNotIn('objectId', answer)
+        self.assertEqual(self.tip('main', self.remote)['status'], 'advertised')
+        self.assertEqual(self.tip('missing', self.remote)['status'], 'absent')
+
     def test_the_read_changes_no_ref(self):
         local_before, remote_before = self.refs(self.repo), self.refs(self.remote)
         for branch, remote in (('main', self.remote), ('main', 'origin'), ('missing', self.remote),
-                               ('main', self.directory / 'missing.git')):
+                               ('main', self.directory / 'missing.git'), ('main', '--get-url')):
             with self.subTest(branch=branch, remote=remote):
                 self.call('remote-tip', self.repo, branch, remote)
         self.assertEqual(self.refs(self.repo), local_before)

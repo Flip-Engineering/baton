@@ -258,11 +258,38 @@ is JSON with a `status` field: `advertised` with the advertised `objectId`,
 `absent` when the remote answered without advertising that branch, or `failed`
 with the `exit` status of the read and a reason naming the command whose message
 is on the coordinator's stderr. A branch the remote does not advertise answers
-`absent` even when a local branch of that name exists. `push` remains the
-publication operation and reports its own outcome.
+`absent` even when a local branch of that name exists. The declared remote and
+branch follow the option terminator, so a remote value that begins with a dash is
+read as the remote operand and answers `failed` with the read's own status.
+`push` remains the publication operation and reports its own outcome.
 
 ```sh
 .scratch/bend2/baton2 state.db remote-tip /path/to/repo target-branch origin
+```
+
+`observed-usage SESSION` projects the usage the session's own recorded native
+conversation states. Only persisted assistant messages that carry an object
+usage contribute, and each contributes under its persisted entry identity. The
+answer names the session, its harness, its recorded native identity and the
+conversation file it read, then `shape` (`message-usage` for a recorded
+assistant-message conversation, `unavailable` when the route recorded no such
+conversation), the record, observation, duplicate, conflict and unreadable-line
+counts, the recorded provider, model and API of each observation, and the token
+and cost component sums. A repeated entry identity counts once; a repeat whose
+recorded usage or route changed is counted under `conflicts` and keeps its first
+record. `absent` names the components the source did not state in every
+observation and `invalid` names the components a record stated without a number,
+per cost component included; either kind stays out of the sums. The sums are
+left out of the answer when any line was unreadable or any identity conflicts,
+and an object is left out when the source stated none of its components. The
+cost fields are the harness's recorded estimates rather than billed charges, and
+a zero component states an observed zero. The read covers the session's current
+recorded conversation and writes nothing. It refuses when both conversation
+stores carry a file for the session's native identity, and when the selected
+file records a different or absent native identity.
+
+```sh
+.scratch/bend2/baton2 state.db observed-usage worker1
 ```
 
 ## Native turns
