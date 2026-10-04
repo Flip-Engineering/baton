@@ -251,8 +251,8 @@ const MUTATIONS = [
   {
     name: 'direct-turn-checks-receive-after-starting-task',
     file: join('bend2','src','coordinator','turn.bend'),
-    find: '      retained : Unit <- retained_receive_guard(db,player)\n      harness : String <- IO.try(String,DB.Sql.query(db,"SELECT harness FROM sessions WHERE id=" ++ C.q(player) ++ ";"))\n      result : Maybe<Outcome> <- player_checked(db,player,id,cmd,model,effort,cwd,task,log,session,harness,missing)',
-    replace: '      harness : String <- IO.try(String,DB.Sql.query(db,"SELECT harness FROM sessions WHERE id=" ++ C.q(player) ++ ";"))\n      result : Maybe<Outcome> <- player_checked(db,player,id,cmd,model,effort,cwd,task,log,session,harness,missing)\n      retained : Unit <- retained_receive_guard(db,player)',
+    find: '      retained : Unit <- retained_receive_guard(db,player)\n      harness : String <- IO.try(String,DB.Sql.query(db,"SELECT harness FROM sessions WHERE id=" ++ C.q(player) ++ ";"))\n      result : Result<&1,&1,U32 & String,Maybe<Outcome>> <- player_checked(db,player,id,cmd,model,effort,cwd,task,log,session,harness,missing)',
+    replace: '      harness : String <- IO.try(String,DB.Sql.query(db,"SELECT harness FROM sessions WHERE id=" ++ C.q(player) ++ ";"))\n      result : Result<&1,&1,U32 & String,Maybe<Outcome>> <- player_checked(db,player,id,cmd,model,effort,cwd,task,log,session,harness,missing)\n      retained : Unit <- retained_receive_guard(db,player)',
     law: 'direct_turn_checks_receive_before_admission',
   },
   {
@@ -1003,10 +1003,21 @@ MUTATIONS.push(
 );
 
 MUTATIONS.push(
-  {"name": "completion-output-skips-the-write", "file": "bend2/src/coordinator/turn.bend", "find": "T.Text.control_output(saved)", "replace": "IO.pure(Result<&1,&1,U32 & String,Unit>,Done{Unit{}})", "law": "completion_output_preserves_delivery_errors_and_returns_write_failure"},
+  {"name": "completion-output-skips-the-write", "file": "bend2/src/coordinator/turn.bend", "find": "    written : Result<&1,&1,U32 & String,Unit> <- T.Text.control_output(saved)\n    IO.pure(Result<&1,&1,U32 & String,Unit>,combine", "replace": "    written : Result<&1,&1,U32 & String,Unit> <- IO.pure(Result<&1,&1,U32 & String,Unit>,Done{Unit{}})\n    IO.pure(Result<&1,&1,U32 & String,Unit>,combine", "law": "completion_output_preserves_delivery_errors_and_returns_write_failure"},
   {"name": "completion-output-hides-earlier-stop-failure", "file": "bend2/src/coordinator/turn.bend", "find": "combine(stopped,written)", "replace": "combine(written,stopped)", "law": "completion_output_preserves_delivery_errors_and_returns_write_failure"},
   {"name": "parentless-completion-uses-global-output", "file": "bend2/src/coordinator/turn.bend", "find": "          T.Text.control_output(output)", "replace": "          written : Unit <- IO.write(output)\n          IO.pure(Result<&1,&1,U32 & String,Unit>,Done{Unit{}})", "law": "completion_without_parent_returns_output_failure"},
   {"name": "receive-status-uses-global-output", "file": "bend2/src/coordinator/receive.bend", "find": "    Text.Text.control_output(result)", "replace": "    written : Unit <- IO.write(result)\n    IO.pure(Result<&1,&1,U32 & String,Unit>,Done{Unit{}})", "law": "receive_status_returns_output_failure"}
+);
+
+MUTATIONS.push(
+  {"name": "report-returns-to-global-buffered-output", "file": "bend2/src/coordinator/turn.bend", "find": "    written : Result<&1,&1,U32 & String,Unit> <- T.Text.control_output(saved)\n    IO.pure(Unit,Unit{})", "replace": "    IO.write(saved)", "law": "report_persists_before_best_effort_control_output"},
+  {"name": "direct-replay-returns-to-buffered-output", "file": "bend2/src/coordinator/turn.bend", "find": "        written : Result<&1,&1,U32 & String,Unit> <- T.Text.control_output(saved)", "replace": "        written : Result<&1,&1,U32 & String,Unit> <- IO.bind(Unit,Result<&1,&1,U32 & String,Unit>,IO.write(saved),u => IO.pure(Result<&1,&1,U32 & String,Unit>,Done{Unit{}}))", "law": "direct_replay_keeps_output_failure_for_completion"},
+  {"name": "parentless-request-loses-original-error", "file": "bend2/src/coordinator/native-requests.bend", "find": "(tasks,\"Native OMP UI request has no registered parent; interaction requires a registered parent.\")", "replace": "(tasks,\"\")", "law": "parentless_request_preserves_its_error_after_control_output"}
+);
+
+MUTATIONS.push(
+  {"name": "failed-replay-skips-the-wake", "file": "bend2/src/coordinator/turn.bend", "find": "    wake : Result<&1,&1,U32 & String,Unit> <- Delivery.wake_pending(db,player,\"0\")\n    IO.pass(Unit,combine(output,wake))", "replace": "    wake : Result<&1,&1,U32 & String,Unit> <- IO.pure(Result<&1,&1,U32 & String,Unit>,Done{Unit{}})\n    IO.pass(Unit,combine(output,wake))", "law": "failed_replay_releases_and_wakes_before_reporting_output_error"},
+  {"name": "failed-replay-halts-before-release", "file": "bend2/src/coordinator/turn.bend", "find": "    case Fail{error}: replay_finished(db,player,lock,Fail{error})", "replace": "    case Fail{error}: IO.pass(Unit,Fail{error})", "law": "failed_replay_output_reaches_the_completion_boundary"}
 );
 
 for (const mutation of MUTATIONS) {

@@ -1,5 +1,7 @@
 """Completion output failure keeps the queued continuation joined."""
 import json
+import importlib.util
+import os
 import pathlib
 import select
 import socket
@@ -13,6 +15,7 @@ import unittest
 ROOT = pathlib.Path(__file__).resolve().parents[2]
 EXE = ROOT / '.scratch/bend2/baton2'
 FIXTURE = ROOT / '.scratch/bend2/receive-output'
+CONTROL = ROOT / '.scratch/bend2/control-output'
 GATE = '''import json,os,pathlib,socket,sys
 home=pathlib.Path(__file__).resolve().parent
 sock=socket.create_connection(('127.0.0.1',int((home/'port').read_text())))
@@ -29,11 +32,27 @@ class ReceiveOutput(unittest.TestCase):
     def setUpClass(cls):
         if not EXE.exists():
             raise unittest.SkipTest(f'Coordinator not built at {EXE}')
-        result = subprocess.run(['sh', 'bend2/scripts/build-native.sh',
-                                 'bend2/test/receive-output.bend', str(FIXTURE)],
-                                cwd=ROOT, capture_output=True, text=True)
-        if result.returncode:
-            raise AssertionError(result.stdout + result.stderr)
+        for source, output in [('receive-output', FIXTURE), ('control-output', CONTROL)]:
+            result = subprocess.run(['sh', 'bend2/scripts/build-native.sh',
+                                     f'bend2/test/{source}.bend', str(output)],
+                                    cwd=ROOT, capture_output=True, text=True)
+            if result.returncode:
+                raise AssertionError(result.stdout + result.stderr)
+
+    def test_failed_output_does_not_poison_empty_or_successful_output(self):
+        with tempfile.TemporaryDirectory(prefix='control-output-', dir=ROOT / '.scratch/bend2') as name:
+            result = subprocess.run([str(CONTROL)], cwd=name, capture_output=True, text=True, timeout=10)
+            self.assertEqual(result.returncode, 0, result.stderr)
+            observed = (pathlib.Path(name) / 'results').read_text().splitlines()
+            self.assertEqual(len(observed), 4)
+            self.assertIn('Could not write coordinator control output.', observed[0])
+            self.assertEqual(observed[1], 'done')
+            self.assertIn('Could not write coordinator control output.', observed[2])
+            self.assertEqual(observed[3], 'done')
+            self.assertEqual(result.stdout, 'after failure: café λ\n')
+            self.assertEqual(result.stderr, '')
+            print(json.dumps({'test': self.id(), 'coordinatorExit': result.returncode,
+                              'results': observed, 'stdout': result.stdout, 'stderr': result.stderr}))
 
     def exercise(self, broken, delivery_status=0):
         with tempfile.TemporaryDirectory(prefix='receive-output-', dir=ROOT / '.scratch/bend2') as name:
@@ -149,6 +168,107 @@ class ReceiveOutput(unittest.TestCase):
 
     def test_delivery_failure_precedes_output_failure_after_continuation(self):
         self.exercise(True, delivery_status=7)
+
+
+SPEC = importlib.util.spec_from_file_location('receive_fixture', ROOT / 'bend2/test/receive.py')
+RECEIVE = importlib.util.module_from_spec(SPEC)
+SPEC.loader.exec_module(RECEIVE)
+
+
+class NativeFailureOutput(unittest.TestCase):
+    def test_native_failure_prepares_report_with_closed_output_and_drains_queued_work(self):
+        fixture = RECEIVE.Receive()
+        fixture.setUp()
+        self.addCleanup(fixture.doCleanups)
+        with fixture.fixture.open('a') as script:
+            script.write("\nsys.exit(7 if globals().get('failure', False) else 0)\n")
+        fixture.coord('connect', 'root', 'native-root', json.dumps([str(fixture.fixture), 'parent_endpoint']))
+        fixture.player(harness='omp')
+        fixture.coord('message', 'first', 'root', 'parent', 'task', 'Fail the first task.')
+        observer = fixture.spawn(*fixture.receive_args('parent'))
+        fixture.server.settimeout(10)
+        original, started = fixture.accept('parent')
+        with sqlite3.connect(fixture.db) as database:
+            ident, directory = database.execute(
+                "SELECT id,directory FROM executions WHERE session='parent'").fetchone()
+        attempt = pathlib.Path(directory)
+        fixture.coord('message', 'second', 'root', 'parent', 'task', 'Complete the queued task.')
+        observer.stdout.close()
+        observer.stdout = None
+        fixture.action(original, fail=True, body='Original native failure retained.')
+        self.assertEqual(original.readline(), b'')
+        try:
+            continuation, resumed = fixture.accept('parent')
+        except TimeoutError:
+            diagnostic = os.read(observer.stderr.fileno(), 65536).decode() if select.select([observer.stderr], [], [], 0)[0] else ''
+            self.fail(f'Queued native did not start; coordinator exit {observer.poll()}: {diagnostic}')
+        self.assertIn('[id: second]', resumed['prompt'])
+        self.assertIsNone(observer.poll(), 'Output failure ended the observer before queued work finished.')
+        report = json.loads(fixture.coord('delivery', ident)['body'])
+        self.assertTrue(report['is_error'])
+        self.assertEqual(report['messages'][0]['content'][0]['text'], 'Original native failure retained.')
+        failure = fixture.coord('delivery', ident + ':exit')
+        self.assertIn('Player process ended with exit ', failure['body'])
+        self.assertNotEqual((attempt / 'status').read_text().strip(), '0')
+        native_status = int((attempt / 'status').read_text().strip())
+        self.assertEqual(os.waitstatus_to_exitcode(native_status), 7)
+        fixture.action(continuation, body='Queued task completed after failure preparation.')
+        self.assertEqual(continuation.readline(), b'')
+        _, stderr = fixture.finish(observer, ok=False)
+        self.assertIn('Could not write coordinator control output.', stderr)
+        self.assertNotIn('short write on a standard stream', stderr)
+        self.assertEqual(fixture.coord('inbox', 'parent'), [])
+        self.assertEqual(fixture.coord('inbox', 'root'), [])
+        self.assertTrue((attempt / 'released').exists())
+        self.assertTrue((attempt / 'acknowledged').exists())
+        fixture.eventually(lambda: not fixture.owned_processes(), 'The fixture retained a process after completion.')
+        print(json.dumps({'test': self.id(), 'coordinatorExit': observer.returncode,
+                          'nativeWaitStatus': native_status,
+                          'nativeExit': os.waitstatus_to_exitcode(native_status), 'stderr': stderr,
+                          'retainedFailure': failure['body'], 'continuationCompleted': True}))
+
+    def test_direct_replay_with_closed_output_releases_and_wakes_queued_input(self):
+        fixture = RECEIVE.Receive()
+        fixture.setUp()
+        self.addCleanup(fixture.doCleanups)
+        fixture.server.settimeout(10)
+        fixture.coord('connect', 'root', 'native-root', json.dumps([str(fixture.fixture), 'parent_endpoint']))
+        fixture.player()
+        fixture.coord('report', 'completed-direct', 'parent', 'Stored direct report.')
+        fixture.coord('message', 'queued-direct', 'root', 'parent', 'task', 'Queued after direct completion.')
+        fixture.coord('connect', 'parent', 'native-parent', fixture.endpoint('parent'))
+        read_fd, write_fd = os.pipe()
+        os.close(read_fd)
+        try:
+            child = subprocess.Popen([str(EXE), str(fixture.db), 'turn', 'parent', 'completed-direct',
+                                      str(fixture.fixture), 'parent', 'low', str(fixture.directory),
+                                      str(fixture.directory / 'unused-task'),
+                                      str(fixture.directory / 'direct.jsonl'), 'native-parent'],
+                                     stdout=write_fd, stderr=subprocess.PIPE, text=True)
+        finally:
+            os.close(write_fd)
+        fixture.children.append(child)
+        try:
+            continuation, resumed = fixture.accept('parent')
+        except TimeoutError:
+            diagnostic = os.read(child.stderr.fileno(), 65536).decode() if select.select([child.stderr], [], [], 0)[0] else ''
+            self.fail(f'Direct replay did not wake queued input; coordinator exit {child.poll()}: {diagnostic}')
+        self.assertIn('[id: queued-direct]', resumed['prompt'])
+        self.assertEqual(resumed['native'], 'native-parent')
+        self.assertIsNone(child.poll())
+        fixture.action(continuation, body='Queued input after direct replay completed.')
+        self.assertEqual(continuation.readline(), b'')
+        _, stderr = fixture.finish(child, ok=False)
+        self.assertIn('Could not write coordinator control output.', stderr)
+        self.assertNotIn('short write on a standard stream', stderr)
+        self.assertEqual(fixture.coord('delivery', 'completed-direct')['body'], 'Stored direct report.')
+        self.assertEqual(fixture.coord('player', 'parent')['native'], 'native-parent')
+        self.assertEqual(fixture.coord('inbox', 'parent'), [])
+        self.assertEqual(fixture.coord('inbox', 'root'), [])
+        fixture.eventually(lambda: not fixture.owned_processes(), 'Direct replay left a fixture process.')
+        print(json.dumps({'test': self.id(), 'coordinatorExit': child.returncode,
+                          'stderr': stderr, 'queuedInputCompleted': True,
+                          'nativeIdentity': resumed['native']}))
 
 
 if __name__ == '__main__':

@@ -69,20 +69,15 @@ static void __attribute__((constructor)) baton_read_use(void) {
 
 #ifdef CID_TEXT_CONTROL_OUTPUT
 static void baton_control_output_call(IoWork *w) {
-  /* Flush earlier runtime output before writing these bytes. The effect owns
-     no stdio buffer, so a failed write leaves no bytes for io_sync to flush. */
+  /* Receive and Turn use this effect for their control output. Each call owns
+     its bytes and writes directly to fd 1 under the stdout stream lock. */
   flockfile(stdout);
-  if (fflush(stdout) != 0) {
-    w->code = errno ? errno : EIO;
-    clearerr(stdout);
-  } else {
-    size_t offset = 0;
-    while (offset < w->size) {
-      ssize_t count = write(STDOUT_FILENO, w->data + offset, w->size - offset);
-      if (count > 0) offset += (size_t)count;
-      else if (count < 0 && errno == EINTR) continue;
-      else { w->code = count < 0 ? errno : EIO; break; }
-    }
+  size_t offset = 0;
+  while (offset < w->size) {
+    ssize_t count = write(STDOUT_FILENO, w->data + offset, w->size - offset);
+    if (count > 0) offset += (size_t)count;
+    else if (count < 0 && errno == EINTR) continue;
+    else { w->code = count < 0 ? errno : EIO; break; }
   }
   funlockfile(stdout);
 }
@@ -100,6 +95,7 @@ static Term baton_control_output_run(Env e, Term *f, IoWork *w) {
   u64 length = 0;
   w->data = io_cstr(e, f[0], &length);
   w->size = length;
+  w->code = 0;
   return io_work(w, baton_control_output_call, baton_control_output_pack);
 }
 
