@@ -376,6 +376,34 @@ class Receive(unittest.TestCase):
         self.assertEqual(json.loads((self.directory / 'parent-report-delivered').read_text())['body'], body)
         self.assertTrue((self.directory / 'parent-question-complete').exists())
 
+    def test_completed_attempt_acknowledged_while_continuation_live(self):
+        self.player()
+        self.coord('message', 'first', 'root', 'parent', 'task', 'Complete the original input.')
+        self.connect('parent')
+        observer = self.spawn(*self.receive_args('parent'))
+        original, _ = self.accept('parent')
+        with sqlite3.connect(self.db) as database:
+            attempt = pathlib.Path(database.execute(
+                "SELECT directory FROM executions WHERE session='parent' AND mode='retained'"
+            ).fetchone()[0])
+        self.coord('message', 'second', 'root', 'parent', 'task', 'The exact queued input.')
+        self.action(original, body='Original result complete.')
+        self.assertEqual(original.readline(), b'')
+        continuation, resumed = self.accept('parent')
+        self.assertIn('[id: second]', resumed['prompt'])
+        self.assertNotIn('[id: first]', resumed['prompt'])
+        # The completed attempt settles independently of the live continuation.
+        self.eventually(lambda: (attempt / 'acknowledged').exists(),
+                        'completed attempt was not acknowledged while its continuation ran')
+        reports = [turn['reportBody'] for turn in self.coord('turns', 'parent')]
+        self.assertIn('Original result complete.', reports)
+        self.assertIsNone(observer.poll())
+        self.action(continuation, body='Queued result complete.')
+        self.assertEqual(continuation.readline(), b'')
+        self.finish(observer)
+        self.assertEqual([turn['reportBody'] for turn in self.coord('turns', 'parent')],
+                         ['Original result complete.', 'Queued result complete.'])
+
     def test_native_root_question_reports_unsupported_without_answering(self):
         self.coord('attach', 'root', 'omp', '', '')
         self.coord('message', 'root-question-task', 'operator', 'root', 'task', 'Inspect the native request.')
