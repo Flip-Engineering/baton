@@ -965,7 +965,7 @@ law m8_an_unregistered_player_is_refused_before_any_turn:
   for +log: String
   for +session: String
   for +harness: String
-  {Turn.player_checked(db, player, id, cmd, model, effort, cwd, task, log, session, harness, True{}) == IO.die(Maybe<Turn.Outcome>,2,"Player has no recorded parent and workspace; register it before starting a turn.") : IO(Maybe<Turn.Outcome>)}
+  {Turn.player_checked(db, player, id, cmd, model, effort, cwd, task, log, session, harness, True{}) == IO.die(Result<&1,&1,U32 & String,Maybe<Turn.Outcome>>,2,"Player has no recorded parent and workspace; register it before starting a turn.") : IO(Result<&1,&1,U32 & String,Maybe<Turn.Outcome>>)}
 
 def m8_an_unregistered_player_is_refused_before_any_turn(db, player, id, cmd, model, effort, cwd, task, log, session, harness):
   {==}

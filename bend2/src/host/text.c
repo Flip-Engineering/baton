@@ -1,4 +1,5 @@
 #include <errno.h>
+#include <unistd.h>
 
 typedef struct {
   char *path, *text;
@@ -63,6 +64,43 @@ static Term baton_read_run(Env e, Term *f, IoWork *w) {
 }
 static void __attribute__((constructor)) baton_read_use(void) {
   io_eff(CID_TEXT_READ, baton_read_run, 0);
+}
+#endif
+
+#ifdef CID_TEXT_CONTROL_OUTPUT
+static void baton_control_output_call(IoWork *w) {
+  /* Receive and Turn use this effect for their control output. Each call owns
+     its bytes and writes directly to fd 1 under the stdout stream lock. */
+  flockfile(stdout);
+  size_t offset = 0;
+  while (offset < w->size) {
+    ssize_t count = write(STDOUT_FILENO, w->data + offset, w->size - offset);
+    if (count > 0) offset += (size_t)count;
+    else if (count < 0 && errno == EINTR) continue;
+    else { w->code = count < 0 ? errno : EIO; break; }
+  }
+  funlockfile(stdout);
+}
+
+static Term baton_control_output_pack(Env e, IoWork *w) {
+  Term result = w->code
+    ? io_fail(e, w->code, "Could not write coordinator control output.")
+    : io_done(e, term_pak(CID_UNIT, 0));
+  free(w->data);
+  w->data = NULL;
+  return result;
+}
+
+static Term baton_control_output_run(Env e, Term *f, IoWork *w) {
+  u64 length = 0;
+  w->data = io_cstr(e, f[0], &length);
+  w->size = length;
+  w->code = 0;
+  return io_work(w, baton_control_output_call, baton_control_output_pack);
+}
+
+static void __attribute__((constructor)) baton_control_output_use(void) {
+  io_eff(CID_TEXT_CONTROL_OUTPUT, baton_control_output_run, 0);
 }
 #endif
 
