@@ -966,9 +966,11 @@ def tip_ref(branch: String) -> String:
   "refs/heads/" ++ branch
 
 # The remote-tip argv: the declared remote is the only source and the requested
-# branch is the only refspec. Nothing reads a default remote.
+# branch is the only refspec. Both follow the option terminator, so a declared
+# remote that begins with a dash is read as the remote operand and not as an
+# option. Nothing reads a default remote.
 def ls_remote_argv(branch: String, remote: String) -> List<String>:
-  Con{"ls-remote", Con{remote, Con{tip_ref(branch), Nil{}}}}
+  Con{"ls-remote", Con{"--", Con{remote, Con{tip_ref(branch), Nil{}}}}}
 
 def tip_match(named: Bool, +object: String) -> String:
   match named:

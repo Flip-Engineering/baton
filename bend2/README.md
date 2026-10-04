@@ -258,8 +258,10 @@ is JSON with a `status` field: `advertised` with the advertised `objectId`,
 `absent` when the remote answered without advertising that branch, or `failed`
 with the `exit` status of the read and a reason naming the command whose message
 is on the coordinator's stderr. A branch the remote does not advertise answers
-`absent` even when a local branch of that name exists. `push` remains the
-publication operation and reports its own outcome.
+`absent` even when a local branch of that name exists. The declared remote and
+branch follow the option terminator, so a remote value that begins with a dash is
+read as the remote operand and answers `failed` with the read's own status.
+`push` remains the publication operation and reports its own outcome.
 
 ```sh
 .scratch/bend2/baton2 state.db remote-tip /path/to/repo target-branch origin
