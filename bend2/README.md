@@ -153,22 +153,33 @@ for the full naming contract.
 The native read commands format complete JSON with `--pretty`:
 
 ```sh
-.scratch/bend2/baton2 state.db player worker1 --pretty
+.scratch/bend2/baton2 state.db status --pretty
+.scratch/bend2/baton2 state.db players --pretty
 .scratch/bend2/baton2 state.db orchestra --pretty
+.scratch/bend2/baton2 state.db pending --pretty
+.scratch/bend2/baton2 state.db player worker1 --pretty
+.scratch/bend2/baton2 state.db session worker1 --pretty
+.scratch/bend2/baton2 state.db inbox worker1 --pretty
 .scratch/bend2/baton2 state.db delivery REPORT_ID --pretty
 .scratch/bend2/baton2 state.db turns worker1 --pretty
-.scratch/bend2/baton2 state.db worktree worker1 --pretty
 .scratch/bend2/baton2 state.db knowledge principal --pretty
+.scratch/bend2/baton2 state.db worktree worker1 --pretty
 ```
 
 `player ID` reads one stored Player binding. `orchestra` returns the snapshot,
 including `latestReport`, `latestReportId`, execution state, routes, pending
 counts and Ensemble and Section records. Pretty output retains every field.
-`delivery REPORT_ID`
-returns the stored message with its full body, receipt and current recipient
-endpoint. `turns PLAYER` lists native turn history with report bodies and
-receipts. Capture complete stdout and parse it when reviewing a report body;
+`delivery REPORT_ID` returns the stored message with its full body, receipt and
+current recipient endpoint. `turns PLAYER` lists native turn history with report
+bodies and receipts. A message leaves `inbox` and `pending` when it is
+acknowledged; `delivery MESSAGE_ID` and `turns PLAYER` read its retained body
+afterwards. Capture complete stdout and parse it when reviewing a report body;
 harness tool display can truncate long strings.
+
+`session ID`, `player ID`, `status`, `delivery ID` and `pending` present each
+registered endpoint in two fields: `endpoint` holds the stored argv JSON text,
+and `endpointArgv` holds the same argv as a JSON array, or null when the session
+has registered none.
 
 When the parentless `operator` session has the operator role, a Principal's
 native terminal result is retained in its turn history and sent to that session.
