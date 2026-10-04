@@ -13,6 +13,9 @@ def is_nl(c: Char) -> Bool:
 def is_sp(c: Char) -> Bool:
   Bool.pick(Bool, U32.is_eq(Char.to_u32(c), 32), True{}, False{})
 
+def is_tab(c: Char) -> Bool:
+  Bool.pick(Bool, U32.is_eq(Char.to_u32(c), 9), True{}, False{})
+
 def is_nul(c: Char) -> Bool:
   Bool.pick(Bool, U32.is_eq(Char.to_u32(c), 0), True{}, False{})
 
@@ -125,6 +128,35 @@ def split_at_sp(s: String, acc: String, out: List<String>) -> List<String>:
 
 def split_spaces(s: String) -> List<String>:
   List.reverse(&1, String, split_at_sp(s, SNil{}, Nil{}))
+
+# The tab splitter, for the ls-remote answer git writes as one
+# "<object>\t<ref>" record per advertised ref.
+def split_keep_tab(nl: Bool, c: Char, acc: String) -> String:
+  match nl:
+    case True{}: SNil{}
+    case False{}: SCon{c, acc}
+
+def split_emit_tab(nl: Bool, acc: String, out: List<String>) -> List<String>:
+  match nl:
+    case True{}: Con{str_rev(acc), out}
+    case False{}: out
+
+def split_flush_tab(acc: String, out: List<String>) -> List<String>:
+  match acc:
+    case SNil{}: out
+    case SCon{c, r}: Con{str_rev(acc), out}
+
+def split_at_tab(s: String, acc: String, out: List<String>) -> List<String>:
+  match s:
+    case SNil{}: split_flush_tab(acc, out)
+    case SCon{c, rest}:
+      +cc = c
+      +hit = is_tab(cc)
+      +acc2 = acc
+      split_at_tab(rest, split_keep_tab(hit, cc, acc2), split_emit_tab(hit, acc2, out))
+
+def split_tabs(s: String) -> List<String>:
+  List.reverse(&1, String, split_at_tab(s, SNil{}, Nil{}))
 
 def str_cat(a: String, b: String) -> String:
   a ++ b

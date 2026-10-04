@@ -79,6 +79,7 @@ prepares and checks against the current target.
 .scratch/bend2/baton2 state.db ack turn1 root NATIVE_ACCEPTANCE_RECEIPT
 .scratch/bend2/baton2 state.db land worker1 /path/to/repo target-branch
 .scratch/bend2/baton2 state.db push /path/to/repo target-branch origin
+.scratch/bend2/baton2 state.db remote-tip /path/to/repo target-branch origin
 .scratch/bend2/baton2 state.db status
 ```
 
@@ -171,10 +172,13 @@ including `latestReport`, `latestReportId`, execution state, routes, pending
 counts and Ensemble and Section records. Pretty output retains every field.
 `delivery REPORT_ID` returns the stored message with its full body, receipt and
 current recipient endpoint. `turns PLAYER` lists native turn history with report
-bodies and receipts. A message leaves `inbox` and `pending` when it is
-acknowledged; `delivery MESSAGE_ID` and `turns PLAYER` read its retained body
-afterwards. Capture complete stdout and parse it when reviewing a report body;
-harness tool display can truncate long strings.
+bodies and receipts.
+
+Acknowledged messages leave inbox and pending. delivery MESSAGE_ID reads any
+retained message afterwards; turns PLAYER reads retained turn-associated reports.
+
+Capture complete stdout and parse it when reviewing a report body; harness tool
+display can truncate long strings.
 
 `session ID`, `player ID`, `status`, `delivery ID` and `pending` present each
 registered endpoint in two fields: `endpoint` holds the stored argv JSON text,
@@ -247,6 +251,19 @@ target. A single commit retains its full message. Several commits use the tip
 commit's subject, with every branch commit's subject in the body, oldest first
 in topological order. The body also names the Player branch and any ignored
 paths dropped during landing.
+
+`remote-tip REPO BRANCH REMOTE` reads the named remote over the Git network
+protocol and reports the object it advertises for the named branch. The answer
+is JSON with a `status` field: `advertised` with the advertised `objectId`,
+`absent` when the remote answered without advertising that branch, or `failed`
+with the `exit` status of the read and a reason naming the command whose message
+is on the coordinator's stderr. A branch the remote does not advertise answers
+`absent` even when a local branch of that name exists. `push` remains the
+publication operation and reports its own outcome.
+
+```sh
+.scratch/bend2/baton2 state.db remote-tip /path/to/repo target-branch origin
+```
 
 ## Native turns
 
@@ -494,8 +511,9 @@ the database and closes with the server.
 
 The native Conductor reviews the report and records acceptance with
 `ack ID root RECEIPT`. It can send guidance with `message`, inspect Git state
-with `worktree`, and land and publish reviewed work with `land`, `land-checked`
-and `push`. A report's receipt records the Conductor's acceptance; committing the
+with `worktree`, read a declared remote's advertised branch with `remote-tip`,
+and land and publish reviewed work with `land`, `land-checked` and `push`. A
+report's receipt records the Conductor's acceptance; committing the
 report alone leaves that receipt empty.
 
 ## OMP Associate Conductors and Players
