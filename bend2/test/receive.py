@@ -161,6 +161,10 @@ while True:
             line=stream.readline()
             if not line: break
             action=json.loads(line)
+            if action.get('native_request'):
+                print(json.dumps(action['native_request']),flush=True)
+                reply({'request_written':action['native_request']})
+                continue
             if not action.get('progress'): break
             progress(action)
     break

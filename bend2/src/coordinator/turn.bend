@@ -153,7 +153,7 @@ def codex_report(db: String, player: String, id: String, event: String, empty: B
   match empty:
     case True{}: IO.pure(Unit,Unit{})
     case False{}: do IO<Unit>:
-      saved : String <- IO.try(String,Store.commit(db,C.Observe{id,player,event}))
+      saved : String <- IO.try(String,Store.commit(db,C.Observe{id,player,event,False{}}))
       IO.pure(Unit,Unit{})
 
 def codex_result_sql(source: String) -> String:
@@ -187,10 +187,57 @@ def omp_terminal(db: String, +event: String, +message: String, enabled: Bool) ->
       normalized : String <- IO.try(String,DB.Sql.query(db,"SELECT CASE WHEN json_extract(" ++ C.q(event) ++ ",'$.type')='agent_end' AND coalesce(json_extract(" ++ C.q(event) ++ ",'$.isTerminal'),1)=1 AND coalesce(json_array_length(" ++ C.q(event) ++ ",'$.messages'),0)=0 AND " ++ C.q(message) ++ "<>'' THEN json_set(" ++ C.q(event) ++ ",'$.messages',json_array(json(" ++ C.q(message) ++ "))) ELSE " ++ C.q(event) ++ " END;"))
       IO.pure(String,Tx.trim_nl(normalized))
 
-def observe_event(db: String, player: String, id: String, line: String, relevant: Bool) -> IO(Result<&1,&1,U32 & String,String>):
+def observe_event(db: String, player: String, id: String, line: String, relevant: Bool, sealed: Bool) -> IO(Result<&1,&1,U32 & String,String>):
   match relevant:
-    case True{}: Store.commit(db,C.Observe{id,player,line})
+    case True{}: Store.commit(db,C.Observe{id,player,line,sealed})
     case False{}: IO.pure(Result<&1,&1,U32 & String,String>,Done{""})
+
+# A terminal that completes after the managed completion was sealed cannot be
+# recorded as a report under the sealed identity: the first terminal stays the
+# report of this receive attempt, and a later episode is named once in the
+# separate diagnostic with the guidance it leaves for the next receive.
+def deferred_terminal_sql(+event: String, +terminal: String) -> String:
+  "SELECT CASE WHEN " ++ C.q(event) ++ "='' THEN 0 WHEN " ++ C.q(terminal) ++ "='' THEN 0 WHEN " ++ C.q(event) ++ "=" ++ C.q(terminal) ++ " THEN 0 WHEN " ++ C.terminal(event) ++ " THEN 1 ELSE 0 END;"
+
+# The note is written once: a later terminal frame must not try a second body
+# under the same identity, which the same-identity store guard would refuse.
+# The presence decision reads the note identity alone, so no message identity
+# can name it.
+def deferred_recorded_sql(+id: String) -> String:
+  "SELECT CASE WHEN EXISTS(SELECT 1 FROM messages WHERE id=" ++ C.q(id ++ ":deferred") ++ ") THEN 1 ELSE 0 END;"
+
+def deferred_pending_sql(+player: String) -> String:
+  "SELECT " ++ Guidance.outstanding_sql(player) ++ ";"
+
+def deferred_pending(+pending: String) -> String:
+  Bool.pick(String,String.is_empty(pending),""," and the deferred guidance " ++ pending ++ " stays pending for the next receive")
+
+def deferred_text(id: String, pending: String) -> String:
+  "A later native terminal completed after the report " ++ id ++ " was sealed; the episode is retained in the native log" ++ deferred_pending(pending) ++ "."
+
+def write_deferred(+db: String, +player: String, +id: String, recorded: Bool) -> IO(Unit):
+  match recorded:
+    case True{}: IO.pure(Unit,Unit{})
+    case False{}: do IO<Unit>:
+      +pending : String <- IO.try(String,DB.Sql.query(db,deferred_pending_sql(player)))
+      noted : Unit <- report(db,player,id ++ ":deferred",deferred_text(id,Tx.trim_nl(pending)))
+      IO.pure(Unit,Unit{})
+
+def record_deferred(+db: String, +player: String, +id: String, later: Bool) -> IO(Unit):
+  match later:
+    case False{}: IO.pure(Unit,Unit{})
+    case True{}: do IO<Unit>:
+      presence : String <- IO.try(String,DB.Sql.query(db,deferred_recorded_sql(id)))
+      written : Unit <- write_deferred(db,player,id,String.eq(presence,"1\n"))
+      IO.pure(Unit,Unit{})
+
+def deferred_note(+db: String, player: String, id: String, +event: String, +terminal: String, sealed: Bool) -> IO(Unit):
+  match sealed:
+    case False{}: IO.pure(Unit,Unit{})
+    case True{}: do IO<Unit>:
+      later : String <- IO.try(String,DB.Sql.query(db,deferred_terminal_sql(event,terminal)))
+      noted : Unit <- record_deferred(db,player,id,String.eq(later,"1\n"))
+      IO.pure(Unit,Unit{})
 
 def append_frame(log: String, line: String, keep: Bool) -> IO(Result<&1,&1,U32 & String,Unit>):
   match keep:
@@ -233,7 +280,7 @@ def terminal_event(db: String, +event: String, +previous: String, relevant: Bool
   match relevant:
     case False{}: IO.pure(String,previous)
     case True{}: do IO<String>:
-      selected : String <- IO.try(String,DB.Sql.query(db,"SELECT CASE WHEN json_valid(" ++ C.q(event) ++ ") THEN CASE WHEN " ++ C.terminal(event) ++ " THEN " ++ C.q(event) ++ " ELSE " ++ C.q(previous) ++ " END ELSE " ++ C.q(previous) ++ " END;"))
+      selected : String <- IO.try(String,DB.Sql.query(db,"SELECT CASE WHEN json_valid(" ++ C.q(event) ++ ") THEN CASE WHEN " ++ C.terminal(event) ++ " THEN CASE WHEN " ++ C.q(previous) ++ "='' THEN " ++ C.q(event) ++ " ELSE " ++ C.q(previous) ++ " END ELSE " ++ C.q(previous) ++ " END ELSE " ++ C.q(previous) ++ " END;"))
       IO.pure(String,Tx.trim_nl(selected))
 
 def codex_frames(db: String, +previous: String, +line: String, codex: Bool) -> IO(String):
@@ -244,7 +291,7 @@ def codex_frames(db: String, +previous: String, +line: String, codex: Bool) -> I
       IO.pure(String,Tx.trim_nl(value))
 
 @unsafe
-def consume(+db: String, +player: String, +id: String, +log: String, +handle: U32, +harness: String, cursor: String, last_message: String, terminal: String, filter: String, codex_log: String, +first_error: String, sender: Chan(Result<&1,&1,U32 & String,Unit>), +attempt: String, deliveries: List<Chan(Result<&1,&1,U32 & String,String>)>, result: Result<&1,&1,U32 & String,Maybe<String>>) -> IO(Outcome & List<Chan(Result<&1,&1,U32 & String,String>)>):
+def consume(+db: String, +player: String, +id: String, +log: String, +handle: U32, +harness: String, cursor: String, last_message: String, +terminal: String, filter: String, codex_log: String, +first_error: String, sender: Chan(Result<&1,&1,U32 & String,Unit>), +attempt: String, deliveries: List<Chan(Result<&1,&1,U32 & String,String>)>, result: Result<&1,&1,U32 & String,Maybe<String>>) -> IO(Outcome & List<Chan(Result<&1,&1,U32 & String,String>)>):
   match result:
     case Fail{error}: do IO<Outcome & List<Chan(Result<&1,&1,U32 & String,String>)>>:
       closed : Result<&1,&1,U32 & String,Unit> <- P.ProcessChild.close_stdin(handle)
@@ -267,7 +314,9 @@ def consume(+db: String, +player: String, +id: String, +log: String, +handle: U3
         next_cursor : String <- Guidance.observe(db,player,handle,line,cursor,Bool.and(String.eq(harness,"omp\n"),relevant))
         +message : String <- omp_message(db,line,last_message,Bool.and(String.eq(harness,"omp\n"),relevant))
         +event : String <- omp_terminal(db,line,message,Bool.and(String.eq(harness,"omp\n"),relevant))
-        observed : Result<&1,&1,U32 & String,String> <- observe_event(db,player,id,event,relevant)
+        +sealed : Bool <- IO.pure(Bool,Bool.not(String.is_empty(terminal)))
+        deferred : Unit <- deferred_note(db,player,id,event,terminal,sealed)
+        observed : Result<&1,&1,U32 & String,String> <- observe_event(db,player,id,event,relevant,sealed)
         ended : String <- terminal_event(db,event,terminal,relevant)
         codex_state : String <- codex_frames(db,codex_log,line,String.eq(harness,"codex\n"))
         questions : List<Chan(Result<&1,&1,U32 & String,String>)> & String <- NativeRequests.observe(db,player,id,attempt,line,deliveries,Bool.and(Bool.not(String.is_empty(attempt)),String.eq(kind,"extension_ui_request\n")))

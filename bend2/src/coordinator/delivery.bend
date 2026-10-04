@@ -73,12 +73,18 @@ def deliver(+db: String, +id: String, +condition: String, saved: String) -> IO(R
     +kind : String <- IO.pure(String,Tx.trim_nl(value))
     routed(db,id,condition,saved,kind,String.is_empty(kind))
 
+# A sealed observation stored no completion, so it invokes no endpoint.
+def observe_delivery(db: String, id: String, +event: String, saved: String, sealed: Bool) -> IO(Result<&1,&1,U32 & String,String>):
+  match sealed:
+    case True{}: IO.pure(Result<&1,&1,U32 & String,String>,Done{saved})
+    case False{}: deliver(db,id,C.terminal(event),saved)
+
 def after(db: String, command: C.Command, saved: String) -> IO(Result<&1,&1,U32 & String,String>):
   match command:
     case C.Report{id,sender,body}: deliver(db,id,"1",saved)
     case C.Ask{id,player,body}: deliver(db,id,"1",saved)
     case C.Message{id,sender,recipient,kind,body}: deliver(db,id,"1",saved)
-    case C.Observe{id,player,event}: deliver(db,id,C.terminal(event),saved)
+    case C.Observe{id,player,event,sealed}: observe_delivery(db,id,event,saved,sealed)
     case other: IO.pure(Result<&1,&1,U32 & String,String>,Done{saved})
 
 def wake_result(result: Result<&1,&1,U32 & String,String>) -> Result<&1,&1,U32 & String,Unit>:

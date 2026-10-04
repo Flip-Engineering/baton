@@ -217,10 +217,32 @@ law m13_terminal_event_invokes_the_registered_endpoint:
   for +player: String
   for +event: String
   for +saved: String
-  {Delivery.after(db, C.Observe{id, player, event}, saved) == Delivery.deliver(db, id, C.terminal(event), saved) : IO(Result<&1,&1,U32 & String,String>)}
+  for +sealed: Bool
+  {Delivery.after(db, C.Observe{id, player, event, sealed}, saved) == Delivery.observe_delivery(db, id, event, saved, sealed) : IO(Result<&1,&1,U32 & String,String>)}
 
-def m13_terminal_event_invokes_the_registered_endpoint(db, id, player, event, saved):
+def m13_terminal_event_invokes_the_registered_endpoint(db, id, player, event, saved, sealed):
   {==}
+
+law the_sealed_observation_delivers_nothing:
+  for +db: String
+  for +id: String
+  for +event: String
+  for +saved: String
+  {Delivery.observe_delivery(db, id, event, saved, True{}) == IO.pure(Result<&1,&1,U32 & String,String>,Done{saved}) : IO(Result<&1,&1,U32 & String,String>)}
+
+def the_sealed_observation_delivers_nothing(db, id, event, saved):
+  {==}
+
+law the_live_observation_delivers_its_terminal:
+  for +db: String
+  for +id: String
+  for +event: String
+  for +saved: String
+  {Delivery.observe_delivery(db, id, event, saved, False{}) == Delivery.deliver(db, id, C.terminal(event), saved) : IO(Result<&1,&1,U32 & String,String>)}
+
+def the_live_observation_delivers_its_terminal(db, id, event, saved):
+  {==}
+
 
 # ---------------------------------------------------------------------------
 # M-17: no silent abandonment of accepted, unsettled work. A player process
@@ -1138,7 +1160,7 @@ law terminal_observation_records_the_report_and_turn:
   for +id: String
   for +player: String
   for +event: String
-  {C.observe_completion_sql(id,player,event) == (
+  {C.completion_sql(id,player,event) == (
   "INSERT INTO messages(id,sender,recipient,kind,body) SELECT " ++ C.q(id) ++ ",id," ++ C.report_recipient("sessions.id") ++ ",'report'," ++ C.terminal_body(event) ++ " FROM sessions WHERE id=" ++ C.q(player) ++ " AND " ++ C.report_recipient("sessions.id") ++ " IS NOT NULL AND " ++ C.terminal(event) ++ C.message_upsert()
   ++ "INSERT INTO turns(id,worker,event) SELECT " ++ C.q(id) ++ "," ++ C.q(player) ++ "," ++ C.q(event) ++ " WHERE " ++ C.report_recipient(C.q(player)) ++ " IS NOT NULL AND " ++ C.terminal(event) ++ " ON CONFLICT(id) DO UPDATE SET id=CASE WHEN turns.worker=excluded.worker AND turns.event=excluded.event THEN turns.id ELSE NULL END;"
   ++ "SELECT json_object('player',id,'native',native,'eventType',coalesce(json_extract(" ++ C.q(event) ++ ",'$.type'),json_extract(" ++ C.q(event) ++ ",'$.payload_type')),'reportId',CASE WHEN " ++ C.report_recipient("sessions.id") ++ " IS NOT NULL AND " ++ C.terminal(event) ++ " THEN " ++ C.q(id) ++ " ELSE NULL END) FROM sessions WHERE id=" ++ C.q(player) ++ ";") : String}
@@ -1150,9 +1172,113 @@ law observations_update_identity_before_recording_completion:
   for id: String
   for +player: String
   for +event: String
-  {C.observe_sql(id,player,event) == C.observe_identity_sql(player,event) ++ C.observe_completion_sql(id,player,event) : String}
+  for sealed: Bool
+  {C.observe_sql(id,player,event,sealed) == C.observe_identity_sql(player,event) ++ C.observe_completion_sql(id,player,event,sealed) : String}
 
-def observations_update_identity_before_recording_completion(id,player,event):
+def observations_update_identity_before_recording_completion(id,player,event,sealed):
+  {==}
+
+law the_sealed_managed_completion_records_nothing:
+  for +id: String
+  for +player: String
+  for +event: String
+  {C.observe_completion_sql(id,player,event,True{}) == "" : String}
+
+def the_sealed_managed_completion_records_nothing(id,player,event):
+  {==}
+
+law a_later_native_terminal_is_named_once:
+  for +event: String
+  for +terminal: String
+  {Turn.deferred_terminal_sql(event,terminal) == ("SELECT CASE WHEN " ++ C.q(event) ++ "='' THEN 0 WHEN " ++ C.q(terminal) ++ "='' THEN 0 WHEN " ++ C.q(event) ++ "=" ++ C.q(terminal) ++ " THEN 0 WHEN " ++ C.terminal(event) ++ " THEN 1 ELSE 0 END;") : String}
+
+def a_later_native_terminal_is_named_once(event,terminal):
+  {==}
+
+law the_deferred_note_names_the_sealed_report:
+  for +id: String
+  for +pending: String
+  {Turn.deferred_text(id,pending) == ("A later native terminal completed after the report " ++ id ++ " was sealed; the episode is retained in the native log" ++ Turn.deferred_pending(pending) ++ ".") : String}
+
+def the_deferred_note_names_the_sealed_report(id,pending):
+  {==}
+
+law the_deferred_note_names_the_pending_guidance:
+  for +pending: String
+  {Turn.deferred_pending(pending) == Bool.pick(String,String.is_empty(pending),""," and the deferred guidance " ++ pending ++ " stays pending for the next receive") : String}
+
+def the_deferred_note_names_the_pending_guidance(pending):
+  {==}
+
+law the_outstanding_guidance_reader_names_stored_guidance:
+  for +player: String
+  {Guidance.outstanding_sql(player) == ("coalesce((SELECT group_concat(id,',') FROM (SELECT id FROM messages WHERE recipient=" ++ C.q(player) ++ " AND kind='guidance' AND receipt IS NULL AND NOT " ++ C.stopped_session_sql(C.q(player)) ++ " ORDER BY seq)),'')") : String}
+
+def the_outstanding_guidance_reader_names_stored_guidance(player):
+  {==}
+
+law the_deferred_note_presence_reads_the_note_identity:
+  for +id: String
+  {Turn.deferred_recorded_sql(id) == ("SELECT CASE WHEN EXISTS(SELECT 1 FROM messages WHERE id=" ++ C.q(id ++ ":deferred") ++ ") THEN 1 ELSE 0 END;") : String}
+
+def the_deferred_note_presence_reads_the_note_identity(id):
+  {==}
+
+law the_deferred_pending_reader_names_the_outstanding_guidance:
+  for +player: String
+  {Turn.deferred_pending_sql(player) == ("SELECT " ++ Guidance.outstanding_sql(player) ++ ";") : String}
+
+def the_deferred_pending_reader_names_the_outstanding_guidance(player):
+  {==}
+
+law a_recorded_deferred_note_is_not_written_again:
+  for +db: String
+  for +player: String
+  for +id: String
+  {Turn.write_deferred(db,player,id,True{}) == IO.pure(Unit,Unit{}) : IO(Unit)}
+
+def a_recorded_deferred_note_is_not_written_again(db,player,id):
+  {==}
+
+law an_absent_deferred_note_names_the_outstanding_guidance:
+  for +db: String
+  for +player: String
+  for +id: String
+  {Turn.write_deferred(db,player,id,False{}) == (do IO<Unit>:
+    +pending : String <- IO.try(String,DB.Sql.query(db,Turn.deferred_pending_sql(player)))
+    noted : Unit <- Turn.report(db,player,id ++ ":deferred",Turn.deferred_text(id,Tx.trim_nl(pending)))
+    IO.pure(Unit,Unit{})) : IO(Unit)}
+
+def an_absent_deferred_note_names_the_outstanding_guidance(db,player,id):
+  {==}
+
+law the_first_native_terminal_keeps_the_managed_completion:
+  for +db: String
+  for +event: String
+  for +previous: String
+  {Turn.terminal_event(db,event,previous,True{}) == (do IO<String>:
+    selected : String <- IO.try(String,DB.Sql.query(db,"SELECT CASE WHEN json_valid(" ++ C.q(event) ++ ") THEN CASE WHEN " ++ C.terminal(event) ++ " THEN CASE WHEN " ++ C.q(previous) ++ "='' THEN " ++ C.q(event) ++ " ELSE " ++ C.q(previous) ++ " END ELSE " ++ C.q(previous) ++ " END ELSE " ++ C.q(previous) ++ " END;"))
+    IO.pure(String,Tx.trim_nl(selected))) : IO(String)}
+
+def the_first_native_terminal_keeps_the_managed_completion(db,event,previous):
+  {==}
+
+law live_native_input_records_guidance_acceptance:
+  for +db: String
+  for +player: String
+  for +event: String
+  {Guidance.accepted(db,player,event,0) == IO.try(String,DB.Sql.query(db,Guidance.accepted_sql(player,event) ++ Guidance.terminal_sql(event))) : IO(String)}
+
+def live_native_input_records_guidance_acceptance(db,player,event):
+  {==}
+
+law closed_native_input_keeps_guidance_pending:
+  for +db: String
+  for +player: String
+  for +event: String
+  {Guidance.accepted(db,player,event,1) == IO.try(String,DB.Sql.query(db,Guidance.terminal_sql(event))) : IO(String)}
+
+def closed_native_input_keeps_guidance_pending(db,player,event):
   {==}
 
 law completion_preparation_checks_the_upstream_recipient:
