@@ -10,10 +10,15 @@ ROOT = pathlib.Path(__file__).resolve().parents[2]
 EXE = ROOT / '.scratch/bend2/baton2'
 
 
-def record(identity, usage, provider='deepseek', model='deepseek-flash', api='openai-completions'):
-    return {'type': 'message', 'id': 'r' + identity,
-            'message': {'role': 'assistant', 'provider': provider, 'model': model,
-                        'api': api, 'responseId': identity, 'usage': usage}}
+def header(native='native-1'):
+    return {'type': 'session', 'id': native}
+
+
+def record(identity, usage, provider='deepseek', model='deepseek-flash',
+           api='openai-completions', response=None, kind='message', role='assistant'):
+    return {'type': kind, 'id': identity,
+            'message': {'role': role, 'provider': provider, 'model': model, 'api': api,
+                        'responseId': response or ('msg_' + identity), 'usage': usage}}
 
 
 def usage(input_, output, cache_read, cache_write, reasoning=None, cost=None):
@@ -43,9 +48,12 @@ class ObservedUsage(unittest.TestCase):
         return subprocess.run([str(EXE), str(self.db), *map(str, args)],
                               text=True, capture_output=True)
 
-    def write(self, records, name='stamp_native-1.jsonl'):
-        path = self.sessions / name
-        path.write_text(''.join(json.dumps(entry) + '\n' for entry in records))
+    def write(self, records, name='stamp_native-1.jsonl', directory=None, with_header=True):
+        path = (directory or self.sessions) / name
+        path.parent.mkdir(parents=True, exist_ok=True)
+        rows = ([header()] if with_header else []) + list(records)
+        path.write_text(''.join(json.dumps(entry) + '\n' if isinstance(entry, dict) else entry + '\n'
+                                for entry in rows))
         return path
 
     def read(self, session='reader'):
@@ -54,34 +62,45 @@ class ObservedUsage(unittest.TestCase):
         self.assertEqual(result.stderr, '')
         return json.loads(result.stdout)
 
+    def refused(self, session='reader'):
+        result = self.call('observed-usage', session)
+        self.assertEqual(result.returncode, 2, result.stdout + result.stderr)
+        self.assertEqual(result.stdout, '')
+        return result.stderr
+
     def expected(self, **values):
         answer = {'session': 'reader', 'harness': 'omp', 'native': 'native-1',
                   'source': str(self.source), 'shape': 'message-usage',
                   'records': 0, 'observations': 0, 'duplicates': 0, 'conflicts': 0,
-                  'routes': [], 'absent': ['reasoningTokens', 'cost'], 'invalid': []}
+                  'malformed': 0, 'routes': [], 'absent': [], 'invalid': []}
         answer.update(values)
         return answer
 
+    def costing_absent(self, *extra):
+        """Absent components for a fixture that states no cost and no reasoning."""
+        return ['reasoningTokens', *extra, 'cost.input', 'cost.output', 'cost.cacheRead',
+                'cost.cacheWrite', 'cost.total']
+
     def test_per_message_records_sum_under_the_recorded_contract(self):
-        self.write([record('m1', usage(10, 2, 1, 0, cost=(0.5, 0.25, 0.125, 0, 0.875))),
+        self.write([record('m1', usage(10, 2, 1, 0, reasoning=3, cost=(0.5, 0.25, 0.125, 0, 0.875))),
                     record('m2', usage(4, 8, 0, 1, cost=(0.125, 0.25, 0, 0.0625, 0.4375)))])
         self.assertEqual(self.read(), self.expected(
-            records=2, observations=2,
+            records=2, observations=2, absent=['reasoningTokens'],
             routes=[{'provider': 'deepseek', 'model': 'deepseek-flash',
                      'api': 'openai-completions', 'observations': 2}],
             observed={'input': 14, 'output': 10, 'cacheRead': 1, 'cacheWrite': 1, 'totalTokens': 26},
             cost={'input': 0.625, 'output': 0.5, 'cacheRead': 0.125, 'cacheWrite': 0.0625,
-                  'total': 1.3125},
-            absent=['reasoningTokens']))
+                  'total': 1.3125}))
 
     def test_independent_records_that_only_grow_and_then_reset_are_all_counted(self):
         self.write([record('m1', usage(10, 0, 0, 0)), record('m2', usage(20, 0, 0, 0)),
                     record('m3', usage(11, 0, 0, 0))])
         self.assertEqual(self.read(), self.expected(
-            records=3, observations=3,
+            records=3, observations=3, observed={'input': 41, 'output': 0, 'cacheRead': 0,
+                                                 'cacheWrite': 0, 'totalTokens': 41},
             routes=[{'provider': 'deepseek', 'model': 'deepseek-flash',
                      'api': 'openai-completions', 'observations': 3}],
-            observed={'input': 41, 'output': 0, 'cacheRead': 0, 'cacheWrite': 0, 'totalTokens': 41}))
+            absent=self.costing_absent()))
 
     def test_increasing_records_are_message_usage_and_never_refused(self):
         self.write([record('m1', usage(10, 0, 0, 0)), record('m2', usage(20, 0, 0, 0)),
@@ -91,44 +110,77 @@ class ObservedUsage(unittest.TestCase):
         self.assertEqual(answer['observed']['input'], 60)
         self.assertEqual(answer['observations'], 3)
 
+    def test_only_message_entries_with_object_usage_are_summed(self):
+        self.write([record('m1', usage(10, 2, 0, 0)),
+                    record('c1', {'input': 99}, kind='custom'),
+                    record('u1', {'input': 5}, role='user'),
+                    {'type': 'message', 'id': 'bad', 'message': {'role': 'assistant', 'usage': 'twelve'}}])
+        self.assertEqual(self.read(), self.expected(
+            records=1, observations=1, observed={'input': 10, 'output': 2, 'cacheRead': 0,
+                                                 'cacheWrite': 0, 'totalTokens': 12},
+            routes=[{'provider': 'deepseek', 'model': 'deepseek-flash',
+                     'api': 'openai-completions', 'observations': 1}],
+            absent=self.costing_absent()))
+
+    def test_a_truncated_tail_is_reported_and_no_sum_is_projected(self):
+        self.write([record('m1', usage(10, 2, 0, 0)), '{"type":"message","id":"m2","mess'])
+        answer = self.read()
+        self.assertEqual(answer['malformed'], 1)
+        self.assertEqual((answer['records'], answer['observations']), (1, 1))
+        self.assertNotIn('observed', answer)
+        self.assertNotIn('cost', answer)
+        self.assertEqual(answer['invalid'], [])
+        untouched = self.write([record('m1', usage(10, 2, 0, 0))])
+        self.assertEqual(self.read()['malformed'], 0)
+        self.assertEqual(self.read()['observed']['input'], 10)
+        self.assertEqual(untouched, self.source)
+
+    def test_two_persisted_ids_with_the_same_response_are_two_observations(self):
+        self.write([record('a1', usage(10, 2, 0, 0), response='msg_same'),
+                    record('a2', usage(4, 0, 0, 0), response='msg_same')])
+        answer = self.read()
+        self.assertEqual((answer['records'], answer['observations'], answer['duplicates'],
+                          answer['conflicts']), (2, 2, 0, 0))
+        self.assertEqual(answer['observed']['input'], 14)
+
+    def test_a_repeated_identity_that_changed_its_route_is_a_conflict(self):
+        self.write([record('m1', usage(10, 2, 0, 0), provider='zai', model='glm-5.3-flash'),
+                    record('m1', usage(10, 2, 0, 0), provider='kimi-code', model='k3')])
+        answer = self.read()
+        self.assertEqual((answer['records'], answer['observations'], answer['duplicates'],
+                          answer['conflicts']), (2, 1, 1, 1))
+        self.assertEqual(answer['routes'], [{'provider': 'zai', 'model': 'glm-5.3-flash',
+                                             'api': 'openai-completions', 'observations': 1}])
+        self.assertNotIn('observed', answer)
+        self.assertNotIn('cost', answer)
+
     def test_a_conversation_with_no_usage_record_is_unavailable(self):
-        self.write([{'type': 'session', 'id': 'native-1'},
-                    {'type': 'message', 'id': 'u1', 'message': {'role': 'user', 'content': []}}])
-        self.assertEqual(self.read(), self.expected(shape='unavailable', absent=[]))
+        self.write([{'type': 'message', 'id': 'u1', 'message': {'role': 'user', 'content': []}}])
+        self.assertEqual(self.read(), self.expected(shape='unavailable'))
 
     def test_zero_cost_components_are_preserved(self):
         self.write([record('m1', usage(3, 1, 0, 0, cost=(0, 0, 0, 0, 0)),
                            provider='kimi-code', model='k3', api='anthropic-messages')])
         self.assertEqual(self.read(), self.expected(
-            records=1, observations=1,
+            records=1, observations=1, absent=['reasoningTokens'],
             routes=[{'provider': 'kimi-code', 'model': 'k3', 'api': 'anthropic-messages',
                      'observations': 1}],
             observed={'input': 3, 'output': 1, 'cacheRead': 0, 'cacheWrite': 0, 'totalTokens': 4},
-            cost={'input': 0, 'output': 0, 'cacheRead': 0, 'cacheWrite': 0, 'total': 0},
-            absent=['reasoningTokens']))
+            cost={'input': 0, 'output': 0, 'cacheRead': 0, 'cacheWrite': 0, 'total': 0}))
 
     def test_a_repeated_identical_record_counts_once(self):
         self.write([record('m1', usage(10, 2, 0, 0)), record('m1', usage(10, 2, 0, 0)),
                     record('m2', usage(4, 0, 0, 0))])
         answer = self.read()
-        self.assertEqual(answer['records'], 3)
-        self.assertEqual(answer['observations'], 2)
-        self.assertEqual(answer['duplicates'], 1)
-        self.assertEqual(answer['conflicts'], 0)
+        self.assertEqual((answer['records'], answer['observations'], answer['duplicates'],
+                          answer['conflicts']), (3, 2, 1, 0))
         self.assertEqual(answer['observed']['input'], 14)
         self.assertNotIn('cost', answer)
-
-    def test_a_changed_repeat_is_a_conflict_and_keeps_the_first_record(self):
-        self.write([record('m1', usage(10, 2, 0, 0)), record('m1', usage(11, 2, 0, 0))])
-        answer = self.read()
-        self.assertEqual((answer['records'], answer['observations'], answer['duplicates'],
-                          answer['conflicts']), (2, 1, 1, 1))
-        self.assertEqual(answer['observed']['input'], 10)
 
     def test_a_component_the_source_does_not_state_throughout_is_absent(self):
         self.write([record('m1', usage(10, 2, 0, 0, reasoning=5)), record('m2', usage(4, 0, 0, 0))])
         answer = self.read()
-        self.assertEqual(answer['absent'], ['reasoningTokens', 'cost'])
+        self.assertEqual(answer['absent'], self.costing_absent())
         self.assertNotIn('reasoningTokens', answer['observed'])
 
     def test_a_component_stated_without_a_number_is_invalid_and_not_summed(self):
@@ -136,19 +188,60 @@ class ObservedUsage(unittest.TestCase):
                                   'totalTokens': 14})])
         answer = self.read()
         self.assertEqual(answer['invalid'], ['input'])
-        self.assertEqual(answer['absent'], ['input', 'reasoningTokens', 'cost'])
+        self.assertEqual(answer['absent'], ['input'] + self.costing_absent())
         self.assertEqual(answer['observed'], {'output': 2, 'cacheRead': 0, 'cacheWrite': 0,
                                               'totalTokens': 14})
 
+    def test_a_non_numeric_cost_component_is_invalid_and_not_summed(self):
+        self.write([record('m1', {'input': 1, 'cost': {'total': 1, 'output': 'bad'}})])
+        answer = self.read()
+        self.assertEqual(answer['invalid'], ['cost.output'])
+        self.assertEqual(answer['cost'], {'total': 1})
+        self.assertIn('cost.output', answer['absent'])
+
+    def test_a_lone_reasoning_component_is_preserved(self):
+        self.write([record('m1', {'reasoningTokens': 5})])
+        self.assertEqual(self.read()['observed'], {'reasoningTokens': 5})
+
+    def test_a_lone_cost_component_is_preserved(self):
+        self.write([record('m1', {'cost': {'input': 0.5}})])
+        self.assertEqual(self.read()['cost'], {'input': 0.5})
+
     def test_a_route_without_a_recorded_file_is_unavailable(self):
         self.source.unlink(missing_ok=True)
-        self.assertEqual(self.read(), self.expected(shape='unavailable', source='', absent=[]))
+        self.assertEqual(self.read(), self.expected(shape='unavailable', source=''))
+
+    def test_the_alternate_store_is_used_when_only_it_records_the_conversation(self):
+        alternate = self.directory / 'state.db.sessions'
+        path = self.write([record('m1', usage(10, 2, 0, 0))], directory=alternate)
+        self.source.unlink(missing_ok=True)
+        answer = self.read()
+        self.assertEqual(answer['source'], str(path))
+        self.assertEqual(answer['observed']['input'], 10)
+
+    def test_two_stores_with_distinct_matching_files_are_refused(self):
+        self.write([record('m1', usage(10, 2, 0, 0))])
+        alternate = self.write([record('m9', usage(99, 0, 0, 0))],
+                               directory=self.directory / 'state.db.sessions')
+        stderr = self.refused()
+        self.assertIn(str(self.source), stderr)
+        self.assertIn(str(alternate), stderr)
+        self.assertIn('native-1', stderr)
+
+    def test_a_file_that_records_another_native_identity_is_refused(self):
+        self.write([record('m1', usage(10, 2, 0, 0))], with_header=False)
+        self.source.write_text(json.dumps(header('native-other')) + '\n'
+                               + self.source.read_text())
+        stderr = self.refused()
+        self.assertIn('native-other', stderr)
+        self.assertIn('native-1', stderr)
+
+    def test_a_file_without_a_session_header_is_refused(self):
+        self.write([record('m1', usage(10, 2, 0, 0))], with_header=False)
+        self.assertIn('no recorded session header', self.refused())
 
     def test_an_unregistered_session_is_refused(self):
-        result = self.call('observed-usage', 'missing-player')
-        self.assertEqual(result.returncode, 2)
-        self.assertEqual(result.stdout, '')
-        self.assertIn('not registered', result.stderr)
+        self.assertIn('not registered', self.refused('missing-player'))
 
     def test_the_read_records_nothing(self):
         self.write([record('m1', usage(10, 2, 0, 0))])

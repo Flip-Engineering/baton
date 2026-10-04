@@ -24,18 +24,52 @@ def storage_sql(+db: String, +session: String) -> String:
 def source_suffix(+native: String) -> String:
   "_" ++ native ++ ".jsonl"
 
-def source_alternate(alternate: String, suffix: String, first: String, found: Bool) -> IO(String):
-  match found:
-    case True{}: IO.pure(String,first)
-    case False{}: IO.try(String,F.Files.find_suffix(alternate,suffix))
+# Two stores can each carry a file for the same native identity. Nothing records
+# which one the session wrote last, so the read names both and refuses.
+def source_ambiguous(first: String, second: String, +native: String) -> String:
+  "Two recorded conversations match the native identity " ++ native ++ ": " ++ first ++ " and " ++ second ++ "; the read does not choose one. Inspect both and remove the one that is not current, then retry."
 
-# The session's own recorded conversation file, or "" when the route recorded no
-# file under either directory.
-def usage_source(primary: String, alternate: String, native: String) -> IO(String):
+def source_first_case(first: String, second: String, native: String, second_present: Bool) -> IO(String):
+  match second_present:
+    case True{}: IO.die(String,2,source_ambiguous(first,second,native))
+    case False{}: IO.pure(String,first)
+
+def source_decide(first: String, second: String, native: String, first_present: Bool, second_present: Bool) -> IO(String):
+  match first_present:
+    case True{}: source_first_case(first,second,native,second_present)
+    case False{}: IO.pure(String,second)
+
+# The session's own recorded conversation file, or "" when neither directory
+# records one. Two distinct matching files are refused rather than guessed.
+def usage_source(primary: String, alternate: String, +native: String) -> IO(String):
   do IO<String>:
     +suffix : String <- IO.pure(String,source_suffix(native))
     +first : String <- IO.try(String,F.Files.find_suffix(primary,suffix))
-    source_alternate(alternate,suffix,first,Bool.not(String.is_empty(first)))
+    +second : String <- IO.try(String,F.Files.find_suffix(alternate,suffix))
+    source_decide(first,second,native,Bool.not(String.is_empty(first)),Bool.not(String.is_empty(second)))
+
+# --- the recorded conversation identity -------------------------------------
+
+# How many non-empty lines are not valid JSON: a truncated or corrupt tail makes
+# the read incomplete, which the answer states instead of hiding.
+def malformed_sql(lines_json: String) -> String:
+  "WITH raw AS (SELECT value AS line FROM json_each(" ++ C.q(lines_json) ++ ")) "
+  ++ "SELECT count(*) FROM raw WHERE trim(line) <> '' AND NOT json_valid(line);"
+
+# The native identity the file's own session header records.
+def header_sql(lines_json: String) -> String:
+  "WITH raw AS (SELECT value AS line FROM json_each(" ++ C.q(lines_json) ++ ") WHERE json_valid(value)) "
+  ++ "SELECT coalesce((SELECT json_extract(line,'$.id') FROM raw WHERE json_extract(line,'$.type')='session' LIMIT 1),'');"
+
+def usage_recorded_name(+recorded: String) -> String:
+  Bool.pick(String,String.is_empty(recorded),"(no recorded session header)",recorded)
+
+# The selected file must record the session's own native identity, or the
+# projection would describe another conversation.
+def usage_recorded_conversation(recorded: String, +native: String, matches: Bool) -> IO(Unit):
+  match matches:
+    case True{}: IO.pure(Unit,Unit{})
+    case False{}: IO.die(Unit,2,"The selected conversation file records " ++ usage_recorded_name(recorded) ++ " rather than " ++ native ++ "; inspect the session's recorded identity and its conversation files.")
 
 # --- the extraction ---------------------------------------------------------
 
@@ -51,18 +85,20 @@ def lines_array(lines: List<String>) -> String:
     case Nil{}: "[]"
     case line <> rest: "[" ++ J.string_literal(line) ++ lines_array_tail(rest)
 
-# One entry per recorded usage record, carrying the recorded identity, provider,
-# model, api and the whole recorded usage object. A record with no usage object
-# contributes nothing. The array is embedded as one SQL string literal.
+# One entry per persisted assistant message that carries an object usage, under
+# the persisted entry identity. Any other record contributes nothing. The array
+# is embedded as one SQL string literal.
 def extract_sql(lines_json: String) -> String:
   "WITH lines AS (SELECT key AS seq, value AS line FROM json_each(" ++ C.q(lines_json) ++ ") WHERE json_valid(value)) "
   ++ "SELECT coalesce(json_group_array(json_object("
-  ++ "'identity',coalesce(json_extract(line,'$.message.responseId'),json_extract(line,'$.id'),'seq:' || seq),"
+  ++ "'identity',coalesce(json_extract(line,'$.id'),'seq:' || seq),"
   ++ "'provider',json_extract(line,'$.message.provider'),"
   ++ "'model',json_extract(line,'$.message.model'),"
   ++ "'api',json_extract(line,'$.message.api'),"
   ++ "'usage',json_extract(line,'$.message.usage'))),json('[]')) "
-  ++ "FROM (SELECT seq, line FROM lines WHERE json_extract(line,'$.message.usage') IS NOT NULL ORDER BY seq);"
+  ++ "FROM (SELECT seq, line FROM lines WHERE json_extract(line,'$.type')='message'"
+  ++ " AND json_extract(line,'$.message.role')='assistant'"
+  ++ " AND json_type(line,'$.message.usage')='object' ORDER BY seq);"
 
 # --- the projection ---------------------------------------------------------
 
@@ -76,9 +112,10 @@ def shape_sql() -> String:
 def projection_entries_cte(entries_json: String) -> String:
   "WITH entries AS (SELECT key AS seq, value AS entry FROM json_each(" ++ C.q(entries_json) ++ ") WHERE json_valid(value)),"
 
-# One row per distinct recorded identity, in the recorded order. A component is
+# One row per persisted entry identity, in the recorded order. A component is
 # read only when the record states a number: an absent or non-numeric value is
-# unknown and stays unknown.
+# unknown and stays unknown. The signature carries the recorded route with the
+# recorded usage, so a repeated identity that changed either is a conflict.
 def projection_rows_cte() -> String:
   "keyed AS (SELECT seq, entry,"
   ++ " json_extract(entry,'$.identity') AS identity,"
@@ -96,18 +133,21 @@ def projection_rows_cte() -> String:
   ++ " CASE WHEN json_type(entry,'$.usage.cost.cacheRead') IN ('integer','real') THEN json_extract(entry,'$.usage.cost.cacheRead') END AS cost_cache_read,"
   ++ " CASE WHEN json_type(entry,'$.usage.cost.cacheWrite') IN ('integer','real') THEN json_extract(entry,'$.usage.cost.cacheWrite') END AS cost_cache_write,"
   ++ " CASE WHEN json_type(entry,'$.usage.cost.total') IN ('integer','real') THEN json_extract(entry,'$.usage.cost.total') END AS cost_total,"
-  ++ " json_extract(entry,'$.usage') AS usage_text FROM entries),"
+  ++ " json_extract(entry,'$.usage') AS usage_text,"
+  ++ " coalesce(json_extract(entry,'$.provider'),'') || char(31) || coalesce(json_extract(entry,'$.model'),'') || char(31)"
+  ++ " || coalesce(json_extract(entry,'$.api'),'') || char(31) || coalesce(json_extract(entry,'$.usage'),'') AS signature"
+  ++ " FROM entries),"
   ++ "ranked AS (SELECT *, row_number() OVER (PARTITION BY identity ORDER BY seq) AS rank FROM keyed),"
   ++ "firsts AS (SELECT * FROM ranked WHERE rank = 1),"
 
 # The counts, the shape, the component sums that stay absent unless every
 # observation states the component, the components the source did not state
 # throughout, the components a record stated without a number, and the recorded
-# routes. A repeated identity keeps its first record and is counted as a
-# conflict when its recorded usage differs.
-def projection_summary_cte() -> String:
+# routes. A repeated identity keeps its first record.
+def projection_summary_cte(malformed: String) -> String:
   "counts AS (SELECT (SELECT count(*) FROM keyed) AS records, (SELECT count(*) FROM firsts) AS observations,"
-  ++ " (SELECT count(*) FROM (SELECT identity FROM keyed GROUP BY identity HAVING count(DISTINCT usage_text) > 1)) AS conflicts),"
+  ++ " (SELECT count(*) FROM (SELECT identity FROM keyed GROUP BY identity HAVING count(DISTINCT signature) > 1)) AS conflicts,"
+  ++ " (" ++ malformed ++ ") AS malformed),"
   ++ "shape AS (SELECT " ++ shape_sql() ++ " AS shape FROM counts),"
   ++ "totals AS (SELECT"
   ++ " CASE WHEN count(*) = count(input) THEN sum(input) END AS input,"
@@ -120,15 +160,20 @@ def projection_summary_cte() -> String:
   ++ " CASE WHEN count(*) = count(cost_output) THEN sum(cost_output) END AS cost_output,"
   ++ " CASE WHEN count(*) = count(cost_cache_read) THEN sum(cost_cache_read) END AS cost_cache_read,"
   ++ " CASE WHEN count(*) = count(cost_cache_write) THEN sum(cost_cache_write) END AS cost_cache_write,"
-  ++ " CASE WHEN count(*) = count(cost_total) THEN sum(cost_total) END AS cost_total FROM firsts),"
-  ++ "absent AS (SELECT json_group_array(name) AS names FROM ("
+  ++ " CASE WHEN count(*) = count(cost_total) THEN sum(cost_total) END AS cost_total,"
+  ++ " (SELECT count(*) FROM firsts) AS observations FROM firsts),"
+  ++ "absent AS (SELECT coalesce(json_group_array(name),json('[]')) AS names FROM ("
   ++ " SELECT 'input' AS name, (SELECT count(*) FROM firsts) AS total, (SELECT count(input) FROM firsts) AS present"
   ++ " UNION ALL SELECT 'output', (SELECT count(*) FROM firsts), (SELECT count(output) FROM firsts)"
   ++ " UNION ALL SELECT 'cacheRead', (SELECT count(*) FROM firsts), (SELECT count(cache_read) FROM firsts)"
   ++ " UNION ALL SELECT 'cacheWrite', (SELECT count(*) FROM firsts), (SELECT count(cache_write) FROM firsts)"
   ++ " UNION ALL SELECT 'totalTokens', (SELECT count(*) FROM firsts), (SELECT count(total_tokens) FROM firsts)"
   ++ " UNION ALL SELECT 'reasoningTokens', (SELECT count(*) FROM firsts), (SELECT count(reasoning) FROM firsts)"
-  ++ " UNION ALL SELECT 'cost', (SELECT count(*) FROM firsts), (SELECT count(cost_total) FROM firsts)) WHERE present < total),"
+  ++ " UNION ALL SELECT 'cost.input', (SELECT count(*) FROM firsts), (SELECT count(cost_input) FROM firsts)"
+  ++ " UNION ALL SELECT 'cost.output', (SELECT count(*) FROM firsts), (SELECT count(cost_output) FROM firsts)"
+  ++ " UNION ALL SELECT 'cost.cacheRead', (SELECT count(*) FROM firsts), (SELECT count(cost_cache_read) FROM firsts)"
+  ++ " UNION ALL SELECT 'cost.cacheWrite', (SELECT count(*) FROM firsts), (SELECT count(cost_cache_write) FROM firsts)"
+  ++ " UNION ALL SELECT 'cost.total', (SELECT count(*) FROM firsts), (SELECT count(cost_total) FROM firsts)) WHERE present < total),"
   ++ "invalid AS (SELECT coalesce(json_group_array(name),json('[]')) AS names FROM ("
   ++ " SELECT 'input' AS name, (SELECT count(*) FROM keyed WHERE json_extract(entry,'$.usage.input') IS NOT NULL AND json_type(entry,'$.usage.input') NOT IN ('integer','real')) AS n"
   ++ " UNION ALL SELECT 'output', (SELECT count(*) FROM keyed WHERE json_extract(entry,'$.usage.output') IS NOT NULL AND json_type(entry,'$.usage.output') NOT IN ('integer','real'))"
@@ -136,14 +181,18 @@ def projection_summary_cte() -> String:
   ++ " UNION ALL SELECT 'cacheWrite', (SELECT count(*) FROM keyed WHERE json_extract(entry,'$.usage.cacheWrite') IS NOT NULL AND json_type(entry,'$.usage.cacheWrite') NOT IN ('integer','real'))"
   ++ " UNION ALL SELECT 'totalTokens', (SELECT count(*) FROM keyed WHERE json_extract(entry,'$.usage.totalTokens') IS NOT NULL AND json_type(entry,'$.usage.totalTokens') NOT IN ('integer','real'))"
   ++ " UNION ALL SELECT 'reasoningTokens', (SELECT count(*) FROM keyed WHERE json_extract(entry,'$.usage.reasoningTokens') IS NOT NULL AND json_type(entry,'$.usage.reasoningTokens') NOT IN ('integer','real'))"
-  ++ " UNION ALL SELECT 'cost', (SELECT count(*) FROM keyed WHERE json_extract(entry,'$.usage.cost') IS NOT NULL AND json_type(entry,'$.usage.cost') <> 'object')) WHERE n > 0),"
+  ++ " UNION ALL SELECT 'cost', (SELECT count(*) FROM keyed WHERE json_extract(entry,'$.usage.cost') IS NOT NULL AND json_type(entry,'$.usage.cost') <> 'object')"
+  ++ " UNION ALL SELECT 'cost.input', (SELECT count(*) FROM keyed WHERE json_extract(entry,'$.usage.cost.input') IS NOT NULL AND json_type(entry,'$.usage.cost.input') NOT IN ('integer','real'))"
+  ++ " UNION ALL SELECT 'cost.output', (SELECT count(*) FROM keyed WHERE json_extract(entry,'$.usage.cost.output') IS NOT NULL AND json_type(entry,'$.usage.cost.output') NOT IN ('integer','real'))"
+  ++ " UNION ALL SELECT 'cost.cacheRead', (SELECT count(*) FROM keyed WHERE json_extract(entry,'$.usage.cost.cacheRead') IS NOT NULL AND json_type(entry,'$.usage.cost.cacheRead') NOT IN ('integer','real'))"
+  ++ " UNION ALL SELECT 'cost.cacheWrite', (SELECT count(*) FROM keyed WHERE json_extract(entry,'$.usage.cost.cacheWrite') IS NOT NULL AND json_type(entry,'$.usage.cost.cacheWrite') NOT IN ('integer','real'))"
+  ++ " UNION ALL SELECT 'cost.total', (SELECT count(*) FROM keyed WHERE json_extract(entry,'$.usage.cost.total') IS NOT NULL AND json_type(entry,'$.usage.cost.total') NOT IN ('integer','real'))) WHERE n > 0),"
   ++ "routes AS (SELECT coalesce(json_group_array(json_object('provider',provider,'model',model,'api',api,'observations',n)),json('[]')) AS routes"
   ++ " FROM (SELECT provider, model, api, count(*) AS n FROM firsts GROUP BY provider, model, api ORDER BY provider, model, api)),"
 
-# The declared conversation and the projected usage. The cost fields are the
-# harness's recorded estimates, never a price derived from tokens. A component
-# the source did not state throughout is left out of the answer rather than
-# reported as zero, so the reader can tell an unstated number from a zero.
+# The declared conversation and the projected usage. Every recorded component of
+# one observation is preserved independently: a component the source did not
+# state is left out of the sums rather than reported as zero.
 def projection_answer_cte(session: String, harness: String, native: String, source: String) -> String:
   "answer AS (SELECT json_object("
   ++ "'session'," ++ C.q(session) ++ ",'harness'," ++ C.q(harness) ++ ",'native'," ++ C.q(native) ++ ",'source'," ++ C.q(source) ++ ","
@@ -152,8 +201,9 @@ def projection_answer_cte(session: String, harness: String, native: String, sour
   ++ "'observations',(SELECT observations FROM counts),"
   ++ "'duplicates',(SELECT records - observations FROM counts),"
   ++ "'conflicts',(SELECT conflicts FROM counts),"
+  ++ "'malformed',(SELECT malformed FROM counts),"
   ++ "'routes',json((SELECT routes FROM routes)),"
-  ++ "'observed',CASE WHEN (SELECT count(input) + count(output) + count(cache_read) + count(cache_write) + count(total_tokens) FROM firsts) > 0 THEN"
+  ++ "'observed',CASE WHEN (SELECT count(input) + count(output) + count(cache_read) + count(cache_write) + count(total_tokens) + count(reasoning) FROM firsts) > 0 THEN"
   ++ " (SELECT json_group_object(name,value) FROM ("
   ++ "  SELECT 'input' AS name, input AS value FROM totals"
   ++ "  UNION ALL SELECT 'output', output FROM totals"
@@ -161,7 +211,7 @@ def projection_answer_cte(session: String, harness: String, native: String, sour
   ++ "  UNION ALL SELECT 'cacheWrite', cache_write FROM totals"
   ++ "  UNION ALL SELECT 'totalTokens', total_tokens FROM totals"
   ++ "  UNION ALL SELECT 'reasoningTokens', reasoning FROM totals) WHERE value IS NOT NULL) END,"
-  ++ "'cost',CASE WHEN (SELECT count(cost_total) FROM firsts) > 0 THEN"
+  ++ "'cost',CASE WHEN (SELECT count(cost_input) + count(cost_output) + count(cost_cache_read) + count(cost_cache_write) + count(cost_total) FROM firsts) > 0 THEN"
   ++ " (SELECT json_group_object(name,value) FROM ("
   ++ "  SELECT 'input' AS name, cost_input AS value FROM totals"
   ++ "  UNION ALL SELECT 'output', cost_output FROM totals"
@@ -170,18 +220,20 @@ def projection_answer_cte(session: String, harness: String, native: String, sour
   ++ "  UNION ALL SELECT 'total', cost_total FROM totals) WHERE value IS NOT NULL) END,"
   ++ "'absent',json((SELECT names FROM absent)),"
   ++ "'invalid',json((SELECT names FROM invalid))) AS document,"
-  ++ " (SELECT count(input) + count(output) + count(cache_read) + count(cache_write) + count(total_tokens) FROM firsts) > 0 AS observed_stated,"
-  ++ " (SELECT count(cost_total) FROM firsts) > 0 AS cost_stated)"
+  ++ " (SELECT count(input) + count(output) + count(cache_read) + count(cache_write) + count(total_tokens) + count(reasoning) FROM firsts) > 0 AS observed_stated,"
+  ++ " (SELECT count(cost_input) + count(cost_output) + count(cost_cache_read) + count(cost_cache_write) + count(cost_total) FROM firsts) > 0 AS cost_stated,"
+  ++ " ((SELECT malformed FROM counts) = 0 AND (SELECT conflicts FROM counts) = 0) AS sums_qualified)"
 
-# A conversation with no stated component carries no observed or cost object.
+# A sum is projected only when the read is complete and no identity conflicts,
+# and an object is removed when the source stated none of its components.
 def projection_select() -> String:
-  " SELECT CASE WHEN observed_stated AND cost_stated THEN document"
-  ++ " WHEN observed_stated THEN json_remove(document,'$.cost')"
-  ++ " WHEN cost_stated THEN json_remove(document,'$.observed')"
+  " SELECT CASE WHEN observed_stated AND sums_qualified AND cost_stated THEN document"
+  ++ " WHEN observed_stated AND sums_qualified THEN json_remove(document,'$.cost')"
+  ++ " WHEN cost_stated AND sums_qualified THEN json_remove(document,'$.observed')"
   ++ " ELSE json_remove(document,'$.observed','$.cost') END FROM answer;"
 
-def project_sql(entries_json: String, session: String, harness: String, native: String, source: String) -> String:
-  projection_entries_cte(entries_json) ++ projection_rows_cte() ++ projection_summary_cte() ++ projection_answer_cte(session,harness,native,source) ++ projection_select()
+def project_sql(malformed: String, entries_json: String, session: String, harness: String, native: String, source: String) -> String:
+  projection_entries_cte(entries_json) ++ projection_rows_cte() ++ projection_summary_cte(malformed) ++ projection_answer_cte(session,harness,native,source) ++ projection_select()
 
 # --- the command ------------------------------------------------------------
 
@@ -190,98 +242,139 @@ def usage_registered(saved: String) -> IO(Unit):
     case SNil{}: IO.die(Unit,2,"Session is not registered; inspect status and the requested ID.")
     case other: IO.pure(Unit,Unit{})
 
-# The extracted entries, or none when the route recorded no conversation file.
-def usage_entries_pick(db: String, file: String, empty: Bool) -> IO(String):
-  match empty:
-    case True{}: IO.pure(String,"[]")
-    case False{}: do IO<String>:
-      text : String <- IO.try(String,Text.Text.read(file))
-      IO.try(String,DB.Sql.query(db,extract_sql(lines_array(Tx.split_lines(text)))))
+# The file's lines as one JSON array, read once for the identity check and the
+# extraction.
+def usage_lines_json(file: String) -> IO(String):
+  do IO<String>:
+    text : String <- IO.try(String,Text.Text.read(file))
+    IO.pure(String,lines_array(Tx.split_lines(text)))
 
-def usage_entries(db: String, +file: String) -> IO(String):
-  usage_entries_pick(db,file,String.is_empty(file))
+def usage_unavailable(db: String, session: String, native: String, harness: String) -> IO(Unit):
+  do IO<Unit>:
+    projection : String <- IO.try(String,DB.Sql.query(db,project_sql("0","[]",session,Tx.trim_nl(harness),native,"")))
+    IO.print(projection)
+
+# A selected file is projected only after its recorded identity matches the
+# session's, and only the distinct entries it records are summed.
+def usage_selected(+db: String, +session: String, +native: String, harness: String, +file: String) -> IO(Unit):
+  do IO<Unit>:
+    +lines_json : String <- usage_lines_json(file)
+    malformed : String <- IO.try(String,DB.Sql.query(db,malformed_sql(lines_json)))
+    +recorded : String <- IO.try(String,DB.Sql.query(db,header_sql(lines_json)))
+    checked : Unit <- usage_recorded_conversation(Tx.trim_nl(recorded),native,String.eq(Tx.trim_nl(recorded),native))
+    entries : String <- IO.try(String,DB.Sql.query(db,extract_sql(lines_json)))
+    projection : String <- IO.try(String,DB.Sql.query(db,project_sql(Tx.trim_nl(malformed),entries,session,Tx.trim_nl(harness),native,file)))
+    IO.print(projection)
 
 def observed_usage(+db: String, +session: String) -> IO(Unit):
   do IO<Unit>:
     found : String <- IO.try(String,Store.apply(db,C.Session{session}))
     present : Unit <- usage_registered(found)
-    harness : String <- IO.try(String,DB.Sql.query(db,"SELECT harness FROM sessions WHERE id=" ++ C.q(session) ++ ";"))
+    +harness : String <- IO.try(String,DB.Sql.query(db,"SELECT harness FROM sessions WHERE id=" ++ C.q(session) ++ ";"))
     +native : String <- IO.try(String,DB.Sql.query(db,"SELECT native FROM sessions WHERE id=" ++ C.q(session) ++ ";"))
     storage : String <- IO.try(String,DB.Sql.query(db,storage_sql(db,session)))
     +file : String <- usage_source(Tx.trim_nl(storage),db ++ ".sessions",Tx.trim_nl(native))
-    entries : String <- usage_entries(db,file)
-    projection : String <- IO.try(String,DB.Sql.query(db,project_sql(entries,session,Tx.trim_nl(harness),Tx.trim_nl(native),file)))
-    IO.print(projection)
+    empty : Bool <- IO.pure(Bool,String.is_empty(file))
+    picked : Unit <- Bool.pick(IO(Unit),empty,usage_unavailable(db,session,Tx.trim_nl(native),Tx.trim_nl(harness)),usage_selected(db,session,Tx.trim_nl(native),Tx.trim_nl(harness),file))
+    IO.pure(Unit,Unit{})
 
 # --- the operative laws -----------------------------------------------------
+# Each law restates the builder, projection or decision the read runs, so a mutation in
+# that function fails the compile of this entry.
 
-# The read looks the conversation up where the launch path records it.
 law observed_usage_reads_the_recorded_session_storage:
   for +db: String
   for +session: String
-  {storage_sql(db,session) == "SELECT CASE WHEN parent IS NULL THEN " ++ C.q(db ++ ".root-sessions") ++ " ELSE " ++ C.q(db ++ ".session-") ++ " || lower(hex(id)) END FROM sessions WHERE id=" ++ C.q(session) ++ ";" : String}
+  {storage_sql(db, session) ==   "SELECT CASE WHEN parent IS NULL THEN " ++ C.q(db ++ ".root-sessions") ++ " ELSE " ++ C.q(db ++ ".session-") ++ " || lower(hex(id)) END FROM sessions WHERE id=" ++ C.q(session) ++ ";" : String}
 
-def observed_usage_reads_the_recorded_session_storage(db,session):
+def observed_usage_reads_the_recorded_session_storage(db, session):
   {==}
 
-# The recorded file is named after the session's recorded native identity.
 law observed_usage_names_the_file_of_the_native_identity:
   for +native: String
-  {source_suffix(native) == "_" ++ native ++ ".jsonl" : String}
+  {source_suffix(native) ==   "_" ++ native ++ ".jsonl" : String}
 
 def observed_usage_names_the_file_of_the_native_identity(native):
   {==}
 
-# No line reads as no entry.
-law observed_usage_empty_lines_form_an_empty_entry_array:
-  {lines_array(Nil{}) == "[]" : String}
+law two_matching_conversations_are_named_and_refused:
+  for first: String
+  for second: String
+  for +native: String
+  {source_ambiguous(first, second, native) ==   "Two recorded conversations match the native identity " ++ native ++ ": " ++ first ++ " and " ++ second ++ "; the read does not choose one. Inspect both and remove the one that is not current, then retry." : String}
 
-def observed_usage_empty_lines_form_an_empty_entry_array():
+def two_matching_conversations_are_named_and_refused(first, second, native):
   {==}
 
-# The lines form one JSON array of escaped strings.
-law observed_usage_lines_form_one_escaped_json_array:
-  {lines_array(Con{"say \"hi\"", Con{"it's", Nil{}}}) == "[" ++ J.string_literal("say \"hi\"") ++ "," ++ J.string_literal("it's") ++ "]" : String}
+law the_recorded_conversation_is_searched_in_both_stores:
+  for primary: String
+  for alternate: String
+  for +native: String
+  {usage_source(primary, alternate, native) == (do IO<String>:
+    +suffix : String <- IO.pure(String,source_suffix(native))
+    +first : String <- IO.try(String,F.Files.find_suffix(primary,suffix))
+    +second : String <- IO.try(String,F.Files.find_suffix(alternate,suffix))
+    source_decide(first,second,native,Bool.not(String.is_empty(first)),Bool.not(String.is_empty(second)))) : IO(String)}
 
-def observed_usage_lines_form_one_escaped_json_array():
+def the_recorded_conversation_is_searched_in_both_stores(primary, alternate, native):
   {==}
 
-# The extraction reads one entry per record that carries the recorded usage,
-# under the identity the record states.
-law observed_usage_extracts_one_entry_per_usage_record:
+law unreadable_lines_are_counted:
   for lines_json: String
-  {extract_sql(lines_json) == "WITH lines AS (SELECT key AS seq, value AS line FROM json_each(" ++ C.q(lines_json) ++ ") WHERE json_valid(value)) "
+  {malformed_sql(lines_json) ==   "WITH raw AS (SELECT value AS line FROM json_each(" ++ C.q(lines_json) ++ ")) "
+  ++ "SELECT count(*) FROM raw WHERE trim(line) <> '' AND NOT json_valid(line);" : String}
+
+def unreadable_lines_are_counted(lines_json):
+  {==}
+
+law the_files_recorded_identity_is_read:
+  for lines_json: String
+  {header_sql(lines_json) ==   "WITH raw AS (SELECT value AS line FROM json_each(" ++ C.q(lines_json) ++ ") WHERE json_valid(value)) "
+  ++ "SELECT coalesce((SELECT json_extract(line,'$.id') FROM raw WHERE json_extract(line,'$.type')='session' LIMIT 1),'');" : String}
+
+def the_files_recorded_identity_is_read(lines_json):
+  {==}
+
+law an_absent_recorded_identity_is_named:
+  for +recorded: String
+  {usage_recorded_name(recorded) ==   Bool.pick(String,String.is_empty(recorded),"(no recorded session header)",recorded) : String}
+
+def an_absent_recorded_identity_is_named(recorded):
+  {==}
+
+law entries_come_from_persisted_assistant_usage_records:
+  for lines_json: String
+  {extract_sql(lines_json) ==   "WITH lines AS (SELECT key AS seq, value AS line FROM json_each(" ++ C.q(lines_json) ++ ") WHERE json_valid(value)) "
   ++ "SELECT coalesce(json_group_array(json_object("
-  ++ "'identity',coalesce(json_extract(line,'$.message.responseId'),json_extract(line,'$.id'),'seq:' || seq),"
+  ++ "'identity',coalesce(json_extract(line,'$.id'),'seq:' || seq),"
   ++ "'provider',json_extract(line,'$.message.provider'),"
   ++ "'model',json_extract(line,'$.message.model'),"
   ++ "'api',json_extract(line,'$.message.api'),"
   ++ "'usage',json_extract(line,'$.message.usage'))),json('[]')) "
-  ++ "FROM (SELECT seq, line FROM lines WHERE json_extract(line,'$.message.usage') IS NOT NULL ORDER BY seq);" : String}
+  ++ "FROM (SELECT seq, line FROM lines WHERE json_extract(line,'$.type')='message'"
+  ++ " AND json_extract(line,'$.message.role')='assistant'"
+  ++ " AND json_type(line,'$.message.usage')='object' ORDER BY seq);" : String}
 
-def observed_usage_extracts_one_entry_per_usage_record(lines_json):
+def entries_come_from_persisted_assistant_usage_records(lines_json):
   {==}
 
-# The shape names the recorded contract, and a conversation that records no
-# usage observation is unavailable. Nothing is classified by the values.
-law observed_usage_shape_names_the_recorded_contract:
-  {shape_sql() == "CASE WHEN observations = 0 THEN 'unavailable' ELSE 'message-usage' END" : String}
+law the_shape_names_the_recorded_contract:
 
-def observed_usage_shape_names_the_recorded_contract():
+  {shape_sql() ==   "CASE WHEN observations = 0 THEN 'unavailable' ELSE 'message-usage' END" : String}
+
+def the_shape_names_the_recorded_contract():
   {==}
 
-# The entries are read from the embedded array, under the recorded identity.
-law observed_usage_entries_come_from_the_embedded_array:
+law entries_are_read_from_the_embedded_array:
   for entries_json: String
-  {projection_entries_cte(entries_json) == "WITH entries AS (SELECT key AS seq, value AS entry FROM json_each(" ++ C.q(entries_json) ++ ") WHERE json_valid(value))," : String}
+  {projection_entries_cte(entries_json) ==   "WITH entries AS (SELECT key AS seq, value AS entry FROM json_each(" ++ C.q(entries_json) ++ ") WHERE json_valid(value))," : String}
 
-def observed_usage_entries_come_from_the_embedded_array(entries_json):
+def entries_are_read_from_the_embedded_array(entries_json):
   {==}
 
-# Every recorded component of one observation is read, and a component that is
-# absent or not a number stays unknown.
-law observed_usage_rows_read_only_recorded_numbers:
-  {projection_rows_cte() == "keyed AS (SELECT seq, entry,"
+law rows_keep_the_route_signature_and_the_recorded_numbers:
+
+  {projection_rows_cte() ==   "keyed AS (SELECT seq, entry,"
   ++ " json_extract(entry,'$.identity') AS identity,"
   ++ " json_extract(entry,'$.provider') AS provider,"
   ++ " json_extract(entry,'$.model') AS model,"
@@ -297,19 +390,21 @@ law observed_usage_rows_read_only_recorded_numbers:
   ++ " CASE WHEN json_type(entry,'$.usage.cost.cacheRead') IN ('integer','real') THEN json_extract(entry,'$.usage.cost.cacheRead') END AS cost_cache_read,"
   ++ " CASE WHEN json_type(entry,'$.usage.cost.cacheWrite') IN ('integer','real') THEN json_extract(entry,'$.usage.cost.cacheWrite') END AS cost_cache_write,"
   ++ " CASE WHEN json_type(entry,'$.usage.cost.total') IN ('integer','real') THEN json_extract(entry,'$.usage.cost.total') END AS cost_total,"
-  ++ " json_extract(entry,'$.usage') AS usage_text FROM entries),"
+  ++ " json_extract(entry,'$.usage') AS usage_text,"
+  ++ " coalesce(json_extract(entry,'$.provider'),'') || char(31) || coalesce(json_extract(entry,'$.model'),'') || char(31)"
+  ++ " || coalesce(json_extract(entry,'$.api'),'') || char(31) || coalesce(json_extract(entry,'$.usage'),'') AS signature"
+  ++ " FROM entries),"
   ++ "ranked AS (SELECT *, row_number() OVER (PARTITION BY identity ORDER BY seq) AS rank FROM keyed),"
   ++ "firsts AS (SELECT * FROM ranked WHERE rank = 1)," : String}
 
-def observed_usage_rows_read_only_recorded_numbers():
+def rows_keep_the_route_signature_and_the_recorded_numbers():
   {==}
 
-# A component is summed only when every observation states it, the components
-# the source did not state throughout are named, the components a record stated
-# without a number are named, and a repeated identity keeps its first record.
-law observed_usage_summary_keeps_unknown_fields_unknown:
-  {projection_summary_cte() == "counts AS (SELECT (SELECT count(*) FROM keyed) AS records, (SELECT count(*) FROM firsts) AS observations,"
-  ++ " (SELECT count(*) FROM (SELECT identity FROM keyed GROUP BY identity HAVING count(DISTINCT usage_text) > 1)) AS conflicts),"
+law the_summary_keeps_unknown_components_unknown:
+  for malformed: String
+  {projection_summary_cte(malformed) ==   "counts AS (SELECT (SELECT count(*) FROM keyed) AS records, (SELECT count(*) FROM firsts) AS observations,"
+  ++ " (SELECT count(*) FROM (SELECT identity FROM keyed GROUP BY identity HAVING count(DISTINCT signature) > 1)) AS conflicts,"
+  ++ " (" ++ malformed ++ ") AS malformed),"
   ++ "shape AS (SELECT " ++ shape_sql() ++ " AS shape FROM counts),"
   ++ "totals AS (SELECT"
   ++ " CASE WHEN count(*) = count(input) THEN sum(input) END AS input,"
@@ -322,15 +417,20 @@ law observed_usage_summary_keeps_unknown_fields_unknown:
   ++ " CASE WHEN count(*) = count(cost_output) THEN sum(cost_output) END AS cost_output,"
   ++ " CASE WHEN count(*) = count(cost_cache_read) THEN sum(cost_cache_read) END AS cost_cache_read,"
   ++ " CASE WHEN count(*) = count(cost_cache_write) THEN sum(cost_cache_write) END AS cost_cache_write,"
-  ++ " CASE WHEN count(*) = count(cost_total) THEN sum(cost_total) END AS cost_total FROM firsts),"
-  ++ "absent AS (SELECT json_group_array(name) AS names FROM ("
+  ++ " CASE WHEN count(*) = count(cost_total) THEN sum(cost_total) END AS cost_total,"
+  ++ " (SELECT count(*) FROM firsts) AS observations FROM firsts),"
+  ++ "absent AS (SELECT coalesce(json_group_array(name),json('[]')) AS names FROM ("
   ++ " SELECT 'input' AS name, (SELECT count(*) FROM firsts) AS total, (SELECT count(input) FROM firsts) AS present"
   ++ " UNION ALL SELECT 'output', (SELECT count(*) FROM firsts), (SELECT count(output) FROM firsts)"
   ++ " UNION ALL SELECT 'cacheRead', (SELECT count(*) FROM firsts), (SELECT count(cache_read) FROM firsts)"
   ++ " UNION ALL SELECT 'cacheWrite', (SELECT count(*) FROM firsts), (SELECT count(cache_write) FROM firsts)"
   ++ " UNION ALL SELECT 'totalTokens', (SELECT count(*) FROM firsts), (SELECT count(total_tokens) FROM firsts)"
   ++ " UNION ALL SELECT 'reasoningTokens', (SELECT count(*) FROM firsts), (SELECT count(reasoning) FROM firsts)"
-  ++ " UNION ALL SELECT 'cost', (SELECT count(*) FROM firsts), (SELECT count(cost_total) FROM firsts)) WHERE present < total),"
+  ++ " UNION ALL SELECT 'cost.input', (SELECT count(*) FROM firsts), (SELECT count(cost_input) FROM firsts)"
+  ++ " UNION ALL SELECT 'cost.output', (SELECT count(*) FROM firsts), (SELECT count(cost_output) FROM firsts)"
+  ++ " UNION ALL SELECT 'cost.cacheRead', (SELECT count(*) FROM firsts), (SELECT count(cost_cache_read) FROM firsts)"
+  ++ " UNION ALL SELECT 'cost.cacheWrite', (SELECT count(*) FROM firsts), (SELECT count(cost_cache_write) FROM firsts)"
+  ++ " UNION ALL SELECT 'cost.total', (SELECT count(*) FROM firsts), (SELECT count(cost_total) FROM firsts)) WHERE present < total),"
   ++ "invalid AS (SELECT coalesce(json_group_array(name),json('[]')) AS names FROM ("
   ++ " SELECT 'input' AS name, (SELECT count(*) FROM keyed WHERE json_extract(entry,'$.usage.input') IS NOT NULL AND json_type(entry,'$.usage.input') NOT IN ('integer','real')) AS n"
   ++ " UNION ALL SELECT 'output', (SELECT count(*) FROM keyed WHERE json_extract(entry,'$.usage.output') IS NOT NULL AND json_type(entry,'$.usage.output') NOT IN ('integer','real'))"
@@ -338,29 +438,33 @@ law observed_usage_summary_keeps_unknown_fields_unknown:
   ++ " UNION ALL SELECT 'cacheWrite', (SELECT count(*) FROM keyed WHERE json_extract(entry,'$.usage.cacheWrite') IS NOT NULL AND json_type(entry,'$.usage.cacheWrite') NOT IN ('integer','real'))"
   ++ " UNION ALL SELECT 'totalTokens', (SELECT count(*) FROM keyed WHERE json_extract(entry,'$.usage.totalTokens') IS NOT NULL AND json_type(entry,'$.usage.totalTokens') NOT IN ('integer','real'))"
   ++ " UNION ALL SELECT 'reasoningTokens', (SELECT count(*) FROM keyed WHERE json_extract(entry,'$.usage.reasoningTokens') IS NOT NULL AND json_type(entry,'$.usage.reasoningTokens') NOT IN ('integer','real'))"
-  ++ " UNION ALL SELECT 'cost', (SELECT count(*) FROM keyed WHERE json_extract(entry,'$.usage.cost') IS NOT NULL AND json_type(entry,'$.usage.cost') <> 'object')) WHERE n > 0),"
+  ++ " UNION ALL SELECT 'cost', (SELECT count(*) FROM keyed WHERE json_extract(entry,'$.usage.cost') IS NOT NULL AND json_type(entry,'$.usage.cost') <> 'object')"
+  ++ " UNION ALL SELECT 'cost.input', (SELECT count(*) FROM keyed WHERE json_extract(entry,'$.usage.cost.input') IS NOT NULL AND json_type(entry,'$.usage.cost.input') NOT IN ('integer','real'))"
+  ++ " UNION ALL SELECT 'cost.output', (SELECT count(*) FROM keyed WHERE json_extract(entry,'$.usage.cost.output') IS NOT NULL AND json_type(entry,'$.usage.cost.output') NOT IN ('integer','real'))"
+  ++ " UNION ALL SELECT 'cost.cacheRead', (SELECT count(*) FROM keyed WHERE json_extract(entry,'$.usage.cost.cacheRead') IS NOT NULL AND json_type(entry,'$.usage.cost.cacheRead') NOT IN ('integer','real'))"
+  ++ " UNION ALL SELECT 'cost.cacheWrite', (SELECT count(*) FROM keyed WHERE json_extract(entry,'$.usage.cost.cacheWrite') IS NOT NULL AND json_type(entry,'$.usage.cost.cacheWrite') NOT IN ('integer','real'))"
+  ++ " UNION ALL SELECT 'cost.total', (SELECT count(*) FROM keyed WHERE json_extract(entry,'$.usage.cost.total') IS NOT NULL AND json_type(entry,'$.usage.cost.total') NOT IN ('integer','real'))) WHERE n > 0),"
   ++ "routes AS (SELECT coalesce(json_group_array(json_object('provider',provider,'model',model,'api',api,'observations',n)),json('[]')) AS routes"
   ++ " FROM (SELECT provider, model, api, count(*) AS n FROM firsts GROUP BY provider, model, api ORDER BY provider, model, api))," : String}
 
-def observed_usage_summary_keeps_unknown_fields_unknown():
+def the_summary_keeps_unknown_components_unknown(malformed):
   {==}
 
-# The answer names the declared conversation, its recorded routes and the
-# components the source did not state throughout.
-law observed_usage_answer_names_the_declared_conversation:
+law the_answer_names_the_declared_conversation:
   for session: String
   for harness: String
   for native: String
   for source: String
-  {projection_answer_cte(session,harness,native,source) == "answer AS (SELECT json_object("
+  {projection_answer_cte(session, harness, native, source) ==   "answer AS (SELECT json_object("
   ++ "'session'," ++ C.q(session) ++ ",'harness'," ++ C.q(harness) ++ ",'native'," ++ C.q(native) ++ ",'source'," ++ C.q(source) ++ ","
   ++ "'shape',(SELECT shape FROM shape),"
   ++ "'records',(SELECT records FROM counts),"
   ++ "'observations',(SELECT observations FROM counts),"
   ++ "'duplicates',(SELECT records - observations FROM counts),"
   ++ "'conflicts',(SELECT conflicts FROM counts),"
+  ++ "'malformed',(SELECT malformed FROM counts),"
   ++ "'routes',json((SELECT routes FROM routes)),"
-  ++ "'observed',CASE WHEN (SELECT count(input) + count(output) + count(cache_read) + count(cache_write) + count(total_tokens) FROM firsts) > 0 THEN"
+  ++ "'observed',CASE WHEN (SELECT count(input) + count(output) + count(cache_read) + count(cache_write) + count(total_tokens) + count(reasoning) FROM firsts) > 0 THEN"
   ++ " (SELECT json_group_object(name,value) FROM ("
   ++ "  SELECT 'input' AS name, input AS value FROM totals"
   ++ "  UNION ALL SELECT 'output', output FROM totals"
@@ -368,7 +472,7 @@ law observed_usage_answer_names_the_declared_conversation:
   ++ "  UNION ALL SELECT 'cacheWrite', cache_write FROM totals"
   ++ "  UNION ALL SELECT 'totalTokens', total_tokens FROM totals"
   ++ "  UNION ALL SELECT 'reasoningTokens', reasoning FROM totals) WHERE value IS NOT NULL) END,"
-  ++ "'cost',CASE WHEN (SELECT count(cost_total) FROM firsts) > 0 THEN"
+  ++ "'cost',CASE WHEN (SELECT count(cost_input) + count(cost_output) + count(cost_cache_read) + count(cost_cache_write) + count(cost_total) FROM firsts) > 0 THEN"
   ++ " (SELECT json_group_object(name,value) FROM ("
   ++ "  SELECT 'input' AS name, cost_input AS value FROM totals"
   ++ "  UNION ALL SELECT 'output', cost_output FROM totals"
@@ -377,31 +481,112 @@ law observed_usage_answer_names_the_declared_conversation:
   ++ "  UNION ALL SELECT 'total', cost_total FROM totals) WHERE value IS NOT NULL) END,"
   ++ "'absent',json((SELECT names FROM absent)),"
   ++ "'invalid',json((SELECT names FROM invalid))) AS document,"
-  ++ " (SELECT count(input) + count(output) + count(cache_read) + count(cache_write) + count(total_tokens) FROM firsts) > 0 AS observed_stated,"
-  ++ " (SELECT count(cost_total) FROM firsts) > 0 AS cost_stated)" : String}
+  ++ " (SELECT count(input) + count(output) + count(cache_read) + count(cache_write) + count(total_tokens) + count(reasoning) FROM firsts) > 0 AS observed_stated,"
+  ++ " (SELECT count(cost_input) + count(cost_output) + count(cost_cache_read) + count(cost_cache_write) + count(cost_total) FROM firsts) > 0 AS cost_stated,"
+  ++ " ((SELECT malformed FROM counts) = 0 AND (SELECT conflicts FROM counts) = 0) AS sums_qualified)" : String}
 
-def observed_usage_answer_names_the_declared_conversation(session,harness,native,source):
+def the_answer_names_the_declared_conversation(session, harness, native, source):
   {==}
 
-# An object the source did not state is removed from the answer.
-law observed_usage_unstated_objects_leave_the_answer:
-  {projection_select() == " SELECT CASE WHEN observed_stated AND cost_stated THEN document"
-  ++ " WHEN observed_stated THEN json_remove(document,'$.cost')"
-  ++ " WHEN cost_stated THEN json_remove(document,'$.observed')"
+law unstated_or_unqualified_sums_leave_the_answer:
+
+  {projection_select() ==   " SELECT CASE WHEN observed_stated AND sums_qualified AND cost_stated THEN document"
+  ++ " WHEN observed_stated AND sums_qualified THEN json_remove(document,'$.cost')"
+  ++ " WHEN cost_stated AND sums_qualified THEN json_remove(document,'$.observed')"
   ++ " ELSE json_remove(document,'$.observed','$.cost') END FROM answer;" : String}
 
-def observed_usage_unstated_objects_leave_the_answer():
+def unstated_or_unqualified_sums_leave_the_answer():
   {==}
 
-# The whole statement is the entry scan, the row projection, the summary and the
-# answer.
-law observed_usage_projection_composes_its_parts:
+law the_projection_composes_its_parts:
+  for malformed: String
   for entries_json: String
   for session: String
   for harness: String
   for native: String
   for source: String
-  {project_sql(entries_json,session,harness,native,source) == projection_entries_cte(entries_json) ++ projection_rows_cte() ++ projection_summary_cte() ++ projection_answer_cte(session,harness,native,source) ++ projection_select() : String}
+  {project_sql(malformed, entries_json, session, harness, native, source) ==   projection_entries_cte(entries_json) ++ projection_rows_cte() ++ projection_summary_cte(malformed) ++ projection_answer_cte(session,harness,native,source) ++ projection_select() : String}
 
-def observed_usage_projection_composes_its_parts(entries_json,session,harness,native,source):
+def the_projection_composes_its_parts(malformed, entries_json, session, harness, native, source):
+  {==}
+
+# The match-bodied decisions are stated over their concrete cases.
+
+law a_second_matching_conversation_is_refused:
+  for first: String
+  for second: String
+  for native: String
+  {source_first_case(first, second, native, True{}) == IO.die(String,2,source_ambiguous(first,second,native)) : IO(String)}
+
+def a_second_matching_conversation_is_refused(first, second, native):
+  {==}
+
+law a_lone_first_conversation_is_used:
+  for first: String
+  for second: String
+  for native: String
+  {source_first_case(first, second, native, False{}) == IO.pure(String,first) : IO(String)}
+
+def a_lone_first_conversation_is_used(first, second, native):
+  {==}
+
+law the_first_store_is_read_when_its_file_matches:
+  for first: String
+  for second: String
+  for native: String
+  {source_decide(first, second, native, True{}, True{}) == source_first_case(first,second,native,True{}) : IO(String)}
+
+def the_first_store_is_read_when_its_file_matches(first, second, native):
+  {==}
+
+law a_missing_first_file_leaves_the_second:
+  for first: String
+  for second: String
+  for native: String
+  for second_present: Bool
+  {source_decide(first, second, native, False{}, second_present) == IO.pure(String,second) : IO(String)}
+
+def a_missing_first_file_leaves_the_second(first, second, native, second_present):
+  {==}
+
+law a_matching_recorded_identity_is_accepted:
+  for recorded: String
+  for +native: String
+  {usage_recorded_conversation(recorded, native, True{}) == IO.pure(Unit,Unit{}) : IO(Unit)}
+
+def a_matching_recorded_identity_is_accepted(recorded, native):
+  {==}
+
+law another_recorded_identity_is_refused:
+  for recorded: String
+  for +native: String
+  {usage_recorded_conversation(recorded, native, False{}) == IO.die(Unit,2,"The selected conversation file records " ++ usage_recorded_name(recorded) ++ " rather than " ++ native ++ "; inspect the session's recorded identity and its conversation files.") : IO(Unit)}
+
+def another_recorded_identity_is_refused(recorded, native):
+  {==}
+
+law no_lines_form_an_empty_entry_array:
+  {lines_array(Nil{}) == "[]" : String}
+
+def no_lines_form_an_empty_entry_array():
+  {==}
+
+law a_line_forms_one_escaped_entry:
+  for +line: String
+  {lines_array(Con{line, Nil{}}) == "[" ++ J.string_literal(line) ++ lines_array_tail(Nil{}) : String}
+
+def a_line_forms_one_escaped_entry(line):
+  {==}
+
+law no_remaining_lines_close_the_entry_array:
+  {lines_array_tail(Nil{}) == "]" : String}
+
+def no_remaining_lines_close_the_entry_array():
+  {==}
+
+law a_remaining_line_extends_the_entry_array:
+  for +line: String
+  {lines_array_tail(Con{line, Nil{}}) == "," ++ J.string_literal(line) ++ lines_array_tail(Nil{}) : String}
+
+def a_remaining_line_extends_the_entry_array(line):
   {==}
