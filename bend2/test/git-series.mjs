@@ -312,3 +312,25 @@ test('CLI parses existing options and refuses credential context or missing exec
   const deny = await child([SOURCE, 'deny-askpass', 'fixture prompt']);
   assert.equal(deny.code, 1); assert.equal(deny.stdout + deny.stderr, '');
 });
+
+test('check resolves a configured exact model and refuses an unmapped one without launching', async () => {
+  const parsed = model.parse(['check', '--registry', registry, '--model-key', 'gpt-6-astra']);
+  assert.equal(parsed.verb, 'check'); assert.equal(parsed.model_key, 'gpt-6-astra');
+  assert.equal(parsed.series_key, null); assert.deepEqual(parsed.command, []);
+  assert.throws(() => model.parse(['check', '--registry', registry]), model.Refusal);
+  assert.throws(() => model.parse(['check', '--registry', registry, '--model-key', 'gpt-6-astra', '--series-key', 'gpt']),
+    /exact model key and no series option/);
+  assert.equal(model.check({ registry, model_key: 'gpt-6-astra' }), undefined);
+  assert.throws(() => model.check({ registry, model_key: 'zai/glm-5.3-flash' }),
+    /Select an explicitly configured model mapping or registered series/);
+  const resolved = await child([SOURCE, 'check', '--registry', registry, '--model-key', 'gpt-6-astra']);
+  assert.equal(resolved.code, 0, resolved.stderr);
+  assert.equal(resolved.stdout + resolved.stderr, '');
+  const unmapped = await child([SOURCE, 'check', '--registry', registry, '--model-key', 'zai/glm-5.3-flash']);
+  assert.equal(unmapped.code, 1); assert.equal(unmapped.stdout, '');
+  assert.equal(unmapped.stderr,
+    'Series Git operation refused: Select an explicitly configured model mapping or registered series.\n');
+  const wrong = await child([SOURCE, 'check', '--registry', registry, '--model-key', 'gpt-6-astra', '--series-key', 'gpt']);
+  assert.equal(wrong.code, 1); assert.equal(wrong.stdout, '');
+  assert.equal(wrong.stderr, 'Series Git operation refused: The check takes an exact model key and no series option.\n');
+});

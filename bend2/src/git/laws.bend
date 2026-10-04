@@ -358,6 +358,20 @@ law m5_tx_single_line_survives_split:
 def m5_tx_single_line_survives_split():
   {==}
 
+# M-5: the tab splitter separates the two fields of one ls-remote record.
+law m5_tx_split_tabs_separates_the_record_fields:
+  {Tx.split_tabs("ab\tcd") == Con{"ab", Con{"cd", Nil{}}} : List<String>}
+
+def m5_tx_split_tabs_separates_the_record_fields():
+  {==}
+
+# M-5: no input fields means no fields out.
+law m5_tx_no_fields_from_empty_tabs:
+  {Tx.split_tabs(SNil{}) == Nil{} : List<String>}
+
+def m5_tx_no_fields_from_empty_tabs():
+  {==}
+
 # M-5: joining no lines answers the empty string.
 law m5_tx_join_empty_is_empty:
   for +sep: String
@@ -1088,6 +1102,60 @@ law m18_the_destination_position_holds_the_declared_remote:
   {List.head(&1, String, List.tail(&1, String, L.push_argv(branch, remote))) == Some{remote} : Maybe<String>}
 
 def m18_the_destination_position_holds_the_declared_remote(branch, remote):
+  {==}
+
+# ---------------------------------------------------------------------------
+# M-18: the remote-tip read runs at the destination the argv names and reports
+# only what that remote advertised for the requested ref.
+
+# M-18: the requested branch is named as its own full ref.
+law m18_the_remote_tip_names_the_requested_branch_ref:
+  for branch: String
+  {L.tip_ref(branch) == "refs/heads/" ++ branch : String}
+
+def m18_the_remote_tip_names_the_requested_branch_ref(branch):
+  {==}
+
+# M-18: the read argv names the read verb, the declared remote and the
+# requested ref, and nothing reads a default remote.
+law m18_the_remote_tip_read_names_the_declared_remote_and_ref:
+  for branch: String
+  for remote: String
+  {L.ls_remote_argv(branch, remote) == Con{"ls-remote", Con{remote, Con{"refs/heads/" ++ branch, Nil{}}}} : List<String>}
+
+def m18_the_remote_tip_read_names_the_declared_remote_and_ref(branch, remote):
+  {==}
+
+# M-18: the read effect runs exactly that argv.
+law m18_the_remote_tip_read_runs_the_declared_argv:
+  for repo: String
+  for branch: String
+  for remote: String
+  {L.remote_tip_git(repo, branch, remote) == P.runGit(repo, L.ls_remote_argv(branch, remote)) : IO(T.GitOut)}
+
+def m18_the_remote_tip_read_runs_the_declared_argv(repo, branch, remote):
+  {==}
+
+# M-18: an answer advertising the requested ref reads back as its object ID.
+law m18_the_advertised_ref_reads_back_as_its_object:
+  {L.tip_object("0123456789abcdef0123456789abcdef01234567\trefs/heads/main", "refs/heads/main") == "0123456789abcdef0123456789abcdef01234567" : String}
+
+def m18_the_advertised_ref_reads_back_as_its_object():
+  {==}
+
+# M-18: an answer advertising another ref reads back as no advertisement of
+# the requested one.
+law m18_another_advertised_ref_reads_back_absent:
+  {L.tip_object("0123456789abcdef0123456789abcdef01234567\trefs/heads/other", "refs/heads/main") == "" : String}
+
+def m18_another_advertised_ref_reads_back_absent():
+  {==}
+
+# M-18: an empty answer reads back as no advertisement.
+law m18_an_empty_remote_answer_reads_back_absent:
+  {L.tip_object(SNil{}, "refs/heads/main") == "" : String}
+
+def m18_an_empty_remote_answer_reads_back_absent():
   {==}
 
 # ---------------------------------------------------------------------------
