@@ -19,6 +19,7 @@ import os
 import pathlib
 import select
 import signal
+import sqlite3
 import subprocess
 import sys
 import time
@@ -37,6 +38,12 @@ def git(*args, cwd):
 
 def note(message):
     print(message, file=sys.stderr, flush=True)
+
+def message_rows(fixture):
+    with sqlite3.connect(fixture.db) as database:
+        database.row_factory = sqlite3.Row
+        return [dict(row) for row in database.execute(
+            'SELECT seq,id,sender,recipient,kind,body,receipt FROM messages ORDER BY seq')]
 
 def report_pid(fixture):
     """The fixture reports its own PID so the probe can kill each harness child.
@@ -165,6 +172,7 @@ def main():
             'worktrees': git('worktree', 'list', '--porcelain', cwd=repo).splitlines(),
             'branches': {n: git('rev-parse', 'bend2/' + n, cwd=repo) for n in NAMES},
             'inbox': {n: fixture.coord('inbox', n) for n in NAMES},
+            'messages': message_rows(fixture),
         }
 
         # Include retained process owners and their replacement observers.
@@ -214,10 +222,12 @@ def main():
         # native for the session is ever admitted while the first is alive.
         starts = {name: [] for name in NAMES}
         controls = {}
+        recovery_receives = []
 
         for name in NAMES:
             note('resume ' + name)
             producer = fixture.spawn(*fixture.receive_args(name))
+            recovery_receives.append((name, producer))
             resumed = accept_any(fixture, producer)
             stream, started = resumed
             if started['session'] != name:
@@ -245,7 +255,12 @@ def main():
             fixture.action(stream)
         for child in fixture.children:
             child.communicate()
-        evidence['afterCompletion'] = {'ownedProcesses': owned_processes(directory)}
+        evidence['afterCompletion'] = {
+            'ownedProcesses': owned_processes(directory),
+            'recoveryReceives': [{'session': name, 'pid': child.pid, 'exit': child.returncode}
+                                 for name, child in recovery_receives],
+            'messages': message_rows(fixture),
+        }
 
         for name in NAMES:
             entry = evidence['sessions'][name]

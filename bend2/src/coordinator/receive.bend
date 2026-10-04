@@ -139,16 +139,24 @@ def observed(+db: String, +session: String, +id: String, +log: String, cursor: S
     gone : Bool <- Turn.refusal(attempt ++ "/native",Bool.not(String.is_empty(native)),outcome)
     complete_or_restart(db,session,id,log,attempt ++ "/native.stderr",cursor,native,cwd,handle,lock,outcome,deliveries,again,Bool.and(gone,Bool.not(closed)))
 
-def observed_output(db: String, session: String, id: String, log: String, cursor: String, native: String, cwd: String, attempt: String, handle: U32, lock: Maybe<U32>, observation: Turn.Outcome & List<Chan(Result<&1,&1,U32 & String,String>)>, again: Unit -> IO(Result<&1,&1,U32 & String,Unit>)) -> IO(Result<&1,&1,U32 & String,Unit>):
+def reconciled_cursor(cursor: String, adopted: Bool, outcome: Turn.Outcome) -> String:
+  match adopted:
+    case False{}: cursor
+    case True{}: match outcome:
+      case Turn.Ended{status,event,error}:
+        Bool.pick(String,Bool.and(String.eq(status,"unknown after keeper loss"),Bool.and(String.is_empty(event),String.is_empty(error))),"0",cursor)
+
+def observed_output(db: String, session: String, id: String, log: String, cursor: String, native: String, cwd: String, attempt: String, handle: U32, lock: Maybe<U32>, observation: Turn.Outcome & List<Chan(Result<&1,&1,U32 & String,String>)>, again: Unit -> IO(Result<&1,&1,U32 & String,Unit>), adopted: Bool) -> IO(Result<&1,&1,U32 & String,Unit>):
   (outcome,deliveries)=observation
-  observed(db,session,id,log,cursor,native,cwd,attempt,handle,lock,outcome,deliveries,again)
+  +current=outcome
+  observed(db,session,id,log,reconciled_cursor(cursor,adopted,current),native,cwd,attempt,handle,lock,current,deliveries,again)
 
 def started(+db: String, +session: String, +id: String, +log: String, cursor: String, native: String, cwd: String, +attempt: String, harness: String, lock: U32, start: P.RetainedStart, again: Unit -> IO(Result<&1,&1,U32 & String,Unit>)) -> IO(Result<&1,&1,U32 & String,Unit>):
   match start:
     case P.Retained{+handle}: do IO<Result<&1,&1,U32 & String,Unit>>:
       reconciled : Unit <- Stop.started(db,session,id,attempt)
       observation : Turn.Outcome & List<Chan(Result<&1,&1,U32 & String,String>)> <- Turn.retained_output(db,session,id,log,harness,attempt,handle)
-      observed_output(db,session,id,log,cursor,native,cwd,attempt,handle,Some{lock},observation,again)
+      observed_output(db,session,id,log,cursor,native,cwd,attempt,handle,Some{lock},observation,again,False{})
     case P.Unstarted{error}: do IO<Result<&1,&1,U32 & String,Unit>>:
       +outcome : Turn.Outcome <- IO.pure(Turn.Outcome,Turn.Ended{"start failed","","Player process could not start: " ++ error})
       exited : Unit <- Turn.record_exit(db,session,id,log,outcome)
@@ -194,11 +202,11 @@ def acquired_pending(+db: String, +session: String, cmd: String, model: String, 
     +cursor : String <- IO.try(String,DB.Sql.query(db,"SELECT coalesce(max(seq),0) FROM messages WHERE recipient=" ++ C.q(session) ++ " AND receipt IS NULL;"))
     selected(db,session,cmd,model,effort,cwd,log,lock,cursor,Bool.not(String.eq(cursor,"0\n")),again)
 
-def observe_guarded(+db: String, +session: String, +id: String, cursor: String, cmd: String, model: String, effort: String, +cwd: String, +log: String, harness: String, +directory: String, native: String, +handle: U32, lock: Maybe<U32>, again: Unit -> IO(Result<&1,&1,U32 & String,Unit>)) -> IO(Result<&1,&1,U32 & String,Unit>):
+def observe_guarded(+db: String, +session: String, +id: String, cursor: String, cmd: String, model: String, effort: String, +cwd: String, +log: String, harness: String, +directory: String, native: String, +handle: U32, lock: Maybe<U32>, again: Unit -> IO(Result<&1,&1,U32 & String,Unit>), adopted: Bool) -> IO(Result<&1,&1,U32 & String,Unit>):
   do IO<Result<&1,&1,U32 & String,Unit>>:
     reconciled : Unit <- Stop.reconcile(db,session,id,directory)
     observation : Turn.Outcome & List<Chan(Result<&1,&1,U32 & String,String>)> <- Turn.retained_output(db,session,id,log,harness,directory,handle)
-    observed_output(db,session,id,log,cursor,native,cwd,directory,handle,lock,observation,again)
+    observed_output(db,session,id,log,cursor,native,cwd,directory,handle,lock,observation,again,adopted)
 
 def recover_owned(+db: String, +session: String, +directory: String, +lock: U32, args: List<&2,String>, again: Unit -> IO(Result<&1,&1,U32 & String,Unit>)) -> IO(Result<&1,&1,U32 & String,Unit>):
   match args:
@@ -206,7 +214,7 @@ def recover_owned(+db: String, +session: String, +directory: String, +lock: U32,
       do IO<Result<&1,&1,U32 & String,Unit>>:
         valid : Unit <- Stop.error_result("Recorded native recovery arguments differ from the current session; retain the attempt and inspect its manifest.",Bool.and(String.eq(flag,"--recover-receive"),Bool.and(String.eq(db,saved_db),Bool.and(String.eq(session,saved_session),String.eq(directory,saved_directory)))))
         handle : U32 <- IO.try(U32,P.ProcessChild.attach_owned(directory,lock))
-        observe_guarded(db,session,id,cursor,cmd,model,effort,cwd,log,harness,directory,native,handle,Some{lock},again)
+        observe_guarded(db,session,id,cursor,cmd,model,effort,cwd,log,harness,directory,native,handle,Some{lock},again,True{})
     case other: IO.pure(Result<&1,&1,U32 & String,Unit>,Fail{(2,"Recorded native recovery arguments are invalid; retain the attempt and inspect its manifest.")})
 
 def acquired_attempt(db: String, session: String, cmd: String, model: String, effort: String, cwd: String, log: String, lock: U32, directory: String, recovery: Maybe<String>, again: Unit -> IO(Result<&1,&1,U32 & String,Unit>)) -> IO(Result<&1,&1,U32 & String,Unit>):
@@ -252,10 +260,10 @@ def attach_recorded(directory: String, next: @+handle: U32 -> IO(Result<&1,&1,U3
     handle : U32 <- IO.try(U32,P.ProcessChild.attach(directory))
     next(handle)
 
-def observe_attached(+db: String, +session: String, id: String, cursor: String, +cmd: String, +model: String, +effort: String, +cwd: String, +log: String, harness: String, directory: String, native: String, +handle: U32) -> IO(Result<&1,&1,U32 & String,Unit>):
-  observe_guarded(db,session,id,cursor,cmd,model,effort,cwd,log,harness,directory,native,handle,None{},u => run(db,session,cmd,model,effort,cwd,log,""))
+def observe_attached(+db: String, +session: String, id: String, cursor: String, +cmd: String, +model: String, +effort: String, +cwd: String, +log: String, harness: String, directory: String, native: String, +handle: U32, again: Unit -> IO(Result<&1,&1,U32 & String,Unit>)) -> IO(Result<&1,&1,U32 & String,Unit>):
+  observe_guarded(db,session,id,cursor,cmd,model,effort,cwd,log,harness,directory,native,handle,None{},again,False{})
 
 # The keeper invokes this with the original attempt and inbox cutoff after the
 # observer exits. Attachment never launches a native process or sends its prompt.
-def recover(db: String, session: String, id: String, cursor: String, cmd: String, model: String, effort: String, cwd: String, log: String, harness: String, +directory: String, native: String) -> IO(Result<&1,&1,U32 & String,Unit>):
-  attach_recorded(directory,observe_attached(db,session,id,cursor,cmd,model,effort,cwd,log,harness,directory,native))
+def recover(+db: String, +session: String, id: String, cursor: String, +cmd: String, +model: String, +effort: String, +cwd: String, +log: String, harness: String, +directory: String, native: String) -> IO(Result<&1,&1,U32 & String,Unit>):
+  attach_recorded(directory,handle => observe_attached(db,session,id,cursor,cmd,model,effort,cwd,log,harness,directory,native,handle,u => run(db,session,cmd,model,effort,cwd,log,"")))
