@@ -384,6 +384,68 @@ class Receive(unittest.TestCase):
         self.assertEqual(json.loads((self.directory / 'parent-report-delivered').read_text())['body'], body)
         self.assertTrue((self.directory / 'parent-question-complete').exists())
 
+    def test_completed_attempt_acknowledged_while_continuation_live(self):
+        self.player()
+        self.coord('message', 'first', 'root', 'parent', 'task', 'Complete the original input.')
+        self.connect('parent')
+        observer = self.spawn(*self.receive_args('parent'))
+        original, _ = self.accept('parent')
+        with sqlite3.connect(self.db) as database:
+            attempt = pathlib.Path(database.execute(
+                "SELECT directory FROM executions WHERE session='parent' AND mode='retained'"
+            ).fetchone()[0])
+        self.coord('message', 'second', 'root', 'parent', 'task', 'The exact queued input.')
+        self.action(original, body='Original result complete.')
+        self.assertEqual(original.readline(), b'')
+        continuation, resumed = self.accept('parent')
+        self.assertIn('[id: second]', resumed['prompt'])
+        self.assertNotIn('[id: first]', resumed['prompt'])
+        # The completed attempt settles independently of the live continuation.
+        self.eventually(lambda: (attempt / 'acknowledged').exists(),
+                        'completed attempt was not acknowledged while its continuation ran')
+        reports = [turn['reportBody'] for turn in self.coord('turns', 'parent')]
+        self.assertIn('Original result complete.', reports)
+        self.assertIsNone(observer.poll())
+        self.action(continuation, body='Queued result complete.')
+        self.assertEqual(continuation.readline(), b'')
+        self.finish(observer)
+        self.assertEqual([turn['reportBody'] for turn in self.coord('turns', 'parent')],
+                         ['Original result complete.', 'Queued result complete.'])
+
+    def test_ack_failure_still_joins_queued_continuation(self):
+        self.player()
+        self.coord('message', 'first', 'root', 'parent', 'task', 'Complete the original input.')
+        self.connect('parent')
+        observer = self.spawn(*self.receive_args('parent'))
+        original, _ = self.accept('parent')
+        with sqlite3.connect(self.db) as database:
+            attempt = pathlib.Path(database.execute(
+                "SELECT directory FROM executions WHERE session='parent' AND mode='retained'").fetchone()[0])
+        # Stage an actual host ACK failure: the acknowledgment marker path
+        # exists as a directory, so the real marker write fails at the
+        # filesystem layer while the wrapper stays the production path.
+        (attempt / 'acknowledged').mkdir()
+        self.coord('message', 'second', 'root', 'parent', 'task', 'The exact queued input.')
+        self.action(original, body='Original result complete.')
+        self.assertEqual(original.readline(), b'')
+        continuation, resumed = self.accept('parent')
+        self.assertIn('[id: second]', resumed['prompt'])
+        # Hold the continuation live past the first attempt's acknowledge, so
+        # a halt-before-join would kill the observer while work remains.
+        self.action(continuation, body='Queued result complete.', hold_exit=True)
+        self.assertEqual(json.loads(continuation.readline()), {'terminal_written': True})
+        time.sleep(1)
+        self.assertIsNone(observer.poll(),
+                         'observer died on ACK failure instead of joining its live continuation')
+        self.action(continuation)
+        self.assertEqual(continuation.readline(), b'')
+        output, error = self.finish(observer, ok=False)
+        self.assertFalse((attempt / 'acknowledged').is_file(),
+                         'a fabricated acknowledged marker appeared after an ACK failure')
+        self.assertEqual([turn['reportBody'] for turn in self.coord('turns', 'parent')],
+                         ['Original result complete.', 'Queued result complete.'])
+        self.assertIn('File exists', output + error)
+
     def test_native_root_question_reports_unsupported_without_answering(self):
         self.coord('attach', 'root', 'omp', '', '')
         self.coord('message', 'root-question-task', 'operator', 'root', 'task', 'Inspect the native request.')
