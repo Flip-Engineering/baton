@@ -120,8 +120,8 @@ Checked against operating needs observed in this run and the repository:
   (`audit-surface-task-1`, visible in `baton2 $DB pending`). No task lost
   ownership in this run. A derived outstanding-work view remains conditional
   on tasks actually losing ownership.
-- Finding correction/supersession relation. The corpus holds 1 finding and 0
-  promotions; no reader used a superseded claim. A stored correction
+- Finding correction/supersession relation. The corpus holds 1 finding and 1
+  promotion (audit-kimi-promote-1); no reader used a superseded claim. A stored correction
   relation remains conditional on repeated use of a superseded claim. A
   correcting finding can already retain the original evidence under the
   current schema.
