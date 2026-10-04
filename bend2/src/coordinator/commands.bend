@@ -39,6 +39,7 @@ type Command is Data:
   Land{player: String, repo: String, target: String}
   LandChecked{player: String, repo: String, target: String, check: String, files: String}
   Push{repo: String, branch: String, remote: String}
+  RemoteTip{repo: String, branch: String, remote: String}
   Status{}
   Players{}
   LegacySubordinates{}
@@ -327,6 +328,7 @@ def sql(command: Command) -> String:
     case Land{player,repo,target}: ""
     case LandChecked{player,repo,target,check,files}: ""
     case Push{repo,branch,remote}: ""
+    case RemoteTip{repo,branch,remote}: ""
     case Recruit{id,parent,harness,model,effort,repo,branch,path,base}: ""
     case Worktree{id}: ""
     case KnowledgeRecord{id,author,claim,evidence,limits}: ""
@@ -367,7 +369,7 @@ def parse(args: List<String>) -> Command:
       Bool.pick(Command, String.eq(verb,"land"),Land{id,one,two},
       Bool.pick(Command, String.eq(verb,"push"),Push{id,one,two},
       Bool.pick(Command, String.eq(verb,"ask"),Ask{id,one,two},
-      Bool.pick(Command, String.eq(verb,"ask-file"),AskFile{id,one,two},Invalid{})))))))))))))
+      Bool.pick(Command, String.eq(verb,"ask-file"),AskFile{id,one,two},Bool.pick(Command, String.eq(verb,"remote-tip"),RemoteTip{id,one,two},Invalid{}))))))))))))))
     case +verb <> +id <> +one <> +two <> +three <> Nil{}:
       Bool.pick(Command,String.eq(verb,"section"),Section{id,one,two,three},Bool.pick(Command, String.eq(verb,"ensemble-member"),EnsembleMember{id,one,two,three},Bool.pick(Command, String.eq(verb,"attach"),Attach{id,one,two,three},Invalid{})))
     case +verb <> +id <> +one <> +two <> +three <> +four <> Nil{}:
@@ -403,4 +405,15 @@ law message_parser_preserves_the_complete_body:
   {parse(["message",id,sender,recipient,kind,body]) == Message{id,sender,recipient,kind,body} : Command}
 
 def message_parser_preserves_the_complete_body(id,sender,recipient,kind,body):
+  {==}
+
+# The declared remote read keeps the repository, branch and remote the caller
+# supplied, in that order, and reads no default.
+law remote_tip_parser_keeps_the_declared_names:
+  for +repo: String
+  for +branch: String
+  for +remote: String
+  {parse(["remote-tip",repo,branch,remote]) == RemoteTip{repo,branch,remote} : Command}
+
+def remote_tip_parser_keeps_the_declared_names(repo,branch,remote):
   {==}

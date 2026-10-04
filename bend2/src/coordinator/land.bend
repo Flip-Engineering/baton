@@ -89,3 +89,41 @@ def push_branch(+repo: String, +branch: String, +remote: String) -> IO(Unit):
   do IO<Unit>:
     r : G.GitOut <- GitLand.push_git(repo, branch, remote)
     push_pick(r, branch, remote)
+
+# The declared remote read's answer. The status names which outcome the read
+# reached, and every answer names the declared repository, branch and remote.
+def tip_json(status: String, tail: String, repo: String, branch: String, remote: String) -> IO(Unit):
+  IO.print("{\"status\":" ++ J.string_literal(status) ++ ",\"repo\":" ++ J.string_literal(repo) ++ ",\"branch\":" ++ J.string_literal(branch) ++ ",\"remote\":" ++ J.string_literal(remote) ++ tail)
+
+def tip_object_tail(object: String) -> String:
+  ",\"objectId\":" ++ J.string_literal(object) ++ "}"
+
+# A failed read names the command whose message is in the coordinator log and
+# the status git exited with. Nothing here reads a local ref.
+def tip_exit_tail(code: U32, remote: String) -> String:
+  ",\"exit\":" ++ U32.show(code) ++ ",\"reason\":" ++ J.string_literal(Tx.cmd_failed(Tx.str_cat("git ls-remote ", remote))) ++ "}"
+
+def tip_present(present: Bool, object: String, +repo: String, +branch: String, +remote: String) -> IO(Unit):
+  match present:
+    case True{}: tip_json("advertised", tip_object_tail(object), repo, branch, remote)
+    case False{}: tip_json("absent", "}", repo, branch, remote)
+
+def tip_zero(zero: Bool, code: U32, +object: String, +repo: String, +branch: String, +remote: String) -> IO(Unit):
+  match zero:
+    case True{}: tip_present(Bool.not(String.is_empty(object)), object, repo, branch, remote)
+    case False{}: tip_json("failed", tip_exit_tail(code, remote), repo, branch, remote)
+
+def tip_run(+code: U32, object: String, +repo: String, +branch: String, +remote: String) -> IO(Unit):
+  tip_zero(U32.is_eq(code, 0), code, object, repo, branch, remote)
+
+def tip_pick(r: G.GitOut, +repo: String, +branch: String, +remote: String) -> IO(Unit):
+  match r:
+    case G.GRun{code, out}: tip_run(code, GitLand.tip_object(out, GitLand.tip_ref(branch)), repo, branch, remote)
+    case G.GBroken{detail}: IO.die(Unit, 1, detail)
+
+# The declared remote-tip read: report the object the named remote advertises
+# for the named branch, the absence of that branch, or the read's own failure.
+def remote_tip(+repo: String, +branch: String, +remote: String) -> IO(Unit):
+  do IO<Unit>:
+    r : G.GitOut <- GitLand.remote_tip_git(repo, branch, remote)
+    tip_pick(r, repo, branch, remote)

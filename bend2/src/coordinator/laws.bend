@@ -56,8 +56,11 @@
 # M-17 bound: Turn.combine, Turn.send_result, Turn.remember, Turn.result_missing, Turn.diagnostic
 #      and Receive.exit_status. A failed step stays the answer, and an unsettled turn reports to
 #      its parent or names the log and inbox that continue it.
-# M-18 bound: L.push_argv and L.push_git. The push argv names the declared remote at the
-#      destination position, and the push effect runs exactly that argv.
+# M-18 bound: L.push_argv and L.push_git, L.tip_ref, L.ls_remote_argv, L.tip_object and
+#      L.remote_tip_git, and Land.tip_json, Land.tip_object_tail, Land.tip_exit_tail, Land.tip_present,
+#      Land.tip_zero, Land.tip_run and Land.tip_pick. The push argv names the declared remote at the
+#      destination position; the remote-tip argv names the declared remote and one requested ref, and
+#      each read answer names the advertised object, the absent ref or the observed exit status.
 # The adapter dispatch is bound under M-2, M-5 and M-11: Turn.input and Turn.launch select the
 # adapter by the harness the session recorded, and Turn.claude_launch and Turn.muse_launch start a
 # session when none is recorded and carry the recorded one otherwise.
@@ -107,6 +110,7 @@ import ../json/canonical.bend as J
 import ../git/laws.bend as GitLaws
 import ../git/types.bend as T
 import ../git/text.bend as Tx
+import ../git/land.bend as GitLand
 import ../harness/laws.bend as HarnessLaws
 
 # ---------------------------------------------------------------------------
@@ -774,6 +778,90 @@ law m2_push_answer_follows_the_observed_exit_code:
   {Land.push_pick(T.GRun{code, out}, branch, remote) == Land.push_ok(U32.is_eq(code, 0), branch, remote) : IO(Unit)}
 
 def m2_push_answer_follows_the_observed_exit_code(code, out, branch, remote):
+  {==}
+
+# ---------------------------------------------------------------------------
+# M-18: the declared remote-tip read answers what that remote advertised, the
+# absence of the requested ref, or the status the read failed with. Every
+# answer names the repository, branch and remote the caller declared.
+
+# M-18: an advertised tip is answered with its own object ID.
+law m18_the_advertised_remote_tip_names_its_object:
+  for +object: String
+  for +repo: String
+  for +branch: String
+  for +remote: String
+  {Land.tip_present(True{}, object, repo, branch, remote) == Land.tip_json("advertised", Land.tip_object_tail(object), repo, branch, remote) : IO(Unit)}
+
+def m18_the_advertised_remote_tip_names_its_object(object, repo, branch, remote):
+  {==}
+
+# M-18: an absent branch is answered absent, with no object.
+law m18_an_absent_remote_branch_is_answered_absent:
+  for +object: String
+  for +repo: String
+  for +branch: String
+  for +remote: String
+  {Land.tip_present(False{}, object, repo, branch, remote) == Land.tip_json("absent", "}", repo, branch, remote) : IO(Unit)}
+
+def m18_an_absent_remote_branch_is_answered_absent(object, repo, branch, remote):
+  {==}
+
+# M-2: a zero exit answers the advertisement the read returned.
+law m2_a_zero_exit_remote_read_answers_its_advertisement:
+  for +code: U32
+  for +object: String
+  for +repo: String
+  for +branch: String
+  for +remote: String
+  {Land.tip_zero(True{}, code, object, repo, branch, remote) == Land.tip_present(Bool.not(String.is_empty(object)), object, repo, branch, remote) : IO(Unit)}
+
+def m2_a_zero_exit_remote_read_answers_its_advertisement(code, object, repo, branch, remote):
+  {==}
+
+# M-2: a failed read answers its own exit status instead of an advertisement.
+law m2_a_failed_remote_read_answers_its_own_exit:
+  for +code: U32
+  for +object: String
+  for +repo: String
+  for +branch: String
+  for +remote: String
+  {Land.tip_zero(False{}, code, object, repo, branch, remote) == Land.tip_json("failed", Land.tip_exit_tail(code, remote), repo, branch, remote) : IO(Unit)}
+
+def m2_a_failed_remote_read_answers_its_own_exit(code, object, repo, branch, remote):
+  {==}
+
+# M-2: the failed-read tail carries the observed exit status and names the
+# command whose message is in the coordinator log.
+law m2_a_failed_remote_read_names_the_command_and_status:
+  for +code: U32
+  for +remote: String
+  {Land.tip_exit_tail(code, remote) == ",\"exit\":" ++ U32.show(code) ++ ",\"reason\":" ++ J.string_literal(Tx.cmd_failed(Tx.str_cat("git ls-remote ", remote))) ++ "}" : String}
+
+def m2_a_failed_remote_read_names_the_command_and_status(code, remote):
+  {==}
+
+# M-2: a read that ran is answered from its own exit code and answer text.
+law m2_the_remote_tip_answer_follows_the_observed_read:
+  for +code: U32
+  for +out: String
+  for +repo: String
+  for +branch: String
+  for +remote: String
+  {Land.tip_pick(T.GRun{code, out}, repo, branch, remote) == Land.tip_run(code, GitLand.tip_object(out, GitLand.tip_ref(branch)), repo, branch, remote) : IO(Unit)}
+
+def m2_the_remote_tip_answer_follows_the_observed_read(code, out, repo, branch, remote):
+  {==}
+
+# M-2: a git executable that could not run answers its own observed detail.
+law m2_an_unusable_git_answers_its_own_detail_for_the_read:
+  for +detail: String
+  for +repo: String
+  for +branch: String
+  for +remote: String
+  {Land.tip_pick(T.GBroken{detail}, repo, branch, remote) == IO.die(Unit, 1, detail) : IO(Unit)}
+
+def m2_an_unusable_git_answers_its_own_detail_for_the_read(detail, repo, branch, remote):
   {==}
 
 # M-14: a Git refusal is rendered with its own vocabulary row, so the caller
