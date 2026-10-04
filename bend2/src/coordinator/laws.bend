@@ -1190,3 +1190,16 @@ law stopped_input_reports_use_the_recorded_upstream_recipient:
 
 def stopped_input_reports_use_the_recorded_upstream_recipient(id):
   {==}
+
+# The OMP setup filter decision (issue #662) reads the server's own answer, and
+# only the exact successful full-category delta selection activates the
+# projection: the response must carry the set_event_filter command, success,
+# an explicitly echoed null events value and delta message updates. A
+# successful answer without that selection is unconfirmed, a failed answer is
+# refused, and every other line leaves the mode unchanged. The nested CASE
+# keeps json extraction behind the validity check.
+law omp_filter_activation_requires_the_complete_echoed_selection:
+  {Turn.filter_mode_sql("x") == "SELECT CASE WHEN json_valid('x') THEN CASE WHEN json_extract('x','$.type')='response' AND json_extract('x','$.id')='baton:filter' AND json_extract('x','$.command')='set_event_filter' THEN CASE WHEN json_extract('x','$.success')=1 THEN CASE WHEN json_type('x','$.data.events')='null' AND json_extract('x','$.data.messageUpdates')='delta' THEN 'delta' ELSE 'unconfirmed' END ELSE 'refused' END ELSE '' END ELSE '' END;" : String}
+
+def omp_filter_activation_requires_the_complete_echoed_selection():
+  {==}

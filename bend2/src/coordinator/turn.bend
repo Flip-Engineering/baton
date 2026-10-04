@@ -208,13 +208,21 @@ def frame_kind(db: String, line: String, omp: Bool) -> IO(String):
 def record_frame(log: String, line: String, kind: String) -> IO(Result<&1,&1,U32 & String,Unit>):
   append_frame(log,line,Bool.not(String.eq(kind,"message_update\n")))
 
-# The response to the setup filter names the active mode in its echoed data; a
-# response without the echo refused the request. Every other line leaves the
-# turn's mode unchanged.
+# The projection is active only when the server answered the set_event_filter
+# request successfully with the complete requested selection: an explicitly
+# echoed null events value forwards every category and a delta messageUpdates
+# value replaces accumulated snapshots. A successful answer without that
+# selection is unconfirmed, an unsuccessful answer is refused, and a response
+# for another command or any other line leaves the turn's mode unchanged. The
+# nested CASE keeps json extraction behind the validity check, so unrelated
+# non-JSON native output never becomes an observer error.
+def filter_mode_sql(+line: String) -> String:
+  "SELECT CASE WHEN json_valid(" ++ C.q(line) ++ ") THEN CASE WHEN json_extract(" ++ C.q(line) ++ ",'$.type')='response' AND json_extract(" ++ C.q(line) ++ ",'$.id')='baton:filter' AND json_extract(" ++ C.q(line) ++ ",'$.command')='set_event_filter' THEN CASE WHEN json_extract(" ++ C.q(line) ++ ",'$.success')=1 THEN CASE WHEN json_type(" ++ C.q(line) ++ ",'$.data.events')='null' AND json_extract(" ++ C.q(line) ++ ",'$.data.messageUpdates')='delta' THEN 'delta' ELSE 'unconfirmed' END ELSE 'refused' END ELSE '' END ELSE '' END;"
+
 def filter_mode(db: String, +line: String, omp: Bool) -> IO(String):
   match omp:
     case False{}: IO.pure(String,"")
-    case True{}: IO.try(String,DB.Sql.query(db,"SELECT CASE WHEN json_valid(" ++ C.q(line) ++ ") AND json_extract(" ++ C.q(line) ++ ",'$.type')='response' AND json_extract(" ++ C.q(line) ++ ",'$.id')='baton:filter' THEN coalesce(json_extract(" ++ C.q(line) ++ ",'$.data.messageUpdates'),'refused') ELSE '' END;"))
+    case True{}: IO.try(String,DB.Sql.query(db,filter_mode_sql(line)))
 
 def record_filter(log: String, +state: String, omp: Bool) -> IO(Result<&1,&1,U32 & String,Unit>):
   match omp:

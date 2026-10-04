@@ -41,21 +41,24 @@ def filter_request() -> String:
 def prompt(text: String) -> String:
   filter_request() ++ "\n" ++ "{\"type\":\"get_state\",\"id\":\"baton:session\"}\n{\"type\":\"prompt\",\"id\":\"baton:prompt\",\"message\":" ++ J.string_literal(text) ++ "}\n"
 
-# The turn folds the server's answer into one mode: the echoed delta selection
-# activates the projection, any other echoed answer records refused, and a
-# missing answer keeps the state the turn already holds.
+# The turn folds the server's classified answer into one mode: the exact
+# successful full-category delta selection activates the projection, a failed
+# answer is refused, a successful answer without that selection is
+# unconfirmed, and a missing answer keeps the state the turn already holds.
 def filter_next(+state: String, +mode: String) -> String:
-  Bool.pick(String,String.is_empty(mode),state,
-    Bool.pick(String,String.eq(mode,"delta"),"delta","refused"))
+  Bool.pick(String,String.is_empty(mode),state,mode)
 
-# The completed turn records what the server actually agreed to, so retained
-# output never claims a reduction the stream did not make.
+# The completed turn records what the server's answer actually established, so
+# retained output names neither a reduction nor a refusal the stream did not
+# make.
 def filter_note(+state: String) -> String:
   Bool.pick(String,String.eq(state,"delta"),
     "{\"type\":\"baton_event_filter\",\"requested\":\"delta\",\"active\":true}",
     Bool.pick(String,String.eq(state,"refused"),
       "{\"type\":\"baton_event_filter\",\"requested\":\"delta\",\"active\":false,\"outcome\":\"refused\"}",
-      "{\"type\":\"baton_event_filter\",\"requested\":\"delta\",\"active\":false,\"outcome\":\"unacknowledged\"}"))
+      Bool.pick(String,String.eq(state,"unconfirmed"),
+        "{\"type\":\"baton_event_filter\",\"requested\":\"delta\",\"active\":false,\"outcome\":\"unconfirmed\"}",
+        "{\"type\":\"baton_event_filter\",\"requested\":\"delta\",\"active\":false,\"outcome\":\"unacknowledged\"}")))
 
 def input(handle: U32, text: String) -> IO(Result<&1,&1,U32 & String,Unit>):
   P.ProcessChild.write(handle,prompt(text))

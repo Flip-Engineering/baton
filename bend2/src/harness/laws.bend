@@ -220,6 +220,7 @@ law omp_setup_requests_the_documented_delta_filter:
 
 def omp_setup_requests_the_documented_delta_filter():
   {==}
+
 law omp_filter_fold_keeps_the_state_without_an_answer:
   for +state: String
   {Omp.filter_next(state,"") == state : String}
@@ -227,16 +228,24 @@ law omp_filter_fold_keeps_the_state_without_an_answer:
 def omp_filter_fold_keeps_the_state_without_an_answer(state):
   {==}
 
-law omp_filter_fold_activates_only_the_echoed_delta:
-  {Bool.and(String.eq(Omp.filter_next("","delta"),"delta"),String.eq(Omp.filter_next("","full"),"refused")) == True{} : Bool}
+# The folded mode names what the server's own answer established: the exact
+# successful full-category delta selection activates the projection, a failed
+# answer is refused, a successful answer without that selection is
+# unconfirmed, and a missing answer stays unacknowledged.
+law omp_filter_fold_records_only_the_observed_answer:
+  {Bool.and(String.eq(Omp.filter_next("","delta"),"delta"),
+    Bool.and(String.eq(Omp.filter_next("","refused"),"refused"),
+      Bool.and(String.eq(Omp.filter_next("","unconfirmed"),"unconfirmed"),
+        String.eq(Omp.filter_next("delta","unconfirmed"),"unconfirmed")))) == True{} : Bool}
 
-def omp_filter_fold_activates_only_the_echoed_delta():
+def omp_filter_fold_records_only_the_observed_answer():
   {==}
 
 law omp_filter_note_names_the_actual_outcome:
   {Bool.and(String.eq(Omp.filter_note("delta"),"{\"type\":\"baton_event_filter\",\"requested\":\"delta\",\"active\":true}"),
     Bool.and(String.eq(Omp.filter_note("refused"),"{\"type\":\"baton_event_filter\",\"requested\":\"delta\",\"active\":false,\"outcome\":\"refused\"}"),
-      String.eq(Omp.filter_note(""),"{\"type\":\"baton_event_filter\",\"requested\":\"delta\",\"active\":false,\"outcome\":\"unacknowledged\"}"))) == True{} : Bool}
+      Bool.and(String.eq(Omp.filter_note("unconfirmed"),"{\"type\":\"baton_event_filter\",\"requested\":\"delta\",\"active\":false,\"outcome\":\"unconfirmed\"}"),
+        String.eq(Omp.filter_note(""),"{\"type\":\"baton_event_filter\",\"requested\":\"delta\",\"active\":false,\"outcome\":\"unacknowledged\"}")))) == True{} : Bool}
 
 def omp_filter_note_names_the_actual_outcome():
   {==}
