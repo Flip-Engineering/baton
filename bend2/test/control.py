@@ -496,6 +496,26 @@ class Control(unittest.TestCase):
                          'No matching session or message; inspect status and the requested ID.')
         self.assertEqual(self.rows("SELECT * FROM sessions WHERE id='missing-player'"), [])
 
+    def test_readers_present_the_registered_endpoint_argv_and_keep_the_stored_text(self):
+        self.root()
+        self.recruit('leaf', 'muse')
+        endpoint = json.dumps(['/usr/bin/true', 'leaf', ''])
+        connected = self.call('connect', 'leaf', 'native-leaf', endpoint)
+        self.assertEqual(connected['endpoint'], endpoint)
+        self.assertEqual(connected['endpointArgv'], ['/usr/bin/true', 'leaf', ''])
+        self.call('message', 'leaf-guide', 'root', 'leaf', 'guidance', 'Continue.')
+        session = self.call('session', 'leaf')
+        self.assertEqual(session['endpoint'], endpoint)
+        self.assertEqual(session['endpointArgv'], ['/usr/bin/true', 'leaf', ''])
+        self.assertEqual(self.call('player', 'leaf')['endpointArgv'], ['/usr/bin/true', 'leaf', ''])
+        self.assertIsNone(self.call('session', 'root')['endpointArgv'])
+        rows = {row['id']: row for row in self.call('status')}
+        self.assertEqual(rows['leaf']['endpointArgv'], ['/usr/bin/true', 'leaf', ''])
+        self.assertIsNone(rows['root']['endpointArgv'])
+        self.assertEqual(self.call('delivery', 'leaf-guide')['endpointArgv'], ['/usr/bin/true', 'leaf', ''])
+        pending = {row['id']: row for row in self.call('pending')}
+        self.assertEqual(pending['leaf-guide']['endpointArgv'], ['/usr/bin/true', 'leaf', ''])
+
     def test_pretty_knowledge_preserves_visibility_and_complete_finding(self):
         self.root()
         self.recruit('researcher', 'muse')

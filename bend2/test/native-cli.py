@@ -75,6 +75,32 @@ class NativeCli(unittest.TestCase):
                 self.assertEqual(result.stderr.rstrip('\n'), expected.rstrip('\n'))
                 self.assertEqual(list(self.directory.iterdir()), [])
 
+    def test_help_names_every_supported_pretty_read_and_full_report_reader(self):
+        text = self.assert_help(self.invoke('--help'))
+        for form in ['status --pretty', 'players --pretty', 'orchestra --pretty', 'pending --pretty',
+                     'player ID --pretty', 'session ID --pretty', 'inbox ID --pretty',
+                     'delivery ID --pretty', 'turns PLAYER_ID --pretty', 'knowledge READER --pretty',
+                     'worktree ID --pretty']:
+            self.assertIn(form, text)
+        for reader in ['delivery MESSAGE_ID', 'turns PLAYER_ID', 'latestReport']:
+            self.assertIn(reader, text)
+
+    def test_every_pretty_read_runs_and_stays_machine_readable(self):
+        self.actors()
+        self.call('message', 'delivered-note', 'operator', 'principal', 'guide', 'Review λ.')
+        forms = [('status',), ('players',), ('orchestra',), ('pending',), ('player', 'principal'),
+                 ('session', 'principal'), ('inbox', 'principal'), ('delivery', 'delivered-note'),
+                 ('turns', 'principal'), ('knowledge', 'principal')]
+        for args in forms:
+            with self.subTest(args=args):
+                ordinary = self.call(*args)
+                readable = self.invoke(self.db, *args, '--pretty')
+                self.assertEqual(readable.returncode, 0, readable.stdout + readable.stderr)
+                self.assertEqual(readable.stderr, '')
+                self.assertEqual(json.loads(readable.stdout), ordinary)
+                if ordinary not in ([], {}):
+                    self.assertIn('\n', readable.stdout.strip())
+
     def test_runtime_option_tokens_and_full_bodies_are_committed_unchanged(self):
         self.actors()
         bodies = ['--help', '--threads', '--gpu', '--gpu-build', '--', '',
