@@ -1121,9 +1121,29 @@ def m18_the_remote_tip_names_the_requested_branch_ref(branch):
 law m18_the_remote_tip_read_names_the_declared_remote_and_ref:
   for branch: String
   for remote: String
-  {L.ls_remote_argv(branch, remote) == Con{"ls-remote", Con{remote, Con{"refs/heads/" ++ branch, Nil{}}}} : List<String>}
+  {L.ls_remote_argv(branch, remote) == Con{"ls-remote", Con{"--", Con{remote, Con{"refs/heads/" ++ branch, Nil{}}}}} : List<String>}
 
 def m18_the_remote_tip_read_names_the_declared_remote_and_ref(branch, remote):
+  {==}
+
+# M-18: the option terminator precedes both declared operands, read through
+# Base's own list readers, so a declared remote that begins with a dash is the
+# remote operand rather than an option.
+law m18_the_remote_tip_read_terminates_its_declared_operands:
+  for branch: String
+  for remote: String
+  {List.head(&1, String, List.tail(&1, String, L.ls_remote_argv(branch, remote))) == Some{"--"} : Maybe<String>}
+
+def m18_the_remote_tip_read_terminates_its_declared_operands(branch, remote):
+  {==}
+
+# M-18: the declared remote is the operand the terminator precedes.
+law m18_the_remote_tip_position_holds_the_declared_remote:
+  for branch: String
+  for remote: String
+  {List.head(&1, String, List.tail(&1, String, List.tail(&1, String, L.ls_remote_argv(branch, remote)))) == Some{remote} : Maybe<String>}
+
+def m18_the_remote_tip_position_holds_the_declared_remote(branch, remote):
   {==}
 
 # M-18: the read effect runs exactly that argv.
