@@ -40,6 +40,7 @@ type Command is Data:
   LandChecked{player: String, repo: String, target: String, check: String, files: String}
   Push{repo: String, branch: String, remote: String}
   RemoteTip{repo: String, branch: String, remote: String}
+  ObservedUsage{session: String}
   Status{}
   Players{}
   LegacySubordinates{}
@@ -329,6 +330,7 @@ def sql(command: Command) -> String:
     case LandChecked{player,repo,target,check,files}: ""
     case Push{repo,branch,remote}: ""
     case RemoteTip{repo,branch,remote}: ""
+    case ObservedUsage{session}: ""
     case Recruit{id,parent,harness,model,effort,repo,branch,path,base}: ""
     case Worktree{id}: ""
     case KnowledgeRecord{id,author,claim,evidence,limits}: ""
@@ -355,7 +357,7 @@ def parse(args: List<String>) -> Command:
       Bool.pick(Command, String.eq(verb,"delivery"),Delivery{id},
       Bool.pick(Command, String.eq(verb,"worktree"),Worktree{id},
       Bool.pick(Command, String.eq(verb,"turns"),Turns{id},
-      Bool.pick(Command, String.eq(verb,"knowledge"),KnowledgeRead{id},Invalid{})))))))))))
+      Bool.pick(Command, String.eq(verb,"knowledge"),KnowledgeRead{id},Bool.pick(Command, String.eq(verb,"observed-usage"),ObservedUsage{id},Invalid{}))))))))))))
     case +verb <> +session <> +id <> Nil{}:
       Bool.pick(Command,Bool.and(Bool.or(String.eq(verb,"player"),Bool.or(String.eq(verb,"session"),Bool.or(String.eq(verb,"inbox"),Bool.or(String.eq(verb,"delivery"),Bool.or(String.eq(verb,"turns"),Bool.or(String.eq(verb,"knowledge"),String.eq(verb,"worktree"))))))),String.eq(id,"--pretty")),Pretty{Bool.pick(Command,String.eq(verb,"player"),PlayerRead{session},Bool.pick(Command,String.eq(verb,"session"),Session{session},Bool.pick(Command,String.eq(verb,"inbox"),Inbox{session},Bool.pick(Command,String.eq(verb,"delivery"),Delivery{session},Bool.pick(Command,String.eq(verb,"turns"),Turns{session},Bool.pick(Command,String.eq(verb,"knowledge"),KnowledgeRead{session},Worktree{session}))))))},Bool.pick(Command,String.eq(verb,"section"),SectionRead{session,id},Bool.pick(Command,String.eq(verb,"role"),Role{session,id},Bool.pick(Command,String.eq(verb,"ensemble"),Ensemble{session,id,"loose"},Bool.pick(Command,String.eq(verb,"force-stop"),ForceStop{session,id},Invalid{})))))
     case +verb <> +id <> +one <> +two <> Nil{}:

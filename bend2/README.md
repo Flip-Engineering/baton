@@ -265,6 +265,24 @@ publication operation and reports its own outcome.
 .scratch/bend2/baton2 state.db remote-tip /path/to/repo target-branch origin
 ```
 
+`observed-usage SESSION` projects the usage the session's own recorded native
+conversation states. The answer names the session, its harness, its recorded
+native identity and the conversation file it read, then `shape` (`message-usage`
+for a recorded assistant-message conversation, `unavailable` when the route
+recorded no such conversation), the record, observation, duplicate and conflict
+counts, the recorded provider, model and API of each observation, and the token
+and cost component sums. A repeated message identity counts once; a repeat whose
+recorded usage changed is counted under `conflicts` and keeps its first record.
+`absent` names the components the source did not state in every observation and
+`invalid` names the components a record stated without a number; either kind
+stays out of the sums. The cost fields are the harness's recorded estimates
+rather than billed charges, and a zero component states an observed zero. The
+read covers the session's current recorded conversation and writes nothing.
+
+```sh
+.scratch/bend2/baton2 state.db observed-usage worker1
+```
+
 ## Native turns
 
 After registering the Player, run:
