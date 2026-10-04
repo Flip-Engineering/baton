@@ -203,9 +203,42 @@ def m13_codex_input_writes_the_task_text(handle, text):
 law m13_omp_input_writes_the_prompt_frames:
   for +handle: U32
   for +text: String
-  {Omp.input(handle, text) == P.ProcessChild.write(handle, "{\"type\":\"get_state\",\"id\":\"baton:session\"}\n{\"type\":\"prompt\",\"id\":\"baton:prompt\",\"message\":" ++ J.string_literal(text) ++ "}\n") : IO(Result<&1,&1,U32 & String,Unit>)}
+  {Omp.input(handle, text) == P.ProcessChild.write(handle, Omp.filter_request() ++ "\n{\"type\":\"get_state\",\"id\":\"baton:session\"}\n{\"type\":\"prompt\",\"id\":\"baton:prompt\",\"message\":" ++ J.string_literal(text) ++ "}\n") : IO(Result<&1,&1,U32 & String,Unit>)}
 
 def m13_omp_input_writes_the_prompt_frames(handle, text):
+  {==}
+
+# ---------------------------------------------------------------------------
+# The OMP setup opens with the documented delta projection request (issue
+# #662). The pinned request asks for every event category with delta-shaped
+# message updates; the server's echoed response, never a version comparison,
+# decides the recorded outcome, and a completed turn records that outcome so
+# retained output names only a reduction the stream actually made.
+
+law omp_setup_requests_the_documented_delta_filter:
+  {Omp.filter_request() == "{\"type\":\"set_event_filter\",\"id\":\"baton:filter\",\"events\":null,\"messageUpdates\":\"delta\"}" : String}
+
+def omp_setup_requests_the_documented_delta_filter():
+  {==}
+law omp_filter_fold_keeps_the_state_without_an_answer:
+  for +state: String
+  {Omp.filter_next(state,"") == state : String}
+
+def omp_filter_fold_keeps_the_state_without_an_answer(state):
+  {==}
+
+law omp_filter_fold_activates_only_the_echoed_delta:
+  {Bool.and(String.eq(Omp.filter_next("","delta"),"delta"),String.eq(Omp.filter_next("","full"),"refused")) == True{} : Bool}
+
+def omp_filter_fold_activates_only_the_echoed_delta():
+  {==}
+
+law omp_filter_note_names_the_actual_outcome:
+  {Bool.and(String.eq(Omp.filter_note("delta"),"{\"type\":\"baton_event_filter\",\"requested\":\"delta\",\"active\":true}"),
+    Bool.and(String.eq(Omp.filter_note("refused"),"{\"type\":\"baton_event_filter\",\"requested\":\"delta\",\"active\":false,\"outcome\":\"refused\"}"),
+      String.eq(Omp.filter_note(""),"{\"type\":\"baton_event_filter\",\"requested\":\"delta\",\"active\":false,\"outcome\":\"unacknowledged\"}"))) == True{} : Bool}
+
+def omp_filter_note_names_the_actual_outcome():
   {==}
 
 law m13_claude_input_writes_the_user_frame:

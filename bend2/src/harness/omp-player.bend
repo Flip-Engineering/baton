@@ -29,8 +29,33 @@ def argv(cmd: String, model: String, effort: String, sessions: String, session: 
 def start_player(cmd: String, model: String, effort: String, cwd: String, +log: String, sessions: String, session: String, fresh: Bool) -> IO(Result<&1,&1,U32 & String,U32>):
   P.ProcessChild.spawn(argv(cmd,model,effort,sessions,session,fresh),cwd,log ++ ".stderr")
 
+# The setup asks the server for the documented delta projection (issue #662):
+# events:null forwards every event category and messageUpdates:"delta" replaces
+# repeated accumulated message snapshots with per-delta frames while
+# message_start, message_end and every other frame stay complete. The server's
+# echoed response names the active mode; a server without the command refuses
+# or ignores the request and the turn keeps full snapshots.
+def filter_request() -> String:
+  "{\"type\":\"set_event_filter\",\"id\":\"baton:filter\",\"events\":null,\"messageUpdates\":\"delta\"}"
+
 def prompt(text: String) -> String:
-  "{\"type\":\"get_state\",\"id\":\"baton:session\"}\n{\"type\":\"prompt\",\"id\":\"baton:prompt\",\"message\":" ++ J.string_literal(text) ++ "}\n"
+  filter_request() ++ "\n" ++ "{\"type\":\"get_state\",\"id\":\"baton:session\"}\n{\"type\":\"prompt\",\"id\":\"baton:prompt\",\"message\":" ++ J.string_literal(text) ++ "}\n"
+
+# The turn folds the server's answer into one mode: the echoed delta selection
+# activates the projection, any other echoed answer records refused, and a
+# missing answer keeps the state the turn already holds.
+def filter_next(+state: String, +mode: String) -> String:
+  Bool.pick(String,String.is_empty(mode),state,
+    Bool.pick(String,String.eq(mode,"delta"),"delta","refused"))
+
+# The completed turn records what the server actually agreed to, so retained
+# output never claims a reduction the stream did not make.
+def filter_note(+state: String) -> String:
+  Bool.pick(String,String.eq(state,"delta"),
+    "{\"type\":\"baton_event_filter\",\"requested\":\"delta\",\"active\":true}",
+    Bool.pick(String,String.eq(state,"refused"),
+      "{\"type\":\"baton_event_filter\",\"requested\":\"delta\",\"active\":false,\"outcome\":\"refused\"}",
+      "{\"type\":\"baton_event_filter\",\"requested\":\"delta\",\"active\":false,\"outcome\":\"unacknowledged\"}"))
 
 def input(handle: U32, text: String) -> IO(Result<&1,&1,U32 & String,Unit>):
   P.ProcessChild.write(handle,prompt(text))

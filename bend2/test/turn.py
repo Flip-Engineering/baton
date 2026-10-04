@@ -109,6 +109,8 @@ print(json.dumps({"type":"result","result":"Task recorded.","session_id":"native
     def test_omp_prompt_session_route_and_terminal_report(self):
         self.register('omp-worker','root','omp','requested-model','high',str(self.cwd),'omp-branch','base')
         self.player.write_text('#!'+sys.executable+'\n'+'''import json,sys,pathlib
+request=json.loads(sys.stdin.readline())
+assert request['type']=='set_event_filter' and request['events'] is None and request['messageUpdates']=='delta'
 state=json.loads(sys.stdin.readline())
 assert state['type']=='get_state'
 prompt=json.loads(sys.stdin.readline())['message']
@@ -133,7 +135,7 @@ assert sys.stdin.read()==''
         frames=[json.loads(line) for line in self.log.read_text().splitlines()]
         self.assertEqual([f for f in frames if f.get('type')=='message_update'], [])
         self.assertEqual([f['partialResult']['content'][0]['text'] for f in frames if f.get('type')=='tool_execution_update'], [self.task.read_text()])
-        self.assertEqual([f['type'] for f in frames], ['response','tool_execution_update','message_start','message_end','agent_end','agent_end'])
+        self.assertEqual([f['type'] for f in frames], ['response','tool_execution_update','message_start','message_end','agent_end','agent_end','baton_event_filter'])
         args=json.loads((self.cwd/'argv.json').read_text())
         self.assertEqual(args[args.index('--mode')+1],'rpc')
         self.assertEqual(args[args.index('--session-dir')+1],str(self.db)+'.sessions')
@@ -163,11 +165,13 @@ assert sys.stdin.read()==''
         self.player.write_text('#!'+sys.executable+'\n'+'''import pathlib,sys
 sys.stdin.readline()
 sys.stdin.readline()
+sys.stdin.readline()
 print(pathlib.Path('events.jsonl').read_text(),end='',flush=True)
 assert sys.stdin.read()==''
 ''')
         self.call('turn','omp-worker','retained-turn',str(self.player),'model','low',str(self.cwd),str(self.task),str(self.log),'')
-        self.assertEqual(self.log.read_text().splitlines(),retained+[terminal])
+        note='{"type":"baton_event_filter","requested":"delta","active":false,"outcome":"unacknowledged"}'
+        self.assertEqual(self.log.read_text().splitlines(),retained+[terminal,note])
         self.assertEqual(json.loads(self.call('delivery','retained-turn'))['body'],final_text)
 
     def test_omp_empty_terminal_envelope_delivers_streamed_trial_report(self):
@@ -190,13 +194,15 @@ assert sys.stdin.read()==''
         self.player.write_text('#!'+sys.executable+'\n'+'''import pathlib,sys
 sys.stdin.readline()
 sys.stdin.readline()
+sys.stdin.readline()
 print(pathlib.Path('events.jsonl').read_text(),end='',flush=True)
 assert sys.stdin.read()==''
 ''')
         self.call('turn','omp-worker','trial-report',str(self.player),'deepseek/deepseek-flash','low',str(self.cwd),str(self.task),str(self.log),'')
         self.assertEqual(json.loads(self.call('delivery','trial-report'))['body'], expected)
         self.assertEqual(json.loads(self.call('inbox','root'))[0]['body'], expected)
-        self.assertEqual(self.log.read_text(),events)
+        note='{"type":"baton_event_filter","requested":"delta","active":false,"outcome":"unacknowledged"}'
+        self.assertEqual(self.log.read_text().splitlines(),events.splitlines()+[note])
         self.assertEqual([json.loads(line) for line in received.read_text().splitlines()], [expected])
         self.player.unlink()
         self.call('turn','omp-worker','trial-report',str(self.player),'deepseek/deepseek-flash','low',str(self.cwd),str(self.task),str(self.log),'')
@@ -208,6 +214,7 @@ assert sys.stdin.read()==''
         body='Change focus now: report the guidance label indigo λ.'
         self.call('message','guidance-1','root','omp-worker','guidance',body)
         self.player.write_text('#!'+sys.executable+'\n'+'''import json,sys,pathlib,sqlite3
+json.loads(sys.stdin.readline())
 state=json.loads(sys.stdin.readline())
 prompt=json.loads(sys.stdin.readline())
 assert prompt['type']=='prompt'
@@ -228,6 +235,79 @@ assert sys.stdin.read()==''
         self.assertEqual(receipt,{'type':'response','command':'steer','success':True,'id':'guidance-1'})
         self.assertEqual(json.loads(self.call('delivery','guided-turn'))['body'],body)
         self.assertEqual(json.loads(self.call('inbox','omp-worker')),[])
+
+    def test_omp_delta_filter_echo_activates_the_projection(self):
+        self.register('omp-worker','root','omp','requested-model','low',str(self.cwd),'omp-branch','base')
+        self.player.write_text('#!'+sys.executable+'\n'+'''import json,sys,pathlib
+request=json.loads(sys.stdin.readline())
+assert request=={'type':'set_event_filter','id':'baton:filter','events':None,'messageUpdates':'delta'},request
+emitted=[]
+def emit(frame):
+    line=json.dumps(frame)
+    emitted.append(line)
+    print(line,flush=True)
+emit({'type':'response','id':'baton:filter','success':True,'data':{'events':None,'messageUpdates':'delta'}})
+state=json.loads(sys.stdin.readline())
+assert state['type']=='get_state'
+prompt=json.loads(sys.stdin.readline())['message']
+emit({'type':'response','command':'get_state','success':True,'id':state['id'],'data':{'sessionId':'omp-delta','model':{'provider':'provider','id':'actual-model'}}})
+emit({'type':'message_update','messageId':'m1','assistantMessageEvent':{'type':'text_delta','delta':'partial λ'}})
+emit({'type':'message_end','message':{'role':'assistant','provider':'provider','model':'actual-model','content':[{'type':'text','text':'delta answer λ'}]}})
+emit({'type':'agent_end','isTerminal':True,'messages':[{'role':'assistant','content':[{'type':'text','text':'delta answer λ'}]}]})
+pathlib.Path('emitted.jsonl').write_text(chr(10).join(emitted)+chr(10))
+''')
+        self.call('turn','omp-worker','delta-turn',str(self.player),'requested-model','low',str(self.cwd),str(self.task),str(self.log),'')
+        frames=[json.loads(line) for line in self.log.read_text().splitlines()]
+        self.assertEqual([f['type'] for f in frames],['response','response','message_end','agent_end','baton_event_filter'])
+        self.assertEqual(frames[0],{'type':'response','id':'baton:filter','success':True,'data':{'events':None,'messageUpdates':'delta'}})
+        self.assertEqual(frames[-1],{'type':'baton_event_filter','requested':'delta','active':True})
+        wire=[json.loads(line) for line in (self.cwd/'emitted.jsonl').read_text().splitlines()]
+        self.assertEqual([f for f in wire if f['type']=='message_update'],
+                         [{'type':'message_update','messageId':'m1','assistantMessageEvent':{'type':'text_delta','delta':'partial λ'}}])
+        self.assertEqual(json.loads(self.call('delivery','delta-turn'))['body'],'delta answer λ')
+        self.assertEqual(json.loads(self.call('player','omp-worker'))['native'],'omp-delta')
+
+    def test_omp_filter_refusal_keeps_full_snapshots_and_completes(self):
+        self.register('omp-worker','root','omp','requested-model','low',str(self.cwd),'omp-branch','base')
+        self.player.write_text('#!'+sys.executable+'\n'+'''import json,sys
+request=json.loads(sys.stdin.readline())
+assert request['type']=='set_event_filter'
+print(json.dumps({'type':'response','id':'baton:filter','success':False,'error':{'code':-32601,'message':'Unknown request type set_event_filter'}}),flush=True)
+state=json.loads(sys.stdin.readline())
+assert state['type']=='get_state'
+prompt=json.loads(sys.stdin.readline())['message']
+print(json.dumps({'type':'response','command':'get_state','success':True,'id':state['id'],'data':{'sessionId':'omp-refused','model':{'provider':'provider','id':'actual-model'}}}),flush=True)
+print(json.dumps({'type':'message_update','assistantMessageEvent':{'type':'text_delta','delta':'partial λ'},'message':{'role':'assistant','content':[{'type':'text','text':'partial λ'}]}}),flush=True)
+print(json.dumps({'type':'message_end','message':{'role':'assistant','provider':'provider','model':'actual-model','content':[{'type':'text','text':'refused answer λ'}]}}),flush=True)
+print(json.dumps({'type':'agent_end','isTerminal':True,'messages':[{'role':'assistant','content':[{'type':'text','text':'refused answer λ'}]}]}),flush=True)
+''')
+        self.call('turn','omp-worker','refused-turn',str(self.player),'requested-model','low',str(self.cwd),str(self.task),str(self.log),'')
+        frames=[json.loads(line) for line in self.log.read_text().splitlines()]
+        self.assertEqual([f['type'] for f in frames],['response','response','message_end','agent_end','baton_event_filter'])
+        self.assertIs(frames[0]['success'],False)
+        self.assertEqual(frames[-1],{'type':'baton_event_filter','requested':'delta','active':False,'outcome':'refused'})
+        self.assertEqual([f for f in frames if f.get('type')=='message_update'],[])
+        self.assertEqual(json.loads(self.call('delivery','refused-turn'))['body'],'refused answer λ')
+        self.assertEqual(json.loads(self.call('player','omp-worker'))['native'],'omp-refused')
+
+    def test_omp_filter_omission_keeps_snapshots_and_completes(self):
+        self.register('omp-worker','root','omp','requested-model','low',str(self.cwd),'omp-branch','base')
+        self.player.write_text('#!'+sys.executable+'\n'+'''import json,sys
+json.loads(sys.stdin.readline())
+state=json.loads(sys.stdin.readline())
+assert state['type']=='get_state'
+prompt=json.loads(sys.stdin.readline())['message']
+print(json.dumps({'type':'response','command':'get_state','success':True,'id':state['id'],'data':{'sessionId':'omp-silent','model':{'provider':'provider','id':'actual-model'}}}),flush=True)
+print(json.dumps({'type':'message_update','assistantMessageEvent':{'type':'text_delta','delta':'partial λ'},'message':{'role':'assistant','content':[{'type':'text','text':'partial λ'}]}}),flush=True)
+print(json.dumps({'type':'message_end','message':{'role':'assistant','provider':'provider','model':'actual-model','content':[{'type':'text','text':'silent answer λ'}]}}),flush=True)
+print(json.dumps({'type':'agent_end','isTerminal':True,'messages':[{'role':'assistant','content':[{'type':'text','text':'silent answer λ'}]}]}),flush=True)
+''')
+        self.call('turn','omp-worker','silent-turn',str(self.player),'requested-model','low',str(self.cwd),str(self.task),str(self.log),'')
+        frames=[json.loads(line) for line in self.log.read_text().splitlines()]
+        self.assertEqual([f['type'] for f in frames],['response','message_end','agent_end','baton_event_filter'])
+        self.assertEqual(frames[-1],{'type':'baton_event_filter','requested':'delta','active':False,'outcome':'unacknowledged'})
+        self.assertEqual(json.loads(self.call('delivery','silent-turn'))['body'],'silent answer λ')
+        self.assertEqual(json.loads(self.call('player','omp-worker'))['native'],'omp-silent')
 
     def test_muse_resumed_turn_reads_new_task_in_recorded_session(self):
         self.register('muse-worker','root','muse','requested-model','low',str(self.cwd),'muse-branch','base')
@@ -325,6 +405,7 @@ args=sys.argv
 if '--resume' in args:
     sys.stderr.write('Error: Session "%s" not found.\\n' % args[args.index('--resume')+1])
     raise SystemExit(1)
+json.loads(sys.stdin.readline())
 state=json.loads(sys.stdin.readline())
 prompt=json.loads(sys.stdin.readline())['message']
 pathlib.Path('fresh-prompt.txt').write_text(prompt)
