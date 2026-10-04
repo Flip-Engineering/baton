@@ -656,14 +656,37 @@ class Receive(unittest.TestCase):
         self.assertIn(' M seed.txt', started['prompt'])
         self.action(fresh, append_file=['seed.txt', 'Root task completed.\n'])
         self.assertEqual(json.loads(fresh.readline()), {'appended': 'seed.txt'})
-        self.action(fresh, body='Root task completed in a fresh conversation.')
+        body = 'Root task completed in a fresh conversation.'
+        self.action(fresh, body=body)
         self.finish(observer)
         self.assertEqual(self.coord('inbox', 'root'), [])
-        self.assertEqual(self.coord('turns', 'root'), [])
+        turns = self.coord('turns', 'root')
+        self.assertEqual([(turn['player'], turn['eventType'], turn['reportBody']) for turn in turns],
+                         [('root', 'agent_end', body)])
+        reports = self.coord('inbox', 'operator')
+        self.assertEqual([report['body'] for report in reports], [
+            "The recorded conversation could not be resumed; pending input will continue in a fresh conversation with the workspace's current state.",
+            body])
+        self.assertTrue(reports[0]['id'].endswith(':recovery'))
+        self.assertNotEqual(turns[0]['id'], reports[0]['id'].removesuffix(':recovery'))
+        self.assertEqual(reports[1]['id'], turns[0]['id'])
+        self.assertEqual(self.coord('delivery', 'root-task')['receipt'], 'native-reviewed')
+        recovery_input = reports[0]['id'].removesuffix(':recovery') + ':recovery-input'
+        self.assertEqual(self.coord('delivery', recovery_input)['receipt'], 'native-reviewed')
+        for report in reports:
+            delivered = self.coord('delivery', report['id'])
+            self.assertEqual((delivered['sender'], delivered['recipient'], delivered['kind'], delivered['body']),
+                             ('root', 'operator', 'report', report['body']))
+            self.assertIsNone(delivered['receipt'])
+            self.coord('ack', report['id'], 'operator', 'operator-reviewed')
+            self.assertEqual(self.coord('delivery', report['id'])['receipt'], 'operator-reviewed')
+        self.assertEqual(self.coord('inbox', 'operator'), [])
+        self.assertEqual(self.coord('turns', 'root')[0]['receipt'], 'operator-reviewed')
         self.assertEqual(self.coord('player', 'root')['native'], started['native'])
         self.assertEqual(journal.read_text(), partial + 'Root task completed.\n')
         with sqlite3.connect(f'{self.db.as_uri()}?mode=ro', uri=True) as database:
-            self.assertEqual(database.execute("SELECT id FROM messages WHERE kind='report'").fetchall(), [])
+            self.assertEqual(database.execute("SELECT id FROM messages WHERE kind='report' ORDER BY seq").fetchall(),
+                             [(report['id'],) for report in reports])
         launches = [json.loads(line) for line in (self.directory / 'native-launches.jsonl').read_text().splitlines()]
         self.assertEqual([row['resume'] for row in launches], [missing, ''])
         self.eventually(lambda: not self.owned_processes(), 'root fallback processes did not exit naturally')
@@ -1381,7 +1404,32 @@ class Receive(unittest.TestCase):
         stdout, _ = self.finish(second, ok=False)
         self.assertIn('fixture provider failed', stdout)
         self.assertEqual([m['id'] for m in self.coord('inbox', 'root')], ['second'])
-        self.assertEqual(self.coord('turns', 'root'), [])
+        turns = self.coord('turns', 'root')
+        self.assertEqual([(turn['player'], turn['eventType']) for turn in turns],
+                         [('root', 'result'), ('root', 'result')])
+        self.assertNotEqual(turns[0]['id'], turns[1]['id'])
+        self.assertEqual(turns[0]['reportBody'], 'native review complete')
+        self.assertEqual(json.loads(turns[1]['reportBody']), {
+            'type': 'result', 'is_error': 1,
+            'nativeEvent': {'type': 'turn.failed', 'error': {'message': 'fixture provider failed'}},
+            'result': 'fixture provider failed'})
+        reports = self.coord('inbox', 'operator')
+        self.assertEqual([report['id'] for report in reports], [turn['id'] for turn in turns])
+        self.assertEqual([report['body'] for report in reports], [turn['reportBody'] for turn in turns])
+        for report in reports:
+            delivered = self.coord('delivery', report['id'])
+            self.assertEqual((delivered['sender'], delivered['recipient'], delivered['kind']),
+                             ('root', 'operator', 'report'))
+            self.assertIsNone(delivered['receipt'])
+            self.coord('ack', report['id'], 'operator', 'operator-reviewed')
+            self.assertEqual(self.coord('delivery', report['id'])['receipt'], 'operator-reviewed')
+        self.assertEqual(self.coord('inbox', 'operator'), [])
+        self.assertEqual([turn['receipt'] for turn in self.coord('turns', 'root')],
+                         ['operator-reviewed', 'operator-reviewed'])
+        self.assertEqual(self.coord('delivery', 'first')['receipt'], 'native-reviewed')
+        self.assertIsNone(self.coord('delivery', 'second')['receipt'])
+        self.assertEqual([m['id'] for m in self.coord('inbox', 'root')], ['second'])
+        self.eventually(lambda: not self.owned_processes(), 'root success or failure processes did not exit naturally')
 
     def test_root_failed_receive_can_retry_the_same_pending_input(self):
         self.message('input', 'root')

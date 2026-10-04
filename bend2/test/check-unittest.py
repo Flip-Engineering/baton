@@ -111,6 +111,7 @@ class CheckUnittest(unittest.TestCase):
         p = run_script(self.tree, 'quiet.py')
         self.assertEqual(p.returncode, 0, p.stderr)
         self.assertEqual(p.stdout, '')
+        self.assertEqual(p.stderr, '')
 
     def test_failing_file_prints_one_identity_per_case(self):
         self.fixture('broken.py', FAILING)
@@ -121,6 +122,10 @@ class CheckUnittest(unittest.TestCase):
         rows = [decode(line) for line in lines]
         self.assertEqual(rows[0], ['broken.py', 'bend2_selected_broken.Broken.test_fails', 'assertion', '-'])
         self.assertEqual(rows[1], ['broken.py', 'bend2_selected_broken.Broken.test_errors', 'error', '-'])
+        self.assertIn('bend2_selected_broken.Broken.test_fails:', p.stderr)
+        self.assertIn('AssertionError: 1 != 2', p.stderr)
+        self.assertIn('bend2_selected_broken.Broken.test_errors:', p.stderr)
+        self.assertIn('ValueError: boom', p.stderr)
 
     def test_identity_lines_match_the_landing_contract_shape(self):
         self.fixture('broken.py', FAILING)
