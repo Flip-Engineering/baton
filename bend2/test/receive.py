@@ -165,6 +165,10 @@ while True:
                 print(json.dumps(action['native_request']),flush=True)
                 reply({'request_written':action['native_request']})
                 continue
+            if action.get('stdout_line'):
+                print(action['stdout_line'],flush=True)
+                reply({'line_written':action['stdout_line']})
+                continue
             if not action.get('progress'): break
             progress(action)
     break

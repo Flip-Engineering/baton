@@ -1190,7 +1190,7 @@ def the_sealed_managed_completion_records_nothing(id,player,event):
 law a_later_native_terminal_is_named_once:
   for +event: String
   for +terminal: String
-  {Turn.deferred_terminal_sql(event,terminal) == ("SELECT CASE WHEN " ++ C.q(event) ++ "='' THEN 0 WHEN " ++ C.q(terminal) ++ "='' THEN 0 WHEN " ++ C.q(event) ++ "=" ++ C.q(terminal) ++ " THEN 0 WHEN " ++ C.terminal(event) ++ " THEN 1 ELSE 0 END;") : String}
+  {Turn.deferred_terminal_sql(event,terminal) == ("SELECT CASE WHEN json_valid(" ++ C.q(event) ++ ") THEN CASE WHEN " ++ C.q(event) ++ "='' THEN 0 WHEN " ++ C.q(terminal) ++ "='' THEN 0 WHEN " ++ C.q(event) ++ "=" ++ C.q(terminal) ++ " THEN 0 WHEN " ++ C.terminal(event) ++ " THEN 1 ELSE 0 END ELSE 0 END;") : String}
 
 def a_later_native_terminal_is_named_once(event,terminal):
   {==}
@@ -1263,22 +1263,22 @@ law the_first_native_terminal_keeps_the_managed_completion:
 def the_first_native_terminal_keeps_the_managed_completion(db,event,previous):
   {==}
 
-law live_native_input_records_guidance_acceptance:
+law a_response_before_the_first_terminal_records_guidance_acceptance:
   for +db: String
   for +player: String
   for +event: String
-  {Guidance.accepted(db,player,event,0) == IO.try(String,DB.Sql.query(db,Guidance.accepted_sql(player,event) ++ Guidance.terminal_sql(event))) : IO(String)}
+  {Guidance.accepted(db,player,event,False{}) == IO.try(String,DB.Sql.query(db,Guidance.accepted_sql(player,event) ++ Guidance.terminal_sql(event))) : IO(String)}
 
-def live_native_input_records_guidance_acceptance(db,player,event):
+def a_response_before_the_first_terminal_records_guidance_acceptance(db,player,event):
   {==}
 
-law closed_native_input_keeps_guidance_pending:
+law a_response_after_the_first_terminal_leaves_guidance_pending:
   for +db: String
   for +player: String
   for +event: String
-  {Guidance.accepted(db,player,event,1) == IO.try(String,DB.Sql.query(db,Guidance.terminal_sql(event))) : IO(String)}
+  {Guidance.accepted(db,player,event,True{}) == IO.try(String,DB.Sql.query(db,Guidance.terminal_sql(event))) : IO(String)}
 
-def closed_native_input_keeps_guidance_pending(db,player,event):
+def a_response_after_the_first_terminal_leaves_guidance_pending(db,player,event):
   {==}
 
 law completion_preparation_checks_the_upstream_recipient:

@@ -197,7 +197,7 @@ def observe_event(db: String, player: String, id: String, line: String, relevant
 # report of this receive attempt, and a later episode is named once in the
 # separate diagnostic with the guidance it leaves for the next receive.
 def deferred_terminal_sql(+event: String, +terminal: String) -> String:
-  "SELECT CASE WHEN " ++ C.q(event) ++ "='' THEN 0 WHEN " ++ C.q(terminal) ++ "='' THEN 0 WHEN " ++ C.q(event) ++ "=" ++ C.q(terminal) ++ " THEN 0 WHEN " ++ C.terminal(event) ++ " THEN 1 ELSE 0 END;"
+  "SELECT CASE WHEN json_valid(" ++ C.q(event) ++ ") THEN CASE WHEN " ++ C.q(event) ++ "='' THEN 0 WHEN " ++ C.q(terminal) ++ "='' THEN 0 WHEN " ++ C.q(event) ++ "=" ++ C.q(terminal) ++ " THEN 0 WHEN " ++ C.terminal(event) ++ " THEN 1 ELSE 0 END ELSE 0 END;"
 
 # The note is written once: a later terminal frame must not try a second body
 # under the same identity, which the same-identity store guard would refuse.
@@ -311,10 +311,10 @@ def consume(+db: String, +player: String, +id: String, +log: String, +handle: U3
         +kind : String <- frame_kind(db,line,String.eq(harness,"omp\n"))
         written : Result<&1,&1,U32 & String,Unit> <- record_frame(log,line,kind)
         +relevant : Bool <- IO.pure(Bool,Guidance.relevant(kind,String.eq(harness,"omp\n")))
-        next_cursor : String <- Guidance.observe(db,player,handle,line,cursor,Bool.and(String.eq(harness,"omp\n"),relevant))
+        +sealed : Bool <- IO.pure(Bool,Bool.not(String.is_empty(terminal)))
+        next_cursor : String <- Guidance.observe(db,player,handle,line,cursor,Bool.and(String.eq(harness,"omp\n"),relevant),sealed)
         +message : String <- omp_message(db,line,last_message,Bool.and(String.eq(harness,"omp\n"),relevant))
         +event : String <- omp_terminal(db,line,message,Bool.and(String.eq(harness,"omp\n"),relevant))
-        +sealed : Bool <- IO.pure(Bool,Bool.not(String.is_empty(terminal)))
         deferred : Unit <- deferred_note(db,player,id,event,terminal,sealed)
         observed : Result<&1,&1,U32 & String,String> <- observe_event(db,player,id,event,relevant,sealed)
         ended : String <- terminal_event(db,event,terminal,relevant)

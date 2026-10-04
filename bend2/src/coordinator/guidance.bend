@@ -51,19 +51,19 @@ def accepted_sql(+player: String, +event: String) -> String:
 def terminal_sql(+event: String) -> String:
   "SELECT CASE WHEN " ++ C.terminal(event) ++ " THEN 1 ELSE 0 END;"
 
-# A native steer response records acceptance while this process still accepts
-# input. A response that arrives after the input closed is a replay of an
-# earlier send: it leaves the guidance for the next receive.
-def accepted(db: String, player: String, +event: String, closed: U32) -> IO(String):
-  match closed:
-    case 0: IO.try(String,DB.Sql.query(db,accepted_sql(player,event) ++ terminal_sql(event)))
-    case other: IO.try(String,DB.Sql.query(db,terminal_sql(event)))
+# A native steer response records acceptance while this reader has seen no
+# terminal for the attempt, including a replay of an attempt whose native input
+# the host already closed. A response that arrives after the first terminal
+# leaves the guidance for the next receive.
+def accepted(db: String, player: String, +event: String, sealed: Bool) -> IO(String):
+  match sealed:
+    case True{}: IO.try(String,DB.Sql.query(db,terminal_sql(event)))
+    case False{}: IO.try(String,DB.Sql.query(db,accepted_sql(player,event) ++ terminal_sql(event)))
 
 # The receipt records native acceptance; the cursor covers this process's sends.
-def observe(+db: String, +player: String, +handle: U32, +event: String, cursor: String, enabled: Bool) -> IO(String):
+def observe(+db: String, +player: String, handle: U32, +event: String, cursor: String, enabled: Bool, sealed: Bool) -> IO(String):
   match enabled:
     case False{}: IO.pure(String,cursor)
     case True{}: do IO<String>:
-      closed : U32 <- IO.try(U32,P.ProcessChild.input_closed(handle))
-      ended : String <- accepted(db,player,event,closed)
+      ended : String <- accepted(db,player,event,sealed)
       continued(db,player,handle,cursor,String.eq(ended,"1\n"))
