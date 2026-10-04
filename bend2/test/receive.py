@@ -60,6 +60,7 @@ if config.get('early_failure'):
     sys.exit(1)
 native='native-'+model
 if omp:
+    json.loads(sys.stdin.readline())
     state=json.loads(sys.stdin.readline())
     prompt=json.loads(sys.stdin.readline())['message']
     storage=pathlib.Path(args[args.index('--session-dir')+1])

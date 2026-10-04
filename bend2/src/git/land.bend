@@ -959,3 +959,47 @@ def push_git(repo: String, branch: String, remote: String) -> IO(T.GitOut):
   do IO<T.GitOut>:
     g : T.GitOut <- Git.runGit(r2, push_argv(b2, rm))
     IO.pure(T.GitOut, g)
+
+# The requested branch as the full ref the read names, so no other ref and no
+# local ref is read.
+def tip_ref(branch: String) -> String:
+  "refs/heads/" ++ branch
+
+# The remote-tip argv: the declared remote is the only source and the requested
+# branch is the only refspec. Both follow the option terminator, so a declared
+# remote that begins with a dash is read as the remote operand and not as an
+# option. Nothing reads a default remote.
+def ls_remote_argv(branch: String, remote: String) -> List<String>:
+  Con{"ls-remote", Con{"--", Con{remote, Con{tip_ref(branch), Nil{}}}}}
+
+def tip_match(named: Bool, +object: String) -> String:
+  match named:
+    case True{}: object
+    case False{}: ""
+
+def tip_named(more: List<String>, object: String, ref: String) -> String:
+  match more:
+    case Nil{}: ""
+    case name <> tail: tip_match(Tx.str_eq(name, ref), object)
+
+# The advertised object ID for the requested ref, or "" when the answer did not
+# advertise it. Git writes one "<object>\t<ref>" line per advertised ref, and
+# neither an object ID nor a ref name carries whitespace, so the fields of the
+# whole answer split cleanly.
+def tip_fields(fields: List<String>, ref: String) -> String:
+  match fields:
+    case Nil{}: ""
+    case object <> more: tip_named(more, object, ref)
+
+def tip_object(out: String, ref: String) -> String:
+  tip_fields(Tx.split_tabs(Tx.trim_nl(out)), ref)
+
+# The read: a read-only ls-remote of the declared remote for the one requested
+# ref. It updates no local ref and pushes nothing.
+def remote_tip_git(repo: String, branch: String, remote: String) -> IO(T.GitOut):
+  +r2 = repo
+  +b2 = branch
+  +rm = remote
+  do IO<T.GitOut>:
+    g : T.GitOut <- Git.runGit(r2, ls_remote_argv(b2, rm))
+    IO.pure(T.GitOut, g)

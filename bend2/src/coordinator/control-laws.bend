@@ -7,6 +7,7 @@ import ./recruit.bend as Recruit
 import ./knowledge.bend as Knowledge
 import ../git/status.bend as WS
 import ../git/types.bend as G
+import ../git/process.bend as Process
 import ../json/canonical.bend as J
 import ../host/control.bend as Host
 import ../host/session-lock.bend as Lock
@@ -112,7 +113,8 @@ law detached_turn_uses_the_recorded_assignment_and_native_identity:
   cwd : String <- Control.recorded_field(db,player,"workspace")
   native : String <- Control.recorded_field(db,player,"native")
   identity : String & String <- IO.try(String & String,Host.Control.identity(executable))
-  IO.try(String,Host.Control.launch(Tx.enc_argv(Control.identity_args([executable,database,"turn",player,id,harness_cmd,model,effort,cwd,path,output,native],model,identity)),database,id))) : IO(String)}
+  checked : String & String <- Control.identity_checked(identity,model)
+  IO.try(String,Host.Control.launch(Tx.enc_argv(Control.identity_args([executable,database,"turn",player,id,harness_cmd,model,effort,cwd,path,output,native],model,checked)),database,id))) : IO(String)}
 
 def detached_turn_uses_the_recorded_assignment_and_native_identity(db,player,id,cmd,log,task):
   {==}
@@ -343,7 +345,8 @@ law receiver_setup_resolves_native_paths_and_model_identity:
   database : String <- IO.try(String,Lock.SessionLock.canonical(db))
   output : String <- IO.try(String,Host.Control.output(log))
   identity : String & String <- IO.try(String & String,Host.Control.identity(executable))
-  IO.pure(String,Control.identity_endpoint(executable,database,session,native,output,model,identity))) : IO(String)}
+  checked : String & String <- Control.identity_checked(identity,model)
+  IO.pure(String,Control.identity_endpoint(executable,database,session,native,output,model,checked))) : IO(String)}
 
 def receiver_setup_resolves_native_paths_and_model_identity(db,session,cmd,log,model):
   {==}
@@ -487,4 +490,68 @@ law ordinary_worktree_output_prints_the_same_inspection_result:
     IO.print(saved)) : IO(Unit)}
 
 def ordinary_worktree_output_prints_the_same_inspection_result(db,id):
+  {==}
+
+law configured_identity_check_runs_the_installed_helper:
+  for +registry: String
+  for +helper: String
+  for +model: String
+  {Control.identity_check_args(registry,helper,model) == ["node",helper,"check","--registry",registry,"--model-key",model] : List<String>}
+
+def configured_identity_check_runs_the_installed_helper(registry,helper,model):
+  {==}
+
+law configured_model_identity_is_checked_before_the_endpoint_is_built:
+  for +registry: String
+  for +helper: String
+  for +model: String
+  {Control.identity_checked((registry,helper),model) == (do IO<String & String>:
+    checked : Unit <- Control.identity_check_body(registry,helper,model,String.is_empty(registry))
+    IO.pure(String & String,(registry,helper))) : IO(String & String)}
+
+def configured_model_identity_is_checked_before_the_endpoint_is_built(registry,helper,model):
+  {==}
+
+law an_absent_registry_leaves_the_identity_unchecked:
+  for +registry: String
+  for +helper: String
+  for +model: String
+  {Control.identity_check_body(registry,helper,model,True{}) == IO.pure(Unit,Unit{}) : IO(Unit)}
+
+def an_absent_registry_leaves_the_identity_unchecked(registry,helper,model):
+  {==}
+
+law a_present_registry_resolves_the_recorded_model:
+  for +registry: String
+  for +helper: String
+  for +model: String
+  {Control.identity_check_body(registry,helper,model,False{}) == (do IO<Unit>:
+  run : Result<&1,&1,U32 & String,String> <- Process.Process.run(Tx.enc_argv(Control.identity_check_args(registry,helper,model)),".")
+  Control.identity_check_refusal(model,Tx.run_res(run))) : IO(Unit)}
+
+def a_present_registry_resolves_the_recorded_model(registry,helper,model):
+  {==}
+
+law a_resolved_configured_identity_passes_the_configuration:
+  for +model: String
+  for out: String
+  {Control.identity_check_refusal(model,G.RRun{G.SExit{0},out}) == IO.pure(Unit,Unit{}) : IO(Unit)}
+
+def a_resolved_configured_identity_passes_the_configuration(model,out):
+  {==}
+
+law a_refused_configured_identity_names_the_recorded_model:
+  for +model: String
+  for out: String
+  {Control.identity_check_refusal(model,G.RRun{G.SExit{1},out}) == IO.die(Unit,2,"The configured series registry does not resolve the recorded model " ++ model ++ "; the endpoint would refuse at delivery. Correct the registry mapping or record a mapped model, then retry.") : IO(Unit)}
+
+def a_refused_configured_identity_names_the_recorded_model(model,out):
+  {==}
+
+law a_failed_configured_identity_spawn_refuses_the_configuration:
+  for +model: String
+  for detail: String
+  {Control.identity_check_refusal(model,G.RSpawn{detail}) == IO.die(Unit,2,"The configured series registry does not resolve the recorded model " ++ model ++ "; the endpoint would refuse at delivery. Correct the registry mapping or record a mapped model, then retry.") : IO(Unit)}
+
+def a_failed_configured_identity_spawn_refuses_the_configuration(model,detail):
   {==}

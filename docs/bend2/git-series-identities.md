@@ -98,6 +98,18 @@ baton2 /absolute/path/state.db dispatch-file lead-task root lead task \
   /absolute/path/lead-task.md
 ```
 
+Before it stores an endpoint or launches a turn, the coordinator asks the helper
+to resolve the recorded model key without launching a command:
+
+```sh
+node "$GIT_SERIES" check --registry "$REGISTRY" --model-key MODEL
+```
+
+The check exits 0 when the registry resolves the key and refuses otherwise.
+`start`, `receiver` and `dispatch-turn` report that refusal with exit status 2,
+keep the session's stored endpoint unchanged, and leave any pending input
+unaccepted, so an unmapped model refuses where it is configured.
+
 The helper replaces inherited Git identity in the launched session with the
 selected recipient series. Native tool calls inherit that identity. Registry
 configuration and keys remain outside the installed prefix and task files.

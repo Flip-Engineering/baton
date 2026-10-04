@@ -79,6 +79,7 @@ prepares and checks against the current target.
 .scratch/bend2/baton2 state.db ack turn1 root NATIVE_ACCEPTANCE_RECEIPT
 .scratch/bend2/baton2 state.db land worker1 /path/to/repo target-branch
 .scratch/bend2/baton2 state.db push /path/to/repo target-branch origin
+.scratch/bend2/baton2 state.db remote-tip /path/to/repo target-branch origin
 .scratch/bend2/baton2 state.db status
 ```
 
@@ -171,10 +172,13 @@ including `latestReport`, `latestReportId`, execution state, routes, pending
 counts and Ensemble and Section records. Pretty output retains every field.
 `delivery REPORT_ID` returns the stored message with its full body, receipt and
 current recipient endpoint. `turns PLAYER` lists native turn history with report
-bodies and receipts. A message leaves `inbox` and `pending` when it is
-acknowledged; `delivery MESSAGE_ID` and `turns PLAYER` read its retained body
-afterwards. Capture complete stdout and parse it when reviewing a report body;
-harness tool display can truncate long strings.
+bodies and receipts.
+
+Acknowledged messages leave inbox and pending. delivery MESSAGE_ID reads any
+retained message afterwards; turns PLAYER reads retained turn-associated reports.
+
+Capture complete stdout and parse it when reviewing a report body; harness tool
+display can truncate long strings.
 
 `session ID`, `player ID`, `status`, `delivery ID` and `pending` present each
 registered endpoint in two fields: `endpoint` holds the stored argv JSON text,
@@ -247,6 +251,46 @@ target. A single commit retains its full message. Several commits use the tip
 commit's subject, with every branch commit's subject in the body, oldest first
 in topological order. The body also names the Player branch and any ignored
 paths dropped during landing.
+
+`remote-tip REPO BRANCH REMOTE` reads the named remote over the Git network
+protocol and reports the object it advertises for the named branch. The answer
+is JSON with a `status` field: `advertised` with the advertised `objectId`,
+`absent` when the remote answered without advertising that branch, or `failed`
+with the `exit` status of the read and a reason naming the command whose message
+is on the coordinator's stderr. A branch the remote does not advertise answers
+`absent` even when a local branch of that name exists. The declared remote and
+branch follow the option terminator, so a remote value that begins with a dash is
+read as the remote operand and answers `failed` with the read's own status.
+`push` remains the publication operation and reports its own outcome.
+
+```sh
+.scratch/bend2/baton2 state.db remote-tip /path/to/repo target-branch origin
+```
+
+`observed-usage SESSION` projects the usage the session's own recorded native
+conversation states. Only persisted assistant messages that carry an object
+usage contribute, and each contributes under its persisted entry identity. The
+answer names the session, its harness, its recorded native identity and the
+conversation file it read, then `shape` (`message-usage` for a recorded
+assistant-message conversation, `unavailable` when the route recorded no such
+conversation), the record, observation, duplicate, conflict and unreadable-line
+counts, the recorded provider, model and API of each observation, and the token
+and cost component sums. A repeated entry identity counts once; a repeat whose
+recorded usage or route changed is counted under `conflicts` and keeps its first
+record. `absent` names the components the source did not state in every
+observation and `invalid` names the components a record stated without a number,
+per cost component included; either kind stays out of the sums. The sums are
+left out of the answer when any line was unreadable or any identity conflicts,
+and an object is left out when the source stated none of its components. The
+cost fields are the harness's recorded estimates rather than billed charges, and
+a zero component states an observed zero. The read covers the session's current
+recorded conversation and writes nothing. It refuses when both conversation
+stores carry a file for the session's native identity, and when the selected
+file records a different or absent native identity.
+
+```sh
+.scratch/bend2/baton2 state.db observed-usage worker1
+```
 
 ## Native turns
 
@@ -361,6 +405,11 @@ existing Codex or OMP session and preserves its saved native ID. It resolves
 executable and log paths and selects the recorded model, effort and workspace.
 The configured model Git registry applies to each launched session through the
 installed Node helper; see [series Git identities](../docs/bend2/git-series-identities.md).
+
+Each of these commands resolves the session's recorded model through the helper's
+`check` verb before it stores an endpoint or launches a turn. A registry that
+does not map that model key refuses with exit status 2 and leaves the stored
+endpoint and pending input unchanged.
 
 `dispatch-file ID SENDER RECIPIENT KIND PATH` commits an authorized message and
 launches its delivery with regular output files. Independent dispatches can run
@@ -489,8 +538,9 @@ the database and closes with the server.
 
 The native Conductor reviews the report and records acceptance with
 `ack ID root RECEIPT`. It can send guidance with `message`, inspect Git state
-with `worktree`, and land and publish reviewed work with `land`, `land-checked`
-and `push`. A report's receipt records the Conductor's acceptance; committing the
+with `worktree`, read a declared remote's advertised branch with `remote-tip`,
+and land and publish reviewed work with `land`, `land-checked` and `push`. A
+report's receipt records the Conductor's acceptance; committing the
 report alone leaves that receipt empty.
 
 ## OMP Associate Conductors and Players
