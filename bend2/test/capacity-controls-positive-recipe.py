@@ -224,7 +224,10 @@ def main():
                      .get('archived', {}).get('documents') or {})
         if sorted(documents) != sorted(package.ARCHIVE_METADATA):
             raise SystemExit('the archive manifest does not bind both metadata documents')
-        current = package.verify_archived_inventory(archived, result['inventory'], documents)
+        current, bound = package.verify_archived_inventory(archived, result['inventory'],
+                                                           documents)
+        if {name: row['sha256'] for name, row in bound.items()} != dict(documents):
+            raise SystemExit('the extracted metadata documents differ from their bound digests')
         envelope = package.controls_evidence(archived, package.snapshot(), args.bend,
                                             archived=True, documents=documents)
         if envelope['reduction_sha256'] != result['reduction_sha256']:
