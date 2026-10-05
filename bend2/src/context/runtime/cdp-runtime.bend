@@ -454,6 +454,23 @@ def stop_is_live(+stop: StopLiveness) -> Bool:
     case StopLive{}: True{}
     case other: False{}
 
+# Status of this model. The recorded-stop liveness above, its transitions and the predicate
+# below are source models with their laws. No operative native gate consumes them: the
+# production pause-scoped admission is the adapter session gate in
+# bend2/context/runtime/cdp-session.mjs (session.admitRef, which refuses refOutsidePause and
+# refStopNotLive), and the native observer that carries a stop through transitions is the
+# caller owner's module. This module supplies the model and the predicates only; it holds no
+# reference identity, no counter and no admission authority of its own.
+#
+# The complete native contribution a caller needs is the predicate below: it takes the
+# caller's already parsed kind flag and the caller's carried stop, and decides whether a
+# pause-scoped reference may be admitted. A caller that keeps its own record applies
+# stop_liveness at each event beside advance and passes the result here; a caller that wants
+# one value to carry both facts can widen its own record, which is the caller's decision
+# because every Rec{...} literal in the law module would change with it.
+def pause_scoped_admitted(+stop: StopLiveness, +pause_scoped: Bool) -> Bool:
+  Bool.pick(Bool, pause_scoped, stop_is_live(stop), True{})
+
 # An intent that needs the control-runtime grant only.
 def admit_control(
   +effects: List<Effect>,

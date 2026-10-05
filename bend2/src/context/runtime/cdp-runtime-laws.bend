@@ -310,6 +310,37 @@ law a_historical_stop_admits_no_pause_scoped_reference:
 def a_historical_stop_admits_no_pause_scoped_reference():
   {==}
 
+law a_pause_scoped_reference_is_admitted_against_a_live_stop:
+  {R.pause_scoped_admitted(R.StopLive{}, True{}) == True{} : Bool}
+
+def a_pause_scoped_reference_is_admitted_against_a_live_stop():
+  {==}
+
+law a_pause_scoped_reference_is_refused_against_a_historical_stop:
+  {R.pause_scoped_admitted(R.StopHistorical{}, True{}) == False{} : Bool}
+
+def a_pause_scoped_reference_is_refused_against_a_historical_stop():
+  {==}
+
+law a_pause_scoped_reference_is_refused_against_an_unknown_stop:
+  {R.pause_scoped_admitted(R.StopUnknown{}, True{}) == False{} : Bool}
+
+def a_pause_scoped_reference_is_refused_against_an_unknown_stop():
+  {==}
+
+law a_pause_scoped_reference_is_refused_against_an_absent_stop:
+  {R.pause_scoped_admitted(R.StopAbsent{}, True{}) == False{} : Bool}
+
+def a_pause_scoped_reference_is_refused_against_an_absent_stop():
+  {==}
+
+law a_non_pause_scoped_reference_ignores_the_stop:
+  for +stop: R.StopLiveness
+  {R.pause_scoped_admitted(stop, False{}) == True{} : Bool}
+
+def a_non_pause_scoped_reference_ignores_the_stop(stop):
+  {==}
+
 law target_liveness_outlives_the_recorded_stop:
   for +epoch: String
   for +mutation: String
