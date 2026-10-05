@@ -13,6 +13,7 @@
 
 import Base
 import ../src/receive/output-framing.bend as F
+import ../src/receive/output-position.bend as P
 
 def same_units(left: List<U32>, right: List<U32>) -> Bool:
   match left:
@@ -164,13 +165,13 @@ def frame(start: List<U32>, end: List<U32>, bytes: List<U32>) -> F.Frame:
 def ask(octets: List<U32>, extent: List<U32>, observation: F.Observation) -> F.FrameRequest:
   F.FrameAsk{octets, extent, source(), observation}
 
-def framed(octets: List<U32>, extent: List<U32>, observation: F.Observation,
+def framed(+octets: List<U32>, extent: List<U32>, observation: F.Observation,
            frames: List<F.Frame>, pending: F.PendingSuffix, boundary: List<U32>,
            inspected: List<U32>) -> F.FramingResult:
   F.Framed{ask(octets, extent, observation), frames, pending, pos(boundary), pos(inspected),
     octets}
 
-def refused(octets: List<U32>, extent: List<U32>, observation: F.Observation,
+def refused(+octets: List<U32>, extent: List<U32>, observation: F.Observation,
             reason: String) -> F.FramingResult:
   F.FramingRefused{reason, ask(octets, extent, observation), octets}
 
@@ -222,13 +223,26 @@ def cases() -> List<List<U32> & List<U32> & F.Observation & F.FramingResult & St
       framed([123, 34, 97, 34, 58, 49, 125, 10], [56], open_obs(),
         [frame([0], [8], [123, 34, 97, 34, 58, 49, 125, 10])], no_pending([8]), [8], [8]),
       "json-looking-bytes-have-no-framing-meaning"),
-    ([97, 10], [51], open_obs(),
-      framed([97, 10], [51], open_obs(), [frame([0], [2], [97, 10])], no_pending([2]), [2], [2]),
+    ([97, 10], [50], open_obs(),
+      framed([97, 10], [50], open_obs(), [frame([0], [2], [97, 10])], no_pending([2]), [2], [2]),
       "lf-ending-no-extra-frame"),
+    ([97, 98], [50], open_obs(),
+      framed([97, 98], [50], open_obs(), [], pending_bytes([0], [2], [97, 98]), [0], [2]),
+      "no-lf-nonempty-open-retains-suffix"),
+    ([97, 98], [50], sealed_obs([2]),
+      framed([97, 98], [50], sealed_obs([2]), [frame([0], [2], [97, 98])], no_pending([2]), [2], [2]),
+      "no-lf-nonempty-same-extent-seal-appends-frame"),
+    ([10, 97, 10, 98, 99], [53], open_obs(),
+      framed([10, 97, 10, 98, 99], [53], open_obs(),
+        [frame([0], [1], [10]), frame([1], [3], [97, 10])], pending_bytes([3], [5], [98, 99]),
+        [3], [5]), "several-frames-with-multi-byte-suffix"),
+    ([97, 10], [50], F.SealedObs{source(), pos([0, 1])},
+      refused([97, 10], [50], F.SealedObs{source(), pos([0, 1])}, "sealed_extent_mismatch"),
+      "invalid-constructed-seal-pos-retained-and-refused"),
     ([97, 98, 10], [51], foreign_obs(),
       refused([97, 98, 10], [51], foreign_obs(), "foreign_source_observation"),
       "foreign-observation-source-refused"),
-    ([97, 10], [50], open_obs(), refused([97, 10], [50], open_obs(), "extent_mismatch"),
+    ([97, 10], [51], open_obs(), refused([97, 10], [51], open_obs(), "extent_mismatch"),
       "declared-extent-mismatch-refused"),
     ([97, 10], [45, 49], open_obs(), refused([97, 10], [45, 49], open_obs(), "captured_extent_invalid"),
       "malformed-extent-bytes-refused"),
@@ -238,7 +252,7 @@ def cases() -> List<List<U32> & List<U32> & F.Observation & F.FramingResult & St
       "non-octet-payload-refused"),
     ([97, 10], [50], fault_obs("extent_mismatch"),
       refused([97, 10], [50], fault_obs("extent_mismatch"), "extent_mismatch"),
-      "fault-after-extent-check-uses-extent-reason"),
+      "source-fault-reason-identical-to-extent-diagnostic"),
     ([97, 10], [50], fault_obs("source_fault_recorded"),
       refused([97, 10], [50], fault_obs("source_fault_recorded"), "source_fault_recorded"),
       "fault-reported-after-matching-extent"),
