@@ -358,7 +358,7 @@ def run_gates(compiler, env, logs, initial, before_inputs, remote=None):
     if remote is not None:
         summary['controls_evidence'] = {key: remote[key] for key in
                                         ('path', 'bytes', 'sha256', 'cases', 'groups', 'binding',
-                                         'origin', 'spans')}
+                                         'origin', 'spans', 'classifier')}
     path = logs / 'summary.json'
     write_json(path, summary)
     try:
@@ -627,7 +627,7 @@ def controls_evidence(directory, initial, compiler):
     inputs = {'compiler_sha256': compiler_sha, 'checker_sha256': sha256(ROOT / CONTROL_SCRIPT),
               'archive_sha256': COMPILER_ARCHIVE_SHA256, 'runtime_set_sha256': runtime_sha}
     source_pins = {key: initial[key] for key in ('head', 'tree', 'bend2_tree')}
-    seen_modules, seen_cases, seen_jobs, spans = set(), {}, set(), []
+    seen_modules, seen_cases, seen_jobs, spans, verdicts = set(), {}, set(), [], {}
     for bundle in bundles:
         module = bundle.get('module')
         require(module in modules, 'A controls evidence bundle is absent from this source: '
@@ -719,9 +719,14 @@ def controls_evidence(directory, initial, compiler):
             verdict = classify_control(case, result, streams, baseline_reference, directory,
                                        source_pins, compiler_sha,
                                        verify_delta(result, json.dumps(identity)))
-            require(verdict.get('match') is True and verdict.get('qualified') is True,
+            require(verdict.get('match') is True and verdict.get('qualified') is True
+                    and verdict.get('evidence_verified') is True,
                     'The checker classifier did not qualify this control as an intended refusal: '
                     + json.dumps(identity) + ' ' + json.dumps(verdict.get('class')))
+            verdicts[identity] = {'class': verdict.get('class'), 'match': verdict.get('match'),
+                                  'qualified': verdict.get('qualified'),
+                                  'diagnostic_sha256': verdict.get('diagnostic_sha256'),
+                                  'evidence_verified': verdict.get('evidence_verified')}
             require(verdict.get('attributed_law') == control['law']
                     and verdict.get('law') == control['law'],
                     'The classified diagnostic names another law: ' + json.dumps(identity))
@@ -749,6 +754,8 @@ def controls_evidence(directory, initial, compiler):
             'binding': expected['sha256'], 'origin': origin, 'route': 'remote-module-groups',
             'checker_invocation': 'node ' + CONTROL_SCRIPT, 'modules': sorted(seen_modules),
             'spans': spans, 'slowest_span_seconds': max(seconds) if seconds else 0,
+            'classifier': {'command': ['node', CONTROL_SCRIPT, '--classify'],
+                           'verdicts': [verdicts[identity] for identity in sorted(verdicts)]},
             'slowest_seconds': max(entry['resource']['real_seconds']
                                    for entry in seen_cases.values()),
             'largest_child_max_rss_bytes': max((entry['resource'].get('max_rss_bytes') or 0)

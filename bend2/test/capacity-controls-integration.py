@@ -20,6 +20,12 @@ CHECKER = ROOT / 'bend2/scripts/laws-check.mjs'
 NODE_ENV = {'PATH': '/usr/bin:/bin:/usr/sbin:/sbin', 'BEND_NO_TELEMETRY': '1'}
 
 
+def binding_order(rows):
+    """The row order the shared serialization produces, as ids."""
+    encoded = PACKAGE.binding_bytes(rows).split(b'\n')
+    return [line.split(b'\t', 1)[0].decode('utf-8') for line in encoded]
+
+
 class CapacityControlsIntegration(unittest.TestCase):
     def checker(self, mode, stdin=None):
         completed = subprocess.run(['node', str(CHECKER), mode], cwd=ROOT, env=NODE_ENV,
@@ -63,6 +69,25 @@ class CapacityControlsIntegration(unittest.TestCase):
                 PACKAGE.discover_controls()
         finally:
             PACKAGE.subprocess.check_output = original
+
+    def test_the_discovery_binding_bytes_are_the_shared_serialization(self):
+        rows = [
+            {'id': 'mutation:astral\U00010000', 'kind': 'mutation', 'law': 'astral',
+             'module': 'bend2/src/json/laws.bend', 'definition_sha256': 'f' * 64},
+            {'id': 'proof:private\ue000', 'kind': 'proof-removal', 'law': 'private',
+             'module': 'bend2/src/json/laws.bend', 'definition_sha256': '0' * 64},
+        ]
+        private_use = '\t'.join(rows[1][field] for field in PACKAGE.CONTROL_FIELDS).encode('utf-8')
+        astral = '\t'.join(rows[0][field] for field in PACKAGE.CONTROL_FIELDS).encode('utf-8')
+        expected = private_use + b'\n' + astral
+        encoded = PACKAGE.binding_bytes(rows)
+        self.assertEqual(encoded, expected,
+                         'the binding must order rows by unsigned UTF-8 bytes, not by code units')
+        self.assertEqual(hashlib.sha256(encoded).hexdigest(),
+                         hashlib.sha256(expected).hexdigest())
+        # U+E000 starts EF 80 80 and U+10000 starts F0 90 80 80, so UTF-8 order puts the
+        # private-use id first while UTF-16 code-unit order would put the astral id first.
+        self.assertEqual(binding_order(rows), [rows[1]['id'], rows[0]['id']])
 
     def test_the_checker_answers_or_refuses_the_classification_request(self):
         payload = {'case': {'id': 'proof:absent', 'kind': 'proof-removal', 'law': 'absent',
