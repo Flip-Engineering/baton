@@ -10,19 +10,20 @@
 // The first test is MODULE COMPOSITION with manually advanced counters: it
 // exercises the module-level admission and the sampled acquisition over
 // counters advanced by the production counter module, not by a live session.
-// The second test drives the production adapter session: launch/evaluate/
-// resume-step/release through session.execute intents, reads through
-// session.send gated by session.admitRef synchronously before each send, the
-// injected production requireAdmittedRef forwarded through the binding and
-// every gated read, live counters and stop liveness from session.snapshot(),
-// and the sampled binding over that live session. No counter is incremented
-// by hand in the session test.
+// The second test drives the production adapter session: launch FIRST (a
+// waitFor issued before launch would reject transportMissing), then consume
+// the retained stop through the session's waitFor surface using the
+// returned absolute frame cursor, reads through session.send gated by
+// session.admitRef synchronously before each send with the injected
+// production requireAdmittedRef forwarded everywhere, the production release
+// intent with the fixture-owned control as the finally fallback, and full
+// resource closure with truthful outcome classification.
 //
 // Resource closure: every line after launchDebuggee runs inside try/finally;
-// the finally performs bounded owned-child termination and reaping, session
-// closure, and full raw evidence retention even on assertion or API failure.
-// The release control is explicitly fixture-owned for the child this harness
-// created - a truthful bounded scope that makes no keeper-custody claim.
+// the finally performs the direct owned-child termination ONLY as the
+// fallback when the production release path has not already ended the child,
+// and retains full raw evidence even on assertion or API failure. A reap
+// timeout is a distinct failed outcome, never fabricated as a signal.
 
 import test from 'node:test';
 import assert from 'node:assert/strict';
@@ -100,7 +101,8 @@ test('module composition with manually advanced counters: unit-level production 
   assert.equal(stale.admitted, false);
   assert.equal(stale.condition, 'staleReference');
 
-  // The binding samples through the injected sampler and normalizer.
+  // The binding samples through the injected sampler and normalizer; a
+  // binding without the production normalizer refuses outright.
   live = { ...liveStart };
   const binding = createCaptureBinding({ admitRef: refs.admitRef, ref, liveNow, ...normalize });
   assert.equal(binding.sample().admitted, true);
@@ -108,6 +110,7 @@ test('module composition with manually advanced counters: unit-level production 
   const changed = binding.sample();
   assert.equal(changed.admitted, false);
   assert.equal(changed.condition, 'refRetiredByMutation');
+  assert.equal(createCaptureBinding({ admitRef: refs.admitRef, ref, liveNow }).sample().condition, 'productionNormalizerRequired');
 
   // Awaited acquisition: identity changes across the read ->
   // changedDuringCapture at stage afterRead with the raw response carried as
@@ -163,16 +166,23 @@ test('same-epoch assembly over a real debuggee through the production session', 
   const app = join(HERE, 'fixtures', 'fixture-app.mjs');
 
   // The retained harness launcher supplies the endpoint and owns the child;
-  // everything after this line is the production session, wrapped in
-  // try/finally with bounded owned-child termination and full evidence
-  // retention even on assertion or API failure.
+  // everything after this line is the production session inside one
+  // try/finally with truthful outcome classification.
   const run = launchDebuggee(app);
+  if (!run.child || run.child.pid == null) {
+    const closure = await finish(run);
+    retain('composition-debuggee', { spawnFailed: true, closure });
+    assert.fail('launchDebuggee returned no child; spawn failed');
+  }
   const evidence = { process: { pid: run.child.pid, execPath: process.execPath, version: process.version } };
   let session = null;
+  let releaseObserved = null;
+  let outstandingAbort = null;
+  let primaryFailure = null;
   try {
     // Fixture-owned control for the child THIS harness created: a truthful
-    // bounded scope that signals and reaps the harness child and makes no
-    // keeper-custody claim.
+    // bounded scope used by the production release intent; the direct kill
+    // in finally is only the fallback when release has not ended the child.
     const control = {
       release: async ({ signal } = {}) => {
         const child = run.child;
@@ -192,23 +202,28 @@ test('same-epoch assembly over a real debuggee through the production session', 
       control,
     });
 
-    // Observation through the session's documented waitFor surface with
-    // bounded cancellation; retained-frame position comes from the awaited
-    // event itself.
-    let lastSeq = 0;
-    const waitForStop = async (timeoutMs = 15000) => {
+    // Observation through the session's waitFor surface. waitFor returns an
+    // ABSOLUTE frame cursor in observed.index; the next wait uses that
+    // cursor so a retained frame is never replayed as a later stop.
+    async function waitForStop(afterCursor, timeoutMs = 15000) {
       const abort = new AbortController();
+      outstandingAbort = abort;
       const timer = setTimeout(() => abort.abort(), timeoutMs);
       try {
-        const observed = await session.waitFor('Debugger.paused', { after: lastSeq, signal: abort.signal });
-        lastSeq += 1;
-        return observed;
+        const observed = await session.waitFor('Debugger.paused', { after: afterCursor, signal: abort.signal });
+        return { observed, timedOut: false };
+      } catch (err) {
+        if (abort.signal.aborted) return { observed: null, timedOut: true, waitError: String(err.message ?? err) };
+        throw err;
       } finally {
         clearTimeout(timer);
+        outstandingAbort = null;
       }
-    };
+    }
 
-    const initialStopPromise = waitForStop();
+    // LAUNCH FIRST: a wait issued before launch would reject
+    // transportMissing. The launch may retain the initial paused frame;
+    // waitFor with cursor 0 consumes it afterwards.
     const launch = await session.execute('launch', {
       effects: ['controlRuntime'],
       webSocketUrl: await run.endpoint,
@@ -218,9 +233,13 @@ test('same-epoch assembly over a real debuggee through the production session', 
       onOwnerStop: 'terminate',
     });
     assert.ok(launch, 'launch acknowledged');
-    const initialStop = await initialStopPromise;
-    assert.ok(initialStop, 'the initial stop arrived through the session observation surface');
-    evidence.initialStop = initialStop;
+    evidence.launch = launch;
+
+    const initial = await waitForStop(0);
+    assert.equal(initial.timedOut, false, 'the initial retained stop arrived');
+    assert.ok(initial.observed, 'the initial stop observation is retained');
+    evidence.initialCursor = initial.observed.index;
+    evidence.initialStop = initial.observed;
 
     const snapshotAtStop = session.snapshot();
     assert.equal(typeof snapshotAtStop.epoch, 'string', 'snapshot exposes the session-owned epoch counter string');
@@ -228,10 +247,10 @@ test('same-epoch assembly over a real debuggee through the production session', 
     const liveness = snapshotAtStop.lastPause ? snapshotAtStop.lastPause.liveness : null;
     assert.equal(liveness, 'live', 'the recorded stop is live');
 
-    // The observed frames come from the retained stop observation; the
-    // original scope objects are kept so record keys stay stable.
-    const retainedFrames = (initialStop && initialStop.params && initialStop.params.callFrames)
-      ?? (initialStop && initialStop.callFrames)
+    // The retained frame position comes from the observed stop; the original
+    // scope objects are kept so record keys stay stable.
+    const retainedFrames = (initial.observed && initial.observed.params && initial.observed.params.callFrames)
+      ?? (initial.observed && initial.observed.callFrames)
       ?? null;
     assert.ok(Array.isArray(retainedFrames) && retainedFrames.length > 0, 'the stop observation retains its call frames');
     const frame0 = retainedFrames[0];
@@ -267,8 +286,6 @@ test('same-epoch assembly over a real debuggee through the production session', 
     assert.ok(handleDescriptor, 'the global scope exposes an expandable object');
     evidence.payload = expansionPayload(handleDescriptor, identity);
 
-    // The awaited scope capture through the production session; the loader
-    // returns the CDP result per scope.
     const capture = await captureScopes({
       scopeChain: frame0.scopeChain,
       identity,
@@ -297,51 +314,80 @@ test('same-epoch assembly over a real debuggee through the production session', 
     assert.equal(retired.admitted, false);
     assert.equal(retired.condition, 'refRetiredByMutation');
 
-    // Resume requires a REAL later stop for staleReference: the stop
-    // observation is awaited with bounded cancellation and its absence
-    // asserts the actual state-first refusal instead.
-    const laterStopPromise = waitForStop();
+    // Resume and require a REAL later stop, waited with the returned cursor
+    // so the first pause cannot replay as the later one.
+    const laterStopPromise = waitForStop(initial.observed.index);
     await session.execute('resume-step', { effects: ['controlRuntime'], action: 'resume' });
-    let laterStop = null;
-    try {
-      laterStop = await laterStopPromise;
-    } catch (err) {
-      laterStop = null;
-      evidence.secondStopWaitError = String(err.message ?? err);
-    }
+    const later = await laterStopPromise;
     const afterResume = liveFromSnapshot(runtime, session.snapshot());
     assert.notEqual(afterResume.epoch, identity.epoch, 'session-owned epoch advanced');
-    if (laterStop) {
-      assert.equal(binding.sample().condition, 'staleReference');
-    } else {
-      // State-first refusal: without an observed later stop, the record is
-      // named from the actual snapshot state rather than asserted as stale.
-      evidence.stateFirstRefusal = { snapshot: afterResume, sample: binding.sample() };
-      assert.equal(binding.sample().admitted, false, 'without a live later stop the pause-scoped ref refuses');
-    }
+    const expectedCondition = later.observed ? 'staleReference' : 'refStopNotLive';
+    const stateFirst = binding.sample();
+    assert.equal(stateFirst.condition, expectedCondition, `the state-first refusal names the actual condition (${later.timedOut ? 'no later stop observed' : 'later stop observed'})`);
+    evidence.afterResume = { ...afterResume, laterStopTimedOut: later.timedOut, stateFirstCondition: stateFirst.condition };
+
+    // The production release path runs and its observed result is asserted;
+    // the finally fallback only covers paths that never reached it.
+    releaseObserved = await session.execute('release', { effects: ['controlRuntime'], onRelease: 'terminate', signal: 'SIGKILL' });
+    assert.ok(releaseObserved, 'release acknowledged');
 
     evidence.runtimeEvidence = runtimeEvidence({ runtime, epoch: identity.epoch, thread: 'main:0', script: frame0.location?.scriptId ?? null, generated: null, original: null });
+  } catch (err) {
+    primaryFailure = { message: String(err.message ?? err), stack: err.stack ?? null };
+    throw err;
   } finally {
     const closureFailures = [];
+    try {
+      // Cancel any outstanding wait so its rejection cannot escape.
+      if (outstandingAbort) outstandingAbort.abort();
+    } catch (err) {
+      closureFailures.push(`abort outstanding wait: ${String(err.message ?? err)}`);
+    }
     try {
       if (session && typeof session.close === 'function') session.close();
     } catch (err) {
       closureFailures.push(`session.close: ${String(err.message ?? err)}`);
     }
+    // Direct owned-child termination is the FALLBACK: it runs only when the
+    // production release path has not already ended the child.
     try {
       const child = run.child;
-      if (child && child.exitCode === null && child.signalCode === null) child.kill('SIGKILL');
+      if (child && child.exitCode === null && child.signalCode === null && !releaseObserved) child.kill('SIGKILL');
     } catch (err) {
-      closureFailures.push(`child kill: ${String(err.message ?? err)}`);
+      closureFailures.push(`child fallback kill: ${String(err.message ?? err)}`);
     }
+    let closure = null;
+    let reapTimedOut = false;
     try {
-      const closure = await Promise.race([finish(run), new Promise((resolve) => setTimeout(() => resolve({ exit: { code: null, signal: 'reap-timeout' }, stdout: run.stdoutText(), stderr: run.stderrText() }), 8000))]);
-      evidence.closure = closure;
+      closure = await Promise.race([
+        finish(run),
+        new Promise((resolve) => setTimeout(() => resolve(null), 8000)),
+      ]);
+      if (!closure) {
+        reapTimedOut = true;
+        closure = { exit: { code: null, signal: null, spawnError: null }, stdout: run.stdoutText(), stderr: run.stderrText(), reapTimedOut: true };
+      }
     } catch (err) {
       closureFailures.push(`reap: ${String(err.message ?? err)}`);
     }
+    evidence.closure = closure;
+    evidence.reapTimedOut = reapTimedOut;
+    evidence.releaseObserved = releaseObserved;
     evidence.closureFailures = closureFailures;
+    evidence.primaryFailure = primaryFailure;
     retain('composition-debuggee', evidence);
+    // Truthful outcome classification: an observed child end plus no
+    // unresolved cleanup failure and no reap timeout is the only success
+    // shape; a reap timeout is a distinct failed outcome.
+    if (reapTimedOut) {
+      assert.fail('child reaping timed out after 8s; no exit was observed (distinct failed outcome, not a fabricated signal)');
+    }
+    if (closureFailures.length > 0) {
+      assert.fail(`cleanup failures: ${closureFailures.join('; ')}`);
+    }
+    if (!closure || (closure.exit.code === null && closure.exit.signal === null)) {
+      assert.fail('the owned child was never observed to exit or close');
+    }
+    assert.equal(closure.exit.spawnError ?? null, null);
   }
-  assert.equal(evidence.closure ? evidence.closure.exit.spawnError ?? null : null, null);
 });

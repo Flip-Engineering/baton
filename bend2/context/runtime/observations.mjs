@@ -48,35 +48,6 @@ export { describeRemoteObject, nullKind, previewCompleteness, propertyDescriptor
 export const ADMISSION_NOTE =
   'backend access requires an explicit admitted ref decision from the production admission; a refusal or a malformed candidate refuses before any send, and a runtimeBusy answer is a refusal rather than a retry obligation';
 
-const CANONICAL_DECIMAL = /^0$|^[1-9][0-9]*$/;
-
-// The ref kinds the production admission accepts (recorded CDP contract:
-// frame, scope and object are the pause-scoped kinds; this list is the
-// test-owned standalone helper's domain restriction, not a second
-// production validator - the operative path delegates to the injected
-// production requireAdmittedRef/refDecision).
-export const REF_KINDS = ['frame', 'scope', 'object'];
-
-// Shape validation for the standalone test helper only. The operative
-// capture path never runs this: createCaptureBinding requires the injected
-// production normalizer. The helper is deliberately narrow: a complete
-// seven-member identity, a kind from REF_KINDS, and canonical decimal
-// counter strings.
-export function isValidRefIdentity(identity) {
-  return (
-    identity !== null &&
-    typeof identity === 'object' &&
-    !Array.isArray(identity) &&
-    typeof identity.runtime === 'string' && identity.runtime !== '' &&
-    typeof identity.adapter === 'string' && identity.adapter !== '' &&
-    typeof identity.thread === 'string' && identity.thread !== '' &&
-    typeof identity.kind === 'string' && REF_KINDS.includes(identity.kind) &&
-    typeof identity.handle === 'string' && identity.handle !== '' &&
-    typeof identity.epoch === 'string' && CANONICAL_DECIMAL.test(identity.epoch) &&
-    typeof identity.mutationGeneration === 'string' && CANONICAL_DECIMAL.test(identity.mutationGeneration)
-  );
-}
-
 function refusal(condition, detail) {
   return { admitted: false, refused: true, condition, detail: detail ?? null, note: ADMISSION_NOTE };
 }
@@ -84,53 +55,30 @@ function refusal(condition, detail) {
 // Normalizes one production ref decision into
 // {admitted:true, identity} or {admitted:false, refused:true, condition,
 // detail, note}; both outcomes always carry the admitted member so callers
-// can branch on it directly. When the composer injects the production
-// requireAdmittedRef, that normalizer decides alone and this function adds
-// no second permissive validator: its thrown {condition, detail} is rendered
-// verbatim. Otherwise the strict local shape check applies: only
-// {decision:'admitted', ok:true, identity} with a valid identity admits; a
-// candidate claiming admission while carrying ok:false refuses as
-// refDecisionContradictory; a candidate with no decision member refuses as
-// refDecisionRefused; any other shape refuses as refDecisionMalformed; a
-// refused decision renders its own condition and detail, and a refused
-// decision without a condition reports refDecisionRefused.
+// can branch on it directly. The injected production requireAdmittedRef
+// (the CDP owner's normalizer) is REQUIRED: it decides alone, its returned
+// identity is in-contract by the producer's own guarantee, and its thrown
+// refusal renders with its ACTUAL condition and detail values - nothing is
+// coerced into another shape. Without it this function refuses with
+// productionNormalizerRequired instead of consulting any local validator;
+// standalone shape checks live in the test files that need them.
 export function admissionOutcome(decision, { requireAdmittedRef } = {}) {
-  if (typeof requireAdmittedRef === 'function') {
-    // The injected production normalizer decides alone: its returned
-    // identity is in-contract by the producer's own guarantee, and its
-    // thrown refusal renders with its ACTUAL condition and detail values -
-    // nothing is coerced into another shape. A throw without a string
-    // condition is outside the producer contract and is named
-    // refDecisionMalformed.
-    try {
-      const identity = requireAdmittedRef(decision);
-      return { admitted: true, identity };
-    } catch (err) {
-      const condition = err && typeof err.condition === 'string' ? err.condition : 'refDecisionMalformed';
-      return refusal(condition, err && err.detail !== undefined ? err.detail : null);
-    }
+  if (typeof requireAdmittedRef !== 'function') {
+    return refusal('productionNormalizerRequired', 'admissionOutcome requires the injected production requireAdmittedRef normalizer');
   }
-  if (decision && typeof decision === 'object' && decision.decision === 'admitted') {
-    if (decision.ok === false) {
-      return refusal('refDecisionContradictory');
-    }
-    if (decision.ok === true && isValidRefIdentity(decision.identity)) {
-      return { admitted: true, identity: decision.identity };
-    }
-    return refusal('refDecisionMalformed');
+  try {
+    const identity = requireAdmittedRef(decision);
+    return { admitted: true, identity };
+  } catch (err) {
+    const condition = err && typeof err.condition === 'string' ? err.condition : 'refDecisionMalformed';
+    return refusal(condition, err && err.detail !== undefined ? err.detail : null);
   }
-  if (decision && typeof decision === 'object' && decision.decision === 'refused') {
-    return refusal(typeof decision.condition === 'string' ? decision.condition : 'refDecisionRefused', decision.detail ?? null);
-  }
-  const hasDecision = decision !== null && typeof decision === 'object' && decision.decision !== undefined;
-  return refusal(hasDecision ? 'refDecisionMalformed' : 'refDecisionRefused');
 }
 
 // Renders a decision as a refusal record, or null when the production
-// admission admitted the ref. Rendered conditions include the production
-// set: refMalformed, foreignRuntime, foreignAdapter, staleReference,
-// refRetiredByMutation, refOutsidePause, refStopNotLive, refThreadUnknown,
-// refDecisionContradictory, refDecisionRefused, refDecisionMalformed.
+// admission admitted the ref. Requires the injected production
+// requireAdmittedRef like every operative normalization path; rendered
+// conditions are the production normalizer's actual values.
 export function staleRefRefusal(decision, options) {
   const outcome = admissionOutcome(decision, options);
   return outcome.admitted ? null : { admitted: false, refused: true, condition: outcome.condition, detail: outcome.detail ?? null, note: outcome.note };

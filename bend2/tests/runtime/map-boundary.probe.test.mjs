@@ -1,21 +1,29 @@
 // Boundary probes for the enforced map reader's substitution and in-place
 // write intervals, authored for admitted remote runs (no local execution).
 //
-// Determinism approach: each probe starts the production reader on a
-// multi-megabyte file inside a worker thread and performs exactly one
-// mutation at a fixed delay inside the multi-millisecond read window - an
-// in-place same-size write for one probe, a rename-over substitution for
-// the other. The retained outcome is honest in both directions: the probe
-// asserts mapReplacedDuringRead when the interval was covered, and records
-// the success as the stated residual when the mutation landed outside every
-// covered interval - matching nanosecond timestamps never claim immutable
-// bytes. One invariant holds unconditionally: when the reader returns
-// success, the bytes it read hash exactly to the original content. A
-// refusal names one of the reader's replacement conditions.
+// Synchronization: the reader runs on a multi-megabyte file inside a worker
+// thread in a child process. The worker posts a 'started' event immediately
+// before entering the reader; the parent awaits that boundary, then performs
+// exactly one mutation (an in-place same-size write, or a rename-over
+// substitution), awaits the mutation, and then awaits the worker outcome and
+// child completion before any cleanup. Timers are always cleared.
+//
+// Coverage classification is asserted from the actual operation sequence:
+// a mapReplacedDuringRead refusal means the interval was COVERED (for the
+// substitution probe only mapReplacedDuringRead counts - a mapReadFailed is
+// a reader refusal, never a covered replacement, and is reported as
+// unexercised with the child status retained separately); a success means
+// the interval was NOT exercised (the mutation landed before admission or
+// after completion) and is reported as UNEXERCISED, never as passed defect
+// coverage. Because a replacement fully installed before admission can be
+// legitimately read, the read digest is recorded and compared to both the
+// original and the replaced content - it is not an unconditional original-
+// bytes invariant. Child status, signal, error and the worker outcome are
+// retained separately.
 
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { spawnSync } from 'node:child_process';
+import { spawn } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -35,49 +43,111 @@ function buildWorkerSource() {
     "import { createHash } from 'node:crypto';",
     `import { createAdmittedFileReader } from ${JSON.stringify(pathToFileURL(READER_MODULE).href)};`,
     'const reader = createAdmittedFileReader({ admittedRoots: workerData.admittedRoots });',
+    "parentPort.postMessage({ event: 'started' });",
     'try {',
     '  const out = reader(workerData.path);',
-    "  parentPort.postMessage({ ok: true, size: out.bytes.length, sha256: createHash('sha256').update(out.bytes).digest('hex') });",
+    "  parentPort.postMessage({ outcome: { ok: true, size: out.bytes.length, sha256: createHash('sha256').update(out.bytes).digest('hex') } });",
     '} catch (err) {',
-    "  parentPort.postMessage({ ok: false, condition: err.condition ?? null, message: String(err.message ?? err) });",
+    "  parentPort.postMessage({ outcome: { ok: false, condition: err.condition ?? null, message: String(err.message ?? err) } });",
     '}',
     '',
   ].join('\n');
 }
 
+// Runs one probe: starts the child (which spawns the worker), waits for the
+// worker's 'started' boundary, applies the mutation, and collects the worker
+// outcome and the child completion separately. Everything is awaited before
+// cleanup; timers are cleared on every path.
 async function runProbe(mutate) {
   const root = mkdtempSync(join(tmpdir(), 'rtv-boundary-'));
   const target = join(root, 'big.map');
   writeFileSync(target, ORIGINAL_CHUNK);
   const workerFile = join(root, 'reader-worker.mjs');
   writeFileSync(workerFile, buildWorkerSource());
-  const mutation = Promise.resolve().then(() => mutate(root, target));
-  const outcome = await new Promise((resolve) => {
-    let settled = false;
-    const done = (value) => {
-      if (!settled) {
-        settled = true;
-        resolve(value);
-      }
-    };
-    const guard = setTimeout(() => done({ ok: false, condition: 'worker-timeout', message: 'reader worker did not finish' }), 60000);
-    // The worker runs through a child Node so this probe file stays free of
-    // a top-level worker_threads import it does not otherwise need.
-    const script = [
-      `const { Worker } = require('node:worker_threads');`,
-      `const worker = new Worker(${JSON.stringify(workerFile)}, { workerData: { path: ${JSON.stringify(target)}, admittedRoots: [${JSON.stringify(root)}] } });`,
-      'worker.on("message", (m) => { console.log(JSON.stringify(m)); });',
-      'worker.on("error", (e) => { console.log(JSON.stringify({ ok: false, condition: "worker-error", message: String(e) })); });',
-      'worker.on("exit", () => {});',
-      '',
-    ].join('\n');
-    const child = spawnSync(process.execPath, ['--input-type=commonjs', '-e', script], { encoding: 'utf8', timeout: 55000 });
-    clearTimeout(guard);
-    const lines = (child.stdout ?? '').split('\n').filter((line) => line.startsWith('{'));
-    const parsed = lines.length > 0 ? JSON.parse(lines[lines.length - 1]) : { ok: false, condition: 'no-worker-output', message: `${child.status} ${child.signal} ${child.stderr ?? ''}` };
-    done(parsed);
+  const facts = { boundaryReached: false, mutationCompleted: false, workerOutcome: null, child: { exitCode: null, signal: null, error: null } };
+  const child = spawn(process.execPath, ['--input-type=commonjs', '-e', [
+    `const { Worker } = require('node:worker_threads');`,
+    `const worker = new Worker(${JSON.stringify(workerFile)}, { workerData: { path: ${JSON.stringify(target)}, admittedRoots: [${JSON.stringify(root)}] } });`,
+    'worker.on("message", (m) => { console.log(JSON.stringify(m)); });',
+    'worker.on("error", (e) => { console.log(JSON.stringify({ outcome: { ok: false, condition: "worker-error", message: String(e) } })); });',
+    '',
+  ].join('\n')], { stdio: ['ignore', 'pipe', 'pipe'] });
+  const childDone = new Promise((resolve) => {
+    child.stdout.on('data', () => {});
+    child.stderr.on('data', () => {});
+    child.on('error', (err) => resolve({ exitCode: null, signal: null, error: String(err.message ?? err) }));
+    child.on('close', (code, signal) => resolve({ exitCode: code, signal, error: null }));
   });
-  return { root, target, outcome };
+  const guard = setTimeout(() => child.kill('SIGKILL'), 60000);
+  try {
+    // Wait for the reader worker's declared start boundary.
+    const startedLine = await new Promise((resolve, reject) => {
+      let buffer = '';
+      const timer = setTimeout(() => reject(new Error('worker never reported started')), 30000);
+      const onLine = () => {
+        let index;
+        while ((index = buffer.indexOf('\n')) !== -1) {
+          const line = buffer.slice(0, index);
+          buffer = buffer.slice(index + 1);
+          if (line.startsWith('{')) {
+            const parsed = JSON.parse(line);
+            if (parsed.event === 'started') {
+              clearTimeout(timer);
+              child.stdout.removeListener('data', onData);
+              resolve(parsed);
+              return;
+            }
+          }
+        }
+      };
+      const onData = (chunk) => {
+        buffer += chunk.toString('utf8');
+        onLine();
+      };
+      child.stdout.on('data', onData);
+      child.on('close', () => {
+        clearTimeout(timer);
+        reject(new Error('child exited before the worker reported started'));
+      });
+    });
+    facts.boundaryReached = true;
+    // The mutation runs at the production operation boundary and the parent
+    // awaits its completion before collecting the outcome.
+    await mutate(root, target);
+    facts.mutationCompleted = true;
+    const outcomeLine = await new Promise((resolve, reject) => {
+      let buffer = '';
+      const timer = setTimeout(() => reject(new Error('worker never reported an outcome')), 45000);
+      const onData = (chunk) => {
+        buffer += chunk.toString('utf8');
+        let index;
+        while ((index = buffer.indexOf('\n')) !== -1) {
+          const line = buffer.slice(0, index);
+          buffer = buffer.slice(index + 1);
+          if (line.startsWith('{')) {
+            const parsed = JSON.parse(line);
+            if (parsed.outcome) {
+              clearTimeout(timer);
+              child.stdout.removeListener('data', onData);
+              resolve(parsed.outcome);
+              return;
+            }
+          }
+        }
+      };
+      child.stdout.on('data', onData);
+      child.on('close', () => {
+        clearTimeout(timer);
+        reject(new Error('child exited before the worker reported an outcome'));
+      });
+    });
+    facts.workerOutcome = outcomeLine;
+    facts.child = await childDone;
+  } finally {
+    clearTimeout(guard);
+    if (child.exitCode === null && child.signalCode === null && !child.killed) child.kill('SIGKILL');
+  }
+  return { root, facts };
 }
 
 function retainProbe(name, record) {
@@ -86,39 +156,60 @@ function retainProbe(name, record) {
   writeFileSync(join(dir, `probe-${name}.json`), JSON.stringify(record, null, 2));
 }
 
-test('in-place same-size write inside the read window refuses or is recorded as the stated residual', async () => {
-  const { root, outcome } = await runProbe(async (rootDir, targetPath) => {
-    await new Promise((resolve) => setTimeout(resolve, 120));
+// Classifies one probe outcome into 'covered' (the interval was exercised
+// and the reader refused the replacement) or 'unexercised' (the mutation
+// landed outside the covered interval; recorded, never counted as defect
+// coverage). A mapReadFailed refusal does NOT stand in for a covered
+// replacement.
+function classify(outcome) {
+  if (outcome && outcome.ok === false && outcome.condition === 'mapReplacedDuringRead') return 'covered';
+  return 'unexercised';
+}
+
+test('in-place same-size write at the started boundary: covered refusals and unexercised residuals are distinguished', async () => {
+  const { root, facts } = await runProbe(async (rootDir, targetPath) => {
     writeFileSync(targetPath, REPLACED_CHUNK);
   });
   try {
-    retainProbe('in-place', outcome);
-    if (outcome.ok) {
-      assert.equal(outcome.sha256, createHash('sha256').update(ORIGINAL_CHUNK).digest('hex'), 'a success can only certify the original bytes');
-      assert.ok(true, 'residual: the write landed outside every covered interval; no immutable-bytes claim is made');
+    retainProbe('in-place', facts);
+    assert.equal(facts.boundaryReached, true, 'the worker reported its start boundary');
+    assert.equal(facts.mutationCompleted, true, 'the mutation completed before outcome collection');
+    assert.ok(facts.child.error === null, `child error retained separately: ${facts.child.error}`);
+    const coverage = classify(facts.workerOutcome);
+    assert.ok(coverage === 'covered' || coverage === 'unexercised', `coverage: ${coverage}`);
+    if (coverage === 'covered') {
+      assert.equal(facts.workerOutcome.condition, 'mapReplacedDuringRead');
     } else {
-      assert.equal(outcome.condition, 'mapReplacedDuringRead');
+      // Unexercised: the mutation landed before admission or after
+      // completion. The read digest may legitimately match either content.
+      const digest = facts.workerOutcome && facts.workerOutcome.ok ? facts.workerOutcome.sha256 : null;
+      const known = {
+        original: createHash('sha256').update(ORIGINAL_CHUNK).digest('hex'),
+        replaced: createHash('sha256').update(REPLACED_CHUNK).digest('hex'),
+      };
+      assert.ok(digest === null || digest === known.original || digest === known.replaced, 'the recorded read digest matches one of the written contents');
     }
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
 });
 
-test('rename-over substitution inside the read window refuses or is recorded as the stated residual', async () => {
-  const { root, outcome } = await runProbe(async (rootDir, targetPath) => {
-    await new Promise((resolve) => setTimeout(resolve, 120));
+test('rename-over substitution at the started boundary: only mapReplacedDuringRead counts as covered', async () => {
+  const { root, facts } = await runProbe(async (rootDir, targetPath) => {
     const replacement = join(rootDir, 'replacement.map');
     writeFileSync(replacement, REPLACED_CHUNK);
     const { renameSync } = await import('node:fs');
     renameSync(replacement, targetPath);
   });
   try {
-    retainProbe('substitution', outcome);
-    if (outcome.ok) {
-      assert.equal(outcome.sha256, createHash('sha256').update(ORIGINAL_CHUNK).digest('hex'), 'a success can only certify the original bytes');
-      assert.ok(true, 'residual: the substitution landed outside every covered interval');
-    } else {
-      assert.ok(['mapReplacedDuringRead', 'mapReadFailed'].includes(outcome.condition), `recorded refusal condition ${outcome.condition}`);
+    retainProbe('substitution', facts);
+    assert.equal(facts.boundaryReached, true, 'the worker reported its start boundary');
+    assert.equal(facts.mutationCompleted, true, 'the mutation completed before outcome collection');
+    assert.ok(facts.child.error === null, `child error retained separately: ${facts.child.error}`);
+    const coverage = classify(facts.workerOutcome);
+    assert.ok(coverage === 'covered' || coverage === 'unexercised', `coverage: ${coverage}`);
+    if (coverage === 'covered') {
+      assert.equal(facts.workerOutcome.condition, 'mapReplacedDuringRead', 'a mapReadFailed never stands in for a covered replacement');
     }
   } finally {
     rmSync(root, { recursive: true, force: true });

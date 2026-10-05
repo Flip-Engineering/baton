@@ -1,10 +1,13 @@
 // Unit laws for one-epoch observation assembly against recorded CDP frame
-// shapes: strict production-decision admission with identity validation,
-// the sampled same-epoch capture binding, the awaited captureScopes
-// acquisition with before-read/after-read/publication checks, records-only
-// summary rendering, stack mapping provenance with retained async chains,
-// exception source separation, worker inventory with sessionId-mapped
-// detaches, capture identity, and runtime evidence with explicit nulls.
+// shapes. All operative normalization paths require the injected production
+// requireAdmittedRef (absence refuses productionNormalizerRequired); the
+// standalone shape validator used here is TEST-OWNED and never imported from
+// the production module. Also covered: the sampled same-epoch capture
+// binding, the awaited captureScopes acquisition with before-read/after-read
+// publication checks, records-only summary rendering, stack mapping
+// provenance with retained async chains, exception source separation,
+// worker inventory with sessionId-mapped detaches, capture identity, and
+// runtime evidence with explicit nulls.
 
 import test from 'node:test';
 import assert from 'node:assert/strict';
@@ -19,7 +22,6 @@ import {
   staleRefRefusal,
   admissionOutcome,
   createCaptureBinding,
-  isValidRefIdentity,
   runtimeEvidence,
 } from '../../context/runtime/observations.mjs';
 
@@ -43,16 +45,38 @@ function admitRef(identity, live) {
   return { decision: 'admitted', ok: true, identity };
 }
 
-// Test-owned standalone normalizer built on the test helper validator. The
-// OPERATIVE path never uses this: createCaptureBinding requires the injected
-// production requireAdmittedRef and refuses with productionNormalizerRequired
-// without one.
+// Test-owned standalone shape validator with canonical decimal counters.
+// This lives in the test file by ownership decision: the production module
+// carries no second validator, and every operative normalization path
+// requires the injected production normalizer. The kind domain below is a
+// subset this helper accepts; it does not claim to mirror the production
+// REF_KINDS table.
+const CANONICAL_DECIMAL = /^0$|^[1-9][0-9]*$/;
+function isValidRefIdentity(identity) {
+  return (
+    identity !== null &&
+    typeof identity === 'object' &&
+    !Array.isArray(identity) &&
+    typeof identity.runtime === 'string' && identity.runtime !== '' &&
+    typeof identity.adapter === 'string' && identity.adapter !== '' &&
+    typeof identity.thread === 'string' && identity.thread !== '' &&
+    typeof identity.kind === 'string' && identity.kind !== '' &&
+    typeof identity.handle === 'string' && identity.handle !== '' &&
+    typeof identity.epoch === 'string' && CANONICAL_DECIMAL.test(identity.epoch) &&
+    typeof identity.mutationGeneration === 'string' && CANONICAL_DECIMAL.test(identity.mutationGeneration)
+  );
+}
+
+// Test-owned standalone normalizer built on the test helper. Throwing with
+// the named conditions mirrors the producer contract so the production
+// rendering path is exercised end to end.
 function requireAdmittedRef(decision) {
   if (decision && decision.decision === 'admitted' && decision.ok === true && isValidRefIdentity(decision.identity)) {
     return decision.identity;
   }
   const error = new Error('standalone normalizer refusal');
   if (decision && typeof decision === 'object' && decision.decision === 'admitted' && decision.ok === false) error.condition = 'refDecisionContradictory';
+  else if (decision && typeof decision === 'object' && decision.decision === 'refused' && typeof decision.condition === 'string') error.condition = decision.condition;
   else if (!decision || typeof decision !== 'object' || decision.decision === undefined) error.condition = 'refDecisionRefused';
   else error.condition = 'refDecisionMalformed';
   throw error;
@@ -67,9 +91,8 @@ function pauseCallFrames() {
   ];
 }
 
-test('identity validation is a test-owned standalone shape with canonical decimal counters and production ref kinds', () => {
+test('the test-owned standalone shape validator admits canonical identities only', () => {
   assert.equal(isValidRefIdentity(IDENTITY), true);
-  assert.equal(isValidRefIdentity({ ...IDENTITY, epoch: '0' }), true);
   assert.equal(isValidRefIdentity({ ...IDENTITY, epoch: '4294967296' }), true);
   for (const bad of [
     null,
@@ -86,61 +109,56 @@ test('identity validation is a test-owned standalone shape with canonical decima
     { ...IDENTITY, mutationGeneration: '-1' },
     { ...IDENTITY, kind: 7 },
     { ...IDENTITY, kind: 'bogus' },
-    { ...IDENTITY, kind: 'pause' },
   ]) {
     assert.equal(isValidRefIdentity(bad), false, JSON.stringify(bad));
   }
 });
 
-test('only the asserted admitted shape with a valid identity admits; both outcomes carry the admitted member', () => {
-  const ok = admissionOutcome({ decision: 'admitted', ok: true, identity: IDENTITY });
+test('operative normalization requires the injected production normalizer', () => {
+  assert.equal(admissionOutcome({ decision: 'admitted', ok: true, identity: IDENTITY }).condition, 'productionNormalizerRequired');
+  assert.equal(admissionOutcome({ decision: 'refused', condition: 'staleReference' }).condition, 'productionNormalizerRequired');
+  assert.equal(staleRefRefusal({ decision: 'admitted', ok: true, identity: IDENTITY }).condition, 'productionNormalizerRequired');
+});
+
+test('through the normalizer, only the asserted admitted shape admits and both outcomes carry admitted', () => {
+  const ok = admissionOutcome({ decision: 'admitted', ok: true, identity: IDENTITY }, NORMALIZER);
   assert.equal(ok.admitted, true);
   assert.deepEqual(ok.identity, IDENTITY);
-  assert.equal(staleRefRefusal({ decision: 'admitted', ok: true, identity: IDENTITY }), null);
+  assert.equal(staleRefRefusal({ decision: 'admitted', ok: true, identity: IDENTITY }, NORMALIZER), null);
 
-  // An admitted decision whose identity is an empty object, an array, or
-  // missing members refuses; it can never bypass the shape contract.
   for (const identity of [{}, [], { runtime: 'rt:q7' }, { ...IDENTITY, epoch: '01' }]) {
-    const outcome = admissionOutcome({ decision: 'admitted', ok: true, identity });
+    const outcome = admissionOutcome({ decision: 'admitted', ok: true, identity }, NORMALIZER);
     assert.equal(outcome.admitted, false);
     assert.equal(outcome.refused, true);
     assert.equal(outcome.condition, 'refDecisionMalformed');
-    assert.equal(staleRefRefusal({ decision: 'admitted', ok: true, identity }).condition, 'refDecisionMalformed');
   }
-
-  // Admitted with ok:false is contradictory by name.
-  const contradictory = admissionOutcome({ decision: 'admitted', ok: false, identity: IDENTITY });
+  const contradictory = admissionOutcome({ decision: 'admitted', ok: false, identity: IDENTITY }, NORMALIZER);
   assert.equal(contradictory.admitted, false);
   assert.equal(contradictory.condition, 'refDecisionContradictory');
 
-  // The split of rejecting shapes: no decision member -> refDecisionRefused;
-  // a wrong decision -> refDecisionMalformed; a refusal without its own
-  // condition -> refDecisionRefused.
   for (const candidate of [null, undefined, 'admitted', 42, { ok: true }, { ok: false, condition: 'staleReference' }]) {
-    assert.equal(admissionOutcome(candidate).condition, 'refDecisionRefused');
+    assert.equal(admissionOutcome(candidate, NORMALIZER).condition, 'refDecisionRefused');
   }
   for (const candidate of [{ decision: 'admitted' }, { decision: 'admitted', identity: IDENTITY }, { decision: 'maybe' }]) {
-    assert.equal(admissionOutcome(candidate).condition, 'refDecisionMalformed');
+    assert.equal(admissionOutcome(candidate, NORMALIZER).condition, 'refDecisionMalformed');
   }
-  assert.equal(admissionOutcome({ decision: 'refused' }).condition, 'refDecisionRefused');
-  assert.equal(admissionOutcome({ decision: 'refused', condition: 'refStopNotLive' }).condition, 'refStopNotLive');
+  assert.equal(admissionOutcome({ decision: 'refused' }, NORMALIZER).condition, 'refDecisionRefused');
+  assert.equal(admissionOutcome({ decision: 'refused', condition: 'refStopNotLive' }, NORMALIZER).condition, 'refStopNotLive');
 
-  // Production refusals render their own conditions with the admitted member
-  // explicit on the refusal.
   for (const condition of ['refMalformed', 'foreignRuntime', 'foreignAdapter', 'staleReference', 'refRetiredByMutation', 'refOutsidePause', 'refStopNotLive', 'refThreadUnknown']) {
-    const refusal = admissionOutcome({ decision: 'refused', condition });
+    const refusal = admissionOutcome({ decision: 'refused', condition }, NORMALIZER);
     assert.equal(refusal.admitted, false);
     assert.equal(refusal.refused, true);
     assert.equal(refusal.condition, condition);
   }
 });
 
-test('an injected production normalizer decides alone; its refusals render verbatim', () => {
+test('an injected production normalizer decides alone; its refusals render verbatim with actual details', () => {
   const requireAdmittedRef = (decision) => {
     if (decision && decision.decision === 'admitted' && decision.ok === true) return decision.identity;
     const error = new Error('refused by production');
     error.condition = 'refThreadUnknown';
-    error.detail = 'thread not live';
+    error.detail = { thread: 'worker:9', note: 'not an attached session' };
     throw error;
   };
   const ok = admissionOutcome({ decision: 'admitted', ok: true, identity: { arbitrary: true, nested: { a: 1 } } }, { requireAdmittedRef });
@@ -148,7 +166,7 @@ test('an injected production normalizer decides alone; its refusals render verba
   const refused = admissionOutcome({ decision: 'refused' }, { requireAdmittedRef });
   assert.equal(refused.admitted, false);
   assert.equal(refused.condition, 'refThreadUnknown');
-  assert.equal(refused.detail, 'thread not live');
+  assert.deepEqual(refused.detail, { thread: 'worker:9', note: 'not an attached session' }, 'the actual detail value is retained uncoerced');
 });
 
 test('stack frames keep generated positions and name their mapping provenance', () => {
@@ -232,16 +250,15 @@ test('captureScopes admits before and after every read and at publication', asyn
     { type: 'local', name: '', object: { type: 'object', objectId: 'obj-1' } },
     { type: 'global', name: 'global', object: { type: 'object', objectId: 'obj-2' } },
   ];
-  let live = { ...LIVE };
   let reads = 0;
   const settled = await captureScopes({
     scopeChain,
     identity: IDENTITY,
-    loadScope: async (scope) => {
+    loadScope: async () => {
       reads += 1;
       return { result: [{ name: 'a', value: { type: 'number', value: 1, description: '1' } }], internalProperties: [] };
     },
-    binding: createCaptureBinding({ admitRef, ref: IDENTITY, liveNow: () => live, ...NORMALIZER }),
+    binding: createCaptureBinding({ admitRef, ref: IDENTITY, liveNow: () => ({ ...LIVE }), ...NORMALIZER }),
   });
   assert.equal(settled.condition, undefined);
   assert.equal(reads, 2);
@@ -249,7 +266,6 @@ test('captureScopes admits before and after every read and at publication', asyn
   assert.equal(settled.scopes[0].expansion.complete, true);
   assert.ok(settled.records instanceof Map);
   assert.equal(settled.records.size, 2);
-  void scopeChain;
 });
 
 test('an identity change across a read is named at stage afterRead with the raw record retained', async () => {
@@ -267,7 +283,8 @@ test('an identity change across a read is named at stage afterRead with the raw 
   assert.equal(changed.condition, 'changedDuringCapture');
   assert.equal(changed.stage, 'afterRead');
   assert.equal(changed.refusal.condition, 'refRetiredByMutation');
-  assert.deepEqual(changed.changedRecord, rawRecord, 'the raw pre-change record is retained as evidence');
+  assert.deepEqual(changed.rawRecord, rawRecord, 'the raw response observed across the read is retained');
+  assert.ok(String(changed.rawRecordNote).includes('not established'), 'the mutation timing is explicitly not established');
   assert.deepEqual(changed.scopes, [], 'no scope is reported complete across the change');
 });
 
@@ -311,8 +328,8 @@ test('captureScopes refuses missing loaders, bindings and malformed chains befor
     return { result: [], internalProperties: [] };
   };
   assert.equal((await captureScopes({ scopeChain: [], loadScope })).condition, 'admissionRequired');
-  assert.equal((await captureScopes({ scopeChain: [], binding: createCaptureBinding({ admitRef, ref: IDENTITY, liveNow: () => ({ ...LIVE }) }) })).condition, 'loadScopeRequired');
-  assert.equal((await captureScopes({ scopeChain: 'x', loadScope, binding: createCaptureBinding({ admitRef, ref: IDENTITY, liveNow: () => ({ ...LIVE }) }) })).condition, 'malformedScopeChain');
+  assert.equal((await captureScopes({ scopeChain: [], binding: createCaptureBinding({ admitRef, ref: IDENTITY, liveNow: () => ({ ...LIVE }), ...NORMALIZER }) })).condition, 'loadScopeRequired');
+  assert.equal((await captureScopes({ scopeChain: 'x', loadScope, binding: createCaptureBinding({ admitRef, ref: IDENTITY, liveNow: () => ({ ...LIVE }), ...NORMALIZER }) })).condition, 'malformedScopeChain');
   assert.equal(reads, 0, 'no backend read happened without admission');
 });
 

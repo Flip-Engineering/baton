@@ -67,16 +67,16 @@ function sha256Hex(bytes) {
 // Admission ordering and the stated boundary: every admission check -
 // real-path closure membership, the lstat identity binding, an immediate
 // re-resolution, and the open with O_NOFOLLOW - happens BEFORE any byte is
-// read. The interval between the closure check and the open is an explicitly
-// narrowed unresolved pre-read boundary: a parent-directory replacement by
-// symlink inside that window can make both lstat and open select an outside
-// inode, and post-read rejection refuses the capture but cannot un-read
-// those bytes or authorize the read. Within that stated boundary the final
-// path component cannot be swapped to a symlink (O_NOFOLLOW refuses it
-// pre-read), and the after checks - descriptor identity, path
-// re-resolution, size and nanosecond mtime/ctime comparison - refuse a
-// replacement or a same-size content write that happened inside the covered
-// interval.
+// read. The immediate re-resolution catches the single parent-directory
+// swap interleaving; the REMAINING supported scenario - parent-link changes
+// across lstat, immediate re-resolution and open (outside/in/out) with the
+// captured and opened inodes still matching - is an OPEN admission gap, not
+// an accepted completed contract: documentation narrowing the claim does
+// not close it. Within the covered checks the final path component cannot
+// be swapped to a symlink (O_NOFOLLOW refuses it pre-read), and the after
+// checks - descriptor identity, path re-resolution, size and nanosecond
+// mtime/ctime comparison - refuse a replacement or a same-size content
+// write that happened inside the covered interval.
 //
 // Timestamp limit, stated without an immutable-bytes claim: matching
 // nanosecond timestamps do not PROVE the bytes never changed - a
@@ -409,15 +409,18 @@ export function resolveSourcePath(map, sourceIndex, base = null) {
   const generatedPath = base && typeof base === 'object' ? base.generatedPath ?? null : base;
   const baseLocation = mapPath ?? generatedPath;
   if (baseLocation && SCHEME.test(baseLocation)) {
-    // A URL base - remote or file - resolves entirely in URL space: the
-    // sourceRoot applies in the URL directory BEFORE the source joins, and a
-    // file:// result decodes back to a filesystem path.
-    const directory = baseLocation.slice(0, baseLocation.lastIndexOf('/') + 1);
-    const withRoot = sourceRoot ? `${directory}${sourceRoot}` : directory;
-    const urlBase = withRoot.endsWith('/') ? withRoot : `${withRoot}/`;
+    // A URL base - remote or file - resolves entirely in URL space with real
+    // URL parsing, never raw text slicing: the directory drops the last
+    // segment together with any query or fragment (a slash inside a query
+    // is not a path separator), the sourceRoot then resolves against that
+    // directory under URL semantics (a slash-leading sourceRoot is
+    // origin-rooted), and the source joins last. A file:// result decodes
+    // back to a filesystem path.
     let href;
     try {
-      href = new URL(source, urlBase).href;
+      const directory = new URL('.', baseLocation);
+      const root = sourceRoot ? new URL(sourceRoot.endsWith('/') ? sourceRoot : `${sourceRoot}/`, directory) : directory;
+      href = new URL(source, root).href;
     } catch (err) {
       throw new SourceMapError('malformedMap', `source does not join the URL base: ${err.message}`);
     }
