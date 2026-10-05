@@ -53,6 +53,7 @@ verified App, bot, installation and repository metadata before launch:
 {
   "seriesKey": "gpt",
   "displaySeries": "GPT",
+  "authorEmail": "gpt@example.invalid",
   "github": {
     "appId": null,
     "clientId": null,
@@ -78,10 +79,35 @@ public user metadata. GitHub's own action documents this
 [email format](https://github.com/actions/create-github-app-token#configure-git-cli-for-an-apps-bot-user).
 `displaySeries` must match the selected label: `GPT`, `Muse`, `DeepSeek`,
 `Claude`, `GLM` or `Kimi`. The helper adds `Flip Baton - ` to that verified
-label for commit names. GitHub controls the App account login's `[bot]` suffix;
-the bot login, numeric ID, noreply email and authenticated actor stay unchanged.
+label for commit names. Each App registration's `name` also uses
+`Flip Baton - SERIES`.
 The helper reads the fixed public filename and uses the adjacent key to sign
 an RS256 App JWT with Node's built-in cryptography library.
+
+## Contribution display
+
+GitHub links a commit to an account using its author and committer emails.
+A linked commit page displays that account's login. The App bot email links
+to `SLUG[bot]`, so a friendly raw Git name alone does not set the visible
+commit byline. The earlier Claude commit
+[61025b33](https://github.com/Flip-Engineering/baton/commit/61025b33e4fcb7fbd4547d8abdd482017e161c52)
+uses `noreply@anthropic.com` and currently links to the `claude` user account.
+
+The optional `authorEmail` selects a separate attribution email for both Git
+author and committer. The example address must be replaced with an owned
+public mailbox or alias. Select an email that GitHub leaves unlinked and
+qualify the full series name on its commit page. GitHub App authentication uses the verified
+`github` fields and the signing key. Omitting `authorEmail` preserves the
+canonical bot email used by existing installations.
+
+Each selected email needs separate qualification of its name, avatar and
+account association on an actual GitHub commit page. Gravatar can associate the
+approved series PNG with the owned email; confirm GitHub serves that image
+before activating the identity. All commit emails are public. GitHub's
+Insights contributor graph counts linked accounts, so an unlinked author has
+different graph attribution. See
+[commit association](https://docs.github.com/en/pull-requests/committing-changes-to-your-project/troubleshooting-commits/why-are-my-commits-linked-to-the-wrong-user)
+and [contributors graph](https://docs.github.com/en/repositories/viewing-activity-and-data-for-your-repository/viewing-a-projects-contributors).
 
 ## Native launch selection
 
@@ -188,6 +214,6 @@ Run the controlled fixtures with `node --test bend2/test/git-series.mjs`. They
 use invented public metadata, a generated signing key, API response doubles and
 a controlled Node child. Fixtures remain under `.scratch/git-series-node-fixtures/`.
 The checks cover identity selection, credential restrictions, signature
-verification and PID, stream and exit preservation. Real App authentication,
+verification, Git commit header readback and PID, stream and exit preservation. Real App authentication,
 native tool inheritance, commit attribution and remote actor verification
 require separate qualification.
