@@ -105,10 +105,17 @@ const pristine = new Map();
 // scratch directory name.
 const repoPathOf = (file) => join('bend2', relative(join(SCRATCH, 'bend2'), file));
 const capture = (repoPath) => {
-  if (!pristine.has(repoPath)) pristine.set(repoPath, readFileSync(join(SCRATCH, repoPath), 'utf8'));
+  if (!pristine.has(repoPath)) pristine.set(repoPath, readFileSync(join(SCRATCH, repoPath)));
 };
 for (const { file } of rows) capture(repoPathOf(file));
 for (const mutation of MUTATIONS) capture(mutation.file);
+// Lossless decode guard: the ordinary route transforms decoded text but
+// restores exact original bytes; a non-lossless decode is a capture failure.
+for (const [repoPath, bytes] of pristine) {
+  if (!Buffer.from(bytes.toString('utf8'), 'utf8').equals(bytes)) {
+    throw new Error(`laws-check: lossy UTF-8 decode for ${repoPath}`);
+  }
+}
 
 // Raw per-case evidence for the consumption step: every control's complete
 // separate raw streams, the parent classifier verdict, the exact applied
