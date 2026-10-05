@@ -360,6 +360,35 @@ class ControlledFrames(ReplayBase):
             task='started-without-completion')
         self.assertFalse([body for body in bodies if 'Complete answer.' in body], bodies)
 
+    def test_an_assistant_frame_without_a_response_ends_the_completion_authority(self):
+        """An assistant frame that names no response still ends the retained completion's authority."""
+        error = assistant(stopReason='error', errorStatus=403, errorMessage='403 earlier failure',
+                          provider='kimi-code', model='k3', responseId='response-e0', content=[])
+        success = assistant(stopReason='stop', responseId='response-s1',
+                            content=[{'type': 'text', 'text': 'Complete answer.'}])
+        unnamed = assistant(content=[])
+        notifications, code, status, bodies = self.replay([
+            {'type': 'agent_start'},
+            {'type': 'message_end', 'message': error},
+            {'type': 'message_end', 'message': success},
+            {'type': 'message_start', 'message': unnamed},
+            {'type': 'agent_end', 'isTerminal': True, 'messages': [error, 'elided']}],
+            task='unnamed-activity')
+        self.assertFalse([body for body in bodies if 'Complete answer.' in body], bodies)
+
+    def test_a_started_message_over_an_empty_terminal_is_not_the_retained_success(self):
+        """A started message that never completed ends the retained success's authority."""
+        success = assistant(stopReason='stop', responseId='response-s1',
+                            content=[{'type': 'text', 'text': 'Complete answer.'}])
+        started = assistant(responseId='response-s2', content=[])
+        notifications, code, status, bodies = self.replay([
+            {'type': 'agent_start'},
+            {'type': 'message_end', 'message': success},
+            {'type': 'message_start', 'message': started},
+            {'type': 'agent_end', 'isTerminal': True, 'messages': []}],
+            task='started-over-empty')
+        self.assertFalse([body for body in bodies if 'Complete answer.' in body], bodies)
+
     def test_sequential_success_then_error_keeps_the_first_report(self):
         """Two consecutive receives: a later receive's failure does not change the earlier report."""
         sealed, code, status, bodies = self.replay([
