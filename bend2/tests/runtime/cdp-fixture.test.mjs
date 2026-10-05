@@ -95,13 +95,14 @@ function makeResolverRecording(client, roots) {
 }
 
 // Harness-only reference of the frozen decision contract, covering the
-// epoch/mutation cases this harness exercises; the production admission with
+// epoch/mutation cases this harness exercises; the asserted admitted shape
+// is {decision:'admitted', ok:true, identity}. The production admission with
 // its full condition set is exercised in cdp-composition.test.mjs.
 function admitRef(identity, live) {
   if (identity.runtime !== live.runtime) return { decision: 'refused', condition: 'foreignRuntime' };
   if (identity.epoch !== live.epoch) return { decision: 'refused', condition: 'staleReference' };
   if (identity.mutationGeneration !== live.mutationGeneration) return { decision: 'refused', condition: 'refRetiredByMutation' };
-  return { decision: 'admitted', identity };
+  return { decision: 'admitted', ok: true, identity };
 }
 
 function previewProperty(preview, name) {

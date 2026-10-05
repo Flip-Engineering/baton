@@ -54,21 +54,23 @@ function refusalOf(decision) {
 }
 
 // Normalizes one production ref decision. Only {decision:'admitted',
-// identity} admits; null, undefined, non-objects, legacy {ok:...} shapes and
-// malformed candidates refuse with refDecisionMalformed, and a refused
-// decision renders its own condition and detail. The returned outcome is
-// either {admitted:true, identity} or {refused:true, condition, detail,
-// note}; nothing in between, so no caller can read absence of refusal as
-// admission.
+// ok:true, identity} admits; a candidate that claims admission while
+// carrying ok:false refuses as refDecisionContradictory (the production law
+// ref_decision_refuses_a_contradictory_candidate pins that shape), an
+// admitted candidate without the asserted members refuses as
+// refDecisionMalformed, and a refused decision renders its own condition and
+// detail. The returned outcome is either {admitted:true, identity} or
+// {refused:true, condition, detail, note}; nothing in between, so no caller
+// can read absence of refusal as admission.
 export function admissionOutcome(decision) {
-  if (
-    decision &&
-    typeof decision === 'object' &&
-    decision.decision === 'admitted' &&
-    decision.identity &&
-    typeof decision.identity === 'object'
-  ) {
-    return { admitted: true, identity: decision.identity };
+  if (decision && typeof decision === 'object' && decision.decision === 'admitted') {
+    if (decision.ok === false) {
+      return { refused: true, condition: 'refDecisionContradictory', detail: null, note: ADMISSION_NOTE };
+    }
+    if (decision.ok === true && decision.identity && typeof decision.identity === 'object') {
+      return { admitted: true, identity: decision.identity };
+    }
+    return { refused: true, condition: 'refDecisionMalformed', detail: null, note: ADMISSION_NOTE };
   }
   return refusalOf(decision);
 }

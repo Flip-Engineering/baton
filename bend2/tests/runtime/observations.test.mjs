@@ -36,7 +36,7 @@ function admitRef(identity, live) {
   if (identity.runtime !== live.runtime) return { decision: 'refused', condition: 'foreignRuntime' };
   if (identity.epoch !== live.epoch) return { decision: 'refused', condition: 'staleReference' };
   if (identity.mutationGeneration !== live.mutationGeneration) return { decision: 'refused', condition: 'refRetiredByMutation' };
-  return { decision: 'admitted', identity };
+  return { decision: 'admitted', ok: true, identity };
 }
 
 test('stack frames keep generated positions and name their mapping provenance', () => {
@@ -296,9 +296,9 @@ test('capture identity fixes both event identities, per-response consistency and
 
 test('only an explicit admitted decision permits access; everything else refuses by name', () => {
   const live = { runtime: 'rt:q7', epoch: '12', mutationGeneration: '3' };
-  // The explicit admitted shape admits.
+  // The asserted admitted shape admits.
   assert.equal(staleRefRefusal(admitRef(IDENTITY, live)), null);
-  assert.deepEqual(admissionOutcome({ decision: 'admitted', identity: IDENTITY }), { admitted: true, identity: IDENTITY });
+  assert.deepEqual(admissionOutcome({ decision: 'admitted', ok: true, identity: IDENTITY }), { admitted: true, identity: IDENTITY });
 
   // Production refusals render their own conditions.
   for (const condition of ['refMalformed', 'foreignRuntime', 'foreignAdapter', 'staleReference', 'refRetiredByMutation', 'refOutsidePause', 'refStopNotLive', 'refThreadUnknown']) {
@@ -308,10 +308,28 @@ test('only an explicit admitted decision permits access; everything else refuses
     assert.ok(refusal.note.includes('runtimeBusy'), 'the refusal note names the runtimeBusy policy');
   }
 
-  // Anything that is not an explicit admitted decision refuses before any
+  // An admitted candidate carrying ok:false is contradictory and refuses by
+  // its own condition, never as admission.
+  const contradictory = admissionOutcome({ decision: 'admitted', ok: false, identity: IDENTITY });
+  assert.equal(contradictory.admitted, undefined);
+  assert.equal(contradictory.refused, true);
+  assert.equal(contradictory.condition, 'refDecisionContradictory');
+  assert.equal(staleRefRefusal({ decision: 'admitted', ok: false, identity: IDENTITY }).condition, 'refDecisionContradictory');
+
+  // Anything that is not the asserted admitted shape refuses before any
   // backend access: null, undefined, strings, legacy ok shapes, admitted
-  // without identity, refused without condition.
-  for (const candidate of [null, undefined, 'admitted', 42, { ok: true }, { ok: false, condition: 'staleReference' }, { decision: 'admitted' }, { decision: 'refused' }]) {
+  // without the asserted members, refused without condition.
+  for (const candidate of [
+    null,
+    undefined,
+    'admitted',
+    42,
+    { ok: true },
+    { ok: false, condition: 'staleReference' },
+    { decision: 'admitted' },
+    { decision: 'admitted', identity: IDENTITY },
+    { decision: 'refused' },
+  ]) {
     const refusal = staleRefRefusal(candidate);
     assert.equal(refusal.refused, true, `candidate ${JSON.stringify(candidate)} must refuse`);
     assert.equal(refusal.condition, 'refDecisionMalformed');
