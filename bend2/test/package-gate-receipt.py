@@ -428,6 +428,48 @@ class PackageGateReceipt(unittest.TestCase):
         self.assertEqual(result['binding'], self.controls['sha256'])
         self.assertNotIn('summed_max_rss_bytes', result)
 
+    def test_a_provenance_root_is_recorded_and_never_followed(self):
+        """A producer's original absolute root stays provenance, not a base."""
+        directory = self.full_evidence()
+        elsewhere = self.home / 'producer-original-root'
+        elsewhere.mkdir(parents=True, exist_ok=True)
+        decoy = elsewhere / 'baseline.stdout'
+        decoy_bytes = b'the producer original bytes\n'
+        decoy.write_bytes(decoy_bytes)
+        self.rewrite_bundle(directory, evidence_root=str(elsewhere))
+        result = PACKAGE.controls_evidence(directory, PACKAGE.snapshot(), self.compiler())
+        self.assertEqual(result['root'], str(directory.resolve()))
+        self.assertEqual(result['provenance'], {str(elsewhere): [result['modules'][0]]})
+        self.assertEqual(result['cases'], len(self.controls['controls']))
+        retained = PACKAGE.controls_evidence(directory, PACKAGE.snapshot(), self.compiler(),
+                                            destination=self.home / 'relocated')
+        self.assertEqual(retained['root'], str(directory.resolve()))
+        self.assertEqual(retained['provenance'], {str(elsewhere): [retained['modules'][0]]})
+        self.assertNotEqual(retained['root'], str(elsewhere))
+        self.assertNotEqual((self.home / 'relocated').resolve(), elsewhere)
+
+    def test_members_bind_to_the_current_root(self):
+        """An absolute or symlinked recorded member refuses by name."""
+        directory = self.full_evidence()
+        baseline = self.bundle(directory)['baseline']
+        stream = baseline['stdout']
+        absolute = self.home / 'absolute.stdout'
+        absolute.write_bytes(b'baseline stdout\n')
+        self.rewrite_bundle(directory, baseline={**baseline,
+                                                 'stdout': {**stream, 'path': str(absolute)}})
+        with self.assertRaisesRegex(RuntimeError, 'records an absolute path'):
+            PACKAGE.controls_evidence(directory, PACKAGE.snapshot(), self.compiler())
+
+        directory = self.full_evidence()
+        baseline = self.bundle(directory)['baseline']
+        stream = baseline['stdout']
+        member = directory / stream['path']
+        moved = directory / (stream['path'] + '.retained')
+        member.rename(moved)
+        member.symlink_to(moved)
+        with self.assertRaisesRegex(RuntimeError, 'passes through a symlink'):
+            PACKAGE.controls_evidence(directory, PACKAGE.snapshot(), self.compiler())
+
     def test_controls_evidence_defects_refuse(self):
         cases = [
             ('missing summary', lambda directory: (directory / 'controls-summary.json').unlink(),

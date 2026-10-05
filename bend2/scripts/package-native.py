@@ -668,7 +668,7 @@ def run_gates(compiler, env, logs, initial, before_inputs, remote=None, ordinary
                                         ('path', 'bytes', 'sha256', 'cases', 'groups', 'binding',
                                          'origin', 'spans', 'classifier', 'closure_sha256',
                                          'modules', 'inventory_sha256', 'reduction_sha256',
-                                         'inventory', 'reduction')}
+                                         'inventory', 'reduction', 'root', 'provenance')}
     path = logs / 'summary.json'
     write_json(path, summary)
     try:
@@ -686,7 +686,9 @@ def run_gates(compiler, env, logs, initial, before_inputs, remote=None, ordinary
                                      'groups': remote['groups'], 'origin': remote['origin'],
                                      'closure_sha256': remote['closure_sha256'],
                                      'inventory_sha256': remote['inventory_sha256'],
-                                     'reduction_sha256': remote['reduction_sha256']}
+                                     'reduction_sha256': remote['reduction_sha256'],
+                                     'root': remote['root'],
+                                     'provenance': remote['provenance']}
             same_source(stage['before'], initial)
             summary['stages'].append(stage)
             write_json(path, summary)
@@ -792,7 +794,8 @@ def reuse_gates(path, expected_sha, compiler, logs, initial):
             record = summary.get('controls_evidence') or {}
             reference = {key: record.get(key) for key in
                          ('path', 'sha256', 'binding', 'cases', 'groups', 'origin',
-                          'closure_sha256', 'inventory_sha256', 'reduction_sha256')}
+                          'closure_sha256', 'inventory_sha256', 'reduction_sha256',
+                          'root', 'provenance')}
             require(stage.get('evidence') == reference,
                     'A remote stage must reference the recorded producer evidence exactly')
             require(stage.get('local_argv') == list(dict(GATES)[name]),
@@ -817,7 +820,8 @@ def reuse_gates(path, expected_sha, compiler, logs, initial):
         recorded = summary.get('controls_evidence') or {}
         reference = {key: recorded.get(key) for key in
                      ('path', 'sha256', 'binding', 'cases', 'groups', 'origin',
-                      'closure_sha256', 'inventory_sha256', 'reduction_sha256')}
+                      'closure_sha256', 'inventory_sha256', 'reduction_sha256',
+                      'root', 'provenance')}
         for stage in summary['stages']:
             if stage.get('route') != 'remote-module-groups':
                 continue
@@ -871,8 +875,29 @@ def reuse_gates(path, expected_sha, compiler, logs, initial):
 
 
 def evidence_stream(directory, record, label):
+    """Resolve one recorded member against the current evidence root.
+
+    The recorded name must be a relative path with no empty, dot or parent
+    segment, and no component of the walked member may be a symlink. A recorded
+    absolute path is refused by name, and a relocated tree binds its members to
+    the directory the caller supplies, which is the graph it holds now; any
+    original absolute root a producer records stays provenance and is never
+    followed for resolution.
+    """
     require(isinstance(record, dict), 'A controls evidence record omits its ' + label)
-    path = (directory / str(record.get('path', ''))).resolve()
+    recorded = record.get('path')
+    require(isinstance(recorded, str) and recorded, 'A controls evidence ' + label + ' records no path')
+    require(not recorded.startswith('/'),
+            'A controls evidence ' + label + ' records an absolute path: ' + json.dumps(recorded))
+    segments = recorded.split('/')
+    require(all(segment not in ('', '.', '..') for segment in segments),
+            'A controls evidence ' + label + ' records an unqualified path: ' + json.dumps(recorded))
+    walked = directory
+    for segment in segments:
+        walked = walked / segment
+        require(not walked.is_symlink(),
+                'A controls evidence ' + label + ' passes through a symlink: ' + json.dumps(recorded))
+    path = walked.resolve()
     require(directory.resolve() in path.parents,
             'A controls evidence ' + label + ' names a file outside the evidence directory')
     require(path.is_file(), 'A controls evidence ' + label + ' is missing: ' + str(record.get('path')))
@@ -1409,6 +1434,7 @@ def controls_evidence(directory, initial, compiler, audit=None, destination=None
     source_pins = {key: initial[key] for key in ('head', 'tree', 'bend2_tree')}
     seen_modules, seen_cases, seen_jobs, spans, verdicts = set(), {}, set(), [], {}
     baselines = {}
+    provenance = {}
     for bundle in bundles:
         module = bundle.get('module')
         require(module in modules, 'A controls evidence bundle is absent from this source: '
@@ -1455,6 +1481,12 @@ def controls_evidence(directory, initial, compiler, audit=None, destination=None
         instrument = bundle.get('instrument') or {}
         require(instrument.get('tool') not in (None, '') and instrument.get('flag') not in (None, ''),
                 'A bundle names no time instrument: ' + json.dumps(module))
+        declared_root = bundle.get('evidence_root')
+        if declared_root is not None:
+            require(isinstance(declared_root, str) and declared_root.startswith('/'),
+                    'A bundle evidence root is not an absolute provenance path: '
+                    + json.dumps(declared_root))
+            provenance.setdefault(str(declared_root), []).append(module)
         bundle_origin = producing.get('origin') or {}
         for field in ('workflow', 'run_id', 'run_attempt'):
             require(str(bundle_origin.get(field)) == str(origin[field]),
@@ -1605,6 +1637,8 @@ def controls_evidence(directory, initial, compiler, audit=None, destination=None
         sort_keys=True, separators=(',', ':')).encode('utf-8')).hexdigest()
     result = {'path': str(path), **file_info(path), 'cases': len(wanted), 'groups': len(modules),
             'closure_sha256': closure,
+            'root': str(Path(directory).resolve()),
+            'provenance': {declared: sorted(modules_of) for declared, modules_of in provenance.items()},
             'binding': expected['sha256'], 'origin': origin, 'route': 'remote-module-groups',
             'checker_invocation': 'node ' + CONTROL_SCRIPT, 'modules': sorted(seen_modules),
             'spans': spans, 'slowest_span_seconds': max(seconds) if seconds else 0,
