@@ -1,20 +1,27 @@
 # Executable corpus for bend2/src/receive/output-json-number.bend.
 # CLAIM: every named case below asserts a complete typed expected result through explicit
-# equality over the constructors and their list fields, so presentation punctuation is
-# irrelevant and a wrong refusal cannot pass; a mismatch calls IO.die with the case name.
+# equality over the constructor and its list fields, so a wrong refusal cannot pass; a
+# mismatch calls IO.die with the case name.
 # Fixture preparation only: UNCOMPILED and UNTESTED, executed by the future compiled
 # artifact on an admitted runner, never locally.
-# Imports follow the adjacent test imports in bend2/test; the product form and the match on
-# a pure Bool for IO follow the repository's own patterns.
+# Imports follow the adjacent test imports in bend2/test. Constructor patterns are
+# positional, the product form is the repository's, and the comparison of booleans is a
+# local match because Bool.eq has no supporting use in the repository.
 # UNCOMPILED and UNTESTED.
 
 import Base
 import ../src/receive/output-json-number.bend as N
 
-def bool_text(b: Bool) -> String:
-  match b:
-    case True{}: "true"
-    case False{}: "false"
+def same_bool(a: Bool, b: Bool) -> Bool:
+  match a:
+    case True{}:
+      match b:
+        case True{}: True{}
+        case False{}: False{}
+    case False{}:
+      match b:
+        case True{}: False{}
+        case False{}: True{}
 
 def same_octets(a: List<U32>, b: List<U32>) -> Bool:
   match a:
@@ -25,14 +32,14 @@ def same_octets(a: List<U32>, b: List<U32>) -> Bool:
     case h <> t:
       match b:
         case Nil{}: False{}
-        case +hb <> tb: Bool.pick(Bool, U32.is_eq(h, hb), same_octets(t, tb), False{})
+        case hb <> tb: Bool.pick(Bool, U32.is_eq(h, hb), same_octets(t, tb), False{})
 
 def same_result(a: N.NumResult, b: N.NumResult) -> Bool:
   match a:
     case N.NumAccepted{minus, integer, fraction, exponent, original}:
       match b:
-        case N.NumAccepted{minus: bm, integer: bi, fraction: bf, exponent: be, original: bo}:
-          Bool.pick(Bool, Bool.eq(minus, bm),
+        case N.NumAccepted{bm, bi, bf, be, bo}:
+          Bool.pick(Bool, same_bool(minus, bm),
             Bool.pick(Bool, same_octets(integer, bi),
               Bool.pick(Bool, same_octets(fraction, bf),
                 Bool.pick(Bool, same_octets(exponent, be), same_octets(original, bo), False{})),
@@ -41,11 +48,11 @@ def same_result(a: N.NumResult, b: N.NumResult) -> Bool:
         case _: False{}
     case N.NumRefused{reason}:
       match b:
-        case N.NumRefused{reason: br}: String.is_eq(reason, br)
+        case N.NumRefused{br}: String.is_eq(reason, br)
         case _: False{}
     case N.NumHostFault{value}:
       match b:
-        case N.NumHostFault{value: bv}: U32.is_eq(value, bv)
+        case N.NumHostFault{bv}: U32.is_eq(value, bv)
         case _: False{}
 
 def accepted(minus: Bool, integer: List<U32>, fraction: List<U32>, exponent: List<U32>,
@@ -79,6 +86,7 @@ def cases() -> List<List<U32> & N.NumResult & String>:
     ([49, 101, 52, 50, 57, 52, 57, 54, 55, 50, 57, 54],
       accepted(False{}, [49], Nil{}, [52, 50, 57, 52, 57, 54, 55, 50, 57, 54],
         [49, 101, 52, 50, 57, 52, 57, 54, 55, 50, 57, 54]), "exponent-beyond-u32"),
+    ([45], refused("expected_digit"), "lone-minus"),
     ([48, 48], refused("leading_zero"), "leading-zero"),
     ([45, 48, 48], refused("leading_zero"), "negative-leading-zero"),
     ([43, 49], refused("expected_digit"), "explicit-plus-token"),

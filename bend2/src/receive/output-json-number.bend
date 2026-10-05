@@ -61,7 +61,7 @@ def bad(reason: String) -> NumState:
 # Digit accumulation uses element-with-list cons, which this repository writes as
 # code <> list (see cat_list), so digits arrive reversed and normalise once at the end. A
 # zero keeps its own digit, so 0, -0 and 0.001 retain the [48] integer part.
-def step(state: NumState, code: U32) -> NumState:
+def step(state: NumState, +code: U32) -> NumState:
   match state:
     case NumStart{}:
       Bool.pick(NumState, is_minus(code), NumMinus{},
@@ -142,7 +142,7 @@ def leading_minus(octets: List<U32>) -> Bool:
 # Entry: a complete token byte slice. The machine consumes the leading sign itself, so the
 # bytes are never fed twice, and the original slice is returned unmodified so an accepted
 # token round-trips byte for byte.
-def decode_number(octets: List<U32>) -> NumResult:
+def decode_number(+octets: List<U32>) -> NumResult:
   match feed_go(octets, NumStart{}):
     case NumStep{state}: finish_go(state, leading_minus(octets), octets)
     case NumScanFault{value}: NumHostFault{value}
