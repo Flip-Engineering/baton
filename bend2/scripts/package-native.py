@@ -185,16 +185,18 @@ VERIFIER_MEMBERS = ('checker_sha256', 'aggregate_module_sha256', 'classifier_mod
 # The classifier member has been emitted under two spellings; a verdict or run
 # that names either one names the same member, and the endpoint closure is not
 # redefined by accepting both.
+# Historical spelling support: a producer that emitted the older name is read
+# through this map, and a document that carries both names must carry equal values.
 VERIFIER_MEMBER_ALIASES = {'classifier_module_sha256': 'classify_module_sha256',
                            'classify_module_sha256': 'classifier_module_sha256'}
 ORDINARY_RUN_VERIFIER_MEMBERS = ('checker_sha256', 'aggregate_module_sha256',
-                                 'classify_module_sha256', 'work_set_module_sha256',
+                                 'classifier_module_sha256', 'work_set_module_sha256',
                                  'laws_common_module_sha256', 'definitions_module_sha256',
                                  'group_run_module_sha256')
 ORDINARY_VERIFIER_FILES = {
     'checker_sha256': 'bend2/scripts/laws-check.mjs',
     'aggregate_module_sha256': 'bend2/scripts/capacity-controls/aggregate.mjs',
-    'classify_module_sha256': 'bend2/scripts/capacity-controls/classify.mjs',
+    'classifier_module_sha256': 'bend2/scripts/capacity-controls/classify.mjs',
     'work_set_module_sha256': 'bend2/scripts/capacity-controls/work-set.mjs',
     'laws_common_module_sha256': 'bend2/scripts/laws-common.mjs',
     'definitions_module_sha256': 'bend2/scripts/laws-mutations.mjs',
@@ -735,7 +737,8 @@ def ordinary_evidence(index_path, expected, compiler=None, declared_root=None,
     admitted, missing_run_members = ordinary_verifier_digests()
     required = set(ORDINARY_RUN_VERIFIER_MEMBERS)
     def run_member(member):
-        return verifier_member_value(verifier if isinstance(verifier, dict) else {}, member)
+        return verifier_member_value(verifier if isinstance(verifier, dict) else {}, member,
+                                     'the ordinary run')
     named = {member for member in required if run_member(member) is not None}
     require(isinstance(verifier, dict) and required <= named,
             'The ordinary run does not name every verifier member: '
@@ -747,7 +750,7 @@ def ordinary_evidence(index_path, expected, compiler=None, declared_root=None,
     # A digest domain is checked for every member the run names, including the
     # ones whose local bytes are absent, so an unverifiable member is still a
     # well-formed claim rather than an unchecked string.
-    for member in required:
+    for member in sorted(set(verifier or {}) | set(required)):
         digest = run_member(member)
         require(isinstance(digest, str) and re.fullmatch(r'[0-9a-f]{64}', digest),
                 'The ordinary run records no digest domain for ' + json.dumps(member))
@@ -903,6 +906,7 @@ def ordinary_evidence(index_path, expected, compiler=None, declared_root=None,
         raw[case['id']] = {'stdout': case['stdout']['sha256'], 'stderr': case['stderr']['sha256']}
     return {'path': str(path), **file_info(path), 'schema': ORDINARY_SCHEMA,
             'cases': len(seen), 'run_root': str(root), 'producer_root': str(producer_root),
+            'retained': str(path.relative_to(root)) if root == path.parent.parent else str(path),
             'root_identity': evidence_root_identity(root, 'The ordinary evidence run root'),
             'invocation': identity['invocation'], 'nonce': identity['nonce'],
             'compiler_sha256': (identity.get('compiler') or {}).get('sha256'),
@@ -1573,12 +1577,19 @@ def ordinary_verifier_digests():
     return digests, missing
 
 
-def verifier_member_value(verifier, member):
-    """Read a member a producer may have emitted under either classifier spelling."""
-    if member in verifier:
-        return verifier[member]
+def verifier_member_value(verifier, member, label=''):
+    """Read a member under either classifier spelling, refusing a conflict.
+
+    A document that carries both spellings with different values names an
+    ambiguous closure, so it refuses rather than resolving by lookup order.
+    """
     alias = VERIFIER_MEMBER_ALIASES.get(member)
-    return verifier.get(alias) if alias else None
+    direct, other = verifier.get(member), verifier.get(alias) if alias else None
+    if direct is not None and other is not None and direct != other:
+        require(False, 'A verifier names ' + member + ' two ways with different values'
+                + (': ' + label if label else ''))
+    value = direct if direct is not None else other
+    return value
 
 
 def require_verifier_closure(verdict, label):
@@ -1586,7 +1597,7 @@ def require_verifier_closure(verdict, label):
     verifier = verdict.get('verifier')
     require(isinstance(verifier, dict), 'A verdict names no verifier closure: ' + label)
     for member in VERIFIER_MEMBERS:
-        value = verifier_member_value(verifier, member)
+        value = verifier_member_value(verifier, member, label)
         require(isinstance(value, str) and value,
                 'A verdict omits verifier ' + member + ': ' + label)
     admitted, missing = expected_verifier_digests()

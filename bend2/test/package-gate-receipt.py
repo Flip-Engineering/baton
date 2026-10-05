@@ -953,33 +953,41 @@ class PackageGateReceipt(unittest.TestCase):
             PACKAGE.ordinary_evidence(located, controls, self.compiler(), None,
                                       self.parent_rows(), None,
                                       self.envelope(recorded, run_root=self.logs / 'run'))
-        no_domain = self.home / 'run' / 'evidence' / 'no-domain.json'
-        bad_verifier = {**envelope['verifier'], 'group_run_module_sha256': 'not-a-digest'}
-        no_domain.write_text(json.dumps({**_load(path), 'run': {**_load(path)['run'],
-                                                              'verifier': bad_verifier}}))
-        with self.assertRaisesRegex(RuntimeError, 'no digest domain'):
-            PACKAGE.ordinary_evidence(no_domain, controls, self.compiler(), None,
-                                      self.parent_rows(), None,
-                                      self.envelope(no_domain, run_root=self.home / 'run',
-                                                    verifier=bad_verifier))
         with self.assertRaisesRegex(RuntimeError, 'no run envelope'):
             PACKAGE.ordinary_evidence(path, controls, self.compiler(), None,
                                       self.parent_rows(), None, None)
-        without_nonce = self.home / 'run' / 'evidence' / 'nonce-removed.json'
-        without_nonce.write_text(json.dumps({**_load(path), 'run': {
-            key: value for key, value in _load(path)['run'].items() if key != 'nonce'}}))
+
+        bad_verifier = {**self.ordinary_verifier,
+                        'group_run_module_sha256': 'not-a-digest'}
+        run_root = self.home / 'run-no-domain'
+        no_domain = self.ordinary_index(run_root)
+        no_domain.write_text(json.dumps({**_load(no_domain), 'run': {
+            **_load(no_domain)['run'], 'verifier': bad_verifier}}))
+        with self.assertRaisesRegex(RuntimeError, 'no digest domain'):
+            PACKAGE.ordinary_evidence(no_domain, controls, self.compiler(), None,
+                                      self.parent_rows(), None,
+                                      self.envelope(no_domain, run_root=run_root,
+                                                    verifier=bad_verifier))
+
+        run_root = self.home / 'run-without-nonce'
+        without_nonce = self.ordinary_index(run_root)
+        without_nonce.write_text(json.dumps({**_load(without_nonce), 'run': {
+            key: value for key, value in _load(without_nonce)['run'].items()
+            if key != 'nonce'}}))
         with self.assertRaisesRegex(RuntimeError, 'no run nonce'):
             PACKAGE.ordinary_evidence(without_nonce, controls, self.compiler(), None,
                                       self.parent_rows(), None,
-                                      self.envelope(without_nonce, run_root=self.home / 'run'))
-        bad_input = self.home / 'run' / 'evidence' / 'bad-input.json'
-        bad_input.write_text(json.dumps({**_load(path),
+                                      self.envelope(without_nonce, run_root=run_root))
+
+        run_root = self.home / 'run-bad-input'
+        bad_input = self.ordinary_index(run_root)
+        bad_input.write_text(json.dumps({**_load(bad_input),
                                          'inputs': [{'path': 'bend2/scripts/laws-check.mjs',
                                                      'sha256': 'not-a-digest'}]}))
         with self.assertRaisesRegex(RuntimeError, 'no digest for'):
             PACKAGE.ordinary_evidence(bad_input, controls, self.compiler(), None,
                                       self.parent_rows(), None,
-                                      self.envelope(bad_input, run_root=self.home / 'run'))
+                                      self.envelope(bad_input, run_root=run_root))
 
     def test_ordinary_evidence_parent_rows_are_required(self):
         path = self.ordinary_index(self.logs / 'run')
@@ -1029,9 +1037,9 @@ class PackageGateReceipt(unittest.TestCase):
                          summary['validation']['ordinary']['raw'])
         self.assertEqual(reused_summary['validation']['ordinary']['producer_root'],
                          summary['validation']['ordinary']['producer_root'])
-        self.assertEqual(summary['validation']['ordinary']['run_root'],
-                         str((self.home / 'ordinary-run').resolve()))
-        self.assertEqual(reused_summary['validation']['ordinary']['run_root'], str(reused))
+        self.assertEqual(summary['validation']['ordinary']['run_root'], str(logs))
+        self.assertEqual(reused_summary['validation']['ordinary']['run_root'], str(logs))
+        self.assertEqual((reused / 'summary.json').read_text(), path.read_text())
         current = json.loads((reused / 'classification-acquisition.json').read_text())
         self.assertEqual(current['run_root'], str(reused))
         self.assertEqual(current['producer_root'], summary['validation']['ordinary']['producer_root'])
