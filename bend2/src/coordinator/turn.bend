@@ -186,7 +186,7 @@ def omp_terminal(db: String, +event: String, +message: String, enabled: Bool) ->
   match enabled:
     case False{}: IO.pure(String,event)
     case True{}: do IO<String>:
-      normalized : String <- IO.try(String,DB.Sql.query(db,"SELECT CASE WHEN json_extract(" ++ C.q(event) ++ ",'$.type')='agent_end' AND coalesce(json_extract(" ++ C.q(event) ++ ",'$.isTerminal'),1)=1 AND coalesce(json_array_length(" ++ C.q(event) ++ ",'$.messages'),0)=0 AND " ++ C.q(message) ++ "<>'' THEN json_set(" ++ C.q(event) ++ ",'$.messages',json_array(json(" ++ C.q(message) ++ "))) ELSE " ++ C.q(event) ++ " END;"))
+      normalized : String <- IO.try(String,DB.Sql.query(db,"SELECT CASE WHEN json_extract(" ++ C.q(event) ++ ",'$.type')='agent_end' AND coalesce(json_extract(" ++ C.q(event) ++ ",'$.isTerminal'),1)=1 AND (coalesce(json_array_length(" ++ C.q(event) ++ ",'$.messages'),0)=0 OR (SELECT CASE WHEN t.type='object' THEN 0 ELSE 1 END FROM json_each(" ++ C.q(event) ++ ",'$.messages') t ORDER BY t.key DESC LIMIT 1)=1) AND " ++ C.q(message) ++ "<>'' THEN json_set(" ++ C.q(event) ++ ",'$.messages',json_array(json(" ++ C.q(message) ++ "))) ELSE " ++ C.q(event) ++ " END;"))
       IO.pure(String,Tx.trim_nl(normalized))
 
 def observe_event(db: String, player: String, id: String, line: String, relevant: Bool, sealed: Bool) -> IO(Result<&1,&1,U32 & String,String>):
