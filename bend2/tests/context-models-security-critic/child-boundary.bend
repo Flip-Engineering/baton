@@ -1,11 +1,13 @@
 # Independent host child-boundary fixture for the semantic context review.
 #
-# The semantic producers run every provider through ProcessChild.spawn and the
-# shared prepared/start keeper, so the claims "the child sees only the
-# constructed environment", "stderr is a private retained artifact", "stdout
-# bytes survive read_line", "close_stdin reaches the child as EOF", "a signal
-# is observed as an actual child status" and "private directories/files keep
-# their modes" are host facts the review must measure rather than assume.
+# This fixture exercises the existing ProcessChild.spawn primitive directly:
+# the claims "the child sees only the constructed environment", "stderr is a
+# private retained artifact", "stdout bytes survive read_line", "close_stdin
+# reaches the child as EOF", "a signal is observed as an actual child status"
+# and "private directories/files keep their modes" are host substrate facts the
+# review must measure rather than assume. It is component evidence for that
+# substrate; the managed prepared/start keeper lifecycle and any provider
+# composition are not exercised here and remain open.
 #
 # The driver is run-child-boundary.py. This program frames each observation as
 # `<tag> <byte-length>\n<payload bytes>\n` so a payload containing newlines or
