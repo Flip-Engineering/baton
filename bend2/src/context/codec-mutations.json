@@ -128,8 +128,8 @@
  {
   "name": "codec-ref-required-uses-projection-names",
   "file": "bend2/src/context/codec.bend",
-  "find": "          Eng.effects_union(operations), granted, fresh}",
-  "replace": "          Refs.ref_projections(record), granted, fresh}",
+  "find": "          Refs.ref_projections(record), requested, applicability, Eng.effects_union(operations), granted, fresh}",
+  "replace": "          Refs.ref_projections(record), requested, applicability, Refs.ref_projections(record), granted, fresh}",
   "law": "codec_law_a_grant_free_source_expansion_is_allowed"
  },
  {
