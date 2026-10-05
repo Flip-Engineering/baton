@@ -78,19 +78,26 @@ export async function cleanupOwned({ timeoutMs = 5000 } = {}) {
       // fall through to the bounded wait
     }
   }
+  // Wait for the child's own close only, up to the bound. An error event is
+  // recorded independently and never ends this wait, so "unresolved" means the
+  // process was still alive at the bound rather than merely erroring.
   await Promise.all(awaiting.map((entry) => new Promise((resolve) => {
     if (entry.close !== null) {
       resolve();
       return;
     }
-    const timer = setTimeout(resolve, timeoutMs);
-    const done = () => {
+    let timer = null;
+    const onClose = () => {
       clearTimeout(timer);
+      entry.child.removeListener('close', onClose);
       resolve();
     };
-    entry.child.once('close', done);
-    entry.child.once('error', done);
-    if (entry.close !== null) done();
+    timer = setTimeout(() => {
+      entry.child.removeListener('close', onClose);
+      entry.cleanupTimedOut = true;
+      resolve();
+    }, timeoutMs);
+    entry.child.once('close', onClose);
   })));
 
   const report = {
@@ -104,11 +111,14 @@ export async function cleanupOwned({ timeoutMs = 5000 } = {}) {
     reaped: entries.filter((entry) => entry.close !== null).map((entry) => entry.pid ?? null),
     errored: entries.filter((entry) => entry.errors.length > 0).map((entry) => entry.pid ?? null),
     spawnFailed: entries.filter((entry) => entry.spawnFailed).map(() => null),
-    // Unresolved means: a pid existed and no close was observed, whether or not
-    // an error event arrived.
+    // Unresolved means: a pid existed and no close was observed within the
+    // bound, whether or not an error event arrived.
     unresolved: entries.filter((entry) => entry.close === null && !entry.spawnFailed).map((entry) => entry.pid),
+    cleanupTimedOut: entries.filter((entry) => entry.cleanupTimedOut === true).map((entry) => entry.pid),
+    errorRecorded: entries.filter((entry) => entry.errors.length > 0)
+      .map((entry) => ({ pid: entry.pid ?? null, errors: entry.errors.slice() })),
     resolved: entries.filter((entry) => entry.close !== null || entry.spawnFailed).map((entry) => entry.pid ?? null),
-    semantics: 'requested signals, error events and close outcomes are separate; only an observed close is a reap; an errored child with a pid and no close is unresolved',
+    semantics: 'requested signals, error events and close outcomes are separate; only an observed close is a reap; an errored child with a pid and no close within the bound is unresolved; an abrupt SIGKILL loss cannot run an installed exit handler, while a catchable termination may',
   };
   return report;
 }

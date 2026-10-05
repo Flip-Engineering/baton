@@ -1,0 +1,15 @@
+# Reviewed digest manifest for immutable CDP target
+#   24ecd9d954e0b21619f452958c0169f321143436
+#   tree 364807c2299ba32b2ad93724e36ae373ebb89d50
+# Paths are matched by basename. Read from the commit, never from the working tree.
+55c3cd5a25b4b2195633c2c0f20fa73683510d1fb73a42ffd0851d61b19a9c62  bootstrap.mjs
+843f84e13f9ba960bf0a44bc2cce9fcc1f66fa00023be4f73c7f3cf876b1f35c  bootstrap-admission.mjs
+8b90a4f180a46f72bf40bde80f7710988a0a61c7a40aff946eb40e98b114dee0  cdp-counter.mjs
+921b23c525c85acd3599e25352d6d52e3001e4849066b0541e4dc61a0faf033d  cdp-endpoint.mjs
+b0ace58e32604d044f6c132e8d3f1a3d5889aa36321c42b4b0a830f814152462  cdp-intents.mjs
+91cdea3d7726f9065f6dcc4512dbae02f7cc134c6081b39d1286ea43a437be6f  cdp-protocol.mjs
+80e32fd714c53e583c481bb3efea85a399bc703a6e6c3ba82c6bd0b0d5aac0ec  cdp-refs.mjs
+fb6945438741b7f54c8b7fda8025e430ea312a12c6218b7a7bd0a6053999a8c2  cdp-scripts.mjs
+b441b3cf1ae749fe49461ef55c8497c6dcd3341510a789f58f21f1ad44dee0f7  cdp-session.mjs
+09363c41b414940f24a1e790473328b09b0366948f96e4745f282d04714f28c8  cdp-state.mjs
+b147efcd0fdf5e9d3452e203d7ab241da708b945d991ab9061e68557d850592b  cdp-transport.mjs

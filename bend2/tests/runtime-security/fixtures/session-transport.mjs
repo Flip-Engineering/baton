@@ -40,11 +40,14 @@ const transportModule = await import(environment.runtimePath('cdp-transport.mjs'
 function createStubTransport() {
   const frames = [];
   const handlers = new Map();
+  const evaluateCalls = [];
   let failureValue = null;
   return {
     frames: () => frames.slice(),
     failure: () => failureValue,
-    endpointIdentity: (url) => `stub:${url}`,
+    // The real connection exposes endpoint identity as a data string, not a
+    // function; the stub models that operative shape.
+    endpointIdentity: 'stub-identity',
     subscribe(method, handler) {
       const list = handlers.get(method) ?? [];
       list.push(handler);
@@ -56,9 +59,18 @@ function createStubTransport() {
       return () => handlers.delete('__failure');
     },
     send(method, params = {}) {
-      frames.push({ direction: 'out', method, text: JSON.stringify({ method, params }) });
-      if (method === 'Runtime.evaluate') return new Promise(() => {}); // stays pending: the target thread is blocked
+      const text = JSON.stringify({ method, params });
+      frames.push({ direction: 'out', method, text });
       return Promise.resolve({});
+    },
+    // The production session calls connection.evaluate for the evaluate intent,
+    // never send. This records the invocation and an outbound frame, then stays
+    // pending: the target thread is blocked.
+    evaluateCalls,
+    evaluate(method, params = {}) {
+      evaluateCalls.push({ method, params });
+      frames.push({ direction: 'out', method, text: JSON.stringify({ method, params }) });
+      return new Promise(() => {});
     },
     close() {
       failureValue = { condition: 'transportClosed', detail: 'fixture stub closed' };
@@ -74,6 +86,14 @@ const outboundMethods = (session) => outbound(session).map((frame) => frame.meth
 
 const controlled = {};
 let controlledSession = null;
+// Retained settlement state lives in the enclosing scope so the checks and the
+// result can use it after the finally block, and so its wait can be bounded.
+const controlledReleaseCalls = [];
+const controlledSettlement = { status: 'unresolved' };
+let settlementSettled = null;
+const settlementDone = new Promise((resolve) => {
+  settlementSettled = resolve;
+});
 try {
   const stub = createStubTransport();
   const connectCalls = [];
@@ -85,7 +105,12 @@ try {
       connectCalls.push(url);
       return stub;
     },
-    control: { release: async (args) => ({ accepted: true, fixtureKeeper: 'stub', signal: args?.signal ?? null }) },
+    control: {
+      release: async (args) => {
+        controlledReleaseCalls.push({ signal: args?.signal ?? null, role: args?.role ?? null });
+        return { accepted: true, fixtureKeeper: 'stub', signal: args?.signal ?? null };
+      },
+    },
     emit: () => {},
   });
 
@@ -117,16 +142,17 @@ try {
   controlled.positive = positive;
   controlled.framesAfterPositive = outbound(controlledSession).length;
 
-  const settlement = { status: 'unresolved' };
   const evaluation = controlledSession.execute('evaluate', { query: 'q-eval', expression: BLOCKED, effects: EVALUATE });
   evaluation.then(
     (value) => {
-      settlement.status = 'settled';
-      settlement.value = value?.state ?? null;
+      controlledSettlement.status = 'settled';
+      controlledSettlement.value = value?.state ?? null;
+      settlementSettled();
     },
     (error) => {
-      settlement.status = 'rejected';
-      settlement.condition = error?.condition ?? error?.name ?? String(error);
+      controlledSettlement.status = 'rejected';
+      controlledSettlement.condition = error?.condition ?? error?.name ?? String(error);
+      settlementSettled();
     },
   );
   const pendingObserved = await waitFor(
@@ -135,6 +161,7 @@ try {
   );
   controlled.pendingObserved = pendingObserved.value === true;
   controlled.pendingSnapshot = controlledSession.snapshot().pending;
+  controlled.evaluateCalls = stub.evaluateCalls.slice();
   controlled.framesBeforeBusy = outbound(controlledSession).length;
 
   let busy = null;
@@ -154,7 +181,8 @@ try {
     release = { refused: error.condition ?? error.name ?? String(error) };
   }
   controlled.release = release;
-  controlled.settlement = settlement;
+  controlled.releaseCalls = controlledReleaseCalls.slice();
+  controlled.settlement = controlledSettlement;
 
   // S5 boundary observation: with an injected factory the session itself does no
   // endpoint validation, so a non-loopback URL reaches the factory. Recorded, not
@@ -202,6 +230,7 @@ try {
 
 // ---- Real inspector path ---------------------------------------------------
 const live = {};
+let liveSession = null;
 const child = spawn(
   '/usr/bin/env',
   ['-i', 'PATH=/usr/bin:/bin', 'HOME=/tmp/baton-fixture-home', 'TMPDIR=/tmp', 'LC_ALL=C',
@@ -220,7 +249,7 @@ try {
   const found = await waitFor(() => parseBanner(stderr), 20000);
   live.banner = found.value;
   if (found.value !== null) {
-    const session = sessionModule.createAdapterSession({
+    liveSession = sessionModule.createAdapterSession({
       runtime: 'rt:live', adapter: 'fixture-adapter', incarnation: '0',
       control: { release: async () => ({ accepted: true, fixtureKeeper: 'stub' }) },
       emit: () => {},
@@ -256,6 +285,37 @@ try {
   const partial = child.pid !== undefined && cleanupReport.unresolved.includes(child.pid);
   rawStdout = { ...writeStream(environment, 'session-transport.subject.stdout.txt', stdout), partial };
   rawStderr = { ...writeStream(environment, 'session-transport.subject.stderr.txt', stderr), partial };
+  // Bounded settlement observation: a bound that elapses is recorded as unknown,
+  // never as a settled outcome.
+  const settlementWait = await Promise.race([
+    settlementDone.then(() => 'settled'),
+    new Promise((resolve) => setTimeout(() => resolve('timeout'), 3000)),
+  ]);
+  controlled.settlementWait = settlementWait;
+  controlled.settlementUnknown = settlementWait !== 'settled';
+  // Live transport closure: observe the recorded failure with a bound.
+  if (liveSession !== null) {
+    const closure = await waitFor(() => {
+      try {
+        return liveSession.snapshot().failure !== null;
+      } catch {
+        return false;
+      }
+    }, 3000);
+    let snapshot = null;
+    try {
+      snapshot = liveSession.snapshot();
+    } catch (error) {
+      snapshot = { refused: String(error?.message ?? error) };
+    }
+    live.transportClosure = {
+      recorded: closure.value === true,
+      timedOutUnknown: closure.value !== true,
+      elapsedMs: closure.elapsedMs,
+      failure: snapshot?.failure ?? null,
+      state: snapshot?.state ?? null,
+    };
+  }
 }
 
 // ---- Assertions ------------------------------------------------------------
@@ -278,12 +338,26 @@ reporter.check('controlled:admitted-control-emits-one-frame',
 reporter.check('controlled:pending-from-adapter-evidence',
   controlled.pendingObserved === true && controlled.pendingSnapshot !== null,
   { pending: controlled.pendingSnapshot, observed: controlled.pendingObserved });
+reporter.check('controlled:evaluate-invocation-recorded',
+  Array.isArray(controlled.evaluateCalls) && controlled.evaluateCalls.length === 1
+  && controlled.evaluateCalls[0].method === 'Runtime.evaluate', controlled.evaluateCalls);
+reporter.check('controlled:no-unexpected-rejection',
+  controlled.settlement?.status !== 'rejected'
+  || ['transportClosed', 'transportError', 'transportAborted'].includes(controlled.settlement?.condition),
+  controlled.settlement);
 reporter.check('controlled:busy-refused-while-pending',
   controlled.busy?.refused === 'runtimeBusy', controlled.busy);
 reporter.check('controlled:busy-emits-no-frame',
   controlled.framesAfterBusy === controlled.framesBeforeBusy,
   { before: controlled.framesBeforeBusy, after: controlled.framesAfterBusy });
 reporter.check('controlled:release-admitted-while-pending', controlled.release?.ok === true, controlled.release);
+reporter.check('controlled:release-invoked-once',
+  Array.isArray(controlled.releaseCalls) && controlled.releaseCalls.length === 1, controlled.releaseCalls);
+reporter.check('controlled:settlement-observed-without-false-claim',
+  ['settled', 'rejected', 'unresolved'].includes(controlled.settlement?.status)
+  && ['settled', 'timeout'].includes(controlled.settlementWait)
+  && (controlled.settlementWait === 'settled' ? controlled.settlement.status !== 'unresolved' : true),
+  { status: controlled.settlement?.status, wait: controlled.settlementWait });
 reporter.check('controlled:no-setup-failure', controlled.failure === undefined, controlled.failure);
 reporter.check('loopback:non-loopback-refused-by-admission',
   loopback.admit?.nonLoopback?.ok === false && loopback.admit.nonLoopback.condition === 'endpointNotLoopback',
@@ -305,6 +379,14 @@ reporter.check('live:admitted-control-emits-one-frame',
   live.positive?.ok === true && live.framesAfterPositive === live.framesBefore + 1,
   { before: live.framesBefore, refusalFrames: live.framesAfterRefusal, after: live.framesAfterPositive });
 reporter.check('live:no-setup-failure', live.failure === undefined, live.failure);
+reporter.check('live:transport-closure-observed-or-unknown',
+  live.transportClosure?.recorded === true || live.transportClosure?.timedOutUnknown === true,
+  live.transportClosure);
+reporter.check('live:closure-not-claimed-when-unknown',
+  live.transportClosure?.timedOutUnknown !== true || live.transportClosure?.failure === null,
+  live.transportClosure);
+reporter.note('live-path scope, stated exactly: the live inspector path exercises breakpoint refusal and admission on the production transport; it does not exercise pending evaluation or release, which are covered on the controlled path');
+reporter.note('S4 remains open: this fixture only records whatever transport-closure observation occurs at cleanup, and claims no coverage of the state recorded after a deliberate close');
 reporter.check('custody:owned-child-resolved', cleanupReport.unresolved.length === 0, cleanupReport);
 
 reporter.note('the injected connect factory is trusted test infrastructure: the session performs no endpoint admission itself, so loopback enforcement is a property of the default factory, observed here rather than asserted as a session defect');

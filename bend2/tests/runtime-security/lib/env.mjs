@@ -20,7 +20,7 @@ import { readFileSync, statSync, accessSync, existsSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, isAbsolute, join, basename } from 'node:path';
 import os from 'node:os';
-import { ClosureRefusal, resolveClosure } from './closure.mjs';
+import { GraphRefusal, loadGraph, resolveDeclaredClosure } from './graph.mjs';
 import { HISTORICAL_PINS } from './pins.mjs';
 
 export const LIB_DIR = dirname(fileURLToPath(import.meta.url));
@@ -110,6 +110,15 @@ export function loadEnvironment() {
   }
   statSync(floorNode);
 
+  const graphPath = requireAbsolute('BATON_EXPECTED_DEPENDENCY_GRAPH', process.env.BATON_EXPECTED_DEPENDENCY_GRAPH);
+  let graphModules;
+  try {
+    graphModules = loadGraph(graphPath);
+  } catch (error) {
+    if (error instanceof GraphRefusal) throw new EnvironmentRefusal(error.condition, error.detail);
+    throw error;
+  }
+
   const pinName = process.env.BATON_HISTORICAL_PIN ?? null;
   const pinClosure = process.env.BATON_HISTORICAL_CLOSURE_SHA256 ?? null;
   if (pinName !== null && HISTORICAL_PINS[pinName] === undefined) {
@@ -128,6 +137,8 @@ export function loadEnvironment() {
     evidenceDir,
     expectedPath,
     expectedEntries: Object.fromEntries(parseExpectedHashes(expectedPath)),
+    graphPath,
+    graphModules,
     pinName,
     pin: pinName === null ? null : HISTORICAL_PINS[pinName],
     platform: {
@@ -147,19 +158,22 @@ export function loadEnvironment() {
 // Resolve the executed closure and validate it against the admitted manifest.
 // This runs in both modes.
 function admitExecutedClosure(environment, entries) {
-  // A resolver refusal is an admission outcome, not an uncaught exception, and
-  // never a success. Any other error is a real defect and is not converted.
+  // Edges come from the admitted declared graph; no source text is parsed. A
+  // graph refusal is an admission outcome, not an uncaught exception, and never
+  // a success. Any other error is a real defect and is not converted.
   let closure;
   try {
-    closure = resolveClosure(environment.runtimeDir, entries);
+    closure = resolveDeclaredClosure(environment.graphModules, entries);
   } catch (error) {
-    if (error instanceof ClosureRefusal) throw new EnvironmentRefusal(error.condition, error.detail);
+    if (error instanceof GraphRefusal) throw new EnvironmentRefusal(error.condition, error.detail);
     throw error;
   }
-  if (closure.unsupported.length > 0) {
-    throw new EnvironmentRefusal('closureUnsupportedForm', closure.unsupported.join(' | '));
+  if (closure.undeclaredEntries.length > 0) {
+    throw new EnvironmentRefusal('graphEntryUndeclared', closure.undeclaredEntries.join(', '));
   }
-  if (closure.missing.length > 0) throw new EnvironmentRefusal('closureModuleMissing', closure.missing.join(', '));
+  if (closure.undeclaredEdges.length > 0) {
+    throw new EnvironmentRefusal('graphEdgeUndeclared', closure.undeclaredEdges.join(' | '));
+  }
 
   const observed = {};
   const uncovered = [];
@@ -175,8 +189,8 @@ function admitExecutedClosure(environment, entries) {
   return { closure, observed };
 }
 
-// Declared for report completeness: what the scan can and cannot establish.
-export const SCANNER_LIMITS = 'closure scan refuses unrecognised import/export/require forms and non-relative specifiers; template and regex literals are not modelled, so a dependency reachable only through them is not detected and such a tree requires an explicit manifest-bound graph';
+// Declared for report completeness: exactly what admission establishes.
+export const GRAPH_SCOPE = 'dependency edges are admitted, reviewed input bound to per-module digests; no source text is parsed, so this suite makes no claim about arbitrary source. It establishes that the executed modules are exactly the admitted ones with the admitted digests; a source change invalidates the graph through its digests, and a graph that omits a real edge is a reviewed-input defect rather than a detected one';
 
 export function admitEnvironment(environment, entries) {
   const { closure, observed } = admitExecutedClosure(environment, entries);
@@ -223,9 +237,9 @@ export function admitEnvironment(environment, entries) {
     entries,
     closureFiles: closure.files,
     observedHashes: observed,
-    closureScan: closure.scanner,
-    closureAllowedBuiltins: closure.allowedBuiltins,
-    closureScannerLimits: SCANNER_LIMITS,
+    closureSource: closure.source,
+    closureGraphPath: environment.graphPath,
+    closureScope: GRAPH_SCOPE,
     historicalScope,
   };
 }

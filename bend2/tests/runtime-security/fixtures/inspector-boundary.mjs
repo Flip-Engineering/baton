@@ -6,8 +6,11 @@
 //   C a client holding only the UUID executes Runtime.evaluate
 //   D Debugger.resume is refused in the --inspect-brk pre-release wait state
 //   E client socket close while paused ends the subject (no release command)
-//   F a target-blocking evaluation never responds, and an external signal still
-//     ends the subject
+//   F a target-blocking evaluation never responds, and an external signal ends it
+//
+// Bounded cleanup and raw persistence run inside `finally`, so a thrown body
+// still leaves raw streams and a partial-labelled record; the primary failure is
+// retained separately and never erased by a cleanup failure.
 import { spawn } from 'node:child_process';
 import { EnvironmentRefusal, FIXTURE_ENTRIES, openEnvironmentOrExit } from '../lib/env.mjs';
 import { createReport, finish, refuseEnvironment, writeStream } from '../lib/assert.mjs';
@@ -100,33 +103,36 @@ function connect(url) {
   };
 }
 
+const observation = {};
+let bodyFailure = null;
+let rawStreams = [];
+let custodyReport = null;
+
 try {
-  // A and B.
   const first = launch('paused-subject');
   const found = await waitFor(() => parseBanner(first.stderr), 20000);
   const banner = found.value;
-  reporter.check('A:banner-present', banner !== null, first.stderr.split('\n').slice(-2).join(' | '));
+  observation.banner = banner;
+  observation.a = { bannerPresent: banner !== null };
   let listBody = null;
   if (banner !== null) {
     const list = await loopbackGet(banner.port, '/json/list');
     listBody = list.body ?? null;
-    reporter.check('B:list-publishes-uuid', typeof listBody === 'string' && listBody.includes(banner.uuid), null);
+    observation.b = { publishesUuid: typeof listBody === 'string' && listBody.includes(banner.uuid) };
   } else {
-    reporter.check('B:list-publishes-uuid', false, 'no banner');
+    observation.b = { publishesUuid: false };
   }
 
-  // C and D.
   if (banner !== null) {
     const client = connect(banner.url);
     await client.opened;
     const resume = await client.send('Debugger.resume');
-    reporter.check('D:resume-refused-in-wait-state', resume?.error?.code === -32000, resume?.error ?? null);
+    observation.d = { resumeError: resume?.error ?? null };
     await client.send('Runtime.enable');
     await client.send('Debugger.enable');
     const evaluate = await client.send('Runtime.evaluate', { expression: '6*7' });
-    reporter.check('C:unauthenticated-evaluate', evaluate?.result?.result?.value === 42, evaluate?.result ?? null);
+    observation.c = { value: evaluate?.result?.result?.value ?? null };
 
-    // E.
     await client.send('Runtime.runIfWaitingForDebugger');
     await client.send('Debugger.pause');
     await waitFor(() => client.frames.some((frame) => frame.method === 'Debugger.paused'), 5000);
@@ -136,19 +142,18 @@ try {
       first.exited.then((value) => ({ exited: true, value })),
       new Promise((resolve) => setTimeout(() => resolve({ exited: false }), 5000)),
     ]);
-    reporter.check('E:client-close-ends-subject', afterClose.exited === true, afterClose);
+    observation.e = afterClose;
   } else {
-    reporter.check('C:unauthenticated-evaluate', false, 'no banner');
-    reporter.check('D:resume-refused-in-wait-state', false, 'no banner');
-    reporter.check('E:client-close-ends-subject', false, 'no banner');
+    observation.c = { value: null };
+    observation.d = { resumeError: null };
+    observation.e = { exited: false };
   }
 
-  // F.
   const second = launch('blocked-evaluation-subject');
   const foundSecond = await waitFor(() => parseBanner(second.stderr), 20000);
-  const bannerSecond = foundSecond.value;
-  if (bannerSecond !== null) {
-    const client = connect(bannerSecond.url);
+  observation.f = { bannerPresent: foundSecond.value !== null };
+  if (foundSecond.value !== null) {
+    const client = connect(foundSecond.value.url);
     await client.opened;
     await client.send('Runtime.enable');
     await client.send('Debugger.enable');
@@ -158,51 +163,75 @@ try {
     await new Promise((resolve) => setTimeout(resolve, 300));
     const following = client.send('Runtime.evaluate', { expression: '1+1' }, 3000);
     const [blockedResult, followingResult] = await Promise.all([blocked, following]);
-    reporter.check('F:blocked-evaluation-no-response', blockedResult.timedOut === true, blockedResult);
-    reporter.check('F:following-request-no-response', followingResult.timedOut === true, followingResult);
     const beforeKill = Date.now();
     second.child.kill('SIGTERM');
     const killed = await Promise.race([
       second.exited.then((value) => value),
       new Promise((resolve) => setTimeout(() => resolve(null), 5000)),
     ]);
-    reporter.check('F:external-signal-ends-subject', killed !== null, killed);
-    reporter.note(JSON.stringify({ killLatencyMs: killed === null ? null : killed.at - beforeKill }));
-  } else {
-    reporter.check('F:blocked-evaluation-no-response', false, 'no banner');
-    reporter.check('F:following-request-no-response', false, 'no banner');
-    reporter.check('F:external-signal-ends-subject', false, 'no banner');
+    observation.f = {
+      bannerPresent: true,
+      blockedTimedOut: blockedResult.timedOut === true,
+      followingTimedOut: followingResult.timedOut === true,
+      signalExit: killed,
+      killLatencyMs: killed === null ? null : killed.at - beforeKill,
+    };
   }
+} catch (error) {
+  bodyFailure = String(error?.stack ?? error);
 } finally {
+  // Bounded cleanup and raw persistence on every path. Cleanup failures are
+  // recorded but never replace the primary body failure.
   for (const state of children) state.custody.kill('SIGKILL');
-  await Promise.all(children.map((state) => state.exited.catch(() => null)));
-}
-
-// Awaited custody first, then raw streams, so trailing pipe data from a kill
-// request is not dropped. Streams whose closure was not observed are labelled
-// partial.
-for (const state of children) if (state.closed) state.custody.markReaped();
-const custodyReport = await cleanupOwned({ timeoutMs: 5000 });
-const rawStreams = [];
-for (const state of children) {
-  const outcome = await state.exited.catch(() => null);
-  const partial = state.pid !== undefined && custodyReport.unresolved.includes(state.pid);
-  rawStreams.push({
-    tag: state.tag,
-    pid: state.pid,
-    closed: state.closed,
-    errorSeen: state.errorSeen,
-    requested: state.custody.entry.requested.slice(),
-    outcome,
-    stdout: { ...writeStream(environment, `inspector-boundary.${state.tag}.stdout.txt`, state.stdout), partial },
-    stderr: { ...writeStream(environment, `inspector-boundary.${state.tag}.stderr.txt`, state.stderr), partial },
+  try {
+    await Promise.all(children.map((state) => Promise.race([
+      state.exited.catch(() => null),
+      new Promise((resolve) => setTimeout(() => resolve('timeout'), 5000)),
+    ])));
+    custodyReport = await cleanupOwned({ timeoutMs: 5000 });
+  } catch (error) {
+    custodyReport = {
+      cleanupFailed: String(error?.message ?? error),
+      unresolved: children.map((state) => state.pid),
+      semantics: 'cleanup failed; every owned child is reported unresolved rather than claimed reaped',
+    };
+  }
+  rawStreams = children.map((state) => {
+    const partial = state.pid !== undefined && (custodyReport.unresolved ?? []).includes(state.pid);
+    return {
+      tag: state.tag,
+      pid: state.pid,
+      closed: state.closed,
+      errorSeen: state.errorSeen,
+      requested: state.custody.entry.requested.slice(),
+      stdout: { ...writeStream(environment, `inspector-boundary.${state.tag}.stdout.txt`, state.stdout), partial },
+      stderr: { ...writeStream(environment, `inspector-boundary.${state.tag}.stderr.txt`, state.stderr), partial },
+    };
   });
 }
+
+reporter.check('fixture:no-uncaught-failure', bodyFailure === null, bodyFailure);
+reporter.check('A:banner-present', observation.a?.bannerPresent === true, observation.a);
+reporter.check('B:list-publishes-uuid', observation.b?.publishesUuid === true, observation.b);
+reporter.check('C:unauthenticated-evaluate', observation.c?.value === 42, observation.c);
+reporter.check('D:resume-refused-in-wait-state', observation.d?.resumeError?.code === -32000, observation.d);
+reporter.check('E:client-close-ends-subject', observation.e?.exited === true, observation.e);
+reporter.check('F:blocked-evaluation-no-response', observation.f?.blockedTimedOut === true, observation.f);
+reporter.check('F:following-request-no-response', observation.f?.followingTimedOut === true, observation.f);
+reporter.check('F:external-signal-ends-subject', observation.f?.signalExit !== null && observation.f?.signalExit !== undefined,
+  observation.f);
 for (const entry of rawStreams) {
   reporter.check(`${entry.tag}:close-observed`, entry.closed === true, entry);
   reporter.check(`${entry.tag}:no-error-event`, entry.errorSeen === null, entry.errorSeen);
+  reporter.check(`${entry.tag}:raw-streams-retained`,
+    entry.stdout.artifact !== undefined && entry.stderr.artifact !== undefined, entry);
 }
-reporter.check('custody:owned-children-resolved', custodyReport.unresolved.length === 0, custodyReport);
-reporter.note(custodyReport.signalObservation);
+reporter.check('custody:owned-children-resolved', (custodyReport.unresolved ?? []).length === 0, custodyReport);
+reporter.note(custodyReport.semantics);
 
-finish(environment, 'inspector-boundary.result.json', reporter.finalize({ rawStreams, custody: custodyReport }));
+finish(environment, 'inspector-boundary.result.json', reporter.finalize({
+  observation,
+  bodyFailure,
+  rawStreams,
+  custody: custodyReport,
+}));

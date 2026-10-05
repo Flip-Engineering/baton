@@ -11,6 +11,7 @@ during authoring; execution belongs to an admitted remote runner.
 | `BATON_FLOOR_NODE` | absolute exact-floor Node executable |
 | `BATON_EVIDENCE_DIR` | absolute evidence directory (must exist) |
 | `BATON_EXPECTED_PRODUCER_HASHES` | absolute root-admitted execution manifest (required) |
+| `BATON_EXPECTED_DEPENDENCY_GRAPH` | absolute admitted, reviewed dependency graph for the frozen producer (required) |
 | `BATON_HISTORICAL_PIN` | optional pin NAME that selects one historical case |
 | `BATON_HISTORICAL_CLOSURE_SHA256` | optional cross-check equal to that pin's closure digest |
 
@@ -28,14 +29,23 @@ unreadable variable; an absent, malformed or duplicate-bearing manifest; an
 unsupported dependency form; an unresolved relative specifier; a missing closure
 module; an uncovered closure file; or a digest mismatch.
 
-The resolver is a **specifier scan, not a JavaScript parser**. It handles
-`import ... from './x'`, `import './x'`, `export ... from './x'`,
-`export * from './x'` and literal `import('./x')`. A dynamic import with a
-non-literal argument and any `require(` call are refused as
-`closureUnsupportedForm`; a relative specifier that does not resolve to a file is
-refused as `closureUnresolvedSpecifier`. A tree using a form the scanner cannot
-follow therefore cannot be admitted by this suite, and says so rather than
-passing silently.
+Dependency edges are **admitted, reviewed input**, not inferred. The graph file
+declares, for each module, the modules it imports; admission resolves the
+closure from that declaration and validates every module's digest against the
+manifest. A graph refusal exits 3 with a named condition: `graphMissing`,
+`graphMalformed`, `graphVersion`, `graphSelfEdge`, `graphDuplicateEdge`,
+`graphEmpty`, `graphEntryUndeclared`, `graphEdgeUndeclared`,
+`expectedHashesIncomplete` or `sourceHashMismatch`.
+
+Scope, stated plainly: this suite parses no source, so it makes **no claim about
+arbitrary source**. It establishes that the modules it executed are exactly the
+admitted ones with the admitted digests. A source change invalidates the graph
+through its digests; a graph that omits a real edge is a reviewed-input defect
+rather than a detected one. An earlier revision tried to infer edges from source
+text, refused valid source such as `import.meta.url`, and is removed.
+
+Reviewed artifacts for the current immutable target are in this directory:
+`reviewed-graph-24ecd9d9.json` and `reviewed-manifest-24ecd9d9.sha256`.
 
 ## Modes
 
@@ -81,7 +91,7 @@ path still leaves `<fixture>.<tag>.stdout.txt` and `.stderr.txt` on disk.
 | `inspector-boundary` | none | pause/custody and pending evaluation against a real inspector |
 | `bootstrap-exec` | `bootstrap.mjs` | pre-exec validation (candidate) or the pinned abort (historical) |
 | `grants-admission` | `cdp-intents`, `cdp-state`, `cdp-session`, `cdp-refs` | grant, serialization, worker-session and ref-decision refusals; admission-order probes |
-| `session-transport` | `cdp-session.mjs` | outbound-frame behavior through the production session on both an injected connect factory and a real inspector child, plus loopback admission of the default factory |
+| `session-transport` | `cdp-session.mjs` | controlled path: outbound frames, pending evaluation and release; live path: breakpoint refusal and admission only; plus default-factory loopback admission |
 | `endpoint-watch` | `cdp-endpoint.mjs` | refusal channel, replacement, truncation, split append |
 | `endpoint-replacement` | `cdp-endpoint.mjs` | repeated replacement refusal |
 
@@ -99,6 +109,7 @@ shasum -a 256 <producer runtime dir>/*.mjs > "$EVID/observed.producer.sha256.txt
 
 BATON_PRODUCER_ROOT=<producer root> BATON_FLOOR_NODE="$NODE" \
 BATON_EVIDENCE_DIR="$EVID" BATON_EXPECTED_PRODUCER_HASHES="$MANIFEST" \
+BATON_EXPECTED_DEPENDENCY_GRAPH=reviewed-graph-24ecd9d9.json \
 "$NODE" run-all.mjs
 
 # separate pinned historical run and evidence directory

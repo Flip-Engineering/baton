@@ -1,0 +1,30 @@
+{
+  "version": 1,
+  "target": "24ecd9d954e0b21619f452958c0169f321143436",
+  "tree": "364807c2299ba32b2ad93724e36ae373ebb89d50",
+  "source": "bend2/context/runtime",
+  "reviewedBy": "semantic-impl-runtime-security-critic",
+  "reviewedFrom": "immutable commit 24ecd9d9, relative import specifiers read from each module",
+  "note": "Edges are reviewed, import-complete declarations for the frozen producer and are bound to the per-module digests in reviewed-manifest-24ecd9d9.sha256. No source text is parsed at run time.",
+  "modules": {
+    "bootstrap.mjs": ["bootstrap-admission.mjs"],
+    "bootstrap-admission.mjs": [],
+    "cdp-counter.mjs": [],
+    "cdp-endpoint.mjs": [],
+    "cdp-intents.mjs": [],
+    "cdp-protocol.mjs": [],
+    "cdp-refs.mjs": ["cdp-counter.mjs"],
+    "cdp-scripts.mjs": [],
+    "cdp-session.mjs": [
+      "cdp-counter.mjs",
+      "cdp-intents.mjs",
+      "cdp-protocol.mjs",
+      "cdp-refs.mjs",
+      "cdp-scripts.mjs",
+      "cdp-state.mjs",
+      "cdp-transport.mjs"
+    ],
+    "cdp-state.mjs": ["cdp-counter.mjs"],
+    "cdp-transport.mjs": []
+  }
+}
