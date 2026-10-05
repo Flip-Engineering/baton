@@ -304,17 +304,12 @@ def chain_is_empty(chain: OpChain) -> Bool:
     case Opnone{}: True{}
     case Opcons{+head, +tail}: False{}
 
-def chain_all_known(chain: OpChain) -> Bool:
-  match chain:
-    case Opnone{}: True{}
-    case Opcons{+head, +tail}: Bool.pick(Bool, Eng.operation_known(head), chain_all_known(tail), False{})
-
-# The required subset is Core's, unioned over the chain in chain order so the first
-# missing effect is reported in that order.
-def chain_required(chain: OpChain) -> Eng.SS:
+# The single conversion of the derived chain to Core's string chain. Admission
+# consumes this, so no caller-supplied required set is involved.
+def chain_ss(chain: OpChain) -> Eng.SS:
   match chain:
     case Opnone{}: Eng.ss_empty()
-    case Opcons{+head, +tail}: Eng.union_append(Eng.required_effects(head), chain_required(tail))
+    case Opcons{+head, +tail}: Eng.SSCons{head, chain_ss(tail)}
 
 # The one grants conversion between the codec's effect constructors and Core's
 # string chain. Nothing else in this module converts effects.
@@ -326,38 +321,36 @@ def grants_ss(xs: Context.Effects) -> Eng.SS:
 def subject_slot(+req: J.Json, retained: String) -> String:
   subject_slot_of(Ops.request_operation(req), Ops.request_subject_kind(req), Ops.request_intent(req), retained)
 
-# A subject this lane does not map (runtime, query-control) is resolved through
-# Core's closed intent mapping; `ref` uses the retained selector's operation. When
-# neither yields an operation the slot stays empty, so the chain's primary is empty
-# and dispatch refuses instead of letting an override stand alone.
+# A subject this lane does not map is resolved through Core's closed intent mapping;
+# only a `ref` subject may use the retained selector's operation. Any other
+# unmapped subject leaves the slot empty, so its work cannot be replaced by an
+# override.
 def subject_slot_of(+mapped: String, +kind: String, +intent: String, +retained: String) -> String:
   Bool.pick(String, String.is_empty(mapped), intent_or_retained(kind, intent, retained), mapped)
 
 def intent_or_retained(+kind: String, +intent: String, +retained: String) -> String:
   Bool.pick(String, String.eq(kind, "runtime"), Eng.runtime_operation(intent),
-    Bool.pick(String, String.eq(kind, "query-control"), Eng.query_control_operation(intent), retained))
+    Bool.pick(String, String.eq(kind, "query-control"), Eng.query_control_operation(intent),
+      Bool.pick(String, String.eq(kind, "ref"), retained, SNil{})))
+
+def subject_slot_present(+req: J.Json, retained: String) -> Bool:
+  Bool.pick(Bool, String.is_empty(subject_slot(req, retained)), False{}, True{})
 
 def request_operation_chain(+req: J.Json, retained_operation: String) -> OpChain:
   chain_append(chain_named(subject_slot(req, retained_operation)), Ops.request_override_operation(req))
 
-# Admission requires a nonempty chain, a nonempty primary and every entry admitted
-# by Core's closed vocabulary.
-def chain_admitted(+chain: OpChain) -> Bool:
-  Bool.pick(Bool, chain_is_empty(chain), False{}, chain_primary(chain, primary_operation(chain)))
-
-def chain_primary(+chain: OpChain, +primary: String) -> Bool:
-  Bool.pick(Bool, String.is_empty(primary), False{}, chain_all_known(chain))
-
-def grant_admission(e: Eng.Effects, +operation: String) -> Admission:
-  match e:
-    case Eng.FxGranted{}: ADispatch{operation}
-    case Eng.FxMissing{+effect}: ARefused{Context.RfValidation{}, "effectNotGranted"}
-
-def dispatch_grant(+chain: OpChain, +grants: Context.Effects) -> Admission:
-  grant_admission(Eng.missing_effects(chain_required(chain), grants_ss(grants)), primary_operation(chain))
+# Core's actual verdict names the refusal: no operation, an operation outside the
+# closed set, or the first required effect the caller did not grant. An admit
+# carries the authorized union; the codec dispatches the chain's primary.
+def admission_decision(a: Eng.Admission, +operation: String) -> Admission:
+  match a:
+    case Eng.AdAdmit{+effects}: ADispatch{operation}
+    case Eng.AdNoOperation{}: ARefused{Context.RfValidation{}, "unknownOperation"}
+    case Eng.AdUnknownOperation{+operation_text}: ARefused{Context.RfValidation{}, "unknownOperation"}
+    case Eng.AdMissingEffect{+effect}: ARefused{Context.RfValidation{}, "effectNotGranted"}
 
 def dispatch_operation(+chain: OpChain, +grants: Context.Effects) -> Admission:
-  Bool.pick(Admission, chain_admitted(chain), dispatch_grant(chain, grants), ARefused{Context.RfValidation{}, "unknownOperation"})
+  admission_decision(Eng.admit_operations(chain_ss(chain), grants_ss(grants)), primary_operation(chain))
 
 def dispatch_profile(v: Req.Verdict, +chain: OpChain, +grants: Context.Effects) -> Admission:
   match v:
@@ -370,12 +363,17 @@ def dispatch_profile(v: Req.Verdict, +chain: OpChain, +grants: Context.Effects) 
 def dispatch_admission(+req: J.Json, +chain: OpChain, +grants: Context.Effects) -> Admission:
   dispatch_profile(Req.Context.request_validate(req), chain, grants)
 
+def dispatch_guarded(present: Bool, +req: J.Json, retained: String, +grants: Context.Effects) -> Admission:
+  Bool.pick(Admission, present,
+    dispatch_admission(req, request_operation_chain(req, retained), grants),
+    ARefused{Context.RfValidation{}, "unknownOperation"})
+
 # The callable entry. It takes the request, the retained selector's operation for a
 # ref subject, and the caller's grants; the chain, the required subset and the
 # admission answer are all derived here, so an arbitrary chain, verdict or required
 # set cannot be substituted.
 def codec_dispatch(+req: J.Json, retained_operation: String, +grants: Context.Effects) -> Admission:
-  dispatch_admission(req, request_operation_chain(req, retained_operation), grants)
+  dispatch_guarded(subject_slot_present(req, retained_operation), req, retained_operation, grants)
 
 law codec_law_the_primary_operation_comes_from_the_chain:
   {primary_operation(request_operation_chain(Request_sample(), "")) == "sourceAnalysis" : String}
@@ -445,6 +443,11 @@ def Unmapped_runtime_override_sample() -> J.Json:
     J.Jpair{"select", J.Jarr{J.Jstr{"state"}, J.Jnil{}},
     J.Jpair{"options", J.Jobj{J.Jpair{"tools", J.Jobj{J.Jnil{}}, J.Jnil{}}}, J.Jnil{}}}}}}
 
+def Unknown_subject_sample() -> J.Json:
+  J.Jobj{J.Jpair{"version", J.Jint{1},
+    J.Jpair{"subject", J.Jobj{J.Jpair{"kind", J.Jstr{"mystery"}, J.Jnil{}}}},
+    J.Jpair{"select", J.Jarr{J.Jstr{"definition"}, J.Jnil{}}, J.Jnil{}}}}
+
 def Ref_override_sample() -> J.Json:
   J.Jobj{J.Jpair{"version", J.Jint{1},
     J.Jpair{"subject", J.Jobj{J.Jpair{"kind", J.Jstr{"ref"}, J.Jnil{}}}},
@@ -460,7 +463,7 @@ def Join_override_sample() -> J.Json:
     J.Jpair{"options", J.Jobj{J.Jpair{"tools", J.Jobj{J.Jnil{}}, J.Jnil{}}}, J.Jnil{}}}}}}
 
 law codec_law_an_override_adds_execute_target_without_dropping_a_plan:
-  {Eng.missing_effects(chain_required(request_operation_chain(Join_override_sample(), "")), grants_ss(Context.one_effect(Context.EfPlanTargetSql{}))) == Eng.FxMissing{"executeTarget"} : Eng.Effects}
+  {Eng.admit_operations(chain_ss(request_operation_chain(Join_override_sample(), "")), grants_ss(Context.one_effect(Context.EfPlanTargetSql{}))) == Eng.AdMissingEffect{"executeTarget"} : Eng.Admission}
 
 def codec_law_an_override_adds_execute_target_without_dropping_a_plan():
   {==}
@@ -1220,9 +1223,29 @@ def ref_snapshot_of(d: RefDecode) -> String:
 def ref_record_of(d: RefDecode) -> Refs.RefRecord:
   Refs.Ref{ref_id_of(d), ref_engine_of(d), ref_subject_of(d), ref_snapshot_of(d), ss_of_proj(ref_projections_of(d))}
 
-def ref_query_of(+record: Refs.RefRecord, requested: Eng.SS, applicability: Snap.Applies, granted: Eng.SS, fresh: String, known: Bool) -> Refs.RefQuery:
+# The retained selector's operations are authenticated evidence carried beside the
+# record, because `RefRecord` does not hold them. Its effects come from Core, not
+# from a projection name, and a missing or unknown authority refuses rather than
+# being fabricated from the request.
+def ref_query_of(+record: Refs.RefRecord, +operations: Eng.SS, requested: Eng.SS, applicability: Snap.Applies, granted: Eng.SS, fresh: String, known: Bool) -> Refs.RefQuery:
   Refs.RQ{known, Refs.ref_subject(record), Refs.ref_projections(record), requested, applicability,
-          Refs.ref_projections(record), granted, fresh}
+          Eng.effects_union(operations), granted, fresh}
+
+def ref_query_admit(+record: Refs.RefRecord, +operations: Eng.SS, requested: Eng.SS, applicability: Snap.Applies, granted: Eng.SS, fresh: String, known: Bool) -> Refs.RefDecision:
+  Refs.admit(ref_query_of(record, operations, requested, applicability, granted, fresh, known))
+
+def ref_known(k: Eng.OpsKnown, +record: Refs.RefRecord, +operations: Eng.SS, requested: Eng.SS, applicability: Snap.Applies, granted: Eng.SS, fresh: String, known: Bool) -> Refs.RefDecision:
+  match k:
+    case Eng.OkAllKnown{}: ref_query_admit(record, operations, requested, applicability, granted, fresh, known)
+    case Eng.OkUnknown{+operation}: Refs.RUnverified{"retainedSelectorOperationUnknown"}
+
+def ref_gate(present: Bool, k: Eng.OpsKnown, +record: Refs.RefRecord, +operations: Eng.SS, requested: Eng.SS, applicability: Snap.Applies, granted: Eng.SS, fresh: String, known: Bool) -> Refs.RefDecision:
+  Bool.pick(Refs.RefDecision, present,
+    ref_known(k, record, operations, requested, applicability, granted, fresh, known),
+    Refs.RUnverified{"retainedSelectorOperationsUnavailable"})
+
+def ref_admit(+record: Refs.RefRecord, +operations: Eng.SS, requested: Eng.SS, applicability: Snap.Applies, granted: Eng.SS, fresh: String, known: Bool) -> Refs.RefDecision:
+  ref_gate(Eng.ss_nonempty(operations), Eng.operations_known(operations), record, operations, requested, applicability, granted, fresh, known)
 
 def frame_text(d: FrameDecision) -> String:
   match d:
@@ -1234,31 +1257,55 @@ def frame_refusal(r: FrameRead) -> String:
     case FrValue{+value}: SNil{}
     case FrRefused{condition}: condition
 
-def ref_record_sample(id: String, +projections: J.Json) -> Refs.RefRecord:
-  ref_record_of(ref_decode(ref_object_of(ref_members_base(id, projections))))
+def record_probe(subject: String, +projections: Eng.SS) -> Refs.RefRecord:
+  Refs.Ref{"r1", "typescript", subject, "s1", projections}
 
 law codec_law_a_retained_record_composes_into_core:
-  {Refs.ref_id(ref_record_sample("r1", J.Jarr{J.Jstr{"definition"}, J.Jnil{}})) == "r1" : String}
+  {Refs.ref_id(record_probe("symbol", Eng.ss_one("definition"))) == "r1" : String}
 
 def codec_law_a_retained_record_composes_into_core():
   {==}
 
-law codec_law_the_composed_record_carries_the_stored_projections:
-  {Eng.ss_member(Refs.ref_projections(ref_record_sample("r1", J.Jarr{J.Jstr{"definition"}, J.Jarr{J.Jstr{"calls"}, J.Jnil{}}})), "calls") == True{} : Bool}
+law codec_law_a_grant_free_source_expansion_is_allowed:
+  {Refs.condition(ref_admit(record_probe("symbol", Eng.ss_one("definition")), Eng.ss_one("sourceAnalysis"), Eng.ss_one("definition"), Snap.ACurrent{}, Eng.ss_empty(), "fresh", True{})) == "ok" : String}
 
-def codec_law_the_composed_record_carries_the_stored_projections():
+def codec_law_a_grant_free_source_expansion_is_allowed():
   {==}
 
-law codec_law_a_query_requires_the_stored_projections_not_the_requested:
-  {Eng.ss_member(Refs.rq_required(ref_query_of(ref_record_sample("r1", J.Jarr{J.Jstr{"definition"}, J.Jnil{}}), Eng.ss_one("calls"), Snap.ACurrent{}, Eng.ss_empty(), "fresh", True{})), "definition") == True{} : Bool}
+law codec_law_a_planning_expansion_without_its_grant_is_refused:
+  {Refs.condition(ref_admit(record_probe("symbol", Eng.ss_one("definition")), Eng.ss_one("codeAccessJoin"), Eng.ss_one("definition"), Snap.ACurrent{}, Eng.ss_empty(), "fresh", True{})) == "effectNotGranted" : String}
 
-def codec_law_a_query_requires_the_stored_projections_not_the_requested():
+def codec_law_a_planning_expansion_without_its_grant_is_refused():
   {==}
 
-law codec_law_a_query_does_not_require_a_projection_the_store_lacks:
-  {Eng.ss_member(Refs.rq_required(ref_query_of(ref_record_sample("r1", J.Jarr{J.Jstr{"definition"}, J.Jnil{}}), Eng.ss_one("calls"), Snap.ACurrent{}, Eng.ss_empty(), "fresh", True{})), "calls") == False{} : Bool}
+law codec_law_a_planning_expansion_with_its_grant_is_allowed:
+  {Refs.condition(ref_admit(record_probe("symbol", Eng.ss_one("definition")), Eng.ss_one("codeAccessJoin"), Eng.ss_one("definition"), Snap.ACurrent{}, Eng.ss_one("planTargetSql"), "fresh", True{})) == "ok" : String}
 
-def codec_law_a_query_does_not_require_a_projection_the_store_lacks():
+def codec_law_a_planning_expansion_with_its_grant_is_allowed():
+  {==}
+
+law codec_law_a_projection_widening_is_refused:
+  {Refs.condition(ref_admit(record_probe("symbol", Eng.ss_one("definition")), Eng.ss_one("sourceAnalysis"), Eng.ss_one("calls"), Snap.ACurrent{}, Eng.ss_empty(), "fresh", True{})) == "projectionRefused" : String}
+
+def codec_law_a_projection_widening_is_refused():
+  {==}
+
+law codec_law_a_missing_retained_operation_authority_refuses:
+  {Refs.condition(ref_admit(record_probe("symbol", Eng.ss_one("definition")), Eng.ss_empty(), Eng.ss_one("definition"), Snap.ACurrent{}, Eng.ss_empty(), "fresh", True{})) == "unverifiedReference" : String}
+
+def codec_law_a_missing_retained_operation_authority_refuses():
+  {==}
+
+law codec_law_an_unknown_retained_operation_refuses:
+  {Refs.condition(ref_admit(record_probe("symbol", Eng.ss_one("definition")), Eng.ss_one("notAnOperation"), Eng.ss_one("definition"), Snap.ACurrent{}, Eng.ss_empty(), "fresh", True{})) == "unverifiedReference" : String}
+
+def codec_law_an_unknown_retained_operation_refuses():
+  {==}
+
+law codec_law_an_unknown_subject_cannot_acquire_ref_authority:
+  {codec_dispatch(Unknown_subject_sample(), "sourceAnalysis", Context.no_effects()) == ARefused{Context.RfValidation{}, "unknownOperation"} : Admission}
+
+def codec_law_an_unknown_subject_cannot_acquire_ref_authority():
   {==}
 
 # ---------------------------------------------------------------------------

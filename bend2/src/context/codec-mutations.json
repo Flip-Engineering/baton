@@ -70,11 +70,25 @@
   "law": "codec_law_a_bad_jsonrpc_refuses_before_the_tool"
  },
  {
-  "name": "codec-unknown-chain-entry-dispatches",
+  "name": "codec-core-admission-verdict-is-ignored",
   "file": "bend2/src/context/codec.bend",
-  "find": "  Bool.pick(Admission, chain_admitted(chain), dispatch_grant(chain, grants), ARefused{Context.RfValidation{}, \"unknownOperation\"})",
-  "replace": "  Bool.pick(Admission, True{}, dispatch_grant(chain, grants), ARefused{Context.RfValidation{}, \"unknownOperation\"})",
+  "find": "  admission_decision(Eng.admit_operations(chain_ss(chain), grants_ss(grants)), primary_operation(chain))",
+  "replace": "  ADispatch{primary_operation(chain)}",
   "law": "codec_law_an_unknown_chain_entry_refuses_even_with_every_grant"
+ },
+ {
+  "name": "codec-subject-slot-guard-is-removed",
+  "file": "bend2/src/context/codec.bend",
+  "find": "  dispatch_guarded(subject_slot_present(req, retained_operation), req, retained_operation, grants)",
+  "replace": "  dispatch_admission(req, request_operation_chain(req, retained_operation), grants)",
+  "law": "codec_law_an_unmapped_runtime_intent_cannot_hide_behind_an_override"
+ },
+ {
+  "name": "codec-retained-operation-is-available-to-every-subject",
+  "file": "bend2/src/context/codec.bend",
+  "find": "      Bool.pick(String, String.eq(kind, \"ref\"), retained, SNil{})))",
+  "replace": "      retained))",
+  "law": "codec_law_an_unknown_subject_cannot_acquire_ref_authority"
  },
  {
   "name": "codec-primary-is-not-read-from-the-chain",
@@ -91,11 +105,18 @@
   "law": "codec_law_the_chain_second_entry_is_the_override"
  },
  {
-  "name": "codec-unmapped-intent-uses-the-retained-slot",
+  "name": "codec-ref-required-uses-projection-names",
   "file": "bend2/src/context/codec.bend",
-  "find": "  Bool.pick(String, String.eq(kind, \"runtime\"), Eng.runtime_operation(intent),\n    Bool.pick(String, String.eq(kind, \"query-control\"), Eng.query_control_operation(intent), retained))",
-  "replace": "  retained",
-  "law": "codec_law_a_runtime_intent_resolves_through_core"
+  "find": "          Eng.effects_union(operations), granted, fresh}",
+  "replace": "          Refs.ref_projections(record), granted, fresh}",
+  "law": "codec_law_a_grant_free_source_expansion_is_allowed"
+ },
+ {
+  "name": "codec-ref-authority-presence-is-not-checked",
+  "file": "bend2/src/context/codec.bend",
+  "find": "  ref_gate(Eng.ss_nonempty(operations), Eng.operations_known(operations), record, operations, requested, applicability, granted, fresh, known)",
+  "replace": "  ref_gate(True{}, Eng.operations_known(operations), record, operations, requested, applicability, granted, fresh, known)",
+  "law": "codec_law_a_missing_retained_operation_authority_refuses"
  },
  {
   "name": "codec-ref-closed-set-is-not-checked",
@@ -138,12 +159,5 @@
   "find": "    case EnvRefused{condition}: FdRefused{Context.RfValidation{}, condition}",
   "replace": "    case EnvRefused{condition}: Bool.pick(FrameDecision, meta_accepted(m), FdRefused{Context.RfValidation{}, condition}, FdRefused{Context.RfValidation{}, meta_text(m)})",
   "law": "codec_law_an_envelope_refusal_wins_over_a_metadata_defect"
- },
- {
-  "name": "codec-ref-query-takes-its-permissions-from-the-request",
-  "file": "bend2/src/context/codec.bend",
-  "find": "  Refs.RQ{known, Refs.ref_subject(record), Refs.ref_projections(record), requested, applicability,\n          Refs.ref_projections(record), granted, fresh}",
-  "replace": "  Refs.RQ{known, Refs.ref_subject(record), Refs.ref_projections(record), requested, applicability,\n          requested, granted, fresh}",
-  "law": "codec_law_a_query_requires_the_stored_projections_not_the_requested"
  }
 ]
