@@ -11,6 +11,7 @@
 import Base
 import ../coordinator/commands.bend as C
 import ../git/text.bend as Tx
+import ./request.bend as Request
 import ../host/sqlite.bend as DB
 
 # The three specification tables. JSON columns carry json_valid checks, so a
@@ -154,7 +155,7 @@ def ref_count_column(query: String, refId: String) -> String:
   "CASE WHEN " ++ ref_container_kind(query) ++ "='array' THEN " ++ ref_match_count(query, refId) ++ " ELSE 'container' END"
 
 def ref_lookup_sql(+query: String, +refId: String) -> String:
-  "SELECT " ++ ref_state(query) ++ "," ++ ref_result_present(query) ++ "," ++ ref_count_column(query, refId) ++ ",coalesce(" ++ ref_first_entry(query, refId) ++ ",''),coalesce(" ++ ref_shape_ok(query, refId) ++ ",0);"
+  "SELECT " ++ ref_state(query) ++ "," ++ ref_result_present(query) ++ "," ++ ref_count_column(query, refId) ++ ",coalesce(hex(" ++ ref_first_entry(query, refId) ++ "),''),coalesce(" ++ ref_shape_ok(query, refId) ++ ",0);"
 
 type RefLookup is Data:
   RefUnreadable{stage: String, answer: String}
@@ -169,6 +170,11 @@ type RefLookup is Data:
 
 def ref_count_ok(count: String) -> Bool:
   runtime_epoch_ok(count)
+
+# The entry column is hex of the stored bytes: the codec's hex framing check and
+# scalar decoder convert it exactly once, and any other shape keeps its raw answer.
+def ref_entry_scalar(hexText: String) -> Request.Scalar:
+  Bool.pick(Request.Scalar, Request.hex_ok(hexText), Request.Context.decode_scalar_utf8(Tx.hex_decode(hexText)), Request.ScalarBadUtf8{})
 def ref_flag_ok(flag: String) -> Bool:
   Bool.or(String.eq(flag, "0"), String.eq(flag, "1"))
 
@@ -181,7 +187,17 @@ def ref_failed_state(state: String) -> Bool:
 # The state decides first: an unfinished or unretained query is never reported as an
 # absent ref, and only a completed result whose retained refs array has no matching
 # entry is absent.
-def ref_decide(+query: String, +refId: String, +state: String, +result: String, +count: String, +entry: String, +shape: String, +answer: String) -> RefLookup:
+def scalar_reason_text(reason: String) -> String:
+  reason
+
+def ref_entry_answer(+query: String, +refId: String, +state: String, +hexEntry: String, +answer: String, +scalar: Request.Scalar) -> RefLookup:
+  match scalar:
+    case Request.ScalarText{value}: RefFound{query, refId, state, value}
+    case Request.ScalarBadUtf8{}: RefMalformed{query, refId, scalar_reason_text("invalidUtf8")}
+    case Request.ScalarSurrogate{}: RefMalformed{query, refId, scalar_reason_text("surrogate")}
+    case Request.ScalarNul{}: RefMalformed{query, refId, scalar_reason_text("nulInString")}
+
+def ref_decide_plain(+query: String, +refId: String, +state: String, +result: String, +count: String, +hexEntry: String, +shape: String, +answer: String) -> RefLookup:
   Bool.pick(RefLookup, String.is_empty(state), RefQueryMissing{query, refId},
   Bool.pick(RefLookup, ref_failed_state(state), RefFailed{query, refId, state},
   Bool.pick(RefLookup, ref_open_state(state), RefOpen{query, refId, state},
@@ -192,7 +208,16 @@ def ref_decide(+query: String, +refId: String, +state: String, +result: String, 
   Bool.pick(RefLookup, Bool.not(ref_flag_ok(shape)), RefUnreadable{"shape", answer},
   Bool.pick(RefLookup, String.eq(count, "0"), RefAbsent{query, refId},
   Bool.pick(RefLookup, Bool.not(String.eq(count, "1")), RefAmbiguous{query, refId, count},
-  Bool.pick(RefLookup, String.eq(shape, "1"), RefFound{query, refId, state, entry}, RefMalformed{query, refId, entry}))))))))))))
+  Bool.pick(RefLookup, String.eq(shape, "1"), RefMalformed{query, refId, answer}, RefMalformed{query, refId, answer}))))))))))))
+
+def ref_decide_shaped(+query: String, +refId: String, +state: String, +result: String, +count: String, +hexEntry: String, +shape: String, +answer: String, +scalar: Request.Scalar, +complete: Bool) -> RefLookup:
+  Bool.pick(RefLookup, complete, ref_entry_answer(query, refId, state, hexEntry, answer, scalar), ref_decide_plain(query, refId, state, result, count, hexEntry, shape, answer))
+
+def ref_decide_scalar(+query: String, +refId: String, +state: String, +result: String, +count: String, +hexEntry: String, +shape: String, +answer: String, +scalar: Request.Scalar) -> RefLookup:
+  ref_decide_shaped(query, refId, state, result, count, hexEntry, shape, answer, scalar, Bool.and(String.eq(count, "1"), String.eq(shape, "1")))
+
+def ref_decide(+query: String, +refId: String, +state: String, +result: String, +count: String, +hexEntry: String, +shape: String, +answer: String) -> RefLookup:
+  ref_decide_scalar(query, refId, state, result, count, hexEntry, shape, answer, ref_entry_scalar(hexEntry))
 
 def ref_lookup_tabs(+query: String, +refId: String, +fields: List<String>, +answer: String) -> RefLookup:
   match fields:
