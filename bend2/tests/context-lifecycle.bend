@@ -311,15 +311,21 @@ def ref_parts(+lookup: ContextStore.RefLookup) -> String & String:
     case ContextStore.RefQueryMissing{+query, +refId}: ("missing:" ++ query ++ ":" ++ refId, "")
     case ContextStore.RefUnreadable{+stage, +answer}: ("unreadable:" ++ stage, answer)
 
+# The pair is matched as a declared parameter, and the raw evidence is bracketed by two
+# key lines so the driver compares the whole text rather than a line fragment.
+def ref_observe(+label: String, pair: String & String) -> IO(Unit):
+  match pair:
+    case (label_text, evidence):
+      do IO<Unit>:
+        shown : Unit <- obs(label, label_text)
+        opened : Unit <- obs(label ++ ".evidence.begin", "")
+        raw : Unit <- IO.print(evidence)
+        closed : Unit <- obs(label ++ ".evidence.end", "")
+        IO.pure(Unit, Unit{})
+
 def ref_after_case(+label: String, result: Result<&1,&1,U32 & String,ContextStore.RefLookup>) -> IO(Unit):
   match result:
-    case Done{+lookup}:
-      match ref_parts(lookup):
-        case (label_text, evidence):
-          do IO<Unit>:
-            shown : Unit <- obs(label, label_text)
-            held : Unit <- obs(label ++ ".evidence", evidence)
-            IO.pure(Unit, Unit{})
+    case Done{+lookup}: ref_observe(label, ref_parts(lookup))
     case Fail{error}:
       match error:
         case (code, message): obs(label ++ ".error", message)
@@ -342,9 +348,11 @@ def ref_publish(+db: String, +binding: String, +query: String, +state: String, +
 # The retained ref association through the bound lookup. Each case is established by its
 # own stored row before the lookup runs: a complete result whose refs array holds one
 # intact entry, an empty refs array, a number element, a text element, an entry missing
-# declared members, a complete result without the refs member, two intact entries sharing
-# the requested identity, an accepted query with no result, a failed query with no result,
-# a query that was never admitted, and an unavailable binding.
+# declared members, a repeated projections member, a repeated refs member, a repeated
+# subject kind, a number projection element, an intact array whose requested identity is
+# absent, a complete result without the refs member, two intact entries sharing the
+# requested identity, an accepted query with no result, a failed query with no result, a
+# query that was never admitted, and an unavailable binding.
 def ref_surfaces(+db: String, +binding: String) -> IO(Unit):
   do IO<Unit>:
     +entry : String <- IO.pure(String, "{\n\t\t\"id\":\"ref-1\",\"engine\":\"typescript\",\"subject\":{\"kind\":\"entity\",\"database\":\"café\"},\"snapshotId\":\"s1\",\"projections\":[\"definition\"]}")
@@ -364,6 +372,11 @@ def ref_surfaces(+db: String, +binding: String) -> IO(Unit):
     a7 : Unit <- ref_accept(db, binding, "qr7")
     p7 : Unit <- ref_publish(db, binding, "qr7", "complete", duplicate, "")
     a8 : Unit <- ref_accept(db, binding, "qr8")
+    +duplicate_projections : String <- IO.pure(String, "{\"refs\":[{\"id\":\"ref-11\",\"engine\":\"typescript\",\"subject\":{\"kind\":\"entity\"},\"snapshotId\":\"s11\",\"projections\":[\"definition\"],\"projections\":[\"definition\"]}]}")
+    +duplicate_refs : String <- IO.pure(String, "{\"refs\":[{\"id\":\"ref-12\",\"engine\":\"typescript\",\"subject\":{\"kind\":\"entity\"},\"snapshotId\":\"s12\",\"projections\":[\"definition\"]}],\"refs\":[]}")
+    +duplicate_kind : String <- IO.pure(String, "{\"refs\":[{\"id\":\"ref-13\",\"engine\":\"typescript\",\"subject\":{\"kind\":\"entity\",\"kind\":\"other\"},\"snapshotId\":\"s13\",\"projections\":[\"definition\"]}]}")
+    +number_projection : String <- IO.pure(String, "{\"refs\":[{\"id\":\"ref-14\",\"engine\":\"typescript\",\"subject\":{\"kind\":\"entity\"},\"snapshotId\":\"s14\",\"projections\":[42]}]}")
+    +other_identity : String <- IO.pure(String, "{\"refs\":[{\"id\":\"ref-15\",\"engine\":\"typescript\",\"subject\":{\"kind\":\"entity\"},\"snapshotId\":\"s15\",\"projections\":[\"definition\"]}]}")
     a9 : Unit <- ref_accept(db, binding, "qr9")
     p9 : Unit <- ref_publish(db, binding, "qr9", "failed", "", "{\"kind\":\"providerFailed\"}")
     f1 : Unit <- ref_case(db, binding, "refs.found", "qr1", "ref-1")
@@ -376,6 +389,21 @@ def ref_surfaces(+db: String, +binding: String) -> IO(Unit):
     f8 : Unit <- ref_case(db, binding, "refs.open", "qr8", "ref-8")
     f9 : Unit <- ref_case(db, binding, "refs.failed", "qr9", "ref-9")
     f10 : Unit <- ref_case(db, binding, "refs.missing", "qr10", "ref-10")
+    a11 : Unit <- ref_accept(db, binding, "qr11")
+    p11 : Unit <- ref_publish(db, binding, "qr11", "complete", duplicate_projections, "")
+    a12 : Unit <- ref_accept(db, binding, "qr12")
+    p12 : Unit <- ref_publish(db, binding, "qr12", "complete", duplicate_refs, "")
+    a13 : Unit <- ref_accept(db, binding, "qr13")
+    p13 : Unit <- ref_publish(db, binding, "qr13", "complete", duplicate_kind, "")
+    a14 : Unit <- ref_accept(db, binding, "qr14")
+    p14 : Unit <- ref_publish(db, binding, "qr14", "complete", number_projection, "")
+    a15 : Unit <- ref_accept(db, binding, "qr15")
+    p15 : Unit <- ref_publish(db, binding, "qr15", "complete", other_identity, "")
+    g11 : Unit <- ref_case(db, binding, "refs.projections", "qr11", "ref-11")
+    g12 : Unit <- ref_case(db, binding, "refs.duplicate.refs", "qr12", "ref-12")
+    g13 : Unit <- ref_case(db, binding, "refs.duplicate.kind", "qr13", "ref-13")
+    g14 : Unit <- ref_case(db, binding, "refs.projection.type", "qr14", "ref-14")
+    g15 : Unit <- ref_case(db, binding, "refs.other.identity", "qr15", "ref-16")
     f11 : Unit <- ref_case(db, binding ++ "-absent", "refs.unavailable", "qr1", "ref-1")
     IO.pure(Unit, Unit{})
 

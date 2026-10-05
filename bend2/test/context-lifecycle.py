@@ -362,8 +362,25 @@ def stored_entry(result_json):
     return ""
 
 
+def framed(stdout, key):
+    """The exact bytes the fixture printed between a case's evidence markers, including
+    the newline IO.print adds after the raw text, so a truncated observation and one with
+    an appended suffix both fail the comparison."""
+    begin = key + ".evidence.begin=\n"
+    end = "\n" + key + ".evidence.end="
+    index = stdout.find(begin)
+    if index == -1:
+        return None
+    start = index + len(begin)
+    stop = stdout.find(end, start)
+    if stop == -1:
+        return None
+    return stdout[start:stop + 1]
+
+
 def check_refs(values, stdout, db):
-    expected = {
+    answers = {
+        "refs.found": "found:qr1:ref-1:complete",
         "refs.absent": "absent:qr2:ref-2",
         "refs.scalar": "unreadable:entry",
         "refs.text": "unreadable:entry",
@@ -373,16 +390,50 @@ def check_refs(values, stdout, db):
         "refs.open": "open:qr8:ref-8:accepted",
         "refs.failed": "failed:qr9:ref-9:failed",
         "refs.missing": "missing:qr10:ref-10",
+        "refs.projections": "unreadable:entry",
+        "refs.duplicate.refs": "unreadable:container",
+        "refs.duplicate.kind": "unreadable:entry",
+        "refs.projection.type": "unreadable:entry",
+        "refs.other.identity": "absent:qr15:ref-16",
     }
-    for key, want in expected.items():
+    for key, want in answers.items():
         check(values.get(key) == want, key, f"{values.get(key)!r} != {want!r}")
-    check(values.get("refs.absent.evidence") == "", "refs.absent.evidence", repr(values.get("refs.absent.evidence")))
-    # Each refusal kept the raw row it refused, so the integrity failure is visible in the
-    # evidence rather than inferred from the label alone.
-    for key in ("refs.scalar", "refs.text", "refs.partial", "refs.container"):
-        evidence = values.get(key + ".evidence", "")
-        check(evidence.startswith("complete\tpresent\t"), key + ".evidence", repr(evidence))
-    check(values.get("refs.found") == "found:qr1:ref-1:complete", "refs.found", repr(values.get("refs.found")))
+    # A case's setup must have been committed before its lookup runs, or a failed insert
+    # would be credited as a lookup answer.
+    for query in ("qr1", "qr2", "qr3", "qr4", "qr5", "qr6", "qr7", "qr8", "qr9", "qr11", "qr12", "qr13", "qr14", "qr15"):
+        check("refs.accept." + query in values, "refs.accept." + query, "the case setup did not report")
+        check("refs.accept." + query + ".error" not in values, "refs.accept." + query, values.get("refs.accept." + query + ".error"))
+    for query in ("qr1", "qr2", "qr3", "qr4", "qr5", "qr6", "qr7", "qr9", "qr11", "qr12", "qr13", "qr14", "qr15"):
+        check("refs.publish." + query in values, "refs.publish." + query, "the case setup did not report")
+        check("refs.publish." + query + ".error" not in values, "refs.publish." + query, values.get("refs.publish." + query + ".error"))
+    # Every refusal kept the whole row it refused: its framing, result and marker facts,
+    # whether the matching entry text was retained, and for the entry cases its shape flag.
+    refusals = {
+        "refs.scalar": ("entry", False, "0"),
+        "refs.text": ("entry", False, "0"),
+        "refs.partial": ("entry", True, "0"),
+        "refs.container": ("container", False, "0"),
+        "refs.projections": ("entry", True, "0"),
+        "refs.duplicate.refs": ("container", True, None),
+        "refs.duplicate.kind": ("entry", True, "0"),
+        "refs.projection.type": ("entry", True, "0"),
+    }
+    for key, (marker, matched, shape) in refusals.items():
+        body = framed(stdout, key)
+        check(body is not None and body.endswith("\n"), key + ".evidence", repr(body))
+        if body is None or not body.endswith("\n"):
+            continue
+        row = body[:-1].split("\t")
+        check(len(row) == 5, key + ".evidence.columns", repr(row))
+        if len(row) != 5:
+            continue
+        check((row[0], row[1], row[2]) == ("complete", "present", marker), key + ".evidence.framing", repr(row))
+        check(bool(row[3]) == matched, key + ".evidence.match", repr(row))
+        if shape is not None:
+            check(row[4] == shape, key + ".evidence.shape", repr(row))
+    # An intact array with no matching identity is absent, exactly as an empty one is.
+    for key in ("refs.absent", "refs.other.identity"):
+        check(framed(stdout, key) == "\n", key + ".evidence", repr(framed(stdout, key)))
     check("refs.unavailable" not in values, "refs.unavailable.absent", repr(values.get("refs.unavailable")))
     check("refs.unavailable.error" in values, "refs.unavailable.error", "a refused binding answered a lookup")
     connection = sqlite3.connect(db)
@@ -396,13 +447,14 @@ def check_refs(values, stdout, db):
     entry = stored_entry(row[0])
     check("\t" in entry and "\n" in entry, "refs.found.stored.formatting", repr(entry))
     check("café" in entry, "refs.found.stored.unicode", repr(entry))
-    marker = "refs.found.evidence="
-    index = stdout.find(marker)
-    check(index != -1, "refs.found.evidence.present", "no evidence observation for the found entry")
-    if index == -1 or not entry:
+    body = framed(stdout, "refs.found")
+    check(body is not None, "refs.found.evidence.present", "no bracketed evidence for the found entry")
+    if body is None or not entry:
         return
-    observed = stdout[index + len(marker): index + len(marker) + len(entry)]
-    check(observed == entry, "refs.found.roundtrip", f"{observed!r} != {entry!r}")
+    # The complete entry, byte for byte against the stored text: truncation and an appended
+    # suffix both fail here. Whether SQLite returns the element's original text with its
+    # internal tab and newline is the declared assumption this comparison gates.
+    check(body == entry + "\n", "refs.found.roundtrip", f"{body!r} != {entry!r}")
 
 
 def check_control(values):

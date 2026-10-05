@@ -116,7 +116,7 @@ def ref_text_nonempty(alias: String, path: String) -> String:
 # projections are a nonempty array of nonempty strings. The kind vocabulary beyond that
 # belongs to the producer contract, so nothing per-kind is invented here.
 def ref_entry_shape(alias: String) -> String:
-  "(CASE WHEN " ++ ref_member_once(alias, "id", "text") ++ " AND " ++ ref_text_nonempty(alias, "id") ++ " AND " ++ ref_member_once(alias, "engine", "text") ++ " AND " ++ ref_text_nonempty(alias, "engine") ++ " AND " ++ ref_member_once(alias, "snapshotId", "text") ++ " AND " ++ ref_text_nonempty(alias, "snapshotId") ++ " AND " ++ ref_member_once(alias, "subject", "object") ++ " AND (CASE WHEN json_type(" ++ alias ++ ",'$.subject')='object' THEN (CASE WHEN " ++ ref_nested_once(alias, "subject", "kind", "text") ++ " AND " ++ ref_text_nonempty(alias, "subject.kind") ++ " THEN 1 ELSE 0 END) ELSE 0 END)=1 AND (CASE WHEN json_type(" ++ alias ++ ",'$.projections')='array' THEN (CASE WHEN json_array_length(" ++ alias ++ ",'$.projections')>0 AND NOT EXISTS(SELECT 1 FROM json_each(" ++ alias ++ ",'$.projections') AS projection WHERE projection.type<>'text' OR projection.value='') THEN 1 ELSE 0 END) ELSE 0 END)=1 AND NOT EXISTS(SELECT 1 FROM json_each(" ++ alias ++ ") AS declared WHERE declared.key NOT IN ('id','engine','subject','snapshotId','projections')) THEN 1 ELSE 0 END)"
+  "(CASE WHEN " ++ ref_member_once(alias, "id", "text") ++ " AND " ++ ref_text_nonempty(alias, "id") ++ " AND " ++ ref_member_once(alias, "engine", "text") ++ " AND " ++ ref_text_nonempty(alias, "engine") ++ " AND " ++ ref_member_once(alias, "snapshotId", "text") ++ " AND " ++ ref_text_nonempty(alias, "snapshotId") ++ " AND " ++ ref_member_once(alias, "subject", "object") ++ " AND " ++ ref_member_once(alias, "projections", "array") ++ " AND (CASE WHEN json_type(" ++ alias ++ ",'$.subject')='object' THEN (CASE WHEN " ++ ref_nested_once(alias, "subject", "kind", "text") ++ " AND " ++ ref_text_nonempty(alias, "subject.kind") ++ " THEN 1 ELSE 0 END) ELSE 0 END)=1 AND (CASE WHEN json_type(" ++ alias ++ ",'$.projections')='array' THEN (CASE WHEN json_array_length(" ++ alias ++ ",'$.projections')>0 AND NOT EXISTS(SELECT 1 FROM json_each(" ++ alias ++ ",'$.projections') AS projection WHERE projection.type<>'text' OR projection.value='') THEN 1 ELSE 0 END) ELSE 0 END)=1 AND NOT EXISTS(SELECT 1 FROM json_each(" ++ alias ++ ") AS declared WHERE declared.key NOT IN ('id','engine','subject','snapshotId','projections')) THEN 1 ELSE 0 END)"
 
 # The element type fact gates the object parse: the entry text reaches a JSON parser only
 # in the branch where json_each already reported an object, so a scalar or text element is
@@ -126,7 +126,8 @@ def ref_entry_gate(kind: String, alias: String) -> String:
 
 # Every entry of the refs array must be an intact object before any absence decision, so a
 # completed result whose element is a number, a string, null or an incomplete object is
-# unreadable instead of an empty set.
+# unreadable instead of an empty set. Absence is a zero match count over an intact array,
+# whether that array is empty or holds intact entries with other identities.
 def ref_all_intact(query: String) -> String:
   "NOT EXISTS(SELECT 1 FROM json_each(" ++ ref_result(query) ++ ",'$.refs') AS entry WHERE " ++ ref_entry_gate("entry.type", "entry.value") ++ "=0)"
 
