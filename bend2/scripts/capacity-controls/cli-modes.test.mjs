@@ -40,13 +40,20 @@ test('the ordinary invocation without a compiler fails with the availability mes
   assert.match(run.stderr, /Bend is unavailable/);
 });
 
-test('classify mode requires a bundle directory', () => {
-  const run = spawnSync(process.execPath, [CHECKER, '--classify'], {
+test('classify mode refuses positional arguments and malformed requests', () => {
+  const positional = spawnSync(process.execPath, [CHECKER, '--classify', '/some/dir'], {
     encoding: 'utf8',
     env: { ...process.env, BEND: NO_COMPILER },
   });
-  assert.equal(run.status, 2);
-  assert.match(run.stderr, /exactly one bundle directory/);
+  assert.equal(positional.status, 2);
+  assert.match(positional.stderr, /classify: no positional arguments/);
+  const malformed = spawnSync(process.execPath, [CHECKER, '--classify'], {
+    input: '{not json', encoding: 'utf8',
+    env: { ...process.env, BEND: NO_COMPILER },
+  });
+  assert.equal(malformed.status, 2);
+  assert.match(malformed.stderr, /classify: request is not JSON/);
+  assert.equal(malformed.stdout, '');
 });
 
 test('discover answers the same records the module API discovers', async () => {

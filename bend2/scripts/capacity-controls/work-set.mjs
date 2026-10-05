@@ -30,14 +30,28 @@ export function proofDefinition(text, law) {
 }
 
 // The bytes that decide one mutation control: the target file, the find and
-// replace texts and the intended law.
+// replace texts, the intended law and the definition owner's expected/observed
+// constructor metadata when it is bound. External expectation sources do not
+// exist; this digest is the only binding.
 export function mutationDefinition(mutation) {
-  return JSON.stringify({ file: mutation.file, find: mutation.find, replace: mutation.replace, law: mutation.law });
+  const definition = { file: mutation.file, find: mutation.find, replace: mutation.replace, law: mutation.law };
+  if (mutation.expected !== undefined) definition.expected = mutation.expected;
+  if (mutation.observed !== undefined) definition.observed = mutation.observed;
+  return JSON.stringify(definition);
+}
+
+// The definition owner's expected/observed metadata, or undefined.
+export function definitionExpectation(mutation) {
+  if (mutation.expected === undefined && mutation.observed === undefined) return undefined;
+  return { expected: mutation.expected, observed: mutation.observed };
 }
 
 // One record per control. Ids are unique across the set; a collision is a
-// discovery failure, never a silent merge.
-export function discoveryRecords() {
+// discovery failure, never a silent merge. `bend2Dir` binds discovery to one
+// copied tree: laws are read from its src and mutation target bytes from its
+// modules, so records and compiles share one snapshot. The default is the
+// live bend2 tree.
+export function discoveryRecords({ bend2Dir = join(ROOT, 'bend2') } = {}) {
   const records = [];
   const seen = new Set();
   const push = (record) => {
@@ -45,35 +59,43 @@ export function discoveryRecords() {
     seen.add(record.id);
     records.push(record);
   };
-  for (const { law, file } of laws()) {
+  for (const { law, file } of laws(join(bend2Dir, 'src'))) {
     push({
       id: `proof:${law}`,
       kind: 'proof-removal',
       law,
-      module: posixPath(relative(ROOT, file)),
+      module: posixPath(relative(ROOT, file).startsWith('bend2/') ? relative(ROOT, file) : join('bend2', relative(bend2Dir, file)).split(sep).join('/')),
       definition_sha256: sha256Hex(proofDefinition(readFileSync(file, 'utf8'), law)),
     });
   }
   for (const mutation of MUTATIONS) {
+    const expectation = definitionExpectation(mutation);
     push({
       id: `mutation:${mutation.name}`,
       kind: 'mutation',
       law: mutation.law,
       module: posixPath(mutation.file),
       definition_sha256: sha256Hex(mutationDefinition(mutation)),
+      ...(expectation !== undefined ? { expectation } : {}),
     });
   }
   return records;
 }
 
 // sha256 over the tab-joined field rows of the sorted records, field order
-// id, kind, law, module, definition_sha256. This digest is the binding every
+// id, kind, law, module, definition_sha256. Serialization pinned for
+// cross-language consumers: rows are raw UTF-8 text (no JSON escaping), fields
+// are joined by one TAB (0x09), rows by one LF (0x0A), no trailing newline,
+// and rows sort by unsigned UTF-8 byte order. This digest is the binding every
 // group manifest and aggregate summary carries.
-export function bindingOf(records) {
-  const rows = records
+export function bindingRows(records) {
+  return records
     .map((record) => [record.id, record.kind, record.law, record.module, record.definition_sha256].join('\t'))
-    .sort();
-  return sha256Hex(rows.join('\n'));
+    .sort((left, right) => Buffer.compare(Buffer.from(left, 'utf8'), Buffer.from(right, 'utf8')));
+}
+
+export function bindingOf(records) {
+  return sha256Hex(bindingRows(records).join('\n'));
 }
 
 export function recordsForModule(records, module) {

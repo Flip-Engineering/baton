@@ -12,11 +12,19 @@
 // main(), which runs only when this file is the process entry.
 
 import { execFileSync } from 'node:child_process';
-import { cpSync, existsSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
+import { createHash } from 'node:crypto';
+import { cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import { join, relative, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
-import { intendedMutationRefusal, isTodoRefusal, refusedNormally } from './capacity-controls/classify.mjs';
+import { expectationMet, intendedMutationRefusal, isTodoRefusal, refusedNormally } from './capacity-controls/classify.mjs';
 import { MUTATIONS } from './laws-mutations.mjs';
+
+// A definition carries its own expected and observed constructor metadata when
+// the definition owner has bound it; there is no external source for it.
+function definitionExpectation(mutation) {
+  if (mutation.expected === undefined && mutation.observed === undefined) return undefined;
+  return { expected: mutation.expected, observed: mutation.observed };
+}
 
 export const ROOT = resolve(import.meta.dirname, '..', '..');
 export const SRC = join(ROOT, 'bend2', 'src');
@@ -61,9 +69,11 @@ function discover(dir) {
 }
 
 // One row per `law <name>:` in the tree, with the module that states it.
-export function laws() {
+// Discovery reads the given copied tree so a run's records bind the same
+// snapshot its compiles use; the default is the live source.
+export function laws(srcDir = SRC) {
   const rows = [];
-  for (const file of discover(SRC)) {
+  for (const file of discover(srcDir)) {
     const lines = readFileSync(file, 'utf8').split('\n');
     for (const line of lines) {
       const match = /^law ([A-Za-z0-9_]+):/.exec(line);
@@ -103,6 +113,7 @@ export function removeProof(modulePath, name) {
 // control restores the file it mutated from bytes captured at copy time.
 export function main(argv = process.argv.slice(2)) {
 const BEND = resolveBend(argv[0]);
+mkdirSync(join(ROOT, '.scratch'), { recursive: true });
 const SCRATCH = mkdtempSync(join(ROOT, '.scratch', 'bend2-laws-check-'));
 const version = run(BEND, ['version'], ROOT).trim();
 if (version !== 'bend 2.0.25') {
@@ -115,16 +126,33 @@ cpSync(join(ROOT, 'bend2'), join(SCRATCH, 'bend2'), { recursive: true });
 const rows = laws();
 let failures = 0;
 
-// Pristine bytes of every module the controls below mutate, captured from the
-// live tree once, before any control runs. Restores never re-read the live
-// tree, so a tree that changes mid-run cannot corrupt a restore.
+// Pristine bytes of every module the controls below mutate, read from the
+// scratch copy itself, so discovery and every restore use the one copied
+// snapshot and never re-read the live tree.
 const pristine = new Map();
-const keepPristine = (file) => {
-  if (!pristine.has(file)) pristine.set(file, readFileSync(file));
+const capture = (repoPath) => {
+  if (!pristine.has(repoPath)) pristine.set(repoPath, readFileSync(join(SCRATCH, repoPath)));
 };
-for (const { file } of rows) keepPristine(file);
+for (const { file } of rows) capture(relative(ROOT, file));
+for (const mutation of MUTATIONS) capture(mutation.file);
+
+// Raw per-case evidence for the consumption step: every control's complete
+// output bytes are retained under the run-private scratch, including the
+// baseline and every passing negative control. The stdout row and summary
+// contract is unchanged.
+mkdirSync(join(SCRATCH, 'evidence'), { recursive: true });
+const evidenceIndex = [];
+const retainEvidence = (id, output) => {
+  const name = `${id.replace(/[^A-Za-z0-9_.-]/g, '_')}.output`;
+  writeFileSync(join(SCRATCH, 'evidence', name), output);
+  evidenceIndex.push({ id, path: `evidence/${name}`, bytes: Buffer.byteLength(output), sha256: sha256Of(output) });
+};
+function sha256Of(text) {
+  return createHash('sha256').update(text).digest('hex');
+}
 
 const baseline = compile(BEND, SCRATCH);
+retainEvidence('baseline', baseline.output);
 console.log(JSON.stringify({ check: 'entry compiles with every law proven', passed: baseline.ok }));
 if (!baseline.ok) {
   failures++;
@@ -134,10 +162,11 @@ if (!baseline.ok) {
 }
 
 for (const { law, file } of rows) {
-  const copied = join(SCRATCH, relative(ROOT, file));
-  keepPristine(file);
+  const repoPath = relative(ROOT, file);
+  const copied = join(SCRATCH, repoPath);
   const removed = removeProof(copied, law);
   const control = removed ? compile(BEND, SCRATCH) : { ok: true, output: '', exitCode: null, signal: null };
+  retainEvidence(`proof:${law}`, control.output);
   const passed = removed && refusedNormally(control) && isTodoRefusal(control.output);
   if (!passed) failures++;
   console.log(JSON.stringify({
@@ -148,7 +177,7 @@ for (const { law, file } of rows) {
     passed,
   }));
   if (!passed) console.log(control.output.trimEnd());
-  writeFileSync(copied, pristine.get(file));
+  writeFileSync(copied, pristine.get(repoPath));
 }
 
 // A mutation is a deliberate change to an implementation, made in the scratch
@@ -163,13 +192,14 @@ for (const { law, file } of rows) {
 
 for (const mutation of MUTATIONS) {
   const copied = join(SCRATCH, mutation.file);
-  keepPristine(resolve(ROOT, mutation.file));
-  const text = readFileSync(copied, 'utf8');
+  const text = pristine.get(mutation.file);
   const applied = text.includes(mutation.find);
   writeFileSync(copied, applied ? text.replace(mutation.find, mutation.replace) : text);
   const control = applied ? compile(BEND, SCRATCH) : { ok: true, output: '', exitCode: null, signal: null };
+  retainEvidence(`mutation:${mutation.name}`, control.output);
   const location = refusedNormally(control) ? intendedMutationRefusal(control.output, mutation.law) : null;
-  const passed = applied && location !== null;
+  const expected = location !== null && expectationMet(control.output, definitionExpectation(mutation));
+  const passed = applied && location !== null && expected;
   if (!passed) failures++;
   console.log(JSON.stringify({
     mutation: mutation.name,
@@ -179,8 +209,14 @@ for (const mutation of MUTATIONS) {
     passed,
   }));
   if (!passed) console.log(control.output.trimEnd());
-  writeFileSync(copied, pristine.get(resolve(ROOT, mutation.file)));
+  writeFileSync(copied, pristine.get(mutation.file));
 }
+
+writeFileSync(join(SCRATCH, 'evidence', 'index.json'), JSON.stringify({
+  schema: 'capacity-controls/ordinary-evidence@1',
+  scratch: SCRATCH,
+  cases: evidenceIndex,
+}, null, 2) + '\n');
 
 console.log(`laws-check: ${failures === 0 ? 'green' : 'red'} - ${rows.length} laws, ${MUTATIONS.length} mutations, ${rows.length + MUTATIONS.length + 1} compiles, ${failures} failures`);
 process.exit(failures === 0 ? 0 : 1);

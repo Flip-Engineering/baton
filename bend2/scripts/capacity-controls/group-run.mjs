@@ -8,11 +8,11 @@
 
 import { execFileSync, spawn } from 'node:child_process';
 import { cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, statSync, writeFileSync } from 'node:fs';
-import { dirname, join, relative, resolve } from 'node:path';
+import { dirname, join, relative, resolve, sep } from 'node:path';
 import { ENV, ENTRY, proofBlockRange, resolveBend, ROOT } from '../laws-check.mjs';
 import { MUTATIONS } from '../laws-mutations.mjs';
 import { classifyControl, parseResourceAccounting, splitTimeAccounting } from './classify.mjs';
-import { bindingOf, discoveryRecords, sha256Hex } from './work-set.mjs';
+import { bindingOf, definitionExpectation, discoveryRecords, sha256Hex } from './work-set.mjs';
 
 export class UsageError extends Error {}
 
@@ -23,7 +23,6 @@ const GROUP_OPTIONS = {
   '--time-flag': 'timeFlag',
   '--bend': 'bend',
   '--compiler-archive': 'compilerArchive',
-  '--expectations': 'expectations',
 };
 
 export function parseGroupArgs(argv) {
@@ -138,7 +137,9 @@ function processRecord(run, attempt) {
     started: run.started,
     ended: run.ended,
     attempt,
-    pid: run.pid,
+    // The observed process id belongs to the spawned time wrapper; the
+    // compiler's own pid is not observable through this wrapper.
+    wrapper_pid: run.pid,
   };
 }
 
@@ -146,9 +147,12 @@ function inventory(root) {
   const rows = [];
   const walk = (dir) => {
     for (const entry of readdirSync(dir, { withFileTypes: true })) {
+      if (entry.isSymbolicLink()) {
+        throw new Error(`inventory: the runtime set must hold regular files only; symlink at ${join(dir, entry.name)}`);
+      }
       const full = join(dir, entry.name);
       if (entry.isDirectory()) walk(full);
-      else if (entry.isFile()) rows.push({ path: relative(root, full).split('/').join('/'), sha256: sha256Hex(readFileSync(full)) });
+      else if (entry.isFile()) rows.push({ path: relative(root, full).split(sep).join('/'), sha256: sha256Hex(readFileSync(full)) });
     }
   };
   walk(root);
@@ -156,7 +160,7 @@ function inventory(root) {
   return {
     directory: root,
     files: rows.length,
-    sha256: sha256Hex(rows.map((row) => `${row.path} ${row.sha256}`).join('\n')),
+    sha256: sha256Hex(rows.map((row) => `${row.path}\t${row.sha256}`).join('\n')),
   };
 }
 
@@ -174,23 +178,26 @@ export async function runGroup({
   bend,
   records,
   mutationDefinitions,
-  expectations,
   compilerArchive,
   copyDir,
   entry,
   sourceRoot,
   scratchPrefix,
 }) {
-  const groupRecords = records.filter((record) => record.module === module);
-  if (groupRecords.length === 0) throw new Error(`runGroup: no controls target module ${module}`);
+  mkdirSync(join(ROOT, '.scratch'), { recursive: true });
+  const scratch = mkdtempSync(join(ROOT, '.scratch', scratchPrefix ?? 'bend2-laws-group-'));
+  cpSync(copyDir ?? join(ROOT, 'bend2'), join(scratch, 'bend2'), { recursive: true });
+  // Records default to the copied snapshot, so discovery, compiles and deltas
+  // bind one source tree.
+  const groupRecords = records ?? discoveryRecords({ bend2Dir: join(scratch, 'bend2') });
+  if (groupRecords.filter((record) => record.module === module).length === 0) {
+    throw new Error(`runGroup: no controls target module ${module}`);
+  }
   if (!existsSync(timeTool)) throw new Error(`runGroup: time tool is unavailable: ${timeTool}`);
   const bendPath = resolve(bend);
   const version = execFileSync(bendPath, ['version'], { env: ENV, encoding: 'utf8', maxBuffer: Infinity }).trim();
   if (version !== 'bend 2.0.25') throw new Error(`runGroup: expected bend 2.0.25, got: ${version}`);
-
-  mkdirSync(evidenceDir, { recursive: true });
-  const scratch = mkdtempSync(join(ROOT, '.scratch', scratchPrefix ?? 'bend2-laws-group-'));
-  cpSync(copyDir ?? join(ROOT, 'bend2'), join(scratch, 'bend2'), { recursive: true });
+  const selectedEntry = entry ?? ENTRY;
 
   const compiler = { path: bendPath, version, sha256: sha256Hex(readFileSync(bendPath)) };
   const checkerPath = join(ROOT, 'bend2', 'scripts', 'laws-check.mjs');
@@ -198,7 +205,8 @@ export async function runGroup({
   const archive = compilerArchive
     ? { path: resolve(compilerArchive), bytes: statSync(resolve(compilerArchive)).size, sha256: sha256Hex(readFileSync(resolve(compilerArchive))) }
     : null;
-  const runtimeDirectory = join(dirname(bendPath), '..', '..', 'bend2');
+  // The installed library sits one parent above the compiler's bin directory.
+  const runtimeDirectory = join(dirname(bendPath), '..', 'bend2');
   const runtime = existsSync(runtimeDirectory) ? inventory(runtimeDirectory) : null;
   const sourceRootDir = sourceRoot ?? ROOT;
   const hasGit = existsSync(join(sourceRootDir, '.git'));
@@ -214,11 +222,19 @@ export async function runGroup({
     ...origin(),
     job: [process.env.GITHUB_JOB ?? 'local', process.env.GITHUB_RUN_ATTEMPT ?? '0', module, nonce].join(':'),
   };
-  const producing = { source, compiler, archive, runtime, origin: producingOrigin };
+  const producing = {
+    source,
+    compiler,
+    checker_sha256: checkerSha256,
+    archive,
+    runtime,
+    runtime_set_sha256: runtime?.sha256 ?? null,
+    origin: producingOrigin,
+  };
   const instrument = { tool: timeTool, flag: timeFlag };
-  const expectationById = expectations ?? {};
+  mkdirSync(evidenceDir, { recursive: true });
 
-  const childArgv = [timeTool, timeFlag, bendPath, entry ?? ENTRY, '--check-only'];
+  const childArgv = [timeTool, timeFlag, bendPath, selectedEntry, '--check-only'];
 
   const baselineRun = await runChild({
     argv: childArgv,
@@ -229,19 +245,20 @@ export async function runGroup({
     stderrName: 'baseline.stderr',
   });
   const baseline = {
-    argv: [bendPath, entry ?? ENTRY, '--check-only'],
+    argv: [bendPath, selectedEntry, '--check-only'],
     process: processRecord(baselineRun, `${module}-baseline-${nonce}`),
     stdout: baselineRun.stdout,
     stderr: baselineRun.stderr,
     inputs: {
       compiler_sha256: compiler.sha256,
+      checker_sha256: checkerSha256,
       archive_sha256: archive?.sha256 ?? null,
-      runtime_sha256: runtime?.sha256 ?? null,
+      runtime_set_sha256: runtime?.sha256 ?? null,
     },
   };
   if (baseline.process.state !== 'exited' || baseline.process.exit_code !== 0) {
     const manifest = {
-      module, binding: bindingOf(records), checker_sha256: checkerSha256, source, origin: origin(),
+      module, binding: bindingOf(groupRecords), entry: selectedEntry, checker_sha256: checkerSha256, source, origin: origin(),
       producing, instrument, baseline, results: [], compiler,
     };
     const manifestPath = join(evidenceDir, 'group-manifest.json');
@@ -289,20 +306,22 @@ export async function runGroup({
         stdoutName: fileName(record, 'stdout'),
         stderrName: fileName(record, 'stderr'),
       });
-      writeFileSync(scratchModule, originalText);
+      writeFileSync(scratchModule, pristine.get(record.module));
       const changedPath = fileName(record, 'changed');
       writeFileSync(join(evidenceDir, changedPath), changedText);
-      const { diagnostics, accounting, profile } = splitTimeAccounting(
-        readFileSync(join(evidenceDir, fileName(record, 'stderr')), 'utf8'),
-      );
+      const stderrText = readFileSync(join(evidenceDir, fileName(record, 'stderr')), 'utf8');
+      // The classifier receives the complete stream and validates any
+      // accounting suffix itself; resource parsing splits the same stream.
       const verdict = classifyControl({
         state: run.state, exitCode: run.exitCode, signal: run.signal, spawnError: run.spawnError,
-        stderrText: diagnostics, control: record, expectation: expectationById[record.id],
+        stderrText, control: record,
+        expectation: definitionExpectation(definitions.get(record.id.slice('mutation:'.length))),
       });
+      const { accounting, profile } = splitTimeAccounting(stderrText);
       results.push({
         case: record,
         setup,
-        expectation: expectationById[record.id] ?? null,
+        expectation: definitionExpectation(definitions.get(record.id.slice('mutation:'.length))) ?? null,
         delta: {
           original_sha256: sha256Hex(Buffer.from(originalText, 'utf8')),
           changed_sha256: sha256Hex(Buffer.from(changedText, 'utf8')),
@@ -312,7 +331,7 @@ export async function runGroup({
         diagnostic: {
           class: verdict.class,
           attributed_law: verdict.attributedLaw,
-          sha256: sha256Hex(diagnostics),
+          sha256: sha256Hex(splitTimeAccounting(stderrText).diagnostics),
         },
         stdout: run.stdout,
         stderr: run.stderr,
@@ -322,9 +341,9 @@ export async function runGroup({
       results.push({
         case: record,
         setup,
-        expectation: expectationById[record.id] ?? null,
+        expectation: definitionExpectation(definitions.get(record.id.slice('mutation:'.length))) ?? null,
         delta: null,
-        process: { state: 'not-run', exit_code: null, signal: null, spawn_error: null, started: null, ended: null, attempt: null, pid: null },
+        process: { state: 'not-run', exit_code: null, signal: null, spawn_error: null, started: null, ended: null, attempt: null, wrapper_pid: null },
         diagnostic: { class: 'not-run', attributed_law: null, sha256: null },
         stdout: { path: null, bytes: null, sha256: null },
         stderr: { path: null, bytes: null, sha256: null },
@@ -335,7 +354,8 @@ export async function runGroup({
 
   const manifest = {
     module,
-    binding: bindingOf(records),
+    binding: bindingOf(groupRecords),
+    entry: selectedEntry,
     checker_sha256: checkerSha256,
     source,
     origin: origin(),
@@ -370,23 +390,12 @@ export async function groupCli(argv) {
     process.exit(2);
   }
   const bend = resolveBend(args.bend);
-  let expectations;
-  if (args.expectations !== undefined) {
-    try {
-      expectations = JSON.parse(readFileSync(args.expectations, 'utf8'));
-    } catch (error) {
-      console.error(`group: expectations file is unreadable: ${error}`);
-      process.exit(2);
-    }
-  }
   const { manifestPath } = await runGroup({
     module: args.module,
     evidenceDir: args.evidenceDir,
     timeTool: args.timeTool,
     timeFlag: args.timeFlag,
     bend,
-    records: discoveryRecords(),
-    expectations,
     compilerArchive: args.compilerArchive,
   });
   console.log(JSON.stringify({ manifest: manifestPath }));

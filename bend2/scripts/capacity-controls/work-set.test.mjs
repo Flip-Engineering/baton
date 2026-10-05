@@ -56,16 +56,23 @@ test('mutation definition bytes bind file, find, replace and law', () => {
   }
 });
 
-test('first-occurrence replacement preserves the law suffix occurrence', () => {
-  // The defined application semantics are String.includes plus String.replace,
-  // which changes the first occurrence only. A find text that also occurs in
-  // the operative law must leave that occurrence byte-identical.
-  const source = '    first call(FIND)\nlaw pinned_behavior:\n  {call(FIND) == ok : T}\n';
-  const find = 'call(FIND)';
-  const replace = 'call(REPLACED)';
-  const changed = source.includes(find) ? source.replace(find, replace) : source;
-  assert.equal(changed.split(find).length - 1, 1);
-  assert.equal(changed.includes('law pinned_behavior:\n  {call(FIND) == ok : T}\n'), true);
+test('the exported D1 control applies first replacement against its accepted source when composed', () => {
+  const d1 = MUTATIONS.find((mutation) => mutation.name === 'reviewed-selection-D1-stops-after-commit');
+  assert.ok(d1, 'the exported D1 control must exist');
+  const sourcePath = join(ROOT, d1.file);
+  const text = readFileSync(sourcePath, 'utf8');
+  if (!text.includes(d1.find)) {
+    assert.fail('the accepted selection source is absent from this tree; D1 requires the 6fb composition before remote execution');
+  }
+  const changed = text.replace(d1.find, d1.replace);
+  // First-occurrence semantics: exactly one occurrence is replaced, and the
+  // law-suffix occurrence stays byte-identical.
+  assert.equal(changed.split(d1.find).length - 1, text.split(d1.find).length - 2);
+  const lawLeaf = d1.law;
+  const suffixPattern = new RegExp(`law ${lawLeaf}:[\\s\\S]*?$`);
+  const originalSuffix = suffixPattern.exec(text)?.[0];
+  const changedSuffix = suffixPattern.exec(changed)?.[0];
+  assert.equal(changedSuffix, originalSuffix);
 });
 
 test('the checker discovery CLI answers with one record per line', () => {

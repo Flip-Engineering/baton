@@ -40,6 +40,8 @@ function fixtureRecords() {
     find: 'def admitted() -> Gate:\n  Gate{True{}}',
     replace: 'def admitted() -> Gate:\n  Gate{False{}}',
     law: 'mini_admitted_gate_is_open',
+    expected: 'Gate{True{}}',
+    observed: 'Gate{False{}}',
   };
   return {
     mutation,
@@ -60,38 +62,38 @@ test('group parity runs the mini fixture end to end and accepts', async () => {
   assert.ok(existsSync(timeTool), `time tool is unavailable: ${timeTool}`);
   const { records, mutation } = fixtureRecords();
   const evidence = mkdtempSync(join(tmpdir(), 'capacity-controls-parity-'));
-  try {
-    const { manifest } = await runGroup({
-      module: 'bend2/src/mini.bend',
-      evidenceDir: join(evidence, 'group-mini'),
-      timeTool,
-      timeFlag,
-      bend,
-      records,
-      mutationDefinitions: [mutation],
-      copyDir: join(ROOT, 'bend2', 'scripts', 'capacity-controls', 'fixtures', 'mini-laws', 'bend2'),
-      entry: 'bend2/src/main.bend',
-      sourceRoot: null,
-    });
-    assert.equal(manifest.baseline.process.state, 'exited');
-    assert.equal(manifest.baseline.process.exit_code, 0);
-    for (const result of manifest.results) {
-      assert.equal(result.setup, 'applied');
-      assert.equal(result.diagnostic.class, 'intended-law-refusal');
-      assert.equal(result.diagnostic.attributed_law, result.case.law);
-    }
-    // Serial intervals: every child starts at or after the baseline ends and
-    // children never overlap.
-    assert.ok(manifest.results.every((result) => result.process.started >= manifest.baseline.process.ended));
-    const ends = manifest.results.map((result) => result.process.ended);
-    const starts = manifest.results.map((result) => result.process.started);
-    for (let i = 1; i < starts.length; i++) assert.ok(starts[i] >= ends[i - 1]);
-    const moduleRecords = records.filter((record) => record.module === 'bend2/src/mini.bend');
-    const { summary } = aggregate({ dir: evidence, records: moduleRecords });
-    assert.equal(summary.expected_cases, moduleRecords.length);
-    assert.deepEqual(summary.rejections, []);
-    assert.equal(accepted(summary), true);
-  } finally {
-    rmSync(evidence, { recursive: true, force: true });
+  // Evidence is retained on failure: cleanup happens only after every
+  // assertion has passed, so a failed run keeps its manifests and streams.
+  const { manifest } = await runGroup({
+    module: 'bend2/src/mini.bend',
+    evidenceDir: join(evidence, 'group-mini'),
+    timeTool,
+    timeFlag,
+    bend,
+    records,
+    mutationDefinitions: [mutation],
+    copyDir: join(ROOT, 'bend2', 'scripts', 'capacity-controls', 'fixtures', 'mini-laws', 'bend2'),
+    entry: 'bend2/src/main.bend',
+    sourceRoot: null,
+  });
+  assert.equal(manifest.entry, 'bend2/src/main.bend');
+  assert.equal(manifest.baseline.process.state, 'exited');
+  assert.equal(manifest.baseline.process.exit_code, 0);
+  for (const result of manifest.results) {
+    assert.equal(result.setup, 'applied');
+    assert.equal(result.diagnostic.class, 'intended-law-refusal');
+    assert.equal(result.diagnostic.attributed_law, result.case.law);
   }
+  // Serial intervals: every child starts at or after the baseline ends and
+  // children never overlap.
+  assert.ok(manifest.results.every((result) => result.process.started >= manifest.baseline.process.ended));
+  const ends = manifest.results.map((result) => result.process.ended);
+  const starts = manifest.results.map((result) => result.process.started);
+  for (let i = 1; i < starts.length; i++) assert.ok(starts[i] >= ends[i - 1]);
+  const moduleRecords = records.filter((record) => record.module === 'bend2/src/mini.bend');
+  const { summary } = aggregate({ dir: evidence, records: moduleRecords });
+  assert.equal(summary.expected_cases, moduleRecords.length);
+  assert.deepEqual(summary.rejections, []);
+  assert.equal(accepted(summary), true);
+  rmSync(evidence, { recursive: true, force: true });
 });

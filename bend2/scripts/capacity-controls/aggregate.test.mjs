@@ -3,7 +3,7 @@
 // streams and deltas are authored bytes, every variant runs in its own fresh
 // directory, and each fault asserts its exact rejection kind.
 
-import { execFileSync } from 'node:child_process';
+import { execFileSync, spawnSync } from 'node:child_process';
 import assert from 'node:assert/strict';
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -12,7 +12,7 @@ import { test } from 'node:test';
 import { MUTATIONS } from '../laws-mutations.mjs';
 import { proofBlockRange, ROOT } from '../laws-check.mjs';
 import { TODO_REFUSAL } from './classify.mjs';
-import { accepted, aggregate, classifyBundle } from './aggregate.mjs';
+import { accepted, aggregate } from './aggregate.mjs';
 import { bindingOf, discoveryRecords, sha256Hex } from './work-set.mjs';
 
 const sha256 = (text) => sha256Hex(Buffer.from(text, 'utf8'));
@@ -79,7 +79,7 @@ function writeBundle(dir, records, module) {
       delta: { original_sha256: sha256(originalText), changed_sha256: sha256(changed), changed_path: `${stem}.changed` },
       process: {
         state: 'exited', exit_code: 1, signal: null, spawn_error: null,
-        started: 100 + index, ended: 101 + index, attempt: `${record.id}-${nonce}-${index}`, pid: 4000 + index,
+        started: 100 + index, ended: 101 + index, attempt: `${record.id}-${nonce}-${index}`, wrapper_pid: 4000 + index,
       },
       diagnostic: { class: 'intended-law-refusal', attributed_law: record.law, sha256: sha256(stderrText) },
       stdout: streamOf(bundle, `${stem}.stdout`, ''),
@@ -93,14 +93,17 @@ function writeBundle(dir, records, module) {
   const manifest = {
     module,
     binding: bindingOf(discoveryRecords()),
+    entry: 'bend2/src/coordinator/main.bend',
     checker_sha256: sha256Hex(readFileSync(join(ROOT, 'bend2', 'scripts', 'laws-check.mjs'))),
     source: ownSource(),
     origin: { workflow: null, run_id: null, run_attempt: null, jobs: [], image_os: null, image_version: null },
     producing: {
       source: ownSource(),
       compiler: COMPILER,
+      checker_sha256: sha256Hex(readFileSync(join(ROOT, 'bend2', 'scripts', 'laws-check.mjs'))),
       archive: { path: '/qualified/archive.tar.gz', bytes: 1, sha256: ARCHIVE_SHA },
       runtime: { directory: '/qualified/bend2', files: 1, sha256: RUNTIME_SHA },
+      runtime_set_sha256: RUNTIME_SHA,
       origin: {
         workflow: null, run_id: null, run_attempt: null, jobs: [], image_os: null, image_version: null,
         job: `local:0:${module}:${nonce}`,
@@ -111,11 +114,16 @@ function writeBundle(dir, records, module) {
       argv: [COMPILER.path, 'bend2/src/coordinator/main.bend', '--check-only'],
       process: {
         state: 'exited', exit_code: 0, signal: null, spawn_error: null,
-        started: 10, ended: 20, attempt: `${module}-baseline-${nonce}`, pid: 3999,
+        started: 10, ended: 20, attempt: `${module}-baseline-${nonce}`, wrapper_pid: 3999,
       },
       stdout: streamOf(bundle, 'baseline.stdout', 'baseline output\n'),
       stderr: streamOf(bundle, 'baseline.stderr', TIME_SUFFIX),
-      inputs: { compiler_sha256: COMPILER.sha256, archive_sha256: ARCHIVE_SHA, runtime_sha256: RUNTIME_SHA },
+      inputs: {
+        compiler_sha256: COMPILER.sha256,
+        checker_sha256: sha256Hex(readFileSync(join(ROOT, 'bend2', 'scripts', 'laws-check.mjs'))),
+        archive_sha256: ARCHIVE_SHA,
+        runtime_set_sha256: RUNTIME_SHA,
+      },
     },
     results,
     compiler: COMPILER,
@@ -320,21 +328,67 @@ test('empty discovery and empty evidence can never satisfy acceptance', () => {
   });
 });
 
-test('classifyBundle recomputes from raw bytes and ignores supplied labels', () => {
-  scenario((dir) => {
-    const proof = pick('proof-removal');
-    const { bundle, manifest } = writeBundle(dir, [proof], proof.module);
-    manifest.results[0].diagnostic.attributed_law = 'another_law';
-    writeBack(bundle, manifest);
-    const result = classifyBundle({ dir: bundle });
-    assert.equal(result.allIntended, false);
-    assert.equal(result.rows[0].class, 'intended-law-refusal');
-    assert.equal(result.rows[0].attributed_law, proof.law);
-    assert.equal(result.rows[0].match, false);
-  });
+test('the per-case classify endpoint answers one structured verdict and refuses unknown cases', () => {
   scenario((dir) => {
     const proof = pick('proof-removal');
     const { bundle } = writeBundle(dir, [proof], proof.module);
-    assert.equal(classifyBundle({ dir: bundle }).allIntended, true);
+    const stem = proof.id.replace(/[^A-Za-z0-9_.-]/g, '_');
+    const request = {
+      case: proof,
+      outcome: { state: 'exited', exit_code: 1, signal: null, spawn_error: null },
+      stdout: join(bundle, `${stem}.stdout`),
+      stderr: join(bundle, `${stem}.stderr`),
+      baseline: {
+        outcome: { state: 'exited', exit_code: 0, signal: null, spawn_error: null },
+        stdout: join(bundle, 'baseline.stdout'),
+        stderr: join(bundle, 'baseline.stderr'),
+      },
+    };
+    const run = spawnSync(process.execPath, [join(ROOT, 'bend2', 'scripts', 'laws-check.mjs'), '--classify'], {
+      input: JSON.stringify(request), encoding: 'utf8', maxBuffer: Infinity,
+      env: { ...process.env, BEND: join(dir, 'absent-bend') },
+    });
+    assert.equal(run.status, 0, run.stderr);
+    const verdict = JSON.parse(run.stdout.trim().split('\n').pop());
+    assert.equal(verdict.class, 'intended-law-refusal');
+    assert.equal(verdict.attributed_law, proof.law);
+    assert.equal(verdict.match, true);
+    assert.equal(verdict.baseline.ok, true);
+
+    // A coherent lying label over unrelated raw bytes classifies, and does
+    // not match: the verdict is produced, the refusal is not accepted.
+    const lying = {
+      ...request,
+      supplied: { class: 'intended-law-refusal', attributed_law: proof.law },
+    };
+    const unrelated = 'Error: unrelated compiler infrastructure failure\n';
+    writeFileSync(join(bundle, `${stem}.stderr`), unrelated);
+    const lyingRun = spawnSync(process.execPath, [join(ROOT, 'bend2', 'scripts', 'laws-check.mjs'), '--classify'], {
+      input: JSON.stringify(lying), encoding: 'utf8', maxBuffer: Infinity,
+      env: { ...process.env, BEND: join(dir, 'absent-bend') },
+    });
+    assert.equal(lyingRun.status, 0);
+    const lyingVerdict = JSON.parse(lyingRun.stdout.trim().split('\n').pop());
+    assert.equal(lyingVerdict.class, 'unclassified-rejection');
+    assert.equal(lyingVerdict.match, false);
+    assert.equal(lyingVerdict.supplied_agrees, false);
+
+    // Unknown case identity is a refusal with exit 2 and a stderr reason.
+    const unknown = spawnSync(process.execPath, [join(ROOT, 'bend2', 'scripts', 'laws-check.mjs'), '--classify'], {
+      input: JSON.stringify({ ...request, case: { ...proof, id: 'proof:not_in_the_work_set' } }),
+      encoding: 'utf8', maxBuffer: Infinity,
+      env: { ...process.env, BEND: join(dir, 'absent-bend') },
+    });
+    assert.equal(unknown.status, 2);
+    assert.match(unknown.stderr, /classify: case proof:not_in_the_work_set is not in the rediscovered work set/);
+    assert.equal(unknown.stdout, '');
+
+    // Malformed request JSON refuses with exit 2.
+    const malformed = spawnSync(process.execPath, [join(ROOT, 'bend2', 'scripts', 'laws-check.mjs'), '--classify'], {
+      input: '{not json', encoding: 'utf8', maxBuffer: Infinity,
+      env: { ...process.env, BEND: join(dir, 'absent-bend') },
+    });
+    assert.equal(malformed.status, 2);
+    assert.match(malformed.stderr, /classify: request is not JSON/);
   });
 });

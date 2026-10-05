@@ -20,9 +20,11 @@
 export const TODO_REFUSAL = 'Error: 1 TODO found.\nThe code is incomplete, and not a valid proof yet.';
 
 // The first line of time-tool accounting when the wrapper appends it to the
-// same stderr stream the child wrote. Everything from that line on is
-// accounting, and the whole suffix must match the measured platform profile.
-const ACCOUNTING = /^\s*[0-9.]+ real\s+[0-9.]+ user\s+[0-9.]+ sys\s*$/m;
+// same stderr stream the child wrote. Darwin /usr/bin/time opens with its
+// real/user/sys field line; GNU time -v opens with its labeled field lines.
+// Everything from that line on is accounting, and the whole suffix must match
+// the measured platform profile.
+const ACCOUNTING = /^\s*(?:[0-9.]+ real\s+[0-9.]+ user\s+[0-9.]+ sys\s*$|Command being exectured:|User time \(seconds\):)/m;
 
 export function splitTimeAccounting(stderrText) {
   const match = ACCOUNTING.exec(stderrText);
@@ -33,18 +35,20 @@ export function splitTimeAccounting(stderrText) {
 
 // Measured wrapper profiles. Darwin /usr/bin/time -l prints bare field lines
 // with the resident set in bytes; GNU time -v prints labeled lines with the
-// resident set in kbytes. A suffix that fits neither profile is invalid
-// evidence, and classification refuses rather than trusting the prefix.
+// resident set in kbytes. GNU time spells its first field "Command being
+// exectured"; that spelling is upstream's and is matched as printed. A suffix
+// that fits neither profile is invalid evidence, and classification refuses
+// rather than trusting the prefix.
 export function accountingProfile(accounting) {
   if (accounting === null) return null;
-  if (/Maximum resident set size \(kbytes\):/.test(accounting)) return 'gnu-time-v';
+  if (/Maximum resident set size \(kbytes\):/.test(accounting) || /User time \(seconds\):/.test(accounting)) return 'gnu-time-v';
   if (/maximum resident set size/.test(accounting)) return 'darwin-usr-bin-time';
   if (/^\s*[0-9.]+ real\s/m.test(accounting)) return 'unknown';
   return null;
 }
 
 const DARWIN_TIME_FIELDS = [
-  /^\d+(\.\d+)? real \d+(\.\d+)? user \d+(\.\d+)? sys$/,
+  /^\d+(\.\d+)? real\s+\d+(\.\d+)? user\s+\d+(\.\d+)? sys$/,
   /^\d+ maximum resident set size$/,
   /^\d+ page reclaims$/,
   /^\d+ page faults$/,
