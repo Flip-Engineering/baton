@@ -130,6 +130,48 @@ for (const { law, file } of rows) {
 // mutation that still compiles means the law it names does not bind the code
 // it claims to bind, and it is reported as a failure.
 const MUTATIONS = [
+  {
+    "name": "reviewed-selection-M0-skips-branch-and-ancestry",
+    "file": "bend2/src/coordinator/land.bend",
+    "find": "    case SelPicked{commitOid}:\n      do IO<Selected>:\n        b : Selected <- sel_branch(repo, branch)\n        sel_ancestor_after_branch(b, repo, commitOid)",
+    "replace": "    case SelPicked{commitOid}: IO.pure(Selected, SelPicked{commitOid})",
+    "law": "sel_branch_after_commit_picked_resolves_the_recorded_branch_then_the_ancestry"
+  },
+  {
+    "name": "reviewed-selection-W1-drops-end-of-options",
+    "file": "bend2/src/coordinator/land.bend",
+    "find": "Git.runGit(r2, [\"rev-parse\", \"--verify\", \"--quiet\", \"--end-of-options\", Tx.str_cat(c2, \"^{commit}\")])",
+    "replace": "Git.runGit(r2, [\"rev-parse\", \"--verify\", \"--quiet\", Tx.str_cat(c2, \"^{commit}\")])",
+    "law": "sel_commit_reads_the_requested_commit_with_the_literal_argv"
+  },
+  {
+    "name": "reviewed-selection-W2-reads-tag",
+    "file": "bend2/src/coordinator/land.bend",
+    "find": "Git.runGit(r2, [\"rev-parse\", \"--verify\", \"--quiet\", Tx.str_cat(\"refs/heads/\", b2)])",
+    "replace": "Git.runGit(r2, [\"rev-parse\", \"--verify\", \"--quiet\", Tx.str_cat(\"refs/tags/\", b2)])",
+    "law": "sel_branch_reads_the_recorded_branch_with_the_literal_argv"
+  },
+  {
+    "name": "reviewed-selection-W3-swaps-ancestry-arguments",
+    "file": "bend2/src/coordinator/land.bend",
+    "find": "Git.runGit(r2, [\"merge-base\", \"--is-ancestor\", o2, b2])",
+    "replace": "Git.runGit(r2, [\"merge-base\", \"--is-ancestor\", b2, o2])",
+    "law": "sel_ancestor_runs_the_literal_ancestry_argv"
+  },
+  {
+    "name": "reviewed-selection-D1-stops-after-commit",
+    "file": "bend2/src/coordinator/land.bend",
+    "find": "    c : Selected <- sel_commit(repo, commit)\n    sel_branch_after_commit(c, repo, branch, commit)",
+    "replace": "    c : Selected <- sel_commit(repo, commit)\n    IO.pure(Selected, c)",
+    "law": "select_reviewed_resolves_then_checks_against_the_recorded_branch"
+  },
+  {
+    "name": "reviewed-selection-D2-skips-ancestry",
+    "file": "bend2/src/coordinator/land.bend",
+    "find": "    case SelPicked{branchOid}: sel_ancestor(repo, oid, branchOid)",
+    "replace": "    case SelPicked{branchOid}: IO.pure(Selected, SelPicked{oid})",
+    "law": "sel_ancestor_after_branch_picked_continues_into_the_ancestry_read"
+  },
   ...[
     ['land_player_at', '    outcome : G.LandOutcome <- GitLand.land_fast_forward_at(repo, oid, target)'],
     ['land_checked_player_at', '    run_checked(db, player, repo, target, check, files, oid)'],

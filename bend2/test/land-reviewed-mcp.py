@@ -143,6 +143,47 @@ class NativeProjection(unittest.TestCase):
                     self.assertEqual(self.f.git('rev-parse', 'main'), before)
                     self.assertEqual(self.f.git('worktree', 'list', '--porcelain'), trees)
 
+    def test_divergent_same_repository_selection_refuses_before_effects(self):
+        self.f.git('commit', '-q', '--allow-empty', '-m', 'divergent target')
+        divergent = self.f.git('rev-parse', 'main').strip()
+        ancestor = subprocess.run(['git', '-C', str(self.f.repo), 'merge-base',
+                                   '--is-ancestor', divergent, 'w1-branch'],
+                                  capture_output=True, text=True)
+        self.assertEqual(ancestor.returncode, 1, ancestor.stderr)
+
+        def snapshot():
+            files = {str(p.relative_to(self.wt)): p.read_bytes()
+                     for p in self.wt.rglob('*') if p.is_file()}
+            return (self.f.git('show-ref'), self.f.git('worktree', 'list', '--porcelain'),
+                    self.f.git('status', '--porcelain'),
+                    subprocess.check_output(['git', '-C', str(self.wt),
+                                             'status', '--porcelain']), files,
+                    sorted(str(p.relative_to(self.f.directory))
+                           for p in self.f.directory.rglob('*') if p.is_dir()))
+
+        before = snapshot()
+        for tool, command in [('baton2_land', 'land'),
+                              ('baton2_land_checked', 'land-checked')]:
+            with self.subTest(tool=tool):
+                args = dict(player='w1', repo=str(self.f.repo), target='main')
+                if command == 'land-checked':
+                    args.update(check='unused-check', files='file.txt')
+                native = subprocess.run([str(EXE), str(self.f.db), command,
+                                         *args.values(), '--commit', divergent],
+                                        capture_output=True, text=True)
+                self.assertEqual(native.returncode, 2, native.stderr)
+                self.assertIn('is not an ancestor of the recorded branch', native.stderr)
+                self.assertEqual(native.stdout, '')
+                self.assertEqual(snapshot(), before)
+                result = self.call(tool, dict(args, commit=divergent))
+                self.assertTrue(result.get('isError'), result)
+                text = result['content'][0]['text']
+                self.assertIn('\nexit code: 2', text)
+                streams = text.split('\nstdout:\n', 1)[1]
+                self.assertEqual(tuple(streams.split('\nstderr:\n', 1)),
+                                 (native.stdout, native.stderr))
+                self.assertEqual(snapshot(), before)
+
     def test_malformed_native_selectors_have_no_target_or_scratch_effect(self):
         before = self.f.git('rev-parse', 'main')
         trees = self.f.git('worktree', 'list', '--porcelain')
