@@ -1,0 +1,54 @@
+{
+  "purpose": "Host behaviour controls for the receive frame composition. Each mutant changes a real consume call site while leaving every helper body and every law untouched, so no law is expected to fail. Rejection is enforced by a semantic fixture: the positive artifact must build and pass, the mutant must build successfully, and only then may a named fixture assertion be reported as failing.",
+  "scope": "bend2/src/coordinator/turn.bend only. Do not alter helper bodies, laws, or any CI/shared checker or evidence API.",
+  "artifacts_exe_note": "receive.py hardcodes EXE to this checkout's .scratch/bend2/baton2 and skips tests when that binary is missing, so every run must preflight and record the SHA-256 of that exact artifact.",
+  "evidence_inputs": {
+    "env": "BATON_RETAINED_LOGS",
+    "required_files": [
+      "semantic-runtime-protocol-research.jsonl",
+      "semantic-runtime-observations-research.jsonl",
+      "lead.jsonl"
+    ],
+    "note": "RetainedReplay skips its class when BATON_RETAINED_LOGS is unset or not a directory. A skip is not acceptance: the remote recipe must set the variable, record the SHA-256 of each required file, and treat a skip as a failure of the run."
+  },
+  "controls": [
+    {
+      "name": "consume-bypasses-the-activity-update",
+      "file": "bend2/src/coordinator/turn.bend",
+      "find": "        +activity : String <- omp_retained_activity(db,harness,line,last_activity)",
+      "replace": "        +activity : String <- IO.pure(String,last_activity)",
+      "targets": ["ControlledFrames.test_an_elided_terminal_repeating_an_older_error_reports_the_later_completion"],
+      "why": "With the activity state never advancing, the terminal's elided tail keeps no recorded assistant activity, so the retained completion is no longer the activity the stream reached last and the normalizer reports the unavailable frame instead of 'Complete answer.'."
+    },
+    {
+      "name": "consume-bypasses-terminal-normalization",
+      "file": "bend2/src/coordinator/turn.bend",
+      "find": "        +event : String <- omp_normalized_step(db,harness,line,message,activity,relevant)",
+      "replace": "        +event : String <- IO.pure(String,line)",
+      "targets": [
+        "ControlledFrames.test_empty_terminal_uses_the_retained_report",
+        "ControlledFrames.test_an_elided_terminal_repeating_an_older_error_reports_the_later_completion"
+      ],
+      "why": "The terminal frame reaches the store unnormalized, so a truncated terminal never recovers the retained completion and the report no longer carries 'Full retained report.' or 'Complete answer.'."
+    },
+    {
+      "name": "consume-propagates-empty-activity",
+      "file": "bend2/src/coordinator/turn.bend",
+      "find": "          consume(db,player,id,log,handle,harness,next_cursor,message,activity,ended,next_filter,codex_state,",
+      "replace": "          consume(db,player,id,log,handle,harness,next_cursor,message,\"\",ended,next_filter,codex_state,",
+      "targets": ["ControlledFrames.test_an_elided_terminal_repeating_an_older_error_reports_the_later_completion"],
+      "why": "The activity state is dropped on every recursion, so the multi-frame sequence loses the assistant activity it accumulated and the normalizer cannot establish which completion the stream reached last."
+    }
+  ],
+  "remote_recipe": [
+    "positive: BEND=/admitted/toolchain/bin/bend sh bend2/scripts/build-native.sh ; require exit 0 ; record shasum -a 256 .scratch/bend2/baton2",
+    "positive fixtures: BATON_RETAINED_LOGS=<log dir> python3 bend2/test/receive-retained-replay.py <named cases> -v ; require OK and no skip",
+    "per mutant: copy the exact source tree, assert the find string occurs exactly once, apply the replacement, then BEND=/admitted/toolchain/bin/bend sh bend2/scripts/build-native.sh ; require exit 0 before reading any fixture result, else the control is inconclusive",
+    "per mutant: record shasum -a 256 .scratch/bend2/baton2 in the copy, then run the named target fixtures with BATON_RETAINED_LOGS set ; retry the named assertion and keep the full trace",
+    "formal gate: BEND=/admitted/toolchain/bin/bend node bend2/scripts/laws-check.mjs with no outer timeout ; read the final aggregate and the actual process exit, not a trailing proof-removal line"
+  ],
+  "reported_limits": [
+    "No mutation in this file has been executed. Nothing here claims a run, a rejection, or a pass.",
+    "Local execution of the runner, builds or fixtures is not permitted; these definitions are inputs to an admitted remote run."
+  ]
+}
