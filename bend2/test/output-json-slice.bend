@@ -127,24 +127,24 @@ def check_pair(pair: K.SliceResult & K.SliceResult & String) -> IO(Unit):
   (left, right, name) = pair
   judge_unequal(left, right, name)
 
-def run(cases: List<List<U32> & K.SliceResult & String>) -> IO(Unit):
-  match cases:
+def run(rows: List<List<U32> & K.SliceResult & String>) -> IO(Unit):
+  match rows:
     case Nil{}: IO.pure(Unit, Unit{})
     case h <> t:
       do IO<Unit>:
         checked : Unit <- check(h)
         run(t)
 
-def run_recon(cases: List<List<U32> & List<U32> & String>) -> IO(Unit):
-  match cases:
+def run_recon(rows: List<List<U32> & List<U32> & String>) -> IO(Unit):
+  match rows:
     case Nil{}: IO.pure(Unit, Unit{})
     case h <> t:
       do IO<Unit>:
         checked : Unit <- check_recon(h)
         run_recon(t)
 
-def run_pairs(cases: List<K.SliceResult & K.SliceResult & String>) -> IO(Unit):
-  match cases:
+def run_pairs(rows: List<K.SliceResult & K.SliceResult & String>) -> IO(Unit):
+  match rows:
     case Nil{}: IO.pure(Unit, Unit{})
     case h <> t:
       do IO<Unit>:
