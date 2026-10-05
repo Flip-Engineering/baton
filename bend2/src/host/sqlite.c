@@ -618,19 +618,30 @@ static int baton_sql_utf8_ok(const unsigned char *text, size_t length) {
 
 /* The read-only call shares BatonSql and the existing row callback and pack
    function, so no second structure layout can diverge from the callback's cast. */
+/* The shared sqlite3_exec error slot is SQLite-owned, so every reason written into
+   it comes from sqlite3_mprintf and is released with sqlite3_free by the caller. The
+   prepare/step status is preserved rather than translated into encoding text, and
+   the encoding refusal is reported only when the pragma itself was read. */
 static int baton_sql_encoding_ok(sqlite3 *db, char **error) {
   sqlite3_stmt *statement = NULL;
-  if (sqlite3_prepare_v2(db, "PRAGMA encoding;", -1, &statement, NULL) != SQLITE_OK) {
-    *error = strdup(sqlite3_errmsg(db));
+  int status = sqlite3_prepare_v2(db, "PRAGMA encoding;", -1, &statement, NULL);
+  if (status != SQLITE_OK) {
+    *error = sqlite3_mprintf("%s", sqlite3_errmsg(db));
     return 0;
   }
-  int ok = 0;
-  if (sqlite3_step(statement) == SQLITE_ROW) {
-    const unsigned char *value = sqlite3_column_text(statement, 0);
-    ok = value && sqlite3_stricmp((const char *)value, "UTF-8") == 0;
+  status = sqlite3_step(statement);
+  if (status != SQLITE_ROW) {
+    *error = sqlite3_mprintf("%s", sqlite3_errmsg(db));
+    sqlite3_finalize(statement);
+    return 0;
   }
-  if (!ok && !*error) *error = strdup("database encoding is not UTF-8");
-  sqlite3_finalize(statement);
+  const unsigned char *value = sqlite3_column_text(statement, 0);
+  int ok = value && sqlite3_stricmp((const char *)value, "UTF-8") == 0;
+  if (!ok) *error = sqlite3_mprintf("database encoding is not UTF-8");
+  if (sqlite3_finalize(statement) != SQLITE_OK && ok) {
+    *error = sqlite3_mprintf("%s", sqlite3_errmsg(db));
+    return 0;
+  }
   return ok;
 }
 
