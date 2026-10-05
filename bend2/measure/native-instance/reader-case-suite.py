@@ -201,28 +201,146 @@ def case_capture_states(root, database):
 
 def case_view_states(root, database):
     failed = capture_set(root, "view-failed", header(database), {"players": (1, "", "error")})
-    current, reports, state, turns = reader.attempt_view(reader.load_captures(failed, database))
-    check("Q a failed players read reports players-failed", state == "players-failed", state)
+    view = reader.attempt_view(reader.load_captures(failed, database))
+    check("Q a failed players read reports players-failed",
+          view["players_state"] == "players-failed" and view["current"] == {},
+          view["players_state"])
 
     empty = capture_set(root, "view-empty", header(database), {"players": (0, "[]", "")})
-    current, reports, state, turns = reader.attempt_view(reader.load_captures(empty, database))
-    check("R an empty players list is its own state", state == "players-empty-list" and current == {}, state)
+    view = reader.attempt_view(reader.load_captures(empty, database))
+    check("R an empty players list is its own state",
+          view["players_state"] == "players-empty-list" and view["current"] == {},
+          view["players_state"])
 
     malformed = capture_set(root, "view-malformed", header(database), {"players": (0, "[1]", "")})
-    current, reports, state, turns = reader.attempt_view(reader.load_captures(malformed, database))
-    check("S malformed players rows are not an empty success", state == "players-malformed", state)
+    view = reader.attempt_view(reader.load_captures(malformed, database))
+    check("S a players document of non-objects is malformed, not an empty success",
+          view["players_state"] == "players-malformed", view["players_state"])
 
-    turns = capture_set(root, "view-turns", header(database),
-                        {"players": (0, "[]", ""), "turns-known": (1, "", "error")})
-    current, reports, state, turns_state = reader.attempt_view(reader.load_captures(turns, database))
+    turns_only = capture_set(root, "view-turns", header(database),
+                             {"players": (0, "[]", ""), "turns-known": (1, "", "error")})
+    view = reader.attempt_view(reader.load_captures(turns_only, database))
     check("T a failed turns read is recorded for that session",
-          turns_state.get("known") == "turns-failed", turns_state)
+          view["turns_state"].get("known") == "turns-failed", view["turns_state"])
+
+
+def case_view_row_validation(root, database):
+    empty_row = capture_set(root, "view-emptyrow", header(database), {"players": (0, "[{}]", "")})
+    view = reader.attempt_view(reader.load_captures(empty_row, database))
+    check("V a players row with no id is malformed, not an ok empty state",
+          view["players_state"] == "players-malformed" and view["current"] == {}
+          and view["players_detail"]["rows_malformed"],
+          {k: view.get(k) for k in ("players_state", "players_detail")})
+
+    mixed = capture_set(root, "view-mixed", header(database),
+                        {"players": (0, '[{"id":"s1","execution":{"attempt":"a1","mode":"retained",'
+                                     '"phase":"running","status":""}},{"id":5}]', "")})
+    view = reader.attempt_view(reader.load_captures(mixed, database))
+    check("W mixed valid and invalid players rows report players-partial with the valid row kept",
+          view["players_state"] == "players-partial" and list(view["current"]) == ["s1"]
+          and len(view["players_detail"]["rows_malformed"]) == 1,
+          {k: view.get(k) for k in ("players_state", "current", "players_detail")})
+
+    bad_field = capture_set(root, "view-badfield", header(database),
+                            {"players": (0, '[{"id":"s2","execution":{"attempt":42}}]', "")})
+    view = reader.attempt_view(reader.load_captures(bad_field, database))
+    check("X a players row with a wrong execution field type is malformed",
+          view["players_state"] == "players-malformed" and view["current"] == {},
+          {k: view.get(k) for k in ("players_state", "players_detail")})
+
+    turns_bad = capture_set(root, "view-turnsbad", header(database),
+                            {"players": (0, "[]", ""),
+                             "turns-s1": (0, '[1, {"id": {}, "reportBody": "x"}]', "")})
+    view = reader.attempt_view(reader.load_captures(turns_bad, database))
+    check("Y turns rows with non-string ids are malformed without raising",
+          view["turns_state"].get("s1") == "turns-malformed" and view["reports"] == {},
+          {k: view.get(k) for k in ("turns_state", "turns_detail")})
+
+    turns_mixed = capture_set(root, "view-turnsmixed", header(database),
+                              {"players": (0, "[]", ""),
+                               "turns-s1": (0, '[{"id":"t1","reportBody":"hello",'
+                                                '"eventType":"agent_end"},{"id":[]}]', "")})
+    view = reader.attempt_view(reader.load_captures(turns_mixed, database))
+    check("Z mixed turns rows report turns-partial and keep the valid report",
+          view["turns_state"].get("s1") == "turns-partial"
+          and view["reports"].get("t1", {}).get("report_body") == "hello"
+          and len(view["turns_detail"]["s1"]["rows_malformed"]) == 1,
+          {k: view.get(k) for k in ("turns_state", "reports", "turns_detail")})
+
+
+def case_final_stat_failure(root):
+    directory = attempt_dir(root, "receive:case-final:1:jjjj", stdout=route_frame() + b"\n")
+    path = os.path.join(directory, "stdout")
+    listing = reader.listing_stat(path)
+    real_stat = reader.os.stat
+    calls = {}
+
+    def failing_stat(target, *arguments, **keywords):
+        key = str(target)
+        calls[key] = calls.get(key, 0) + 1
+        # The first os.stat for this path comes from the existence check; the
+        # second is the final path stat after the read, which this case fails.
+        if key == path and calls[key] == 2:
+            raise OSError(2, "simulated removal after the read")
+        return real_stat(target, *arguments, **keywords)
+
+    reader.os.stat = failing_stat
+    try:
+        record = reader.retained_observed_route(directory, listing)
+    finally:
+        reader.os.stat = real_stat
+    check("F2 a failed final stat keeps the bytes and the earlier observations",
+          record["route"] == "deepseek/deepseek-flash"
+          and record["changed_during_read"] is True
+          and record["interpreted_everything"] is False
+          and record.get("final_stat_error") is not None
+          and record["metadata_samples"].get("opened") is not None,
+          {k: record.get(k) for k in ("route", "state", "changed_during_read",
+                                      "interpreted_everything", "final_stat_error")})
+
+
+def case_composition(root, database):
+    captures_directory = capture_set(
+        root, "view-composition", header(database),
+        {"players": (1, "", "error"),
+         "turns-case-a": (0, '[{"id":"receive:case-a:1:aaaa","reportBody":"independent report",'
+                             '"eventType":"agent_end","receipt":null}]', "")})
+    out_path = os.path.join(root, "composition.json")
+    argv = sys.argv
+    sys.argv = ["attempt_exit_records.py", database, out_path, "--captures", captures_directory]
+    try:
+        reader.main()
+    finally:
+        sys.argv = argv
+    with open(out_path) as handle:
+        document = json.load(handle)
+    matches = [record for record in document["attempts"]
+               if record["attempt"] == "receive:case-a:1:aaaa"]
+    record = matches[0] if matches else {}
+    check("Z2 a successful turns read survives a failed players read in the output document",
+          document["cli_state"] == "players-failed"
+          and record.get("current_execution") is None
+          and record.get("report_state") == "ok"
+          and (record.get("report") or {}).get("report_body") == "independent report",
+          {k: record.get(k) for k in ("session_cli_state", "report_state", "current_execution", "report")})
 
 
 def main():
+    arguments = [argument for argument in sys.argv[1:] if argument != "--keep"]
     keep = "--keep" in sys.argv
-    root = tempfile.mkdtemp(prefix="reader-cases-")
+    supplied = None
+    if arguments:
+        supplied = os.path.abspath(arguments[0])
+        if os.path.exists(supplied):
+            raise SystemExit(
+                "Refusing to reuse an existing directory: %s. Pass a fresh directory so earlier "
+                "case results stay in place." % supplied)
+        os.makedirs(supplied)
+        root = supplied
+    else:
+        root = tempfile.mkdtemp(prefix="reader-cases-")
     database = os.path.join(root, "fixture.db")
+    print("case root: %s" % root)
     try:
         case_route_parsed(root)
         case_route_then_undecodable(root)
@@ -232,8 +350,11 @@ def main():
         case_truncated_spool(root)
         case_removed_after_listing(root)
         case_no_spool(root)
+        case_final_stat_failure(root)
         case_capture_states(root, database)
         case_view_states(root, database)
+        case_view_row_validation(root, database)
+        case_composition(root, database)
         records = reader.attempt_records(database)
         check("U attempt_records reports one record per synthetic attempt",
               len(records) == len([name for name in os.listdir(root) if ".attempt-" in name]),
@@ -242,10 +363,11 @@ def main():
             json.dump([{"case": name, "passed": passed, "detail": detail} for name, passed, detail in RESULTS],
                       handle, indent=1, sort_keys=True)
     finally:
-        if not keep:
-            shutil.rmtree(root, ignore_errors=True)
+        failed = [name for name, passed, _ in RESULTS if not passed]
+        if failed or keep or supplied:
+            print("retained: %s" % root)
         else:
-            print("kept: %s" % root)
+            shutil.rmtree(root, ignore_errors=True)
     failed = [name for name, passed, _ in RESULTS if not passed]
     print("%d/%d cases passed" % (len(RESULTS) - len(failed), len(RESULTS)))
     return 1 if failed else 0

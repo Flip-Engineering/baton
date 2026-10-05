@@ -78,16 +78,26 @@ def value(env_name, historical_key, mode_name):
 
 
 def identity():
-    """Resolve every input once and return the record a tool writes out."""
+    """Resolve every input once and return the record a tool writes out.
+
+    In a caller-supplied run every input must be named: a missing
+    `BATON2_GIT_SERIES` stops the run even when the release prefix contains a
+    helper. The helper is derived from the release only in the explicit
+    historical mode, where that derivation is part of the retained baseline.
+    """
     mode_name = mode()
     release = executable("BATON2_RELEASE", "release", mode_name)
-    helper_default = os.path.join(os.path.dirname(os.path.dirname(release)), "libexec/baton2/git-series.mjs")
     helper = os.environ.get("BATON2_GIT_SERIES")
     if helper:
         if not os.path.isfile(helper):
             raise SystemExit("BATON2_GIT_SERIES is set but is not a file: %s" % helper)
-    elif os.path.isfile(helper_default):
-        helper = helper_default
+    elif mode_name:
+        derived = os.path.join(os.path.dirname(os.path.dirname(release)), "libexec/baton2/git-series.mjs")
+        if not os.path.isfile(derived):
+            raise SystemExit(
+                "BATON2_GIT_SERIES is not set and the historical baseline's release prefix holds no "
+                "helper at %s." % derived)
+        helper = derived
     else:
         raise _missing("BATON2_GIT_SERIES")
     return {

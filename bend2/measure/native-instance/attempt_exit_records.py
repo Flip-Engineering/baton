@@ -60,7 +60,10 @@ ROUTE_PROVENANCE = (
     "with data.model.provider and data.model.id, a run.model.configured payload, and a message with "
     "provider and model; other shapes are counted as unrecognised rather than interpreted. Session and "
     "per-attempt reports come only from CLI captures supplied on the command line, and each capture "
-    "carries its own state so a missing, failed or unparsable read is not an empty result. "
+    "carries its own state so a missing, failed or unparsable read is not an empty result. Rows inside a "
+    "loaded read are validated individually: a list that mixes valid and invalid rows is reported as "
+    "partial with every row accounted for in the detail record, and only a list whose rows are all valid "
+    "is reported as complete. "
     "sessions.observed_model is one mutable session-level value and states nothing about an earlier "
     "attempt of the same session.")
 
@@ -205,20 +208,32 @@ def read_bounded_bytes(path, limit, listing_stat):
             record["prefix_sha256"] = hashlib.sha256(blob).hexdigest()
             after = os.fstat(handle.fileno())
             record["size_after_read"] = after.st_size
-        current = os.stat(path)
-        record["metadata_samples"]["opened"] = metadata(opened)
-        record["metadata_samples"]["after_read"] = metadata(after)
-        record["metadata_samples"]["final_path_stat"] = metadata(current)
-        record["metadata_comparisons"] = {
-            "listing_to_opened": compare_metadata(listing_stat, opened),
-            "opened_to_after_read": compare_metadata(opened, after),
-            "opened_to_final_path": compare_metadata(opened, current)}
-        for comparison in record["metadata_comparisons"].values():
-            if comparison not in ("same-dev-inode-size-mtime", "left-absent"):
-                record["changed_during_read"] = True
     except OSError as error:
         record["error"] = "errno %s" % error.errno
         return None, record
+
+    # Everything below is recorded even when the final stat fails, so the bytes
+    # already read stay available to interpretation and the observations already
+    # taken are kept. A failed final stat marks the read changed, which denies a
+    # complete-interpretation claim without reporting an absence.
+    record["metadata_samples"]["opened"] = metadata(opened)
+    record["metadata_samples"]["after_read"] = metadata(after)
+    record["metadata_comparisons"] = {
+        "listing_to_opened": compare_metadata(listing_stat, opened),
+        "opened_to_after_read": compare_metadata(opened, after)}
+    try:
+        current = os.stat(path)
+    except OSError as error:
+        record["final_stat_error"] = "errno %s" % error.errno
+        record["metadata_samples"]["final_path_stat"] = None
+        record["metadata_comparisons"]["opened_to_final_path"] = "final-stat-failed"
+        record["changed_during_read"] = True
+    else:
+        record["metadata_samples"]["final_path_stat"] = metadata(current)
+        record["metadata_comparisons"]["opened_to_final_path"] = compare_metadata(opened, current)
+    for comparison in record["metadata_comparisons"].values():
+        if comparison not in ("same-dev-inode-size-mtime", "left-absent"):
+            record["changed_during_read"] = True
     return blob, record
 
 
@@ -498,60 +513,121 @@ def load_captures(directory, database):
     return result
 
 
+def nonempty_string(value):
+    return isinstance(value, str) and value != ""
+
+
+def outcome_state(rows_seen, rows_used, rows_malformed, prefix):
+    if rows_used and not rows_malformed:
+        return "ok"
+    if rows_used:
+        return "%s-partial" % prefix
+    if rows_seen:
+        return "%s-malformed" % prefix
+    return "%s-empty-list" % prefix
+
+
+def validate_players(rows):
+    """Return (current_by_id, malformed_rows) with every row accounted for."""
+    current = {}
+    malformed = []
+    for index, row in enumerate(rows):
+        if not isinstance(row, dict):
+            malformed.append({"index": index, "reason": "row is not a JSON object"})
+            continue
+        row_id = row.get("id")
+        if not nonempty_string(row_id):
+            malformed.append({"index": index, "reason": "id is not a non-empty string"})
+            continue
+        execution = row.get("execution")
+        if execution is not None and not isinstance(execution, dict):
+            malformed.append({"index": index, "id": row_id, "reason": "execution is not a JSON object"})
+            continue
+        fields = {}
+        reason = None
+        for key in ("attempt", "mode", "phase", "status"):
+            value = (execution or {}).get(key)
+            if value is not None and not isinstance(value, str):
+                reason = "execution.%s is not a string" % key
+                break
+            fields[key] = value
+        if reason:
+            malformed.append({"index": index, "id": row_id, "reason": reason})
+            continue
+        current[row_id] = {"current_attempt": fields["attempt"], "mode": fields["mode"],
+                           "phase": fields["phase"], "status": fields["status"]}
+    return current, malformed
+
+
+def validate_turns(rows, reports):
+    """Insert valid report rows into reports and return (rows_used, malformed)."""
+    used = 0
+    malformed = []
+    for index, row in enumerate(rows):
+        if not isinstance(row, dict):
+            malformed.append({"index": index, "reason": "row is not a JSON object"})
+            continue
+        row_id = row.get("id")
+        if not nonempty_string(row_id):
+            malformed.append({"index": index, "reason": "id is not a non-empty string"})
+            continue
+        body = row.get("reportBody")
+        if body is not None and not isinstance(body, str):
+            malformed.append({"index": index, "id": row_id, "reason": "reportBody is not a string"})
+            continue
+        event = row.get("eventType")
+        if event is not None and not isinstance(event, str):
+            malformed.append({"index": index, "id": row_id, "reason": "eventType is not a string"})
+            continue
+        reports[row_id] = {"report_body": body[:4000] if isinstance(body, str) else None,
+                           "event_type": event, "receipt": row.get("receipt")}
+        used += 1
+    return used, malformed
+
+
 def attempt_view(captures):
     """Session and attempt state from CLI captures, each with an explicit state.
 
-    A successful empty list, a missing read, a failed read, an unparsable read and
-    a malformed document are reported separately, so an absent or partial state
-    never appears as an empty success.
+    A successful empty list, a missing read, a failed read, an unparsable read, a
+    malformed document and a list mixing valid and invalid rows are reported
+    separately, so an absent or partial state never appears as a complete
+    success. Every row is accounted for in the detail record.
     """
-    current = {}
-    reports = {}
-    turns_state = {}
+    view = {"current": {}, "reports": {}, "players_state": None, "players_detail": {},
+            "turns_state": {}, "turns_detail": {}}
     if captures["state"] != "loaded":
-        return current, reports, "cli-reads-%s" % captures["state"], turns_state
+        view["players_state"] = "cli-reads-%s" % captures["state"]
+        return view
     players = captures["reads"].get("players")
     if players is None:
-        players_state = "players-missing"
+        view["players_state"] = "players-missing"
     elif players["state"] != "ok":
-        players_state = "players-%s" % players["state"]
+        view["players_state"] = "players-%s" % players["state"]
     elif not isinstance(players["document"], list):
-        players_state = "players-malformed"
+        view["players_state"] = "players-malformed"
+        view["players_detail"] = {"reason": "the players document is not a JSON array"}
     else:
-        rows_seen = len(players["document"])
-        for row in players["document"]:
-            if not isinstance(row, dict):
-                continue
-            execution = row.get("execution")
-            execution = execution if isinstance(execution, dict) else {}
-            current[row.get("id")] = {"current_attempt": execution.get("attempt"),
-                                      "mode": execution.get("mode"), "phase": execution.get("phase"),
-                                      "status": execution.get("status")}
-        if current:
-            players_state = "ok"
-        elif rows_seen:
-            players_state = "players-malformed"
-        else:
-            players_state = "players-empty-list"
+        current, malformed = validate_players(players["document"])
+        view["current"] = current
+        view["players_detail"] = {"rows_seen": len(players["document"]), "rows_used": len(current),
+                                  "rows_malformed": malformed}
+        view["players_state"] = outcome_state(len(players["document"]), len(current), malformed, "players")
     for name, entry in captures["reads"].items():
         if not name.startswith("turns-"):
             continue
         session = name[len("turns-"):]
         if entry["state"] != "ok":
-            turns_state[session] = "turns-%s" % entry["state"]
+            view["turns_state"][session] = "turns-%s" % entry["state"]
             continue
         if not isinstance(entry["document"], list):
-            turns_state[session] = "turns-malformed"
+            view["turns_state"][session] = "turns-malformed"
+            view["turns_detail"][session] = {"reason": "the turns document is not a JSON array"}
             continue
-        turns_state[session] = "ok"
-        for row in entry["document"]:
-            if not isinstance(row, dict):
-                continue
-            body = row.get("reportBody")
-            reports[row.get("id")] = {"report_body": body[:4000] if isinstance(body, str) else None,
-                                      "event_type": row.get("eventType"),
-                                      "receipt": row.get("receipt")}
-    return current, reports, players_state, turns_state
+        used, malformed = validate_turns(entry["document"], view["reports"])
+        view["turns_state"][session] = outcome_state(len(entry["document"]), used, malformed, "turns")
+        view["turns_detail"][session] = {"rows_seen": len(entry["document"]), "rows_used": used,
+                                         "rows_malformed": malformed}
+    return view
 
 
 def main():
@@ -567,19 +643,25 @@ def main():
 
     records = attempt_records(database)
     captures = load_captures(capture_directory, database)
-    current, reports, cli_state, turns_state = attempt_view(captures)
-    players_resolved = cli_state in ("ok", "players-empty-list")
+    view = attempt_view(captures)
+    players_state = view["players_state"]
+    players_resolved = players_state in ("ok", "players-partial", "players-empty-list")
+    turns_resolved = ("ok", "turns-partial")
 
     observed_available = observed_agree = 0
     states = {}
     for record in records:
         states[record["observed_route_state"]] = states.get(record["observed_route_state"], 0) + 1
         if captures["state"] != "loaded":
-            record["session_cli_state"] = "unavailable"
+            session_state = "unavailable"
         else:
-            record["session_cli_state"] = turns_state.get(record["session"], "turns-missing")
-        record["current_execution"] = current.get(record["session"]) if players_resolved else None
-        record["report"] = reports.get(record["attempt"]) if players_resolved else None
+            session_state = view["turns_state"].get(record["session"], "turns-missing")
+        # The report follows this session's turns outcome, not the players
+        # outcome, so an independent turns success survives a players failure.
+        record["session_cli_state"] = session_state
+        record["report_state"] = session_state
+        record["current_execution"] = view["current"].get(record["session"]) if players_resolved else None
+        record["report"] = view["reports"].get(record["attempt"]) if session_state in turns_resolved else None
         observed = record["observed_route"]
         if observed and observed.get("route"):
             observed_available += 1
@@ -599,14 +681,16 @@ def main():
         "attempt_count": len(records),
         "captured_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
         "cli_captures": capture_summary,
-        "cli_state": cli_state,
-        "session_cli_state": turns_state,
+        "cli_state": players_state,
+        "players_detail": view["players_detail"],
+        "session_cli_state": view["turns_state"],
+        "session_cli_detail": view["turns_detail"],
         "route_provenance": ROUTE_PROVENANCE,
         "observed_route_summary": {"available": observed_available,
                                    "unavailable": len(records) - observed_available,
                                    "matches_configured": observed_agree,
                                    "states": states},
-        "current_session_observation": current if players_resolved else None,
+        "current_session_observation": view["current"] if players_resolved else None,
         "attempts": records,
     }
     with open(out_path, "w") as handle:

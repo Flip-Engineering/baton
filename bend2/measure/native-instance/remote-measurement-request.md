@@ -32,30 +32,39 @@ no script falls back to a recorded laptop path, and no script selects a CLI of i
 The capture step records `cli` and `cli_sha256` for `READ_CLI` in its own header, and
 the analysis step consumes that file. The analysis tool never runs a CLI command.
 
-No script substitutes a path the caller did not supply. A tool that names a release,
-helper, registry or model stops when that input is missing or does not resolve.
+No script substitutes a path the caller did not supply. `BATON2_RELEASE`,
+`BATON2_GIT_SERIES`, `BATON2_GIT_REGISTRY` and `BATON2_MEASURE_MODEL` are all required
+for a new run, including the helper: a release prefix that happens to contain a helper
+is not consulted in caller-supplied mode.
 `BATON2_MEASURE_IDENTITY=historical-fca7af87-laptop` is the only way to select the
-retained laptop paths; a run that sets it records `identity_mode` as that mode and is a
+retained laptop paths, and in that mode alone the helper is derived from the retained
+release prefix. A run that sets it records `identity_mode` as that mode and is a
 reproduction of the retained baseline, not a qualification of a candidate.
 
 ## Reader case suite
 
 `reader-case-suite.py` is the prepared check for the malformed, truncated, removed and
-capture-failure paths. It builds synthetic attempt directories and capture sets in a
-temporary directory, runs no Baton command, touches no retained evidence, and exits
-non-zero when a case differs from the documented state.
+capture-failure paths. It builds synthetic attempt directories and capture sets, runs no
+Baton command, touches no retained evidence, and exits non-zero when a case differs from
+the documented state. Give it a fresh directory so its inputs, its `results.json` and
+its per-case output survive a mismatch; the directory is printed before the first case
+runs. Without a directory it uses a temporary one and retains it whenever any case fails.
 
 ```
-python3 bend2/measure/native-instance/reader-case-suite.py
+python3 bend2/measure/native-instance/reader-case-suite.py "$RUN/reader-cases"
 ```
 
 Cases: a route parsed from an intact spool; a route followed by undecodable bytes; a
 stable non-JSON line; valid non-object JSON as a number, string and array; an object
 with no recognised shape; a route beyond the 4 MiB prefix with the suffix uninspected; a
-spool removed after the directory listing; no spool at all; the capture refusals
+spool removed after the directory listing; a failed final path stat that must keep the
+bytes and the earlier metadata samples; no spool at all; the capture refusals
 `header-incomplete`, `header-invalid`, `database-mismatch` and `no-reads`; a non-zero
-exit; a read without raw stderr; exit 0 with empty stdout; and the `players-failed`,
-`players-empty-list`, `players-malformed` and `turns-failed` states.
+exit; a read without raw stderr; exit 0 with empty stdout; the `players-failed`,
+`players-empty-list`, `players-malformed` and `turns-failed` states; a players row with
+no id; mixed valid and invalid players rows; a wrong execution field type; turns rows
+with non-string ids; mixed turns rows; and a successful turns read composed with a
+failed players read through the tool's own output document.
 
 ## Tier 1: runtime chain without a provider request
 
