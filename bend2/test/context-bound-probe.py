@@ -41,10 +41,21 @@ def check(condition, label, detail=""):
     return bool(condition)
 
 
-def run(argv, cwd):
+def run(argv, cwd, out_path=None):
+    """Run one child with its stdout and stderr streamed to files, so the raw
+    evidence survives an interrupted run instead of living only in memory."""
     env = dict(os.environ, BEND_NO_TELEMETRY="1")
-    result = subprocess.run(argv, capture_output=True, text=True, env=env, cwd=str(cwd))
-    return result
+    if out_path is None:
+        result = subprocess.run(argv, capture_output=True, text=True, env=env, cwd=str(cwd))
+        result.args = argv
+        return result
+    err_path = pathlib.Path(str(out_path) + ".stderr")
+    with open(out_path, "w") as out, open(err_path, "w") as err:
+        completed = subprocess.run(argv, stdout=out, stderr=err, text=True, env=env, cwd=str(cwd))
+    completed.stdout = pathlib.Path(out_path).read_text()
+    completed.stderr = err_path.read_text()
+    completed.args = argv
+    return completed
 
 
 def digest(path):
@@ -88,7 +99,7 @@ def main():
     connection.close()
     shutil.copyfile(db, copy)
 
-    build = run([str(COMPILER), str(ENTRY), "-o", str(run_dir / "probe.c")], run_dir)
+    build = run([str(COMPILER), str(ENTRY), "-o", str(run_dir / "probe.c")], run_dir, run_dir / "compile.stdout")
     case("bend-compile", build, run_dir / "compile.stdout")
     if build.returncode != 0:
         print(build.stdout)
@@ -97,14 +108,14 @@ def main():
         raise SystemExit(f"bend compile failed with exit {build.returncode}")
     EVIDENCE["generated_c_sha256"] = digest(run_dir / "probe.c")
 
-    link = run(["clang", "-O1", "-pthread", str(run_dir / "probe.c"), "-lsqlite3", "-lm", "-o", str(run_dir / "probe")], run_dir)
+    link = run(["clang", "-O1", "-pthread", str(run_dir / "probe.c"), "-lsqlite3", "-lm", "-o", str(run_dir / "probe")], run_dir, run_dir / "link.stdout")
     case("clang-link", link, run_dir / "link.stdout")
     if link.returncode != 0:
         print(link.stderr, file=sys.stderr)
         (run_dir / "evidence.json").write_text(json.dumps(EVIDENCE, indent=2))
         raise SystemExit(f"clang link failed with exit {link.returncode}")
 
-    probe = run([str(run_dir / "probe"), str(db), str(copy)], run_dir)
+    probe = run([str(run_dir / "probe"), str(db), str(copy)], run_dir, run_dir / "probe.stdout")
     case("probe", probe, run_dir / "probe.stdout")
     print(probe.stdout, end="")
     if probe.stderr:

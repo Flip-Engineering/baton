@@ -18,6 +18,37 @@ import ../coordinator/commands.bend as C
 def runtime_epoch_column() -> String:
   "epoch TEXT NOT NULL"
 
+# The canonical unsigned decimal counter profile: `0`, or a nonzero digit followed by
+# digits. The profile is exact text, so a sign, a fraction, an exponent, an empty
+# token, a leading zero or any non-digit refuses; length is unbounded.
+def head_of(s: String) -> String:
+  match s:
+    case SNil{}: ""
+    case SCon{c, rest}: SCon{c, SNil{}}
+
+def tail_of(s: String) -> String:
+  match s:
+    case SNil{}: SNil{}
+    case SCon{c, rest}: rest
+
+def is_digit(c: Char) -> Bool:
+  +code = Char.to_u32(c)
+  Bool.and(U32.is_lt(47, code), U32.is_lt(code, 58))
+
+def digits_only(s: String) -> Bool:
+  match s:
+    case SNil{}: True{}
+    case SCon{c, rest}: Bool.and(is_digit(c), digits_only(rest))
+
+def runtime_epoch_ok(+value: String) -> Bool:
+  match value:
+    case "":
+      False{}
+    case "0":
+      True{}
+    case other:
+      Bool.and(Bool.not(String.eq(head_of(other), "0")), digits_only(tail_of(other)))
+
 def runtime_epoch_value(+epoch: String) -> String:
   C.q(epoch)
 

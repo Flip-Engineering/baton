@@ -622,27 +622,37 @@ static int baton_sql_utf8_ok(const unsigned char *text, size_t length) {
    it comes from sqlite3_mprintf and is released with sqlite3_free by the caller. The
    prepare/step status is preserved rather than translated into encoding text, and
    the encoding refusal is reported only when the pragma itself was read. */
-static int baton_sql_encoding_ok(sqlite3 *db, char **error) {
+/* A distinct status for an encoding this operation observed and refuses, separate
+   from the SQLite status of a failed prepare, step or finalize. SQLITE_MISMATCH is a
+   real SQLite code and carries no SQLite text of its own, so the helper supplies it. */
+#define BATON_SQL_NOT_UTF8 SQLITE_MISMATCH
+
+static int baton_sql_encoding_status(sqlite3 *db, char **error) {
   sqlite3_stmt *statement = NULL;
   int status = sqlite3_prepare_v2(db, "PRAGMA encoding;", -1, &statement, NULL);
   if (status != SQLITE_OK) {
     *error = sqlite3_mprintf("%s", sqlite3_errmsg(db));
-    return 0;
+    return status;
   }
   status = sqlite3_step(statement);
   if (status != SQLITE_ROW) {
+    if (status == SQLITE_DONE) status = SQLITE_ERROR;
     *error = sqlite3_mprintf("%s", sqlite3_errmsg(db));
     sqlite3_finalize(statement);
-    return 0;
+    return status;
   }
   const unsigned char *value = sqlite3_column_text(statement, 0);
-  int ok = value && sqlite3_stricmp((const char *)value, "UTF-8") == 0;
-  if (!ok) *error = sqlite3_mprintf("database encoding is not UTF-8");
-  if (sqlite3_finalize(statement) != SQLITE_OK && ok) {
+  int utf8 = value && sqlite3_stricmp((const char *)value, "UTF-8") == 0;
+  int final = sqlite3_finalize(statement);
+  if (final != SQLITE_OK) {
     *error = sqlite3_mprintf("%s", sqlite3_errmsg(db));
-    return 0;
+    return final;
   }
-  return ok;
+  if (!utf8) {
+    *error = sqlite3_mprintf("database encoding is not UTF-8");
+    return BATON_SQL_NOT_UTF8;
+  }
+  return SQLITE_OK;
 }
 
 static void baton_sql_read_call(IoWork *w) {
@@ -658,7 +668,10 @@ static void baton_sql_read_call(IoWork *w) {
        setting; the opened database's encoding is admitted before any caller SQL
        because compact projections measure bytes with CAST(text AS BLOB). */
     call->code = sqlite3_exec(db, "PRAGMA foreign_keys=ON;", NULL, NULL, &error);
-    if (call->code == SQLITE_OK && !baton_sql_encoding_ok(db, &error)) call->code = SQLITE_ERROR;
+    if (call->code == SQLITE_OK) {
+      int encoding = baton_sql_encoding_status(db, &error);
+      if (encoding != SQLITE_OK) call->code = encoding;
+    }
     if (call->code == SQLITE_OK)
       call->code = sqlite3_exec(db, call->sql, baton_sql_row, call, &error);
     if (call->code != SQLITE_OK) {

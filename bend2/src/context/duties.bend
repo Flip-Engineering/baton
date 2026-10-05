@@ -165,6 +165,13 @@ def duty_after(result: Result<&1,&1,U32 & String,String>) -> IO(Result<&1,&1,U32
     case Fail{error}: IO.pure(Result<&1,&1,U32 & String,DutyView>, Fail{error})
     case Done{+rows}: IO.pure(Result<&1,&1,U32 & String,DutyView>, Done{duty_view(rows)})
 
+# A safe rendering of the exported view for a caller that only needs the disposition.
+def duty_text(view: DutyView) -> String:
+  match view:
+    case DutyNone{}: "none"
+    case DutyRows{count, text}: "rows:" ++ U32.show(count)
+    case DutyUnreadable{line, answer}: "unreadable:" ++ line
+
 # The bound enumeration. A failed read stays a failure and an unreadable answer is
 # never a settled set.
 def duties(+db: String, +binding: String) -> IO(Result<&1,&1,U32 & String,DutyView>):

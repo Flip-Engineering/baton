@@ -782,3 +782,45 @@ law a_repeated_event_identity_admits_only_an_identical_replay:
 
 def a_repeated_event_identity_admits_only_an_identical_replay(query,role,incarnation,next,capture,evidence,progress,recorded):
   {==}
+
+law a_large_canonical_counter_is_admitted:
+  {ContextStore.runtime_epoch_ok("12345678901234567890123456789012345") == True{} : Bool}
+
+def a_large_canonical_counter_is_admitted():
+  {==}
+
+law a_leading_zero_counter_is_refused:
+  {ContextStore.runtime_epoch_ok("0123") == False{} : Bool}
+
+def a_leading_zero_counter_is_refused():
+  {==}
+
+law a_signed_or_fractional_counter_is_refused:
+  {ContextStore.runtime_epoch_ok("-1") == False{} : Bool}
+
+def a_signed_or_fractional_counter_is_refused():
+  {==}
+
+law an_empty_counter_is_refused:
+  {ContextStore.runtime_epoch_ok("") == False{} : Bool}
+
+def an_empty_counter_is_refused():
+  {==}
+
+law an_unreadable_enumeration_is_not_a_settled_set:
+  {ContextDuties.duty_text(ContextDuties.duty_view("short\n")) == "unreadable:short" : String}
+
+def an_unreadable_enumeration_is_not_a_settled_set():
+  {==}
+
+law a_settled_enumeration_names_no_duty:
+  {ContextDuties.duty_text(ContextDuties.duty_view("")) == "none" : String}
+
+def a_settled_enumeration_names_no_duty():
+  {==}
+
+law a_duty_enumeration_reports_its_count:
+  {ContextDuties.duty_text(ContextDuties.duty_view("notice\tq1\t\t\tnotice\treport\n")) == "rows:1" : String}
+
+def a_duty_enumeration_reports_its_count():
+  {==}
