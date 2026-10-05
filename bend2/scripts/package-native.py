@@ -172,6 +172,19 @@ def binding_bytes(controls):
     return b'\n'.join(sorted(rows))
 
 
+def canonical_record_bytes(record):
+    """The complete control record as canonical bytes, for identity.
+
+    The set binding uses the checker's five-field serialization; this is the
+    second layer, over every field the discovery record carries (definition
+    metadata and expectation included), so a name alone cannot join a record to
+    another. Keys are sorted and the separators are fixed, so the digest depends
+    only on the values.
+    """
+    return json.dumps(record, sort_keys=True, separators=(',', ':'),
+                      ensure_ascii=False).encode('utf-8')
+
+
 def is_finite(value):
     return isinstance(value, (int, float)) and not isinstance(value, bool) and math.isfinite(value)
 
@@ -744,10 +757,17 @@ def controls_evidence(directory, initial, compiler):
                     and verdict.get('evidence_verified') is True,
                     'The checker classifier did not qualify this control as an intended refusal: '
                     + json.dumps(identity) + ' ' + json.dumps(verdict.get('class')))
-            verdicts[identity] = {'class': verdict.get('class'), 'match': verdict.get('match'),
+            verdicts[identity] = {'id': identity, 'class': verdict.get('class'),
+                                  'law': verdict.get('law'),
+                                  'attributed_law': verdict.get('attributed_law'),
+                                  'match': verdict.get('match'),
                                   'qualified': verdict.get('qualified'),
                                   'diagnostic_sha256': verdict.get('diagnostic_sha256'),
-                                  'evidence_verified': verdict.get('evidence_verified')}
+                                  'evidence_verified': verdict.get('evidence_verified'),
+                                  'definition_sha256': control['definition_sha256'],
+                                  'case_sha256': hashlib.sha256(
+                                      canonical_record_bytes(control)).hexdigest(),
+                                  'group': module}
             require(verdict.get('attributed_law') == control['law']
                     and verdict.get('law') == control['law'],
                     'The classified diagnostic names another law: ' + json.dumps(identity))
