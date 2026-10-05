@@ -15,10 +15,20 @@ import time
 
 FIELDS = ["pid", "ppid", "pgid", "uid", "rss", "vsz", "%cpu", "time", "etime", "state"]
 
-RELEASE_BIN = os.environ.get(
-    "BATON2_RELEASE",
-    "/Users/wahargis/.local/share/baton2/releases/1.1.0-fca7af876c8260c32d17f95f3e19bc68ee1bf561/bin/baton2")
-GIT_SERIES = "libexec/baton2/git-series.mjs"
+RECORDED_RELEASE_BIN = "/Users/wahargis/.local/share/baton2/releases/1.1.0-fca7af876c8260c32d17f95f3e19bc68ee1bf561/bin/baton2"
+
+
+def resolve_release_bin():
+    """BATON2_RELEASE overrides the recorded laptop release; a bad value stops."""
+    configured = os.environ.get("BATON2_RELEASE")
+    if configured:
+        if not os.path.isfile(configured) or not os.access(configured, os.X_OK):
+            raise SystemExit("BATON2_RELEASE is set but is not an executable file: %s" % configured)
+        return configured
+    return RECORDED_RELEASE_BIN
+
+
+RELEASE_BIN = resolve_release_bin()
 
 
 def parse_cpu_time(value):

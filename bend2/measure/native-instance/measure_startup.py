@@ -1,23 +1,50 @@
 #!/usr/bin/env python3
 """Measure startup costs for the native CLI, the identity wrapper and Node.
 
-Writes evidence/startup-costs.json. Each measurement runs several repetitions
-and reports minimum and median wall time.
+Writes a JSON document of wall-time measurements. Each measurement runs several
+repetitions and reports minimum, median and maximum wall time.
+
+Every executable path is recorded in the output. `BATON2_RELEASE` overrides the
+release binary, `BATON2_GIT_SERIES` the identity helper and `BATON2_GIT_REGISTRY`
+the series registry. A configured path that is not an executable file stops the
+run instead of falling back to the recorded laptop path. Remote runs must set
+these explicitly; the recorded defaults describe the retained laptop baseline.
 
 Usage: measure_startup.py FIXTURE_DATABASE OUT_PATH
 """
 import json
+import os
 import statistics
 import subprocess
 import sys
 import time
 
-RELEASE = os.environ.get(
-    "BATON2_RELEASE",
-    "/Users/wahargis/.local/share/baton2/releases/1.1.0-fca7af876c8260c32d17f95f3e19bc68ee1bf561/bin/baton2")
+RECORDED_RELEASE = "/Users/wahargis/.local/share/baton2/releases/1.1.0-fca7af876c8260c32d17f95f3e19bc68ee1bf561/bin/baton2"
+RECORDED_REGISTRY = "/Users/wahargis/.config/baton/github-apps/series.json"
+
+
+def resolve_executable(env_name, recorded):
+    configured = os.environ.get(env_name)
+    if configured:
+        if not os.path.isfile(configured) or not os.access(configured, os.X_OK):
+            raise SystemExit("%s is set but is not an executable file: %s" % (env_name, configured))
+        return configured
+    return recorded
+
+
+def resolve_path(env_name, recorded):
+    configured = os.environ.get(env_name)
+    if configured:
+        if not os.path.exists(configured):
+            raise SystemExit("%s is set but does not exist: %s" % (env_name, configured))
+        return configured
+    return recorded
+
+
+RELEASE = resolve_executable("BATON2_RELEASE", RECORDED_RELEASE)
 RELEASE_ROOT = os.path.dirname(os.path.dirname(RELEASE))
-HELPER = os.environ.get("BATON2_GIT_SERIES", os.path.join(RELEASE_ROOT, "libexec/baton2/git-series.mjs"))
-REGISTRY = os.environ.get("BATON2_GIT_REGISTRY", "/Users/wahargis/.config/baton/github-apps/series.json")
+HELPER = resolve_executable("BATON2_GIT_SERIES", os.path.join(RELEASE_ROOT, "libexec/baton2/git-series.mjs"))
+REGISTRY = resolve_path("BATON2_GIT_REGISTRY", RECORDED_REGISTRY)
 MODEL = os.environ.get("BATON2_MEASURE_MODEL", "deepseek/deepseek-flash")
 
 

@@ -5,26 +5,32 @@ Each attempt keeps its own directory `<database>.attempt-<hex(attempt id)>`. The
 keeper reaps the native child and writes the raw wait status to `status` there,
 beside `native.pid`, `native.birth`, `launch`, `released` and `acknowledged`.
 This tool reads those files, decodes the wait status and the attempt identity,
-and takes the operational state from scoped CLI reads: `players` for the current
-execution pointer and session rows, and `turns <session>` for the per-attempt
-report and event. Raw CLI output is kept beside the record. It writes no state.
+and takes operational state only from CLI captures that were produced by a
+direct CLI invocation outside this tool (see `capture-cli-reads.sh`). It never
+runs a CLI command, never writes outside its output file, and never treats a
+missing or failed capture as an empty successful result.
+
+Modes:
+  attempt_exit_records.py DATABASE OUT.json [--captures CAPTURE_DIR]
+  attempt_exit_records.py --list-sessions DATABASE
 
 Route provenance. The attempt's configured route comes from its own manifest
 argv, so it is per-attempt evidence. A harness-reported route is recorded only
 from that attempt's own retained native stdout spool, which the keeper unlinks
 at acknowledgement. Absence therefore means unavailable in the retained
 evidence that was inspected; it is not evidence that the attempt produced no
-model frame. The inspected prefix is bounded, and the record states whether the
-spool was longer than that prefix, so an uninspected suffix stays distinct from
-an absence of a route frame.
-
-Usage: attempt_exit_records.py DATABASE OUT.json [--cli PATH]
+model frame. The prefix read is bounded in bytes, the record states the bytes
+read, whether end of file was reached, whether the spool changed during the
+read, how many lines could not be decoded as UTF-8, how many parsed frames were
+not objects or matched no recognised shape, and whether the final line is a
+partial frame. A successful full inspection is claimed only when end of file was
+reached, the spool did not change during the read, and every line was
+interpreted.
 """
 import glob
 import hashlib
 import json
 import os
-import subprocess
 import struct
 import sys
 import time
@@ -34,20 +40,24 @@ MANIFEST_MAGIC = b"BATONRP1"
 # harness route response lies in the first frames of the spool. Retained spools
 # reach hundreds of megabytes, so only a bounded prefix is read.
 SPOOL_PREFIX_BYTES = 4 << 20
-DEFAULT_CLI = ("/Users/wahargis/Development/Experiments/baton-bend2-root-delivery-20260928/"
-               ".scratch/semantic-context-20261005/worktrees/semantic-controls-interfaces-research/"
-               ".scratch/671-frozen-stable98/baton2")
+
 ROUTE_PROVENANCE = (
     "configured_route is read from each attempt's own manifest argv. observed_route is reported only "
     "from that attempt's retained native stdout spool, which the keeper unlinks at acknowledgement, so "
     "a missing observed_route means unavailable in the retained and inspected evidence, not that the "
-    "attempt produced no model frame. The spool read is bounded to a prefix; observed_route_state "
-    "distinguishes a route parsed from the spool, a spool inspected in full with no recognised route "
-    "frame, a prefix inspected with the suffix uninspected, and no retained spool. Recognised frames are "
-    "an OMP get_state response with data.model.provider and data.model.id, a run.model.configured "
-    "payload, and a message with provider and model. current_session_observation holds sessions rows as "
-    "they stand now; sessions.observed_model is one mutable session-level value and states nothing about "
-    "an earlier attempt of the same session.")
+    "attempt produced no model frame. The spool read is bounded to a byte prefix and reports the bytes "
+    "read, whether end of file was reached, whether the spool changed during the read, the count of "
+    "undecodable or uninterpreted lines and frames, and whether the final line is a partial frame. "
+    "observed_route_state is one of: route-parsed-from-retained-spool; "
+    "no-route-frame-in-fully-read-spool, claimed only when end of file was reached, the spool did not "
+    "change during the read, and every line was interpreted; no-route-frame-in-inspected-prefix, when "
+    "the prefix ended before end of file or a line could not be interpreted; "
+    "spool-changed-during-read, when the spool was removed or changed while it was read; "
+    "no-retained-spool. Recognised frames are an OMP get_state response with data.model.provider and "
+    "data.model.id, a run.model.configured payload, and a message with provider and model; other shapes "
+    "are counted as unrecognised rather than interpreted. current_session_observation and per-attempt "
+    "reports come from CLI captures supplied on the command line; sessions.observed_model is one "
+    "mutable session-level value and states nothing about an earlier attempt of the same session.")
 
 
 def decode_attempt_id(name):
@@ -111,61 +121,167 @@ def configured_route(manifest):
 
 
 def frame_route(frame):
-    """Return the route a recognised harness frame reports, or None."""
+    """Return the route a recognised harness frame reports, or None.
+
+    Every nested value is type-checked before use, so a frame with an unexpected
+    JSON shape is unrecognised rather than an error.
+    """
+    if not isinstance(frame, dict):
+        return None
     if frame.get("command") == "get_state":
-        model = (frame.get("data") or {}).get("model") or {}
-        if model.get("provider") and model.get("id"):
+        data = frame.get("data")
+        model = data.get("model") if isinstance(data, dict) else None
+        if isinstance(model, dict) and isinstance(model.get("provider"), str) and isinstance(model.get("id"), str):
             return {"route": "%s/%s" % (model["provider"], model["id"]),
                     "frame": "command=get_state data.model.provider+id",
-                    "frame_success": frame.get("success")}
-    payload = frame.get("payload") or {}
-    if (frame.get("payload_type") or payload.get("kind")) == "run.model.configured" and payload.get("model_id"):
+                    "frame_success": frame.get("success") if isinstance(frame.get("success"), bool) else None}
+    payload = frame.get("payload")
+    payload_type = frame.get("payload_type")
+    if not isinstance(payload_type, str):
+        payload_type = payload.get("kind") if isinstance(payload, dict) else None
+    if payload_type == "run.model.configured" and isinstance(payload, dict) and isinstance(payload.get("model_id"), str):
         return {"route": payload["model_id"], "frame": "payload_type=run.model.configured"}
     message = frame.get("message")
-    if isinstance(message, dict) and message.get("provider") and message.get("model"):
+    if isinstance(message, dict) and isinstance(message.get("provider"), str) and isinstance(message.get("model"), str):
         return {"route": "%s/%s" % (message["provider"], message["model"]),
                 "frame": "message.provider+model"}
     return None
 
 
-def retained_observed_route(directory):
-    """Harness-reported route from this attempt's retained stdout spool.
+def read_bounded_bytes(path, limit, listing_stat):
+    """Read at most limit bytes and report exactly what was inspected.
 
-    Returns None when no spool is retained. Otherwise returns the parsed route
-    or a state that distinguishes a fully inspected spool from an inspected
-    prefix with an uninspected suffix.
+    Returns (blob or None, record). End of file is established by a read past
+    the prefix. A spool that was removed or replaced between the directory
+    listing and the read, or that changed size or modification time during the
+    read, is reported as changed rather than as a completed inspection.
     """
+    record = {"path": path, "limit_bytes": limit, "bytes_read": 0, "reached_eof": False,
+              "changed_during_read": False, "opened": False, "error": None,
+              "size_at_listing": listing_stat.st_size if listing_stat else None,
+              "size_after_read": None, "prefix_sha256": None}
+    try:
+        with open(path, "rb") as handle:
+            record["opened"] = True
+            opened = os.fstat(handle.fileno())
+            if listing_stat and (opened.st_dev, opened.st_ino) != (listing_stat.st_dev, listing_stat.st_ino):
+                record["changed_during_read"] = True
+            blob = handle.read(limit)
+            extra = handle.read(1)
+            record["bytes_read"] = len(blob)
+            record["reached_eof"] = not extra
+            record["prefix_sha256"] = hashlib.sha256(blob).hexdigest()
+            after = os.fstat(handle.fileno())
+            record["size_after_read"] = after.st_size
+            if opened.st_size != after.st_size or opened.st_mtime_ns != after.st_mtime_ns:
+                record["changed_during_read"] = True
+        current = os.stat(path)
+        if (current.st_dev, current.st_ino) != (opened.st_dev, opened.st_ino) or current.st_size != after.st_size:
+            record["changed_during_read"] = True
+    except OSError as error:
+        record["error"] = "errno %s" % error.errno
+        return None, record
+    return blob, record
+
+
+def interpret_prefix(blob, reached_eof):
+    """Split a byte prefix into lines and count what was not interpreted."""
+    stats = {"lines": 0, "lines_undecodable": 0, "lines_non_json": 0, "frames_non_object": 0,
+             "frames_unrecognised": 0, "frames_recognised": 0, "trailing_partial_line": False}
+    if blob is None or not blob:
+        return None, stats
+    # A final line is partial only when the prefix ended before end of file and
+    # the last byte is not a newline. At end of file an unterminated final line
+    # is a complete line.
+    partial_final = (not reached_eof) and not blob.endswith(b"\n")
+    raw_lines = blob.split(b"\n")
+    if partial_final:
+        # The last element is an incomplete line; it is never parsed because the
+        # frame it belongs to may continue beyond the inspected prefix.
+        raw_lines = raw_lines[:-1]
+        stats["trailing_partial_line"] = True
+    if raw_lines and raw_lines[-1] == b"":
+        raw_lines = raw_lines[:-1]
+    for raw in raw_lines:
+        line = raw.strip()
+        if not line:
+            continue
+        stats["lines"] += 1
+        try:
+            text = line.decode("utf-8")
+        except UnicodeDecodeError:
+            stats["lines_undecodable"] += 1
+            continue
+        if not text.startswith("{"):
+            stats["lines_non_json"] += 1
+            continue
+        try:
+            frame = json.loads(text)
+        except json.JSONDecodeError:
+            stats["lines_non_json"] += 1
+            continue
+        if not isinstance(frame, dict):
+            stats["frames_non_object"] += 1
+            continue
+        found = frame_route(frame)
+        if found:
+            stats["frames_recognised"] += 1
+            return found, stats
+        stats["frames_unrecognised"] += 1
+    return None, stats
+
+
+def retained_observed_route(directory, listing_stat):
+    """Harness-reported route from this attempt's retained stdout spool."""
     path = os.path.join(directory, "stdout")
     if not os.path.exists(path):
         return None
-    size = os.path.getsize(path)
-    with open(path, "r", errors="replace") as handle:
-        prefix = handle.read(SPOOL_PREFIX_BYTES)
-    complete = len(prefix) >= size
-    for line in prefix.splitlines():
-        line = line.strip()
-        if not line.startswith("{"):
-            continue
-        try:
-            frame = json.loads(line)
-        except json.JSONDecodeError:
-            continue
-        if isinstance(frame, dict):
-            found = frame_route(frame)
-            if found:
-                return {"route": found["route"], "source": "stdout", "frame": found["frame"],
-                        "spool_bytes": size, "prefix_bytes_read": len(prefix),
-                        "spool_fully_inspected": complete,
-                        "state": "route-parsed-from-retained-spool"}
-    return {"route": None, "source": "stdout", "frame": None, "spool_bytes": size,
-            "prefix_bytes_read": len(prefix), "spool_fully_inspected": complete,
-            "state": ("no-route-frame-in-retained-spool" if complete
-                      else "no-route-frame-in-inspected-prefix")}
+    blob, read = read_bounded_bytes(path, SPOOL_PREFIX_BYTES, listing_stat)
+    found, stats = interpret_prefix(blob, read["reached_eof"])
+    record = dict(read, **stats)
+    record["source"] = "stdout"
+    record["interpreted_everything"] = bool(
+        read["reached_eof"] and not read["changed_during_read"] and read["error"] is None
+        and stats["lines_undecodable"] == 0 and stats["trailing_partial_line"] is False
+        and stats["frames_non_object"] == 0 and stats["frames_unrecognised"] == 0)
+    if found:
+        record["route"] = found["route"]
+        record["frame"] = found["frame"]
+        record["frame_success"] = found.get("frame_success")
+        record["state"] = "route-parsed-from-retained-spool"
+    else:
+        record["route"] = None
+        record["frame"] = None
+        if read["error"] is not None or read["changed_during_read"]:
+            record["state"] = "spool-changed-during-read"
+        elif record["interpreted_everything"]:
+            record["state"] = "no-route-frame-in-fully-read-spool"
+        else:
+            record["state"] = "no-route-frame-in-inspected-prefix"
+    return record
 
 
 def size_of(path):
     try:
         return os.path.getsize(path)
+    except OSError:
+        return None
+
+
+def session_names(database):
+    """Session ids discovered from attempt directory names, with no file reads."""
+    suffix = os.path.basename(database) + ".attempt-"
+    sessions = set()
+    for directory in glob.glob(database + ".attempt-*"):
+        attempt = decode_attempt_id(os.path.basename(directory)[len(suffix):])
+        if attempt and attempt.count(":") >= 1:
+            sessions.add(attempt.split(":")[1])
+    return sorted(sessions)
+
+
+def listing_stat(path):
+    try:
+        return os.stat(path)
     except OSError:
         return None
 
@@ -191,7 +307,7 @@ def attempt_records(database):
         manifest_path = os.path.join(directory, "manifest")
         record["manifest"] = read_manifest(manifest_path) if record["files"]["manifest"] else None
         record["configured_route"] = configured_route(record["manifest"])
-        observed = retained_observed_route(directory)
+        observed = retained_observed_route(directory, listing_stat(os.path.join(directory, "stdout")))
         record["observed_route"] = observed
         record["observed_route_state"] = observed["state"] if observed else "no-retained-spool"
         record["native_stderr_bytes"] = size_of(os.path.join(directory, "native.stderr"))
@@ -200,85 +316,151 @@ def attempt_records(database):
     return records
 
 
-def cli_read(cli, database, args, raw_directory):
-    """Run one scoped CLI read and keep its exact bytes."""
-    argv = [cli, database] + list(args)
-    done = subprocess.run(argv, capture_output=True, text=True)
-    name = "-".join([str(part) for part in args]).replace("/", "_")[:120] + ".json"
-    path = os.path.join(raw_directory, name)
-    with open(path, "w") as handle:
-        handle.write(done.stdout)
-    entry = {"argv": argv, "exit": done.returncode, "stdout_bytes": len(done.stdout),
-             "stderr": done.stderr[:2000], "raw": path}
-    try:
-        entry["document"] = json.loads(done.stdout)
-    except json.JSONDecodeError:
+def load_captures(directory, database):
+    """Consume CLI captures. This never runs a command.
+
+    A capture set is a directory written by `capture-cli-reads.sh`: a
+    `capture.txt` header with `cli`, `cli_sha256`, `database` and `captured_at`,
+    one `<name><TAB><exit>` line per read, and `<name>.stdout`, `<name>.stderr`
+    and `<name>.exit` for each read. A read whose exit file is missing or does
+    not parse as zero is recorded as failed with its raw sizes and hashes, and
+    its output is not interpreted.
+    """
+    result = {"directory": directory, "state": "not-supplied", "header": {}, "reads": {}}
+    if not directory or not os.path.isdir(directory):
+        return result
+    manifest = os.path.join(directory, "capture.txt")
+    if not os.path.exists(manifest):
+        result["state"] = "manifest-missing"
+        return result
+    names = []
+    with open(manifest, "r", errors="replace") as handle:
+        for line in handle:
+            line = line.rstrip("\n")
+            if not line or line.startswith("#"):
+                continue
+            if "\t" not in line and "=" in line:
+                key, value = line.split("=", 1)
+                result["header"][key.strip()] = value.strip()
+            elif "\t" in line:
+                names.append(line.split("\t", 1)[0].strip())
+    result["header"]["capture_file"] = manifest
+    recorded_database = result["header"].get("database")
+    if recorded_database and database and os.path.realpath(recorded_database) != os.path.realpath(database):
+        result["state"] = "database-mismatch"
+        result["header"]["requested_database"] = database
+        return result
+    result["state"] = "loaded"
+    for name in names:
+        entry = {"name": name}
+        for suffix in ("stdout", "stderr", "exit"):
+            path = os.path.join(directory, "%s.%s" % (name, suffix))
+            entry[suffix + "_path"] = path
+            if not os.path.exists(path):
+                entry[suffix] = None
+                continue
+            with open(path, "rb") as handle:
+                blob = handle.read()
+            entry[suffix] = {"bytes": len(blob), "sha256": hashlib.sha256(blob).hexdigest()}
+            if suffix == "stdout":
+                entry["_stdout_bytes"] = blob
+            if suffix == "exit":
+                entry["_exit_bytes"] = blob
+        exit_bytes = entry.pop("_exit_bytes", None)
+        try:
+            entry["exit_code"] = int((exit_bytes or b"").strip())
+        except ValueError:
+            entry["exit_code"] = None
+        entry["state"] = "ok" if entry["exit_code"] == 0 else (
+            "failed" if entry["exit_code"] is not None else "no-exit-record")
         entry["document"] = None
-    return entry
+        if entry["state"] == "ok":
+            stdout_bytes = entry.pop("_stdout_bytes", b"")
+            try:
+                entry["document"] = json.loads(stdout_bytes.decode("utf-8"))
+            except (UnicodeDecodeError, json.JSONDecodeError) as error:
+                entry["state"] = "unparsable-stdout"
+                entry["error"] = str(error)
+        else:
+            entry.pop("_stdout_bytes", None)
+        result["reads"][name] = entry
+    return result
+
+
+def attempt_view(captures):
+    """Session-level and attempt-level state from CLI captures, or unavailable."""
+    current = {}
+    reports = {}
+    if captures["state"] != "loaded":
+        return current, reports, "cli-reads-%s" % captures["state"]
+    players = captures["reads"].get("players")
+    if players and players["state"] == "ok" and isinstance(players["document"], list):
+        for row in players["document"]:
+            if not isinstance(row, dict):
+                continue
+            execution = row.get("execution")
+            execution = execution if isinstance(execution, dict) else {}
+            current[row.get("id")] = {"current_attempt": execution.get("attempt"),
+                                      "mode": execution.get("mode"), "phase": execution.get("phase"),
+                                      "status": execution.get("status")}
+    for name, entry in captures["reads"].items():
+        if not name.startswith("turns-") or entry["state"] != "ok" or not isinstance(entry["document"], list):
+            continue
+        for row in entry["document"]:
+            if not isinstance(row, dict):
+                continue
+            reports[row.get("id")] = {"report_body": (row.get("reportBody") or "")[:4000]
+                                      if isinstance(row.get("reportBody"), str) else None,
+                                      "event_type": row.get("eventType"),
+                                      "receipt": row.get("receipt")}
+    return current, reports, "loaded"
 
 
 def main():
     arguments = sys.argv[1:]
+    if arguments[:1] == ["--list-sessions"]:
+        for session in session_names(arguments[1]):
+            print(session)
+        return
     database, out_path = arguments[0], arguments[1]
-    cli = os.environ.get("BATON2_CLI", DEFAULT_CLI)
-    if "--cli" in arguments:
-        cli = arguments[arguments.index("--cli") + 1]
-    if not os.path.exists(cli):
-        fallback = "/Users/wahargis/.local/share/baton2/releases/1.1.0-fca7af876c8260c32d17f95f3e19bc68ee1bf561/bin/baton2"
-        cli = fallback if os.path.exists(fallback) else cli
+    capture_directory = None
+    if "--captures" in arguments:
+        capture_directory = arguments[arguments.index("--captures") + 1]
 
     records = attempt_records(database)
-    raw_directory = os.path.join(os.path.dirname(os.path.abspath(out_path)), "cli-reads")
-    os.makedirs(raw_directory, exist_ok=True)
-
-    reads = {}
-    if os.path.exists(cli):
-        reads["players"] = cli_read(cli, database, ["players"], raw_directory)
-        sessions = sorted({record["session"] for record in records if record["session"]})
-        for session in sessions:
-            reads["turns:" + session] = cli_read(cli, database, ["turns", session], raw_directory)
-
-    current = {}
-    for row in (reads.get("players", {}).get("document") or []):
-        execution = row.get("execution") or {}
-        current[row.get("id")] = {"current_attempt": execution.get("attempt"),
-                                  "mode": execution.get("mode"), "phase": execution.get("phase"),
-                                  "status": execution.get("status")}
-    reports = {}
-    for key, entry in reads.items():
-        if not key.startswith("turns:"):
-            continue
-        for row in (entry.get("document") or []):
-            reports[row.get("id")] = {"report_body": (row.get("reportBody") or "")[:4000],
-                                      "event_type": row.get("eventType"), "receipt": row.get("receipt")}
+    captures = load_captures(capture_directory, database)
+    current, reports, cli_state = attempt_view(captures)
 
     observed_available = observed_agree = 0
     states = {}
     for record in records:
         states[record["observed_route_state"]] = states.get(record["observed_route_state"], 0) + 1
-        record["current_execution"] = current.get(record["session"])
-        record["report"] = reports.get(record["attempt"])
+        record["current_execution"] = current.get(record["session"]) if cli_state == "loaded" else None
+        record["report"] = reports.get(record["attempt"]) if cli_state == "loaded" else None
         observed = record["observed_route"]
         if observed and observed.get("route"):
             observed_available += 1
             if (record["configured_route"] or {}).get("model") == observed["route"]:
                 observed_agree += 1
 
+    capture_summary = {"state": captures["state"], "directory": captures["directory"],
+                       "header": captures["header"],
+                       "reads": {name: {"state": entry["state"], "exit_code": entry["exit_code"],
+                                        "stdout": entry.get("stdout"), "stderr": entry.get("stderr"),
+                                        "stdout_path": entry.get("stdout_path")}
+                                 for name, entry in captures["reads"].items()}}
     document = {
         "database": database,
         "attempt_count": len(records),
         "captured_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
-        "cli": {"path": cli,
-                "sha256": hashlib.sha256(open(cli, "rb").read()).hexdigest() if os.path.exists(cli) else None,
-                "reads": {key: {"argv": value["argv"], "exit": value["exit"],
-                                "stdout_bytes": value["stdout_bytes"], "raw": value["raw"]}
-                          for key, value in reads.items()}},
+        "cli_captures": capture_summary,
+        "cli_state": cli_state,
         "route_provenance": ROUTE_PROVENANCE,
         "observed_route_summary": {"available": observed_available,
                                    "unavailable": len(records) - observed_available,
                                    "matches_configured": observed_agree,
                                    "states": states},
-        "current_session_observation": current,
+        "current_session_observation": current if cli_state == "loaded" else None,
         "attempts": records,
     }
     with open(out_path, "w") as handle:
@@ -294,9 +476,9 @@ def main():
             key = "exit %s" % record["exit"]["exit"]
         histogram[key] = histogram.get(key, 0) + 1
     print(json.dumps({"database": database, "attempt_count": len(records),
-                      "exit_histogram": histogram,
-                      "observed_route": document["observed_route_summary"],
-                      "cli_reads": len(reads)}, indent=1, sort_keys=True))
+                      "exit_histogram": histogram, "cli_state": cli_state,
+                      "observed_route": document["observed_route_summary"]},
+                     indent=1, sort_keys=True))
 
 
 if __name__ == "__main__":

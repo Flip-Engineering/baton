@@ -16,15 +16,35 @@ Usage: fixture_run.py FIXTURE_DIR OMP_BIN MODEL EFFORT
 import glob
 import json
 import os
-import shutil
 import subprocess
 import sys
 import time
 
-RELEASE = os.environ.get(
-    "BATON2_RELEASE",
-    "/Users/wahargis/.local/share/baton2/releases/1.1.0-fca7af876c8260c32d17f95f3e19bc68ee1bf561/bin/baton2")
+RECORDED_RELEASE = "/Users/wahargis/.local/share/baton2/releases/1.1.0-fca7af876c8260c32d17f95f3e19bc68ee1bf561/bin/baton2"
 TASK = "Reply with exactly the text fixture-ok and nothing else. Do not use any tools."
+
+
+def resolve_release():
+    """BATON2_RELEASE overrides the recorded laptop release; a bad value stops."""
+    configured = os.environ.get("BATON2_RELEASE")
+    if configured:
+        if not os.path.isfile(configured) or not os.access(configured, os.X_OK):
+            raise SystemExit("BATON2_RELEASE is set but is not an executable file: %s" % configured)
+        return configured
+    return RECORDED_RELEASE
+
+
+def fresh_directory(path):
+    """Create a new run directory; never reuse or clear an existing one."""
+    if os.path.exists(path):
+        raise SystemExit(
+            "Refusing to reuse an existing directory: %s. Pass a new run directory so earlier "
+            "fixture databases, attempt directories and interrupted evidence stay in place." % path)
+    os.makedirs(path)
+    return path
+
+
+RELEASE = resolve_release()
 
 
 def ps_rows():
@@ -97,8 +117,7 @@ def main():
     fixture, omp_bin, model, effort = sys.argv[1:5]
     task_text = sys.argv[5] if len(sys.argv) > 5 else TASK
     label = sys.argv[6] if len(sys.argv) > 6 else "fixture-small"
-    shutil.rmtree(fixture, ignore_errors=True)
-    os.makedirs(fixture)
+    fresh_directory(fixture)
     workspace = os.path.join(fixture, "workspace")
     os.makedirs(workspace)
     database = os.path.join(fixture, "fixture.db")

@@ -15,7 +15,7 @@ import sys
 import time
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from fixture_run import RELEASE, roles  # noqa: E402
+from fixture_run import RELEASE, fresh_directory, roles  # noqa: E402
 
 SLOW_TASK = "Use the bash tool to run exactly: seq 1 400000 . Then reply with the total number of lines you observed."
 FOLLOWUP = "Reply with exactly the text queued-followup and nothing else."
@@ -28,8 +28,7 @@ def cli(database, *args):
 
 def main():
     fixture, omp_bin, model, effort = sys.argv[1:5]
-    subprocess.run(["rm", "-rf", fixture], check=True)
-    os.makedirs(fixture)
+    fresh_directory(fixture)
     workspace = os.path.join(fixture, "workspace")
     os.makedirs(workspace)
     database = os.path.join(fixture, "fixture.db")
