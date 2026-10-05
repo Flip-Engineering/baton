@@ -258,6 +258,12 @@ export function laws(modules) {
           'the current-scope admission was refused');
         assertEqual(refs.refDecision({ decision: 'refused', ok: true, condition: 'staleReference' }).condition,
           'staleReference', 'a refused decision lost its condition');
+        assertEqual(refs.refDecision({ decision: 'refused', ok: false, detail: 'x' }).condition,
+          'refDecisionRefused', 'a refusal without a condition was not refused');
+        assertEqual(refs.refDecision({ decision: 'unknown', ok: true }).condition,
+          'refDecisionMalformed', 'a candidate carrying a wrong decision was not malformed');
+        assertEqual(refs.refDecision({ ok: true }).condition,
+          'refDecisionRefused', 'a candidate carrying no decision was not refused');
       },
     },
     {

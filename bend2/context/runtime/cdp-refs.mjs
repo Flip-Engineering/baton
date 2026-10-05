@@ -144,11 +144,12 @@ export function admitRef(ref, scope) {
 
 // Normalize one candidate decision. The admitted shape is exactly
 // `{decision:'admitted', ok:true, identity}` with an identity that still validates; a
-// refusal keeps its condition; and null, undefined, a missing or unknown decision, a
-// non-object, a missing `ok`, a missing identity or a malformed identity refuses as
-// refDecisionMalformed. An admitted decision carrying `ok:false` refuses as
-// refDecisionContradictory rather than being silently believed, so `decision` and `ok`
-// can never disagree and no candidate is admitted on a partially written shape.
+// refusal keeps its condition; and the three rejecting shapes stay distinct: a candidate
+// carrying no decision refuses as refDecisionRefused, a candidate carrying a decision that
+// is neither admitted nor refused refuses as refDecisionMalformed, and an admitted decision
+// carrying `ok:false` refuses as refDecisionContradictory. A non-object, a missing `ok`, a
+// missing identity or a malformed identity refuses as refDecisionMalformed, so no candidate
+// is admitted on a partially written shape and `decision` and `ok` can never disagree.
 //
 // This function revalidates the identity's own shape and the decision's coherence only.
 // Admission against the live runtime, epoch and mutation generation remains
@@ -158,11 +159,17 @@ export function refDecision(value) {
   if (typeof value !== 'object' || value === null || Array.isArray(value)) {
     return refusedDecision('refDecisionMalformed', 'not a decision object');
   }
-  if (value.decision !== 'admitted') {
+  if (value.decision === undefined || value.decision === null) {
+    return refusedDecision('refDecisionRefused', 'the candidate carries no decision');
+  }
+  if (value.decision === 'refused') {
     return refusedDecision(
       typeof value.condition === 'string' ? value.condition : 'refDecisionRefused',
-      value.decision === 'refused' ? value.detail ?? null : `decision ${JSON.stringify(value.decision)}`,
+      value.detail ?? null,
     );
+  }
+  if (value.decision !== 'admitted') {
+    return refusedDecision('refDecisionMalformed', `decision ${JSON.stringify(value.decision)}`);
   }
   if (value.ok !== true) {
     return value.ok === false
