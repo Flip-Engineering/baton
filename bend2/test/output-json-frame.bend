@@ -112,6 +112,14 @@ def step_val(+left: F.FrameVal, +right: F.FrameVal) -> List<Work>:
         case F.FArr{_i}: diff()
         case F.FObj{b_members}: [WList{a_members, b_members}]
 
+# Element-with-list cons joins one task to a list, so a whole child list is joined by this
+# helper: an empty child list leaves the remaining worklist unchanged, and a nonempty one
+# conses its own actual task elements in order onto the joined remainder.
+def append_work(prefix: List<Work>, +remaining: List<Work>) -> List<Work>:
+  match prefix:
+    case Nil{}: remaining
+    case h <> t: h <> append_work(t, remaining)
+
 # One self-recursive comparison over the worklist. It matches its own list parameter, pushes
 # child tasks instead of calling a second recursive function, and stops at the first
 # difference, so no two helpers call each other.
@@ -121,8 +129,8 @@ def all_same(work: List<Work>) -> Bool:
     case h <> t:
       match h:
         case WDiff{}: False{}
-        case WVal{left, right}: all_same(step_val(left, right) <> t)
-        case WList{left, right}: all_same(step_list(left, right) <> t)
+        case WVal{left, right}: all_same(append_work(step_val(left, right), t))
+        case WList{left, right}: all_same(append_work(step_list(left, right), t))
 
 def same_val(left: F.FrameVal, right: F.FrameVal) -> Bool:
   all_same([WVal{left, right}])
@@ -306,6 +314,12 @@ def unequal_pairs() -> List<F.FrameResult & F.FrameResult & String>:
       "comparator-value-constructor"),
     (ok(varr([vnum([49]), vnum([50])]), [91, 49, 44, 50, 93]),
       ok(varr([vnum([50]), vnum([49])]), [91, 49, 44, 50, 93]), "comparator-array-order"),
+    (ok(varr([vnum([49]), vnum([50])]), [91, 49, 44, 50, 93]),
+      ok(varr([vnum([49]), vnum([51])]), [91, 49, 44, 50, 93]),
+      "comparator-array-later-child"),
+    (ok(varr([varr([vnum([49])]), varr([vnum([50])])]), [91, 91, 49, 93, 44, 91, 50, 93, 93]),
+      ok(varr([varr([vnum([49])]), varr([vnum([51])])]), [91, 91, 49, 93, 44, 91, 50, 93, 93]),
+      "comparator-nested-later-child"),
     (ok(varr([vnum([49])]), [91, 49, 93]), ok(varr([vnum([49]), vnum([49])]), [91, 49, 93]),
       "comparator-array-multiplicity"),
     (ok(vobj([vstr([97], [34, 97, 34]), vnum([49]), vstr([98], [34, 98, 34]), vnum([50])]),
