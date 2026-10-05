@@ -120,29 +120,39 @@ def case_findings(report, cases):
         return None, 'the structured fixture report is missing or not JSON'
     findings = {}
     for case in cases:
-        entries = report.get(case)
-        if not isinstance(entries, list) or len(entries) != 1:
-            findings[case] = {'outcome': 'inconclusive',
+        matches = [key for key in report if key == case or key.endswith('.' + case)]
+        if len(matches) != 1:
+            findings[case] = {'outcome': 'inconclusive', 'phase': None,
                               'reason': 'the case is not present exactly once in the report'}
+            continue
+        entries = report[matches[0]]
+        if not isinstance(entries, list) or len(entries) != 1 or not isinstance(entries[0], dict):
+            findings[case] = {'outcome': 'inconclusive', 'phase': None,
+                              'reason': 'the case entry is not a single structured record'}
             continue
         entry = entries[0]
         findings[case] = {'outcome': entry.get('outcome'),
                           'phase': entry.get('phase'),
                           'message': entry.get('message')}
+    extra = [key for key in report
+             if not any(key == case or key.endswith('.' + case) for case in cases)]
+    if extra:
+        findings['__extra__'] = {'outcome': 'inconclusive', 'phase': None,
+                                 'reason': f'the report carries unrequested entries: {extra}'}
     return findings, None
 
 
 def judge(findings, expected):
     problems = []
     for case, state in findings.items():
-        if state['outcome'] == 'skipped':
-            problems.append(f'{case} was skipped')
-        elif state['phase'] != 'test':
-            problems.append(f'{case} failed in its {state["phase"]} phase')
-        elif state['outcome'] == 'error':
-            problems.append(f'{case} raised an error rather than failing an assertion')
-        elif state['outcome'] == 'inconclusive':
+        if state.get('outcome') == 'inconclusive':
             problems.append(f'{case}: {state.get("reason", "no structured result")}')
+        elif state.get('outcome') == 'skipped':
+            problems.append(f'{case} was skipped')
+        elif state.get('phase') != 'test':
+            problems.append(f'{case} failed in its {state.get("phase")} phase')
+        elif state.get('outcome') == 'error':
+            problems.append(f'{case} raised an error rather than failing an assertion')
     return problems
 
 
@@ -201,8 +211,26 @@ def main(argv=None):
                    if entry['name'] in CONSUME_CONTROLS}
     if sorted(definitions) != sorted(CONSUME_CONTROLS):
         summary['failures'].append('a consume control has no definition')
-    if 'targets' in json.dumps(controls['control_expectations']):
-        summary['failures'].append('the mapping carries a descriptive targets duplicate')
+    def no_duplicates(pairs):
+        seen = set()
+        for key, _value in pairs:
+            if key in seen:
+                raise ValueError(f'duplicate key {key}')
+            seen.add(key)
+        return dict(pairs)
+
+    try:
+        json.loads(CONTROLS.read_text(), object_pairs_hook=no_duplicates)
+    except ValueError as error:
+        summary['failures'].append(f'the control file is not a clean mapping: {error}')
+    definition_names = []
+    for entry in controls['controls']:
+        name = entry.get('name')
+        if name in definition_names:
+            summary['failures'].append(f'duplicate control definition {name}')
+        definition_names.append(name)
+        if 'targets' in entry:
+            summary['failures'].append(f'control {name} still carries a descriptive targets field')
 
     if summary['failures']:
         print(json.dumps(summary, indent=2))

@@ -711,7 +711,7 @@ if __name__ == '__main__':
         loader = unittest.TestLoader()
         suite = unittest.TestSuite()
         for name in names:
-            suite.addTests(loader.loadTestsFromName(name))
+            suite.addTests(loader.loadTestsFromName(name, sys.modules[__name__]))
         result = StructuredReport()
         suite.run(result)
         pathlib.Path(report).write_text(json.dumps(result.entries, indent=2, sort_keys=True))
