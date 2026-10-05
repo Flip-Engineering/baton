@@ -275,7 +275,7 @@ def register_decided(+registration: Registration, +observed: Generation, identit
       case other: match busy:
         case True{}: registration
         case other: match revision:
-          case True{}: Registration{reg_identity_of(registration),reg_generation_of(registration),reg_database_of(registration),reg_owner_of(registration),reg_request_of(registration),reg_session_of(registration),reg_adoptions_of(registration),reg_references_of(registration),True{},reg_event_retained_of(registration),reg_cancelled_of(registration),reg_outstanding_of(registration),False{}}
+          case True{}: Registration{reg_identity_of(registration),reg_generation_of(registration),reg_database_of(registration),reg_owner_of(registration),reg_request_of(registration),reg_session_of(registration),reg_adoptions_of(registration),reg_references_of(registration),True{},reg_event_retained_of(registration),reg_cancelled_of(registration),reg_outstanding_of(registration),reg_pending_of(registration)}
           case other: Registration{reg_identity_of(registration),reg_generation_of(registration),reg_database_of(registration),reg_owner_of(registration),reg_request_of(registration),reg_session_of(registration),reg_adoptions_of(registration),reg_references_of(registration),False{},Bool.or(reg_event_retained_of(registration),Bool.and(Bool.not(reg_event_retained_of(registration)),no_outstanding)),reg_cancelled_of(registration),reg_outstanding_of(registration),Bool.or(reg_pending_of(registration),Bool.not(no_outstanding))}
     case other: registration
 
@@ -386,7 +386,7 @@ type RegistrationRelease is Data:
   AlreadyReleased{registration: Registration}
 
 def release_registration_reference(+registration: Registration) -> RegistrationRelease:
-  Bool.pick(RegistrationRelease,U32.is_lt(0,reg_references_of(registration)),Released{Registration{reg_identity_of(registration),reg_generation_of(registration),reg_database_of(registration),reg_owner_of(registration),reg_request_of(registration),reg_session_of(registration),reg_adoptions_of(registration),U32.sub(reg_references_of(registration),1),reg_armed_of(registration),reg_event_retained_of(registration),reg_cancelled_of(registration),reg_outstanding_of(registration),reg_pending_of(registration)},AlreadyReleased{registration})
+  Bool.pick(RegistrationRelease,U32.is_lt(0,reg_references_of(registration)),Released{Registration{reg_identity_of(registration),reg_generation_of(registration),reg_database_of(registration),reg_owner_of(registration),reg_request_of(registration),reg_session_of(registration),reg_adoptions_of(registration),U32.sub(reg_references_of(registration),1),reg_armed_of(registration),reg_event_retained_of(registration),reg_cancelled_of(registration),reg_outstanding_of(registration),reg_pending_of(registration)}},AlreadyReleased{registration})
 
 # One destination reference is released, checked against zero, with the
 # same explicit disposition; the lease stays live, the task count is
@@ -425,7 +425,7 @@ type Settlement is Data:
   Refused{registration: Registration}
 
 def settle_cancelled_event(registration: Registration, transfer_accepted: Bool) -> Settlement:
-  Bool.pick(Settlement,Bool.and(reg_cancelled_of(registration),Bool.and(reg_event_retained_of(registration),transfer_accepted)),Settled{Registration{reg_identity_of(registration),reg_generation_of(registration),reg_database_of(registration),reg_owner_of(registration),reg_request_of(registration),reg_session_of(registration),reg_adoptions_of(registration),reg_references_of(registration),False{},False{},reg_cancelled_of(registration),reg_outstanding_of(registration),False{}}},Refused{registration})
+  Bool.pick(Settlement,Bool.and(reg_cancelled_of(registration),Bool.and(reg_event_retained_of(registration),transfer_accepted)),Settled{Registration{reg_identity_of(registration),reg_generation_of(registration),reg_database_of(registration),reg_owner_of(registration),reg_request_of(registration),reg_session_of(registration),reg_adoptions_of(registration),reg_references_of(registration),False{},False{},reg_cancelled_of(registration),reg_outstanding_of(registration),reg_pending_of(registration)}},Refused{registration})
 
 def registration_disposable(+registration: Registration) -> Bool:
   Bool.and(reg_cancelled_of(registration),Bool.and(Bool.not(reg_event_retained_of(registration)),Bool.and(Bool.not(reg_armed_of(registration)),Bool.and(U32.is_eq(reg_references_of(registration),0),Bool.and(outstanding_is_none(registration),Bool.not(reg_pending_of(registration)))))))
@@ -578,12 +578,13 @@ law accepting_a_ready_event_issues_the_next_occurrence:
   for +lease_references: U32
   for +lease_tasks: U32
   for +task_capacity: U32
+  for +adoptions_bound: U32
   for +database: String
   for +request: String
   for +session: String
   {accept_ready(Registration{identity,Generation{owner,capability,revision},database,owner,request,session,adoptions,reg_references,True{},True{},False{},None{},False{}},Destination{database,owner,request,session,lease_references,lease_tasks},task_capacity,adoptions_bound) == Bool.pick(Acceptance,U32.is_lt(lease_tasks,task_capacity),Adopted{Registration{identity,Generation{owner,capability,revision},database,owner,request,session,U32.add(adoptions,1),reg_references,False{},False{},False{},Some{adoptions}},Destination{database,owner,request,session,lease_references,U32.add(lease_tasks,1)},TaskEvent{identity,adoptions,Generation{owner,capability,revision},database,owner,request,session,AdoptedOutstanding{}}},Refused{Registration{identity,Generation{owner,capability,revision},database,owner,request,session,adoptions,reg_references,True{},True{},False{},None{},False{}},Destination{database,owner,request,session,lease_references,lease_tasks}}) : Acceptance}
 
-def accepting_a_ready_event_issues_the_next_occurrence(identity,owner,capability,revision,adoptions,reg_references,lease_references,lease_tasks,task_capacity,database,request,session):
+def accepting_a_ready_event_issues_the_next_occurrence(identity,owner,capability,revision,adoptions,reg_references,lease_references,lease_tasks,task_capacity,adoptions_bound,database,request,session):
   {==}
 
 # The issued token presents exactly while its occurrence is the
@@ -620,7 +621,7 @@ law a_presenting_requeue_drops_one_outstanding_task:
   for +database: String
   for +request: String
   for +session: String
-  {requeue_event(Registration{identity,Generation{owner,capability,revision},database,owner,request,session,adoptions,reg_references,True{},False{},False{},Some{occurrence}},Destination{database,owner,request,session,lease_references,lease_tasks},TaskEvent{identity,occurrence,Generation{owner,capability,revision},database,owner,request,session,AdoptedOutstanding{}}) == Bool.pick(Requeue,U32.is_lt(0,lease_tasks),Requeued{Registration{identity,Generation{owner,capability,revision},database,owner,request,session,adoptions,reg_references,True{},True{},False{},None{},False{}},Destination{database,owner,request,session,lease_references,U32.sub(lease_tasks,1)},TaskEvent{identity,occurrence,Generation{owner,capability,revision},database,owner,request,session,ReturnedToRegistration{}}},Unowned{Registration{identity,Generation{owner,capability,revision},database,owner,request,session,adoptions,reg_references,True{},False{},False{},Some{occurrence}},Destination{database,owner,request,session,lease_references,lease_tasks},TaskEvent{identity,occurrence,Generation{owner,capability,revision},database,owner,request,session,AdoptedOutstanding{}}}) : Requeue}
+  {requeue_event(Registration{identity,Generation{owner,capability,revision},database,owner,request,session,adoptions,reg_references,True{},False{},False{},Some{occurrence},False{}},Destination{database,owner,request,session,lease_references,lease_tasks},TaskEvent{identity,occurrence,Generation{owner,capability,revision},database,owner,request,session,AdoptedOutstanding{}}) == Bool.pick(Requeue,U32.is_lt(0,lease_tasks),Requeued{Registration{identity,Generation{owner,capability,revision},database,owner,request,session,adoptions,reg_references,True{},True{},False{},None{},False{}},Destination{database,owner,request,session,lease_references,U32.sub(lease_tasks,1)},TaskEvent{identity,occurrence,Generation{owner,capability,revision},database,owner,request,session,ReturnedToRegistration{}}},Unowned{Registration{identity,Generation{owner,capability,revision},database,owner,request,session,adoptions,reg_references,True{},False{},False{},Some{occurrence},False{}},Destination{database,owner,request,session,lease_references,lease_tasks},TaskEvent{identity,occurrence,Generation{owner,capability,revision},database,owner,request,session,AdoptedOutstanding{}}}) : Requeue}
 
 def a_presenting_requeue_drops_one_outstanding_task(identity,owner,capability,revision,occurrence,adoptions,reg_references,lease_references,lease_tasks,database,request,session):
   {==}
