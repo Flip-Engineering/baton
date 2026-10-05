@@ -82,8 +82,7 @@ def child(record, name, argv, run, stdin=None):
             settle(run, record, name, entry.get('outcome', 'failed'), **{
                 key: value for key, value in entry.items() if key not in ('name', 'outcome')})
         except BaseException as record_error:
-            setattr(error, 'record_error', record_error)
-            setattr(error, 'record_error_text', repr(record_error))
+            attach_secondary(error, 'record_error', record_error)
             raise error from record_error
         raise
     for stream, path in (('stdout', stdout), ('stderr', stderr)):
@@ -138,12 +137,31 @@ def settle(directory, record, name, outcome, **fields):
     return record[-1] if record[-1].get('name') == name else entry
 
 
-class ArchiveCopyMismatch(SystemExit):
-    """A retained copy disagrees with the admitted identity after partial staging."""
+class StageFailure(SystemExit):
+    """A stage stopped partway, naming what it reached and where it stopped."""
 
-    def __init__(self, message, partial=()):
+    def __init__(self, message, fields=None, partial=()):
         super().__init__(message)
+        self.fields = dict(fields or {})
         self.partial = list(partial)
+
+
+def attach_secondary(error, key, value):
+    """Attach an ordered secondary observation to the primary work exception.
+
+    The work exception stays primary. A later recording or cleanup failure never
+    overwrites an earlier secondary observation: the first keeps the key and later
+    ones are appended to its chain in the order they happened.
+    """
+    if not hasattr(error, key):
+        setattr(error, key, value)
+        setattr(error, key + '_text', repr(value))
+        return
+    chain = getattr(error, key + '_chain', None)
+    if chain is None:
+        chain = []
+        setattr(error, key + '_chain', chain)
+    chain.append(value)
 
 
 def attempt(directory, record, name, work, **declared):
@@ -160,13 +178,14 @@ def attempt(directory, record, name, work, **declared):
             # A stage that reports how far it got keeps those identities on its
             # failure row, so a partial result is not lost with the failure. A stage
             # that reports nothing partial records no partial identity.
+            reported = dict(getattr(error, 'fields', None) or {})
             partial = getattr(error, 'partial', None)
-            settle(directory, record, name, 'failed',
-                   **({'partial_staged': list(partial)} if partial else {}),
+            if partial:
+                reported['partial_staged'] = list(partial)
+            settle(directory, record, name, 'failed', **reported,
                    failure=repr(error), failure_type=type(error).__name__)
         except BaseException as record_error:
-            setattr(error, 'record_error', record_error)
-            setattr(error, 'record_error_text', repr(record_error))
+            attach_secondary(error, 'record_error', record_error)
             raise error from record_error
         raise
     try:
@@ -271,8 +290,7 @@ def main():
         try:
             settle(run, record, 'consume', 'refused', reason=repr(error))
         except BaseException as record_error:
-            setattr(error, 'record_error', record_error)
-            setattr(error, 'record_error_text', repr(record_error))
+            attach_secondary(error, 'record_error', record_error)
             raise error from record_error
         raise
     settle(run, record, 'consume', 'qualified', **{
@@ -300,8 +318,7 @@ def main():
         try:
             settle(run, record, 'relocated-consume', 'refused', reason=repr(error))
         except BaseException as record_error:
-            setattr(error, 'record_error', record_error)
-            setattr(error, 'record_error_text', repr(record_error))
+            attach_secondary(error, 'record_error', record_error)
             raise error from record_error
         raise
     settle(run, record, 'relocated-consume', 'qualified', **{
@@ -339,16 +356,24 @@ def main():
                     raise SystemExit('the retained archive does not match the admitted identity: '
                                      + observed + ' against ' + args.expected_archive_sha256)
             except BaseException as error:
+                # An accounting read that fails leaves an explicit unavailable
+                # observation and is not the same as a failure to record the row.
+                retained_present = None
+                retained_sha256 = None
+                try:
+                    retained_present = retained_input.is_file()
+                    if retained_present:
+                        retained_sha256 = digest(retained_input)
+                except OSError as accounting_error:
+                    attach_secondary(error, 'accounting_error', accounting_error)
                 try:
                     settle(run, record, 'archive-retained', 'failed',
                            retained=retained_input.name,
-                           retained_present=retained_input.is_file(),
-                           retained_sha256=(digest(retained_input)
-                                            if retained_input.is_file() else None),
+                           retained_present=retained_present,
+                           retained_sha256=retained_sha256,
                            failure=repr(error))
                 except BaseException as record_error:
-                    setattr(error, 'record_error', record_error)
-                    setattr(error, 'record_error_text', repr(record_error))
+                    attach_secondary(error, 'record_error', record_error)
                     raise error from record_error
                 raise
             settle(run, record, 'archive-retained', 'verified',
@@ -359,50 +384,74 @@ def main():
             settle(run, record, 'archive-extracted', 'attempted',
                    source='original-archive.tar.gz', target=str(target))
             extracted = []
-            with tarfile.open(retained_input, 'r:gz') as archive:
-                members = archive.getmembers()
-                # Complete preflight first: every member is checked and the admitted
-                # manifest member is located before a single member is extracted.
-                kinds = {}
-                for member in members:
-                    name = member.name
-                    relative = pathlib.PurePosixPath(name)
-                    if (name != relative.as_posix() or relative.is_absolute()
-                            or '..' in relative.parts or member.issym() or member.islnk()
-                            or not (member.isfile() or member.isdir())):
-                        raise SystemExit('the archive holds an unsupported or unsafe member: ' + name)
-                    if name in kinds:
-                        raise SystemExit('the archive names a member twice: ' + name)
-                    kinds[name] = 'directory' if member.isdir() else 'file'
-                for name, kind in kinds.items():
-                    prefix = name
-                    while '/' in prefix:
-                        prefix = prefix.rsplit('/', 1)[0]
-                        if kinds.get(prefix) == 'file':
-                            raise SystemExit('the archive uses a file as a directory: ' + prefix)
-                roots = sorted({name.split('/', 1)[0] for name in kinds})
-                if len(roots) != 1:
-                    raise SystemExit('the archive does not hold exactly one root: ' + repr(roots))
-                selected_root = roots[0]
-                manifest_member = selected_root + '/manifest.json'
-                if kinds.get(manifest_member) != 'file':
-                    raise SystemExit('the archive does not hold the admitted manifest member: '
-                                     + manifest_member)
-                try:
+            attempted_member = None
+            # The whole extraction phase, including opening the archive, listing its
+            # members and the preflight, settles its own failure with the member being
+            # handled and the state the extraction target reached.
+            try:
+                with tarfile.open(retained_input, 'r:gz') as archive:
+                    members = archive.getmembers()
+                    # Complete preflight first: every member is checked and the admitted
+                    # manifest member is located before a single member is extracted.
+                    kinds = {}
                     for member in members:
-                        archive.extract(member, target)
-                        extracted.append(member.name)
-                except BaseException as error:
-                    try:
-                        settle(run, record, 'archive-extracted', 'failed',
-                               members_extracted=len(extracted),
-                               members_extracted_names=list(extracted),
-                               failure=repr(error))
-                    except BaseException as record_error:
-                        setattr(error, 'record_error', record_error)
-                        setattr(error, 'record_error_text', repr(record_error))
-                        raise error from record_error
-                    raise
+                        name = member.name
+                        relative = pathlib.PurePosixPath(name)
+                        if (name != relative.as_posix() or relative.is_absolute()
+                                or '..' in relative.parts or member.issym() or member.islnk()
+                                or not (member.isfile() or member.isdir())):
+                            raise StageFailure('the archive holds an unsupported or unsafe member: '
+                                               + name,
+                                               fields={'member': name,
+                                                       'boundary': 'archive-member-kind'})
+                        if name in kinds:
+                            raise StageFailure('the archive names a member twice: ' + name,
+                                               fields={'member': name,
+                                                       'boundary': 'archive-member-kind'})
+                        kinds[name] = 'directory' if member.isdir() else 'file'
+                    for name, kind in kinds.items():
+                        prefix = name
+                        while '/' in prefix:
+                            prefix = prefix.rsplit('/', 1)[0]
+                            if kinds.get(prefix) == 'file':
+                                raise StageFailure('the archive uses a file as a directory: '
+                                                   + prefix,
+                                                   fields={'member': prefix,
+                                                           'boundary': 'archive-member-kind'})
+                    roots = sorted({name.split('/', 1)[0] for name in kinds})
+                    if len(roots) != 1:
+                        raise StageFailure('the archive does not hold exactly one root: '
+                                           + repr(roots),
+                                           fields={'roots': list(roots), 'boundary': 'archive-root'})
+                    selected_root = roots[0]
+                    manifest_member = selected_root + '/manifest.json'
+                    if kinds.get(manifest_member) != 'file':
+                        raise StageFailure('the archive does not hold the admitted manifest member: '
+                                           + manifest_member,
+                                           fields={'member': manifest_member,
+                                                   'boundary': 'archive-manifest-member'})
+                        for member in members:
+                            attempted_member = member.name
+                            archive.extract(member, target)
+                            extracted.append(member.name)
+                            attempted_member = None
+            except BaseException as error:
+                target_present = None
+                try:
+                    target_present = target.is_dir()
+                except OSError as accounting_error:
+                    attach_secondary(error, 'accounting_error', accounting_error)
+                try:
+                    settle(run, record, 'archive-extracted', 'failed',
+                           members_extracted=len(extracted),
+                           members_extracted_names=list(extracted),
+                           failing_member=attempted_member,
+                           target=str(target), target_present=target_present,
+                           failure=repr(error), failure_type=type(error).__name__)
+                except BaseException as record_error:
+                    attach_secondary(error, 'record_error', record_error)
+                    raise error from record_error
+                raise
             settle(run, record, 'archive-extracted', 'verified', target=str(target),
                    members=len(members), manifest_member=manifest_member)
             manifest_path = target / manifest_member
@@ -418,8 +467,18 @@ def main():
                 raise SystemExit('the archive manifest does not bind both metadata documents')
             settle(run, record, 'archive-admitted', 'attempted', root=selected_root,
                    documents=sorted(documents))
-            current, bound = package.verify_archived_inventory(archived, result['inventory'],
-                                                               documents)
+            try:
+                current, bound = package.verify_archived_inventory(archived, result['inventory'],
+                                                                   documents)
+            except BaseException as error:
+                try:
+                    settle(run, record, 'archive-admitted', 'failed', root=selected_root,
+                           documents=sorted(documents), failure=repr(error),
+                           failure_type=type(error).__name__)
+                except BaseException as record_error:
+                    attach_secondary(error, 'record_error', record_error)
+                    raise error from record_error
+                raise
             settle(run, record, 'archive-admitted', 'verified', root=selected_root,
                    documents=sorted(documents), members=len(current['members']))
             audit.mkdir(exist_ok=True)
@@ -437,82 +496,132 @@ def main():
             if len(expected_ids) != len(set(expected_ids)):
                 raise SystemExit('the readback reports a case identity twice: '
                                  + repr(expected_ids))
-            uncovered = []
-            verdicts = {str(verdict.get('id')): verdict
-                        for verdict in (envelope.get('classifier') or {}).get('verdicts') or []}
-            if len(verdicts) != len(expected_ids):
-                raise SystemExit('the readback reports a repeated or missing verdict identity')
-            terminals = {}
-            for identity in expected_ids:
-                stem = package.acquisition_stem(identity)
-                terminal_path = audit / (stem + '.acquisition.json')
-                if not terminal_path.is_file():
-                    uncovered.append(identity)
-                    continue
-                terminal = json.loads(terminal_path.read_text())
-                terminals[identity] = terminal
-                # The request bytes are the ones the terminal record describes, and
-                # the parsed request is the case this run asked about.
-                request_data = (audit / (stem + '.request.json')).read_bytes()
-                if (len(request_data) != terminal.get('request_bytes')
-                        or hashlib.sha256(request_data).hexdigest()
-                        != terminal.get('request_sha256')):
-                    raise SystemExit('a retained request disagrees with its terminal record: '
-                                     + identity)
-                request = json.loads(request_data)
-                if (request.get('case') or {}).get('id') != identity:
-                    raise SystemExit('a retained request names another case: ' + identity)
-                # Both raw streams are the bytes their terminal record describes,
-                # with the digest taken from the buffer that was measured.
-                for suffix, field in (('.stdout', 'stdout'), ('.stderr', 'stderr')):
-                    stream_path = audit / (stem + suffix)
-                    if not stream_path.is_file():
-                        raise SystemExit('a retained acquisition stream is missing: '
-                                         + stream_path.name)
-                    data = stream_path.read_bytes()
-                    if (len(data) != terminal.get(field + '_bytes')
-                            or hashlib.sha256(data).hexdigest() != terminal.get(field + '_sha256')):
-                        raise SystemExit('a retained acquisition stream disagrees with its '
-                                         'terminal record: ' + stream_path.name)
-                # The reported verdict is the one this acquisition recorded, and
-                # the envelope's acquisition record is this terminal.
-                verdict = verdicts.get(identity)
-                if verdict is None:
-                    raise SystemExit('the readback reported no verdict for a retained case: '
-                                     + identity)
-                if (verdict.get('acquisition') or {}) != terminal:
-                    raise SystemExit('a retained terminal acquisition differs from the verdict '
-                                     'acquisition: ' + identity)
-                # The whole-terminal equality above already covers the process fields.
-                # The retained response is the verdict the readback reported, with the
-                # reader's own added fields kept separate from the endpoint contract.
-                stdout_data = (audit / (stem + '.stdout')).read_bytes()
-                lines = [line for line in stdout_data.decode('utf-8').splitlines()
-                         if line.strip()]
-                if len(lines) != 1:
-                    raise SystemExit('a retained response is not one line: ' + identity)
-                response = json.loads(lines[0])
-                if (response.get('id') != identity
-                        or response.get('schema') != 'capacity-controls/classify-verdict@1'):
-                    raise SystemExit('a retained response names another case or schema: ' + identity)
-                for field in ('class', 'attributed_law', 'match', 'qualified'):
-                    if response.get(field) != verdict.get(field):
-                        raise SystemExit('a retained response field differs from the reported '
-                                         'verdict: ' + field + ' for ' + identity)
-                # The response verifier and diagnostic are the ones the verdict reports,
-                # compared from the single response buffer parsed above.
-                if response.get('verifier') != verdict.get('verifier_raw',
-                                                           verdict.get('verifier')):
-                    raise SystemExit('a retained response verifier differs from the reported '
-                                     'verdict: ' + identity)
-                if response.get('diagnostic_sha256') != verdict.get('diagnostic_sha256'):
-                    raise SystemExit('a retained response diagnostic differs from the reported '
-                                     'verdict: ' + identity)
-            if uncovered:
-                raise SystemExit('the acquisition omits selected cases: ' + repr(uncovered))
+            def bind_case_acquisitions():
+                """Bind each selected case's retained acquisition to its verdict."""
+                uncovered = []
+                verdicts = {str(verdict.get('id')): verdict
+                            for verdict in (envelope.get('classifier') or {}).get('verdicts') or []}
+                if len(verdicts) != len(expected_ids):
+                    raise SystemExit('the readback reports a repeated or missing verdict identity')
+                for identity in expected_ids:
+                    stem = package.acquisition_stem(identity)
+                    terminal_path = audit / (stem + '.acquisition.json')
+                    if not terminal_path.is_file():
+                        uncovered.append(identity)
+                        continue
+                    terminal = json.loads(terminal_path.read_text())
+                    # The request bytes are the ones the terminal record describes, and
+                    # the parsed request is the case this run asked about.
+                    request_data = (audit / (stem + '.request.json')).read_bytes()
+                    if (len(request_data) != terminal.get('request_bytes')
+                            or hashlib.sha256(request_data).hexdigest()
+                            != terminal.get('request_sha256')):
+                        raise StageFailure(
+                            'a retained request disagrees with its terminal record: ' + identity,
+                            fields={'case': identity, 'boundary': 'request-bytes'})
+                    request = json.loads(request_data)
+                    if (request.get('case') or {}).get('id') != identity:
+                        raise StageFailure('a retained request names another case: ' + identity,
+                                       fields={'case': identity, 'boundary': 'request-case'})
+                    # Both raw streams are the bytes their terminal record describes,
+                    # with the digest taken from the buffer that was measured.
+                    streams = {}
+                    for suffix, field in (('.stdout', 'stdout'), ('.stderr', 'stderr')):
+                        stream_path = audit / (stem + suffix)
+                        if not stream_path.is_file():
+                            raise StageFailure('a retained acquisition stream is missing: '
+                                               + stream_path.name,
+                                               fields={'case': identity, 'boundary': field + '-stream'})
+                        data = stream_path.read_bytes()
+                        if (len(data) != terminal.get(field + '_bytes')
+                                or hashlib.sha256(data).hexdigest() != terminal.get(field + '_sha256')):
+                            raise StageFailure('a retained acquisition stream disagrees with its '
+                                               'terminal record: ' + stream_path.name,
+                                               fields={'case': identity, 'boundary': field + '-stream'})
+                        streams[field] = data
+                    # The reported verdict is the one this acquisition recorded, and
+                    # the envelope's acquisition record is this terminal.
+                    verdict = verdicts.get(identity)
+                    if verdict is None:
+                        raise StageFailure(
+                            'the readback reported no verdict for a retained case: ' + identity,
+                            fields={'case': identity, 'boundary': 'verdict-present'})
+                    if (verdict.get('acquisition') or {}) != terminal:
+                        raise StageFailure(
+                            'a retained terminal acquisition differs from the verdict acquisition: '
+                            + identity,
+                            fields={'case': identity, 'boundary': 'terminal-equality'})
+                    # The whole-terminal equality above already covers the process fields.
+                    # The retained response is the verdict the readback reported, with the
+                    # reader's own added fields kept separate from the endpoint contract.
+                    # The response is parsed from the buffer already verified against the
+                    # terminal record, so the bytes read and the bytes parsed are one.
+                    lines = [line for line in streams['stdout'].decode('utf-8').splitlines()
+                             if line.strip()]
+                    if len(lines) != 1:
+                        raise StageFailure('a retained response is not one line: ' + identity,
+                                           fields={'case': identity, 'boundary': 'response-line'})
+                    response = json.loads(lines[0])
+                    if (response.get('id') != identity
+                            or response.get('schema') != 'capacity-controls/classify-verdict@1'):
+                        raise StageFailure('a retained response names another case or schema: '
+                                           + identity,
+                                           fields={'case': identity, 'boundary': 'response-identity'})
+                    # Each endpoint evidence field the readback reports is compared with
+                    # the retained response; only the reader-added fields stay separate.
+                    for field in ('class', 'attributed_law', 'match', 'qualified', 'law',
+                                  'evidence_verified'):
+                        if response.get(field) != verdict.get(field):
+                            raise StageFailure('a retained response field differs from the reported '
+                                               'verdict: ' + field + ' for ' + identity,
+                                               fields={'case': identity, 'boundary': 'response-' + field})
+                    # The endpoint emits its raw verifier map and the reader's composition
+                    # stores the canonical closure, so the response is normalized through
+                    # the same member contract before the comparison. A raw identity the
+                    # verdict retains is still compared with the raw response.
+                    response_verifier = response.get('verifier')
+                    if not isinstance(response_verifier, dict):
+                        raise StageFailure('a retained response names no verifier map: ' + identity,
+                                           fields={'case': identity, 'boundary': 'response-verifier'})
+                    try:
+                        normalized = {member: package.verifier_member_value(
+                            response_verifier, member, identity)
+                            for member in package.VERIFIER_MEMBERS}
+                    except BaseException as error:
+                        raise StageFailure('a retained response verifier is not a valid closure: '
+                                           + identity + ': ' + str(error),
+                                           fields={'case': identity, 'boundary': 'response-verifier'})
+                    if normalized != verdict.get('verifier'):
+                        raise StageFailure('a retained response verifier differs from the reported '
+                                           'verdict: ' + identity,
+                                           fields={'case': identity, 'boundary': 'response-verifier'})
+                    raw_verifier = verdict.get('verifier_raw')
+                    if raw_verifier is not None and raw_verifier != response_verifier:
+                        raise StageFailure('a retained response differs from the raw verifier the '
+                                           'verdict retains: ' + identity,
+                                           fields={'case': identity, 'boundary': 'response-verifier-raw'})
+                    if response.get('diagnostic_sha256') != verdict.get('diagnostic_sha256'):
+                        raise StageFailure('a retained response diagnostic differs from the reported '
+                                           'verdict: ' + identity,
+                                           fields={'case': identity, 'boundary': 'response-diagnostic'})
+                if uncovered:
+                    raise StageFailure('the acquisition omits selected cases: '
+                                       + repr(uncovered),
+                                       fields={'cases': list(uncovered),
+                                               'boundary': 'terminal-record'})
+                return {'cases_checked': len(expected_ids),
+                        'cases_uncovered': list(uncovered),
+                        'acquisition_directory': str(audit)}
+
+            bound_cases = attempt(run, record, 'archive-case-acquisition',
+                                  bind_case_acquisitions,
+                                  expected_cases=len(expected_ids),
+                                  acquisition_directory=str(audit),
+                                  scope='each selected case retains its request, both raw '
+                                        'streams and terminal record, bound to its verdict')
             # Each later phase settles its own result where it happens, so a failure
             # in one of them is recorded at that boundary with what it did reach.
-            def read_acquisition():
+            def compare_inventory():
                 records = sorted(entry.name for entry in audit.rglob('*')
                                  if entry.is_file())
                 if not records:
@@ -524,56 +633,104 @@ def main():
                                      'the retained envelope binds')
                 return {'records': records, 'inventory_sha256': inventory['inventory_sha256']}
 
-            acquired = attempt(run, record, 'archive-acquisition-read', read_acquisition,
-                               audit=str(audit),
-                               scope='acquisition and index files under the extracted root')
+            acquired = attempt(run, record, 'archive-inventory-compared', compare_inventory,
+                               audit_directory=str(audit),
+                               scope='the current listing and inventory of the reader-written '
+                                     'acquisition directory, compared with the inventory the '
+                                     'retained envelope binds; the per-case acquisition reads '
+                                     'settle separately in archive-case-acquisition')
             records = acquired['records']
 
             def stage_metadata():
                 # Retain the original archive and metadata bytes bound to this stage.
+                # What was copied, what is being copied and what was verified are
+                # separate observations: a copied destination is not a verified one.
                 metadata = run / 'archive-metadata'
                 metadata.mkdir(exist_ok=True)
-                staged = []
-                for name in package.ARCHIVE_METADATA:
-                    shutil.copyfile(archived / name, metadata / name)
-                    staged.append(name)
-                # The retained copies are checked against the admitted identity, not
-                # only the reader's own later observation.
-                kept_archive = digest(retained_input)
-                if kept_archive != args.expected_archive_sha256:
-                    raise ArchiveCopyMismatch(
-                        'the retained archive copy differs from the admitted identity',
-                        partial=staged)
-                for name in package.ARCHIVE_METADATA:
-                    if digest(metadata / name) != documents[name]:
-                        raise ArchiveCopyMismatch(
-                            'the retained metadata copy differs from the admitted identity: '
-                            + name, partial=staged)
-                return {'documents_staged': sorted(staged),
-                        'retained_archive_sha256': kept_archive,
-                        'metadata': sorted(str(row.relative_to(run))
-                                           for row in metadata.iterdir())}
+                copied = []
+                attempted = None
+                verified = []
+                try:
+                    for name in package.ARCHIVE_METADATA:
+                        attempted = name
+                        shutil.copyfile(archived / name, metadata / name)
+                        copied.append(name)
+                        attempted = None
+                    # The retained copies are checked against the admitted identity,
+                    # not only the reader's own later observation.
+                    kept_archive = digest(retained_input)
+                    if kept_archive != args.expected_archive_sha256:
+                        raise StageFailure(
+                            'the retained archive copy differs from the admitted identity',
+                            fields={'boundary': 'retained-archive',
+                                    'retained_sha256': kept_archive,
+                                    'metadata_verified': list(verified)})
+                    for name in package.ARCHIVE_METADATA:
+                        if digest(metadata / name) != documents[name]:
+                            raise StageFailure(
+                                'the retained metadata copy differs from the admitted identity: '
+                                + name,
+                                fields={'boundary': 'retained-metadata',
+                                        'metadata_member': name,
+                                        'metadata_verified': list(verified)})
+                        verified.append(name)
+                    return {'documents_copied': sorted(copied),
+                            'documents_verified': sorted(verified),
+                            'retained_archive_sha256': kept_archive,
+                            'metadata': sorted(str(row.relative_to(run))
+                                               for row in metadata.iterdir())}
+                except BaseException as error:
+                    # The copied destinations, the destination being copied when the
+                    # failure happened and the verification observations so far stay
+                    # separate on the failure row.
+                    reported = dict(getattr(error, 'fields', None) or {})
+                    reported.setdefault('documents_copied', sorted(copied))
+                    reported.setdefault('documents_verified', sorted(verified))
+                    if attempted:
+                        reported['copy_attempted'] = attempted
+                    setattr(error, 'fields', reported)
+                    setattr(error, 'partial', sorted(copied))
+                    raise
 
             staged = attempt(run, record, 'archive-metadata-staged', stage_metadata,
-                             archive=retained_input.name, root=selected_root)
+                             archive=retained_input.name, root=selected_root,
+                             scope='copied destinations, the destination being copied and the '
+                                   'verified documents are separate observations')
 
             def write_envelope():
                 envelope_path = run / 'archive-envelope.json'
-                envelope_path.write_text(json.dumps(envelope, indent=2) + '\n')
-                return {'envelope': str(envelope_path.relative_to(run)),
-                        'envelope_sha256': digest(envelope_path)}
+                relative = str(envelope_path.relative_to(run))
+                try:
+                    envelope_path.write_text(json.dumps(envelope, indent=2) + '\n')
+                    return {'envelope': relative, 'envelope_sha256': digest(envelope_path)}
+                except BaseException as error:
+                    present = None
+                    size = None
+                    try:
+                        present = envelope_path.is_file()
+                        size = envelope_path.stat().st_size if present else None
+                    except OSError as accounting_error:
+                        attach_secondary(error, 'accounting_error', accounting_error)
+                    setattr(error, 'fields', {'envelope': relative,
+                                              'envelope_present': present,
+                                              'envelope_bytes': size,
+                                              'boundary': 'archive-envelope'})
+                    raise
 
             written = attempt(run, record, 'archive-envelope-written', write_envelope,
-                              document='the complete returned envelope, bound to this stage')
+                              document='archive-envelope.json',
+                              scope='the complete returned envelope, written to that file and '
+                                    'hashed from the written bytes')
             return {'root': selected_root, 'manifest_member': manifest_member,
                     'members': len(current['members']),
                     'documents': sorted(documents), 'archive': str(args.archive),
                     'archive_sha256': observed,
                     'extraction_target': str(target),
                     'extracted_acquisition': str(audit),
-                    'extracted_acquisition_records': len(records),
+                    'extracted_acquisition_files': len(records),
                     'expected_verdict_ids': expected_ids,
-                    'audit_records_uncovered_ids': uncovered,
+                    'cases_bound': bound_cases['cases_checked'],
+                    'audit_records_uncovered_ids': bound_cases['cases_uncovered'],
                     'audit_inventory_sha256': acquired['inventory_sha256'],
                     'envelope': written['envelope'],
                     'envelope_sha256': written['envelope_sha256'],

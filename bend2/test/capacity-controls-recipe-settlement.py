@@ -79,10 +79,57 @@ class RecipeSettlement(unittest.TestCase):
         with self.assertRaises(StoppedAfterOne):
             RECIPE.attempt(self.run, self.record, 'archive-metadata-staged',
                            partially_failing, archive='original-archive.tar.gz')
-        partial_row = self.rows()[2]
-        self.assertEqual(partial_row['name'], 'archive-metadata-staged')
+        rows = {row['name']: row for row in self.rows()}
+        partial_row = rows['archive-metadata-staged']
         self.assertEqual(partial_row['outcome'], 'failed')
         self.assertEqual(partial_row['partial_staged'], ['bend2.json'])
+
+    def test_stage_reported_fields_reach_its_failed_row(self):
+        # A stage that names what it reached and where it stopped keeps both on the
+        # failure row, next to the partial identities it reports.
+        def failing():
+            raise RECIPE.StageFailure('the acquisition read stopped',
+                                      fields={'case': 'case-1', 'boundary': 'request-bytes'},
+                                      partial=['case-1'])
+
+        with self.assertRaises(RECIPE.StageFailure):
+            RECIPE.attempt(self.run, self.record, 'archive-case-acquisition', failing,
+                           expected_cases=1)
+        row = next(row for row in self.rows()
+                   if row['name'] == 'archive-case-acquisition')
+        self.assertEqual(row['outcome'], 'failed')
+        self.assertEqual(row['case'], 'case-1')
+        self.assertEqual(row['boundary'], 'request-bytes')
+        self.assertEqual(row['partial_staged'], ['case-1'])
+
+    def test_ordered_secondary_observations_are_preserved(self):
+        # The first recording failure keeps the key and the later one is appended, so
+        # the primary work exception keeps an ordered record of both.
+        writes = []
+        original_write = RECIPE.write_record
+
+        def flaky(run, record):
+            writes.append(len(record))
+            if len(writes) > 2:
+                raise RuntimeError('the run record could not be written: blocked')
+            return original_write(run, record)
+
+        RECIPE.write_record = flaky
+        self.addCleanup(setattr, RECIPE, 'write_record', original_write)
+
+        def inner_work():
+            raise ValueError('the stage work failed')
+
+        with self.assertRaises(ValueError) as raised:
+            RECIPE.attempt(self.run, self.record, 'outer-stage',
+                           lambda: RECIPE.attempt(self.run, self.record, 'inner-stage',
+                                                  inner_work))
+        primary = raised.exception
+        self.assertIn('the stage work failed', str(primary))
+        self.assertIsInstance(primary.record_error, RuntimeError)
+        self.assertEqual(len(primary.record_error_chain), 1)
+        self.assertIsInstance(primary.record_error_chain[0], RuntimeError)
+        self.assertIsNot(primary.record_error, primary.record_error_chain[0])
 
     def test_a_record_failure_preserves_the_original_cause(self):
         # The declared row is written, then persisting the terminal row fails while
