@@ -89,14 +89,6 @@ type Completion is Data:
   Completed{registration: Registration, destination: Destination, returned: TaskEvent}
   Unowned{registration: Registration, destination: Destination, outstanding: TaskEvent}
 
-type RegistrationRelease is Data:
-  Released{registration: Registration}
-  AlreadyReleased{registration: Registration}
-
-type LeaseRelease is Data:
-  LeaseReleased{lease: DestinationLease}
-  LeaseAlreadyReleased{lease: DestinationLease}
-
 def dest_of(lease: DestinationLease) -> Destination:
   match lease:
     case DestinationLease{destination,live}: destination
@@ -284,9 +276,6 @@ def register_ready(+registration: Registration, +observed: Generation) -> Regist
 def registration_binds(+registration: Registration, +destination: Destination) -> Bool:
   Bool.and(String.eq(reg_database_of(registration),dest_database_of(destination)),Bool.and(String.eq(reg_owner_of(registration),dest_owner_of(destination)),Bool.and(String.eq(reg_request_of(registration),dest_request_of(destination)),String.eq(reg_session_of(registration),dest_session_of(destination)))))
 
-def token_presents_for_transition(+registration: Registration, +destination: Destination, +outstanding: TaskEvent) -> Bool:
-  Bool.and(Bool.and(Bool.and(Bool.and(String.eq(reg_identity_of(registration),token_identity_of(outstanding)),same_generation(reg_generation_of(registration),token_generation_of(outstanding))),correlation_is(destination,token_database_of(outstanding),token_owner_of(outstanding),token_request_of(outstanding),token_session_of(outstanding))),U32.is_eq(token_occurrence_of(outstanding),U32.sub(reg_adoptions_of(registration),1))),token_is_adopted(outstanding))
-
 def accept_decided(+registration: Registration, +destination: Destination, task_capacity: U32, event: Bool, bound: Bool, is_cancelled: Bool, below_task_capacity: Bool) -> Acceptance:
   match event:
     case True{}: match is_cancelled:
@@ -315,10 +304,12 @@ def accept_ready(+registration: Registration, +destination: Destination, task_ca
 
 # The token presentation an event transition requires: the token names this
 # registration's identity and current capability generation, this
-# destination's correlation, the registration's latest occurrence, and the
-# adopted-outstanding phase.
+# destination's correlation, the registration's latest occurrence, the
+# adopted-outstanding phase, and the registration still holds the event
+# outstanding — after a requeue the event is back with the registration, so
+# an old outstanding-phase copy can no longer act on the destination.
 def token_presents_for_transition(+registration: Registration, +destination: Destination, +outstanding: TaskEvent) -> Bool:
-  Bool.and(Bool.and(Bool.and(Bool.and(String.eq(reg_identity_of(registration),token_identity_of(outstanding)),same_generation(reg_generation_of(registration),token_generation_of(outstanding))),correlation_is(destination,token_database_of(outstanding),token_owner_of(outstanding),token_request_of(outstanding),token_session_of(outstanding))),U32.is_eq(token_occurrence_of(outstanding),U32.sub(reg_adoptions_of(registration),1))),token_is_adopted(outstanding))
+  Bool.and(Bool.and(Bool.and(Bool.and(Bool.and(String.eq(reg_identity_of(registration),token_identity_of(outstanding)),same_generation(reg_generation_of(registration),token_generation_of(outstanding))),correlation_is(destination,token_database_of(outstanding),token_owner_of(outstanding),token_request_of(outstanding),token_session_of(outstanding))),U32.is_eq(token_occurrence_of(outstanding),U32.sub(reg_adoptions_of(registration),1))),token_is_adopted(outstanding)),Bool.not(reg_event_retained_of(registration)))
 
 def requeue_decided(+registration: Registration, +destination: Destination, +outstanding: TaskEvent, presents: Bool, outstanding_tasks: Bool) -> Requeue:
   match presents:

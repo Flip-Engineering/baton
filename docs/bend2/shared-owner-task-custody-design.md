@@ -565,8 +565,11 @@ The precise missing primitive preventing a concrete hosted call site is the
 owner event-loop entry itself: `--owner-serve` is a pending composition
 contract with no existing literal in any reviewed source, routed through
 Interfaces and Controls. Until that entry exists, the instance region can
-supply only these pure decisions and their evidence, and no hosted storage
-claim is made. The exact unavailable host primitives, as found at the
+supply the pure decisions, their evidence, and the actual retained keyed
+table and its checked transitions (`retained-table.bend`,
+`event-registry.bend`); what remains missing is only the process hosting
+of that table behind the pending owner entry and the operative exports
+named above. The exact unavailable host primitives, as found at the
 reviewed pins: no callable `attach_reader`, `read_ready`,
 `register_ready_event`, `cancel_registration`, `release_frame`,
 `release_reader`, `release_destination`, `prepare_env`,
@@ -588,8 +591,10 @@ reinitialization, the primary init/read error stays separate from both
 close-attempt results, and a close error never authorizes another close on
 the former numeric descriptor. Successful source disposal establishes
 neither registry quiescence, settled interpretation or effects, parent
-delivery nor ACK completion; a successful ACK removes attempt and stdout
-records while filtered public logs keep serving, so recovery binds to the
+delivery nor ACK completion; a normal ACK attempts the raw unlink of
+attempt and stdout records, so raw availability after ACK depends on the
+cleanup outcome — retained when cleanup fails, gone when it succeeds —
+while filtered public logs keep serving, so recovery binds to the
 actual retained original sources and returns an explicit unavailable or
 uncertain disposition where they no longer exist.
 

@@ -218,7 +218,9 @@ def main():
         assert sha256(args.compiler_archive) == identity["compiler_archive_sha256"], \
             "compiler archive changed during run"
     assert git("rev-parse", "HEAD^{tree}") == identity["tree_before"], "tree changed during run"
-    print("custody-fixture: all modes and mutations matched", flush=True)
+    print("custody-fixture: baseline and fixture modes completed; "
+          "mutation observations are recorded unqualified (attribution "
+          "requires the root-owned wrapper)", flush=True)
 
 
 if __name__ == "__main__":
