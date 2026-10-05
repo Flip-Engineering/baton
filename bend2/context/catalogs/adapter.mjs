@@ -25,8 +25,9 @@
 // with the codec, the core and the lifecycle.
 
 import { DatabaseSync } from 'node:sqlite';
+import { pathToFileURL } from 'node:url';
 
-import { captureSqliteSnapshot, createSqliteSession } from './sqlite-catalog.mjs';
+import { createSqliteSession } from './sqlite-catalog.mjs';
 import { openPostgresSession } from './postgres-catalog.mjs';
 import { joinPostgresRelations } from './sql-join.mjs';
 import { CATALOG_OPERATIONS } from './operations.mjs';
@@ -228,21 +229,24 @@ export async function catalogAdapterMain({ readStdin, writeStdout, writeStderr }
   const records = Array.isArray(frame.inputs?.records) ? frame.inputs.records : [];
   const operation = operationFor({ provider, select, records });
   const requiredEffects = requiredEffectsFor(operation);
+  const effects = Array.isArray(request.effects) ? request.effects : [];
+  // Component defense for a directly invoked provider. Managed admission
+  // remains with the native lifecycle and the core's effect construction.
+  if (requiredEffects.some(effect => !effects.includes(effect))) {
+    writeStdout(`${JSON.stringify(refusal(query, provider, `the ${operation} operation requires ${requiredEffects.join(', ')}`, 'operationRefused'))}\n`);
+    return 2;
+  }
 
   try {
     if (provider === 'sqlite-schema') {
-      const statements = [];
-      if (operation === 'codeAccessJoin') {
-        for (const fact of records) {
-          const text = fact?.value?.record?.sql?.text;
-          if (typeof text === 'string' && text.length > 0) statements.push({ id: fact.value.record.snapshotId ?? text, sql: text });
-        }
-      }
-      const snapshot = captureSqliteSnapshot({ path: database.path, DatabaseSync, statements });
+      // One session serves both halves: the catalog facts, the engine plans and
+      // the join all come from one connection and one read transaction.
       const session = createSqliteSession({ path: database.path, DatabaseSync });
       let joined = { relations: [], refs: [], limits: [] };
+      let snapshot;
       try {
         if (operation === 'codeAccessJoin') joined = session.join({ records });
+        snapshot = { identity: session.identity, catalog: session.catalog, limits: session.limits, stableWithinTransaction: session.stability().stableWithinTransaction };
       } finally {
         session.close();
       }
@@ -324,7 +328,7 @@ export async function catalogAdapterMain({ readStdin, writeStdout, writeStderr }
   }
 }
 
-const invokedDirectly = process.argv[1] !== undefined && import.meta.url === new URL(`file://${process.argv[1]}`).href;
+const invokedDirectly = process.argv[1] !== undefined && import.meta.url === pathToFileURL(process.argv[1]).href;
 if (invokedDirectly) {
   const chunks = [];
   for await (const chunk of process.stdin) chunks.push(chunk);

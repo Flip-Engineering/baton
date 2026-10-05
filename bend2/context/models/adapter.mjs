@@ -26,6 +26,7 @@
 import { createRequire } from 'node:module';
 import { readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
+import { pathToFileURL } from 'node:url';
 
 import { createJsonSchemaProvider } from './json-schema.mjs';
 import { readJsonSample, resolveJsonPointer } from './sample.mjs';
@@ -47,7 +48,7 @@ export async function loadAjv2020() {
   const attempted = [];
   for (const candidate of candidates) {
     try {
-      const module = await import(new URL(`file://${candidate}`).href);
+      const module = await import(pathToFileURL(candidate).href);
       return { Ajv2020: module.default ?? module, path: candidate, attempted };
     } catch (error) {
       attempted.push(`${candidate}: ${error.code ?? error.message}`);
@@ -167,14 +168,19 @@ export async function modelAdapterMain({ readStdin, writeStdout, writeStderr, ch
         writeStdout(`${JSON.stringify(refusal(query, 'the model subject needs module and sample paths'))}\n`);
         return 2;
       }
-      const outputDirectory = frame.inputs?.outputDirectory ?? join(dirname(subject.module), '.baton-context-artifacts');
+      const home = frame.inputs?.home;
+      const outputDirectory = frame.inputs?.outputDirectory;
+      if (typeof home !== 'string' || home.length === 0 || typeof outputDirectory !== 'string' || outputDirectory.length === 0) {
+        writeStdout(`${JSON.stringify(refusal(query, 'the modelLoad operation needs inputs.home and inputs.outputDirectory from the managed launch'))}\n`);
+        return 2;
+      }
       const result = await runZodModelChild({
         node,
         childPath,
         target: { module: subject.module, export: subject.export ?? null, sample: subject.sample },
         effects,
-        home: frame.inputs?.home,
-        tempDirectory: frame.inputs?.tempDirectory,
+        home,
+        tempDirectory: frame.inputs?.tempDirectory ?? home,
         outputDirectory,
       });
       if (result.status !== 'ok') {
@@ -260,7 +266,7 @@ export async function modelAdapterMain({ readStdin, writeStdout, writeStderr, ch
   }
 }
 
-const invokedDirectly = process.argv[1] !== undefined && import.meta.url === new URL(`file://${process.argv[1]}`).href;
+const invokedDirectly = process.argv[1] !== undefined && import.meta.url === pathToFileURL(process.argv[1]).href;
 if (invokedDirectly) {
   const chunks = [];
   for await (const chunk of process.stdin) chunks.push(chunk);
