@@ -645,6 +645,26 @@ class PackageGateReceipt(unittest.TestCase):
         self.assertEqual(summary['validation']['route'], 'remote-module-groups')
         self.assertEqual(path.name, 'summary.json')
 
+    def test_a_changed_receipt_field_refuses_reuse(self):
+        """One altered field in the retained laws log must refuse reuse by name."""
+        marker = self.home / 'field-receipt'
+        self.run_gates_fixture(marker, self.stub_gates(marker, laws_exit=1))
+        compiler = self.compiler()
+        remote = PACKAGE.controls_evidence(self.full_evidence(), PACKAGE.snapshot(), compiler)
+        logs = self.home / 'field-gates'
+        logs.mkdir()
+        path, _summary = PACKAGE.run_gates(compiler, {'CC': 'gcc'}, logs, PACKAGE.snapshot(),
+                                           {'fixture': 'inputs'}, remote=remote)
+        retained = logs / 'laws-check.log'
+        entry = json.loads(retained.read_text())
+        entry['spans'] = []
+        retained.write_text(json.dumps(entry))
+        reused = self.home / 'field-reused'
+        reused.mkdir()
+        with self.assertRaisesRegex(RuntimeError, 'spans'):
+            PACKAGE.reuse_gates(path, PACKAGE.sha256(path), compiler, reused,
+                                PACKAGE.snapshot())
+
     def test_a_self_produced_remote_receipt_reuses(self):
         """A receipt this package produced reuses against its own evidence."""
         marker = self.home / 'self-receipt'

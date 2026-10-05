@@ -169,6 +169,7 @@ def archive_inputs(archive, compiler):
 
 
 RECEIPT_SCHEMA = 'baton2-native-gate-receipt-v2'
+ADMITTED_ENTRY = 'bend2/src/coordinator/main.bend'
 INVENTORY_SCHEMA = 'baton2-controls-inventory-v1'
 REDUCTION_SCHEMA = 'baton2-controls-reduction-v1'
 CONTROL_SCRIPT = 'bend2/scripts/laws-check.mjs'
@@ -548,10 +549,16 @@ def reuse_gates(path, expected_sha, compiler, logs, initial):
             retained = logs / stage['log']
             require(retained.is_file(), 'The retained remote stage log is missing: ' + str(retained))
             entry = json.loads(retained.read_text())
-            require(entry.get('schema') == RECEIPT_SCHEMA,
-                    'The retained remote stage log carries another schema')
-            require(entry.get('evidence') == reference,
-                    'The retained remote stage log names other producer evidence than the receipt')
+            expected = {'schema': RECEIPT_SCHEMA, 'route': 'remote-module-groups',
+                        'kind': 'evidence-qualification', 'evidence': reference,
+                        'spans': stage.get('spans'), 'classifier': recorded.get('classifier'),
+                        'local_gates': [name for name, _ in GATES if name != stage['name']],
+                        'local_argv': stage.get('local_argv')}
+            differing = sorted(key for key in set(expected) | set(entry)
+                               if expected.get(key) != entry.get(key))
+            require(not differing,
+                    'The retained remote stage log disagrees with the receipt at: '
+                    + succinct(differing))
     require(summary['stages'][0]['after']['binary_sha256'] == initial['binary_sha256'],
             'The original build-stage binary differs from the receipt binary')
     require(validation(logs, summary.get('controls_evidence')) == summary['validation'],
@@ -1112,8 +1119,10 @@ def controls_evidence(directory, initial, compiler, audit=None, destination=None
         require(bundle.get('status') == 'complete',
                 'A bundle did not report complete: ' + json.dumps(bundle.get('status')))
         entry = bundle.get('entry')
-        require(isinstance(entry, str) and (ROOT / entry).is_file(),
-                'A bundle names no entry from this source: ' + json.dumps(entry))
+        require(entry == ADMITTED_ENTRY,
+                'A bundle names an entry that is not the admitted one: ' + json.dumps(entry))
+        require((ROOT / ADMITTED_ENTRY).is_file(),
+                'The admitted entry is absent from this checkout: ' + ADMITTED_ENTRY)
         producing = bundle.get('producing') or {}
         require(producing.get('checker_sha256') == sha256(ROOT / CONTROL_SCRIPT),
                 'A bundle names different checker bytes: ' + json.dumps(module))
