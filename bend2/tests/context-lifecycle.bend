@@ -250,15 +250,20 @@ def show_duty(key: String, result: Result<&1,&1,U32 & String,ContextDuties.DutyV
 
 def duty_surfaces(db: String, binding: String) -> IO(Unit):
   do IO<Unit>:
-    settled : Result<&1,&1,U32 & String,ContextDuties.DutyView> <- ContextDuties.duties(db, binding)
-    show_duty("duties.view", settled)
-    owed : Result<&1,&1,U32 & String,String> <- DB.Sql.query_bound(db, binding, "SELECT json_extract(cleanup_intent_json,'$.signal') FROM semantic_queries WHERE id='q1';")
-    show("duties.intent", owed)
+    created : Result<&1,&1,U32 & String,String> <- DB.Sql.query_bound(db, binding, ContextStore.accept_sql("q4", "root", "{\"version\":1,\"engine\":\"typescript\"}", "/work", "", "/log/q4", "/art/q4"))
+    show("duties.q4.accept", created)
+    published : Result<&1,&1,U32 & String,String> <- DB.Sql.query_bound(db, binding, ContextStore.state_publish_sql("q4", "complete", "{\"engine\":\"typescript\"}", ""))
+    show("duties.q4.publish", published)
+    settled : Result<&1,&1,U32 & String,String> <- DB.Sql.query_bound(db, binding, ContextStore.envelope_sql("q4"))
+    show("duties.q4.readback", settled)
+    +view : Result<&1,&1,U32 & String,ContextDuties.DutyView> <- ContextDuties.duties(db, binding)
+    show_duty("duties.view", view)
+    show_duty_has("duties.q1", view, "query", "q1")
+    show_duty_has("duties.q4", view, "query", "q4")
+    missing : Result<&1,&1,U32 & String,ContextDuties.DutyView> <- ContextDuties.duties(db, binding ++ "-absent")
+    show_duty("duties.missing", missing)
     IO.pure(Unit, Unit{})
 
-# The runtime row through its actual store text: a large canonical counter is
-# stored and returned verbatim, a malformed counter inserts nothing, and a repeat of
-# an existing identity with different launch data aborts instead of updating it.
 def runtime_row_surfaces(db: String, binding: String) -> IO(Unit):
   do IO<Unit>:
     +owner : String <- IO.pure(String, "root")
@@ -268,10 +273,16 @@ def runtime_row_surfaces(db: String, binding: String) -> IO(Unit):
     show("runtime.big", valid)
     after : Result<&1,&1,U32 & String,String> <- DB.Sql.query_bound(db, binding, "SELECT count(*) FROM semantic_runtimes WHERE id='rt1';")
     show("runtime.big.rows", after)
-    refused : Result<&1,&1,U32 & String,String> <- DB.Sql.query_bound(db, binding, ContextStore.runtime_row_sql("rt2", owner, "", "q1", "adapter-2", "starting", bad))
+    control : Result<&1,&1,U32 & String,String> <- DB.Sql.query_bound(db, binding, ContextStore.runtime_row_sql("rt3", owner, "", "q4", "adapter-3", "starting", big))
+    show("runtime.control", control)
+    refused : Result<&1,&1,U32 & String,String> <- DB.Sql.query_bound(db, binding, ContextStore.runtime_row_sql("rt2", owner, "", "q4", "adapter-2", "starting", bad))
     show("runtime.bad", refused)
     none : Result<&1,&1,U32 & String,String> <- DB.Sql.query_bound(db, binding, "SELECT count(*) FROM semantic_runtimes WHERE id='rt2';")
     show("runtime.bad.rows", none)
+    malformed : Result<&1,&1,U32 & String,String> <- DB.Sql.query_bound(db, binding, ContextStore.runtime_row_sql("rt1", owner, "", "q9", "adapter-9", "running", bad))
+    show("runtime.malformed", malformed)
+    unchanged : Result<&1,&1,U32 & String,String> <- DB.Sql.query_bound(db, binding, "SELECT json_object('launchQuery',launch_query,'adapterId',adapter_id,'state',state,'epoch',epoch) FROM semantic_runtimes WHERE id='rt1';")
+    show("runtime.unchanged", unchanged)
     conflict : Result<&1,&1,U32 & String,String> <- DB.Sql.query_bound(db, binding, ContextStore.runtime_row_sql("rt1", owner, "", "q9", "adapter-9", "running", big))
     show("runtime.conflict", conflict)
     kept : Result<&1,&1,U32 & String,String> <- DB.Sql.query_bound(db, binding, "SELECT launch_query FROM semantic_runtimes WHERE id='rt1';")

@@ -255,20 +255,72 @@ def check_admission_bound(values):
 
 
 def check_duties(values):
-    # The obligation, not a census: the query that still owes cleanup is present and
-    # the query published complete with no intent is absent.
+    # The obligation, not a census. The settled query is proven settled by its own
+    # readback first, so its absence from the enumeration is behaviour rather than
+    # a missing row, and a failed view cannot satisfy either assertion.
+    settled = values.get("duties.q4.readback")
+    try:
+        parsed = json.loads(settled)
+    except (TypeError, ValueError):
+        parsed = None
+        check(False, "duties.q4.readback", f"not JSON: {settled!r}")
+    if parsed:
+        check(parsed.get("query") == "q4" and parsed.get("state") == "complete", "duties.q4.readback", parsed)
+        check(parsed.get("progress") is None, "duties.q4.progress", parsed.get("progress"))
     check(values.get("duties.q1") == "true", "duties.q1", values.get("duties.q1"))
     check(values.get("duties.q4") == "false", "duties.q4", values.get("duties.q4"))
-    check(values.get("duties.view", "").startswith(("rows:", "none")), "duties.view", values.get("duties.view"))
+    check(values.get("duties.missing.error", "") != "", "duties.missing", values.get("duties.missing"))
+
+
+BIG_EPOCH = "12345678901234567890123456789012345"
+
+
+def parsed_row(label, values, key):
+    raw = values.get(key)
+    try:
+        row = json.loads(raw)
+    except (TypeError, ValueError):
+        check(False, label, f"not JSON: {raw!r}")
+        return None
+    return row
 
 
 def check_runtime_rows(values):
+    row = parsed_row("runtime.big", values, "runtime.big")
+    if row:
+        check(row.get("id") == "rt1", "runtime.big.id", row.get("id"))
+        check(row.get("launchQuery") == "q1", "runtime.big.launchQuery", row.get("launchQuery"))
+        check(row.get("adapterId") == "adapter-1", "runtime.big.adapterId", row.get("adapterId"))
+        check(row.get("state") == "starting", "runtime.big.state", row.get("state"))
+        check(row.get("epoch") == BIG_EPOCH, "runtime.big.epoch", row.get("epoch"))
+        check(isinstance(row.get("epoch"), str), "runtime.big.epoch type", type(row.get("epoch")).__name__)
     check(values.get("runtime.big.rows") == "1", "runtime.big.rows", values.get("runtime.big.rows"))
-    check("12345678901234567890123456789012345" in values.get("runtime.big", ""), "runtime.big", values.get("runtime.big"))
-    check("runtime-epoch-refused" in values.get("runtime.bad", ""), "runtime.bad", values.get("runtime.bad"))
+
+    control = parsed_row("runtime.control", values, "runtime.control")
+    if control:
+        check(control.get("id") == "rt3" and control.get("epoch") == BIG_EPOCH, "runtime.control", control)
+
+    refused = parsed_row("runtime.bad", values, "runtime.bad")
+    if refused:
+        check(refused.get("error") == "runtime-epoch-refused", "runtime.bad.error", refused.get("error"))
     check(values.get("runtime.bad.rows") == "0", "runtime.bad.rows", values.get("runtime.bad.rows"))
-    check(values.get("runtime.kept") == "q1", "runtime.kept", values.get("runtime.kept"))
+
+    malformed = parsed_row("runtime.malformed", values, "runtime.malformed")
+    if malformed:
+        check(malformed.get("error") == "runtime-epoch-refused", "runtime.malformed.error", malformed)
+
+    unchanged = parsed_row("runtime.unchanged", values, "runtime.unchanged")
+    if unchanged:
+        check(unchanged.get("launchQuery") == "q1", "runtime.unchanged.launchQuery", unchanged.get("launchQuery"))
+        check(unchanged.get("adapterId") == "adapter-1", "runtime.unchanged.adapterId", unchanged.get("adapterId"))
+        check(unchanged.get("state") == "starting", "runtime.unchanged.state", unchanged.get("state"))
+        check(unchanged.get("epoch") == BIG_EPOCH, "runtime.unchanged.epoch", unchanged.get("epoch"))
+
+    # The conflict is a real SQL failure, not the refusal row, so it must surface as
+    # an error rather than as a structured refusal.
     check(values.get("runtime.conflict.error", "") != "", "runtime.conflict", values.get("runtime.conflict"))
+    check(values.get("runtime.conflict", "") == "", "runtime.conflict output", values.get("runtime.conflict"))
+    check(values.get("runtime.kept") == "q1", "runtime.kept", values.get("runtime.kept"))
 
 
 def check_control(values):
