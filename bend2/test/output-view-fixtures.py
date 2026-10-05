@@ -26,6 +26,12 @@ Named cases, each with its independent expectation:
 13. final refused unterminated response   -> kept exact, fold reaches final extent in Refused
 14. note replay and consumption           -> Pending(E) then Consumed(E); retry replays identity
 15. decoder failure preserving last good boundary -> no advance, no note
+16. old open token, newly sealed tail        -> resumeAt below scannedThrough equal to the
+   qualified extent with no complete LF frame in the pending suffix is ACCEPTED; the
+   newly eligible unterminated tail is folded and the note phases keep that extent
+17. forged scannedThrough hiding an LF frame  -> ACCEPTANCE is REFUSED, not folded: the
+   same positions with the pending suffix having hidden a complete LF-delimited frame
+   must be rejected, which is what distinguishes it from the legitimate case above
 
 Every case fails on its own named invariant. A compile, setup or launch failure is
 inconclusive and never counts as a rejection. Decoder duplicate-policy controls stay

@@ -155,3 +155,17 @@ def validate_continuation(positions: Positions, qualified_extent: U32) -> Bool:
   match U32.lte(positions.ResumeAt, positions.ScannedThrough):
     case True{}: U32.lte(positions.ScannedThrough, qualified_extent)
     case False{}: False{}
+
+# A token taken while the tail was open stays legitimate after a newly qualified
+# all-writer seal arrives at the same extent. resumeAt below scannedThrough equal to
+# that extent is accepted, provided the pending suffix hid no complete LF-delimited
+# frame; the newly eligible unterminated tail is then folded. A forged scannedThrough
+# that stepped over a complete frame is rejected instead of folded.
+def accepts_tail(hid_complete_frame: Bool, sealed: Bool, positions: Positions,
+                 qualified_extent: U32) -> Bool:
+  match hid_complete_frame:
+    case True{}: False{}
+    case False{}:
+      match sealed:
+        case True{}: U32.eq(positions.ScannedThrough, qualified_extent)
+        case False{}: U32.lt(positions.ResumeAt, positions.ScannedThrough)
