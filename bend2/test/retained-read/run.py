@@ -10,7 +10,7 @@ import platform
 import re
 import shutil
 import subprocess
-import tempfile
+import sys
 import time
 
 
@@ -50,8 +50,19 @@ def main():
         with stdout_path.open("wb") as stdout_file, stderr_path.open("wb") as stderr_file:
             child = subprocess.Popen(argv, cwd=cwd, env=env, stdout=stdout_file, stderr=stderr_file)
             launch = dict(argv=argv, cwd=str(cwd), pid=child.pid)
-            (output / (name + ".launch.json")).write_text(json.dumps(launch, indent=2) + "\n")
-            child.wait()
+            try:
+                (output / (name + ".launch.json")).write_text(json.dumps(launch, indent=2) + "\n")
+                child.wait()
+            except BaseException as error:
+                # The remote job owns reconciliation of this same child.
+                # Retain source and output even when its exit was not observed.
+                interrupted = dict(launch, outcome="unobserved", error_type=type(error).__name__)
+                try:
+                    (output / (name + ".interrupted.json")).write_text(json.dumps(interrupted, indent=2) + "\n")
+                except OSError:
+                    pass
+                print(json.dumps(interrupted), file=sys.stderr, flush=True)
+                raise
         stdout, stderr = stdout_path.read_bytes(), stderr_path.read_bytes()
         record = dict(launch, exit=child.returncode, elapsed_seconds=time.monotonic() - started,
                       stdout_sha256=hashlib.sha256(stdout).hexdigest(),
@@ -103,6 +114,11 @@ def main():
         expected = "overflow" if total >= (1 << 64) else f"{total >> 32}:{total & ((1 << 32) - 1)}"
         status, stdout, stderr = run("case-" + name, [binary, *words])
         assert status == 0 and stdout == (expected + "\n").encode(), name
+    for index in range(4):
+        words = ["0", "0", "0", "0"]
+        words[index] = "invalid"
+        status, stdout, stderr = run("invalid-word-" + str(index), [binary, *words])
+        assert status == 2 and stdout == b"" and b"Invalid unsigned offset word." in stderr
 
     controls = (
         ("drop-low-carry", "U32.is_lt(next_low,low)", "False{}", "offset_carry_keeps_the_high_word", "Done", "Done"),
@@ -115,19 +131,19 @@ def main():
         assert implementation.count(old) == 1, name
         mutated = implementation.replace(old, new) + "\nlaw " + laws
         (output / (name + ".bend")).write_text(mutated)
-        with tempfile.TemporaryDirectory(prefix=name + "-", dir=output) as directory:
-            isolated = Path(directory)
-            for path in (module, dependency, entry):
-                (isolated / path).parent.mkdir(parents=True, exist_ok=True)
-                shutil.copyfile(root / path, isolated / path)
-            (isolated / module).write_text(mutated)
-            status, stdout, stderr = run("mutation-" + name, [compiler, entry, "--check-only"], isolated)
-            diagnostic = (stdout + stderr).decode(errors="replace")
-            assert status == 1, (name, diagnostic)
-            assert "Location: ../../src/context/retained-read." + law + "\n" in diagnostic, (name, diagnostic)
-            for label, constructor in (("expected", expected), ("observed", observed)):
-                pattern = r"^- " + label + r" : (?:[A-Za-z0-9_./-]+\.)?" + constructor + r"\{"
-                assert re.search(pattern, diagnostic, re.MULTILINE), (name, diagnostic)
+        isolated = output / ("mutation-source-" + name)
+        isolated.mkdir()
+        for path in (module, dependency, entry):
+            (isolated / path).parent.mkdir(parents=True, exist_ok=True)
+            shutil.copyfile(root / path, isolated / path)
+        (isolated / module).write_text(mutated)
+        status, stdout, stderr = run("mutation-" + name, [compiler, entry, "--check-only"], isolated)
+        diagnostic = (stdout + stderr).decode(errors="replace")
+        assert status == 1, (name, diagnostic)
+        assert "Location: ../../src/context/retained-read." + law + "\n" in diagnostic, (name, diagnostic)
+        for label, constructor in (("expected", expected), ("observed", observed)):
+            pattern = r"^- " + label + r" : (?:[A-Za-z0-9_./-]+\.)?" + constructor + r"\{"
+            assert re.search(pattern, diagnostic, re.MULTILINE), (name, diagnostic)
     after = identity()
     (output / "identity-after.json").write_text(json.dumps(after, indent=2) + "\n")
     assert before == after, "Source or toolchain changed during this run"
