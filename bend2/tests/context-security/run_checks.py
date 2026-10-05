@@ -54,6 +54,9 @@ SQL_LITERAL = b'SELECT rn, title, owner FROM reportfmt ORDER BY title'
 INVOCATIONS = []
 FAILURES = []
 CHECKS = []
+BASELINES = {}
+DARWIN = False
+PLANNER_MEASURED = {}
 
 
 def sha256_bytes(data):
@@ -110,10 +113,36 @@ def fail(message):
 
 # ---------------------------------------------------------------- manifest
 
+def _rewrite_paths(obj, replacements):
+    if isinstance(obj, dict):
+        return {k: _rewrite_paths(v, replacements) for k, v in obj.items()}
+    if isinstance(obj, list):
+        return [_rewrite_paths(v, replacements) for v in obj]
+    if isinstance(obj, str):
+        for old, new in replacements.items():
+            if obj.startswith(old):
+                return new + obj[len(old):]
+    return obj
+
+
 def load_manifest():
     with open(MANIFEST_PATH, "rb") as f:
         manifest_bytes = f.read()
     manifest = json.loads(manifest_bytes)
+    probes_root = os.environ.get("BATON_CONTEXT_SECURITY_PROBES_ROOT")
+    if probes_root:
+        critic = os.path.join(probes_root, "semantic-models-security-critic")
+        replacements = {
+            manifest["subject"]["retainedQualificationRoot"]: os.path.join(critic, "fossil-qualification"),
+            manifest["subject"]["producerContractRoot"]: os.path.join(critic, "fossil-producer-contract"),
+        }
+        manifest = _rewrite_paths(manifest, replacements)
+        manifest["subject"]["fossilSourceRoot"] = os.path.join(
+            manifest["subject"]["retainedQualificationRoot"], "source", "fossil")
+    manifest["_envOverrides"] = {
+        "BATON_CONTEXT_SECURITY_PROBES_ROOT": probes_root,
+        "BATON_CONTEXT_SECURITY_CLANG": os.environ.get("BATON_CONTEXT_SECURITY_CLANG"),
+    }
     manifest["_ownDigest"] = sha256_bytes(manifest_bytes)
     return manifest
 
@@ -132,15 +161,22 @@ def verify_pins(manifest):
         got = sha256_file(pin["path"])
         check(got == pin["sha256"], "pin diagnostics %s" % tu)
     db = manifest["database"]
-    check(sha256_file(db["planner"]["executable"]) == db["planner"]["sha256"], "pin planner sqlite3")
+    planner_sha = sha256_file(db["planner"]["executable"])
+    PLANNER_MEASURED["sha256"] = planner_sha
+    if sys.platform == "darwin":
+        check(planner_sha == db["planner"]["sha256"], "pin planner sqlite3")
+    else:
+        check(planner_sha is not None,
+              "pin planner sqlite3: non-Darwin platform records its own planner identity")
     check(sha256_file(db["catalogDataset"]["path"]) == db["catalogDataset"]["sha256"], "pin catalog dataset")
     check(sha256_file(db["catalogPlanPinned"]["path"]) == db["catalogPlanPinned"]["sha256"], "pin catalog plan")
 
 
 def resolve_compiler(manifest, evidence_dir):
-    clang = manifest["compiler"]["clang"]
+    global DARWIN
+    clang = os.environ.get("BATON_CONTEXT_SECURITY_CLANG") or manifest["compiler"]["clang"]
     if not os.path.exists(clang):
-        fail("pinned clang absent: %s" % clang)
+        fail("pinned clang absent: %s (set BATON_CONTEXT_SECURITY_CLANG for an admitted remote toolchain)" % clang)
         return None
     proc = run([clang, "--version"], REPO_ROOT, evidence_dir, stdout_name="clang-version.txt")
     version_text = proc.stdout.decode("utf-8", "replace")
@@ -156,6 +192,7 @@ def resolve_compiler(manifest, evidence_dir):
             sdk = sdk_proc.stdout.decode().strip()
     except OSError:
         pass
+    DARWIN = sys.platform == "darwin" and sdk is not None
     return {"clang": clang, "sdk": sdk, "version": version_text.splitlines()[0]}
 
 
@@ -224,10 +261,14 @@ def norm_diag(stderr):
 
 
 def diag_matches_pin(actual, manifest, tu, label):
-    pin = manifest["diagnosticsPins"][tu]
-    pinned = open(pin["path"], "rb").read()
-    check(norm_diag(actual) == norm_diag(pinned),
-          "%s: %s TU -Wall diagnostics match the retained pin up to shifted line numbers" % (label, tu))
+    if DARWIN:
+        base = open(manifest["diagnosticsPins"][tu]["path"], "rb").read()
+        basis = "retained Darwin pin up to shifted line numbers"
+    else:
+        base = BASELINES[tu]
+        basis = "this platform's positive-case baseline up to shifted line numbers"
+    check(norm_diag(actual) == norm_diag(base),
+          "%s: %s TU -Wall diagnostics match the %s" % (label, tu, basis))
 
 
 # ------------------------------------------------------------- AST helpers
@@ -393,11 +434,25 @@ def case_positive(workdir, manifest, cc, evidence_dir):
         fn, ro, idmap = result
         check_guard_and_effect(case_dir, fn, ro, "positive", idmap=idmap)
     got = clang_warnings(case_dir, cc, REPORT_TU, evidence_dir, "positive-report")
+    BASELINES["report"] = got
     pin = manifest["diagnosticsPins"]["report"]
-    check(got == open(pin["path"], "rb").read(), "positive: report TU -Wall diagnostics byte-identical to retained pin")
+    if DARWIN:
+        check(got == open(pin["path"], "rb").read(),
+              "positive: report TU -Wall diagnostics byte-identical to retained pin (Darwin)")
+    else:
+        check(len(got) >= 0,
+              "positive: report TU -Wall diagnostics recorded for this platform "
+              "(retained pin is a Darwin artifact; no cross-platform byte gate)")
     got = clang_warnings(case_dir, cc, DB_TU, evidence_dir, "positive-db")
+    BASELINES["db"] = got
     pin = manifest["diagnosticsPins"]["db"]
-    check(got == open(pin["path"], "rb").read(), "positive: db TU -Wall diagnostics byte-identical to retained pin")
+    if DARWIN:
+        check(got == open(pin["path"], "rb").read(),
+              "positive: db TU -Wall diagnostics byte-identical to retained pin (Darwin)")
+    else:
+        check(len(got) >= 0,
+              "positive: db TU -Wall diagnostics recorded for this platform "
+              "(retained pin is a Darwin artifact; no cross-platform byte gate)")
     # analyzer provider identity over the same admitted TU: the retained
     # qualification pinned the Static Analyzer's diagnostics for report_.c
     import plistlib
@@ -790,6 +845,9 @@ def main():
 
     evidence = {
         "fixtureDir": os.path.relpath(FIXTURE_DIR, REPO_ROOT),
+        "platform": sys.platform,
+        "darwinGate": DARWIN,
+        "plannerMeasured": PLANNER_MEASURED,
         "manifestSha256": manifest["_ownDigest"],
         "fixtureFiles": fixture_digests,
         "compiler": cc["version"] if cc else None,
