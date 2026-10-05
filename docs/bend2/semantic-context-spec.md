@@ -1400,8 +1400,9 @@ operation. This hook is required new integration, not existing keeper behavior.
 The startup composition uses the proposed ordinary retained-process primitive
 in `95bfccf0acefa151a667fa40a5f1fdfedafc5a80:docs/bend2/direct-start-672-proposal.md`,
 the docs-only successor to `d47d5c11` with six independent design ACCEPTs.
-These reviews establish the proposal assessment; root's implementation decision
-and host qualification remain separate. The `08dd2053` and `d47d5c11` reports
+These reviews establish the proposal assessment. Root has authorized bounded
+direct95 implementation; shared host qualification and semantic implementation
+authorization remain separate. The `08dd2053` and `d47d5c11` reports
 remain attached to their original pins.
 `ProcessChild.prepare`, `start` and
 `state` are proposed extensions of the existing keeper. Semantic composition
@@ -1475,7 +1476,9 @@ The actual process relationships and admitted failure responsibilities are:
 | Target/adapter observer disconnect | that role's keeper attempts its persisted recovery argv | the new observer attaches the same keeper, reconstructs committed event identity and delivers owed notices without replaying the effect |
 | Adapter exits while target survives | adapter keeper reaps only adapter; target keeper remains live | publish adapter failure, retain target capture, and permit owner release through the target keeper's validated control identity |
 | Owner stop accepted during start or execution | native stop transaction records intent; starter and each surviving role observer reconcile it | refuse a new target launch after accepted stop, or send recorded cleanup to an already started role and observe its exit; queued/accepted signaling alone does not complete cleanup |
-| Role keeper fails or recovery cannot attach/start | existing source provides error evidence and limited orphan observation only | expose unknown custody/continuation accurately; the required cleanup/wake mechanism for these branches remains unresolved, so they block an unqualified lifetime claim |
+| Role keeper fails while its original observer survives | that historical observer retains its original role handle and qualified orphan/spool observation | continue lifetime observation and actual historical owner notice; new public or internal callers report unavailable control and acquire no orphan custody |
+| Recovery spawn or pre-attachment setup fails while the keeper survives | the original keeper retains child custody and recovery responsibility | apply the shared direct95 retry and qualified recovery-child lifetime rules; retain first/latest failure evidence and permit at most one recovery child in flight |
+| Keeper and every historical observer are lost | surviving custody and notification continuation are unproved | retain available evidence and report the limit; inspection or a free guard supplies no replacement owner or repeated-effect authority |
 
 Observers are native coordinator processes using retained handles. Each
 persistent observer owns one role handle and its in-process intent companion;
@@ -1484,13 +1487,18 @@ child role to that role's own observer before relinquishing starter custody. Eac
 and recovery invocation. Persisted role rows and handoff labels alone do not
 establish a surviving observer or a successful native delivery.
 
-This is required new coordinator composition. Existing retained APIs support
-the handshake and disconnect recovery path. Their partial setup failure after
-native spawn and failure to launch the recovery process remain distinct host
-limitations: current code can leave keeper-error or observer-error evidence
-without a completed cleanup or another wake. The starter does not repair those
-host branches. Their exact disposition and qualification remain open before an
-implementation-ready successor can claim the full lifetime contract.
+This is required new coordinator composition. Baseline98fbfe03 supports the
+retained handshake and disconnect recovery path, but post-spawn setup failure
+and recovery-launch failure can leave keeper-error or observer-error evidence
+without completed cleanup or another wake. The root-authorized direct95 repair
+requires the surviving keeper to retain and reap its child after post-spawn
+setup failure, and to retry failed recovery launch or verified pre-attach exit
+on its monotonic retry cadence. A successful recovery spawn followed by waiter
+setup failure retains that child's qualified identity; another recovery spawn
+requires evidence that its lifetime ended. Semantic roles use those common
+requirements. Their implementation and selective-loss/actual-notice qualification
+remain open. Total loss of keeper and all historical observers remains an explicit
+unproved continuation boundary; an unavailable result establishes no survivor.
 
 Each runtime has separate `target` and `adapter` roles. Each role owns one
 shared prepared keeper and, after its admitted start grant, one direct child.
@@ -1502,15 +1510,31 @@ query/runtime identity, incarnation, keeper directory, guard key, recovery argv,
 capture cursor and cleanup state. Target exit evidence is written only by the
 target observer; adapter failure cannot overwrite it.
 
-Guard acquisition uses `SessionLock.try_acquire` with the canonical existing
-context log directory as its path anchor and canonical JSON
-`["context-role",databaseBinding,subjectKind,subjectId,role,incarnation]` as
-its key. That host function canonicalizes its path argument and uses it only
-as the anchor for a hex-encoded lock filename. The directory anchor keeps role
-guards distinct from the coordination database file used by ordinary Player
-turn guards. Actual guard handles go to `retain`; ordinary owner turns remain
-available. Keeper directories use digests of the recorded binding and role
-identity under that log directory. Raw IDs do not become path components.
+The full guard identity is canonical JSON
+`["context-role",databaseBinding,subjectKind,subjectId,role,incarnation]`.
+The fixed leading `context-role` tag separates this digest domain from other
+artifact and request identities.
+`Context.role_guard_key` returns the 64 lowercase ASCII hexadecimal characters
+of SHA-256 over that identity's canonical UTF-8 bytes. No identity member is
+truncated or omitted. The bootstrap and role record retain the full identity;
+admission and recovery compare it with the expected binding and manifest.
+A digest/identity disagreement refuses without replacing existing custody or
+records. The digest identifies a lock filename; acquisition establishes current
+exclusion, and the full identity checks separately bind the operation.
+
+`SessionLock.try_acquire` receives this digest string and the existing private
+directory `<canonical-context-log-directory>/g` as its path anchor. Create that
+fixed-name directory with mode 0700 before acquisition; require its canonical
+parent to be the recorded log directory and its canonical basename to remain
+`g`. The host appends `.lock-` and two hexadecimal characters per key byte, so
+the resulting basename is `g.lock-` plus 128 characters, totaling 135 ASCII bytes.
+Its representation is independent of query ID and database-path lengths.
+Actual filesystem path/allocation errors retain their host failure; no additional
+ID/path-length cutoff is introduced. Ordinary Player turn guards keep their
+existing database-file anchor. Actual role guard handles go to the shared
+prepared keeper; ordinary owner turns remain available. Keeper directories use
+the same full-identity digest under the log directory and validate their retained
+identity before reuse. Raw IDs do not become path components.
 
 The persisted recovery argv is the absolute installed Baton executable followed
 by `--recover-context-role`, canonical database path, expected database binding,
@@ -1518,9 +1542,15 @@ subject kind/ID, role, incarnation and exact keeper directory. This is an intern
 entry, not an agent-facing remedy. It validates the recorded role and manifest.
 With a live keeper it calls `ProcessChild.attach`, receiving the existing guard;
 it does not first try to acquire the guard that the keeper still holds. A
-competing attach returns busy. A missing keeper may use `attach_owned` only with
-a newly acquired matching guard and the qualified orphan-observation path;
-unknown status after keeper loss is not a reap receipt.
+competing attach returns busy. If that newly arriving internal recovery process
+finds the keeper absent or unreachable, it returns unavailable control with the
+original role/directory and retained evidence. It cannot use `attach_owned`,
+start a companion, finish the result or adopt historical notice duty by acquiring
+a free matching guard. The already owning historical observer continues its
+qualified orphan/spool observation through its retained handle and original
+identity, including owed notices after guard release. Unknown status after
+keeper loss is not a reap receipt. This follows the same keeper-absent rule as
+the common direct95 primitive.
 
 An attached handle starts reading its spool at offset zero. The observer uses
 persisted role/incarnation/event identity to skip identical committed events;
@@ -1768,7 +1798,7 @@ New tables join the existing Store transaction initialization:
   origin_attempt NULL, launch_query UNIQUE, adapter_id,
   state, epoch, pending_query NULL, outcome_json NULL)`;
 - `semantic_roles(query_id REFERENCES semantic_queries, role, incarnation,
-  keeper_path UNIQUE, guard_anchor, guard_key, recovery_argv_json,
+  keeper_path UNIQUE, guard_anchor, guard_key, guard_identity_json, recovery_argv_json,
   database_binding_json, phase, observer_identity_json NULL,
   observer_cursor, exit_evidence_json NULL,
   capture_json NULL, release_intent_json NULL, cleanup_phase,
@@ -2059,7 +2089,8 @@ result ID/owner/evidence validation; failed-provider no-publication; structural
 environment value exclusion; explicit adapter environment construction; ref
 snapshot/epoch validation; applicability from recorded/current identities; query
 claim before target launch; prepared keeper and observer before managed admission; committed admission before start grant;
-runtime owner and transition rules; query-control owner/kind validation,
+runtime owner and transition rules; complete role-identity construction and
+fixed-length guard-key encoding; query-control owner/kind validation,
 atomic intent/result publication, replay without control effects,
 no-relaunch recovery and release-intent ordering; version/URI-bound clangd
 diagnostic completion including empty publication; and each main dispatch
@@ -2080,7 +2111,18 @@ target exit/reap. Independent observer-loss cases cover each runtime role and
 each one-shot effect class without effect replay. Exercise public query-control
 through native and MCP for stopped owners, release before grant, release after
 provider submission, concurrent completion/release, repeated control IDs and
-keeper loss with a surviving historical observer. Kill a public control caller
+keeper loss with a surviving historical observer. Invoke delayed internal
+recovery both before and after that observer releases its guard while its
+historical owner notice remains owed. A failed connection proves neither keeper
+death nor observer transfer. Require unavailable control, no second observer/companion
+or effect, and actual notice delivery by the original holder. Separately exercise
+the fixed guard representation with long admissible database paths and Unicode
+query IDs: identical full identities contend, distinct query/role/database
+identities acquire independent guards, and full-identity mismatch refuses reuse.
+Verify ordinary owner-turn progress while those guards are held. The pure
+guard law binds complete canonical identity and key construction; actual
+filesystem acquisition and SHA-256/UTF-8 behavior require host qualification.
+Kill a public control caller
 before its transaction, after commit and before any keeper operation, and after
 an operation before response. Reusing the exact control ID must return the
 original committed observation; the controlled query must independently reconcile
@@ -2193,7 +2235,8 @@ proposal `2543678035631371a6f024a1c58ac9ec16239c12` has six design ACCEPT verdic
 controls-next owns its structural module, laws and Recruit factoring, with a
 separately owned structural fixture. That approval performs no semantic or
 optional-startup effect. Controls-next owns the #672 direct-start proposal and
-shared keeper design; its runtime remains unapproved. Semantic package/store/law
+shared keeper design, with bounded direct95 implementation authorized and host
+qualification still open. Semantic package/store/law
 and entry changes require explicit reviewed handoffs after authorization.
 `native-receive-conductor` first owns #669/#670 repair to
 commands/turn/receive and associated laws/tests. Feature branches rebase onto its
