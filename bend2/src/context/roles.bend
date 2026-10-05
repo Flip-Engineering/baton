@@ -51,14 +51,25 @@ def admitted(expected: String, query: String, role: String, incarnation: String,
 # value, and anything else assigns NULL to the NOT NULL cursor column. The recorded
 # value is the column itself, so a retained NULL stays NULL and never becomes an
 # empty string that the json_valid checks would refuse.
-def replay_column(expected: String, query: String, role: String, incarnation: String, next: String, value: String, +captureJson: String, +exitEvidenceJson: String, +progressJson: String, recorded: String) -> String:
+def first_or_replay_column(expected: String, query: String, role: String, incarnation: String, next: String, value: String, +captureJson: String, +exitEvidenceJson: String, +progressJson: String, recorded: String) -> String:
   "CASE WHEN " ++ cursor_expected(expected) ++ " THEN " ++ value ++ " WHEN " ++ replay_guard(query, role, incarnation, next, captureJson, exitEvidenceJson, progressJson) ++ " THEN " ++ recorded ++ " ELSE NULL END"
+
+# When the expected and next cursors are the same event identity, only an identical
+# replay may be admitted: a first-delivery branch would otherwise accept changed
+# capture, exit evidence or progress under that same identity.
+def strict_replay_column(query: String, role: String, incarnation: String, next: String, +captureJson: String, +exitEvidenceJson: String, +progressJson: String, recorded: String) -> String:
+  "CASE WHEN " ++ replay_guard(query, role, incarnation, next, captureJson, exitEvidenceJson, progressJson) ++ " THEN " ++ recorded ++ " ELSE NULL END"
+
+def replay_column(expected: String, query: String, role: String, incarnation: String, next: String, value: String, +captureJson: String, +exitEvidenceJson: String, +progressJson: String, recorded: String) -> String:
+  Bool.pick(String, String.eq(expected, next),
+    strict_replay_column(query, role, incarnation, next, captureJson, exitEvidenceJson, progressJson, recorded),
+    first_or_replay_column(expected, query, role, incarnation, next, value, captureJson, exitEvidenceJson, progressJson, recorded))
 
 # A missing role row aborts the transaction, because the cursor column is NOT NULL.
 # When the query row itself is missing the update matches no row, so nothing is
 # written and the caller's role read returns no row.
 def role_present_guard(query: String, role: String, incarnation: String) -> String:
-  "UPDATE semantic_roles SET observer_cursor=CASE WHEN EXISTS(SELECT 1 FROM semantic_roles WHERE query_id=" ++ C.q(query) ++ " AND role=" ++ C.q(role) ++ " AND incarnation=" ++ C.q(incarnation) ++ ") THEN observer_cursor ELSE NULL END WHERE query_id=" ++ C.q(query) ++ " AND role=" ++ C.q(role) ++ " AND incarnation=" ++ C.q(incarnation) ++ ";"
+  "UPDATE semantic_queries SET id=CASE WHEN EXISTS(SELECT 1 FROM semantic_roles WHERE query_id=" ++ C.q(query) ++ " AND role=" ++ C.q(role) ++ " AND incarnation=" ++ C.q(incarnation) ++ ") THEN id ELSE NULL END WHERE id=" ++ C.q(query) ++ ";"
 
 # One committed observation event. The role update carries the cursor rule; the
 # progress write then runs in the same transaction, so a refused replay rolls both
@@ -90,11 +101,18 @@ def release_claim_sql(+query: String, +role: String, +incarnation: String, +expe
 # owes a duty, or is settled. A missing role or query row is reported as `missing`
 # rather than as a settled role, and an owed notice for this query keeps the answer
 # unsettled.
+# The notice's own identity is canonical JSON array text, so its query field is read
+# structurally instead of by substring match: two queries whose IDs contain one
+# another cannot select each other's notices, and JSON escaping cannot hide the
+# field.
+def owed_notice_for(query: String) -> String:
+  "EXISTS(SELECT 1 FROM messages m WHERE m.receipt IS NULL AND json_valid(m.id) AND json_extract(m.id,'$[1]')=" ++ C.q(query) ++ " AND json_extract(m.id,'$[0]') IN ('context-progress','context-terminal','context-admission-rejected'))"
+
 def role_present(query: String, role: String, incarnation: String) -> String:
   "(EXISTS(SELECT 1 FROM semantic_roles WHERE query_id=" ++ C.q(query) ++ " AND role=" ++ C.q(role) ++ " AND incarnation=" ++ C.q(incarnation) ++ ") AND EXISTS(SELECT 1 FROM semantic_queries WHERE id=" ++ C.q(query) ++ "))"
 
 def intent_open(query: String, role: String, incarnation: String) -> String:
-  "EXISTS(SELECT 1 FROM semantic_roles WHERE query_id=" ++ C.q(query) ++ " AND role=" ++ C.q(role) ++ " AND incarnation=" ++ C.q(incarnation) ++ " AND (cleanup_phase IN ('pending','unavailable') OR (release_intent_json IS NOT NULL AND json_extract(release_intent_json,'$.delivery') IN ('pending','attempted','unknown')))) OR EXISTS(SELECT 1 FROM semantic_queries WHERE id=" ++ C.q(query) ++ " AND (cleanup_intent_json IS NOT NULL OR recovery_intent_json IS NOT NULL)) OR EXISTS(SELECT 1 FROM messages m WHERE m.receipt IS NULL AND substr(m.id,1,10)='[\"context-' AND instr(m.id," ++ C.q(query) ++ ")>0)"
+  "EXISTS(SELECT 1 FROM semantic_roles WHERE query_id=" ++ C.q(query) ++ " AND role=" ++ C.q(role) ++ " AND incarnation=" ++ C.q(incarnation) ++ " AND (cleanup_phase IN ('pending','unavailable') OR (release_intent_json IS NOT NULL AND json_extract(release_intent_json,'$.delivery') IN ('pending','attempted','unknown')))) OR EXISTS(SELECT 1 FROM semantic_queries WHERE id=" ++ C.q(query) ++ " AND (cleanup_intent_json IS NOT NULL OR recovery_intent_json IS NOT NULL)) OR " ++ owed_notice_for(query)
 
 # A recovery intent is a request to resume the existing duty. The observer clears it
 # in the same transaction that records its observation, so a later reader sees the

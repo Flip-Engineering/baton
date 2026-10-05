@@ -15,12 +15,14 @@
 #    rejection_error, rejection_message_id, owner_admission, stopped_owner_admitted;
 #  - store: replay_guard, envelope_sql, accept_sql, reject_sql, state_publish_sql,
 #    progress_body_sql, owner_notice_sql, json_or_null, text_or_null;
-#  - roles: cursor_guard, role_present_guard, role_row_sql, event_commit_sql,
+#  - roles: cursor_expected, cursor_seen, role_present_guard, owed_notice_for,
+#    replay_column, role_row_sql, event_commit_sql,
 #    release_claim_sql, intent_read_sql, progress_notice_id, terminal_notice_id;
 #  - control: cleanup_intent_text, role_release_intent_text, recovery_intent_text,
 #    pending_release_text, signal_ordering, controllable, control_admit_sql,
 #    control_result_sql;
 #  - lifecycle: rejected_cleanup_ready, release_attempt_delivery, release_ack_delivery,
+#    intent_owed, intent_settled, intent_missing, intent_step, companion_step,
 #    owns_live_duty, intent_owed;
 #  - bound: binding_document, token_member, physical_tuple.
 # The host digest, the guard-anchor directory creation and SQLite execution remain
@@ -354,12 +356,18 @@ def an_absent_notice_identity_inserts_nothing(owner,body):
 # ---------------------------------------------------------------------------
 # Role statements.
 
-law the_cursor_guard_admits_the_next_event_exactly_once:
-  for +expected: String
-  for +next: String
-  {ContextRoles.cursor_guard(expected,next) == "(observer_cursor=" ++ C.q(expected) ++ " OR observer_cursor=" ++ C.q(next) ++ ")" : String}
+law an_event_identity_names_its_expected_and_next_cursor:
+  for +cursor: String
+  {ContextRoles.cursor_expected(cursor) == "observer_cursor=" ++ C.q(cursor) : String}
 
-def the_cursor_guard_admits_the_next_event_exactly_once(expected,next):
+def an_event_identity_names_its_expected_and_next_cursor(cursor):
+  {==}
+
+law an_event_identity_names_its_next_cursor:
+  for +cursor: String
+  {ContextRoles.cursor_seen(cursor) == "observer_cursor=" ++ C.q(cursor) : String}
+
+def an_event_identity_names_its_next_cursor(cursor):
   {==}
 
 law a_missing_role_row_aborts_the_event_transaction:
@@ -752,4 +760,25 @@ law an_empty_line_makes_the_exported_enumeration_unreadable:
   {ContextDuties.duty_view("\n") == ContextDuties.DutyUnreadable{"","\n"} : ContextDuties.DutyView}
 
 def an_empty_line_makes_the_exported_enumeration_unreadable():
+  {==}
+
+law a_notice_is_matched_by_its_json_query_field:
+  for +query: String
+  {ContextRoles.owed_notice_for(query) == "EXISTS(SELECT 1 FROM messages m WHERE m.receipt IS NULL AND json_valid(m.id) AND json_extract(m.id,'$[1]')=" ++ C.q(query) ++ " AND json_extract(m.id,'$[0]') IN ('context-progress','context-terminal','context-admission-rejected'))" : String}
+
+def a_notice_is_matched_by_its_json_query_field(query):
+  {==}
+
+law a_repeated_event_identity_admits_only_an_identical_replay:
+  for +query: String
+  for +role: String
+  for +incarnation: String
+  for +next: String
+  for +capture: String
+  for +evidence: String
+  for +progress: String
+  for +recorded: String
+  {ContextRoles.replay_column(next,query,role,incarnation,next,"value",capture,evidence,progress,recorded) == ContextRoles.strict_replay_column(query,role,incarnation,next,capture,evidence,progress,recorded) : String}
+
+def a_repeated_event_identity_admits_only_an_identical_replay(query,role,incarnation,next,capture,evidence,progress,recorded):
   {==}

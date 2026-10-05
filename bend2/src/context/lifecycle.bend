@@ -39,31 +39,57 @@ def intent_settled(row: String) -> Bool:
 def intent_missing(row: String) -> Bool:
   String.eq(Tx.trim_nl(row), "missing")
 
-# One companion step: a bound read of committed intents, then the caller's duty
-# probe, then either one second of waiting and the continuation or the end. A failed
-# bound read ends the companion without claiming a wake; the original keeper and
-# observer retain their duty.
-def reconcile_delay(+db: String, +binding: String, +query: String, +role: String, +incarnation: String, duty: Unit -> IO(Bool), again: Unit -> IO(Unit)) -> IO(Unit):
-  do IO<Unit>:
-    waited : Unit <- IO.sleep(1000)
-    again(Unit{})
+# What one companion step concluded. A settled role ends the companion; a missing
+# custody answer is a failure with its own answer text, never a settled role; and a
+# failed bound read keeps its host error.
+type CompanionStep is Data:
+  StepContinue{}
+  StepSettled{}
+  StepMissing{answer: String}
+  StepFailed{code: U32, message: String}
+
+def intent_step(answer: String) -> CompanionStep:
+  Bool.pick(CompanionStep, intent_owed(answer), StepContinue{},
+  Bool.pick(CompanionStep, intent_settled(answer), StepSettled{}, StepMissing{answer}))
+
+# One reading: the bound intent answer, then the caller's duty probe while the
+# recorded duties are settled but the role may still be live.
+def companion_answer(+db: String, +binding: String, +query: String, +role: String, +incarnation: String, duty: Unit -> IO(Bool), step: CompanionStep) -> IO(CompanionStep):
+  match step:
+    case StepContinue{}: IO.pure(CompanionStep, StepContinue{})
+    case StepSettled{}: do IO<CompanionStep>:
+      live : Bool <- duty(Unit{})
+      Bool.pick(CompanionStep, live, StepContinue{}, StepSettled{})
+    case StepMissing{answer}: IO.pure(CompanionStep, StepMissing{answer})
+    case StepFailed{code, message}: IO.pure(CompanionStep, StepFailed{code, message})
+
+# The companion: one reading, then one second of waiting and the continuation while
+# the role has a live or unsettled duty. A settled, missing or failed conclusion ends
+# the companion and is returned to its caller.
+def companion_step(+db: String, +binding: String, +query: String, +role: String, +incarnation: String, duty: Unit -> IO(Bool)) -> IO(CompanionStep):
+  do IO<CompanionStep>:
+    read : Result<&1,&1,U32 & String,String> <- DB.Sql.query_bound(db, binding, ContextRoles.intent_read_sql(query, role, incarnation))
+    match read:
+      case Fail{error}:
+        match error:
+          case (code, message): IO.pure(CompanionStep, StepFailed{code, message})
+      case Done{+answer}: companion_answer(db, binding, query, role, incarnation, duty, intent_step(answer))
+
+def reconcile_step(+db: String, +binding: String, +query: String, +role: String, +incarnation: String, duty: Unit -> IO(Bool), again: Unit -> IO(CompanionStep), step: CompanionStep) -> IO(CompanionStep):
+  match step:
+    case StepContinue{}: do IO<CompanionStep>:
+      waited : Unit <- IO.sleep(1000)
+      again(Unit{})
+    case StepSettled{}: IO.pure(CompanionStep, StepSettled{})
+    case StepMissing{answer}: IO.pure(CompanionStep, StepMissing{answer})
+    case StepFailed{code, message}: IO.pure(CompanionStep, StepFailed{code, message})
 
 # The role observer starts exactly one in-process companion and keeps its own handle
 # and spool reader.
-def reconcile_settled(+db: String, +binding: String, +query: String, +role: String, +incarnation: String, duty: Unit -> IO(Bool), again: Unit -> IO(Unit), owed: Bool, live: Bool) -> IO(Unit):
-  Bool.pick(IO(Unit), Bool.or(owed, live), reconcile_delay(db, binding, query, role, incarnation, duty, again), IO.pure(Unit, Unit{}))
+def reconcile_intents(+db: String, +binding: String, +query: String, +role: String, +incarnation: String, duty: Unit -> IO(Bool), again: Unit -> IO(CompanionStep)) -> IO(CompanionStep):
+  do IO<CompanionStep>:
+    step : CompanionStep <- companion_step(db, binding, query, role, incarnation, duty)
+    reconcile_step(db, binding, query, role, incarnation, duty, again, step)
 
-def reconcile_after(+db: String, +binding: String, +query: String, +role: String, +incarnation: String, duty: Unit -> IO(Bool), again: Unit -> IO(Unit), read: Result<&1,&1,U32 & String,String>) -> IO(Unit):
-  match read:
-    case Fail{error}: IO.pure(Unit, Unit{})
-    case Done{+captured}: do IO<Unit>:
-      live : Bool <- duty(Unit{})
-      reconcile_settled(db, binding, query, role, incarnation, duty, again, intent_owed(captured), live)
-
-def reconcile_intents(+db: String, +binding: String, +query: String, +role: String, +incarnation: String, duty: Unit -> IO(Bool), again: Unit -> IO(Unit)) -> IO(Unit):
-  do IO<Unit>:
-    read : Result<&1,&1,U32 & String,String> <- DB.Sql.query_bound(db, binding, ContextRoles.intent_read_sql(query, role, incarnation))
-    reconcile_after(db, binding, query, role, incarnation, duty, again, read)
-
-def start_reconcile(+db: String, +binding: String, +query: String, +role: String, +incarnation: String, duty: Unit -> IO(Bool), again: Unit -> IO(Unit)) -> IO(Chan(Unit)):
-  IO.fork(Unit, reconcile_intents(db, binding, query, role, incarnation, duty, again))
+def start_reconcile(+db: String, +binding: String, +query: String, +role: String, +incarnation: String, duty: Unit -> IO(Bool), again: Unit -> IO(CompanionStep)) -> IO(Chan(CompanionStep)):
+  IO.fork(CompanionStep, reconcile_intents(db, binding, query, role, incarnation, duty, again))
