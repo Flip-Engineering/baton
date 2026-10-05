@@ -150,22 +150,20 @@ def ff_go4(r: FFLD, repo: String, target: String) -> IO(FFLD):
     case FFNext{wc, tb}: ff_stage4(wc, tb, repo, target)
 
 # Stage 5: CAS update-ref to advance the target branch.
-# --- the selected publication: prepared helpers, deliberately NOT wired ---------
+# --- the selected publication and holder observation: prepared, NOT wired -------
 #
-# Helper source for #674. No live caller references any of this: both publication
-# sites keep their previous conservative path until the live guard claim, the receipt
-# intent, the completed-failure record, the uncertainty reconciliation, the holder
-# post-state verification and the protected scratch sweep exist.
+# Helper source for #674. No live caller references any of this and no completion
+# mapper is offered: the post-state qualification and the holder verification that
+# the Root contract requires are not implemented, so these helpers can only refuse
+# while keeping every raw fact for the receipt and custody caller. The helpers are
+# activated only with the guard claim, the receipt intent, the completed-failure
+# record, the uncertainty reconciliation and the protected sweep.
 #
-# The helpers keep every raw fact: the command status and output, the parsed record
-# with its matched line or its ambiguity sample, the disposition, and a post-state
-# qualification. They are not user text. A destination that is not an absolute path
-# produces a typed not-attempted observation and no command at all; the absolute
-# prefix is a precondition, not canonicality and not authority, which the caller must
-# establish. The porcelain record is bound to the exact refspec field this attempt
-# pushed, terminated by the summary tab, so refs/heads/main cannot match
-# refs/heads/main-other, and a nonzero status is never a landing even when the record
-# looks applied.
+# A record is FLAG TAB REFSPEC TAB SUMMARY. The expected field therefore carries
+# both separators, so refs/heads/main cannot match refs/heads/main-other, and the
+# field must be the whole refspec this attempt pushed. Every attempt carries its
+# immutable identity - destination, target, object and the expected-basis lease -
+# and every reread keeps its own raw status and output.
 def publish_receiver() -> String:
   "git -c receive.denyCurrentBranch=updateInstead -c receive.denyNonFastForwards=true -c core.hooksPath=/dev/null receive-pack"
 
@@ -173,7 +171,7 @@ def publish_refspec(+oid: String, +target: String) -> String:
   T.str_cat3(oid, ":refs/heads/", target)
 
 def publish_field(+oid: String, +target: String) -> String:
-  Tx.str_cat(publish_refspec(oid, target), "\t")
+  T.str_cat3("\t", publish_refspec(oid, target), "\t")
 
 def publish_destination_ok(+path: String) -> Bool:
   Tx.starts_with(path, "/")
@@ -223,10 +221,14 @@ type PubRecord is Data:
   RecordAmbiguous{count: U32, sample: String}
   RecordAbsent{}
 
+type RereadObs is Data:
+  RereadRead{code: U32, out: String, ref: String}
+  RereadBroken{detail: String}
+
 type PubObservation is Data:
-  ObsAttempted{code: U32, out: String, record: PubRecord, destination: String, target: String, oid: String, post: String}
-  ObsNotAttempted{reason: String}
-  ObsBroken{detail: String}
+  ObsAttempted{code: U32, out: String, record: PubRecord, destination: String, target: String, oid: String, basis: String, post: String, reread: RereadObs}
+  ObsNotAttempted{reason: String, destination: String, target: String, oid: String, basis: String}
+  ObsBroken{detail: String, destination: String, target: String, oid: String, basis: String}
 
 def pub_record(out: String, +want: String) -> PubRecord:
   +lines = Tx.split_lines(out)
@@ -240,6 +242,11 @@ def pub_record(out: String, +want: String) -> PubRecord:
       Bool.pick(PubRecord, U32.is_eq(flagged, 0), RecordAbsent{}, RecordAmbiguous{flagged, pub_first(lines, want, 0)}),
       RecordAmbiguous{relevant, pub_first(lines, want, 1)}))
 
+def pub_obs(r: T.GitOut, +want: String, +destination: String, +target: String, +oid: String, +basis: String) -> PubObservation:
+  match r:
+    case T.GRun{code, out}: ObsAttempted{code, out, pub_record(out, want), destination, target, oid, basis, "unverified", RereadBroken{"not read"}}
+    case T.GBroken{detail}: ObsBroken{detail, destination, target, oid, basis}
+
 def record_class(record: PubRecord) -> String:
   match record:
     case RecordMatched{cls, line}: cls
@@ -249,80 +256,141 @@ def record_class(record: PubRecord) -> String:
 def obs_class_pick(code: U32, record: PubRecord) -> String:
   Bool.pick(String, U32.is_eq(code, 0), record_class(record), "failed")
 
-def pub_obs(r: T.GitOut, +want: String, +destination: String, +target: String, +oid: String) -> PubObservation:
-  match r:
-    case T.GRun{code, out}: ObsAttempted{code, out, pub_record(out, want), destination, target, oid, "unverified"}
-    case T.GBroken{detail}: ObsBroken{detail}
-
 def obs_class(+obs: PubObservation) -> String:
   match obs:
-    case ObsAttempted{code, out, record, destination, target, oid, post}: obs_class_pick(code, record)
-    case ObsNotAttempted{reason}: "not-attempted"
-    case ObsBroken{detail}: "broken"
+    case ObsAttempted{code, out, record, destination, target, oid, basis, post, reread}: obs_class_pick(code, record)
+    case ObsNotAttempted{reason, destination, target, oid, basis}: "not-attempted"
+    case ObsBroken{detail, destination, target, oid, basis}: "broken"
 
-def record_land(record: PubRecord, +target: String, +oid: String) -> T.LandOutcome:
-  match record:
-    case RecordMatched{cls, line}:
-      Bool.pick(T.LandOutcome, Tx.str_eq(cls, "applied"), T.LLanded{target, oid},
-        Bool.pick(T.LandOutcome, Tx.str_eq(cls, "already"), T.LAlready{oid},
-          T.LBlocked{"the publication of " ++ oid ++ " onto " ++ target ++ " answered " ++ cls ++ "; inspect the command output, the holder and the record before retrying"}))
-    case RecordAmbiguous{count, sample}: T.LBlocked{"the publication of " ++ oid ++ " onto " ++ target ++ " carried " ++ U32.show(count) ++ " flag-bearing records; inspect the command output before retrying"}
-    case RecordAbsent{}: T.LBlocked{"the publication of " ++ oid ++ " onto " ++ target ++ " carried no flag-bearing record; inspect the command output before retrying"}
-
-def obs_land_pick(code: U32, record: PubRecord, +target: String, +oid: String) -> T.LandOutcome:
-  Bool.pick(T.LandOutcome, U32.is_eq(code, 0), record_land(record, target, oid),
-    T.LBlocked{"the publication of " ++ oid ++ " onto " ++ target ++ " did not complete; inspect the command output, the holder and the record before retrying"})
-
-def obs_land_outcome(+obs: PubObservation) -> T.LandOutcome:
+# No completion mapper exists. Every observation refuses and keeps its evidence,
+# including the disposition (applied or already) for the caller that will later own
+# the post-state and holder qualification.
+def obs_refusal(+obs: PubObservation) -> T.LandOutcome:
   match obs:
-    case ObsAttempted{code, out, record, destination, target, oid, post}: obs_land_pick(code, record, target, oid)
-    case ObsNotAttempted{reason}: T.LBlocked{reason}
-    case ObsBroken{detail}: T.LBlocked{detail}
+    case ObsAttempted{code, out, record, destination, target, oid, basis, post, reread}: obs_refuse(code, record, post, target, oid)
+    case ObsNotAttempted{reason, destination, target, oid, basis}: T.LBlocked{reason}
+    case ObsBroken{detail, destination, target, oid, basis}: T.LBlocked{detail}
 
-def verify_ref_pick(obs: PubObservation, r: T.GitOut, +oid: String) -> PubObservation:
+def obs_refuse(code: U32, record: PubRecord, +post: String, +target: String, +oid: String) -> T.LandOutcome:
+  Bool.pick(T.LandOutcome, U32.is_eq(code, 0),
+    Bool.pick(T.LandOutcome, Tx.str_eq(post, "verified-object"),
+      T.LBlocked{"the publication of " ++ oid ++ " onto " ++ target ++ " reached the post-state " ++ post ++ " but holder verification and custody do not exist yet; the observation stays pending and must not be treated as a completion"},
+      T.LBlocked{"the publication of " ++ oid ++ " onto " ++ target ++ " is not qualified (post-state " ++ post ++ "); inspect the observation before any retry"}),
+    T.LBlocked{"the publication of " ++ oid ++ " onto " ++ target ++ " did not complete; inspect the observation before any retry"})
+
+def verify_ref_pick(+obs: PubObservation, r: T.GitOut, +ref: String) -> PubObservation:
   match obs:
-    case ObsAttempted{code, out, record, destination, target, observed, post}:
+    case ObsAttempted{code, out, record, destination, target, oid, basis, post, reread}:
       match r:
-        case T.GRun{rcode, rout}:
-          Bool.pick(PubObservation, U32.is_eq(rcode, 0),
-            Bool.pick(PubObservation, Tx.str_eq(Tx.trim_nl(rout), oid),
-              ObsAttempted{code, out, record, destination, target, observed, "verified-object"},
-              ObsAttempted{code, out, record, destination, target, observed, "mismatch-ref"}),
-            ObsAttempted{code, out, record, destination, target, observed, "unreadable-ref"})
-        case T.GBroken{detail}: ObsAttempted{code, out, record, destination, target, observed, "unreadable-ref"}
+        case T.GRun{rcode, rout}: obs_reread(code, out, record, destination, target, oid, basis, rcode, rout, ref)
+        case T.GBroken{detail}: obs_reread_broken(code, out, record, destination, target, oid, basis, detail, ref)
     case other: other
 
-def verify_ref(obs: PubObservation, +repo: String, +target: String, +oid: String) -> IO(PubObservation):
+def obs_reread(code: U32, out: String, record: PubRecord, +destination: String, +target: String, +oid: String, +basis: String, rcode: U32, rout: String, +ref: String) -> PubObservation:
+  Bool.pick(PubObservation, U32.is_eq(rcode, 0),
+    Bool.pick(PubObservation, Tx.str_eq(Tx.trim_nl(rout), oid),
+      ObsAttempted{code, out, record, destination, target, oid, basis, "verified-object", RereadRead{rcode, rout, ref}},
+      ObsAttempted{code, out, record, destination, target, oid, basis, "mismatch-ref", RereadRead{rcode, rout, ref}}),
+    ObsAttempted{code, out, record, destination, target, oid, basis, "unreadable-ref", RereadRead{rcode, rout, ref}})
+
+def obs_reread_broken(code: U32, out: String, record: PubRecord, +destination: String, +target: String, +oid: String, +basis: String, +detail: String, +ref: String) -> PubObservation:
+  ObsAttempted{code, out, record, destination, target, oid, basis, "unreadable-ref", RereadBroken{detail}}
+
+def verify_ref(+obs: PubObservation, +repo: String, +target: String, +ref: String) -> IO(PubObservation):
   +r2 = repo
   do IO<PubObservation>:
     reread : T.GitOut <- Git.runGit(r2, Con{"rev-parse", Con{Tx.str_cat("refs/heads/", target), Nil{}}})
-    IO.pure(PubObservation, verify_ref_pick(obs, reread, oid))
+    IO.pure(PubObservation, verify_ref_pick(obs, reread, ref))
 
-def verify_attempted(obs: PubObservation, +repo: String) -> IO(PubObservation):
+def verify_observation(+obs: PubObservation, +repo: String) -> IO(PubObservation):
   match obs:
-    case ObsAttempted{code, out, record, destination, target, oid, post}: verify_ref(obs, repo, target, oid)
-    case other: IO.pure(PubObservation, other)
-
-def verify_observation(obs: PubObservation, +repo: String) -> IO(PubObservation):
-  match obs:
-    case ObsAttempted{code, out, record, destination, target, oid, post}:
-      Bool.pick(IO(PubObservation), U32.is_eq(code, 0), verify_attempted(obs, repo), IO.pure(PubObservation, obs))
+    case ObsAttempted{code, out, record, destination, target, oid, basis, post, reread}:
+      Bool.pick(IO(PubObservation), U32.is_eq(code, 0),
+        verify_ref(obs, repo, target, Tx.str_cat("refs/heads/", target)),
+        IO.pure(PubObservation, obs))
     case other: IO.pure(PubObservation, other)
 
 def publish_run(+destination: String, +target: String, +oid: String, +basis: String, +want: String) -> IO(PubObservation):
   do IO<PubObservation>:
     pushed : T.GitOut <- Git.runGit(destination, publish_argv(destination, target, oid, basis))
-    observation : PubObservation <- IO.pure(PubObservation, pub_obs(pushed, want, destination, target, oid))
+    observation : PubObservation <- IO.pure(PubObservation, pub_obs(pushed, want, destination, target, oid, basis))
     verify_observation(observation, destination)
 
 def publish_observe(+destination: String, +target: String, +oid: String, +basis: String) -> IO(PubObservation):
   +d2 = destination
   +t2 = target
   +o2 = oid
+  +b2 = basis
   +want = publish_field(o2, t2)
   Bool.pick(IO(PubObservation), publish_destination_ok(d2),
-    publish_run(d2, t2, o2, basis, want),
-    IO.pure(PubObservation, ObsNotAttempted{"the publication destination is not an absolute canonical repository path"}))
+    publish_run(d2, t2, o2, b2, want),
+    IO.pure(PubObservation, ObsNotAttempted{"the publication destination is not an absolute canonical repository path", d2, t2, o2, b2}))
+
+# --- holder discovery and state: prepared, NOT wired ---------------------------
+# Discovery distinguishes an unreadable list from no holder: only a readable list
+# that names the target branch once may answer HolderFound. The caller passes the
+# canonical holder path it will bind; a changed holder is refused by comparison.
+type HolderLookup is Data:
+  HolderFound{path: String}
+  HolderNone{}
+  HolderUnreadable{code: U32, out: String}
+
+type HolderState is Data:
+  HolderRead{head: RereadObs, index: RereadObs, status: RereadObs}
+  HolderUnavailable{detail: String}
+
+def holder_second(items: List<String>) -> String:
+  match items:
+    case Nil{}: ""
+    case Con{first, rest}: holder_head(rest)
+
+def holder_head(items: List<String>) -> String:
+  match items:
+    case Nil{}: ""
+    case Con{first, rest}: first
+
+def holder_path_of(+line: String) -> String:
+  holder_second(Tx.split_spaces(line))
+
+def holder_branch_line(+target: String) -> String:
+  T.str_cat3("branch ", "refs/heads/", target)
+
+def holder_scan(lines: List<String>, +branch: String, +last: String) -> HolderLookup:
+  match lines:
+    case Nil{}: HolderNone{}
+    case Con{h, rest}:
+      Bool.pick(HolderLookup, Tx.starts_with(h, "worktree "),
+        holder_scan(rest, branch, holder_path_of(h)),
+        Bool.pick(HolderLookup, Tx.str_eq(h, branch),
+          Bool.pick(HolderLookup, String.is_empty(last), HolderNone{}, HolderFound{last}),
+          holder_scan(rest, branch, last)))
+
+def holder_lookup(g: T.GitOut, +target: String) -> HolderLookup:
+  match g:
+    case T.GRun{code, out}:
+      Bool.pick(HolderLookup, U32.is_eq(code, 0),
+        holder_scan(Tx.split_lines(out), holder_branch_line(target), ""),
+        HolderUnreadable{code, out})
+    case T.GBroken{detail}: HolderUnreadable{1, detail}
+
+def holder_state(+path: String) -> IO(HolderState):
+  +p2 = path
+  do IO<HolderState>:
+    head : T.GitOut <- Git.runGit(p2, ["rev-parse", "HEAD"])
+    index : T.GitOut <- Git.runGit(p2, ["diff", "--cached", "--name-status"])
+    status : T.GitOut <- Git.runGit(p2, ["status", "--porcelain"])
+    IO.pure(HolderState, holder_state_of(head, index, status, p2))
+
+def reread_of(g: T.GitOut, +ref: String) -> RereadObs:
+  match g:
+    case T.GRun{code, out}: RereadRead{code, out, ref}
+    case T.GBroken{detail}: RereadBroken{detail}
+
+def holder_state_of(head: T.GitOut, index: T.GitOut, status: T.GitOut, +path: String) -> HolderState:
+  HolderRead{reread_of(head, path), reread_of(index, path), reread_of(status, path)}
+
+def holder_unchanged(+expected: String, +found: String) -> Bool:
+  Tx.str_eq(expected, found)
 
 def ff_stage5_ok(ok: Bool, wc: String, target: String) -> FFLD:
   match ok:
@@ -1195,8 +1263,37 @@ def remote_tip_git(repo: String, branch: String, remote: String) -> IO(T.GitOut)
 
 # --- helper laws: prepared, not operative caller coverage ----------------------
 #
-# These pin the prepared helpers only. No live caller uses them, so they prove
-# nothing about ff_stage5 or ld_advance, and no compile or check has been run.
+# The positive is spelled independently of publish_field, so a missing separator in
+# the helper cannot hide behind a law that repeats the same mistake. The paired
+# negatives cover the prefix collision and an unrelated record on the real parser.
+# No live caller uses these helpers and no compile has been run.
+
+law prepared_publication_reads_a_well_formed_applied_record:
+  for +oid: String
+  for +target: String
+  for +summary: String
+  {pub_record(Tx.str_cat(" \t", Tx.str_cat(Tx.str_cat(T.str_cat3(oid, ":refs/heads/", target), "\t"), summary)), publish_field(oid, target)) == RecordMatched{"applied", Tx.str_cat(" \t", Tx.str_cat(Tx.str_cat(T.str_cat3(oid, ":refs/heads/", target), "\t"), summary))} : PubRecord}
+
+def prepared_publication_reads_a_well_formed_applied_record(oid, target, summary):
+  {==}
+
+law prepared_publication_rejects_a_prefix_collision:
+  for +oid: String
+  for +target: String
+  for +other: String
+  {pub_record(Tx.str_cat(" \t", T.str_cat3(T.str_cat3(oid, ":refs/heads/", target), "-", other)), publish_field(oid, target)) == RecordAbsent{} : PubRecord}
+
+def prepared_publication_rejects_a_prefix_collision(oid, target, other):
+  {==}
+
+law prepared_publication_rejects_an_unrelated_record:
+  for +oid: String
+  for +target: String
+  for +other: String
+  {pub_record(Tx.str_cat(" \t", T.str_cat3(other, ":refs/heads/", other)), publish_field(oid, target)) == RecordAmbiguous{1, Tx.str_cat(" \t", T.str_cat3(other, ":refs/heads/", other))} : PubRecord}
+
+def prepared_publication_rejects_an_unrelated_record(oid, target, other):
+  {==}
 
 law prepared_publication_refuses_a_relative_destination_without_argv:
   for +destination: String
@@ -1208,30 +1305,11 @@ law prepared_publication_refuses_a_relative_destination_without_argv:
 def prepared_publication_refuses_a_relative_destination_without_argv(destination, target, oid, basis):
   {==}
 
-law prepared_publication_binds_the_exact_refspec_field:
-  for +oid: String
-  for +target: String
-  {publish_field(oid, target) == Tx.str_cat(publish_refspec(oid, target), "\t") : String}
-
-def prepared_publication_binds_the_exact_refspec_field(oid, target):
-  {==}
-
-law prepared_publication_never_lands_on_a_nonzero_status:
-  for +record: PubRecord
-  for +target: String
-  for +oid: String
+law prepared_holder_discovery_never_reads_a_failed_list_as_no_holder:
   for +code: U32
-  {obs_land_pick(code, record, target, oid) == Bool.pick(T.LandOutcome, U32.is_eq(code, 0), record_land(record, target, oid), T.LBlocked{"the publication of " ++ oid ++ " onto " ++ target ++ " did not complete; inspect the command output, the holder and the record before retrying"}) : T.LandOutcome}
-
-def prepared_publication_never_lands_on_a_nonzero_status(record, target, oid, code):
-  {==}
-
-law prepared_publication_runs_only_for_an_absolute_destination:
-  for +destination: String
+  for +out: String
   for +target: String
-  for +oid: String
-  for +basis: String
-  {publish_observe(destination, target, oid, basis) == Bool.pick(IO(PubObservation), publish_destination_ok(destination), publish_run(destination, target, oid, basis, publish_field(oid, target)), IO.pure(PubObservation, ObsNotAttempted{"the publication destination is not an absolute canonical repository path"})) : IO(PubObservation)}
+  {holder_lookup(T.GRun{code, out}, target) == Bool.pick(HolderLookup, U32.is_eq(code, 0), holder_scan(Tx.split_lines(out), holder_branch_line(target), ""), HolderUnreadable{code, out}) : HolderLookup}
 
-def prepared_publication_runs_only_for_an_absolute_destination(destination, target, oid, basis):
+def prepared_holder_discovery_never_reads_a_failed_list_as_no_holder(code, out, target):
   {==}
