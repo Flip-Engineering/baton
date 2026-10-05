@@ -239,16 +239,40 @@ class ReviewedSourceLanding(unittest.TestCase):
                        check=True, capture_output=True)
         subprocess.run(['git', '-C', str(other), 'commit', '-q', '--allow-empty', '-m', 'foreign'],
                        check=True, capture_output=True, env=identity)
+        def foreign(*args):
+            return subprocess.run(['git', '-C', str(other), *args],
+                                  check=True, text=True, capture_output=True).stdout
+
+        other_tip = foreign('rev-parse', 'HEAD').strip()
+        other_status = foreign('status', '--porcelain')
         for mode, tail in (('land-player-at', []),
                            ('land-checked-player-at', ['true', 'file.txt'])):
             with self.subTest(mode=mode):
                 printed = self.refusal(mode, self.db, 'w1', other, 'main', *tail, commit)
                 self.assertIn('different repository', printed)
+                # the recorded source repository, its branch and its worktrees are untouched
                 self.assertEqual(self.git('rev-parse', 'main').strip(), self.base,
-                                 'a foreign workspace moved the target')
+                                 'a foreign workspace moved the recorded repository')
+                self.assertEqual(self.git('rev-parse', 'w1-branch').strip(), commit,
+                                 'a foreign workspace moved the recorded branch')
                 self.assertEqual(self.scratch_trees('w1'), [],
                                  'a foreign workspace prepared a scratch tree')
+                # and the repository the caller named as the landing target is untouched
+                self.assertEqual(foreign('rev-parse', 'refs/heads/main').strip(), other_tip,
+                                 'the named target branch moved')
+                self.assertEqual(foreign('rev-parse', 'HEAD').strip(), other_tip,
+                                 'the named target HEAD moved')
+                self.assertEqual(foreign('status', '--porcelain'), other_status,
+                                 'the named target worktree changed')
+                self.assertEqual(self.foreign_scratch(other, 'w1'), [],
+                                 'the named target holds landing scratch effects')
         self.assertEqual(self.git('rev-parse', 'w1-branch').strip(), commit)
+
+    @staticmethod
+    def foreign_scratch(repo, player):
+        """Any landing scratch tree the named repository left for PLAYER."""
+        scratch = repo / '.scratch'
+        return sorted(p.name for p in scratch.glob(f'bend2-land-{player}-*')) if scratch.exists() else []
 
     def test_checked_reviewed_landing_advances_when_the_checks_pass(self):
         self.check_fixtures({'check-pass.sh': 'exit 0\n'})
