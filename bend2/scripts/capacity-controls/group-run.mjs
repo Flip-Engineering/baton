@@ -273,6 +273,38 @@ export async function runGroup({
       else throw new Error(`runGroup: unsupported admitted-input type at ${full}`);
     }
   };
+  const definitions = definitionsByName(mutationDefinitions);
+
+  // Every selected case gets its row before the baseline runs, so unstarted
+  // cases stay represented when the group stops early.
+  const results = [];
+  const rowsByid = new Map();
+  for (const record of selected) {
+    const row = {
+      case: record,
+      setup: 'unstarted',
+      expectation: null,
+      delta: null,
+      process: { state: 'not-run', exit_code: null, signal: null, spawn_error: null, started: null, ended: null, attempt: null, wrapper_pid: null, wrapper_exit_code: null, wrapper_signal: null },
+      diagnostic: { class: 'not-run', attributed_law: null, sha256: null },
+      stdout: { path: null, bytes: null, sha256: null },
+      stderr: { path: null, bytes: null, sha256: null },
+      resource: null,
+    };
+    rowsByid.set(record.id, row);
+    results.push(row);
+  }
+
+  let baseline = null;
+  let manifestStatus = 'incomplete';
+  let manifestPhase = 'capture';
+  let manifestCaught = null;
+  let manifestError = null;
+  let secondaryTerminal = null;
+  let outcome = null;
+
+  try {
+  manifestPhase = 'capture';
   captureTree(join(scratch, 'bend2'), 'bend2');
   const dirty = new Set();
   const verifyRestored = () => {
@@ -300,37 +332,6 @@ export async function runGroup({
       }
     }
   };
-  const definitions = definitionsByName(mutationDefinitions);
-
-  // Every selected case gets its row before the baseline runs, so unstarted
-  // cases stay represented when the group stops early.
-  const results = [];
-  const rowsByid = new Map();
-  for (const record of selected) {
-    const row = {
-      case: record,
-      setup: 'unstarted',
-      expectation: null,
-      delta: null,
-      process: { state: 'not-run', exit_code: null, signal: null, spawn_error: null, started: null, ended: null, attempt: null, wrapper_pid: null, wrapper_exit_code: null, wrapper_signal: null },
-      diagnostic: { class: 'not-run', attributed_law: null, sha256: null },
-      stdout: { path: null, bytes: null, sha256: null },
-      stderr: { path: null, bytes: null, sha256: null },
-      resource: null,
-    };
-    rowsByid.set(record.id, row);
-    results.push(row);
-  }
-
-  let baseline = null;
-  let manifestStatus = 'incomplete';
-  let manifestPhase = 'baseline';
-  let manifestCaught = null;
-  let manifestError = null;
-  let secondaryTerminal = null;
-  let outcome = null;
-
-  try {
     const childArgv = [timeTool, timeFlag, bendPath, selectedEntry, '--check-only'];
 
     manifestPhase = 'baseline';
@@ -419,20 +420,25 @@ export async function runGroup({
           if (dirty.has(record.module)) {
             try {
               writeFileSync(scratchModule, pristine.get(record.module));
+              dirty.delete(record.module);
             } catch (restoreError) {
+              // The path stays dirty so the terminal verification catches it;
+              // the write failure is recorded without replacing a primary.
               if (controlError === null) controlError = restoreError;
               else controlError.secondary_restoration = String(restoreError?.message ?? restoreError);
             }
-            dirty.delete(record.module);
           }
           try {
             verifyRestored();
           } catch (error) {
-            if (controlError === null) controlError = error;
-            else if (controlError !== error) controlError.secondary_restoration = String(error?.message ?? error);
+            if (controlError === null) {
+              controlError = error;
+            } else if (!controlError.secondary_restoration) {
+              controlError.secondary_restoration = String(error?.message ?? error);
+            }
+            manifestError = manifestError ?? `${record.id}: ${error?.message ?? error}`;
           }
         }
-        row.setup = setup;
         if (controlError !== null) {
           row.evidence_error = String(controlError?.message ?? controlError);
           throw controlError;
