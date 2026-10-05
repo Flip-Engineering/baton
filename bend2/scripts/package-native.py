@@ -727,7 +727,12 @@ def ordinary_evidence(index_path, expected, compiler=None, declared_root=None,
         block = identity.get('compiler') or {}
         require(block.get('sha256') == sha256(compiler),
                 'The ordinary run used another compiler than the selected one')
-        require(block.get('path') not in (None, ''), 'The ordinary run records no compiler path')
+        require(block.get('path') not in (None, ''),
+                'The ordinary run records no compiler path')
+        # The location the run invoked is kept beside the verified identity, so a
+        # relocation of equal bytes does not overwrite the original invocation.
+        run_compiler_path = str(block['path'])
+    run_compiler_path = None
     source_block = identity.get('source') or {}
     # The producer records member names relative to its run scratch, which is the
     # index location's parent directory and the same root the classifier endpoint
@@ -910,6 +915,7 @@ def ordinary_evidence(index_path, expected, compiler=None, declared_root=None,
             'root_identity': evidence_root_identity(root, 'The ordinary evidence run root'),
             'invocation': identity['invocation'], 'nonce': identity['nonce'],
             'compiler_sha256': (identity.get('compiler') or {}).get('sha256'),
+            'run_compiler_path': run_compiler_path,
             'source': source_block, 'verifier': verifier, 'inputs': admitted_inputs,
             'endpoint_members': list(VERIFIER_MEMBERS),
             'run_members': sorted(required), 'verifier_unavailable': unavailable,

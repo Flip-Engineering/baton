@@ -74,6 +74,9 @@ class PackageGateReceipt(unittest.TestCase):
             for member in PACKAGE.ORDINARY_RUN_VERIFIER_MEMBERS}
         self.addCleanup(setattr, PACKAGE, 'expected_verifier_digests',
                         PACKAGE.expected_verifier_digests)
+        # Keep the unstubbed authorities so a seam test can read the checkout.
+        self._restore_expected_verifier_digests = PACKAGE.expected_verifier_digests
+        self._restore_ordinary_verifier_digests = PACKAGE.ordinary_verifier_digests
         PACKAGE.expected_verifier_digests = lambda: (dict(self.verifier), [])
         self.addCleanup(setattr, PACKAGE, 'ordinary_verifier_digests',
                         PACKAGE.ordinary_verifier_digests)
@@ -1057,6 +1060,25 @@ class PackageGateReceipt(unittest.TestCase):
         again.mkdir()
         with self.assertRaisesRegex(RuntimeError, 'does not match its recorded bytes'):
             PACKAGE.reuse_gates(path, PACKAGE.sha256(path), compiler, again, PACKAGE.snapshot())
+
+    def test_the_admitted_verifier_authority_is_read_from_the_checkout(self):
+        """The unstubbed authority seam, distinct from the stubbed plumbing fixture."""
+        PACKAGE.expected_verifier_digests = self._restore_expected_verifier_digests
+        PACKAGE.ordinary_verifier_digests = self._restore_ordinary_verifier_digests
+        digests, missing = PACKAGE.ordinary_verifier_digests()
+        self.assertEqual(sorted(missing),
+                         [PACKAGE.ORDINARY_VERIFIER_FILES['group_run_module_sha256']])
+        for member, digest in digests.items():
+            path = PACKAGE.ROOT / PACKAGE.ORDINARY_VERIFIER_FILES[member]
+            self.assertEqual(digest, hashlib.sha256(path.read_bytes()).hexdigest())
+        endpoint, endpoint_missing = PACKAGE.expected_verifier_digests()
+        self.assertEqual(sorted(digests), sorted(set(PACKAGE.ORDINARY_RUN_VERIFIER_MEMBERS)
+                                                 - {'group_run_module_sha256'}))
+        self.assertTrue(endpoint)
+        # The endpoint closure and the run identity stay separate authorities.
+        self.assertEqual(set(endpoint) - set(digests),
+                         set(PACKAGE.VERIFIER_MEMBERS)
+                         - {name for name in PACKAGE.VERIFIER_MEMBERS if name in digests})
 
     def test_the_ordinary_index_layout_and_run_root_are_checked(self):
         run_root = self.home / 'declared-run'
