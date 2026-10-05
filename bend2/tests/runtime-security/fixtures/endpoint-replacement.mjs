@@ -3,14 +3,14 @@
 // lucky event.
 import { writeFileSync, unlinkSync, renameSync, mkdirSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
-import { EnvironmentRefusal, openEnvironmentOrExit } from '../lib/env.mjs';
+import { EnvironmentRefusal, FIXTURE_ENTRIES, openEnvironmentOrExit } from '../lib/env.mjs';
 import { createReport, finish, refuseEnvironment } from '../lib/assert.mjs';
-import { historicalExpectation } from '../lib/pins.mjs';
+import { requirePin } from '../lib/pins.mjs';
 
 let environment;
 try {
-  environment = openEnvironmentOrExit();
-  if (environment.historicalPin !== null) historicalExpectation(environment, 'endpoint-replacement');
+  environment = openEnvironmentOrExit(FIXTURE_ENTRIES['endpoint-replacement']);
+  if (environment.pin !== null) requirePin(environment, 'endpoint-replacement');
 } catch (error) {
   if (error instanceof EnvironmentRefusal) refuseEnvironment(error);
   throw error;

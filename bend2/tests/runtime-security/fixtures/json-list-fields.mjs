@@ -2,15 +2,16 @@
 // child stderr and /json/list answers an unauthenticated loopback client. The
 // entry carries no pid field, so direct-child identity must come from the keeper.
 import { spawn } from 'node:child_process';
-import { EnvironmentRefusal, openEnvironmentOrExit } from '../lib/env.mjs';
-import { createReport, finish, refuseEnvironment } from '../lib/assert.mjs';
-import { historicalExpectation } from '../lib/pins.mjs';
+import { EnvironmentRefusal, FIXTURE_ENTRIES, openEnvironmentOrExit } from '../lib/env.mjs';
+import { createReport, finish, refuseEnvironment, writeStream } from '../lib/assert.mjs';
+import { own } from '../lib/children.mjs';
+import { requirePin } from '../lib/pins.mjs';
 import { loopbackGet, parseBanner, waitFor } from '../lib/net.mjs';
 
 let environment;
 try {
-  environment = openEnvironmentOrExit();
-  if (environment.historicalPin !== null) historicalExpectation(environment, 'json-list-fields');
+  environment = openEnvironmentOrExit(FIXTURE_ENTRIES['json-list-fields']);
+  if (environment.pin !== null) requirePin(environment, 'json-list-fields');
 } catch (error) {
   if (error instanceof EnvironmentRefusal) refuseEnvironment(error);
   throw error;
@@ -23,12 +24,20 @@ const child = spawn(
     environment.floorNode, '--inspect-brk=127.0.0.1:0', environment.helperPath('subject.mjs')],
   { cwd: environment.evidenceDir, env: { ...process.env }, stdio: ['ignore', 'pipe', 'pipe'] },
 );
+const custody = own(child);
+let stdout = '';
 let stderr = '';
+let errorSeen = null;
+child.stdout.on('data', (chunk) => (stdout += chunk));
 child.stderr.on('data', (chunk) => (stderr += chunk));
-// Observation is installed before any work so an early exit is not missed.
+// Observation is installed before any work so an early exit is not missed. An
+// error event is recorded separately and is not an observed close.
 const exitObservation = new Promise((resolve) => {
-  child.on('close', (code, signal) => resolve({ code, signal, at: Date.now() }));
-  child.on('error', (error) => resolve({ error: error.code ?? String(error), at: Date.now() }));
+  child.on('error', (error) => {
+    errorSeen = error.code ?? String(error);
+    resolve({ closed: false, error: errorSeen, at: Date.now() });
+  });
+  child.on('close', (code, signal) => resolve({ closed: true, code, signal, at: Date.now() }));
 });
 
 let banner = null;
@@ -45,6 +54,9 @@ try {
   child.kill('SIGKILL');
 }
 const observedExit = await exitObservation;
+if (observedExit.closed) custody.markReaped();
+const rawStdout = writeStream(environment, 'json-list-fields.subject.stdout.txt', stdout);
+const rawStderr = writeStream(environment, 'json-list-fields.subject.stderr.txt', stderr);
 
 let listParsed = null;
 try {
@@ -70,7 +82,9 @@ reporter.check('list:entry-shape', Array.isArray(listParsed) && listParsed.lengt
   && typeof listParsed[0].webSocketDebuggerUrl === 'string', listParsed);
 reporter.check('version:names-node', typeof versionParsed?.Browser === 'string'
   && versionParsed.Browser.includes('node.js'), versionParsed);
-reporter.check('subject:reaped', observedExit.signal === 'SIGKILL' || observedExit.code !== undefined, observedExit);
+reporter.check('subject:close-observed', observedExit.closed === true, observedExit);
+reporter.check('subject:no-error-event', errorSeen === null, errorSeen);
+reporter.check('subject:reaped', observedExit.closed === true && observedExit.signal === 'SIGKILL', observedExit);
 
 finish(environment, 'json-list-fields.result.json', reporter.finalize({
   banner,
@@ -78,4 +92,7 @@ finish(environment, 'json-list-fields.result.json', reporter.finalize({
   listParsed,
   versionParsed,
   observedExit,
+  errorSeen,
+  rawStdout,
+  rawStderr,
 }));

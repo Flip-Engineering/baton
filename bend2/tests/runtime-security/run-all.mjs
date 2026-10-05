@@ -1,16 +1,18 @@
 // Suite runner.
 //
-// Admission runs first, before any fixture child is spawned: a refused or
-// mismatched producer closure stops the run. Under a historical pin only the
-// fixtures registered for that pin run, so candidate and historical eras are
-// never mixed in one suite run.
+// Admission runs first over the union of every fixture's executed entries, before
+// any fixture child is spawned. Under a historical pin only the registered
+// fixtures run, against the pinned closure, so eras are never mixed.
 //
 // Full stdout and stderr are persisted per fixture child, including failed
-// fixtures, and the machine-readable summary is written separately.
+// fixtures, and the machine-readable summary is written separately with the
+// floor executable identity.
 import { spawnSync } from 'node:child_process';
 import { writeFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { EnvironmentRefusal, openEnvironmentOrExit, observedDigestLines, SUITE_DIR } from './lib/env.mjs';
+import {
+  EnvironmentRefusal, observedDigestLines, openEnvironmentOrExit, SUITE_DIR, unionEntries,
+} from './lib/env.mjs';
 import { HISTORICAL_PINS } from './lib/pins.mjs';
 
 const CANDIDATE_FIXTURES = [
@@ -25,7 +27,7 @@ const CANDIDATE_FIXTURES = [
 
 let environment;
 try {
-  environment = openEnvironmentOrExit();
+  environment = openEnvironmentOrExit(unionEntries());
 } catch (error) {
   if (error instanceof EnvironmentRefusal) {
     process.stdout.write(`FAIL environment ${error.condition}${error.detail === null ? '' : `: ${error.detail}`}\n`);
@@ -36,20 +38,15 @@ try {
 
 let fixtures = CANDIDATE_FIXTURES;
 let mode = 'candidate';
-if (environment.historicalPin !== null) {
-  const pin = HISTORICAL_PINS[environment.historicalPin];
-  if (pin === undefined || pin.closureSha256 !== environment.closureSha256) {
-    process.stdout.write(`FAIL environment historicalPinMismatch${environment.historicalPin === null ? '' : `: ${environment.historicalPin}`}\n`);
-    process.exit(3);
-  }
+if (environment.pin !== null) {
+  const pin = HISTORICAL_PINS[environment.pinName];
   fixtures = pin.fixtures.map((name) => `${name}.mjs`);
-  mode = `historical:${environment.historicalPin}`;
+  mode = `historical:${environment.pinName}`;
 }
 
 const results = [];
 for (const fixture of fixtures) {
-  const path = join(SUITE_DIR, 'fixtures', fixture);
-  const run = spawnSync(process.execPath, [path], {
+  const run = spawnSync(process.execPath, [join(SUITE_DIR, 'fixtures', fixture)], {
     cwd: SUITE_DIR,
     env: process.env,
     encoding: 'utf8',
@@ -60,7 +57,6 @@ for (const fixture of fixtures) {
   const stderr = run.stderr ?? '';
   writeFileSync(join(environment.evidenceDir, `${fixture}.child.stdout.txt`), stdout);
   writeFileSync(join(environment.evidenceDir, `${fixture}.child.stderr.txt`), stderr);
-  const refusalLine = stdout.split('\n').find((line) => line.startsWith('FAIL environment')) ?? null;
   results.push({
     fixture,
     status: run.status,
@@ -71,7 +67,7 @@ for (const fixture of fixtures) {
     stderrBytes: Buffer.byteLength(stderr),
     stdoutArtifact: `${fixture}.child.stdout.txt`,
     stderrArtifact: `${fixture}.child.stderr.txt`,
-    refusalLine,
+    refusalLine: stdout.split('\n').find((line) => line.startsWith('FAIL environment')) ?? null,
   });
   process.stdout.write(`[${run.status === 0 ? 'PASS' : 'FAIL'}] ${fixture} exit=${run.status} signal=${run.signal} error=${run.error?.code ?? ''}\n`);
 }
@@ -81,11 +77,13 @@ const summary = {
   suite: 'bend2/tests/runtime-security',
   mode,
   platform: environment.platform,
+  floorNode: environment.floorNode,
+  floorNodeSha256: environment.floorNodeSha256,
   producerRoot: environment.producerRoot,
   expectedManifest: environment.expectedPath,
-  closureSha256Observed: environment.closureSha256,
-  historicalPin: environment.historicalPin,
+  closureFiles: environment.closureFiles,
   observedDigests: observedDigestLines(environment),
+  historicalScope: environment.historicalScope,
   fixtureCount: fixtures.length,
   failed: failed.map((entry) => entry.fixture),
   results,

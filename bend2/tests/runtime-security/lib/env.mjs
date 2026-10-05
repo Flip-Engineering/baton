@@ -1,41 +1,49 @@
-// Portable fixture environment contract and central source admission.
+// Portable fixture environment contract and central closure-aware admission.
 //
-// Nothing here hardcodes a host path. The caller injects:
-//   BATON_PRODUCER_ROOT              absolute root of the producer worktree under test
+// Injected inputs:
+//   BATON_PRODUCER_ROOT              absolute producer worktree root under test
 //   BATON_FLOOR_NODE                 absolute exact-floor Node executable
-//   BATON_EVIDENCE_DIR               absolute directory for result artifacts (required)
-//   BATON_EXPECTED_PRODUCER_HASHES   absolute ROOT-ADMITTED frozen manifest (required)
-//   BATON_HISTORICAL_CLOSURE_SHA256  optional; enables the pinned historical expectation
+//   BATON_EVIDENCE_DIR               absolute evidence directory (must exist)
+//   BATON_EXPECTED_PRODUCER_HASHES   absolute ROOT-ADMITTED manifest (required)
+//   BATON_HISTORICAL_PIN             optional pin NAME that selects one historical case
+//   BATON_HISTORICAL_CLOSURE_SHA256  optional cross-check equal to that pin's closure digest
 //
-// The expected manifest is an admitted input. It must not be produced from the
-// tree under test: producing expectations from the tree under test would accept
-// any tree. The runner records fresh observed digests separately, under
-// `observed.producer.sha256`, and never feeds them back as expectations.
+// One key contract: the pin is selected by NAME (HISTORICAL_PINS[name]); the
+// closure digest is an assertion, never the key. The expected manifest is
+// admitted input; it is never produced from the tree under test.
 //
-// Admission refuses before any producer import or child spawn when the manifest
-// is absent, malformed, duplicated, incomplete for the imported dependency
-// closure, or disagrees with the tree.
+// Admission resolves the relative-import dependency closure of the modules a
+// fixture actually executes and requires the admitted manifest to cover every
+// one of them.
 
 import { createHash } from 'node:crypto';
 import { readFileSync, statSync, accessSync, existsSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, isAbsolute, join, basename } from 'node:path';
 import os from 'node:os';
+import { resolveClosure } from './closure.mjs';
+import { HISTORICAL_PINS } from './pins.mjs';
 
 export const LIB_DIR = dirname(fileURLToPath(import.meta.url));
 export const SUITE_DIR = dirname(LIB_DIR);
 export const HELPERS_DIR = join(SUITE_DIR, 'helpers');
 
-// The dependency closure this suite imports or launches from the producer tree.
-export const PRODUCER_FILES = Object.freeze([
-  'bootstrap.mjs',
-  'bootstrap-admission.mjs',
-  'cdp-intents.mjs',
-  'cdp-state.mjs',
-  'cdp-session.mjs',
-  'cdp-transport.mjs',
-  'cdp-endpoint.mjs',
-]);
+// Entry modules each fixture executes, used for the suite-wide union admission.
+export const FIXTURE_ENTRIES = Object.freeze({
+  'exec-continuity': Object.freeze(['bootstrap.mjs']),
+  'json-list-fields': Object.freeze([]),
+  'inspector-boundary': Object.freeze([]),
+  'bootstrap-exec': Object.freeze(['bootstrap.mjs']),
+  'grants-admission': Object.freeze(['cdp-intents.mjs', 'cdp-state.mjs', 'cdp-session.mjs']),
+  'endpoint-watch': Object.freeze(['cdp-endpoint.mjs']),
+  'endpoint-replacement': Object.freeze(['cdp-endpoint.mjs']),
+});
+
+export function unionEntries() {
+  const all = new Set();
+  for (const entries of Object.values(FIXTURE_ENTRIES)) for (const name of entries) all.add(name);
+  return [...all].sort();
+}
 
 export class EnvironmentRefusal extends Error {
   constructor(condition, detail) {
@@ -47,12 +55,8 @@ export class EnvironmentRefusal extends Error {
 }
 
 function requireAbsolute(name, value) {
-  if (typeof value !== 'string' || value.length === 0) {
-    throw new EnvironmentRefusal('missingEnvironment', name);
-  }
-  if (!isAbsolute(value)) {
-    throw new EnvironmentRefusal('relativeEnvironment', `${name}=${value}`);
-  }
+  if (typeof value !== 'string' || value.length === 0) throw new EnvironmentRefusal('missingEnvironment', name);
+  if (!isAbsolute(value)) throw new EnvironmentRefusal('relativeEnvironment', `${name}=${value}`);
   return value;
 }
 
@@ -60,13 +64,11 @@ export function sha256File(path) {
   return createHash('sha256').update(readFileSync(path)).digest('hex');
 }
 
-export function closureDigest(hashes) {
-  const lines = PRODUCER_FILES.slice().sort().map((name) => `${name}:${hashes[name] ?? ''}`);
+export function closureDigest(hashes, names) {
+  const lines = [...names].sort().map((name) => `${name}:${hashes[name] ?? ''}`);
   return createHash('sha256').update(`${lines.join('\n')}\n`).digest('hex');
 }
 
-// Strict manifest parse: every non-empty, non-comment line must be a well-formed
-// digest entry, and a basename may appear once.
 export function parseExpectedHashes(path) {
   if (!existsSync(path)) throw new EnvironmentRefusal('expectedHashesMissing', path);
   const text = readFileSync(path, 'utf8');
@@ -109,30 +111,15 @@ export function loadEnvironment() {
   }
   statSync(floorNode);
 
-  const expected = parseExpectedHashes(expectedPath);
-  const missingInManifest = PRODUCER_FILES.filter((name) => !expected.has(name));
-  if (missingInManifest.length > 0) {
-    throw new EnvironmentRefusal('expectedHashesIncomplete', missingInManifest.join(', '));
+  const pinName = process.env.BATON_HISTORICAL_PIN ?? null;
+  const pinClosure = process.env.BATON_HISTORICAL_CLOSURE_SHA256 ?? null;
+  if (pinName !== null && HISTORICAL_PINS[pinName] === undefined) {
+    throw new EnvironmentRefusal('historicalPinUnknown', pinName);
   }
-
-  const hashes = {};
-  const missingFiles = [];
-  const mismatches = [];
-  for (const name of PRODUCER_FILES) {
-    const path = join(runtimeDir, name);
-    if (!existsSync(path)) {
-      missingFiles.push(name);
-      continue;
-    }
-    const digest = sha256File(path);
-    hashes[name] = digest;
-    if (expected.get(name) !== digest) {
-      mismatches.push(`${name}: admitted ${expected.get(name)} observed ${digest}`);
-    }
+  if (pinName !== null && pinClosure !== null && HISTORICAL_PINS[pinName].closureSha256 !== pinClosure) {
+    throw new EnvironmentRefusal('historicalPinClosureDisagreement',
+      `${pinName} is ${HISTORICAL_PINS[pinName].closureSha256}, got ${pinClosure}`);
   }
-
-  const closure = closureDigest(hashes);
-  const historicalPin = process.env.BATON_HISTORICAL_CLOSURE_SHA256 ?? null;
 
   return {
     producerRoot,
@@ -141,19 +128,16 @@ export function loadEnvironment() {
     floorNodeSha256: sha256File(floorNode),
     evidenceDir,
     expectedPath,
-    expectedEntries: Object.fromEntries(expected),
-    hashes,
-    missingFiles,
-    mismatches,
-    closureSha256: closure,
-    historicalPin,
-    historicalPinMatches: historicalPin !== null && historicalPin === closure,
+    expectedEntries: Object.fromEntries(parseExpectedHashes(expectedPath)),
+    pinName,
+    pin: pinName === null ? null : HISTORICAL_PINS[pinName],
     platform: {
       platform: process.platform,
       arch: process.arch,
       release: os.release(),
       nodeVersion: process.version,
       floorNode,
+      floorNodeSha256: sha256File(floorNode),
     },
     platformInjectedEnvKeys: process.platform === 'darwin' ? ['__CF_USER_TEXT_ENCODING'] : [],
     runtimePath: (name) => join(runtimeDir, name),
@@ -161,23 +145,88 @@ export function loadEnvironment() {
   };
 }
 
-// Central admission: refuses before any producer import or child spawn.
-export function admitSource(environment) {
-  if (environment.missingFiles.length > 0) {
-    throw new EnvironmentRefusal('producerFileMissing', environment.missingFiles.join(', '));
+// Resolve and validate the executed dependency closure for one fixture.
+export function admitEnvironment(environment, entries) {
+  const expected = environment.expectedEntries;
+  const { files, missing } = resolveClosure(environment.runtimeDir, entries);
+  const observed = {};
+  const uncovered = [];
+  const mismatches = [];
+  for (const name of files) {
+    observed[name] = sha256File(join(environment.runtimeDir, name));
+    const admitted = expected[name];
+    if (admitted === undefined) uncovered.push(name);
+    else if (admitted !== observed[name]) mismatches.push(`${name}: admitted ${admitted} observed ${observed[name]}`);
   }
-  if (environment.mismatches.length > 0) {
-    throw new EnvironmentRefusal('sourceHashMismatch', environment.mismatches.join(' | '));
+
+  if (environment.pin !== null) {
+    const scope = environment.pin.scopeFiles;
+    const scopeObserved = {};
+    const scopeMissing = [];
+    const scopeUncovered = [];
+    const scopeMismatched = [];
+    for (const name of scope) {
+      const path = join(environment.runtimeDir, name);
+      if (!existsSync(path)) {
+        scopeMissing.push(name);
+        continue;
+      }
+      scopeObserved[name] = sha256File(path);
+      const admitted = expected[name];
+      if (admitted === undefined) scopeUncovered.push(name);
+      else if (admitted !== scopeObserved[name]) scopeMismatched.push(`${name}: admitted ${admitted} observed ${scopeObserved[name]}`);
+    }
+    if (scopeMissing.length > 0) throw new EnvironmentRefusal('historicalScopeFileMissing', scopeMissing.join(', '));
+    if (scopeUncovered.length > 0) {
+      throw new EnvironmentRefusal('historicalScopeNotInManifest', scopeUncovered.join(', '));
+    }
+    if (scopeMismatched.length > 0) {
+      throw new EnvironmentRefusal('historicalScopeHashMismatch', scopeMismatched.join(' | '));
+    }
+    const scopeDigest = closureDigest(scopeObserved, scope);
+    if (scopeDigest !== environment.pin.closureSha256) {
+      throw new EnvironmentRefusal('historicalClosureMismatch',
+        `expected ${environment.pin.closureSha256} observed ${scopeDigest}`);
+    }
+    return {
+      ...environment,
+      entries,
+      closureFiles: files,
+      closureMissing: missing,
+      observedHashes: observed,
+      uncoveredInManifest: uncovered,
+      mismatches,
+      // Honest labelling: only the retained scope is digest-verified for this era.
+      historicalScope: {
+        pin: environment.pinName,
+        scopeFiles: scope,
+        scopeComplete: environment.pin.scopeComplete,
+        digest: scopeDigest,
+        verifiedFiles: scope.slice(),
+        unverifiedForEra: files.filter((name) => !scope.includes(name)),
+      },
+    };
   }
-  return environment;
+
+  if (missing.length > 0) throw new EnvironmentRefusal('closureModuleMissing', missing.join(', '));
+  if (uncovered.length > 0) throw new EnvironmentRefusal('expectedHashesIncomplete', uncovered.join(', '));
+  if (mismatches.length > 0) throw new EnvironmentRefusal('sourceHashMismatch', mismatches.join(' | '));
+  return {
+    ...environment,
+    entries,
+    closureFiles: files,
+    closureMissing: missing,
+    observedHashes: observed,
+    uncoveredInManifest: uncovered,
+    mismatches,
+    historicalScope: null,
+  };
 }
 
-// Uniform entry point for every fixture and for the suite runner. Returns an
-// admitted environment or exits 3 with the refusal recorded on stdout.
-export function openEnvironmentOrExit() {
+export function openEnvironmentOrExit(entries = []) {
   let environment;
   try {
-    environment = admitSource(loadEnvironment());
+    environment = admitEnvironment(loadEnvironment(), entries);
   } catch (error) {
     if (error instanceof EnvironmentRefusal) {
       process.stdout.write(`FAIL environment ${error.condition}${error.detail === null ? '' : `: ${error.detail}`}\n`);
@@ -188,8 +237,7 @@ export function openEnvironmentOrExit() {
   return environment;
 }
 
-// Freshly observed digests, for evidence only.
 export function observedDigestLines(environment) {
-  return PRODUCER_FILES.slice().sort()
-    .map((name) => `${environment.hashes[name] ?? 'MISSING'}  ${join(environment.runtimeDir, name)}`);
+  return Object.keys(environment.observedHashes).sort()
+    .map((name) => `${environment.observedHashes[name]}  ${join(environment.runtimeDir, name)}`);
 }

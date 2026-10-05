@@ -9,15 +9,16 @@
 //   F a target-blocking evaluation never responds, and an external signal still
 //     ends the subject
 import { spawn } from 'node:child_process';
-import { EnvironmentRefusal, openEnvironmentOrExit } from '../lib/env.mjs';
-import { createReport, finish, refuseEnvironment } from '../lib/assert.mjs';
-import { historicalExpectation } from '../lib/pins.mjs';
+import { EnvironmentRefusal, FIXTURE_ENTRIES, openEnvironmentOrExit } from '../lib/env.mjs';
+import { createReport, finish, refuseEnvironment, writeStream } from '../lib/assert.mjs';
+import { own } from '../lib/children.mjs';
+import { requirePin } from '../lib/pins.mjs';
 import { loopbackGet, parseBanner, waitFor } from '../lib/net.mjs';
 
 let environment;
 try {
-  environment = openEnvironmentOrExit();
-  if (environment.historicalPin !== null) historicalExpectation(environment, 'inspector-boundary');
+  environment = openEnvironmentOrExit(FIXTURE_ENTRIES['inspector-boundary']);
+  if (environment.pin !== null) requirePin(environment, 'inspector-boundary');
 } catch (error) {
   if (error instanceof EnvironmentRefusal) refuseEnvironment(error);
   throw error;
@@ -33,11 +34,19 @@ function launch(tag) {
       environment.floorNode, '--inspect-brk=127.0.0.1:0', environment.helperPath('subject.mjs')],
     { cwd: environment.evidenceDir, env: { ...process.env }, stdio: ['ignore', 'pipe', 'pipe'] },
   );
-  const state = { tag, child, pid: child.pid, stdout: '', stderr: '' };
+  const state = { tag, child, pid: child.pid, stdout: '', stderr: '', errorSeen: null, closed: false };
+  state.custody = own(child);
   child.stdout.on('data', (chunk) => (state.stdout += chunk));
   child.stderr.on('data', (chunk) => (state.stderr += chunk));
   state.exited = new Promise((resolve) => {
-    child.on('close', (code, signal) => resolve({ code, signal, at: Date.now() }));
+    child.on('error', (error) => {
+      state.errorSeen = error.code ?? String(error);
+      resolve({ closed: false, error: state.errorSeen, at: Date.now() });
+    });
+    child.on('close', (code, signal) => {
+      state.closed = true;
+      resolve({ closed: true, code, signal, at: Date.now() });
+    });
   });
   children.push(state);
   return state;
@@ -165,14 +174,27 @@ try {
     reporter.check('F:external-signal-ends-subject', false, 'no banner');
   }
 } finally {
-  for (const state of children) {
-    try {
-      state.child.kill('SIGKILL');
-    } catch {
-      // already gone
-    }
-  }
+  for (const state of children) state.custody.kill('SIGKILL');
   await Promise.all(children.map((state) => state.exited.catch(() => null)));
 }
 
-finish(environment, 'inspector-boundary.result.json', reporter.finalize());
+// Raw debuggee streams and outcomes, persisted per subject including failures.
+const rawStreams = [];
+for (const state of children) {
+  if (state.closed) state.custody.markReaped();
+  rawStreams.push({
+    tag: state.tag,
+    pid: state.pid,
+    closed: state.closed,
+    errorSeen: state.errorSeen,
+    outcome: await state.exited.catch(() => null),
+    stdout: writeStream(environment, `inspector-boundary.${state.tag}.stdout.txt`, state.stdout),
+    stderr: writeStream(environment, `inspector-boundary.${state.tag}.stderr.txt`, state.stderr),
+  });
+}
+for (const entry of rawStreams) {
+  reporter.check(`${entry.tag}:close-observed`, entry.closed === true, entry);
+  reporter.check(`${entry.tag}:no-error-event`, entry.errorSeen === null, entry.errorSeen);
+}
+
+finish(environment, 'inspector-boundary.result.json', reporter.finalize({ rawStreams }));

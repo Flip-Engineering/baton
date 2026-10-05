@@ -1,9 +1,6 @@
-// Assertion and result recording for the portable fixture set.
-//
-// Source admission runs centrally in lib/env.mjs before a fixture imports any
-// producer module or spawns any child, so a report is only ever created for an
-// admitted closure. Every report records the admitted manifest path, the
-// observed closure digest and the historical pin, if any.
+// Assertion and result recording. Admission runs centrally in lib/env.mjs
+// before a report exists, so every report describes an admitted closure.
+// Executable identity and the verified closure are recorded with each result.
 
 import { writeFileSync, mkdirSync } from 'node:fs';
 import { join } from 'node:path';
@@ -13,15 +10,18 @@ export function createReport(fixture, environment) {
   const notes = [];
   const report = {
     fixture,
-    mode: environment.historicalPin === null ? 'candidate' : `historical:${environment.historicalPin}`,
+    mode: environment.pin === null ? 'candidate' : `historical:${environment.pinName}`,
     platform: environment.platform,
+    floorNode: environment.floorNode,
+    floorNodeSha256: environment.floorNodeSha256,
     producerRoot: environment.producerRoot,
     runtimeDir: environment.runtimeDir,
-    producerHashesObserved: environment.hashes,
+    entries: environment.entries,
+    closureFiles: environment.closureFiles,
+    observedHashes: environment.observedHashes,
     expectedManifest: environment.expectedPath,
-    expectedEntries: environment.expectedEntries,
-    closureSha256Observed: environment.closureSha256,
-    historicalPin: environment.historicalPin,
+    uncoveredInManifest: environment.uncoveredInManifest,
+    historicalScope: environment.historicalScope,
     checks,
     notes,
     ok: false,
@@ -55,6 +55,13 @@ export function writeReport(environment, name, report) {
   return path;
 }
 
+// Persist a raw debuggee stream verbatim and return its artifact name.
+export function writeStream(environment, name, text) {
+  mkdirSync(environment.evidenceDir, { recursive: true });
+  writeFileSync(join(environment.evidenceDir, name), text ?? '');
+  return { artifact: name, bytes: Buffer.byteLength(text ?? '') };
+}
+
 // Real exit statuses: 0 pass, 1 assertion failure, 3 refused environment.
 export function finish(environment, name, report) {
   writeReport(environment, name, report);
@@ -66,7 +73,6 @@ export function finish(environment, name, report) {
   process.exit(report.ok ? 0 : 1);
 }
 
-// A refused environment records the refusal and exits 3 for any fixture.
 export function refuseEnvironment(error) {
   const condition = error?.condition ?? 'environmentRefusal';
   const detail = error?.detail ?? String(error);
