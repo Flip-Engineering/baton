@@ -45,6 +45,12 @@ def effects_text(xs: Eng.SS) -> String:
     case Eng.SSCons{h, Eng.SSNil{}}: h
     case Eng.SSCons{h, r}: h ++ "," ++ effects_text(r)
 
+def availability_text(a: Eng.Availability) -> String:
+  match a:
+    case Eng.AvAvailable{}: "available"
+    case Eng.AvUnavailable{reason}: "unavailable:" ++ reason
+    case Eng.AvExcluded{reason}: "excluded:" ++ reason
+
 def check_text(c: Snap.CaptureCheck) -> String:
   match c:
     case Snap.CCIntact{}: "intact"
@@ -86,6 +92,8 @@ def all_ok() -> List<Bool>:
     String.eq(effects_text(Eng.required_effects(Eng.op_query_control_release())), "controlRuntime"),
     String.eq(effects_text(Eng.required_effects(Eng.op_query_control_recover())), ""),
     String.eq(choice_text(Eng.auto("runtime", "", "", Eng.ss_one("state"))), "one:cdp"),
+    String.eq(availability_text(Eng.probe_availability(Eng.unpinned_operation(), Eng.POk{"20.1.8", "", "s"}, "20.1.8")), "unavailable:the provider probe form is not pinned"),
+    String.eq(availability_text(Eng.probe_availability("providerEngines", Eng.POk{"5.9.3", "/x/node", "s"}, "5.9.3")), "available"),
     String.eq(choice_text(Eng.auto("ref", "", "typescript", Eng.ss_one("definition"))), "one:typescript"),
     String.eq(choice_text(Eng.auto("ref", "", "", Eng.ss_one("definition"))), "none:ref subject requires the stored selector engine") ]
 

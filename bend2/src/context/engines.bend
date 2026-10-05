@@ -438,9 +438,7 @@ def resolve(choice: EngineChoice, catalog: List<EngineEntry>) -> EngineResolved:
 
 # --- the fixed discovery plan ------------------------------------------------
 type Deployment is Data:
-  Dep{node: String, tsProvider: String, clangdAdapter: String,
-      analyzerAdapter: String, psql: String, catalogsProvider: String,
-      modelsProvider: String, envProvider: String, datasetProvider: String}
+  Dep{node: String, tsProvider: String, psql: String}
 
 type ProbeSpec is Data:
   Probe{engine: String, operation: String, executable: String, argv: SS}
@@ -450,25 +448,28 @@ type ProbeOutcome is Data:
   PFailed{reason: String}
   PExcluded{reason: String}
 
-# One fixed probe per engine. The plan names only deployment executables and
-# fixed argv; it names no target path and starts no debuggee. The two clang
-# engines are probed through their packaged adapters, which resolve the
-# admitted external clangd and the packaged extractor from their own location
-# and report the absolute path, version and digest they use; the packaged
-# extractor and the helper summary are therefore not separate deployment
-# inputs. The cdp and postgres probes name their admitted executables directly.
+# The probe form of one engine is pinned only where its owner published a
+# callable discovery entry. The TypeScript adapter publishes the
+# provider-engines request on standard input with argv `-`; node and psql are
+# probed with their conventional version flag. Every other engine stays
+# unpinned here: no invented argv can establish that a provider answers, and an
+# unpinned engine reports unavailable with that reason until its owner pins the
+# callable form and its staged path.
+def unpinned_operation() -> String:
+  "unpinned"
+
 def probe_plan(dep: Deployment) -> List<ProbeSpec>:
   match dep:
-    case Dep{+node, tsProvider, clangdAdapter, analyzerAdapter, psql, catalogsProvider, modelsProvider, envProvider, datasetProvider}:
+    case Dep{+node, tsProvider, psql}:
       [ Probe{e_typescript(), "providerEngines", node, ss_two(tsProvider, "-")},
-        Probe{e_clangd(), "providerEngines", node, ss_two(clangdAdapter, "-")},
-        Probe{e_clang_analyzer(), "providerEngines", node, ss_two(analyzerAdapter, "-")},
+        Probe{e_clangd(), unpinned_operation(), "", SSNil{}},
+        Probe{e_clang_analyzer(), unpinned_operation(), "", SSNil{}},
         Probe{e_cdp(), "version", node, ss_one("--version")},
-        Probe{e_sqlite(), "providerEngines", node, ss_two(catalogsProvider, "-")},
+        Probe{e_sqlite(), unpinned_operation(), "", SSNil{}},
         Probe{e_postgres(), "version", psql, ss_one("--version")},
-        Probe{e_datamodel(), "providerEngines", node, ss_two(modelsProvider, "-")},
-        Probe{e_environment(), "providerEngines", node, ss_two(envProvider, "-")},
-        Probe{e_dataset(), "providerEngines", node, ss_two(datasetProvider, "-")} ]
+        Probe{e_datamodel(), unpinned_operation(), "", SSNil{}},
+        Probe{e_environment(), unpinned_operation(), "", SSNil{}},
+        Probe{e_dataset(), unpinned_operation(), "", SSNil{}} ]
 
 # A successful probe whose observed version differs from the declared version
 # is unavailable with the observed mismatch named. A failed probe remains
@@ -481,7 +482,12 @@ def availability_observed(outcome: ProbeOutcome, +expected: String) -> Availabil
     case PFailed{reason}: AvUnavailable{reason}
     case PExcluded{reason}: AvExcluded{reason}
 
+# An engine whose discovery form is not pinned cannot report availability; it
+# reports the missing prerequisite rather than an absent executable.
+def probe_availability(+operation: String, outcome: ProbeOutcome, +expected: String) -> Availability:
+  Bool.pick(Availability, String.eq(operation, unpinned_operation()), AvUnavailable{"the provider probe form is not pinned"}, availability_observed(outcome, expected))
+
 def entry_of(spec: ProbeSpec, outcome: ProbeOutcome, +provider: String, +expected: String, +projections: SS, +limits: SS) -> EngineEntry:
   match spec:
     case Probe{+engine, operation, executable, argv}:
-      Engine{engine, provider, expected, executable, projections, effects_of(engine), availability_observed(outcome, expected), limits}
+      Engine{engine, provider, expected, executable, projections, effects_of(engine), probe_availability(operation, outcome, expected), limits}

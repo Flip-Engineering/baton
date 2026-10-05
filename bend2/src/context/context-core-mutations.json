@@ -1,5 +1,6 @@
 {
-  "purpose": "Handoff payload for bend2/scripts/laws-check.mjs MUTATIONS. Each entry mutates one context core production function and is refused by the named law when the isolated entry bend2/tests/context-core/laws-entry.bend is compiled. Thirty-two entries were refused by their named law at the verified baseline 40e7060b (.scratch/context-core-controls/run.mjs, 33 mutations, 0 failures; the discovery-plan entry was rewritten with the adapter layout). Entries added after that run are pending remote validation (report native-core-layout-74); the operator boundary forbids local compilation.",
+  "purpose": "Handoff payload for bend2/scripts/laws-check.mjs MUTATIONS. Each entry replaces one production-source string with a mutated one and is refused by the named law when the isolated entry bend2/tests/context-core/laws-entry.bend is compiled. Thirty-two entries were refused by their named law at the verified baseline 40e7060b (.scratch/context-core-controls/run.mjs, 33 mutations, 0 failures); entries rewritten or added after that run are pending remote validation. The operator boundary forbids local compilation.",
+  "how_to_apply": "In a scratch copy of the pinned tree: for each entry, replace the first occurrence of find in file with replace, then compile entry with the pinned bend 2.0.25 and require a nonzero exit whose output contains the law string. Restore the file before the next entry.",
   "entry": "bend2/tests/context-core/laws-entry.bend",
   "verified_baseline": "40e7060bf11ea1f8a924110e5a72815c9e343c41",
   "entries": [
@@ -111,9 +112,16 @@
     {
       "name": "discovery-plan-probes-a-target",
       "file": "bend2/src/context/engines.bend",
-      "find": "        Probe{e_clangd(), \"providerEngines\", node, ss_two(clangdAdapter, \"-\")},",
-      "replace": "        Probe{e_clangd(), \"providerEngines\", node, ss_two(clangdAdapter, \"target.json\")},",
+      "find": "      [ Probe{e_typescript(), \"providerEngines\", node, ss_two(tsProvider, \"-\")},",
+      "replace": "      [ Probe{e_typescript(), \"providerEngines\", node, ss_two(tsProvider, \"target.json\")},",
       "law": "engine_the_probe_plan_is_fixed_and_names_no_target_path"
+    },
+    {
+      "name": "unpinned-probe-reads-as-available",
+      "file": "bend2/src/context/engines.bend",
+      "find": "  Bool.pick(Availability, String.eq(operation, unpinned_operation()), AvUnavailable{\"the provider probe form is not pinned\"}, availability_observed(outcome, expected))",
+      "replace": "  availability_observed(outcome, expected)",
+      "law": "engine_an_unpinned_probe_reports_the_missing_prerequisite"
     },
     {
       "name": "probe-mismatch-reads-as-available",

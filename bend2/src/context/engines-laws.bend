@@ -412,9 +412,35 @@ def engine_the_entry_identity_is_the_observed_one():
 
 # --- discovery plan and probe composition ------------------------------------
 law engine_the_probe_plan_is_fixed_and_names_no_target_path:
-  {Eng.probe_plan(Eng.Dep{"node", "ts.mjs", "clangd.mjs", "clang-analyzer.mjs", "psql", "catalogs.mjs", "models.mjs", "env.mjs", "dataset.mjs"}) == [Eng.Probe{"typescript", "providerEngines", "node", Eng.ss_two("ts.mjs", "-")}, Eng.Probe{"clangd", "providerEngines", "node", Eng.ss_two("clangd.mjs", "-")}, Eng.Probe{"clang-analyzer", "providerEngines", "node", Eng.ss_two("clang-analyzer.mjs", "-")}, Eng.Probe{"cdp", "version", "node", Eng.ss_one("--version")}, Eng.Probe{"sqlite-schema", "providerEngines", "node", Eng.ss_two("catalogs.mjs", "-")}, Eng.Probe{"postgres-schema", "version", "psql", Eng.ss_one("--version")}, Eng.Probe{"data-model", "providerEngines", "node", Eng.ss_two("models.mjs", "-")}, Eng.Probe{"environment", "providerEngines", "node", Eng.ss_two("env.mjs", "-")}, Eng.Probe{"json-dataset", "providerEngines", "node", Eng.ss_two("dataset.mjs", "-")}] : List<Eng.ProbeSpec>}
+  {Eng.probe_plan(Eng.Dep{"node", "ts.mjs", "psql"}) == [Eng.Probe{"typescript", "providerEngines", "node", Eng.ss_two("ts.mjs", "-")}, Eng.Probe{"clangd", "unpinned", "", Eng.SSNil{}}, Eng.Probe{"clang-analyzer", "unpinned", "", Eng.SSNil{}}, Eng.Probe{"cdp", "version", "node", Eng.ss_one("--version")}, Eng.Probe{"sqlite-schema", "unpinned", "", Eng.SSNil{}}, Eng.Probe{"postgres-schema", "version", "psql", Eng.ss_one("--version")}, Eng.Probe{"data-model", "unpinned", "", Eng.SSNil{}}, Eng.Probe{"environment", "unpinned", "", Eng.SSNil{}}, Eng.Probe{"json-dataset", "unpinned", "", Eng.SSNil{}}] : List<Eng.ProbeSpec>}
 
 def engine_the_probe_plan_is_fixed_and_names_no_target_path():
+  {==}
+
+# An engine whose discovery form its owner has not pinned cannot report
+# availability; the entry names the missing prerequisite.
+law engine_an_unpinned_probe_reports_the_missing_prerequisite:
+  {Eng.probe_availability(Eng.unpinned_operation(), Eng.POk{"20.1.8", "/x/clangd", "s"}, "20.1.8") == Eng.AvUnavailable{"the provider probe form is not pinned"} : Eng.Availability}
+
+def engine_an_unpinned_probe_reports_the_missing_prerequisite():
+  {==}
+
+law engine_a_pinned_probe_composes_its_observed_version:
+  {Eng.probe_availability("providerEngines", Eng.POk{"5.9.3", "/x/node", "s"}, "5.9.3") == Eng.AvAvailable{} : Eng.Availability}
+
+def engine_a_pinned_probe_composes_its_observed_version():
+  {==}
+
+law engine_a_pinned_probe_still_reports_a_version_mismatch:
+  {Eng.probe_availability("version", Eng.POk{"20.0.0", "/x/clangd", "s"}, "20.1.8") == Eng.AvUnavailable{"observed provider version 20.0.0 differs from the declared version 20.1.8"} : Eng.Availability}
+
+def engine_a_pinned_probe_still_reports_a_version_mismatch():
+  {==}
+
+law engine_an_entry_of_an_unpinned_engine_is_unavailable:
+  {Eng.entry_of(Eng.Probe{"clangd", "unpinned", "", Eng.SSNil{}}, Eng.POk{"20.1.8", "", "s"}, "llvm-clangd", "20.1.8", Eng.ss_one("definition"), Eng.SSNil{}) == Eng.Engine{"clangd", "llvm-clangd", "20.1.8", "", Eng.ss_one("definition"), Eng.SSNil{}, Eng.AvUnavailable{"the provider probe form is not pinned"}, Eng.SSNil{}} : Eng.EngineEntry}
+
+def engine_an_entry_of_an_unpinned_engine_is_unavailable():
   {==}
 
 law engine_a_matching_probe_version_is_available:
