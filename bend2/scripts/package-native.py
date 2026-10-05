@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Build a Darwin arm64 native artifact with exact-source gate evidence."""
 import argparse
+import base64
 import datetime
 import hashlib
 import json
@@ -10,9 +11,11 @@ from pathlib import Path, PurePosixPath
 import platform
 import re
 import shutil
+import signal
 import subprocess
 import tarfile
 import time
+import urllib.request
 
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -21,6 +24,13 @@ COMPILER_ARCHIVE_SHA256 = 'c5bb22ba029d5909da9c6db82aa037278a66d1cf8a5572f433879
 COMPILER_ARCHIVE_URL = 'https://github.com/bendlang/bend/releases/download/v2.0.25/bend-2.0.25-darwin-arm64.tar.gz'
 COMPILER_LICENSE_URL = 'https://raw.githubusercontent.com/bendlang/bend/v2.0.25/LICENSE'
 COMPILER_LICENSE_SHA256 = '0beb288abd3d067e231f3fbe7df1f8ee37344061fc67f22018150a19e4b26c35'
+CONTEXT_PACKAGE_DIR = ROOT / 'bend2/context'
+CONTEXT_STAGE_ROOT = 'libexec/baton2/context'
+CONTEXT_PACKAGE_NAME = 'baton2-context'
+CONTEXT_NODE_FLOOR = '>=22.15.0'
+CONTEXT_DEPENDENCY_PINS = {'ajv': '8.17.1', 'typescript': '5.9.3', 'zod': '4.3.6'}
+# License/notice files the LICENSE/NOTICE/COPYING prefix rule does not capture.
+CONTEXT_EXTRA_NOTICES = {'typescript': ('ThirdPartyNoticeText.txt',)}
 GATES = (
     ('build-native', ['sh', 'bend2/scripts/build-native.sh']),
     ('laws-check', ['node', 'bend2/scripts/laws-check.mjs']),
@@ -46,6 +56,11 @@ def file_info(path):
 
 
 def write_json(path, value):
+    """Write value as indented JSON and return only after the completed write.
+
+    The guarantee is a complete written and closed file before the caller
+    proceeds; it is not crash or power-loss durability, and no fsync is added.
+    """
     path.write_text(json.dumps(value, indent=2, ensure_ascii=False) + '\n')
 
 
@@ -474,13 +489,18 @@ def reuse_gates(path, expected_sha, compiler, logs, initial):
         if stage.get('route') is not None:
             require(wants_remote,
                     'Only the laws-check stage may carry the remote route: ' + json.dumps(name))
+            require(stage.get('route') == 'remote-module-groups',
+                    'A stage names an unsupported route: ' + json.dumps(stage.get('route')))
             require(stage.get('kind') == 'evidence-qualification',
                     'A remote stage must be marked as evidence qualification')
             require(stage.get('exit_code') is None,
                     'A remote stage must record no local exit')
-            require(isinstance(stage.get('evidence'), dict)
-                    and stage['evidence'].get('closure_sha256'),
-                    'A remote stage must reference its evidence closure')
+            record = summary.get('controls_evidence') or {}
+            reference = {key: record.get(key) for key in
+                         ('path', 'sha256', 'binding', 'cases', 'groups', 'origin',
+                          'closure_sha256')}
+            require(stage.get('evidence') == reference,
+                    'A remote stage must reference the recorded producer evidence exactly')
             require(stage.get('local_argv') == list(dict(GATES)[name]),
                     'A remote stage must keep the local command it replaces')
             require(stage.get('status') == 'passed',
@@ -857,6 +877,519 @@ def stage_adapters(payload):
     shutil.copyfile(ROOT / 'bend2/harness/git-series.mjs', directory / 'git-series.mjs')
 
 
+def context_package_manifest(directory=None):
+    source = (directory or CONTEXT_PACKAGE_DIR) / 'package.json'
+    require(source.is_file(), 'The context package manifest is missing: ' + str(source))
+    manifest = json.loads(source.read_text())
+    require(manifest.get('name') == CONTEXT_PACKAGE_NAME,
+            'The context package name is fixed: ' + CONTEXT_PACKAGE_NAME)
+    require(manifest.get('private') is True, 'The context package must be private')
+    require(manifest.get('type') == 'module', 'The context package must be an ECMAScript module package')
+    require(manifest.get('engines') == {'node': CONTEXT_NODE_FLOOR},
+            'The context package must pin the Node floor ' + CONTEXT_NODE_FLOOR)
+    require(manifest.get('dependencies') == CONTEXT_DEPENDENCY_PINS,
+            'Context dependencies must equal the approved exact pins '
+            + repr(dict(sorted(CONTEXT_DEPENDENCY_PINS.items()))))
+    return manifest
+
+
+def context_lockfile(directory=None):
+    source = (directory or CONTEXT_PACKAGE_DIR) / 'package-lock.json'
+    require(source.is_file(), 'The context lockfile is missing: ' + str(source))
+    lock = json.loads(source.read_text())
+    require(lock.get('name') == CONTEXT_PACKAGE_NAME and lock.get('version') == '0.0.0',
+            'The context lockfile must name ' + CONTEXT_PACKAGE_NAME + ' 0.0.0')
+    require(lock.get('lockfileVersion') == 3, 'The context lockfile must use lockfileVersion 3')
+    packages = lock.get('packages')
+    require(isinstance(packages, dict), 'The context lockfile has no packages map')
+    root = packages.get('')
+    require(isinstance(root, dict), 'The context lockfile has no root entry')
+    require(root.get('dependencies') == CONTEXT_DEPENDENCY_PINS,
+            'Lock root dependencies must equal the approved exact pins')
+    require(root.get('engines') == {'node': CONTEXT_NODE_FLOOR},
+            'Lock root engines must pin the Node floor ' + CONTEXT_NODE_FLOOR)
+    entries = {}
+    for key, row in packages.items():
+        if key == '':
+            continue
+        name = key.removeprefix('node_modules/')
+        # Conflicting nested transitive versions would stage an ambiguous tree;
+        # the approved closure resolves to one version per package.
+        require(key == 'node_modules/' + name and '/' not in name,
+                'Unexpected nested lock entry: ' + key)
+        resolved = row.get('resolved')
+        require(isinstance(resolved, str) and resolved.startswith('https://registry.npmjs.org/'),
+                'Lock entry must resolve from the npm registry: ' + name)
+        integrity = row.get('integrity')
+        require(isinstance(integrity, str) and integrity.startswith('sha512-'),
+                'Lock entry must carry a sha512 integrity: ' + name)
+        digest = base64.b64decode(integrity[len('sha512-'):], validate=True)
+        require(len(digest) == 64, 'Lock integrity must decode to a sha512 digest: ' + name)
+        require(isinstance(row.get('version'), str), 'Lock entry has no version: ' + name)
+        entries[name] = row
+    for name, version in CONTEXT_DEPENDENCY_PINS.items():
+        require(entries.get(name, {}).get('version') == version,
+                'Lock must pin ' + name + ' at exactly ' + version)
+    for name, row in entries.items():
+        for dependency in row.get('dependencies', {}):
+            require(dependency in entries,
+                    'Lock closure is missing ' + dependency + ' required by ' + name)
+    return entries
+
+
+def fetch_context_dependencies(entries, logs):
+    destination = logs / 'context-dependencies'
+    destination.mkdir(parents=True, exist_ok=True)
+    fetched = []
+    for name, row in sorted(entries.items()):
+        with urllib.request.urlopen(row['resolved'], timeout=300) as response:
+            data = response.read()
+        require(base64.b64encode(hashlib.sha512(data).digest()).decode('ascii')
+                == row['integrity'][len('sha512-'):],
+                'Dependency bytes do not match the lockfile integrity: ' + name)
+        path = destination / (name + '.tgz')
+        path.write_bytes(data)
+        fetched.append({'name': name, 'version': row['version'], 'resolved': row['resolved'],
+                        'integrity': row['integrity'],
+                        'tarball': {'bytes': len(data), 'sha256': hashlib.sha256(data).hexdigest()}})
+    return fetched
+
+
+def extract_context_dependency(payload, name, tarball_path):
+    module = payload / CONTEXT_STAGE_ROOT / 'node_modules' / name
+    module.mkdir(parents=True)
+    extracted = 0
+    with tarfile.open(tarball_path, 'r:gz') as archive:
+        for member in archive.getmembers():
+            member_path = PurePosixPath(member.name)
+            require(not member_path.is_absolute() and '..' not in member_path.parts,
+                    'Unsafe dependency archive member: ' + member.name)
+            if not member.isfile():
+                require(member.isdir() and member.name == 'package',
+                        'Unsafe dependency archive member: ' + member.name)
+                continue
+            relative = member_path.relative_to('package')
+            destination = module.joinpath(*relative.parts)
+            destination.parent.mkdir(parents=True, exist_ok=True)
+            destination.write_bytes(archive.extractfile(member).read())
+            destination.chmod(0o644)
+            extracted += 1
+    require(extracted > 0, 'Dependency archive staged no files: ' + name)
+    return module
+
+
+def context_tree_digest(directory):
+    digest = hashlib.sha256()
+    for relative, path in sorted((path.relative_to(directory).as_posix(), path)
+                                 for path in directory.rglob('*') if path.is_file()):
+        digest.update(relative.encode('utf-8'))
+        digest.update(b'\0')
+        digest.update(sha256(path).encode('ascii'))
+        digest.update(b'\n')
+    return digest.hexdigest()
+
+
+def context_closure_manifest(entries, digests):
+    packages = {name: {'version': row['version'], 'integrity': row['integrity'],
+                       'treeSha256': digests[name]}
+                for name, row in sorted(entries.items())}
+    return {'schema': 'baton2-context-dependency-closure-v1', 'packages': packages}
+
+
+def stage_context_sources(payload):
+    directory = payload / CONTEXT_STAGE_ROOT
+    directory.mkdir(parents=True)
+    staged = []
+    for source in sorted(CONTEXT_PACKAGE_DIR.rglob('*')):
+        if not source.is_file():
+            continue
+        relative = source.relative_to(CONTEXT_PACKAGE_DIR)
+        if relative.parts[0] == 'node_modules' or relative.as_posix() in ('package.json', 'package-lock.json'):
+            continue
+        destination = directory / relative
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copyfile(source, destination)
+        destination.chmod(0o644)
+        staged.append(relative.as_posix())
+    return staged
+
+
+def stage_context_notices(payload, entries):
+    directory = payload / 'notices/context'
+    directory.mkdir(parents=True, exist_ok=True)
+    terms = {}
+    for name, row in sorted(entries.items()):
+        module = payload / CONTEXT_STAGE_ROOT / 'node_modules' / name
+        files = []
+        for candidate in sorted(module.rglob('*')):
+            if not candidate.is_file():
+                continue
+            base = candidate.name.upper()
+            if (base in ('LICENSE', 'NOTICE', 'COPYING')
+                    or base.startswith(('LICENSE.', 'NOTICE.', 'COPYING.'))
+                    or candidate.name in CONTEXT_EXTRA_NOTICES.get(name, ())):
+                destination = directory / name / candidate.name
+                destination.parent.mkdir(parents=True, exist_ok=True)
+                shutil.copyfile(candidate, destination)
+                files.append({'path': destination.relative_to(payload).as_posix(),
+                              'source': CONTEXT_STAGE_ROOT + '/node_modules/' + name + '/'
+                                        + candidate.relative_to(module).as_posix(),
+                              **file_info(destination)})
+        require(files, 'Staged dependency has no staged license or notice file: ' + name)
+        terms[name] = {'version': row['version'], 'license': row.get('license'), 'files': files}
+    lines = ['Context dependency terms staged from lockfile-resolved npm bytes verified',
+             'against the lockfile integrity hashes.', '']
+    for name, row in terms.items():
+        lines.append(name + '@' + row['version'] + ' - ' + str(row['license'])
+                     + ' - ' + ', '.join(item['path'] for item in row['files']))
+    (directory / 'context-packages.md').write_text('\n'.join(lines) + '\n')
+    return terms
+
+
+def context_gate_environment(node, logs, name):
+    home = logs / ('context-gate-home-' + name)
+    scratch = logs / ('context-gate-tmp-' + name)
+    home.mkdir(parents=True, exist_ok=True)
+    scratch.mkdir(parents=True, exist_ok=True)
+    return {'PATH': str(node.parent) + ':/usr/bin:/bin', 'HOME': str(home),
+            'TMPDIR': str(scratch), 'LC_ALL': 'C'}
+
+
+def context_node_identity(node, payload, logs, name, suffix=''):
+    version = command([str(node), '--version'], payload,
+                      context_gate_environment(node, logs, name), logs,
+                      'context-node-version-' + name + suffix)
+    return {'path': str(node.resolve()), 'bytes': node.stat().st_size,
+            'sha256': sha256(node), 'version': version}
+
+
+def child_signal(returncode):
+    if returncode is not None and returncode < 0:
+        try:
+            return signal.Signals(-returncode).name
+        except ValueError:
+            return 'signal-' + str(-returncode)
+    return None
+
+
+def retained_stream(record, error):
+    if error is not None:
+        return {'path': record.name, 'available': False, 'error': error}
+    if not record.is_file():
+        return {'path': record.name, 'available': False, 'error': 'stream file is absent'}
+    try:
+        info = file_info(record)
+    except BaseException as hash_error:
+        return {'path': record.name, 'available': False, 'error': repr(hash_error)}
+    return {'path': record.name, 'available': True, **info}
+
+
+def snapshot_evidence(path, state, evidence_errors, label):
+    try:
+        write_json(path, state)
+        info = file_info(path)
+    except BaseException as error:
+        evidence_errors.append(label + ' snapshot write failed: ' + repr(error))
+        return {'path': path.name, 'available': False, 'error': repr(error)}
+    return {'path': path.name, 'available': True, **info}
+
+
+def context_receipt_logs(logs):
+    return sorted(path for pattern in ('context-gate-*', 'context-node-version-*')
+                  for path in logs.glob(pattern) if path.is_file())
+
+
+def context_tree_state(payload):
+    directory = payload / CONTEXT_STAGE_ROOT
+    return {path.relative_to(payload).as_posix(): file_info(path)
+            for path in sorted(directory.rglob('*')) if path.is_file()}
+
+
+def run_context_gate(payload, logs, node, name, extra_env=None):
+    env = context_gate_environment(node, logs, name)
+    if extra_env:
+        env.update(extra_env)
+    cwd = payload / CONTEXT_STAGE_ROOT
+    node_identity = context_node_identity(node, payload, logs, name)
+    stdout = logs / ('context-gate-' + name + '.stdout')
+    stderr = logs / ('context-gate-' + name + '.stderr')
+    before_path = logs / ('context-gate-' + name + '.payload-before.json')
+    after_path = logs / ('context-gate-' + name + '.payload-after.json')
+    evidence_errors = []
+    before = context_tree_state(payload)
+    before_ref = snapshot_evidence(before_path, before, evidence_errors, 'before-payload')
+    started = time.monotonic()
+    stream_errors = {}
+    out_handle = None
+    err_handle = None
+    try:
+        out_handle = stdout.open('wb')
+    except OSError as error:
+        stream_errors['stdout'] = repr(error)
+    try:
+        err_handle = stderr.open('wb')
+    except OSError as error:
+        stream_errors['stderr'] = repr(error)
+    spawn_stage = 'completed'
+    spawn_error = None
+    interrupted = None
+    outcome = None
+    cleanup_evidence = None
+    if stream_errors:
+        spawn_stage = 'streams-unavailable'
+        spawn_error = '; '.join(name + ': ' + value
+                                for name, value in sorted(stream_errors.items()))
+    else:
+        process = None
+        try:
+            # Only a Popen construction failure proves non-creation.
+            process = subprocess.Popen([str(node), 'context-package-gate.mjs'], cwd=cwd, env=env,
+                                       stdin=subprocess.DEVNULL, stdout=out_handle,
+                                       stderr=err_handle)
+        except (OSError, ValueError) as error:
+            spawn_stage = 'unspawned'
+            spawn_error = repr(error)
+        except BaseException as error:
+            spawn_stage = 'interrupted'
+            spawn_error = repr(error)
+            interrupted = error
+        if process is not None:
+            try:
+                outcome = subprocess.CompletedProcess(process.args, process.wait())
+                spawn_stage = 'completed'
+            except BaseException as error:
+                # The original wait interruption is recorded before any cleanup
+                # attempt; kill and reap are each guarded with their own error,
+                # a successful reap return code is settlement evidence rather
+                # than an error, and a failed cleanup never claims the child
+                # was not leaked.
+                interrupted = error
+                spawn_stage = 'started-outcome-unknown'
+                spawn_error = repr(error)
+                cleanup = {}
+                try:
+                    process.kill()
+                except BaseException as kill_error:
+                    cleanup['kill'] = repr(kill_error)
+                try:
+                    cleanup['reapReturncode'] = process.wait()
+                except BaseException as reap_error:
+                    cleanup['reap'] = repr(reap_error)
+                cleanup_evidence = cleanup
+                cleanup_failures = {key: value for key, value in cleanup.items()
+                                    if key != 'reapReturncode'}
+                if cleanup_failures:
+                    evidence_errors.append('child cleanup after interruption: '
+                                           + json.dumps(cleanup_failures, sort_keys=True))
+    for handle in (out_handle, err_handle):
+        if handle is not None:
+            try:
+                handle.close()
+            except OSError as error:
+                evidence_errors.append('stream close failed: ' + repr(error))
+    secondary_error = None
+    if interrupted is None:
+        try:
+            after = context_tree_state(payload)
+            after_ref = snapshot_evidence(after_path, after, evidence_errors, 'after-payload')
+        except BaseException as error:
+            secondary_error = error
+            after_ref = {'path': after_path.name, 'available': False, 'error': repr(error)}
+        post_identity = None
+        post_error = None
+        try:
+            post_identity = context_node_identity(node, payload, logs, name, '-after')
+        except BaseException as error:
+            post_error = repr(error)
+    else:
+        post_identity = None
+        post_error = 'not attempted: the gate child raised an interruption'
+        try:
+            after = context_tree_state(payload)
+            after_ref = snapshot_evidence(after_path, after, evidence_errors, 'after-payload')
+        except BaseException as error:
+            secondary_error = error
+            after_ref = {'path': after_path.name, 'available': False, 'error': repr(error)}
+    receipt_path = logs / ('context-gate-' + name + '.json')
+    try:
+        if post_identity is None:
+            node_identity['postIdentity'] = {'available': False, 'error': post_error}
+            node_identity['versionAfter'] = None
+            node_identity['sha256After'] = None
+            node_identity['bytesAfter'] = None
+        else:
+            node_identity['postIdentity'] = {'available': True, 'version': post_identity['version'],
+                                             'sha256': post_identity['sha256'],
+                                             'bytes': post_identity['bytes']}
+            node_identity['versionAfter'] = post_identity['version']
+            node_identity['sha256After'] = post_identity['sha256']
+            node_identity['bytesAfter'] = post_identity['bytes']
+        if outcome is not None:
+            child = {'spawned': True, 'stage': spawn_stage}
+        elif spawn_stage == 'started-outcome-unknown':
+            child = {'spawned': True, 'stage': spawn_stage, 'error': spawn_error}
+            if cleanup_evidence is not None:
+                child['cleanup'] = cleanup_evidence
+        else:
+            child = {'spawned': None if interrupted is not None else False,
+                     'stage': spawn_stage}
+            if spawn_error is not None:
+                child['error'] = spawn_error
+        receipt = {'runtime': name, 'node': node_identity,
+                   'argv': [str(node), 'context-package-gate.mjs'], 'cwd': str(cwd),
+                   'environmentKeys': sorted(env),
+                   'child': child,
+                   'exit_code': None if outcome is None else outcome.returncode,
+                   'signal': child_signal(None if outcome is None else outcome.returncode),
+                   'elapsed_seconds': time.monotonic() - started,
+                   'stdout': retained_stream(stdout, stream_errors.get('stdout')),
+                   'stderr': retained_stream(stderr, stream_errors.get('stderr')),
+                   'payloadSnapshot': {'before': before_ref, 'after': after_ref,
+                                       'equal': None if not after_ref.get('available')
+                                                else before == after},
+                   'evidenceErrors': evidence_errors,
+                   'nodeVersionChanged': None if post_identity is None
+                                         else post_identity['version'] != node_identity['version'],
+                   'nodeIdentityChanged': None if post_identity is None
+                                          else (post_identity['sha256'] != node_identity['sha256']
+                                                or post_identity['bytes'] != node_identity['bytes'])}
+        write_json(receipt_path, receipt)
+    except BaseException as error:
+        original = interrupted if interrupted is not None else secondary_error
+        if original is not None:
+            # The original interruption (or the first secondary failure) stays
+            # the raised exception; the new failure is retained as its chained
+            # cause across the whole post-child evidence path.
+            raise original from error
+        raise
+    if interrupted is not None:
+        if secondary_error is not None:
+            raise interrupted from secondary_error
+        # The completed receipt retains the evidence; interruption semantics
+        # are preserved instead of converting the interrupt into a refusal.
+        raise interrupted
+    require(spawn_stage == 'completed',
+            'The context gate child did not complete (stage ' + spawn_stage + '): '
+            + str(receipt_path))
+    require(post_identity is not None,
+            'The context gate node identity is unavailable after the package gate: '
+            + str(receipt_path))
+    require(not receipt['nodeVersionChanged'],
+            'The context gate node reported a different version after the package gate: '
+            + str(receipt_path))
+    require(not receipt['nodeIdentityChanged'],
+            'The context gate node executable bytes changed during the package gate: '
+            + str(receipt_path))
+    require(receipt['stdout']['available'] and receipt['stderr']['available'],
+            'The context gate raw stream evidence is incomplete: ' + str(receipt_path))
+    require(receipt['payloadSnapshot']['before']['available']
+            and receipt['payloadSnapshot']['after']['available'],
+            'The context payload snapshot evidence is incomplete: ' + str(receipt_path))
+    require(secondary_error is None,
+            'The context gate after-outcome evidence capture failed: ' + str(receipt_path))
+    require(not receipt['evidenceErrors'],
+            'The context gate evidence retention reported errors: ' + str(receipt_path))
+    require(receipt['payloadSnapshot']['equal'],
+            'The context payload changed during the package gate: ' + str(receipt_path))
+    return receipt, stdout.read_text(errors='replace')
+
+
+def require_gate_report(text, expected_packages):
+    require(text.strip(), 'The context package gate printed no report')
+    report = json.loads(text)
+    require(report.get('gate') == 'baton2-context-package-gate',
+            'Unexpected context gate report identity')
+    closure = report.get('closure')
+    require(isinstance(closure, dict) and closure.get('digestsVerified') is True
+            and closure.get('packages') == expected_packages,
+            'The context gate closure verification is missing or incomplete')
+    stages = report.get('stages')
+    require(isinstance(stages, list) and len(stages) == 3,
+            'The context gate report is missing probes')
+    ajv, zod_probe, typescript = stages
+    require(ajv.get('version') == '8.17.1' and len(ajv.get('invalidErrors', [])) >= 2,
+            'The Ajv gate probe is not useful')
+    require(zod_probe.get('version') == '4.3.6'
+            and zod_probe.get('validValue') == {'id': 7, 'name': 'report'}
+            and len(zod_probe.get('invalidIssues', [])) >= 2,
+            'The Zod gate probe is not useful')
+    require(typescript.get('version') == '5.9.3'
+            and typescript.get('resolvedDeclarationType') == '(name: string) => string'
+            and typescript.get('messageType') == 'string',
+            'The TypeScript gate probe is not useful')
+    return report
+
+
+def run_context_gates(payload, logs, args, entries):
+    runs = []
+    floor = {'requested': '22.15.0'}
+    if args.context_node22 is not None:
+        node22 = args.context_node22.resolve()
+        identity = context_node_identity(node22, payload, logs, 'floor')
+        require(identity['version'] == 'v22.15.0',
+                'The supplied context floor node is not v22.15.0: ' + identity['version'])
+        floor['available'] = True
+        floor['node'] = identity
+        receipt, text = run_context_gate(payload, logs, node22, 'node22.15.0')
+        require(receipt['exit_code'] == 0,
+                'The context package gate failed on the Node 22.15.0 floor; see '
+                + str(logs / 'context-gate-node22.15.0.json'))
+        require_gate_report(text, len(entries))
+        runs.append(receipt)
+    else:
+        floor['available'] = False
+        floor['reason'] = ('No --context-node22 executable was supplied; '
+                           'floor gate evidence is pending provision.')
+    host_node = executable('node')
+    receipt, text = run_context_gate(payload, logs, host_node, 'host')
+    require(receipt['exit_code'] == 0,
+            'The context package gate failed on the host Node; see '
+            + str(logs / 'context-gate-host.json'))
+    require_gate_report(text, len(entries))
+    runs.append(receipt)
+    return {'floor': floor, 'runs': runs}
+
+
+def compose_context(payload, logs, args):
+    entries = context_lockfile()
+    context_package_manifest()
+    fetched = fetch_context_dependencies(entries, logs)
+    staged_first_party = stage_context_sources(payload)
+    for row in fetched:
+        extract_context_dependency(payload, row['name'],
+                                   logs / 'context-dependencies' / (row['name'] + '.tgz'))
+    digests = {name: context_tree_digest(payload / CONTEXT_STAGE_ROOT / 'node_modules' / name)
+               for name in entries}
+    closure = context_closure_manifest(entries, digests)
+    (payload / CONTEXT_STAGE_ROOT / 'dependency-closure.json').write_text(
+        json.dumps(closure, indent=2, sort_keys=True) + '\n')
+    terms = stage_context_notices(payload, entries)
+    gate = run_context_gates(payload, logs, args, entries)
+    return {'pins': dict(sorted(CONTEXT_DEPENDENCY_PINS.items())),
+            'manifest': {'path': 'bend2/context/package.json',
+                         **file_info(CONTEXT_PACKAGE_DIR / 'package.json')},
+            'lockfile': {'path': 'bend2/context/package-lock.json',
+                         **file_info(CONTEXT_PACKAGE_DIR / 'package-lock.json')},
+            'dependencies': fetched,
+            'stagedFirstParty': staged_first_party,
+            'dependencyClosure': closure,
+            'gate': gate,
+            'terms': terms}
+
+
+def append_context_distribution(payload, terms):
+    lines = ['',
+             'Context dependencies are staged from lockfile-resolved npm tarballs verified',
+             'against the lockfile integrity hashes before staging.']
+    for name, row in terms.items():
+        lines.append(name + '@' + row['version'] + ' is distributed under ' + str(row['license'])
+                     + '; staged terms: ' + ', '.join(item['path'] for item in row['files']) + '.')
+    with (payload / 'notices/distribution.md').open('a') as distribution:
+        distribution.write('\n'.join(lines) + '\n')
+
+
+
+
 def stage_notices(payload, archive_notices, kind='development'):
     directory = payload / 'notices'
     directory.mkdir()
@@ -930,6 +1463,8 @@ def package(args):
         require(platform.system() == 'Darwin' and platform.machine() == 'arm64', 'This native artifact requires a Darwin arm64 build host')
         initial = snapshot()
         same_source(initial, initial)
+        context_package_manifest()
+        context_entries = context_lockfile()
         identity = artifact_identity(args.release_version)
         compiler = args.bend.resolve()
         env = dict(os.environ, BEND=str(compiler), BEND_NO_TELEMETRY='1')
@@ -983,6 +1518,13 @@ def package(args):
         stage_adapters(payload)
         shutil.copytree(logs, payload / 'logs')
         terms = stage_notices(payload, notices, identity['kind'])
+        context = compose_context(payload, logs, args)
+        context['dependencyClosureEntries'] = len(context_entries)
+        terms['context_packages'] = context.pop('terms')
+        append_context_distribution(payload, terms['context_packages'])
+        receipt_logs = context_receipt_logs(logs)
+        for receipt_log in receipt_logs:
+            shutil.copyfile(receipt_log, payload / 'logs' / receipt_log.name)
         generated_dir = output / 'generated'
         generated_dir.mkdir()
         shutil.copyfile(generated, generated_dir / 'baton2.c')
@@ -1003,7 +1545,8 @@ def package(args):
             'build': {'inputs_before': before_inputs, 'inputs_after': after_inputs,
                       'input_capture_boundary': input_boundary, 'compiler_archive': archive,
                       'generated_c': {'path': str(generated), **file_info(generated)},
-                      'linked_libraries': libraries},
+                      'linked_libraries': libraries,
+                      'context': context},
             'gates': {'receipt': 'logs/summary.json', **file_info(receipt),
                       'validation': summary['validation'], 'reused': bool(args.gate_receipt),
                       'route': summary.get('route', 'local-complete'),
@@ -1038,6 +1581,8 @@ def main():
     parser.add_argument('--release-version', help='version identifier for a release archive; requires the project root LICENSE')
     parser.add_argument('--gate-receipt', type=Path, help='reuse a completed exact-source three-gate summary')
     parser.add_argument('--gate-receipt-sha256', help='required SHA256 pin when reusing a gate receipt')
+ 
+ 
     parser.add_argument('--controls-evidence', type=Path,
                         help='directory holding controls-summary.json and its control logs, validated against this source')
     args = parser.parse_args()
