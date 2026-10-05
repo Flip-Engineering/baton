@@ -5,23 +5,26 @@ Each attempt keeps its own directory `<database>.attempt-<hex(attempt id)>`. The
 keeper reaps the native child and writes the raw wait status to `status` there,
 beside `native.pid`, `native.birth`, `launch`, `released` and `acknowledged`.
 This tool reads those files, decodes the wait status and the attempt identity,
-and joins the database rows that are keyed by the attempt id. It is read-only.
+and takes the operational state from scoped CLI reads: `players` for the current
+execution pointer and session rows, and `turns <session>` for the per-attempt
+report and event. Raw CLI output is kept beside the record. It writes no state.
 
 Route provenance. The attempt's configured route comes from its own manifest
 argv, so it is per-attempt evidence. A harness-reported route is recorded only
-when retained per-attempt frame evidence exists: the native stdout spool
-`<attempt>/stdout`, which the keeper unlinks at acknowledgement, so it survives
-only for attempts that were never acknowledged. Every other attempt's observed
-route is reported as unavailable. `sessions.observed_model` is a single mutable
-session-level value; this tool reports it under `current_session_observation`
-and never as per-attempt evidence.
+from that attempt's own retained native stdout spool, which the keeper unlinks
+at acknowledgement. Absence therefore means unavailable in the retained
+evidence that was inspected; it is not evidence that the attempt produced no
+model frame. The inspected prefix is bounded, and the record states whether the
+spool was longer than that prefix, so an uninspected suffix stays distinct from
+an absence of a route frame.
 
-Usage: attempt_exit_records.py DATABASE OUT.json
+Usage: attempt_exit_records.py DATABASE OUT.json [--cli PATH]
 """
 import glob
+import hashlib
 import json
 import os
-import sqlite3
+import subprocess
 import struct
 import sys
 import time
@@ -31,6 +34,20 @@ MANIFEST_MAGIC = b"BATONRP1"
 # harness route response lies in the first frames of the spool. Retained spools
 # reach hundreds of megabytes, so only a bounded prefix is read.
 SPOOL_PREFIX_BYTES = 4 << 20
+DEFAULT_CLI = ("/Users/wahargis/Development/Experiments/baton-bend2-root-delivery-20260928/"
+               ".scratch/semantic-context-20261005/worktrees/semantic-controls-interfaces-research/"
+               ".scratch/671-frozen-stable98/baton2")
+ROUTE_PROVENANCE = (
+    "configured_route is read from each attempt's own manifest argv. observed_route is reported only "
+    "from that attempt's retained native stdout spool, which the keeper unlinks at acknowledgement, so "
+    "a missing observed_route means unavailable in the retained and inspected evidence, not that the "
+    "attempt produced no model frame. The spool read is bounded to a prefix; observed_route_state "
+    "distinguishes a route parsed from the spool, a spool inspected in full with no recognised route "
+    "frame, a prefix inspected with the suffix uninspected, and no retained spool. Recognised frames are "
+    "an OMP get_state response with data.model.provider and data.model.id, a run.model.configured "
+    "payload, and a message with provider and model. current_session_observation holds sessions rows as "
+    "they stand now; sessions.observed_model is one mutable session-level value and states nothing about "
+    "an earlier attempt of the same session.")
 
 
 def decode_attempt_id(name):
@@ -60,7 +77,11 @@ def read_birth(path):
     return {"pid": pid, "start_sec": first, "start_usec": second}
 
 
-def manifest_argv(blob):
+def read_manifest(path):
+    with open(path, "rb") as handle:
+        blob = handle.read()
+    if len(blob) < 64 or blob[:8] != MANIFEST_MAGIC:
+        return {"valid": False, "bytes": len(blob)}
     lengths = struct.unpack_from("<6Q", blob, 8)
     offset = 64
     fields = []
@@ -68,15 +89,6 @@ def manifest_argv(blob):
         fields.append(blob[offset:offset + length])
         offset += length
     argv = [part.decode("utf-8", "replace") for part in fields[0].split(b"\0") if part]
-    return argv, fields
-
-
-def read_manifest(path):
-    with open(path, "rb") as handle:
-        blob = handle.read()
-    if len(blob) < 64 or blob[:8] != MANIFEST_MAGIC:
-        return {"valid": False, "bytes": len(blob)}
-    argv, fields = manifest_argv(blob)
     keep_stdin, reserved = struct.unpack_from("<II", blob, 56)
     return {"valid": True, "bytes": len(blob), "keep_stdin": keep_stdin, "reserved": reserved,
             "argv": argv, "argv0": argv[0] if argv else None,
@@ -91,17 +103,37 @@ def configured_route(manifest):
     route = {}
     for index, token in enumerate(argv):
         if token in ("--model", "--thinking", "--approval-mode", "--effort", "-m") and index + 1 < len(argv):
-            route[token.lstrip("-") if token != "-m" else "model"] = argv[index + 1]
+            route["model" if token == "-m" else token.lstrip("-")] = argv[index + 1]
         elif token.startswith("--model="):
             route["model"] = token.split("=", 1)[1]
     route["argv0"] = manifest.get("argv0")
     return route
 
 
+def frame_route(frame):
+    """Return the route a recognised harness frame reports, or None."""
+    if frame.get("command") == "get_state":
+        model = (frame.get("data") or {}).get("model") or {}
+        if model.get("provider") and model.get("id"):
+            return {"route": "%s/%s" % (model["provider"], model["id"]),
+                    "frame": "command=get_state data.model.provider+id",
+                    "frame_success": frame.get("success")}
+    payload = frame.get("payload") or {}
+    if (frame.get("payload_type") or payload.get("kind")) == "run.model.configured" and payload.get("model_id"):
+        return {"route": payload["model_id"], "frame": "payload_type=run.model.configured"}
+    message = frame.get("message")
+    if isinstance(message, dict) and message.get("provider") and message.get("model"):
+        return {"route": "%s/%s" % (message["provider"], message["model"]),
+                "frame": "message.provider+model"}
+    return None
+
+
 def retained_observed_route(directory):
     """Harness-reported route from this attempt's retained stdout spool.
 
-    Returns None with no retained spool. Reads only a bounded prefix.
+    Returns None when no spool is retained. Otherwise returns the parsed route
+    or a state that distinguishes a fully inspected spool from an inspected
+    prefix with an uninspected suffix.
     """
     path = os.path.join(directory, "stdout")
     if not os.path.exists(path):
@@ -109,6 +141,7 @@ def retained_observed_route(directory):
     size = os.path.getsize(path)
     with open(path, "r", errors="replace") as handle:
         prefix = handle.read(SPOOL_PREFIX_BYTES)
+    complete = len(prefix) >= size
     for line in prefix.splitlines():
         line = line.strip()
         if not line.startswith("{"):
@@ -117,31 +150,17 @@ def retained_observed_route(directory):
             frame = json.loads(line)
         except json.JSONDecodeError:
             continue
-        if not isinstance(frame, dict):
-            continue
-        if frame.get("command") == "get_state":
-            data = frame.get("data") or {}
-            model = data.get("model") or {}
-            provider, identifier = model.get("provider"), model.get("id")
-            if provider and identifier:
-                return {"route": "%s/%s" % (provider, identifier), "source": "stdout",
-                        "frame": "command=get_state data.model.provider+id",
-                        "frame_success": frame.get("success"),
-                        "spool_bytes": size, "prefix_bytes_read": len(prefix)}
-        payload_type = frame.get("payload_type") or (frame.get("payload") or {}).get("kind")
-        if payload_type == "run.model.configured":
-            payload = frame.get("payload") or {}
-            if payload.get("model_id"):
-                return {"route": payload["model_id"], "source": "stdout",
-                        "frame": "payload_type=run.model.configured",
-                        "spool_bytes": size, "prefix_bytes_read": len(prefix)}
-        message = frame.get("message")
-        if isinstance(message, dict) and message.get("provider") and message.get("model"):
-            return {"route": "%s/%s" % (message["provider"], message["model"]), "source": "stdout",
-                    "frame": "message.provider+model",
-                    "spool_bytes": size, "prefix_bytes_read": len(prefix)}
+        if isinstance(frame, dict):
+            found = frame_route(frame)
+            if found:
+                return {"route": found["route"], "source": "stdout", "frame": found["frame"],
+                        "spool_bytes": size, "prefix_bytes_read": len(prefix),
+                        "spool_fully_inspected": complete,
+                        "state": "route-parsed-from-retained-spool"}
     return {"route": None, "source": "stdout", "frame": None, "spool_bytes": size,
-            "prefix_bytes_read": len(prefix), "state": "no-route-frame-in-prefix"}
+            "prefix_bytes_read": len(prefix), "spool_fully_inspected": complete,
+            "state": ("no-route-frame-in-retained-spool" if complete
+                      else "no-route-frame-in-inspected-prefix")}
 
 
 def size_of(path):
@@ -172,78 +191,94 @@ def attempt_records(database):
         manifest_path = os.path.join(directory, "manifest")
         record["manifest"] = read_manifest(manifest_path) if record["files"]["manifest"] else None
         record["configured_route"] = configured_route(record["manifest"])
-        observed = retained_observed_route(directory) if record["files"]["stdout"] else None
+        observed = retained_observed_route(directory)
         record["observed_route"] = observed
-        record["observed_route_state"] = ("unavailable" if observed is None
-                                          else ("retained-spool" if observed.get("route") else
-                                                observed.get("state", "unavailable")))
+        record["observed_route_state"] = observed["state"] if observed else "no-retained-spool"
         record["native_stderr_bytes"] = size_of(os.path.join(directory, "native.stderr"))
         record["spool_bytes"] = size_of(os.path.join(directory, "stdout"))
         records.append(record)
     return records
 
 
-def database_rows(connection, records):
-    executions = {}
-    reports = {}
-    turns = {}
-    sessions = {}
-    for record in records:
-        attempt = record["attempt"]
-        session = record["session"]
-        try:
-            executions[attempt] = [dict(row) for row in connection.execute(
-                "SELECT session,id,mode,directory,phase,status FROM executions WHERE id=?", (attempt,))]
-            row = connection.execute("SELECT body FROM messages WHERE id=?", (attempt,)).fetchone()
-            reports[attempt] = row["body"][:4000] if row else None
-            row = connection.execute("SELECT event FROM turns WHERE id=?", (attempt,)).fetchone()
-            turns[attempt] = row["event"][:2000] if row else None
-            if session and session not in sessions:
-                row = connection.execute(
-                    "SELECT id,harness,model,effort,native,observed_harness,observed_model,observed_effort "
-                    "FROM sessions WHERE id=?", (session,)).fetchone()
-                sessions[session] = dict(row) if row else None
-        except sqlite3.Error as error:
-            executions[attempt] = {"error": str(error)}
-    return executions, reports, turns, sessions
+def cli_read(cli, database, args, raw_directory):
+    """Run one scoped CLI read and keep its exact bytes."""
+    argv = [cli, database] + list(args)
+    done = subprocess.run(argv, capture_output=True, text=True)
+    name = "-".join([str(part) for part in args]).replace("/", "_")[:120] + ".json"
+    path = os.path.join(raw_directory, name)
+    with open(path, "w") as handle:
+        handle.write(done.stdout)
+    entry = {"argv": argv, "exit": done.returncode, "stdout_bytes": len(done.stdout),
+             "stderr": done.stderr[:2000], "raw": path}
+    try:
+        entry["document"] = json.loads(done.stdout)
+    except json.JSONDecodeError:
+        entry["document"] = None
+    return entry
 
 
 def main():
-    database, out_path = sys.argv[1:3]
+    arguments = sys.argv[1:]
+    database, out_path = arguments[0], arguments[1]
+    cli = os.environ.get("BATON2_CLI", DEFAULT_CLI)
+    if "--cli" in arguments:
+        cli = arguments[arguments.index("--cli") + 1]
+    if not os.path.exists(cli):
+        fallback = "/Users/wahargis/.local/share/baton2/releases/1.1.0-fca7af876c8260c32d17f95f3e19bc68ee1bf561/bin/baton2"
+        cli = fallback if os.path.exists(fallback) else cli
+
     records = attempt_records(database)
-    executions, reports, turns, sessions = {}, {}, {}, {}
-    if os.path.exists(database):
-        connection = sqlite3.connect("file:%s?mode=ro" % database, uri=True)
-        connection.row_factory = sqlite3.Row
-        executions, reports, turns, sessions = database_rows(connection, records)
-        connection.close()
+    raw_directory = os.path.join(os.path.dirname(os.path.abspath(out_path)), "cli-reads")
+    os.makedirs(raw_directory, exist_ok=True)
+
+    reads = {}
+    if os.path.exists(cli):
+        reads["players"] = cli_read(cli, database, ["players"], raw_directory)
+        sessions = sorted({record["session"] for record in records if record["session"]})
+        for session in sessions:
+            reads["turns:" + session] = cli_read(cli, database, ["turns", session], raw_directory)
+
+    current = {}
+    for row in (reads.get("players", {}).get("document") or []):
+        execution = row.get("execution") or {}
+        current[row.get("id")] = {"current_attempt": execution.get("attempt"),
+                                  "mode": execution.get("mode"), "phase": execution.get("phase"),
+                                  "status": execution.get("status")}
+    reports = {}
+    for key, entry in reads.items():
+        if not key.startswith("turns:"):
+            continue
+        for row in (entry.get("document") or []):
+            reports[row.get("id")] = {"report_body": (row.get("reportBody") or "")[:4000],
+                                      "event_type": row.get("eventType"), "receipt": row.get("receipt")}
 
     observed_available = observed_agree = 0
+    states = {}
     for record in records:
-        record["database"] = {"executions_for_attempt": executions.get(record["attempt"]),
-                             "report": reports.get(record["attempt"]),
-                             "turn_event": turns.get(record["attempt"])}
+        states[record["observed_route_state"]] = states.get(record["observed_route_state"], 0) + 1
+        record["current_execution"] = current.get(record["session"])
+        record["report"] = reports.get(record["attempt"])
         observed = record["observed_route"]
         if observed and observed.get("route"):
             observed_available += 1
-            configured = (record["configured_route"] or {}).get("model")
-            if configured == observed["route"]:
+            if (record["configured_route"] or {}).get("model") == observed["route"]:
                 observed_agree += 1
 
     document = {
         "database": database,
         "attempt_count": len(records),
         "captured_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
-        "route_provenance": (
-            "configured_route is read from each attempt's own manifest argv. observed_route is "
-            "reported only from that attempt's retained stdout spool, which the keeper unlinks at "
-            "acknowledgement; every other attempt is unavailable. current_session_observation holds "
-            "the sessions row as it stands now and is a mutable session-level value, not per-attempt "
-            "evidence."),
+        "cli": {"path": cli,
+                "sha256": hashlib.sha256(open(cli, "rb").read()).hexdigest() if os.path.exists(cli) else None,
+                "reads": {key: {"argv": value["argv"], "exit": value["exit"],
+                                "stdout_bytes": value["stdout_bytes"], "raw": value["raw"]}
+                          for key, value in reads.items()}},
+        "route_provenance": ROUTE_PROVENANCE,
         "observed_route_summary": {"available": observed_available,
                                    "unavailable": len(records) - observed_available,
-                                   "matches_configured": observed_agree},
-        "current_session_observation": sessions,
+                                   "matches_configured": observed_agree,
+                                   "states": states},
+        "current_session_observation": current,
         "attempts": records,
     }
     with open(out_path, "w") as handle:
@@ -260,9 +295,8 @@ def main():
         histogram[key] = histogram.get(key, 0) + 1
     print(json.dumps({"database": database, "attempt_count": len(records),
                       "exit_histogram": histogram,
-                      "spool_retained": sum(1 for r in records if r["files"]["stdout"]),
-                      "observed_route": document["observed_route_summary"]},
-                     indent=1, sort_keys=True))
+                      "observed_route": document["observed_route_summary"],
+                      "cli_reads": len(reads)}, indent=1, sort_keys=True))
 
 
 if __name__ == "__main__":
