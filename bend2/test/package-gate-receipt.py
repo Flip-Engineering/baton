@@ -680,7 +680,8 @@ class PackageGateReceipt(unittest.TestCase):
     def ordinary_index(self, run_root, complete=True, drop=(), duplicate=False,
                        tamper=False, escape=False, symlink=False, argv=None,
                        outcome=True, baseline_exit=0, baseline_position=0, identity=None,
-                       verdicts=None, delta=True, inputs=None, extra=()):
+                       verdicts=None, delta=True, inputs=None, extra=(),
+                       top_level_identity=False, top_level_conflict=False):
         """The v2 producer layout: an index whose run identity matches the envelope.
 
         Streams hold raw compiler bytes. The checker's verdict, the applied delta and
@@ -752,19 +753,20 @@ class PackageGateReceipt(unittest.TestCase):
                 record.pop('outcome')
             records.append(record)
         identity = identity or self.ordinary_identity(path, run_root)
-        # Producer layout: index_path and scratch sit at the index top level, the
-        # remaining identity fields sit in the run block, and the admitted inputs
-        # are rows rather than a mapping.
+        # The current producer layout: the whole identity sits in the run block
+        # and the admitted inputs are a map from path to digest.
         index = {'schema': PACKAGE.ORDINARY_SCHEMA, 'complete': complete,
-                 'index_path': identity['index_path'], 'scratch': identity['scratch'],
-                 'run': {key: value for key, value in identity.items()
-                         if key not in ('index_path', 'scratch')}
-                 | {'nonce': 'fixture-nonce',
-                    'checker_argv': ['node', 'bend2/scripts/laws-check.mjs']},
-                 'inputs': [{'path': 'bend2/scripts/laws-check.mjs', 'bytes': 7,
-                             'sha256': hashlib.sha256(b'checker').hexdigest()}]
+                 'run': {**identity, 'nonce': 'fixture-nonce',
+                         'checker_argv': ['node', 'bend2/scripts/laws-check.mjs']},
+                 'inputs': {'bend2/scripts/laws-check.mjs':
+                            hashlib.sha256(b'checker').hexdigest()}
                  if inputs is None else inputs,
                  'cases': records}
+        if top_level_identity:
+            index['index_path'] = identity['index_path']
+            index['scratch'] = identity['scratch']
+        if top_level_conflict:
+            index['index_path'] = str(self.home / 'conflicting' / 'evidence' / 'index.json')
         path.write_text(json.dumps(index))
         return path
 
@@ -789,6 +791,7 @@ class PackageGateReceipt(unittest.TestCase):
         self.assertEqual(result['ordinary']['invocation'], 'ordinary:fixture-nonce')
         self.assertEqual(result['ordinary']['verifier'], self.verifier)
         self.assertEqual(result['ordinary']['input_rows'], 1)
+        self.assertEqual(result['ordinary']['input_shape'], 'map')
         self.assertTrue(result['ordinary']['audit']['members'])
         self.assertEqual(result['ordinary']['root_identity']['ancestor_policy'],
                          'repository-real-paths')
@@ -800,6 +803,26 @@ class PackageGateReceipt(unittest.TestCase):
                              'evidence/' + identity.replace(':', '_') + '.stdout')
             self.assertIsNotNone(self.verdicts[identity]['baseline'])
             self.assertIsNotNone(self.verdicts[identity]['delta'])
+
+    def test_the_index_carries_one_run_identity(self):
+        """One contract: the run block is authoritative, both input shapes read."""
+        path = self.ordinary_index(self.logs / 'run-toplevel', top_level_identity=True)
+        self.write_logs(envelope=self.envelope_for(path))
+        result = PACKAGE.validation(self.logs, None, path, self.compiler())
+        self.assertEqual(result['ordinary']['cases'], len(self.controls['controls']) + 1)
+
+        path = self.ordinary_index(
+            self.logs / 'run-rows',
+            inputs=[{'path': 'bend2/scripts/laws-check.mjs',
+                     'sha256': hashlib.sha256(b'checker').hexdigest()}])
+        self.write_logs(envelope=self.envelope_for(path))
+        result = PACKAGE.validation(self.logs, None, path, self.compiler())
+        self.assertEqual(result['ordinary']['input_shape'], 'rows')
+
+        path = self.ordinary_index(self.logs / 'run-conflict', top_level_conflict=True)
+        self.write_logs(envelope=self.envelope_for(path))
+        with self.assertRaisesRegex(RuntimeError, 'two different index_path'):
+            PACKAGE.validation(self.logs, None, path, self.compiler())
 
     def test_ordinary_evidence_defects_refuse(self):
         cases = [('incomplete run', dict(complete=False), 'does not declare a completed run'),

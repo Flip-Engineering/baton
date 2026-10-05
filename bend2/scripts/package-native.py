@@ -174,9 +174,14 @@ INVENTORY_SCHEMA = 'baton2-controls-inventory-v1'
 REDUCTION_SCHEMA = 'baton2-controls-reduction-v1'
 CONTROL_SCRIPT = 'bend2/scripts/laws-check.mjs'
 CONTROL_FIELDS = ('id', 'kind', 'law', 'module', 'definition_sha256')
-VERIFIER_MEMBERS = ('checker_sha256', 'laws_common_module_sha256', 'definitions_module_sha256',
-                    'classify_module_sha256', 'work_set_module_sha256',
-                    'aggregate_module_sha256', 'group_run_module_sha256')
+# The endpoint verdict contract this package already consumes names six members.
+# The ordinary producer run adds a seventh for the group-run module, which is
+# validated separately so the endpoint closure stays exactly as it is.
+VERIFIER_MEMBERS = ('checker_sha256', 'aggregate_module_sha256', 'classifier_module_sha256',
+                    'work_set_module_sha256', 'laws_common_module_sha256',
+                    'definitions_module_sha256')
+ORDINARY_EXTRA_VERIFIER_FILES = {
+    'group_run_module_sha256': 'bend2/scripts/capacity-controls/group-run.mjs'}
 CHILD_FIELDS = ('exit_code', 'signal', 'spawn_error')
 ORIGIN_FIELDS = ('workflow', 'run_id', 'run_attempt', 'jobs', 'image_os', 'image_version')
 
@@ -641,30 +646,37 @@ def ordinary_evidence(index_path, expected, compiler=None, declared_root=None,
             'The ordinary evidence index names another schema: ' + json.dumps(index.get('schema')))
     require(index.get('complete') is True,
             'The ordinary evidence index does not declare a completed run')
-    identity = index.get('run')
-    require(compiler is not None,
-            'The ordinary evidence is consumed without the compiler it binds')
-    require(isinstance(identity, dict), 'The ordinary evidence index records no run identity')
+    run_identity = index.get('run')
+    require(isinstance(run_identity, dict), 'The ordinary evidence index records no run identity')
     require(isinstance(envelope, dict), 'The ordinary evidence is consumed without its run envelope')
-    for field in ORDINARY_INDEX_TOP_FIELDS:
-        require(json.dumps(index.get(field), sort_keys=True)
+    # One contract, stated once: every identity field is read from the run block,
+    # and an index may also carry the run location at its top level. Where both
+    # places carry a field they must agree, so moving a field cannot present two
+    # different runs silently.
+    identity = {}
+    for field in ORDINARY_IDENTITY_FIELDS:
+        inside, outer = run_identity.get(field), index.get(field)
+        require(inside is not None or outer is not None,
+                'The ordinary index records no ' + field)
+        if inside is not None and outer is not None:
+            require(json.dumps(inside, sort_keys=True) == json.dumps(outer, sort_keys=True),
+                    'The ordinary index records two different ' + field + ' values')
+        identity[field] = inside if inside is not None else outer
+        require(json.dumps(identity[field], sort_keys=True)
                 == json.dumps(envelope.get(field), sort_keys=True),
                 'The ordinary index names another run ' + field + ': '
-                + json.dumps(index.get(field)) + ' against '
+                + json.dumps(identity[field]) + ' against '
                 + json.dumps(envelope.get(field)))
-    for field in ORDINARY_RUN_FIELDS:
-        require(json.dumps(identity.get(field), sort_keys=True)
-                == json.dumps(envelope.get(field), sort_keys=True),
-                'The ordinary index names another run ' + field + ': '
-                + json.dumps(identity.get(field)) + ' against '
-                + json.dumps(envelope.get(field)))
+    for field in ('nonce', 'checker_argv'):
+        identity[field] = (run_identity.get(field) if run_identity.get(field) is not None
+                           else index.get(field))
     require(isinstance(identity.get('nonce'), str) and identity['nonce'],
             'The ordinary index records no run nonce')
     require(identity.get('invocation') == envelope.get('invocation'),
             'The ordinary index names another invocation')
     require(isinstance(identity.get('checker_argv'), list) and identity['checker_argv'],
             'The ordinary index records no checker command')
-    recorded_index = Path(str(index.get('index_path') or ''))
+    recorded_index = Path(str(identity.get('index_path') or ''))
     require(recorded_index.is_absolute(),
             'The ordinary index records no absolute index path: '
             + json.dumps(identity.get('index_path')))
@@ -684,18 +696,31 @@ def ordinary_evidence(index_path, expected, compiler=None, declared_root=None,
         require(block.get('path') not in (None, ''), 'The ordinary run records no compiler path')
     source_block = identity.get('source') or {}
     verifier = identity.get('verifier') or {}
-    admitted, missing_verifier = expected_verifier_digests()
-    require(isinstance(verifier, dict) and set(VERIFIER_MEMBERS) <= set(verifier),
+    admitted, _missing_verifier = expected_verifier_digests()
+    extra_admitted, _missing_extra = ordinary_extra_verifier_digests()
+    required = set(VERIFIER_MEMBERS) | set(ORDINARY_EXTRA_VERIFIER_FILES)
+    require(isinstance(verifier, dict) and required <= set(verifier),
             'The ordinary run does not name every verifier member: '
-            + succinct(sorted(set(VERIFIER_MEMBERS) - set(verifier or {}))))
-    differing = sorted(key for key, digest in admitted.items() if verifier.get(key) != digest)
+            + succinct(sorted(required - set(verifier or {}))))
+    differing = sorted(key for key, digest in {**admitted, **extra_admitted}.items()
+                       if verifier.get(key) != digest)
     require(not differing,
             'The ordinary run used other verifier bytes at: ' + succinct(differing))
     # The index records the admitted inputs it captured as rows. Whether those
     # rows cover the complete non-target source and runtime graph is a
     # producer-side question this consumer cannot answer from the rows alone.
-    input_rows = index.get('inputs')
-    require(isinstance(input_rows, list) and input_rows,
+    recorded_inputs = index.get('inputs')
+    if isinstance(recorded_inputs, dict):
+        input_shape = 'map'
+        input_rows = [{'path': name, 'sha256': digest}
+                      for name, digest in recorded_inputs.items()]
+    elif isinstance(recorded_inputs, list):
+        input_shape = 'rows'
+        input_rows = recorded_inputs
+    else:
+        input_shape = None
+        input_rows = []
+    require(input_shape is not None and input_rows,
             'The ordinary index records no admitted input inventory')
     admitted_inputs = {}
     for row in input_rows:
@@ -822,7 +847,8 @@ def ordinary_evidence(index_path, expected, compiler=None, declared_root=None,
             'invocation': identity['invocation'], 'nonce': identity['nonce'],
             'compiler_sha256': (identity.get('compiler') or {}).get('sha256'),
             'source': source_block, 'verifier': verifier, 'inputs': admitted_inputs,
-            'input_rows': len(admitted_inputs), 'recomputed': recomputed,
+            'input_rows': len(admitted_inputs), 'input_shape': input_shape,
+            'recomputed': recomputed,
             'audit': audit_inventory, 'raw': raw}
 
 
@@ -1396,11 +1422,10 @@ def classify_control(case, result, streams, baseline, evidence_root, source, com
 VERIFIER_FILES = {
     'checker_sha256': 'bend2/scripts/laws-check.mjs',
     'aggregate_module_sha256': 'bend2/scripts/capacity-controls/aggregate.mjs',
-    'classify_module_sha256': 'bend2/scripts/capacity-controls/classify.mjs',
+    'classifier_module_sha256': 'bend2/scripts/capacity-controls/classify.mjs',
     'work_set_module_sha256': 'bend2/scripts/capacity-controls/work-set.mjs',
     'laws_common_module_sha256': 'bend2/scripts/laws-common.mjs',
     'definitions_module_sha256': 'bend2/scripts/laws-mutations.mjs',
-    'group_run_module_sha256': 'bend2/scripts/capacity-controls/group-run.mjs',
 }
 
 
@@ -1408,6 +1433,18 @@ def expected_verifier_digests():
     """The admitted checker bytes of this checkout, or the files still missing."""
     digests, missing = {}, []
     for member, relative in VERIFIER_FILES.items():
+        path = ROOT / relative
+        if path.is_file():
+            digests[member] = sha256(path)
+        else:
+            missing.append(relative)
+    return digests, missing
+
+
+def ordinary_extra_verifier_digests():
+    """The ordinary producer run's additional verifier member, when present."""
+    digests, missing = {}, []
+    for member, relative in ORDINARY_EXTRA_VERIFIER_FILES.items():
         path = ROOT / relative
         if path.is_file():
             digests[member] = sha256(path)
