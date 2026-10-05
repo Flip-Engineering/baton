@@ -1,176 +1,69 @@
 #!/usr/bin/env node
-// Scoped negative-control acquisition for the runtime-values law modules.
-// This runner acquires raw evidence only; classification of the retained
-// diagnostics belongs to the sole Interfaces-owned shared checker, and the
-// corrected --classify API and schema are pending, so no predicate and no
-// schema are implemented or frozen here.
+// Raw acquisition runner for the runtime-values law mutation controls.
 //
-// What one run retains, per control: the exact compiler argv, cwd, recorded
-// environment policy, compiler path and binary digest, the compiler's own
-// `version` output, the compiler child process id (this wrapper's pid is
-// recorded separately and is not the compiler pid), actual start and end
-// times, the observed exit status or signal or spawn error, the complete
-// stdout and stderr streams separately with byte lengths and SHA-256
-// digests, and the source snapshot binding: SHA-256 of the entry, the two
-// law modules, and the development entry, identical to the successful
-// unchanged baseline's snapshot. Each mutation retains its definition JSON
-// and digest, the original and changed module bytes' hashes, the exact
-// replaced delta, and the unchanged law text digest. Scratch is recreated
-// per control from the tree and non-target inputs are hashed to show they
-// did not change.
+// This runner acquires evidence only. It computes no refusal verdicts, no
+// shape matching and no diagnostic correlation: attribution of the retained
+// diagnostics belongs to the sole Interfaces-owned shared checker, and no
+// classifier or schema is implemented here.
 //
-// Outcome vocabulary (raw, not a classifier verdict):
-//   baseline-ok            the unchanged entry compiled with exit 0
-//   proof-refusal          a proof-removal control whose diagnostics are
-//                          exactly the known two-line Bend proof-removal
-//                          shape (the diagnostic carries no law name, so the
-//                          binding is the exact proof edit plus completed
-//                          status plus the unchanged snapshot, never a name
-//                          substring)
-//   mutation-refusal       an implementation-mutation control where the
-//                          compiler ran, exited nonzero through normal
-//                          status, and produced nonempty diagnostics; the
-//                          raw diagnostics are retained for the shared
-//                          classifier to attribute
-//   unqualified            everything else, with its named class:
-//                          compiler-unavailable, spawn-error, signal,
-//                          empty-diagnostics, baseline-failure,
-//                          snapshot-mismatch, proof-shape-mismatch,
-//                          find-text-absent
-// A syntax error, a launch failure, an exception, a signal, resource loss,
-// missing metadata, or a baseline or unrelated error is never a law refusal.
+// One immutable snapshot per run: before any case, the full bend2 tree of
+// the admitted checkout is copied once into <evidence>/snapshot/ and hashed
+// file by file into a manifest; every case compiles a fresh copy of that
+// frozen snapshot, never the live tree, and links the snapshot manifest
+// digest. Original and changed module bytes, the law text, and the exact
+// delta are retained beside each case's raw compiler streams so no evidence
+// row references bytes that were deleted.
+//
+// Per case the runner retains: the exact compiler argv, cwd, environment
+// identity (key list plus the explicit policy assignments), the compiler
+// binary digest and its version output, the actual compiler child process id
+// (this wrapper's pid is recorded separately and is not the compiler pid),
+// start and end times, the observed exit status or signal or spawn error,
+// and the complete separate stdout and stderr as exact buffers - hashed and
+// length-recorded over the raw bytes, with their UTF-8 renderings retained
+// alongside for reading.
+//
+// Outcome vocabulary (acquisition bookkeeping, not attribution): 'acquired'
+// means the compiler ran to a normal termination and its complete streams
+// were captured, whatever the exit code; 'not-acquired' names the
+// infrastructure class (spawn-error, signal, missing-streams). The baseline
+// case additionally requires exit 0 on the frozen snapshot for any later
+// case to be meaningful. Case-level acquired/not-acquired never reports a
+// law refusal.
 //
 // Usage, on an admitted runner:
 //   node bend2/tests/runtime/laws-mutations.mjs [path-to-bend-2.0.25]
-// Prints one JSON row per control and a final summary; exits nonzero when
-// the baseline failed, any expected refusal was unqualified, or any control
-// outcome is unqualified.
 
-import { execFileSync, spawnSync } from 'node:child_process';
-import { cpSync, createHash, existsSync, mkdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
-import { join, resolve } from 'node:path';
+import { spawnSync } from 'node:child_process';
+import { createHash } from 'node:crypto';
+import { cpSync, existsSync, mkdirSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import { join, relative, resolve } from 'node:path';
+
+import { MUTATION_DEFINITIONS, LAW_ENTRY } from './laws-mutation-definitions.mjs';
 
 const ROOT = resolve(import.meta.dirname, '..', '..', '..');
-const ENTRY = join('bend2', 'tests', 'runtime', 'observations-laws.bend');
-const CAPTURE_MODULE = join('bend2', 'src', 'context', 'runtime', 'observations-capture.bend');
-const CLASSIFY_MODULE = join('bend2', 'src', 'context', 'runtime', 'observations-classification.bend');
+const CAPTURE_MODULE = 'bend2/src/context/runtime/observations-capture.bend';
+const CLASSIFY_MODULE = 'bend2/src/context/runtime/observations-classification.bend';
 const SCRATCH = join(ROOT, '.scratch', 'runtime-values-laws-mutations');
 const EVIDENCE_DIR =
   process.env.BATON_RUNTIME_EVIDENCE_DIR ??
   join(ROOT, '.scratch', 'runtime-values-laws-evidence', new Date().toISOString().replace(/[:.]/g, '-'));
 const ENV = { ...process.env, BEND_NO_TELEMETRY: '1' };
 
-// The proof-removal diagnostic of Bend 2.0.25 on this platform is exactly
-// these two lines and carries no law name.
-const PROOF_REMOVAL_DIAGNOSTIC =
-  'Error: 1 TODO found.\nThe code is incomplete, and not a valid proof yet.';
-
-const CAPTURE = 'observations-capture.bend';
-const CLASSIFY = 'observations-classification.bend';
-
-const LAWS = [
-  { name: 'runtime_evidence_preserves_every_identity_member', file: CAPTURE },
-  { name: 'capture_record_carries_both_event_identities_and_the_fixed_consistency_pair', file: CAPTURE },
-  { name: 'capture_without_an_end_event_stays_open', file: CAPTURE },
-  { name: 'runtime_fact_admits_only_the_observed_classification', file: CLASSIFY },
-  { name: 'class_tags_are_the_four_fixed_names', file: CLASSIFY },
-  { name: 'expansion_admits_each_class_at_itself', file: CLASSIFY },
-  { name: 'observed_expansion_refuses_every_other_classification', file: CLASSIFY },
-  { name: 'observed_value_completeness_follows_the_conservative_rule', file: CLASSIFY },
-  { name: 'a_preview_is_incomplete_regardless_of_its_flags', file: CLASSIFY },
+const PROOF_REMOVAL_LAWS = [
+  { name: 'runtime_evidence_preserves_every_identity_member', file: CAPTURE_MODULE },
+  { name: 'capture_record_carries_both_event_identities_and_the_fixed_consistency_pair', file: CAPTURE_MODULE },
+  { name: 'capture_without_an_end_event_stays_open', file: CAPTURE_MODULE },
+  { name: 'runtime_fact_admits_only_the_observed_classification', file: CLASSIFY_MODULE },
+  { name: 'class_tags_are_the_four_fixed_names', file: CLASSIFY_MODULE },
+  { name: 'expansion_admits_each_class_at_itself', file: CLASSIFY_MODULE },
+  { name: 'observed_expansion_refuses_every_other_classification', file: CLASSIFY_MODULE },
+  { name: 'observed_value_completeness_follows_the_conservative_rule', file: CLASSIFY_MODULE },
+  { name: 'a_preview_is_incomplete_regardless_of_its_flags', file: CLASSIFY_MODULE },
 ];
 
-// The implementation mutations this lane contributes. Each definition names
-// its source file, the scoped entry, the intended qualified law, the exact
-// find/replace delta, and the expected and observed constructors the law
-// comparison should produce. Definitions are exported for the sole
-// Interfaces-owned laws-mutations export; the authoritative digest is over
-// the canonical JSON of the definition without the derived digest field.
-export const MUTATION_DEFINITIONS = [
-  {
-    name: 'capture-record-changes-consistency',
-    file: CAPTURE,
-    entry: ENTRY,
-    law: 'capture_record_carries_both_event_identities_and_the_fixed_consistency_pair',
-    expected: 'CaptureRecord{consistency: "per-response", controlExclusivity: "unverified", ...}',
-    observed: 'CaptureRecord{consistency: "per-response-wrong", controlExclusivity: "unverified", ...}',
-    find: 'consistency: "per-response"',
-    replace: 'consistency: "per-response-wrong"',
-  },
-  {
-    name: 'capture-record-claims-verified-exclusivity',
-    file: CAPTURE,
-    entry: ENTRY,
-    law: 'capture_record_carries_both_event_identities_and_the_fixed_consistency_pair',
-    expected: 'CaptureRecord{controlExclusivity: "unverified", ...}',
-    observed: 'CaptureRecord{controlExclusivity: "verified", ...}',
-    find: 'controlExclusivity: "unverified"',
-    replace: 'controlExclusivity: "verified"',
-  },
-  {
-    name: 'unfinished-capture-manufactures-a-record',
-    file: CAPTURE,
-    entry: ENTRY,
-    law: 'capture_without_an_end_event_stays_open',
-    expected: 'CaptureOpen{detail: "multirequest capture has no end event identity"}',
-    observed: 'CaptureRecord{startEvent, endEvent, consistency: "per-response", controlExclusivity: "unverified", epoch}',
-    find: 'case False{}: CaptureOpen{detail: "multirequest capture has no end event identity"}',
-    replace: 'case False{}: CaptureRecord{startEvent: startEvent, endEvent: endEvent, consistency: "per-response", controlExclusivity: "unverified", epoch: epoch}',
-  },
-  {
-    name: 'runtime-evidence-drops-the-original-member',
-    file: CAPTURE,
-    entry: ENTRY,
-    law: 'runtime_evidence_preserves_every_identity_member',
-    expected: 'RuntimeEvidence{..., original: original}',
-    observed: 'RuntimeEvidence{..., original: ""}',
-    find: 'RuntimeEvidence{runtime: runtime, epoch: epoch, thread: thread, script: script, generated: generated, original: original}',
-    replace: 'RuntimeEvidence{runtime: runtime, epoch: epoch, thread: thread, script: script, generated: generated, original: ""}',
-  },
-  {
-    name: 'runtime-facts-admit-checked',
-    file: CLASSIFY,
-    entry: ENTRY,
-    law: 'runtime_fact_admits_only_the_observed_classification',
-    expected: 'fact_class_admitted(Checked{}) == False{}',
-    observed: 'fact_class_admitted(Checked{}) == True{}',
-    find: 'match cls:\n    case Observed{}: True{}\n    case StaticPossible{}: False{}\n    case Checked{}: False{}',
-    replace: 'match cls:\n    case Observed{}: True{}\n    case StaticPossible{}: False{}\n    case Checked{}: True{}',
-  },
-  {
-    name: 'expansion-upgrades-every-fact-to-observed',
-    file: CLASSIFY,
-    entry: ENTRY,
-    law: 'observed_expansion_refuses_every_other_classification',
-    expected: 'expansion_admitted(Observed{}, StaticPossible{}) == False{}',
-    observed: 'expansion_admitted(Observed{}, StaticPossible{}) == True{}',
-    find: 'String.eq(class_tag(original), class_tag(proposed))',
-    replace: 'True{}',
-  },
-  {
-    name: 'static-possible-tag-renamed',
-    file: CLASSIFY,
-    entry: ENTRY,
-    law: 'class_tags_are_the_four_fixed_names',
-    expected: 'class_tag(StaticPossible{}) in {"observed", "static-possible", "checked", "declared"}',
-    observed: 'class_tag(StaticPossible{}) == "static"',
-    find: '"static-possible"',
-    replace: '"static"',
-  },
-  {
-    name: 'completeness-ignores-the-preview',
-    file: CLASSIFY,
-    entry: ENTRY,
-    law: 'observed_value_completeness_follows_the_conservative_rule',
-    expected: 'observed_value_complete(hasPreview, overflow) == Bool.and(Bool.not(hasPreview), Bool.not(overflow))',
-    observed: 'observed_value_complete(hasPreview, overflow) == Bool.not(overflow)',
-    find: 'Bool.and(Bool.not(hasPreview), Bool.not(expansionOverflow))',
-    replace: 'Bool.not(expansionOverflow)',
-  },
-];
-
-function sha256Hex(bytes) {
-  return createHash('sha256').update(bytes).digest('hex');
+function sha256Hex(data) {
+  return createHash('sha256').update(data).digest('hex');
 }
 
 function resolveBend() {
@@ -181,92 +74,120 @@ function resolveBend() {
   return null;
 }
 
-function sourceSnapshot() {
-  const read = (rel) => sha256Hex(readFileSync(join(ROOT, rel)));
+// Freezes one immutable snapshot of the full bend2 tree under the evidence
+// directory and returns its manifest: one row per file with byte length and
+// SHA-256, plus the aggregate manifest digest that every case links to.
+function freezeSnapshot() {
+  const snapshotRoot = join(EVIDENCE_DIR, 'snapshot');
+  cpSync(join(ROOT, 'bend2'), join(snapshotRoot, 'bend2'), { recursive: true });
+  const files = [];
+  const walk = (dir) => {
+    for (const entry of readdirSync(dir, { withFileTypes: true })) {
+      const full = join(dir, entry.name);
+      if (entry.isDirectory()) walk(full);
+      else {
+        const bytes = readFileSync(full);
+        files.push({ path: relative(snapshotRoot, full), bytes: bytes.length, sha256: sha256Hex(bytes) });
+      }
+    }
+  };
+  walk(snapshotRoot);
+  files.sort((a, b) => (a.path < b.path ? -1 : 1));
+  const manifest = { files, fileCount: files.length };
+  const manifestBytes = Buffer.from(JSON.stringify(manifest), 'utf8');
+  writeFileSync(join(snapshotRoot, 'manifest.json'), manifestBytes);
   return {
-    entry: { path: ENTRY, sha256: read(ENTRY) },
-    captureModule: { path: CAPTURE_MODULE, sha256: read(CAPTURE_MODULE) },
-    classifyModule: { path: CLASSIFY_MODULE, sha256: read(CLASSIFY_MODULE) },
+    root: snapshotRoot,
+    manifestPath: join('snapshot', 'manifest.json'),
+    manifestDigest: sha256Hex(manifestBytes),
+    fileCount: files.length,
+    bytes: files.reduce((total, file) => total + file.bytes, 0),
   };
 }
 
-function fileDigest(path) {
-  try {
-    const stats = statSync(path);
-    return { path, size: stats.size, sha256: sha256Hex(readFileSync(path)) };
-  } catch (err) {
-    return { path, error: String(err.message ?? err) };
-  }
-}
-
-function prepareScratch() {
+// Each case compiles a fresh copy of the frozen snapshot, so the compiled
+// inputs are exactly the frozen bytes.
+function prepareScratch(snapshotRoot) {
   rmSync(SCRATCH, { recursive: true, force: true });
   mkdirSync(SCRATCH, { recursive: true });
-  cpSync(join(ROOT, 'bend2'), join(SCRATCH, 'bend2'), { recursive: true });
+  cpSync(join(snapshotRoot, 'bend2'), join(SCRATCH, 'bend2'), { recursive: true });
 }
 
-// Runs the scoped entry compile. Records the observed process identity: the
-// direct child is the compiler process itself; this wrapper's pid is
-// recorded separately and is not the compiler pid.
+function readModule(path) {
+  return readFileSync(join(SCRATCH, path));
+}
+
+function writeModule(path, bytes) {
+  writeFileSync(join(SCRATCH, path), bytes);
+}
+
+// Runs the scoped entry compile with byte-exact stream capture. Records the
+// observed process identity: the direct child is the compiler process
+// itself; this wrapper's pid is recorded separately and is not the compiler
+// pid.
 function runCompiler(cwd) {
   const started = new Date().toISOString();
   const startedMs = Date.now();
-  let result;
-  try {
-    const child = spawnSync(BEND, [ENTRY, '--check-only'], { env: ENV, cwd, encoding: 'utf8', maxBuffer: Infinity });
-    result = {
-      ran: child.error == null,
-      spawnError: child.error ? String(child.error.message ?? child.error) : null,
-      exitCode: child.status,
-      signal: child.signal,
-      stdout: child.stdout ?? '',
-      stderr: child.stderr ?? '',
-    };
-  } catch (err) {
-    result = { ran: false, spawnError: String(err.message ?? err), exitCode: null, signal: null, stdout: '', stderr: '' };
-  }
-  const diagnostics = `${result.stdout}${result.stderr}`;
+  const child = spawnSync(BEND, [LAW_ENTRY, '--check-only'], { env: ENV, cwd, encoding: 'buffer', maxBuffer: Infinity });
+  const ended = new Date().toISOString();
+  const stdoutBytes = child.stdout ?? Buffer.alloc(0);
+  const stderrBytes = child.stderr ?? Buffer.alloc(0);
+  const spawnError = child.error ? String(child.error.message ?? child.error) : null;
+  const acquired = spawnError === null && child.signal === null && child.status !== null;
   return {
-    argv: [BEND, ENTRY, '--check-only'],
+    argv: [BEND, LAW_ENTRY, '--check-only'],
     cwd,
     wrapperPid: process.pid,
-    compilerPid: null,
+    compilerPid: typeof child.pid === 'number' ? child.pid : null,
     started,
-    ended: new Date().toISOString(),
+    ended,
     durationMs: Date.now() - startedMs,
-    exitCode: result.exitCode,
-    signal: result.signal,
-    spawnError: result.spawnError,
-    stdout: result.stdout,
-    stderr: result.stderr,
-    stdoutBytes: Buffer.byteLength(result.stdout, 'utf8'),
-    stderrBytes: Buffer.byteLength(result.stderr, 'utf8'),
-    stdoutSha256: sha256Hex(Buffer.from(result.stdout, 'utf8')),
-    stderrSha256: sha256Hex(Buffer.from(result.stderr, 'utf8')),
-    diagnostics,
+    exitCode: child.status,
+    signal: child.signal,
+    spawnError,
+    stdoutBytes,
+    stderrBytes,
+    stdoutLength: stdoutBytes.length,
+    stderrLength: stderrBytes.length,
+    stdoutSha256: sha256Hex(stdoutBytes),
+    stderrSha256: sha256Hex(stderrBytes),
+    stdoutUtf8: stdoutBytes.toString('utf8'),
+    stderrUtf8: stderrBytes.toString('utf8'),
+    acquired,
+    notAcquiredClass: acquired ? null : spawnError ? 'spawn-error' : child.signal ? 'signal' : 'missing-status',
   };
+}
+
+function environmentIdentity() {
+  const keys = Object.keys(ENV).sort();
+  const recorded = {};
+  for (const key of ['PATH', 'HOME', 'BEND', 'BEND_NO_TELEMETRY', 'TMPDIR']) {
+    if (ENV[key] !== undefined) recorded[key] = ENV[key];
+  }
+  return { keyCount: keys.length, keys, recordedValues: recorded };
 }
 
 const BEND = resolveBend();
 mkdirSync(EVIDENCE_DIR, { recursive: true });
 
-// Run identity: the admitted runner records the exact compiler archive or
-// binary identity, its version output, and the environment policy.
+// Run identity: the admitted runner records the exact compiler binary
+// identity, its version output, the runtime and the environment identity.
 const identity = {
   node: process.version,
   execPath: process.execPath,
   execArgv: process.execArgv,
   cwd: ROOT,
-  entry: ENTRY,
+  entry: LAW_ENTRY,
   scratch: SCRATCH,
-  environmentPolicy: { set: { BEND_NO_TELEMETRY: '1' }, inherited: 'runner environment, recorded in the run receipt' },
+  environment: environmentIdentity(),
   bendRequested: BEND,
   bendUnavailable: BEND === null,
 };
 if (BEND) {
-  identity.bendBinary = fileDigest(BEND);
+  const bendBytes = readFileSync(BEND);
+  identity.bendBinary = { path: BEND, bytes: bendBytes.length, sha256: sha256Hex(bendBytes) };
   try {
-    identity.bendVersion = execFileSync(BEND, ['version'], { env: ENV, encoding: 'utf8' }).trim();
+    identity.bendVersion = spawnSync(BEND, ['version'], { env: ENV, encoding: 'buffer' }).stdout.toString('utf8').trim();
   } catch (err) {
     identity.bendVersion = `unavailable: ${String(err.message ?? err)}`;
   }
@@ -277,49 +198,50 @@ const rows = [];
 let failures = 0;
 function record(row) {
   rows.push(row);
-  writeFileSync(join(EVIDENCE_DIR, `${String(rows.length).padStart(3, '0')}-${row.control}.json`), JSON.stringify(row, null, 2));
-  console.log(JSON.stringify(row));
+  writeFileSync(join(EVIDENCE_DIR, `${String(rows.length).padStart(3, '0')}-${row.control.replace(/[^a-zA-Z0-9_-]/g, '_')}.json`), JSON.stringify(row, null, 2));
+  console.log(JSON.stringify({ control: row.control, acquired: row.acquired, notAcquiredClass: row.notAcquiredClass ?? null }));
 }
 
 if (BEND === null) {
-  record({ control: 'compiler-unavailable', outcome: 'unqualified', class: 'compiler-unavailable', refused: false });
+  record({ control: 'compiler-unavailable', acquired: false, notAcquiredClass: 'compiler-unavailable' });
   console.log(`laws-mutations: red - no Bend executable; ${rows.length} rows in ${EVIDENCE_DIR}`);
   process.exit(1);
 }
 
-// Baseline: the unchanged entry must compile with exit 0, and its frozen
-// snapshot binds every later control. One complete snapshot is frozen here
-// for baseline and cases; the original and changed module bytes, the law
-// text and the exact delta are retained beside each control's diagnostics so
-// no evidence row references bytes that were deleted.
-prepareScratch();
-const FROZEN_SNAPSHOT = sourceSnapshot();
+// One frozen snapshot for baseline and every case.
+const snapshot = freezeSnapshot();
+writeFileSync(join(EVIDENCE_DIR, '001-snapshot.json'), JSON.stringify(snapshot, null, 2));
+
+// Baseline: the frozen snapshot's unchanged entry must compile with exit 0
+// for any later case to be meaningful.
+prepareScratch(snapshot.root);
 const baselineRun = runCompiler(SCRATCH);
-const baseline = {
+record({
   control: 'baseline',
-  outcome: baselineRun.exitCode === 0 ? 'baseline-ok' : 'unqualified',
-  class: baselineRun.exitCode === 0 ? null : (baselineRun.spawnError ? 'spawn-error' : baselineRun.signal ? 'signal' : 'baseline-failure'),
-  snapshot: FROZEN_SNAPSHOT,
+  kind: 'baseline',
+  entry: LAW_ENTRY,
+  snapshot,
+  acquired: baselineRun.acquired,
+  notAcquiredClass: baselineRun.notAcquiredClass,
+  baselineExitZero: baselineRun.exitCode === 0,
   run: baselineRun,
-};
-record(baseline);
-if (baseline.outcome !== 'baseline-ok') {
+});
+if (!baselineRun.acquired || baselineRun.exitCode !== 0) {
   failures += 1;
-  console.log(`laws-mutations: red - baseline failed; ${rows.length} rows in ${EVIDENCE_DIR}`);
+  console.log(`laws-mutations: red - baseline did not compile cleanly on the frozen snapshot; ${rows.length} rows in ${EVIDENCE_DIR}`);
+  rmSync(SCRATCH, { recursive: true, force: true });
   process.exit(1);
 }
 
-const originalCapture = readFileSync(join(ROOT, CAPTURE_MODULE), 'utf8');
-const originalClassify = readFileSync(join(ROOT, CLASSIFY_MODULE), 'utf8');
-const originals = { [CAPTURE]: originalCapture, [CLASSIFY]: originalClassify };
+const originalCapture = readFileSync(join(snapshot.root, CAPTURE_MODULE));
+const originalClassify = readFileSync(join(snapshot.root, CLASSIFY_MODULE));
+const originals = new Map([
+  [CAPTURE_MODULE, originalCapture],
+  [CLASSIFY_MODULE, originalClassify],
+]);
 
-function unchangedLawText(moduleText) {
-  // The law blocks must be byte-identical across a mutation: each `law `
-  // line plus its indented and blank continuation lines, joined in order.
-  return sha256Hex(Buffer.from(extractLawText(moduleText), 'utf8'));
-}
-
-function extractLawText(moduleText) {
+function extractLawText(moduleBytes) {
+  const moduleText = moduleBytes.toString('utf8');
   const lines = moduleText.split('\n');
   const blocks = [];
   let current = null;
@@ -337,68 +259,58 @@ function extractLawText(moduleText) {
     }
   }
   if (current) blocks.push(current);
-  return blocks.map((block) => block.join('\n')).join('\n\n');
+  return Buffer.from(blocks.map((block) => block.join('\n')).join('\n\n'), 'utf8');
 }
 
-for (const law of LAWS) {
-  prepareScratch();
-  const modulePath = join(SCRATCH, 'bend2', 'src', 'context', 'runtime', law.file);
-  const original = readFileSync(join(ROOT, 'bend2', 'src', 'context', 'runtime', law.file), 'utf8');
+function lawBytesUnchanged(changedBytes, originalBytes) {
+  return extractLawText(changedBytes).equals(extractLawText(originalBytes));
+}
+
+for (const law of PROOF_REMOVAL_LAWS) {
+  prepareScratch(snapshot.root);
+  const modulePath = join(SCRATCH, law.file);
+  const original = originals.get(law.file);
   const proofPattern = new RegExp(`\\ndef ${law.name}\\([^)]*\\):\\n  \\{==\\}\\n`);
-  if (!proofPattern.test(original)) {
-    record({ control: `proof-removal:${law.name}`, outcome: 'unqualified', class: 'find-text-absent', refused: false, law: law.name });
+  if (!proofPattern.test(original.toString('utf8'))) {
+    record({ control: `proof-removal:${law.name}`, kind: 'proof-removal', law: law.name, source: law.file, acquired: false, notAcquiredClass: 'find-text-absent' });
     failures += 1;
     continue;
   }
-  const changed = original.replace(proofPattern, '\n');
-  const before = sha256Hex(Buffer.from(original, 'utf8'));
-  const after = sha256Hex(Buffer.from(changed, 'utf8'));
+  const changed = Buffer.from(original.toString('utf8').replace(proofPattern, '\n'), 'utf8');
   writeFileSync(modulePath, changed);
-  const compiledBytesMatch = sha256Hex(readFileSync(modulePath)) === after;
+  const compiledMatchesChanged = readFileSync(modulePath).equals(changed);
   writeFileSync(join(EVIDENCE_DIR, `bytes-proof-removal-${law.name}-original.bend`), original);
   writeFileSync(join(EVIDENCE_DIR, `bytes-proof-removal-${law.name}-changed.bend`), changed);
+  writeFileSync(join(EVIDENCE_DIR, `law-text-${law.name}.txt`), extractLawText(changed));
   const run = runCompiler(SCRATCH);
-  const shapeMatch = run.diagnostics.trim() === PROOF_REMOVAL_DIAGNOSTIC;
-  const refused =
-    compiledBytesMatch &&
-    run.spawnError === null &&
-    run.signal === null &&
-    run.exitCode !== 0 &&
-    run.diagnostics.trim() !== '' &&
-    shapeMatch;
   record({
     control: `proof-removal:${law.name}`,
+    kind: 'proof-removal',
     law: law.name,
-    source: `bend2/src/context/runtime/${law.file}`,
-    entry: ENTRY,
-    outcome: refused ? 'proof-refusal' : 'unqualified',
-    class: refused ? null : shapeMatch ? null : 'proof-shape-mismatch',
-    refused,
-    mutation: { kind: 'proof-removal', before, after },
-    lawTextDigest: unchangedLawText(changed),
-    lawTextUnchanged: unchangedLawText(changed) === unchangedLawText(original),
-    compiledBytesMatch,
-    frozenSnapshot: FROZEN_SNAPSHOT,
+    source: law.file,
+    entry: LAW_ENTRY,
+    snapshot,
+    acquired: run.acquired && compiledMatchesChanged,
+    notAcquiredClass: run.acquired ? (compiledMatchesChanged ? null : 'compiled-bytes-mismatch') : run.notAcquiredClass,
+    moduleBefore: { bytes: original.length, sha256: sha256Hex(original) },
+    moduleAfter: { bytes: changed.length, sha256: sha256Hex(changed) },
+    lawTextSha256: sha256Hex(extractLawText(changed)),
+    lawBytesUnchanged: lawBytesUnchanged(changed, original),
+    compiledBytesMatch: compiledMatchesChanged,
     run,
   });
-  if (!refused) failures += 1;
+  if (!(run.acquired && compiledMatchesChanged)) failures += 1;
 }
 
 for (const definition of MUTATION_DEFINITIONS) {
-  prepareScratch();
-  const original = originals[definition.file];
-  if (!original.includes(definition.find)) {
-    record({
-      control: `mutation:${definition.name}`,
-      outcome: 'unqualified',
-      class: 'find-text-absent',
-      refused: false,
-      law: definition.law,
-    });
+  prepareScratch(snapshot.root);
+  const original = originals.get(definition.file);
+  if (!original.toString('utf8').includes(definition.find)) {
+    record({ control: `mutation:${definition.name}`, kind: 'mutation', law: definition.law, source: definition.file, acquired: false, notAcquiredClass: 'find-text-absent' });
     failures += 1;
     continue;
   }
-  const changed = original.replace(definition.find, definition.replace);
+  const changed = Buffer.from(original.toString('utf8').replace(definition.find, definition.replace), 'utf8');
   const canonical = JSON.stringify({
     name: definition.name,
     file: definition.file,
@@ -409,54 +321,78 @@ for (const definition of MUTATION_DEFINITIONS) {
     find: definition.find,
     replace: definition.replace,
   });
-  const modulePath = join(SCRATCH, 'bend2', 'src', 'context', 'runtime', definition.file);
+  const modulePath = join(SCRATCH, definition.file);
   writeFileSync(modulePath, changed);
-  const compiledBytesMatch = sha256Hex(readFileSync(modulePath)) === sha256Hex(Buffer.from(changed, 'utf8'));
+  const compiledMatchesChanged = readFileSync(modulePath).equals(changed);
   writeFileSync(join(EVIDENCE_DIR, `bytes-mutation-${definition.name}-original.bend`), original);
   writeFileSync(join(EVIDENCE_DIR, `bytes-mutation-${definition.name}-changed.bend`), changed);
   writeFileSync(join(EVIDENCE_DIR, `law-text-${definition.name}.txt`), extractLawText(changed));
   const run = runCompiler(SCRATCH);
-  const refused =
-    compiledBytesMatch &&
-    run.spawnError === null &&
-    run.signal === null &&
-    run.exitCode !== 0 &&
-    run.diagnostics.trim() !== '';
-  // Diagnostic correlation is recorded raw for the shared classifier; it
-  // gates nothing here. The expected and observed constructors count as
-  // correlated when both appear in the retained diagnostics.
-  const correlated =
-    run.diagnostics.includes(definition.expected.split('(')[0].trim()) ||
-    run.diagnostics.includes(definition.expected.split('{')[0].trim()) ||
-    (run.diagnostics.length > 0 && run.diagnostics.includes(definition.law));
   record({
     control: `mutation:${definition.name}`,
+    kind: 'mutation',
     law: definition.law,
-    source: `bend2/src/context/runtime/${definition.file}`,
+    source: definition.file,
     entry: definition.entry,
-    outcome: refused ? 'mutation-refusal' : 'unqualified',
-    class: refused ? null : run.spawnError ? 'spawn-error' : run.signal ? 'signal' : run.diagnostics.trim() === '' ? 'empty-diagnostics' : 'unqualified',
-    refused,
+    snapshot,
+    acquired: run.acquired && compiledMatchesChanged,
+    notAcquiredClass: run.acquired ? (compiledMatchesChanged ? null : 'compiled-bytes-mismatch') : run.notAcquiredClass,
     definitionDigest: sha256Hex(Buffer.from(canonical, 'utf8')),
+    historicDigest: definition.historicDigest,
     definition,
-    moduleBefore: sha256Hex(Buffer.from(original, 'utf8')),
-    moduleAfter: sha256Hex(Buffer.from(changed, 'utf8')),
+    moduleBefore: { bytes: original.length, sha256: sha256Hex(original) },
+    moduleAfter: { bytes: changed.length, sha256: sha256Hex(changed) },
     delta: { findBytes: Buffer.byteLength(definition.find, 'utf8'), replaceBytes: Buffer.byteLength(definition.replace, 'utf8') },
-    lawTextDigest: unchangedLawText(changed),
-    lawTextUnchanged: unchangedLawText(changed) === unchangedLawText(original),
-    lawTextSha256: sha256Hex(Buffer.from(extractLawText(changed), 'utf8')),
-    compiledBytesMatch,
-    nonTargetInputs: [fileDigest(join(SCRATCH, ENTRY)), fileDigest(join(SCRATCH, definition.file === CAPTURE ? CLASSIFY_MODULE : CAPTURE_MODULE))],
-    diagnosticCorrelation: { correlated, note: 'raw observation only; attribution belongs to the shared classifier' },
-    frozenSnapshot: FROZEN_SNAPSHOT,
+    lawTextSha256: sha256Hex(extractLawText(changed)),
+    lawBytesUnchanged: lawBytesUnchanged(changed, original),
+    compiledBytesMatch: compiledMatchesChanged,
+    nonTargetInputs: [
+      (() => {
+        const bytes = readFileSync(join(SCRATCH, LAW_ENTRY));
+        return { path: LAW_ENTRY, bytes: bytes.length, sha256: sha256Hex(bytes) };
+      })(),
+      (() => {
+        const otherPath = definition.file === CAPTURE_MODULE ? CLASSIFY_MODULE : CAPTURE_MODULE;
+        const bytes = readFileSync(join(SCRATCH, otherPath));
+        return { path: otherPath, bytes: bytes.length, sha256: sha256Hex(bytes) };
+      })(),
+    ],
     run,
   });
-  if (!refused) failures += 1;
+  if (!(run.acquired && compiledMatchesChanged)) failures += 1;
 }
 
 rmSync(SCRATCH, { recursive: true, force: true });
-writeFileSync(join(EVIDENCE_DIR, 'summary.json'), JSON.stringify({ rows, failures }, null, 2));
+writeFileSync(
+  join(EVIDENCE_DIR, 'summary.json'),
+  JSON.stringify({
+    rows: rows.map(({ run, ...rest }) => ({
+      ...rest,
+      run: {
+        argv: run.argv,
+        cwd: run.cwd,
+        wrapperPid: run.wrapperPid,
+        compilerPid: run.compilerPid,
+        started: run.started,
+        ended: run.ended,
+        durationMs: run.durationMs,
+        exitCode: run.exitCode,
+        signal: run.signal,
+        spawnError: run.spawnError,
+        stdoutLength: run.stdoutLength,
+        stderrLength: run.stderrLength,
+        stdoutSha256: run.stdoutSha256,
+        stderrSha256: run.stderrSha256,
+        acquired: run.acquired,
+        notAcquiredClass: run.notAcquiredClass,
+      },
+    })),
+    snapshot,
+    failures,
+    attribution: 'deferred to the sole Interfaces-owned shared checker; this runner reports acquisition only',
+  }, null, 2),
+);
 console.log(
-  `laws-mutations: ${failures === 0 ? 'green' : 'red'} - baseline + ${LAWS.length} proof removals + ${MUTATION_DEFINITIONS.length} mutations, ${failures} unqualified, evidence in ${EVIDENCE_DIR}`,
+  `laws-mutations: ${failures === 0 ? 'complete' : 'incomplete'} - baseline + ${PROOF_REMOVAL_LAWS.length} proof removals + ${MUTATION_DEFINITIONS.length} mutations, ${failures} not acquired, evidence in ${EVIDENCE_DIR}`,
 );
 process.exit(failures === 0 ? 0 : 1);

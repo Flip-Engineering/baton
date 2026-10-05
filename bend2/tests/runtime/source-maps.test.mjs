@@ -391,6 +391,105 @@ test('the enforced reader refuses an injected override that does not enforce the
   }
 });
 
+test('a relative local reference without a recorded base refuses instead of using the cwd', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'runtime-values-sm-'));
+  try {
+    writeFileSync(join(dir, 'm.map'), MAP_JSON);
+    const previousCwd = process.cwd();
+    process.chdir(dir);
+    try {
+      const refusal = loadSourceMap({ sourceMapURL: 'm.map', generatedPath: null, admittedRoots: [dir] });
+      assert.equal(refusal.condition, 'mapBaseUnrecorded');
+    } finally {
+      process.chdir(previousCwd);
+    }
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('an expected digest verifies the recorded bytes; mismatch refuses by name', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'runtime-values-sm-'));
+  try {
+    writeFileSync(join(dir, 'm.map'), MAP_JSON);
+    const digest = createHash('sha256').update(MAP_TEXT_BYTES).digest('hex');
+    const verified = loadSourceMap({
+      sourceMapURL: 'm.map',
+      generatedPath: join(dir, 'gen.js'),
+      admittedRoots: [dir],
+      expectedDigest: digest,
+    });
+    assert.equal(verified.condition, undefined);
+    assert.equal(verified.digestVerified, true);
+    const mismatch = loadSourceMap({
+      sourceMapURL: 'm.map',
+      generatedPath: join(dir, 'gen.js'),
+      admittedRoots: [dir],
+      expectedDigest: '00'.repeat(32),
+    });
+    assert.equal(mismatch.condition, 'mapDigestMismatch');
+    const provenanceOnly = loadSourceMap({
+      sourceMapURL: 'm.map',
+      generatedPath: join(dir, 'gen.js'),
+      admittedRoots: [dir],
+    });
+    assert.equal(provenanceOnly.condition, undefined);
+    assert.equal(provenanceOnly.digestVerified, false, 'without an expected digest the recorded digest is provenance only');
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('a missing admitted root refuses through the reader instead of throwing at construction', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'runtime-values-sm-'));
+  try {
+    writeFileSync(join(dir, 'm.map'), MAP_JSON);
+    const missingRoot = join(dir, 'does-not-exist');
+    const refusal = loadSourceMap({
+      sourceMapURL: 'm.map',
+      generatedPath: join(dir, 'gen.js'),
+      admittedRoots: [missingRoot],
+    });
+    assert.equal(refusal.condition, 'mapReadFailed');
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('source map structural parsing checks sourcesContent correspondence', () => {
+  const shortContent = JSON.stringify({ version: 3, sources: ['a.ts', 'b.ts'], sourcesContent: ['let a\n'], mappings: '' });
+  assert.equal(conditionOf(() => parseSourceMapV3(shortContent)), 'malformedMap');
+  const matching = parseSourceMapV3(JSON.stringify({ version: 3, sources: ['a.ts'], sourcesContent: ['let a\n'], mappings: '' }));
+  assert.equal(matching.sourcesContent.length, 1);
+});
+
+test('VLQ place-value overflow through long continuations is contained', () => {
+  // 'g' is a zero continuation digit; enough of them drive the place value
+  // past the finite double range, where the running value would go Infinity
+  // and then NaN without an explicit check.
+  const overflowing = 'g'.repeat(210) + 'B';
+  assert.equal(conditionOf(() => decodeVlqSegment(overflowing)), 'coordinateRangeExceeded');
+});
+
+test('resolveSourcePath composes the map base before the generated base, and URL bases stay URL', () => {
+  const plain = parseSourceMapV3(JSON.stringify({ version: 3, sources: ['a.ts'], names: [], mappings: '' }));
+  // A loaded local map's own location is the map-relative base and wins over
+  // the generated script base.
+  assert.equal(
+    resolveSourcePath(plain, 0, { mapPath: '/maps/m.map', generatedPath: '/work/gen.js' }),
+    join('/maps', 'a.ts'),
+  );
+  // Without a map location (embedded maps) the generated base applies.
+  assert.equal(resolveSourcePath(plain, 0, { mapPath: null, generatedPath: '/work/gen.js' }), join('/work', 'a.ts'));
+  // A URL generated base keeps the source in URL space.
+  assert.equal(
+    resolveSourcePath(plain, 0, { mapPath: null, generatedPath: 'https://cdn.example/app/bundle.js' }),
+    'https://cdn.example/app/a.ts',
+  );
+  // A plain string base is still accepted as the generated base.
+  assert.equal(resolveSourcePath(plain, 0, '/work/gen.js'), join('/work', 'a.ts'));
+});
+
 test('mapGeneratedPosition composes the original path with the map digest for provenance', () => {
   const map = parseSourceMapV3(MAP_TEXT_BYTES);
   const named = parseSourceMapV3(JSON.stringify({

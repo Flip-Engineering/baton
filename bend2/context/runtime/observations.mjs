@@ -9,11 +9,23 @@
 // observe intent requires no controlRuntime grant.
 //
 // Admission: every backend access is gated on the production ref decision.
-// The composer injects the CDP owner's admitRef (decision === 'admitted' with
-// identity, or {decision:'refused', condition, detail}); this module treats
-// anything else as a refusal and never derives admission from the absence of
-// a refusal. A runtimeBusy answer is a terminal refusal for the capture, not
-// a retry obligation, and release stays available as an intent.
+// The composer injects the CDP owner's admitRef (and optionally its
+// requireAdmittedRef normalizer); this module treats anything else as a
+// refusal and never derives admission from the absence of a refusal. The
+// local shape check exists only for the standalone unit path and is strictly
+// narrower than the production contract, never wider: an admitted decision
+// must be {decision:'admitted', ok:true, identity} with a complete
+// seven-member identity whose counters are canonical decimal strings. A
+// runtimeBusy answer is a terminal refusal for the capture, not a retry
+// obligation, and release stays available as an intent.
+//
+// Capture: reads run through an awaited acquisition that samples the
+// composer's live session before and after every read and at publication,
+// through the injected production admission. An identity change yields an
+// explicit changedDuringCapture result with the scopes admitted so far; the
+// raw record of a changed read is retained as pre-change evidence and never
+// reported complete. Summary rendering over already-acquired records is a
+// separate synchronous operation that performs no backend read.
 //
 // Counter strings: epoch and mutationGeneration are canonical unsigned
 // decimal strings owned by the CDP counter module and pass through here
@@ -36,76 +48,108 @@ export { describeRemoteObject, nullKind, previewCompleteness, propertyDescriptor
 export const ADMISSION_NOTE =
   'backend access requires an explicit admitted ref decision from the production admission; a refusal or a malformed candidate refuses before any send, and a runtimeBusy answer is a refusal rather than a retry obligation';
 
-function refusalOf(decision) {
-  if (decision && typeof decision === 'object' && decision.decision === 'refused') {
-    return {
-      refused: true,
-      condition: typeof decision.condition === 'string' ? decision.condition : 'refDecisionRefused',
-      detail: decision.detail ?? null,
-      note: ADMISSION_NOTE,
-    };
-  }
-  const hasDecision = decision !== null && typeof decision === 'object' && decision.decision !== undefined;
-  return {
-    refused: true,
-    condition: hasDecision ? 'refDecisionMalformed' : 'refDecisionRefused',
-    detail: null,
-    note: ADMISSION_NOTE,
-  };
+const CANONICAL_DECIMAL = /^0$|^[1-9][0-9]*$/;
+
+// Shape validation for the standalone unit path. This is deliberately narrow:
+// a complete seven-member identity with nonempty string members and
+// canonical decimal counter strings. Full semantic validation stays with the
+// production refDecision/requireAdmittedRef; when one is injected below it
+// decides alone.
+export function isValidRefIdentity(identity) {
+  return (
+    identity !== null &&
+    typeof identity === 'object' &&
+    !Array.isArray(identity) &&
+    typeof identity.runtime === 'string' && identity.runtime !== '' &&
+    typeof identity.adapter === 'string' && identity.adapter !== '' &&
+    typeof identity.thread === 'string' && identity.thread !== '' &&
+    typeof identity.kind === 'string' && identity.kind !== '' &&
+    typeof identity.handle === 'string' && identity.handle !== '' &&
+    typeof identity.epoch === 'string' && CANONICAL_DECIMAL.test(identity.epoch) &&
+    typeof identity.mutationGeneration === 'string' && CANONICAL_DECIMAL.test(identity.mutationGeneration)
+  );
 }
 
-// Normalizes one production ref decision. Only {decision:'admitted',
-// ok:true, identity} admits; a candidate that claims admission while
-// carrying ok:false refuses as refDecisionContradictory (the production law
-// ref_decision_refuses_a_contradictory_candidate pins that shape), an
-// admitted candidate without the asserted members refuses as
-// refDecisionMalformed, and a refused decision renders its own condition and
-// detail. The returned outcome is either {admitted:true, identity} or
-// {refused:true, condition, detail, note}; nothing in between, so no caller
-// can read absence of refusal as admission.
-export function admissionOutcome(decision) {
+function refusal(condition, detail) {
+  return { admitted: false, refused: true, condition, detail: detail ?? null, note: ADMISSION_NOTE };
+}
+
+// Normalizes one production ref decision into
+// {admitted:true, identity} or {admitted:false, refused:true, condition,
+// detail, note}; both outcomes always carry the admitted member so callers
+// can branch on it directly. When the composer injects the production
+// requireAdmittedRef, that normalizer decides alone and this function adds
+// no second permissive validator: its thrown {condition, detail} is rendered
+// verbatim. Otherwise the strict local shape check applies: only
+// {decision:'admitted', ok:true, identity} with a valid identity admits; a
+// candidate claiming admission while carrying ok:false refuses as
+// refDecisionContradictory; a candidate with no decision member refuses as
+// refDecisionRefused; any other shape refuses as refDecisionMalformed; a
+// refused decision renders its own condition and detail, and a refused
+// decision without a condition reports refDecisionRefused.
+export function admissionOutcome(decision, { requireAdmittedRef } = {}) {
+  if (typeof requireAdmittedRef === 'function') {
+    // The injected production normalizer decides alone: its returned
+    // identity is in-contract by the producer's own guarantee, and its
+    // thrown {condition, detail} is rendered verbatim. No second validator
+    // runs here.
+    try {
+      const identity = requireAdmittedRef(decision);
+      return { admitted: true, identity };
+    } catch (err) {
+      const condition = err && typeof err.condition === 'string' ? err.condition : 'refDecisionMalformed';
+      return refusal(condition, err && err.detail != null ? String(err.detail) : err && err.message ? err.message : null);
+    }
+  }
   if (decision && typeof decision === 'object' && decision.decision === 'admitted') {
     if (decision.ok === false) {
-      return { refused: true, condition: 'refDecisionContradictory', detail: null, note: ADMISSION_NOTE };
+      return refusal('refDecisionContradictory');
     }
-    if (decision.ok === true && decision.identity && typeof decision.identity === 'object') {
+    if (decision.ok === true && isValidRefIdentity(decision.identity)) {
       return { admitted: true, identity: decision.identity };
     }
-    return { refused: true, condition: 'refDecisionMalformed', detail: null, note: ADMISSION_NOTE };
+    return refusal('refDecisionMalformed');
   }
-  return refusalOf(decision);
+  if (decision && typeof decision === 'object' && decision.decision === 'refused') {
+    return refusal(typeof decision.condition === 'string' ? decision.condition : 'refDecisionRefused', decision.detail ?? null);
+  }
+  const hasDecision = decision !== null && typeof decision === 'object' && decision.decision !== undefined;
+  return refusal(hasDecision ? 'refDecisionMalformed' : 'refDecisionRefused');
 }
 
 // Renders a decision as a refusal record, or null when the production
 // admission admitted the ref. Rendered conditions include the production
 // set: refMalformed, foreignRuntime, foreignAdapter, staleReference,
 // refRetiredByMutation, refOutsidePause, refStopNotLive, refThreadUnknown,
-// and refDecisionMalformed/refDecisionRefused for malformed or non-admitted
-// candidates.
-export function staleRefRefusal(decision) {
-  const outcome = admissionOutcome(decision);
-  return outcome.admitted ? null : { refused: true, condition: outcome.condition, detail: outcome.detail ?? null, note: outcome.note };
+// refDecisionContradictory, refDecisionRefused, refDecisionMalformed.
+export function staleRefRefusal(decision, options) {
+  const outcome = admissionOutcome(decision, options);
+  return outcome.admitted ? null : { admitted: false, refused: true, condition: outcome.condition, detail: outcome.detail ?? null, note: outcome.note };
 }
 
 // Binds one multirequest capture to a ref the production admission issued at
-// capture start. check(live) re-admits that ref against the composer's
-// current live record before every asynchronous read and at capture end,
-// through the injected production admitRef; this module never re-implements
-// the comparison. The outcome is the production decision rendered: admitted,
-// or an explicit refusal (staleReference after a resume, refRetiredByMutation
-// after an evaluation, refStopNotLive/refThreadUnknown/refOutsidePause from
-// the session layer, runtimeBusy while an evaluation is pending). An
-// observed identity change yields the explicit refusal; it never becomes a
+// capture start. liveNow is a function the composer supplies that returns
+// the CURRENT live record at call time (from session.snapshot()); the
+// binding never accepts a static live object as the capture's truth.
+// sample() re-admits the capture ref against a fresh sample through the
+// injected production admission; the caller gates every backend access and
+// the publication on sample(). An identity change yields the explicit
+// refusal - staleReference after a resume, refRetiredByMutation after an
+// evaluation, refStopNotLive/refThreadUnknown/refOutsidePause from the
+// session layer, runtimeBusy while an evaluation is pending - never a
 // coherent capture by assertion.
-export function createCaptureBinding({ admitRef, ref }) {
+export function createCaptureBinding({ admitRef, ref, liveNow }) {
   if (typeof admitRef !== 'function') {
-    return { check: () => ({ refused: true, condition: 'refDecisionMalformed', detail: 'no production admission was injected', note: ADMISSION_NOTE }) };
+    return { sample: () => refusal('refDecisionMalformed', 'no production admission was injected') };
   }
   if (ref === null || ref === undefined) {
-    return { check: () => ({ refused: true, condition: 'refDecisionMalformed', detail: 'capture carries no issued ref', note: ADMISSION_NOTE }) };
+    return { sample: () => refusal('refDecisionMalformed', 'capture carries no issued ref') };
+  }
+  if (typeof liveNow !== 'function') {
+    return { sample: () => refusal('refDecisionMalformed', 'no live session sampler was injected; a static live object cannot gate a capture') };
   }
   return {
-    check: (live) => admissionOutcome(admitRef(ref, live ?? null)),
+    sample: () => admissionOutcome(admitRef(ref, liveNow()), { requireAdmittedRef: undefined }),
   };
 }
 
@@ -207,66 +251,98 @@ export function mapStackFrames({
   return { frames, async };
 }
 
-// Summarizes one pause's scope chain. One Runtime.getProperties request per
-// level (recorded fact): loadScope(scope) returns the already-awaited
-// response record for exactly one scope object - a promise is refused as
-// asyncScopeRecordUnresolved, because this assembly never dereferences an
-// unsettled read. Before each loadScope the injected admission binding
-// (createCaptureBinding) re-admits the capture ref against the live record;
-// a refusal stops the capture with an explicit changedDuringCapture result
-// carrying the scopes collected so far, never a coherent capture by
-// assertion. Each scope names its object description, its expansion payload
-// (identity members plus handle; the canonical ref encoding happens at
-// composition through the canonical ref owner), the one-level property
-// descriptors with their own completeness records, and the internal property
-// list kept separate.
-export function scopeSummaries({ scopeChain, identity = null, loadScope, admission = null, live = null }) {
-  if (!Array.isArray(scopeChain)) return { condition: 'malformedScopeChain' };
-  const scopes = [];
-  for (const scope of scopeChain) {
-    if (admission && typeof admission.check === 'function') {
-      const outcome = admission.check(live);
-      if (!outcome || !outcome.admitted) {
-        return {
-          condition: 'changedDuringCapture',
-          scopes,
-          refusal: outcome && outcome.refused
-            ? outcome
-            : { refused: true, condition: outcome?.condition ?? 'refDecisionMalformed', detail: outcome?.detail ?? null, note: ADMISSION_NOTE },
-        };
-      }
-    }
-    const object = scope?.object ? describeRemoteObject(scope.object) : { condition: 'missingScopeObject' };
-    const summary = {
-      type: scope?.type ?? null,
-      name: scope?.name ?? null,
-      object,
-      nullKind: scope?.object ? nullKind(scope.object) : null,
-      objectPayload: scope?.object?.objectId ? expansionPayload({ value: scope.object }, identity) : null,
-      properties: [],
-      internalProperties: [],
-      preview: scope?.object?.preview ? previewCompleteness(scope.object.preview) : null,
-    };
-    if (typeof loadScope === 'function' && typeof scope?.object?.objectId === 'string') {
-      const loaded = loadScope(scope);
-      if (loaded && typeof loaded.then === 'function') {
-        summary.expansionRefusal = {
-          refused: true,
-          condition: 'asyncScopeRecordUnresolved',
-          detail: 'loadScope returned an unsettled promise; the composer awaits each read before assembling',
-        };
-      } else if (loaded && loaded.condition) {
-        summary.expansionRefusal = { refused: true, condition: loaded.condition, detail: loaded.detail ?? null };
-      } else if (!loaded || !Array.isArray(loaded.result)) {
-        summary.expansion = expansionCompleteness(loaded);
-      } else {
-        summary.properties = loaded.result.map(propertyDescriptorSummary);
-        summary.internalProperties = internalPropertiesSummary(loaded.internalProperties);
-        summary.expansion = expansionCompleteness(loaded);
-      }
-    }
-    scopes.push(summary);
+function scopeSummaryOf(scope, identity, record) {
+  const object = scope?.object ? describeRemoteObject(scope.object) : { condition: 'missingScopeObject' };
+  const summary = {
+    type: scope?.type ?? null,
+    name: scope?.name ?? null,
+    object,
+    nullKind: scope?.object ? nullKind(scope.object) : null,
+    objectPayload: scope?.object?.objectId ? expansionPayload({ value: scope.object }, identity) : null,
+    properties: [],
+    internalProperties: [],
+    preview: scope?.object?.preview ? previewCompleteness(scope.object.preview) : null,
+    expansion: { complete: false, reason: 'recordAbsent' },
+  };
+  if (record === undefined || record === null) {
+    return summary;
   }
+  if (record.condition) {
+    summary.expansionRefusal = { admitted: false, refused: true, condition: record.condition, detail: record.detail ?? null };
+    return summary;
+  }
+  if (!Array.isArray(record.result)) {
+    summary.expansion = expansionCompleteness(record);
+    return summary;
+  }
+  summary.properties = record.result.map(propertyDescriptorSummary);
+  summary.internalProperties = internalPropertiesSummary(record.internalProperties);
+  summary.expansion = expansionCompleteness(record);
+  return summary;
+}
+
+// The awaited capture over one pause's scope chain. Every backend read is
+// issued by loadScope AFTER the binding samples and admits the live session,
+// and sampled again after the read resolves and once more at publication:
+// an identity change across any boundary returns
+// {condition:'changedDuringCapture', scopes:<admitted prefix>, refusal,
+// stage} with the raw record of the changed read retained as pre-change
+// evidence (changedRecord) and never reported complete. A scope read that
+// returns its own refusal record stops the capture with
+// {condition:'scopeReadRefused', refusal, scopes}. Only a capture whose
+// before-read, after-read and publication samples all admitted returns
+// {scopes, records}.
+export async function captureScopes({ scopeChain, identity = null, loadScope, binding }) {
+  if (!Array.isArray(scopeChain)) return { condition: 'malformedScopeChain' };
+  if (typeof loadScope !== 'function') return { condition: 'loadScopeRequired' };
+  if (!binding || typeof binding.sample !== 'function') return { condition: 'admissionRequired' };
+  const scopes = [];
+  const records = new Map();
+  for (const scope of scopeChain) {
+    const before = binding.sample();
+    if (!before.admitted) {
+      return { condition: 'changedDuringCapture', scopes, refusal: before, stage: 'beforeRead' };
+    }
+    const record = await loadScope(scope);
+    const after = binding.sample();
+    if (!after.admitted) {
+      return { condition: 'changedDuringCapture', scopes, refusal: after, stage: 'afterRead', changedRecord: record };
+    }
+    if (record && record.condition) {
+      return { condition: 'scopeReadRefused', refusal: { admitted: false, refused: true, condition: record.condition, detail: record.detail ?? null }, scopes };
+    }
+    records.set(scope, record);
+    scopes.push(scopeSummaryOf(scope, identity, record));
+  }
+  const atPublication = binding.sample();
+  if (!atPublication.admitted) {
+    return { condition: 'changedDuringCapture', scopes, refusal: atPublication, stage: 'publication' };
+  }
+  return { scopes, records };
+}
+
+// Summary-only rendering over already-acquired records. This synchronous
+// operation performs NO backend read and accepts no loader: records is a Map
+// (or lookup function) from scope object to its awaited response record, as
+// returned by captureScopes. A scope without a record renders an absent
+// expansion record; it never triggers a read.
+export function scopeSummaries({ scopeChain, identity = null, records = null }) {
+  if (!Array.isArray(scopeChain)) return { condition: 'malformedScopeChain' };
+  const lookup =
+    records instanceof Map
+      ? (scope) => records.get(scope)
+      : typeof records === 'function'
+        ? records
+        : null;
+  const scopes = scopeChain.map((scope) => {
+    const record = lookup ? lookup(scope) : undefined;
+    const summary = scopeSummaryOf(scope, identity, record);
+    if (!lookup) {
+      summary.expansion = { complete: false, reason: 'recordAbsent' };
+      summary.expansionNote = 'summary rendering performs no reads; acquire records through captureScopes';
+    }
+    return summary;
+  });
   return { scopes };
 }
 
@@ -355,9 +431,7 @@ export function workerInventory({ attached = [], detachedFromWorker = [], detach
 // end protocol event identities, per-response consistency, unverified control
 // exclusivity, and the epoch string the capture was taken at. Event
 // identities are protocol event/sequence identities; inspector endpoint URLs
-// and UUIDs never enter capture records or results. A capture whose live
-// stop is not 'live' is named by the caller's own refusal; this record is
-// built only for captures that actually ran.
+// and UUIDs never enter capture records or results.
 export function captureIdentity({ startEvent, endEvent, epoch }) {
   if (!startEvent || !endEvent) return { condition: 'captureIncomplete' };
   return {

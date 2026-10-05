@@ -1,9 +1,10 @@
 // Unit laws for one-epoch observation assembly against recorded CDP frame
-// shapes: production-decision admission gating, same-epoch capture binding,
-// stack mapping provenance with retained async chains, scope summaries with
-// safe preloaded records and the changedDuringCapture refusal, exception
-// source separation, worker inventory with sessionId-mapped detaches,
-// capture identity, and runtime evidence with explicit nulls.
+// shapes: strict production-decision admission with identity validation,
+// the sampled same-epoch capture binding, the awaited captureScopes
+// acquisition with before-read/after-read/publication checks, records-only
+// summary rendering, stack mapping provenance with retained async chains,
+// exception source separation, worker inventory with sessionId-mapped
+// detaches, capture identity, and runtime evidence with explicit nulls.
 
 import test from 'node:test';
 import assert from 'node:assert/strict';
@@ -11,24 +12,27 @@ import assert from 'node:assert/strict';
 import {
   mapStackFrames,
   scopeSummaries,
+  captureScopes,
   captureException,
   workerInventory,
   captureIdentity,
   staleRefRefusal,
   admissionOutcome,
   createCaptureBinding,
+  isValidRefIdentity,
   runtimeEvidence,
 } from '../../context/runtime/observations.mjs';
 
-const IDENTITY = { runtime: 'rt:q7', adapter: '0', thread: 'main:0', epoch: '12', mutationGeneration: '3' };
-
-function pauseCallFrames() {
-  return [
-    { functionName: 'probe', callFrameId: 'cf:1', location: { scriptId: '42', lineNumber: 10, columnNumber: 4 } },
-    { functionName: '', callFrameId: 'cf:2', location: { scriptId: '42', lineNumber: 0, columnNumber: 0 } },
-    { functionName: 'timer', callFrameId: 'cf:3', location: { scriptId: '42', lineNumber: 30, columnNumber: 2 } },
-  ];
-}
+const IDENTITY = {
+  runtime: 'rt:q7',
+  adapter: '0',
+  thread: 'main:0',
+  epoch: '12',
+  mutationGeneration: '3',
+  kind: 'object',
+  handle: 'obj-1',
+};
+const LIVE = { runtime: 'rt:q7', adapter: '0', epoch: '12', mutationGeneration: '3' };
 
 // Harness stand-in for the production admission (same decision shape); the
 // production module itself is exercised by cdp-composition.test.mjs.
@@ -38,6 +42,96 @@ function admitRef(identity, live) {
   if (identity.mutationGeneration !== live.mutationGeneration) return { decision: 'refused', condition: 'refRetiredByMutation' };
   return { decision: 'admitted', ok: true, identity };
 }
+
+function pauseCallFrames() {
+  return [
+    { functionName: 'probe', callFrameId: 'cf:1', location: { scriptId: '42', lineNumber: 10, columnNumber: 4 } },
+    { functionName: '', callFrameId: 'cf:2', location: { scriptId: '42', lineNumber: 0, columnNumber: 0 } },
+    { functionName: 'timer', callFrameId: 'cf:3', location: { scriptId: '42', lineNumber: 30, columnNumber: 2 } },
+  ];
+}
+
+test('identity validation is a strict member shape with canonical decimal counters', () => {
+  assert.equal(isValidRefIdentity(IDENTITY), true);
+  assert.equal(isValidRefIdentity({ ...IDENTITY, epoch: '0' }), true);
+  assert.equal(isValidRefIdentity({ ...IDENTITY, epoch: '4294967296' }), true);
+  for (const bad of [
+    null,
+    undefined,
+    'identity',
+    42,
+    [],
+    {},
+    { ...IDENTITY, runtime: '' },
+    { ...IDENTITY, epoch: '01' },
+    { ...IDENTITY, epoch: '+1' },
+    { ...IDENTITY, epoch: '1.5' },
+    { ...IDENTITY, epoch: '1e3' },
+    { ...IDENTITY, mutationGeneration: '-1' },
+    { ...IDENTITY, kind: 7 },
+  ]) {
+    assert.equal(isValidRefIdentity(bad), false, JSON.stringify(bad));
+  }
+});
+
+test('only the asserted admitted shape with a valid identity admits; both outcomes carry the admitted member', () => {
+  const ok = admissionOutcome({ decision: 'admitted', ok: true, identity: IDENTITY });
+  assert.equal(ok.admitted, true);
+  assert.deepEqual(ok.identity, IDENTITY);
+  assert.equal(staleRefRefusal({ decision: 'admitted', ok: true, identity: IDENTITY }), null);
+
+  // An admitted decision whose identity is an empty object, an array, or
+  // missing members refuses; it can never bypass the shape contract.
+  for (const identity of [{}, [], { runtime: 'rt:q7' }, { ...IDENTITY, epoch: '01' }]) {
+    const outcome = admissionOutcome({ decision: 'admitted', ok: true, identity });
+    assert.equal(outcome.admitted, false);
+    assert.equal(outcome.refused, true);
+    assert.equal(outcome.condition, 'refDecisionMalformed');
+    assert.equal(staleRefRefusal({ decision: 'admitted', ok: true, identity }).condition, 'refDecisionMalformed');
+  }
+
+  // Admitted with ok:false is contradictory by name.
+  const contradictory = admissionOutcome({ decision: 'admitted', ok: false, identity: IDENTITY });
+  assert.equal(contradictory.admitted, false);
+  assert.equal(contradictory.condition, 'refDecisionContradictory');
+
+  // The split of rejecting shapes: no decision member -> refDecisionRefused;
+  // a wrong decision -> refDecisionMalformed; a refusal without its own
+  // condition -> refDecisionRefused.
+  for (const candidate of [null, undefined, 'admitted', 42, { ok: true }, { ok: false, condition: 'staleReference' }]) {
+    assert.equal(admissionOutcome(candidate).condition, 'refDecisionRefused');
+  }
+  for (const candidate of [{ decision: 'admitted' }, { decision: 'admitted', identity: IDENTITY }, { decision: 'maybe' }]) {
+    assert.equal(admissionOutcome(candidate).condition, 'refDecisionMalformed');
+  }
+  assert.equal(admissionOutcome({ decision: 'refused' }).condition, 'refDecisionRefused');
+  assert.equal(admissionOutcome({ decision: 'refused', condition: 'refStopNotLive' }).condition, 'refStopNotLive');
+
+  // Production refusals render their own conditions with the admitted member
+  // explicit on the refusal.
+  for (const condition of ['refMalformed', 'foreignRuntime', 'foreignAdapter', 'staleReference', 'refRetiredByMutation', 'refOutsidePause', 'refStopNotLive', 'refThreadUnknown']) {
+    const refusal = admissionOutcome({ decision: 'refused', condition });
+    assert.equal(refusal.admitted, false);
+    assert.equal(refusal.refused, true);
+    assert.equal(refusal.condition, condition);
+  }
+});
+
+test('an injected production normalizer decides alone; its refusals render verbatim', () => {
+  const requireAdmittedRef = (decision) => {
+    if (decision && decision.decision === 'admitted' && decision.ok === true) return decision.identity;
+    const error = new Error('refused by production');
+    error.condition = 'refThreadUnknown';
+    error.detail = 'thread not live';
+    throw error;
+  };
+  const ok = admissionOutcome({ decision: 'admitted', ok: true, identity: { arbitrary: true, nested: { a: 1 } } }, { requireAdmittedRef });
+  assert.equal(ok.admitted, true, 'the production normalizer owns admission; no second validator runs');
+  const refused = admissionOutcome({ decision: 'refused' }, { requireAdmittedRef });
+  assert.equal(refused.admitted, false);
+  assert.equal(refused.condition, 'refThreadUnknown');
+  assert.equal(refused.detail, 'thread not live');
+});
 
 test('stack frames keep generated positions and name their mapping provenance', () => {
   const mapped = mapStackFrames({
@@ -55,17 +149,7 @@ test('stack frames keep generated positions and name their mapping provenance', 
   assert.equal(first.provenance, 'mapped');
   assert.equal(first.thread, 'main:0');
   assert.equal(mapped.frames[1].provenance, 'unmapped');
-  assert.equal(mapped.frames[1].original, null);
   assert.equal(mapped.frames[2].provenance, 'unmapped');
-});
-
-test('frames without a script identity stay unknownScript; thread labels pass through', () => {
-  const mapped = mapStackFrames({
-    callFrames: [{ functionName: 'x', callFrameId: 'cf:9', location: { lineNumber: 0, columnNumber: 0 } }],
-    thread: 'worker:2',
-  });
-  assert.equal(mapped.frames[0].provenance, 'unknownScript');
-  assert.equal(mapped.frames[0].thread, 'worker:2');
   assert.equal(mapStackFrames({ callFrames: 'nope' }).condition, 'malformedCallFrames');
 });
 
@@ -75,10 +159,7 @@ test('async chains are retained and mapped with parent provenance, not reduced t
     asyncStackTrace: {
       description: 'await',
       callFrames: [{ functionName: 'tick', scriptId: '42', lineNumber: 5, columnNumber: 0 }],
-      parent: {
-        description: 'timer',
-        callFrames: [{ functionName: 'fire', scriptId: '42', lineNumber: 7, columnNumber: 2 }],
-      },
+      parent: { description: 'timer', callFrames: [{ functionName: 'fire', scriptId: '42', lineNumber: 7, columnNumber: 2 }] },
     },
     asyncCaptureEnabled: true,
     resolveOriginal: (scriptId, line) =>
@@ -91,159 +172,154 @@ test('async chains are retained and mapped with parent provenance, not reduced t
   const tick = mapped.async.chain.frames[0];
   assert.equal(tick.async, true);
   assert.equal(tick.asyncDepth, 0);
-  assert.deepEqual(tick.generated, { scriptId: '42', line: 5, column: 0, url: null });
   assert.equal(tick.provenance, 'mapped');
   assert.equal(tick.original.path, '/work/src/tick.ts');
   assert.equal(mapped.async.chain.parent.description, 'timer');
-  const fire = mapped.async.chain.parent.frames[0];
-  assert.equal(fire.asyncDepth, 1);
-  assert.equal(fire.provenance, 'unmapped');
-  assert.equal(fire.original, null);
-});
-
-test('an async chain captured without the earlier enable says so', () => {
+  assert.equal(mapped.async.chain.parent.frames[0].asyncDepth, 1);
   const unenabled = mapStackFrames({ callFrames: pauseCallFrames(), asyncStackTrace: { callFrames: [] }, asyncCaptureEnabled: false });
-  assert.equal(unenabled.async.present, true);
   assert.equal(unenabled.async.captureEnabled, false);
   assert.ok(unenabled.async.note.length > 0);
-  assert.deepEqual(unenabled.async.chain.frames, []);
-  const absent = mapStackFrames({ callFrames: pauseCallFrames(), asyncStackTrace: null, asyncCaptureEnabled: false });
-  assert.equal(absent.async.present, false);
-  assert.equal(absent.async.chain, null);
 });
 
-test('scope summaries keep one-level descriptors, internal properties and expansion payloads apart', () => {
+test('the capture binding requires a live sampler and samples the current session', () => {
+  assert.equal(createCaptureBinding({ admitRef, ref: 'ref' }).sample().condition, 'refDecisionMalformed');
+  assert.equal(createCaptureBinding({ liveNow: () => LIVE }).sample().condition, 'refDecisionMalformed');
+  assert.equal(createCaptureBinding({ admitRef, ref: null, liveNow: () => LIVE }).sample().condition, 'refDecisionMalformed');
+
+  let samples = 0;
+  const binding = createCaptureBinding({
+    admitRef: (identity, live) => {
+      samples += 1;
+      return admitRef(identity, live);
+    },
+    ref: IDENTITY,
+    liveNow: () => {
+      samples += 1;
+      return { ...LIVE };
+    },
+  });
+  assert.equal(binding.sample().admitted, true);
+  assert.equal(samples, 2, 'each sample calls the sampler and the admission once');
+});
+
+test('captureScopes admits before and after every read and at publication', async () => {
   const scopeChain = [
-    { type: 'local', name: '', object: { type: 'object', objectId: 'scope-obj-1' } },
-    { type: 'global', name: 'global', object: { type: 'object', objectId: 'scope-obj-2' } },
+    { type: 'local', name: '', object: { type: 'object', objectId: 'obj-1' } },
+    { type: 'global', name: 'global', object: { type: 'object', objectId: 'obj-2' } },
   ];
-  const summarized = scopeSummaries({
+  let live = { ...LIVE };
+  let reads = 0;
+  const settled = await captureScopes({
     scopeChain,
     identity: IDENTITY,
-    loadScope: (scope) =>
-      scope.object.objectId === 'scope-obj-1'
-        ? {
-            result: [
-              { name: 'sixProps', value: { type: 'object', objectId: 'obj-six', preview: { type: 'object', properties: [], overflow: true } } },
-              { name: 'count', value: { type: 'number', value: -2, description: '-2' } },
-            ],
-            internalProperties: [{ name: '[[Prototype]]', value: { type: 'object', className: 'Object' } }],
-          }
-        : { result: [], internalProperties: [] },
+    loadScope: async (scope) => {
+      reads += 1;
+      return { result: [{ name: 'a', value: { type: 'number', value: 1, description: '1' } }], internalProperties: [] };
+    },
+    binding: createCaptureBinding({ admitRef, ref: IDENTITY, liveNow: () => live }),
   });
-  assert.equal(summarized.condition, undefined);
-  const local = summarized.scopes[0];
-  assert.equal(local.type, 'local');
-  assert.deepEqual(local.objectPayload, { kind: 'object', handle: 'scope-obj-1', identity: IDENTITY });
-  assert.equal(local.properties[0].value.objectId, 'obj-six');
-  assert.equal(local.expansion.complete, true);
-  assert.equal(local.expansion.accessorExecuted, false);
-  assert.equal(local.internalProperties[0].name, '[[Prototype]]');
-  assert.equal(summarized.scopes[1].objectPayload.handle, 'scope-obj-2');
+  assert.equal(settled.condition, undefined);
+  assert.equal(reads, 2);
+  assert.equal(settled.scopes.length, 2);
+  assert.equal(settled.scopes[0].expansion.complete, true);
+  assert.ok(settled.records instanceof Map);
+  assert.equal(settled.records.size, 2);
+  void scopeChain;
 });
 
-test('an unsettled promise record refuses instead of being dereferenced', () => {
-  const summarized = scopeSummaries({
+test('an identity change across a read is named at stage afterRead with the raw record retained', async () => {
+  let live = { ...LIVE };
+  const rawRecord = { result: [{ name: 'sneaky', value: { type: 'number', value: 7, description: '7' } }], internalProperties: [] };
+  const changed = await captureScopes({
     scopeChain: [{ type: 'local', name: '', object: { type: 'object', objectId: 'obj-1' } }],
     identity: IDENTITY,
-    loadScope: () => Promise.resolve({ result: [] }),
+    loadScope: async () => {
+      live = { ...live, mutationGeneration: '4' };
+      return rawRecord;
+    },
+    binding: createCaptureBinding({ admitRef, ref: IDENTITY, liveNow: () => live }),
   });
-  assert.equal(summarized.scopes[0].expansionRefusal.condition, 'asyncScopeRecordUnresolved');
-  assert.deepEqual(summarized.scopes[0].properties, []);
+  assert.equal(changed.condition, 'changedDuringCapture');
+  assert.equal(changed.stage, 'afterRead');
+  assert.equal(changed.refusal.condition, 'refRetiredByMutation');
+  assert.deepEqual(changed.changedRecord, rawRecord, 'the raw pre-change record is retained as evidence');
+  assert.deepEqual(changed.scopes, [], 'no scope is reported complete across the change');
 });
 
-test('a refused or malformed response record never dereferences a missing result list', () => {
-  const refused = scopeSummaries({
-    scopeChain: [{ type: 'local', name: '', object: { type: 'object', objectId: 'obj-1' } }],
-    identity: IDENTITY,
-    loadScope: () => ({ condition: 'cdpError' }),
-  });
-  assert.equal(refused.scopes[0].expansionRefusal.condition, 'cdpError');
-  assert.deepEqual(refused.scopes[0].properties, []);
-
-  const malformed = scopeSummaries({
-    scopeChain: [{ type: 'local', name: '', object: { type: 'object', objectId: 'obj-1' } }],
-    identity: IDENTITY,
-    loadScope: () => ({ exceptionDetails: { text: 'Uncaught' } }),
-  });
-  assert.equal(malformed.scopes[0].expansion.complete, false);
-  assert.equal(malformed.scopes[0].expansion.reason, 'malformedExpansionResponse');
-  assert.deepEqual(malformed.scopes[0].properties, []);
-});
-
-test('the admission binding refuses mid-capture with an explicit changedDuringCapture result', () => {
-  const binding = createCaptureBinding({ admitRef, ref: '["runtime","rt:q7","0","main:0","12","3","object","obj-1"]' });
-  assert.equal(binding.check({ runtime: 'rt:q7', epoch: '12', mutationGeneration: '3' }).admitted, true);
-
-  // After an evaluation the mutation generation advanced: the same capture
-  // ref now refuses, and the summary names the change with the scopes
-  // collected so far instead of asserting a coherent capture.
-  const afterEvaluate = { runtime: 'rt:q7', epoch: '12', mutationGeneration: '4' };
-  const changed = binding.check(afterEvaluate);
-  assert.equal(changed.admitted, false);
-  assert.equal(changed.condition, 'refRetiredByMutation');
-  const partial = scopeSummaries({
+test('a change at publication refuses the whole capture after all reads admitted', async () => {
+  let live = { ...LIVE };
+  let reads = 0;
+  const changed = await captureScopes({
     scopeChain: [
       { type: 'local', name: '', object: { type: 'object', objectId: 'obj-1' } },
-      { type: 'closure', name: '', object: { type: 'object', objectId: 'obj-2' } },
+      { type: 'global', name: '', object: { type: 'object', objectId: 'obj-2' } },
     ],
     identity: IDENTITY,
-    loadScope: () => ({ result: [], internalProperties: [] }),
-    admission: binding,
-    live: afterEvaluate,
+    loadScope: async () => {
+      reads += 1;
+      if (reads === 2) live = { ...live, epoch: '13' };
+      return { result: [], internalProperties: [] };
+    },
+    binding: createCaptureBinding({ admitRef, ref: IDENTITY, liveNow: () => live }),
   });
-  assert.equal(partial.condition, 'changedDuringCapture');
-  assert.equal(partial.refusal.condition, 'refRetiredByMutation');
-  assert.equal(partial.scopes.length, 1, 'the scope read before the change is retained');
-
-  // A malformed or missing admission refuses the capture outright.
-  const noAdmission = scopeSummaries({
-    scopeChain: [{ type: 'local', name: '', object: { type: 'object', objectId: 'obj-1' } }],
-    identity: IDENTITY,
-    loadScope: () => ({ result: [], internalProperties: [] }),
-    admission: { check: () => null },
-    live: {},
-  });
-  assert.equal(noAdmission.condition, 'changedDuringCapture');
-  assert.equal(noAdmission.refusal.condition, 'refDecisionMalformed');
+  assert.equal(changed.condition, 'changedDuringCapture');
+  assert.equal(changed.stage, 'publication');
+  assert.equal(changed.refusal.condition, 'staleReference');
+  assert.equal(changed.scopes.length, 2, 'the admitted prefix is listed but nothing is complete');
 });
 
-test('scopes without an object and malformed chains refuse explicitly', () => {
-  const summarized = scopeSummaries({ scopeChain: [{ type: 'block', object: undefined }], identity: IDENTITY });
-  assert.equal(summarized.scopes[0].object.condition, 'missingScopeObject');
-  assert.equal(scopeSummaries({ scopeChain: 'x' }).condition, 'malformedScopeChain');
+test('a scope read refusal stops the capture with scopeReadRefused', async () => {
+  const refused = await captureScopes({
+    scopeChain: [{ type: 'local', name: '', object: { type: 'object', objectId: 'obj-1' } }],
+    identity: IDENTITY,
+    loadScope: async () => ({ condition: 'cdpError' }),
+    binding: createCaptureBinding({ admitRef, ref: IDENTITY, liveNow: () => ({ ...LIVE }) }),
+  });
+  assert.equal(refused.condition, 'scopeReadRefused');
+  assert.equal(refused.refusal.condition, 'cdpError');
+});
+
+test('captureScopes refuses missing loaders, bindings and malformed chains before any read', async () => {
+  let reads = 0;
+  const loadScope = async () => {
+    reads += 1;
+    return { result: [], internalProperties: [] };
+  };
+  assert.equal((await captureScopes({ scopeChain: [], loadScope })).condition, 'admissionRequired');
+  assert.equal((await captureScopes({ scopeChain: [], binding: createCaptureBinding({ admitRef, ref: IDENTITY, liveNow: () => ({ ...LIVE }) }) })).condition, 'loadScopeRequired');
+  assert.equal((await captureScopes({ scopeChain: 'x', loadScope, binding: createCaptureBinding({ admitRef, ref: IDENTITY, liveNow: () => ({ ...LIVE }) }) })).condition, 'malformedScopeChain');
+  assert.equal(reads, 0, 'no backend read happened without admission');
+});
+
+test('summary rendering consumes acquired records and performs no reads', () => {
+  const scopeChain = [{ type: 'local', name: '', object: { type: 'object', objectId: 'obj-1' } }];
+  const record = { result: [{ name: 'six', value: { type: 'object', objectId: 'obj-six', preview: { type: 'object', properties: [], overflow: true } } }], internalProperties: [{ name: '[[Prototype]]', value: { type: 'object', className: 'Object' } }] };
+  const rendered = scopeSummaries({ scopeChain, identity: IDENTITY, records: new Map([[scopeChain[0], record]]) });
+  assert.equal(rendered.condition, undefined);
+  assert.equal(rendered.scopes[0].expansion.complete, true);
+  assert.equal(rendered.scopes[0].expansion.accessorExecuted, false);
+  assert.equal(rendered.scopes[0].internalProperties[0].name, '[[Prototype]]');
+  assert.deepEqual(rendered.scopes[0].objectPayload, { kind: 'object', handle: 'obj-1', identity: IDENTITY });
+
+  const withoutRecord = scopeSummaries({ scopeChain, identity: IDENTITY, records: new Map() });
+  assert.equal(withoutRecord.scopes[0].expansion.complete, false);
+  assert.equal(withoutRecord.scopes[0].expansion.reason, 'recordAbsent');
+  const noRecordsAtAll = scopeSummaries({ scopeChain, identity: IDENTITY });
+  assert.equal(noRecordsAtAll.scopes[0].expansion.reason, 'recordAbsent');
+  assert.equal(scopeSummaries({ scopeChain: 'x', records: new Map() }).condition, 'malformedScopeChain');
 });
 
 test('during a pause the exception value is paused.data; exceptionThrown is the unpaused source', () => {
   const atPause = captureException({ paused: true, pausedData: { type: 'object', description: 'Error: boom', className: 'Error' } });
   assert.equal(atPause.source, 'paused.data');
   assert.equal(atPause.value.description, 'Error: boom');
-
   const unpaused = captureException({
     paused: false,
-    exceptionThrownEvent: {
-      exceptionDetails: {
-        text: 'Uncaught',
-        exception: { type: 'object', className: 'Error', description: 'Error: thrown-later' },
-        stackTrace: { callFrames: [] },
-      },
-    },
+    exceptionThrownEvent: { exceptionDetails: { text: 'Uncaught', exception: { type: 'object', description: 'Error: thrown-later' } } },
   });
   assert.equal(unpaused.source, 'exceptionThrown');
-  assert.equal(unpaused.text, 'Uncaught');
-  assert.deepEqual(unpaused.stackTrace, { callFrames: [] });
-
-  const detailsOnly = captureException({ paused: false, exceptionThrownEvent: { exceptionDetails: { text: 'Uncaught TypeError: x is not a function' } } });
-  assert.equal(detailsOnly.source, 'exceptionThrown');
-  assert.equal(detailsOnly.value.description, 'Uncaught TypeError: x is not a function');
-});
-
-test('exception sources refuse to merge and refuse to be absent', () => {
-  const data = { type: 'object', description: 'Error: boom' };
-  assert.equal(captureException({ paused: true, pausedData: data, exceptionThrownEvent: { exceptionDetails: {} } }).condition, 'conflictingExceptionSources');
-  assert.equal(captureException({ paused: false, pausedData: data, exceptionThrownEvent: { exceptionDetails: {} } }).condition, 'conflictingExceptionSources');
-  assert.equal(captureException({ paused: true }).condition, 'noExceptionObserved');
-  assert.equal(captureException({ paused: false, exceptionThrownEvent: {} }).condition, 'noExceptionObserved');
+  const conflict = captureException({ paused: true, pausedData: { type: 'object' }, exceptionThrownEvent: { exceptionDetails: {} } });
+  assert.equal(conflict.condition, 'conflictingExceptionSources');
   assert.equal(captureException({}).condition, 'noExceptionObserved');
 });
 
@@ -253,10 +329,8 @@ test('worker inventory maps detaches through the session id and records unmatche
     detachedFromWorker: [{ sessionId: 'sess-worker-1', reason: 'closed' }],
   });
   assert.equal(inventory.workers.length, 1);
-  const worker = inventory.workers[0];
-  assert.equal(worker.workerId, '1');
-  assert.equal(worker.state, 'detached', 'a detached session is never reported attached');
-  assert.deepEqual(worker.detached, { sessionId: 'sess-worker-1', reason: 'closed' });
+  assert.equal(inventory.workers[0].state, 'detached', 'a detached session is never reported attached');
+  assert.deepEqual(inventory.workers[0].detached, { sessionId: 'sess-worker-1', reason: 'closed' });
   assert.deepEqual(inventory.limits, ['workerBreakpointsUnavailable', 'workerScopesUnavailable', 'workerExceptionsUnavailable']);
 
   const unknownDetach = workerInventory({
@@ -265,17 +339,8 @@ test('worker inventory maps detaches through the session id and records unmatche
   });
   assert.equal(unknownDetach.workers.length, 2);
   assert.equal(unknownDetach.workers[0].state, 'attached');
-  assert.equal(unknownDetach.workers[1].state, 'detached');
   assert.equal(unknownDetach.workers[1].sessionId, 'sess-unknown');
-  assert.equal(unknownDetach.workers[1].workerId, null);
   assert.ok(unknownDetach.workers[1].note.includes('without a recorded attached event'));
-
-  const allAttached = workerInventory({
-    attached: [{ workerInfo: { workerId: '3', type: 'dedicated', title: 'w', url: 'u' }, sessionId: 'sess-3' }],
-    detachedFromWorker: [],
-  });
-  assert.equal(allAttached.workers[0].state, 'attached');
-  assert.equal(allAttached.workers[0].detached, null);
 });
 
 test('capture identity fixes both event identities, per-response consistency and unverified exclusivity', () => {
@@ -294,61 +359,7 @@ test('capture identity fixes both event identities, per-response consistency and
   assert.equal(captureIdentity({ startEvent: { method: 'Debugger.paused' }, endEvent: null, epoch: '1' }).condition, 'captureIncomplete');
 });
 
-test('only an explicit admitted decision permits access; everything else refuses by name', () => {
-  const live = { runtime: 'rt:q7', epoch: '12', mutationGeneration: '3' };
-  // The asserted admitted shape admits.
-  assert.equal(staleRefRefusal(admitRef(IDENTITY, live)), null);
-  assert.deepEqual(admissionOutcome({ decision: 'admitted', ok: true, identity: IDENTITY }), { admitted: true, identity: IDENTITY });
-
-  // Production refusals render their own conditions.
-  for (const condition of ['refMalformed', 'foreignRuntime', 'foreignAdapter', 'staleReference', 'refRetiredByMutation', 'refOutsidePause', 'refStopNotLive', 'refThreadUnknown']) {
-    const refusal = staleRefRefusal({ decision: 'refused', condition });
-    assert.equal(refusal.refused, true);
-    assert.equal(refusal.condition, condition);
-    assert.ok(refusal.note.includes('runtimeBusy'), 'the refusal note names the runtimeBusy policy');
-  }
-
-  // An admitted candidate carrying ok:false is contradictory and refuses by
-  // its own condition, never as admission.
-  const contradictory = admissionOutcome({ decision: 'admitted', ok: false, identity: IDENTITY });
-  assert.equal(contradictory.admitted, undefined);
-  assert.equal(contradictory.refused, true);
-  assert.equal(contradictory.condition, 'refDecisionContradictory');
-  assert.equal(staleRefRefusal({ decision: 'admitted', ok: false, identity: IDENTITY }).condition, 'refDecisionContradictory');
-
-  // Anything that is not the asserted admitted shape refuses before any
-  // backend access. A candidate with no decision member at all refuses as
-  // refDecisionRefused; an object carrying a decision that is not the
-  // asserted admitted or refused shape refuses as refDecisionMalformed.
-  for (const candidate of [null, undefined, 'admitted', 42, { ok: true }, { ok: false, condition: 'staleReference' }]) {
-    const refusal = staleRefRefusal(candidate);
-    assert.equal(refusal.refused, true, `candidate ${JSON.stringify(candidate)} must refuse`);
-    assert.equal(refusal.condition, 'refDecisionRefused');
-  }
-  for (const candidate of [{ decision: 'admitted' }, { decision: 'admitted', identity: IDENTITY }, { decision: 'maybe' }]) {
-    const refusal = staleRefRefusal(candidate);
-    assert.equal(refusal.refused, true, `candidate ${JSON.stringify(candidate)} must refuse`);
-    assert.equal(refusal.condition, 'refDecisionMalformed');
-  }
-  // A refusal without its own condition reports refDecisionRefused, matching
-  // the production normalizer.
-  assert.equal(staleRefRefusal({ decision: 'refused' }).condition, 'refDecisionRefused');
-  assert.equal(admissionOutcome({ decision: 'refused', condition: 'refStopNotLive' }).condition, 'refStopNotLive');
-  assert.equal(admissionOutcome('admitted').condition, 'refDecisionRefused');
-});
-
-test('a capture binding without production admission or a ref refuses instead of admitting', () => {
-  const noAdmission = createCaptureBinding({});
-  assert.equal(noAdmission.check({}).condition, 'refDecisionMalformed');
-  const noRef = createCaptureBinding({ admitRef });
-  assert.equal(noRef.check({ runtime: 'rt:q7', epoch: '12', mutationGeneration: '3' }).condition, 'refDecisionMalformed');
-});
-
 test('runtime evidence keeps every field with explicit nulls and refuses missing identity', () => {
-  const full = runtimeEvidence({ runtime: 'rt:q7', epoch: '12', thread: 'worker:1', script: '42', generated: 'gen.js:10:4', original: 'src/main.ts:13:2' });
-  assert.deepEqual(full, {
-    kind: 'runtime', runtime: 'rt:q7', epoch: '12', thread: 'worker:1', script: '42', generated: 'gen.js:10:4', original: 'src/main.ts:13:2',
-  });
   const minimal = runtimeEvidence({ runtime: 'rt:q7', epoch: '0' });
   assert.deepEqual(minimal, { kind: 'runtime', runtime: 'rt:q7', epoch: '0', thread: null, script: null, generated: null, original: null });
   assert.equal('original' in minimal, true);

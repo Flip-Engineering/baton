@@ -71,7 +71,13 @@ function makeResolver(client, roots) {
       loaded.set(scriptId, entry);
     }
     if (entry.condition) return null;
-    return mapGeneratedPosition(entry.map, { line, column }, entry.path ?? null);
+    // Explicit base composition: the loaded map's own location is the
+    // map-relative base; the generated script base is the embedded-map
+    // fallback.
+    return mapGeneratedPosition(entry.map, { line, column }, {
+      mapPath: entry.path ?? null,
+      generatedPath: script.url && script.url.startsWith('file://') ? fileURLToPath(script.url) : null,
+    });
   };
 }
 
@@ -183,11 +189,12 @@ test('two pause epochs: scopes, previews, expansion, getters without execution, 
     loadScope: (scope) => scopeResponses[frame0.scopeChain.indexOf(scope)] ?? { condition: 'noScopeObject' },
   });
   assert.equal(scopes.condition, undefined);
+  const localIndex = frame0.scopeChain.findIndex((scope) => scope.type === 'local');
   const local = scopes.scopes.find((scope) => scope.type === 'local');
   assert.equal(local.expansion.complete, true);
   assert.equal(local.expansion.accessorExecuted, false);
 
-  const rawByName = new Map(scopeResponses[frame0.scopeChain.indexOf(local)].result.map((descriptor) => [descriptor.name, descriptor]));
+  const rawByName = new Map(scopeResponses[localIndex].result.map((descriptor) => [descriptor.name, descriptor]));
 
   const sixPreview = previewCompleteness(rawByName.get('sixProps').value.preview);
   assert.equal(sixPreview.overflow, true, 'recorded CDP preview behavior: six properties preview five with overflow');
