@@ -243,11 +243,14 @@ class StructuralCase(unittest.TestCase):
     # -- shared assertions -------------------------------------------------
 
     def one_object(self, stream, channel):
-        text = stream.strip()
-        self.assertTrue(text, f'{channel} carried no result object')
-        obj, index = json.JSONDecoder().raw_decode(text)
-        self.assertEqual(text[index:].strip(), '',
-                         f'{channel} carried bytes after the single result object')
+        self.assertTrue(stream, f'{channel} carried no result object')
+        self.assertTrue(stream.startswith('{'),
+                        f'{channel} does not begin with the result object')
+        obj, index = json.JSONDecoder().raw_decode(stream)
+        rest = stream[index:]
+        self.assertEqual(rest, '\n',
+                         f'{channel} must end with exactly one newline after the single '
+                         f'object, got {rest!r}')
         return obj
 
     def common(self, obj):
@@ -255,8 +258,28 @@ class StructuralCase(unittest.TestCase):
             self.assertIn(field, obj, f'result omits the common field {field}')
         self.assertEqual(obj['type'], RESULT_TYPE)
 
+    def assert_legacy_ensemble(self, rc, out, err, name):
+        """A plain no-option Ensemble keeps its legacy JSON, not the new object."""
+        self.assertEqual(rc, 0, f'plain ensemble {name} failed: {err.strip()[:200]}')
+        self.assertEqual(err, '', 'plain ensemble wrote to stderr')
+        obj = self.one_object(out, 'stdout')
+        self.assertNotIn('type', obj, 'the plain form must not emit the structural object')
+        self.assertEqual(obj['id'], name)
+        self.assertIn('coupling', obj)
+        return obj
+
+    def assert_legacy_recruit(self, rc, out, err, child):
+        """A zero-option recruit keeps its legacy session JSON."""
+        self.assertEqual(rc, 0, f'plain recruit {child} failed: {err.strip()[:200]}')
+        self.assertEqual(err, '', 'plain recruit wrote to stderr')
+        obj = self.one_object(out, 'stdout')
+        self.assertNotIn('type', obj, 'the plain form must not emit the structural object')
+        self.assertEqual(obj['id'], child)
+        self.assertIn('parent', obj)
+        return obj
+
     def assert_refused(self, rc, out, err, status=None, phase=None):
-        self.assertEqual(out.strip(), '', 'a refusal wrote to stdout')
+        self.assertEqual(out, '', 'a refusal wrote to stdout')
         self.assertTrue(err.startswith(REFUSAL_PREFIX),
                         f'refusal did not begin with the registered prefix: {err[:120]!r}')
         self.assertEqual(rc, 2, 'an admission refusal must exit 2')
@@ -270,7 +293,7 @@ class StructuralCase(unittest.TestCase):
         return obj
 
     def assert_host_failure(self, rc, out, err, status):
-        self.assertEqual(out.strip(), '', 'a host failure wrote to stdout')
+        self.assertEqual(out, '', 'a host failure wrote to stdout')
         self.assertTrue(err.startswith(HOST_PREFIX),
                         f'host failure did not begin with its prefix: {err[:120]!r}')
         self.assertNotEqual(rc, 0, 'a host failure must exit nonzero')
@@ -278,11 +301,13 @@ class StructuralCase(unittest.TestCase):
         self.common(obj)
         self.assertEqual(obj['status'], status)
         self.assertIn('hostError', obj, 'a host failure carries hostError')
+        self.assertEqual(obj['hostError']['code'], rc,
+                         'the process exit must equal the reported hostError code')
         return obj
 
     def assert_configured(self, rc, out, err):
         self.assertEqual(rc, 0, f'configured success must exit 0: {err.strip()[:200]}')
-        self.assertEqual(err.strip(), '', 'configured success wrote to stderr')
+        self.assertEqual(err, '', 'configured success wrote to stderr')
         obj = self.one_object(out, 'stdout')
         self.common(obj)
         self.assertEqual(obj['status'], 'configured')
@@ -346,7 +371,7 @@ class RollbackAndLegacy(StructuralCase):
     def test_trigger_abort_rolls_back_the_earlier_write(self):
         f = self.fixture
         f.conductor('lead')
-        self.assert_configured(*f.run('ensemble', 'team', 'lead', 'loose'))
+        self.assert_legacy_ensemble(*f.run('ensemble', 'team', 'lead', 'loose'), 'team')
         f.abort_trigger('sections')
         rc, out, err = f.run('ensemble', 'team', 'lead', 'tight', '--section', 'core', 'cap')
         obj = self.assert_host_failure(rc, out, err, status='registrationFailed')
@@ -360,7 +385,7 @@ class RollbackAndLegacy(StructuralCase):
         f = self.fixture
         f.conductor('owner')
         f.conductor('other')
-        self.assert_configured(*f.run('ensemble', 'team', 'owner', 'loose'))
+        self.assert_legacy_ensemble(*f.run('ensemble', 'team', 'owner', 'loose'), 'team')
         rc, out, err = f.run('ensemble', 'team', 'other', 'loose')
         self.assertNotEqual(rc, 0, 'the legacy owner conflict must not report success')
         self.assertFalse(err.startswith(REFUSAL_PREFIX) or err.startswith(HOST_PREFIX),
@@ -372,7 +397,7 @@ class RollbackAndLegacy(StructuralCase):
         f = self.fixture
         f.conductor('owner')
         f.conductor('other')
-        self.assert_configured(*f.run('ensemble', 'team', 'owner', 'loose'))
+        self.assert_legacy_ensemble(*f.run('ensemble', 'team', 'owner', 'loose'), 'team')
         rc, out, err = f.run('ensemble', 'team', 'other', 'loose', '--section', 'core', 'cap')
         self.assert_refused(rc, out, err)
         self.assertEqual(f.scalar('SELECT owner FROM ensembles WHERE id=?', ('team',)), 'owner')
@@ -385,7 +410,7 @@ class RecruitSurface(StructuralCase):
     def _parent(self):
         f = self.fixture
         f.conductor('lead')
-        self.assert_configured(*f.run('ensemble', 'team', 'lead', 'loose'))
+        self.assert_legacy_ensemble(*f.run('ensemble', 'team', 'lead', 'loose'), 'team')
         return f
 
     def _args(self, child, harness='omp'):
@@ -405,12 +430,25 @@ class RecruitSurface(StructuralCase):
 
     def test_extended_recruit_requires_an_explicit_role(self):
         f = self._parent()
-        rc, out, err = f.run(*self._args('child'))
-        self.assertNotEqual(rc, 0, 'a recruit without --role must not report success')
-        self.assertIsNone(f.scalar('SELECT id FROM sessions WHERE id=?', ('child',)))
+        rc, out, err = f.run(*self._args('child'), '--ensemble', 'team', 'lead')
+        obj = self.assert_refused(rc, out, err, status='preflightRefused', phase='preflight')
+        self.assertIn('role', json.dumps(obj),
+                      'the refusal should name the missing role declaration')
+        self.assertIsNone(f.scalar('SELECT id FROM sessions WHERE id=?', ('child',)),
+                          'a refused extended recruit still registered the child')
 
-    def test_absent_role_row_receives_the_admitted_role(self):
+    def test_plain_recruit_continues_to_work(self):
         f = self._parent()
+        self.assert_legacy_recruit(*f.run(*self._args('child')), 'child')
+        self.assertEqual(f.scalar('SELECT parent FROM sessions WHERE id=?', ('child',)), 'lead')
+        self.assertIsNone(f.scalar('SELECT session FROM session_roles WHERE session=?', ('child',)),
+                          'plain recruit recorded an explicit role row')
+
+    def test_existing_assignment_without_a_role_row_receives_the_admitted_role(self):
+        f = self._parent()
+        self.assert_legacy_recruit(*f.run(*self._args('child')), 'child')
+        self.assertIsNone(f.scalar('SELECT session FROM session_roles WHERE session=?', ('child',)),
+                          'the requirement needs an existing assignment with no explicit role row')
         rc, out, err = f.run(*self._args('child'), '--role', 'associate-conductor')
         self.assert_configured(rc, out, err)
         self.assertEqual(f.scalar('SELECT role FROM session_roles WHERE session=?', ('child',)),
@@ -459,7 +497,7 @@ class PostGitBarrier(StructuralCase):
     def _parent(self):
         f = self.fixture
         f.conductor('lead')
-        self.assert_configured(*f.run('ensemble', 'team', 'lead', 'loose'))
+        self.assert_legacy_ensemble(*f.run('ensemble', 'team', 'lead', 'loose'), 'team')
         return f
 
     def _args(self):
@@ -498,11 +536,11 @@ class PostGitBarrier(StructuralCase):
         self.assertEqual(f.scalar('SELECT count(*) FROM sessions WHERE id=?', ('child',)), 0)
 
 
-class BaselineNegativeControl(unittest.TestCase):
-    """Bounded control: the accepted contract is absent from a baseline binary.
+class _BaselineBinary(StructuralCase):
+    """Shared setup for the groups that need a real binary to compare against.
 
-    This is not candidate qualification. It shows that the fixtures and the
-    harness run, and that the extended grammar and result object are new.
+    It reuses the wire assertions so the legacy helpers are exercised now,
+    against a real binary, rather than only in the candidate cases.
     """
 
     EXE_VARIABLE = 'BATON2_BASELINE_EXE'
@@ -514,26 +552,19 @@ class BaselineNegativeControl(unittest.TestCase):
         self.fixture = StructuralFixture(exe, 'structural-baseline-')
         self.addCleanup(self.fixture.close)
 
-    def test_plain_form_configures_and_the_extended_grammar_is_absent(self):
-        f = self.fixture
-        f.conductor('lead')
-        rc, out, err = f.run('ensemble', 'team', 'lead', 'loose')
-        self.assertEqual(rc, 0, f'the baseline plain form failed: {err.strip()[:200]}')
-        rc, out, err = f.run('ensemble', 'team', 'lead', 'loose', '--section', 'core', 'review')
-        self.assertNotEqual(rc, 0, 'the baseline accepted the extended Section grammar')
-        self.assertFalse(err.startswith(REFUSAL_PREFIX),
-                         'the baseline returned the structural refusal object')
-        rc, out, err = f.run('recruit', 'child', 'lead', 'omp', 'model-x', 'high',
-                             str(f.repo), 'codex/child', str(f.root / 'child'), f.base,
-                             '--role', 'player')
-        self.assertNotEqual(rc, 0, 'the baseline accepted the extended recruit grammar')
+
+class FixtureMechanisms(_BaselineBinary):
+    """The fixture primitives, qualified against a real binary.
+
+    This is not candidate qualification and it is not the negative control: it
+    shows the abort trigger and the post-checkout barrier reach real effects.
+    """
 
     def test_fixture_trigger_reaches_a_real_sqlite_error_and_rollback(self):
         """Qualify the abort-trigger mechanism against a real command+rollback."""
         f = self.fixture
         f.conductor('lead')
-        rc, out, err = f.run('ensemble', 'team', 'lead', 'loose')
-        self.assertEqual(rc, 0, f'fixture ensemble failed: {err.strip()[:200]}')
+        self.assert_legacy_ensemble(*f.run('ensemble', 'team', 'lead', 'loose'), 'team')
         f.abort_trigger('sections')
         rc, out, err = f.run('section', 'team', 'core', 'lead', 'review')
         self.assertNotEqual(rc, 0, 'the fixture trigger did not abort the insert')
@@ -562,6 +593,195 @@ class BaselineNegativeControl(unittest.TestCase):
         rc, out, err = f.drain(child)
         self.assertEqual(rc, 0, f'the held recruit failed: {err.strip()[:200]}')
         self.assertTrue(Path(f.root / 'child').is_dir())
+
+
+class AssignmentValidation(StructuralCase):
+    """Preflight validation of an incompatible assignment."""
+
+    def _parent(self):
+        f = self.fixture
+        f.conductor('lead')
+        self.assert_legacy_ensemble(*f.run('ensemble', 'team', 'lead', 'loose'), 'team')
+        return f
+
+    def _args(self, child, branch=None, path=None):
+        f = self.fixture
+        return ('recruit', child, 'lead', 'omp', 'model-x', 'high', str(f.repo),
+                branch or f'codex/{child}', str(path or (f.root / child)), f.base)
+
+    def test_incompatible_assignment_refuses_and_preserves_every_old_value(self):
+        f = self._parent()
+        self.assert_legacy_recruit(*f.run(*self._args('child')), 'child')
+        columns = 'parent,harness,model,effort,workspace,branch,base'
+        before = f.rows(f'SELECT {columns} FROM sessions WHERE id=?', ('child',))
+        rc, out, err = f.run(*self._args('child', branch='codex/other', path=f.root / 'other'),
+                             '--role', 'player')
+        self.assert_refused(rc, out, err, status='preflightRefused', phase='preflight')
+        after = f.rows(f'SELECT {columns} FROM sessions WHERE id=?', ('child',))
+        self.assertEqual(after, before, 'a refused request changed the recorded assignment')
+        self.assertFalse((f.root / 'other').exists(),
+                         'Git ran even though the request was refused at preflight')
+
+
+class WorkspacePhase(StructuralCase):
+    """Occupied artifacts, inspection failure, and truthful workspace facts."""
+
+    def _parent(self):
+        f = self.fixture
+        f.conductor('lead')
+        self.assert_legacy_ensemble(*f.run('ensemble', 'team', 'lead', 'loose'), 'team')
+        return f
+
+    def _args(self, child):
+        f = self.fixture
+        return ('recruit', child, 'lead', 'omp', 'model-x', 'high', str(f.repo),
+                f'codex/{child}', str(f.root / child), f.base)
+
+    def test_occupied_branch_is_refused_and_retained(self):
+        f = self._parent()
+        git(f.repo, 'branch', 'codex/child')
+        before = git(f.repo, 'rev-parse', 'refs/heads/codex/child')
+        rc, out, err = f.run(*self._args('child'), '--role', 'player')
+        obj = self.assert_host_failure(rc, out, err, status='workspaceFailed')
+        self.assertEqual(obj['workspace']['disposition'], 'failed')
+        self.assertEqual(git(f.repo, 'rev-parse', 'refs/heads/codex/child'), before,
+                         'the occupied branch was moved')
+        self.assertFalse(Path(f.root / 'child').exists())
+
+    def test_occupied_path_is_refused_and_retained(self):
+        f = self._parent()
+        occupied = f.root / 'child'
+        occupied.mkdir()
+        (occupied / 'keep.txt').write_text('keep\n')
+        rc, out, err = f.run(*self._args('child'), '--role', 'player')
+        obj = self.assert_host_failure(rc, out, err, status='workspaceFailed')
+        self.assertEqual(obj['workspace']['disposition'], 'failed')
+        self.assertEqual((occupied / 'keep.txt').read_text(), 'keep\n',
+                         'an occupied path was altered or adopted')
+
+    def test_uninspectable_workspace_is_unknown_and_never_unchanged(self):
+        f = self._parent()
+        self.assert_configured(*f.run(*self._args('child'), '--role', 'player'))
+        shutil.rmtree(f.root / 'child')
+        rc, out, err = f.run(*self._args('child'), '--role', 'player')
+        if err:
+            obj = self.one_object(err, 'stderr')
+            self.assertEqual(out, '', 'the result went to both channels')
+        else:
+            obj = self.one_object(out, 'stdout')
+        self.common(obj)
+        self.assertEqual(obj['workspace']['disposition'], 'unknown',
+                         'a failed inspection must not be reported as unchanged')
+        if 'hostError' in obj:
+            self.assertEqual(obj['hostError']['code'], rc)
+
+
+class MembershipGroups(StructuralCase):
+    """Section prerequisites, cross-parent owners, and coalesced groups."""
+
+    def _named(self, name):
+        f = self.fixture
+        child = f'child-{name}'
+        return child, ('recruit', child, 'lead', 'omp', 'model-x', 'high', str(f.repo),
+                       f'codex/{child}', str(f.root / child), f.base)
+
+    def test_section_group_adds_the_prerequisite_membership_and_the_section(self):
+        f = self.fixture
+        f.conductor('lead')
+        self.assert_configured(*f.run('ensemble', 'team', 'lead', 'loose',
+                                      '--section', 'core', 'review'))
+        child, args = self._named('prereq')
+        self.assert_configured(*f.run(*args, '--role', 'player',
+                                      '--section', 'team', 'lead', 'core'))
+        self.assertEqual(f.scalar('SELECT session FROM ensemble_members '
+                                  'WHERE ensemble=? AND session=?', ('team', child)), child,
+                         'the Section group did not add its prerequisite membership')
+        self.assertEqual(f.scalar('SELECT session FROM section_members '
+                                  'WHERE ensemble=? AND section=? AND session=?',
+                                  ('team', 'core', child)), child)
+
+    def test_cross_parent_owner_membership(self):
+        f = self.fixture
+        f.conductor('lead')
+        f.conductor('owner2')
+        self.assert_configured(*f.run('ensemble', 'team', 'lead', 'loose',
+                                      '--section', 'core', 'alpha'))
+        self.assert_configured(*f.run('ensemble', 'team2', 'owner2', 'loose',
+                                      '--section', 'core2', 'beta'))
+        child, args = self._named('cross')
+        self.assert_configured(*f.run(*args, '--role', 'player',
+                                      '--ensemble', 'team2', 'owner2',
+                                      '--section', 'team', 'lead', 'core'))
+        self.assertEqual(f.scalar('SELECT parent FROM sessions WHERE id=?', (child,)), 'lead')
+        self.assertEqual(f.scalar('SELECT owner FROM ensembles WHERE id=?', ('team2',)), 'owner2')
+        self.assertEqual(f.scalar('SELECT session FROM ensemble_members '
+                                  'WHERE ensemble=? AND session=?', ('team2', child)), child,
+                         'a membership under an owner that is not the parent was refused')
+        self.assertEqual(f.scalar('SELECT session FROM section_members '
+                                  'WHERE ensemble=? AND section=? AND session=?',
+                                  ('team', 'core', child)), child)
+
+    def test_identical_groups_are_coalesced(self):
+        f = self.fixture
+        f.conductor('lead')
+        self.assert_configured(*f.run('ensemble', 'team', 'lead', 'loose'))
+        child, args = self._named('coalesced')
+        self.assert_configured(*f.run(*args, '--role', 'player',
+                                      '--ensemble', 'team', 'lead',
+                                      '--ensemble', 'team', 'lead'))
+        self.assertEqual(f.scalar('SELECT count(*) FROM ensemble_members '
+                                  'WHERE ensemble=? AND session=?', ('team', child)), 1,
+                         'identical repeated groups were not coalesced')
+
+
+class LiteralTails(StructuralCase):
+    """Malformed tails reach the typed refusal, and flag-like values are literal."""
+
+    def _lead(self):
+        f = self.fixture
+        f.conductor('lead')
+        return f
+
+    def test_incomplete_section_group_refuses_through_the_typed_object(self):
+        f = self._lead()
+        rc, out, err = f.run('ensemble', 'team', 'lead', 'loose', '--section', 'core')
+        self.assert_refused(rc, out, err)
+        self.assertIsNone(f.scalar('SELECT id FROM ensembles WHERE id=?', ('team',)),
+                          'a malformed tail still created the Ensemble')
+
+    def test_unknown_flag_refuses_through_the_typed_object(self):
+        f = self._lead()
+        rc, out, err = f.run('ensemble', 'team', 'lead', 'loose', '--nope', 'value')
+        self.assert_refused(rc, out, err)
+
+    def test_flag_like_value_is_a_literal_value(self):
+        f = self._lead()
+        self.assert_configured(*f.run('ensemble', 'team', 'lead', 'loose',
+                                      '--section', 'core', '--verbose'))
+        self.assertEqual(f.scalar('SELECT capability FROM sections '
+                                  'WHERE ensemble=? AND id=?', ('team', 'core')), '--verbose',
+                         'a value that looks like a flag was parsed as one')
+
+
+class BaselineNegativeControl(_BaselineBinary):
+    """Bounded control: the accepted contract is absent from a baseline binary.
+
+    Not candidate qualification. It shows the fixtures and the harness run, and
+    that the extended grammar and the structural result object are new.
+    """
+
+    def test_plain_form_configures_and_the_extended_grammar_is_absent(self):
+        f = self.fixture
+        f.conductor('lead')
+        self.assert_legacy_ensemble(*f.run('ensemble', 'team', 'lead', 'loose'), 'team')
+        rc, out, err = f.run('ensemble', 'team', 'lead', 'loose', '--section', 'core', 'review')
+        self.assertNotEqual(rc, 0, 'the baseline accepted the extended Section grammar')
+        self.assertFalse(err.startswith(REFUSAL_PREFIX),
+                         'the baseline returned the structural refusal object')
+        rc, out, err = f.run('recruit', 'child', 'lead', 'omp', 'model-x', 'high',
+                             str(f.repo), 'codex/child', str(f.root / 'child'), f.base,
+                             '--role', 'player')
+        self.assertNotEqual(rc, 0, 'the baseline accepted the extended recruit grammar')
 
 
 if __name__ == '__main__':
