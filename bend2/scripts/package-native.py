@@ -770,12 +770,23 @@ def verify_resource(record, label):
     return resource
 
 
-def verify_delta(record, label):
+def verify_delta(record, control, directory, label):
+    """The delta must bind the admitted module bytes and a closure member."""
     delta = record.get('delta')
     require(isinstance(delta, dict), 'A control records no applied source delta: ' + label)
     for field in ('original_sha256', 'changed_sha256', 'changed_path'):
         require(isinstance(delta.get(field), str) and delta[field],
                 'A control delta omits ' + field + ': ' + label)
+    module = ROOT / control['module']
+    require(module.is_file(), 'A control names no module in this checkout: ' + control['module'])
+    require(delta['original_sha256'] == sha256(module),
+            'A control delta original digest is not the admitted module bytes: ' + label)
+    changed = (directory / delta['changed_path']).resolve()
+    require(directory.resolve() in changed.parents,
+            'A control changed file escapes the evidence closure: ' + label)
+    require(changed.is_file(), 'A control changed file is absent from the closure: ' + label)
+    require(delta['changed_sha256'] == sha256(changed),
+            'A control changed file digest is not the closure bytes: ' + label)
     return delta
 
 
@@ -997,7 +1008,8 @@ def controls_evidence(directory, initial, compiler, audit=None, destination=None
                        for stream in ('stdout', 'stderr')}
             verdict = classify_control(case, result, streams, baseline_reference, directory,
                                        source_pins, compiler_sha,
-                                       delta=verify_delta(result, json.dumps(identity)),
+                                       delta=verify_delta(result, control, directory,
+                                                          json.dumps(identity)),
                                        audit=audit)
             require(verdict.get('match') is True and verdict.get('qualified') is True
                     and verdict.get('evidence_verified') is True,
@@ -1019,6 +1031,19 @@ def controls_evidence(directory, initial, compiler, audit=None, destination=None
             require(verdict.get('attributed_law') == control['law']
                     and verdict.get('law') == control['law'],
                     'The classified diagnostic names another law: ' + json.dumps(identity))
+            acquisition = verdict.get('acquisition') or {}
+            require(type(acquisition.get('exit_code')) is int and acquisition['exit_code'] > 0
+                    and acquisition.get('signal') is None
+                    and acquisition.get('spawn_error') is None,
+                    'The classification child did not exit with a refusal status: '
+                    + json.dumps(identity))
+            reported = verdict.get('baseline')
+            if isinstance(reported, dict):
+                require(reported.get('ok') is True
+                        and reported.get('exit_code') == baseline_outcome['exit_code']
+                        and reported.get('state') == baseline_outcome['state'],
+                        'The verdict baseline record disagrees with the verified baseline: '
+                        + json.dumps(identity))
             claim = result.get('diagnostic') or {}
             if claim:
                 require(claim.get('class') == verdict['class']
