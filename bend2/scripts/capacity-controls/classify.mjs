@@ -51,19 +51,19 @@ export function accountingProfile(accounting) {
 }
 
 const DARWIN_TIME_FIELDS = [
-  /^\d+(\.\d+)? real\s+\d+(\.\d+)? user\s+\d+(\.\d+)? sys$/,
-  /^\d+ maximum resident set size$/,
-  /^\d+ page reclaims$/,
-  /^\d+ page faults$/,
-  /^\d+ swap ins$/,
-  /^\d+ swap outs$/,
-  /^\d+ block input ops$/,
-  /^\d+ block output ops$/,
-  /^\d+ messages sent$/,
-  /^\d+ messages received$/,
-  /^\d+ signals received$/,
-  /^\d+ voluntary context switches$/,
-  /^\d+ involuntary context switches$/,
+  /^\d+(\.\d+)?\s+real\s+\d+(\.\d+)?\s+user\s+\d+(\.\d+)?\s+sys$/,
+  /^\d+\s+maximum resident set size$/,
+  /^\d+\s+page reclaims$/,
+  /^\d+\s+page faults$/,
+  /^\d+\s+swap ins$/,
+  /^\d+\s+swap outs$/,
+  /^\d+\s+block input ops$/,
+  /^\d+\s+block output ops$/,
+  /^\d+\s+messages sent$/,
+  /^\d+\s+messages received$/,
+  /^\d+\s+signals received$/,
+  /^\d+\s+voluntary context switches$/,
+  /^\d+\s+involuntary context switches$/,
 ];
 
 // GNU time -v field lines exactly as the retained instance-9930 artifacts
@@ -74,7 +74,7 @@ const GNU_TIME_FIELDS = [
   /^User time \(seconds\): \d+(\.\d+)?$/,
   /^System time \(seconds\): \d+(\.\d+)?$/,
   /^Percent of CPU this job got: \d+%$/,
-  /^Elapsed \(wall clock\) time \(h:mm:ss or m:ss\): (\d+:)?\d{1,2}\.\d{2}$/,
+  /^Elapsed \(wall clock\) time \(h:mm:ss or m:ss\): (\d{1,2}:)?\d{1,2}:\d{1,2}\.\d{2}$/,
   /^Average shared text size \(kbytes\): \d+$/,
   /^Average unshared data size \(kbytes\): \d+$/,
   /^Average stack size \(kbytes\): \d+$/,
@@ -102,7 +102,10 @@ export function accountingValid(accounting, profile) {
       : null;
   if (fields === null) return false;
   const lines = accounting.split('\n').map((line) => line.trim()).filter((line) => line !== '');
-  return lines.length > 0 && lines.every((line) => fields.some((field) => field.test(line)));
+  if (lines.length === 0 || !lines.every((line) => fields.some((field) => field.test(line)))) return false;
+  // The measured exit the wrapper reports must appear exactly once.
+  const exitLines = lines.filter((line) => /^(Exit status: \d+$)/.test(line));
+  return profile === 'gnu-time-v' ? exitLines.length === 1 : true;
 }
 
 // Resource samples with explicit units per measured profile. max_rss_bytes is
@@ -183,22 +186,23 @@ export function expectationMet(diagnostics, expectation) {
 
 // One strict process-outcome validator for every path: ordinary gate, group
 // runner receipts, aggregate loop and the per-case endpoint. Types are never
-// coerced: the exit code must be an integer, the signal and spawn error must
-// be a string or exactly null, and the fields must agree with the declared
-// state. Absent fields are not proof of a normal child.
+// coerced and absent fields are not proof of a normal child: the exit code
+// must be a non-negative integer, the signal and spawn error must be a string
+// or exactly null, and every field must agree with the declared state.
 export function validChildOutcome({ state, exitCode, signal, spawnError }) {
   if (state !== 'exited' && state !== 'signalled' && state !== 'spawn-error' && state !== 'not-run') return false;
-  if (exitCode !== null && exitCode !== undefined && !Number.isInteger(exitCode)) return false;
+  if (exitCode !== null && exitCode !== undefined && (!Number.isInteger(exitCode) || exitCode < 0)) return false;
   if (signal !== null && signal !== undefined && typeof signal !== 'string' && typeof signal !== 'number') return false;
   if (spawnError !== null && spawnError !== undefined && typeof spawnError !== 'string') return false;
   if (state === 'exited') {
     if (!Number.isInteger(exitCode)) return false;
-    if (signal !== null && signal !== undefined) return false;
-    if (spawnError !== null && spawnError !== undefined) return false;
+    if (signal !== null) return false;
+    if (spawnError !== null) return false;
     return true;
   }
   if (state === 'signalled') {
     if (signal === null || signal === undefined) return false;
+    if (exitCode !== null && exitCode !== undefined) return false;
     if (spawnError !== null && spawnError !== undefined) return false;
     return true;
   }
@@ -208,7 +212,9 @@ export function validChildOutcome({ state, exitCode, signal, spawnError }) {
     if (signal !== null && signal !== undefined) return false;
     return true;
   }
-  return true;
+  return exitCode === null || exitCode === undefined
+    ? signal === null || signal === undefined ? spawnError === null || spawnError === undefined : false
+    : false;
 }
 
 // The ordinary gate's compile receipt shape: a refusal that was a valid

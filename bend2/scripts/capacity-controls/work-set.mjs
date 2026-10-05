@@ -41,15 +41,17 @@ export function mutationDefinition(mutation) {
   return JSON.stringify(definition);
 }
 
-// The definition owner's expected/observed constructor metadata, or undefined.
+// The definition owner's expected/observed constructor metadata, or undefined
+// when the definition is absent or has not bound it.
 export function definitionExpectation(mutation) {
+  if (!mutation) return undefined;
   if (mutation.expected === undefined && mutation.observed === undefined) return undefined;
   return { expected: mutation.expected, observed: mutation.observed };
 }
 
 // The definition owner's qualified diagnostic location, or undefined.
 export function definitionLocation(mutation) {
-  return mutation.location;
+  return mutation ? mutation.location : undefined;
 }
 
 // One record per control. Ids are unique across the set; a collision is a

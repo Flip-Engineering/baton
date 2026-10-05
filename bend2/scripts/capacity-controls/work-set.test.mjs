@@ -66,12 +66,14 @@ test('the exported D1 control applies first replacement against its accepted sou
   }
   const changed = text.replace(d1.find, d1.replace);
   // First-occurrence semantics: exactly one occurrence is replaced, and the
-  // law-suffix occurrence stays byte-identical.
+  // law-suffix occurrence stays byte-identical and nonempty.
   assert.equal(changed.split(d1.find).length - 1, text.split(d1.find).length - 2);
   const lawLeaf = d1.law;
   const suffixPattern = new RegExp(`law ${lawLeaf}:[\\s\\S]*?$`);
   const originalSuffix = suffixPattern.exec(text)?.[0];
   const changedSuffix = suffixPattern.exec(changed)?.[0];
+  assert.ok(originalSuffix, 'the D1 law suffix must exist in the composed source');
+  assert.ok(changedSuffix, 'the D1 law suffix must survive first-occurrence replacement');
   assert.equal(changedSuffix, originalSuffix);
 });
 

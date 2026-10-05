@@ -249,7 +249,12 @@ export function aggregate({ dir, records, definitions, moduleRoot }) {
         rejections.push(reject('duplicate-attempt', name, `attempt id reused: ${attempt}`, caseId));
       }
       attempts.add(attempt);
-      const processValid = validChildOutcome(process) && process.state === 'exited'
+      const processValid = validChildOutcome({
+        state: process.state,
+        exitCode: process.exit_code,
+        signal: process.signal,
+        spawnError: process.spawn_error,
+      }) && process.state === 'exited'
         && Number.isInteger(process.exit_code) && process.exit_code > 0
         && typeof process.started === 'number' && typeof process.ended === 'number'
         && process.started <= process.ended;
@@ -436,9 +441,15 @@ export function classifyCli(argv) {
     refusal('request source binding is missing');
   }
   const ownSource = ownSourceSnapshot();
-  if (ownSource === null || JSON.stringify(request.source) !== JSON.stringify(ownSource)) {
+  if (ownSource === null) refusal('this checkout has no git metadata to bind');
+  if (JSON.stringify(request.source) !== JSON.stringify(ownSource)) {
     refusal('request source binding differs from this checkout');
   }
+  // A dirty checkout cannot bind its inputs: uncommitted bytes change the
+  // modules and helper hashes the verdict reports without any identity
+  // change. The endpoint therefore qualifies only clean checkouts.
+  const status = execFileSync('git', ['status', '--porcelain=v1'], { cwd: ROOT, encoding: 'utf8', maxBuffer: Infinity });
+  if (status.trim() !== '') refusal('this checkout has uncommitted inputs; source binding requires a clean tree');
   const toolchain = request?.toolchain;
   if (!toolchain || typeof toolchain.compiler_sha256 !== 'string' || toolchain.compiler_sha256 === '') {
     refusal('request toolchain binding is missing its compiler sha256');
@@ -531,8 +542,10 @@ export function classifyCli(argv) {
     evidence_verified: true,
     verifier: {
       checker_sha256: sha256Hex(readFileSync(join(ROOT, 'bend2', 'scripts', 'laws-check.mjs'))),
+      aggregate_module_sha256: sha256Hex(readFileSync(join(ROOT, 'bend2', 'scripts', 'capacity-controls', 'aggregate.mjs'))),
       classifier_module_sha256: sha256Hex(readFileSync(join(ROOT, 'bend2', 'scripts', 'capacity-controls', 'classify.mjs'))),
       work_set_module_sha256: sha256Hex(readFileSync(join(ROOT, 'bend2', 'scripts', 'capacity-controls', 'work-set.mjs'))),
+      laws_common_module_sha256: sha256Hex(readFileSync(join(ROOT, 'bend2', 'scripts', 'laws-common.mjs'))),
       definitions_module_sha256: sha256Hex(readFileSync(join(ROOT, 'bend2', 'scripts', 'laws-mutations.mjs'))),
     },
   };

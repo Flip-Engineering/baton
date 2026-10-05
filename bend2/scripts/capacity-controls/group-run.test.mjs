@@ -10,7 +10,7 @@ import { join } from 'node:path';
 import { test } from 'node:test';
 import { ROOT } from '../laws-check.mjs';
 import { parseGroupArgs, runGroup, UsageError } from './group-run.mjs';
-import { mutationDefinition, proofDefinition, sha256Hex } from './work-set.mjs';
+import { definitionExpectation, definitionLocation, discoveryRecords, mutationDefinition, proofDefinition, sha256Hex } from './work-set.mjs';
 import { accepted, aggregate } from './aggregate.mjs';
 
 test('group argument parsing enforces the option contract', () => {
@@ -30,10 +30,19 @@ test('group argument parsing enforces the option contract', () => {
 
 // Fixture work set: the mini entry imports the mini module and both carry
 // laws; the mutation pins admitted() to the open gate.
+const FIXTURE_BEND2 = join(ROOT, 'bend2', 'scripts', 'capacity-controls', 'fixtures', 'mini-laws', 'bend2');
+
 function fixtureRecords() {
-  const moduleDir = join(ROOT, 'bend2', 'scripts', 'capacity-controls', 'fixtures', 'mini-laws', 'bend2', 'src');
-  const miniText = readFileSync(join(moduleDir, 'mini.bend'), 'utf8');
-  const mainText = readFileSync(join(moduleDir, 'main.bend'), 'utf8');
+  // The fixture proof records come from the shared discovery authority run
+  // over the fixture tree; the fixture mutation record uses the same
+  // definition helpers.
+  const proofs = discoveryRecords({ bend2Dir: FIXTURE_BEND2 })
+    .filter((record) => record.kind === 'proof-removal');
+  assert.ok(proofs.length > 0, 'the fixture tree must discover its own laws');
+  for (const proof of proofs) {
+    const text = readFileSync(join(FIXTURE_BEND2, proof.module.slice('bend2/'.length)), 'utf8');
+    assert.equal(sha256Hex(proofDefinition(text, proof.law)), proof.definition_sha256);
+  }
   const mutation = {
     name: 'mini-admitted-returns-refused-gate',
     file: 'bend2/src/mini.bend',
@@ -44,15 +53,16 @@ function fixtureRecords() {
     observed: 'Gate{False{}}',
     location: 'mini.mini_admitted_gate_is_open',
   };
-  return {
-    mutation,
-    records: [
-      { id: 'proof:mini_admitted_gate_is_open', kind: 'proof-removal', law: 'mini_admitted_gate_is_open', module: 'bend2/src/mini.bend', definition_sha256: sha256Hex(proofDefinition(miniText, 'mini_admitted_gate_is_open')) },
-      { id: 'proof:mini_refused_gate_is_closed', kind: 'proof-removal', law: 'mini_refused_gate_is_closed', module: 'bend2/src/mini.bend', definition_sha256: sha256Hex(proofDefinition(miniText, 'mini_refused_gate_is_closed')) },
-      { id: 'proof:mini_entry_answer_is_true', kind: 'proof-removal', law: 'mini_entry_answer_is_true', module: 'bend2/src/main.bend', definition_sha256: sha256Hex(proofDefinition(mainText, 'mini_entry_answer_is_true')) },
-      { id: `mutation:${mutation.name}`, kind: 'mutation', law: mutation.law, module: mutation.file, definition_sha256: sha256Hex(mutationDefinition(mutation)) },
-    ],
+  const mutationRecord = {
+    id: `mutation:${mutation.name}`,
+    kind: 'mutation',
+    law: mutation.law,
+    module: mutation.file,
+    definition_sha256: sha256Hex(mutationDefinition(mutation)),
+    expectation: definitionExpectation(mutation),
+    location: mutation.location,
   };
+  return { records: [...proofs, mutationRecord], mutation };
 }
 
 test('group parity runs the complete fixture work set and aggregates exhaustively', async () => {

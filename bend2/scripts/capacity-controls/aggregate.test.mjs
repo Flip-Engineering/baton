@@ -445,14 +445,20 @@ test('the endpoint answers a complete qualified request with one verdict', () =>
     const request = buildEndpointRequest(dir, record);
     const run = runEndpoint(request);
     assert.equal(run.status, 0, run.stderr);
-    const verdict = JSON.parse(run.stdout.trim().split('\n').pop());
+    assert.equal(run.stderr, '');
+    const lines = run.stdout.split('\n').filter((line) => line !== '');
+    assert.equal(lines.length, 1, 'the endpoint must answer exactly one verdict line');
+    const verdict = JSON.parse(lines[0]);
     assert.equal(verdict.class, 'intended-law-refusal');
     assert.equal(verdict.attributed_law, record.law);
     assert.equal(verdict.match, true);
     assert.equal(verdict.qualified, true);
     assert.equal(verdict.evidence_verified, true);
     assert.equal(verdict.definition_sha256, record.definition_sha256);
-    assert.ok(verdict.verifier.checker_sha256.length === 64);
+    for (const field of ['checker_sha256', 'aggregate_module_sha256', 'classifier_module_sha256',
+      'work_set_module_sha256', 'laws_common_module_sha256', 'definitions_module_sha256']) {
+      assert.match(String(verdict.verifier[field]), /^[0-9a-f]{64}$/, `verifier ${field} must bind`);
+    }
   });
 });
 

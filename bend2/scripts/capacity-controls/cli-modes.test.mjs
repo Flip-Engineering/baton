@@ -4,7 +4,7 @@
 // with its availability message instead of entering a mode.
 
 import assert from 'node:assert/strict';
-import { spawnSync } from 'node:child_process';
+import { existsSync, spawnSync } from 'node:child_process';
 import { join } from 'node:path';
 import { test } from 'node:test';
 import { ROOT } from '../laws-check.mjs';
@@ -31,27 +31,36 @@ test('group mode refuses missing required options before compiler resolution', (
   assert.match(run.stderr, /group: option --group needs a value/);
 });
 
-test('the ordinary invocation without a compiler fails with the availability message', () => {
+test('the ordinary no-compiler refusal requires an isolated checkout', () => {
+  // laws-common resolveBend falls back to installed locations; this probe is
+  // effect-free only when no fallback candidate exists in the checkout.
+  const fallback = existsSync(join(ROOT, '.bend', 'bin', 'bend'))
+    || existsSync(join(ROOT, 'node_modules', '.bend', 'bin', 'bend'));
+  assert.ok(!fallback, 'an installed fallback compiler exists; run this probe in an isolated checkout without .bend or node_modules/.bend');
   const run = spawnSync(process.execPath, [CHECKER], {
     encoding: 'utf8',
     env: { ...process.env, BEND: NO_COMPILER },
   });
-  assert.equal(run.status, 1);
+  assert.equal(run.status, 1, `stderr: ${run.stderr}`);
   assert.match(run.stderr, /Bend is unavailable/);
 });
 
-test('classify mode refuses positional arguments and malformed requests', () => {
+test('classify mode refuses positional arguments', () => {
   const positional = spawnSync(process.execPath, [CHECKER, '--classify', '/some/dir'], {
     encoding: 'utf8',
     env: { ...process.env, BEND: NO_COMPILER },
   });
-  assert.equal(positional.status, 2);
+  assert.equal(positional.status, 2, `stderr: ${positional.stderr}`);
   assert.match(positional.stderr, /classify: no positional arguments/);
+  assert.equal(positional.stdout, '');
+});
+
+test('classify mode refuses malformed request JSON', () => {
   const malformed = spawnSync(process.execPath, [CHECKER, '--classify'], {
     input: '{not json', encoding: 'utf8',
     env: { ...process.env, BEND: NO_COMPILER },
   });
-  assert.equal(malformed.status, 2);
+  assert.equal(malformed.status, 2, `stderr: ${malformed.stderr}`);
   assert.match(malformed.stderr, /classify: request is not JSON/);
   assert.equal(malformed.stdout, '');
 });

@@ -214,11 +214,6 @@ export async function runGroup({
   if (selected.length === 0) {
     throw new Error(`runGroup: no controls target module ${module}`);
   }
-  if (!existsSync(timeTool)) throw new Error(`runGroup: time tool is unavailable: ${timeTool}`);
-  const bendPath = resolve(bend);
-  const version = execFileSync(bendPath, ['version'], { env: ENV, encoding: 'utf8', maxBuffer: Infinity }).trim();
-  if (version !== 'bend 2.0.25') throw new Error(`runGroup: expected bend 2.0.25, got: ${version}`);
-  const selectedEntry = entry ?? ENTRY;
 
   const compiler = { path: bendPath, version, sha256: sha256Hex(readFileSync(bendPath)) };
   const checkerPath = join(ROOT, 'bend2', 'scripts', 'laws-check.mjs');
@@ -245,6 +240,17 @@ export async function runGroup({
   };
   const instrument = { tool: timeTool, flag: timeFlag };
   mkdirSync(evidenceDir, { recursive: true });
+
+  // Pristine text per executed control module, read from the scratch copy
+  // before any child runs, so the snapshot is stable across the whole group.
+  // Restores never re-read the live tree, and each control's changed bytes
+  // are retained as its exact applied delta.
+  const pristine = new Map();
+  for (const record of selected) {
+    const scratchModule = join(scratch, record.module);
+    if (!pristine.has(record.module)) pristine.set(record.module, readFileSync(scratchModule, 'utf8'));
+  }
+  const definitions = definitionsByName(mutationDefinitions);
 
   const childArgv = [timeTool, timeFlag, bendPath, selectedEntry, '--check-only'];
 
@@ -278,41 +284,56 @@ export async function runGroup({
     return { manifest, manifestPath, scratch };
   }
 
-  // Pristine text per executed control module, read from the scratch copy
-  // right after it was made. Restores never re-read the live tree, and each
-  // control's changed bytes are retained as its exact applied delta.
-  const pristine = new Map();
-  for (const record of selected) {
-    const scratchModule = join(scratch, record.module);
-    if (!pristine.has(record.module)) pristine.set(record.module, readFileSync(scratchModule, 'utf8'));
-  }
-  const definitions = definitionsByName(mutationDefinitions);
+  // Every executed control runs against the stable pristine snapshot, and the
+  // whole selected module set must match it again after each terminal path.
+  const verifyRestored = () => {
+    for (const [recordModule, text] of pristine) {
+      if (readFileSync(join(scratch, recordModule), 'utf8') !== text) {
+        throw new Error(`runGroup: restoration verification failed for ${recordModule}`);
+      }
+    }
+  };
 
   const results = [];
-  for (const record of groupRecords) {
+  for (const record of selected) {
     const scratchModule = join(scratch, record.module);
     const originalText = pristine.get(record.module);
     let setup = 'applied';
     let changedText = null;
-    if (record.kind === 'proof-removal') {
-      if (!removeProofText(scratchModule, record.law)) setup = 'missing';
-      else changedText = readFileSync(scratchModule, 'utf8');
-    } else {
-      const definition = definitions.get(record.id.slice('mutation:'.length));
-      if (!definition) throw new Error(`runGroup: no definition for ${record.id}`);
-      if (!originalText.includes(definition.find)) {
-        setup = 'missing';
+    let expectedChangedText = null;
+    try {
+      if (record.kind === 'proof-removal') {
+        const block = proofBlockRange(originalText, record.law);
+        if (!block) {
+          setup = 'missing';
+        } else {
+          const lines = originalText.split('\n');
+          lines.splice(block.start, block.end - block.start);
+          expectedChangedText = lines.join('\n');
+          removeProofText(scratchModule, record.law);
+          changedText = readFileSync(scratchModule, 'utf8');
+          if (changedText !== expectedChangedText) {
+            throw new Error(`runGroup: proof application mismatch for ${record.id}`);
+          }
+        }
       } else {
-        // Defined first-occurrence replacement semantics, unchanged; the law
-        // suffix stays byte-identical for accepted controls.
-        changedText = originalText.replace(definition.find, definition.replace);
-        writeFileSync(scratchModule, changedText);
+        const definition = definitions.get(record.id.slice('mutation:'.length));
+        if (!definition) throw new Error(`runGroup: no definition for ${record.id}`);
+        if (!originalText.includes(definition.find)) {
+          setup = 'missing';
+        } else {
+          // Defined first-occurrence replacement semantics, unchanged; the law
+          // suffix stays byte-identical for accepted controls.
+          expectedChangedText = originalText.replace(definition.find, definition.replace);
+          writeFileSync(scratchModule, expectedChangedText);
+          changedText = readFileSync(scratchModule, 'utf8');
+          if (changedText !== expectedChangedText) {
+            throw new Error(`runGroup: mutation application mismatch for ${record.id}`);
+          }
+        }
       }
-    }
-    if (setup === 'applied') {
-      let run;
-      try {
-        run = await runChild({
+      if (setup === 'applied') {
+        const run = await runChild({
           argv: childArgv,
           cwd: scratch,
           env: ENV,
@@ -320,60 +341,60 @@ export async function runGroup({
           stdoutName: fileName(record, 'stdout'),
           stderrName: fileName(record, 'stderr'),
         });
-      } finally {
-        writeFileSync(scratchModule, pristine.get(record.module));
-        if (readFileSync(scratchModule, 'utf8') !== pristine.get(record.module)) {
-          throw new Error(`runGroup: restoration verification failed for ${record.module}`);
-        }
+        const changedPath = fileName(record, 'changed');
+        writeFileSync(join(evidenceDir, changedPath), changedText);
+        const stderrText = readFileSync(join(evidenceDir, fileName(record, 'stderr')), 'utf8');
+        // One shared qualification boundary: the complete stream, the matched
+        // baseline, the definition-bound metadata and the exact applied delta.
+        const definition = definitions.get(record.id.slice('mutation:'.length));
+        const verdict = classifyCase({
+          control: record,
+          expectation: definitionExpectation(definition),
+          location: definitionLocation(definition),
+          state: run.state, exitCode: run.exitCode, signal: run.signal, spawnError: run.spawnError,
+          stderrText,
+          baselineOk: baseline.process.state === 'exited' && baseline.process.exit_code === 0,
+          delta: { changedText, expectedChangedText },
+          supplied: null,
+        });
+        const { accounting, profile } = splitTimeAccounting(stderrText);
+        results.push({
+          case: record,
+          setup,
+          expectation: definitionExpectation(definition) ?? null,
+          delta: {
+            original_sha256: sha256Hex(Buffer.from(originalText, 'utf8')),
+            changed_sha256: sha256Hex(Buffer.from(changedText, 'utf8')),
+            changed_path: changedPath,
+          },
+          process: processRecord(run, `${record.id}-${nonce}-${results.length}`),
+          diagnostic: {
+            class: verdict.class,
+            attributed_law: verdict.attributedLaw,
+            sha256: sha256Hex(splitTimeAccounting(stderrText).diagnostics),
+          },
+          stdout: run.stdout,
+          stderr: run.stderr,
+          resource: parseResourceAccounting(accounting, profile),
+        });
+      } else {
+        results.push({
+          case: record,
+          setup,
+          expectation: definitionExpectation(definitions.get(record.id.slice('mutation:'.length))) ?? null,
+          delta: null,
+          process: { state: 'not-run', exit_code: null, signal: null, spawn_error: null, started: null, ended: null, attempt: null, wrapper_pid: null },
+          diagnostic: { class: 'not-run', attributed_law: null, sha256: null },
+          stdout: { path: null, bytes: null, sha256: null },
+          stderr: { path: null, bytes: null, sha256: null },
+          resource: null,
+        });
       }
-      const changedPath = fileName(record, 'changed');
-      writeFileSync(join(evidenceDir, changedPath), changedText);
-      const stderrText = readFileSync(join(evidenceDir, fileName(record, 'stderr')), 'utf8');
-      // One shared qualification boundary: the complete stream, the matched
-      // baseline, the definition-bound metadata and the exact applied delta.
-      const definition = definitions.get(record.id.slice('mutation:'.length));
-      const verdict = classifyCase({
-        control: record,
-        expectation: definitionExpectation(definition),
-        location: definitionLocation(definition),
-        state: run.state, exitCode: run.exitCode, signal: run.signal, spawnError: run.spawnError,
-        stderrText,
-        baselineOk: baseline.process.state === 'exited' && baseline.process.exit_code === 0,
-        delta: setup === 'applied' && changedText !== null ? { changedText, expectedChangedText: changedText } : null,
-        supplied: null,
-      });
-      const { accounting, profile } = splitTimeAccounting(stderrText);
-      results.push({
-        case: record,
-        setup,
-        expectation: definitionExpectation(definition) ?? null,
-        delta: {
-          original_sha256: sha256Hex(Buffer.from(originalText, 'utf8')),
-          changed_sha256: sha256Hex(Buffer.from(changedText, 'utf8')),
-          changed_path: changedPath,
-        },
-        process: processRecord(run, `${record.id}-${nonce}-${results.length}`),
-        diagnostic: {
-          class: verdict.class,
-          attributed_law: verdict.attributedLaw,
-          sha256: sha256Hex(splitTimeAccounting(stderrText).diagnostics),
-        },
-        stdout: run.stdout,
-        stderr: run.stderr,
-        resource: parseResourceAccounting(accounting, profile),
-      });
-    } else {
-      results.push({
-        case: record,
-        setup,
-        expectation: definitionExpectation(definitions.get(record.id.slice('mutation:'.length))) ?? null,
-        delta: null,
-        process: { state: 'not-run', exit_code: null, signal: null, spawn_error: null, started: null, ended: null, attempt: null, wrapper_pid: null },
-        diagnostic: { class: 'not-run', attributed_law: null, sha256: null },
-        stdout: { path: null, bytes: null, sha256: null },
-        stderr: { path: null, bytes: null, sha256: null },
-        resource: null,
-      });
+    } finally {
+      for (const [restoredModule, text] of pristine) {
+        writeFileSync(join(scratch, restoredModule), text);
+      }
+      verifyRestored();
     }
   }
 
