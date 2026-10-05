@@ -131,6 +131,31 @@ class RecipeSettlement(unittest.TestCase):
         self.assertIn('could not be written', raised.exception.record_error)
         self.assertEqual([row['name'] for row in self.rows()], ['preconditions'])
 
+    def test_successful_work_with_a_failing_terminal_record(self):
+        # The work succeeds and its terminal record cannot be written: the stage
+        # outcome and observed value stay attached to the recording error.
+        writes = []
+        original_write = RECIPE.write_record
+
+        def failing_write(run, record):
+            writes.append(len(record))
+            if len(writes) > 1:
+                raise RuntimeError('the run record could not be written: blocked')
+            return original_write(run, record)
+
+        RECIPE.write_record = failing_write
+        self.addCleanup(setattr, RECIPE, 'write_record', original_write)
+        with self.assertRaises(RuntimeError) as raised:
+            RECIPE.attempt(self.run, self.record, 'archive-readback',
+                           lambda: {'root': 'r', 'members': 2})
+        self.assertIn('could not be written', str(raised.exception))
+        self.assertEqual(raised.exception.stage, 'archive-readback')
+        self.assertEqual(raised.exception.stage_outcome, 'completed')
+        self.assertEqual(raised.exception.stage_value, {'root': 'r', 'members': 2})
+        # The declared row is the only one persisted, and it says only that the
+        # stage was attempted.
+        self.assertEqual([row['outcome'] for row in self.rows()], ['attempted'])
+
     def test_settling_twice_updates_one_row(self):
         RECIPE.settle(self.run, self.record, 'archive-readback', 'attempted', archive='a')
         RECIPE.settle(self.run, self.record, 'archive-readback', 'verified', members=1)

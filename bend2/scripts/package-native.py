@@ -1378,6 +1378,20 @@ def runtime_set_digest(compiler):
     return hashlib.sha256('\n'.join(sorted(rows)).encode('utf-8')).hexdigest()
 
 
+ACQUISITION_SUFFIXES = ('.request.json', '.stdout', '.stderr', '.acquisition.json')
+
+
+def acquisition_stem(identity):
+    """The acquisition file stem this writer uses for one case identity.
+
+    The classifier writes its request, both raw streams and its terminal record
+    under this stem, so a consumer binds one case to those files rather than
+    guessing a name from the identity text.
+    """
+    stem = identity.replace(':', '-').replace('/', '_')
+    return stem + '-' + hashlib.sha256(identity.encode('utf-8')).hexdigest()[:12]
+
+
 def classify_control(case, result, streams, baseline, evidence_root, source, compiler_sha256,
                     compiler_path=None, delta=None, supplied=None, audit=None):
     """Ask the checker's classifier what the verified bytes establish.
@@ -1413,8 +1427,7 @@ def classify_control(case, result, streams, baseline, evidence_root, source, com
     acquire = None if audit is None else audit
     if acquire is not None:
         acquire.mkdir(parents=True, exist_ok=True)
-        stem = identity.replace(':', '-').replace('/', '_')
-        stem = stem + '-' + hashlib.sha256(identity.encode('utf-8')).hexdigest()[:12]
+        stem = acquisition_stem(identity)
     stdout_bytes, stderr_bytes = None, None
     status, signal_name, spawn_error, open_error = None, None, None, None
     launch_attempted = False

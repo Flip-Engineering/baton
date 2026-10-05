@@ -1300,7 +1300,8 @@ class PackageGateReceipt(unittest.TestCase):
         bound = {name: hashlib.sha256((envelope / name).read_bytes()).hexdigest()
                  for name in PACKAGE.ARCHIVE_METADATA}
 
-        admitted, raw, admitted_inventory, admitted_reduction = (
+        admitted, raw = PACKAGE.admit_archive_documents(envelope, bound)
+        admitted, admitted_inventory, admitted_reduction = (
             PACKAGE.admit_archived_documents(envelope, bound))
         # The admitted snapshot is the exact file bytes, recorded as bytes.
         for name, data in raw.items():
@@ -1314,6 +1315,54 @@ class PackageGateReceipt(unittest.TestCase):
         self.assertEqual(PACKAGE.require_current_metadata(envelope, admitted),
                          {name: bound[name] for name in sorted(bound)})
         self.assertEqual(calls, [])
+
+    def test_the_endpoint_historical_spelling_reaches_the_consumer(self):
+        """A historical-only endpoint response normalizes through classify_control.
+
+        The endpoint process is substituted: this exercises the reader's own
+        normalization and raw-byte retention, and is not an endpoint acquisition.
+        """
+        original_run = PACKAGE.subprocess.run
+        self.addCleanup(setattr, PACKAGE.subprocess, 'run', original_run)
+        case = self.laws()[0]
+        historical = {key: value for key, value in self.verifier.items()
+                      if key != 'classifier_module_sha256'}
+        historical['classify_module_sha256'] = self.verifier['classifier_module_sha256']
+        answer = {'schema': 'capacity-controls/classify-verdict@1', 'id': case['id'],
+                  'class': 'intended-law-refusal', 'attributed_law': case['law'],
+                  'law': case['law'], 'match': True, 'qualified': True,
+                  'evidence_verified': True, 'verifier': historical}
+        seen = {}
+
+        def substitute(argv, **kwargs):
+            seen['argv'] = argv
+            handle = kwargs.get('stdout')
+            payload = (json.dumps(answer) + '\n').encode()
+            if hasattr(handle, 'write'):
+                handle.write(payload)
+                handle.flush()
+
+            class Completed:
+                returncode = 0
+                stdout = payload
+                stderr = b''
+            return Completed()
+
+        PACKAGE.subprocess.run = substitute
+        audit = self.home / 'endpoint-audit'
+        verdict = PACKAGE.classify_control(
+            case, {'process': {'state': 'exited', 'exit_code': 1, 'signal': None,
+                               'spawn_error': None}}, {}, {}, PACKAGE.ROOT,
+            {'head': 'h' * 40}, '0' * 64, compiler_path=self.compiler(), audit=audit)
+        self.assertEqual(sorted(verdict['verifier']), sorted(PACKAGE.VERIFIER_MEMBERS))
+        self.assertEqual(verdict['verifier']['classifier_module_sha256'],
+                         self.verifier['classifier_module_sha256'])
+        # The raw endpoint map is retained rather than replaced.
+        self.assertEqual(verdict['verifier_raw'], historical)
+        self.assertIn('--classify', seen['argv'])
+        stem = PACKAGE.acquisition_stem(case['id'])
+        for suffix in PACKAGE.ACQUISITION_SUFFIXES:
+            self.assertTrue((audit / (stem + suffix)).is_file(), suffix)
 
     def test_the_reader_accepts_the_historical_classifier_spelling(self):
         """A run naming only the historical spelling still reads."""

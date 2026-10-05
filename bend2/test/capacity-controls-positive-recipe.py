@@ -62,8 +62,12 @@ def child(record, name, argv, run, stdin=None):
             entry[stream] = {'path': str(path.relative_to(run)) if path.exists() else None,
                              'bytes': path.stat().st_size if path.exists() else 0,
                              'sha256': digest(path) if path.exists() else None}
-        settle(run, record, name, entry.get('outcome', 'failed'), **{
-            key: value for key, value in entry.items() if key not in ('name', 'outcome')})
+        try:
+            settle(run, record, name, entry.get('outcome', 'failed'), **{
+                key: value for key, value in entry.items() if key not in ('name', 'outcome')})
+        except BaseException as record_error:
+            setattr(error, 'record_error', repr(record_error))
+            raise error from record_error
         raise
     for stream, path in (('stdout', stdout), ('stderr', stderr)):
         entry[stream] = {'path': str(path.relative_to(run)) if path.exists() else None,
@@ -235,7 +239,11 @@ def main():
                                            audit=run / 'audit',
                                            destination=run / 'payload-closure')
     except BaseException as error:
-        settle(run, record, 'consume', 'refused', reason=repr(error))
+        try:
+            settle(run, record, 'consume', 'refused', reason=repr(error))
+        except BaseException as record_error:
+            setattr(error, 'record_error', repr(record_error))
+            raise error from record_error
         raise
     settle(run, record, 'consume', 'qualified', **{
                    'inventory_sha256': result['inventory_sha256'],
@@ -259,7 +267,11 @@ def main():
         relocated_result = package.controls_evidence(relocated, package.snapshot(), args.bend,
                                                      audit=run / 'relocate' / 'audit')
     except BaseException as error:
-        settle(run, record, 'relocated-consume', 'refused', reason=repr(error))
+        try:
+            settle(run, record, 'relocated-consume', 'refused', reason=repr(error))
+        except BaseException as record_error:
+            setattr(error, 'record_error', repr(record_error))
+            raise error from record_error
         raise
     settle(run, record, 'relocated-consume', 'qualified', **{
                    'reduction_sha256': relocated_result['reduction_sha256']})
@@ -286,11 +298,18 @@ def main():
 
         def observe_archive():
             """Extract the admitted archive and read the envelope it carries."""
-            observed = digest(args.archive)
+            shutil.copyfile(args.archive, run / 'original-archive.tar.gz')
+            retained_input = run / 'original-archive.tar.gz'
+            observed = digest(retained_input)
             if observed != args.expected_archive_sha256:
-                raise SystemExit('the archive does not match the admitted identity: '
+                raise SystemExit('the retained archive does not match the admitted identity: '
                                  + observed + ' against ' + args.expected_archive_sha256)
-            with tarfile.open(args.archive, 'r:gz') as archive:
+            settle(run, record, 'archive-retained', 'verified',
+                   retained='original-archive.tar.gz', sha256=observed,
+                   provenance=str(args.archive),
+                   scope='the archive bytes are retained before extraction and extracted from '
+                         'the retained copy; the external path stays provenance')
+            with tarfile.open(retained_input, 'r:gz') as archive:
                 members = archive.getmembers()
                 # Complete preflight first: every member is checked and the admitted
                 # manifest member is located before a single member is extracted.
@@ -321,6 +340,8 @@ def main():
                                      + manifest_member)
                 for member in members:
                     archive.extract(member, target)
+            settle(run, record, 'archive-extracted', 'verified', target=str(target),
+                   members=len(members), manifest_member=manifest_member)
             manifest_path = target / manifest_member
             manifest = json.loads(manifest_path.read_text())
             if selected_root != manifest.get('archive_root'):
@@ -343,12 +364,32 @@ def main():
             expected_ids = sorted(str(verdict.get('id'))
                                   for verdict in (envelope.get('classifier') or {})
                                   .get('verdicts') or [])
-            named = ' '.join(records)
-            uncovered = [identity for identity in expected_ids if identity not in named]
+            # Every selected case must have its own retained acquisition: the
+            # request, both raw streams and the terminal record under the stem the
+            # classifier writer itself uses, with the recorded digests agreeing.
+            uncovered = []
+            for identity in expected_ids:
+                stem = package.acquisition_stem(identity)
+                recorded = audit / (stem + '.acquisition.json')
+                if not recorded.is_file():
+                    uncovered.append(identity)
+                    continue
+                record = json.loads(recorded.read_text())
+                for suffix, field in (('.request.json', 'request'), ('.stdout', 'stdout'),
+                                      ('.stderr', 'stderr')):
+                    stream = audit / (stem + suffix)
+                    if not stream.is_file():
+                        raise SystemExit('a retained acquisition stream is missing: ' + stream.name)
+                    data = stream.read_bytes()
+                    if (len(data) != record.get(field + '_bytes')
+                            or digest(stream) != record.get(field + '_sha256')):
+                        raise SystemExit('a retained acquisition stream disagrees with its '
+                                         'terminal record: ' + stream.name)
+            if uncovered:
+                raise SystemExit('the acquisition omits selected cases: ' + repr(uncovered))
             records = sorted(entry.name for entry in audit.rglob('*') if entry.is_file())
-            if len(records) < len(expected_ids) or not records:
-                raise SystemExit('the archived readback retained fewer acquisition records than '
-                                 'cases: ' + repr(records) + ' for ' + repr(expected_ids))
+            if not records:
+                raise SystemExit('the archived readback retained no acquisition file')
             audit_inventory = package.producer_inventory(audit)
             bound_audit = (envelope.get('audit') or {})
             if audit_inventory['inventory_sha256'] != bound_audit.get('inventory_sha256'):
@@ -356,14 +397,13 @@ def main():
                                  'retained envelope binds')
             # Retain the original archive and metadata bytes, and the complete returned
             # envelope bound to this stage rather than only a count of any files.
-            shutil.copyfile(args.archive, run / 'original-archive.tar.gz')
             metadata = run / 'archive-metadata'
             metadata.mkdir(exist_ok=True)
             for name in package.ARCHIVE_METADATA:
                 shutil.copyfile(archived / name, metadata / name)
             # The retained copies are checked against the admitted identity, not
             # only the reader's own later observation.
-            kept_archive = digest(run / 'original-archive.tar.gz')
+            kept_archive = digest(retained_input)
             if kept_archive != args.expected_archive_sha256:
                 raise SystemExit('the retained archive copy differs from the admitted identity')
             for name in package.ARCHIVE_METADATA:
