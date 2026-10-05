@@ -6,7 +6,6 @@ import ./structural-options.bend as O
 import ./structural-workspace.bend as W
 import ../git/create-worktree.bend as CW
 import ../git/process.bend as Git
-import ../host/control.bend as Host
 import ../host/sqlite.bend as DB
 import ../json/canonical.bend as J
 import ../git/text.bend as Tx
@@ -187,13 +186,13 @@ def with_git(+subject: String, +requested: String, +workspace: String, operation
 def inspection_match(db: String, +assignment: Assignment, requested: String, workspace: String, matched: Bool) -> IO(Unit):
   match matched:
     case True{}: execute(db,recruit_plan(assignment,requested),workspace,"registration","registrationRefused")
-    case False{}: emit(refusal("registrationRefused","registration",assignment_id(assignment),requested,workspace,"workspace: actual repository or branch differs from the assignment","[[\"worktree\"," ++ J.string_literal(assignment_id(assignment)) ++ "]]"))
+    case False{}: emit(refusal("registrationRefused","registration",assignment_id(assignment),requested,workspace,"workspace: actual worktree root, repository or branch differs from the assignment","[[\"worktree\"," ++ J.string_literal(assignment_id(assignment)) ++ "]]"))
 
 def inspected(db: String, +assignment: Assignment, requested: String, expected_repo: String, disposition: String, result: Result<&1,&1,W.Failure,W.Observation>) -> IO(Unit):
   match result:
     case Fail{+error}: workspace_error(assignment_id(assignment),requested,workspace("unknown",assignment_path(assignment),assignment_branch(assignment),assignment_base(assignment),"null","null",W.failure_json(error)),error)
-    case Done{W.Observed{+repo,+actual_branch,head,dirty}}:
-      inspection_match(db,assignment,requested,workspace(disposition,assignment_path(assignment),assignment_branch(assignment),assignment_base(assignment),W.observation_json(W.Observed{repo,actual_branch,head,dirty}),"null","null"),Bool.and(String.eq(expected_repo,repo),String.eq(assignment_branch(assignment),actual_branch)))
+    case Done{W.Observed{+repo,+root,+path,+actual_branch,head,dirty}}:
+      inspection_match(db,assignment,requested,workspace(disposition,assignment_path(assignment),assignment_branch(assignment),assignment_base(assignment),W.observation_json(W.Observed{repo,root,path,actual_branch,head,dirty}),"null","null"),Bool.and(String.eq(root,path),Bool.and(String.eq(expected_repo,repo),String.eq(assignment_branch(assignment),actual_branch))))
 
 def inspect_assignment(+db: String, +assignment: Assignment, +requested: String, +expected_repo: String, +disposition: String) -> IO(Unit):
   match assignment:
@@ -277,25 +276,13 @@ def recruit_normalized(+db: String, +assignment: Assignment, +requested: String,
     result : Result<&1,&1,U32 & String,String> <- DB.Sql.query(db,preflight_sql(recruit_plan(assignment,requested),no_workspace()))
     checked_preflight(db,assignment,requested,repo,expected_repo,result)
 
-def path_ready(db: String, assignment: Assignment, requested: String, repo: String, expected_repo: String, result: Result<&1,&1,U32 & String,String>) -> IO(Unit):
-  match result:
-    case Done{normalized}: recruit_normalized(db,assignment,requested,repo,expected_repo)
-    case Fail{(code,detail)}: workspace_error(assignment_id(assignment),requested,no_workspace(),W.HostFailure{"workspace.path",code,detail})
-
-def normalize_path(+db: String, +assignment: Assignment, +requested: String, +repo: String, +expected_repo: String) -> IO(Unit):
-  match assignment:
-    case Assignment{id,parent,harness,model,effort,path,branch,base,role,memberships}:
-      do IO<Unit>:
-        result : Result<&1,&1,U32 & String,String> <- Host.Control.output(path)
-        path_ready(db,assignment,requested,repo,expected_repo,result)
-
 def normalize(+db: String, assignment: Assignment, +repo: String, +requested: String) -> IO(Unit):
   match assignment:
     case Assignment{+id,parent,harness,model,effort,+path,branch,base,role,memberships}:
       with_git(id,requested,no_workspace(),W.run("repository.root",repo,["rev-parse","--show-toplevel"]),root =>
         with_git(id,requested,no_workspace(),W.run("repository.base",repo,["rev-parse","--verify","--end-of-options",base ++ "^{commit}"]),commit =>
           with_git(id,requested,no_workspace(),W.run("repository.identity",repo,["rev-parse","--path-format=absolute","--git-common-dir"]),common =>
-            normalize_path(db,Assignment{id,parent,harness,model,effort,Recruit.absolute(root,path,Tx.starts_with(path,"/")),branch,commit,role,memberships},requested,repo,common))))
+            recruit_normalized(db,Assignment{id,parent,harness,model,effort,Recruit.absolute(root,path,Tx.starts_with(path,"/")),branch,commit,role,memberships},requested,repo,common))))
 
 def recruit_parsed(+db: String, +id: String, +parent: String, +harness: String, +model: String, +effort: String, +repo: String, +branch: String, +path: String, +base: String, +requested: String, parsed: Result<&1,&1,String,O.RecruitOptions>) -> IO(Unit):
   match parsed:
@@ -361,7 +348,7 @@ law workspace_mismatch_refuses_before_registration:
   for +assignment: Assignment
   for requested: String
   for workspace: String
-  {inspection_match(db,assignment,requested,workspace,False{}) == emit(refusal("registrationRefused","registration",assignment_id(assignment),requested,workspace,"workspace: actual repository or branch differs from the assignment","[[\"worktree\"," ++ J.string_literal(assignment_id(assignment)) ++ "]]")) : IO(Unit)}
+  {inspection_match(db,assignment,requested,workspace,False{}) == emit(refusal("registrationRefused","registration",assignment_id(assignment),requested,workspace,"workspace: actual worktree root, repository or branch differs from the assignment","[[\"worktree\"," ++ J.string_literal(assignment_id(assignment)) ++ "]]")) : IO(Unit)}
 
 def workspace_mismatch_refuses_before_registration(db,assignment,requested,workspace):
   {==}
@@ -390,4 +377,21 @@ law recruit_registers_only_under_the_frozen_decision:
   {recruit_mutations(Assignment{id,parent,harness,model,effort,path,branch,base,role,memberships}) == "INSERT INTO sessions(id,parent,harness,model,effort,workspace,branch,base) SELECT " ++ C.q(id) ++ "," ++ C.q(parent) ++ "," ++ C.q(harness) ++ "," ++ C.q(model) ++ "," ++ C.q(effort) ++ "," ++ C.q(path) ++ "," ++ C.q(branch) ++ "," ++ C.q(base) ++ " WHERE " ++ admitted() ++ " ON CONFLICT(id) DO NOTHING;" ++ "INSERT INTO session_roles(session,role) SELECT " ++ C.q(id) ++ "," ++ C.q(C.role_family(role)) ++ " WHERE " ++ admitted() ++ " ON CONFLICT(session) DO NOTHING;" ++ "INSERT OR IGNORE INTO ensemble_members(ensemble,session) SELECT DISTINCT ensemble," ++ C.q(id) ++ " FROM structural_memberships WHERE " ++ admitted() ++ ";" ++ "INSERT OR IGNORE INTO section_members(ensemble,section,session) SELECT ensemble,section," ++ C.q(id) ++ " FROM structural_memberships WHERE section IS NOT NULL AND " ++ admitted() ++ ";" : String}
 
 def recruit_registers_only_under_the_frozen_decision(id,parent,harness,model,effort,path,branch,base,role,memberships):
+  {==}
+
+law inspected_requires_the_actual_worktree_root:
+  for db: String
+  for +assignment: Assignment
+  for requested: String
+  for expected_repo: String
+  for disposition: String
+  for +repo: String
+  for +root: String
+  for +path: String
+  for +branch: String
+  for head: String
+  for dirty: Bool
+  {inspected(db,assignment,requested,expected_repo,disposition,Done{W.Observed{repo,root,path,branch,head,dirty}}) == inspection_match(db,assignment,requested,workspace(disposition,assignment_path(assignment),assignment_branch(assignment),assignment_base(assignment),W.observation_json(W.Observed{repo,root,path,branch,head,dirty}),"null","null"),Bool.and(String.eq(root,path),Bool.and(String.eq(expected_repo,repo),String.eq(assignment_branch(assignment),branch)))) : IO(Unit)}
+
+def inspected_requires_the_actual_worktree_root(db,assignment,requested,expected_repo,disposition,repo,root,path,branch,head,dirty):
   {==}
