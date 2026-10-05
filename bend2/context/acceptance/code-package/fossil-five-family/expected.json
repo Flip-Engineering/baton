@@ -1,0 +1,65 @@
+{
+  "comment": "Semantic expectations and fixture identities for the authentic Fossil view_list same-handler acceptance and the separate selected db_prepare qualification. Values are semantic predicates and input identities only: no result counts, no source line numbers, no reviewed block constants ingested as producer truth. The candidate must recompute everything from the named inputs.",
+  "inputs": {
+    "fossil_manifest_uuid": "32ad9a1584a16f09fff78563d789b2dbc6b4bae5",
+    "fossil_manifest_file_sha256": "5d0706e796c6516e7cfbb43a504df6f9a6063653214acb96d00c614391d0c3b1",
+    "view_list_original_source": "src/report.c",
+    "view_list_original_sha256": "1a102ac38785fcf9d53c946d2b73de9bbcf5c3905dee6bd56524b54781e3f6c5",
+    "view_list_generated_input": "bld/report_.c",
+    "view_list_generated_sha256": "dfa95e6dbe5f9672e2bbe895a90e491f3a98c1ffb3afc526dc97d87d4f49abe8",
+    "db_prepare_generated_input": "bld/db_.c",
+    "catalog_fixture": "runtime-connection/allowed.fossil",
+    "catalog_fixture_sha256": "fead9134052f85377dfd22bc52d4ea27f8236b23de4468ac94679a8d3034dec3",
+    "handler_sql_literal": "SELECT rn, title, owner FROM reportfmt ORDER BY title",
+    "handler_prepare_call": "db_prepare",
+    "handler_statement_variable": "q",
+    "catalog_table": "reportfmt",
+    "qualifying_compiler": "Homebrew clang 20.1.8, prefix /opt/homebrew/opt/llvm"
+  },
+  "view_list_expectations": {
+    "family_types": {
+      "handler_formal_list": "empty",
+      "global_permission_operands": "present and typed",
+      "classification": "useful classifications follow the actual evidence class of each fact"
+    },
+    "family_calls": {
+      "direct_calls": "nonempty, including the db_prepare helper call resolved to its declaration"
+    },
+    "family_database": {
+      "selected_prepare_parameter_types": "nonempty and resolved",
+      "sql_join": "handler literal joins the reportfmt catalog table by identity, with catalog constraints/access facts",
+      "join_discrimination": "changing helper body identity, callee identity, statement alias or SQL formatting prevents the join"
+    },
+    "family_security": {
+      "guard_relations": "discovered guard/deny/effect relations present; changing the actual guard changes the derived relation"
+    },
+    "family_diagnostics": {
+      "diagnostics": "recorded with their actual meaning"
+    }
+  },
+  "db_prepare_expectations": {
+    "selected_function": "db_prepare definition in bld/db_.c",
+    "formal_list": "nonempty",
+    "variadic_status": "true",
+    "limit": "successful callee expansion in the view_list result does not replace this selected-function qualification"
+  },
+  "mutation_controls": [
+    {
+      "name": "guard-change",
+      "rule": "a copy of the source tree with the view_list guard mask changed must produce a changed derived guard relation and must not silently keep the original relation"
+    },
+    {
+      "name": "helper-body-change",
+      "rule": "a copy with the db_prepare body changed must prevent the unjustified SQL join while other families may survive"
+    },
+    {
+      "name": "sql-format-change",
+      "rule": "a copy with the handler SQL literal reformatted (same objects, different text) must refuse the join rather than match by alias spelling or formatting"
+    }
+  ],
+  "provenance": {
+    "evidence_root": "/Users/wahargis/Development/Experiments/baton-bend2-root-delivery-20260928/.scratch/semantic-context-20261005/probes/semantic-models-security-critic/fossil-qualification",
+    "verdict_message": "semantic-security-fossil-qualification-verdict-6",
+    "read_only": "the retained root is read-only; harness runs operate on verified copies under the private evidence directory"
+  }
+}
