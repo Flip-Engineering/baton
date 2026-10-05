@@ -67,8 +67,9 @@ test('the scan reports its coordinate domain and code-unit positions', () => {
   assert.deepEqual(SCAN_DIALECTS, ['sqlite', 'postgres']);
   assert.deepEqual(plain.separators, [8]);
   // The second segment retains the space that follows the separator: it starts
-  // at code unit 9, immediately after the semicolon at 8.
-  assert.deepEqual(plain.statements.map(statement => [statement.start, statement.end]), [[0, 8], [9, 17]]);
+  // at code unit 9, immediately after the semicolon at 8, and ends at the text
+  // length 18.
+  assert.deepEqual(plain.statements.map(statement => [statement.start, statement.end]), [[0, 8], [9, 18]]);
   assert.equal(plain.statementCount, 2);
 
   const terminated = scanSqlStatements('SELECT 1;', { dialect: 'sqlite' });
@@ -81,22 +82,22 @@ test('a BMP character before the separator keeps the reported position in code u
   // SELECT 'é'; SELECT 2 : separator code unit 10, UTF-8 byte 11.
   const scan = scanSqlStatements("SELECT 'é'; SELECT 2", { dialect: 'sqlite' });
   assert.deepEqual(scan.separators, [10]);
-  assert.deepEqual(scan.statements.map(statement => [statement.start, statement.end]), [[0, 10], [11, 19]]);
+  assert.deepEqual(scan.statements.map(statement => [statement.start, statement.end]), [[0, 10], [11, 20]]);
 });
 
 test('an astral character moves code units and bytes apart', () => {
   // SELECT '😀'; SELECT 2 : separator code unit 11, UTF-8 byte 13.
   const scan = scanSqlStatements("SELECT '😀'; SELECT 2", { dialect: 'sqlite' });
   assert.deepEqual(scan.separators, [11]);
-  assert.deepEqual(scan.statements.map(statement => [statement.start, statement.end]), [[0, 11], [12, 20]]);
+  assert.deepEqual(scan.statements.map(statement => [statement.start, statement.end]), [[0, 11], [12, 21]]);
 });
 
 test('a CRLF sequence is two code units and the segment retains both', () => {
   const scan = scanSqlStatements('SELECT 1;\r\nSELECT 2', { dialect: 'sqlite' });
   assert.deepEqual(scan.separators, [8]);
-  // The separator is code unit 8; the second segment starts at 9 and therefore
-  // contains the CR and the LF before the next statement.
-  assert.deepEqual(scan.statements.map(statement => [statement.start, statement.end]), [[0, 8], [9, 18]]);
+  // The separator is code unit 8; the second segment starts at 9, retains the
+  // CR and the LF, and ends at the text length 19.
+  assert.deepEqual(scan.statements.map(statement => [statement.start, statement.end]), [[0, 8], [9, 19]]);
   assert.equal(scan.statements[1].text, '\r\nSELECT 2');
 });
 
