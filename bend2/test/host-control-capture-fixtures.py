@@ -116,8 +116,27 @@ class CaptureFailures(unittest.TestCase):
         retained = json.loads((self.directory / 'case.outcome.json').read_text())
         self.assertEqual(retained['state'], 'setup-error')
         self.assertEqual(retained['childCustody'], 'not-launched')
+        self.assertEqual(retained['launchStage'], 'not-entered')
         self.assertEqual(retained['primaryError']['message'], str(primary))
         self.assertEqual(retained['receiptWrites'][0]['state'], 'failed')
+
+    def test_launch_interruption_without_handle_retains_unknown_custody(self):
+        primary = InterruptedError('interrupted inside launch')
+        with patch.object(capture.subprocess, 'Popen', side_effect=primary) as launch:
+            with self.assertRaises(InterruptedError) as raised:
+                capture.run(self.directory, 'case', ['fixture'], 7)
+        self.assertIs(raised.exception, primary)
+        launch.assert_called_once()
+        record = primary.capture_record
+        self.assertEqual(record['launchStage'], 'entered')
+        self.assertEqual(record['childCustody'], 'unresolved')
+        self.assertIsNone(record['pid'])
+        self.assertIsNone(record['returncode'])
+        self.assertEqual([entry['operation'] for entry in record['cleanup']],
+                         ['close-stdout', 'close-stderr', 'restore-sigterm'])
+        retained = json.loads((self.directory / 'case.outcome.json').read_text())
+        self.assertEqual(retained['launchStage'], 'entered')
+        self.assertEqual(retained['childCustody'], 'unresolved')
 
     def test_existing_capture_is_preserved_without_launch(self):
         (self.directory / 'case.capture').mkdir()

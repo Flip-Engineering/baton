@@ -30,7 +30,7 @@ def run(directory, name, argv, timeout):
               'returncode': None, 'exitCode': None, 'signal': None,
               'driverSignal': None, 'platform': list(os.uname()),
               'primaryError': None, 'cleanup': [], 'receiptWrites': [],
-              'childCustody': 'not-launched'}
+              'childCustody': 'not-launched', 'launchStage': 'not-entered'}
     child = None
     stdout = stderr = None
     owned = False
@@ -108,8 +108,11 @@ def run(directory, name, argv, timeout):
         stderr = stderr_path.open('xb', buffering=0)
         record['state'] = 'spawning'
         receipt(outcome_path, record, 'before-spawn')
+        # Once launch is entered, a missing handle cannot prove no child exists.
+        record.update(launchStage='entered', childCustody='unresolved')
         child = subprocess.Popen(argv, stdout=stdout, stderr=stderr)
-        record.update(pid=child.pid, state='running', childCustody='owned')
+        record.update(pid=child.pid, state='running', childCustody='owned',
+                      launchStage='handle-acquired')
         receipt(outcome_path, record, 'running')
         child.wait(timeout=timeout)
         child_status()
