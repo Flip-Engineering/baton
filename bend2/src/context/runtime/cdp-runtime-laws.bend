@@ -140,6 +140,126 @@ law adapter_failure_preserves_the_liveness_evidence:
 def adapter_failure_preserves_the_liveness_evidence(state, epoch, mutation, pending, liveness):
   {==}
 
+# ---------------------------------------------------------------------------
+# In-flight intents, settle admission, rejected resume and recorded-stop liveness.
+
+law an_in_flight_intent_is_recorded_while_it_runs:
+  for +epoch: String
+  for +mutation: String
+  for +liveness: R.Liveness
+  {R.advance(R.Rec{R.Running{}, epoch, mutation, R.Idle{}, liveness}, R.EvIntentStarted{"pause", "q-pause"}) == R.Advanced{R.Rec{R.Running{}, epoch, mutation, R.InFlight{"pause", "q-pause"}, liveness}} : R.Transition}
+
+def an_in_flight_intent_is_recorded_while_it_runs(epoch, mutation, liveness):
+  {==}
+
+law a_second_intent_refuses_while_one_is_in_flight:
+  for +epoch: String
+  for +mutation: String
+  for +liveness: R.Liveness
+  {R.advance(R.Rec{R.Running{}, epoch, mutation, R.InFlight{"pause", "q-pause"}, liveness}, R.EvIntentStarted{"resume-step", "q-step"}) == R.Refused{"runtimeBusy pause"} : R.Transition}
+
+def a_second_intent_refuses_while_one_is_in_flight(epoch, mutation, liveness):
+  {==}
+
+law settling_a_recorded_intent_returns_to_idle:
+  for +epoch: String
+  for +mutation: String
+  for +liveness: R.Liveness
+  {R.advance(R.Rec{R.PausePending{}, epoch, mutation, R.InFlight{"pause", "q-pause"}, liveness}, R.EvIntentSettled{}) == R.Advanced{R.Rec{R.PausePending{}, epoch, mutation, R.Idle{}, liveness}} : R.Transition}
+
+def settling_a_recorded_intent_returns_to_idle(epoch, mutation, liveness):
+  {==}
+
+law settling_without_an_in_flight_intent_is_refused:
+  for +epoch: String
+  for +mutation: String
+  for +liveness: R.Liveness
+  {R.advance(R.Rec{R.Running{}, epoch, mutation, R.Idle{}, liveness}, R.EvIntentSettled{}) == R.Refused{"intentSettled without an in-flight intent"} : R.Transition}
+
+def settling_without_an_in_flight_intent_is_refused(epoch, mutation, liveness):
+  {==}
+
+law a_rejected_resume_retains_the_stop_and_the_advanced_epoch:
+  for +epoch: String
+  for +mutation: String
+  for +liveness: R.Liveness
+  {R.advance(R.Rec{R.Running{}, epoch, mutation, R.Idle{}, liveness}, R.EvResumeRejected{}) == R.Advanced{R.Rec{R.Paused{}, epoch, mutation, R.Idle{}, liveness}} : R.Transition}
+
+def a_rejected_resume_retains_the_stop_and_the_advanced_epoch(epoch, mutation, liveness):
+  {==}
+
+law a_rejected_resume_never_asserts_a_target_exit:
+  for +epoch: String
+  for +mutation: String
+  {R.advance(R.Rec{R.Running{}, epoch, mutation, R.Idle{}, R.LivenessLive{}}, R.EvResumeRejected{}) == R.Advanced{R.Rec{R.Paused{}, epoch, mutation, R.Idle{}, R.LivenessLive{}}} : R.Transition}
+
+def a_rejected_resume_never_asserts_a_target_exit(epoch, mutation):
+  {==}
+
+law a_rejected_resume_outside_a_resume_attempt_is_refused:
+  for +epoch: String
+  for +mutation: String
+  for +liveness: R.Liveness
+  {R.advance(R.Rec{R.Paused{}, epoch, mutation, R.Idle{}, liveness}, R.EvResumeRejected{}) == R.Refused{"resumeRejected from paused"} : R.Transition}
+
+def a_rejected_resume_outside_a_resume_attempt_is_refused(epoch, mutation, liveness):
+  {==}
+
+law a_stopped_event_records_a_live_stop:
+  for +previous: R.StopLiveness
+  {R.stop_liveness(previous, R.EvPaused{}) == R.StopLive{} : R.StopLiveness}
+
+def a_stopped_event_records_a_live_stop(previous):
+  {==}
+
+law a_resume_leaves_the_recorded_stop_historical:
+  for +previous: R.StopLiveness
+  {R.stop_liveness(previous, R.EvResumeSent{}) == R.StopHistorical{} : R.StopLiveness}
+
+def a_resume_leaves_the_recorded_stop_historical(previous):
+  {==}
+
+law a_destroyed_context_leaves_the_recorded_stop_historical:
+  for +previous: R.StopLiveness
+  {R.stop_liveness(previous, R.EvContextDestroyed{}) == R.StopHistorical{} : R.StopLiveness}
+
+def a_destroyed_context_leaves_the_recorded_stop_historical(previous):
+  {==}
+
+law a_rejected_resume_leaves_the_recorded_stop_unknown:
+  for +previous: R.StopLiveness
+  {R.stop_liveness(previous, R.EvResumeRejected{}) == R.StopUnknown{} : R.StopLiveness}
+
+def a_rejected_resume_leaves_the_recorded_stop_unknown(previous):
+  {==}
+
+law adapter_failure_keeps_the_recorded_stop_liveness:
+  for +previous: R.StopLiveness
+  {R.stop_liveness(previous, R.EvAdapterFailed{}) == previous : R.StopLiveness}
+
+def adapter_failure_keeps_the_recorded_stop_liveness(previous):
+  {==}
+
+law only_a_live_stop_admits_a_pause_scoped_reference:
+  {R.stop_is_live(R.StopLive{}) == True{} : Bool}
+
+def only_a_live_stop_admits_a_pause_scoped_reference():
+  {==}
+
+law a_historical_stop_admits_no_pause_scoped_reference:
+  {R.stop_is_live(R.StopHistorical{}) == False{} : Bool}
+
+def a_historical_stop_admits_no_pause_scoped_reference():
+  {==}
+
+law target_liveness_outlives_the_recorded_stop:
+  for +epoch: String
+  for +mutation: String
+  {R.advance(R.Rec{R.Running{}, epoch, mutation, R.Idle{}, R.LivenessLive{}}, R.EvResumeRejected{}) == R.Advanced{R.Rec{R.Paused{}, epoch, mutation, R.Idle{}, R.LivenessLive{}}} : R.Transition}
+
+def target_liveness_outlives_the_recorded_stop(epoch, mutation):
+  {==}
+
 law an_adapter_failure_after_exit_is_refused:
   {R.advance(R.Rec{R.Exited{}, "0", "0", R.Idle{}, R.LivenessExited{}}, R.EvAdapterFailed{}) == R.Refused{"adapterFailed after exited"} : R.Transition}
 

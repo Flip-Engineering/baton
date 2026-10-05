@@ -72,6 +72,7 @@ export function createAdapterSession({
   let sequenceState = null;
   let transport = null;
   let lastPause = null;
+  let lastResume = null;
   let releaseSignal = null;
   let published = 0;
   const scripts = createScriptTable();
@@ -147,9 +148,15 @@ export function createAdapterSession({
         break;
       }
       case 'Debugger.resumed':
+        // An observed resume is evidence for the epoch it arrived in, whether or not the
+        // record still shows a stop. After resumeSent the record is already running, so the
+        // event advances nothing; it is recorded so a later query can see that a resume was
+        // observed rather than inferred.
+        lastResume = { epoch: record.epoch };
         if (record.state === 'paused' || record.state === 'pausePending') {
           apply({ type: 'resumed' });
-          lastPause = lastPause === null ? null : { ...lastPause, liveness: 'historical' };
+          lastResume = { epoch: record.epoch };
+          markPauseLiveness('historical');
           publish({ query: null, type: 'state', payload: { state: record.state, evidence: { resumedEpoch: record.epoch } } });
         }
         break;
@@ -254,6 +261,7 @@ export function createAdapterSession({
         pending: record.pending === null ? null : { ...record.pending },
         targetLiveness: record.targetLiveness,
         lastPause: lastPause === null ? null : { ...lastPause },
+        lastResume: lastResume === null ? null : { ...lastResume },
         releaseSignal,
         emitted: published,
         failure: transport === null ? null : transport.failure(),
@@ -522,6 +530,10 @@ export function createAdapterSession({
           // longer live evidence from the moment the resume is written.
           apply({ type: 'resumeSent' });
           markPauseLiveness('historical');
+          // The epoch this request advanced to. A later observed event (a stop, a resume or
+          // a context destruction) changes it, and that stronger evidence is never
+          // overwritten by this request's outcome.
+          const requestEpoch = record.epoch;
           apply({ type: 'intentStarted', intent, query: params.query ?? null });
           try {
             await connection.send(request.method, request.params);
@@ -532,12 +544,15 @@ export function createAdapterSession({
               // A lost connection is an adapter failure. It asserts nothing about the
               // target and never reports an exit.
               onTransportFailure(error);
-            } else if (record.state === 'running') {
-              // The protocol rejected the resume: no resumption was established, and the
-              // retained stop has no live evidence until a fresh stopped event arrives.
+            } else if (record.state === 'running' && record.epoch === requestEpoch) {
+              // Nothing observed after this request changed the record, so the rejection is
+              // the strongest evidence for this epoch: no resumption was established and
+              // the retained stop has no live evidence until a fresh stop arrives.
               apply({ type: 'resumeRejected' });
               markPauseLiveness('unknown');
             }
+            // Otherwise a later observation stands and only the caller learns of the
+            // rejection.
             throw error;
           }
           settlePendingIntent();

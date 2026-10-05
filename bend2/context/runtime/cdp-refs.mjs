@@ -145,7 +145,14 @@ export function admitRef(ref, scope) {
 // Normalize one candidate decision. Only `{decision:'admitted', identity}` with an
 // identity that still validates is admitted; a refusal keeps its condition; and null,
 // undefined, a missing or unknown decision, a non-object or a malformed identity refuses.
-// A caller must gate every backend send on this function's admitted result.
+// `ok` is retained for compatibility and must not contradict `decision`: an admitted
+// decision carrying `ok:false` refuses as refDecisionContradictory rather than being
+// silently believed.
+//
+// This function revalidates the identity's own shape and the decision's coherence only.
+// Admission against the live runtime, epoch and mutation generation remains
+// admitRef(ref, scope), and session.admitRef is the current-scope gate a caller uses
+// before a send.
 export function refDecision(value) {
   if (typeof value !== 'object' || value === null || Array.isArray(value)) {
     return refusedDecision('refDecisionMalformed', 'not a decision object');
@@ -155,6 +162,9 @@ export function refDecision(value) {
       typeof value.condition === 'string' ? value.condition : 'refDecisionRefused',
       value.decision === 'refused' ? value.detail ?? null : `decision ${JSON.stringify(value.decision)}`,
     );
+  }
+  if (value.ok === false) {
+    return refusedDecision('refDecisionContradictory', 'an admitted decision carried ok:false');
   }
   const admitted = admitIdentity(value.identity);
   if (!admitted.ok) return admitted;

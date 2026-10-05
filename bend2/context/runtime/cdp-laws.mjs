@@ -27,7 +27,6 @@ import * as nodeFs from 'node:fs';
 import { join, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
 
-import { laws as lawStatements } from './cdp-law-checks.mjs';
 import {
   JS_MODULES,
   JS_MUTATIONS,
@@ -130,22 +129,40 @@ async function loadModules(directory) {
   };
 }
 
-async function runLaws(moduleSet, statementNames) {
+// The law entry is imported from the directory under test, so the statements a case runs
+// are bound to frozen, digested bytes rather than to the live working tree.
+async function lawStatementsFor(directory, moduleSet) {
+  const module = await import(pathToFileURL(join(directory, 'cdp-law-checks.mjs')).href);
+  return module.laws(moduleSet);
+}
+
+// Full raw failure records: the shared classifier needs the error kind, code and stack, not
+// only a law name.
+async function runLaws(directory, moduleSet, expectedNames = null) {
+  const statements = await lawStatementsFor(directory, moduleSet);
   const failures = [];
-  const statements = lawStatements(moduleSet);
   for (const statement of statements) {
     try {
       // A law may be asynchronous (a session refusal is observed through a promise).
       await statement.run();
     } catch (error) {
-      failures.push({ law: statement.name, detail: error.message });
+      failures.push({
+        law: statement.name,
+        name: typeof error?.name === 'string' ? error.name : null,
+        code: typeof error?.code === 'string' || typeof error?.code === 'number' ? error.code : null,
+        condition: typeof error?.condition === 'string' ? error.condition : null,
+        message: typeof error?.message === 'string' ? error.message : String(error),
+        stack: typeof error?.stack === 'string' ? error.stack : null,
+      });
     }
   }
   const seen = new Set(statements.map((statement) => statement.name));
-  for (const name of statementNames) {
-    if (!seen.has(name)) failures.push({ law: name, detail: 'the law statement is missing from the module set' });
+  for (const name of expectedNames ?? []) {
+    if (!seen.has(name)) {
+      failures.push({ law: name, name: 'MissingStatement', code: null, condition: null, message: 'the law statement is missing from the module set', stack: null });
+    }
   }
-  return failures;
+  return { statements, failures };
 }
 
 // Apply one mutation, keeping the changed bytes at a durable path.
@@ -173,6 +190,18 @@ function applyMutation(caseDirectory, mutation) {
   };
 }
 
+// The identity of this in-process invocation: what ran it, from where and when.
+function invocationIdentity() {
+  return {
+    argv: process.argv,
+    cwd: process.cwd(),
+    execPath: process.execPath,
+    node: process.version,
+    startedAt: null,
+    endedAt: null,
+  };
+}
+
 function writeCase(label, payload) {
   const path = join(RUN, `${label}.case.json`);
   writeFileSync(path, `${JSON.stringify(payload, null, 2)}\n`);
@@ -194,24 +223,47 @@ async function main() {
   };
 
   const baselineCase = prepareCase('baseline', frozen);
-  const statementNames = lawStatements(await loadModules(frozen.directory)).map((statement) => statement.name);
-  const baselineFailures = await runLaws(await loadModules(frozen.directory), statementNames);
+  const baselineModules = await loadModules(baselineCase.directory);
+  const baselineRun = await runLaws(baselineCase.directory, baselineModules);
+  const statementNames = baselineRun.statements.map((statement) => statement.name);
   const baseline = {
     case: 'shipped-modules',
     kind: 'baseline',
     metadata: { control: 'shipped-modules', law: null, entry: JS_ENTRY, definitionSha256: null },
     binding,
     caseSnapshot: baselineCase.snapshot,
-    observation: { statementCount: statementNames.length, failures: baselineFailures },
+    // The paths the statements actually ran from: the baseline runs in its case directory,
+    // not in the frozen snapshot directory.
+    executedSource: {
+      directory: baselineCase.directory,
+      entry: join(baselineCase.directory, 'cdp-law-checks.mjs'),
+      modulePaths: Object.fromEntries(
+        Object.entries(baselineCase.snapshot).map(([relative, row]) => [relative, row.casePath]),
+      ),
+    },
+    invocation: invocationIdentity(),
+    observation: { statementCount: statementNames.length, failures: baselineRun.failures },
     attribution: { state: 'pending-shared-endpoint', endpoint: CLASSIFY_ENDPOINT },
   };
   baseline.caseJson = writeCase('baseline', baseline);
   cases.push(baseline);
+  const baselineLink = {
+    caseJson: baseline.caseJson,
+    observationSha256: sha256Text(JSON.stringify(baseline.observation)),
+    frozenSnapshotDirectory: frozen.directory,
+  };
 
   for (const [index, mutation] of JS_MUTATIONS.entries()) {
     const label = `mutation-${index + 1}-${mutation.name}`;
     const prepared = prepareCase(label, frozen);
     const detail = applyMutation(prepared.directory, mutation);
+    const executedSource = {
+      directory: prepared.directory,
+      entry: join(prepared.directory, 'cdp-law-checks.mjs'),
+      modulePaths: Object.fromEntries(
+        Object.entries(prepared.snapshot).map(([relative, row]) => [relative, row.casePath]),
+      ),
+    };
     if (!detail.applied) {
       const missing = {
         case: `mutation:${mutation.name}`,
@@ -220,7 +272,9 @@ async function main() {
         definition: mutationDefinition(mutation),
         definitionSha256: mutationDefinitionDigest(mutation),
         binding,
+        baselineLink,
         caseSnapshot: prepared.snapshot,
+        executedSource,
         observation: { reason: `the mutation subject occurs ${detail.occurrences} times` },
         attribution: { state: 'pending-shared-endpoint', endpoint: CLASSIFY_ENDPOINT },
       };
@@ -229,13 +283,20 @@ async function main() {
       continue;
     }
     let loadFailure = null;
-    let failures = [];
+    let run = null;
+    const startedAt = new Date().toISOString();
     try {
       const mutated = await loadModules(prepared.directory);
-      failures = await runLaws(mutated, statementNames);
+      run = await runLaws(prepared.directory, mutated, statementNames);
     } catch (error) {
-      loadFailure = { message: error.message, code: error.code ?? null };
+      loadFailure = {
+        name: typeof error?.name === 'string' ? error.name : null,
+        code: typeof error?.code === 'string' || typeof error?.code === 'number' ? error.code : null,
+        message: typeof error?.message === 'string' ? error.message : String(error),
+        stack: typeof error?.stack === 'string' ? error.stack : null,
+      };
     }
+    const endedAt = new Date().toISOString();
     const record = {
       case: `mutation:${mutation.name}`,
       kind: 'implementation-mutation',
@@ -243,13 +304,19 @@ async function main() {
       definition: mutationDefinition(mutation),
       definitionSha256: mutationDefinitionDigest(mutation),
       binding,
+      baselineLink,
       caseSnapshot: prepared.snapshot,
+      executedSource,
+      invocation: { ...invocationIdentity(), startedAt, endedAt },
       delta: detail,
       nonTargetInputs: JS_MODULES.filter((file) => file !== mutation.file),
       restoration: { caseDirectoryKept: true, frozenSnapshotUntouched: true, liveSourceUntouched: true },
+      // Full raw failure records, so the shared classifier can tell an assertion failure
+      // from a TypeError, an import failure or a missing statement.
       observation: {
-        namedLawFailure: failures.find((failure) => failure.law === mutation.law) ?? null,
-        alsoFailed: failures.filter((failure) => failure.law !== mutation.law).map((failure) => failure.law),
+        failures: run === null ? [] : run.failures,
+        namedLawFailure: run === null ? null : (run.failures.find((failure) => failure.law === mutation.law) ?? null),
+        alsoFailed: run === null ? [] : run.failures.filter((failure) => failure.law !== mutation.law),
         loadFailure,
       },
       attribution: { state: 'pending-shared-endpoint', endpoint: CLASSIFY_ENDPOINT },

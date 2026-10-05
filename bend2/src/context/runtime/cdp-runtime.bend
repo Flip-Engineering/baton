@@ -45,14 +45,26 @@ type RuntimeState is Data:
   Exited{}
   Failed{}
 
+// Target liveness: whether the owned child is believed alive, exited, or unobserved. This
+// is distinct from stop liveness below and only target exit evidence sets it to exited.
 type Liveness is Data:
   LivenessUnknown{}
   LivenessLive{}
   LivenessExited{}
 
+// Recorded-stop liveness: whether the last recorded stop is current evidence. It is a
+// separate fact from target liveness, because a rejected resume or a destroyed context
+// invalidates the stop while the target is still alive.
+type StopLiveness is Data:
+  StopAbsent{}
+  StopLive{}
+  StopHistorical{}
+  StopUnknown{}
+
 type Pending is Data:
   Idle{}
   Evaluation{query: String}
+  InFlight{intent: String, query: String}
 
 type RuntimeEvent is Data:
   EvLaunchStarted{}
@@ -65,6 +77,9 @@ type RuntimeEvent is Data:
   EvEvaluationSent{query: String}
   EvEvaluationSettled{}
   EvContextDestroyed{}
+  EvIntentStarted{intent: String, query: String}
+  EvIntentSettled{}
+  EvResumeRejected{}
   EvReleaseCommitted{}
   EvAdapterFailed{}
   EvChildExit{}
@@ -225,6 +240,7 @@ def pending_name(+pending: Pending) -> String:
   match pending:
     case Idle{}: ""
     case Evaluation{query}: "evaluate"
+    case InFlight{intent, query}: intent
 
 def pending_evaluation(+pending: Pending) -> Bool:
   match pending:
@@ -378,6 +394,18 @@ def advance(record: RuntimeRecord, event: RuntimeEvent) -> Transition:
           Bool.pick(Transition, is_exited(state),
             Refused{"releaseCommitted after exited"},
             Advanced{Rec{Releasing{}, epoch, mutation, pending, liveness}})
+        case EvIntentStarted{intent, query}:
+          Bool.pick(Transition, is_idle(pending),
+            Advanced{Rec{state, epoch, mutation, InFlight{intent, query}, liveness}},
+            Refused{"runtimeBusy " ++ pending_name(pending)})
+        case EvIntentSettled{}:
+          Bool.pick(Transition, is_idle(pending),
+            Refused{"intentSettled without an in-flight intent"},
+            Advanced{Rec{state, epoch, mutation, Idle{}, liveness}})
+        case EvResumeRejected{}:
+          Bool.pick(Transition, is_running(state),
+            Advanced{Rec{Paused{}, epoch, mutation, pending, liveness}},
+            Refused{"resumeRejected from " ++ state_name(state)})
         case EvAdapterFailed{}:
           Bool.pick(Transition, is_exited(state),
             Refused{"adapterFailed after exited"},
@@ -391,6 +419,25 @@ def advance(record: RuntimeRecord, event: RuntimeEvent) -> Transition:
 # state as it was.
 def context_after(+state: RuntimeState) -> RuntimeState:
   Bool.pick(RuntimeState, Bool.or(is_paused(state), is_pause_pending(state)), Running{}, state)
+
+# Recorded-stop liveness advances on the same events that invalidate a stop, on its own
+# evidence and independently of target liveness. A stopped event records a live stop; a
+# resume attempt, an observed resume and a destroyed context leave it historical; a rejected
+# resume leaves it unknown, because no resumption was established and no fresh stop arrived.
+def stop_liveness(+previous: StopLiveness, +event: RuntimeEvent) -> StopLiveness:
+  match event:
+    case EvPaused{}: StopLive{}
+    case EvResumed{}: StopHistorical{}
+    case EvResumeSent{}: StopHistorical{}
+    case EvContextDestroyed{}: StopHistorical{}
+    case EvResumeRejected{}: StopUnknown{}
+    case other: previous
+
+# A pause-scoped reference is admitted only against a live stop.
+def stop_is_live(+stop: StopLiveness) -> Bool:
+  match stop:
+    case StopLive{}: True{}
+    case other: False{}
 
 # An intent that needs the control-runtime grant only.
 def admit_control(

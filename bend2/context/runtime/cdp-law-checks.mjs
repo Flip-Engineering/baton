@@ -244,6 +244,19 @@ export function laws(modules) {
       },
     },
     {
+      name: 'ref_decision_refuses_a_contradictory_candidate',
+      run() {
+        assertEqual(refs.refDecision({ decision: 'admitted', ok: false, identity: liveRef }).condition,
+          'refDecisionContradictory', 'an admitted decision carrying ok:false was accepted');
+        assertEqual(refs.refDecision({ decision: 'admitted', ok: true, identity: liveRef }).decision,
+          'admitted', 'the agreed admitted shape was refused');
+        assertEqual(refs.refDecision(refs.admitRef(liveRef, liveScope)).decision, 'admitted',
+          'the current-scope admission was refused');
+        assertEqual(refs.refDecision({ decision: 'refused', ok: true, condition: 'staleReference' }).condition,
+          'staleReference', 'a refused decision lost its condition');
+      },
+    },
+    {
       name: 'worker_channel_requires_an_owned_active_session',
       run() {
         const owned = ['ws-1'];

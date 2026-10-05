@@ -25,10 +25,11 @@ import { createHash } from 'node:crypto';
 
 export const NATIVE_ENTRY = 'bend2/src/context/runtime/cdp-runtime-laws.bend';
 
-// The exact Darwin proof-removal diagnostic text. It names no law, so a proof removal
-// carries this declared expectation beside its exact proof edit.
+// The exact Darwin proof-removal diagnostic, as the reported first line and its second
+// line. It names no law, so a proof removal carries this declared expectation beside its
+// exact proof edit.
 export const PROOF_REMOVAL_DIAGNOSTIC = Object.freeze([
-  '1 TODO found',
+  'Error: 1 TODO found.',
   'The code is incomplete, and not a valid proof yet.',
 ]);
 
@@ -103,6 +104,35 @@ export const NATIVE_MUTATIONS = Object.freeze([
     find: 'Bool.and(serializes, Bool.not(is_idle(pending))),',
     replace: 'False{},',
     expectedConstructors: Object.freeze(['RuntimeBusy', 'Admitted']) },
+  { name: 'in-flight-intent-not-recorded', law: 'an_in_flight_intent_is_recorded_while_it_runs',
+    file: 'bend2/src/context/runtime/cdp-runtime.bend',
+    find: 'Advanced{Rec{state, epoch, mutation, InFlight{intent, query}, liveness}},',
+    replace: 'Advanced{Rec{state, epoch, mutation, Idle{}, liveness}},',
+    expectedConstructors: Object.freeze(['InFlight', 'Idle']) },
+  { name: 'second-intent-admitted-while-one-is-in-flight',
+    law: 'a_second_intent_refuses_while_one_is_in_flight',
+    file: 'bend2/src/context/runtime/cdp-runtime.bend',
+    find: '        case EvIntentStarted{intent, query}:\n          Bool.pick(Transition, is_idle(pending),',
+    replace: '        case EvIntentStarted{intent, query}:\n          Bool.pick(Transition, True{},',
+    expectedConstructors: Object.freeze(['Refused', 'InFlight']) },
+  { name: 'settle-admitted-without-an-in-flight-intent',
+    law: 'settling_without_an_in_flight_intent_is_refused',
+    file: 'bend2/src/context/runtime/cdp-runtime.bend',
+    find: '        case EvIntentSettled{}:\n          Bool.pick(Transition, is_idle(pending),',
+    replace: '        case EvIntentSettled{}:\n          Bool.pick(Transition, False{},',
+    expectedConstructors: Object.freeze(['Refused', 'Idle']) },
+  { name: 'rejected-resume-asserts-resumption',
+    law: 'a_rejected_resume_retains_the_stop_and_the_advanced_epoch',
+    file: 'bend2/src/context/runtime/cdp-runtime.bend',
+    find: '        case EvResumeRejected{}:\n          Bool.pick(Transition, is_running(state),\n            Advanced{Rec{Paused{}, epoch, mutation, pending, liveness}},',
+    replace: '        case EvResumeRejected{}:\n          Bool.pick(Transition, is_running(state),\n            Advanced{Rec{Running{}, epoch, mutation, pending, liveness}},',
+    expectedConstructors: Object.freeze(['Paused', 'Running']) },
+  { name: 'stop-liveness-ignores-a-resume',
+    law: 'a_resume_leaves_the_recorded_stop_historical',
+    file: 'bend2/src/context/runtime/cdp-runtime.bend',
+    find: '    case EvResumeSent{}: StopHistorical{}',
+    replace: '    case EvResumeSent{}: previous',
+    expectedConstructors: Object.freeze(['StopHistorical', 'previous']) },
 ]);
 
 // Implementation mutations of this lane's JavaScript modules. Each is attributed by the
@@ -216,10 +246,16 @@ export const JS_MUTATIONS = Object.freeze([
     law: 'endpoint_watch_refuses_replacement_and_truncation',
     find: 'if (current.dev !== identity.dev || current.ino !== identity.ino) {',
     replace: 'if (false) {' },
+  // Rebound: the previous definition targeted the single-line
+  // `PAUSE_SCOPED.includes(identity?.kind) && record.state !== 'paused'` expression, which
+  // no longer exists since the session grew the nested stop-liveness branch. The
+  // superseded definition and its digest are not reusable; this one names the current
+  // operative branch and inverts the gate so the pause-scope block is skipped for a
+  // pause-scoped kind, leaving the epoch comparison to judge the ref by name instead.
   { name: 'string-ref-bypasses-the-pause-scope', file: 'bend2/context/runtime/cdp-session.mjs',
     law: 'session_read_path_refuses_control_requests_and_string_refs_outside_a_pause',
-    find: "      if (PAUSE_SCOPED.includes(identity?.kind) && record.state !== 'paused') {",
-    replace: '      if (false) {' },
+    find: '      if (PAUSE_SCOPED.includes(identity?.kind)) {',
+    replace: '      if (!PAUSE_SCOPED.includes(identity?.kind)) {' },
   { name: 'argv-wrapper-admitted', file: 'bend2/context/runtime/bootstrap-admission.mjs',
     law: 'launch_document_refuses_an_argument_vector_that_keeps_a_wrapper',
     find: 'if (parsed.argv[0] !== parsed.node) {',
@@ -238,8 +274,11 @@ export const JS_MUTATIONS = Object.freeze([
     replace: "return createHash('sha1').update(text, 'utf8').digest('hex');" },
 ]);
 
-// The frozen module set one JavaScript control copies before it is mutated.
+// The frozen module set one JavaScript control copies before it is mutated. The law entry
+// itself is part of the set, so the statements a case runs are bound to frozen, digested
+// bytes rather than to the live working tree.
 export const JS_MODULES = Object.freeze([
+  'bend2/context/runtime/cdp-law-checks.mjs',
   'bend2/context/runtime/cdp-counter.mjs',
   'bend2/context/runtime/cdp-protocol.mjs',
   'bend2/context/runtime/cdp-refs.mjs',

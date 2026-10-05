@@ -746,13 +746,71 @@ test('rejected-resume-retains-the-stop-without-live-evidence', async () => {
   assertEqual(after.targetLiveness, 'live', 'the rejected resume asserted a target exit');
   assertEqual(after.pending, null, 'the rejected resume left its request pending');
   assertEqual(after.lastPause.liveness, 'unknown', 'the retained stop claims live evidence');
-  assertEqual(session.admitRef(ref).condition, 'staleReference', 'the previous-epoch ref was admitted');
+  // The session layer refuses a stop that is not live before it ever compares the epoch,
+  // so the documented liveness-first condition is refStopNotLive, not staleReference.
+  assertEqual(session.admitRef(ref).condition, 'refStopNotLive', 'the liveness-first refusal');
+  // The module-level admission keeps its own stale-epoch control, unchanged.
+  assertEqual(admitRef(ref, {
+    runtime: after.runtime,
+    adapter: after.adapter,
+    epoch: after.epoch,
+    mutationGeneration: after.mutationGeneration,
+  }).condition, 'staleReference', 'the module-level stale-epoch control');
   const fresh = refIdentity({
     runtime: after.runtime, adapter: after.adapter, thread: 'main:0',
     epoch: after.epoch, mutationGeneration: after.mutationGeneration, kind: 'object', handle: 'h',
   });
   assertEqual(session.admitRef(fresh).condition, 'refStopNotLive',
     'a pause-scoped ref was admitted against a stop with no live evidence');
+  writeFileSync(join(dir, 'case.json'), `${JSON.stringify({ refusal: refusal.condition, after })}\n`);
+});
+
+test('rejected-resume-preserves-a-later-stop-observation', async () => {
+  const slug = 'source-resume-rejected-later-stop';
+  const dir = evidenceDir(slug);
+  let transport = null;
+  let reordered = false;
+  transport = stubTransport({
+    onSend: (method) => {
+      if (method === 'Debugger.stepOver' && !reordered) {
+        reordered = true;
+        // Later, stronger observations arrive before the request is rejected: the target
+        // resumes and then stops again.
+        transport.emit('Debugger.resumed', {});
+        transport.emit('Debugger.paused', { reason: 'other', callFrames: [], hitBreakpoints: [], threadId: 'main:0' });
+        return { error: { code: -32000, message: 'Can only perform operation while paused' } };
+      }
+      return { result: {} };
+    },
+  });
+  const { session } = openSession({ slug, runtime: 'rt:later', connect: async () => transport });
+  await session.execute('launch', { effects: ['controlRuntime'], webSocketUrl: 'ws://127.0.0.1:1/stub' });
+  transport.emit('Debugger.paused', { reason: 'other', callFrames: [], hitBreakpoints: [], threadId: 'main:0' });
+  const before = session.snapshot();
+  assertEqual(before.state, 'paused', 'the initial stop');
+  let refusal = null;
+  try {
+    await session.execute('resume-step', { effects: ['controlRuntime'], action: 'next', query: 'q-step' });
+  } catch (error) {
+    refusal = error;
+  }
+  assert(refusal !== null, 'the rejected resume was reported as success');
+  assertEqual(refusal.condition, 'cdpError', 'the refusal condition');
+  const after = session.snapshot();
+  // The later stop is the strongest evidence and the rejection overwrites nothing.
+  assertEqual(after.state, 'paused', 'the later stop was lost');
+  assertEqual(after.epoch, counterNext(counterNext(before.epoch).value).value,
+    'the later stop did not advance the epoch past the rejected request');
+  assertEqual(after.lastPause.liveness, 'live', 'the later stop is live evidence');
+  assertEqual(after.lastResume === null ? null : after.lastResume.epoch, counterNext(before.epoch).value,
+    'the observed resume was not recorded');
+  assertEqual(after.pending, null, 'the rejected request stayed pending');
+  assertEqual(after.targetLiveness, 'live', 'the rejection asserted a target exit');
+  const fresh = refIdentity({
+    runtime: after.runtime, adapter: after.adapter, thread: 'main:0',
+    epoch: after.epoch, mutationGeneration: after.mutationGeneration, kind: 'object', handle: 'h',
+  });
+  assertEqual(session.admitRef(fresh).decision, 'admitted', 'the fresh live stop refused a pause-scoped ref');
   writeFileSync(join(dir, 'case.json'), `${JSON.stringify({ refusal: refusal.condition, after })}\n`);
 });
 

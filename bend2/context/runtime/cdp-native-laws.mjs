@@ -110,8 +110,10 @@ function compilerIdentity() {
   };
 }
 
-// The toolchain archive identity where one exists at the resolved install root. Absence is
-// reported rather than assumed.
+// The toolchain archive identity. Release archive bytes are not retained at the resolved
+// install root, so only install markers can be reported: they are evidence that an
+// installation exists there, not archive-byte identity, and the archive identity stays
+// explicitly unavailable.
 function archiveIdentity(bendPath) {
   const installRoot = resolve(bendPath, '..', '..');
   const markers = ['version', 'VERSION', 'SHASUMS256.txt', 'MANIFEST.json', 'bend2/base.bend'];
@@ -129,9 +131,13 @@ function archiveIdentity(bendPath) {
   }
   return {
     installRoot,
-    markers: found,
-    available: found.length > 0,
-    reason: found.length > 0 ? null : 'no version or archive marker found at the resolved install root',
+    installMarkers: found,
+    installMarkerEvidence: found.length > 0,
+    reason: found.length > 0 ? null : 'no install marker found at the resolved install root',
+    archiveIdentity: {
+      available: false,
+      reason: 'no release archive bytes are retained at the resolved install root; install markers are not archive-byte identity',
+    },
   };
 }
 
@@ -224,6 +230,8 @@ function removeProof(caseDirectory, relative, name) {
   if (start === -1) return null;
   let end = start + 1;
   while (end < lines.length && (lines[end] === '' || /^\s/.test(lines[end]))) end += 1;
+  const prefix = start === 0 ? '' : `${lines.slice(0, start).join('\n')}\n`;
+  const startByte = Buffer.byteLength(prefix, 'utf8');
   const removed = `${lines.slice(start, end).join('\n')}\n`;
   const changed = [...lines.slice(0, start), ...lines.slice(end)].join('\n');
   const removedPath = join(RUN, `proof-removed-${name}.txt`);
@@ -235,6 +243,20 @@ function removeProof(caseDirectory, relative, name) {
     law: name,
     startLine: start + 1,
     endLine: end,
+    // The exact byte delta of the edit, with the line range above.
+    byteDelta: {
+      startByte,
+      endByte: startByte + Buffer.byteLength(removed, 'utf8'),
+      removedBytes: Buffer.byteLength(removed, 'utf8'),
+      originalBytes: Buffer.byteLength(original, 'utf8'),
+      changedBytes: Buffer.byteLength(changed, 'utf8'),
+      deltaBytes: Buffer.byteLength(changed, 'utf8') - Buffer.byteLength(original, 'utf8'),
+    },
+    sourceBinding: {
+      relativePath: relative,
+      casePath: path,
+      originalSha256: sha256Text(original),
+    },
     removedBytes: Buffer.byteLength(removed, 'utf8'),
     removedSha256: sha256Text(removed),
     removedPath,
@@ -312,6 +334,11 @@ function main() {
   };
   baselineRecord.caseJson = writeCase('baseline', baselineRecord);
   cases.push(baselineRecord);
+  const baselineLink = {
+    caseJson: baselineRecord.caseJson,
+    observationSha256: sha256Text(JSON.stringify(baselineRecord.observation)),
+    frozenSnapshotDirectory: frozen.directory,
+  };
 
   const names = lawNames(baselineCase.directory);
   for (const [index, name] of names.entries()) {
@@ -333,6 +360,7 @@ function main() {
           definitionSha256: null,
         },
         binding,
+        baselineLink,
         observation: { process: null, reason: 'the law has no proof beside it' },
         attribution: { state: 'pending-shared-endpoint', endpoint: CLASSIFY_ENDPOINT },
       };
@@ -357,6 +385,7 @@ function main() {
         definitionSha256: null,
       },
       binding,
+      baselineLink,
       caseSnapshot: prepared.snapshot,
       proofEdit: edit,
       lawTextAsCompiled: {
@@ -388,6 +417,7 @@ function main() {
         definition: mutationDefinition(mutation),
         definitionSha256: mutationDefinitionDigest(mutation),
         binding,
+        baselineLink,
         observation: { process: null, reason: `the mutation subject occurs ${detail.occurrences} times` },
         attribution: { state: 'pending-shared-endpoint', endpoint: CLASSIFY_ENDPOINT },
       };
@@ -405,6 +435,7 @@ function main() {
       definition: mutationDefinition(mutation),
       definitionSha256: mutationDefinitionDigest(mutation),
       binding,
+      baselineLink,
       caseSnapshot: prepared.snapshot,
       delta: detail,
       lawTextUnchanged: {
