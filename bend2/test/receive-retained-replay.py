@@ -75,6 +75,28 @@ class ReplayBase(RECEIVE.Receive):
         self.assertEqual(os.WEXITSTATUS(status), 0)
         return f'exit {os.WEXITSTATUS(status)}'
 
+    def attempt_snapshot(self, binding):
+        """Every retained value of one attempt, keyed by that attempt's own identity."""
+        identity, directory = binding
+        with sqlite3.connect(f'{self.db.as_uri()}?mode=ro', uri=True) as database:
+            turn = database.execute("SELECT event FROM turns WHERE id=? AND worker='parent'",
+                                    (identity,)).fetchone()
+        delivery = self.coord('delivery', identity)
+        return {
+            'id': identity,
+            'directory': str(directory),
+            'status': int((directory / 'status').read_text()),
+            'turn_event': turn[0] if turn else None,
+            'body': delivery['body'],
+            'receipt': delivery['receipt'],
+        }
+
+    def assert_snapshot_unchanged(self, before, after):
+        """A completed attempt's own retained values do not change when a later attempt runs."""
+        for field in sorted(before):
+            self.assertEqual(after[field], before[field],
+                             f'the {field} of the completed attempt changed after a later attempt')
+
     def reported_body(self, binding):
         """The public report body of the bound attempt, read by its own saved id."""
         return self.coord('delivery', binding[0])['body']
@@ -562,6 +584,7 @@ class ControlledFrames(ReplayBase):
             {'type': 'agent_end', 'isTerminal': True, 'messages': []}], task='sealed-first')
         self.assertEqual(code, 0)
         self.assertIn('Sealed first report.', bodies[0])
+        a = self.attempt_snapshot(self.first_attempt)
         later, later_code, later_status, later_bodies = self.replay([
             {'type': 'agent_end', 'isTerminal': True, 'messages': [
                 assistant(stopReason='error', errorStatus=403, errorMessage='403 later failure',
@@ -572,6 +595,12 @@ class ControlledFrames(ReplayBase):
         self.assertTrue(any('Native model failure' in body for body in later_bodies), later_bodies)
         self.assertIn('exit 0', self.native_status(self.first_attempt))
         self.assertEqual(self.reported_body(self.first_attempt), 'Sealed first report.')
+        after = self.attempt_snapshot(self.first_attempt)
+        b = self.attempt_snapshot(self.original_attempt)
+        self.assertNotEqual(b['id'], a['id'])
+        self.assertNotEqual(b['directory'], a['directory'])
+        self.assert_snapshot_unchanged(a, after)
+        self.assertEqual(a['body'], 'Sealed first report.')
 
     def test_sequential_error_then_success_keeps_the_first_failure(self):
         """Two consecutive receives: a later success does not change the earlier failure."""
@@ -583,6 +612,7 @@ class ControlledFrames(ReplayBase):
         self.assertNotEqual(code, 0)
         first_failure = [body for body in bodies if 'Native model failure' in body]
         self.assertTrue(first_failure, bodies)
+        a = self.attempt_snapshot(self.first_attempt)
         later, later_code, later_status, later_bodies = self.replay([
             {'type': 'message_end', 'message': assistant(
                 stopReason='stop', content=[{'type': 'text', 'text': 'Later successful report.'}])},
@@ -592,6 +622,13 @@ class ControlledFrames(ReplayBase):
         self.assertIn('Later successful report.', later_bodies[-1])
         self.assertIn('exit 0', self.native_status(self.first_attempt))
         self.assertIn('Native model failure', self.reported_body(self.first_attempt))
+        after = self.attempt_snapshot(self.first_attempt)
+        b = self.attempt_snapshot(self.original_attempt)
+        self.assertNotEqual(b['id'], a['id'])
+        self.assertNotEqual(b['directory'], a['directory'])
+        self.assert_snapshot_unchanged(a, after)
+        self.assertIn('Native model failure', a['body'])
+        self.assertEqual(b['body'], 'Continuation report after the sealed failure.')
 
 
 if __name__ == '__main__':
