@@ -36,6 +36,18 @@ General-purpose work can use structured context from supported documents,
 datasets, files and service results. Code and runtime capabilities describe their
 availability for the current subject.
 
+## Language support
+
+Bend2 is the first language target. Elixir, Rust, Go, Python and TypeScript are
+preferred modular targets after Bend2. Language modules use the same native
+query and result contracts. Project context and available module capabilities
+determine the applicable analysis and debugging support.
+
+Each module supplies language-specific facts and their evidence through a
+common interface. Adding a language module preserves the shared query surface,
+result relationships, provenance and access rules. Capability discovery states
+which requested facts the selected module can actually provide.
+
 ## Native use
 
 A task receives relevant context orientation through its existing native harness

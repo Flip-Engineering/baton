@@ -1,7 +1,8 @@
 # Baton2 root handoff
 
 This contributor handoff preserves unfinished operator work as of 2026-10-05
-21:37 UTC. Read the native task records and current source before resuming.
+22:07 UTC. Host and qualification observations retain their recorded times.
+Read the native task records and current source before resuming.
 Issue records describe defects; native reports contain current ownership and evidence.
 
 ## Authority and recovery
@@ -393,11 +394,19 @@ Task and review bodies are under
 
 ## Semantic context implementation
 
-The accepted implementation specification is commit
+The prior implementation specification is commit
 `8a26bc3e7f9d5355b72f1291d95620b218b5c8e2`,
 `docs/bend2/semantic-context-spec.md`. Root comparison with
 [the feature document](semantic-context-feature.md) and six independent
 reviewers approved that design. Native guidance 39 authorized implementation.
+The operator subsequently rejected its fixed TS/C/C++ language boundary and
+requires Bend2 first, followed by modular Elixir, Rust, Go, Python and TypeScript
+support. Root81 supersedes the conflicting scope and whole-feature acceptance.
+The current requirement is the feature document's Language support section and
+[language-module amendment](semantic-context-language-scope.md). Synthesis owns
+one coherent spec successor; existing domain critic Ensembles and Quality must
+review it before root's renewed feature comparison. The historical review and
+all source remain preserved.
 
 This system returns programmatic facts about external target software:
 semantic code, runtime/debug values, database/data relationships, security
@@ -406,16 +415,20 @@ provenance, freshness and explicit target-execution grants are acceptance
 requirements. The operator rejected workflow recipes and operational Baton
 telemetry as a substitute for these capabilities.
 
-Implementation Conductors are `semantic-impl-code` (TypeScript and the single
-Clang helper), `semantic-impl-models` (catalogs, SQLite, schemas and datasets),
-`semantic-impl-runtime` (CDP and runtime values), and `semantic-impl-native`
-(codec, lifecycle and packaging). Each has implementation Sections and a
-critic Ensemble. `semantic-quality` coordinates independent acceptance.
+Implementation Conductors are `semantic-impl-code`, `semantic-impl-models`,
+`semantic-impl-runtime` and `semantic-impl-native`. Each has implementation
+Sections and a critic Ensemble. `semantic-quality` coordinates independent
+acceptance. Root81 directs their existing hierarchy to prioritize a real Bend2
+module and generalize language/provider selection, options, normalization,
+packaging and runtime capability discovery. The codec's closed engine list is
+a concrete coupling to correct. Existing TS/C/C++ and CDP work remains
+optional-module source with its original qualification limits.
 
-Outstanding scope includes strict request/result codecs, TypeScript facts,
-Clang AST/CFG joins, real catalog/model facts, read-only SQLite plans and
-migration replay, CDP frames/scopes/descriptors, environment/dataset facts,
-security fixtures, managed lifecycle integration, pinned dependencies and
+Outstanding scope includes Bend2 definitions/imports/types/checker context and
+diagnostics, the modular common language boundary, preferred language modules,
+strict request/result codecs, real catalog/model facts, read-only SQLite plans
+and migration replay, supported runtime/debug facts, environment/dataset facts,
+security relationships, managed lifecycle integration, pinned dependencies and
 useful installed-provider results. Ordinary operations are `context-engines`,
 `context-query[-file]`, `context-result` and their attached MCP tools.
 
