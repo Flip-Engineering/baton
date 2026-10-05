@@ -187,7 +187,7 @@ def main():
                     "compiler_error": True,
                     "location": f"custody-tasks.{law}",
                     "expected_semantics": expected_semantics}
-        observed = {"build_exit": code,
+        observed = {"bend_check_only_exit": code,
                     "compiler_error": "Error" in stderr,
                     "location_seen": "Location" in stderr and bool(location_lines),
                     "location_lines": location_lines[:4],
@@ -205,7 +205,7 @@ def main():
                                str(scratch / "mutated-source.bend"),
                                str(output / ("mutation-" + name + ".stderr"))]}
         record("mutation-" + name + ".verdict", verdict)
-        assert code != 0, f"{name}: mutated outer build unexpectedly succeeded (exit {code})"
+        assert code == 1, f"{name}: Bend check-only exit {code}, expected exact refusal 1"
         assert observed["compiler_error"] and observed["location_seen"], \
             f"{name}: build stderr lacks a compiler Error with a custody-tasks.{law} Location"
         assert observed["law_named"], f"{name}: expected law {law} named in build stderr"

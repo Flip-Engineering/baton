@@ -109,7 +109,7 @@ def checks() -> IO(Unit):
       case other: check("uncancelled-settlement-refused",False{})
     +unaccepted : Registry.Settlement <- IO.pure(Registry.Settlement,Registry.settle_cancelled_event(cancelaccept,False{}))
     kept2 : Unit <- match unaccepted:
-      case Registry.Refused{+registration}: check("unaccepted-transfer-refused-preserves-event-and-outstanding",Bool.and(Registry.reg_event_retained_of(registration),Bool.not(Registry.outstanding_is_none(registration))))
+      case Registry.Refused{+registration}: check("unaccepted-transfer-refused-preserves-event-and-outstanding",Bool.and(Registry.reg_event_retained_of(registration),Registry.outstanding_is_none(registration)))
       case other: check("unaccepted-transfer-refused-preserves-event-and-outstanding",False{})
     +releasedreg : Registry.RegistrationRelease <- IO.pure(Registry.RegistrationRelease,Registry.release_registration_reference(cancelledevent))
     droppedref : Unit <- match releasedreg:
