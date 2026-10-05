@@ -1171,6 +1171,32 @@ class PackageGateReceipt(unittest.TestCase):
                          [PACKAGE.ORDINARY_VERIFIER_FILES['group_run_module_sha256']])
         self.assertFalse(result['ordinary']['run_identity_qualified'])
 
+    def test_invalid_archive_metadata_refuses_before_the_classifier(self):
+        """Admission precedes classification on the direct archived path."""
+        calls = []
+        original = PACKAGE.classify_control
+        self.addCleanup(setattr, PACKAGE, 'classify_control', original)
+        PACKAGE.classify_control = lambda *args, **kwargs: calls.append(args) or {}
+
+        envelope = self.home / 'archive-envelope'
+        envelope.mkdir()
+        for name in PACKAGE.ARCHIVE_METADATA:
+            (envelope / name).write_text('{}\n')
+        wrong = {name: '0' * 64 for name in PACKAGE.ARCHIVE_METADATA}
+        with self.assertRaisesRegex(RuntimeError, 'differs from its recorded identity'):
+            PACKAGE.controls_evidence(envelope, PACKAGE.snapshot(), self.compiler(),
+                                      archived=True, documents=wrong)
+        self.assertEqual(calls, [])
+
+        missing = envelope / PACKAGE.ARCHIVE_METADATA[0]
+        parked = envelope / (PACKAGE.ARCHIVE_METADATA[0] + '.parked')
+        missing.rename(parked)
+        with self.assertRaisesRegex(RuntimeError, 'document is missing'):
+            PACKAGE.controls_evidence(envelope, PACKAGE.snapshot(), self.compiler(),
+                                      archived=True, documents=wrong)
+        self.assertEqual(calls, [])
+        parked.rename(missing)
+
     def test_the_ordinary_index_layout_and_run_root_are_checked(self):
         run_root = self.home / 'declared-run'
         path = self.ordinary_index(run_root)

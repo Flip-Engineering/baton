@@ -77,6 +77,57 @@ def child(record, name, argv, run, stdin=None):
     return entry
 
 
+def write_record(run, record):
+    """Persist the stage record without replacing an original cause.
+
+    A record that cannot be written is reported as its own error, and the caller
+    keeps the exception it was already handling.
+    """
+    try:
+        (run / 'run.json').write_text(json.dumps({'children': record}, indent=2) + '\n')
+    except OSError as error:
+        raise RuntimeError('the run record could not be written: ' + repr(error)) from error
+
+
+def settle(run, record, name, outcome, **fields):
+    """Settle one stage row and persist it before anything else can fail.
+
+    The row can be declared before its fallible work and settled again afterwards,
+    so an observation this run already made is durable and a later stage failure
+    cannot erase it.
+    """
+    entry = {'name': name, 'outcome': outcome, **fields}
+    for position, existing in enumerate(record):
+        if existing.get('name') == name:
+            record[position] = {**existing, **entry}
+            break
+    else:
+        record.append(entry)
+    write_record(run, record)
+    return record[-1] if record[-1].get('name') == name else entry
+
+
+def attempt(run, record, name, work, **declared):
+    """Run one stage with its identity declared first and settled on every exit.
+
+    The original exception is raised with any recording error attached, so a
+    failure to persist the terminal row never replaces the cause it was recording.
+    """
+    settle(run, record, name, 'attempted', **declared)
+    try:
+        value = work()
+    except BaseException as error:
+        try:
+            settle(run, record, name, 'failed', failure=repr(error),
+                   failure_type=type(error).__name__)
+        except BaseException as record_error:
+            setattr(error, 'record_error', repr(record_error))
+            raise error from record_error
+        raise
+    settle(run, record, name, 'verified', **(value if isinstance(value, dict) else {}))
+    return value
+
+
 def package_module():
     import importlib.util
     spec = importlib.util.spec_from_file_location('package_native',
@@ -93,6 +144,8 @@ def main():
     parser.add_argument('--compiler-archive', required=True, type=pathlib.Path)
     parser.add_argument('--archive', type=pathlib.Path,
                         help='the built artifact archive, extracted and checked against the inventory')
+    parser.add_argument('--expected-archive-sha256', default='',
+                        help='the admitted archive digest; required with --archive and compared before extraction')
     parser.add_argument('--receipt', help='a gate receipt produced from this evidence, reused and compared')
     parser.add_argument('--receipt-sha256', default='')
     args = parser.parse_args()
@@ -201,53 +254,84 @@ def main():
 
     if args.archive:
         import tarfile
+        if not args.expected_archive_sha256:
+            raise SystemExit('--archive requires --expected-archive-sha256, the admitted archive identity')
         target = run / 'readback'
-        with tarfile.open(args.archive, 'r:gz') as archive:
-            for member in archive.getmembers():
-                name = member.name
-                relative = pathlib.PurePosixPath(name)
-                if (name != relative.as_posix() or relative.is_absolute()
-                        or '..' in relative.parts or member.issym() or member.islnk()
-                        or not (member.isfile() or member.isdir())):
-                    raise SystemExit('the archive holds an unsupported or unsafe member: ' + name)
-                archive.extract(member, target)
-        manifest_path = next(target.rglob('manifest.json'), None)
-        if manifest_path is None:
-            raise SystemExit('the archive holds no manifest')
-        manifest = json.loads(manifest_path.read_text())
-        if manifest_path.parent.name != manifest.get('archive_root'):
-            raise SystemExit('the archive root does not match the manifest')
-        archived = manifest_path.parent / 'controls-evidence'
-        if not archived.is_dir():
-            raise SystemExit('the archive holds no controls evidence member')
-        documents = (manifest.get('gates', {}).get('controls', {})
-                     .get('archived', {}).get('documents') or {})
-        if sorted(documents) != sorted(package.ARCHIVE_METADATA):
-            raise SystemExit('the archive manifest does not bind both metadata documents')
-        current, bound = package.verify_archived_inventory(archived, result['inventory'],
-                                                           documents)
-        if {name: row['sha256'] for name, row in bound.items()} != dict(documents):
-            raise SystemExit('the extracted metadata documents differ from their bound digests')
-        envelope = package.controls_evidence(archived, package.snapshot(), args.bend,
-                                            archived=True, documents=documents)
-        if envelope['reduction_sha256'] != result['reduction_sha256']:
-            raise SystemExit('the archived envelope produced a different stable reduction')
-        record.append({'name': 'archive-readback', 'outcome': 'verified',
-                       'root': manifest_path.parent.name,
-                       'members': len(current['members']), 'documents': sorted(documents)})
+        audit = run / 'archive-audit'
+
+        def observe_archive():
+            """Extract the admitted archive and read the envelope it carries."""
+            observed = digest(args.archive)
+            if observed != args.expected_archive_sha256:
+                raise SystemExit('the archive does not match the admitted identity: '
+                                 + observed + ' against ' + args.expected_archive_sha256)
+            with tarfile.open(args.archive, 'r:gz') as archive:
+                names = []
+                for member in archive.getmembers():
+                    name = member.name
+                    relative = pathlib.PurePosixPath(name)
+                    if (name != relative.as_posix() or relative.is_absolute()
+                            or '..' in relative.parts or member.issym() or member.islnk()
+                            or not (member.isfile() or member.isdir())):
+                        raise SystemExit('the archive holds an unsupported or unsafe member: ' + name)
+                    if name in names:
+                        raise SystemExit('the archive names a member twice: ' + name)
+                    names.append(name)
+                    archive.extract(member, target)
+            roots = sorted({path.name for path in target.iterdir()})
+            if len(roots) != 1:
+                raise SystemExit('the archive does not hold exactly one root: ' + repr(roots))
+            manifests = sorted(target.rglob('manifest.json'))
+            if len(manifests) != 1:
+                raise SystemExit('the archive does not hold exactly one manifest: '
+                                 + repr([str(path) for path in manifests]))
+            manifest_path = manifests[0]
+            manifest = json.loads(manifest_path.read_text())
+            if roots[0] != manifest.get('archive_root'):
+                raise SystemExit('the archive root does not match the manifest')
+            archived = manifest_path.parent / 'controls-evidence'
+            if not archived.is_dir():
+                raise SystemExit('the archive holds no controls evidence member')
+            documents = (manifest.get('gates', {}).get('controls', {})
+                         .get('archived', {}).get('documents') or {})
+            if sorted(documents) != sorted(package.ARCHIVE_METADATA):
+                raise SystemExit('the archive manifest does not bind both metadata documents')
+            current, bound = package.verify_archived_inventory(archived, result['inventory'],
+                                                               documents)
+            audit.mkdir(exist_ok=True)
+            envelope = package.controls_evidence(archived, package.snapshot(), args.bend,
+                                                archived=True, documents=documents,
+                                                audit=audit)
+            if envelope['reduction_sha256'] != result['reduction_sha256']:
+                raise SystemExit('the archived envelope produced a different stable reduction')
+            required = sorted(entry.name for entry in audit.rglob('*') if entry.is_file())
+            if not required:
+                raise SystemExit('the archived readback retained no classifier acquisition')
+            return {'root': roots[0], 'members': len(current['members']),
+                    'documents': sorted(documents), 'archive': str(args.archive),
+                    'archive_sha256': observed, 'extracted_acquisition': str(audit),
+                    'extracted_acquisition_records': len(required),
+                    'documents_staged_scope': 'this readback hashes extracted bytes; '
+                                              'the package staged record is separate'}
+
+        attempt(run, record, 'archive-readback', observe_archive)
     if args.receipt:
-        import subprocess as _subprocess
-        logs = run / 'receipt-logs'
-        logs.mkdir(exist_ok=True)
-        destination, receipt = package.reuse_gates(pathlib.Path(args.receipt),
-                                                   args.receipt_sha256, args.bend, logs,
-                                                   package.snapshot())
-        fresh = receipt.get('controls_evidence') or {}
-        if fresh.get('reduction_sha256') != result['reduction_sha256']:
-            raise SystemExit('the reused receipt names a different stable reduction')
-        record.append({'name': 'receipt-validation', 'outcome': 'verified',
-                       'scope': 'receipt summary and logs against the fresh reduction',
-                       'receipt': str(destination)})
+        def observe_receipt():
+            """Validate a supplied receipt against the fresh reduction."""
+            logs = run / 'receipt-logs'
+            logs.mkdir(exist_ok=True)
+            destination, receipt = package.reuse_gates(pathlib.Path(args.receipt),
+                                                       args.receipt_sha256, args.bend, logs,
+                                                       package.snapshot())
+            fresh = receipt.get('controls_evidence') or {}
+            if fresh.get('reduction_sha256') != result['reduction_sha256']:
+                raise SystemExit('the reused receipt names a different stable reduction')
+            return {'scope': 'receipt summary and logs against the fresh reduction; '
+                             'distinct from archive-fed full package reuse',
+                    'receipt': str(destination)}
+
+        attempt(run, record, 'receipt-validation', observe_receipt,
+                receipt=str(args.receipt))
     (run / 'run.json').write_text(json.dumps({'children': record}, indent=2) + '\n')
     print('recipe complete; child receipts and streams are under ' + str(run))
 
