@@ -202,20 +202,81 @@ def capture_check(recorded: Fps, verified: Fps) -> CaptureCheck:
 def applies_catalog(+path: String, +recorded_digest: String, +current_digest: String) -> Applies:
   Bool.pick(Applies, String.eq(recorded_digest, current_digest), ACurrent{}, AStale{Eng.ss_one(path)})
 
-# A runtime observation is current only in the same live epoch; a captured
-# value after resume is historical and never becomes a fresh live value.
-#
-# The epoch is the same monotone lifetime counter the runtime reference carries,
-# as its exact decimal text, so no U32 conversion can truncate or wrap it. This
-# is a freshness comparison over evidence the runtime owner supplies: it is not
-# a stop-state authority and it grants nothing. Authority to use or control a
-# runtime comes from the owned Runtime/CDP contract, which binds the stored
-# target, session, thread and stop identity; until that callable contract is
-# supplied this comparison composes with nothing and no runtime state is added
-# here.
-def applies_runtime(+recorded_epoch: String, +live_epoch: String, +live: Bool) -> Applies:
-  Bool.pick(Applies, Bool.and(live, String.eq(recorded_epoch, live_epoch)), ACurrent{},
-  Bool.pick(Applies, live, AHistorical{"runtime epoch advanced"}, AHistorical{"runtime is not live"}))
+# --- runtime references ------------------------------------------------------
+# The identity a runtime reference carries. The caller obtains the same fields
+# from the owned runtime contract and the two are compared here; this module
+# reads no runtime state, advances no transition and grants nothing.
+type RuntimeIdentity is Data:
+  RId{runtime: String, adapter: String, thread: String, epoch: String, mutation: String}
+
+def same_runtime_identity(+a: RuntimeIdentity, +b: RuntimeIdentity) -> Bool:
+  match a:
+    case RId{runtime, adapter, thread, epoch, mutation}:
+      match b:
+        case RId{other_runtime, other_adapter, other_thread, other_epoch, other_mutation}:
+          Bool.and(String.eq(runtime, other_runtime),
+          Bool.and(String.eq(adapter, other_adapter),
+          Bool.and(String.eq(thread, other_thread),
+          Bool.and(String.eq(epoch, other_epoch), String.eq(mutation, other_mutation)))))
+
+# What the owned runtime contract reports now: the canonical identity, whether
+# the thread is live, whether the child has exited, whether the runtime is
+# paused, whether a stop is recorded, and whether the reference is scoped to a
+# pause. A recorded stop committed together with an admitted record is the
+# contract's evidence; a caller-supplied decision or a liveness flag alone is
+# not authority, and nothing here grants one.
+type RuntimeNow is Data:
+  Now{identity: RuntimeIdentity, live_thread: Bool, child_exited: Bool, paused: Bool, stop_recorded: Bool, pause_scoped: Bool}
+
+def now_identity(r: RuntimeNow) -> RuntimeIdentity:
+  match r:
+    case Now{identity, live_thread, child_exited, paused, stop_recorded, pause_scoped}: identity
+
+def now_live_thread(r: RuntimeNow) -> Bool:
+  match r:
+    case Now{identity, live_thread, child_exited, paused, stop_recorded, pause_scoped}: live_thread
+
+def now_child_exited(r: RuntimeNow) -> Bool:
+  match r:
+    case Now{identity, live_thread, child_exited, paused, stop_recorded, pause_scoped}: child_exited
+
+def now_paused(r: RuntimeNow) -> Bool:
+  match r:
+    case Now{identity, live_thread, child_exited, paused, stop_recorded, pause_scoped}: paused
+
+def now_stop_recorded(r: RuntimeNow) -> Bool:
+  match r:
+    case Now{identity, live_thread, child_exited, paused, stop_recorded, pause_scoped}: stop_recorded
+
+def now_pause_scoped(r: RuntimeNow) -> Bool:
+  match r:
+    case Now{identity, live_thread, child_exited, paused, stop_recorded, pause_scoped}: pause_scoped
+
+# Identity is decided first: a reference whose runtime, adapter, thread, epoch
+# or mutation generation differs belongs to another lifetime, whatever the
+# current liveness. A live thread is required next, then a child that has not
+# exited; an exit makes every observation of that child historical. A reference
+# scoped to a pause additionally requires the recorded stop in a paused
+# runtime, and without that evidence its applicability is unknown with the
+# cause rather than current.
+def rref_identity(recorded: RuntimeIdentity, +now: RuntimeNow) -> Applies:
+  Bool.pick(Applies, same_runtime_identity(recorded, now_identity(now)), rref_live(now), AHistorical{"runtime identity changed"})
+
+def rref_live(+now: RuntimeNow) -> Applies:
+  Bool.pick(Applies, now_live_thread(now), rref_exit(now), AHistorical{"runtime thread is not live"})
+
+def rref_exit(+now: RuntimeNow) -> Applies:
+  Bool.pick(Applies, now_child_exited(now), AHistorical{"runtime child exited"}, rref_scope(now))
+
+def rref_scope(+now: RuntimeNow) -> Applies:
+  Bool.pick(Applies, now_pause_scoped(now), rref_stop(now), ACurrent{})
+
+def rref_stop(+now: RuntimeNow) -> Applies:
+  Bool.pick(Applies, Bool.and(now_paused(now), now_stop_recorded(now)), ACurrent{},
+    AUnknown{"pause-scoped reference requires a recorded stop in a paused runtime"})
+
+def applies_runtime_ref(recorded: RuntimeIdentity, now: RuntimeNow) -> Applies:
+  rref_identity(recorded, now)
 
 # --- connection binding ------------------------------------------------------
 # A catalog snapshot and its target plan share one live connection and read

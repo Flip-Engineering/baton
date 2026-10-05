@@ -208,11 +208,18 @@
       "law": "context_snapshot_a_changed_schema_digest_is_stale_with_the_path"
     },
     {
-      "name": "runtime-applicability-always-reads-current",
+      "name": "runtime-applicability-ignores-the-identity",
       "file": "bend2/src/context/snapshot.bend",
-      "find": "  Bool.pick(Applies, Bool.and(live, String.eq(recorded_epoch, live_epoch)), ACurrent{},",
+      "find": "  Bool.pick(Applies, same_runtime_identity(recorded, now_identity(now)), rref_live(now), AHistorical{\"runtime identity changed\"})",
+      "replace": "  Bool.pick(Applies, True{}, rref_live(now), AHistorical{\"runtime identity changed\"})",
+      "law": "context_snapshot_an_advanced_epoch_is_a_different_lifetime"
+    },
+    {
+      "name": "runtime-applicability-skips-the-recorded-stop",
+      "file": "bend2/src/context/snapshot.bend",
+      "find": "  Bool.pick(Applies, Bool.and(now_paused(now), now_stop_recorded(now)), ACurrent{},",
       "replace": "  Bool.pick(Applies, True{}, ACurrent{},",
-      "law": "context_snapshot_an_advanced_epoch_is_historical"
+      "law": "context_snapshot_a_pause_scoped_reference_requires_a_recorded_stop"
     },
     {
       "name": "plan-binding-accepts-a-detached-snapshot",

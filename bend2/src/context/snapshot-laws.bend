@@ -135,35 +135,84 @@ law context_snapshot_a_changed_schema_digest_is_stale_with_the_path:
 def context_snapshot_a_changed_schema_digest_is_stale_with_the_path():
   {==}
 
-# --- runtime applicability ---------------------------------------------------
-law context_snapshot_a_same_live_epoch_is_current:
-  {Snap.applies_runtime("3", "3", True{}) == Snap.ACurrent{} : Snap.Applies}
+# --- runtime references ------------------------------------------------------
+def rt_a() -> Snap.RuntimeIdentity:
+  Snap.RId{"rt:q7", "ad:1", "worker:2", "3", "5"}
 
-def context_snapshot_a_same_live_epoch_is_current():
+def rt_advanced() -> Snap.RuntimeIdentity:
+  Snap.RId{"rt:q7", "ad:1", "worker:2", "4", "5"}
+
+def rt_other_thread() -> Snap.RuntimeIdentity:
+  Snap.RId{"rt:q7", "ad:1", "worker:3", "3", "5"}
+
+def rt_big() -> Snap.RuntimeIdentity:
+  Snap.RId{"rt:q7", "ad:1", "worker:2", "18446744073709551617", "5"}
+
+def rnow(identity: Snap.RuntimeIdentity, live_thread: Bool, exited: Bool, paused: Bool, stop_recorded: Bool, pause_scoped: Bool) -> Snap.RuntimeNow:
+  Snap.Now{identity, live_thread, exited, paused, stop_recorded, pause_scoped}
+
+law context_snapshot_a_live_matching_runtime_reference_is_current:
+  {Snap.applies_runtime_ref(rt_a(), rnow(rt_a(), True{}, False{}, False{}, False{}, False{})) == Snap.ACurrent{} : Snap.Applies}
+
+def context_snapshot_a_live_matching_runtime_reference_is_current():
   {==}
 
-law context_snapshot_an_advanced_epoch_is_historical:
-  {Snap.applies_runtime("3", "4", True{}) == Snap.AHistorical{"runtime epoch advanced"} : Snap.Applies}
+law context_snapshot_an_advanced_epoch_is_a_different_lifetime:
+  {Snap.applies_runtime_ref(rt_a(), rnow(rt_advanced(), True{}, False{}, False{}, False{}, False{})) == Snap.AHistorical{"runtime identity changed"} : Snap.Applies}
 
-def context_snapshot_an_advanced_epoch_is_historical():
+def context_snapshot_an_advanced_epoch_is_a_different_lifetime():
   {==}
 
-law context_snapshot_a_dead_runtime_is_historical:
-  {Snap.applies_runtime("3", "3", False{}) == Snap.AHistorical{"runtime is not live"} : Snap.Applies}
+law context_snapshot_a_different_thread_is_a_different_lifetime:
+  {Snap.applies_runtime_ref(rt_a(), rnow(rt_other_thread(), True{}, False{}, False{}, False{}, False{})) == Snap.AHistorical{"runtime identity changed"} : Snap.Applies}
 
-def context_snapshot_a_dead_runtime_is_historical():
+def context_snapshot_a_different_thread_is_a_different_lifetime():
   {==}
 
-# The epoch is compared as its exact decimal text, so a counter beyond the U32
-# range stays exact and cannot wrap onto another lifetime.
+law context_snapshot_identity_is_decided_before_liveness:
+  {Snap.applies_runtime_ref(rt_a(), rnow(rt_advanced(), False{}, False{}, False{}, False{}, False{})) == Snap.AHistorical{"runtime identity changed"} : Snap.Applies}
+
+def context_snapshot_identity_is_decided_before_liveness():
+  {==}
+
+law context_snapshot_a_dead_runtime_thread_is_historical:
+  {Snap.applies_runtime_ref(rt_a(), rnow(rt_a(), False{}, False{}, False{}, False{}, False{})) == Snap.AHistorical{"runtime thread is not live"} : Snap.Applies}
+
+def context_snapshot_a_dead_runtime_thread_is_historical():
+  {==}
+
+law context_snapshot_an_exited_child_is_historical:
+  {Snap.applies_runtime_ref(rt_a(), rnow(rt_a(), True{}, True{}, False{}, False{}, False{})) == Snap.AHistorical{"runtime child exited"} : Snap.Applies}
+
+def context_snapshot_an_exited_child_is_historical():
+  {==}
+
+law context_snapshot_a_pause_scoped_reference_requires_a_recorded_stop:
+  {Snap.applies_runtime_ref(rt_a(), rnow(rt_a(), True{}, False{}, True{}, False{}, True{})) == Snap.AUnknown{"pause-scoped reference requires a recorded stop in a paused runtime"} : Snap.Applies}
+
+def context_snapshot_a_pause_scoped_reference_requires_a_recorded_stop():
+  {==}
+
+law context_snapshot_a_pause_scoped_reference_with_a_recorded_stop_is_current:
+  {Snap.applies_runtime_ref(rt_a(), rnow(rt_a(), True{}, False{}, True{}, True{}, True{})) == Snap.ACurrent{} : Snap.Applies}
+
+def context_snapshot_a_pause_scoped_reference_with_a_recorded_stop_is_current():
+  {==}
+
+law context_snapshot_a_pause_scoped_reference_needs_a_paused_runtime:
+  {Snap.applies_runtime_ref(rt_a(), rnow(rt_a(), True{}, False{}, False{}, True{}, True{})) == Snap.AUnknown{"pause-scoped reference requires a recorded stop in a paused runtime"} : Snap.Applies}
+
+def context_snapshot_a_pause_scoped_reference_needs_a_paused_runtime():
+  {==}
+
 law context_snapshot_an_unbounded_epoch_is_compared_exactly:
-  {Snap.applies_runtime("18446744073709551617", "18446744073709551617", True{}) == Snap.ACurrent{} : Snap.Applies}
+  {Snap.applies_runtime_ref(rt_big(), rnow(rt_big(), True{}, False{}, False{}, False{}, False{})) == Snap.ACurrent{} : Snap.Applies}
 
 def context_snapshot_an_unbounded_epoch_is_compared_exactly():
   {==}
 
 law context_snapshot_an_unbounded_epoch_that_advanced_is_historical:
-  {Snap.applies_runtime("18446744073709551617", "18446744073709551618", True{}) == Snap.AHistorical{"runtime epoch advanced"} : Snap.Applies}
+  {Snap.applies_runtime_ref(rt_big(), rnow(Snap.RId{"rt:q7", "ad:1", "worker:2", "18446744073709551618", "5"}, True{}, False{}, False{}, False{}, False{})) == Snap.AHistorical{"runtime identity changed"} : Snap.Applies}
 
 def context_snapshot_an_unbounded_epoch_that_advanced_is_historical():
   {==}
