@@ -210,7 +210,7 @@
     {
       "name": "runtime-applicability-always-reads-current",
       "file": "bend2/src/context/snapshot.bend",
-      "find": "  Bool.pick(Applies, Bool.and(live, U32.is_eq(recorded_epoch, live_epoch)), ACurrent{},",
+      "find": "  Bool.pick(Applies, Bool.and(live, String.eq(recorded_epoch, live_epoch)), ACurrent{},",
       "replace": "  Bool.pick(Applies, True{}, ACurrent{},",
       "law": "context_snapshot_an_advanced_epoch_is_historical"
     },

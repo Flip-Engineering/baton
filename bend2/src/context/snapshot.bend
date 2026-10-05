@@ -204,8 +204,17 @@ def applies_catalog(+path: String, +recorded_digest: String, +current_digest: St
 
 # A runtime observation is current only in the same live epoch; a captured
 # value after resume is historical and never becomes a fresh live value.
-def applies_runtime(+recorded_epoch: U32, +live_epoch: U32, +live: Bool) -> Applies:
-  Bool.pick(Applies, Bool.and(live, U32.is_eq(recorded_epoch, live_epoch)), ACurrent{},
+#
+# The epoch is the same monotone lifetime counter the runtime reference carries,
+# as its exact decimal text, so no U32 conversion can truncate or wrap it. This
+# is a freshness comparison over evidence the runtime owner supplies: it is not
+# a stop-state authority and it grants nothing. Authority to use or control a
+# runtime comes from the owned Runtime/CDP contract, which binds the stored
+# target, session, thread and stop identity; until that callable contract is
+# supplied this comparison composes with nothing and no runtime state is added
+# here.
+def applies_runtime(+recorded_epoch: String, +live_epoch: String, +live: Bool) -> Applies:
+  Bool.pick(Applies, Bool.and(live, String.eq(recorded_epoch, live_epoch)), ACurrent{},
   Bool.pick(Applies, live, AHistorical{"runtime epoch advanced"}, AHistorical{"runtime is not live"}))
 
 # --- connection binding ------------------------------------------------------

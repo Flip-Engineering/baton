@@ -137,21 +137,35 @@ def context_snapshot_a_changed_schema_digest_is_stale_with_the_path():
 
 # --- runtime applicability ---------------------------------------------------
 law context_snapshot_a_same_live_epoch_is_current:
-  {Snap.applies_runtime(3, 3, True{}) == Snap.ACurrent{} : Snap.Applies}
+  {Snap.applies_runtime("3", "3", True{}) == Snap.ACurrent{} : Snap.Applies}
 
 def context_snapshot_a_same_live_epoch_is_current():
   {==}
 
 law context_snapshot_an_advanced_epoch_is_historical:
-  {Snap.applies_runtime(3, 4, True{}) == Snap.AHistorical{"runtime epoch advanced"} : Snap.Applies}
+  {Snap.applies_runtime("3", "4", True{}) == Snap.AHistorical{"runtime epoch advanced"} : Snap.Applies}
 
 def context_snapshot_an_advanced_epoch_is_historical():
   {==}
 
 law context_snapshot_a_dead_runtime_is_historical:
-  {Snap.applies_runtime(3, 3, False{}) == Snap.AHistorical{"runtime is not live"} : Snap.Applies}
+  {Snap.applies_runtime("3", "3", False{}) == Snap.AHistorical{"runtime is not live"} : Snap.Applies}
 
 def context_snapshot_a_dead_runtime_is_historical():
+  {==}
+
+# The epoch is compared as its exact decimal text, so a counter beyond the U32
+# range stays exact and cannot wrap onto another lifetime.
+law context_snapshot_an_unbounded_epoch_is_compared_exactly:
+  {Snap.applies_runtime("18446744073709551617", "18446744073709551617", True{}) == Snap.ACurrent{} : Snap.Applies}
+
+def context_snapshot_an_unbounded_epoch_is_compared_exactly():
+  {==}
+
+law context_snapshot_an_unbounded_epoch_that_advanced_is_historical:
+  {Snap.applies_runtime("18446744073709551617", "18446744073709551618", True{}) == Snap.AHistorical{"runtime epoch advanced"} : Snap.Applies}
+
+def context_snapshot_an_unbounded_epoch_that_advanced_is_historical():
   {==}
 
 # --- connection binding ------------------------------------------------------
