@@ -443,12 +443,15 @@ def validate_result(parsed, label):
 
 
 def parse_result(evidence, role):
+    if evidence.get('construction_failure'):
+        raise Blocker(f"{role} could not be constructed: {evidence['construction_failure']}")
     if evidence.get('launch_failure'):
         raise Blocker(f"{role} did not launch: {evidence['launch_failure']}")
     if evidence.get('decode_failure'):
         raise Blocker(f'{role} stdout is not valid UTF-8: {evidence["decode_failure"]}')
-    if evidence.get('exit') != 0:
-        raise Blocker(f"{role} exited {evidence['exit']}")
+    exit_code = evidence.get('exit')
+    if exit_code != 0:
+        raise Blocker(f'{role} exited {exit_code!r}')
     lines = [line for line in evidence.get('stdout', '').splitlines() if line.strip()]
     if len(lines) != 1:
         raise Blocker(f'{role} reported {len(lines)} result lines, expected exactly one')
@@ -655,39 +658,60 @@ def self_check():
             self.stdout = stdout.encode('utf-8')
             self.stderr = b''
 
-    def _fault_after_first(argv, input=None, capture_output=True, cwd=None):
-        if any(PLACEHOLDER in argument for argument in argv):
-            raise ValueError('embedded null byte')
-        return _Completed('{"disposition": "accepted", "fields": {"n": {"lexeme": "1"}}}')
-
-    retention_case = {
-        'name': 'retention', 'octets_hex': '', 'octets_sha256': EMPTY_OCTETS_SHA256,
-        'expected': {'disposition': 'accepted', 'fields': {'n': {'lexeme': '1'}}},
-    }
-    retention_entries = {
+    facts_text = '{"disposition": "accepted", "fields": {"n": {"lexeme": "1"}}}'
+    expected_facts = {'disposition': 'accepted', 'fields': {'n': {'lexeme': '1'}}}
+    entries_under_test = {
         'candidate': {'argv': ['/candidate/bridge', '--protocol'],
                       'executable': '/candidate/bridge', 'protocol': 'json-lines'},
         'oracle': {'argv': ['/oracle/bridge', PLACEHOLDER + '/frame_kind.sql'],
                    'executable': '/oracle/bridge', 'protocol': 'json-lines'},
     }
-    retention_report = {'cases': [], 'mismatches': [], 'inconclusive': []}
-    run_case(retention_case, retention_entries, '/work/base', '/work/base/expressions',
-             retention_report, _fault_after_first)
-    observed = retention_report['cases'][0] if retention_report['cases'] else {}
-    roles = observed.get('roles', {})
-    retention_ok = (len(retention_report['cases']) == 1
-                    and observed.get('case') == 'retention'
-                    and set(roles) == set(ROLES)
-                    and bool(roles.get('candidate', {}).get('facts'))
-                    and 'launch_failure' in roles.get('oracle', {})
-                    and len(retention_report['inconclusive']) == 1
-                    and not retention_report['mismatches'])
-    report['self_check'].append({'control': 'second-role-fault-retains-both-roles',
-                                 'outcome': 'accepted' if retention_ok else 'rejected',
-                                 'roles': sorted(roles)})
-    if not retention_ok:
-        report['mismatches'].append({'case': 'second-role-fault-retains-both-roles',
-                                     'differences': ['the case and both role records must survive']})
+    retention_case = {
+        'name': 'retention', 'octets_hex': '', 'octets_sha256': EMPTY_OCTETS_SHA256,
+        'expected': expected_facts,
+    }
+
+    def retention_report(failing_role, order):
+        """Distinguishes the role by its verified executable, which survives launch construction."""
+
+        def double(argv, input=None, capture_output=True, cwd=None):
+            order.append(argv[0])
+            if argv[0] == entries_under_test[failing_role]['executable']:
+                raise ValueError('the ' + failing_role + ' double refused the launch')
+            return _Completed(facts_text)
+
+        local = {'cases': [], 'mismatches': [], 'inconclusive': []}
+        run_case(retention_case, entries_under_test, '/work/base', '/work/base/expressions',
+                 local, double)
+        return local
+
+    for failing_role in ROLES:
+        healthy_role = 'oracle' if failing_role == 'candidate' else 'candidate'
+        order = []
+        local = retention_report(failing_role, order)
+        observed = local['cases'][0] if local['cases'] else {}
+        roles = observed.get('roles', {})
+        reason = str(roles.get(failing_role, {}).get('failure', ''))
+        inconclusive = local['inconclusive']
+        ok = (len(local['cases']) == 1
+              and observed.get('case') == 'retention'
+              and set(roles) == set(ROLES)
+              and roles.get(healthy_role, {}).get('facts') == expected_facts
+              and 'ValueError' in reason and failing_role in reason
+              and len(inconclusive) == 1
+              and inconclusive[0].get('case') == 'retention'
+              and failing_role in str(inconclusive[0].get('reason', ''))
+              and not local['mismatches']
+              and order == [entries_under_test['candidate']['executable'],
+                            entries_under_test['oracle']['executable']])
+        control = f'{failing_role}-fault-retains-both-roles'
+        report['self_check'].append({'control': control,
+                                     'outcome': 'accepted' if ok else 'rejected',
+                                     'invocation_order': order, 'failure': reason})
+        if not ok:
+            report['mismatches'].append({'case': control,
+                                         'differences': ['the case and both role records must '
+                                                         'survive with a role-attributed failure']})
 
     placeholder_bridge = {'path': '/w/' + PLACEHOLDER + '/bridge'}
     placeholder_manifest = {'invocation': {'oracle': {
