@@ -382,9 +382,11 @@ def advance(record: RuntimeRecord, event: RuntimeEvent) -> Transition:
               Refused{"evaluationSent from " ++ state_name(state)}),
             Refused{"counterMalformed"})
         case EvEvaluationSettled{}:
-          Bool.pick(Transition, pending_evaluation(pending),
-            Advanced{Rec{state, epoch, mutation, Idle{}, liveness}},
-            Refused{"evaluationSettled without a pending evaluation"})
+          Bool.pick(Transition, is_exited(state),
+            Refused{"evaluationSettled after exited"},
+            Bool.pick(Transition, pending_evaluation(pending),
+              Advanced{Rec{state, epoch, mutation, Idle{}, liveness}},
+              Refused{"evaluationSettled without a pending evaluation"}))
         case EvContextDestroyed{}:
           Bool.pick(Transition, counter_valid(epoch),
             Bool.pick(Transition, is_exited(state),

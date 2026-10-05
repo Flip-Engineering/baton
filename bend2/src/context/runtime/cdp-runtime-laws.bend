@@ -226,6 +226,24 @@ law an_intent_settled_after_exit_is_refused:
 def an_intent_settled_after_exit_is_refused(epoch, mutation):
   {==}
 
+law an_evaluation_settlement_after_exit_is_refused:
+  for +epoch: String
+  for +mutation: String
+  {R.advance(R.Rec{R.Exited{}, epoch, mutation, R.Evaluation{"q-eval"}, R.LivenessExited{}}, R.EvEvaluationSettled{}) == R.Refused{"evaluationSettled after exited"} : R.Transition}
+
+def an_evaluation_settlement_after_exit_is_refused(epoch, mutation):
+  {==}
+
+law a_recorded_evaluation_settles_to_idle:
+  for +state: R.RuntimeState
+  for +epoch: String
+  for +mutation: String
+  for +liveness: R.Liveness
+  {R.advance(R.Rec{state, epoch, mutation, R.Evaluation{"q-eval"}, liveness}, R.EvEvaluationSettled{}) == R.Advanced{R.Rec{state, epoch, mutation, R.Idle{}, liveness}} : R.Transition}
+
+def a_recorded_evaluation_settles_to_idle(state, epoch, mutation, liveness):
+  {==}
+
 law a_stopped_event_records_a_live_stop:
   for +previous: R.StopLiveness
   {R.stop_liveness(previous, R.EvPaused{}) == R.StopLive{} : R.StopLiveness}
