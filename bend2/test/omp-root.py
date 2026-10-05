@@ -321,6 +321,9 @@ class OmpRootAdapter(unittest.TestCase):
         self.assertIn('delivery ID', args_text)
         self.assertIn("orchestra --index --for 'root' --pretty", args_text)
         self.assertIn('--sender PLAYER --kind report --state all', args_text)
+        self.assertIn('inputRead argv', args_text)
+        self.assertIn('pendingCount excludes stopped execution inputs', args_text)
+        self.assertIn('unacknowledgedCount includes every NULL receipt', args_text)
         self.assertIn('players', args_text)
         self.assertIn('land', args_text)
 

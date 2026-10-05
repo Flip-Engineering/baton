@@ -131,6 +131,27 @@ for (const { law, file } of rows) {
 // it claims to bind, and it is reported as a failure.
 const MUTATIONS = [
   {
+    name: 'structure-embeds-retained-message-rows',
+    file: 'bend2/src/coordinator/commands.bend',
+    find: ",'limitations',(SELECT json_group_array",
+    replace: ",'pending',(SELECT json_group_array(json_object('id',id)) FROM messages),'limitations',(SELECT json_group_array",
+    law: 'structural_index_contains_structure_and_actor_counts',
+  },
+  {
+    name: 'structure-unacknowledged-count-omits-execution-inputs',
+    file: 'bend2/src/coordinator/commands.bend',
+    find: "'unacknowledgedCount',(SELECT count(*) FROM messages WHERE recipient=s.id AND receipt IS NULL)",
+    replace: "'unacknowledgedCount',(SELECT count(*) FROM messages WHERE recipient=s.id AND receipt IS NULL AND kind='note')",
+    law: 'structural_index_preserves_recorded_process_and_assignment_facts',
+  },
+  {
+    name: 'structure-input-lookup-loses-literal-recipient',
+    file: 'bend2/src/coordinator/commands.bend',
+    find: "'inputRead',json_array('inbox',s.id,'--index')",
+    replace: "'inputRead',json_array('pending','--index')",
+    law: 'structural_index_preserves_recorded_process_and_assignment_facts',
+  },
+  {
     name: 'index-snapshot-enters-write-capable-host',
     file: 'bend2/src/coordinator/index-reads.bend',
     find: 'DB.Sql.read(db,C.sql(command))',
