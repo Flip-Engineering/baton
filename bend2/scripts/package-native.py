@@ -169,6 +169,8 @@ def archive_inputs(archive, compiler):
 
 
 RECEIPT_SCHEMA = 'baton2-native-gate-receipt-v2'
+INVENTORY_SCHEMA = 'baton2-controls-inventory-v1'
+REDUCTION_SCHEMA = 'baton2-controls-reduction-v1'
 CONTROL_SCRIPT = 'bend2/scripts/laws-check.mjs'
 CONTROL_FIELDS = ('id', 'kind', 'law', 'module', 'definition_sha256')
 VERIFIER_MEMBERS = ('checker_sha256', 'aggregate_module_sha256', 'classifier_module_sha256',
@@ -414,7 +416,9 @@ def run_gates(compiler, env, logs, initial, before_inputs, remote=None):
                 stage['evidence'] = {'path': remote['path'], 'sha256': remote['sha256'],
                                      'binding': remote['binding'], 'cases': remote['cases'],
                                      'groups': remote['groups'], 'origin': remote['origin'],
-                                     'closure_sha256': remote['closure_sha256']}
+                                     'closure_sha256': remote['closure_sha256'],
+                                     'inventory_sha256': remote['inventory']['inventory_sha256'],
+                                     'reduction_sha256': remote['reduction']['sha256']}
             same_source(stage['before'], initial)
             summary['stages'].append(stage)
             write_json(path, summary)
@@ -511,7 +515,7 @@ def reuse_gates(path, expected_sha, compiler, logs, initial):
             record = summary.get('controls_evidence') or {}
             reference = {key: record.get(key) for key in
                          ('path', 'sha256', 'binding', 'cases', 'groups', 'origin',
-                          'closure_sha256')}
+                          'closure_sha256', 'inventory_sha256', 'reduction_sha256')}
             require(stage.get('evidence') == reference,
                     'A remote stage must reference the recorded producer evidence exactly')
             require(stage.get('local_argv') == list(dict(GATES)[name]),
@@ -536,7 +540,7 @@ def reuse_gates(path, expected_sha, compiler, logs, initial):
         recorded = summary.get('controls_evidence') or {}
         reference = {key: recorded.get(key) for key in
                      ('path', 'sha256', 'binding', 'cases', 'groups', 'origin',
-                      'closure_sha256')}
+                      'closure_sha256', 'inventory_sha256', 'reduction_sha256')}
         for stage in summary['stages']:
             if stage.get('route') != 'remote-module-groups':
                 continue
@@ -582,7 +586,7 @@ def runtime_set_digest(compiler):
 
 
 def classify_control(case, result, streams, baseline, evidence_root, source, compiler_sha256,
-                    delta=None, supplied=None):
+                    delta=None, supplied=None, audit=None):
     """Ask the checker's classifier what the verified bytes establish.
 
     One JSON request on stdin, one verdict line on stdout. The checker owns
@@ -607,18 +611,37 @@ def classify_control(case, result, streams, baseline, evidence_root, source, com
         request['delta'] = delta
     if supplied is not None:
         request['supplied'] = supplied
-    completed = subprocess.run(['node', str(ROOT / CONTROL_SCRIPT), '--classify'], cwd=ROOT,
-                               env={'PATH': os.environ.get('PATH', ''), 'BEND_NO_TELEMETRY': '1'},
-                               input=json.dumps(request), text=True, capture_output=True)
+    argv = ['node', str(ROOT / CONTROL_SCRIPT), '--classify']
+    request_bytes = json.dumps(request).encode('utf-8')
+    completed = subprocess.run(argv, cwd=ROOT, input=request_bytes, capture_output=True,
+                               env={'PATH': os.environ.get('PATH', ''), 'BEND_NO_TELEMETRY': '1'})
+    acquisition = {'argv': argv, 'cwd': str(ROOT), 'returncode': completed.returncode,
+                   'signal': child_signal(completed.returncode),
+                   'spawn_error': None,
+                   'request_sha256': hashlib.sha256(request_bytes).hexdigest(),
+                   'request_bytes': len(request_bytes),
+                   'stdout_sha256': hashlib.sha256(completed.stdout).hexdigest(),
+                   'stdout_bytes': len(completed.stdout),
+                   'stderr_sha256': hashlib.sha256(completed.stderr).hexdigest(),
+                   'stderr_bytes': len(completed.stderr)}
+    if audit is not None:
+        slug = str(case.get('id', 'case')).replace(':', '-').replace('/', '_')
+        audit.mkdir(parents=True, exist_ok=True)
+        (audit / (slug + '.request.json')).write_bytes(request_bytes)
+        (audit / (slug + '.stdout')).write_bytes(completed.stdout)
+        (audit / (slug + '.stderr')).write_bytes(completed.stderr)
     if completed.returncode != 0:
-        raise RuntimeError('The checker classification refused the request: '
-                           + completed.stderr.strip()[:200])
+        raise RuntimeError('The checker classification refused the request with status '
+                           + str(completed.returncode) + ': ' + completed.stderr.decode('utf-8', 'replace'))
     require(not completed.stderr.strip(),
-            'The checker classification wrote to stderr: ' + completed.stderr[:120])
-    lines = [line for line in completed.stdout.splitlines() if line.strip()]
+            'The checker classification wrote to stderr: '
+            + completed.stderr.decode('utf-8', 'replace')[:120])
+    lines = completed.stdout.decode('utf-8').splitlines()
+    lines = [line for line in lines if line.strip()]
     require(len(lines) == 1,
             'The checker classification printed ' + str(len(lines)) + ' response lines')
     verdict = json.loads(lines[0])
+    verdict['acquisition'] = acquisition
     require(verdict.get('schema') == 'capacity-controls/classify-verdict@1',
             'The checker classification answered another schema: '
             + json.dumps(verdict.get('schema')))
@@ -706,7 +729,85 @@ def verify_delta(record, label):
     return delta
 
 
-def controls_evidence(directory, initial, compiler):
+def producer_inventory(directory, destination=None):
+    """Inventory the evidence closure bytes and optionally copy it elsewhere.
+
+    Members are confined to the directory and must be regular files; a symlink
+    anywhere in the closure refuses. The inventory digest covers the member rows
+    only, so the inventory can never include itself. The copy is byte-for-byte
+    and re-hashed, which is what makes the closure relocatable for reuse.
+    """
+    root = directory.resolve()
+    members = []
+    for path in sorted(root.rglob('*')):
+        relative = path.relative_to(root)
+        require(not path.is_symlink(), 'The evidence closure holds a symlink: ' + str(relative))
+        if path.is_dir():
+            continue
+        require(path.is_file(), 'The evidence closure holds a non-regular member: ' + str(relative))
+        require('..' not in PurePosixPath(relative.as_posix()).parts,
+                'An evidence member escapes its root: ' + str(relative))
+        members.append({'path': relative.as_posix(), 'bytes': path.stat().st_size,
+                        'sha256': sha256(path)})
+    require(members, 'The evidence closure is empty: ' + str(root))
+    document = {'schema': INVENTORY_SCHEMA, 'root': str(root), 'members': members}
+    copied = None
+    if destination is not None:
+        for member in members:
+            target = destination / member['path']
+            target.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copyfile(root / member['path'], target)
+            require(sha256(target) == member['sha256'],
+                    'A copied evidence member changed: ' + member['path'])
+        copied = str(destination)
+    document['copied'] = copied
+    document['inventory_sha256'] = hashlib.sha256(
+        json.dumps(members, sort_keys=True, separators=(',', ':')).encode()).hexdigest()
+    return document
+
+
+def verify_inventory(directory, recorded):
+    """Re-hash a relocated closure and require it to match its inventory."""
+    current = producer_inventory(directory)
+    require(current['inventory_sha256'] == recorded.get('inventory_sha256'),
+            'The relocated evidence closure differs from its inventory')
+    return current
+
+
+def semantic_reduction(result, inventory):
+    """The versioned stable reduction over the qualified cases.
+
+    It names each case identity, its source, entry, definition, admitted
+    verifier digests, class, match and qualification, its diagnostic and delta
+    references and the baseline reference, plus the closure, evidence and
+    inventory digests. Ordering and serialization are fixed, so two reductions
+    of the same evidence are byte equal and a changed member changes the digest.
+    """
+    cases = []
+    for record in result['classifier']['verdicts']:
+        cases.append({'id': record['id'], 'group': record['group'], 'entry': record['entry'],
+                      'law': record['law'], 'attributed_law': record['attributed_law'],
+                      'definition_sha256': record['definition_sha256'],
+                      'case_sha256': record['case_sha256'],
+                      'class': record['class'], 'match': record['match'],
+                      'qualified': record['qualified'],
+                      'evidence_verified': record['evidence_verified'],
+                      'diagnostic_sha256': record['diagnostic_sha256'],
+                      'verifier': record['verifier'], 'source': record['source']})
+    document = {'schema': REDUCTION_SCHEMA, 'binding': result['binding'],
+                'closure_sha256': result['closure_sha256'],
+                'evidence_sha256': result['sha256'],
+                'inventory_sha256': inventory['inventory_sha256'],
+                'modules': result['modules'],
+                'cases': sorted(cases, key=lambda case: case['id'])}
+    digest = hashlib.sha256(json.dumps(document, sort_keys=True,
+                                       separators=(',', ':')).encode()).hexdigest()
+    return {'schema': REDUCTION_SCHEMA, 'document': document, 'sha256': digest}
+
+
+def controls_evidence(directory, initial, compiler, audit=None):
+    """audit is a directory that receives one acquisition record per case."""
+    audit_inventory = None
     """Validate remote module-group control evidence against this source.
 
     The evidence is the aggregate of one control job per module group. Each
@@ -846,7 +947,7 @@ def controls_evidence(directory, initial, compiler):
                        for stream in ('stdout', 'stderr')}
             verdict = classify_control(case, result, streams, baseline_reference, directory,
                                        source_pins, compiler_sha,
-                                       verify_delta(result, json.dumps(identity)))
+                                       verify_delta(result, json.dumps(identity)), audit)
             require(verdict.get('match') is True and verdict.get('qualified') is True
                     and verdict.get('evidence_verified') is True,
                     'The checker classifier did not qualify this control as an intended refusal: '
@@ -862,7 +963,8 @@ def controls_evidence(directory, initial, compiler):
                                   'definition_sha256': control['definition_sha256'],
                                   'case_sha256': hashlib.sha256(
                                       canonical_record_bytes(control)).hexdigest(),
-                                  'group': module, 'entry': entry, 'verifier': closure}
+                                  'group': module, 'entry': entry, 'verifier': closure,
+                                  'acquisition': verdict.get('acquisition')}
             require(verdict.get('attributed_law') == control['law']
                     and verdict.get('law') == control['law'],
                     'The classified diagnostic names another law: ' + json.dumps(identity))
@@ -898,11 +1000,14 @@ def controls_evidence(directory, initial, compiler):
     missing_cases = sorted(set(wanted) - set(seen_cases))
     require(not missing_cases, 'The controls evidence omits controls: ' + succinct(missing_cases))
     seconds = [span['seconds'] for span in spans]
+    inventory = producer_inventory(directory)
+    if audit is not None:
+        audit_inventory = producer_inventory(audit)
     closure = hashlib.sha256(json.dumps(
         {'baselines': [baselines[module] for module in sorted(baselines)],
          'receipts': [seen_cases[identity]['receipt'] for identity in sorted(seen_cases)]},
         sort_keys=True, separators=(',', ':')).encode('utf-8')).hexdigest()
-    return {'path': str(path), **file_info(path), 'cases': len(wanted), 'groups': len(modules),
+    result = {'path': str(path), **file_info(path), 'cases': len(wanted), 'groups': len(modules),
             'closure_sha256': closure,
             'binding': expected['sha256'], 'origin': origin, 'route': 'remote-module-groups',
             'checker_invocation': 'node ' + CONTROL_SCRIPT, 'modules': sorted(seen_modules),
@@ -912,10 +1017,14 @@ def controls_evidence(directory, initial, compiler):
                                              closure_sha256=closure,
                                              evidence_sha256=summary_sha)
                                         for identity in sorted(verdicts)]},
+            'inventory': inventory,
             'slowest_seconds': max(entry['resource']['real_seconds']
                                    for entry in seen_cases.values()),
             'largest_child_max_rss_bytes': max((entry['resource'].get('max_rss_bytes') or 0)
-                                               for entry in seen_cases.values())}
+                                               for entry in seen_cases.values()),
+            'audit': audit_inventory}
+    result['reduction'] = semantic_reduction(result, inventory)
+    return result
 
 
 def stage_adapters(payload):
@@ -1524,17 +1633,23 @@ def package(args):
         before_inputs = inputs(compiler, env, logs, 'before')
         archive, notices = archive_inputs(args.compiler_archive.resolve(), compiler)
         write_json(output / 'compiler-archive.json', archive)
-        controls = (controls_evidence(args.controls_evidence.resolve(), initial, compiler)
+        controls = (controls_evidence(args.controls_evidence.resolve(), initial, compiler,
+                                      audit=logs / 'classifier-audit')
                     if args.controls_evidence else None)
         if args.gate_receipt:
             if summary.get('route') == 'remote-module-groups':
                 record = summary.get('controls_evidence') or {}
                 require(controls is not None,
                         'A remote-route receipt must be supplied with its producer evidence')
-                require(controls['sha256'] == record.get('sha256')
-                        and controls['binding'] == record.get('binding')
-                        and controls['closure_sha256'] == record.get('closure_sha256'),
-                        'The supplied controls evidence is not the evidence the receipt recorded')
+                for field, fresh in (('sha256', controls['sha256']),
+                                     ('binding', controls['binding']),
+                                     ('closure_sha256', controls['closure_sha256']),
+                                     ('inventory_sha256', controls['inventory']['inventory_sha256']),
+                                     ('reduction_sha256', controls['reduction']['sha256'])):
+                    require(fresh == record.get(field),
+                            'The supplied controls evidence differs from the receipt at '
+                            + field + ': fresh ' + str(fresh) + ', recorded '
+                            + str(record.get(field)))
             require(summary['inputs_after'] == before_inputs, 'The receipt toolchain or host inputs differ from current inputs')
             input_boundary = 'Compiler libraries, CC and host captured after the supplied gates and checked again during packaging.'
         else:
