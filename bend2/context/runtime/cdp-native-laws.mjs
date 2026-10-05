@@ -50,6 +50,12 @@ const ENV = { ...process.env, BEND_NO_TELEMETRY: '1' };
 
 // One deliberate implementation change per law.
 const MUTATIONS = [
+  { name: 'launch-drops-its-control-grant', law: 'launch_requires_the_control_grant',
+    find: 'admit_control(effects, launch_state(state), pending, serialized(intent), intent)',
+    replace: 'admit_granted(launch_state(state), intent)' },
+  { name: 'launch-ignores-a-pending-intent', law: 'launch_is_refused_while_an_intent_is_pending',
+    find: 'admit_control(effects, launch_state(state), pending, serialized(intent), intent)',
+    replace: 'admit_granted(launch_state(state), intent)' },
   { name: 'pause-does-not-advance-the-epoch', law: 'a_pause_advances_the_epoch_by_one_successor',
     find: 'Advanced{Rec{Paused{}, counter_next(epoch), mutation, pending, LivenessLive{}}},',
     replace: 'Advanced{Rec{Paused{}, epoch, mutation, pending, LivenessLive{}}},' },
@@ -133,25 +139,39 @@ function main() {
   const rows = [];
   const baselineDir = prepareScratch();
   const baseline = compile(baselineDir);
-  rows.push({ control: 'entry-compiles-with-every-law-proven', passed: baseline.ok, detail: baseline.ok ? null : baseline.output.trimEnd() });
+  const baselinePath = join(RUN, 'baseline-compile.txt');
+  writeFileSync(baselinePath, `${baseline.output}\n`);
+  rows.push({
+    control: 'entry-compiles-with-every-law-proven',
+    passed: baseline.ok,
+    output: baselinePath,
+    detail: baseline.ok ? null : baseline.output.trimEnd(),
+  });
   if (!baseline.ok) return finish(rows);
 
   const names = lawNames(baselineDir);
+  let index = 0;
   for (const name of names) {
+    index += 1;
     const directory = prepareScratch();
     const removed = removeProof(join(directory, LAW_MODULE), name);
     const control = removed ? compile(directory) : { ok: true, output: '' };
     const passed = removed && !control.ok && /TODO found|expected :|Error/.test(control.output);
+    const outputPath = join(RUN, `control-${index}-${name}.txt`);
+    writeFileSync(outputPath, `${control.output}\n`);
     rows.push({
       control: `proof-removal:${name}`,
       law: name,
       proof: removed ? 'removed' : 'missing',
       passed,
+      // The raw compiler stdout and stderr of this control, retained for review.
+      output: outputPath,
       detail: passed ? null : (removed ? 'the compile accepted a removed proof' : 'the law has no proof beside it'),
     });
   }
 
   for (const mutation of MUTATIONS) {
+    index += 1;
     const directory = prepareScratch();
     const path = join(directory, OPERATIVE_MODULE);
     const source = readFileSync(path, 'utf8');
@@ -168,10 +188,13 @@ function main() {
     writeFileSync(path, source.replace(mutation.find, mutation.replace));
     const control = compile(directory);
     const passed = !control.ok && /TODO found|expected :|Error/.test(control.output);
+    const outputPath = join(RUN, `control-${index}-${mutation.name}.txt`);
+    writeFileSync(outputPath, `${control.output}\n`);
     rows.push({
       control: `mutation:${mutation.name}`,
       law: mutation.law,
       passed,
+      output: outputPath,
       detail: passed ? null : 'the law accepted the mutation under compile',
     });
   }

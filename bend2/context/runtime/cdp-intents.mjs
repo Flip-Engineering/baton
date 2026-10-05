@@ -219,8 +219,11 @@ export function admitReadRequest(record, method) {
 }
 
 // The grant-gated control path. The control grant is checked before the method, and the
-// method before the parameters, so a refusal names the first failed predicate.
-export function admitControlRequest(record, method, params = {}, effects = []) {
+// method before the parameters, so a refusal names the first failed predicate. `workers`
+// is the list of owned, active worker session ids; a worker channel operation naming any
+// other session refuses. A `runtimeBusy` decision is a refusal returned to the caller: it
+// carries no retry obligation, and release stays available as an intent.
+export function admitControlRequest(record, method, params = {}, effects = [], workers = []) {
   if (typeof record !== 'object' || record === null) return refusal('requestMalformed', 'record');
   if (!Array.isArray(effects) || !effects.includes('controlRuntime')) {
     return refusal('missingEffect', `${method} requires controlRuntime`);
@@ -253,6 +256,18 @@ export function admitControlRequest(record, method, params = {}, effects = []) {
   // available to the owner.
   if (record.pending !== null) {
     return refusal('runtimeBusy', `pending ${record.pending.intent}`);
+  }
+  // A worker channel operation names one owned, active worker session. An absent or
+  // foreign session id refuses before the send, so the adapter never addresses a worker
+  // it does not own.
+  if (method === 'NodeWorker.detach' || method === 'NodeWorker.sendMessageToWorker') {
+    const sessionId = params?.sessionId;
+    if (typeof sessionId !== 'string' || sessionId.length === 0) {
+      return refusal('workerSessionMissing', method);
+    }
+    if (!Array.isArray(workers) || !workers.includes(sessionId)) {
+      return refusal('workerSessionUnknown', sessionId);
+    }
   }
   if (method === 'NodeWorker.sendMessageToWorker') {
     const inner = admitNestedWorkerMessage(params);

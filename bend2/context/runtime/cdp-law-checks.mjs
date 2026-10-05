@@ -217,6 +217,90 @@ export function laws(modules) {
       },
     },
     {
+      name: 'ref_decision_admits_only_an_explicit_validated_success',
+      run() {
+        const admitted = refs.admitRef(liveRef, liveScope);
+        assertEqual(admitted.decision, 'admitted', 'the live ref decision');
+        assertEqual(refs.refDecision(admitted).decision, 'admitted', 'an admitted decision revalidated');
+        for (const candidate of [null, undefined, 'admitted', 42, [], {},
+          { ok: true },
+          { decision: 'admitted' },
+          { decision: 'admitted', identity: { ...liveRef, epoch: 7 } },
+          { decision: 'refused', condition: 'staleReference', detail: 'x' },
+          { decision: 'unknown', ok: true }]) {
+          assertEqual(refs.refDecision(candidate).decision, 'refused',
+            `refDecision admitted ${JSON.stringify(candidate)}`);
+        }
+        assertEqual(refs.refDecision({ decision: 'refused', condition: 'staleReference' }).condition,
+          'staleReference', 'a refusal keeps its condition');
+        let thrown = null;
+        try {
+          refs.requireAdmittedRef({ ok: true });
+        } catch (error) {
+          thrown = error.condition;
+        }
+        assertEqual(thrown, 'refDecisionMalformed', 'requireAdmittedRef admitted a bare ok');
+        assert(refs.requireAdmittedRef(admitted) === admitted.identity, 'the admitted identity is returned');
+      },
+    },
+    {
+      name: 'worker_channel_requires_an_owned_active_session',
+      run() {
+        const owned = ['ws-1'];
+        const send = (method, params, workers) => intents.admitControlRequest(running, method, params,
+          ['controlRuntime'], workers);
+        assertEqual(send('NodeWorker.sendMessageToWorker', {
+          sessionId: 'ws-1',
+          message: JSON.stringify({ id: 1, method: 'Runtime.getProperties', params: {} }),
+        }, owned).ok, true, 'a read on an owned worker session was refused');
+        assertEqual(send('NodeWorker.sendMessageToWorker', {
+          sessionId: 'ws-9',
+          message: JSON.stringify({ id: 1, method: 'Runtime.getProperties', params: {} }),
+        }, owned).condition, 'workerSessionUnknown', 'a foreign worker session was admitted');
+        assertEqual(send('NodeWorker.sendMessageToWorker', {
+          message: JSON.stringify({ id: 1, method: 'Runtime.getProperties', params: {} }),
+        }, owned).condition, 'workerSessionMissing', 'a message without a session id was admitted');
+        assertEqual(send('NodeWorker.detach', { sessionId: 'ws-9' }, owned).condition, 'workerSessionUnknown',
+          'detaching a foreign worker session was admitted');
+        assertEqual(send('NodeWorker.detach', { sessionId: 'ws-1' }, owned).ok, true,
+          'detaching an owned worker session was refused');
+        assertEqual(send('NodeWorker.sendMessageToWorker', {
+          sessionId: 'ws-1',
+          message: JSON.stringify({ id: 1, method: 'Runtime.getProperties', params: {} }),
+        }, []).condition, 'workerSessionUnknown', 'an unowned session list admitted a worker message');
+      },
+    },
+    {
+      name: 'resume_rejection_retains_the_stop_without_live_evidence',
+      run() {
+        const sent = state.nextState(paused, { type: 'resumeSent' });
+        expect(sent.ok, 'the resume send transition was refused');
+        assertEqual(sent.record.state, 'running', 'the resume send state');
+        assertEqual(sent.record.epoch, '3', 'the resume send advanced the epoch');
+        const rejected = state.nextState(sent.record, { type: 'resumeRejected' });
+        expect(rejected.ok, 'the resume rejection was refused');
+        assertEqual(rejected.record.state, 'paused', 'the rejection did not retain the stop');
+        assertEqual(rejected.record.epoch, '3', 'the rejection changed the invalidating epoch');
+        assertEqual(rejected.record.targetLiveness, 'live', 'the rejection asserted a target exit');
+        assertEqual(state.nextState(paused, { type: 'resumeRejected' }).condition, 'illegalTransition',
+          'a rejection outside a resume attempt was admitted');
+      },
+    },
+    {
+      name: 'pause_acknowledgment_after_a_stopped_event_keeps_the_stop',
+      run() {
+        let record = { ...running, pending: { query: 'q-pause', intent: 'pause' } };
+        const stopped = state.nextState(record, { type: 'paused' });
+        expect(stopped.ok, 'a stop during an acknowledged pause was refused');
+        record = state.nextState(stopped.record, { type: 'intentSettled' }).record;
+        assertEqual(record.state, 'paused', 'the settled request lost the stop');
+        assertEqual(record.pending, null, 'the request stayed pending');
+        // The acknowledgment must not be applied as pauseRequested from a stopped record.
+        assertEqual(state.nextState(record, { type: 'pauseRequested' }).condition, 'illegalTransition',
+          'a stopped record accepted a new pause request');
+      },
+    },
+    {
       name: 'adapter_failure_never_asserts_target_exit',
       run() {
         const failed = state.nextState(paused, { type: 'adapterFailed' });
@@ -529,9 +613,14 @@ export function laws(modules) {
         const first = table.attachLoaded({ scriptId: '7', source: 'const a = 1;\n' });
         assertEqual(first.loaded.length, 13, 'loaded length');
         assertEqual(first.loaded.sha256.length, 64, 'loaded digest is not a SHA-256');
-        assertEqual(first.map.url, 'file:///m.js.map', 'map reference');
+        assertEqual(first.mapReference.url, 'file:///m.js.map', 'map reference');
+        assertEqual(first.mapReference.urlTextSha256.length, 64, 'the URL text digest');
+        assertEqual(first.mapReference.embedded, false, 'the map is not embedded');
         const second = table.attachLoaded({ scriptId: '7', source: 'const a = 2;\n' });
         expect(first.loaded.sha256 !== second.loaded.sha256, 'a changed loaded source kept its identity');
+        // The map reference is the URL text identity only; it is not a decoded map-byte
+        // digest, which the source-map owner produces.
+        assert(!Object.hasOwn(first.mapReference, 'sha256'), 'the map reference claims a map-byte digest');
       },
     },
   ];

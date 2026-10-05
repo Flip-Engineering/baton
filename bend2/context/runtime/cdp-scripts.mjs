@@ -58,7 +58,7 @@ export function createScriptTable() {
       if (typeof params !== 'object' || params === null || params.scriptId === undefined) {
         throw new ScriptRefusal('scriptParsedMalformed', null);
       }
-      const entry = { ...normalize(params), protocol: params, loaded: null, mapIdentity: null };
+      const entry = { ...normalize(params), protocol: params, loaded: null, mapReference: null };
       const existing = byId.get(entry.scriptId);
       if (existing !== undefined && existing.url !== entry.url) {
         throw new ScriptRefusal('scriptIdentityConflict',
@@ -72,22 +72,28 @@ export function createScriptTable() {
       return entry;
     },
 
-    // Debugger.getScriptSource: the loaded bytes of one script, kept as the
-    // exact text with its length and digest. A source map is recorded as the
-    // reference the map owner resolves, not as decoded mappings.
+    // Debugger.getScriptSource: the loaded bytes of one script, kept as the exact text
+    // with its length and digest. The source-map reference is the text of the
+    // sourceMapURL member and a digest of that text, for correlation only: the digest of
+    // the decoded map bytes belongs to the source-map owner (values), and a data-URL text
+    // digest is not a decoded map-byte digest.
     attachLoaded({ scriptId, source }) {
       const entry = byId.get(String(scriptId));
       if (entry === undefined) throw new ScriptRefusal('scriptUnknown', String(scriptId));
       if (typeof source !== 'string') throw new ScriptRefusal('scriptSourceMalformed', String(scriptId));
       entry.loaded = { length: source.length, sha256: sha256(source), source };
-      entry.mapIdentity = entry.sourceMapURL === null
+      entry.mapReference = entry.sourceMapURL === null
         ? null
-        : { url: entry.sourceMapURL, sha256: sha256(entry.sourceMapURL), embedded: entry.sourceMapURL.startsWith('data:') };
+        : {
+          url: entry.sourceMapURL,
+          urlTextSha256: sha256(entry.sourceMapURL),
+          embedded: entry.sourceMapURL.startsWith('data:'),
+        };
       return {
         scriptId: entry.scriptId,
         url: entry.url,
         loaded: { length: entry.loaded.length, sha256: entry.loaded.sha256 },
-        map: entry.mapIdentity,
+        mapReference: entry.mapReference,
       };
     },
 

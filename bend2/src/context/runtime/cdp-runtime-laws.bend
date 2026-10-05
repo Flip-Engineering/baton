@@ -220,6 +220,24 @@ law launch_is_admitted_only_before_the_target_starts:
 def launch_is_admitted_only_before_the_target_starts():
   {==}
 
+law launch_requires_the_control_grant:
+  {R.admit_intent(R.Rec{R.Starting{}, "0", "0", R.Idle{}, R.LivenessUnknown{}}, R.IntentLaunch{}, Nil{}, "", "") == R.MissingEffect{"controlRuntime"} : R.Decision}
+
+def launch_requires_the_control_grant():
+  {==}
+
+law launch_is_admitted_with_the_control_grant_before_the_start:
+  {R.admit_intent(R.Rec{R.WaitingForStart{}, "0", "0", R.Idle{}, R.LivenessLive{}}, R.IntentLaunch{}, [R.ControlRuntime{}], "", "") == R.Admitted{} : R.Decision}
+
+def launch_is_admitted_with_the_control_grant_before_the_start():
+  {==}
+
+law launch_is_refused_while_an_intent_is_pending:
+  {R.admit_intent(R.Rec{R.WaitingForStart{}, "0", "0", R.Evaluation{"q"}, R.LivenessLive{}}, R.IntentLaunch{}, [R.ControlRuntime{}], "", "") == R.RuntimeBusy{"evaluate"} : R.Decision}
+
+def launch_is_refused_while_an_intent_is_pending():
+  {==}
+
 law serialized_intents_refuse_runtime_busy:
   {R.admit_intent(R.Rec{R.Paused{}, "0", "0", R.Evaluation{"q"}, R.LivenessLive{}}, R.IntentResumeStep{}, [R.ControlRuntime{}], "", "") == R.RuntimeBusy{"evaluate"} : R.Decision}
 

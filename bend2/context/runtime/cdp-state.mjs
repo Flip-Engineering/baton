@@ -144,6 +144,16 @@ export function nextState(record, event) {
       return { ok: true, record: { ...record, state: 'running', epoch: epoch.value } };
     }
 
+    // The resume request was rejected by the protocol (not by a transport failure). The
+    // epoch advance from resumeSent stands, so every reference from the previous stop
+    // stays invalid, but the send established no resumption. The record keeps the last
+    // positive stop evidence; the session marks that stop's liveness unknown, so no new
+    // pause-scoped reference is admitted until a fresh stopped event arrives.
+    case 'resumeRejected': {
+      if (record.state !== 'running') return refusal('illegalTransition', `resumeRejected from ${record.state}`);
+      return { ok: true, record: { ...record, state: 'paused' } };
+    }
+
     // An invalidating execution-context destruction. Every pause-scoped ref from the
     // destroyed context is invalid, so the epoch advances, and a stop or an acknowledged
     // pause request returns to running.

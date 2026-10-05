@@ -24,9 +24,9 @@
 // exit status, hashes and the adapter's emitted frames.
 
 import { spawn, execFileSync } from 'node:child_process';
-import { closeSync, existsSync, mkdirSync, openSync, readFileSync, renameSync, truncateSync, writeFileSync } from 'node:fs';
+import { closeSync, existsSync, mkdirSync, openSync, readFileSync, readdirSync, renameSync, truncateSync, writeFileSync } from 'node:fs';
 import { createHash } from 'node:crypto';
-import { dirname, join, resolve } from 'node:path';
+import { dirname, join, relative, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { watch } from 'node:fs';
 
@@ -35,7 +35,7 @@ import { counterNext, counterValid } from './cdp-counter.mjs';
 import { watchTargetStderr, parseInspectorBanner } from './cdp-endpoint.mjs';
 import { admitControlRequest, admitIntent, admitReadRequest, requestForIntent, startupStopRequests } from './cdp-intents.mjs';
 import { admitFrame, encodeFrame, sequenceAdmit } from './cdp-protocol.mjs';
-import { admitRef, decodeRefId, encodeRefId, refIdentity } from './cdp-refs.mjs';
+import { admitRef, decodeRefId, encodeRefId, refDecision, refIdentity } from './cdp-refs.mjs';
 import { createScriptTable } from './cdp-scripts.mjs';
 import { createAdapterSession } from './cdp-session.mjs';
 import { initialRecord, nextState } from './cdp-state.mjs';
@@ -186,7 +186,7 @@ function spawnKeeper({ slug, target, targetArgs = [], env = {} }) {
 }
 
 // One adapter session per case, with its emitted frames retained as evidence.
-function openSession({ slug, runtime, adapter = 'adapter:fixture', incarnation = '0', keeper = null, control = null }) {
+function openSession({ slug, runtime, adapter = 'adapter:fixture', incarnation = '0', keeper = null, control = null, connect = null }) {
   const dir = evidenceDir(slug);
   const framePath = join(dir, 'adapter-frames.jsonl');
   writeFileSync(framePath, '');
@@ -195,6 +195,7 @@ function openSession({ slug, runtime, adapter = 'adapter:fixture', incarnation =
     adapter,
     incarnation,
     control: control ?? (keeper === null ? null : keeper.control),
+    ...(connect === null ? {} : { connect }),
     emit: ({ frame, bytes }) => {
       writeFileSync(framePath, `${JSON.stringify({ frame, bytes })}\n`, { flag: 'a' });
     },
@@ -622,8 +623,9 @@ test('script-table-records-metadata-and-loaded-identity', () => {
   const attached = table.attachLoaded({ scriptId: '42', source: 'const x = 1;\n' });
   assertEqual(attached.loaded.length, 13, 'loaded length');
   assertEqual(attached.loaded.sha256.length, 64, 'loaded digest');
-  assertEqual(attached.map.url, 'file:///work/main.js.map', 'map reference');
-  assertEqual(attached.map.embedded, false, 'map is not embedded');
+  assertEqual(attached.mapReference.url, 'file:///work/main.js.map', 'map reference');
+  assertEqual(attached.mapReference.urlTextSha256.length, 64, 'the URL text digest');
+  assertEqual(attached.mapReference.embedded, false, 'map is not embedded');
   let conflict = null;
   try {
     table.record({ scriptId: '42', url: 'file:///other.js' });
@@ -634,7 +636,147 @@ test('script-table-records-metadata-and-loaded-identity', () => {
 });
 
 // ---------------------------------------------------------------------------
-// Retained correction regressions.
+// Source fixtures with an injected connection. These exercise the session's own
+// handling of a reordered stop and a rejected send without a target: the connection
+// factory is the documented injection point, and every assertion reads the session's
+// recorded state, its decisions and its frame log.
+
+function stubTransport({ onSend = null } = {}) {
+  const frames = [{ direction: 'out', text: JSON.stringify({ id: 1, method: 'Runtime.enable' }), method: 'Runtime.enable' }];
+  const handlers = new Map();
+  let failure = null;
+  const record = (method, params) => {
+    frames.push({ direction: 'out', text: JSON.stringify({ id: frames.length + 1, method, params }), method });
+  };
+  return {
+    endpointIdentity: 'stub',
+    frames: () => frames.slice(),
+    failure: () => failure,
+    closed: () => failure !== null,
+    subscribe(method, handler) {
+      const list = handlers.get(method) ?? [];
+      list.push(handler);
+      handlers.set(method, list);
+      return () => handlers.set(method, (handlers.get(method) ?? []).filter((c) => c !== handler));
+    },
+    subscribeFailure(handler) {
+      handlers.set('__failure', [...(handlers.get('__failure') ?? []), handler]);
+      return () => {};
+    },
+    emit(method, params) {
+      for (const handler of handlers.get(method) ?? []) handler(params, { method, params });
+    },
+    async request(method, params = {}) {
+      record(method, params);
+      return onSend === null ? { result: {} } : onSend(method, params);
+    },
+    async send(method, params = {}) {
+      const message = await this.request(method, params);
+      if (message.error !== undefined) {
+        const error = new Error(`${method} ${message.error.code}`);
+        error.name = 'TransportRefusal';
+        error.condition = 'cdpError';
+        error.detail = `${method} ${message.error.code}: ${message.error.message}`;
+        throw error;
+      }
+      return message.result ?? {};
+    },
+    async evaluate(method, params = {}) {
+      const result = await this.send(method, params);
+      return { result, exceptionDetails: result.exceptionDetails ?? null, inBandException: false };
+    },
+    close() { failure = { condition: 'transportClosed' }; },
+  };
+}
+
+test('pause-acknowledgment-after-a-stopped-event-keeps-the-stop', async () => {
+  const slug = 'source-pause-reorder';
+  const dir = evidenceDir(slug);
+  const transport = stubTransport();
+  const { session } = openSession({
+    slug,
+    runtime: 'rt:reorder',
+    connect: async () => transport,
+  });
+  await session.execute('launch', { effects: ['controlRuntime'], webSocketUrl: 'ws://127.0.0.1:1/stub' });
+  // The stop arrives before the acknowledgment of Debugger.pause.
+  const pending = session.execute('pause', { effects: ['controlRuntime'], query: 'q-pause' });
+  transport.emit('Debugger.paused', { reason: 'other', callFrames: [], hitBreakpoints: [], threadId: 'main:0' });
+  const result = await pending;
+  assertEqual(result.state, 'paused', 'the stop was lost when the acknowledgment arrived');
+  const snapshot = session.snapshot();
+  assertEqual(snapshot.pending, null, 'the pause request stayed pending');
+  assertEqual(snapshot.epoch, '2', 'the stop advanced the epoch');
+  assertEqual(snapshot.lastPause.liveness, 'live', 'the stop is live evidence');
+  // The session is not stuck: a following intent is admitted and refused on its own rule.
+  assertEqual(session.admit('pause', { effects: ['controlRuntime'] }).condition, 'intentNotAdmitted',
+    'a stopped record accepted a new pause');
+  writeFileSync(join(dir, 'frames.jsonl'), `${session.frames().map((frame) => JSON.stringify(frame)).join('\n')}\n`);
+  writeFileSync(join(dir, 'case.json'), `${JSON.stringify({ state: snapshot.state, epoch: snapshot.epoch, pending: snapshot.pending })}\n`);
+});
+
+test('rejected-resume-retains-the-stop-without-live-evidence', async () => {
+  const slug = 'source-resume-rejected';
+  const dir = evidenceDir(slug);
+  const transport = stubTransport({
+    onSend: (method) => (method === 'Debugger.stepOver'
+      ? { error: { code: -32000, message: 'Can only perform operation while paused' } }
+      : { result: {} }),
+  });
+  const { session } = openSession({ slug, runtime: 'rt:rejected', connect: async () => transport });
+  await session.execute('launch', { effects: ['controlRuntime'], webSocketUrl: 'ws://127.0.0.1:1/stub' });
+  transport.emit('Debugger.paused', { reason: 'other', callFrames: [], hitBreakpoints: [], threadId: 'main:0' });
+  const before = session.snapshot();
+  const ref = refIdentity({
+    runtime: before.runtime, adapter: before.adapter, thread: 'main:0',
+    epoch: before.epoch, mutationGeneration: before.mutationGeneration, kind: 'object', handle: 'h',
+  });
+  assertEqual(session.admitRef(ref).decision, 'admitted', 'the live-stop ref was refused');
+  let refusal = null;
+  try {
+    await session.execute('resume-step', { effects: ['controlRuntime'], action: 'next', query: 'q-step' });
+  } catch (error) {
+    refusal = error;
+  }
+  assert(refusal !== null, 'the rejected resume was reported as success');
+  assertEqual(refusal.condition, 'cdpError', 'the refusal condition');
+  const after = session.snapshot();
+  assertEqual(after.state, 'paused', 'the rejected resume did not retain the stop');
+  assertEqual(after.epoch, counterNext(before.epoch).value, 'the rejected resume did not invalidate the old epoch');
+  assertEqual(after.targetLiveness, 'live', 'the rejected resume asserted a target exit');
+  assertEqual(after.pending, null, 'the rejected resume left its request pending');
+  assertEqual(after.lastPause.liveness, 'unknown', 'the retained stop claims live evidence');
+  assertEqual(session.admitRef(ref).condition, 'staleReference', 'the previous-epoch ref was admitted');
+  const fresh = refIdentity({
+    runtime: after.runtime, adapter: after.adapter, thread: 'main:0',
+    epoch: after.epoch, mutationGeneration: after.mutationGeneration, kind: 'object', handle: 'h',
+  });
+  assertEqual(session.admitRef(fresh).condition, 'refStopNotLive',
+    'a pause-scoped ref was admitted against a stop with no live evidence');
+  writeFileSync(join(dir, 'case.json'), `${JSON.stringify({ refusal: refusal.condition, after })}\n`);
+});
+
+test('ref-decisions-and-thread-membership', () => {
+  const slug = 'source-ref-decisions';
+  const dir = evidenceDir(slug);
+  const { session } = openSession({ slug, runtime: 'rt:decision' });
+  const scope = session.snapshot();
+  const base = {
+    runtime: scope.runtime, adapter: scope.adapter, thread: 'main:0',
+    epoch: scope.epoch, mutationGeneration: scope.mutationGeneration, kind: 'runtime', handle: 'rt',
+  };
+  assertEqual(session.admitRef(refIdentity(base)).decision, 'admitted', 'a runtime ref was refused while starting');
+  assertEqual(session.admitRef({ ...base, thread: 'worker:ghost' }).condition, 'refThreadUnknown',
+    'a ref on an unknown thread was admitted');
+  assertEqual(session.admitRef({ ...base, kind: 'object' }).condition, 'refOutsidePause',
+    'a pause-scoped ref was admitted outside a stop');
+  assertEqual(refDecision(session.admitRef(refIdentity(base))).decision, 'admitted', 'the decision did not revalidate');
+  assertEqual(refDecision(null).condition, 'refDecisionMalformed', 'a null decision was admitted');
+  assertEqual(refDecision({ ok: true }).condition, 'refDecisionMalformed', 'a bare ok was admitted');
+  writeFileSync(join(dir, 'case.json'), `${JSON.stringify({ scope })}\n`);
+});
+
+
 
 test('counter-text-boundary-cases', () => {
   assert(counterValid('0'), 'the initial counter was refused');
@@ -1095,6 +1237,10 @@ async function main() {
     cases: results.length,
     failed: failed.length,
     results,
+    // Every retained file of this run with its exact size and digest: child stdout,
+    // child stderr, the exit record with status and signal, the launch document and the
+    // adapter's emitted frames.
+    artifacts: artifactSummary(RUN),
   };
   writeFileSync(join(RUN, 'verdict.json'), `${JSON.stringify(verdict, null, 2)}\n`);
   process.stdout.write(`${JSON.stringify({ verdict: verdict.failed === 0 ? 'pass' : 'fail', cases: verdict.cases, failed: verdict.failed, run: RUN })}\n`);
@@ -1107,6 +1253,20 @@ function readNodeVersion(node) {
   } catch {
     return null;
   }
+}
+
+// Every retained file of one run, with its exact size and digest.
+function artifactSummary(root) {
+  const rows = [];
+  const walk = (directory) => {
+    for (const entry of readdirSync(directory, { withFileTypes: true })) {
+      const full = join(directory, entry.name);
+      if (entry.isDirectory()) { walk(full); continue; }
+      rows.push({ path: relative(root, full), bytes: readFileSync(full).length, sha256: digest(full) });
+    }
+  };
+  walk(root);
+  return rows.sort((left, right) => left.path.localeCompare(right.path));
 }
 
 await main();

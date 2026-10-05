@@ -19,6 +19,12 @@ import { counterValid, counterPair } from './cdp-counter.mjs';
 
 export const REF_KINDS = Object.freeze(['runtime', 'thread', 'frame', 'scope', 'object', 'script']);
 
+// The production ref decision. `decision` is the authoritative member: only an
+// `admitted` decision with a revalidated identity lets a caller send against the ref.
+// A refused decision carries the condition and detail. A caller must not treat any other
+// value, including a bare `{ok:true}`, null, undefined or a malformed object, as success.
+export const REF_DECISIONS = Object.freeze(['admitted', 'refused']);
+
 export class RefRefusal extends Error {
   constructor(condition, detail) {
     super(detail === undefined || detail === null ? condition : `${condition}: ${detail}`);
@@ -30,8 +36,12 @@ export class RefRefusal extends Error {
 
 const isText = (value) => typeof value === 'string' && value.length > 0;
 
-function refusal(condition, detail) {
-  return { ok: false, condition, detail: detail === undefined ? null : detail };
+function refusedDecision(condition, detail) {
+  return { decision: 'refused', ok: false, condition, detail: detail === undefined ? null : detail };
+}
+
+function admittedDecision(identity) {
+  return { decision: 'admitted', ok: true, identity };
 }
 
 export function refIdentity({ runtime, adapter, thread, epoch, mutationGeneration, kind, handle }) {
@@ -43,18 +53,18 @@ export function refIdentity({ runtime, adapter, thread, epoch, mutationGeneratio
 
 function admitIdentity(identity) {
   if (typeof identity !== 'object' || identity === null || Array.isArray(identity)) {
-    return refusal('refMalformed', 'identity is not an object');
+    return refusedDecision('refMalformed', 'identity is not an object');
   }
-  if (!isText(identity.runtime)) return refusal('refMalformed', 'runtime');
-  if (!isText(identity.adapter)) return refusal('refMalformed', 'adapter');
-  if (!isText(identity.thread)) return refusal('refMalformed', 'thread');
-  if (!counterValid(identity.epoch)) return refusal('refMalformed', 'epoch is not canonical counter text');
+  if (!isText(identity.runtime)) return refusedDecision('refMalformed', 'runtime');
+  if (!isText(identity.adapter)) return refusedDecision('refMalformed', 'adapter');
+  if (!isText(identity.thread)) return refusedDecision('refMalformed', 'thread');
+  if (!counterValid(identity.epoch)) return refusedDecision('refMalformed', 'epoch is not canonical counter text');
   if (!counterValid(identity.mutationGeneration)) {
-    return refusal('refMalformed', 'mutationGeneration is not canonical counter text');
+    return refusedDecision('refMalformed', 'mutationGeneration is not canonical counter text');
   }
-  if (!REF_KINDS.includes(identity.kind)) return refusal('refMalformed', `kind ${identity.kind}`);
-  if (!isText(identity.handle)) return refusal('refMalformed', 'handle');
-  return { ok: true, identity };
+  if (!REF_KINDS.includes(identity.kind)) return refusedDecision('refMalformed', `kind ${identity.kind}`);
+  if (!isText(identity.handle)) return refusedDecision('refMalformed', 'handle');
+  return admittedDecision(identity);
 }
 
 // Canonical id text: ["runtime",runtime,adapter,thread,epoch,mutationGeneration,kind,handle]
@@ -105,29 +115,56 @@ export function decodeRefId(text) {
 // another pause is stale, and a live-value ref from an earlier mutation generation is
 // retired by the evaluation that advanced it.
 export function admitRef(ref, scope) {
-  if (typeof scope !== 'object' || scope === null) return refusal('refMalformed', 'scope');
+  if (typeof scope !== 'object' || scope === null) return refusedDecision('refMalformed', 'scope');
   const counters = counterPair(scope.epoch, scope.mutationGeneration);
-  if (!counters.ok) return refusal('refMalformed', `scope ${counters.detail}`);
+  if (!counters.ok) return refusedDecision('refMalformed', `scope ${counters.detail}`);
   let identity;
   try {
     identity = typeof ref === 'string' ? decodeRefId(ref) : ref;
   } catch (error) {
-    return refusal(error.condition ?? 'refMalformed', error.detail ?? error.message);
+    return refusedDecision(error.condition ?? 'refMalformed', error.detail ?? error.message);
   }
   const admitted = admitIdentity(identity);
   if (!admitted.ok) return admitted;
   if (identity.runtime !== scope.runtime) {
-    return refusal('foreignRuntime', `${identity.runtime} != ${scope.runtime}`);
+    return refusedDecision('foreignRuntime', `${identity.runtime} != ${scope.runtime}`);
   }
   if (identity.adapter !== scope.adapter) {
-    return refusal('foreignAdapter', `${identity.adapter} != ${scope.adapter}`);
+    return refusedDecision('foreignAdapter', `${identity.adapter} != ${scope.adapter}`);
   }
   if (identity.epoch !== scope.epoch) {
-    return refusal('staleReference', `epoch ${identity.epoch} != live epoch ${scope.epoch}`);
+    return refusedDecision('staleReference', `epoch ${identity.epoch} != live epoch ${scope.epoch}`);
   }
   if (identity.mutationGeneration !== scope.mutationGeneration) {
-    return refusal('refRetiredByMutation',
+    return refusedDecision('refRetiredByMutation',
       `mutation generation ${identity.mutationGeneration} != live ${scope.mutationGeneration}`);
   }
-  return { ok: true, identity };
+  return admittedDecision(identity);
+}
+
+// Normalize one candidate decision. Only `{decision:'admitted', identity}` with an
+// identity that still validates is admitted; a refusal keeps its condition; and null,
+// undefined, a missing or unknown decision, a non-object or a malformed identity refuses.
+// A caller must gate every backend send on this function's admitted result.
+export function refDecision(value) {
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) {
+    return refusedDecision('refDecisionMalformed', 'not a decision object');
+  }
+  if (value.decision !== 'admitted') {
+    return refusedDecision(
+      typeof value.condition === 'string' ? value.condition : 'refDecisionRefused',
+      value.decision === 'refused' ? value.detail ?? null : `decision ${JSON.stringify(value.decision)}`,
+    );
+  }
+  const admitted = admitIdentity(value.identity);
+  if (!admitted.ok) return admitted;
+  return admitted;
+}
+
+// The identity of an admitted decision, or a thrown refusal. This is the only sanctioned
+// way to turn a decision into something a send may use.
+export function requireAdmittedRef(value) {
+  const decision = refDecision(value);
+  if (decision.decision !== 'admitted') throw new RefRefusal(decision.condition, decision.detail);
+  return decision.identity;
 }

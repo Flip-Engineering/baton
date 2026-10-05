@@ -458,7 +458,7 @@ def admit_intent(
     case Rec{state, epoch, mutation, pending, liveness}:
       match intent:
         case IntentLaunch{}:
-          admit_granted(launch_state(state), intent)
+          admit_control(effects, launch_state(state), pending, serialized(intent), intent)
         case IntentObserve{}:
           admit_granted(observe_state(state), intent)
         case IntentPause{}:

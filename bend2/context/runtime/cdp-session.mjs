@@ -25,6 +25,13 @@
 // Transport loss: a lost or closed connection sets the runtime's adapter-failure state,
 // marks the recorded stop historical and asserts nothing about the target, whose custody
 // stays with the native keeper.
+//
+// Reference decisions: `admitRef` returns {decision:'admitted',identity} or
+// {decision:'refused',condition,detail}. Only an admitted decision lets a caller send.
+// A pause-scoped ref additionally requires a stop whose recorded liveness is live, and
+// every ref must name a live thread. `connect` is the connection factory (the real
+// inspector transport by default); a source fixture may inject a failing or reordering
+// stub to exercise a rejected send without a target.
 
 import { counterNext } from './cdp-counter.mjs';
 import { admitControlRequest, admitIntent, admitReadRequest, requestForIntent, startupStopRequests } from './cdp-intents.mjs';
@@ -53,6 +60,7 @@ export function createAdapterSession({
   incarnation,
   control = null,
   emit = null,
+  connect = CdpTransport.connect,
 }) {
   if (typeof runtime !== 'string' || runtime.length === 0) throw new SessionRefusal('runtimeMissing', null);
   if (typeof adapter !== 'string' || adapter.length === 0) throw new SessionRefusal('adapterMissing', null);
@@ -209,6 +217,26 @@ export function createAdapterSession({
     ...[...workers.values()].map((worker) => ({ thread: `worker:${worker.workerId}`, workerId: worker.workerId })),
   ];
 
+  const liveThreads = () => threadList().map((row) => row.thread);
+  const workerSessions = () => [...workers.keys()];
+
+  const refusedRefDecision = (condition, detail) => ({
+    decision: 'refused', ok: false, condition, detail: detail === undefined ? null : detail,
+  });
+
+  // The recorded stop's liveness: live while a stop is current evidence, historical once
+  // a resume or context destruction leaves it, unknown when a rejected resume established
+  // no resumption and no fresh stop has arrived.
+  const markPauseLiveness = (liveness) => {
+    if (lastPause !== null && lastPause.liveness !== liveness) lastPause = { ...lastPause, liveness };
+  };
+
+  // Settle the in-flight intent only when one is recorded, so a cleanup path never masks
+  // the error it is handling.
+  const settlePendingIntent = () => {
+    if (record.pending !== null) apply({ type: 'intentSettled' });
+  };
+
   const session = {
     runtime,
     adapter,
@@ -261,17 +289,29 @@ export function createAdapterSession({
       return admitIntent(record, intent, options);
     },
 
+    // The production ref decision. Only an admitted decision lets a caller send. A
+    // pause-scoped kind additionally requires a stop whose recorded liveness is live, and
+    // every ref must name a live thread, so a detached worker or an invalidated stop is
+    // refused here rather than at the backend.
     admitRef(ref) {
       let identity = ref;
       if (typeof ref === 'string') {
         try {
           identity = decodeRefId(ref);
         } catch (error) {
-          return { ok: false, condition: error.condition ?? 'refMalformed', detail: error.detail ?? error.message };
+          return refusedRefDecision(error.condition ?? 'refMalformed', error.detail ?? error.message);
         }
       }
-      if (PAUSE_SCOPED.includes(identity?.kind) && record.state !== 'paused') {
-        return { ok: false, condition: 'refOutsidePause', detail: record.state };
+      if (PAUSE_SCOPED.includes(identity?.kind)) {
+        if (record.state !== 'paused' || lastPause === null) {
+          return refusedRefDecision('refOutsidePause', record.state);
+        }
+        if (lastPause.liveness !== 'live') {
+          return refusedRefDecision('refStopNotLive', lastPause.liveness);
+        }
+      }
+      if (typeof identity?.thread === 'string' && !liveThreads().includes(identity.thread)) {
+        return refusedRefDecision('refThreadUnknown', identity.thread);
       }
       return admitRef(identity, {
         runtime,
@@ -331,7 +371,7 @@ export function createAdapterSession({
     // The grant-gated control path: configuration and session plumbing, never
     // evaluation. `effects` are the caller's declared grants.
     async control({ query, method, params = {}, effects = [] }) {
-      const admitted = admitControlRequest(record, method, params, effects);
+      const admitted = admitControlRequest(record, method, params, effects, workerSessions());
       if (!admitted.ok) throw new SessionRefusal(admitted.condition, admitted.detail);
       const connection = requireTransport();
       publish({ query, type: 'accepted', payload: { state: record.state } });
@@ -418,7 +458,7 @@ export function createAdapterSession({
           // The startup stop positions are generated locations the caller decoded; a
           // condition is refused because it is target JavaScript.
           const stops = startupStopRequests(params.stopAt);
-          transport = await CdpTransport.connect(params.webSocketUrl, { signal: params.signal ?? null });
+          transport = await connect(params.webSocketUrl, { signal: params.signal ?? null });
           subscriptions.push(transport.subscribeFailure(onTransportFailure));
           subscriptions.push(
             transport.subscribe('Debugger.scriptParsed', handleEvent),
@@ -459,33 +499,49 @@ export function createAdapterSession({
         case 'pause': {
           const connection = requireTransport();
           apply({ type: 'intentStarted', intent, query: params.query ?? null });
+          const request = requestForIntent(intent, params);
           try {
-            const request = requestForIntent(intent, params);
             await connection.send(request.method, request.params);
-            apply({ type: 'intentSettled' });
-            apply({ type: 'pauseRequested' });
-            return { state: record.state };
           } catch (error) {
-            apply({ type: 'intentSettled' });
+            settlePendingIntent();
             throw error;
           }
+          settlePendingIntent();
+          // A stopped event may have completed this pause before the acknowledgment: that
+          // event is the stronger evidence, and the record already says paused, so the
+          // acknowledgment does not move a stopped runtime back to pausePending.
+          if (record.state === 'running') apply({ type: 'pauseRequested' });
+          return { state: record.state };
         }
 
         case 'resume-step': {
           const connection = requireTransport();
           const request = requestForIntent(intent, params);
-          // The invalidating epoch advance happens before the send: a ref admitted
-          // against the previous pause refuses from this point.
+          // The invalidating epoch advance happens before the send: a ref admitted against
+          // the previous pause refuses from this point. The stop that is being left is no
+          // longer live evidence from the moment the resume is written.
           apply({ type: 'resumeSent' });
+          markPauseLiveness('historical');
           apply({ type: 'intentStarted', intent, query: params.query ?? null });
           try {
             await connection.send(request.method, request.params);
-            apply({ type: 'intentSettled' });
-            return { state: record.state };
           } catch (error) {
-            apply({ type: 'intentSettled' });
+            settlePendingIntent();
+            const transportFailure = error instanceof TransportRefusal && error.condition !== 'cdpError';
+            if (transportFailure) {
+              // A lost connection is an adapter failure. It asserts nothing about the
+              // target and never reports an exit.
+              onTransportFailure(error);
+            } else if (record.state === 'running') {
+              // The protocol rejected the resume: no resumption was established, and the
+              // retained stop has no live evidence until a fresh stopped event arrives.
+              apply({ type: 'resumeRejected' });
+              markPauseLiveness('unknown');
+            }
             throw error;
           }
+          settlePendingIntent();
+          return { state: record.state };
         }
 
         case 'evaluate': {
