@@ -1295,6 +1295,17 @@ law omp_terminal_named_sql_keeps_the_terminals_own_error:
 def omp_terminal_named_sql_keeps_the_terminals_own_error(activity,error_id):
   {==}
 
+# The decision composition itself: which branch of the terminal normalizer runs,
+# in which order, with which arguments.
+law omp_terminal_decision_composition_is_ordered:
+  for +event: String
+  for +message: String
+  for +activity: String
+  {Turn.omp_terminal_sql(event,message,activity) == ("SELECT CASE WHEN " ++ Turn.omp_terminal_elided_sql(event) ++ " THEN CASE WHEN " ++ Turn.omp_terminal_error_sql(event) ++ "=0 AND " ++ C.q(message) ++ "<>'' AND " ++ Turn.omp_activity_commanding_sql(activity) ++ "=1 THEN " ++ Turn.omp_terminal_retained_sql(event,message) ++ " WHEN " ++ Turn.omp_terminal_justified_sql(activity,message,Turn.omp_terminal_error_id_sql(event)) ++ "=1 THEN " ++ Turn.omp_terminal_retained_sql(event,message) ++ " WHEN " ++ Turn.omp_terminal_named_sql(activity,Turn.omp_terminal_error_id_sql(event)) ++ "=1 THEN " ++ C.q(event) ++ " WHEN " ++ C.q(message) ++ "<>'' THEN " ++ Turn.omp_terminal_conflict_sql(event) ++ " WHEN " ++ Turn.omp_terminal_error_sql(event) ++ "=1 THEN " ++ Turn.omp_terminal_conflict_sql(event) ++ " ELSE " ++ C.q(event) ++ " END ELSE " ++ C.q(event) ++ " END;") : String}
+
+def omp_terminal_decision_composition_is_ordered(event,message,activity):
+  {==}
+
 # The receive's outcome decision reads the retained event through the failure
 # classifier and combines that with the turn's own failure test.
 law receive_outcome_failed_reads_the_classifier:

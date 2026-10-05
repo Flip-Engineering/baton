@@ -9,6 +9,7 @@ completion ID.
 
 import importlib.util
 import json
+import os
 import pathlib
 import select
 import sqlite3
@@ -45,6 +46,7 @@ class ReceiveTerminalBoundary(RECEIVE.Receive):
         self.assertEqual(json.loads(stream.readline()), {'terminal_written': True})
         sealed = self.eventually(lambda: self.coord('turns', 'parent'),
                                  'the sealed report was not recorded')[0]['id']
+        self.remember_attempt(sealed)
         if guidance:
             self.coord('message', guidance, 'root', 'parent', 'guidance',
                        'Guidance the sealed attempt does not accept.')
@@ -77,8 +79,7 @@ class ReceiveTerminalBoundary(RECEIVE.Receive):
         self.assertNotIn('[id: late-error-task]', resumed['prompt'])
         self.action(continuation, body='Continuation after the late error.')
         self.finish(observer)
-        execution, _status = self.native_status()
-        self.assertNotEqual(execution, sealed, 'the session row still names the sealed attempt')
+        self.assert_retained_exit(sealed)
         turns = self.coord('turns', 'parent')
         self.assertEqual(turns[0]['id'], sealed)
         self.assertEqual(turns[0]['reportBody'], 'First sealed report.')
@@ -98,13 +99,27 @@ class ReceiveTerminalBoundary(RECEIVE.Receive):
                                    (worker,)).fetchone()
         return row[0] if row else ''
 
-    def native_status(self):
-        """The execution row of the session, which the next attempt replaces."""
+    def remember_attempt(self, sealed):
+        """Bind the sealed attempt to its own execution id and native directory."""
         with sqlite3.connect(f'{self.db.as_uri()}?mode=ro', uri=True) as database:
             row = database.execute(
-                "SELECT id, status FROM executions WHERE session='parent'").fetchone()
-        self.assertIsNotNone(row, 'no execution row for the session')
-        return row
+                "SELECT id, directory FROM executions WHERE session='parent'").fetchone()
+        self.assertIsNotNone(row, 'no execution row while the report is sealed')
+        self.assertEqual(row[0], sealed, 'the execution row is not the sealed attempt')
+        self.assertTrue(row[1], 'the sealed attempt has no native directory')
+        self.sealed_attempt = (sealed, pathlib.Path(row[1]))
+        (self.directory / 'sealed-attempt-binding.json').write_text(
+            json.dumps({'id': row[0], 'directory': row[1]}))
+
+    def assert_retained_exit(self, sealed):
+        """The sealed attempt's own retained wait status is a normal exit."""
+        identity, directory = self.sealed_attempt
+        self.assertEqual(identity, sealed)
+        status = int((directory / 'status').read_text())
+        self.assertTrue(os.WIFEXITED(status), f'sealed attempt did not exit normally: {status}')
+        self.assertEqual(os.WEXITSTATUS(status), 0)
+        print(json.dumps({'sealed': sealed, 'directory': str(directory),
+                          'waitStatus': status, 'exit': os.WEXITSTATUS(status)}), flush=True)
 
     def test_same_attempt_error_then_late_success_keeps_the_sealed_failure(self):
         """A structured first provider failure is sealed; a later success in that episode does not replace it."""
@@ -122,6 +137,7 @@ class ReceiveTerminalBoundary(RECEIVE.Receive):
         turns = self.eventually(lambda: self.coord('turns', 'parent'),
                                 'the sealed report was not recorded')
         sealed = turns[0]['id']
+        self.remember_attempt(sealed)
         self.assertIn('errorStatus', self.stored_event())
         self.assertIn('403 provider refused the request', self.stored_event())
         body = turns[0]['reportBody']
@@ -141,8 +157,7 @@ class ReceiveTerminalBoundary(RECEIVE.Receive):
         self.assertIn('[id: same-attempt-task]', resumed['prompt'])
         self.action(continuation, body='Continuation after the sealed failure.')
         self.finish(observer, ok=False)
-        execution, _status = self.native_status()
-        self.assertNotEqual(execution, sealed, 'the session row still names the sealed attempt')
+        self.assert_retained_exit(sealed)
         turns = self.coord('turns', 'parent')
         self.assertEqual(turns[0]['id'], sealed)
         self.assertEqual(turns[0]['reportBody'], body)
