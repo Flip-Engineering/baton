@@ -182,6 +182,11 @@ VERIFIER_MEMBERS = ('checker_sha256', 'aggregate_module_sha256', 'classifier_mod
                     'definitions_module_sha256')
 # The producer owner declares the ordinary run verifier with seven members and
 # these names, while the endpoint verdict closure keeps its own six names.
+# The classifier member has been emitted under two spellings; a verdict or run
+# that names either one names the same member, and the endpoint closure is not
+# redefined by accepting both.
+VERIFIER_MEMBER_ALIASES = {'classifier_module_sha256': 'classify_module_sha256',
+                           'classify_module_sha256': 'classifier_module_sha256'}
 ORDINARY_RUN_VERIFIER_MEMBERS = ('checker_sha256', 'aggregate_module_sha256',
                                  'classify_module_sha256', 'work_set_module_sha256',
                                  'laws_common_module_sha256', 'definitions_module_sha256',
@@ -728,21 +733,26 @@ def ordinary_evidence(index_path, expected, compiler=None, declared_root=None,
     verifier = identity.get('verifier') or {}
     admitted, missing_run_members = ordinary_verifier_digests()
     required = set(ORDINARY_RUN_VERIFIER_MEMBERS)
-    require(isinstance(verifier, dict) and required <= set(verifier),
+    def run_member(member):
+        return verifier_member_value(verifier if isinstance(verifier, dict) else {}, member)
+    named = {member for member in required if run_member(member) is not None}
+    require(isinstance(verifier, dict) and required <= named,
             'The ordinary run does not name every verifier member: '
-            + succinct(sorted(required - set(verifier or {}))))
+            + succinct(sorted(required - named)))
     differing = sorted(key for key, digest in admitted.items()
-                       if verifier.get(key) != digest)
+                       if run_member(key) != digest)
     require(not differing,
             'The ordinary run used other verifier bytes at: ' + succinct(differing))
     # A digest domain is checked for every member the run names, including the
     # ones whose local bytes are absent, so an unverifiable member is still a
     # well-formed claim rather than an unchecked string.
-    for member, digest in verifier.items():
+    for member in required:
+        digest = run_member(member)
         require(isinstance(digest, str) and re.fullmatch(r'[0-9a-f]{64}', digest),
                 'The ordinary run records no digest domain for ' + json.dumps(member))
     unavailable = sorted(missing_run_members)
-    beyond = sorted(set(verifier) - required)
+    beyond = sorted(key for key in (verifier or {}) if key not in required
+                    and VERIFIER_MEMBER_ALIASES.get(key) not in required)
     # The index records the admitted inputs it captured as rows. Whether those
     # rows cover the complete non-target source and runtime graph is a
     # producer-side question this consumer cannot answer from the rows alone.
@@ -1089,11 +1099,13 @@ def run_gates(compiler, env, logs, initial, before_inputs, remote=None, ordinary
                 require(zero_exit(result_exit),
                         name + ' failed; full output is retained at ' + str(logs / stage['log']))
             same_source(stage['after'], initial)
-        retained, source_root, audit = None, None, None
+        retained, source_root = None, None
+        # Both the explicit-argument and automatic envelope routes consume ordinary
+        # evidence, so the classifier acquisition scope is always owned by this run.
+        audit = logs / 'classifier-audit'
         if ordinary is not None:
             source_root = verify_ordinary_graph(ordinary_root(ordinary, ordinary_root_path),
                                                 'The ordinary evidence source')
-            audit = logs / 'classifier-audit'
             require(not (logs / 'evidence').exists(),
                     'The package run already retains ordinary evidence')
             shutil.copytree(source_root / 'evidence', logs / 'evidence')
@@ -1244,12 +1256,20 @@ def reuse_gates(path, expected_sha, compiler, logs, initial):
                 'The reused run reads another admitted input inventory')
         require(consumed['run_root'] == str(logs),
                 'The copied ordinary evidence is not rooted at the reused run')
-        # The receipt keeps the acquisition scope of the original run; this run
-        # records its own current scope beside it, so neither replaces the other.
+        # The original receipt bytes are copied unchanged below. This run records
+        # its own current replay acquisition in a separate durable document, so the
+        # two are linked rather than one replacing or relabelling the other.
         require(consumed['audit'] is not None,
                 'The reused run recorded no classifier acquisition scope')
-        summary.setdefault('acquired_now', {})['ordinary_audit'] = consumed['audit']
-        summary.setdefault('acquired_now', {})['recorded_audit'] = ordinary.get('audit')
+        replay = {'schema': 'baton2-native-classifier-replay-v1',
+                  'source_receipt': str(path), 'source_receipt_sha256': sha256(path),
+                  'run_root': consumed['run_root'], 'producer_root': consumed['producer_root'],
+                  'invocation': consumed.get('invocation'), 'nonce': consumed.get('nonce'),
+                  'retained': consumed['retained'],
+                  'ordinary_audit': consumed['audit'], 'recorded_audit': ordinary.get('audit')}
+        write_json(logs / 'classification-acquisition.json', replay)
+        require((logs / 'classification-acquisition.json').is_file(),
+                'The reused run did not retain its current classifier acquisition')
     destination = logs / 'summary.json'
     shutil.copyfile(path, destination)
     return destination, summary
@@ -1552,21 +1572,30 @@ def ordinary_verifier_digests():
     return digests, missing
 
 
+def verifier_member_value(verifier, member):
+    """Read a member a producer may have emitted under either classifier spelling."""
+    if member in verifier:
+        return verifier[member]
+    alias = VERIFIER_MEMBER_ALIASES.get(member)
+    return verifier.get(alias) if alias else None
+
+
 def require_verifier_closure(verdict, label):
     """A verdict must name its whole transitive verifier closure."""
     verifier = verdict.get('verifier')
     require(isinstance(verifier, dict), 'A verdict names no verifier closure: ' + label)
     for member in VERIFIER_MEMBERS:
-        require(isinstance(verifier.get(member), str) and verifier[member],
+        value = verifier_member_value(verifier, member)
+        require(isinstance(value, str) and value,
                 'A verdict omits verifier ' + member + ': ' + label)
     admitted, missing = expected_verifier_digests()
     require(not missing,
             'This checkout lacks admitted verifier source, so no verdict can be qualified: '
             + succinct(missing))
     for member, digest in admitted.items():
-        require(verifier[member] == digest,
+        require(verifier_member_value(verifier, member) == digest,
                 'The verdict names verifier ' + member + ' bytes that differ from this checkout')
-    return {member: verifier[member] for member in VERIFIER_MEMBERS}
+    return {member: verifier_member_value(verifier, member) for member in VERIFIER_MEMBERS}
 
 
 def verify_process(record, baseline, label):

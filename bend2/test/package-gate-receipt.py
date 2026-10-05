@@ -42,6 +42,11 @@ def synthetic_controls():
             'sha256': discovery_binding(controls)}
 
 
+def _load(path):
+    """Read a JSON document a fixture wrote."""
+    return json.loads(pathlib.Path(path).read_text())
+
+
 def law_row(control, **overrides):
     return {'law': control['law'], 'module': control['module'], 'proof': 'removed',
             'gate': 'refuses', 'passed': True, **overrides}
@@ -807,7 +812,7 @@ class PackageGateReceipt(unittest.TestCase):
         self.assertEqual(result['ordinary']['schema'], 'capacity-controls/ordinary-evidence@2')
         self.assertEqual(result['ordinary']['retained'], 'evidence/index.json')
         self.assertEqual(result['ordinary']['producer_root'], str((self.logs / 'run').resolve()))
-        self.assertEqual(result['ordinary']['run_root'], str((self.logs / 'evidence').resolve()))
+        self.assertEqual(result['ordinary']['run_root'], str(self.logs.resolve()))
         self.assertEqual(result['ordinary']['invocation'], 'ordinary:fixture-nonce')
         self.assertEqual(result['ordinary']['verifier'], self.ordinary_verifier)
         self.assertEqual(result['ordinary']['endpoint_members'], list(PACKAGE.VERIFIER_MEMBERS))
@@ -841,8 +846,11 @@ class PackageGateReceipt(unittest.TestCase):
                                     audit=self.logs / 'classifier-audit')
         self.assertEqual(result['ordinary']['selected'], 'argument')
         self.assertEqual(result['ordinary']['retained'], 'run/evidence/index.json')
-        with self.assertRaisesRegex(RuntimeError, 'already retains ordinary evidence'):
-            PACKAGE.validation(self.logs, None, path, self.compiler())
+        # The retention guard belongs to the envelope-copy branch, so a repeated
+        # direct validation of the same argument reads the same retained graph.
+        again = PACKAGE.validation(self.logs, None, path, self.compiler())
+        self.assertEqual(again['ordinary']['retained'], 'run/evidence/index.json')
+        self.assertEqual(again['ordinary']['sha256'], result['ordinary']['sha256'])
 
     def test_the_index_carries_one_run_identity(self):
         """One contract: the run block is authoritative, both input shapes read."""
@@ -926,10 +934,7 @@ class PackageGateReceipt(unittest.TestCase):
                   'names another run index_path'),
                  ('missing verifier', {**envelope, 'verifier': {}},
                   'names another run verifier'),
-                 ('member without a digest',
-                  {**envelope,
-                   'verifier': {**envelope['verifier'], 'group_run_module_sha256': 'not-a-digest'}},
-                  'no digest domain')]
+                 ]
         for name, run_envelope, message in cases:
             with self.subTest(name=name):
                 with self.assertRaisesRegex(RuntimeError, message):
@@ -948,23 +953,33 @@ class PackageGateReceipt(unittest.TestCase):
             PACKAGE.ordinary_evidence(located, controls, self.compiler(), None,
                                       self.parent_rows(), None,
                                       self.envelope(recorded, run_root=self.logs / 'run'))
+        no_domain = self.home / 'run' / 'evidence' / 'no-domain.json'
+        bad_verifier = {**envelope['verifier'], 'group_run_module_sha256': 'not-a-digest'}
+        no_domain.write_text(json.dumps({**_load(path), 'run': {**_load(path)['run'],
+                                                              'verifier': bad_verifier}}))
+        with self.assertRaisesRegex(RuntimeError, 'no digest domain'):
+            PACKAGE.ordinary_evidence(no_domain, controls, self.compiler(), None,
+                                      self.parent_rows(), None,
+                                      self.envelope(no_domain, run_root=self.home / 'run',
+                                                    verifier=bad_verifier))
         with self.assertRaisesRegex(RuntimeError, 'no run envelope'):
             PACKAGE.ordinary_evidence(path, controls, self.compiler(), None,
                                       self.parent_rows(), None, None)
+        without_nonce = self.home / 'run' / 'evidence' / 'nonce-removed.json'
+        without_nonce.write_text(json.dumps({**_load(path), 'run': {
+            key: value for key, value in _load(path)['run'].items() if key != 'nonce'}}))
         with self.assertRaisesRegex(RuntimeError, 'no run nonce'):
-            rewritten = json.loads(path.read_text())
-            rewritten['run'] = {key: value for key, value in rewritten['run'].items()
-                                if key != 'nonce'}
-            path.write_text(json.dumps(rewritten))
-            PACKAGE.ordinary_evidence(path, controls, self.compiler(), None,
-                                      self.parent_rows(), None, envelope)
+            PACKAGE.ordinary_evidence(without_nonce, controls, self.compiler(), None,
+                                      self.parent_rows(), None,
+                                      self.envelope(without_nonce, run_root=self.home / 'run'))
+        bad_input = self.home / 'run' / 'evidence' / 'bad-input.json'
+        bad_input.write_text(json.dumps({**_load(path),
+                                         'inputs': [{'path': 'bend2/scripts/laws-check.mjs',
+                                                     'sha256': 'not-a-digest'}]}))
         with self.assertRaisesRegex(RuntimeError, 'no digest for'):
-            rewritten = json.loads(path.read_text())
-            rewritten['inputs'] = [{'path': 'bend2/scripts/laws-check.mjs',
-                                    'sha256': 'not-a-digest'}]
-            path.write_text(json.dumps(rewritten))
-            PACKAGE.ordinary_evidence(path, controls, self.compiler(), None,
-                                      self.parent_rows(), None, envelope)
+            PACKAGE.ordinary_evidence(bad_input, controls, self.compiler(), None,
+                                      self.parent_rows(), None,
+                                      self.envelope(bad_input, run_root=self.home / 'run'))
 
     def test_ordinary_evidence_parent_rows_are_required(self):
         path = self.ordinary_index(self.logs / 'run')
@@ -1014,7 +1029,13 @@ class PackageGateReceipt(unittest.TestCase):
                          summary['validation']['ordinary']['raw'])
         self.assertEqual(reused_summary['validation']['ordinary']['producer_root'],
                          summary['validation']['ordinary']['producer_root'])
+        self.assertEqual(summary['validation']['ordinary']['run_root'],
+                         str((self.home / 'ordinary-run').resolve()))
         self.assertEqual(reused_summary['validation']['ordinary']['run_root'], str(reused))
+        current = json.loads((reused / 'classification-acquisition.json').read_text())
+        self.assertEqual(current['run_root'], str(reused))
+        self.assertEqual(current['producer_root'], summary['validation']['ordinary']['producer_root'])
+        self.assertTrue(current['ordinary_audit']['members'])
         twice = self.home / 'ordinary-twice'
         twice.mkdir()
         _again_path, twice_summary = PACKAGE.reuse_gates(reused / 'summary.json',
