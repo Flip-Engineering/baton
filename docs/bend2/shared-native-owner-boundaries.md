@@ -68,19 +68,52 @@ completion state and native-request deliveries. External clients identify an
 attempt through the bound owner protocol. U32 child handles stay inside their
 owning process.
 
-`Receive.completed` releases the observer guard and child observer before
-`finish_pending` completes. `finish_pending` concurrently starts parent delivery
+`Receive.completed` releases its optional observer guard, then
+`ProcessChild.release` asks the keeper to release its held session lock after
+native exit. The attempt handle and completion duty remain. ACK requires native
+exit and release, records acknowledgment and finishes the retained keeper's
+completion protocol. Neither operation currently destroys the host child
+object. `finish_pending` concurrently starts parent delivery
 and pending-input continuation, then settles native requests, acknowledges the
 original handle and joins continuation. The owner must therefore retain the old
 attempt's delivery and ACK duties after replacing the active session slot.
 The mutable `executions` row supplies the current pointer; historical duties
 require their original attempt identity and retained evidence.
 
+Admission-slot generation, child-capability generation and owner-instance
+identity have separate lifetimes. An older attempt's callback validates against
+that retained attempt and capability. A newer active slot does not invalidate
+the older attempt's report delivery or ACK. Reused child storage invalidates
+the retired capability while preserving any separately retained delivery duty.
+
+Historical-duty recovery requires durable enumeration independent of the active
+execution pointer. At the reviewed source, `ProcessChild.recovery_argv` returns
+no recovery command when the attempt has a `released` marker. It therefore
+cannot enumerate the released-but-unacknowledged finish window. The persistence
+interface must retain the original attempt's report, settlement, release and
+ACK obligations across coordinator loss. Historical completion must proceed
+without reacquiring the session admission guard held by newer active work.
+
+An operation that returns `Fail` has completed an invocation. Its result must
+remain observable and may leave a delivery or custody obligation outstanding.
+Task retirement must inspect those remaining obligations and in-flight
+references explicitly. Requiring every result to be `Done` retains terminal
+failed tasks indefinitely; treating every returned failure as fulfilled loses
+owed notification. A continuation admitted for the next attempt belongs to that
+attempt. Waiting for its complete descendant chain must not retain the old
+attempt's child capability after its own custody and reference duties finish.
+
 Model-scoped environment construction belongs at each harness launch. The
 shared owner must never change its global environment to impersonate the most
 recent client. Concurrent harnesses must receive their configured identities
 and model routes independently. The current host spawn passes `environ`; the
 host owner must approve the exact child-environment API before integration.
+The proposed host API takes a complete immutable environment snapshot with
+validated keys, values and duplicate-key handling. Native launch and recovery
+launch have separate environment sources. Bootstrap and recovery must preserve
+the configured removal and override rules without persisting secrets in plain
+request records or report logs. The owner must review the representation before
+manifest or prepare-signature changes.
 
 ## Failure and output isolation
 
@@ -90,6 +123,9 @@ as exiting on error. A shared task entry needs explicit result propagation and
 task-scoped output. Forking the current public CLI entry requires a runtime
 isolation proof before use. The initial implementation should expose an owned
 task result to its caller and reserve process termination for owner failures.
+Pre-admission refusal and failure after native admission require distinct
+results. An admitted failure must identify the remaining observation, cleanup
+and notification owner even when database or output effects themselves fail.
 
 The root runtime review confirms that `IO.try` on failure and `IO.die` produce
 process-global HALT. Every transitive task call needs the result-valued boundary.
@@ -161,6 +197,12 @@ Integration requires explicit owner agreement for these interfaces:
   a busy recipient and a delayed historical parent notification.
 
 This proposal grants no edit authority in those existing regions.
+The complete owner responses retained in
+`synthesis-instance-owner-conditions-49` agree with these boundaries and require
+compiled concrete type/function signatures for the next source handoff.
+The prepared API remains prepare followed by identity-bound start/cancel and
+state inspection; readiness means attachment. Current phase observations do
+not establish recovery or shared-custody guarantees.
 
 ## Qualification
 
@@ -181,6 +223,10 @@ sibling continues. Exercise helper-pool saturation with idle children and active
 control requests, repeated task completion with stable owned allocations,
 slot reuse with outstanding old requests, coordinator loss with surviving
 custody, shared custody loss, and client disconnect after endpoint admission.
+Recovery tests must stop the owner after A releases its guard, admit B, and
+restore A's outstanding delivery and ACK while B remains active. Failed final
+delivery must retain its responsible wake obligation; a settled task failure
+with fulfilled custody and notification obligations must permit retirement.
 Mutation controls must alter the operative implementation and demonstrate the
 corresponding semantic failure. All applicable laws must be imported by the
 real native entry and checked on each exact source build.
