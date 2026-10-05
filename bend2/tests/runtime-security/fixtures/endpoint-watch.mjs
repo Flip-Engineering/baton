@@ -1,34 +1,30 @@
-// Fixture: stderr endpoint watch refusal behavior.
+// Fixture: stderr endpoint watch refusal behavior against the admitted closure.
 //
-// Current/corrected behavior: a missing file is refused through the module's
-// failure channel without a throw, a replaced or recreated file is refused as
-// endpointReplaced, truncation below the consumed offset is refused as
-// endpointTruncated, and a banner split across appends is still found.
+// Claims: a banner split across appends is found; a replaced or recreated file
+// is refused as endpointReplaced; truncation below the consumed offset is
+// refused as endpointTruncated; a missing file is refused through the module
+// failure channel without a throw.
 //
-// BATON_EXPECT=historical reproduces the earlier defect: the missing-file case
-// throws out of watchTargetStderr and never reaches the failure channel.
+// No historical expectation is registered for this fixture: the pre-fix stderr
+// throw belongs to a source revision whose digest this critic did not retain, so
+// it is not asserted against any closure. A historical pin therefore refuses.
 import { openSync, writeSync, writeFileSync, closeSync, unlinkSync, renameSync, mkdirSync, truncateSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
-import { EnvironmentRefusal, loadEnvironment } from '../lib/env.mjs';
-import { createReport, finish, failEnvironment } from '../lib/assert.mjs';
+import { EnvironmentRefusal, openEnvironmentOrExit } from '../lib/env.mjs';
+import { createReport, finish, refuseEnvironment } from '../lib/assert.mjs';
+import { historicalExpectation } from '../lib/pins.mjs';
 
 let environment;
 try {
-  environment = loadEnvironment();
+  environment = openEnvironmentOrExit();
+  if (environment.historicalPin !== null) historicalExpectation(environment, 'endpoint-watch');
 } catch (error) {
-  if (error instanceof EnvironmentRefusal) failEnvironment(error.condition, error.detail);
+  if (error instanceof EnvironmentRefusal) refuseEnvironment(error);
   throw error;
 }
 
-const reporter = createReport('endpoint-watch', environment, environment.expect);
-let module_;
-try {
-  module_ = await import(environment.runtimePath('cdp-endpoint.mjs'));
-} catch (error) {
-  reporter.check('producer:module-loadable', false, String(error?.message ?? error));
-  finish(environment, 'endpoint-watch.result.json', reporter.finalize());
-}
-const { watchTargetStderr, parseInspectorBanner } = module_;
+const reporter = createReport('endpoint-watch', environment);
+const { watchTargetStderr, parseInspectorBanner } = await import(environment.runtimePath('cdp-endpoint.mjs'));
 
 const work = join(environment.evidenceDir, 'endpoint-watch-work');
 rmSync(work, { recursive: true, force: true });
@@ -36,7 +32,6 @@ mkdirSync(work, { recursive: true });
 const settle = (ms = 200) => new Promise((resolve) => setTimeout(resolve, ms));
 const observations = {};
 
-// Banner parsing allowlist.
 observations.parse = {
   loopback: parseInspectorBanner('Debugger listening on ws://127.0.0.1:5/abc\n'),
   localhost: parseInspectorBanner('Debugger listening on ws://localhost:5/abc\n'),
@@ -47,7 +42,8 @@ reporter.check('parse:loopback-accepted', observations.parse.loopback !== null, 
 reporter.check('parse:remote-refused', observations.parse.remote === null, observations.parse.remote);
 reporter.check('parse:incomplete-line-not-accepted', observations.parse.noNewline === null, observations.parse.noNewline);
 
-async function scenario(name, action, { expectFailure }) {
+async function scenario(name, action, options = {}) {
+  const expectFailure = options.expectFailure ?? null;
   const path = join(work, `${name}.stderr`);
   const temporary = `${path}.new`;
   writeFileSync(path, 'no banner yet\n');
@@ -96,7 +92,6 @@ await scenario('truncate', async ({ path }) => {
   truncateSync(path, 2);
 }, { expectFailure: 'endpointTruncated' });
 
-// Missing file at start.
 {
   const path = join(work, 'missing.stderr');
   let failure = null;
@@ -108,12 +103,8 @@ await scenario('truncate', async ({ path }) => {
   }
   await settle();
   observations['missing-file'] = { threw, failure: failure?.condition ?? null };
-  if (environment.expect === 'historical') {
-    reporter.check('missing-file:throws-out-of-module', threw === 'ENOENT', observations['missing-file']);
-  } else {
-    reporter.check('missing-file:refused-without-throw',
-      threw === null && observations['missing-file'].failure === 'endpointWatchFailed', observations['missing-file']);
-  }
+  reporter.check('missing-file:refused-without-throw',
+    threw === null && observations['missing-file'].failure === 'endpointWatchFailed', observations['missing-file']);
 }
 
 try {

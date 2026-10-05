@@ -9,19 +9,21 @@
 //   F a target-blocking evaluation never responds, and an external signal still
 //     ends the subject
 import { spawn } from 'node:child_process';
-import { EnvironmentRefusal, loadEnvironment } from '../lib/env.mjs';
-import { createReport, finish, failEnvironment } from '../lib/assert.mjs';
+import { EnvironmentRefusal, openEnvironmentOrExit } from '../lib/env.mjs';
+import { createReport, finish, refuseEnvironment } from '../lib/assert.mjs';
+import { historicalExpectation } from '../lib/pins.mjs';
 import { loopbackGet, parseBanner, waitFor } from '../lib/net.mjs';
 
 let environment;
 try {
-  environment = loadEnvironment();
+  environment = openEnvironmentOrExit();
+  if (environment.historicalPin !== null) historicalExpectation(environment, 'inspector-boundary');
 } catch (error) {
-  if (error instanceof EnvironmentRefusal) failEnvironment(error.condition, error.detail);
+  if (error instanceof EnvironmentRefusal) refuseEnvironment(error);
   throw error;
 }
 
-const reporter = createReport('inspector-boundary', environment, environment.expect);
+const reporter = createReport('inspector-boundary', environment);
 const children = [];
 
 function launch(tag) {

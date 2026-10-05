@@ -1,25 +1,27 @@
 // Assertion and result recording for the portable fixture set.
 //
-// Every fixture builds one result object, writes it to BATON_EVIDENCE_DIR, and
-// exits 0 only when every assertion passed. A refused environment or a source
-// digest mismatch yields a non-zero exit and a recorded reason.
+// Source admission runs centrally in lib/env.mjs before a fixture imports any
+// producer module or spawns any child, so a report is only ever created for an
+// admitted closure. Every report records the admitted manifest path, the
+// observed closure digest and the historical pin, if any.
 
 import { writeFileSync, mkdirSync } from 'node:fs';
 import { join } from 'node:path';
 
-export function createReport(fixture, environment, mode) {
+export function createReport(fixture, environment) {
   const checks = [];
   const notes = [];
   const report = {
     fixture,
-    expect: mode,
+    mode: environment.historicalPin === null ? 'candidate' : `historical:${environment.historicalPin}`,
     platform: environment.platform,
     producerRoot: environment.producerRoot,
     runtimeDir: environment.runtimeDir,
-    producerHashes: environment.hashes,
-    expectedHashesFile: environment.expectedPath,
-    producerHashMismatches: environment.mismatches,
-    producerHashMissing: environment.missing,
+    producerHashesObserved: environment.hashes,
+    expectedManifest: environment.expectedPath,
+    expectedEntries: environment.expectedEntries,
+    closureSha256Observed: environment.closureSha256,
+    historicalPin: environment.historicalPin,
     checks,
     notes,
     ok: false,
@@ -32,6 +34,9 @@ export function createReport(fixture, environment, mode) {
     },
     note(text) {
       notes.push(text);
+    },
+    fail(name, detail = null) {
+      checks.push({ name, ok: false, detail });
     },
     finalize(extra = {}) {
       Object.assign(report, extra);
@@ -50,19 +55,21 @@ export function writeReport(environment, name, report) {
   return path;
 }
 
-export function finish(environment, name, report, exitCodeOverride = null) {
-  const path = writeReport(environment, name, report);
+// Real exit statuses: 0 pass, 1 assertion failure, 3 refused environment.
+export function finish(environment, name, report) {
+  writeReport(environment, name, report);
   const failed = report.failedChecks ?? [];
   const line = report.ok
-    ? `PASS ${report.fixture} (${report.expect}) checks=${report.checks.length}`
-    : `FAIL ${report.fixture} (${report.expect}) failed=${failed.join(',')}`;
+    ? `PASS ${report.fixture} (${report.mode}) checks=${report.checks.length}`
+    : `FAIL ${report.fixture} (${report.mode}) failed=${failed.join(',')}`;
   process.stdout.write(`${line}\n${JSON.stringify(report, null, 2)}\n`);
-  if (exitCodeOverride !== null) process.exit(exitCodeOverride);
   process.exit(report.ok ? 0 : 1);
 }
 
-// A fixture whose environment refuses before any observation still records why.
-export function failEnvironment(condition, detail) {
+// A refused environment records the refusal and exits 3 for any fixture.
+export function refuseEnvironment(error) {
+  const condition = error?.condition ?? 'environmentRefusal';
+  const detail = error?.detail ?? String(error);
   process.stdout.write(`FAIL environment ${condition}${detail === null ? '' : `: ${detail}`}\n`);
   process.exit(3);
 }

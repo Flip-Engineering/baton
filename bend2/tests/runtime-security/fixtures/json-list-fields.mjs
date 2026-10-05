@@ -2,28 +2,34 @@
 // child stderr and /json/list answers an unauthenticated loopback client. The
 // entry carries no pid field, so direct-child identity must come from the keeper.
 import { spawn } from 'node:child_process';
-import { EnvironmentRefusal, loadEnvironment } from '../lib/env.mjs';
-import { createReport, finish, failEnvironment } from '../lib/assert.mjs';
+import { EnvironmentRefusal, openEnvironmentOrExit } from '../lib/env.mjs';
+import { createReport, finish, refuseEnvironment } from '../lib/assert.mjs';
+import { historicalExpectation } from '../lib/pins.mjs';
 import { loopbackGet, parseBanner, waitFor } from '../lib/net.mjs';
 
 let environment;
 try {
-  environment = loadEnvironment();
+  environment = openEnvironmentOrExit();
+  if (environment.historicalPin !== null) historicalExpectation(environment, 'json-list-fields');
 } catch (error) {
-  if (error instanceof EnvironmentRefusal) failEnvironment(error.condition, error.detail);
+  if (error instanceof EnvironmentRefusal) refuseEnvironment(error);
   throw error;
 }
 
-const reporter = createReport('json-list-fields', environment, environment.expect);
-const subject = environment.helperPath('subject.mjs');
+const reporter = createReport('json-list-fields', environment);
 const child = spawn(
   '/usr/bin/env',
   ['-i', 'PATH=/usr/bin:/bin', 'HOME=/tmp/baton-fixture-home', 'TMPDIR=/tmp', 'LC_ALL=C',
-    environment.floorNode, '--inspect-brk=127.0.0.1:0', subject],
+    environment.floorNode, '--inspect-brk=127.0.0.1:0', environment.helperPath('subject.mjs')],
   { cwd: environment.evidenceDir, env: { ...process.env }, stdio: ['ignore', 'pipe', 'pipe'] },
 );
 let stderr = '';
 child.stderr.on('data', (chunk) => (stderr += chunk));
+// Observation is installed before any work so an early exit is not missed.
+const exitObservation = new Promise((resolve) => {
+  child.on('close', (code, signal) => resolve({ code, signal, at: Date.now() }));
+  child.on('error', (error) => resolve({ error: error.code ?? String(error), at: Date.now() }));
+});
 
 let banner = null;
 let list = null;
@@ -37,8 +43,8 @@ try {
   }
 } finally {
   child.kill('SIGKILL');
-  await new Promise((resolve) => child.on('close', resolve));
 }
+const observedExit = await exitObservation;
 
 let listParsed = null;
 try {
@@ -64,10 +70,12 @@ reporter.check('list:entry-shape', Array.isArray(listParsed) && listParsed.lengt
   && typeof listParsed[0].webSocketDebuggerUrl === 'string', listParsed);
 reporter.check('version:names-node', typeof versionParsed?.Browser === 'string'
   && versionParsed.Browser.includes('node.js'), versionParsed);
+reporter.check('subject:reaped', observedExit.signal === 'SIGKILL' || observedExit.code !== undefined, observedExit);
 
 finish(environment, 'json-list-fields.result.json', reporter.finalize({
   banner,
   listBody: list?.body ?? null,
   listParsed,
   versionParsed,
+  observedExit,
 }));

@@ -1,101 +1,125 @@
 # Runtime security and lifecycle fixtures
 
-Portable fixture set for the CDP runtime lane. It replaces the earlier private
-scratch fixtures, which hardcoded a host worktree path and a Homebrew Node
-binary. The scratch originals and their results stay unchanged under
-`.scratch/evidence-security-critic/`; this directory is the successor set for
-admitted remote execution.
+Portable fixture set for the CDP runtime lane. It supersedes the scratch set and
+the first committed version. Source only: nothing here runs during authoring, and
+execution belongs to an admitted remote runner.
 
 ## Environment contract
 
-Nothing here hardcodes a host path. The runner injects:
-
 | Variable | Meaning |
 | --- | --- |
-| `BATON_PRODUCER_ROOT` | absolute root of the admitted producer worktree |
+| `BATON_PRODUCER_ROOT` | absolute root of the producer worktree under test |
 | `BATON_FLOOR_NODE` | absolute exact-floor Node executable |
 | `BATON_EVIDENCE_DIR` | absolute directory for result artifacts (must exist) |
-| `BATON_EXPECT` | `historical` or `corrected` (default `corrected`) |
-| `BATON_EXPECTED_PRODUCER_HASHES` | optional file of `sha256  <path>` lines to validate |
+| `BATON_EXPECTED_PRODUCER_HASHES` | absolute root-admitted frozen manifest (required) |
+| `BATON_HISTORICAL_CLOSURE_SHA256` | optional pin that enables one historical reproduction |
 
-The producer runtime directory is resolved as
-`$BATON_PRODUCER_ROOT/bend2/context/runtime`. Helper scripts are resolved
-relative to the fixture file itself, so the checkout can sit anywhere.
-`BATON_EXPECTED_PRODUCER_HASHES` is matched by basename; a mismatch or a missing
-listed file fails the run before any observation, because the review then does
-not apply to that tree. Every fixture records `platform`, `arch`, `os.release()`,
-the Node version, the floor executable path and its SHA-256, and the producer
-digests it read.
+The runtime directory resolves as `$BATON_PRODUCER_ROOT/bend2/context/runtime`,
+and helpers resolve from the fixture module location, so the checkout can sit
+anywhere.
+
+The expected manifest is an admitted input. It must not be produced by hashing
+the tree under test: that would accept any tree. The runner records freshly
+observed digests under `*.observed.sha256.json` and the suite summary, and never
+feeds them back as expectations.
+
+## Central source admission
+
+`openEnvironmentOrExit()` runs in every fixture and in the suite runner before
+any producer module is imported or any child is spawned. It refuses, with a
+recorded condition and exit 3, when:
+
+- the manifest path is absent, unreadable, or not absolute;
+- any non-comment line is malformed, or a basename appears twice;
+- the manifest does not cover every file in the imported dependency closure
+  (`bootstrap.mjs`, `bootstrap-admission.mjs`, `cdp-intents.mjs`, `cdp-state.mjs`,
+  `cdp-session.mjs`, `cdp-transport.mjs`, `cdp-endpoint.mjs`);
+- a closure file is missing from the tree, or its observed digest differs from
+  the admitted value.
+
+The suite runner also refuses before spawning any fixture child, so a mismatch
+produces no partial run.
 
 ## Modes
 
-`BATON_EXPECT=historical` reproduces the defects that were found:
+**Candidate mode** is the default and asserts the current tree's behavior:
 
-- `bootstrap-exec`: a directory or a mode-0644 file named as the target Node
-  emits `launchAdopted` and the process aborts with `status null`, `signal
-  SIGABRT`.
-- `grants-admission`: `Runtime.runIfWaitingForDebugger` and the `NodeWorker`
-  state changes are admitted with no grants and outside the pending-intent
-  serialization, and a breakpoint condition is forwarded with an empty effect set.
-- `endpoint-watch`: a missing stderr file throws `ENOENT` out of the module.
+- `bootstrap-exec`: a directory or a mode-0644 file named as the target Node is
+  refused with a structured bootstrap record and a numeric non-zero status, with
+  no `process.execve` abort; the real Node control starts the target.
+- `grants-admission`: the effectful methods reachable through the observation
+  send path refuse without their grant, mutate requests respect the pending-intent
+  serialization, and a condition-carrying breakpoint requires the evaluate grant.
+- `endpoint-watch`: a missing stderr file is refused through the module failure
+  channel without a throw; replacement and truncation refuse by name.
+- `exec-continuity`, `json-list-fields`, `inspector-boundary`,
+  `endpoint-replacement`: provider behavior as named in each file header.
 
-`BATON_EXPECT=corrected` accepts the fixed candidate and asserts the opposite
-outcomes for those same points: a structured bootstrap refusal with a numeric
-exit status and no `process.execve` abort, refusal of the ungranted methods and
-of mutate requests while an evaluation is pending, an evaluate grant requirement
-for a condition-carrying breakpoint, and a missing file refused through the
-module's failure channel without a throw. A corrected run does not fail because
-the historical expectations name `SIGABRT` or ungranted admission, and a
-historical run does not fail because the candidate refuses.
-
-Both modes assert the positive controls: launch requires `controlRuntime`,
-evaluate and pause-family requests refuse on the send path, the observe intent
-requires no grants, and worker inner evaluate and resume refuse.
+**Historical mode** runs only when `BATON_HISTORICAL_CLOSURE_SHA256` names a
+registered pin whose closure digest equals the admitted closure exactly. The one
+registered pin is `review-verified-2026-10-05` (closure
+`edffa694953b8ba9d99b0833fdabe1651a7b0d52275baf073c119775b5d55018`), covering
+`bootstrap-exec` and `grants-admission`. Under that pin the invalid bootstrap
+documents abort with `status null`, `signal SIGABRT`, and the observation-path
+methods are admitted without grants. A pin set for any other fixture refuses, so
+candidate and historical eras are never mixed in one run. No historical
+expectation is registered for `endpoint-watch`: the pre-fix stderr throw belongs
+to a revision whose digest this critic did not retain.
 
 ## Platform expectations
 
-The environment boundary check allows exactly the platform text-encoding
-addition. On darwin that is `__CF_USER_TEXT_ENCODING`; on linux the allowed
-addition set is empty, so any extra key fails the fixture.
+The environment boundary fixture allows exactly the platform text-encoding
+addition: `__CF_USER_TEXT_ENCODING` on darwin, and the empty set on linux, so any
+extra key fails there. Declared environment values are compared as well as keys.
 
 ## Exact remote invocation
 
 ```
 NODE=<exact floor executable for the platform>
 EVID=<absolute empty evidence directory>
-cd <this directory>
+MANIFEST=<root-admitted frozen producer digest manifest>
+cd <checkout>/bend2/tests/runtime-security
 
-"$NODE" --version                          > "$EVID/node.version.txt" 2>&1
-shasum -a 256 "$NODE"                      > "$EVID/node.sha256.txt"  2>&1
-shasum -a 256 <producer runtime dir>/*.mjs > "$EVID/producer.sha256.txt" 2>&1
+"$NODE" --version                       > "$EVID/node.version.txt" 2>&1
+shasum -a 256 "$NODE"                   > "$EVID/node.sha256.txt"  2>&1
+shasum -a 256 <producer runtime dir>/*.mjs > "$EVID/observed.producer.sha256.txt" 2>&1
 
-BATON_PRODUCER_ROOT=<admitted producer root> \
+# Candidate run
+BATON_PRODUCER_ROOT=<producer root> \
 BATON_FLOOR_NODE="$NODE" \
 BATON_EVIDENCE_DIR="$EVID" \
-BATON_EXPECT=corrected \
-BATON_EXPECTED_PRODUCER_HASHES="$EVID/producer.sha256.txt" \
+BATON_EXPECTED_PRODUCER_HASHES="$MANIFEST" \
+"$NODE" run-all.mjs
+
+# Historical run against the pinned closure (separate evidence directory)
+BATON_PRODUCER_ROOT=<pinned producer root> \
+BATON_FLOOR_NODE="$NODE" \
+BATON_EVIDENCE_DIR=<pinned evidence directory> \
+BATON_EXPECTED_PRODUCER_HASHES=<pinned manifest> \
+BATON_HISTORICAL_CLOSURE_SHA256=edffa694953b8ba9d99b0833fdabe1651a7b0d52275baf073c119775b5d55018 \
 "$NODE" run-all.mjs
 ```
 
-`run-all.mjs` executes each fixture as a child and exits non-zero when any
-failed. Each fixture writes its own `<name>.result.json` and exits 0 only when
-every assertion passed; an environment refusal exits 3 with the condition on
-stdout. Re-run the same command with `BATON_EXPECT=historical` against the
-pre-fix tree to reproduce the original defects.
+`observed.producer.sha256.txt` is evidence of what was present; it is not the
+expected manifest. Each fixture writes `<name>.result.json` and exits 0 only when
+every assertion passed; a refused environment exits 3. The runner persists every
+child's full stdout and stderr to `<fixture>.child.{stdout,stderr}.txt`,
+including failed fixtures, records status, signal, error and refusal line per
+child, and writes `run-all.summary.json` separately.
 
-## Coverage limits
+## Coverage limits and unexecuted status
 
-These fixtures assert provider behavior and pure admission functions only. They
-do not cover, and must not be read as covering:
+The suite is authored source and has not been run or syntax-checked on the
+operator laptop; it is unvalidated until an admitted remote runner executes the
+invocation above. It asserts provider behavior and pure admission functions
+only, and does not cover:
 
-- S3 endpoint identity from the path rather than the descriptor: forcing a
-  replacement between `openSync` and the identity capture needs a dedicated
-  race harness that this set does not provide.
-- S4 transport close semantics against session state: the resume-on-close
-  behavior is measured by `inspector-boundary`, but the session record's stale
-  `paused` claim needs a session-level fixture.
-- S5 loopback validation on the launch endpoint and S6 the delivered law import
-  fragment: both are code and integration obligations with no provider-visible
-  behavior here.
-- Keeper custody, role admission, observer recovery and owner notification: no
-  Baton keeper is involved.
+- the S3 endpoint identity race (forcing a replacement between `openSync` and the
+  identity capture needs a dedicated harness);
+- the S4 session-level close state;
+- the S5 loopback boundary and the S6 delivered law import fragment;
+- keeper custody, role admission, observer recovery and owner notification.
+
+The conditional-breakpoint check establishes grant behavior only; the approved
+public breakpoint shape (intent versus request construction) remains an open
+question for the CDP owner, and table metadata is never accepted as proof.

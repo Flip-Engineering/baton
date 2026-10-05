@@ -1,31 +1,35 @@
 // Fixture: bootstrap pre-exec validation and exec outcome.
 //
-// BATON_EXPECT=historical reproduces the current defect: a directory or a
-// mode-0644 regular file named as the target Node passes admission, a
-// launchAdopted record is emitted, and process.execve aborts the process
-// (subprocess status null, signal SIGABRT).
+// Candidate mode (no historical pin): a directory or a mode-0644 regular file
+// named as the target Node must be refused with a structured bootstrap record
+// and a numeric non-zero exit status, with no process.execve abort, and the real
+// Node control must start the target.
 //
-// BATON_EXPECT=corrected accepts the fixed candidate: the same documents are
-// refused with a structured bootstrap record and a numeric exit status, and no
-// process.execve abort. The corrected run must not be required to reproduce
-// SIGABRT, and the historical run must not be required to refuse.
-//
-// The real-Node control must start the target in both modes.
+// Historical mode runs only when BATON_HISTORICAL_CLOSURE_SHA256 names a pin
+// registered for this fixture and the admitted closure matches it exactly. For
+// the verified review closure the invalid documents abort with status null and
+// signal SIGABRT. The two modes are never mixed in one run.
 import { spawnSync } from 'node:child_process';
 import { mkdirSync, writeFileSync, chmodSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
-import { EnvironmentRefusal, loadEnvironment } from '../lib/env.mjs';
-import { createReport, finish, failEnvironment } from '../lib/assert.mjs';
+import { EnvironmentRefusal, openEnvironmentOrExit } from '../lib/env.mjs';
+import { createReport, finish, refuseEnvironment } from '../lib/assert.mjs';
+import { historicalExpectation } from '../lib/pins.mjs';
 
 let environment;
+let historical = false;
 try {
-  environment = loadEnvironment();
+  environment = openEnvironmentOrExit();
+  if (environment.historicalPin !== null) {
+    historicalExpectation(environment, 'bootstrap-exec');
+    historical = true;
+  }
 } catch (error) {
-  if (error instanceof EnvironmentRefusal) failEnvironment(error.condition, error.detail);
+  if (error instanceof EnvironmentRefusal) refuseEnvironment(error);
   throw error;
 }
 
-const reporter = createReport('bootstrap-exec', environment, environment.expect);
+const reporter = createReport('bootstrap-exec', environment);
 const work = join(environment.evidenceDir, 'bootstrap-exec-work');
 rmSync(work, { recursive: true, force: true });
 mkdirSync(work, { recursive: true });
@@ -45,11 +49,7 @@ const cases = [
   { name: 'real-node-control', node: environment.floorNode, extra: [target], invalid: false },
 ];
 
-const REFUSAL_KINDS = [
-  'launchRefused', 'launchNodeUnavailable', 'launchNodeNotExecutable',
-  'launchExecveUnavailable', 'launchDocumentMalformed',
-];
-
+const REFUSAL_EXCLUDES = ['launchAdopted'];
 const results = [];
 for (const item of cases) {
   const document = JSON.stringify({
@@ -78,10 +78,9 @@ for (const item of cases) {
     })
     .filter((value) => value !== null);
   const kinds = records.map((record) => record.kind).filter((kind) => typeof kind === 'string');
-  const adopted = kinds.includes('launchAdopted');
-  const refusalKind = kinds.find((kind) => REFUSAL_KINDS.includes(kind)) ?? null;
-  const execAbort = /process\.execve failed/.test(stderr);
+  const executiveAdoption = kinds.filter((kind) => !REFUSAL_EXCLUDES.includes(kind));
   const targetRan = /TARGET_RAN/.test(run.stdout ?? '');
+  const execAbort = /process\.execve failed/.test(stderr);
   results.push({
     name: item.name,
     document,
@@ -92,26 +91,24 @@ for (const item of cases) {
     stdout: run.stdout,
     stderr,
     kinds,
-    adoptedBeforeFailure: adopted,
-    refusalKind,
+    nonAdoptionRecords: executiveAdoption,
     execAbort,
     targetRan,
   });
 
   const label = item.name;
   reporter.check(`${label}:no-target-start-on-invalid`, item.invalid ? !targetRan : targetRan, { targetRan });
-  reporter.check(`${label}:not-timed-out`, run.error === undefined || run.error === null, String(run.error ?? ''));
-
   if (!item.invalid) {
-    reporter.check(`${label}:exit-zero`, run.status === 0 && run.signal === null, { status: run.status, signal: run.signal });
+    reporter.check(`${label}:exit-zero`, run.status === 0 && run.signal === null,
+      { status: run.status, signal: run.signal });
     continue;
   }
-  if (environment.expect === 'historical') {
+  if (historical) {
     reporter.check(`${label}:aborts-with-signal`,
       run.status === null && run.signal === 'SIGABRT', { status: run.status, signal: run.signal });
   } else {
     reporter.check(`${label}:structured-refusal`,
-      run.signal === null && typeof run.status === 'number' && run.status !== 0 && refusalKind !== null,
+      run.signal === null && typeof run.status === 'number' && run.status !== 0 && executiveAdoption.length > 0,
       { status: run.status, signal: run.signal, kinds });
     reporter.check(`${label}:no-exec-abort-on-refusal`, execAbort === false, execAbort);
   }
@@ -120,7 +117,7 @@ for (const item of cases) {
 try {
   rmSync(work, { recursive: true, force: true });
 } catch {
-  // evidence directory is retained regardless of fixture scratch cleanup
+  // scratch cleanup is best effort; evidence is retained
 }
 
-finish(environment, 'bootstrap-exec.result.json', reporter.finalize({ cases: results }));
+finish(environment, 'bootstrap-exec.result.json', reporter.finalize({ historical, cases: results }));

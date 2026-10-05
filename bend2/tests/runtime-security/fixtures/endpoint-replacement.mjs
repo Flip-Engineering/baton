@@ -3,18 +3,20 @@
 // lucky event.
 import { writeFileSync, unlinkSync, renameSync, mkdirSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
-import { EnvironmentRefusal, loadEnvironment } from '../lib/env.mjs';
-import { createReport, finish, failEnvironment } from '../lib/assert.mjs';
+import { EnvironmentRefusal, openEnvironmentOrExit } from '../lib/env.mjs';
+import { createReport, finish, refuseEnvironment } from '../lib/assert.mjs';
+import { historicalExpectation } from '../lib/pins.mjs';
 
 let environment;
 try {
-  environment = loadEnvironment();
+  environment = openEnvironmentOrExit();
+  if (environment.historicalPin !== null) historicalExpectation(environment, 'endpoint-replacement');
 } catch (error) {
-  if (error instanceof EnvironmentRefusal) failEnvironment(error.condition, error.detail);
+  if (error instanceof EnvironmentRefusal) refuseEnvironment(error);
   throw error;
 }
 
-const reporter = createReport('endpoint-replacement', environment, environment.expect);
+const reporter = createReport('endpoint-replacement', environment);
 const module_ = await import(environment.runtimePath('cdp-endpoint.mjs'));
 const { watchTargetStderr } = module_;
 const work = join(environment.evidenceDir, 'endpoint-replacement-work');

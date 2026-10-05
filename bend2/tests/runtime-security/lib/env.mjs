@@ -1,19 +1,23 @@
-// Portable fixture environment contract for the runtime security/lifecycle set.
+// Portable fixture environment contract and central source admission.
 //
 // Nothing here hardcodes a host path. The caller injects:
-//   BATON_PRODUCER_ROOT       absolute root of the admitted producer worktree
-//   BATON_FLOOR_NODE          absolute exact-floor Node executable
-//   BATON_EVIDENCE_DIR        absolute directory for result artifacts (required)
-//   BATON_EXPECT              historical | corrected   (default corrected)
-//   BATON_EXPECTED_PRODUCER_HASHES  optional file of `sha256  <path>` lines
+//   BATON_PRODUCER_ROOT              absolute root of the producer worktree under test
+//   BATON_FLOOR_NODE                 absolute exact-floor Node executable
+//   BATON_EVIDENCE_DIR               absolute directory for result artifacts (required)
+//   BATON_EXPECTED_PRODUCER_HASHES   absolute ROOT-ADMITTED frozen manifest (required)
+//   BATON_HISTORICAL_CLOSURE_SHA256  optional; enables the pinned historical expectation
 //
-// The producer runtime modules are resolved as
-// <BATON_PRODUCER_ROOT>/bend2/context/runtime/<name>, and the expected digests
-// in BATON_EXPECTED_PRODUCER_HASHES are matched by basename. A digest mismatch
-// refuses the run: the review does not apply to that tree.
+// The expected manifest is an admitted input. It must not be produced from the
+// tree under test: producing expectations from the tree under test would accept
+// any tree. The runner records fresh observed digests separately, under
+// `observed.producer.sha256`, and never feeds them back as expectations.
+//
+// Admission refuses before any producer import or child spawn when the manifest
+// is absent, malformed, duplicated, incomplete for the imported dependency
+// closure, or disagrees with the tree.
 
 import { createHash } from 'node:crypto';
-import { readFileSync, statSync, accessSync, constants, existsSync } from 'node:fs';
+import { readFileSync, statSync, accessSync, existsSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, isAbsolute, join, basename } from 'node:path';
 import os from 'node:os';
@@ -22,6 +26,7 @@ export const LIB_DIR = dirname(fileURLToPath(import.meta.url));
 export const SUITE_DIR = dirname(LIB_DIR);
 export const HELPERS_DIR = join(SUITE_DIR, 'helpers');
 
+// The dependency closure this suite imports or launches from the producer tree.
 export const PRODUCER_FILES = Object.freeze([
   'bootstrap.mjs',
   'bootstrap-admission.mjs',
@@ -55,14 +60,37 @@ export function sha256File(path) {
   return createHash('sha256').update(readFileSync(path)).digest('hex');
 }
 
-function parseExpectedHashes(path) {
+export function closureDigest(hashes) {
+  const lines = PRODUCER_FILES.slice().sort().map((name) => `${name}:${hashes[name] ?? ''}`);
+  return createHash('sha256').update(`${lines.join('\n')}\n`).digest('hex');
+}
+
+// Strict manifest parse: every non-empty, non-comment line must be a well-formed
+// digest entry, and a basename may appear once.
+export function parseExpectedHashes(path) {
+  if (!existsSync(path)) throw new EnvironmentRefusal('expectedHashesMissing', path);
   const text = readFileSync(path, 'utf8');
   const map = new Map();
-  for (const line of text.split('\n')) {
-    const match = /^([0-9a-f]{64})\s+(.+)$/.exec(line.trim());
-    if (match === null) continue;
-    map.set(basename(match[2].trim()), match[1]);
+  const malformed = [];
+  const duplicates = [];
+  const lines = text.split('\n');
+  for (let index = 0; index < lines.length; index += 1) {
+    const line = lines[index].trim();
+    if (line.length === 0 || line.startsWith('#')) continue;
+    const match = /^([0-9a-f]{64})[ \t]+(.+)$/.exec(line);
+    if (match === null) {
+      malformed.push(`line ${index + 1}: ${line.slice(0, 80)}`);
+      continue;
+    }
+    const name = basename(match[2].trim());
+    if (map.has(name)) {
+      duplicates.push(name);
+      continue;
+    }
+    map.set(name, match[1]);
   }
+  if (malformed.length > 0) throw new EnvironmentRefusal('expectedHashesMalformed', malformed.join(' | '));
+  if (duplicates.length > 0) throw new EnvironmentRefusal('expectedHashesDuplicate', duplicates.join(', '));
   return map;
 }
 
@@ -70,74 +98,98 @@ export function loadEnvironment() {
   const producerRoot = requireAbsolute('BATON_PRODUCER_ROOT', process.env.BATON_PRODUCER_ROOT);
   const floorNode = requireAbsolute('BATON_FLOOR_NODE', process.env.BATON_FLOOR_NODE);
   const evidenceDir = requireAbsolute('BATON_EVIDENCE_DIR', process.env.BATON_EVIDENCE_DIR);
-  const expect = process.env.BATON_EXPECT ?? 'corrected';
-  if (expect !== 'historical' && expect !== 'corrected') {
-    throw new EnvironmentRefusal('unknownExpectation', expect);
-  }
-  if (!existsSync(evidenceDir)) {
-    throw new EnvironmentRefusal('evidenceDirectoryMissing', evidenceDir);
-  }
+  const expectedPath = requireAbsolute('BATON_EXPECTED_PRODUCER_HASHES', process.env.BATON_EXPECTED_PRODUCER_HASHES);
+  if (!existsSync(evidenceDir)) throw new EnvironmentRefusal('evidenceDirectoryMissing', evidenceDir);
   const runtimeDir = join(producerRoot, 'bend2', 'context', 'runtime');
-  if (!existsSync(runtimeDir)) {
-    throw new EnvironmentRefusal('producerRuntimeMissing', runtimeDir);
-  }
+  if (!existsSync(runtimeDir)) throw new EnvironmentRefusal('producerRuntimeMissing', runtimeDir);
   try {
-    accessSync(floorNode, constants.X_OK);
+    accessSync(floorNode, 1); // X_OK
   } catch (error) {
     throw new EnvironmentRefusal('floorNodeNotExecutable', `${floorNode}: ${error.code ?? error.message}`);
   }
+  statSync(floorNode);
 
-  const floorHash = sha256File(floorNode);
-  const expectedPath = process.env.BATON_EXPECTED_PRODUCER_HASHES ?? null;
-  const expected = expectedPath === null ? null : parseExpectedHashes(expectedPath);
+  const expected = parseExpectedHashes(expectedPath);
+  const missingInManifest = PRODUCER_FILES.filter((name) => !expected.has(name));
+  if (missingInManifest.length > 0) {
+    throw new EnvironmentRefusal('expectedHashesIncomplete', missingInManifest.join(', '));
+  }
+
   const hashes = {};
+  const missingFiles = [];
   const mismatches = [];
-  const missing = [];
   for (const name of PRODUCER_FILES) {
     const path = join(runtimeDir, name);
     if (!existsSync(path)) {
-      missing.push(name);
+      missingFiles.push(name);
       continue;
     }
     const digest = sha256File(path);
     hashes[name] = digest;
-    if (expected !== null) {
-      const wanted = expected.get(name);
-      if (wanted === undefined) missing.push(`${name} (not in expected list)`);
-      else if (wanted !== digest) mismatches.push(`${name}: expected ${wanted} found ${digest}`);
+    if (expected.get(name) !== digest) {
+      mismatches.push(`${name}: admitted ${expected.get(name)} observed ${digest}`);
     }
   }
 
-  const platform = {
-    platform: process.platform,
-    arch: process.arch,
-    release: os.release(),
-    nodeVersion: process.version,
-    floorNode,
-    floorNodeSha256: floorHash,
-  };
+  const closure = closureDigest(hashes);
+  const historicalPin = process.env.BATON_HISTORICAL_CLOSURE_SHA256 ?? null;
 
   return {
     producerRoot,
     runtimeDir,
     floorNode,
-    floorHash,
+    floorNodeSha256: sha256File(floorNode),
     evidenceDir,
-    expect,
     expectedPath,
+    expectedEntries: Object.fromEntries(expected),
     hashes,
+    missingFiles,
     mismatches,
-    missing,
-    platform,
-    // The platform keys an explicit child environment may gain. On macOS the
-    // text-encoding variable appears; on Linux the expected addition set is empty.
+    closureSha256: closure,
+    historicalPin,
+    historicalPinMatches: historicalPin !== null && historicalPin === closure,
+    platform: {
+      platform: process.platform,
+      arch: process.arch,
+      release: os.release(),
+      nodeVersion: process.version,
+      floorNode,
+    },
     platformInjectedEnvKeys: process.platform === 'darwin' ? ['__CF_USER_TEXT_ENCODING'] : [],
     runtimePath: (name) => join(runtimeDir, name),
     helperPath: (name) => join(HELPERS_DIR, name),
   };
 }
 
-export function producerDigestLines(environment) {
-  return Object.keys(environment.hashes).sort()
-    .map((name) => `${environment.hashes[name]}  ${join(environment.runtimeDir, name)}`);
+// Central admission: refuses before any producer import or child spawn.
+export function admitSource(environment) {
+  if (environment.missingFiles.length > 0) {
+    throw new EnvironmentRefusal('producerFileMissing', environment.missingFiles.join(', '));
+  }
+  if (environment.mismatches.length > 0) {
+    throw new EnvironmentRefusal('sourceHashMismatch', environment.mismatches.join(' | '));
+  }
+  return environment;
+}
+
+// Uniform entry point for every fixture and for the suite runner. Returns an
+// admitted environment or exits 3 with the refusal recorded on stdout.
+export function openEnvironmentOrExit() {
+  let environment;
+  try {
+    environment = admitSource(loadEnvironment());
+  } catch (error) {
+    if (error instanceof EnvironmentRefusal) {
+      process.stdout.write(`FAIL environment ${error.condition}${error.detail === null ? '' : `: ${error.detail}`}\n`);
+      process.exit(3);
+    }
+    throw error;
+  }
+  return environment;
+}
+
+// Freshly observed digests, for evidence only.
+export function observedDigestLines(environment) {
+  return PRODUCER_FILES.slice().sort()
+    .map((name) => `${environment.hashes[name] ?? 'MISSING'}  ${join(environment.runtimeDir, name)}`);
 }
