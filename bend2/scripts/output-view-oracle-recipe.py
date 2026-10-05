@@ -4,20 +4,33 @@
 This harness compares, for every case in a hashed input manifest, three things: the
 independently written expectation, the structured facts reported by the pure candidate, and
 the facts extracted from the admitted artifact's linked SQLite by evaluating the original
-frame_kind and filter_mode_sql expressions. It performs no comparison logic of its own beyond
-field equality, and it produces no successful result that is not backed by a real invocation.
+frame_kind and filter_mode_sql expressions.
+
+Fact representation. A fact is null, a boolean, a string, a list, or an object. A numeric fact
+is an object with exactly one key, "lexeme", whose value is the exact original spelling as a
+string, because a bare JSON number would let the host language equate distinct spellings and
+would let a boolean compare equal to a number. A bare number anywhere in a result or an
+expectation is a protocol failure. Comparison is kind sensitive and recursive: missing keys,
+extra keys, list length and list order are all reported.
 
 Manifest schema, receive-output-view-oracle/1:
 
   {
     "schema": "receive-output-view-oracle/1",
+    "bridges": {
+      "candidate": {"present": false, "absent_reason": ..., "path": ..., "sha256": ...},
+      "oracle":    {"present": false, "absent_reason": ...,
+                    "expressions_bound": false, "path": ..., "sha256": ...}
+    },
     "dependency": {
-      "artifact":  {"path": ..., "sha256": ...},
-      "candidate": {"path": ..., "pin": ..., "tree": ..., "source_sha256": {name: sha}},
-      "original":  {"pin": ..., "tree": ...},
-      "sqlite":    {"identity": ..., "sha256": ...},
-      "compiler":  {"identity": ...},
-      "oracle":    {"path": ..., "extraction_sha256": {name: sha},
+      "artifact":  {"identity": ..., "path": ..., "sha256": ...},
+      "candidate": {"identity": ..., "path": ..., "pin": ..., "tree": ...,
+                    "source_sha256": {name: sha}},
+      "original":  {"identity": ..., "path": ..., "pin": ..., "tree": ...,
+                    "source_sha256": {name: sha}},
+      "sqlite":    {"identity": ..., "path": ..., "sha256": ...},
+      "compiler":  {"identity": ..., "path": ..., "sha256": ...},
+      "oracle":    {"identity": ..., "path": ..., "extraction_sha256": {name: sha},
                     "expressions": {
                       "frame_kind":      {"text_sha256": ...,
                                           "source": {"path": ..., "first_line": ..., "last_line": ...},
@@ -26,8 +39,9 @@ Manifest schema, receive-output-view-oracle/1:
                     }}
     },
     "invocation": {
-      "candidate": {"argv": [...], "protocol": "json-lines"},
-      "oracle":    {"argv": [...], "protocol": "json-lines"}
+      "candidate": {"executable": ..., "argv": [...], "protocol": "json-lines"},
+      "oracle":    {"executable": ..., "argv": [..., "{expressions_dir}", ...],
+                    "protocol": "json-lines"}
     },
     "cases": [
       {"name": ..., "octets_hex": ..., "octets_sha256": ...,
@@ -38,40 +52,47 @@ Manifest schema, receive-output-view-oracle/1:
 The manifest carries the input octets, the expected dispositions and fields, the complete
 case definitions, both invocation commands and every dependency identity, so a case is
 defined by hashed manifest content and nothing is taken from the caller. Each oracle
-expression is declared as a provenance record: the source path, the exact first and last
-line, the commit pin and tree those lines belong to, and the hash of the extracted text. The
-harness re-extracts that text from the declared lines, verifies its hash before any
-invocation, and records the verified hash in the report, so the expression cannot drift from
-the lineage it is claimed to come from. No command line
-option accepts a case name, a case label or a reported outcome, because a reported outcome is
-not evidence that a case ran. Each case's octets are re-derived from the manifest and hashed
-before use, so a case cannot be substituted.
+expression is declared as a provenance record: source path, first and last line, the commit
+pin and tree those lines belong to, and the hash of the extracted text; the harness
+re-extracts that text, verifies its hash before any invocation, writes the verified text into
+a directory, and substitutes that directory into the declared oracle argv placeholder, so the
+evaluated expression is the verified one rather than a label.
 
-Exit codes, and the taxonomy they encode:
+What hashes prove and what they do not. A verified hash proves that the named bytes were
+present at the named path when the harness ran. It does not prove that a build consumed them,
+that the invoked executable is the artifact built from them, or that the linked SQLite is the
+one the artifact loads. Those remain admitted-run evidence, and each invocation declares its
+executable, which must be one of the verified files and must match the invoked argv head. The
+harness refuses to invoke at all while either bridge is declared absent, which is the state
+today: no candidate adapter emits the pure module's structured facts for a frame, and no
+linked-SQLite extractor bound to the verified expressions exists.
 
-  0  every case matched its expectation from both the candidate and the oracle
-  1  at least one case was observed to differ from its expectation, or a result was missing,
-     extra or malformed in a way that names a specific difference
-  2  inconclusive: the manifest, a dependency identity, an invocation, the process launch,
-     the exit status or the result protocol prevented observation. A compile, setup or launch
-     failure is inconclusive and is never recorded as a successful rejection.
+Exit codes. Zero means every case matched from both sides. One means valid structured facts
+were observed to differ from the expectation, or from each other, in a named field. Two means
+inconclusive: the manifest, a dependency, a bridge, an invocation, a launch, an exit status or
+the result protocol prevented observation. A compile, setup, launch or protocol failure is
+inconclusive and is never recorded as a semantic rejection of the behaviour under test. A
+conclusion is reported for a case only when both roles produced valid facts.
 
-Precedence is mismatch first, then inconclusive, then matched, and the report states both.
-
-Per-case evidence retained: the case name, its octets hash, the exact argv of each
-invocation, the process exit and the stdout and stderr hashes for each, the parsed candidate
-and oracle facts, and the field-by-field differences. The report also carries the manifest
-hash, the two source pins, the artifact hash, the compiler identity and the SQLite identity.
+Per-case evidence retained, written as soon as it is available and independently per role:
+the case name, its octets hash, each role's exact argv, process exit, stdout and stderr
+hashes, and either the parsed facts or the parse or launch failure. A later failure in the
+other role never discards an already observed side.
 
 Named negative controls that must identify their designated semantic mismatch on a successful
-build: filter-only-in-delta, filter-stderr, advance-only-when-visible, reset-state-at-cursor,
-note-without-phase, finish-on-child-exit, raw-export-via-line-plus-LF, resolve-latest, and
-view-calls-consume. Duplicate-member and numeric-precision controls remain dependent on this
-harness and are not claimed before it runs.
+build, once the bridges exist: filter-only-in-delta, filter-stderr, advance-only-when-visible,
+reset-state-at-cursor, note-without-phase, finish-on-child-exit, raw-export-via-line-plus-LF,
+resolve-latest, view-calls-consume, nested-boolean-versus-number, nested-missing-field,
+nested-extra-field, and exact-numeric-lexeme. The last four are exercised without any bridge
+by the self-check mode below. Duplicate-member and numeric-precision dataset controls remain
+dependent on a real run and are not claimed before it.
 
-This file is source preparation. Running it locally is out of scope, and a candidate
-extraction adapter and fold bridge that do not exist yet are reported as blockers rather than
-invented here.
+Self-check. Running with --self-check exercises the comparator and the fact validator against
+in-script control data and reports the taxonomy for each control: a control whose equality
+outcome is wrong is a harness defect and exits one; a control whose rejection is expected and
+observed is a pass. This runs no bridge, reads no manifest and invokes nothing.
+
+This file is source preparation. Running it locally is out of scope.
 """
 
 import argparse
@@ -89,6 +110,8 @@ SCHEMA = 'receive-output-view-oracle/1'
 ROLES = ('candidate', 'oracle')
 DEPENDENCIES = ('artifact', 'candidate', 'original', 'sqlite', 'compiler', 'oracle')
 EXPRESSIONS = ('frame_kind', 'filter_mode_sql')
+LEXEME = 'lexeme'
+EXPECTED_KEYS = ('disposition', 'fields')
 
 
 class Blocker(Exception):
@@ -103,30 +126,124 @@ def digest_file(path):
     return digest_bytes(pathlib.Path(path).read_bytes())
 
 
-def load_manifest(options):
-    path = pathlib.Path(options.manifest)
+def strict_json(text, label):
+    """JSON with duplicate keys and non-finite numbers rejected for this protocol."""
+
+    def no_duplicates(pairs):
+        seen = set()
+        for key, _value in pairs:
+            if key in seen:
+                raise ValueError(f'duplicate key {key!r}')
+            seen.add(key)
+        return dict(pairs)
+
+    def no_constant(name):
+        raise ValueError(f'non-finite number {name}')
+
+    def no_decimal(value):
+        raise ValueError(f'decimal literal {value} where an exact lexeme string is required')
+
+    try:
+        return json.loads(text, object_pairs_hook=no_duplicates, parse_constant=no_constant,
+                          parse_float=no_decimal)
+    except (json.JSONDecodeError, ValueError) as exc:
+        raise Blocker(f'{label} is not strict JSON: {exc}')
+
+
+def validate_fact(value, path):
+    """A fact is null, a boolean, a string, a list or an object; numbers carry their lexeme."""
+    if value is None or isinstance(value, (bool, str)):
+        return
+    if isinstance(value, int) or isinstance(value, float):
+        raise Blocker(f'{path} is a bare number; a numeric fact must carry its exact lexeme')
+    if isinstance(value, list):
+        for index, item in enumerate(value):
+            validate_fact(item, f'{path}[{index}]')
+        return
+    if isinstance(value, dict):
+        if list(value.keys()) == [LEXEME]:
+            if not isinstance(value[LEXEME], str):
+                raise Blocker(f'{path}.{LEXEME} is not a string')
+            return
+        for key in value:
+            if not isinstance(key, str):
+                raise Blocker(f'{path} has a non-string key')
+        for key in sorted(value):
+            validate_fact(value[key], f'{path}.{key}')
+        return
+    raise Blocker(f'{path} has an unsupported type {type(value).__name__}')
+
+
+def fact_differences(expected, observed, path):
+    """Kind-sensitive recursive differences, including missing and extra keys."""
+    if isinstance(expected, dict) and LEXEME in expected:
+        if not (isinstance(observed, dict) and LEXEME in observed):
+            return [f'{path}: expected numeric lexeme, observed {observed!r}']
+        if observed[LEXEME] != expected[LEXEME]:
+            return [f'{path}.{LEXEME}: {observed[LEXEME]!r} does not equal {expected[LEXEME]!r}']
+        return []
+    if isinstance(expected, dict):
+        if not isinstance(observed, dict):
+            return [f'{path}: expected an object, observed {observed!r}']
+        differences = []
+        for key in sorted(set(expected) - set(observed)):
+            differences.append(f'{path}.{key}: missing from the observed facts')
+        for key in sorted(set(observed) - set(expected)):
+            differences.append(f'{path}.{key}: reported but not declared as expected')
+        for key in sorted(set(expected) & set(observed)):
+            differences.extend(fact_differences(expected[key], observed[key], f'{path}.{key}'))
+        return differences
+    if isinstance(expected, list):
+        if not isinstance(observed, list):
+            return [f'{path}: expected a list, observed {observed!r}']
+        if len(expected) != len(observed):
+            return [f'{path}: expected {len(expected)} items, observed {len(observed)}']
+        differences = []
+        for index, item in enumerate(expected):
+            differences.extend(fact_differences(item, observed[index], f'{path}[{index}]'))
+        return differences
+    if isinstance(expected, bool) or isinstance(observed, bool):
+        if not (isinstance(expected, bool) and isinstance(observed, bool)):
+            return [f'{path}: kind differs, expected {expected!r}, observed {observed!r}']
+        return [] if expected == observed else [f'{path}: {observed!r} does not equal {expected!r}']
+    if type(expected) is not type(observed):
+        return [f'{path}: kind differs, expected {expected!r}, observed {observed!r}']
+    return [] if expected == observed else [f'{path}: {observed!r} does not equal {expected!r}']
+
+
+def verified_file(entry, label):
+    if not isinstance(entry, dict):
+        raise Blocker(f'{label} is not a record')
+    path_value = entry.get('path')
+    declared = entry.get('sha256')
+    if not path_value or not declared:
+        raise Blocker(f'{label} must declare a path and a hash')
+    path = pathlib.Path(path_value)
     if not path.is_file():
-        raise Blocker(f'manifest is missing: {path}')
-    raw = path.read_bytes()
-    actual = digest_bytes(raw)
-    if actual != options.manifest_sha256:
-        raise Blocker(f'manifest hash mismatch: {actual}')
-    manifest = json.loads(raw)
-    if manifest.get('schema') != SCHEMA:
-        raise Blocker(f'unknown manifest schema: {manifest.get("schema")!r}')
-    if not isinstance(manifest.get('cases'), list) or not manifest['cases']:
-        raise Blocker('manifest declares no cases')
-    return manifest, actual
+        raise Blocker(f'{label} is missing: {path}')
+    actual = digest_file(path)
+    if actual != declared:
+        raise Blocker(f'{label} hash mismatch: {actual}')
+    if not entry.get('identity'):
+        raise Blocker(f'{label} must declare an identity label')
+    return {'identity': entry['identity'], 'sha256': actual, 'path': str(path)}
 
 
-def verify_hashed_tree(root, declared, label):
-    base = pathlib.Path(root)
+def verified_tree(entry, label):
+    declared = entry.get('source_sha256')
+    if not isinstance(declared, dict) or not declared:
+        raise Blocker(f'{label} must declare at least one file to verify')
+    base = pathlib.Path(entry.get('path', ''))
     for name, sha in sorted(declared.items()):
         path = base / name
         if not path.is_file():
             raise Blocker(f'{label} file is missing: {name}')
         if digest_file(path) != sha:
             raise Blocker(f'{label} hash mismatch: {name}')
+    if not entry.get('pin') or not entry.get('tree'):
+        raise Blocker(f'{label} must declare a pin and a tree')
+    return {'identity': entry.get('identity', ''), 'pin': entry['pin'], 'tree': entry['tree'],
+            'files': sorted(declared)}
 
 
 def extracted_expression(name, record):
@@ -147,10 +264,13 @@ def extracted_expression(name, record):
     path = pathlib.Path(source['path'])
     if not path.is_file():
         raise Blocker(f'oracle expression source is missing: {source["path"]}')
-    lines = path.read_text(encoding='utf-8', errors='replace').splitlines()
+    lines = path.read_text(encoding='utf-8').splitlines()
     if source['last_line'] > len(lines):
         raise Blocker(f'oracle expression {name} declares a range past the end of its source')
-    return '\n'.join(lines[source['first_line'] - 1:source['last_line']])
+    text = '\n'.join(lines[source['first_line'] - 1:source['last_line']])
+    if digest_bytes(text.encode('utf-8')) != record.get('text_sha256'):
+        raise Blocker(f'oracle expression text hash mismatch: {name}')
+    return text
 
 
 def verify_dependency(manifest):
@@ -160,28 +280,13 @@ def verify_dependency(manifest):
     for key in DEPENDENCIES:
         if key not in dependency:
             raise Blocker(f'dependency identity is missing: {key}')
-    artifact = dependency['artifact']
-    path = pathlib.Path(artifact.get('path', ''))
-    if not path.is_file():
-        raise Blocker(f'admitted artifact is missing: {path}')
-    if digest_file(path) != artifact.get('sha256'):
-        raise Blocker('admitted artifact hash mismatch')
-    candidate = dependency['candidate']
-    if not candidate.get('pin') or not candidate.get('tree'):
-        raise Blocker('candidate pin or tree is missing')
-    verify_hashed_tree(candidate.get('path', ''), candidate.get('source_sha256', {}),
-                       'candidate source')
-    original = dependency['original']
-    if not original.get('pin') or not original.get('tree'):
-        raise Blocker('original pin or tree is missing')
-    sqlite = dependency['sqlite']
-    if not sqlite.get('identity') or not sqlite.get('sha256'):
-        raise Blocker('sqlite identity is missing')
-    if not dependency['compiler'].get('identity'):
-        raise Blocker('compiler identity is missing')
+    verified = {'artifact': verified_file(dependency['artifact'], 'admitted artifact'),
+                'sqlite': verified_file(dependency['sqlite'], 'linked sqlite'),
+                'compiler': verified_file(dependency['compiler'], 'compiler'),
+                'candidate': verified_tree(dependency['candidate'], 'candidate source'),
+                'original': verified_tree(dependency['original'], 'original source')}
     oracle = dependency['oracle']
-    verify_hashed_tree(oracle.get('path', ''), oracle.get('extraction_sha256', {}),
-                       'oracle extraction')
+    verified['oracle'] = verified_tree(oracle, 'oracle extraction')
     expressions = oracle.get('expressions')
     if not isinstance(expressions, dict):
         raise Blocker('oracle expressions are missing')
@@ -189,80 +294,122 @@ def verify_dependency(manifest):
         record = expressions.get(name)
         if not isinstance(record, dict):
             raise Blocker(f'oracle expression is missing or is not a provenance record: {name}')
-        text = extracted_expression(name, record)
-        if digest_bytes(text.encode('utf-8')) != record.get('text_sha256'):
-            raise Blocker(f'oracle expression text hash mismatch: {name}')
-    return dependency
+        key = record.get('source_commit', {}).get('pin', '')
+        verified[f'expression_{name}'] = {
+            'text_sha256': digest_bytes(extracted_expression(name, record).encode('utf-8')),
+            'source_commit': key}
+    return verified
 
 
-def invocation(manifest, role):
+def verify_bridge(manifest, role):
+    bridges = manifest.get('bridges')
+    if not isinstance(bridges, dict):
+        raise Blocker('bridge declarations are missing')
+    bridge = bridges.get(role)
+    if not isinstance(bridge, dict):
+        raise Blocker(f'{role} bridge declaration is missing')
+    if bridge.get('present') is not True:
+        raise Blocker(f'{role} bridge is declared absent: {bridge.get("absent_reason", "no reason")}')
+    verified = verified_file(bridge, f'{role} bridge')
+    if role == 'oracle' and bridge.get('expressions_bound') is not True:
+        raise Blocker('the oracle bridge does not declare the verified expressions bound')
+    return verified
+
+
+def invocation(manifest, role, bridge):
     declared = manifest.get('invocation')
     if not isinstance(declared, dict) or role not in declared:
         raise Blocker(f'{role} invocation is not declared')
     entry = declared[role]
-    if not entry.get('argv'):
-        raise Blocker(f'{role} argv is not declared')
+    argv = entry.get('argv')
+    if not isinstance(argv, list) or not argv or not all(isinstance(a, str) and a for a in argv):
+        raise Blocker(f'{role} argv must be a non-empty list of non-empty strings')
     if entry.get('protocol') != 'json-lines':
         raise Blocker(f'{role} result protocol is unsupported: {entry.get("protocol")!r}')
-    return entry
+    executable = entry.get('executable')
+    if not executable or pathlib.Path(argv[0]).name != pathlib.Path(executable).name:
+        raise Blocker(f'{role} argv head does not name the declared executable')
+    if str(bridge['path']) != executable and pathlib.Path(bridge['path']).name != pathlib.Path(executable).name:
+        raise Blocker(f'{role} declared executable is not the verified bridge file')
+    if role == 'oracle' and '{expressions_dir}' not in argv:
+        raise Blocker('the oracle argv does not declare where the verified expressions are bound')
+    return {'argv': list(argv), 'protocol': entry['protocol'], 'executable': executable}
 
 
-def invoke(entry, octets, workdir):
-    argv = list(entry['argv'])
+def write_expressions(workdir, expressions, verified):
+    directory = pathlib.Path(workdir) / 'expressions'
+    directory.mkdir(parents=True, exist_ok=True)
+    for name in EXPRESSIONS:
+        text = extracted_expression(name, expressions[name])
+        digest = digest_bytes(text.encode('utf-8'))
+        if digest != verified[f'expression_{name}']['text_sha256']:
+            raise Blocker(f'oracle expression text hash changed while binding: {name}')
+        (directory / f'{name}.sql').write_text(text, encoding='utf-8')
+    return str(directory)
+
+
+def invoke(entry, octets, workdir, expressions_dir):
+    argv = [argument.replace('{expressions_dir}', expressions_dir) for argument in entry['argv']]
+    evidence = {'argv': argv}
     try:
         completed = subprocess.run(argv, input=octets, capture_output=True, cwd=workdir)
     except OSError as exc:
-        raise Blocker(f'launch failed for {argv[0]}: {exc}')
-    return {
-        'argv': argv,
-        'exit': completed.returncode,
-        'stdout_sha256': digest_bytes(completed.stdout),
-        'stderr_sha256': digest_bytes(completed.stderr),
-        'stdout': completed.stdout.decode('utf-8', 'replace'),
-        'stderr': completed.stderr.decode('utf-8', 'replace'),
-    }
+        evidence['launch_failure'] = str(exc)
+        return evidence
+    evidence['exit'] = completed.returncode
+    evidence['stdout_sha256'] = digest_bytes(completed.stdout)
+    evidence['stderr_sha256'] = digest_bytes(completed.stderr)
+    try:
+        evidence['stdout'] = completed.stdout.decode('utf-8')
+    except UnicodeDecodeError as exc:
+        evidence['decode_failure'] = str(exc)
+    return evidence
+
+
+def validate_result(parsed, label):
+    if not isinstance(parsed, dict):
+        raise Blocker(f'{label} is not an object')
+    for key in EXPECTED_KEYS:
+        if key not in parsed:
+            raise Blocker(f'{label} declares no {key}')
+    if not isinstance(parsed['disposition'], str) or not parsed['disposition']:
+        raise Blocker(f'{label} has an empty disposition')
+    if not isinstance(parsed['fields'], dict) or not parsed['fields']:
+        raise Blocker(f'{label} declares no fields')
+    validate_fact(parsed['fields'], f'{label} fields')
+    return parsed
 
 
 def parse_result(evidence, role):
-    if evidence['exit'] != 0:
-        raise Blocker(f"{role} exited {evidence['exit']}: {evidence['stderr'].strip()[:200]}")
-    lines = [line for line in evidence['stdout'].splitlines() if line.strip()]
+    if evidence.get('launch_failure'):
+        raise Blocker(f"{role} did not launch: {evidence['launch_failure']}")
+    if evidence.get('decode_failure'):
+        raise Blocker(f'{role} stdout is not valid UTF-8: {evidence["decode_failure"]}')
+    if evidence.get('exit') != 0:
+        raise Blocker(f"{role} exited {evidence['exit']}")
+    lines = [line for line in evidence.get('stdout', '').splitlines() if line.strip()]
     if len(lines) != 1:
         raise Blocker(f'{role} reported {len(lines)} result lines, expected exactly one')
-    try:
-        parsed = json.loads(lines[0])
-    except json.JSONDecodeError as exc:
-        raise Blocker(f'{role} result is not JSON: {exc}')
-    if not isinstance(parsed, dict):
-        raise Blocker(f'{role} result is not an object')
-    return parsed
+    return validate_result(strict_json(lines[0], f'{role} result'), f'{role} result')
 
 
 def compare(case, candidate, oracle):
     expected = case['expected']
-    if not isinstance(expected, dict):
-        raise Blocker(f"case {case['name']} declares no expected object")
     differences = []
-    for field in sorted(expected):
-        for role, observed in (('candidate', candidate), ('oracle', oracle)):
-            if field not in observed:
-                differences.append(f'{role} is missing field {field}')
-            elif observed[field] != expected[field]:
-                differences.append(
-                    f'{role} {field}: {observed[field]!r} does not equal expected {expected[field]!r}')
     for role, observed in (('candidate', candidate), ('oracle', oracle)):
-        extra = sorted(set(observed) - set(expected))
-        if extra:
-            differences.append(f'{role} reported undeclared fields {extra}')
+        differences.extend(fact_differences(expected['disposition'], observed['disposition'],
+                                            f'{role}.disposition'))
+        differences.extend(fact_differences(expected['fields'], observed['fields'],
+                                            f'{role}.fields'))
     return differences
 
 
-def run_case(case, entries, workdir, report):
+def run_case(case, entries, workdir, expressions_dir, report):
     name = case.get('name')
-    if not name:
+    if not isinstance(name, str) or not name:
         raise Blocker('a case has no name')
     octets_hex = case.get('octets_hex')
-    if not isinstance(octets_hex, str):
+    if not isinstance(octets_hex, str) or not octets_hex:
         raise Blocker(f'case {name} declares no octets')
     try:
         octets = bytes.fromhex(octets_hex)
@@ -270,56 +417,167 @@ def run_case(case, entries, workdir, report):
         raise Blocker(f'case {name} declares octets that are not hex: {exc}')
     if digest_bytes(octets) != case.get('octets_sha256'):
         raise Blocker(f'case {name} octets hash mismatch')
-    evidence = {}
+    expected = case.get('expected')
+    if not isinstance(expected, dict) or set(expected) != set(EXPECTED_KEYS):
+        raise Blocker(f'case {name} must declare exactly a disposition and fields')
+    if not isinstance(expected['disposition'], str) or not expected['disposition']:
+        raise Blocker(f'case {name} declares an empty expected disposition')
+    if not isinstance(expected['fields'], dict) or not expected['fields']:
+        raise Blocker(f'case {name} declares no expected fields')
+    validate_fact(expected['fields'], f'case {name} expected fields')
+
+    outcome = {'case': name, 'octets_sha256': case['octets_sha256'], 'roles': {}, 'differences': []}
     parsed = {}
     for role in ROLES:
-        entry = entries[role]
-        evidence[role] = invoke(entry, octets, workdir)
-        parsed[role] = parse_result(evidence[role], role)
+        evidence = invoke(entries[role], octets, workdir, expressions_dir)
+        try:
+            facts = parse_result(evidence, role)
+            evidence['facts'] = facts
+            parsed[role] = facts
+        except Blocker as exc:
+            evidence['failure'] = str(exc)
+        outcome['roles'][role] = evidence
+    report['cases'].append(outcome)
+
+    missing = [f'{role}: {outcome["roles"][role].get("failure")}' for role in ROLES
+               if role not in parsed]
+    if missing:
+        report['inconclusive'].append({'case': name, 'reason': '; '.join(missing)})
+        return
     differences = compare(case, parsed['candidate'], parsed['oracle'])
-    report['cases'].append({
-        'case': name,
-        'octets_sha256': case['octets_sha256'],
-        'candidate_evidence': evidence['candidate'],
-        'oracle_evidence': evidence['oracle'],
-        'differences': differences,
-    })
+    outcome['differences'] = differences
     if differences:
         report['mismatches'].append({'case': name, 'differences': differences})
+
+
+def load_manifest(options):
+    path = pathlib.Path(options.manifest)
+    if not path.is_file():
+        raise Blocker(f'manifest is missing: {path}')
+    raw = path.read_bytes()
+    actual = digest_bytes(raw)
+    if actual != options.manifest_sha256:
+        raise Blocker(f'manifest hash mismatch: {actual}')
+    try:
+        text = raw.decode('utf-8')
+    except UnicodeDecodeError as exc:
+        raise Blocker(f'manifest is not valid UTF-8: {exc}')
+    manifest = strict_json(text, 'manifest')
+    if not isinstance(manifest, dict) or manifest.get('schema') != SCHEMA:
+        raise Blocker(f'unknown manifest schema: {manifest.get("schema")!r}')
+    cases = manifest.get('cases')
+    if not isinstance(cases, list) or not cases:
+        raise Blocker('manifest declares no cases')
+    names = [case.get('name') for case in cases if isinstance(case, dict)]
+    if len(set(names)) != len(cases):
+        raise Blocker('the manifest declares a missing or duplicate case name')
+    return manifest, actual
+
+
+SELF_CHECK_CONTROLS = (
+    ('nested-boolean-versus-number',
+     {'flag': True}, {'flag': {'lexeme': '1'}}, 'differ'),
+    ('nested-missing-field', {'outer': {'a': {'lexeme': '1'}}}, {'outer': {}}, None),
+    ('nested-extra-field', {'outer': {}}, {'outer': {'a': {'lexeme': '1'}}}, None),
+    ('exact-numeric-lexeme', {'n': {'lexeme': '1.0'}}, {'n': {'lexeme': '1'}}, 'differ'),
+    ('equal-lexeme-different-position', {'a': {'lexeme': '1'}, 'b': {'lexeme': '1'}},
+     {'b': {'lexeme': '1'}, 'a': {'lexeme': '1'}}, 'equal'),
+    ('null-versus-missing', {'a': None}, {}, None),
+    ('list-length', {'l': [{'lexeme': '1'}]}, {'l': [{'lexeme': '1'}, {'lexeme': '2'}]}, None),
+    ('list-order', {'l': [{'lexeme': '1'}, {'lexeme': '2'}]},
+     {'l': [{'lexeme': '2'}, {'lexeme': '1'}]}, 'differ'),
+    ('boolean-versus-boolean', {'flag': False}, {'flag': False}, 'equal'),
+)
+
+SELF_CHECK_REJECTIONS = (
+    ('bare-number', '{"disposition": "accepted", "fields": {"n": 1}}'),
+    ('bare-decimal', '{"disposition": "accepted", "fields": {"n": 1.5}}'),
+    ('duplicate-key', '{"disposition": "accepted", "fields": {"a": {"lexeme": "1"}, "a": {"lexeme": "2"}}}'),
+    ('non-finite', '{"disposition": "accepted", "fields": {"n": NaN}}'),
+    ('missing-fields', '{"disposition": "accepted"}'),
+    ('empty-fields', '{"disposition": "accepted", "fields": {}}'),
+)
+
+
+def self_check():
+    report = {'self_check': [], 'mismatches': [], 'inconclusive': []}
+    for name, expected, observed, kind in SELF_CHECK_CONTROLS:
+        try:
+            validate_fact(expected, 'expected')
+            validate_fact(observed, 'observed')
+        except Blocker as exc:
+            report['self_check'].append({'control': name, 'outcome': 'rejected', 'reason': str(exc)})
+            report['mismatches'].append({'case': name, 'differences': [str(exc)]})
+            continue
+        differences = fact_differences(expected, observed, 'fields')
+        if kind == 'equal':
+            passed = not differences
+            recorded = 'equal'
+        elif kind == 'differ':
+            passed = bool(differences)
+            recorded = 'differ' if differences else 'equal'
+        else:
+            passed = bool(differences)
+            recorded = 'differ' if differences else 'equal'
+        report['self_check'].append({'control': name, 'outcome': recorded,
+                                     'differences': differences})
+        if not passed:
+            report['mismatches'].append({'case': name, 'differences': differences or
+                                         ['expected a difference and observed none']})
+    for name, text in SELF_CHECK_REJECTIONS:
+        rejected = False
+        reason = ''
+        try:
+            validate_result(strict_json(text, name), name)
+        except Blocker as exc:
+            rejected = True
+            reason = str(exc)
+        report['self_check'].append({'control': name, 'outcome': 'rejected' if rejected else 'accepted',
+                                     'reason': reason})
+        if not rejected:
+            report['mismatches'].append({'case': name, 'differences': ['expected rejection']})
+    print(json.dumps(report, indent=2, sort_keys=True))
+    if report['mismatches']:
+        return MISMATCH
+    if report['inconclusive']:
+        return INCONCLUSIVE
+    return MATCHED
 
 
 def main(argv=None):
     parser = argparse.ArgumentParser(
         description='Remote differential oracle harness, not for local execution')
-    parser.add_argument('--manifest', required=True,
-                        help='hashed input manifest carrying every case and dependency')
-    parser.add_argument('--manifest-sha256', required=True,
-                        help='expected hash of the manifest, so the caller cannot substitute it')
-    parser.add_argument('--workdir', required=True, help='working directory for invocations')
+    parser.add_argument('--manifest', help='hashed input manifest carrying every case and dependency')
+    parser.add_argument('--manifest-sha256', help='expected manifest hash, so the caller cannot substitute it')
+    parser.add_argument('--workdir', help='working directory for invocations and bound expressions')
+    parser.add_argument('--self-check', action='store_true',
+                        help='exercise the comparator and fact validator on in-script controls')
     options = parser.parse_args(argv)
+    if options.self_check:
+        return self_check()
+    if not (options.manifest and options.manifest_sha256 and options.workdir):
+        parser.error('the manifest, its hash and a working directory are required')
 
     report = {'manifest': options.manifest, 'cases': [], 'mismatches': [], 'inconclusive': []}
     try:
         manifest, manifest_hash = load_manifest(options)
         report['manifest_sha256'] = manifest_hash
         dependency = verify_dependency(manifest)
-        report['oracle_expression_sha256'] = {
-            name: digest_bytes(
-                extracted_expression(name, dependency['oracle']['expressions'][name]).encode('utf-8'))
-            for name in EXPRESSIONS
-        }
-        report['dependency'] = dependency
-        entries = {role: invocation(manifest, role) for role in ROLES}
-        names = [case.get('name') for case in manifest['cases']]
-        if len(set(names)) != len(names):
-            raise Blocker('the manifest declares a duplicate case name')
+        report['dependency_verified'] = dependency
+        expressions_dir = write_expressions(options.workdir, manifest['dependency']['oracle']['expressions'],
+                                            dependency)
+        report['expressions_dir'] = expressions_dir
+        bridges = {role: verify_bridge(manifest, role) for role in ROLES}
+        entries = {role: invocation(manifest, role, bridges[role]) for role in ROLES}
         for case in manifest['cases']:
             try:
-                run_case(case, entries, options.workdir, report)
+                run_case(case, entries, options.workdir, expressions_dir, report)
             except Blocker as exc:
                 report['inconclusive'].append({'case': case.get('name'), 'reason': str(exc)})
     except Blocker as exc:
         report['inconclusive'].append({'case': None, 'reason': str(exc)})
+    except Exception as exc:
+        report['inconclusive'].append({'case': None, 'reason': f'unexpected harness failure: {exc!r}'})
 
     print(json.dumps(report, indent=2, sort_keys=True))
     if report['mismatches']:
