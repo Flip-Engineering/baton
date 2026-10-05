@@ -85,12 +85,18 @@ def main():
         'select(OutputFrame{correlation,stream,"",bytes}',
         "matching_output_preserves_frame", "Matched", "Matched")
     mutations["mismatch-loses-stderr"] = (
-        "case False{}: Mismatched{frame}",
-        "case False{}: mismatch_stdout(frame)\n\n"
+        "def select(frame: OutputFrame, matches: Bool) -> OutputRoute:\n"
+        "  match matches:\n"
+        "    case True{}: Matched{frame}\n"
+        "    case False{}: Mismatched{frame}",
         "def mismatch_stdout(frame: OutputFrame) -> OutputRoute:\n"
         "  match frame:\n"
         "    case OutputFrame{correlation,stream,cursor,bytes}:\n"
-        "      Mismatched{OutputFrame{correlation,Stdout{},cursor,bytes}}",
+        "      Mismatched{OutputFrame{correlation,Stdout{},cursor,bytes}}\n\n"
+        "def select(frame: OutputFrame, matches: Bool) -> OutputRoute:\n"
+        "  match matches:\n"
+        "    case True{}: Matched{frame}\n"
+        "    case False{}: mismatch_stdout(frame)",
         "mismatched_output_preserves_entire_frame", "Mismatched", "Mismatched")
     mutations["wake-replaced"] = (
         "case other: Some{other}", 'case other: Some{"message"}',
