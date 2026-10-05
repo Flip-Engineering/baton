@@ -181,6 +181,35 @@ results. Retry must identify the same request and attempt and avoid a second
 native grant. A delayed parent wake remains outstanding until its actual delivery
 outcome is recorded; a successful admission response alone cannot discharge it.
 
+## Admission decision module
+
+The new pure `coordinator/owner-admission.bend` exposes
+`decide(Request, Maybe<Record>) -> Decision`. `Request.Identity` carries a
+qualified database binding, durable request ID, session, operation and canonical
+payload. `Record.Recorded` retains that identity and its original attempt.
+The decisions are `Fresh`, `Replay{attempt}`, `Conflict` and `Invalid`.
+An identical retry returns the original attempt. Changed identity fields refuse
+reuse. Missing required identity or a stored empty attempt returns `Invalid`.
+The owner-process token is outside this durable request identity so a qualified
+replacement owner can reconcile the same admitted request.
+
+The existing command decoder must supply canonical payload including relevant
+model/configuration identity without logging secret environment values. The
+bound persistence caller must resolve the record and publish a fresh admission
+atomically against concurrent requests. `Fresh` is a decision from that supplied
+snapshot; it is not authority to grant a native child. After the durable record
+commits, retries replay it even if the first client's reply was lost. Grant
+remains subject to the prepared-child protocol and immutable admission decision.
+Pre-commit disconnect, post-commit lost reply and coordinator replacement must
+be tested through that actual caller before runtime acceptance.
+
+The isolated native fixture imports the module and its laws. The qualification
+runner executes field-change and retry cases and rejects mutations that admit a
+duplicate grant, ignore payload/database identity or treat a missing stored
+attempt as a fresh request. Each rejected mutation must identify its intended
+law and expected/observed decision constructors. The module is awaiting import
+by the real native entry and bound-store composition through the current owners.
+
 ## Source handoffs
 
 The new task-state module and isolated fixtures can be developed independently.
