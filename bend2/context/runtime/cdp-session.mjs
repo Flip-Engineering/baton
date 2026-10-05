@@ -119,14 +119,20 @@ export function createAdapterSession({
     return frame;
   };
 
-  // Secondary evidence never replaces the failure it describes. The record is best effort:
-  // a frozen or sealed failure object, or one whose setter throws, is left untouched so the
-  // original failure still reaches the caller.
-  const recordPublicationFailure = (failure, condition) => {
+  // Secondary evidence never replaces the failure it describes. Everything is inspected
+  // inside the guard, because both inputs can throw on inspection: the failure may be frozen,
+  // sealed or carry a throwing setter, and the secondary thrown value may be null, undefined,
+  // a primitive or an object with a throwing condition accessor. The original failure always
+  // reaches the caller; the record is best effort.
+  const recordPublicationFailure = (failure, secondary) => {
     try {
-      if (failure !== null && typeof failure === 'object' && Object.isExtensible(failure)) {
-        failure.publicationFailure = condition ?? null;
+      if (failure === null || typeof failure !== 'object' || !Object.isExtensible(failure)) {
+        return;
       }
+      const condition = secondary !== null && typeof secondary === 'object'
+        ? secondary.condition ?? null
+        : null;
+      failure.publicationFailure = typeof condition === 'string' ? condition : null;
     } catch {
       // A refused or unavailable secondary record is dropped; the original failure stands.
     }
@@ -153,7 +159,7 @@ export function createAdapterSession({
         },
       });
     } catch (publication) {
-      recordPublicationFailure(failure, publication.condition);
+      recordPublicationFailure(failure, publication);
     }
   };
 
@@ -401,7 +407,7 @@ export function createAdapterSession({
         try {
           publish({ query, type: 'failed', payload: { error: { condition, detail: error.detail ?? error.message } } });
         } catch (publication) {
-          recordPublicationFailure(error, publication.condition);
+          recordPublicationFailure(error, publication);
         }
         if (error instanceof TransportRefusal && error.condition !== 'cdpError') {
           onTransportFailure(error);
@@ -427,7 +433,7 @@ export function createAdapterSession({
         try {
           publish({ query, type: 'failed', payload: { error: { condition, detail: error.detail ?? error.message } } });
         } catch (publication) {
-          recordPublicationFailure(error, publication.condition);
+          recordPublicationFailure(error, publication);
         }
         if (error instanceof TransportRefusal && error.condition !== 'cdpError') {
           onTransportFailure(error);

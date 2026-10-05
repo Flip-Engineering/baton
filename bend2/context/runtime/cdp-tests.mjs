@@ -1006,61 +1006,84 @@ test('publisher-refuses-a-missing-caller-identity-and-keeps-the-sequence', async
   })}\n`);
 });
 
-// The failure paths record a refused secondary publication without replacing the failure
-// they report. The original failure here is frozen, and the emission callback fails after
-// its sequence was committed, which is a callback-side effect and not an envelope refusal.
-test('publisher-callback-failure-preserves-the-original-error', async () => {
+// The failure paths record a refused secondary publication without replacing the failure they
+// report. The accepted frame of the read is published before the transport call, so the
+// failure frame is the third committed publication. The emission callback throws on that
+// frame, after its sequence was committed, which is a callback-side effect and not an
+// envelope refusal. Each case supplies a different secondary value: a frozen error, null, a
+// primitive, and an object whose condition accessor throws.
+test('publisher-failure-recording-preserves-the-original-error', async () => {
   const slug = 'source-publisher-callback-failure';
   const dir = evidenceDir(slug);
-  const emitted = [];
-  const original = Object.freeze(new Error('stopped by fixture'));
-  const transport = stubTransport({
-    // The startup requests of the launch succeed; the read request fails with the frozen
-    // original error as a plain transport failure.
-    onSend: (method) => {
-      if (method === 'Runtime.getProperties') throw original;
-      return { result: {} };
-    },
-  });
-  const session = createAdapterSession({
-    runtime: 'rt:callback',
-    adapter: 'adapter:fixture',
-    incarnation: '0',
-    connect: async () => transport,
-    emit: ({ frame }) => {
-      emitted.push(frame);
-      // The second emission is the failure frame. It throws after its sequence was
-      // committed, so the committed sequence and publication count both advance.
-      if (emitted.length === 2) throw Object.freeze(new Error('emission refused'));
-    },
-  });
-  await session.execute('launch', { effects: ['controlRuntime'], query: 'q-launch', webSocketUrl: 'ws://127.0.0.1:1/stub' });
-  assertEqual(emitted.length, 1, 'the launch did not publish the accepted frame');
-  let refusal = null;
-  try {
-    await session.send({ query: 'q-read', method: 'Runtime.getProperties', params: { objectId: 'h' } });
-  } catch (error) {
-    refusal = error;
+  const cases = [
+    { name: 'frozen-secondary', frozen: true, secondary: () => Object.freeze(new Error('emission refused')), recorded: undefined },
+    { name: 'null-secondary', frozen: false, secondary: () => null, recorded: null },
+    { name: 'throwing-condition', frozen: false, secondary: () => ({ get condition() { throw new Error('condition refused'); } }), recorded: undefined },
+    { name: 'text-secondary', frozen: false, secondary: () => 'refused', recorded: null },
+  ];
+  const seen = [];
+  for (const entry of cases) {
+    const emitted = [];
+    const original = new Error('stopped by fixture');
+    if (entry.frozen) Object.freeze(original);
+    const transport = stubTransport({
+      // The startup requests of the launch succeed; the read request fails with the original
+      // error as a plain transport failure.
+      onSend: (method) => {
+        if (method === 'Runtime.getProperties') throw original;
+        return { result: {} };
+      },
+    });
+    const session = createAdapterSession({
+      runtime: `rt:callback:${entry.name}`,
+      adapter: 'adapter:fixture',
+      incarnation: '0',
+      connect: async () => transport,
+      emit: ({ frame }) => {
+        emitted.push(frame);
+        if (frame.type === 'failed') throw entry.secondary();
+      },
+    });
+    await session.execute('launch', { effects: ['controlRuntime'], query: 'q-launch', webSocketUrl: 'ws://127.0.0.1:1/stub' });
+    assertEqual(emitted.length, 1, `${entry.name}: the launch did not publish its accepted frame`);
+    let refusal = null;
+    try {
+      await session.send({ query: 'q-read', method: 'Runtime.getProperties', params: { objectId: 'h' } });
+    } catch (error) {
+      refusal = error;
+    }
+    // The original failure reaches the caller by identity, whatever the secondary value does.
+    assert(refusal !== null, `${entry.name}: the failing request was reported as success`);
+    assertEqual(refusal === original, true, `${entry.name}: the original failure was replaced`);
+    assertEqual(refusal.message, 'stopped by fixture', `${entry.name}: a different failure reached the caller`);
+    assertEqual(refusal.publicationFailure, entry.recorded, `${entry.name}: the secondary record differs from the guard`);
+    // The backend read was attempted before the failure, and all three publications committed:
+    // the launch accepted frame, the read accepted frame and the read failure frame.
+    assertEqual(transport.frames().some((frame) => frame.direction === 'out' && frame.method === 'Runtime.getProperties'), true,
+      `${entry.name}: the backend read was never attempted`);
+    assertEqual(emitted.length, 3, `${entry.name}: the emission count did not match the committed publications`);
+    assertEqual(session.snapshot().emitted, 3, `${entry.name}: the publication count did not match the committed publications`);
+    assertEqual(emitted[0].type, 'accepted', `${entry.name}: the launch publication is not accepted`);
+    assertEqual(emitted[0].sequence, 0, `${entry.name}: the launch publication did not carry sequence 0`);
+    assertEqual(emitted[0].query, 'q-launch', `${entry.name}: the launch publication lost its identity`);
+    assertEqual(emitted[1].type, 'accepted', `${entry.name}: the read publication is not accepted`);
+    assertEqual(emitted[1].sequence, 1, `${entry.name}: the read publication did not carry sequence 1`);
+    assertEqual(emitted[1].query, 'q-read', `${entry.name}: the read publication lost its identity`);
+    assertEqual(emitted[2].type, 'failed', `${entry.name}: the third publication is not the failure frame`);
+    assertEqual(emitted[2].sequence, 2, `${entry.name}: the failure frame did not carry sequence 2`);
+    assertEqual(emitted[2].query, 'q-read', `${entry.name}: the failure frame lost its request identity`);
+    assertEqual(emitted[2].payload.error.condition, 'transportError', `${entry.name}: the failure frame carried a wrong condition`);
+    assertEqual(emitted[2].payload.error.detail, 'stopped by fixture', `${entry.name}: the failure frame lost the original detail`);
+    seen.push({
+      name: entry.name,
+      frozenOriginal: Object.isFrozen(refusal),
+      recorded: refusal.publicationFailure === undefined ? null : refusal.publicationFailure,
+      hasRecord: Object.hasOwn(refusal, 'publicationFailure'),
+      sequences: emitted.map((frame) => frame.sequence),
+      types: emitted.map((frame) => frame.type),
+    });
   }
-  assert(refusal !== null, 'the failing request was reported as success');
-  assertEqual(refusal === original, true, 'the original frozen failure was replaced');
-  assertEqual(Object.isFrozen(refusal), true, 'the original failure lost its frozen state');
-  assertEqual(refusal.message, 'stopped by fixture', 'a different failure reached the caller');
-  assertEqual(refusal.publicationFailure, undefined, 'a secondary record was written to a frozen failure');
-  // Both publications committed before the callback threw: the accepted frame and the
-  // failure frame each consumed a sequence, so this case claims no absent publication.
-  assertEqual(emitted.length, 2, 'the emission count did not match the committed publications');
-  assertEqual(session.snapshot().emitted, 2, 'the publication count did not match the committed publications');
-  assertEqual(emitted[1].type, 'failed', 'the second committed publication is not the failure frame');
-  assertEqual(emitted[1].sequence, 1, 'the failure frame did not carry the next sequence');
-  assertEqual(emitted[1].query, 'q-read', 'the failure frame lost its request identity');
-  assertEqual(emitted[1].payload.error.condition, 'transportError', 'the failure frame carried a wrong condition');
-  assertEqual(emitted[1].payload.error.detail, 'stopped by fixture', 'the failure frame lost the original detail');
-  writeFileSync(join(dir, 'case.json'), `${JSON.stringify({
-    refusal: refusal.message,
-    frozen: Object.isFrozen(refusal),
-    committed: emitted.map((frame) => ({ query: frame.query, sequence: frame.sequence, type: frame.type })),
-  })}\n`);
+  writeFileSync(join(dir, 'case.json'), `${JSON.stringify({ cases: seen })}\n`);
 });
 
 test('ref-decisions-and-thread-membership', () => {
