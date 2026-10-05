@@ -414,6 +414,7 @@ function readVerifiedStream(label, stream, realEvidenceRoot) {
 // the shared boundary accepts the whole chain. Well-formed semantic failures
 // are verdicts with exit 0; invalid requests refuse with exit 2.
 export function classifyCli(argv) {
+  if (argv.length > 0 && argv[0] === '--classify') argv = argv.slice(1);
   if (argv.length > 0) refusal(`no positional arguments are accepted, got: ${argv.join(' ')}`);
   let request;
   try {

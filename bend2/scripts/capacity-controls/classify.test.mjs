@@ -98,18 +98,25 @@ test('outcome shapes are validated without coercion', () => {
   assert.equal(validChildOutcome({ state: 'exited', exitCode: -1, signal: null, spawnError: null }), false);
   assert.equal(validChildOutcome({ state: 'exited', exitCode: 1.5, signal: null, spawnError: null }), false);
   assert.equal(validChildOutcome({ state: 'exited', exitCode: null, signal: null, spawnError: null }), false);
-  assert.equal(validChildOutcome({ state: 'exited', exitCode: 1, signal: undefined, spawnError: null }), true);
+  assert.equal(validChildOutcome({ state: 'exited', exitCode: 1, signal: undefined, spawnError: null }), false);
+  assert.equal(validChildOutcome({ state: 'exited', exitCode: 1, signal: '', spawnError: null }), false);
   assert.equal(validChildOutcome({ state: 'exited', exitCode: 1, signal: null, spawnError: 'later' }), false);
-  assert.equal(validChildOutcome({ state: 'signalled', exitCode: null, signal: 'SIGSEGV', spawnError: null }), true);
+  assert.equal(validChildOutcome({ state: 'exited', exitCode: 1, signal: null, spawnError: '' }), false);
+  assert.equal(validChildOutcome({ state: 'signalled', exitCode: null, signal: '9', spawnError: null }), true);
+  assert.equal(validChildOutcome({ state: 'signalled', exitCode: null, signal: 9, spawnError: null }), false);
+  assert.equal(validChildOutcome({ state: 'signalled', exitCode: 1, signal: '9', spawnError: null }), false);
   assert.equal(validChildOutcome({ state: 'signalled', exitCode: null, signal: null, spawnError: null }), false);
   assert.equal(validChildOutcome({ state: 'spawn-error', exitCode: null, signal: null, spawnError: 'ENOENT' }), true);
+  assert.equal(validChildOutcome({ state: 'not-run', exitCode: null, signal: null, spawnError: null }), true);
   assert.equal(validChildOutcome({ state: 'running', exitCode: null, signal: null, spawnError: null }), false);
   for (const bad of [{ state: 'exited', exitCode: '1', signal: null, spawnError: null },
     { state: 'exited', exitCode: -1, signal: null, spawnError: null },
     { state: 'exited', exitCode: 1.5, signal: null, spawnError: null },
     { state: 'exited', exitCode: false, signal: null, spawnError: null },
     { state: 'exited', exitCode: null, signal: null, spawnError: null },
-    { state: 'signalled', exitCode: 1, signal: 'SIGKILL', spawnError: null }]) {
+    { state: 'exited', exitCode: 1, signal: undefined, spawnError: null },
+    { state: 'exited', exitCode: 1, signal: 9, spawnError: null },
+    { state: 'signalled', exitCode: 1, signal: '9', spawnError: null }]) {
     assert.equal(classifyControl({ ...bad, stderrText: TODO_STDERR, control: PROOF }).class, 'malformed-outcome');
   }
   assert.equal(refusedNormally({ exitCode: '1', signal: null }), false);

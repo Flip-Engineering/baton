@@ -185,36 +185,22 @@ export function expectationMet(diagnostics, expectation) {
 }
 
 // One strict process-outcome validator for every path: ordinary gate, group
-// runner receipts, aggregate loop and the per-case endpoint. Types are never
-// coerced and absent fields are not proof of a normal child: the exit code
-// must be a non-negative integer, the signal and spawn error must be a string
-// or exactly null, and every field must agree with the declared state.
+// runner receipts, aggregate loop and the per-case endpoint. This is the
+// documented receipt contract, shared with the package validator: fields must
+// be present, types are never coerced, the exit code must be a non-negative
+// integer, signal and spawn_error are exactly null or a non-empty string, and
+// every field must agree with the declared state.
 export function validChildOutcome({ state, exitCode, signal, spawnError }) {
   if (state !== 'exited' && state !== 'signalled' && state !== 'spawn-error' && state !== 'not-run') return false;
-  if (exitCode !== null && exitCode !== undefined && (!Number.isInteger(exitCode) || exitCode < 0)) return false;
-  if (signal !== null && signal !== undefined && typeof signal !== 'string' && typeof signal !== 'number') return false;
-  if (spawnError !== null && spawnError !== undefined && typeof spawnError !== 'string') return false;
-  if (state === 'exited') {
-    if (!Number.isInteger(exitCode)) return false;
-    if (signal !== null) return false;
-    if (spawnError !== null) return false;
-    return true;
-  }
-  if (state === 'signalled') {
-    if (signal === null || signal === undefined) return false;
-    if (exitCode !== null && exitCode !== undefined) return false;
-    if (spawnError !== null && spawnError !== undefined) return false;
-    return true;
-  }
-  if (state === 'spawn-error') {
-    if (spawnError === null || spawnError === undefined) return false;
-    if (exitCode !== null && exitCode !== undefined) return false;
-    if (signal !== null && signal !== undefined) return false;
-    return true;
-  }
-  return exitCode === null || exitCode === undefined
-    ? signal === null || signal === undefined ? spawnError === null || spawnError === undefined : false
-    : false;
+  if (!Number.isInteger(exitCode) && exitCode !== null) return false;
+  if (exitCode !== null && exitCode < 0) return false;
+  const signalOk = signal === null || (typeof signal === 'string' && signal.length > 0);
+  const spawnOk = spawnError === null || (typeof spawnError === 'string' && spawnError.length > 0);
+  if (!signalOk || !spawnOk) return false;
+  if (state === 'exited') return Number.isInteger(exitCode) && signal === null && spawnError === null;
+  if (state === 'signalled') return exitCode === null && signal !== null && spawnError === null;
+  if (state === 'spawn-error') return exitCode === null && signal === null && spawnError !== null;
+  return exitCode === null && signal === null && spawnError === null;
 }
 
 // The ordinary gate's compile receipt shape: a refusal that was a valid

@@ -156,12 +156,12 @@ function writeBundle(dir, records, module) {
       archive: { path: '/qualified/archive.tar.gz', bytes: 1, sha256: ARCHIVE_SHA },
       runtime: { directory: '/qualified/bend2', files: 1, sha256: RUNTIME_SHA },
       runtime_set_sha256: RUNTIME_SHA,
+      instrument: { tool: '/usr/bin/time', flag: '-l' },
       origin: {
         workflow: null, run_id: null, run_attempt: null, jobs: [], image_os: null, image_version: null,
         job: `local:0:${module}:${nonce}`,
       },
     },
-    instrument: { tool: '/usr/bin/time', flag: '-l' },
     baseline: {
       argv: [COMPILER.path, 'bend2/src/main.bend', '--check-only'],
       process: {

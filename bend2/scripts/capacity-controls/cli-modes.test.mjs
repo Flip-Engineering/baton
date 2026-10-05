@@ -4,7 +4,8 @@
 // with its availability message instead of entering a mode.
 
 import assert from 'node:assert/strict';
-import { existsSync, spawnSync } from 'node:child_process';
+import { spawnSync } from 'node:child_process';
+import { existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { test } from 'node:test';
 import { ROOT } from '../laws-check.mjs';

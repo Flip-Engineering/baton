@@ -91,11 +91,18 @@ function runChild({ argv, cwd, env, dir, stdoutName, stderrName }) {
       const stderrBytes = Buffer.concat(stderr);
       const stderrText = stderrBytes.toString('utf8');
       let { state, exitCode, signal } = outcome;
+      let wrapperExitCode = state === 'exited' ? exitCode : null;
       if (state === 'exited' && exitCode !== 0 && exitCode !== null) {
         const translated = WRAPPER_SIGNAL.exec(stderrText);
         if (translated) {
+          // The wrapper's own nonzero exit is retained as wrapper evidence;
+          // the inferred compiler signal is the recorded child signal. No
+          // normal exit is invented for the compiler.
           state = 'signalled';
-          signal = Number(translated[1]);
+          wrapperExitCode = exitCode;
+          exitCode = null;
+          // Receipt contract: signals are non-empty strings, never numbers.
+          signal = translated[1];
         }
       }
       settle({
@@ -103,6 +110,7 @@ function runChild({ argv, cwd, env, dir, stdoutName, stderrName }) {
         exitCode,
         signal: signal ?? null,
         spawnError: outcome.spawnError ?? null,
+        wrapperExitCode,
         pid: outcome.pid ?? null,
         started,
         ended,
@@ -137,9 +145,11 @@ function processRecord(run, attempt) {
     started: run.started,
     ended: run.ended,
     attempt,
-    // The observed process id belongs to the spawned time wrapper; the
-    // compiler's own pid is not observable through this wrapper.
+    // The observed process id and the wrapper's own exit status belong to the
+    // spawned time wrapper; the compiler's pid is not observable through it,
+    // and a translated signal carries no compiler exit code.
     wrapper_pid: run.pid,
+    wrapper_exit_code: run.wrapperExitCode ?? null,
   };
 }
 
@@ -229,6 +239,7 @@ export async function runGroup({
     ...origin(),
     job: [process.env.GITHUB_JOB ?? 'local', process.env.GITHUB_RUN_ATTEMPT ?? '0', module, nonce].join(':'),
   };
+  const instrument = { tool: timeTool, flag: timeFlag };
   const producing = {
     source,
     compiler,
@@ -237,18 +248,19 @@ export async function runGroup({
     runtime,
     runtime_set_sha256: runtime?.sha256 ?? null,
     origin: producingOrigin,
+    instrument,
   };
-  const instrument = { tool: timeTool, flag: timeFlag };
   mkdirSync(evidenceDir, { recursive: true });
 
-  // Pristine text per executed control module, read from the scratch copy
-  // before any child runs, so the snapshot is stable across the whole group.
-  // Restores never re-read the live tree, and each control's changed bytes
-  // are retained as its exact applied delta.
+  // Pristine original bytes per executed control module, read from the
+  // scratch copy before any child runs, so the snapshot is stable across the
+  // whole group. Text transforms decode explicitly; restoration writes and
+  // verifies the exact original bytes. Restores never re-read the live tree,
+  // and each control's changed bytes are retained as its exact applied delta.
   const pristine = new Map();
   for (const record of selected) {
     const scratchModule = join(scratch, record.module);
-    if (!pristine.has(record.module)) pristine.set(record.module, readFileSync(scratchModule, 'utf8'));
+    if (!pristine.has(record.module)) pristine.set(record.module, readFileSync(scratchModule));
   }
   const definitions = definitionsByName(mutationDefinitions);
 
@@ -277,7 +289,7 @@ export async function runGroup({
   if (baseline.process.state !== 'exited' || baseline.process.exit_code !== 0) {
     const manifest = {
       module, binding, entry: selectedEntry, checker_sha256: checkerSha256, source, origin: origin(),
-      producing, instrument, baseline, results: [], compiler,
+      producing, baseline, results: [], compiler,
     };
     const manifestPath = join(evidenceDir, 'group-manifest.json');
     writeFileSync(manifestPath, JSON.stringify(manifest, null, 2) + '\n');
@@ -285,10 +297,11 @@ export async function runGroup({
   }
 
   // Every executed control runs against the stable pristine snapshot, and the
-  // whole selected module set must match it again after each terminal path.
+  // whole selected module set must match it again, byte for byte, after each
+  // terminal path.
   const verifyRestored = () => {
-    for (const [recordModule, text] of pristine) {
-      if (readFileSync(join(scratch, recordModule), 'utf8') !== text) {
+    for (const [recordModule, bytes] of pristine) {
+      if (!readFileSync(join(scratch, recordModule)).equals(bytes)) {
         throw new Error(`runGroup: restoration verification failed for ${recordModule}`);
       }
     }
@@ -297,7 +310,8 @@ export async function runGroup({
   const results = [];
   for (const record of selected) {
     const scratchModule = join(scratch, record.module);
-    const originalText = pristine.get(record.module);
+    const originalBytes = pristine.get(record.module);
+    const originalText = originalBytes.toString("utf8");
     let setup = 'applied';
     let changedText = null;
     let expectedChangedText = null;
@@ -391,8 +405,8 @@ export async function runGroup({
         });
       }
     } finally {
-      for (const [restoredModule, text] of pristine) {
-        writeFileSync(join(scratch, restoredModule), text);
+      for (const [restoredModule, bytes] of pristine) {
+        writeFileSync(join(scratch, restoredModule), bytes);
       }
       verifyRestored();
     }
@@ -406,7 +420,6 @@ export async function runGroup({
     source,
     origin: origin(),
     producing,
-    instrument,
     baseline,
     results,
     compiler,

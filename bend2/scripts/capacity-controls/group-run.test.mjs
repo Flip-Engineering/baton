@@ -24,6 +24,9 @@ test('group argument parsing enforces the option contract', () => {
   assert.equal(valid.timeFlag, '-l');
   assert.throws(() => parseGroupArgs(['--unknown']), UsageError);
   assert.throws(() => parseGroupArgs(['--group', '--evidence-dir', '/tmp/evidence', '--time-tool', '/usr/bin/time', '--time-flag', '-l']), UsageError);
+  // Empty argv and a valueless flag are distinct refusals.
+  assert.throws(() => parseGroupArgs([]), /--group is required/);
+  assert.throws(() => parseGroupArgs(['--group']), /--group needs a value/);
   assert.throws(() => parseGroupArgs(['--evidence-dir', '/tmp/evidence', '--time-tool', '/usr/bin/time', '--time-flag', '-l']), UsageError);
   assert.throws(() => parseGroupArgs(['--group', 'm', '--evidence-dir', '/tmp/evidence', '--time-tool', '/usr/bin/time']), UsageError);
 });

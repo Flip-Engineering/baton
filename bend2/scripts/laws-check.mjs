@@ -144,7 +144,8 @@ retainEvidence('baseline', baseline.stdout, baseline.stderr, outcomeOf(baseline)
 console.log(JSON.stringify({ check: 'entry compiles with every law proven', passed: baseline.ok }));
 if (!baseline.ok) {
   failures++;
-  console.log(baseline.output.trimEnd());
+  console.log(baseline.stderr.trimEnd());
+  if (baseline.stdout.trimEnd() !== '') console.log(baseline.stdout.trimEnd());
   console.log(`laws-check: red - ${rows.length} laws, 1 compile, ${failures} failure; proof-removal controls did not run`);
   process.exit(1);
 }
@@ -276,13 +277,13 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
     discoverCli(rest);
   } else if (mode === '--group') {
     const { groupCli } = await import('./capacity-controls/group-run.mjs');
-    await groupCli(rest);
+    await groupCli(process.argv.slice(2));
   } else if (mode === '--aggregate') {
     const { aggregateCli } = await import('./capacity-controls/aggregate.mjs');
     await aggregateCli(rest);
   } else if (mode === '--classify') {
     const { classifyCli } = await import('./capacity-controls/aggregate.mjs');
-    await classifyCli(rest);
+    await classifyCli(process.argv.slice(2));
   } else if (typeof mode === 'string' && mode.startsWith('-')) {
     // Refusal happens here, before any compiler resolution or effect.
     console.error(`laws-check: unknown mode ${mode}; expected --discover, --group, --aggregate or --classify`);
