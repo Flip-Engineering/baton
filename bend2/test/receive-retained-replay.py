@@ -93,6 +93,8 @@ class ReplayBase(RECEIVE.Receive):
                 "SELECT id, directory FROM executions WHERE session='parent'").fetchone()
         self.assertIsNotNone(row, 'the original attempt was not recorded at start')
         self.assertTrue(row[0] and row[1], 'the original attempt has no id or directory')
+        if not hasattr(self, 'first_attempt'):
+            self.first_attempt = (row[0], pathlib.Path(row[1]))
         self.original_attempt = (row[0], pathlib.Path(row[1]))
         (self.directory / 'original-attempt-binding.json').write_text(
             json.dumps({'id': row[0], 'directory': row[1]}))
