@@ -192,13 +192,12 @@ test('same-epoch assembly over a real debuggee through the production session', 
         return { signaled, pid: child.pid, scope: 'fixture-owned harness child; no keeper-custody claim' };
       },
     };
+    // Actual CDP surface: {runtime, adapter, incarnation, control, emit,
+    // connect} - no role/sequence/targetPid parameters exist there.
     session = sessionModule.createAdapterSession({
       runtime,
       adapter: '0',
-      role: 'adapter',
       incarnation: '0',
-      sequence: '0',
-      targetPid: run.child.pid,
       control,
     });
 
