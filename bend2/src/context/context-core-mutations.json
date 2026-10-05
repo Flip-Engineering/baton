@@ -1,11 +1,12 @@
 {
-  "purpose": "Handoff payload for bend2/scripts/laws-check.mjs MUTATIONS. Each entry mutates one context core production function and is refused by the named law when the isolated entry bend2/tests/context-core/laws-entry.bend is compiled. Every entry is refused by its named law at the verified baseline 40e7060b for the entries present then (33 mutations, 0 failures, .scratch/context-core-controls/run.mjs). Entries added after that run with the decimal runtime counter, ref subject selection and projection-table changes are pending the remote validation request native-core-counter-70; the operator boundary forbids local compilation.",
+  "purpose": "Handoff payload for bend2/scripts/laws-check.mjs MUTATIONS. Each entry mutates one context core production function and is refused by the named law when the isolated entry bend2/tests/context-core/laws-entry.bend is compiled. Thirty-three entries were refused by their named law at the verified baseline 40e7060b (.scratch/context-core-controls/run.mjs, 33 mutations, 0 failures). Entries added after that run are pending the remote validation request native-core-layout-74; the operator boundary forbids local compilation.",
   "entry": "bend2/tests/context-core/laws-entry.bend",
   "verified_baseline": "40e7060bf11ea1f8a924110e5a72815c9e343c41",
   "verification_pending": [
     "runtime-ref-collapses-the-lifetime-counter",
     "ref-subject-ignores-its-stored-engine",
-    "analyzer-serves-the-cfg-option-as-a-projection"
+    "analyzer-serves-the-cfg-option-as-a-projection",
+    "discovery-plan-probes-a-target"
   ],
   "entries": [
     {
@@ -116,8 +117,8 @@
     {
       "name": "discovery-plan-probes-a-target",
       "file": "bend2/src/context/engines.bend",
-      "find": "        Probe{e_clangd(), \"version\", clangd, ss_one(\"--version\")},",
-      "replace": "        Probe{e_clangd(), \"version\", clangd, ss_two(\"--project\", \"target.json\")},",
+      "find": "        Probe{e_clangd(), \"providerEngines\", node, ss_two(clangdAdapter, \"-\")},",
+      "replace": "        Probe{e_clangd(), \"providerEngines\", node, ss_two(clangdAdapter, \"target.json\")},",
       "law": "engine_the_probe_plan_is_fixed_and_names_no_target_path"
     },
     {

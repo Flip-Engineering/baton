@@ -438,9 +438,9 @@ def resolve(choice: EngineChoice, catalog: List<EngineEntry>) -> EngineResolved:
 
 # --- the fixed discovery plan ------------------------------------------------
 type Deployment is Data:
-  Dep{node: String, tsProvider: String, clangd: String, extractor: String,
-      psql: String, catalogsProvider: String, modelsProvider: String,
-      envProvider: String, datasetProvider: String}
+  Dep{node: String, tsProvider: String, clangdAdapter: String,
+      analyzerAdapter: String, psql: String, catalogsProvider: String,
+      modelsProvider: String, envProvider: String, datasetProvider: String}
 
 type ProbeSpec is Data:
   Probe{engine: String, operation: String, executable: String, argv: SS}
@@ -451,13 +451,18 @@ type ProbeOutcome is Data:
   PExcluded{reason: String}
 
 # One fixed probe per engine. The plan names only deployment executables and
-# fixed argv; it names no target path and starts no debuggee.
+# fixed argv; it names no target path and starts no debuggee. The two clang
+# engines are probed through their packaged adapters, which resolve the
+# admitted external clangd and the packaged extractor from their own location
+# and report the absolute path, version and digest they use; the packaged
+# extractor and the helper summary are therefore not separate deployment
+# inputs. The cdp and postgres probes name their admitted executables directly.
 def probe_plan(dep: Deployment) -> List<ProbeSpec>:
   match dep:
-    case Dep{+node, tsProvider, clangd, extractor, psql, catalogsProvider, modelsProvider, envProvider, datasetProvider}:
+    case Dep{+node, tsProvider, clangdAdapter, analyzerAdapter, psql, catalogsProvider, modelsProvider, envProvider, datasetProvider}:
       [ Probe{e_typescript(), "providerEngines", node, ss_two(tsProvider, "-")},
-        Probe{e_clangd(), "version", clangd, ss_one("--version")},
-        Probe{e_clang_analyzer(), "version", extractor, ss_one("--version")},
+        Probe{e_clangd(), "providerEngines", node, ss_two(clangdAdapter, "-")},
+        Probe{e_clang_analyzer(), "providerEngines", node, ss_two(analyzerAdapter, "-")},
         Probe{e_cdp(), "version", node, ss_one("--version")},
         Probe{e_sqlite(), "providerEngines", node, ss_two(catalogsProvider, "-")},
         Probe{e_postgres(), "version", psql, ss_one("--version")},
