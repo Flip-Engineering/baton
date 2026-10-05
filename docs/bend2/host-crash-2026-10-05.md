@@ -6,6 +6,10 @@ Orchestra tasks. One Player started the same fixture build twice while its
 first build remained active. These executions establish a validation placement
 and duplicate-execution defect.
 
+Post-restart measurement also found expensive retained output replay and
+repeated public-log append in the installed Receive path. No duplicate live
+native conversation owner was established by that process audit.
+
 The operator requires compilation and CI/CD on remote homelab runners. The
 laptop remains available for orchestration, source edits and evidence review.
 
@@ -75,3 +79,41 @@ fixture request: both requesters receive one retained execution and completion.
 Loss of a requester or coordinator must preserve the active execution's
 ownership and final result. Large Ensembles remain supported; heavy-effect
 placement uses admitted remote capacity.
+
+## Live recovery pressure
+
+The process audit sampled one receiver and keeper per active actor. Thirty
+sampled keepers had live recorded native children. A broad pathname match for
+`baton2` also counts OMP executables under the audit scratch directory; exact
+executable names are required for process totals. Recorded RSS totals still
+do not measure physical memory.
+
+Receiver 9536 for `semantic-impl-typescript` reached 954096 KiB RSS and
+76.5 percent CPU while reading retained stdout of 9502406 bytes after its
+provider exited. That receiver and its keeper subsequently exited naturally.
+Several other receivers used 70–78 percent CPU while processing historical
+output. This establishes expensive replay; it does not establish a permanent
+deadlock or a missing process-exit event.
+
+Codec's public log grew from 651298261 to 685860643 bytes while its old
+retained stdout remained 306865152 bytes. At installed source `fca7af87`,
+`retained_output` starts at the first frame, retained attach initializes the
+read offset to zero, `consume` calls `record_frame`, and `record_frame` appends
+non-`message_update` frames to the public log. Recovery repeats that append.
+The existing Receive owner retains source correction and remote replay
+qualification. Original output, completion, input and notification duties
+remain acceptance requirements.
+
+Swap allocation rose from 4 to 6 GiB during recovery, with free disk below
+1 GiB. Existing turns finished without forced termination. Lossless filesystem
+compression of two closed public logs reduced allocated blocks by 380.7 MiB;
+their paths and full SHA256 hashes stayed unchanged. The operator approved a
+normal Chrome quit. Chrome exited and its profile remained intact. macOS
+refused a separate session-file backup. A later sample showed swap used below
+1 GiB and free disk above 4 GiB.
+
+The retained evidence is
+`.scratch/root-crash-evidence-20261005/current-pressure-assessment.md`,
+process-owner snapshots and compression hash records. Native guidance
+`root-receive-replay-pressure-59` gives the owner the measured replay case.
+No fixed actor limit was introduced.

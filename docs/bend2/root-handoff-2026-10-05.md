@@ -139,6 +139,37 @@ TypeScript/Bun frontend and host compiler. CUDA and Metal support executes
 Bend programs. The operator's GPU-queue question does not change the selected
 CPU compilation placement.
 
+Root later investigated pressure from Receive replay. No duplicate live
+native child was established. Codec's public log grew while its retained
+stdout stayed unchanged; the installed recorder appends replayed frames.
+Guidance `root-receive-replay-pressure-59` assigns measured time/memory and
+output-retention qualification to the existing Receive owner. Existing turns
+finished naturally. Two closed public logs retain exact bytes and paths after
+lossless filesystem compression, saving 380.7 MiB of allocated blocks.
+The operator approved a normal Chrome quit; Chrome exited with its profile
+intact. macOS refused a separate session-file backup. A later sample had
+approximately 4.4 GiB free disk and less than 1 GiB swap used.
+
+Root admitted exact candidate
+`5e7223929d748a56116cba71ea4eab3a8ec6b5b7`, tree
+`787fda261e2442585ec633bac6002c56dfb1daf6`, for bounded Linux component tests.
+The isolated homelab job `baton2-instance-5e722392.service` completed with
+exit 1 and peak cgroup memory 151011328 bytes. Owner-admission passed its
+runtime cases and eight intended mutation controls. Receive-request failed
+baseline compilation at a computed-value match in its fixture. Retained-read
+failed baseline compilation at its nested `match carry`. Their generation,
+native and mutation stages did not run after those failures. Source stayed
+clean; before/after compiler, archive and complete library hashes matched.
+
+Full copied evidence is under
+`.scratch/root-homelab-ci-20261005/instance-5e722392-evidence`; remote source,
+bundle, job and results are under
+`/mnt/nvme4tb/ci-runners/baton2-native-homelab/qualifications/instance-5e722392`.
+Native guidance `root-instance-remote-result-61` gives the existing Conductor
+the exact failures and authorizes a reviewed immutable successor. These
+component results qualify neither shared host/caller integration nor Darwin
+artifacts. Preserve the failed source and results.
+
 [Issue #675](https://github.com/Flip-Engineering/baton/issues/675) covers hosted
 parallel law validation. `native-ci-conductor` owns the work under
 `semantic-synthesis`. Its implementation Sections use
