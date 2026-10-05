@@ -81,7 +81,7 @@ def ref_entries(query: String) -> String:
   "(SELECT result_json FROM semantic_queries WHERE id=" ++ C.q(query) ++ ")"
 
 def ref_id_match(+refId: String) -> String:
-  "json_extract(value,'$.id')=" ++ C.q(refId)
+  "json_extract(entry.value,'$.id')=" ++ C.q(refId)
 
 # The retained per-ref association of one stored result: the referenced query's
 # stored refs are scanned by exact ref identity, and the entry's engine, subject,
@@ -111,31 +111,44 @@ def ref_state(query: String) -> String:
 def ref_result_present(query: String) -> String:
   "CASE WHEN NOT EXISTS(SELECT 1 FROM semantic_queries WHERE id=" ++ C.q(query) ++ ") THEN 'absent' WHEN (SELECT result_json FROM semantic_queries WHERE id=" ++ C.q(query) ++ ") IS NULL THEN 'null' ELSE 'present' END"
 
+# The refs container must be an array before anything is counted: a completed result
+# whose refs member is absent, null or another type is a container failure, not an
+# empty set.
+def ref_container_kind(query: String) -> String:
+  "coalesce(json_type(coalesce((SELECT result_json FROM semantic_queries WHERE id=" ++ C.q(query) ++ "),'null'),'$.refs'),'absent')"
+
 def ref_match_count(query: String, refId: String) -> String:
-  "(SELECT count(*) FROM json_each(coalesce((SELECT result_json FROM semantic_queries WHERE id=" ++ C.q(query) ++ "),'null'),'$.refs') WHERE " ++ ref_id_match(refId) ++ ")"
+  "(SELECT count(*) FROM json_each(coalesce((SELECT result_json FROM semantic_queries WHERE id=" ++ C.q(query) ++ "),'null'),'$.refs') AS entry WHERE " ++ ref_id_match(refId) ++ ")"
 
 def ref_first_entry(query: String, refId: String) -> String:
-  "(SELECT value FROM json_each(coalesce((SELECT result_json FROM semantic_queries WHERE id=" ++ C.q(query) ++ "),'null'),'$.refs') WHERE " ++ ref_id_match(refId) ++ ")"
+  "(SELECT entry.value FROM json_each(coalesce((SELECT result_json FROM semantic_queries WHERE id=" ++ C.q(query) ++ "),'null'),'$.refs') AS entry WHERE " ++ ref_id_match(refId) ++ ")"
 
 # One member of the entry occurs exactly once and carries the required JSON type; the
 # identity members are additionally nonempty. A JSON null, number, object, wrong
 # array element or a duplicated key fails the test.
 def ref_member_once(member: String, kind: String) -> String:
-  "(SELECT count(*) FROM json_each(value) WHERE key=" ++ C.q(member) ++ ")=1 AND json_type(value,'$." ++ member ++ "')=" ++ C.q(kind)
+  "(SELECT count(*) FROM json_each(entry.value) AS member WHERE member.key=" ++ C.q(member) ++ ")=1 AND json_type(entry.value,'$." ++ member ++ "')=" ++ C.q(kind)
 
 def ref_identity_nonempty(member: String) -> String:
-  "coalesce(json_extract(value,'$." ++ member ++ "'),'')<>''"
+  "coalesce(json_extract(entry.value,'$." ++ member ++ "'),'')<>''"
 
+# The stored selector is the producer's structured object, so the subject member must
+# be an object with a nonempty kind; the projection list must be an array of strings.
+# The complete kind vocabulary belongs to the producer contract, so this checks the
+# shape it can establish here and reports anything else as malformed.
 def ref_shape_ok(query: String, refId: String) -> String:
-  "(SELECT CASE WHEN " ++ ref_member_once("engine", "text") ++ " AND " ++ ref_identity_nonempty("engine") ++ " AND " ++ ref_member_once("subject", "array") ++ " AND " ++ ref_member_once("snapshotId", "text") ++ " AND " ++ ref_identity_nonempty("snapshotId") ++ " AND " ++ ref_member_once("projections", "array") ++ " AND json_array_length(value,'$.projections')>0 THEN 1 ELSE 0 END FROM json_each(coalesce((SELECT result_json FROM semantic_queries WHERE id=" ++ C.q(query) ++ "),'null'),'$.refs') WHERE " ++ ref_id_match(refId) ++ ")"
+  "(SELECT CASE WHEN " ++ ref_member_once("engine", "text") ++ " AND " ++ ref_identity_nonempty("engine") ++ " AND " ++ ref_member_once("subject", "object") ++ " AND json_type(entry.value,'$.subject.kind')='text' AND json_extract(entry.value,'$.subject.kind')<>'' AND " ++ ref_member_once("snapshotId", "text") ++ " AND " ++ ref_identity_nonempty("snapshotId") ++ " AND " ++ ref_member_once("projections", "array") ++ " AND json_array_length(entry.value,'$.projections')>0 AND NOT EXISTS(SELECT 1 FROM json_each(entry.value,'$.projections') AS projection WHERE projection.type<>'text' OR projection.value='') THEN 1 ELSE 0 END FROM json_each(coalesce((SELECT result_json FROM semantic_queries WHERE id=" ++ C.q(query) ++ "),'null'),'$.refs') AS entry WHERE " ++ ref_id_match(refId) ++ ")"
 
 # One row of five columns, none of which echoes a caller string: the recorded state of
 # the requested query, whether its result is retained, the count of entries whose id
 # matches exactly, the matching entry's stored text, and whether that entry has the
 # exact selector shape. The requested identity is supplied to the decoder instead of
 # travelling through the tab-separated row.
+def ref_count_column(query: String, refId: String) -> String:
+  "CASE WHEN " ++ ref_container_kind(query) ++ "='array' THEN " ++ ref_match_count(query, refId) ++ " ELSE 'container' END"
+
 def ref_lookup_sql(+query: String, +refId: String) -> String:
-  "SELECT " ++ ref_state(query) ++ "," ++ ref_result_present(query) ++ "," ++ ref_match_count(query, refId) ++ ",coalesce(" ++ ref_first_entry(query, refId) ++ ",''),coalesce(" ++ ref_shape_ok(query, refId) ++ ",0);"
+  "SELECT " ++ ref_state(query) ++ "," ++ ref_result_present(query) ++ "," ++ ref_count_column(query, refId) ++ ",coalesce(" ++ ref_first_entry(query, refId) ++ ",''),coalesce(" ++ ref_shape_ok(query, refId) ++ ",0);"
 
 type RefLookup is Data:
   RefUnreadable{stage: String, answer: String}

@@ -858,73 +858,79 @@ def a_ref_lookup_matches_its_exact_ref_identity(refId):
   {==}
 
 law a_ref_lookup_decodes_against_the_requested_identity:
-  {ContextStore.ref_lookup_decode("q7","ref-1","complete\t1\t{\"engine\":\"typescript\",\"subject\":[\"position\",\"/a.ts\",1,2],\"snapshotId\":\"s1\",\"projections\":[\"definition\"]}\t1\n") == ContextStore.RefFound{"q7","ref-1","complete","{\"engine\":\"typescript\",\"subject\":[\"position\",\"/a.ts\",1,2],\"snapshotId\":\"s1\",\"projections\":[\"definition\"]}"} : ContextStore.RefLookup}
+  {ContextStore.ref_lookup_decode("q7","ref-1","complete\tpresent\t1\t{\"engine\":\"typescript\",\"subject\":{\"kind\":\"entity\",\"database\":\"d\",\"schema\":\"s\",\"name\":\"n\"},\"snapshotId\":\"s1\",\"projections\":[\"definition\"]}\t1\n") == ContextStore.RefFound{"q7","ref-1","complete","{\"engine\":\"typescript\",\"subject\":{\"kind\":\"entity\",\"database\":\"d\",\"schema\":\"s\",\"name\":\"n\"},\"snapshotId\":\"s1\",\"projections\":[\"definition\"]}"} : ContextStore.RefLookup}
 
 def a_ref_lookup_decodes_against_the_requested_identity():
   {==}
 
 law an_unfinished_query_is_not_an_absent_ref:
-  {ContextStore.ref_lookup_decode("q7","ref-1","running\t0\t\t0\n") == ContextStore.RefOpen{"q7","ref-1","running"} : ContextStore.RefLookup}
+  {ContextStore.ref_lookup_decode("q7","ref-1","running\tabsent\t0\t\t0\n") == ContextStore.RefOpen{"q7","ref-1","running"} : ContextStore.RefLookup}
 
 def an_unfinished_query_is_not_an_absent_ref():
   {==}
 
 law a_query_without_a_retained_result_is_not_an_absent_ref:
-  {ContextStore.ref_lookup_decode("q7","ref-1","unretained\t0\t\t0\n") == ContextStore.RefUnretained{"q7","ref-1"} : ContextStore.RefLookup}
+  {ContextStore.ref_lookup_decode("q7","ref-1","complete\tnull\t0\t\t0\n") == ContextStore.RefUnretained{"q7","ref-1"} : ContextStore.RefLookup}
 
 def a_query_without_a_retained_result_is_not_an_absent_ref():
   {==}
 
 law a_failed_query_names_its_state:
-  {ContextStore.ref_lookup_decode("q7","ref-1","failed\t0\t\t0\n") == ContextStore.RefFailed{"q7","ref-1","failed"} : ContextStore.RefLookup}
+  {ContextStore.ref_lookup_decode("q7","ref-1","failed\tabsent\t0\t\t0\n") == ContextStore.RefFailed{"q7","ref-1","failed"} : ContextStore.RefLookup}
 
 def a_failed_query_names_its_state():
   {==}
 
 law an_absent_query_row_is_not_an_absent_ref:
-  {ContextStore.ref_lookup_decode("q7","ref-1","\t0\t\t0\n") == ContextStore.RefQueryMissing{"q7","ref-1"} : ContextStore.RefLookup}
+  {ContextStore.ref_lookup_decode("q7","ref-1","\tabsent\t0\t\t0\n") == ContextStore.RefQueryMissing{"q7","ref-1"} : ContextStore.RefLookup}
 
 def an_absent_query_row_is_not_an_absent_ref():
   {==}
 
 law a_completed_result_without_a_matching_ref_is_absent:
-  {ContextStore.ref_lookup_decode("q7","ref-1","complete\t0\t\t0\n") == ContextStore.RefAbsent{"q7","ref-1"} : ContextStore.RefLookup}
+  {ContextStore.ref_lookup_decode("q7","ref-1","complete\tpresent\t0\t\t0\n") == ContextStore.RefAbsent{"q7","ref-1"} : ContextStore.RefLookup}
 
 def a_completed_result_without_a_matching_ref_is_absent():
   {==}
 
 law two_matching_entries_are_ambiguous:
-  {ContextStore.ref_lookup_decode("q7","ref-1","complete\t2\t{}\t1\n") == ContextStore.RefAmbiguous{"q7","ref-1","2"} : ContextStore.RefLookup}
+  {ContextStore.ref_lookup_decode("q7","ref-1","complete\tpresent\t2\t{}\t1\n") == ContextStore.RefAmbiguous{"q7","ref-1","2"} : ContextStore.RefLookup}
 
 def two_matching_entries_are_ambiguous():
   {==}
 
 law an_entry_without_the_exact_selector_shape_is_malformed:
-  {ContextStore.ref_lookup_decode("q7","ref-1","complete\t1\t{\"engine\":null}\t0\n") == ContextStore.RefMalformed{"q7","ref-1","{\"engine\":null}"} : ContextStore.RefLookup}
+  {ContextStore.ref_lookup_decode("q7","ref-1","complete\tpresent\t1\t{\"engine\":null}\t0\n") == ContextStore.RefMalformed{"q7","ref-1","{\"engine\":null}"} : ContextStore.RefLookup}
 
 def an_entry_without_the_exact_selector_shape_is_malformed():
   {==}
 
 law an_unknown_query_state_is_unreadable:
-  {ContextStore.ref_lookup_decode("q7","ref-1","bogus\t0\t\t0\n") == ContextStore.RefUnreadable{"state","bogus\t0\t\t0\n"} : ContextStore.RefLookup}
+  {ContextStore.ref_lookup_decode("q7","ref-1","bogus\tpresent\t0\t\t0\n") == ContextStore.RefUnreadable{"state","bogus\t0\t\t0\n"} : ContextStore.RefLookup}
 
 def an_unknown_query_state_is_unreadable():
   {==}
 
 law a_noncanonical_count_is_unreadable:
-  {ContextStore.ref_lookup_decode("q7","ref-1","complete\t-1\t\t1\n") == ContextStore.RefUnreadable{"count","complete\t-1\t\t1\n"} : ContextStore.RefLookup}
+  {ContextStore.ref_lookup_decode("q7","ref-1","complete\tpresent\t-1\t\t1\n") == ContextStore.RefUnreadable{"count","complete\t-1\t\t1\n"} : ContextStore.RefLookup}
 
 def a_noncanonical_count_is_unreadable():
   {==}
 
 law an_invalid_shape_flag_is_unreadable:
-  {ContextStore.ref_lookup_decode("q7","ref-1","complete\t1\t{}\tmaybe\n") == ContextStore.RefUnreadable{"shape","complete\t1\t{}\tmaybe\n"} : ContextStore.RefLookup}
+  {ContextStore.ref_lookup_decode("q7","ref-1","complete\tpresent\t1\t{}\tmaybe\n") == ContextStore.RefUnreadable{"shape","complete\t1\t{}\tmaybe\n"} : ContextStore.RefLookup}
 
 def an_invalid_shape_flag_is_unreadable():
   {==}
 
 law a_surplus_ref_row_is_unreadable:
-  {ContextStore.ref_lookup_decode("q7","ref-1","complete\t1\t{}\t1\textra\n") == ContextStore.RefUnreadable{"surplus","complete\t1\t{}\t1\textra\n"} : ContextStore.RefLookup}
+  {ContextStore.ref_lookup_decode("q7","ref-1","complete\tpresent\t1\t{}\t1\textra\n") == ContextStore.RefUnreadable{"surplus","complete\t1\t{}\t1\textra\n"} : ContextStore.RefLookup}
 
 def a_surplus_ref_row_is_unreadable():
+  {==}
+
+law a_non_array_refs_container_is_unreadable:
+  {ContextStore.ref_lookup_decode("q7","ref-1","complete\tpresent\tcontainer\t\t0\n") == ContextStore.RefUnreadable{"count","complete\tpresent\tcontainer\t\t0\n"} : ContextStore.RefLookup}
+
+def a_non_array_refs_container_is_unreadable():
   {==}
