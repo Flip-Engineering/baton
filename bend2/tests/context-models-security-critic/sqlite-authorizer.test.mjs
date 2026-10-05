@@ -29,6 +29,14 @@
 //   replay-*.json    records from the chain replay operation
 //   stage-*.json     records expected to carry an input-refusal stage
 //
+// Member paths bound from producer message sqlite-record-shape-answer-1 (pin
+// c1fc1766 on top of d66c779c): status.stageHex carries the hex-encoded fixed
+// stage name in the lowerCamelCase spelling of baton_ctx_sql_stage_name;
+// scratch.tempStoreVerified is true only in a chain-replay record whose two
+// private connections verified PRAGMA temp_store==2, and false in planner and
+// applied-capture records; authorizer arrays appear at the top level of plan
+// records and inside the replay prefix and head sections.
+//
 // Remote only; this file has not been executed locally.
 
 import { test } from 'node:test';
@@ -65,31 +73,37 @@ const ACTION = {
   COPY: 0,
 };
 const DDL_ACTIONS = new Set([1, 2, 3, 4, 5, 6, 7, 8, 10, 11, 12, 13, 14, 15, 16, 17]);
-const REFUSED_STAGES = new Set(['SQL_UTF8', 'SQL_NUL', 'SQL_EMPTY', 'SQL_BIND', 'TAIL_REMAINS', 'NOT_READONLY', 'IS_EXPLAIN', 'SQL_LENGTH_EXCEEDS_INT']);
+// The fixed stage names exactly as baton_ctx_sql_stage_name spells them.
+const STAGES = new Set([
+  'ok', 'inputInvalid', 'tempdirUnavailable', 'openFailed', 'identityFailed',
+  'snapshotFailed', 'dropModulesFailed', 'authorizerFailed', 'sqlUtf8', 'sqlNul',
+  'sqlEmpty', 'sqlBind', 'prepareFailed', 'notReadonly', 'isExplain', 'tailRemains',
+  'explainPrepareFailed', 'explainStepFailed', 'cancelled', 'closeFailed',
+  'allocationFailed', 'sqlLengthExceedsInt', 'tempstoreUnverified',
+  'replayRevisionFailed', 'replayOpenTransaction',
+]);
+const REFUSED_STAGES = new Set(['sqlUtf8', 'sqlNul', 'sqlEmpty', 'sqlBind', 'tailRemains', 'notReadonly', 'isExplain', 'sqlLengthExceedsInt']);
 
-// BatonCtxSqlStage from the published header, so a numeric stage is still checked.
-const STAGE_NAMES = [
-  'OK', 'INPUT_INVALID', 'TEMPDIR_UNAVAILABLE', 'OPEN_FAILED', 'IDENTITY_FAILED',
-  'SNAPSHOT_FAILED', 'DROPMODULES_FAILED', 'AUTHORIZER_FAILED', 'SQL_UTF8', 'SQL_NUL',
-  'SQL_EMPTY', 'SQL_BIND', 'PREPARE_FAILED', 'NOT_READONLY', 'IS_EXPLAIN',
-  'TAIL_REMAINS', 'EXPLAIN_PREPARE_FAILED', 'EXPLAIN_STEP_FAILED', 'CANCELLED',
-  'CLOSE_FAILED', 'ALLOCATION_FAILED', 'SQL_LENGTH_EXCEEDS_INT', 'TEMPSTORE_UNVERIFIED',
-  'REPLAY_REVISION_FAILED', 'REPLAY_OPEN_TRANSACTION',
-];
+function stageOf(document, name) {
+  const status = document.status;
+  assert.ok(status !== null && typeof status === 'object', `${name} carries no status object`);
+  const stage = hexDecode(status.stageHex, `${name}.status.stageHex`);
+  assert.ok(stage !== null, `${name}.status.stageHex is absent; the emitter writes the fixed stage name there`);
+  assert.ok(STAGES.has(stage), `${name} carries unknown stage ${JSON.stringify(stage)}`);
+  return stage;
+}
 
-function stageOf(document) {
-  const seen = [];
-  const walk = (value) => {
+// Authorizer arrays appear at the top level of a plan record and inside the
+// replay prefix and head sections, so collect every one with its path.
+function collectAuthorizerArrays(document) {
+  const arrays = [];
+  const walk = (value, path) => {
     if (value === null || typeof value !== 'object') return;
-    for (const [key, entry] of Object.entries(value)) {
-      if (/^stage$/i.test(key) && typeof entry === 'number') seen.push(STAGE_NAMES[entry] ?? `STAGE_${entry}`);
-      if (/^stageNameHex$/i.test(key)) seen.push(hexDecode(entry, 'stageNameHex'));
-      if (/^stageHex$/i.test(key)) seen.push(hexDecode(entry, 'stageHex'));
-      walk(entry);
-    }
+    if (Array.isArray(value.authorizer)) arrays.push({ path: `${path}.authorizer`, entries: value.authorizer });
+    for (const [key, entry] of Object.entries(value)) walk(entry, `${path}.${key}`);
   };
-  walk(document);
-  return seen;
+  walk(document, '$');
+  return arrays;
 }
 const TEMP_STORE_REFUSED_PRAGMAS = ['journal_mode', 'temp_store', 'synchronous', 'mmap_size'];
 
@@ -115,26 +129,33 @@ function loadRecords(prefix) {
   return names.map(name => {
     const path = join(directory, name);
     const document = JSON.parse(readFileSync(path, 'utf8'));
-    const authorizer = document.authorizer;
-    if (!Array.isArray(authorizer)) throw new Error(`${name} carries no authorizer array`);
-    const events = authorizer.map((entry, index) => ({
-      index,
-      phase: hexDecode(entry.phase, `${name}#${index}.phase`),
-      action: entry.action,
-      actionName: hexDecode(entry.actionNameHex, `${name}#${index}.actionNameHex`),
-      arg1: hexDecode(entry.arg1Hex, `${name}#${index}.arg1Hex`),
-      arg2: hexDecode(entry.arg2Hex, `${name}#${index}.arg2Hex`),
-      arg3: hexDecode(entry.arg3Hex, `${name}#${index}.arg3Hex`),
-      arg4: hexDecode(entry.arg4Hex, `${name}#${index}.arg4Hex`),
-      decision: entry.decision,
-      reason: hexDecode(entry.reasonHex, `${name}#${index}.reasonHex`),
-    }));
-    return { name, path, document, events };
+    const arrays = collectAuthorizerArrays(document);
+    if (arrays.length === 0) throw new Error(`${name} carries no authorizer array at any level`);
+    const events = [];
+    for (const array of arrays) {
+      array.entries.forEach((entry, index) => {
+        const where = `${name} ${array.path}[${index}]`;
+        events.push({
+          index,
+          section: array.path,
+          phase: hexDecode(entry.phase, `${where}.phase`),
+          action: entry.action,
+          actionName: hexDecode(entry.actionNameHex, `${where}.actionNameHex`),
+          arg1: hexDecode(entry.arg1Hex, `${where}.arg1Hex`),
+          arg2: hexDecode(entry.arg2Hex, `${where}.arg2Hex`),
+          arg3: hexDecode(entry.arg3Hex, `${where}.arg3Hex`),
+          arg4: hexDecode(entry.arg4Hex, `${where}.arg4Hex`),
+          decision: entry.decision,
+          reason: hexDecode(entry.reasonHex, `${where}.reasonHex`),
+        });
+      });
+    }
+    return { name, path, document, arrays, events, stage: stageOf(document, name) };
   });
 }
 
 function decisions(records) {
-  return records.flatMap(record => record.events.map(event => ({ ...event, file: record.name })));
+  return records.flatMap(record => record.events.map(event => ({ ...event, file: record.name, stage: record.stage })));
 }
 
 test('planner records admit only SELECT and READ of captured main objects', () => {
@@ -223,21 +244,36 @@ test('replay denies extension loading, attachment, virtual tables and unknown ac
 test('a refused input stage carries its token and no target-derived prepare', () => {
   const records = loadRecords('stage-');
   for (const record of records) {
-    const stages = stageOf(record.document);
-    assert.ok(stages.length > 0, `${record.name} carries no stage token`);
-    const stage = stages[0];
-    assert.ok(REFUSED_STAGES.has(stage), `${record.name} stage ${stage} is not an input-refusal stage`);
+    assert.ok(REFUSED_STAGES.has(record.stage), `${record.name} stage ${record.stage} is not an input-refusal stage`);
     const targetDerived = record.events.filter(event => event.phase === 'planner' || event.phase === 'replay');
     assert.equal(targetDerived.length, 0, `${record.name} recorded target-derived authorizer events for a refused input stage`);
   }
 });
 
-test('the replay record states the verified private temp store before its events', () => {
-  const records = loadRecords('replay-');
-  for (const record of records) {
-    const text = JSON.stringify(record.document);
-    assert.match(text, /"(tempStoreVerified|temp_store_verified)"\s*:\s*true/,
-      `${record.name} carries no verified private temp store flag; the contract installs the authorizer only after verifying PRAGMA temp_store=MEMORY`);
-    assert.ok(!/"(tempStoreVerified|temp_store_verified)"\s*:\s*false/.test(text), `${record.name} reports an unverified temp store`);
+test('the private scratch and temp-store verification facts follow the contract', () => {
+  // Operation sections appear when their capture completed before a failure, so
+  // an early refusal may omit scratch; a record that reached its operation may not.
+  const scratchOf = (record) => {
+    const scratch = record.document.scratch;
+    if (scratch === null || typeof scratch !== 'object') {
+      assert.notEqual(record.stage, 'ok', `${record.name} reports stage ok without the scratch facts`);
+      return null;
+    }
+    return scratch;
+  };
+  for (const record of loadRecords('replay-')) {
+    const scratch = scratchOf(record);
+    if (scratch === null) continue;
+    assert.equal(scratch.tempStoreVerified, true,
+      `${record.name} is a chain-replay record without a verified private temp store; the authorizer installs only after both private connections verify PRAGMA temp_store==2`);
+    assert.ok(typeof scratch.directoryHex === 'string' && hexDecode(scratch.directoryHex, `${record.name}.scratch.directoryHex`).startsWith('/'),
+      `${record.name} does not name the private scratch directory`);
+  }
+  for (const record of loadRecords('planner-')) {
+    const scratch = scratchOf(record);
+    if (scratch === null) continue;
+    assert.equal(scratch.tempStoreVerified, false,
+      `${record.name} is a planner record claiming a verified temp store; the planner configures sqlite3_temp_directory and never verifies PRAGMA temp_store`);
+    assert.ok(Object.hasOwn(scratch, 'configured'), `${record.name} does not record whether the temp directory was configured`);
   }
 });
