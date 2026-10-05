@@ -165,7 +165,26 @@ def duty_after(result: Result<&1,&1,U32 & String,String>) -> IO(Result<&1,&1,U32
     case Fail{error}: IO.pure(Result<&1,&1,U32 & String,DutyView>, Fail{error})
     case Done{+rows}: IO.pure(Result<&1,&1,U32 & String,DutyView>, Done{duty_view(rows)})
 
+# Whether the validated enumeration contains this exact duty. It is the obligation a
+# caller asserts, so no caller has to infer identity from an aggregate count.
+def duty_matches(line: String, +kind: String, +subject: String) -> Bool:
+  match duty_line(line):
+    case None{}: False{}
+    case Some{record}: Bool.and(String.eq(duty_kind(record), kind), String.eq(duty_subject(record), subject))
+
 # A safe rendering of the exported view for a caller that only needs the disposition.
+def duty_contains_rows(xs: List<String>, +kind: String, +subject: String) -> Bool:
+  match xs:
+    case Nil{}: False{}
+    case h <> t:
+      Bool.pick(Bool, duty_matches(h, kind, subject), True{}, duty_contains_rows(t, kind, subject))
+
+def duty_contains(+view: DutyView, +kind: String, +subject: String) -> Bool:
+  match view:
+    case DutyNone{}: False{}
+    case DutyRows{count, text}: duty_contains_rows(duty_split(text), kind, subject)
+    case DutyUnreadable{line, answer}: False{}
+
 def duty_text(view: DutyView) -> String:
   match view:
     case DutyNone{}: "none"

@@ -155,7 +155,8 @@ def progress_guarded_sql(+admitted: String, +id: String, +owner: String, +progre
 
 def runtime_row_sql(+id: String, +owner: String, +originAttempt: String, +launchQuery: String, +adapterId: String, +state: String, +epoch: String) -> String:
   "SELECT json_object('error','runtime-epoch-refused','condition','A runtime epoch is a canonical unsigned decimal counter: 0, or a nonzero digit followed by digits.','next','Read the adapter epoch as its exact decimal text; never convert it to a finite number.') WHERE NOT " ++ runtime_epoch_sql_ok(C.q(epoch)) ++ ";"
-  ++ "INSERT INTO semantic_runtimes(id,owner,origin_attempt,launch_query,adapter_id,state,epoch) VALUES("
+  ++ "INSERT INTO semantic_runtimes(id,owner,origin_attempt,launch_query,adapter_id,state,epoch) SELECT "
   ++ C.q(id) ++ "," ++ C.q(owner) ++ "," ++ text_or_null(originAttempt) ++ "," ++ C.q(launchQuery) ++ "," ++ C.q(adapterId) ++ "," ++ C.q(state) ++ "," ++ runtime_epoch_value(epoch)
-  ++ ") ON CONFLICT(id) DO UPDATE SET id=CASE WHEN semantic_runtimes.launch_query=excluded.launch_query AND semantic_runtimes.adapter_id=excluded.adapter_id THEN semantic_runtimes.id ELSE NULL END;"
-  ++ "SELECT json_object('id',id,'owner',owner,'launchQuery',launch_query,'adapterId',adapter_id,'state',state,'epoch',epoch,'pendingQuery',pending_query,'outcome',CASE WHEN outcome_json IS NULL THEN NULL ELSE json(outcome_json) END) FROM semantic_runtimes WHERE id=" ++ C.q(id) ++ ";"
+  ++ " WHERE " ++ runtime_epoch_sql_ok(C.q(epoch))
+  ++ " ON CONFLICT(id) DO UPDATE SET id=CASE WHEN semantic_runtimes.launch_query=excluded.launch_query AND semantic_runtimes.adapter_id=excluded.adapter_id THEN semantic_runtimes.id ELSE NULL END;"
+  ++ "SELECT json_object('id',id,'owner',owner,'launchQuery',launch_query,'adapterId',adapter_id,'state',state,'epoch',epoch,'pendingQuery',pending_query,'outcome',CASE WHEN outcome_json IS NULL THEN NULL ELSE json(outcome_json) END) FROM semantic_runtimes WHERE id=" ++ C.q(id) ++ " AND " ++ runtime_epoch_sql_ok(C.q(epoch)) ++ ";"

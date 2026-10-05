@@ -255,8 +255,20 @@ def check_admission_bound(values):
 
 
 def check_duties(values):
-    view = values.get("duties.view", "")
-    check(view in ("rows:1", "rows:2", "rows:3"), "duties.view", view)
+    # The obligation, not a census: the query that still owes cleanup is present and
+    # the query published complete with no intent is absent.
+    check(values.get("duties.q1") == "true", "duties.q1", values.get("duties.q1"))
+    check(values.get("duties.q4") == "false", "duties.q4", values.get("duties.q4"))
+    check(values.get("duties.view", "").startswith(("rows:", "none")), "duties.view", values.get("duties.view"))
+
+
+def check_runtime_rows(values):
+    check(values.get("runtime.big.rows") == "1", "runtime.big.rows", values.get("runtime.big.rows"))
+    check("12345678901234567890123456789012345" in values.get("runtime.big", ""), "runtime.big", values.get("runtime.big"))
+    check("runtime-epoch-refused" in values.get("runtime.bad", ""), "runtime.bad", values.get("runtime.bad"))
+    check(values.get("runtime.bad.rows") == "0", "runtime.bad.rows", values.get("runtime.bad.rows"))
+    check(values.get("runtime.kept") == "q1", "runtime.kept", values.get("runtime.kept"))
+    check(values.get("runtime.conflict.error", "") != "", "runtime.conflict", values.get("runtime.conflict"))
 
 
 def check_control(values):
@@ -402,6 +414,7 @@ def main():
     check_admission_bound(values)
     check_roles(values)
     check_duties(values)
+    check_runtime_rows(values)
     check_control(values)
     if os.environ.get("CONTEXT_LIFECYCLE_MUTATIONS") == "1":
         proof_removal_check()

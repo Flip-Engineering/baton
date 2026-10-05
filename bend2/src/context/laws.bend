@@ -824,3 +824,28 @@ law a_duty_enumeration_reports_its_count:
 
 def a_duty_enumeration_reports_its_count():
   {==}
+
+law the_counter_profile_is_one_sql_predicate:
+  for +expr: String
+  {ContextStore.runtime_epoch_sql_ok(expr) == "((" ++ expr ++ ")='0' OR ((" ++ expr ++ ") GLOB '[1-9]*' AND (" ++ expr ++ ") NOT GLOB '*[^0-9]*'))" : String}
+
+def the_counter_profile_is_one_sql_predicate(expr):
+  {==}
+
+law a_duty_obligation_is_found_by_its_identity:
+  {ContextDuties.duty_contains(ContextDuties.duty_view("notice\tq1\t\t\tnotice\treport\n"), "notice", "q1") == True{} : Bool}
+
+def a_duty_obligation_is_found_by_its_identity():
+  {==}
+
+law a_duty_obligation_does_not_match_another_subject:
+  {ContextDuties.duty_contains(ContextDuties.duty_view("notice\tq1\t\t\tnotice\treport\n"), "notice", "q2") == False{} : Bool}
+
+def a_duty_obligation_does_not_match_another_subject():
+  {==}
+
+law an_unreadable_enumeration_contains_no_obligation:
+  {ContextDuties.duty_contains(ContextDuties.duty_view("short\n"), "notice", "q1") == False{} : Bool}
+
+def an_unreadable_enumeration_contains_no_obligation():
+  {==}

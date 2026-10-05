@@ -256,7 +256,29 @@ def duty_surfaces(db: String, binding: String) -> IO(Unit):
     show("duties.intent", owed)
     IO.pure(Unit, Unit{})
 
-def run(+db: String, +copy: String, +log: String) -> IO(Unit):
+# The runtime row through its actual store text: a large canonical counter is
+# stored and returned verbatim, a malformed counter inserts nothing, and a repeat of
+# an existing identity with different launch data aborts instead of updating it.
+def runtime_row_surfaces(db: String, binding: String) -> IO(Unit):
+  do IO<Unit>:
+    +owner : String <- IO.pure(String, "root")
+    +big : String <- IO.pure(String, "12345678901234567890123456789012345")
+    +bad : String <- IO.pure(String, "-1")
+    valid : Result<&1,&1,U32 & String,String> <- DB.Sql.query_bound(db, binding, ContextStore.runtime_row_sql("rt1", owner, "", "q1", "adapter-1", "starting", big))
+    show("runtime.big", valid)
+    after : Result<&1,&1,U32 & String,String> <- DB.Sql.query_bound(db, binding, "SELECT count(*) FROM semantic_runtimes WHERE id='rt1';")
+    show("runtime.big.rows", after)
+    refused : Result<&1,&1,U32 & String,String> <- DB.Sql.query_bound(db, binding, ContextStore.runtime_row_sql("rt2", owner, "", "q1", "adapter-2", "starting", bad))
+    show("runtime.bad", refused)
+    none : Result<&1,&1,U32 & String,String> <- DB.Sql.query_bound(db, binding, "SELECT count(*) FROM semantic_runtimes WHERE id='rt2';")
+    show("runtime.bad.rows", none)
+    conflict : Result<&1,&1,U32 & String,String> <- DB.Sql.query_bound(db, binding, ContextStore.runtime_row_sql("rt1", owner, "", "q9", "adapter-9", "running", big))
+    show("runtime.conflict", conflict)
+    kept : Result<&1,&1,U32 & String,String> <- DB.Sql.query_bound(db, binding, "SELECT launch_query FROM semantic_runtimes WHERE id='rt1';")
+    show("runtime.kept", kept)
+    IO.pure(Unit, Unit{})
+
+def run(+db: String, +copy: String, +log: String) -> IO<Unit>:
   do IO<Unit>:
     pure : Unit <- identity_surfaces()
     more : Unit <- progress_surfaces()
@@ -269,6 +291,7 @@ def run(+db: String, +copy: String, +log: String) -> IO(Unit):
     roles : Unit <- role_surfaces(db, binding, log)
     control : Unit <- control_surfaces(db, binding)
     duties : Unit <- duty_surfaces(db, binding)
+    rows : Unit <- runtime_row_surfaces(db, binding)
     IO.print("context-lifecycle: done")
 
 def complain() -> IO(Unit):
