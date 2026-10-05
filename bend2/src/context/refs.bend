@@ -160,6 +160,7 @@ type RefDecision is Data:
   REffectMissing{effect: String}
   RProjectionRefused{projection: String}
   RSubjectRefused{kind: String}
+  RPolicyMissing{}
   RPolicyRefused{stored: String, current: String}
 
 # The fixed refusal condition each decision carries; "ok" admits expansion.
@@ -172,6 +173,7 @@ def condition(d: RefDecision) -> String:
     case REffectMissing{effect}: "effectNotGranted"
     case RProjectionRefused{projection}: "projectionRefused"
     case RSubjectRefused{kind}: "subjectRefused"
+    case RPolicyMissing{}: "refPolicyUnestablished"
     case RPolicyRefused{stored, current}: "refPolicyMismatch"
 
 # The supported subject kinds a stored referenced selector can name.
@@ -218,9 +220,19 @@ def admit_applicability(a: Snap.Applies, +q: RefQuery) -> RefDecision:
     case Snap.AHistorical{reason}: RStaleRef{rq_fresh(q)}
     case Snap.AUnknown{reason}: RUnverified{reason}
 
-def admit_policy(+q: RefQuery) -> RefDecision:
+# Policy evidence must exist before it can be compared. The stored identity is
+# the one retained with the reference and the presented identity is the one the
+# caller authenticated; this module compares them and authenticates neither, so
+# an absent identity refuses instead of passing an empty equality.
+def policy_present(+q: RefQuery) -> Bool:
+  Bool.and(Bool.not(String.is_empty(rq_stored_policy(q))), Bool.not(String.is_empty(rq_policy(q))))
+
+def admit_policy_equal(+q: RefQuery) -> RefDecision:
   Bool.pick(RefDecision, String.eq(rq_stored_policy(q), rq_policy(q)), admit_applicability(rq_applicability(q), q),
     RPolicyRefused{rq_stored_policy(q), rq_policy(q)})
+
+def admit_policy(+q: RefQuery) -> RefDecision:
+  Bool.pick(RefDecision, policy_present(q), admit_policy_equal(q), RPolicyMissing{})
 
 def admit_known(+q: RefQuery) -> RefDecision:
   Bool.pick(RefDecision, supported_subject(rq_stored_kind(q)), admit_policy(q),

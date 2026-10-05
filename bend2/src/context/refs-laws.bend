@@ -135,6 +135,38 @@ def context_refs_the_record_carries_the_original_policy():
 # The current request cannot establish the policy a retained selector was
 # created under, so a reference whose recorded policy differs from the presented
 # one refuses before snapshot applicability, effects and projections.
+# Equality never establishes provenance: an absent identity refuses, with two
+# empty identities refused first, before any snapshot or effect check.
+law context_refs_a_reference_without_policy_evidence_refuses:
+  {Refs.admit(Refs.RQ{True{}, "symbol", "", "", Eng.ss_one("definition"), Eng.ss_one("definition"), Snap.ACurrent{}, Eng.SSNil{}, Eng.SSNil{}, "[]"}) == Refs.RPolicyMissing{} : Refs.RefDecision}
+
+def context_refs_a_reference_without_policy_evidence_refuses():
+  {==}
+
+law context_refs_a_reference_with_only_the_stored_policy_refuses:
+  {Refs.admit(Refs.RQ{True{}, "symbol", "pol-a", "", Eng.ss_one("definition"), Eng.ss_one("definition"), Snap.ACurrent{}, Eng.SSNil{}, Eng.SSNil{}, "[]"}) == Refs.RPolicyMissing{} : Refs.RefDecision}
+
+def context_refs_a_reference_with_only_the_stored_policy_refuses():
+  {==}
+
+law context_refs_a_reference_with_only_the_presented_policy_refuses:
+  {Refs.admit(Refs.RQ{True{}, "symbol", "", "pol-a", Eng.ss_one("definition"), Eng.ss_one("definition"), Snap.ACurrent{}, Eng.SSNil{}, Eng.SSNil{}, "[]"}) == Refs.RPolicyMissing{} : Refs.RefDecision}
+
+def context_refs_a_reference_with_only_the_presented_policy_refuses():
+  {==}
+
+law context_refs_the_missing_policy_is_decided_before_the_snapshot:
+  {Refs.admit(Refs.RQ{True{}, "symbol", "", "", Eng.ss_one("definition"), Eng.ss_one("definition"), Snap.AStale{Eng.ss_one("/work/a.c")}, Eng.SSNil{}, Eng.SSNil{}, "[]"}) == Refs.RPolicyMissing{} : Refs.RefDecision}
+
+def context_refs_the_missing_policy_is_decided_before_the_snapshot():
+  {==}
+
+law context_refs_the_policy_unestablished_condition_is_named:
+  {Refs.condition(Refs.RPolicyMissing{}) == "refPolicyUnestablished" : String}
+
+def context_refs_the_policy_unestablished_condition_is_named():
+  {==}
+
 law context_refs_a_reference_from_another_policy_refuses:
   {Refs.admit(Refs.RQ{True{}, "symbol", "pol-a", "pol-b", Eng.ss_one("definition"), Eng.ss_one("definition"), Snap.ACurrent{}, Eng.SSNil{}, Eng.SSNil{}, "[]"}) == Refs.RPolicyRefused{"pol-a", "pol-b"} : Refs.RefDecision}
 
