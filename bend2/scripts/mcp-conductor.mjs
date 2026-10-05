@@ -215,7 +215,7 @@ const TOOLS = [
   },
   {
     name: 'baton2_orchestra',
-    description: 'Use index:true for concise Players, Conductor tiers, operators, Ensembles and Sections. session focuses a registered session and requires index. References retain their recorded parents without expanding outside branches. Legacy no-index includes report bodies.',
+    description: 'Use index:true for concise Players, Conductor tiers, operators, Ensembles and Sections. session focuses a registered session and requires index. References retain their recorded parents without expanding outside branches. Unfocused routes is null (not requested); focused routes is the admitted outgoing array. Compact reads require a UTF-8 database. Legacy no-index includes report bodies.',
     inputSchema: { type: 'object', properties: { index: { type: 'boolean' }, session: { type: 'string' }, pretty: { type: 'boolean' } }, additionalProperties: false },
   },
   {
@@ -225,7 +225,7 @@ const TOOLS = [
   },
   {
     name: 'baton2_inbox',
-    description: 'Read messages for recipient (default attached session). Use index:true for concise metadata without acknowledgment; state defaults to pending and accepts acknowledged/all. sender and kind are conjunctive exact text filters, valid only with index. Use baton2_delivery for full bodies. Legacy no-index returns pending bodies.',
+    description: 'Read messages for recipient (default attached session). Use index:true for concise metadata without acknowledgment; state defaults to pending and accepts acknowledged/all. sender and kind are conjunctive exact text filters, valid only with index. Use baton2_delivery for full bodies. Compact reads require a UTF-8 database. Legacy no-index returns pending bodies.',
     inputSchema: { type: 'object', properties: {
       recipient: { type: 'string' }, index: { type: 'boolean' }, sender: { type: 'string' },
       kind: { type: 'string' }, state: { type: 'string', enum: ['pending', 'acknowledged', 'all'] },
@@ -321,7 +321,7 @@ const TOOLS = [
   },
   {
     name: 'baton2_pending',
-    description: 'Read across all recipients by default. Use index:true for concise metadata; optional recipient, sender and kind filters combine by exact equality. state defaults to pending and accepts acknowledged/all. Filters require index. Legacy no-index includes bodies and endpoints. This read never acknowledges.',
+    description: 'Read across all recipients by default. Use index:true for concise metadata; optional recipient, sender and kind filters combine by exact equality. state defaults to pending and accepts acknowledged/all. Filters require index. Compact reads require a UTF-8 database. Legacy no-index includes bodies and endpoints. This read never acknowledges.',
     inputSchema: { type: 'object', properties: {
       index: { type: 'boolean' }, recipient: { type: 'string' }, sender: { type: 'string' },
       kind: { type: 'string' }, state: { type: 'string', enum: ['pending', 'acknowledged', 'all'] },
