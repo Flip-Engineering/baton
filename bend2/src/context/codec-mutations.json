@@ -236,5 +236,19 @@
   "find": "    case Uint.UintRefused{+reason}: JcRefused{\"nonU32NumberInRequest\"}",
   "replace": "    case Uint.UintRefused{+reason}: JcJson{J.Jint{0}}",
   "law": "codec_law_a_non_u32_request_number_refuses"
+ },
+ {
+  "name": "codec-object-subject-kind-is-not-derived",
+  "file": "bend2/src/context/codec.bend",
+  "find": "    case J.Jobj{members}: obj_kind_of(Req.member_lookup(\"kind\", members))",
+  "replace": "    case J.Jobj{+members}: SNil{}",
+  "law": "codec_law_an_object_subject_selector_decodes_its_kind"
+ },
+ {
+  "name": "codec-subject-selector-evidence-is-dropped",
+  "file": "bend2/src/context/codec.bend",
+  "find": "  J.json_text(or_json_nil(Req.member_lookup(\"subject\", members)))",
+  "replace": "  SNil{}",
+  "law": "codec_law_an_object_subject_selector_keeps_its_evidence"
  }
 ]

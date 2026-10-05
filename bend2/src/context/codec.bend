@@ -527,6 +527,9 @@ def Unmapped_runtime_override_sample() -> J.Json:
 def cobj1(k1: String, v1: J.Json) -> J.Json:
   J.Jobj{J.Jpair{k1, v1, J.Jnil{}}}
 
+def cobj2(k1: String, v1: J.Json, k2: String, v2: J.Json) -> J.Json:
+  J.Jobj{J.Jpair{k1, v1, J.Jpair{k2, v2, J.Jnil{}}}}
+
 def cobj3(k1: String, v1: J.Json, k2: String, v2: J.Json, k3: String, v3: J.Json) -> J.Json:
   J.Jobj{J.Jpair{k1, v1, J.Jpair{k2, v2, J.Jpair{k3, v3, J.Jnil{}}}}}
 
@@ -731,7 +734,7 @@ type Proj is Data:
 
 type RefDecode is Data:
   RdNone{}
-  RdRef{id: String, engine: String, subject: String, snapshot_id: String, projections: Proj}
+  RdRef{id: String, engine: String, subject_kind: String, subject_text: String, snapshot_id: String, projections: Proj}
   RdBad{condition: String}
 
 def proj_of(+j: J.Json) -> Proj:
@@ -805,16 +808,80 @@ def ref_closed(+members: J.Json) -> Bool:
 def ref_required(+members: J.Json) -> Bool:
   Req.all_present(ref_words(), members)
 
+# The retained selector is what the producer actually writes: either a kind string,
+# or a full subject object such as {kind:entity,database,schema,name}. The object is
+# validated for a known kind and kept whole as evidence; only the kind is derived
+# for Core's admission, and no public field changes.
+def subject_selector_ok(+members: J.Json) -> Bool:
+  subject_value_ok(or_json_nil(Req.member_lookup("subject", members)))
+
+def subject_value_ok(+v: J.Json) -> Bool:
+  match v:
+    case J.Jstr{value}: nonempty_text(value)
+    case J.Jobj{members}: subject_object_ok(members)
+    case J.Jnull{}: False{}
+    case J.Jtrue{}: False{}
+    case J.Jfalse{}: False{}
+    case J.Jint{+value}: False{}
+    case J.Jarr{+head, +tail}: False{}
+    case J.Jnil{}: False{}
+
+def subject_object_ok(+members: J.Json) -> Bool:
+  known_kind(Req.member_lookup("kind", members))
+
+def known_kind(m: Maybe<&2, J.Json>) -> Bool:
+  match m:
+    case None{}: False{}
+    case Some{value}: kind_value_ok(value)
+
+def kind_present(m: Maybe<&2, Context.SubjectKind>) -> Bool:
+  match m:
+    case Some{+kind}: True{}
+    case None{}: False{}
+
+def kind_value_ok(+v: J.Json) -> Bool:
+  match v:
+    case J.Jstr{value}: Bool.pick(Bool, String.is_empty(value), False{}, kind_present(Context.subject_kind_of(value)))
+    case J.Jnull{}: False{}
+    case J.Jtrue{}: False{}
+    case J.Jfalse{}: False{}
+    case J.Jint{+value}: False{}
+    case J.Jarr{+head, +tail}: False{}
+    case J.Jobj{+members}: False{}
+    case J.Jnil{}: False{}
+
+def subject_kind_of_members(+members: J.Json) -> String:
+  subject_kind_value(or_json_nil(Req.member_lookup("subject", members)))
+
+def subject_kind_value(+v: J.Json) -> String:
+  match v:
+    case J.Jstr{value}: value
+    case J.Jobj{members}: obj_kind_of(Req.member_lookup("kind", members))
+    case J.Jnull{}: SNil{}
+    case J.Jtrue{}: SNil{}
+    case J.Jfalse{}: SNil{}
+    case J.Jint{+value}: SNil{}
+    case J.Jarr{+head, +tail}: SNil{}
+    case J.Jnil{}: SNil{}
+
+def obj_kind_of(m: Maybe<&2, J.Json>) -> String:
+  match m:
+    case None{}: SNil{}
+    case Some{value}: Req.text_of(value)
+
+def subject_text_of_members(+members: J.Json) -> String:
+  J.json_text(or_json_nil(Req.member_lookup("subject", members)))
+
 def ref_values_ok(+members: J.Json) -> Bool:
   Bool.pick(Bool, field_nonempty(members, "id"),
     Bool.pick(Bool, field_nonempty(members, "engine"),
-      Bool.pick(Bool, field_nonempty(members, "subject"),
+      Bool.pick(Bool, subject_selector_ok(members),
         Bool.pick(Bool, field_nonempty(members, "snapshotId"), field_array(members, "projections"), False{}),
         False{}), False{}), False{})
 
 def ref_members(+members: J.Json) -> RefDecode:
   Bool.pick(RefDecode, ref_values_ok(members),
-    RdRef{field_text(members, "id"), field_text(members, "engine"), field_text(members, "subject"), field_text(members, "snapshotId"), proj_of(or_json_nil(Req.member_lookup("projections", members)))},
+    RdRef{field_text(members, "id"), field_text(members, "engine"), subject_kind_of_members(members), subject_text_of_members(members), field_text(members, "snapshotId"), proj_of(or_json_nil(Req.member_lookup("projections", members)))},
     RdBad{"invalidRefField"})
 
 def ref_object(+members: J.Json) -> RefDecode:
@@ -832,13 +899,13 @@ def ref_kind(ok: Bool, +j: J.Json) -> RefDecode:
 def ref_id_of(d: RefDecode) -> String:
   match d:
     case RdNone{}: SNil{}
-    case RdRef{id, +engine, +subject, +snapshot_id, +projections}: id
+    case RdRef{id, +engine, +subject_kind, +subject_text, +snapshot_id, +projections}: id
     case RdBad{condition}: SNil{}
 
 def ref_condition(d: RefDecode) -> String:
   match d:
     case RdNone{}: "noReference"
-    case RdRef{+id, +engine, +subject, +snapshot_id, +projections}: SNil{}
+    case RdRef{+id, +engine, +subject_kind, +subject_text, +snapshot_id, +projections}: SNil{}
     case RdBad{condition}: condition
 
 # The retained projection chain leaves the decode so core can compose it into
@@ -846,7 +913,7 @@ def ref_condition(d: RefDecode) -> String:
 def ref_projections_of(d: RefDecode) -> Proj:
   match d:
     case RdNone{}: Pnone{}
-    case RdRef{+id, +engine, +subject, +snapshot_id, projections}: projections
+    case RdRef{+id, +engine, +subject_kind, +subject_text, +snapshot_id, projections}: projections
     case RdBad{condition}: Pnone{}
 
 def ref_object_of(members: J.Json) -> J.Json:
@@ -1448,19 +1515,27 @@ def ss_of_proj(+p: Proj) -> Eng.SS:
 def ref_engine_of(d: RefDecode) -> String:
   match d:
     case RdNone{}: SNil{}
-    case RdRef{+id, engine, +subject, +snapshot_id, +projections}: engine
+    case RdRef{+id, engine, +subject_kind, +subject_text, +snapshot_id, +projections}: engine
     case RdBad{+condition}: SNil{}
 
 def ref_subject_of(d: RefDecode) -> String:
   match d:
     case RdNone{}: SNil{}
-    case RdRef{+id, +engine, subject, +snapshot_id, +projections}: subject
+    case RdRef{+id, +engine, subject_kind, +subject_text, +snapshot_id, +projections}: subject_kind
+    case RdBad{+condition}: SNil{}
+
+# The whole selector as retained evidence, so a full object selector is not lost
+# when only its kind is admitted on.
+def ref_subject_text_of(d: RefDecode) -> String:
+  match d:
+    case RdNone{}: SNil{}
+    case RdRef{+id, +engine, +subject_kind, subject_text, +snapshot_id, +projections}: subject_text
     case RdBad{+condition}: SNil{}
 
 def ref_snapshot_of(d: RefDecode) -> String:
   match d:
     case RdNone{}: SNil{}
-    case RdRef{+id, +engine, +subject, snapshot_id, +projections}: snapshot_id
+    case RdRef{+id, +engine, +subject_kind, +subject_text, snapshot_id, +projections}: snapshot_id
     case RdBad{+condition}: SNil{}
 
 def ref_record_of(d: RefDecode) -> Refs.RefRecord:
@@ -1662,6 +1737,36 @@ def bad_utf8_rows() -> Req.Rows:
 def decoded_record(id: String, subject: String, +projections: J.Json) -> Refs.RefRecord:
   ref_record_of(ref_decode(ref_object_of(ref_members_base(id, subject, projections))))
 
+law codec_law_an_object_subject_selector_decodes_its_kind:
+  {ref_subject_of(ref_decode(ref_object_of(ref_members_object_subject("r9", J.Jarr{J.Jstr{"definition"}, J.Jnil{}})))) == "entity" : String}
+
+def codec_law_an_object_subject_selector_decodes_its_kind():
+  {==}
+
+law codec_law_an_object_subject_selector_keeps_its_evidence:
+  {ref_subject_text_of(ref_decode(ref_object_of(ref_members_object_subject("r9", J.Jarr{J.Jstr{"definition"}, J.Jnil{}})))) == "{\"kind\":\"entity\",\"name\":\"t\"}" : String}
+
+def codec_law_an_object_subject_selector_keeps_its_evidence():
+  {==}
+
+law codec_law_an_object_subject_selector_composes_into_core:
+  {Refs.ref_subject(ref_record_of(ref_decode(ref_object_of(ref_members_object_subject("r9", J.Jarr{J.Jstr{"definition"}, J.Jnil{}}))))) == "entity" : String}
+
+def codec_law_an_object_subject_selector_composes_into_core():
+  {==}
+
+law codec_law_a_subject_object_without_a_kind_refuses:
+  {ref_condition(ref_decode(ref_object_of(ref_members_kindless_subject("r9", J.Jarr{J.Jstr{"definition"}, J.Jnil{}})))) == "invalidRefField" : String}
+
+def codec_law_a_subject_object_without_a_kind_refuses():
+  {==}
+
+law codec_law_an_unknown_subject_kind_in_an_object_refuses:
+  {ref_condition(ref_decode(ref_object_of(ref_members_mystery_subject("r9", J.Jarr{J.Jstr{"definition"}, J.Jnil{}})))) == "invalidRefField" : String}
+
+def codec_law_an_unknown_subject_kind_in_an_object_refuses():
+  {==}
+
 law codec_law_a_decoded_reference_composes_into_core:
   {Refs.ref_id(decoded_record("r9", "symbol", J.Jarr{J.Jstr{"definition"}, J.Jnil{}})) == "r9" : String}
 
@@ -1679,6 +1784,22 @@ law codec_law_a_decoded_reference_with_an_unknown_subject_refuses:
 
 def codec_law_a_decoded_reference_with_an_unknown_subject_refuses():
   {==}
+
+def ref_members_subject(id: String, subject: J.Json, +projections: J.Json) -> J.Json:
+  J.Jpair{"id", J.Jstr{id},
+  J.Jpair{"engine", J.Jstr{"typescript"},
+  J.Jpair{"subject", subject,
+  J.Jpair{"snapshotId", J.Jstr{"s1"},
+  J.Jpair{"projections", projections, J.Jnil{}}}}}}
+
+def ref_members_object_subject(id: String, +projections: J.Json) -> J.Json:
+  ref_members_subject(id, cobj2("kind", J.Jstr{"entity"}, "name", J.Jstr{"t"}), projections)
+
+def ref_members_kindless_subject(id: String, +projections: J.Json) -> J.Json:
+  ref_members_subject(id, cobj1("name", J.Jstr{"t"}), projections)
+
+def ref_members_mystery_subject(id: String, +projections: J.Json) -> J.Json:
+  ref_members_subject(id, cobj1("kind", J.Jstr{"mystery"}), projections)
 
 def ref_members_nosubject(+projections: J.Json) -> J.Json:
   J.Jpair{"id", J.Jstr{"r9"},
