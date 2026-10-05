@@ -11,7 +11,7 @@
 import { spawn } from 'node:child_process';
 import { EnvironmentRefusal, FIXTURE_ENTRIES, openEnvironmentOrExit } from '../lib/env.mjs';
 import { createReport, finish, refuseEnvironment, writeStream } from '../lib/assert.mjs';
-import { own } from '../lib/children.mjs';
+import { cleanupOwned, own } from '../lib/children.mjs';
 import { requirePin } from '../lib/pins.mjs';
 import { loopbackGet, parseBanner, waitFor } from '../lib/net.mjs';
 
@@ -178,23 +178,28 @@ try {
   await Promise.all(children.map((state) => state.exited.catch(() => null)));
 }
 
-// Raw debuggee streams and outcomes, persisted per subject including failures.
+// Raw debuggee streams and outcomes, persisted per subject on every path.
 const rawStreams = [];
 for (const state of children) {
   if (state.closed) state.custody.markReaped();
+  const outcome = await state.exited.catch(() => null);
   rawStreams.push({
     tag: state.tag,
     pid: state.pid,
     closed: state.closed,
     errorSeen: state.errorSeen,
-    outcome: await state.exited.catch(() => null),
+    requested: state.custody.entry.requested.slice(),
+    outcome,
     stdout: writeStream(environment, `inspector-boundary.${state.tag}.stdout.txt`, state.stdout),
     stderr: writeStream(environment, `inspector-boundary.${state.tag}.stderr.txt`, state.stderr),
   });
 }
+const custodyReport = await cleanupOwned({ timeoutMs: 5000 });
 for (const entry of rawStreams) {
   reporter.check(`${entry.tag}:close-observed`, entry.closed === true, entry);
   reporter.check(`${entry.tag}:no-error-event`, entry.errorSeen === null, entry.errorSeen);
 }
+reporter.check('custody:owned-children-resolved', custodyReport.unresolved.length === 0, custodyReport);
+reporter.note(custodyReport.signalObservation);
 
-finish(environment, 'inspector-boundary.result.json', reporter.finalize({ rawStreams }));
+finish(environment, 'inspector-boundary.result.json', reporter.finalize({ rawStreams, custody: custodyReport }));

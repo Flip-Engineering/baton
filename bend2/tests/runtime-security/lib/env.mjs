@@ -8,13 +8,12 @@
 //   BATON_HISTORICAL_PIN             optional pin NAME that selects one historical case
 //   BATON_HISTORICAL_CLOSURE_SHA256  optional cross-check equal to that pin's closure digest
 //
-// One key contract: the pin is selected by NAME (HISTORICAL_PINS[name]); the
-// closure digest is an assertion, never the key. The expected manifest is
-// admitted input; it is never produced from the tree under test.
-//
-// Admission resolves the relative-import dependency closure of the modules a
-// fixture actually executes and requires the admitted manifest to cover every
-// one of them.
+// Admission has one authority: the admitted execution manifest. In BOTH modes
+// every actually executed producer module must appear in that manifest with a
+// matching digest; a missing, unsupported, unresolved, uncovered or mismatched
+// dependency refuses. The historical pin adds provenance labelling on top of
+// that check and never replaces it: retained-history incompleteness is reported
+// as incomplete, and is never presented as exact historical qualification.
 
 import { createHash } from 'node:crypto';
 import { readFileSync, statSync, accessSync, existsSync } from 'node:fs';
@@ -28,13 +27,13 @@ export const LIB_DIR = dirname(fileURLToPath(import.meta.url));
 export const SUITE_DIR = dirname(LIB_DIR);
 export const HELPERS_DIR = join(SUITE_DIR, 'helpers');
 
-// Entry modules each fixture executes, used for the suite-wide union admission.
 export const FIXTURE_ENTRIES = Object.freeze({
   'exec-continuity': Object.freeze(['bootstrap.mjs']),
   'json-list-fields': Object.freeze([]),
   'inspector-boundary': Object.freeze([]),
   'bootstrap-exec': Object.freeze(['bootstrap.mjs']),
   'grants-admission': Object.freeze(['cdp-intents.mjs', 'cdp-state.mjs', 'cdp-session.mjs']),
+  'session-transport': Object.freeze(['cdp-session.mjs']),
   'endpoint-watch': Object.freeze(['cdp-endpoint.mjs']),
   'endpoint-replacement': Object.freeze(['cdp-endpoint.mjs']),
 });
@@ -145,81 +144,79 @@ export function loadEnvironment() {
   };
 }
 
-// Resolve and validate the executed dependency closure for one fixture.
-export function admitEnvironment(environment, entries) {
-  const expected = environment.expectedEntries;
-  const { files, missing } = resolveClosure(environment.runtimeDir, entries);
+// Resolve the executed closure and validate it against the admitted manifest.
+// This runs in both modes.
+function admitExecutedClosure(environment, entries) {
+  const closure = resolveClosure(environment.runtimeDir, entries);
+  if (closure.unsupported.length > 0) {
+    throw new EnvironmentRefusal('closureUnsupportedForm', closure.unsupported.join(' | '));
+  }
+  if (closure.unresolved.length > 0) {
+    throw new EnvironmentRefusal('closureUnresolvedSpecifier', closure.unresolved.join(' | '));
+  }
+  if (closure.missing.length > 0) throw new EnvironmentRefusal('closureModuleMissing', closure.missing.join(', '));
+
   const observed = {};
   const uncovered = [];
   const mismatches = [];
-  for (const name of files) {
+  for (const name of closure.files) {
     observed[name] = sha256File(join(environment.runtimeDir, name));
-    const admitted = expected[name];
+    const admitted = environment.expectedEntries[name];
     if (admitted === undefined) uncovered.push(name);
     else if (admitted !== observed[name]) mismatches.push(`${name}: admitted ${admitted} observed ${observed[name]}`);
   }
+  if (uncovered.length > 0) throw new EnvironmentRefusal('expectedHashesIncomplete', uncovered.join(', '));
+  if (mismatches.length > 0) throw new EnvironmentRefusal('sourceHashMismatch', mismatches.join(' | '));
+  return { closure, observed };
+}
 
+export function admitEnvironment(environment, entries) {
+  const { closure, observed } = admitExecutedClosure(environment, entries);
+
+  let historicalScope = null;
   if (environment.pin !== null) {
     const scope = environment.pin.scopeFiles;
     const scopeObserved = {};
-    const scopeMissing = [];
-    const scopeUncovered = [];
-    const scopeMismatched = [];
+    const missing = [];
+    const mismatch = [];
     for (const name of scope) {
       const path = join(environment.runtimeDir, name);
       if (!existsSync(path)) {
-        scopeMissing.push(name);
+        missing.push(name);
         continue;
       }
       scopeObserved[name] = sha256File(path);
-      const admitted = expected[name];
-      if (admitted === undefined) scopeUncovered.push(name);
-      else if (admitted !== scopeObserved[name]) scopeMismatched.push(`${name}: admitted ${admitted} observed ${scopeObserved[name]}`);
+      const admitted = environment.expectedEntries[name];
+      if (admitted === undefined) missing.push(`${name} (not in admitted manifest)`);
+      else if (admitted !== scopeObserved[name]) mismatch.push(name);
     }
-    if (scopeMissing.length > 0) throw new EnvironmentRefusal('historicalScopeFileMissing', scopeMissing.join(', '));
-    if (scopeUncovered.length > 0) {
-      throw new EnvironmentRefusal('historicalScopeNotInManifest', scopeUncovered.join(', '));
-    }
-    if (scopeMismatched.length > 0) {
-      throw new EnvironmentRefusal('historicalScopeHashMismatch', scopeMismatched.join(' | '));
-    }
+    if (missing.length > 0) throw new EnvironmentRefusal('historicalScopeUnavailable', missing.join(', '));
+    if (mismatch.length > 0) throw new EnvironmentRefusal('historicalScopeHashMismatch', mismatch.join(', '));
     const scopeDigest = closureDigest(scopeObserved, scope);
     if (scopeDigest !== environment.pin.closureSha256) {
       throw new EnvironmentRefusal('historicalClosureMismatch',
         `expected ${environment.pin.closureSha256} observed ${scopeDigest}`);
     }
-    return {
-      ...environment,
-      entries,
-      closureFiles: files,
-      closureMissing: missing,
-      observedHashes: observed,
-      uncoveredInManifest: uncovered,
-      mismatches,
-      // Honest labelling: only the retained scope is digest-verified for this era.
-      historicalScope: {
-        pin: environment.pinName,
-        scopeFiles: scope,
-        scopeComplete: environment.pin.scopeComplete,
-        digest: scopeDigest,
-        verifiedFiles: scope.slice(),
-        unverifiedForEra: files.filter((name) => !scope.includes(name)),
-      },
+    historicalScope = {
+      pin: environment.pinName,
+      scopeFiles: scope,
+      digest: scopeDigest,
+      // Provenance labelling only: retained history covers these files.
+      retainedHistoryFiles: scope.slice(),
+      // Executed here but never digest-recorded for that era.
+      unverifiedForEra: closure.files.filter((name) => !scope.includes(name)),
+      exactHistoricalQualification: false,
+      note: 'the executed closure is validated against the admitted current manifest; retained history is incomplete and is not exact historical qualification',
     };
   }
 
-  if (missing.length > 0) throw new EnvironmentRefusal('closureModuleMissing', missing.join(', '));
-  if (uncovered.length > 0) throw new EnvironmentRefusal('expectedHashesIncomplete', uncovered.join(', '));
-  if (mismatches.length > 0) throw new EnvironmentRefusal('sourceHashMismatch', mismatches.join(' | '));
   return {
     ...environment,
     entries,
-    closureFiles: files,
-    closureMissing: missing,
+    closureFiles: closure.files,
     observedHashes: observed,
-    uncoveredInManifest: uncovered,
-    mismatches,
-    historicalScope: null,
+    closureScan: 'specifier-scan-not-a-parser',
+    historicalScope,
   };
 }
 

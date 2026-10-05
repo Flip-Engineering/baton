@@ -1,6 +1,7 @@
 // Assertion and result recording. Admission runs centrally in lib/env.mjs
-// before a report exists, so every report describes an admitted closure.
-// Executable identity and the verified closure are recorded with each result.
+// before a report exists, so every report describes an admitted executed
+// closure. Raw debuggee streams are written before the result is finalized, so
+// a refusal or assertion failure still leaves the streams on disk.
 
 import { writeFileSync, mkdirSync } from 'node:fs';
 import { join } from 'node:path';
@@ -18,9 +19,9 @@ export function createReport(fixture, environment) {
     runtimeDir: environment.runtimeDir,
     entries: environment.entries,
     closureFiles: environment.closureFiles,
+    closureScan: environment.closureScan,
     observedHashes: environment.observedHashes,
     expectedManifest: environment.expectedPath,
-    uncoveredInManifest: environment.uncoveredInManifest,
     historicalScope: environment.historicalScope,
     checks,
     notes,
@@ -55,7 +56,7 @@ export function writeReport(environment, name, report) {
   return path;
 }
 
-// Persist a raw debuggee stream verbatim and return its artifact name.
+// Persist a raw debuggee stream verbatim and return its artifact reference.
 export function writeStream(environment, name, text) {
   mkdirSync(environment.evidenceDir, { recursive: true });
   writeFileSync(join(environment.evidenceDir, name), text ?? '');

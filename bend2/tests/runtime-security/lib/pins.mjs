@@ -22,7 +22,15 @@
 // covered. No historical expectation is registered for endpoint-watch: the
 // pre-fix stderr throw belongs to a revision this critic did not retain.
 
-import { EnvironmentRefusal } from './env.mjs';
+// Kept free of the env import so env.mjs can import HISTORICAL_PINS without a
+// load-time cycle. The thrown value carries the same condition/detail fields.
+function refusal(condition, detail) {
+  const error = new Error(detail === undefined || detail === null ? condition : `${condition}: ${detail}`);
+  error.name = 'EnvironmentRefusal';
+  error.condition = condition;
+  error.detail = detail === undefined ? null : detail;
+  return error;
+}
 
 export const HISTORICAL_PINS = Object.freeze({
   'review-verified-2026-10-05': Object.freeze({
@@ -46,11 +54,11 @@ export const HISTORICAL_PINS = Object.freeze({
 
 export function requirePin(environment, fixture) {
   if (environment.pin === null) {
-    throw new EnvironmentRefusal('historicalPinMissing', 'BATON_HISTORICAL_PIN');
+    throw refusal('historicalPinMissing', 'BATON_HISTORICAL_PIN');
   }
   const pin = environment.pin;
   if (!pin.fixtures.includes(fixture)) {
-    throw new EnvironmentRefusal('historicalPinNotRegisteredForFixture', `${fixture} @ ${environment.pinName}`);
+    throw refusal('historicalPinNotRegisteredForFixture', `${fixture} @ ${environment.pinName}`);
   }
   return pin;
 }

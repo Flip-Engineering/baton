@@ -1,14 +1,14 @@
 // Fixture: bootstrap -> process.execve continuity and environment boundary.
 //
 // Continuity is the parent-observed spawned child pid against the target's own
-// reported pid. This is the fixture's own spawned child, not a keeper birth
-// identity, and that limit is recorded. Full raw stdout and stderr are written
-// beside the result. An `error` event is reported separately and never counted
-// as an observed close.
+// reported pid; this is this fixture's child, not a keeper birth identity, and
+// that limit is recorded. Raw stdout and stderr are written in a `finally`
+// block, so a refusal or failure path still leaves them on disk. Requested
+// signals and observed close/error outcomes are recorded separately.
 import { spawn } from 'node:child_process';
 import { EnvironmentRefusal, FIXTURE_ENTRIES, openEnvironmentOrExit } from '../lib/env.mjs';
 import { createReport, finish, refuseEnvironment, writeReport, writeStream } from '../lib/assert.mjs';
-import { own } from '../lib/children.mjs';
+import { cleanupOwned, own } from '../lib/children.mjs';
 import { requirePin } from '../lib/pins.mjs';
 
 let environment;
@@ -47,40 +47,53 @@ const child = spawn(argv[0], argv.slice(1), {
 const custody = own(child);
 let stdout = '';
 let stderr = '';
-let errorSeen = null;
 child.stdout.on('data', (chunk) => (stdout += chunk));
 child.stderr.on('data', (chunk) => (stderr += chunk));
-const closeObservation = new Promise((resolve) => {
-  child.on('error', (error) => {
-    errorSeen = error.code ?? String(error);
-    resolve({ closed: false, error: errorSeen });
-  });
-  child.on('close', (code, signal) => resolve({ closed: true, code, signal }));
-});
-child.stdin.end(document);
 
+let outcome = null;
+let targetResult = null;
+let bodyFailure = null;
+let rawStdout = null;
+let rawStderr = null;
+let custodyReport = null;
 const requestedSignals = [];
 let timeoutFired = false;
-const timeout = setTimeout(() => {
-  timeoutFired = true;
-  requestedSignals.push('SIGKILL');
-  custody.kill('SIGKILL');
-}, 30000);
-const outcome = await closeObservation;
-clearTimeout(timeout);
-if (outcome.closed) custody.markReaped();
 
-writeStream(environment, 'exec-continuity.child.stdout.txt', stdout);
-writeStream(environment, 'exec-continuity.child.stderr.txt', stderr);
-
-let targetResult = null;
-for (const line of stdout.trim().split('\n').filter(Boolean)) {
-  try {
-    targetResult = JSON.parse(line);
-  } catch {
-    targetResult = null;
+try {
+  child.stdin.end(document);
+  const timeout = setTimeout(() => {
+    timeoutFired = true;
+    requestedSignals.push('SIGKILL(timeout)');
+    custody.kill('SIGKILL');
+  }, 30000);
+  outcome = await new Promise((resolve) => {
+    const timer = () => clearTimeout(timeout);
+    child.on('close', (code, signal) => {
+      timer();
+      resolve({ closed: true, code, signal });
+    });
+    child.on('error', (error) => {
+      timer();
+      resolve({ closed: false, error: error.code ?? String(error) });
+    });
+  });
+  if (outcome.closed) custody.markReaped(outcome);
+  for (const line of stdout.trim().split('\n').filter(Boolean)) {
+    try {
+      targetResult = JSON.parse(line);
+    } catch {
+      targetResult = null;
+    }
   }
+} catch (error) {
+  bodyFailure = String(error?.stack ?? error);
+} finally {
+  // Raw streams and awaited custody run on every path.
+  rawStdout = writeStream(environment, 'exec-continuity.child.stdout.txt', stdout);
+  rawStderr = writeStream(environment, 'exec-continuity.child.stderr.txt', stderr);
+  custodyReport = await cleanupOwned({ timeoutMs: 5000 });
 }
+
 const producerRecords = stderr.split('\n')
   .filter((line) => line.trim().startsWith('{'))
   .map((line) => {
@@ -101,11 +114,11 @@ const valueMismatches = declaredKeys
   .filter((key) => key in (targetResult?.env ?? {}))
   .filter((key) => targetResult.env[key] !== declared[key]);
 
+reporter.check('fixture:no-uncaught-failure', bodyFailure === null, bodyFailure);
 reporter.check('child:target-started', targetResult !== null, null);
-reporter.check('child:close-observed', outcome.closed === true, outcome);
-reporter.check('child:no-error-event', errorSeen === null, errorSeen);
+reporter.check('child:close-observed', outcome?.closed === true, outcome);
+reporter.check('child:exit-zero', outcome?.closed === true && outcome.code === 0 && outcome.signal === null, outcome);
 reporter.check('child:no-timeout', timeoutFired === false, { requestedSignals });
-reporter.check('child:exit-zero', outcome.code === 0 && outcome.signal === null, outcome);
 reporter.check('continuity:spawned-pid-equals-target-pid',
   targetResult !== null && targetResult.target_pid === child.pid,
   { spawnedChildPid: child.pid, targetPid: targetResult?.target_pid ?? null });
@@ -115,17 +128,20 @@ reporter.check('env:no-unexpected-extra-key', unexpectedExtra.length === 0,
 reporter.check('env:no-missing-declared-key', missingKeys.length === 0, missingKeys);
 reporter.check('env:declared-values-exact', valueMismatches.length === 0, valueMismatches);
 reporter.check('stdin:at-eof', targetResult?.stdin_bytes === 0, targetResult?.stdin_bytes ?? null);
+reporter.check('custody:owned-child-resolved', custodyReport.unresolved.length === 0, custodyReport);
 
 reporter.note('continuity limit: compared pid is this fixture\'s spawned child, not a keeper birth identity');
+reporter.note(custodyReport.signalObservation);
 finish(environment, 'exec-continuity.result.json', reporter.finalize({
   declaredTargetEnv: declared,
   spawnArgv: argv,
   spawnedChildPid: child.pid,
   requestedSignals,
   observedOutcome: outcome,
-  errorSeen,
-  rawStdout: { artifact: 'exec-continuity.child.stdout.txt', bytes: Buffer.byteLength(stdout) },
-  rawStderr: { artifact: 'exec-continuity.child.stderr.txt', bytes: Buffer.byteLength(stderr) },
+  bodyFailure,
+  rawStdout,
+  rawStderr,
+  custody: custodyReport,
   producerRecordKinds: producerRecords.map((record) => record.kind ?? null),
   targetResult,
 }));

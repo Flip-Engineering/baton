@@ -1,10 +1,11 @@
 // Fixture: exact inspector discovery surface. The endpoint is published on the
-// child stderr and /json/list answers an unauthenticated loopback client. The
-// entry carries no pid field, so direct-child identity must come from the keeper.
+// child stderr and /json/list answers an unauthenticated loopback client; the
+// entry carries no pid field, so direct-child identity must come from the
+// keeper. Raw streams and awaited custody run on every path.
 import { spawn } from 'node:child_process';
 import { EnvironmentRefusal, FIXTURE_ENTRIES, openEnvironmentOrExit } from '../lib/env.mjs';
 import { createReport, finish, refuseEnvironment, writeStream } from '../lib/assert.mjs';
-import { own } from '../lib/children.mjs';
+import { cleanupOwned, own } from '../lib/children.mjs';
 import { requirePin } from '../lib/pins.mjs';
 import { loopbackGet, parseBanner, waitFor } from '../lib/net.mjs';
 
@@ -27,22 +28,17 @@ const child = spawn(
 const custody = own(child);
 let stdout = '';
 let stderr = '';
-let errorSeen = null;
 child.stdout.on('data', (chunk) => (stdout += chunk));
 child.stderr.on('data', (chunk) => (stderr += chunk));
-// Observation is installed before any work so an early exit is not missed. An
-// error event is recorded separately and is not an observed close.
-const exitObservation = new Promise((resolve) => {
-  child.on('error', (error) => {
-    errorSeen = error.code ?? String(error);
-    resolve({ closed: false, error: errorSeen, at: Date.now() });
-  });
-  child.on('close', (code, signal) => resolve({ closed: true, code, signal, at: Date.now() }));
-});
 
 let banner = null;
 let list = null;
 let version = null;
+let bodyFailure = null;
+let rawStdout = null;
+let rawStderr = null;
+let custodyReport = null;
+
 try {
   const found = await waitFor(() => parseBanner(stderr), 20000);
   banner = found.value;
@@ -50,13 +46,14 @@ try {
     list = await loopbackGet(banner.port, '/json/list');
     version = await loopbackGet(banner.port, '/json/version');
   }
+} catch (error) {
+  bodyFailure = String(error?.stack ?? error);
 } finally {
-  child.kill('SIGKILL');
+  custody.kill('SIGKILL');
+  rawStdout = writeStream(environment, 'json-list-fields.subject.stdout.txt', stdout);
+  rawStderr = writeStream(environment, 'json-list-fields.subject.stderr.txt', stderr);
+  custodyReport = await cleanupOwned({ timeoutMs: 5000 });
 }
-const observedExit = await exitObservation;
-if (observedExit.closed) custody.markReaped();
-const rawStdout = writeStream(environment, 'json-list-fields.subject.stdout.txt', stdout);
-const rawStderr = writeStream(environment, 'json-list-fields.subject.stderr.txt', stderr);
 
 let listParsed = null;
 try {
@@ -71,6 +68,7 @@ try {
   versionParsed = null;
 }
 
+reporter.check('fixture:no-uncaught-failure', bodyFailure === null, bodyFailure);
 reporter.check('banner:present', banner !== null, stderr.split('\n').slice(-3).join(' | '));
 reporter.check('banner:loopback', banner !== null && ['127.0.0.1', 'localhost', '[::1]', '::1'].includes(banner.host),
   banner?.host ?? null);
@@ -82,17 +80,16 @@ reporter.check('list:entry-shape', Array.isArray(listParsed) && listParsed.lengt
   && typeof listParsed[0].webSocketDebuggerUrl === 'string', listParsed);
 reporter.check('version:names-node', typeof versionParsed?.Browser === 'string'
   && versionParsed.Browser.includes('node.js'), versionParsed);
-reporter.check('subject:close-observed', observedExit.closed === true, observedExit);
-reporter.check('subject:no-error-event', errorSeen === null, errorSeen);
-reporter.check('subject:reaped', observedExit.closed === true && observedExit.signal === 'SIGKILL', observedExit);
+reporter.check('custody:owned-child-resolved', custodyReport.unresolved.length === 0, custodyReport);
 
+reporter.note(custodyReport.signalObservation);
 finish(environment, 'json-list-fields.result.json', reporter.finalize({
   banner,
   listBody: list?.body ?? null,
   listParsed,
   versionParsed,
-  observedExit,
-  errorSeen,
+  bodyFailure,
   rawStdout,
   rawStderr,
+  custody: custodyReport,
 }));

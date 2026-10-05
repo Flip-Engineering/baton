@@ -21,6 +21,7 @@ const CANDIDATE_FIXTURES = [
   'inspector-boundary.mjs',
   'bootstrap-exec.mjs',
   'grants-admission.mjs',
+  'session-transport.mjs',
   'endpoint-watch.mjs',
   'endpoint-replacement.mjs',
 ];
