@@ -88,7 +88,8 @@ def meta_members_ok(members: RawValue) -> Bool:
       Bool.pick(Bool, String.eq(name, "progressToken"),
         Bool.pick(Bool, progress_token_ok(value), meta_members_ok(tail), False{}),
         meta_members_ok(tail))
-    case other: True{}
+    case Rnil{}: True{}
+    case other: False{}
 
 def meta_of_ok(ok: Bool) -> MetaVerdict:
   match ok:
@@ -122,28 +123,6 @@ def metadata_admit(m: MetaInput) -> MetaVerdict:
     case MetaAbsent{}: MetaOk{}
     case MetaPresent{value}: metadata_validate(value)
 
-law codec_law_absent_metadata_is_admitted:
-  {metadata_admit(MetaAbsent{}) == MetaOk{} : MetaVerdict}
-
-def codec_law_absent_metadata_is_admitted():
-  {==}
-
-law codec_law_a_present_non_object_metadata_refuses:
-  {metadata_admit(MetaPresent{Rarr{Rnil{}, Rnil{}}}) == MetaNotObject{} : MetaVerdict}
-
-def codec_law_a_present_non_object_metadata_refuses():
-  {==}
-
-law codec_law_a_present_metadata_still_validates_its_token:
-  {metadata_admit(MetaPresent{meta_one("progressToken", Rnum{"1e"})}) == MetaBadProgressToken{} : MetaVerdict}
-
-def codec_law_a_present_metadata_still_validates_its_token():
-  {==}
-
-# The request container is a JSON object under the public schema. It is converted
-# through the raw-token tree so a number keeps its document token, and its
-# canonical text comes from the shared canonical encoder rather than a second
-# serializer. A conversion failure carries its own condition.
 type RequestText is Data:
   RtAbsent{}
   RtText{value: String}
@@ -235,9 +214,6 @@ def env_method_ok(+env: Envelope) -> Bool:
   match env:
     case EnvFrame{+jsonrpc, +method, +tool, +frame_id, +query, +request, +root_closed, +params_closed, +arguments_closed}: String.eq(method, "tools/call")
 
-def env_tool_known(+env: Envelope) -> Bool:
-  tool_present(Context.codec_tool_of(env_tool_text(env)))
-
 def tool_present(m: Maybe<&2, Context.CodecTool>) -> Bool:
   match m:
     case Some{+value}: True{}
@@ -245,13 +221,16 @@ def tool_present(m: Maybe<&2, Context.CodecTool>) -> Bool:
 
 # The acceptance path is guarded by `env_tool_known`, so the fallback here is
 # unreachable for an accepted envelope.
-def env_tool(+env: Envelope) -> Context.CodecTool:
-  tool_value(Context.codec_tool_of(env_tool_text(env)))
+def env_tool_known(+env: Envelope) -> Bool:
+  tool_present(Context.codec_tool_of(env_tool_text(env)))
 
 def tool_value(m: Maybe<&2, Context.CodecTool>) -> Context.CodecTool:
   match m:
     case Some{value}: value
     case None{}: Context.CtEngines{}
+
+def env_tool(+env: Envelope) -> Context.CodecTool:
+  tool_value(Context.codec_tool_of(env_tool_text(env)))
 
 def opt_absent(q: Context.OptText) -> Bool:
   match q:
@@ -263,48 +242,27 @@ def opt_nonempty(q: Context.OptText) -> Bool:
     case Context.Absent{}: False{}
     case Context.Present{value}: Bool.pick(Bool, String.is_empty(value), False{}, True{})
 
-def env_query_ok(+env: Envelope) -> Bool:
-  query_shape(env_tool_text(env), env_query_of(env))
-
 def query_shape(+tool: String, q: Context.OptText) -> Bool:
   match tool:
     case "context-engines": opt_absent(q)
     case other: opt_nonempty(q)
 
-def env_request_ok(+env: Envelope) -> Bool:
-  request_shape(env_tool_text(env), env_request(env), env_arguments_closed(env))
+def env_query_ok(+env: Envelope) -> Bool:
+  query_shape(env_tool_text(env), env_query_of(env))
 
 def request_shape(+tool: String, r: RequestText, closed: Bool) -> Bool:
   match tool:
     case "context-query": Bool.pick(Bool, closed, request_text_present(r), False{})
     case other: Bool.pick(Bool, closed, request_absent(r), False{})
 
+def env_request_ok(+env: Envelope) -> Bool:
+  request_shape(env_tool_text(env), env_request(env), env_arguments_closed(env))
+
 def env_arguments_ok(+env: Envelope) -> Bool:
   Bool.pick(Bool, env_query_ok(env), env_request_ok(env), False{})
 
 def arguments_condition(+env: Envelope) -> String:
   Bool.pick(String, request_bad(env_request(env)), request_condition(env_request(env)), "invalidArguments")
-
-def envelope_decide(+env: Envelope) -> EnvelopeVerdict:
-  Bool.pick(EnvelopeVerdict, env_jsonrpc_ok(env), envelope_after_jsonrpc(env), EnvRefused{"invalidJsonrpc"})
-
-def envelope_after_jsonrpc(+env: Envelope) -> EnvelopeVerdict:
-  Bool.pick(EnvelopeVerdict, env_method_ok(env), envelope_after_method(env), EnvRefused{"invalidMethod"})
-
-def envelope_after_method(+env: Envelope) -> EnvelopeVerdict:
-  Bool.pick(EnvelopeVerdict, env_root_closed(env), envelope_after_root(env), EnvRefused{"unknownFrameField"})
-
-def envelope_after_root(+env: Envelope) -> EnvelopeVerdict:
-  Bool.pick(EnvelopeVerdict, Context.frame_id_ok(env_id(env)), envelope_after_id(env), EnvRefused{"invalidFrameId"})
-
-def envelope_after_id(+env: Envelope) -> EnvelopeVerdict:
-  Bool.pick(EnvelopeVerdict, env_tool_known(env), envelope_after_tool(env), EnvRefused{"unknownTool"})
-
-def envelope_after_tool(+env: Envelope) -> EnvelopeVerdict:
-  Bool.pick(EnvelopeVerdict, env_params_closed(env), envelope_after_params(env), EnvRefused{"unknownParamsField"})
-
-def envelope_after_params(+env: Envelope) -> EnvelopeVerdict:
-  Bool.pick(EnvelopeVerdict, env_arguments_ok(env), envelope_accept(env), EnvRefused{arguments_condition(env)})
 
 def envelope_accept(+env: Envelope) -> EnvelopeVerdict:
   EnvAccepted{env_tool(env), env_id(env), env_query_of(env), request_opt(env_request(env))}
@@ -314,45 +272,57 @@ def envelope_accept(+env: Envelope) -> EnvelopeVerdict:
 # grant set are checked in that order, and a refusal answers a fixed condition
 # before any effect.
 
+def envelope_after_params(+env: Envelope) -> EnvelopeVerdict:
+  Bool.pick(EnvelopeVerdict, env_arguments_ok(env), envelope_accept(env), EnvRefused{arguments_condition(env)})
+
+def envelope_after_tool(+env: Envelope) -> EnvelopeVerdict:
+  Bool.pick(EnvelopeVerdict, env_params_closed(env), envelope_after_params(env), EnvRefused{"unknownParamsField"})
+
+def envelope_after_id(+env: Envelope) -> EnvelopeVerdict:
+  Bool.pick(EnvelopeVerdict, env_tool_known(env), envelope_after_tool(env), EnvRefused{"unknownTool"})
+
+def envelope_after_root(+env: Envelope) -> EnvelopeVerdict:
+  Bool.pick(EnvelopeVerdict, Context.frame_id_ok(env_id(env)), envelope_after_id(env), EnvRefused{"invalidFrameId"})
+
+def envelope_after_method(+env: Envelope) -> EnvelopeVerdict:
+  Bool.pick(EnvelopeVerdict, env_root_closed(env), envelope_after_root(env), EnvRefused{"unknownFrameField"})
+
+def envelope_after_jsonrpc(+env: Envelope) -> EnvelopeVerdict:
+  Bool.pick(EnvelopeVerdict, env_method_ok(env), envelope_after_method(env), EnvRefused{"invalidMethod"})
+
+def envelope_decide(+env: Envelope) -> EnvelopeVerdict:
+  Bool.pick(EnvelopeVerdict, env_jsonrpc_ok(env), envelope_after_jsonrpc(env), EnvRefused{"invalidJsonrpc"})
+
 type Admission is Data:
   ADispatch{operations: OpChain, effects: Eng.SS}
   ARefused{class: Context.RefusalClass, condition: String}
 
 # The admitted value carries the whole operation chain and Core's authorized effect
 # union, so the caller's executor does not have to reconstruct them.
-def admitted_operations(a: Admission) -> OpChain:
-  match a:
-    case ADispatch{operations, +effects}: operations
-    case ARefused{+cls, +condition}: Opnone{}
-
 def admitted_effects(a: Admission) -> Eng.SS:
   match a:
     case ADispatch{+operations, effects}: effects
     case ARefused{+cls, +condition}: Eng.ss_empty()
 
-def admission_text(a: Admission) -> String:
-  match a:
-    case ADispatch{operations, +effects}: "dispatch:" ++ primary_operation(operations) ++ ":" ++ U32.show(chain_count(operations))
-    case ARefused{cls, condition}: "refused:" ++ Context.refusal_class_name(cls) ++ ":" ++ condition
-
-# The request-derived operation chain. The primary dispatch operation is always
-# read out of this chain, and the chain's subject slot is filled from Core's closed
-# intent mapping, so a runtime, query-control or ref subject can never collapse into
-# an override-only chain. `chain_with` only appends.
 type OpChain is Data:
   Opnone{}
   Opcons{head: String, tail: OpChain}
 
+def admitted_operations(a: Admission) -> OpChain:
+  match a:
+    case ADispatch{operations, +effects}: operations
+    case ARefused{+cls, +condition}: Opnone{}
+
 def chain_named(+op: String) -> OpChain:
   Bool.pick(OpChain, String.is_empty(op), Opnone{}, Opcons{op, Opnone{}})
-
-def chain_with(chain: OpChain, +op: String) -> OpChain:
-  chain_append(chain, op)
 
 def chain_append(chain: OpChain, +op: String) -> OpChain:
   match chain:
     case Opnone{}: Bool.pick(OpChain, String.is_empty(op), Opnone{}, Opcons{op, Opnone{}})
     case Opcons{+head, +tail}: Opcons{head, chain_append(tail, op)}
+
+def chain_with(chain: OpChain, +op: String) -> OpChain:
+  chain_append(chain, op)
 
 def primary_operation(chain: OpChain) -> String:
   match chain:
@@ -374,6 +344,15 @@ def chain_count(chain: OpChain) -> U32:
     case Opnone{}: 0
     case Opcons{+head, +tail}: U32.add(1, chain_count(tail))
 
+def admission_text(a: Admission) -> String:
+  match a:
+    case ADispatch{operations, +effects}: "dispatch:" ++ primary_operation(operations) ++ ":" ++ U32.show(chain_count(operations))
+    case ARefused{cls, condition}: "refused:" ++ Context.refusal_class_name(cls) ++ ":" ++ condition
+
+# The request-derived operation chain. The primary dispatch operation is always
+# read out of this chain, and the chain's subject slot is filled from Core's closed
+# intent mapping, so a runtime, query-control or ref subject can never collapse into
+# an override-only chain. `chain_with` only appends.
 def chain_is_empty(chain: OpChain) -> Bool:
   match chain:
     case Opnone{}: True{}
@@ -403,16 +382,16 @@ def ss_chain(xs: Eng.SS) -> OpChain:
 # whole authenticated chain so a model ref cannot lose one of its obligations. Any
 # other unmapped subject leaves the subject chain empty, so its work cannot be
 # replaced by an override.
-def subject_chain(+req: J.Json, retained_operations: Eng.SS) -> OpChain:
-  chain_subject(Ops.request_operation(req), Ops.request_subject_kind(req), Ops.request_intent(req), retained_operations)
-
-def chain_subject(+mapped: String, +kind: String, +intent: String, +retained_operations: Eng.SS) -> OpChain:
-  Bool.pick(OpChain, String.is_empty(mapped), intent_or_retained(kind, intent, retained_operations), chain_named(mapped))
-
 def intent_or_retained(+kind: String, +intent: String, +retained_operations: Eng.SS) -> OpChain:
   Bool.pick(OpChain, String.eq(kind, "runtime"), chain_named(Eng.runtime_operation(intent)),
     Bool.pick(OpChain, String.eq(kind, "query-control"), chain_named(Eng.query_control_operation(intent)),
       Bool.pick(OpChain, String.eq(kind, "ref"), ss_chain(retained_operations), Opnone{})))
+
+def chain_subject(+mapped: String, +kind: String, +intent: String, +retained_operations: Eng.SS) -> OpChain:
+  Bool.pick(OpChain, String.is_empty(mapped), intent_or_retained(kind, intent, retained_operations), chain_named(mapped))
+
+def subject_chain(+req: J.Json, retained_operations: Eng.SS) -> OpChain:
+  chain_subject(Ops.request_operation(req), Ops.request_subject_kind(req), Ops.request_intent(req), retained_operations)
 
 def subject_chain_present(+req: J.Json, retained_operations: Eng.SS) -> Bool:
   Bool.pick(Bool, chain_is_empty(subject_chain(req, retained_operations)), False{}, True{})
@@ -514,6 +493,1110 @@ def Join_override_sample() -> J.Json:
     J.Jpair{"select", J.Jarr{J.Jstr{"databaseAccesses"}, J.Jnil{}},
     J.Jpair{"options", J.Jobj{J.Jpair{"tools", J.Jobj{J.Jnil{}}, J.Jnil{}}}, J.Jnil{}}}}}}
 
+type Proj is Data:
+  Pnone{}
+  Pcons{head: String, tail: Proj}
+
+type RefDecode is Data:
+  RdNone{}
+  RdRef{id: String, engine: String, subject_kind: String, subject_text: String, snapshot_id: String, projections: Proj}
+  RdBad{condition: String}
+
+def proj_of(+j: J.Json) -> Proj:
+  match j:
+    case J.Jarr{+head, +tail}: Pcons{Req.text_of(head), proj_of(tail)}
+    case J.Jnil{}: Pnone{}
+    case J.Jnull{}: Pnone{}
+    case J.Jtrue{}: Pnone{}
+    case J.Jfalse{}: Pnone{}
+    case J.Jint{+value}: Pnone{}
+    case J.Jstr{+value}: Pnone{}
+    case J.Jobj{+members}: Pnone{}
+
+def or_json_nil(m: Maybe<&2, J.Json>) -> J.Json:
+  match m:
+    case None{}: J.Jnil{}
+    case Some{value}: value
+
+def proj_names(+p: Proj, +acc: String) -> String:
+  match p:
+    case Pnone{}: acc
+    case Pcons{+head, +tail}: proj_names(tail, acc ++ Bool.pick(String, String.is_empty(acc), SNil{}, ",") ++ head)
+
+def proj_count(p: Proj) -> U32:
+  match p:
+    case Pnone{}: 0
+    case Pcons{+head, +tail}: U32.add(1, proj_count(tail))
+
+def ref_words() -> Req.Words:
+  Req.words_from(["id", "engine", "subject", "snapshotId", "projections"])
+
+def present_str(m: Maybe<&2, J.Json>) -> Bool:
+  match m:
+    case None{}: False{}
+    case Some{+value}: Req.is_jstr(value)
+
+def strings_only(+j: J.Json) -> Bool:
+  match j:
+    case J.Jarr{+head, +tail}: Bool.pick(Bool, Req.is_jstr(head), strings_only(tail), False{})
+    case J.Jnil{}: True{}
+    case J.Jnull{}: False{}
+    case J.Jtrue{}: False{}
+    case J.Jfalse{}: False{}
+    case J.Jint{+value}: False{}
+    case J.Jstr{+value}: False{}
+    case J.Jobj{+members}: False{}
+
+def present_array(m: Maybe<&2, J.Json>) -> Bool:
+  match m:
+    case None{}: False{}
+    case Some{+value}: strings_only(value)
+
+def nonempty_text(+text: String) -> Bool:
+  Bool.pick(Bool, String.is_empty(text), False{}, True{})
+
+def field_str(+members: J.Json, +key: String) -> Bool:
+  present_str(Req.member_lookup(key, members))
+
+def field_text(+members: J.Json, key: String) -> String:
+  Ops.member_text(members, key)
+
+def field_nonempty(+members: J.Json, +key: String) -> Bool:
+  Bool.pick(Bool, field_str(members, key), nonempty_text(field_text(members, key)), False{})
+
+def field_array(+members: J.Json, +key: String) -> Bool:
+  present_array(Req.member_lookup(key, members))
+
+def ref_closed(+members: J.Json) -> Bool:
+  Req.keys_allowed(ref_words(), members)
+
+def ref_required(+members: J.Json) -> Bool:
+  Req.all_present(ref_words(), members)
+
+# The retained selector is what the producer actually writes: either a kind string,
+# or a full subject object such as {kind:entity,database,schema,name}. The object is
+# validated for a known kind and kept whole as evidence; only the kind is derived
+# for Core's admission, and no public field changes.
+def key_absent(key: String, rest: J.Json) -> Bool:
+  match rest:
+    case J.Jpair{+other, +value, +tail}: Bool.pick(Bool, String.eq(key, other), False{}, key_absent(key, tail))
+    case J.Jnil{}: True{}
+    case J.Jnull{}: True{}
+    case J.Jtrue{}: True{}
+    case J.Jfalse{}: True{}
+    case J.Jint{+value}: True{}
+    case J.Jstr{+value}: True{}
+    case J.Jarr{+head, +tail}: True{}
+    case J.Jobj{+members}: True{}
+
+def distinct_keys(members: J.Json) -> Bool:
+  match members:
+    case J.Jpair{+key, +value, +rest}: Bool.pick(Bool, key_absent(key, rest), distinct_keys(rest), False{})
+    case J.Jnil{}: True{}
+    case J.Jnull{}: True{}
+    case J.Jtrue{}: True{}
+    case J.Jfalse{}: True{}
+    case J.Jint{+value}: True{}
+    case J.Jstr{+value}: True{}
+    case J.Jarr{+head, +tail}: True{}
+    case J.Jobj{+members}: True{}
+
+def kind_present(m: Maybe<&2, Context.SubjectKind>) -> Bool:
+  match m:
+    case Some{+kind}: True{}
+    case None{}: False{}
+
+def kind_value_ok(+v: J.Json) -> Bool:
+  match v:
+    case J.Jstr{value}: Bool.pick(Bool, String.is_empty(value), False{}, kind_present(Context.subject_kind_of(value)))
+    case J.Jnull{}: False{}
+    case J.Jtrue{}: False{}
+    case J.Jfalse{}: False{}
+    case J.Jint{+value}: False{}
+    case J.Jarr{+head, +tail}: False{}
+    case J.Jobj{+members}: False{}
+    case J.Jnil{}: False{}
+
+def known_kind(m: Maybe<&2, J.Json>) -> Bool:
+  match m:
+    case None{}: False{}
+    case Some{value}: kind_value_ok(value)
+
+def subject_object_ok(+members: J.Json) -> Bool:
+  Bool.pick(Bool, distinct_keys(members), known_kind(Req.member_lookup("kind", members)), False{})
+
+
+def subject_value_ok(+v: J.Json) -> Bool:
+  match v:
+    case J.Jobj{members}: subject_object_ok(members)
+    case J.Jstr{+value}: False{}
+    case J.Jnull{}: False{}
+    case J.Jtrue{}: False{}
+    case J.Jfalse{}: False{}
+    case J.Jint{+value}: False{}
+    case J.Jarr{+head, +tail}: False{}
+    case J.Jnil{}: False{}
+
+# The retained selector is the producer's object, so this path requires it. Its
+# member names must be distinct: a duplicate key would make the derived kind
+# ambiguous, and the retained decode path has no SQL duplicate check behind it.
+def subject_selector_ok(+members: J.Json) -> Bool:
+  subject_value_ok(or_json_nil(Req.member_lookup("subject", members)))
+
+def obj_kind_of(m: Maybe<&2, J.Json>) -> String:
+  match m:
+    case None{}: SNil{}
+    case Some{value}: Req.text_of(value)
+
+def subject_kind_value(+v: J.Json) -> String:
+  match v:
+    case J.Jstr{value}: value
+    case J.Jobj{members}: obj_kind_of(Req.member_lookup("kind", members))
+    case J.Jnull{}: SNil{}
+    case J.Jtrue{}: SNil{}
+    case J.Jfalse{}: SNil{}
+    case J.Jint{+value}: SNil{}
+    case J.Jarr{+head, +tail}: SNil{}
+    case J.Jnil{}: SNil{}
+
+def subject_kind_of_members(+members: J.Json) -> String:
+  subject_kind_value(or_json_nil(Req.member_lookup("subject", members)))
+
+def subject_text_of_members(+members: J.Json) -> String:
+  J.json_text(or_json_nil(Req.member_lookup("subject", members)))
+
+def ref_values_ok(+members: J.Json) -> Bool:
+  Bool.pick(Bool, field_nonempty(members, "id"),
+    Bool.pick(Bool, field_nonempty(members, "engine"),
+      Bool.pick(Bool, subject_selector_ok(members),
+        Bool.pick(Bool, field_nonempty(members, "snapshotId"), field_array(members, "projections"), False{}),
+        False{}), False{}), False{})
+
+def ref_members(+members: J.Json) -> RefDecode:
+  Bool.pick(RefDecode, ref_values_ok(members),
+    RdRef{field_text(members, "id"), field_text(members, "engine"), subject_kind_of_members(members), subject_text_of_members(members), field_text(members, "snapshotId"), proj_of(or_json_nil(Req.member_lookup("projections", members)))},
+    RdBad{"invalidRefField"})
+
+def ref_object(+members: J.Json) -> RefDecode:
+  Bool.pick(RefDecode, ref_required(members), ref_members(members), RdBad{"missingRefField"})
+
+def ref_fields(+members: J.Json) -> RefDecode:
+  Bool.pick(RefDecode, ref_closed(members), ref_object(members), RdBad{"unknownRefField"})
+
+def ref_kind(ok: Bool, +j: J.Json) -> RefDecode:
+  Bool.pick(RefDecode, ok, ref_fields(Ops.obj_members(j)), RdBad{"refNotObject"})
+
+def ref_decode(+j: J.Json) -> RefDecode:
+  ref_kind(Req.is_jobj(j), j)
+
+def ref_id_of(d: RefDecode) -> String:
+  match d:
+    case RdNone{}: SNil{}
+    case RdRef{id, +engine, +subject_kind, +subject_text, +snapshot_id, +projections}: id
+    case RdBad{condition}: SNil{}
+
+def ref_condition(d: RefDecode) -> String:
+  match d:
+    case RdNone{}: "noReference"
+    case RdRef{+id, +engine, +subject_kind, +subject_text, +snapshot_id, +projections}: SNil{}
+    case RdBad{condition}: condition
+
+# The retained projection chain leaves the decode so core can compose it into
+# `Refs.Ref`. It comes from the stored record, never from the request.
+def ref_projections_of(d: RefDecode) -> Proj:
+  match d:
+    case RdNone{}: Pnone{}
+    case RdRef{+id, +engine, +subject_kind, +subject_text, +snapshot_id, projections}: projections
+    case RdBad{condition}: Pnone{}
+
+def ref_object_of(members: J.Json) -> J.Json:
+  J.Jobj{members}
+
+def ref_members_base(id: String, subject: J.Json, projections: J.Json) -> J.Json:
+  J.Jpair{"id", J.Jstr{id},
+  J.Jpair{"engine", J.Jstr{"typescript"},
+  J.Jpair{"subject", subject,
+  J.Jpair{"snapshotId", J.Jstr{"s1"},
+  J.Jpair{"projections", projections, J.Jnil{}}}}}}
+
+def ref_members_extra(id: String, projections: J.Json) -> J.Json:
+  J.Jpair{"id", J.Jstr{id},
+  J.Jpair{"engine", J.Jstr{"typescript"},
+  J.Jpair{"subject", cobj1("kind", J.Jstr{"symbol"}),
+  J.Jpair{"snapshotId", J.Jstr{"s1"},
+  J.Jpair{"projections", projections, J.Jpair{"extra", J.Jstr{"x"}, J.Jnil{}}}}}}}
+
+type RawOpt is Data:
+  ROnone{}
+  ROsome{value: RawValue}
+
+type RawFrame is Data:
+  RFRoot{root: RawOpt}
+  RFObj{id: String, key: String, members: RawValue, up: RawFrame}
+  RFArr{id: String, key: String, items: RawValue, up: RawFrame}
+  RFBad{condition: String}
+
+type FrameRead is Data:
+  FrValue{value: RawValue}
+  FrRefused{condition: String}
+
+type EnvelopeRead is Data:
+  ErEnvelope{envelope: Envelope, meta: MetaInput}
+  ErRefused{condition: String}
+
+type FrameDecision is Data:
+  FdOk{tool: Context.CodecTool, id: Context.FrameId, query: Context.OptText, request: Context.OptText}
+  FdRefused{class: Context.RefusalClass, condition: String}
+
+def row_id(r: Req.Row) -> String:
+  match r:
+    case Req.Row{id, +parent, +kind, +key, +value}: id
+
+def row_parent(r: Req.Row) -> String:
+  match r:
+    case Req.Row{+id, parent, +kind, +key, +value}: parent
+
+def row_kind(r: Req.Row) -> String:
+  match r:
+    case Req.Row{+id, +parent, kind, +key, +value}: kind
+
+def row_key(r: Req.Row) -> String:
+  match r:
+    case Req.Row{+id, +parent, +kind, key, +value}: key
+
+def row_value(r: Req.Row) -> String:
+  match r:
+    case Req.Row{+id, +parent, +kind, +key, value}: value
+
+# `Context.json_tree_sql` emits all five columns as hex and `Context.parse_rows`
+# keeps them verbatim, so every transport field is decoded here exactly once. A
+# scalar decoder failure keeps its own reason; the empty string is never used to
+# turn an invalid field into a valid one.
+
+type FieldText is Data:
+  FtText{value: String}
+  FtBad{condition: String}
+
+type DecodedRow is Data:
+  DRow{id: String, parent: String, kind: String, key: String, value: String, bad: String}
+
+def ft_text(f: FieldText) -> String:
+  match f:
+    case FtText{value}: value
+    case FtBad{+condition}: SNil{}
+
+def ft_bad(f: FieldText) -> String:
+  match f:
+    case FtText{+value}: SNil{}
+    case FtBad{condition}: condition
+
+def text_field_scalar(+scalar: Req.Scalar) -> FieldText:
+  match scalar:
+    case Req.ScalarText{value}: FtText{value}
+    case Req.ScalarBadUtf8{}: FtBad{"invalidUtf8Field"}
+    case Req.ScalarSurrogate{}: FtBad{"surrogateField"}
+    case Req.ScalarNul{}: FtBad{"nulInField"}
+
+def text_field_checked(ok: Bool, +hex: String) -> FieldText:
+  Bool.pick(FieldText, ok, text_field_scalar(Req.Context.decode_scalar_utf8(Tx.hex_decode(hex))), FtBad{"malformedHexField"})
+
+def text_field(+hex: String) -> FieldText:
+  text_field_checked(Req.hex_ok(hex), hex)
+
+def merge_bad(a: String, +b: String) -> String:
+  Bool.pick(String, String.is_empty(a), b, a)
+
+def build_row(i: FieldText, p: FieldText, k: FieldText, key: FieldText, v: FieldText) -> DecodedRow:
+  DRow{ft_text(i), ft_text(p), ft_text(k), ft_text(key), ft_text(v),
+       merge_bad(merge_bad(merge_bad(merge_bad(ft_bad(i), ft_bad(p)), ft_bad(k)), ft_bad(key)), ft_bad(v))}
+
+# `row_id`, `row_parent`, `row_kind`, `row_key` and `row_value` read the transport
+# field verbatim, which is hex; only `decode_row` interprets them.
+def decode_row(+row: Req.Row) -> DecodedRow:
+  build_row(text_field(row_id(row)), text_field(row_parent(row)), text_field(row_kind(row)),
+            text_field(row_key(row)), text_field(row_value(row)))
+
+def dr_id(r: DecodedRow) -> String:
+  match r:
+    case DRow{id, +parent, +kind, +key, +value, +bad}: id
+
+def dr_parent(r: DecodedRow) -> String:
+  match r:
+    case DRow{+id, parent, +kind, +key, +value, +bad}: parent
+
+def dr_kind(r: DecodedRow) -> String:
+  match r:
+    case DRow{+id, +parent, kind, +key, +value, +bad}: kind
+
+def dr_key(r: DecodedRow) -> String:
+  match r:
+    case DRow{+id, +parent, +kind, key, +value, +bad}: key
+
+def dr_value(r: DecodedRow) -> String:
+  match r:
+    case DRow{+id, +parent, +kind, +key, value, +bad}: value
+
+def dr_bad(r: DecodedRow) -> String:
+  match r:
+    case DRow{+id, +parent, +kind, +key, +value, bad}: bad
+
+def rf_id(+f: RawFrame) -> String:
+  match f:
+    case RFRoot{+root}: SNil{}
+    case RFObj{id, +key, +members, +up}: id
+    case RFArr{id, +key, +items, +up}: id
+    case RFBad{+condition}: "\u{1}"
+
+def raw_or_null(m: Maybe<&2, RawValue>) -> RawValue:
+  match m:
+    case None{}: Rnull{}
+    case Some{value}: value
+
+def raw_attach(+up: RawFrame, key: String, value: RawValue) -> RawFrame:
+  match up:
+    case RFRoot{+root}: RFRoot{ROsome{value}}
+    case RFObj{id, pkey, members, up2}: RFObj{id, pkey, Rpair{key, value, members}, up2}
+    case RFArr{id, pkey, items, up2}: RFArr{id, pkey, Rarr{value, items}, up2}
+    case RFBad{condition}: RFBad{condition}
+
+def rev_items(a: RawValue, acc: RawValue) -> RawValue:
+  match a:
+    case Rarr{+head, +tail}: rev_items(tail, Rarr{head, acc})
+    case other: acc
+
+# The accumulated cell chain closes into a completed array value: a nonempty
+# accumulation reverses to its own cell chain, and an empty accumulation becomes the
+# canonical empty-array cell `Rarr{Rnil, Rnil}`. The completed value is attached to its
+# parent exactly once; no extra array wrapper is added around it.
+def array_value(items: RawValue) -> RawValue:
+  match items:
+    case Rarr{+head, +tail}: rev_items(items, Rnil{})
+    case other: Rarr{Rnil{}, Rnil{}}
+
+# Each completed container is attached into its parent while unwinding, so a nested
+# object followed by a sibling field keeps its contents. Elements attach in arrival
+# order and the close reverses the accumulator, so array order is restored; the
+# object member chain is not re-sorted, and the consumers here (member lookup and
+# the scalar progress token) do not read member order. Canonical text is produced
+# by the shared encoder, which normalizes member order itself.
+def raw_unwind(+f: RawFrame, pid: String) -> RawFrame:
+  match f:
+    case RFRoot{+root}: RFRoot{root}
+    case RFObj{+id, +key, +members, up}:
+      Bool.pick(RawFrame, String.eq(id, pid), RFObj{id, key, members, up},
+        raw_attach(raw_unwind(up, pid), key, Robj{members}))
+    case RFArr{+id, +key, +items, up}:
+      Bool.pick(RawFrame, String.eq(id, pid), RFArr{id, key, items, up},
+        raw_attach(raw_unwind(up, pid), key, array_value(items)))
+    case RFBad{+condition}: RFBad{condition}
+
+def raw_finish(+f: RawFrame) -> RawFrame:
+  match f:
+    case RFRoot{+root}: RFRoot{root}
+    case RFObj{+id, key, members, up}: raw_finish(raw_attach(up, key, Robj{members}))
+    case RFArr{+id, key, items, up}: raw_finish(raw_attach(up, key, array_value(items)))
+    case RFBad{+condition}: RFBad{condition}
+
+def raw_hex_number(+stack: RawFrame, +d: DecodedRow) -> RawFrame:
+  raw_attach(stack, dr_key(d), Rnum{dr_value(d)})
+
+def raw_hex_text(+stack: RawFrame, +d: DecodedRow) -> RawFrame:
+  raw_attach(stack, dr_key(d), Rstr{dr_value(d)})
+
+def raw_kind(+kind: String, +stack: RawFrame, +d: DecodedRow) -> RawFrame:
+  match kind:
+    case "object": RFObj{dr_id(d), dr_key(d), Rnil{}, stack}
+    case "array": RFArr{dr_id(d), dr_key(d), Rnil{}, stack}
+    case "null": raw_attach(stack, dr_key(d), Rnull{})
+    case "true": raw_attach(stack, dr_key(d), Rtrue{})
+    case "false": raw_attach(stack, dr_key(d), Rfalse{})
+    case "integer": raw_hex_number(stack, d)
+    case "real": raw_hex_number(stack, d)
+    case "text": raw_hex_text(stack, d)
+    case other: RFBad{"malformedRowKind"}
+
+def raw_place_decoded(+stack: RawFrame, +d: DecodedRow) -> RawFrame:
+  Bool.pick(RawFrame, String.eq(rf_id(stack), dr_parent(d)), raw_kind(dr_kind(d), stack, d), RFBad{"missingParentRow"})
+
+def raw_place(+frame: RawFrame, +d: DecodedRow) -> RawFrame:
+  Bool.pick(RawFrame, String.is_empty(dr_bad(d)), raw_place_decoded(raw_unwind(frame, dr_parent(d)), d), RFBad{dr_bad(d)})
+
+def raw_step(+frame: RawFrame, +row: Req.Row) -> RawFrame:
+  match frame:
+    case RFBad{+condition}: RFBad{condition}
+    case other_frame: raw_place(other_frame, decode_row(row))
+
+def raw_fold(rows: Req.Rows, frame: RawFrame) -> RawFrame:
+  match rows:
+    case Req.Rnone{}: raw_finish(frame)
+    case Req.Rcons{+head, +tail}: raw_fold(tail, raw_step(frame, head))
+
+def frame_root(root: RawOpt) -> FrameRead:
+  match root:
+    case ROnone{}: FrRefused{"emptyFrame"}
+    case ROsome{value}: FrValue{value}
+
+def frame_of(+f: RawFrame) -> FrameRead:
+  match f:
+    case RFRoot{root}: frame_root(root)
+    case RFBad{condition}: FrRefused{condition}
+    case RFObj{+id, +key, +members, +up}: FrRefused{"missingParentRow"}
+    case RFArr{+id, +key, +items, +up}: FrRefused{"missingParentRow"}
+
+def frame_read(rows: Req.Rows) -> FrameRead:
+  frame_of(raw_fold(rows, RFRoot{ROnone{}}))
+
+# --- extraction ------------------------------------------------------------
+
+def raw_members_of(+v: RawValue) -> RawValue:
+  match v:
+    case Robj{members}: members
+    case Rnull{}: Rnil{}
+    case Rtrue{}: Rnil{}
+    case Rfalse{}: Rnil{}
+    case Rnum{+token}: Rnil{}
+    case Rstr{+value}: Rnil{}
+    case Rarr{+head, +tail}: Rnil{}
+    case Rpair{+key, +value, +rest}: Rnil{}
+    case Rnil{}: Rnil{}
+
+def raw_text_of(+v: RawValue) -> String:
+  match v:
+    case Rstr{value}: value
+    case Rnull{}: SNil{}
+    case Rtrue{}: SNil{}
+    case Rfalse{}: SNil{}
+    case Rnum{+token}: SNil{}
+    case Rarr{+head, +tail}: SNil{}
+    case Robj{+members}: SNil{}
+    case Rpair{+key, +value, +rest}: SNil{}
+    case Rnil{}: SNil{}
+
+def raw_field(+v: RawValue, key: String) -> Maybe<&2, RawValue>:
+  raw_member(key, raw_members_of(v))
+
+def raw_field_text(+v: RawValue, key: String) -> String:
+  raw_text_of(raw_or_null(raw_field(v, key)))
+
+def raw_keys_ok(allowed: Req.Words, members: RawValue) -> Bool:
+  match members:
+    case Rpair{+key, +value, +tail}: Bool.pick(Bool, Req.word_member(allowed, key), raw_keys_ok(allowed, tail), False{})
+    case Rnil{}: True{}
+    case other: False{}
+
+def present_raw(m: Maybe<&2, RawValue>) -> Bool:
+  match m:
+    case None{}: False{}
+    case Some{+value}: True{}
+
+def raw_member_present(key: String, members: RawValue) -> Bool:
+  present_raw(raw_member(key, members))
+
+def root_words() -> Req.Words:
+  Req.words_from(["jsonrpc", "id", "method", "params"])
+
+def params_words() -> Req.Words:
+  Req.words_from(["name", "arguments", "_meta"])
+
+def arguments_words(+tool: String) -> Req.Words:
+  match tool:
+    case "context-query": Req.words_from(["query", "request"])
+    case "context-result": Req.words_from(["query"])
+    case other: Req.words_from(Nil{})
+
+def arguments_required(+tool: String, members: RawValue) -> Bool:
+  match tool:
+    case "context-query": Bool.pick(Bool, raw_member_present("query", members), raw_member_present("request", members), False{})
+    case "context-result": raw_member_present("query", members)
+    case other: True{}
+
+def arguments_closed_for(+tool: String, members: RawValue) -> Bool:
+  Bool.pick(Bool, raw_keys_ok(arguments_words(tool), members), arguments_required(tool, members), False{})
+
+# --- the request container conversion --------------------------------------
+
+type JsonConv is Data:
+  JcJson{value: J.Json}
+  JcRefused{condition: String}
+
+# The conversion is one structurally self-recursive walk over the private tree, like
+# `json/canonical.bend`'s emitter: every recursive call passes a strict subterm as its
+# first argument and the mode selects a member cell, an array cell or a complete value.
+# The result-combining steps are declared before it and do not recurse, so no two
+# definitions refer to each other. A number is converted by the qualified U32 decoder
+# over its exact token, so a token that is not an exact U32 refuses before any
+# canonical emission.
+#
+# Order: an array's cell chain is in document order, because the close reverses the
+# arrival accumulator, and a refusal in a cell is reported before its tail. A member
+# chain is held in reverse arrival order, so a refusal found while walking it is not in
+# document order; every refusing member-value conversion currently reports the same
+# condition text, so the condition that is reported does not depend on that order.
+
+type ConvMode is Data:
+  CmValue{}
+  CmArray{}
+  CmObject{}
+
+def cv_ok(c: JsonConv) -> Bool:
+  match c:
+    case JcJson{+value}: True{}
+    case JcRefused{+condition}: False{}
+
+def cv_json(c: JsonConv) -> J.Json:
+  match c:
+    case JcJson{value}: value
+    case JcRefused{+condition}: J.Jnull{}
+
+def cv_bad(c: JsonConv) -> String:
+  match c:
+    case JcJson{+value}: SNil{}
+    case JcRefused{condition}: condition
+
+def uint_conv(r: Uint.UintResult) -> JsonConv:
+  match r:
+    case Uint.UintAccepted{value}: JcJson{J.Jint{value}}
+    case Uint.UintRefused{+reason}: JcRefused{"nonU32NumberInRequest"}
+
+def number_conv(+token: String) -> JsonConv:
+  uint_conv(Uint.finish(Uint.feed(token, Uint.UintStart{})))
+
+# The internal domain of the conversion. `Rnil` terminates both chains and is the only
+# admitted terminator; a member cell is admitted only while reading a member chain, an
+# array cell only in a value or array position, and an object only in a value position.
+def mode_is_value(mode: ConvMode) -> Bool:
+  match mode:
+    case CmValue{}: True{}
+    case CmArray{}: False{}
+    case CmObject{}: False{}
+
+def mode_is_member(mode: ConvMode) -> Bool:
+  match mode:
+    case CmObject{}: True{}
+    case CmValue{}: False{}
+    case CmArray{}: False{}
+
+def arr_rest(rest: JsonConv, +head: J.Json) -> JsonConv:
+  Bool.pick(JsonConv, cv_ok(rest), JcJson{J.Jarr{head, cv_json(rest)}}, JcRefused{cv_bad(rest)})
+
+def arr_mode(rest: JsonConv, +head: J.Json, mode: ConvMode) -> JsonConv:
+  Bool.pick(JsonConv, mode_is_member(mode), JcRefused{"arrayCellInMemberChain"}, arr_rest(rest, head))
+
+def arr_step(c: JsonConv, rest: JsonConv, mode: ConvMode) -> JsonConv:
+  Bool.pick(JsonConv, cv_ok(c), arr_mode(rest, cv_json(c), mode), JcRefused{cv_bad(c)})
+
+def obj_wrap(c: JsonConv) -> JsonConv:
+  match c:
+    case JcJson{value}: JcJson{J.Jobj{value}}
+    case JcRefused{condition}: JcRefused{condition}
+
+def obj_step(c: JsonConv, mode: ConvMode) -> JsonConv:
+  Bool.pick(JsonConv, mode_is_value(mode), obj_wrap(c), JcRefused{"objectOutsideValuePosition"})
+
+def pair_rest(rest: JsonConv, +key: String, +value: J.Json) -> JsonConv:
+  Bool.pick(JsonConv, cv_ok(rest), JcJson{J.Jpair{key, value, cv_json(rest)}}, JcRefused{cv_bad(rest)})
+
+def pair_mode(rest: JsonConv, +key: String, +value: J.Json, mode: ConvMode) -> JsonConv:
+  Bool.pick(JsonConv, mode_is_member(mode), pair_rest(rest, key, value), JcRefused{"memberCellOutsideObject"})
+
+def pair_step(c: JsonConv, rest: JsonConv, key: String, mode: ConvMode) -> JsonConv:
+  Bool.pick(JsonConv, cv_ok(c), pair_mode(rest, key, cv_json(c), mode), JcRefused{cv_bad(c)})
+
+def scalar_in_mode(+value: J.Json, mode: ConvMode) -> JsonConv:
+  Bool.pick(JsonConv, mode_is_member(mode), JcRefused{"scalarInMemberChain"}, JcJson{value})
+
+def number_in_mode(+token: String, mode: ConvMode) -> JsonConv:
+  Bool.pick(JsonConv, mode_is_member(mode), JcRefused{"scalarInMemberChain"}, number_conv(token))
+
+def conv(+v: RawValue, +mode: ConvMode) -> JsonConv:
+  match v:
+    case Rnull{}: scalar_in_mode(J.Jnull{}, mode)
+    case Rtrue{}: scalar_in_mode(J.Jtrue{}, mode)
+    case Rfalse{}: scalar_in_mode(J.Jfalse{}, mode)
+    case Rnum{token}: number_in_mode(token, mode)
+    case Rstr{value}: scalar_in_mode(J.Jstr{value}, mode)
+    case Rarr{+head, +tail}: arr_step(conv(head, CmValue{}), conv(tail, CmArray{}), mode)
+    case Robj{members}: obj_step(conv(members, CmObject{}), mode)
+    case Rpair{+key, +value, +rest}: pair_step(conv(value, CmValue{}), conv(rest, CmObject{}), key, mode)
+    case Rnil{}: JcJson{J.Jnil{}}
+
+def raw_to_json(+v: RawValue) -> JsonConv:
+  conv(v, CmValue{})
+
+def opt_text_of(m: Maybe<&2, RawValue>) -> Context.OptText:
+  match m:
+    case None{}: Context.Absent{}
+    case Some{value}: Context.Present{raw_text_of(value)}
+
+def frame_id_of(+v: RawValue) -> Context.FrameId:
+  match v:
+    case Rstr{value}: Context.IdText{value}
+    case Rnum{token}: Context.IdNumber{token}
+    case Rnull{}: Context.IdNumber{SNil{}}
+    case Rtrue{}: Context.IdNumber{SNil{}}
+    case Rfalse{}: Context.IdNumber{SNil{}}
+    case Rarr{+head, +tail}: Context.IdNumber{SNil{}}
+    case Robj{+members}: Context.IdNumber{SNil{}}
+    case Rpair{+key, +value, +rest}: Context.IdNumber{SNil{}}
+    case Rnil{}: Context.IdNumber{SNil{}}
+
+def params_of(+frame: RawValue) -> RawValue:
+  raw_or_null(raw_field(frame, "params"))
+
+def arguments_of(+frame: RawValue) -> RawValue:
+  raw_or_null(raw_field(params_of(frame), "arguments"))
+
+def meta_input(m: Maybe<&2, RawValue>) -> MetaInput:
+  match m:
+    case None{}: MetaAbsent{}
+    case Some{value}: MetaPresent{value}
+
+def meta_of(+frame: RawValue) -> MetaInput:
+  meta_input(raw_field(params_of(frame), "_meta"))
+
+# The canonical text of a request object, or the condition that refused it. A
+# non-object refuses, and a number that is not an exact U32 token refuses through the
+# converter rather than being coerced. The request is always a JSON object here.
+def request_conv_ok(c: JsonConv) -> RequestText:
+  match c:
+    case JcJson{value}: RtText{J.json_text(value)}
+    case JcRefused{condition}: RtBad{condition}
+
+def request_read(+v: RawValue) -> RequestText:
+  match v:
+    case Robj{members}: request_conv_ok(raw_to_json(v))
+    case Rnull{}: RtBad{"requestNotObject"}
+    case Rtrue{}: RtBad{"requestNotObject"}
+    case Rfalse{}: RtBad{"requestNotObject"}
+    case Rnum{+token}: RtBad{"requestNotObject"}
+    case Rstr{+value}: RtBad{"requestNotObject"}
+    case Rarr{+head, +tail}: RtBad{"requestNotObject"}
+    case Rpair{+key, +value, +rest}: RtBad{"requestNotObject"}
+    case Rnil{}: RtBad{"requestNotObject"}
+
+def request_field(m: Maybe<&2, RawValue>) -> RequestText:
+  match m:
+    case None{}: RtAbsent{}
+    case Some{value}: request_read(value)
+
+def envelope_fields(+frame: RawValue) -> Envelope:
+  EnvFrame{raw_field_text(frame, "jsonrpc"), raw_field_text(frame, "method"),
+           raw_field_text(params_of(frame), "name"), frame_id_of(raw_or_null(raw_field(frame, "id"))),
+           opt_text_of(raw_field(arguments_of(frame), "query")),
+           request_field(raw_field(arguments_of(frame), "request")),
+           raw_keys_ok(root_words(), raw_members_of(frame)),
+           raw_keys_ok(params_words(), raw_members_of(params_of(frame))),
+           arguments_closed_for(raw_field_text(params_of(frame), "name"), raw_members_of(arguments_of(frame)))}
+
+def envelope_read(+r: FrameRead) -> EnvelopeRead:
+  match r:
+    case FrValue{+value}: ErEnvelope{envelope_fields(value), meta_of(value)}
+    case FrRefused{condition}: ErRefused{condition}
+
+def frame_envelope(rows: Req.Rows) -> EnvelopeRead:
+  envelope_read(frame_read(rows))
+
+# --- the frame decision ----------------------------------------------------
+
+def meta_accepted(v: MetaVerdict) -> Bool:
+  match v:
+    case MetaOk{}: True{}
+    case MetaNotObject{}: False{}
+    case MetaBadProgressToken{}: False{}
+
+def frame_meta_verdict(tool: Context.CodecTool, id: Context.FrameId, query: Context.OptText, request: Context.OptText, +m: MetaVerdict) -> FrameDecision:
+  Bool.pick(FrameDecision, meta_accepted(m), FdOk{tool, id, query, request}, FdRefused{Context.RfValidation{}, meta_text(m)})
+
+def frame_envelope_then_meta(v: EnvelopeVerdict, +m: MetaVerdict) -> FrameDecision:
+  match v:
+    case EnvAccepted{tool, id, query, request}: frame_meta_verdict(tool, id, query, request, m)
+    case EnvRefused{condition}: FdRefused{Context.RfValidation{}, condition}
+
+# The envelope is decided first, then the metadata profile. Only an accepted frame
+# with accepted metadata reaches `FdOk`, so metadata is discarded after successful
+# validation and never carried into the decision.
+def frame_envelope_decision(+env: Envelope, +m: MetaVerdict) -> FrameDecision:
+  frame_envelope_then_meta(envelope_decide(env), m)
+
+def frame_decision(+r: EnvelopeRead) -> FrameDecision:
+  match r:
+    case ErEnvelope{envelope, meta}: frame_envelope_decision(envelope, metadata_admit(meta))
+    case ErRefused{condition}: FdRefused{Context.RfValidation{}, condition}
+
+# --- laws ------------------------------------------------------------------
+
+def row_sample() -> Req.Row:
+  Req.Row{"1", "0", "text", "6a736f6e727063", "322e30"}
+
+def row_hex(text: String) -> String:
+  J.utf8_hex(J.utf8(text))
+
+def text_row(id: String, parent: String, key: String, value: String) -> Req.Row:
+  Req.Row{id, parent, "text", row_hex(key), row_hex(value)}
+
+def object_row(id: String, parent: String, key: String) -> Req.Row:
+  Req.Row{id, parent, "object", row_hex(key), SNil{}}
+
+def number_row(id: String, parent: String, key: String, token: String) -> Req.Row:
+  Req.Row{id, parent, "integer", row_hex(key), row_hex(token)}
+
+# One row per transport line, so a frame's shape is readable and its close count is
+# not hand-written.
+def rows_of(rows: List<Req.Row>) -> Req.Rows:
+  match rows:
+    case Nil{}: Req.Rnone{}
+    case head <> tail: Req.Rcons{head, rows_of(tail)}
+
+
+def engine_frame_rows() -> Req.Rows:
+  rows_of([
+    object_row("0", SNil{}, SNil{}),
+    text_row("1", "0", "jsonrpc", "2.0"),
+    text_row("2", "0", "method", "tools/call"),
+    number_row("3", "0", "id", "7"),
+    object_row("4", "0", "params"),
+    text_row("5", "4", "name", "context-engines"),
+    object_row("6", "4", "arguments")])
+
+def query_frame_rows() -> Req.Rows:
+  rows_of([
+    object_row("0", SNil{}, SNil{}),
+    text_row("1", "0", "jsonrpc", "2.0"),
+    text_row("2", "0", "method", "tools/call"),
+    number_row("3", "0", "id", "-1"),
+    object_row("4", "0", "params"),
+    text_row("5", "4", "name", "context-query"),
+    object_row("6", "4", "arguments"),
+    text_row("7", "6", "query", "q1"),
+    object_row("8", "6", "request"),
+    number_row("9", "8", "version", "1")])
+
+# ---------------------------------------------------------------------------
+# The retained reference composes into Core's own record and query types. The
+# `required` set of a query is the stored selector's projection chain, never the
+# request's, so a caller cannot widen its own permissions.
+
+def ss_of_proj(+p: Proj) -> Eng.SS:
+  match p:
+    case Pnone{}: Eng.ss_empty()
+    case Pcons{+head, +tail}: Eng.SSCons{head, ss_of_proj(tail)}
+
+def ref_engine_of(d: RefDecode) -> String:
+  match d:
+    case RdNone{}: SNil{}
+    case RdRef{+id, engine, +subject_kind, +subject_text, +snapshot_id, +projections}: engine
+    case RdBad{+condition}: SNil{}
+
+def ref_subject_of(d: RefDecode) -> String:
+  match d:
+    case RdNone{}: SNil{}
+    case RdRef{+id, +engine, subject_kind, +subject_text, +snapshot_id, +projections}: subject_kind
+    case RdBad{+condition}: SNil{}
+
+# The whole selector as retained evidence, so a full object selector is not lost
+# when only its kind is admitted on.
+def ref_subject_text_of(d: RefDecode) -> String:
+  match d:
+    case RdNone{}: SNil{}
+    case RdRef{+id, +engine, +subject_kind, subject_text, +snapshot_id, +projections}: subject_text
+    case RdBad{+condition}: SNil{}
+
+def ref_snapshot_of(d: RefDecode) -> String:
+  match d:
+    case RdNone{}: SNil{}
+    case RdRef{+id, +engine, +subject_kind, +subject_text, snapshot_id, +projections}: snapshot_id
+    case RdBad{+condition}: SNil{}
+
+def ref_record_of(d: RefDecode, policy: String) -> Refs.RefRecord:
+  Refs.Ref{ref_id_of(d), ref_engine_of(d), ref_subject_of(d), ref_subject_text_of(d), ref_snapshot_of(d), policy, ss_of_proj(ref_projections_of(d))}
+
+# The retained selector's operations are authenticated evidence carried beside the
+# record, because `RefRecord` does not hold them. Its effects come from Core, not
+# from a projection name, and a missing or unknown authority refuses rather than
+# being fabricated from the request.
+def ref_query_of(+record: Refs.RefRecord, current_policy: String, +operations: Eng.SS, requested: Eng.SS, applicability: Snap.Applies, granted: Eng.SS, fresh: String, known: Bool) -> Refs.RefQuery:
+  Refs.RQ{known, Refs.ref_subject_kind(record), Refs.ref_policy(record), current_policy,
+          Refs.ref_projections(record), requested, applicability, Eng.effects_union(operations), granted, fresh}
+
+# The stored policy must exist before it can equal the caller's authenticated one,
+# so an absent policy refuses as unestablished and is never filled with an invented
+# identity. Core owns both the comparison and that refusal.
+def ref_known(k: Eng.OpsKnown, +record: Refs.RefRecord, current_policy: String, +operations: Eng.SS, requested: Eng.SS, applicability: Snap.Applies, granted: Eng.SS, fresh: String, known: Bool) -> Refs.RefDecision:
+  match k:
+    case Eng.OkAllKnown{}: Refs.admit(ref_query_of(record, current_policy, operations, requested, applicability, granted, fresh, known))
+    case Eng.OkUnknown{+operation}: Refs.RUnverified{"retainedSelectorOperationUnknown"}
+
+def ref_gate(present: Bool, k: Eng.OpsKnown, +record: Refs.RefRecord, current_policy: String, +operations: Eng.SS, requested: Eng.SS, applicability: Snap.Applies, granted: Eng.SS, fresh: String, known: Bool) -> Refs.RefDecision:
+  Bool.pick(Refs.RefDecision, present,
+    ref_known(k, record, current_policy, operations, requested, applicability, granted, fresh, known),
+    Refs.RUnverified{"retainedSelectorOperationsUnavailable"})
+
+def ref_admit(+record: Refs.RefRecord, current_policy: String, +operations: Eng.SS, requested: Eng.SS, applicability: Snap.Applies, granted: Eng.SS, fresh: String, known: Bool) -> Refs.RefDecision:
+  ref_gate(Eng.ss_nonempty(operations), Eng.operations_known(operations), record, current_policy, operations, requested, applicability, granted, fresh, known)
+
+def frame_text(d: FrameDecision) -> String:
+  match d:
+    case FdOk{tool, id, query, request}: Context.codec_success_text(tool, id, query, request)
+    case FdRefused{cls, condition}: Context.refusal_class_name(cls) ++ ":" ++ condition
+
+def frame_refusal(r: FrameRead) -> String:
+  match r:
+    case FrValue{+value}: SNil{}
+    case FrRefused{condition}: condition
+
+def record_probe(subject: String, policy: String, +projections: Eng.SS) -> Refs.RefRecord:
+  Refs.Ref{"r1", "typescript", subject, subject, "s1", policy, projections}
+
+def real_row(id: String, parent: String, key: String, token: String) -> Req.Row:
+  Req.Row{id, parent, "real", row_hex(key), row_hex(token)}
+
+def null_row(id: String, parent: String, key: String) -> Req.Row:
+  Req.Row{id, parent, "null", row_hex(key), SNil{}}
+
+def meta_token_row(id: String, parent: String, kind: String, token: String) -> Req.Row:
+  Bool.pick(Req.Row, String.eq(kind, "null"), null_row(id, parent, "progressToken"), real_row(id, parent, "progressToken", token))
+
+# A frame with two defects at once: a refused envelope and a refused metadata
+# value. The envelope refusal must win.
+def meta_frame_rows(kind: String, token: String) -> Req.Rows:
+  rows_of([
+    object_row("0", SNil{}, SNil{}),
+    text_row("1", "0", "jsonrpc", "2.0"),
+    text_row("2", "0", "method", "tools/call"),
+    number_row("3", "0", "id", "7"),
+    object_row("4", "0", "params"),
+    text_row("5", "4", "name", "context-result"),
+    object_row("6", "4", "arguments"),
+    text_row("7", "6", "query", "q1"),
+    object_row("8", "4", "_meta"),
+    meta_token_row("9", "8", kind, token)])
+
+def bad_jsonrpc_meta_rows() -> Req.Rows:
+  rows_of([
+    object_row("0", SNil{}, SNil{}),
+    text_row("1", "0", "jsonrpc", "1.0"),
+    text_row("2", "0", "method", "tools/call"),
+    number_row("3", "0", "id", "7"),
+    object_row("4", "0", "params"),
+    text_row("5", "4", "name", "context-result"),
+    object_row("6", "4", "arguments"),
+    text_row("7", "6", "query", "q1"),
+    object_row("8", "4", "_meta"),
+    null_row("9", "8", "progressToken")])
+
+def broken_frame_rows() -> Req.Rows:
+  rows_of([
+    object_row("0", SNil{}, SNil{}),
+    text_row("1", "0", "jsonrpc", "2.0"),
+    text_row("2", "9", "method", "tools/call")])
+
+def bad_field_rows() -> Req.Rows:
+  rows_of([
+    object_row("0", SNil{}, SNil{}),
+    Req.Row{"1", "0", row_hex("text"), "7z", row_hex("v")}])
+
+def bad_utf8_rows() -> Req.Rows:
+  rows_of([
+    object_row("0", SNil{}, SNil{}),
+    Req.Row{"1", "0", row_hex("text"), row_hex("k"), "ff"}])
+
+# A reference that came through the actual decoder composes into Core, and the
+# composed admission is exercised on that decoded record rather than on a
+# hand-built one.
+def decoded_record(id: String, subject: J.Json, policy: String, +projections: J.Json) -> Refs.RefRecord:
+  ref_record_of(ref_decode(ref_object_of(ref_members_base(id, subject, projections))), policy)
+
+def ref_members_subject(id: String, subject: J.Json, +projections: J.Json) -> J.Json:
+  J.Jpair{"id", J.Jstr{id},
+  J.Jpair{"engine", J.Jstr{"typescript"},
+  J.Jpair{"subject", subject,
+  J.Jpair{"snapshotId", J.Jstr{"s1"},
+  J.Jpair{"projections", projections, J.Jnil{}}}}}}
+
+def ref_members_object_subject(id: String, +projections: J.Json) -> J.Json:
+  ref_members_subject(id, cobj2("kind", J.Jstr{"entity"}, "name", J.Jstr{"t"}), projections)
+
+def ref_members_string_subject(id: String, +projections: J.Json) -> J.Json:
+  ref_members_subject(id, J.Jstr{"symbol"}, projections)
+
+def ref_members_duplicate_subject(id: String, +projections: J.Json) -> J.Json:
+  ref_members_subject(id, cobj2("kind", J.Jstr{"entity"}, "kind", J.Jstr{"symbol"}), projections)
+
+def ref_members_kindless_subject(id: String, +projections: J.Json) -> J.Json:
+  ref_members_subject(id, cobj1("name", J.Jstr{"t"}), projections)
+
+def ref_members_mystery_subject(id: String, +projections: J.Json) -> J.Json:
+  ref_members_subject(id, cobj1("kind", J.Jstr{"mystery"}), projections)
+
+def ref_members_nosubject(+projections: J.Json) -> J.Json:
+  J.Jpair{"id", J.Jstr{"r9"},
+  J.Jpair{"engine", J.Jstr{"typescript"},
+  J.Jpair{"snapshotId", J.Jstr{"s1"},
+  J.Jpair{"projections", projections, J.Jnil{}}}}}
+
+def ref_members_wrong_engine(+projections: J.Json) -> J.Json:
+  J.Jpair{"id", J.Jstr{"r9"},
+  J.Jpair{"engine", J.Jint{1},
+  J.Jpair{"subject", J.Jstr{"symbol"},
+  J.Jpair{"snapshotId", J.Jstr{"s1"},
+  J.Jpair{"projections", projections, J.Jnil{}}}}}}
+
+def root_value(r: FrameRead) -> RawValue:
+  match r:
+    case FrValue{value}: value
+    case FrRefused{+condition}: Rnull{}
+
+def sole_member(+m: RawValue) -> String:
+  match m:
+    case Rpair{+key, +value, +tail}: raw_text_of(value)
+    case other: SNil{}
+
+# Values whose bytes are written literally: an astral code point, a decoded NUL and
+# a raw surrogate sequence. The demo encoder has no four-byte branch, so these do
+# not go through it.
+def sole_value(+v: RawValue) -> String:
+  match v:
+    case Robj{members}: sole_member(members)
+    case Rnull{}: SNil{}
+    case Rtrue{}: SNil{}
+    case Rfalse{}: SNil{}
+    case Rnum{+token}: SNil{}
+    case Rstr{+value}: SNil{}
+    case Rarr{+head, +tail}: SNil{}
+    case Rpair{+key, +value, +rest}: SNil{}
+    case Rnil{}: SNil{}
+
+def value_row(hex: String) -> Req.Rows:
+  rows_of([
+    object_row("0", SNil{}, SNil{}),
+    Req.Row{"1", "0", row_hex("text"), row_hex("k"), hex}])
+
+def astral_rows() -> Req.Rows:
+  value_row("f09f9880")
+
+def nul_value_rows() -> Req.Rows:
+  value_row("610062")
+
+def surrogate_value_rows() -> Req.Rows:
+  value_row("eda080")
+
+def extra_root_row() -> Req.Row:
+  text_row("9", "0", "extra", "x")
+
+def unknown_root_rows() -> Req.Rows:
+  rows_of([
+    object_row("0", SNil{}, SNil{}),
+    text_row("1", "0", "jsonrpc", "2.0"),
+    extra_root_row()])
+
+def unknown_params_rows() -> Req.Rows:
+  rows_of([
+    object_row("0", SNil{}, SNil{}),
+    text_row("1", "0", "jsonrpc", "2.0"),
+    text_row("2", "0", "method", "tools/call"),
+    number_row("3", "0", "id", "7"),
+    object_row("4", "0", "params"),
+    text_row("5", "4", "name", "context-engines"),
+    object_row("6", "4", "arguments"),
+    text_row("7", "4", "extra", "x")])
+
+def array_row(id: String, parent: String, key: String) -> Req.Row:
+  Req.Row{id, parent, "array", row_hex(key), SNil{}}
+
+def nested_request_rows() -> Req.Rows:
+  rows_of([
+    object_row("0", SNil{}, SNil{}),
+    text_row("1", "0", "jsonrpc", "2.0"),
+    text_row("2", "0", "method", "tools/call"),
+    number_row("3", "0", "id", "7"),
+    object_row("4", "0", "params"),
+    text_row("5", "4", "name", "context-query"),
+    object_row("6", "4", "arguments"),
+    text_row("7", "6", "query", "q1"),
+    object_row("8", "6", "request"),
+    text_row("9", "8", "s", "x"),
+    array_row("10", "8", "a"),
+    number_row("11", "10", "0", "1"),
+    number_row("12", "10", "1", "2"),
+    object_row("13", "8", "b"),
+    null_row("14", "13", "c")])
+
+def empty_request_rows() -> Req.Rows:
+  rows_of([
+    object_row("0", SNil{}, SNil{}),
+    text_row("1", "0", "jsonrpc", "2.0"),
+    text_row("2", "0", "method", "tools/call"),
+    number_row("3", "0", "id", "7"),
+    object_row("4", "0", "params"),
+    text_row("5", "4", "name", "context-query"),
+    object_row("6", "4", "arguments"),
+    text_row("7", "6", "query", "q1"),
+    object_row("8", "6", "request")])
+
+def text_request_rows() -> Req.Rows:
+  rows_of([
+    object_row("0", SNil{}, SNil{}),
+    text_row("1", "0", "jsonrpc", "2.0"),
+    text_row("2", "0", "method", "tools/call"),
+    number_row("3", "0", "id", "7"),
+    object_row("4", "0", "params"),
+    text_row("5", "4", "name", "context-query"),
+    object_row("6", "4", "arguments"),
+    text_row("7", "6", "query", "q1"),
+    text_row("8", "6", "request", "{}")])
+
+def big_number_request_rows() -> Req.Rows:
+  rows_of([
+    object_row("0", SNil{}, SNil{}),
+    text_row("1", "0", "jsonrpc", "2.0"),
+    text_row("2", "0", "method", "tools/call"),
+    number_row("3", "0", "id", "7"),
+    object_row("4", "0", "params"),
+    text_row("5", "4", "name", "context-query"),
+    object_row("6", "4", "arguments"),
+    text_row("7", "6", "query", "q1"),
+    object_row("8", "6", "request"),
+    real_row("9", "8", "version", "4294967296")])
+
+def main() -> IO(Unit):
+  do IO<Unit>:
+    z1 : Unit <- IO.print("frame-engines " ++ frame_text(frame_decision(frame_envelope(engine_frame_rows()))))
+    z2 : Unit <- IO.print("frame-query " ++ frame_text(frame_decision(frame_envelope(query_frame_rows()))))
+    a : Unit <- IO.print("metadata")
+    b : Unit <- IO.print(meta_text(metadata_validate(meta_one("progressToken", Rnum{"0.5"}))))
+    c : Unit <- IO.print(meta_text(metadata_validate(meta_one("progressToken", Rnum{"1e400"}))))
+    d : Unit <- IO.print(meta_text(metadata_validate(meta_one("progressToken", Rnull{}))))
+    e : Unit <- IO.print("envelope")
+    f : Unit <- IO.print(envelope_text(envelope_decide(EnvFrame{"2.0", "tools/call", "context-engines", Context.IdNumber{"7"}, Context.Absent{}, RtAbsent{}, True{}, True{}, True{}})))
+    g : Unit <- IO.print(envelope_text(envelope_decide(EnvFrame{"2.0", "tools/call", "context-query", Context.IdText{"7"}, Context.Present{"q1"}, RtText{"{\"version\":1}"}, True{}, True{}, True{}})))
+    h : Unit <- IO.print(envelope_text(envelope_decide(EnvFrame{"1.0", "tools/call", "not-a-tool", Context.IdNumber{"7"}, Context.Absent{}, RtAbsent{}, True{}, True{}, True{}})))
+    i : Unit <- IO.print("dispatch")
+    j : Unit <- IO.print(admission_text(dispatch_admission(Request_sample(), "sqlPlan", Context.one_effect(Context.EfPlanTargetSql{}), Context.no_effects())))
+    k : Unit <- IO.print(admission_text(dispatch_admission(Request_sample(), "", Context.no_effects(), Context.no_effects())))
+    IO.print("end")
+
+law codec_law_absent_metadata_is_admitted:
+  {metadata_admit(MetaAbsent{}) == MetaOk{} : MetaVerdict}
+
+def codec_law_absent_metadata_is_admitted():
+  {==}
+
+law codec_law_a_present_non_object_metadata_refuses:
+  {metadata_admit(MetaPresent{Rarr{Rnil{}, Rnil{}}}) == MetaNotObject{} : MetaVerdict}
+
+def codec_law_a_present_non_object_metadata_refuses():
+  {==}
+
+law codec_law_a_present_metadata_still_validates_its_token:
+  {metadata_admit(MetaPresent{meta_one("progressToken", Rnum{"1e"})}) == MetaBadProgressToken{} : MetaVerdict}
+
+def codec_law_a_present_metadata_still_validates_its_token():
+  {==}
+
+# The request container is a JSON object under the public schema. It is converted
+# through the raw-token tree so a number keeps its document token, and its
+# canonical text comes from the shared canonical encoder rather than a second
+# serializer. A conversion failure carries its own condition.
 law codec_law_an_admitted_caller_keeps_its_whole_operation_chain:
   {chain_count(admitted_operations(dispatch_admission(Request_sample(), request_operation_chain(Join_override_sample(), Eng.ss_empty()), Context.two_effects(Context.EfPlanTargetSql{}, Context.EfExecuteTarget{})))) == 2 : U32}
 
@@ -766,239 +1849,6 @@ def codec_law_an_accepted_query_frame_emits_its_success_document():
 # carries; the projections text is joined separately so no array crosses this
 # boundary.
 
-type Proj is Data:
-  Pnone{}
-  Pcons{head: String, tail: Proj}
-
-type RefDecode is Data:
-  RdNone{}
-  RdRef{id: String, engine: String, subject_kind: String, subject_text: String, snapshot_id: String, projections: Proj}
-  RdBad{condition: String}
-
-def proj_of(+j: J.Json) -> Proj:
-  match j:
-    case J.Jarr{+head, +tail}: Pcons{Req.text_of(head), proj_of(tail)}
-    case J.Jnil{}: Pnone{}
-    case J.Jnull{}: Pnone{}
-    case J.Jtrue{}: Pnone{}
-    case J.Jfalse{}: Pnone{}
-    case J.Jint{+value}: Pnone{}
-    case J.Jstr{+value}: Pnone{}
-    case J.Jobj{+members}: Pnone{}
-
-def or_json_nil(m: Maybe<&2, J.Json>) -> J.Json:
-  match m:
-    case None{}: J.Jnil{}
-    case Some{value}: value
-
-def proj_names(+p: Proj, +acc: String) -> String:
-  match p:
-    case Pnone{}: acc
-    case Pcons{+head, +tail}: proj_names(tail, acc ++ Bool.pick(String, String.is_empty(acc), SNil{}, ",") ++ head)
-
-def proj_count(p: Proj) -> U32:
-  match p:
-    case Pnone{}: 0
-    case Pcons{+head, +tail}: U32.add(1, proj_count(tail))
-
-def ref_words() -> Req.Words:
-  Req.words_from(["id", "engine", "subject", "snapshotId", "projections"])
-
-def present_str(m: Maybe<&2, J.Json>) -> Bool:
-  match m:
-    case None{}: False{}
-    case Some{+value}: Req.is_jstr(value)
-
-def present_array(m: Maybe<&2, J.Json>) -> Bool:
-  match m:
-    case None{}: False{}
-    case Some{+value}: strings_only(value)
-
-def strings_only(+j: J.Json) -> Bool:
-  match j:
-    case J.Jarr{+head, +tail}: Bool.pick(Bool, Req.is_jstr(head), strings_only(tail), False{})
-    case J.Jnil{}: True{}
-    case J.Jnull{}: False{}
-    case J.Jtrue{}: False{}
-    case J.Jfalse{}: False{}
-    case J.Jint{+value}: False{}
-    case J.Jstr{+value}: False{}
-    case J.Jobj{+members}: False{}
-
-def field_nonempty(+members: J.Json, +key: String) -> Bool:
-  Bool.pick(Bool, field_str(members, key), nonempty_text(field_text(members, key)), False{})
-
-def nonempty_text(+text: String) -> Bool:
-  Bool.pick(Bool, String.is_empty(text), False{}, True{})
-
-def field_str(+members: J.Json, +key: String) -> Bool:
-  present_str(Req.member_lookup(key, members))
-
-def field_text(+members: J.Json, key: String) -> String:
-  Ops.member_text(members, key)
-
-def field_array(+members: J.Json, +key: String) -> Bool:
-  present_array(Req.member_lookup(key, members))
-
-def ref_closed(+members: J.Json) -> Bool:
-  Req.keys_allowed(ref_words(), members)
-
-def ref_required(+members: J.Json) -> Bool:
-  Req.all_present(ref_words(), members)
-
-# The retained selector is what the producer actually writes: either a kind string,
-# or a full subject object such as {kind:entity,database,schema,name}. The object is
-# validated for a known kind and kept whole as evidence; only the kind is derived
-# for Core's admission, and no public field changes.
-def subject_selector_ok(+members: J.Json) -> Bool:
-  subject_value_ok(or_json_nil(Req.member_lookup("subject", members)))
-
-def subject_value_ok(+v: J.Json) -> Bool:
-  match v:
-    case J.Jobj{members}: subject_object_ok(members)
-    case J.Jstr{+value}: False{}
-    case J.Jnull{}: False{}
-    case J.Jtrue{}: False{}
-    case J.Jfalse{}: False{}
-    case J.Jint{+value}: False{}
-    case J.Jarr{+head, +tail}: False{}
-    case J.Jnil{}: False{}
-
-# The retained selector is the producer's object, so this path requires it. Its
-# member names must be distinct: a duplicate key would make the derived kind
-# ambiguous, and the retained decode path has no SQL duplicate check behind it.
-def distinct_keys(members: J.Json) -> Bool:
-  match members:
-    case J.Jpair{+key, +value, +rest}: Bool.pick(Bool, key_absent(key, rest), distinct_keys(rest), False{})
-    case J.Jnil{}: True{}
-    case J.Jnull{}: True{}
-    case J.Jtrue{}: True{}
-    case J.Jfalse{}: True{}
-    case J.Jint{+value}: True{}
-    case J.Jstr{+value}: True{}
-    case J.Jarr{+head, +tail}: True{}
-    case J.Jobj{+members}: True{}
-
-def key_absent(key: String, rest: J.Json) -> Bool:
-  match rest:
-    case J.Jpair{+other, +value, +tail}: Bool.pick(Bool, String.eq(key, other), False{}, key_absent(key, tail))
-    case J.Jnil{}: True{}
-    case J.Jnull{}: True{}
-    case J.Jtrue{}: True{}
-    case J.Jfalse{}: True{}
-    case J.Jint{+value}: True{}
-    case J.Jstr{+value}: True{}
-    case J.Jarr{+head, +tail}: True{}
-    case J.Jobj{+members}: True{}
-
-def subject_object_ok(+members: J.Json) -> Bool:
-  Bool.pick(Bool, distinct_keys(members), known_kind(Req.member_lookup("kind", members)), False{})
-
-
-def known_kind(m: Maybe<&2, J.Json>) -> Bool:
-  match m:
-    case None{}: False{}
-    case Some{value}: kind_value_ok(value)
-
-def kind_present(m: Maybe<&2, Context.SubjectKind>) -> Bool:
-  match m:
-    case Some{+kind}: True{}
-    case None{}: False{}
-
-def kind_value_ok(+v: J.Json) -> Bool:
-  match v:
-    case J.Jstr{value}: Bool.pick(Bool, String.is_empty(value), False{}, kind_present(Context.subject_kind_of(value)))
-    case J.Jnull{}: False{}
-    case J.Jtrue{}: False{}
-    case J.Jfalse{}: False{}
-    case J.Jint{+value}: False{}
-    case J.Jarr{+head, +tail}: False{}
-    case J.Jobj{+members}: False{}
-    case J.Jnil{}: False{}
-
-def subject_kind_of_members(+members: J.Json) -> String:
-  subject_kind_value(or_json_nil(Req.member_lookup("subject", members)))
-
-def subject_kind_value(+v: J.Json) -> String:
-  match v:
-    case J.Jstr{value}: value
-    case J.Jobj{members}: obj_kind_of(Req.member_lookup("kind", members))
-    case J.Jnull{}: SNil{}
-    case J.Jtrue{}: SNil{}
-    case J.Jfalse{}: SNil{}
-    case J.Jint{+value}: SNil{}
-    case J.Jarr{+head, +tail}: SNil{}
-    case J.Jnil{}: SNil{}
-
-def obj_kind_of(m: Maybe<&2, J.Json>) -> String:
-  match m:
-    case None{}: SNil{}
-    case Some{value}: Req.text_of(value)
-
-def subject_text_of_members(+members: J.Json) -> String:
-  J.json_text(or_json_nil(Req.member_lookup("subject", members)))
-
-def ref_values_ok(+members: J.Json) -> Bool:
-  Bool.pick(Bool, field_nonempty(members, "id"),
-    Bool.pick(Bool, field_nonempty(members, "engine"),
-      Bool.pick(Bool, subject_selector_ok(members),
-        Bool.pick(Bool, field_nonempty(members, "snapshotId"), field_array(members, "projections"), False{}),
-        False{}), False{}), False{})
-
-def ref_members(+members: J.Json) -> RefDecode:
-  Bool.pick(RefDecode, ref_values_ok(members),
-    RdRef{field_text(members, "id"), field_text(members, "engine"), subject_kind_of_members(members), subject_text_of_members(members), field_text(members, "snapshotId"), proj_of(or_json_nil(Req.member_lookup("projections", members)))},
-    RdBad{"invalidRefField"})
-
-def ref_object(+members: J.Json) -> RefDecode:
-  Bool.pick(RefDecode, ref_required(members), ref_members(members), RdBad{"missingRefField"})
-
-def ref_fields(+members: J.Json) -> RefDecode:
-  Bool.pick(RefDecode, ref_closed(members), ref_object(members), RdBad{"unknownRefField"})
-
-def ref_decode(+j: J.Json) -> RefDecode:
-  ref_kind(Req.is_jobj(j), j)
-
-def ref_kind(ok: Bool, +j: J.Json) -> RefDecode:
-  Bool.pick(RefDecode, ok, ref_fields(Ops.obj_members(j)), RdBad{"refNotObject"})
-
-def ref_id_of(d: RefDecode) -> String:
-  match d:
-    case RdNone{}: SNil{}
-    case RdRef{id, +engine, +subject_kind, +subject_text, +snapshot_id, +projections}: id
-    case RdBad{condition}: SNil{}
-
-def ref_condition(d: RefDecode) -> String:
-  match d:
-    case RdNone{}: "noReference"
-    case RdRef{+id, +engine, +subject_kind, +subject_text, +snapshot_id, +projections}: SNil{}
-    case RdBad{condition}: condition
-
-# The retained projection chain leaves the decode so core can compose it into
-# `Refs.Ref`. It comes from the stored record, never from the request.
-def ref_projections_of(d: RefDecode) -> Proj:
-  match d:
-    case RdNone{}: Pnone{}
-    case RdRef{+id, +engine, +subject_kind, +subject_text, +snapshot_id, projections}: projections
-    case RdBad{condition}: Pnone{}
-
-def ref_object_of(members: J.Json) -> J.Json:
-  J.Jobj{members}
-
-def ref_members_base(id: String, subject: J.Json, projections: J.Json) -> J.Json:
-  J.Jpair{"id", J.Jstr{id},
-  J.Jpair{"engine", J.Jstr{"typescript"},
-  J.Jpair{"subject", subject,
-  J.Jpair{"snapshotId", J.Jstr{"s1"},
-  J.Jpair{"projections", projections, J.Jnil{}}}}}}
-
-def ref_members_extra(id: String, projections: J.Json) -> J.Json:
-  J.Jpair{"id", J.Jstr{id},
-  J.Jpair{"engine", J.Jstr{"typescript"},
-  J.Jpair{"subject", cobj1("kind", J.Jstr{"symbol"}),
-  J.Jpair{"snapshotId", J.Jstr{"s1"},
-  J.Jpair{"projections", projections, J.Jpair{"extra", J.Jstr{"x"}, J.Jnil{}}}}}}}
-
 law codec_law_a_retained_reference_decodes_its_fields:
   {ref_id_of(ref_decode(ref_object_of(ref_members_base("[\"source\",\"/a.ts\"]", cobj1("kind", J.Jstr{"symbol"}), J.Jarr{J.Jstr{"definition"}, J.Jnil{}})))) == "[\"source\",\"/a.ts\"]" : String}
 
@@ -1042,451 +1892,6 @@ def codec_law_a_reference_requires_a_string_projection_list():
 # `_meta` value. A number keeps its document token, so the metadata profile and
 # the frame id are decided on the token rather than on a converted value.
 
-type RawOpt is Data:
-  ROnone{}
-  ROsome{value: RawValue}
-
-type RawFrame is Data:
-  RFRoot{root: RawOpt}
-  RFObj{id: String, key: String, members: RawValue, up: RawFrame}
-  RFArr{id: String, key: String, items: RawValue, up: RawFrame}
-  RFBad{condition: String}
-
-type FrameRead is Data:
-  FrValue{value: RawValue}
-  FrRefused{condition: String}
-
-type EnvelopeRead is Data:
-  ErEnvelope{envelope: Envelope, meta: MetaInput}
-  ErRefused{condition: String}
-
-type FrameDecision is Data:
-  FdOk{tool: Context.CodecTool, id: Context.FrameId, query: Context.OptText, request: Context.OptText}
-  FdRefused{class: Context.RefusalClass, condition: String}
-
-def row_id(r: Req.Row) -> String:
-  match r:
-    case Req.Row{id, +parent, +kind, +key, +value}: id
-
-def row_parent(r: Req.Row) -> String:
-  match r:
-    case Req.Row{+id, parent, +kind, +key, +value}: parent
-
-def row_kind(r: Req.Row) -> String:
-  match r:
-    case Req.Row{+id, +parent, kind, +key, +value}: kind
-
-def row_key(r: Req.Row) -> String:
-  match r:
-    case Req.Row{+id, +parent, +kind, key, +value}: key
-
-def row_value(r: Req.Row) -> String:
-  match r:
-    case Req.Row{+id, +parent, +kind, +key, value}: value
-
-# `Context.json_tree_sql` emits all five columns as hex and `Context.parse_rows`
-# keeps them verbatim, so every transport field is decoded here exactly once. A
-# scalar decoder failure keeps its own reason; the empty string is never used to
-# turn an invalid field into a valid one.
-
-type FieldText is Data:
-  FtText{value: String}
-  FtBad{condition: String}
-
-type DecodedRow is Data:
-  DRow{id: String, parent: String, kind: String, key: String, value: String, bad: String}
-
-def ft_text(f: FieldText) -> String:
-  match f:
-    case FtText{value}: value
-    case FtBad{+condition}: SNil{}
-
-def ft_bad(f: FieldText) -> String:
-  match f:
-    case FtText{+value}: SNil{}
-    case FtBad{condition}: condition
-
-def text_field_scalar(+scalar: Req.Scalar) -> FieldText:
-  match scalar:
-    case Req.ScalarText{value}: FtText{value}
-    case Req.ScalarBadUtf8{}: FtBad{"invalidUtf8Field"}
-    case Req.ScalarSurrogate{}: FtBad{"surrogateField"}
-    case Req.ScalarNul{}: FtBad{"nulInField"}
-
-def text_field_checked(ok: Bool, +hex: String) -> FieldText:
-  Bool.pick(FieldText, ok, text_field_scalar(Req.Context.decode_scalar_utf8(Tx.hex_decode(hex))), FtBad{"malformedHexField"})
-
-def text_field(+hex: String) -> FieldText:
-  text_field_checked(Req.hex_ok(hex), hex)
-
-def merge_bad(a: String, +b: String) -> String:
-  Bool.pick(String, String.is_empty(a), b, a)
-
-def build_row(i: FieldText, p: FieldText, k: FieldText, key: FieldText, v: FieldText) -> DecodedRow:
-  DRow{ft_text(i), ft_text(p), ft_text(k), ft_text(key), ft_text(v),
-       merge_bad(merge_bad(merge_bad(merge_bad(ft_bad(i), ft_bad(p)), ft_bad(k)), ft_bad(key)), ft_bad(v))}
-
-# `row_id`, `row_parent`, `row_kind`, `row_key` and `row_value` read the transport
-# field verbatim, which is hex; only `decode_row` interprets them.
-def decode_row(+row: Req.Row) -> DecodedRow:
-  build_row(text_field(row_id(row)), text_field(row_parent(row)), text_field(row_kind(row)),
-            text_field(row_key(row)), text_field(row_value(row)))
-
-def dr_id(r: DecodedRow) -> String:
-  match r:
-    case DRow{id, +parent, +kind, +key, +value, +bad}: id
-
-def dr_parent(r: DecodedRow) -> String:
-  match r:
-    case DRow{+id, parent, +kind, +key, +value, +bad}: parent
-
-def dr_kind(r: DecodedRow) -> String:
-  match r:
-    case DRow{+id, +parent, kind, +key, +value, +bad}: kind
-
-def dr_key(r: DecodedRow) -> String:
-  match r:
-    case DRow{+id, +parent, +kind, key, +value, +bad}: key
-
-def dr_value(r: DecodedRow) -> String:
-  match r:
-    case DRow{+id, +parent, +kind, +key, value, +bad}: value
-
-def dr_bad(r: DecodedRow) -> String:
-  match r:
-    case DRow{+id, +parent, +kind, +key, +value, bad}: bad
-
-def rf_id(+f: RawFrame) -> String:
-  match f:
-    case RFRoot{+root}: SNil{}
-    case RFObj{id, +key, +members, +up}: id
-    case RFArr{id, +key, +items, +up}: id
-    case RFBad{+condition}: "\u{1}"
-
-def raw_or_null(m: Maybe<&2, RawValue>) -> RawValue:
-  match m:
-    case None{}: Rnull{}
-    case Some{value}: value
-
-def raw_attach(+up: RawFrame, key: String, value: RawValue) -> RawFrame:
-  match up:
-    case RFRoot{+root}: RFRoot{ROsome{value}}
-    case RFObj{id, pkey, members, up2}: RFObj{id, pkey, Rpair{key, value, members}, up2}
-    case RFArr{id, pkey, items, up2}: RFArr{id, pkey, Rarr{value, items}, up2}
-    case RFBad{condition}: RFBad{condition}
-
-def rev_items(a: RawValue, acc: RawValue) -> RawValue:
-  match a:
-    case Rarr{+head, +tail}: rev_items(tail, Rarr{head, acc})
-    case other: acc
-
-def close_items(items: RawValue) -> RawValue:
-  match items:
-    case Rarr{+head, +tail}: rev_items(items, Rnil{})
-    case other: Rnil{}
-
-# Each completed container is attached into its parent while unwinding, so a nested
-# object followed by a sibling field keeps its contents. Elements attach in arrival
-# order and the close reverses the accumulator, so array order is restored; the
-# object member chain is not re-sorted, and the consumers here (member lookup and
-# the scalar progress token) do not read member order. Canonical text is produced
-# by the shared encoder, which normalizes member order itself.
-def raw_unwind(+f: RawFrame, pid: String) -> RawFrame:
-  match f:
-    case RFRoot{+root}: RFRoot{root}
-    case RFObj{+id, +key, +members, up}:
-      Bool.pick(RawFrame, String.eq(id, pid), RFObj{id, key, members, up},
-        raw_attach(raw_unwind(up, pid), key, Robj{members}))
-    case RFArr{+id, +key, +items, up}:
-      Bool.pick(RawFrame, String.eq(id, pid), RFArr{id, key, items, up},
-        raw_attach(raw_unwind(up, pid), key, Rarr{close_items(items)}))
-    case RFBad{+condition}: RFBad{condition}
-
-def raw_finish(+f: RawFrame) -> RawFrame:
-  match f:
-    case RFRoot{+root}: RFRoot{root}
-    case RFObj{+id, key, members, up}: raw_finish(raw_attach(up, key, Robj{members}))
-    case RFArr{+id, key, items, up}: raw_finish(raw_attach(up, key, Rarr{close_items(items)}))
-    case RFBad{+condition}: RFBad{condition}
-
-def raw_hex_number(+stack: RawFrame, +d: DecodedRow) -> RawFrame:
-  raw_attach(stack, dr_key(d), Rnum{dr_value(d)})
-
-def raw_hex_text(+stack: RawFrame, +d: DecodedRow) -> RawFrame:
-  raw_attach(stack, dr_key(d), Rstr{dr_value(d)})
-
-def raw_kind(+kind: String, +stack: RawFrame, +d: DecodedRow) -> RawFrame:
-  match kind:
-    case "object": RFObj{dr_id(d), dr_key(d), Rnil{}, stack}
-    case "array": RFArr{dr_id(d), dr_key(d), Rnil{}, stack}
-    case "null": raw_attach(stack, dr_key(d), Rnull{})
-    case "true": raw_attach(stack, dr_key(d), Rtrue{})
-    case "false": raw_attach(stack, dr_key(d), Rfalse{})
-    case "integer": raw_hex_number(stack, d)
-    case "real": raw_hex_number(stack, d)
-    case "text": raw_hex_text(stack, d)
-    case other: RFBad{"malformedRowKind"}
-
-def raw_place_decoded(+stack: RawFrame, +d: DecodedRow) -> RawFrame:
-  Bool.pick(RawFrame, String.eq(rf_id(stack), dr_parent(d)), raw_kind(dr_kind(d), stack, d), RFBad{"missingParentRow"})
-
-def raw_place(+frame: RawFrame, +d: DecodedRow) -> RawFrame:
-  Bool.pick(RawFrame, String.is_empty(dr_bad(d)), raw_place_decoded(raw_unwind(frame, dr_parent(d)), d), RFBad{dr_bad(d)})
-
-def raw_step(+frame: RawFrame, +row: Req.Row) -> RawFrame:
-  match frame:
-    case RFBad{+condition}: RFBad{condition}
-    case other_frame: raw_place(other_frame, decode_row(row))
-
-def raw_fold(rows: Req.Rows, frame: RawFrame) -> RawFrame:
-  match rows:
-    case Req.Rnone{}: raw_finish(frame)
-    case Req.Rcons{+head, +tail}: raw_fold(tail, raw_step(frame, head))
-
-def frame_root(root: RawOpt) -> FrameRead:
-  match root:
-    case ROnone{}: FrRefused{"emptyFrame"}
-    case ROsome{value}: FrValue{value}
-
-def frame_of(+f: RawFrame) -> FrameRead:
-  match f:
-    case RFRoot{root}: frame_root(root)
-    case RFBad{condition}: FrRefused{condition}
-    case RFObj{+id, +key, +members, +up}: FrRefused{"missingParentRow"}
-    case RFArr{+id, +key, +items, +up}: FrRefused{"missingParentRow"}
-
-def frame_read(rows: Req.Rows) -> FrameRead:
-  frame_of(raw_fold(rows, RFRoot{ROnone{}}))
-
-# --- extraction ------------------------------------------------------------
-
-def raw_members_of(+v: RawValue) -> RawValue:
-  match v:
-    case Robj{members}: members
-    case Rnull{}: Rnil{}
-    case Rtrue{}: Rnil{}
-    case Rfalse{}: Rnil{}
-    case Rnum{+token}: Rnil{}
-    case Rstr{+value}: Rnil{}
-    case Rarr{+head, +tail}: Rnil{}
-    case Rpair{+key, +value, +rest}: Rnil{}
-    case Rnil{}: Rnil{}
-
-def raw_text_of(+v: RawValue) -> String:
-  match v:
-    case Rstr{value}: value
-    case Rnull{}: SNil{}
-    case Rtrue{}: SNil{}
-    case Rfalse{}: SNil{}
-    case Rnum{+token}: SNil{}
-    case Rarr{+head, +tail}: SNil{}
-    case Robj{+members}: SNil{}
-    case Rpair{+key, +value, +rest}: SNil{}
-    case Rnil{}: SNil{}
-
-def raw_field(+v: RawValue, key: String) -> Maybe<&2, RawValue>:
-  raw_member(key, raw_members_of(v))
-
-def raw_field_text(+v: RawValue, key: String) -> String:
-  raw_text_of(raw_or_null(raw_field(v, key)))
-
-def raw_keys_ok(allowed: Req.Words, members: RawValue) -> Bool:
-  match members:
-    case Rpair{+key, +value, +tail}: Bool.pick(Bool, Req.word_member(allowed, key), raw_keys_ok(allowed, tail), False{})
-    case other: True{}
-
-def present_raw(m: Maybe<&2, RawValue>) -> Bool:
-  match m:
-    case None{}: False{}
-    case Some{+value}: True{}
-
-def raw_member_present(key: String, members: RawValue) -> Bool:
-  present_raw(raw_member(key, members))
-
-def root_words() -> Req.Words:
-  Req.words_from(["jsonrpc", "id", "method", "params"])
-
-def params_words() -> Req.Words:
-  Req.words_from(["name", "arguments", "_meta"])
-
-def arguments_words(+tool: String) -> Req.Words:
-  match tool:
-    case "context-query": Req.words_from(["query", "request"])
-    case "context-result": Req.words_from(["query"])
-    case other: Req.words_from(Nil{})
-
-def arguments_required(+tool: String, members: RawValue) -> Bool:
-  match tool:
-    case "context-query": Bool.pick(Bool, raw_member_present("query", members), raw_member_present("request", members), False{})
-    case "context-result": raw_member_present("query", members)
-    case other: True{}
-
-def arguments_closed_for(+tool: String, members: RawValue) -> Bool:
-  Bool.pick(Bool, raw_keys_ok(arguments_words(tool), members), arguments_required(tool, members), False{})
-
-# --- the request container conversion --------------------------------------
-
-type JsonConv is Data:
-  JcJson{value: J.Json}
-  JcRefused{condition: String}
-
-# The conversion is one structurally self-recursive walk over the private tree,
-# like `json/canonical.bend`'s emitter: every recursive call passes a strict subterm
-# as its first argument and the mode disambiguates a member cell, an array cell and
-# a complete value. The result-combining steps are declared before it and never
-# recurse, so there is no mutual recursion. A number is converted by the qualified
-# U32 decoder over its exact token, and the first refusal in document order wins.
-
-type ConvMode is Data:
-  CmValue{}
-  CmArray{}
-  CmObject{}
-
-def cv_ok(c: JsonConv) -> Bool:
-  match c:
-    case JcJson{+value}: True{}
-    case JcRefused{+condition}: False{}
-
-def cv_json(c: JsonConv) -> J.Json:
-  match c:
-    case JcJson{value}: value
-    case JcRefused{+condition}: J.Jnull{}
-
-def cv_bad(c: JsonConv) -> String:
-  match c:
-    case JcJson{+value}: SNil{}
-    case JcRefused{condition}: condition
-
-def uint_conv(r: Uint.UintResult) -> JsonConv:
-  match r:
-    case Uint.UintAccepted{value}: JcJson{J.Jint{value}}
-    case Uint.UintRefused{+reason}: JcRefused{"nonU32NumberInRequest"}
-
-def number_conv(+token: String) -> JsonConv:
-  uint_conv(Uint.finish(Uint.feed(token, Uint.UintStart{})))
-
-def is_object_mode(mode: ConvMode) -> Bool:
-  match mode:
-    case CmObject{}: True{}
-    case CmValue{}: False{}
-    case CmArray{}: False{}
-
-def arr_rest(rest: JsonConv, +head: J.Json) -> JsonConv:
-  Bool.pick(JsonConv, cv_ok(rest), JcJson{J.Jarr{head, cv_json(rest)}}, JcRefused{cv_bad(rest)})
-
-def arr_step(c: JsonConv, rest: JsonConv, mode: ConvMode) -> JsonConv:
-  Bool.pick(JsonConv, cv_ok(c), arr_mode(rest, cv_json(c), mode), JcRefused{cv_bad(c)})
-
-def arr_mode(rest: JsonConv, +head: J.Json, mode: ConvMode) -> JsonConv:
-  Bool.pick(JsonConv, is_object_mode(mode), JcRefused{"unexpectedArrayCell"}, arr_rest(rest, head))
-
-def obj_step(c: JsonConv, mode: ConvMode) -> JsonConv:
-  Bool.pick(JsonConv, cv_ok(c), obj_mode(cv_json(c), mode), JcRefused{cv_bad(c)})
-
-def obj_mode(members: J.Json, mode: ConvMode) -> JsonConv:
-  Bool.pick(JsonConv, is_object_mode(mode), JcRefused{"unexpectedObject"}, JcJson{J.Jobj{members}})
-
-def pair_rest(rest: JsonConv, +key: String, +value: J.Json) -> JsonConv:
-  Bool.pick(JsonConv, cv_ok(rest), JcJson{J.Jpair{key, value, cv_json(rest)}}, JcRefused{cv_bad(rest)})
-
-def pair_step(c: JsonConv, rest: JsonConv, key: String, mode: ConvMode) -> JsonConv:
-  Bool.pick(JsonConv, cv_ok(c), pair_mode(rest, key, cv_json(c), mode), JcRefused{cv_bad(c)})
-
-def pair_mode(rest: JsonConv, +key: String, +value: J.Json, mode: ConvMode) -> JsonConv:
-  Bool.pick(JsonConv, is_object_mode(mode), pair_rest(rest, key, value), JcRefused{"unexpectedMemberCell"})
-
-def conv(+v: RawValue, +mode: ConvMode) -> JsonConv:
-  match v:
-    case Rnull{}: JcJson{J.Jnull{}}
-    case Rtrue{}: JcJson{J.Jtrue{}}
-    case Rfalse{}: JcJson{J.Jfalse{}}
-    case Rnum{token}: number_conv(token)
-    case Rstr{value}: JcJson{J.Jstr{value}}
-    case Rarr{+head, +tail}: arr_step(conv(head, CmValue{}), conv(tail, CmArray{}), mode)
-    case Robj{members}: obj_step(conv(members, CmObject{}), mode)
-    case Rpair{+key, +value, +rest}: pair_step(conv(value, CmValue{}), conv(rest, CmObject{}), key, mode)
-    case Rnil{}: JcJson{J.Jnil{}}
-
-def raw_to_json(+v: RawValue) -> JsonConv:
-  conv(v, CmValue{})
-
-def opt_text_of(m: Maybe<&2, RawValue>) -> Context.OptText:
-  match m:
-    case None{}: Context.Absent{}
-    case Some{value}: Context.Present{raw_text_of(value)}
-
-def frame_id_of(+v: RawValue) -> Context.FrameId:
-  match v:
-    case Rstr{value}: Context.IdText{value}
-    case Rnum{token}: Context.IdNumber{token}
-    case Rnull{}: Context.IdNumber{SNil{}}
-    case Rtrue{}: Context.IdNumber{SNil{}}
-    case Rfalse{}: Context.IdNumber{SNil{}}
-    case Rarr{+head, +tail}: Context.IdNumber{SNil{}}
-    case Robj{+members}: Context.IdNumber{SNil{}}
-    case Rpair{+key, +value, +rest}: Context.IdNumber{SNil{}}
-    case Rnil{}: Context.IdNumber{SNil{}}
-
-def params_of(+frame: RawValue) -> RawValue:
-  raw_or_null(raw_field(frame, "params"))
-
-def arguments_of(+frame: RawValue) -> RawValue:
-  raw_or_null(raw_field(params_of(frame), "arguments"))
-
-def meta_input(m: Maybe<&2, RawValue>) -> MetaInput:
-  match m:
-    case None{}: MetaAbsent{}
-    case Some{value}: MetaPresent{value}
-
-def meta_of(+frame: RawValue) -> MetaInput:
-  meta_input(raw_field(params_of(frame), "_meta"))
-
-def envelope_fields(+frame: RawValue) -> Envelope:
-  EnvFrame{raw_field_text(frame, "jsonrpc"), raw_field_text(frame, "method"),
-           raw_field_text(params_of(frame), "name"), frame_id_of(raw_or_null(raw_field(frame, "id"))),
-           opt_text_of(raw_field(arguments_of(frame), "query")),
-           request_field(raw_field(arguments_of(frame), "request")),
-           raw_keys_ok(root_words(), raw_members_of(frame)),
-           raw_keys_ok(params_words(), raw_members_of(params_of(frame))),
-           arguments_closed_for(raw_field_text(params_of(frame), "name"), raw_members_of(arguments_of(frame)))}
-
-def envelope_read(+r: FrameRead) -> EnvelopeRead:
-  match r:
-    case FrValue{+value}: ErEnvelope{envelope_fields(value), meta_of(value)}
-    case FrRefused{condition}: ErRefused{condition}
-
-def frame_envelope(rows: Req.Rows) -> EnvelopeRead:
-  envelope_read(frame_read(rows))
-
-# --- the frame decision ----------------------------------------------------
-
-def meta_accepted(v: MetaVerdict) -> Bool:
-  match v:
-    case MetaOk{}: True{}
-    case MetaNotObject{}: False{}
-    case MetaBadProgressToken{}: False{}
-
-def frame_meta_verdict(tool: Context.CodecTool, id: Context.FrameId, query: Context.OptText, request: Context.OptText, +m: MetaVerdict) -> FrameDecision:
-  Bool.pick(FrameDecision, meta_accepted(m), FdOk{tool, id, query, request}, FdRefused{Context.RfValidation{}, meta_text(m)})
-
-def frame_envelope_then_meta(v: EnvelopeVerdict, +m: MetaVerdict) -> FrameDecision:
-  match v:
-    case EnvAccepted{tool, id, query, request}: frame_meta_verdict(tool, id, query, request, m)
-    case EnvRefused{condition}: FdRefused{Context.RfValidation{}, condition}
-
-# The envelope is decided first, then the metadata profile. Only an accepted frame
-# with accepted metadata reaches `FdOk`, so metadata is discarded after successful
-# validation and never carried into the decision.
-def frame_envelope_decision(+env: Envelope, +m: MetaVerdict) -> FrameDecision:
-  frame_envelope_then_meta(envelope_decide(env), m)
-
-def frame_decision(+r: EnvelopeRead) -> FrameDecision:
-  match r:
-    case ErEnvelope{envelope, meta}: frame_envelope_decision(envelope, metadata_admit(meta))
-    case ErRefused{condition}: FdRefused{Context.RfValidation{}, condition}
-
-# --- laws ------------------------------------------------------------------
-
 law codec_law_a_text_frame_id_stays_a_string:
   {frame_id_of(Rstr{"7"}) == Context.IdText{"7"} : Context.FrameId}
 
@@ -1516,128 +1921,6 @@ law codec_law_a_malformed_kind_is_refused:
 
 def codec_law_a_malformed_kind_is_refused():
   {==}
-
-def row_sample() -> Req.Row:
-  Req.Row{"1", "0", "text", "6a736f6e727063", "322e30"}
-
-def row_hex(text: String) -> String:
-  J.utf8_hex(J.utf8(text))
-
-def text_row(id: String, parent: String, key: String, value: String) -> Req.Row:
-  Req.Row{id, parent, "text", row_hex(key), row_hex(value)}
-
-def object_row(id: String, parent: String, key: String) -> Req.Row:
-  Req.Row{id, parent, "object", row_hex(key), SNil{}}
-
-def number_row(id: String, parent: String, key: String, token: String) -> Req.Row:
-  Req.Row{id, parent, "integer", row_hex(key), row_hex(token)}
-
-# One row per transport line, so a frame's shape is readable and its close count is
-# not hand-written.
-def rows_of(rows: List<Req.Row>) -> Req.Rows:
-  match rows:
-    case Nil{}: Req.Rnone{}
-    case head <> tail: Req.Rcons{head, rows_of(tail)}
-
-
-def engine_frame_rows() -> Req.Rows:
-  rows_of([
-    object_row("0", SNil{}, SNil{}),
-    text_row("1", "0", "jsonrpc", "2.0"),
-    text_row("2", "0", "method", "tools/call"),
-    number_row("3", "0", "id", "7"),
-    object_row("4", "0", "params"),
-    text_row("5", "4", "name", "context-engines"),
-    object_row("6", "4", "arguments")])
-
-def query_frame_rows() -> Req.Rows:
-  rows_of([
-    object_row("0", SNil{}, SNil{}),
-    text_row("1", "0", "jsonrpc", "2.0"),
-    text_row("2", "0", "method", "tools/call"),
-    number_row("3", "0", "id", "-1"),
-    object_row("4", "0", "params"),
-    text_row("5", "4", "name", "context-query"),
-    object_row("6", "4", "arguments"),
-    text_row("7", "6", "query", "q1"),
-    object_row("8", "6", "request"),
-    number_row("9", "8", "version", "1")])
-
-# ---------------------------------------------------------------------------
-# The retained reference composes into Core's own record and query types. The
-# `required` set of a query is the stored selector's projection chain, never the
-# request's, so a caller cannot widen its own permissions.
-
-def ss_of_proj(+p: Proj) -> Eng.SS:
-  match p:
-    case Pnone{}: Eng.ss_empty()
-    case Pcons{+head, +tail}: Eng.SSCons{head, ss_of_proj(tail)}
-
-def ref_engine_of(d: RefDecode) -> String:
-  match d:
-    case RdNone{}: SNil{}
-    case RdRef{+id, engine, +subject_kind, +subject_text, +snapshot_id, +projections}: engine
-    case RdBad{+condition}: SNil{}
-
-def ref_subject_of(d: RefDecode) -> String:
-  match d:
-    case RdNone{}: SNil{}
-    case RdRef{+id, +engine, subject_kind, +subject_text, +snapshot_id, +projections}: subject_kind
-    case RdBad{+condition}: SNil{}
-
-# The whole selector as retained evidence, so a full object selector is not lost
-# when only its kind is admitted on.
-def ref_subject_text_of(d: RefDecode) -> String:
-  match d:
-    case RdNone{}: SNil{}
-    case RdRef{+id, +engine, +subject_kind, subject_text, +snapshot_id, +projections}: subject_text
-    case RdBad{+condition}: SNil{}
-
-def ref_snapshot_of(d: RefDecode) -> String:
-  match d:
-    case RdNone{}: SNil{}
-    case RdRef{+id, +engine, +subject_kind, +subject_text, snapshot_id, +projections}: snapshot_id
-    case RdBad{+condition}: SNil{}
-
-def ref_record_of(d: RefDecode, policy: String) -> Refs.RefRecord:
-  Refs.Ref{ref_id_of(d), ref_engine_of(d), ref_subject_of(d), ref_subject_text_of(d), ref_snapshot_of(d), policy, ss_of_proj(ref_projections_of(d))}
-
-# The retained selector's operations are authenticated evidence carried beside the
-# record, because `RefRecord` does not hold them. Its effects come from Core, not
-# from a projection name, and a missing or unknown authority refuses rather than
-# being fabricated from the request.
-def ref_query_of(+record: Refs.RefRecord, current_policy: String, +operations: Eng.SS, requested: Eng.SS, applicability: Snap.Applies, granted: Eng.SS, fresh: String, known: Bool) -> Refs.RefQuery:
-  Refs.RQ{known, Refs.ref_subject_kind(record), Refs.ref_policy(record), current_policy,
-          Refs.ref_projections(record), requested, applicability, Eng.effects_union(operations), granted, fresh}
-
-# The stored policy must exist before it can equal the caller's authenticated one,
-# so an absent policy refuses as unestablished and is never filled with an invented
-# identity. Core owns both the comparison and that refusal.
-def ref_known(k: Eng.OpsKnown, +record: Refs.RefRecord, current_policy: String, +operations: Eng.SS, requested: Eng.SS, applicability: Snap.Applies, granted: Eng.SS, fresh: String, known: Bool) -> Refs.RefDecision:
-  match k:
-    case Eng.OkAllKnown{}: Refs.admit(ref_query_of(record, current_policy, operations, requested, applicability, granted, fresh, known))
-    case Eng.OkUnknown{+operation}: Refs.RUnverified{"retainedSelectorOperationUnknown"}
-
-def ref_gate(present: Bool, k: Eng.OpsKnown, +record: Refs.RefRecord, current_policy: String, +operations: Eng.SS, requested: Eng.SS, applicability: Snap.Applies, granted: Eng.SS, fresh: String, known: Bool) -> Refs.RefDecision:
-  Bool.pick(Refs.RefDecision, present,
-    ref_known(k, record, current_policy, operations, requested, applicability, granted, fresh, known),
-    Refs.RUnverified{"retainedSelectorOperationsUnavailable"})
-
-def ref_admit(+record: Refs.RefRecord, current_policy: String, +operations: Eng.SS, requested: Eng.SS, applicability: Snap.Applies, granted: Eng.SS, fresh: String, known: Bool) -> Refs.RefDecision:
-  ref_gate(Eng.ss_nonempty(operations), Eng.operations_known(operations), record, current_policy, operations, requested, applicability, granted, fresh, known)
-
-def frame_text(d: FrameDecision) -> String:
-  match d:
-    case FdOk{tool, id, query, request}: Context.codec_success_text(tool, id, query, request)
-    case FdRefused{cls, condition}: Context.refusal_class_name(cls) ++ ":" ++ condition
-
-def frame_refusal(r: FrameRead) -> String:
-  match r:
-    case FrValue{+value}: SNil{}
-    case FrRefused{condition}: condition
-
-def record_probe(subject: String, policy: String, +projections: Eng.SS) -> Refs.RefRecord:
-  Refs.Ref{"r1", "typescript", subject, subject, "s1", policy, projections}
 
 law codec_law_a_retained_record_composes_into_core:
   {Refs.ref_id(record_probe("symbol", "p1", Eng.ss_one("definition"))) == "r1" : String}
@@ -1727,6 +2010,12 @@ law codec_law_a_bad_progress_token_after_a_nested_object_refuses:
 def codec_law_a_bad_progress_token_after_a_nested_object_refuses():
   {==}
 
+law codec_law_an_envelope_refusal_wins_over_a_metadata_defect:
+  {frame_text(frame_decision(frame_envelope(bad_jsonrpc_meta_rows()))) == "validationRefusal:invalidJsonrpc" : String}
+
+def codec_law_an_envelope_refusal_wins_over_a_metadata_defect():
+  {==}
+
 law codec_law_a_transported_missing_parent_refuses:
   {frame_refusal(frame_read(broken_frame_rows())) == "missingParentRow" : String}
 
@@ -1744,93 +2033,6 @@ law codec_law_a_transported_invalid_utf8_field_refuses:
 
 def codec_law_a_transported_invalid_utf8_field_refuses():
   {==}
-
-def real_row(id: String, parent: String, key: String, token: String) -> Req.Row:
-  Req.Row{id, parent, "real", row_hex(key), row_hex(token)}
-
-def null_row(id: String, parent: String, key: String) -> Req.Row:
-  Req.Row{id, parent, "null", row_hex(key), SNil{}}
-
-def meta_frame_rows(kind: String, token: String) -> Req.Rows:
-  rows_of([
-    object_row("0", SNil{}, SNil{}),
-    text_row("1", "0", "jsonrpc", "2.0"),
-    text_row("2", "0", "method", "tools/call"),
-    number_row("3", "0", "id", "7"),
-    object_row("4", "0", "params"),
-    text_row("5", "4", "name", "context-result"),
-    object_row("6", "4", "arguments"),
-    text_row("7", "6", "query", "q1"),
-    object_row("8", "4", "_meta"),
-    meta_token_row("9", "8", kind, token)])
-
-def meta_token_row(id: String, parent: String, kind: String, token: String) -> Req.Row:
-  Bool.pick(Req.Row, String.eq(kind, "null"), null_row(id, parent, "progressToken"), real_row(id, parent, "progressToken", token))
-
-# A frame with two defects at once: a refused envelope and a refused metadata
-# value. The envelope refusal must win.
-law codec_law_an_envelope_refusal_wins_over_a_metadata_defect:
-  {frame_text(frame_decision(frame_envelope(bad_jsonrpc_meta_rows()))) == "validationRefusal:invalidJsonrpc" : String}
-
-def codec_law_an_envelope_refusal_wins_over_a_metadata_defect():
-  {==}
-
-def bad_jsonrpc_meta_rows() -> Req.Rows:
-  rows_of([
-    object_row("0", SNil{}, SNil{}),
-    text_row("1", "0", "jsonrpc", "1.0"),
-    text_row("2", "0", "method", "tools/call"),
-    number_row("3", "0", "id", "7"),
-    object_row("4", "0", "params"),
-    text_row("5", "4", "name", "context-result"),
-    object_row("6", "4", "arguments"),
-    text_row("7", "6", "query", "q1"),
-    object_row("8", "4", "_meta"),
-    null_row("9", "8", "progressToken")])
-
-def broken_frame_rows() -> Req.Rows:
-  rows_of([
-    object_row("0", SNil{}, SNil{}),
-    text_row("1", "0", "jsonrpc", "2.0"),
-    text_row("2", "9", "method", "tools/call")])
-
-def bad_field_rows() -> Req.Rows:
-  rows_of([
-    object_row("0", SNil{}, SNil{}),
-    Req.Row{"1", "0", row_hex("text"), "7z", row_hex("v")}])
-
-def bad_utf8_rows() -> Req.Rows:
-  rows_of([
-    object_row("0", SNil{}, SNil{}),
-    Req.Row{"1", "0", row_hex("text"), row_hex("k"), "ff"}])
-
-# A reference that came through the actual decoder composes into Core, and the
-# composed admission is exercised on that decoded record rather than on a
-# hand-built one.
-def decoded_record(id: String, subject: J.Json, policy: String, +projections: J.Json) -> Refs.RefRecord:
-  ref_record_of(ref_decode(ref_object_of(ref_members_base(id, subject, projections))), policy)
-
-def ref_members_subject(id: String, subject: J.Json, +projections: J.Json) -> J.Json:
-  J.Jpair{"id", J.Jstr{id},
-  J.Jpair{"engine", J.Jstr{"typescript"},
-  J.Jpair{"subject", subject,
-  J.Jpair{"snapshotId", J.Jstr{"s1"},
-  J.Jpair{"projections", projections, J.Jnil{}}}}}}
-
-def ref_members_object_subject(id: String, +projections: J.Json) -> J.Json:
-  ref_members_subject(id, cobj2("kind", J.Jstr{"entity"}, "name", J.Jstr{"t"}), projections)
-
-def ref_members_string_subject(id: String, +projections: J.Json) -> J.Json:
-  ref_members_subject(id, J.Jstr{"symbol"}, projections)
-
-def ref_members_duplicate_subject(id: String, +projections: J.Json) -> J.Json:
-  ref_members_subject(id, cobj2("kind", J.Jstr{"entity"}, "kind", J.Jstr{"symbol"}), projections)
-
-def ref_members_kindless_subject(id: String, +projections: J.Json) -> J.Json:
-  ref_members_subject(id, cobj1("name", J.Jstr{"t"}), projections)
-
-def ref_members_mystery_subject(id: String, +projections: J.Json) -> J.Json:
-  ref_members_subject(id, cobj1("kind", J.Jstr{"mystery"}), projections)
 
 law codec_law_an_object_subject_selector_decodes_its_kind:
   {ref_subject_of(ref_decode(ref_object_of(ref_members_object_subject("r9", J.Jarr{J.Jstr{"definition"}, J.Jnil{}})))) == "entity" : String}
@@ -1896,19 +2098,6 @@ def codec_law_a_kind_outside_core_support_is_refused_by_admission():
 
 
 
-def ref_members_nosubject(+projections: J.Json) -> J.Json:
-  J.Jpair{"id", J.Jstr{"r9"},
-  J.Jpair{"engine", J.Jstr{"typescript"},
-  J.Jpair{"snapshotId", J.Jstr{"s1"},
-  J.Jpair{"projections", projections, J.Jnil{}}}}}
-
-def ref_members_wrong_engine(+projections: J.Json) -> J.Json:
-  J.Jpair{"id", J.Jstr{"r9"},
-  J.Jpair{"engine", J.Jint{1},
-  J.Jpair{"subject", J.Jstr{"symbol"},
-  J.Jpair{"snapshotId", J.Jstr{"s1"},
-  J.Jpair{"projections", projections, J.Jnil{}}}}}}
-
 law codec_law_a_decoded_reference_with_an_absent_field_refuses:
   {ref_condition(ref_decode(ref_object_of(ref_members_nosubject(J.Jarr{J.Jstr{"definition"}, J.Jnil{}})))) == "missingRefField" : String}
 
@@ -1935,46 +2124,10 @@ law codec_law_a_model_ref_chain_starts_with_its_retained_load:
 def codec_law_a_model_ref_chain_starts_with_its_retained_load():
   {==}
 
-law codec_law_a_nested_object_request_round_trips_through_the_converter:
-  {frame_text(frame_decision(frame_envelope(nested_request_rows()))) == "{\"id\":7,\"query\":\"q1\",\"requestCanonical\":\"{\\\"a\\\":[1,2],\\\"b\\\":{\\\"c\\\":null},\\\"s\\\":\\\"x\\\"}\",\"tool\":\"context-query\",\"version\":1}" : String}
-
-def codec_law_a_nested_object_request_round_trips_through_the_converter():
-  {==}
-
-law codec_law_an_empty_object_request_round_trips_through_the_converter:
-  {frame_text(frame_decision(frame_envelope(empty_request_rows()))) == "{\"id\":7,\"query\":\"q1\",\"requestCanonical\":\"{}\",\"tool\":\"context-query\",\"version\":1}" : String}
-
-def codec_law_an_empty_object_request_round_trips_through_the_converter():
-  {==}
-
 law codec_law_a_valid_object_request_frame_is_accepted:
   {frame_text(frame_decision(frame_envelope(query_frame_rows()))) == "{\"id\":-1,\"query\":\"q1\",\"requestCanonical\":\"{\\\"version\\\":1}\",\"tool\":\"context-query\",\"version\":1}" : String}
 
 def codec_law_a_valid_object_request_frame_is_accepted():
-  {==}
-
-law codec_law_an_unknown_root_field_refuses:
-  {frame_text(frame_decision(frame_envelope(unknown_root_rows()))) == "validationRefusal:unknownFrameField" : String}
-
-def codec_law_an_unknown_root_field_refuses():
-  {==}
-
-law codec_law_an_unknown_params_field_refuses:
-  {frame_text(frame_decision(frame_envelope(unknown_params_rows()))) == "validationRefusal:unknownParamsField" : String}
-
-def codec_law_an_unknown_params_field_refuses():
-  {==}
-
-law codec_law_a_non_object_request_refuses:
-  {frame_text(frame_decision(frame_envelope(text_request_rows()))) == "validationRefusal:requestNotObject" : String}
-
-def codec_law_a_non_object_request_refuses():
-  {==}
-
-law codec_law_a_non_u32_request_number_refuses:
-  {frame_text(frame_decision(frame_envelope(big_number_request_rows()))) == "validationRefusal:nonU32NumberInRequest" : String}
-
-def codec_law_a_non_u32_request_number_refuses():
   {==}
 
 law codec_law_an_astral_transported_value_decodes_its_code_point:
@@ -1995,136 +2148,38 @@ law codec_law_a_transported_surrogate_value_refuses:
 def codec_law_a_transported_surrogate_value_refuses():
   {==}
 
-def root_value(r: FrameRead) -> RawValue:
-  match r:
-    case FrValue{value}: value
-    case FrRefused{+condition}: Rnull{}
+law codec_law_an_unknown_root_field_refuses:
+  {frame_text(frame_decision(frame_envelope(unknown_root_rows()))) == "validationRefusal:unknownFrameField" : String}
 
-def sole_value(+v: RawValue) -> String:
-  match v:
-    case Robj{members}: sole_member(members)
-    case Rnull{}: SNil{}
-    case Rtrue{}: SNil{}
-    case Rfalse{}: SNil{}
-    case Rnum{+token}: SNil{}
-    case Rstr{+value}: SNil{}
-    case Rarr{+head, +tail}: SNil{}
-    case Rpair{+key, +value, +rest}: SNil{}
-    case Rnil{}: SNil{}
+def codec_law_an_unknown_root_field_refuses():
+  {==}
 
-def sole_member(+m: RawValue) -> String:
-  match m:
-    case Rpair{+key, +value, +tail}: raw_text_of(value)
-    case other: SNil{}
+law codec_law_an_unknown_params_field_refuses:
+  {frame_text(frame_decision(frame_envelope(unknown_params_rows()))) == "validationRefusal:unknownParamsField" : String}
 
-# Values whose bytes are written literally: an astral code point, a decoded NUL and
-# a raw surrogate sequence. The demo encoder has no four-byte branch, so these do
-# not go through it.
-def value_row(hex: String) -> Req.Rows:
-  rows_of([
-    object_row("0", SNil{}, SNil{}),
-    Req.Row{"1", "0", row_hex("text"), row_hex("k"), hex}])
+def codec_law_an_unknown_params_field_refuses():
+  {==}
 
-def astral_rows() -> Req.Rows:
-  value_row("f09f9880")
+law codec_law_a_nested_object_request_round_trips_through_the_converter:
+  {frame_text(frame_decision(frame_envelope(nested_request_rows()))) == "{\"id\":7,\"query\":\"q1\",\"requestCanonical\":\"{\\\"a\\\":[1,2],\\\"b\\\":{\\\"c\\\":null},\\\"s\\\":\\\"x\\\"}\",\"tool\":\"context-query\",\"version\":1}" : String}
 
-def nul_value_rows() -> Req.Rows:
-  value_row("610062")
+def codec_law_a_nested_object_request_round_trips_through_the_converter():
+  {==}
 
-def surrogate_value_rows() -> Req.Rows:
-  value_row("eda080")
+law codec_law_an_empty_object_request_round_trips_through_the_converter:
+  {frame_text(frame_decision(frame_envelope(empty_request_rows()))) == "{\"id\":7,\"query\":\"q1\",\"requestCanonical\":\"{}\",\"tool\":\"context-query\",\"version\":1}" : String}
 
-def extra_root_row() -> Req.Row:
-  text_row("9", "0", "extra", "x")
+def codec_law_an_empty_object_request_round_trips_through_the_converter():
+  {==}
 
-def unknown_root_rows() -> Req.Rows:
-  rows_of([
-    object_row("0", SNil{}, SNil{}),
-    text_row("1", "0", "jsonrpc", "2.0"),
-    extra_root_row()])
+law codec_law_a_non_object_request_refuses:
+  {frame_text(frame_decision(frame_envelope(text_request_rows()))) == "validationRefusal:requestNotObject" : String}
 
-def unknown_params_rows() -> Req.Rows:
-  rows_of([
-    object_row("0", SNil{}, SNil{}),
-    text_row("1", "0", "jsonrpc", "2.0"),
-    text_row("2", "0", "method", "tools/call"),
-    number_row("3", "0", "id", "7"),
-    object_row("4", "0", "params"),
-    text_row("5", "4", "name", "context-engines"),
-    object_row("6", "4", "arguments"),
-    text_row("7", "4", "extra", "x")])
+def codec_law_a_non_object_request_refuses():
+  {==}
 
-def array_row(id: String, parent: String, key: String) -> Req.Row:
-  Req.Row{id, parent, "array", row_hex(key), SNil{}}
+law codec_law_a_non_u32_request_number_refuses:
+  {frame_text(frame_decision(frame_envelope(big_number_request_rows()))) == "validationRefusal:nonU32NumberInRequest" : String}
 
-def nested_request_rows() -> Req.Rows:
-  rows_of([
-    object_row("0", SNil{}, SNil{}),
-    text_row("1", "0", "jsonrpc", "2.0"),
-    text_row("2", "0", "method", "tools/call"),
-    number_row("3", "0", "id", "7"),
-    object_row("4", "0", "params"),
-    text_row("5", "4", "name", "context-query"),
-    object_row("6", "4", "arguments"),
-    text_row("7", "6", "query", "q1"),
-    object_row("8", "6", "request"),
-    text_row("9", "8", "s", "x"),
-    array_row("10", "8", "a"),
-    number_row("11", "10", "0", "1"),
-    number_row("12", "10", "1", "2"),
-    object_row("13", "8", "b"),
-    null_row("14", "13", "c")])
-
-def empty_request_rows() -> Req.Rows:
-  rows_of([
-    object_row("0", SNil{}, SNil{}),
-    text_row("1", "0", "jsonrpc", "2.0"),
-    text_row("2", "0", "method", "tools/call"),
-    number_row("3", "0", "id", "7"),
-    object_row("4", "0", "params"),
-    text_row("5", "4", "name", "context-query"),
-    object_row("6", "4", "arguments"),
-    text_row("7", "6", "query", "q1"),
-    object_row("8", "6", "request")])
-
-def text_request_rows() -> Req.Rows:
-  rows_of([
-    object_row("0", SNil{}, SNil{}),
-    text_row("1", "0", "jsonrpc", "2.0"),
-    text_row("2", "0", "method", "tools/call"),
-    number_row("3", "0", "id", "7"),
-    object_row("4", "0", "params"),
-    text_row("5", "4", "name", "context-query"),
-    object_row("6", "4", "arguments"),
-    text_row("7", "6", "query", "q1"),
-    text_row("8", "6", "request", "{}")])
-
-def big_number_request_rows() -> Req.Rows:
-  rows_of([
-    object_row("0", SNil{}, SNil{}),
-    text_row("1", "0", "jsonrpc", "2.0"),
-    text_row("2", "0", "method", "tools/call"),
-    number_row("3", "0", "id", "7"),
-    object_row("4", "0", "params"),
-    text_row("5", "4", "name", "context-query"),
-    object_row("6", "4", "arguments"),
-    text_row("7", "6", "query", "q1"),
-    object_row("8", "6", "request"),
-    real_row("9", "8", "version", "4294967296")])
-
-def main() -> IO(Unit):
-  do IO<Unit>:
-    z1 : Unit <- IO.print("frame-engines " ++ frame_text(frame_decision(frame_envelope(engine_frame_rows()))))
-    z2 : Unit <- IO.print("frame-query " ++ frame_text(frame_decision(frame_envelope(query_frame_rows()))))
-    a : Unit <- IO.print("metadata")
-    b : Unit <- IO.print(meta_text(metadata_validate(meta_one("progressToken", Rnum{"0.5"}))))
-    c : Unit <- IO.print(meta_text(metadata_validate(meta_one("progressToken", Rnum{"1e400"}))))
-    d : Unit <- IO.print(meta_text(metadata_validate(meta_one("progressToken", Rnull{}))))
-    e : Unit <- IO.print("envelope")
-    f : Unit <- IO.print(envelope_text(envelope_decide(EnvFrame{"2.0", "tools/call", "context-engines", Context.IdNumber{"7"}, Context.Absent{}, RtAbsent{}, True{}, True{}, True{}})))
-    g : Unit <- IO.print(envelope_text(envelope_decide(EnvFrame{"2.0", "tools/call", "context-query", Context.IdText{"7"}, Context.Present{"q1"}, RtText{"{\"version\":1}"}, True{}, True{}, True{}})))
-    h : Unit <- IO.print(envelope_text(envelope_decide(EnvFrame{"1.0", "tools/call", "not-a-tool", Context.IdNumber{"7"}, Context.Absent{}, RtAbsent{}, True{}, True{}, True{}})))
-    i : Unit <- IO.print("dispatch")
-    j : Unit <- IO.print(admission_text(dispatch_admission(Request_sample(), "sqlPlan", Context.one_effect(Context.EfPlanTargetSql{}), Context.no_effects())))
-    k : Unit <- IO.print(admission_text(dispatch_admission(Request_sample(), "", Context.no_effects(), Context.no_effects())))
-    IO.print("end")
+def codec_law_a_non_u32_request_number_refuses():
+  {==}
