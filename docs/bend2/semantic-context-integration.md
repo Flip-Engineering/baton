@@ -301,9 +301,9 @@ Vendor-declared: Node 22.13.0 unflagging of `node:sqlite`; TypeScript
 Unverified: compile verification of the full new Bend module set
 (implementation phase; the researchers' worktrees carried no compiler — the
 pinned 2.0.25 at the qualification toolchain path was used for lane probes);
-the full `laws-check.mjs` run in one pass; end-to-end adapter runs against
-real subjects; retained-mode semantic adapter behavior; packaged-install
-readiness runs.
+end-to-end adapter runs against real subjects; retained-mode semantic
+adapter behavior; packaged-install readiness runs. (The baseline
+`laws-check.mjs` full run has since completed green; see below.)
 
 Laws-critic reconciliation (`.../reports/integration-laws-critic.md`, verified
 by execution on pinned Bend 2.0.25): the critic independently confirmed the
@@ -337,9 +337,14 @@ adopted into this consolidation:
   `<db>.dispatch-<hex(id)>.{stdout,stderr}`); spawn argv splits on every
   NUL, so NUL exclusion is an obligation of the argv builder upstream of
   `P.argv`.
-- The critic's full `laws-check.mjs` run remains pending completeness
-  evidence (`/tmp/laws-check-r2.log`, in progress at consolidation time; an
-  earlier attempt is `/tmp/laws-check-critic.log`).
+- The critic's full `laws-check.mjs` run completed green
+  (`laws-check: green - 578 laws, 172 mutations, 751 compiles, 0 failures`,
+  EXIT=0, 10229.66 s wall, pinned 2.0.25 at `6929bffe`; every proof-removal
+  and mutation row `passed:true`; log
+  `.../probes/laws-critic/runs/laws-check-green.log`). Register A2 is proved:
+  every stated law proof is required and every pinned mutation is refused —
+  the gate is complete positive and negative evidence. (The earlier truncated
+  attempt is `/tmp/laws-check-critic.log`.)
 
 Codec-series supplements (laws researcher, peer reviews for semantic-synthesis
 after this document's first draft; reports
