@@ -289,7 +289,8 @@ def accept_decided(+registration: Registration, +destination: Destination, task_
         case True{}: match no_outstanding:
           case True{}: match adoptions_exhausted:
             case True{}: Exhausted{registration,destination}
-            case other: Bool.pick(Acceptance,below_task_capacity,Adopted{Registration{reg_identity_of(registration),reg_generation_of(registration),reg_database_of(registration),reg_owner_of(registration),reg_request_of(registration),reg_session_of(registration),U32.add(reg_adoptions_of(registration),1),reg_references_of(registration),False{},False{},reg_cancelled_of(registration)},Destination{dest_database_of(destination),dest_owner_of(destination),dest_request_of(destination),dest_session_of(destination),dest_references_of(destination),U32.add(dest_tasks_of(destination),1)},TaskEvent{reg_identity_of(registration),reg_adoptions_of(registration),reg_generation_of(registration),dest_database_of(destination),dest_owner_of(destination),dest_request_of(destination),dest_session_of(destination),AdoptedOutstanding{}}},Refused{registration,destination})
+            case other:
+              Bool.pick(Acceptance,below_task_capacity,Adopted{Registration{reg_identity_of(registration),reg_generation_of(registration),reg_database_of(registration),reg_owner_of(registration),reg_request_of(registration),reg_session_of(registration),U32.add(reg_adoptions_of(registration),1),reg_references_of(registration),False{},False{},reg_cancelled_of(registration),Some{reg_adoptions_of(registration)}},Destination{dest_database_of(destination),dest_owner_of(destination),dest_request_of(destination),dest_session_of(destination),dest_references_of(destination),U32.add(dest_tasks_of(destination),1)},TaskEvent{reg_identity_of(registration),reg_adoptions_of(registration),reg_generation_of(registration),dest_database_of(destination),dest_owner_of(destination),dest_request_of(destination),dest_session_of(destination),AdoptedOutstanding{}}},Refused{registration,destination})
         case other: Refused{registration,destination}
     case other: Refused{registration,destination}
 
@@ -391,8 +392,8 @@ def release_destination_reference(+lease: DestinationLease) -> LeaseRelease:
 # already retained event keeps its responsible owner through cancellation.
 def cancel_registration(registration: Registration) -> Registration:
   match registration:
-    case Registration{+identity,+generation,+database,+owner,+request,+session,+adoptions,+references,+armed,+event_retained,+cancelled}:
-      Registration{identity,generation,database,owner,request,session,adoptions,references,armed:False{},event_retained,cancelled:True{}}
+    case Registration{+identity,+generation,+database,+owner,+request,+session,+adoptions,+references,+armed,+event_retained,+cancelled,+outstanding}:
+      Registration{identity,generation,database,owner,request,session,adoptions,references,armed:False{},event_retained,cancelled:True{},outstanding}
 
 # Disposal of a destination is safe only when nothing references it and no
 # undelivered task event remains.
@@ -400,17 +401,20 @@ def destination_disposable(+destination: Destination) -> Bool:
   Bool.and(U32.is_eq(dest_references_of(destination),0),U32.is_eq(dest_tasks_of(destination),0))
 
 # A cancelled registration's still-retained event settles through its
-# cancellation/failure task: this transfer clears the retained
-# responsibility so disposal can proceed after references resolve. It is
-# the only settlement route for such an event — ordinary adoption stays
-# refused on a cancelled registration.
-def settle_cancelled_event(registration: Registration) -> Registration:
-  match registration:
-    case Registration{+identity,+generation,+database,+owner,+request,+session,+adoptions,+references,+armed,+event_retained,+cancelled}:
-      Registration{identity,generation,database,owner,request,session,adoptions,references,armed:False{},event_retained:False{},cancelled}
+# cancellation/failure task once that task accepts the transfer: with the
+# accepted receipt the retained responsibility clears so disposal can
+# proceed after references resolve; without acceptance the event and its
+# owner stay exactly as they were. Settlement is the only route for such an
+# event — ordinary adoption stays refused on a cancelled registration.
+type Settlement is Data:
+  Settled{registration: Registration}
+  Refused{registration: Registration}
+
+def settle_cancelled_event(registration: Registration, transfer_accepted: Bool) -> Settlement:
+  Bool.pick(Settlement,Bool.and(reg_cancelled_of(registration),Bool.and(reg_event_retained_of(registration),transfer_accepted)),Settled{Registration{reg_identity_of(registration),reg_generation_of(registration),reg_database_of(registration),reg_owner_of(registration),reg_request_of(registration),reg_session_of(registration),reg_adoptions_of(registration),reg_references_of(registration),False{},False{},reg_cancelled_of(registration),reg_outstanding_of(registration)}},Refused{registration})
 
 def registration_disposable(+registration: Registration) -> Bool:
-  Bool.and(reg_cancelled_of(registration),Bool.and(Bool.not(reg_event_retained_of(registration)),Bool.and(Bool.not(reg_armed_of(registration)),U32.is_eq(reg_references_of(registration),0))))
+  Bool.and(reg_cancelled_of(registration),Bool.and(Bool.not(reg_event_retained_of(registration)),Bool.and(Bool.not(reg_armed_of(registration)),Bool.and(U32.is_eq(reg_references_of(registration),0),outstanding_is_none(registration)))))
 
 # --- laws -------------------------------------------------------------------
 
