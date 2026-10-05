@@ -7,7 +7,7 @@ e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855  ./FIXTURES.sha
 ecc80295d70939cdfc9b93628cb57aa5c7c79d5e90df9434f4433220354808de  ./fixtures/grants-admission.mjs
 1f0621260ce45a2f45b8c0638c94f544d1d8be268bda06daaf54dc80f294954f  ./fixtures/inspector-boundary.mjs
 734bd91d3f7b8d73dc5caf59f817d9d1e4962d394cf99ee087e94ba489213cd6  ./fixtures/json-list-fields.mjs
-228738207704b04a72e19b893a0f017861a9f94f6406cc61eba51eea6bb2dd59  ./fixtures/session-transport.mjs
+880418f1783eadb26e30cc43e64e10763a399398b6ec9c514faec604013c1989  ./fixtures/session-transport.mjs
 c662353459965cf492e64554a1038fc3517e7670234d03d831ed7e28c0fe7911  ./helpers/subject.mjs
 9a1b03f8f7f11fffee9ffd83638b35a9fcf6d396fd54e3085d86d40438e4018c  ./helpers/target.mjs
 02982bb1b96d2c3437097be67255a77040a9ed7ce503b2e40b8ffe5a5fbf01fc  ./lib/assert.mjs

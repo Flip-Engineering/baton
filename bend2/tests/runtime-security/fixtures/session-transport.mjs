@@ -254,19 +254,19 @@ try {
       control: { release: async () => ({ accepted: true, fixtureKeeper: 'stub' }) },
       emit: () => {},
     });
-    await session.execute('launch', { query: 'q-live', webSocketUrl: found.value.url, effects: CONTROL });
-    const before = outbound(session).length;
+    await liveSession.execute('launch', { query: 'q-live', webSocketUrl: found.value.url, effects: CONTROL });
+    const before = outbound(liveSession).length;
     let refusal = null;
     try {
-      await session.control({ query: 'q-live-refuse', method: 'Debugger.setBreakpointByUrl', params: conditionParams, effects: CONTROL });
+      await liveSession.control({ query: 'q-live-refuse', method: 'Debugger.setBreakpointByUrl', params: conditionParams, effects: CONTROL });
       refusal = { ok: true };
     } catch (error) {
       refusal = { refused: error.condition ?? error.name ?? String(error) };
     }
-    const afterRefusal = outbound(session).length;
+    const afterRefusal = outbound(liveSession).length;
     let positive = null;
     try {
-      await session.control({ query: 'q-live-positive', method: 'Debugger.setBreakpointByUrl', params: breakpointParams, effects: CONTROL });
+      await liveSession.control({ query: 'q-live-positive', method: 'Debugger.setBreakpointByUrl', params: breakpointParams, effects: CONTROL });
       positive = { ok: true };
     } catch (error) {
       positive = { refused: error.condition ?? error.name ?? String(error) };
@@ -275,7 +275,7 @@ try {
     live.refusal = refusal;
     live.framesAfterRefusal = afterRefusal;
     live.positive = positive;
-    live.framesAfterPositive = outbound(session).length;
+    live.framesAfterPositive = outbound(liveSession).length;
   }
 } catch (error) {
   live.failure = String(error?.stack ?? error);
