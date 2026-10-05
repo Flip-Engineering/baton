@@ -1,5 +1,7 @@
 import Base
 import ../../src/instance/event-registry.bend as Registry
+import ../../src/instance/retained-table.bend as Table
+import ../../src/instance/owner-service.bend as Service
 
 # Fixture for the instance event-destination registry decisions. Compile-
 # verified laws in the imported module fail this build when false; the run
@@ -88,8 +90,8 @@ def checks() -> IO(Unit):
     conserved : Unit <- check("requeued-event-readopts-with-new-occurrence",Bool.and(U32.is_eq(Registry.dest_tasks_of(seconddest),1),U32.is_eq(Registry.reg_adoptions_of(secondreg),2)))
     completion : Registry.Completion <- IO.pure(Registry.Completion,Registry.complete_event(secondreg,seconddest,secondoutstanding))
     finished : Unit <- match completion:
-      case Registry.Completed{+registration,+destination,+returned}: check("completion-releases-task-count",U32.is_eq(Registry.dest_tasks_of(destination),0))
-      case other: check("completion-releases-task-count",False{})
+      case Registry.Completed{+registration,+destination,+returned}: check("completion-without-pending-releases-task-count",U32.is_eq(Registry.dest_tasks_of(destination),0))
+      case other: check("completion-without-pending-releases-task-count",False{})
     +cancelledevent : Registry.Registration <- IO.pure(Registry.Registration,Registry.register_ready(Registry.Registration{"reg-2",Registry.Generation{"owner-1","cap-1",3},"db","owner-1","req-1","sess-1",0,1,False{},False{},False{},None{}},Registry.Generation{"owner-1","cap-1",4}))
     +cancelleddst : Registry.Destination <- IO.pure(Registry.Destination,Registry.Destination{"db","owner-1","req-1","sess-1",1,0})
     cancelledaccept : Registry.Acceptance <- IO.pure(Registry.Acceptance,Registry.accept_ready(Registry.cancel_registration(cancelledevent),cancelleddst,2,1000))
@@ -99,12 +101,16 @@ def checks() -> IO(Unit):
     +cancelaccept : Registry.Registration <- IO.pure(Registry.Registration,Registry.cancel_registration(cancelledevent))
     settle : Registry.Settlement <- IO.pure(Registry.Settlement,Registry.settle_cancelled_event(cancelaccept,True{}))
     settledok : Unit <- match settle:
-      case Registry.Settled{+registration}: check("cancelled-event-settles-through-failure-task",Bool.not(Registry.reg_event_retained_of(registration)))
-      case other: check("cancelled-event-settles-through-failure-task",False{})
+      case Registry.Settled{+registration}: check("accepted-receipt-gate-clears-retained-event",Bool.not(Registry.reg_event_retained_of(registration)))
+      case other: check("accepted-receipt-gate-clears-retained-event",False{})
     refusedsettle : Registry.Settlement <- IO.pure(Registry.Settlement,Registry.settle_cancelled_event(cancelledevent,True{}))
     kept : Unit <- match refusedsettle:
       case Registry.Refused{+registration}: check("uncancelled-settlement-refused",Registry.reg_event_retained_of(registration))
       case other: check("uncancelled-settlement-refused",False{})
+    +uncancelledref : Registry.Settlement <- IO.pure(Registry.Settlement,Registry.settle_cancelled_event(cancelledevent,False{}))
+    kept2 : Unit <- match uncancelledref:
+      case Registry.Refused{+registration}: check("unaccepted-transfer-refused-preserves-event",Registry.reg_event_retained_of(registration))
+      case other: check("unaccepted-transfer-refused-preserves-event",False{})
     +releasedreg : Registry.RegistrationRelease <- IO.pure(Registry.RegistrationRelease,Registry.release_registration_reference(cancelledevent))
     droppedref : Unit <- match releasedreg:
       case Registry.Released{+registration}: check("registration-reference-releases",U32.is_eq(Registry.reg_references_of(registration),0))
