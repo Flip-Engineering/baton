@@ -852,7 +852,7 @@ def an_unreadable_enumeration_contains_no_obligation():
 
 law a_ref_lookup_matches_its_exact_ref_identity:
   for +refId: String
-  {ContextStore.ref_id_match(refId) == "json_extract(value,'$.id')=" ++ C.q(refId) : String}
+  {ContextStore.ref_id_match(refId) == "json_extract(entry.value,'$.id')=" ++ C.q(refId) : String}
 
 def a_ref_lookup_matches_its_exact_ref_identity(refId):
   {==}
@@ -906,25 +906,25 @@ def an_entry_without_the_exact_selector_shape_is_malformed():
   {==}
 
 law an_unknown_query_state_is_unreadable:
-  {ContextStore.ref_lookup_decode("q7","ref-1","bogus\tpresent\t0\t\t0\n") == ContextStore.RefUnreadable{"state","bogus\t0\t\t0\n"} : ContextStore.RefLookup}
+  {ContextStore.ref_lookup_decode("q7","ref-1","bogus\tpresent\t0\t\t0\n") == ContextStore.RefUnreadable{"state","bogus\tpresent\t0\t\t0\n"} : ContextStore.RefLookup}
 
 def an_unknown_query_state_is_unreadable():
   {==}
 
 law a_noncanonical_count_is_unreadable:
-  {ContextStore.ref_lookup_decode("q7","ref-1","complete\tpresent\t-1\t\t1\n") == ContextStore.RefUnreadable{"count","complete\t-1\t\t1\n"} : ContextStore.RefLookup}
+  {ContextStore.ref_lookup_decode("q7","ref-1","complete\tpresent\t-1\t\t1\n") == ContextStore.RefUnreadable{"count","complete\tpresent\t-1\t\t1\n"} : ContextStore.RefLookup}
 
 def a_noncanonical_count_is_unreadable():
   {==}
 
 law an_invalid_shape_flag_is_unreadable:
-  {ContextStore.ref_lookup_decode("q7","ref-1","complete\tpresent\t1\t{}\tmaybe\n") == ContextStore.RefUnreadable{"shape","complete\t1\t{}\tmaybe\n"} : ContextStore.RefLookup}
+  {ContextStore.ref_lookup_decode("q7","ref-1","complete\tpresent\t1\t{}\tmaybe\n") == ContextStore.RefUnreadable{"shape","complete\tpresent\t1\t{}\tmaybe\n"} : ContextStore.RefLookup}
 
 def an_invalid_shape_flag_is_unreadable():
   {==}
 
 law a_surplus_ref_row_is_unreadable:
-  {ContextStore.ref_lookup_decode("q7","ref-1","complete\tpresent\t1\t{}\t1\textra\n") == ContextStore.RefUnreadable{"surplus","complete\t1\t{}\t1\textra\n"} : ContextStore.RefLookup}
+  {ContextStore.ref_lookup_decode("q7","ref-1","complete\tpresent\t1\t{}\t1\textra\n") == ContextStore.RefUnreadable{"surplus","complete\tpresent\t1\t{}\t1\textra\n"} : ContextStore.RefLookup}
 
 def a_surplus_ref_row_is_unreadable():
   {==}

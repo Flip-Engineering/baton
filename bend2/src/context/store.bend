@@ -120,8 +120,14 @@ def ref_container_kind(query: String) -> String:
 def ref_match_count(query: String, refId: String) -> String:
   "(SELECT count(*) FROM json_each(coalesce((SELECT result_json FROM semantic_queries WHERE id=" ++ C.q(query) ++ "),'null'),'$.refs') AS entry WHERE " ++ ref_id_match(refId) ++ ")"
 
+# Every traversal is guarded: the refs member must be an array and each candidate
+# entry an object before any nested JSON function reads it, so a scalar or null
+# element is never fed into json_each or json_type as text.
+def ref_guarded(query: String, inner: String) -> String:
+  "CASE WHEN " ++ ref_container_kind(query) ++ "='array' THEN (" ++ inner ++ ") ELSE '' END"
+
 def ref_first_entry(query: String, refId: String) -> String:
-  "(SELECT entry.value FROM json_each(coalesce((SELECT result_json FROM semantic_queries WHERE id=" ++ C.q(query) ++ "),'null'),'$.refs') AS entry WHERE " ++ ref_id_match(refId) ++ ")"
+  ref_guarded(query, "SELECT entry.value FROM json_each(coalesce((SELECT result_json FROM semantic_queries WHERE id=" ++ C.q(query) ++ "),'null'),'$.refs') AS entry WHERE json_type(entry.value)='object' AND " ++ ref_id_match(refId))
 
 # One member of the entry occurs exactly once and carries the required JSON type; the
 # identity members are additionally nonempty. A JSON null, number, object, wrong
@@ -137,7 +143,7 @@ def ref_identity_nonempty(member: String) -> String:
 # The complete kind vocabulary belongs to the producer contract, so this checks the
 # shape it can establish here and reports anything else as malformed.
 def ref_shape_ok(query: String, refId: String) -> String:
-  "(SELECT CASE WHEN " ++ ref_member_once("engine", "text") ++ " AND " ++ ref_identity_nonempty("engine") ++ " AND " ++ ref_member_once("subject", "object") ++ " AND json_type(entry.value,'$.subject.kind')='text' AND json_extract(entry.value,'$.subject.kind')<>'' AND " ++ ref_member_once("snapshotId", "text") ++ " AND " ++ ref_identity_nonempty("snapshotId") ++ " AND " ++ ref_member_once("projections", "array") ++ " AND json_array_length(entry.value,'$.projections')>0 AND NOT EXISTS(SELECT 1 FROM json_each(entry.value,'$.projections') AS projection WHERE projection.type<>'text' OR projection.value='') THEN 1 ELSE 0 END FROM json_each(coalesce((SELECT result_json FROM semantic_queries WHERE id=" ++ C.q(query) ++ "),'null'),'$.refs') AS entry WHERE " ++ ref_id_match(refId) ++ ")"
+  "CASE WHEN " ++ ref_container_kind(query) ++ "='array' THEN (SELECT CASE WHEN " ++ ref_member_once("engine", "text") ++ " AND " ++ ref_identity_nonempty("engine") ++ " AND " ++ ref_member_once("subject", "object") ++ " AND json_type(entry.value,'$.subject.kind')='text' AND json_extract(entry.value,'$.subject.kind')<>'' AND " ++ ref_member_once("snapshotId", "text") ++ " AND " ++ ref_identity_nonempty("snapshotId") ++ " AND " ++ ref_member_once("projections", "array") ++ " AND json_array_length(entry.value,'$.projections')>0 AND NOT EXISTS(SELECT 1 FROM json_each(entry.value,'$.projections') AS projection WHERE projection.type<>'text' OR projection.value='') THEN 1 ELSE 0 END FROM json_each(coalesce((SELECT result_json FROM semantic_queries WHERE id=" ++ C.q(query) ++ "),'null'),'$.refs') AS entry WHERE json_type(entry.value)='object' AND " ++ ref_id_match(refId) ++ ") ELSE '' END"
 
 # One row of five columns, none of which echoes a caller string: the recorded state of
 # the requested query, whether its result is retained, the count of entries whose id
