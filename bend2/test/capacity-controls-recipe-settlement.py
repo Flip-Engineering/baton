@@ -84,7 +84,9 @@ class RecipeSettlement(unittest.TestCase):
             RECIPE.attempt(self.run, self.record, 'archive-readback',
                            lambda: (_ for _ in ()).throw(original))
         self.assertIs(raised.exception, original)
-        self.assertIn('could not be written', raised.exception.record_error)
+        self.assertIn('could not be written',
+                      raised.exception.record_error_text)
+        self.assertIn('could not be written', str(raised.exception.record_error))
         self.assertEqual(len(writes), 2)
 
     def test_a_prepopulated_record_survives_a_failed_replacement(self):
@@ -109,11 +111,14 @@ class RecipeSettlement(unittest.TestCase):
         # replacement name, so the terminal record cannot be written and its own
         # cleanup fails: the original work error must still be raised.
         RECIPE.settle(self.run, self.record, 'preconditions', 'observed', run=1)
-        before = (self.run / 'run.json').read_bytes()
         staged = self.run / 'run.json.next'
         original = SystemExit('the stage itself failed')
+        observed = {}
 
         def failing_work():
+            # The declared row is already persisted by attempt, so the latest
+            # complete record is captured here, before the terminal write fails.
+            observed['attempted'] = [dict(row) for row in self.rows()]
             staged.mkdir()
             (staged / 'occupied').write_text('still here\n')
             raise original
@@ -121,9 +126,16 @@ class RecipeSettlement(unittest.TestCase):
         with self.assertRaises(SystemExit) as raised:
             RECIPE.attempt(self.run, self.record, 'archive-readback', failing_work)
         self.assertIs(raised.exception, original)
-        self.assertIn('could not be written', raised.exception.record_error)
-        self.assertEqual((self.run / 'run.json').read_bytes(), before)
-        self.assertEqual([row['name'] for row in self.rows()], ['preconditions'])
+        self.assertEqual([row['name'] for row in observed['attempted']],
+                         ['preconditions', 'archive-readback'])
+        self.assertEqual(observed['attempted'][1]['outcome'], 'attempted')
+        # The attempted row and the earlier row both survive the failed terminal write.
+        self.assertEqual([row['name'] for row in self.rows()],
+                         ['preconditions', 'archive-readback'])
+        self.assertEqual(self.rows()[1]['outcome'], 'attempted')
+        # The recording cause keeps its own cleanup detail.
+        self.assertIn('could not be written', str(raised.exception.record_error))
+        self.assertIsNotNone(raised.exception.record_error.cleanup_error)
 
     def test_a_replace_failure_keeps_the_prior_record(self):
         # Staging succeeds and the swap fails, so the prior record must survive and

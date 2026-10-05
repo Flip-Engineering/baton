@@ -81,7 +81,8 @@ def child(record, name, argv, run, stdin=None):
             settle(run, record, name, entry.get('outcome', 'failed'), **{
                 key: value for key, value in entry.items() if key not in ('name', 'outcome')})
         except BaseException as record_error:
-            setattr(error, 'record_error', repr(record_error))
+            setattr(error, 'record_error', record_error)
+            setattr(error, 'record_error_text', repr(record_error))
             raise error from record_error
         raise
     for stream, path in (('stdout', stdout), ('stderr', stderr)):
@@ -150,7 +151,8 @@ def attempt(run, record, name, work, **declared):
             settle(run, record, name, 'failed', failure=repr(error),
                    failure_type=type(error).__name__)
         except BaseException as record_error:
-            setattr(error, 'record_error', repr(record_error))
+            setattr(error, 'record_error', record_error)
+            setattr(error, 'record_error_text', repr(record_error))
             raise error from record_error
         raise
     try:
@@ -255,7 +257,8 @@ def main():
         try:
             settle(run, record, 'consume', 'refused', reason=repr(error))
         except BaseException as record_error:
-            setattr(error, 'record_error', repr(record_error))
+            setattr(error, 'record_error', record_error)
+            setattr(error, 'record_error_text', repr(record_error))
             raise error from record_error
         raise
     settle(run, record, 'consume', 'qualified', **{
@@ -283,7 +286,8 @@ def main():
         try:
             settle(run, record, 'relocated-consume', 'refused', reason=repr(error))
         except BaseException as record_error:
-            setattr(error, 'record_error', repr(record_error))
+            setattr(error, 'record_error', record_error)
+            setattr(error, 'record_error_text', repr(record_error))
             raise error from record_error
         raise
     settle(run, record, 'relocated-consume', 'qualified', **{
