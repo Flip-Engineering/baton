@@ -423,7 +423,16 @@ def check_refs(values, stdout, db):
         check(body is not None and body.endswith("\n"), key + ".evidence", repr(body))
         if body is None or not body.endswith("\n"):
             continue
-        row = body[:-1].split("\t")
+        # The fixture prints the raw answer and IO.print adds one newline; the answer is the
+        # whole SQL output, which itself ends with the row's own newline. Both terminators are
+        # separated here so the fields are compared without either of them.
+        printed = body[:-1]
+        check(printed.endswith("\n"), key + ".evidence.row.terminator", repr(body))
+        if not printed.endswith("\n"):
+            continue
+        row_text = printed[:-1]
+        check("\n" not in row_text, key + ".evidence.single.row", repr(body))
+        row = row_text.split("\t")
         check(len(row) == 5, key + ".evidence.columns", repr(row))
         if len(row) != 5:
             continue
