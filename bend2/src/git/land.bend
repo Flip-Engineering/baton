@@ -327,51 +327,101 @@ def publish_observe(+destination: String, +target: String, +oid: String, +basis:
     IO.pure(PubObservation, ObsNotAttempted{"the publication destination is not an absolute canonical repository path", d2, t2, o2, b2}))
 
 # --- holder discovery and state: prepared, NOT wired ---------------------------
-# Discovery distinguishes an unreadable list from no holder: only a readable list
-# that names the target branch once may answer HolderFound. The caller passes the
-# canonical holder path it will bind; a changed holder is refused by comparison.
+#
+# Discovery distinguishes a partial, malformed, duplicated or unreadable listing from
+# a complete valid one: only a listing whose every block is well formed, which names
+# the target branch exactly once, may answer HolderFound; a complete valid listing
+# naming it not at all answers HolderNone. Anything else is ambiguous or unreadable,
+# and every answer retains the raw listing and the command that produced it. The path
+# is decoded by stripping the literal keyword, so a path containing spaces keeps every
+# byte; a quoted path is treated as malformed because this transport's quoting is not
+# decoded here, which stays an explicit dependency.
+#
+# The holder's original identity and the re-observation under the future guard are NOT
+# implemented. holder_read carries the canonical path its caller supplied, and
+# holder_path_same compares only those supplied paths; the function the contract needs
+# is holder_reobserve_under_guard(guard: U32, expected: String) -> IO(HolderAssociation),
+# which must re-observe the actual holder while the guard is held so that a moved or
+# failed observation cannot look unchanged.
 type HolderLookup is Data:
-  HolderFound{path: String}
-  HolderNone{}
-  HolderUnreadable{code: U32, out: String}
+  HolderFound{path: String, list: String}
+  HolderNone{list: String}
+  HolderUnreadable{detail: String}
+  HolderAmbiguous{detail: String, list: String}
 
 type HolderState is Data:
-  HolderRead{head: RereadObs, index: RereadObs, status: RereadObs}
-  HolderUnavailable{detail: String}
+  HolderRead{path: String, head: RereadObs, index: RereadObs, status: RereadObs}
 
-def holder_second(items: List<String>) -> String:
-  match items:
-    case Nil{}: ""
-    case Con{first, rest}: holder_head(rest)
+def prefix_drop(line: String, prefix: String) -> Maybe<String>:
+  match prefix:
+    case SNil{}: Some{line}
+    case SCon{head, rest}:
+      match line:
+        case SNil{}: None{}
+        case SCon{got, gotrest}:
+          Bool.pick(Maybe<String>, Char.is_eq(head, got), prefix_drop(gotrest, rest), None{})
 
-def holder_head(items: List<String>) -> String:
-  match items:
-    case Nil{}: ""
-    case Con{first, rest}: first
+def holder_path_of(+line: String) -> Maybe<String>:
+  prefix_drop(line, "worktree ")
 
-def holder_path_of(+line: String) -> String:
-  holder_second(Tx.split_spaces(line))
+def holder_path_ok(+path: String) -> Bool:
+  Bool.pick(Bool, Tx.starts_with(path, "\""), False{}, Bool.not(String.is_empty(path)))
 
 def holder_branch_line(+target: String) -> String:
   T.str_cat3("branch ", "refs/heads/", target)
 
-def holder_scan(lines: List<String>, +branch: String, +last: String) -> HolderLookup:
+def holder_block(block: Maybe<String>, +seen: U32, +bad: U32, +list: String) -> HolderLookup:
+  Bool.pick(HolderLookup, U32.is_lt(0, bad), HolderAmbiguous{"the worktree listing is malformed", list},
+    Bool.pick(HolderLookup, U32.is_lt(0, seen), HolderAmbiguous{"the target branch is named more than once", list},
+      holder_finish(block, seen, list)))
+
+def holder_finish(block: Maybe<String>, seen: U32, +list: String) -> HolderLookup:
+  match block:
+    case Some{value}: HolderFound{value, list}
+    case None{}: Bool.pick(HolderLookup, U32.is_lt(0, seen), HolderAmbiguous{"the target branch has no valid worktree block", list}, HolderNone{list})
+
+def holder_step(lines: List<String>, +branch: String, block: Maybe<String>, +seen: U32, +bad: U32, +blocks: U32, +list: String) -> HolderLookup:
   match lines:
-    case Nil{}: HolderNone{}
+    case Nil{}:
+      Bool.pick(HolderLookup, U32.is_eq(blocks, 0), HolderAmbiguous{"the worktree listing carries no worktree block", list},
+        holder_block(block, seen, bad, list))
     case Con{h, rest}:
-      Bool.pick(HolderLookup, Tx.starts_with(h, "worktree "),
-        holder_scan(rest, branch, holder_path_of(h)),
-        Bool.pick(HolderLookup, Tx.str_eq(h, branch),
-          Bool.pick(HolderLookup, String.is_empty(last), HolderNone{}, HolderFound{last}),
-          holder_scan(rest, branch, last)))
+      Bool.pick(HolderLookup, String.is_empty(h),
+        holder_step(rest, branch, None{}, seen, bad, blocks, list),
+        holder_line(h, rest, branch, block, seen, bad, blocks, list))
+
+def holder_line(+line: String, rest: List<String>, +branch: String, block: Maybe<String>, +seen: U32, +bad: U32, +blocks: U32, +list: String) -> HolderLookup:
+  Bool.pick(HolderLookup, Tx.starts_with(line, "worktree "),
+    holder_opened(holder_path_of(line), rest, branch, seen, bad, blocks, list),
+    Bool.pick(HolderLookup, Tx.str_eq(line, branch),
+      holder_matched(block, rest, branch, seen, bad, blocks, list),
+      Bool.pick(HolderLookup, Tx.starts_with(line, "branch "),
+        holder_step(rest, branch, block, seen, U32.add(bad, 1), blocks, list),
+        holder_step(rest, branch, block, seen, bad, blocks, list))))
+
+def holder_opened(path: Maybe<String>, rest: List<String>, +branch: String, +seen: U32, +bad: U32, +blocks: U32, +list: String) -> HolderLookup:
+  match path:
+    case Some{value}:
+      Bool.pick(HolderLookup, holder_path_ok(value),
+        holder_step(rest, branch, Some{value}, seen, bad, U32.add(blocks, 1), list),
+        holder_step(rest, branch, None{}, seen, U32.add(bad, 1), blocks, list))
+    case None{}: holder_step(rest, branch, None{}, seen, U32.add(bad, 1), blocks, list)
+
+def holder_matched(block: Maybe<String>, rest: List<String>, +branch: String, +seen: U32, +bad: U32, +blocks: U32, +list: String) -> HolderLookup:
+  match block:
+    case Some{value}: holder_step(rest, branch, Some{value}, U32.add(seen, 1), bad, blocks, list)
+    case None{}: holder_step(rest, branch, None{}, U32.add(seen, 1), U32.add(bad, 1), blocks, list)
+
+def holder_scan(lines: List<String>, +branch: String, +list: String) -> HolderLookup:
+  holder_step(lines, branch, None{}, 0, 0, 0, list)
 
 def holder_lookup(g: T.GitOut, +target: String) -> HolderLookup:
   match g:
     case T.GRun{code, out}:
       Bool.pick(HolderLookup, U32.is_eq(code, 0),
-        holder_scan(Tx.split_lines(out), holder_branch_line(target), ""),
-        HolderUnreadable{code, out})
-    case T.GBroken{detail}: HolderUnreadable{1, detail}
+        holder_scan(Tx.split_lines(out), holder_branch_line(target), out),
+        HolderUnreadable{T.str_cat3("the worktree listing could not be read (status ", U32.show(code), ")")})
+    case T.GBroken{detail}: HolderUnreadable{detail}
 
 def holder_state(+path: String) -> IO(HolderState):
   +p2 = path
@@ -379,17 +429,14 @@ def holder_state(+path: String) -> IO(HolderState):
     head : T.GitOut <- Git.runGit(p2, ["rev-parse", "HEAD"])
     index : T.GitOut <- Git.runGit(p2, ["diff", "--cached", "--name-status"])
     status : T.GitOut <- Git.runGit(p2, ["status", "--porcelain"])
-    IO.pure(HolderState, holder_state_of(head, index, status, p2))
+    IO.pure(HolderState, HolderRead{p2, reread_of(head, p2), reread_of(index, p2), reread_of(status, p2)})
 
 def reread_of(g: T.GitOut, +ref: String) -> RereadObs:
   match g:
     case T.GRun{code, out}: RereadRead{code, out, ref}
     case T.GBroken{detail}: RereadBroken{detail}
 
-def holder_state_of(head: T.GitOut, index: T.GitOut, status: T.GitOut, +path: String) -> HolderState:
-  HolderRead{reread_of(head, path), reread_of(index, path), reread_of(status, path)}
-
-def holder_unchanged(+expected: String, +found: String) -> Bool:
+def holder_path_same(+expected: String, +found: String) -> Bool:
   Tx.str_eq(expected, found)
 
 def ff_stage5_ok(ok: Bool, wc: String, target: String) -> FFLD:
@@ -1263,53 +1310,69 @@ def remote_tip_git(repo: String, branch: String, remote: String) -> IO(T.GitOut)
 
 # --- helper laws: prepared, not operative caller coverage ----------------------
 #
-# The positive is spelled independently of publish_field, so a missing separator in
-# the helper cannot hide behind a law that repeats the same mistake. The paired
-# negatives cover the prefix collision and an unrelated record on the real parser.
-# No live caller uses these helpers and no compile has been run.
+# Concrete, independently written discriminators over the real parser: no law
+# quantifies an unconstrained string, because split_lines admits newlines inside the
+# parts and a universal claim would not describe the constrained protocol. Every
+# expected value is spelled from the record's literal parts, not from the helper under
+# test. No live caller uses these helpers and no compile has been run.
 
 law prepared_publication_reads_a_well_formed_applied_record:
-  for +oid: String
-  for +target: String
-  for +summary: String
-  {pub_record(Tx.str_cat(" \t", Tx.str_cat(Tx.str_cat(T.str_cat3(oid, ":refs/heads/", target), "\t"), summary)), publish_field(oid, target)) == RecordMatched{"applied", Tx.str_cat(" \t", Tx.str_cat(Tx.str_cat(T.str_cat3(oid, ":refs/heads/", target), "\t"), summary))} : PubRecord}
+  {pub_record(" \tabc123:refs/heads/main\told..new", publish_field("abc123", "main")) == RecordMatched{"applied", " \tabc123:refs/heads/main\told..new"} : PubRecord}
 
-def prepared_publication_reads_a_well_formed_applied_record(oid, target, summary):
+def prepared_publication_reads_a_well_formed_applied_record():
   {==}
 
-law prepared_publication_rejects_a_prefix_collision:
-  for +oid: String
-  for +target: String
-  for +other: String
-  {pub_record(Tx.str_cat(" \t", T.str_cat3(T.str_cat3(oid, ":refs/heads/", target), "-", other)), publish_field(oid, target)) == RecordAbsent{} : PubRecord}
+law prepared_publication_reads_a_well_formed_already_record:
+  {pub_record("=\tabc123:refs/heads/main\t[up to date]", publish_field("abc123", "main")) == RecordMatched{"already", "=\tabc123:refs/heads/main\t[up to date]"} : PubRecord}
 
-def prepared_publication_rejects_a_prefix_collision(oid, target, other):
+def prepared_publication_reads_a_well_formed_already_record():
   {==}
 
-law prepared_publication_rejects_an_unrelated_record:
-  for +oid: String
-  for +target: String
-  for +other: String
-  {pub_record(Tx.str_cat(" \t", T.str_cat3(other, ":refs/heads/", other)), publish_field(oid, target)) == RecordAmbiguous{1, Tx.str_cat(" \t", T.str_cat3(other, ":refs/heads/", other))} : PubRecord}
+law prepared_publication_refuses_a_prefix_collision:
+  {pub_record(" \tabc123:refs/heads/main-longer\tcollision", publish_field("abc123", "main")) == RecordAmbiguous{1, " \tabc123:refs/heads/main-longer\tcollision"} : PubRecord}
 
-def prepared_publication_rejects_an_unrelated_record(oid, target, other):
+def prepared_publication_refuses_a_prefix_collision():
   {==}
 
-law prepared_publication_refuses_a_relative_destination_without_argv:
-  for +destination: String
-  for +target: String
-  for +oid: String
-  for +basis: String
-  {publish_argv(destination, target, oid, basis) == Bool.pick(List<String>, Tx.starts_with(destination, "/"), Con{"push", Con{"--porcelain", Con{Tx.str_cat("--receive-pack=", publish_receiver()), Con{T.str_cat3("--force-with-lease=refs/heads/", target, Tx.str_cat(":", basis)), Con{destination, Con{publish_refspec(oid, target), Nil{}}}}}}, Nil{}) : List<String>}
+law prepared_publication_refuses_an_unrelated_record:
+  {pub_record(" \tabc999:refs/heads/other\tunrelated", publish_field("abc123", "main")) == RecordAmbiguous{1, " \tabc999:refs/heads/other\tunrelated"} : PubRecord}
 
-def prepared_publication_refuses_a_relative_destination_without_argv(destination, target, oid, basis):
+def prepared_publication_refuses_an_unrelated_record():
+  {==}
+
+law prepared_publication_refuses_a_newline_smuggled_record:
+  {pub_record(" \tabc123:refs/heads/main\trow\n \tabc999:refs/heads/main\tother", publish_field("abc123", "main")) == RecordAmbiguous{2, " \tabc123:refs/heads/main\trow"} : PubRecord}
+
+def prepared_publication_refuses_a_newline_smuggled_record():
+  {==}
+
+law prepared_publication_refuses_a_flag_line_without_its_fields:
+  {pub_record("!abc123:refs/heads/main", publish_field("abc123", "main")) == RecordAbsent{} : PubRecord}
+
+def prepared_publication_refuses_a_flag_line_without_its_fields():
   {==}
 
 law prepared_holder_discovery_never_reads_a_failed_list_as_no_holder:
-  for +code: U32
-  for +out: String
-  for +target: String
-  {holder_lookup(T.GRun{code, out}, target) == Bool.pick(HolderLookup, U32.is_eq(code, 0), holder_scan(Tx.split_lines(out), holder_branch_line(target), ""), HolderUnreadable{code, out}) : HolderLookup}
+  {holder_lookup(T.GRun{1, ""}, "main") == HolderUnreadable{"the worktree listing could not be read (status 1)"} : HolderLookup}
 
-def prepared_holder_discovery_never_reads_a_failed_list_as_no_holder(code, out, target):
+def prepared_holder_discovery_never_reads_a_failed_list_as_no_holder():
   {==}
+
+law prepared_holder_discovery_reads_a_complete_listing:
+  {holder_lookup(T.GRun{0, "worktree /tmp/one with spaces\nHEAD abc\nbranch refs/heads/main\n\nworktree /tmp/two\nHEAD def\nbranch refs/heads/other\n"}, "main") == HolderFound{"/tmp/one with spaces", "worktree /tmp/one with spaces\nHEAD abc\nbranch refs/heads/main\n\nworktree /tmp/two\nHEAD def\nbranch refs/heads/other\n"} : HolderLookup}
+
+def prepared_holder_discovery_reads_a_complete_listing():
+  {==}
+
+law prepared_holder_discovery_rejects_a_duplicate_target_branch:
+  {holder_lookup(T.GRun{0, "worktree /a\nbranch refs/heads/main\nworktree /b\nbranch refs/heads/main\n"}, "main") == HolderAmbiguous{"the target branch is named more than once", "worktree /a\nbranch refs/heads/main\nworktree /b\nbranch refs/heads/main\n"} : HolderLookup}
+
+def prepared_holder_discovery_rejects_a_duplicate_target_branch():
+  {==}
+
+law prepared_holder_discovery_rejects_a_branch_without_its_block:
+  {holder_lookup(T.GRun{0, "branch refs/heads/main\n"}, "main") == HolderAmbiguous{"the worktree listing carries no worktree block", "branch refs/heads/main\n"} : HolderLookup}
+
+def prepared_holder_discovery_rejects_a_branch_without_its_block():
+  {==}
+
