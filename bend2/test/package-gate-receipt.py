@@ -739,13 +739,13 @@ class PackageGateReceipt(unittest.TestCase):
             for name, payload in (('stdout', case.pop('raw')), ('stderr', b'')):
                 member = evidence / (stem + '.' + name)
                 member.write_bytes(payload)
-                record = {'path': stem + '.' + name,
+                record = {'path': 'evidence/' + stem + '.' + name,
                           'bytes': member.stat().st_size,
                           'sha256': hashlib.sha256(member.read_bytes()).hexdigest()}
                 if tamper and case['id'] == cases[0]['id'] and name == 'stdout':
                     member.write_bytes(b'tampered\n')
                 if escape and case['id'] == cases[0]['id'] and name == 'stdout':
-                    record['path'] = '../' + stem + '.stdout'
+                    record['path'] = 'evidence/../' + stem + '.stdout'
                 if symlink and case['id'] == cases[0]['id'] and name == 'stdout':
                     kept = evidence / (stem + '.retained.stdout')
                     member.rename(kept)
@@ -762,7 +762,7 @@ class PackageGateReceipt(unittest.TestCase):
                     'original_sha256': hashlib.sha256(
                         (PACKAGE.ROOT / module).read_bytes()).hexdigest(),
                     'changed_sha256': hashlib.sha256(member.read_bytes()).hexdigest(),
-                    'changed_path': member.name}
+                    'changed_path': 'evidence/' + member.name}
             record = {'id': case['id'], 'applied': case.pop('applied'), 'argv': case.pop('argv'),
                       'verdict': case.pop('verdict'), 'delta': delta_record,
                       'stdout': streams['stdout'], 'stderr': streams['stderr'],

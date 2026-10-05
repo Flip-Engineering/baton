@@ -727,9 +727,10 @@ def ordinary_evidence(index_path, expected, compiler=None, declared_root=None,
                 'The ordinary run used another compiler than the selected one')
         require(block.get('path') not in (None, ''), 'The ordinary run records no compiler path')
     source_block = identity.get('source') or {}
-    # Stream and delta members are relative to the evidence directory the run
-    # recorded, which for the ordinary route is the index parent.
-    members_root = path.parent
+    # The producer records member names relative to its run scratch, which is the
+    # index location's parent directory and the same root the classifier endpoint
+    # receives, so streams, deltas and the endpoint all resolve through one root.
+    members_root = root
     verifier = identity.get('verifier') or {}
     admitted, missing_run_members = ordinary_verifier_digests()
     required = set(ORDINARY_RUN_VERIFIER_MEMBERS)
