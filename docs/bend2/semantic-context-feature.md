@@ -28,7 +28,9 @@ possibilities and checked properties.
 
 Environment context exposes resolved dependencies, toolchain and build
 configuration, applicable runtime configuration and available service facts that
-affect the examined program. Credential values remain outside returned context.
+affect the examined program. Automatic environment context excludes credential
+values. Explicit source and runtime inspection has a stated access and output
+policy; adapters receive no harness credential material.
 
 General-purpose work can use structured context from supported documents,
 datasets, files and service results. Code and runtime capabilities describe their
