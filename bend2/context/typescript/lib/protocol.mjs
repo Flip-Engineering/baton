@@ -278,6 +278,15 @@ export function validateResult(result) {
     if (typeof ref.snapshotId !== 'string' || ref.snapshotId.length === 0) {
       throw new ProviderFailure('result-ref-snapshot-missing', ref.id);
     }
+    if (ref.snapshotId !== result.snapshot?.snapshotId) {
+      throw new ProviderFailure('result-ref-snapshot-mismatch', ref.id);
+    }
+  }
+  for (const item of [...result.facts, ...result.relations]) {
+    const record = item.value?.record;
+    if (record !== undefined && record !== null && record.snapshotId !== result.snapshot?.snapshotId) {
+      throw new ProviderFailure('result-record-snapshot-mismatch', String(item.id));
+    }
   }
   return result;
 }

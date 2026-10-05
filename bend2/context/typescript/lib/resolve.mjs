@@ -12,6 +12,7 @@ import { createHash } from 'node:crypto';
 import { readFileSync, realpathSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import { dirname, join, resolve, sep } from 'node:path';
+import { fileURLToPath } from 'node:url';
 
 export const PROVIDER_NAME = 'typescript';
 export const REQUIRED_VERSION = '5.9.3';
@@ -24,14 +25,21 @@ function readJson(path) {
   return JSON.parse(readFileSync(path, 'utf8'));
 }
 
-// The staged context root owns the provider tree: <stage>/libexec/baton2/context.
+// The staged context root owns the provider tree: <stage>/libexec/baton2/context. The adapter
+// location arrives as a module URL or a path; it is converted before any path arithmetic, so a
+// staging directory containing spaces or escapes still resolves.
+export function adapterPathFor(adapterUrl) {
+  return adapterUrl.startsWith('file:') ? fileURLToPath(adapterUrl) : adapterUrl;
+}
+
 export function contextRootFor(adapterUrl) {
-  return resolve(dirname(adapterUrl), '..', '..');
+  return resolve(dirname(adapterPathFor(adapterUrl)), '..', '..');
 }
 
 export function resolveTypeScript({ adapterUrl = import.meta.url } = {}) {
-  const contextRoot = contextRootFor(adapterUrl);
-  const require = createRequire(adapterUrl);
+  const adapterPath = adapterPathFor(adapterUrl);
+  const contextRoot = contextRootFor(adapterPath);
+  const require = createRequire(adapterPath);
   let entry;
   try {
     entry = require.resolve('typescript');

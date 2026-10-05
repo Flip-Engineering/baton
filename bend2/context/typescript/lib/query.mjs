@@ -16,8 +16,42 @@ import { produceDatabaseAccesses, produceModuleUses } from './sql.mjs';
 import { providerRecord } from './refs.mjs';
 import { Refusal } from './protocol.mjs';
 
+const SNAPSHOT_PENDING = 'pending';
+
 function sha256Text(text) {
   return createHash('sha256').update(text).digest('hex');
+}
+
+// Every published object carries the identity of the complete input closure. Producers run before
+// the closure is final, so they stamp the pending marker and this pass replaces it once, after
+// the last read, with the identity computed over every captured input.
+function bindSnapshotId(node, snapshotId) {
+  if (Array.isArray(node)) {
+    for (const item of node) bindSnapshotId(item, snapshotId);
+    return;
+  }
+  if (node === null || typeof node !== 'object') return;
+  for (const [key, value] of Object.entries(node)) {
+    if (key === 'snapshotId' && (value === SNAPSHOT_PENDING || value === null || value === undefined)) {
+      node[key] = snapshotId;
+    } else {
+      bindSnapshotId(value, snapshotId);
+    }
+  }
+}
+
+function assertSnapshotBound(node) {
+  if (Array.isArray(node)) {
+    node.forEach(assertSnapshotBound);
+    return;
+  }
+  if (node === null || typeof node !== 'object') return;
+  for (const [key, value] of Object.entries(node)) {
+    if (key === 'snapshotId' && value === SNAPSHOT_PENDING) {
+      throw new Error('snapshot identity was not bound to every published object');
+    }
+    assertSnapshotBound(value);
+  }
 }
 
 export function runQuery({ resolved, request, queryId = null }) {
@@ -28,22 +62,13 @@ export function runQuery({ resolved, request, queryId = null }) {
   });
   const service = createService({ resolved, capture, request });
 
-  const identityDocument = {
-    version: 1,
-    engine: 'typescript',
-    provider: { name: 'typescript', version: resolved.version, librarySha: resolved.librarySha },
-    effectiveOptions: service.effective,
-    inputs: capture.descriptors(),
-  };
-  const snapshotId = sha256Text(JSON.stringify(identityDocument));
-
   const context = {
     ts: service.ts,
     service,
     capture,
     resolved,
     request,
-    snapshotId,
+    snapshotId: SNAPSHOT_PENDING,
     queryId,
   };
 
@@ -94,8 +119,18 @@ export function runQuery({ resolved, request, queryId = null }) {
     uniqueRefs.push(ref);
   }
 
+  // Identity over the closure the producers actually consumed, computed only now.
   const descriptors = capture.descriptors();
-  return {
+  const identityDocument = {
+    version: 1,
+    engine: 'typescript',
+    provider: { name: 'typescript', version: resolved.version, librarySha: resolved.librarySha },
+    effectiveOptions: service.effective,
+    inputs: descriptors,
+  };
+  const snapshotId = sha256Text(JSON.stringify(identityDocument));
+
+  const envelope = {
     version: 1,
     engine: 'typescript',
     query: queryId,
@@ -123,6 +158,9 @@ export function runQuery({ resolved, request, queryId = null }) {
     applicability: 'current',
     changedInputs: [],
   };
+  bindSnapshotId(envelope, snapshotId);
+  assertSnapshotBound(envelope);
+  return envelope;
 }
 
 export function subjectPathFor(request) {
