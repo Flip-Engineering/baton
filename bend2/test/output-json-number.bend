@@ -144,15 +144,15 @@ def check(case: List<U32> & N.NumResult & String) -> IO(Unit):
   (octets, expected, name) = case
   judge(N.decode_number(octets), expected, name)
 
-def check_pair(pair: N.NumResult & N.NumResult & String) -> IO(Unit):
-  (left, right, name) = pair
-  judge_unequal(left, right, name)
-
 def judge_unequal(left: N.NumResult, right: N.NumResult, name: String) -> IO(Unit):
   +verdict = same_result(left, right)
   match verdict:
     case True{}: IO.die(Unit, 1, name)
     case False{}: IO.pure(Unit, Unit{})
+
+def check_pair(pair: N.NumResult & N.NumResult & String) -> IO(Unit):
+  (left, right, name) = pair
+  judge_unequal(left, right, name)
 
 def run(rows: List<List<U32> & N.NumResult & String>) -> IO(Unit):
   match rows:
