@@ -31,11 +31,11 @@ def same_result(a: S.StrResult, b: S.StrResult) -> Bool:
         case _: False{}
     case S.StrRefused{reason}:
       match b:
-        case S.StrRefused{br}: String.is_eq(reason, br)
+        case S.StrRefused{br}: String.eq(reason, br)
         case _: False{}
     case S.StrUnsupported{reason}:
       match b:
-        case S.StrUnsupported{br}: String.is_eq(reason, br)
+        case S.StrUnsupported{br}: String.eq(reason, br)
         case _: False{}
     case S.StrHostFault{value}:
       match b:
@@ -98,7 +98,7 @@ def cases() -> List<List<U32> & S.StrResult & String>:
     ([34, 0, 34], refused("raw_control"), "raw-nul-refused"),
     ([34, 92, 120, 34], refused("invalid_escape"), "malformed-escape"),
     ([34, 92, 117, 48, 48, 34, 65, 34], refused("invalid_unicode_hex"), "quote-in-hex-position"),
-    ([34, 92, 117, 48, 48, 34], refused("incomplete_unicode_escape"), "eof-after-two-hex-digits"),
+    ([34, 92, 117, 48, 48], refused("incomplete_unicode_escape"), "eof-after-two-hex-digits"),
     ([34, 92, 117, 122, 48, 48, 48, 34], refused("invalid_unicode_hex"), "bad-unicode-hex"),
     ([34, 194, 34], refused("invalid_utf8_continuation"), "pending-lead-then-quote"),
     ([34, 194, 92, 110, 34], refused("invalid_utf8_continuation"), "pending-lead-then-backslash"),
@@ -117,7 +117,11 @@ def cases() -> List<List<U32> & S.StrResult & String>:
 
 def check(case: List<U32> & S.StrResult & String) -> IO(Unit):
   (octets, expected, name) = case
-  match same_result(S.decode_string(octets), expected):
+  judge(S.decode_string(octets), expected, name)
+
+def judge(actual: S.StrResult, expected: S.StrResult, name: String) -> IO(Unit):
+  +verdict = same_result(actual, expected)
+  match verdict:
     case True{}: IO.pure(Unit, Unit{})
     case False{}: IO.die(Unit, 1, name)
 
