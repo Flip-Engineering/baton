@@ -82,7 +82,7 @@ def ref_entries(query: String) -> String:
   "(SELECT result_json FROM semantic_queries WHERE id=" ++ C.q(query) ++ ")"
 
 def ref_id_match(+refId: String) -> String:
-  "json_extract(entry.value,'$.id')=" ++ C.q(refId)
+  "entry.type='object' AND json_extract(entry.value,'$.id')=" ++ C.q(refId)
 
 # The retained per-ref association of one stored result: the referenced query's
 # stored refs are scanned by exact ref identity, and the entry's engine, subject,
@@ -187,17 +187,17 @@ def ref_failed_state(state: String) -> Bool:
 # The state decides first: an unfinished or unretained query is never reported as an
 # absent ref, and only a completed result whose retained refs array has no matching
 # entry is absent.
-def scalar_reason_text(reason: String) -> String:
-  reason
-
-def ref_entry_answer(+query: String, +refId: String, +state: String, +hexEntry: String, +answer: String, +scalar: Request.Scalar) -> RefLookup:
+def ref_scalar_answer(+query: String, +refId: String, +state: String, +answer: String, +scalar: Request.Scalar) -> RefLookup:
   match scalar:
     case Request.ScalarText{value}: RefFound{query, refId, state, value}
-    case Request.ScalarBadUtf8{}: RefMalformed{query, refId, scalar_reason_text("invalidUtf8")}
-    case Request.ScalarSurrogate{}: RefMalformed{query, refId, scalar_reason_text("surrogate")}
-    case Request.ScalarNul{}: RefMalformed{query, refId, scalar_reason_text("nulInString")}
+    case Request.ScalarBadUtf8{}: RefUnreadable{"scalar", answer}
+    case Request.ScalarSurrogate{}: RefUnreadable{"scalar", answer}
+    case Request.ScalarNul{}: RefUnreadable{"scalar", answer}
 
-def ref_decide_plain(+query: String, +refId: String, +state: String, +result: String, +count: String, +hexEntry: String, +shape: String, +answer: String) -> RefLookup:
+def ref_entry_answer(+query: String, +refId: String, +state: String, +hexEntry: String, +answer: String) -> RefLookup:
+  Bool.pick(RefLookup, Request.hex_ok(hexEntry), ref_scalar_answer(query, refId, state, answer, ref_entry_scalar(hexEntry)), RefUnreadable{"framing", answer})
+
+def ref_decide(+query: String, +refId: String, +state: String, +result: String, +count: String, +hexEntry: String, +shape: String, +answer: String) -> RefLookup:
   Bool.pick(RefLookup, String.is_empty(state), RefQueryMissing{query, refId},
   Bool.pick(RefLookup, ref_failed_state(state), RefFailed{query, refId, state},
   Bool.pick(RefLookup, ref_open_state(state), RefOpen{query, refId, state},
@@ -208,17 +208,11 @@ def ref_decide_plain(+query: String, +refId: String, +state: String, +result: St
   Bool.pick(RefLookup, Bool.not(ref_flag_ok(shape)), RefUnreadable{"shape", answer},
   Bool.pick(RefLookup, String.eq(count, "0"), RefAbsent{query, refId},
   Bool.pick(RefLookup, Bool.not(String.eq(count, "1")), RefAmbiguous{query, refId, count},
-  Bool.pick(RefLookup, String.eq(shape, "1"), RefMalformed{query, refId, answer}, RefMalformed{query, refId, answer}))))))))))))
+  Bool.pick(RefLookup, Bool.not(String.eq(shape, "1")), RefMalformed{query, refId, "shape"},
+    ref_entry_answer(query, refId, state, hexEntry, answer)))))))))))
 
-def ref_decide_shaped(+query: String, +refId: String, +state: String, +result: String, +count: String, +hexEntry: String, +shape: String, +answer: String, +scalar: Request.Scalar, +complete: Bool) -> RefLookup:
-  Bool.pick(RefLookup, complete, ref_entry_answer(query, refId, state, hexEntry, answer, scalar), ref_decide_plain(query, refId, state, result, count, hexEntry, shape, answer))
-
-def ref_decide_scalar(+query: String, +refId: String, +state: String, +result: String, +count: String, +hexEntry: String, +shape: String, +answer: String, +scalar: Request.Scalar) -> RefLookup:
-  ref_decide_shaped(query, refId, state, result, count, hexEntry, shape, answer, scalar, Bool.and(String.eq(count, "1"), String.eq(shape, "1")))
-
-def ref_decide(+query: String, +refId: String, +state: String, +result: String, +count: String, +hexEntry: String, +shape: String, +answer: String) -> RefLookup:
-  ref_decide_scalar(query, refId, state, result, count, hexEntry, shape, answer, ref_entry_scalar(hexEntry))
-
+# Only a qualified found branch reaches here, so the scalar is decoded once and its
+# failure keeps the whole raw answer with the stage that failed.
 def ref_lookup_tabs(+query: String, +refId: String, +fields: List<String>, +answer: String) -> RefLookup:
   match fields:
     case +state <> more0:

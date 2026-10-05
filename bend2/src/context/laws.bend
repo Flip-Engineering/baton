@@ -858,9 +858,39 @@ def a_ref_lookup_matches_its_exact_ref_identity(refId):
   {==}
 
 law a_ref_lookup_decodes_against_the_requested_identity:
-  {ContextStore.ref_lookup_decode("q7","ref-1","complete\tpresent\t1\t7b22656e67696e65223a2274797065736372697074222c227375626a656374223a7b226b696e64223a22656e74697479222c226461746162617365223a2264222c22736368656d61223a2273222c226e616d65223a226e227d2c22736e617073686f744964223a227331222c2270726f6a656374696f6e73223a5b22646566696e6974696f6e225d7d\t1\n") == ContextStore.RefFound{"q7","ref-1","complete","{"engine":"typescript","subject":{"kind":"entity","database":"d","schema":"s","name":"n"},"snapshotId":"s1","projections":["definition"]}"} : ContextStore.RefLookup}
+  {ContextStore.ref_lookup_decode("q7","ref-1","complete\tpresent\t1\t7b22656e67696e65223a2274797065736372697074222c227375626a656374223a7b226b696e64223a22656e74697479222c226461746162617365223a2264222c22736368656d61223a2273222c226e616d65223a226e227d2c22736e617073686f744964223a227331222c2270726f6a656374696f6e73223a5b22646566696e6974696f6e225d7d\t1\n") == ContextStore.RefFound{"q7","ref-1","complete","{\"engine\":\"typescript\",\"subject\":{\"kind\":\"entity\",\"database\":\"d\",\"schema\":\"s\",\"name\":\"n\"},\"snapshotId\":\"s1\",\"projections\":[\"definition\"]}"} : ContextStore.RefLookup}
 
 def a_ref_lookup_decodes_against_the_requested_identity():
+  {==}
+
+law an_unfinished_query_never_becomes_a_found_selector:
+  {ContextStore.ref_lookup_decode("q7","ref-1","running\tpresent\t1\t7b7d\t1\n") == ContextStore.RefOpen{"q7","ref-1","running"} : ContextStore.RefLookup}
+
+def an_unfinished_query_never_becomes_a_found_selector():
+  {==}
+
+law a_failed_query_never_becomes_a_found_selector:
+  {ContextStore.ref_lookup_decode("q7","ref-1","failed\tpresent\t1\t7b7d\t1\n") == ContextStore.RefFailed{"q7","ref-1","failed"} : ContextStore.RefLookup}
+
+def a_failed_query_never_becomes_a_found_selector():
+  {==}
+
+law an_unknown_state_never_becomes_a_found_selector:
+  {ContextStore.ref_lookup_decode("q7","ref-1","bogus\tpresent\t1\t7b7d\t1\n") == ContextStore.RefUnreadable{"state","bogus\tpresent\t1\t7b7d\t1\n"} : ContextStore.RefLookup}
+
+def an_unknown_state_never_becomes_a_found_selector():
+  {==}
+
+law a_null_result_never_becomes_a_found_selector:
+  {ContextStore.ref_lookup_decode("q7","ref-1","complete\tnull\t1\t7b7d\t1\n") == ContextStore.RefUnretained{"q7","ref-1"} : ContextStore.RefLookup}
+
+def a_null_result_never_becomes_a_found_selector():
+  {==}
+
+law a_bad_hex_entry_keeps_its_raw_answer:
+  {ContextStore.ref_lookup_decode("q7","ref-1","complete\tpresent\t1\t7b7\t1\n") == ContextStore.RefUnreadable{"framing","complete\tpresent\t1\t7b7\t1\n"} : ContextStore.RefLookup}
+
+def a_bad_hex_entry_keeps_its_raw_answer():
   {==}
 
 law a_ref_lookup_decodes_a_tabbed_unicode_entry:
@@ -906,19 +936,19 @@ def two_matching_entries_are_ambiguous():
   {==}
 
 law an_entry_without_the_exact_selector_shape_is_malformed:
-  {ContextStore.ref_lookup_decode("q7","ref-1","complete\tpresent\t1\t7b22656e67696e65223a6e756c6c7d\t0\n") == ContextStore.RefMalformed{"q7","ref-1","complete\tpresent\t1\t7b22656e67696e65223a6e756c6c7d\t0\n"} : ContextStore.RefLookup}
+  {ContextStore.ref_lookup_decode("q7","ref-1","complete\tpresent\t1\t7b22656e67696e65223a6e756c6c7d\t0\n") == ContextStore.RefMalformed{"q7","ref-1","shape"} : ContextStore.RefLookup}
 
 def an_entry_without_the_exact_selector_shape_is_malformed():
   {==}
 
 law an_entry_that_is_not_utf8_is_malformed_with_its_reason:
-  {ContextStore.ref_lookup_decode("q7","ref-1","complete\tpresent\t1\tff\t1\n") == ContextStore.RefMalformed{"q7","ref-1","invalidUtf8"} : ContextStore.RefLookup}
+  {ContextStore.ref_lookup_decode("q7","ref-1","complete\tpresent\t1\tff\t1\n") == ContextStore.RefUnreadable{"scalar","complete\tpresent\t1\tff\t1\n"} : ContextStore.RefLookup}
 
 def an_entry_that_is_not_utf8_is_malformed_with_its_reason():
   {==}
 
 law an_odd_hex_entry_is_unreadable:
-  {ContextStore.ref_lookup_decode("q7","ref-1","complete\tpresent\t1\t7b7\t1\n") == ContextStore.RefMalformed{"q7","ref-1","invalidUtf8"} : ContextStore.RefLookup}
+  {ContextStore.ref_lookup_decode("q7","ref-1","complete\tpresent\t1\t7b7\t1\n") == ContextStore.RefUnreadable{"scalar","complete\tpresent\t1\tff\t1\n"} : ContextStore.RefLookup}
 
 def an_odd_hex_entry_is_unreadable():
   {==}
