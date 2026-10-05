@@ -229,8 +229,9 @@ def selected_or_die(s: Selected, +player: String) -> IO(String):
 # The recorded workspace must belong to the landing repository. Two worktrees of
 # one repository share a git common directory, so comparing that directory
 # separates the recorded Player source from an unrelated repository that happens
-# to carry a branch of the same name. An unrecorded workspace is left to the
-# caller's own repository argument; a recorded one that cannot be read refuses.
+# to carry a branch of the same name. An unrecorded workspace refuses, because
+# absence does not establish the recorded source repository, and a recorded one
+# that cannot be read refuses as well.
 def assoc_same(w: String, r: String, +workspace: String, +repo: String) -> IO(Unit):
   Bool.pick(IO(Unit), String.eq(w, r),
     IO.pure(Unit, Unit{}),
