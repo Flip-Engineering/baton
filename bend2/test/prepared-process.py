@@ -10,6 +10,7 @@ import select
 import socket
 import subprocess
 import unittest
+import tempfile
 
 HERE = Path(__file__).resolve().parent
 spec = importlib.util.spec_from_file_location('retry_helpers', HERE / 'retained-recovery-retry.py')
@@ -33,13 +34,13 @@ class Prepared(unittest.TestCase):
             self.fail(child.stderr.read().decode())
         return result.decode().strip()
 
-    def start(self, mode='start', native=None):
-        native = native or self.f.write_program('native', 'native', EXE)
-        recovery = self.f.write_program('recovery', 'recovery', EXE)
+    def start(self, mode='start', native=None, exe=EXE):
+        native = native or self.f.write_program('native', 'native', exe)
+        recovery = self.f.write_program('recovery', 'recovery', exe)
         # Recovery consumes the original identity from immutable fixture input.
         body = recovery.read_text().replace("'recover-retained',sys.argv[1]", "'recover-prepared',sys.argv[1]," + repr(self.identity))
         recovery.write_text(body)
-        child = subprocess.Popen([str(EXE), 'prepare', str(self.f.db), str(self.f.attempt),
+        child = subprocess.Popen([str(exe), 'prepare', str(self.f.db), str(self.f.attempt),
                                   str(self.f.home), str(recovery), self.identity, mode, str(native)],
                                  stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE, bufsize=0)
         self.f.children.append(child)
@@ -124,6 +125,87 @@ class Prepared(unittest.TestCase):
         endpoint.write(b'finish\n')
         self.f.wait_file('acknowledged')
         self.assertEqual((self.f.attempt / 'status').read_text(), '0\n')
+
+
+class PostSpawnFaults(unittest.TestCase):
+    setUp = Prepared.setUp
+    line = Prepared.line
+    start = Prepared.start
+
+    @classmethod
+    def setUpClass(cls):
+        cls.build = tempfile.TemporaryDirectory(prefix='prepared-postspawn-faults-')
+        cls.addClassCleanup(cls.build.cleanup)
+        source = helpers.SOURCE.read_text()
+        cls.executables = {}
+        replacements = {
+            'pid': ('error=br_file(keeper->directory,"native.pid",pid,(size_t)n,1);', 'error=EIO;'),
+            'birth': ('observed=br_file(keeper->directory,"native.birth",&birth,sizeof(birth),1);', 'observed=EIO;'),
+            'waiter': ("observed=br_wait_start(keeper,keeper->native_pid,'N');", 'observed=EAGAIN;'),
+        }
+        for name, (before, after) in replacements.items():
+            if source.count(before) != 1:
+                raise AssertionError('ambiguous generated fault site: ' + name)
+            code = Path(cls.build.name) / (name + '.c')
+            code.write_text(source.replace(before, after))
+            exe = Path(cls.build.name) / name
+            subprocess.run(['clang', '-O1', '-pthread', str(code), '-lsqlite3', '-lm', '-o', str(exe)],
+                           check=True, capture_output=True, text=True, timeout=120)
+            cls.executables[name] = exe
+
+    def retained_child(self, fault, observer_loss=False):
+        child, prepared = self.start(mode='read-only', exe=self.executables[fault])
+        child.stdin.close()
+        self.assertEqual(self.line(child), 'grant-refused')
+        first = json.loads(self.line(child))
+        second = json.loads(self.line(child))
+        self.assertEqual(first, second)
+        self.assertEqual(first['processState'], 'running')
+        self.assertGreater(first['startError'], 0)
+        self.assertEqual(first['waitStatus'], -1)
+        event, endpoint = self.f.connect('native')
+        self.assertEqual(event['pid'], first['nativePid'])
+        self.assertEqual(event['ppid'], prepared['keeper']['pid'])
+        self.assertTrue((self.f.attempt / 'native-setup-error').exists())
+        self.f.assert_no_second_recovery()
+        lock = subprocess.run([str(EXE), 'lock-try', str(self.f.db)], capture_output=True, text=True, timeout=10)
+        self.assertEqual(lock.stdout, 'busy\n')
+        if observer_loss:
+            child.kill()
+            child.wait(timeout=5)
+            recovered, recovery = self.f.connect('recovery')
+            self.assertEqual(recovered['ppid'], prepared['keeper']['pid'])
+            recovery.write(b'attach\n')
+            endpoint.write(b'finish\n')
+            self.f.wait_file('acknowledged')
+        else:
+            endpoint.write(b'finish\n')
+            child.wait(timeout=10)
+            self.assertEqual(child.returncode, 0, child.stderr.read().decode())
+        self.assertEqual((self.f.attempt / 'status').read_text(), '0\n')
+        self.assertTrue((self.f.attempt / 'acknowledged').exists())
+        with self.assertRaises(ProcessLookupError):
+            os.kill(event['pid'], 0)
+        lock = subprocess.run([str(EXE), 'lock-try', str(self.f.db)], capture_output=True, text=True, timeout=10)
+        self.assertEqual(lock.stdout, 'acquired\n')
+
+    def test_pid_record_failure_keeps_child_until_reaped(self):
+        self.retained_child('pid')
+
+    def test_birth_record_failure_keeps_child_until_reaped(self):
+        self.retained_child('birth')
+
+    def test_waiter_setup_failure_keeps_child_until_reaped(self):
+        self.retained_child('waiter')
+
+    def test_observer_loss_after_pid_record_failure_recovers_original(self):
+        self.retained_child('pid', observer_loss=True)
+
+    def test_observer_loss_after_birth_record_failure_recovers_original(self):
+        self.retained_child('birth', observer_loss=True)
+
+    def test_observer_loss_after_waiter_failure_recovers_original(self):
+        self.retained_child('waiter', observer_loss=True)
 
 
 if __name__ == '__main__':

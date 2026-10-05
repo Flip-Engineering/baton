@@ -148,12 +148,20 @@ def prepared_finish(+handle: U32, lock: Maybe<U32>, message: String) -> IO(Unit)
   ack : Unit <- IO.try(Unit,P.ProcessChild.acknowledge(handle))
   IO.print(message)
 
-def prepared_observe(handle: U32, lock: Maybe<U32>, unstarted: Bool) -> IO(Unit):
+def prepared_readonly(+handle: U32, lock: Maybe<U32>, readonly: Bool) -> IO(Unit):
+  match readonly:
+    case False{}: observe_retained(handle,lock,"",False{})
+    case True{}: do IO<Unit>:
+      sender : Chan(Unit) <- IO.fork(Unit,IO.pure(Unit,Unit{}))
+      first : Maybe<String> <- IO.try(Maybe<String>,P.ProcessChild.read_line(handle))
+      retained_lines(handle,lock,sender,first)
+
+def prepared_observe(handle: U32, lock: Maybe<U32>, mode: String, unstarted: Bool) -> IO(Unit):
   match unstarted:
     case True{}: prepared_finish(handle,lock,"prepared-unstarted")
-    case False{}: observe_retained(handle,lock,"",False{})
+    case False{}: prepared_readonly(handle,lock,String.eq(mode,"read-only"))
 
-def prepared_action(+handle: U32, lock: Maybe<U32>, +identity: String, mode: String, cancel: Bool) -> IO(Unit):
+def prepared_action(+handle: U32, lock: Maybe<U32>, +identity: String, +mode: String, cancel: Bool) -> IO(Unit):
   match cancel:
     case True{}: do IO<Unit>:
       state : String <- IO.try(String,P.ProcessChild.cancel_prepared(handle,identity))
@@ -166,7 +174,7 @@ def prepared_action(+handle: U32, lock: Maybe<U32>, +identity: String, mode: Str
       printed : Unit <- IO.print(first)
       second : String <- IO.try(String,P.ProcessChild.start(handle,identity))
       replay : Unit <- IO.print(second)
-      prepared_observe(handle,lock,String.eq(mode,"unstarted"))
+      prepared_observe(handle,lock,mode,String.eq(mode,"unstarted"))
 
 def prepared_started(start: P.RetainedStart, lock: U32, identity: String, +mode: String) -> IO(Unit):
   match start:
@@ -196,7 +204,7 @@ def prepared_recover_cli(args: List<String>) -> IO(Unit):
       +handle : U32 <- IO.try(U32,P.ProcessChild.attach(directory))
       state : String <- IO.try(String,P.ProcessChild.state(handle))
       printed : Unit <- IO.print(state)
-      prepared_action(handle,None{},identity,"start",False{})
+      prepared_action(handle,None{},identity,"read-only",False{})
     case _: IO.die(Unit,2,"recover-prepared ATTEMPT IDENTITY")
 
 def lock_result(lock: Maybe<U32>) -> IO(Unit):
