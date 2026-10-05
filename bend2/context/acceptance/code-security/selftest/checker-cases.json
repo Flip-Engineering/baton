@@ -1,0 +1,259 @@
+[
+  {
+    "id": "exit-and-outcome-valid",
+    "wantOk": true,
+    "expect": {"outcome": "complete", "exitCode": 0},
+    "answer": {"exitCode": 0, "stdout": "{}", "stderr": "", "envelope": {"state": "complete"}}
+  },
+  {
+    "id": "exit-and-outcome-invalid",
+    "wantOk": false,
+    "expect": {"outcome": "complete", "exitCode": 0},
+    "answer": {"exitCode": 2, "stdout": "", "stderr": "", "envelope": {"state": "refused", "error": {"kind": "validationRefusal"}}}
+  },
+  {
+    "id": "refusal-condition-valid",
+    "wantOk": true,
+    "expect": {"outcome": "refused", "exitCode": 2, "refusalConditionIncludes": "plugin"},
+    "answer": {"exitCode": 2, "stdout": "", "stderr": "{\"error\":\"validationRefusal\",\"condition\":\"pluginFlagRefused\"}", "envelope": {"error": "validationRefusal", "condition": "pluginFlagRefused"}}
+  },
+  {
+    "id": "refusal-condition-invalid",
+    "wantOk": false,
+    "expect": {"outcome": "refused", "exitCode": 2, "refusalConditionIncludes": "plugin"},
+    "answer": {"exitCode": 2, "stdout": "", "stderr": "", "envelope": {"error": "validationRefusal", "condition": "responseFileUnsupported"}}
+  },
+  {
+    "id": "routes-valid",
+    "wantOk": true,
+    "expect": {"relations": [{"kind": "guarded_call", "classification": "static-possible", "minAcceptedRoutes": 2, "cutSetCoversAccepted": true, "deniedRouteReachesReturn": true}]},
+    "answer": {"exitCode": 0, "stdout": "", "stderr": "", "envelope": {"state": "complete", "result": {"relations": [
+      {"kind": "guarded_call", "classification": "static-possible", "value": {
+        "acceptedRoutes": [{"from": 33, "to": 30}, {"from": 32, "to": 30}],
+        "deniedRoutes": [{"edge": {"from": 32, "to": 31}, "returnRef": {"byteStart": 900, "byteEnd": 930}}],
+        "cutEdgeSet": [{"from": 33, "to": 30}, {"from": 32, "to": 30}]
+      }}
+    ]}}}
+  },
+  {
+    "id": "cut-set-incomplete-invalid",
+    "wantOk": false,
+    "expect": {"relations": [{"kind": "guarded_call", "cutSetCoversAccepted": true}]},
+    "answer": {"exitCode": 0, "stdout": "", "stderr": "", "envelope": {"state": "complete", "result": {"relations": [
+      {"kind": "guarded_call", "value": {
+        "acceptedRoutes": [{"from": 33, "to": 30}, {"from": 32, "to": 30}],
+        "deniedRoutes": [],
+        "cutEdgeSet": [{"from": 33, "to": 30}]
+      }}
+    ]}}}
+  },
+  {
+    "id": "denied-route-without-return-invalid",
+    "wantOk": false,
+    "expect": {"relations": [{"kind": "guarded_call", "deniedRouteReachesReturn": true}]},
+    "answer": {"exitCode": 0, "stdout": "", "stderr": "", "envelope": {"state": "complete", "result": {"relations": [
+      {"kind": "guarded_call", "value": {
+        "acceptedRoutes": [{"from": 1, "to": 2}],
+        "deniedRoutes": [{"edge": {"from": 3, "to": 4}}],
+        "cutEdgeSet": [{"from": 1, "to": 2}]
+      }}
+    ]}}}
+  },
+  {
+    "id": "classification-mismatch-invalid",
+    "wantOk": false,
+    "expect": {"relations": [{"kind": "guarded_call", "classification": "static-possible"}]},
+    "answer": {"exitCode": 0, "stdout": "", "stderr": "", "envelope": {"state": "complete", "result": {"relations": [
+      {"kind": "guarded_call", "classification": "observed", "value": {}}
+    ]}}}
+  },
+  {
+    "id": "count-bound-invalid",
+    "wantOk": false,
+    "expect": {"relations": [{"kind": "guarded_call", "count": {"max": 1}}]},
+    "answer": {"exitCode": 0, "stdout": "", "stderr": "", "envelope": {"state": "complete", "result": {"relations": [
+      {"kind": "guarded_call", "value": {}}, {"kind": "guarded_call", "value": {}}
+    ]}}}
+  },
+  {
+    "id": "forbidden-relation-valid",
+    "wantOk": true,
+    "expect": {"forbiddenRelations": [{"kind": "guarded_call"}]},
+    "answer": {"exitCode": 0, "stdout": "", "stderr": "", "envelope": {"state": "complete", "result": {"relations": [{"kind": "resolved_call", "value": {}}]}}}
+  },
+  {
+    "id": "forbidden-relation-invalid",
+    "wantOk": false,
+    "expect": {"forbiddenRelations": [{"kind": "guarded_call"}]},
+    "answer": {"exitCode": 0, "stdout": "", "stderr": "", "envelope": {"state": "complete", "result": {"relations": [{"kind": "guarded_call", "value": {}}]}}}
+  },
+  {
+    "id": "limits-valid",
+    "wantOk": true,
+    "expect": {"limits": [{"projection": "authorization"}, {"projection": "diagnostics", "code": "diagnosticsUnobserved"}]},
+    "answer": {"exitCode": 0, "stdout": "", "stderr": "", "envelope": {"state": "complete", "result": {"limits": [
+      {"projection": "authorization", "code": "denialCycle", "detail": "cycle on the denial side"},
+      {"projection": "diagnostics", "code": "diagnosticsUnobserved", "detail": "no publication"}
+    ]}}}
+  },
+  {
+    "id": "limits-invalid",
+    "wantOk": false,
+    "expect": {"limits": [{"projection": "authorization"}]},
+    "answer": {"exitCode": 0, "stdout": "", "stderr": "", "envelope": {"state": "complete", "result": {"limits": [{"projection": "types"}]}}}
+  },
+  {
+    "id": "forbidden-limits-invalid",
+    "wantOk": false,
+    "expect": {"forbiddenLimits": [{"projection": "diagnostics", "code": "diagnosticsUnobserved"}]},
+    "answer": {"exitCode": 0, "stdout": "", "stderr": "", "envelope": {"state": "complete", "error": {"limits": [{"projection": "diagnostics", "code": "diagnosticsUnobserved"}]}}}
+  },
+  {
+    "id": "must-not-mention-valid",
+    "wantOk": true,
+    "expect": {"mustNotMention": ["HARNESS_MARKER"]},
+    "answer": {"exitCode": 0, "stdout": "{\"state\":\"complete\"}", "stderr": "", "envelope": {"state": "complete"}}
+  },
+  {
+    "id": "must-not-mention-invalid",
+    "wantOk": false,
+    "expect": {"mustNotMention": ["HARNESS_MARKER"]},
+    "answer": {"exitCode": 0, "stdout": "", "stderr": "HARNESS_MARKER leaked into stderr", "envelope": {"state": "complete"}}
+  },
+  {
+    "id": "source-identities-valid",
+    "wantOk": true,
+    "expect": {"sourceIdentitiesVerified": true},
+    "answer": {"exitCode": 0, "stdout": "", "stderr": "", "envelope": {"state": "complete", "result": {"facts": [
+      {"kind": "definition", "evidence": [{"kind": "source", "path": "__HERE__/fixtures/c/short_circuit_and.c", "sha256": "__SHA256_OF:fixtures/c/short_circuit_and.c__"}]}
+    ]}}}
+  },
+  {
+    "id": "source-identities-invalid",
+    "wantOk": false,
+    "expect": {"sourceIdentitiesVerified": true},
+    "answer": {"exitCode": 0, "stdout": "", "stderr": "", "envelope": {"state": "complete", "result": {"facts": [
+      {"kind": "definition", "evidence": [{"kind": "source", "path": "__HERE__/fixtures/c/short_circuit_and.c", "sha256": "0000000000000000000000000000000000000000000000000000000000000000"}]}
+    ]}}}
+  },
+  {
+    "id": "snapshot-inputs-valid",
+    "wantOk": true,
+    "expect": {"snapshotInputs": ["alpha.h", "beta.h"]},
+    "answer": {"exitCode": 0, "stdout": "", "stderr": "", "envelope": {"state": "complete", "result": {"snapshot": {"inputs": [{"path": "include/alpha.h"}, {"path": "include/beta.h"}]}}}}
+  },
+  {
+    "id": "snapshot-inputs-invalid",
+    "wantOk": false,
+    "expect": {"snapshotInputs": ["gamma.h"]},
+    "answer": {"exitCode": 0, "stdout": "", "stderr": "", "envelope": {"state": "complete", "result": {"snapshot": {"inputs": [{"path": "include/alpha.h"}]}}}}
+  },
+  {
+    "id": "phase-consistent-valid",
+    "wantOk": true,
+    "context": {"phases": [{"__HERE__/fixtures/c/short_circuit_and.c": "__SHA256_OF:fixtures/c/short_circuit_and.c__"}]},
+    "expect": {"phaseConsistent": true},
+    "answer": {"exitCode": 0, "stdout": "", "stderr": "", "envelope": {"state": "complete", "result": {"facts": [
+      {"kind": "definition", "evidence": [{"kind": "source", "path": "__HERE__/fixtures/c/short_circuit_and.c", "sha256": "__SHA256_OF:fixtures/c/short_circuit_and.c__"}]}
+    ]}}}
+  },
+  {
+    "id": "phase-consistent-invalid",
+    "wantOk": false,
+    "context": {"phases": [{"__HERE__/fixtures/c/short_circuit_and.c": "1111111111111111111111111111111111111111111111111111111111111111"}]},
+    "expect": {"phaseConsistent": true},
+    "answer": {"exitCode": 0, "stdout": "", "stderr": "", "envelope": {"state": "complete", "result": {"facts": [
+      {"kind": "definition", "evidence": [{"kind": "source", "path": "__HERE__/fixtures/c/short_circuit_and.c", "sha256": "__SHA256_OF:fixtures/c/short_circuit_and.c__"}]}
+    ]}}}
+  },
+  {
+    "id": "ordering-valid",
+    "wantOk": true,
+    "expect": {"ordering": "guardPrecedesCall"},
+    "answer": {"exitCode": 0, "stdout": "", "stderr": "", "envelope": {"state": "complete", "result": {"relations": [
+      {"kind": "guarded_call", "value": {"guardRef": {"byteStart": 100, "byteEnd": 140}, "callRef": {"byteStart": 400, "byteEnd": 420}}}
+    ]}}}
+  },
+  {
+    "id": "ordering-invalid",
+    "wantOk": false,
+    "expect": {"ordering": "guardPrecedesCall"},
+    "answer": {"exitCode": 0, "stdout": "", "stderr": "", "envelope": {"state": "complete", "result": {"relations": [
+      {"kind": "guarded_call", "value": {"guardRef": {"byteStart": 100, "byteEnd": 140}, "callRef": {"byteStart": 120, "byteEnd": 150}}}
+    ]}}}
+  },
+  {
+    "id": "one-guard-per-call-valid",
+    "wantOk": true,
+    "expect": {"oneGuardPerCall": true},
+    "answer": {"exitCode": 0, "stdout": "", "stderr": "", "envelope": {"state": "complete", "result": {"relations": [
+      {"kind": "guarded_call", "value": {"callRef": {"from": 20, "to": 21}}},
+      {"kind": "guarded_call", "value": {"callRef": {"from": 30, "to": 31}}}
+    ]}}}
+  },
+  {
+    "id": "one-guard-per-call-invalid",
+    "wantOk": false,
+    "expect": {"oneGuardPerCall": true},
+    "answer": {"exitCode": 0, "stdout": "", "stderr": "", "envelope": {"state": "complete", "result": {"relations": [
+      {"kind": "guarded_call", "value": {"callRef": {"from": 20, "to": 21}}},
+      {"kind": "guarded_call", "value": {"callRef": {"from": 20, "to": 21}}}
+    ]}}}
+  },
+  {
+    "id": "applicability-valid",
+    "wantOk": true,
+    "expect": {"applicability": "stale"},
+    "answer": {"exitCode": 0, "stdout": "", "stderr": "", "envelope": {"state": "complete", "result": {"applicability": "stale"}}}
+  },
+  {
+    "id": "applicability-invalid",
+    "wantOk": false,
+    "expect": {"applicability": "stale"},
+    "answer": {"exitCode": 0, "stdout": "", "stderr": "", "envelope": {"state": "complete", "result": {"applicability": "current"}}}
+  },
+  {
+    "id": "forbidden-outcome-valid",
+    "wantOk": true,
+    "expect": {"outcome": "interrupted", "forbiddenOutcome": "complete"},
+    "answer": {"exitCode": 0, "stdout": "", "stderr": "", "envelope": {"state": "interrupted"}}
+  },
+  {
+    "id": "forbidden-outcome-invalid",
+    "wantOk": false,
+    "expect": {"forbiddenOutcome": "complete"},
+    "answer": {"exitCode": 0, "stdout": "", "stderr": "", "envelope": {"state": "complete"}}
+  },
+  {
+    "id": "waiting-for-valid",
+    "wantOk": true,
+    "expect": {"outcome": "running", "waitingForAll": [{"kind": "clangdDiagnostics", "reason": "diagnosticsUnobserved"}]},
+    "answer": {"exitCode": 0, "stdout": "", "stderr": "", "envelope": {"state": "running", "progress": {"phase": "waiting", "waitingFor": [
+      {"kind": "clangdDiagnostics", "uri": "file:///subject.c", "version": 3, "reason": "diagnosticsUnobserved"}
+    ], "control": "unobserved", "cleanup": "notRequested"}}}
+  },
+  {
+    "id": "waiting-for-invalid",
+    "wantOk": false,
+    "expect": {"waitingForAll": [{"kind": "childExit"}]},
+    "answer": {"exitCode": 0, "stdout": "", "stderr": "", "envelope": {"state": "running", "progress": {"waitingFor": [{"kind": "clangdDiagnostics", "reason": "diagnosticsUnobserved"}]}}}
+  },
+  {
+    "id": "no-waiting-array-invalid",
+    "wantOk": false,
+    "expect": {"waitingForAll": [{"kind": "clangdDiagnostics"}]},
+    "answer": {"exitCode": 0, "stdout": "", "stderr": "", "envelope": {"state": "running", "progress": null}}
+  },
+  {
+    "id": "either-of-valid",
+    "wantOk": true,
+    "expect": {"eitherOf": [{"outcome": "complete", "phaseConsistent": true}, {"outcome": "refused", "exitCode": 2}]},
+    "answer": {"exitCode": 0, "stdout": "", "stderr": "", "envelope": {"state": "complete", "result": {"facts": []}}}
+  },
+  {
+    "id": "either-of-invalid",
+    "wantOk": false,
+    "expect": {"eitherOf": [{"outcome": "complete"}, {"outcome": "refused"}]},
+    "answer": {"exitCode": 3, "stdout": "", "stderr": "", "envelope": {"state": "failed"}}
+  }
+]

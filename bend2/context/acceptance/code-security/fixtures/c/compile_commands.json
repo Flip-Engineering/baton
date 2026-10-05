@@ -1,0 +1,17 @@
+[
+  {"directory": "__FIXTURE_ROOT__", "file": "__FIXTURE_ROOT__/short_circuit_and.c", "arguments": ["__CLANG__", "-std=gnu89", "-fsyntax-only", "__FIXTURE_ROOT__/short_circuit_and.c"]},
+  {"directory": "__FIXTURE_ROOT__", "file": "__FIXTURE_ROOT__/short_circuit_or.c", "arguments": ["__CLANG__", "-std=gnu89", "-fsyntax-only", "__FIXTURE_ROOT__/short_circuit_or.c"]},
+  {"directory": "__FIXTURE_ROOT__", "file": "__FIXTURE_ROOT__/or_denial_set.c", "arguments": ["__CLANG__", "-std=gnu89", "-fsyntax-only", "__FIXTURE_ROOT__/or_denial_set.c"]},
+  {"directory": "__FIXTURE_ROOT__", "file": "__FIXTURE_ROOT__/bypass_earlier_call.c", "arguments": ["__CLANG__", "-std=gnu89", "-fsyntax-only", "__FIXTURE_ROOT__/bypass_earlier_call.c"]},
+  {"directory": "__FIXTURE_ROOT__", "file": "__FIXTURE_ROOT__/bypass_branch_call.c", "arguments": ["__CLANG__", "-std=gnu89", "-fsyntax-only", "__FIXTURE_ROOT__/bypass_branch_call.c"]},
+  {"directory": "__FIXTURE_ROOT__", "file": "__FIXTURE_ROOT__/denial_cycle.c", "arguments": ["__CLANG__", "-std=gnu89", "-fsyntax-only", "__FIXTURE_ROOT__/denial_cycle.c"]},
+  {"directory": "__FIXTURE_ROOT__", "file": "__FIXTURE_ROOT__/opaque_call_recorded.c", "arguments": ["__CLANG__", "-std=gnu89", "-fsyntax-only", "__FIXTURE_ROOT__/opaque_call_recorded.c"]},
+  {"directory": "__FIXTURE_ROOT__", "file": "__FIXTURE_ROOT__/opaque_call_mutates.c", "arguments": ["__CLANG__", "-std=gnu89", "-fsyntax-only", "__FIXTURE_ROOT__/opaque_call_mutates.c"]},
+  {"directory": "__FIXTURE_ROOT__", "file": "__FIXTURE_ROOT__/guard_operand_call.c", "arguments": ["__CLANG__", "-std=gnu89", "-fsyntax-only", "__FIXTURE_ROOT__/guard_operand_call.c"]},
+  {"directory": "__FIXTURE_ROOT__", "file": "__FIXTURE_ROOT__/helper_shadowed_callee.c", "arguments": ["__CLANG__", "-std=gnu89", "-fsyntax-only", "__FIXTURE_ROOT__/helper_shadowed_callee.c"]},
+  {"directory": "__FIXTURE_ROOT__", "file": "__FIXTURE_ROOT__/helper_body_changed.c", "arguments": ["__CLANG__", "-std=gnu89", "-fsyntax-only", "__FIXTURE_ROOT__/helper_body_changed.c"]},
+  {"directory": "__FIXTURE_ROOT__", "file": "__FIXTURE_ROOT__/helper_step_lineage.c", "arguments": ["__CLANG__", "-std=gnu89", "-fsyntax-only", "__FIXTURE_ROOT__/helper_step_lineage.c"]},
+  {"directory": "__FIXTURE_ROOT__", "file": "__FIXTURE_ROOT__/sanitizer_claim.c", "arguments": ["__CLANG__", "-std=gnu89", "-fsyntax-only", "__FIXTURE_ROOT__/sanitizer_claim.c"]},
+  {"directory": "__FIXTURE_ROOT__", "file": "__FIXTURE_ROOT__/declaration_unbound.c", "arguments": ["__CLANG__", "-std=gnu89", "-fsyntax-only", "__FIXTURE_ROOT__/declaration_unbound.c"]},
+  {"directory": "__FIXTURE_ROOT__", "file": "__FIXTURE_ROOT__/local_field_alias.c", "arguments": ["__CLANG__", "-std=gnu89", "-fsyntax-only", "__FIXTURE_ROOT__/local_field_alias.c"]}
+]

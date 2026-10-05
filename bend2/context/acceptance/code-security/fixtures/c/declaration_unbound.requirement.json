@@ -1,0 +1,35 @@
+{
+  "schemaVersion": 1,
+  "requirements": [
+    {
+      "id": "REQ-UNBOUND-1",
+      "authority": {"author": "code-security-acceptance-fixture", "revision": "1"},
+      "translationUnit": {"path": "declaration_unbound.c", "compileCommandDigest": null},
+      "entry": {"path": "declaration_unbound.c", "sourceSha256": "__SHA256__", "byteStart": "__SPAN_ENTRY_START__", "byteEnd": "__SPAN_ENTRY_END__", "expectedAstKind": "FunctionDecl"},
+      "principal": {
+        "base": {"path": "declaration_unbound.c", "sourceSha256": "__SHA256__", "byteStart": "__SPAN_PRINCIPAL_START__", "byteEnd": "__SPAN_PRINCIPAL_END__", "expectedAstKind": "VarDecl"},
+        "fields": []
+      },
+      "action": {"label": "list report definitions", "callsite": {"path": "declaration_unbound.c", "sourceSha256": "__SHA256__", "byteStart": "__SPAN_EFFECT_START__", "byteEnd": "__SPAN_EFFECT_END__", "expectedAstKind": "CallExpr"}},
+      "resource": {
+        "origin": {
+          "base": {"path": "declaration_unbound.c", "sourceSha256": "__SHA256__", "byteStart": "__SPAN_RESOURCE_START__", "byteEnd": "__SPAN_RESOURCE_END__", "expectedAstKind": "VarDecl"},
+          "fields": []
+        },
+        "atEffect": {"callsite": {"path": "declaration_unbound.c", "sourceSha256": "__SHA256__", "byteStart": "__SPAN_EFFECT_START__", "byteEnd": "__SPAN_EFFECT_END__", "expectedAstKind": "CallExpr"}, "argumentIndex": 0, "fields": []}
+      },
+      "guard": {
+        "condition": {"path": "declaration_unbound.c", "sourceSha256": "__SHA256__", "byteStart": "__SPAN_GUARD_START__", "byteEnd": "__SPAN_GUARD_END__", "expectedAstKind": "UnaryOperator"},
+        "acceptedValue": false,
+        "principalUses": [],
+        "resourceUses": []
+      },
+      "deny": {"terminal": {"path": "declaration_unbound.c", "sourceSha256": "__SHA256__", "byteStart": "__SPAN_DENY_START__", "byteEnd": "__SPAN_DENY_END__", "expectedAstKind": "ReturnStmt"}},
+      "effect": {
+        "callsite": {"path": "declaration_unbound.c", "sourceSha256": "__SHA256__", "byteStart": "__SPAN_EFFECT_START__", "byteEnd": "__SPAN_EFFECT_END__", "expectedAstKind": "CallExpr"},
+        "calleeDeclaration": {"path": "declaration_unbound.c", "sourceSha256": "__SHA256__", "byteStart": "__SPAN_CALLEE_START__", "byteEnd": "__SPAN_CALLEE_END__", "expectedAstKind": "FunctionDecl"}
+      },
+      "inputs": []
+    }
+  ]
+}

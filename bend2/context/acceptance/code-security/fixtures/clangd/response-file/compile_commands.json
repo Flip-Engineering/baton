@@ -1,0 +1,10 @@
+[
+  {
+    "directory": "__FIXTURE_ROOT__",
+    "file": "__FIXTURE_ROOT__/src/main.c",
+    "arguments": [
+      "__FIXTURE_ROOT__/clang",
+      "@__FIXTURE_ROOT__/compile.rsp"
+    ]
+  }
+]

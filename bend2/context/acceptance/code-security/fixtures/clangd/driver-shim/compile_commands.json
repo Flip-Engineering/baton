@@ -1,0 +1,12 @@
+[
+  {
+    "directory": "__FIXTURE_ROOT__",
+    "file": "__FIXTURE_ROOT__/src/main.c",
+    "arguments": [
+      "__FIXTURE_ROOT__/driver-ran.sh",
+      "-I__FIXTURE_ROOT__/src",
+      "-c",
+      "__FIXTURE_ROOT__/src/main.c"
+    ]
+  }
+]

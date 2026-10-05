@@ -1,0 +1,1 @@
+-I include -DADMITTED_FLAG=1 -c src/main.c

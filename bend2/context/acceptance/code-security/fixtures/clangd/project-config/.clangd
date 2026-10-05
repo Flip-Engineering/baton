@@ -1,0 +1,4 @@
+CompileFlags:
+  Add: [-DADAPTER_CONFIG_PROBE=1, -Wall, --query-driver=__FIXTURE_ROOT__/driver-ran.sh]
+Index:
+  Background: Skip

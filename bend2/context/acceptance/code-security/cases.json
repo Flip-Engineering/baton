@@ -1,0 +1,588 @@
+{
+  "defaults": {
+    "c-guard": {
+      "request": {
+        "version": 1,
+        "engine": "clang-analyzer",
+        "subject": {"kind": "symbol", "name": "handler"},
+        "select": ["authorization"],
+        "options": {"project": "c/compile_commands.json", "readRoots": ["c"]},
+        "effects": []
+      },
+      "expect": {"outcome": "complete", "exitCode": 0}
+    },
+    "c-capture": {
+      "request": {
+        "version": 1,
+        "engine": "clang-analyzer",
+        "subject": {"kind": "symbol", "path": "src/main.c", "name": "capture_subject"},
+        "select": ["definition", "type"],
+        "options": {"project": "compile_commands.json", "readRoots": ["src", "include"]},
+        "effects": []
+      },
+      "expect": {"outcome": "complete", "exitCode": 0}
+    }
+  },
+
+  "cases": [
+    {
+      "id": "S1-short-circuit-and-accepted-set",
+      "group": "security",
+      "default": "c-guard",
+      "subjectPath": "c/short_circuit_and.c",
+      "expect": {
+        "relations": [{"kind": "guarded_call", "classification": "static-possible", "minAcceptedRoutes": 2, "cutSetCoversAccepted": true}]
+      }
+    },
+    {
+      "id": "S2-short-circuit-or-accepted-set",
+      "group": "security",
+      "default": "c-guard",
+      "subjectPath": "c/short_circuit_or.c",
+      "expect": {
+        "relations": [{"kind": "guarded_call", "classification": "static-possible", "minAcceptedRoutes": 2, "cutSetCoversAccepted": true}]
+      }
+    },
+    {
+      "id": "S3-or-denial-set",
+      "group": "security",
+      "default": "c-guard",
+      "subjectPath": "c/or_denial_set.c",
+      "expect": {
+        "relations": [{"kind": "guarded_call", "classification": "static-possible", "deniedRouteReachesReturn": true, "cutSetCoversAccepted": true}]
+      }
+    },
+    {
+      "id": "S4-bypass-earlier-call",
+      "group": "security",
+      "default": "c-guard",
+      "subjectPath": "c/bypass_earlier_call.c",
+      "expect": {
+        "relations": [{"kind": "guarded_call", "classification": "static-possible", "count": {"max": 1}}],
+        "ordering": "guardPrecedesCall",
+        "oneGuardPerCall": true
+      }
+    },
+    {
+      "id": "S5-bypass-branch-call",
+      "group": "security",
+      "default": "c-guard",
+      "subjectPath": "c/bypass_branch_call.c",
+      "expect": {
+        "relations": [{"kind": "guarded_call", "classification": "static-possible", "count": {"max": 1}}],
+        "ordering": "guardPrecedesCall",
+        "oneGuardPerCall": true
+      }
+    },
+    {
+      "id": "S6-denial-cycle-unavailable",
+      "group": "security",
+      "default": "c-guard",
+      "subjectPath": "c/denial_cycle.c",
+      "expect": {
+        "forbiddenRelations": [{"kind": "guarded_call"}],
+        "limits": [{"projection": "authorization"}],
+        "relations": [{"kind": "resolved_call", "count": {"min": 1}}]
+      }
+    },
+    {
+      "id": "S7-opaque-call-recorded",
+      "group": "security",
+      "default": "c-guard",
+      "subjectPath": "c/opaque_call_recorded.c",
+      "expect": {
+        "relations": [{"kind": "guarded_call", "classification": "static-possible"}]
+      }
+    },
+    {
+      "id": "S8-opaque-call-may-mutate",
+      "group": "security",
+      "default": "c-guard",
+      "subjectPath": "c/opaque_call_mutates.c",
+      "expect": {
+        "forbiddenRelations": [{"kind": "guarded_call"}],
+        "limits": [{"projection": "authorization"}]
+      }
+    },
+    {
+      "id": "S9-guard-operand-call",
+      "group": "security",
+      "default": "c-guard",
+      "subjectPath": "c/guard_operand_call.c",
+      "expect": {
+        "forbiddenRelations": [{"kind": "guarded_call"}],
+        "limits": [{"projection": "authorization"}]
+      }
+    },
+    {
+      "id": "S10-helper-shadowed-callee",
+      "group": "security",
+      "default": "c-guard",
+      "subjectPath": "c/helper_shadowed_callee.c",
+      "expect": {
+        "forbiddenRelations": [{"kind": "database_access"}, {"kind": "modeled_access"}],
+        "limits": [{"projection": "databaseAccesses"}]
+      }
+    },
+    {
+      "id": "S11-helper-body-changed",
+      "group": "security",
+      "default": "c-guard",
+      "subjectPath": "c/helper_body_changed.c",
+      "expect": {
+        "forbiddenRelations": [{"kind": "database_access"}, {"kind": "modeled_access"}],
+        "limits": [{"projection": "databaseAccesses"}]
+      }
+    },
+    {
+      "id": "S12-helper-step-lineage",
+      "group": "security",
+      "default": "c-guard",
+      "subjectPath": "c/helper_step_lineage.c",
+      "expect": {
+        "forbiddenRelations": [{"kind": "database_access"}, {"kind": "modeled_access"}],
+        "limits": [{"projection": "databaseAccesses"}]
+      }
+    },
+    {
+      "id": "S13-sanitizer-not-claimed",
+      "group": "security",
+      "default": "c-guard",
+      "subjectPath": "c/sanitizer_claim.c",
+      "expect": {
+        "forbiddenRelations": [{"kind": "sanitized"}, {"kind": "enforced"}, {"kind": "guaranteed"}, {"kind": "observed_decision"}],
+        "relations": [{"kind": "guarded_call", "classification": "static-possible"}]
+      }
+    },
+    {
+      "id": "S14-declaration-unbound",
+      "group": "security",
+      "declaration": {
+        "template": "c/declaration_unbound.requirement.json",
+        "out": "c/declaration_unbound.bound.requirement.json",
+        "target": "c/declaration_unbound.c",
+        "spans": {
+          "ENTRY": {"find": "handler"},
+          "PRINCIPAL": {"find": "unused_principal"},
+          "RESOURCE": {"find": "unused_resource"},
+          "GUARD": {"find": "!ok"},
+          "DENY": {"find": "return -1;"},
+          "EFFECT": {"find": "recorded_effect()"},
+          "CALLEE": {"find": "int recorded_effect(void)"}
+        }
+      },
+      "request": {
+        "version": 1,
+        "engine": "clang-analyzer",
+        "subject": {"kind": "security", "declaration": {"path": "c/declaration_unbound.bound.requirement.json", "sha256": "computed"}, "requirementId": "REQ-UNBOUND-1"},
+        "select": ["declaration", "guardPaths", "inputPaths"],
+        "options": {"project": "c/compile_commands.json", "readRoots": ["c"]},
+        "effects": []
+      },
+      "expect": {
+        "limits": [{"projection": "guardPaths", "code": "declarationUnbound"}],
+        "forbiddenRelations": [{"kind": "authorization_path"}]
+      }
+    },
+    {
+      "id": "S15-local-field-alias-supported",
+      "group": "security",
+      "default": "c-guard",
+      "subjectPath": "c/local_field_alias.c",
+      "expect": {
+        "relations": [{"kind": "guarded_call", "classification": "static-possible"}, {"kind": "input_path", "classification": "static-possible"}]
+      }
+    },
+
+    {
+      "id": "B1-admitted-absolute-include",
+      "group": "boundary",
+      "subjectPath": "clangd/admitted-sdk/src/main.c",
+      "request": {
+        "version": 1, "engine": "clang-analyzer",
+        "subject": {"kind": "symbol", "path": "clangd/admitted-sdk/src/main.c", "name": "handler"},
+        "select": ["type", "calls", "definition"],
+        "options": {"project": "clangd/admitted-sdk/compile_commands.json", "readRoots": ["clangd/admitted-sdk/src", "clangd/admitted-sdk/sdk"]},
+        "effects": []
+      },
+      "expect": {
+        "outcome": "complete", "exitCode": 0,
+        "relations": [{"kind": "resolved_call", "count": {"min": 1}}],
+        "snapshotInputs": ["api.h"]
+      }
+    },
+    {
+      "id": "B2-escaping-symlink",
+      "group": "boundary",
+      "subjectPath": "clangd/symlink-escape/src/main.c",
+      "request": {
+        "version": 1, "engine": "clang-analyzer",
+        "subject": {"kind": "symbol", "path": "clangd/symlink-escape/src/main.c", "name": "escaped_symbol"},
+        "select": ["definition", "type"],
+        "options": {"project": "clangd/symlink-escape/compile_commands.json", "readRoots": ["clangd/symlink-escape/src", "clangd/symlink-escape/include"]},
+        "effects": []
+      },
+      "expect": {
+        "mustNotMention": ["OUTSIDE_MARKER_DO_NOT_PUBLISH"],
+        "forbiddenRelations": [{"kind": "definition"}]
+      }
+    },
+    {
+      "id": "B3-symlink-inside-admitted",
+      "group": "boundary",
+      "subjectPath": "clangd/symlink-inside/src/main.c",
+      "request": {
+        "version": 1, "engine": "clang-analyzer",
+        "subject": {"kind": "symbol", "path": "clangd/symlink-inside/src/main.c", "name": "inside_symbol"},
+        "select": ["definition", "type"],
+        "options": {"project": "clangd/symlink-inside/compile_commands.json", "readRoots": ["clangd/symlink-inside/src", "clangd/symlink-inside/include"]},
+        "effects": []
+      },
+      "expect": {
+        "outcome": "complete", "exitCode": 0,
+        "relations": [{"kind": "definition", "count": {"min": 1}}],
+        "sourceIdentitiesVerified": true
+      }
+    },
+    {
+      "id": "B4-unadmitted-read-root",
+      "group": "boundary",
+      "subjectPath": "clangd/unadmitted-root/src/main.c",
+      "request": {
+        "version": 1, "engine": "clang-analyzer",
+        "subject": {"kind": "symbol", "path": "clangd/unadmitted-root/src/main.c", "name": "other_symbol"},
+        "select": ["definition"],
+        "options": {"project": "clangd/unadmitted-root/compile_commands.json", "readRoots": ["clangd/unadmitted-root/src"]},
+        "effects": []
+      },
+      "expect": {
+        "forbiddenRelations": [{"kind": "definition"}]
+      }
+    },
+    {
+      "id": "B5-response-file-recorded",
+      "group": "boundary",
+      "subjectPath": "clangd/response-file/src/main.c",
+      "request": {
+        "version": 1, "engine": "clang-analyzer",
+        "subject": {"kind": "symbol", "path": "clangd/response-file/src/main.c", "name": "rsp_flag_seen"},
+        "select": ["definition", "type"],
+        "options": {"project": "clangd/response-file/compile_commands.json", "readRoots": ["clangd/response-file"]},
+        "effects": []
+      },
+      "expect": {
+        "outcome": "complete", "exitCode": 0,
+        "relations": [{"kind": "definition", "count": {"min": 1}}],
+        "snapshotInputs": ["compile.rsp"]
+      }
+    },
+    {
+      "id": "B6-plugin-flag-refused",
+      "group": "boundary",
+      "subjectPath": "clangd/plugin-flag/src/main.c",
+      "request": {
+        "version": 1, "engine": "clang-analyzer",
+        "subject": {"kind": "symbol", "path": "clangd/plugin-flag/src/main.c", "name": "handler"},
+        "select": ["definition"],
+        "options": {"project": "clangd/plugin-flag/plugin.json", "readRoots": ["clangd/plugin-flag/src"]},
+        "effects": []
+      },
+      "expect": {
+        "outcome": "refused", "exitCode": 2,
+        "forbiddenRelations": [{"kind": "definition"}],
+        "mustNotMention": ["libprobe"]
+      }
+    },
+    {
+      "id": "B7-driver-not-executed",
+      "group": "boundary",
+      "subjectPath": "clangd/driver-shim/src/main.c",
+      "request": {
+        "version": 1, "engine": "clang-analyzer",
+        "subject": {"kind": "symbol", "path": "clangd/driver-shim/src/main.c", "name": "handler"},
+        "select": ["definition", "type"],
+        "options": {"project": "clangd/driver-shim/compile_commands.json", "readRoots": ["clangd/driver-shim/src"]},
+        "effects": []
+      },
+      "expect": {
+        "marker": {"path": "clangd/driver-shim/driver-ran.marker", "mustExist": false},
+        "forbiddenRelations": [{"kind": "definition"}]
+      }
+    },
+    {
+      "id": "B8-project-config-ignored",
+      "group": "boundary",
+      "subjectPath": "clangd/project-config-control/src/main.c",
+      "request": {
+        "version": 1, "engine": "clang-analyzer",
+        "subject": {"kind": "symbol", "path": "clangd/project-config-control/src/main.c", "name": "handler"},
+        "select": ["definition", "type", "diagnostics"],
+        "options": {"project": "clangd/project-config-control/compile_commands.json", "readRoots": ["clangd/project-config-control/src"]},
+        "effects": []
+      },
+      "expect": {
+        "outcome": "complete", "exitCode": 0,
+        "mustNotMention": ["probe_symbol"],
+        "marker": {"path": "clangd/driver-shim/driver-ran.marker", "mustExist": false}
+      }
+    },
+    {
+      "id": "B8b-project-config-present",
+      "group": "boundary",
+      "subjectPath": "clangd/project-config/src/main.c",
+      "sameFactsAs": "B8-project-config-ignored",
+      "request": {
+        "version": 1, "engine": "clang-analyzer",
+        "subject": {"kind": "symbol", "path": "clangd/project-config/src/main.c", "name": "handler"},
+        "select": ["definition", "type", "diagnostics"],
+        "options": {"project": "clangd/project-config/compile_commands.json", "readRoots": ["clangd/project-config/src"]},
+        "effects": []
+      },
+      "expect": {
+        "mustNotMention": ["probe_symbol"],
+        "marker": {"path": "clangd/driver-shim/driver-ran.marker", "mustExist": false}
+      }
+    },
+    {
+      "id": "B9-subject-outside-root",
+      "group": "boundary",
+      "subjectPath": "clangd/outside-root/src/main.c",
+      "request": {
+        "version": 1, "engine": "clang-analyzer",
+        "subject": {"kind": "symbol", "path": "clangd/outside-root/src/main.c", "name": "handler"},
+        "select": ["definition"],
+        "options": {"project": "clangd/admitted-sdk/compile_commands.json", "readRoots": ["clangd/admitted-sdk/src"]},
+        "effects": []
+      },
+      "expect": {
+        "forbiddenRelations": [{"kind": "definition"}]
+      }
+    },
+
+    {
+      "id": "L1-clangd-exact-version-uri",
+      "group": "lifecycle",
+      "scenario": "exact",
+      "polls": 40,
+      "request": {
+        "version": 1, "engine": "clang-analyzer",
+        "subject": {"kind": "position", "path": "c/short_circuit_and.c", "line": 3, "column": 5},
+        "select": ["diagnostics", "type"],
+        "options": {"project": "c/compile_commands.json", "readRoots": ["c"], "tools": {"clangd": "__CLANGD_LAUNCHER__"}},
+        "effects": ["executeTarget"]
+      },
+      "expect": {
+        "outcome": "complete",
+        "forbiddenLimits": [{"projection": "diagnostics", "code": "diagnosticsUnobserved"}]
+      }
+    },
+    {
+      "id": "L2-clangd-no-publication-running",
+      "group": "lifecycle",
+      "scenario": "no-publication",
+      "polls": 6,
+      "request": {
+        "version": 1, "engine": "clang-analyzer",
+        "subject": {"kind": "position", "path": "c/short_circuit_and.c", "line": 3, "column": 5},
+        "select": ["diagnostics", "type"],
+        "options": {"project": "c/compile_commands.json", "readRoots": ["c"], "tools": {"clangd": "__CLANGD_LAUNCHER__"}},
+        "effects": ["executeTarget"]
+      },
+      "expect": {
+        "outcome": "running",
+        "waitingForAll": [{"kind": "clangdDiagnostics", "reason": "diagnosticsUnobserved"}],
+        "relations": []
+      }
+    },
+    {
+      "id": "L3-clangd-versionless-idle",
+      "group": "lifecycle",
+      "scenario": "idle",
+      "polls": 6,
+      "request": {
+        "version": 1, "engine": "clang-analyzer",
+        "subject": {"kind": "position", "path": "c/short_circuit_and.c", "line": 3, "column": 5},
+        "select": ["diagnostics", "type"],
+        "options": {"project": "c/compile_commands.json", "readRoots": ["c"], "tools": {"clangd": "__CLANGD_LAUNCHER__"}},
+        "effects": ["executeTarget"]
+      },
+      "expect": {
+        "outcome": "running",
+        "forbiddenOutcome": "complete",
+        "waitingForAll": [{"kind": "clangdDiagnostics", "reason": "diagnosticsUnobserved"}]
+      }
+    },
+    {
+      "id": "L4-clangd-wrong-version",
+      "group": "lifecycle",
+      "scenario": "wrong-version",
+      "polls": 40,
+      "request": {
+        "version": 1, "engine": "clang-analyzer",
+        "subject": {"kind": "position", "path": "c/short_circuit_and.c", "line": 3, "column": 5},
+        "select": ["diagnostics", "type"],
+        "options": {"project": "c/compile_commands.json", "readRoots": ["c"], "tools": {"clangd": "__CLANGD_LAUNCHER__"}},
+        "effects": ["executeTarget"]
+      },
+      "expect": {
+        "outcome": "complete",
+        "forbiddenLimits": [{"projection": "diagnostics", "code": "diagnosticsUnobserved"}]
+      }
+    },
+    {
+      "id": "L5-clangd-wrong-uri",
+      "group": "lifecycle",
+      "scenario": "wrong-uri",
+      "polls": 40,
+      "request": {
+        "version": 1, "engine": "clang-analyzer",
+        "subject": {"kind": "position", "path": "c/short_circuit_and.c", "line": 3, "column": 5},
+        "select": ["diagnostics", "type"],
+        "options": {"project": "c/compile_commands.json", "readRoots": ["c"], "tools": {"clangd": "__CLANGD_LAUNCHER__"}},
+        "effects": ["executeTarget"]
+      },
+      "expect": {
+        "outcome": "complete",
+        "forbiddenLimits": [{"projection": "diagnostics", "code": "diagnosticsUnobserved"}]
+      }
+    },
+    {
+      "id": "L6-clangd-release-retains-missing-publication",
+      "group": "lifecycle",
+      "scenario": "no-publication",
+      "polls": 4,
+      "release": true,
+      "request": {
+        "version": 1, "engine": "clang-analyzer",
+        "subject": {"kind": "position", "path": "c/short_circuit_and.c", "line": 3, "column": 5},
+        "select": ["diagnostics", "type"],
+        "options": {"project": "c/compile_commands.json", "readRoots": ["c"], "tools": {"clangd": "__CLANGD_LAUNCHER__"}},
+        "effects": ["executeTarget"]
+      },
+      "expect": {
+        "outcome": "interrupted",
+        "limits": [{"projection": "diagnostics", "code": "diagnosticsUnobserved"}]
+      }
+    },
+    {
+      "id": "L7-clangd-provider-failure",
+      "group": "lifecycle",
+      "scenario": "failure",
+      "polls": 40,
+      "request": {
+        "version": 1, "engine": "clang-analyzer",
+        "subject": {"kind": "position", "path": "c/short_circuit_and.c", "line": 3, "column": 5},
+        "select": ["diagnostics", "type"],
+        "options": {"project": "c/compile_commands.json", "readRoots": ["c"], "tools": {"clangd": "__CLANGD_LAUNCHER__"}},
+        "effects": ["executeTarget"]
+      },
+      "expect": {
+        "outcome": "failed",
+        "mustNotMention": ["diagnosticsUnobserved"]
+      }
+    },
+    {
+      "id": "L8-clangd-late-publication-after-release",
+      "group": "lifecycle",
+      "scenario": "wrong-version",
+      "polls": 8,
+      "release": true,
+      "request": {
+        "version": 1, "engine": "clang-analyzer",
+        "subject": {"kind": "position", "path": "c/short_circuit_and.c", "line": 3, "column": 5},
+        "select": ["diagnostics", "type"],
+        "options": {"project": "c/compile_commands.json", "readRoots": ["c"], "tools": {"clangd": "__CLANGD_LAUNCHER__"}},
+        "effects": ["executeTarget"]
+      },
+      "expect": {
+        "outcome": "interrupted",
+        "forbiddenOutcome": "complete"
+      }
+    },
+
+    {
+      "id": "C1-capture-recorded-read-identities",
+      "group": "capture",
+      "default": "c-capture",
+      "captureTree": "three-file",
+      "expect": {
+        "sourceIdentitiesVerified": true,
+        "snapshotInputs": ["main.c", "alpha.h", "beta.h"]
+      }
+    },
+    {
+      "id": "C2-capture-stale-after-input-change",
+      "group": "capture",
+      "default": "c-capture",
+      "captureTree": "three-file",
+      "mutateAfter": "include/alpha.h",
+      "expect": {
+        "applicability": "stale"
+      }
+    },
+    {
+      "id": "C3-capture-no-mixed-phase",
+      "group": "capture",
+      "default": "c-capture",
+      "captureTree": "three-file",
+      "mutateDuring": true,
+      "expect": {
+        "eitherOf": [
+          {"outcome": "complete", "phaseConsistent": true},
+          {"outcome": "refused", "exitCode": 2}
+        ]
+      }
+    },
+
+    {
+      "id": "E1a-tool-override-without-grant",
+      "group": "environment",
+      "probeMarker": "e1a.marker.json",
+      "exportedMarkers": {"BATON_TEST_HARNESS_CREDENTIAL": "e1a-harness-credential-marker"},
+      "request": {
+        "version": 1, "engine": "environment",
+        "subject": {"kind": "program", "path": "c/short_circuit_and.c"},
+        "select": ["dependencies"],
+        "options": {"tools": {"clang": "__ENV_PROBE_LAUNCHER__"}, "readRoots": ["c"]},
+        "effects": []
+      },
+      "expect": {
+        "outcome": "refused", "exitCode": 2,
+        "mustNotMention": ["e1a-harness-credential-marker"],
+        "probeMarkerAbsent": true
+      }
+    },
+    {
+      "id": "E1b-tool-override-with-grant",
+      "group": "environment",
+      "probeMarker": "e1b.marker.json",
+      "exportedMarkers": {"BATON_TEST_HARNESS_CREDENTIAL": "e1b-harness-credential-marker"},
+      "request": {
+        "version": 1, "engine": "environment",
+        "subject": {"kind": "program", "path": "c/short_circuit_and.c"},
+        "select": ["dependencies", "toolchain"],
+        "options": {"tools": {"clang": "__ENV_PROBE_LAUNCHER__"}, "readRoots": ["c"]},
+        "effects": ["executeTarget"]
+      },
+      "expect": {
+        "probeMarkerPresent": true,
+        "probeEnvExcludes": ["BATON_TEST_HARNESS_CREDENTIAL", "ANTHROPIC_API_KEY", "OPENAI_API_KEY", "CLAUDE_CODE_OAUTH_TOKEN", "BATON_SESSION", "BATON_PLAYER"],
+        "mustNotMention": ["e1b-harness-credential-marker"]
+      }
+    },
+    {
+      "id": "E2-harness-values-absent-from-results",
+      "group": "environment",
+      "default": "c-guard",
+      "subjectPath": "c/short_circuit_and.c",
+      "exportedMarkers": {
+        "BATON_TEST_HARNESS_CREDENTIAL": "e2-baton-marker-9f3a",
+        "ANTHROPIC_API_KEY": "e2-anthropic-marker-9f3a",
+        "OPENAI_API_KEY": "e2-openai-marker-9f3a"
+      },
+      "expect": {
+        "mustNotMention": ["e2-baton-marker-9f3a", "e2-anthropic-marker-9f3a", "e2-openai-marker-9f3a"]
+      }
+    }
+  ]
+}

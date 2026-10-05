@@ -1,0 +1,3 @@
+[
+  {"directory": "__FIXTURE_ROOT__", "file": "__FIXTURE_ROOT__/src/main.c", "arguments": ["__CLANG__", "-std=gnu89", "-fsyntax-only", "-I__FIXTURE_ROOT__/include", "__FIXTURE_ROOT__/src/main.c"]}
+]
