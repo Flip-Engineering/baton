@@ -23,6 +23,7 @@ lib/fixtures.mjs                  fixture tree materialization and identity help
 lib/provider.mjs                  coordinator CLI driver (context-query-file/context-result/context-engines)
 lib/assert.mjs                    expectation checker over one provider answer
 lib/capture.mjs                   phase recording and the concurrent mutator
+lib/artifacts.mjs                 complete child-output retention
 fixtures/c/                       C translation units for guard, denial and helper analysis
 fixtures/clangd/                  compilation database, configuration, response file, plugin, driver trees
 fixtures/providers/               LSP stdio transport fixture and environment probe executable
@@ -57,25 +58,67 @@ Fixtures that must control a provider transport (the clangd lifecycle cases) use
 routes 1 or 2. Request-local `options.tools` admission requires `executeTarget`
 and is exercised separately by the environment probe case.
 
+## Execution boundary
+
+Compilation, compiler calls, provider fixtures and every test gate run on an
+admitted remote runner. The operator's laptop edits source, reviews source,
+orchestrates natively and inspects retained evidence.
+
+| Mode | Starts a child | Where it runs |
+| --- | --- | --- |
+| `--verify-static` | no | anywhere, including the laptop |
+| `--selftest` | no | anywhere, including the laptop |
+| `--auth` | `/usr/bin/sqlite3`, read-only | laptop, as retained-evidence inspection |
+| `--verify` | the selected C front end | remote runner |
+| catalog run | the coordinator, Node and the fixture transports | remote runner |
+
+No mode applies a wall-time deadline or an output ceiling. Every child
+invocation is written in full to the artifact directory: `<id>.stdout`,
+`<id>.stderr` and `<id>.observation.json` carrying the exact argv, exit status,
+signal and spawn error. When no artifact directory is supplied the complete
+streams stay in the result row. A missing prerequisite is reported as
+`unqualified:` in the failing row and the run does not pass.
+
 ## Running
 
 ```sh
-node bend2/context/acceptance/code-security/run.mjs --verify
+node bend2/context/acceptance/code-security/run.mjs --verify-static
 node bend2/context/acceptance/code-security/run.mjs --selftest
-node bend2/context/acceptance/code-security/run.mjs --auth [--evidence-root PATH]
+node bend2/context/acceptance/code-security/run.mjs --auth \
+  --clang PATH --clangd PATH --sqlite3 PATH [--evidence-root PATH]
 node bend2/context/acceptance/code-security/run.mjs --list
-node bend2/context/acceptance/code-security/run.mjs \
-  --baton2 /path/to/baton2 --database /path/to/orchestra.db --session SESSION \
-  [--case CASE_ID] [--clang PATH] [--clangd PATH] [--tool NAME=PATH] [--work DIR]
 ```
 
-`sh bend2/scripts/check-unittest.sh bend2/context/acceptance/code-security/test_code_security_acceptance.py`
-runs the corpus and the mutation control through the checked-landing gate.
+Remote runner, fixture compile:
 
-`--verify` checks the fixture corpus itself: every C unit compiles with the
-pinned front end through its own recorded compile command, every fixture
-manifest is closed JSON, every symlink, response file and credential marker is
-as declared. It needs no coordinator and runs at any commit.
+```sh
+node bend2/context/acceptance/code-security/run.mjs --verify \
+  --clang /absolute/path/to/clang-20.1.8 \
+  --artifacts /absolute/retained/artifacts
+```
+
+Remote runner, provider cases:
+
+```sh
+node bend2/context/acceptance/code-security/run.mjs \
+  --baton2 /absolute/path/to/baton2 \
+  --database /absolute/path/to/orchestra.db \
+  --session SESSION \
+  --node /absolute/path/to/node-v22.15.0/bin/node \
+  --clang /absolute/path/to/clang-20.1.8 \
+  --clangd /absolute/path/to/clangd-20.1.8 \
+  --artifacts /absolute/retained/artifacts \
+  [--case CASE_ID] [--tool NAME=PATH] [--work DIR]
+```
+
+`--verify-static` checks the corpus with no child process: every fixture
+manifest is closed JSON, every symlink, response file, plugin flag, driver shim
+and configuration fragment is as declared, and every case names an existing
+subject, project and declaration template.
+
+`--verify` adds a compile of every C fixture through its own recorded compile
+command with the selected front end substituted for argv[0]. It requires
+`--clang` naming the front end and `--artifacts` for the retained output.
 
 `--selftest` runs the checker against recorded response payloads, one per
 expectation predicate, and requires each predicate to reject a violating
@@ -88,13 +131,16 @@ and tool identities, the catalog plan's database digest and rootpage joins, the
 guard and field source spans, the `view_list` CFG successor map and the
 accepted-edge cut set, the five-family composition of the joined result, the
 selected `db_prepare` signature gate, and the claim-classification discipline.
-It performs no build and launches no compiler; it is a check over retained
-files.
+It performs no build and launches no compiler. It requires `--clang`,
+`--clangd` and `--sqlite3` so every recomputed identity names the installed
+tool it was recomputed against; without them the mode reports `unqualified` and
+exits 2.
 
-The default run executes the catalog against the installed coordinator. A
-missing binary, a missing session or an unimplemented command is reported as
-`providerUnavailable` with the exact failing command and its exit status, and
-the run exits 2.
+The catalog run executes the catalog against the installed coordinator. It
+requires `--node` so the provider runtime identity is explicit and recorded,
+and `--artifacts` so every observation is retained. A missing binary, a missing
+session or an unimplemented command is reported as `providerUnavailable` with
+the exact failing command and its exit status, and the run exits 2.
 
 ## Expectation schema
 
@@ -167,6 +213,13 @@ Fields:
 - `ordering: "guardPrecedesCall"`: every `guarded_call` relation's call ref must
   begin at or after its guard ref ends.
 - `oneGuardPerCall`: one relation per call ref.
+- `evidenceRefsResolved`: every evidence item carries the identity fields its
+  `kind` requires, with no null path, digest, range or object. A source range
+  must carry numeric `line` and `column` on both ends.
+- `second`: a complete expectation applied to the second submission of a case
+  that declares `secondRequest`.
+- `retainedState`: the `context-result` state of the first submission, read
+  after the second submission.
 
 Case-level fields drive the runner rather than the checker:
 
@@ -184,6 +237,9 @@ Case-level fields drive the runner rather than the checker:
   published snapshot that mixes phases is the failure the case looks for.
 - `sameFactsAs`: compare the relation kinds and classifications with another
   case's answer.
+- `secondRequest`: a request body merged over the case request and submitted
+  again under the same query ID. The retained row must keep its first result and
+  the second submission must refuse.
 
 ## Case groups
 
@@ -218,7 +274,8 @@ Case-level fields drive the runner rather than the checker:
 | B5 | `clangd/response-file` | a response-file compile command resolves and is recorded; shell syntax in a response file refuses |
 | B6 | `clangd/plugin-flag` | `-plugin`, `-load`, `-Xclang -load` and `-fplugin=` refuse before provider startup |
 | B7 | `clangd/driver-shim` | the compilation database's compiler is not executed; target configuration cannot enable `--query-driver` |
-| B8 | `clangd/project-config` | a `.clangd` fragment in the subject tree does not change the analysis result |
+| B8 | `clangd/project-config-control` | the control tree for the configuration comparison |
+| B8b | `clangd/project-config` | a `.clangd` fragment in the subject tree changes neither the relation shape nor the marker set, and its `--query-driver` program is not executed |
 | B9 | `clangd/outside-root` | a subject path outside the admitted roots refuses |
 
 ### L: clangd managed lifecycle, version and URI completion
@@ -246,8 +303,17 @@ Case-level fields drive the runner rather than the checker:
 
 | Case | Fixture | Property |
 | --- | --- | --- |
-| E1 | `providers/env-probe.mjs` | a tool override without `executeTarget` refuses and leaves no marker; with the grant the child environment holds no harness credentials |
+| E1a | `providers/env-probe.mjs` | a tool override without `executeTarget` refuses and leaves no marker |
+| E1b | `providers/env-probe.mjs` | with the grant the probe runs and its recorded environment holds no harness credential name |
 | E2 | any completed query | no marker value from the runner's own environment appears in stdout, stderr or the retained result |
+
+### P: cross-module provenance and record identity
+
+| Case | Property |
+| --- | --- |
+| P1 | a second submission under the same query ID with a different canonical request refuses; the retained row keeps its first completed result |
+| P2 | every evidence item on a guard result carries the identity fields its kind requires, with no null path, digest, range or object |
+| P3 | the same evidence identity requirement holds on a type and call result |
 
 ## Ownership boundary
 
@@ -272,6 +338,15 @@ run:
    projections only.
 2. The message kind of the managed admission and waiting notice, so L2 can check
    owner delivery rather than progress alone.
+3. The settled source record and reference contract of the single TypeScript
+   producer. The Node SQL-join consumer negatives recorded at
+   `.scratch/source-review/models-floor-14` — a plan cached under a call-site key
+   alone and reused for changed SQL, a missing database receiver, a declaration
+   identity hashed from empty objects, and null-valued source references — become
+   function cases here once the record carries full statement, declaration and
+   source-snapshot identity. Case P1 already covers the query-ID half of that
+   boundary, because a conflicting submission under one ID must refuse regardless
+   of provider.
 
 ## Limits
 

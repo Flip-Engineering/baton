@@ -262,6 +262,56 @@ export function checkExpectation(expect, answer, context = {}) {
       if (call.start < guard.end) fail(`ordering guardPrecedesCall: call at ${call.start} precedes guard end ${guard.end}`);
     }
   }
+  if (expect.evidenceRefsResolved) {
+    // The specification fixes the required fields of each evidence item, so a
+    // null-valued identity field is an unresolved reference, not an optional
+    // absence.
+    const required = {
+      source: ['path', 'sha256', 'range'],
+      schema: ['databaseIdentity', 'schemaDigest', 'object'],
+      document: ['path', 'sha256', 'pointer'],
+      probe: ['executable', 'sha256', 'version', 'operation'],
+      runtime: ['runtime', 'epoch', 'thread', 'script'],
+    };
+    let inspected = 0;
+    for (const item of itemsOf(envelope)) {
+      const evidence = Array.isArray(item.evidence) ? item.evidence : [];
+      if (evidence.length === 0) fail(`evidenceRefsResolved: ${item.kind} carries no evidence`);
+      for (const entry of evidence) {
+        inspected += 1;
+        if (!entry || typeof entry !== 'object' || !entry.kind) {
+          fail(`evidenceRefsResolved: an evidence item on ${item.kind} has no kind`);
+          continue;
+        }
+        for (const field of required[entry.kind] ?? []) {
+          if (entry[field] === null || entry[field] === undefined) {
+            fail(`evidenceRefsResolved: ${entry.kind} evidence on ${item.kind} has a null ${field}`);
+          }
+        }
+        if (entry.kind === 'source' && entry.range) {
+          for (const edge of ['start', 'end']) {
+            const point = entry.range[edge];
+            if (!point || typeof point.line !== 'number' || typeof point.column !== 'number') {
+              fail(`evidenceRefsResolved: source range ${edge} has no numeric line and column`);
+            }
+          }
+        }
+      }
+    }
+    if (inspected === 0) fail('evidenceRefsResolved: no evidence items were returned');
+  }
+  if (expect.second) {
+    const second = context.secondAnswer;
+    if (!second) fail('second: no second submission was recorded');
+    else {
+      const outcome = checkExpectation(expect.second, second, context);
+      for (const message of outcome.failures) fail(`second: ${message}`);
+    }
+  }
+  if (expect.retainedState) {
+    const state = context.retainedAnswer?.envelope?.state ?? null;
+    if (state !== expect.retainedState) fail(`retainedState: expected ${expect.retainedState}, observed ${state}`);
+  }
   if (expect.applicability) {
     const observed = envelope?.result?.applicability ?? null;
     if (observed !== expect.applicability) fail(`applicability: expected ${expect.applicability}, observed ${observed}`);

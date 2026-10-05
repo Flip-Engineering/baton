@@ -1,4 +1,7 @@
-// Driver for the installed coordinator. Every call runs the real binary.
+// Driver for the installed coordinator. Every call runs the real binary and
+// returns the complete observed result: exit status, signal, spawn error and
+// the whole stdout and stderr streams. No wall-time deadline and no output
+// ceiling is applied here; the caller retains the streams as artifacts.
 
 import { spawnSync } from 'node:child_process';
 import { existsSync } from 'node:fs';
@@ -6,12 +9,11 @@ import { existsSync } from 'node:fs';
 export const PROVIDER_UNAVAILABLE = 'providerUnavailable';
 
 export class Coordinator {
-  constructor({ baton2, database, session, cwd, env = {}, timeoutMs = 120000 }) {
+  constructor({ baton2, database, session, cwd, env = {} }) {
     this.baton2 = baton2;
     this.database = database;
     this.session = session;
     this.cwd = cwd;
-    this.timeoutMs = timeoutMs;
     this.env = { ...process.env, ...env };
   }
 
@@ -20,17 +22,17 @@ export class Coordinator {
   }
 
   run(args, { stdin } = {}) {
-    const result = spawnSync(this.baton2, [this.database, ...args], {
+    const argv = [this.baton2, this.database, ...args];
+    const result = spawnSync(argv[0], argv.slice(1), {
       cwd: this.cwd,
       env: this.env,
       input: stdin,
       encoding: 'utf8',
-      maxBuffer: 512 * 1024 * 1024,
-      timeout: this.timeoutMs,
+      maxBuffer: Infinity,
     });
     return {
-      argv: [this.baton2, this.database, ...args],
-      exitCode: result.status === null ? -1 : result.status,
+      argv,
+      exitCode: result.status === null ? null : result.status,
       stdout: result.stdout ?? '',
       stderr: result.stderr ?? '',
       signal: result.signal ?? null,
@@ -60,21 +62,16 @@ export class Coordinator {
   }
 
   // The coordinator answers exit 0 with one JSON document and exit 2 with the
-  // structured refusal. A non-zero exit without that document means the command
-  // is absent or the invocation failed.
-  submitAndRead(queryId, requestText, { retries = 0 } = {}) {
-    let submission = this.submit(queryId, requestText);
-    let attempts = 0;
-    while (submission.exitCode !== 0 && submission.exitCode !== 2 && attempts < retries) {
-      attempts += 1;
-      submission = this.submit(queryId, requestText);
-    }
-    const refusal = tryJson(submission.exitCode === 2 ? submission.stdout : null) ?? tryJson(submission.stderr);
+  // structured refusal. Any other status, a signal or a spawn error means the
+  // command is absent or the invocation failed; it is reported as unavailable
+  // rather than retried.
+  submitAndRead(queryId, requestText) {
+    const submission = this.submit(queryId, requestText);
     if (submission.exitCode !== 0 && submission.exitCode !== 2) {
       return { kind: PROVIDER_UNAVAILABLE, submission };
     }
     if (submission.exitCode === 2) {
-      return { kind: 'refused', submission, envelope: refusal };
+      return { kind: 'refused', submission, envelope: tryJson(submission.stdout) ?? tryJson(submission.stderr) };
     }
     const envelope = tryJson(submission.stdout);
     if (envelope === null) {
@@ -86,7 +83,7 @@ export class Coordinator {
   retrieve(queryId) {
     const retrieval = this.result(queryId);
     if (retrieval.exitCode === 2) {
-      return { kind: 'refused', submission: retrieval, envelope: tryJson(retrieval.stderr) };
+      return { kind: 'refused', submission: retrieval, envelope: tryJson(retrieval.stderr) ?? tryJson(retrieval.stdout) };
     }
     if (retrieval.exitCode !== 0) return { kind: PROVIDER_UNAVAILABLE, submission: retrieval };
     const envelope = tryJson(retrieval.stdout);

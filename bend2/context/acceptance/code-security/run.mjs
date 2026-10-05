@@ -2,18 +2,27 @@
 // Code-security acceptance runner.
 //
 // Modes:
-//   --verify    static checks over the fixture corpus; no coordinator needed
-//   --selftest  checker mutation control over recorded payloads
-//   --auth      independent verification of the retained Fossil records
-//   default     run the case catalog against the installed coordinator
+//   --verify-static  source inspection of the fixture corpus; starts no child
+//   --verify         the same checks plus a compile of every fixture through
+//                    the selected front end; this mode runs a compiler and is
+//                    an admitted-remote-runner gate
+//   --selftest       checker mutation control over recorded payloads
+//   --auth           independent verification of the retained Fossil records
+//   --list           the case catalog
+//   default          run the case catalog against the installed coordinator;
+//                    remote-runner only
 //
-// The catalog run calls the real coordinator. A missing binary, a missing
-// session or an unimplemented command is reported as providerUnavailable.
+// Every mode that starts a child requires an explicit identity for that child
+// (--clang, --clangd, --node) and an --artifacts directory. A child's complete
+// stdout and stderr, its exit status, signal and spawn error are retained; no
+// deadline and no output ceiling is applied. A missing prerequisite is
+// reported as unqualified and the run does not pass.
 
 import { spawnSync } from 'node:child_process';
 import { existsSync, mkdtempSync, mkdirSync, readFileSync, readdirSync, realpathSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, relative } from 'node:path';
+import { ArtifactStore } from './lib/artifacts.mjs';
 import { checkExpectation } from './lib/assert.mjs';
 import { recordPhases, setPhase, sourceDigestSet, startMutator } from './lib/capture.mjs';
 import {
@@ -22,8 +31,6 @@ import {
 import { Coordinator, isUnavailable } from './lib/provider.mjs';
 
 const FIXTURES = join(HERE, 'fixtures');
-const DEFAULT_CLANG = process.env.BATON_CONTEXT_CLANG ?? '/opt/homebrew/opt/llvm/bin/clang-20';
-const DEFAULT_CLANGD = process.env.BATON_CONTEXT_CLANGD ?? '/opt/homebrew/opt/llvm/bin/clangd';
 
 function parseArgs(argv) {
   const options = { mode: 'run', cases: [], tools: {} };
@@ -31,6 +38,7 @@ function parseArgs(argv) {
     const arg = argv[index];
     const next = () => argv[(index += 1)];
     if (arg === '--verify') options.mode = 'verify';
+    else if (arg === '--verify-static') options.mode = 'verify-static';
     else if (arg === '--selftest') options.mode = 'selftest';
     else if (arg === '--auth') options.mode = 'auth';
     else if (arg === '--list') options.mode = 'list';
@@ -40,6 +48,9 @@ function parseArgs(argv) {
     else if (arg === '--case') options.cases.push(next());
     else if (arg === '--clang') options.clang = next();
     else if (arg === '--clangd') options.clangd = next();
+    else if (arg === '--node') options.node = next();
+    else if (arg === '--sqlite3') options.sqlite3 = next();
+    else if (arg === '--artifacts') options.artifacts = next();
     else if (arg === '--evidence-root') options.evidenceRoot = next();
     else if (arg === '--work') options.work = next();
     else if (arg === '--tool') {
@@ -63,14 +74,36 @@ function sleep(ms) {
 // --verify
 
 function verifyFixtures(options) {
-  const clang = options.clang ?? DEFAULT_CLANG;
+  const clang = options.clang ?? null;
   const results = [];
   const record = (id, ok, detail) => results.push({ id, ok, detail });
+  const compiled = options.mode === 'verify';
+  const store = compiled && options.artifacts ? new ArtifactStore(join(options.artifacts, 'verify')) : null;
+  if (compiled && !store) {
+    record('artifacts-directory', false, 'unqualified: --artifacts is required for a compiler-backed verification');
+  }
+  // When no artifact directory was supplied the complete streams stay in the
+  // result row; nothing is dropped in either case.
+  const observe = (id, observation) => (store
+    ? store.retain(id, observation)
+    : {
+      id,
+      argv: observation.argv ?? null,
+      exitCode: observation.exitCode ?? null,
+      signal: observation.signal ?? null,
+      error: observation.error ?? null,
+      stdout: observation.stdout ?? '',
+      stderr: observation.stderr ?? '',
+    });
 
-  record('clang-present', existsSync(clang), clang);
-  if (existsSync(clang)) {
-    const version = spawnSync(clang, ['--version'], { encoding: 'utf8' });
-    record('clang-version', version.stdout.includes('20.1.8'), version.stdout.split('\n')[0].trim());
+  if (compiled) {
+    if (!clang) record('clang-identity', false, 'unqualified: no --clang front-end identity was supplied');
+    else if (!existsSync(clang)) record('clang-present', false, `unqualified: ${clang} does not exist`);
+    else {
+      const probe = observe('clang-version', spawnSync(clang, ['--version'], { encoding: 'utf8', maxBuffer: Infinity }));
+      const ok = probe.exitCode === 0 && probe.signal === null && probe.error === null && probe.stdout.includes('20.1.8');
+      record('clang-version', ok, JSON.stringify(probe));
+    }
   }
 
   // Compile every C fixture. A tree with a compilation database is compiled
@@ -93,7 +126,8 @@ function verifyFixtures(options) {
     ['clangd/outside-root', []],
   ]);
 
-  for (const [tree, flags] of plainFlags) {
+  const compileTrees = compiled && Boolean(clang) && existsSync(clang);
+  for (const [tree, flags] of (compileTrees ? plainFlags : new Map())) {
     const treeDir = join(FIXTURES, tree);
     if (!existsSync(treeDir)) {
       record(`tree-missing:${tree}`, false, treeDir);
@@ -123,9 +157,17 @@ function verifyFixtures(options) {
         }
       }
       if (!argv) argv = [clang, '-std=gnu89', '-fsyntax-only', ...flags, file];
-      const run = spawnSync(argv[0], argv.slice(1), { encoding: 'utf8', cwd: treeDir });
-      const ok = run.status === 0;
-      record(`compiles:${relative(FIXTURES, file)}`, ok, ok ? 'clean' : (run.stderr || '').trim().split('\n')[0] ?? `exit ${run.status}`);
+      const run = spawnSync(argv[0], argv.slice(1), { encoding: 'utf8', cwd: treeDir, maxBuffer: Infinity });
+      const observation = observe(`compile-${relative(FIXTURES, file)}`, {
+        argv,
+        exitCode: run.status,
+        signal: run.signal,
+        error: run.error ? String(run.error.message) : null,
+        stdout: run.stdout ?? '',
+        stderr: run.stderr ?? '',
+      });
+      const ok = run.status === 0 && !run.signal && !run.error;
+      record(`compiles:${relative(FIXTURES, file)}`, ok, JSON.stringify(observation));
     }
     for (const database of databases) {
       const entries = JSON.parse(readFileSync(database, 'utf8'));
@@ -180,15 +222,16 @@ function verifyFixtures(options) {
   const cases = JSON.parse(readFileSync(join(HERE, 'cases.json'), 'utf8'));
   const caseKeys = new Set(['id', 'group', 'default', 'subjectPath', 'request', 'expect', 'declaration',
     'sameFactsAs', 'scenario', 'polls', 'release', 'exportedMarkers', 'probeMarker', 'captureTree',
-    'mutateAfter', 'mutateDuring']);
+    'mutateAfter', 'mutateDuring', 'secondRequest']);
   const expectKeys = new Set(['outcome', 'exitCode', 'refusalCondition', 'refusalConditionIncludes',
     'relations', 'forbiddenRelations', 'limits', 'forbiddenLimits', 'mustNotMention',
     'sourceIdentitiesVerified', 'snapshotInputs', 'phaseConsistent', 'ordering', 'oneGuardPerCall',
     'applicability', 'forbiddenOutcome', 'waitingForAll', 'eitherOf', 'marker', 'probeMarkerPresent',
-    'probeMarkerAbsent', 'probeEnvExcludes', 'probeEnvIncludes']);
+    'probeMarkerAbsent', 'probeEnvExcludes', 'probeEnvIncludes', 'evidenceRefsResolved', 'second',
+    'retainedState']);
   const relationKeys = new Set(['kind', 'classification', 'count', 'minAcceptedRoutes',
     'cutSetCoversAccepted', 'deniedRouteReachesReturn', 'callsite']);
-  const groups = new Set(['security', 'boundary', 'lifecycle', 'capture', 'environment']);
+  const groups = new Set(['security', 'boundary', 'lifecycle', 'capture', 'environment', 'provenance']);
   const defaults = Object.keys(cases.defaults ?? {});
   const ids = new Set();
   const unknown = (row, allowed) => Object.keys(row).filter((key) => !allowed.has(key));
@@ -288,7 +331,8 @@ function prepareWork(options) {
 
   const clangdTransport = join(FIXTURES, 'providers/clangd-transport.mjs');
   const envProbe = join(FIXTURES, 'providers/env-probe.mjs');
-  const node = process.execPath;
+  if (!options.node) throw new Error('--node is required: one explicit provider runtime identity is recorded, for example the Node 22.15.0 floor binary');
+  const node = options.node;
   const launcherFor = (label, script, scenario) => writeLauncher(
     launchers,
     `${label}.sh`,
@@ -385,7 +429,13 @@ function sideChecks(entry, cwd) {
 }
 
 async function runCatalog(options) {
+  if (!options.artifacts) {
+    log({ summary: 'run', ok: false, detail: 'unqualified: --artifacts is required so every provider observation is retained' });
+    return false;
+  }
+  const store = new ArtifactStore(join(options.artifacts, 'provider'));
   const work = prepareWork(options);
+  const nodeProbe = store.retain('node-version', spawnSync(options.node, ['--version'], { encoding: 'utf8', maxBuffer: Infinity }));
   const catalog = readCaseCatalog();
   const defaults = catalog.defaults ?? {};
   const selected = options.cases.length > 0 ? catalog.cases.filter((entry) => options.cases.includes(entry.id)) : catalog.cases;
@@ -437,6 +487,7 @@ async function runCatalog(options) {
 
     const queryId = `accept-${entry.id}`;
     let answer = coordinator.submitAndRead(queryId, requestText);
+    answer.submission.observation = store.retain(`${entry.id}-submit`, answer.submission).record;
     if (isUnavailable(answer)) {
       unavailable += 1;
       log({ id: entry.id, ok: false, providerUnavailable: true, detail: answer.detail ?? `exit ${answer.submission.exitCode}`, stderr: answer.submission.stderr.slice(0, 400) });
@@ -445,19 +496,25 @@ async function runCatalog(options) {
 
     // Managed queries: poll the retained envelope.
     const polls = entry.polls ?? 0;
+    // The observation budget bounds how many times this runner re-reads the
+    // retained envelope; it is not a deadline. A query still running at the
+    // end of the budget keeps its observed running state.
     for (let attempt = 0; attempt < polls; attempt += 1) {
       const state = answer.envelope?.state;
       if (state && state !== 'accepted' && state !== 'running') break;
       sleep(100);
       const retained = coordinator.retrieve(queryId);
+      retained.submission.observation = store.retain(`${entry.id}-result-${attempt}`, retained.submission).record;
       if (retained.kind === 'retained') answer = { kind: 'retained', submission: retained.submission, envelope: retained.envelope };
     }
 
     if (entry.release && (answer.envelope?.state === 'running' || answer.envelope?.state === 'accepted')) {
-      coordinator.control(`${queryId}-release`, queryId, 'release', 'SIGTERM');
+      const control = coordinator.control(`${queryId}-release`, queryId, 'release', 'SIGTERM');
+      control.observation = store.retain(`${entry.id}-release-control`, control).record;
       for (let attempt = 0; attempt < (entry.polls ?? 4); attempt += 1) {
         sleep(100);
         const retained = coordinator.retrieve(queryId);
+        retained.submission.observation = store.retain(`${entry.id}-release-result-${attempt}`, retained.submission).record;
         if (retained.kind === 'retained') answer = { kind: 'retained', submission: retained.submission, envelope: retained.envelope };
         const state = answer.envelope?.state;
         if (state && state !== 'accepted' && state !== 'running') break;
@@ -483,8 +540,21 @@ async function runCatalog(options) {
       }
     }
 
+    // A second submission under the same query ID exercises conflicting reuse.
+    let secondAnswer = null;
+    let retainedAnswer = null;
+    if (entry.secondRequest) {
+      const secondBody = deepMerge(request, entry.secondRequest);
+      const second = coordinator.submitAndRead(queryId, JSON.stringify(secondBody));
+      second.submission.observation = store.retain(`${entry.id}-second-submit`, second.submission).record;
+      secondAnswer = { exitCode: second.submission.exitCode, stdout: second.submission.stdout, stderr: second.submission.stderr, envelope: second.envelope };
+      const retained = coordinator.retrieve(queryId);
+      retained.submission.observation = store.retain(`${entry.id}-second-result`, retained.submission).record;
+      retainedAnswer = { exitCode: retained.submission.exitCode, stdout: retained.submission.stdout, stderr: retained.submission.stderr, envelope: retained.envelope };
+    }
+
     const evaluated = { exitCode: answer.submission.exitCode, stdout: answer.submission.stdout, stderr: answer.submission.stderr, envelope: answer.envelope };
-    const result = checkExpectation(entry.expect, evaluated, { phases });
+    const result = checkExpectation(entry.expect, evaluated, { phases, secondAnswer, retainedAnswer });
     const side = sideChecks(entry, cwd);
     const failuresForCase = [...result.failures, ...side.failures];
     if (digestDrift) failuresForCase.push(digestDrift);
@@ -499,10 +569,18 @@ async function runCatalog(options) {
 
     const ok = failuresForCase.length === 0;
     if (!ok) failures += 1;
-    log({ id: entry.id, ok, state: evaluated.envelope?.state ?? null, failures: failuresForCase.slice(0, 4) });
+    log({ id: entry.id, ok, state: evaluated.envelope?.state ?? null, findings: failuresForCase });
   }
 
-  log({ summary: 'run', cases: selected.length, failed: failures, providerUnavailable: unavailable, ok: failures === 0 && unavailable === 0 });
+  log({
+    summary: 'run',
+    cases: selected.length,
+    failed: failures,
+    providerUnavailable: unavailable,
+    ok: failures === 0 && unavailable === 0,
+    runtime: { node: options.node, nodeObservation: nodeProbe, clang: options.clang ?? null, clangd: options.clangd ?? null, baton2: options.baton2 ?? null, database: options.database ?? null },
+    artifacts: options.artifacts,
+  });
   return failures === 0 && unavailable === 0;
 }
 
@@ -511,7 +589,7 @@ async function runCatalog(options) {
 async function main() {
   const options = parseArgs(process.argv.slice(2));
   if (options.help) {
-    process.stdout.write('usage: run.mjs [--verify|--selftest|--auth|--list] [--baton2 PATH --database PATH --session ID] [--case ID] [--clang PATH] [--clangd PATH] [--tool NAME=PATH]\n');
+    process.stdout.write('usage: run.mjs [--verify|--verify-static|--selftest|--auth|--list] [--baton2 PATH --database PATH --session ID --node PATH --artifacts DIR] [--case ID] [--clang PATH] [--clangd PATH] [--sqlite3 PATH] [--tool NAME=PATH] [--evidence-root PATH] [--work DIR]\n');
     return 0;
   }
   if (options.mode === 'list') {
@@ -519,7 +597,7 @@ async function main() {
     for (const entry of catalog.cases) log({ id: entry.id, group: entry.group });
     return 0;
   }
-  if (options.mode === 'verify') return verifyFixtures(options) ? 0 : 1;
+  if (options.mode === 'verify' || options.mode === 'verify-static') return verifyFixtures(options) ? 0 : 1;
   if (options.mode === 'selftest') return selftest() ? 0 : 1;
   if (options.mode === 'auth') {
     const modulePath = join(HERE, 'verify/authentic.mjs');
@@ -527,9 +605,22 @@ async function main() {
       log({ summary: 'auth', ok: false, detail: 'verify/authentic.mjs is missing' });
       return 1;
     }
+    if (!options.clang || !options.clangd || !options.sqlite3) {
+      log({
+        summary: 'auth',
+        ok: false,
+        detail: 'unqualified: --clang, --clangd and --sqlite3 are required so every recorded identity is recomputed against an explicit installed tool',
+      });
+      return 2;
+    }
     const { verifyAuthentic } = await import(modulePath);
     const evidenceRoot = options.evidenceRoot ?? '/Users/wahargis/Development/Experiments/baton-bend2-root-delivery-20260928/.scratch/semantic-context-20261005/probes/semantic-models-security-critic/fossil-qualification';
-    const result = await verifyAuthentic(evidenceRoot, options);
+    const result = await verifyAuthentic(evidenceRoot, {
+      clang: options.clang,
+      clangd: options.clangd,
+      sqlite3: options.sqlite3,
+      checks: options.checks,
+    });
     for (const check of result.checks) log({ id: check.id, ok: check.ok, detail: check.detail });
     log({ summary: 'auth', checks: result.checks.length, failed: result.checks.filter((check) => !check.ok).length, ok: result.ok });
     return result.ok ? 0 : 1;

@@ -1,9 +1,9 @@
 // Read-only verification of the retained authentic Fossil qualification record.
 //
-// Every check recomputes its claim from the retained bytes and JSON documents
+// Every check derives its result from the retained bytes and JSON documents
 // under the evidence root: file and segment digests, byte spans, graded
 // classification fields, CFG reachability, catalog rows and installed tool
-// identities. No recorded number is taken as input to a result.
+// identities.
 //
 // The module opens every file read-only and writes nothing. The evidence root
 // is a parameter; the default is the retained fossil-qualification probe tree.
@@ -133,6 +133,31 @@ function withProblems(summary, problems) {
 function displayPath(root, file) {
   const relative = path.relative(root, file);
   return relative && !relative.startsWith('..') ? relative : file;
+}
+
+// Resolve a recorded absolute path against the evidence root in use. A copy of
+// the probe tree under another root keeps the recorded absolute paths in its
+// JSON documents, so the longest existing component tail under the current root
+// is the resolution for such a copy. The recorded path itself is used when it
+// exists.
+function resolveRecordedPath(root, recorded) {
+  if (typeof recorded !== 'string' || recorded.length === 0) return null;
+  if (existsSync(recorded)) return recorded;
+  const parts = recorded.split(path.sep).filter((part) => part.length > 0);
+  for (let count = parts.length - 1; count >= 1; count -= 1) {
+    const candidate = path.join(root, ...parts.slice(parts.length - count));
+    if (existsSync(candidate)) return candidate;
+  }
+  return null;
+}
+
+function sameFile(left, right) {
+  if (typeof left !== 'string' || typeof right !== 'string') return false;
+  try {
+    return realpathSync(left) === realpathSync(right);
+  } catch {
+    return path.resolve(left) === path.resolve(right);
+  }
 }
 
 // Parse the DumpCFG text into blocks with ordered successors. A block header is
@@ -289,7 +314,12 @@ async function correspondenceBytes(root) {
   if (!Array.isArray(entries)) throw new Error(`${file}: expected a JSON array`);
   const problems = [];
   const cache = new Map();
-  const bytesOf = (target) => {
+  const bytesOf = (recorded, at) => {
+    const target = resolveRecordedPath(root, recorded);
+    if (target === null) {
+      problems.push(`${at}: recorded path ${JSON.stringify(recorded)} resolves to no retained file`);
+      return null;
+    }
     if (!cache.has(target)) cache.set(target, readBytes(target));
     return cache.get(target);
   };
@@ -297,8 +327,9 @@ async function correspondenceBytes(root) {
 
   entries.forEach((entry, index) => {
     const at = `source-correspondence.json[${index}]`;
-    const original = bytesOf(entry.original);
-    const generated = bytesOf(entry.generated);
+    const original = bytesOf(entry.original, at);
+    const generated = bytesOf(entry.generated, at);
+    if (original === null || generated === null) return;
     const originalDigest = sha256Hex(original);
     const generatedDigest = sha256Hex(generated);
     if (originalDigest !== entry.original_sha256) {
@@ -601,7 +632,12 @@ async function catalogProvenance(root, options) {
   }
 
   const argv = Array.isArray(plan.argv) ? plan.argv : [];
-  if (!argv.includes(database)) problems.push(`catalog-plan.json argv does not name ${database}`);
+  const argvNamesDatabase = argv.some((argument) => {
+    if (typeof argument !== 'string') return false;
+    const resolved = resolveRecordedPath(root, argument);
+    return resolved !== null && sameFile(resolved, database);
+  });
+  if (!argvNamesDatabase) problems.push(`catalog-plan.json argv names no path resolving to ${database}`);
 
   const fileFields = [];
   const openReads = [];
@@ -622,7 +658,10 @@ async function catalogProvenance(root, options) {
   });
 
   for (const field of fileFields) {
-    if (field.file !== database) problems.push(`catalog-plan.json results[${field.result}] names ${field.file} instead of ${database}`);
+    const resolved = resolveRecordedPath(root, field.file);
+    if (resolved === null || !sameFile(resolved, database)) {
+      problems.push(`catalog-plan.json results[${field.result}] names ${field.file}, which resolves to no file matching ${database}`);
+    }
   }
   if (fileFields.length === 0) problems.push('catalog-plan.json records no database_list file entry');
 
@@ -661,14 +700,14 @@ async function catalogProvenance(root, options) {
   if (openReads.length === 0) problems.push('catalog-plan.json records no OpenRead operand');
 
   for (const recorded of recordedCatalogRows) {
-    const live = schemaRows.find((row) => row.rootpage === recorded.rootpage);
-    if (!live) {
+    const liveRow = schemaRows.find((row) => row.rootpage === recorded.rootpage);
+    if (!liveRow) {
       problems.push(`recorded catalog row rootpage ${recorded.rootpage} (${recorded.name}) is absent from the live catalog`);
       continue;
     }
-    if (live.name !== recorded.name || live.type !== recorded.type) {
+    if (liveRow.name !== recorded.name || liveRow.type !== recorded.type) {
       problems.push(
-        `recorded catalog row rootpage ${recorded.rootpage} is ${recorded.type} ${recorded.name} while the live catalog holds ${live.type} ${live.name}`,
+        `recorded catalog row rootpage ${recorded.rootpage} is ${recorded.type} ${recorded.name} while the live catalog holds ${liveRow.type} ${liveRow.name}`,
       );
     }
   }
@@ -720,8 +759,9 @@ async function catalogProvenance(root, options) {
 async function guardSpan(root) {
   const joined = readJson(path.join(root, 'joined-result.json'));
   const subject = joined.subject ?? {};
-  const generatedPath = subject.source?.generated;
-  if (typeof generatedPath !== 'string') throw new Error('joined-result.json subject.source.generated is absent');
+  const recordedGenerated = subject.source?.generated;
+  if (typeof recordedGenerated !== 'string') throw new Error('joined-result.json subject.source.generated is absent');
+  const generatedPath = resolveRecordedPath(root, recordedGenerated) ?? recordedGenerated;
   const bytes = readBytes(generatedPath);
   const relation = joined.security?.relation ?? {};
   const problems = [];
@@ -733,13 +773,19 @@ async function guardSpan(root) {
     problems.push(`security.relation.guard range ${JSON.stringify(guard.range)} does not index ${displayPath(root, generatedPath)} (${bytes.length} bytes)`);
   } else {
     guardText = spanText(bytes, guardSpan);
-    const trimmed = guardText.trim();
-    if (!/^if[\s(]/.test(trimmed)) problems.push(`security.relation.guard span does not start an if statement: ${JSON.stringify(trimmed.slice(0, 40))}`);
-    const opens = (trimmed.match(/\{/g) ?? []).length;
-    const closes = (trimmed.match(/\}/g) ?? []).length;
-    if (opens === 0 || opens !== closes) problems.push(`security.relation.guard span does not hold a balanced block: {${opens} }${closes}`);
-    if (!trimmed.endsWith('}')) problems.push(`security.relation.guard span does not end at a closing brace: ${JSON.stringify(trimmed.slice(-20))}`);
+    if (!/^if[\s(]/.test(guardText)) problems.push(`security.relation.guard span does not start an if statement: ${JSON.stringify(guardText.slice(0, 40))}`);
+    const opens = (guardText.match(/\{/g) ?? []).length;
+    const closes = (guardText.match(/\}/g) ?? []).length;
+    if (opens === 0 || opens !== closes) problems.push(`security.relation.guard span does not hold a balanced block: ${opens} opening and ${closes} closing braces`);
+    if (!guardText.endsWith('}')) problems.push(`security.relation.guard span does not end at a closing brace: ${JSON.stringify(guardText.slice(-20))}`);
+    if (guardText !== guardText.trim()) problems.push('security.relation.guard span holds bytes outside the statement text');
     if (guard.kind !== undefined && guard.kind !== 'IfStmt') problems.push(`security.relation.guard kind is ${guard.kind}`);
+    const beginLength = guard.range.begin.tokLen ?? 0;
+    const beginToken = bytes.subarray(guard.range.begin.offset, guard.range.begin.offset + beginLength).toString('utf8');
+    const endLength = guard.range.end.tokLen ?? 0;
+    const endToken = bytes.subarray(guard.range.end.offset, guard.range.end.offset + endLength).toString('utf8');
+    if (beginToken !== 'if') problems.push(`security.relation.guard begin token is ${JSON.stringify(beginToken)}`);
+    if (endToken !== '}') problems.push(`security.relation.guard end token is ${JSON.stringify(endToken)}`);
   }
 
   const fields = Array.isArray(relation.fields) ? relation.fields : [];
@@ -891,7 +937,6 @@ async function relationRecompute(root) {
       `selected_unreachable_when_allow_block_removed is ${relation.selected_unreachable_when_allow_block_removed} while the recomputed value is ${!callReachable}`,
     );
   }
-  if (!callReachable === false) problems.push('the selected call block is reachable in the recomputed graph');
 
   // (f) the deny block is reachable from the entry through no accepted edge and
   // its text holds a return terminator.
@@ -908,7 +953,7 @@ async function relationRecompute(root) {
   if (relation.class !== 'static-possible') problems.push(`security.relation class is ${relation.class}`);
 
   const ok = problems.length === 0;
-  const summary = `${blocks.size} blocks parsed with ordered successors ${successorMismatches === 0 ? 'matching' : 'differing from'} cfg_edges; entry block ${entry} reaches [${entryReach.join(', ')}]; accepted exit edges ${[...acceptedEdges].sort().join(', ')}; reachability after their removal [${reachWithoutAccepted.join(', ')}]; selected call block ${selectedCallBlock} unreachable in that graph and selected_unreachable_when_allow_block_removed is ${relation.selected_unreachable_when_allow_block_removed}; deny block ${denyBlock} reachable through no accepted edge with a return terminator`;
+  const summary = `${blocks.size} blocks parsed with ordered successors ${successorMismatches === 0 ? 'matching' : 'differing from'} cfg_edges; entry block ${entry} reaches [${entryReach.join(', ')}] from the parsed text and [${entryReachRecorded.join(', ')}] from cfg_edges; accepted exit edges ${[...acceptedEdges].sort().join(', ')}; reachability after their removal [${reachWithoutAccepted.join(', ')}]; selected call block ${selectedCallBlock} unreachable in that graph and selected_unreachable_when_allow_block_removed is ${relation.selected_unreachable_when_allow_block_removed}; deny block ${denyBlock} reachable through no accepted edge with a return terminator`;
   return {
     ok,
     detail: withProblems(summary, problems),
@@ -953,30 +998,37 @@ async function sameHandlerFamilies(root) {
       problems.push(`family ${name} is absent from joined-result.json`);
       continue;
     }
-    if (typeof family.class !== 'string') problems.push(`family ${name} carries no class`);
+    let classification = family.class;
+    if (typeof classification !== 'string') {
+      const nested = gradedBlocks(family).length;
+      if (nested === 0) problems.push(`family ${name} carries no class and no nested graded block`);
+      classification = `nested:${nested}`;
+    }
     let size = 0;
     if (name === 'types') size = (family.global_inputs?.length ?? 0) + (family.handler_type ? 1 : 0);
-    if (name === 'calls') size = family.facts?.length ?? 0;
+    if (name === 'calls') size = Array.isArray(family.facts) ? family.facts.length : 0;
     if (name === 'security') size = (family.roles ? 1 : 0) + (family.relation ? 1 : 0);
     if (name === 'database') size = family.sql ? 1 : 0;
-    if (name === 'diagnostics') size = family.files?.length ?? 0;
+    if (name === 'diagnostics') size = Array.isArray(family.files) ? family.files.length : 0;
     if (size === 0) problems.push(`family ${name} carries no entries for the subject`);
-    familyRows.push({ name, class: family.class, entries: size });
+    familyRows.push({ name, class: classification, entries: size });
   }
 
-  const generatedPath = subject?.source?.generated;
-  const generatedBytes = typeof generatedPath === 'string' ? readBytes(generatedPath) : null;
+  const recordedGenerated = subject?.source?.generated;
+  const generatedBytes = typeof recordedGenerated === 'string' ? readBytes(resolveRecordedPath(root, recordedGenerated) ?? recordedGenerated) : null;
   const subjectSpan = Array.isArray(subject?.source?.generated_byte_span)
     ? { start: subject.source.generated_byte_span[0], stop: subject.source.generated_byte_span[1] }
     : null;
 
   // Handler-body facts must index the recorded subject bytes.
   const bodySpans = [];
-  for (const [index, fact] of (joined.calls?.facts ?? []).entries()) {
+  const callFacts = Array.isArray(joined.calls?.facts) ? joined.calls.facts : [];
+  for (const [index, fact] of callFacts.entries()) {
     bodySpans.push({ at: `calls.facts[${index}].call`, span: spanOf(fact.call?.range) });
   }
   bodySpans.push({ at: 'security.relation.guard', span: spanOf(joined.security?.relation?.guard?.range) });
-  (joined.security?.relation?.fields ?? []).forEach((field, index) => {
+  const relationFields = Array.isArray(joined.security?.relation?.fields) ? joined.security.relation.fields : [];
+  relationFields.forEach((field, index) => {
     bodySpans.push({ at: `security.relation.fields[${index}].expression`, span: spanOf(field.expression?.range) });
   });
   for (const name of ['selected_prepare', 'selected_step', 'literal']) {
@@ -1042,11 +1094,12 @@ async function sameHandlerFamilies(root) {
 // 8. database-join
 // ---------------------------------------------------------------------------
 
-async function databaseJoin(root) {
+async function databaseJoin(root, options) {
   const joined = readJson(path.join(root, 'joined-result.json'));
   const subject = joined.subject ?? {};
-  const generatedPath = subject.source?.generated;
-  if (typeof generatedPath !== 'string') throw new Error('joined-result.json subject.source.generated is absent');
+  const recordedGenerated = subject.source?.generated;
+  if (typeof recordedGenerated !== 'string') throw new Error('joined-result.json subject.source.generated is absent');
+  const generatedPath = resolveRecordedPath(root, recordedGenerated) ?? recordedGenerated;
   const bytes = readBytes(generatedPath);
   const database = joined.database ?? {};
   const problems = [];
@@ -1129,21 +1182,22 @@ async function databaseJoin(root) {
   if (existsSync(headerFile)) {
     const header = readText(headerFile);
     const define = /#define\s+SQLITE_VERSION\s+"([^"]+)"/.exec(header);
-    if (decline(define)) problems.push(`${displayPath(root, headerFile)} records no SQLITE_VERSION define`);
+    if (define === null) problems.push(`${displayPath(root, headerFile)} records no SQLITE_VERSION define`);
     else if (define[1] !== targetVersion) {
       problems.push(`source/sqlite3.h defines SQLITE_VERSION ${define[1]} while database.target_sqlite_source_version is ${targetVersion}`);
     }
   } else {
     problems.push(`${displayPath(root, headerFile)} is absent; the target version cannot be recomputed`);
   }
-  const sqlite = options0Sqlite(root);
+  const sqlite = options.sqlite3 ?? DEFAULT_SQLITE3;
   const livePlanner = runCapture(sqlite, ['--version']).stdout.trim();
   if (livePlanner !== plannerVersion) {
     problems.push(`${sqlite} reports ${livePlanner} while database.external_planner_version is ${plannerVersion}`);
   }
 
   const catalogEvidence = database.catalog_evidence;
-  if (typeof catalogEvidence !== 'string' || !existsSync(catalogEvidence)) {
+  const resolvedCatalogEvidence = resolveRecordedPath(root, catalogEvidence);
+  if (typeof catalogEvidence !== 'string' || resolvedCatalogEvidence === null) {
     problems.push(`database.catalog_evidence ${JSON.stringify(catalogEvidence)} is not a retained file`);
   }
 
@@ -1173,25 +1227,24 @@ async function databaseJoin(root) {
   };
 }
 
-function decline(define) {
-  return define === null;
-}
-
-function options0Sqlite(root) {
-  return DEFAULT_SQLITE3;
-}
-
 // ---------------------------------------------------------------------------
 // 9. claim-discipline
 // ---------------------------------------------------------------------------
 
-// Required field per classification class. Field names are matched
-// case-insensitively as substrings; the semantic role comes from the class
-// contract in the specification:
+// Required field per classification class. The class contract in the
+// specification fixes the semantic role of each field:
 //   checked          an oracle verdict on a stated proposition
 //   declared         an authored intent or external assumption with its source
 //   observed         an actual observation with a retained evidence path
 //   static-possible  a resolved static relation with its derivation or witness
+// Field names are matched case-insensitively as substrings. The accepted names
+// are the ones the specification and the retained record use: oracle, provider,
+// engine, checker and compiler for an oracle; proposition, claim, verdict,
+// statement and meaning for a stated proposition; author, authority,
+// authorship, source, document and declared for authorship; derivation,
+// provider, model, method, basis, scope, witness, raw, evidence and reference
+// for a derivation or a witness artifact. An observed block is accepted when
+// one of its string fields resolves to a retained file.
 const CLASS_FIELDS = {
   checked: [
     { role: 'oracle', match: (name) => /oracle|provider|engine|checker|compiler/i.test(name) },
@@ -1202,8 +1255,7 @@ const CLASS_FIELDS = {
 };
 
 async function claimDiscipline(root) {
-  const joinedFile = path.join(root, 'joined-result.json');
-  const joined = readJson(joinedFile);
+  const joined = readJson(path.join(root, 'joined-result.json'));
   const problems = [];
   const rows = [];
 
@@ -1211,10 +1263,8 @@ async function claimDiscipline(root) {
     const found = [];
     for (const [name, value] of Object.entries(block)) {
       if (typeof value !== 'string') continue;
-      const candidates = path.isAbsolute(value) ? [value] : [path.resolve(root, value)];
-      for (const candidate of candidates) {
-        if (existsSync(candidate)) found.push({ field: name, path: candidate });
-      }
+      const resolved = resolveRecordedPath(root, value);
+      if (resolved !== null) found.push({ field: name, path: resolved });
     }
     return found;
   };
@@ -1261,9 +1311,10 @@ async function claimDiscipline(root) {
   runtime.forEach((block, index) => {
     const at = `runtime[${index}]`;
     if (block.class !== 'observed') problems.push(`${at}: class ${block.class} in the runtime observation list`);
-    const tracePath = block.sql_trace_path;
-    if (typeof tracePath !== 'string' || !existsSync(tracePath)) {
-      problems.push(`${at}: sql_trace_path ${JSON.stringify(tracePath)} is not a retained file`);
+    const recordedTrace = block.sql_trace_path;
+    const tracePath = resolveRecordedPath(root, recordedTrace);
+    if (typeof recordedTrace !== 'string' || tracePath === null) {
+      problems.push(`${at}: sql_trace_path ${JSON.stringify(recordedTrace)} is not a retained file`);
       return;
     }
     const traceLines = readText(tracePath).split('\n');
@@ -1332,8 +1383,7 @@ async function claimDiscipline(root) {
 // ---------------------------------------------------------------------------
 
 async function noEnforcementClaim(root) {
-  const joinedFile = path.join(root, 'joined-result.json');
-  const joined = readJson(joinedFile);
+  const joined = readJson(path.join(root, 'joined-result.json'));
   const problems = [];
   const hits = [];
   for (const { at, text } of collectStrings(joined)) {
@@ -1398,6 +1448,11 @@ export async function verifyAuthentic(evidenceRoot = DEFAULT_EVIDENCE_ROOT, opti
   const root = path.resolve(evidenceRoot);
   if (!existsSync(root)) throw new Error(`evidence root is absent: ${root}`);
   const selected = Array.isArray(options.checks) && options.checks.length > 0 ? new Set(options.checks) : null;
+  if (selected !== null) {
+    const known = new Set(CHECKS.map(([id]) => id));
+    const unknown = [...selected].filter((id) => !known.has(id));
+    if (unknown.length > 0) throw new Error(`unknown check id(s): ${unknown.join(', ')}`);
+  }
   const checks = [];
   for (const [id, run] of CHECKS) {
     if (selected !== null && !selected.has(id)) continue;

@@ -2,8 +2,13 @@
 """Run the code-security acceptance checks that need no coordinator.
 
 The checked-landing gate selects files by path, so this file makes the fixture
-corpus and the checker mutation control selectable. The provider cases run
-through `run.mjs` with an installed coordinator and are not selected here.
+corpus and the checker mutation control selectable. Both checks start child
+processes and are remote-runner gates; they must not be executed on the
+operator's laptop. The provider cases run through `run.mjs` with an installed
+coordinator and are selected separately.
+
+No deadline, output ceiling or skip is applied here. A missing prerequisite is
+reported as a failure so the gate cannot read green without the check.
 """
 import pathlib
 import shutil
@@ -17,29 +22,31 @@ RUNNER = HERE / "run.mjs"
 def node() -> str:
     path = shutil.which("node")
     if not path:
-        raise unittest.SkipTest("node is unavailable")
+        raise AssertionError("node is unavailable: this check is unqualified without it")
     return path
 
 
 def run_runner(*args: str) -> subprocess.CompletedProcess:
-    return subprocess.run(
+    result = subprocess.run(
         [node(), str(RUNNER), *args],
         cwd=HERE,
         capture_output=True,
         text=True,
-        timeout=600,
     )
+    print(result.stdout, end="")
+    print(result.stderr, end="", file=__import__("sys").stderr)
+    return result
 
 
 class FixtureCorpus(unittest.TestCase):
-    def test_every_fixture_verifies(self):
-        result = run_runner("--verify")
-        self.assertEqual(result.returncode, 0, f"verify failed:\n{result.stdout}\n{result.stderr}")
+    def test_static_fixture_checks(self):
+        result = run_runner("--verify-static")
+        self.assertEqual(result.returncode, 0, "the static fixture checks failed")
         self.assertIn('"summary":"verify"', result.stdout)
 
     def test_checker_rejects_violating_payloads(self):
         result = run_runner("--selftest")
-        self.assertEqual(result.returncode, 0, f"selftest failed:\n{result.stdout}\n{result.stderr}")
+        self.assertEqual(result.returncode, 0, "the checker mutation control failed")
         self.assertIn('"summary":"selftest"', result.stdout)
 
 

@@ -323,7 +323,7 @@
       "expect": {
         "outcome": "complete", "exitCode": 0,
         "mustNotMention": ["probe_symbol"],
-        "marker": {"path": "clangd/driver-shim/driver-ran.marker", "mustExist": false}
+        "marker": {"path": "clangd/project-config/driver-ran.marker", "mustExist": false}
       }
     },
     {
@@ -340,7 +340,7 @@
       },
       "expect": {
         "mustNotMention": ["probe_symbol"],
-        "marker": {"path": "clangd/driver-shim/driver-ran.marker", "mustExist": false}
+        "marker": {"path": "clangd/project-config/driver-ran.marker", "mustExist": false}
       }
     },
     {
@@ -582,6 +582,47 @@
       },
       "expect": {
         "mustNotMention": ["e2-baton-marker-9f3a", "e2-anthropic-marker-9f3a", "e2-openai-marker-9f3a"]
+      }
+    },
+    {
+      "id": "P1-conflicting-reuse-of-one-query-id",
+      "group": "provenance",
+      "default": "c-guard",
+      "subjectPath": "c/short_circuit_and.c",
+      "secondRequest": {"select": ["type"]},
+      "expect": {
+        "outcome": "complete",
+        "exitCode": 0,
+        "relations": [{"kind": "guarded_call"}],
+        "second": {"outcome": "refused", "exitCode": 2},
+        "retainedState": "complete"
+      }
+    },
+    {
+      "id": "P2-evidence-references-resolved",
+      "group": "provenance",
+      "default": "c-guard",
+      "subjectPath": "c/short_circuit_and.c",
+      "expect": {
+        "outcome": "complete",
+        "relations": [{"kind": "guarded_call"}],
+        "evidenceRefsResolved": true
+      }
+    },
+    {
+      "id": "P3-evidence-references-resolved-on-a-type-query",
+      "group": "provenance",
+      "subjectPath": "c/local_field_alias.c",
+      "request": {
+        "version": 1, "engine": "clang-analyzer",
+        "subject": {"kind": "symbol", "path": "c/local_field_alias.c", "name": "handler"},
+        "select": ["type", "calls"],
+        "options": {"project": "c/compile_commands.json", "readRoots": ["c"]},
+        "effects": []
+      },
+      "expect": {
+        "outcome": "complete",
+        "evidenceRefsResolved": true
       }
     }
   ]
