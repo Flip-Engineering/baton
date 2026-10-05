@@ -234,6 +234,33 @@ class ControlIndex(unittest.TestCase):
         with closing(sqlite3.connect(uninitialized)) as db:
             self.assertEqual(list(db.iterdump()), before)
 
+    def test_index_reads_from_read_only_database_and_directory(self):
+        before = self.db.read_bytes()
+        database_mode = self.db.stat().st_mode & 0o777
+        directory_mode = self.directory.stat().st_mode & 0o777
+        self.db.chmod(0o444)
+        self.directory.chmod(0o555)
+        try:
+            if os.access(self.db, os.W_OK) or os.access(self.directory, os.W_OK):
+                self.skipTest('Current privileges bypass fixture read-only permissions')
+            for args in [('inbox', 'associate', '--index'),
+                         ('pending', '--index'), ('orchestra', '--index')]:
+                for pretty in (False, True):
+                    command = [*args, *(['--pretty'] if pretty else [])]
+                    with self.subTest(command=command):
+                        result = subprocess.run([str(EXE), str(self.db), *command],
+                                                capture_output=True, text=True, timeout=10)
+                        self.assertEqual(result.returncode, 0, result.stderr or result.stdout)
+                        value = json.loads(result.stdout)
+                        if args[0] == 'orchestra':
+                            self.assertIn('worker', {row['id'] for row in value['players']})
+                        else:
+                            self.assertIn('pending-report', {row['id'] for row in value})
+            self.assertEqual(self.db.read_bytes(), before)
+        finally:
+            self.directory.chmod(directory_mode)
+            self.db.chmod(database_mode)
+
     def test_mcp_has_same_native_selection(self):
         args = {'recipient': 'associate', 'index': True, 'sender': 'worker', 'kind': 'report', 'state': 'all'}
         requests = [
