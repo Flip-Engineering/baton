@@ -8,27 +8,16 @@ one JSON document per run.
 Usage: measure_processes.py OUTPUT.json [--label LABEL]
 """
 import json
-import os
 import subprocess
 import sys
 import time
 
+import measure_identity
+
 FIELDS = ["pid", "ppid", "pgid", "uid", "rss", "vsz", "%cpu", "time", "etime", "state"]
 
-RECORDED_RELEASE_BIN = "/Users/wahargis/.local/share/baton2/releases/1.1.0-fca7af876c8260c32d17f95f3e19bc68ee1bf561/bin/baton2"
-
-
-def resolve_release_bin():
-    """BATON2_RELEASE overrides the recorded laptop release; a bad value stops."""
-    configured = os.environ.get("BATON2_RELEASE")
-    if configured:
-        if not os.path.isfile(configured) or not os.access(configured, os.X_OK):
-            raise SystemExit("BATON2_RELEASE is set but is not an executable file: %s" % configured)
-        return configured
-    return RECORDED_RELEASE_BIN
-
-
-RELEASE_BIN = resolve_release_bin()
+IDENTITY_MODE = measure_identity.mode()
+RELEASE_BIN = measure_identity.executable("BATON2_RELEASE", "release", IDENTITY_MODE)
 
 
 def parse_cpu_time(value):
@@ -161,6 +150,7 @@ def take_snapshot(label):
         "captured_at": captured_at,
         "boot": boot,
         "release_bin": RELEASE_BIN,
+        "identity_mode": IDENTITY_MODE or "caller-supplied",
         "elapsed_s": round(time.time() - started, 3),
         "ps_row_count": len(rows),
         "processes": baton,

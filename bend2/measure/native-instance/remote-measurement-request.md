@@ -32,6 +32,31 @@ no script falls back to a recorded laptop path, and no script selects a CLI of i
 The capture step records `cli` and `cli_sha256` for `READ_CLI` in its own header, and
 the analysis step consumes that file. The analysis tool never runs a CLI command.
 
+No script substitutes a path the caller did not supply. A tool that names a release,
+helper, registry or model stops when that input is missing or does not resolve.
+`BATON2_MEASURE_IDENTITY=historical-fca7af87-laptop` is the only way to select the
+retained laptop paths; a run that sets it records `identity_mode` as that mode and is a
+reproduction of the retained baseline, not a qualification of a candidate.
+
+## Reader case suite
+
+`reader-case-suite.py` is the prepared check for the malformed, truncated, removed and
+capture-failure paths. It builds synthetic attempt directories and capture sets in a
+temporary directory, runs no Baton command, touches no retained evidence, and exits
+non-zero when a case differs from the documented state.
+
+```
+python3 bend2/measure/native-instance/reader-case-suite.py
+```
+
+Cases: a route parsed from an intact spool; a route followed by undecodable bytes; a
+stable non-JSON line; valid non-object JSON as a number, string and array; an object
+with no recognised shape; a route beyond the 4 MiB prefix with the suffix uninspected; a
+spool removed after the directory listing; no spool at all; the capture refusals
+`header-incomplete`, `header-invalid`, `database-mismatch` and `no-reads`; a non-zero
+exit; a read without raw stderr; exit 0 with empty stdout; and the `players-failed`,
+`players-empty-list`, `players-malformed` and `turns-failed` states.
+
 ## Tier 1: runtime chain without a provider request
 
 No model credentials and no network egress. It measures the dispatch, receive
@@ -101,7 +126,9 @@ attempt `status` and `manifest` bytes, the captured CLI sets, and the delivered 
 bodies with the actual exit status of every command. Report an observed route only from
 that attempt's retained `stdout` spool, using the states the tool records
 (`route-parsed-from-retained-spool`, `no-route-frame-in-fully-read-spool`,
-`no-route-frame-in-inspected-prefix`, `spool-changed-during-read`, `no-retained-spool`).
+`no-route-frame-in-inspected-prefix`, `spool-changed-during-read`,
+`spool-removed-after-listing`, `no-retained-spool`), together with the uninterpreted
+categories and the metadata comparisons that produced them.
 
 Tier 2 numbers are comparable only with Tier 2 numbers of the same platform, route,
 effort, harness build and fixture revision.
