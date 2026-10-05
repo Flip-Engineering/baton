@@ -30,9 +30,6 @@ def schema() -> String:
 
 # The runtime epoch is a canonical unsigned decimal counter of arbitrary length; it
 # is stored and inserted as text so no SQLite numeric conversion can coerce it.
-# A progress write inside the observer transaction: admitted is the event's own
-# identity guard, so a replay that does not reproduce the recorded progress aborts
-# instead of writing a new document.
 def json_or_null(+value: String) -> String:
   Bool.pick(String, String.is_empty(value), "NULL", "json(" ++ C.q(value) ++ ")")
 
@@ -60,6 +57,12 @@ def accept_sql(+id: String, +owner: String, +requestJson: String, +cwd: String, 
 # The retained rejection: state refused, its own error object, cleanup pending and
 # the owed owner notice, committed in one transaction. A later cleanup change
 # preserves the notice by identity.
+# The notice insert of the observer path additionally requires the retained query
+# row, so a commit for a missing query inserts no notice at all.
+def owner_notice_bound_sql(+id: String, +owner: String, +body: String, +query: String) -> String:
+  Bool.pick(String, String.is_empty(id), "",
+    "INSERT INTO messages(id,sender,recipient,kind,body) SELECT " ++ C.q(id) ++ ",s.id,s.id,'report'," ++ C.q(body) ++ " FROM sessions s WHERE s.id=" ++ C.q(owner) ++ " AND EXISTS(SELECT 1 FROM semantic_queries WHERE id=" ++ C.q(query) ++ ")" ++ C.message_upsert())
+
 def owner_notice_sql(+id: String, +owner: String, +body: String) -> String:
   Bool.pick(String, String.is_empty(id), "",
     "INSERT INTO messages(id,sender,recipient,kind,body) SELECT " ++ C.q(id) ++ ",s.id,s.id,'report'," ++ C.q(body) ++ " FROM sessions s WHERE s.id=" ++ C.q(owner) ++ C.message_upsert())

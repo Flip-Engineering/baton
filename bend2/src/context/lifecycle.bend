@@ -37,17 +37,17 @@ def intent_owed(+row: String) -> Bool:
 # probe, then either one second of waiting and the continuation or the end. A failed
 # bound read ends the companion without claiming a wake; the original keeper and
 # observer retain their duty.
-def reconcile_intents(+db: String, +binding: String, +query: String, +role: String, +incarnation: String, duty: Unit -> IO(Bool), again: Unit -> IO(Unit)) -> IO(Unit):
-  do IO<Unit>:
-    read : Result<&1,&1,U32 & String,String> <- DB.Sql.query_bound(db, binding, ContextRoles.intent_read_sql(query, role, incarnation))
-    reconcile_after(db, binding, query, role, incarnation, duty, again, read)
-
 def reconcile_after(+db: String, +binding: String, +query: String, +role: String, +incarnation: String, duty: Unit -> IO(Bool), again: Unit -> IO(Unit), read: Result<&1,&1,U32 & String,String>) -> IO(Unit):
   match read:
     case Fail{error}: IO.pure(Unit, Unit{})
     case Done{+captured}: do IO<Unit>:
       live : Bool <- duty(Unit{})
       reconcile_settled(db, binding, query, role, incarnation, duty, again, intent_owed(captured), live)
+
+def reconcile_intents(+db: String, +binding: String, +query: String, +role: String, +incarnation: String, duty: Unit -> IO(Bool), again: Unit -> IO(Unit)) -> IO(Unit):
+  do IO<Unit>:
+    read : Result<&1,&1,U32 & String,String> <- DB.Sql.query_bound(db, binding, ContextRoles.intent_read_sql(query, role, incarnation))
+    reconcile_after(db, binding, query, role, incarnation, duty, again, read)
 
 def reconcile_settled(+db: String, +binding: String, +query: String, +role: String, +incarnation: String, duty: Unit -> IO(Bool), again: Unit -> IO(Unit), owed: Bool, live: Bool) -> IO(Unit):
   Bool.pick(IO(Unit), Bool.or(owed, live), reconcile_delay(db, binding, query, role, incarnation, duty, again), IO.pure(Unit, Unit{}))
