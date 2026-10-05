@@ -150,6 +150,83 @@ def ff_go4(r: FFLD, repo: String, target: String) -> IO(FFLD):
     case FFNext{wc, tb}: ff_stage4(wc, tb, repo, target)
 
 # Stage 5: CAS update-ref to advance the target branch.
+# --- the selected publication -------------------------------------------------
+# For #674: one local push per attempt, of the immutable object, carrying an
+# explicit expected-basis lease into a receiver whose checked-out-branch policy is
+# updateInstead with hooks off. The receiver writes the checked-out holder itself,
+# so no separate worktree probe decides anything here. The porcelain table's flag
+# classifies only: the abbreviated old..new range is never read as identity, and the
+# named ref is re-read as a full object before any answer. Exactly one refspec is
+# pushed, so the single flag-bearing line is this attempt's.
+def publish_receiver() -> String:
+  "git -c receive.denyCurrentBranch=updateInstead -c receive.denyNonFastForwards=true -c core.hooksPath=/dev/null receive-pack"
+
+def publish_argv(+repo: String, +target: String, +oid: String, +basis: String) -> List<String>:
+  Con{"push", Con{"--porcelain", Con{Tx.str_cat("--receive-pack=", publish_receiver()), Con{Tx.str_cat3("--force-with-lease=refs/heads/", target, Tx.str_cat(":", basis)), Con{repo, Con{Tx.str_cat3(oid, ":refs/heads/", target), Nil{}}}}}}}
+
+def push_flag_like(line: String) -> Bool:
+  Bool.pick(Bool, Tx.starts_with(line, " "),
+    True{},
+    Bool.pick(Bool, Tx.starts_with(line, "="),
+      True{},
+      Bool.pick(Bool, Tx.starts_with(line, "!"),
+        True{},
+        Bool.pick(Bool, Tx.starts_with(line, "+"), True{}, Tx.starts_with(line, "*")))))
+
+def push_flag_line(lines: List<String>) -> String:
+  match lines:
+    case Nil{}: ""
+    case Con{h, rest}:
+      Bool.pick(String, push_flag_like(h), h, push_flag_line(rest))
+
+def push_class(out: String) -> String:
+  +line = push_flag_line(Tx.split_lines(out))
+  Bool.pick(String, String.is_empty(line), "unclassified",
+    Bool.pick(String, Tx.starts_with(line, "="), "already",
+      Bool.pick(String, Tx.starts_with(line, "!"), "refused", "applied")))
+
+def publish_answer(code: U32, cls: String, +target: String, +oid: String) -> T.LandOutcome:
+  Bool.pick(T.LandOutcome, U32.is_eq(code, 0),
+    Bool.pick(T.LandOutcome, Tx.str_eq(cls, "applied"), T.LLanded{target, oid},
+      Bool.pick(T.LandOutcome, Tx.str_eq(cls, "already"), T.LAlready{oid},
+        T.LBlocked{"the publication of " ++ oid ++ " onto " ++ target ++ " answered " ++ cls ++ "; retry"})),
+    T.LBlocked{"the publication of " ++ oid ++ " onto " ++ target ++ " did not complete; retry"})
+
+def publish_pick(r: T.GitOut, +target: String, +oid: String) -> T.LandOutcome:
+  match r:
+    case T.GRun{code, out}: publish_answer(code, push_class(out), target, oid)
+    case T.GBroken{detail}: T.LBlocked{detail}
+
+def verify_landed_pick(r: T.GitOut, +target: String, +oid: String) -> T.LandOutcome:
+  match r:
+    case T.GRun{code, out}:
+      Bool.pick(T.LandOutcome, U32.is_eq(code, 0),
+        Bool.pick(T.LandOutcome, Tx.str_eq(Tx.trim_nl(out), oid), T.LLanded{target, oid},
+          T.LBlocked{"the publication answered applied for " ++ target ++ " but the ref does not name " ++ oid}),
+        T.LBlocked{"the publication answered applied for " ++ target ++ " but the ref could not be read"})
+    case T.GBroken{detail}: T.LBlocked{detail}
+
+def verify_landed(+repo: String, +target: String, +oid: String) -> IO(T.LandOutcome):
+  +r2 = repo
+  +t2 = target
+  do IO<T.LandOutcome>:
+    reread : T.GitOut <- Git.runGit(r2, Con{"rev-parse", Con{Tx.str_cat("refs/heads/", t2), Nil{}}})
+    IO.pure(T.LandOutcome, verify_landed_pick(reread, t2, oid))
+
+def verify_published(outcome: T.LandOutcome, +repo: String, +target: String, +oid: String) -> IO(T.LandOutcome):
+  match outcome:
+    case T.LLanded{landedTarget, landedCommit}: verify_landed(repo, target, oid)
+    case other: IO.pure(T.LandOutcome, other)
+
+def publish_outcome(+repo: String, +target: String, +oid: String, +basis: String) -> IO(T.LandOutcome):
+  +r2 = repo
+  +t2 = target
+  +o2 = oid
+  do IO<T.LandOutcome>:
+    pushed : T.GitOut <- Git.runGit(r2, publish_argv(r2, t2, o2, basis))
+    outcome : T.LandOutcome <- IO.pure(T.LandOutcome, publish_pick(pushed, t2, o2))
+    verify_published(outcome, r2, t2, o2)
+
 def ff_stage5_ok(ok: Bool, wc: String, target: String) -> FFLD:
   match ok:
     case True{}: FFDone{T.LLanded{target, wc}}
@@ -166,8 +243,8 @@ def ff_stage5(wc: String, tb: String, repo: String, target: String) -> IO(FFLD):
   +rp = repo
   +tg = target
   do IO<FFLD>:
-    r : T.GitOut <- Git.runGit(rp, Con{"update-ref", Con{Tx.str_cat("refs/heads/", tg), Con{wc2, Con{tb2, Nil{}}}}})
-    IO.pure(FFLD, ff_stage5_pick(r, wc2, tg))
+    published : T.LandOutcome <- publish_outcome(rp, tg, wc2, tb2)
+    IO.pure(FFLD, FFDone{published})
 
 def ff_go5(r: FFLD, repo: String, target: String) -> IO(FFLD):
   match r:
@@ -522,8 +599,8 @@ def ld_advance(repo: String, target: String, cand: String, basis: String) -> IO(
   +c2 = cand
   +b2 = basis
   do IO<Ld>:
-    gl : T.GitOut <- Git.runGit(r2, ["worktree", "list", "--porcelain"])
-    ld_adv_busy(gl, r2, t2, c2, b2)
+    published : T.LandOutcome <- publish_outcome(r2, t2, c2, b2)
+    IO.pure(Ld, LdDone{published})
 
 # Stage 1 resolves the worker commit; the pipeline carries the resolved sha
 # so the LAlready answer names the worker commit.
@@ -1018,3 +1095,43 @@ def remote_tip_git(repo: String, branch: String, remote: String) -> IO(T.GitOut)
   do IO<T.GitOut>:
     g : T.GitOut <- Git.runGit(r2, ls_remote_argv(b2, rm))
     IO.pure(T.GitOut, g)
+
+# --- operative laws over the selected publication ------------------------------
+
+# The push carries the selected receiver command, the explicit expected-basis lease
+# and the immutable object, and no value of the caller's reaches the receiver string.
+law published_push_carries_the_selected_receiver_lease_and_object:
+  for +repo: String
+  for +target: String
+  for +oid: String
+  for +basis: String
+  {publish_argv(repo, target, oid, basis) == Con{"push", Con{"--porcelain", Con{Tx.str_cat("--receive-pack=", publish_receiver()), Con{Tx.str_cat3("--force-with-lease=refs/heads/", target, Tx.str_cat(":", basis)), Con{repo, Con{Tx.str_cat3(oid, ":refs/heads/", target), Nil{}}}}}}} : List<String>}
+
+def published_push_carries_the_selected_receiver_lease_and_object(repo, target, oid, basis):
+  {==}
+
+# The publication runs the push and then re-reads the named ref as a full object, so
+# no answer rests on the porcelain display.
+law published_push_rereads_the_named_ref_before_answering:
+  for +repo: String
+  for +target: String
+  for +oid: String
+  for +basis: String
+  {publish_outcome(repo, target, oid, basis) == (do IO<T.LandOutcome>:
+    pushed : T.GitOut <- Git.runGit(repo, publish_argv(repo, target, oid, basis))
+    outcome : T.LandOutcome <- IO.pure(T.LandOutcome, publish_pick(pushed, target, oid))
+    verify_published(outcome, repo, target, oid)) : IO(T.LandOutcome)}
+
+def published_push_rereads_the_named_ref_before_answering(repo, target, oid, basis):
+  {==}
+
+# Only the flag classifies, and a zero status with an unclassified flag is not a
+# landing.
+law published_answer_reads_the_flag_and_never_the_displayed_range:
+  for +cls: String
+  for +target: String
+  for +oid: String
+  {publish_answer(0, cls, target, oid) == Bool.pick(T.LandOutcome, Tx.str_eq(cls, "applied"), T.LLanded{target, oid}, Bool.pick(T.LandOutcome, Tx.str_eq(cls, "already"), T.LAlready{oid}, T.LBlocked{"the publication of " ++ oid ++ " onto " ++ target ++ " answered " ++ cls ++ "; retry"})) : T.LandOutcome}
+
+def published_answer_reads_the_flag_and_never_the_displayed_range(cls, target, oid):
+  {==}
