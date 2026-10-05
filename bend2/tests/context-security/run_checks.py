@@ -170,6 +170,19 @@ def verify_pins(manifest):
               "pin planner sqlite3: non-Darwin platform records its own planner identity")
     check(sha256_file(db["catalogDataset"]["path"]) == db["catalogDataset"]["sha256"], "pin catalog dataset")
     check(sha256_file(db["catalogPlanPinned"]["path"]) == db["catalogPlanPinned"]["sha256"], "pin catalog plan")
+    shipped = manifest["producerInputs"].get("shippedHelperSummary")
+    if shipped:
+        artifact = json.load(open(shipped["path"]))
+        pins = artifact["subject"]["sourcePins"]
+        for name, seg in sorted(artifact["definitionSegments"].items()):
+            data = open(os.path.join(retained, seg["source"]), "rb").read()
+            piece = data[seg["byteStart"]:seg["byteEnd"]]
+            check(sha256_bytes(piece) == seg["segmentSha256"],
+                  "shipped summary: %s definition segment digest matches pinned source" % name)
+            check(sha256_bytes(data) == pins[seg["source"]],
+                  "shipped summary: %s source pin agrees with the artifact subject pins" % name)
+        check(artifact["implementationLink"]["status"] == "implementationLinkUnverified",
+              "shipped summary: implementationLink stays implementationLinkUnverified")
 
 
 def resolve_compiler(manifest, evidence_dir):

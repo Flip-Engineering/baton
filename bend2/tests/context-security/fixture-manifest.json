@@ -248,6 +248,11 @@
    "path": "/Users/wahargis/Development/Experiments/baton-bend2-root-delivery-20260928/.scratch/semantic-context-20261005/probes/semantic-models-security-critic/fossil-qualification/compiler/linked-symbols.txt",
    "sha256": "9338b48bcdee31c4a5b4758afb7e0340ad4ebca793ff9723aadfdb6dd0bcf47e",
    "normalForm": "capture:null; implementationLink stays implementationLinkUnverified with empty evidence"
+  },
+  "shippedHelperSummary": {
+   "path": "bend2/context/fossil-helper-summary.json",
+   "sha256": "4322788144790390963cbddc9896b6106543e3dc51ccc2ba9e100ad8334632fa",
+   "role": "relocatable packaged summary owned by semantic-impl-security-fixtures; the research example above remains retained evidence of its derivation"
   }
  },
  "diagnosticsPins": {
@@ -295,8 +300,8 @@
   }
  },
  "openIntegrationInputs": [
-  "compile-command digest normalization rule for the producer (pinned helper summary digests are over retained absolute-path command bytes; a materialized fixture workdir changes absolute paths)",
   "build receipt fixture path/producer (closed BuildReceipt shape defined in docs/bend2/semantic-context-spec.md; no producer-contract example retained yet)",
+  "compile-command digest normalization and adapter-relative resolution of libexec/baton2/context/fossil-helper-summary.json (../../ from the adapter URL) to be settled with the Code matcher owner before compatibility is declared",
   "actual extractor artifact from bend2/context/clang (handoff pending); observed producer behavior qualification deferred until handoff"
  ]
 }
