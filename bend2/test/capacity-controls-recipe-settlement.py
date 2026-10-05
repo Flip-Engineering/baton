@@ -174,7 +174,8 @@ class RecipeSettlement(unittest.TestCase):
             RECIPE.extract_archive(self.run, self.record, archive_path, target)
         row = next(row for row in self.rows() if row['name'] == 'archive-extracted')
         self.assertEqual(row['outcome'], 'failed')
-        self.assertIn('manifest.json', row['members_extracted_names'])
+        # The reached members are named as the archive names them.
+        self.assertEqual(row['members_extracted_names'], ['bend2/manifest.json'])
         self.assertEqual(row['failing_member'], 'bend2/controls-evidence/bend2.json')
         self.assertEqual(row['members_extracted'], 1)
         self.assertIn(str(raised.exception), row['failure'])
@@ -230,11 +231,52 @@ class RecipeSettlement(unittest.TestCase):
                                   self.run / 'metadata', digest, wrong)
         fields = raised.exception.fields
         self.assertEqual(fields['boundary'], 'retained-metadata')
-        # Documents are verified in the archive metadata order, so the first one is
-        # the document being verified when the refusal happens.
-        self.assertEqual(fields['metadata_member'], 'inventory.json')
-        self.assertEqual(fields['metadata_verified'], [])
+        # Documents are verified in the archive metadata order: the inventory is
+        # verified first, and the refusal happens while the reduction is verified.
+        self.assertEqual(fields['metadata_member'], 'reduction.json')
+        self.assertEqual(fields['metadata_verified'], ['inventory.json'])
         self.assertEqual(raised.exception.partial, sorted(documents))
+
+    def test_metadata_failures_through_the_attempt_composition(self):
+        # The production composition is attempt over the staging helper, so the
+        # persisted failed row is where the copy, the retained archive and the
+        # metadata observations have to appear.
+        package = RECIPE.package_handle()
+        archived = self.run / 'composed-archived'
+        archived.mkdir()
+        documents = {}
+        for name in package.ARCHIVE_METADATA:
+            (archived / name).write_bytes(json.dumps({'name': name}).encode())
+            documents[name] = RECIPE.digest(archived / name)
+        retained = self.run / 'composed-archive.tar.gz'
+        retained.write_bytes(b'archive bytes')
+        digest = RECIPE.digest(retained)
+        target = self.run / 'composed-metadata'
+
+        def run_stage(expected, staged):
+            return RECIPE.attempt(
+                self.run, self.record, 'archive-metadata-staged',
+                lambda: RECIPE.stage_metadata(self.run, self.record, staged, retained,
+                                              target, expected, documents),
+                archive=retained.name)
+
+        # A missing first document fails before any copy completes.
+        missing = self.run / 'missing-archived'
+        missing.mkdir()
+        (missing / 'reduction.json').write_bytes(b'{}')
+        with self.assertRaises(RECIPE.StageFailure):
+            run_stage(digest, missing)
+        row = next(row for row in self.rows() if row['name'] == 'archive-metadata-staged')
+        self.assertEqual(row['outcome'], 'failed')
+        self.assertEqual(row['documents_copied'], [])
+        self.assertEqual(row['copy_attempted'], 'inventory.json')
+
+        # A retained archive whose digest disagrees fails at the archive check.
+        with self.assertRaises(RECIPE.StageFailure):
+            run_stage('d' * 64, archived)
+        row = next(row for row in self.rows() if row['name'] == 'archive-metadata-staged')
+        self.assertEqual(row['boundary'], 'retained-archive')
+        self.assertEqual(row['documents_verified'], [])
 
     def test_the_envelope_caller_names_the_operation_it_reached(self):
         # A written envelope reports its digest, and a write that cannot happen
@@ -253,7 +295,9 @@ class RecipeSettlement(unittest.TestCase):
         fields = raised.exception.fields
         self.assertEqual(fields['operation'], 'envelope-write')
         self.assertEqual(fields['boundary'], 'archive-envelope')
-        self.assertTrue(fields['envelope_present'])
+        # The occupied path is a directory, so no written file is present and the
+        # write operation is the one that failed.
+        self.assertFalse(fields['envelope_present'])
 
     def test_a_preflight_refusal_names_the_member_and_extracts_nothing(self):
         # The unsafe member is refused during the preflight, before any member is
