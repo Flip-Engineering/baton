@@ -269,9 +269,13 @@ class StructuralCase(unittest.TestCase):
         return obj
 
     def assert_legacy_recruit(self, rc, out, err, child):
-        """A zero-option recruit keeps its legacy session JSON."""
+        """A zero-option recruit keeps its legacy session JSON.
+
+        Stderr is not asserted empty here. A real legacy recruit lets git's own
+        `Preparing worktree` and `ls` diagnostics through, and that is the
+        behaviour being preserved; only stdout carries the result.
+        """
         self.assertEqual(rc, 0, f'plain recruit {child} failed: {err.strip()[:200]}')
-        self.assertEqual(err, '', 'plain recruit wrote to stderr')
         obj = self.one_object(out, 'stdout')
         self.assertNotIn('type', obj, 'the plain form must not emit the structural object')
         self.assertEqual(obj['id'], child)
@@ -724,7 +728,7 @@ class MembershipGroups(StructuralCase):
     def test_identical_groups_are_coalesced(self):
         f = self.fixture
         f.conductor('lead')
-        self.assert_configured(*f.run('ensemble', 'team', 'lead', 'loose'))
+        self.assert_legacy_ensemble(*f.run('ensemble', 'team', 'lead', 'loose'), 'team')
         child, args = self._named('coalesced')
         self.assert_configured(*f.run(*args, '--role', 'player',
                                       '--ensemble', 'team', 'lead',
@@ -782,6 +786,27 @@ class BaselineNegativeControl(_BaselineBinary):
                              str(f.repo), 'codex/child', str(f.root / 'child'), f.base,
                              '--role', 'player')
         self.assertNotEqual(rc, 0, 'the baseline accepted the extended recruit grammar')
+
+    def test_plain_recruit_establishes_its_real_stdout_and_rows(self):
+        """Execute a real legacy recruit and pin the stdout and rows it produces.
+
+        This is what fixes the legacy assumption in the file: the real stdout is
+        one session object, the rows are recorded, and stderr carries git's own
+        diagnostics rather than being empty.
+        """
+        f = self.fixture
+        f.conductor('lead')
+        args = ('recruit', 'child', 'lead', 'omp', 'model-x', 'high', str(f.repo),
+                'codex/child', str(f.root / 'child'), f.base)
+        obj = self.assert_legacy_recruit(*f.run(*args), 'child')
+        self.assertEqual(obj['parent'], 'lead')
+        self.assertEqual(obj['branch'], 'codex/child')
+        self.assertEqual(obj['harness'], 'omp')
+        self.assertEqual(f.scalar('SELECT parent FROM sessions WHERE id=?', ('child',)), 'lead')
+        self.assertEqual(f.scalar('SELECT branch FROM sessions WHERE id=?', ('child',)), 'codex/child')
+        self.assertIsNone(f.scalar('SELECT session FROM session_roles WHERE session=?', ('child',)),
+                          'legacy recruit recorded an explicit role row')
+        self.assertTrue(Path(f.root / 'child').is_dir(), 'legacy recruit created no worktree')
 
 
 if __name__ == '__main__':
