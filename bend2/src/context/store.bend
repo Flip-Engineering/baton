@@ -75,6 +75,21 @@ def schema() -> String:
 
 # The runtime epoch is a canonical unsigned decimal counter of arbitrary length; it
 # is stored and inserted as text so no SQLite numeric conversion can coerce it.
+def ref_entries(query: String) -> String:
+  "(SELECT result_json FROM semantic_queries WHERE id=" ++ C.q(query) ++ ")"
+
+def ref_id_match(+refId: String) -> String:
+  "json_extract(value,'$.id')=" ++ C.q(refId)
+
+# The retained per-ref association of one stored result: the referenced query's
+# stored refs are scanned by exact ref identity, and the entry's engine, subject,
+# snapshotId and projections come back with a presence marker. Nothing here supplies
+# the operation names the selector was originally admitted under, because no retained
+# column records them; a re-derivation is Core's current check, not retained evidence,
+# and absent evidence refuses.
+def ref_lookup_sql(+query: String, +refId: String) -> String:
+  "SELECT json_object('found',CASE WHEN EXISTS(SELECT 1 FROM json_each(" ++ ref_entries(query) ++ ",'$.refs') WHERE " ++ ref_id_match(refId) ++ ") THEN 1 ELSE 0 END,'engine',coalesce((SELECT json_extract(value,'$.engine') FROM json_each(" ++ ref_entries(query) ++ ",'$.refs') WHERE " ++ ref_id_match(refId) ++ "),''),'subject',coalesce((SELECT json_extract(value,'$.subject') FROM json_each(" ++ ref_entries(query) ++ ",'$.refs') WHERE " ++ ref_id_match(refId) ++ "),''),'snapshotId',coalesce((SELECT json_extract(value,'$.snapshotId') FROM json_each(" ++ ref_entries(query) ++ ",'$.refs') WHERE " ++ ref_id_match(refId) ++ "),''),'projections',coalesce((SELECT json_extract(value,'$.projections') FROM json_each(" ++ ref_entries(query) ++ ",'$.refs') WHERE " ++ ref_id_match(refId) ++ "),json('[]')));"
+
 def json_or_null(+value: String) -> String:
   Bool.pick(String, String.is_empty(value), "NULL", "json(" ++ C.q(value) ++ ")")
 

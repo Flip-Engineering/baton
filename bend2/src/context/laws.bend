@@ -849,3 +849,10 @@ law an_unreadable_enumeration_contains_no_obligation:
 
 def an_unreadable_enumeration_contains_no_obligation():
   {==}
+
+law a_ref_lookup_matches_its_exact_ref_identity:
+  for +refId: String
+  {ContextStore.ref_id_match(refId) == "json_extract(value,'$.id')=" ++ C.q(refId) : String}
+
+def a_ref_lookup_matches_its_exact_ref_identity(refId):
+  {==}
