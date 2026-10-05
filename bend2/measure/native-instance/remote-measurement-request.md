@@ -63,8 +63,18 @@ bytes and the earlier metadata samples; no spool at all; the capture refusals
 exit; a read without raw stderr; exit 0 with empty stdout; the `players-failed`,
 `players-empty-list`, `players-malformed` and `turns-failed` states; a players row with
 no id; mixed valid and invalid players rows; a wrong execution field type; turns rows
-with non-string ids; mixed turns rows; and a successful turns read composed with a
-failed players read through the tool's own output document.
+with non-string ids; mixed turns rows; a repeated identical players row; a repeated
+players row with different fields; a repeated identical turns row; a repeated turns row
+with different content; a turns row naming another player; a successful turns read
+composed with a failed players read through the tool's own output document; and two
+captures that carry the same attempt identifier, where the attempt must keep its own
+session's capture and the other capture's row must be recorded as a conflict.
+
+The suite prints its case root before the first case, writes `results.json` in every
+termination, and retains the directory on any failed case and on any incomplete or
+interrupted termination; it removes the directory only after a complete passing run with
+no supplied directory. No case is counted or run by this request; the runner returns the
+output, the exit status and the retained directory.
 
 ## Tier 1: runtime chain without a provider request
 

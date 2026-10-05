@@ -15,6 +15,7 @@ import os
 import shutil
 import sys
 import tempfile
+import traceback
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import attempt_exit_records as reader  # noqa: E402
@@ -253,7 +254,7 @@ def case_view_row_validation(root, database):
                              "turns-s1": (0, '[1, {"id": {}, "reportBody": "x"}]', "")})
     view = reader.attempt_view(reader.load_captures(turns_bad, database))
     check("Y turns rows with non-string ids are malformed without raising",
-          view["turns_state"].get("s1") == "turns-malformed" and view["reports"] == {},
+          view["turns_state"].get("s1") == "turns-malformed" and view["reports"].get("s1", {}) == {},
           {k: view.get(k) for k in ("turns_state", "turns_detail")})
 
     turns_mixed = capture_set(root, "view-turnsmixed", header(database),
@@ -325,6 +326,131 @@ def case_composition(root, database):
           {k: record.get(k) for k in ("session_cli_state", "report_state", "current_execution", "report")})
 
 
+def case_duplicate_and_conflict_rows(root, database):
+    duplicate_players = capture_set(
+        root, "dup-players", header(database),
+        {"players": (0, '[{"id":"s1","execution":{"attempt":"a1","mode":"retained","phase":"running",'
+                         '"status":""}},{"id":"s1","execution":{"attempt":"a1","mode":"retained",'
+                         '"phase":"running","status":""}}]', "")})
+    view = reader.attempt_view(reader.load_captures(duplicate_players, database))
+    check("AA a repeated identical players row is accounted as a duplicate, not complete",
+          view["players_state"] == "players-partial"
+          and view["players_detail"]["rows_duplicate"] == 1
+          and view["players_detail"]["rows_used"] == 1
+          and view["players_detail"]["rows_seen"] == 2,
+          {k: view.get(k) for k in ("players_state", "players_detail")})
+
+    conflicting_players = capture_set(
+        root, "conflict-players", header(database),
+        {"players": (0, '[{"id":"s1","execution":{"attempt":"a1","phase":"running"}},'
+                         '{"id":"s1","execution":{"attempt":"a1","phase":"exited"}}]', "")})
+    view = reader.attempt_view(reader.load_captures(conflicting_players, database))
+    check("AB a repeated players row with different fields keeps the first and records a conflict",
+          view["players_state"] == "players-partial"
+          and view["players_detail"]["rows_conflicting"] == 1
+          and view["current"]["s1"]["phase"] == "running"
+          and view["current"]["s1"]["source_index"] == 0
+          and len(view["player_conflicts"]) == 1,
+          {k: view.get(k) for k in ("players_state", "players_detail", "player_conflicts")})
+
+    duplicate_turns = capture_set(
+        root, "dup-turns", header(database),
+        {"players": (0, "[]", ""),
+         "turns-s1": (0, '[{"id":"t1","reportBody":"same","eventType":"agent_end"},'
+                         '{"id":"t1","reportBody":"same","eventType":"agent_end"}]', "")})
+    view = reader.attempt_view(reader.load_captures(duplicate_turns, database))
+    check("AC a repeated identical turns row is accounted as a duplicate",
+          view["turns_state"].get("s1") == "turns-partial"
+          and view["turns_detail"]["s1"]["rows_duplicate"] == 1
+          and view["reports"]["s1"]["t1"]["report_body"] == "same",
+          {k: view.get(k) for k in ("turns_state", "turns_detail")})
+
+    conflicting_turns = capture_set(
+        root, "conflict-turns", header(database),
+        {"players": (0, "[]", ""),
+         "turns-s1": (0, '[{"id":"t1","reportBody":"first"},{"id":"t1","reportBody":"second"}]', "")})
+    view = reader.attempt_view(reader.load_captures(conflicting_turns, database))
+    check("AD a repeated turns row with different content keeps the first and records a conflict",
+          view["turns_state"].get("s1") == "turns-partial"
+          and view["turns_detail"]["s1"]["rows_conflicting"] == 1
+          and view["reports"]["s1"]["t1"]["report_body"] == "first"
+          and len(view["report_conflicts"]) == 1,
+          {k: view.get(k) for k in ("turns_state", "turns_detail", "report_conflicts")})
+
+    other_player = capture_set(
+        root, "other-player", header(database),
+        {"players": (0, "[]", ""),
+         "turns-s1": (0, '[{"id":"t1","player":"s2","reportBody":"elsewhere"}]', "")})
+    view = reader.attempt_view(reader.load_captures(other_player, database))
+    check("AE a turns row naming another player is a conflict and is not used",
+          view["turns_state"].get("s1") == "turns-malformed" and view["reports"].get("s1", {}) == {}
+          and len(view["report_conflicts"]) == 1,
+          {k: view.get(k) for k in ("turns_state", "report_conflicts")})
+
+
+def case_conflicting_sessions(root, database):
+    shared_id = "receive:case-a:1:aaaa"
+    captures_directory = capture_set(
+        root, "view-crossed", header(database),
+        {"players": (0, "[]", ""),
+         "turns-case-a": (0, json.dumps([{"id": shared_id, "player": "case-a",
+                                          "reportBody": "from case-a", "eventType": "agent_end",
+                                          "receipt": None}]), ""),
+         "turns-other": (0, json.dumps([{"id": shared_id, "player": "other",
+                                         "reportBody": "from other", "eventType": "agent_end",
+                                         "receipt": None}]), "")})
+    out_path = os.path.join(root, "crossed.json")
+    argv = sys.argv
+    sys.argv = ["attempt_exit_records.py", database, out_path, "--captures", captures_directory]
+    try:
+        reader.main()
+    finally:
+        sys.argv = argv
+    with open(out_path) as handle:
+        document = json.load(handle)
+    matches = [record for record in document["attempts"] if record["attempt"] == shared_id]
+    record = matches[0] if matches else {}
+    report = record.get("report") or {}
+    check("AF an attempt keeps its own session's capture when another capture carries the same id",
+          report.get("capture_session") == "case-a" and report.get("report_body") == "from case-a"
+          and any(entry.get("attempt_id") == shared_id and entry.get("capture_session") == "other"
+                  for entry in document["report_conflicts"]),
+          {"report": report, "conflicts": document["report_conflicts"]})
+
+
+def run_cases(root, database):
+    case_route_parsed(root)
+    case_route_then_undecodable(root)
+    case_non_json_line(root)
+    case_non_object_json(root)
+    case_unrecognised_object(root)
+    case_truncated_spool(root)
+    case_removed_after_listing(root)
+    case_no_spool(root)
+    case_final_stat_failure(root)
+    case_capture_states(root, database)
+    case_view_states(root, database)
+    case_view_row_validation(root, database)
+    case_duplicate_and_conflict_rows(root, database)
+    case_composition(root, database)
+    case_conflicting_sessions(root, database)
+    records = reader.attempt_records(database)
+    check("U attempt_records reports one record per synthetic attempt",
+          len(records) == len([name for name in os.listdir(root) if ".attempt-" in name]),
+          len(records))
+
+
+def write_results(root, failure):
+    """Best effort: keep the per-case results and any termination failure."""
+    try:
+        with open(os.path.join(root, "results.json"), "w") as handle:
+            json.dump({"cases": [{"case": name, "passed": passed, "detail": detail}
+                                 for name, passed, detail in RESULTS],
+                       "termination_failure": failure}, handle, indent=1, sort_keys=True)
+    except OSError as error:
+        print("could not write results.json: %s" % error, file=sys.stderr)
+
+
 def main():
     arguments = [argument for argument in sys.argv[1:] if argument != "--keep"]
     keep = "--keep" in sys.argv
@@ -340,32 +466,22 @@ def main():
     else:
         root = tempfile.mkdtemp(prefix="reader-cases-")
     database = os.path.join(root, "fixture.db")
-    print("case root: %s" % root)
+    print("case root: %s" % root, flush=True)
+    failure = None
     try:
-        case_route_parsed(root)
-        case_route_then_undecodable(root)
-        case_non_json_line(root)
-        case_non_object_json(root)
-        case_unrecognised_object(root)
-        case_truncated_spool(root)
-        case_removed_after_listing(root)
-        case_no_spool(root)
-        case_final_stat_failure(root)
-        case_capture_states(root, database)
-        case_view_states(root, database)
-        case_view_row_validation(root, database)
-        case_composition(root, database)
-        records = reader.attempt_records(database)
-        check("U attempt_records reports one record per synthetic attempt",
-              len(records) == len([name for name in os.listdir(root) if ".attempt-" in name]),
-              len(records))
-        with open(os.path.join(root, "results.json"), "w") as handle:
-            json.dump([{"case": name, "passed": passed, "detail": detail} for name, passed, detail in RESULTS],
-                      handle, indent=1, sort_keys=True)
+        run_cases(root, database)
+    except BaseException as error:
+        # Includes KeyboardInterrupt: any incomplete termination is unsuccessful
+        # and keeps its directory, even when every completed case had passed.
+        failure = {"type": type(error).__name__, "message": str(error),
+                   "traceback": traceback.format_exc()}
+        RESULTS.append(("suite-terminated", False, failure["type"]))
+        print("case suite terminated: %s" % error, file=sys.stderr)
     finally:
+        write_results(root, failure)
         failed = [name for name, passed, _ in RESULTS if not passed]
         if failed or keep or supplied:
-            print("retained: %s" % root)
+            print("retained: %s" % root, flush=True)
         else:
             shutil.rmtree(root, ignore_errors=True)
     failed = [name for name, passed, _ in RESULTS if not passed]

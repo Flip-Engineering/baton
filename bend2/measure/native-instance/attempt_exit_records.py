@@ -61,9 +61,12 @@ ROUTE_PROVENANCE = (
     "provider and model; other shapes are counted as unrecognised rather than interpreted. Session and "
     "per-attempt reports come only from CLI captures supplied on the command line, and each capture "
     "carries its own state so a missing, failed or unparsable read is not an empty result. Rows inside a "
-    "loaded read are validated individually: a list that mixes valid and invalid rows is reported as "
-    "partial with every row accounted for in the detail record, and only a list whose rows are all valid "
-    "is reported as complete. "
+    "loaded read are validated individually: a repeated id with identical content is a duplicate, a "
+    "repeated id with different content is a conflict where the first row is kept, and a turn row whose id "
+    "or player names another session is refused for that capture. Every kept row records the index that "
+    "supplied it and every row is accounted for, so only a read whose rows were all used once with none "
+    "malformed, duplicated or conflicting is complete. Per-attempt reports are retained per capture "
+    "session, and a record's report is read only from its own session's capture. "
     "sessions.observed_model is one mutable session-level value and states nothing about an earlier "
     "attempt of the same session.")
 
@@ -517,8 +520,23 @@ def nonempty_string(value):
     return isinstance(value, str) and value != ""
 
 
-def outcome_state(rows_seen, rows_used, rows_malformed, prefix):
-    if rows_used and not rows_malformed:
+def attempt_id_session(attempt_id):
+    """The session encoded in a `receive:<session>:<cursor>:<random>` id, or None."""
+    parts = attempt_id.split(":")
+    if len(parts) == 4 and parts[0] == "receive" and parts[1]:
+        return parts[1]
+    return None
+
+
+def same_fields(left, right, keys):
+    return all(left.get(key) == right.get(key) for key in keys)
+
+
+def outcome_state(rows_seen, rows_used, rows_malformed, rows_duplicate, prefix):
+    """`ok` only when every row was used once and none was malformed, duplicated
+    or conflicting. A row that was dropped, repeated or superseded never leaves
+    the read labelled complete."""
+    if rows_used and not rows_malformed and not rows_duplicate:
         return "ok"
     if rows_used:
         return "%s-partial" % prefix
@@ -528,9 +546,16 @@ def outcome_state(rows_seen, rows_used, rows_malformed, prefix):
 
 
 def validate_players(rows):
-    """Return (current_by_id, malformed_rows) with every row accounted for."""
+    """Return (current_by_id, malformed_rows, duplicates, conflicts).
+
+    A repeated id with identical fields counts as a duplicate; a repeated id with
+    different fields is a conflict and the first row is kept. Each kept entry
+    records the row index that supplied it.
+    """
     current = {}
     malformed = []
+    conflicts = []
+    duplicates = 0
     for index, row in enumerate(rows):
         if not isinstance(row, dict):
             malformed.append({"index": index, "reason": "row is not a JSON object"})
@@ -554,15 +579,34 @@ def validate_players(rows):
         if reason:
             malformed.append({"index": index, "id": row_id, "reason": reason})
             continue
-        current[row_id] = {"current_attempt": fields["attempt"], "mode": fields["mode"],
-                           "phase": fields["phase"], "status": fields["status"]}
-    return current, malformed
+        entry = {"current_attempt": fields["attempt"], "mode": fields["mode"], "phase": fields["phase"],
+                 "status": fields["status"], "source_index": index}
+        if row_id in current:
+            if same_fields(current[row_id], entry, ("current_attempt", "mode", "phase", "status")):
+                duplicates += 1
+                current[row_id].setdefault("duplicate_indices", []).append(index)
+            else:
+                conflicts.append({"id": row_id, "source_index": index,
+                                  "first_index": current[row_id]["source_index"],
+                                  "reason": "repeated id with different fields"})
+            continue
+        current[row_id] = entry
+    return current, malformed, duplicates, conflicts
 
 
-def validate_turns(rows, reports):
-    """Insert valid report rows into reports and return (rows_used, malformed)."""
+def validate_turns(session, rows, reports, conflicts):
+    """Insert this capture's report rows into reports[session].
+
+    Returns (rows_used, duplicates, malformed). A row whose id encodes another
+    session, or whose `player` names another session, is not used here and is
+    recorded as a conflict, so one capture cannot supply another session's
+    attempt. A repeated id with identical content counts as a duplicate; a
+    repeated id with different content is a conflict and the first row is kept.
+    """
     used = 0
+    duplicates = 0
     malformed = []
+    per_session = reports.setdefault(session, {})
     for index, row in enumerate(rows):
         if not isinstance(row, dict):
             malformed.append({"index": index, "reason": "row is not a JSON object"})
@@ -570,6 +614,22 @@ def validate_turns(rows, reports):
         row_id = row.get("id")
         if not nonempty_string(row_id):
             malformed.append({"index": index, "reason": "id is not a non-empty string"})
+            continue
+        embedded = attempt_id_session(row_id)
+        if embedded is not None and embedded != session:
+            conflicts.append({"capture_session": session, "attempt_id": row_id, "source_index": index,
+                              "reason": "attempt id names session %s" % embedded})
+            malformed.append({"index": index, "id": row_id,
+                              "reason": "attempt id belongs to another session"})
+            continue
+        player = row.get("player")
+        if player is not None and not isinstance(player, str):
+            malformed.append({"index": index, "id": row_id, "reason": "player is not a string"})
+            continue
+        if isinstance(player, str) and player != session:
+            conflicts.append({"capture_session": session, "attempt_id": row_id, "source_index": index,
+                              "reason": "row names player %s" % player})
+            malformed.append({"index": index, "id": row_id, "reason": "row names another player"})
             continue
         body = row.get("reportBody")
         if body is not None and not isinstance(body, str):
@@ -579,10 +639,21 @@ def validate_turns(rows, reports):
         if event is not None and not isinstance(event, str):
             malformed.append({"index": index, "id": row_id, "reason": "eventType is not a string"})
             continue
-        reports[row_id] = {"report_body": body[:4000] if isinstance(body, str) else None,
-                           "event_type": event, "receipt": row.get("receipt")}
+        entry = {"report_body": body[:4000] if isinstance(body, str) else None,
+                 "event_type": event, "receipt": row.get("receipt"),
+                 "capture_session": session, "source_index": index}
+        if row_id in per_session:
+            if same_fields(per_session[row_id], entry, ("report_body", "event_type", "receipt")):
+                duplicates += 1
+                per_session[row_id].setdefault("duplicate_indices", []).append(index)
+            else:
+                conflicts.append({"capture_session": session, "attempt_id": row_id, "source_index": index,
+                                  "first_index": per_session[row_id]["source_index"],
+                                  "reason": "repeated id with different content"})
+            continue
+        per_session[row_id] = entry
         used += 1
-    return used, malformed
+    return used, duplicates, malformed
 
 
 def attempt_view(captures):
@@ -594,7 +665,7 @@ def attempt_view(captures):
     success. Every row is accounted for in the detail record.
     """
     view = {"current": {}, "reports": {}, "players_state": None, "players_detail": {},
-            "turns_state": {}, "turns_detail": {}}
+            "player_conflicts": [], "turns_state": {}, "turns_detail": {}, "report_conflicts": []}
     if captures["state"] != "loaded":
         view["players_state"] = "cli-reads-%s" % captures["state"]
         return view
@@ -607,11 +678,14 @@ def attempt_view(captures):
         view["players_state"] = "players-malformed"
         view["players_detail"] = {"reason": "the players document is not a JSON array"}
     else:
-        current, malformed = validate_players(players["document"])
+        current, malformed, duplicates, conflicts = validate_players(players["document"])
         view["current"] = current
+        view["player_conflicts"] = conflicts
         view["players_detail"] = {"rows_seen": len(players["document"]), "rows_used": len(current),
-                                  "rows_malformed": malformed}
-        view["players_state"] = outcome_state(len(players["document"]), len(current), malformed, "players")
+                                  "rows_malformed": malformed, "rows_duplicate": duplicates,
+                                  "rows_conflicting": len(conflicts)}
+        view["players_state"] = outcome_state(len(players["document"]), len(current), malformed,
+                                              duplicates, "players")
     for name, entry in captures["reads"].items():
         if not name.startswith("turns-"):
             continue
@@ -623,10 +697,14 @@ def attempt_view(captures):
             view["turns_state"][session] = "turns-malformed"
             view["turns_detail"][session] = {"reason": "the turns document is not a JSON array"}
             continue
-        used, malformed = validate_turns(entry["document"], view["reports"])
-        view["turns_state"][session] = outcome_state(len(entry["document"]), used, malformed, "turns")
+        conflicts_before = len(view["report_conflicts"])
+        used, duplicates, malformed = validate_turns(session, entry["document"], view["reports"],
+                                                     view["report_conflicts"])
+        view["turns_state"][session] = outcome_state(len(entry["document"]), used, malformed,
+                                                     duplicates, "turns")
         view["turns_detail"][session] = {"rows_seen": len(entry["document"]), "rows_used": used,
-                                         "rows_malformed": malformed}
+                                         "rows_malformed": malformed, "rows_duplicate": duplicates,
+                                         "rows_conflicting": len(view["report_conflicts"]) - conflicts_before}
     return view
 
 
@@ -657,11 +735,13 @@ def main():
         else:
             session_state = view["turns_state"].get(record["session"], "turns-missing")
         # The report follows this session's turns outcome, not the players
-        # outcome, so an independent turns success survives a players failure.
+        # outcome, and it is read only from this session's own capture, so one
+        # capture cannot supply another session's attempt.
+        session_reports = view["reports"].get(record["session"]) or {}
         record["session_cli_state"] = session_state
         record["report_state"] = session_state
         record["current_execution"] = view["current"].get(record["session"]) if players_resolved else None
-        record["report"] = view["reports"].get(record["attempt"]) if session_state in turns_resolved else None
+        record["report"] = session_reports.get(record["attempt"]) if session_state in turns_resolved else None
         observed = record["observed_route"]
         if observed and observed.get("route"):
             observed_available += 1
@@ -683,8 +763,10 @@ def main():
         "cli_captures": capture_summary,
         "cli_state": players_state,
         "players_detail": view["players_detail"],
+        "player_conflicts": view["player_conflicts"],
         "session_cli_state": view["turns_state"],
         "session_cli_detail": view["turns_detail"],
+        "report_conflicts": view["report_conflicts"],
         "route_provenance": ROUTE_PROVENANCE,
         "observed_route_summary": {"available": observed_available,
                                    "unavailable": len(records) - observed_available,
@@ -706,7 +788,7 @@ def main():
             key = "exit %s" % record["exit"]["exit"]
         histogram[key] = histogram.get(key, 0) + 1
     print(json.dumps({"database": database, "attempt_count": len(records),
-                      "exit_histogram": histogram, "cli_state": cli_state,
+                      "exit_histogram": histogram, "cli_state": players_state,
                       "observed_route": document["observed_route_summary"]},
                      indent=1, sort_keys=True))
 
