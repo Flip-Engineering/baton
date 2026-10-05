@@ -113,6 +113,20 @@ def retained_cli(args: List<String>) -> IO(Unit):
       Lock.SessionLock.acquire_session(Unit,db,"fixture",canonical => lock => retained_locked(directory,cwd,payload,mode,program,lock))
     case _: IO.die(Unit,2,"retain DATABASE ATTEMPT CWD PAYLOAD MODE PROGRAM ARGS...")
 
+# The recovery program belongs to the owned host fixture.
+def custom_locked(+directory: String, cwd: String, recovery: String, program: List<String>, lock: Maybe<U32>) -> IO(Unit):
+  match lock:
+    case None{}: IO.die(Unit,1,"fixture session busy")
+    case Some{+handle}: do IO<Unit>:
+      start : P.RetainedStart <- IO.try(P.RetainedStart,P.ProcessChild.retain(directory,P.argv(program),cwd,directory ++ "/native.stderr","",1,handle,P.argv([recovery,directory])))
+      retained_started(start,handle,"",False{})
+
+def custom_cli(args: List<String>) -> IO(Unit):
+  match args:
+    case db <> directory <> cwd <> recovery <> program:
+      Lock.SessionLock.acquire_session(Unit,db,"fixture",canonical => lock => custom_locked(directory,cwd,recovery,program,lock))
+    case _: IO.die(Unit,2,"retain-custom DATABASE ATTEMPT CWD RECOVERY PROGRAM ARGS...")
+
 def recovery_cli(args: List<String>) -> IO(Unit):
   match args:
     case +directory <> Nil{}: do IO<Unit>:
@@ -172,7 +186,8 @@ def mode_number(+mode: String) -> U32:
   Bool.pick(U32,String.eq(mode,"recover-retained"),3,
   Bool.pick(U32,String.eq(mode,"lock-try"),4,
   Bool.pick(U32,String.eq(mode,"control-write"),5,
-  Bool.pick(U32,String.eq(mode,"control-signal"),6,0))))))
+  Bool.pick(U32,String.eq(mode,"control-signal"),6,
+  Bool.pick(U32,String.eq(mode,"retain-custom"),7,0)))))))
 
 def dispatch(mode: U32, original: String, rest: List<String>) -> IO(Unit):
   match mode:
@@ -182,6 +197,7 @@ def dispatch(mode: U32, original: String, rest: List<String>) -> IO(Unit):
     case 4: lock_cli(rest)
     case 5: write_cli(rest)
     case 6: signal_cli(rest)
+    case 7: custom_cli(rest)
     case _: spawn_cli(original <> rest)
 
 def cli(args: List<String>) -> IO(Unit):

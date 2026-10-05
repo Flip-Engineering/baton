@@ -2,6 +2,7 @@
 #include <fcntl.h>
 #include <spawn.h>
 #include <sys/wait.h>
+#include <time.h>
 
 extern char **environ;
 
@@ -146,6 +147,8 @@ typedef struct {
   int listener,client,input,lock,watch,wake[2],spool,finishing,change_queued;
   uint64_t generation;
   pid_t native_pid,recovery_pid;
+  int recovery_waiting;
+  uint64_t recovery_due,recovery_attempt;
   int exited,status,released,input_closed,ready,native_waiting;
   char *directory,*incoming;
   size_t incoming_size,incoming_capacity;
@@ -670,14 +673,72 @@ static int br_wait_start(BrKeeper *keeper,pid_t pid,int kind) {
   if(error){close(waiter->descriptor);free(waiter);return error;}
   pthread_detach(thread);return 0;
 }
+static uint64_t br_monotonic_ms(void) {
+  struct timespec now;
+  if(clock_gettime(CLOCK_MONOTONIC,&now))return 0;
+  return (uint64_t)now.tv_sec*1000+(uint64_t)now.tv_nsec/1000000;
+}
+static void br_recovery_note(BrKeeper *keeper,int error,int status) {
+  char text[256];
+  int n=snprintf(text,sizeof(text),"attempt %llu monotonicMs %llu error %d status %d\n",
+    (unsigned long long)keeper->recovery_attempt,(unsigned long long)br_monotonic_ms(),error,status);
+  /* The first diagnostic and the current diagnostic have separate retention. */
+  br_file(keeper->directory,"observer-first-error",text,(size_t)n,1);
+  char *temporary=br_path(keeper->directory,"observer-error.next");
+  char *path=br_path(keeper->directory,"observer-error");
+  int fd=temporary?open(temporary,O_WRONLY|O_CREAT|O_TRUNC|O_CLOEXEC,0600):-1;
+  if(fd>=0) {
+    int failed=br_write_all(fd,text,(size_t)n);
+    if(!failed && fsync(fd))failed=errno;
+    close(fd);
+    if(!failed && path)rename(temporary,path);
+  }
+  free(temporary);free(path);
+}
+static void br_recovery_arm(BrKeeper *keeper) {
+  if(!keeper->finishing && keeper->client<0)
+    keeper->recovery_due=br_monotonic_ms()+1000;
+}
 static void br_recover(BrKeeper *keeper) {
+  if(keeper->finishing || keeper->client>=0 || keeper->recovery_pid>0)return;
+  keeper->recovery_due=0;keeper->recovery_attempt++;
   char **argv=br_argv(keeper->manifest.field[4],(size_t)keeper->manifest.header.lengths[4]);
   char *path=br_path(keeper->directory,"observer.log");
   int null=open("/dev/null",O_RDONLY|O_CLOEXEC),log=path?open(path,O_WRONLY|O_CREAT|O_APPEND|O_CLOEXEC,0600):-1;
-  int error=argv&&path&&null>=0&&log>=0?br_spawn(&keeper->recovery_pid,argv,keeper->manifest.field[1],null,log,log,-1,-1):errno?errno:ENOMEM;
+  pid_t pid=0;
+  int error=argv&&path&&null>=0&&log>=0?br_spawn(&pid,argv,keeper->manifest.field[1],null,log,log,-1,-1):errno?errno:ENOMEM;
   if(null>=0)close(null);if(log>=0)close(log);free(path);free(argv);
-  if(!error) error=br_wait_start(keeper,keeper->recovery_pid,'R');
-  if(error) br_note(keeper,"observer-error",error);
+  if(!error) {
+    keeper->recovery_pid=pid;
+    error=br_wait_start(keeper,pid,'R');
+    keeper->recovery_waiting=!error;
+  }
+  if(error) {br_recovery_note(keeper,error,-1);br_recovery_arm(keeper);}
+}
+/* A failed waiter leaves the keeper as this child's parent. waitpid both
+   qualifies its end and reaps it before another recovery child can exist. */
+static int br_recovery_tick(BrKeeper *keeper) {
+  uint64_t now=br_monotonic_ms();
+  if(keeper->recovery_pid>0 && !keeper->recovery_waiting) {
+    int status=0;pid_t ended;
+    do {ended=waitpid(keeper->recovery_pid,&status,WNOHANG);}while(ended<0 && errno==EINTR);
+    if(ended==keeper->recovery_pid) {
+      keeper->recovery_pid=0;
+      if(keeper->client<0) {br_recovery_note(keeper,0,status);br_recovery_arm(keeper);}
+    }
+    /* An unavailable child observation preserves ownership uncertainty. */
+  }
+  if(keeper->client>=0 || keeper->finishing)keeper->recovery_due=0;
+  else if(!keeper->recovery_pid && keeper->recovery_due && now>=keeper->recovery_due)
+    br_recover(keeper);
+  int timeout=-1;
+  if(keeper->recovery_pid>0 && !keeper->recovery_waiting)timeout=1000;
+  if(keeper->recovery_due && !keeper->recovery_pid) {
+    now=br_monotonic_ms();
+    int delay=now>=keeper->recovery_due?0:(int)(keeper->recovery_due-now);
+    if(timeout<0 || delay<timeout)timeout=delay;
+  }
+  return timeout;
 }
 static void br_disconnected(BrKeeper *keeper) {
   if(keeper->client>=0) close(keeper->client);
@@ -931,7 +992,10 @@ static int br_keep(BrKeeper *keeper) {
     for(BrControl *control=keeper->controls;control;control=control->next,index++) {
       clients[index]=control;fds[index]=(struct pollfd){control->socket,POLLIN|(control->answered?POLLOUT:0),0};
     }
-    int ready;do {ready=poll(fds,(nfds_t)count,-1);} while(ready<0 && errno==EINTR);
+    int ready;
+    do {ready=poll(fds,(nfds_t)count,br_recovery_tick(keeper));}while(ready<0 && errno==EINTR);
+    /* A completed poll timeout also advances retry if clock observation failed. */
+    if(!ready && keeper->recovery_due && !keeper->recovery_pid)br_recover(keeper);
     if(ready<0) {error=errno;goto polled;}
     if(fds[0].revents&POLLIN) {
       int socket=accept(keeper->listener,NULL,NULL);
@@ -959,9 +1023,15 @@ static int br_keep(BrKeeper *keeper) {
         if(event.status<0) {error=ECHILD;goto polled;}
         keeper->native_waiting=1;
         if((error=br_native_exited(keeper)))goto polled;
-      } else if(event.kind=='R' && event.generation==keeper->generation && keeper->client<0) {
-        char text[96];int n=snprintf(text,sizeof(text),"pid %d exited before attach: wait status %d\n",event.pid,event.status);
-        br_file(keeper->directory,"observer-error",text,(size_t)n,0);
+      } else if(event.kind=='R' && event.pid==keeper->recovery_pid) {
+        if(event.status>=0) {
+          keeper->recovery_pid=0;keeper->recovery_waiting=0;
+          if(keeper->client<0) {br_recovery_note(keeper,0,event.status);br_recovery_arm(keeper);}
+        } else {
+          /* A failed wait is not evidence that this recovery child ended. */
+          keeper->recovery_waiting=0;
+          br_recovery_note(keeper,ECHILD,-1);
+        }
       }
     }
     for(size_t i=5;i<count;i++) if(fds[i].revents&(POLLIN|POLLHUP|POLLERR)) {
