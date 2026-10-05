@@ -655,11 +655,17 @@ def run_context_gate(payload, logs, node, name, extra_env=None):
                                                 or post_identity['bytes'] != node_identity['bytes'])}
         write_json(receipt_path, receipt)
     except BaseException as error:
-        original = interrupted if interrupted is not None else secondary_error
+        # The FIRST interruption wins precedence across all subsequent
+        # evidence failures: a pre-existing child/wait interrupt, then a
+        # fresh close interrupt, then the first secondary capture failure.
+        # Phase records in the receipt stay truthful regardless of which
+        # original wins; the new failure is chained as its cause.
+        original = interrupted
+        if original is None:
+            original = close_interrupt
+        if original is None:
+            original = secondary_error
         if original is not None:
-            # The original interruption (or the first secondary failure) stays
-            # the raised exception; the new failure is retained as its chained
-            # cause across the whole post-child evidence path.
             raise original from error
         raise
     if interrupted is not None:
