@@ -176,6 +176,14 @@ class ContextPackagedBytes(unittest.TestCase):
         typescript = self.report['stages'][2]
         self.assertEqual(typescript['resolvedDeclarationType'], '(name: string) => string')
         self.assertEqual(typescript['messageType'], 'string')
+        gate_receipt = json.loads(
+            (self.logs / 'context-gate-host.json').read_text())
+        self.assertEqual(gate_receipt['node']['version'], subprocess_version(self.host_node))
+        self.assertTrue(gate_receipt['payloadSnapshot']['equal'])
+        for side in ('before', 'after'):
+            snapshot = self.logs / gate_receipt['payloadSnapshot'][side]['path']
+            self.assertEqual(hashlib.sha256(snapshot.read_bytes()).hexdigest(),
+                             gate_receipt['payloadSnapshot'][side]['sha256'])
 
     def test_gate_runs_on_exact_node22_floor(self):
         if self.node22 is None:
@@ -228,6 +236,63 @@ class ContextPackagedBytes(unittest.TestCase):
         self.assertTrue(fast_uri['files'])
         for name in self.entries:
             self.assertTrue(terms[name]['files'], 'no staged notice for ' + name)
+
+
+class ContextPackageComposition(unittest.TestCase):
+    """Replays the exact package() composition order on a fresh payload and
+    validates the manifest.build.context schema that packaging will embed."""
+
+    def test_compose_context_matches_manifest_schema(self):
+        scratch = tempfile.TemporaryDirectory(prefix='baton2-context-compose-')
+        self.addCleanup(scratch.cleanup)
+        root = pathlib.Path(scratch.name)
+        payload = root / 'payload'
+        # package() creates the payload root (bin/) before any staging.
+        (payload / 'bin').mkdir(parents=True)
+        logs = root / 'logs'
+        logs.mkdir()
+        entries = PACKAGE.context_lockfile()
+        try:
+            # Exact package() order: base notices stage first, then the
+            # context composition adds its notices and runs the gates.
+            PACKAGE.stage_notices(payload, [], 'development')
+
+            class Args:
+                context_node22 = None
+            context = PACKAGE.compose_context(payload, logs, Args())
+        except urllib.error.URLError as error:
+            self.skipTest('npm registry unreachable: ' + repr(error))
+        terms = context.pop('terms')
+        self.assertEqual(set(context), {'pins', 'manifest', 'lockfile', 'dependencies',
+                                        'stagedFirstParty', 'dependencyClosure', 'gate'})
+        self.assertEqual(context['pins'], PINS)
+        self.assertEqual(context['manifest']['path'], 'bend2/context/package.json')
+        self.assertEqual(context['lockfile']['path'], 'bend2/context/package-lock.json')
+        self.assertEqual([row['name'] for row in context['dependencies']], sorted(entries))
+        for row in context['dependencies']:
+            self.assertTrue(row['tarball']['sha256'])
+            self.assertTrue(row['resolved'].startswith('https://registry.npmjs.org/'))
+        self.assertEqual(context['dependencyClosure']['schema'],
+                         'baton2-context-dependency-closure-v1')
+        self.assertEqual(set(context['dependencyClosure']['packages']), set(entries))
+        runs = context['gate']['runs']
+        self.assertEqual(context['gate']['floor']['available'], False)
+        self.assertEqual([run['runtime'] for run in runs], ['host'])
+        self.assertEqual(runs[0]['exit_code'], 0)
+        self.assertTrue(runs[0]['payloadSnapshot']['equal'])
+        self.assertTrue(runs[0]['node']['version'].startswith('v'))
+        for name in entries:
+            self.assertTrue(terms[name]['files'], 'no staged notice for ' + name)
+        staged = payload / PACKAGE.CONTEXT_STAGE_ROOT
+        self.assertTrue((staged / 'dependency-closure.json').is_file())
+        self.assertTrue((staged / 'context-package-gate.mjs').is_file())
+        self.assertFalse((staged / 'package.json').exists())
+        self.assertFalse((staged / 'package-lock.json').exists())
+        self.assertGreater((logs / 'context-gate-host.json').stat().st_size, 0)
+        self.assertGreater((logs / 'context-gate-host.stdout').stat().st_size, 0)
+        self.assertTrue((logs / 'context-gate-host.stderr').is_file())
+        for side in ('before', 'after'):
+            self.assertTrue((logs / ('context-gate-host.payload-' + side + '.json')).is_file())
 
 
 def subprocess_version(node):

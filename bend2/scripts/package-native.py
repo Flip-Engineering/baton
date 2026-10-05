@@ -430,6 +430,14 @@ def context_gate_environment(node, logs, name):
             'TMPDIR': str(scratch), 'LC_ALL': 'C'}
 
 
+def context_node_identity(node, payload, logs, name, suffix=''):
+    version = command([str(node), '--version'], payload,
+                      context_gate_environment(node, logs, name), logs,
+                      'context-node-version-' + name + suffix)
+    return {'path': str(node.resolve()), 'bytes': node.stat().st_size,
+            'sha256': sha256(node), 'version': version}
+
+
 def context_tree_state(payload):
     directory = payload / CONTEXT_STAGE_ROOT
     return {path.relative_to(payload).as_posix(): file_info(path)
@@ -441,23 +449,34 @@ def run_context_gate(payload, logs, node, name, extra_env=None):
     if extra_env:
         env.update(extra_env)
     cwd = payload / CONTEXT_STAGE_ROOT
+    node_identity = context_node_identity(node, payload, logs, name)
     stdout = logs / ('context-gate-' + name + '.stdout')
     stderr = logs / ('context-gate-' + name + '.stderr')
+    before_path = logs / ('context-gate-' + name + '.payload-before.json')
+    after_path = logs / ('context-gate-' + name + '.payload-after.json')
     before = context_tree_state(payload)
+    write_json(before_path, before)
     started = time.monotonic()
     with stdout.open('wb') as out, stderr.open('wb') as err:
         result = subprocess.run([str(node), 'context-package-gate.mjs'], cwd=cwd, env=env,
                                 stdin=subprocess.DEVNULL, stdout=out, stderr=err)
-    require(before == context_tree_state(payload),
-            'The context payload changed during the package gate')
-    receipt = {'runtime': name, 'node': {'path': str(node.resolve()), **file_info(node)},
+    after = context_tree_state(payload)
+    write_json(after_path, after)
+    node_identity['versionAfter'] = command([str(node), '--version'], payload, env, logs,
+                                            'context-node-version-' + name + '-after')
+    receipt = {'runtime': name, 'node': node_identity,
                'argv': [str(node), 'context-package-gate.mjs'], 'cwd': str(cwd),
                'environmentKeys': sorted(env), 'exit_code': result.returncode,
                'elapsed_seconds': time.monotonic() - started,
                'stdout': {'path': stdout.name, **file_info(stdout)},
                'stderr': {'path': stderr.name, **file_info(stderr)},
-               'payloadUnchanged': True}
+               'payloadSnapshot': {'before': {'path': before_path.name, **file_info(before_path)},
+                                   'after': {'path': after_path.name, **file_info(after_path)},
+                                   'equal': before == after}}
     write_json(logs / ('context-gate-' + name + '.json'), receipt)
+    require(receipt['payloadSnapshot']['equal'],
+            'The context payload changed during the package gate: '
+            + str(logs / ('context-gate-' + name + '.json')))
     return receipt, stdout.read_text(errors='replace')
 
 
@@ -492,13 +511,11 @@ def run_context_gates(payload, logs, args, entries):
     floor = {'requested': '22.15.0'}
     if args.context_node22 is not None:
         node22 = args.context_node22.resolve()
-        version = command([str(node22), '--version'], payload,
-                          context_gate_environment(node22, logs, 'floor-version'),
-                          logs, 'context-floor-version')
-        require(version == 'v22.15.0',
-                'The supplied context floor node is not v22.15.0: ' + version)
+        identity = context_node_identity(node22, payload, logs, 'floor')
+        require(identity['version'] == 'v22.15.0',
+                'The supplied context floor node is not v22.15.0: ' + identity['version'])
         floor['available'] = True
-        floor['node'] = {'path': str(node22), **file_info(node22)}
+        floor['node'] = identity
         receipt, text = run_context_gate(payload, logs, node22, 'node22.15.0')
         require(receipt['exit_code'] == 0,
                 'The context package gate failed on the Node 22.15.0 floor; see '
@@ -670,12 +687,14 @@ def package(args):
         shutil.copyfile(binary, payload / 'bin/baton2')
         (payload / 'bin/baton2').chmod(0o755)
         stage_adapters(payload)
-        context = compose_context(payload, logs, args)
-        context['dependencyClosureEntries'] = len(context_entries)
         shutil.copytree(logs, payload / 'logs')
         terms = stage_notices(payload, notices, identity['kind'])
+        context = compose_context(payload, logs, args)
+        context['dependencyClosureEntries'] = len(context_entries)
         terms['context_packages'] = context.pop('terms')
         append_context_distribution(payload, terms['context_packages'])
+        for receipt_log in sorted(path for path in logs.glob('context-gate-*') if path.is_file()):
+            shutil.copyfile(receipt_log, payload / 'logs' / receipt_log.name)
         generated_dir = output / 'generated'
         generated_dir.mkdir()
         shutil.copyfile(generated, generated_dir / 'baton2.c')
@@ -696,7 +715,8 @@ def package(args):
             'build': {'inputs_before': before_inputs, 'inputs_after': after_inputs,
                       'input_capture_boundary': input_boundary, 'compiler_archive': archive,
                       'generated_c': {'path': str(generated), **file_info(generated)},
-                      'linked_libraries': libraries},
+                      'linked_libraries': libraries,
+                      'context': context},
             'gates': {'receipt': 'logs/summary.json', **file_info(receipt),
                       'validation': summary['validation'], 'reused': bool(args.gate_receipt)},
             'terms': terms,
