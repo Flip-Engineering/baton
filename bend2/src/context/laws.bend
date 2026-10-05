@@ -729,3 +729,27 @@ law an_unreadable_enumeration_names_its_line_and_answer:
 
 def an_unreadable_enumeration_names_its_line_and_answer():
   {==}
+
+law an_absent_answer_with_a_nonempty_value_is_not_a_proven_absence:
+  {ContextAdmit.admit_decode("absent\t\t\t\t\t\t\t\tvalue\t\n") == ContextAdmit.AdmissionUncertain{"shape","absent\t\t\t\t\t\t\t\tvalue\t\n"} : ContextAdmit.Admission}
+
+def an_absent_answer_with_a_nonempty_value_is_not_a_proven_absence():
+  {==}
+
+law a_valid_enumeration_is_recorded_as_rows:
+  {ContextDuties.duty_view("notice\tq1\t\t\tnotice\treport\n") == ContextDuties.DutyRows{1,"notice\tq1\t\t\tnotice\treport\n"} : ContextDuties.DutyView}
+
+def a_valid_enumeration_is_recorded_as_rows():
+  {==}
+
+law an_unknown_kind_makes_the_exported_enumeration_unreadable:
+  {ContextDuties.duty_view("other\tq1\t\t\tstage\t\n") == ContextDuties.DutyUnreadable{"other\tq1\t\t\tstage\t","other\tq1\t\t\tstage\t\n"} : ContextDuties.DutyView}
+
+def an_unknown_kind_makes_the_exported_enumeration_unreadable():
+  {==}
+
+law an_empty_line_makes_the_exported_enumeration_unreadable:
+  {ContextDuties.duty_view("\n") == ContextDuties.DutyUnreadable{"","\n"} : ContextDuties.DutyView}
+
+def an_empty_line_makes_the_exported_enumeration_unreadable():
+  {==}

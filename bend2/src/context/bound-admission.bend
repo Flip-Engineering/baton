@@ -139,7 +139,7 @@ def admit_answer(+fields: List<String>, +answer: String) -> Admission:
   match fields:
     case +presence <> more:
       Bool.pick(Admission, String.eq(presence, "absent"),
-        Bool.pick(Admission, ten_columns_absent(fields), AdmissionAbsent{}, AdmissionUncertain{"shape", answer}),
+        Bool.pick(Admission, nine_values_absent(more), AdmissionAbsent{}, AdmissionUncertain{"shape", answer}),
         Bool.pick(Admission, String.eq(presence, "present"), admit_tabs(more, answer), AdmissionUncertain{"mark", answer}))
     case _: AdmissionUncertain{"short", answer}
 
