@@ -178,12 +178,21 @@ function admitExecutedClosure(environment, entries) {
   const observed = {};
   const uncovered = [];
   const mismatches = [];
+  const absent = [];
   for (const name of closure.files) {
-    observed[name] = sha256File(join(environment.runtimeDir, name));
+    const path = join(environment.runtimeDir, name);
+    // A declared module missing from disk is a named admission refusal, not a
+    // raw ENOENT escaping to an uncaught exception.
+    if (!existsSync(path)) {
+      absent.push(name);
+      continue;
+    }
+    observed[name] = sha256File(path);
     const admitted = environment.expectedEntries[name];
     if (admitted === undefined) uncovered.push(name);
     else if (admitted !== observed[name]) mismatches.push(`${name}: admitted ${admitted} observed ${observed[name]}`);
   }
+  if (absent.length > 0) throw new EnvironmentRefusal('closureModuleMissing', absent.join(', '));
   if (uncovered.length > 0) throw new EnvironmentRefusal('expectedHashesIncomplete', uncovered.join(', '));
   if (mismatches.length > 0) throw new EnvironmentRefusal('sourceHashMismatch', mismatches.join(' | '));
   return { closure, observed };

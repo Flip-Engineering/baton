@@ -37,6 +37,11 @@ manifest. A graph refusal exits 3 with a named condition: `graphMissing`,
 `graphEmpty`, `graphEntryUndeclared`, `graphEdgeUndeclared`,
 `expectedHashesIncomplete` or `sourceHashMismatch`.
 
+A missing admitted input — the manifest, the graph, the evidence directory, the
+floor executable or a declared module — is a named refusal with exit status 3, not
+a raw filesystem error escaping as an uncaught exception. That status-3
+distinction is part of the contract.
+
 Scope, stated plainly: this suite parses no source, so it makes **no claim about
 arbitrary source**. It establishes that the modules it executed are exactly the
 admitted ones with the admitted digests. A source change invalidates the graph

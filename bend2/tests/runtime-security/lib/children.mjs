@@ -79,8 +79,9 @@ export async function cleanupOwned({ timeoutMs = 5000 } = {}) {
     }
   }
   // Wait for the child's own close only, up to the bound. An error event is
-  // recorded independently and never ends this wait, so "unresolved" means the
-  // process was still alive at the bound rather than merely erroring.
+  // recorded independently and never ends this wait. "Unresolved" therefore
+  // means no close was observed within the bound: the outcome is unknown. It is
+  // not evidence that the process was alive, and it is not a reap.
   await Promise.all(awaiting.map((entry) => new Promise((resolve) => {
     if (entry.close !== null) {
       resolve();
@@ -118,7 +119,7 @@ export async function cleanupOwned({ timeoutMs = 5000 } = {}) {
     errorRecorded: entries.filter((entry) => entry.errors.length > 0)
       .map((entry) => ({ pid: entry.pid ?? null, errors: entry.errors.slice() })),
     resolved: entries.filter((entry) => entry.close !== null || entry.spawnFailed).map((entry) => entry.pid ?? null),
-    semantics: 'requested signals, error events and close outcomes are separate; only an observed close is a reap; an errored child with a pid and no close within the bound is unresolved; an abrupt SIGKILL loss cannot run an installed exit handler, while a catchable termination may',
+    semantics: 'requested signals, error events and close outcomes are separate; only an observed close is a reap; a child with a pid and no close within the bound is unresolved, which means the outcome is unknown rather than a claim that the process was alive; an abrupt SIGKILL loss cannot run an installed exit handler, while a catchable termination may',
   };
   return report;
 }
