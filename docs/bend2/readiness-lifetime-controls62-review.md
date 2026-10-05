@@ -6,7 +6,7 @@ Read the complete Controls62 refinement, Receive agreement and corrected narrow
 client mapping in `native-instance-lifetime-critic-controls62-full-29`.
 Inspected immutable `e3dd9c588689828f360fdbaa7b14d43aa9fd7a6e` host source,
 particularly `br_read_line`, `br_native_exited`, `br_command` and
-`baton_process_done`. This is source review. No compiler, native fixture or
+`baton_process_pack`. This is source review. No compiler, native fixture or
 test gate ran. Remote-only execution and root admission remain required.
 
 The LF-inclusive frame contract, separate stream finality, original
