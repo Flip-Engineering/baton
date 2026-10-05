@@ -536,6 +536,21 @@ export function classifyCli(argv) {
     supplied: request.supplied ?? null,
   });
   const { diagnostics, accounting, profile } = splitTimeAccounting(stderrText);
+  // The transitive verifier closure is read and hashed inside the stable
+  // snapshot: every admitted input read above happens under the clean-tree
+  // observation, and the observation is rechecked only after these final
+  // reads and hashes, immediately before the verdict is emitted. The input
+  // snapshot digest binds the case, delta, source, toolchain, baseline
+  // outcome and these six members as read; it is a binding digest of the
+  // recorded values, not a remeasurement of every transitive byte.
+  const verifier = {
+    checker_sha256: sha256Hex(readFileSync(join(ROOT, 'bend2', 'scripts', 'laws-check.mjs'))),
+    aggregate_module_sha256: sha256Hex(readFileSync(join(ROOT, 'bend2', 'scripts', 'capacity-controls', 'aggregate.mjs'))),
+    classifier_module_sha256: sha256Hex(readFileSync(join(ROOT, 'bend2', 'scripts', 'capacity-controls', 'classify.mjs'))),
+    work_set_module_sha256: sha256Hex(readFileSync(join(ROOT, 'bend2', 'scripts', 'capacity-controls', 'work-set.mjs'))),
+    laws_common_module_sha256: sha256Hex(readFileSync(join(ROOT, 'bend2', 'scripts', 'laws-common.mjs'))),
+    definitions_module_sha256: sha256Hex(readFileSync(join(ROOT, 'bend2', 'scripts', 'laws-mutations.mjs'))),
+  };
   const match = verdict.class === 'intended-law-refusal' && verdict.attributedLaw === discovered.law && verdict.qualified;
   const verdictLine = {
     schema: 'capacity-controls/classify-verdict@1',
