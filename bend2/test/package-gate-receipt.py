@@ -80,13 +80,10 @@ class PackageGateReceipt(unittest.TestCase):
         PACKAGE.expected_verifier_digests = lambda: (dict(self.verifier), [])
         self.addCleanup(setattr, PACKAGE, 'ordinary_verifier_digests',
                         PACKAGE.ordinary_verifier_digests)
-        PACKAGE.ordinary_verifier_digests = lambda: (
-            {member: self.ordinary_verifier[member]
-             for member in PACKAGE.ORDINARY_RUN_VERIFIER_MEMBERS
-             if (PACKAGE.ROOT / PACKAGE.ORDINARY_VERIFIER_FILES[member]).is_file()},
-            [PACKAGE.ORDINARY_VERIFIER_FILES[member]
-             for member in PACKAGE.ORDINARY_RUN_VERIFIER_MEMBERS
-             if not (PACKAGE.ROOT / PACKAGE.ORDINARY_VERIFIER_FILES[member]).is_file()])
+        # The mocked run authority is a controlled complete inventory by default;
+        # a test that wants an unavailable member sets ordinary_missing first.
+        self.ordinary_missing = []
+        PACKAGE.ordinary_verifier_digests = self.mocked_ordinary_verifier_digests
         self.verdicts = {}
         for name in ('discover_controls', 'classify_control'):
             self.addCleanup(setattr, PACKAGE, name, getattr(PACKAGE, name))
@@ -114,6 +111,14 @@ class PackageGateReceipt(unittest.TestCase):
                     'verifier': dict(self.verifier)}
 
         PACKAGE.classify_control = classify
+
+    def mocked_ordinary_verifier_digests(self):
+        """The fixture run authority: present digests and the controlled absent set."""
+        missing = list(self.ordinary_missing)
+        return ({member: self.ordinary_verifier[member]
+                 for member in PACKAGE.ORDINARY_RUN_VERIFIER_MEMBERS
+                 if PACKAGE.ORDINARY_VERIFIER_FILES[member] not in missing},
+                missing)
 
     def laws(self):
         return [control for control in self.controls['controls']
@@ -165,7 +170,8 @@ class PackageGateReceipt(unittest.TestCase):
         return self.logs
 
     def test_complete_control_rows_are_accepted(self):
-        result = PACKAGE.validation(self.write_logs())
+        result = PACKAGE.validation(self.write_logs(), None, None, self.compiler(),
+                                    audit=self.logs / 'classifier-audit')
         suites = PACKAGE.native_suites()
         self.assertEqual(result['laws'], {'laws': len(self.laws()), 'mutations': len(self.mutations()),
                                           'compiles': len(self.laws()) + len(self.mutations()) + 1})
@@ -782,8 +788,9 @@ class PackageGateReceipt(unittest.TestCase):
         index = {'schema': PACKAGE.ORDINARY_SCHEMA, 'complete': complete,
                  'run': {**identity, 'nonce': 'fixture-nonce',
                          'checker_argv': ['node', 'bend2/scripts/laws-check.mjs']},
-                 # The producer contract for admitted inputs: a path-keyed map
-                 # whose value is an object carrying the digest.
+                 # The emitted contract for admitted inputs: a path-keyed map whose
+                 # value is the flat sha256 string. A digest object is a tolerated
+                 # earlier shape and is covered separately below.
                  'inputs': {'bend2/scripts/laws-check.mjs':
                             hashlib.sha256(b'checker').hexdigest()}
                  if inputs is None else inputs,
@@ -822,11 +829,12 @@ class PackageGateReceipt(unittest.TestCase):
         self.assertEqual(result['ordinary']['run_members'], sorted(self.ordinary_verifier))
         # The group-run module is absent from this checkout, so its member is
         # recorded unavailable rather than accepted or silently dropped.
-        self.assertEqual(result['ordinary']['verifier_unavailable'],
-                         ['bend2/scripts/capacity-controls/group-run.mjs'])
-        self.assertFalse(result['ordinary']['run_identity_qualified'])
+        self.assertEqual(result['ordinary']['verifier_unavailable'], [])
+        self.assertTrue(result['ordinary']['run_identity_qualified'])
         self.assertEqual(result['ordinary']['run_members_beyond_contract'], [])
         self.assertEqual(result['ordinary']['input_rows'], 1)
+        self.assertEqual(result['ordinary']['run_compiler_path'],
+                         str(self.compiler()))
         self.assertEqual(result['ordinary']['input_shape'], 'map')
         self.assertEqual(result['ordinary']['input_value_shape'], 'digest-string')
         self.assertTrue(result['ordinary']['audit']['members'])
@@ -1066,19 +1074,40 @@ class PackageGateReceipt(unittest.TestCase):
         PACKAGE.expected_verifier_digests = self._restore_expected_verifier_digests
         PACKAGE.ordinary_verifier_digests = self._restore_ordinary_verifier_digests
         digests, missing = PACKAGE.ordinary_verifier_digests()
-        self.assertEqual(sorted(missing),
-                         [PACKAGE.ORDINARY_VERIFIER_FILES['group_run_module_sha256']])
+        # Every present member must match its real file bytes, and the missing set
+        # is reported as this checkout actually is rather than assumed.
         for member, digest in digests.items():
             path = PACKAGE.ROOT / PACKAGE.ORDINARY_VERIFIER_FILES[member]
+            self.assertTrue(path.is_file())
             self.assertEqual(digest, hashlib.sha256(path.read_bytes()).hexdigest())
-        endpoint, endpoint_missing = PACKAGE.expected_verifier_digests()
-        self.assertEqual(sorted(digests), sorted(set(PACKAGE.ORDINARY_RUN_VERIFIER_MEMBERS)
-                                                 - {'group_run_module_sha256'}))
-        self.assertTrue(endpoint)
-        # The endpoint closure and the run identity stay separate authorities.
-        self.assertEqual(set(endpoint) - set(digests),
-                         set(PACKAGE.VERIFIER_MEMBERS)
-                         - {name for name in PACKAGE.VERIFIER_MEMBERS if name in digests})
+        self.assertEqual(sorted(missing),
+                         sorted(PACKAGE.ORDINARY_VERIFIER_FILES[member]
+                                for member in PACKAGE.ORDINARY_RUN_VERIFIER_MEMBERS
+                                if member not in digests))
+        self.assertIn(PACKAGE.ORDINARY_VERIFIER_FILES['group_run_module_sha256'], missing)
+        endpoint, _endpoint_missing = PACKAGE.expected_verifier_digests()
+        for member, digest in endpoint.items():
+            path = PACKAGE.ROOT / PACKAGE.VERIFIER_FILES[member]
+            self.assertTrue(path.is_file())
+            self.assertEqual(digest, hashlib.sha256(path.read_bytes()).hexdigest())
+        # This checkout is not a complete authority, and the endpoint closure and
+        # the run identity are separately declared member sets, not one inferred
+        # from the other.
+        self.assertEqual(set(PACKAGE.ORDINARY_RUN_VERIFIER_MEMBERS)
+                         - set(PACKAGE.VERIFIER_MEMBERS), {'group_run_module_sha256'})
+        self.assertEqual(set(PACKAGE.VERIFIER_MEMBERS)
+                         - set(PACKAGE.ORDINARY_RUN_VERIFIER_MEMBERS), set())
+
+    def test_an_unavailable_run_member_is_recorded(self):
+        """The controlled missing variant of the mocked run authority."""
+        self.ordinary_missing = [
+            PACKAGE.ORDINARY_VERIFIER_FILES['group_run_module_sha256']]
+        path = self.ordinary_index(self.logs / 'run')
+        self.write_logs(envelope=self.envelope_for(path))
+        result = PACKAGE.validation(self.logs, None, None, self.compiler())
+        self.assertEqual(result['ordinary']['verifier_unavailable'],
+                         [PACKAGE.ORDINARY_VERIFIER_FILES['group_run_module_sha256']])
+        self.assertFalse(result['ordinary']['run_identity_qualified'])
 
     def test_the_ordinary_index_layout_and_run_root_are_checked(self):
         run_root = self.home / 'declared-run'

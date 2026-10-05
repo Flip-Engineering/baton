@@ -723,6 +723,7 @@ def ordinary_evidence(index_path, expected, compiler=None, declared_root=None,
                 == (Path(producer_root) / 'evidence' / 'index.json').resolve(),
                 'The ordinary index path does not match the recorded producer root: '
                 + json.dumps(identity.get('index_path')) + ' against ' + str(producer_root))
+    run_compiler_path = None
     if compiler is not None:
         block = identity.get('compiler') or {}
         require(block.get('sha256') == sha256(compiler),
@@ -731,8 +732,9 @@ def ordinary_evidence(index_path, expected, compiler=None, declared_root=None,
                 'The ordinary run records no compiler path')
         # The location the run invoked is kept beside the verified identity, so a
         # relocation of equal bytes does not overwrite the original invocation.
+        # Relocation of equal bytes is still refused by the argv comparison below:
+        # the historical invocation location must resolve to the selected path.
         run_compiler_path = str(block['path'])
-    run_compiler_path = None
     source_block = identity.get('source') or {}
     # The producer records member names relative to its run scratch, which is the
     # index location's parent directory and the same root the classifier endpoint
@@ -1586,16 +1588,24 @@ def ordinary_verifier_digests():
 def verifier_member_value(verifier, member, label=''):
     """Read a member under either classifier spelling, refusing a conflict.
 
-    A document that carries both spellings with different values names an
-    ambiguous closure, so it refuses rather than resolving by lookup order.
+    Presence and validity are separate: a spelling that is present with a malformed
+    or null value refuses even when the other spelling carries a valid digest, and
+    a document carrying both spellings must carry equal valid digests.
     """
     alias = VERIFIER_MEMBER_ALIASES.get(member)
-    direct, other = verifier.get(member), verifier.get(alias) if alias else None
-    if direct is not None and other is not None and direct != other:
-        require(False, 'A verifier names ' + member + ' two ways with different values'
-                + (': ' + label if label else ''))
-    value = direct if direct is not None else other
-    return value
+    present = [name for name in (member, alias) if name and name in verifier]
+    if not present:
+        return None
+    values = [verifier[name] for name in present]
+    malformed = [value for value in values
+                 if not (isinstance(value, str) and re.fullmatch(r'[0-9a-f]{64}', value))]
+    require(not malformed,
+            'A verifier names ' + member + ' with a malformed value'
+            + (': ' + label if label else ''))
+    require(len(set(values)) == 1,
+            'A verifier names ' + member + ' two ways with different values'
+            + (': ' + label if label else ''))
+    return values[0]
 
 
 def require_verifier_closure(verdict, label):
