@@ -281,42 +281,21 @@ export async function runGroup({
   // the phase, the original cause and any secondary restoration failure.
   let baseline = null;
   let manifestStatus = "incomplete";
+  let manifestPhase = "capture";
   let manifestCaught = null;
   let manifestError = null;
   let secondaryTerminal = null;
   let manifestWritten = false;
   let outcome = null;
-  const results = [];
-  const persistManifest = () => {
-    const manifest = {
-      module,
-      binding,
-      entry: selectedEntry,
-      status: manifestStatus,
-      evidence_root: evidenceDir,
-      ...(manifestError !== null ? { error: manifestError } : {}),
-      ...(secondaryTerminal !== null ? { secondary_error: secondaryTerminal } : {}),
-      checker_sha256: checkerSha256,
-      source,
-      origin: origin(),
-      producing,
-      instrument,
-      ...(baseline !== null ? { baseline } : {}),
-      results,
-      compiler,
-    };
-    const manifestPath = join(evidenceDir, "group-manifest.json");
-    writeFileSync(manifestPath, JSON.stringify(manifest, null, 2) + "\n");
-    manifestWritten = true;
-    return { manifest, manifestPath };
-  };
-  try {
   // Complete admitted-input snapshot: every file of the copied tree is
   // captured as exact original bytes before any child runs. Text transforms
   // decode explicitly and mark their target dirty; restoration rewrites the
   // dirty paths and verification checks exact membership, file type and byte
-  // equality across the whole inventory on every terminal path.
+  // equality across the whole inventory on every terminal path. The map and
+  // dirty set live in the enclosure scope so terminal verification, defined
+  // here, reads the same bindings the try body fills.
   const pristine = new Map();
+  const dirty = new Set();
   const captureTree = (root, prefix) => {
     for (const entry of readdirSync(root, { withFileTypes: true })) {
       if (entry.isSymbolicLink()) throw new Error(`runGroup: admitted inputs must be regular files; symlink at ${join(root, entry.name)}`);
@@ -327,9 +306,6 @@ export async function runGroup({
       else throw new Error(`runGroup: unsupported admitted-input type at ${full}`);
     }
   };
-  captureTree(join(scratch, "bend2"), "bend2");
-  const dirty = new Set();
-  const definitions = definitionsByName(mutationDefinitions);
   const verifyRestored = () => {
     const seen = new Set();
     const walk = (root, prefix) => {
@@ -354,7 +330,37 @@ export async function runGroup({
       }
     }
   };
+  const results = [];
+  const persistManifest = () => {
+    const manifest = {
+      module,
+      binding,
+      entry: selectedEntry,
+      status: manifestStatus,
+      phase: manifestPhase,
+      evidence_root: evidenceDir,
+      ...(manifestError !== null ? { error: manifestError } : {}),
+      ...(secondaryTerminal !== null ? { secondary_error: secondaryTerminal } : {}),
+      checker_sha256: checkerSha256,
+      source,
+      origin: origin(),
+      producing,
+      instrument,
+      ...(baseline !== null ? { baseline } : {}),
+      results,
+      compiler,
+    };
+    const manifestPath = join(evidenceDir, "group-manifest.json");
+    writeFileSync(manifestPath, JSON.stringify(manifest, null, 2) + "\n");
+    manifestWritten = true;
+    return { manifest, manifestPath };
+  };
+  try {
+  manifestPhase = "capture";
+  captureTree(join(scratch, "bend2"), "bend2");
+  const definitions = definitionsByName(mutationDefinitions);
 
+  manifestPhase = "baseline";
   const childArgv = [timeTool, timeFlag, bendPath, selectedEntry, "--check-only"];
   const baselineRun = await runChild({
     argv: childArgv,
@@ -428,6 +434,7 @@ export async function runGroup({
             if (changedText !== expectedChangedText) {
               throw new Error(`runGroup: proof application mismatch for ${record.id}`);
             }
+            row.setup = "applied";
           }
         } else {
           if (!definition) throw new Error(`runGroup: no definition for ${record.id}`);
@@ -444,9 +451,10 @@ export async function runGroup({
             if (changedText !== expectedChangedText) {
               throw new Error(`runGroup: mutation application mismatch for ${record.id}`);
             }
+            row.setup = "applied";
           }
         }
-        if (row.setup !== "applied") continue;
+        if (row.setup === "applied") {
         const run = await runChild({
           argv: childArgv,
           cwd: scratch,
@@ -461,37 +469,47 @@ export async function runGroup({
         row.process = processRecord(run, `${record.id}-${nonce}-${results.length}`);
         row.stdout = run.stdout;
         row.stderr = run.stderr;
+        let evidenceError = null;
+        let classificationError = null;
         try {
           const changedPath = fileName(record, "changed");
           writeFileSync(join(evidenceDir, changedPath), changedText);
           const stderrText = readFileSync(join(evidenceDir, fileName(record, "stderr")), "utf8");
           const definition = definitions.get(record.id.slice("mutation:".length));
-          const verdict = classifyCase({
-            control: record,
-            expectation: definitionExpectation(definition),
-            location: definitionLocation(definition),
-            state: run.state, exitCode: run.exitCode, signal: run.signal, spawnError: run.spawnError,
-            stderrText,
-            baselineOk: baseline.process.state === "exited" && baseline.process.exit_code === 0,
-            delta: { changedText, expectedChangedText },
-            supplied: null,
-          });
-          const { accounting, profile } = splitTimeAccounting(stderrText);
-          row.expectation = definitionExpectation(definition) ?? null;
-          row.delta = {
-            original_sha256: sha256Hex(originalBytes),
-            changed_sha256: sha256Hex(readFileSync(join(evidenceDir, changedPath))),
-            changed_path: changedPath,
-          };
-          row.diagnostic = {
-            class: verdict.class,
-            attributed_law: verdict.attributedLaw,
-            sha256: sha256Hex(splitTimeAccounting(stderrText).diagnostics),
-          };
-          row.resource = parseResourceAccounting(accounting, profile);
+          try {
+            const verdict = classifyCase({
+              control: record,
+              expectation: definitionExpectation(definition),
+              location: definitionLocation(definition),
+              state: run.state, exitCode: run.exitCode, signal: run.signal, spawnError: run.spawnError,
+              stderrText,
+              baselineOk: baseline.process.state === "exited" && baseline.process.exit_code === 0,
+              delta: { changedText, expectedChangedText },
+              supplied: null,
+            });
+            const { accounting, profile } = splitTimeAccounting(stderrText);
+            row.expectation = definitionExpectation(definition) ?? null;
+            row.delta = {
+              original_sha256: sha256Hex(originalBytes),
+              changed_sha256: sha256Hex(readFileSync(join(evidenceDir, changedPath))),
+              changed_path: changedPath,
+            };
+            row.diagnostic = {
+              class: verdict.class,
+              attributed_law: verdict.attributedLaw,
+              sha256: sha256Hex(splitTimeAccounting(stderrText).diagnostics),
+            };
+            row.resource = parseResourceAccounting(accounting, profile);
+          } catch (error) {
+            classificationError = error?.message ?? String(error);
+          }
         } catch (error) {
-          row.evidence_error = error?.message ?? String(error);
-          throw error;
+          evidenceError = error?.message ?? String(error);
+        }
+        if (evidenceError !== null) row.evidence_error = evidenceError;
+        if (classificationError !== null) {
+          row.classification_error = classificationError;
+          throw new Error(`runGroup: classification failed for ${record.id}: ${classificationError}`);
         }
       } catch (error) {
         controlError = error;
@@ -499,26 +517,26 @@ export async function runGroup({
         if (dirty.has(record.module)) {
           try {
             writeFileSync(scratchModule, pristine.get(record.module));
-          } catch (error) {
-            controlError = controlError ?? error;
+          } catch (restoreWriteError) {
+            // A restoration write failure is recorded as the case cleanup
+            // error; it never replaces a primary cause.
+            if (controlError === null) controlError = restoreWriteError;
+            else controlError.secondary_restoration = String(restoreWriteError?.message ?? restoreWriteError);
           }
           dirty.delete(record.module);
         }
         try {
           verifyRestored();
         } catch (error) {
-          if (controlError !== null) {
-            // The primary cause is preserved; the restoration failure is
-            // attached to it as secondary evidence.
-            controlError.secondary_restoration = error?.message ?? String(error);
-          } else {
-            // No primary cause exists, so the restoration failure is the
-            // terminal failure of this case.
-            throw error;
-          }
+          // The primary cause is preserved; the restoration failure is
+          // attached to it as secondary evidence and surfaces through the
+          // serialized manifest error fields.
+          controlError.secondary_restoration = error?.message ?? String(error);
+          manifestError = manifestError ?? `${record.id}: ${error?.message ?? error}`;
         }
       }
       if (controlError !== null) throw controlError;
+      }
     }
     manifestStatus = "complete";
   }
@@ -535,6 +553,9 @@ export async function runGroup({
       manifestError = manifestError ?? secondaryTerminal;
     }
   }
+  // The original error object is re-raised after durable settlement; a
+  // serialization failure binds itself to the primary as secondary evidence
+  // instead of replacing it.
   // One durable serialization with the settled status, original cause and
   // any secondary failure recorded inside the manifest bytes.
   try {
@@ -559,11 +580,11 @@ export async function runGroup({
     writeFileSync(manifestPath, JSON.stringify(manifest, null, 2) + "\n");
     outcome = { manifest, manifestPath, scratch };
   } catch (error) {
-    // A serialization failure is secondary: the original cause is preserved
-    // and re-raised, with the manifest failure bound to it.
-    const primary = manifestCaught ?? error;
-    if (error !== primary) primary.secondary_manifest_error = String(error?.message ?? error);
-    throw primary;
+    // A serialization failure is secondary: the original cause object is
+    // preserved and re-raised, with the manifest failure bound to it.
+    if (manifestCaught === null) throw error;
+    manifestCaught.secondary_manifest_error = String(error?.message ?? error);
+    throw manifestCaught;
   }
   
   if (secondaryTerminal !== null) throw new Error(`runGroup: terminal restoration failure: ${secondaryTerminal}`);
