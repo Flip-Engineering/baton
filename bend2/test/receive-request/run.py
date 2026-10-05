@@ -5,6 +5,7 @@ import argparse
 import hashlib
 import json
 import os
+import re
 from pathlib import Path
 import shutil
 import subprocess
@@ -19,7 +20,7 @@ def main():
     args = parser.parse_args()
     root = Path(__file__).resolve().parents[3]
     output = Path(args.output).resolve()
-    output.mkdir(parents=True, exist_ok=True)
+    output.mkdir(parents=True, exist_ok=False)
     compiler = str(Path(args.bend).resolve())
     module = Path("bend2/src/context/receive-request.bend")
     entry = Path("bend2/test/receive-request/main.bend")
@@ -51,13 +52,17 @@ def main():
     assert run("native-build", [os.environ.get("CC", "clang"), "-O1", "-pthread",
                                 generated, "-lm", "-o", executable]).returncode == 0
     base = ["db", "owner", "request", "session", "cursor", "body"]
-    cases = {"matching": (base, "matched:cursor:body"),
-             "empty-bytes": (base[:5] + [""], "matched:cursor:"),
-             "literal-bytes": (base[:5] + ["--flag λ \nsecond"], "matched:cursor:--flag λ \nsecond")}
+    cases = {"matching": (base, "matched:stdout:cursor:body"),
+             "empty-bytes": (base[:5] + [""], "matched:stdout:cursor:"),
+             "literal-bytes": (base[:5] + ["--flag λ \nsecond"], "matched:stdout:cursor:--flag λ \nsecond"),
+             "stderr-matching": (["stderr", *base], "matched:stderr:cursor:body"),
+             "wake-empty": (["wake", ""], "none"),
+             "wake-literal": (["wake", "original-wake-λ\nnext"], "some:original-wake-λ\nnext")}
     for index, field in enumerate(("database", "owner", "request", "session")):
         changed = base.copy()
         changed[index] = "other-" + field
-        cases["different-" + field] = (changed, "mismatched:cursor:body")
+        cases["different-" + field] = (changed, "mismatched:stdout:cursor:body")
+        cases["stderr-different-" + field] = (["stderr", *changed], "mismatched:stderr:cursor:body")
     for name, (arguments, expected) in cases.items():
         child = run("case-" + name, [executable, *arguments])
         assert child.returncode == 0 and child.stdout.decode() == expected + "\n", name
@@ -79,6 +84,13 @@ def main():
         "select(OutputFrame{correlation,stream,cursor,bytes}",
         'select(OutputFrame{correlation,stream,"",bytes}',
         "matching_output_preserves_frame", "Matched", "Matched")
+    mutations["mismatch-loses-stderr"] = (
+        "case False{}: Mismatched{frame}",
+        "case False{}:\n      match frame:\n        case OutputFrame{correlation,stream,cursor,bytes}:\n          Mismatched{OutputFrame{correlation,Stdout{},cursor,bytes}}",
+        "mismatched_output_preserves_entire_frame", "Mismatched", "Mismatched")
+    mutations["wake-replaced"] = (
+        "case other: Some{other}", 'case other: Some{"message"}',
+        "nonempty_wake_keeps_message_identifier", "Some", "Some")
     source = (root / module).read_text()
     for name, (old, new, law, expected, observed) in mutations.items():
         assert source.count(old) == 1, name
@@ -95,8 +107,13 @@ def main():
             prefix = "../../src/context/receive-request."
             assert child.returncode == 1, (name, diagnostic)
             assert "Location: " + prefix + law + "\n" in diagnostic, (name, diagnostic)
-            assert "- expected : " + prefix + expected + "{" in diagnostic, (name, diagnostic)
-            assert "- observed : " + prefix + observed + "{" in diagnostic, (name, diagnostic)
+            for label, constructor in (("expected", expected), ("observed", observed)):
+                if name == "wake-replaced":
+                    # Base constructor qualification is determined by the compiler.
+                    pattern = r"^- " + label + r" : (?:[A-Za-z0-9_./-]+\.)?Some\{"
+                    assert re.search(pattern, diagnostic, re.MULTILINE), (name, diagnostic)
+                else:
+                    assert "- " + label + " : " + prefix + constructor + "{" in diagnostic, (name, diagnostic)
     print("Receive request cases and intended implementation mutation rejections passed.", flush=True)
 
 

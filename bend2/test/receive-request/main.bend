@@ -1,9 +1,14 @@
 import Base
 import ../../src/context/receive-request.bend as R
 
+def show_stream(stream: R.Stream) -> String:
+  match stream:
+    case R.Stdout{}: "stdout"
+    case R.Stderr{}: "stderr"
+
 def show_frame(frame: R.OutputFrame) -> String:
   match frame:
-    case R.OutputFrame{correlation,stream,cursor,bytes}: cursor ++ ":" ++ bytes
+    case R.OutputFrame{correlation,stream,cursor,bytes}: show_stream(stream) ++ ":" ++ cursor ++ ":" ++ bytes
 
 def show(value: R.OutputRoute) -> String:
   match value:
@@ -12,6 +17,12 @@ def show(value: R.OutputRoute) -> String:
 
 def cli(args: List<String>) -> IO(Unit):
   match args:
+    case Con{"wake",Con{message,Nil{}}}:
+      match R.wake(message):
+        case None{}: IO.print("none")
+        case Some{value}: IO.print("some:" ++ value)
+    case Con{"stderr",Con{database,Con{owner,Con{request,Con{session,Con{cursor,Con{bytes,Nil{}}}}}}}}:
+      IO.print(show(R.route(R.Correlation{"db","owner","request","session"},R.OutputFrame{R.Correlation{database,owner,request,session},R.Stderr{},cursor,bytes})))
     case Con{database,Con{owner,Con{request,Con{session,Con{cursor,Con{bytes,Nil{}}}}}}}:
       IO.print(show(R.route(R.Correlation{"db","owner","request","session"},R.OutputFrame{R.Correlation{database,owner,request,session},R.Stdout{},cursor,bytes})))
     case other: IO.die(Unit,2,"Expected database, owner, request, session, cursor and bytes.")

@@ -98,6 +98,15 @@ law different_owner_preserves_unrouted_frame:
 def different_owner_preserves_unrouted_frame():
   {==}
 
+law mismatched_output_preserves_entire_frame:
+  for stream: Stream
+  for cursor: String
+  for bytes: String
+  {route(Correlation{"db","owner","request","session"},OutputFrame{Correlation{"db","other-owner","request","session"},stream,cursor,bytes}) == Mismatched{OutputFrame{Correlation{"db","other-owner","request","session"},stream,cursor,bytes}} : OutputRoute}
+
+def mismatched_output_preserves_entire_frame(stream,cursor,bytes):
+  {==}
+
 law different_request_preserves_unrouted_frame:
   {route(Correlation{"db","owner","request","session"},OutputFrame{Correlation{"db","owner","other-request","session"},Stdout{},"cursor","body"}) == Mismatched{OutputFrame{Correlation{"db","owner","other-request","session"},Stdout{},"cursor","body"}} : OutputRoute}
 
@@ -117,7 +126,9 @@ def continuation_has_no_message_identifier():
   {==}
 
 law nonempty_wake_keeps_message_identifier:
-  {wake("message") == Some{"message"} : Maybe<String>}
+  for head: Char
+  for tail: String
+  {wake(SCon{head,tail}) == Some{SCon{head,tail}} : Maybe<String>}
 
-def nonempty_wake_keeps_message_identifier():
+def nonempty_wake_keeps_message_identifier(head,tail):
   {==}
