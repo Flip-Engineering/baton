@@ -31,10 +31,10 @@ def rev_units(xs: List<U32>, acc: List<U32>) -> List<U32>:
 # false a backslash appends and sets the flag, a quote appends and closes the token, and any
 # other octet appends and continues. End of input in either state reports MissingClose with
 # the exact original input.
-def walk(rest: List<U32>, acc: List<U32>, escaped: Bool) -> SliceResult:
+def walk(rest: List<U32>, +acc: List<U32>, escaped: Bool) -> SliceResult:
   match rest:
     case Nil{}: MissingClose{rev_units(acc, Nil{})}
-    case +h <> t:
+    case +h <> +t:
       Bool.pick(SliceResult, escaped, walk(t, h <> acc, False{}),
         Bool.pick(SliceResult, U32.is_eq(h, 92), walk(t, h <> acc, True{}),
           Bool.pick(SliceResult, U32.is_eq(h, 34),
@@ -44,5 +44,5 @@ def walk(rest: List<U32>, acc: List<U32>, escaped: Bool) -> SliceResult:
 def slice(octets: List<U32>) -> SliceResult:
   match octets:
     case Nil{}: MissingOpen{Nil{}}
-    case +h <> t:
-      Bool.pick(SliceResult, U32.is_eq(h, 34), walk(t, h <> Nil{}, False{}), MissingOpen{octets})
+    case +h <> +t:
+      Bool.pick(SliceResult, U32.is_eq(h, 34), walk(t, h <> Nil{}, False{}), MissingOpen{h <> t})

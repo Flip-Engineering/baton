@@ -11,7 +11,7 @@
 # value bound to a parameter before it is matched. UNCOMPILED and UNTESTED.
 
 import Base
-import output-json-slice as K
+import ../src/receive/output-json-slice.bend as K
 
 def rev_units(xs: List<U32>, acc: List<U32>) -> List<U32>:
   match xs:
@@ -116,12 +116,15 @@ def check(case: List<U32> & K.SliceResult & String) -> IO(Unit):
   (octets, expected, name) = case
   judge(K.slice(octets), expected, name)
 
-def check_recon(case: List<U32> & List<U32> & String) -> IO(Unit):
-  (octets, original, name) = case
-  match K.slice(octets):
+def judge_recon(result: K.SliceResult, original: List<U32>, name: String) -> IO(Unit):
+  match result:
     case K.Closed{token, rest}: judge_equal(concat(token, rest), original, name)
     case K.MissingClose{_scanned}: IO.die(Unit, 1, name)
     case K.MissingOpen{_original}: IO.die(Unit, 1, name)
+
+def check_recon(case: List<U32> & List<U32> & String) -> IO(Unit):
+  (octets, original, name) = case
+  judge_recon(K.slice(octets), original, name)
 
 def check_pair(pair: K.SliceResult & K.SliceResult & String) -> IO(Unit):
   (left, right, name) = pair
