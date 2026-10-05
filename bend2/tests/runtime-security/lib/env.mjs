@@ -20,7 +20,7 @@ import { readFileSync, statSync, accessSync, existsSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, isAbsolute, join, basename } from 'node:path';
 import os from 'node:os';
-import { resolveClosure } from './closure.mjs';
+import { ClosureRefusal, resolveClosure } from './closure.mjs';
 import { HISTORICAL_PINS } from './pins.mjs';
 
 export const LIB_DIR = dirname(fileURLToPath(import.meta.url));
@@ -147,12 +147,17 @@ export function loadEnvironment() {
 // Resolve the executed closure and validate it against the admitted manifest.
 // This runs in both modes.
 function admitExecutedClosure(environment, entries) {
-  const closure = resolveClosure(environment.runtimeDir, entries);
+  // A resolver refusal is an admission outcome, not an uncaught exception, and
+  // never a success. Any other error is a real defect and is not converted.
+  let closure;
+  try {
+    closure = resolveClosure(environment.runtimeDir, entries);
+  } catch (error) {
+    if (error instanceof ClosureRefusal) throw new EnvironmentRefusal(error.condition, error.detail);
+    throw error;
+  }
   if (closure.unsupported.length > 0) {
     throw new EnvironmentRefusal('closureUnsupportedForm', closure.unsupported.join(' | '));
-  }
-  if (closure.unresolved.length > 0) {
-    throw new EnvironmentRefusal('closureUnresolvedSpecifier', closure.unresolved.join(' | '));
   }
   if (closure.missing.length > 0) throw new EnvironmentRefusal('closureModuleMissing', closure.missing.join(', '));
 
@@ -169,6 +174,9 @@ function admitExecutedClosure(environment, entries) {
   if (mismatches.length > 0) throw new EnvironmentRefusal('sourceHashMismatch', mismatches.join(' | '));
   return { closure, observed };
 }
+
+// Declared for report completeness: what the scan can and cannot establish.
+export const SCANNER_LIMITS = 'closure scan refuses unrecognised import/export/require forms and non-relative specifiers; template and regex literals are not modelled, so a dependency reachable only through them is not detected and such a tree requires an explicit manifest-bound graph';
 
 export function admitEnvironment(environment, entries) {
   const { closure, observed } = admitExecutedClosure(environment, entries);
@@ -215,7 +223,9 @@ export function admitEnvironment(environment, entries) {
     entries,
     closureFiles: closure.files,
     observedHashes: observed,
-    closureScan: 'specifier-scan-not-a-parser',
+    closureScan: closure.scanner,
+    closureAllowedBuiltins: closure.allowedBuiltins,
+    closureScannerLimits: SCANNER_LIMITS,
     historicalScope,
   };
 }

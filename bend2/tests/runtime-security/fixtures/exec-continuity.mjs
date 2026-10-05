@@ -88,10 +88,13 @@ try {
 } catch (error) {
   bodyFailure = String(error?.stack ?? error);
 } finally {
-  // Raw streams and awaited custody run on every path.
-  rawStdout = writeStream(environment, 'exec-continuity.child.stdout.txt', stdout);
-  rawStderr = writeStream(environment, 'exec-continuity.child.stderr.txt', stderr);
+  // Awaited custody first: a kill request is asynchronous, so trailing pipe data
+  // may still arrive. Streams are persisted after closure and labelled partial
+  // when closure was not observed.
   custodyReport = await cleanupOwned({ timeoutMs: 5000 });
+  const partial = child.pid !== undefined && custodyReport.unresolved.includes(child.pid);
+  rawStdout = { ...writeStream(environment, 'exec-continuity.child.stdout.txt', stdout), partial };
+  rawStderr = { ...writeStream(environment, 'exec-continuity.child.stderr.txt', stderr), partial };
 }
 
 const producerRecords = stderr.split('\n')

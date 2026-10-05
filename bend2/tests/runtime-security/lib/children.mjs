@@ -1,28 +1,27 @@
 // Owned-child custody for fixtures.
 //
-// A requested signal and an observed child outcome are separate facts. This
-// module records both and never treats a requested SIGKILL as a reap.
+// A requested signal, an error event and a close outcome are three separate
+// facts. An `error` event never settles the child and never counts as a reap;
+// only an observed `close` does. `cleanupOwned` requests SIGKILL for every child
+// whose close was not observed and still has a pid, then awaits each child's own
+// close with a bounded wait. A spawn failure that produced no pid is recorded
+// distinctly.
 //
-// `cleanupOwned` is the awaited path: it requests SIGKILL for every child that
-// was not observed reaped, then waits a bounded time for each child's own
-// `close` (or `error`) event, and reports any child still unresolved. The
-// process `exit` hook can only REQUEST a signal; it observes nothing, and the
-// fixture result records no outcome from it.
-//
-// Coordinator-level custody of a killed fixture's descendants is outside this
-// fixture's authority and is not claimed here.
+// The process `exit` hook can only REQUEST a signal and observes nothing, so no
+// outcome is attributed to it. Custody of a killed fixture's descendants is
+// coordinator-level and is outside this fixture's authority.
 
 const owned = new Map();
 let installed = false;
 
 function requestOnlyKill() {
   for (const entry of owned.values()) {
-    if (entry.observed !== null) continue;
+    if (entry.close !== null || entry.pid === undefined) continue;
     entry.requested.push('SIGKILL(exit-hook, unobserved)');
     try {
       entry.child.kill('SIGKILL');
     } catch {
-      // best effort on a shutdown path; result remains unobserved
+      // best effort on a shutdown path
     }
   }
 }
@@ -35,26 +34,34 @@ function install() {
 
 export function own(child) {
   install();
-  const entry = { child, pid: child.pid, requested: [], observed: null };
-  owned.set(child, entry);
-  const settle = (outcome) => {
-    if (entry.observed === null) entry.observed = outcome;
+  const entry = {
+    child,
+    pid: child.pid,
+    spawnFailed: child.pid === undefined,
+    requested: [],
+    errors: [],
+    close: null,
   };
-  child.on('close', (code, signal) => settle({ closed: true, code, signal }));
-  child.on('error', (error) => settle({ closed: false, error: error.code ?? String(error) }));
+  owned.set(child, entry);
+  child.on('close', (code, signal) => {
+    if (entry.close === null) entry.close = { code, signal };
+  });
+  child.on('error', (error) => {
+    entry.errors.push(error.code ?? String(error));
+  });
   return {
     entry,
-    markReaped(outcome) {
-      if (outcome !== undefined) settle(outcome);
+    markReaped(close) {
+      if (close !== undefined && entry.close === null) entry.close = close;
     },
-    // Record the request and send it. The outcome arrives through the child's
-    // own close/error event, or not at all.
+    // Records the request and sends it; the outcome arrives only through the
+    // child's own close event.
     kill(signal = 'SIGKILL') {
       entry.requested.push(signal);
       try {
         child.kill(signal);
       } catch {
-        // already gone; observed outcome still governs
+        // already gone; the close outcome still governs
       }
     },
   };
@@ -62,44 +69,46 @@ export function own(child) {
 
 export async function cleanupOwned({ timeoutMs = 5000 } = {}) {
   const entries = [...owned.values()];
-  const pending = [];
-  for (const entry of entries) {
-    if (entry.observed !== null) continue;
+  const awaiting = entries.filter((entry) => entry.close === null && !entry.spawnFailed);
+  for (const entry of awaiting) {
     entry.requested.push('SIGKILL(cleanup)');
     try {
       entry.child.kill('SIGKILL');
     } catch {
-      // fall through to the wait below
+      // fall through to the bounded wait
     }
-    pending.push(entry);
   }
-  const waited = pending.map((entry) => new Promise((resolve) => {
-    if (entry.observed !== null) {
+  await Promise.all(awaiting.map((entry) => new Promise((resolve) => {
+    if (entry.close !== null) {
       resolve();
       return;
     }
-    const timer = setTimeout(() => resolve('timeout'), timeoutMs);
+    const timer = setTimeout(resolve, timeoutMs);
     const done = () => {
       clearTimeout(timer);
-      resolve('settled');
+      resolve();
     };
     entry.child.once('close', done);
     entry.child.once('error', done);
-    // Re-check after subscribing: the event may already have arrived.
-    if (entry.observed !== null) done();
-  }));
-  await Promise.all(waited);
+    if (entry.close !== null) done();
+  })));
 
-  const report = entries.map((entry) => ({
-    pid: entry.pid,
-    requested: entry.requested.slice(),
-    observed: entry.observed,
-  }));
-  return {
-    children: report,
-    reaped: report.filter((item) => item.observed !== null && item.observed.closed === true).map((item) => item.pid),
-    errored: report.filter((item) => item.observed !== null && item.observed.closed === false).map((item) => item.pid),
-    unresolved: report.filter((item) => item.observed === null).map((item) => item.pid),
-    signalObservation: 'requested signals are recorded separately from observed close/error outcomes; a requested SIGKILL is never a reap',
+  const report = {
+    children: entries.map((entry) => ({
+      pid: entry.pid ?? null,
+      spawnFailed: entry.spawnFailed,
+      requested: entry.requested.slice(),
+      errors: entry.errors.slice(),
+      close: entry.close,
+    })),
+    reaped: entries.filter((entry) => entry.close !== null).map((entry) => entry.pid ?? null),
+    errored: entries.filter((entry) => entry.errors.length > 0).map((entry) => entry.pid ?? null),
+    spawnFailed: entries.filter((entry) => entry.spawnFailed).map(() => null),
+    // Unresolved means: a pid existed and no close was observed, whether or not
+    // an error event arrived.
+    unresolved: entries.filter((entry) => entry.close === null && !entry.spawnFailed).map((entry) => entry.pid),
+    resolved: entries.filter((entry) => entry.close !== null || entry.spawnFailed).map((entry) => entry.pid ?? null),
+    semantics: 'requested signals, error events and close outcomes are separate; only an observed close is a reap; an errored child with a pid and no close is unresolved',
   };
+  return report;
 }

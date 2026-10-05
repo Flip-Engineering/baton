@@ -49,10 +49,14 @@ try {
 } catch (error) {
   bodyFailure = String(error?.stack ?? error);
 } finally {
+  // Awaited custody first: a kill request is asynchronous, so trailing pipe data
+  // may still arrive. Streams are persisted after closure and labelled partial
+  // when closure was not observed.
   custody.kill('SIGKILL');
-  rawStdout = writeStream(environment, 'json-list-fields.subject.stdout.txt', stdout);
-  rawStderr = writeStream(environment, 'json-list-fields.subject.stderr.txt', stderr);
   custodyReport = await cleanupOwned({ timeoutMs: 5000 });
+  const partial = child.pid !== undefined && custodyReport.unresolved.includes(child.pid);
+  rawStdout = { ...writeStream(environment, 'json-list-fields.subject.stdout.txt', stdout), partial };
+  rawStderr = { ...writeStream(environment, 'json-list-fields.subject.stderr.txt', stderr), partial };
 }
 
 let listParsed = null;

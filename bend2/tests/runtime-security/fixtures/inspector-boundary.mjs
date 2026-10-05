@@ -178,11 +178,15 @@ try {
   await Promise.all(children.map((state) => state.exited.catch(() => null)));
 }
 
-// Raw debuggee streams and outcomes, persisted per subject on every path.
+// Awaited custody first, then raw streams, so trailing pipe data from a kill
+// request is not dropped. Streams whose closure was not observed are labelled
+// partial.
+for (const state of children) if (state.closed) state.custody.markReaped();
+const custodyReport = await cleanupOwned({ timeoutMs: 5000 });
 const rawStreams = [];
 for (const state of children) {
-  if (state.closed) state.custody.markReaped();
   const outcome = await state.exited.catch(() => null);
+  const partial = state.pid !== undefined && custodyReport.unresolved.includes(state.pid);
   rawStreams.push({
     tag: state.tag,
     pid: state.pid,
@@ -190,11 +194,10 @@ for (const state of children) {
     errorSeen: state.errorSeen,
     requested: state.custody.entry.requested.slice(),
     outcome,
-    stdout: writeStream(environment, `inspector-boundary.${state.tag}.stdout.txt`, state.stdout),
-    stderr: writeStream(environment, `inspector-boundary.${state.tag}.stderr.txt`, state.stderr),
+    stdout: { ...writeStream(environment, `inspector-boundary.${state.tag}.stdout.txt`, state.stdout), partial },
+    stderr: { ...writeStream(environment, `inspector-boundary.${state.tag}.stderr.txt`, state.stderr), partial },
   });
 }
-const custodyReport = await cleanupOwned({ timeoutMs: 5000 });
 for (const entry of rawStreams) {
   reporter.check(`${entry.tag}:close-observed`, entry.closed === true, entry);
   reporter.check(`${entry.tag}:no-error-event`, entry.errorSeen === null, entry.errorSeen);
