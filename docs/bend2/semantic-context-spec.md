@@ -99,6 +99,7 @@ Operation = {
   id, subjectSchema, optionsSchema, projections,
   effects, execution: pure | direct | managed | runtime,
   resultSchema, referenceSchema, eventSchema,
+  lifetimeProfile: optional RuntimeLifetimeProfile,
   dependencies: [ModuleOperationRef]
 }
 ModuleOperationRef = {module, declarationDigest, operation}
@@ -145,8 +146,8 @@ required grant.
 
 Subject, options, result, reference and event schemas are typed declaration data
 consumed by shared native validation. The initial schema vocabulary is closed
-records, tagged
-unions, arrays, literal enums, optional fields and the existing scalar types.
+records, tagged unions, arrays, literal enums, optional fields, dictionaries,
+local named recursive definitions and the existing scalar types.
 It reuses the strict raw JSON, duplicate-key and Unicode boundary below. Numeric
 request fields retain the supported U32 profile; wider or noninteger provider
 values use explicitly typed exact text fields until a separately reviewed codec
@@ -155,6 +156,25 @@ validation; unsupported schema forms refuse before provider invocation. Schema
 validation cannot execute provider code. Each record rejects undeclared fields.
 Adding a language-specific subject or option shape consists of a declaration
 using this vocabulary; it does not add a language case to the validator.
+
+A dictionary explicitly declares its scalar-text key policy and value schema;
+it admits arbitrary keys only at that declared data position. Common authority
+records remain closed. Local schema references resolve within the authenticated
+description, with no external fetch or executable validator. Recursive references
+must consume an object member or array element on each cycle; unguarded schema
+cycles refuse. Validation visits the finite supplied value without truncating it.
+Allocation or validation failure retains its actual condition.
+
+The reusable `json-value` profile is a structural sum of null, Boolean, scalar
+text, exact JSON number token, array of values and object members with scalar
+keys. Number and text remain distinct kinds: `1e400` is a number token, while
+`"1e400"` is text. Duplicate decoded object keys refuse in this normalized
+profile; raw source evidence remains separately available. The result schema
+selects this profile for complete dataset/model values. It preserves number
+tokens, sign and exponent without converting through U32 or JS Number. Env/tool
+maps use declared dictionaries. Neither profile expands the public request's
+numeric authority domain. These shared schema forms and their exact transport
+are proposed Codec work, with actual end-to-end qualification still required.
 
 Common lifecycle/control and reference envelopes remain native-owned. Modules
 declare their source/data subject shapes and projections within that envelope.
@@ -203,6 +223,31 @@ fabricating a child outcome. A returned capability or claimed producer
 cannot widen the admitted
 binding. Protocol corruption retains failure and cleanup responsibility.
 
+The common module transport uses one closed version-2 protocol. Invocation is
+`{version:2,query,owner,moduleBinding,request,inputIdentities,operationPlan,role,incarnation}`.
+Request is the validated canonical request value; input identities and operation
+plan are the trusted admitted values. Role/incarnation are both null for a direct
+invocation, or both identify its retained managed role. Native still records the
+actual direct child/launch identity; null is not permission to lose that evidence.
+Event/result is
+`{version:2,query,owner,moduleBinding,runtime,role,incarnation,sequence,type,payload}`.
+Sequence is canonical unsigned decimal text, monotone within the qualified
+invocation or retained role. Runtime is nullable; unsolicited query-null events
+are allowed only for a retained runtime under its authenticated original binding.
+The native observer resolves that binding and producing operation from admitted
+state, then compares the frame; the echoed text does not authenticate itself.
+Type is `accepted`, `complete`, `failed` or `state`; each payload uses its selected
+declared schema within the common outcome rules.
+
+Direct and managed bridges use this same envelope. Private compiler/CDP/backend
+protocols sit behind the selected bridge and cannot bypass the envelope's identity
+or effect checks. A binding mismatch fails publication and preserves actual
+received bytes, possible effects and cleanup responsibility. The older version-1
+adapter literals are historical candidate protocols. They require an explicit
+bridge/version migration before new-module admission; recovery keeps the protocol
+of its original accepted invocation. No existing provider is silently enabled by
+these proposed version-2 shapes.
+
 Normalized facts and relations retain producer binding, language semantics,
 snapshot, evidence and classification. Module-specific detail is validated by
 the selected result schema with an explicit module namespace and schema version.
@@ -229,6 +274,22 @@ Missing provider execution availability alone does not make a retained result's
 source stale. Applicability follows its actual recorded inputs and revalidation
 capability; historical readable facts and presently unavailable expansion remain
 separate outcomes.
+
+Ref admission takes the expected original query/ref key independently of the
+authenticated lookup. Qualified absence, unreadable attribution, unestablished
+legacy association and found association remain distinct outcomes. A found ref
+binds its producing step to the original retained plan. Serving uses an exact
+frozen selected binding; re-resolving a module name cannot replace that identity.
+Original/current selector, operation and result compatibility requires admitted
+evidence tied to both complete bindings. Equal effect sets alone establish no
+semantic compatibility. Required grants preserve authenticated historical
+effective requirements, union current common minima and declared additions.
+Require requested projections to be a subset of both stored limits and effective
+current support; losing an unused historical projection need not refuse a still
+supported request. Negotiated capabilities can only narrow declared support.
+The pure decision is submitted for atomic retention; invocation binds the verified
+retained winner and qualified current authority. Classification of newly produced
+facts occurs after their evidence exists.
 
 ### Detection, acquisition and resource ownership
 
@@ -259,6 +320,16 @@ that entry or authority is unavailable, refusal identifies the missing owned
 primitive. Metadata success cannot count as installed resolution. Acquisition is
 separate from the original analysis query; after success the agent retries its
 ordinary query with the original subject and current admitted identities.
+
+The existing explicit engine selector resolves a one-query ambiguity. Persistent
+selection updates additionally require an admitted expected-configuration
+compare/apply operation. Its exact request, effect authority and callable export
+remain Package/Lifecycle/Interfaces handoff work. Target execution and package
+installation grants do not implicitly grant configuration changes. An unknown
+apply outcome returns to its original retained operation for reconciliation;
+active queries and old results retain their original admitted configuration.
+Pre-preparation refusal creates no query row. A committed admission rejection
+and an admitted failed resolution retain their existing distinct result semantics.
 
 Package installation publishes only a verified selected closure. Failure and
 unknown completion preserve original artifacts, error and cleanup responsibility;
@@ -652,7 +723,9 @@ frame for invalid UTF-8 and duplicates. Its frame shape is
 `{jsonrpc:"2.0",id,method:"tools/call",params:{name,arguments,_meta?}}`; `id` is a
 string or a signed safe-integer token. It admits exactly the three named context
 tools. Query arguments are `{query,request}`, result arguments are `{query}`,
-and engines arguments are `{}`. Query IDs are nonempty strings; request is an
+and engines arguments are `{}` or `{scope:"session"}`. Scope has no other
+admitted value or type; the arguments cannot contain a session identity.
+Query IDs are nonempty strings; request is an
 object. The root, params and arguments objects reject unknown fields except for
 the declared metadata extension. After these checks the entry extracts the request
 container with SQLite `json_extract`, which preserves its numeric tokens. That
@@ -689,13 +762,20 @@ a receiver to omit them. Managed query progress and owner notices retain their
 existing lifecycle contracts.
 
 Codec success is one JSON document:
-`{version:1,tool,id,query,requestCanonical}`. `tool` is `context-query`,
+`{version:1,tool,id,query,requestCanonical,scope}`. `tool` is `context-query`,
 `context-engines` or `context-result`; `query` is null for engines and the
 validated query ID otherwise; `requestCanonical` is canonical text for query
-and null otherwise. `id` is the validated frame ID, emitted from its checked
+and null otherwise. `scope` is `"session"` only for validated scoped engines
+arguments, and null otherwise. `id` is the validated frame ID, emitted from its checked
 JSON token. The bridge dispatches solely
 from this result, forwarding request text verbatim to `context-query-file`.
 It never rebuilds that request from a parsed JS object.
+For scoped discovery, the bridge obtains SESSION solely from its authenticated
+attachment and renders `--session SESSION` from the validated scope. Missing
+attachment refuses before target inspection. Absence retains target-free
+discovery. Preliminary JSON parsing and opaque metadata supply no scope authority.
+This success-shape addition must update native codec and MCP consumer together;
+an old consumer cannot silently discard it.
 Context notifications without an ID do not dispatch. A preliminary parse error
 keeps the existing no-dispatch error path. Ordinary non-context frames retain
 their existing parsing semantics; this raw validation guarantee is context-scoped.
@@ -830,13 +910,17 @@ Stored entries also retain their authenticated original policy and schema
 association for expansion. The core compares those associations before dispatch;
 ref text supplied by a caller establishes none of them. IDs are
 canonical JSON arrays serialized as strings, for example
-`["source","/work/a.ts","<sha256>",40,17,"definition"]` or
-`["runtime","rt:q7",3,"worker:2","object","handle:9"]`. Encoding uses JSON
+`["source","/work/a.ts","<sha256>",40,17,"definition"]`.
+Runtime reference shapes use the selected reviewed lifetime profile and common
+Codec/Core encoding. The CDP profile retains its eight-member identity with
+adapter, epoch and mutation generation, using canonical decimal-text counters;
+this document supplies no shortened interchangeable runtime encoding. Encoding uses JSON
 escaping; implementations do not split refs on punctuation. A ref query uses
 `{kind:"ref",query:"q7",id:"..."}`. The coordinator loads the retained entry,
 checks its original snapshot and required effects, then expands that selector.
 Unknown IDs refuse. Stale source/schema refs return `staleReference` and a fresh
-selector in the remedy; runtime refs require the same live epoch. Expansion
+selector in the remedy; runtime refs require valid acquisition and current
+lifetime evidence under their admitted profile. Expansion
 preserves the original evidence, proposition, classification and scope.
 Observed and checked evidence have different meanings; they form no general
 strength ranking. A new relation requires its own evidenced derivation and
@@ -951,8 +1035,10 @@ The adapter obtains requested language-service response facts independently;
 completion requires their responses and the matching diagnostic publication.
 
 Without that publication, the query remains running with
-the declaration-bound providerEvent for that URI/version, with
-`reason:"diagnosticsUnobserved"`, in `progress.waitingFor`. Admission and this initial
+the declaration-bound event
+`{kind:"providerEvent",producer,operation,event:{kind:"diagnosticsPublication",reason:"diagnosticsUnobserved"},subject:{uri,version}}`
+in `progress.waitingFor`. The event and subject objects follow the clangd
+declaration's schemas; reason is not an extra top-level common member. Admission and this initial
 waiting state are delivered to the owner through the managed notice path;
 the provider observer retains its work and consumes future events. The owner
 can inspect the query, continue other work, recover observation or explicitly
@@ -1002,9 +1088,12 @@ catalog rows. Freshness re-reads those rows in a new transaction. Catalog and
 plan facts include RLS/role/search-path assumptions; unsupported FDW/extension
 or remote-relation paths are explicit limits.
 
-Runtime identity is the owned runtime ID, adapter instance, owned child PID,
-loaded-script digest, debugger/context/worker IDs and integration pause epoch.
-PID alone is not identity. Disk bytes, loaded bytes and source-map bytes are
+Common runtime identity binds the owned runtime, actual serving module/adapter
+and native child incarnation. Its declared lifetime profile supplies the
+additional qualified thread/context/handle acquisition and invalidation evidence.
+The CDP profile adds loaded-script digest, debugger/context/worker IDs and pause
+and mutation epochs. Other profiles retain their actual semantics. PID alone is
+not identity. Disk bytes, loaded bytes and source-map bytes are
 separate identities. A generated source map records its transform relationship.
 A captured runtime value is a historical observation after resume; it never
 becomes a fresh live value through `context-result`.
@@ -1317,6 +1406,22 @@ local user's access. Runtime stdout/stderr are captured privately, separate from
 the protocol. The adapter's own protocol process loads no project module; a
 controlled child does. The TS resolver supplies model import/use edges for
 `codeAccesses`. Merely listing model names fails this projection's acceptance.
+
+A negative validation verdict is a completed validation observation. A project
+import, validator, conversion or serialization throw is an admitted execution
+failure with its actual target/provider cause and completion evidence. Invalid
+prelaunch input or a missing grant is refusal. Successful retrieval of a retained
+failed query preserves that failure; it does not turn the analysis into success.
+
+Every operation driving project execution identifies its admitted invocation and
+capture boundary. Capture covers all project-controlled phases it drives,
+including deferred conversion and serialization, and keeps target output separate
+from protocol frames. Failure retains observed bytes, completion and exact capture
+or retention limitations. Dedicated channels or a separate target child may
+implement this boundary; no particular stream-hook mechanism is required. Direct
+descriptor writes and inherited writers need their own qualification. A later
+effect/capture mismatch fails publication and preserves possible effects; it cannot
+claim that admission prevented an action already observed.
 
 `migration.chain` is an ordered array of `{revision,path,sha256}` with string
 revision identities; numeric revision values refuse before replay.
@@ -1654,6 +1759,15 @@ debuggers bind the affected thread and handle lifetime; an all-stop assumption
 cannot be inherited from another module. Language-level frames and values require
 actual compiler/runtime mappings, including erased or affine Bend values.
 
+Each runtime operation declares a reviewed lifetime profile consumed by common
+reference admission: acquisition evidence, thread/context scope, valid states,
+invalidation on mutation/replacement/loss/exit, and required publication checks.
+Common Codec/Core owns identity validation and encoding; a provider cannot supply
+an arbitrary authority codec. Runtime supplies authenticated observations mapped
+through the admitted profile. Missing events do not imply perpetual validity.
+Without demonstrated acquisition and lifetime, a module issues no live-value ref;
+historical observed values remain readable with their evidence and limitations.
+
 Bend2 debug support requires a separately investigated and qualified backend.
 The pinned frontend assessment supplies no runtime frame/value/stepping API.
 Runtime's Section owns that investigation and truthful discovery limits. The
@@ -1661,12 +1775,19 @@ CDP behavior below remains a concrete optional module profile. The owned
 launch/role and cleanup rules apply to every effectful provider that uses them.
 
 A runtime ID is `rt:<launch QUERY_ID>`.
-Arbitrary PID attachment is refused as `attachUnqualified`; `/json/list` is not
+Arbitrary PID attachment is refused as `attachUnqualified`. In the CDP profile,
+`/json/list` is not
 PID authentication or proof that no other inspector client exists. One Baton
 adapter owns its connection; other local clients can affect the shared debugger
 state. No exclusivity or hostile-local-user boundary is claimed.
 
-Runtime subjects use the following closed intent forms. `select` remains at the
+The following closed intent forms specify the retained optional CDP profile.
+Other runtime modules declare their supported subject schemas, serialization
+classes, valid states and completion observations through the common boundary.
+They retain common native ownership, grants, runtime naming and release duties;
+they need no inspector handshake or all-stop epoch unless their profile requires
+one. Non-evaluating observations while running are admissible when supported by
+the qualified profile. `select` remains at the
 request top level. `session` below is the runtime ID, not the requesting Player.
 
 | Intent | Fields | Completion |
@@ -2088,13 +2209,13 @@ responsibility remains with its original keeper and observer. Under the healthy,
 verified original database, observer-loss and adapter-loss recovery still require
 retained responsibility and actual native owner notification.
 
-The adapter serializes incompatible state-changing intents per runtime and rejects a
-second incompatible intent as `runtimeBusy` before send. Observe is admitted
-while idle/stopped; release is always available to the owner. Query IDs correlate requests and responses. Native-to-adapter frames are
-`{version:1,query,request}`. Adapter frames are
-`{version:1,query,runtime,role,incarnation,sequence,type,payload}` with nullable `runtime`,
-monotone sequence per adapter, and type `accepted`, `complete`, `failed` or
-`state`. Only complete frames carry the validated result shape. State frames
+The adapter serializes incompatible state-changing intents according to the
+admitted runtime profile and rejects a second incompatible intent as `runtimeBusy`
+before send. CDP observation uses its idle/stopped rule; other profiles use their
+qualified observation states. Release remains available to the owner independent
+of those observation states. The version-2 invocation/event envelopes in Installed
+module contract are the sole common wire shapes, including the original module
+binding and trusted plan. Only complete frames carry the validated result shape. State frames
 carry runtime state/evidence; unsolicited state has query null. Malformed frames,
 foreign runtime/query identities and repeated sequence with different bytes
 fail the protocol. Replayed identical spool frames are idempotent. In one
@@ -2656,13 +2777,28 @@ Selective-loading qualification uses Bend2-only, individual preferred-language
 and mixed projects through installed CLI and MCP. Inspect actual archive and
 installed dependency members, loaded libraries, probes, processes and attributable
 memory cost. Include a known unused module with absent payload and observable
-initialization: discovery and unrelated queries must leave it untouched. Exercise
+initialization: discovery and unrelated queries must leave it untouched. Separately
+install that module with fixture instrumentation and repeat the unrelated calls;
+its initialization/probe/library markers remain untouched. A selected positive
+control must demonstrate that the instrumentation detects real initialization.
+Instrumentation belongs to the fixture, not the product declaration. Exercise
 missing selected dependencies through the proposed native resolution operation,
 failed/uncertain installation, changed project configuration and two projects
 sharing a compatible selected resource. Releasing one project must preserve the
 other's live work. Measure actual package/process cost with recorded scope;
 an enabled flag or unavailable-only answer does not establish isolation or useful
 language support. These are remote qualification requirements, not measured savings.
+
+Surface/protocol controls exercise unscoped and attachment-scoped MCP discovery,
+duplicate or escaped scope names, invalid scope values/types, missing attachment
+and attempted body session injection. They discriminate scope loss in the codec
+success frame and prove target-free unscoped behavior. Module transport controls
+mutate one binding/owner/plan/role field, substitute a version-1 frame or replay
+a foreign event; no result may publish through a private backend bypass. Generic
+runtime controls use a supported running-state observation and a non-CDP lifetime
+profile. Data controls preserve nested dictionaries, number-versus-text identity,
+large signed/exponent tokens and recursive values through publication and refs.
+Validator verdict, target throw and prelaunch refusal retain distinct outcomes.
 
 Single-defect negative controls cover unknown/duplicate module identities,
 disabled or ambiguous selection, schema/entry/dependency replacement, unsupported
@@ -2927,6 +3063,16 @@ The retained research used for this specification is retrievable with native
   `quality-language-critic-contributions-84-semantic-synthesis`: independent
   candidate requirements, including their retained corrections to earlier
   frontend claims. These contributions are not verdicts on this successor.
+- `models-spec-source-39-synthesis`, `models-spec-security-40-synthesis`,
+  `code-spec-review-48`, `runtime-spec140-corrections-synthesis` and
+  `controls-next-spec-review-105-synthesis`: intermediate-candidate corrections
+  to scoped MCP codec, common transport, runtime profiles, schema expressiveness
+  and target-execution outcome/capture semantics.
+- `native115-consolidated-boundary`,
+  `controls-next-loading-reconciliation-106-synthesis` and
+  `quality-loading-contributions-89-semantic-synthesis`: authenticated ref inputs,
+  physical primitive gaps and controlled unused-module qualification. Actual
+  package installation/configuration exports remain owner handoff work.
 
 - `semantic-code-lane-report-1`: public API/binding/flow producer qualifications;
 - `semantic-models-lane-report-1`: data joins, model/migration probes, security
