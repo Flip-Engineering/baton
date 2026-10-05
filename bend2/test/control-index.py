@@ -291,7 +291,7 @@ class ControlIndex(unittest.TestCase):
         self.assertEqual(view, self.call('orchestra', '--index', '--for', 'associate'))
         self.assertEqual(self.retained(), before)
 
-    def test_utf16_metadata_is_utf8_counted_or_explicitly_refused(self):
+    def test_utf16_compact_reads_refuse_and_full_reader_preserves_body(self):
         body = 'REPORT λ 日本語\0tail'
         with closing(sqlite3.connect(self.db)) as db:
             schema_and_rows = '\n'.join(db.iterdump())
@@ -312,13 +312,19 @@ class ControlIndex(unittest.TestCase):
                 with self.subTest(encoding=encoding, args=args):
                     result = subprocess.run([str(EXE), str(database), *args],
                                             capture_output=True, text=True, timeout=10)
-                    if result.returncode == 0:
-                        row = next(row for row in json.loads(result.stdout)
-                                   if row['id'] == 'pending-report')
-                        self.assertEqual(row['bodyBytes'], len(body.encode('utf-8')))
-                    else:
-                        self.assertRegex(result.stdout + result.stderr, r'(?i)utf.?8|encoding')
+                    self.assertNotEqual(result.returncode, 0)
+                    self.assertIn('UTF-8', result.stdout + result.stderr)
+                    self.assertIn('full', result.stdout + result.stderr)
             self.assertEqual(database.read_bytes(), before)
+            for args in [('delivery', 'pending-report'), ('inbox', 'associate')]:
+                with self.subTest(encoding=encoding, full_reader=args):
+                    result = subprocess.run([str(EXE), str(database), *args],
+                                            capture_output=True, text=True, timeout=10)
+                    self.assertEqual(result.returncode, 0, result.stderr or result.stdout)
+                    value = json.loads(result.stdout)
+                    row = value if args[0] == 'delivery' else next(
+                        row for row in value if row['id'] == 'pending-report')
+                    self.assertEqual(row['body'], body)
 
     def test_focused_routes_agree_with_native_message_admission(self):
         self.assertIsNone(self.call('orchestra', '--index')['routes'],
