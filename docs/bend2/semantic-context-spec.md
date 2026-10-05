@@ -376,9 +376,26 @@ continues to use the caller's original request. An absent primitive reports its
 actual limitation; a template is no claim that its callable is implemented.
 
 The existing explicit engine selector resolves a one-query ambiguity. Persistent
-selection updates additionally require an admitted expected-configuration
-compare/apply operation. Its exact request, effect authority and callable export
-remain Package/Lifecycle/Interfaces handoff work. Target execution and package
+selection uses the proposed native subject
+`{kind:"module-resolution",module,intent:"configure",expected:{query,id},selection:{enabled,preference}}`,
+where enabled is Boolean and preference is `preferred|ordinary`. Engine/options/
+select follow the same native control branch. Expected names an inspect ref for
+this exact project/configuration and module. Inspect supplies the current
+selection in its state and configure remedy. Configuration changes only that
+trusted project's module selection entry; it cannot choose a configuration file,
+installer or executable from request data. Native compares the expected config
+identity and current authenticated write authority before an atomic conditional
+update; mismatch returns fresh inspect navigation. Multiple preferred compatible
+modules still produce explicit ambiguity.
+
+Configure requires the proposed common `configureModules` effect and actual
+project-configuration write authority. It uses retained managed one-shot custody,
+the same four admission outcomes and immutable historical replay. Its result uses
+the native moduleResolution state variant. Expected-state comparison and effect
+completion need the actual config owner's primitive: a SQLite transaction alone
+cannot make an external-file compare/write atomic. The exact callable and both
+new effect meanings require Package/Core/Codec/Lifecycle/Interfaces and Root
+review before implementation acceptance. Target execution and package
 installation grants do not implicitly grant configuration changes. An unknown
 apply outcome returns to its original retained operation for reconciliation;
 active queries and old results retain their original admitted configuration.
@@ -528,9 +545,9 @@ The actual source targets and extractor mapping require Code and independent
 Quality review before those capabilities are advertised.
 
 Code's concrete initial subjects at `8a26bc3e` are
-`json/uint-decoder.bend::append_digit`,
-`json/laws.bend::m5_canonical_null_is_itself` and
-`host/files.bend::Files.find_suffix`. They exercise quantity-aware types, an actual
+`bend2/src/json/uint-decoder.bend::append_digit`,
+`bend2/src/json/laws.bend::m5_canonical_null_is_itself` and
+`bend2/src/host/files.bend::Files.find_suffix`. They exercise quantity-aware types, an actual
 declaration/fill and canonical import reference, and an IO/foreign-body assumption.
 These are proposed subject choices with source evidence, not observed successful
 queries. Derivatives changing proof, declaration order, quantity and imported
@@ -662,7 +679,7 @@ profile and does not enter shared selection code.
 | `runtime` | intent-specific fields below | `state`, `frames`, `scopes`, `values`, `exception`, `threads` |
 | `query-control` | `query`, `intent:"recover"|"release"`; release also requires `signal:"SIGTERM"|"SIGKILL"` | `state` |
 | `ref` | `query`, `id` | projections admitted by the stored referenced selector |
-| `module-resolution` | `module`, `intent:"inspect"` with optional original `origin` ref, or `intent:"install"` with required inspected `expected` ref | `state`; native control admission and package authority described above |
+| `module-resolution` | `module`; `inspect` with optional `origin` ref, `install` with required `expected` ref, or `configure` with required `expected` and closed `selection` | `state`; native control admission and separate package/config authority described above |
 
 The retained catalog profile's `database` is `{engine:"sqlite-schema",path}` or
 `{engine:"postgres-schema",connectionFile}`. The latter is an explicitly supplied libpq service file with one selected
@@ -726,7 +743,7 @@ observed model behavior have their own evidence.
 
 `effects` is a set drawn from `executeTarget`, `planTargetSql`,
 `replayMigrations`, `evaluateRuntime`, `controlRuntime`, and the proposed
-package-resolution effect `installProvider`. Each declared operation
+package/configuration effects `installProvider` and `configureModules`. Each declared operation
 has a required subset, composed with its dependency plan. A missing grant refuses before its effect. Grants are
 explicit trusted-local consent, not an OS sandbox. Read-only catalog/source
 operations need none. Query-control recovery needs none; query-control release
@@ -734,8 +751,10 @@ requires `controlRuntime` for its owned process effect. Runtime launch/resume/pa
 `controlRuntime`; evaluation also requires `evaluateRuntime`. Zod module
 loading requires `executeTarget`; target SQL planning requires
 `planTargetSql`; SQL migration replay requires `replayMigrations`.
-Installing a selected provider requires `installProvider` plus the existing
-package authority. That consent does not authorize unrelated target execution.
+Installing a selected provider requires `installProvider` plus qualified installed
+acquisition authority; configure requires `configureModules` plus qualified
+project-configuration write authority. These proposed grants do not authorize
+unrelated target execution or substitute for the missing authority primitives.
 
 Inline/file queries share canonical request identity. Validation precedes
 admission and provider invocation. Installed declaration resolution supplies the
@@ -857,6 +876,12 @@ arguments, and null otherwise. `id` is the validated frame ID, emitted from its 
 JSON token. The bridge dispatches solely
 from this result, forwarding request text verbatim to `context-query-file`.
 It never rebuilds that request from a parsed JS object.
+For successful results, the MCP bridge wraps the native-validated JSON document
+as text, preserving the contained JSON text through outer JSON-RPC string
+escaping. It does not parse/re-serialize payload numbers through JS Number.
+A rounded structured convenience copy cannot become authoritative. This covers
+negative zero, nested values, signed/exponent tokens and number-versus-text
+identity on query, result retrieval and ref expansion alike.
 For scoped discovery, the bridge obtains SESSION solely from its authenticated
 attachment and renders `--session SESSION` from the validated scope. Missing
 attachment refuses before target inspection. Absence retains target-free
@@ -1853,7 +1878,14 @@ selected value. `join` is `{left,right,leftKey,rightKey}`, each an RFC6901 point
 relative to the root or record as applicable; left/right select arrays, key
 pointers select scalar keys. `relationships` returns exact-equality pairs with
 both record pointers, duplicate and missing-key facts. There is no implicit
-foreign-key inference. SQLite json1 uses fixed parameterized traversals; callers
+foreign-key inference. This initial join profile compares scalar kind and exact
+decoded value; numeric keys compare their validated original token text. Thus
+`1e3` and `1000`, or `-0` and `0`, are different keys, and JSON null never equals
+the text `"null"`. This relation policy is distinct from canonical request identity
+and lossless value retention. Numeric-value equality requires a separately stated
+and qualified comparator while preserving the original tokens. Existing producer
+or critic-oracle code alone establishes neither policy nor exact arithmetic.
+SQLite json1 uses fixed parameterized traversals; callers
 supply no SQL. JSON values are explicit target-document inspection. Byte hashes,
 pointers and key qualifications accompany every relation. YAML/CSV/Markdown
 adapters are outside this initial set.
@@ -1926,7 +1958,8 @@ runtime timeout changes it to success. Static/catalog queries whose selected
 provider has an explicit response boundary return their completed result
 synchronously under M-12's query exception. clangd diagnostic queries use managed
 admission because completion depends on a later versioned publication. Model execution,
-SQL planning, migration replay and module installation with nonempty effect grants use the same
+SQL planning, migration replay, module installation and module configuration
+with nonempty effect grants use the same
 detached admission/completion envelope and owner-notice path; their internal
 query worker uses a retained one-shot adapter. Its keeper preserves output and
 status across worker loss. Recovery attaches to that keeper and records only
@@ -2934,7 +2967,7 @@ retained historical snapshotId bytes or prove consumed-byte consistency from
 provider tags or pre/post equality alone.
 
 Surface/protocol controls exercise unscoped and attachment-scoped MCP discovery,
-duplicate or escaped scope names, invalid scope values/types, missing attachment
+duplicate decoded scope names, including escaped duplicates, invalid scope values/types, missing attachment
 and attempted body session injection. They discriminate scope loss in the codec
 success frame and prove target-free unscoped behavior. Module transport controls
 mutate one binding/owner/plan/role field, substitute a version-1 frame or replay
@@ -2943,6 +2976,11 @@ runtime controls use a supported running-state observation and a non-CDP lifetim
 profile. Data controls preserve nested dictionaries, number-versus-text identity,
 large signed/exponent tokens and recursive values through publication and refs.
 Validator verdict, target throw and prelaunch refusal retain distinct outcomes.
+An escaped spelling of one valid scope key remains valid; escape syntax alone
+is not a duplicate. Configuration controls include stale expected identity,
+denied write authority, lost completion and historical replay while live queries
+retain their original configuration. Actual filesystem and DB owners must qualify
+their respective atomic update boundaries.
 
 Single-defect negative controls cover unknown/duplicate module identities,
 disabled or ambiguous selection, schema/entry/dependency replacement, unsupported
