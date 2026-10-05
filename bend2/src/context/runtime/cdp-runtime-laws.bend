@@ -234,14 +234,22 @@ law an_evaluation_settlement_after_exit_is_refused:
 def an_evaluation_settlement_after_exit_is_refused(epoch, mutation):
   {==}
 
-law a_recorded_evaluation_settles_to_idle:
-  for +state: R.RuntimeState
+law a_recorded_evaluation_settles_to_idle_from_paused:
   for +epoch: String
   for +mutation: String
   for +liveness: R.Liveness
-  {R.advance(R.Rec{state, epoch, mutation, R.Evaluation{"q-eval"}, liveness}, R.EvEvaluationSettled{}) == R.Advanced{R.Rec{state, epoch, mutation, R.Idle{}, liveness}} : R.Transition}
+  {R.advance(R.Rec{R.Paused{}, epoch, mutation, R.Evaluation{"q-eval"}, liveness}, R.EvEvaluationSettled{}) == R.Advanced{R.Rec{R.Paused{}, epoch, mutation, R.Idle{}, liveness}} : R.Transition}
 
-def a_recorded_evaluation_settles_to_idle(state, epoch, mutation, liveness):
+def a_recorded_evaluation_settles_to_idle_from_paused(epoch, mutation, liveness):
+  {==}
+
+law a_recorded_evaluation_settles_to_idle_from_running:
+  for +epoch: String
+  for +mutation: String
+  for +liveness: R.Liveness
+  {R.advance(R.Rec{R.Running{}, epoch, mutation, R.Evaluation{"q-eval"}, liveness}, R.EvEvaluationSettled{}) == R.Advanced{R.Rec{R.Running{}, epoch, mutation, R.Idle{}, liveness}} : R.Transition}
+
+def a_recorded_evaluation_settles_to_idle_from_running(epoch, mutation, liveness):
   {==}
 
 law a_stopped_event_records_a_live_stop:

@@ -109,7 +109,11 @@ export const NATIVE_MUTATIONS = Object.freeze([
     file: 'bend2/src/context/runtime/cdp-runtime.bend',
     find: '        case EvEvaluationSettled{}:\n          Bool.pick(Transition, is_exited(state),',
     replace: '        case EvEvaluationSettled{}:\n          Bool.pick(Transition, False{},',
-    expectedConstructors: Object.freeze(['Refused', 'Idle']) },
+    expectedConstructors: Object.freeze(['Refused', 'Advanced']),
+    // Declared from the law's two sides, not measured in a run: the law's right side is the
+    // refusal, and the mutant's outer result is Advanced with the evaluation cleared.
+    expectedTerm: 'Refused{"evaluationSettled after exited"}',
+    observedTerm: 'Advanced{Rec{Exited{}, epoch, mutation, Idle{}, LivenessExited{}}}' },
   { name: 'in-flight-intent-not-recorded', law: 'an_in_flight_intent_is_recorded_while_it_runs',
     file: 'bend2/src/context/runtime/cdp-runtime.bend',
     find: 'Advanced{Rec{state, epoch, mutation, InFlight{intent, query}, liveness}},',
@@ -338,7 +342,9 @@ export function mutationDefinitionDigest(mutation) {
 
 // Metadata bound to the authoritative digest. It never re-enters the definition, so the
 // digest stays stable when an expectation is refined. `options` declares the rule the
-// shared endpoint will use for this control; it is a declaration, not a local verdict.
+// shared endpoint will use for this control and, where the terms are known, the intended
+// expected and observed terms of the diagnostic; every declared diagnostic term is marked
+// as declared rather than measured, because no compiler run has confirmed its wording.
 export function controlMetadata(mutation, entry, options = {}) {
   return {
     control: mutation.name,
@@ -348,6 +354,15 @@ export function controlMetadata(mutation, entry, options = {}) {
     expectedConstructors: mutation.expectedConstructors === undefined ? null : [...mutation.expectedConstructors],
     diagnosticMarkers: options.diagnosticMarkers === undefined ? null : [...options.diagnosticMarkers],
     attributionRule: options.attributionRule ?? null,
+    // The intended expected and observed terms, where the mutation declares them. They are
+    // declarations from the law's two sides, not compiler wording observed in a run.
+    declaredDiagnostic: mutation.expectedTerm === undefined && mutation.observedTerm === undefined
+      ? null
+      : {
+        expectedTerm: mutation.expectedTerm ?? null,
+        observedTerm: mutation.observedTerm ?? null,
+        wordingSource: 'declared-not-measured',
+      },
     definitionSha256: mutationDefinitionDigest(mutation),
   };
 }
