@@ -205,6 +205,39 @@ class RecipeSettlement(unittest.TestCase):
         self.assertEqual(raised.exception.stage_outcome, 'verified')
         self.assertEqual(raised.exception.stage_value['members'], 1)
 
+    def test_a_cleanup_failure_at_the_extraction_caller_keeps_the_work_error(self):
+        # The extraction succeeds, its verified replacement cannot happen, and the
+        # cleanup of the staged file fails too, so the recording error carries that
+        # secondary while the attempted row stays on disk and the outcome value is
+        # still attached.
+        archive_path = self.run / 'cleanup-archive.tar.gz'
+        with tarfile.open(archive_path, 'w:gz') as archive:
+            self.add_member(archive, 'bend2/manifest.json', b'{}')
+        target = self.run / 'cleanup-readback'
+        target.mkdir()
+        calls = []
+        original_write = RECIPE.write_record
+
+        def writing(run, record):
+            calls.append(len(record))
+            value = original_write(run, record)
+            if len(calls) == 1:
+                # The next replacement cannot happen, and the cleanup cannot remove
+                # the staged path because it is a directory.
+                (run / 'run.json.next').mkdir()
+            return value
+
+        RECIPE.write_record = writing
+        self.addCleanup(setattr, RECIPE, 'write_record', original_write)
+        with self.assertRaises(RuntimeError) as raised:
+            RECIPE.extract_archive(self.run, self.record, archive_path, target)
+        self.assertIsNotNone(raised.exception.cleanup_error)
+        self.assertEqual(raised.exception.stage, 'archive-extracted')
+        self.assertEqual(raised.exception.stage_outcome, 'verified')
+        self.assertEqual(raised.exception.stage_value['members'], 1)
+        row = next(row for row in self.rows() if row['name'] == 'archive-extracted')
+        self.assertEqual(row['outcome'], 'attempted')
+
     def test_metadata_staging_reports_copied_and_verified_separately(self):
         # The actual metadata caller copies both documents, verifies both, and a
         # document whose digest disagrees fails with the document being verified.
