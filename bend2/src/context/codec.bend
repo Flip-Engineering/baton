@@ -86,10 +86,9 @@ def meta_members_ok(members: RawMembers) -> Bool:
   match members:
     case RMnone{}: True{}
     case RMcons{+name, +value, +tail}:
-      Bool.pick(Bool, String.eq(name, "progressToken"), meta_progress(value, tail), meta_members_ok(tail))
-
-def meta_progress(v: RawValue, +tail: RawMembers) -> Bool:
-  Bool.pick(Bool, progress_token_ok(v), meta_members_ok(tail), False{})
+      Bool.pick(Bool, String.eq(name, "progressToken"),
+        Bool.pick(Bool, progress_token_ok(value), meta_members_ok(tail), False{}),
+        meta_members_ok(tail))
 
 def meta_of_ok(ok: Bool) -> MetaVerdict:
   match ok:
@@ -421,7 +420,8 @@ def request_operation_chain(+req: J.Json, retained_operations: Eng.SS) -> OpChai
 
 # Core's actual verdict names the refusal: no operation, an operation outside the
 # closed set, or the first required effect the caller did not grant. An admit
-# carries the authorized union; the codec dispatches the chain's primary.
+# carries the whole admitted chain and Core's authorized effect union; the caller
+# acts on that chain and only within those effects.
 def admission_decision(a: Eng.Admission, +chain: OpChain) -> Admission:
   match a:
     case Eng.AdAdmit{effects}: ADispatch{chain, effects}
@@ -1016,13 +1016,13 @@ def codec_law_a_retained_reference_counts_its_projections():
   {==}
 
 law codec_law_a_reference_with_an_unknown_field_refuses:
-  {ref_condition(ref_decode(ref_object_of(ref_members_extra("r", J.Jarr{J.Jnil{}, J.Jnil{}})))) == "unknownRefField" : String}
+  {ref_condition(ref_decode(ref_object_of(ref_members_extra("r", J.Jarr{J.Jstr{"definition"}, J.Jnil{}})))) == "unknownRefField" : String}
 
 def codec_law_a_reference_with_an_unknown_field_refuses():
   {==}
 
 law codec_law_a_reference_with_an_empty_id_refuses:
-  {ref_condition(ref_decode(ref_object_of(ref_members_base("", cobj1("kind", J.Jstr{"symbol"}), J.Jarr{J.Jnil{}, J.Jnil{}})))) == "invalidRefField" : String}
+  {ref_condition(ref_decode(ref_object_of(ref_members_base("", cobj1("kind", J.Jstr{"symbol"}), J.Jarr{J.Jstr{"definition"}, J.Jnil{}})))) == "invalidRefField" : String}
 
 def codec_law_a_reference_with_an_empty_id_refuses():
   {==}
