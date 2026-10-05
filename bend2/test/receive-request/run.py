@@ -86,7 +86,11 @@ def main():
         "matching_output_preserves_frame", "Matched", "Matched")
     mutations["mismatch-loses-stderr"] = (
         "case False{}: Mismatched{frame}",
-        "case False{}:\n      match frame:\n        case OutputFrame{correlation,stream,cursor,bytes}:\n          Mismatched{OutputFrame{correlation,Stdout{},cursor,bytes}}",
+        "case False{}: mismatch_stdout(frame)\n\n"
+        "def mismatch_stdout(frame: OutputFrame) -> OutputRoute:\n"
+        "  match frame:\n"
+        "    case OutputFrame{correlation,stream,cursor,bytes}:\n"
+        "      Mismatched{OutputFrame{correlation,Stdout{},cursor,bytes}}",
         "mismatched_output_preserves_entire_frame", "Mismatched", "Mismatched")
     mutations["wake-replaced"] = (
         "case other: Some{other}", 'case other: Some{"message"}',
