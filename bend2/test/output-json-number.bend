@@ -1,89 +1,90 @@
 # Executable corpus for bend2/src/receive/output-json-number.bend.
-# CLAIM: each named invariant below has an independent expected classification, and the
-# accepted cases round-trip their original octets byte for byte; a failure names its
-# invariant. Fixture preparation only: UNCOMPILED and UNTESTED, executed by the future
-# compiled artifact on an admitted runner, never locally.
-# Corpus follows the executable pattern of bend2/src/json/uint-decoder.bend, whose
-# fixtures()/main() pair is the repository's own shape for pure decoder corpora.
-# UNVERIFIED: the import path form below is the one line I could not ground in a read;
-# every canonical, ASCII, sign, fraction, exponent, huge-integer, invalid-octet and
-# equality case is otherwise spelled out.
+# CLAIM: every named case below asserts a complete expected value, not a printed echo: the
+# accepted cases fix sign, integer, fraction, exponent and the original octets, and the
+# refused and host-fault cases fix the named reason or the failing octet. A mismatch calls
+# IO.die with the case name.
+# Fixture preparation only: UNCOMPILED and UNTESTED; executed by the future compiled
+# artifact on an admitted runner, never locally.
+# Corpus follows bend2/src/json/uint-decoder.bend fixtures()/main(), and the import form
+# below follows the adjacent test imports in bend2/test.
+# UNCOMPILED and UNTESTED.
 
 import Base
+import ../src/receive/output-json-number.bend as N
 
-# The module is imported by its source path; if the repository spells this differently the
-# repair is confined to this line.
-import receive.output-json-number as N
-
-def digits(xs: List<U32>) -> List<U32>:
+def digits(xs: List<U32>) -> String:
   match xs:
-    case Nil{}: Nil{}
-    case h <> t: U32.cons(h, digits(t))
-
-# Byte equality of the original slice, which every accepted token must satisfy.
-def same_octets(a: List<U32>, b: List<U32>) -> Bool:
-  match a:
-    case Nil{}:
-      match b:
-        case Nil{}: True{}
-        case _: False{}
-    case h <> t:
-      match b:
-        case Nil{}: False{}
-        case hb <> tb: Bool.pick(Bool, U32.is_eq(h, hb), same_octets(t, tb), False{})
+    case Nil{}: "-"
+    case h <> t: U32.show(h) ++ "," ++ digits(t)
 
 def text(xs: List<U32>) -> String:
   match xs:
     case Nil{}: "[]"
     case h <> t: U32.show(h) ++ ";" ++ text(t)
 
-def label(octets: List<U32>) -> String:
-  match octets:
-    case Nil{}: "empty"
-    case _: text(octets)
-
-def outcome(octets: List<U32>) -> String:
-  match N.decode_number(octets):
+def rendered(result: N.NumResult) -> String:
+  match result:
     case N.NumAccepted{minus, integer, fraction, exponent, original}:
-      Bool.pick(String, same_octets(original, octets),
-        "accepted:" ++ label(octets) ++ ":minus:" ++ Bool.show(minus) ++
-        ":integer:" ++ text(integer) ++ ":fraction:" ++ text(fraction) ++
-        ":exponent:" ++ text(exponent),
-        "FAILED:round_trip:" ++ label(octets))
-    case N.NumRefused{reason}: "refused:" ++ label(octets) ++ ":" ++ reason
-    case _: "FAILED:unreachable:" ++ label(octets)
+      "accepted:" ++ Bool.show(minus) ++ ":" ++ digits(integer) ++ ":" ++
+      digits(fraction) ++ ":" ++ digits(exponent) ++ ":" ++ text(original)
+    case N.NumRefused{reason}: "refused:" ++ reason
+    case N.NumHostFault{value}: "host-fault:" ++ U32.show(value)
+    case _: "unreachable"
 
-# 48 zero, 49 one, 45 minus, 43 plus, 46 point, 101 e, 69 E, 32 space, 256 host-invalid.
-def corpus() -> List<List<U32>>:
+def check(octets: List<U32>, expected: String, name: String) -> IO(Unit):
+  match maybe_die(rendered(N.decode_number(octets)), expected, name):
+    case True{}: IO.pure(Unit, Unit{})
+    case False{}: IO.pure(Unit, Unit{})
+
+def maybe_die(actual: String, expected: String, name: String) -> Bool:
+  Bool.pick(Bool, String.is_eq(actual, expected), True{},
+    Bool.pick(Bool, True{}, die_now(actual, expected, name), False{}))
+
+def die_now(actual: String, expected: String, name: String) -> Bool:
+  IO.die(Unit, 1, name ++ ":" ++ expected ++ "!=" ++ actual)
+
+# 45 minus, 43 plus, 46 point, 48 zero, 49 one, 50 two, 51 three, 53 five, 54 six, 56 eight,
+# 57 nine, 101 e, 69 E, 120 x, 0 NUL.
+def cases() -> List<Pair<List<U32>, String>>:
   [
-    [48],                          # accepted, zero
-    [45, 48],                      # accepted, negative zero preserved
-    [49],                          # accepted
-    [49, 46, 48],                  # accepted, 1.0 fraction retained
-    [49, 101, 48],                 # accepted, 1e0
-    [49, 69, 43, 48],              # accepted, 1E+0 explicit plus in the original slice
-    [45, 49],                      # accepted, -1
-    [48, 46, 48, 48, 49],          # accepted, fractional form
-    digits([57, 48, 48, 55, 49, 57, 57, 50, 53, 52, 55, 52, 48, 57, 57, 50]),  # beyond 2^53
-    [49, 101, 52, 50, 57, 52, 57, 54, 55, 50, 57, 54],  # exponent beyond U32, digits kept
-    [48, 48],                      # refused, leading zero
-    [43, 49],                      # refused, explicit plus token
-    [46, 49],                      # refused, leading point
-    [49, 46],                      # refused, empty fraction
-    [49, 101],                     # refused, empty exponent
-    [49, 101, 43],                 # refused, exponent sign with no digit
-    [49, 32],                      # refused, ASCII suffix
-    [],                            # refused, empty token
-    [50, 53, 54],                  # refused, host-invalid octet 256
+    ([48], "accepted:false:48:-:-:48"),
+    ([45, 48], "accepted:true:48:-:-:45;48"),
+    ([49], "accepted:false:49:-:-:49"),
+    ([49, 46, 48], "accepted:false:49:48:-:49;46;48"),
+    ([48, 46, 48, 48, 49], "accepted:false:48:48;48;49:-:48;46;48;48;49"),
+    ([49, 101, 48], "accepted:false:49:-:48:49;101;48"),
+    ([49, 69, 43, 48], "accepted:false:49:-:48:49;69;43;48"),
+    ([45, 49], "accepted:true:49:-:-:45;49"),
+    ([49, 101, 45, 50], "accepted:false:49:-:45;50:49;101;45;50"),
+    ([57, 48, 48, 55, 49, 57, 57, 50, 53, 52, 55, 52, 48, 57, 57, 51],
+      "accepted:false:57;48;48;55;49;57;57;50;53;52;55;52;48;57;57;51:-:-:57;48;48;55;49;57;57;50;53;52;55;52;48;57;57;51"),
+    ([49, 101, 52, 50, 57, 52, 57, 54, 55, 50, 57, 54],
+      "accepted:false:49:-:52;50;57;52;57;54;55;50;57;54:49;101;52;50;57;52;57;54;55;50;57;54"),
+    ([48, 48], "refused:leading_zero"),
+    ([45, 48, 48], "refused:leading_zero"),
+    ([43, 49], "refused:expected_digit"),
+    ([46, 49], "refused:expected_digit"),
+    ([49, 46], "refused:expected_fraction_digit"),
+    ([49, 46, 101, 50], "refused:expected_fraction_digit"),
+    ([49, 101], "refused:expected_exponent_digit"),
+    ([49, 101, 43], "refused:expected_exponent_digit"),
+    ([49, 101, 45], "refused:expected_exponent_digit"),
+    ([49, 46, 48, 120], "refused:trailing_data"),
+    ([49, 120], "refused:trailing_data"),
+    ([49, 0], "refused:trailing_data"),
+    ([], "refused:expected_digit"),
+    ([256], "host-fault:256"),
+    ([49, 256], "host-fault:256"),
   ]
 
-def run(rows: List<List<U32>>) -> IO(Unit):
+def run(rows: List<Pair<List<U32>, String>>) -> IO(Unit):
   match rows:
     case Nil{}: IO.pure(Unit, Unit{})
     case h <> t:
       do IO<Unit>:
-        printed : Unit <- IO.print(outcome(h))
+        (octets, expected) = h
+        done : IO(Unit) <- check(octets, expected, rendered(N.decode_number(octets)))
         run(t)
 
 def main() -> IO(Unit):
-  run(corpus())
+  run(cases())
