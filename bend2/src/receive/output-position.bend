@@ -6,21 +6,24 @@
 # constructor is reachable from this module, so a client can build a value that was never
 # validated; every checked public operation re-validates its inputs and refuses rather than
 # trusting them, and no client-created value is treated as validated authority.
-# Orientations, one per helper. rev_units reverses a digit list. add_low takes both operands
-# and returns its accumulated result all in least-significant-first order, and finish_carry
-# keeps that order. added reverses each operand once into that order and reverses nothing
-# afterwards, so the canonical most-significant-first result is produced exactly once.
-# Length is bounded structurally: bounded_19 walks at most nineteen digits with a bounded
-# counter, and nothing counts an unbounded list. Nineteen is the domain bound, not a resource
-# cutoff.
+# Orientations, one per helper. rev_units reverses a digit list. add_low and finish_low take
+# both operands least significant first, and they keep their accumulated result most
+# significant first: each new low-order total is consed onto the front of the accumulator, so
+# the last one consed, which is the most significant digit, ends up at the head. finish_carry
+# prepends a final carry the same way. added reverses each operand once into the input order
+# and reverses nothing afterwards, so the canonical most-significant-first result is produced
+# exactly once.
+# Length is bounded structurally: bounded_19 walks at most nineteen digits with a counter
+# bounded by the domain, and nothing counts an unbounded list. Nineteen is the domain bound,
+# not a resource cutoff.
 # Scope. This module grants no source access, source correlation, all-writer seal or cursor
 # authority. Adjacency is endpoint equality between a validated ordered interval and a
 # validated position, and it is not permission to correlate different sources.
 # Language forms grounded on the reviewed number, string and frame modules and the pinned
 # Base: element-with-list cons, Bool.pick with a first type argument, U32.is_eq and U32.is_lt,
 # definitions before their callers, positional constructor patterns, and a plus binder on any
-# binding used more than once. Every function is declared before its callers, none is mutually
-# recursive with another, and no match subject is a computed call.
+# binding used more than once. Every function is declared before the functions that call it,
+# none is mutually recursive with another, and no match subject is a computed call.
 # UNCOMPILED and UNTESTED.
 
 import Base
@@ -195,8 +198,7 @@ def compare_pos(+left: Pos, +right: Pos) -> PosCompare:
 def equality_of(+result: PosCompare, +left: Pos, +right: Pos) -> PosEquality:
   match result:
     case PosCompared{order, _left, _right}:
-      Bool.pick(PosEquality, order_is_equal(order), PositionsEqual{},
-        PositionsUnequal{})
+      Bool.pick(PosEquality, order_is_equal(order), PositionsEqual{}, PositionsUnequal{})
     case PosCompareRefused{reason, _l, _r}: EqualityRefused{reason, left, right}
 
 def equal_checked(+left: Pos, +right: Pos) -> PosEquality:
@@ -217,8 +219,9 @@ def sum_carry(+total: U32) -> U32:
 def finish_carry(+carry: U32, +acc: List<U32>) -> List<U32>:
   Bool.pick(List<U32>, U32.is_eq(carry, 0), acc, 1 <> acc)
 
-# Both operands and the accumulated result are least significant first. When one operand runs
-# out its remaining high digits are carried through with the running carry.
+# The remaining high digits of whichever operand is longer, all least significant first, are
+# carried through with the running carry, each result consed onto the most-significant-first
+# accumulator.
 def finish_low(+rest: List<U32>, +carry: U32, +acc: List<U32>) -> List<U32>:
   match rest:
     case Nil{}: finish_carry(carry, acc)
@@ -231,7 +234,9 @@ def add_low(+left: List<U32>, +right: List<U32>, +carry: U32, +acc: List<U32>) -
     case Nil{}: finish_low(right, carry, acc)
     case +lh <> lt:
       match right:
-        case Nil{}: finish_low(lt, carry, acc)
+        case Nil{}:
+          +tail = U32.add(lh, carry)
+          finish_low(lt, sum_carry(tail), sum_digit(tail) <> acc)
         case +rh <> rt:
           +total = U32.add(U32.add(lh, rh), carry)
           add_low(lt, rt, sum_carry(total), sum_digit(total) <> acc)
@@ -260,12 +265,16 @@ def span_pos(+low: Pos, +high: Pos) -> PosSpan:
       SpanRefused{"high_position_invalid", low, high}),
     SpanRefused{"low_position_invalid", low, high})
 
-def adjacent_checked(+span: PosSpan, +next: Pos) -> PosAdjacency:
-  checked_span(span, next, pos_ok(next))
+def endpoint_equality(+span: PosSpan, +next: Pos, +high: Pos) -> PosAdjacency:
+  Bool.pick(PosAdjacency, passed(equal_checked(high, next)), Adjacent{}, NotAdjacent{})
+
+def ordered_pair(+span: PosSpan, +next: Pos, +low: Pos, +high: Pos) -> PosAdjacency:
+  Bool.pick(PosAdjacency, order_is_greater(cmp_values(digits_of(low), digits_of(high))),
+    AdjacencyRefused{"endpoints_reversed", span, next}, endpoint_equality(span, next, high))
 
 def checked_span(+span: PosSpan, +next: Pos, +next_ok: Bool) -> PosAdjacency:
   match span:
-    case SpanOrdered{low, high}:
+    case SpanOrdered{+low, +high}:
       Bool.pick(PosAdjacency, pos_ok(low),
         Bool.pick(PosAdjacency, pos_ok(high),
           Bool.pick(PosAdjacency, next_ok, ordered_pair(span, next, low, high),
@@ -274,10 +283,5 @@ def checked_span(+span: PosSpan, +next: Pos, +next_ok: Bool) -> PosAdjacency:
         AdjacencyRefused{"low_position_invalid", span, next})
     case SpanRefused{reason, _l, _h}: AdjacencyRefused{reason, span, next}
 
-def ordered_pair(+span: PosSpan, +next: Pos, +low: Pos, +high: Pos) -> PosAdjacency:
-  Bool.pick(PosAdjacency, order_is_greater(cmp_values(digits_of(low), digits_of(high))),
-    AdjacencyRefused{"endpoints_reversed", span, next}, endpoint_equality(span, next, high))
-
-def endpoint_equality(+span: PosSpan, +next: Pos, +high: Pos) -> PosAdjacency:
-  Bool.pick(PosAdjacency, passed(equal_checked(high, next)), Adjacent{},
-    NotAdjacent{})
+def adjacent_checked(+span: PosSpan, +next: Pos) -> PosAdjacency:
+  checked_span(span, next, pos_ok(next))
