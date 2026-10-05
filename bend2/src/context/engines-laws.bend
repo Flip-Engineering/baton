@@ -251,6 +251,30 @@ law engine_a_request_local_tools_override_requires_target_execution:
 def engine_a_request_local_tools_override_requires_target_execution():
   {==}
 
+law engine_a_deployment_probe_requires_no_effect:
+  {Eng.required_effects(Eng.op_deployment_probe()) == Eng.SSNil{} : Eng.SS}
+
+def engine_a_deployment_probe_requires_no_effect():
+  {==}
+
+law engine_the_closed_operation_set_admits_the_deployment_probe:
+  {Eng.operation_known(Eng.op_deployment_probe()) == True{} : Bool}
+
+def engine_the_closed_operation_set_admits_the_deployment_probe():
+  {==}
+
+law engine_the_closed_operation_set_admits_the_runtime_observation:
+  {Eng.operation_known(Eng.op_runtime_observe()) == True{} : Bool}
+
+def engine_the_closed_operation_set_admits_the_runtime_observation():
+  {==}
+
+law engine_an_unknown_operation_is_outside_the_closed_set:
+  {Eng.operation_known("inventedOperation") == False{} : Bool}
+
+def engine_an_unknown_operation_is_outside_the_closed_set():
+  {==}
+
 law engine_runtime_launch_requires_target_control:
   {Eng.required_effects(Eng.op_runtime_launch()) == Eng.ss_one("controlRuntime") : Eng.SS}
 

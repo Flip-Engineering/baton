@@ -192,6 +192,13 @@ def op_schema_validation() -> String:
 def op_model_load() -> String:
   "modelLoad"
 
+# Qualified discovery of a deployment-admitted provider executable: no request
+# supplied it, so it needs no target-execution grant. A request-local tools
+# override is a different operation and does require executeTarget before its
+# probe runs, even when it names the same path as a deployment executable.
+def op_deployment_probe() -> String:
+  "deploymentProbe"
+
 def op_tools_probe() -> String:
   "toolsProbe"
 
@@ -224,6 +231,31 @@ def op_query_control_recover() -> String:
 
 def op_query_control_release() -> String:
   "queryControlRelease"
+
+# The closed operation set. A caller consults this before required_effects, so
+# an operation outside the set is refused by closed validation and never
+# reaches the effect composition; the empty fallthrough of required_effects
+# cannot authorize an operation that this predicate does not admit.
+def operation_known(+operation: String) -> Bool:
+  Bool.or(String.eq(operation, op_source_analysis()),
+  Bool.or(String.eq(operation, op_code_access_join()),
+  Bool.or(String.eq(operation, op_sql_plan()),
+  Bool.or(String.eq(operation, op_catalog_capture()),
+  Bool.or(String.eq(operation, op_migration_replay()),
+  Bool.or(String.eq(operation, op_schema_validation()),
+  Bool.or(String.eq(operation, op_model_load()),
+  Bool.or(String.eq(operation, op_deployment_probe()),
+  Bool.or(String.eq(operation, op_tools_probe()),
+  Bool.or(String.eq(operation, op_environment_read()),
+  Bool.or(String.eq(operation, op_dataset_read()),
+  Bool.or(String.eq(operation, op_runtime_launch()),
+  Bool.or(String.eq(operation, op_runtime_observe()),
+  Bool.or(String.eq(operation, op_runtime_pause()),
+  Bool.or(String.eq(operation, op_runtime_resume()),
+  Bool.or(String.eq(operation, op_runtime_release()),
+  Bool.or(String.eq(operation, op_runtime_evaluate()),
+  Bool.or(String.eq(operation, op_query_control_recover()),
+         String.eq(operation, op_query_control_release())))))))))))))))))))
 
 # An operation outside this closed set is refused by closed request
 # validation; this composition requires no effect for it.
