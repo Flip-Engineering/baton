@@ -171,6 +171,47 @@ class ControlIndex(unittest.TestCase):
         self.assertEqual(self.retained(), before)
         self.assertEqual(self.call('orchestra', '--index', '--for', 'associate', '--pretty'), view)
 
+    def test_index_reads_under_writer_reservation_preserve_database(self):
+        with closing(sqlite3.connect(self.db)) as db:
+            before = list(db.iterdump())
+            db.execute('BEGIN IMMEDIATE')
+            try:
+                for args in [('inbox', 'associate', '--index'),
+                             ('pending', '--index'),
+                             ('orchestra', '--index', '--for', 'associate')]:
+                    plain = None
+                    for pretty in (False, True):
+                        command = [*args, *(['--pretty'] if pretty else [])]
+                        with self.subTest(command=command):
+                            result = subprocess.run(
+                                [str(EXE), str(self.db), *command],
+                                capture_output=True, text=True, timeout=10)
+                            self.assertEqual(result.returncode, 0, result.stderr or result.stdout)
+                            value = json.loads(result.stdout)
+                            if pretty:
+                                self.assertEqual(value, plain)
+                            else:
+                                plain = value
+            finally:
+                db.rollback()
+            self.assertEqual(list(db.iterdump()), before)
+
+    def test_uninitialized_database_is_not_migrated(self):
+        uninitialized = self.directory / 'uninitialized.db'
+        with closing(sqlite3.connect(uninitialized)) as db:
+            db.execute('CREATE TABLE unrelated(value TEXT)')
+            db.execute("INSERT INTO unrelated VALUES('retain this database')")
+            db.commit()
+            before = list(db.iterdump())
+        for args in [('pending', '--index'), ('pending', '--index', '--pretty'),
+                     ('orchestra', '--index'), ('orchestra', '--index', '--pretty')]:
+            with self.subTest(args=args):
+                result = subprocess.run([str(EXE), str(uninitialized), *args],
+                                        capture_output=True, text=True, timeout=10)
+                self.assertNotEqual(result.returncode, 0)
+        with closing(sqlite3.connect(uninitialized)) as db:
+            self.assertEqual(list(db.iterdump()), before)
+
     def test_mcp_has_same_native_selection(self):
         args = {'recipient': 'associate', 'index': True, 'sender': 'worker', 'kind': 'report', 'state': 'all'}
         requests = [
