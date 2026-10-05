@@ -1,4 +1,5 @@
 import Base
+import ./sequence.bend as Sequence
 
 type IndexText is Data:
   IndexAny{}
@@ -41,6 +42,7 @@ type Command is Data:
   Pending{}
   Inbox{id: String}
   MessageIndex{recipient: IndexText, sender: IndexText, kind: IndexText, state: String}
+  MessageRange{recipient: IndexText, sender: IndexText, kind: IndexText, state: String, after: IndexText, through: IndexText}
   OrchestraIndex{focus: IndexText}
   Land{player: String, repo: String, target: String}
   LandAt{player: String, repo: String, target: String, commit: String}
@@ -295,6 +297,14 @@ def message_index_row() -> String:
 def message_index_sql(recipient: IndexText, sender: IndexText, kind: IndexText, state: String) -> String:
   "SELECT coalesce(json_group_array(json(item)),json('[]')) FROM (SELECT " ++ message_index_row() ++ " AS item FROM messages m WHERE " ++ index_filter("m.recipient",recipient) ++ " AND " ++ index_filter("m.sender",sender) ++ " AND " ++ index_filter("m.kind",kind) ++ " AND " ++ index_state_sql(state) ++ " ORDER BY m.seq);"
 
+def sequence_predicate(operator: String, bound: IndexText) -> String:
+  match bound:
+    case IndexAny{}: "1"
+    case IndexExact{text}: "m.seq" ++ operator ++ "CAST(" ++ q(text) ++ " AS INTEGER)"
+
+def message_range_sql(r: IndexText, s: IndexText, k: IndexText, state: String, after: IndexText, through: IndexText) -> String:
+  "SELECT coalesce(json_group_array(json(item)),json('[]')) FROM (SELECT " ++ message_index_row() ++ " AS item FROM messages m WHERE " ++ index_filter("m.recipient",r) ++ " AND " ++ index_filter("m.sender",s) ++ " AND " ++ index_filter("m.kind",k) ++ " AND " ++ index_state_sql(state) ++ " AND " ++ sequence_predicate(">",after) ++ " AND " ++ sequence_predicate("<=",through) ++ " ORDER BY m.seq);"
+
 def index_focus_text(focus: IndexText) -> String:
   match focus:
     case IndexAny{}: "NULL"
@@ -358,6 +368,7 @@ def sql(command: Command) -> String:
     case SectionMember{ensemble,id,owner,player,action}: section_member_sql(ensemble,id,owner,player,action)
     case Orchestra{}: orchestra_sql()
     case MessageIndex{recipient,sender,kind,state}: message_index_sql(recipient,sender,kind,state)
+    case MessageRange{r,s,k,state,after,through}: message_range_sql(r,s,k,state,after,through)
     case OrchestraIndex{focus}: orchestra_index_sql(focus)
     case Turns{id}:
       "SELECT coalesce(json_group_array(json(item)),json('[]')) FROM (SELECT json_object('id',t.id,'player',t.worker,'eventType',coalesce(json_extract(t.event,'$.type'),json_extract(t.event,'$.payload_type')),'reportBody',m.body,'receipt',m.receipt) AS item FROM turns t JOIN messages m ON m.id=t.id WHERE t.worker=" ++ q(id) ++ " ORDER BY m.seq);"
@@ -520,7 +531,7 @@ def parse_knowledge(args: List<&2,String>) -> Command:
     case reader <> "--pretty" <> "--id" <> id <> Nil{}: Pretty{KnowledgeDetail{reader,id}}
     case other: parse_legacy("knowledge" <> other)
 
-def parse_shared(args: List<&2,String>) -> Command:
+def parse_shared_base(args: List<&2,String>) -> Command:
   match args:
     case Nil{}: Invalid{}
     case +verb <> +rest:
@@ -528,6 +539,63 @@ def parse_shared(args: List<&2,String>) -> Command:
       Bool.pick(Command,String.eq(verb,"inbox"),parse_inbox_index(rest),
       Bool.pick(Command,String.eq(verb,"pending"),Bool.pick(Command,index_legacy_args(rest),parse_legacy(verb <> rest),index_command(read_args(rest,ReadArgs{IndexAny{},IndexAny{},IndexAny{},IndexAny{},IndexAny{},False{},False{},"",True{}}))),
       Bool.pick(Command,String.eq(verb,"orchestra"),orchestra_command(read_args(rest,ReadArgs{IndexAny{},IndexAny{},IndexAny{},IndexAny{},IndexAny{},False{},False{},"",True{}})),parse_legacy(verb <> rest)))))
+
+def sequence_order(after: IndexText, through: IndexText) -> Bool:
+  match after:
+    case IndexAny{}: True{}
+    case IndexExact{a}:
+      match through:
+        case IndexAny{}: True{}
+        case IndexExact{b}: Sequence.decimal_le(a,b)
+
+def range_attach(command: Command, after: IndexText, through: IndexText) -> Command:
+  match command:
+    case MessageIndex{r,s,k,state}: MessageRange{r,s,k,state,after,through}
+    case Pretty{inner}:
+      match inner:
+        case MessageIndex{r,s,k,state}: Pretty{MessageRange{r,s,k,state,after,through}}
+        case _: Invalid{}
+    case _: Invalid{}
+
+def range_reverse(args: List<&2,String>, out: List<&2,String>) -> List<&2,String>:
+  match args:
+    case Nil{}: out
+    case token <> rest: range_reverse(rest,token <> out)
+
+def range_finish(kept: List<&2,String>, +after: IndexText, +through: IndexText) -> Command:
+  +command = parse_shared_base(range_reverse(kept,Nil{}))
+  Bool.pick(Command,Bool.and(index_absent(after),index_absent(through)),command,
+    Bool.pick(Command,sequence_order(after,through),range_attach(command,after,through),Invalid{}))
+
+def range_bound(rest: List<&2,String>, kept: List<&2,String>, +after: IndexText, +through: IndexText, +value: String, lower: Bool) -> Command:
+  match lower:
+    case True{}:
+      Bool.pick(Command,Bool.and(index_absent(after),Sequence.valid(value)),range_scan(rest,kept,IndexExact{value},through),Invalid{})
+    case False{}:
+      Bool.pick(Command,Bool.and(index_absent(through),Sequence.valid(value)),range_scan(rest,kept,after,IndexExact{value}),Invalid{})
+
+# Existing filter values remain literal even when they spell a range option.
+def range_pair(+flag: String, +value: String, +rest: List<&2,String>, +kept: List<&2,String>, +after: IndexText, +through: IndexText) -> Command:
+  match flag:
+    case "--after-seq": range_bound(rest,kept,after,through,value,True{})
+    case "--through-seq": range_bound(rest,kept,after,through,value,False{})
+    case +other:
+      Bool.pick(Command,Bool.or(String.eq(other,"--recipient"),Bool.or(String.eq(other,"--sender"),Bool.or(String.eq(other,"--kind"),Bool.or(String.eq(other,"--state"),String.eq(other,"--for"))))),
+        range_scan(rest,value <> other <> kept,after,through),
+        range_scan(value <> rest,other <> kept,after,through))
+
+def range_scan(args: List<&2,String>, kept: List<&2,String>, after: IndexText, through: IndexText) -> Command:
+  match args:
+    case Nil{}: range_finish(kept,after,through)
+    case +flag <> Nil{}:
+      Bool.pick(Command,Bool.or(String.eq(flag,"--after-seq"),String.eq(flag,"--through-seq")),Invalid{},range_finish(flag <> kept,after,through))
+    case flag <> value <> rest: range_pair(flag,value,rest,kept,after,through)
+
+def parse_shared(args: List<&2,String>) -> Command:
+  match args:
+    case "pending" <> rest: range_scan(rest,["pending"],IndexAny{},IndexAny{})
+    case "inbox" <> id <> rest: range_scan(rest,[id,"inbox"],IndexAny{},IndexAny{})
+    case other: parse_shared_base(other)
 
 def shared_args(args: List<String>) -> List<&2,String>:
   match args:

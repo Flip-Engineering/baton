@@ -225,10 +225,12 @@ const TOOLS = [
   },
   {
     name: 'baton2_inbox',
-    description: 'Read messages for recipient (default attached session). Use index:true for concise metadata without acknowledgment; state defaults to pending and accepts acknowledged/all. sender and kind are conjunctive exact text filters, valid only with index. Use baton2_delivery for full bodies. Compact reads require a UTF-8 database. Legacy no-index returns pending bodies.',
+    description: 'Read messages for recipient (default attached session). Use index:true for concise metadata without acknowledgment; state defaults to pending and accepts acknowledged/all. sender and kind are conjunctive exact text filters, valid only with index. Use baton2_delivery for full bodies. afterSeq is exclusive and throughSeq inclusive on the stored coordination sequence; both require index:true and canonical decimal strings from 0 through 9223372036854775807. Omitted bounds are unbounded; equal bounds select nothing; reversed bounds refuse. Rows retain ascending sequence order. Compact reads require a UTF-8 database. Legacy no-index returns pending bodies.',
     inputSchema: { type: 'object', properties: {
       recipient: { type: 'string' }, index: { type: 'boolean' }, sender: { type: 'string' },
       kind: { type: 'string' }, state: { type: 'string', enum: ['pending', 'acknowledged', 'all'] },
+      afterSeq: { type: 'string', pattern: '^(0|[1-9][0-9]{0,18})$' },
+      throughSeq: { type: 'string', pattern: '^(0|[1-9][0-9]{0,18})$' },
       pretty: { type: 'boolean' },
     }, additionalProperties: false },
   },
@@ -323,10 +325,12 @@ const TOOLS = [
   },
   {
     name: 'baton2_pending',
-    description: 'Read across all recipients by default. Use index:true for concise metadata; optional recipient, sender and kind filters combine by exact equality. state defaults to pending and accepts acknowledged/all. Filters require index. Compact reads require a UTF-8 database. Legacy no-index includes bodies and endpoints. This read never acknowledges.',
+    description: 'Read across all recipients by default. Use index:true for concise metadata; optional recipient, sender and kind filters combine by exact equality. state defaults to pending and accepts acknowledged/all. Filters require index. afterSeq is exclusive and throughSeq inclusive on the stored coordination sequence. Bounds are canonical decimal strings from 0 through 9223372036854775807; omitted bounds are unbounded, equal bounds select nothing, and reversed bounds refuse. Rows retain ascending sequence order. Compact reads require a UTF-8 database. Legacy no-index includes bodies and endpoints. This read never acknowledges.',
     inputSchema: { type: 'object', properties: {
       index: { type: 'boolean' }, recipient: { type: 'string' }, sender: { type: 'string' },
       kind: { type: 'string' }, state: { type: 'string', enum: ['pending', 'acknowledged', 'all'] },
+      afterSeq: { type: 'string', pattern: '^(0|[1-9][0-9]{0,18})$' },
+      throughSeq: { type: 'string', pattern: '^(0|[1-9][0-9]{0,18})$' },
       pretty: { type: 'boolean' },
     }, additionalProperties: false },
   },
@@ -509,11 +513,22 @@ function readOptions(options, allowed) {
 }
 
 function messageReadOptions(options, inbox) {
-  readOptions(options, ['index', 'recipient', 'sender', 'kind', 'state', 'pretty']);
-  const filters = inbox ? ['sender', 'kind', 'state'] : ['recipient', 'sender', 'kind', 'state'];
+  readOptions(options, ['index', 'recipient', 'sender', 'kind', 'state', 'afterSeq', 'throughSeq', 'pretty']);
+  const filters = inbox ? ['sender', 'kind', 'state', 'afterSeq', 'throughSeq'] : ['recipient', 'sender', 'kind', 'state', 'afterSeq', 'throughSeq'];
   if (!options.index && filters.some(key => options[key] !== undefined)) throw new Error('Message filters require index: true');
+  for (const key of ['afterSeq', 'throughSeq']) {
+    const value = options[key];
+    if (value !== undefined && (/^(0|[1-9][0-9]{0,18})$/.exec(value)?.[0] !== value ||
+        (value.length === 19 && value > '9223372036854775807'))) throw new Error('Invalid sequence bound: ' + key);
+  }
+  const lower = options.afterSeq, upper = options.throughSeq;
+  if (lower !== undefined && upper !== undefined &&
+      (lower.length > upper.length || (lower.length === upper.length && lower > upper))) throw new Error('Reversed sequence bounds');
   const argv = options.index ? ['--index'] : [];
-  for (const key of filters) if (options[key] !== undefined) argv.push('--' + key, options[key]);
+  for (const key of filters) if (options[key] !== undefined) {
+    const flag = key === 'afterSeq' ? 'after-seq' : key === 'throughSeq' ? 'through-seq' : key;
+    argv.push('--' + flag, options[key]);
+  }
   if (options.pretty) argv.push('--pretty');
   return argv;
 }

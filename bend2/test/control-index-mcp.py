@@ -89,12 +89,40 @@ class ControlIndexMcp(unittest.TestCase):
             if flag in ('--index', '--pretty'):
                 actual[flag] = True
             else:
-                self.assertIn(flag, ('--recipient', '--sender', '--kind', '--state', '--for'))
+                self.assertIn(flag, ('--recipient', '--sender', '--kind', '--state', '--for', '--after-seq', '--through-seq'))
                 value = next(tail, OMITTED)
                 self.assertIsNot(value, OMITTED, 'Adapter omitted an option value')
                 actual[flag] = value
         self.assertEqual(actual, options or {})
         return result
+
+    def test_sequence_bounds_preserve_exact_decimal_argv(self):
+        for tool, prefix in [('baton2_pending', ['pending']), ('baton2_inbox', ['inbox', 'attached'])]:
+            for lower, upper in [('0', '0'), ('4294967296', '9007199254740993'),
+                                 ('9007199254740993', '9223372036854775807')]:
+                args = {'index': True, 'afterSeq': lower, 'throughSeq': upper,
+                        'sender': '--after-seq', 'kind': '--through-seq', 'state': 'all', 'pretty': True}
+                self.translated(tool, args, prefix, {'--index': True, '--after-seq': lower,
+                                '--through-seq': upper, '--sender': '--after-seq',
+                                '--kind': '--through-seq', '--state': 'all', '--pretty': True})
+                properties = self.advertised[tool]['inputSchema']['properties']
+                self.assertEqual(properties['afterSeq']['type'], 'string')
+                self.assertEqual(properties['throughSeq']['type'], 'string')
+
+    def test_sequence_invalid_bounds_refuse_before_native(self):
+        for tool in ('baton2_pending', 'baton2_inbox'):
+            for key in ('afterSeq', 'throughSeq'):
+                for value in ['', '-1', '+1', '01', ' 1', '1 ', '1\n', '1.0', '1e2',
+                              '١', '9223372036854775808', 1, None, True]:
+                    with self.subTest(tool=tool, key=key, value=value):
+                        result, calls = self.exchange(tool, {'index': True, key: value})
+                        self.assertTrue(result.get('isError'), result)
+                        self.assertEqual(calls, [])
+            for args in [{'afterSeq': '0'}, {'index': False, 'throughSeq': '1'},
+                         {'index': True, 'afterSeq': '10', 'throughSeq': '9'}]:
+                result, calls = self.exchange(tool, args)
+                self.assertTrue(result.get('isError'), result)
+                self.assertEqual(calls, [])
 
     def test_inbox_omission_and_empty_recipient_have_different_scopes(self):
         for session in ('attached', '', "Conductor's 日本語"):

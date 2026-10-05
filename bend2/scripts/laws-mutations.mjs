@@ -1054,4 +1054,19 @@ MUTATIONS.push(
   {"name": "knowledge-selected-detail-pretty-dispatch", "file": "bend2/src/coordinator/main.bend", "find": "KnowledgeReads.run(db,reader,C.IndexExact{id},True{})", "replace": "Knowledge.read(db,reader)", "law": "knowledge_detail_pretty_entry_uses_the_readonly_path"}
 );
 
+MUTATIONS.push(
+  {"name": "sequence-lower-includes-bound", "file": "bend2/src/coordinator/commands.bend", "find": "sequence_predicate(\">\",after)", "replace": "sequence_predicate(\">=\",after)", "law": "sequence_selection_conjoins_filters_bounds_and_order"},
+  {"name": "sequence-upper-excludes-bound", "file": "bend2/src/coordinator/commands.bend", "find": "sequence_predicate(\"<=\",through)", "replace": "sequence_predicate(\"<\",through)", "law": "sequence_selection_conjoins_filters_bounds_and_order"},
+  {"name": "sequence-selection-drops-lower", "file": "bend2/src/coordinator/commands.bend", "find": "sequence_predicate(\">\",after)", "replace": "\"1\"", "law": "sequence_selection_conjoins_filters_bounds_and_order"},
+  {"name": "sequence-selection-drops-upper", "file": "bend2/src/coordinator/commands.bend", "find": "sequence_predicate(\"<=\",through)", "replace": "\"1\"", "law": "sequence_selection_conjoins_filters_bounds_and_order"},
+  {"name": "sequence-selection-loses-recipient", "file": "bend2/src/coordinator/commands.bend", "find": "index_filter(\"m.recipient\",r) ++ \" AND \" ++ index_filter(\"m.sender\",s)", "replace": "index_filter(\"m.recipient\",IndexAny{}) ++ \" AND \" ++ index_filter(\"m.sender\",s)", "law": "sequence_selection_conjoins_filters_bounds_and_order"},
+  {"name": "sequence-command-drops-range", "file": "bend2/src/coordinator/commands.bend", "find": "case MessageRange{r,s,k,state,after,through}: message_range_sql(r,s,k,state,after,through)", "replace": "case MessageRange{r,s,k,state,after,through}: message_index_sql(r,s,k,state)", "law": "sequence_command_uses_the_range_selection"},
+  {"name": "sequence-repeat-lower-accepted", "file": "bend2/src/coordinator/commands.bend", "find": "Bool.and(index_absent(after),Sequence.valid(value))", "replace": "Sequence.valid(value)", "law": "sequence_repeated_bound_refuses"},
+  {"name": "sequence-reversed-accepted", "file": "bend2/src/coordinator/commands.bend", "find": "case IndexExact{b}: Sequence.decimal_le(a,b)", "replace": "case IndexExact{b}: True{}", "law": "sequence_reversed_bounds_refuse"},
+  {"name": "sequence-overflow-accepted", "file": "bend2/src/coordinator/sequence.bend", "find": "decimal_le(SCon{head,tail},\"9223372036854775807\")", "replace": "True{}", "law": "sequence_overflow_is_invalid"},
+  {"name": "sequence-leading-zero-accepted", "file": "bend2/src/coordinator/sequence.bend", "find": "Bool.or(Bool.not(Char.is_eq(head,'0')),String.is_empty(tail))", "replace": "True{}", "law": "sequence_leading_zero_is_invalid"},
+  {"name": "sequence-entry-drops-range", "file": "bend2/src/coordinator/main.bend", "find": "IndexReads.run(db,C.MessageRange{r,s,k,state,after,through},False{})", "replace": "IndexReads.run(db,C.MessageIndex{r,s,k,state},False{})", "law": "sequence_range_entry_uses_readonly_snapshot"},
+  {"name": "sequence-pretty-entry-drops-range", "file": "bend2/src/coordinator/main.bend", "find": "IndexReads.run(db,C.MessageRange{r,s,k,state,after,through},True{})", "replace": "IndexReads.run(db,C.MessageIndex{r,s,k,state},True{})", "law": "sequence_range_pretty_entry_uses_readonly_snapshot"}
+);
+
 export { MUTATIONS };
