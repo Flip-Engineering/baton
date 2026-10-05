@@ -466,6 +466,34 @@ def check_refs(values, stdout, db):
     check(body == entry + "\n", "refs.found.roundtrip", f"{body!r} != {entry!r}")
 
 
+def check_companion(values):
+    expected = {
+        "intent.step.owed": "continue",
+        "intent.step.settled": "settled",
+        "intent.step.missing": "missing:missing",
+        "intent.step.unreadable": "unreadable:weird",
+        "intent.step.unterminated": "continue",
+        "intent.duty.attempted": "true",
+        "intent.duty.unavailable": "true",
+        "intent.duty.acknowledged": "false",
+        "intent.duty.settled": "false",
+        "companion.owed": "continue",
+        "companion.settled.live": "continue",
+        "companion.settled.done": "settled",
+        "companion.missing": "missing:missing",
+        "companion.loop": "settled",
+    }
+    for key, want in expected.items():
+        check(values.get(key) == want, key, f"{values.get(key)!r} != {want!r}")
+    # The role rows the bound readings depend on must have been recorded, and a refused
+    # binding must be a host failure rather than a conclusion about the role.
+    for key in ("companion.owed.row", "companion.settled.row"):
+        check(key in values, key, "the role setup did not report")
+        check(key + ".error" not in values, key, values.get(key + ".error"))
+    check("companion.refused.error" in values, "companion.refused.error", "a refused binding answered a companion reading")
+    check("companion.refused" not in values, "companion.refused.absent", repr(values.get("companion.refused")))
+
+
 def check_control(values):
     control = json.loads(values.get("control.release", "{}"))
     check(control.get("state") == "complete", "control.release", control)
@@ -612,6 +640,7 @@ def main():
     check_runtime_rows(values)
     check_control(values)
     check_refs(values, result.stdout, str(db))
+    check_companion(values)
     if os.environ.get("CONTEXT_LIFECYCLE_MUTATIONS") == "1":
         proof_removal_check()
         mutation_checks()

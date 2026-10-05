@@ -407,6 +407,61 @@ def ref_surfaces(+db: String, +binding: String) -> IO(Unit):
     f11 : Unit <- ref_case(db, binding ++ "-absent", "refs.unavailable", "qr1", "ref-1")
     IO.pure(Unit, Unit{})
 
+# --- the companion intent surfaces -------------------------------------------
+
+# The pure intent decisions on the answers the bound read produces, including an answer
+# that arrives without the host's terminating newline and one that is unrecognised.
+def intent_surfaces() -> IO(Unit):
+  do IO<Unit>:
+    obs("intent.step.owed", ContextLifecycle.companion_text(ContextLifecycle.intent_step("1\n")))
+    obs("intent.step.settled", ContextLifecycle.companion_text(ContextLifecycle.intent_step("0\n")))
+    obs("intent.step.missing", ContextLifecycle.companion_text(ContextLifecycle.intent_step("missing\n")))
+    obs("intent.step.unreadable", ContextLifecycle.companion_text(ContextLifecycle.intent_step("weird\n")))
+    obs("intent.step.unterminated", ContextLifecycle.companion_text(ContextLifecycle.intent_step("1")))
+    obs("intent.duty.attempted", Bool.show(ContextLifecycle.owns_live_duty("attempted")))
+    obs("intent.duty.unavailable", Bool.show(ContextLifecycle.owns_live_duty("unavailable")))
+    obs("intent.duty.acknowledged", Bool.show(ContextLifecycle.owns_live_duty("acknowledged")))
+    obs("intent.duty.settled", Bool.show(ContextLifecycle.owns_live_duty("settled")))
+
+def show_step(key: String, step: ContextLifecycle.CompanionStep) -> IO(Unit):
+  obs(key, ContextLifecycle.companion_text(step))
+
+def show_step_result(key: String, result: Result<&1,&1,U32 & String,ContextLifecycle.CompanionStep>) -> IO(Unit):
+  match result:
+    case Done{+step}: show_step(key, step)
+    case Fail{error}:
+      match error:
+        case (code, message): obs(key ++ ".error", message)
+
+# The companion through the bound read: an owed cleanup phase continues, a settled phase
+# ends with the caller's duty probe deciding both ways, a role that was never recorded is
+# missing with its own answer, and a refused binding is the host failure rather than any of
+# those conclusions.
+def companion_surfaces(+db: String, +binding: String, +log: String) -> IO(Unit):
+  do IO<Unit>:
+    +anchor : String <- IO.pure(String, ContextRole.guard_anchor(log))
+    owed_identity : String <- IO.pure(String, ContextRole.guard_identity(binding, ContextRole.SubjectQuery{"q1"}, ContextRole.RoleStarter{}, "2"))
+    owed_key : String <- IO.try(String, ContextRole.role_guard_key(owed_identity))
+    owed : Result<&1,&1,U32 & String,String> <- DB.Sql.query_bound(db, binding, ContextRoles.role_row_sql("q1", "starter", "2", "/log/q1", anchor, owed_key, owed_identity, "[\"bat\",\"--recover-context-role\"]", binding, "prepared", "pending"))
+    show("companion.owed.row", owed)
+    settled_identity : String <- IO.pure(String, ContextRole.guard_identity(binding, ContextRole.SubjectQuery{"q1"}, ContextRole.RoleTarget{}, "3"))
+    settled_key : String <- IO.try(String, ContextRole.role_guard_key(settled_identity))
+    settled : Result<&1,&1,U32 & String,String> <- DB.Sql.query_bound(db, binding, ContextRoles.role_row_sql("q1", "target", "3", "/log/q1", anchor, settled_key, settled_identity, "[\"bat\",\"--recover-context-role\"]", binding, "settled", "complete"))
+    show("companion.settled.row", settled)
+    owed_read : Result<&1,&1,U32 & String,ContextLifecycle.CompanionStep> <- ContextLifecycle.companion_step(db, binding, "q1", "starter", "2", u => IO.pure(Bool, True{}))
+    show_step_result("companion.owed", owed_read)
+    settled_live : Result<&1,&1,U32 & String,ContextLifecycle.CompanionStep> <- ContextLifecycle.companion_step(db, binding, "q1", "target", "3", u => IO.pure(Bool, True{}))
+    show_step_result("companion.settled.live", settled_live)
+    settled_done : Result<&1,&1,U32 & String,ContextLifecycle.CompanionStep> <- ContextLifecycle.companion_step(db, binding, "q1", "target", "3", u => IO.pure(Bool, False{}))
+    show_step_result("companion.settled.done", settled_done)
+    missing_read : Result<&1,&1,U32 & String,ContextLifecycle.CompanionStep> <- ContextLifecycle.companion_step(db, binding, "q1", "adapter", "9", u => IO.pure(Bool, False{}))
+    show_step_result("companion.missing", missing_read)
+    refused : Result<&1,&1,U32 & String,ContextLifecycle.CompanionStep> <- ContextLifecycle.companion_step(db, binding ++ "-absent", "q1", "starter", "2", u => IO.pure(Bool, True{}))
+    show_step_result("companion.refused", refused)
+    looped : ContextLifecycle.CompanionStep <- ContextLifecycle.reconcile_intents(db, binding, "q1", "starter", "2", u => IO.pure(Bool, True{}), u => IO.pure(ContextLifecycle.CompanionStep, ContextLifecycle.StepSettled{}))
+    show_step("companion.loop", looped)
+    IO.pure(Unit, Unit{})
+
 def run(+db: String, +copy: String, +log: String) -> IO<Unit>:
   do IO<Unit>:
     pure : Unit <- identity_surfaces()
@@ -422,6 +477,8 @@ def run(+db: String, +copy: String, +log: String) -> IO<Unit>:
     duties : Unit <- duty_surfaces(db, binding)
     rows : Unit <- runtime_row_surfaces(db, binding)
     refs : Unit <- ref_surfaces(db, binding)
+    intents : Unit <- intent_surfaces()
+    companions : Unit <- companion_surfaces(db, binding, log)
     IO.print("context-lifecycle: done")
 
 def complain() -> IO(Unit):
