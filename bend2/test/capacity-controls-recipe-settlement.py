@@ -117,8 +117,10 @@ class RecipeSettlement(unittest.TestCase):
 
         def failing_work():
             # The declared row is already persisted by attempt, so the latest
-            # complete record is captured here, before the terminal write fails.
+            # complete record is captured here, before the terminal write fails:
+            # both its parsed rows and its exact bytes.
             observed['attempted'] = [dict(row) for row in self.rows()]
+            observed['bytes'] = (self.run / 'run.json').read_bytes()
             staged.mkdir()
             (staged / 'occupied').write_text('still here\n')
             raise original
@@ -133,6 +135,8 @@ class RecipeSettlement(unittest.TestCase):
         self.assertEqual([row['name'] for row in self.rows()],
                          ['preconditions', 'archive-readback'])
         self.assertEqual(self.rows()[1]['outcome'], 'attempted')
+        # The failed terminal write left the latest complete record byte for byte.
+        self.assertEqual((self.run / 'run.json').read_bytes(), observed['bytes'])
         # The recording cause keeps its own cleanup detail.
         self.assertIn('could not be written', str(raised.exception.record_error))
         self.assertIsNotNone(raised.exception.record_error.cleanup_error)
