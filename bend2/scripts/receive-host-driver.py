@@ -192,10 +192,15 @@ def main(argv=None):
         return 1
 
     controls = json.loads(CONTROLS.read_text())
-    if not isinstance(controls, dict) or not isinstance(controls.get('controls'), list) \
-            or not isinstance(controls.get('control_expectations', {}).get('controls'), dict):
-        print(json.dumps({'failures': ['the control file does not have the expected shape']},
-                         indent=2))
+    if not isinstance(controls, dict):
+        print(json.dumps({'failures': ['the control file is not a mapping']}, indent=2))
+        return 1
+    if not isinstance(controls.get('controls'), list):
+        print(json.dumps({'failures': ['the control file has no definitions list']}, indent=2))
+        return 1
+    expectations = controls.get('control_expectations')
+    if not isinstance(expectations, dict) or not isinstance(expectations.get('controls'), dict):
+        print(json.dumps({'failures': ['the control file has no mapping of controls']}, indent=2))
         return 1
     for entry in controls.get('immutable_inputs', []):
         if 'sha256' not in entry:
