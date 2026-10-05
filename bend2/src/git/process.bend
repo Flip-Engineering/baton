@@ -1,4 +1,4 @@
-# The one foreign effect of the Git operations module and its typed wrappers.
+# Git process effects and their typed wrappers.
 # Process.run spawns a process with no shell anywhere: the Bend side passes
 # the argv as a length-prefixed string (Tx.enc_argv) and the C half forks,
 # execs and waits on a helper thread. runFull keeps the exit/signal
@@ -10,6 +10,13 @@ import ./types.bend as T
 import ./text.bend as Tx
 
 def Process.run(argv: String, cwd: String) -> IO(Result<&1, &1, U32 & String, String>):
+  import "./process.c"
+
+# The extended structural result retains stdout and diagnostics separately.
+def Process.capture(argv: String, cwd: String) -> IO(Result<&1,&1,U32 & String,String & String>):
+  import "./process.c"
+
+def Process.path_exists(path: String) -> IO(Result<&1,&1,U32 & String,Bool>):
   import "./process.c"
 
 def runFull(args: List<String>, cwd: String) -> IO(T.RunRes):
