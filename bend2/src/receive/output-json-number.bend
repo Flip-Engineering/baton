@@ -98,7 +98,7 @@ def step(state: NumState, +code: U32) -> NumState:
     case NumExponent{+integer, +fraction, exp_minus, +exponent}:
       Bool.pick(NumState, is_digit(code),
         NumExponent{integer, fraction, exp_minus, code <> exponent}, bad("trailing_data"))
-    case +NumBad{reason}: NumBad{reason}
+    case NumBad{reason}: NumBad{reason}
 
 def feed_go(octets: List<U32>, state: NumState) -> NumScan:
   match octets:
@@ -136,7 +136,7 @@ def leading_minus(octets: List<U32>) -> Bool:
 
 # The computed scan is bound to a parameter before it is matched, per the restriction that
 # canonical.bend records; the entry never matches a computed scrutinee directly.
-def entry(scan: NumScan, octets: List<U32>) -> NumResult:
+def entry(scan: NumScan, +octets: List<U32>) -> NumResult:
   match scan:
     case NumStep{state}: finish_go(state, leading_minus(octets), octets)
     case NumScanFault{value}: NumHostFault{value}
