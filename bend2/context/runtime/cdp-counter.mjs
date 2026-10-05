@@ -16,11 +16,21 @@
 
 export const INITIAL_COUNTER = '0';
 
-const DECIMAL = /^[0-9]+$/;
+// Complete-token ASCII digit admission. A regular expression is deliberately not used:
+// JavaScript's `$` also matches before a final line terminator, so a pattern like
+// /^[0-9]+$/ would admit "1\n" and counterNext would then increment the terminator. This
+// scan admits the whole string as ASCII digits and nothing else.
+function allDecimalDigits(text) {
+  for (let index = 0; index < text.length; index += 1) {
+    const code = text.charCodeAt(index);
+    if (code < 48 || code > 57) return false;
+  }
+  return true;
+}
 
 export function counterValid(text) {
   if (typeof text !== 'string' || text.length === 0) return false;
-  if (!DECIMAL.test(text)) return false;
+  if (!allDecimalDigits(text)) return false;
   if (text.length > 1 && text[0] === '0') return false;
   return true;
 }

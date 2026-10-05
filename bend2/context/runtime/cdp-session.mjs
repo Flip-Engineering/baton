@@ -440,7 +440,10 @@ export function createAdapterSession({
             await transport.send('Debugger.setAsyncCallStackDepth', { maxDepth: 32 });
             for (const stop of stops) await transport.send(stop.method, stop.params);
             if (params.startup !== false) {
-              apply({ type: 'startReleaseSent' });
+              // An observed stop may already have arrived: the stop itself ended the
+              // startup wait, so the record is advanced through the event only while it is
+              // still waiting for the start release.
+              if (record.state === 'waitingForStart') apply({ type: 'startReleaseSent' });
               await transport.send('Runtime.runIfWaitingForDebugger');
             }
           } catch (error) {

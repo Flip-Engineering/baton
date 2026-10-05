@@ -135,9 +135,37 @@ law adapter_failure_preserves_the_liveness_evidence:
   for +mutation: String
   for +pending: R.Pending
   for +liveness: R.Liveness
-  {R.advance(R.Rec{state, epoch, mutation, pending, liveness}, R.EvAdapterFailed{}) == R.Advanced{R.Rec{R.Failed{}, epoch, mutation, pending, liveness}} : R.Transition}
+  {R.advance(R.Rec{state, epoch, mutation, pending, liveness}, R.EvAdapterFailed{}) == Bool.pick(R.Transition, R.is_exited(state), R.Refused{"adapterFailed after exited"}, R.Advanced{R.Rec{R.Failed{}, epoch, mutation, pending, liveness}}) : R.Transition}
 
 def adapter_failure_preserves_the_liveness_evidence(state, epoch, mutation, pending, liveness):
+  {==}
+
+law an_adapter_failure_after_exit_is_refused:
+  {R.advance(R.Rec{R.Exited{}, "0", "0", R.Idle{}, R.LivenessExited{}}, R.EvAdapterFailed{}) == R.Refused{"adapterFailed after exited"} : R.Transition}
+
+def an_adapter_failure_after_exit_is_refused():
+  {==}
+
+law a_start_release_from_the_startup_wait_runs:
+  {R.advance(R.Rec{R.WaitingForStart{}, "0", "0", R.Idle{}, R.LivenessLive{}}, R.EvStartReleaseSent{}) == R.Advanced{R.Rec{R.Running{}, "0", "0", R.Idle{}, R.LivenessLive{}}} : R.Transition}
+
+def a_start_release_from_the_startup_wait_runs():
+  {==}
+
+law a_start_release_after_an_observed_stop_keeps_the_stop:
+  for +epoch: String
+  for +mutation: String
+  for +pending: R.Pending
+  for +liveness: R.Liveness
+  {R.advance(R.Rec{R.Paused{}, epoch, mutation, pending, liveness}, R.EvStartReleaseSent{}) == R.Advanced{R.Rec{R.Paused{}, epoch, mutation, pending, liveness}} : R.Transition}
+
+def a_start_release_after_an_observed_stop_keeps_the_stop(epoch, mutation, pending, liveness):
+  {==}
+
+law a_start_release_before_the_endpoint_is_refused:
+  {R.advance(R.Rec{R.Starting{}, "0", "0", R.Idle{}, R.LivenessUnknown{}}, R.EvStartReleaseSent{}) == R.Refused{"startReleaseSent from starting"} : R.Transition}
+
+def a_start_release_before_the_endpoint_is_refused():
   {==}
 
 law child_exit_records_the_exited_liveness:

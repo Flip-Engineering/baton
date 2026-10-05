@@ -83,9 +83,23 @@ export function laws(modules) {
         expect(counter.counterValid('0'), 'the initial counter was refused');
         expect(counter.counterValid('1'), 'a single digit was refused');
         expect(counter.counterValid('4294967296'), 'a counter above the U32 range was refused');
-        for (const invalid of ['', '00', '01', '007', '-1', '+1', '1.0', '1e3', ' 1', '1 ', '0x1', '١٢']) {
+        expect(counter.counterValid('9'.repeat(40)), 'a long counter was refused');
+        for (const invalid of ['', '00', '01', '007', '-1', '+1', '1.0', '1e3', ' 1', '1 ', '0x1', '١٢',
+          '1\n', '1\r', '0\n', '1\r\n', '1\u2028', '1\u2029', '\u00b9', '1\u0000']) {
           assertEqual(counter.counterValid(invalid), false, `counterValid admitted ${JSON.stringify(invalid)}`);
         }
+      },
+    },
+    {
+      name: 'counter_next_refuses_a_counter_with_a_trailing_terminator',
+      run() {
+        for (const invalid of ['1\n', '1\r', '1\u2028', '1\u2029', '0\n']) {
+          assertEqual(counter.counterNext(invalid).ok, false,
+            `counterNext accepted ${JSON.stringify(invalid)}`);
+        }
+        assertEqual(counter.counterNext('4294967295').value, '4294967296', 'U32 boundary successor');
+        assertEqual(counter.counterNext('9007199254740991').value, '9007199254740992', 'safe-integer boundary successor');
+        assertEqual(counter.counterNext('9'.repeat(40)).value, `1${'0'.repeat(40)}`, 'long all-nine carry');
       },
     },
     {
@@ -176,6 +190,30 @@ export function laws(modules) {
         assertEqual(runningDestroyed.record.epoch, '3', 'the destruction did not advance the running epoch');
         assertEqual(state.nextState({ ...running, state: 'exited' }, { type: 'contextDestroyed' }).condition,
           'illegalTransition', 'a destruction after exit was admitted');
+      },
+    },
+    {
+      name: 'startup_release_after_an_observed_stop_keeps_the_stop',
+      run() {
+        let record = state.initialRecord();
+        record = state.nextState(record, { type: 'launchStarted' }).record;
+        record = state.nextState(record, { type: 'endpointDiscovered' }).record;
+        const stopped = state.nextState(record, { type: 'paused' });
+        expect(stopped.ok, 'a stop during the startup wait was refused');
+        assertEqual(stopped.record.state, 'paused', 'the stop during the startup wait');
+        assertEqual(stopped.record.epoch, '1', 'the stop advanced the epoch');
+        const released = state.nextState(stopped.record, { type: 'startReleaseSent' });
+        expect(released.ok, 'the start release after an observed stop was refused');
+        assertEqual(released.record.state, 'paused', 'the start release did not keep the observed stop');
+        assertEqual(released.record.epoch, '1', 'the start release changed the epoch');
+        assertEqual(
+          state.nextState({ ...record, state: 'starting' }, { type: 'startReleaseSent' }).condition,
+          'illegalTransition',
+          'a start release before the endpoint was admitted',
+        );
+        const exited = state.nextState(record, { type: 'childExit' }).record;
+        assertEqual(state.nextState(exited, { type: 'adapterFailed' }).condition, 'illegalTransition',
+          'an adapter failure after exit was admitted');
       },
     },
     {

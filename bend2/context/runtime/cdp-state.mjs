@@ -95,11 +95,13 @@ export function nextState(record, event) {
       if (record.state !== 'starting') return refusal('illegalTransition', `endpointDiscovered from ${record.state}`);
       return { ok: true, record: { ...record, state: 'waitingForStart', targetLiveness: 'live' } };
 
-    // Runtime.runIfWaitingForDebugger was sent: the startup wait ended, but no stopped
-    // event has been observed yet.
+    // Runtime.runIfWaitingForDebugger was sent: the startup wait ended. An observed stop
+    // may precede this response, in which case that stop already ended the wait and the
+    // record stays stopped.
     case 'startReleaseSent':
-      if (record.state !== 'waitingForStart') return refusal('illegalTransition', `startReleaseSent from ${record.state}`);
-      return { ok: true, record: { ...record, state: 'running' } };
+      if (record.state === 'waitingForStart') return { ok: true, record: { ...record, state: 'running' } };
+      if (record.state === 'paused') return { ok: true, record };
+      return refusal('illegalTransition', `startReleaseSent from ${record.state}`);
 
     // A pause request was acknowledged by the protocol. The actual stop is a later
     // stopped event; no timeout may convert this into either outcome.

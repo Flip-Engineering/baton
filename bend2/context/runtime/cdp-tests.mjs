@@ -216,6 +216,30 @@ function assertEqual(actual, expected, label) {
   if (actual !== expected) throw new Error(`${label}: expected ${JSON.stringify(expected)}, saw ${JSON.stringify(actual)}`);
 }
 
+test('startup-order-stop-before-the-start-release-response', () => {
+  let record = initialRecord();
+  const step = (event) => {
+    const result = nextState(record, event);
+    if (!result.ok) throw new Error(`${event.type}: ${result.condition} ${result.detail ?? ''}`);
+    record = result.record;
+    return record;
+  };
+  step({ type: 'launchStarted' });
+  step({ type: 'endpointDiscovered' });
+  // The stop event can precede the response of the startup release.
+  assertEqual(step({ type: 'paused' }).state, 'paused', 'the stop during the startup wait');
+  assertEqual(record.epoch, '1', 'the stop advanced the epoch');
+  assertEqual(step({ type: 'startReleaseSent' }).state, 'paused', 'the start release kept the observed stop');
+  assertEqual(record.epoch, '1', 'the start release changed no counter');
+  assertEqual(nextState({ ...record, state: 'starting' }, { type: 'startReleaseSent' }).condition,
+    'illegalTransition', 'a start release before the endpoint was admitted');
+  const exited = nextState({ ...record, state: 'running' }, { type: 'childExit' }).record;
+  assertEqual(nextState(exited, { type: 'adapterFailed' }).condition, 'illegalTransition',
+    'an adapter failure replaced an exited state');
+  assertEqual(nextState(exited, { type: 'childExit' }).condition, 'illegalTransition',
+    'a repeated child exit was admitted');
+});
+
 // ---------------------------------------------------------------------------
 // Closed transport envelope.
 
@@ -614,11 +638,14 @@ test('script-table-records-metadata-and-loaded-identity', () => {
 
 test('counter-text-boundary-cases', () => {
   assert(counterValid('0'), 'the initial counter was refused');
-  for (const invalid of ['', '00', '01', '-1', '+1', '1.0', '1e3', ' 1', '1 ', '0x1']) {
+  assert(counterValid('9'.repeat(40)), 'a long counter was refused');
+  for (const invalid of ['', '00', '01', '-1', '+1', '1.0', '1e3', ' 1', '1 ', '0x1',
+    '1\n', '1\r', '0\n', '1\r\n', '1\u2028', '1\u2029', '1\u0000']) {
     assertEqual(counterValid(invalid), false, `counterValid admitted ${JSON.stringify(invalid)}`);
   }
+  assertEqual(counterNext('1\n').ok, false, 'a trailing line terminator was incremented');
   assertEqual(counterNext('4294967295').value, '4294967296', 'U32 boundary successor');
-  assertEqual(counterNext('9007199254740991').value, '9007199254740992', 'double boundary successor');
+  assertEqual(counterNext('9007199254740991').value, '9007199254740992', 'safe-integer boundary successor');
   assertEqual(counterNext('9007199254740992').value, '9007199254740993', 'successor past the double boundary');
   assertEqual(counterNext('9'.repeat(40)).value, `1${'0'.repeat(40)}`, 'long all-nine carry');
   assertEqual(counterNext('01').ok, false, 'a non-canonical counter was normalized');

@@ -331,7 +331,9 @@ def advance(record: RuntimeRecord, event: RuntimeEvent) -> Transition:
         case EvStartReleaseSent{}:
           Bool.pick(Transition, is_waiting(state),
             Advanced{Rec{Running{}, epoch, mutation, pending, liveness}},
-            Refused{"startReleaseSent from " ++ state_name(state)})
+            Bool.pick(Transition, is_paused(state),
+              Advanced{Rec{Paused{}, epoch, mutation, pending, liveness}},
+              Refused{"startReleaseSent from " ++ state_name(state)}))
         case EvPauseRequested{}:
           Bool.pick(Transition, is_running(state),
             Advanced{Rec{PausePending{}, epoch, mutation, pending, liveness}},
@@ -377,7 +379,9 @@ def advance(record: RuntimeRecord, event: RuntimeEvent) -> Transition:
             Refused{"releaseCommitted after exited"},
             Advanced{Rec{Releasing{}, epoch, mutation, pending, liveness}})
         case EvAdapterFailed{}:
-          Advanced{Rec{Failed{}, epoch, mutation, pending, liveness}}
+          Bool.pick(Transition, is_exited(state),
+            Refused{"adapterFailed after exited"},
+            Advanced{Rec{Failed{}, epoch, mutation, pending, liveness}})
         case EvChildExit{}:
           Bool.pick(Transition, is_exited(state),
             Refused{"childExit after exited"},
