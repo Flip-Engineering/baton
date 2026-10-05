@@ -11,6 +11,7 @@ import importlib.util
 import json
 import pathlib
 import select
+import sqlite3
 import unittest
 
 SPEC = importlib.util.spec_from_file_location(
@@ -66,7 +67,7 @@ class ReceiveTerminalBoundary(RECEIVE.Receive):
         self.frame(stream, {'type': 'response', 'command': 'steer', 'success': True,
                             'id': 'late-error-guidance'})
         self.assertIsNone(self.coord('delivery', 'late-error-guidance')['receipt'])
-        self.frame(stream, {'type': 'agent_end', 'isTerminal': True, 'is_error': True,
+        self.frame(stream, {'type': 'agent_end', 'isTerminal': True,
                             'messages': [{'role': 'assistant', 'stopReason': 'error',
                                           'errorStatus': 403, 'errorMessage': '403 late failure',
                                           'provider': 'kimi-code', 'model': 'k3', 'content': []}]})
@@ -76,9 +77,11 @@ class ReceiveTerminalBoundary(RECEIVE.Receive):
         self.assertNotIn('[id: late-error-task]', resumed['prompt'])
         self.action(continuation, body='Continuation after the late error.')
         self.finish(observer)
+        self.assertIn('exit 0', self.native_status())
         turns = self.coord('turns', 'parent')
         self.assertEqual(turns[0]['id'], sealed)
         self.assertEqual(turns[0]['reportBody'], 'First sealed report.')
+        self.assertNotEqual(turns[1]['id'], sealed)
         self.assertEqual(self.coord('delivery', sealed)['body'], 'First sealed report.')
         notes = [report for report in self.coord('inbox', 'root')
                  if report['id'] == sealed + ':deferred']
@@ -87,20 +90,65 @@ class ReceiveTerminalBoundary(RECEIVE.Receive):
         self.assertEqual(self.coord('delivery', 'late-error-guidance')['receipt'], 'native-reviewed')
         self.eventually(lambda: not self.owned_processes(), 'boundary fixtures did not exit')
 
-    def test_late_success_terminal_keeps_the_sealed_failure(self):
-        """A later terminal in the same episode does not replace the sealed failure."""
-        body = 'Native model failure: status 403 from kimi-code/k3; 403 first failure.'
-        observer, stream, started, sealed = self.sealed_attempt('late-success-task', body)
+    def stored_event(self, worker='parent'):
+        """The stored turn event for this attempt, read from the store."""
+        with sqlite3.connect(f'{self.db.as_uri()}?mode=ro', uri=True) as database:
+            row = database.execute("SELECT event FROM turns WHERE worker=? ORDER BY rowid LIMIT 1",
+                                   (worker,)).fetchone()
+        return row[0] if row else ''
+
+    def native_status(self):
+        """The recorded execution status of the native child for the current attempt."""
+        with sqlite3.connect(f'{self.db.as_uri()}?mode=ro', uri=True) as database:
+            row = database.execute("SELECT status FROM executions WHERE session='parent'").fetchone()
+        return row[0] if row else '(none)'
+
+    def test_same_attempt_error_then_late_success_keeps_the_sealed_failure(self):
+        """A structured first provider failure is sealed; a later success in that episode does not replace it."""
+        self.player(harness='omp')
+        self.coord('message', 'same-attempt-task', 'root', 'parent', 'task',
+                   'Task before the settled terminal.')
+        observer = self.spawn(*self.receive_args('parent'))
+        stream, started = self.accept('parent')
+        self.assertIn('[id: same-attempt-task]', started['prompt'])
+        failure = {'type': 'agent_end', 'isTerminal': True, 'messages': [
+            {'role': 'assistant', 'stopReason': 'error', 'errorStatus': 403,
+             'errorMessage': '403 provider refused the request', 'provider': 'kimi-code',
+             'model': 'k3', 'content': []}]}
+        self.frame(stream, failure)
+        turns = self.eventually(lambda: self.coord('turns', 'parent'),
+                                'the sealed report was not recorded')
+        sealed = turns[0]['id']
+        self.assertIn('errorStatus', self.stored_event())
+        self.assertIn('403 provider refused the request', self.stored_event())
+        body = turns[0]['reportBody']
+        self.assertIn('Native model failure', body)
+        self.assertIn('403', body)
+        self.assertIn('kimi-code', body)
+        self.assertEqual(self.coord('delivery', sealed)['body'], body)
+        self.coord('message', 'same-attempt-guidance', 'root', 'parent', 'guidance',
+                   'Guidance the sealed attempt does not accept.')
+        self.frame(stream, {'type': 'response', 'command': 'steer', 'success': True,
+                            'id': 'same-attempt-guidance'})
+        self.assertIsNone(self.coord('delivery', 'same-attempt-guidance')['receipt'])
         self.frame(stream, late_terminal('Later episode with a successful report.'))
         self.action(stream, exit_fixture=True)
-        self.finish(observer)
+        continuation, resumed = self.accept('parent')
+        self.assertIn('[id: same-attempt-guidance]', resumed['prompt'])
+        self.assertIn('[id: same-attempt-task]', resumed['prompt'])
+        self.action(continuation, body='Continuation after the sealed failure.')
+        self.finish(observer, ok=False)
+        self.assertIn('exit 0', self.native_status())
         turns = self.coord('turns', 'parent')
-        self.assertEqual([turn['reportBody'] for turn in turns], [body])
         self.assertEqual(turns[0]['id'], sealed)
+        self.assertEqual(turns[0]['reportBody'], body)
+        self.assertNotEqual(turns[1]['id'], sealed)
         self.assertEqual(self.coord('delivery', sealed)['body'], body)
         notes = [report for report in self.coord('inbox', 'root')
                  if report['id'] == sealed + ':deferred']
-        self.assertEqual([note['body'] for note in notes], [deferred_body(sealed, None)])
+        self.assertEqual([note['body'] for note in notes],
+                         [deferred_body(sealed, 'same-attempt-guidance')])
+        self.assertEqual(self.coord('delivery', 'same-attempt-guidance')['receipt'], 'native-reviewed')
         self.eventually(lambda: not self.owned_processes(), 'boundary fixtures did not exit')
 
     def test_late_terminal_keeps_the_sealed_report_and_defers_the_guidance(self):

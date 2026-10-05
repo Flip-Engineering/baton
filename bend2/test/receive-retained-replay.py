@@ -200,6 +200,15 @@ class RetainedReplay(ReplayBase):
         self.assertNotEqual(code, 0)
         failure = [body for body in bodies if 'Native model failure' in body]
         self.assertTrue(failure, bodies)
+        errors = [message for message in (terminal.get('messages') or [])
+                  if isinstance(message, dict) and message.get('stopReason') == 'error']
+        self.assertTrue(errors, 'no error assistant in the captured terminal')
+        self.assertEqual(errors[-1].get('errorStatus'), 403)
+        self.assertEqual(errors[-1].get('provider'), 'kimi-code')
+        self.assertIn(str(errors[-1].get('errorStatus')), failure[0])
+        self.assertIn(str(errors[-1].get('provider')), failure[0])
+        turns = self.coord('turns', 'parent')
+        self.assertEqual(self.coord('delivery', turns[0]['id'])['body'], failure[0])
         logged = []
         for line in (self.directory / 'parent.jsonl').read_text(errors='replace').splitlines():
             try:
@@ -255,7 +264,8 @@ class ControlledFrames(ReplayBase):
         self.assertTrue(failure, bodies)
         self.assertNotIn('earlier successful report', failure[0])
 
-    def test_sealed_success_then_error_preserves_the_first_report(self):
+    def test_sequential_success_then_error_keeps_the_first_report(self):
+        """Two consecutive receives: a later receive's failure does not change the earlier report."""
         sealed, code, status, bodies = self.replay([
             {'type': 'message_end', 'message': assistant(
                 stopReason='stop', content=[{'type': 'text', 'text': 'Sealed first report.'}])},
@@ -271,7 +281,8 @@ class ControlledFrames(ReplayBase):
         self.assertIn('Sealed first report.', self.reports()[0])
         self.assertTrue(any('Native model failure' in body for body in later_bodies), later_bodies)
 
-    def test_sealed_error_then_success_preserves_the_first_failure(self):
+    def test_sequential_error_then_success_keeps_the_first_failure(self):
+        """Two consecutive receives: a later success does not change the earlier failure."""
         first, code, status, bodies = self.replay([
             {'type': 'agent_end', 'isTerminal': True, 'messages': [
                 assistant(stopReason='error', errorStatus=403, errorMessage='403 first failure',
