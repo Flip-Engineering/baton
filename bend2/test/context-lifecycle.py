@@ -258,15 +258,10 @@ def check_duties(values):
     # The obligation, not a census. The settled query is proven settled by its own
     # readback first, so its absence from the enumeration is behaviour rather than
     # a missing row, and a failed view cannot satisfy either assertion.
-    settled = values.get("duties.q4.readback")
-    try:
-        parsed = json.loads(settled)
-    except (TypeError, ValueError):
-        parsed = None
-        check(False, "duties.q4.readback", f"not JSON: {settled!r}")
-    if parsed:
-        check(parsed.get("query") == "q4" and parsed.get("state") == "complete", "duties.q4.readback", parsed)
-        check(parsed.get("progress") is None, "duties.q4.progress", parsed.get("progress"))
+    settled = parsed_object("duties.q4.readback", values, "duties.q4.readback", ["query", "state", "progress"])
+    if settled is not None:
+        check(settled["query"] == "q4" and settled["state"] == "complete", "duties.q4.readback", settled)
+        check(settled["progress"] is None, "duties.q4.progress", settled["progress"])
     check(values.get("duties.q1") == "true", "duties.q1", values.get("duties.q1"))
     check(values.get("duties.q4") == "false", "duties.q4", values.get("duties.q4"))
     check(values.get("duties.missing.error", "") != "", "duties.missing", values.get("duties.missing"))
@@ -275,49 +270,64 @@ def check_duties(values):
 BIG_EPOCH = "12345678901234567890123456789012345"
 
 
-def parsed_row(label, values, key):
+def parsed_object(label, values, key, members):
+    """Parse a retained answer as an object with the named members. A JSON null,
+    false, number, array or empty object fails here instead of skipping the field
+    assertions that follow it."""
     raw = values.get(key)
     try:
-        row = json.loads(raw)
+        parsed = json.loads(raw)
     except (TypeError, ValueError):
         check(False, label, f"not JSON: {raw!r}")
         return None
-    return row
+    if not isinstance(parsed, dict):
+        check(False, label, f"not a JSON object: {parsed!r}")
+        return None
+    absent = [member for member in members if member not in parsed]
+    if absent:
+        check(False, label, f"missing members {absent}: {parsed!r}")
+        return None
+    return parsed
 
 
 def check_runtime_rows(values):
-    row = parsed_row("runtime.big", values, "runtime.big")
-    if row:
-        check(row.get("id") == "rt1", "runtime.big.id", row.get("id"))
-        check(row.get("launchQuery") == "q1", "runtime.big.launchQuery", row.get("launchQuery"))
-        check(row.get("adapterId") == "adapter-1", "runtime.big.adapterId", row.get("adapterId"))
-        check(row.get("state") == "starting", "runtime.big.state", row.get("state"))
-        check(row.get("epoch") == BIG_EPOCH, "runtime.big.epoch", row.get("epoch"))
-        check(isinstance(row.get("epoch"), str), "runtime.big.epoch type", type(row.get("epoch")).__name__)
+    row = parsed_object("runtime.big", values, "runtime.big", ["id", "launchQuery", "adapterId", "state", "epoch"])
+    if row is not None:
+        check(row["id"] == "rt1", "runtime.big.id", row["id"])
+        check(row["launchQuery"] == "q1", "runtime.big.launchQuery", row["launchQuery"])
+        check(row["adapterId"] == "adapter-1", "runtime.big.adapterId", row["adapterId"])
+        check(row["state"] == "starting", "runtime.big.state", row["state"])
+        check(row["epoch"] == BIG_EPOCH, "runtime.big.epoch", row["epoch"])
+        check(isinstance(row["epoch"], str), "runtime.big.epoch type", type(row["epoch"]).__name__)
     check(values.get("runtime.big.rows") == "1", "runtime.big.rows", values.get("runtime.big.rows"))
 
-    control = parsed_row("runtime.control", values, "runtime.control")
-    if control:
-        check(control.get("id") == "rt3" and control.get("epoch") == BIG_EPOCH, "runtime.control", control)
-
-    refused = parsed_row("runtime.bad", values, "runtime.bad")
-    if refused:
-        check(refused.get("error") == "runtime-epoch-refused", "runtime.bad.error", refused.get("error"))
+    refused = parsed_object("runtime.bad", values, "runtime.bad", ["error"])
+    if refused is not None:
+        check(refused["error"] == "runtime-epoch-refused", "runtime.bad.error", refused["error"])
     check(values.get("runtime.bad.rows") == "0", "runtime.bad.rows", values.get("runtime.bad.rows"))
 
-    malformed = parsed_row("runtime.malformed", values, "runtime.malformed")
-    if malformed:
-        check(malformed.get("error") == "runtime-epoch-refused", "runtime.malformed.error", malformed)
+    # The positive control runs after the refusal, on the same runtime identity and
+    # the same launch key, so it proves the same constraints admit a canonical
+    # counter rather than passing on an unused key.
+    control = parsed_object("runtime.control", values, "runtime.control", ["id", "launchQuery", "epoch"])
+    if control is not None:
+        check(control["id"] == "rt2", "runtime.control.id", control["id"])
+        check(control["launchQuery"] == "q4", "runtime.control.launchQuery", control["launchQuery"])
+        check(control["epoch"] == BIG_EPOCH, "runtime.control.epoch", control["epoch"])
 
-    unchanged = parsed_row("runtime.unchanged", values, "runtime.unchanged")
-    if unchanged:
-        check(unchanged.get("launchQuery") == "q1", "runtime.unchanged.launchQuery", unchanged.get("launchQuery"))
-        check(unchanged.get("adapterId") == "adapter-1", "runtime.unchanged.adapterId", unchanged.get("adapterId"))
-        check(unchanged.get("state") == "starting", "runtime.unchanged.state", unchanged.get("state"))
-        check(unchanged.get("epoch") == BIG_EPOCH, "runtime.unchanged.epoch", unchanged.get("epoch"))
+    malformed = parsed_object("runtime.malformed", values, "runtime.malformed", ["error"])
+    if malformed is not None:
+        check(malformed["error"] == "runtime-epoch-refused", "runtime.malformed.error", malformed["error"])
 
-    # The conflict is a real SQL failure, not the refusal row, so it must surface as
-    # an error rather than as a structured refusal.
+    unchanged = parsed_object("runtime.unchanged", values, "runtime.unchanged", ["launchQuery", "adapterId", "state", "epoch"])
+    if unchanged is not None:
+        check(unchanged["launchQuery"] == "q1", "runtime.unchanged.launchQuery", unchanged["launchQuery"])
+        check(unchanged["adapterId"] == "adapter-1", "runtime.unchanged.adapterId", unchanged["adapterId"])
+        check(unchanged["state"] == "starting", "runtime.unchanged.state", unchanged["state"])
+        check(unchanged["epoch"] == BIG_EPOCH, "runtime.unchanged.epoch", unchanged["epoch"])
+
+    # The conflict is a real SQL failure, not the refusal row, so it must surface as an
+    # error with no structured output at all.
     check(values.get("runtime.conflict.error", "") != "", "runtime.conflict", values.get("runtime.conflict"))
     check(values.get("runtime.conflict", "") == "", "runtime.conflict output", values.get("runtime.conflict"))
     check(values.get("runtime.kept") == "q1", "runtime.kept", values.get("runtime.kept"))

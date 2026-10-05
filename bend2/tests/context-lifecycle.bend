@@ -248,6 +248,13 @@ def show_duty(key: String, result: Result<&1,&1,U32 & String,ContextDuties.DutyV
       match error:
         case (code, message): obs(key ++ ".error", message)
 
+def show_duty_has(+key: String, +view: Result<&1,&1,U32 & String,ContextDuties.DutyView>, +kind: String, +subject: String) -> IO(Unit):
+  match view:
+    case Done{+duties}: obs(key, Bool.show(ContextDuties.duty_contains(duties, kind, subject)))
+    case Fail{error}:
+      match error:
+        case (code, message): obs(key ++ ".error", message)
+
 def duty_surfaces(db: String, binding: String) -> IO(Unit):
   do IO<Unit>:
     created : Result<&1,&1,U32 & String,String> <- DB.Sql.query_bound(db, binding, ContextStore.accept_sql("q4", "root", "{\"version\":1,\"engine\":\"typescript\"}", "/work", "", "/log/q4", "/art/q4"))
@@ -273,12 +280,12 @@ def runtime_row_surfaces(db: String, binding: String) -> IO(Unit):
     show("runtime.big", valid)
     after : Result<&1,&1,U32 & String,String> <- DB.Sql.query_bound(db, binding, "SELECT count(*) FROM semantic_runtimes WHERE id='rt1';")
     show("runtime.big.rows", after)
-    control : Result<&1,&1,U32 & String,String> <- DB.Sql.query_bound(db, binding, ContextStore.runtime_row_sql("rt3", owner, "", "q4", "adapter-3", "starting", big))
-    show("runtime.control", control)
     refused : Result<&1,&1,U32 & String,String> <- DB.Sql.query_bound(db, binding, ContextStore.runtime_row_sql("rt2", owner, "", "q4", "adapter-2", "starting", bad))
     show("runtime.bad", refused)
     none : Result<&1,&1,U32 & String,String> <- DB.Sql.query_bound(db, binding, "SELECT count(*) FROM semantic_runtimes WHERE id='rt2';")
     show("runtime.bad.rows", none)
+    control : Result<&1,&1,U32 & String,String> <- DB.Sql.query_bound(db, binding, ContextStore.runtime_row_sql("rt2", owner, "", "q4", "adapter-2", "starting", big))
+    show("runtime.control", control)
     malformed : Result<&1,&1,U32 & String,String> <- DB.Sql.query_bound(db, binding, ContextStore.runtime_row_sql("rt1", owner, "", "q9", "adapter-9", "running", bad))
     show("runtime.malformed", malformed)
     unchanged : Result<&1,&1,U32 & String,String> <- DB.Sql.query_bound(db, binding, "SELECT json_object('launchQuery',launch_query,'adapterId',adapter_id,'state',state,'epoch',epoch) FROM semantic_runtimes WHERE id='rt1';")
