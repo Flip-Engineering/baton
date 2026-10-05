@@ -79,15 +79,23 @@ class ReplayBase(RECEIVE.Receive):
         """The public report body of the bound attempt, read by its own saved id."""
         return self.coord('delivery', binding[0])['body']
 
-    def stored_event(self, worker='parent'):
-        """The stored turn event, read from the store."""
+    def stored_event(self, binding, worker='parent'):
+        """The stored turn event of the bound attempt, read by its own identity."""
         with sqlite3.connect(f'{self.db.as_uri()}?mode=ro', uri=True) as database:
-            row = database.execute("SELECT event FROM turns WHERE worker=? ORDER BY rowid LIMIT 1",
-                                   (worker,)).fetchone()
-        return row[0] if row else ''
+            row = database.execute("SELECT event FROM turns WHERE id=? AND worker=?",
+                                   (binding[0], worker)).fetchone()
+        self.assertIsNotNone(row, 'the bound attempt has no stored turn event')
+        return row[0]
 
-    def retained_raw_terminals(self):
-        """Every agent_end frame the native log retained, parsed."""
+    def stored_assistant(self, binding):
+        """The assistant the bound attempt's stored event selected."""
+        event = json.loads(self.stored_event(binding))
+        messages = event.get('messages') or []
+        self.assertTrue(messages, event)
+        return messages[-1]
+
+    def public_log_terminals(self):
+        """Every agent_end frame the public log retained, which precede normalization."""
         found = []
         for line in (self.directory / 'parent.jsonl').read_text(errors='replace').splitlines():
             try:
@@ -97,6 +105,10 @@ class ReplayBase(RECEIVE.Receive):
             if frame.get('type') == 'agent_end' and frame.get('messages'):
                 found.append(frame)
         return found
+
+    def original_spool_bytes(self, binding):
+        """The bound attempt's own raw stdout spool, read as bytes."""
+        return (binding[1] / 'stdout').read_bytes()
 
     def reports(self):
         """Every report body the native session delivered to the root."""
@@ -452,13 +464,21 @@ class ControlledFrames(ReplayBase):
         self.assertNotIn('403 earlier failure', failure[0])
         turns = self.coord('turns', 'parent')
         self.assertEqual(turns[-1]['id'], self.original_attempt[0])
-        self.assertEqual(turns[-1]['reportBody'], failure[0])
-        self.assertEqual(self.coord('delivery', turns[-1]['id'])['body'], failure[0])
-        self.assertIn('response-e2', self.stored_event())
-        raw = self.retained_raw_terminals()
-        self.assertTrue(raw, 'the original terminal was not retained')
-        self.assertEqual(raw[-1]['messages'][-1], 'elided')
-        self.assertIn('403 earlier failure', json.dumps(raw[-1]))
+        expected = ('Native model failure: status 429 from kimi-code/k3; 429 later failure; '
+                    'the original terminal frame is retained in the native log for this attempt.')
+        self.assertEqual(turns[-1]['reportBody'], expected)
+        self.assertEqual(self.coord('delivery', turns[-1]['id'])['body'], expected)
+        selected = self.stored_assistant(self.original_attempt)
+        self.assertEqual(selected.get('responseId'), 'response-e2')
+        self.assertEqual(selected.get('errorStatus'), 429)
+        self.assertEqual(selected.get('errorMessage'), '429 later failure')
+        public = self.public_log_terminals()
+        self.assertTrue(public, 'the terminal frame was not retained in the public log')
+        self.assertEqual(public[-1]['messages'][-1], 'elided')
+        self.assertIn('403 earlier failure', json.dumps(public[-1]))
+        spool = self.original_spool_bytes(self.original_attempt)
+        self.assertIn(b'response-e0', spool)
+        self.assertIn(b'elided', spool)
 
     def test_two_missing_identities_cannot_establish_the_current_error(self):
         """With no response identity on either side, the result is the unavailable frame."""
