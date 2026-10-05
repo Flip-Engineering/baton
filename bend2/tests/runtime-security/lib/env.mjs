@@ -32,7 +32,7 @@ export const FIXTURE_ENTRIES = Object.freeze({
   'json-list-fields': Object.freeze([]),
   'inspector-boundary': Object.freeze([]),
   'bootstrap-exec': Object.freeze(['bootstrap.mjs']),
-  'grants-admission': Object.freeze(['cdp-intents.mjs', 'cdp-state.mjs', 'cdp-session.mjs']),
+  'grants-admission': Object.freeze(['cdp-intents.mjs', 'cdp-state.mjs', 'cdp-session.mjs', 'cdp-refs.mjs']),
   'session-transport': Object.freeze(['cdp-session.mjs']),
   'endpoint-watch': Object.freeze(['cdp-endpoint.mjs']),
   'endpoint-replacement': Object.freeze(['cdp-endpoint.mjs']),

@@ -80,8 +80,8 @@ path still leaves `<fixture>.<tag>.stdout.txt` and `.stderr.txt` on disk.
 | `json-list-fields` | none | discovery surface, no pid field |
 | `inspector-boundary` | none | pause/custody and pending evaluation against a real inspector |
 | `bootstrap-exec` | `bootstrap.mjs` | pre-exec validation (candidate) or the pinned abort (historical) |
-| `grants-admission` | `cdp-intents`, `cdp-state`, `cdp-session` | grant and serialization refusals; admission-order probes |
-| `session-transport` | `cdp-session.mjs` | outbound-frame behavior through the production session and real transport |
+| `grants-admission` | `cdp-intents`, `cdp-state`, `cdp-session`, `cdp-refs` | grant, serialization, worker-session and ref-decision refusals; admission-order probes |
+| `session-transport` | `cdp-session.mjs` | outbound-frame behavior through the production session on both an injected connect factory and a real inspector child, plus loopback admission of the default factory |
 | `endpoint-watch` | `cdp-endpoint.mjs` | refusal channel, replacement, truncation, split append |
 | `endpoint-replacement` | `cdp-endpoint.mjs` | repeated replacement refusal |
 
@@ -111,12 +111,28 @@ Exit statuses: 0 pass, 1 assertion failure, 3 refused environment.
 
 ## Authoritative API of record
 
-Candidate expectations target the CDP lane's authoritative API report
-`cdp-fixture-api-8c4fa004`, source commit
-`8c4fa004bce8e7fc3cb1ed3df942e5d1a5256683`, tree
-`8963a375427815a5da33960cfad49cd894ab6875`, `cdp-intents.mjs` sha256
-`bbfc2bbbd81cef2aea5cc76538ac354a5e1f8a69a9206178e7ca45bec45b4bbc`. A remote run
-observing a different refusal name is a real disagreement to report.
+Candidate expectations target immutable CDP source commit
+`24ecd9d954e0b21619f452958c0169f321143436`, tree
+`364807c2299ba32b2ad93724e36ae373ebb89d50`, successor to `8c4fa004`:
+
+| File | sha256 |
+| --- | --- |
+| `cdp-intents.mjs` | `b0ace58e32604d044f6c132e8d3f1a3d5889aa36321c42b4b0a830f814152462` |
+| `cdp-session.mjs` | `b441b3cf1ae749fe49461ef55c8497c6dcd3341510a789f58f21f1ad44dee0f7` |
+| `cdp-refs.mjs` | `80e32fd714c53e583c481bb3efea85a399bc703a6e6c3ba82c6bd0b0d5aac0ec` |
+| `cdp-transport.mjs` | `b147efcd0fdf5e9d3452e203d7ab241da708b945d991ab9061e68557d850592b` |
+
+Contract points these fixtures assert: `admitControlRequest(record, method,
+params, effects, workers)` takes the owned worker session list as a fifth
+argument; `NodeWorker.detach` and `NodeWorker.sendMessageToWorker` require a
+nonempty `sessionId` present in that list, checked before the inner message is
+validated; ref decisions carry an authoritative `decision` member and a bare
+`{ok:true}` is not success (`refDecision`, `requireAdmittedRef`);
+`createAdapterSession` accepts an injected `connect` factory defaulting to
+`CdpTransport.connect`; and loopback admission (`admitLoopbackEndpoint`) is
+enforced by the default factory, so the injected-factory path performs no
+endpoint admission of its own. A remote run observing a different refusal name
+is a real disagreement to report.
 
 ## Status and coverage limits
 
