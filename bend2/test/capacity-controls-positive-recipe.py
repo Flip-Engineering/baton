@@ -391,7 +391,8 @@ def main():
                     'receipt': str(destination)}
 
         attempt(run, record, 'receipt-validation', observe_receipt,
-                receipt=str(args.receipt))
+                receipt=str(args.receipt), receipt_sha256=args.receipt_sha256,
+                output_scope='gates receipts and logs under ' + str(run / 'receipt-logs'))
     (run / 'run.json').write_text(json.dumps({'children': record}, indent=2) + '\n')
     print('recipe complete; child receipts and streams are under ' + str(run))
 

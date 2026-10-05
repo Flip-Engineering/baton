@@ -1799,11 +1799,10 @@ def admit_archived_documents(directory, documents):
     discovery or endpoint work. Only the comparison with the fresh semantic
     reduction waits for classification.
     """
-    bound = admit_archive_documents(directory, documents)
-    inventory_path = directory / 'inventory.json'
-    reduction_path = directory / 'reduction.json'
-    archived_inventory = json.loads(inventory_path.read_text())
-    archived_reduction = json.loads(reduction_path.read_text())
+    bound, raw = admit_archive_documents(directory, documents)
+    # Parsing reads the retained snapshot, never the paths again.
+    archived_inventory = json.loads(raw['inventory.json'])
+    archived_reduction = json.loads(raw['reduction.json'])
     require(archived_inventory.get('schema') == INVENTORY_SCHEMA,
             'The archived inventory document names another schema')
     require(archived_reduction.get('schema') == REDUCTION_SCHEMA,
@@ -1841,16 +1840,38 @@ def admit_archive_documents(directory, documents):
     require(isinstance(documents, dict) and set(documents) == set(ARCHIVE_METADATA),
             'An archived envelope must bind exactly its metadata documents: '
             + succinct(sorted(documents or {})))
-    bound = {}
+    bound, raw = {}, {}
     for name in sorted(documents):
         digest = documents[name]
         require(isinstance(digest, str) and re.fullmatch(r'[0-9a-f]{64}', digest),
                 'The archived envelope records no digest for ' + name)
         path = archive_document_path(directory, name, 'The archived envelope')
-        require(sha256(path) == digest,
+        data = path.read_bytes()
+        # The bytes are read once: the digest, the recorded size and the parsed
+        # document all come from this one snapshot, so parsing can never use bytes
+        # other than the admitted ones, and re-serializing equivalent JSON does not
+        # inherit the admitted file digest.
+        require(hashlib.sha256(data).hexdigest() == digest,
                 'An archived metadata document differs from its recorded identity: ' + name)
-        bound[name] = {'sha256': digest, 'bytes': path.stat().st_size}
-    return bound
+        bound[name] = {'sha256': digest, 'bytes': len(data)}
+        raw[name] = data
+    return bound, raw
+
+
+def require_current_metadata(directory, bound):
+    """Require the metadata files to still be the admitted bytes.
+
+    The admitted identity is recorded as its own observation; this is the final
+    current-file observation across classification and artifact handling, so a
+    document changed after admission cannot pass as the admitted one.
+    """
+    for name in sorted(bound):
+        path = archive_document_path(directory, name, 'The archived envelope')
+        data = path.read_bytes()
+        require(len(data) == bound[name]['bytes']
+                and hashlib.sha256(data).hexdigest() == bound[name]['sha256'],
+                'The archived metadata document changed after admission: ' + name)
+    return {name: bound[name]['sha256'] for name in sorted(bound)}
 
 
 def verify_archived_inventory(directory, recorded, documents=None):
@@ -1860,7 +1881,7 @@ def verify_archived_inventory(directory, recorded, documents=None):
     contract, so a reserved-name document is never accepted without the digests
     the producer recorded for it.
     """
-    bound = admit_archive_documents(directory, documents)
+    bound, _raw = admit_archive_documents(directory, documents)
     current = producer_inventory(directory, exclude=ARCHIVE_METADATA)
     present = {member['path']: member for member in current['members']}
     recorded_members = {member['path']: member for member in recorded.get('members', [])}
@@ -2206,6 +2227,9 @@ def controls_evidence(directory, initial, compiler, audit=None, destination=None
                 'The archived reduction document differs from the fresh document')
         result['archived_origin_root'] = archived_inventory.get('root')
         result['archived_documents'] = archived_bound
+        # The admitted identity and the final current-file observation are recorded
+        # separately, and the final state must still be the admitted bytes.
+        result['archived_metadata_final'] = require_current_metadata(directory, archived_bound)
     result['inventory_sha256'] = inventory['inventory_sha256']
     result['reduction_sha256'] = result['reduction']['sha256']
     return result

@@ -1222,6 +1222,49 @@ class PackageGateReceipt(unittest.TestCase):
                                               archived=True, documents=bound)
                 self.assertEqual(calls, [])
 
+        # Equivalent JSON with a different raw serialization is a different file:
+        # it must not inherit the digest admitted for the earlier bytes.
+        reserialized = self.home / 'archive-reserialized'
+        reserialized.mkdir()
+        empty = hashlib.sha256(json.dumps({}, sort_keys=True,
+                                          separators=(',', ':')).encode()).hexdigest()
+        reduction = {'schema': PACKAGE.REDUCTION_SCHEMA, 'document': {}, 'sha256': empty}
+        inventory = {'schema': PACKAGE.INVENTORY_SCHEMA, 'members': [
+            {'path': 'a', 'bytes': 1, 'sha256': '0' * 64}]}
+        compact = {name: json.dumps(payload, sort_keys=True, separators=(',', ':'))
+                   for name, payload in ((PACKAGE.ARCHIVE_METADATA[0], inventory),
+                                         (PACKAGE.ARCHIVE_METADATA[1], reduction))}
+        admitted = {name: hashlib.sha256(text.encode()).hexdigest()
+                    for name, text in compact.items()}
+        spaced = {}
+
+        def write_spaced(target):
+            for name, payload in ((PACKAGE.ARCHIVE_METADATA[0], inventory),
+                                  (PACKAGE.ARCHIVE_METADATA[1], reduction)):
+                (target / name).write_text(json.dumps(payload, indent=4) + '\n')
+
+        write_spaced(reserialized)
+        for name in PACKAGE.ARCHIVE_METADATA:
+            spaced[name] = hashlib.sha256(
+                (reserialized / name).read_bytes()).hexdigest()
+        self.assertNotEqual(spaced, admitted)
+        self.assertEqual(json.loads((reserialized / PACKAGE.ARCHIVE_METADATA[0]).read_text()),
+                         json.loads(compact[PACKAGE.ARCHIVE_METADATA[0]]))
+        with self.assertRaisesRegex(RuntimeError, 'differs from its recorded identity'):
+            PACKAGE.controls_evidence(reserialized, PACKAGE.snapshot(), self.compiler(),
+                                      archived=True, documents=admitted)
+        self.assertEqual(calls, [])
+
+        # The final current-file observation is separate from the admitted identity.
+        bound, raw = PACKAGE.admit_archive_documents(reserialized, spaced)
+        self.assertEqual(sorted(raw), sorted(PACKAGE.ARCHIVE_METADATA))
+        self.assertEqual(PACKAGE.require_current_metadata(reserialized, bound),
+                         {name: spaced[name] for name in sorted(spaced)})
+        (reserialized / PACKAGE.ARCHIVE_METADATA[0]).write_text(
+            json.dumps(inventory) + '\n')
+        with self.assertRaisesRegex(RuntimeError, 'changed after admission'):
+            PACKAGE.require_current_metadata(reserialized, bound)
+
         missing = envelope / PACKAGE.ARCHIVE_METADATA[0]
         parked = envelope / (PACKAGE.ARCHIVE_METADATA[0] + '.parked')
         missing.rename(parked)
