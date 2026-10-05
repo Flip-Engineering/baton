@@ -157,14 +157,20 @@ const runIdentity = {
 };
 const writeEvidenceIndex = () => {
   // Complete admitted-input inventory: the full captured tree with byte
-  // digests, so consumers verify non-target files against their originals
-  // and bind every input through completion.
-  const inputs = [...pristine.entries()].map(([path, bytes]) => ({ path, sha256: sha256Of(bytes) }));
-  writeFileSync(join(SCRATCH, 'evidence', 'index.json'), JSON.stringify({
-    schema: 'capacity-controls/ordinary-evidence@2',
-    run: runIdentity,
+  // digests, keyed by path, so consumers verify non-target files against
+  // their originals and bind every input through completion. The run block
+  // mirrors index_path and scratch so envelope and index agree on the
+  // launched-run location without fallback parsing.
+  const inputs = {};
+  for (const [path, bytes] of pristine.entries()) inputs[path] = { sha256: sha256Of(bytes) };
+  const run = {
+    ...runIdentity,
     index_path: join(SCRATCH, 'evidence', 'index.json'),
     scratch: SCRATCH,
+  };
+  writeFileSync(join(SCRATCH, 'evidence', 'index.json'), JSON.stringify({
+    schema: 'capacity-controls/ordinary-evidence@2',
+    run,
     inputs,
     complete: evidenceComplete,
     cases: evidenceIndex,
