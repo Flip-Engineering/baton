@@ -430,9 +430,11 @@ def context_gate_environment(node, logs, name):
             'TMPDIR': str(scratch), 'LC_ALL': 'C'}
 
 
-def context_node_identity(node, payload, logs, name, suffix=''):
-    version = command([str(node), '--version'], payload,
-                      context_gate_environment(node, logs, name), logs,
+def context_node_identity(node, payload, logs, name, suffix='', extra_env=None):
+    env = context_gate_environment(node, logs, name)
+    if extra_env:
+        env.update(extra_env)
+    version = command([str(node), '--version'], payload, env, logs,
                       'context-node-version-' + name + suffix)
     return {'path': str(node.resolve()), 'bytes': node.stat().st_size,
             'sha256': sha256(node), 'version': version}
@@ -449,7 +451,7 @@ def run_context_gate(payload, logs, node, name, extra_env=None):
     if extra_env:
         env.update(extra_env)
     cwd = payload / CONTEXT_STAGE_ROOT
-    node_identity = context_node_identity(node, payload, logs, name)
+    node_identity = context_node_identity(node, payload, logs, name, extra_env=extra_env)
     stdout = logs / ('context-gate-' + name + '.stdout')
     stderr = logs / ('context-gate-' + name + '.stderr')
     before_path = logs / ('context-gate-' + name + '.payload-before.json')
@@ -462,10 +464,27 @@ def run_context_gate(payload, logs, node, name, extra_env=None):
                                 stdin=subprocess.DEVNULL, stdout=out, stderr=err)
     after = context_tree_state(payload)
     write_json(after_path, after)
-    after_identity = context_node_identity(node, payload, logs, name, '-after')
-    node_identity['versionAfter'] = after_identity['version']
-    node_identity['sha256After'] = after_identity['sha256']
-    node_identity['bytesAfter'] = after_identity['bytes']
+    post_identity = None
+    post_identity_error = None
+    try:
+        post_identity = context_node_identity(node, payload, logs, name, '-after',
+                                              extra_env=extra_env)
+    except BaseException as error:
+        post_identity_error = repr(error)
+    if post_identity is not None:
+        node_identity['versionAfter'] = post_identity['version']
+        node_identity['sha256After'] = post_identity['sha256']
+        node_identity['bytesAfter'] = post_identity['bytes']
+    if post_identity is not None:
+        post_record = {'status': 'verified', 'version': post_identity['version'],
+                       'sha256': post_identity['sha256'], 'bytes': post_identity['bytes']}
+        version_changed = post_identity['version'] != node_identity['version']
+        identity_changed = (post_identity['sha256'] != node_identity['sha256']
+                            or post_identity['bytes'] != node_identity['bytes'])
+    else:
+        post_record = {'status': 'unavailable', 'error': post_identity_error}
+        version_changed = None
+        identity_changed = None
     receipt = {'runtime': name, 'node': node_identity,
                'argv': [str(node), 'context-package-gate.mjs'], 'cwd': str(cwd),
                'environmentKeys': sorted(env), 'exit_code': result.returncode,
@@ -475,15 +494,18 @@ def run_context_gate(payload, logs, node, name, extra_env=None):
                'payloadSnapshot': {'before': {'path': before_path.name, **file_info(before_path)},
                                    'after': {'path': after_path.name, **file_info(after_path)},
                                    'equal': before == after},
-               'nodeVersionChanged': after_identity['version'] != node_identity['version'],
-               'nodeIdentityChanged': (after_identity['sha256'] != node_identity['sha256']
-                                       or after_identity['bytes'] != node_identity['bytes'])}
+               'postIdentity': post_record,
+               'nodeVersionChanged': version_changed,
+               'nodeIdentityChanged': identity_changed}
     receipt_path = logs / ('context-gate-' + name + '.json')
     write_json(receipt_path, receipt)
-    require(not receipt['nodeVersionChanged'],
+    require(post_identity is not None,
+            'The context gate node identity could not be verified after the package gate: '
+            + str(receipt_path))
+    require(not version_changed,
             'The context gate node reported a different version after the package gate: '
             + str(receipt_path))
-    require(not receipt['nodeIdentityChanged'],
+    require(not identity_changed,
             'The context gate node executable bytes changed during the package gate: '
             + str(receipt_path))
     require(receipt['payloadSnapshot']['equal'],
