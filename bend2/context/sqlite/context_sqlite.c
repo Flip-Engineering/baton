@@ -1774,6 +1774,9 @@ static int replay_run_slice(sqlite3 *db, AuthCtx *auth, ReplaySection *section,
                     *message ? strlen(*message) : 0);
       buf_lit(&section->statements, "}");
       section->statementCount++;
+      if (*code == SQLITE_INTERRUPT && input->cancelFlag && *input->cancelFlag) {
+        section->cancelled = 1; /* the progress handler stopped this section */
+      }
       if (*stage == BATON_CTX_SQL_OK) {
         *stage = (*code == SQLITE_INTERRUPT && input->cancelFlag && *input->cancelFlag)
                      ? BATON_CTX_SQL_CANCELLED
@@ -1952,7 +1955,6 @@ int baton_ctx_sql_chain_replay(const BatonCtxSqlChainReplayInput *input,
     }
     rows_free(&sv);
     free(cmsg);
-    if (input->cancelFlag && *input->cancelFlag) section->cancelled = 1;
   }
 
 emit:
