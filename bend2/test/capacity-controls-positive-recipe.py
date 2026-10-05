@@ -38,6 +38,23 @@ def digest(path):
     return hashlib.sha256(path.read_bytes()).hexdigest()
 
 
+def stream_record(path, run=None):
+    """One observed child stream, or an explicit unavailable observation.
+
+    Accounting reads cannot be allowed to supersede the exception being reported,
+    so a stream that is missing or unreadable is recorded as unavailable rather
+    than raising here.
+    """
+    try:
+        if path is None or not path.exists():
+            return {'path': None, 'bytes': 0, 'sha256': None, 'unavailable': 'not observed'}
+        data = path.read_bytes()
+        return {'path': None if run is None else str(path.relative_to(run)),
+                'bytes': len(data), 'sha256': hashlib.sha256(data).hexdigest()}
+    except OSError as error:
+        return {'path': None, 'bytes': 0, 'sha256': None, 'unavailable': repr(error)}
+
+
 def child(record, name, argv, run, stdin=None):
     """Run one child, keep its complete streams and record its actual identity."""
     stdout = run / 'out' / (name + '.stdout')
@@ -59,9 +76,7 @@ def child(record, name, argv, run, stdin=None):
         entry['exit_code'] = None
         entry['signal'] = getattr(locals().get('process', None), 'returncode', None)
         for stream, path in (('stdout', stdout), ('stderr', stderr)):
-            entry[stream] = {'path': str(path.relative_to(run)) if path.exists() else None,
-                             'bytes': path.stat().st_size if path.exists() else 0,
-                             'sha256': digest(path) if path.exists() else None}
+            entry[stream] = stream_record(path, run)
         try:
             settle(run, record, name, entry.get('outcome', 'failed'), **{
                 key: value for key, value in entry.items() if key not in ('name', 'outcome')})
@@ -70,9 +85,7 @@ def child(record, name, argv, run, stdin=None):
             raise error from record_error
         raise
     for stream, path in (('stdout', stdout), ('stderr', stderr)):
-        entry[stream] = {'path': str(path.relative_to(run)) if path.exists() else None,
-                         'bytes': path.stat().st_size if path.exists() else 0,
-                         'sha256': digest(path) if path.exists() else None}
+        entry[stream] = stream_record(path, run)
     settle(run, record, name, entry.get('outcome', 'completed'), **{
         key: value for key, value in entry.items() if key not in ('name', 'outcome')})
     return entry
@@ -298,6 +311,8 @@ def main():
 
         def observe_archive():
             """Extract the admitted archive and read the envelope it carries."""
+            settle(run, record, 'archive-retained', 'attempted',
+                   source=str(args.archive), expected_sha256=args.expected_archive_sha256)
             shutil.copyfile(args.archive, run / 'original-archive.tar.gz')
             retained_input = run / 'original-archive.tar.gz'
             observed = digest(retained_input)
@@ -309,6 +324,8 @@ def main():
                    provenance=str(args.archive),
                    scope='the archive bytes are retained before extraction and extracted from '
                          'the retained copy; the external path stays provenance')
+            settle(run, record, 'archive-extracted', 'attempted', source='original-archive.tar.gz',
+                   target=str(target))
             with tarfile.open(retained_input, 'r:gz') as archive:
                 members = archive.getmembers()
                 # Complete preflight first: every member is checked and the admitted
@@ -353,6 +370,8 @@ def main():
                          .get('archived', {}).get('documents') or {})
             if sorted(documents) != sorted(package.ARCHIVE_METADATA):
                 raise SystemExit('the archive manifest does not bind both metadata documents')
+            settle(run, record, 'archive-admitted', 'attempted', root=selected_root,
+                   documents=sorted(documents))
             current, bound = package.verify_archived_inventory(archived, result['inventory'],
                                                                documents)
             audit.mkdir(exist_ok=True)
@@ -368,23 +387,46 @@ def main():
             # request, both raw streams and the terminal record under the stem the
             # classifier writer itself uses, with the recorded digests agreeing.
             uncovered = []
+            verdicts = {str(verdict.get('id')): verdict
+                        for verdict in (envelope.get('classifier') or {}).get('verdicts') or []}
+            terminals = {}
             for identity in expected_ids:
                 stem = package.acquisition_stem(identity)
-                recorded = audit / (stem + '.acquisition.json')
-                if not recorded.is_file():
+                terminal_path = audit / (stem + '.acquisition.json')
+                if not terminal_path.is_file():
                     uncovered.append(identity)
                     continue
-                record = json.loads(recorded.read_text())
-                for suffix, field in (('.request.json', 'request'), ('.stdout', 'stdout'),
-                                      ('.stderr', 'stderr')):
-                    stream = audit / (stem + suffix)
-                    if not stream.is_file():
-                        raise SystemExit('a retained acquisition stream is missing: ' + stream.name)
-                    data = stream.read_bytes()
-                    if (len(data) != record.get(field + '_bytes')
-                            or digest(stream) != record.get(field + '_sha256')):
+                terminal = json.loads(terminal_path.read_text())
+                terminals[identity] = terminal
+                # The request is the case this run asked about.
+                request = json.loads((audit / (stem + '.request.json')).read_text())
+                if (request.get('case') or {}).get('id') != identity:
+                    raise SystemExit('a retained request names another case: ' + identity)
+                # Both raw streams are the bytes their terminal record describes,
+                # with the digest taken from the buffer that was measured.
+                for suffix, field in (('.stdout', 'stdout'), ('.stderr', 'stderr')):
+                    stream_path = audit / (stem + suffix)
+                    if not stream_path.is_file():
+                        raise SystemExit('a retained acquisition stream is missing: '
+                                         + stream_path.name)
+                    data = stream_path.read_bytes()
+                    if (len(data) != terminal.get(field + '_bytes')
+                            or hashlib.sha256(data).hexdigest() != terminal.get(field + '_sha256')):
                         raise SystemExit('a retained acquisition stream disagrees with its '
-                                         'terminal record: ' + stream.name)
+                                         'terminal record: ' + stream_path.name)
+                # The reported verdict is the one this acquisition recorded, and
+                # the envelope's acquisition record is this terminal.
+                verdict = verdicts.get(identity)
+                if verdict is None:
+                    raise SystemExit('the readback reported no verdict for a retained case: '
+                                     + identity)
+                if (verdict.get('acquisition') or {}) != terminal:
+                    raise SystemExit('a retained terminal acquisition differs from the verdict '
+                                     'acquisition: ' + identity)
+                for field in ('state', 'exit_code', 'signal', 'spawn_error'):
+                    if terminal.get(field) != (verdict.get('acquisition') or {}).get(field):
+                        raise SystemExit('a retained terminal process field differs from the '
+                                         'verdict: ' + field)
             if uncovered:
                 raise SystemExit('the acquisition omits selected cases: ' + repr(uncovered))
             records = sorted(entry.name for entry in audit.rglob('*') if entry.is_file())

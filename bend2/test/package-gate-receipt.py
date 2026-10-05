@@ -89,6 +89,9 @@ class PackageGateReceipt(unittest.TestCase):
             self.addCleanup(setattr, PACKAGE, name, getattr(PACKAGE, name))
         PACKAGE.discover_controls = lambda: self.controls
         self.verdicts.clear()
+        # The real classifier is kept so the endpoint fixture can exercise it while
+        # the transport is substituted.
+        self._real_classify_control = PACKAGE.classify_control
 
         def classify(case, result, streams, baseline, evidence_root, source, compiler_sha256,
                      compiler_path=None, delta=None, supplied=None, audit=None):
@@ -1110,6 +1113,64 @@ class PackageGateReceipt(unittest.TestCase):
         self.assertEqual(set(PACKAGE.VERIFIER_MEMBERS)
                          - set(PACKAGE.ORDINARY_RUN_VERIFIER_MEMBERS), set())
 
+    def archived_envelope(self, original, result, name='archived-envelope'):
+        """A faithful extracted envelope: the real graph plus its two documents."""
+        archived = self.home / name
+        shutil.copytree(original, archived)
+        (archived / 'inventory.json').write_text(json.dumps(result['inventory']))
+        (archived / 'reduction.json').write_text(json.dumps(result['reduction']))
+        documents = {member: hashlib.sha256((archived / member).read_bytes()).hexdigest()
+                     for member in PACKAGE.ARCHIVE_METADATA}
+        return archived, documents
+
+    def test_the_archived_reader_accepts_a_faithful_envelope(self):
+        original = self.full_evidence()
+        result = PACKAGE.controls_evidence(original, PACKAGE.snapshot(), self.compiler())
+        archived, documents = self.archived_envelope(original, result)
+        envelope = PACKAGE.controls_evidence(archived, PACKAGE.snapshot(), self.compiler(),
+                                            archived=True, documents=documents,
+                                            audit=self.home / 'archived-audit')
+        self.assertEqual(envelope['reduction_sha256'], result['reduction_sha256'])
+        self.assertEqual(envelope['inventory_sha256'], result['inventory_sha256'])
+        self.assertEqual(envelope['archived_documents'],
+                         {member: documents[member] for member in sorted(documents)})
+        self.assertEqual(envelope['archived_metadata_final'],
+                         {member: documents[member] for member in sorted(documents)})
+
+    def test_archived_reader_defects_refuse(self):
+        original = self.full_evidence()
+        result = PACKAGE.controls_evidence(original, PACKAGE.snapshot(), self.compiler())
+        def self_consistent(payload, field, value, digest_field):
+            """Change the graph and make the document reproduce its own digest."""
+            updated = {**payload, field: value}
+            updated[digest_field] = hashlib.sha256(json.dumps(
+                value, sort_keys=True, separators=(',', ':')).encode()).hexdigest()
+            return updated
+
+        cases = [
+            ('member graph', 'inventory.json',
+             lambda payload: self_consistent(
+                 payload, 'members',
+                 payload['members'] + [{'path': 'ghost', 'bytes': 1, 'sha256': '0' * 64}],
+                 'inventory_sha256'),
+             'inventory document does not describe this member graph'),
+            ('embedded reduction', 'reduction.json',
+             lambda payload: self_consistent(
+                 payload, 'document', {**payload['document'], 'cases': 99}, 'sha256'),
+             'does not match the fresh stable reduction'),
+        ]
+        for name, document, mutate, message in cases:
+            with self.subTest(name=name):
+                archived, documents = self.archived_envelope(original, result,
+                                                             'archived-' + name.replace(' ', '-'))
+                payload = json.loads((archived / document).read_text())
+                (archived / document).write_text(json.dumps(mutate(payload)))
+                documents = {member: hashlib.sha256((archived / member).read_bytes()).hexdigest()
+                             for member in PACKAGE.ARCHIVE_METADATA}
+                with self.assertRaisesRegex(RuntimeError, message):
+                    PACKAGE.controls_evidence(archived, PACKAGE.snapshot(), self.compiler(),
+                                              archived=True, documents=documents)
+
     def test_the_classifier_member_spelling_cases(self):
         """Canonical, historical-only, equal duplicates and refusals."""
         member = 'classifier_module_sha256'
@@ -1327,6 +1388,9 @@ class PackageGateReceipt(unittest.TestCase):
         """
         original_run = PACKAGE.subprocess.run
         self.addCleanup(setattr, PACKAGE.subprocess, 'run', original_run)
+        substituted = PACKAGE.classify_control
+        PACKAGE.classify_control = self._real_classify_control
+        self.addCleanup(setattr, PACKAGE, 'classify_control', substituted)
         case = self.laws()[0]
         historical = {key: value for key, value in self.verifier.items()
                       if key != 'classifier_module_sha256'}
@@ -1362,6 +1426,11 @@ class PackageGateReceipt(unittest.TestCase):
                          self.verifier['classifier_module_sha256'])
         # The raw endpoint map is retained rather than replaced.
         self.assertEqual(verdict['verifier_raw'], historical)
+        # Downstream canonical indexing over the normalized closure, which is the
+        # use that failed before normalization.
+        closure = {member: verdict['verifier'][member] for member in PACKAGE.VERIFIER_MEMBERS}
+        self.assertEqual(closure['classifier_module_sha256'],
+                         self.verifier['classifier_module_sha256'])
         self.assertIn('--classify', seen['argv'])
         stem = PACKAGE.acquisition_stem(case['id'])
         for suffix in PACKAGE.ACQUISITION_SUFFIXES:
