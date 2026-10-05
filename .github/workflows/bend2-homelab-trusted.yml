@@ -1,0 +1,162 @@
+name: bend2-homelab-trusted
+
+'on':
+  push:
+    branches: [codex/bend2-homelab-validation-20261005]
+
+permissions:
+  contents: read
+
+jobs:
+  linux-native:
+    # GitHub's self-hosted job execution ceiling is five days.
+    timeout-minutes: 7200
+    runs-on:
+      group: baton2-native-homelab
+      labels: baton2-native-linux-x64
+    env:
+      BEND_NO_TELEMETRY: '1'
+      CC: /usr/bin/clang-19
+    steps:
+      - name: Checkout admitted source
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+
+      - name: Select Node 22
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: '22'
+
+      - name: Preserve source and install pinned Linux compiler
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(uname -s)" = Linux
+          test "$(uname -m)" = x86_64
+          test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+          test -z "$(git status --porcelain=v1)"
+          run="$RUNNER_TEMP/baton2-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT"
+          test ! -e "$run"
+          mkdir -p "$run/evidence" "$run/toolchain"
+          printf 'BATON2_VALIDATION_RUN=%s\n' "$run" >> "$GITHUB_ENV"
+          jq -n --arg head "$(git rev-parse HEAD)" \
+            --arg tree "$(git rev-parse HEAD^{tree})" \
+            --arg bend2_tree "$(git rev-parse HEAD:bend2)" \
+            --arg run_id "$GITHUB_RUN_ID" --arg attempt "$GITHUB_RUN_ATTEMPT" \
+            --arg workflow_ref "$GITHUB_WORKFLOW_REF" --arg runner "$RUNNER_NAME" \
+            '{head:$head,tree:$tree,bend2_tree:$bend2_tree,run_id:$run_id,attempt:$attempt,workflow_ref:$workflow_ref,runner:$runner}' \
+            > "$run/evidence/source-before.json"
+          git archive HEAD | gzip > "$run/evidence/source.tar.gz"
+          archive="$run/toolchain/bend-2.0.25-linux-x64.tar.gz"
+          curl --proto '=https' --tlsv1.2 -fsSL \
+            https://github.com/bendlang/bend/releases/download/v2.0.25/bend-2.0.25-linux-x64.tar.gz \
+            -o "$archive"
+          printf '91c0e2640f8d2e3e73fd3dd62ed4d178ce9a6f7ce8f8980b4dc4abf7a6f9ccd4  %s\n' "$archive" | sha256sum -c -
+          tar -tzf "$archive" > "$run/evidence/compiler-archive-members.txt"
+          mkdir "$run/toolchain-home"
+          tar -xzf "$archive" --strip-components=1 -C "$run/toolchain-home"
+          bend="$run/toolchain-home/bin/bend"
+          test "$("$bend" version)" = 'bend 2.0.25'
+          printf 'BEND=%s\n' "$bend" >> "$GITHUB_ENV"
+          sha256sum "$archive" "$bend" "$CC" \
+            > "$run/evidence/toolchain-sha256.txt"
+          find "$run/toolchain-home/bend2" -type f -print0 | sort -z | xargs -0 sha256sum \
+            > "$run/evidence/compiler-library-sha256.txt"
+          "$CC" --version > "$run/evidence/cc-version.txt"
+          node --version > "$run/evidence/node-version.txt"
+          python3 --version > "$run/evidence/python-version.txt"
+          uname -a > "$run/evidence/uname.txt"
+          lscpu > "$run/evidence/cpu.txt"
+          cat /proc/meminfo > "$run/evidence/memory-before.txt"
+
+      - name: Compile the law-bearing coordinator
+        shell: bash
+        run: |
+          set -euo pipefail
+          log="$BATON2_VALIDATION_RUN/evidence/build-native.log"
+          if /usr/bin/time -v sh bend2/scripts/build-native.sh > "$log" 2>&1; then
+            printf '{"exit_code":0}\n' > "$BATON2_VALIDATION_RUN/evidence/build-native-exit.json"
+          else
+            result=$?
+            printf '{"exit_code":%s}\n' "$result" > "$BATON2_VALIDATION_RUN/evidence/build-native-exit.json"
+            cat "$log"
+            exit "$result"
+          fi
+
+      - name: Verify every discovered law control
+        shell: bash
+        run: |
+          set -euo pipefail
+          log="$BATON2_VALIDATION_RUN/evidence/laws-check.log"
+          if /usr/bin/time -v node bend2/scripts/laws-check.mjs "$BEND" > "$log" 2>&1; then
+            printf '{"exit_code":0}\n' > "$BATON2_VALIDATION_RUN/evidence/laws-check-exit.json"
+          else
+            result=$?
+            printf '{"exit_code":%s}\n' "$result" > "$BATON2_VALIDATION_RUN/evidence/laws-check-exit.json"
+            cat "$log"
+            exit "$result"
+          fi
+
+      - name: Run native checks
+        shell: bash
+        run: |
+          set -euo pipefail
+          log="$BATON2_VALIDATION_RUN/evidence/check-native.log"
+          if /usr/bin/time -v sh bend2/scripts/check-native.sh > "$log" 2>&1; then
+            printf '{"exit_code":0}\n' > "$BATON2_VALIDATION_RUN/evidence/check-native-exit.json"
+          else
+            result=$?
+            printf '{"exit_code":%s}\n' "$result" > "$BATON2_VALIDATION_RUN/evidence/check-native-exit.json"
+            cat "$log"
+            exit "$result"
+          fi
+          test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+          test -z "$(git status --porcelain=v1)"
+          git rev-parse HEAD HEAD^{tree} HEAD:bend2 \
+            > "$BATON2_VALIDATION_RUN/evidence/source-after.txt"
+          sha256sum .scratch/bend2/baton2 > "$BATON2_VALIDATION_RUN/evidence/binary-sha256.txt"
+          cat /proc/meminfo > "$BATON2_VALIDATION_RUN/evidence/memory-after.txt"
+
+      - name: Preserve final source and toolchain state
+        if: always()
+        shell: bash
+        env:
+          VALIDATION_JOB_STATUS: ${{ job.status }}
+        run: |
+          set -euo pipefail
+          test -n "${BATON2_VALIDATION_RUN:-}"
+          evidence="$BATON2_VALIDATION_RUN/evidence"
+          jq -n --arg head "$(git rev-parse HEAD)" \
+            --arg tree "$(git rev-parse HEAD^{tree})" \
+            --arg bend2_tree "$(git rev-parse HEAD:bend2)" \
+            --arg source_status "$(git status --porcelain=v1)" \
+            --arg job_status "$VALIDATION_JOB_STATUS" \
+            '{head:$head,tree:$tree,bend2_tree:$bend2_tree,source_status:$source_status,job_status:$job_status}' \
+            > "$evidence/source-final.json"
+          cat /proc/meminfo > "$evidence/memory-final.txt"
+          if test -n "${BEND:-}"; then
+            sha256sum "$BATON2_VALIDATION_RUN/toolchain/bend-2.0.25-linux-x64.tar.gz" "$BEND" "$CC" \
+              > "$evidence/toolchain-final-sha256.txt"
+            find "$BATON2_VALIDATION_RUN/toolchain-home/bend2" -type f -print0 | sort -z | xargs -0 sha256sum \
+              > "$evidence/compiler-library-final-sha256.txt"
+            cmp "$evidence/toolchain-sha256.txt" "$evidence/toolchain-final-sha256.txt"
+            cmp "$evidence/compiler-library-sha256.txt" "$evidence/compiler-library-final-sha256.txt"
+          fi
+          if test -f .scratch/bend2/baton2; then
+            sha256sum .scratch/bend2/baton2 > "$evidence/binary-final-sha256.txt"
+          fi
+          test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+          test -z "$(git status --porcelain=v1)"
+
+      - name: Preserve checker output and validation evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: baton2-linux-x64-${{ github.sha }}-${{ github.run_attempt }}
+          path: |
+            ${{ env.BATON2_VALIDATION_RUN }}/evidence/
+            ${{ env.BATON2_VALIDATION_RUN }}/toolchain/
+          if-no-files-found: error
+          include-hidden-files: true
