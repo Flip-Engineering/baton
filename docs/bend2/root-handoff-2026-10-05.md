@@ -1,7 +1,7 @@
 # Baton2 root handoff
 
 This contributor handoff preserves unfinished operator work as of 2026-10-05
-22:43 UTC. Host and qualification observations retain their recorded times.
+23:18 UTC. Host and qualification observations retain their recorded times.
 Read the native task records and current source before resuming.
 Issue records describe defects; native reports contain current ownership and evidence.
 
@@ -511,12 +511,19 @@ lease; its exact tip remains at an archive tag and in `master` history.
 [The cleanup report](branch-consolidation-2026-10-05.md) records exact identities
 and the remaining integration work. Active source and worktrees remain owned.
 
-All six contributor App registrations were read back through GitHub and have
-the requested `Flip Baton - SERIES` names. The Git helper already applies the
-same author and committer format. GitHub's managed bot account login remains
-visible in linked actor views; its Bot schema exposes login and avatar fields.
-The identity documentation describes this platform behavior. Published commit
-history was preserved.
+All six contributor App registrations have the requested `Flip Baton - SERIES`
+names. The operator requires the actual contribution display to use those
+names with the approved avatars. Earlier Claude commits link to the separate
+`claude` user account. Root's optional `authorEmail` repair is published at
+`177fbf73c8380280f7b9127ae7b228d1e75214dc` and passed 15 scoped remote fixtures;
+Controls owns later source composition. The operator selected `flip.engineering`
+for the six addresses. Live email activation and name/avatar acceptance are due.
+Two measured GitHub examples render gray avatars despite live Gravatars, so
+the avatar path remains unqualified. Browser Harness is installed and its
+first Chrome connection setting is pending. The active browser's Cloudflare
+account differs from the existing Flip tunnel account. Verify domain authority
+before creating addresses. [The qualification report](contributor-attribution-2026-10-05.md)
+preserves source, evidence and the remaining work. Published history is preserved.
 
 Validated work must reach the appropriate repository branch. Consolidate
 reviewed immutable source onto `bend2-rewrite` with authored lineage intact,
