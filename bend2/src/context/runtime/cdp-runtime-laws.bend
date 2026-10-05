@@ -298,11 +298,28 @@ law adapter_failure_marks_an_unknown_stop_historical:
 def adapter_failure_marks_an_unknown_stop_historical():
   {==}
 
-law a_child_exit_leaves_no_recorded_stop:
-  for +previous: R.StopLiveness
-  {R.stop_liveness(previous, R.EvChildExit{}) == R.StopAbsent{} : R.StopLiveness}
+law a_child_exit_keeps_an_absent_stop_absent:
+  {R.stop_liveness(R.StopAbsent{}, R.EvChildExit{}) == R.StopAbsent{} : R.StopLiveness}
 
-def a_child_exit_leaves_no_recorded_stop(previous):
+def a_child_exit_keeps_an_absent_stop_absent():
+  {==}
+
+law a_child_exit_marks_a_live_stop_historical:
+  {R.stop_liveness(R.StopLive{}, R.EvChildExit{}) == R.StopHistorical{} : R.StopLiveness}
+
+def a_child_exit_marks_a_live_stop_historical():
+  {==}
+
+law a_child_exit_marks_an_unknown_stop_historical:
+  {R.stop_liveness(R.StopUnknown{}, R.EvChildExit{}) == R.StopHistorical{} : R.StopLiveness}
+
+def a_child_exit_marks_an_unknown_stop_historical():
+  {==}
+
+law a_child_exit_keeps_a_historical_stop_historical:
+  {R.stop_liveness(R.StopHistorical{}, R.EvChildExit{}) == R.StopHistorical{} : R.StopLiveness}
+
+def a_child_exit_keeps_a_historical_stop_historical():
   {==}
 
 law only_a_live_stop_admits_a_pause_scoped_reference:

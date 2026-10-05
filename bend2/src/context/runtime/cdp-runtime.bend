@@ -439,7 +439,7 @@ def stop_liveness(+previous: StopLiveness, +event: RuntimeEvent) -> StopLiveness
     case EvContextDestroyed{}: StopHistorical{}
     case EvResumeRejected{}: StopUnknown{}
     case EvAdapterFailed{}: stop_lost(previous)
-    case EvChildExit{}: StopAbsent{}
+    case EvChildExit{}: stop_lost(previous)
     case other: previous
 
 # An adapter failure invalidates a recorded stop without inventing stop history: a live or
@@ -463,19 +463,29 @@ def stop_is_live(+stop: StopLiveness) -> Bool:
 # caller owner's module. This module supplies the model and the predicates only; it holds no
 # reference identity, no counter and no admission authority of its own.
 #
-# Caller contract. Three limits belong to any caller that carries this model:
-#  1. pause_scoped_admitted is a stop-liveness predicate, not a complete admission, and it
-#     cannot stand alone for any part of one. The caller applies its own ordered checks first:
-#     the record is stopped (refOutsidePause), the reference names a live thread, and the
-#     runtime, adapter, epoch and mutation generation match canonically; stop liveness is the
-#     additional gate for a pause-scoped kind, checked after those.
-#  2. The caller updates the stop only for a transition its record actually admits. It
+# Caller contract. A caller that carries this model applies these steps in this order:
+#  1. decode the reference shape as applicable, which is the codec owner's parsing;
+#  2. for a pause-scoped kind only, meaning kind frame, scope or object, require the record to
+#     be stopped and a recorded stop to exist, refusing as refOutsidePause otherwise, and then
+#     require that stop to be live, refusing as refStopNotLive otherwise. The predicate below
+#     supplies this step's liveness test and nothing else. A reference whose kind is not
+#     pause-scoped acquires no paused-state requirement and no stop requirement from this step;
+#  3. require the reference to name a live thread, refusing as refThreadUnknown otherwise;
+#  4. apply the production identity checks: runtime, adapter, epoch and mutation generation
+#     must match canonically.
+# Two further limits belong to the caller:
+#  A. The caller updates the stop only for a transition its record actually admits. It
 #     evaluates stop_liveness beside advance and keeps the previous stop when advance refuses
-#     the event; a refused event cannot mutate the stop merely because it was attempted.
-#  3. The bare event transition covers the ordinary cases only. An observed resume while the
+#     the event, so a refused event cannot mutate the stop merely because it was attempted.
+#  B. The bare event transition covers the ordinary cases only. An observed resume while the
 #     record is already running, and a rejected send, are reconciliation cases the caller owns
-#     with its own request-epoch and observed-resume evidence: this module records no request
+#     with its own request-epoch and observed-resume evidence; this module records no request
 #     identity and observes no event stream, so it supplies no such reconciliation.
+#
+# A child exit marks a recorded stop historical through stop_lost, so an absent stop stays
+# absent and a live, unknown or historical stop becomes historical; absence means that no stop
+# was ever recorded. This is a native model proposal: it is not claimed to match the adapter
+# session, whose childExited currently preserves its recorded stop and refuses by runtime state.
 #
 # The complete native contribution a caller needs is the predicate below: it takes the
 # caller's already parsed kind flag and the caller's carried stop, and decides whether a
