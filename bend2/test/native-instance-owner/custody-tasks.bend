@@ -41,8 +41,18 @@ def rebuild_empty(result: Maybe<Custody.Duty>) -> Bool:
 
 def rebuild_open_with_wake(result: Maybe<Custody.Duty>) -> Bool:
   match result:
-    case Some{duty}: Bool.and(Custody.duty_open(duty),Custody.wake_owed_of(duty))
+    case Some{+duty}: Bool.and(Custody.duty_open(duty),Custody.wake_owed_of(duty))
     case None{}: False{}
+
+def rebuild_carries(result: Maybe<Custody.Duty>, expected: String) -> Bool:
+  match result:
+    case Some{duty}: String.eq(Custody.errors_of(duty),expected)
+    case None{}: False{}
+
+def rebuild_duty_or_open(result: Maybe<Custody.Duty>, +owner: Custody.OwnerInstance, +attempt: Custody.Attempt) -> Custody.Duty:
+  match result:
+    case Some{duty}: duty
+    case None{}: Custody.open_duty(owner,attempt)
 
 def checks() -> IO(Unit):
   do IO<Unit>:
@@ -50,21 +60,31 @@ def checks() -> IO(Unit):
     +attempt : Custody.Attempt <- IO.pure(Custody.Attempt,sample_attempt())
     +sealed : Custody.Duty <- IO.pure(Custody.Duty,Custody.seal_completion(Custody.open_duty(owner,attempt),Custody.RefDone{"exit 0"}))
     failed : Custody.Duty <- IO.pure(Custody.Duty,Custody.record_delivery(sealed,Custody.RefFail{"delivery failed"}))
-    open1 : Unit <- check("failed-delivery-settles-and-leaves-duty-open",Custody.duty_open(failed))
+    open1 : Unit <- check("failed-delivery-settles-and-leaves-wake-owed",Custody.wake_owed_of(failed))
     +delivered : Custody.Duty <- IO.pure(Custody.Duty,Custody.record_delivery(sealed,Custody.RefDone{"report-1 delivered"}))
     wake : Unit <- check("delivered-outcome-clears-the-wake",Bool.not(Custody.wake_owed_of(delivered)))
-    closed : Custody.Duty <- IO.pure(Custody.Duty,Custody.record_continuation(Custody.record_ack(Custody.record_settle(delivered,Custody.RefFail{"settle failed"}),True{},Custody.RefDone{"acknowledged"}),Custody.RefDone{"continued"}))
-    retained : Unit <- check("closed-duty-retains-its-errors",Bool.and(Bool.not(Custody.duty_open(closed)),Bool.not(String.eq(Custody.errors_of(closed),""))))
+    +broken : Custody.Duty <- IO.pure(Custody.Duty,Custody.record_settle(delivered,Custody.RefFail{"settle failed"}))
+    retained : Unit <- check("failed-settlement-keeps-responsibility",Custody.settle_owed_of(broken))
+    +retriedsettle : Custody.Duty <- IO.pure(Custody.Duty,Custody.record_settle(broken,Custody.RefDone{"settled"}))
+    evidence : Unit <- check("settlement-retry-retains-error",String.eq(Custody.errors_of(retriedsettle),"settle failed\n"))
+    +closed : Custody.Duty <- IO.pure(Custody.Duty,Custody.record_continuation(Custody.record_ack(retriedsettle,True{},Custody.RefDone{"acknowledged"}),Custody.RefDone{"continued"}))
+    retires : Unit <- check("closed-duty-retains-its-errors",Bool.and(Bool.not(Custody.duty_open(closed)),Bool.not(String.eq(Custody.errors_of(closed),""))))
     unacked : Custody.Duty <- IO.pure(Custody.Duty,Custody.record_continuation(Custody.record_ack(Custody.record_settle(delivered,Custody.RefDone{"none-pending"}),False{},Custody.RefDone{"returned-without-marker"}),Custody.RefDone{"continued"}))
     owed : Unit <- check("ack-without-marker-keeps-duty-open",Custody.duty_open(unacked))
     historical : Unit <- check("attempt-check-after-slot-replacement",duty_done(Custody.check_attempt(Custody.open_duty(owner,attempt),owner,attempt)))
     foreign : Unit <- check("foreign-owner-token-refused",refused_stale_owner_is(Custody.check_attempt(Custody.open_duty(owner,attempt),Custody.Owner{"dev:main","token-2"},attempt),"token-1"))
     superseded : Unit <- check("superseded-slot-generation-refused",refused_stale_slot_is(Custody.check_slot(Custody.Slot{"session-1",2},"session-1",3),2))
     advanced : Unit <- check("advanced-slot-refuses-old-generation",refused_stale_slot_is(Custody.check_slot(Custody.advance_slot(Custody.Slot{"session-1",1},"session-1",2),"session-1",1),2))
-    empty : Unit <- check("rebuild-acknowledged-is-empty",rebuild_empty(Custody.rebuild(attempt,owner,True{},Custody.RefDone{"enumerated"},Custody.RefDone{"none-pending"},Custody.RefDone{"none-pending"})))
-    window : Unit <- check("released-not-acknowledged-rebuilds-open",rebuild_open_with_wake(Custody.rebuild(attempt,owner,False{},Custody.RefDone{"enumerated"},Custody.RefOpen{},Custody.RefDone{"none-pending"})))
-    acknotice : Unit <- check("acknowledged-owed-notice-stays-open",rebuild_open_with_wake(Custody.rebuild(attempt,owner,True{},Custody.RefDone{"enumerated"},Custody.RefFail{"delivery failed"},Custody.RefDone{"none-pending"})))
-    clear : Unit <- check("acknowledged-fulfilled-rebuilds-empty",rebuild_empty(Custody.rebuild(attempt,owner,True{},Custody.RefDone{"enumerated"},Custody.RefDone{"report delivered"},Custody.RefDone{"settled"})))
+    empty : Unit <- check("rebuild-acknowledged-is-empty",rebuild_empty(Custody.rebuild(attempt,owner,True{},Custody.RefDone{"enumerated"},Custody.RefDone{"report delivered"},Custody.RefDone{"settled"},Custody.RefDone{"recovered"},"")))
+    window : Unit <- check("released-not-acknowledged-rebuilds-open",rebuild_open_with_wake(Custody.rebuild(attempt,owner,False{},Custody.RefDone{"enumerated"},Custody.RefOpen{},Custody.RefDone{"none-pending"},Custody.RefDone{"recovered"},"")))
+    acknotice : Unit <- check("acknowledged-owed-notice-stays-open",rebuild_open_with_wake(Custody.rebuild(attempt,owner,True{},Custody.RefDone{"enumerated"},Custody.RefFail{"delivery failed"},Custody.RefDone{"settled"},Custody.RefDone{"recovered"},"enumerated delivery failure\n")))
+    clear : Unit <- check("acknowledged-fulfilled-rebuilds-empty",rebuild_empty(Custody.rebuild(attempt,owner,True{},Custody.RefDone{"enumerated"},Custody.RefDone{"report delivered"},Custody.RefDone{"settled"},Custody.RefDone{"recovered"},"")))
+    unackedclear : Unit <- check("unacknowledged-fulfilled-rebuilds-open",rebuild_open_with_wake(Custody.rebuild(attempt,owner,False{},Custody.RefDone{"enumerated"},Custody.RefDone{"delivered"},Custody.RefDone{"settled"},Custody.RefDone{"recovered"},"")))
+    carries : Unit <- check("rebuild-carries-enumerated-errors",rebuild_carries(Custody.rebuild(attempt,owner,True{},Custody.RefDone{"enumerated"},Custody.RefFail{"delivery failed"},Custody.RefDone{"settled"},Custody.RefDone{"recovered"},"enumerated delivery failure\n"),"enumerated delivery failure\n"))
+    +rebuilt : Maybe<Custody.Duty> <- IO.pure(Maybe<Custody.Duty>,Custody.rebuild(attempt,owner,True{},Custody.RefDone{"enumerated"},Custody.RefFail{"enumerated delivery failure"},Custody.RefDone{"settled"},Custody.RefDone{"recovered"},"enumerated delivery failure\n"))
+    retriednotice : Custody.Duty <- IO.pure(Custody.Duty,rebuild_duty_or_open(rebuilt,owner,attempt))
+    carried : Unit <- check("rebuild-retry-retains-enumerated-errors",String.eq(Custody.errors_of(retriednotice),"enumerated delivery failure\n"))
+    wakeagain : Unit <- check("rebuild-retry-clears-wake",Bool.not(Custody.wake_owed_of(retriednotice)))
     wrongattempt : Unit <- check("differing-attempt-refused",Bool.not(duty_done(Custody.check_attempt(Custody.open_duty(owner,attempt),owner,Custody.Attempt{"attempt-b","/tmp/db.attempt-attempt-b","session-1","7",2}))))
     +ackd : Custody.Duty <- IO.pure(Custody.Duty,Custody.record_continuation(Custody.record_ack(Custody.record_delivery(Custody.seal_completion(Custody.open_duty(owner,attempt),Custody.RefDone{"exit 0"}),Custody.RefDone{"delivered"}),True{},Custody.RefDone{"acknowledged"}),Custody.RefDone{"continued"}))
     +settlefail : Custody.Duty <- IO.pure(Custody.Duty,Custody.record_settle(ackd,Custody.RefFail{"settle failed"}))
@@ -72,9 +92,11 @@ def checks() -> IO(Unit):
     settled2 : Custody.Duty <- IO.pure(Custody.Duty,Custody.record_settle(settlefail,Custody.RefDone{"settled"}))
     closes : Unit <- check("fulfilled-settlement-closes-duty",Bool.not(Custody.duty_open(settled2)))
     +noticed : Custody.Duty <- IO.pure(Custody.Duty,Custody.record_delivery(Custody.seal_completion(Custody.open_duty(owner,attempt),Custody.RefDone{"exit 0"}),Custody.RefFail{"notice failed"}))
-    wakekept : Unit <- check("failed-notice-keeps-wake-owed",Custody.duty_open(noticed))
+    wakekept : Unit <- check("failed-notice-keeps-wake-owed",Custody.wake_owed_of(noticed))
     retried : Custody.Duty <- IO.pure(Custody.Duty,Custody.record_delivery(noticed,Custody.RefDone{"retry delivered"}))
-    retires : Unit <- check("notice-retry-clears-wake",Bool.not(Custody.wake_owed_of(retried)))
+    retires2 : Unit <- check("notice-retry-clears-wake",Bool.not(Custody.wake_owed_of(retried)))
+    finished : Custody.Duty <- IO.pure(Custody.Duty,Custody.record_continuation(retried,Custody.RefDone{"continued"}))
+    completes : Unit <- check("notice-retry-completes-retirement",Bool.not(Custody.duty_open(finished)))
 
 def failure(mode: String) -> IO(Result<&1,&1,U32 & String,Unit>):
   match mode:

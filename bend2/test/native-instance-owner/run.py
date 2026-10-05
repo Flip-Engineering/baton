@@ -98,6 +98,7 @@ def main():
         "tree_before": git("rev-parse", "HEAD^{tree}"),
         "owned_clean": git("status", "--porcelain", "--", *OWNED) == "",
         "owned_status": git("status", "--porcelain", "--", *OWNED),
+        "owned_sha256_before": {path: sha256(root / path) for path in OWNED},
         "bend_version": None,
         "bend_sha256": sha256(args.bend),
         "compiler_archive_sha256": sha256(args.compiler_archive) if args.compiler_archive else None,
@@ -108,6 +109,7 @@ def main():
         "fixture_sha256": sha256(root / OWNED[1]),
         "runner_sha256": sha256(Path(__file__).resolve()),
     }
+    assert identity["owned_clean"], f"owned files must be committed and clean: {identity['owned_status']}"
     child, streams, started = launch("compiler", [args.bend, "version"], root)
     code = complete("compiler", child, streams, started)
     assert code == 0 and (output / "compiler.stdout").read_bytes().strip() == b"bend 2.0.25", \
@@ -116,12 +118,12 @@ def main():
     probe = subprocess.run([os.environ.get("CC", "clang"), "--version"], capture_output=True)
     identity["host_compiler"] = probe.stdout.decode(errors="replace")
     if args.library_root:
-        listing = sorted((p.relative_to(args.library_root).as_posix(), p.stat().st_size)
+        listing = sorted((p.relative_to(args.library_root).as_posix(), sha256(p))
                          for p in Path(args.library_root).rglob("*") if p.is_file())
         identity["library_root"] = {"path": str(Path(args.library_root).resolve()),
                                     "files": len(listing),
                                     "listing_sha256": hashlib.sha256(
-                                        json.dumps(listing).encode()).hexdigest()}
+                                        json.dumps(listing, sort_keys=True).encode()).hexdigest()}
     (output / "identity.json").write_text(json.dumps(identity, indent=2) + "\n")
 
     child, streams, started = launch("build", ["sh", "bend2/scripts/build-native.sh",
@@ -167,20 +169,29 @@ def main():
                                           str(scratch / "fixture")], scratch)
         code = complete("mutation-" + name, child, streams, started)
         stderr = (output / ("mutation-" + name + ".stderr")).read_text(errors="replace")
+        expected = {"kind": "law-compile-failure", "exit_nonzero": True,
+                    "compiler_error": True, "diagnostic_location": OWNED[0],
+                    "diagnostic_names": law}
+        observed = {"exit": code,
+                    "compiler_error": "Error" in stderr,
+                    "location_seen": "Location" in stderr and OWNED[0] in stderr,
+                    "law_named": law in stderr,
+                    "diagnostic_head": stderr.splitlines()[:6]}
         verdict = {"name": name, "target_law": law,
-                   "expected": {"kind": "law-compile-failure", "exit_nonzero": True,
-                                "diagnostic_names": law},
-                   "observed": {"exit": code, "law_named": law in stderr,
-                                "diagnostic_head": stderr.splitlines()[:6]},
+                   "expected": expected, "observed": observed,
                    "records": [str(output / ("mutation-" + name + ".launch.json")),
                                str(output / ("mutation-" + name + ".completion.json")),
                                str(scratch / "mutated-source.bend"),
                                str(output / ("mutation-" + name + ".stderr"))]}
         record("mutation-" + name + ".verdict", verdict)
         assert code != 0, f"{name}: mutated build unexpectedly succeeded"
-        assert law in stderr, f"{name}: expected law {law} named in build stderr"
+        assert observed["compiler_error"] and observed["location_seen"], \
+            f"{name}: build stderr lacks a compiler Error/Location naming {OWNED[0]}"
+        assert observed["law_named"], f"{name}: expected law {law} named in build stderr"
 
-    assert sha256(module) == identity["module_sha256"], "module changed during mutations"
+    for path in OWNED:
+        assert sha256(root / path) == identity["owned_sha256_before"][path], \
+            f"owned file changed during run: {path}"
     assert git("rev-parse", "HEAD^{tree}") == identity["tree_before"], "tree changed during run"
     print("custody-fixture: all modes and mutations matched", flush=True)
 

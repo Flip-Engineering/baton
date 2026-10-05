@@ -52,7 +52,10 @@ existing marker as success (`process-spawn.c:602-606`), so marker writes are
 not generally idempotent.
 `ProcessChild.recovery_argv` reads the manifest
 and returns the original `--recover-receive` invocation while the attempt is
-unacknowledged.
+unacknowledged; the underlying recovery read also suppresses attempts with a
+missing launch marker, and for eager manifests additionally released or
+native-start-error attempts, so historical-duty enumeration reads the marker
+files directly instead of reusing this admission filter.
 
 ### Handles and cross-process addressing
 
@@ -155,7 +158,7 @@ session locks: the owner binds the actual SQL connection and effects to the
 database under a qualified supported-path policy, records its fresh instance
 token under a database-level lock, and serves clients that resolve the same
 binding. A device/inode label or path text alone is an identifier for the
-record, and supplies the binding itself; connection binding and path-policy
+record, and does not supply the binding itself; connection binding and path-policy
 qualification are host requirements outside the pure task module. The session
 locks serialize per-session admission under
 the owner; they do not establish the one-owner-per-database property by
@@ -207,7 +210,16 @@ Enumeration reads the attempt directory's marker files directly (`status`,
 `released`, `acknowledged`), together with sealed reports lacking a recorded
 wake outcome, `native_requests` rows with `written=0` or `closed IS NULL`,
 `session_stops` rows with a pending `report_id`, and unreceipted messages above
-the completed cursor. The coordinator's own enumeration includes failed or
+the completed cursor. The enumeration also supplies the retained error record
+text and the continuation evidence: a rebuilt duty's continuation reference is
+open while retained continuation duties are pending, and records recovery
+only when the enumeration shows the previous process-local operations ended
+and their continuation duties are re-enumerated and owned by the recovering
+owner; reconstruction never settles a live join and grants no replacement
+authority, which the host guard and custody acquisition establish. When every
+coordinator duty is fulfilled and the marker is present, the decision is
+empty and the durable retained error record remains authoritative on its own.
+The coordinator's own enumeration includes failed or
 pending notices and settlements after the host acknowledgment; the host's
 unacknowledged-child enumeration is another input to it, and an acknowledged
 marker alone clears no coordinator duty. A duty is open while a notification
@@ -419,8 +431,10 @@ closes. Fulfillment is tracked as outstanding responsibilities that clear only
 on evidence: a parent wake clears when a delivery result names the original
 report ID as actually delivered, and a `Fail` delivery settles the invocation
 while the wake stays owed; the ACK responsibility clears when the
-`acknowledged` marker is recorded; request settlement clears when the
-settlement invocation returns, with any failure retained. A duty closes when
+`acknowledged` marker is recorded; the settlement responsibility clears only
+on a fulfilled settlement result, and a failed settlement survives host
+acknowledgment with its retained error until fulfillment or an explicit owned
+resolution. A duty closes when
 every invocation has settled and no responsibility is outstanding, and its
 retained errors remain readable. A continuation `Fail` never closes another
 attempt's work, and replacing the active slot never retargets an old delivery,
@@ -463,8 +477,9 @@ conditions:
 - `ProcessChild.retain_env(directory, argv, cwd, stderr, initial, keep_stdin,
   lock, recovery, env: List<String & String>) -> ...`
 
-The environment is a complete immutable snapshot for that one child, validated
-before use (key and value text, duplicate keys refused), and the owner never
+The environment is a complete immutable snapshot for that one child, captured
+and validated before prepare returns (duplicate keys refused), and the owner
+never
 calls `setenv`/`unsetenv` on itself. Native launch and recovery launch are
 distinct roles; a recovery launch sources its argv from the recorded manifest
 and the same explicit environment rule, so neither role inherits a previous
@@ -514,11 +529,12 @@ report/question routing and the knowledge plane are unchanged.
 | --- | --- | --- | --- |
 | `src/context/custody-tasks.bend` (new) | this design | task records, duties, slot/attempt validation, rebuild decision, laws | additive, owned here |
 | `src/coordinator/receive.bend`, `turn.bend` | native-receive-conductor | result-valued entry successors, sink-targeted output, per-task fiber entry | accepted handoff required |
-| `src/coordinator/stop.bend` (`executions`) | shared stop semantics | slot replacement only through `Custody.close_slot` | accepted handoff required |
+| `src/coordinator/stop.bend` (`executions`) | shared stop semantics | slot replacement validated through `Custody.check_slot`/`advance_slot` | accepted handoff required |
 | `src/host/process.bend`, `process-spawn.c` | semantic-controls-next | environment parameter, owner token in hello/reply frames, per-child shared-keeper prerequisites | accepted handoff required |
 | `src/host/text.c`, `text.bend` | synthesis | sink-parameterized `control_output` successor | accepted handoff required |
 | `src/coordinator/main.bend`, `commands.bend`, `scripts/mcp-conductor.mjs` | synthesis | owner resolution, request/reply correlation, law import through the real entry | accepted handoff required |
 | `src/coordinator/native-requests.bend` | this design composes; receive owner owns observation | no structural change | compose only |
+| `src/instance/event-registry.bend` (new) | this design | retained event-destination registry decisions: full-correlation resolution, registration arming, reference and disposal lifecycle | additive, owned here; Controls owns the file effects, reader serialization and shared event synchronization it composes |
 
 The custody-task module and isolated fixtures can be developed now in this
 worktree. Imports into the protected regions wait for the accepted handoffs;
