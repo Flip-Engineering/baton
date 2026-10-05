@@ -710,7 +710,7 @@ class PackageGateReceipt(unittest.TestCase):
         if baseline_position:
             cases.insert(baseline_position, cases.pop(0))
         path = evidence / 'index.json'
-        records, changed = [], {}
+        records = []
         for case in cases:
             stem = case['id'].replace(':', '_')
             streams = {}
@@ -731,14 +731,16 @@ class PackageGateReceipt(unittest.TestCase):
                 streams[name] = record
             delta_record = None
             if case.pop('delta', None):
+                # The changed bytes are a retained evidence member beside the
+                # streams, and the original digest is the admitted module bytes.
                 module = case.pop('module')
-                member = run_root / module
-                member.parent.mkdir(parents=True, exist_ok=True)
+                member = evidence / (stem + '.changed')
                 member.write_bytes(('changed by ' + case['id'] + '\n').encode())
-                delta_record = {'original_sha256': '0' * 64,
-                                'changed_sha256': hashlib.sha256(member.read_bytes()).hexdigest(),
-                                'changed_path': module}
-                changed[module] = delta_record
+                delta_record = {
+                    'original_sha256': hashlib.sha256(
+                        (PACKAGE.ROOT / module).read_bytes()).hexdigest(),
+                    'changed_sha256': hashlib.sha256(member.read_bytes()).hexdigest(),
+                    'changed_path': 'evidence/' + member.name}
             record = {'id': case['id'], 'applied': case.pop('applied'), 'argv': case.pop('argv'),
                       'verdict': case.pop('verdict'), 'delta': delta_record,
                       'stdout': streams['stdout'], 'stderr': streams['stderr'],

@@ -174,9 +174,9 @@ INVENTORY_SCHEMA = 'baton2-controls-inventory-v1'
 REDUCTION_SCHEMA = 'baton2-controls-reduction-v1'
 CONTROL_SCRIPT = 'bend2/scripts/laws-check.mjs'
 CONTROL_FIELDS = ('id', 'kind', 'law', 'module', 'definition_sha256')
-VERIFIER_MEMBERS = ('checker_sha256', 'aggregate_module_sha256', 'classifier_module_sha256',
-                    'work_set_module_sha256', 'laws_common_module_sha256',
-                    'definitions_module_sha256')
+VERIFIER_MEMBERS = ('checker_sha256', 'laws_common_module_sha256', 'definitions_module_sha256',
+                    'classify_module_sha256', 'work_set_module_sha256',
+                    'aggregate_module_sha256', 'group_run_module_sha256')
 CHILD_FIELDS = ('exit_code', 'signal', 'spawn_error')
 ORIGIN_FIELDS = ('workflow', 'run_id', 'run_attempt', 'jobs', 'image_os', 'image_version')
 
@@ -609,9 +609,9 @@ def verify_ordinary_delta(record, root, control, label):
     require(hashlib.sha256(data).hexdigest() == delta['changed_sha256'],
             label + ' changed file does not match its recorded digest')
     require(data != b'', label + ' changed file is empty')
-    require(control['module'] == delta['changed_path'],
-            label + ' changed a module other than the control module: '
-            + json.dumps(delta['changed_path']))
+    # changed_path is the retained evidence member the checker wrote, so it is
+    # bound as a confined member. The control module is bound separately by the
+    # original digest of the admitted module bytes.
     return delta
 
 
@@ -684,13 +684,13 @@ def ordinary_evidence(index_path, expected, compiler=None, declared_root=None,
         require(block.get('path') not in (None, ''), 'The ordinary run records no compiler path')
     source_block = identity.get('source') or {}
     verifier = identity.get('verifier') or {}
-    admitted, _missing = expected_verifier_digests()
-    if admitted:
-        require(isinstance(verifier, dict) and verifier,
-                'The ordinary index records no verifier digests')
-        differing = sorted(key for key, digest in admitted.items() if verifier.get(key) != digest)
-        require(not differing,
-                'The ordinary run used other verifier bytes at: ' + succinct(differing))
+    admitted, missing_verifier = expected_verifier_digests()
+    require(isinstance(verifier, dict) and set(VERIFIER_MEMBERS) <= set(verifier),
+            'The ordinary run does not name every verifier member: '
+            + succinct(sorted(set(VERIFIER_MEMBERS) - set(verifier or {}))))
+    differing = sorted(key for key, digest in admitted.items() if verifier.get(key) != digest)
+    require(not differing,
+            'The ordinary run used other verifier bytes at: ' + succinct(differing))
     # The index records the admitted inputs it captured as rows. Whether those
     # rows cover the complete non-target source and runtime graph is a
     # producer-side question this consumer cannot answer from the rows alone.
@@ -758,7 +758,11 @@ def ordinary_evidence(index_path, expected, compiler=None, declared_root=None,
                 label + ' records an invalid interval')
         outcome_claim = {'state': outcome['state'], 'exit_code': outcome['exit_code'],
                          'signal': outcome['signal'], 'spawn_error': outcome['spawn_error']}
-        stream_records = {stream: dict(case[stream]) for stream in ('stdout', 'stderr')}
+        stream_records = {}
+        for stream in ('stdout', 'stderr'):
+            member = ordinary_member(root, case[stream].get('path'), label + ' ' + stream)
+            stream_records[stream] = {'path': str(member), 'bytes': case[stream].get('bytes'),
+                                      'sha256': case[stream].get('sha256')}
         if identity_id == 'baseline':
             baseline_reference = {'argv': argv, 'outcome': outcome_claim,
                                   'streams': stream_records}
@@ -1392,10 +1396,11 @@ def classify_control(case, result, streams, baseline, evidence_root, source, com
 VERIFIER_FILES = {
     'checker_sha256': 'bend2/scripts/laws-check.mjs',
     'aggregate_module_sha256': 'bend2/scripts/capacity-controls/aggregate.mjs',
-    'classifier_module_sha256': 'bend2/scripts/capacity-controls/classify.mjs',
+    'classify_module_sha256': 'bend2/scripts/capacity-controls/classify.mjs',
     'work_set_module_sha256': 'bend2/scripts/capacity-controls/work-set.mjs',
     'laws_common_module_sha256': 'bend2/scripts/laws-common.mjs',
     'definitions_module_sha256': 'bend2/scripts/laws-mutations.mjs',
+    'group_run_module_sha256': 'bend2/scripts/capacity-controls/group-run.mjs',
 }
 
 
