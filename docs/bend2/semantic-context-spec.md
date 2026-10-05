@@ -180,7 +180,10 @@ old binding remains explicit; recovery cannot substitute a newly installed modul
 
 An operation's declared effects conservatively cover its complete dependency
 plan. The core resolves dependency declarations, validates their identities and
-schemas, rejects cycles and checks the union of effects before target effects
+schemas, rejects cycles and computes the common operation's mandatory effect
+minimum union the declared additions across every step. A module cannot erase
+that minimum by declaring an empty effect set. Unknown fundamental operations or
+effect meanings require common-contract review. The core checks this union before target effects
 start. Conditional effectful suboperations require an independently admitted
 query or an already granted declared plan. Module-provided facts cannot grant
 another effect. New effect classes require shared effect-contract review; new
@@ -212,6 +215,15 @@ association and schema binding, then performs the common snapshot/effect checks.
 A caller-supplied operation or module ID cannot replace that retained association.
 Unavailable modules preserve readable historical results while new expansion
 reports its exact unavailable dependency.
+
+Result payload representation preserves the numeric and text domains admitted by
+its versioned schema through validation, storage, replay and ref expansion. Raw
+number tokens or a qualified exact-value representation may carry large, signed,
+fractional or exponent values; authority-bearing fields still pass their native
+domain checks. Unsupported conversion returns an explicit limitation or refusal.
+It cannot round a value, silently apply the request U32 domain to every payload,
+or publish an unvalidated authority field. Codec's current raw-token retention
+does not establish a qualified end-to-end payload path.
 
 Missing provider execution availability alone does not make a retained result's
 source stale. Applicability follows its actual recorded inputs and revalidation
@@ -2906,6 +2918,11 @@ The retained research used for this specification is retrievable with native
   `models-env-review-37-synthesis`, `runtime-module-contract133-synthesis` and
   `controls-next-interfaces-review-101-synthesis`: owner contributions to the
   declaration, schema, effect, framework, runtime and public surface boundaries.
+- `native113-module-contract-reconciliation`,
+  `native114-reviewed-successors-supplement` and `models-module-final-38-synthesis`:
+  common effect minima, authenticated original/current ref associations, actual
+  storage migration requirements and payload numeric-domain limits. Their concrete
+  source/design proposals remain subject to the complete successor review.
 - `quality-language-fidelity-contributions-83-semantic-synthesis` and
   `quality-language-critic-contributions-84-semantic-synthesis`: independent
   candidate requirements, including their retained corrections to earlier
