@@ -175,11 +175,12 @@ def binding_bytes(controls):
 def canonical_record_bytes(record):
     """The complete control record as canonical bytes, for identity.
 
-    The set binding uses the checker's five-field serialization; this is the
-    second layer, over every field the discovery record carries (definition
-    metadata and expectation included), so a name alone cannot join a record to
-    another. Keys are sorted and the separators are fixed, so the digest depends
-    only on the values.
+    The set binding uses the checker's five-field serialization, which is the
+    only cross-language byte contract. This is a Python-local identity layer over
+    every field the discovery record carries (definition metadata and expectation
+    included), so a name alone cannot join a record to another. Keys are sorted
+    and the separators are fixed, so the digest depends only on the values. It is
+    not claimed to equal a JavaScript serialization of the same record.
     """
     return json.dumps(record, sort_keys=True, separators=(',', ':'),
                       ensure_ascii=False).encode('utf-8')
@@ -373,7 +374,8 @@ def run_gates(compiler, env, logs, initial, before_inputs, remote=None):
     if remote is not None:
         summary['controls_evidence'] = {key: remote[key] for key in
                                         ('path', 'bytes', 'sha256', 'cases', 'groups', 'binding',
-                                         'origin', 'spans', 'classifier')}
+                                         'origin', 'spans', 'classifier', 'closure_sha256',
+                                         'modules')}
     path = logs / 'summary.json'
     write_json(path, summary)
     try:
@@ -382,9 +384,14 @@ def run_gates(compiler, env, logs, initial, before_inputs, remote=None):
                      'before': snapshot(), 'log': name + '.log'}
             if remote is not None and name == 'laws-check':
                 stage['local_argv'] = list(argv)
-                stage['argv'] = [remote['checker_invocation'], '--group', '<module>']
+                stage['template_command'] = remote['checker_invocation'] + ' --group <module>'
                 stage['route'] = 'remote-module-groups'
-                stage['children'] = [dict(span) for span in remote['spans']]
+                stage['kind'] = 'evidence-qualification'
+                stage['spans'] = [dict(span) for span in remote['spans']]
+                stage['evidence'] = {'path': remote['path'], 'sha256': remote['sha256'],
+                                     'binding': remote['binding'], 'cases': remote['cases'],
+                                     'groups': remote['groups'], 'origin': remote['origin'],
+                                     'closure_sha256': remote['closure_sha256']}
             same_source(stage['before'], initial)
             summary['stages'].append(stage)
             write_json(path, summary)
@@ -393,10 +400,9 @@ def run_gates(compiler, env, logs, initial, before_inputs, remote=None):
             started = time.monotonic()
             if stage.get('route') == 'remote-module-groups':
                 receipt = {'schema': RECEIPT_SCHEMA, 'route': 'remote-module-groups',
-                           'evidence': remote['path'], 'evidence_sha256': remote['sha256'],
-                           'binding': remote['binding'], 'cases': remote['cases'],
-                           'groups': remote['groups'], 'origin': remote['origin'],
-                           'children': remote['spans'], 'classifier': remote['classifier'],
+                           'kind': 'evidence-qualification',
+                           'evidence': stage['evidence'], 'spans': stage['spans'],
+                           'classifier': remote['classifier'],
                            'local_gates': ['build-native', 'check-native'],
                            'local_argv': list(argv)}
                 (logs / stage['log']).write_text(json.dumps(receipt, indent=2) + '\n')
@@ -412,7 +418,8 @@ def run_gates(compiler, env, logs, initial, before_inputs, remote=None):
             if stage.get('route') == 'remote-module-groups':
                 stage['elapsed_seconds'] = remote['slowest_span_seconds']
                 stage['evidence_sha256'] = remote['sha256']
-                require(stage['children'], 'A remote laws stage records no producing child outcome')
+                require(stage['spans'] and stage['evidence']['closure_sha256'],
+                        'A remote laws stage records no producing span or closure digest')
             stage['log_sha256'] = sha256(logs / stage['log'])
             write_json(path, summary)
             require(result_exit in (0, None),
@@ -455,16 +462,35 @@ def reuse_gates(path, expected_sha, compiler, logs, initial):
             'The receipt must select this compiler with telemetry disabled')
     require([stage['name'] for stage in summary['stages']] == [name for name, _ in GATES],
             'The receipt must contain the complete three gate stages in order')
+    route = summary.get('route')
+    require(route in ('local-complete', 'remote-module-groups'),
+            'The supplied gate receipt names no route: ' + json.dumps(route))
+    remote_laws = route == 'remote-module-groups'
+    require((summary.get('controls_evidence') is not None) == remote_laws,
+            'The receipt route and its controls evidence disagree')
     for stage in summary['stages']:
-        if stage.get('route') == 'remote-module-groups':
-            require(stage.get('exit_code') is None and stage.get('children'),
-                    'A remote laws stage must record its producing children and no local exit')
-            require(stage.get('local_argv') == list(dict(GATES)[stage['name']]),
-                    'A remote laws stage must keep the local gate command it replaces')
+        name = stage['name']
+        wants_remote = remote_laws and name == 'laws-check'
+        if stage.get('route') is not None:
+            require(wants_remote,
+                    'Only the laws-check stage may carry the remote route: ' + json.dumps(name))
+            require(stage.get('kind') == 'evidence-qualification',
+                    'A remote stage must be marked as evidence qualification')
+            require(stage.get('exit_code') is None,
+                    'A remote stage must record no local exit')
+            require(isinstance(stage.get('evidence'), dict)
+                    and stage['evidence'].get('closure_sha256'),
+                    'A remote stage must reference its evidence closure')
+            require(stage.get('local_argv') == list(dict(GATES)[name]),
+                    'A remote stage must keep the local command it replaces')
+            require(stage.get('status') == 'passed',
+                    'A remote stage that did not qualify cannot be reused')
         else:
-            require(stage.get('argv') == list(dict(GATES)[stage['name']]),
+            require(not wants_remote,
+                    'The laws-check stage must carry the remote route when the receipt does')
+            require(stage.get('argv') == list(dict(GATES)[name]),
                     'A local gate stage must name its own command')
-            require(stage['status'] == 'passed' and stage['exit_code'] == 0,
+            require(stage.get('status') == 'passed' and stage.get('exit_code') == 0,
                     'A supplied gate did not pass')
         same_source(stage['before'], initial)
         same_source(stage['after'], initial)
@@ -662,6 +688,7 @@ def controls_evidence(directory, initial, compiler):
               'archive_sha256': COMPILER_ARCHIVE_SHA256, 'runtime_set_sha256': runtime_sha}
     source_pins = {key: initial[key] for key in ('head', 'tree', 'bend2_tree')}
     seen_modules, seen_cases, seen_jobs, spans, verdicts = set(), {}, set(), [], {}
+    baselines = {}
     for bundle in bundles:
         module = bundle.get('module')
         require(module in modules, 'A controls evidence bundle is absent from this source: '
@@ -778,20 +805,37 @@ def controls_evidence(directory, initial, compiler):
                         'A produced diagnostic label disagrees with its bytes: '
                         + json.dumps(identity))
             seen_cases[identity] = {'resource': verify_resource(result, json.dumps(identity)),
-                                    'group': module}
+                                    'group': module,
+                                    'receipt': {'id': identity,
+                                                'definition_sha256': control['definition_sha256'],
+                                                'stdout_sha256': streams['stdout']['sha256'],
+                                                'stderr_sha256': streams['stderr']['sha256'],
+                                                'exit_code': outcome['exit_code'],
+                                                'signal': outcome['signal'],
+                                                'attempt': outcome['attempt']}}
         intervals.sort()
         require(all(left[1] <= right[0] for left, right in zip(intervals, intervals[1:])),
                 'Two compilers overlapped in one module group: ' + json.dumps(module))
         spans.append({'module': module, 'job': job, 'cases': len(bundle.get('results') or []),
                       'started': intervals[0][0], 'ended': intervals[-1][1],
                       'seconds': round(intervals[-1][1] - intervals[0][0], 3)})
+        baselines[module] = {'module': module, 'job': job,
+                             'stdout_sha256': (baseline.get('stdout') or {}).get('sha256'),
+                             'stderr_sha256': (baseline.get('stderr') or {}).get('sha256'),
+                             'exit_code': baseline_outcome['exit_code'],
+                             'attempt': baseline_outcome['attempt']}
     missing_modules = sorted(modules - seen_modules)
     require(not missing_modules, 'The controls evidence omits module groups: '
             + succinct(missing_modules))
     missing_cases = sorted(set(wanted) - set(seen_cases))
     require(not missing_cases, 'The controls evidence omits controls: ' + succinct(missing_cases))
     seconds = [span['seconds'] for span in spans]
+    closure = hashlib.sha256(json.dumps(
+        {'baselines': [baselines[module] for module in sorted(baselines)],
+         'receipts': [seen_cases[identity]['receipt'] for identity in sorted(seen_cases)]},
+        sort_keys=True, separators=(',', ':')).encode('utf-8')).hexdigest()
     return {'path': str(path), **file_info(path), 'cases': len(wanted), 'groups': len(modules),
+            'closure_sha256': closure,
             'binding': expected['sha256'], 'origin': origin, 'route': 'remote-module-groups',
             'checker_invocation': 'node ' + CONTROL_SCRIPT, 'modules': sorted(seen_modules),
             'spans': spans, 'slowest_span_seconds': max(seconds) if seconds else 0,
@@ -902,7 +946,8 @@ def package(args):
                 require(controls is not None,
                         'A remote-route receipt must be supplied with its producer evidence')
                 require(controls['sha256'] == record.get('sha256')
-                        and controls['binding'] == record.get('binding'),
+                        and controls['binding'] == record.get('binding')
+                        and controls['closure_sha256'] == record.get('closure_sha256'),
                         'The supplied controls evidence is not the evidence the receipt recorded')
             require(summary['inputs_after'] == before_inputs, 'The receipt toolchain or host inputs differ from current inputs')
             input_boundary = 'Compiler libraries, CC and host captured after the supplied gates and checked again during packaging.'
