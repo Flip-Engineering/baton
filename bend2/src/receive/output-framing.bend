@@ -128,21 +128,28 @@ def span_of(+low: P.Pos, +high: P.Pos) -> P.PosSpan:
 
 def count_go(+rest: List<U32>, +position: P.Pos, +bump: P.PosSum,
              +original: List<U32>) -> CountOutcome:
-  match bump:
-    case P.PosSumRefused{_reason, _l, _r}: CountRefused{"position_overflow", original}
-    case P.PosAdded{value, _left, _right}:
-      +here = P.digits_of(value)
-      match rest:
-        case Nil{}: Counted{here}
-        case _h <> t: count_go(t, here, bump_of(here), original)
+  match rest:
+    case Nil{}: Counted{position}
+    case _h <> t:
+      match bump:
+        case P.PosSumRefused{_reason, _l, _r}: CountRefused{"position_overflow", original}
+        case P.PosAdded{value, _left, _right}: count_go(t, value, bump_of(value), original)
 
 def counted_matches(+outcome: CountOutcome, +declared: P.Pos) -> Bool:
   match outcome:
     case Counted{value}: P.passed(P.equal_checked(value, declared))
     case CountRefused{_reason, _original}: False{}
 
+def count_reason(+outcome: CountOutcome) -> String:
+  match outcome:
+    case Counted{_value}: ""
+    case CountRefused{reason, _original}: reason
+
+def count_ok(+outcome: CountOutcome, +declared: P.Pos) -> Bool:
+  counted_matches(outcome, declared)
+
 def extent_matches(+octets: List<U32>, +declared: P.Pos) -> Bool:
-  counted_matches(count_go(octets, zero_pos(), bump_of(zero_pos()), octets), declared)
+  count_ok(count_go(octets, zero_pos(), bump_of(zero_pos()), octets), declared)
 
 def frame_of(+start: P.Pos, +end: P.Pos, +source: SourceId, +bytes: List<U32>) -> Frame:
   FrameRange{start, end, source, bytes}
