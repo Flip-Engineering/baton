@@ -24,14 +24,33 @@ def shell_chars(value: String) -> String:
 def shell(value: String) -> String:
   "'" ++ shell_chars(value) ++ "'"
 
+def inspection_cli(+command: String, +session: String) -> String:
+  "  " ++ command ++ " inbox " ++ shell(session) ++ " --index\n"
+  ++ "  " ++ command ++ " inbox " ++ shell(session) ++ " --index --sender PLAYER --kind report --state all\n"
+  ++ "  " ++ command ++ " delivery MESSAGE_ID\n"
+  ++ "  " ++ command ++ " orchestra --index --for " ++ shell(session) ++ " --pretty\n"
+
+law inspection_examples_scope_metadata_to_the_recorded_session:
+  for +command: String
+  for +session: String
+  {inspection_cli(command,session) == ("  " ++ command ++ " inbox " ++ shell(session) ++ " --index\n"
+    ++ "  " ++ command ++ " inbox " ++ shell(session) ++ " --index --sender PLAYER --kind report --state all\n"
+    ++ "  " ++ command ++ " delivery MESSAGE_ID\n"
+    ++ "  " ++ command ++ " orchestra --index --for " ++ shell(session) ++ " --pretty\n") : String}
+
+def inspection_examples_scope_metadata_to_the_recorded_session(command,session):
+  {==}
+
 def instructions(executable: String, database: String, +session: String) -> String:
   +command = shell(executable) ++ " " ++ shell(database)
   "You are session " ++ session ++ " in a Baton2 Orchestra. A Player is an individual agent. Review pending messages and follow your task.\n"
   ++ "The Principal Conductor is the main orchestrator. An Associate Conductor is a sub-orchestrator. An Ensemble is a coordinated team of agents. A Section is a capability-specific subgroup. The Orchestra is the whole coordinated system. When coordinating players, direct their work according to your task.\n"
   ++ "The players command lists all Players, including Principal and Associate Conductors. PLAYER denotes a player session ID.\n"
   ++ "Public messages follow assigned roles, parent links and explicit tight Ensemble membership. A Conductor can message its descendants; report and ask reach your immediate parent. Peer messages require a shared tight Ensemble; Conductor peers must have equal hierarchy depth.\n"
-  ++ "Coordinator CLI:\n  " ++ command ++ " inbox " ++ shell(session) ++ "\n  " ++ command ++ " ack MESSAGE_ID " ++ shell(session) ++ " RECEIPT\n"
-  ++ "Acknowledge each message after accepting it.\n  " ++ command ++ " orchestra\n  " ++ command ++ " players\n  " ++ command ++ " session ID\n  " ++ command ++ " worktree ID\n  " ++ command ++ " turns ID\n"
+  ++ "Coordinator CLI: inspect message metadata first, then retrieve the selected complete body.\n" ++ inspection_cli(command,session)
+  ++ "Index filters combine by exact sender/kind equality. State defaults to pending; --state all also includes acknowledged messages. pending --index selects across recipients and accepts --recipient SESSION. Index reads do not acknowledge input; receipt state records acknowledgment, not review or completed work. Legacy inbox/pending/players/turns/orchestra readers include full bodies or histories; use them when that payload is needed.\n"
+  ++ "  " ++ command ++ " ack MESSAGE_ID " ++ shell(session) ++ " RECEIPT\n"
+  ++ "Acknowledge each message after reading and accepting it.\n  " ++ command ++ " session ID\n  " ++ command ++ " worktree ID\n  " ++ command ++ " turns ID\n"
   ++ "  " ++ command ++ " recruit PLAYER " ++ shell(session) ++ " HARNESS MODEL EFFORT REPO BRANCH PATH BASE\n"
   ++ "  " ++ command ++ " receiver PLAYER HARNESS_CMD OUTPUT_LOG\n  " ++ command ++ " dispatch-file ID " ++ shell(session) ++ " PLAYER task TASK_FILE\n"
   ++ "  " ++ command ++ " dispatch-turn PLAYER TURN_ID HARNESS_CMD OUTPUT_LOG TASK_FILE\n  " ++ command ++ " status --pretty\n"
