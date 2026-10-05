@@ -51,6 +51,13 @@ def availability_text(a: Eng.Availability) -> String:
     case Eng.AvUnavailable{reason}: "unavailable:" ++ reason
     case Eng.AvExcluded{reason}: "excluded:" ++ reason
 
+def admission_text(a: Eng.Admission) -> String:
+  match a:
+    case Eng.AdAdmit{effects}: "admit:" ++ effects_text(effects)
+    case Eng.AdNoOperation{}: "noop"
+    case Eng.AdUnknownOperation{operation}: "unknown:" ++ operation
+    case Eng.AdMissingEffect{effect}: "missing:" ++ effect
+
 def check_text(c: Snap.CaptureCheck) -> String:
   match c:
     case Snap.CCIntact{}: "intact"
@@ -93,9 +100,12 @@ def all_ok() -> List<Bool>:
     String.eq(effects_text(Eng.required_effects(Eng.op_query_control_recover())), ""),
     String.eq(choice_text(Eng.auto("runtime", "", "", Eng.ss_one("state"))), "one:cdp"),
     String.eq(effects_text(Eng.required_effects(Eng.op_tools_probe())), "executeTarget"),
-    String.eq(effects_text(Eng.required_effects(Eng.op_deployment_probe())), ""),
-    Eng.operation_known(Eng.op_deployment_probe()),
+    String.eq(effects_text(Eng.required_effects(Eng.op_deployment_tool_probe())), ""),
+    Eng.operation_known(Eng.op_deployment_tool_probe()),
     Bool.not(Eng.operation_known("inventedOperation")),
+    String.eq(admission_text(Eng.admit_operations(Eng.ss_one(Eng.op_source_analysis()), Eng.SSNil{})), "admit:"),
+    String.eq(admission_text(Eng.admit_operations(Eng.ss_one("inventedOperation"), Eng.SSNil{})), "unknown:inventedOperation"),
+    String.eq(admission_text(Eng.admit_operations(Eng.ss_two(Eng.op_tools_probe(), Eng.op_code_access_join()), Eng.ss_one("executeTarget"))), "missing:planTargetSql"),
     String.eq(availability_text(Eng.probe_availability(Eng.unpinned_operation(), Eng.POk{"20.1.8", "", "s"}, "20.1.8")), "unavailable:the provider probe form is not pinned"),
     String.eq(availability_text(Eng.probe_availability("providerEngines", Eng.POk{"5.9.3", "/x/node", "s"}, "5.9.3")), "available"),
     String.eq(choice_text(Eng.auto("ref", "", "typescript", Eng.ss_one("definition"))), "one:typescript"),

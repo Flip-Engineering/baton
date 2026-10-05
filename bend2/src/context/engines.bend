@@ -195,9 +195,11 @@ def op_model_load() -> String:
 # Qualified discovery of a deployment-admitted provider executable: no request
 # supplied it, so it needs no target-execution grant. A request-local tools
 # override is a different operation and does require executeTarget before its
-# probe runs, even when it names the same path as a deployment executable.
-def op_deployment_probe() -> String:
-  "deploymentProbe"
+# probe runs, even when it names the same path as a deployment executable. The
+# label is the one Environment proposed; core owns the vocabulary and there is
+# one definition per contract.
+def op_deployment_tool_probe() -> String:
+  "deploymentToolProbe"
 
 def op_tools_probe() -> String:
   "toolsProbe"
@@ -244,7 +246,7 @@ def operation_known(+operation: String) -> Bool:
   Bool.or(String.eq(operation, op_migration_replay()),
   Bool.or(String.eq(operation, op_schema_validation()),
   Bool.or(String.eq(operation, op_model_load()),
-  Bool.or(String.eq(operation, op_deployment_probe()),
+  Bool.or(String.eq(operation, op_deployment_tool_probe()),
   Bool.or(String.eq(operation, op_tools_probe()),
   Bool.or(String.eq(operation, op_environment_read()),
   Bool.or(String.eq(operation, op_dataset_read()),
@@ -313,6 +315,62 @@ def missing_effects(required: SS, +granted: SS) -> Effects:
     case SSNil{}: FxGranted{}
     case SSCons{+h, r}:
       Bool.pick(Effects, ss_member(granted, h), missing_effects(r, granted), FxMissing{h})
+
+# --- the admission composition ------------------------------------------------
+# A request can select more than one operation: a request-local tools override
+# sits beside the subject's own SQL, model or runtime work, and a tools override
+# cannot replace the effects that work still needs. The caller therefore passes
+# every selected operation, and this composition unions their required effects
+# before it consults the grant.
+def union_append(xs: SS, +add: SS) -> SS:
+  match xs:
+    case SSNil{}: add
+    case SSCons{h, r}: SSCons{h, union_append(r, add)}
+
+def union_add(required: SS, +acc: SS) -> SS:
+  match required:
+    case SSNil{}: acc
+    case SSCons{+h, r}:
+      union_add(r, Bool.pick(SS, ss_member(acc, h), acc, union_append(acc, ss_one(h))))
+
+def effects_union(operations: SS) -> SS:
+  match operations:
+    case SSNil{}: SSNil{}
+    case SSCons{h, r}: union_add(required_effects(h), effects_union(r))
+
+type OpsKnown is Data:
+  OkAllKnown{}
+  OkEmpty{}
+  OkUnknown{operation: String}
+
+def operations_known(operations: SS) -> OpsKnown:
+  match operations:
+    case SSNil{}: OkEmpty{}
+    case SSCons{+h, r}: Bool.pick(OpsKnown, operation_known(h), operations_known(r), OkUnknown{h})
+
+type Admission is Data:
+  AdAdmit{effects: SS}
+  AdNoOperation{}
+  AdUnknownOperation{operation: String}
+  AdMissingEffect{effect: String}
+
+def admit_effects(m: Effects, union: SS) -> Admission:
+  match m:
+    case FxGranted{}: AdAdmit{union}
+    case FxMissing{effect}: AdMissingEffect{effect}
+
+def admit_after_known(k: OpsKnown, +operations: SS, +granted: SS) -> Admission:
+  match k:
+    case OkAllKnown{}: admit_effects(missing_effects(effects_union(operations), granted), effects_union(operations))
+    case OkEmpty{}: AdNoOperation{}
+    case OkUnknown{operation}: AdUnknownOperation{operation}
+
+# The caller-level refusal: an empty selection and an operation outside the
+# closed set are both refused before any effect composition, and a union whose
+# grant is incomplete names the first effect it lacks. An admit carries the
+# union as its evidence of what was authorized.
+def admit_operations(+operations: SS, +granted: SS) -> Admission:
+  admit_after_known(operations_known(operations), operations, granted)
 
 # --- automatic engine selection ----------------------------------------------
 type EngineChoice is Data:
@@ -481,19 +539,20 @@ type ProbeOutcome is Data:
   PExcluded{reason: String}
 
 # The probe form of one engine is pinned only where its owner published a
-# callable discovery entry. The TypeScript adapter publishes the
-# provider-engines request on standard input with argv `-`; node and psql are
-# probed with their conventional version flag. Every other engine stays
-# unpinned here: no invented argv can establish that a provider answers, and an
-# unpinned engine reports unavailable with that reason until its owner pins the
-# callable form and its staged path.
+# callable discovery entry. The TypeScript adapter's actual entry is the
+# `--engines` argument; node and psql are probed with their conventional
+# version flag. Every other engine stays unpinned here: no invented argv can
+# establish that a provider answers, and an unpinned engine reports unavailable
+# with that reason until its owner pins the callable form and its staged path.
+# The clang adapters' dash-plus-stdin form is a draft under known adapter
+# defects and is therefore not pinned.
 def unpinned_operation() -> String:
   "unpinned"
 
 def probe_plan(dep: Deployment) -> List<ProbeSpec>:
   match dep:
     case Dep{+node, tsProvider, psql}:
-      [ Probe{e_typescript(), "providerEngines", node, ss_two(tsProvider, "-")},
+      [ Probe{e_typescript(), "providerEngines", node, ss_two(tsProvider, "--engines")},
         Probe{e_clangd(), unpinned_operation(), "", SSNil{}},
         Probe{e_clang_analyzer(), unpinned_operation(), "", SSNil{}},
         Probe{e_cdp(), "version", node, ss_one("--version")},

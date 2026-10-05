@@ -251,16 +251,16 @@ law engine_a_request_local_tools_override_requires_target_execution:
 def engine_a_request_local_tools_override_requires_target_execution():
   {==}
 
-law engine_a_deployment_probe_requires_no_effect:
-  {Eng.required_effects(Eng.op_deployment_probe()) == Eng.SSNil{} : Eng.SS}
+law engine_a_deployment_tool_probe_requires_no_effect:
+  {Eng.required_effects(Eng.op_deployment_tool_probe()) == Eng.SSNil{} : Eng.SS}
 
-def engine_a_deployment_probe_requires_no_effect():
+def engine_a_deployment_tool_probe_requires_no_effect():
   {==}
 
-law engine_the_closed_operation_set_admits_the_deployment_probe:
-  {Eng.operation_known(Eng.op_deployment_probe()) == True{} : Bool}
+law engine_the_closed_operation_set_admits_the_deployment_tool_probe:
+  {Eng.operation_known(Eng.op_deployment_tool_probe()) == True{} : Bool}
 
-def engine_the_closed_operation_set_admits_the_deployment_probe():
+def engine_the_closed_operation_set_admits_the_deployment_tool_probe():
   {==}
 
 law engine_the_closed_operation_set_admits_the_runtime_observation:
@@ -377,6 +377,55 @@ law engine_the_declared_environment_effects_cover_a_tools_override:
 def engine_the_declared_environment_effects_cover_a_tools_override():
   {==}
 
+# --- the caller-level admission composition ----------------------------------
+law engine_an_unknown_operation_refuses_before_its_effects:
+  {Eng.admit_operations(Eng.ss_one("inventedOperation"), Eng.ss_one("executeTarget")) == Eng.AdUnknownOperation{"inventedOperation"} : Eng.Admission}
+
+def engine_an_unknown_operation_refuses_before_its_effects():
+  {==}
+
+law engine_an_unknown_operation_refuses_even_with_every_grant:
+  {Eng.admit_operations(Eng.ss_two(Eng.op_source_analysis(), "inventedOperation"), Eng.ss_two("planTargetSql", "executeTarget")) == Eng.AdUnknownOperation{"inventedOperation"} : Eng.Admission}
+
+def engine_an_unknown_operation_refuses_even_with_every_grant():
+  {==}
+
+law engine_no_selected_operation_refuses:
+  {Eng.admit_operations(Eng.SSNil{}, Eng.SSNil{}) == Eng.AdNoOperation{} : Eng.Admission}
+
+def engine_no_selected_operation_refuses():
+  {==}
+
+law engine_a_grantless_operation_admits_without_a_grant:
+  {Eng.admit_operations(Eng.ss_one(Eng.op_source_analysis()), Eng.SSNil{}) == Eng.AdAdmit{Eng.SSNil{}} : Eng.Admission}
+
+def engine_a_grantless_operation_admits_without_a_grant():
+  {==}
+
+law engine_a_deployment_tool_probe_admits_without_a_grant:
+  {Eng.admit_operations(Eng.ss_one(Eng.op_deployment_tool_probe()), Eng.SSNil{}) == Eng.AdAdmit{Eng.SSNil{}} : Eng.Admission}
+
+def engine_a_deployment_tool_probe_admits_without_a_grant():
+  {==}
+
+law engine_an_aggregate_names_the_missing_planning_grant:
+  {Eng.admit_operations(Eng.ss_two(Eng.op_tools_probe(), Eng.op_code_access_join()), Eng.ss_one("executeTarget")) == Eng.AdMissingEffect{"planTargetSql"} : Eng.Admission}
+
+def engine_an_aggregate_names_the_missing_planning_grant():
+  {==}
+
+law engine_an_aggregate_shares_one_grant_between_two_execution_operations:
+  {Eng.admit_operations(Eng.ss_two(Eng.op_tools_probe(), Eng.op_model_load()), Eng.ss_one("executeTarget")) == Eng.AdAdmit{Eng.ss_one("executeTarget")} : Eng.Admission}
+
+def engine_an_aggregate_shares_one_grant_between_two_execution_operations():
+  {==}
+
+law engine_an_aggregate_unions_the_effects_of_both_operations:
+  {Eng.effects_union(Eng.ss_two(Eng.op_tools_probe(), Eng.op_code_access_join())) == Eng.ss_two("planTargetSql", "executeTarget") : Eng.SS}
+
+def engine_an_aggregate_unions_the_effects_of_both_operations():
+  {==}
+
 law engine_missing_grant_is_named_before_the_effect:
   {Eng.missing_effects(Eng.ss_two("controlRuntime", "evaluateRuntime"), Eng.ss_one("controlRuntime")) == Eng.FxMissing{"evaluateRuntime"} : Eng.Effects}
 
@@ -436,7 +485,7 @@ def engine_the_entry_identity_is_the_observed_one():
 
 # --- discovery plan and probe composition ------------------------------------
 law engine_the_probe_plan_is_fixed_and_names_no_target_path:
-  {Eng.probe_plan(Eng.Dep{"node", "ts.mjs", "psql"}) == [Eng.Probe{"typescript", "providerEngines", "node", Eng.ss_two("ts.mjs", "-")}, Eng.Probe{"clangd", "unpinned", "", Eng.SSNil{}}, Eng.Probe{"clang-analyzer", "unpinned", "", Eng.SSNil{}}, Eng.Probe{"cdp", "version", "node", Eng.ss_one("--version")}, Eng.Probe{"sqlite-schema", "unpinned", "", Eng.SSNil{}}, Eng.Probe{"postgres-schema", "version", "psql", Eng.ss_one("--version")}, Eng.Probe{"data-model", "unpinned", "", Eng.SSNil{}}, Eng.Probe{"environment", "unpinned", "", Eng.SSNil{}}, Eng.Probe{"json-dataset", "unpinned", "", Eng.SSNil{}}] : List<Eng.ProbeSpec>}
+  {Eng.probe_plan(Eng.Dep{"node", "ts.mjs", "psql"}) == [Eng.Probe{"typescript", "providerEngines", "node", Eng.ss_two("ts.mjs", "--engines")}, Eng.Probe{"clangd", "unpinned", "", Eng.SSNil{}}, Eng.Probe{"clang-analyzer", "unpinned", "", Eng.SSNil{}}, Eng.Probe{"cdp", "version", "node", Eng.ss_one("--version")}, Eng.Probe{"sqlite-schema", "unpinned", "", Eng.SSNil{}}, Eng.Probe{"postgres-schema", "version", "psql", Eng.ss_one("--version")}, Eng.Probe{"data-model", "unpinned", "", Eng.SSNil{}}, Eng.Probe{"environment", "unpinned", "", Eng.SSNil{}}, Eng.Probe{"json-dataset", "unpinned", "", Eng.SSNil{}}] : List<Eng.ProbeSpec>}
 
 def engine_the_probe_plan_is_fixed_and_names_no_target_path():
   {==}
