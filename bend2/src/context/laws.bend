@@ -38,6 +38,7 @@ import ./control.bend as ContextControl
 import ./lifecycle.bend as ContextLifecycle
 import ./bound.bend as ContextBound
 import ./bound-admission.bend as ContextAdmit
+import ./duties.bend as ContextDuties
 
 # ---------------------------------------------------------------------------
 # Role identity. The identity is the canonical array of the fixed tag, binding,
@@ -625,4 +626,75 @@ law an_unreadable_answer_matches_nothing:
   {ContextAdmit.admit_identical(ContextAdmit.AdmissionUncertain{"short","x"},"root","rq") == False{} : Bool}
 
 def an_unreadable_answer_matches_nothing():
+  {==}
+
+# ---------------------------------------------------------------------------
+# Coordinator duty enumeration. The enumeration selects the context's own
+# unsettled records, each duty row is six columns, and every row of an enumeration
+# must be a known record before the caller may treat the set as settled.
+
+law the_open_computation_predicate_names_every_nonterminal_state:
+  {ContextDuties.duty_query_open() == "state NOT IN ('complete','failed','interrupted','refused')" : String}
+
+def the_open_computation_predicate_names_every_nonterminal_state():
+  {==}
+
+law the_open_cleanup_predicate_names_both_unsettled_values:
+  {ContextDuties.duty_query_cleanup_open() == "json_extract(progress_json,'$.cleanup') IN ('pending','unavailable')" : String}
+
+def the_open_cleanup_predicate_names_both_unsettled_values():
+  {==}
+
+law the_open_intent_predicate_names_both_committed_intents:
+  {ContextDuties.duty_query_intent_open() == "cleanup_intent_json IS NOT NULL OR recovery_intent_json IS NOT NULL" : String}
+
+def the_open_intent_predicate_names_both_committed_intents():
+  {==}
+
+law the_open_role_predicate_names_an_unsettled_cleanup_or_release:
+  {ContextDuties.duty_role_open() == "cleanup_phase IN ('pending','unavailable') OR release_intent_json IS NOT NULL" : String}
+
+def the_open_role_predicate_names_an_unsettled_cleanup_or_release():
+  {==}
+
+law the_owed_notice_predicate_selects_only_context_notices:
+  {ContextDuties.duty_notice_owed() == "m.receipt IS NULL AND substr(m.id,1,11)='[\"context-'" : String}
+
+def the_owed_notice_predicate_selects_only_context_notices():
+  {==}
+
+law a_duty_line_reads_six_columns:
+  {ContextDuties.duty_line("query\tq1\t\t\tcomputationOpen\t") == Some{ContextDuties.DutyRecord{"query","q1","","","computationOpen",""}} : Maybe<&1,ContextDuties.DutyRecord>}
+
+def a_duty_line_reads_six_columns():
+  {==}
+
+law a_short_duty_line_is_not_a_record:
+  {ContextDuties.duty_line("query\tq1") == None{} : Maybe<&1,ContextDuties.DutyRecord>}
+
+def a_short_duty_line_is_not_a_record():
+  {==}
+
+law a_duty_without_a_subject_is_not_a_record:
+  {ContextDuties.duty_line("query\t\t\t\topen\tevidence") == None{} : Maybe<&1,ContextDuties.DutyRecord>}
+
+def a_duty_without_a_subject_is_not_a_record():
+  {==}
+
+law an_empty_enumeration_is_wellformed:
+  {ContextDuties.duty_wellformed("") == True{} : Bool}
+
+def an_empty_enumeration_is_wellformed():
+  {==}
+
+law an_unknown_duty_kind_makes_the_enumeration_unusable:
+  {ContextDuties.duty_wellformed("notice\tnot-a-context-id\t\t\tnotice\treport\n") == False{} : Bool}
+
+def an_unknown_duty_kind_makes_the_enumeration_unusable():
+  {==}
+
+law one_unreadable_line_makes_the_enumeration_unusable:
+  {ContextDuties.duty_wellformed("query\tq1\t\t\topen\t\nshort\n") == False{} : Bool}
+
+def one_unreadable_line_makes_the_enumeration_unusable():
   {==}
