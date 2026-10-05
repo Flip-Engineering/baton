@@ -760,8 +760,10 @@ class PackageGateReceipt(unittest.TestCase):
         index = {'schema': PACKAGE.ORDINARY_SCHEMA, 'complete': complete,
                  'run': {**identity, 'nonce': 'fixture-nonce',
                          'checker_argv': ['node', 'bend2/scripts/laws-check.mjs']},
+                 # The producer contract for admitted inputs: a path-keyed map
+                 # whose value is an object carrying the digest.
                  'inputs': {'bend2/scripts/laws-check.mjs':
-                            hashlib.sha256(b'checker').hexdigest()}
+                            {'sha256': hashlib.sha256(b'checker').hexdigest()}}
                  if inputs is None else inputs,
                  'cases': records}
         if top_level_identity:
@@ -832,15 +834,23 @@ class PackageGateReceipt(unittest.TestCase):
         result = PACKAGE.validation(self.logs, None, None, self.compiler())
         self.assertEqual(result['ordinary']['cases'], len(self.controls['controls']) + 1)
 
+        # Tolerated earlier shapes, each read through the same canonical path and
+        # digest set: rows, and a map whose values are digest strings.
         run('rows', inputs=[{'path': 'bend2/scripts/laws-check.mjs',
                              'sha256': hashlib.sha256(b'checker').hexdigest()}])
         result = PACKAGE.validation(self.logs, None, None, self.compiler())
         self.assertEqual(result['ordinary']['input_shape'], 'rows')
 
-        run('mapped-objects', inputs={'bend2/scripts/laws-check.mjs':
-                                      {'sha256': hashlib.sha256(b'checker').hexdigest()}})
+        run('mapped-strings', inputs={'bend2/scripts/laws-check.mjs':
+                                      hashlib.sha256(b'checker').hexdigest()})
         result = PACKAGE.validation(self.logs, None, None, self.compiler())
         self.assertEqual(result['ordinary']['input_shape'], 'map')
+
+        # A mapped object without a digest refuses rather than being read as one.
+        run('mapped-object-without-digest',
+            inputs={'bend2/scripts/laws-check.mjs': {'bytes': 7}})
+        with self.assertRaisesRegex(RuntimeError, 'records no digest for'):
+            PACKAGE.validation(self.logs, None, None, self.compiler())
 
         run('conflict', top_level_conflict=True)
         with self.assertRaisesRegex(RuntimeError, 'two different index_path'):
