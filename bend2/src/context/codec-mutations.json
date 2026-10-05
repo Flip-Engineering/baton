@@ -70,11 +70,11 @@
   "law": "codec_law_a_bad_jsonrpc_refuses_before_the_tool"
  },
  {
-  "name": "codec-unknown-operation-dispatches",
+  "name": "codec-unknown-chain-entry-dispatches",
   "file": "bend2/src/context/codec.bend",
-  "find": "  Bool.pick(Admission, admission_accepted(admission),\n    dispatch_grant(chain, required, grants), ARefused{Context.RfValidation{}, admission_condition(admission)})",
-  "replace": "  Bool.pick(Admission, True{},\n    dispatch_grant(chain, required, grants), ARefused{Context.RfValidation{}, admission_condition(admission)})",
-  "law": "codec_law_an_unknown_operation_refuses_even_with_every_grant"
+  "find": "  Bool.pick(Admission, chain_admitted(chain), dispatch_grant(chain, grants), ARefused{Context.RfValidation{}, \"unknownOperation\"})",
+  "replace": "  Bool.pick(Admission, True{}, dispatch_grant(chain, grants), ARefused{Context.RfValidation{}, \"unknownOperation\"})",
+  "law": "codec_law_an_unknown_chain_entry_refuses_even_with_every_grant"
  },
  {
   "name": "codec-primary-is-not-read-from-the-chain",
@@ -86,9 +86,16 @@
  {
   "name": "codec-chain-drops-the-override",
   "file": "bend2/src/context/codec.bend",
-  "find": "  chain_append(chain_named(Ops.request_operation(req)), Ops.request_override_operation(req))",
-  "replace": "  chain_named(Ops.request_operation(req))",
+  "find": "  chain_append(chain_named(subject_slot(req, retained_operation)), Ops.request_override_operation(req))",
+  "replace": "  chain_named(subject_slot(req, retained_operation))",
   "law": "codec_law_the_chain_second_entry_is_the_override"
+ },
+ {
+  "name": "codec-unmapped-intent-uses-the-retained-slot",
+  "file": "bend2/src/context/codec.bend",
+  "find": "  Bool.pick(String, String.eq(kind, \"runtime\"), Eng.runtime_operation(intent),\n    Bool.pick(String, String.eq(kind, \"query-control\"), Eng.query_control_operation(intent), retained))",
+  "replace": "  retained",
+  "law": "codec_law_a_runtime_intent_resolves_through_core"
  },
  {
   "name": "codec-ref-closed-set-is-not-checked",
@@ -112,10 +119,31 @@
   "law": "codec_law_absent_metadata_is_admitted"
  },
  {
-  "name": "codec-malformed-row-kind-is-accepted",
+  "name": "codec-transport-kind-is-not-decoded",
   "file": "bend2/src/context/codec.bend",
-  "find": "    case other: RFBad{\"malformedRowTransport\"}",
-  "replace": "    case other: raw_attach(stack, row_key(row), Rnull{})",
-  "law": "codec_law_a_malformed_kind_is_refused"
+  "find": "  build_row(text_field(row_id(row)), text_field(row_parent(row)), text_field(row_kind(row)),\n            text_field(row_key(row)), text_field(row_value(row)))",
+  "replace": "  build_row(text_field(row_id(row)), text_field(row_parent(row)), FtText{row_kind(row)},\n            text_field(row_key(row)), text_field(row_value(row)))",
+  "law": "codec_law_a_transported_engines_frame_is_accepted"
+ },
+ {
+  "name": "codec-unwind-drops-completed-children",
+  "file": "bend2/src/context/codec.bend",
+  "find": "        raw_attach(raw_unwind(up, pid), key, Robj{members}))",
+  "replace": "        raw_unwind(up, pid))",
+  "law": "codec_law_a_sibling_object_after_a_nested_object_survives"
+ },
+ {
+  "name": "codec-metadata-is-consulted-before-a-refused-envelope",
+  "file": "bend2/src/context/codec.bend",
+  "find": "    case EnvRefused{condition}: FdRefused{Context.RfValidation{}, condition}",
+  "replace": "    case EnvRefused{condition}: Bool.pick(FrameDecision, meta_accepted(m), FdRefused{Context.RfValidation{}, condition}, FdRefused{Context.RfValidation{}, meta_text(m)})",
+  "law": "codec_law_an_envelope_refusal_wins_over_a_metadata_defect"
+ },
+ {
+  "name": "codec-ref-query-takes-its-permissions-from-the-request",
+  "file": "bend2/src/context/codec.bend",
+  "find": "  Refs.RQ{known, Refs.ref_subject(record), Refs.ref_projections(record), requested, applicability,\n          Refs.ref_projections(record), granted, fresh}",
+  "replace": "  Refs.RQ{known, Refs.ref_subject(record), Refs.ref_projections(record), requested, applicability,\n          requested, granted, fresh}",
+  "law": "codec_law_a_query_requires_the_stored_projections_not_the_requested"
  }
 ]

@@ -20,6 +20,9 @@ import ./contracts.bend as Context
 import ./request.bend as Req
 import ./operations.bend as Ops
 import ../git/text.bend as Tx
+import ./engines.bend as Eng
+import ./refs.bend as Refs
+import ./snapshot.bend as Snap
 
 # ---------------------------------------------------------------------------
 # The raw-token value model. This is what the hex row traversal produces for a
@@ -258,16 +261,12 @@ def admission_text(a: Admission) -> String:
     case ARefused{cls, condition}: "refused:" ++ Context.refusal_class_name(cls) ++ ":" ++ condition
 
 # The request-derived operation chain. The primary dispatch operation is always
-# read out of this chain, so a caller cannot set a primary that escaped Core's
-# admission; `chain_with` only appends.
+# read out of this chain, and the chain's subject slot is filled from Core's closed
+# intent mapping, so a runtime, query-control or ref subject can never collapse into
+# an override-only chain. `chain_with` only appends.
 type OpChain is Data:
   Opnone{}
   Opcons{head: String, tail: OpChain}
-
-type OperationAdmission is Data:
-  OaAdmitted{}
-  OaEmpty{}
-  OaUnknown{operation: String}
 
 def chain_named(+op: String) -> OpChain:
   Bool.pick(OpChain, String.is_empty(op), Opnone{}, Opcons{op, Opnone{}})
@@ -300,74 +299,130 @@ def chain_count(chain: OpChain) -> U32:
     case Opnone{}: 0
     case Opcons{+head, +tail}: U32.add(1, chain_count(tail))
 
-def request_operation_chain(+req: J.Json) -> OpChain:
-  chain_append(chain_named(Ops.request_operation(req)), Ops.request_override_operation(req))
+def chain_is_empty(chain: OpChain) -> Bool:
+  match chain:
+    case Opnone{}: True{}
+    case Opcons{+head, +tail}: False{}
 
-def admission_accepted(a: OperationAdmission) -> Bool:
-  match a:
-    case OaAdmitted{}: True{}
-    case OaEmpty{}: False{}
-    case OaUnknown{+operation}: False{}
+def chain_all_known(chain: OpChain) -> Bool:
+  match chain:
+    case Opnone{}: True{}
+    case Opcons{+head, +tail}: Bool.pick(Bool, Eng.operation_known(head), chain_all_known(tail), False{})
 
-def admission_condition(a: OperationAdmission) -> String:
-  match a:
-    case OaAdmitted{}: SNil{}
-    case OaEmpty{}: "unknownOperation"
-    case OaUnknown{+operation}: "unknownOperation"
+# The required subset is Core's, unioned over the chain in chain order so the first
+# missing effect is reported in that order.
+def chain_required(chain: OpChain) -> Eng.SS:
+  match chain:
+    case Opnone{}: Eng.ss_empty()
+    case Opcons{+head, +tail}: Eng.union_append(Eng.required_effects(head), chain_required(tail))
+
+# The one grants conversion between the codec's effect constructors and Core's
+# string chain. Nothing else in this module converts effects.
+def grants_ss(xs: Context.Effects) -> Eng.SS:
+  match xs:
+    case Context.EpsNone{}: Eng.ss_empty()
+    case Context.EpsCons{+head, +tail}: Eng.union_append(grants_ss(tail), Eng.ss_one(Context.effect_name(head)))
+
+def subject_slot(+req: J.Json, retained: String) -> String:
+  subject_slot_of(Ops.request_operation(req), Ops.request_subject_kind(req), Ops.request_intent(req), retained)
+
+# A subject this lane does not map (runtime, query-control) is resolved through
+# Core's closed intent mapping; `ref` uses the retained selector's operation. When
+# neither yields an operation the slot stays empty, so the chain's primary is empty
+# and dispatch refuses instead of letting an override stand alone.
+def subject_slot_of(+mapped: String, +kind: String, +intent: String, +retained: String) -> String:
+  Bool.pick(String, String.is_empty(mapped), intent_or_retained(kind, intent, retained), mapped)
+
+def intent_or_retained(+kind: String, +intent: String, +retained: String) -> String:
+  Bool.pick(String, String.eq(kind, "runtime"), Eng.runtime_operation(intent),
+    Bool.pick(String, String.eq(kind, "query-control"), Eng.query_control_operation(intent), retained))
+
+def request_operation_chain(+req: J.Json, retained_operation: String) -> OpChain:
+  chain_append(chain_named(subject_slot(req, retained_operation)), Ops.request_override_operation(req))
+
+# Admission requires a nonempty chain, a nonempty primary and every entry admitted
+# by Core's closed vocabulary.
+def chain_admitted(+chain: OpChain) -> Bool:
+  Bool.pick(Bool, chain_is_empty(chain), False{}, chain_primary(chain, primary_operation(chain)))
+
+def chain_primary(+chain: OpChain, +primary: String) -> Bool:
+  Bool.pick(Bool, String.is_empty(primary), False{}, chain_all_known(chain))
+
+def grant_admission(e: Eng.Effects, +operation: String) -> Admission:
+  match e:
+    case Eng.FxGranted{}: ADispatch{operation}
+    case Eng.FxMissing{+effect}: ARefused{Context.RfValidation{}, "effectNotGranted"}
+
+def dispatch_grant(+chain: OpChain, +grants: Context.Effects) -> Admission:
+  grant_admission(Eng.missing_effects(chain_required(chain), grants_ss(grants)), primary_operation(chain))
+
+def dispatch_operation(+chain: OpChain, +grants: Context.Effects) -> Admission:
+  Bool.pick(Admission, chain_admitted(chain), dispatch_grant(chain, grants), ARefused{Context.RfValidation{}, "unknownOperation"})
+
+def dispatch_profile(v: Req.Verdict, +chain: OpChain, +grants: Context.Effects) -> Admission:
+  match v:
+    case Req.VAccepted{}: dispatch_operation(chain, grants)
+    case Req.VRefused{condition}: ARefused{Context.RfValidation{}, condition}
 
 # `Req.Context.request_validate` is the callable form: request.bend declares the
 # spec-named functions with their `Context.` prefix, so a caller reaches them
-# through the module alias as well. Core supplies the admission answer for exactly
-# this chain through `Eng.admit_operations`; the codec consumes it and reads the
-# primary out of the chain.
-def dispatch_admission(+req: J.Json, +chain: OpChain, admission: OperationAdmission, required: Context.Effects, +grants: Context.Effects) -> Admission:
-  dispatch_profile(Req.Context.request_validate(req), chain, admission, required, grants)
+# through the module alias as well.
+def dispatch_admission(+req: J.Json, +chain: OpChain, +grants: Context.Effects) -> Admission:
+  dispatch_profile(Req.Context.request_validate(req), chain, grants)
 
-def dispatch_profile(v: Req.Verdict, +chain: OpChain, admission: OperationAdmission, required: Context.Effects, +grants: Context.Effects) -> Admission:
-  match v:
-    case Req.VAccepted{}: dispatch_operation(chain, admission, required, grants)
-    case Req.VRefused{condition}: ARefused{Context.RfValidation{}, condition}
+# The callable entry. It takes the request, the retained selector's operation for a
+# ref subject, and the caller's grants; the chain, the required subset and the
+# admission answer are all derived here, so an arbitrary chain, verdict or required
+# set cannot be substituted.
+def codec_dispatch(+req: J.Json, retained_operation: String, +grants: Context.Effects) -> Admission:
+  dispatch_admission(req, request_operation_chain(req, retained_operation), grants)
 
-def dispatch_operation(+chain: OpChain, +admission: OperationAdmission, required: Context.Effects, +grants: Context.Effects) -> Admission:
-  Bool.pick(Admission, admission_accepted(admission),
-    dispatch_grant(chain, required, grants), ARefused{Context.RfValidation{}, admission_condition(admission)})
-
-def dispatch_grant(+chain: OpChain, required: Context.Effects, +grants: Context.Effects) -> Admission:
-  grant_admission(Context.missing_grant(required, grants), primary_operation(chain))
-
-def dispatch_grant(+operation: String, required: Context.Effects, +grants: Context.Effects) -> Admission:
-  grant_admission(Context.missing_grant(required, grants), operation)
-
-def grant_admission(m: Maybe<&2, Context.Effect>, +operation: String) -> Admission:
-  match m:
-    case None{}: ADispatch{operation}
-    case Some{+effect}: ARefused{Context.RfValidation{}, "effectNotGranted"}
-
-# The required set a caller passes is the union of every selected operation's
-# subset. `Context.cat_effects` is the union builder, and this law pins that an
-# override adds its effect without dropping the subject's.
 law codec_law_the_primary_operation_comes_from_the_chain:
-  {primary_operation(request_operation_chain(Request_sample())) == "sourceAnalysis" : String}
+  {primary_operation(request_operation_chain(Request_sample(), "")) == "sourceAnalysis" : String}
 
 def codec_law_the_primary_operation_comes_from_the_chain():
   {==}
 
 law codec_law_the_chain_carries_the_override_after_the_subject:
-  {primary_operation(request_operation_chain(Join_override_sample())) == "codeAccessJoin" : String}
+  {primary_operation(request_operation_chain(Join_override_sample(), "")) == "codeAccessJoin" : String}
 
 def codec_law_the_chain_carries_the_override_after_the_subject():
   {==}
 
 law codec_law_the_chain_second_entry_is_the_override:
-  {chain_second(request_operation_chain(Join_override_sample())) == "toolsProbe" : String}
+  {chain_second(request_operation_chain(Join_override_sample(), "")) == "toolsProbe" : String}
 
 def codec_law_the_chain_second_entry_is_the_override():
   {==}
 
 law codec_law_an_absent_override_leaves_a_single_entry_chain:
-  {chain_count(request_operation_chain(Request_sample())) == 1 : U32}
+  {chain_count(request_operation_chain(Request_sample(), "")) == 1 : U32}
 
 def codec_law_an_absent_override_leaves_a_single_entry_chain():
+  {==}
+
+law codec_law_a_runtime_intent_resolves_through_core:
+  {primary_operation(request_operation_chain(Runtime_sample(), "")) == "runtimeObserve" : String}
+
+def codec_law_a_runtime_intent_resolves_through_core():
+  {==}
+
+law codec_law_an_unmapped_runtime_intent_cannot_hide_behind_an_override:
+  {codec_dispatch(Unmapped_runtime_override_sample(), "", Context.two_effects(Context.EfExecuteTarget{}, Context.EfControlRuntime{})) == ARefused{Context.RfValidation{}, "unknownOperation"} : Admission}
+
+def codec_law_an_unmapped_runtime_intent_cannot_hide_behind_an_override():
+  {==}
+
+law codec_law_a_ref_without_a_retained_selector_cannot_hide_behind_an_override:
+  {codec_dispatch(Ref_override_sample(), "", Context.one_effect(Context.EfExecuteTarget{})) == ARefused{Context.RfValidation{}, "unknownOperation"} : Admission}
+
+def codec_law_a_ref_without_a_retained_selector_cannot_hide_behind_an_override():
+  {==}
+
+law codec_law_a_ref_chain_uses_the_retained_selector_operation:
+  {primary_operation(request_operation_chain(Ref_override_sample(), "sourceAnalysis")) == "sourceAnalysis" : String}
+
+def codec_law_a_ref_chain_uses_the_retained_selector_operation():
   {==}
 
 # A minimal accepted closed request, so these laws exercise the real profile.
@@ -379,6 +434,23 @@ def Request_sample() -> J.Json:
 def RawRefused_sample() -> J.Json:
   J.Jstr{"not an object"}
 
+def Runtime_sample() -> J.Json:
+  J.Jobj{J.Jpair{"version", J.Jint{1},
+    J.Jpair{"subject", J.Jobj{J.Jpair{"kind", J.Jstr{"runtime"}, J.Jpair{"intent", J.Jstr{"observe"}, J.Jnil{}}}},
+    J.Jpair{"select", J.Jarr{J.Jstr{"state"}, J.Jnil{}}, J.Jnil{}}}}}
+
+def Unmapped_runtime_override_sample() -> J.Json:
+  J.Jobj{J.Jpair{"version", J.Jint{1},
+    J.Jpair{"subject", J.Jobj{J.Jpair{"kind", J.Jstr{"runtime"}, J.Jpair{"intent", J.Jstr{"breakpoint"}, J.Jnil{}}}},
+    J.Jpair{"select", J.Jarr{J.Jstr{"state"}, J.Jnil{}},
+    J.Jpair{"options", J.Jobj{J.Jpair{"tools", J.Jobj{J.Jnil{}}, J.Jnil{}}}, J.Jnil{}}}}}}
+
+def Ref_override_sample() -> J.Json:
+  J.Jobj{J.Jpair{"version", J.Jint{1},
+    J.Jpair{"subject", J.Jobj{J.Jpair{"kind", J.Jstr{"ref"}, J.Jnil{}}}},
+    J.Jpair{"select", J.Jarr{J.Jstr{"definition"}, J.Jnil{}},
+    J.Jpair{"options", J.Jobj{J.Jpair{"tools", J.Jobj{J.Jnil{}}, J.Jnil{}}}, J.Jnil{}}}}}
+
 # A source request that selects the SQL join and carries a request-local tool
 # override, so both obligations are in one chain.
 def Join_override_sample() -> J.Json:
@@ -388,51 +460,57 @@ def Join_override_sample() -> J.Json:
     J.Jpair{"options", J.Jobj{J.Jpair{"tools", J.Jobj{J.Jnil{}}, J.Jnil{}}}, J.Jnil{}}}}}}
 
 law codec_law_an_override_adds_execute_target_without_dropping_a_plan:
-  {Context.missing_grant(Context.cat_effects(Context.one_effect(Context.EfPlanTargetSql{}), Context.one_effect(Context.EfExecuteTarget{})), Context.one_effect(Context.EfPlanTargetSql{})) == Some{Context.EfExecuteTarget{}} : Maybe<&2, Context.Effect>}
+  {Eng.missing_effects(chain_required(request_operation_chain(Join_override_sample(), "")), grants_ss(Context.one_effect(Context.EfPlanTargetSql{}))) == Eng.FxMissing{"executeTarget"} : Eng.Effects}
 
 def codec_law_an_override_adds_execute_target_without_dropping_a_plan():
   {==}
 
-law codec_law_an_empty_operation_refuses:
-  {dispatch_admission(Request_sample(), Opnone{}, OaEmpty{}, Context.no_effects(), Context.no_effects()) == ARefused{Context.RfValidation{}, "unknownOperation"} : Admission}
+law codec_law_an_empty_chain_refuses:
+  {dispatch_admission(Request_sample(), Opnone{}, Context.no_effects()) == ARefused{Context.RfValidation{}, "unknownOperation"} : Admission}
 
-def codec_law_an_empty_operation_refuses():
+def codec_law_an_empty_chain_refuses():
+  {==}
+
+law codec_law_an_unknown_chain_entry_refuses_even_with_every_grant:
+  {dispatch_admission(Request_sample(), Opcons{"notAnOperation", Opnone{}}, Context.two_effects(Context.EfExecuteTarget{}, Context.EfControlRuntime{})) == ARefused{Context.RfValidation{}, "unknownOperation"} : Admission}
+
+def codec_law_an_unknown_chain_entry_refuses_even_with_every_grant():
   {==}
 
 law codec_law_a_missing_grant_refuses_before_dispatch:
-  {dispatch_admission(Request_sample(), request_operation_chain(Request_sample()), OaAdmitted{}, Context.one_effect(Context.EfPlanTargetSql{}), Context.no_effects()) == ARefused{Context.RfValidation{}, "effectNotGranted"} : Admission}
+  {dispatch_admission(Request_sample(), Opcons{"sqlPlan", Opnone{}}, Context.one_effect(Context.EfPlanTargetSql{})) == ADispatch{"sqlPlan"} : Admission}
 
 def codec_law_a_missing_grant_refuses_before_dispatch():
   {==}
 
-law codec_law_a_granted_operation_dispatches_with_its_operation:
-  {dispatch_admission(Request_sample(), Opcons{"sqlPlan", Opnone{}}, OaAdmitted{}, Context.one_effect(Context.EfPlanTargetSql{}), Context.one_effect(Context.EfPlanTargetSql{})) == ADispatch{"sqlPlan"} : Admission}
+law codec_law_an_ungranted_plan_refuses:
+  {dispatch_admission(Request_sample(), Opcons{"sqlPlan", Opnone{}}, Context.no_effects()) == ARefused{Context.RfValidation{}, "effectNotGranted"} : Admission}
 
-def codec_law_a_granted_operation_dispatches_with_its_operation():
+def codec_law_an_ungranted_plan_refuses():
   {==}
 
-law codec_law_an_unknown_operation_refuses_even_with_every_grant:
-  {dispatch_admission(Request_sample(), request_operation_chain(Request_sample()), OaUnknown{"notAnOperation"}, Context.two_effects(Context.EfExecuteTarget{}, Context.EfControlRuntime{}), Context.two_effects(Context.EfExecuteTarget{}, Context.EfControlRuntime{})) == ARefused{Context.RfValidation{}, "unknownOperation"} : Admission}
+law codec_law_a_refused_profile_refuses_before_the_operation_is_consulted:
+  {dispatch_admission(RawRefused_sample(), request_operation_chain(Request_sample(), ""), Context.no_effects()) == ARefused{Context.RfValidation{}, "requestNotObject"} : Admission}
 
-def codec_law_an_unknown_operation_refuses_even_with_every_grant():
+def codec_law_a_refused_profile_refuses_before_the_operation_is_consulted():
   {==}
 
 law codec_law_an_admitted_grant_free_operation_dispatches:
-  {dispatch_admission(Request_sample(), request_operation_chain(Request_sample()), OaAdmitted{}, Context.no_effects(), Context.no_effects()) == ADispatch{"sourceAnalysis"} : Admission}
+  {dispatch_admission(Request_sample(), request_operation_chain(Request_sample(), ""), Context.no_effects()) == ADispatch{"sourceAnalysis"} : Admission}
 
 def codec_law_an_admitted_grant_free_operation_dispatches():
   {==}
 
 law codec_law_tools_and_subject_obligations_both_apply:
-  {dispatch_admission(Join_override_sample(), request_operation_chain(Join_override_sample()), OaAdmitted{}, Context.cat_effects(Context.one_effect(Context.EfPlanTargetSql{}), Context.one_effect(Context.EfExecuteTarget{})), Context.one_effect(Context.EfPlanTargetSql{})) == ARefused{Context.RfValidation{}, "effectNotGranted"} : Admission}
+  {codec_dispatch(Join_override_sample(), "", Context.one_effect(Context.EfPlanTargetSql{})) == ARefused{Context.RfValidation{}, "effectNotGranted"} : Admission}
 
 def codec_law_tools_and_subject_obligations_both_apply():
   {==}
 
-law codec_law_a_refused_profile_refuses_before_the_operation_is_consulted:
-  {dispatch_admission(RawRefused_sample(), request_operation_chain(Request_sample()), OaAdmitted{}, Context.no_effects(), Context.no_effects()) == ARefused{Context.RfValidation{}, "requestNotObject"} : Admission}
+law codec_law_a_runtime_observe_needs_no_control_grant:
+  {codec_dispatch(Runtime_sample(), "", Context.no_effects()) == ADispatch{"runtimeObserve"} : Admission}
 
-def codec_law_a_refused_profile_refuses_before_the_operation_is_consulted():
+def codec_law_a_runtime_observe_needs_no_control_grant():
   {==}
 
 # ---------------------------------------------------------------------------
@@ -772,8 +850,77 @@ def row_value(r: Req.Row) -> String:
   match r:
     case Req.Row{+id, +parent, +kind, +key, value}: value
 
-def decoded_text(+hex: String) -> String:
-  Req.scalar_value(Req.Context.decode_scalar_utf8(Tx.hex_decode(hex)))
+# `Context.json_tree_sql` emits all five columns as hex and `Context.parse_rows`
+# keeps them verbatim, so every transport field is decoded here exactly once. A
+# scalar decoder failure keeps its own reason; the empty string is never used to
+# turn an invalid field into a valid one.
+
+type FieldText is Data:
+  FtText{value: String}
+  FtBad{condition: String}
+
+type DecodedRow is Data:
+  DRow{id: String, parent: String, kind: String, key: String, value: String, bad: String}
+
+def ft_text(f: FieldText) -> String:
+  match f:
+    case FtText{value}: value
+    case FtBad{+condition}: SNil{}
+
+def ft_bad(f: FieldText) -> String:
+  match f:
+    case FtText{+value}: SNil{}
+    case FtBad{condition}: condition
+
+def text_field_scalar(+scalar: Req.Scalar) -> FieldText:
+  match scalar:
+    case Req.ScalarText{value}: FtText{value}
+    case Req.ScalarBadUtf8{}: FtBad{"invalidUtf8Field"}
+    case Req.ScalarSurrogate{}: FtBad{"surrogateField"}
+    case Req.ScalarNul{}: FtBad{"nulInField"}
+
+def text_field_checked(ok: Bool, +hex: String) -> FieldText:
+  Bool.pick(FieldText, ok, text_field_scalar(Req.Context.decode_scalar_utf8(Tx.hex_decode(hex))), FtBad{"malformedHexField"})
+
+def text_field(+hex: String) -> FieldText:
+  text_field_checked(Req.hex_ok(hex), hex)
+
+def merge_bad(a: String, +b: String) -> String:
+  Bool.pick(String, String.is_empty(a), b, a)
+
+def build_row(i: FieldText, p: FieldText, k: FieldText, key: FieldText, v: FieldText) -> DecodedRow:
+  DRow{ft_text(i), ft_text(p), ft_text(k), ft_text(key), ft_text(v),
+       merge_bad(merge_bad(merge_bad(merge_bad(ft_bad(i), ft_bad(p)), ft_bad(k)), ft_bad(key)), ft_bad(v))}
+
+# `row_id`, `row_parent`, `row_kind`, `row_key` and `row_value` read the transport
+# field verbatim, which is hex; only `decode_row` interprets them.
+def decode_row(+row: Req.Row) -> DecodedRow:
+  build_row(text_field(row_id(row)), text_field(row_parent(row)), text_field(row_kind(row)),
+            text_field(row_key(row)), text_field(row_value(row)))
+
+def dr_id(r: DecodedRow) -> String:
+  match r:
+    case DRow{id, +parent, +kind, +key, +value, +bad}: id
+
+def dr_parent(r: DecodedRow) -> String:
+  match r:
+    case DRow{+id, parent, +kind, +key, +value, +bad}: parent
+
+def dr_kind(r: DecodedRow) -> String:
+  match r:
+    case DRow{+id, +parent, kind, +key, +value, +bad}: kind
+
+def dr_key(r: DecodedRow) -> String:
+  match r:
+    case DRow{+id, +parent, +kind, key, +value, +bad}: key
+
+def dr_value(r: DecodedRow) -> String:
+  match r:
+    case DRow{+id, +parent, +kind, +key, value, +bad}: value
+
+def dr_bad(r: DecodedRow) -> String:
+  match r:
+    case DRow{+id, +parent, +kind, +key, +value, bad}: bad
 
 def rf_id(+f: RawFrame) -> String:
   match f:
@@ -804,55 +951,57 @@ def close_items(items: RawItems) -> RawItems:
     case RInone{}: RInone{}
     case RIcons{+head, +tail}: rev_items(items, RInone{})
 
+# Each completed container is attached into its parent while unwinding, so a nested
+# object followed by a sibling field keeps its contents. Array item order is not
+# guaranteed across an unwind; the only consumers here are member lookup and the
+# scalar progress token, neither of which reads array order.
 def raw_unwind(+f: RawFrame, pid: String) -> RawFrame:
   match f:
     case RFRoot{+root}: RFRoot{root}
-    case RFObj{+id, key, members, +up}:
-      Bool.pick(RawFrame, String.eq(id, pid), RFObj{id, key, members, up}, raw_unwind(up, pid))
-    case RFArr{+id, key, items, +up}:
-      Bool.pick(RawFrame, String.eq(id, pid), RFArr{id, key, items, up}, raw_unwind(up, pid))
-    case RFBad{condition}: RFBad{condition}
+    case RFObj{+id, +key, +members, up}:
+      Bool.pick(RawFrame, String.eq(id, pid), RFObj{id, key, members, up},
+        raw_attach(raw_unwind(up, pid), key, Robj{members}))
+    case RFArr{+id, +key, +items, up}:
+      Bool.pick(RawFrame, String.eq(id, pid), RFArr{id, key, items, up},
+        raw_attach(raw_unwind(up, pid), key, Rarr{close_items(items)}))
+    case RFBad{+condition}: RFBad{condition}
 
 def raw_finish(+f: RawFrame) -> RawFrame:
   match f:
     case RFRoot{+root}: RFRoot{root}
     case RFObj{+id, key, members, up}: raw_finish(raw_attach(up, key, Robj{members}))
     case RFArr{+id, key, items, up}: raw_finish(raw_attach(up, key, Rarr{close_items(items)}))
-    case RFBad{condition}: RFBad{condition}
+    case RFBad{+condition}: RFBad{condition}
 
-def raw_hex_number(+stack: RawFrame, +row: Req.Row) -> RawFrame:
-  Bool.pick(RawFrame, Req.hex_ok(row_value(row)),
-    raw_attach(stack, row_key(row), Rnum{decoded_text(row_value(row))}), RFBad{"malformedRowTransport"})
+def raw_hex_number(+stack: RawFrame, +d: DecodedRow) -> RawFrame:
+  raw_attach(stack, dr_key(d), Rnum{dr_value(d)})
 
-def raw_hex_text(+stack: RawFrame, +row: Req.Row) -> RawFrame:
-  Bool.pick(RawFrame, Req.hex_ok(row_value(row)),
-    raw_attach(stack, row_key(row), Rstr{decoded_text(row_value(row))}), RFBad{"malformedRowTransport"})
+def raw_hex_text(+stack: RawFrame, +d: DecodedRow) -> RawFrame:
+  raw_attach(stack, dr_key(d), Rstr{dr_value(d)})
 
-def raw_kind(+kind: String, +stack: RawFrame, +row: Req.Row) -> RawFrame:
+def raw_kind(+kind: String, +stack: RawFrame, +d: DecodedRow) -> RawFrame:
   match kind:
-    case "object": RFObj{row_id(row), row_key(row), RMnone{}, stack}
-    case "array": RFArr{row_id(row), row_key(row), RInone{}, stack}
-    case "null": raw_attach(stack, row_key(row), Rnull{})
-    case "true": raw_attach(stack, row_key(row), Rtrue{})
-    case "false": raw_attach(stack, row_key(row), Rfalse{})
-    case "integer": raw_hex_number(stack, row)
-    case "real": raw_hex_number(stack, row)
-    case "text": raw_hex_text(stack, row)
-    case other: RFBad{"malformedRowTransport"}
+    case "object": RFObj{dr_id(d), dr_key(d), RMnone{}, stack}
+    case "array": RFArr{dr_id(d), dr_key(d), RInone{}, stack}
+    case "null": raw_attach(stack, dr_key(d), Rnull{})
+    case "true": raw_attach(stack, dr_key(d), Rtrue{})
+    case "false": raw_attach(stack, dr_key(d), Rfalse{})
+    case "integer": raw_hex_number(stack, d)
+    case "real": raw_hex_number(stack, d)
+    case "text": raw_hex_text(stack, d)
+    case other: RFBad{"malformedRowKind"}
 
-def raw_unwound(+stack: RawFrame, +row: Req.Row) -> RawFrame:
-  Bool.pick(RawFrame, String.eq(rf_id(stack), row_parent(row)),
-    raw_kind(row_kind(row), stack, row), RFBad{"missingParentRow"})
+def raw_place_decoded(+stack: RawFrame, +d: DecodedRow) -> RawFrame:
+  Bool.pick(RawFrame, String.eq(rf_id(stack), dr_parent(d)), raw_kind(dr_kind(d), stack, d), RFBad{"missingParentRow"})
 
-def raw_step_live(+frame: RawFrame, +row: Req.Row) -> RawFrame:
-  raw_unwound(raw_unwind(frame, row_parent(row)), row)
+def raw_place(+frame: RawFrame, +d: DecodedRow) -> RawFrame:
+  Bool.pick(RawFrame, String.is_empty(dr_bad(d)), raw_place_decoded(raw_unwind(frame, dr_parent(d)), d), RFBad{dr_bad(d)})
 
 def raw_step(+frame: RawFrame, +row: Req.Row) -> RawFrame:
   match frame:
     case RFBad{+condition}: RFBad{condition}
-    case other_frame: raw_step_live(other_frame, row)
+    case other_frame: raw_place(other_frame, decode_row(row))
 
-# One self-recursive walk over the rows; a failure is carried by the `RFBad` frame.
 def raw_fold(rows: Req.Rows, frame: RawFrame) -> RawFrame:
   match rows:
     case Req.Rnone{}: raw_finish(frame)
@@ -952,19 +1101,19 @@ def meta_accepted(v: MetaVerdict) -> Bool:
     case MetaNotObject{}: False{}
     case MetaBadProgressToken{}: False{}
 
-def frame_envelope_ok(v: EnvelopeVerdict) -> FrameDecision:
-  match v:
-    case EnvAccepted{tool, id, query, request}: FdOk{tool, id, query, request}
-    case EnvRefused{condition}: FdRefused{Context.RfValidation{}, condition}
+def frame_meta_verdict(tool: Context.CodecTool, id: Context.FrameId, query: Context.OptText, request: Context.OptText, +m: MetaVerdict) -> FrameDecision:
+  Bool.pick(FrameDecision, meta_accepted(m), FdOk{tool, id, query, request}, FdRefused{Context.RfValidation{}, meta_text(m)})
 
-def frame_meta(v: EnvelopeVerdict, +m: MetaVerdict) -> FrameDecision:
-  Bool.pick(FrameDecision, meta_accepted(m), frame_envelope_ok(v), FdRefused{Context.RfValidation{}, meta_text(m)})
+def frame_envelope_then_meta(v: EnvelopeVerdict, +m: MetaVerdict) -> FrameDecision:
+  match v:
+    case EnvAccepted{tool, id, query, request}: frame_meta_verdict(tool, id, query, request, m)
+    case EnvRefused{condition}: FdRefused{Context.RfValidation{}, condition}
 
 # The envelope is decided first, then the metadata profile. Only an accepted frame
 # with accepted metadata reaches `FdOk`, so metadata is discarded after successful
 # validation and never carried into the decision.
 def frame_envelope_decision(+env: Envelope, +m: MetaVerdict) -> FrameDecision:
-  frame_meta(envelope_decide(env), m)
+  frame_envelope_then_meta(envelope_decide(env), m)
 
 def frame_decision(+r: EnvelopeRead) -> FrameDecision:
   match r:
@@ -1040,10 +1189,182 @@ def query_frame_rows() -> Req.Rows:
   Req.Rcons{text_row("8", "6", "request", "{\"version\":1}"),
   Req.Rnone{}}}}}}}}}}
 
+# ---------------------------------------------------------------------------
+# The retained reference composes into Core's own record and query types. The
+# `required` set of a query is the stored selector's projection chain, never the
+# request's, so a caller cannot widen its own permissions.
+
+def ss_of_proj(+p: Proj) -> Eng.SS:
+  match p:
+    case Pnone{}: Eng.ss_empty()
+    case Pcons{+head, +tail}: Eng.SSCons{head, ss_of_proj(tail)}
+
+def ref_engine_of(d: RefDecode) -> String:
+  match d:
+    case RdNone{}: SNil{}
+    case RdRef{+id, engine, +subject, +snapshot_id, +projections}: engine
+    case RdBad{+condition}: SNil{}
+
+def ref_subject_of(d: RefDecode) -> String:
+  match d:
+    case RdNone{}: SNil{}
+    case RdRef{+id, +engine, subject, +snapshot_id, +projections}: subject
+    case RdBad{+condition}: SNil{}
+
+def ref_snapshot_of(d: RefDecode) -> String:
+  match d:
+    case RdNone{}: SNil{}
+    case RdRef{+id, +engine, +subject, snapshot_id, +projections}: snapshot_id
+    case RdBad{+condition}: SNil{}
+
+def ref_record_of(d: RefDecode) -> Refs.RefRecord:
+  Refs.Ref{ref_id_of(d), ref_engine_of(d), ref_subject_of(d), ref_snapshot_of(d), ss_of_proj(ref_projections_of(d))}
+
+def ref_query_of(+record: Refs.RefRecord, requested: Eng.SS, applicability: Snap.Applies, granted: Eng.SS, fresh: String, known: Bool) -> Refs.RefQuery:
+  Refs.RQ{known, Refs.ref_subject(record), Refs.ref_projections(record), requested, applicability,
+          Refs.ref_projections(record), granted, fresh}
+
 def frame_text(d: FrameDecision) -> String:
   match d:
     case FdOk{tool, id, query, request}: Context.codec_success_text(tool, id, query, request)
     case FdRefused{cls, condition}: Context.refusal_class_name(cls) ++ ":" ++ condition
+
+def frame_refusal(r: FrameRead) -> String:
+  match r:
+    case FrValue{+value}: SNil{}
+    case FrRefused{condition}: condition
+
+def ref_record_sample(id: String, +projections: J.Json) -> Refs.RefRecord:
+  ref_record_of(ref_decode(ref_object_of(ref_members_base(id, projections))))
+
+law codec_law_a_retained_record_composes_into_core:
+  {Refs.ref_id(ref_record_sample("r1", J.Jarr{J.Jstr{"definition"}, J.Jnil{}})) == "r1" : String}
+
+def codec_law_a_retained_record_composes_into_core():
+  {==}
+
+law codec_law_the_composed_record_carries_the_stored_projections:
+  {Eng.ss_member(Refs.ref_projections(ref_record_sample("r1", J.Jarr{J.Jstr{"definition"}, J.Jarr{J.Jstr{"calls"}, J.Jnil{}}})), "calls") == True{} : Bool}
+
+def codec_law_the_composed_record_carries_the_stored_projections():
+  {==}
+
+law codec_law_a_query_requires_the_stored_projections_not_the_requested:
+  {Eng.ss_member(Refs.rq_required(ref_query_of(ref_record_sample("r1", J.Jarr{J.Jstr{"definition"}, J.Jnil{}}), Eng.ss_one("calls"), Snap.ACurrent{}, Eng.ss_empty(), "fresh", True{})), "definition") == True{} : Bool}
+
+def codec_law_a_query_requires_the_stored_projections_not_the_requested():
+  {==}
+
+law codec_law_a_query_does_not_require_a_projection_the_store_lacks:
+  {Eng.ss_member(Refs.rq_required(ref_query_of(ref_record_sample("r1", J.Jarr{J.Jstr{"definition"}, J.Jnil{}}), Eng.ss_one("calls"), Snap.ACurrent{}, Eng.ss_empty(), "fresh", True{})), "calls") == False{} : Bool}
+
+def codec_law_a_query_does_not_require_a_projection_the_store_lacks():
+  {==}
+
+# ---------------------------------------------------------------------------
+# Transported-frame laws. These exercise the actual hex row transport through the
+# reconstruction, the sibling return and the metadata extraction.
+
+law codec_law_a_transported_engines_frame_is_accepted:
+  {frame_text(frame_decision(frame_envelope(engine_frame_rows()))) == "{\"id\":7,\"query\":null,\"requestCanonical\":null,\"tool\":\"context-engines\",\"version\":1}" : String}
+
+def codec_law_a_transported_engines_frame_is_accepted():
+  {==}
+
+law codec_law_a_transported_query_frame_keeps_its_numeric_id:
+  {frame_text(frame_decision(frame_envelope(query_frame_rows()))) == "{\"id\":-1,\"query\":\"q1\",\"requestCanonical\":\"{\\\"version\\\":1}\",\"tool\":\"context-query\",\"version\":1}" : String}
+
+def codec_law_a_transported_query_frame_keeps_its_numeric_id():
+  {==}
+
+law codec_law_a_sibling_object_after_a_nested_object_survives:
+  {frame_text(frame_decision(frame_envelope(meta_frame_rows("real", "0.5")))) == "{\"id\":7,\"query\":\"q1\",\"requestCanonical\":null,\"tool\":\"context-result\",\"version\":1}" : String}
+
+def codec_law_a_sibling_object_after_a_nested_object_survives():
+  {==}
+
+law codec_law_a_bad_progress_token_after_a_nested_object_refuses:
+  {frame_text(frame_decision(frame_envelope(meta_frame_rows("null", "")))) == "validationRefusal:invalidProgressToken" : String}
+
+def codec_law_a_bad_progress_token_after_a_nested_object_refuses():
+  {==}
+
+law codec_law_a_transported_missing_parent_refuses:
+  {frame_refusal(frame_read(broken_frame_rows())) == "missingParentRow" : String}
+
+def codec_law_a_transported_missing_parent_refuses():
+  {==}
+
+law codec_law_a_transported_malformed_field_refuses:
+  {frame_refusal(frame_read(bad_field_rows())) == "malformedHexField" : String}
+
+def codec_law_a_transported_malformed_field_refuses():
+  {==}
+
+law codec_law_a_transported_invalid_utf8_field_refuses:
+  {frame_refusal(frame_read(bad_utf8_rows())) == "invalidUtf8Field" : String}
+
+def codec_law_a_transported_invalid_utf8_field_refuses():
+  {==}
+
+def real_row(id: String, parent: String, key: String, token: String) -> Req.Row:
+  Req.Row{id, parent, "real", row_hex(key), row_hex(token)}
+
+def null_row(id: String, parent: String, key: String) -> Req.Row:
+  Req.Row{id, parent, "null", row_hex(key), SNil{}}
+
+def meta_frame_rows(kind: String, token: String) -> Req.Rows:
+  Req.Rcons{object_row("0", SNil{}, SNil{}),
+  Req.Rcons{text_row("1", "0", "jsonrpc", "2.0"),
+  Req.Rcons{text_row("2", "0", "method", "tools/call"),
+  Req.Rcons{number_row("3", "0", "id", "7"),
+  Req.Rcons{object_row("4", "0", "params"),
+  Req.Rcons{text_row("5", "4", "name", "context-result"),
+  Req.Rcons{object_row("6", "4", "arguments"),
+  Req.Rcons{text_row("7", "6", "query", "q1"),
+  Req.Rcons{object_row("8", "4", "_meta"),
+  Req.Rcons{meta_token_row("9", "8", kind, token),
+  Req.Rnone{}}}}}}}}}}}
+
+def meta_token_row(id: String, parent: String, kind: String, token: String) -> Req.Row:
+  Bool.pick(Req.Row, String.eq(kind, "null"), null_row(id, parent, "progressToken"), real_row(id, parent, "progressToken", token))
+
+# A frame with two defects at once: a refused envelope and a refused metadata
+# value. The envelope refusal must win.
+law codec_law_an_envelope_refusal_wins_over_a_metadata_defect:
+  {frame_text(frame_decision(frame_envelope(bad_jsonrpc_meta_rows()))) == "validationRefusal:invalidJsonrpc" : String}
+
+def codec_law_an_envelope_refusal_wins_over_a_metadata_defect():
+  {==}
+
+def bad_jsonrpc_meta_rows() -> Req.Rows:
+  Req.Rcons{object_row("0", SNil{}, SNil{}),
+  Req.Rcons{text_row("1", "0", "jsonrpc", "1.0"),
+  Req.Rcons{text_row("2", "0", "method", "tools/call"),
+  Req.Rcons{number_row("3", "0", "id", "7"),
+  Req.Rcons{object_row("4", "0", "params"),
+  Req.Rcons{text_row("5", "4", "name", "context-result"),
+  Req.Rcons{object_row("6", "4", "arguments"),
+  Req.Rcons{text_row("7", "6", "query", "q1"),
+  Req.Rcons{object_row("8", "4", "_meta"),
+  Req.Rcons{null_row("9", "8", "progressToken"),
+  Req.Rnone{}}}}}}}}}}}
+
+def broken_frame_rows() -> Req.Rows:
+  Req.Rcons{object_row("0", SNil{}, SNil{}),
+  Req.Rcons{text_row("1", "0", "jsonrpc", "2.0"),
+  Req.Rcons{text_row("2", "9", "method", "tools/call"),
+  Req.Rnone{}}}}
+
+def bad_field_rows() -> Req.Rows:
+  Req.Rcons{object_row("0", SNil{}, SNil{}),
+  Req.Rcons{Req.Row{"1", "0", row_hex("text"), "7z", row_hex("v")},
+  Req.Rnone{}}}
+
+def bad_utf8_rows() -> Req.Rows:
+  Req.Rcons{object_row("0", SNil{}, SNil{}),
+  Req.Rcons{Req.Row{"1", "0", row_hex("text"), row_hex("k"), "ff"},
+  Req.Rnone{}}}
 
 def main() -> IO(Unit):
   do IO<Unit>:
