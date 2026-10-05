@@ -22,6 +22,7 @@ import ../src/context/roles.bend as ContextRoles
 import ../src/context/control.bend as ContextControl
 import ../src/context/lifecycle.bend as ContextLifecycle
 import ../src/context/bound.bend as ContextBound
+import ../src/context/bound-admission.bend as ContextAdmit
 import ../src/context/laws.bend as ContextLaws
 import ../src/coordinator/commands.bend as C
 import ../src/host/sqlite.bend as DB
@@ -212,15 +213,41 @@ def control_surfaces(+db: String, +binding: String) -> IO(Unit):
     show("control.count", count)
     IO.pure(Unit, Unit{})
 
+def show_admission(+key: String, result: Result<&1,&1,U32 & String,ContextAdmit.Admission>) -> IO(Unit):
+  match result:
+    case Done{+admission}: obs(key, ContextAdmit.admit_text(admission))
+    case Fail{error}:
+      match error:
+        case (code, message): obs(key ++ ".error", message)
+
+# The atomic bound admission: one transaction creates the row, a second identical
+# admission returns the retained row, and a different request for the same identity
+# returns the winner's recorded request so the caller can refuse it. The row count
+# stays at one.
+def admit_surfaces(+db: String, +binding: String) -> IO(Unit):
+  do IO<Unit>:
+    +request : String <- IO.pure(String, "{\"version\":1,\"engine\":\"typescript\"}")
+    +other : String <- IO.pure(String, "{\"version\":1,\"engine\":\"clangd\"}")
+    created : Result<&1,&1,U32 & String,ContextAdmit.Admission> <- ContextAdmit.admit(db, binding, "q3", "root", request, "/log/q3", "/work", "attempt-3", "/art/q3")
+    show_admission("admit.created", created)
+    retained : Result<&1,&1,U32 & String,ContextAdmit.Admission> <- ContextAdmit.admit(db, binding, "q3", "root", request, "/log/q3", "/work", "attempt-3", "/art/q3")
+    show_admission("admit.retained", retained)
+    conflict : Result<&1,&1,U32 & String,ContextAdmit.Admission> <- ContextAdmit.admit(db, binding, "q3", "root", other, "/log/q3", "/work", "attempt-9", "/art/q3")
+    show_admission("admit.conflict", conflict)
+    rows : Result<&1,&1,U32 & String,String> <- DB.Sql.query_bound(db, binding, "SELECT count(*) FROM semantic_queries WHERE id='q3';")
+    show("admit.rows", rows)
+    IO.pure(Unit, Unit{})
+
 def run(+db: String, +copy: String, +log: String) -> IO(Unit):
   do IO<Unit>:
     pure : Unit <- identity_surfaces()
     more : Unit <- progress_surfaces()
     decisions : Unit <- admission_surfaces()
     host : Unit <- host_surfaces(log)
-    binding : String <- binding_surfaces(db, copy)
+    +binding : String <- binding_surfaces(db, copy)
     store : Unit <- store_surfaces(db, binding)
     rejection : Unit <- rejection_surfaces(db, binding)
+    admissions : Unit <- admit_surfaces(db, binding)
     roles : Unit <- role_surfaces(db, binding, log)
     control : Unit <- control_surfaces(db, binding)
     IO.print("context-lifecycle: done")

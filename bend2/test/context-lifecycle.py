@@ -242,6 +242,18 @@ def check_roles(values):
     check(values.get("intent.q1") == "0", "intent.q1", values.get("intent.q1"))
 
 
+def check_admission_bound(values):
+    check(values.get("admit.created") == "created:accepted:accepted", "admit.created", values.get("admit.created"))
+    check(
+        values.get("admit.retained") == "retained:accepted:accepted:attempt-3",
+        "admit.retained",
+        values.get("admit.retained"),
+    )
+    conflict = values.get("admit.conflict", "")
+    check(conflict.startswith("retained:accepted:accepted:attempt-3"), "admit.conflict", conflict)
+    check(values.get("admit.rows") == "1", "admit.rows", values.get("admit.rows"))
+
+
 def check_control(values):
     control = json.loads(values.get("control.release", "{}"))
     check(control.get("state") == "complete", "control.release", control)
@@ -293,7 +305,22 @@ MUTATIONS = [
         "AND semantic_queries.request_json=semantic_queries.request_json",
         "a_repeated_query_id_replays_only_an_identical_owner_and_request",
     ),
+    # The admission answer stops distinguishing creation from retention.
+    (
+        "bend2/src/context/bound-admission.bend",
+        "SELECT CASE WHEN changes()=1 THEN 'created' ELSE 'retained' END",
+        "SELECT CASE WHEN changes()=1 THEN 'retained' ELSE 'created' END",
+        "the_admission_answer_names_what_the_transaction_did",
+    ),
+    # A retained answer with a different request stops being a conflict.
+    (
+        "bend2/src/context/bound-admission.bend",
+        "Bool.and(String.eq(owner, expected_owner), String.eq(request, expected_request))",
+        "Bool.and(String.eq(owner, expected_owner), True{})",
+        "a_retained_answer_with_a_different_request_is_a_conflict",
+    ),
 ]
+
 
 
 def proof_removal_check():
@@ -360,6 +387,7 @@ def main():
     check_admission(values)
     check_host(values, str(db), str(log))
     check_store(values)
+    check_admission_bound(values)
     check_roles(values)
     check_control(values)
     if os.environ.get("CONTEXT_LIFECYCLE_MUTATIONS") == "1":
