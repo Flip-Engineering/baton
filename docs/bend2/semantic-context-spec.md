@@ -2,7 +2,8 @@
 
 Status: revised design candidate for independent review. The requirements are
 [Native semantic context](semantic-context-feature.md) and the Root81
-[language scope amendment](semantic-context-language-scope.md). Bend2 is the
+[language scope amendment](semantic-context-language-scope.md), including
+Root83/84's project detection and selective package-loading requirement. Bend2 is the
 first target. The amendment withdraws whole-feature and language-boundary
 acceptance of `8a26bc3e7f9d5355b72f1291d95620b218b5c8e2`. Prior reviews and
 provider evidence retain their original scope. This revision requires new domain
@@ -89,7 +90,7 @@ engine readers do not implement it.
 ```text
 ModuleDeclaration = {
   version, id, revision, protocolVersion,
-  entry: Native{exportIdentity} | Process{artifact, argv},
+  packageIdentity, entry: Native{artifact, exportIdentity} | Process{artifact, argv},
   dependencies: [Artifact],
   operations: [Operation], applicability: [SelectorRule]
 }
@@ -105,13 +106,25 @@ ModuleBinding = {id, revision, declarationDigest, protocolVersion,
                  operation, artifactIdentities, schemaIdentities}
 ```
 
-Modules are ordinary statically imported native modules with typed declarations
-and explicit composition. Adding a module may add its import, composition entry,
-operative laws and backend payload, then rebuild the native executable. Shared
+The baseline contains common native policy and lightweight trusted descriptions.
+Provider implementation artifacts and their compiler/LSP/debugger/framework
+dependencies are separately installable. A module's own artifact may use ordinary
+static Bend imports, typed declarations, composition and operative laws. Shared
 validation, selection, effect admission and result/ref algorithms consume the
-composed declarations without a language case. A pure native operation needs no
-extra provider process or probe. Process-backed operations use the existing
-invocation boundary and their actual protocol/dependency declarations.
+descriptions without a language case. Adding a module adds its description and
+selected package members; unused implementation code stays outside the baseline
+executable and its loaded dependency closure.
+
+The proposed physical invocation boundary uses the existing owned process
+adapters. A Native entry is a separately compiled module executable whose
+statically composed export handles the common invocation frame. A Process entry
+names a packaged interpreter/backend entry vector. Neither requires dynamic
+symbol loading in the coordinator. Direct operations use a one-shot child;
+stateful operations use the existing managed role/custody path. An already owned,
+compatible selected host may execute several pure operations without another
+child per function. Pure common policy runs directly in the baseline. Concrete
+entry exports and reuse operations remain Native/Code implementation handoffs;
+no current package or host export is claimed by these logical signatures.
 
 `version` identifies the declaration schema. The package inventory binds its
 canonical bytes, entry, schemas and dependency closure. IDs are unique nonempty
@@ -157,7 +170,12 @@ cannot install declarations or expand their grants. Explicit selection must be
 enabled and compatible. Auto selects only a unique compatible candidate after
 configured preference is applied; ties return candidates through the ordinary
 refusal. An availability failure does not silently select a different module.
-The recorded selected binding survives replay and package upgrades. An unavailable
+Selection covers the primary subject and the related facts requested. Mixed
+projects may select several module operations in one dependency plan. Every edge
+retains its own producer and source binding. Recognition reads admitted manifests,
+configuration and examined source; executable configuration requires a separately
+admitted effect before its results can influence selection. The recorded selected
+binding survives replay and package upgrades. An unavailable
 old binding remains explicit; recovery cannot substitute a newly installed module.
 
 An operation's declared effects conservatively cover its complete dependency
@@ -169,16 +187,16 @@ another effect. New effect classes require shared effect-contract review; new
 languages using existing classes do not. Existing source reads, target execution,
 SQL planning/replay and runtime control/evaluation retain their precise meanings.
 
-Invocation calls the statically composed native entry under the common admission
-contract. Its process-backed operations use the existing process/lifecycle
+Activation verifies only the selected implementation and dependency closure under
+the existing package authority, then uses the existing process/lifecycle
 boundary and a versioned frame containing the query, owner, selected ModuleBinding,
 canonical request,
 admitted input identities and granted operation plan. Result and event frames
 echo that binding and the original query/role/incarnation identity. The core
 validates both the common envelope and the selected declared schema before
 publication. Raw compiler/provider streams remain evidence with their actual
-completion. Native-only results retain the same invocation and evidence binding
-without fabricating a child outcome. A returned capability or claimed producer
+completion. Pure baseline results retain invocation and evidence binding without
+fabricating a child outcome. A returned capability or claimed producer
 cannot widen the admitted
 binding. Protocol corruption retains failure and cleanup responsibility.
 
@@ -200,6 +218,53 @@ source stale. Applicability follows its actual recorded inputs and revalidation
 capability; historical readable facts and presently unavailable expansion remain
 separate outcomes.
 
+### Detection, acquisition and resource ownership
+
+Descriptions include recognition rules, schemas, capabilities, package identity
+and dependency declarations as trusted data. Discovery does not import an entry,
+invoke its discovery command, probe its tools or initialize its libraries.
+Applicability, installed-byte presence, verified closure, observed readiness and
+qualification are separate fields. A retained probe can be reported with its
+identity and observation age; it cannot prove current readiness. A query performs
+any required selected-module readiness check after admission.
+
+Ordinary queries automatically activate available admitted modules. Missing
+selected bytes return the exact package/dependency and an ordinary native
+resolution request. The proposed request uses the existing context query surface:
+subject `{kind:"module-resolution",module,intent:"inspect"|"install"}` and
+`select:["state"]`. Inspect resolves the trusted declaration and installed
+inventory without retrieval. Install requires the proposed common effect
+`installProvider` and the existing package authority for its pinned source,
+destination and integrity policy. Target configuration supplies no package URL,
+installer command or trust root. The native result includes the literal query
+needed to resolve the missing selected package; agents need no private scripts.
+
+This operation and effect are review proposals owned jointly by Native's package,
+Core/Codec/Lifecycle owners and sole Interfaces. They are not existing exports.
+Their implementation must call the actual package acquisition/staging/verification
+entry and retain its process/effect receipt through existing query custody. If
+that entry or authority is unavailable, refusal identifies the missing owned
+primitive. Metadata success cannot count as installed resolution. Acquisition is
+separate from the original analysis query; after success the agent retries its
+ordinary query with the original subject and current admitted identities.
+
+Package installation publishes only a verified selected closure. Failure and
+unknown completion preserve original artifacts, error and cleanup responsibility;
+recovery inspects the retained installation outcome before repeating effects.
+Package-manager scripts or target-controlled hooks retain their actual effects
+and cannot execute under metadata inspection. No implicit network download occurs
+while parsing a declaration, expanding a source ref or answering discovery.
+
+Compatible resource reuse binds module/artifact/schema identity, project inputs,
+configuration, policy and actual backend session isolation. Sharing a process
+does not merge project state or reference identities. Each project/query retains
+its owned references and release duties. Releasing one owner leaves other live
+owners and their processes intact. A package present for another project may
+remain on disk; an unrelated query neither loads nor probes it. Changed project
+inputs update selection and applicability while old accepted duties retain their
+original bindings. Actual table/holder and retained owner primitives remain
+required for this behavior.
+
 ## Bend2 frontend integration
 
 The pinned Root source artifacts are `bend-v2.0.25-main.ts` (SHA256
@@ -212,7 +277,9 @@ dependency closure before qualification.
 
 `main.ts` imports `bend.ts` and `comp.ts`. Its `book_read` calls `book_load`,
 `book_valid` and `Comp.book_owned(book, Comp.SYNTH)`, then rejects remaining
-holes/open terms. The `--check-only` branch calls that path and `cli_report`;
+holes/open terms. It also enforces the PROOF/LAWS import rule when the sibling
+LAWS file exists. These are validity-changing gates. The `--check-only` branch
+calls that path and `cli_report`;
 `--checkup` additionally runs imported programs and is outside read-only checking.
 `cli_report` records definitions relying on unsafe or foreign code. A successful
 check must retain that qualification with each derived law/type claim. The
@@ -243,6 +310,17 @@ API. Declared signature, inferred type and normalized display retain distinct
 status. Missing proof/holes can produce Main's plain-text incomplete-proof error;
 a malformed proof can produce structured `Err`. Preserve the original form and
 completed phase, including useful independently established parse/import facts.
+
+A failed mutated Book does not export a trustworthy checked-prefix length.
+Presence in `tlds` or a nonempty `Def.e` does not establish that the current
+event completed: insertion and stubs can precede failure, and reused Books can
+retain prior annotations. Checked partial facts require fresh-run event
+start/success/failure evidence; otherwise publish only the supported parse and
+diagnostic observations. The checker also supplies no retained per-binder usage
+table after scope deletion. Declared quantity remains useful; observed checked
+usage requires actual instrumentation. A second fill of an already filled law
+is a duplicate-declaration parse error. Error spans and structured Err fields
+are optional; preserve absent locations and the original diagnostic.
 
 `book_load` resolves Base, aliases, real file identity, package imports and
 cycles. Missing package imports can fetch from `BEND_HUB` and write `BEND_LIB`.
@@ -300,15 +378,20 @@ baton2 DATABASE context-result QUERY_ID [--pretty]
 
 `context-engines` returns `{engines, runtimes}`. An engine entry has `engine`,
 `provider`, `version`, `executable`, `projections`, `effects`, `availability`,
-`limits` and its installed declaration/schema identities. It exposes admitted
+`limits` and its trusted description/schema identities. It exposes admitted
 subject/option shapes and operation-specific readiness through the same native
 surface. Availability is `available`, `unavailable` or `excluded`.
+Applicability is separately `applicable`, `inapplicable`, `ambiguous` or
+`unknown`, with its inspected inputs. Installation is `present`, `missing` or
+`unverified`. Readiness is `unknown`, `ready` or `failed`, with the actual retained
+observation and binding when one exists. An unprobed provider stays unknown;
+the legacy aggregate availability field cannot imply a completed probe.
 Failed probes remain visible. Runtime rows name owner, origin attempt if any,
 state, pending query IDs and the next observe/release operation. Managed one-shot
 query progress is retrieved through `context-result`; its returned state names
 the ordinary query-control route. This command
-runs only trusted declaration-bound version/capability probes and reads
-coordination state. Declared capability, observed readiness and qualified support
+reads descriptions, retained observations and coordination state. It invokes no
+provider or tool probe. Declared capability, observed readiness and qualified support
 are reported separately. Missing module dependencies retain their actual cause.
 Unscoped discovery reads no target files. With `--session SESSION`, it uses that
 session's recorded workspace and admitted configuration to report applicable
@@ -409,6 +492,7 @@ profile and does not enter shared selection code.
 | `runtime` | intent-specific fields below | `state`, `frames`, `scopes`, `values`, `exception`, `threads` |
 | `query-control` | `query`, `intent:"recover"|"release"`; release also requires `signal:"SIGTERM"|"SIGKILL"` | `state` |
 | `ref` | `query`, `id` | projections admitted by the stored referenced selector |
+| `module-resolution` | `module`, `intent:"inspect"|"install"` | `state`; common package operation with the authority described above |
 
 The retained catalog profile's `database` is `{engine:"sqlite-schema",path}` or
 `{engine:"postgres-schema",connectionFile}`. The latter is an explicitly supplied libpq service file with one selected
@@ -471,7 +555,8 @@ export. The caller supplies its role as a model; the resolved identity and
 observed model behavior have their own evidence.
 
 `effects` is a set drawn from `executeTarget`, `planTargetSql`,
-`replayMigrations`, `evaluateRuntime`, `controlRuntime`. Each declared operation
+`replayMigrations`, `evaluateRuntime`, `controlRuntime`, and the proposed
+package-resolution effect `installProvider`. Each declared operation
 has a required subset, composed with its dependency plan. A missing grant refuses before its effect. Grants are
 explicit trusted-local consent, not an OS sandbox. Read-only catalog/source
 operations need none. Query-control recovery needs none; query-control release
@@ -479,6 +564,8 @@ requires `controlRuntime` for its owned process effect. Runtime launch/resume/pa
 `controlRuntime`; evaluation also requires `evaluateRuntime`. Zod module
 loading requires `executeTarget`; target SQL planning requires
 `planTargetSql`; SQL migration replay requires `replayMigrations`.
+Installing a selected provider requires `installProvider` plus the existing
+package authority. That consent does not authorize unrelated target execution.
 
 Inline/file queries share canonical request identity. Validation precedes
 admission and provider invocation. Installed declaration resolution supplies the
@@ -2330,12 +2417,15 @@ its extra oracle fields; the validator establishes shape, not oracle truth.
 
 ## Packaging
 
-The installed package manifest carries the enabled module declarations, their
-entry/schema/dependency members, integrity hashes, licenses and exact runtime
-requirements. The existing package/configuration authority verifies this closure.
+The baseline package manifest carries the common native runtime and lightweight
+trusted module descriptions. Each separately selected module package manifest
+carries its entry/schema/dependency members, integrity hashes, licenses and exact
+runtime requirements. The existing package/configuration authority verifies each
+selected closure and its correspondence with the trusted description.
 Selection cannot load a declaration from target source, an ambient package search
 or a runtime download. Adding a module updates those installed members and
-configuration through the ordinary package path. Core, Codec and result/ref
+configuration through the ordinary package path. Merely listing a supported
+module does not stage its implementation. Core, Codec and result/ref
 algorithms remain unchanged for an extension within the supported declaration
 schema; normal imports, composition entries, laws and payload additions are
 permitted as specified above.
@@ -2356,15 +2446,36 @@ cause; it does not weaken admitted refs or substitute another producer. Upgrades
 retain bindings needed by live queries or explicitly refuse new work while their
 original duties remain owned.
 
+Staging follows the selected manifest graph. It does not recursively copy every
+context implementation or resolve every language's lockfile dependencies.
+Common schema/recognition data has its own reviewed minimal closure. A provider's
+discovery entry that imports its compiler cannot serve baseline discovery.
+Selected activation may probe only that closure under its admitted operation;
+unused provider libraries and tools are absent from the query's loaded resources.
+Module-specific gates run for the selected artifacts. An explicit full-profile
+qualification job may select several modules, retaining that broader effect scope.
+
+Root84's source assessment identifies the current c795 combined Node dependency
+set, unconditional `compose_context`, recursive source staging and all-library
+gate as pending package corrections. TypeScript's provider `--engines` currently
+loads its compiler. Those paths do not implement this selective boundary. Native,
+CI and Code must return concrete per-module staging/activation exports and their
+exact source composition before installed acceptance.
+
 ### Retained optional provider packages
 
 First-party adapters are staged under `libexec/baton2/`, with package-relative
-imports. The optional Node profiles' bundled inputs are TypeScript5.9.3, Ajv8.17.1 and Zod4.3.6 plus Ajv's
-resolved dependencies. `bend2/context/package.json` and its npm lockfile are the
-single dependency pin input; exact versions and integrity hashes are mandatory.
+imports. The optional Node profiles retain pins for TypeScript5.9.3, Ajv8.17.1
+and Zod4.3.6 plus Ajv's resolved dependencies. Each module stages only its actual
+consumer dependency closure. The historical combined `bend2/context/package.json`
+and npm lockfile are source pin evidence; their partition into separately
+installable closures requires package-owner review. Exact versions and integrity
+hashes remain mandatory.
 `package-native.py` verifies the lockfile-resolved bytes, stages licenses and
 third-party notices, records payload/source hashes and includes distribution
-entries. No runtime install or ambient `node_modules` resolution is permitted.
+entries. Provider invocation performs no installation or ambient `node_modules`
+resolution. The explicit native package-resolution operation above retains its
+separate authority and effect receipt.
 The C combined-query payload includes `libexec/baton2/context-clang-20`, a
 first-party C++ LibTooling extractor built against LLVM/Clang20.1.8, and the
 fixed Fossil helper summary, with source/build and summary hashes in package
@@ -2513,12 +2624,14 @@ unsafe/foreign dependency. A wrapper-only response, source-name inventory or
 unavailable-only result cannot satisfy these cases. Runtime/debug gaps must be
 visible through discovery without suppressing useful code context.
 
-Module extension qualification installs a second declaration with a distinct ID,
+Module extension qualification installs a second description and selected package with a distinct ID,
 subject/options schema and entry through the existing package path. Preserve the
 shared validation, selection, admission, normalization and result/ref algorithm
 sources; permit the module's normal imports, composition declaration, operative
-laws, payload and configuration additions. Rebuild and qualify the exact composed
-executable remotely, retaining both source diffs and binary/package identities.
+laws, payload and configuration additions within the relevant artifact. Rebuild
+and qualify each changed executable remotely, retaining source diffs and
+binary/package identities. The common baseline must not link the new provider
+implementation merely to describe or select it.
 Exercise useful query, result and expansion through both public surfaces. Verify the actual
 selected entry and schema, recorded effects, dependency bindings and normalized
 facts. This test must fail if shared code selects the historical engine list,
@@ -2526,6 +2639,18 @@ uses a language suffix switch, ignores the declaration schema or consumes a
 foreign producer result. Installing a real preferred-language module then
 qualifies its facts on its own target; a synthetic extension establishes only
 the generic boundary.
+
+Selective-loading qualification uses Bend2-only, individual preferred-language
+and mixed projects through installed CLI and MCP. Inspect actual archive and
+installed dependency members, loaded libraries, probes, processes and attributable
+memory cost. Include a known unused module with absent payload and observable
+initialization: discovery and unrelated queries must leave it untouched. Exercise
+missing selected dependencies through the proposed native resolution operation,
+failed/uncertain installation, changed project configuration and two projects
+sharing a compatible selected resource. Releasing one project must preserve the
+other's live work. Measure actual package/process cost with recorded scope;
+an enabled flag or unavailable-only answer does not establish isolation or useful
+language support. These are remote qualification requirements, not measured savings.
 
 Single-defect negative controls cover unknown/duplicate module identities,
 disabled or ambiguous selection, schema/entry/dependency replacement, unsupported
@@ -2542,7 +2667,9 @@ producer and snapshot identity at each edge; unsupported joins remain explicit.
 Additional languages use this same acceptance boundary. Effectful framework and
 debug operations retain all grant, cleanup and recovery gates below.
 
-Every implementation compile imports operative laws through `coordinator/laws.bend`.
+The common runtime compile imports operative laws through `coordinator/laws.bend`.
+Each separate module build imports its own operative laws, and every artifact
+composition that links it retains those laws.
 Laws bind actual parse, admission, effect construction, classification and result
 functions. Host/provider truth remains a named assumption exercised by native
 fixtures. The full `laws-check.mjs` includes proof-removal and implementation
@@ -2762,9 +2889,19 @@ The retained research used for this specification is retrievable with native
   `root-semantic-source-boundary-82`: Bend2-first scope and static module
   composition. Their canonical feature/amendment documents are Root-owned;
   source composition must retain both documents with this specification.
+- Root83 `root-semantic-project-loading-83` and Root84
+  `root-semantic-package-boundary-84`: project detection, separately installed
+  payloads and selective activation; canonical documents at
+  `b3cd9fbba6c0c8629add60e2d86af95ed52245a3` supersede the universal static
+  composition interpretation in intermediate candidate `fee9f193`.
 - `code-bend2-contribution-38`: pinned loader, parser, checker, declaration-order,
   source mapping and useful Bend2 query requirements; complete frontend closure
   and actual provider qualification remain open.
+- `code-bend2-corrections-reviewed-41`, `code-bend2-semantics-review-43` and
+  `code-bend2-source-review-complete-45`: conditional PROOF rule, event-completion
+  and quantity-instrumentation limits, corrected duplicate-fill and optional
+  diagnostic evidence. Independent source review is complete at that scope;
+  the actual frontend module and qualification remain due.
 - `native112-module-contract-candidate`, `models-module-review-synthesis-36`,
   `models-env-review-37-synthesis`, `runtime-module-contract133-synthesis` and
   `controls-next-interfaces-review-101-synthesis`: owner contributions to the
