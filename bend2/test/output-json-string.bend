@@ -57,6 +57,9 @@ def cases() -> List<List<U32> & S.StrResult & String>:
     ([34, 34], ok(Nil{}, [34, 34]), "empty-string"),
     ([34, 97, 34], ok([97], [34, 97, 34]), "ordinary-ascii"),
     ([34, 92, 98, 34], ok([8], [34, 92, 98, 34]), "escape-backspace"),
+    ([34, 92, 102, 34], ok([12], [34, 92, 102, 34]), "escape-formfeed"),
+    ([34, 92, 114, 34], ok([13], [34, 92, 114, 34]), "escape-carriage-return"),
+    ([34, 92, 116, 34], ok([9], [34, 92, 116, 34]), "escape-tab"),
     ([34, 92, 110, 34], ok([10], [34, 92, 110, 34]), "escape-newline"),
     ([34, 92, 34, 34], ok([34], [34, 92, 34, 34]), "escaped-quote"),
     ([34, 92, 92, 34], ok([92], [34, 92, 92, 34]), "escaped-backslash"),
@@ -115,15 +118,15 @@ def cases() -> List<List<U32> & S.StrResult & String>:
     ([97, 34], refused("expected_open_quote"), "missing-open-quote"),
   ]
 
-def check(case: List<U32> & S.StrResult & String) -> IO(Unit):
-  (octets, expected, name) = case
-  judge(S.decode_string(octets), expected, name)
-
 def judge(actual: S.StrResult, expected: S.StrResult, name: String) -> IO(Unit):
   +verdict = same_result(actual, expected)
   match verdict:
     case True{}: IO.pure(Unit, Unit{})
     case False{}: IO.die(Unit, 1, name)
+
+def check(case: List<U32> & S.StrResult & String) -> IO(Unit):
+  (octets, expected, name) = case
+  judge(S.decode_string(octets), expected, name)
 
 def run(rows: List<List<U32> & S.StrResult & String>) -> IO(Unit):
   match rows:

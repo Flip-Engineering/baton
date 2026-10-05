@@ -134,7 +134,7 @@ def step(state: StrState, +code: U32) -> StrState:
     case StrEscape{+units}:
       Bool.pick(StrState, U32.is_eq(code, 117), StrUnicode{units, 0, 0}, simple_escape(code, units))
     case StrUnicode{units, digits, value}: unicode_step(units, digits, value, code)
-    case +StrBad{reason}: StrBad{reason}
+    case StrBad{reason}: StrBad{reason}
 
 def feed_go(octets: List<U32>, state: StrState) -> StrScan:
   match octets:
