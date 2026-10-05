@@ -42,7 +42,7 @@ def connect_updates_and_answers_only_after_admission(id,native,endpoint):
 
 law connect_refusal_is_classified_before_delivery:
   for +saved: String
-  {Store.refused(saved) == Bool.or(Store.naming_refused(saved),Bool.or(Tx.starts_with(saved,"{\"error\":\"player-assignment-conflict\""),Bool.or(Tx.starts_with(saved,"{\"error\":\"message-route-denied\""),Tx.starts_with(saved,"{\"error\":\"invalid-endpoint\"")))) : Bool}
+  {Store.refused(saved) == Bool.or(Tx.starts_with(saved,"{\"error\":\"structural-refused\","),Bool.or(Store.naming_refused(saved),Bool.or(Tx.starts_with(saved,"{\"error\":\"player-assignment-conflict\""),Bool.or(Tx.starts_with(saved,"{\"error\":\"message-route-denied\""),Tx.starts_with(saved,"{\"error\":\"invalid-endpoint\""))))) : Bool}
 
 def connect_refusal_is_classified_before_delivery(saved):
   {==}
