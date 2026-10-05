@@ -6,8 +6,10 @@ production run with real producer, compiler and endpoint effects and is never
 executed here; importing it reads module-level constants and defines helpers.
 """
 import importlib.util
+import io
 import json
 import pathlib
+import tarfile
 import tempfile
 import unittest
 
@@ -34,6 +36,11 @@ class RecipeSettlement(unittest.TestCase):
 
     def rows(self):
         return json.loads((self.run / 'run.json').read_text())['children']
+
+    def add_member(self, archive, name, data):
+        info = tarfile.TarInfo(name)
+        info.size = len(data)
+        archive.addfile(info, io.BytesIO(data))
 
     def test_a_successful_stage_is_durable_before_later_failure(self):
         RECIPE.attempt(self.run, self.record, 'archive-readback',
@@ -130,6 +137,80 @@ class RecipeSettlement(unittest.TestCase):
         self.assertEqual(len(primary.record_error_chain), 1)
         self.assertIsInstance(primary.record_error_chain[0], RuntimeError)
         self.assertIsNot(primary.record_error, primary.record_error_chain[0])
+
+    def test_extraction_reaches_members_only_after_a_complete_preflight(self):
+        # A complete preflight passes, so every member is extracted and the verified
+        # row reports the members actually completed.
+        archive_path = self.run / 'original-archive.tar.gz'
+        with tarfile.open(archive_path, 'w:gz') as archive:
+            self.add_member(archive, 'bend2/manifest.json',
+                            json.dumps({'archive_root': 'bend2'}).encode())
+            self.add_member(archive, 'bend2/controls-evidence/bend2.json', b'{}')
+        target = self.run / 'readback'
+        target.mkdir()
+        facts = RECIPE.extract_archive(self.run, self.record, archive_path, target)
+        self.assertEqual(facts['root'], 'bend2')
+        self.assertEqual(facts['manifest_member'], 'bend2/manifest.json')
+        row = next(row for row in self.rows() if row['name'] == 'archive-extracted')
+        self.assertEqual(row['outcome'], 'verified')
+        self.assertEqual(row['members'], 2)
+        self.assertTrue((target / 'bend2/manifest.json').is_file())
+
+    def test_a_preflight_refusal_names_the_member_and_extracts_nothing(self):
+        # The unsafe member is refused during the preflight, before any member is
+        # extracted, and the failure row keeps the member and the boundary.
+        archive_path = self.run / 'unsafe-archive.tar.gz'
+        with tarfile.open(archive_path, 'w:gz') as archive:
+            self.add_member(archive, 'bend2/manifest.json', b'{}')
+            self.add_member(archive, '../escaped.json', b'{}')
+        target = self.run / 'unsafe-readback'
+        target.mkdir()
+        with self.assertRaises(RECIPE.StageFailure):
+            RECIPE.extract_archive(self.run, self.record, archive_path, target)
+        row = next(row for row in self.rows() if row['name'] == 'archive-extracted')
+        self.assertEqual(row['outcome'], 'failed')
+        self.assertEqual(row['member'], '../escaped.json')
+        self.assertEqual(row['boundary'], 'archive-member-kind')
+        self.assertEqual(row['members_extracted'], 0)
+        self.assertFalse((target / 'bend2').exists())
+
+    def test_the_composed_boundary_accepts_a_raw_alias_verifier(self):
+        # The endpoint emits its raw verifier map with the classifier member under a
+        # historical spelling, while the reader composition stores the canonical
+        # closure: the contract compares the two through the member contract, so the
+        # alias spelling is accepted, an equal dual spelling is accepted, and a
+        # conflicting one is refused by the composition.
+        package = RECIPE.package_handle()
+        admitted, missing = package.expected_verifier_digests()
+        if missing:
+            self.skipTest('this checkout lacks admitted verifier source: '
+                          + repr(sorted(missing)))
+        fields = {'id': 'case-1', 'schema': 'capacity-controls/classify-verdict@1',
+                  'class': 'bend2-native', 'attributed_law': 'laws-check', 'match': True,
+                  'qualified': True, 'law': 'laws-check', 'evidence_verified': True,
+                  'diagnostic_sha256': 'a' * 64, 'acquisition': {'state': 'exited'}}
+        historical = {}
+        for member in package.VERIFIER_MEMBERS:
+            alias = package.VERIFIER_MEMBER_ALIASES.get(member)
+            historical[alias or member] = admitted[member]
+        canonical = package.require_verifier_closure({'verifier': historical}, 'fixture')
+        response = dict(fields, verifier=historical)
+        verdict = dict(fields, verifier=canonical)
+        RECIPE.bind_response_to_verdict(response, verdict, 'case-1')
+
+        dual = dict(historical)
+        for member in package.VERIFIER_MEMBERS:
+            dual[member] = admitted[member]
+        RECIPE.bind_response_to_verdict(dict(fields, verifier=dual),
+                                        dict(fields,
+                                             verifier=package.require_verifier_closure(
+                                                 {'verifier': dual}, 'fixture')),
+                                        'case-1')
+
+        conflict = dict(dual)
+        conflict['classifier_module_sha256'] = 'b' * 64
+        with self.assertRaises(RuntimeError):
+            package.require_verifier_closure({'verifier': conflict}, 'fixture')
 
     def test_a_record_failure_preserves_the_original_cause(self):
         # The declared row is written, then persisting the terminal row fails while
