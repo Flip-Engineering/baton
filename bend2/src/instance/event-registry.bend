@@ -263,7 +263,7 @@ def register_decided(+registration: Registration, +observed: Generation, identit
         case True{}: registration
         case other: match revision:
           case True{}: Registration{reg_identity_of(registration),reg_generation_of(registration),reg_database_of(registration),reg_owner_of(registration),reg_request_of(registration),reg_session_of(registration),reg_adoptions_of(registration),reg_references_of(registration),True{},reg_event_retained_of(registration),reg_cancelled_of(registration),reg_outstanding_of(registration)}
-          case other: Registration{reg_identity_of(registration),reg_generation_of(registration),reg_database_of(registration),reg_owner_of(registration),reg_request_of(registration),reg_session_of(registration),reg_adoptions_of(registration),reg_references_of(registration),False{},Bool.and(Bool.not(reg_event_retained_of(registration)),no_outstanding),reg_cancelled_of(registration),reg_outstanding_of(registration)}
+          case other: Registration{reg_identity_of(registration),reg_generation_of(registration),reg_database_of(registration),reg_owner_of(registration),reg_request_of(registration),reg_session_of(registration),reg_adoptions_of(registration),reg_references_of(registration),False{},Bool.or(reg_event_retained_of(registration),Bool.and(Bool.not(reg_event_retained_of(registration)),no_outstanding)),reg_cancelled_of(registration),reg_outstanding_of(registration)}
     case other: registration
 
 # Registering under shared synchronization. A stale owner or capability
@@ -372,7 +372,7 @@ type RegistrationRelease is Data:
   AlreadyReleased{registration: Registration}
 
 def release_registration_reference(+registration: Registration) -> RegistrationRelease:
-  Bool.pick(RegistrationRelease,U32.is_lt(0,reg_references_of(registration)),Released{Registration{reg_identity_of(registration),reg_generation_of(registration),reg_database_of(registration),reg_owner_of(registration),reg_request_of(registration),reg_session_of(registration),reg_adoptions_of(registration),U32.sub(reg_references_of(registration),1),reg_armed_of(registration),reg_event_retained_of(registration),reg_cancelled_of(registration)}},AlreadyReleased{registration})
+  Bool.pick(RegistrationRelease,U32.is_lt(0,reg_references_of(registration)),Released{Registration{reg_identity_of(registration),reg_generation_of(registration),reg_database_of(registration),reg_owner_of(registration),reg_request_of(registration),reg_session_of(registration),reg_adoptions_of(registration),U32.sub(reg_references_of(registration),1),reg_armed_of(registration),reg_event_retained_of(registration),reg_cancelled_of(registration),reg_outstanding_of(registration)}},AlreadyReleased{registration})
 
 # One destination reference is released, checked against zero, with the
 # same explicit disposition; the lease stays live, the task count is
