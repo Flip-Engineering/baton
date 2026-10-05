@@ -5,6 +5,7 @@ import Base
 import ./commands.bend as C
 import ./store.bend as Store
 import ../host/sqlite.bend as DB
+import ../host/control.bend as Host
 import ../git/process.bend as Git
 import ../git/land.bend as GitLand
 import ../git/types.bend as G
@@ -145,10 +146,12 @@ type Selected is Data:
 # refuses; an unusable git command is an operation failure with its own detail.
 def sel_commit_pick(r: G.GitOut, +commit: String) -> Selected:
   match r:
-    case G.GRun{code, out}:
+    case G.GRun{+code, +out}:
       Bool.pick(Selected, U32.is_eq(code, 0),
         SelPicked{Tx.trim_nl(out)},
-        SelRefused{"The selected source is not a commit in the recorded repository: " ++ commit})
+        Bool.pick(Selected, U32.is_eq(code, 1),
+          SelRefused{"The selected source is not a commit in the recorded repository: " ++ commit},
+          SelFailed{code, Tx.cmd_failed("git rev-parse --verify") ++ " (exit " ++ U32.show(code) ++ "): " ++ Tx.trim_nl(out)}))
     case G.GBroken{detail}: SelFailed{1, detail}
 
 def sel_commit(repo: String, +commit: String) -> IO(Selected):
@@ -161,10 +164,12 @@ def sel_commit(repo: String, +commit: String) -> IO(Selected):
 # SelPicked here carries the resolved recorded-branch tip.
 def sel_branch_pick(r: G.GitOut, +branch: String) -> Selected:
   match r:
-    case G.GRun{code, out}:
+    case G.GRun{+code, +out}:
       Bool.pick(Selected, U32.is_eq(code, 0),
         SelPicked{Tx.trim_nl(out)},
-        SelRefused{"The recorded branch is missing from the recorded repository: " ++ branch})
+        Bool.pick(Selected, U32.is_eq(code, 1),
+          SelRefused{"The recorded branch is missing from the recorded repository: " ++ branch},
+          SelFailed{code, Tx.cmd_failed("git rev-parse --verify") ++ " (exit " ++ U32.show(code) ++ "): " ++ Tx.trim_nl(out)}))
     case G.GBroken{detail}: SelFailed{1, detail}
 
 def sel_branch(repo: String, +branch: String) -> IO(Selected):
@@ -179,7 +184,7 @@ def sel_branch(repo: String, +branch: String) -> IO(Selected):
 # failure carrying that status and the command that produced it.
 def sel_ancestor_pick(r: G.GitOut, +oid: String, +branchOid: String) -> Selected:
   match r:
-    case G.GRun{+code, out}:
+    case G.GRun{+code, +out}:
       Bool.pick(Selected, U32.is_eq(code, 0),
         SelPicked{oid},
         Bool.pick(Selected, U32.is_eq(code, 1),
@@ -226,10 +231,28 @@ def selected_or_die(s: Selected, +player: String) -> IO(String):
 # separates the recorded Player source from an unrelated repository that happens
 # to carry a branch of the same name. An unrecorded workspace is left to the
 # caller's own repository argument; a recorded one that cannot be read refuses.
-def assoc_same(w: String, r: String) -> IO(Unit):
+def assoc_same(w: String, r: String, +workspace: String, +repo: String) -> IO(Unit):
   Bool.pick(IO(Unit), String.eq(w, r),
     IO.pure(Unit, Unit{}),
-    IO.die(Unit, 2, "The recorded workspace belongs to a different repository than the landing repository."))
+    IO.die(Unit, 2, "The recorded workspace belongs to a different repository than " ++ repo ++ ": " ++ workspace))
+
+# The host realpath canonicalizes the git-reported directory, so a symlinked
+# spelling and its resolved spelling compare equal.
+def assoc_real_pick(resolved: Result<&1,&1,U32 & String,String>, +workspace: String, +repo: String, +directory: String) -> IO(String):
+  match resolved:
+    case Done{value}: IO.pure(String, value)
+    case Fail{error}: IO.die(String, 2, "The recorded workspace repository directory cannot be resolved for " ++ workspace ++ " against " ++ repo ++ ": " ++ directory)
+
+def assoc_real(+directory: String, +workspace: String, +repo: String) -> IO(String):
+  do IO<String>:
+    resolved : Result<&1,&1,U32 & String,String> <- Host.Control.workspace(directory)
+    assoc_real_pick(resolved, workspace, repo, directory)
+
+def assoc_canonical(+workspace: String, +repo: String, wdir: String, rdir: String) -> IO(Unit):
+  do IO<Unit>:
+    w : String <- assoc_real(wdir, workspace, repo)
+    r : String <- assoc_real(rdir, workspace, repo)
+    assoc_same(w, r, workspace, repo)
 
 def assoc_pair(+workspace: String, +repo: String, w: G.GitOut, r: G.GitOut) -> IO(Unit):
   match w:
@@ -238,10 +261,16 @@ def assoc_pair(+workspace: String, +repo: String, w: G.GitOut, r: G.GitOut) -> I
         case G.GRun{rcode, rout}:
           Bool.pick(IO(Unit),
             Bool.and(U32.is_eq(wcode, 0), U32.is_eq(rcode, 0)),
-            assoc_same(Tx.trim_nl(wout), Tx.trim_nl(rout)),
+            assoc_canonical(workspace, repo, Tx.trim_nl(wout), Tx.trim_nl(rout)),
             IO.die(Unit, 2, "The recorded workspace cannot be associated with " ++ repo ++ ": " ++ workspace))
         case G.GBroken{rdetail}: IO.die(Unit, 1, rdetail)
     case G.GBroken{wdetail}: IO.die(Unit, 1, wdetail)
+
+# Absence of a recorded workspace does not establish a recorded source
+# repository, so the reviewed entry refuses instead of falling back to the
+# caller's repository argument.
+def assoc_missing() -> IO(Unit):
+  IO.die(Unit, 2, "The player has no recorded workspace, so the reviewed source repository cannot be established; inspect the session and record its workspace.")
 
 def assoc_probe(+workspace: String, +repo: String) -> IO(Unit):
   do IO<Unit>:
@@ -253,9 +282,7 @@ def require_association(+db: String, +player: String, +repo: String) -> IO(Unit)
   do IO<Unit>:
     workspace_raw : String <- IO.try(String, DB.Sql.query(db, "SELECT workspace FROM sessions WHERE id=" ++ C.q(player) ++ ";"))
     +workspace : String <- IO.pure(String, line(workspace_raw))
-    Bool.pick(IO(Unit), String.is_empty(workspace),
-      IO.pure(Unit, Unit{}),
-      assoc_probe(workspace, repo))
+    Bool.pick(IO(Unit), String.is_empty(workspace), assoc_missing(), assoc_probe(workspace, repo))
 
 # The recorded branch tip is the default source; the reviewed entry selects an
 # exact commit from that same recorded branch and lands only that object.
@@ -296,13 +323,15 @@ law reviewed_source_ancestry_keeps_three_decisions:
 def reviewed_source_ancestry_keeps_three_decisions(oid, branchOid, code):
   {==}
 
-# A selector that does not resolve to a commit refuses before any effect.
-law reviewed_source_selector_must_be_a_commit:
+# A selector that does not resolve to a commit refuses before any effect, and a
+# status other than the verify refusal is an operation failure with its detail.
+law reviewed_source_selector_separates_absence_from_operation_failure:
   for +commit: String
   for +out: String
-  {sel_commit_pick(G.GRun{128, out}, commit) == SelRefused{"The selected source is not a commit in the recorded repository: " ++ commit} : Selected}
+  for +code: U32
+  {sel_commit_pick(G.GRun{code, out}, commit) == Bool.pick(Selected, U32.is_eq(code, 0), SelPicked{Tx.trim_nl(out)}, Bool.pick(Selected, U32.is_eq(code, 1), SelRefused{"The selected source is not a commit in the recorded repository: " ++ commit}, SelFailed{code, Tx.cmd_failed("git rev-parse --verify") ++ " (exit " ++ U32.show(code) ++ "): " ++ Tx.trim_nl(out)})) : Selected}
 
-def reviewed_source_selector_must_be_a_commit(commit, out):
+def reviewed_source_selector_separates_absence_from_operation_failure(commit, out, code):
   {==}
 
 # Only the selected object id crosses into the landing pipeline.
