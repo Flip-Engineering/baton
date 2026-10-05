@@ -609,9 +609,11 @@ def runtime_set_digest(compiler):
         return None
     rows = []
     for path in sorted(runtime.rglob('*')):
+        if path.is_symlink():
+            return None
         if path.is_file():
             rows.append(path.relative_to(runtime).as_posix() + '\t' + sha256(path))
-    return hashlib.sha256('\n'.join(rows).encode()).hexdigest()
+    return hashlib.sha256('\n'.join(sorted(rows)).encode('utf-8')).hexdigest()
 
 
 def classify_control(case, result, streams, baseline, evidence_root, source, compiler_sha256,
@@ -635,7 +637,9 @@ def classify_control(case, result, streams, baseline, evidence_root, source, com
         'evidence_root': str(evidence_root),
         'source': source,
         'toolchain': {'compiler_sha256': compiler_sha256,
-                      'compiler_path': str(compiler_path) if compiler_path else None},
+                      'compiler_path': (baseline.get('argv') or [None])[0]
+                      or (str(compiler_path) if compiler_path else None),
+                      'current_compiler_path': str(compiler_path) if compiler_path else None},
     }
     if delta is not None:
         request['delta'] = delta
@@ -650,7 +654,7 @@ def classify_control(case, result, streams, baseline, evidence_root, source, com
         stem = identity.replace(':', '-').replace('/', '_')
         stem = stem + '-' + hashlib.sha256(identity.encode('utf-8')).hexdigest()[:12]
     stdout_bytes, stderr_bytes = None, None
-    status, signal_name, spawn_error = None, None, None
+    status, signal_name, spawn_error, open_error = None, None, None, None
     launch_attempted = False
     started = None
     interruption = None
@@ -667,7 +671,7 @@ def classify_control(case, result, streams, baseline, evidence_root, source, com
         if path is None:
             return None
         try:
-            return path.read_bytes() if path.exists() else b''
+            return path.read_bytes() if path.exists() else None
         except OSError:
             return None
 
@@ -691,6 +695,7 @@ def classify_control(case, result, streams, baseline, evidence_root, source, com
                                           else hashlib.sha256(err_bytes).hexdigest()),
                         'request_sha256': hashlib.sha256(request_bytes).hexdigest()})
         except BaseException as write_error:
+            nonlocal secondary
             secondary = secondary or repr(write_error)
 
     handles = []
@@ -699,13 +704,17 @@ def classify_control(case, result, streams, baseline, evidence_root, source, com
             if path is not None:
                 handles.append(path.open('wb'))
     except BaseException as error:
-        spawn_error = repr(error)
+        open_error = repr(error)
         while handles:
             try:
                 handles.pop().close()
             except BaseException as close_error:
                 secondary = secondary or repr(close_error)
     completed = None
+    if open_error is not None:
+        settle('stream-open-error', open_error)
+        raise RuntimeError('The classification streams could not be opened: ' + open_error
+                           + ('; secondary: ' + str(secondary) if secondary else ''))
     if spawn_error is None:
         try:
             launch_attempted = True
@@ -1019,8 +1028,15 @@ def semantic_reduction(result, inventory):
     return {'schema': REDUCTION_SCHEMA, 'document': document, 'sha256': digest}
 
 
-def controls_evidence(directory, initial, compiler, audit=None, destination=None):
-    """audit receives one acquisition record per case; destination copies the closure."""
+def controls_evidence(directory, initial, compiler, audit=None, destination=None,
+                      archived=False, documents=None):
+    """Validate one producer closure or one archived envelope of it.
+
+    audit receives one acquisition record per case; destination copies the
+    closure. archived=True accepts the reserved metadata names only when the
+    caller binds their digests through documents, which is how an extracted
+    archive envelope is validated against the graph it was written from.
+    """
     audit_inventory = None
     """Validate remote module-group control evidence against this source.
 
@@ -1242,10 +1258,17 @@ def controls_evidence(directory, initial, compiler, audit=None, destination=None
     require(not missing_cases, 'The controls evidence omits controls: ' + succinct(missing_cases))
     seconds = [span['seconds'] for span in spans]
     supplied = producer_inventory(directory)
-    reserved = sorted({member['path'] for member in supplied['members']}
-                      & set(ARCHIVE_METADATA))
-    require(not reserved,
-            'The producer closure names reserved archive metadata: ' + succinct(reserved))
+    present = {member['path']: member['sha256'] for member in supplied['members']}
+    if archived:
+        bound = documents or {}
+        for name in ARCHIVE_METADATA:
+            require(name in present, 'An archived envelope omits ' + name)
+            require(bound.get(name) == present[name],
+                    'An archived envelope metadata document is not the one recorded: ' + name)
+    else:
+        reserved = sorted(set(present) & set(ARCHIVE_METADATA))
+        require(not reserved,
+                'The producer closure names reserved archive metadata: ' + succinct(reserved))
     inventory = producer_inventory(directory, destination, exclude=ARCHIVE_METADATA)
     if audit is not None:
         audit_inventory = producer_inventory(audit)

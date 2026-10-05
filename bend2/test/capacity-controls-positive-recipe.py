@@ -204,10 +204,12 @@ def main():
         target = run / 'readback'
         with tarfile.open(args.archive, 'r:gz') as archive:
             for member in archive.getmembers():
-                relative = pathlib.PurePosixPath(member.name.lstrip('./'))
-                if (relative.is_absolute() or '..' in relative.parts
-                        or member.issym() or member.islnk()):
-                    raise SystemExit('the archive holds an unsafe member: ' + member.name)
+                name = member.name
+                relative = pathlib.PurePosixPath(name)
+                if (name != relative.as_posix() or relative.is_absolute()
+                        or '..' in relative.parts or member.issym() or member.islnk()
+                        or not (member.isfile() or member.isdir())):
+                    raise SystemExit('the archive holds an unsupported or unsafe member: ' + name)
                 archive.extract(member, target)
         manifest_path = next(target.rglob('manifest.json'), None)
         if manifest_path is None:
@@ -220,7 +222,13 @@ def main():
             raise SystemExit('the archive holds no controls evidence member')
         documents = (manifest.get('gates', {}).get('controls', {})
                      .get('archived', {}).get('documents') or {})
+        if sorted(documents) != sorted(package.ARCHIVE_METADATA):
+            raise SystemExit('the archive manifest does not bind both metadata documents')
         current = package.verify_archived_inventory(archived, result['inventory'], documents)
+        envelope = package.controls_evidence(archived, package.snapshot(), args.bend,
+                                            archived=True, documents=documents)
+        if envelope['reduction_sha256'] != result['reduction_sha256']:
+            raise SystemExit('the archived envelope produced a different stable reduction')
         record.append({'name': 'archive-readback', 'outcome': 'verified',
                        'root': manifest_path.parent.name,
                        'members': len(current['members']), 'documents': sorted(documents)})
