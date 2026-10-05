@@ -137,6 +137,68 @@ def recovery_cli(args: List<String>) -> IO(Unit):
       retained_lines(handle,None{},sender,first)
     case _: IO.die(Unit,2,"recover-retained ATTEMPT")
 
+def grant_refusal(result: Result<&1,&1,U32 & String,String>) -> IO(Unit):
+  match result:
+    case Done{state}: IO.die(Unit,1,"wrong identity was accepted")
+    case Fail{error}: IO.print("grant-refused")
+
+def prepared_finish(+handle: U32, lock: Maybe<U32>, message: String) -> IO(Unit): do IO<Unit>:
+  unlocked : Unit <- release_lock(lock)
+  released : Unit <- IO.try(Unit,P.ProcessChild.release(handle))
+  ack : Unit <- IO.try(Unit,P.ProcessChild.acknowledge(handle))
+  IO.print(message)
+
+def prepared_observe(handle: U32, lock: Maybe<U32>, unstarted: Bool) -> IO(Unit):
+  match unstarted:
+    case True{}: prepared_finish(handle,lock,"prepared-unstarted")
+    case False{}: observe_retained(handle,lock,"",False{})
+
+def prepared_action(+handle: U32, lock: Maybe<U32>, +identity: String, mode: String, cancel: Bool) -> IO(Unit):
+  match cancel:
+    case True{}: do IO<Unit>:
+      state : String <- IO.try(String,P.ProcessChild.cancel_prepared(handle,identity))
+      printed : Unit <- IO.print(state)
+      prepared_finish(handle,lock,"prepared-cancelled")
+    case False{}: do IO<Unit>:
+      wrong : Result<&1,&1,U32 & String,String> <- P.ProcessChild.start(handle,identity ++ "-wrong")
+      refused : Unit <- grant_refusal(wrong)
+      first : String <- IO.try(String,P.ProcessChild.start(handle,identity))
+      printed : Unit <- IO.print(first)
+      second : String <- IO.try(String,P.ProcessChild.start(handle,identity))
+      replay : Unit <- IO.print(second)
+      prepared_observe(handle,lock,String.eq(mode,"unstarted"))
+
+def prepared_started(start: P.RetainedStart, lock: U32, identity: String, +mode: String) -> IO(Unit):
+  match start:
+    case P.Unstarted{error}: IO.die(Unit,1,error)
+    case P.Retained{+handle}: do IO<Unit>:
+      state : String <- IO.try(String,P.ProcessChild.state(handle))
+      printed : Unit <- IO.print(state)
+      gate : String <- IO.try(String,Text.Text.read("-"))
+      prepared_action(handle,Some{lock},identity,mode,String.eq(mode,"cancel"))
+
+def prepared_locked(+directory: String, cwd: String, recovery: String, +identity: String, +mode: String, program: List<String>, lock: Maybe<U32>) -> IO(Unit):
+  match lock:
+    case None{}: IO.die(Unit,1,"fixture session busy")
+    case Some{+handle}: do IO<Unit>:
+      start : P.RetainedStart <- IO.try(P.RetainedStart,P.ProcessChild.prepare(directory,P.argv(program),cwd,directory ++ "/native.stderr","",1,handle,P.argv([recovery,directory]),identity))
+      prepared_started(start,handle,identity,mode)
+
+def prepared_cli(args: List<String>) -> IO(Unit):
+  match args:
+    case db <> directory <> cwd <> recovery <> identity <> mode <> program:
+      Lock.SessionLock.acquire_session(Unit,db,"fixture",canonical => lock => prepared_locked(directory,cwd,recovery,identity,mode,program,lock))
+    case _: IO.die(Unit,2,"prepare DATABASE ATTEMPT CWD RECOVERY IDENTITY MODE PROGRAM ARGS...")
+
+def prepared_recover_cli(args: List<String>) -> IO(Unit):
+  match args:
+    case +directory <> identity <> Nil{}: do IO<Unit>:
+      +handle : U32 <- IO.try(U32,P.ProcessChild.attach(directory))
+      state : String <- IO.try(String,P.ProcessChild.state(handle))
+      printed : Unit <- IO.print(state)
+      prepared_action(handle,None{},identity,"start",False{})
+    case _: IO.die(Unit,2,"recover-prepared ATTEMPT IDENTITY")
+
 def lock_result(lock: Maybe<U32>) -> IO(Unit):
   match lock:
     case None{}: IO.print("busy")
@@ -187,7 +249,9 @@ def mode_number(+mode: String) -> U32:
   Bool.pick(U32,String.eq(mode,"lock-try"),4,
   Bool.pick(U32,String.eq(mode,"control-write"),5,
   Bool.pick(U32,String.eq(mode,"control-signal"),6,
-  Bool.pick(U32,String.eq(mode,"retain-custom"),7,0)))))))
+  Bool.pick(U32,String.eq(mode,"retain-custom"),7,
+  Bool.pick(U32,String.eq(mode,"prepare"),8,
+  Bool.pick(U32,String.eq(mode,"recover-prepared"),9,0)))))))))
 
 def dispatch(mode: U32, original: String, rest: List<String>) -> IO(Unit):
   match mode:
@@ -198,6 +262,8 @@ def dispatch(mode: U32, original: String, rest: List<String>) -> IO(Unit):
     case 5: write_cli(rest)
     case 6: signal_cli(rest)
     case 7: custom_cli(rest)
+    case 8: prepared_cli(rest)
+    case 9: prepared_recover_cli(rest)
     case _: spawn_cli(original <> rest)
 
 def cli(args: List<String>) -> IO(Unit):

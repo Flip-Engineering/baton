@@ -28,6 +28,25 @@ def ProcessChild.retain(directory: String, argv: String, cwd: String, stderr: St
     result : Result<&1,&1,U32 & String,Maybe<U32> & String> <- ProcessChild.retain_start(directory,argv,cwd,stderr,initial,keep_stdin,lock,recovery_argv)
     IO.pure(Result<&1,&1,U32 & String,RetainedStart>,retained_start(result))
 
+# Prepared mode retains the exact bootstrap identity and starts after a grant.
+def ProcessChild.prepare_start(directory: String, argv: String, cwd: String, stderr: String, initial: String, keep_stdin: U32, lock: U32, recovery_argv: String, identity: String) -> IO(Result<&1,&1,U32 & String,Maybe<U32> & String>):
+  import "./process-spawn.c"
+
+def ProcessChild.prepare(directory: String, argv: String, cwd: String, stderr: String, initial: String, keep_stdin: U32, lock: U32, recovery_argv: String, identity: String) -> IO(Result<&1,&1,U32 & String,RetainedStart>):
+  do IO<Result<&1,&1,U32 & String,RetainedStart>>:
+    result : Result<&1,&1,U32 & String,Maybe<U32> & String> <- ProcessChild.prepare_start(directory,argv,cwd,stderr,initial,keep_stdin,lock,recovery_argv,identity)
+    IO.pure(Result<&1,&1,U32 & String,RetainedStart>,retained_start(result))
+
+# Each answer is the keeper's structured state, including its birth identity.
+def ProcessChild.start(handle: U32, identity: String) -> IO(Result<&1,&1,U32 & String,String>):
+  import "./process-spawn.c"
+
+def ProcessChild.state(handle: U32) -> IO(Result<&1,&1,U32 & String,String>):
+  import "./process-spawn.c"
+
+def ProcessChild.cancel_prepared(handle: U32, identity: String) -> IO(Result<&1,&1,U32 & String,String>):
+  import "./process-spawn.c"
+
 def ProcessChild.attach(directory: String) -> IO(Result<&1,&1,U32 & String,U32>):
   import "./process-spawn.c"
 
