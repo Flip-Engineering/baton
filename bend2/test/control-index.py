@@ -196,6 +196,28 @@ class ControlIndex(unittest.TestCase):
                 db.rollback()
             self.assertEqual(list(db.iterdump()), before)
 
+    def test_structural_index_preserves_native_status_and_observed_assignment(self):
+        with closing(sqlite3.connect(self.db)) as db:
+            db.execute("UPDATE sessions SET model=?,effort=?,observed_harness=?,"
+                       "observed_model=?,observed_effort=? WHERE id='worker'",
+                       ('recorded-model', 'high', 'codex', 'observed-model', 'medium'))
+            db.execute('INSERT INTO executions(session,id,mode,directory,phase,status) '
+                       'VALUES(?,?,?,?,?,?)',
+                       ('worker', 'native-attempt', 'receive', '/fixture/execution', 'exited', '17'))
+            db.commit()
+        for args in [('orchestra', '--index'),
+                     ('orchestra', '--index', '--for', 'associate', '--pretty')]:
+            with self.subTest(args=args):
+                view = self.call(*args)
+                worker = next(row for row in view['players'] if row['id'] == 'worker')
+                self.assertEqual((worker['model'], worker['effort']), ('recorded-model', 'high'))
+                self.assertEqual((worker['observedModel'], worker['observedEffort']),
+                                 ('observed-model', 'medium'))
+                self.assertEqual(worker['execution']['attempt'], 'native-attempt')
+                self.assertEqual(worker['execution']['mode'], 'receive')
+                self.assertEqual(worker['execution']['phase'], 'exited')
+                self.assertEqual(worker['execution']['status'], '17')
+
     def test_uninitialized_database_is_not_migrated(self):
         uninitialized = self.directory / 'uninitialized.db'
         with closing(sqlite3.connect(uninitialized)) as db:
