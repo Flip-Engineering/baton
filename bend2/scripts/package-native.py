@@ -937,7 +937,7 @@ def controls_evidence(directory, initial, compiler, audit=None, destination=None
         if runtime_sha is not None:
             require(producing.get('runtime_set_sha256') == runtime_sha,
                     'A bundle used different installed Bend library bytes: ' + json.dumps(module))
-        instrument = producing.get('instrument') or {}
+        instrument = bundle.get('instrument') or {}
         require(instrument.get('tool') not in (None, '') and instrument.get('flag') not in (None, ''),
                 'A bundle names no time instrument: ' + json.dumps(module))
         bundle_origin = producing.get('origin') or {}
