@@ -103,8 +103,7 @@ def clangd_projections() -> SS:
 def analyzer_projections() -> SS:
   ss_of_list(["definition", "type", "calls", "callers", "diagnostics", "flow",
               "exceptions", "authorization", "databaseAccesses",
-              "predicateQueries", "guardPaths", "inputPaths", "declaration",
-              "cfg"])
+              "predicateQueries", "guardPaths", "inputPaths", "declaration"])
 
 def cdp_projections() -> SS:
   ss_of_list(["state", "frames", "scopes", "values", "exception", "threads"])
@@ -313,7 +312,8 @@ def cpp_suffix(+path: String) -> Bool:
          String.ends_with(path, ".hxx"))))))
 
 # A projection the C analyzer profile answers and the ordinary language service
-# does not.
+# does not. The `analysis` option value `cfg` selects a C analysis operation; it
+# is an option, not a projection, and appears in no selection list.
 def analysis_projection(+p: String) -> Bool:
   Bool.or(String.eq(p, "authorization"),
   Bool.or(String.eq(p, "flow"),
@@ -321,8 +321,7 @@ def analysis_projection(+p: String) -> Bool:
   Bool.or(String.eq(p, "predicateQueries"),
   Bool.or(String.eq(p, "guardPaths"),
   Bool.or(String.eq(p, "inputPaths"),
-  Bool.or(String.eq(p, "declaration"),
-         String.eq(p, "cfg"))))))))
+         String.eq(p, "declaration")))))))
 
 def any_analysis(xs: SS) -> Bool:
   match xs:
@@ -374,12 +373,18 @@ def entity_choice(+declared: String) -> EngineChoice:
   Bool.pick(EngineChoice, String.eq(declared, e_postgres()), EOne{e_postgres()},
     ENone{"entity subject requires a database engine"}))
 
+# A ref subject resolves from its retained entry, so `declared` carries the
+# stored selector's engine and no suffix or projection decides it.
+def ref_choice(+declared: String) -> EngineChoice:
+  Bool.pick(EngineChoice, String.eq(declared, ""), ENone{"ref subject requires the stored selector engine"}, EOne{declared})
+
 # Automatic selection. `declared` names the subject's own declared sub-engine
-# where the subject carries one (the entity subject's database engine); it is
-# empty otherwise.
+# where the subject carries one: the entity subject's database engine, or the
+# retained entry's engine for a ref subject. It is empty otherwise.
 def auto(+kind: String, +path: String, +declared: String, +projections: SS) -> EngineChoice:
   Bool.pick(EngineChoice, source_kind(kind), source_choice(path, projections),
   Bool.pick(EngineChoice, String.eq(kind, "entity"), entity_choice(declared),
+  Bool.pick(EngineChoice, String.eq(kind, "ref"), ref_choice(declared),
   Bool.pick(EngineChoice, String.eq(kind, "model"), EOne{e_datamodel()},
   Bool.pick(EngineChoice, String.eq(kind, "schema"), EOne{e_datamodel()},
   Bool.pick(EngineChoice, String.eq(kind, "security"), EOne{e_clang_analyzer()},
@@ -388,7 +393,7 @@ def auto(+kind: String, +path: String, +declared: String, +projections: SS) -> E
   Bool.pick(EngineChoice, String.eq(kind, "dataset"), EOne{e_dataset()},
   Bool.pick(EngineChoice, String.eq(kind, "runtime"), EOne{e_cdp()},
   Bool.pick(EngineChoice, String.eq(kind, "query-control"), EOne{e_query_control()},
-    ENone{"unsupported subject kind"}))))))))))
+    ENone{"unsupported subject kind"})))))))))))
 
 # --- resolution against the observed catalog ---------------------------------
 type Availability is Data:

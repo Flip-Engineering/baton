@@ -1,7 +1,12 @@
 {
-  "purpose": "Handoff payload for bend2/scripts/laws-check.mjs MUTATIONS. Each entry mutates one context core production function and is refused by the named law when the isolated entry bend2/tests/context-core/laws-entry.bend is compiled. Verified green at 40e7060b by .scratch/context-core-controls/run.mjs (entry compiles with every law proven, 33 mutations, 0 failures); the runtime-ref-collapses-the-lifetime-counter entry was added after that run with the decimal-counter change and is pending the remote validation request native-core-counter-70.",
+  "purpose": "Handoff payload for bend2/scripts/laws-check.mjs MUTATIONS. Each entry mutates one context core production function and is refused by the named law when the isolated entry bend2/tests/context-core/laws-entry.bend is compiled. Every entry is refused by its named law at the verified baseline 40e7060b for the entries present then (33 mutations, 0 failures, .scratch/context-core-controls/run.mjs). Entries added after that run with the decimal runtime counter, ref subject selection and projection-table changes are pending the remote validation request native-core-counter-70; the operator boundary forbids local compilation.",
   "entry": "bend2/tests/context-core/laws-entry.bend",
   "verified_baseline": "40e7060bf11ea1f8a924110e5a72815c9e343c41",
+  "verification_pending": [
+    "runtime-ref-collapses-the-lifetime-counter",
+    "ref-subject-ignores-its-stored-engine",
+    "analyzer-serves-the-cfg-option-as-a-projection"
+  ],
   "entries": [
     {
       "name": "auto-ignores-the-typescript-suffix",
@@ -30,6 +35,20 @@
       "find": "    EMany{ss_two(e_typescript(), e_clangd())},",
       "replace": "    EOne{e_typescript()},",
       "law": "engine_auto_unknown_suffix_returns_candidates"
+    },
+    {
+      "name": "ref-subject-ignores-its-stored-engine",
+      "file": "bend2/src/context/engines.bend",
+      "find": "  Bool.pick(EngineChoice, String.eq(declared, \"\"), ENone{\"ref subject requires the stored selector engine\"}, EOne{declared})",
+      "replace": "  EOne{declared}",
+      "law": "engine_auto_ref_without_a_stored_selector_engine_refuses"
+    },
+    {
+      "name": "analyzer-serves-the-cfg-option-as-a-projection",
+      "file": "bend2/src/context/engines.bend",
+      "find": "              \"predicateQueries\", \"guardPaths\", \"inputPaths\", \"declaration\"])",
+      "replace": "              \"predicateQueries\", \"guardPaths\", \"inputPaths\", \"declaration\", \"cfg\"])",
+      "law": "engine_the_analyzer_does_not_serve_the_cfg_option_as_a_projection"
     },
     {
       "name": "required-effects-drop-the-join-planning-grant",

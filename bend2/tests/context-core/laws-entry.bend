@@ -85,7 +85,9 @@ def all_ok() -> List<Bool>:
     String.eq(effects_text(Eng.required_effects(Eng.op_code_access_join())), "planTargetSql"),
     String.eq(effects_text(Eng.required_effects(Eng.op_query_control_release())), "controlRuntime"),
     String.eq(effects_text(Eng.required_effects(Eng.op_query_control_recover())), ""),
-    String.eq(choice_text(Eng.auto("runtime", "", "", Eng.ss_one("state"))), "one:cdp") ]
+    String.eq(choice_text(Eng.auto("runtime", "", "", Eng.ss_one("state"))), "one:cdp"),
+    String.eq(choice_text(Eng.auto("ref", "", "typescript", Eng.ss_one("definition"))), "one:typescript"),
+    String.eq(choice_text(Eng.auto("ref", "", "", Eng.ss_one("definition"))), "none:ref subject requires the stored selector engine") ]
 
 def run_go(xs: List<Bool>, +i: U32) -> IO(Unit):
   match xs:

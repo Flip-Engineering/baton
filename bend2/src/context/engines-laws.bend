@@ -86,6 +86,32 @@ law engine_auto_entity_without_a_database_engine_refuses:
 def engine_auto_entity_without_a_database_engine_refuses():
   {==}
 
+law engine_auto_ref_uses_the_stored_selector_engine:
+  {Eng.auto("ref", "", "typescript", Eng.ss_one("definition")) == Eng.EOne{"typescript"} : Eng.EngineChoice}
+
+def engine_auto_ref_uses_the_stored_selector_engine():
+  {==}
+
+law engine_auto_ref_without_a_stored_selector_engine_refuses:
+  {Eng.auto("ref", "", "", Eng.ss_one("definition")) == Eng.ENone{"ref subject requires the stored selector engine"} : Eng.EngineChoice}
+
+def engine_auto_ref_without_a_stored_selector_engine_refuses():
+  {==}
+
+law engine_the_analyzer_refuses_a_projection_it_does_not_serve:
+  {Eng.auto("symbol", "src/report.c", "", Eng.ss_two("authorization", "entities")) == Eng.ENone{"projection is not served by clang-analyzer: entities"} : Eng.EngineChoice}
+
+def engine_the_analyzer_refuses_a_projection_it_does_not_serve():
+  {==}
+
+# The `analysis` option value cfg selects a C analysis operation; it is not a
+# projection of any engine.
+law engine_the_analyzer_does_not_serve_the_cfg_option_as_a_projection:
+  {Eng.serves("clang-analyzer", Eng.ss_one("cfg")) == False{} : Bool}
+
+def engine_the_analyzer_does_not_serve_the_cfg_option_as_a_projection():
+  {==}
+
 law engine_auto_model_selects_the_model_engine:
   {Eng.auto("model", "", "", Eng.ss_one("validation")) == Eng.EOne{"data-model"} : Eng.EngineChoice}
 
