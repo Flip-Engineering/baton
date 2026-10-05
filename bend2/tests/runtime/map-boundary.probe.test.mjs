@@ -127,7 +127,8 @@ function freshFacts() {
     workerOutcome: null,
     workerExit: null,
     workerError: null,
-    child: { exitCode: null, signal: null, error: null, closeObserved: false, closeTimedOut: false, cleanupKilled: false, cleanupError: null },
+    guardKill: null,
+    child: { exitCode: null, signal: null, error: null, closeObserved: false, closeTimedOut: false, cleanupAttempted: false, cleanupSignaled: null, cleanupKilled: false, cleanupError: null },
     rawStdout: [],
     rawStderr: [],
     parseErrors: [],
@@ -147,6 +148,9 @@ function probeStorage() {
   // Unique per-run storage: successive runs never overwrite prior evidence.
   if (!PROBE_STORAGE) {
     const base = process.env.BATON_RUNTIME_EVIDENCE_DIR ?? join(tmpdir(), 'runtime-values-evidence-');
+    // The default evidence base does not exist on a fresh machine; the
+    // parent is created first, then the leaf is reserved exclusively.
+    mkdirSync(base, { recursive: true });
     PROBE_STORAGE = mkdtempSync(join(base, 'probe-run-'));
   }
   return PROBE_STORAGE;
@@ -173,7 +177,17 @@ async function runProbeBody(root, facts, mutate, options) {
   let queue = null;
   let childClosed = null;
   const guard = setTimeout(() => {
-    if (child && child.exitCode === null && child.signalCode === null) child.kill('SIGKILL');
+    if (child && child.exitCode === null && child.signalCode === null) {
+      // The guard intervention is recorded with attempt, result and error,
+      // same as the finally cleanup.
+      const guardKill = { attempted: true, signaled: null, error: null };
+      try {
+        guardKill.signaled = child.kill('SIGKILL');
+      } catch (killError) {
+        guardKill.error = String(killError.message ?? killError);
+      }
+      facts.guardKill = guardKill;
+    }
   }, 90000);
   try {
     child = spawn(process.execPath, ['--input-type=commonjs', '-e', [
@@ -220,15 +234,20 @@ async function runProbeBody(root, facts, mutate, options) {
     facts.probeError = String(err.message ?? err);
   } finally {
     clearTimeout(guard);
-    // Cleanup is supervised per step: a kill that throws is retained as a
-    // cleanup error instead of skipping the close and raw capture.
+    // Cleanup is supervised per step with ATTEMPT, RESULT and ERROR kept
+    // distinct: cleanupKilled is set only from the actual kill result, and
+    // no causal exit is inferred from an attempt alone.
     if (child && child.exitCode === null && child.signalCode === null) {
+      const cleanup = { attempted: true, signaled: null, error: null };
       try {
-        facts.child.cleanupKilled = true;
-        child.kill('SIGKILL');
+        cleanup.signaled = child.kill('SIGKILL');
       } catch (killError) {
-        facts.child.cleanupError = String(killError.message ?? killError);
+        cleanup.error = String(killError.message ?? killError);
       }
+      facts.child.cleanupAttempted = cleanup.attempted;
+      facts.child.cleanupSignaled = cleanup.signaled;
+      facts.child.cleanupError = cleanup.error;
+      facts.child.cleanupKilled = cleanup.signaled === true;
     }
     if (childClosed) {
       let closeTimer = null;
@@ -245,6 +264,10 @@ async function runProbeBody(root, facts, mutate, options) {
         facts.child.signal = close.signal;
       }
     }
+    // Late worker-error lines that arrived after the earlier sample remain
+    // structured facts: resample from the queue after the close.
+    const lateWorkerError = queue ? queue.lines.find((message) => message.workerError !== undefined) : null;
+    if (lateWorkerError) facts.workerError = String(lateWorkerError.workerError);
     // The queue holds the exact stdout bytes; they flow into the facts here.
     facts.rawStdoutBytes = Buffer.concat(queue ? queue.rawChunks : facts.rawStdout);
     facts.rawStderrBytes = Buffer.concat(facts.rawStderr);
@@ -300,16 +323,20 @@ function assertAcquisitionHealthy(facts) {
   // The mutation actually completed inside the probe.
   assert.equal(facts.mutationCompleted, true, 'the mutation completed');
   assert.equal(facts.mutationError, null, `mutation completed cleanly: ${facts.mutationError ?? ''}`);
-  // A cleanup kill is the expected termination for an intervention; any
-  // other signal is an abnormal close and fails acquisition. The worker
-  // host failure stays distinct from a healthy reader refusal.
-  if (facts.child.cleanupKilled) {
-    assert.equal(facts.child.signal, 'SIGKILL', `the cleanup kill produced the expected signal: ${facts.child.signal}`);
+  // Cleanup semantics: attempted/signaled/error stay distinct and no causal
+  // exit is inferred. An actual signaled cleanup expects the SIGKILL close;
+  // an attempt whose kill returned false (the child exited in the race
+  // window) accepts the observed natural exit. A cleanup error fails.
+  assert.equal(facts.child.cleanupError ?? null, null, `no cleanup error: ${facts.child.cleanupError ?? ''}`);
+  if (facts.child.cleanupAttempted && facts.child.cleanupSignaled) {
+    assert.equal(facts.child.signal, 'SIGKILL', `the signaled cleanup produced the expected signal: ${facts.child.signal}`);
   } else {
     assert.equal(facts.child.exitCode, 0, `the child exited cleanly (code ${facts.child.exitCode})`);
     assert.equal(facts.child.signal, null, `no unexpected child signal: ${facts.child.signal}`);
   }
-  assert.equal(facts.child.cleanupError ?? null, null, `no cleanup error: ${facts.child.cleanupError ?? ''}`);
+  if (facts.guardKill) {
+    assert.equal(facts.guardKill.error, null, `guard intervention error: ${facts.guardKill.error}`);
+  }
   // The worker's own lifetime must be observed: an absent exit is a failed
   // acquisition, not an acceptable absence. A worker-error event is a
   // failed acquisition, separate from any reader refusal.
@@ -348,7 +375,9 @@ test('in-place same-size concurrent stress: acquired facts retained, coverage un
       );
     }
   } finally {
-    if (root) rmSync(root, { recursive: true, force: true });
+    // Preserve the live root when the close is unresolved: deleting it
+    // would discard unresolved custody.
+    if (root && !facts.child.closeTimedOut) rmSync(root, { recursive: true, force: true });
   }
 });
 
@@ -372,6 +401,7 @@ test('rename-over substitution concurrent stress: verdicts are recorded, coverag
       assert.ok(true, 'reader refusal recorded; interval coverage remains unknown');
     }
   } finally {
-    if (root) rmSync(root, { recursive: true, force: true });
+    // Preserve the live root when the close is unresolved.
+    if (root && !facts.child.closeTimedOut) rmSync(root, { recursive: true, force: true });
   }
 });
