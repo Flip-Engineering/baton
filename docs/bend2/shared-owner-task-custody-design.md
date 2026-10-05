@@ -562,13 +562,48 @@ outstanding task event, and check every increment and decrement, and the
 module deliberately provides no unkeyed task-count debit.
 
 The precise missing primitive preventing a concrete hosted call site is the
-owner event-loop entry itself: the `--owner-serve` dispatch handoff
-(Main/synthesis) that would host the in-memory retained destination table,
-its uniqueness, and the Controls lease exports (`attach_reader`, `read_ready`,
-`register_ready_event`, `cancel_registration`, `release_frame/release_reader/
-release_destination`, `prepare_env`) as callable operations. Until that entry
-exists, the instance region can supply only these pure decisions and their
-evidence, and no hosted storage claim is made.
+owner event-loop entry itself: `--owner-serve` is a pending composition
+contract with no existing literal in any reviewed source, routed through
+Interfaces and Controls. Until that entry exists, the instance region can
+supply only these pure decisions and their evidence, and no hosted storage
+claim is made. The exact unavailable host primitives, as found at the
+reviewed pins: no callable `attach_reader`, `read_ready`,
+`register_ready_event`, `cancel_registration`, `release_frame`,
+`release_reader`, `release_destination`, `prepare_env`,
+`describe_preparation` or `dispose_preparation` export exists anywhere in
+the reviewed source; the only concrete reader layer is the internal
+Controls `br_read_source_*`/`br_read_offer_*` C helpers with no Bend
+export. Startup, return and failure ownership for the Instance operations
+follows the hosted entry: the entry process starts the owner loop, resolves
+each call's leases under the shared synchronization, returns typed outcomes
+to the calling client, and retains failures as duties — no pure record
+establishes any of it.
+
+Cleanup adoption follows the Controls `932cd36d` disposal contract: the
+offered-frame/cleanup adoption returns an explicit accepted or refused
+disposition; until the original task has accepted a complete copy bound to
+the original correlation and reader incarnation, the cleanup record and its
+responsible owner stay retained, acceptance precedes storage free or
+reinitialization, the primary init/read error stays separate from both
+close-attempt results, and a close error never authorizes another close on
+the former numeric descriptor. Successful source disposal establishes
+neither registry quiescence, settled interpretation or effects, parent
+delivery nor ACK completion; a successful ACK removes attempt and stdout
+records while filtered public logs keep serving, so recovery binds to the
+actual retained original sources and returns an explicit unavailable or
+uncertain disposition where they no longer exist.
+
+Finality and retention precision for the reader-facing duties: native
+`waitpid` plus custody release establishes neither all-writer finality nor a
+sealed extent — only Controls' qualified current observation does, and task
+or reader operations never manufacture a seal from child exit, release, a
+zero-byte read or an ACK. A normal ACK attempts the raw unlink, so raw-data
+availability after ACK depends on the cleanup outcome: neither universal
+retention nor universal deletion follows from ACK alone, cleanup uncertainty
+is preserved with the original duties, and selected public-log byte offsets
+denote a different byte stream from raw offsets — exact historical raw bytes
+that are unavailable stay unavailable, with no substitution of public bytes
+and no reinterpretation of public offsets as raw parser state.
 
 The custody-task module and isolated fixtures can be developed now in this
 worktree. Imports into the protected regions wait for the accepted handoffs;

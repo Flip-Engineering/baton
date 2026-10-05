@@ -25,6 +25,9 @@ import Base
 # The offered-reader dispose call inherits ignored close results and assumes
 # registry quiescence, so it is not a qualified disposal receipt — qualified
 # disposal is the registry's own decision plus the Controls lease release.
+# Registration and destination reference release must validate the original
+# holder identity in the hosted table; the checked decrements here are the
+# accounting those validated releases perform.
 
 # Capability identity is separate from the readiness state it observes: the
 # generation names the capability incarnation, and the separately owned
@@ -40,14 +43,28 @@ type Generation is Data:
 type Destination is Data:
   Destination{database: String, owner: String, request: String, session: String, references: U32, tasks: U32}
 
-# One registration over a reader lease and a destination lease. `identity`
-# is the registration and event identity; a ready event belongs to the task
-# that owns this registration.
+# One registration over a reader lease and its bound destination
+# correlation. The four correlation fields are the operative binding an
+# adoption must match; `identity` is the registration and event identity,
+# and a ready event belongs to the task that owns this registration.
 type Registration is Data:
-  Registration{identity: String, generation: Generation, references: U32, armed: Bool, event_retained: Bool, cancelled: Bool}
+  Registration{identity: String, generation: Generation, database: String, owner: String, request: String, session: String, references: U32, armed: Bool, event_retained: Bool, cancelled: Bool}
 
 type DestinationLease is Data:
   DestinationLease{destination: Destination, live: Bool}
+
+# The adopted responsibility for one readiness event: the registration
+# identity, the full destination correlation it was adopted against, and the
+# phase — outstanding with the task after adoption, or returned to the
+# registration after a failed delivery. A requeue or completion must present
+# the exact outstanding token; the hosted table validates its live phase
+# under synchronization, and a copied token alone establishes nothing.
+type EventPhase is Data:
+  AdoptedOutstanding{}
+  ReturnedToRegistration{}
+
+type TaskEvent is Data:
+  TaskEvent{identity: String, database: String, owner: String, request: String, session: String, phase: EventPhase}
 
 # The outcome of one resolution against the retained table decision: the
 # matched destination gained a reference, the matched destination was at its
@@ -60,17 +77,23 @@ type Resolution is Data:
   Created{retained: DestinationLease, fresh: DestinationLease}
 
 # The outcome of one event adoption: the event moved to the destination's
-# task count, or the adoption was refused with both records unchanged.
+# task count with an outstanding token, or the adoption was refused with
+# both records unchanged.
 type Acceptance is Data:
-  Adopted{registration: Registration, destination: Destination}
+  Adopted{registration: Registration, destination: Destination, outstanding: TaskEvent}
   Refused{registration: Registration, destination: Destination}
 
-# The outcome of one failed-delivery requeue: the event returned to its
-# registration and the destination's outstanding task count dropped, or no
-# outstanding task event existed and both records stay unchanged.
+# The outcome of one failed-delivery requeue or one completion: the token's
+# outstanding responsibility was consumed and the event returned or the
+# task count dropped, or the presented token did not match an outstanding
+# responsibility and both records stay unchanged.
 type Requeue is Data:
-  Requeued{registration: Registration, destination: Destination}
-  Unowned{registration: Registration, destination: Destination}
+  Requeued{registration: Registration, destination: Destination, returned: TaskEvent}
+  Unowned{registration: Registration, destination: Destination, outstanding: TaskEvent}
+
+type Completion is Data:
+  Completed{registration: Registration, destination: Destination, returned: TaskEvent}
+  Unowned{registration: Registration, destination: Destination, outstanding: TaskEvent}
 
 def dest_of(lease: DestinationLease) -> Destination:
   match lease:
@@ -106,27 +129,43 @@ def dest_tasks_of(destination: Destination) -> U32:
 
 def reg_identity_of(registration: Registration) -> String:
   match registration:
-    case Registration{identity,generation,references,armed,event_retained,cancelled}: identity
+    case Registration{identity,generation,database,owner,request,session,references,armed,event_retained,cancelled}: identity
 
 def reg_generation_of(registration: Registration) -> Generation:
   match registration:
-    case Registration{identity,generation,references,armed,event_retained,cancelled}: generation
+    case Registration{identity,generation,database,owner,request,session,references,armed,event_retained,cancelled}: generation
+
+def reg_database_of(registration: Registration) -> String:
+  match registration:
+    case Registration{identity,generation,database,owner,request,session,references,armed,event_retained,cancelled}: database
+
+def reg_owner_of(registration: Registration) -> String:
+  match registration:
+    case Registration{identity,generation,database,owner,request,session,references,armed,event_retained,cancelled}: owner
+
+def reg_request_of(registration: Registration) -> String:
+  match registration:
+    case Registration{identity,generation,database,owner,request,session,references,armed,event_retained,cancelled}: request
+
+def reg_session_of(registration: Registration) -> String:
+  match registration:
+    case Registration{identity,generation,database,owner,request,session,references,armed,event_retained,cancelled}: session
 
 def reg_references_of(registration: Registration) -> U32:
   match registration:
-    case Registration{identity,generation,references,armed,event_retained,cancelled}: references
+    case Registration{identity,generation,database,owner,request,session,references,armed,event_retained,cancelled}: references
 
 def reg_armed_of(registration: Registration) -> Bool:
   match registration:
-    case Registration{identity,generation,references,armed,event_retained,cancelled}: armed
+    case Registration{identity,generation,database,owner,request,session,references,armed,event_retained,cancelled}: armed
 
 def reg_event_retained_of(registration: Registration) -> Bool:
   match registration:
-    case Registration{identity,generation,references,armed,event_retained,cancelled}: event_retained
+    case Registration{identity,generation,database,owner,request,session,references,armed,event_retained,cancelled}: event_retained
 
 def reg_cancelled_of(registration: Registration) -> Bool:
   match registration:
-    case Registration{identity,generation,references,armed,event_retained,cancelled}: cancelled
+    case Registration{identity,generation,database,owner,request,session,references,armed,event_retained,cancelled}: cancelled
 
 def gen_owner_of(generation: Generation) -> String:
   match generation:
@@ -185,8 +224,8 @@ def register_decided(+registration: Registration, +observed: Generation, identit
       case other: match busy:
         case True{}: registration
         case other: match revision:
-          case True{}: Registration{reg_identity_of(registration),reg_generation_of(registration),reg_references_of(registration),True{},reg_event_retained_of(registration),reg_cancelled_of(registration)}
-          case other: Registration{reg_identity_of(registration),reg_generation_of(registration),reg_references_of(registration),False{},True{},reg_cancelled_of(registration)}
+          case True{}: Registration{reg_identity_of(registration),reg_generation_of(registration),reg_database_of(registration),reg_owner_of(registration),reg_request_of(registration),reg_session_of(registration),reg_references_of(registration),True{},reg_event_retained_of(registration),reg_cancelled_of(registration)}
+          case other: Registration{reg_identity_of(registration),reg_generation_of(registration),reg_database_of(registration),reg_owner_of(registration),reg_request_of(registration),reg_session_of(registration),reg_references_of(registration),False{},True{},reg_cancelled_of(registration)}
     case other: registration
 
 # Registering under shared synchronization. A stale owner or capability
@@ -201,9 +240,16 @@ def register_decided(+registration: Registration, +observed: Generation, identit
 def register_ready(+registration: Registration, +observed: Generation) -> Registration:
   register_decided(registration,observed,same_owner_and_capability(reg_generation_of(registration),observed),U32.is_eq(gen_revision_of(reg_generation_of(registration)),gen_revision_of(observed)),reg_cancelled_of(registration),reg_armed_of(registration))
 
-def accept_decided(+registration: Registration, +destination: Destination, task_capacity: U32, event: Bool, below_task_capacity: Bool) -> Acceptance:
+def registration_binds(+registration: Registration, +destination: Destination) -> Bool:
+  Bool.and(String.eq(reg_database_of(registration),dest_database_of(destination)),Bool.and(String.eq(reg_owner_of(registration),dest_owner_of(destination)),Bool.and(String.eq(reg_request_of(registration),dest_request_of(destination)),String.eq(reg_session_of(registration),dest_session_of(destination)))))
+
+def accept_decided(+registration: Registration, +destination: Destination, task_capacity: U32, event: Bool, bound: Bool, is_cancelled: Bool, below_task_capacity: Bool) -> Acceptance:
   match event:
-    case True{}: Bool.pick(Acceptance,below_task_capacity,Adopted{Registration{reg_identity_of(registration),reg_generation_of(registration),reg_references_of(registration),False{},False{},reg_cancelled_of(registration)},Destination{dest_database_of(destination),dest_owner_of(destination),dest_request_of(destination),dest_session_of(destination),dest_references_of(destination),U32.add(dest_tasks_of(destination),1)}},Refused{registration,destination})
+    case True{}: match is_cancelled:
+      case True{}: Refused{registration,destination}
+      case other: match bound:
+        case True{}: Bool.pick(Acceptance,below_task_capacity,Adopted{Registration{reg_identity_of(registration),reg_generation_of(registration),reg_database_of(registration),reg_owner_of(registration),reg_request_of(registration),reg_session_of(registration),reg_references_of(registration),False{},False{},reg_cancelled_of(registration)},Destination{dest_database_of(destination),dest_owner_of(destination),dest_request_of(destination),dest_session_of(destination),dest_references_of(destination),U32.add(dest_tasks_of(destination),1)},TaskEvent{reg_identity_of(registration),dest_database_of(destination),dest_owner_of(destination),dest_request_of(destination),dest_session_of(destination),AdoptedOutstanding{}}},Refused{registration,destination})
+        case other: Refused{registration,destination}
     case other: Refused{registration,destination}
 
 # A readiness event transfers the responsibility to wake and retry
@@ -211,49 +257,109 @@ def accept_decided(+registration: Registration, +destination: Destination, task_
 # allocation. Frame adoption is a separate hosted operation after an actual
 # OfferedFrame, preserving the original correlation, the exact reader
 # incarnation and serial, the latched fault and task ownership before any
-# take. Adoption here clears the registration's retained event and records
-# the wake on the destination's task count, checked against the recorded
-# task capacity. A registration without a retained event, or a destination
-# at its task capacity, refuses adoption with both records unchanged — a
-# duplicate acceptance cannot manufacture a second task event.
+# take. Adoption requires the destination to match the registration's
+# recorded binding and a retained event, clears that event, records the wake
+# on the destination's task count against the recorded capacity, and issues
+# the outstanding task-event token. A registration without a retained event,
+# a foreign destination, or a destination at task capacity refuses adoption
+# with both records unchanged — a duplicate acceptance cannot manufacture a
+# second task event.
 def accept_ready(+registration: Registration, +destination: Destination, task_capacity: U32) -> Acceptance:
-  accept_decided(registration,destination,task_capacity,reg_event_retained_of(registration),U32.is_lt(dest_tasks_of(destination),task_capacity))
+  accept_decided(registration,destination,task_capacity,reg_event_retained_of(registration),registration_binds(registration,destination),reg_cancelled_of(registration),U32.is_lt(dest_tasks_of(destination),task_capacity))
 
-def requeue_decided(+registration: Registration, +destination: Destination, outstanding: Bool) -> Requeue:
-  match outstanding:
-    case True{}: Requeued{Registration{reg_identity_of(registration),reg_generation_of(registration),reg_references_of(registration),reg_armed_of(registration),True{},reg_cancelled_of(registration)},Destination{dest_database_of(destination),dest_owner_of(destination),dest_request_of(destination),dest_session_of(destination),dest_references_of(destination),U32.sub(dest_tasks_of(destination),1)}}
-    case other: Unowned{registration,destination}
+def token_is_adopted(token: TaskEvent) -> Bool:
+  match token:
+    case TaskEvent{identity,database,owner,request,session,phase}:
+      match phase:
+        case AdoptedOutstanding{}: True{}
+        case other: False{}
 
-# A task whose delivery of the event failed returns the event to its
+def token_identity_of(token: TaskEvent) -> String:
+  match token:
+    case TaskEvent{identity,database,owner,request,session,phase}: identity
+
+def token_database_of(token: TaskEvent) -> String:
+  match token:
+    case TaskEvent{identity,database,owner,request,session,phase}: database
+
+def token_owner_of(token: TaskEvent) -> String:
+  match token:
+    case TaskEvent{identity,database,owner,request,session,phase}: owner
+
+def token_request_of(token: TaskEvent) -> String:
+  match token:
+    case TaskEvent{identity,database,owner,request,session,phase}: request
+
+def token_session_of(token: TaskEvent) -> String:
+  match token:
+    case TaskEvent{identity,database,owner,request,session,phase}: session
+
+def token_presents(+registration: Registration, +destination: Destination, +outstanding: TaskEvent) -> Bool:
+  Bool.and(Bool.and(String.eq(reg_identity_of(registration),token_identity_of(outstanding)),correlation_is(destination,token_database_of(outstanding),token_owner_of(outstanding),token_request_of(outstanding),token_session_of(outstanding))),token_is_adopted(outstanding))
+
+def requeue_decided(+registration: Registration, +destination: Destination, +outstanding: TaskEvent, presents: Bool, outstanding_tasks: Bool) -> Requeue:
+  match presents:
+    case True{}: match outstanding_tasks:
+      case True{}: Requeued{Registration{reg_identity_of(registration),reg_generation_of(registration),reg_database_of(registration),reg_owner_of(registration),reg_request_of(registration),reg_session_of(registration),reg_references_of(registration),reg_armed_of(registration),True{},reg_cancelled_of(registration)},Destination{dest_database_of(destination),dest_owner_of(destination),dest_request_of(destination),dest_session_of(destination),dest_references_of(destination),U32.sub(dest_tasks_of(destination),1)},TaskEvent{reg_identity_of(registration),dest_database_of(destination),dest_owner_of(destination),dest_request_of(destination),dest_session_of(destination),ReturnedToRegistration{}}}
+      case other: Unowned{registration,destination,outstanding}
+    case other: Unowned{registration,destination,outstanding}
+
+# A failed delivery returns the exact adopted event token to its
 # registration for retry and releases the destination's outstanding task
-# count, checked against zero; with no outstanding task event both records
-# stay unchanged, so retries cannot manufacture or strand duties. A
-# completed delivery releases its task count through the same keyed
-# destination record in the hosted table; the module deliberately provides
-# no unkeyed task-count debit.
-def requeue_event(+registration: Registration, +destination: Destination) -> Requeue:
-  requeue_decided(registration,destination,U32.is_lt(0,dest_tasks_of(destination)))
+# count, checked against zero. The token must name this registration
+# identity, this destination correlation and the adopted-outstanding phase;
+# a mismatched, repeated or foreign token is refused with both records and
+# the presented token preserved, so one event can never consume a second
+# task responsibility.
+def requeue_event(+registration: Registration, +destination: Destination, +outstanding: TaskEvent) -> Requeue:
+  requeue_decided(registration,destination,outstanding,token_presents(registration,destination,outstanding),U32.is_lt(0,dest_tasks_of(destination)))
 
-# One registration reference is released, checked against zero: original
-# holders end only through this release on the records they hold, and a
-# fresh zero-reference construction proves nothing about other holders.
-def release_registration_reference(registration: Registration) -> Registration:
-  Bool.pick(Registration,U32.is_lt(0,reg_references_of(registration)),Registration{reg_identity_of(registration),reg_generation_of(registration),U32.sub(reg_references_of(registration),1),reg_armed_of(registration),reg_event_retained_of(registration),reg_cancelled_of(registration)},registration)
+def complete_decided(+registration: Registration, +destination: Destination, +outstanding: TaskEvent, presents: Bool, outstanding_tasks: Bool) -> Completion:
+  match presents:
+    case True{}: match outstanding_tasks:
+      case True{}: Completed{Registration{reg_identity_of(registration),reg_generation_of(registration),reg_database_of(registration),reg_owner_of(registration),reg_request_of(registration),reg_session_of(registration),reg_references_of(registration),reg_armed_of(registration),reg_event_retained_of(registration),reg_cancelled_of(registration)},Destination{dest_database_of(destination),dest_owner_of(destination),dest_request_of(destination),dest_session_of(destination),dest_references_of(destination),U32.sub(dest_tasks_of(destination),1)},TaskEvent{reg_identity_of(registration),dest_database_of(destination),dest_owner_of(destination),dest_request_of(destination),dest_session_of(destination),ReturnedToRegistration{}}}
+      case other: Unowned{registration,destination,outstanding}
+    case other: Unowned{registration,destination,outstanding}
 
-# One destination reference is released, checked against zero; the lease
-# stays live and its destination is reconstructed unchanged otherwise.
-def release_destination_reference(+lease: DestinationLease) -> DestinationLease:
+# A completed delivery consumes the exact adopted event token: the event
+# stays delivered, the destination's outstanding task count drops checked
+# against zero, and a mismatched or repeated token is refused with both
+# records preserved.
+def complete_event(+registration: Registration, +destination: Destination, +outstanding: TaskEvent) -> Completion:
+  complete_decided(registration,destination,outstanding,token_presents(registration,destination,outstanding),U32.is_lt(0,dest_tasks_of(destination)))
+
+# One registration reference is released, checked against zero, with an
+# explicit disposition: an absent or already-released reference returns the
+# record unchanged as AlreadyReleased. The hosted table additionally
+# validates the original holder identity for this release; a copied record
+# alone establishes no holder.
+type RegistrationRelease is Data:
+  Released{registration: Registration}
+  AlreadyReleased{registration: Registration}
+
+def release_registration_reference(+registration: Registration) -> RegistrationRelease:
+  Bool.pick(RegistrationRelease,U32.is_lt(0,reg_references_of(registration)),Released{Registration{reg_identity_of(registration),reg_generation_of(registration),reg_database_of(registration),reg_owner_of(registration),reg_request_of(registration),reg_session_of(registration),U32.sub(reg_references_of(registration),1),reg_armed_of(registration),reg_event_retained_of(registration),reg_cancelled_of(registration)}},AlreadyReleased{registration})
+
+# One destination reference is released, checked against zero, with the
+# same explicit disposition; the lease stays live and its destination is
+# reconstructed unchanged on an already-released outcome.
+type LeaseRelease is Data:
+  LeaseReleased{lease: DestinationLease}
+  LeaseAlreadyReleased{lease: DestinationLease}
+
+def release_destination_reference(+lease: DestinationLease) -> LeaseRelease:
   match lease:
     case DestinationLease{+destination,+live}:
-      Bool.pick(DestinationLease,U32.is_lt(0,dest_references_of(destination)),DestinationLease{Destination{dest_database_of(destination),dest_owner_of(destination),dest_request_of(destination),dest_session_of(destination),U32.sub(dest_references_of(destination),1),dest_tasks_of(destination)},live},DestinationLease{destination,live})
+      Bool.pick(LeaseRelease,U32.is_lt(0,dest_references_of(destination)),LeaseReleased{DestinationLease{Destination{dest_database_of(destination),dest_owner_of(destination),dest_request_of(destination),dest_session_of(destination),dest_references_of(destination),U32.sub(dest_references_of(destination),1)},live}},LeaseAlreadyReleased{DestinationLease{destination,live}})
 
 # Cancellation invalidates exactly this registration generation: later
 # events on this identity are refused, arming stops, and its disposal stays
-# unsafe while an event is retained, a reference remains or it is armed.
+# unsafe while an event is retained, a reference remains or it is armed. An
+# already retained event keeps its responsible owner through cancellation.
 def cancel_registration(registration: Registration) -> Registration:
   match registration:
-    case Registration{+identity,+generation,+references,+armed,+event_retained,+cancelled}:
-      Registration{identity,generation,references,armed:False{},event_retained,cancelled:True{}}
+    case Registration{+identity,+generation,+database,+owner,+request,+session,+references,+armed,+event_retained,+cancelled}:
+      Registration{identity,generation,database,owner,request,session,references,armed:False{},event_retained,cancelled:True{}}
 
 # Disposal of a destination is safe only when nothing references it and no
 # undelivered task event remains.
@@ -262,191 +368,3 @@ def destination_disposable(+destination: Destination) -> Bool:
 
 def registration_disposable(+registration: Registration) -> Bool:
   Bool.and(reg_cancelled_of(registration),Bool.and(Bool.not(reg_event_retained_of(registration)),Bool.and(Bool.not(reg_armed_of(registration)),U32.is_eq(reg_references_of(registration),0))))
-
-# --- laws -------------------------------------------------------------------
-
-law resolving_the_same_correlation_retains_the_same_destination:
-  for +database: String
-  for +owner: String
-  for +request: String
-  for +session: String
-  for +references: U32
-  for +tasks: U32
-  for +capacity: U32
-  {resolve_destination(DestinationLease{Destination{database,owner,request,session,references,tasks},True{}},database,owner,request,session,capacity) == Bool.pick(Resolution,U32.is_lt(references,capacity),Retained{DestinationLease{Destination{database,owner,request,session,U32.add(references,1),tasks},True{}}},AtCapacity{DestinationLease{Destination{database,owner,request,session,references,tasks},True{}}}) : Resolution}
-
-def resolving_the_same_correlation_retains_the_same_destination(database,owner,request,session,references,tasks,capacity):
-  {==}
-
-law resolution_at_capacity_returns_the_retained_lease_unchanged:
-  for +database: String
-  for +owner: String
-  for +request: String
-  for +session: String
-  for +references: U32
-  for +tasks: U32
-  {resolve_destination(DestinationLease{Destination{database,owner,request,session,references,tasks},True{}},database,owner,request,session,references) == AtCapacity{DestinationLease{Destination{database,owner,request,session,references,tasks},True{}}} : Resolution}
-
-def resolution_at_capacity_returns_the_retained_lease_unchanged(database,owner,request,session,references,tasks):
-  {==}
-
-law a_new_correlation_creates_one_fresh_retained_destination:
-  for +database: String
-  for +owner: String
-  for +request: String
-  for +session: String
-  for +references: U32
-  for +tasks: U32
-  {resolve_destination(DestinationLease{Destination{database,owner,request,session,references,tasks},True{}},"other-"++database,owner,request,session,references) == Created{DestinationLease{Destination{database,owner,request,session,references,tasks},True{}},DestinationLease{Destination{"other-"++database,owner,request,session,1,0},True{}}} : Resolution}
-
-def a_new_correlation_creates_one_fresh_retained_destination(database,owner,request,session,references,tasks):
-  {==}
-
-law registration_on_the_current_revision_arms:
-  for +identity: String
-  for +owner: String
-  for +capability: String
-  for +revision: U32
-  for +references: U32
-  {register_ready(Registration{identity,Generation{owner,capability,revision},references,False{},False{},False{}},Generation{owner,capability,revision}) == Registration{identity,Generation{owner,capability,revision},references,True{},False{},False{}} : Registration}
-
-def registration_on_the_current_revision_arms(identity,owner,capability,revision,references):
-  {==}
-
-# A registration on a changed readiness revision under the same capability
-# identity stays unarmed and retains its ready event immediately; on the
-# current revision it arms without retaining.
-law registration_on_a_changed_revision_retains_the_event_unarmed:
-  for +identity: String
-  for +owner: String
-  for +capability: String
-  for +revision: U32
-  for +other_revision: U32
-  for +references: U32
-  {register_ready(Registration{identity,Generation{owner,capability,revision},references,False{},False{},False{}},Generation{owner,capability,other_revision}) == Bool.pick(Registration,U32.is_eq(revision,other_revision),Registration{identity,Generation{owner,capability,revision},references,True{},False{},False{}},Registration{identity,Generation{owner,capability,revision},references,False{},True{},False{}}) : Registration}
-
-def registration_on_a_changed_revision_retains_the_event_unarmed(identity,owner,capability,revision,other_revision,references):
-  {==}
-
-# A registration under a different capability incarnation is refused
-# outright: the foreign owner name is derived as the six-character prefix
-# extension of the recorded owner, so the identities provably differ, and
-# only the separately owned readiness revision changes under the same
-# identity.
-law a_foreign_capability_registration_is_refused:
-  for +identity: String
-  for +owner: String
-  for +capability: String
-  for +revision: U32
-  for +other_capability: String
-  for +other_revision: U32
-  for +references: U32
-  for +armed: Bool
-  for +event: Bool
-  for +cancelled: Bool
-  {register_ready(Registration{identity,Generation{owner,capability,revision},references,armed,event,cancelled},Generation{"other-"++owner,other_capability,other_revision}) == Registration{identity,Generation{owner,capability,revision},references,armed,event,cancelled} : Registration}
-
-def a_foreign_capability_registration_is_refused(identity,owner,capability,revision,other_capability,other_revision,references,armed,event,cancelled):
-  {==}
-
-# A cancelled registration refuses re-registration in either revision state.
-law a_cancelled_registration_refuses_registration:
-  for +identity: String
-  for +owner: String
-  for +capability: String
-  for +revision: U32
-  for +other_revision: U32
-  for +references: U32
-  for +armed: Bool
-  for +event: Bool
-  {register_ready(Registration{identity,Generation{owner,capability,revision},references,armed,event,True{}},Generation{owner,capability,other_revision}) == Registration{identity,Generation{owner,capability,revision},references,armed,event,True{}} : Registration}
-
-def a_cancelled_registration_refuses_registration(identity,owner,capability,revision,other_revision,references,armed,event):
-  {==}
-
-# An armed registration refuses repeated arming until its references
-# resolve.
-law an_armed_registration_refuses_repeated_arming:
-  for +identity: String
-  for +owner: String
-  for +capability: String
-  for +revision: U32
-  for +references: U32
-  for +event: Bool
-  for +cancelled: Bool
-  {register_ready(Registration{identity,Generation{owner,capability,revision},references,True{},event,cancelled},Generation{owner,capability,revision}) == Registration{identity,Generation{owner,capability,revision},references,True{},event,cancelled} : Registration}
-
-def an_armed_registration_refuses_repeated_arming(identity,owner,capability,revision,references,event,cancelled):
-  {==}
-
-# Adopting a retained event clears the registration's event and records it
-# on the destination's task count; without a retained event the adoption is
-# refused with both records unchanged.
-law accepting_a_ready_event_transfers_it_to_the_task:
-  for +identity: String
-  for +owner: String
-  for +capability: String
-  for +revision: U32
-  for +references: U32
-  for +lease_references: U32
-  for +lease_tasks: U32
-  for +task_capacity: U32
-  for +database: String
-  for +request: String
-  for +session: String
-  {accept_ready(Registration{identity,Generation{owner,capability,revision},references,True{},True{},False{}},Destination{database,owner,request,session,lease_references,lease_tasks},task_capacity) == Bool.pick(Acceptance,U32.is_lt(lease_tasks,task_capacity),Adopted{Registration{identity,Generation{owner,capability,revision},references,False{},False{},False{}},Destination{database,owner,request,session,lease_references,U32.add(lease_tasks,1)}},Refused{Registration{identity,Generation{owner,capability,revision},references,True{},True{},False{}},Destination{database,owner,request,session,lease_references,lease_tasks}}) : Acceptance}
-
-def accepting_a_ready_event_transfers_it_to_the_task(identity,owner,capability,revision,references,lease_references,lease_tasks,task_capacity,database,request,session):
-  {==}
-
-# A registration without a retained event refuses adoption.
-law adopting_without_a_retained_event_is_refused:
-  for +identity: String
-  for +owner: String
-  for +capability: String
-  for +revision: U32
-  for +references: U32
-  for +lease_references: U32
-  for +lease_tasks: U32
-  for +task_capacity: U32
-  for +database: String
-  for +request: String
-  for +session: String
-  {accept_ready(Registration{identity,Generation{owner,capability,revision},references,False{},False{},False{}},Destination{database,owner,request,session,lease_references,lease_tasks},task_capacity) == Refused{Registration{identity,Generation{owner,capability,revision},references,False{},False{},False{}},Destination{database,owner,request,session,lease_references,lease_tasks}} : Acceptance}
-
-def adopting_without_a_retained_event_is_refused(identity,owner,capability,revision,references,lease_references,lease_tasks,task_capacity,database,request,session):
-  {==}
-
-# A failed delivery requeues the event and releases the destination's
-# outstanding task count; with no outstanding task event both records stay
-# unchanged.
-law a_failed_delivery_requeues_the_event:
-  for +identity: String
-  for +owner: String
-  for +capability: String
-  for +revision: U32
-  for +references: U32
-  for +lease_references: U32
-  for +lease_tasks: U32
-  for +database: String
-  for +request: String
-  for +session: String
-  {requeue_event(Registration{identity,Generation{owner,capability,revision},references,False{},True{},False{}},Destination{database,owner,request,session,lease_references,lease_tasks}) == Bool.pick(Requeue,U32.is_lt(0,lease_tasks),Requeued{Registration{identity,Generation{owner,capability,revision},references,False{},True{},False{}},Destination{database,owner,request,session,lease_references,U32.sub(lease_tasks,1)}},Unowned{Registration{identity,Generation{owner,capability,revision},references,False{},True{},False{}},Destination{database,owner,request,session,lease_references,lease_tasks}}) : Requeue}
-
-def a_failed_delivery_requeues_the_event(identity,owner,capability,revision,references,lease_references,lease_tasks,database,request,session):
-  {==}
-
-# Disposal requires cancellation, no retained event, no armed state and no
-# remaining reference.
-law disposal_requires_cancelled_unarmed_unreferenced_state:
-  for +identity: String
-  for +owner: String
-  for +capability: String
-  for +revision: U32
-  for +references: U32
-  for +armed: Bool
-  for +event: Bool
-  {registration_disposable(Registration{identity,Generation{owner,capability,revision},references,armed,event,True{}}) == Bool.and(Bool.not(armed),Bool.and(Bool.not(event),U32.is_eq(references,0))) : Bool}
-
-def disposal_requires_cancelled_unarmed_unreferenced_state(identity,owner,capability,revision,references,armed,event):
-  {==}
