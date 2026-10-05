@@ -60,6 +60,35 @@
     "known_behavior": "A recovered observer that revisits a previously projected spool prefix appends that selected prefix to the public log again, and repeated generations amplify it. Ownership of the projection frontier is a host concern outside this file.",
     "not_defined_here": "No record-suppression flag is defined: retained_output also serves fresh retained starts and live tail, so suppressing records there would drop output that was never recorded."
   },
+  "control_expectations": {
+    "note": "Driver metadata: for each control, the discriminating assertion is expected to fail while the positive artifact passes; a companion inverse case is expected to remain passing under the same mutant and exists to catch over-broad corrections. A named failure counts only after a successful mutant build and a passing positive run; a missing target, a skip, an unrelated exception or a compiler error is inconclusive.",
+    "controls": {
+      "consume-bypasses-the-activity-update": {
+        "discriminating": ["ControlledFrames.test_an_elided_terminal_repeating_an_older_error_reports_the_later_completion"],
+        "companion_expected_to_pass": ["ControlledFrames.test_a_neutral_frame_after_an_incomplete_start_keeps_no_success"]
+      },
+      "consume-bypasses-terminal-normalization": {
+        "discriminating": ["ControlledFrames.test_an_observed_later_failure_is_reported_over_an_older_observed_error"],
+        "companion_expected_to_pass": ["ControlledFrames.test_empty_terminal_uses_the_retained_report"]
+      },
+      "consume-propagates-the-previous-activity": {
+        "discriminating": ["ControlledFrames.test_an_observed_later_failure_is_reported_over_an_older_observed_error"],
+        "companion_expected_to_pass": ["ControlledFrames.test_a_neutral_frame_after_an_incomplete_start_keeps_no_success"]
+      },
+      "consume-propagates-empty-activity": {
+        "discriminating": ["ControlledFrames.test_an_elided_terminal_repeating_an_older_error_reports_the_later_completion"],
+        "companion_expected_to_pass": ["ControlledFrames.test_a_neutral_frame_after_an_incomplete_start_keeps_no_success"]
+      },
+      "normalizer-ignores-truncated-history": {
+        "discriminating": ["ControlledFrames.test_empty_terminal_uses_the_retained_report"],
+        "companion_expected_to_pass": ["ControlledFrames.test_unavailable_content_is_reported_truthfully"]
+      },
+      "outcome-failed-bypasses-the-classifier": {
+        "discriminating": ["ControlledFrames.test_an_observed_later_failure_is_reported_over_an_older_observed_error"],
+        "companion_expected_to_pass": ["ControlledFrames.test_empty_terminal_uses_the_retained_report"]
+      }
+    }
+  },
   "immutable_inputs": [
     {"name": "semantic-runtime-protocol-research.jsonl", "sha256": "e4f45a333bdf880ff78b792429e3f4a2a3fd698e976eb2aec7024fd456cedf12"},
     {"name": "semantic-runtime-observations-research.jsonl", "sha256": "4779281c0e05a3d34834934c56e9c5cef51e3df0b61206d36f73a0cdb9fd6db7"},
