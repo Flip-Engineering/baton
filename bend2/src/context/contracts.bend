@@ -319,6 +319,14 @@ def effect_member(xs: Effects, +e: Effect) -> Bool:
     case EpsCons{+head, +tail}:
       Bool.pick(Bool, String.eq(effect_name(head), effect_name(e)), True{}, effect_member(tail, e))
 
+# The union builder for required-effect sets. A caller composes the subset of
+# every selected operation with it, so an override adds its effect without
+# dropping another operation's requirement.
+def cat_effects(xs: Effects, ys: Effects) -> Effects:
+  match xs:
+    case EpsNone{}: ys
+    case EpsCons{+head, +tail}: EpsCons{head, cat_effects(tail, ys)}
+
 def missing_grant(required: Effects, +grants: Effects) -> Maybe<&2, Effect>:
   match required:
     case EpsNone{}: None{}
@@ -606,6 +614,12 @@ law contracts_law_empty_request_needs_no_grant:
   {missing_grant(no_effects(), no_effects()) == None{} : Maybe<&2, Effect>}
 
 def contracts_law_empty_request_needs_no_grant():
+  {==}
+
+law contracts_law_cat_effects_keeps_both_sets:
+  {missing_grant(cat_effects(one_effect(EfPlanTargetSql{}), one_effect(EfExecuteTarget{})), one_effect(EfPlanTargetSql{})) == Some{EfExecuteTarget{}} : Maybe<&2, Effect>}
+
+def contracts_law_cat_effects_keeps_both_sets():
   {==}
 
 law contracts_law_missing_grant_names_the_first_absent:

@@ -1,0 +1,86 @@
+[
+ {
+  "name": "codec-empty-next-is-not-nil",
+  "file": "bend2/src/context/contracts.bend",
+  "find": "    case NextStop{}: J.Jarr{J.Jnil{}, J.Jnil{}}",
+  "replace": "    case NextStop{}: J.Jnil{}",
+  "law": "contracts_law_empty_next_is_the_empty_array"
+ },
+ {
+  "name": "codec-numeric-frame-id-is-quoted",
+  "file": "bend2/src/context/contracts.bend",
+  "find": "    case IdNumber{token}: token",
+  "replace": "    case IdNumber{token}: J.json_text(J.Jstr{token})",
+  "law": "contracts_law_frame_id_keeps_a_number_unquoted"
+ },
+ {
+  "name": "codec-u32-token-admits-empty",
+  "file": "bend2/src/context/contracts.bend",
+  "find": "  Bool.pick(Bool, String.is_empty(s), False{},\n    Bool.pick(Bool, all_digits(s), digits_shape_ok(s), False{}))",
+  "replace": "  Bool.pick(Bool, all_digits(s), digits_shape_ok(s), False{})",
+  "law": "contracts_law_u32_token_refuses_the_empty_token"
+ },
+ {
+  "name": "codec-signed-safe-token-widens-its-bound",
+  "file": "bend2/src/context/contracts.bend",
+  "find": "    Bool.pick(Bool, U32.is_lt(length(s), 16), True{}, digits_le(s, \"9007199254740991\")))",
+  "replace": "    Bool.pick(Bool, U32.is_lt(length(s), 16), True{}, digits_le(s, \"9999999999999999\")))",
+  "law": "contracts_law_signed_safe_token_refuses_above_the_bound"
+ },
+ {
+  "name": "codec-cat-effects-drops-the-second-set",
+  "file": "bend2/src/context/contracts.bend",
+  "find": "    case EpsCons{+head, +tail}: EpsCons{head, cat_effects(tail, ys)}",
+  "replace": "    case EpsCons{+head, +tail}: EpsCons{head, cat_effects(tail, EpsNone{})}",
+  "law": "contracts_law_cat_effects_keeps_both_sets"
+ },
+ {
+  "name": "codec-entity-catalog-read-is-a-join",
+  "file": "bend2/src/context/operations.bend",
+  "find": "  Bool.pick(String, projection_selected(req, \"codeAccesses\"), \"codeAccessJoin\", \"catalogCapture\")",
+  "replace": "  Bool.pick(String, projection_selected(req, \"codeAccesses\"), \"codeAccessJoin\", \"codeAccessJoin\")",
+  "law": "operations_law_an_entity_catalog_read_is_not_a_plan"
+ },
+ {
+  "name": "codec-program-subject-selects-nothing",
+  "file": "bend2/src/context/operations.bend",
+  "find": "    case \"program\": \"environmentRead\"",
+  "replace": "    case \"program\": SNil{}",
+  "law": "operations_law_a_tool_override_keeps_the_subject_operation"
+ },
+ {
+  "name": "codec-projections-join-with-the-wrong-separator",
+  "file": "bend2/src/context/operations.bend",
+  "find": "      join_projections(tail, False{}, acc ++ Bool.pick(String, first, SNil{}, \",\") ++ Req.text_of(head))",
+  "replace": "      join_projections(tail, False{}, acc ++ Bool.pick(String, first, SNil{}, \";\") ++ Req.text_of(head))",
+  "law": "operations_law_projections_join_in_request_order"
+ },
+ {
+  "name": "codec-metadata-accepts-a-null-progress-token",
+  "file": "bend2/src/context/codec.bend",
+  "find": "    case Rnull{}: False{}",
+  "replace": "    case Rnull{}: True{}",
+  "law": "codec_law_metadata_refuses_a_null_progress_token"
+ },
+ {
+  "name": "codec-envelope-checks-the-method-before-jsonrpc",
+  "file": "bend2/src/context/codec.bend",
+  "find": "  Bool.pick(EnvelopeVerdict, env_jsonrpc_ok(env), envelope_after_jsonrpc(env), EnvRefused{\"invalidJsonrpc\"})",
+  "replace": "  Bool.pick(EnvelopeVerdict, env_method_ok(env), envelope_after_jsonrpc(env), EnvRefused{\"invalidJsonrpc\"})",
+  "law": "codec_law_a_bad_jsonrpc_refuses_before_the_tool"
+ },
+ {
+  "name": "codec-empty-operation-dispatches",
+  "file": "bend2/src/context/codec.bend",
+  "find": "    ARefused{Context.RfValidation{}, \"unknownOperation\"}, dispatch_grant(operation, required, grants))",
+  "replace": "    ADispatch{operation}, dispatch_grant(operation, required, grants))",
+  "law": "codec_law_an_empty_operation_refuses"
+ },
+ {
+  "name": "codec-ref-closed-set-is-not-checked",
+  "file": "bend2/src/context/codec.bend",
+  "find": "  Bool.pick(RefDecode, ref_closed(members), ref_object(members), RdBad{\"unknownRefField\"})",
+  "replace": "  Bool.pick(RefDecode, True{}, ref_object(members), RdBad{\"unknownRefField\"})",
+  "law": "codec_law_a_reference_with_an_unknown_field_refuses"
+ }
+]
