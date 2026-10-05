@@ -204,9 +204,9 @@ def canonical_record_bytes(record):
                       ensure_ascii=False).encode('utf-8')
 
 
-def ended_normally(value):
-    """A local gate ended at status zero, or the remote route records no local exit."""
-    return value is None or (type(value) is int and value == 0)
+def zero_exit(value):
+    """A locally launched gate ended at integer status zero."""
+    return type(value) is int and value == 0
 
 
 def is_finite(value):
@@ -436,7 +436,8 @@ def run_gates(compiler, env, logs, initial, before_inputs, remote=None):
                                             stdout=log, stderr=subprocess.STDOUT)
                 result_exit = result.returncode
             stage.update(exit_code=result_exit, elapsed_seconds=time.monotonic() - started,
-                         status='passed' if ended_normally(result_exit) else 'failed',
+                         status=('passed' if stage.get('route') == 'remote-module-groups'
+                                 or zero_exit(result_exit) else 'failed'),
                          after=snapshot())
             if stage.get('route') == 'remote-module-groups':
                 stage['elapsed_seconds'] = remote['slowest_span_seconds']
@@ -445,8 +446,12 @@ def run_gates(compiler, env, logs, initial, before_inputs, remote=None):
                         'A remote laws stage records no producing span or closure digest')
             stage['log_sha256'] = sha256(logs / stage['log'])
             write_json(path, summary)
-            require(ended_normally(result_exit),
-                    name + ' failed; full output is retained at ' + str(logs / stage['log']))
+            if stage.get('route') == 'remote-module-groups':
+                require(bool(stage['spans']) and bool(stage['evidence']['closure_sha256']),
+                        name + ' carries no qualified remote evidence')
+            else:
+                require(zero_exit(result_exit),
+                        name + ' failed; full output is retained at ' + str(logs / stage['log']))
             same_source(stage['after'], initial)
         summary['validation'] = validation(logs, remote)
         summary['after'] = snapshot()
@@ -1573,6 +1578,8 @@ def package(args):
         receipt_logs = context_receipt_logs(logs)
         for receipt_log in receipt_logs:
             shutil.copyfile(receipt_log, payload / 'logs' / receipt_log.name)
+        after_context = snapshot()
+        same_source(after_context, final)
         generated_dir = output / 'generated'
         generated_dir.mkdir()
         shutil.copyfile(generated, generated_dir / 'baton2.c')
