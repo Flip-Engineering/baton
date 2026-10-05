@@ -1,4 +1,11 @@
 // Structural environment allowlist discriminators over real target files.
+//
+// SCOPE: this case exercises the suite's own reference allowlist
+// (lib/envscan.mjs) as a contract oracle for the structural-value rules.
+// It is NOT qualification of a production environment provider; the
+// catalogs provider names environmentRead and toolsProbe unsupported.
+// Production assertions bind to the environment author's native entry when
+// it exists.
 
 import { writeFileSync, mkdirSync } from 'node:fs';
 import { join } from 'node:path';

@@ -1,9 +1,11 @@
 // Migration prefix/head/checksum discriminators over real node:sqlite.
 //
-// These pin the replay CONTRACT semantics the native linked-library
-// operation must reproduce (spec: Data projections, migration chain;
-// Packaging). The native operation itself is a separate native-owner
-// qualification; nothing here runs against the target database.
+// SCOPE: this case exercises the suite's own reference replay runner
+// (lib/migrations.mjs) as a contract oracle for the replay semantics the
+// native linked-library operation must reproduce. It is NOT qualification
+// of the native migration replay operation; that operation and its laws
+// belong to the native owner. Nothing here runs against the target
+// database.
 
 import { createHash } from 'node:crypto';
 import { readFileSync } from 'node:fs';

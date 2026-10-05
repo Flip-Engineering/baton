@@ -1,16 +1,18 @@
 // Check harness for the independent production-critic fixtures.
 //
-// Each check states the requirement it pins (spec clause or accepted conductor
-// correction), runs once, and reports observed evidence. Two verdict kinds:
-// - required: must pass on qualified source. A failure is a real finding.
-// - discriminator: documents a known defect in the captured source. Expected
-//   to fail now; when it passes, the producer fixed the behavior and the run
-//   reports "fixed" for re-pinning.
-// Exit semantics live in run.mjs; this module only collects.
+// Every registered check is a required qualification assertion: it states the
+// requirement it pins, runs once, and either passes or fails. A failure is a
+// real finding against the exercised source; nothing is accepted because a
+// defect was "expected". Diagnostic demonstrations of known producer defects
+// live in diagnose/DIAGNOSES.mjs, run only through the explicit diagnose
+// entrypoint, and never count toward acceptance.
 
 export const checks = [];
 
 export function check(definition) {
+  if (definition.discriminator !== undefined) {
+    throw new Error(`check ${definition.id}: expected-defect acceptance is removed; use diagnose/DIAGNOSES.mjs`);
+  }
   checks.push(definition);
   return definition;
 }
@@ -52,13 +54,13 @@ export async function runChecks(context, selected = null) {
     let outcome;
     try {
       const observed = await definition.run(context);
-      outcome = { id: definition.id, requirement: definition.requirement, discriminator: definition.discriminator === true, verdict: 'pass', observed };
+      const pending = observed !== null && typeof observed === 'object' && observed.pending === true;
+      outcome = { id: definition.id, requirement: definition.requirement, verdict: pending ? 'pending' : 'pass', observed };
     } catch (error) {
       outcome = {
         id: definition.id,
         requirement: definition.requirement,
-        discriminator: definition.discriminator === true,
-        verdict: definition.discriminator === true ? 'reproduced' : 'fail',
+        verdict: 'fail',
         observed: { error: String(error && error.message ? error.message : error) },
       };
     }
@@ -66,4 +68,10 @@ export async function runChecks(context, selected = null) {
     results.push(outcome);
   }
   return results;
+}
+
+// Check IDs known to the registry, for argument validation before any
+// fixture or provider effect runs.
+export function knownCheckIds() {
+  return checks.map(definition => definition.id);
 }

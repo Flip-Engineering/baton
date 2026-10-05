@@ -16,6 +16,7 @@ const SIBLING_DEFAULT = resolve(WORKTREE, '../semantic-impl-catalogs-models');
 
 export const CATALOG_SOURCES = Object.freeze([
   'bend2/context/catalogs/index.mjs',
+  'bend2/context/catalogs/adapter.mjs',
   'bend2/context/catalogs/canonical.mjs',
   'bend2/context/catalogs/operations.mjs',
   'bend2/context/catalogs/sql-identifiers.mjs',
@@ -27,6 +28,7 @@ export const CATALOG_SOURCES = Object.freeze([
 
 export const MODEL_SOURCES = Object.freeze([
   'bend2/context/models/index.mjs',
+  'bend2/context/models/adapter.mjs',
   'bend2/context/models/json-schema.mjs',
   'bend2/context/models/model-use-join.mjs',
   'bend2/context/models/operations.mjs',

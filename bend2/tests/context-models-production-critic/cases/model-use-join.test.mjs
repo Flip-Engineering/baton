@@ -1,10 +1,13 @@
-// Model-use join discriminators (conductor round14 four unjustified-relation
-// cases) plus the agreed v1 record boundary.
+// Model-use join qualification (conductor round14 four unjustified-relation
+// cases and the agreed v1 record boundary).
 //
-// Current draft (79629c3d) consumes flat value fields {export, uses, imports}
-// and exhibits all four defects. The agreed sole private boundary is
-// facts[].value.record ResolverUseRecord v1; these checks feed v1 records and
-// are discriminators until the consumer adaptation lands.
+// Required checks below assert the required behavior and fail on violations
+// against the exercised producer bytes; the historically observed defects
+// themselves are demonstrated with exact expectations in
+// diagnose/DIAGNOSES.mjs, which never counts toward acceptance. The current
+// captured producer bytes (model-use-join.mjs 53b57a18) still consume the
+// flat value shape and exhibit the four defects, so these checks fail until
+// the consumer adaptation lands.
 
 import { check } from '../lib/harness.mjs';
 
@@ -42,7 +45,6 @@ function v1Fact(record) {
 check({
   id: 'modeluse/v1-positive-complete-evidence',
   requirement: 'agreed boundary: ResolverUseRecord v1 with full provenance (symbol identity, module/export sha, snapshot ids, object use site) produces a modelUse relation whose refs and evidence carry no null fields',
-  discriminator: true,
   async run({ producer }) {
     const join = producer.modules.models.modelUseJoin.joinModelUses;
     const record = v1UseRecord({
@@ -66,7 +68,6 @@ check({
 check({
   id: 'modeluse/string-site-ref-no-null-evidence',
   requirement: 'round14 case 1: a string siteRef must not become null-valued refs/evidence; consume the object site or refuse with a precise limit (observed 79629c3d emitted [source,null,null,null,null,...])',
-  discriminator: true,
   async run({ producer }) {
     const join = producer.modules.models.modelUseJoin.joinModelUses;
     const record = v1UseRecord({ siteRef: '["source","/work/src/handler.ts","cc",20,2,"references"]' });
@@ -89,7 +90,6 @@ check({
 check({
   id: 'modeluse/changed-hashes-refuse',
   requirement: 'round14 case 2: same symbolId with changed module/export sha256 must refuse the join with a precise limit; the old model hash must not be copied into new evidence (observed 79629c3d emitted the relation)',
-  discriminator: true,
   async run({ producer }) {
     const join = producer.modules.models.modelUseJoin.joinModelUses;
     const record = v1UseRecord({
@@ -108,7 +108,6 @@ check({
 check({
   id: 'modeluse/missing-snapshots-limited',
   requirement: 'round14 case 3: missing model/resolver snapshotId must emit a precise limit and no relation; null snapshots must not join (observed 79629c3d emitted null-snapshot relation)',
-  discriminator: true,
   async run({ producer }) {
     const join = producer.modules.models.modelUseJoin.joinModelUses;
     const model = structuredClone(MODEL);
@@ -128,7 +127,6 @@ check({
 check({
   id: 'modeluse/no-symbol-fallback-refused',
   requirement: 'round14 case 4: without checker symbol identity, matching path/export name alone must NOT join (observed 79629c3d fell back to identityBasis path-and-export-name; the existing producer test blessed this)',
-  discriminator: true,
   async run({ producer }) {
     const join = producer.modules.models.modelUseJoin.joinModelUses;
     const model = structuredClone(MODEL);
@@ -150,7 +148,6 @@ check({
 check({
   id: 'modeluse/symbol-mismatch-refused',
   requirement: 'conductor round18: alias/re-export negatives — a use record resolving a different export symbol must not join the observed model export; unresolved alias chains stay limited',
-  discriminator: true,
   async run({ producer }) {
     const join = producer.modules.models.modelUseJoin.joinModelUses;
     const record = v1UseRecord({
@@ -167,7 +164,6 @@ check({
 check({
   id: 'modeluse/public-ref-shape-valid',
   requirement: 'public refs use accepted selector kinds and projections; private tags (source-module) and invented projection tags (modelUse) never appear in public ref IDs (conductor ref-schema correction)',
-  discriminator: true,
   async run({ producer }) {
     const join = producer.modules.models.modelUseJoin.joinModelUses;
     const record = v1UseRecord({

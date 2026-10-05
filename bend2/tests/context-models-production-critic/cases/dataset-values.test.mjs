@@ -1,5 +1,13 @@
 // Dataset typed-contract boundary fixture (conductor dataset-pointer-17).
 //
+// SCOPE: this case exercises the suite's own reference implementations
+// (lib/jsonref.mjs, lib/migrations-style token layer) as a contract oracle.
+// It pins the RFC 6901 and exact-token semantics the production dataset
+// implementation must reproduce; it is NOT qualification of a production
+// dataset provider. The catalogs provider names datasetRead unsupported;
+// production dataset assertions bind to its author's native entry when it
+// exists.
+//
 // Pins at the foreign boundary: complete selected values keep exact numeric
 // token spellings (signed, fractional, exponent, above-U32, beyond-double),
 // nested nulls and empty containers stay distinct, RFC 6901 pointer grammar

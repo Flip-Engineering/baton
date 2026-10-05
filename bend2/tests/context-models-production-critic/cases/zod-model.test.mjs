@@ -1,9 +1,10 @@
-// Zod model provider discriminators over the real zod 4.3.6 package.
+// Zod model provider qualification over the real zod 4.3.6 package.
 //
 // Pins: grant ordering before spawn, sanitized child environment, useful
 // validation/serialization results, version-pin refusal, complete stream
 // retention without arbitrary ceilings, and the execution-failure versus
 // validation-refusal distinction (conductor round14 Zod driver findings).
+// Failing checks here are findings against the exercised producer bytes.
 
 import { mkdirSync, symlinkSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
@@ -128,7 +129,6 @@ check({
 check({
   id: 'zod/complete-streams-retained',
   requirement: 'round14: no arbitrary truncation of target stdout/stderr; complete retained bytes without 4096/8192 slicing; fs.writeSync(1) bytes either captured through the actual boundary or explicitly reported uncaptured (observed 9635abec truncated both; producer reworked retention in later bytes)',
-  discriminator: true,
   async run({ producer, workspace }) {
     const { runZodModelChild } = producer.modules.models.zodModel;
     const childPath = join(producer.root, 'bend2/context/models/zod-child.mjs');
@@ -152,7 +152,6 @@ check({
 check({
   id: 'zod/no-output-ceiling',
   requirement: 'round14: the driver passes no maxBuffer/output ceiling or timeout to the spawn (observed 76cb9a18 adds maxBuffer 64MiB); buffers grow as needed without a configured cutoff (spec: no arbitrary cutoff)',
-  discriminator: true,
   async run({ producer }) {
     const { runZodModelChild } = producer.modules.models.zodModel;
     let observedOptions = null;
@@ -170,7 +169,6 @@ check({
 check({
   id: 'zod/execution-failure-distinct-from-refusal',
   requirement: 'round14: a target exiting nonzero is an execution failure preserving the child status; a validation refusal stays the refused status — the two outcomes never merge',
-  discriminator: true,
   async run({ producer, workspace }) {
     const { runZodModelChild } = producer.modules.models.zodModel;
     const childPath = join(producer.root, 'bend2/context/models/zod-child.mjs');
