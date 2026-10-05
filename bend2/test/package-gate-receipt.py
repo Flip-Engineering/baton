@@ -64,13 +64,21 @@ class PackageGateReceipt(unittest.TestCase):
         self.verifier = {member: hashlib.sha256(('fixture:' + member).encode()).hexdigest()
                          for member in PACKAGE.VERIFIER_MEMBERS}
         # Producer run identity authority: those six plus the group-run member.
-        self.ordinary_verifier = dict(self.verifier)
-        for member in PACKAGE.ORDINARY_EXTRA_VERIFIER_FILES:
-            self.ordinary_verifier[member] = hashlib.sha256(
-                ('fixture:' + member).encode()).hexdigest()
+        self.ordinary_verifier = {
+            member: hashlib.sha256(('fixture:' + member).encode()).hexdigest()
+            for member in PACKAGE.ORDINARY_RUN_VERIFIER_MEMBERS}
         self.addCleanup(setattr, PACKAGE, 'expected_verifier_digests',
                         PACKAGE.expected_verifier_digests)
         PACKAGE.expected_verifier_digests = lambda: (dict(self.verifier), [])
+        self.addCleanup(setattr, PACKAGE, 'ordinary_verifier_digests',
+                        PACKAGE.ordinary_verifier_digests)
+        PACKAGE.ordinary_verifier_digests = lambda: (
+            {member: self.ordinary_verifier[member]
+             for member in PACKAGE.ORDINARY_RUN_VERIFIER_MEMBERS
+             if (PACKAGE.ROOT / PACKAGE.ORDINARY_VERIFIER_FILES[member]).is_file()},
+            [PACKAGE.ORDINARY_VERIFIER_FILES[member]
+             for member in PACKAGE.ORDINARY_RUN_VERIFIER_MEMBERS
+             if not (PACKAGE.ROOT / PACKAGE.ORDINARY_VERIFIER_FILES[member]).is_file()])
         self.verdicts = {}
         for name in ('discover_controls', 'classify_control'):
             self.addCleanup(setattr, PACKAGE, name, getattr(PACKAGE, name))
@@ -726,13 +734,13 @@ class PackageGateReceipt(unittest.TestCase):
             for name, payload in (('stdout', case.pop('raw')), ('stderr', b'')):
                 member = evidence / (stem + '.' + name)
                 member.write_bytes(payload)
-                record = {'path': 'evidence/' + stem + '.' + name,
+                record = {'path': stem + '.' + name,
                           'bytes': member.stat().st_size,
                           'sha256': hashlib.sha256(member.read_bytes()).hexdigest()}
                 if tamper and case['id'] == cases[0]['id'] and name == 'stdout':
                     member.write_bytes(b'tampered\n')
                 if escape and case['id'] == cases[0]['id'] and name == 'stdout':
-                    record['path'] = 'evidence/../' + stem + '.stdout'
+                    record['path'] = '../' + stem + '.stdout'
                 if symlink and case['id'] == cases[0]['id'] and name == 'stdout':
                     kept = evidence / (stem + '.retained.stdout')
                     member.rename(kept)
@@ -749,7 +757,7 @@ class PackageGateReceipt(unittest.TestCase):
                     'original_sha256': hashlib.sha256(
                         (PACKAGE.ROOT / module).read_bytes()).hexdigest(),
                     'changed_sha256': hashlib.sha256(member.read_bytes()).hexdigest(),
-                    'changed_path': 'evidence/' + member.name}
+                    'changed_path': member.name}
             record = {'id': case['id'], 'applied': case.pop('applied'), 'argv': case.pop('argv'),
                       'verdict': case.pop('verdict'), 'delta': delta_record,
                       'stdout': streams['stdout'], 'stderr': streams['stderr'],
@@ -769,7 +777,7 @@ class PackageGateReceipt(unittest.TestCase):
                  # The producer contract for admitted inputs: a path-keyed map
                  # whose value is an object carrying the digest.
                  'inputs': {'bend2/scripts/laws-check.mjs':
-                            {'sha256': hashlib.sha256(b'checker').hexdigest()}}
+                            hashlib.sha256(b'checker').hexdigest()}
                  if inputs is None else inputs,
                  'cases': records}
         if top_level_identity:
@@ -812,6 +820,7 @@ class PackageGateReceipt(unittest.TestCase):
         self.assertEqual(result['ordinary']['run_members_beyond_contract'], [])
         self.assertEqual(result['ordinary']['input_rows'], 1)
         self.assertEqual(result['ordinary']['input_shape'], 'map')
+        self.assertEqual(result['ordinary']['input_value_shape'], 'digest-string')
         self.assertTrue(result['ordinary']['audit']['members'])
         self.assertEqual(result['ordinary']['root_identity']['ancestor_policy'],
                          'repository-real-paths')
@@ -849,16 +858,16 @@ class PackageGateReceipt(unittest.TestCase):
         self.assertEqual(result['ordinary']['cases'], len(self.controls['controls']) + 1)
 
         # Tolerated earlier shapes, each read through the same canonical path and
-        # digest set: rows, and a map whose values are digest strings.
+        # digest set: rows, and a map whose values are digest objects.
         run('rows', inputs=[{'path': 'bend2/scripts/laws-check.mjs',
                              'sha256': hashlib.sha256(b'checker').hexdigest()}])
         result = PACKAGE.validation(self.logs, None, None, self.compiler())
         self.assertEqual(result['ordinary']['input_shape'], 'rows')
 
-        run('mapped-strings', inputs={'bend2/scripts/laws-check.mjs':
-                                      hashlib.sha256(b'checker').hexdigest()})
+        run('mapped-objects', inputs={'bend2/scripts/laws-check.mjs':
+                                      {'sha256': hashlib.sha256(b'checker').hexdigest()}})
         result = PACKAGE.validation(self.logs, None, None, self.compiler())
-        self.assertEqual(result['ordinary']['input_shape'], 'map')
+        self.assertEqual(result['ordinary']['input_value_shape'], 'digest-object')
 
         # A mapped object without a digest refuses rather than being read as one.
         run('mapped-object-without-digest',

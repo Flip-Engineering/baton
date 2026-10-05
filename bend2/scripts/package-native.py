@@ -180,7 +180,19 @@ CONTROL_FIELDS = ('id', 'kind', 'law', 'module', 'definition_sha256')
 VERIFIER_MEMBERS = ('checker_sha256', 'aggregate_module_sha256', 'classifier_module_sha256',
                     'work_set_module_sha256', 'laws_common_module_sha256',
                     'definitions_module_sha256')
-ORDINARY_EXTRA_VERIFIER_FILES = {
+# The producer owner declares the ordinary run verifier with seven members and
+# these names, while the endpoint verdict closure keeps its own six names.
+ORDINARY_RUN_VERIFIER_MEMBERS = ('checker_sha256', 'aggregate_module_sha256',
+                                 'classify_module_sha256', 'work_set_module_sha256',
+                                 'laws_common_module_sha256', 'definitions_module_sha256',
+                                 'group_run_module_sha256')
+ORDINARY_VERIFIER_FILES = {
+    'checker_sha256': 'bend2/scripts/laws-check.mjs',
+    'aggregate_module_sha256': 'bend2/scripts/capacity-controls/aggregate.mjs',
+    'classify_module_sha256': 'bend2/scripts/capacity-controls/classify.mjs',
+    'work_set_module_sha256': 'bend2/scripts/capacity-controls/work-set.mjs',
+    'laws_common_module_sha256': 'bend2/scripts/laws-common.mjs',
+    'definitions_module_sha256': 'bend2/scripts/laws-mutations.mjs',
     'group_run_module_sha256': 'bend2/scripts/capacity-controls/group-run.mjs'}
 CHILD_FIELDS = ('exit_code', 'signal', 'spawn_error')
 ORIGIN_FIELDS = ('workflow', 'run_id', 'run_attempt', 'jobs', 'image_os', 'image_version')
@@ -385,6 +397,9 @@ ORDINARY_VERDICT_FIELDS = ('class', 'attributed_law', 'qualified')
 ORDINARY_IDENTITY_FIELDS = ('index_path', 'scratch', 'source', 'compiler', 'entry', 'origin',
                             'invocation', 'verifier')
 ORDINARY_INDEX_TOP_FIELDS = ('index_path', 'scratch')
+# Fields the producer records in the run envelope only; an index that omits them
+# is bound by the envelope, and an index that carries them must agree with it.
+ORDINARY_ENVELOPE_ONLY_FIELDS = ('index_path', 'scratch')
 ORDINARY_RUN_FIELDS = ('source', 'compiler', 'entry', 'origin', 'invocation', 'verifier')
 ORDINARY_INTENDED_CLASS = 'intended-law-refusal'
 
@@ -655,15 +670,21 @@ def ordinary_evidence(index_path, expected, compiler=None, declared_root=None,
     run_identity = index.get('run')
     require(isinstance(run_identity, dict), 'The ordinary evidence index records no run identity')
     require(isinstance(envelope, dict), 'The ordinary evidence is consumed without its run envelope')
-    # One contract, stated once: every identity field is read from the run block,
-    # and an index may also carry the run location at its top level. Where both
-    # places carry a field they must agree, so moving a field cannot present two
+    # One contract, stated once: the run block carries the producer identity, the
+    # index may also carry the run location at its top level, and the envelope
+    # supplies the location when the index records neither. Where more than one
+    # place carries a field they must agree, so moving a field cannot present two
     # different runs silently.
     identity = {}
     for field in ORDINARY_IDENTITY_FIELDS:
         inside, outer = run_identity.get(field), index.get(field)
-        require(inside is not None or outer is not None,
-                'The ordinary index records no ' + field)
+        if inside is None and outer is None:
+            require(field in ORDINARY_ENVELOPE_ONLY_FIELDS,
+                    'The ordinary index records no ' + field)
+            identity[field] = envelope.get(field)
+            require(identity[field] is not None,
+                    'The run envelope records no ' + field)
+            continue
         if inside is not None and outer is not None:
             require(json.dumps(inside, sort_keys=True) == json.dumps(outer, sort_keys=True),
                     'The ordinary index records two different ' + field + ' values')
@@ -701,14 +722,16 @@ def ordinary_evidence(index_path, expected, compiler=None, declared_root=None,
                 'The ordinary run used another compiler than the selected one')
         require(block.get('path') not in (None, ''), 'The ordinary run records no compiler path')
     source_block = identity.get('source') or {}
+    # Stream and delta members are relative to the evidence directory the run
+    # recorded, which for the ordinary route is the index parent.
+    members_root = path.parent
     verifier = identity.get('verifier') or {}
-    admitted, _missing_verifier = expected_verifier_digests()
-    extra_admitted, _missing_extra = ordinary_extra_verifier_digests()
-    required = set(VERIFIER_MEMBERS) | set(ORDINARY_EXTRA_VERIFIER_FILES)
+    admitted, missing_run_members = ordinary_verifier_digests()
+    required = set(ORDINARY_RUN_VERIFIER_MEMBERS)
     require(isinstance(verifier, dict) and required <= set(verifier),
             'The ordinary run does not name every verifier member: '
             + succinct(sorted(required - set(verifier or {}))))
-    differing = sorted(key for key, digest in {**admitted, **extra_admitted}.items()
+    differing = sorted(key for key, digest in admitted.items()
                        if verifier.get(key) != digest)
     require(not differing,
             'The ordinary run used other verifier bytes at: ' + succinct(differing))
@@ -718,22 +741,25 @@ def ordinary_evidence(index_path, expected, compiler=None, declared_root=None,
     for member, digest in verifier.items():
         require(isinstance(digest, str) and re.fullmatch(r'[0-9a-f]{64}', digest),
                 'The ordinary run records no digest domain for ' + json.dumps(member))
-    unavailable = sorted(set(_missing_verifier) | set(_missing_extra))
+    unavailable = sorted(missing_run_members)
     beyond = sorted(set(verifier) - required)
     # The index records the admitted inputs it captured as rows. Whether those
     # rows cover the complete non-target source and runtime graph is a
     # producer-side question this consumer cannot answer from the rows alone.
     recorded_inputs = index.get('inputs')
+    input_value_shape = None
     if isinstance(recorded_inputs, dict):
+        # The declared producer shape is a path-keyed map whose value is a flat
+        # sha256 hex string. An object value is read for earlier producer pins and
+        # recorded as a different value shape rather than treated as the contract.
         input_shape = 'map'
         input_rows = []
         for name, value in recorded_inputs.items():
             if isinstance(value, dict):
-                # The current producer records an object per path, whose digest
-                # field is read here; any size it carries is checked against the
-                # member when the inventory is verified elsewhere.
+                input_value_shape = 'digest-object'
                 input_rows.append({'path': name, 'sha256': value.get('sha256')})
             else:
+                input_value_shape = input_value_shape or 'digest-string'
                 input_rows.append({'path': name, 'sha256': value})
     elif isinstance(recorded_inputs, list):
         input_shape = 'rows'
@@ -792,7 +818,8 @@ def ordinary_evidence(index_path, expected, compiler=None, declared_root=None,
         for stream in ('stdout', 'stderr'):
             stream_record = case.get(stream)
             require(isinstance(stream_record, dict), label + ' omits its ' + stream)
-            member = ordinary_member(root, stream_record.get('path'), label + ' ' + stream)
+            member = ordinary_member(members_root, stream_record.get('path'),
+                                     label + ' ' + stream)
             data = member.read_bytes()
             require(len(data) == stream_record.get('bytes')
                     and hashlib.sha256(data).hexdigest() == stream_record.get('sha256'),
@@ -806,7 +833,8 @@ def ordinary_evidence(index_path, expected, compiler=None, declared_root=None,
                          'signal': outcome['signal'], 'spawn_error': outcome['spawn_error']}
         stream_records = {}
         for stream in ('stdout', 'stderr'):
-            member = ordinary_member(root, case[stream].get('path'), label + ' ' + stream)
+            member = ordinary_member(members_root, case[stream].get('path'),
+                                     label + ' ' + stream)
             stream_records[stream] = {'path': str(member), 'bytes': case[stream].get('bytes'),
                                       'sha256': case[stream].get('sha256')}
         if identity_id == 'baseline':
@@ -815,7 +843,7 @@ def ordinary_evidence(index_path, expected, compiler=None, declared_root=None,
         else:
             require(baseline_reference is not None,
                     label + ' is consumed without its baseline reference')
-            delta_record = verify_ordinary_delta(case, root, control, label)
+            delta_record = verify_ordinary_delta(case, members_root, control, label)
             require(delta_record['original_sha256'] == sha256(ROOT / control['module']),
                     label + ' delta original digest is not the admitted module bytes')
             verdict = classify_control(
@@ -876,6 +904,7 @@ def ordinary_evidence(index_path, expected, compiler=None, declared_root=None,
             'run_identity_qualified': not unavailable,
             'run_members_beyond_contract': beyond,
             'input_rows': len(admitted_inputs), 'input_shape': input_shape,
+            'input_value_shape': input_value_shape,
             'recomputed': recomputed,
             'audit': audit_inventory, 'raw': raw}
 
@@ -1511,10 +1540,10 @@ def expected_verifier_digests():
     return digests, missing
 
 
-def ordinary_extra_verifier_digests():
-    """The ordinary producer run's additional verifier member, when present."""
+def ordinary_verifier_digests():
+    """The admitted bytes of the ordinary run's members, or those still absent."""
     digests, missing = {}, []
-    for member, relative in ORDINARY_EXTRA_VERIFIER_FILES.items():
+    for member, relative in ORDINARY_VERIFIER_FILES.items():
         path = ROOT / relative
         if path.is_file():
             digests[member] = sha256(path)
