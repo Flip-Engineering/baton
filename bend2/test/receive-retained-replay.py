@@ -81,12 +81,15 @@ class ReplayBase(RECEIVE.Receive):
         with sqlite3.connect(f'{self.db.as_uri()}?mode=ro', uri=True) as database:
             turn = database.execute("SELECT event FROM turns WHERE id=? AND worker='parent'",
                                     (identity,)).fetchone()
+        self.assertIsNotNone(turn, 'the bound attempt has no stored turn event')
+        raw_status = (directory / 'status').read_text().strip()
         delivery = self.coord('delivery', identity)
         return {
             'id': identity,
             'directory': str(directory),
-            'status': int((directory / 'status').read_text()),
-            'turn_event': turn[0] if turn else None,
+            'raw_status': raw_status,
+            'wait_status': int(raw_status),
+            'turn_event': turn[0],
             'body': delivery['body'],
             'receipt': delivery['receipt'],
         }
@@ -601,6 +604,9 @@ class ControlledFrames(ReplayBase):
         self.assertNotEqual(b['directory'], a['directory'])
         self.assert_snapshot_unchanged(a, after)
         self.assertEqual(a['body'], 'Sealed first report.')
+        self.assertEqual(b['body'],
+                         'Native model failure: status 403 from kimi-code/k3; 403 later failure; '
+                         'the original terminal frame is retained in the native log for this attempt.')
 
     def test_sequential_error_then_success_keeps_the_first_failure(self):
         """Two consecutive receives: a later success does not change the earlier failure."""
@@ -627,8 +633,10 @@ class ControlledFrames(ReplayBase):
         self.assertNotEqual(b['id'], a['id'])
         self.assertNotEqual(b['directory'], a['directory'])
         self.assert_snapshot_unchanged(a, after)
-        self.assertIn('Native model failure', a['body'])
-        self.assertEqual(b['body'], 'Continuation report after the sealed failure.')
+        self.assertEqual(a['body'],
+                         'Native model failure: status 403 from kimi-code/k3; 403 provider refused the request; '
+                         'the original terminal frame is retained in the native log for this attempt.')
+        self.assertEqual(b['body'], 'Later successful report.')
 
 
 if __name__ == '__main__':
