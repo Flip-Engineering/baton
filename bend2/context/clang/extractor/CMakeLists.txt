@@ -25,6 +25,14 @@ target_include_directories(context-clang-20 PRIVATE src)
 
 target_link_libraries(context-clang-20 PRIVATE clang-cpp LLVM)
 
+# Pure source tests (graph semantics, JSON); no LLVM dependency.
+add_executable(context-clang-20-tests
+  ${CMAKE_CURRENT_SOURCE_DIR}/../test/graph-tests.cpp
+  src/json.cpp
+  src/graph.cpp
+)
+target_include_directories(context-clang-20-tests PRIVATE src)
+
 # Keep the binary relocatable-unfriendly on purpose: the packaged artifact
 # records its linked dylib identity at qualification time.
 if(APPLE)
