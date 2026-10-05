@@ -36,7 +36,7 @@ for (const [index, key] of model.SERIES.entries()) {
 save(registry, { models, series });
 save(join(directory, 'BOUNDARY.json'), { actual_credentials: false, actual_profile_reads: false,
   provider_execution: false, network: false, public_metadata: 'invented',
-  signing: 'generated fixture key only', launch: 'controlled Node child only' });
+  signing: 'generated fixture key only', launch: 'controlled Node child and owned Git fixture commands' });
 
 function args(key, command, native = false, selected = null) {
   return { registry, model_key: key, series_key: selected, native_model: native, command };
@@ -109,6 +109,73 @@ test('native validation preserves exact model agreement and separate Git -m mean
   assert.equal(execution(args('unknown/exact', ['native-fixture', '--model', 'unknown/exact'], true, 'glm'))[2].GIT_COMMITTER_EMAIL,
     identities.glm.commitEmail);
   assert.throws(() => execution(args('unknown/exact', ['native-fixture', '--model', 'other'], true, 'glm')), model.Refusal);
+});
+
+test('each series selects its attribution email while retaining its App identity and credential scope', async () => {
+  const repository = join(directory, 'attribution-repository');
+  const git = (key, ...command) => child([SOURCE, 'launch', '--registry', registry, '--series-key', key,
+    '--', 'git', ...command]);
+  const initialized = await git('gpt', 'init', '--bare', repository);
+  assert.equal(initialized.code, 0, initialized.stderr);
+  const tree = await git('gpt', '-C', repository, 'hash-object', '-t', 'tree', '--stdin');
+  assert.equal(tree.code, 0, tree.stderr);
+  for (const key of model.SERIES) {
+    const filename = join(series[key], 'identity-series.json');
+    const identity = { seriesKey: key, displaySeries: model.SERIES_LABELS[key], github: identities[key] };
+    const email = `flip-baton+${key}@example.invalid`;
+    try {
+      save(filename, { ...identity, authorEmail: email });
+      const [selected, , github, authorEmail] = model.selected_identity(registry, null, key);
+      assert.equal(selected, key);
+      assert.equal(authorEmail, email);
+      assert.deepEqual(github, identities[key]);
+      const environment = execution(args(null, ['git', 'commit', '-m', 'Fixture commit'], false, key),
+        { GIT_AUTHOR_EMAIL: 'sender@example.invalid', GIT_COMMITTER_EMAIL: 'sender@example.invalid' })[2];
+      for (const field of ['GIT_AUTHOR_NAME', 'GIT_COMMITTER_NAME']) {
+        assert.equal(environment[field], 'Flip Baton - ' + model.SERIES_LABELS[key]);
+      }
+      for (const field of ['GIT_AUTHOR_EMAIL', 'GIT_COMMITTER_EMAIL']) assert.equal(environment[field], email);
+      const committed = await git(key, '-C', repository, 'commit-tree', tree.stdout.trim(), '-m', 'Fixture attribution');
+      assert.equal(committed.code, 0, committed.stderr);
+      const readback = await git(key, '-C', repository, 'cat-file', 'commit', committed.stdout.trim());
+      assert.equal(readback.code, 0, readback.stderr);
+      for (const field of ['author', 'committer']) {
+        assert.ok(readback.stdout.split('\n').some(line => line.startsWith(
+          `${field} Flip Baton - ${model.SERIES_LABELS[key]} <${email}> `)), readback.stdout);
+      }
+      for (const [exact, mapped] of Object.entries(models)) {
+        if (mapped === key) assert.equal(execution(args(exact, ['native-fixture', '--model', exact], true))[2].GIT_AUTHOR_EMAIL, email);
+      }
+      let output = '';
+      await model.helper({ registry, series_key: key, operation: 'get' },
+        Readable.from([`protocol=https\nhost=github.com\npath=${model.REPOSITORY}.git\n\n`]),
+        { write(value) { output += value; } }, async (home, authenticated) => {
+          assert.equal(home, series[key]);
+          assert.deepEqual(authenticated, identities[key]);
+          return 'fixture-token-no-network';
+        });
+      assert.equal(output, 'username=x-access-token\npassword=fixture-token-no-network\n\n');
+    } finally {
+      save(filename, identity);
+    }
+  }
+});
+
+test('configured attribution emails reject absent values, multiple addresses and control characters', () => {
+  const key = 'gpt', filename = join(series[key], 'identity-series.json');
+  const identity = { seriesKey: key, displaySeries: model.SERIES_LABELS[key], github: identities[key] };
+  try {
+    for (const authorEmail of [null, 42, '', 'missing-domain', 'a@example.invalid,b@example.invalid',
+      'Display <a@example.invalid>', 'a@@example.invalid', 'a@example.invalid\nother', 'a@example.invalid\r',
+      'a@example.invalid\0', 'a\u0001@example.invalid', 'a\u007f@example.invalid',
+      '"a"@example.invalid', 'a\\b@example.invalid', 'a@localhost']) {
+      save(filename, { ...identity, authorEmail });
+      assert.throws(() => execution(args('gpt-6-astra', ['git', 'commit', '-m', 'Fixture commit'])), model.Refusal);
+    }
+  } finally {
+    save(filename, identity);
+  }
+  assert.equal(model.selected_identity(registry, 'gpt-6-astra')[3], identities[key].commitEmail);
 });
 
 test('recipient re-selection removes sender authentication and preserves noncredential Git parameters', () => {
