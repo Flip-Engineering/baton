@@ -52,6 +52,16 @@ def child(record, name, argv, run, stdin=None):
     except OSError as error:
         entry['spawn_error'] = repr(error)
         entry['exit_code'] = None
+    except BaseException as error:
+        entry['interrupted'] = repr(error)
+        entry['exit_code'] = None
+        for stream, path in (('stdout', stdout), ('stderr', stderr)):
+            entry[stream] = {'path': str(path.relative_to(run)) if path.exists() else None,
+                             'bytes': path.stat().st_size if path.exists() else 0,
+                             'sha256': digest(path) if path.exists() else None}
+        record[-1:] = [entry]
+        (run / 'run.json').write_text(json.dumps({'children': record}, indent=2) + '\n')
+        raise
     for stream, path in (('stdout', stdout), ('stderr', stderr)):
         entry[stream] = {'path': str(path.relative_to(run)) if path.exists() else None,
                          'bytes': path.stat().st_size if path.exists() else 0,
@@ -75,6 +85,10 @@ def main():
     parser.add_argument('--workdir', required=True, type=pathlib.Path)
     parser.add_argument('--bend', required=True, type=pathlib.Path)
     parser.add_argument('--compiler-archive', required=True, type=pathlib.Path)
+    parser.add_argument('--archive', type=pathlib.Path,
+                        help='the built artifact archive, extracted and checked against the inventory')
+    parser.add_argument('--receipt', help='a gate receipt produced from this evidence, reused and compared')
+    parser.add_argument('--receipt-sha256', default='')
     args = parser.parse_args()
     run = args.workdir.resolve()
     if run.exists():
@@ -86,6 +100,10 @@ def main():
     # 0. Preconditions: a clean admitted checkout and the pinned compiler.
     status = subprocess.check_output(['git', '-C', str(ROOT), 'status', '--porcelain=v1'],
                                      text=True).strip()
+    record.append({'name': 'preconditions', 'cwd': str(ROOT), 'git_status': status,
+                   'bend': str(args.bend), 'compiler_archive': str(args.compiler_archive),
+                   'node': shutil.which('node')})
+    (run / 'run.json').write_text(json.dumps({'children': record}, indent=2) + '\n')
     if status:
         raise SystemExit('the checkout is not clean')
     version = subprocess.check_output([str(args.bend), 'version'],
@@ -93,10 +111,7 @@ def main():
                                       text=True).strip()
     if version != 'bend 2.0.25':
         raise SystemExit('the compiler is not bend 2.0.25: ' + version)
-    record.append({'name': 'preconditions', 'cwd': str(ROOT), 'git_status': status,
-                   'bend': str(args.bend), 'bend_version': version,
-                   'compiler_archive': str(args.compiler_archive),
-                   'node': shutil.which('node')})
+    record[-1]['bend_version'] = version
     (run / 'run.json').write_text(json.dumps({'children': record}, indent=2) + '\n')
 
     # 1. Discovery, then one producer job per discovered group: a complete run.
@@ -149,8 +164,16 @@ def main():
     relocated = run / 'relocate' / 'closure'
     shutil.copytree(run / 'payload-closure', relocated)
     package.verify_inventory(relocated, result['inventory'])
-    relocated_result = package.controls_evidence(relocated, package.snapshot(), args.bend,
-                                                 audit=run / 'relocate' / 'audit')
+    try:
+        relocated_result = package.controls_evidence(relocated, package.snapshot(), args.bend,
+                                                     audit=run / 'relocate' / 'audit')
+    except BaseException as error:
+        record.append({'name': 'relocated-consume', 'outcome': 'refused', 'reason': repr(error)})
+        (run / 'run.json').write_text(json.dumps({'children': record}, indent=2) + '\n')
+        raise
+    record.append({'name': 'relocated-consume', 'outcome': 'qualified',
+                   'reduction_sha256': relocated_result['reduction_sha256']})
+    (run / 'run.json').write_text(json.dumps({'children': record}, indent=2) + '\n')
     if relocated_result['reduction_sha256'] != result['reduction_sha256']:
         raise SystemExit('the relocated closure produced a different stable reduction')
     (run / 'relocated-reduction.json').write_text(
@@ -165,6 +188,28 @@ def main():
     except RuntimeError as error:
         print('changed member refused:', error)
 
+    if args.archive:
+        import tarfile
+        with tarfile.open(args.archive, 'r:gz') as archive:
+            archive.extractall(run / 'readback')
+        archived = run / 'readback' / 'baton2-development-darwin-arm64' / 'controls-evidence'
+        if not archived.is_dir():
+            raise SystemExit('the archive holds no controls evidence member')
+        current = package.verify_archived_inventory(archived, result['inventory'])
+        record.append({'name': 'archive-readback', 'outcome': 'verified',
+                       'members': len(current['members'])})
+    if args.receipt:
+        import subprocess as _subprocess
+        logs = run / 'receipt-logs'
+        logs.mkdir(exist_ok=True)
+        destination, receipt = package.reuse_gates(pathlib.Path(args.receipt),
+                                                   args.receipt_sha256, args.bend, logs,
+                                                   package.snapshot())
+        fresh = receipt.get('controls_evidence') or {}
+        if fresh.get('reduction_sha256') != result['reduction_sha256']:
+            raise SystemExit('the reused receipt names a different stable reduction')
+        record.append({'name': 'receipt-reuse', 'outcome': 'verified',
+                       'receipt': str(destination)})
     (run / 'run.json').write_text(json.dumps({'children': record}, indent=2) + '\n')
     print('recipe complete; child receipts and streams are under ' + str(run))
 

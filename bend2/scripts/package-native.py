@@ -587,7 +587,7 @@ def runtime_set_digest(compiler):
 
 
 def classify_control(case, result, streams, baseline, evidence_root, source, compiler_sha256,
-                    delta=None, supplied=None, audit=None):
+                    compiler_path=None, delta=None, supplied=None, audit=None):
     """Ask the checker's classifier what the verified bytes establish.
 
     One JSON request on stdin, one verdict line on stdout. The checker owns
@@ -606,7 +606,8 @@ def classify_control(case, result, streams, baseline, evidence_root, source, com
         'baseline': baseline,
         'evidence_root': str(evidence_root),
         'source': source,
-        'toolchain': {'compiler_sha256': compiler_sha256},
+        'toolchain': {'compiler_sha256': compiler_sha256,
+                      'compiler_path': str(compiler_path) if compiler_path else None},
     }
     if delta is not None:
         request['delta'] = delta
@@ -622,27 +623,43 @@ def classify_control(case, result, streams, baseline, evidence_root, source, com
         stem = stem + '-' + hashlib.sha256(identity.encode('utf-8')).hexdigest()[:12]
     stdout_bytes, stderr_bytes, status, signal_name, spawn_error = b'', b'', None, None, None
     interruption = None
-    if acquire is not None:
-        (acquire / (stem + '.request.json')).write_bytes(request_bytes)
+    stream_dir = acquire if acquire is not None else None
+    if stream_dir is not None:
+        (stream_dir / (stem + '.request.json')).write_bytes(request_bytes)
+    out_path = (stream_dir / (stem + '.stdout')) if stream_dir is not None else None
+    err_path = (stream_dir / (stem + '.stderr')) if stream_dir is not None else None
     try:
-        completed = subprocess.run(argv, cwd=ROOT, input=request_bytes, capture_output=True,
+        completed = subprocess.run(argv, cwd=ROOT, input=request_bytes,
+                                   stdout=out_path.open('wb') if out_path else subprocess.PIPE,
+                                   stderr=err_path.open('wb') if err_path else subprocess.PIPE,
                                    env={'PATH': os.environ.get('PATH', ''), 'BEND_NO_TELEMETRY': '1'})
-        stdout_bytes, stderr_bytes, status = completed.stdout, completed.stderr, completed.returncode
+        status = completed.returncode
+        stdout_bytes = out_path.read_bytes() if out_path else (completed.stdout or b'')
+        stderr_bytes = err_path.read_bytes() if err_path else (completed.stderr or b'')
         if status < 0:
             signal_name, status = child_signal(status), None
     except OSError as error:
         spawn_error = repr(error)
     except BaseException as error:
-        if acquire is not None:
-            (acquire / (stem + '.stdout')).write_bytes(stdout_bytes)
-            (acquire / (stem + '.stderr')).write_bytes(stderr_bytes)
-            write_json(acquire / (stem + '.acquisition.json'),
-                       {'argv': argv, 'cwd': str(ROOT), 'outcome': 'interrupted',
-                        'reason': repr(error),
-                        'request_sha256': hashlib.sha256(request_bytes).hexdigest()})
+        interruption = repr(error)
+        if stream_dir is not None:
+            try:
+                stdout_bytes = out_path.read_bytes() if out_path and out_path.exists() else b''
+                stderr_bytes = err_path.read_bytes() if err_path and err_path.exists() else b''
+                write_json(stream_dir / (stem + '.acquisition.json'),
+                           {'argv': argv, 'cwd': str(ROOT), 'outcome': 'interrupted',
+                            'reason': interruption,
+                            'stdout_sha256': hashlib.sha256(stdout_bytes).hexdigest(),
+                            'stdout_bytes': len(stdout_bytes),
+                            'stderr_sha256': hashlib.sha256(stderr_bytes).hexdigest(),
+                            'stderr_bytes': len(stderr_bytes),
+                            'request_sha256': hashlib.sha256(request_bytes).hexdigest()})
+            except OSError:
+                pass
         raise
     acquisition = {'argv': argv, 'cwd': str(ROOT), 'exit_code': status,
-                   'outcome': 'spawn-error' if spawn_error else 'exited',
+                   'outcome': ('spawn-error' if spawn_error else
+                               'signalled' if signal_name else 'exited'),
                    'signal': signal_name, 'spawn_error': spawn_error,
                    'request_sha256': hashlib.sha256(request_bytes).hexdigest(),
                    'request_bytes': len(request_bytes),
@@ -811,7 +828,10 @@ def verify_delta(record, control, directory, label):
     return delta
 
 
-def producer_inventory(directory, destination=None):
+ARCHIVE_METADATA = ('inventory.json', 'reduction.json')
+
+
+def producer_inventory(directory, destination=None, exclude=()):
     """Inventory the evidence closure bytes and optionally copy it elsewhere.
 
     Members are confined to the directory and must be regular files; a symlink
@@ -829,6 +849,8 @@ def producer_inventory(directory, destination=None):
         require(path.is_file(), 'The evidence closure holds a non-regular member: ' + str(relative))
         require('..' not in PurePosixPath(relative.as_posix()).parts,
                 'An evidence member escapes its root: ' + str(relative))
+        if relative.as_posix() in exclude:
+            continue
         members.append({'path': relative.as_posix(), 'bytes': path.stat().st_size,
                         'sha256': sha256(path)})
     require(members, 'The evidence closure is empty: ' + str(root))
@@ -850,7 +872,7 @@ def producer_inventory(directory, destination=None):
 
 def verify_archived_inventory(directory, recorded):
     """Require every recorded original member to be present with identical bytes."""
-    current = producer_inventory(directory)
+    current = producer_inventory(directory, exclude=ARCHIVE_METADATA)
     present = {member['path']: member for member in current['members']}
     for member in recorded.get('members', []):
         found = present.get(member['path'])
@@ -1007,6 +1029,7 @@ def controls_evidence(directory, initial, compiler, audit=None, destination=None
         require(baseline.get('inputs') == inputs,
                 'A baseline does not name the inputs it ran with: ' + json.dumps(module))
         baseline_reference = {
+            'argv': baseline.get('argv'),
             'outcome': {'state': baseline_outcome['state'],
                         'exit_code': baseline_outcome['exit_code'],
                         'signal': baseline_outcome['signal'],
@@ -1042,7 +1065,7 @@ def controls_evidence(directory, initial, compiler, audit=None, destination=None
                                              json.dumps(identity) + ' ' + stream)
                        for stream in ('stdout', 'stderr')}
             verdict = classify_control(case, result, streams, baseline_reference, directory,
-                                       source_pins, compiler_sha,
+                                       source_pins, compiler_sha, compiler_path=compiler,
                                        delta=verify_delta(result, control, directory,
                                                           json.dumps(identity)),
                                        audit=audit)
@@ -1882,6 +1905,8 @@ def package(args):
         if controls is not None:
             manifest['gates']['controls']['archived'] = {
                 'path': 'controls-evidence',
+                'original_root': controls['inventory']['root'],
+                'excluded_metadata': list(ARCHIVE_METADATA),
                 'inventory_sha256': controls['inventory_sha256'],
                 'reduction_sha256': controls['reduction_sha256'],
                 'origin': controls['origin'],
