@@ -1,0 +1,267 @@
+# TypeScript semantic-context fixture verification
+
+generated: 2026-10-05T17:37:46.965Z
+pinned typescript version: 5.9.3
+typescript module: /Users/wahargis/node_modules/typescript/lib/typescript.js
+repository root: /Users/wahargis/Development/Experiments/baton-bend2-root-delivery-20260928/.scratch/semantic-context-20261005/worktrees/semantic-impl-typescript
+all manifest paths (root/config/file) are relative to the repository worktree root
+
+## commands
+
+raw CLI check, one config per project:
+  node /Users/wahargis/node_modules/typescript/bin/tsc -p <config> --pretty false
+  node /Users/wahargis/node_modules/typescript/bin/tsc -p bend2/context/typescript/fixtures/ts-project/tsconfig.json --pretty false
+  node /Users/wahargis/node_modules/typescript/bin/tsc -p bend2/context/typescript/fixtures/ts-project/tsconfig.unreachable.json --pretty false
+  node /Users/wahargis/node_modules/typescript/bin/tsc -p bend2/context/typescript/fixtures/js-project/jsconfig.json --pretty false
+  node /Users/wahargis/node_modules/typescript/bin/tsc -p bend2/context/typescript/fixtures/states/a/tsconfig.json --pretty false
+  node /Users/wahargis/node_modules/typescript/bin/tsc -p bend2/context/typescript/fixtures/states/b/tsconfig.json --pretty false
+
+manifest generator + full AST/checker resolution (re-runs both, writes manifest.json and this file):
+  node bend2/context/typescript/fixtures/verify.mjs
+
+note: the tsc CLI prints Error-category diagnostics only; TS7027 unreachable code is a Suggestion at default options
+      and therefore appears here (family=suggestion) but not in tsc CLI output.
+
+## effective compiler options (measured from parseJsonConfigFileContent)
+
+- ts-project: strict=true allowUnreachableCode=undefined(default) allowJs=false checkJs=false target=ES2022 module=CommonJS moduleResolution=Node10 types=[] typeRoots=[]
+- ts-project-unreachable: strict=true allowUnreachableCode=false allowJs=false checkJs=false target=ES2022 module=CommonJS moduleResolution=Node10 types=[] typeRoots=[]
+- js-project: strict=true allowUnreachableCode=undefined(default) allowJs=true checkJs=true target=ES2022 module=CommonJS moduleResolution=Node10 types=[] typeRoots=[]
+- states-a: strict=false allowUnreachableCode=undefined(default) allowJs=false checkJs=false target=ES2022 module=CommonJS moduleResolution=Node10 types=[] typeRoots=[]
+- states-b: strict=true allowUnreachableCode=undefined(default) allowJs=false checkJs=false target=ES2022 module=CommonJS moduleResolution=Node10 types=[] typeRoots=[]
+
+states/b differs from states/a by exactly one compiler option: compilerOptions.strict false -> true
+(same target/module/moduleResolution/noEmit/types/typeRoots/include; states/b additionally adds src/added.ts and changes src/dep.ts value to string)
+
+## project ts-project
+root: bend2/context/typescript/fixtures/ts-project
+config: bend2/context/typescript/fixtures/ts-project/tsconfig.json
+source files parsed: src/consumer.ts, src/db.ts, src/dispatch.ts, src/exceptions.ts, src/flow.ts, src/impl.ts, src/index.ts, src/merged.ts, src/models.ts, src/sql-client.d.ts, src/util.ts
+tsc-equivalent (Error category only):
+  bend2/context/typescript/fixtures/ts-project/src/flow.ts(51,10): error TS2454: Variable 'x' is used before being assigned.
+API diagnostics (family retained):
+  bend2/context/typescript/fixtures/ts-project/src/flow.ts:42:2 TS7027 family=suggestion Unreachable code detected.
+  bend2/context/typescript/fixtures/ts-project/src/flow.ts:50:9 TS2454 family=semantic Variable 'x' is used before being assigned.
+
+## project ts-project-unreachable
+root: bend2/context/typescript/fixtures/ts-project
+config: bend2/context/typescript/fixtures/ts-project/tsconfig.unreachable.json
+source files parsed: src/consumer.ts, src/db.ts, src/dispatch.ts, src/exceptions.ts, src/flow.ts, src/impl.ts, src/index.ts, src/merged.ts, src/models.ts, src/sql-client.d.ts, src/util.ts
+tsc-equivalent (Error category only):
+  bend2/context/typescript/fixtures/ts-project/src/flow.ts(34,3): error TS7027: Unreachable code detected.
+  bend2/context/typescript/fixtures/ts-project/src/flow.ts(43,3): error TS7027: Unreachable code detected.
+  bend2/context/typescript/fixtures/ts-project/src/flow.ts(51,10): error TS2454: Variable 'x' is used before being assigned.
+API diagnostics (family retained):
+  bend2/context/typescript/fixtures/ts-project/src/flow.ts:33:2 TS7027 family=semantic Unreachable code detected.
+  bend2/context/typescript/fixtures/ts-project/src/flow.ts:42:2 TS7027 family=semantic Unreachable code detected.
+  bend2/context/typescript/fixtures/ts-project/src/flow.ts:50:9 TS2454 family=semantic Variable 'x' is used before being assigned.
+
+## project js-project
+root: bend2/context/typescript/fixtures/js-project
+config: bend2/context/typescript/fixtures/js-project/jsconfig.json
+source files parsed: src/broken.js, src/messages.js
+tsc-equivalent (Error category only):
+  bend2/context/typescript/fixtures/js-project/src/broken.js(6,3): error TS2322: Type 'number' is not assignable to type 'string'.
+API diagnostics (family retained):
+  bend2/context/typescript/fixtures/js-project/src/broken.js:5:2 TS2322 family=semantic Type 'number' is not assignable to type 'string'.
+
+## project states-a
+root: bend2/context/typescript/fixtures/states/a
+config: bend2/context/typescript/fixtures/states/a/tsconfig.json
+source files parsed: src/app.ts, src/dep.ts
+tsc-equivalent (Error category only):
+  clean
+API diagnostics (family retained):
+  clean
+
+## project states-b
+root: bend2/context/typescript/fixtures/states/b
+config: bend2/context/typescript/fixtures/states/b/tsconfig.json
+source files parsed: src/added.ts, src/app.ts, src/dep.ts
+tsc-equivalent (Error category only):
+  clean
+API diagnostics (family retained):
+  clean
+
+## measured behaviour the fixtures exist to pin (typescript 5.9.3)
+
+ts-project default (tsconfig.json):
+  statement after return 1            src/flow.ts:33:2 -> no diagnostic
+  statement after a never-annotated call src/flow.ts:42:2 -> TS7027 family=suggestion
+  definite-assignment read of x        src/flow.ts:50:9 -> TS2454 family=semantic
+ts-project with allowUnreachableCode:false (tsconfig.unreachable.json):
+  statement after return 1            src/flow.ts:33:2 -> TS7027 family=semantic
+  statement after a never-annotated call src/flow.ts:42:2 -> TS7027 family=semantic
+  definite-assignment read of x        src/flow.ts:50:9 -> TS2454 family=semantic
+
+statement: the default tsconfig.json is NOT clean: it carries the semantic TS2454 required by the
+definite-assignment case in src/flow.ts plus exactly one unreachable diagnostic, which is suggestion-family
+only (TS7027 at src/flow.ts:42:2). The statement after `return 1` produces no diagnostic at default options.
+The only difference on tsconfig.unreachable.json is that both unreachable statements become semantic
+(Error-category) TS7027 errors; the suggestion list is empty there. No other diagnostic is produced by
+either config. Note strings that point at files outside this repository (the default lib .d.ts files)
+carry absolute paths; every manifest path field is repository-relative.
+
+## resolved manifest positions (all from ts AST/checker queries, zero-based line:column)
+
+ts-project.models.Greeter bend2/context/typescript/fixtures/ts-project/src/models.ts:0:17 kind=Identifier name=Greeter :: export interface Greeter {
+ts-project.models.Greeter.greet bend2/context/typescript/fixtures/ts-project/src/models.ts:1:2 kind=MethodSignature name=greet :: greet(name: string): string;
+ts-project.models.Greeter.greet.param.name bend2/context/typescript/fixtures/ts-project/src/models.ts:1:8 kind=Parameter name=name :: greet(name: string): string;
+ts-project.models.FormalGreeter bend2/context/typescript/fixtures/ts-project/src/models.ts:4:0 kind=ClassDeclaration name=FormalGreeter :: export class FormalGreeter implements Greeter {
+ts-project.models.FormalGreeter.greet bend2/context/typescript/fixtures/ts-project/src/models.ts:5:2 kind=MethodDeclaration name=greet :: greet(name: string): string {
+ts-project.models.Kind bend2/context/typescript/fixtures/ts-project/src/models.ts:10:0 kind=TypeAliasDeclaration name=Kind :: export type Kind = "circle" | "square";
+ts-project.models.Kind.circle bend2/context/typescript/fixtures/ts-project/src/models.ts:10:19 kind=StringLiteral name=circle :: export type Kind = "circle" | "square";
+ts-project.models.DEFAULT_NAME bend2/context/typescript/fixtures/ts-project/src/models.ts:12:13 kind=VariableDeclaration name=DEFAULT_NAME :: export const DEFAULT_NAME = "world";
+ts-project.util.specifier.models bend2/context/typescript/fixtures/ts-project/src/util.ts:0:24 kind=StringLiteral name=./models :: import { Greeter } from "./models";
+ts-project.util.import.Greeter bend2/context/typescript/fixtures/ts-project/src/util.ts:0:9 kind=Identifier name=Greeter :: import { Greeter } from "./models";
+ts-project.util.makeMessage bend2/context/typescript/fixtures/ts-project/src/util.ts:2:0 kind=FunctionDeclaration name=makeMessage :: export function makeMessage(g: Greeter, name: string): string {
+ts-project.util.makeMessage.param.g bend2/context/typescript/fixtures/ts-project/src/util.ts:2:28 kind=Parameter name=g :: export function makeMessage(g: Greeter, name: string): string {
+ts-project.util.makeMessage.call.greet bend2/context/typescript/fixtures/ts-project/src/util.ts:3:9 kind=CallExpression name=g.greet :: return g.greet(name);
+ts-project.util.makeMessage.call.greet.receiver bend2/context/typescript/fixtures/ts-project/src/util.ts:3:9 kind=Identifier name=g :: return g.greet(name);
+ts-project.impl.import.DEFAULT_NAME bend2/context/typescript/fixtures/ts-project/src/impl.ts:0:9 kind=Identifier name=DEFAULT_NAME :: import { DEFAULT_NAME, Greeter } from "./models";
+ts-project.impl.import.Greeter bend2/context/typescript/fixtures/ts-project/src/impl.ts:0:23 kind=Identifier name=Greeter :: import { DEFAULT_NAME, Greeter } from "./models";
+ts-project.impl.GreeterImpl bend2/context/typescript/fixtures/ts-project/src/impl.ts:2:0 kind=ClassDeclaration name=GreeterImpl :: export class GreeterImpl implements Greeter {
+ts-project.impl.GreeterImpl.greet bend2/context/typescript/fixtures/ts-project/src/impl.ts:3:2 kind=MethodDeclaration name=greet :: greet(name: string): string {
+ts-project.impl.GreeterImpl.greet.read.DEFAULT_NAME bend2/context/typescript/fixtures/ts-project/src/impl.ts:4:14 kind=Identifier name=DEFAULT_NAME :: return `${DEFAULT_NAME}: ${name}`;
+ts-project.index.reexport.FormalGreeter bend2/context/typescript/fixtures/ts-project/src/index.ts:0:9 kind=Identifier name=FormalGreeter :: export { FormalGreeter } from "./models";
+ts-project.index.reexport.Greeter bend2/context/typescript/fixtures/ts-project/src/index.ts:1:14 kind=Identifier name=Greeter :: export type { Greeter } from "./models";
+ts-project.index.reexport.GreeterImpl bend2/context/typescript/fixtures/ts-project/src/index.ts:2:9 kind=Identifier name=GreeterImpl :: export { GreeterImpl } from "./impl";
+ts-project.index.reexport.makeMessage bend2/context/typescript/fixtures/ts-project/src/index.ts:3:9 kind=Identifier name=makeMessage :: export { makeMessage } from "./util";
+ts-project.index.specifier.models.1 bend2/context/typescript/fixtures/ts-project/src/index.ts:0:30 kind=StringLiteral name=./models :: export { FormalGreeter } from "./models";
+ts-project.index.specifier.models.2 bend2/context/typescript/fixtures/ts-project/src/index.ts:1:29 kind=StringLiteral name=./models :: export type { Greeter } from "./models";
+ts-project.index.specifier.impl bend2/context/typescript/fixtures/ts-project/src/index.ts:2:28 kind=StringLiteral name=./impl :: export { GreeterImpl } from "./impl";
+ts-project.index.specifier.util bend2/context/typescript/fixtures/ts-project/src/index.ts:3:28 kind=StringLiteral name=./util :: export { makeMessage } from "./util";
+ts-project.consumer.import.FormalGreeter bend2/context/typescript/fixtures/ts-project/src/consumer.ts:0:9 kind=Identifier name=FormalGreeter :: import { FormalGreeter, makeMessage, GreeterImpl as Impl } from "./index";
+ts-project.consumer.import.makeMessage bend2/context/typescript/fixtures/ts-project/src/consumer.ts:0:24 kind=Identifier name=makeMessage :: import { FormalGreeter, makeMessage, GreeterImpl as Impl } from "./index";
+ts-project.consumer.import.alias.Impl bend2/context/typescript/fixtures/ts-project/src/consumer.ts:0:52 kind=Identifier name=Impl :: import { FormalGreeter, makeMessage, GreeterImpl as Impl } from "./index";
+ts-project.consumer.specifier.index bend2/context/typescript/fixtures/ts-project/src/consumer.ts:0:64 kind=StringLiteral name=./index :: import { FormalGreeter, makeMessage, GreeterImpl as Impl } from "./index";
+ts-project.consumer.run bend2/context/typescript/fixtures/ts-project/src/consumer.ts:2:0 kind=FunctionDeclaration name=run :: export function run(): string {
+ts-project.consumer.run.call.makeMessage.1 bend2/context/typescript/fixtures/ts-project/src/consumer.ts:5:16 kind=CallExpression name=makeMessage :: const first = makeMessage(greeter, "first");
+ts-project.consumer.run.call.makeMessage.2 bend2/context/typescript/fixtures/ts-project/src/consumer.ts:6:17 kind=CallExpression name=makeMessage :: const second = makeMessage(impl, "second");
+ts-project.consumer.run.call.makeMessage.3 bend2/context/typescript/fixtures/ts-project/src/consumer.ts:7:16 kind=CallExpression name=makeMessage :: const third = makeMessage(new FormalGreeter(), "third");
+ts-project.consumer.config bend2/context/typescript/fixtures/ts-project/src/consumer.ts:11:6 kind=VariableDeclaration name=config :: const config: any = { retries: 3 };
+ts-project.consumer.dynamicKey bend2/context/typescript/fixtures/ts-project/src/consumer.ts:12:6 kind=VariableDeclaration name=dynamicKey :: const dynamicKey = "retries";
+ts-project.consumer.retries.dynamic-access bend2/context/typescript/fixtures/ts-project/src/consumer.ts:14:32 kind=ElementAccessExpression name=config :: export const retries: unknown = config[dynamicKey];
+ts-project.consumer.handlers bend2/context/typescript/fixtures/ts-project/src/consumer.ts:16:13 kind=VariableDeclaration name=handlers :: export const handlers = {
+ts-project.consumer.handlers.greet bend2/context/typescript/fixtures/ts-project/src/consumer.ts:17:2 kind=PropertyAssignment name=greet :: greet: (name: string): string => makeMessage(new FormalGreeter(), name),
+ts-project.dispatch.Fn bend2/context/typescript/fixtures/ts-project/src/dispatch.ts:0:0 kind=TypeAliasDeclaration name=Fn :: type Fn = (name: string) => string;
+ts-project.dispatch.invoke bend2/context/typescript/fixtures/ts-project/src/dispatch.ts:2:0 kind=FunctionDeclaration name=invoke :: export function invoke(fn: Fn, name: string): string {
+ts-project.dispatch.invoke.param.fn bend2/context/typescript/fixtures/ts-project/src/dispatch.ts:2:23 kind=Parameter name=fn :: export function invoke(fn: Fn, name: string): string {
+ts-project.dispatch.invoke.call.fn bend2/context/typescript/fixtures/ts-project/src/dispatch.ts:3:9 kind=CallExpression name=fn :: return fn(name);
+ts-project.dispatch.functionVariable bend2/context/typescript/fixtures/ts-project/src/dispatch.ts:6:6 kind=VariableDeclaration name=functionVariable :: const functionVariable: Fn = (name) => `variable:${name}`;
+ts-project.dispatch.viaVariable bend2/context/typescript/fixtures/ts-project/src/dispatch.ts:8:0 kind=FunctionDeclaration name=viaVariable :: export function viaVariable(name: string): string {
+ts-project.dispatch.viaVariable.call.functionVariable bend2/context/typescript/fixtures/ts-project/src/dispatch.ts:9:9 kind=CallExpression name=functionVariable :: return functionVariable(name);
+ts-project.dispatch.objectHoldingFunction bend2/context/typescript/fixtures/ts-project/src/dispatch.ts:12:6 kind=VariableDeclaration name=objectHoldingFunction :: const objectHoldingFunction = {
+ts-project.dispatch.viaObjectProperty bend2/context/typescript/fixtures/ts-project/src/dispatch.ts:16:0 kind=FunctionDeclaration name=viaObjectProperty :: export function viaObjectProperty(name: string): string {
+ts-project.dispatch.viaObjectProperty.call.send bend2/context/typescript/fixtures/ts-project/src/dispatch.ts:17:9 kind=CallExpression name=objectHoldingFunction.send :: return objectHoldingFunction.send(name);
+ts-project.dispatch.handlers bend2/context/typescript/fixtures/ts-project/src/dispatch.ts:20:6 kind=VariableDeclaration name=handlers :: const handlers: Record<string, Fn> = {
+ts-project.dispatch.viaIndexedAccess bend2/context/typescript/fixtures/ts-project/src/dispatch.ts:25:0 kind=FunctionDeclaration name=viaIndexedAccess :: export function viaIndexedAccess(kind: string, name: string): string {
+ts-project.dispatch.viaIndexedAccess.call.indexed bend2/context/typescript/fixtures/ts-project/src/dispatch.ts:26:9 kind=CallExpression name=handlers[kind] :: return handlers[kind](name);
+ts-project.dispatch.Dispatcher bend2/context/typescript/fixtures/ts-project/src/dispatch.ts:29:0 kind=InterfaceDeclaration name=Dispatcher :: export interface Dispatcher {
+ts-project.dispatch.dispatcher bend2/context/typescript/fixtures/ts-project/src/dispatch.ts:33:6 kind=VariableDeclaration name=dispatcher :: const dispatcher: Dispatcher = {
+ts-project.dispatch.viaInterfaceReceiver bend2/context/typescript/fixtures/ts-project/src/dispatch.ts:37:0 kind=FunctionDeclaration name=viaInterfaceReceiver :: export function viaInterfaceReceiver(name: string): string {
+ts-project.dispatch.viaInterfaceReceiver.call.send bend2/context/typescript/fixtures/ts-project/src/dispatch.ts:38:9 kind=CallExpression name=dispatcher.send :: return dispatcher.send(name);
+ts-project.merged.Box.decl1 bend2/context/typescript/fixtures/ts-project/src/merged.ts:0:0 kind=InterfaceDeclaration name=Box :: export interface Box {
+ts-project.merged.Box.decl2 bend2/context/typescript/fixtures/ts-project/src/merged.ts:4:0 kind=InterfaceDeclaration name=Box :: export interface Box {
+ts-project.merged.measure.overload1 bend2/context/typescript/fixtures/ts-project/src/merged.ts:8:0 kind=FunctionDeclaration name=measure :: export function measure(width: number): number;
+ts-project.merged.measure.overload2 bend2/context/typescript/fixtures/ts-project/src/merged.ts:9:0 kind=FunctionDeclaration name=measure :: export function measure(width: number, height: number): number;
+ts-project.merged.measure.impl bend2/context/typescript/fixtures/ts-project/src/merged.ts:10:0 kind=FunctionDeclaration name=measure :: export function measure(width: number, height?: number): number {
+ts-project.merged.Counter.class bend2/context/typescript/fixtures/ts-project/src/merged.ts:14:0 kind=ClassDeclaration name=Counter :: export class Counter {
+ts-project.merged.Counter.namespace bend2/context/typescript/fixtures/ts-project/src/merged.ts:22:0 kind=ModuleDeclaration name=Counter :: export namespace Counter {
+ts-project.merged.Counter.origin bend2/context/typescript/fixtures/ts-project/src/merged.ts:23:15 kind=VariableDeclaration name=origin :: export const origin = 0;
+ts-project.merged.Counter.reset bend2/context/typescript/fixtures/ts-project/src/merged.ts:25:2 kind=FunctionDeclaration name=reset :: export function reset(counter: Counter): void {
+ts-project.flow.Shape bend2/context/typescript/fixtures/ts-project/src/flow.ts:0:0 kind=TypeAliasDeclaration name=Shape :: export type Shape =
+ts-project.flow.Shape.member.circle bend2/context/typescript/fixtures/ts-project/src/flow.ts:1:12 kind=StringLiteral name=circle :: | { kind: "circle"; radius: number }
+ts-project.flow.area bend2/context/typescript/fixtures/ts-project/src/flow.ts:4:0 kind=FunctionDeclaration name=area :: export function area(shape: Shape): number {
+ts-project.flow.area.param.shape bend2/context/typescript/fixtures/ts-project/src/flow.ts:4:21 kind=Parameter name=shape :: export function area(shape: Shape): number {
+ts-project.flow.area.discriminant bend2/context/typescript/fixtures/ts-project/src/flow.ts:5:10 kind=PropertyAccessExpression name=kind :: switch (shape.kind) {
+ts-project.flow.area.exhaustive bend2/context/typescript/fixtures/ts-project/src/flow.ts:11:12 kind=VariableDeclaration name=exhaustive :: const exhaustive: never = shape;
+ts-project.flow.describe bend2/context/typescript/fixtures/ts-project/src/flow.ts:17:0 kind=FunctionDeclaration name=describe :: export function describe(value: string | number): string {
+ts-project.flow.describe.typeof-guard bend2/context/typescript/fixtures/ts-project/src/flow.ts:18:2 kind=IfStatement name=if :: if (typeof value === "string") {
+ts-project.flow.describe.call.toUpperCase bend2/context/typescript/fixtures/ts-project/src/flow.ts:19:11 kind=CallExpression name=value.toUpperCase :: return value.toUpperCase();
+ts-project.flow.formatDate bend2/context/typescript/fixtures/ts-project/src/flow.ts:24:0 kind=FunctionDeclaration name=formatDate :: export function formatDate(value: string | Date): string {
+ts-project.flow.formatDate.instanceof-guard bend2/context/typescript/fixtures/ts-project/src/flow.ts:25:2 kind=IfStatement name=if :: if (value instanceof Date) {
+ts-project.flow.formatDate.call.toISOString bend2/context/typescript/fixtures/ts-project/src/flow.ts:26:11 kind=CallExpression name=value.toISOString :: return value.toISOString();
+ts-project.flow.afterReturn bend2/context/typescript/fixtures/ts-project/src/flow.ts:31:0 kind=FunctionDeclaration name=afterReturn :: export function afterReturn(): number {
+ts-project.flow.afterReturn.unreachable-statement bend2/context/typescript/fixtures/ts-project/src/flow.ts:33:2 kind=ExpressionStatement name=console :: console.log("unreachable after return");
+ts-project.flow.alwaysThrows bend2/context/typescript/fixtures/ts-project/src/flow.ts:36:0 kind=FunctionDeclaration name=alwaysThrows :: export function alwaysThrows(message: string): never {
+ts-project.flow.alwaysThrows.return-type bend2/context/typescript/fixtures/ts-project/src/flow.ts:36:47 kind=NeverKeyword name=NeverKeyword :: export function alwaysThrows(message: string): never {
+ts-project.flow.afterNeverCall bend2/context/typescript/fixtures/ts-project/src/flow.ts:40:0 kind=FunctionDeclaration name=afterNeverCall :: export function afterNeverCall(message: string): number {
+ts-project.flow.afterNeverCall.never-call bend2/context/typescript/fixtures/ts-project/src/flow.ts:41:2 kind=CallExpression name=alwaysThrows :: alwaysThrows(message);
+ts-project.flow.afterNeverCall.unreachable-return bend2/context/typescript/fixtures/ts-project/src/flow.ts:42:2 kind=ReturnStatement name=return :: return 2;
+ts-project.flow.definiteAssignment bend2/context/typescript/fixtures/ts-project/src/flow.ts:45:0 kind=FunctionDeclaration name=definiteAssignment :: export function definiteAssignment(flag: boolean): number {
+ts-project.flow.definiteAssignment.x.decl bend2/context/typescript/fixtures/ts-project/src/flow.ts:46:6 kind=VariableDeclaration name=x :: let x: number;
+ts-project.flow.definiteAssignment.x.read bend2/context/typescript/fixtures/ts-project/src/flow.ts:50:9 kind=Identifier name=x :: return x;
+ts-project.exceptions.Boom bend2/context/typescript/fixtures/ts-project/src/exceptions.ts:0:0 kind=ClassDeclaration name=Boom :: class Boom extends Error {
+ts-project.exceptions.tryThrow bend2/context/typescript/fixtures/ts-project/src/exceptions.ts:7:0 kind=FunctionDeclaration name=tryThrow :: export function tryThrow(n: number): number {
+ts-project.exceptions.tryThrow.try bend2/context/typescript/fixtures/ts-project/src/exceptions.ts:8:2 kind=TryStatement name=try :: try {
+ts-project.exceptions.tryThrow.throw bend2/context/typescript/fixtures/ts-project/src/exceptions.ts:10:6 kind=ThrowStatement name=throw :: throw new Boom("negative");
+ts-project.exceptions.tryThrow.catch bend2/context/typescript/fixtures/ts-project/src/exceptions.ts:13:4 kind=CatchClause name=catch :: } catch (error) {
+ts-project.exceptions.tryThrow.finally bend2/context/typescript/fixtures/ts-project/src/exceptions.ts:15:12 kind=Block name={ :: } finally {
+ts-project.exceptions.throwInCallback bend2/context/typescript/fixtures/ts-project/src/exceptions.ts:20:0 kind=FunctionDeclaration name=throwInCallback :: export function throwInCallback(values: number[]): void {
+ts-project.exceptions.throwInCallback.arrow bend2/context/typescript/fixtures/ts-project/src/exceptions.ts:21:17 kind=ArrowFunction name=( :: values.forEach((value) => {
+ts-project.exceptions.throwInCallback.throw bend2/context/typescript/fixtures/ts-project/src/exceptions.ts:23:6 kind=ThrowStatement name=throw :: throw new Boom(`bad value: ${value}`);
+ts-project.exceptions.throwAsync bend2/context/typescript/fixtures/ts-project/src/exceptions.ts:28:13 kind=VariableDeclaration name=throwAsync :: export const throwAsync = async (n: number): Promise<number> => {
+ts-project.exceptions.throwAsync.arrow bend2/context/typescript/fixtures/ts-project/src/exceptions.ts:28:26 kind=ArrowFunction name=async :: export const throwAsync = async (n: number): Promise<number> => {
+ts-project.exceptions.throwAsync.throw bend2/context/typescript/fixtures/ts-project/src/exceptions.ts:30:4 kind=ThrowStatement name=throw :: throw new Boom("negative async");
+ts-project.exceptions.checked bend2/context/typescript/fixtures/ts-project/src/exceptions.ts:38:0 kind=FunctionDeclaration name=checked :: export declare function checked(n: number): number;
+ts-project.exceptions.checked.jsdoc.throws bend2/context/typescript/fixtures/ts-project/src/exceptions.ts:36:3 kind=JSDocThrowsTag name=@throws :: * @throws {Boom} when n is negative
+ts-project.exceptions.unchecked bend2/context/typescript/fixtures/ts-project/src/exceptions.ts:40:0 kind=FunctionDeclaration name=unchecked :: export function unchecked(n: number): number {
+ts-project.exceptions.neverReturns bend2/context/typescript/fixtures/ts-project/src/exceptions.ts:47:0 kind=FunctionDeclaration name=neverReturns :: export function neverReturns(message: string): never {
+ts-project.exceptions.neverReturns.throw bend2/context/typescript/fixtures/ts-project/src/exceptions.ts:48:2 kind=ThrowStatement name=throw :: throw new Boom(message);
+ts-project.sql-client.SqlClient bend2/context/typescript/fixtures/ts-project/src/sql-client.d.ts:0:0 kind=ClassDeclaration name=SqlClient :: export declare class SqlClient {
+ts-project.sql-client.SqlClient.prepare bend2/context/typescript/fixtures/ts-project/src/sql-client.d.ts:1:2 kind=MethodDeclaration name=prepare :: prepare(sql: string): Statement;
+ts-project.sql-client.Statement bend2/context/typescript/fixtures/ts-project/src/sql-client.d.ts:4:0 kind=InterfaceDeclaration name=Statement :: export interface Statement {
+ts-project.sql-client.Statement.all bend2/context/typescript/fixtures/ts-project/src/sql-client.d.ts:5:2 kind=MethodSignature name=all :: all(...params: unknown[]): unknown[];
+ts-project.db.import.SqlClient bend2/context/typescript/fixtures/ts-project/src/db.ts:0:9 kind=Identifier name=SqlClient :: import { SqlClient } from "./sql-client";
+ts-project.db.specifier.sql-client bend2/context/typescript/fixtures/ts-project/src/db.ts:0:26 kind=StringLiteral name=./sql-client :: import { SqlClient } from "./sql-client";
+ts-project.db.selectUsers bend2/context/typescript/fixtures/ts-project/src/db.ts:2:0 kind=FunctionDeclaration name=selectUsers :: export function selectUsers(client: SqlClient): unknown[] {
+ts-project.db.selectUsers.sql-literal bend2/context/typescript/fixtures/ts-project/src/db.ts:3:24 kind=StringLiteral name=SELECT id, name FROM users WHERE note = ' FROM accounts' :: return client.prepare("SELECT id, name FROM users WHERE note = ' FROM accounts'").all();
+ts-project.db.countUsers bend2/context/typescript/fixtures/ts-project/src/db.ts:6:0 kind=FunctionDeclaration name=countUsers :: export function countUsers(client: SqlClient): unknown[] {
+ts-project.db.countUsers.template bend2/context/typescript/fixtures/ts-project/src/db.ts:7:24 kind=NoSubstitutionTemplateLiteral name=SELECT count(*) FROM users :: return client.prepare(`SELECT count(*) FROM users`).all();
+ts-project.db.selectByKind bend2/context/typescript/fixtures/ts-project/src/db.ts:10:0 kind=FunctionDeclaration name=selectByKind :: export function selectByKind(client: SqlClient, kind: string): unknown[] {
+ts-project.db.selectByKind.template bend2/context/typescript/fixtures/ts-project/src/db.ts:11:24 kind=TemplateExpression name=`SELECT id FROM users WHERE kind = '${ :: return client.prepare(`SELECT id FROM users WHERE kind = '${kind}'`).all();
+ts-project.db.prepare bend2/context/typescript/fixtures/ts-project/src/db.ts:14:0 kind=FunctionDeclaration name=prepare :: function prepare(sql: string): string {
+ts-project.db.shadowedPrepare bend2/context/typescript/fixtures/ts-project/src/db.ts:18:0 kind=FunctionDeclaration name=shadowedPrepare :: export function shadowedPrepare(sql: string): string {
+ts-project.db.shadowedPrepare.call bend2/context/typescript/fixtures/ts-project/src/db.ts:19:9 kind=CallExpression name=prepare :: return prepare(sql);
+ts-project.db.dynamicReceiver bend2/context/typescript/fixtures/ts-project/src/db.ts:22:0 kind=FunctionDeclaration name=dynamicReceiver :: export function dynamicReceiver(client: any, sql: string): unknown {
+ts-project.db.dynamicReceiver.call bend2/context/typescript/fixtures/ts-project/src/db.ts:23:9 kind=CallExpression name=client.prepare :: return client.prepare(sql);
+js-project.messages.label bend2/context/typescript/fixtures/js-project/src/messages.js:9:0 kind=FunctionDeclaration name=label :: function label(item, prefix) {
+js-project.messages.label.item-name bend2/context/typescript/fixtures/js-project/src/messages.js:10:23 kind=PropertyAccessExpression name=name :: return `${prefix}: ${item.name}`;
+js-project.messages.describe bend2/context/typescript/fixtures/js-project/src/messages.js:17:0 kind=FunctionDeclaration name=describe :: function describe(item) {
+js-project.broken.stringify bend2/context/typescript/fixtures/js-project/src/broken.js:4:0 kind=FunctionDeclaration name=stringify :: function stringify(value) {
+js-project.broken.stringify.error-return bend2/context/typescript/fixtures/js-project/src/broken.js:5:2 kind=ReturnStatement name=return :: return value;
+states-a.app.describe bend2/context/typescript/fixtures/states/a/src/app.ts:2:0 kind=FunctionDeclaration name=describe :: export function describe(): string {
+states-a.app.specifier.dep bend2/context/typescript/fixtures/states/a/src/app.ts:0:22 kind=StringLiteral name=./dep :: import { value } from "./dep";
+states-a.app.value.read bend2/context/typescript/fixtures/states/a/src/app.ts:3:18 kind=Identifier name=value :: return `value=${value}`;
+states-a.dep.value bend2/context/typescript/fixtures/states/a/src/dep.ts:0:13 kind=VariableDeclaration name=value :: export const value: number = 1;
+states-b.app.describe bend2/context/typescript/fixtures/states/b/src/app.ts:3:0 kind=FunctionDeclaration name=describe :: export function describe(): string {
+states-b.app.specifier.dep bend2/context/typescript/fixtures/states/b/src/app.ts:0:22 kind=StringLiteral name=./dep :: import { value } from "./dep";
+states-b.app.specifier.added bend2/context/typescript/fixtures/states/b/src/app.ts:1:22 kind=StringLiteral name=./added :: import { extra } from "./added";
+states-b.app.value.read bend2/context/typescript/fixtures/states/b/src/app.ts:4:18 kind=Identifier name=value :: return `value=${value} extra=${extra}`;
+states-b.app.extra.read bend2/context/typescript/fixtures/states/b/src/app.ts:4:33 kind=Identifier name=extra :: return `value=${value} extra=${extra}`;
+states-b.dep.value bend2/context/typescript/fixtures/states/b/src/dep.ts:0:13 kind=VariableDeclaration name=value :: export const value: string = "one";
+states-b.added.extra bend2/context/typescript/fixtures/states/b/src/added.ts:0:13 kind=VariableDeclaration name=extra :: export const extra = "added";
+
+## sql call analysis (checker.getResolvedSignature)
+
+sql-call.db.selectUsers.prepare bend2/context/typescript/fixtures/ts-project/src/db.ts:3:9 form=stringLiteral substitutions=0 clientMatch=matched receiverBinding=resolved receiverType=SqlClient
+  resolvedDeclaration=prepare@bend2/context/typescript/fixtures/ts-project/src/sql-client.d.ts:1:2
+  sqlText="SELECT id, name FROM users WHERE note = ' FROM accounts'"
+sql-call.db.countUsers.prepare bend2/context/typescript/fixtures/ts-project/src/db.ts:7:9 form=template substitutions=0 clientMatch=matched receiverBinding=resolved receiverType=SqlClient
+  resolvedDeclaration=prepare@bend2/context/typescript/fixtures/ts-project/src/sql-client.d.ts:1:2
+  sqlText="SELECT count(*) FROM users"
+sql-call.db.selectByKind.prepare bend2/context/typescript/fixtures/ts-project/src/db.ts:11:9 form=dynamic substitutions=1 clientMatch=matched receiverBinding=resolved receiverType=SqlClient
+  resolvedDeclaration=prepare@bend2/context/typescript/fixtures/ts-project/src/sql-client.d.ts:1:2
+  sqlText=(non-literal)
+sql-call.db.shadowedPrepare.prepare bend2/context/typescript/fixtures/ts-project/src/db.ts:19:9 form=dynamic substitutions=0 clientMatch=shadowed receiverBinding=resolved receiverType=(sql: string) => string
+  resolvedDeclaration=prepare@bend2/context/typescript/fixtures/ts-project/src/db.ts:14:0
+  sqlText=(non-literal)
+sql-call.db.dynamicReceiver.prepare bend2/context/typescript/fixtures/ts-project/src/db.ts:23:9 form=dynamic substitutions=0 clientMatch=dynamic receiverBinding=any receiverType=any
+  resolvedDeclaration=none
+  sqlText=(non-literal)
+
+## encoding check
+
+files checked (no NUL byte, valid UTF-8): 23
+

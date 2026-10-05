@@ -1,0 +1,1700 @@
+{
+  "projects": [
+    {
+      "id": "ts-project",
+      "root": "bend2/context/typescript/fixtures/ts-project",
+      "config": "bend2/context/typescript/fixtures/ts-project/tsconfig.json",
+      "compile": "diagnostics",
+      "diagnostics": [
+        {
+          "file": "bend2/context/typescript/fixtures/ts-project/src/flow.ts",
+          "line": 42,
+          "column": 2,
+          "code": 7027,
+          "family": "suggestion",
+          "message": "Unreachable code detected."
+        },
+        {
+          "file": "bend2/context/typescript/fixtures/ts-project/src/flow.ts",
+          "line": 50,
+          "column": 9,
+          "code": 2454,
+          "family": "semantic",
+          "message": "Variable 'x' is used before being assigned."
+        }
+      ]
+    },
+    {
+      "id": "ts-project-unreachable",
+      "root": "bend2/context/typescript/fixtures/ts-project",
+      "config": "bend2/context/typescript/fixtures/ts-project/tsconfig.unreachable.json",
+      "compile": "diagnostics",
+      "diagnostics": [
+        {
+          "file": "bend2/context/typescript/fixtures/ts-project/src/flow.ts",
+          "line": 33,
+          "column": 2,
+          "code": 7027,
+          "family": "semantic",
+          "message": "Unreachable code detected."
+        },
+        {
+          "file": "bend2/context/typescript/fixtures/ts-project/src/flow.ts",
+          "line": 42,
+          "column": 2,
+          "code": 7027,
+          "family": "semantic",
+          "message": "Unreachable code detected."
+        },
+        {
+          "file": "bend2/context/typescript/fixtures/ts-project/src/flow.ts",
+          "line": 50,
+          "column": 9,
+          "code": 2454,
+          "family": "semantic",
+          "message": "Variable 'x' is used before being assigned."
+        }
+      ]
+    },
+    {
+      "id": "js-project",
+      "root": "bend2/context/typescript/fixtures/js-project",
+      "config": "bend2/context/typescript/fixtures/js-project/jsconfig.json",
+      "compile": "diagnostics",
+      "diagnostics": [
+        {
+          "file": "bend2/context/typescript/fixtures/js-project/src/broken.js",
+          "line": 5,
+          "column": 2,
+          "code": 2322,
+          "family": "semantic",
+          "message": "Type 'number' is not assignable to type 'string'."
+        }
+      ]
+    },
+    {
+      "id": "states-a",
+      "root": "bend2/context/typescript/fixtures/states/a",
+      "config": "bend2/context/typescript/fixtures/states/a/tsconfig.json",
+      "compile": "clean",
+      "diagnostics": []
+    },
+    {
+      "id": "states-b",
+      "root": "bend2/context/typescript/fixtures/states/b",
+      "config": "bend2/context/typescript/fixtures/states/b/tsconfig.json",
+      "compile": "clean",
+      "diagnostics": []
+    }
+  ],
+  "symbols": [
+    {
+      "id": "ts-project.models.Greeter",
+      "project": "ts-project",
+      "file": "bend2/context/typescript/fixtures/ts-project/src/models.ts",
+      "name": "Greeter",
+      "kind": "Identifier",
+      "line": 0,
+      "column": 17,
+      "note": "interface Greeter declaration name"
+    },
+    {
+      "id": "ts-project.models.Greeter.greet",
+      "project": "ts-project",
+      "file": "bend2/context/typescript/fixtures/ts-project/src/models.ts",
+      "name": "greet",
+      "kind": "MethodSignature",
+      "line": 1,
+      "column": 2,
+      "note": "greet method signature in interface Greeter"
+    },
+    {
+      "id": "ts-project.models.Greeter.greet.param.name",
+      "project": "ts-project",
+      "file": "bend2/context/typescript/fixtures/ts-project/src/models.ts",
+      "name": "name",
+      "kind": "Parameter",
+      "line": 1,
+      "column": 8,
+      "note": "name parameter of the declared greet method"
+    },
+    {
+      "id": "ts-project.models.FormalGreeter",
+      "project": "ts-project",
+      "file": "bend2/context/typescript/fixtures/ts-project/src/models.ts",
+      "name": "FormalGreeter",
+      "kind": "ClassDeclaration",
+      "line": 4,
+      "column": 0,
+      "note": "class FormalGreeter declaration name"
+    },
+    {
+      "id": "ts-project.models.FormalGreeter.greet",
+      "project": "ts-project",
+      "file": "bend2/context/typescript/fixtures/ts-project/src/models.ts",
+      "name": "greet",
+      "kind": "MethodDeclaration",
+      "line": 5,
+      "column": 2,
+      "note": "greet implementation in class FormalGreeter | call expressions in body: 0"
+    },
+    {
+      "id": "ts-project.models.Kind",
+      "project": "ts-project",
+      "file": "bend2/context/typescript/fixtures/ts-project/src/models.ts",
+      "name": "Kind",
+      "kind": "TypeAliasDeclaration",
+      "line": 10,
+      "column": 0,
+      "note": "type alias Kind declaration name"
+    },
+    {
+      "id": "ts-project.models.Kind.circle",
+      "project": "ts-project",
+      "file": "bend2/context/typescript/fixtures/ts-project/src/models.ts",
+      "name": "circle",
+      "kind": "StringLiteral",
+      "line": 10,
+      "column": 19,
+      "note": "string literal type member \"circle\" of Kind"
+    },
+    {
+      "id": "ts-project.models.DEFAULT_NAME",
+      "project": "ts-project",
+      "file": "bend2/context/typescript/fixtures/ts-project/src/models.ts",
+      "name": "DEFAULT_NAME",
+      "kind": "VariableDeclaration",
+      "line": 12,
+      "column": 13,
+      "note": "const DEFAULT_NAME declaration name | type \"world\""
+    },
+    {
+      "id": "ts-project.util.specifier.models",
+      "project": "ts-project",
+      "file": "bend2/context/typescript/fixtures/ts-project/src/util.ts",
+      "name": "./models",
+      "kind": "StringLiteral",
+      "line": 0,
+      "column": 24,
+      "note": "import module specifier \"./models\""
+    },
+    {
+      "id": "ts-project.util.import.Greeter",
+      "project": "ts-project",
+      "file": "bend2/context/typescript/fixtures/ts-project/src/util.ts",
+      "name": "Greeter",
+      "kind": "Identifier",
+      "line": 0,
+      "column": 9,
+      "note": "import binding Greeter specifier"
+    },
+    {
+      "id": "ts-project.util.makeMessage",
+      "project": "ts-project",
+      "file": "bend2/context/typescript/fixtures/ts-project/src/util.ts",
+      "name": "makeMessage",
+      "kind": "FunctionDeclaration",
+      "line": 2,
+      "column": 0,
+      "note": "exported function makeMessage declaration name"
+    },
+    {
+      "id": "ts-project.util.makeMessage.param.g",
+      "project": "ts-project",
+      "file": "bend2/context/typescript/fixtures/ts-project/src/util.ts",
+      "name": "g",
+      "kind": "Parameter",
+      "line": 2,
+      "column": 28,
+      "note": "g parameter of makeMessage (typed by imported interface Greeter) | type Greeter"
+    },
+    {
+      "id": "ts-project.util.makeMessage.call.greet",
+      "project": "ts-project",
+      "file": "bend2/context/typescript/fixtures/ts-project/src/util.ts",
+      "name": "g.greet",
+      "kind": "CallExpression",
+      "line": 3,
+      "column": 9,
+      "note": "call token g.greet inside makeMessage body | checker.getResolvedSignature -> greet @ bend2/context/typescript/fixtures/ts-project/src/models.ts:1:2"
+    },
+    {
+      "id": "ts-project.util.makeMessage.call.greet.receiver",
+      "project": "ts-project",
+      "file": "bend2/context/typescript/fixtures/ts-project/src/util.ts",
+      "name": "g",
+      "kind": "Identifier",
+      "line": 3,
+      "column": 9,
+      "note": "receiver g of the greet call (parameter binding)"
+    },
+    {
+      "id": "ts-project.impl.import.DEFAULT_NAME",
+      "project": "ts-project",
+      "file": "bend2/context/typescript/fixtures/ts-project/src/impl.ts",
+      "name": "DEFAULT_NAME",
+      "kind": "Identifier",
+      "line": 0,
+      "column": 9,
+      "note": "import binding DEFAULT_NAME specifier"
+    },
+    {
+      "id": "ts-project.impl.import.Greeter",
+      "project": "ts-project",
+      "file": "bend2/context/typescript/fixtures/ts-project/src/impl.ts",
+      "name": "Greeter",
+      "kind": "Identifier",
+      "line": 0,
+      "column": 23,
+      "note": "import binding Greeter specifier"
+    },
+    {
+      "id": "ts-project.impl.GreeterImpl",
+      "project": "ts-project",
+      "file": "bend2/context/typescript/fixtures/ts-project/src/impl.ts",
+      "name": "GreeterImpl",
+      "kind": "ClassDeclaration",
+      "line": 2,
+      "column": 0,
+      "note": "class GreeterImpl declaration name"
+    },
+    {
+      "id": "ts-project.impl.GreeterImpl.greet",
+      "project": "ts-project",
+      "file": "bend2/context/typescript/fixtures/ts-project/src/impl.ts",
+      "name": "greet",
+      "kind": "MethodDeclaration",
+      "line": 3,
+      "column": 2,
+      "note": "greet implementation in class GreeterImpl (body has no outgoing call)"
+    },
+    {
+      "id": "ts-project.impl.GreeterImpl.greet.read.DEFAULT_NAME",
+      "project": "ts-project",
+      "file": "bend2/context/typescript/fixtures/ts-project/src/impl.ts",
+      "name": "DEFAULT_NAME",
+      "kind": "Identifier",
+      "line": 4,
+      "column": 14,
+      "note": "read of imported DEFAULT_NAME inside greet | resolved symbol DEFAULT_NAME"
+    },
+    {
+      "id": "ts-project.index.reexport.FormalGreeter",
+      "project": "ts-project",
+      "file": "bend2/context/typescript/fixtures/ts-project/src/index.ts",
+      "name": "FormalGreeter",
+      "kind": "Identifier",
+      "line": 0,
+      "column": 9,
+      "note": "barrel re-export specifier FormalGreeter"
+    },
+    {
+      "id": "ts-project.index.reexport.Greeter",
+      "project": "ts-project",
+      "file": "bend2/context/typescript/fixtures/ts-project/src/index.ts",
+      "name": "Greeter",
+      "kind": "Identifier",
+      "line": 1,
+      "column": 14,
+      "note": "barrel type-only re-export specifier Greeter"
+    },
+    {
+      "id": "ts-project.index.reexport.GreeterImpl",
+      "project": "ts-project",
+      "file": "bend2/context/typescript/fixtures/ts-project/src/index.ts",
+      "name": "GreeterImpl",
+      "kind": "Identifier",
+      "line": 2,
+      "column": 9,
+      "note": "barrel re-export specifier GreeterImpl"
+    },
+    {
+      "id": "ts-project.index.reexport.makeMessage",
+      "project": "ts-project",
+      "file": "bend2/context/typescript/fixtures/ts-project/src/index.ts",
+      "name": "makeMessage",
+      "kind": "Identifier",
+      "line": 3,
+      "column": 9,
+      "note": "barrel re-export specifier makeMessage"
+    },
+    {
+      "id": "ts-project.index.specifier.models.1",
+      "project": "ts-project",
+      "file": "bend2/context/typescript/fixtures/ts-project/src/index.ts",
+      "name": "./models",
+      "kind": "StringLiteral",
+      "line": 0,
+      "column": 30,
+      "note": "barrel module specifier \"./models\" (value re-export)"
+    },
+    {
+      "id": "ts-project.index.specifier.models.2",
+      "project": "ts-project",
+      "file": "bend2/context/typescript/fixtures/ts-project/src/index.ts",
+      "name": "./models",
+      "kind": "StringLiteral",
+      "line": 1,
+      "column": 29,
+      "note": "barrel module specifier \"./models\" (type re-export)"
+    },
+    {
+      "id": "ts-project.index.specifier.impl",
+      "project": "ts-project",
+      "file": "bend2/context/typescript/fixtures/ts-project/src/index.ts",
+      "name": "./impl",
+      "kind": "StringLiteral",
+      "line": 2,
+      "column": 28,
+      "note": "barrel module specifier \"./impl\""
+    },
+    {
+      "id": "ts-project.index.specifier.util",
+      "project": "ts-project",
+      "file": "bend2/context/typescript/fixtures/ts-project/src/index.ts",
+      "name": "./util",
+      "kind": "StringLiteral",
+      "line": 3,
+      "column": 28,
+      "note": "barrel module specifier \"./util\""
+    },
+    {
+      "id": "ts-project.consumer.import.FormalGreeter",
+      "project": "ts-project",
+      "file": "bend2/context/typescript/fixtures/ts-project/src/consumer.ts",
+      "name": "FormalGreeter",
+      "kind": "Identifier",
+      "line": 0,
+      "column": 9,
+      "note": "import specifier FormalGreeter from the barrel"
+    },
+    {
+      "id": "ts-project.consumer.import.makeMessage",
+      "project": "ts-project",
+      "file": "bend2/context/typescript/fixtures/ts-project/src/consumer.ts",
+      "name": "makeMessage",
+      "kind": "Identifier",
+      "line": 0,
+      "column": 24,
+      "note": "import specifier makeMessage from the barrel"
+    },
+    {
+      "id": "ts-project.consumer.import.alias.Impl",
+      "project": "ts-project",
+      "file": "bend2/context/typescript/fixtures/ts-project/src/consumer.ts",
+      "name": "Impl",
+      "kind": "Identifier",
+      "line": 0,
+      "column": 52,
+      "note": "aliased import binding (GreeterImpl as Impl)"
+    },
+    {
+      "id": "ts-project.consumer.specifier.index",
+      "project": "ts-project",
+      "file": "bend2/context/typescript/fixtures/ts-project/src/consumer.ts",
+      "name": "./index",
+      "kind": "StringLiteral",
+      "line": 0,
+      "column": 64,
+      "note": "import module specifier \"./index\" (barrel)"
+    },
+    {
+      "id": "ts-project.consumer.run",
+      "project": "ts-project",
+      "file": "bend2/context/typescript/fixtures/ts-project/src/consumer.ts",
+      "name": "run",
+      "kind": "FunctionDeclaration",
+      "line": 2,
+      "column": 0,
+      "note": "exported function run declaration name"
+    },
+    {
+      "id": "ts-project.consumer.run.call.makeMessage.1",
+      "project": "ts-project",
+      "file": "bend2/context/typescript/fixtures/ts-project/src/consumer.ts",
+      "name": "makeMessage",
+      "kind": "CallExpression",
+      "line": 5,
+      "column": 16,
+      "note": "first makeMessage call site in run | checker.getResolvedSignature -> makeMessage @ bend2/context/typescript/fixtures/ts-project/src/util.ts:2:0"
+    },
+    {
+      "id": "ts-project.consumer.run.call.makeMessage.2",
+      "project": "ts-project",
+      "file": "bend2/context/typescript/fixtures/ts-project/src/consumer.ts",
+      "name": "makeMessage",
+      "kind": "CallExpression",
+      "line": 6,
+      "column": 17,
+      "note": "second makeMessage call site in run | checker.getResolvedSignature -> makeMessage @ bend2/context/typescript/fixtures/ts-project/src/util.ts:2:0"
+    },
+    {
+      "id": "ts-project.consumer.run.call.makeMessage.3",
+      "project": "ts-project",
+      "file": "bend2/context/typescript/fixtures/ts-project/src/consumer.ts",
+      "name": "makeMessage",
+      "kind": "CallExpression",
+      "line": 7,
+      "column": 16,
+      "note": "third makeMessage call site in run | checker.getResolvedSignature -> makeMessage @ bend2/context/typescript/fixtures/ts-project/src/util.ts:2:0"
+    },
+    {
+      "id": "ts-project.consumer.config",
+      "project": "ts-project",
+      "file": "bend2/context/typescript/fixtures/ts-project/src/consumer.ts",
+      "name": "config",
+      "kind": "VariableDeclaration",
+      "line": 11,
+      "column": 6,
+      "note": "config declaration (explicitly any-typed object) | type any"
+    },
+    {
+      "id": "ts-project.consumer.dynamicKey",
+      "project": "ts-project",
+      "file": "bend2/context/typescript/fixtures/ts-project/src/consumer.ts",
+      "name": "dynamicKey",
+      "kind": "VariableDeclaration",
+      "line": 12,
+      "column": 6,
+      "note": "dynamicKey declaration (const string literal) | type \"retries\""
+    },
+    {
+      "id": "ts-project.consumer.retries.dynamic-access",
+      "project": "ts-project",
+      "file": "bend2/context/typescript/fixtures/ts-project/src/consumer.ts",
+      "name": "config",
+      "kind": "ElementAccessExpression",
+      "line": 14,
+      "column": 32,
+      "note": "element access config[dynamicKey] (dynamic property access on an any receiver) | receiver type any"
+    },
+    {
+      "id": "ts-project.consumer.handlers",
+      "project": "ts-project",
+      "file": "bend2/context/typescript/fixtures/ts-project/src/consumer.ts",
+      "name": "handlers",
+      "kind": "VariableDeclaration",
+      "line": 16,
+      "column": 13,
+      "note": "exported const handlers holding an object literal"
+    },
+    {
+      "id": "ts-project.consumer.handlers.greet",
+      "project": "ts-project",
+      "file": "bend2/context/typescript/fixtures/ts-project/src/consumer.ts",
+      "name": "greet",
+      "kind": "PropertyAssignment",
+      "line": 17,
+      "column": 2,
+      "note": "function-valued property greet of the object literal | type (name: string) => string"
+    },
+    {
+      "id": "ts-project.dispatch.Fn",
+      "project": "ts-project",
+      "file": "bend2/context/typescript/fixtures/ts-project/src/dispatch.ts",
+      "name": "Fn",
+      "kind": "TypeAliasDeclaration",
+      "line": 0,
+      "column": 0,
+      "note": "type alias Fn = (name: string) => string"
+    },
+    {
+      "id": "ts-project.dispatch.invoke",
+      "project": "ts-project",
+      "file": "bend2/context/typescript/fixtures/ts-project/src/dispatch.ts",
+      "name": "invoke",
+      "kind": "FunctionDeclaration",
+      "line": 2,
+      "column": 0,
+      "note": "exported function invoke declaration name"
+    },
+    {
+      "id": "ts-project.dispatch.invoke.param.fn",
+      "project": "ts-project",
+      "file": "bend2/context/typescript/fixtures/ts-project/src/dispatch.ts",
+      "name": "fn",
+      "kind": "Parameter",
+      "line": 2,
+      "column": 23,
+      "note": "function-typed parameter fn | type Fn"
+    },
+    {
+      "id": "ts-project.dispatch.invoke.call.fn",
+      "project": "ts-project",
+      "file": "bend2/context/typescript/fixtures/ts-project/src/dispatch.ts",
+      "name": "fn",
+      "kind": "CallExpression",
+      "line": 3,
+      "column": 9,
+      "note": "call token fn(name) through a function-typed parameter | checker.getResolvedSignature -> FunctionType @ bend2/context/typescript/fixtures/ts-project/src/dispatch.ts:0:10"
+    },
+    {
+      "id": "ts-project.dispatch.functionVariable",
+      "project": "ts-project",
+      "file": "bend2/context/typescript/fixtures/ts-project/src/dispatch.ts",
+      "name": "functionVariable",
+      "kind": "VariableDeclaration",
+      "line": 6,
+      "column": 6,
+      "note": "const functionVariable holding a function value | type Fn"
+    },
+    {
+      "id": "ts-project.dispatch.viaVariable",
+      "project": "ts-project",
+      "file": "bend2/context/typescript/fixtures/ts-project/src/dispatch.ts",
+      "name": "viaVariable",
+      "kind": "FunctionDeclaration",
+      "line": 8,
+      "column": 0,
+      "note": "exported function viaVariable declaration name"
+    },
+    {
+      "id": "ts-project.dispatch.viaVariable.call.functionVariable",
+      "project": "ts-project",
+      "file": "bend2/context/typescript/fixtures/ts-project/src/dispatch.ts",
+      "name": "functionVariable",
+      "kind": "CallExpression",
+      "line": 9,
+      "column": 9,
+      "note": "call token functionVariable(name) | checker.getResolvedSignature -> FunctionType @ bend2/context/typescript/fixtures/ts-project/src/dispatch.ts:0:10"
+    },
+    {
+      "id": "ts-project.dispatch.objectHoldingFunction",
+      "project": "ts-project",
+      "file": "bend2/context/typescript/fixtures/ts-project/src/dispatch.ts",
+      "name": "objectHoldingFunction",
+      "kind": "VariableDeclaration",
+      "line": 12,
+      "column": 6,
+      "note": "const objectHoldingFunction (inferred object type) | type { send: (name: string) => string; }"
+    },
+    {
+      "id": "ts-project.dispatch.viaObjectProperty",
+      "project": "ts-project",
+      "file": "bend2/context/typescript/fixtures/ts-project/src/dispatch.ts",
+      "name": "viaObjectProperty",
+      "kind": "FunctionDeclaration",
+      "line": 16,
+      "column": 0,
+      "note": "exported function viaObjectProperty declaration name"
+    },
+    {
+      "id": "ts-project.dispatch.viaObjectProperty.call.send",
+      "project": "ts-project",
+      "file": "bend2/context/typescript/fixtures/ts-project/src/dispatch.ts",
+      "name": "objectHoldingFunction.send",
+      "kind": "CallExpression",
+      "line": 17,
+      "column": 9,
+      "note": "call token objectHoldingFunction.send(name) through an object-literal property | checker.getResolvedSignature -> ArrowFunction @ bend2/context/typescript/fixtures/ts-project/src/dispatch.ts:13:8"
+    },
+    {
+      "id": "ts-project.dispatch.handlers",
+      "project": "ts-project",
+      "file": "bend2/context/typescript/fixtures/ts-project/src/dispatch.ts",
+      "name": "handlers",
+      "kind": "VariableDeclaration",
+      "line": 20,
+      "column": 6,
+      "note": "const handlers: Record<string, Fn> | type Record<string, Fn>"
+    },
+    {
+      "id": "ts-project.dispatch.viaIndexedAccess",
+      "project": "ts-project",
+      "file": "bend2/context/typescript/fixtures/ts-project/src/dispatch.ts",
+      "name": "viaIndexedAccess",
+      "kind": "FunctionDeclaration",
+      "line": 25,
+      "column": 0,
+      "note": "exported function viaIndexedAccess declaration name"
+    },
+    {
+      "id": "ts-project.dispatch.viaIndexedAccess.call.indexed",
+      "project": "ts-project",
+      "file": "bend2/context/typescript/fixtures/ts-project/src/dispatch.ts",
+      "name": "handlers[kind]",
+      "kind": "CallExpression",
+      "line": 26,
+      "column": 9,
+      "note": "call token handlers[kind](name) through an indexed access | checker.getResolvedSignature -> FunctionType @ bend2/context/typescript/fixtures/ts-project/src/dispatch.ts:0:10"
+    },
+    {
+      "id": "ts-project.dispatch.Dispatcher",
+      "project": "ts-project",
+      "file": "bend2/context/typescript/fixtures/ts-project/src/dispatch.ts",
+      "name": "Dispatcher",
+      "kind": "InterfaceDeclaration",
+      "line": 29,
+      "column": 0,
+      "note": "interface Dispatcher declaration name"
+    },
+    {
+      "id": "ts-project.dispatch.dispatcher",
+      "project": "ts-project",
+      "file": "bend2/context/typescript/fixtures/ts-project/src/dispatch.ts",
+      "name": "dispatcher",
+      "kind": "VariableDeclaration",
+      "line": 33,
+      "column": 6,
+      "note": "const dispatcher: Dispatcher (implementation assigned to send) | type Dispatcher"
+    },
+    {
+      "id": "ts-project.dispatch.viaInterfaceReceiver",
+      "project": "ts-project",
+      "file": "bend2/context/typescript/fixtures/ts-project/src/dispatch.ts",
+      "name": "viaInterfaceReceiver",
+      "kind": "FunctionDeclaration",
+      "line": 37,
+      "column": 0,
+      "note": "exported function viaInterfaceReceiver declaration name"
+    },
+    {
+      "id": "ts-project.dispatch.viaInterfaceReceiver.call.send",
+      "project": "ts-project",
+      "file": "bend2/context/typescript/fixtures/ts-project/src/dispatch.ts",
+      "name": "dispatcher.send",
+      "kind": "CallExpression",
+      "line": 38,
+      "column": 9,
+      "note": "call token dispatcher.send(name) through an interface-typed receiver | checker.getResolvedSignature -> send @ bend2/context/typescript/fixtures/ts-project/src/dispatch.ts:30:2"
+    },
+    {
+      "id": "ts-project.merged.Box.decl1",
+      "project": "ts-project",
+      "file": "bend2/context/typescript/fixtures/ts-project/src/merged.ts",
+      "name": "Box",
+      "kind": "InterfaceDeclaration",
+      "line": 0,
+      "column": 0,
+      "note": "first interface Box declaration | merged symbol declarations 2"
+    },
+    {
+      "id": "ts-project.merged.Box.decl2",
+      "project": "ts-project",
+      "file": "bend2/context/typescript/fixtures/ts-project/src/merged.ts",
+      "name": "Box",
+      "kind": "InterfaceDeclaration",
+      "line": 4,
+      "column": 0,
+      "note": "second interface Box declaration merged with the first | merged symbol declarations 2"
+    },
+    {
+      "id": "ts-project.merged.measure.overload1",
+      "project": "ts-project",
+      "file": "bend2/context/typescript/fixtures/ts-project/src/merged.ts",
+      "name": "measure",
+      "kind": "FunctionDeclaration",
+      "line": 8,
+      "column": 0,
+      "note": "measure overload signature 1 (no body)"
+    },
+    {
+      "id": "ts-project.merged.measure.overload2",
+      "project": "ts-project",
+      "file": "bend2/context/typescript/fixtures/ts-project/src/merged.ts",
+      "name": "measure",
+      "kind": "FunctionDeclaration",
+      "line": 9,
+      "column": 0,
+      "note": "measure overload signature 2 (no body)"
+    },
+    {
+      "id": "ts-project.merged.measure.impl",
+      "project": "ts-project",
+      "file": "bend2/context/typescript/fixtures/ts-project/src/merged.ts",
+      "name": "measure",
+      "kind": "FunctionDeclaration",
+      "line": 10,
+      "column": 0,
+      "note": "measure implementation with body | merged symbol declarations 3"
+    },
+    {
+      "id": "ts-project.merged.Counter.class",
+      "project": "ts-project",
+      "file": "bend2/context/typescript/fixtures/ts-project/src/merged.ts",
+      "name": "Counter",
+      "kind": "ClassDeclaration",
+      "line": 14,
+      "column": 0,
+      "note": "class Counter declaration merged with namespace Counter"
+    },
+    {
+      "id": "ts-project.merged.Counter.namespace",
+      "project": "ts-project",
+      "file": "bend2/context/typescript/fixtures/ts-project/src/merged.ts",
+      "name": "Counter",
+      "kind": "ModuleDeclaration",
+      "line": 22,
+      "column": 0,
+      "note": "namespace Counter merged with class Counter | merged symbol declarations 2"
+    },
+    {
+      "id": "ts-project.merged.Counter.origin",
+      "project": "ts-project",
+      "file": "bend2/context/typescript/fixtures/ts-project/src/merged.ts",
+      "name": "origin",
+      "kind": "VariableDeclaration",
+      "line": 23,
+      "column": 15,
+      "note": "const origin inside namespace Counter"
+    },
+    {
+      "id": "ts-project.merged.Counter.reset",
+      "project": "ts-project",
+      "file": "bend2/context/typescript/fixtures/ts-project/src/merged.ts",
+      "name": "reset",
+      "kind": "FunctionDeclaration",
+      "line": 25,
+      "column": 2,
+      "note": "function reset inside namespace Counter"
+    },
+    {
+      "id": "ts-project.flow.Shape",
+      "project": "ts-project",
+      "file": "bend2/context/typescript/fixtures/ts-project/src/flow.ts",
+      "name": "Shape",
+      "kind": "TypeAliasDeclaration",
+      "line": 0,
+      "column": 0,
+      "note": "discriminated union Shape declaration name"
+    },
+    {
+      "id": "ts-project.flow.Shape.member.circle",
+      "project": "ts-project",
+      "file": "bend2/context/typescript/fixtures/ts-project/src/flow.ts",
+      "name": "circle",
+      "kind": "StringLiteral",
+      "line": 1,
+      "column": 12,
+      "note": "discriminant member kind \"circle\" of Shape"
+    },
+    {
+      "id": "ts-project.flow.area",
+      "project": "ts-project",
+      "file": "bend2/context/typescript/fixtures/ts-project/src/flow.ts",
+      "name": "area",
+      "kind": "FunctionDeclaration",
+      "line": 4,
+      "column": 0,
+      "note": "exported function area declaration name"
+    },
+    {
+      "id": "ts-project.flow.area.param.shape",
+      "project": "ts-project",
+      "file": "bend2/context/typescript/fixtures/ts-project/src/flow.ts",
+      "name": "shape",
+      "kind": "Parameter",
+      "line": 4,
+      "column": 21,
+      "note": "shape parameter of area | type Shape"
+    },
+    {
+      "id": "ts-project.flow.area.discriminant",
+      "project": "ts-project",
+      "file": "bend2/context/typescript/fixtures/ts-project/src/flow.ts",
+      "name": "kind",
+      "kind": "PropertyAccessExpression",
+      "line": 5,
+      "column": 10,
+      "note": "narrowing discriminant shape.kind of the switch | type \"circle\" | \"square\""
+    },
+    {
+      "id": "ts-project.flow.area.exhaustive",
+      "project": "ts-project",
+      "file": "bend2/context/typescript/fixtures/ts-project/src/flow.ts",
+      "name": "exhaustive",
+      "kind": "VariableDeclaration",
+      "line": 11,
+      "column": 12,
+      "note": "never-typed default-branch value of the exhaustive switch | type never"
+    },
+    {
+      "id": "ts-project.flow.describe",
+      "project": "ts-project",
+      "file": "bend2/context/typescript/fixtures/ts-project/src/flow.ts",
+      "name": "describe",
+      "kind": "FunctionDeclaration",
+      "line": 17,
+      "column": 0,
+      "note": "exported function describe declaration name"
+    },
+    {
+      "id": "ts-project.flow.describe.typeof-guard",
+      "project": "ts-project",
+      "file": "bend2/context/typescript/fixtures/ts-project/src/flow.ts",
+      "name": "if",
+      "kind": "IfStatement",
+      "line": 18,
+      "column": 2,
+      "note": "typeof value === \"string\" guard statement"
+    },
+    {
+      "id": "ts-project.flow.describe.call.toUpperCase",
+      "project": "ts-project",
+      "file": "bend2/context/typescript/fixtures/ts-project/src/flow.ts",
+      "name": "value.toUpperCase",
+      "kind": "CallExpression",
+      "line": 19,
+      "column": 11,
+      "note": "call in the typeof-narrowed branch | checker.getResolvedSignature -> toUpperCase @ /Users/wahargis/node_modules/typescript/lib/lib.es5.d.ts:507:4"
+    },
+    {
+      "id": "ts-project.flow.formatDate",
+      "project": "ts-project",
+      "file": "bend2/context/typescript/fixtures/ts-project/src/flow.ts",
+      "name": "formatDate",
+      "kind": "FunctionDeclaration",
+      "line": 24,
+      "column": 0,
+      "note": "exported function formatDate declaration name"
+    },
+    {
+      "id": "ts-project.flow.formatDate.instanceof-guard",
+      "project": "ts-project",
+      "file": "bend2/context/typescript/fixtures/ts-project/src/flow.ts",
+      "name": "if",
+      "kind": "IfStatement",
+      "line": 25,
+      "column": 2,
+      "note": "value instanceof Date guard statement"
+    },
+    {
+      "id": "ts-project.flow.formatDate.call.toISOString",
+      "project": "ts-project",
+      "file": "bend2/context/typescript/fixtures/ts-project/src/flow.ts",
+      "name": "value.toISOString",
+      "kind": "CallExpression",
+      "line": 26,
+      "column": 11,
+      "note": "call in the instanceof-narrowed branch | checker.getResolvedSignature -> toISOString @ /Users/wahargis/node_modules/typescript/lib/lib.es5.d.ts:919:4"
+    },
+    {
+      "id": "ts-project.flow.afterReturn",
+      "project": "ts-project",
+      "file": "bend2/context/typescript/fixtures/ts-project/src/flow.ts",
+      "name": "afterReturn",
+      "kind": "FunctionDeclaration",
+      "line": 31,
+      "column": 0,
+      "note": "exported function afterReturn declaration name"
+    },
+    {
+      "id": "ts-project.flow.afterReturn.unreachable-statement",
+      "project": "ts-project",
+      "file": "bend2/context/typescript/fixtures/ts-project/src/flow.ts",
+      "name": "console",
+      "kind": "ExpressionStatement",
+      "line": 33,
+      "column": 2,
+      "note": "statement after return 1 (TS7027 only when allowUnreachableCode:false)"
+    },
+    {
+      "id": "ts-project.flow.alwaysThrows",
+      "project": "ts-project",
+      "file": "bend2/context/typescript/fixtures/ts-project/src/flow.ts",
+      "name": "alwaysThrows",
+      "kind": "FunctionDeclaration",
+      "line": 36,
+      "column": 0,
+      "note": "exported function alwaysThrows declaration name"
+    },
+    {
+      "id": "ts-project.flow.alwaysThrows.return-type",
+      "project": "ts-project",
+      "file": "bend2/context/typescript/fixtures/ts-project/src/flow.ts",
+      "name": "NeverKeyword",
+      "kind": "NeverKeyword",
+      "line": 36,
+      "column": 47,
+      "note": "explicit never return type annotation | type never"
+    },
+    {
+      "id": "ts-project.flow.afterNeverCall",
+      "project": "ts-project",
+      "file": "bend2/context/typescript/fixtures/ts-project/src/flow.ts",
+      "name": "afterNeverCall",
+      "kind": "FunctionDeclaration",
+      "line": 40,
+      "column": 0,
+      "note": "exported function afterNeverCall declaration name"
+    },
+    {
+      "id": "ts-project.flow.afterNeverCall.never-call",
+      "project": "ts-project",
+      "file": "bend2/context/typescript/fixtures/ts-project/src/flow.ts",
+      "name": "alwaysThrows",
+      "kind": "CallExpression",
+      "line": 41,
+      "column": 2,
+      "note": "call to the never-annotated function | checker.getResolvedSignature -> alwaysThrows @ bend2/context/typescript/fixtures/ts-project/src/flow.ts:36:0"
+    },
+    {
+      "id": "ts-project.flow.afterNeverCall.unreachable-return",
+      "project": "ts-project",
+      "file": "bend2/context/typescript/fixtures/ts-project/src/flow.ts",
+      "name": "return",
+      "kind": "ReturnStatement",
+      "line": 42,
+      "column": 2,
+      "note": "statement after the never call (TS7027 suggestion at default options)"
+    },
+    {
+      "id": "ts-project.flow.definiteAssignment",
+      "project": "ts-project",
+      "file": "bend2/context/typescript/fixtures/ts-project/src/flow.ts",
+      "name": "definiteAssignment",
+      "kind": "FunctionDeclaration",
+      "line": 45,
+      "column": 0,
+      "note": "exported function definiteAssignment declaration name"
+    },
+    {
+      "id": "ts-project.flow.definiteAssignment.x.decl",
+      "project": "ts-project",
+      "file": "bend2/context/typescript/fixtures/ts-project/src/flow.ts",
+      "name": "x",
+      "kind": "VariableDeclaration",
+      "line": 46,
+      "column": 6,
+      "note": "let x: number declaration (no initializer)"
+    },
+    {
+      "id": "ts-project.flow.definiteAssignment.x.read",
+      "project": "ts-project",
+      "file": "bend2/context/typescript/fixtures/ts-project/src/flow.ts",
+      "name": "x",
+      "kind": "Identifier",
+      "line": 50,
+      "column": 9,
+      "note": "read of x after conditional assignment (TS2454 site)"
+    },
+    {
+      "id": "ts-project.exceptions.Boom",
+      "project": "ts-project",
+      "file": "bend2/context/typescript/fixtures/ts-project/src/exceptions.ts",
+      "name": "Boom",
+      "kind": "ClassDeclaration",
+      "line": 0,
+      "column": 0,
+      "note": "error class Boom declaration name"
+    },
+    {
+      "id": "ts-project.exceptions.tryThrow",
+      "project": "ts-project",
+      "file": "bend2/context/typescript/fixtures/ts-project/src/exceptions.ts",
+      "name": "tryThrow",
+      "kind": "FunctionDeclaration",
+      "line": 7,
+      "column": 0,
+      "note": "exported function tryThrow declaration name"
+    },
+    {
+      "id": "ts-project.exceptions.tryThrow.try",
+      "project": "ts-project",
+      "file": "bend2/context/typescript/fixtures/ts-project/src/exceptions.ts",
+      "name": "try",
+      "kind": "TryStatement",
+      "line": 8,
+      "column": 2,
+      "note": "try statement with catch and finally clauses"
+    },
+    {
+      "id": "ts-project.exceptions.tryThrow.throw",
+      "project": "ts-project",
+      "file": "bend2/context/typescript/fixtures/ts-project/src/exceptions.ts",
+      "name": "throw",
+      "kind": "ThrowStatement",
+      "line": 10,
+      "column": 6,
+      "note": "throw inside the try block"
+    },
+    {
+      "id": "ts-project.exceptions.tryThrow.catch",
+      "project": "ts-project",
+      "file": "bend2/context/typescript/fixtures/ts-project/src/exceptions.ts",
+      "name": "catch",
+      "kind": "CatchClause",
+      "line": 13,
+      "column": 4,
+      "note": "catch clause of the try"
+    },
+    {
+      "id": "ts-project.exceptions.tryThrow.finally",
+      "project": "ts-project",
+      "file": "bend2/context/typescript/fixtures/ts-project/src/exceptions.ts",
+      "name": "{",
+      "kind": "Block",
+      "line": 15,
+      "column": 12,
+      "note": "finally block of the try"
+    },
+    {
+      "id": "ts-project.exceptions.throwInCallback",
+      "project": "ts-project",
+      "file": "bend2/context/typescript/fixtures/ts-project/src/exceptions.ts",
+      "name": "throwInCallback",
+      "kind": "FunctionDeclaration",
+      "line": 20,
+      "column": 0,
+      "note": "exported function throwInCallback declaration name"
+    },
+    {
+      "id": "ts-project.exceptions.throwInCallback.arrow",
+      "project": "ts-project",
+      "file": "bend2/context/typescript/fixtures/ts-project/src/exceptions.ts",
+      "name": "(",
+      "kind": "ArrowFunction",
+      "line": 21,
+      "column": 17,
+      "note": "arrow callback passed to values.forEach"
+    },
+    {
+      "id": "ts-project.exceptions.throwInCallback.throw",
+      "project": "ts-project",
+      "file": "bend2/context/typescript/fixtures/ts-project/src/exceptions.ts",
+      "name": "throw",
+      "kind": "ThrowStatement",
+      "line": 23,
+      "column": 6,
+      "note": "throw inside the arrow callback"
+    },
+    {
+      "id": "ts-project.exceptions.throwAsync",
+      "project": "ts-project",
+      "file": "bend2/context/typescript/fixtures/ts-project/src/exceptions.ts",
+      "name": "throwAsync",
+      "kind": "VariableDeclaration",
+      "line": 28,
+      "column": 13,
+      "note": "exported const throwAsync (async arrow) | type (n: number) => Promise<number>"
+    },
+    {
+      "id": "ts-project.exceptions.throwAsync.arrow",
+      "project": "ts-project",
+      "file": "bend2/context/typescript/fixtures/ts-project/src/exceptions.ts",
+      "name": "async",
+      "kind": "ArrowFunction",
+      "line": 28,
+      "column": 26,
+      "note": "async arrow function initializer of throwAsync"
+    },
+    {
+      "id": "ts-project.exceptions.throwAsync.throw",
+      "project": "ts-project",
+      "file": "bend2/context/typescript/fixtures/ts-project/src/exceptions.ts",
+      "name": "throw",
+      "kind": "ThrowStatement",
+      "line": 30,
+      "column": 4,
+      "note": "throw inside the async arrow"
+    },
+    {
+      "id": "ts-project.exceptions.checked",
+      "project": "ts-project",
+      "file": "bend2/context/typescript/fixtures/ts-project/src/exceptions.ts",
+      "name": "checked",
+      "kind": "FunctionDeclaration",
+      "line": 38,
+      "column": 0,
+      "note": "declare function checked (ambient, no body)"
+    },
+    {
+      "id": "ts-project.exceptions.checked.jsdoc.throws",
+      "project": "ts-project",
+      "file": "bend2/context/typescript/fixtures/ts-project/src/exceptions.ts",
+      "name": "@throws",
+      "kind": "JSDocThrowsTag",
+      "line": 36,
+      "column": 3,
+      "note": "JSDoc @throws {Boom} when n is negative tag"
+    },
+    {
+      "id": "ts-project.exceptions.unchecked",
+      "project": "ts-project",
+      "file": "bend2/context/typescript/fixtures/ts-project/src/exceptions.ts",
+      "name": "unchecked",
+      "kind": "FunctionDeclaration",
+      "line": 40,
+      "column": 0,
+      "note": "exported function that can throw without a @throws tag | measured @throws tags 0"
+    },
+    {
+      "id": "ts-project.exceptions.neverReturns",
+      "project": "ts-project",
+      "file": "bend2/context/typescript/fixtures/ts-project/src/exceptions.ts",
+      "name": "neverReturns",
+      "kind": "FunctionDeclaration",
+      "line": 47,
+      "column": 0,
+      "note": "exported never-annotated function declaration name"
+    },
+    {
+      "id": "ts-project.exceptions.neverReturns.throw",
+      "project": "ts-project",
+      "file": "bend2/context/typescript/fixtures/ts-project/src/exceptions.ts",
+      "name": "throw",
+      "kind": "ThrowStatement",
+      "line": 48,
+      "column": 2,
+      "note": "throw that makes neverReturns return never"
+    },
+    {
+      "id": "ts-project.sql-client.SqlClient",
+      "project": "ts-project",
+      "file": "bend2/context/typescript/fixtures/ts-project/src/sql-client.d.ts",
+      "name": "SqlClient",
+      "kind": "ClassDeclaration",
+      "line": 0,
+      "column": 0,
+      "note": "ambient declared class SqlClient"
+    },
+    {
+      "id": "ts-project.sql-client.SqlClient.prepare",
+      "project": "ts-project",
+      "file": "bend2/context/typescript/fixtures/ts-project/src/sql-client.d.ts",
+      "name": "prepare",
+      "kind": "MethodDeclaration",
+      "line": 1,
+      "column": 2,
+      "note": "SqlClient.prepare method declaration"
+    },
+    {
+      "id": "ts-project.sql-client.Statement",
+      "project": "ts-project",
+      "file": "bend2/context/typescript/fixtures/ts-project/src/sql-client.d.ts",
+      "name": "Statement",
+      "kind": "InterfaceDeclaration",
+      "line": 4,
+      "column": 0,
+      "note": "Statement interface declaration"
+    },
+    {
+      "id": "ts-project.sql-client.Statement.all",
+      "project": "ts-project",
+      "file": "bend2/context/typescript/fixtures/ts-project/src/sql-client.d.ts",
+      "name": "all",
+      "kind": "MethodSignature",
+      "line": 5,
+      "column": 2,
+      "note": "Statement.all method signature declaration"
+    },
+    {
+      "id": "ts-project.db.import.SqlClient",
+      "project": "ts-project",
+      "file": "bend2/context/typescript/fixtures/ts-project/src/db.ts",
+      "name": "SqlClient",
+      "kind": "Identifier",
+      "line": 0,
+      "column": 9,
+      "note": "import binding SqlClient specifier | aliased target SqlClient @ bend2/context/typescript/fixtures/ts-project/src/sql-client.d.ts:0:0"
+    },
+    {
+      "id": "ts-project.db.specifier.sql-client",
+      "project": "ts-project",
+      "file": "bend2/context/typescript/fixtures/ts-project/src/db.ts",
+      "name": "./sql-client",
+      "kind": "StringLiteral",
+      "line": 0,
+      "column": 26,
+      "note": "import module specifier \"./sql-client\" (resolves to the ambient .d.ts)"
+    },
+    {
+      "id": "ts-project.db.selectUsers",
+      "project": "ts-project",
+      "file": "bend2/context/typescript/fixtures/ts-project/src/db.ts",
+      "name": "selectUsers",
+      "kind": "FunctionDeclaration",
+      "line": 2,
+      "column": 0,
+      "note": "exported function selectUsers declaration name"
+    },
+    {
+      "id": "ts-project.db.selectUsers.sql-literal",
+      "project": "ts-project",
+      "file": "bend2/context/typescript/fixtures/ts-project/src/db.ts",
+      "name": "SELECT id, name FROM users WHERE note = ' FROM accounts'",
+      "kind": "StringLiteral",
+      "line": 3,
+      "column": 24,
+      "note": "single string-literal SQL argument with decoy + real FROM clause"
+    },
+    {
+      "id": "ts-project.db.countUsers",
+      "project": "ts-project",
+      "file": "bend2/context/typescript/fixtures/ts-project/src/db.ts",
+      "name": "countUsers",
+      "kind": "FunctionDeclaration",
+      "line": 6,
+      "column": 0,
+      "note": "exported function countUsers declaration name"
+    },
+    {
+      "id": "ts-project.db.countUsers.template",
+      "project": "ts-project",
+      "file": "bend2/context/typescript/fixtures/ts-project/src/db.ts",
+      "name": "SELECT count(*) FROM users",
+      "kind": "NoSubstitutionTemplateLiteral",
+      "line": 7,
+      "column": 24,
+      "note": "template literal SQL argument with no substitutions | ts.SyntaxKind.NoSubstitutionTemplateLiteral (numeric 15, alias FirstTemplateToken)"
+    },
+    {
+      "id": "ts-project.db.selectByKind",
+      "project": "ts-project",
+      "file": "bend2/context/typescript/fixtures/ts-project/src/db.ts",
+      "name": "selectByKind",
+      "kind": "FunctionDeclaration",
+      "line": 10,
+      "column": 0,
+      "note": "exported function selectByKind declaration name"
+    },
+    {
+      "id": "ts-project.db.selectByKind.template",
+      "project": "ts-project",
+      "file": "bend2/context/typescript/fixtures/ts-project/src/db.ts",
+      "name": "`SELECT id FROM users WHERE kind = '${",
+      "kind": "TemplateExpression",
+      "line": 11,
+      "column": 24,
+      "note": "template literal SQL argument with one substitution (dynamic)"
+    },
+    {
+      "id": "ts-project.db.prepare",
+      "project": "ts-project",
+      "file": "bend2/context/typescript/fixtures/ts-project/src/db.ts",
+      "name": "prepare",
+      "kind": "FunctionDeclaration",
+      "line": 14,
+      "column": 0,
+      "note": "locally declared function prepare that shadows the client method"
+    },
+    {
+      "id": "ts-project.db.shadowedPrepare",
+      "project": "ts-project",
+      "file": "bend2/context/typescript/fixtures/ts-project/src/db.ts",
+      "name": "shadowedPrepare",
+      "kind": "FunctionDeclaration",
+      "line": 18,
+      "column": 0,
+      "note": "exported function shadowedPrepare declaration name"
+    },
+    {
+      "id": "ts-project.db.shadowedPrepare.call",
+      "project": "ts-project",
+      "file": "bend2/context/typescript/fixtures/ts-project/src/db.ts",
+      "name": "prepare",
+      "kind": "CallExpression",
+      "line": 19,
+      "column": 9,
+      "note": "call token prepare(sql) bound to the local shadowing function | checker.getResolvedSignature -> prepare @ bend2/context/typescript/fixtures/ts-project/src/db.ts:14:0"
+    },
+    {
+      "id": "ts-project.db.dynamicReceiver",
+      "project": "ts-project",
+      "file": "bend2/context/typescript/fixtures/ts-project/src/db.ts",
+      "name": "dynamicReceiver",
+      "kind": "FunctionDeclaration",
+      "line": 22,
+      "column": 0,
+      "note": "exported function dynamicReceiver declaration name"
+    },
+    {
+      "id": "ts-project.db.dynamicReceiver.call",
+      "project": "ts-project",
+      "file": "bend2/context/typescript/fixtures/ts-project/src/db.ts",
+      "name": "client.prepare",
+      "kind": "CallExpression",
+      "line": 23,
+      "column": 9,
+      "note": "call token client.prepare(sql) on an any-typed receiver | checker.getResolvedSignature -> no declaration (unresolved/any callee)"
+    },
+    {
+      "id": "js-project.messages.label",
+      "project": "js-project",
+      "file": "bend2/context/typescript/fixtures/js-project/src/messages.js",
+      "name": "label",
+      "kind": "FunctionDeclaration",
+      "line": 9,
+      "column": 0,
+      "note": "exported JS function label (JSDoc-typed item parameter)"
+    },
+    {
+      "id": "js-project.messages.label.item-name",
+      "project": "js-project",
+      "file": "bend2/context/typescript/fixtures/js-project/src/messages.js",
+      "name": "name",
+      "kind": "PropertyAccessExpression",
+      "line": 10,
+      "column": 23,
+      "note": "property access item.name on the JSDoc-typed object | type string"
+    },
+    {
+      "id": "js-project.messages.describe",
+      "project": "js-project",
+      "file": "bend2/context/typescript/fixtures/js-project/src/messages.js",
+      "name": "describe",
+      "kind": "FunctionDeclaration",
+      "line": 17,
+      "column": 0,
+      "note": "exported JS function describe declaration name"
+    },
+    {
+      "id": "js-project.broken.stringify",
+      "project": "js-project",
+      "file": "bend2/context/typescript/fixtures/js-project/src/broken.js",
+      "name": "stringify",
+      "kind": "FunctionDeclaration",
+      "line": 4,
+      "column": 0,
+      "note": "exported JS function stringify declaration name"
+    },
+    {
+      "id": "js-project.broken.stringify.error-return",
+      "project": "js-project",
+      "file": "bend2/context/typescript/fixtures/js-project/src/broken.js",
+      "name": "return",
+      "kind": "ReturnStatement",
+      "line": 5,
+      "column": 2,
+      "note": "deliberate TS2322 site (number returned where JSDoc declares string)"
+    },
+    {
+      "id": "states-a.app.describe",
+      "project": "states-a",
+      "file": "bend2/context/typescript/fixtures/states/a/src/app.ts",
+      "name": "describe",
+      "kind": "FunctionDeclaration",
+      "line": 2,
+      "column": 0,
+      "note": "exported function describe declaration name"
+    },
+    {
+      "id": "states-a.app.specifier.dep",
+      "project": "states-a",
+      "file": "bend2/context/typescript/fixtures/states/a/src/app.ts",
+      "name": "./dep",
+      "kind": "StringLiteral",
+      "line": 0,
+      "column": 22,
+      "note": "import module specifier \"./dep\""
+    },
+    {
+      "id": "states-a.app.value.read",
+      "project": "states-a",
+      "file": "bend2/context/typescript/fixtures/states/a/src/app.ts",
+      "name": "value",
+      "kind": "Identifier",
+      "line": 3,
+      "column": 18,
+      "note": "template read of imported value | type number"
+    },
+    {
+      "id": "states-a.dep.value",
+      "project": "states-a",
+      "file": "bend2/context/typescript/fixtures/states/a/src/dep.ts",
+      "name": "value",
+      "kind": "VariableDeclaration",
+      "line": 0,
+      "column": 13,
+      "note": "exported const value declaration name | type number"
+    },
+    {
+      "id": "states-b.app.describe",
+      "project": "states-b",
+      "file": "bend2/context/typescript/fixtures/states/b/src/app.ts",
+      "name": "describe",
+      "kind": "FunctionDeclaration",
+      "line": 3,
+      "column": 0,
+      "note": "exported function describe declaration name"
+    },
+    {
+      "id": "states-b.app.specifier.dep",
+      "project": "states-b",
+      "file": "bend2/context/typescript/fixtures/states/b/src/app.ts",
+      "name": "./dep",
+      "kind": "StringLiteral",
+      "line": 0,
+      "column": 22,
+      "note": "import module specifier \"./dep\""
+    },
+    {
+      "id": "states-b.app.specifier.added",
+      "project": "states-b",
+      "file": "bend2/context/typescript/fixtures/states/b/src/app.ts",
+      "name": "./added",
+      "kind": "StringLiteral",
+      "line": 1,
+      "column": 22,
+      "note": "import module specifier \"./added\" (module absent in states/a)"
+    },
+    {
+      "id": "states-b.app.value.read",
+      "project": "states-b",
+      "file": "bend2/context/typescript/fixtures/states/b/src/app.ts",
+      "name": "value",
+      "kind": "Identifier",
+      "line": 4,
+      "column": 18,
+      "note": "template read of imported value (string in state b) | type string"
+    },
+    {
+      "id": "states-b.app.extra.read",
+      "project": "states-b",
+      "file": "bend2/context/typescript/fixtures/states/b/src/app.ts",
+      "name": "extra",
+      "kind": "Identifier",
+      "line": 4,
+      "column": 33,
+      "note": "template read of imported extra | type \"added\""
+    },
+    {
+      "id": "states-b.dep.value",
+      "project": "states-b",
+      "file": "bend2/context/typescript/fixtures/states/b/src/dep.ts",
+      "name": "value",
+      "kind": "VariableDeclaration",
+      "line": 0,
+      "column": 13,
+      "note": "exported const value declaration name (string in state b) | type string"
+    },
+    {
+      "id": "states-b.added.extra",
+      "project": "states-b",
+      "file": "bend2/context/typescript/fixtures/states/b/src/added.ts",
+      "name": "extra",
+      "kind": "VariableDeclaration",
+      "line": 0,
+      "column": 13,
+      "note": "exported const extra declaration name (only in states/b) | type \"added\""
+    }
+  ],
+  "sqlCalls": [
+    {
+      "id": "sql-call.db.selectUsers.prepare",
+      "project": "ts-project",
+      "file": "bend2/context/typescript/fixtures/ts-project/src/db.ts",
+      "line": 3,
+      "column": 9,
+      "name": "client.prepare",
+      "label": "resolved client with single string-literal SQL argument",
+      "form": "stringLiteral",
+      "substitutions": 0,
+      "sqlText": "SELECT id, name FROM users WHERE note = ' FROM accounts'",
+      "sqlLiteralPosition": {
+        "line": 3,
+        "column": 24
+      },
+      "receiver": "client",
+      "receiverBinding": "resolved",
+      "receiverType": "SqlClient",
+      "clientMatch": "matched",
+      "resolvedDeclaration": {
+        "file": "bend2/context/typescript/fixtures/ts-project/src/sql-client.d.ts",
+        "line": 1,
+        "column": 2,
+        "name": "prepare"
+      },
+      "clientDeclaration": {
+        "file": "bend2/context/typescript/fixtures/ts-project/src/sql-client.d.ts",
+        "line": 0,
+        "column": 0,
+        "name": "SqlClient"
+      },
+      "note": "CallExpression start (first token of callee client.prepare in selectUsers); resolved client with single string-literal SQL argument; clientMatch=matched from checker.getResolvedSignature"
+    },
+    {
+      "id": "sql-call.db.countUsers.prepare",
+      "project": "ts-project",
+      "file": "bend2/context/typescript/fixtures/ts-project/src/db.ts",
+      "line": 7,
+      "column": 9,
+      "name": "client.prepare",
+      "label": "resolved client with no-substitution template SQL",
+      "form": "template",
+      "substitutions": 0,
+      "sqlText": "SELECT count(*) FROM users",
+      "sqlLiteralPosition": {
+        "line": 7,
+        "column": 24
+      },
+      "receiver": "client",
+      "receiverBinding": "resolved",
+      "receiverType": "SqlClient",
+      "clientMatch": "matched",
+      "resolvedDeclaration": {
+        "file": "bend2/context/typescript/fixtures/ts-project/src/sql-client.d.ts",
+        "line": 1,
+        "column": 2,
+        "name": "prepare"
+      },
+      "clientDeclaration": {
+        "file": "bend2/context/typescript/fixtures/ts-project/src/sql-client.d.ts",
+        "line": 0,
+        "column": 0,
+        "name": "SqlClient"
+      },
+      "note": "CallExpression start (first token of callee client.prepare in countUsers); resolved client with no-substitution template SQL; clientMatch=matched from checker.getResolvedSignature"
+    },
+    {
+      "id": "sql-call.db.selectByKind.prepare",
+      "project": "ts-project",
+      "file": "bend2/context/typescript/fixtures/ts-project/src/db.ts",
+      "line": 11,
+      "column": 9,
+      "name": "client.prepare",
+      "label": "resolved client with substituted template SQL (dynamic)",
+      "form": "dynamic",
+      "substitutions": 1,
+      "sqlText": null,
+      "sqlLiteralPosition": {
+        "line": 11,
+        "column": 24
+      },
+      "receiver": "client",
+      "receiverBinding": "resolved",
+      "receiverType": "SqlClient",
+      "clientMatch": "matched",
+      "resolvedDeclaration": {
+        "file": "bend2/context/typescript/fixtures/ts-project/src/sql-client.d.ts",
+        "line": 1,
+        "column": 2,
+        "name": "prepare"
+      },
+      "clientDeclaration": {
+        "file": "bend2/context/typescript/fixtures/ts-project/src/sql-client.d.ts",
+        "line": 0,
+        "column": 0,
+        "name": "SqlClient"
+      },
+      "note": "CallExpression start (first token of callee client.prepare in selectByKind); resolved client with substituted template SQL (dynamic); clientMatch=matched from checker.getResolvedSignature"
+    },
+    {
+      "id": "sql-call.db.shadowedPrepare.prepare",
+      "project": "ts-project",
+      "file": "bend2/context/typescript/fixtures/ts-project/src/db.ts",
+      "line": 19,
+      "column": 9,
+      "name": "prepare",
+      "label": "same-name local function shadowing the client method",
+      "form": "dynamic",
+      "substitutions": 0,
+      "sqlText": null,
+      "sqlLiteralPosition": null,
+      "receiver": "prepare",
+      "receiverBinding": "resolved",
+      "receiverType": "(sql: string) => string",
+      "clientMatch": "shadowed",
+      "resolvedDeclaration": {
+        "file": "bend2/context/typescript/fixtures/ts-project/src/db.ts",
+        "line": 14,
+        "column": 0,
+        "name": "prepare"
+      },
+      "clientDeclaration": {
+        "file": "bend2/context/typescript/fixtures/ts-project/src/sql-client.d.ts",
+        "line": 0,
+        "column": 0,
+        "name": "SqlClient"
+      },
+      "note": "CallExpression start (first token of callee prepare in shadowedPrepare); same-name local function shadowing the client method; clientMatch=shadowed from checker.getResolvedSignature"
+    },
+    {
+      "id": "sql-call.db.dynamicReceiver.prepare",
+      "project": "ts-project",
+      "file": "bend2/context/typescript/fixtures/ts-project/src/db.ts",
+      "line": 23,
+      "column": 9,
+      "name": "client.prepare",
+      "label": "any-typed receiver",
+      "form": "dynamic",
+      "substitutions": 0,
+      "sqlText": null,
+      "sqlLiteralPosition": null,
+      "receiver": "client",
+      "receiverBinding": "any",
+      "receiverType": "any",
+      "clientMatch": "dynamic",
+      "resolvedDeclaration": null,
+      "clientDeclaration": {
+        "file": "bend2/context/typescript/fixtures/ts-project/src/sql-client.d.ts",
+        "line": 0,
+        "column": 0,
+        "name": "SqlClient"
+      },
+      "note": "CallExpression start (first token of callee client.prepare in dynamicReceiver); any-typed receiver; clientMatch=dynamic from checker.getResolvedSignature"
+    }
+  ],
+  "gaps": [
+    {
+      "id": "gap.models.FormalGreeter.greet.no-outgoing-call-edge",
+      "file": "bend2/context/typescript/fixtures/ts-project/src/models.ts",
+      "line": 5,
+      "column": 2,
+      "expected": "no-outgoing-call-edge"
+    },
+    {
+      "id": "gap.impl.GreeterImpl.greet.no-outgoing-call-edge",
+      "file": "bend2/context/typescript/fixtures/ts-project/src/impl.ts",
+      "line": 3,
+      "column": 2,
+      "expected": "no-outgoing-call-edge"
+    },
+    {
+      "id": "gap.util.makeMessage.greet.indirect-call",
+      "file": "bend2/context/typescript/fixtures/ts-project/src/util.ts",
+      "line": 3,
+      "column": 9,
+      "expected": "indirect-call"
+    },
+    {
+      "id": "gap.dispatch.invoke.fn.indirect-call",
+      "file": "bend2/context/typescript/fixtures/ts-project/src/dispatch.ts",
+      "line": 3,
+      "column": 9,
+      "expected": "indirect-call"
+    },
+    {
+      "id": "gap.dispatch.viaVariable.functionVariable.indirect-call",
+      "file": "bend2/context/typescript/fixtures/ts-project/src/dispatch.ts",
+      "line": 9,
+      "column": 9,
+      "expected": "indirect-call"
+    },
+    {
+      "id": "gap.dispatch.viaObjectProperty.send.indirect-call",
+      "file": "bend2/context/typescript/fixtures/ts-project/src/dispatch.ts",
+      "line": 17,
+      "column": 9,
+      "expected": "indirect-call"
+    },
+    {
+      "id": "gap.dispatch.viaIndexedAccess.dynamic-property-access",
+      "file": "bend2/context/typescript/fixtures/ts-project/src/dispatch.ts",
+      "line": 26,
+      "column": 9,
+      "expected": "dynamic-property-access"
+    },
+    {
+      "id": "gap.dispatch.viaInterfaceReceiver.send.indirect-call",
+      "file": "bend2/context/typescript/fixtures/ts-project/src/dispatch.ts",
+      "line": 38,
+      "column": 9,
+      "expected": "indirect-call"
+    },
+    {
+      "id": "gap.db.shadowedPrepare.prepare.shadowed-client",
+      "file": "bend2/context/typescript/fixtures/ts-project/src/db.ts",
+      "line": 19,
+      "column": 9,
+      "expected": "shadowed-client"
+    },
+    {
+      "id": "gap.db.dynamicReceiver.prepare.indirect-call",
+      "file": "bend2/context/typescript/fixtures/ts-project/src/db.ts",
+      "line": 23,
+      "column": 9,
+      "expected": "indirect-call"
+    }
+  ]
+}
