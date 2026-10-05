@@ -41,17 +41,23 @@ def child(record, name, argv, run, stdin=None):
     stdout = run / 'out' / (name + '.stdout')
     stderr = run / 'out' / (name + '.stderr')
     stdout.parent.mkdir(parents=True, exist_ok=True)
-    with stdout.open('wb') as out, stderr.open('wb') as err:
-        process = subprocess.Popen(argv, cwd=ROOT, stdin=subprocess.PIPE if stdin else None,
-                                   stdout=out, stderr=err)
-        process.communicate(stdin)
-    entry = {'name': name, 'argv': argv, 'cwd': str(ROOT), 'pid': process.pid,
-             'exit_code': process.returncode,
-             'stdout': {'path': str(stdout.relative_to(run)), 'bytes': stdout.stat().st_size,
-                        'sha256': digest(stdout)},
-             'stderr': {'path': str(stderr.relative_to(run)), 'bytes': stderr.stat().st_size,
-                        'sha256': digest(stderr)}}
+    entry = {'name': name, 'argv': argv, 'cwd': str(ROOT)}
+    try:
+        with stdout.open('wb') as out, stderr.open('wb') as err:
+            process = subprocess.Popen(argv, cwd=ROOT, stdin=subprocess.PIPE if stdin else None,
+                                       stdout=out, stderr=err)
+            entry['pid'] = process.pid
+            process.communicate(stdin)
+        entry['exit_code'] = process.returncode
+    except OSError as error:
+        entry['spawn_error'] = repr(error)
+        entry['exit_code'] = None
+    for stream, path in (('stdout', stdout), ('stderr', stderr)):
+        entry[stream] = {'path': str(path.relative_to(run)) if path.exists() else None,
+                         'bytes': path.stat().st_size if path.exists() else 0,
+                         'sha256': digest(path) if path.exists() else None}
     record.append(entry)
+    (run / 'run.json').write_text(json.dumps({'children': record}, indent=2) + '\n')
     return entry
 
 
@@ -87,6 +93,11 @@ def main():
                                       text=True).strip()
     if version != 'bend 2.0.25':
         raise SystemExit('the compiler is not bend 2.0.25: ' + version)
+    record.append({'name': 'preconditions', 'cwd': str(ROOT), 'git_status': status,
+                   'bend': str(args.bend), 'bend_version': version,
+                   'compiler_archive': str(args.compiler_archive),
+                   'node': shutil.which('node')})
+    (run / 'run.json').write_text(json.dumps({'children': record}, indent=2) + '\n')
 
     # 1. Discovery, then one producer job per discovered group: a complete run.
     discovery = child(record, 'discover', ['node', str(CHECKER), '--discover'], run)
@@ -121,10 +132,18 @@ def main():
                       'closure_sha256': result['closure_sha256'],
                       'reduction_sha256': result['reduction']['sha256']}, indent=2))
 
-    # 3. Relocation: the copied closure re-hashes to the same inventory.
+    # 3. Relocation: the copied closure re-hashes to the same inventory, and the
+    #    package consumes the relocated copy end to end, producing the same
+    #    stable reduction as the original producer evidence.
     relocated = run / 'relocate' / 'closure'
     shutil.copytree(run / 'payload-closure', relocated)
     package.verify_inventory(relocated, result['inventory'])
+    relocated_result = package.controls_evidence(relocated, package.snapshot(), args.bend,
+                                                 audit=run / 'relocate' / 'audit')
+    if relocated_result['reduction_sha256'] != result['reduction_sha256']:
+        raise SystemExit('the relocated closure produced a different stable reduction')
+    (run / 'relocated-reduction.json').write_text(
+        json.dumps(relocated_result['reduction'], indent=2) + '\n')
 
     # 4. Changed member: the relocated closure no longer matches its inventory.
     victim = next(path for path in sorted(relocated.rglob('*.stdout')))

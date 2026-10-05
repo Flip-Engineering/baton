@@ -743,6 +743,11 @@ def verify_process(record, baseline, label):
         wrapper_exit = outcome['wrapper_exit_code']
         require(wrapper_exit is None or (type(wrapper_exit) is int and wrapper_exit >= 0),
                 'A controls evidence ' + label + ' records an invalid wrapper exit status')
+    if 'wrapper_signal' in outcome:
+        wrapper_signal = outcome['wrapper_signal']
+        require(wrapper_signal is None
+                or (isinstance(wrapper_signal, str) and wrapper_signal),
+                'A controls evidence ' + label + ' records an invalid wrapper signal')
     if state != 'exited':
         raise RuntimeError('A controls evidence ' + label + ' did not complete as an exited child: '
                            + json.dumps(state))
@@ -779,6 +784,8 @@ def verify_delta(record, control, directory, label):
     require(module.is_file(), 'A control names no module in this checkout: ' + control['module'])
     require(delta['original_sha256'] == sha256(module),
             'A control delta original digest is not the admitted module bytes: ' + label)
+    require(not (directory / delta['changed_path']).is_symlink(),
+            'A control changed file is itself a symlink: ' + label)
     walked = directory.resolve()
     for part in PurePosixPath(delta['changed_path']).parts[:-1]:
         walked = walked / part
@@ -827,6 +834,18 @@ def producer_inventory(directory, destination=None):
     document['inventory_sha256'] = hashlib.sha256(
         json.dumps(members, sort_keys=True, separators=(',', ':')).encode()).hexdigest()
     return document
+
+
+def verify_archived_inventory(directory, recorded):
+    """Require every recorded original member to be present with identical bytes."""
+    current = producer_inventory(directory)
+    present = {member['path']: member for member in current['members']}
+    for member in recorded.get('members', []):
+        found = present.get(member['path'])
+        require(found is not None and found['sha256'] == member['sha256']
+                and found['bytes'] == member['bytes'],
+                'An archived evidence member is missing or changed: ' + member['path'])
+    return current
 
 
 def verify_inventory(directory, recorded):
@@ -929,6 +948,8 @@ def controls_evidence(directory, initial, compiler, audit=None, destination=None
         seen_modules.add(module)
         require(bundle.get('binding') == expected['sha256'],
                 'A bundle checked a different control definition set: ' + json.dumps(module))
+        require(bundle.get('status') == 'complete',
+                'A bundle did not report complete: ' + json.dumps(bundle.get('status')))
         entry = bundle.get('entry')
         require(isinstance(entry, str) and (ROOT / entry).is_file(),
                 'A bundle names no entry from this source: ' + json.dumps(entry))
@@ -1797,6 +1818,17 @@ def package(args):
         (payload / 'bin/baton2').chmod(0o755)
         stage_adapters(payload)
         shutil.copytree(logs, payload / 'logs')
+        archived = None
+        if controls is not None:
+            copied = (controls['inventory'] or {}).get('copied')
+            require(copied, 'The verified controls closure was not copied for archiving')
+            archived = payload / 'controls-evidence'
+            require(not archived.exists(), 'The payload already holds controls evidence')
+            shutil.copytree(copied, archived)
+            write_json(archived / 'inventory.json', controls['inventory'])
+            write_json(archived / 'reduction.json', controls['reduction'])
+            require(verify_archived_inventory(archived, controls['inventory'])['members'],
+                    'The archived controls closure holds no member')
         terms = stage_notices(payload, notices, identity['kind'])
         context = compose_context(payload, logs, args)
         context['dependencyClosureEntries'] = len(context_entries)
@@ -1835,6 +1867,13 @@ def package(args):
                       **({'controls': controls} if controls else {})},
             'terms': terms,
         }
+        if controls is not None:
+            manifest['gates']['controls']['archived'] = {
+                'path': 'controls-evidence',
+                'inventory_sha256': controls['inventory_sha256'],
+                'reduction_sha256': controls['reduction_sha256'],
+                'origin': controls['origin'],
+                'members': len(controls['inventory']['members'])}
         write_json(payload / 'manifest.json', manifest)
         shutil.copyfile(payload / 'manifest.json', output / 'manifest.json')
         destination = output / (identity['archive_root'] + '-' + final['head'] + '.tar.gz')

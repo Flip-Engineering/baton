@@ -38,7 +38,8 @@ def synthetic_controls():
         {'id': 'mutation:gamma_edit', 'kind': 'mutation', 'law': 'gamma_law',
          'module': MODULE_B, 'definition_sha256': hashlib.sha256(b'gamma definition').hexdigest()},
     ]
-    return {'controls': controls, 'sha256': discovery_binding(controls)}
+    return {'controls': controls, 'by_id': {control['id']: control for control in controls},
+            'sha256': discovery_binding(controls)}
 
 
 def law_row(control, **overrides):
@@ -59,6 +60,11 @@ class PackageGateReceipt(unittest.TestCase):
         self.logs = self.home / 'logs'
         self.logs.mkdir()
         self.controls = synthetic_controls()
+        self.verifier = {member: hashlib.sha256(('fixture:' + member).encode()).hexdigest()
+                         for member in PACKAGE.VERIFIER_MEMBERS}
+        self.addCleanup(setattr, PACKAGE, 'expected_verifier_digests',
+                        PACKAGE.expected_verifier_digests)
+        PACKAGE.expected_verifier_digests = lambda: (dict(self.verifier), [])
         self.verdicts = {}
         for name in ('discover_controls', 'classify_control'):
             self.addCleanup(setattr, PACKAGE, name, getattr(PACKAGE, name))
@@ -66,14 +72,16 @@ class PackageGateReceipt(unittest.TestCase):
         self.verdicts.clear()
 
         def classify(case, result, streams, baseline, evidence_root, source, compiler_sha256,
-                     delta=None, supplied=None):
+                     delta=None, supplied=None, audit=None):
             self.verdicts[case['id']] = {'streams': streams, 'baseline': baseline, 'delta': delta}
             return {'schema': 'capacity-controls/classify-verdict@1', 'id': case['id'],
                     'class': 'intended-law-refusal', 'attributed_law': case['law'],
                     'law': case['law'], 'match': True, 'qualified': True,
                     'evidence_verified': True, 'diagnostic_sha256': 'd' * 64,
-                    'verifier': {member: hashlib.sha256(member.encode()).hexdigest()
-                                 for member in PACKAGE.VERIFIER_MEMBERS}}
+                    'acquisition': {'exit_code': 0, 'signal': None, 'spawn_error': None,
+                                    'argv': ['node', 'laws-check.mjs', '--classify'],
+                                    'cwd': str(ROOT), 'stdout_bytes': 1, 'stderr_bytes': 0},
+                    'verifier': dict(self.verifier)}
 
         PACKAGE.classify_control = classify
 
@@ -276,6 +284,15 @@ class PackageGateReceipt(unittest.TestCase):
     def checker_sha(self):
         return hashlib.sha256((ROOT / 'bend2/scripts/laws-check.mjs').read_bytes()).hexdigest()
 
+    def delta_for(self, directory, control):
+        module = ROOT / control['module']
+        changed = directory / 'changed' / (control['id'].replace(':', '-') + '.changed')
+        changed.parent.mkdir(parents=True, exist_ok=True)
+        changed.write_bytes(module.read_bytes() + b'\n-- fixture change --\n')
+        return {'original_sha256': hashlib.sha256(module.read_bytes()).hexdigest(),
+                'changed_sha256': hashlib.sha256(changed.read_bytes()).hexdigest(),
+                'changed_path': str(changed.relative_to(directory))}
+
     def inputs_for(self, compiler):
         return {'compiler_sha256': hashlib.sha256(compiler.read_bytes()).hexdigest(),
                 'checker_sha256': self.checker_sha(),
@@ -315,9 +332,7 @@ class PackageGateReceipt(unittest.TestCase):
                 'process': {'state': 'exited', 'exit_code': 1, 'signal': None, 'spawn_error': None,
                             'started': 10.0 + index, 'ended': 11.0 + index, 'attempt': attempt,
                             'wrapper_pid': 4242 + index},
-                'delta': {'original_sha256': hashlib.sha256(b'original').hexdigest(),
-                          'changed_sha256': hashlib.sha256(b'changed').hexdigest(),
-                          'changed_path': 'results/%s.changed' % control['id'].replace(':', '-')},
+                'delta': self.delta_for(directory, control),
                 'diagnostic': {'class': 'intended-law-refusal', 'attributed_law': control['law'],
                                'sha256': hashlib.sha256(b'diagnostic').hexdigest()},
                 'stdout': self.stream(directory, control['id'].replace(':', '-') + '.stdout',
@@ -331,6 +346,7 @@ class PackageGateReceipt(unittest.TestCase):
         return {
             'module': module,
             'binding': self.controls['sha256'],
+            'status': 'complete',
             'entry': 'bend2/src/coordinator/main.bend',
             'instrument': {'tool': '/usr/bin/time', 'flag': '-l'},
             'producing': self.producing_for(module, compiler),
@@ -513,13 +529,13 @@ class PackageGateReceipt(unittest.TestCase):
         target = self.laws()[0]['id']
 
         def classify(case, result, streams, baseline, evidence_root, source, compiler_sha256,
-                     delta=None, supplied=None):
+                     delta=None, supplied=None, audit=None):
             value = {'schema': 'capacity-controls/classify-verdict@1', 'id': case['id'],
                      'class': 'intended-law-refusal', 'attributed_law': case['law'],
                      'law': case['law'], 'match': True, 'qualified': True,
                      'evidence_verified': True, 'diagnostic_sha256': 'd' * 64,
-                     'verifier': {member: hashlib.sha256(member.encode()).hexdigest()
-                                  for member in PACKAGE.VERIFIER_MEMBERS}}
+                     'acquisition': {'exit_code': 0, 'signal': None, 'spawn_error': None},
+                     'verifier': dict(self.verifier)}
             if case['id'] == target:
                 value.update(answer)
             return value
