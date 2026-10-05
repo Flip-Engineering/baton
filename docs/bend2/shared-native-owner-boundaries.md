@@ -172,6 +172,23 @@ cleanup must follow their final release and acknowledgment obligations.
 
 ## Endpoint and command results
 
+The first routing seam proposed in `synthesis-root-owner-seam-53-native-instance-conductor`
+is the existing `Main.execute` branch for `C.Receive`. At the source reviewed
+here it calls `IO.try(Unit, Receive.run(...))`. The interfaces owner must replace
+that call with a short-lived bound-owner client while preserving the registered
+receiver argv. The task entry behind that client needs the result-valued
+Receive boundary described above. Foreground and detached Direct callers must
+compose the same controls-owned admission contract. Owner discovery and startup
+remain one authority for the database.
+
+A busy Receive wake commits responsibility for pending input. Its consuming
+attempt can start after the current active attempt releases admission. A retry
+of that wake must identify the retained wake operation; it cannot report that
+the current attempt accepted input beyond its cutoff. The pure admission
+module's `Replay{attempt}` applies only when its supplied record already binds
+that request to the stated attempt. It does not supply the queued-wake record
+or the later wake-to-attempt relation.
+
 Endpoint admission acknowledges that the bound owner accepted responsibility for
 the wake. The final delivery outcome records whether the original recipient's
 required notification was actually delivered. These outcomes need separate
@@ -180,6 +197,47 @@ a short-lived client after admission must preserve owed notification and retaine
 results. Retry must identify the same request and attempt and avoid a second
 native grant. A delayed parent wake remains outstanding until its actual delivery
 outcome is recorded; a successful admission response alone cannot discharge it.
+
+The interface-owner review retained in `synthesis-instance-full-interface-50`
+requires command-specific reply phases. `Control.dispatch_body` commits input
+and returns a detached launch result; `Store.apply` proceeds through the actual
+Delivery outcome after commit. The public result must state its existing
+completion point. A shared owner cannot invent a per-request process ID for a
+result that currently reports a launched delivery process. That compatibility
+change needs an explicit caller mapping through interfaces and lifecycle.
+
+The transport envelope must carry a protocol version, external request ID,
+qualified database and owner binding, literal argv and request-local invocation
+context. The current command parser remains authoritative. Cwd, consumed stdin
+and file contents must be captured for the original invocation and preserved
+across its retries. Relative paths resolve against that invocation's cwd.
+Concurrent requests require explicit context and output destinations. Process
+cwd, stdin, environment and fd 1 cannot serve as per-request context.
+
+Replies bind the external request ID and owner to a phase, ordered stdout and
+stderr bytes, and a terminal status or explicit unresolved outcome. MCP keeps
+its existing rendering and per-connection JSON-RPC IDs, while the durable
+native request ID survives reconnects independently. Qualification includes
+equal JSON-RPC IDs on separate connections, literal empty/flag-like/Unicode
+arguments, lost replies, large captured input and disconnected output clients.
+
+## Database binding proposal
+
+The initial policy proposed by root limits admission to one canonical selected
+database path whose physical identity is checked under database-level owner
+exclusion. It refuses multiply-linked files and detected replacement. Session
+guards continue to govern session admission; they do not elect the database
+owner. The bound-store owner must supply the actual connection-bound identity,
+exclusion and replacement checks before this policy can authorize effects.
+
+At the reviewed source, `Sql.query(path, sql)` calls `sqlite3_open` on each query.
+Checking an open descriptor's device and inode before this call leaves a path
+replacement interval. The integration must state its filesystem assumptions
+and bind SQL effects to the selected connection. A policy that depends on a
+stable pathname must explicitly require cooperating writers and no external
+rename, unlink or hard-link creation throughout the owner's lifetime. Such an
+assumption requires qualification with real SQLite journal/WAL and replacement
+fixtures; the empty-file guard probe supplies no evidence for those effects.
 
 ## Admission decision module
 
