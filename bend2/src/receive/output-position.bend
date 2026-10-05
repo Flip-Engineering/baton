@@ -1,19 +1,26 @@
 # CLAIM: exact checked decimal position arithmetic over the canonical unsigned domain zero
 # through 9223372036854775807, carried as decimal digits with no whole-position integer or
-# floating conversion.
-# Construction. A position value holds its digits most significant first, each digit in zero
-# through nine, with no leading zero except the single zero, and never above the domain
-# maximum. The constructor is reachable from this module, so a client can build a value that
-# was never validated; every public operation re-validates its inputs and refuses rather than
-# trusting them, and nothing here treats a client-created value as validated authority.
+# floating conversion, and with no unchecked length counter.
+# Construction. A value holds its digits most significant first, each in zero through nine,
+# with no leading zero except the single zero, and never above the domain maximum. The
+# constructor is reachable from this module, so a client can build a value that was never
+# validated; every checked public operation re-validates its inputs and refuses rather than
+# trusting them, and no client-created value is treated as validated authority.
+# Orientations, one per helper. rev_units reverses a digit list. add_low takes both operands
+# and returns its accumulated result all in least-significant-first order, and finish_carry
+# keeps that order. added reverses each operand once into that order and reverses nothing
+# afterwards, so the canonical most-significant-first result is produced exactly once.
+# Length is bounded structurally: bounded_19 walks at most nineteen digits with a bounded
+# counter, and nothing counts an unbounded list. Nineteen is the domain bound, not a resource
+# cutoff.
 # Scope. This module grants no source access, source correlation, all-writer seal or cursor
-# authority. Adjacency is endpoint equality between an interval and a position, and it is not
-# permission to correlate different sources.
+# authority. Adjacency is endpoint equality between a validated ordered interval and a
+# validated position, and it is not permission to correlate different sources.
 # Language forms grounded on the reviewed number, string and frame modules and the pinned
 # Base: element-with-list cons, Bool.pick with a first type argument, U32.is_eq and U32.is_lt,
-# definitions before their callers, positional and named constructor patterns, and a plus
-# binder on any binding used more than once. Every function is declared before its callers and
-# none is mutually recursive with another; no match subject is a computed call.
+# definitions before their callers, positional constructor patterns, and a plus binder on any
+# binding used more than once. Every function is declared before its callers, none is mutually
+# recursive with another, and no match subject is a computed call.
 # UNCOMPILED and UNTESTED.
 
 import Base
@@ -34,6 +41,11 @@ type PosCompare is Data:
   PosCompared{order: PosOrder, left: Pos, right: Pos}
   PosCompareRefused{reason: String, left: Pos, right: Pos}
 
+type PosEquality is Data:
+  PositionsEqual{}
+  PositionsUnequal{}
+  EqualityRefused{reason: String, left: Pos, right: Pos}
+
 type PosSum is Data:
   PosAdded{value: Pos, left: Pos, right: Pos}
   PosSumRefused{reason: String, left: Pos, right: Pos}
@@ -42,15 +54,20 @@ type PosSpan is Data:
   SpanOrdered{low: Pos, high: Pos}
   SpanRefused{reason: String, low: Pos, high: Pos}
 
+type PosAdjacency is Data:
+  Adjacent{}
+  NotAdjacent{}
+  AdjacencyRefused{reason: String, span: PosSpan, next: Pos}
+
 def rev_units(xs: List<U32>, acc: List<U32>) -> List<U32>:
   match xs:
     case Nil{}: acc
     case h <> t: rev_units(t, h <> acc)
 
-def len_units(xs: List<U32>) -> U32:
-  match xs:
-    case Nil{}: 0
-    case _h <> t: U32.add(len_units(t), 1)
+def listed(rest: List<U32>) -> Bool:
+  match rest:
+    case Nil{}: False{}
+    case _h <> _t: True{}
 
 def is_octet(+code: U32) -> Bool:
   U32.is_lt(code, 256)
@@ -78,11 +95,6 @@ def to_digits(xs: List<U32>) -> List<U32>:
     case Nil{}: Nil{}
     case +h <> t: U32.sub(h, 48) <> to_digits(t)
 
-def listed(rest: List<U32>) -> Bool:
-  match rest:
-    case Nil{}: False{}
-    case _h <> _t: True{}
-
 def has_leading_zero(digits: List<U32>) -> Bool:
   match digits:
     case Nil{}: False{}
@@ -90,6 +102,22 @@ def has_leading_zero(digits: List<U32>) -> Bool:
 
 def max_digits() -> List<U32>:
   [9, 2, 2, 3, 3, 7, 2, 0, 3, 6, 8, 5, 4, 7, 7, 5, 8, 0, 7]
+
+# A bounded walk: at most nineteen digits may remain. The counter is bounded by the domain,
+# and it is the only counter in this module.
+def bounded_19(+xs: List<U32>, +budget: U32) -> Bool:
+  match xs:
+    case Nil{}: True{}
+    case _h <> t:
+      Bool.pick(Bool, U32.is_eq(budget, 0), False{}, bounded_19(t, U32.sub(budget, 1)))
+
+def shorter_than(+digits: List<U32>, +ceiling: List<U32>) -> Bool:
+  match digits:
+    case Nil{}: listed(ceiling)
+    case _h <> t:
+      match ceiling:
+        case Nil{}: False{}
+        case _c <> ct: shorter_than(t, ct)
 
 def cmp_digits(+left: List<U32>, +right: List<U32>) -> PosOrder:
   match left:
@@ -104,6 +132,10 @@ def cmp_digits(+left: List<U32>, +right: List<U32>) -> PosOrder:
           Bool.pick(PosOrder, U32.is_eq(lh, rh), cmp_digits(lt, rt),
             Bool.pick(PosOrder, U32.is_lt(lh, rh), PosLess{}, PosGreater{}))
 
+def cmp_values(+left: List<U32>, +right: List<U32>) -> PosOrder:
+  Bool.pick(PosOrder, shorter_than(left, right), PosLess{},
+    Bool.pick(PosOrder, shorter_than(right, left), PosGreater{}, cmp_digits(left, right)))
+
 def order_is_greater(+order: PosOrder) -> Bool:
   match order:
     case PosLess{}: False{}
@@ -117,18 +149,18 @@ def order_is_equal(+order: PosOrder) -> Bool:
     case PosGreater{}: False{}
 
 def over_max(+digits: List<U32>) -> Bool:
-  +here = len_units(digits)
-  +limit = len_units(max_digits())
-  Bool.pick(Bool, U32.is_lt(limit, here), True{},
-    Bool.pick(Bool, U32.is_lt(here, limit), False{},
-      order_is_greater(cmp_digits(digits, max_digits()))))
+  Bool.pick(Bool, bounded_19(digits, 19),
+    Bool.pick(Bool, shorter_than(digits, max_digits()), False{},
+      Bool.pick(Bool, shorter_than(max_digits(), digits), True{},
+        order_is_greater(cmp_digits(digits, max_digits())))),
+    True{})
 
 def digits_ok(+digits: List<U32>) -> Bool:
-  +here = len_units(digits)
-  Bool.pick(Bool, U32.is_eq(here, 0), False{},
+  Bool.pick(Bool, listed(digits),
     Bool.pick(Bool, has_leading_zero(digits), False{},
-      Bool.pick(Bool, all_digit_values(digits), Bool.pick(Bool, over_max(digits), False{}, True{}),
-        False{})))
+      Bool.pick(Bool, all_digit_values(digits),
+        Bool.pick(Bool, over_max(digits), False{}, True{}), False{})),
+    False{})
 
 def pos_ok(+pos: Pos) -> Bool:
   match pos:
@@ -139,10 +171,11 @@ def digits_of(+pos: Pos) -> List<U32>:
     case PosDigits{digits}: digits
 
 def parsed_digits(+digits: List<U32>, +original: List<U32>) -> PosResult:
-  Bool.pick(PosResult, U32.is_eq(len_units(digits), 0), PosRefused{"empty_position", original},
+  Bool.pick(PosResult, listed(digits),
     Bool.pick(PosResult, has_leading_zero(digits), PosRefused{"leading_zero", original},
       Bool.pick(PosResult, over_max(digits), PosRefused{"above_domain_maximum", original},
-        PosAccepted{PosDigits{digits}})))
+        PosAccepted{PosDigits{digits}})),
+    PosRefused{"empty_position", original})
 
 def parse_pos(+octets: List<U32>) -> PosResult:
   Bool.pick(PosResult, all_octets(octets),
@@ -151,7 +184,7 @@ def parse_pos(+octets: List<U32>) -> PosResult:
     PosRefused{"not_an_octet", octets})
 
 def compared(+ld: List<U32>, +rd: List<U32>, +left: Pos, +right: Pos) -> PosCompare:
-  PosCompared{cmp_digits(ld, rd), left, right}
+  PosCompared{cmp_values(ld, rd), left, right}
 
 def compare_pos(+left: Pos, +right: Pos) -> PosCompare:
   Bool.pick(PosCompare, pos_ok(left),
@@ -159,13 +192,21 @@ def compare_pos(+left: Pos, +right: Pos) -> PosCompare:
       PosCompareRefused{"right_position_invalid", left, right}),
     PosCompareRefused{"left_position_invalid", left, right})
 
-def matched(+result: PosCompare) -> Bool:
+def equality_of(+result: PosCompare, +left: Pos, +right: Pos) -> PosEquality:
   match result:
-    case PosCompared{order, left: _left, right: _right}: order_is_equal(order)
-    case PosCompareRefused{_reason, _l, _r}: False{}
+    case PosCompared{order, _left, _right}:
+      Bool.pick(PosEquality, order_is_equal(order), PositionsEqual{},
+        PositionsUnequal{})
+    case PosCompareRefused{reason, _l, _r}: EqualityRefused{reason, left, right}
 
-def equal_pos(+left: Pos, +right: Pos) -> Bool:
-  matched(compare_pos(left, right))
+def equal_checked(+left: Pos, +right: Pos) -> PosEquality:
+  equality_of(compare_pos(left, right), left, right)
+
+def passed(+outcome: PosEquality) -> Bool:
+  match outcome:
+    case PositionsEqual{}: True{}
+    case PositionsUnequal{}: False{}
+    case EqualityRefused{_reason, _l, _r}: False{}
 
 def sum_digit(+total: U32) -> U32:
   Bool.pick(U32, U32.is_lt(total, 10), total, U32.sub(total, 10))
@@ -173,38 +214,31 @@ def sum_digit(+total: U32) -> U32:
 def sum_carry(+total: U32) -> U32:
   Bool.pick(U32, U32.is_lt(total, 10), 0, 1)
 
-def finish_sum(+carry: U32, acc: List<U32>) -> List<U32>:
+def finish_carry(+carry: U32, +acc: List<U32>) -> List<U32>:
   Bool.pick(List<U32>, U32.is_eq(carry, 0), acc, 1 <> acc)
 
-def add_pairs(+left: List<U32>, +right: List<U32>, +carry: U32, acc: List<U32>) -> List<U32>:
+# Both operands and the accumulated result are least significant first. When one operand runs
+# out its remaining high digits are carried through with the running carry.
+def finish_low(+rest: List<U32>, +carry: U32, +acc: List<U32>) -> List<U32>:
+  match rest:
+    case Nil{}: finish_carry(carry, acc)
+    case +h <> t:
+      +total = U32.add(h, carry)
+      finish_low(t, sum_carry(total), sum_digit(total) <> acc)
+
+def add_low(+left: List<U32>, +right: List<U32>, +carry: U32, +acc: List<U32>) -> List<U32>:
   match left:
-    case Nil{}: finish_sum(carry, acc)
-    case +lh <> +lt:
+    case Nil{}: finish_low(right, carry, acc)
+    case +lh <> lt:
       match right:
-        case Nil{}: finish_sum(carry, acc)
-        case +rh <> +rt:
+        case Nil{}: finish_low(lt, carry, acc)
+        case +rh <> rt:
           +total = U32.add(U32.add(lh, rh), carry)
-          add_pairs(lt, rt, sum_carry(total), sum_digit(total) <> acc)
-
-def wider(+left: List<U32>, +right: List<U32>) -> U32:
-  +la = len_units(left)
-  +lb = len_units(right)
-  Bool.pick(U32, U32.is_lt(la, lb), lb, la)
-
-def zeros_go(+count: U32, acc: List<U32>) -> List<U32>:
-  Bool.pick(List<U32>, U32.is_eq(count, 0), acc, zeros_go(U32.sub(count, 1), 0 <> acc))
-
-def pad_tail(+xs: List<U32>, +budget: U32, acc: List<U32>) -> List<U32>:
-  match xs:
-    case Nil{}: zeros_go(budget, acc)
-    case +h <> t: pad_tail(t, U32.sub(budget, 1), h <> acc)
+          add_low(lt, rt, sum_carry(total), sum_digit(total) <> acc)
 
 def added(+ld: List<U32>, +rd: List<U32>, +left: Pos, +right: Pos) -> PosSum:
-  +wide = wider(ld, rd)
-  +low = pad_tail(rev_units(ld, Nil{}), wide, Nil{})
-  +high = pad_tail(rev_units(rd, Nil{}), wide, Nil{})
-  +digits = rev_units(add_pairs(low, high, 0, Nil{}), Nil{})
-  Bool.pick(PosSum, digits_ok(digits), PosAdded{PosDigits{digits}, left, right},
+  +total = add_low(rev_units(ld, Nil{}), rev_units(rd, Nil{}), 0, Nil{})
+  Bool.pick(PosSum, digits_ok(total), PosAdded{PosDigits{total}, left, right},
     PosSumRefused{"sum_above_domain_maximum", left, right})
 
 def add_pos(+left: Pos, +right: Pos) -> PosSum:
@@ -215,7 +249,7 @@ def add_pos(+left: Pos, +right: Pos) -> PosSum:
 
 def spanned(+order: PosCompare, +low: Pos, +high: Pos) -> PosSpan:
   match order:
-    case PosCompared{order: found, left: _l, right: _r}:
+    case PosCompared{found, _left, _right}:
       Bool.pick(PosSpan, order_is_greater(found), SpanRefused{"endpoints_reversed", low, high},
         SpanOrdered{low, high})
     case PosCompareRefused{reason, _l, _r}: SpanRefused{reason, low, high}
@@ -226,13 +260,24 @@ def span_pos(+low: Pos, +high: Pos) -> PosSpan:
       SpanRefused{"high_position_invalid", low, high}),
     SpanRefused{"low_position_invalid", low, high})
 
-def touching(+span: PosSpan, +next: Pos) -> Bool:
+def adjacent_checked(+span: PosSpan, +next: Pos) -> PosAdjacency:
+  checked_span(span, next, pos_ok(next))
+
+def checked_span(+span: PosSpan, +next: Pos, +next_ok: Bool) -> PosAdjacency:
   match span:
-    case SpanOrdered{low: _low, high}: equal_pos(high, next)
-    case SpanRefused{_reason, _l, _h}: False{}
+    case SpanOrdered{low, high}:
+      Bool.pick(PosAdjacency, pos_ok(low),
+        Bool.pick(PosAdjacency, pos_ok(high),
+          Bool.pick(PosAdjacency, next_ok, ordered_pair(span, next, low, high),
+            AdjacencyRefused{"next_position_invalid", span, next}),
+          AdjacencyRefused{"high_position_invalid", span, next}),
+        AdjacencyRefused{"low_position_invalid", span, next})
+    case SpanRefused{reason, _l, _h}: AdjacencyRefused{reason, span, next}
 
-def span_adjacent(+span: PosSpan, +next: Pos) -> Bool:
-  touching(span, next)
+def ordered_pair(+span: PosSpan, +next: Pos, +low: Pos, +high: Pos) -> PosAdjacency:
+  Bool.pick(PosAdjacency, order_is_greater(cmp_values(digits_of(low), digits_of(high))),
+    AdjacencyRefused{"endpoints_reversed", span, next}, endpoint_equality(span, next, high))
 
-def max_pos() -> Pos:
-  PosDigits{max_digits()}
+def endpoint_equality(+span: PosSpan, +next: Pos, +high: Pos) -> PosAdjacency:
+  Bool.pick(PosAdjacency, passed(equal_checked(high, next)), Adjacent{},
+    NotAdjacent{})
