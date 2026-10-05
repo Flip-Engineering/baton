@@ -73,7 +73,7 @@ def ff_stage1(repo: String, workerBranch: String) -> IO(FFLD):
   +wb = workerBranch
   +rp = repo
   do IO<FFLD>:
-    r : T.GitOut <- Git.runGit(rp, Con{"rev-parse", Con{"--verify", Con{"--quiet", Con{Tx.str_cat("refs/heads/", wb), Nil{}}}}})
+    r : T.GitOut <- Git.runGit(rp, Con{"rev-parse", Con{"--verify", Con{"--quiet", Con{T.str_cat2("refs/heads/", wb), Nil{}}}}})
     IO.pure(FFLD, ff_stage1_pick(r))
 
 # Stage 2: check if the target already contains the worker commit.
@@ -116,7 +116,7 @@ def ff_stage3(wc: String, repo: String, target: String) -> IO(FFLD):
   +rp = repo
   +tg = target
   do IO<FFLD>:
-    r : T.GitOut <- Git.runGit(rp, Con{"rev-parse", Con{"--verify", Con{"--quiet", Con{Tx.str_cat("refs/heads/", tg), Nil{}}}}})
+    r : T.GitOut <- Git.runGit(rp, Con{"rev-parse", Con{"--verify", Con{"--quiet", Con{T.str_cat2("refs/heads/", tg), Nil{}}}}})
     IO.pure(FFLD, ff_stage3_pick(r, wc2))
 
 def ff_go3(r: FFLD, repo: String, target: String) -> IO(FFLD):
@@ -150,82 +150,120 @@ def ff_go4(r: FFLD, repo: String, target: String) -> IO(FFLD):
     case FFNext{wc, tb}: ff_stage4(wc, tb, repo, target)
 
 # Stage 5: CAS update-ref to advance the target branch.
-# --- the selected publication -------------------------------------------------
-# For #674: one local push per attempt, of the immutable object, carrying an
-# explicit expected-basis lease into a receiver whose checked-out-branch policy is
-# updateInstead with hooks off. The receiver writes the checked-out holder itself,
-# so no separate worktree probe decides anything here. The porcelain table's flag
-# classifies only: the abbreviated old..new range is never read as identity, and the
-# named ref is re-read as a full object before any answer. Exactly one refspec is
-# pushed, so the single flag-bearing line is this attempt's.
+# --- the selected publication: prepared helpers, deliberately NOT wired ---------
+#
+# Helper source for #674. No live caller references any of this: both publication
+# sites keep their previous conservative path until the live guard claim, the receipt
+# intent, the completed-failure record, the uncertainty reconciliation and the
+# protected scratch sweep all exist, because publishing with a retry instruction
+# while an interrupted effect may still be running cannot be a completed slice.
+#
+# The destination must be canonical and absolute. A relative spelling could select
+# another repository once the working directory changes, so a non-absolute
+# destination yields no argv at all and the caller must refuse.
+#
+# The porcelain record is matched strictly: a flag, a tab, and the exact
+# <oid>:refs/heads/<target> refspec this attempt pushed. Unrelated, malformed and
+# duplicate records are rejected as ambiguous rather than read as a landing, and the
+# abbreviated old..new display is never treated as identity.
 def publish_receiver() -> String:
   "git -c receive.denyCurrentBranch=updateInstead -c receive.denyNonFastForwards=true -c core.hooksPath=/dev/null receive-pack"
 
-def publish_argv(+repo: String, +target: String, +oid: String, +basis: String) -> List<String>:
-  Con{"push", Con{"--porcelain", Con{Tx.str_cat("--receive-pack=", publish_receiver()), Con{Tx.str_cat3("--force-with-lease=refs/heads/", target, Tx.str_cat(":", basis)), Con{repo, Con{Tx.str_cat3(oid, ":refs/heads/", target), Nil{}}}}}}}
+def publish_refspec(+oid: String, +target: String) -> String:
+  T.str_cat3(oid, ":refs/heads/", target)
 
-def push_flag_like(line: String) -> Bool:
-  Bool.pick(Bool, Tx.starts_with(line, " "),
-    True{},
-    Bool.pick(Bool, Tx.starts_with(line, "="),
-      True{},
-      Bool.pick(Bool, Tx.starts_with(line, "!"),
-        True{},
-        Bool.pick(Bool, Tx.starts_with(line, "+"), True{}, Tx.starts_with(line, "*")))))
+def publish_argv(+destination: String, +target: String, +oid: String, +basis: String) -> List<String>:
+  Bool.pick(List<String>, Tx.starts_with(destination, "/"),
+    Con{"push", Con{"--porcelain", Con{T.str_cat2("--receive-pack=", publish_receiver()), Con{T.str_cat3("--force-with-lease=refs/heads/", target, T.str_cat2(":", basis)), Con{destination, Con{publish_refspec(oid, target), Nil{}}}}}},
+    Nil{})
 
-def push_flag_line(lines: List<String>) -> String:
+def push_flag_like(line: String, want: String) -> Bool:
+  Bool.pick(Bool, Tx.starts_with(line, T.str_cat3(" ", "\t", want)), True{},
+    Bool.pick(Bool, Tx.starts_with(line, T.str_cat3("=", "\t", want)), True{},
+      Bool.pick(Bool, Tx.starts_with(line, T.str_cat3("!", "\t", want)), True{},
+        Bool.pick(Bool, Tx.starts_with(line, T.str_cat3("+", "\t", want)), True{},
+          Tx.starts_with(line, T.str_cat3("*", "\t", want))))))
+
+def push_matches(lines: List<String>, want: String) -> U32:
+  match lines:
+    case Nil{}: 0
+    case Con{h, rest}:
+      +tail = push_matches(rest, want)
+      Bool.pick(U32, push_flag_like(h, want), U32.add(tail, 1), tail)
+
+def push_flag_line(lines: List<String>, want: String) -> String:
   match lines:
     case Nil{}: ""
     case Con{h, rest}:
-      Bool.pick(String, push_flag_like(h), h, push_flag_line(rest))
+      +w2 = want
+      Bool.pick(String, push_flag_like(h, w2), h, push_flag_line(rest, w2))
 
-def push_class(out: String) -> String:
-  +line = push_flag_line(Tx.split_lines(out))
+def push_flag_class(line: String) -> String:
   Bool.pick(String, String.is_empty(line), "unclassified",
     Bool.pick(String, Tx.starts_with(line, "="), "already",
-      Bool.pick(String, Tx.starts_with(line, "!"), "refused", "applied")))
+      Bool.pick(String, Tx.starts_with(line, "!"), "refused",
+        Bool.pick(String, Tx.starts_with(line, " "), "applied", "unclassified"))))
 
-def publish_answer(code: U32, cls: String, +target: String, +oid: String) -> T.LandOutcome:
-  Bool.pick(T.LandOutcome, U32.is_eq(code, 0),
-    Bool.pick(T.LandOutcome, Tx.str_eq(cls, "applied"), T.LLanded{target, oid},
-      Bool.pick(T.LandOutcome, Tx.str_eq(cls, "already"), T.LAlready{oid},
-        T.LBlocked{"the publication of " ++ oid ++ " onto " ++ target ++ " answered " ++ cls ++ "; retry"})),
-    T.LBlocked{"the publication of " ++ oid ++ " onto " ++ target ++ " did not complete; retry"})
+def push_class(out: String, want: String) -> String:
+  +lines = Tx.split_lines(out)
+  +found = push_matches(lines, want)
+  Bool.pick(String, U32.is_eq(found, 1),
+    push_flag_class(push_flag_line(lines, want)),
+    Bool.pick(String, U32.is_eq(found, 0), "unclassified", "ambiguous"))
 
-def publish_pick(r: T.GitOut, +target: String, +oid: String) -> T.LandOutcome:
+type PubEvidence is Data:
+  PubApplied{code: U32, out: String}
+  PubAlready{code: U32, out: String}
+  PubRefused{cls: String, code: U32, out: String}
+  PubBroken{detail: String}
+
+def pub_evidence(r: T.GitOut, +want: String) -> PubEvidence:
   match r:
-    case T.GRun{code, out}: publish_answer(code, push_class(out), target, oid)
-    case T.GBroken{detail}: T.LBlocked{detail}
+    case T.GRun{code, out}:
+      +cls = push_class(out, want)
+      Bool.pick(PubEvidence, Tx.str_eq(cls, "applied"), PubApplied{code, out},
+        Bool.pick(PubEvidence, Tx.str_eq(cls, "already"), PubAlready{code, out},
+          PubRefused{cls, code, out}))
+    case T.GBroken{detail}: PubBroken{detail}
+
+def pub_answer(ev: PubEvidence, +target: String, +oid: String) -> T.LandOutcome:
+  match ev:
+    case PubApplied{code, out}: T.LLanded{target, oid}
+    case PubAlready{code, out}: T.LAlready{oid}
+    case PubRefused{cls, code, out}: T.LBlocked{"the publication of " ++ oid ++ " onto " ++ target ++ " answered " ++ cls ++ " with status " ++ U32.show(code) ++ "; inspect the target, the holder and the record before retrying"}
+    case PubBroken{detail}: T.LBlocked{detail}
 
 def verify_landed_pick(r: T.GitOut, +target: String, +oid: String) -> T.LandOutcome:
   match r:
     case T.GRun{code, out}:
       Bool.pick(T.LandOutcome, U32.is_eq(code, 0),
         Bool.pick(T.LandOutcome, Tx.str_eq(Tx.trim_nl(out), oid), T.LLanded{target, oid},
-          T.LBlocked{"the publication answered applied for " ++ target ++ " but the ref does not name " ++ oid}),
-        T.LBlocked{"the publication answered applied for " ++ target ++ " but the ref could not be read"})
+          T.LBlocked{"the publication answered for " ++ target ++ " but the ref does not name " ++ oid}),
+        T.LBlocked{"the publication answered for " ++ target ++ " but the ref could not be read"})
     case T.GBroken{detail}: T.LBlocked{detail}
 
 def verify_landed(+repo: String, +target: String, +oid: String) -> IO(T.LandOutcome):
   +r2 = repo
   +t2 = target
-  do IO<T.LandOutcome>:
-    reread : T.GitOut <- Git.runGit(r2, Con{"rev-parse", Con{Tx.str_cat("refs/heads/", t2), Nil{}}})
+  do IO(T.LandOutcome):
+    reread : T.GitOut <- Git.runGit(r2, Con{"rev-parse", Con{T.str_cat2("refs/heads/", t2), Nil{}}})
     IO.pure(T.LandOutcome, verify_landed_pick(reread, t2, oid))
 
-def verify_published(outcome: T.LandOutcome, +repo: String, +target: String, +oid: String) -> IO(T.LandOutcome):
-  match outcome:
-    case T.LLanded{landedTarget, landedCommit}: verify_landed(repo, target, oid)
-    case other: IO.pure(T.LandOutcome, other)
+def verify_pub(ev: PubEvidence, +repo: String, +target: String, +oid: String) -> IO(T.LandOutcome):
+  match ev:
+    case PubApplied{code, out}: verify_landed(repo, target, oid)
+    case PubAlready{code, out}: verify_landed(repo, target, oid)
+    case other: IO.pure(T.LandOutcome, pub_answer(other, target, oid))
 
-def publish_outcome(+repo: String, +target: String, +oid: String, +basis: String) -> IO(T.LandOutcome):
-  +r2 = repo
+def publish_outcome(+destination: String, +target: String, +oid: String, +basis: String) -> IO(T.LandOutcome):
+  +d2 = destination
   +t2 = target
   +o2 = oid
-  do IO<T.LandOutcome>:
-    pushed : T.GitOut <- Git.runGit(r2, publish_argv(r2, t2, o2, basis))
-    outcome : T.LandOutcome <- IO.pure(T.LandOutcome, publish_pick(pushed, t2, o2))
-    verify_published(outcome, r2, t2, o2)
+  +want = publish_refspec(o2, t2)
+  do IO(T.LandOutcome):
+    pushed : T.GitOut <- Git.runGit(d2, publish_argv(d2, t2, o2, basis))
+    evidence : PubEvidence <- IO.pure(PubEvidence, pub_evidence(pushed, want))
+    verify_pub(evidence, d2, t2, o2)
 
 def ff_stage5_ok(ok: Bool, wc: String, target: String) -> FFLD:
   match ok:
@@ -243,8 +281,8 @@ def ff_stage5(wc: String, tb: String, repo: String, target: String) -> IO(FFLD):
   +rp = repo
   +tg = target
   do IO<FFLD>:
-    published : T.LandOutcome <- publish_outcome(rp, tg, wc2, tb2)
-    IO.pure(FFLD, FFDone{published})
+    r : T.GitOut <- Git.runGit(rp, Con{"update-ref", Con{T.str_cat2("refs/heads/", tg), Con{wc2, Con{tb2, Nil{}}}}})
+    IO.pure(FFLD, ff_stage5_pick(r, wc2, tg))
 
 def ff_go5(r: FFLD, repo: String, target: String) -> IO(FFLD):
   match r:
@@ -379,7 +417,7 @@ def first_bad(block: String) -> String:
 
 def unjudged_why(block: String) -> String:
   +b2 = block
-  Bool.pick(String, String.is_empty(b2), "the check printed nothing", Tx.str_cat("check output is not failure identities: ", first_bad(b2)))
+  Bool.pick(String, String.is_empty(b2), "the check printed nothing", T.str_cat2("check output is not failure identities: ", first_bad(b2)))
 
 def block_ok_go(lines: List<String>, ok: Bool) -> Bool:
   match lines:
@@ -450,11 +488,11 @@ def new_lines_go(cand: List<String>, targ: String, acc: List<String>) -> List<St
 # The line naming one unjudged run; it never matches a hex identity line, so
 # an unjudged run always blocks.
 def unjudged_line(side: String, why: String) -> String:
-  Tx.str_cat("?unjudged ", T.str_cat3(side, ": ", why))
+  T.str_cat2("?unjudged ", T.str_cat3(side, ": ", why))
 
 def pair_targ(hex: String, tv: Verdict, file: String, acc: List<String>) -> List<String>:
   match tv:
-    case VPass{}: Con{Tx.str_cat("?uncovered: ", hex), acc}
+    case VPass{}: Con{T.str_cat2("?uncovered: ", hex), acc}
     case VFail{thex}: new_lines_go(Tx.split_lines(hex), thex, acc)
     case VNone{why}: Con{unjudged_line("target", T.str_cat3(file, ": ", why)), acc}
 
@@ -502,7 +540,7 @@ def run_pairs(script: String, files: List<String>, candTree: String, targTree: S
 
 # The branch line a worktree report carries when it holds the target.
 def ld_busy_branch(target: String) -> String:
-  Tx.str_cat("branch refs/heads/", target)
+  T.str_cat2("branch refs/heads/", target)
 
 def ld_busy_any(lines: List<String>, want: String) -> Bool:
   match lines:
@@ -544,7 +582,7 @@ def ld_unmerged(scratch: String, why: String) -> IO(Ld):
     IO.pure(Ld, ld_unmerged_pick(g, sc, w2))
 
 def ld_update_argv(target: String, cand: String, basis: String) -> List<String>:
-  ["update-ref", Tx.str_cat("refs/heads/", target), cand, basis]
+  ["update-ref", T.str_cat2("refs/heads/", target), cand, basis]
 
 def ld_adv_update(repo: String, target: String, cand: String, basis: String) -> IO(Ld):
   +r2 = repo
@@ -576,7 +614,7 @@ def ld_adv_tip(repo: String, target: String, cand: String, basis: String) -> IO(
   +c2 = cand
   +b2 = basis
   do IO<Ld>:
-    g : T.GitOut <- Git.runGit(r2, ["rev-parse", "--verify", Tx.str_cat(t2, "^{commit}")])
+    g : T.GitOut <- Git.runGit(r2, ["rev-parse", "--verify", T.str_cat2(t2, "^{commit}")])
     ld_adv_tip_pick(g, r2, t2, c2, b2)
 
 def ld_adv_busy_go(busy: Bool, repo: String, target: String, cand: String, basis: String) -> IO(Ld):
@@ -599,8 +637,8 @@ def ld_advance(repo: String, target: String, cand: String, basis: String) -> IO(
   +c2 = cand
   +b2 = basis
   do IO<Ld>:
-    published : T.LandOutcome <- publish_outcome(r2, t2, c2, b2)
-    IO.pure(Ld, LdDone{published})
+    gl : T.GitOut <- Git.runGit(r2, ["worktree", "list", "--porcelain"])
+    ld_adv_busy(gl, r2, t2, c2, b2)
 
 # Stage 1 resolves the worker commit; the pipeline carries the resolved sha
 # so the LAlready answer names the worker commit.
@@ -619,7 +657,7 @@ def ld_stage1(repo: String, target: String, worker: String) -> IO(Ld):
   +t2 = target
   +w2 = worker
   do IO<Ld>:
-    g : T.GitOut <- Git.runGit(r2, ["rev-parse", "--verify", "--quiet", Tx.str_cat(w2, "^{commit}")])
+    g : T.GitOut <- Git.runGit(r2, ["rev-parse", "--verify", "--quiet", T.str_cat2(w2, "^{commit}")])
     ld_resolved_pick(g, w2)
 
 # Stage 2 resolves the target tip the candidate is prepared on.
@@ -638,7 +676,7 @@ def ld_stage2(repo: String, target: String, worker: String, sha: String) -> IO(L
   +t2 = target
   +w2 = worker
   do IO<Ld>:
-    g : T.GitOut <- Git.runGit(r2, ["rev-parse", "--verify", Tx.str_cat(t2, "^{commit}")])
+    g : T.GitOut <- Git.runGit(r2, ["rev-parse", "--verify", T.str_cat2(t2, "^{commit}")])
     IO.pure(Ld, ld_tip_of(g, w2, sha))
 
 # Stage 3 creates the candidate worktree, detached at the target tip.
@@ -814,7 +852,7 @@ def ld_stage5(repo: String, scratch: String, worker: String, sha: String, tip: S
 def ld_judged_news(news: List<String>, repo: String, target: String, scratch: String, tip: String, cand: String) -> IO(Ld):
   match news:
     case Nil{}: ld_advance(repo, target, cand, tip)
-    case Con{h, rest}: IO.pure(Ld, LdDone{T.LBlocked{Tx.str_cat("new failures: ", Tx.join("; ", news))}})
+    case Con{h, rest}: IO.pure(Ld, LdDone{T.LBlocked{T.str_cat2("new failures: ", Tx.join("; ", news))}})
 
 def ld_judged(pvs: List<PV>, repo: String, target: String, scratch: String, tip: String, cand: String) -> IO(Ld):
   ld_judged_news(pairs_news(pvs), repo, target, scratch, tip, cand)
@@ -839,7 +877,7 @@ def ld_stage6(repo: String, target: String, script: String, files: List<String>,
   +r2 = repo
   +sc = scratch
   +t2 = tip
-  +tw = Tx.str_cat(sc, "-target")
+  +tw = T.str_cat2(sc, "-target")
   do IO<Ld>:
     g : T.GitOut <- Git.runGit(r2, ["worktree", "add", "--detach", tw, t2])
     ld_tree_ok(g, r2, target, script, files, sc, t2, cand, tw)
@@ -896,7 +934,7 @@ def ld_go5(r: Ld, repo: String, target: String, script: String, files: List<Stri
 # root, the candidate and its "-target" sibling. PREFIX is the part of their
 # name that belongs to the worker rather than to the attempt.
 def scratch_prefix(repo: String, worker: String) -> String:
-  T.str_cat3(repo, "/.scratch/bend2-land-", Tx.str_cat(worker, "-"))
+  T.str_cat3(repo, "/.scratch/bend2-land-", T.str_cat2(worker, "-"))
 
 # The path one worktree-list line names: the line with its label matched off,
 # or the empty string for a line that does not carry the label.
@@ -923,7 +961,7 @@ def scratch_remove1(repo: String, dir: String) -> IO(Unit):
 # answer keeps them.
 def settle_paths(scratch: String) -> List<String>:
   +s2 = scratch
-  Con{s2, Con{Tx.str_cat(s2, "-target"), Nil{}}}
+  Con{s2, Con{T.str_cat2(s2, "-target"), Nil{}}}
 
 def drop_list(repo: String, dirs: List<String>) -> IO(Unit):
   match dirs:
@@ -986,7 +1024,7 @@ def open_scratch(repo: String, worker: String, ts: String) -> IO(String):
   +p2 = scratch_prefix(r2, w2)
   do IO<String>:
     _sweep : Unit <- sweep_scratch(r2, p2)
-    IO.pure(String, Tx.str_cat(p2, ts))
+    IO.pure(String, T.str_cat2(p2, ts))
 
 # The landing's own trees settle with its answer: a landed or already-merged
 # attempt needs them no longer, and a refused, conflicted or failed attempt
@@ -1101,37 +1139,39 @@ def remote_tip_git(repo: String, branch: String, remote: String) -> IO(T.GitOut)
 # The push carries the selected receiver command, the explicit expected-basis lease
 # and the immutable object, and no value of the caller's reaches the receiver string.
 law published_push_carries_the_selected_receiver_lease_and_object:
-  for +repo: String
+  for +destination: String
   for +target: String
   for +oid: String
   for +basis: String
-  {publish_argv(repo, target, oid, basis) == Con{"push", Con{"--porcelain", Con{Tx.str_cat("--receive-pack=", publish_receiver()), Con{Tx.str_cat3("--force-with-lease=refs/heads/", target, Tx.str_cat(":", basis)), Con{repo, Con{Tx.str_cat3(oid, ":refs/heads/", target), Nil{}}}}}}} : List<String>}
+  {publish_argv(destination, target, oid, basis) == Bool.pick(List<String>, Tx.starts_with(destination, "/"), Con{"push", Con{"--porcelain", Con{T.str_cat2("--receive-pack=", publish_receiver()), Con{T.str_cat3("--force-with-lease=refs/heads/", target, T.str_cat2(":", basis)), Con{destination, Con{publish_refspec(oid, target), Nil{}}}}}}, Nil{}) : List<String>}
 
-def published_push_carries_the_selected_receiver_lease_and_object(repo, target, oid, basis):
+def published_push_carries_the_selected_receiver_lease_and_object(destination, target, oid, basis):
   {==}
 
 # The publication runs the push and then re-reads the named ref as a full object, so
 # no answer rests on the porcelain display.
 law published_push_rereads_the_named_ref_before_answering:
-  for +repo: String
+  for +destination: String
   for +target: String
   for +oid: String
   for +basis: String
-  {publish_outcome(repo, target, oid, basis) == (do IO<T.LandOutcome>:
-    pushed : T.GitOut <- Git.runGit(repo, publish_argv(repo, target, oid, basis))
-    outcome : T.LandOutcome <- IO.pure(T.LandOutcome, publish_pick(pushed, target, oid))
-    verify_published(outcome, repo, target, oid)) : IO(T.LandOutcome)}
+  {publish_outcome(destination, target, oid, basis) == (do IO(T.LandOutcome):
+    pushed : T.GitOut <- Git.runGit(destination, publish_argv(destination, target, oid, basis))
+    evidence : PubEvidence <- IO.pure(PubEvidence, pub_evidence(pushed, publish_refspec(oid, target)))
+    verify_pub(evidence, destination, target, oid)) : IO(T.LandOutcome)}
 
-def published_push_rereads_the_named_ref_before_answering(repo, target, oid, basis):
+def published_push_rereads_the_named_ref_before_answering(destination, target, oid, basis):
   {==}
 
 # Only the flag classifies, and a zero status with an unclassified flag is not a
 # landing.
-law published_answer_reads_the_flag_and_never_the_displayed_range:
+law published_answer_keeps_the_evidence_and_reads_the_flag:
   for +cls: String
+  for +code: U32
+  for +out: String
   for +target: String
   for +oid: String
-  {publish_answer(0, cls, target, oid) == Bool.pick(T.LandOutcome, Tx.str_eq(cls, "applied"), T.LLanded{target, oid}, Bool.pick(T.LandOutcome, Tx.str_eq(cls, "already"), T.LAlready{oid}, T.LBlocked{"the publication of " ++ oid ++ " onto " ++ target ++ " answered " ++ cls ++ "; retry"})) : T.LandOutcome}
+  {pub_answer(PubRefused{cls, code, out}, target, oid) == T.LBlocked{"the publication of " ++ oid ++ " onto " ++ target ++ " answered " ++ cls ++ " with status " ++ U32.show(code) ++ "; inspect the target, the holder and the record before retrying"} : T.LandOutcome}
 
-def published_answer_reads_the_flag_and_never_the_displayed_range(cls, target, oid):
+def published_answer_keeps_the_evidence_and_reads_the_flag(cls, code, out, target, oid):
   {==}
