@@ -1,7 +1,14 @@
 import Base
+import ./sequence.bend as Sequence
+
+type IndexText is Data:
+  IndexAny{}
+  IndexExact{text: String}
 
 type Command is Data:
   Recruit{id: String, parent: String, harness: String, model: String, effort: String, repo: String, branch: String, path: String, base: String}
+  StructuralRecruit{id: String, parent: String, harness: String, model: String, effort: String, repo: String, branch: String, path: String, base: String, options: List<&2,String>}
+  StructuralEnsemble{id: String, owner: String, coupling: String, options: List<&2,String>}
   Worktree{id: String}
   Receive{session: String, cmd: String, model: String, effort: String, cwd: String, log: String, message: String}
   Start{session: String, harness: String, cmd: String, model: String, effort: String, cwd: String, log: String, id: String, task: String}
@@ -36,7 +43,12 @@ type Command is Data:
   Delivery{id: String}
   Pending{}
   Inbox{id: String}
+  MessageIndex{recipient: IndexText, sender: IndexText, kind: IndexText, state: String}
+  MessageRange{recipient: IndexText, sender: IndexText, kind: IndexText, state: String, after: IndexText, through: IndexText}
+  OrchestraIndex{focus: IndexText}
   Land{player: String, repo: String, target: String}
+  LandAt{player: String, repo: String, target: String, commit: String}
+  LandCheckedAt{player: String, repo: String, target: String, check: String, files: String, commit: String}
   LandChecked{player: String, repo: String, target: String, check: String, files: String}
   Push{repo: String, branch: String, remote: String}
   RemoteTip{repo: String, branch: String, remote: String}
@@ -52,6 +64,8 @@ type Command is Data:
   Turns{id: String}
   KnowledgeRecord{id: String, author: String, claim: String, evidence: String, limits: String}
   KnowledgeRead{reader: String}
+  KnowledgeIndex{reader: String}
+  KnowledgeDetail{reader: String, id: String}
   KnowledgePromote{id: String, promoter: String, source: String, destination: String, finding: String}
   Help{}
   Invalid{}
@@ -270,6 +284,49 @@ def orchestra_sql() -> String:
   "SELECT json_object('players'," ++ players_json(assigned_role("s.id") ++ "<>'operator'") ++ ",'operators'," ++ players_json(assigned_role("s.id") ++ "='operator'") ++ ",'ensembles',(SELECT json_group_array(json(item)) FROM (SELECT " ++ ensemble_row("e") ++ " AS item FROM ensembles e ORDER BY e.id)));"
 
 
+# Read filters select retained rows by exact text equality.
+def index_filter(column: String, value: IndexText) -> String:
+  match value:
+    case IndexAny{}: "1"
+    case IndexExact{text}: column ++ "=" ++ q(text)
+
+def index_state_sql(+state: String) -> String:
+  Bool.pick(String,String.eq(state,"pending"),"m.receipt IS NULL",Bool.pick(String,String.eq(state,"acknowledged"),"m.receipt IS NOT NULL","1"))
+
+def message_index_row() -> String:
+  "json_patch(json_object('id',m.id,'sender',m.sender,'recipient',m.recipient,'kind',m.kind,'seq',m.seq,'bodyBytes',length(CAST(m.body AS BLOB)),'receiptState',CASE WHEN m.receipt IS NULL THEN 'unacknowledged' ELSE 'acknowledged' END)," ++ input_state_sql("m") ++ ")"
+
+def message_index_sql(recipient: IndexText, sender: IndexText, kind: IndexText, state: String) -> String:
+  "SELECT coalesce(json_group_array(json(item)),json('[]')) FROM (SELECT " ++ message_index_row() ++ " AS item FROM messages m WHERE " ++ index_filter("m.recipient",recipient) ++ " AND " ++ index_filter("m.sender",sender) ++ " AND " ++ index_filter("m.kind",kind) ++ " AND " ++ index_state_sql(state) ++ " ORDER BY m.seq);"
+
+def sequence_predicate(operator: String, bound: IndexText) -> String:
+  match bound:
+    case IndexAny{}: "1"
+    case IndexExact{text}: "m.seq" ++ operator ++ "CAST(" ++ q(text) ++ " AS INTEGER)"
+
+def message_range_sql(r: IndexText, s: IndexText, k: IndexText, state: String, after: IndexText, through: IndexText) -> String:
+  "SELECT coalesce(json_group_array(json(item)),json('[]')) FROM (SELECT " ++ message_index_row() ++ " AS item FROM messages m WHERE " ++ index_filter("m.recipient",r) ++ " AND " ++ index_filter("m.sender",s) ++ " AND " ++ index_filter("m.kind",k) ++ " AND " ++ index_state_sql(state) ++ " AND " ++ sequence_predicate(">",after) ++ " AND " ++ sequence_predicate("<=",through) ++ " ORDER BY m.seq);"
+
+def index_focus_text(focus: IndexText) -> String:
+  match focus:
+    case IndexAny{}: "NULL"
+    case IndexExact{id}: q(id)
+
+def orchestra_index_scope(+focus: IndexText) -> String:
+  +subject = index_focus_text(focus)
+  "WITH base(id) AS (SELECT s.id FROM sessions s WHERE " ++ subject ++ " IS NULL OR s.id=" ++ subject ++ " OR s.id IN (" ++ ancestors(subject) ++ ") OR " ++ descendant(subject,"s.id") ++ "),"
+  ++ "chosen_ensembles(id) AS (SELECT e.id FROM ensembles e WHERE e.owner IN (SELECT id FROM base) OR EXISTS(SELECT 1 FROM ensemble_members em WHERE em.ensemble=e.id AND em.session=" ++ subject ++ ")),"
+  ++ "chosen_routes(id) AS (SELECT r.id FROM sessions r WHERE " ++ subject ++ " IS NOT NULL AND " ++ message_route(subject,"r.id") ++ "),"
+  ++ "selected(id) AS (SELECT id FROM base UNION SELECT e.owner FROM ensembles e JOIN chosen_ensembles ce ON ce.id=e.id UNION SELECT em.session FROM ensemble_members em JOIN chosen_ensembles ce ON ce.id=em.ensemble UNION SELECT id FROM chosen_routes) "
+
+def orchestra_index_players(condition: String) -> String:
+  "(SELECT coalesce(json_group_array(json(item)),json('[]')) FROM (SELECT json_object('id',s.id,'kind'," ++ session_kind("s.id") ++ ",'role'," ++ public_role("s.id") ++ ",'parent',s.parent,'harness',s.harness,'model',s.model,'effort',s.effort,'observedHarness',s.observed_harness,'observedModel',s.observed_model,'observedEffort',s.observed_effort,'workspace',s.workspace,'branch',s.branch,'base',s.base,'reference',json(CASE WHEN s.id IN (SELECT id FROM base) THEN 'false' ELSE 'true' END),'execution',(SELECT json_object('attempt',id,'mode',mode,'phase',phase,'status',status) FROM executions WHERE session=s.id),'stop',(SELECT json_object('id',id,'status',outcome,'attempt',nullif(attempt,''),'reportId',nullif(report_id,'')) FROM session_stops WHERE session=s.id),'endpointRegistered',json(CASE WHEN s.endpoint='' THEN 'false' ELSE 'true' END),'lastTurnId',(SELECT t.id FROM turns t WHERE t.worker=s.id ORDER BY rowid DESC LIMIT 1),'latestReportId',(SELECT m.id FROM messages m WHERE m.sender=s.id AND m.kind='report' ORDER BY m.seq DESC LIMIT 1),'pendingCount',(SELECT count(*) FROM messages WHERE recipient=s.id AND receipt IS NULL AND NOT (" ++ stopped_session_sql("s.id") ++ " AND " ++ execution_input_sql("messages.kind") ++ ")),'unacknowledgedCount',(SELECT count(*) FROM messages WHERE recipient=s.id AND receipt IS NULL),'inputRead',json_array('inbox',s.id,'--index'),'ownedEnsembles',(SELECT json_group_array(id) FROM (SELECT id FROM ensembles WHERE owner=s.id ORDER BY id)),'memberEnsembles',(SELECT json_group_array(ensemble) FROM (SELECT ensemble FROM ensemble_members WHERE session=s.id ORDER BY ensemble))) AS item FROM sessions s WHERE s.id IN (SELECT id FROM selected) AND " ++ condition ++ " ORDER BY s.id))"
+
+def orchestra_index_sql(+focus: IndexText) -> String:
+  +subject = index_focus_text(focus)
+  orchestra_index_scope(focus)
+  ++ "SELECT CASE WHEN " ++ subject ++ " IS NOT NULL AND NOT EXISTS(SELECT 1 FROM sessions WHERE id=" ++ subject ++ ") THEN json_object('error','orchestra-subject-unknown','command','orchestra','condition','The focused session is not registered.','next','Read players or orchestra --index and select a recorded ID.') ELSE json_object('version',1,'subject'," ++ subject ++ ",'selection',json_object('mode',CASE WHEN " ++ subject ++ " IS NULL THEN 'all' ELSE 'connected' END,'rule','parent-owner-member-routes-v1'),'players'," ++ orchestra_index_players(assigned_role("s.id") ++ "<>'operator'") ++ ",'operators'," ++ orchestra_index_players(assigned_role("s.id") ++ "='operator'") ++ ",'ensembles',(SELECT json_group_array(json(item)) FROM (SELECT " ++ ensemble_row("e") ++ " AS item FROM ensembles e WHERE e.id IN (SELECT id FROM chosen_ensembles) ORDER BY e.id)),'routes',json(CASE WHEN " ++ subject ++ " IS NULL THEN 'null' ELSE (SELECT json_group_array(json_object('sender'," ++ subject ++ ",'recipient',id)) FROM chosen_routes) END),'limitations',(SELECT json_group_array(json_object('kind','reference','id',id,'next',json_array('orchestra','--index','--for',id))) FROM (SELECT id FROM selected WHERE id NOT IN (SELECT id FROM base) ORDER BY id))) END;"
+
 def sql(command: Command) -> String:
   match command:
     case Observe{id,player,event,sealed}: observe_sql(id,player,event,sealed)
@@ -312,6 +369,9 @@ def sql(command: Command) -> String:
     case SectionRead{ensemble,id}: "SELECT " ++ section_row("sections") ++ " FROM sections WHERE ensemble=" ++ q(ensemble) ++ " AND id=" ++ q(id) ++ ";"
     case SectionMember{ensemble,id,owner,player,action}: section_member_sql(ensemble,id,owner,player,action)
     case Orchestra{}: orchestra_sql()
+    case MessageIndex{recipient,sender,kind,state}: message_index_sql(recipient,sender,kind,state)
+    case MessageRange{r,s,k,state,after,through}: message_range_sql(r,s,k,state,after,through)
+    case OrchestraIndex{focus}: orchestra_index_sql(focus)
     case Turns{id}:
       "SELECT coalesce(json_group_array(json(item)),json('[]')) FROM (SELECT json_object('id',t.id,'player',t.worker,'eventType',coalesce(json_extract(t.event,'$.type'),json_extract(t.event,'$.payload_type')),'reportBody',m.body,'receipt',m.receipt) AS item FROM turns t JOIN messages m ON m.id=t.id WHERE t.worker=" ++ q(id) ++ " ORDER BY m.seq);"
     case ObserveFile{id,player,path}: ""
@@ -330,14 +390,20 @@ def sql(command: Command) -> String:
     case StatusPretty{}: ""
     case Pretty{read}: ""
     case Land{player,repo,target}: ""
+    case LandAt{player,repo,target,commit}: ""
+    case LandCheckedAt{player,repo,target,check,files,commit}: ""
     case LandChecked{player,repo,target,check,files}: ""
     case Push{repo,branch,remote}: ""
     case RemoteTip{repo,branch,remote}: ""
     case ObservedUsage{session}: ""
     case Recruit{id,parent,harness,model,effort,repo,branch,path,base}: ""
+    case StructuralRecruit{id,parent,harness,model,effort,repo,branch,path,base,options}: ""
+    case StructuralEnsemble{id,owner,coupling,options}: ""
     case Worktree{id}: ""
     case KnowledgeRecord{id,author,claim,evidence,limits}: ""
     case KnowledgeRead{reader}: ""
+    case KnowledgeIndex{reader}: ""
+    case KnowledgeDetail{reader,id}: ""
     case KnowledgePromote{id,promoter,source,destination,finding}: ""
     case Help{}: ""
     case Invalid{}: ""
@@ -345,7 +411,7 @@ def sql(command: Command) -> String:
 def help_verb(+verb: String) -> Bool:
   Bool.or(String.eq(verb,"help"),String.eq(verb,"--help"))
 
-def parse(args: List<String>) -> Command:
+def parse_legacy(args: List<&2,String>) -> Command:
   match args:
     case +verb <> Nil{}:
       Bool.pick(Command,help_verb(verb),Help{},
@@ -378,16 +444,183 @@ def parse(args: List<String>) -> Command:
     case +verb <> +id <> +one <> +two <> +three <> Nil{}:
       Bool.pick(Command,String.eq(verb,"section"),Section{id,one,two,three},Bool.pick(Command, String.eq(verb,"ensemble-member"),EnsembleMember{id,one,two,three},Bool.pick(Command, String.eq(verb,"attach"),Attach{id,one,two,three},Invalid{})))
     case +verb <> +id <> +one <> +two <> +three <> +four <> Nil{}:
-      Bool.pick(Command,String.eq(verb,"dispatch-turn"),DispatchTurn{id,one,two,three,four},Bool.pick(Command,String.eq(verb,"dispatch-file"),DispatchFile{id,one,two,three,four},Bool.pick(Command,String.eq(verb,"section-member"),SectionMember{id,one,two,three,four},Bool.pick(Command, String.eq(verb,"land-checked"),LandChecked{id,one,two,three,four},
+      Bool.pick(Command,Bool.and(String.eq(verb,"land"),String.eq(three,"--commit")),LandAt{id,one,two,four},Bool.pick(Command,String.eq(verb,"dispatch-turn"),DispatchTurn{id,one,two,three,four},Bool.pick(Command,String.eq(verb,"dispatch-file"),DispatchFile{id,one,two,three,four},Bool.pick(Command,String.eq(verb,"section-member"),SectionMember{id,one,two,three,four},Bool.pick(Command, String.eq(verb,"land-checked"),LandChecked{id,one,two,three,four},
       Bool.pick(Command, String.eq(verb,"bind"),Bind{id,one,two,three,four},
       Bool.pick(Command, String.eq(verb,"message"),Message{id,one,two,three,four},
-      Bool.pick(Command, String.eq(verb,"message-file"),MessageFile{id,one,two,three,four},Bool.pick(Command, String.eq(verb,"record"),KnowledgeRecord{id,one,two,three,four},Bool.pick(Command, String.eq(verb,"promote"),KnowledgePromote{id,one,two,three,four},Invalid{})))))))))
-    case +verb <> session <> cmd <> model <> effort <> cwd <> log <> message <> Nil{}:
-      Bool.pick(Command,String.eq(verb,"receive"),Receive{session,cmd,model,effort,cwd,log,message},Invalid{})
+      Bool.pick(Command, String.eq(verb,"message-file"),MessageFile{id,one,two,three,four},Bool.pick(Command, String.eq(verb,"record"),KnowledgeRecord{id,one,two,three,four},Bool.pick(Command, String.eq(verb,"promote"),KnowledgePromote{id,one,two,three,four},Invalid{}))))))))))
+    case +verb <> +session <> +cmd <> +model <> +effort <> +cwd <> +log <> +message <> Nil{}:
+      Bool.pick(Command,Bool.and(String.eq(verb,"land-checked"),String.eq(log,"--commit")),LandCheckedAt{session,cmd,model,effort,cwd,message},Bool.pick(Command,String.eq(verb,"receive"),Receive{session,cmd,model,effort,cwd,log,message},Invalid{}))
     case +verb <> +player <> +id <> +cmd <> +model <> +effort <> +cwd <> +task <> +log <> +session <> Nil{}:
       Bool.pick(Command,String.eq(verb,"start"),Start{player,id,cmd,model,effort,cwd,task,log,session},Bool.pick(Command,String.eq(verb,"turn"),RunTurn{player,id,cmd,model,effort,cwd,task,log,session},
       Bool.pick(Command,String.eq(verb,"recruit"),Recruit{player,id,cmd,model,effort,cwd,task,log,session},Invalid{})))
     case _: Invalid{}
+
+type ReadArgs is Data:
+  ReadArgs{recipient: IndexText, sender: IndexText, kind: IndexText, state: IndexText, focus: IndexText, indexed: Bool, pretty: Bool, awaiting: String, valid: Bool}
+
+def index_absent(value: IndexText) -> Bool:
+  match value:
+    case IndexAny{}: True{}
+    case IndexExact{text}: False{}
+
+def read_flag(+flag: String, +r: IndexText, +s: IndexText, +k: IndexText, +state: IndexText, +focus: IndexText, +indexed: Bool, +pretty: Bool) -> ReadArgs:
+  Bool.pick(ReadArgs,String.eq(flag,"--index"),ReadArgs{r,s,k,state,focus,True{},pretty,"",Bool.not(indexed)},
+  Bool.pick(ReadArgs,String.eq(flag,"--pretty"),ReadArgs{r,s,k,state,focus,indexed,True{},"",Bool.not(pretty)},
+  ReadArgs{r,s,k,state,focus,indexed,pretty,flag,
+    Bool.or(Bool.and(String.eq(flag,"--recipient"),index_absent(r)),
+    Bool.or(Bool.and(String.eq(flag,"--sender"),index_absent(s)),
+    Bool.or(Bool.and(String.eq(flag,"--kind"),index_absent(k)),
+    Bool.or(Bool.and(String.eq(flag,"--state"),index_absent(state)),Bool.and(String.eq(flag,"--for"),index_absent(focus))))))}))
+
+def read_value(+value: String, +flag: String, +r: IndexText, +s: IndexText, +k: IndexText, +state: IndexText, +focus: IndexText, +indexed: Bool, +pretty: Bool) -> ReadArgs:
+  ReadArgs{
+    Bool.pick(IndexText,String.eq(flag,"--recipient"),IndexExact{value},r),
+    Bool.pick(IndexText,String.eq(flag,"--sender"),IndexExact{value},s),
+    Bool.pick(IndexText,String.eq(flag,"--kind"),IndexExact{value},k),
+    Bool.pick(IndexText,String.eq(flag,"--state"),IndexExact{value},state),
+    Bool.pick(IndexText,String.eq(flag,"--for"),IndexExact{value},focus),indexed,pretty,"",
+    Bool.or(Bool.not(String.eq(flag,"--state")),Bool.or(String.eq(value,"pending"),Bool.or(String.eq(value,"acknowledged"),String.eq(value,"all"))))}
+
+def read_arg(+token: String, args: ReadArgs) -> ReadArgs:
+  match args:
+    case ReadArgs{+r,+s,+k,+state,+focus,+indexed,+pretty,+awaiting,+valid}:
+      Bool.pick(ReadArgs,valid,
+        Bool.pick(ReadArgs,String.is_empty(awaiting),read_flag(token,r,s,k,state,focus,indexed,pretty),read_value(token,awaiting,r,s,k,state,focus,indexed,pretty)),
+        ReadArgs{r,s,k,state,focus,indexed,pretty,awaiting,False{}})
+
+def read_args(args: List<&2,String>, parsed: ReadArgs) -> ReadArgs:
+  match args:
+    case Nil{}: parsed
+    case token <> rest: read_args(rest,read_arg(token,parsed))
+
+def index_state_default(state: IndexText) -> String:
+  match state:
+    case IndexAny{}: "pending"
+    case IndexExact{text}: text
+
+def read_command(+command: Command, pretty: Bool, valid: Bool) -> Command:
+  Bool.pick(Command,valid,Bool.pick(Command,pretty,Pretty{command},command),Invalid{})
+
+def index_command(args: ReadArgs) -> Command:
+  match args:
+    case ReadArgs{r,s,k,state,focus,indexed,pretty,awaiting,valid}:
+      read_command(MessageIndex{r,s,k,index_state_default(state)},pretty,
+        Bool.and(valid,Bool.and(indexed,Bool.and(String.is_empty(awaiting),index_absent(focus)))))
+
+def orchestra_command(args: ReadArgs) -> Command:
+  match args:
+    case ReadArgs{r,s,k,state,+focus,+indexed,pretty,awaiting,valid}:
+      read_command(Bool.pick(Command,indexed,OrchestraIndex{focus},Orchestra{}),pretty,
+        Bool.and(valid,Bool.and(String.is_empty(awaiting),Bool.and(index_absent(r),Bool.and(index_absent(s),Bool.and(index_absent(k),Bool.and(index_absent(state),Bool.or(indexed,index_absent(focus)))))))))
+
+def index_legacy_args(args: List<&2,String>) -> Bool:
+  match args:
+    case Nil{}: True{}
+    case arg <> Nil{}: String.eq(arg,"--pretty")
+    case _: False{}
+
+def parse_inbox_index(args: List<&2,String>) -> Command:
+  match args:
+    case Nil{}: Invalid{}
+    case +id <> +rest:
+      Bool.pick(Command,index_legacy_args(rest),parse_legacy("inbox" <> id <> rest),index_command(read_args(rest,ReadArgs{IndexExact{id},IndexAny{},IndexAny{},IndexAny{},IndexAny{},False{},False{},"",True{}})))
+
+def parse_knowledge(args: List<&2,String>) -> Command:
+  match args:
+    case reader <> "--index" <> Nil{}: KnowledgeIndex{reader}
+    case reader <> "--id" <> id <> Nil{}: KnowledgeDetail{reader,id}
+    case reader <> "--index" <> "--pretty" <> Nil{}: Pretty{KnowledgeIndex{reader}}
+    case reader <> "--pretty" <> "--index" <> Nil{}: Pretty{KnowledgeIndex{reader}}
+    case reader <> "--id" <> id <> "--pretty" <> Nil{}: Pretty{KnowledgeDetail{reader,id}}
+    case reader <> "--pretty" <> "--id" <> id <> Nil{}: Pretty{KnowledgeDetail{reader,id}}
+    case other: parse_legacy("knowledge" <> other)
+
+def parse_structural_recruit(+args: List<&2,String>) -> Command:
+  match args:
+    case verb <> id <> parent <> harness <> model <> effort <> repo <> branch <> path <> base <> first <> rest:
+      Bool.pick(Command,String.eq(verb,"recruit"),StructuralRecruit{id,parent,harness,model,effort,repo,branch,path,base,first <> rest},parse_legacy(args))
+    case _: parse_legacy(args)
+
+def parse_structural(+args: List<&2,String>) -> Command:
+  match args:
+    case +verb <> id <> owner <> coupling <> first <> rest:
+      Bool.pick(Command,String.eq(verb,"ensemble"),StructuralEnsemble{id,owner,coupling,first <> rest},parse_structural_recruit(args))
+    case _: parse_legacy(args)
+
+def parse_shared_base(args: List<&2,String>) -> Command:
+  match args:
+    case Nil{}: Invalid{}
+    case +verb <> +rest:
+      Bool.pick(Command,String.eq(verb,"knowledge"),parse_knowledge(rest),
+      Bool.pick(Command,String.eq(verb,"inbox"),parse_inbox_index(rest),
+      Bool.pick(Command,String.eq(verb,"pending"),Bool.pick(Command,index_legacy_args(rest),parse_legacy(verb <> rest),index_command(read_args(rest,ReadArgs{IndexAny{},IndexAny{},IndexAny{},IndexAny{},IndexAny{},False{},False{},"",True{}}))),
+      Bool.pick(Command,String.eq(verb,"orchestra"),orchestra_command(read_args(rest,ReadArgs{IndexAny{},IndexAny{},IndexAny{},IndexAny{},IndexAny{},False{},False{},"",True{}})),parse_structural(verb <> rest)))))
+
+def sequence_order_upper(a: String, through: IndexText) -> Bool:
+  match through:
+    case IndexAny{}: True{}
+    case IndexExact{b}: Sequence.decimal_le(a,b)
+
+def sequence_order(after: IndexText, through: IndexText) -> Bool:
+  match after:
+    case IndexAny{}: True{}
+    case IndexExact{a}: sequence_order_upper(a,through)
+
+def range_attach(command: Command, after: IndexText, through: IndexText) -> Command:
+  match command:
+    case MessageIndex{r,s,k,state}: MessageRange{r,s,k,state,after,through}
+    case Pretty{inner}:
+      match inner:
+        case MessageIndex{r,s,k,state}: Pretty{MessageRange{r,s,k,state,after,through}}
+        case _: Invalid{}
+    case _: Invalid{}
+
+def range_reverse(args: List<&2,String>, out: List<&2,String>) -> List<&2,String>:
+  match args:
+    case Nil{}: out
+    case token <> rest: range_reverse(rest,token <> out)
+
+def range_finish(kept: List<&2,String>, +after: IndexText, +through: IndexText) -> Command:
+  +command = parse_shared_base(range_reverse(kept,Nil{}))
+  Bool.pick(Command,Bool.and(index_absent(after),index_absent(through)),command,
+    Bool.pick(Command,sequence_order(after,through),range_attach(command,after,through),Invalid{}))
+
+def range_bound_valid(+bound: IndexText, +value: String) -> Bool:
+  Bool.and(index_absent(bound),Sequence.valid(value))
+
+def range_value_flag(+flag: String) -> Bool:
+  Bool.or(String.eq(flag,"--recipient"),Bool.or(String.eq(flag,"--sender"),Bool.or(String.eq(flag,"--kind"),Bool.or(String.eq(flag,"--state"),String.eq(flag,"--for")))))
+
+# The scanner recurses only into itself. Existing filter values remain literal.
+def range_scan(args: List<&2,String>, +kept: List<&2,String>, +after: IndexText, +through: IndexText) -> Command:
+  match args:
+    case Nil{}: range_finish(kept,after,through)
+    case +flag <> Nil{}:
+      Bool.pick(Command,Bool.or(String.eq(flag,"--after-seq"),String.eq(flag,"--through-seq")),Invalid{},range_finish(flag <> kept,after,through))
+    case flag <> +value <> +rest:
+      match flag:
+        case "--after-seq":
+          Bool.pick(Command,range_bound_valid(after,value),range_scan(rest,kept,IndexExact{value},through),Invalid{})
+        case "--through-seq":
+          Bool.pick(Command,range_bound_valid(through,value),range_scan(rest,kept,after,IndexExact{value}),Invalid{})
+        case +other:
+          Bool.pick(Command,range_value_flag(other),
+            range_scan(rest,value <> other <> kept,after,through),
+            range_scan(value <> rest,other <> kept,after,through))
+
+def parse_shared(args: List<&2,String>) -> Command:
+  match args:
+    case "pending" <> rest: range_scan(rest,["pending"],IndexAny{},IndexAny{})
+    case "inbox" <> id <> rest: range_scan(rest,[id,"inbox"],IndexAny{},IndexAny{})
+    case other: parse_shared_base(other)
+
+def shared_args(args: List<String>) -> List<&2,String>:
+  match args:
+    case Nil{}: Nil{}
+    case arg <> rest: arg <> shared_args(rest)
+
+def parse(args: List<String>) -> Command:
+  parse_shared(shared_args(args))
 
 law help_word_selects_the_help_command:
   {parse(["help"]) == Help{} : Command}
@@ -421,4 +654,55 @@ law remote_tip_parser_keeps_the_declared_names:
   {parse(["remote-tip",repo,branch,remote]) == RemoteTip{repo,branch,remote} : Command}
 
 def remote_tip_parser_keeps_the_declared_names(repo,branch,remote):
+  {==}
+
+
+law reviewed_land_parser_preserves_literal_selector:
+  for player: String
+  for repo: String
+  for target: String
+  for commit: String
+  {parse(["land",player,repo,target,"--commit",commit]) == LandAt{player,repo,target,commit} : Command}
+
+def reviewed_land_parser_preserves_literal_selector(player,repo,target,commit):
+  {==}
+
+law reviewed_checked_land_parser_preserves_check_files_and_selector:
+  for player: String
+  for repo: String
+  for target: String
+  for check: String
+  for files: String
+  for commit: String
+  {parse(["land-checked",player,repo,target,check,files,"--commit",commit]) == LandCheckedAt{player,repo,target,check,files,commit} : Command}
+
+def reviewed_checked_land_parser_preserves_check_files_and_selector(player,repo,target,check,files,commit):
+  {==}
+
+law structural_ensemble_parser_preserves_the_complete_literal_tail:
+  for id: String
+  for owner: String
+  for coupling: String
+  for first: String
+  for rest: List<&2,String>
+  {parse_structural("ensemble" <> id <> owner <> coupling <> first <> rest) == StructuralEnsemble{id,owner,coupling,first <> rest} : Command}
+
+def structural_ensemble_parser_preserves_the_complete_literal_tail(id,owner,coupling,first,rest):
+  {==}
+
+law structural_recruit_parser_preserves_parent_and_complete_literal_tail:
+  for id: String
+  for parent: String
+  for harness: String
+  for model: String
+  for effort: String
+  for repo: String
+  for branch: String
+  for path: String
+  for base: String
+  for first: String
+  for rest: List<&2,String>
+  {parse_structural("recruit" <> id <> parent <> harness <> model <> effort <> repo <> branch <> path <> base <> first <> rest) == StructuralRecruit{id,parent,harness,model,effort,repo,branch,path,base,first <> rest} : Command}
+
+def structural_recruit_parser_preserves_parent_and_complete_literal_tail(id,parent,harness,model,effort,repo,branch,path,base,first,rest):
   {==}

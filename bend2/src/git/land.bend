@@ -185,6 +185,21 @@ def land_fast_forward(repo: String, workerBranch: String, target: String) -> IO(
     r5 : FFLD <- ff_go5(r4, rp, tg)
     ff_answer(r5)
 
+# The reviewed-source entry: the caller has already resolved an immutable commit
+# and the pipeline starts after branch resolution, so no branch name is read
+# here. Stages 2 to 5, their outcome type and the CAS target update are the same
+# ones the branch entry uses.
+def land_fast_forward_at(repo: String, +workerCommit: String, target: String) -> IO(T.LandOutcome):
+  +rp = repo
+  +tg = target
+  +wc = workerCommit
+  do IO<T.LandOutcome>:
+    r2 : FFLD <- ff_go2(FFNext{wc, ""}, rp, tg)
+    r3 : FFLD <- ff_go3(r2, rp, tg)
+    r4 : FFLD <- ff_go4(r3, rp, tg)
+    r5 : FFLD <- ff_go5(r4, rp, tg)
+    ff_answer(r5)
+
 def outcome_json(o: T.LandOutcome) -> String:
   match o:
     case T.LLanded{target, commit}: "{\"status\":\"landed\",\"target\":\"" ++ target ++ "\",\"commit\":\"" ++ commit ++ "\"}"

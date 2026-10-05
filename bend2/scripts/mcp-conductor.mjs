@@ -131,7 +131,7 @@ const TOOLS = [
   },
   {
     name: 'baton2_recruit',
-    description: 'Recruit a Player with a registered assignment and Git worktree.',
+    description: 'Recruit a Player or Associate Conductor with a registered assignment and Git worktree. Extended role/ensembles/sections require explicit parent and role. Each Section membership also adds Ensemble membership; owners may differ from parent. Repeat calls with the same parent for siblings, or an Associate parent for nested work. Configuration returns one complete native result with workspace and registration phases; startup is not requested.',
     inputSchema: { type: 'object', properties: {
       player: { type: 'string', description: 'New Player session ID' },
       parent: { type: 'string', description: 'Parent session ID (default: attached Conductor)' },
@@ -139,6 +139,13 @@ const TOOLS = [
       repo: { type: 'string', description: 'Repository path' },
       branch: { type: 'string' }, workspace: { type: 'string', description: 'New worktree path' },
       base: { type: 'string', description: 'Base Git revision' },
+      role: { type: 'string', enum: ['player', 'associate-conductor'] },
+      ensembles: { type: 'array', items: { type: 'object', properties: {
+        ensemble: { type: 'string' }, owner: { type: 'string' },
+      }, required: ['ensemble', 'owner'], additionalProperties: false } },
+      sections: { type: 'array', items: { type: 'object', properties: {
+        ensemble: { type: 'string' }, owner: { type: 'string' }, section: { type: 'string' },
+      }, required: ['ensemble', 'owner', 'section'], additionalProperties: false } },
     }, required: ['player', 'harness', 'model', 'effort', 'repo', 'branch', 'workspace', 'base'],
     additionalProperties: false },
   },
@@ -183,10 +190,13 @@ const TOOLS = [
   },
   {
     name: 'baton2_ensemble',
-    description: 'Inspect an Ensemble or configure its owner and coupling.',
+    description: 'Inspect an Ensemble or configure its owner and coupling. sections declares capability groups in one native operation and requires explicit owner and coupling. The owner must be a registered Conductor, including a Principal. Sections may be empty; recruit multiple Players into a Section to form a critic group. Ownership and membership are independent.',
     inputSchema: { type: 'object', properties: {
       ensemble: { type: 'string' }, owner: { type: 'string' },
       coupling: { type: 'string', enum: ['loose', 'tight'] },
+      sections: { type: 'array', minItems: 1, items: { type: 'object', properties: {
+        section: { type: 'string' }, capability: { type: 'string' },
+      }, required: ['section', 'capability'], additionalProperties: false } },
     }, required: ['ensemble'], additionalProperties: false },
   },
   {
@@ -215,8 +225,8 @@ const TOOLS = [
   },
   {
     name: 'baton2_orchestra',
-    description: 'Inspect Players, both Conductor tiers, operators, Ensembles and their Sections.',
-    inputSchema: { type: 'object', properties: {}, additionalProperties: false },
+    description: 'Use index:true for concise Players, Conductor tiers, operators, Ensembles and Sections. session focuses a registered session and requires index. Returns complete structural records with per-actor pendingCount, unacknowledgedCount and inputRead argv. Reference limitations.next is a literal native argv array. To follow it through MCP, call baton2_orchestra with index:true and session set to the reference id. pendingCount excludes stopped execution inputs; unacknowledgedCount includes every NULL receipt. Use baton2_inbox with index:true and recipient for pending metadata; state:all includes receipt history. baton2_pending accepts recipient/sender/kind selectors; baton2_delivery retrieves each full body. References retain their recorded parents without expanding outside branches. Unfocused routes is null (not requested); focused routes is the admitted outgoing array. Compact reads require a UTF-8 database. Legacy no-index includes report bodies.',
+    inputSchema: { type: 'object', properties: { index: { type: 'boolean' }, session: { type: 'string' }, pretty: { type: 'boolean' } }, additionalProperties: false },
   },
   {
     name: 'baton2_status',
@@ -225,12 +235,19 @@ const TOOLS = [
   },
   {
     name: 'baton2_inbox',
-    description: 'Show pending unacknowledged messages for the attached Conductor.',
-    inputSchema: {
-      type: 'object',
-      properties: { recipient: { type: 'string', description: 'Session ID (default: attached Conductor)' } },
-      additionalProperties: false,
-    },
+    description: 'Read messages for recipient (default attached session). Use index:true for concise metadata without acknowledgment; state defaults to pending and accepts acknowledged/all. sender and kind are conjunctive exact text filters, valid only with index. Use baton2_delivery for full bodies. afterSeq is exclusive and throughSeq inclusive on the stored coordination sequence; both require index:true and canonical decimal strings from 0 through 9223372036854775807. Omitted bounds are unbounded; equal bounds select nothing; reversed bounds refuse. Rows retain ascending sequence order. Compact reads require a UTF-8 database. Legacy no-index returns pending bodies.',
+    inputSchema: { type: 'object', properties: {
+      recipient: { type: 'string' }, index: { type: 'boolean' }, sender: { type: 'string' },
+      kind: { type: 'string' }, state: { type: 'string', enum: ['pending', 'acknowledged', 'all'] },
+      afterSeq: { type: 'string', pattern: '^(0|[1-9][0-9]{0,18})$' },
+      throughSeq: { type: 'string', pattern: '^(0|[1-9][0-9]{0,18})$' },
+      pretty: { type: 'boolean' },
+    }, additionalProperties: false },
+  },
+  {
+    name: 'baton2_delivery',
+    description: 'Read the full retained message body and receipt by ID, including acknowledged messages. This read does not acknowledge or retry delivery.',
+    inputSchema: { type: 'object', properties: { id: { type: 'string' }, pretty: { type: 'boolean' } }, required: ['id'], additionalProperties: false },
   },
   {
     name: 'baton2_ack',
@@ -278,6 +295,7 @@ const TOOLS = [
         player: { type: 'string', description: 'Player session ID' },
         repo: { type: 'string', description: 'Repository path' },
         target: { type: 'string', description: 'Target branch name' },
+        commit: { type: 'string', description: 'Optional reviewed source commit; native verifies ancestry of the recorded branch. Omission selects its tip.' },
       },
       required: ['player', 'repo', 'target'],
       additionalProperties: false,
@@ -292,6 +310,7 @@ const TOOLS = [
         player: { type: 'string', description: 'Player session ID' },
         repo: { type: 'string', description: 'Repository path' },
         target: { type: 'string', description: 'Target branch name' },
+        commit: { type: 'string', description: 'Optional reviewed source commit; native verifies ancestry of the recorded branch. Omission selects its tip.' },
         check: { type: 'string', description: 'Check script path' },
         files: { type: 'string', description: 'Space-separated list of files to check' },
       },
@@ -316,8 +335,23 @@ const TOOLS = [
   },
   {
     name: 'baton2_pending',
-    description: 'List all undelivered messages with their recipients\' current native endpoints.',
-    inputSchema: { type: 'object', properties: {}, additionalProperties: false },
+    description: 'Read across all recipients by default. Use index:true for concise metadata; optional recipient, sender and kind filters combine by exact equality. state defaults to pending and accepts acknowledged/all. Filters require index. afterSeq is exclusive and throughSeq inclusive on the stored coordination sequence. Bounds are canonical decimal strings from 0 through 9223372036854775807; omitted bounds are unbounded, equal bounds select nothing, and reversed bounds refuse. Rows retain ascending sequence order. Compact reads require a UTF-8 database. Legacy no-index includes bodies and endpoints. This read never acknowledges.',
+    inputSchema: { type: 'object', properties: {
+      index: { type: 'boolean' }, recipient: { type: 'string' }, sender: { type: 'string' },
+      kind: { type: 'string' }, state: { type: 'string', enum: ['pending', 'acknowledged', 'all'] },
+      afterSeq: { type: 'string', pattern: '^(0|[1-9][0-9]{0,18})$' },
+      throughSeq: { type: 'string', pattern: '^(0|[1-9][0-9]{0,18})$' },
+      pretty: { type: 'boolean' },
+    }, additionalProperties: false },
+  },
+  {
+    name: 'baton2_knowledge',
+    description: 'Read findings visible to reader (default attached session). index:true returns complete metadata with UTF-8 byte lengths, evidence-message identity/receipt state, visible destinations and literal detailRead argv. id selects zero or one full finding with complete claim, limits, cited evidence and reader-visible promotion history, including acknowledged evidence. index and id are mutually exclusive. These modes use read-only connections and never create knowledge tables or acknowledge evidence; both absent tables return [], partial schemas refuse. Invisible and absent IDs both return []. Omit index/id for the existing full view.',
+    inputSchema: { type: 'object', properties: {
+      reader: { type: 'string' }, index: { type: 'boolean' },
+      id: { type: 'string', description: 'Exact literal finding ID; use the id from detailRead.' },
+      pretty: { type: 'boolean' },
+    }, additionalProperties: false },
   },
   {
     name: 'baton2_push',
@@ -441,7 +475,7 @@ function handleMessage(msg) {
         experimental: { 'claude/channel': {} },
       },
       serverInfo: { name: 'baton-conductor', version: '0.1.0' },
-      instructions: `Baton2 ${hasParent(selectedSession()) ? 'Associate' : 'Principal'} Conductor attachment for session ${sessionId}. Use baton2_recruit to assign a Player and its worktree. Use baton2_receiver to register a Player's Codex or OMP receive endpoint, then baton2_dispatch_file to send task or guidance files. Use baton2_dispatch_turn to launch a recruited Player's task file with its recorded route. Use baton2_inbox or baton2_pending to see pending messages. Use baton2_ack to acknowledge delivery. Use baton2_guide to direct Players. Use baton2_player and baton2_players to inspect Players and both Conductor tiers. Use baton2_role, baton2_ensemble, baton2_ensemble_member, baton2_section and baton2_section_member to configure responsibilities and membership. Use baton2_orchestra to inspect the system. Use baton2_turns for turn history and baton2_land or baton2_land_checked to land a Player's changes.`,
+      instructions: `Baton2 ${hasParent(selectedSession()) ? 'Associate' : 'Principal'} Conductor attachment for session ${sessionId}. Use baton2_recruit to assign a Player and its worktree. For structural configuration provide explicit parent and role with typed ensembles/sections arrays. Repeated explicit parents form sibling or nested Associates. baton2_ensemble accepts sections with explicit owner and coupling; a Principal may own an Ensemble directly. Sections may be empty or contain multiple Players, and memberships may cross parent boundaries. Parent responsibility, ownership and membership are separate facts. One native result reports configuration and workspace phases; startupRequested:false leaves task dispatch to existing commands. Use baton2_receiver to register a Player's Codex or OMP receive endpoint, then baton2_dispatch_file to send task or guidance files. Use baton2_dispatch_turn to launch a recruited Player's task file with its recorded route. Use baton2_inbox with index:true for concise pending metadata scoped to this attachment; baton2_pending with index:true reads across recipients. Exact sender/kind filters combine; state:all includes acknowledged history. Use baton2_delivery to read each selected complete body. Index reads do not acknowledge, review or complete work. Use baton2_knowledge with index:true to list visible finding metadata; use id with the selected literal finding ID to read its complete claim, limits, evidence and visible promotion history. Reader defaults to this session. Acknowledged evidence remains readable. Use baton2_ack to acknowledge delivery. Use baton2_guide to direct Players. Use baton2_player and baton2_players to inspect Players and both Conductor tiers. Use baton2_role, baton2_ensemble, baton2_ensemble_member, baton2_section and baton2_section_member to configure responsibilities and membership. Use baton2_orchestra with index:true and session to inspect the focused system; omitted session selects the full structure. Structural output provides per-actor counts and inputRead argv. Reference limitations.next is a literal native argv array. To follow it through MCP, call baton2_orchestra with index:true and session set to the reference id. pendingCount excludes stopped execution inputs; unacknowledgedCount includes every NULL receipt. Use baton2_inbox with index:true and recipient for each actor; state:all includes receipt history. Counts describe retained input; per-message disposition is available from inbox/pending indexes. Legacy no-index readers include bodies and histories. Use baton2_turns for turn history and baton2_land or baton2_land_checked to land a Player's changes. Landing defaults to the recorded branch tip; supply commit with a reviewed object ID to select an ancestor while later work remains on the branch. Native selection verifies the registered workspace repository and source ancestry. The checked form runs target/candidate checks on that source. Inspect the result status; selection does not grant review or landing authority.`,
     });
     return;
   }
@@ -481,6 +515,78 @@ function handleMessage(msg) {
   sendError(msg.id, -32601, `Method not found: ${msg.method}`);
 }
 
+function readOptions(options, allowed) {
+  if (typeof options !== 'object' || options === null || Array.isArray(options)) throw new Error('Read options must be an object');
+  for (const [key, value] of Object.entries(options)) {
+    if (!allowed.includes(key) || typeof value !== (['index', 'pretty'].includes(key) ? 'boolean' : 'string')) throw new Error('Invalid read option: ' + key);
+  }
+}
+
+function messageReadOptions(options, inbox) {
+  readOptions(options, ['index', 'recipient', 'sender', 'kind', 'state', 'afterSeq', 'throughSeq', 'pretty']);
+  const filters = inbox ? ['sender', 'kind', 'state', 'afterSeq', 'throughSeq'] : ['recipient', 'sender', 'kind', 'state', 'afterSeq', 'throughSeq'];
+  if (!options.index && filters.some(key => options[key] !== undefined)) throw new Error('Message filters require index: true');
+  for (const key of ['afterSeq', 'throughSeq']) {
+    const value = options[key];
+    if (value !== undefined && (/^(0|[1-9][0-9]{0,18})$/.exec(value)?.[0] !== value ||
+        (value.length === 19 && value > '9223372036854775807'))) throw new Error('Invalid sequence bound: ' + key);
+  }
+  const lower = options.afterSeq, upper = options.throughSeq;
+  if (lower !== undefined && upper !== undefined &&
+      (lower.length > upper.length || (lower.length === upper.length && lower > upper))) throw new Error('Reversed sequence bounds');
+  const argv = options.index ? ['--index'] : [];
+  for (const key of filters) if (options[key] !== undefined) {
+    const flag = key === 'afterSeq' ? 'after-seq' : key === 'throughSeq' ? 'through-seq' : key;
+    argv.push('--' + flag, options[key]);
+  }
+  if (options.pretty) argv.push('--pretty');
+  return argv;
+}
+
+function landCommit(args) {
+  if (args.commit === undefined) return [];
+  if (typeof args.commit !== 'string') throw new Error('commit must be a string');
+  return ['--commit', args.commit];
+}
+
+function structuralFields(value, strings, arrays, required) {
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) throw new Error('Structural arguments must be an object');
+  for (const [key, item] of Object.entries(value)) {
+    if (strings.includes(key)) {
+      if (typeof item !== 'string') throw new Error('Structural argument must be a string: ' + key);
+    } else if (arrays.includes(key)) {
+      if (!Array.isArray(item)) throw new Error('Structural group must be an array: ' + key);
+    } else throw new Error('Unknown structural argument: ' + key);
+  }
+  for (const key of required) if (value[key] === undefined) throw new Error('Required structural argument: ' + key);
+}
+
+function structuralGroups(groups, flag, keys) {
+  const argv = [];
+  for (const group of groups ?? []) {
+    structuralFields(group, keys, [], keys);
+    argv.push(flag, ...keys.map(key => group[key]));
+  }
+  return argv;
+}
+
+function recruitOptions(args) {
+  if (!['role', 'ensembles', 'sections'].some(key => args?.[key] !== undefined)) return [];
+  structuralFields(args, ['player', 'parent', 'harness', 'model', 'effort', 'repo', 'branch', 'workspace', 'base', 'role'],
+    ['ensembles', 'sections'], ['player', 'parent', 'harness', 'model', 'effort', 'repo', 'branch', 'workspace', 'base', 'role']);
+  if (!['player', 'associate-conductor'].includes(args.role)) throw new Error('Extended recruit role must be player or associate-conductor');
+  return ['--role', args.role, ...structuralGroups(args.ensembles, '--ensemble', ['ensemble', 'owner']),
+    ...structuralGroups(args.sections, '--section', ['ensemble', 'owner', 'section'])];
+}
+
+function ensembleOptions(args) {
+  if (args?.sections === undefined) return [];
+  structuralFields(args, ['ensemble', 'owner', 'coupling'], ['sections'], ['ensemble', 'owner', 'coupling', 'sections']);
+  if (!['loose', 'tight'].includes(args.coupling)) throw new Error('Ensemble coupling must be loose or tight');
+  if (!args.sections.length) throw new Error('Section declarations must contain at least one group');
+  return structuralGroups(args.sections, '--section', ['section', 'capability']);
+}
+
 function handleToolCall(msg) {
   const { name, arguments: args } = msg.params;
   const player = args?.player ?? args?.worker;
@@ -492,7 +598,7 @@ function handleToolCall(msg) {
         break;
       case 'baton2_recruit':
         result = coord('recruit', player, args.parent ?? sessionId, args.harness, args.model,
-          args.effort, args.repo, args.branch, args.workspace, args.base);
+          args.effort, args.repo, args.branch, args.workspace, args.base, ...recruitOptions(args));
         break;
       case 'baton2_receiver':
         result = coord('receiver', player, args.command, args.log);
@@ -509,7 +615,7 @@ function handleToolCall(msg) {
         break;
       case 'baton2_ensemble':
         result = coord('ensemble', args.ensemble,
-          ...(args.owner === undefined && args.coupling === undefined ? [] : [args.owner ?? sessionId, args.coupling ?? 'loose']));
+          ...(args.owner === undefined && args.coupling === undefined && args.sections === undefined ? [] : [args.owner ?? sessionId, args.coupling ?? 'loose']), ...ensembleOptions(args));
         break;
       case 'baton2_ensemble_member':
         result = coord('ensemble-member', args.ensemble, args.owner ?? sessionId, player, args.action);
@@ -522,14 +628,24 @@ function handleToolCall(msg) {
       case 'baton2_section_member':
         result = coord('section-member', args.ensemble, args.section, args.owner ?? sessionId, player, args.action);
         break;
-      case 'baton2_orchestra':
-        result = coord('orchestra');
+      case 'baton2_orchestra': {
+        const options = args ?? {};
+        readOptions(options, ['index', 'session', 'pretty']);
+        if (options.session !== undefined && options.index !== true) throw new Error('session requires index: true');
+        result = coord('orchestra', ...(options.index ? ['--index'] : []),
+          ...(options.session === undefined ? [] : ['--for', options.session]), ...(options.pretty ? ['--pretty'] : []));
         break;
+      }
       case 'baton2_status':
         result = coord('status');
         break;
       case 'baton2_inbox':
-        result = coord('inbox', args?.recipient ?? sessionId);
+        result = coord('inbox', args?.recipient ?? sessionId, ...messageReadOptions(args ?? {}, true));
+        break;
+      case 'baton2_delivery':
+        readOptions(args ?? {}, ['id', 'pretty']);
+        if (typeof args?.id !== 'string') throw new Error('delivery requires id');
+        result = coord('delivery', args.id, ...(args.pretty ? ['--pretty'] : []));
         break;
       case 'baton2_ack':
         result = coord('ack', args.id, sessionId, args.receipt);
@@ -542,10 +658,10 @@ function handleToolCall(msg) {
         result = coord('worktree', player);
         break;
       case 'baton2_land':
-        result = coord('land', player, args.repo, args.target);
+        result = coord('land', player, args.repo, args.target, ...landCommit(args));
         break;
       case 'baton2_land_checked':
-        result = coord('land-checked', player, args.repo, args.target, args.check, args.files);
+        result = coord('land-checked', player, args.repo, args.target, args.check, args.files, ...landCommit(args));
         break;
       case 'baton2_players':
         result = coord('players');
@@ -557,8 +673,18 @@ function handleToolCall(msg) {
         result = coord('turns', player);
         break;
       case 'baton2_pending':
-        result = coord('pending');
+        result = coord('pending', ...messageReadOptions(args ?? {}, false));
         break;
+      case 'baton2_knowledge': {
+        const options = args ?? {};
+        readOptions(options, ['reader', 'index', 'id', 'pretty']);
+        if (options.index === true && options.id !== undefined) throw new Error('knowledge index and id are mutually exclusive');
+        result = coord('knowledge', options.reader ?? sessionId,
+          ...(options.index ? ['--index'] : []),
+          ...(options.id === undefined ? [] : ['--id', options.id]),
+          ...(options.pretty ? ['--pretty'] : []));
+        break;
+      }
       case 'baton2_push':
         result = coord('push', args.repo, args.branch, args.remote);
         break;

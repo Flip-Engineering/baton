@@ -88,9 +88,12 @@ import ./receive-laws.bend as ReceiveLaws
 import ./stop-laws.bend as StopLaws
 import ./native-request-laws.bend as NativeRequestLaws
 import ./knowledge-laws.bend as KnowledgeLaws
+import ./knowledge-read-laws.bend as KnowledgeReadLaws
 import ./messaging-laws.bend as MessagingLaws
 import ./connect-laws.bend as ConnectLaws
 import ./naming-laws.bend as NamingLaws
+import ./index-laws.bend as IndexLaws
+import ./sequence-laws.bend as SequenceLaws
 import ./delivery.bend as Delivery
 import ./turn.bend as Turn
 import ./commands.bend as C

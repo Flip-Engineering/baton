@@ -9,9 +9,12 @@ import ./stop.bend as Stop
 import ./receive.bend as Receive
 import ./native-requests.bend as NativeRequests
 import ./recruit.bend as Recruit
+import ./structural.bend as Structural
 import ./land.bend as Land
 import ./knowledge.bend as Knowledge
+import ./knowledge-reads.bend as KnowledgeReads
 import ./usage.bend as Usage
+import ./index-reads.bend as IndexReads
 import ./commands.bend as C
 import ./control.bend as Control
 import ./control-laws.bend as ControlLaws
@@ -77,7 +80,19 @@ def stored_command_entry_uses_the_actual_store(db,command):
   {==}
 
 def usage() -> String:
-  "usage: baton2 DATABASE COMMAND ARGS\nstart SESSION HARNESS HARNESS_CMD MODEL EFFORT CWD OUTPUT_LOG TASK_ID TASK_FILE\nreceiver SESSION HARNESS_CMD OUTPUT_LOG\ndispatch-file ID SENDER RECIPIENT KIND PATH\ndispatch-turn PLAYER TURN_ID HARNESS_CMD OUTPUT_LOG TASK_FILE\nstatus --pretty\nplayers --pretty\norchestra --pretty\npending --pretty\nplayer ID --pretty\nsession ID --pretty\ninbox ID --pretty\ndelivery ID --pretty\nturns PLAYER_ID --pretty\nknowledge READER --pretty\nworktree ID --pretty\nattach ID HARNESS NATIVE ENDPOINT\nrecruit ID PARENT HARNESS MODEL EFFORT REPO BRANCH PATH BASE\nworktree ID\nconnect ID NATIVE ENDPOINT\nbind ID NATIVE HARNESS MODEL EFFORT\nrole SESSION [player|principal-conductor|associate-conductor|operator]\nensemble ID [OWNER [loose|tight]]\nensemble-member ID OWNER PLAYER add|remove\nsection ENSEMBLE SECTION [OWNER CAPABILITY]\nsection-member ENSEMBLE SECTION OWNER PLAYER add|remove\norchestra\nmessage ID SENDER RECIPIENT KIND BODY\nmessage-file ID SENDER RECIPIENT KIND PATH\nobserve-file ID PLAYER PATH\nreport ID PLAYER BODY\nask ID PLAYER BODY\nask-file ID PLAYER PATH\nnative-reply PARENT REQUEST RESPONSE_JSON\nnative-reply-file PARENT REQUEST PATH\nsession ID\ndelivery ID\npending\ninbox RECIPIENT\nack ID RECIPIENT NATIVE_RECEIPT\nstatus\nplayers\nplayer ID\nturns PLAYER_ID\nland PLAYER_ID REPO TARGET_BRANCH\nland-checked PLAYER_ID REPO TARGET_BRANCH CHECK FILES\npush REPO BRANCH REMOTE\nremote-tip REPO BRANCH REMOTE\nobserved-usage SESSION\nturn PLAYER TURN_ID HARNESS_CMD MODEL EFFORT CWD TASK_FILE OUTPUT_LOG RESUME_SESSION\nstop SESSION STOP_ID REASON\nforce-stop SESSION STOP_ID\nreceive SESSION HARNESS_CMD MODEL EFFORT CWD OUTPUT_LOG MESSAGE_ID\nrecord FINDING_ID AUTHOR CLAIM EVIDENCE LIMITS\nknowledge READER\npromote PROMOTION_ID PROMOTER SOURCE DESTINATION FINDING\nEmpty receive MODEL/EFFORT/CWD use recorded values; empty MESSAGE_ID reads the pending inbox.\nPATH - reads stdin; empty RESUME_SESSION starts a new native session\nComplete stored input: delivery MESSAGE_ID returns the full body and receipt of any message; turns PLAYER_ID lists turn history with report bodies; players reports latestReport and latestReportId. Acknowledged messages leave inbox and pending and remain readable by ID."
+  "usage: baton2 DATABASE COMMAND ARGS\nstart SESSION HARNESS HARNESS_CMD MODEL EFFORT CWD OUTPUT_LOG TASK_ID TASK_FILE\nreceiver SESSION HARNESS_CMD OUTPUT_LOG\ndispatch-file ID SENDER RECIPIENT KIND PATH\ndispatch-turn PLAYER TURN_ID HARNESS_CMD OUTPUT_LOG TASK_FILE\nstatus --pretty\nplayers --pretty\norchestra --pretty\norchestra --index [--for SESSION] [--pretty]\ninbox SESSION --index [--sender SESSION] [--kind KIND] [--state pending|acknowledged|all] [--after-seq SEQ] [--through-seq SEQ] [--pretty]\npending --index [--recipient SESSION] [--sender SESSION] [--kind KIND] [--state pending|acknowledged|all] [--after-seq SEQ] [--through-seq SEQ] [--pretty]\npending --pretty\nplayer ID --pretty\nsession ID --pretty\ninbox ID --pretty\ndelivery ID --pretty\nturns PLAYER_ID --pretty\nknowledge READER --pretty\nknowledge READER --index [--pretty]\nknowledge READER --id FINDING_ID [--pretty]\nworktree ID --pretty\nattach ID HARNESS NATIVE ENDPOINT\nrecruit ID PARENT HARNESS MODEL EFFORT REPO BRANCH PATH BASE\nrecruit ID PARENT HARNESS MODEL EFFORT REPO BRANCH PATH BASE --role player|associate-conductor [--ensemble ENSEMBLE OWNER]... [--section ENSEMBLE OWNER SECTION]...\nensemble ID OWNER loose|tight [--section SECTION CAPABILITY]...\nworktree ID\nconnect ID NATIVE ENDPOINT\nbind ID NATIVE HARNESS MODEL EFFORT\nrole SESSION [player|principal-conductor|associate-conductor|operator]\nensemble ID [OWNER [loose|tight]]\nensemble-member ID OWNER PLAYER add|remove\nsection ENSEMBLE SECTION [OWNER CAPABILITY]\nsection-member ENSEMBLE SECTION OWNER PLAYER add|remove\norchestra\nmessage ID SENDER RECIPIENT KIND BODY\nmessage-file ID SENDER RECIPIENT KIND PATH\nobserve-file ID PLAYER PATH\nreport ID PLAYER BODY\nask ID PLAYER BODY\nask-file ID PLAYER PATH\nnative-reply PARENT REQUEST RESPONSE_JSON\nnative-reply-file PARENT REQUEST PATH\nsession ID\ndelivery ID\npending\ninbox RECIPIENT\nack ID RECIPIENT NATIVE_RECEIPT\nstatus\nplayers\nplayer ID\nturns PLAYER_ID\nland PLAYER_ID REPO TARGET_BRANCH [--commit COMMIT]\nland-checked PLAYER_ID REPO TARGET_BRANCH CHECK FILES [--commit COMMIT]\npush REPO BRANCH REMOTE\nremote-tip REPO BRANCH REMOTE\nobserved-usage SESSION\nturn PLAYER TURN_ID HARNESS_CMD MODEL EFFORT CWD TASK_FILE OUTPUT_LOG RESUME_SESSION\nstop SESSION STOP_ID REASON\nforce-stop SESSION STOP_ID\nreceive SESSION HARNESS_CMD MODEL EFFORT CWD OUTPUT_LOG MESSAGE_ID\nrecord FINDING_ID AUTHOR CLAIM EVIDENCE LIMITS\nknowledge READER\npromote PROMOTION_ID PROMOTER SOURCE DESTINATION FINDING\nEmpty receive MODEL/EFFORT/CWD use recorded values; empty MESSAGE_ID reads the pending inbox.\nPATH - reads stdin; empty RESUME_SESSION starts a new native session\nland and land-checked default to the recorded branch tip. Add --commit COMMIT to select a reviewed commit from that branch while later work remains on the branch. Native selection verifies the registered workspace repository and selected commit ancestry before landing effects. Use a full reviewed object ID to name the intended source. The checked form runs the existing target/candidate checks on the selected source. Inspect the result status; selection does not grant review or landing authority.\nknowledge --index lists visible finding metadata and literal detailRead argv. Pass detailRead elements after the executable and database to read the selected full finding. knowledge READER --id FINDING_ID preserves the complete claim, limits, cited message and visible promotion history, including acknowledged evidence. Index and selected reads use read-only connections: both absent knowledge tables return []; partial schemas refuse. Absent and invisible finding IDs both return []. Reader and finding IDs are literal arguments. These reads never acknowledge evidence. Extended ensemble declares Sections with fixed groups --section SECTION CAPABILITY and explicit owner/coupling. The owner is an existing Conductor; a Principal may own an Ensemble directly. Extended recruit requires explicit PARENT and --role player|associate-conductor; --ensemble ENSEMBLE OWNER adds membership, and --section ENSEMBLE OWNER SECTION adds both memberships. Repeat recruitment with the same parent for sibling Associates or an Associate parent for nested work. Sections may be empty or contain multiple Players, including a critic group. Cross-parent memberships preserve the recorded parent; ownership and membership are independent. Configuration returns one structural-result with registration and workspace phases, literal next argv arrays, and startupRequested:false on success. Inspect with orchestra --index, player, worktree, ensemble and section. Use existing receiver/dispatch-file or dispatch-turn commands to start work.\nCompact reads require a UTF-8 coordination database; other encodings refuse without conversion and remain accessible through full legacy readers. Unfocused orchestra index returns routes:null (not requested); focused views return the admitted outgoing route array. orchestra --index returns structural records and per-actor pendingCount, unacknowledgedCount and inputRead argv. Reference limitations.next is a literal argv array; pass its elements after the executable and database to inspect that exact subject. pendingCount excludes stopped execution inputs; unacknowledgedCount includes every NULL receipt. These counts describe retained input. Run inputRead after the executable and database to list that actor's pending metadata; append --state all for receipt history. pending --index --recipient ID accepts conjunctive sender/kind selectors; delivery ID retrieves each full body. Index reads never acknowledge messages. inbox SESSION --index fixes the recipient; pending --index defaults to all recipients. Both default to pending; --state all includes acknowledged rows. Filters combine by exact text equality; unmatched sender, recipient or kind selects no rows. Message indexes accept --after-seq SEQ (exclusive lower bound) and --through-seq SEQ (inclusive upper bound) over the stored coordination sequence m.seq, ordered ascending. Each bound is canonical decimal text from 0 through 9223372036854775807; signs, whitespace, leading zeros, non-digits, overflow, repeated options and reversed bounds refuse. Equal bounds select an empty range. Omitted bounds are unbounded. Sequence bounds require --index, combine with all existing filters and never acknowledge messages. Invalid or repeated options refuse. orchestra --index retains recorded model/effort, separately observed model/effort, and native process execution status (not model or task success), while omitting bodies and opaque logs; --for selects ancestors, descendants, related Ensembles and route references without expanding external branches. Full stored input: delivery MESSAGE_ID returns the full body and receipt of any message; turns PLAYER_ID lists turn history with report bodies; players reports latestReport and latestReportId. Acknowledged messages leave inbox and pending and remain readable by ID."
+
+def pretty_read(db: String, command: C.Command) -> IO(Unit):
+  match command:
+    case C.KnowledgeIndex{reader}: KnowledgeReads.run(db,reader,C.IndexAny{},True{})
+    case C.KnowledgeDetail{reader,id}: KnowledgeReads.run(db,reader,C.IndexExact{id},True{})
+    case C.MessageIndex{r,s,k,state}: IndexReads.run(db,C.MessageIndex{r,s,k,state},True{})
+    case C.MessageRange{r,s,k,state,after,through}: IndexReads.run(db,C.MessageRange{r,s,k,state,after,through},True{})
+    case C.OrchestraIndex{focus}: IndexReads.run(db,C.OrchestraIndex{focus},True{})
+    case other:
+      do IO<Unit>:
+        saved : String <- Control.pretty(db,other)
+        print_result(saved)
 
 def execute(db: String, command: C.Command) -> IO(Unit):
   match command:
@@ -105,14 +120,22 @@ def execute(db: String, command: C.Command) -> IO(Unit):
       do IO<Unit>:
         saved : String <- Control.status_pretty(db)
         print_result(saved)
-    case C.Pretty{read}:
-      do IO<Unit>:
-        saved : String <- Control.pretty(db,read)
-        print_result(saved)
+    case C.Pretty{read}: pretty_read(db,read)
+    case C.MessageIndex{r,s,k,state}: IndexReads.run(db,C.MessageIndex{r,s,k,state},False{})
+    case C.MessageRange{r,s,k,state,after,through}: IndexReads.run(db,C.MessageRange{r,s,k,state,after,through},False{})
+    case C.OrchestraIndex{focus}: IndexReads.run(db,C.OrchestraIndex{focus},False{})
     case C.Recruit{id,parent,harness,model,effort,repo,branch,path,base}:
       Recruit.recruit(db,id,parent,harness,model,effort,repo,branch,path,base)
+    case C.StructuralRecruit{id,parent,harness,model,effort,repo,branch,path,base,options}:
+      Structural.recruit(db,id,parent,harness,model,effort,repo,branch,path,base,Structural.linear_args(options))
+    case C.StructuralEnsemble{id,owner,coupling,options}:
+      Structural.ensemble(db,id,owner,coupling,Structural.linear_args(options))
     case C.Land{player,repo,target}:
       Land.land_player(db,player,repo,target)
+    case C.LandAt{player,repo,target,commit}:
+      Land.land_player_at(db,player,repo,target,commit)
+    case C.LandCheckedAt{player,repo,target,check,files,commit}:
+      Land.land_checked_player_at(db,player,repo,target,check,files,commit)
     case C.LandChecked{player,repo,target,check,files}:
       Land.land_checked_player(db,player,repo,target,check,files)
     case C.Push{repo,branch,remote}:
@@ -126,6 +149,10 @@ def execute(db: String, command: C.Command) -> IO(Unit):
       Knowledge.record(db,id,author,claim,evidence,limits)
     case C.KnowledgeRead{reader}:
       Knowledge.read(db,reader)
+    case C.KnowledgeIndex{reader}:
+      KnowledgeReads.run(db,reader,C.IndexAny{},False{})
+    case C.KnowledgeDetail{reader,id}:
+      KnowledgeReads.run(db,reader,C.IndexExact{id},False{})
     case C.KnowledgePromote{id,promoter,source,destination,finding}:
       Knowledge.promote(db,id,promoter,source,destination,finding)
     case C.Receive{session,cmd,model,effort,cwd,log,message}:
@@ -250,17 +277,17 @@ def dispatch_cli(db: String, id: String, args: List<String>, keeper_flag: Bool, 
     case True{}: Control.deliver(db,id)
     case False{}: keeper_cli(db,id,args,keeper_flag)
 
-def recover_cli(db: String, session: String, id: String, cursor: String, cmd: String, model: String, effort: String, cwd: String, log: String, harness: String, directory: String, native: String, internal: Bool) -> IO(Unit):
+def recover_cli(flag: String, db: String, session: String, id: String, cursor: String, cmd: String, model: String, effort: String, cwd: String, log: String, harness: String, directory: String, native: String, internal: Bool) -> IO(Unit):
   match internal:
     case True{}: IO.try(Unit,Receive.recover(db,session,id,cursor,cmd,model,effort,cwd,log,harness,directory,native))
-    case False{}: execute("",C.Invalid{})
+    case False{}: normal_cli([flag,db,session,id,cursor,cmd,model,effort,cwd,log,harness,directory,native])
 
 def cli(args: List<String>) -> IO(Unit):
   match args:
     case +flag <> +directory <> +lock <> Nil{}:
       dispatch_cli(directory,lock,[flag,directory,lock],String.eq(flag,"--host-process-keeper"),String.eq(flag,"--dispatch-message"))
-    case flag <> db <> session <> id <> cursor <> cmd <> model <> effort <> cwd <> log <> harness <> directory <> native <> Nil{}:
-      recover_cli(db,session,id,cursor,cmd,model,effort,cwd,log,harness,directory,native,String.eq(flag,"--recover-receive"))
+    case +flag <> db <> session <> id <> cursor <> cmd <> model <> effort <> cwd <> log <> harness <> directory <> native <> Nil{}:
+      recover_cli(flag,db,session,id,cursor,cmd,model,effort,cwd,log,harness,directory,native,String.eq(flag,"--recover-receive"))
     case other: normal_cli(other)
 
 def main() -> IO(Unit):
@@ -338,9 +365,7 @@ def status_pretty_entry_executes_the_native_control(db):
 law readable_snapshot_entry_executes_its_stored_read:
   for db: String
   for read: C.Command
-  {execute(db,C.Pretty{read}) == (do IO<Unit>:
-    saved : String <- Control.pretty(db,read)
-    print_result(saved)) : IO(Unit)}
+  {execute(db,C.Pretty{read}) == pretty_read(db,read) : IO(Unit)}
 
 def readable_snapshot_entry_executes_its_stored_read(db,read):
   {==}
@@ -396,4 +421,183 @@ law native_main_passes_the_complete_runtime_arguments:
     cli(args)) : IO(Unit)}
 
 def native_main_passes_the_complete_runtime_arguments():
+  {==}
+
+law metadata_entry_uses_readonly_snapshot:
+  for db: String
+  for r: C.IndexText
+  for s: C.IndexText
+  for k: C.IndexText
+  for state: String
+  {execute(db,C.MessageIndex{r,s,k,state}) == IndexReads.run(db,C.MessageIndex{r,s,k,state},False{}) : IO(Unit)}
+
+def metadata_entry_uses_readonly_snapshot(db,r,s,k,state):
+  {==}
+
+law pretty_metadata_entry_uses_readonly_snapshot:
+  for db: String
+  for r: C.IndexText
+  for s: C.IndexText
+  for k: C.IndexText
+  for state: String
+  {pretty_read(db,C.MessageIndex{r,s,k,state}) == IndexReads.run(db,C.MessageIndex{r,s,k,state},True{}) : IO(Unit)}
+
+def pretty_metadata_entry_uses_readonly_snapshot(db,r,s,k,state):
+  {==}
+
+law orchestra_index_entry_uses_readonly_snapshot:
+  for db: String
+  for focus: C.IndexText
+  {execute(db,C.OrchestraIndex{focus}) == IndexReads.run(db,C.OrchestraIndex{focus},False{}) : IO(Unit)}
+
+def orchestra_index_entry_uses_readonly_snapshot(db,focus):
+  {==}
+
+law pretty_orchestra_index_entry_uses_readonly_snapshot:
+  for db: String
+  for focus: C.IndexText
+  {pretty_read(db,C.OrchestraIndex{focus}) == IndexReads.run(db,C.OrchestraIndex{focus},True{}) : IO(Unit)}
+
+def pretty_orchestra_index_entry_uses_readonly_snapshot(db,focus):
+  {==}
+
+law pretty_players_preserves_legacy_read:
+  for db: String
+  {pretty_read(db,C.Players{}) == (do IO<Unit>:
+    saved : String <- Control.pretty(db,C.Players{})
+    print_result(saved)) : IO(Unit)}
+
+def pretty_players_preserves_legacy_read(db):
+  {==}
+
+
+law reviewed_land_entry_uses_selected_source:
+  for db: String
+  for player: String
+  for repo: String
+  for target: String
+  for commit: String
+  {execute(db,C.LandAt{player,repo,target,commit}) == Land.land_player_at(db,player,repo,target,commit) : IO(Unit)}
+
+def reviewed_land_entry_uses_selected_source(db,player,repo,target,commit):
+  {==}
+
+law reviewed_checked_land_entry_preserves_selected_source_and_checks:
+  for db: String
+  for player: String
+  for repo: String
+  for target: String
+  for check: String
+  for files: String
+  for commit: String
+  {execute(db,C.LandCheckedAt{player,repo,target,check,files,commit}) == Land.land_checked_player_at(db,player,repo,target,check,files,commit) : IO(Unit)}
+
+def reviewed_checked_land_entry_preserves_selected_source_and_checks(db,player,repo,target,check,files,commit):
+  {==}
+
+law knowledge_index_entry_uses_the_readonly_path:
+  for db: String
+  for reader: String
+  {execute(db,C.KnowledgeIndex{reader}) == KnowledgeReads.run(db,reader,C.IndexAny{},False{}) : IO(Unit)}
+
+def knowledge_index_entry_uses_the_readonly_path(db,reader):
+  {==}
+
+law knowledge_index_pretty_entry_uses_the_readonly_path:
+  for db: String
+  for reader: String
+  {execute(db,C.Pretty{C.KnowledgeIndex{reader}}) == KnowledgeReads.run(db,reader,C.IndexAny{},True{}) : IO(Unit)}
+
+def knowledge_index_pretty_entry_uses_the_readonly_path(db,reader):
+  {==}
+
+law knowledge_detail_entry_uses_the_readonly_path:
+  for db: String
+  for reader: String
+  for id: String
+  {execute(db,C.KnowledgeDetail{reader,id}) == KnowledgeReads.run(db,reader,C.IndexExact{id},False{}) : IO(Unit)}
+
+def knowledge_detail_entry_uses_the_readonly_path(db,reader,id):
+  {==}
+
+law knowledge_detail_pretty_entry_uses_the_readonly_path:
+  for db: String
+  for reader: String
+  for id: String
+  {execute(db,C.Pretty{C.KnowledgeDetail{reader,id}}) == KnowledgeReads.run(db,reader,C.IndexExact{id},True{}) : IO(Unit)}
+
+def knowledge_detail_pretty_entry_uses_the_readonly_path(db,reader,id):
+  {==}
+
+
+
+law sequence_range_entry_uses_readonly_snapshot:
+  for db: String
+  for r: C.IndexText
+  for s: C.IndexText
+  for k: C.IndexText
+  for state: String
+  for after: C.IndexText
+  for through: C.IndexText
+  {execute(db,C.MessageRange{r,s,k,state,after,through}) == IndexReads.run(db,C.MessageRange{r,s,k,state,after,through},False{}) : IO(Unit)}
+
+def sequence_range_entry_uses_readonly_snapshot(db,r,s,k,state,after,through):
+  {==}
+
+law sequence_range_pretty_entry_uses_readonly_snapshot:
+  for db: String
+  for r: C.IndexText
+  for s: C.IndexText
+  for k: C.IndexText
+  for state: String
+  for after: C.IndexText
+  for through: C.IndexText
+  {pretty_read(db,C.MessageRange{r,s,k,state,after,through}) == IndexReads.run(db,C.MessageRange{r,s,k,state,after,through},True{}) : IO(Unit)}
+
+def sequence_range_pretty_entry_uses_readonly_snapshot(db,r,s,k,state,after,through):
+  {==}
+
+law structural_ensemble_entry_uses_one_complete_native_operation:
+  for db: String
+  for id: String
+  for owner: String
+  for coupling: String
+  for options: List<&2,String>
+  {execute(db,C.StructuralEnsemble{id,owner,coupling,options}) == Structural.ensemble(db,id,owner,coupling,Structural.linear_args(options)) : IO(Unit)}
+
+def structural_ensemble_entry_uses_one_complete_native_operation(db,id,owner,coupling,options):
+  {==}
+
+law structural_recruit_entry_preserves_parent_and_complete_options:
+  for db: String
+  for id: String
+  for parent: String
+  for harness: String
+  for model: String
+  for effort: String
+  for repo: String
+  for branch: String
+  for path: String
+  for base: String
+  for options: List<&2,String>
+  {execute(db,C.StructuralRecruit{id,parent,harness,model,effort,repo,branch,path,base,options}) == Structural.recruit(db,id,parent,harness,model,effort,repo,branch,path,base,Structural.linear_args(options)) : IO(Unit)}
+
+def structural_recruit_entry_preserves_parent_and_complete_options(db,id,parent,harness,model,effort,repo,branch,path,base,options):
+  {==}
+
+
+law ordinary_role_only_recruit_reaches_the_public_entry:
+  for id: String
+  for parent: String
+  for harness: String
+  for model: String
+  for effort: String
+  for repo: String
+  for branch: String
+  for path: String
+  for base: String
+  for role: String
+  {cli(["fixture.db","recruit",id,parent,harness,model,effort,repo,branch,path,base,"--role",role]) == normal_cli(["fixture.db","recruit",id,parent,harness,model,effort,repo,branch,path,base,"--role",role]) : IO(Unit)}
+
+def ordinary_role_only_recruit_reaches_the_public_entry(id,parent,harness,model,effort,repo,branch,path,base,role):
   {==}
