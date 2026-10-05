@@ -61,31 +61,46 @@
     "not_defined_here": "No record-suppression flag is defined: retained_output also serves fresh retained starts and live tail, so suppressing records there would drop output that was never recorded."
   },
   "control_expectations": {
-    "note": "Driver metadata: for each control, the discriminating assertion is expected to fail while the positive artifact passes; a companion inverse case is expected to remain passing under the same mutant and exists to catch over-broad corrections. A named failure counts only after a successful mutant build and a passing positive run; a missing target, a skip, an unrelated exception or a compiler error is inconclusive.",
+    "authority": "This section is the single mapping the Receive host driver consumes; the targets field inside each control entry is descriptive only and is not read by the driver. Metadata here are proposals until remote observations exist.",
+    "note": "For each control the discriminating assertion is expected to fail while the positive artifact passes, and every listed companion case is expected to remain passing under the same mutant. A named failure counts only after a successful mutant build and a passing positive run; a missing target, a skip, a setup or collection error, an unrelated exception or a compiler error is inconclusive.",
+    "lane": "Only the four consume-site controls are in this host driver's lane. The operative-law controls normalizer-ignores-truncated-history and outcome-failed-bypasses-the-classifier are not host driver entries and are checked by the formal law gate instead.",
     "controls": {
       "consume-bypasses-the-activity-update": {
-        "discriminating": ["ControlledFrames.test_an_elided_terminal_repeating_an_older_error_reports_the_later_completion"],
-        "companion_expected_to_pass": ["ControlledFrames.test_a_neutral_frame_after_an_incomplete_start_keeps_no_success"]
+        "discriminating": [
+          "ControlledFrames.test_an_elided_terminal_repeating_an_older_error_reports_the_later_completion",
+          "ControlledFrames.test_an_observed_later_failure_is_reported_over_an_older_observed_error"
+        ],
+        "companion_expected_to_pass": [
+          "ControlledFrames.test_a_neutral_frame_after_an_incomplete_start_keeps_no_success"
+        ]
       },
       "consume-bypasses-terminal-normalization": {
-        "discriminating": ["ControlledFrames.test_an_observed_later_failure_is_reported_over_an_older_observed_error"],
-        "companion_expected_to_pass": ["ControlledFrames.test_empty_terminal_uses_the_retained_report"]
+        "discriminating": [
+          "ControlledFrames.test_empty_terminal_uses_the_retained_report",
+          "ControlledFrames.test_an_observed_later_failure_is_reported_over_an_older_observed_error"
+        ],
+        "companion_expected_to_pass": [
+          "ControlledFrames.test_a_neutral_frame_after_an_incomplete_start_keeps_no_success"
+        ]
       },
       "consume-propagates-the-previous-activity": {
-        "discriminating": ["ControlledFrames.test_an_observed_later_failure_is_reported_over_an_older_observed_error"],
-        "companion_expected_to_pass": ["ControlledFrames.test_a_neutral_frame_after_an_incomplete_start_keeps_no_success"]
+        "discriminating": [
+          "ControlledFrames.test_an_observed_later_failure_is_reported_over_an_older_observed_error",
+          "ControlledFrames.test_an_elided_terminal_repeating_an_older_error_reports_the_later_completion"
+        ],
+        "companion_expected_to_pass": [
+          "ControlledFrames.test_a_neutral_frame_after_an_incomplete_start_keeps_no_success",
+          "ControlledFrames.test_a_neutral_frame_before_the_terminal_keeps_the_later_completion"
+        ]
       },
       "consume-propagates-empty-activity": {
-        "discriminating": ["ControlledFrames.test_an_elided_terminal_repeating_an_older_error_reports_the_later_completion"],
-        "companion_expected_to_pass": ["ControlledFrames.test_a_neutral_frame_after_an_incomplete_start_keeps_no_success"]
-      },
-      "normalizer-ignores-truncated-history": {
-        "discriminating": ["ControlledFrames.test_empty_terminal_uses_the_retained_report"],
-        "companion_expected_to_pass": ["ControlledFrames.test_unavailable_content_is_reported_truthfully"]
-      },
-      "outcome-failed-bypasses-the-classifier": {
-        "discriminating": ["ControlledFrames.test_an_observed_later_failure_is_reported_over_an_older_observed_error"],
-        "companion_expected_to_pass": ["ControlledFrames.test_empty_terminal_uses_the_retained_report"]
+        "discriminating": [
+          "ControlledFrames.test_an_elided_terminal_repeating_an_older_error_reports_the_later_completion",
+          "ControlledFrames.test_an_observed_later_failure_is_reported_over_an_older_observed_error"
+        ],
+        "companion_expected_to_pass": [
+          "ControlledFrames.test_a_neutral_frame_after_an_incomplete_start_keeps_no_success"
+        ]
       }
     }
   },

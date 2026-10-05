@@ -82,7 +82,7 @@ class ReplayBase(RECEIVE.Receive):
             turn = database.execute("SELECT event FROM turns WHERE id=? AND worker='parent'",
                                     (identity,)).fetchone()
         self.assertIsNotNone(turn, 'the bound attempt has no stored turn event')
-        raw_status = (directory / 'status').read_text().strip()
+        raw_status = (directory / 'status').read_text()
         delivery = self.coord('delivery', identity)
         return {
             'id': identity,
