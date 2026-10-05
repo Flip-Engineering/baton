@@ -580,6 +580,12 @@ def classify_control(case, result, streams, baseline, evidence_root, source, com
                     delta=None, supplied=None):
     """Ask the checker's classifier what the verified bytes establish.
 
+    The case's definition metadata, including any expectation the definition
+    owner bound, is a declared statement about the intended diagnostic. It is
+    bound into the identity but is never treated as a measured diagnostic; only
+    the classifier's verdict over the verified bytes qualifies a control.
+    """
+
     One JSON request on stdin, one verdict line on stdout. The checker owns the
     classifier; the package recomputes the verdict over the streams and the
     actual child outcome it verified, and compares the producer's claim with it.
@@ -853,7 +859,7 @@ def controls_evidence(directory, initial, compiler):
                                   'definition_sha256': control['definition_sha256'],
                                   'case_sha256': hashlib.sha256(
                                       canonical_record_bytes(control)).hexdigest(),
-                                  'group': module, 'verifier': closure}
+                                  'group': module, 'entry': entry, 'verifier': closure}
             require(verdict.get('attributed_law') == control['law']
                     and verdict.get('law') == control['law'],
                     'The classified diagnostic names another law: ' + json.dumps(identity))
@@ -899,7 +905,10 @@ def controls_evidence(directory, initial, compiler):
             'checker_invocation': 'node ' + CONTROL_SCRIPT, 'modules': sorted(seen_modules),
             'spans': spans, 'slowest_span_seconds': max(seconds) if seconds else 0,
             'classifier': {'command': ['node', CONTROL_SCRIPT, '--classify'],
-                           'verdicts': [verdicts[identity] for identity in sorted(verdicts)]},
+                           'verdicts': [dict(verdicts[identity], source=source_pins,
+                                             closure_sha256=closure,
+                                             evidence_sha256=summary.get('sha256'))
+                                        for identity in sorted(verdicts)]},
             'slowest_seconds': max(entry['resource']['real_seconds']
                                    for entry in seen_cases.values()),
             'largest_child_max_rss_bytes': max((entry['resource'].get('max_rss_bytes') or 0)
