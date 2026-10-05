@@ -312,9 +312,15 @@ string or JSON number, as specified by the
 Additional metadata members are opaque transport data subject to the same raw
 JSON, duplicate-name and scalar-string validation. The
 [JSON schema](https://raw.githubusercontent.com/modelcontextprotocol/specification/main/schema/2024-11-05/schema.json)
-places no integer or range restriction on ProgressToken numbers. The metadata
-numeric profile admits strict JSON number tokens, including negative, fractional,
-exponent and above-U32 forms, independently of the request U32 and frame-ID
+defines ProgressToken as string or integer, while the TypeScript declaration
+uses string or number. Neither definition specifies a numeric maximum. This
+receiver explicitly selects the broader strict JSON-number compatibility profile
+requested by root, including fractions. For example, `0.5` is admitted by this
+profile and excluded by the published JSON Schema integer branch. The linked
+URLs use `main`; these statements describe the reviewed source snapshots.
+The metadata numeric profile admits strict JSON number tokens, including
+negative, fractional, exponent and above-U32 forms, independently of the request
+U32 and frame-ID
 safe-integer profiles. Validation uses the raw token and JSON node kind without
 conversion through Bend U32 or a JS Number; a valid large token is not rejected
 because a host numeric conversion would round or overflow. Null, booleans,
@@ -2194,6 +2200,9 @@ tests qualify the foreign parsers; native ordering mutations qualify the laws.
 Native codec and MCP integration cases exercise all three context tools with
 metadata absent, `{}`, string progress tokens (including astral characters), and
 numeric tokens `-1`, `0.5`, `1e3`, `4294967296`, `9007199254740993` and `1e400`.
+The `0.5` case distinguishes the selected receiver profile from the published
+JSON Schema integer branch. The mathematically integral `1e400` case exercises
+host-conversion overflow handling; the integer branch supplies no magnitude limit.
 Direct CLI and MCP submissions of the same owner/query/request must store identical
 canonical bytes and replay the same admitted query when only metadata changes.
 Observe actual query rows and provider launch markers: metadata must neither
