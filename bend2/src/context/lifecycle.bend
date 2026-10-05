@@ -33,6 +33,12 @@ def owns_live_duty(+recorded: String) -> Bool:
 def intent_owed(+row: String) -> Bool:
   String.eq(Tx.trim_nl(row), "1")
 
+def intent_settled(row: String) -> Bool:
+  String.eq(Tx.trim_nl(row), "0")
+
+def intent_missing(row: String) -> Bool:
+  String.eq(Tx.trim_nl(row), "missing")
+
 # One companion step: a bound read of committed intents, then the caller's duty
 # probe, then either one second of waiting and the continuation or the end. A failed
 # bound read ends the companion without claiming a wake; the original keeper and
