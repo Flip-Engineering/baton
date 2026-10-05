@@ -330,8 +330,11 @@ def publish_observe(+destination: String, +target: String, +oid: String, +basis:
 #
 # Supported record grammar, stated: the listing is a sequence of blocks separated by
 # blank lines. A block is one "worktree <path>" line followed by at least one state
-# line, one of "HEAD <oid>", "detached", "bare", "locked" or "prunable <reason>", and
-# any number of "branch refs/heads/<name>" lines. Completion criteria: every block
+# line, one of "HEAD <oid>", "detached" or "bare", at most one of "locked [<reason>]"
+# or "prunable <reason>", and AT MOST ONE "branch refs/heads/<name>" line. The supported
+# transport is the line-separated porcelain form; git recommends
+# `worktree list --porcelain -z` for unusual paths, so that lossless NUL form and its
+# quoting decoder remain explicit unimplemented work. Completion criteria: every block
 # carries a valid unquoted non-empty absolute path and at least one state line, every
 # line belongs to the grammar, and at most one block names the target branch. Under
 # those criteria the parsed observation may be read: exactly one qualified target match
@@ -368,6 +371,11 @@ type HolderScan is Data:
 type HolderDiscovery is Data:
   DiscoverRead{request: HolderRequest, code: U32, out: String}
   DiscoverBroken{request: HolderRequest, detail: String}
+
+# The returned boundary: the retained observation with the derived interpretation, so a
+# caller keeps the raw result and the request identity alongside the verdict.
+type HolderObservation is Data:
+  HolderObserved{request: HolderRequest, code: U32, out: String, verdict: HolderVerdict}
 
 type HolderVerdict is Data:
   VerdictFound{request: HolderRequest, path: String}
@@ -476,7 +484,7 @@ def holder_branch_ok(+acc: HolderScan, +request: String) -> HolderScan:
         case InBlock{path, has_state, branches}: ScanState{InBlock{path, has_state, U32.add(branches, 1)}, match, seen, bad, blocks}
         case NoBlock{}: ScanState{NoBlock{}, match, seen, U32.add(bad, 1), blocks}
 
-def holder_verdict(+acc: HolderScan, +request: HolderRequest, +raw: String) -> HolderVerdict:
+def holder_verdict(+acc: HolderScan, +request: HolderRequest) -> HolderVerdict:
   match acc:
     case ScanState{block, match, seen, bad, blocks}:
       Bool.pick(HolderVerdict, U32.is_lt(0, bad), VerdictAmbiguous{request, "the worktree listing is unsupported, incomplete or malformed"},
@@ -500,7 +508,7 @@ def holder_step(lines: List<String>, +branch: String, +target: String, +acc: Hol
 def holder_line_step(+line: String, rest: List<String>, +branch: String, +target: String, +acc: HolderScan, +request: String) -> HolderScan:
   Bool.pick(HolderScan, Tx.starts_with(line, "worktree "),
     holder_step(rest, branch, target, holder_open(holder_path_of(line), acc, request), request),
-    Bool.pick(HolderScan, holder_state_line(line),
+    Bool.pick(HolderScan, holder_required_state(line),
       holder_step(rest, branch, target, holder_ok_state(acc, request), request),
       Bool.pick(HolderScan, Tx.str_eq(line, branch),
         holder_step(rest, branch, target, holder_match_seen(line, target, acc, request), request),
@@ -522,7 +530,7 @@ def holder_bad(+acc: HolderScan, +request: String) -> HolderScan:
 
 def holder_scan(lines: List<String>, +request: HolderRequest) -> HolderVerdict:
   +target = holder_request_target(request)
-  holder_verdict(holder_step(lines, holder_branch_line(target), target, ScanState{NoBlock{}, None{}, 0, 0, 0}, holder_request_argv(request)), request, holder_request_argv(request))
+  holder_verdict(holder_step(lines, holder_branch_line(target), target, ScanState{NoBlock{}, None{}, 0, 0, 0}, holder_request_argv(request)), request)
 
 def holder_request_target(request: HolderRequest) -> String:
   match request:
@@ -546,6 +554,12 @@ def holder_verdict_of_discovery(discovery: HolderDiscovery) -> HolderVerdict:
         holder_scan(Tx.split_lines(out), request),
         VerdictUnreadable{request, code, out})
     case DiscoverBroken{request, detail}: VerdictBroken{request, detail}
+
+# The boundary a caller retains: the observation and its interpretation together.
+def holder_read(discovery: HolderDiscovery) -> HolderObservation:
+  match discovery:
+    case DiscoverRead{request, code, out}: HolderObserved{request, code, out, holder_verdict_of_discovery(discovery)}
+    case DiscoverBroken{request, detail}: HolderObserved{request, 0, detail, holder_verdict_of_discovery(discovery)}
 
 def holder_state(+path: String) -> IO(HolderState):
   +p2 = path
@@ -1507,9 +1521,21 @@ def prepared_holder_discovery_answers_none_among_valid_unrelated_blocks():
   {==}
 
 law prepared_holder_discovery_rejects_a_duplicate_target:
-  {holder_verdict_of_discovery(holder_discover(HolderRequest{"/r", "main", "git worktree list --porcelain"}, T.GRun{0, "worktree /a\nHEAD aa\nbranch refs/heads/main\nworktree /b\nHEAD bb\nbranch refs/heads/main\n"})) == VerdictAmbiguous{HolderRequest{"/r", "main", "git worktree list --porcelain"}, "the target branch is named more than once"} : HolderVerdict}
+  {holder_verdict_of_discovery(holder_discover(HolderRequest{"/r", "main", "git worktree list --porcelain"}, T.GRun{0, "worktree /a\nHEAD aa\nbranch refs/heads/main\n\nworktree /b\nHEAD bb\nbranch refs/heads/main\n"})) == VerdictAmbiguous{HolderRequest{"/r", "main", "git worktree list --porcelain"}, "the target branch is named more than once"} : HolderVerdict}
 
 def prepared_holder_discovery_rejects_a_duplicate_target():
+  {==}
+
+law prepared_holder_discovery_rejects_a_missing_record_separator:
+  {holder_verdict_of_discovery(holder_discover(HolderRequest{"/r", "main", "git worktree list --porcelain"}, T.GRun{0, "worktree /a\nHEAD aa\nbranch refs/heads/main\nworktree /b\nHEAD bb\nbranch refs/heads/other\n"})) == VerdictAmbiguous{HolderRequest{"/r", "main", "git worktree list --porcelain"}, "the worktree listing is unsupported, incomplete or malformed"} : HolderVerdict}
+
+def prepared_holder_discovery_rejects_a_missing_record_separator():
+  {==}
+
+law prepared_holder_discovery_rejects_a_second_branch_in_one_block:
+  {holder_verdict_of_discovery(holder_discover(HolderRequest{"/r", "main", "git worktree list --porcelain"}, T.GRun{0, "worktree /a\nHEAD aa\nbranch refs/heads/main\nbranch refs/heads/other\n"})) == VerdictAmbiguous{HolderRequest{"/r", "main", "git worktree list --porcelain"}, "the worktree listing is unsupported, incomplete or malformed"} : HolderVerdict}
+
+def prepared_holder_discovery_rejects_a_second_branch_in_one_block():
   {==}
 
 law prepared_holder_discovery_rejects_an_unfinished_final_block:
