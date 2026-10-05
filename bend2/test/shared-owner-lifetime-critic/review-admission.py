@@ -14,6 +14,7 @@ import subprocess
 
 
 PIN = "bea247cc523271f2eab4199febcc47262aca8574"
+TYPED_PIN = "0dc3c99051c4df9521546f14aacbd57a19174480"
 MODULE = Path("bend2/src/coordinator/owner-admission.bend")
 ENTRY = Path("bend2/test/owner-admission/main.bend")
 
@@ -22,6 +23,7 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--bend", required=True)
     parser.add_argument("--output", required=True)
+    parser.add_argument("--pin", choices=(PIN, TYPED_PIN), default=PIN)
     args = parser.parse_args()
     root = Path(__file__).resolve().parents[3]
     output = Path(args.output).resolve()
@@ -43,11 +45,11 @@ def main():
     assert version.returncode == 0 and version.stdout.strip() == b"bend 2.0.25"
     sources = {}
     for name, path in (("module", MODULE), ("entry", ENTRY)):
-        fetched = run("source-" + name, ["git", "show", PIN + ":" + str(path)])
+        fetched = run("source-" + name, ["git", "show", args.pin + ":" + str(path)])
         assert fetched.returncode == 0
         sources[path] = fetched.stdout.decode()
     (output / "source-sha256.json").write_text(json.dumps({
-        "commit": PIN, "compiler": hashlib.sha256(Path(args.bend).read_bytes()).hexdigest(),
+        "commit": args.pin, "compiler": hashlib.sha256(Path(args.bend).read_bytes()).hexdigest(),
         "files": {str(p): hashlib.sha256(s.encode()).hexdigest() for p, s in sources.items()}
     }, indent=2) + "\n")
 
@@ -77,7 +79,8 @@ def main():
             arguments[{"request": 1, "session": 2, "operation": 3}[changed_field]] = "changed"
             result = run(name + "-changed-" + changed_field, [binary, *arguments], isolated)
             assert result.returncode == 0
-            assert result.stdout == (b"conflict\n" if field is None else b"replay:attempt-a\n")
+            conflict = ("conflict:attempt-a:" + changed_field + "\n").encode() if args.pin == TYPED_PIN else b"conflict\n"
+            assert result.stdout == (conflict if field is None else b"replay:attempt-a\n")
         if field is None:
             replay = run("baseline-replay", [binary, *base], isolated)
             assert replay.returncode == 0 and replay.stdout == b"replay:attempt-a\n"
