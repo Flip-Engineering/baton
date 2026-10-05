@@ -429,8 +429,12 @@ class ControlledFrames(ReplayBase):
         self.assertIn('exit 0', status)
         failure = [body for body in bodies if 'Native model failure' in body]
         self.assertTrue(failure, bodies)
-        self.assertIn('429', failure[0])
+        self.assertIn('429 later failure', failure[0])
         self.assertNotIn('403 earlier failure', failure[0])
+        turns = self.coord('turns', 'parent')
+        self.assertEqual(turns[-1]['id'], self.original_attempt[0])
+        self.assertEqual(turns[-1]['reportBody'], failure[0])
+        self.assertEqual(self.coord('delivery', turns[-1]['id'])['body'], failure[0])
 
     def test_two_missing_identities_cannot_establish_the_current_error(self):
         """With no response identity on either side, the result is the unavailable frame."""
