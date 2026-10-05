@@ -317,25 +317,24 @@ test('only an explicit admitted decision permits access; everything else refuses
   assert.equal(staleRefRefusal({ decision: 'admitted', ok: false, identity: IDENTITY }).condition, 'refDecisionContradictory');
 
   // Anything that is not the asserted admitted shape refuses before any
-  // backend access: null, undefined, strings, legacy ok shapes, admitted
-  // without the asserted members, refused without condition.
-  for (const candidate of [
-    null,
-    undefined,
-    'admitted',
-    42,
-    { ok: true },
-    { ok: false, condition: 'staleReference' },
-    { decision: 'admitted' },
-    { decision: 'admitted', identity: IDENTITY },
-    { decision: 'refused' },
-  ]) {
+  // backend access. A candidate with no decision member at all refuses as
+  // refDecisionRefused; an object carrying a decision that is not the
+  // asserted admitted or refused shape refuses as refDecisionMalformed.
+  for (const candidate of [null, undefined, 'admitted', 42, { ok: true }, { ok: false, condition: 'staleReference' }]) {
+    const refusal = staleRefRefusal(candidate);
+    assert.equal(refusal.refused, true, `candidate ${JSON.stringify(candidate)} must refuse`);
+    assert.equal(refusal.condition, 'refDecisionRefused');
+  }
+  for (const candidate of [{ decision: 'admitted' }, { decision: 'admitted', identity: IDENTITY }, { decision: 'refused' }, { decision: 'maybe' }]) {
     const refusal = staleRefRefusal(candidate);
     assert.equal(refusal.refused, true, `candidate ${JSON.stringify(candidate)} must refuse`);
     assert.equal(refusal.condition, 'refDecisionMalformed');
   }
+  // A production-normalized candidate carries its own condition; the builder
+  // renders it instead of overriding.
+  assert.equal(staleRefRefusal({ decision: 'refused', condition: 'refDecisionRefused' }).condition, 'refDecisionRefused');
   assert.equal(admissionOutcome({ decision: 'refused', condition: 'refStopNotLive' }).condition, 'refStopNotLive');
-  assert.equal(admissionOutcome('admitted').condition, 'refDecisionMalformed');
+  assert.equal(admissionOutcome('admitted').condition, 'refDecisionRefused');
 });
 
 test('a capture binding without production admission or a ref refuses instead of admitting', () => {

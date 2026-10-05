@@ -45,9 +45,10 @@ function refusalOf(decision) {
       note: ADMISSION_NOTE,
     };
   }
+  const hasDecision = decision !== null && typeof decision === 'object' && decision.decision !== undefined;
   return {
     refused: true,
-    condition: 'refDecisionMalformed',
+    condition: hasDecision ? 'refDecisionMalformed' : 'refDecisionRefused',
     detail: null,
     note: ADMISSION_NOTE,
   };
