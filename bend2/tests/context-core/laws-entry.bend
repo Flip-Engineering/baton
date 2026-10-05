@@ -100,7 +100,7 @@ law main:
 def main():
   do IO<Unit>:
     _a : Unit <- run_go(all_ok(), 1)
-    _b : Unit <- IO.print(Refs.runtime_ref("rt:q7", "ad:1", "worker:2", 3, 5, "object", "handle:9"))
+    _b : Unit <- IO.print(Refs.runtime_ref("rt:q7", "ad:1", "worker:2", "3", "5", "object", "handle:9"))
     _c : Unit <- IO.print(resolved_text(Eng.resolve(Eng.EMany{Eng.ss_two("typescript", "clangd")}, [])))
     _d : Unit <- IO.print(choice_text(Eng.auto("entity", "", "sqlite-schema", Eng.ss_one("entities"))))
     IO.pure(Unit, Unit{})

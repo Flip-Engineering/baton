@@ -1,7 +1,7 @@
 {
-  "purpose": "Handoff payload for bend2/scripts/laws-check.mjs MUTATIONS. Each entry mutates one context core production function and is refused by the named law when the isolated entry bend2/tests/context-core/laws-entry.bend is compiled. Verified green by .scratch/context-core-controls/run.mjs: entry compiles with every law proven, 33 mutations, 0 failures.",
+  "purpose": "Handoff payload for bend2/scripts/laws-check.mjs MUTATIONS. Each entry mutates one context core production function and is refused by the named law when the isolated entry bend2/tests/context-core/laws-entry.bend is compiled. Verified green at 40e7060b by .scratch/context-core-controls/run.mjs (entry compiles with every law proven, 33 mutations, 0 failures); the runtime-ref-collapses-the-lifetime-counter entry was added after that run with the decimal-counter change and is pending the remote validation request native-core-counter-70.",
   "entry": "bend2/tests/context-core/laws-entry.bend",
-  "baseline": "fa44a0e0b6dc72187ad632170fd1770585eb04cc",
+  "verified_baseline": "40e7060bf11ea1f8a924110e5a72815c9e343c41",
   "entries": [
     {
       "name": "auto-ignores-the-typescript-suffix",
@@ -170,6 +170,13 @@
       "find": "  encode([Rt{\"source\"}, Rt{path}, Rt{sha256}, Rn{line}, Rn{column}, Rt{projection}])",
       "replace": "  encode([Rt{path}, Rt{sha256}, Rn{line}, Rn{column}, Rt{projection}])",
       "law": "context_refs_a_source_id_is_a_canonical_array"
+    },
+    {
+      "name": "runtime-ref-collapses-the-lifetime-counter",
+      "file": "bend2/src/context/refs.bend",
+      "find": "  encode([Rt{\"runtime\"}, Rt{runtime}, Rt{adapter}, Rt{thread}, Rt{epoch}, Rt{mutation}, Rt{kind}, Rt{handle}])",
+      "replace": "  encode([Rt{\"runtime\"}, Rt{runtime}, Rt{adapter}, Rt{thread}, Rt{\"0\"}, Rt{\"0\"}, Rt{kind}, Rt{handle}])",
+      "law": "context_refs_a_runtime_id_names_runtime_adapter_thread_epoch_generation_kind_handle"
     },
     {
       "name": "ref-id-uses-unescaped-text",

@@ -17,9 +17,18 @@ def context_refs_a_source_id_is_a_canonical_array():
   {==}
 
 law context_refs_a_runtime_id_names_runtime_adapter_thread_epoch_generation_kind_handle:
-  {Refs.runtime_ref("rt:q7", "ad:1", "worker:2", 3, 5, "object", "handle:9") == "[\"runtime\",\"rt:q7\",\"ad:1\",\"worker:2\",3,5,\"object\",\"handle:9\"]" : String}
+  {Refs.runtime_ref("rt:q7", "ad:1", "worker:2", "3", "5", "object", "handle:9") == "[\"runtime\",\"rt:q7\",\"ad:1\",\"worker:2\",\"3\",\"5\",\"object\",\"handle:9\"]" : String}
 
 def context_refs_a_runtime_id_names_runtime_adapter_thread_epoch_generation_kind_handle():
+  {==}
+
+# A monotone lifetime counter is carried as its exact decimal text, so a
+# counter above the U32 range stays distinct and cannot wrap into an earlier
+# lifetime and re-admit a stale reference.
+law context_refs_a_runtime_id_keeps_an_unbounded_lifetime_counter:
+  {Refs.runtime_ref("rt:q7", "ad:1", "worker:2", "9007199254740993", "18446744073709551617", "object", "handle:9") == "[\"runtime\",\"rt:q7\",\"ad:1\",\"worker:2\",\"9007199254740993\",\"18446744073709551617\",\"object\",\"handle:9\"]" : String}
+
+def context_refs_a_runtime_id_keeps_an_unbounded_lifetime_counter():
   {==}
 
 law context_refs_a_quoted_component_is_escaped:

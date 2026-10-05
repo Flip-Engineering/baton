@@ -58,8 +58,14 @@ def source_ref(+path: String, +sha256: String, line: U32, column: U32, +projecti
 # A runtime selection: the family tag, the owned runtime, the adapter, the
 # thread, the integration epoch, the mutation generation, the value kind and
 # the handle. PID alone is not identity.
-def runtime_ref(+runtime: String, +adapter: String, +thread: String, epoch: U32, mutation: U32, +kind: String, +handle: String) -> String:
-  encode([Rt{"runtime"}, Rt{runtime}, Rt{adapter}, Rt{thread}, Rn{epoch}, Rn{mutation}, Rt{kind}, Rt{handle}])
+#
+# The epoch and mutation generation are the exact decimal text of monotone
+# lifetime counters, never a value truncated or wrapped to U32: two different
+# lifetimes must not produce equal text, and a wrapped counter would re-admit a
+# stale reference. The caller supplies the canonical decimal token (no sign, no
+# leading zero, no fraction) under closed validation.
+def runtime_ref(+runtime: String, +adapter: String, +thread: String, +epoch: String, +mutation: String, +kind: String, +handle: String) -> String:
+  encode([Rt{"runtime"}, Rt{runtime}, Rt{adapter}, Rt{thread}, Rt{epoch}, Rt{mutation}, Rt{kind}, Rt{handle}])
 
 # --- the stored reference ----------------------------------------------------
 type RefRecord is Data:
