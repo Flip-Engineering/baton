@@ -275,12 +275,37 @@ by the real native entry and bound-store composition through the current owners.
 
 ## Source handoffs
 
+The post-reboot source candidate in `context/retained-read.bend` supplies
+`FrameBytes` as ordered `Word(8n)` octets, independent of character decoding.
+Its host conversion, allocation cost and arbitrary-byte transport remain
+unqualified. `ByteOffset` uses unsigned high/low U32 words for a 64-bit offset;
+`offset_sum` checks high-word overflow and carry overflow. `Cursor` retains
+original attempt, retained stream and offset. The source has boundary laws and
+an isolated native entry awaiting admitted remote compilation and execution.
+
+`ReadVersion` carries host-issued owner, capability and readiness-generation
+identities. `ReadRegistration` retains that version, registration identity and
+request-scoped sink. The host must validate these identities and implement the
+atomic compare/register/recheck contract from Controls62. These data types do
+not implement registration, event retention, byte counting, finality, seek or
+capability retirement. The host's qualified exit evidence remains separate.
+
+All compiler, build and test execution now requires an admitted remote runner.
+The earlier String/cursor correlation fixture retains its original text scope;
+it does not qualify the new raw byte representation or host I/O. Linux runner
+results and remote Darwin artifact qualification remain separate evidence.
+
 `context/receive-request.bend` supplies initial compiled transport data types:
 `InvocationContext` retains literal argv, cwd, captured stdin and captured files;
 `ReceiveRequest` retains version, correlation, invocation, existing Receive
 arguments and an optional wake message. `Correlation` separates database,
 owner-instance, request and session values. These are issued by the qualified
 caller; the module does not establish their authority or capture input itself.
+It also retains the client executable. The new `receive_invocation` constructor
+sets stdin to `UnusedInput` and files to the empty list while preserving literal
+argv and caller cwd. Receive's workspace override remains a separate field.
+This constructor is a source candidate awaiting remote validation; ordinary
+Receive continues to obtain its task input from retained coordinator messages.
 The envelope's owner names the current qualified transport generation. Durable
 request identity remains separate, as in `OwnerAdmission.Request`. A replacement
 owner must reconcile the original request before issuing a new transport

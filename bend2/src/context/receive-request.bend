@@ -15,7 +15,20 @@ type CapturedFile is Data:
 # The client supplies literal argv and already captured invocation input.
 # File/stdin capture, path resolution and canonical encoding belong to callers.
 type InvocationContext is Type:
-  Invocation{cwd: String, argv: List<String>, stdin: CapturedInput, files: List<CapturedFile>}
+  Invocation{executable: String, cwd: String, argv: List<String>, stdin: CapturedInput, files: List<CapturedFile>}
+
+# Receive takes its input from retained messages and does not consume stdin.
+def receive_invocation(executable: String, cwd: String, argv: List<String>) -> InvocationContext:
+  Invocation{executable,cwd,argv,UnusedInput{},Nil{}}
+
+law receive_context_keeps_literal_arguments_without_input_capture:
+  for executable: String
+  for cwd: String
+  for argv: List<String>
+  {receive_invocation(executable,cwd,argv) == Invocation{executable,cwd,argv,UnusedInput{},Nil{}} : InvocationContext}
+
+def receive_context_keeps_literal_arguments_without_input_capture(executable,cwd,argv):
+  {==}
 
 type ReceiveRequest is Type:
   ReceiveRequest{version: U32, correlation: Correlation, invocation: InvocationContext, command: String, model: String, effort: String, workspace: String, log: String, wake: Maybe<String>}
