@@ -410,6 +410,7 @@ class ContextPackagedBytes(unittest.TestCase):
 
     def test_gate_records_started_child_with_unknown_outcome(self):
         real = pathlib.Path(self.host_node).resolve()
+        real_popen = subprocess.Popen
         created = []
 
         class FakeOutcomeProcess:
@@ -432,8 +433,10 @@ class ContextPackagedBytes(unittest.TestCase):
                 process = FakeOutcomeProcess()
                 created.append(process)
                 return process
-            return subprocess.Popen(argv, **kwargs)
+            return real_popen(argv, **kwargs)
 
+        # The fake process evidences cleanup method calls only; no OS child is
+        # actually killed or reaped by this fixture.
         with mock.patch.object(PACKAGE.subprocess, 'Popen', fake_popen):
             with self.assertRaises(KeyboardInterrupt):
                 PACKAGE.run_context_gate(self.host_root, self.logs, real, 'outcome-unknown')
@@ -444,6 +447,7 @@ class ContextPackagedBytes(unittest.TestCase):
         self.assertIs(receipt['child']['spawned'], True)
         self.assertEqual(receipt['child']['stage'], 'started-outcome-unknown')
         self.assertIn('KeyboardInterrupt', receipt['child']['error'])
+        self.assertEqual(receipt['child']['cleanup'], {'reapReturncode': -9})
         self.assertIsNone(receipt['exit_code'])
         self.assertIsNone(receipt['signal'])
         self.assertTrue(receipt['payloadSnapshot']['equal'])
@@ -451,6 +455,7 @@ class ContextPackagedBytes(unittest.TestCase):
 
     def test_gate_preserves_interrupt_with_chained_write_failure(self):
         real = pathlib.Path(self.host_node).resolve()
+        real_popen = subprocess.Popen
 
         class InterruptingWait:
             args = [str(real), 'context-package-gate.mjs']
@@ -464,7 +469,7 @@ class ContextPackagedBytes(unittest.TestCase):
         def fake_popen(argv, **kwargs):
             if argv[-1] == 'context-package-gate.mjs':
                 return InterruptingWait()
-            return subprocess.Popen(argv, **kwargs)
+            return real_popen(argv, **kwargs)
 
         real_write = PACKAGE.write_json
 
@@ -483,6 +488,48 @@ class ContextPackagedBytes(unittest.TestCase):
         self.assertTrue((self.logs / 'context-gate-write-interrupt.stdout').is_file())
         self.assertTrue(
             (self.logs / 'context-gate-write-interrupt.payload-before.json').is_file())
+
+    def test_gate_records_cleanup_failure_during_interrupt(self):
+        real = pathlib.Path(self.host_node).resolve()
+        real_popen = subprocess.Popen
+        created = []
+
+        class KillFailsProcess:
+            def __init__(self):
+                self.args = [str(real), 'context-package-gate.mjs']
+
+            def wait(self):
+                raise KeyboardInterrupt
+
+            def kill(self):
+                raise OSError('kill refused')
+
+        def fake_popen(argv, **kwargs):
+            if argv[-1] == 'context-package-gate.mjs':
+                process = KillFailsProcess()
+                created.append(process)
+                return process
+            return real_popen(argv, **kwargs)
+
+        # The fake process evidences cleanup method calls only; the kill
+        # failure must not mask the original wait interruption and the
+        # unknown settlement is retained in the receipt evidence.
+        with mock.patch.object(PACKAGE.subprocess, 'Popen', fake_popen):
+            with self.assertRaises(KeyboardInterrupt) as caught:
+                PACKAGE.run_context_gate(self.host_root, self.logs, real, 'cleanup-failure')
+        self.assertIs(type(caught.exception), KeyboardInterrupt)
+        self.assertEqual(len(created), 1)
+        receipt = json.loads((self.logs / 'context-gate-cleanup-failure.json').read_text())
+        self.assertIs(receipt['child']['spawned'], True)
+        self.assertEqual(receipt['child']['stage'], 'started-outcome-unknown')
+        self.assertIn('KeyboardInterrupt', receipt['child']['error'])
+        self.assertIsNone(receipt['exit_code'])
+        self.assertIsNone(receipt['signal'])
+        self.assertIn('kill refused', receipt['child']['cleanup']['kill'])
+        self.assertIn('KeyboardInterrupt', receipt['child']['cleanup']['reap'])
+        self.assertTrue(any('kill refused' in row for row in receipt['evidenceErrors']))
+        self.assertTrue(any('child cleanup after interruption' in row
+                            for row in receipt['evidenceErrors']))
 
     def test_gate_refuses_same_version_byte_drift(self):
         real = pathlib.Path(self.host_node).resolve()

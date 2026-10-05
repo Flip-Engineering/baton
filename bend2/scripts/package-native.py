@@ -458,16 +458,21 @@ def retained_stream(record, error):
         return {'path': record.name, 'available': False, 'error': error}
     if not record.is_file():
         return {'path': record.name, 'available': False, 'error': 'stream file is absent'}
-    return {'path': record.name, 'available': True, **file_info(record)}
+    try:
+        info = file_info(record)
+    except BaseException as hash_error:
+        return {'path': record.name, 'available': False, 'error': repr(hash_error)}
+    return {'path': record.name, 'available': True, **info}
 
 
 def snapshot_evidence(path, state, evidence_errors, label):
     try:
         write_json(path, state)
+        info = file_info(path)
     except BaseException as error:
         evidence_errors.append(label + ' snapshot write failed: ' + repr(error))
         return {'path': path.name, 'available': False, 'error': repr(error)}
-    return {'path': path.name, 'available': True, **file_info(path)}
+    return {'path': path.name, 'available': True, **info}
 
 
 def context_receipt_logs(logs):
@@ -510,6 +515,7 @@ def run_context_gate(payload, logs, node, name, extra_env=None):
     spawn_error = None
     interrupted = None
     outcome = None
+    cleanup_evidence = None
     if stream_errors:
         spawn_stage = 'streams-unavailable'
         spawn_error = '; '.join(name + ': ' + value
@@ -533,17 +539,29 @@ def run_context_gate(payload, logs, node, name, extra_env=None):
                 outcome = subprocess.CompletedProcess(process.args, process.wait())
                 spawn_stage = 'completed'
             except BaseException as error:
-                # Preserve subprocess.run owned-child cleanup: terminate and
-                # reap before re-raising, never leaking a running child and
-                # never claiming a settled outcome.
-                process.kill()
-                try:
-                    process.wait()
-                except BaseException:
-                    pass
+                # The original wait interruption is recorded before any cleanup
+                # attempt; kill and reap are each guarded with their own error,
+                # a successful reap return code is settlement evidence rather
+                # than an error, and a failed cleanup never claims the child
+                # was not leaked.
+                interrupted = error
                 spawn_stage = 'started-outcome-unknown'
                 spawn_error = repr(error)
-                interrupted = error
+                cleanup = {}
+                try:
+                    process.kill()
+                except BaseException as kill_error:
+                    cleanup['kill'] = repr(kill_error)
+                try:
+                    cleanup['reapReturncode'] = process.wait()
+                except BaseException as reap_error:
+                    cleanup['reap'] = repr(reap_error)
+                cleanup_evidence = cleanup
+                cleanup_failures = {key: value for key, value in cleanup.items()
+                                    if key != 'reapReturncode'}
+                if cleanup_failures:
+                    evidence_errors.append('child cleanup after interruption: '
+                                           + json.dumps(cleanup_failures, sort_keys=True))
     for handle in (out_handle, err_handle):
         if handle is not None:
             try:
@@ -552,8 +570,12 @@ def run_context_gate(payload, logs, node, name, extra_env=None):
                 evidence_errors.append('stream close failed: ' + repr(error))
     secondary_error = None
     if interrupted is None:
-        after = context_tree_state(payload)
-        after_ref = snapshot_evidence(after_path, after, evidence_errors, 'after-payload')
+        try:
+            after = context_tree_state(payload)
+            after_ref = snapshot_evidence(after_path, after, evidence_errors, 'after-payload')
+        except BaseException as error:
+            secondary_error = error
+            after_ref = {'path': after_path.name, 'available': False, 'error': repr(error)}
         post_identity = None
         post_error = None
         try:
@@ -569,56 +591,61 @@ def run_context_gate(payload, logs, node, name, extra_env=None):
         except BaseException as error:
             secondary_error = error
             after_ref = {'path': after_path.name, 'available': False, 'error': repr(error)}
-    if post_identity is None:
-        node_identity['postIdentity'] = {'available': False, 'error': post_error}
-        node_identity['versionAfter'] = None
-        node_identity['sha256After'] = None
-        node_identity['bytesAfter'] = None
-    else:
-        node_identity['postIdentity'] = {'available': True, 'version': post_identity['version'],
-                                         'sha256': post_identity['sha256'],
-                                         'bytes': post_identity['bytes']}
-        node_identity['versionAfter'] = post_identity['version']
-        node_identity['sha256After'] = post_identity['sha256']
-        node_identity['bytesAfter'] = post_identity['bytes']
-    if outcome is not None:
-        child = {'spawned': True, 'stage': spawn_stage}
-    elif spawn_stage == 'started-outcome-unknown':
-        child = {'spawned': True, 'stage': spawn_stage, 'error': spawn_error}
-    else:
-        child = {'spawned': None if interrupted is not None else False,
-                 'stage': spawn_stage}
-        if spawn_error is not None:
-            child['error'] = spawn_error
-    receipt = {'runtime': name, 'node': node_identity,
-               'argv': [str(node), 'context-package-gate.mjs'], 'cwd': str(cwd),
-               'environmentKeys': sorted(env),
-               'child': child,
-               'exit_code': None if outcome is None else outcome.returncode,
-               'signal': child_signal(None if outcome is None else outcome.returncode),
-               'elapsed_seconds': time.monotonic() - started,
-               'stdout': retained_stream(stdout, stream_errors.get('stdout')),
-               'stderr': retained_stream(stderr, stream_errors.get('stderr')),
-               'payloadSnapshot': {'before': before_ref, 'after': after_ref,
-                                   'equal': None if not after_ref.get('available')
-                                            else before == after},
-               'evidenceErrors': evidence_errors,
-               'nodeVersionChanged': None if post_identity is None
-                                     else post_identity['version'] != node_identity['version'],
-               'nodeIdentityChanged': None if post_identity is None
-                                      else (post_identity['sha256'] != node_identity['sha256']
-                                            or post_identity['bytes'] != node_identity['bytes'])}
     receipt_path = logs / ('context-gate-' + name + '.json')
     try:
+        if post_identity is None:
+            node_identity['postIdentity'] = {'available': False, 'error': post_error}
+            node_identity['versionAfter'] = None
+            node_identity['sha256After'] = None
+            node_identity['bytesAfter'] = None
+        else:
+            node_identity['postIdentity'] = {'available': True, 'version': post_identity['version'],
+                                             'sha256': post_identity['sha256'],
+                                             'bytes': post_identity['bytes']}
+            node_identity['versionAfter'] = post_identity['version']
+            node_identity['sha256After'] = post_identity['sha256']
+            node_identity['bytesAfter'] = post_identity['bytes']
+        if outcome is not None:
+            child = {'spawned': True, 'stage': spawn_stage}
+        elif spawn_stage == 'started-outcome-unknown':
+            child = {'spawned': True, 'stage': spawn_stage, 'error': spawn_error}
+            if cleanup_evidence is not None:
+                child['cleanup'] = cleanup_evidence
+        else:
+            child = {'spawned': None if interrupted is not None else False,
+                     'stage': spawn_stage}
+            if spawn_error is not None:
+                child['error'] = spawn_error
+        receipt = {'runtime': name, 'node': node_identity,
+                   'argv': [str(node), 'context-package-gate.mjs'], 'cwd': str(cwd),
+                   'environmentKeys': sorted(env),
+                   'child': child,
+                   'exit_code': None if outcome is None else outcome.returncode,
+                   'signal': child_signal(None if outcome is None else outcome.returncode),
+                   'elapsed_seconds': time.monotonic() - started,
+                   'stdout': retained_stream(stdout, stream_errors.get('stdout')),
+                   'stderr': retained_stream(stderr, stream_errors.get('stderr')),
+                   'payloadSnapshot': {'before': before_ref, 'after': after_ref,
+                                       'equal': None if not after_ref.get('available')
+                                                else before == after},
+                   'evidenceErrors': evidence_errors,
+                   'nodeVersionChanged': None if post_identity is None
+                                         else post_identity['version'] != node_identity['version'],
+                   'nodeIdentityChanged': None if post_identity is None
+                                          else (post_identity['sha256'] != node_identity['sha256']
+                                                or post_identity['bytes'] != node_identity['bytes'])}
         write_json(receipt_path, receipt)
     except BaseException as error:
-        if interrupted is not None or secondary_error is not None:
-            original = interrupted if interrupted is not None else secondary_error
-            # The original interruption stays the raised exception; the
-            # receipt-write failure is retained as its chained cause.
+        original = interrupted if interrupted is not None else secondary_error
+        if original is not None:
+            # The original interruption (or the first secondary failure) stays
+            # the raised exception; the new failure is retained as its chained
+            # cause across the whole post-child evidence path.
             raise original from error
         raise
     if interrupted is not None:
+        if secondary_error is not None:
+            raise interrupted from secondary_error
         # The completed receipt retains the evidence; interruption semantics
         # are preserved instead of converting the interrupt into a refusal.
         raise interrupted
@@ -634,6 +661,15 @@ def run_context_gate(payload, logs, node, name, extra_env=None):
     require(not receipt['nodeIdentityChanged'],
             'The context gate node executable bytes changed during the package gate: '
             + str(receipt_path))
+    require(receipt['stdout']['available'] and receipt['stderr']['available'],
+            'The context gate raw stream evidence is incomplete: ' + str(receipt_path))
+    require(receipt['payloadSnapshot']['before']['available']
+            and receipt['payloadSnapshot']['after']['available'],
+            'The context payload snapshot evidence is incomplete: ' + str(receipt_path))
+    require(secondary_error is None,
+            'The context gate after-outcome evidence capture failed: ' + str(receipt_path))
+    require(not receipt['evidenceErrors'],
+            'The context gate evidence retention reported errors: ' + str(receipt_path))
     require(receipt['payloadSnapshot']['equal'],
             'The context payload changed during the package gate: ' + str(receipt_path))
     return receipt, stdout.read_text(errors='replace')
