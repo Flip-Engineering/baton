@@ -1300,9 +1300,12 @@ class PackageGateReceipt(unittest.TestCase):
         bound = {name: hashlib.sha256((envelope / name).read_bytes()).hexdigest()
                  for name in PACKAGE.ARCHIVE_METADATA}
 
-        admitted, raw = PACKAGE.admit_archive_documents(envelope, bound)
+        # The raw snapshot comes from the two-return document admission and the
+        # structural checks from the three-return archived admission.
+        document_record, raw = PACKAGE.admit_archive_documents(envelope, bound)
         admitted, admitted_inventory, admitted_reduction = (
             PACKAGE.admit_archived_documents(envelope, bound))
+        self.assertEqual(document_record, admitted)
         # The admitted snapshot is the exact file bytes, recorded as bytes.
         for name, data in raw.items():
             self.assertIsInstance(data, bytes)

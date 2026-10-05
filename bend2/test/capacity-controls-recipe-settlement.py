@@ -105,31 +105,52 @@ class RecipeSettlement(unittest.TestCase):
                          ['preconditions', 'consume'])
 
     def test_work_record_and_cleanup_failure_together(self):
-        # The stage fails, its terminal record cannot be written and the staged
-        # cleanup fails too: the original cause is raised and both secondary
-        # facts stay attached.
+        # The declared row persists, then the stage work fails and occupies the
+        # replacement name, so the terminal record cannot be written and its own
+        # cleanup fails: the original work error must still be raised.
         RECIPE.settle(self.run, self.record, 'preconditions', 'observed', run=1)
+        before = (self.run / 'run.json').read_bytes()
         staged = self.run / 'run.json.next'
-        original_write = RECIPE.write_record
-        calls = []
-
-        def failing_write(run, record):
-            calls.append(len(record))
-            if len(calls) > 1:
-                raise RuntimeError('the run record could not be written: blocked')
-            return original_write(run, record)
-
-        RECIPE.write_record = failing_write
-        self.addCleanup(setattr, RECIPE, 'write_record', original_write)
-        staged.mkdir()
-        (staged / 'occupied').write_text('still here\n')
         original = SystemExit('the stage itself failed')
+
+        def failing_work():
+            staged.mkdir()
+            (staged / 'occupied').write_text('still here\n')
+            raise original
+
         with self.assertRaises(SystemExit) as raised:
-            RECIPE.attempt(self.run, self.record, 'archive-readback',
-                           lambda: (_ for _ in ()).throw(original))
+            RECIPE.attempt(self.run, self.record, 'archive-readback', failing_work)
         self.assertIs(raised.exception, original)
         self.assertIn('could not be written', raised.exception.record_error)
+        self.assertEqual((self.run / 'run.json').read_bytes(), before)
         self.assertEqual([row['name'] for row in self.rows()], ['preconditions'])
+
+    def test_a_replace_failure_keeps_the_prior_record(self):
+        # Staging succeeds and the swap fails, so the prior record must survive and
+        # the staged file must not be left behind.
+        RECIPE.settle(self.run, self.record, 'preconditions', 'observed', run=1)
+        before = (self.run / 'run.json').read_bytes()
+        record_path = self.run / 'run.json'
+        original_replace = RECIPE.os.replace
+        RECIPE.os.replace = lambda source, target: (_ for _ in ()).throw(
+            OSError('the swap failed'))
+        self.addCleanup(setattr, RECIPE.os, 'replace', original_replace)
+        with self.assertRaises(RuntimeError) as raised:
+            RECIPE.write_record(self.run, self.record + [{'name': 'archive-readback'}])
+        self.assertIn('could not be written', str(raised.exception))
+        self.assertIsNone(raised.exception.cleanup_error)
+        self.assertEqual(record_path.read_bytes(), before)
+        self.assertFalse((self.run / 'run.json.next').exists())
+
+    def test_a_stale_staged_file_is_replaced(self):
+        # A leftover staged file from an earlier attempt is overwritten, and the
+        # record ends correct with nothing staged left behind.
+        RECIPE.settle(self.run, self.record, 'preconditions', 'observed', run=1)
+        (self.run / 'run.json.next').write_text('{"children": [{"name": "stale"}]}\n')
+        RECIPE.settle(self.run, self.record, 'consume', 'qualified', cases=2)
+        self.assertEqual([row['name'] for row in self.rows()],
+                         ['preconditions', 'consume'])
+        self.assertFalse((self.run / 'run.json.next').exists())
 
     def test_successful_work_with_a_failing_terminal_record(self):
         # The work succeeds and its terminal record cannot be written: the stage
