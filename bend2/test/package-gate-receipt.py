@@ -808,6 +808,8 @@ class PackageGateReceipt(unittest.TestCase):
         # recorded unavailable rather than accepted or silently dropped.
         self.assertEqual(result['ordinary']['verifier_unavailable'],
                          ['bend2/scripts/capacity-controls/group-run.mjs'])
+        self.assertFalse(result['ordinary']['run_identity_qualified'])
+        self.assertEqual(result['ordinary']['run_members_beyond_contract'], [])
         self.assertEqual(result['ordinary']['input_rows'], 1)
         self.assertEqual(result['ordinary']['input_shape'], 'map')
         self.assertTrue(result['ordinary']['audit']['members'])
@@ -914,7 +916,11 @@ class PackageGateReceipt(unittest.TestCase):
                  ('other index path', {**envelope, 'index_path': str(self.home / 'elsewhere')},
                   'names another run index_path'),
                  ('missing verifier', {**envelope, 'verifier': {}},
-                  'names another run verifier')]
+                  'names another run verifier'),
+                 ('member without a digest',
+                  {**envelope,
+                   'verifier': {**envelope['verifier'], 'group_run_module_sha256': 'not-a-digest'}},
+                  'no digest domain')]
         for name, run_envelope, message in cases:
             with self.subTest(name=name):
                 with self.assertRaisesRegex(RuntimeError, message):

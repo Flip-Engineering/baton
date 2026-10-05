@@ -712,7 +712,14 @@ def ordinary_evidence(index_path, expected, compiler=None, declared_root=None,
                        if verifier.get(key) != digest)
     require(not differing,
             'The ordinary run used other verifier bytes at: ' + succinct(differing))
+    # A digest domain is checked for every member the run names, including the
+    # ones whose local bytes are absent, so an unverifiable member is still a
+    # well-formed claim rather than an unchecked string.
+    for member, digest in verifier.items():
+        require(isinstance(digest, str) and re.fullmatch(r'[0-9a-f]{64}', digest),
+                'The ordinary run records no digest domain for ' + json.dumps(member))
     unavailable = sorted(set(_missing_verifier) | set(_missing_extra))
+    beyond = sorted(set(verifier) - required)
     # The index records the admitted inputs it captured as rows. Whether those
     # rows cover the complete non-target source and runtime graph is a
     # producer-side question this consumer cannot answer from the rows alone.
@@ -863,6 +870,11 @@ def ordinary_evidence(index_path, expected, compiler=None, declared_root=None,
             'source': source_block, 'verifier': verifier, 'inputs': admitted_inputs,
             'endpoint_members': list(VERIFIER_MEMBERS),
             'run_members': sorted(required), 'verifier_unavailable': unavailable,
+            # The endpoint closure and the full producer-run identity qualify
+            # separately: the extra run member is unqualified in a checkout that
+            # does not hold its bytes.
+            'run_identity_qualified': not unavailable,
+            'run_members_beyond_contract': beyond,
             'input_rows': len(admitted_inputs), 'input_shape': input_shape,
             'recomputed': recomputed,
             'audit': audit_inventory, 'raw': raw}
