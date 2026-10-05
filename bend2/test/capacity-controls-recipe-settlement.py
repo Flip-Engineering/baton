@@ -250,26 +250,36 @@ class RecipeSettlement(unittest.TestCase):
         target = self.run / 'primary-readback'
         (target / 'bend2').mkdir(parents=True)
         (target / 'bend2/controls-evidence').write_bytes(b'occupied')
-        original_write = RECIPE.write_record
-        calls = []
+        original_replace = RECIPE.os.replace
+        original_unlink = RECIPE.os.unlink
+        replacements = []
 
-        def writing(run, record):
-            calls.append(len(record))
-            if len(calls) > 1:
-                raise RuntimeError('the run record could not be written: blocked')
-            return original_write(run, record)
+        def counting_replace(source, destination):
+            # The attempted row is written; the replacement that would settle the
+            # failure is refused.
+            replacements.append(str(destination))
+            if len(replacements) > 1:
+                raise OSError('the replacement could not be made')
+            return original_replace(source, destination)
 
-        RECIPE.write_record = writing
-        self.addCleanup(setattr, RECIPE, 'write_record', original_write)
+        def failing_unlink(path, **kwargs):
+            raise OSError('the staged file could not be removed')
+
+        RECIPE.os.replace = counting_replace
+        RECIPE.os.unlink = failing_unlink
+        self.addCleanup(setattr, RECIPE.os, 'replace', original_replace)
+        self.addCleanup(setattr, RECIPE.os, 'unlink', original_unlink)
         with self.assertRaises(OSError) as raised:
             RECIPE.extract_archive(self.run, self.record, archive_path, target)
         primary = raised.exception
-        # The work failure stays the primary object: the recording failure is a
-        # secondary observation attached to it.
+        # The work failure stays the primary object; the recording failure, with its
+        # own retained cleanup failure, is a secondary observation attached to it.
         self.assertIsInstance(primary, OSError)
         self.assertNotIsInstance(primary, RuntimeError)
         self.assertIsInstance(primary.record_error, RuntimeError)
         self.assertIn('could not be written', str(primary.record_error))
+        self.assertIsNotNone(primary.record_error.cleanup_error)
+        self.assertEqual(primary.record_error_text, repr(primary.record_error))
         row = next(row for row in self.rows() if row['name'] == 'archive-extracted')
         self.assertEqual(row['outcome'], 'attempted')
 
