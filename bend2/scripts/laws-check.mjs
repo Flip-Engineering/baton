@@ -130,6 +130,35 @@ for (const { law, file } of rows) {
 // mutation that still compiles means the law it names does not bind the code
 // it claims to bind, and it is reported as a failure.
 const MUTATIONS = [
+  {
+    name: 'index-snapshot-enters-write-capable-host',
+    file: 'bend2/src/coordinator/index-reads.bend',
+    find: 'DB.Sql.read(db,C.sql(command))',
+    replace: 'DB.Sql.query(db,C.sql(command))',
+    law: 'metadata_snapshot_uses_the_readonly_host_effect',
+  },
+  {
+    name: 'index-row-counts-codepoints-as-bytes',
+    file: 'bend2/src/coordinator/commands.bend',
+    find: 'length(CAST(m.body AS BLOB))',
+    replace: 'length(m.body)',
+    law: 'metadata_rows_preserve_receipt_and_input_dispositions',
+  },
+  {
+    name: 'index-command-skips-shared-selection',
+    file: 'bend2/src/coordinator/commands.bend',
+    find: 'case MessageIndex{recipient,sender,kind,state}: message_index_sql(recipient,sender,kind,state)',
+    replace: 'case MessageIndex{recipient,sender,kind,state}: message_index_sql(IndexAny{},sender,kind,state)',
+    law: 'metadata_command_uses_the_shared_projection',
+  },
+  {
+    name: 'index-focus-expands-every-ensemble',
+    file: 'bend2/src/coordinator/commands.bend',
+    find: 'e.owner IN (SELECT id FROM base) OR EXISTS',
+    replace: '1 OR EXISTS',
+    law: 'orchestra_reference_expansion_uses_only_the_base_and_selected_ensembles',
+  },
+
   {"name": "adopted-dead-attempt-keeps-old-cutoff", "find": "        Bool.pick(String,Bool.and(String.eq(status,\"unknown after keeper loss\"),Bool.and(String.is_empty(event),String.is_empty(error))),\"0\",cursor)", "replace": "        cursor", "law": "adopted_unknown_attempt_replays_the_retained_inbox", "file": "bend2/src/coordinator/receive.bend"},
   {"name": "fresh-attempt-replays-old-input", "find": "    case False{}: cursor", "replace": "    case False{}: \"0\"", "law": "fresh_attempt_preserves_its_input_cursor", "file": "bend2/src/coordinator/receive.bend"},
   {"name": "adopted-known-failure-replays-old-input", "find": "      case Turn.Ended{status,event,error}:\n        Bool.pick(String,Bool.and(String.eq(status,\"unknown after keeper loss\"),Bool.and(String.is_empty(event),String.is_empty(error))),\"0\",cursor)", "replace": "      case Turn.Ended{+status,event,error}:\n        Bool.pick(String,Bool.and(Bool.or(String.eq(status,\"unknown after keeper loss\"),String.eq(status,\"exit 1\")),Bool.and(String.is_empty(event),String.is_empty(error))),\"0\",cursor)", "law": "adopted_known_native_failure_preserves_its_input_cursor", "file": "bend2/src/coordinator/receive.bend"},

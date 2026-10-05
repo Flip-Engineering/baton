@@ -12,6 +12,7 @@ import ./recruit.bend as Recruit
 import ./land.bend as Land
 import ./knowledge.bend as Knowledge
 import ./usage.bend as Usage
+import ./index-reads.bend as IndexReads
 import ./commands.bend as C
 import ./control.bend as Control
 import ./control-laws.bend as ControlLaws
@@ -77,7 +78,16 @@ def stored_command_entry_uses_the_actual_store(db,command):
   {==}
 
 def usage() -> String:
-  "usage: baton2 DATABASE COMMAND ARGS\nstart SESSION HARNESS HARNESS_CMD MODEL EFFORT CWD OUTPUT_LOG TASK_ID TASK_FILE\nreceiver SESSION HARNESS_CMD OUTPUT_LOG\ndispatch-file ID SENDER RECIPIENT KIND PATH\ndispatch-turn PLAYER TURN_ID HARNESS_CMD OUTPUT_LOG TASK_FILE\nstatus --pretty\nplayers --pretty\norchestra --pretty\npending --pretty\nplayer ID --pretty\nsession ID --pretty\ninbox ID --pretty\ndelivery ID --pretty\nturns PLAYER_ID --pretty\nknowledge READER --pretty\nworktree ID --pretty\nattach ID HARNESS NATIVE ENDPOINT\nrecruit ID PARENT HARNESS MODEL EFFORT REPO BRANCH PATH BASE\nworktree ID\nconnect ID NATIVE ENDPOINT\nbind ID NATIVE HARNESS MODEL EFFORT\nrole SESSION [player|principal-conductor|associate-conductor|operator]\nensemble ID [OWNER [loose|tight]]\nensemble-member ID OWNER PLAYER add|remove\nsection ENSEMBLE SECTION [OWNER CAPABILITY]\nsection-member ENSEMBLE SECTION OWNER PLAYER add|remove\norchestra\nmessage ID SENDER RECIPIENT KIND BODY\nmessage-file ID SENDER RECIPIENT KIND PATH\nobserve-file ID PLAYER PATH\nreport ID PLAYER BODY\nask ID PLAYER BODY\nask-file ID PLAYER PATH\nnative-reply PARENT REQUEST RESPONSE_JSON\nnative-reply-file PARENT REQUEST PATH\nsession ID\ndelivery ID\npending\ninbox RECIPIENT\nack ID RECIPIENT NATIVE_RECEIPT\nstatus\nplayers\nplayer ID\nturns PLAYER_ID\nland PLAYER_ID REPO TARGET_BRANCH\nland-checked PLAYER_ID REPO TARGET_BRANCH CHECK FILES\npush REPO BRANCH REMOTE\nremote-tip REPO BRANCH REMOTE\nobserved-usage SESSION\nturn PLAYER TURN_ID HARNESS_CMD MODEL EFFORT CWD TASK_FILE OUTPUT_LOG RESUME_SESSION\nstop SESSION STOP_ID REASON\nforce-stop SESSION STOP_ID\nreceive SESSION HARNESS_CMD MODEL EFFORT CWD OUTPUT_LOG MESSAGE_ID\nrecord FINDING_ID AUTHOR CLAIM EVIDENCE LIMITS\nknowledge READER\npromote PROMOTION_ID PROMOTER SOURCE DESTINATION FINDING\nEmpty receive MODEL/EFFORT/CWD use recorded values; empty MESSAGE_ID reads the pending inbox.\nPATH - reads stdin; empty RESUME_SESSION starts a new native session\nComplete stored input: delivery MESSAGE_ID returns the full body and receipt of any message; turns PLAYER_ID lists turn history with report bodies; players reports latestReport and latestReportId. Acknowledged messages leave inbox and pending and remain readable by ID."
+  "usage: baton2 DATABASE COMMAND ARGS\nstart SESSION HARNESS HARNESS_CMD MODEL EFFORT CWD OUTPUT_LOG TASK_ID TASK_FILE\nreceiver SESSION HARNESS_CMD OUTPUT_LOG\ndispatch-file ID SENDER RECIPIENT KIND PATH\ndispatch-turn PLAYER TURN_ID HARNESS_CMD OUTPUT_LOG TASK_FILE\nstatus --pretty\nplayers --pretty\norchestra --pretty\norchestra --index [--for SESSION] [--pretty]\ninbox SESSION --index [--sender SESSION] [--kind KIND] [--state pending|acknowledged|all] [--pretty]\npending --index [--recipient SESSION] [--sender SESSION] [--kind KIND] [--state pending|acknowledged|all] [--pretty]\npending --pretty\nplayer ID --pretty\nsession ID --pretty\ninbox ID --pretty\ndelivery ID --pretty\nturns PLAYER_ID --pretty\nknowledge READER --pretty\nworktree ID --pretty\nattach ID HARNESS NATIVE ENDPOINT\nrecruit ID PARENT HARNESS MODEL EFFORT REPO BRANCH PATH BASE\nworktree ID\nconnect ID NATIVE ENDPOINT\nbind ID NATIVE HARNESS MODEL EFFORT\nrole SESSION [player|principal-conductor|associate-conductor|operator]\nensemble ID [OWNER [loose|tight]]\nensemble-member ID OWNER PLAYER add|remove\nsection ENSEMBLE SECTION [OWNER CAPABILITY]\nsection-member ENSEMBLE SECTION OWNER PLAYER add|remove\norchestra\nmessage ID SENDER RECIPIENT KIND BODY\nmessage-file ID SENDER RECIPIENT KIND PATH\nobserve-file ID PLAYER PATH\nreport ID PLAYER BODY\nask ID PLAYER BODY\nask-file ID PLAYER PATH\nnative-reply PARENT REQUEST RESPONSE_JSON\nnative-reply-file PARENT REQUEST PATH\nsession ID\ndelivery ID\npending\ninbox RECIPIENT\nack ID RECIPIENT NATIVE_RECEIPT\nstatus\nplayers\nplayer ID\nturns PLAYER_ID\nland PLAYER_ID REPO TARGET_BRANCH\nland-checked PLAYER_ID REPO TARGET_BRANCH CHECK FILES\npush REPO BRANCH REMOTE\nremote-tip REPO BRANCH REMOTE\nobserved-usage SESSION\nturn PLAYER TURN_ID HARNESS_CMD MODEL EFFORT CWD TASK_FILE OUTPUT_LOG RESUME_SESSION\nstop SESSION STOP_ID REASON\nforce-stop SESSION STOP_ID\nreceive SESSION HARNESS_CMD MODEL EFFORT CWD OUTPUT_LOG MESSAGE_ID\nrecord FINDING_ID AUTHOR CLAIM EVIDENCE LIMITS\nknowledge READER\npromote PROMOTION_ID PROMOTER SOURCE DESTINATION FINDING\nEmpty receive MODEL/EFFORT/CWD use recorded values; empty MESSAGE_ID reads the pending inbox.\nPATH - reads stdin; empty RESUME_SESSION starts a new native session\nIndex reads never acknowledge messages. inbox SESSION --index fixes the recipient; pending --index defaults to all recipients. Both default to pending; --state all includes acknowledged rows. Filters combine by exact text equality; unmatched sender, recipient or kind selects no rows. Invalid or repeated options refuse. orchestra --index retains recorded model/effort, separately observed model/effort, and native process execution status (not model or task success), while omitting bodies and opaque logs; --for selects ancestors, descendants, related Ensembles and route references without expanding external branches. Full stored input: delivery MESSAGE_ID returns the full body and receipt of any message; turns PLAYER_ID lists turn history with report bodies; players reports latestReport and latestReportId. Acknowledged messages leave inbox and pending and remain readable by ID."
+
+def pretty_read(db: String, command: C.Command) -> IO(Unit):
+  match command:
+    case C.MessageIndex{r,s,k,state}: IndexReads.run(db,C.MessageIndex{r,s,k,state},True{})
+    case C.OrchestraIndex{focus}: IndexReads.run(db,C.OrchestraIndex{focus},True{})
+    case other:
+      do IO<Unit>:
+        saved : String <- Control.pretty(db,other)
+        print_result(saved)
 
 def execute(db: String, command: C.Command) -> IO(Unit):
   match command:
@@ -105,10 +115,9 @@ def execute(db: String, command: C.Command) -> IO(Unit):
       do IO<Unit>:
         saved : String <- Control.status_pretty(db)
         print_result(saved)
-    case C.Pretty{read}:
-      do IO<Unit>:
-        saved : String <- Control.pretty(db,read)
-        print_result(saved)
+    case C.Pretty{read}: pretty_read(db,read)
+    case C.MessageIndex{r,s,k,state}: IndexReads.run(db,C.MessageIndex{r,s,k,state},False{})
+    case C.OrchestraIndex{focus}: IndexReads.run(db,C.OrchestraIndex{focus},False{})
     case C.Recruit{id,parent,harness,model,effort,repo,branch,path,base}:
       Recruit.recruit(db,id,parent,harness,model,effort,repo,branch,path,base)
     case C.Land{player,repo,target}:
@@ -338,9 +347,7 @@ def status_pretty_entry_executes_the_native_control(db):
 law readable_snapshot_entry_executes_its_stored_read:
   for db: String
   for read: C.Command
-  {execute(db,C.Pretty{read}) == (do IO<Unit>:
-    saved : String <- Control.pretty(db,read)
-    print_result(saved)) : IO(Unit)}
+  {execute(db,C.Pretty{read}) == pretty_read(db,read) : IO(Unit)}
 
 def readable_snapshot_entry_executes_its_stored_read(db,read):
   {==}
@@ -396,4 +403,51 @@ law native_main_passes_the_complete_runtime_arguments:
     cli(args)) : IO(Unit)}
 
 def native_main_passes_the_complete_runtime_arguments():
+  {==}
+
+law metadata_entry_uses_readonly_snapshot:
+  for db: String
+  for r: C.IndexText
+  for s: C.IndexText
+  for k: C.IndexText
+  for state: String
+  {execute(db,C.MessageIndex{r,s,k,state}) == IndexReads.run(db,C.MessageIndex{r,s,k,state},False{}) : IO(Unit)}
+
+def metadata_entry_uses_readonly_snapshot(db,r,s,k,state):
+  {==}
+
+law pretty_metadata_entry_uses_readonly_snapshot:
+  for db: String
+  for r: C.IndexText
+  for s: C.IndexText
+  for k: C.IndexText
+  for state: String
+  {pretty_read(db,C.MessageIndex{r,s,k,state}) == IndexReads.run(db,C.MessageIndex{r,s,k,state},True{}) : IO(Unit)}
+
+def pretty_metadata_entry_uses_readonly_snapshot(db,r,s,k,state):
+  {==}
+
+law orchestra_index_entry_uses_readonly_snapshot:
+  for db: String
+  for focus: C.IndexText
+  {execute(db,C.OrchestraIndex{focus}) == IndexReads.run(db,C.OrchestraIndex{focus},False{}) : IO(Unit)}
+
+def orchestra_index_entry_uses_readonly_snapshot(db,focus):
+  {==}
+
+law pretty_orchestra_index_entry_uses_readonly_snapshot:
+  for db: String
+  for focus: C.IndexText
+  {pretty_read(db,C.OrchestraIndex{focus}) == IndexReads.run(db,C.OrchestraIndex{focus},True{}) : IO(Unit)}
+
+def pretty_orchestra_index_entry_uses_readonly_snapshot(db,focus):
+  {==}
+
+law pretty_players_preserves_legacy_read:
+  for db: String
+  {pretty_read(db,C.Players{}) == (do IO<Unit>:
+    saved : String <- Control.pretty(db,C.Players{})
+    print_result(saved)) : IO(Unit)}
+
+def pretty_players_preserves_legacy_read(db):
   {==}

@@ -1,5 +1,9 @@
 import Base
 
+type IndexText is Data:
+  IndexAny{}
+  IndexExact{text: String}
+
 type Command is Data:
   Recruit{id: String, parent: String, harness: String, model: String, effort: String, repo: String, branch: String, path: String, base: String}
   Worktree{id: String}
@@ -36,6 +40,8 @@ type Command is Data:
   Delivery{id: String}
   Pending{}
   Inbox{id: String}
+  MessageIndex{recipient: IndexText, sender: IndexText, kind: IndexText, state: String}
+  OrchestraIndex{focus: IndexText}
   Land{player: String, repo: String, target: String}
   LandChecked{player: String, repo: String, target: String, check: String, files: String}
   Push{repo: String, branch: String, remote: String}
@@ -270,6 +276,41 @@ def orchestra_sql() -> String:
   "SELECT json_object('players'," ++ players_json(assigned_role("s.id") ++ "<>'operator'") ++ ",'operators'," ++ players_json(assigned_role("s.id") ++ "='operator'") ++ ",'ensembles',(SELECT json_group_array(json(item)) FROM (SELECT " ++ ensemble_row("e") ++ " AS item FROM ensembles e ORDER BY e.id)));"
 
 
+# Read filters select retained rows by exact text equality.
+def index_filter(column: String, value: IndexText) -> String:
+  match value:
+    case IndexAny{}: "1"
+    case IndexExact{text}: column ++ "=" ++ q(text)
+
+def index_state_sql(+state: String) -> String:
+  Bool.pick(String,String.eq(state,"pending"),"m.receipt IS NULL",Bool.pick(String,String.eq(state,"acknowledged"),"m.receipt IS NOT NULL","1"))
+
+def message_index_row() -> String:
+  "json_patch(json_object('id',m.id,'sender',m.sender,'recipient',m.recipient,'kind',m.kind,'seq',m.seq,'bodyBytes',length(CAST(m.body AS BLOB)),'receiptState',CASE WHEN m.receipt IS NULL THEN 'unacknowledged' ELSE 'acknowledged' END)," ++ input_state_sql("m") ++ ")"
+
+def message_index_sql(recipient: IndexText, sender: IndexText, kind: IndexText, state: String) -> String:
+  "SELECT coalesce(json_group_array(json(item)),json('[]')) FROM (SELECT " ++ message_index_row() ++ " AS item FROM messages m WHERE " ++ index_filter("m.recipient",recipient) ++ " AND " ++ index_filter("m.sender",sender) ++ " AND " ++ index_filter("m.kind",kind) ++ " AND " ++ index_state_sql(state) ++ " ORDER BY m.seq);"
+
+def index_focus_text(focus: IndexText) -> String:
+  match focus:
+    case IndexAny{}: "NULL"
+    case IndexExact{id}: q(id)
+
+def orchestra_index_scope(+focus: IndexText) -> String:
+  +subject = index_focus_text(focus)
+  "WITH base(id) AS (SELECT s.id FROM sessions s WHERE " ++ subject ++ " IS NULL OR s.id=" ++ subject ++ " OR s.id IN (" ++ ancestors(subject) ++ ") OR " ++ descendant(subject,"s.id") ++ "),"
+  ++ "chosen_ensembles(id) AS (SELECT e.id FROM ensembles e WHERE e.owner IN (SELECT id FROM base) OR EXISTS(SELECT 1 FROM ensemble_members em WHERE em.ensemble=e.id AND em.session=" ++ subject ++ ")),"
+  ++ "chosen_routes(id) AS (SELECT r.id FROM sessions r WHERE " ++ subject ++ " IS NOT NULL AND " ++ message_route(subject,"r.id") ++ "),"
+  ++ "selected(id) AS (SELECT id FROM base UNION SELECT e.owner FROM ensembles e JOIN chosen_ensembles ce ON ce.id=e.id UNION SELECT em.session FROM ensemble_members em JOIN chosen_ensembles ce ON ce.id=em.ensemble UNION SELECT id FROM chosen_routes) "
+
+def orchestra_index_players(condition: String) -> String:
+  "(SELECT coalesce(json_group_array(json(item)),json('[]')) FROM (SELECT json_object('id',s.id,'kind'," ++ session_kind("s.id") ++ ",'role'," ++ public_role("s.id") ++ ",'parent',s.parent,'harness',s.harness,'model',s.model,'effort',s.effort,'observedHarness',s.observed_harness,'observedModel',s.observed_model,'observedEffort',s.observed_effort,'workspace',s.workspace,'branch',s.branch,'base',s.base,'reference',json(CASE WHEN s.id IN (SELECT id FROM base) THEN 'false' ELSE 'true' END),'execution',(SELECT json_object('attempt',id,'mode',mode,'phase',phase,'status',status) FROM executions WHERE session=s.id),'stop',(SELECT json_object('id',id,'status',outcome,'attempt',nullif(attempt,''),'reportId',nullif(report_id,'')) FROM session_stops WHERE session=s.id),'endpointRegistered',json(CASE WHEN s.endpoint='' THEN 'false' ELSE 'true' END),'lastTurnId',(SELECT t.id FROM turns t WHERE t.worker=s.id ORDER BY rowid DESC LIMIT 1),'latestReportId',(SELECT m.id FROM messages m WHERE m.sender=s.id AND m.kind='report' ORDER BY m.seq DESC LIMIT 1),'pendingCount',(SELECT count(*) FROM messages WHERE recipient=s.id AND receipt IS NULL AND NOT (" ++ stopped_session_sql("s.id") ++ " AND " ++ execution_input_sql("messages.kind") ++ ")),'unacknowledgedCount',(SELECT count(*) FROM messages WHERE recipient=s.id AND receipt IS NULL),'ownedEnsembles',(SELECT json_group_array(id) FROM (SELECT id FROM ensembles WHERE owner=s.id ORDER BY id)),'memberEnsembles',(SELECT json_group_array(ensemble) FROM (SELECT ensemble FROM ensemble_members WHERE session=s.id ORDER BY ensemble))) AS item FROM sessions s WHERE s.id IN (SELECT id FROM selected) AND " ++ condition ++ " ORDER BY s.id))"
+
+def orchestra_index_sql(+focus: IndexText) -> String:
+  +subject = index_focus_text(focus)
+  orchestra_index_scope(focus)
+  ++ "SELECT CASE WHEN " ++ subject ++ " IS NOT NULL AND NOT EXISTS(SELECT 1 FROM sessions WHERE id=" ++ subject ++ ") THEN json_object('error','orchestra-subject-unknown','command','orchestra','condition','The focused session is not registered.','next','Read players or orchestra --index and select a recorded ID.') ELSE json_object('version',1,'subject'," ++ subject ++ ",'selection',json_object('mode',CASE WHEN " ++ subject ++ " IS NULL THEN 'all' ELSE 'connected' END,'rule','parent-owner-member-routes-v1'),'players'," ++ orchestra_index_players(assigned_role("s.id") ++ "<>'operator'") ++ ",'operators'," ++ orchestra_index_players(assigned_role("s.id") ++ "='operator'") ++ ",'ensembles',(SELECT json_group_array(json(item)) FROM (SELECT " ++ ensemble_row("e") ++ " AS item FROM ensembles e WHERE e.id IN (SELECT id FROM chosen_ensembles) ORDER BY e.id)),'routes',(SELECT json_group_array(json_object('sender'," ++ subject ++ ",'recipient',id)) FROM chosen_routes),'pending',(SELECT json_group_array(json(item)) FROM (SELECT " ++ message_index_row() ++ " AS item FROM messages m WHERE m.recipient IN (SELECT id FROM selected) AND m.receipt IS NULL ORDER BY m.seq)),'limitations',(SELECT json_group_array(json_object('kind','reference','id',id,'next','orchestra --index --for ' || id)) FROM (SELECT id FROM selected WHERE id NOT IN (SELECT id FROM base) ORDER BY id))) END;"
+
 def sql(command: Command) -> String:
   match command:
     case Observe{id,player,event,sealed}: observe_sql(id,player,event,sealed)
@@ -312,6 +353,8 @@ def sql(command: Command) -> String:
     case SectionRead{ensemble,id}: "SELECT " ++ section_row("sections") ++ " FROM sections WHERE ensemble=" ++ q(ensemble) ++ " AND id=" ++ q(id) ++ ";"
     case SectionMember{ensemble,id,owner,player,action}: section_member_sql(ensemble,id,owner,player,action)
     case Orchestra{}: orchestra_sql()
+    case MessageIndex{recipient,sender,kind,state}: message_index_sql(recipient,sender,kind,state)
+    case OrchestraIndex{focus}: orchestra_index_sql(focus)
     case Turns{id}:
       "SELECT coalesce(json_group_array(json(item)),json('[]')) FROM (SELECT json_object('id',t.id,'player',t.worker,'eventType',coalesce(json_extract(t.event,'$.type'),json_extract(t.event,'$.payload_type')),'reportBody',m.body,'receipt',m.receipt) AS item FROM turns t JOIN messages m ON m.id=t.id WHERE t.worker=" ++ q(id) ++ " ORDER BY m.seq);"
     case ObserveFile{id,player,path}: ""
@@ -345,7 +388,7 @@ def sql(command: Command) -> String:
 def help_verb(+verb: String) -> Bool:
   Bool.or(String.eq(verb,"help"),String.eq(verb,"--help"))
 
-def parse(args: List<String>) -> Command:
+def parse_legacy(args: List<&2,String>) -> Command:
   match args:
     case +verb <> Nil{}:
       Bool.pick(Command,help_verb(verb),Help{},
@@ -388,6 +431,92 @@ def parse(args: List<String>) -> Command:
       Bool.pick(Command,String.eq(verb,"start"),Start{player,id,cmd,model,effort,cwd,task,log,session},Bool.pick(Command,String.eq(verb,"turn"),RunTurn{player,id,cmd,model,effort,cwd,task,log,session},
       Bool.pick(Command,String.eq(verb,"recruit"),Recruit{player,id,cmd,model,effort,cwd,task,log,session},Invalid{})))
     case _: Invalid{}
+
+type ReadArgs is Data:
+  ReadArgs{recipient: IndexText, sender: IndexText, kind: IndexText, state: IndexText, focus: IndexText, indexed: Bool, pretty: Bool, awaiting: String, valid: Bool}
+
+def index_absent(value: IndexText) -> Bool:
+  match value:
+    case IndexAny{}: True{}
+    case IndexExact{text}: False{}
+
+def read_flag(+flag: String, +r: IndexText, +s: IndexText, +k: IndexText, +state: IndexText, +focus: IndexText, +indexed: Bool, +pretty: Bool) -> ReadArgs:
+  Bool.pick(ReadArgs,String.eq(flag,"--index"),ReadArgs{r,s,k,state,focus,True{},pretty,"",Bool.not(indexed)},
+  Bool.pick(ReadArgs,String.eq(flag,"--pretty"),ReadArgs{r,s,k,state,focus,indexed,True{},"",Bool.not(pretty)},
+  ReadArgs{r,s,k,state,focus,indexed,pretty,flag,
+    Bool.or(Bool.and(String.eq(flag,"--recipient"),index_absent(r)),
+    Bool.or(Bool.and(String.eq(flag,"--sender"),index_absent(s)),
+    Bool.or(Bool.and(String.eq(flag,"--kind"),index_absent(k)),
+    Bool.or(Bool.and(String.eq(flag,"--state"),index_absent(state)),Bool.and(String.eq(flag,"--for"),index_absent(focus))))))}))
+
+def read_value(+value: String, +flag: String, +r: IndexText, +s: IndexText, +k: IndexText, +state: IndexText, +focus: IndexText, +indexed: Bool, +pretty: Bool) -> ReadArgs:
+  ReadArgs{
+    Bool.pick(IndexText,String.eq(flag,"--recipient"),IndexExact{value},r),
+    Bool.pick(IndexText,String.eq(flag,"--sender"),IndexExact{value},s),
+    Bool.pick(IndexText,String.eq(flag,"--kind"),IndexExact{value},k),
+    Bool.pick(IndexText,String.eq(flag,"--state"),IndexExact{value},state),
+    Bool.pick(IndexText,String.eq(flag,"--for"),IndexExact{value},focus),indexed,pretty,"",
+    Bool.or(Bool.not(String.eq(flag,"--state")),Bool.or(String.eq(value,"pending"),Bool.or(String.eq(value,"acknowledged"),String.eq(value,"all"))))}
+
+def read_arg(+token: String, args: ReadArgs) -> ReadArgs:
+  match args:
+    case ReadArgs{+r,+s,+k,+state,+focus,+indexed,+pretty,+awaiting,+valid}:
+      Bool.pick(ReadArgs,valid,
+        Bool.pick(ReadArgs,String.is_empty(awaiting),read_flag(token,r,s,k,state,focus,indexed,pretty),read_value(token,awaiting,r,s,k,state,focus,indexed,pretty)),
+        ReadArgs{r,s,k,state,focus,indexed,pretty,awaiting,False{}})
+
+def read_args(args: List<&2,String>, parsed: ReadArgs) -> ReadArgs:
+  match args:
+    case Nil{}: parsed
+    case token <> rest: read_args(rest,read_arg(token,parsed))
+
+def index_state_default(state: IndexText) -> String:
+  match state:
+    case IndexAny{}: "pending"
+    case IndexExact{text}: text
+
+def read_command(+command: Command, pretty: Bool, valid: Bool) -> Command:
+  Bool.pick(Command,valid,Bool.pick(Command,pretty,Pretty{command},command),Invalid{})
+
+def index_command(args: ReadArgs) -> Command:
+  match args:
+    case ReadArgs{r,s,k,state,focus,indexed,pretty,awaiting,valid}:
+      read_command(MessageIndex{r,s,k,index_state_default(state)},pretty,
+        Bool.and(valid,Bool.and(indexed,Bool.and(String.is_empty(awaiting),index_absent(focus)))))
+
+def orchestra_command(args: ReadArgs) -> Command:
+  match args:
+    case ReadArgs{r,s,k,state,+focus,+indexed,pretty,awaiting,valid}:
+      read_command(Bool.pick(Command,indexed,OrchestraIndex{focus},Orchestra{}),pretty,
+        Bool.and(valid,Bool.and(String.is_empty(awaiting),Bool.and(index_absent(r),Bool.and(index_absent(s),Bool.and(index_absent(k),Bool.and(index_absent(state),Bool.or(indexed,index_absent(focus)))))))))
+
+def index_legacy_args(args: List<&2,String>) -> Bool:
+  match args:
+    case Nil{}: True{}
+    case arg <> Nil{}: String.eq(arg,"--pretty")
+    case _: False{}
+
+def parse_inbox_index(args: List<&2,String>) -> Command:
+  match args:
+    case Nil{}: Invalid{}
+    case +id <> +rest:
+      Bool.pick(Command,index_legacy_args(rest),parse_legacy("inbox" <> id <> rest),index_command(read_args(rest,ReadArgs{IndexExact{id},IndexAny{},IndexAny{},IndexAny{},IndexAny{},False{},False{},"",True{}})))
+
+def parse_shared(args: List<&2,String>) -> Command:
+  match args:
+    case Nil{}: Invalid{}
+    case +verb <> +rest:
+      Bool.pick(Command,String.eq(verb,"inbox"),parse_inbox_index(rest),
+      Bool.pick(Command,String.eq(verb,"pending"),Bool.pick(Command,index_legacy_args(rest),parse_legacy(verb <> rest),index_command(read_args(rest,ReadArgs{IndexAny{},IndexAny{},IndexAny{},IndexAny{},IndexAny{},False{},False{},"",True{}}))),
+      Bool.pick(Command,String.eq(verb,"orchestra"),orchestra_command(read_args(rest,ReadArgs{IndexAny{},IndexAny{},IndexAny{},IndexAny{},IndexAny{},False{},False{},"",True{}})),parse_legacy(verb <> rest))))
+
+def shared_args(args: List<String>) -> List<&2,String>:
+  match args:
+    case Nil{}: Nil{}
+    case arg <> rest: arg <> shared_args(rest)
+
+def parse(args: List<String>) -> Command:
+  parse_shared(shared_args(args))
 
 law help_word_selects_the_help_command:
   {parse(["help"]) == Help{} : Command}
