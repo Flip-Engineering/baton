@@ -78,81 +78,86 @@ def schema() -> String:
 
 # The runtime epoch is a canonical unsigned decimal counter of arbitrary length; it
 # is stored and inserted as text so no SQLite numeric conversion can coerce it.
-def ref_entries(query: String) -> String:
-  "(SELECT result_json FROM semantic_queries WHERE id=" ++ C.q(query) ++ ")"
+def ref_result(query: String) -> String:
+  "coalesce((SELECT result_json FROM semantic_queries WHERE id=" ++ C.q(query) ++ "),'null')"
 
+# The retained per-ref association of one stored result is scanned by exact ref identity
+# inside the query's stored refs. Nothing here supplies the operation names the selector
+# was originally admitted under, because no retained column records them; absent
+# provenance refuses.
+
+# The refs container is the result object's single `refs` member, and it must be an
+# array. A result that is not an object, repeats the member or carries another type
+# there fails the container test, and that failure is reported as unreadable rather than
+# as an empty set.
+def ref_container_ok(query: String) -> String:
+  "(json_type(" ++ ref_result(query) ++ ")='object' AND (SELECT count(*) FROM json_each(" ++ ref_result(query) ++ ") AS member WHERE member.key='refs')=1 AND json_type(" ++ ref_result(query) ++ ",'$.refs')='array')"
+
+# The exact identity match of one entry. The element's own json_each type fact decides
+# whether the element may be read as an object, so a text element is never reparsed as
+# JSON and can never match.
 def ref_id_match(+refId: String) -> String:
-  "entry.type='object' AND json_extract(entry.value,'$.id')=" ++ C.q(refId)
+  "(CASE WHEN entry.type='object' THEN json_extract(entry.value,'$.id') ELSE NULL END)=" ++ C.q(refId)
 
-# The retained per-ref association of one stored result: the referenced query's
-# stored refs are scanned by exact ref identity, and the entry's engine, subject,
-# snapshotId and projections come back with a presence marker. Nothing here supplies
-# the operation names the selector was originally admitted under, because no retained
-# column records them; a re-derivation is Core's current check, not retained evidence,
-# and absent evidence refuses.
-# The retained per-ref association of one stored result, as one row of six
-# tab-separated columns: the requested query and ref identity, the query's recorded
-# state (empty when the query is absent), the count of entries whose id matches
-# exactly, the matching entry's stored text, and whether that entry carries every
-# field a selector association needs. The count is read rather than assumed, so a
-# duplicate id is visible instead of silently one of several.
-def ref_fields_ok(query: String, refId: String) -> String:
-  "(SELECT CASE WHEN json_type(value,'$.engine') IS NOT NULL AND json_type(value,'$.subject') IS NOT NULL AND json_type(value,'$.snapshotId') IS NOT NULL AND json_type(value,'$.projections') IS NOT NULL THEN 1 ELSE 0 END FROM json_each(" ++ ref_entries(query) ++ ",'$.refs') WHERE " ++ ref_id_match(refId) ++ ")"
+# One member of an object occurs exactly once and carries the required JSON type.
+def ref_member_once(alias: String, member: String, kind: String) -> String:
+  "(SELECT count(*) FROM json_each(" ++ alias ++ ") AS member WHERE member.key=" ++ C.q(member) ++ ")=1 AND json_type(" ++ alias ++ ",'$." ++ member ++ "')=" ++ C.q(kind)
 
-# One retained association. `RefOpen` means the referenced query's result is not
-# retained yet, `RefAbsent` and `RefAmbiguous` are read from the match count, and
-# `RefMalformed` means the single matching entry lacks a member. No constructor
-# carries operation names, because no retained column holds them.
+# The same check for one member of a named nested object, reached by its path.
+def ref_nested_once(alias: String, path: String, member: String, kind: String) -> String:
+  "(SELECT count(*) FROM json_each(" ++ alias ++ ",'$." ++ path ++ "') AS member WHERE member.key=" ++ C.q(member) ++ ")=1 AND json_type(" ++ alias ++ ",'$." ++ path ++ "." ++ member ++ "')=" ++ C.q(kind)
+
+def ref_text_nonempty(alias: String, path: String) -> String:
+  "coalesce(json_extract(" ++ alias ++ ",'$." ++ path ++ "'),'')<>''"
+
+# Every declared entry check as one 1/0 expression over an entry already established to be
+# an object: the five declared names occur once each with their types, the identity
+# members are nonempty, the subject is an object with a single nonempty text kind, and the
+# projections are a nonempty array of nonempty strings. The kind vocabulary beyond that
+# belongs to the producer contract, so nothing per-kind is invented here.
+def ref_entry_shape(alias: String) -> String:
+  "(CASE WHEN " ++ ref_member_once(alias, "id", "text") ++ " AND " ++ ref_text_nonempty(alias, "id") ++ " AND " ++ ref_member_once(alias, "engine", "text") ++ " AND " ++ ref_text_nonempty(alias, "engine") ++ " AND " ++ ref_member_once(alias, "snapshotId", "text") ++ " AND " ++ ref_text_nonempty(alias, "snapshotId") ++ " AND " ++ ref_member_once(alias, "subject", "object") ++ " AND (CASE WHEN json_type(" ++ alias ++ ",'$.subject')='object' THEN (CASE WHEN " ++ ref_nested_once(alias, "subject", "kind", "text") ++ " AND " ++ ref_text_nonempty(alias, "subject.kind") ++ " THEN 1 ELSE 0 END) ELSE 0 END)=1 AND (CASE WHEN json_type(" ++ alias ++ ",'$.projections')='array' THEN (CASE WHEN json_array_length(" ++ alias ++ ",'$.projections')>0 AND NOT EXISTS(SELECT 1 FROM json_each(" ++ alias ++ ",'$.projections') AS projection WHERE projection.type<>'text' OR projection.value='') THEN 1 ELSE 0 END) ELSE 0 END)=1 AND NOT EXISTS(SELECT 1 FROM json_each(" ++ alias ++ ") AS declared WHERE declared.key NOT IN ('id','engine','subject','snapshotId','projections')) THEN 1 ELSE 0 END)"
+
+# The element type fact gates the object parse: the entry text reaches a JSON parser only
+# in the branch where json_each already reported an object, so a scalar or text element is
+# never parsed as JSON.
+def ref_entry_gate(kind: String, alias: String) -> String:
+  "(CASE WHEN " ++ kind ++ "='object' THEN " ++ ref_entry_shape(alias) ++ " ELSE 0 END)"
+
+# Every entry of the refs array must be an intact object before any absence decision, so a
+# completed result whose element is a number, a string, null or an incomplete object is
+# unreadable instead of an empty set.
+def ref_all_intact(query: String) -> String:
+  "NOT EXISTS(SELECT 1 FROM json_each(" ++ ref_result(query) ++ ",'$.refs') AS entry WHERE " ++ ref_entry_gate("entry.type", "entry.value") ++ "=0)"
+
+# One retained association. `RefOpen` means the referenced query's result is not retained
+# yet; `RefAbsent` and `RefAmbiguous` come from the match count over an intact array; and
+# `RefUnreadable` covers a container, entry, state, result, count or shape failure. No
+# constructor carries operation names, because no retained column holds them.
 def ref_state(query: String) -> String:
   "coalesce((SELECT state FROM semantic_queries WHERE id=" ++ C.q(query) ++ "),'')"
 
-# The result column of a query that has one, or the marker that it is not retained.
-# Whether the query's retained result exists, as its own fact, so a failed or
-# refused query keeps its authoritative state even when no result was retained.
+# Whether the query's retained result exists, as its own fact, so a failed or refused query
+# keeps its authoritative state even when no result was retained.
 def ref_result_present(query: String) -> String:
   "CASE WHEN NOT EXISTS(SELECT 1 FROM semantic_queries WHERE id=" ++ C.q(query) ++ ") THEN 'absent' WHEN (SELECT result_json FROM semantic_queries WHERE id=" ++ C.q(query) ++ ") IS NULL THEN 'null' ELSE 'present' END"
 
-# The refs container must be an array before anything is counted: a completed result
-# whose refs member is absent, null or another type is a container failure, not an
-# empty set.
-def ref_container_kind(query: String) -> String:
-  "coalesce(json_type(coalesce((SELECT result_json FROM semantic_queries WHERE id=" ++ C.q(query) ++ "),'null'),'$.refs'),'absent')"
-
 def ref_match_count(query: String, refId: String) -> String:
-  "(SELECT count(*) FROM json_each(coalesce((SELECT result_json FROM semantic_queries WHERE id=" ++ C.q(query) ++ "),'null'),'$.refs') AS entry WHERE " ++ ref_id_match(refId) ++ ")"
-
-# Every traversal is guarded: the refs member must be an array and each candidate
-# entry an object before any nested JSON function reads it, so a scalar or null
-# element is never fed into json_each or json_type as text.
-def ref_guarded(query: String, inner: String) -> String:
-  "CASE WHEN " ++ ref_container_kind(query) ++ "='array' THEN (" ++ inner ++ ") ELSE '' END"
+  "(SELECT count(*) FROM json_each(" ++ ref_result(query) ++ ",'$.refs') AS entry WHERE " ++ ref_id_match(refId) ++ ")"
 
 def ref_first_entry(query: String, refId: String) -> String:
-  ref_guarded(query, "SELECT entry.value FROM json_each(coalesce((SELECT result_json FROM semantic_queries WHERE id=" ++ C.q(query) ++ "),'null'),'$.refs') AS entry WHERE json_type(entry.value)='object' AND " ++ ref_id_match(refId))
+  "(SELECT entry.value FROM json_each(" ++ ref_result(query) ++ ",'$.refs') AS entry WHERE " ++ ref_id_match(refId) ++ ")"
 
-# One member of the entry occurs exactly once and carries the required JSON type; the
-# identity members are additionally nonempty. A JSON null, number, object, wrong
-# array element or a duplicated key fails the test.
-def ref_member_once(member: String, kind: String) -> String:
-  "(SELECT count(*) FROM json_each(entry.value) AS member WHERE member.key=" ++ C.q(member) ++ ")=1 AND json_type(entry.value,'$." ++ member ++ "')=" ++ C.q(kind)
-
-def ref_identity_nonempty(member: String) -> String:
-  "coalesce(json_extract(entry.value,'$." ++ member ++ "'),'')<>''"
-
-# The stored selector is the producer's structured object, so the subject member must
-# be an object with a nonempty kind; the projection list must be an array of strings.
-# The complete kind vocabulary belongs to the producer contract, so this checks the
-# shape it can establish here and reports anything else as malformed.
 def ref_shape_ok(query: String, refId: String) -> String:
-  "CASE WHEN " ++ ref_container_kind(query) ++ "='array' THEN (SELECT CASE WHEN " ++ ref_member_once("engine", "text") ++ " AND " ++ ref_identity_nonempty("engine") ++ " AND " ++ ref_member_once("subject", "object") ++ " AND json_type(entry.value,'$.subject.kind')='text' AND json_extract(entry.value,'$.subject.kind')<>'' AND " ++ ref_member_once("snapshotId", "text") ++ " AND " ++ ref_identity_nonempty("snapshotId") ++ " AND " ++ ref_member_once("projections", "array") ++ " AND json_array_length(entry.value,'$.projections')>0 AND NOT EXISTS(SELECT 1 FROM json_each(entry.value,'$.projections') AS projection WHERE projection.type<>'text' OR projection.value='') THEN 1 ELSE 0 END FROM json_each(coalesce((SELECT result_json FROM semantic_queries WHERE id=" ++ C.q(query) ++ "),'null'),'$.refs') AS entry WHERE json_type(entry.value)='object' AND " ++ ref_id_match(refId) ++ ") ELSE '' END"
+  "(SELECT " ++ ref_entry_gate("entry.type", "entry.value") ++ " FROM json_each(" ++ ref_result(query) ++ ",'$.refs') AS entry WHERE " ++ ref_id_match(refId) ++ ")"
 
-# One row of five columns, none of which echoes a caller string: the recorded state of
-# the requested query, whether its result is retained, the count of entries whose id
-# matches exactly, the matching entry's stored text, and whether that entry has the
-# exact selector shape. The requested identity is supplied to the decoder instead of
-# travelling through the tab-separated row.
+# One row of five columns, none of which echoes a caller string: the recorded state of the
+# requested query, whether its result is retained, the match count or the marker for a
+# container or entry integrity failure, the matching entry's stored text as hex, and
+# whether that entry has the exact declared shape. The requested identity is supplied to
+# the decoder instead of travelling through the tab-separated row.
 def ref_count_column(query: String, refId: String) -> String:
-  "CASE WHEN " ++ ref_container_kind(query) ++ "='array' THEN " ++ ref_match_count(query, refId) ++ " ELSE 'container' END"
+  "CASE WHEN NOT (" ++ ref_container_ok(query) ++ ") THEN 'container' WHEN NOT (" ++ ref_all_intact(query) ++ ") THEN 'entry' ELSE " ++ ref_match_count(query, refId) ++ " END"
 
 def ref_lookup_sql(+query: String, +refId: String) -> String:
   "SELECT " ++ ref_state(query) ++ "," ++ ref_result_present(query) ++ "," ++ ref_count_column(query, refId) ++ ",coalesce(hex(" ++ ref_first_entry(query, refId) ++ "),''),coalesce(" ++ ref_shape_ok(query, refId) ++ ",0);"
@@ -188,7 +193,7 @@ def ref_failed_state(state: String) -> Bool:
 # entry is absent.
 def ref_scalar_answer(+query: String, +refId: String, +state: String, +answer: String, +scalar: Request.Scalar) -> RefLookup:
   match scalar:
-    case Request.ScalarText{value}: RefFound{query, refId, state, value}
+    case Request.ScalarText{+value}: RefFound{query, refId, state, value}
     case Request.ScalarBadUtf8{}: RefUnreadable{"scalar", answer}
     case Request.ScalarSurrogate{}: RefUnreadable{"scalar", answer}
     case Request.ScalarNul{}: RefUnreadable{"scalar", answer}
@@ -203,12 +208,14 @@ def ref_decide(+query: String, +refId: String, +state: String, +result: String, 
   Bool.pick(RefLookup, Bool.not(String.eq(state, "complete")), RefUnreadable{"state", answer},
   Bool.pick(RefLookup, String.eq(result, "null"), RefUnretained{query, refId},
   Bool.pick(RefLookup, Bool.not(String.eq(result, "present")), RefUnreadable{"result", answer},
+  Bool.pick(RefLookup, String.eq(count, "container"), RefUnreadable{"container", answer},
+  Bool.pick(RefLookup, String.eq(count, "entry"), RefUnreadable{"entry", answer},
   Bool.pick(RefLookup, Bool.not(ref_count_ok(count)), RefUnreadable{"count", answer},
   Bool.pick(RefLookup, Bool.not(ref_flag_ok(shape)), RefUnreadable{"shape", answer},
   Bool.pick(RefLookup, String.eq(count, "0"), RefAbsent{query, refId},
   Bool.pick(RefLookup, Bool.not(String.eq(count, "1")), RefAmbiguous{query, refId, count},
   Bool.pick(RefLookup, Bool.not(String.eq(shape, "1")), RefUnreadable{"shape", answer},
-    ref_entry_answer(query, refId, state, hexEntry, answer)))))))))))
+    ref_entry_answer(query, refId, state, hexEntry, answer))))))))))))))
 
 # Only a qualified found branch reaches here, so the scalar is decoded once and its
 # failure keeps the whole raw answer with the stage that failed.

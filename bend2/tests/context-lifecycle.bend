@@ -296,6 +296,89 @@ def runtime_row_surfaces(db: String, binding: String) -> IO(Unit):
     show("runtime.kept", kept)
     IO.pure(Unit, Unit{})
 
+# --- the retained ref association -------------------------------------------
+
+# One lookup answer as a pair of a label and its raw evidence text, so every case is
+# asserted from its own observation and an unreadable answer shows the row it refused.
+def ref_parts(+lookup: ContextStore.RefLookup) -> String & String:
+  match lookup:
+    case ContextStore.RefFound{+query, +refId, +state, +entry}: ("found:" ++ query ++ ":" ++ refId ++ ":" ++ state, entry)
+    case ContextStore.RefAbsent{+query, +refId}: ("absent:" ++ query ++ ":" ++ refId, "")
+    case ContextStore.RefAmbiguous{+query, +refId, +count}: ("ambiguous:" ++ query ++ ":" ++ refId ++ ":" ++ count, "")
+    case ContextStore.RefOpen{+query, +refId, +state}: ("open:" ++ query ++ ":" ++ refId ++ ":" ++ state, "")
+    case ContextStore.RefFailed{+query, +refId, +state}: ("failed:" ++ query ++ ":" ++ refId ++ ":" ++ state, "")
+    case ContextStore.RefUnretained{+query, +refId}: ("unretained:" ++ query ++ ":" ++ refId, "")
+    case ContextStore.RefQueryMissing{+query, +refId}: ("missing:" ++ query ++ ":" ++ refId, "")
+    case ContextStore.RefUnreadable{+stage, +answer}: ("unreadable:" ++ stage, answer)
+
+def ref_after_case(+label: String, result: Result<&1,&1,U32 & String,ContextStore.RefLookup>) -> IO(Unit):
+  match result:
+    case Done{+lookup}:
+      match ref_parts(lookup):
+        case (label_text, evidence):
+          do IO<Unit>:
+            shown : Unit <- obs(label, label_text)
+            held : Unit <- obs(label ++ ".evidence", evidence)
+            IO.pure(Unit, Unit{})
+    case Fail{error}:
+      match error:
+        case (code, message): obs(label ++ ".error", message)
+
+def ref_case(+db: String, +binding: String, +label: String, +query: String, +refId: String) -> IO(Unit):
+  do IO<Unit>:
+    result : Result<&1,&1,U32 & String,ContextStore.RefLookup> <- ContextStore.ref_lookup(db, binding, query, refId)
+    ref_after_case(label, result)
+
+def ref_accept(+db: String, +binding: String, +query: String) -> IO(Unit):
+  do IO<Unit>:
+    created : Result<&1,&1,U32 & String,String> <- DB.Sql.query_bound(db, binding, ContextStore.accept_sql(query, "root", "{\"version\":1,\"engine\":\"typescript\"}", "/work", "", "/log/" ++ query, "/art/" ++ query))
+    show("refs.accept." ++ query, created)
+
+def ref_publish(+db: String, +binding: String, +query: String, +state: String, +result: String, +error: String) -> IO(Unit):
+  do IO<Unit>:
+    published : Result<&1,&1,U32 & String,String> <- DB.Sql.query_bound(db, binding, ContextStore.state_publish_sql(query, state, result, error))
+    show("refs.publish." ++ query, published)
+
+# The retained ref association through the bound lookup. Each case is established by its
+# own stored row before the lookup runs: a complete result whose refs array holds one
+# intact entry, an empty refs array, a number element, a text element, an entry missing
+# declared members, a complete result without the refs member, two intact entries sharing
+# the requested identity, an accepted query with no result, a failed query with no result,
+# a query that was never admitted, and an unavailable binding.
+def ref_surfaces(+db: String, +binding: String) -> IO(Unit):
+  do IO<Unit>:
+    +entry : String <- IO.pure(String, "{\n\t\t\"id\":\"ref-1\",\"engine\":\"typescript\",\"subject\":{\"kind\":\"entity\",\"database\":\"café\"},\"snapshotId\":\"s1\",\"projections\":[\"definition\"]}")
+    +duplicate : String <- IO.pure(String, "{\"refs\":[{\"id\":\"ref-7\",\"engine\":\"typescript\",\"subject\":{\"kind\":\"entity\"},\"snapshotId\":\"s7\",\"projections\":[\"definition\"]},{\"id\":\"ref-7\",\"engine\":\"typescript\",\"subject\":{\"kind\":\"entity\"},\"snapshotId\":\"s7\",\"projections\":[\"definition\"]}]}")
+    a1 : Unit <- ref_accept(db, binding, "qr1")
+    p1 : Unit <- ref_publish(db, binding, "qr1", "complete", "{\"refs\":[" ++ entry ++ "]}", "")
+    a2 : Unit <- ref_accept(db, binding, "qr2")
+    p2 : Unit <- ref_publish(db, binding, "qr2", "complete", "{\"refs\":[]}", "")
+    a3 : Unit <- ref_accept(db, binding, "qr3")
+    p3 : Unit <- ref_publish(db, binding, "qr3", "complete", "{\"refs\":[42]}", "")
+    a4 : Unit <- ref_accept(db, binding, "qr4")
+    p4 : Unit <- ref_publish(db, binding, "qr4", "complete", "{\"refs\":[\"not-json\"]}", "")
+    a5 : Unit <- ref_accept(db, binding, "qr5")
+    p5 : Unit <- ref_publish(db, binding, "qr5", "complete", "{\"refs\":[{\"id\":\"ref-5\",\"engine\":\"typescript\"}]}", "")
+    a6 : Unit <- ref_accept(db, binding, "qr6")
+    p6 : Unit <- ref_publish(db, binding, "qr6", "complete", "{\"facts\":[]}", "")
+    a7 : Unit <- ref_accept(db, binding, "qr7")
+    p7 : Unit <- ref_publish(db, binding, "qr7", "complete", duplicate, "")
+    a8 : Unit <- ref_accept(db, binding, "qr8")
+    a9 : Unit <- ref_accept(db, binding, "qr9")
+    p9 : Unit <- ref_publish(db, binding, "qr9", "failed", "", "{\"kind\":\"providerFailed\"}")
+    f1 : Unit <- ref_case(db, binding, "refs.found", "qr1", "ref-1")
+    f2 : Unit <- ref_case(db, binding, "refs.absent", "qr2", "ref-2")
+    f3 : Unit <- ref_case(db, binding, "refs.scalar", "qr3", "ref-3")
+    f4 : Unit <- ref_case(db, binding, "refs.text", "qr4", "ref-4")
+    f5 : Unit <- ref_case(db, binding, "refs.partial", "qr5", "ref-5")
+    f6 : Unit <- ref_case(db, binding, "refs.container", "qr6", "ref-6")
+    f7 : Unit <- ref_case(db, binding, "refs.duplicate", "qr7", "ref-7")
+    f8 : Unit <- ref_case(db, binding, "refs.open", "qr8", "ref-8")
+    f9 : Unit <- ref_case(db, binding, "refs.failed", "qr9", "ref-9")
+    f10 : Unit <- ref_case(db, binding, "refs.missing", "qr10", "ref-10")
+    f11 : Unit <- ref_case(db, binding ++ "-absent", "refs.unavailable", "qr1", "ref-1")
+    IO.pure(Unit, Unit{})
+
 def run(+db: String, +copy: String, +log: String) -> IO<Unit>:
   do IO<Unit>:
     pure : Unit <- identity_surfaces()
@@ -310,6 +393,7 @@ def run(+db: String, +copy: String, +log: String) -> IO<Unit>:
     control : Unit <- control_surfaces(db, binding)
     duties : Unit <- duty_surfaces(db, binding)
     rows : Unit <- runtime_row_surfaces(db, binding)
+    refs : Unit <- ref_surfaces(db, binding)
     IO.print("context-lifecycle: done")
 
 def complain() -> IO(Unit):

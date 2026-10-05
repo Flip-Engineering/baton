@@ -852,7 +852,7 @@ def an_unreadable_enumeration_contains_no_obligation():
 
 law a_ref_lookup_matches_its_exact_ref_identity:
   for +refId: String
-  {ContextStore.ref_id_match(refId) == "entry.type='object' AND json_extract(entry.value,'$.id')=" ++ C.q(refId) : String}
+  {ContextStore.ref_id_match(refId) == "(CASE WHEN entry.type='object' THEN json_extract(entry.value,'$.id') ELSE NULL END)=" ++ C.q(refId) : String}
 
 def a_ref_lookup_matches_its_exact_ref_identity(refId):
   {==}
@@ -891,6 +891,18 @@ law a_bad_hex_entry_keeps_its_raw_answer:
   {ContextStore.ref_lookup_decode("q7","ref-1","complete\tpresent\t1\t7b7\t1\n") == ContextStore.RefUnreadable{"framing","complete\tpresent\t1\t7b7\t1\n"} : ContextStore.RefLookup}
 
 def a_bad_hex_entry_keeps_its_raw_answer():
+  {==}
+
+law a_container_failure_is_never_an_absent_ref:
+  {ContextStore.ref_lookup_decode("q7","ref-1","complete\tpresent\tcontainer\t\t0\n") == ContextStore.RefUnreadable{"container","complete\tpresent\tcontainer\t\t0\n"} : ContextStore.RefLookup}
+
+def a_container_failure_is_never_an_absent_ref():
+  {==}
+
+law an_incomplete_entry_is_never_an_absent_ref:
+  {ContextStore.ref_lookup_decode("q7","ref-1","complete\tpresent\tentry\t\t0\n") == ContextStore.RefUnreadable{"entry","complete\tpresent\tentry\t\t0\n"} : ContextStore.RefLookup}
+
+def an_incomplete_entry_is_never_an_absent_ref():
   {==}
 
 law a_ref_lookup_decodes_a_tabbed_unicode_entry:

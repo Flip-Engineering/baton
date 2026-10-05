@@ -333,6 +333,78 @@ def check_runtime_rows(values):
     check(values.get("runtime.kept") == "q1", "runtime.kept", values.get("runtime.kept"))
 
 
+def stored_entry(result_json):
+    """The stored text of the first entry of the refs array, taken from the stored
+    result itself so the round-trip assertion compares against what the store holds
+    rather than against a copy of the fixture's literal."""
+    start = result_json.index("{", result_json.index('"refs"') + 6)
+    depth = 0
+    in_string = False
+    escape = False
+    for index in range(start, len(result_json)):
+        char = result_json[index]
+        if in_string:
+            if escape:
+                escape = False
+            elif char == "\\":
+                escape = True
+            elif char == '"':
+                in_string = False
+            continue
+        if char == '"':
+            in_string = True
+        elif char in "[{":
+            depth += 1
+        elif char in "]}":
+            depth -= 1
+            if depth == 0:
+                return result_json[start:index + 1]
+    return ""
+
+
+def check_refs(values, stdout, db):
+    expected = {
+        "refs.absent": "absent:qr2:ref-2",
+        "refs.scalar": "unreadable:entry",
+        "refs.text": "unreadable:entry",
+        "refs.partial": "unreadable:entry",
+        "refs.container": "unreadable:container",
+        "refs.duplicate": "ambiguous:qr7:ref-7:2",
+        "refs.open": "open:qr8:ref-8:accepted",
+        "refs.failed": "failed:qr9:ref-9:failed",
+        "refs.missing": "missing:qr10:ref-10",
+    }
+    for key, want in expected.items():
+        check(values.get(key) == want, key, f"{values.get(key)!r} != {want!r}")
+    check(values.get("refs.absent.evidence") == "", "refs.absent.evidence", repr(values.get("refs.absent.evidence")))
+    # Each refusal kept the raw row it refused, so the integrity failure is visible in the
+    # evidence rather than inferred from the label alone.
+    for key in ("refs.scalar", "refs.text", "refs.partial", "refs.container"):
+        evidence = values.get(key + ".evidence", "")
+        check(evidence.startswith("complete\tpresent\t"), key + ".evidence", repr(evidence))
+    check(values.get("refs.found") == "found:qr1:ref-1:complete", "refs.found", repr(values.get("refs.found")))
+    check("refs.unavailable" not in values, "refs.unavailable.absent", repr(values.get("refs.unavailable")))
+    check("refs.unavailable.error" in values, "refs.unavailable.error", "a refused binding answered a lookup")
+    connection = sqlite3.connect(db)
+    try:
+        row = connection.execute("SELECT result_json FROM semantic_queries WHERE id='qr1'").fetchone()
+    finally:
+        connection.close()
+    check(row is not None and row[0] is not None, "refs.found.stored", "no retained result for qr1")
+    if row is None or not row[0]:
+        return
+    entry = stored_entry(row[0])
+    check("\t" in entry and "\n" in entry, "refs.found.stored.formatting", repr(entry))
+    check("café" in entry, "refs.found.stored.unicode", repr(entry))
+    marker = "refs.found.evidence="
+    index = stdout.find(marker)
+    check(index != -1, "refs.found.evidence.present", "no evidence observation for the found entry")
+    if index == -1 or not entry:
+        return
+    observed = stdout[index + len(marker): index + len(marker) + len(entry)]
+    check(observed == entry, "refs.found.roundtrip", f"{observed!r} != {entry!r}")
+
+
 def check_control(values):
     control = json.loads(values.get("control.release", "{}"))
     check(control.get("state") == "complete", "control.release", control)
@@ -478,6 +550,7 @@ def main():
     check_duties(values)
     check_runtime_rows(values)
     check_control(values)
+    check_refs(values, result.stdout, str(db))
     if os.environ.get("CONTEXT_LIFECYCLE_MUTATIONS") == "1":
         proof_removal_check()
         mutation_checks()

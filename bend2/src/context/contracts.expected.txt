@@ -1,0 +1,80 @@
+classes
+validationRefusal
+admissionRejected
+hostPreparationFailed
+admissionUncertain
+classification
+observed
+static-possible
+checked
+declared
+availability
+available
+unavailable
+excluded
+state
+accepted
+running
+complete
+failed
+interrupted
+refused
+effect
+executeTarget
+planTargetSql
+replayMigrations
+evaluateRuntime
+controlRuntime
+subject
+position
+symbol
+diagnostic
+entity
+model
+schema
+security
+migration
+program
+dataset
+runtime
+query-control
+ref
+tool
+context-query
+context-engines
+context-result
+tokens
+true/true/true
+true/true/true
+true/true/true
+false/true/true
+false/true/true
+false/false/true
+false/false/true
+false/false/true
+false/false/true
+false/false/true
+false/false/true
+false/false/true
+false/false/true
+false/false/false
+false/false/false
+false/false/false
+false/false/false
+false/false/false
+false/false/false
+false/false/false
+false/false/false
+false/false/false
+false/false/false
+false/true/true
+false/false/true
+["context-result","q7"]
+empty-next []
+id-number {"id":7,"query":null,"requestCanonical":null,"tool":"context-engines","version":1}
+id-string {"id":"7","query":"q7","requestCanonical":"{\"version\":1}","tool":"context-query","version":1}
+id-negative {"id":-9007199254740991,"query":"q1","requestCanonical":null,"tool":"context-result","version":1}
+{"command":"context-query","condition":"admission rejected","error":"admissionRejected","next":["context-result","q7"]}
+signed true,true,true,true,false
+counter true,true,false,false,true
+end
