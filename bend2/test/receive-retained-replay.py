@@ -640,4 +640,82 @@ class ControlledFrames(ReplayBase):
 
 
 if __name__ == '__main__':
-    unittest.main()
+    import sys
+    import tempfile
+
+    report = os.environ.get('BATON_FIXTURE_REPORT', '')
+    if not report:
+        unittest.main()
+    else:
+        class StructuredReport(unittest.TestResult):
+            """A private report keyed by exact test id, recording the failure phase."""
+
+            def __init__(self):
+                super().__init__()
+                self.entries = {}
+
+            def phase_of(self, text):
+                for phase in ('setUpClass', 'setUp', 'tearDown', 'tearDownClass'):
+                    if phase in text:
+                        return phase
+                return 'test'
+
+            def add(self, test, outcome, phase, message):
+                self.entries.setdefault(test.id(), []).append(
+                    {'outcome': outcome, 'phase': phase, 'message': message})
+
+            def addSuccess(self, test):
+                super().addSuccess(test)
+                self.add(test, 'pass', 'test', '')
+
+            def addFailure(self, test, err):
+                super().addFailure(test, err)
+                text = self._exc_info_to_string(err, test)
+                self.add(test, 'fail', self.phase_of(text), text)
+
+            def addError(self, test, err):
+                super().addError(test, err)
+                text = self._exc_info_to_string(err, test)
+                self.add(test, 'error', self.phase_of(text), text)
+
+            def addSkip(self, test, reason):
+                super().addSkip(test, reason)
+                self.add(test, 'skipped', 'test', reason)
+
+            def addExpectedFailure(self, test, err):
+                super().addExpectedFailure(test, err)
+                text = self._exc_info_to_string(err, test)
+                self.add(test, 'fail', self.phase_of(text), text)
+
+            def addUnexpectedSuccess(self, test):
+                super().addUnexpectedSuccess(test)
+                self.add(test, 'error', 'test', 'unexpected success')
+
+            def addSubTest(self, test, subtest, err):
+                super().addSubTest(test, subtest, err)
+                if err is not None:
+                    text = self._exc_info_to_string(err, test)
+                    self.add(test, 'fail', self.phase_of(text), text)
+
+        class RetainedDirectory:
+            """Keeps the fixture's own directory so its database, spool and reports survive."""
+
+            def __init__(self, **kwargs):
+                self.name = tempfile.mkdtemp(**kwargs)
+
+            def cleanup(self):
+                pass
+
+        RECEIVE.tempfile.TemporaryDirectory = RetainedDirectory
+        names = [name for name in sys.argv[1:] if not name.startswith('-')]
+        loader = unittest.TestLoader()
+        suite = unittest.TestSuite()
+        for name in names:
+            suite.addTests(loader.loadTestsFromName(name))
+        result = StructuredReport()
+        suite.run(result)
+        pathlib.Path(report).write_text(json.dumps(result.entries, indent=2, sort_keys=True))
+        for case, states in sorted(result.entries.items()):
+            for state in states:
+                print(f"{case} {state['outcome']} {state['phase']}", flush=True)
+        sys.exit(1 if (result.failures or result.errors or result.skipped) else 0)

@@ -1,29 +1,32 @@
-"""Remote driver for the Receive host behaviour controls.
+"""Remote driver for the Receive host behaviour controls. Remote runners only.
 
-Runs only on a root-admitted remote runner. It never runs here.
+The driver never runs on the operator machine. It:
 
-The driver reads the authoritative mapping from receive-host-controls.json, takes
-its inputs from an explicit remote input directory, and for each of the four
-consume-site controls:
+  1. exports one committed source snapshot into a unique run root and preserves it;
+  2. derives isolated positive and mutant copies from that snapshot, without ever
+     writing into an existing copy root;
+  3. resolves the input directory and the compiler to absolute paths, requires the
+     compiler to be present and executable before any build, and hashes every
+     declared input, failing on a mismatch;
+  4. builds the positive copy first, requires the build to succeed, requires the
+     exact newly built artifact to exist, records its hash, and stops dependent
+     work on any failure;
+  5. runs the positive fixture set against that artifact, requiring the structured
+     fixture report to show every named case present exactly once, in the test
+     phase, passed, with no skip and no collection, setup or teardown error;
+  6. for each of the four consume-site controls copies the snapshot, requires
+     exactly one occurrence of its find text, builds, and then requires every
+     companion case to pass and every discriminating case to fail in its test
+     phase with the designated assertion marker;
+  7. writes full stdout and stderr files plus a summary per run, into a unique run
+     root, so later review sees the actual evidence rather than an excerpt.
 
-  1. verifies every declared input hash, failing on a mismatch;
-  2. requires the exact artifact path, failing when it is missing, and records its
-     SHA-256;
-  3. copies the source tree, requires exactly one occurrence of the control's find
-     text, applies its replacement, and builds; a build that does not exit zero is
-     inconclusive, never a rejection;
-  4. runs the positive fixture set against the untouched artifact, requiring every
-     case to pass with no skip;
-  5. runs the control's discriminating and companion cases against the mutant,
-     requiring each companion to pass and each discriminating case to fail as an
-     assertion;
-  6. retains, per case, the identity, the complete command, stdout, stderr and
-     actual exit.
-
-A missing named case, a skip, a setup or collection error, an unrelated exception
-or a compiler error is inconclusive and fails the run. Only an assertion failure
-in a designated discriminating case, after a successful mutant build and a
-passing positive run on the untouched artifact, counts as a behavioural rejection.
+A missing case, a skip, a collection, setup or teardown error, a launch or IO
+failure, an unavailable or non-executable compiler, a missing artifact, a failed
+positive, a failed mutant build, an abnormal process termination or an assertion
+that is not the designated one is inconclusive and makes the run nonzero. Only a
+designated discriminator failing in its test phase, after a successful mutant
+build and a clean positive run, counts as a behavioural rejection.
 """
 
 import argparse
@@ -31,18 +34,22 @@ import hashlib
 import json
 import os
 import pathlib
-import re
 import shutil
 import subprocess
 import sys
-import tempfile
+import time
 
 REPO = pathlib.Path(__file__).resolve().parents[2]
 CONTROLS = REPO / 'bend2' / 'scripts' / 'receive-host-controls.json'
-ARTIFACT = pathlib.Path('.scratch/bend2/baton2')
-FIXTURE = 'bend2/test/receive-retained-replay.py'
+FIXTURE_RELATIVE = pathlib.Path('bend2/test/receive-retained-replay.py')
+ARTIFACT_RELATIVE = pathlib.Path('.scratch/bend2/baton2')
+BUILD_SCRIPT = pathlib.Path('bend2/scripts/build-native.sh')
 
 POSITIVE_CASES = [
+    'ControlledFrames.test_foreign_members_keep_the_latest_assistant_report',
+    'ControlledFrames.test_empty_terminal_uses_the_retained_report',
+    'ControlledFrames.test_unavailable_content_is_reported_truthfully',
+    'ControlledFrames.test_current_failure_is_classified_while_the_native_exits_zero',
     'ControlledFrames.test_an_observed_later_failure_is_reported_over_an_older_observed_error',
     'ControlledFrames.test_an_elided_terminal_repeating_an_older_error_reports_the_later_completion',
     'ControlledFrames.test_a_started_error_after_a_cached_success_stays_the_current_failure',
@@ -56,8 +63,6 @@ POSITIVE_CASES = [
     'ControlledFrames.test_two_missing_identities_cannot_establish_the_current_error',
     'ControlledFrames.test_a_neutral_frame_after_an_incomplete_start_keeps_no_success',
     'ControlledFrames.test_a_neutral_frame_before_the_terminal_keeps_the_later_completion',
-    'ControlledFrames.test_empty_terminal_uses_the_retained_report',
-    'ControlledFrames.test_unavailable_content_is_reported_truthfully',
     'ControlledFrames.test_sequential_success_then_error_keeps_the_first_report',
     'ControlledFrames.test_sequential_error_then_success_keeps_the_first_failure',
     'RetainedReplay.test_original_protocol_research_stream_reports_the_retained_assistant',
@@ -72,131 +77,247 @@ CONSUME_CONTROLS = [
     'consume-propagates-empty-activity',
 ]
 
+IGNORED = shutil.ignore_patterns('.git', '.scratch', '__pycache__', '*.pyc')
+
 
 def digest(path):
     return hashlib.sha256(path.read_bytes()).hexdigest()
 
 
-def run(command, cwd, env):
-    completed = subprocess.run(list(command), cwd=str(cwd), env=env,
-                               stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
-    return {'command': [str(part) for part in command], 'exit': completed.returncode,
-            'stdout': completed.stdout, 'stderr': completed.stderr}
+def record(root, label, command, completed):
+    stdout_path = root / f'{label}.stdout'
+    stderr_path = root / f'{label}.stderr'
+    stdout_path.write_bytes(completed.stdout or b'')
+    stderr_path.write_bytes(completed.stderr or b'')
+    return {'command': [str(part) for part in command],
+            'exit': completed.returncode,
+            'stdout_path': str(stdout_path),
+            'stderr_path': str(stderr_path)}
 
 
-def case_outcome(result, case):
-    """The outcome of one unittest case: pass, assertion, inconclusive."""
-    text = result['stdout'] + result['stderr']
-    if re.search(r'skipped', text) and case.split('.')[-1] in text and 'skipped' in text:
-        return 'skipped'
-    if re.search(r'^ERROR: ' + re.escape(case), text, re.M):
-        return 'error'
-    if re.search(r'^FAIL: ' + re.escape(case), text, re.M):
-        return 'assertion'
-    if re.search(r'^' + re.escape(case) + r'.*\.\.\. ok', text, re.M):
-        return 'pass'
-    return 'inconclusive'
+def run(root, label, command, cwd, env):
+    try:
+        completed = subprocess.run([str(part) for part in command], cwd=str(cwd), env=env,
+                                   stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+    except OSError as error:
+        return {'command': [str(part) for part in command], 'exit': None,
+                'launch_error': str(error), 'stdout_path': None, 'stderr_path': None}
+    return record(root, label, command, completed)
+
+
+def load_report(path):
+    if not path.exists():
+        return None
+    try:
+        return json.loads(path.read_text())
+    except ValueError:
+        return None
+
+
+def case_findings(report, cases):
+    """Per-case findings from the structured fixture report, or a reason it is unusable."""
+    if report is None:
+        return None, 'the structured fixture report is missing or not JSON'
+    findings = {}
+    for case in cases:
+        entries = report.get(case)
+        if not isinstance(entries, list) or len(entries) != 1:
+            findings[case] = {'outcome': 'inconclusive',
+                              'reason': 'the case is not present exactly once in the report'}
+            continue
+        entry = entries[0]
+        findings[case] = {'outcome': entry.get('outcome'),
+                          'phase': entry.get('phase'),
+                          'message': entry.get('message')}
+    return findings, None
+
+
+def judge(findings, expected):
+    problems = []
+    for case, state in findings.items():
+        if state['outcome'] == 'skipped':
+            problems.append(f'{case} was skipped')
+        elif state['phase'] != 'test':
+            problems.append(f'{case} failed in its {state["phase"]} phase')
+        elif state['outcome'] == 'error':
+            problems.append(f'{case} raised an error rather than failing an assertion')
+        elif state['outcome'] == 'inconclusive':
+            problems.append(f'{case}: {state.get("reason", "no structured result")}')
+    return problems
+
+
+def prepare_snapshot(snapshot):
+    snapshot.mkdir(parents=True)
+    for name in ('bend2',):
+        shutil.copytree(REPO / name, snapshot / name, ignore=IGNORED)
+    manifest = {}
+    for path in sorted((snapshot / 'bend2').rglob('*')):
+        if path.is_file():
+            manifest[str(path.relative_to(snapshot))] = digest(path)
+    (snapshot / 'source-manifest.json').write_text(json.dumps(manifest, indent=2, sort_keys=True))
+    return manifest
 
 
 def main(argv=None):
     parser = argparse.ArgumentParser(description='Receive host control driver, remote runners only')
-    parser.add_argument('--inputs', required=True, help='directory holding the immutable replay inputs')
-    parser.add_argument('--bend', required=True, help='path to the pinned Bend executable')
-    parser.add_argument('--store', required=True, help='directory for retained per-execution evidence')
-    parser.add_argument('--copy-root', required=True, help='directory for isolated source copies')
+    parser.add_argument('--inputs', required=True)
+    parser.add_argument('--bend', required=True)
+    parser.add_argument('--run-root', required=True)
+    parser.add_argument('--assertion-marker', default='AssertionError')
     options = parser.parse_args(argv)
 
-    inputs = pathlib.Path(options.inputs)
-    store = pathlib.Path(options.store)
-    store.mkdir(parents=True, exist_ok=True)
-    controls = json.loads(CONTROLS.read_text())
-    summary = {'failures': [], 'executions': []}
+    inputs = pathlib.Path(options.inputs).resolve()
+    compiler = pathlib.Path(options.bend).resolve()
+    run_root = pathlib.Path(options.run_root).resolve()
+    summary = {'run_root': str(run_root), 'failures': [], 'executions': []}
 
-    for entry in controls['immutable_inputs']:
+    if run_root.exists():
+        print(json.dumps({'failures': [f'run root {run_root} already exists; refusing to overwrite']},
+                         indent=2))
+        return 1
+    if not compiler.is_file() or not os.access(str(compiler), os.X_OK):
+        print(json.dumps({'failures': [f'compiler {compiler} is unavailable or not executable']},
+                         indent=2))
+        return 1
+
+    controls = json.loads(CONTROLS.read_text())
+    for entry in controls.get('immutable_inputs', []):
         if 'sha256' not in entry:
             continue
         source = inputs / entry['name']
         if not source.exists():
             summary['failures'].append(f"missing input {entry['name']} in {inputs}")
-            continue
-        if digest(source) != entry['sha256']:
+        elif digest(source) != entry['sha256']:
             summary['failures'].append(f"input hash mismatch for {entry['name']}")
-
-    mapping = controls['control_expectations']
-    declared = mapping['controls']
-    missing = [name for name in CONSUME_CONTROLS if name not in declared]
-    extra = [name for name in declared if name not in CONSUME_CONTROLS]
-    if missing or extra:
-        summary['failures'].append(f'control metadata does not match the four consume controls: '
-                                   f'missing {missing}, extra {extra}')
-
-    definitions = {entry['name']: entry for entry in controls['controls']}
-    for name in CONSUME_CONTROLS:
-        if name not in definitions:
-            summary['failures'].append(f'no definition for control {name}')
+    declared = controls['control_expectations']['controls']
+    if sorted(declared) != sorted(CONSUME_CONTROLS):
+        summary['failures'].append('the control mapping does not match the four consume controls')
+    mapped = {case for entry in declared.values()
+              for case in entry['discriminating'] + entry['companion_expected_to_pass']}
+    unmapped = sorted(case for case in mapped if case not in POSITIVE_CASES)
+    if unmapped:
+        summary['failures'].append(f'mapped cases missing from the positive gate: {unmapped}')
+    definitions = {entry['name']: entry for entry in controls['controls']
+                   if entry['name'] in CONSUME_CONTROLS}
+    if sorted(definitions) != sorted(CONSUME_CONTROLS):
+        summary['failures'].append('a consume control has no definition')
+    if 'targets' in json.dumps(controls['control_expectations']):
+        summary['failures'].append('the mapping carries a descriptive targets duplicate')
 
     if summary['failures']:
-        json.dump(summary, open(store / 'preflight.json', 'w'), indent=2)
         print(json.dumps(summary, indent=2))
         return 1
 
-    env = dict(os.environ, BEND_NO_TELEMETRY='1', BATON_RETAINED_LOGS=str(inputs))
-    positive = run([sys.executable, FIXTURE, *POSITIVE_CASES, '-v'], REPO, env)
-    (store / 'positive.json').write_text(json.dumps(positive, indent=2))
-    positive_outcomes = {case: case_outcome(positive, case) for case in POSITIVE_CASES}
-    summary['executions'].append({'case': 'positive', **{k: positive[k] for k in ('command', 'exit')}})
-    if positive['exit'] != 0 or any(state != 'pass' for state in positive_outcomes.values()):
-        summary['failures'].append(f'positive fixture set did not pass cleanly: {positive_outcomes}')
+    run_root.mkdir(parents=True)
+    snapshot = run_root / 'snapshot'
+    manifest = prepare_snapshot(snapshot)
+    summary['snapshot'] = str(snapshot)
+    summary['snapshot_entries'] = len(manifest)
+
+    env = dict(os.environ, BEND_NO_TELEMETRY='1', BEND=str(compiler),
+               BATON_RETAINED_LOGS=str(inputs),
+               BATON_FIXTURE_REPORT=str(run_root / 'positive-report.json'))
+
+    positive = run_root / 'positive'
+    shutil.copytree(snapshot, positive, ignore=IGNORED)
+    build = run(run_root, 'positive-build', ['sh', str(BUILD_SCRIPT)], positive, env)
+    summary['executions'].append({'label': 'positive-build', **build})
+    if build['exit'] != 0:
+        summary['failures'].append('the positive build did not succeed; dependent work stopped')
+        (run_root / 'summary.json').write_text(json.dumps(summary, indent=2))
+        print(json.dumps(summary, indent=2))
+        return 1
+    artifact = positive / ARTIFACT_RELATIVE
+    if not artifact.is_file():
+        summary['failures'].append(f'the positive build produced no artifact at {artifact}')
+        (run_root / 'summary.json').write_text(json.dumps(summary, indent=2))
+        print(json.dumps(summary, indent=2))
+        return 1
+    summary['positive_artifact_sha256'] = digest(artifact)
+
+    fixture = positive / FIXTURE_RELATIVE
+    positive_run = run(run_root, 'positive-fixtures',
+                       [sys.executable, str(fixture), *POSITIVE_CASES, '-v'], positive, env)
+    summary['executions'].append({'label': 'positive-fixtures', **positive_run})
+    report_path = pathlib.Path(env['BATON_FIXTURE_REPORT'])
+    findings, reason = case_findings(load_report(report_path), POSITIVE_CASES)
+    if reason:
+        summary['failures'].append(reason)
+    else:
+        summary['failures'].extend(judge(findings, POSITIVE_CASES))
+        for case, state in findings.items():
+            if state['outcome'] != 'pass':
+                summary['failures'].append(f'positive case {case} is {state["outcome"]}')
+    if positive_run['exit'] != 0 and not summary['failures']:
+        summary['failures'].append(f'the positive run exited {positive_run["exit"]}')
+    if summary['failures']:
+        (run_root / 'summary.json').write_text(json.dumps(summary, indent=2))
+        print(json.dumps(summary, indent=2))
+        return 1
+
+    (run_root / 'positive-report.json').replace(run_root / 'positive-report-kept.json')
 
     for name in CONSUME_CONTROLS:
         entry = definitions[name]
-        expect = declared[name]
-        work = pathlib.Path(options.copy_root) / name
-        if work.exists():
-            shutil.rmtree(work)
-        shutil.copytree(REPO, work, dirs_exist_ok=False, ignore=shutil.ignore_patterns('.git'))
+        expectation = declared[name]
+        work = run_root / f'mutant-{name}'
+        shutil.copytree(snapshot, work, ignore=IGNORED)
         target = work / entry['file']
         text = target.read_text()
         occurrences = text.count(entry['find'])
+        record_entry = {'control': name, 'occurrences': occurrences}
         if occurrences != 1:
-            summary['failures'].append(f'{name}: find text occurs {occurrences} times, not once')
+            record_entry['inconclusive'] = f'the find text occurs {occurrences} times, not once'
+            summary['failures'].append({'control': name, 'inconclusive': record_entry['inconclusive']})
+            summary['executions'].append(record_entry)
             continue
         target.write_text(text.replace(entry['find'], entry['replace']))
-        build = run(['sh', 'bend2/scripts/build-native.sh'], work, dict(env, BEND=options.bend))
-        artifact = work / ARTIFACT
-        record = {'control': name, 'build_exit': build['exit'], 'command': build['command']}
-        if build['exit'] != 0:
-            record['inconclusive'] = 'mutant build failed; not a behavioural rejection'
-            record['stderr'] = build['stderr']
-            summary['executions'].append(record)
-            summary['failures'].append({'control': name, 'inconclusive': record['inconclusive']})
+        mutant_build = run(run_root, f'{name}-build', ['sh', str(BUILD_SCRIPT)], work, env)
+        record_entry['build'] = mutant_build
+        if mutant_build['exit'] != 0:
+            record_entry['inconclusive'] = 'the mutant build failed; not a behavioural rejection'
+            summary['failures'].append({'control': name, 'inconclusive': record_entry['inconclusive']})
+            summary['executions'].append(record_entry)
             continue
-        if not artifact.exists():
-            record['inconclusive'] = 'mutant artifact missing after a successful build'
-            summary['executions'].append(record)
-            summary['failures'].append({'control': name, 'inconclusive': record['inconclusive']})
+        mutant_artifact = work / ARTIFACT_RELATIVE
+        if not mutant_artifact.is_file():
+            record_entry['inconclusive'] = 'the mutant build produced no artifact'
+            summary['failures'].append({'control': name, 'inconclusive': record_entry['inconclusive']})
+            summary['executions'].append(record_entry)
             continue
-        record['artifact_sha256'] = digest(artifact)
-        cases = expect['discriminating'] + expect['companion_expected_to_pass']
-        result = run([sys.executable, str(work / FIXTURE), *cases, '-v'], work, env)
-        outcomes = {case: case_outcome(result, case) for case in cases}
-        record.update({'cases': cases, 'outcomes': outcomes, 'fixture_exit': result['exit'],
-                       'stdout': result['stdout'][-8000:], 'stderr': result['stderr'][-4000:]})
-        for case in expect['companion_expected_to_pass']:
-            if outcomes[case] != 'pass':
-                record.setdefault('failures', []).append(f'companion {case} is {outcomes[case]}')
-        for case in expect['discriminating']:
-            if outcomes[case] != 'assertion':
-                record.setdefault('failures', []).append(
-                    f'discriminating {case} is {outcomes[case]}, not a named assertion failure')
-        if record.get('failures'):
-            summary['failures'].append({'control': name, 'detail': record['failures']})
-        summary['executions'].append(record)
+        record_entry['artifact_sha256'] = digest(mutant_artifact)
+        cases = expectation['discriminating'] + expectation['companion_expected_to_pass']
+        report_file = run_root / f'{name}-report.json'
+        mutant_env = dict(env, BATON_FIXTURE_REPORT=str(report_file))
+        mutant_run = run(run_root, f'{name}-fixtures',
+                         [sys.executable, str(work / FIXTURE_RELATIVE), *cases, '-v'], work, mutant_env)
+        record_entry['fixtures'] = mutant_run
+        mutant_findings, mutant_reason = case_findings(load_report(report_file), cases)
+        problems = []
+        if mutant_reason:
+            problems.append(mutant_reason)
+        else:
+            problems.extend(judge(mutant_findings, cases))
+            for case in expectation['companion_expected_to_pass']:
+                if mutant_findings[case]['outcome'] != 'pass':
+                    problems.append(f'companion {case} is {mutant_findings[case]["outcome"]}')
+            for case in expectation['discriminating']:
+                state = mutant_findings[case]
+                if state['outcome'] == 'assertion':
+                    if options.assertion_marker not in (state.get('message') or ''):
+                        problems.append(f'discriminator {case} failed without the designated marker')
+                elif state['outcome'] != 'fail':
+                    problems.append(f'discriminator {case} is {state["outcome"]}, not a failure')
+                if state.get('phase') != 'test':
+                    problems.append(f'discriminator {case} failed in its {state.get("phase")} phase')
+        if problems:
+            record_entry['problems'] = problems
+            summary['failures'].append({'control': name, 'problems': problems})
+        summary['executions'].append(record_entry)
 
-    (store / 'summary.json').write_text(json.dumps(summary, indent=2))
-    print(json.dumps({'failures': summary['failures'],
-                      'executions': [{k: v for k, v in record.items() if k not in ('stdout', 'stderr')}
-                                     for record in summary['executions']]}, indent=2))
+    (run_root / 'summary.json').write_text(json.dumps(summary, indent=2))
+    print(json.dumps({'run_root': str(run_root), 'failures': summary['failures'],
+                      'executions': summary['executions']}, indent=2))
     return 1 if summary['failures'] else 0
 
 
