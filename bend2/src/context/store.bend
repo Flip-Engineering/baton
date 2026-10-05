@@ -17,7 +17,7 @@ import ../coordinator/commands.bend as C
 # assignment to abort a conflicting write.
 def schema() -> String:
   "CREATE TABLE IF NOT EXISTS semantic_queries (id TEXT PRIMARY KEY NOT NULL,owner TEXT NOT NULL REFERENCES sessions(id),request_json TEXT NOT NULL,admission_decision TEXT NOT NULL CHECK(admission_decision IN ('accepted','rejected')),prepared_keeper_path TEXT,cwd TEXT NOT NULL,origin_attempt TEXT,state TEXT NOT NULL CHECK(state IN ('accepted','running','complete','failed','interrupted','refused')),result_json TEXT,error_json TEXT,progress_json TEXT,cleanup_intent_json TEXT,recovery_intent_json TEXT,runtime_id TEXT,artifact_path TEXT NOT NULL,CHECK(json_valid(request_json)),CHECK(result_json IS NULL OR json_valid(result_json)),CHECK(error_json IS NULL OR json_valid(error_json)),CHECK(progress_json IS NULL OR json_valid(progress_json)),CHECK(cleanup_intent_json IS NULL OR json_valid(cleanup_intent_json)),CHECK(recovery_intent_json IS NULL OR json_valid(recovery_intent_json)));"
-  ++ "CREATE TABLE IF NOT EXISTS semantic_runtimes (id TEXT PRIMARY KEY NOT NULL,owner TEXT NOT NULL REFERENCES sessions(id),origin_attempt TEXT,launch_query TEXT NOT NULL UNIQUE,adapter_id TEXT NOT NULL,state TEXT NOT NULL,epoch INTEGER NOT NULL,pending_query TEXT,outcome_json TEXT,CHECK(outcome_json IS NULL OR json_valid(outcome_json)));"
+  ++ "CREATE TABLE IF NOT EXISTS semantic_runtimes (id TEXT PRIMARY KEY NOT NULL,owner TEXT NOT NULL REFERENCES sessions(id),origin_attempt TEXT,launch_query TEXT NOT NULL UNIQUE,adapter_id TEXT NOT NULL,state TEXT NOT NULL,epoch TEXT NOT NULL,pending_query TEXT,outcome_json TEXT,CHECK(outcome_json IS NULL OR json_valid(outcome_json)));"
   ++ "CREATE TABLE IF NOT EXISTS semantic_roles (query_id TEXT NOT NULL REFERENCES semantic_queries(id),role TEXT NOT NULL CHECK(role IN ('starter','target','adapter')),incarnation TEXT NOT NULL,keeper_path TEXT NOT NULL UNIQUE,guard_anchor TEXT NOT NULL,guard_key TEXT NOT NULL,guard_identity_json TEXT NOT NULL,recovery_argv_json TEXT NOT NULL,database_binding_json TEXT NOT NULL,phase TEXT NOT NULL,observer_identity_json TEXT,observer_cursor TEXT NOT NULL,exit_evidence_json TEXT,capture_json TEXT,release_intent_json TEXT,cleanup_phase TEXT NOT NULL,PRIMARY KEY(query_id,role,incarnation),CHECK(json_valid(guard_identity_json)),CHECK(json_valid(recovery_argv_json)),CHECK(json_valid(database_binding_json)),CHECK(observer_identity_json IS NULL OR json_valid(observer_identity_json)),CHECK(exit_evidence_json IS NULL OR json_valid(exit_evidence_json)),CHECK(capture_json IS NULL OR json_valid(capture_json)),CHECK(release_intent_json IS NULL OR json_valid(release_intent_json)));"
   ++ "CREATE INDEX IF NOT EXISTS semantic_queries_owner ON semantic_queries(owner);"
   ++ "CREATE INDEX IF NOT EXISTS semantic_roles_keeper ON semantic_roles(guard_key);"
@@ -88,9 +88,10 @@ def progress_body_sql(+id: String, +owner: String, +progressJson: String, +notic
   ++ owner_notice_sql(noticeId, owner, noticeBody)
 
 # One runtime row. The launch query is unique, so two runtimes cannot claim one
-# launch; the epoch is recorded as the adapter reported it.
+# launch; the epoch is stored and returned as the admitted canonical decimal text,
+# so no finite numeric conversion can lose its identity.
 def runtime_row_sql(+id: String, +owner: String, +originAttempt: String, +launchQuery: String, +adapterId: String, +state: String, +epoch: String) -> String:
   "INSERT INTO semantic_runtimes(id,owner,origin_attempt,launch_query,adapter_id,state,epoch) VALUES("
-  ++ C.q(id) ++ "," ++ C.q(owner) ++ "," ++ text_or_null(originAttempt) ++ "," ++ C.q(launchQuery) ++ "," ++ C.q(adapterId) ++ "," ++ C.q(state) ++ "," ++ epoch
+  ++ C.q(id) ++ "," ++ C.q(owner) ++ "," ++ text_or_null(originAttempt) ++ "," ++ C.q(launchQuery) ++ "," ++ C.q(adapterId) ++ "," ++ C.q(state) ++ "," ++ C.q(epoch)
   ++ ") ON CONFLICT(id) DO UPDATE SET id=CASE WHEN semantic_runtimes.launch_query=excluded.launch_query AND semantic_runtimes.adapter_id=excluded.adapter_id THEN semantic_runtimes.id ELSE NULL END;"
   ++ "SELECT json_object('id',id,'owner',owner,'launchQuery',launch_query,'adapterId',adapter_id,'state',state,'epoch',epoch,'pendingQuery',pending_query,'outcome',CASE WHEN outcome_json IS NULL THEN NULL ELSE json(outcome_json) END) FROM semantic_runtimes WHERE id=" ++ C.q(id) ++ ";"

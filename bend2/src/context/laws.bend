@@ -513,13 +513,15 @@ def an_absent_logical_token_is_not_a_member():
 # ---------------------------------------------------------------------------
 # Atomic bound admission. The insert runs only while the identity is absent and the
 # read-back reports what the transaction did, so a concurrent admission of the same
-# identity resolves to one row and the answer names the recorded attempt.
+# identity resolves to one row and the answer names the recorded preparation. The
+# decoder is closed over the exact row grammar and its value domains.
 
-law the_admission_answer_names_what_the_transaction_did:
+law every_answer_column_is_guarded_by_presence:
   for +id: String
-  {ContextAdmit.admit_row_sql(id) == "SELECT CASE WHEN changes()=1 THEN 'created' ELSE 'retained' END,coalesce((SELECT owner FROM semantic_queries WHERE id=" ++ C.q(id) ++ "),''),coalesce((SELECT request_json FROM semantic_queries WHERE id=" ++ C.q(id) ++ "),''),coalesce((SELECT admission_decision FROM semantic_queries WHERE id=" ++ C.q(id) ++ "),''),coalesce((SELECT state FROM semantic_queries WHERE id=" ++ C.q(id) ++ "),''),coalesce((SELECT origin_attempt FROM semantic_queries WHERE id=" ++ C.q(id) ++ "),'');" : String}
+  for +expression: String
+  {ContextAdmit.admit_column(id,expression) == "CASE WHEN " ++ ContextAdmit.admit_present(id) ++ " THEN " ++ expression ++ " ELSE '' END" : String}
 
-def the_admission_answer_names_what_the_transaction_did(id):
+def every_answer_column_is_guarded_by_presence(id,expression):
   {==}
 
 law the_admission_inserts_only_an_absent_identity:
@@ -535,50 +537,92 @@ law the_admission_inserts_only_an_absent_identity:
 def the_admission_inserts_only_an_absent_identity(id,owner,requestJson,keeperPath,cwd,originAttempt,artifactPath):
   {==}
 
-law a_created_answer_names_the_recorded_identity:
-  {ContextAdmit.admit_decode("created\troot\trq\taccepted\taccepted\tattempt-1\n") == ContextAdmit.AdmissionCreated{"root","rq","accepted","accepted","attempt-1"} : ContextAdmit.Admission}
+law a_created_answer_names_the_recorded_identity_and_preparation:
+  {ContextAdmit.admit_decode("present\tcreated\troot\trq\taccepted\taccepted\tattempt-1\t/log/q3\t/work\t/art/q3\n") == ContextAdmit.AdmissionCreated{"root","rq","accepted","accepted","attempt-1","/log/q3","/work","/art/q3"} : ContextAdmit.Admission}
 
-def a_created_answer_names_the_recorded_identity():
+def a_created_answer_names_the_recorded_identity_and_preparation():
   {==}
 
 law a_retained_answer_names_the_recorded_attempt:
-  {ContextAdmit.admit_decode("retained\troot\trq\taccepted\tcomplete\tattempt-1\n") == ContextAdmit.AdmissionRetained{"root","rq","accepted","complete","attempt-1"} : ContextAdmit.Admission}
+  {ContextAdmit.admit_decode("present\tretained\troot\trq\taccepted\tcomplete\tattempt-1\t/log/q3\t/work\t/art/q3\n") == ContextAdmit.AdmissionRetained{"root","rq","accepted","complete","attempt-1","/log/q3","/work","/art/q3"} : ContextAdmit.Admission}
 
 def a_retained_answer_names_the_recorded_attempt():
   {==}
 
-law a_short_answer_is_not_a_readable_record:
-  {ContextAdmit.admit_decode("retained\troot\n") == ContextAdmit.AdmissionUncertain{"retained"} : ContextAdmit.Admission}
+law an_absent_answer_is_a_proven_absence:
+  {ContextAdmit.admit_decode("absent\t\t\t\t\t\t\t\t\t\n") == ContextAdmit.AdmissionAbsent{} : ContextAdmit.Admission}
 
-def a_short_answer_is_not_a_readable_record():
+def an_absent_answer_is_a_proven_absence():
   {==}
 
-law an_empty_answer_is_not_a_readable_record:
-  {ContextAdmit.admit_decode("\n") == ContextAdmit.AdmissionUncertain{"\n"} : ContextAdmit.Admission}
+law a_short_answer_is_not_a_record:
+  {ContextAdmit.admit_decode("present\tcreated\troot\n") == ContextAdmit.AdmissionUncertain{"short","present\tcreated\troot\n"} : ContextAdmit.Admission}
 
-def an_empty_answer_is_not_a_readable_record():
+def a_short_answer_is_not_a_record():
+  {==}
+
+law a_surplus_column_is_not_a_record:
+  {ContextAdmit.admit_decode("present\tcreated\troot\trq\taccepted\taccepted\ta\t/l\t/w\t/art\textra\n") == ContextAdmit.AdmissionUncertain{"surplus","present\tcreated\troot\trq\taccepted\taccepted\ta\t/l\t/w\t/art\textra\n"} : ContextAdmit.Admission}
+
+def a_surplus_column_is_not_a_record():
+  {==}
+
+law an_unknown_marker_is_not_a_record:
+  {ContextAdmit.admit_decode("present\tsomething\troot\trq\taccepted\taccepted\ta\t/l\t/w\t/art\n") == ContextAdmit.AdmissionUncertain{"mark","something"} : ContextAdmit.Admission}
+
+def an_unknown_marker_is_not_a_record():
+  {==}
+
+law a_value_outside_the_domain_is_not_a_record:
+  {ContextAdmit.admit_decode("present\tcreated\troot\trq\tbogus\taccepted\ta\t/l\t/w\t/art\n") == ContextAdmit.AdmissionUncertain{"domain","bogus"} : ContextAdmit.Admission}
+
+def a_value_outside_the_domain_is_not_a_record():
+  {==}
+
+law the_state_domain_comes_from_the_canonical_contract:
+  {ContextAdmit.admit_state_ok("running") == True{} : Bool}
+
+def the_state_domain_comes_from_the_canonical_contract():
+  {==}
+
+law an_unknown_state_is_outside_the_domain:
+  {ContextAdmit.admit_state_ok("bogus") == False{} : Bool}
+
+def an_unknown_state_is_outside_the_domain():
+  {==}
+
+law the_decision_domain_admits_both_recorded_decisions:
+  {ContextAdmit.admit_decision_ok("accepted") == True{} : Bool}
+
+def the_decision_domain_admits_both_recorded_decisions():
   {==}
 
 law a_created_answer_matches_no_retained_identity:
-  {ContextAdmit.admit_identical(ContextAdmit.AdmissionCreated{"root","rq","accepted","accepted","a"},"root","rq") == False{} : Bool}
+  {ContextAdmit.admit_identical(ContextAdmit.AdmissionCreated{"root","rq","accepted","accepted","a","/l","/w","/art"},"root","rq") == False{} : Bool}
 
 def a_created_answer_matches_no_retained_identity():
   {==}
 
 law a_retained_answer_matches_its_own_owner_and_request:
-  {ContextAdmit.admit_identical(ContextAdmit.AdmissionRetained{"root","rq","accepted","accepted","a"},"root","rq") == True{} : Bool}
+  {ContextAdmit.admit_identical(ContextAdmit.AdmissionRetained{"root","rq","accepted","accepted","a","/l","/w","/art"},"root","rq") == True{} : Bool}
 
 def a_retained_answer_matches_its_own_owner_and_request():
   {==}
 
 law a_retained_answer_with_a_different_request_is_a_conflict:
-  {ContextAdmit.admit_identical(ContextAdmit.AdmissionRetained{"root","rq","accepted","accepted","a"},"root","other") == False{} : Bool}
+  {ContextAdmit.admit_identical(ContextAdmit.AdmissionRetained{"root","rq","accepted","accepted","a","/l","/w","/art"},"root","other") == False{} : Bool}
 
 def a_retained_answer_with_a_different_request_is_a_conflict():
   {==}
 
+law an_absent_answer_matches_nothing:
+  {ContextAdmit.admit_identical(ContextAdmit.AdmissionAbsent{},"root","rq") == False{} : Bool}
+
+def an_absent_answer_matches_nothing():
+  {==}
+
 law an_unreadable_answer_matches_nothing:
-  {ContextAdmit.admit_identical(ContextAdmit.AdmissionUncertain{"x"},"root","rq") == False{} : Bool}
+  {ContextAdmit.admit_identical(ContextAdmit.AdmissionUncertain{"short","x"},"root","rq") == False{} : Bool}
 
 def an_unreadable_answer_matches_nothing():
   {==}
