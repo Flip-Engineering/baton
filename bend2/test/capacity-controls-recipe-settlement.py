@@ -154,7 +154,106 @@ class RecipeSettlement(unittest.TestCase):
         row = next(row for row in self.rows() if row['name'] == 'archive-extracted')
         self.assertEqual(row['outcome'], 'verified')
         self.assertEqual(row['members'], 2)
-        self.assertTrue((target / 'bend2/manifest.json').is_file())
+        # Every authored member is extracted with its own bytes.
+        self.assertEqual((target / 'bend2/manifest.json').read_bytes(),
+                         json.dumps({'archive_root': 'bend2'}).encode())
+        self.assertEqual((target / 'bend2/controls-evidence/bend2.json').read_bytes(), b'{}')
+
+    def test_a_failure_partway_keeps_the_members_it_reached(self):
+        # A later member cannot be written where the target already holds a file of
+        # that name, so the failure records the members extracted before it and the
+        # member it was handling when it failed, with the original exception object.
+        archive_path = self.run / 'partial-archive.tar.gz'
+        with tarfile.open(archive_path, 'w:gz') as archive:
+            self.add_member(archive, 'bend2/manifest.json', b'{}')
+            self.add_member(archive, 'bend2/controls-evidence/bend2.json', b'{}')
+        target = self.run / 'partial-readback'
+        (target / 'bend2').mkdir(parents=True)
+        (target / 'bend2/controls-evidence').write_bytes(b'occupied')
+        with self.assertRaises(Exception) as raised:
+            RECIPE.extract_archive(self.run, self.record, archive_path, target)
+        row = next(row for row in self.rows() if row['name'] == 'archive-extracted')
+        self.assertEqual(row['outcome'], 'failed')
+        self.assertIn('manifest.json', row['members_extracted_names'])
+        self.assertEqual(row['failing_member'], 'bend2/controls-evidence/bend2.json')
+        self.assertEqual(row['members_extracted'], 1)
+        self.assertIn(str(raised.exception), row['failure'])
+
+    def test_a_failed_verified_write_keeps_the_extraction_outcome(self):
+        # The extraction succeeds and its verified row cannot be written, so the
+        # recording error carries the stage outcome and the value it observed.
+        archive_path = self.run / 'record-archive.tar.gz'
+        with tarfile.open(archive_path, 'w:gz') as archive:
+            self.add_member(archive, 'bend2/manifest.json', b'{}')
+        target = self.run / 'record-readback'
+        target.mkdir()
+        writes = []
+        original_write = RECIPE.write_record
+
+        def flaky(run, record):
+            writes.append(len(record))
+            if len(writes) > 1:
+                raise RuntimeError('the run record could not be written: blocked')
+            return original_write(run, record)
+
+        RECIPE.write_record = flaky
+        self.addCleanup(setattr, RECIPE, 'write_record', original_write)
+        with self.assertRaises(RuntimeError) as raised:
+            RECIPE.extract_archive(self.run, self.record, archive_path, target)
+        self.assertEqual(raised.exception.stage, 'archive-extracted')
+        self.assertEqual(raised.exception.stage_outcome, 'verified')
+        self.assertEqual(raised.exception.stage_value['members'], 1)
+
+    def test_metadata_staging_reports_copied_and_verified_separately(self):
+        # The actual metadata caller copies both documents, verifies both, and a
+        # document whose digest disagrees fails with the document being verified.
+        package = RECIPE.package_handle()
+        archived = self.run / 'archived'
+        archived.mkdir()
+        documents = {}
+        for name in package.ARCHIVE_METADATA:
+            (archived / name).write_bytes(json.dumps({'name': name}).encode())
+            documents[name] = RECIPE.digest(archived / name)
+        retained = self.run / 'original-archive.tar.gz'
+        retained.write_bytes(b'archive bytes')
+        digest = RECIPE.digest(retained)
+        facts = RECIPE.stage_metadata(self.run, self.record, archived, retained,
+                                      self.run / 'metadata', digest, documents)
+        self.assertEqual(facts['documents_copied'], sorted(documents))
+        self.assertEqual(facts['documents_verified'], sorted(documents))
+        self.assertEqual(facts['retained_archive_sha256'], digest)
+
+        wrong = dict(documents)
+        wrong['reduction.json'] = 'c' * 64
+        with self.assertRaises(RECIPE.StageFailure) as raised:
+            RECIPE.stage_metadata(self.run, self.record, archived, retained,
+                                  self.run / 'metadata', digest, wrong)
+        fields = raised.exception.fields
+        self.assertEqual(fields['boundary'], 'retained-metadata')
+        # Documents are verified in the archive metadata order, so the first one is
+        # the document being verified when the refusal happens.
+        self.assertEqual(fields['metadata_member'], 'inventory.json')
+        self.assertEqual(fields['metadata_verified'], [])
+        self.assertEqual(raised.exception.partial, sorted(documents))
+
+    def test_the_envelope_caller_names_the_operation_it_reached(self):
+        # A written envelope reports its digest, and a write that cannot happen
+        # reports the write operation rather than the hash step.
+        path = self.run / 'archive-envelope.json'
+        written = RECIPE.write_envelope(self.run, self.record,
+                                        {'reduction_sha256': 'a' * 64}, path)
+        self.assertEqual(written['envelope'], 'archive-envelope.json')
+        self.assertEqual(written['envelope_sha256'], RECIPE.digest(path))
+
+        blocked = self.run / 'envelope-directory'
+        blocked.mkdir()
+        with self.assertRaises(Exception) as raised:
+            RECIPE.write_envelope(self.run, self.record, {'reduction_sha256': 'a' * 64},
+                                  blocked)
+        fields = raised.exception.fields
+        self.assertEqual(fields['operation'], 'envelope-write')
+        self.assertEqual(fields['boundary'], 'archive-envelope')
+        self.assertTrue(fields['envelope_present'])
 
     def test_a_preflight_refusal_names_the_member_and_extracts_nothing(self):
         # The unsafe member is refused during the preflight, before any member is

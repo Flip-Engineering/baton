@@ -326,8 +326,10 @@ def attach_secondary(error, key, value):
 def attempt(directory, record, name, work, **declared):
     """Run one stage with its identity declared first and settled on each exit.
 
-    A settled row is written by replacing the run record, so a stage whose row
-    cannot be written leaves the attempted row on disk.
+    Each settlement replaces the run record. An attempted row is on disk only
+    after its own write succeeds, so a stage whose first write fails leaves no
+    attempted row, and a stage whose later write fails leaves the row that was
+    last written. Retry or retry-on-crash behaviour is not part of this helper.
 
     The original exception is raised with any recording error attached, so a
     failure to persist the terminal row never replaces the cause it was recording.
@@ -379,6 +381,91 @@ def package_handle():
     if _PACKAGE is None:
         _PACKAGE = package_module()
     return _PACKAGE
+
+
+def stage_metadata(directory, record, archived, retained_input, metadata,
+                   expected_archive_sha256, documents):
+    """Retain the archive and metadata bytes bound to this stage.
+
+    What was copied, what is being copied and what has been verified are separate
+    observations: a copied destination is not a verified one.
+    """
+    package = package_handle()
+    metadata.mkdir(exist_ok=True)
+    copied = []
+    attempted = None
+    verifying = None
+    verified = []
+    try:
+        for name in package.ARCHIVE_METADATA:
+            attempted = name
+            shutil.copyfile(archived / name, metadata / name)
+            copied.append(name)
+            attempted = None
+        # The retained copies are checked against the admitted identity, not only
+        # the reader's own later observation.
+        kept_archive = digest(retained_input)
+        if kept_archive != expected_archive_sha256:
+            raise StageFailure(
+                'the retained archive copy differs from the admitted identity',
+                fields={'boundary': 'retained-archive',
+                        'retained_sha256': kept_archive,
+                        'metadata_verified': list(verified)})
+        for name in package.ARCHIVE_METADATA:
+            verifying = name
+            if digest(metadata / name) != documents[name]:
+                raise StageFailure(
+                    'the retained metadata copy differs from the admitted identity: ' + name,
+                    fields={'boundary': 'retained-metadata',
+                            'metadata_member': name,
+                            'metadata_verified': list(verified)})
+            verified.append(name)
+            verifying = None
+        return {'documents_copied': sorted(copied),
+                'documents_verified': sorted(verified),
+                'retained_archive_sha256': kept_archive,
+                'metadata': sorted(str(row.relative_to(directory))
+                                   for row in metadata.iterdir())}
+    except BaseException as error:
+        reported = dict(getattr(error, 'fields', None) or {})
+        reported.setdefault('documents_copied', sorted(copied))
+        reported.setdefault('documents_verified', sorted(verified))
+        if attempted:
+            reported['copy_attempted'] = attempted
+        if verifying:
+            reported['metadata_verifying'] = verifying
+        if getattr(error, 'accounting_error', None) is not None:
+            reported['accounting_error_text'] = repr(error.accounting_error)
+        setattr(error, 'fields', reported)
+        setattr(error, 'partial', sorted(copied))
+        raise
+
+
+def write_envelope(directory, record, envelope, envelope_path):
+    """Write the complete returned envelope and hash the bytes that were written."""
+    relative = str(envelope_path.relative_to(directory))
+    operation = 'envelope-write'
+    try:
+        envelope_path.write_text(json.dumps(envelope, indent=2) + '\n')
+        operation = 'envelope-sha256'
+        return {'envelope': relative, 'envelope_sha256': digest(envelope_path)}
+    except BaseException as error:
+        present = None
+        size = None
+        try:
+            present = envelope_path.is_file()
+            size = envelope_path.stat().st_size if present else None
+        except OSError as accounting_error:
+            attach_secondary(error, 'accounting_error', accounting_error)
+        setattr(error, 'fields', {
+            'envelope': relative,
+            'operation': operation,
+            'envelope_present': present,
+            'envelope_bytes': size,
+            'accounting_error_text': (repr(error.accounting_error)
+                                      if getattr(error, 'accounting_error', None) else None),
+            'boundary': 'archive-envelope'})
+        raise
 
 
 def main():
@@ -728,103 +815,21 @@ def main():
                                      'settle separately in archive-case-acquisition')
             records = acquired['records']
 
-            def stage_metadata():
-                # Retain the original archive and metadata bytes bound to this stage.
-                # What was copied, what is being copied and what was verified are
-                # separate observations: a copied destination is not a verified one.
-                metadata = run / 'archive-metadata'
-                metadata.mkdir(exist_ok=True)
-                copied = []
-                attempted = None
-                verifying = None
-                verified = []
-                try:
-                    for name in package.ARCHIVE_METADATA:
-                        attempted = name
-                        shutil.copyfile(archived / name, metadata / name)
-                        copied.append(name)
-                        attempted = None
-                    # The retained copies are checked against the admitted identity,
-                    # not only the reader's own later observation.
-                    kept_archive = digest(retained_input)
-                    if kept_archive != args.expected_archive_sha256:
-                        raise StageFailure(
-                            'the retained archive copy differs from the admitted identity',
-                            fields={'boundary': 'retained-archive',
-                                    'retained_sha256': kept_archive,
-                                    'metadata_verified': list(verified)})
-                    for name in package.ARCHIVE_METADATA:
-                        verifying = name
-                        if digest(metadata / name) != documents[name]:
-                            raise StageFailure(
-                                'the retained metadata copy differs from the admitted identity: '
-                                + name,
-                                fields={'boundary': 'retained-metadata',
-                                        'metadata_member': name,
-                                        'metadata_verified': list(verified)})
-                        verified.append(name)
-                    return {'documents_copied': sorted(copied),
-                            'documents_verified': sorted(verified),
-                            'retained_archive_sha256': kept_archive,
-                            'metadata': sorted(str(row.relative_to(run))
-                                               for row in metadata.iterdir())}
-                except BaseException as error:
-                    # The copied destinations, the destination being copied when the
-                    # failure happened and the verification observations so far stay
-                    # separate on the failure row.
-                    reported = dict(getattr(error, 'fields', None) or {})
-                    reported.setdefault('documents_copied', sorted(copied))
-                    reported.setdefault('documents_verified', sorted(verified))
-                    if attempted:
-                        reported['copy_attempted'] = attempted
-                    if verifying:
-                        reported['metadata_verifying'] = verifying
-                    if getattr(error, 'accounting_error', None) is not None:
-                        reported['accounting_error_text'] = repr(error.accounting_error)
-                    if verifying:
-                        reported['metadata_verifying'] = verifying
-                    if getattr(error, 'accounting_error', None) is not None:
-                        reported['accounting_error_text'] = repr(error.accounting_error)
-                    setattr(error, 'fields', reported)
-                    setattr(error, 'partial', sorted(copied))
-                    raise
-
-            staged = attempt(run, record, 'archive-metadata-staged', stage_metadata,
-                             archive=retained_input.name, root=selected_root,
-                             scope='copied destinations, the destination being copied and the '
-                                   'verified documents are separate observations')
-
-            def write_envelope():
-                envelope_path = run / 'archive-envelope.json'
-                relative = str(envelope_path.relative_to(run))
-                operation = 'envelope-write'
-                try:
-                    envelope_path.write_text(json.dumps(envelope, indent=2) + '\n')
-                    operation = 'envelope-sha256'
-                    return {'envelope': relative, 'envelope_sha256': digest(envelope_path)}
-                except BaseException as error:
-                    present = None
-                    size = None
-                    try:
-                        present = envelope_path.is_file()
-                        size = envelope_path.stat().st_size if present else None
-                    except OSError as accounting_error:
-                        attach_secondary(error, 'accounting_error', accounting_error)
-                    setattr(error, 'fields', {
-                        'envelope': relative,
-                        'operation': operation,
-                        'envelope_present': present,
-                        'envelope_bytes': size,
-                        'accounting_error_text': (repr(error.accounting_error)
-                                                  if getattr(error, 'accounting_error', None)
-                                                  else None),
-                        'boundary': 'archive-envelope'})
-                    raise
-
-            written = attempt(run, record, 'archive-envelope-written', write_envelope,
-                              document='archive-envelope.json',
-                              scope='the complete returned envelope, written to that file and '
-                                    'hashed from the written bytes')
+            staged = attempt(
+                run, record, 'archive-metadata-staged',
+                lambda: stage_metadata(run, record, archived, retained_input,
+                                       run / 'archive-metadata',
+                                       args.expected_archive_sha256, documents),
+                archive=retained_input.name, root=selected_root,
+                scope='copied destinations, the destination being copied and the '
+                      'verified documents are separate observations')
+            written = attempt(
+                run, record, 'archive-envelope-written',
+                lambda: write_envelope(run, record, envelope,
+                                       run / 'archive-envelope.json'),
+                document='archive-envelope.json',
+                scope='the complete returned envelope, written to that file and '
+                      'hashed from the written bytes')
             return {'root': selected_root, 'manifest_member': manifest_member,
                     'members': len(current['members']),
                     'documents': sorted(documents), 'archive': str(args.archive),
