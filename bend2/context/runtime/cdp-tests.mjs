@@ -910,6 +910,21 @@ test('pending-evaluation-admits-release-while-unanswered', async () => {
       && JSON.parse(frame.text).id === requestId);
     assertEqual(answered, false, 'no response arrived for the blocking evaluation');
 
+    // The control path serializes against the pending evaluation and reaches no backend:
+    // the refusal happens before the transport, and no Debugger.enable frame is sent.
+    const framesBeforeControl = session.frames().length;
+    let controlRefusal = null;
+    try {
+      await session.control({ query: 'q-control', method: 'Debugger.enable', effects: ['controlRuntime'] });
+    } catch (error) {
+      controlRefusal = error;
+    }
+    assert(controlRefusal !== null, 'a control request was admitted while an evaluation is pending');
+    assertEqual(controlRefusal.condition, 'runtimeBusy', 'the control-path refusal condition');
+    const sentControl = session.frames().slice(framesBeforeControl)
+      .filter((frame) => frame.direction === 'out' && JSON.parse(frame.text).method === 'Debugger.enable');
+    assertEqual(sentControl.length, 0, 'a control request reached the backend while an evaluation is pending');
+
     const release = await session.execute('release', {
       effects: ['controlRuntime'],
       signal: 'SIGKILL',

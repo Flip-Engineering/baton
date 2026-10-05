@@ -217,6 +217,13 @@ export function admitControlRequest(record, method, params = {}, effects = []) {
       }
     }
   }
+  // State-changing CDP requests serialize per runtime: a control request is refused while
+  // a state-changing intent is in flight, so no second request reaches the target while
+  // an evaluation is pending. Release is an intent, not a control request, and stays
+  // available to the owner.
+  if (record.pending !== null) {
+    return refusal('runtimeBusy', `pending ${record.pending.intent}`);
+  }
   if (method === 'NodeWorker.sendMessageToWorker') {
     const inner = admitNestedWorkerMessage(params);
     if (!inner.ok) return inner;

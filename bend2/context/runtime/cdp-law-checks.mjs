@@ -302,6 +302,24 @@ export function laws(modules) {
       },
     },
     {
+      name: 'control_requests_serialize_against_a_pending_evaluation',
+      run() {
+        const denied = intents.admitControlRequest(pending, 'Debugger.enable', {}, ['controlRuntime']);
+        assertEqual(denied.condition, 'runtimeBusy',
+          'a control request was admitted while an evaluation is pending');
+        assertEqual(denied.detail, 'pending evaluate', 'the refusal names the pending intent');
+        for (const method of ['Runtime.runIfWaitingForDebugger', 'Debugger.setBreakpointByUrl',
+          'NodeWorker.detach', 'NodeWorker.sendMessageToWorker']) {
+          assertEqual(intents.admitControlRequest(pending, method, {}, ['controlRuntime']).ok, false,
+            `${method} was admitted while an evaluation is pending`);
+        }
+        assertEqual(intents.admitControlRequest(running, 'Debugger.enable', {}, ['controlRuntime']).ok, true,
+          'a control request was refused while the runtime is idle');
+        assertEqual(intents.admitIntent(pending, 'release', { effects: ['controlRuntime'], signal: 'SIGKILL' }).ok, true,
+          'release was refused while an evaluation is pending');
+      },
+    },
+    {
       name: 'nested_worker_message_must_itself_be_a_read',
       run() {
         const reads = intents.admitControlRequest(running, 'NodeWorker.sendMessageToWorker', {
