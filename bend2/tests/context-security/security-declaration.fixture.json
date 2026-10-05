@@ -1,0 +1,92 @@
+{
+  "schemaVersion": 1,
+  "pathPlaceholders": "<workdir> is replaced by the materialized fixture workdir before use; the rewritten file's sha256 is computed at request time. sourceSha256 values pin the authentic Fossil bytes and are unchanged by materialization.",
+  "requirements": [
+    {
+      "id": "fossil-reportlist-read",
+      "authority": {"author": "semantic-models-security-critic", "revision": "producer-contract-7"},
+      "translationUnit": {"path": "<workdir>/bld/report_.c"},
+      "entry": {"path": "<workdir>/src/report.c", "sourceSha256": "1a102ac38785fcf9d53c946d2b73de9bbcf5c3905dee6bd56524b54781e3f6c5", "byteStart": 830, "byteEnd": 2597, "expectedAstKind": "FunctionDecl"},
+      "principal": {
+        "base": {"path": "<workdir>/bld/report.h", "sourceSha256": "0cfe9c029a1a011d83bee4fa778a17e9bf949d2fa76fa8aabc7e4590a819b299", "byteStart": 10045, "byteEnd": 10060, "expectedAstKind": "VarDecl"},
+        "fields": []
+      },
+      "action": {
+        "label": "prepare report-definition read",
+        "callsite": {"path": "<workdir>/src/report.c", "sourceSha256": "1a102ac38785fcf9d53c946d2b73de9bbcf5c3905dee6bd56524b54781e3f6c5", "byteStart": 1285, "byteEnd": 1356, "expectedAstKind": "CallExpr"}
+      },
+      "resource": {
+        "catalogAccess": {
+          "callsite": {"path": "<workdir>/src/report.c", "sourceSha256": "1a102ac38785fcf9d53c946d2b73de9bbcf5c3905dee6bd56524b54781e3f6c5", "byteStart": 1285, "byteEnd": 1356, "expectedAstKind": "CallExpr"},
+          "argumentIndex": 1
+        }
+      },
+      "guard": {
+        "condition": {"path": "<workdir>/src/report.c", "sourceSha256": "1a102ac38785fcf9d53c946d2b73de9bbcf5c3905dee6bd56524b54781e3f6c5", "byteStart": 987, "byteEnd": 1012, "expectedAstKind": "BinaryOperator"},
+        "acceptedValue": false,
+        "principalUses": [
+          {"path": "<workdir>/src/report.c", "sourceSha256": "1a102ac38785fcf9d53c946d2b73de9bbcf5c3905dee6bd56524b54781e3f6c5", "byteStart": 988, "byteEnd": 997, "expectedAstKind": "MemberExpr"},
+          {"path": "<workdir>/src/report.c", "sourceSha256": "1a102ac38785fcf9d53c946d2b73de9bbcf5c3905dee6bd56524b54781e3f6c5", "byteStart": 1002, "byteEnd": 1012, "expectedAstKind": "MemberExpr"}
+        ],
+        "resourceUses": []
+      },
+      "deny": {
+        "terminal": {"path": "<workdir>/src/report.c", "sourceSha256": "1a102ac38785fcf9d53c946d2b73de9bbcf5c3905dee6bd56524b54781e3f6c5", "byteStart": 1032, "byteEnd": 1038, "expectedAstKind": "ReturnStmt"}
+      },
+      "effect": {
+        "callsite": {"path": "<workdir>/src/report.c", "sourceSha256": "1a102ac38785fcf9d53c946d2b73de9bbcf5c3905dee6bd56524b54781e3f6c5", "byteStart": 1285, "byteEnd": 1356, "expectedAstKind": "CallExpr"},
+        "calleeDeclaration": {"path": "<workdir>/bld/report.h", "sourceSha256": "0cfe9c029a1a011d83bee4fa778a17e9bf949d2fa76fa8aabc7e4590a819b299", "byteStart": 2726, "byteEnd": 2777, "expectedAstKind": "FunctionDecl"}
+      },
+      "inputs": [
+        {
+          "origin": {
+            "base": {"path": "<workdir>/src/report.c", "sourceSha256": "1a102ac38785fcf9d53c946d2b73de9bbcf5c3905dee6bd56524b54781e3f6c5", "byteStart": 1300, "byteEnd": 1355, "expectedAstKind": "StringLiteral"},
+            "fields": []
+          },
+          "atEffect": {
+            "callsite": {"path": "<workdir>/src/report.c", "sourceSha256": "1a102ac38785fcf9d53c946d2b73de9bbcf5c3905dee6bd56524b54781e3f6c5", "byteStart": 1285, "byteEnd": 1356, "expectedAstKind": "CallExpr"},
+            "argumentIndex": 1,
+            "fields": []
+          }
+        }
+      ]
+    },
+    {
+      "id": "fossil-disconnected-negative",
+      "authority": {"author": "semantic-impl-security-fixtures", "revision": "context-security-fixture-1"},
+      "disconnectedNegative": "The action callsite selector range resolves to a StringLiteral, not the declared CallExpr kind; the requirement stays declared and reports declarationUnbound. Supplying it establishes no enforcement.",
+      "translationUnit": {"path": "<workdir>/bld/report_.c"},
+      "entry": {"path": "<workdir>/src/report.c", "sourceSha256": "1a102ac38785fcf9d53c946d2b73de9bbcf5c3905dee6bd56524b54781e3f6c5", "byteStart": 830, "byteEnd": 2597, "expectedAstKind": "FunctionDecl"},
+      "principal": {
+        "base": {"path": "<workdir>/bld/report.h", "sourceSha256": "0cfe9c029a1a011d83bee4fa778a17e9bf949d2fa76fa8aabc7e4590a819b299", "byteStart": 10045, "byteEnd": 10060, "expectedAstKind": "VarDecl"},
+        "fields": []
+      },
+      "action": {
+        "label": "deliberately unresolvable callsite",
+        "callsite": {"path": "<workdir>/src/report.c", "sourceSha256": "1a102ac38785fcf9d53c946d2b73de9bbcf5c3905dee6bd56524b54781e3f6c5", "byteStart": 1300, "byteEnd": 1355, "expectedAstKind": "CallExpr"}
+      },
+      "resource": {
+        "catalogAccess": {
+          "callsite": {"path": "<workdir>/src/report.c", "sourceSha256": "1a102ac38785fcf9d53c946d2b73de9bbcf5c3905dee6bd56524b54781e3f6c5", "byteStart": 1300, "byteEnd": 1355, "expectedAstKind": "CallExpr"},
+          "argumentIndex": 1
+        }
+      },
+      "guard": {
+        "condition": {"path": "<workdir>/src/report.c", "sourceSha256": "1a102ac38785fcf9d53c946d2b73de9bbcf5c3905dee6bd56524b54781e3f6c5", "byteStart": 987, "byteEnd": 1012, "expectedAstKind": "BinaryOperator"},
+        "acceptedValue": false,
+        "principalUses": [
+          {"path": "<workdir>/src/report.c", "sourceSha256": "1a102ac38785fcf9d53c946d2b73de9bbcf5c3905dee6bd56524b54781e3f6c5", "byteStart": 988, "byteEnd": 997, "expectedAstKind": "MemberExpr"}
+        ],
+        "resourceUses": []
+      },
+      "deny": {
+        "terminal": {"path": "<workdir>/src/report.c", "sourceSha256": "1a102ac38785fcf9d53c946d2b73de9bbcf5c3905dee6bd56524b54781e3f6c5", "byteStart": 1032, "byteEnd": 1038, "expectedAstKind": "ReturnStmt"}
+      },
+      "effect": {
+        "callsite": {"path": "<workdir>/src/report.c", "sourceSha256": "1a102ac38785fcf9d53c946d2b73de9bbcf5c3905dee6bd56524b54781e3f6c5", "byteStart": 1300, "byteEnd": 1355, "expectedAstKind": "CallExpr"},
+        "calleeDeclaration": {"path": "<workdir>/bld/report.h", "sourceSha256": "0cfe9c029a1a011d83bee4fa778a17e9bf949d2fa76fa8aabc7e4590a819b299", "byteStart": 2726, "byteEnd": 2777, "expectedAstKind": "FunctionDecl"}
+      },
+      "inputs": []
+    }
+  ]
+}

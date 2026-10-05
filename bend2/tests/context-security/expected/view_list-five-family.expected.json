@@ -1,0 +1,168 @@
+{
+  "schemaVersion": 1,
+  "status": "expected contract, not observed producer output. Observed values qualify only after the bend2/context/clang extractor handoff (producer contract models: fossil-producer-contract helper-summary.example.json, request.example.json, security-declaration.example.json; joined research facts: fossil-qualification/joined-result.json).",
+  "requestShape": {
+    "version": 1,
+    "engine": "clang-analyzer",
+    "subject": {"kind": "position", "path": "<workdir>/src/report.c", "line": 30, "column": 5},
+    "select": ["type", "calls", "diagnostics", "authorization", "databaseAccesses"],
+    "cwd": "<workdir>",
+    "options": {"project": "<workdir>/compile_commands.json"},
+    "effects": []
+  },
+  "selectorNote": "The ordinary position/symbol source query discovers all five families; no declaration file, database option, or client option is required for the discovery facts. databaseAccesses additionally uses the packaged helper summary profile. options.client on the C profile refuses as an incompatible option.",
+  "families": {
+    "type": {
+      "classification": "checked",
+      "oracle": "LLVM Clang 20.1.8 AST/type checker",
+      "expected": {
+        "function": "view_list",
+        "qualType": "void (void)",
+        "formalParameters": [],
+        "formalCount": 0,
+        "generatedFunctionInterval": {"path": "<workdir>/bld/report_.c", "byteStart": 830, "byteEnd": 2597},
+        "originalFunctionInterval": {"path": "<workdir>/src/report.c", "byteStart": 830, "byteEnd": 2597},
+        "identicalBytes": true,
+        "guardGlobalInputs": [
+          {"expression": "g.okRdTkt", "astKind": "MemberExpr", "type": "int", "resolvedField": "okRdTkt", "fieldDeclLocation": {"includedFrom": "./bld/report_.c", "line": 162}},
+          {"expression": "g.okNewTkt", "astKind": "MemberExpr", "type": "int", "resolvedField": "okNewTkt"}
+        ]
+      },
+      "discriminator": "The handler's formal list is genuinely empty; a producer that invents formals, or reports okRdTkt/okNewTkt as parameters, fails."
+    },
+    "calls": {
+      "classification": "static-possible",
+      "provider": "Clang 20.1.8 resolved AST references, one translation unit",
+      "expected": {
+        "directCallCountInViewList": 29,
+        "resolvedCallees": [
+          {"name": "db_prepare", "qualType": "int (Stmt *, const char *, ...)", "linkageName": "_db_prepare"},
+          {"name": "db_step", "qualType": "int (Stmt *)", "linkageName": "_db_step"},
+          {"name": "login_check_credentials", "qualType": "void (void)"},
+          {"name": "login_needed"},
+          {"name": "style_header"},
+          {"name": "ticket_reportlist_code"},
+          {"name": "ticket_init"},
+          {"name": "blob_zero"},
+          {"name": "db_column_text"},
+          {"name": "db_column_int"},
+          {"name": "blob_appendf"}
+        ],
+        "statementVariableLineage": {
+          "declared": {"name": "q", "astKind": "VarDecl", "qualType": "Stmt", "desugared": "struct Stmt"},
+          "passedToPrepare": {"byteStart": 1297, "expected": "same VarDecl identity as passedToStep"},
+          "passedToStep": {"byteStart": 1374, "expected": "same VarDecl identity as passedToPrepare"}
+        }
+      },
+      "discriminator": "db_prepare/db_step must resolve to their defining declarations by compiler binding, never by spelling; an indirect or shadowed callee retains an unavailable callee identity and produces no resolved edge."
+    },
+    "diagnostics": {
+      "classification": "checked",
+      "oracle": "Clang 20.1.8 -Wall -fsyntax-only over the admitted TU",
+      "expected": {
+        "reportTranslationUnitWarnings": 5,
+        "exactByteComparableArtifact": "fossil-qualification/compiler/report-diagnostics.txt (relative ./bld/report_.c paths reproduce under the fixture workdir layout)",
+        "handlerScoped": [{"line": 36, "code": "-Wunused-but-set-variable", "variable": "cnt"}],
+        "analyzerDeadAssignmentDiagnosticsInTu": 8,
+        "meaning": "Scoped diagnostics only; their presence or absence establishes no authorization property."
+      }
+    },
+    "authorization": {
+      "discoveredRelation": {
+        "classification": "static-possible",
+        "derivation": "adapter reachability over the mapped Clang CFG",
+        "expected": {
+          "guard": {
+            "text": "!g.okRdTkt && !g.okNewTkt",
+            "sourceRange": {"byteStart": 987, "byteEnd": 1012, "astKind": "BinaryOperator"},
+            "operands": [
+              {"text": "!g.okRdTkt", "byteStart": 988, "byteEnd": 997, "astKind": "UnaryOperator over MemberExpr"},
+              {"text": "!g.okNewTkt", "byteStart": 1002, "byteEnd": 1012, "astKind": "UnaryOperator over MemberExpr"}
+            ]
+          },
+          "denyTerminal": {"text": "return", "byteStart": 1032, "byteEnd": 1038, "astKind": "ReturnStmt", "precededByCall": "login_needed"},
+          "effectCallsite": {"byteStart": 1285, "byteEnd": 1356, "astKind": "CallExpr", "callee": "db_prepare"},
+          "guardedCall": {
+            "requirement": "denial continuation reaches an explicit mapped return before the call or accepted continuation; removal of the entire accepted exit-edge set disconnects entry from the call; complete true/false exit-edge sets recorded per condition/call pair",
+            "interveningOpaqueCalls": ["style_header", "ticket_reportlist_code", "ticket_init"],
+            "cutEdgeSet": "recorded whole cut set; no fixed route cap"
+          }
+        }
+      },
+      "declaredRoles": {
+        "classification": "declared",
+        "authority": {"author": "semantic-models-security-critic", "revision": "semantic-security-fossil-qualification-verdict-6"},
+        "expected": {
+          "guardFieldSemantics": ["g.okRdTkt", "g.okNewTkt"],
+          "guardFieldMeaning": "permission inputs from source global request state",
+          "action": "list report definitions",
+          "resource": "reportfmt",
+          "limits": [
+            "no named authenticated user is asserted",
+            "stability of permission fields after intervening Th_Eval script execution is not asserted",
+            "authorization for every effect of the handler is not asserted"
+          ]
+        }
+      },
+      "discriminator": "Basic discovery reports the actual guard expression without any declaration input. Roles stay declared; the reachability relation stays static-possible; neither upgrades the other."
+    },
+    "databaseAccesses": {
+      "sourceModeledAccess": {
+        "classification": "static-possible",
+        "expected": {
+          "resolvedCall": "db_prepare",
+          "argumentShape": {"stmtArgument": 0, "sqlArgument": 1, "actualArgumentCount": 2, "extraVariadicArguments": 0},
+          "sqlLiteral": "SELECT rn, title, owner FROM reportfmt ORDER BY title",
+          "sqlLiteralAstKind": "StringLiteral",
+          "literalRange": {"byteStart": 1300, "byteEnd": 1355},
+          "noPercent": true,
+          "noNul": true,
+          "prepareStepSameLocalStmt": true,
+          "valueFields": {
+            "sourceBinding": "local ref to the resolved call and parsed definition binding",
+            "helperAssumption": "local ref to the reviewed literal-helper assumption (normal allocation, successful prepare, no escape through an unreviewed call)",
+            "buildAssociation": "local ref to the declared build/link association",
+            "implementationLink": {"status": "implementationLinkUnverified", "evidence": []}
+          }
+        },
+        "discriminator": "A matching spelling is insufficient: the resolved definition must bind the helper summary's pinned body segments and compiler declaration identity. implementationLinkUnverified must survive ref expansion unchanged; a matching symbol name supplies no executable-contribution upgrade."
+      },
+      "catalogAndPlan": {
+        "classification": "observed",
+        "provider": "external sqlite-schema planner, engine and versions named",
+        "expected": {
+          "databaseFile": "owned disposable Fossil repository (runtime-connection/allowed.fossil pinned)",
+          "openMode": "SQLITE_OPEN_READONLY, one transaction, authorizer limited to SQLITE_SELECT/SQLITE_READ of captured main-database objects",
+          "entity": "reportfmt",
+          "columns": ["rn", "title", "owner"],
+          "planDetail": {"rootpageReportfmt": 15, "orderingIndex": "sqlite_autoindex_reportfmt_1", "orderingIndexRootpage": 16},
+          "externalPlannerVersion": "3.54.0 (pinned /usr/bin/sqlite3)",
+          "targetLinkedSqliteSource": "3.7.7",
+          "planAttribution": "the external plan is never labeled as the target VM's plan"
+        },
+        "discriminator": "Catalog rows and plan output are observed provider output in one snapshot; the call-to-modeled-access edge stays static-possible and never inherits observed status."
+      }
+    }
+  },
+  "separateDbPrepareDefinitionQuery": {
+    "classification": "checked (types)",
+    "requestShape": {
+      "version": 1,
+      "engine": "clang-analyzer",
+      "subject": {"kind": "symbol", "path": "<workdir>/src/db.c", "name": "db_prepare"},
+      "select": ["type", "definition", "calls", "diagnostics"],
+      "options": {"project": "<workdir>/compile_commands.json"}
+    },
+    "expected": {
+      "qualType": "int (Stmt *, const char *, ...)",
+      "formalParameters": [
+        {"name": "pStmt", "type": "Stmt *"},
+        {"name": "zFormat", "type": "const char *"}
+      ],
+      "variadic": true,
+      "generatedDefinitionInterval": {"path": "<workdir>/bld/db_.c", "byteStart": 6354, "byteEnd": 6529},
+      "originalDefinitionInterval": {"path": "<workdir>/src/db.c", "byteStart": 6338, "byteEnd": 6513}
+    },
+    "discriminator": "The selected function's own nonempty formal list and variadic status are returned independently of callee expansion; the view_list result retains its genuine empty formal list in the same fixture run."
+  }
+}

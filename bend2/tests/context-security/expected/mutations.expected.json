@@ -1,0 +1,98 @@
+{
+  "schemaVersion": 1,
+  "status": "expected discrimination contract, not observed producer output. Each negative runs on an identified owned copy of the authentic bytes with its changed model assumption recorded; perturbations never touch the retained Fossil source.",
+  "violationsExplained": {
+    "spellingOnly": "A spelling or whitespace change alone establishes no identity/profile/mapping violation. Formatting is a positive control. Every negative below names the concrete identity, profile, or mapping rule it breaks."
+  },
+  "mutations": [
+    {
+      "id": "guard-noop-call",
+      "changedModelAssumption": "guard operands now flow through an unreviewed call; the guard-expression profile admits nonvolatile scalar reads only, and calls make the guard relation unavailable",
+      "edit": "insert static int perm_allows(int p){ return p; } above view_list; guard becomes if( !perm_allows(g.okRdTkt) && !perm_allows(g.okNewTkt) ){ login_needed(); return; }",
+      "expected": {
+        "authorization": "guarded_call unavailable: guard condition contains CallExpr operands; discovery still reports the condition expression and its resolved MemberExpr operands",
+        "type": "unchanged: void (void), empty formals",
+        "calls": "unchanged except two additional resolved direct calls to perm_allows inside the condition",
+        "diagnostics": "no new warning under -Wall",
+        "databaseAccesses": "unchanged: resolved db_prepare, same literal, same-local-Stmt lineage intact"
+      }
+    },
+    {
+      "id": "deny-fallthrough",
+      "changedModelAssumption": "the denial continuation no longer terminates at an explicit return before the accepted continuation",
+      "edit": "if( !g.okRdTkt && !g.okNewTkt ){ login_needed(); } — return; removed",
+      "expected": {
+        "authorization": "guarded_call unavailable: no qualifying denial continuation reaches an explicit mapped return before the call; the recorded facts keep the condition and its operands",
+        "type": "unchanged",
+        "calls": "unchanged",
+        "diagnostics": "no new warning under -Wall",
+        "databaseAccesses": "unchanged"
+      }
+    },
+    {
+      "id": "stmt-escape",
+      "changedModelAssumption": "the prepared statement escapes through an unreviewed call between preparation and the first step; the helper profile admits no unreviewed escape, reassignment, or uncertain reaching definition on the first-entry path",
+      "edit": "insert static Stmt *stmt_stash_target; static void stmt_stash(Stmt *p){ stmt_stash_target = p; } above view_list; insert stmt_stash(&q); between db_prepare(&q, ...) and the while( db_step(&q) ) loop",
+      "expected": {
+        "databaseAccesses": "step lineage refused: an intervening opaque call receives the same local Stmt address between prepare and first step; no joined access edge",
+        "authorization": "guarded_call unchanged: the guard/deny/effect relation over the db_prepare call still holds",
+        "type": "unchanged",
+        "calls": "one additional resolved direct call to stmt_stash between prepare and step",
+        "diagnostics": "no new warning under -Wall (stmt_stash_target used within its definition file scope)"
+      }
+    },
+    {
+      "id": "shadowed-callee",
+      "changedModelAssumption": "the db_prepare spelling is bound to a local function-pointer object, not the pinned FunctionDecl; resolution follows the actual binding",
+      "edit": "insert static int stmt_dummy_prepare(Stmt *p, const char *z, ...){ (void)p; (void)z; return SQLITE_OK; } above view_list; declare int (*db_prepare)(Stmt *, const char *, ...) = stmt_dummy_prepare; after Stmt q; in view_list",
+      "expected": {
+        "databaseAccesses": "unavailable: the call binds to a local VarDecl object, never to the pinned db_prepare FunctionDecl; no helper join and no modeled access edge",
+        "authorization": "effect callee declaration cannot equal the pinned compiler declaration; the selected requirement reports the mismatch, discovery keeps the call with its unavailable callee identity (indirect through a local object)",
+        "calls": "db_prepare CallExpr resolved to VarDecl (function pointer), linkageName absent",
+        "type": "unchanged",
+        "diagnostics": "no new warning under -Wall"
+      }
+    },
+    {
+      "id": "helper-body-changed",
+      "changedModelAssumption": "the pinned db_prepare body segment identity is broken (unsupported helper transformation: an early error-path return inserted into the reviewed body); the reviewed literal-helper assumption is bound to exact source digests",
+      "edit": "in src/db.c and bld/db_.c, insert if( zFormat==0 ) return SQLITE_NOMEM; after va_start(ap, zFormat);",
+      "expected": {
+        "databaseAccesses": "helper join refuses with changedHelperBody: recomputed db_prepare segment digest differs from pinned f67b2d803260e044e877f2b9035f37934272d5dcae90e866e96985e33b625a8d; no modeled access edge even though the literal-copy path is semantically intact",
+        "authorization": "guard relation unchanged; effect callee still resolves to a db_prepare FunctionDecl, so the guarded_call relation over the call holds while the database join is refused",
+        "type": "view_list unchanged; db_prepare type unchanged",
+        "calls": "unchanged",
+        "diagnostics": "no new warning in either TU under -Wall"
+      }
+    },
+    {
+      "id": "duplicate-original-body",
+      "changedModelAssumption": "the original file no longer carries the view_list body bytes uniquely; a byte-identical body region exists under #if 0, and the location-aware inputs cannot disambiguate identical bytes",
+      "edit": "in src/report.c only, append #if 0 + the exact original view_list function bytes + #endif immediately after the authentic function",
+      "expected": {
+        "correspondence": "refused as ambiguous: the generated FunctionDecl interval's bytes match two original locations; the selected position lies in exactly one original interval but the identical-byte rule cannot choose between the two candidate intervals — the refusal must name both candidate original ranges",
+        "generatedSourceFacts": "separately available: direct generated-source query facts (types/calls/diagnostics over bld/report_.c) remain correct without original correspondence",
+        "parser": "one view_list FunctionDecl in the AST (#if 0 region is skipped); diagnostics unchanged",
+        "databaseAccesses": "no joined access edge without original/generated correspondence",
+        "authorization": "no original-mapped guard refs; the same facts over generated coordinates remain"
+      }
+    },
+    {
+      "id": "sql-format-control",
+      "changedModelAssumption": "none — positive control: whitespace-only literal change is not an identity, profile, or mapping violation",
+      "edit": "in src/report.c and bld/report_.c identically: SQL literal becomes SELECT  rn, title, owner FROM reportfmt  ORDER BY title (two added space groups)",
+      "expected": {
+        "correspondence": "still unique: the edited body bytes appear exactly once in each paired file",
+        "type": "unchanged",
+        "calls": "unchanged, same-local-Stmt lineage intact",
+        "authorization": "unchanged guard/deny/effect relation with shifted byte spans only",
+        "diagnostics": "unchanged",
+        "databaseAccesses": "still present: sourceBinding resolves, helperAssumption unchanged; the retained qualified catalog plan for the original literal does not transfer — the producer plans the new literal bytes freshly (same catalog entity reportfmt, same columns, same ordering index), and the result records the fresh plan snapshot rather than the retained plan"
+      }
+    }
+  ],
+  "refusalSurface": {
+    "publicValidationRefusals": "exit 2 with {error, command, condition, next}, next a literal argv array such as [\"context-result\", QUERY_ID]; identifying fields only, no source bodies or selector text in refusal messages",
+    "staleReference": "a ref query against a changed snapshot returns staleReference plus a fresh selector; a fresh query against a changed catalog is an ordinary query result — the two surfaces stay distinct"
+  }
+}

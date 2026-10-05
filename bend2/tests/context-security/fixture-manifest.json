@@ -1,0 +1,302 @@
+{
+ "schemaVersion": 1,
+ "owner": "semantic-impl-security-fixtures",
+ "scope": "bend2/tests/context-security fixture contract for the single bend2/context/clang extractor (five-family same-handler case, separate db_prepare selected-definition case, mutation negatives, formatting control)",
+ "subject": {
+  "fossilManifest": "32ad9a1584a16f09fff78563d789b2dbc6b4bae5",
+  "retainedQualificationRoot": "/Users/wahargis/Development/Experiments/baton-bend2-root-delivery-20260928/.scratch/semantic-context-20261005/probes/semantic-models-security-critic/fossil-qualification",
+  "producerContractRoot": "/Users/wahargis/Development/Experiments/baton-bend2-root-delivery-20260928/.scratch/semantic-context-20261005/probes/semantic-models-security-critic/fossil-producer-contract",
+  "retainedReports": [
+   "/Users/wahargis/Development/Experiments/baton-bend2-root-delivery-20260928/.scratch/semantic-context-20261005/probes/semantic-models-security-critic/fossil-qualification/review.md",
+   "/Users/wahargis/Development/Experiments/baton-bend2-root-delivery-20260928/.scratch/semantic-context-20261005/probes/semantic-models-security-critic/report.md",
+   "/Users/wahargis/Development/Experiments/baton-bend2-root-delivery-20260928/.scratch/semantic-context-20261005/probes/semantic-models-security-critic/fossil-32ad9a15/review.md"
+  ],
+  "retainedSourceReadOnly": true,
+  "fossilSourceRoot": "/Users/wahargis/Development/Experiments/baton-bend2-root-delivery-20260928/.scratch/semantic-context-20261005/probes/semantic-models-security-critic/fossil-qualification/source/fossil"
+ },
+ "pinnedRetainedFiles": {
+  "src/report.c": "1a102ac38785fcf9d53c946d2b73de9bbcf5c3905dee6bd56524b54781e3f6c5",
+  "src/db.c": "5f9f27c6d68041463560cfc12ca11c7e7991e13cd9ddd7c6e81f2f8e9368d0f4",
+  "src/blob.c": "029fe2e580aee4259b84d8615b50eee74f2bbab98782c66617bf65c87a786e20",
+  "src/printf.c": "7c885153a892f9da9169ccfcb8514fd5e516e846be670d3bd7937b41ac01d353",
+  "src/config.h": "d724ac0fa3cfd563c06766c7473b264ca293aac80388930948a22f128b0d532c",
+  "src/sqlite3.h": "b1e78748423ccbee71fd9fb28692776a16df0638540d9d51355e8a8ff2a6121d",
+  "bld/report_.c": "dfa95e6dbe5f9672e2bbe895a90e491f3a98c1ffb3afc526dc97d87d4f49abe8",
+  "bld/report.h": "0cfe9c029a1a011d83bee4fa778a17e9bf949d2fa76fa8aabc7e4590a819b299",
+  "bld/db_.c": "c467713708e605bdd3a3fddac6ccf49faecb8720423f2c97a39cf452f9c04121",
+  "bld/db.h": "834fa351da9bc93c157f88a4c811c34acc4e3b7e92ae7a1ec027156340df48ac",
+  "bld/blob_.c": "029fe2e580aee4259b84d8615b50eee74f2bbab98782c66617bf65c87a786e20",
+  "bld/printf_.c": "7c885153a892f9da9169ccfcb8514fd5e516e846be670d3bd7937b41ac01d353"
+ },
+ "correspondence": [
+  {
+   "original": "src/report.c",
+   "generated": "bld/report_.c",
+   "originalByteSpan": [
+    830,
+    2597
+   ],
+   "generatedByteSpan": [
+    830,
+    2597
+   ],
+   "segmentSha256": "a5ea1cea2ffbf371e188bdaaf8fa90b4deb05463e733f944de5acedcc5f3eb9e",
+   "identicalBytes": true
+  },
+  {
+   "original": "src/db.c",
+   "generated": "bld/db_.c",
+   "originalByteSpan": [
+    6338,
+    6513
+   ],
+   "generatedByteSpan": [
+    6354,
+    6529
+   ],
+   "segmentSha256": "f67b2d803260e044e877f2b9035f37934272d5dcae90e866e96985e33b625a8d",
+   "identicalBytes": true
+  },
+  {
+   "original": "src/db.c",
+   "generated": "bld/db_.c",
+   "originalByteSpan": [
+    5901,
+    6337
+   ],
+   "generatedByteSpan": [
+    5917,
+    6353
+   ],
+   "segmentSha256": "bf5080b94309ced2ecacb784d48edb5d2c3c6a3d822fd9a742a75c7d7cbabde2",
+   "identicalBytes": true
+  },
+  {
+   "original": "src/db.c",
+   "generated": "bld/db_.c",
+   "originalByteSpan": [
+    8940,
+    9043
+   ],
+   "generatedByteSpan": [
+    8956,
+    9059
+   ],
+   "segmentSha256": "0ec75b69d5c61b9ec879e2380a1b4864f905997bc6742749926c7063ff2ef565",
+   "identicalBytes": true
+  },
+  {
+   "original": "src/db.c",
+   "generated": "bld/db_.c",
+   "originalByteSpan": [
+    17488,
+    17741
+   ],
+   "generatedByteSpan": [
+    17504,
+    17757
+   ],
+   "segmentSha256": "380a0e49bbe452f388f025cb7dff1e557f4eab6893df07fae08a4dd5dd27d2bb",
+   "identicalBytes": true
+  },
+  {
+   "original": "src/db.c",
+   "generated": "bld/db_.c",
+   "originalByteSpan": [
+    16787,
+    17288
+   ],
+   "generatedByteSpan": [
+    16803,
+    17304
+   ],
+   "segmentSha256": "5e0767b7e856a71cf4d34d4aff3adf0a74d498dff59461cc72f9bce96635978e",
+   "identicalBytes": true
+  },
+  {
+   "original": "src/db.c",
+   "generated": "bld/db_.c",
+   "originalByteSpan": [
+    38576,
+    39151
+   ],
+   "generatedByteSpan": [
+    38592,
+    39167
+   ],
+   "segmentSha256": "92dc07873dcb96783aec7f793058e7ce19ff3ad1210e4452f3502595240d2325",
+   "identicalBytes": true
+  },
+  {
+   "original": "src/db.c",
+   "generated": "bld/db_.c",
+   "originalByteSpan": [
+    34865,
+    35070
+   ],
+   "generatedByteSpan": [
+    34881,
+    35086
+   ],
+   "segmentSha256": "79cd0e3d812ff71c5986908933829fc4fe57272f6a12d33b19210ef09b851980",
+   "identicalBytes": true
+  },
+  {
+   "original": "src/blob.c",
+   "generated": "bld/blob_.c",
+   "originalByteSpan": [
+    5948,
+    6178
+   ],
+   "generatedByteSpan": [
+    5948,
+    6178
+   ],
+   "segmentSha256": "e3e8131de0bebd318efcc7b892b55ee5da82d34d4f6df4a1d2ed0161a77f5d39",
+   "identicalBytes": true
+  },
+  {
+   "original": "src/blob.c",
+   "generated": "bld/blob_.c",
+   "originalByteSpan": [
+    16440,
+    16539
+   ],
+   "generatedByteSpan": [
+    16440,
+    16539
+   ],
+   "segmentSha256": "5eaf9d836c681508f03c1ad2a6e1675a8794b0228ac99169fb64396b1148ae94",
+   "identicalBytes": true
+  },
+  {
+   "original": "src/blob.c",
+   "generated": "bld/blob_.c",
+   "originalByteSpan": [
+    6231,
+    6730
+   ],
+   "generatedByteSpan": [
+    6231,
+    6730
+   ],
+   "segmentSha256": "1cbe7ee9cb3f9c44cce911c34c25187e5c79e4b67105cba3e7020896d1335460",
+   "identicalBytes": true
+  },
+  {
+   "original": "src/blob.c",
+   "generated": "bld/blob_.c",
+   "originalByteSpan": [
+    6961,
+    7155
+   ],
+   "generatedByteSpan": [
+    6961,
+    7155
+   ],
+   "segmentSha256": "46d82194acc006009e1d27cad0655be279883b92e5aa80eb2067fb005c8f873f",
+   "identicalBytes": true
+  },
+  {
+   "original": "src/printf.c",
+   "generated": "bld/printf_.c",
+   "originalByteSpan": [
+    6896,
+    26327
+   ],
+   "generatedByteSpan": [
+    6896,
+    26327
+   ],
+   "segmentSha256": "d8d0b3d66ac7fa2ee12323a70a7c5ad27d19ab860d66142488f98ad9698c879d",
+   "identicalBytes": true
+  }
+ ],
+ "compiler": {
+  "clang": "/opt/homebrew/opt/llvm/bin/clang",
+  "expectedVersion": "20.1.8",
+  "flags": [
+   "-std=gnu89",
+   "-g",
+   "-O0",
+   "-Wall"
+  ],
+  "sdkResolution": "xcrun -sdk macosx -show-sdk-path; recorded in run evidence"
+ },
+ "producerInputs": {
+  "helperSummary": {
+   "path": "/Users/wahargis/Development/Experiments/baton-bend2-root-delivery-20260928/.scratch/semantic-context-20261005/probes/semantic-models-security-critic/fossil-producer-contract/helper-summary.example.json",
+   "sha256": "22daadb2baa1e80f2a404e0551527b027f728f7e24a84205ffedeee5d447633d",
+   "profile": "fossil-no-format-reportlist-v1",
+   "compileCommandsSha256Pinned": "1e5af4917d8bd10291c7d2756b4b708f5364d12f206474c9d814d56025af19b4",
+   "compileCommandsSha256ActualExampleFile": "1e5af4917d8bd10291c7d2756b4b708f5364d12f206474c9d814d56025af19b4",
+   "note": "pinned vs actual-file digest differ -> compile-command digest normalization rule is an open producer input"
+  },
+  "sourceMap": {
+   "path": "/Users/wahargis/Development/Experiments/baton-bend2-root-delivery-20260928/.scratch/semantic-context-20261005/probes/semantic-models-security-critic/fossil-producer-contract/source-map.example.json",
+   "sha256": "ad88471acbe9dee799ca51e2a5e144a5e4c1784d0848118056139bd7e52bd5f6"
+  },
+  "requestExample": {
+   "path": "/Users/wahargis/Development/Experiments/baton-bend2-root-delivery-20260928/.scratch/semantic-context-20261005/probes/semantic-models-security-critic/fossil-producer-contract/request.example.json",
+   "sha256": "6edf580f56868f8572f4ebbe3ce0a3d60aa6f37bd1f02e59f65d882b2bee4955"
+  },
+  "declarationExample": {
+   "path": "/Users/wahargis/Development/Experiments/baton-bend2-root-delivery-20260928/.scratch/semantic-context-20261005/probes/semantic-models-security-critic/fossil-producer-contract/security-declaration.example.json",
+   "sha256": "a1c33d2737d1161c36021e1c23086fa0602428386f7d523b3f52c99532bd0225"
+  },
+  "linkedSymbols": {
+   "path": "/Users/wahargis/Development/Experiments/baton-bend2-root-delivery-20260928/.scratch/semantic-context-20261005/probes/semantic-models-security-critic/fossil-qualification/compiler/linked-symbols.txt",
+   "sha256": "9338b48bcdee31c4a5b4758afb7e0340ad4ebca793ff9723aadfdb6dd0bcf47e",
+   "normalForm": "capture:null; implementationLink stays implementationLinkUnverified with empty evidence"
+  }
+ },
+ "diagnosticsPins": {
+  "report": {
+   "path": "/Users/wahargis/Development/Experiments/baton-bend2-root-delivery-20260928/.scratch/semantic-context-20261005/probes/semantic-models-security-critic/fossil-qualification/compiler/report-diagnostics.txt",
+   "sha256": "8fa731fb9c3ffb1d33916c38c36bbf49d5759704f2eecd2acb3dadf2193ca96b",
+   "warnings": 5
+  },
+  "db": {
+   "path": "/Users/wahargis/Development/Experiments/baton-bend2-root-delivery-20260928/.scratch/semantic-context-20261005/probes/semantic-models-security-critic/fossil-qualification/compiler/db-diagnostics.txt",
+   "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "blob": {
+   "path": "/Users/wahargis/Development/Experiments/baton-bend2-root-delivery-20260928/.scratch/semantic-context-20261005/probes/semantic-models-security-critic/fossil-qualification/compiler/blob-diagnostics.txt",
+   "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "printf": {
+   "path": "/Users/wahargis/Development/Experiments/baton-bend2-root-delivery-20260928/.scratch/semantic-context-20261005/probes/semantic-models-security-critic/fossil-qualification/compiler/printf-diagnostics.txt",
+   "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  }
+ },
+ "database": {
+  "planner": {
+   "executable": "/usr/bin/sqlite3",
+   "sha256": "9496b9de74d2a79ff94cf83b79d9a2ac34fccf3db0c6c0ff052e23b78ec1e044",
+   "version": "3.54.0 2026-04-09 12:25:13 8fa8248e303219400c646a885e36dfc52eae33d83f4412e3f369b2be5373aapl (64-bit)"
+  },
+  "targetBundledSqliteSource": "3.7.7",
+  "catalogDataset": {
+   "path": "/Users/wahargis/Development/Experiments/baton-bend2-root-delivery-20260928/.scratch/semantic-context-20261005/probes/semantic-models-security-critic/fossil-qualification/runtime-connection/allowed.fossil",
+   "sha256": "fead9134052f85377dfd22bc52d4ea27f8236b23de4468ac94679a8d3034dec3"
+  },
+  "catalogPlanPinned": {
+   "path": "/Users/wahargis/Development/Experiments/baton-bend2-root-delivery-20260928/.scratch/semantic-context-20261005/probes/semantic-models-security-critic/fossil-qualification/catalog-plan.json",
+   "sha256": "ec49cf9f1ab4a1c075c8c77bdb740bc29bbcf6d6f7b4e1c53cf3cf1430b6dce7"
+  },
+  "expectedCatalog": {
+   "entity": "reportfmt",
+   "columns": [
+    "rn",
+    "title",
+    "owner"
+   ],
+   "orderingIndex": "sqlite_autoindex_reportfmt_1"
+  }
+ },
+ "openIntegrationInputs": [
+  "compile-command digest normalization rule for the producer (pinned helper summary digests are over retained absolute-path command bytes; a materialized fixture workdir changes absolute paths)",
+  "build receipt fixture path/producer (closed BuildReceipt shape defined in docs/bend2/semantic-context-spec.md; no producer-contract example retained yet)",
+  "actual extractor artifact from bend2/context/clang (handoff pending); observed producer behavior qualification deferred until handoff"
+ ]
+}
