@@ -1,7 +1,7 @@
 # Baton2 root handoff
 
 This contributor handoff preserves unfinished operator work as of 2026-10-05
-22:16 UTC. Host and qualification observations retain their recorded times.
+22:43 UTC. Host and qualification observations retain their recorded times.
 Read the native task records and current source before resuming.
 Issue records describe defects; native reports contain current ownership and evidence.
 
@@ -501,6 +501,22 @@ and `.scratch/root-structural518-review`. Read complete original bodies through
 native delivery lookup and preserve rejected/intermediate evidence.
 
 ## Publication, release and earlier operator scope
+
+Root85 requires current source consolidation through the existing native
+Synthesis, Controls and Quality hierarchy. Root removed twenty-one obsolete
+local branches after ancestry, patch-equivalence, worktree and native-binding
+review. Seven original histories are published under `archive/2026-10-05/`
+tags. The unused remote `bend2-v2` pointer was removed with an expected-tip
+lease; its exact tip remains at an archive tag and in `master` history.
+[The cleanup report](branch-consolidation-2026-10-05.md) records exact identities
+and the remaining integration work. Active source and worktrees remain owned.
+
+All six contributor App registrations were read back through GitHub and have
+the requested `Flip Baton - SERIES` names. The Git helper already applies the
+same author and committer format. GitHub's managed bot account login remains
+visible in linked actor views; its Bot schema exposes login and avatar fields.
+The identity documentation describes this platform behavior. Published commit
+history was preserved.
 
 Validated work must reach the appropriate repository branch. Consolidate
 reviewed immutable source onto `bend2-rewrite` with authored lineage intact,
