@@ -59,6 +59,50 @@ class ReceiveTerminalBoundary(RECEIVE.Receive):
             found.append(self.accept_any())
         return found
 
+    def test_late_error_terminal_keeps_the_sealed_report_and_defers_the_guidance(self):
+        """An error terminal later in the same episode does not replace the sealed report."""
+        observer, stream, started, sealed = self.sealed_attempt(
+            'late-error-task', 'First sealed report.', 'late-error-guidance')
+        self.frame(stream, {'type': 'response', 'command': 'steer', 'success': True,
+                            'id': 'late-error-guidance'})
+        self.assertIsNone(self.coord('delivery', 'late-error-guidance')['receipt'])
+        self.frame(stream, {'type': 'agent_end', 'isTerminal': True, 'is_error': True,
+                            'messages': [{'role': 'assistant', 'stopReason': 'error',
+                                          'errorStatus': 403, 'errorMessage': '403 late failure',
+                                          'provider': 'kimi-code', 'model': 'k3', 'content': []}]})
+        self.action(stream, exit_fixture=True)
+        continuation, resumed = self.accept('parent')
+        self.assertIn('[id: late-error-guidance]', resumed['prompt'])
+        self.assertNotIn('[id: late-error-task]', resumed['prompt'])
+        self.action(continuation, body='Continuation after the late error.')
+        self.finish(observer)
+        turns = self.coord('turns', 'parent')
+        self.assertEqual(turns[0]['id'], sealed)
+        self.assertEqual(turns[0]['reportBody'], 'First sealed report.')
+        self.assertEqual(self.coord('delivery', sealed)['body'], 'First sealed report.')
+        notes = [report for report in self.coord('inbox', 'root')
+                 if report['id'] == sealed + ':deferred']
+        self.assertEqual([note['body'] for note in notes],
+                         [deferred_body(sealed, 'late-error-guidance')])
+        self.assertEqual(self.coord('delivery', 'late-error-guidance')['receipt'], 'native-reviewed')
+        self.eventually(lambda: not self.owned_processes(), 'boundary fixtures did not exit')
+
+    def test_late_success_terminal_keeps_the_sealed_failure(self):
+        """A later terminal in the same episode does not replace the sealed failure."""
+        body = 'Native model failure: status 403 from kimi-code/k3; 403 first failure.'
+        observer, stream, started, sealed = self.sealed_attempt('late-success-task', body)
+        self.frame(stream, late_terminal('Later episode with a successful report.'))
+        self.action(stream, exit_fixture=True)
+        self.finish(observer)
+        turns = self.coord('turns', 'parent')
+        self.assertEqual([turn['reportBody'] for turn in turns], [body])
+        self.assertEqual(turns[0]['id'], sealed)
+        self.assertEqual(self.coord('delivery', sealed)['body'], body)
+        notes = [report for report in self.coord('inbox', 'root')
+                 if report['id'] == sealed + ':deferred']
+        self.assertEqual([note['body'] for note in notes], [deferred_body(sealed, None)])
+        self.eventually(lambda: not self.owned_processes(), 'boundary fixtures did not exit')
+
     def test_late_terminal_keeps_the_sealed_report_and_defers_the_guidance(self):
         observer, stream, started, sealed = self.sealed_attempt(
             'boundary-task', 'First sealed report.', 'boundary-guidance')

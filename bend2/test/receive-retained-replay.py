@@ -109,8 +109,10 @@ class ReplayBase(RECEIVE.Receive):
         return notifications, code, self.native_status(), self.reports()
 
     def assert_report(self, notifications, body):
-        """The recorded delivery and the parent notification both carry the body."""
-        self.assertIn(body, '\n'.join(self.reports()))
+        """The sealed turn and the public delivery both carry exactly the body."""
+        turns = self.coord('turns', 'parent')
+        self.assertEqual(turns[-1]['reportBody'], body)
+        self.assertEqual(self.coord('delivery', turns[-1]['id'])['body'], body)
         prompts = [prompt for _session, prompt in notifications]
         self.assertTrue(any(body in prompt for prompt in prompts), prompts)
 
@@ -131,59 +133,83 @@ class RetainedReplay(ReplayBase):
                 terminal = frame
         return retained, terminal
 
-    def test_original_research_streams_report_the_retained_assistant(self):
-        for name in ('semantic-runtime-protocol-research.jsonl',
-                     'semantic-runtime-observations-research.jsonl'):
-            retained, terminal = self.stream_frames(name)
-            self.assertIsNotNone(retained, name)
-            self.assertIsNotNone(terminal, name)
-            self.assertIsInstance(terminal['messages'][-1], str, name)
-            print(f'evidence {name} terminal sha256 {digest(terminal)} retained sha256 {digest(retained)}')
-            notifications, code, status, bodies = self.replay([retained, terminal], task=name[:12])
-            self.assertEqual(code, 0)
-            self.assertIn('exit 0', status)
-            self.assert_report(notifications, assistant_text(retained))
-            logged = []
-            for line in (self.directory / 'parent.jsonl').read_text(errors='replace').splitlines():
-                try:
-                    logged.append(json.loads(line))
-                except Exception:
-                    continue
-            terminals = [frame for frame in logged
-                         if frame.get('type') == 'agent_end' and frame.get('messages')]
-            self.assertTrue(terminals, logged[-3:])
-            self.assertEqual(terminals[-1]['messages'][-1], terminal['messages'][-1])
-            retained_logged = [frame for frame in logged if frame.get('type') == 'message_end']
-            self.assertTrue(any(assistant_text(frame) == assistant_text(retained)
-                                for frame in retained_logged), retained_logged[-3:])
-            self.assertIn(assistant_text(retained), bodies[-1])
-
-    def test_original_quota_frame_is_classified_while_the_native_exits_zero(self):
-        retained, quota = None, None
-        for line in (EVIDENCE / 'lead.jsonl').read_text(errors='replace').splitlines():
-            if 'errorStatus' not in line or 'errorMessage' not in line:
+    def replay_captured_research_stream(self, name):
+        """Replay one captured research stream and assert its exact report."""
+        task = name.replace('.jsonl', '')
+        retained, terminal = self.stream_frames(name)
+        self.assertIsNotNone(retained, name)
+        self.assertIsNotNone(terminal, name)
+        self.assertIsInstance(terminal['messages'][-1], str, name)
+        expected = assistant_text(retained)
+        print(f'evidence {name} terminal parsed digest {digest(terminal)} '
+              f'retained parsed digest {digest(retained)}')
+        notifications, code, status, _bodies = self.replay([retained, terminal], task=task)
+        self.assertEqual(code, 0)
+        self.assertIn('exit 0', status)
+        turns = self.coord('turns', 'parent')
+        self.assertEqual([turn['reportBody'] for turn in turns], [expected])
+        self.assertEqual(self.coord('delivery', turns[0]['id'])['body'], expected)
+        prompts = [prompt for _session, prompt in notifications]
+        self.assertTrue(any(expected in prompt for prompt in prompts), prompts)
+        logged = []
+        for line in (self.directory / 'parent.jsonl').read_text(errors='replace').splitlines():
+            try:
+                logged.append(json.loads(line))
+            except Exception:
                 continue
+        terminals = [frame for frame in logged
+                     if frame.get('type') == 'agent_end' and frame.get('messages')]
+        self.assertTrue(terminals, logged[-3:])
+        self.assertEqual(terminals[-1], terminal)
+        retained_logged = [frame for frame in logged if frame.get('type') == 'message_end']
+        self.assertTrue(any(assistant_text(frame) == expected for frame in retained_logged),
+                        retained_logged[-3:])
+
+    def test_original_protocol_research_stream_reports_the_retained_assistant(self):
+        self.replay_captured_research_stream('semantic-runtime-protocol-research.jsonl')
+
+    def test_original_observations_research_stream_reports_the_retained_assistant(self):
+        self.replay_captured_research_stream('semantic-runtime-observations-research.jsonl')
+
+    def quota_frames(self):
+        """The captured quota attempt: its assistant message_end and its agent_end."""
+        lines = (EVIDENCE / 'lead.jsonl').read_text(errors='replace').splitlines()
+        terminal, preceding, terminal_line = None, None, None
+        for index, line in enumerate(lines):
             try:
                 record = json.loads(line)
             except Exception:
                 continue
-            message = record.get('message') or record
-            if message.get('stopReason') != 'error':
-                continue
-            retained = {'type': 'message_end', 'message': assistant(
-                stopReason='endTurn', content=[{'type': 'text', 'text': 'earlier successful report'}])}
-            quota = {'type': 'agent_end', 'isTerminal': True, 'messages': [message]}
-            break
-        self.assertIsNotNone(quota, 'no captured quota frame in lead.jsonl')
-        print(f'evidence lead.jsonl quota frame sha256 {digest(quota)}')
-        notifications, code, status, bodies = self.replay([retained, quota], task='original-quota')
+            if record.get('type') == 'message_end':
+                preceding = record
+            if record.get('type') == 'agent_end':
+                terminal, terminal_line = record, index
+                break
+        self.assertIsNotNone(terminal, 'no captured agent_end terminal in lead.jsonl')
+        return preceding, terminal, lines[terminal_line]
+
+    def test_original_quota_terminal_is_classified_while_the_native_exits_zero(self):
+        preceding, terminal, raw = self.quota_frames()
+        self.assertIsNotNone(preceding, 'no captured message_end before the terminal')
+        print(f'evidence lead.jsonl agent_end parsed digest {digest(terminal)} '
+              f'original byte sha256 {hashlib.sha256(raw.encode()).hexdigest()}')
+        print(f'evidence lead.jsonl preceding message_end parsed digest {digest(preceding)}')
+        notifications, code, status, bodies = self.replay(
+            [preceding, terminal], task='original-quota-terminal')
         self.assertIn('exit 0', status)
         self.assertNotEqual(code, 0)
         failure = [body for body in bodies if 'Native model failure' in body]
         self.assertTrue(failure, bodies)
-        self.assertIn(str(quota['messages'][0].get('errorStatus')), failure[0])
-        self.assertIn(str(quota['messages'][0].get('provider')), failure[0])
-        self.assertNotIn('earlier successful report', failure[0])
+        logged = []
+        for line in (self.directory / 'parent.jsonl').read_text(errors='replace').splitlines():
+            try:
+                logged.append(json.loads(line))
+            except Exception:
+                continue
+        terminals = [frame for frame in logged
+                     if frame.get('type') == 'agent_end' and frame.get('messages')]
+        self.assertTrue(terminals, logged[-3:])
+        self.assertEqual(terminals[-1], terminal)
 
 
 class ControlledFrames(ReplayBase):
@@ -211,7 +237,9 @@ class ControlledFrames(ReplayBase):
             {'type': 'agent_end', 'isTerminal': True, 'messages': ['marker', None, True]}],
             task='unavailable')
         self.assertEqual(code, 0)
-        self.assert_report(notifications, 'Native report unavailable')
+        self.assert_report(notifications, 'Native report unavailable: the terminal frame carries '
+                          'no complete assistant message; the original frame is retained in the '
+                          'native log for this attempt.')
 
     def test_current_failure_is_classified_while_the_native_exits_zero(self):
         notifications, code, status, bodies = self.replay([
