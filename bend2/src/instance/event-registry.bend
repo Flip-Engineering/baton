@@ -292,6 +292,7 @@ def accept_decided(+registration: Registration, +destination: Destination, task_
             case other:
               Bool.pick(Acceptance,below_task_capacity,Adopted{Registration{reg_identity_of(registration),reg_generation_of(registration),reg_database_of(registration),reg_owner_of(registration),reg_request_of(registration),reg_session_of(registration),U32.add(reg_adoptions_of(registration),1),reg_references_of(registration),False{},False{},reg_cancelled_of(registration),Some{reg_adoptions_of(registration)}},Destination{dest_database_of(destination),dest_owner_of(destination),dest_request_of(destination),dest_session_of(destination),dest_references_of(destination),U32.add(dest_tasks_of(destination),1)},TaskEvent{reg_identity_of(registration),reg_adoptions_of(registration),reg_generation_of(registration),dest_database_of(destination),dest_owner_of(destination),dest_request_of(destination),dest_session_of(destination),AdoptedOutstanding{}}},Refused{registration,destination})
         case other: Refused{registration,destination}
+      case other: Refused{registration,destination}
     case other: Refused{registration,destination}
 
 # A readiness event transfers the responsibility to wake and retry

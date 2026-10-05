@@ -96,8 +96,15 @@ def checks() -> IO(Unit):
     cancelledref : Unit <- match cancelledaccept:
       case Registry.Refused{+registration,+destination}: check("cancelled-registration-refuses-adoption",Bool.and(Registry.reg_event_retained_of(registration),U32.is_eq(Registry.dest_tasks_of(destination),0)))
       case other: check("cancelled-registration-refuses-adoption",False{})
-    settled : Registry.Registration <- IO.pure(Registry.Registration,Registry.settle_cancelled_event(Registry.cancel_registration(cancelledevent)))
-    settledok : Unit <- check("cancelled-event-settles-through-failure-task",Bool.not(Registry.reg_event_retained_of(settled)))
+    +cancelaccept : Registry.Registration <- IO.pure(Registry.Registration,Registry.cancel_registration(cancelledevent))
+    settle : Registry.Settlement <- IO.pure(Registry.Settlement,Registry.settle_cancelled_event(cancelaccept,True{}))
+    settledok : Unit <- match settle:
+      case Registry.Settled{+registration}: check("cancelled-event-settles-through-failure-task",Bool.not(Registry.reg_event_retained_of(registration)))
+      case other: check("cancelled-event-settles-through-failure-task",False{})
+    refusedsettle : Registry.Settlement <- IO.pure(Registry.Settlement,Registry.settle_cancelled_event(cancelledevent,True{}))
+    kept : Unit <- match refusedsettle:
+      case Registry.Refused{+registration}: check("uncancelled-settlement-refused",Registry.reg_event_retained_of(registration))
+      case other: check("uncancelled-settlement-refused",False{})
     +releasedreg : Registry.RegistrationRelease <- IO.pure(Registry.RegistrationRelease,Registry.release_registration_reference(cancelledevent))
     droppedref : Unit <- match releasedreg:
       case Registry.Released{+registration}: check("registration-reference-releases",U32.is_eq(Registry.reg_references_of(registration),0))
