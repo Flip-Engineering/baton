@@ -1467,7 +1467,7 @@ class Receive(unittest.TestCase):
         first = self.spawn(*self.receive_args('root'))
         control, started = self.accept('root')
         inbox_command = next(line.strip() for line in started['prompt'].splitlines() if ' inbox ' in line)
-        self.assertEqual(shlex.split(inbox_command), [str(EXE.resolve()), str(self.db.resolve()), 'inbox', 'root'])
+        self.assertEqual(shlex.split(inbox_command), [str(EXE.resolve()), str(self.db.resolve()), 'inbox', 'root', '--index'])
         self.action(control)
         self.finish(first)
         self.message('second', 'root')
