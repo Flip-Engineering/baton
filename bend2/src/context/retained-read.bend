@@ -23,6 +23,8 @@ type ReadVersion is Data:
   ReadVersion{owner: String, capability: String, generation: String}
 
 type ReadRegistration is Data:
+  # The host resolves sink to a retained owner event destination. Its lifetime
+  # extends through observation even after the submitting client disconnects.
   ReadRegistration{version: ReadVersion, registration: String, sink: R.RequestOutput}
 
 def offset_result(high: U32, low: U32, carry: Bool, overflow: Bool) -> Result<&2,&2,OffsetFault,ByteOffset>:
@@ -67,4 +69,10 @@ law offset_empty_advance_preserves_position:
   {offset_sum(ByteOffset{4,12},ByteOffset{0,0}) == Done{ByteOffset{4,12}} : Result<&2,&2,OffsetFault,ByteOffset>}
 
 def offset_empty_advance_preserves_position():
+  {==}
+
+law offset_nonzero_words_add:
+  {offset_sum(ByteOffset{7,11},ByteOffset{3,17}) == Done{ByteOffset{10,28}} : Result<&2,&2,OffsetFault,ByteOffset>}
+
+def offset_nonzero_words_add():
   {==}

@@ -289,13 +289,21 @@ request-scoped sink. The host must validate these identities and implement the
 atomic compare/register/recheck contract from Controls62. These data types do
 not implement registration, event retention, byte counting, finality, seek or
 capability retirement. The host's qualified exit evidence remains separate.
+The registry must resolve the sink to a retained owner event destination whose
+lifetime includes task observation and historical finish. An early queued
+client response or client disconnect cannot retire that event destination or
+cancel the attempt. Resolution failure returns a task-local error with remaining
+duties retained. This lifetime requirement follows Receive67; the declarations
+do not themselves implement it.
 
 All compiler, build and test execution now requires an admitted remote runner.
 The earlier String/cursor correlation fixture retains its original text scope;
 it does not qualify the new raw byte representation or host I/O. Linux runner
 results and remote Darwin artifact qualification remain separate evidence.
 
-`context/receive-request.bend` supplies initial compiled transport data types:
+`context/receive-request.bend` supplies transport data declarations. Its initial
+text-correlation component has historical fixture evidence; later source
+changes await remote validation.
 `InvocationContext` retains literal argv, cwd, captured stdin and captured files;
 `ReceiveRequest` retains version, correlation, invocation, existing Receive
 arguments and an optional wake message. `Correlation` separates database,
@@ -306,6 +314,16 @@ sets stdin to `UnusedInput` and files to the empty list while preserving literal
 argv and caller cwd. Receive's workspace override remains a separate field.
 This constructor is a source candidate awaiting remote validation; ordinary
 Receive continues to obtain its task input from retained coordinator messages.
+The actual helper signature is `receive_invocation(executable,cwd,argv)`, with
+field order `Invocation{executable,cwd,argv,stdin,files}`. Interfaces67 and
+Receive67 agree that the future short-lived client resolves
+`SessionLock.executable` once and retains that selection. The qualified invocation
+supplies both instructions and the original prepared recovery argv. Provider
+command, original Main arguments and workspace override remain distinct inputs.
+Replay keeps the original selection. The host resolver supplies a canonical
+pathname; package/content identity requires the owned admission check. Resolver
+failure returns the original client error before submission and preserves any
+message already committed by its sender.
 The envelope's owner names the current qualified transport generation. Durable
 request identity remains separate, as in `OwnerAdmission.Request`. A replacement
 owner must reconcile the original request before issuing a new transport
