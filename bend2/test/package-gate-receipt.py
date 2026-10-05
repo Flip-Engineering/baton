@@ -292,7 +292,6 @@ class PackageGateReceipt(unittest.TestCase):
             'runtime': {'directory': str(compiler.parent.parent),
                         'sha256': PACKAGE.runtime_set_digest(compiler)},
             'runtime_set_sha256': PACKAGE.runtime_set_digest(compiler),
-            'instrument': {'tool': '/usr/bin/time', 'flag': '-l'},
             'origin': {'workflow': 'bend2-native-capacity-controls', 'run_id': '1',
                        'run_attempt': '1', 'job': 'controls:' + module.replace('/', '_') + ':1:1',
                        'runner_name': 'GitHub Actions 1', 'image_os': 'macos27',
@@ -330,6 +329,7 @@ class PackageGateReceipt(unittest.TestCase):
             'module': module,
             'binding': self.controls['sha256'],
             'entry': 'bend2/src/coordinator/main.bend',
+            'instrument': {'tool': '/usr/bin/time', 'flag': '-l'},
             'producing': self.producing_for(module, compiler),
             'baseline': {
                 'argv': [str(compiler), 'bend2/src/coordinator/main.bend', '--check-only'],

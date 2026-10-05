@@ -204,6 +204,11 @@ def canonical_record_bytes(record):
                       ensure_ascii=False).encode('utf-8')
 
 
+def ended_normally(value):
+    """A local gate ended at status zero, or the remote route records no local exit."""
+    return value is None or (type(value) is int and value == 0)
+
+
 def is_finite(value):
     return isinstance(value, (int, float)) and not isinstance(value, bool) and math.isfinite(value)
 
@@ -431,7 +436,7 @@ def run_gates(compiler, env, logs, initial, before_inputs, remote=None):
                                             stdout=log, stderr=subprocess.STDOUT)
                 result_exit = result.returncode
             stage.update(exit_code=result_exit, elapsed_seconds=time.monotonic() - started,
-                         status='passed' if result_exit in (0, None) else 'failed',
+                         status='passed' if ended_normally(result_exit) else 'failed',
                          after=snapshot())
             if stage.get('route') == 'remote-module-groups':
                 stage['elapsed_seconds'] = remote['slowest_span_seconds']
@@ -440,7 +445,7 @@ def run_gates(compiler, env, logs, initial, before_inputs, remote=None):
                         'A remote laws stage records no producing span or closure digest')
             stage['log_sha256'] = sha256(logs / stage['log'])
             write_json(path, summary)
-            require(result_exit in (0, None),
+            require(ended_normally(result_exit),
                     name + ' failed; full output is retained at ' + str(logs / stage['log']))
             same_source(stage['after'], initial)
         summary['validation'] = validation(logs, remote)
@@ -513,14 +518,30 @@ def reuse_gates(path, expected_sha, compiler, logs, initial):
                     'The laws-check stage must carry the remote route when the receipt does')
             require(stage.get('argv') == list(dict(GATES)[name]),
                     'A local gate stage must name its own command')
-            require(stage.get('status') == 'passed' and stage.get('exit_code') == 0,
-                    'A supplied gate did not pass')
+            require(stage.get('status') == 'passed'
+                    and type(stage.get('exit_code')) is int and stage['exit_code'] == 0,
+                    'A supplied gate did not pass with an integer zero exit')
         same_source(stage['before'], initial)
         same_source(stage['after'], initial)
         require(stage['log'] == stage['name'] + '.log', 'Unexpected gate log path')
         source = path.parent / stage['log']
         require(sha256(source) == stage['log_sha256'], 'Supplied gate log bytes changed: ' + str(source))
         shutil.copyfile(source, logs / stage['log'])
+    if remote_laws:
+        recorded = summary.get('controls_evidence') or {}
+        reference = {key: recorded.get(key) for key in
+                     ('path', 'sha256', 'binding', 'cases', 'groups', 'origin',
+                      'closure_sha256')}
+        for stage in summary['stages']:
+            if stage.get('route') != 'remote-module-groups':
+                continue
+            retained = logs / stage['log']
+            require(retained.is_file(), 'The retained remote stage log is missing: ' + str(retained))
+            entry = json.loads(retained.read_text())
+            require(entry.get('schema') == RECEIPT_SCHEMA,
+                    'The retained remote stage log carries another schema')
+            require(entry.get('evidence') == reference,
+                    'The retained remote stage log names other producer evidence than the receipt')
     require(summary['stages'][0]['after']['binary_sha256'] == initial['binary_sha256'],
             'The original build-stage binary differs from the receipt binary')
     require(validation(logs, summary.get('controls_evidence')) == summary['validation'],
@@ -756,7 +777,7 @@ def controls_evidence(directory, initial, compiler):
         if runtime_sha is not None:
             require(producing.get('runtime_set_sha256') == runtime_sha,
                     'A bundle used different installed Bend library bytes: ' + json.dumps(module))
-        instrument = producing.get('instrument') or {}
+        instrument = bundle.get('instrument') or {}
         require(instrument.get('tool') not in (None, '') and instrument.get('flag') not in (None, ''),
                 'A bundle names no time instrument: ' + json.dumps(module))
         bundle_origin = producing.get('origin') or {}
@@ -773,7 +794,7 @@ def controls_evidence(directory, initial, compiler):
         baseline = bundle.get('baseline') or {}
         baseline_outcome = verify_process(baseline, baseline=True,
                                           label='baseline of ' + json.dumps(module))
-        require(baseline_outcome['exit_code'] == 0,
+        require(type(baseline_outcome['exit_code']) is int and baseline_outcome['exit_code'] == 0,
                 'A group baseline did not exit 0: ' + json.dumps(module))
         require(baseline.get('argv') == [bundle_compiler['path'], entry, '--check-only'],
                 'A baseline ran another command: ' + json.dumps(module))
