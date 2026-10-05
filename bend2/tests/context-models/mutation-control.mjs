@@ -24,6 +24,8 @@ const MUTATIONS = [
   { name: 'execute-target-grant-check-removed', file: 'context/models/zod-model.mjs', find: 'if (!effects.includes(EXECUTE_TARGET_GRANT)) {', replace: 'if (false) {', tests: ['zod-model.test.mjs'] },
   { name: 'export-kind-check-removed', file: 'context/models/zod-child.mjs', find: 'if (typeof zod.ZodType !== \'function\' || !(selected instanceof zod.ZodType)) {', replace: 'if (false) {', tests: ['zod-model.test.mjs'] },
   { name: 'child-stdout-line-count-ignored', file: 'context/models/zod-model.mjs', find: 'if (lines.length !== 1) {', replace: 'if (false) {', tests: ['zod-model.test.mjs'] },
+  { name: 'exclusive-artifact-creation-removed', file: 'context/models/zod-child.mjs', find: "descriptor = openSync(path, 'wx', 0o600);", replace: "descriptor = openSync(path, 'w', 0o600);", tests: ['zod-model.test.mjs'] },
+  { name: 'custody-limit-blanked', file: 'context/models/zod-model.mjs', find: "export const CUSTODY_BOUNDARY = 'the driver holds", replace: "export const CUSTODY_BOUNDARY = 'x-the driver holds", tests: ['zod-model.test.mjs'] },
   { name: 'statement-framing-gate-removed', file: 'context/catalogs/sqlite-statement.mjs', find: 'if (scan.statementCount > 1 || scan.trailingHasContent) {', replace: 'if (false) {', tests: ['sqlite-catalog.test.mjs'] },
   { name: 'text-admission-removed', file: 'context/catalogs/sqlite-statement.mjs', find: 'if (text.status !== \'admitted\') return text;', replace: 'if (false) return text;', tests: ['sqlite-catalog.test.mjs'] },
   { name: 'nul-byte-check-removed', file: 'context/catalogs/sql-scan.mjs', find: "if (nul !== -1) return { status: 'refused', reason: 'nulByte'", replace: "if (false) return { status: 'refused', reason: 'nulByte'", tests: ['sqlite-catalog.test.mjs'] },

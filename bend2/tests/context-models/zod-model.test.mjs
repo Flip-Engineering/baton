@@ -7,7 +7,7 @@
 // executed at all.
 
 import assert from 'node:assert/strict';
-import { existsSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { test } from 'node:test';
@@ -67,6 +67,7 @@ test('a zod version other than 4.3.6 refuses before the target module is importe
     assert.equal(result.child.code, 2);
     assert.equal(result.refusal.reason, 'zodVersionMismatch');
     assert.match(result.refusal.detail, /4\.3\.5/);
+    assert.match(result.custody, /memory until close/, 'the driver states its custody limit on a refusal too');
     assert.equal(result.document?.target, undefined);
     assert.equal(project.readMarker(), null, 'the version gate refused before any target execution');
   } finally {
@@ -107,6 +108,16 @@ test('a valid sample reports the transformed output, both schemas and the captur
     assert.equal(document.validation.verdict, true);
     assert.equal(document.validation.output.display_name, 'ann', 'the model overwrite ran');
     assert.equal(document.validation.output.tags, 2, 'the model transform produced its own output type');
+    assert.equal(document.validation.output.note, 'NONE', 'the printing transform ran on the defaulted field');
+    const capturedStdout = readFileSync(document.targetOutput.stdout.path, 'utf8');
+    assert.match(capturedStdout, /transform ran/, 'a print from a transform lands in the retained target stream');
+    assert.match(capturedStdout, /serialized/, 'a print from a project toJSON during response serialization lands in the retained target stream');
+    assert.match(capturedStdout, /target stdout line/);
+    assert.equal(document.targetOutput.boundary.includes('process.stdout.write'), true);
+    assert.ok(document.limits.some(limit => limit.code === 'streamCaptureBoundary'));
+    assert.match(result.custody, /memory until close/, 'the driver states its custody limit on a successful run');
+    assert.equal(result.private.stdout.bytes >= 0, true);
+    assert.ok(readFileSync(result.private.stdout.path, 'utf8').includes('"status":"ok"'));
     assert.equal(document.serialization.status, 'ok');
     assert.equal(document.serialization.transformed, true);
     assert.equal(JSON.parse(document.serialization.text).display_name, 'ann');
@@ -147,6 +158,32 @@ test('an invalid sample reports the actual validation issues with their paths an
     assert.equal(result.document.serialization.reason, 'sampleRejectedByModel');
   } finally {
     project.remove();
+  }
+});
+
+test('an existing artifact file is never overwritten', async () => {
+  const dir = makeTempDir('zod-collision');
+  try {
+    const project = makeZodProject({ dir: join(dir, 'inner') });
+    const artifacts = join(dir, 'artifacts');
+    mkdirSync(artifacts, { recursive: true, mode: 0o700 });
+    writeFileSync(join(artifacts, 'target-stdout'), 'unrelated');
+    const result = await runZodModelChild({
+      node: process.execPath,
+      childPath: CHILD_PATH,
+      target: { module: project.modulePath, export: 'User', sample: project.samplePath },
+      effects: ['executeTarget'],
+      home: dir,
+      tempDirectory: dir,
+      outputDirectory: artifacts,
+    });
+    assert.equal(result.status, 'ok');
+    assert.equal(result.document.targetOutput.retentionRefusal, 'artifactExists');
+    assert.equal(readFileSync(join(artifacts, 'target-stdout'), 'utf8'), 'unrelated',
+      'the pre-existing file keeps its bytes');
+    project.remove();
+  } finally {
+    removeTempDir(dir);
   }
 });
 

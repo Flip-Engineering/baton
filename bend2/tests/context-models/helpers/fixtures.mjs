@@ -48,13 +48,27 @@ export const User = z.object({
   display_name: z.string().trim().toLowerCase().default('anonymous'),
   total_cents: z.number().int().min(0),
   tags: z.array(z.string()).transform(list => list.length),
+  note: z.string().transform(value => {
+    // A transform that prints runs inside the capture window.
+    console.log('transform ran');
+    return value.toUpperCase();
+  }).default('none'),
+  stamp: z.string().transform(value => ({
+    value,
+    toJSON() {
+      // A project \`toJSON\` runs during response serialization, which also stays
+      // inside the capture window.
+      console.log('serialized');
+      return 'stamp:' + this.value;
+    },
+  })),
 });
 
 export const NotAModel = { safeParse() { return { success: true }; } };
 `;
 
-export const ZOD_FIXTURE_SAMPLE = `{"email":"A@B.co","display_name":"  ANN  ","total_cents":1250,"tags":["a","b"]}`;
-export const ZOD_FIXTURE_INVALID_SAMPLE = `{"email":"not-an-email","display_name":"Bo","total_cents":-5,"tags":[]}`;
+export const ZOD_FIXTURE_SAMPLE = `{"email":"A@B.co","display_name":"  ANN  ","total_cents":1250,"tags":["a","b"],"stamp":"s1"}`;
+export const ZOD_FIXTURE_INVALID_SAMPLE = `{"email":"not-an-email","display_name":"Bo","total_cents":-5,"tags":[],"stamp":"s2"}`;
 
 // The matching project resolves the real zod package through its own
 // node_modules. The mismatch project declares a different version; the child

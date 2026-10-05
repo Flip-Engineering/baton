@@ -241,6 +241,11 @@ async function modelLoad({ frame, query, request, select, writeStdout, childPath
       code: 'managedLaunchUncomposed',
       detail: 'this component driver starts the child itself; canonical admitted launch and custody remain with the native managed-child operation',
     },
+    {
+      projection: 'coverage',
+      code: 'streamCustody',
+      detail: result.custody,
+    },
   ];
   writeStdout(`${JSON.stringify({
     version: 1,
