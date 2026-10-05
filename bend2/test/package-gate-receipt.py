@@ -74,6 +74,14 @@ class PackageGateReceipt(unittest.TestCase):
         def classify(case, result, streams, baseline, evidence_root, source, compiler_sha256,
                      compiler_path=None, delta=None, supplied=None, audit=None):
             self.verdicts[case['id']] = {'streams': streams, 'baseline': baseline, 'delta': delta}
+            if audit is not None:
+                # Stub plumbing: a real endpoint writes its request, argv, cwd, raw
+                # streams and child outcome here. This records only that a scope was
+                # passed, and is not endpoint acquisition evidence.
+                audit_path = pathlib.Path(audit)
+                audit_path.mkdir(parents=True, exist_ok=True)
+                (audit_path / (case['id'].replace(':', '_') + '.json')).write_text(
+                    json.dumps({'stub': 'classifier plumbing', 'case': case['id']}))
             return {'schema': 'capacity-controls/classify-verdict@1', 'id': case['id'],
                     'class': 'intended-law-refusal', 'attributed_law': case['law'],
                     'law': case['law'], 'match': True, 'qualified': True,
@@ -742,10 +750,17 @@ class PackageGateReceipt(unittest.TestCase):
                 record.pop('outcome')
             records.append(record)
         identity = identity or self.ordinary_identity(path, run_root)
+        # Producer layout: index_path and scratch sit at the index top level, the
+        # remaining identity fields sit in the run block, and the admitted inputs
+        # are rows rather than a mapping.
         index = {'schema': PACKAGE.ORDINARY_SCHEMA, 'complete': complete,
-                 'run': {**identity, 'nonce': 'fixture-nonce',
-                         'checker_argv': ['node', 'bend2/scripts/laws-check.mjs']},
-                 'inputs': {'bend2/scripts/laws-check.mjs': hashlib.sha256(b'checker').hexdigest()}
+                 'index_path': identity['index_path'], 'scratch': identity['scratch'],
+                 'run': {key: value for key, value in identity.items()
+                         if key not in ('index_path', 'scratch')}
+                 | {'nonce': 'fixture-nonce',
+                    'checker_argv': ['node', 'bend2/scripts/laws-check.mjs']},
+                 'inputs': [{'path': 'bend2/scripts/laws-check.mjs', 'bytes': 7,
+                             'sha256': hashlib.sha256(b'checker').hexdigest()}]
                  if inputs is None else inputs,
                  'cases': records}
         path.write_text(json.dumps(index))
@@ -771,6 +786,10 @@ class PackageGateReceipt(unittest.TestCase):
         self.assertEqual(result['ordinary']['run_root'], str((self.logs / 'run').resolve()))
         self.assertEqual(result['ordinary']['invocation'], 'ordinary:fixture-nonce')
         self.assertEqual(result['ordinary']['verifier'], self.verifier)
+        self.assertEqual(result['ordinary']['input_rows'], 1)
+        self.assertTrue(result['ordinary']['audit']['members'])
+        self.assertEqual(result['ordinary']['root_identity']['ancestor_policy'],
+                         'repository-real-paths')
         self.assertEqual(sorted(result['ordinary']['recomputed']), sorted(self.verdicts))
         for identity, verdict in result['ordinary']['recomputed'].items():
             self.assertEqual(verdict['class'], 'intended-law-refusal')
@@ -855,7 +874,8 @@ class PackageGateReceipt(unittest.TestCase):
                                       self.parent_rows(), None, envelope)
         with self.assertRaisesRegex(RuntimeError, 'no digest for'):
             rewritten = json.loads(path.read_text())
-            rewritten['inputs'] = {'bend2/scripts/laws-check.mjs': 'not-a-digest'}
+            rewritten['inputs'] = [{'path': 'bend2/scripts/laws-check.mjs',
+                                    'sha256': 'not-a-digest'}]
             path.write_text(json.dumps(rewritten))
             PACKAGE.ordinary_evidence(path, controls, self.compiler(), None,
                                       self.parent_rows(), None, envelope)
