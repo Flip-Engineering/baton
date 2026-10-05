@@ -12,5 +12,19 @@
     "find": "json_object('lookup','absent','requestId',i.id)",
     "replace": "json_object('lookup','retained','requestId',i.id)",
     "law": "recovery_lookup_selects_the_original_identity"
+  },
+  {
+    "name": "direct-bound-decision-discards-expectation",
+    "file": "bend2/src/coordinator/direct-request.bend",
+    "find": "DB.Sql.query_bound(path,expected,decide_sql(id,request,preparation,detached))",
+    "replace": "DB.Sql.query(path,decide_sql(id,request,preparation,detached))",
+    "law": "bound_decision_uses_original_expectation"
+  },
+  {
+    "name": "direct-bound-recovery-discards-expectation",
+    "file": "bend2/src/coordinator/direct-request.bend",
+    "find": "DB.Sql.query_bound(path,expected,readback_sql(id))",
+    "replace": "DB.Sql.query(path,readback_sql(id))",
+    "law": "bound_recovery_uses_original_expectation"
   }
 ]

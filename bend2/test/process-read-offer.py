@@ -5,8 +5,8 @@ import os
 from pathlib import Path
 import shlex
 import shutil
-import subprocess
 import tempfile
+from host_control_capture import run
 
 ROOT = Path(__file__).resolve().parents[1]
 SOURCE = ROOT / 'src/host/process-read-offer.h'
@@ -17,21 +17,6 @@ FIXTURE = ROOT / 'test/process-read-offer.c'
 
 def digest(path):
     return hashlib.sha256(path.read_bytes()).hexdigest()
-
-
-def run(directory, name, argv, timeout):
-    (directory / f'{name}.argv.json').write_text(json.dumps(argv))
-    try:
-        result = subprocess.run(argv, capture_output=True, timeout=timeout)
-    except subprocess.TimeoutExpired as error:
-        (directory / f'{name}.stdout').write_bytes(error.stdout or b'')
-        (directory / f'{name}.stderr').write_bytes(error.stderr or b'')
-        (directory / f'{name}.outcome.json').write_text(json.dumps({'timeout': error.timeout}))
-        raise
-    (directory / f'{name}.stdout').write_bytes(result.stdout)
-    (directory / f'{name}.stderr').write_bytes(result.stderr)
-    (directory / f'{name}.outcome.json').write_text(json.dumps({'returncode': result.returncode}))
-    return result
 
 
 def main():
@@ -83,6 +68,8 @@ def main():
         shutil.copyfile(SPOOL, source_spool)
         shutil.copyfile(FIXTURE, fixture)
         (directory / 'sources.json').write_text(json.dumps({
+            'driverSha256': digest(Path(__file__)),
+            'captureSha256': digest(Path(__file__).with_name('host_control_capture.py')),
             'originalSourceSha256': digest(SOURCE), 'sourceSha256': digest(header),
             'spoolSha256': digest(source_spool), 'bufferSha256': digest(buffer),
             'fixtureSha256': digest(fixture)}, indent=2))

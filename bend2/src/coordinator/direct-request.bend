@@ -19,6 +19,11 @@ type Request is Data:
 type Preparation is Data:
   Preparation{directory: String, keeper: String, protocol: U32}
 
+# The owner retains this original expectation across decision and recovery calls.
+# Constructing this value does not qualify the connection or grant a host effect.
+type StoreBinding is Data:
+  StoreBinding{path: String, expected: String}
+
 def nullable(value: Maybe<&2,String>) -> String:
   match value:
     case None{}: "null"
@@ -103,10 +108,47 @@ def decide_sql(+id: String, request: Request, preparation: Preparation, +detache
 def readback_sql(id: String) -> String:
   "SELECT CASE WHEN r.id IS NULL THEN json_object('lookup','absent','requestId',i.id) ELSE json_object('lookup','retained','requestId',r.id,'session',r.session,'request',json(r.request),'attemptDirectory',r.directory,'keeper',json(r.keeper),'protocol',r.protocol,'admissionDecision',r.decision,'reason',r.reason,'phase',r.phase,'outcome',r.outcome,'notification',r.notification,'cleanup',r.cleanup,'lifetime',r.lifetime,'resultId',r.result_message,'localResult',r.local_result) END FROM (SELECT " ++ C.q(id) ++ " AS id) i LEFT JOIN direct_requests r ON r.id=i.id;"
 
-# The caller holds the session guard and owns the prepared keeper. The returned
-# row is the sole admission authority; host errors require same-binding readback.
+# The caller holds the session guard and owns the prepared keeper. It decodes
+# the returned row and checks the original request and preparation before action.
 def decide(db: String, id: String, request: Request, preparation: Preparation, detached: Bool) -> IO(Result<&1,&1,U32 & String,String>):
   DB.Sql.query(db,decide_sql(id,request,preparation,detached))
+
+# Each operation compares the captured expectation on the connection executing
+# its SQL. Errors retain the host code and text. The owner must reconcile an
+# unknown decision outcome through readback before deciding any keeper action.
+def decide_bound(store: StoreBinding, id: String, request: Request, preparation: Preparation, detached: Bool) -> IO(Result<&1,&1,U32 & String,String>):
+  match store:
+    case StoreBinding{path,+expected}:
+      DB.Sql.query_bound(path,expected,decide_sql(id,request,preparation,detached))
+
+# This returns original decision/preparation evidence. The caller still must
+# decode the complete row and compare it with its retained request and keeper.
+# Successful absence leaves recovery unresolved and does not authorize start.
+def readback_bound(store: StoreBinding, id: String) -> IO(Result<&1,&1,U32 & String,String>):
+  match store:
+    case StoreBinding{path,+expected}:
+      DB.Sql.query_bound(path,expected,readback_sql(id))
+
+law bound_decision_uses_original_expectation:
+  for path: String
+  for expected: String
+  for id: String
+  for request: Request
+  for preparation: Preparation
+  for detached: Bool
+  {decide_bound(StoreBinding{path,expected},id,request,preparation,detached) == DB.Sql.query_bound(path,expected,decide_sql(id,request,preparation,detached)) : IO(Result<&1,&1,U32 & String,String>)}
+
+def bound_decision_uses_original_expectation(path,expected,id,request,preparation,detached):
+  {==}
+
+law bound_recovery_uses_original_expectation:
+  for path: String
+  for expected: String
+  for id: String
+  {readback_bound(StoreBinding{path,expected},id) == DB.Sql.query_bound(path,expected,readback_sql(id)) : IO(Result<&1,&1,U32 & String,String>)}
+
+def bound_recovery_uses_original_expectation(path,expected,id):
+  {==}
 
 law existing_requests_are_compared_field_by_field:
   for original: String
