@@ -585,15 +585,12 @@ def classify_control(case, result, streams, baseline, evidence_root, source, com
                     delta=None, supplied=None):
     """Ask the checker's classifier what the verified bytes establish.
 
-    The case's definition metadata, including any expectation the definition
-    owner bound, is a declared statement about the intended diagnostic. It is
-    bound into the identity but is never treated as a measured diagnostic; only
-    the classifier's verdict over the verified bytes qualifies a control.
-    """
-
-    One JSON request on stdin, one verdict line on stdout. The checker owns the
-    classifier; the package recomputes the verdict over the streams and the
-    actual child outcome it verified, and compares the producer's claim with it.
+    One JSON request on stdin, one verdict line on stdout. The checker owns
+    the classifier; the package recomputes the verdict over the verified
+    streams and the actual child outcome and compares the producer's claim
+    with it. A case definition, including any expectation the definition
+    owner bound, is a declared statement about the intended diagnostic: it is
+    bound into the identity and never treated as a measured diagnostic.
     """
     outcome = result.get('process') or {}
     request = {
@@ -724,6 +721,7 @@ def controls_evidence(directory, initial, compiler):
     path = directory / 'controls-summary.json'
     require(path.is_file(), 'The controls evidence has no controls-summary.json: ' + str(path))
     summary = json.loads(path.read_text())
+    summary_sha = sha256(path)
     expected = discover_controls()
     wanted = expected['by_id']
     modules = {control['module'] for control in expected['controls']}
@@ -912,7 +910,7 @@ def controls_evidence(directory, initial, compiler):
             'classifier': {'command': ['node', CONTROL_SCRIPT, '--classify'],
                            'verdicts': [dict(verdicts[identity], source=source_pins,
                                              closure_sha256=closure,
-                                             evidence_sha256=summary.get('sha256'))
+                                             evidence_sha256=summary_sha)
                                         for identity in sorted(verdicts)]},
             'slowest_seconds': max(entry['resource']['real_seconds']
                                    for entry in seen_cases.values()),
