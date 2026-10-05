@@ -12,6 +12,7 @@ from pathlib import Path
 import sqlite3
 import subprocess
 import tempfile
+import threading
 import unittest
 
 
@@ -345,6 +346,61 @@ class ControlIndex(unittest.TestCase):
                     self.assertNotEqual(result.returncode, 0, result.stdout)
                     self.assertIn('message-route-denied', result.stdout + result.stderr)
             self.assertEqual(projected, admitted)
+
+    def test_structure_and_pending_share_snapshot_during_commits(self):
+        with closing(sqlite3.connect(self.db)) as db:
+            db.execute('PRAGMA journal_mode=WAL')
+            db.execute("INSERT INTO messages(id,sender,recipient,kind,body) "
+                       "VALUES('snapshot-message','other-root','external','note','fixture')")
+            db.commit()
+        ready = threading.Event()
+        finished = threading.Event()
+        errors = []
+
+        def change_membership_and_receipt():
+            try:
+                with closing(sqlite3.connect(self.db)) as db:
+                    present = False
+                    while not finished.is_set():
+                        db.execute('BEGIN IMMEDIATE')
+                        if present:
+                            db.execute("INSERT OR IGNORE INTO ensemble_members VALUES('team','external')")
+                            db.execute("INSERT OR IGNORE INTO section_members VALUES('team','review','external')")
+                        else:
+                            db.execute("DELETE FROM section_members WHERE ensemble='team' AND session='external'")
+                            db.execute("DELETE FROM ensemble_members WHERE ensemble='team' AND session='external'")
+                        db.execute("UPDATE messages SET receipt=? WHERE id='snapshot-message'",
+                                   (None if present else 'fixture acknowledgment',))
+                        db.commit()
+                        ready.set()
+                        present = not present
+            except BaseException as error:
+                errors.append(error)
+                ready.set()
+
+        writer = threading.Thread(target=change_membership_and_receipt, daemon=True)
+        writer.start()
+        try:
+            self.assertTrue(ready.wait(10), 'Fixture writer did not start')
+            for pretty in (False, True) * 6:
+                args = ['orchestra', '--index', '--for', 'associate']
+                if pretty:
+                    args.append('--pretty')
+                result = subprocess.run([str(EXE), str(self.db), *args],
+                                        capture_output=True, text=True, timeout=10)
+                self.assertEqual(result.returncode, 0, result.stderr or result.stdout)
+                view = json.loads(result.stdout)
+                team = next(row for row in view['ensembles'] if row['id'] == 'team')
+                member = 'external' in team['members']
+                reference = any(row['id'] == 'external' for row in view['players'])
+                pending = any(row['id'] == 'snapshot-message' for row in view['pending'])
+                self.assertEqual((reference, pending), (member, member),
+                                 'Structure and pending came from different committed states')
+        finally:
+            finished.set()
+            writer.join(10)
+        self.assertFalse(writer.is_alive(), 'Fixture writer did not finish')
+        self.assertEqual(errors, [])
 
     def test_index_size_tracks_metadata_and_read_is_pure(self):
         before = self.retained()
