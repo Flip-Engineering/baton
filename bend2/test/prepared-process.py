@@ -7,6 +7,7 @@ import json
 import os
 from pathlib import Path
 import select
+import signal
 import socket
 import subprocess
 import unittest
@@ -125,6 +126,56 @@ class Prepared(unittest.TestCase):
         endpoint.write(b'finish\n')
         self.f.wait_file('acknowledged')
         self.assertEqual((self.f.attempt / 'status').read_text(), '0\n')
+
+
+    def test_keeper_loss_preserves_spool_and_reports_unknown_wait_status(self):
+        child, prepared = self.start(mode='read-only')
+        child.stdin.close()
+        self.assertEqual(self.line(child), 'grant-refused')
+        first = json.loads(self.line(child))
+        second = json.loads(self.line(child))
+        self.assertEqual(first, second)
+        event, endpoint = self.f.connect('native')
+        self.assertEqual(event['pid'], first['nativePid'])
+        self.assertEqual(event['ppid'], prepared['keeper']['pid'])
+        os.kill(prepared['keeper']['pid'], signal.SIGKILL)
+        lock = subprocess.run([str(EXE), 'lock-try', str(self.f.db)], capture_output=True, text=True, timeout=10)
+        self.assertEqual(lock.stdout, 'busy\n')
+        self.assertIsNone(child.poll())
+        self.f.assert_no_second_recovery()
+        endpoint.write(b'finish\n')
+        child.wait(timeout=10)
+        self.assertEqual(child.returncode, 0, child.stderr.read().decode())
+        output = child.stdout.read().decode()
+        self.assertIn('native-finished\n', output)
+        self.assertIn('native-unknown after keeper loss\n', output)
+        self.assertNotIn('native-exit 0', output)
+        self.assertFalse((self.f.attempt / 'status').exists())
+        self.assertTrue((self.f.attempt / 'acknowledged').exists())
+        self.assertIn('native-finished', (self.f.attempt / 'stdout').read_text())
+        lock = subprocess.run([str(EXE), 'lock-try', str(self.f.db)], capture_output=True, text=True, timeout=10)
+        self.assertEqual(lock.stdout, 'acquired\n')
+
+    def test_start_marker_failure_keeps_unknown_and_never_repeats_grant(self):
+        child, prepared = self.start(mode='read-only')
+        # A fixture-owned occupied marker path forces the actual creation failure.
+        (self.f.attempt / 'start-attempt').mkdir()
+        child.stdin.close()
+        self.assertEqual(self.line(child), 'grant-refused')
+        first = json.loads(self.line(child))
+        second = json.loads(self.line(child))
+        self.assertEqual(first, second)
+        self.assertEqual(first['processState'], 'unknown')
+        self.assertEqual(first['nativePid'], 0)
+        self.assertEqual(first['waitStatus'], -1)
+        self.assertGreater(first['startError'], 0)
+        self.assertEqual(first['keeper'], prepared['keeper'])
+        self.f.assert_no_second_recovery()
+        self.assertIsNone(child.poll())
+        lock = subprocess.run([str(EXE), 'lock-try', str(self.f.db)], capture_output=True, text=True, timeout=10)
+        self.assertEqual(lock.stdout, 'busy\n')
+        # Test cleanup releases only owned processes. This does not qualify a
+        # coordinator's Unknown resolution or owner-notification continuation.
 
 
 class PostSpawnFaults(unittest.TestCase):
