@@ -138,6 +138,14 @@ def settle(directory, record, name, outcome, **fields):
     return record[-1] if record[-1].get('name') == name else entry
 
 
+class ArchiveCopyMismatch(SystemExit):
+    """A retained copy disagrees with the admitted identity after partial staging."""
+
+    def __init__(self, message, partial=()):
+        super().__init__(message)
+        self.partial = list(partial)
+
+
 def attempt(directory, record, name, work, **declared):
     """Run one stage with its identity declared first and settled on every exit.
 
@@ -149,8 +157,13 @@ def attempt(directory, record, name, work, **declared):
         value = work()
     except BaseException as error:
         try:
-            settle(directory, record, name, 'failed', failure=repr(error),
-                   failure_type=type(error).__name__)
+            # A stage that reports how far it got keeps those identities on its
+            # failure row, so a partial result is not lost with the failure. A stage
+            # that reports nothing partial records no partial identity.
+            partial = getattr(error, 'partial', None)
+            settle(directory, record, name, 'failed',
+                   **({'partial_staged': list(partial)} if partial else {}),
+                   failure=repr(error), failure_type=type(error).__name__)
         except BaseException as record_error:
             setattr(error, 'record_error', record_error)
             setattr(error, 'record_error_text', repr(record_error))
@@ -497,31 +510,61 @@ def main():
                                      'verdict: ' + identity)
             if uncovered:
                 raise SystemExit('the acquisition omits selected cases: ' + repr(uncovered))
-            records = sorted(entry.name for entry in audit.rglob('*') if entry.is_file())
-            if not records:
-                raise SystemExit('the archived readback retained no acquisition file')
-            audit_inventory = package.producer_inventory(audit)
-            bound_audit = (envelope.get('audit') or {})
-            if audit_inventory['inventory_sha256'] != bound_audit.get('inventory_sha256'):
-                raise SystemExit('the current acquisition inventory differs from the one the '
-                                 'retained envelope binds')
-            # Retain the original archive and metadata bytes, and the complete returned
-            # envelope bound to this stage rather than only a count of any files.
-            metadata = run / 'archive-metadata'
-            metadata.mkdir(exist_ok=True)
-            for name in package.ARCHIVE_METADATA:
-                shutil.copyfile(archived / name, metadata / name)
-            # The retained copies are checked against the admitted identity, not
-            # only the reader's own later observation.
-            kept_archive = digest(retained_input)
-            if kept_archive != args.expected_archive_sha256:
-                raise SystemExit('the retained archive copy differs from the admitted identity')
-            for name in package.ARCHIVE_METADATA:
-                if digest(metadata / name) != documents[name]:
-                    raise SystemExit('the retained metadata copy differs from the admitted '
-                                     'identity: ' + name)
-            envelope_path = run / 'archive-envelope.json'
-            envelope_path.write_text(json.dumps(envelope, indent=2) + '\n')
+            # Each later phase settles its own result where it happens, so a failure
+            # in one of them is recorded at that boundary with what it did reach.
+            def read_acquisition():
+                records = sorted(entry.name for entry in audit.rglob('*')
+                                 if entry.is_file())
+                if not records:
+                    raise SystemExit('the archived readback retained no acquisition file')
+                inventory = package.producer_inventory(audit)
+                bound_audit = (envelope.get('audit') or {})
+                if inventory['inventory_sha256'] != bound_audit.get('inventory_sha256'):
+                    raise SystemExit('the current acquisition inventory differs from the one '
+                                     'the retained envelope binds')
+                return {'records': records, 'inventory_sha256': inventory['inventory_sha256']}
+
+            acquired = attempt(run, record, 'archive-acquisition-read', read_acquisition,
+                               audit=str(audit),
+                               scope='acquisition and index files under the extracted root')
+            records = acquired['records']
+
+            def stage_metadata():
+                # Retain the original archive and metadata bytes bound to this stage.
+                metadata = run / 'archive-metadata'
+                metadata.mkdir(exist_ok=True)
+                staged = []
+                for name in package.ARCHIVE_METADATA:
+                    shutil.copyfile(archived / name, metadata / name)
+                    staged.append(name)
+                # The retained copies are checked against the admitted identity, not
+                # only the reader's own later observation.
+                kept_archive = digest(retained_input)
+                if kept_archive != args.expected_archive_sha256:
+                    raise ArchiveCopyMismatch(
+                        'the retained archive copy differs from the admitted identity',
+                        partial=staged)
+                for name in package.ARCHIVE_METADATA:
+                    if digest(metadata / name) != documents[name]:
+                        raise ArchiveCopyMismatch(
+                            'the retained metadata copy differs from the admitted identity: '
+                            + name, partial=staged)
+                return {'documents_staged': sorted(staged),
+                        'retained_archive_sha256': kept_archive,
+                        'metadata': sorted(str(row.relative_to(run))
+                                           for row in metadata.iterdir())}
+
+            staged = attempt(run, record, 'archive-metadata-staged', stage_metadata,
+                             archive=retained_input.name, root=selected_root)
+
+            def write_envelope():
+                envelope_path = run / 'archive-envelope.json'
+                envelope_path.write_text(json.dumps(envelope, indent=2) + '\n')
+                return {'envelope': str(envelope_path.relative_to(run)),
+                        'envelope_sha256': digest(envelope_path)}
+
+            written = attempt(run, record, 'archive-envelope-written', write_envelope,
+                              document='the complete returned envelope, bound to this stage')
             return {'root': selected_root, 'manifest_member': manifest_member,
                     'members': len(current['members']),
                     'documents': sorted(documents), 'archive': str(args.archive),
@@ -531,12 +574,11 @@ def main():
                     'extracted_acquisition_records': len(records),
                     'expected_verdict_ids': expected_ids,
                     'audit_records_uncovered_ids': uncovered,
-                    'audit_inventory_sha256': audit_inventory['inventory_sha256'],
-                    'envelope': str(envelope_path.relative_to(run)),
-                    'envelope_sha256': digest(envelope_path),
+                    'audit_inventory_sha256': acquired['inventory_sha256'],
+                    'envelope': written['envelope'],
+                    'envelope_sha256': written['envelope_sha256'],
                     'original_archive': 'original-archive.tar.gz',
-                    'metadata': sorted(str(row.relative_to(run))
-                                       for row in metadata.iterdir()),
+                    'metadata': staged['metadata'],
                     'documents_staged_scope': 'this readback hashes extracted bytes and keeps '
                                               'the original archive bytes; the package staged '
                                               'record is separate'}

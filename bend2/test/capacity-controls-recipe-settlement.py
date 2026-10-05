@@ -64,6 +64,25 @@ class RecipeSettlement(unittest.TestCase):
         self.assertEqual(row['outcome'], 'failed')
         self.assertEqual(row['archive'], '/tmp/artifact.tar.gz')
         self.assertEqual(row['failure_type'], 'RuntimeError')
+        # A stage that says how far it got keeps those identities, and a stage that
+        # says nothing partial records no partial identity rather than a null one.
+        self.assertNotIn('partial_staged', row)
+
+        class StoppedAfterOne(SystemExit):
+            def __init__(self, message, partial=()):
+                super().__init__(message)
+                self.partial = list(partial)
+
+        def partially_failing():
+            raise StoppedAfterOne('staging stopped', partial=['bend2.json'])
+
+        with self.assertRaises(StoppedAfterOne):
+            RECIPE.attempt(self.run, self.record, 'archive-metadata-staged',
+                           partially_failing, archive='original-archive.tar.gz')
+        partial_row = self.rows()[2]
+        self.assertEqual(partial_row['name'], 'archive-metadata-staged')
+        self.assertEqual(partial_row['outcome'], 'failed')
+        self.assertEqual(partial_row['partial_staged'], ['bend2.json'])
 
     def test_a_record_failure_preserves_the_original_cause(self):
         # The declared row is written, then persisting the terminal row fails while
