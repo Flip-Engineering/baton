@@ -31,28 +31,26 @@ import ./snapshot.bend as Snap
 # containers keep their member or item chain. A numeric token is therefore never
 # converted through Bend U32 or a host number before it is judged.
 
-type RawItems is Data:
-  RInone{}
-  RIcons{head: RawValue, tail: RawItems}
-
-type RawMembers is Data:
-  RMnone{}
-  RMcons{key: String, value: RawValue, tail: RawMembers}
-
+# One self-referential tree, as `json/canonical.bend` uses: a Data constructor's
+# fields must be Data, so array and member chains are carried by the same type
+# rather than by three declarations that refer to each other. `Rarr{head, tail}` is
+# an array cell, `Rpair{key, value, rest}` a member cell, and `Rnil` terminates both.
 type RawValue is Data:
   Rnull{}
   Rtrue{}
   Rfalse{}
   Rnum{token: String}
   Rstr{value: String}
-  Rarr{items: RawItems}
-  Robj{members: RawMembers}
+  Rarr{head: RawValue, tail: RawValue}
+  Robj{members: RawValue}
+  Rpair{key: String, value: RawValue, rest: RawValue}
+  Rnil{}
 
-def raw_member(key: String, members: RawMembers) -> Maybe<&2, RawValue>:
+def raw_member(key: String, members: RawValue) -> Maybe<&2, RawValue>:
   match members:
-    case RMnone{}: None{}
-    case RMcons{+name, +value, +tail}:
+    case Rpair{+name, +value, +tail}:
       Bool.pick(Maybe<&2, RawValue>, String.eq(name, key), Some{value}, raw_member(key, tail))
+    case other: None{}
 
 # ---------------------------------------------------------------------------
 # The metadata profile. `params._meta` is an object; its optional `progressToken`
@@ -79,16 +77,18 @@ def progress_token_ok(v: RawValue) -> Bool:
     case Rnull{}: False{}
     case Rtrue{}: False{}
     case Rfalse{}: False{}
-    case Rarr{+items}: False{}
+    case Rarr{+head, +tail}: False{}
     case Robj{+members}: False{}
+    case Rpair{+key, +value, +rest}: False{}
+    case Rnil{}: False{}
 
-def meta_members_ok(members: RawMembers) -> Bool:
+def meta_members_ok(members: RawValue) -> Bool:
   match members:
-    case RMnone{}: True{}
-    case RMcons{+name, +value, +tail}:
+    case Rpair{+name, +value, +tail}:
       Bool.pick(Bool, String.eq(name, "progressToken"),
         Bool.pick(Bool, progress_token_ok(value), meta_members_ok(tail), False{}),
         meta_members_ok(tail))
+    case other: True{}
 
 def meta_of_ok(ok: Bool) -> MetaVerdict:
   match ok:
@@ -103,10 +103,12 @@ def metadata_validate(v: RawValue) -> MetaVerdict:
     case Rfalse{}: MetaNotObject{}
     case Rnum{+token}: MetaNotObject{}
     case Rstr{+value}: MetaNotObject{}
-    case Rarr{+items}: MetaNotObject{}
+    case Rarr{+head, +tail}: MetaNotObject{}
+    case Rpair{+key, +value, +rest}: MetaNotObject{}
+    case Rnil{}: MetaNotObject{}
 
 def meta_one(key: String, v: RawValue) -> RawValue:
-  Robj{RMcons{key, v, RMnone{}}}
+  Robj{Rpair{key, v, Rnil{}}}
 
 type MetaInput is Data:
   MetaAbsent{}
@@ -127,7 +129,7 @@ def codec_law_absent_metadata_is_admitted():
   {==}
 
 law codec_law_a_present_non_object_metadata_refuses:
-  {metadata_admit(MetaPresent{Rarr{RInone{}}}) == MetaNotObject{} : MetaVerdict}
+  {metadata_admit(MetaPresent{Rarr{Rnil{}, Rnil{}}}) == MetaNotObject{} : MetaVerdict}
 
 def codec_law_a_present_non_object_metadata_refuses():
   {==}
@@ -691,7 +693,7 @@ def codec_law_metadata_refuses_a_null_progress_token():
   {==}
 
 law codec_law_metadata_refuses_an_object_progress_token:
-  {metadata_validate(meta_one("progressToken", Robj{RMnone{}})) == MetaBadProgressToken{} : MetaVerdict}
+  {metadata_validate(meta_one("progressToken", Robj{Rnil{}})) == MetaBadProgressToken{} : MetaVerdict}
 
 def codec_law_metadata_refuses_an_object_progress_token():
   {==}
@@ -703,7 +705,7 @@ def codec_law_metadata_refuses_a_malformed_number_token():
   {==}
 
 law codec_law_metadata_refuses_a_non_object:
-  {metadata_validate(Rarr{RInone{}}) == MetaNotObject{} : MetaVerdict}
+  {metadata_validate(Rarr{Rnil{}, Rnil{}}) == MetaNotObject{} : MetaVerdict}
 
 def codec_law_metadata_refuses_a_non_object():
   {==}
@@ -993,7 +995,7 @@ def ref_members_base(id: String, subject: J.Json, projections: J.Json) -> J.Json
 def ref_members_extra(id: String, projections: J.Json) -> J.Json:
   J.Jpair{"id", J.Jstr{id},
   J.Jpair{"engine", J.Jstr{"typescript"},
-  J.Jpair{"subject", J.Jstr{"symbol"},
+  J.Jpair{"subject", cobj1("kind", J.Jstr{"symbol"}),
   J.Jpair{"snapshotId", J.Jstr{"s1"},
   J.Jpair{"projections", projections, J.Jpair{"extra", J.Jstr{"x"}, J.Jnil{}}}}}}}
 
@@ -1046,8 +1048,8 @@ type RawOpt is Data:
 
 type RawFrame is Data:
   RFRoot{root: RawOpt}
-  RFObj{id: String, key: String, members: RawMembers, up: RawFrame}
-  RFArr{id: String, key: String, items: RawItems, up: RawFrame}
+  RFObj{id: String, key: String, members: RawValue, up: RawFrame}
+  RFArr{id: String, key: String, items: RawValue, up: RawFrame}
   RFBad{condition: String}
 
 type FrameRead is Data:
@@ -1169,19 +1171,19 @@ def raw_or_null(m: Maybe<&2, RawValue>) -> RawValue:
 def raw_attach(+up: RawFrame, key: String, value: RawValue) -> RawFrame:
   match up:
     case RFRoot{+root}: RFRoot{ROsome{value}}
-    case RFObj{id, pkey, members, up2}: RFObj{id, pkey, RMcons{key, value, members}, up2}
-    case RFArr{id, pkey, items, up2}: RFArr{id, pkey, RIcons{value, items}, up2}
+    case RFObj{id, pkey, members, up2}: RFObj{id, pkey, Rpair{key, value, members}, up2}
+    case RFArr{id, pkey, items, up2}: RFArr{id, pkey, Rarr{value, items}, up2}
     case RFBad{condition}: RFBad{condition}
 
-def rev_items(a: RawItems, acc: RawItems) -> RawItems:
+def rev_items(a: RawValue, acc: RawValue) -> RawValue:
   match a:
-    case RInone{}: acc
-    case RIcons{+head, +tail}: rev_items(tail, RIcons{head, acc})
+    case Rarr{+head, +tail}: rev_items(tail, Rarr{head, acc})
+    case other: acc
 
-def close_items(items: RawItems) -> RawItems:
+def close_items(items: RawValue) -> RawValue:
   match items:
-    case RInone{}: RInone{}
-    case RIcons{+head, +tail}: rev_items(items, RInone{})
+    case Rarr{+head, +tail}: rev_items(items, Rnil{})
+    case other: Rnil{}
 
 # Each completed container is attached into its parent while unwinding, so a nested
 # object followed by a sibling field keeps its contents. Elements attach in arrival
@@ -1215,8 +1217,8 @@ def raw_hex_text(+stack: RawFrame, +d: DecodedRow) -> RawFrame:
 
 def raw_kind(+kind: String, +stack: RawFrame, +d: DecodedRow) -> RawFrame:
   match kind:
-    case "object": RFObj{dr_id(d), dr_key(d), RMnone{}, stack}
-    case "array": RFArr{dr_id(d), dr_key(d), RInone{}, stack}
+    case "object": RFObj{dr_id(d), dr_key(d), Rnil{}, stack}
+    case "array": RFArr{dr_id(d), dr_key(d), Rnil{}, stack}
     case "null": raw_attach(stack, dr_key(d), Rnull{})
     case "true": raw_attach(stack, dr_key(d), Rtrue{})
     case "false": raw_attach(stack, dr_key(d), Rfalse{})
@@ -1258,15 +1260,17 @@ def frame_read(rows: Req.Rows) -> FrameRead:
 
 # --- extraction ------------------------------------------------------------
 
-def raw_members_of(+v: RawValue) -> RawMembers:
+def raw_members_of(+v: RawValue) -> RawValue:
   match v:
     case Robj{members}: members
-    case Rnull{}: RMnone{}
-    case Rtrue{}: RMnone{}
-    case Rfalse{}: RMnone{}
-    case Rnum{+token}: RMnone{}
-    case Rstr{+value}: RMnone{}
-    case Rarr{+items}: RMnone{}
+    case Rnull{}: Rnil{}
+    case Rtrue{}: Rnil{}
+    case Rfalse{}: Rnil{}
+    case Rnum{+token}: Rnil{}
+    case Rstr{+value}: Rnil{}
+    case Rarr{+head, +tail}: Rnil{}
+    case Rpair{+key, +value, +rest}: Rnil{}
+    case Rnil{}: Rnil{}
 
 def raw_text_of(+v: RawValue) -> String:
   match v:
@@ -1275,8 +1279,10 @@ def raw_text_of(+v: RawValue) -> String:
     case Rtrue{}: SNil{}
     case Rfalse{}: SNil{}
     case Rnum{+token}: SNil{}
-    case Rarr{+items}: SNil{}
+    case Rarr{+head, +tail}: SNil{}
     case Robj{+members}: SNil{}
+    case Rpair{+key, +value, +rest}: SNil{}
+    case Rnil{}: SNil{}
 
 def raw_field(+v: RawValue, key: String) -> Maybe<&2, RawValue>:
   raw_member(key, raw_members_of(v))
@@ -1284,17 +1290,17 @@ def raw_field(+v: RawValue, key: String) -> Maybe<&2, RawValue>:
 def raw_field_text(+v: RawValue, key: String) -> String:
   raw_text_of(raw_or_null(raw_field(v, key)))
 
-def raw_keys_ok(allowed: Req.Words, members: RawMembers) -> Bool:
+def raw_keys_ok(allowed: Req.Words, members: RawValue) -> Bool:
   match members:
-    case RMnone{}: True{}
-    case RMcons{+key, +value, +tail}: Bool.pick(Bool, Req.word_member(allowed, key), raw_keys_ok(allowed, tail), False{})
+    case Rpair{+key, +value, +tail}: Bool.pick(Bool, Req.word_member(allowed, key), raw_keys_ok(allowed, tail), False{})
+    case other: True{}
 
 def present_raw(m: Maybe<&2, RawValue>) -> Bool:
   match m:
     case None{}: False{}
     case Some{+value}: True{}
 
-def raw_member_present(key: String, members: RawMembers) -> Bool:
+def raw_member_present(key: String, members: RawValue) -> Bool:
   present_raw(raw_member(key, members))
 
 def root_words() -> Req.Words:
@@ -1309,13 +1315,13 @@ def arguments_words(+tool: String) -> Req.Words:
     case "context-result": Req.words_from(["query"])
     case other: Req.words_from(Nil{})
 
-def arguments_required(+tool: String, members: RawMembers) -> Bool:
+def arguments_required(+tool: String, members: RawValue) -> Bool:
   match tool:
     case "context-query": Bool.pick(Bool, raw_member_present("query", members), raw_member_present("request", members), False{})
     case "context-result": raw_member_present("query", members)
     case other: True{}
 
-def arguments_closed_for(+tool: String, members: RawMembers) -> Bool:
+def arguments_closed_for(+tool: String, members: RawValue) -> Bool:
   Bool.pick(Bool, raw_keys_ok(arguments_words(tool), members), arguments_required(tool, members), False{})
 
 # --- the request container conversion --------------------------------------
@@ -1324,96 +1330,85 @@ type JsonConv is Data:
   JcJson{value: J.Json}
   JcRefused{condition: String}
 
-type ArrMode is Data:
-  AMvalue{}
-  AMtail{}
+# The conversion is one structurally self-recursive walk over the private tree,
+# like `json/canonical.bend`'s emitter: every recursive call passes a strict subterm
+# as its first argument and the mode disambiguates a member cell, an array cell and
+# a complete value. The result-combining steps are declared before it and never
+# recurse, so there is no mutual recursion. A number is converted by the qualified
+# U32 decoder over its exact token, and the first refusal in document order wins.
 
-def array_conv(items: RawItems, mode: ArrMode) -> JsonConv:
-  match items:
-    case RInone{}: arr_empty(mode)
-    case RIcons{+head, +tail}: arr_cell(raw_to_json(head), tail, mode)
+type ConvMode is Data:
+  CmValue{}
+  CmArray{}
+  CmObject{}
 
-def arr_empty(mode: ArrMode) -> JsonConv:
-  match mode:
-    case AMvalue{}: JcJson{J.Jarr{J.Jnil{}, J.Jnil{}}}
-    case AMtail{}: JcJson{J.Jnil{}}
-
-def arr_cell(c: JsonConv, +tail: RawItems, mode: ArrMode) -> JsonConv:
+def cv_ok(c: JsonConv) -> Bool:
   match c:
-    case JcJson{value}: arr_rest(array_conv(tail, AMtail{}), value)
-    case JcRefused{condition}: JcRefused{condition}
+    case JcJson{+value}: True{}
+    case JcRefused{+condition}: False{}
 
-def arr_rest(t: JsonConv, +value: J.Json) -> JsonConv:
-  match t:
-    case JcJson{rest}: JcJson{J.Jarr{value, rest}}
-    case JcRefused{condition}: JcRefused{condition}
-
-def members_conv(members: RawMembers) -> JsonConv:
-  match members:
-    case RMnone{}: JcJson{J.Jnil{}}
-    case RMcons{+key, +value, +tail}: pair_conv(raw_to_json(value), key, tail)
-
-def pair_conv(c: JsonConv, key: String, members: RawMembers) -> JsonConv:
+def cv_json(c: JsonConv) -> J.Json:
   match c:
-    case JcJson{value}: pair_then(members_conv(members), value, key)
-    case JcRefused{condition}: JcRefused{condition}
+    case JcJson{value}: value
+    case JcRefused{+condition}: J.Jnull{}
 
-def pair_then(rest: JsonConv, +value: J.Json, key: String) -> JsonConv:
-  match rest:
-    case JcJson{rest_value}: JcJson{J.Jpair{key, value, rest_value}}
-    case JcRefused{condition}: JcRefused{condition}
+def cv_bad(c: JsonConv) -> String:
+  match c:
+    case JcJson{+value}: SNil{}
+    case JcRefused{condition}: condition
 
 def uint_conv(r: Uint.UintResult) -> JsonConv:
   match r:
     case Uint.UintAccepted{value}: JcJson{J.Jint{value}}
     case Uint.UintRefused{+reason}: JcRefused{"nonU32NumberInRequest"}
 
-# The number conversion runs the first-party qualified U32 decoder over the exact
-# document token, so admission is the canonical unsigned decimal domain itself
-# rather than a host parse whose edge behaviour is assumed.
 def number_conv(+token: String) -> JsonConv:
   uint_conv(Uint.finish(Uint.feed(token, Uint.UintStart{})))
 
-def object_conv(members: RawMembers) -> JsonConv:
-  obj_wrap(members_conv(members))
+def is_object_mode(mode: ConvMode) -> Bool:
+  match mode:
+    case CmObject{}: True{}
+    case CmValue{}: False{}
+    case CmArray{}: False{}
 
-def obj_wrap(c: JsonConv) -> JsonConv:
-  match c:
-    case JcJson{value}: JcJson{J.Jobj{value}}
-    case JcRefused{condition}: JcRefused{condition}
+def arr_rest(rest: JsonConv, +head: J.Json) -> JsonConv:
+  Bool.pick(JsonConv, cv_ok(rest), JcJson{J.Jarr{head, cv_json(rest)}}, JcRefused{cv_bad(rest)})
 
-def raw_to_json(+v: RawValue) -> JsonConv:
+def arr_step(c: JsonConv, rest: JsonConv, mode: ConvMode) -> JsonConv:
+  Bool.pick(JsonConv, cv_ok(c), arr_mode(rest, cv_json(c), mode), JcRefused{cv_bad(c)})
+
+def arr_mode(rest: JsonConv, +head: J.Json, mode: ConvMode) -> JsonConv:
+  Bool.pick(JsonConv, is_object_mode(mode), JcRefused{"unexpectedArrayCell"}, arr_rest(rest, head))
+
+def obj_step(c: JsonConv, mode: ConvMode) -> JsonConv:
+  Bool.pick(JsonConv, cv_ok(c), obj_mode(cv_json(c), mode), JcRefused{cv_bad(c)})
+
+def obj_mode(members: J.Json, mode: ConvMode) -> JsonConv:
+  Bool.pick(JsonConv, is_object_mode(mode), JcRefused{"unexpectedObject"}, JcJson{J.Jobj{members}})
+
+def pair_rest(rest: JsonConv, +key: String, +value: J.Json) -> JsonConv:
+  Bool.pick(JsonConv, cv_ok(rest), JcJson{J.Jpair{key, value, cv_json(rest)}}, JcRefused{cv_bad(rest)})
+
+def pair_step(c: JsonConv, rest: JsonConv, key: String, mode: ConvMode) -> JsonConv:
+  Bool.pick(JsonConv, cv_ok(c), pair_mode(rest, key, cv_json(c), mode), JcRefused{cv_bad(c)})
+
+def pair_mode(rest: JsonConv, +key: String, +value: J.Json, mode: ConvMode) -> JsonConv:
+  Bool.pick(JsonConv, is_object_mode(mode), pair_rest(rest, key, value), JcRefused{"unexpectedMemberCell"})
+
+def conv(+v: RawValue, +mode: ConvMode) -> JsonConv:
   match v:
     case Rnull{}: JcJson{J.Jnull{}}
     case Rtrue{}: JcJson{J.Jtrue{}}
     case Rfalse{}: JcJson{J.Jfalse{}}
     case Rnum{token}: number_conv(token)
     case Rstr{value}: JcJson{J.Jstr{value}}
-    case Rarr{items}: array_conv(items, AMvalue{})
-    case Robj{members}: object_conv(members)
+    case Rarr{+head, +tail}: arr_step(conv(head, CmValue{}), conv(tail, CmArray{}), mode)
+    case Robj{members}: obj_step(conv(members, CmObject{}), mode)
+    case Rpair{+key, +value, +rest}: pair_step(conv(value, CmValue{}), conv(rest, CmObject{}), key, mode)
+    case Rnil{}: JcJson{J.Jnil{}}
 
-def request_conv_ok(c: JsonConv) -> RequestText:
-  match c:
-    case JcJson{value}: RtText{J.json_text(value)}
-    case JcRefused{condition}: RtBad{condition}
-
-# The canonical text of a request object, or the condition that refused it. A
-# non-object or a number that is not an exact U32 token refuses here rather than
-# being coerced into another spelling.
-def request_read(+v: RawValue) -> RequestText:
-  match v:
-    case Robj{members}: request_conv_ok(raw_to_json(v))
-    case Rnull{}: RtBad{"requestNotObject"}
-    case Rtrue{}: RtBad{"requestNotObject"}
-    case Rfalse{}: RtBad{"requestNotObject"}
-    case Rnum{+token}: RtBad{"requestNotObject"}
-    case Rstr{+value}: RtBad{"requestNotObject"}
-    case Rarr{+items}: RtBad{"requestNotObject"}
-
-def request_field(m: Maybe<&2, RawValue>) -> RequestText:
-  match m:
-    case None{}: RtAbsent{}
-    case Some{value}: request_read(value)
+def raw_to_json(+v: RawValue) -> JsonConv:
+  conv(v, CmValue{})
 
 def opt_text_of(m: Maybe<&2, RawValue>) -> Context.OptText:
   match m:
@@ -1427,8 +1422,10 @@ def frame_id_of(+v: RawValue) -> Context.FrameId:
     case Rnull{}: Context.IdNumber{SNil{}}
     case Rtrue{}: Context.IdNumber{SNil{}}
     case Rfalse{}: Context.IdNumber{SNil{}}
-    case Rarr{+items}: Context.IdNumber{SNil{}}
+    case Rarr{+head, +tail}: Context.IdNumber{SNil{}}
     case Robj{+members}: Context.IdNumber{SNil{}}
+    case Rpair{+key, +value, +rest}: Context.IdNumber{SNil{}}
+    case Rnil{}: Context.IdNumber{SNil{}}
 
 def params_of(+frame: RawValue) -> RawValue:
   raw_or_null(raw_field(frame, "params"))
@@ -2011,12 +2008,14 @@ def sole_value(+v: RawValue) -> String:
     case Rfalse{}: SNil{}
     case Rnum{+token}: SNil{}
     case Rstr{+value}: SNil{}
-    case Rarr{+items}: SNil{}
+    case Rarr{+head, +tail}: SNil{}
+    case Rpair{+key, +value, +rest}: SNil{}
+    case Rnil{}: SNil{}
 
-def sole_member(+m: RawMembers) -> String:
+def sole_member(+m: RawValue) -> String:
   match m:
-    case RMcons{+key, +value, +tail}: raw_text_of(value)
-    case RMnone{}: SNil{}
+    case Rpair{+key, +value, +tail}: raw_text_of(value)
+    case other: SNil{}
 
 # Values whose bytes are written literally: an astral code point, a decoded NUL and
 # a raw surrogate sequence. The demo encoder has no four-byte branch, so these do
