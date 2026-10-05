@@ -171,6 +171,9 @@ def archive_inputs(archive, compiler):
 RECEIPT_SCHEMA = 'baton2-native-gate-receipt-v2'
 CONTROL_SCRIPT = 'bend2/scripts/laws-check.mjs'
 CONTROL_FIELDS = ('id', 'kind', 'law', 'module', 'definition_sha256')
+VERIFIER_MEMBERS = ('checker_sha256', 'aggregate_module_sha256', 'classifier_module_sha256',
+                    'work_set_module_sha256', 'laws_common_module_sha256',
+                    'definitions_module_sha256')
 CHILD_FIELDS = ('exit_code', 'signal', 'spawn_error')
 ORIGIN_FIELDS = ('workflow', 'run_id', 'run_attempt', 'jobs', 'image_os', 'image_version')
 
@@ -592,14 +595,28 @@ def classify_control(case, result, streams, baseline, evidence_root, source, com
             + json.dumps(verdict.get('schema')))
     require(verdict.get('id') == case.get('id'),
             'The checker classification answered another case')
+    require_verifier_closure(verdict, json.dumps(case.get('id')))
     return verdict
+
+
+def require_verifier_closure(verdict, label):
+    """A verdict must name its whole transitive verifier closure."""
+    verifier = verdict.get('verifier')
+    require(isinstance(verifier, dict), 'A verdict names no verifier closure: ' + label)
+    for member in VERIFIER_MEMBERS:
+        require(isinstance(verifier.get(member), str) and verifier[member],
+                'A verdict omits verifier ' + member + ': ' + label)
+    return {member: verifier[member] for member in VERIFIER_MEMBERS}
 
 
 def verify_process(record, baseline, label):
     """Validate one recorded child outcome by type and state consistency."""
     outcome = record.get('process')
     require(isinstance(outcome, dict), 'A controls evidence ' + label + ' omits its process outcome')
-    state = outcome.get('state')
+    for field in ('state', 'exit_code', 'signal', 'spawn_error'):
+        require(field in outcome,
+                'A controls evidence ' + label + ' omits its ' + field + ' field')
+    state = outcome['state']
     require(state in ('exited', 'signalled', 'spawn-error', 'not-run'),
             'A controls evidence ' + label + ' records state ' + json.dumps(state))
     signal = outcome.get('signal')
@@ -804,6 +821,7 @@ def controls_evidence(directory, initial, compiler):
                     and verdict.get('evidence_verified') is True,
                     'The checker classifier did not qualify this control as an intended refusal: '
                     + json.dumps(identity) + ' ' + json.dumps(verdict.get('class')))
+            closure = {member: verdict['verifier'][member] for member in VERIFIER_MEMBERS}
             verdicts[identity] = {'id': identity, 'class': verdict.get('class'),
                                   'law': verdict.get('law'),
                                   'attributed_law': verdict.get('attributed_law'),
@@ -814,7 +832,7 @@ def controls_evidence(directory, initial, compiler):
                                   'definition_sha256': control['definition_sha256'],
                                   'case_sha256': hashlib.sha256(
                                       canonical_record_bytes(control)).hexdigest(),
-                                  'group': module}
+                                  'group': module, 'verifier': closure}
             require(verdict.get('attributed_law') == control['law']
                     and verdict.get('law') == control['law'],
                     'The classified diagnostic names another law: ' + json.dumps(identity))
@@ -1581,8 +1599,8 @@ def main():
     parser.add_argument('--release-version', help='version identifier for a release archive; requires the project root LICENSE')
     parser.add_argument('--gate-receipt', type=Path, help='reuse a completed exact-source three-gate summary')
     parser.add_argument('--gate-receipt-sha256', help='required SHA256 pin when reusing a gate receipt')
- 
- 
+    parser.add_argument('--context-node22', type=Path,
+                        help='exact Node v22.15.0 executable for the context package floor gate')
     parser.add_argument('--controls-evidence', type=Path,
                         help='directory holding controls-summary.json and its control logs, validated against this source')
     args = parser.parse_args()
