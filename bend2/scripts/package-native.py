@@ -712,8 +712,15 @@ def ordinary_evidence(index_path, expected, compiler=None, declared_root=None,
     recorded_inputs = index.get('inputs')
     if isinstance(recorded_inputs, dict):
         input_shape = 'map'
-        input_rows = [{'path': name, 'sha256': digest}
-                      for name, digest in recorded_inputs.items()]
+        input_rows = []
+        for name, value in recorded_inputs.items():
+            if isinstance(value, dict):
+                # The current producer records an object per path, whose digest
+                # field is read here; any size it carries is checked against the
+                # member when the inventory is verified elsewhere.
+                input_rows.append({'path': name, 'sha256': value.get('sha256')})
+            else:
+                input_rows.append({'path': name, 'sha256': value})
     elif isinstance(recorded_inputs, list):
         input_shape = 'rows'
         input_rows = recorded_inputs
@@ -852,7 +859,8 @@ def ordinary_evidence(index_path, expected, compiler=None, declared_root=None,
             'audit': audit_inventory, 'raw': raw}
 
 
-def validation(logs, remote=None, ordinary=None, compiler=None, producer_root=None, audit=None):
+def validation(logs, remote=None, ordinary=None, compiler=None, producer_root=None, audit=None,
+               consume_ordinary=True):
     expected = discover_controls()
     laws = [control for control in expected['controls'] if control['kind'] == 'proof-removal']
     mutations = [control for control in expected['controls'] if control['kind'] == 'mutation']
@@ -879,11 +887,40 @@ def validation(logs, remote=None, ordinary=None, compiler=None, producer_root=No
         reconcile_controls(expected, law_rows, mutation_rows)
         parents = parent_verdicts(law_text)
         envelope = ordinary_envelope(law_text)
+        # The complete invocation prints the index it wrote, so the package
+        # consumes the run's own index instead of an externally named file. An
+        # explicit argument is checked against that recorded location.
+        recorded_index = envelope.get('index_path')
+        if not consume_ordinary:
+            ordinary, ordinary_source = None, None
+        elif ordinary is None:
+            require(isinstance(recorded_index, str) and recorded_index,
+                    'The checker envelope names no ordinary index: ' + json.dumps(recorded_index))
+            require(Path(recorded_index).is_file(),
+                    'The checker envelope names an ordinary index that is absent: '
+                    + recorded_index)
+            ordinary = Path(recorded_index)
+            ordinary_source = 'envelope'
+        else:
+            ordinary_source = 'argument'
     native_text = (logs / 'check-native.log').read_text(errors='replace')
     result = {'laws': counts, 'controls_sha256': expected['sha256'],
               'route': 'remote-module-groups' if remote is not None else 'local-complete',
               'native': reconcile_native(native_text)}
     if ordinary is not None:
+        if ordinary_source == 'envelope':
+            # The checker writes its index under its own scratch, so the package
+            # retains the graph it read before consuming it and keeps the
+            # producer root beside the retained run root.
+            source_root = verify_ordinary_graph(ordinary_root(ordinary, None),
+                                                'The ordinary evidence source')
+            require(not (logs / 'evidence').exists(),
+                    'The package run already retains ordinary evidence')
+            shutil.copytree(source_root / 'evidence', logs / 'evidence')
+            verify_ordinary_graph(logs, 'The retained ordinary evidence')
+            ordinary = logs / 'evidence' / 'index.json'
+            if producer_root is None:
+                producer_root = source_root
         consumed = ordinary_evidence(ordinary, expected, compiler, None, parents,
                                      producer_root, envelope, audit)
         retained = Path(consumed['path']).resolve()
@@ -891,6 +928,7 @@ def validation(logs, remote=None, ordinary=None, compiler=None, producer_root=No
                 'The consumed ordinary evidence is not retained under the package run: '
                 + str(retained))
         consumed['retained'] = str(retained.relative_to(logs.resolve()))
+        consumed['selected'] = ordinary_source
         result['ordinary'] = consumed
     return result
 
@@ -1125,7 +1163,7 @@ def reuse_gates(path, expected_sha, compiler, logs, initial):
     require(summary['stages'][0]['after']['binary_sha256'] == initial['binary_sha256'],
             'The original build-stage binary differs from the receipt binary')
     recorded = summary['validation']
-    fresh = validation(logs, summary.get('controls_evidence'))
+    fresh = validation(logs, summary.get('controls_evidence'), consume_ordinary=False)
     require({key: value for key, value in recorded.items() if key != 'ordinary'} == fresh,
             'The supplied receipt validation disagrees with its full logs')
     ordinary = recorded.get('ordinary')
@@ -1149,8 +1187,19 @@ def reuse_gates(path, expected_sha, compiler, logs, initial):
                 and consumed['schema'] == ordinary['schema']
                 and consumed['raw'] == ordinary['raw'],
                 'The copied ordinary evidence disagrees with the receipt')
+        require(consumed['recomputed'] == ordinary['recomputed'],
+                'The reused run reclassified the same bytes differently')
+        require(consumed['input_shape'] == ordinary['input_shape']
+                and consumed['inputs'] == ordinary['inputs'],
+                'The reused run reads another admitted input inventory')
         require(consumed['run_root'] == str(logs),
                 'The copied ordinary evidence is not rooted at the reused run')
+        # The receipt keeps the acquisition scope of the original run; this run
+        # records its own current scope beside it, so neither replaces the other.
+        require(consumed['audit'] is not None,
+                'The reused run recorded no classifier acquisition scope')
+        summary.setdefault('acquired_now', {})['ordinary_audit'] = consumed['audit']
+        summary.setdefault('acquired_now', {})['recorded_audit'] = ordinary.get('audit')
     destination = logs / 'summary.json'
     shutil.copyfile(path, destination)
     return destination, summary

@@ -127,7 +127,9 @@ class PackageGateReceipt(unittest.TestCase):
         mutations = self.complete_mutation_rows() if mutations is None else mutations
         counts = (len(self.laws()), len(self.mutations()),
                   len(self.laws()) + len(self.mutations()) + 1)
-        lines = [json.dumps(envelope or self.envelope())]
+        if envelope is None:
+            envelope = self.envelope_for(self.ordinary_index(self.home / 'run'))
+        lines = [json.dumps(envelope)]
         lines += ['{"check":"entry compiles with every law proven","passed":true}']
         lines += [json.dumps(row) for row in laws]
         lines += [json.dumps(row) for row in mutations]
@@ -782,12 +784,14 @@ class PackageGateReceipt(unittest.TestCase):
     def test_the_ordinary_evidence_index_is_consumed(self):
         path = self.ordinary_index(self.logs / 'run')
         self.write_logs(envelope=self.envelope_for(path))
-        result = PACKAGE.validation(self.logs, None, path, self.compiler())
+        result = PACKAGE.validation(self.logs, None, None, self.compiler(),
+                                    audit=self.logs / 'classifier-audit')
+        self.assertEqual(result['ordinary']['selected'], 'envelope')
         self.assertEqual(result['ordinary']['cases'], len(self.controls['controls']) + 1)
         self.assertEqual(result['ordinary']['schema'], 'capacity-controls/ordinary-evidence@2')
-        self.assertEqual(result['ordinary']['retained'], 'run/evidence/index.json')
+        self.assertEqual(result['ordinary']['retained'], 'evidence/index.json')
         self.assertEqual(result['ordinary']['producer_root'], str((self.logs / 'run').resolve()))
-        self.assertEqual(result['ordinary']['run_root'], str((self.logs / 'run').resolve()))
+        self.assertEqual(result['ordinary']['run_root'], str((self.logs / 'evidence').resolve()))
         self.assertEqual(result['ordinary']['invocation'], 'ordinary:fixture-nonce')
         self.assertEqual(result['ordinary']['verifier'], self.verifier)
         self.assertEqual(result['ordinary']['input_rows'], 1)
@@ -799,30 +803,48 @@ class PackageGateReceipt(unittest.TestCase):
         for identity, verdict in result['ordinary']['recomputed'].items():
             self.assertEqual(verdict['class'], 'intended-law-refusal')
             self.assertTrue(verdict['qualified'])
-            self.assertEqual(self.verdicts[identity]['streams']['stdout']['path'],
-                             'evidence/' + identity.replace(':', '_') + '.stdout')
+            member = pathlib.Path(self.verdicts[identity]['streams']['stdout']['path'])
+            self.assertTrue(member.is_absolute())
+            self.assertEqual(member.name, identity.replace(':', '_') + '.stdout')
             self.assertIsNotNone(self.verdicts[identity]['baseline'])
             self.assertIsNotNone(self.verdicts[identity]['delta'])
 
+    def test_an_explicit_index_argument_is_consumed(self):
+        path = self.ordinary_index(self.logs / 'run')
+        self.write_logs(envelope=self.envelope_for(path))
+        result = PACKAGE.validation(self.logs, None, path, self.compiler(),
+                                    audit=self.logs / 'classifier-audit')
+        self.assertEqual(result['ordinary']['selected'], 'argument')
+        self.assertEqual(result['ordinary']['retained'], 'run/evidence/index.json')
+        with self.assertRaisesRegex(RuntimeError, 'already retains ordinary evidence'):
+            PACKAGE.validation(self.logs, None, path, self.compiler())
+
     def test_the_index_carries_one_run_identity(self):
         """One contract: the run block is authoritative, both input shapes read."""
-        path = self.ordinary_index(self.logs / 'run-toplevel', top_level_identity=True)
-        self.write_logs(envelope=self.envelope_for(path))
-        result = PACKAGE.validation(self.logs, None, path, self.compiler())
+        def run(name, **options):
+            self.logs = self.home / ('logs-' + name)
+            self.logs.mkdir()
+            path = self.ordinary_index(self.logs / 'run', **options)
+            self.write_logs(envelope=self.envelope_for(path))
+            return path
+
+        path = run('toplevel', top_level_identity=True)
+        result = PACKAGE.validation(self.logs, None, None, self.compiler())
         self.assertEqual(result['ordinary']['cases'], len(self.controls['controls']) + 1)
 
-        path = self.ordinary_index(
-            self.logs / 'run-rows',
-            inputs=[{'path': 'bend2/scripts/laws-check.mjs',
-                     'sha256': hashlib.sha256(b'checker').hexdigest()}])
-        self.write_logs(envelope=self.envelope_for(path))
-        result = PACKAGE.validation(self.logs, None, path, self.compiler())
+        run('rows', inputs=[{'path': 'bend2/scripts/laws-check.mjs',
+                             'sha256': hashlib.sha256(b'checker').hexdigest()}])
+        result = PACKAGE.validation(self.logs, None, None, self.compiler())
         self.assertEqual(result['ordinary']['input_shape'], 'rows')
 
-        path = self.ordinary_index(self.logs / 'run-conflict', top_level_conflict=True)
-        self.write_logs(envelope=self.envelope_for(path))
+        run('mapped-objects', inputs={'bend2/scripts/laws-check.mjs':
+                                      {'sha256': hashlib.sha256(b'checker').hexdigest()}})
+        result = PACKAGE.validation(self.logs, None, None, self.compiler())
+        self.assertEqual(result['ordinary']['input_shape'], 'map')
+
+        run('conflict', top_level_conflict=True)
         with self.assertRaisesRegex(RuntimeError, 'two different index_path'):
-            PACKAGE.validation(self.logs, None, path, self.compiler())
+            PACKAGE.validation(self.logs, None, None, self.compiler())
 
     def test_ordinary_evidence_defects_refuse(self):
         cases = [('incomplete run', dict(complete=False), 'does not declare a completed run'),
@@ -847,7 +869,9 @@ class PackageGateReceipt(unittest.TestCase):
                  ('no inputs', dict(inputs={}), 'no admitted input inventory')]
         for name, options, message in cases:
             with self.subTest(name=name):
-                run_root = self.logs / ('run-' + name.replace(' ', '-'))
+                self.logs = self.home / ('logs-' + name.replace(' ', '-'))
+                self.logs.mkdir()
+                run_root = self.logs / 'run'
                 path = self.ordinary_index(run_root, **options)
                 self.write_logs(envelope=self.envelope_for(path))
                 with self.assertRaisesRegex(RuntimeError, message):
