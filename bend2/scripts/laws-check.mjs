@@ -13,7 +13,7 @@
 
 import { execFileSync, spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { cpSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
+import { cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
 import { join, relative } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { classifyCase } from './capacity-controls/classify.mjs';
@@ -132,9 +132,9 @@ const gitIdentity = () => {
 const ordinaryNonce = `${Date.now()}-${process.pid}-${Math.random().toString(36).slice(2, 10)}`;
 const runIdentity = {
   source: gitIdentity(),
-  compiler: { path: resolve(BEND), version, sha256: sha256Hex(readFileSync(BEND)) },
+  compiler: { path: BEND, version, sha256: sha256Of(readFileSync(BEND)) },
   entry: ENTRY,
-  checker_argv: [resolve(BEND), ENTRY, "--check-only"],
+  checker_argv: [BEND, ENTRY, "--check-only"],
   origin: {
     workflow: process.env.GITHUB_WORKFLOW ?? null,
     run_id: process.env.GITHUB_RUN_ID ?? null,
