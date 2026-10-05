@@ -149,7 +149,7 @@ const runIdentity = {
     checker_sha256: sha256Of(readFileSync(join(ROOT, "bend2", "scripts", "laws-check.mjs"))),
     laws_common_module_sha256: sha256Of(readFileSync(join(ROOT, "bend2", "scripts", "laws-common.mjs"))),
     definitions_module_sha256: sha256Of(readFileSync(join(ROOT, "bend2", "scripts", "laws-mutations.mjs"))),
-    classify_module_sha256: sha256Of(readFileSync(join(ROOT, "bend2", "scripts", "capacity-controls", "classify.mjs"))),
+    classifier_module_sha256: sha256Of(readFileSync(join(ROOT, "bend2", "scripts", "capacity-controls", "classify.mjs"))),
     work_set_module_sha256: sha256Of(readFileSync(join(ROOT, "bend2", "scripts", "capacity-controls", "work-set.mjs"))),
     aggregate_module_sha256: sha256Of(readFileSync(join(ROOT, "bend2", "scripts", "capacity-controls", "aggregate.mjs"))),
     group_run_module_sha256: sha256Of(readFileSync(join(ROOT, "bend2", "scripts", "capacity-controls", "group-run.mjs"))),
