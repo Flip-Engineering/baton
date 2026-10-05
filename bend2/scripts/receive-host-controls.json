@@ -45,7 +45,7 @@
       "find": "          consume(db,player,id,log,handle,harness,next_cursor,message,activity,ended,next_filter,codex_state,",
       "replace": "          consume(db,player,id,log,handle,harness,next_cursor,message,last_activity,ended,next_filter,codex_state,",
       "targets": ["ControlledFrames.test_an_observed_later_failure_is_reported_over_an_older_observed_error"],
-      "why": "The recursion forwards the state carried into the current frame instead of the state this frame produced, so the terminal frame sees the activity as of the frame before the later completion and keeps its own earlier error rather than the completion the stream reached last. When the first assistant frame is also the only assistant activity, the forwarded state can remain initially empty throughout, in which case the predicted mismatch is the unavailable frame instead of the earlier error. This control shares its target text with the empty-activity control and is distinguished only by its replacement."
+      "why": "The replacement forwards the state the recursion received, so the state this frame computed never reaches the next frame. retained_output initializes that state empty, so by induction it stays empty for every frame: the normalizer sees no observed activity, cannot justify the retained completion, and the ordered later-failure fixture is predicted to report the unavailable frame rather than the later failure. This prediction is not a measurement. The control shares its target text with the empty-activity control and is distinguished only by its replacement."
     }
   ],
   "remote_recipe": [

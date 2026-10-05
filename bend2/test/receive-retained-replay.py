@@ -456,12 +456,12 @@ class ControlledFrames(ReplayBase):
                             provider='kimi-code', model='k3', responseId='response-e0', content=[])
         later = assistant(stopReason='error', errorStatus=429, errorMessage='429 later failure',
                           provider='kimi-code', model='k3', responseId='response-e2', content=[])
+        terminal = {'type': 'agent_end', 'isTerminal': True, 'messages': [earlier, 'elided']}
         notifications, code, status, bodies = self.replay([
             {'type': 'agent_start'},
             {'type': 'message_end', 'message': earlier},
             {'type': 'message_end', 'message': later},
-            {'type': 'agent_end', 'isTerminal': True, 'messages': [earlier, 'elided']}],
-            task='observed-later-failure')
+            terminal], task='observed-later-failure')
         self.assertNotEqual(code, 0)
         self.assertIn('exit 0', status)
         failure = [body for body in bodies if 'Native model failure' in body]
@@ -479,14 +479,9 @@ class ControlledFrames(ReplayBase):
         self.assertEqual(selected.get('errorStatus'), 429)
         self.assertEqual(selected.get('errorMessage'), '429 later failure')
         public = self.public_log_terminals()
-        self.assertTrue(public, 'the terminal frame was not retained in the public log')
-        self.assertEqual(public[-1]['messages'][-1], 'elided')
-        self.assertIn('403 earlier failure', json.dumps(public[-1]))
+        self.assertEqual(public, [terminal], 'the public log terminal is not the emitted terminal')
         spool = self.spool_terminals(self.original_attempt)
-        self.assertEqual(spool, public,
-                         'the raw spool terminal is not the public log terminal')
-        self.assertEqual(spool[-1]['messages'][-1], 'elided')
-        self.assertIn('403 earlier failure', json.dumps(spool[-1]))
+        self.assertEqual(spool, [terminal], 'the raw spool terminal is not the emitted terminal')
 
     def test_two_missing_identities_cannot_establish_the_current_error(self):
         """With no response identity on either side, the result is the unavailable frame."""
