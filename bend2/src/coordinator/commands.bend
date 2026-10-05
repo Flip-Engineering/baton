@@ -6,6 +6,8 @@ type IndexText is Data:
 
 type Command is Data:
   Recruit{id: String, parent: String, harness: String, model: String, effort: String, repo: String, branch: String, path: String, base: String}
+  StructuralRecruit{id: String, parent: String, harness: String, model: String, effort: String, repo: String, branch: String, path: String, base: String, options: List<&2,String>}
+  StructuralEnsemble{id: String, owner: String, coupling: String, options: List<&2,String>}
   Worktree{id: String}
   Receive{session: String, cmd: String, model: String, effort: String, cwd: String, log: String, message: String}
   Start{session: String, harness: String, cmd: String, model: String, effort: String, cwd: String, log: String, id: String, task: String}
@@ -378,6 +380,8 @@ def sql(command: Command) -> String:
     case RemoteTip{repo,branch,remote}: ""
     case ObservedUsage{session}: ""
     case Recruit{id,parent,harness,model,effort,repo,branch,path,base}: ""
+    case StructuralRecruit{id,parent,harness,model,effort,repo,branch,path,base,options}: ""
+    case StructuralEnsemble{id,owner,coupling,options}: ""
     case Worktree{id}: ""
     case KnowledgeRecord{id,author,claim,evidence,limits}: ""
     case KnowledgeRead{reader}: ""
@@ -502,13 +506,25 @@ def parse_inbox_index(args: List<&2,String>) -> Command:
     case +id <> +rest:
       Bool.pick(Command,index_legacy_args(rest),parse_legacy("inbox" <> id <> rest),index_command(read_args(rest,ReadArgs{IndexExact{id},IndexAny{},IndexAny{},IndexAny{},IndexAny{},False{},False{},"",True{}})))
 
+def parse_structural_recruit(+args: List<&2,String>) -> Command:
+  match args:
+    case verb <> id <> parent <> harness <> model <> effort <> repo <> branch <> path <> base <> first <> rest:
+      Bool.pick(Command,String.eq(verb,"recruit"),StructuralRecruit{id,parent,harness,model,effort,repo,branch,path,base,first <> rest},parse_legacy(args))
+    case _: parse_legacy(args)
+
+def parse_structural(+args: List<&2,String>) -> Command:
+  match args:
+    case +verb <> id <> owner <> coupling <> first <> rest:
+      Bool.pick(Command,String.eq(verb,"ensemble"),StructuralEnsemble{id,owner,coupling,first <> rest},parse_structural_recruit(args))
+    case _: parse_legacy(args)
+
 def parse_shared(args: List<&2,String>) -> Command:
   match args:
     case Nil{}: Invalid{}
     case +verb <> +rest:
       Bool.pick(Command,String.eq(verb,"inbox"),parse_inbox_index(rest),
       Bool.pick(Command,String.eq(verb,"pending"),Bool.pick(Command,index_legacy_args(rest),parse_legacy(verb <> rest),index_command(read_args(rest,ReadArgs{IndexAny{},IndexAny{},IndexAny{},IndexAny{},IndexAny{},False{},False{},"",True{}}))),
-      Bool.pick(Command,String.eq(verb,"orchestra"),orchestra_command(read_args(rest,ReadArgs{IndexAny{},IndexAny{},IndexAny{},IndexAny{},IndexAny{},False{},False{},"",True{}})),parse_legacy(verb <> rest))))
+      Bool.pick(Command,String.eq(verb,"orchestra"),orchestra_command(read_args(rest,ReadArgs{IndexAny{},IndexAny{},IndexAny{},IndexAny{},IndexAny{},False{},False{},"",True{}})),parse_structural(verb <> rest))))
 
 def shared_args(args: List<String>) -> List<&2,String>:
   match args:
@@ -550,4 +566,33 @@ law remote_tip_parser_keeps_the_declared_names:
   {parse(["remote-tip",repo,branch,remote]) == RemoteTip{repo,branch,remote} : Command}
 
 def remote_tip_parser_keeps_the_declared_names(repo,branch,remote):
+  {==}
+
+
+law structural_ensemble_parser_preserves_the_complete_literal_tail:
+  for id: String
+  for owner: String
+  for coupling: String
+  for first: String
+  for rest: List<&2,String>
+  {parse_structural("ensemble" <> id <> owner <> coupling <> first <> rest) == StructuralEnsemble{id,owner,coupling,first <> rest} : Command}
+
+def structural_ensemble_parser_preserves_the_complete_literal_tail(id,owner,coupling,first,rest):
+  {==}
+
+law structural_recruit_parser_preserves_parent_and_complete_literal_tail:
+  for id: String
+  for parent: String
+  for harness: String
+  for model: String
+  for effort: String
+  for repo: String
+  for branch: String
+  for path: String
+  for base: String
+  for first: String
+  for rest: List<&2,String>
+  {parse_structural("recruit" <> id <> parent <> harness <> model <> effort <> repo <> branch <> path <> base <> first <> rest) == StructuralRecruit{id,parent,harness,model,effort,repo,branch,path,base,first <> rest} : Command}
+
+def structural_recruit_parser_preserves_parent_and_complete_literal_tail(id,parent,harness,model,effort,repo,branch,path,base,first,rest):
   {==}

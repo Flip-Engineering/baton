@@ -131,7 +131,7 @@ const TOOLS = [
   },
   {
     name: 'baton2_recruit',
-    description: 'Recruit a Player with a registered assignment and Git worktree.',
+    description: 'Recruit a Player or Associate Conductor with a registered assignment and Git worktree. Extended role/ensembles/sections require explicit parent and role. Each Section membership also adds Ensemble membership; owners may differ from parent. Repeat calls with the same parent for siblings, or an Associate parent for nested work. Configuration returns one complete native result with workspace and registration phases; startup is not requested.',
     inputSchema: { type: 'object', properties: {
       player: { type: 'string', description: 'New Player session ID' },
       parent: { type: 'string', description: 'Parent session ID (default: attached Conductor)' },
@@ -139,6 +139,13 @@ const TOOLS = [
       repo: { type: 'string', description: 'Repository path' },
       branch: { type: 'string' }, workspace: { type: 'string', description: 'New worktree path' },
       base: { type: 'string', description: 'Base Git revision' },
+      role: { type: 'string', enum: ['player', 'associate-conductor'] },
+      ensembles: { type: 'array', items: { type: 'object', properties: {
+        ensemble: { type: 'string' }, owner: { type: 'string' },
+      }, required: ['ensemble', 'owner'], additionalProperties: false } },
+      sections: { type: 'array', items: { type: 'object', properties: {
+        ensemble: { type: 'string' }, owner: { type: 'string' }, section: { type: 'string' },
+      }, required: ['ensemble', 'owner', 'section'], additionalProperties: false } },
     }, required: ['player', 'harness', 'model', 'effort', 'repo', 'branch', 'workspace', 'base'],
     additionalProperties: false },
   },
@@ -183,10 +190,13 @@ const TOOLS = [
   },
   {
     name: 'baton2_ensemble',
-    description: 'Inspect an Ensemble or configure its owner and coupling.',
+    description: 'Inspect an Ensemble or configure its owner and coupling. sections declares capability groups in one native operation and requires explicit owner and coupling. The owner must be a registered Conductor, including a Principal. Sections may be empty; recruit multiple Players into a Section to form a critic group. Ownership and membership are independent.',
     inputSchema: { type: 'object', properties: {
       ensemble: { type: 'string' }, owner: { type: 'string' },
       coupling: { type: 'string', enum: ['loose', 'tight'] },
+      sections: { type: 'array', minItems: 1, items: { type: 'object', properties: {
+        section: { type: 'string' }, capability: { type: 'string' },
+      }, required: ['section', 'capability'], additionalProperties: false } },
     }, required: ['ensemble'], additionalProperties: false },
   },
   {
@@ -450,7 +460,7 @@ function handleMessage(msg) {
         experimental: { 'claude/channel': {} },
       },
       serverInfo: { name: 'baton-conductor', version: '0.1.0' },
-      instructions: `Baton2 ${hasParent(selectedSession()) ? 'Associate' : 'Principal'} Conductor attachment for session ${sessionId}. Use baton2_recruit to assign a Player and its worktree. Use baton2_receiver to register a Player's Codex or OMP receive endpoint, then baton2_dispatch_file to send task or guidance files. Use baton2_dispatch_turn to launch a recruited Player's task file with its recorded route. Use baton2_inbox with index:true for concise pending metadata scoped to this attachment; baton2_pending with index:true reads across recipients. Exact sender/kind filters combine; state:all includes acknowledged history. Use baton2_delivery to read each selected complete body. Index reads do not acknowledge, review or complete work. Use baton2_ack to acknowledge delivery. Use baton2_guide to direct Players. Use baton2_player and baton2_players to inspect Players and both Conductor tiers. Use baton2_role, baton2_ensemble, baton2_ensemble_member, baton2_section and baton2_section_member to configure responsibilities and membership. Use baton2_orchestra with index:true and session to inspect the focused system; omitted session selects the full structure. Structural output provides per-actor counts and inputRead argv. Reference limitations.next is a literal native argv array. To follow it through MCP, call baton2_orchestra with index:true and session set to the reference id. pendingCount excludes stopped execution inputs; unacknowledgedCount includes every NULL receipt. Use baton2_inbox with index:true and recipient for each actor; state:all includes receipt history. Counts describe retained input; per-message disposition is available from inbox/pending indexes. Legacy no-index readers include bodies and histories. Use baton2_turns for turn history and baton2_land or baton2_land_checked to land a Player's changes.`,
+      instructions: `Baton2 ${hasParent(selectedSession()) ? 'Associate' : 'Principal'} Conductor attachment for session ${sessionId}. Use baton2_recruit to assign a Player and its worktree. For structural configuration provide explicit parent and role with typed ensembles/sections arrays. Repeated explicit parents form sibling or nested Associates. baton2_ensemble accepts sections with explicit owner and coupling; a Principal may own an Ensemble directly. Sections may be empty or contain multiple Players, and memberships may cross parent boundaries. Parent responsibility, ownership and membership are separate facts. One native result reports configuration and workspace phases; startupRequested:false leaves task dispatch to existing commands. Use baton2_receiver to register a Player's Codex or OMP receive endpoint, then baton2_dispatch_file to send task or guidance files. Use baton2_dispatch_turn to launch a recruited Player's task file with its recorded route. Use baton2_inbox with index:true for concise pending metadata scoped to this attachment; baton2_pending with index:true reads across recipients. Exact sender/kind filters combine; state:all includes acknowledged history. Use baton2_delivery to read each selected complete body. Index reads do not acknowledge, review or complete work. Use baton2_ack to acknowledge delivery. Use baton2_guide to direct Players. Use baton2_player and baton2_players to inspect Players and both Conductor tiers. Use baton2_role, baton2_ensemble, baton2_ensemble_member, baton2_section and baton2_section_member to configure responsibilities and membership. Use baton2_orchestra with index:true and session to inspect the focused system; omitted session selects the full structure. Structural output provides per-actor counts and inputRead argv. Reference limitations.next is a literal native argv array. To follow it through MCP, call baton2_orchestra with index:true and session set to the reference id. pendingCount excludes stopped execution inputs; unacknowledgedCount includes every NULL receipt. Use baton2_inbox with index:true and recipient for each actor; state:all includes receipt history. Counts describe retained input; per-message disposition is available from inbox/pending indexes. Legacy no-index readers include bodies and histories. Use baton2_turns for turn history and baton2_land or baton2_land_checked to land a Player's changes.`,
     });
     return;
   }
@@ -507,6 +517,44 @@ function messageReadOptions(options, inbox) {
   return argv;
 }
 
+function structuralFields(value, strings, arrays, required) {
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) throw new Error('Structural arguments must be an object');
+  for (const [key, item] of Object.entries(value)) {
+    if (strings.includes(key)) {
+      if (typeof item !== 'string') throw new Error('Structural argument must be a string: ' + key);
+    } else if (arrays.includes(key)) {
+      if (!Array.isArray(item)) throw new Error('Structural group must be an array: ' + key);
+    } else throw new Error('Unknown structural argument: ' + key);
+  }
+  for (const key of required) if (value[key] === undefined) throw new Error('Required structural argument: ' + key);
+}
+
+function structuralGroups(groups, flag, keys) {
+  const argv = [];
+  for (const group of groups ?? []) {
+    structuralFields(group, keys, [], keys);
+    argv.push(flag, ...keys.map(key => group[key]));
+  }
+  return argv;
+}
+
+function recruitOptions(args) {
+  if (!['role', 'ensembles', 'sections'].some(key => args?.[key] !== undefined)) return [];
+  structuralFields(args, ['player', 'parent', 'harness', 'model', 'effort', 'repo', 'branch', 'workspace', 'base', 'role'],
+    ['ensembles', 'sections'], ['player', 'parent', 'harness', 'model', 'effort', 'repo', 'branch', 'workspace', 'base', 'role']);
+  if (!['player', 'associate-conductor'].includes(args.role)) throw new Error('Extended recruit role must be player or associate-conductor');
+  return ['--role', args.role, ...structuralGroups(args.ensembles, '--ensemble', ['ensemble', 'owner']),
+    ...structuralGroups(args.sections, '--section', ['ensemble', 'owner', 'section'])];
+}
+
+function ensembleOptions(args) {
+  if (args?.sections === undefined) return [];
+  structuralFields(args, ['ensemble', 'owner', 'coupling'], ['sections'], ['ensemble', 'owner', 'coupling', 'sections']);
+  if (!['loose', 'tight'].includes(args.coupling)) throw new Error('Ensemble coupling must be loose or tight');
+  if (!args.sections.length) throw new Error('Section declarations must contain at least one group');
+  return structuralGroups(args.sections, '--section', ['section', 'capability']);
+}
+
 function handleToolCall(msg) {
   const { name, arguments: args } = msg.params;
   const player = args?.player ?? args?.worker;
@@ -518,7 +566,7 @@ function handleToolCall(msg) {
         break;
       case 'baton2_recruit':
         result = coord('recruit', player, args.parent ?? sessionId, args.harness, args.model,
-          args.effort, args.repo, args.branch, args.workspace, args.base);
+          args.effort, args.repo, args.branch, args.workspace, args.base, ...recruitOptions(args));
         break;
       case 'baton2_receiver':
         result = coord('receiver', player, args.command, args.log);
@@ -535,7 +583,7 @@ function handleToolCall(msg) {
         break;
       case 'baton2_ensemble':
         result = coord('ensemble', args.ensemble,
-          ...(args.owner === undefined && args.coupling === undefined ? [] : [args.owner ?? sessionId, args.coupling ?? 'loose']));
+          ...(args.owner === undefined && args.coupling === undefined && args.sections === undefined ? [] : [args.owner ?? sessionId, args.coupling ?? 'loose']), ...ensembleOptions(args));
         break;
       case 'baton2_ensemble_member':
         result = coord('ensemble-member', args.ensemble, args.owner ?? sessionId, player, args.action);
