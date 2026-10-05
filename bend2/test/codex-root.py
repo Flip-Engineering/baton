@@ -288,6 +288,9 @@ class CodexRootAdapter(unittest.TestCase):
         self.assertIn('delivery ID', stdin_content)
         self.assertIn("orchestra --index --for 'root' --pretty", stdin_content)
         self.assertIn('--sender PLAYER --kind report --state all', stdin_content)
+        self.assertIn('inputRead argv', stdin_content)
+        self.assertIn('pendingCount excludes stopped execution inputs', stdin_content)
+        self.assertIn('unacknowledgedCount includes every NULL receipt', stdin_content)
         self.assertIn('players', stdin_content)
         self.assertIn('land', stdin_content)
 

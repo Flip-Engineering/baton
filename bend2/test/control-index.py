@@ -5,6 +5,7 @@ or an agent's discovery of installed product surfaces. BATON2_INDEX_EXE and
 BATON2_INDEX_MCP can select a staged artifact. Evidence directories are retained.
 """
 from contextlib import closing
+from copy import deepcopy
 import hashlib
 import json
 import os
@@ -281,6 +282,13 @@ class ControlIndex(unittest.TestCase):
         tools = {item['name']: item for item in replies['tools']['result']['tools']}
         self.assertIn('index', tools['baton2_inbox']['inputSchema']['properties'])
         self.assertIn('baton2_delivery', tools)
+        for text in (replies['init']['result']['instructions'],
+                     tools['baton2_orchestra']['description']):
+            self.assertIn('inputRead argv', text)
+            self.assertIn('pendingCount excludes stopped execution inputs', text)
+            self.assertIn('unacknowledgedCount includes every NULL receipt', text)
+            self.assertIn('baton2_inbox', text)
+            self.assertIn('state:all', text)
         for name in ('index', 'view'):
             self.assertNotIn('error', replies[name])
             self.assertFalse(replies[name]['result'].get('isError'))
@@ -353,11 +361,13 @@ class ControlIndex(unittest.TestCase):
                     self.assertIn('message-route-denied', result.stdout + result.stderr)
             self.assertEqual(projected, admitted)
 
-    def test_structure_and_pending_share_snapshot_during_commits(self):
+    def test_structure_and_counts_share_snapshot_during_commits(self):
         with closing(sqlite3.connect(self.db)) as db:
             db.execute('PRAGMA journal_mode=WAL')
             db.execute("INSERT INTO messages(id,sender,recipient,kind,body) "
                        "VALUES('snapshot-message','other-root','external','note','fixture')")
+            db.execute("INSERT INTO messages(id,sender,recipient,kind,body) "
+                       "VALUES('snapshot-anchor','root','associate','note','fixture')")
             db.commit()
         ready = threading.Event()
         finished = threading.Event()
@@ -375,7 +385,7 @@ class ControlIndex(unittest.TestCase):
                         else:
                             db.execute("DELETE FROM section_members WHERE ensemble='team' AND session='external'")
                             db.execute("DELETE FROM ensemble_members WHERE ensemble='team' AND session='external'")
-                        db.execute("UPDATE messages SET receipt=? WHERE id='snapshot-message'",
+                        db.execute("UPDATE messages SET receipt=? WHERE id IN ('snapshot-message','snapshot-anchor')",
                                    (None if present else 'fixture acknowledgment',))
                         db.commit()
                         ready.set()
@@ -398,15 +408,102 @@ class ControlIndex(unittest.TestCase):
                 view = json.loads(result.stdout)
                 team = next(row for row in view['ensembles'] if row['id'] == 'team')
                 member = 'external' in team['members']
-                reference = any(row['id'] == 'external' for row in view['players'])
-                pending = any(row['id'] == 'snapshot-message' for row in view['pending'])
-                self.assertEqual((reference, pending), (member, member),
-                                 'Structure and pending came from different committed states')
+                actors = {row['id']: row for row in view['players']}
+                self.assertEqual('external' in actors, member)
+                self.assertEqual(actors['associate']['pendingCount'], 2 + int(member))
+                self.assertEqual(actors['associate']['unacknowledgedCount'], 2 + int(member))
+                if member:
+                    self.assertTrue(actors['external']['reference'])
+                    self.assertEqual(actors['external']['pendingCount'], 1)
+                    self.assertEqual(actors['external']['unacknowledgedCount'], 1)
+                self.assertNotIn('pending', view)
         finally:
             finished.set()
             writer.join(10)
         self.assertFalse(writer.is_alive(), 'Fixture writer did not finish')
         self.assertEqual(errors, [])
+
+    def test_structure_preserves_relations_and_counts_as_backlogs_grow(self):
+        literal_actor = "literal ' \" $() ; actor"
+        with closing(sqlite3.connect(self.db)) as db:
+            db.execute('INSERT INTO sessions(id,parent,harness) VALUES(?,?,?)',
+                       (literal_actor, 'associate', 'fixture'))
+            db.execute("INSERT INTO messages(id,sender,recipient,kind,body) "
+                       "VALUES('stopped-guidance','root','stopped','guidance','fixture')")
+            db.execute("INSERT INTO messages(id,sender,recipient,kind,body) "
+                       "VALUES('stopped-recovery','root','stopped','recovery','fixture')")
+            db.commit()
+        commands = [('orchestra', '--index'),
+                    ('orchestra', '--index', '--for', 'associate')]
+
+        def check_counts(view):
+            self.assertNotIn('pending', view)
+            with closing(sqlite3.connect(self.db)) as db:
+                stopped = {row[0] for row in db.execute('SELECT session FROM session_stops')}
+                for actor in view['players'] + view['operators']:
+                    kinds = [row[0] for row in db.execute(
+                        'SELECT kind FROM messages WHERE recipient=? AND receipt IS NULL',
+                        (actor['id'],))]
+                    self.assertEqual(actor['unacknowledgedCount'], len(kinds))
+                    self.assertEqual(actor['pendingCount'], sum(
+                        actor['id'] not in stopped or kind not in ('task', 'guidance', 'recovery')
+                        for kind in kinds))
+                    self.assertEqual(actor['inputRead'], ['inbox', actor['id'], '--index'])
+
+        def structure(view):
+            value = deepcopy(view)
+            for actor in value['players'] + value['operators']:
+                del actor['pendingCount'], actor['unacknowledgedCount']
+            return value
+
+        before = [self.call(*args) for args in commands]
+        for view in before:
+            check_counts(view)
+        bodies = {}
+        with closing(sqlite3.connect(self.db)) as db:
+            for recipient in ('root', 'external', 'stopped', literal_actor):
+                # Note-only growth preserves latest report and execution facts.
+                for index in range(1024):
+                    ident = f'backlog-{recipient}-{index}'
+                    body = f'λ\0retained body for {ident}\nend'
+                    bodies[ident] = body
+                    db.execute('INSERT INTO messages(id,sender,recipient,kind,body,receipt) '
+                               'VALUES(?,?,?,?,?,?)',
+                               (ident, 'worker', recipient, 'note', body,
+                                '' if index % 3 == 0 else None))
+            db.commit()
+        after = [self.call(*args) for args in commands]
+        for old, new in zip(before, after):
+            check_counts(new)
+            self.assertEqual(structure(old), structure(new))
+            self.assertNotEqual(old, new)
+        for recipient in ('root', 'external', 'stopped', literal_actor):
+            with closing(sqlite3.connect(self.db)) as db:
+                expected = db.execute('SELECT id,receipt,body FROM messages WHERE recipient=? ORDER BY seq',
+                                      (recipient,)).fetchall()
+            rows = self.call('inbox', recipient, '--index', '--state', 'all')
+            self.assertEqual([row['id'] for row in rows], [row[0] for row in expected])
+            self.assertEqual(rows, self.index('--recipient', recipient, '--state', 'all'))
+            self.assertEqual([row['bodyBytes'] for row in rows],
+                             [len(row[2].encode()) for row in expected])
+            actor = next(row for row in after[0]['players'] if row['id'] == recipient)
+            self.assertEqual([row['id'] for row in self.call(*actor['inputRead'])],
+                             [row[0] for row in expected if row[1] is None])
+            for ident in (f'backlog-{recipient}-0', f'backlog-{recipient}-1023'):
+                self.assertEqual(self.call('delivery', ident)['body'], bodies[ident])
+        (self.directory / 'structural-growth.json').write_text(json.dumps({
+            'before': before, 'after': after,
+            'beforeBytes': [len(json.dumps(view).encode()) for view in before],
+            'afterBytes': [len(json.dumps(view).encode()) for view in after],
+        }, indent=2) + '\n')
+        with closing(sqlite3.connect(self.db)) as db:
+            db.execute("INSERT INTO messages(id,sender,recipient,kind,body) "
+                       "VALUES('new-report','worker','root','report','new full report')")
+            db.commit()
+        latest = self.call('orchestra', '--index', '--for', 'associate')
+        worker = next(row for row in latest['players'] if row['id'] == 'worker')
+        self.assertEqual(worker['latestReportId'], 'new-report')
+        self.assertEqual(self.call('delivery', worker['latestReportId'])['body'], 'new full report')
 
     def test_index_size_tracks_metadata_and_read_is_pure(self):
         before = self.retained()
