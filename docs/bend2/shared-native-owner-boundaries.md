@@ -44,6 +44,13 @@ output and status. Owner admission must qualify the database binding and owner
 instance before sending work. A saved PID, native conversation ID or socket
 pathname alone cannot establish that binding.
 
+Independent review `5fea8d62` measured the current guard with empty temporary
+files: the original path and a symlink serialize the same session, while a hard
+link can acquire a second guard for that session. The database binding policy
+must account for physical aliases and replacement before claiming one owner
+for the same database. This fixture establishes guard behavior only; SQLite
+access through hard links requires separate qualification.
+
 The initial full-design target has one coordinator process and one fixed shared
 custody process per Orchestra. Custody owns every admitted child's stdin writer,
 wait authority, process-group identity and retained spool. This preserves a
