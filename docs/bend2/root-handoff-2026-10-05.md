@@ -1,7 +1,7 @@
 # Baton2 root handoff
 
 This contributor handoff preserves unfinished operator work as of 2026-10-05
-20:46 UTC. Read the native task records and current source before resuming.
+21:16 UTC. Read the native task records and current source before resuming.
 Issue records describe defects; native reports contain current ownership and evidence.
 
 ## Authority and recovery
@@ -210,6 +210,13 @@ Receive evidence is copied under `instance-171bb8d7-evidence` beside them.
 Guidance 68 carries root's bounded result to Instance and Synthesis and
 continues actual host/caller integration through their original owners.
 
+Guidance 73 required publication through the existing component review
+branch. Instance completed native push, and root's separate native remote-tip
+readback confirmed `codex/baton2-native-instance-conductor-20261005` at exact
+`171bb8d7352bb77e9bcd72c9e97c0755c7d44e58`. Authored lineage is preserved.
+Primary publication, real shared-runtime behavior and measured savings
+remain unqualified.
+
 Root guidance `root-dependent-continuation-62` ended the temporary admission
 hold for dependent source and review work after observed relief. Conductors
 continue through original actors after actual custody checks, with no fixed
@@ -225,6 +232,43 @@ Original GNU output says `Command being timed`; the draft matches
 `Command being exectured`. Its corrected committed JSON-stdin classifier
 remains a dependency for Runtime Values and package qualification. Source
 corrections and remote execution remain separate gates.
+
+Root70/71 independently reviewed CI source
+`afbd44e4ebc8f4ecd2e8f0c27d8d4b0998821e81`, tree
+`f886b1f2bb662122549c5bc0c3065a6466fe1b3f`. Source concerns include Buffer
+replacement, complete-set execution inside each selected group, fixture
+binding mismatch, invalid outcome acceptance and contradictory accounting
+metadata. The admitted compiler-free remote tests completed with exit 1.
+They confirmed malformed outcome inputs matching an intended refusal,
+Darwin resource-parser failure and direct endpoint exit 13 from an unresolved
+import await. Source stayed clean and Node identity matched. Root72 retains
+the complete actual result and direct child diagnostics.
+
+Corrected CI source `44d120dcbe7028d85ffb5d65e0ef5434f36d2047`, tree
+`0cb464a981c639a44fe3f645dbfbdef4454f3d8f`, moved shared primitives into
+`laws-common.mjs`. Its compiler-free remote tests also exited 1. Positional
+and malformed classifier refusals and discovery passed. Integer -1 still
+matched an intended refusal; padded Darwin accounting validation failed;
+the group module had a duplicate declaration that prevented its usage
+refusal. Both compiler fallback paths were verified absent before CLI tests.
+No Bend compiler or group gate ran. Root74 gives the original CI owner the
+actual results and separate source concerns over outcome normalization,
+proof metadata, snapshot paths and group selection.
+
+Full source, recipes, stdout/stderr, supplied-input cases and outcomes remain
+under the isolated remote `qualifications/ci-afbd44e4` and `ci-44d120dc`
+directories, copied under `.scratch/root-homelab-ci-20261005` in matching
+evidence directories. Node 22.23.3 SHA256 is
+`fde6a4bf8d0562f7751d1a2d6cb9b417c4cfe107bbcb0aa3e9a24e125e348f48`.
+Existing implementation Sections and critic Ensembles continue correction.
+Complete new group/ordinary effects, package reuse and speedup acceptance
+remain withheld pending a coherent source closure. The protected original
+baseline run continues its full law controls separately.
+
+A 21:16 UTC sample confirmed the same 11:56:29 Pacific boot, 3.8 GiB free
+disk and 603.62 MiB swap used. Chrome remains closed normally with its
+profile preserved. No additional cleanup or process termination occurred
+during the component and CI qualification work above.
 
 Synthesis93 and Receive source reviews confirm historical reconstruction and
 public-log projection have separate duties. Controls owns crash-consistent
