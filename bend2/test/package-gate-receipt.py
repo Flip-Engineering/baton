@@ -60,8 +60,14 @@ class PackageGateReceipt(unittest.TestCase):
         self.logs = self.home / 'logs'
         self.logs.mkdir()
         self.controls = synthetic_controls()
+        # Endpoint verdict authority: the six members the endpoint emits.
         self.verifier = {member: hashlib.sha256(('fixture:' + member).encode()).hexdigest()
                          for member in PACKAGE.VERIFIER_MEMBERS}
+        # Producer run identity authority: those six plus the group-run member.
+        self.ordinary_verifier = dict(self.verifier)
+        for member in PACKAGE.ORDINARY_EXTRA_VERIFIER_FILES:
+            self.ordinary_verifier[member] = hashlib.sha256(
+                ('fixture:' + member).encode()).hexdigest()
         self.addCleanup(setattr, PACKAGE, 'expected_verifier_digests',
                         PACKAGE.expected_verifier_digests)
         PACKAGE.expected_verifier_digests = lambda: (dict(self.verifier), [])
@@ -666,7 +672,7 @@ class PackageGateReceipt(unittest.TestCase):
                 'origin': {'workflow': 'w', 'run_id': '1', 'run_attempt': '1', 'jobs': [],
                            'image_os': 'macOS', 'image_version': 'x'},
                 'invocation': 'ordinary:' + nonce,
-                'verifier': dict(self.verifier)}
+                'verifier': dict(self.ordinary_verifier)}
 
     def envelope(self, index_path=None, run_root=None, **overrides):
         index = index_path or (self.home / 'run' / 'evidence' / 'index.json')
@@ -795,7 +801,13 @@ class PackageGateReceipt(unittest.TestCase):
         self.assertEqual(result['ordinary']['producer_root'], str((self.logs / 'run').resolve()))
         self.assertEqual(result['ordinary']['run_root'], str((self.logs / 'evidence').resolve()))
         self.assertEqual(result['ordinary']['invocation'], 'ordinary:fixture-nonce')
-        self.assertEqual(result['ordinary']['verifier'], self.verifier)
+        self.assertEqual(result['ordinary']['verifier'], self.ordinary_verifier)
+        self.assertEqual(result['ordinary']['endpoint_members'], list(PACKAGE.VERIFIER_MEMBERS))
+        self.assertEqual(result['ordinary']['run_members'], sorted(self.ordinary_verifier))
+        # The group-run module is absent from this checkout, so its member is
+        # recorded unavailable rather than accepted or silently dropped.
+        self.assertEqual(result['ordinary']['verifier_unavailable'],
+                         ['bend2/scripts/capacity-controls/group-run.mjs'])
         self.assertEqual(result['ordinary']['input_rows'], 1)
         self.assertEqual(result['ordinary']['input_shape'], 'map')
         self.assertTrue(result['ordinary']['audit']['members'])

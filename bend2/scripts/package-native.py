@@ -624,6 +624,10 @@ def ordinary_evidence(index_path, expected, compiler=None, declared_root=None,
                       parent_rows=None, producer_root=None, envelope=None, audit=None):
     """Consume the checker's retained ordinary per-case evidence.
 
+    The caller supplies the admitted compiler. Its bytes are compared with the
+    compiler block the run recorded, so an ordinary run is only consumed for the
+    compiler this checkout selected.
+
     The index sits at <run>/evidence/index.json and records stream paths relative
     to <run>. Its run identity must equal the envelope the checker printed for
     the same run, every control the source states must appear exactly once with
@@ -632,6 +636,8 @@ def ordinary_evidence(index_path, expected, compiler=None, declared_root=None,
     baseline compile must precede the controls, and the index must declare a
     finished run over the admitted inputs.
     """
+    require(compiler is not None,
+            'The ordinary evidence is consumed without the compiler it binds')
     root = ordinary_root(index_path, declared_root)
     if producer_root is None:
         producer_root = root
@@ -706,6 +712,7 @@ def ordinary_evidence(index_path, expected, compiler=None, declared_root=None,
                        if verifier.get(key) != digest)
     require(not differing,
             'The ordinary run used other verifier bytes at: ' + succinct(differing))
+    unavailable = sorted(set(_missing_verifier) | set(_missing_extra))
     # The index records the admitted inputs it captured as rows. Whether those
     # rows cover the complete non-target source and runtime graph is a
     # producer-side question this consumer cannot answer from the rows alone.
@@ -854,6 +861,8 @@ def ordinary_evidence(index_path, expected, compiler=None, declared_root=None,
             'invocation': identity['invocation'], 'nonce': identity['nonce'],
             'compiler_sha256': (identity.get('compiler') or {}).get('sha256'),
             'source': source_block, 'verifier': verifier, 'inputs': admitted_inputs,
+            'endpoint_members': list(VERIFIER_MEMBERS),
+            'run_members': sorted(required), 'verifier_unavailable': unavailable,
             'input_rows': len(admitted_inputs), 'input_shape': input_shape,
             'recomputed': recomputed,
             'audit': audit_inventory, 'raw': raw}
