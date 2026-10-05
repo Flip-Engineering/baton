@@ -364,15 +364,18 @@ test('same-epoch assembly over a real debuggee through the production session', 
     // the acknowledgement alone.
     releaseObserved = await session.execute('release', { effects: ['controlRuntime'], onRelease: 'terminate', signal: 'SIGKILL' });
     assert.ok(releaseObserved !== null && typeof releaseObserved === 'object', 'release returned an observed result envelope');
-    assert.ok(typeof releaseObserved.state === 'string' && releaseObserved.state.length > 0, `the release envelope names its observed state: ${JSON.stringify(releaseObserved).slice(0, 200)}`);
-    assert.ok(releaseObserved.keeper !== undefined, 'the release envelope names its keeper disposition');
-    assert.ok(releaseObserved.keeper === null || typeof releaseObserved.keeper === 'object', 'the keeper disposition is an object or an explicit null');
-    if (releaseObserved.keeper && typeof releaseObserved.keeper === 'object') {
-      assert.ok('signaled' in releaseObserved.keeper, 'the keeper disposition records the signal attempt');
-      assert.ok('pid' in releaseObserved.keeper, 'the keeper disposition names the pid');
-      assert.ok(typeof releaseObserved.keeper.scope === 'string' && releaseObserved.keeper.scope.includes('fixture-owned'), 'the keeper disposition carries the truthful fixture-owned scope');
-    }
+    // The documented CDP releasing state, not any nonempty string.
+    assert.equal(releaseObserved.state, 'releasing', `the release envelope names the releasing state: ${JSON.stringify(releaseObserved).slice(0, 200)}`);
+    // The actual fixture control shape: an object with the signaled boolean,
+    // the pid equal to the owned child, and the truthful fixture-owned scope.
+    assert.ok(releaseObserved.keeper !== null && typeof releaseObserved.keeper === 'object', 'the release envelope carries the fixture control disposition');
+    assert.equal(releaseObserved.keeper.signaled, true, 'the control disposition records an actual signal attempt');
+    assert.equal(releaseObserved.keeper.pid, run.child.pid, 'the control disposition names the owned child pid');
+    assert.ok(typeof releaseObserved.keeper.scope === 'string' && releaseObserved.keeper.scope.includes('fixture-owned'), 'the control disposition carries the truthful fixture-owned scope');
     evidence.releaseResult = releaseObserved;
+    evidence.signalAttempt = releaseObserved.keeper;
+    // An observed exit must not upgrade a failed or missing-signal envelope:
+    // these assertions stand regardless of how quickly the child closes.
     evidence.signalAttempt = releaseObserved.keeper ?? null;
 
     // The session's frame trace, when the surface exposes one, is retained
@@ -423,7 +426,7 @@ test('same-epoch assembly over a real debuggee through the production session', 
       const child = run.child;
       if (child && child.exitCode === null && child.signalCode === null) {
         const fallbackSignaled = child.kill('SIGKILL');
-        evidence.fallbackKill = { intervened: true, signaled: fallbackSignaled, pid: child.pid, note: 'release did not end the child before this fallback' };
+        evidence.fallbackKill = { intervened: true, signaled: fallbackSignaled, pid: child.pid, note: 'child end not yet observed at fallback; no release-only cause is claimed' };
       }
     } catch (err) {
       closureFailures.push(`child fallback kill: ${String(err.message ?? err)}`);
@@ -431,6 +434,7 @@ test('same-epoch assembly over a real debuggee through the production session', 
     let closure = null;
     let reapTimedOut = false;
     let reapTimer = null;
+    let reapError = null;
     try {
       closure = await Promise.race([
         finish(run),
@@ -438,29 +442,40 @@ test('same-epoch assembly over a real debuggee through the production session', 
           reapTimer = setTimeout(() => resolve(null), 8000);
         }),
       ]);
-      clearTimeout(reapTimer);
-      if (!closure) {
-        reapTimedOut = true;
-        closure = { exit: { code: null, signal: null, spawnError: null }, stdout: run.stdoutText(), stderr: run.stderrText(), reapTimedOut: true };
-      }
     } catch (err) {
-      closureFailures.push(`reap: ${String(err.message ?? err)}`);
+      reapError = String(err.message ?? err);
+    } finally {
+      // The real race timer is cleared on success AND on rejection.
+      clearTimeout(reapTimer);
     }
+    if (reapError) closureFailures.push(`reap: ${reapError}`);
+    if (!closure && !reapError) {
+      reapTimedOut = true;
+      closure = { exit: { code: null, signal: null, spawnError: null }, stdout: run.stdoutText(), stderr: run.stderrText(), reapTimedOut: true };
+    }
+    // Final classification is set BEFORE retention so the persisted evidence
+    // carries releaseClosePending and the primary failure.
     evidence.closure = closure;
     evidence.reapTimedOut = reapTimedOut;
+    evidence.reapError = reapError;
     evidence.releaseObserved = releaseObserved;
     evidence.closureFailures = closureFailures;
     evidence.primaryFailure = primaryFailure;
-    retain('composition-debuggee', evidence);
-    // Truthful outcome classification: an observed child end plus no
-    // unresolved cleanup failure and no reap timeout is the only success
-    // shape; a reap timeout is a distinct failed outcome.
-    if (reapTimedOut) {
+    if (reapTimedOut && releaseObserved) {
       // Async-close latency after an acknowledged release is UNRESOLVED
       // CUSTODY, not a failed release: the close was not observed within the
       // bound, no exit is fabricated, and the distinction is named.
+      evidence.releaseClosePending = true;
+    }
+    retain('composition-debuggee', evidence);
+    if (primaryFailure) {
+      assert.fail(`primary failure (retained in evidence): ${primaryFailure.message}`);
+    }
+    if (reapError) {
+      assert.fail(`reaping threw: ${reapError}`);
+    }
+    if (reapTimedOut) {
       if (releaseObserved) {
-        evidence.releaseClosePending = true;
         assert.fail('release acknowledged but the child close was not observed within 8s; unresolved custody, not a failed release and not a fabricated signal');
       }
       assert.fail('child reaping timed out after 8s; no exit was observed (distinct failed outcome, not a fabricated signal)');

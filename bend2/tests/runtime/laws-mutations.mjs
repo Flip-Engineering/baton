@@ -216,7 +216,8 @@ function freezeSnapshot() {
       }
     }
   };
-  walk(snapshot.bend2Root);
+  const bend2Root = join(snapshotRoot, 'bend2');
+  walk(bend2Root);
   files.sort((a, b) => (a.path < b.path ? -1 : 1));
   const manifest = { files, fileCount: files.length };
   const manifestBytes = Buffer.from(JSON.stringify(manifest), 'utf8');
@@ -557,9 +558,9 @@ try {
   }
   // Bind the executed producer bytes to the frozen copies and verify the
   // snapshot against its manifest before any case.
-  identity.entryBytes = safeFileDigest(join(snapshot.bend2Root, relative('bend2', LAW_ENTRY)));
-  identity.producerBytes.runnerFrozen = safeFileDigest(join(snapshot.bend2Root, relative('bend2', import.meta.filename)));
-  identity.producerBytes.definitionsFrozen = safeFileDigest(join(snapshot.bend2Root, relative('bend2', join(import.meta.dirname, 'laws-mutation-definitions.mjs'))));
+  identity.entryBytes = safeFileDigest(join(snapshot.root, LAW_ENTRY));
+  identity.producerBytes.runnerFrozen = safeFileDigest(join(snapshot.bend2Root, relative(join(ROOT, 'bend2'), import.meta.filename)));
+  identity.producerBytes.definitionsFrozen = safeFileDigest(join(snapshot.bend2Root, relative(join(ROOT, 'bend2'), join(import.meta.dirname, 'laws-mutation-definitions.mjs'))));
   identity.producerBytes.frozenCopiesMatchLive =
     identity.producerBytes.runnerFrozen.sha256 !== undefined &&
     identity.producerBytes.definitionsFrozen.sha256 !== undefined &&
@@ -656,7 +657,17 @@ try {
   // loop stops on drift.
   let snapshotDriftStopped = false;
   function verifySnapshotOrFail(caseName) {
-    const verification = verifySnapshot(snapshot);
+    let verification;
+    try {
+      verification = verifySnapshot(snapshot);
+    } catch (err) {
+      // A verification that cannot even run is a runwide failure: every
+      // later acquisition would compile against an unverifiable input, so
+      // the stop flag is set with the retained reason before returning.
+      snapshotDriftStopped = true;
+      record({ control: `snapshot-verification-threw:${caseName}`, kind: 'setup', acquired: false, notAcquiredClass: 'snapshot-verification-threw', noProcess: { reason: 'snapshot verification threw; all remaining acquisitions stop', error: String(err.message ?? err) } });
+      return false;
+    }
     if (!verification.verified) {
       snapshotDriftStopped = true;
       record({ control: `snapshot-drift:${caseName}`, kind: 'setup', acquired: false, notAcquiredClass: 'snapshot-drift', noProcess: { reason: 'the frozen input drifted before this case; all remaining acquisitions stop', drift: verification.inputDrift, manifestBinding: verification.manifestBinding } });
@@ -664,18 +675,25 @@ try {
     }
     return true;
   }
-  function verifyOrFail(paths, law, { preDiff, editedDiff = null, postDiff = null }) {
+  // Explicit phase argument: 'pre' verifies only the unchanged copy and
+  // must not demand an edited diff; 'edited' additionally requires the
+  // declared single-change verification BEFORE the compiler may run; 'post'
+  // re-checks everything after the run.
+  function verifyOrFail(paths, law, phase, diffs) {
+    const { preDiff, editedDiff = null, postDiff = null } = diffs;
     if (!preDiff || !preDiff.closureMatches) {
       record({ control: `${law.kind}:${law.name}`, kind: law.kind, law: law.name, source: law.source, acquired: false, notAcquiredClass: 'pre-spawn-closure-mismatch', executedCwd: paths.inputDir, preDiff, noProcess: { reason: 'the copied input did not match the frozen snapshot before the edit' } });
       return false;
     }
-    if (!editedDiff || !editedDiff.closureMatches) {
-      record({ control: `${law.kind}:${law.name}`, kind: law.kind, law: law.name, source: law.source, acquired: false, notAcquiredClass: 'edited-closure-mismatch', executedCwd: paths.inputDir, editedDiff, noProcess: { reason: 'the edited input did not match the snapshot with exactly the declared change' } });
-      return false;
-    }
-    if (postDiff && !postDiff.closureMatches) {
-      record({ control: `${law.kind}:${law.name}`, kind: law.kind, law: law.name, source: law.source, acquired: false, notAcquiredClass: 'post-spawn-closure-mismatch', executedCwd: paths.inputDir, postDiff });
-      return false;
+    if (phase !== 'pre') {
+      if (!editedDiff || !editedDiff.closureMatches) {
+        record({ control: `${law.kind}:${law.name}`, kind: law.kind, law: law.name, source: law.source, acquired: false, notAcquiredClass: 'edited-closure-mismatch', executedCwd: paths.inputDir, editedDiff, noProcess: { reason: 'the edited input did not match the snapshot with exactly the declared change' } });
+        return false;
+      }
+      if (phase === 'post' && (!postDiff || !postDiff.closureMatches)) {
+        record({ control: `${law.kind}:${law.name}`, kind: law.kind, law: law.name, source: law.source, acquired: false, notAcquiredClass: 'post-spawn-closure-mismatch', executedCwd: paths.inputDir, postDiff });
+        return false;
+      }
     }
     return true;
   }
@@ -706,14 +724,14 @@ try {
       const targetRelative = relative('bend2', law.file);
       phase = 'pre-verify';
       const preDiff = closureDiff(paths.inputBend2Dir, snapshot.bend2Root, null);
-      if (!verifyOrFail(paths, { kind: 'proof-removal', name: law.name, source: law.file }, { preDiff })) {
+      if (!verifyOrFail(paths, { kind: 'proof-removal', name: law.name, source: law.file }, 'pre', { preDiff })) {
         failures += 1;
         continue;
       }
       phase = 'edit';
       writeFileSync(join(paths.inputDir, law.file), changed);
       const editedDiff = closureDiff(paths.inputBend2Dir, snapshot.bend2Root, { relativePath: targetRelative, bytes: changed });
-      if (!verifyOrFail(paths, { kind: 'proof-removal', name: law.name, source: law.file }, { preDiff, editedDiff })) {
+      if (!verifyOrFail(paths, { kind: 'proof-removal', name: law.name, source: law.file }, 'edited', { preDiff, editedDiff })) {
         failures += 1;
         continue;
       }
@@ -797,14 +815,14 @@ try {
       const targetRelative = relative('bend2', definition.file);
       phase = 'pre-verify';
       const preDiff = closureDiff(paths.inputBend2Dir, snapshot.bend2Root, null);
-      if (!verifyOrFail(paths, { kind: 'mutation', name: definition.name, source: definition.file }, { preDiff })) {
+      if (!verifyOrFail(paths, { kind: 'mutation', name: definition.name, source: definition.file }, 'pre', { preDiff })) {
         failures += 1;
         continue;
       }
       phase = 'edit';
       writeFileSync(join(paths.inputDir, definition.file), changed);
       const editedDiff = closureDiff(paths.inputBend2Dir, snapshot.bend2Root, { relativePath: targetRelative, bytes: changed });
-      if (!verifyOrFail(paths, { kind: 'mutation', name: definition.name, source: definition.file }, { preDiff, editedDiff })) {
+      if (!verifyOrFail(paths, { kind: 'mutation', name: definition.name, source: definition.file }, 'edited', { preDiff, editedDiff })) {
         failures += 1;
         continue;
       }

@@ -126,7 +126,8 @@ function freshFacts() {
     mutationError: null,
     workerOutcome: null,
     workerExit: null,
-    child: { exitCode: null, signal: null, error: null, closeObserved: false, closeTimedOut: false },
+    workerError: null,
+    child: { exitCode: null, signal: null, error: null, closeObserved: false, closeTimedOut: false, cleanupKilled: false, cleanupError: null },
     rawStdout: [],
     rawStderr: [],
     parseErrors: [],
@@ -169,6 +170,7 @@ async function runProbeBody(root, facts, mutate, options) {
   const workerFile = join(root, 'reader-worker.mjs');
   writeFileSync(workerFile, buildWorkerSource());
   let child = null;
+  let queue = null;
   let childClosed = null;
   const guard = setTimeout(() => {
     if (child && child.exitCode === null && child.signalCode === null) child.kill('SIGKILL');
@@ -184,7 +186,7 @@ async function runProbeBody(root, facts, mutate, options) {
     ].join('\n')], { stdio: ['ignore', 'pipe', 'pipe'] });
     facts.rawStdout = [];
     facts.rawStderr = [];
-    const queue = new LineQueue(child.stdout, facts.parseErrors);
+    queue = new LineQueue(child.stdout, facts.parseErrors);
     child.stderr.on('data', (chunk) => facts.rawStderr.push(Buffer.from(chunk)));
     // The close promise settles ONLY on an actual close; an error event is
     // recorded separately and does not masquerade as reaping.
@@ -210,17 +212,23 @@ async function runProbeBody(root, facts, mutate, options) {
     }
     const outcome = await queue.waitFor((message) => message.outcome !== undefined, options.outcomeTimeoutMs ?? 45000, () => null);
     facts.workerOutcome = outcome ? outcome.outcome : null;
+    const workerErrorLine = queue.lines.find((message) => message.workerError !== undefined);
+    facts.workerError = workerErrorLine ? String(workerErrorLine.workerError) : null;
     const workerExitLine = await queue.waitFor((message) => message.workerExit !== undefined, options.exitTimeoutMs ?? 10000, () => null);
     facts.workerExit = workerExitLine ? workerExitLine.workerExit : null;
   } catch (err) {
     facts.probeError = String(err.message ?? err);
   } finally {
     clearTimeout(guard);
+    // Cleanup is supervised per step: a kill that throws is retained as a
+    // cleanup error instead of skipping the close and raw capture.
     if (child && child.exitCode === null && child.signalCode === null) {
-      // Cleanup intervention: recorded so a later close is never presented
-      // as a natural termination.
-      facts.child.cleanupKilled = true;
-      child.kill('SIGKILL');
+      try {
+        facts.child.cleanupKilled = true;
+        child.kill('SIGKILL');
+      } catch (killError) {
+        facts.child.cleanupError = String(killError.message ?? killError);
+      }
     }
     if (childClosed) {
       let closeTimer = null;
@@ -237,7 +245,8 @@ async function runProbeBody(root, facts, mutate, options) {
         facts.child.signal = close.signal;
       }
     }
-    facts.rawStdoutBytes = Buffer.concat(facts.rawStdout);
+    // The queue holds the exact stdout bytes; they flow into the facts here.
+    facts.rawStdoutBytes = Buffer.concat(queue ? queue.rawChunks : facts.rawStdout);
     facts.rawStderrBytes = Buffer.concat(facts.rawStderr);
     facts.rawStdoutLength = facts.rawStdoutBytes.length;
     facts.rawStderrLength = facts.rawStderrBytes.length;
@@ -288,25 +297,27 @@ function assertAcquisitionHealthy(facts) {
   assert.equal(facts.child.closeObserved, true, 'the child close was observed');
   assert.equal(facts.child.closeTimedOut, false, 'the child close did not time out');
   assert.ok(facts.child.exitCode !== null || facts.child.signal !== null, 'the child close carried status or signal');
-  // A worker-error event is a failed acquisition, separate from any reader
-  // refusal.
-  assert.ok(
-    !(facts.workerOutcome && facts.workerOutcome.condition === 'worker-error'),
-    `worker-error event retained separately: ${facts.workerOutcome ? facts.workerOutcome.message : ''}`,
-  );
-  // The worker's own exit contract: an abnormal termination (signal or
-  // nonzero code) is a failed acquisition, recorded with the actual values;
-  // a clean exit carries code 0 with no signal. Absence is reported as
-  // not-observed, never fabricated.
-  if (facts.workerExit) {
-    if (facts.workerExit.signal !== null && facts.workerExit.signal !== undefined) {
-      assert.fail(`worker terminated by signal ${facts.workerExit.signal}: failed acquisition`);
-    }
-    if (facts.workerExit.code !== null && facts.workerExit.code !== 0) {
-      assert.fail(`worker exited nonzero (${facts.workerExit.code}): failed acquisition`);
-    }
+  // The mutation actually completed inside the probe.
+  assert.equal(facts.mutationCompleted, true, 'the mutation completed');
+  assert.equal(facts.mutationError, null, `mutation completed cleanly: ${facts.mutationError ?? ''}`);
+  // A cleanup kill is the expected termination for an intervention; any
+  // other signal is an abnormal close and fails acquisition. The worker
+  // host failure stays distinct from a healthy reader refusal.
+  if (facts.child.cleanupKilled) {
+    assert.equal(facts.child.signal, 'SIGKILL', `the cleanup kill produced the expected signal: ${facts.child.signal}`);
   } else {
-    assert.ok(true, 'worker exit not observed: recorded as absent, not fabricated');
+    assert.equal(facts.child.exitCode, 0, `the child exited cleanly (code ${facts.child.exitCode})`);
+    assert.equal(facts.child.signal, null, `no unexpected child signal: ${facts.child.signal}`);
+  }
+  assert.equal(facts.child.cleanupError ?? null, null, `no cleanup error: ${facts.child.cleanupError ?? ''}`);
+  // The worker's own lifetime must be observed: an absent exit is a failed
+  // acquisition, not an acceptable absence. A worker-error event is a
+  // failed acquisition, separate from any reader refusal.
+  assert.ok(facts.workerExit, 'the worker exit was observed (required lifetime evidence)');
+  assert.equal(facts.workerError, null, `no worker-error event: ${facts.workerError}`);
+  if (facts.workerExit) {
+    assert.equal(facts.workerExit.signal ?? null, null, `the worker was not killed by a signal: ${facts.workerExit.signal}`);
+    assert.equal(facts.workerExit.code, 0, `the worker exited cleanly (code ${facts.workerExit.code})`);
   }
   assert.ok(facts.workerOutcome, 'the reader outcome was observed');
   // A reader refusal is healthy: the condition is retained verbatim and
@@ -323,6 +334,11 @@ test('in-place same-size concurrent stress: acquired facts retained, coverage un
   });
   try {
     retainProbe('in-place', facts);
+    // An unresolved close keeps the live root for inspection instead of
+    // deleting it; the acquisition fails rather than passing.
+    if (facts.child.closeTimedOut) {
+      assert.fail('child close timed out; the live root is preserved unresolved and the acquisition failed');
+    }
     assertAcquisitionHealthy(facts);
     assert.equal(facts.coverage, 'unknown');
     if (facts.readerVerdict === 'accepted') {
@@ -332,7 +348,7 @@ test('in-place same-size concurrent stress: acquired facts retained, coverage un
       );
     }
   } finally {
-    rmSync(root, { recursive: true, force: true });
+    if (root) rmSync(root, { recursive: true, force: true });
   }
 });
 
@@ -345,6 +361,9 @@ test('rename-over substitution concurrent stress: verdicts are recorded, coverag
   });
   try {
     retainProbe('substitution', facts);
+    if (facts.child.closeTimedOut) {
+      assert.fail('child close timed out; the live root is preserved unresolved and the acquisition failed');
+    }
     assertAcquisitionHealthy(facts);
     assert.equal(facts.coverage, 'unknown');
     // A mapReadFailed refusal is recorded as a reader condition, never as
@@ -353,6 +372,6 @@ test('rename-over substitution concurrent stress: verdicts are recorded, coverag
       assert.ok(true, 'reader refusal recorded; interval coverage remains unknown');
     }
   } finally {
-    rmSync(root, { recursive: true, force: true });
+    if (root) rmSync(root, { recursive: true, force: true });
   }
 });
