@@ -279,6 +279,34 @@ test('the replay record carries its prefix and head sections under their own pha
   }
 });
 
+test('each replay section reports its own terminal facts truthfully', () => {
+  for (const record of loadRecords('replay-')) {
+    const sections = ['prefix', 'head'].map(name => [name, record.document[name]]);
+    for (const [name, section] of sections) {
+      assert.equal(typeof section.aborted, 'boolean', `${record.name}.${name}.aborted must be a boolean`);
+      assert.equal(typeof section.cancelled, 'boolean', `${record.name}.${name}.cancelled must be a boolean`);
+      assert.ok(section.autocommitAtEnd === null || typeof section.autocommitAtEnd === 'boolean',
+        `${record.name}.${name}.autocommitAtEnd must be a boolean or null`);
+      assert.ok(section.schemaVersion === null || typeof section.schemaVersion === 'number',
+        `${record.name}.${name}.schemaVersion must be a number or null`);
+      if (section.cancelled) {
+        assert.equal(record.stage, 'cancelled', `${record.name}.${name} reports cancellation but the record stage is ${record.stage}`);
+      }
+      if (section.aborted) {
+        assert.notEqual(record.stage, 'ok', `${record.name}.${name} reports an aborted replay under stage ok`);
+      }
+      if (section.autocommitAtEnd === false) {
+        assert.equal(record.stage, 'replayOpenTransaction',
+          `${record.name}.${name} reports an open transaction but the record stage is ${record.stage}`);
+      }
+    }
+    if (record.stage === 'cancelled') {
+      assert.ok(sections.some(([, section]) => section.cancelled === true),
+        `${record.name} reports stage cancelled while neither section reports cancellation`);
+    }
+  }
+});
+
 test('every authorizer event names a known phase', () => {
   for (const prefix of ['planner-', 'replay-', 'stage-']) {
     for (const record of loadRecords(prefix)) {
