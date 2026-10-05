@@ -254,6 +254,11 @@ def check_admission_bound(values):
     check(values.get("admit.rows") == "1", "admit.rows", values.get("admit.rows"))
 
 
+def check_duties(values):
+    view = values.get("duties.view", "")
+    check(view in ("rows:1", "rows:2", "rows:3"), "duties.view", view)
+
+
 def check_control(values):
     control = json.loads(values.get("control.release", "{}"))
     check(control.get("state") == "complete", "control.release", control)
@@ -304,6 +309,13 @@ MUTATIONS = [
         "AND semantic_queries.request_json=excluded.request_json",
         "AND semantic_queries.request_json=semantic_queries.request_json",
         "a_repeated_query_id_replays_only_an_identical_owner_and_request",
+    ),
+    # The exported duty boundary stops refusing an unreadable enumeration.
+    (
+        "bend2/src/context/duties.bend",
+        "Bool.pick(DutyView, duty_all_valid(duty_split(rows)),",
+        "Bool.pick(DutyView, True{},",
+        "an_unknown_kind_makes_the_exported_enumeration_unreadable",
     ),
     # The admission answer stops distinguishing creation from retention.
     (
@@ -389,6 +401,7 @@ def main():
     check_store(values)
     check_admission_bound(values)
     check_roles(values)
+    check_duties(values)
     check_control(values)
     if os.environ.get("CONTEXT_LIFECYCLE_MUTATIONS") == "1":
         proof_removal_check()

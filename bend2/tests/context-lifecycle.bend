@@ -23,6 +23,7 @@ import ../src/context/control.bend as ContextControl
 import ../src/context/lifecycle.bend as ContextLifecycle
 import ../src/context/bound.bend as ContextBound
 import ../src/context/bound-admission.bend as ContextAdmit
+import ../src/context/duties.bend as ContextDuties
 import ../src/context/laws.bend as ContextLaws
 import ../src/coordinator/commands.bend as C
 import ../src/host/sqlite.bend as DB
@@ -96,6 +97,11 @@ def admission_surfaces() -> IO<Unit>:
 
 # --- host surfaces -----------------------------------------------------------
 
+def release_lock(lock: Maybe<U32>) -> IO(Unit):
+  match lock:
+    case None{}: IO.pure(Unit, Unit{})
+    case Some{handle}: IO.try(Unit, Lock.release(handle))
+
 def host_surfaces(+log: String) -> IO(Unit):
   do IO<Unit>:
     anchor : String <- IO.try(String, ContextRole.prepare_guard_anchor(log))
@@ -108,11 +114,6 @@ def host_surfaces(+log: String) -> IO(Unit):
     obs("lock.found", found)
     released : Unit <- release_lock(lock)
     IO.pure(Unit, Unit{})
-
-def release_lock(lock: Maybe<U32>) -> IO(Unit):
-  match lock:
-    case None{}: IO.pure(Unit, Unit{})
-    case Some{handle}: IO.try(Unit, Lock.release(handle))
 
 def binding_surfaces(+db: String, +copy: String) -> IO(String):
   do IO<String>:
@@ -238,6 +239,23 @@ def admit_surfaces(+db: String, +binding: String) -> IO(Unit):
     show("admit.rows", rows)
     IO.pure(Unit, Unit{})
 
+# The exported duty enumeration: a settled context answers none, and an owed notice
+# for the query keeps the view from being settled.
+def show_duty(key: String, result: Result<&1,&1,U32 & String,ContextDuties.DutyView>) -> IO(Unit):
+  match result:
+    case Done{+view}: obs(key, ContextDuties.duty_text(view))
+    case Fail{error}:
+      match error:
+        case (code, message): obs(key ++ ".error", message)
+
+def duty_surfaces(db: String, binding: String) -> IO(Unit):
+  do IO<Unit>:
+    settled : Result<&1,&1,U32 & String,ContextDuties.DutyView> <- ContextDuties.duties(db, binding)
+    show_duty("duties.view", settled)
+    owed : Result<&1,&1,U32 & String,String> <- DB.Sql.query_bound(db, binding, "SELECT json_extract(cleanup_intent_json,'$.signal') FROM semantic_queries WHERE id='q1';")
+    show("duties.intent", owed)
+    IO.pure(Unit, Unit{})
+
 def run(+db: String, +copy: String, +log: String) -> IO(Unit):
   do IO<Unit>:
     pure : Unit <- identity_surfaces()
@@ -250,6 +268,7 @@ def run(+db: String, +copy: String, +log: String) -> IO(Unit):
     admissions : Unit <- admit_surfaces(db, binding)
     roles : Unit <- role_surfaces(db, binding, log)
     control : Unit <- control_surfaces(db, binding)
+    duties : Unit <- duty_surfaces(db, binding)
     IO.print("context-lifecycle: done")
 
 def complain() -> IO(Unit):
