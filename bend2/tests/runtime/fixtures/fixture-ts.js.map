@@ -1,0 +1,1 @@
+{"version":3,"file":"fixture-ts.js","sourceRoot":"","sources":["fixture-ts.ts"],"sourcesContent":["interface Reading { id: string; value: number }\n\nexport function scale(r: Reading, by: number): number {\n  const adjusted = r.value * by\n  return adjusted\n}\n"],"names":[],"mappings":";MAGQ;JACN;;"}
