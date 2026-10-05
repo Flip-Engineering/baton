@@ -1,18 +1,17 @@
 # CLAIM: a complete JSON number token is lexed losslessly in pure Bend2 over explicit
 # validated octets, preserving the original token and returning its lexical digits as
-# octet lists without any arithmetic or floating conversion, so negative zero, arbitrarily
-# long lexemes and exponent spelling survive.
-# Scope: one number token byte slice supplied by a future structural parser. This is not a
-# full JSON parser and it decides no duplicate-key or arithmetic policy.
-# Normalisation stated honestly: the integer, fraction and exponent parts carry digits
-# only. An exponent minus is carried as a leading 45 in the exponent part, an explicit
-# exponent plus is NOT carried there, and both that plus and the original case of e or E
-# are preserved only in the returned original slice.
+# octet lists without any arithmetic or floating conversion.
+# Scope: one number token byte slice supplied by a future structural parser; not a full
+# JSON parser, and it decides no duplicate-key or arithmetic policy.
+# Normalisation stated honestly: the parts carry digits only; an exponent minus is carried
+# as a leading 45, an explicit exponent plus is not, and both the plus and the original case
+# of e or E survive only in the returned original slice.
+# Language forms grounded by reading the pinned Base: Bool.pick takes exactly type,
+# condition, true, false; a computed value is bound to a helper parameter before it is
+# matched, per the restriction canonical.bend records; declarations appear before use and
+# there is no mutual recursion; a matched state that is reused carries the plus binder.
 # Serves: LANG-CAP-06 (B2-JSON), decoder slice.
-# Fixture: bend2/test/output-json-number.bend, which compares typed expected results.
-# Pin: bend 2.0.25, bendlang/bend@a49524265bdfa5753a4bf38e25f0574a705dd868.
-# Syntax follows bend2/src/json/uint-decoder.bend and bend2/src/json/canonical.bend, read
-# before writing, including the plus marker on values reused more than once.
+# Fixture: bend2/test/output-json-number.bend.
 # UNCOMPILED and UNTESTED.
 
 import Base
@@ -34,8 +33,6 @@ type NumResult is Data:
   NumRefused{reason: String}
   NumHostFault{value: U32}
 
-# The scan failure is an internal constructor of its own and is converted explicitly to the
-# public NumHostFault at the entry, so the two never share a name.
 type NumScan is Data:
   NumStep{state: NumState}
   NumScanFault{value: U32}
@@ -58,9 +55,13 @@ def is_minus(+code: U32) -> Bool:
 def bad(reason: String) -> NumState:
   NumBad{reason}
 
-# Digit accumulation uses element-with-list cons, which this repository writes as
-# code <> list (see cat_list), so digits arrive reversed and normalise once at the end. A
-# zero keeps its own digit, so 0, -0 and 0.001 retain the [48] integer part.
+def reverse_go(xs: List<U32>, acc: List<U32>) -> List<U32>:
+  match xs:
+    case Nil{}: acc
+    case h <> t: reverse_go(t, h <> acc)
+
+# Digit accumulation uses element-with-list cons, so digits arrive reversed and normalise
+# once at the end. A zero keeps its own digit, so 0, -0 and 0.001 retain [48].
 def step(state: NumState, +code: U32) -> NumState:
   match state:
     case NumStart{}:
@@ -97,15 +98,8 @@ def step(state: NumState, +code: U32) -> NumState:
     case NumExponent{+integer, +fraction, exp_minus, +exponent}:
       Bool.pick(NumState, is_digit(code),
         NumExponent{integer, fraction, exp_minus, code <> exponent}, bad("trailing_data"))
-    case NumBad{reason}: NumBad{reason}
+    case +NumBad{reason}: NumBad{reason}
 
-def reverse_go(xs: List<U32>, acc: List<U32>) -> List<U32>:
-  match xs:
-    case Nil{}: acc
-    case h <> t: reverse_go(t, h <> acc)
-
-# Octets at or above 256 are a host input fault, reported through the internal scan
-# constructor and converted at the entry.
 def feed_go(octets: List<U32>, state: NumState) -> NumScan:
   match octets:
     case Nil{}: NumStep{state}
@@ -122,8 +116,9 @@ def accepted(state: NumState, minus: Bool, original: List<U32>) -> NumResult:
       NumAccepted{minus, reverse_go(integer, Nil{}), reverse_go(fraction, Nil{}),
         Bool.pick(List<U32>, exp_minus, 45 <> reverse_go(exponent, Nil{}),
           reverse_go(exponent, Nil{})), original}
-    case _: NumRefused{"incomplete_token"}
+    case +other: NumRefused{"incomplete_token"}
 
+# The remaining state is bound and passed once rather than reused from the match.
 def finish_go(state: NumState, minus: Bool, original: List<U32>) -> NumResult:
   match state:
     case NumBad{reason}: NumRefused{reason}
@@ -132,17 +127,19 @@ def finish_go(state: NumState, minus: Bool, original: List<U32>) -> NumResult:
     case NumPoint{integer}: NumRefused{"expected_fraction_digit"}
     case NumExpMark{integer, fraction}: NumRefused{"expected_exponent_digit"}
     case NumExpSign{integer, fraction, exp_minus}: NumRefused{"expected_exponent_digit"}
-    case _: accepted(state, minus, original)
+    case +other: accepted(other, minus, original)
 
 def leading_minus(octets: List<U32>) -> Bool:
   match octets:
     case Nil{}: False{}
     case +h <> t: is_minus(h)
 
-# Entry: a complete token byte slice. The machine consumes the leading sign itself, so the
-# bytes are never fed twice, and the original slice is returned unmodified so an accepted
-# token round-trips byte for byte.
-def decode_number(+octets: List<U32>) -> NumResult:
-  match feed_go(octets, NumStart{}):
+# The computed scan is bound to a parameter before it is matched, per the restriction that
+# canonical.bend records; the entry never matches a computed scrutinee directly.
+def entry(scan: NumScan, octets: List<U32>) -> NumResult:
+  match scan:
     case NumStep{state}: finish_go(state, leading_minus(octets), octets)
     case NumScanFault{value}: NumHostFault{value}
+
+def decode_number(+octets: List<U32>) -> NumResult:
+  entry(feed_go(octets, NumStart{}), octets)
