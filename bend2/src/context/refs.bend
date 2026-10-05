@@ -68,61 +68,89 @@ def runtime_ref(+runtime: String, +adapter: String, +thread: String, +epoch: Str
   encode([Rt{"runtime"}, Rt{runtime}, Rt{adapter}, Rt{thread}, Rt{epoch}, Rt{mutation}, Rt{kind}, Rt{handle}])
 
 # --- the stored reference ----------------------------------------------------
+# The producer emits a full subject selector object (for an entity subject:
+# {kind:entity, database, schema, name}). The retained record preserves that
+# selector as its exact canonical text, and carries the kind the owned subject
+# validation derived from it, so core admits on the kind without parsing or
+# matching selector text and without losing the selector's own evidence. The
+# policy is the identity of the policy the reference was created under; the
+# current request alone cannot establish it.
 type RefRecord is Data:
-  Ref{id: String, engine: String, subject: String, snapshot_id: String, projections: Eng.SS}
+  Ref{id: String, engine: String, subject_kind: String, selector: String, snapshot_id: String, policy: String, projections: Eng.SS}
 
 def ref_id(r: RefRecord) -> String:
   match r:
-    case Ref{id, engine, subject, snapshot_id, projections}: id
+    case Ref{id, engine, subject_kind, selector, snapshot_id, policy, projections}: id
 
-def ref_subject(r: RefRecord) -> String:
+def ref_engine(r: RefRecord) -> String:
   match r:
-    case Ref{id, engine, subject, snapshot_id, projections}: subject
+    case Ref{id, engine, subject_kind, selector, snapshot_id, policy, projections}: engine
 
-def ref_projections(r: RefRecord) -> Eng.SS:
+def ref_subject_kind(r: RefRecord) -> String:
   match r:
-    case Ref{id, engine, subject, snapshot_id, projections}: projections
+    case Ref{id, engine, subject_kind, selector, snapshot_id, policy, projections}: subject_kind
+
+def ref_selector(r: RefRecord) -> String:
+  match r:
+    case Ref{id, engine, subject_kind, selector, snapshot_id, policy, projections}: selector
 
 def ref_snapshot(r: RefRecord) -> String:
   match r:
-    case Ref{id, engine, subject, snapshot_id, projections}: snapshot_id
+    case Ref{id, engine, subject_kind, selector, snapshot_id, policy, projections}: snapshot_id
+
+def ref_policy(r: RefRecord) -> String:
+  match r:
+    case Ref{id, engine, subject_kind, selector, snapshot_id, policy, projections}: policy
+
+def ref_projections(r: RefRecord) -> Eng.SS:
+  match r:
+    case Ref{id, engine, subject_kind, selector, snapshot_id, policy, projections}: projections
 
 # --- expansion admission -----------------------------------------------------
 type RefQuery is Data:
-  RQ{known: Bool, stored_subject: String, stored: Eng.SS, requested: Eng.SS,
-     applicability: Snap.Applies, required: Eng.SS, granted: Eng.SS, fresh: String}
+  RQ{known: Bool, stored_kind: String, stored_policy: String, policy: String,
+     stored: Eng.SS, requested: Eng.SS, applicability: Snap.Applies,
+     required: Eng.SS, granted: Eng.SS, fresh: String}
 
 def rq_known(q: RefQuery) -> Bool:
   match q:
-    case RQ{known, stored_subject, stored, requested, applicability, required, granted, fresh}: known
+    case RQ{known, stored_kind, stored_policy, policy, stored, requested, applicability, required, granted, fresh}: known
 
-def rq_subject(q: RefQuery) -> String:
+def rq_stored_kind(q: RefQuery) -> String:
   match q:
-    case RQ{known, stored_subject, stored, requested, applicability, required, granted, fresh}: stored_subject
+    case RQ{known, stored_kind, stored_policy, policy, stored, requested, applicability, required, granted, fresh}: stored_kind
+
+def rq_stored_policy(q: RefQuery) -> String:
+  match q:
+    case RQ{known, stored_kind, stored_policy, policy, stored, requested, applicability, required, granted, fresh}: stored_policy
+
+def rq_policy(q: RefQuery) -> String:
+  match q:
+    case RQ{known, stored_kind, stored_policy, policy, stored, requested, applicability, required, granted, fresh}: policy
 
 def rq_stored(q: RefQuery) -> Eng.SS:
   match q:
-    case RQ{known, stored_subject, stored, requested, applicability, required, granted, fresh}: stored
+    case RQ{known, stored_kind, stored_policy, policy, stored, requested, applicability, required, granted, fresh}: stored
 
 def rq_requested(q: RefQuery) -> Eng.SS:
   match q:
-    case RQ{known, stored_subject, stored, requested, applicability, required, granted, fresh}: requested
+    case RQ{known, stored_kind, stored_policy, policy, stored, requested, applicability, required, granted, fresh}: requested
 
 def rq_applicability(q: RefQuery) -> Snap.Applies:
   match q:
-    case RQ{known, stored_subject, stored, requested, applicability, required, granted, fresh}: applicability
+    case RQ{known, stored_kind, stored_policy, policy, stored, requested, applicability, required, granted, fresh}: applicability
 
 def rq_required(q: RefQuery) -> Eng.SS:
   match q:
-    case RQ{known, stored_subject, stored, requested, applicability, required, granted, fresh}: required
+    case RQ{known, stored_kind, stored_policy, policy, stored, requested, applicability, required, granted, fresh}: required
 
 def rq_granted(q: RefQuery) -> Eng.SS:
   match q:
-    case RQ{known, stored_subject, stored, requested, applicability, required, granted, fresh}: granted
+    case RQ{known, stored_kind, stored_policy, policy, stored, requested, applicability, required, granted, fresh}: granted
 
 def rq_fresh(q: RefQuery) -> String:
   match q:
-    case RQ{known, stored_subject, stored, requested, applicability, required, granted, fresh}: fresh
+    case RQ{known, stored_kind, stored_policy, policy, stored, requested, applicability, required, granted, fresh}: fresh
 
 type RefDecision is Data:
   RAllow{projections: Eng.SS}
@@ -132,6 +160,7 @@ type RefDecision is Data:
   REffectMissing{effect: String}
   RProjectionRefused{projection: String}
   RSubjectRefused{kind: String}
+  RPolicyRefused{stored: String, current: String}
 
 # The fixed refusal condition each decision carries; "ok" admits expansion.
 def condition(d: RefDecision) -> String:
@@ -143,6 +172,7 @@ def condition(d: RefDecision) -> String:
     case REffectMissing{effect}: "effectNotGranted"
     case RProjectionRefused{projection}: "projectionRefused"
     case RSubjectRefused{kind}: "subjectRefused"
+    case RPolicyRefused{stored, current}: "refPolicyMismatch"
 
 # The supported subject kinds a stored referenced selector can name.
 def supported_subject(+kind: String) -> Bool:
@@ -188,9 +218,13 @@ def admit_applicability(a: Snap.Applies, +q: RefQuery) -> RefDecision:
     case Snap.AHistorical{reason}: RStaleRef{rq_fresh(q)}
     case Snap.AUnknown{reason}: RUnverified{reason}
 
+def admit_policy(+q: RefQuery) -> RefDecision:
+  Bool.pick(RefDecision, String.eq(rq_stored_policy(q), rq_policy(q)), admit_applicability(rq_applicability(q), q),
+    RPolicyRefused{rq_stored_policy(q), rq_policy(q)})
+
 def admit_known(+q: RefQuery) -> RefDecision:
-  Bool.pick(RefDecision, supported_subject(rq_subject(q)), admit_applicability(rq_applicability(q), q),
-    RSubjectRefused{rq_subject(q)})
+  Bool.pick(RefDecision, supported_subject(rq_stored_kind(q)), admit_policy(q),
+    RSubjectRefused{rq_stored_kind(q)})
 
 def admit(+q: RefQuery) -> RefDecision:
   Bool.pick(RefDecision, rq_known(q), admit_known(q), RUnknownId{})

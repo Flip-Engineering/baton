@@ -294,9 +294,16 @@
     {
       "name": "ref-admission-accepts-an-unsupported-subject-kind",
       "file": "bend2/src/context/refs.bend",
-      "find": "  Bool.pick(RefDecision, supported_subject(rq_subject(q)), admit_applicability(rq_applicability(q), q),",
-      "replace": "  Bool.pick(RefDecision, True{}, admit_applicability(rq_applicability(q), q),",
+      "find": "  Bool.pick(RefDecision, supported_subject(rq_stored_kind(q)), admit_policy(q),",
+      "replace": "  Bool.pick(RefDecision, True{}, admit_policy(q),",
       "law": "context_refs_an_unsupported_subject_refuses"
+    },
+    {
+      "name": "ref-admission-ignores-the-original-policy",
+      "file": "bend2/src/context/refs.bend",
+      "find": "  Bool.pick(RefDecision, String.eq(rq_stored_policy(q), rq_policy(q)), admit_applicability(rq_applicability(q), q),",
+      "replace": "  admit_applicability(rq_applicability(q), q)",
+      "law": "context_refs_a_reference_from_another_policy_refuses"
     },
     {
       "name": "expansion-strengthens-a-declaration",
