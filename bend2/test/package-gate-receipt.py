@@ -1085,11 +1085,18 @@ class PackageGateReceipt(unittest.TestCase):
                                 for member in PACKAGE.ORDINARY_RUN_VERIFIER_MEMBERS
                                 if not (PACKAGE.ROOT
                                         / PACKAGE.ORDINARY_VERIFIER_FILES[member]).is_file()))
-        endpoint, _endpoint_missing = PACKAGE.expected_verifier_digests()
+        endpoint, endpoint_missing = PACKAGE.expected_verifier_digests()
         for member, digest in endpoint.items():
             path = PACKAGE.ROOT / PACKAGE.VERIFIER_FILES[member]
             self.assertTrue(path.is_file())
             self.assertEqual(digest, hashlib.sha256(path.read_bytes()).hexdigest())
+        self.assertEqual(sorted(endpoint_missing),
+                         sorted(PACKAGE.VERIFIER_FILES[member]
+                                for member in PACKAGE.VERIFIER_MEMBERS
+                                if not (PACKAGE.ROOT / PACKAGE.VERIFIER_FILES[member]).is_file()))
+        self.assertEqual(sorted(endpoint), sorted(
+            member for member in PACKAGE.VERIFIER_MEMBERS
+            if (PACKAGE.ROOT / PACKAGE.VERIFIER_FILES[member]).is_file()))
         # This checkout is not a complete authority, and the endpoint closure and
         # the run identity are separately declared member sets, not one inferred
         # from the other.
@@ -1123,7 +1130,35 @@ class PackageGateReceipt(unittest.TestCase):
                 with self.assertRaisesRegex(RuntimeError, 'with a malformed value'):
                     PACKAGE.verifier_member_value(
                         {'classifier_module_sha256': malformed,
-                         'classify_module_sha256': digest}, 'classifier_module_sha256')
+                         'classify_module_sha256': digest}, member)
+        # The other direction refuses too: a valid canonical value does not excuse
+        # a malformed historical spelling the document also carries.
+        for malformed in (None, 'not-a-digest', 17):
+            with self.subTest(historical=malformed):
+                with self.assertRaisesRegex(RuntimeError, 'with a malformed value'):
+                    PACKAGE.verifier_member_value(
+                        {'classifier_module_sha256': digest,
+                         'classify_module_sha256': malformed}, member)
+        # The endpoint closure boundary refuses the same malformed pair, using the
+        # stubbed endpoint authority this fixture supplies.
+        endpoint_verdict = {'verifier': dict(self.verifier,
+                                             classifier_module_sha256='not-a-digest')}
+        with self.assertRaisesRegex(RuntimeError, 'with a malformed value'):
+            PACKAGE.require_verifier_closure(endpoint_verdict, 'the endpoint boundary')
+
+    def test_a_malformed_run_spelling_refuses_at_the_reader_boundary(self):
+        """The ordinary reader refuses a malformed spelling, not only the helper."""
+        member = 'classifier_module_sha256'
+        malformed = {**self.ordinary_verifier, member: 'not-a-digest'}
+        run_root = self.home / 'run-bad-spelling'
+        index = self.ordinary_index(run_root)
+        index.write_text(json.dumps({**_load(index), 'run': {
+            **_load(index)['run'], 'verifier': malformed}}))
+        with self.assertRaisesRegex(RuntimeError, 'with a malformed value'):
+            PACKAGE.ordinary_evidence(index, self.controls, self.compiler(), None,
+                                      self.parent_rows(), None,
+                                      self.envelope(index, run_root=run_root,
+                                                    verifier=malformed))
 
     def test_an_unavailable_run_member_is_recorded(self):
         """The controlled missing variant of the mocked run authority."""

@@ -1785,6 +1785,29 @@ def archive_document_path(directory, name, label):
     return path
 
 
+def admit_archive_documents(directory, documents):
+    """Admit the bound metadata documents before any fallible work.
+
+    The exact reserved set must be bound, every recorded name is checked as
+    written and confined, and every bound digest must be a well-formed digest
+    matching the document bytes. Shared by the archived reader and the readback
+    so an envelope with invalid metadata refuses before classification.
+    """
+    require(isinstance(documents, dict) and set(documents) == set(ARCHIVE_METADATA),
+            'An archived envelope must bind exactly its metadata documents: '
+            + succinct(sorted(documents or {})))
+    bound = {}
+    for name in sorted(documents):
+        digest = documents[name]
+        require(isinstance(digest, str) and re.fullmatch(r'[0-9a-f]{64}', digest),
+                'The archived envelope records no digest for ' + name)
+        path = archive_document_path(directory, name, 'The archived envelope')
+        require(sha256(path) == digest,
+                'An archived metadata document differs from its recorded identity: ' + name)
+        bound[name] = {'sha256': digest, 'bytes': path.stat().st_size}
+    return bound
+
+
 def verify_archived_inventory(directory, recorded, documents=None):
     """Require the recorded members and the bound metadata documents to match.
 
@@ -1792,9 +1815,7 @@ def verify_archived_inventory(directory, recorded, documents=None):
     contract, so a reserved-name document is never accepted without the digests
     the producer recorded for it.
     """
-    require(isinstance(documents, dict) and set(documents) == set(ARCHIVE_METADATA),
-            'An archived envelope must bind exactly its metadata documents: '
-            + succinct(sorted(documents or {})))
+    bound = admit_archive_documents(directory, documents)
     current = producer_inventory(directory, exclude=ARCHIVE_METADATA)
     present = {member['path']: member for member in current['members']}
     recorded_members = {member['path']: member for member in recorded.get('members', [])}
@@ -1805,15 +1826,6 @@ def verify_archived_inventory(directory, recorded, documents=None):
                 'An archived evidence member is missing or changed: ' + path)
     extra = sorted(set(present) - set(recorded_members))
     require(not extra, 'An archived evidence member was not produced: ' + succinct(extra))
-    bound = {}
-    for name in sorted(documents):
-        digest = documents[name]
-        require(isinstance(digest, str) and re.fullmatch(r'[0-9a-f]{64}', digest),
-                'The archived envelope records no digest for ' + name)
-        path = archive_document_path(directory, name, 'The archived envelope')
-        require(sha256(path) == digest,
-                'An archived metadata document differs from its recorded identity: ' + name)
-        bound[name] = {'sha256': digest, 'bytes': path.stat().st_size}
     return current, bound
 
 
@@ -1883,6 +1895,9 @@ def controls_evidence(directory, initial, compiler, audit=None, destination=None
     only compared with that verdict.
     """
     root_identity = evidence_root_identity(directory, 'The controls evidence root')
+    # An extracted envelope is admitted before any summary, case or endpoint work,
+    # so invalid or missing bound metadata refuses before fallible effects.
+    archived_bound = (admit_archive_documents(directory, documents) if archived else None)
     path = directory / 'controls-summary.json'
     require(path.is_file(), 'The controls evidence has no controls-summary.json: ' + str(path))
     summary = json.loads(path.read_text())
@@ -2102,23 +2117,11 @@ def controls_evidence(directory, initial, compiler, audit=None, destination=None
     seconds = [span['seconds'] for span in spans]
     supplied = producer_inventory(directory)
     present = {member['path']: member['sha256'] for member in supplied['members']}
-    if archived:
-        bound = documents or {}
-        require(set(bound) == set(ARCHIVE_METADATA),
-                'An archived envelope must bind exactly its metadata documents: '
-                + succinct(sorted(bound)))
-        for name in ARCHIVE_METADATA:
-            require(name in present, 'An archived envelope omits ' + name)
-            require(bound.get(name) == present[name],
-                    'An archived envelope metadata document is not the one recorded: ' + name)
-    else:
+    if not archived:
         reserved = sorted(set(present) & set(ARCHIVE_METADATA))
         require(not reserved,
                 'The producer closure names reserved archive metadata: ' + succinct(reserved))
     inventory = producer_inventory(directory, destination, exclude=ARCHIVE_METADATA)
-    if archived:
-        require(isinstance(documents, dict) and documents,
-                'An archived envelope is admitted only with its bound metadata documents')
     if audit is not None:
         audit_inventory = producer_inventory(audit)
     closure = hashlib.sha256(json.dumps(
@@ -2178,6 +2181,7 @@ def controls_evidence(directory, initial, compiler, audit=None, destination=None
         require(archived_document == result['reduction']['document'],
                 'The archived reduction document differs from the fresh document')
         result['archived_origin_root'] = archived_inventory.get('root')
+        result['archived_documents'] = archived_bound
     result['inventory_sha256'] = inventory['inventory_sha256']
     result['reduction_sha256'] = result['reduction']['sha256']
     return result
@@ -2947,9 +2951,10 @@ def package(args):
                 'origin': controls['origin'],
                 'members': len(controls['inventory']['members']),
                 'documents': archived_documents,
-                # The bound documents as read back from the extracted envelope,
-                # so archive identity survives replay rather than being retyped.
-                'documents_bound': archived_bound}
+                # The staged documents as hashed in the payload before the archive
+                # is written. Extracted bytes are read back by the archive reader
+                # on the consuming side and are not this record.
+                'documents_staged': archived_bound}
         write_json(payload / 'manifest.json', manifest)
         shutil.copyfile(payload / 'manifest.json', output / 'manifest.json')
         destination = output / (identity['archive_root'] + '-' + final['head'] + '.tar.gz')
