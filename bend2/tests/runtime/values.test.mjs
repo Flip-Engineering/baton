@@ -94,7 +94,7 @@ test('any preview is conservatively incomplete regardless of its own flags', () 
   assert.equal(previewCompleteness(undefined).condition, 'noPreview');
 });
 
-test('data property descriptors keep their described value; symbol names stay described objects', () => {
+test('data property descriptors keep their described value; symbol fields stay described objects', () => {
   const data = propertyDescriptorSummary({
     name: 'a',
     value: { type: 'number', value: 1, description: '1' },
@@ -104,14 +104,31 @@ test('data property descriptors keep their described value; symbol names stay de
     isOwn: true,
   });
   assert.equal(data.kind, 'data');
+  assert.equal(data.isOwn, true);
   assert.equal(data.writable, true);
   assert.deepEqual(data.value, { type: 'number', subtype: null, className: null, description: '1', value: 1 });
 
   const symbol = propertyDescriptorSummary({
-    name: { type: 'symbol', description: 'Symbol(s)', objectId: undefined },
+    name: 'Symbol(s)',
+    symbol: { type: 'symbol', description: 'Symbol(s)' },
     value: { type: 'number', value: 2, description: '2' },
   });
-  assert.deepEqual(symbol.name, { type: 'symbol', subtype: null, className: null, description: 'Symbol(s)' });
+  assert.deepEqual(symbol.symbol, { type: 'symbol', subtype: null, className: null, description: 'Symbol(s)' });
+  assert.equal(symbol.name, 'Symbol(s)');
+});
+
+test('an absent isOwn field is preserved as unknown, never an invented ownership claim', () => {
+  const unknown = propertyDescriptorSummary({
+    name: 'inherited',
+    value: { type: 'number', value: 3, description: '3' },
+  });
+  assert.equal(unknown.isOwn, null);
+  const explicit = propertyDescriptorSummary({
+    name: 'own',
+    isOwn: false,
+    value: { type: 'number', value: 4, description: '4' },
+  });
+  assert.equal(explicit.isOwn, false);
 });
 
 test('accessor descriptors keep their getter and setter as descriptors and never execute them', () => {

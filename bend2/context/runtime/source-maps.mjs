@@ -3,19 +3,29 @@
 // the recorded CDP research facts).
 //
 // Maps arrive through Debugger.scriptParsed.sourceMapURL as local files or
-// embedded data URLs. Remote map fetch is unavailable. A mapping records the
-// generated and mapped segment positions and the map digest; it does not
-// reconstruct renamed runtime bindings from map names, and a segment lookup is
-// segment-exact, not character-exact.
+// embedded data URLs. Remote map fetch is unavailable and unknown schemes
+// never become local paths. A mapping records the generated and mapped
+// segment positions and the map digest; it does not reconstruct renamed
+// runtime bindings from map names, and a segment lookup is segment-exact, not
+// character-exact.
 //
-// Identity rules: a loaded map keeps three separate identities. The source
-// identities are the names in sources joined with sourceRoot, the map identity
-// is the SHA-256 of the raw map bytes, and the loaded/disk identities of the
-// generated script belong to the caller's script record. None of the three is
-// derived from another.
+// Identity rules: a loaded map keeps separate identities. The source
+// identities are the names in sources resolved against the map's own base
+// (URL bases stay in URL space, file bases resolve on the filesystem), the
+// map identity is the SHA-256 of the raw map bytes, the read identity is the
+// enforced file identity of the read itself, and the loaded/disk identities
+// of the generated script belong to the caller's script record. None of
+// these is derived from another.
+//
+// Read closure: local map reads go through createAdmittedFileReader, which
+// resolves real paths, refuses escapes from the admitted roots, and refuses a
+// file replaced during the read. A composer may inject its own readAdmitted
+// capability, which then owns that enforcement; plain readFile injection is
+// deliberately not offered.
 
 import { createHash } from 'node:crypto';
-import { dirname, isAbsolute, join as joinPath, relative, resolve as resolvePath } from 'node:path';
+import { closeSync, fstatSync, lstatSync, openSync, readSync, realpathSync } from 'node:fs';
+import { dirname, isAbsolute, relative, resolve as resolvePath } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const BASE64_CHARS = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/';
@@ -23,6 +33,9 @@ const BASE64_VALUES = new Int32Array(128).fill(-1);
 for (let i = 0; i < BASE64_CHARS.length; i += 1) {
   BASE64_VALUES[BASE64_CHARS.charCodeAt(i)] = i;
 }
+
+const SCHEME = /^[a-zA-Z][a-zA-Z0-9+.-]*:/;
+const SAFE_INTEGER = Number.MAX_SAFE_INTEGER;
 
 export class SourceMapError extends Error {
   constructor(condition, detail) {
@@ -36,7 +49,78 @@ function sha256Hex(bytes) {
   return createHash('sha256').update(bytes).digest('hex');
 }
 
-// Decodes one VLQ segment (for example "MAGQ" or "JACA") into its field
+// Builds the enforced local reader for one admitted closure. Every admitted
+// root is resolved to its own real path first. A read resolves the requested
+// path's real location, refuses when it escapes the closure (a symlink inside
+// an admitted root may not point outside), opens and reads through one file
+// descriptor, and re-checks the path's identity afterwards so a replacement
+// during the read refuses. The result carries the actual read identity.
+export function createAdmittedFileReader({ admittedRoots = [] } = {}) {
+  const roots = admittedRoots.map((root) => ({ requested: root, real: realpathSync(root) }));
+  const inside = (candidate) =>
+    roots.some((root) => {
+      const rel = relative(root.real, candidate);
+      return rel !== '' && !rel.startsWith('..') && !isAbsolute(rel);
+    });
+  return function readAdmitted(path) {
+    let realPath;
+    try {
+      realPath = realpathSync(path);
+    } catch (err) {
+      if (err && err.code === 'ENOENT') throw new SourceMapError('missingMap', `${path} does not resolve`);
+      throw new SourceMapError('mapReadFailed', `${path} does not resolve: ${err.message}`);
+    }
+    if (!inside(realPath)) {
+      throw new SourceMapError('mapOutsideAdmittedRoots', `${realPath} resolves outside every admitted root`);
+    }
+    let fd = null;
+    try {
+      fd = openSync(realPath, 'r');
+      const before = fstatSync(fd);
+      if (!before.isFile()) {
+        throw new SourceMapError('mapReadFailed', `${realPath} is not a regular file`);
+      }
+      const bytes = Buffer.alloc(before.size);
+      let offset = 0;
+      while (offset < before.size) {
+        const read = readSync(fd, bytes, offset, before.size - offset, offset);
+        if (read === 0) break;
+        offset += read;
+      }
+      if (offset !== before.size) {
+        throw new SourceMapError('mapReplacedDuringRead', `${realPath} changed size during the read`);
+      }
+      const after = fstatSync(fd);
+      if (after.size !== before.size) {
+        throw new SourceMapError('mapReplacedDuringRead', `${realPath} changed size during the read`);
+      }
+      closeSync(fd);
+      fd = null;
+      const afterStat = lstatSync(realPath);
+      if (afterStat.dev !== before.dev || afterStat.ino !== before.ino) {
+        throw new SourceMapError('mapReplacedDuringRead', `${realPath} named a different file after the read`);
+      }
+      const finalReal = realpathSync(path);
+      if (finalReal !== realPath || !inside(finalReal)) {
+        throw new SourceMapError('mapReplacedDuringRead', `${path} re-resolved to ${finalReal} during the read`);
+      }
+      return {
+        bytes,
+        identity: { path, realPath, dev: before.dev, ino: before.ino, size: before.size },
+      };
+    } finally {
+      if (fd !== null) {
+        try {
+          closeSync(fd);
+        } catch {
+          // the read already failed; the close error is not the finding
+        }
+      }
+    }
+  };
+}
+
+// Decodes one VLQ segment (for example "MAGQ" or "JACN") into its field
 // values. Refuses unknown characters, truncated continuations and field counts
 // other than 1, 4 and 5 by throwing a SourceMapError with condition 'badVLQ'.
 export function decodeVlqSegment(segment) {
@@ -51,6 +135,9 @@ export function decodeVlqSegment(segment) {
     }
     value += (digit & 31) * shift;
     shift *= 32;
+    if (value > SAFE_INTEGER) {
+      throw new SourceMapError('coordinateRangeExceeded', `segment ${JSON.stringify(segment)} overflows the safe-integer VLQ domain`);
+    }
     if ((digit & 32) === 0) {
       const negative = value % 2 === 1;
       const magnitude = Math.floor(value / 2);
@@ -68,10 +155,24 @@ export function decodeVlqSegment(segment) {
   return values;
 }
 
+function advance(running, delta, field) {
+  const next = running + delta;
+  if (!Number.isSafeInteger(next)) {
+    throw new SourceMapError('coordinateRangeExceeded', `${field} leaves the safe-integer domain`);
+  }
+  if (next < 0) {
+    throw new SourceMapError('badVLQ', `${field} would go negative`);
+  }
+  return next;
+}
+
 // Decodes the mappings string into ordered segments with zero-based generated
-// positions. Generated columns restart at every line; the source, line,
-// column and name running state persists across lines. Throws SourceMapError
-// with condition 'badVLQ' on malformed input.
+// positions. Generated columns restart at every line and must stay
+// non-decreasing within a line; the source, line, column and name running
+// state persists across lines and must stay inside the safe-integer domain
+// and nonnegative. No U32 bound is applied: the bound is the exact numeric
+// domain the arithmetic itself can answer for. Throws SourceMapError with
+// conditions 'badVLQ', 'malformedMap' or 'coordinateRangeExceeded'.
 export function decodeMappings(mappingsText) {
   const segments = [];
   let sourceIndex = 0;
@@ -88,18 +189,22 @@ export function decodeMappings(mappingsText) {
         throw new SourceMapError('badVLQ', 'empty mapping segment between separators');
       }
       const fields = decodeVlqSegment(part);
-      generatedColumn += fields[0];
+      const previousColumn = generatedColumn;
+      generatedColumn = advance(generatedColumn, fields[0], 'generated column');
+      if (segments.length > 0 && generatedColumn < previousColumn) {
+        throw new SourceMapError('malformedMap', 'generated columns decrease within one line');
+      }
       const segment = { generatedLine: line, generatedColumn };
       if (fields.length >= 4) {
-        sourceIndex += fields[1];
-        sourceLine += fields[2];
-        sourceColumn += fields[3];
+        sourceIndex = advance(sourceIndex, fields[1], 'source index');
+        sourceLine = advance(sourceLine, fields[2], 'source line');
+        sourceColumn = advance(sourceColumn, fields[3], 'source column');
         segment.sourceIndex = sourceIndex;
         segment.sourceLine = sourceLine;
         segment.sourceColumn = sourceColumn;
       }
       if (fields.length === 5) {
-        nameIndex += fields[4];
+        nameIndex = advance(nameIndex, fields[4], 'name index');
         segment.nameIndex = nameIndex;
       }
       segments.push(segment);
@@ -110,7 +215,8 @@ export function decodeMappings(mappingsText) {
 
 // Parses a source map v3 document and returns the decoded map with its raw
 // byte digest. Throws SourceMapError with conditions 'malformedMap',
-// 'unsupportedVersion', 'badVLQ', 'sourceUrlOutOfRange' or 'nameOutOfRange'.
+// 'unsupportedVersion', 'badVLQ', 'coordinateRangeExceeded',
+// 'sourceUrlOutOfRange' or 'nameOutOfRange'.
 export function parseSourceMapV3(text) {
   const bytes = Buffer.isBuffer(text) ? text : Buffer.from(String(text), 'utf8');
   const digest = sha256Hex(bytes);
@@ -141,7 +247,24 @@ export function parseSourceMapV3(text) {
   if (doc.sourceRoot !== undefined && doc.sourceRoot !== null && typeof doc.sourceRoot !== 'string') {
     throw new SourceMapError('malformedMap', 'sourceRoot is not a string');
   }
+  for (const entry of doc.sources) {
+    if (entry !== null && typeof entry !== 'string') {
+      throw new SourceMapError('malformedMap', 'sources entries are strings or null');
+    }
+  }
   const names = doc.names ?? [];
+  for (const entry of names) {
+    if (typeof entry !== 'string') {
+      throw new SourceMapError('malformedMap', 'names entries are strings');
+    }
+  }
+  if (Array.isArray(doc.sourcesContent)) {
+    for (const entry of doc.sourcesContent) {
+      if (entry !== null && typeof entry !== 'string') {
+        throw new SourceMapError('malformedMap', 'sourcesContent entries are strings or null');
+      }
+    }
+  }
   const segments = decodeMappings(doc.mappings);
   for (const segment of segments) {
     if (segment.sourceIndex !== undefined && (segment.sourceIndex < 0 || segment.sourceIndex >= doc.sources.length)) {
@@ -164,20 +287,40 @@ export function parseSourceMapV3(text) {
   };
 }
 
-// Joins one entry of sources with the map's sourceRoot. A relative entry
-// resolves against the generated script's directory when its path is known;
-// URL-shaped entries (data:, file://, http(s)://) pass through unchanged. The
-// recorded spelling of the source entry is preserved in the returned string.
+// Resolves one entry of sources for evidence. The base kind decides the
+// relationship: a URL sourceRoot keeps the source in URL space (file:// roots
+// come back as absolute paths), a file source joins the map-relative or
+// generated-relative filesystem base, and URL-shaped or data entries pass
+// through with their recorded spelling. A null source entry resolves to null.
+// No URL is ever handed to the filesystem resolver.
 export function resolveSourcePath(map, sourceIndex, generatedPath = null) {
   const source = map.sources[sourceIndex];
+  if (source === null) return null;
   if (typeof source !== 'string') {
     throw new SourceMapError('malformedMap', 'source entry is not a string');
   }
-  if (source.startsWith('data:') || /^[a-zA-Z][a-zA-Z0-9+.-]*:\/\//.test(source)) {
+  const sourceRoot = typeof map.sourceRoot === 'string' ? map.sourceRoot : '';
+  if (SCHEME.test(sourceRoot) && !sourceRoot.startsWith('file://')) {
+    const base = sourceRoot.endsWith('/') ? sourceRoot : `${sourceRoot}/`;
+    try {
+      return new URL(source, base).href;
+    } catch (err) {
+      throw new SourceMapError('malformedMap', `source does not join the URL sourceRoot: ${err.message}`);
+    }
+  }
+  if (source.startsWith('data:') || SCHEME.test(source)) {
     return source;
   }
-  const rooted = map.sourceRoot
-    ? (map.sourceRoot.endsWith('/') ? map.sourceRoot + source : map.sourceRoot + '/' + source)
+  if (sourceRoot.startsWith('file://')) {
+    try {
+      const base = sourceRoot.endsWith('/') ? sourceRoot : `${sourceRoot}/`;
+      return fileURLToPath(new URL(source, base).href);
+    } catch (err) {
+      throw new SourceMapError('malformedMap', `source does not join the file sourceRoot: ${err.message}`);
+    }
+  }
+  const rooted = sourceRoot
+    ? (sourceRoot.endsWith('/') ? sourceRoot + source : `${sourceRoot}/${source}`)
     : source;
   if (isAbsolute(rooted)) return rooted;
   if (generatedPath) return resolvePath(dirname(generatedPath), rooted);
@@ -217,28 +360,24 @@ function localMapPath(sourceMapURL, generatedPath) {
   return resolvePath(sourceMapURL);
 }
 
-function insideRoots(mapPath, admittedRoots) {
-  for (const root of admittedRoots) {
-    const rel = relative(root, mapPath);
-    if (rel !== '' && !rel.startsWith('..') && !isAbsolute(rel)) return true;
-  }
-  return false;
-}
-
 // Reads and parses the map named by a script's recorded sourceMapURL.
-//   sourceMapURL   the Debugger.scriptParsed.sourceMapURL string
-//   generatedPath  absolute path of the generated script on disk; the base for
-//                  relative map references; null when unknown
-//   admittedRoots  absolute directories forming the admitted read closure; a
-//                  local map must resolve inside one of them
-//   readFile       (path) => Buffer; the composer binds its own read policy
-// Returns {sourceMapURL, origin:'file'|'embedded', path?, digest, bytes, map}
-// or a refusal {condition, sourceMapURL, ...}. Refusal conditions:
-// 'remoteMapUnavailable', 'mapOutsideAdmittedRoots', 'missingMap',
-// 'mapReadFailed', 'malformedDataUrl', 'malformedMap', 'unsupportedVersion',
-// 'badVLQ', 'sourceUrlOutOfRange', 'nameOutOfRange'. This function does not
-// throw refusal conditions.
-export function loadSourceMap({ sourceMapURL, generatedPath = null, admittedRoots = [], readFile }) {
+//   sourceMapURL   the Debugger.scriptParsed.sourceMapURL string (or the
+//                  cdp-scripts mapReference url)
+//   generatedPath  absolute path of the generated script on disk; the base
+//                  for relative map references; null when unknown
+//   admittedRoots  absolute directories forming the admitted read closure,
+//                  used by the default enforced reader
+//   readAdmitted   optional composer capability (path) => {bytes, identity}
+//                  that enforces the closure itself; when absent the default
+//                  createAdmittedFileReader({admittedRoots}) enforces it
+// Returns {sourceMapURL, origin:'file'|'embedded', path?, input?, digest,
+// bytes, map} or a refusal {condition, sourceMapURL, ...}. Refusal
+// conditions: 'remoteMapUnavailable', 'mapOutsideAdmittedRoots',
+// 'mapReplacedDuringRead', 'missingMap', 'mapReadFailed', 'malformedDataUrl',
+// 'malformedMap', 'unsupportedVersion', 'badVLQ', 'coordinateRangeExceeded',
+// 'sourceUrlOutOfRange', 'nameOutOfRange'. This function does not throw
+// refusal conditions.
+export function loadSourceMap({ sourceMapURL, generatedPath = null, admittedRoots = [], readAdmitted }) {
   if (typeof sourceMapURL !== 'string' || sourceMapURL === '') {
     return { condition: 'missingMap', sourceMapURL: sourceMapURL ?? null };
   }
@@ -255,7 +394,7 @@ export function loadSourceMap({ sourceMapURL, generatedPath = null, admittedRoot
       return { condition: err.condition ?? 'malformedMap', sourceMapURL, detail: err.message };
     }
   }
-  if (/^(?:http|https|ws|wss|ftp):\/\//i.test(sourceMapURL)) {
+  if (SCHEME.test(sourceMapURL) && !sourceMapURL.startsWith('file://')) {
     return { condition: 'remoteMapUnavailable', sourceMapURL };
   }
   let mapPath;
@@ -264,18 +403,26 @@ export function loadSourceMap({ sourceMapURL, generatedPath = null, admittedRoot
   } catch (err) {
     return { condition: err.condition ?? 'malformedMap', sourceMapURL, detail: err.message };
   }
-  if (!insideRoots(mapPath, admittedRoots)) {
-    return { condition: 'mapOutsideAdmittedRoots', sourceMapURL, path: mapPath };
-  }
-  let bytes;
+  const reader = typeof readAdmitted === 'function' ? readAdmitted : createAdmittedFileReader({ admittedRoots });
+  let read;
   try {
-    bytes = readFile(mapPath);
+    read = reader(mapPath);
   } catch (err) {
-    const condition = err && err.code === 'ENOENT' ? 'missingMap' : 'mapReadFailed';
-    return { condition, sourceMapURL, path: mapPath, detail: String((err && err.message) ?? err) };
+    if (err instanceof SourceMapError) {
+      return { condition: err.condition, sourceMapURL, path: mapPath, detail: err.message };
+    }
+    return { condition: 'mapReadFailed', sourceMapURL, path: mapPath, detail: String(err) };
   }
   try {
-    return { sourceMapURL, origin: 'file', path: mapPath, digest: sha256Hex(bytes), bytes, map: parseSourceMapV3(bytes) };
+    return {
+      sourceMapURL,
+      origin: 'file',
+      path: read.identity.realPath,
+      input: read.identity,
+      digest: sha256Hex(read.bytes),
+      bytes: read.bytes,
+      map: parseSourceMapV3(read.bytes),
+    };
   } catch (err) {
     return { condition: err.condition ?? 'malformedMap', sourceMapURL, path: mapPath, detail: err.message };
   }
@@ -334,8 +481,8 @@ export function originalPositionFor(map, { line, column }) {
 
 // Convenience composition used by the stack mapper's caller: resolves a
 // generated position through a loaded map and returns the original position
-// with its absolute original path and the map digest for provenance, or null
-// when the position maps to nothing.
+// with its resolved original path (URL bases keep their URL spelling) and the
+// map digest for provenance, or null when the position maps to nothing.
 export function mapGeneratedPosition(map, { line, column }, generatedPath = null) {
   const found = originalPositionFor(map, { line, column });
   if (!found) return null;

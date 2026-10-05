@@ -8,10 +8,12 @@
 //
 // Value semantics: observed values follow the provider's general JSON
 // semantics. Numbers keep their exact provider value and sign (negative and
-// fractional values included); unserializableValue forms (NaN, Infinity, -0,
-// bigint) are carried verbatim and win over any value field; null subtype,
-// the undefined type and a JSON null value remain three distinct
-// observations. No numeric range validation is applied to observed values.
+// fractional values included); the provider emits either a value field or an
+// unserializableValue field (NaN, Infinity, -0, bigint) and this module
+// retains whichever fields are present verbatim, never inventing or dropping
+// one; null subtype, the undefined type and a JSON null value remain three
+// distinct observations. No numeric range validation is applied to observed
+// values.
 //
 // Counter strings: epoch and mutationGeneration are canonical unsigned
 // decimal strings owned by the CDP counter module. This module carries them
@@ -99,17 +101,23 @@ export function previewCompleteness(preview) {
 // Summarizes one property descriptor. Data properties keep their value as a
 // described RemoteObject; accessor properties keep their getter and setter as
 // described RemoteObjects (handles when present, null otherwise) and are
-// never invoked here. Symbol property names arrive as RemoteObjects and stay
-// described objects; distinct handles that alias one target are kept apart.
+// never invoked here. Symbol property descriptors retain their symbol field
+// as a described RemoteObject beside the name. isOwn is preserved exactly as
+// the provider recorded it: a descriptor without the field reports null
+// rather than an invented ownership claim. Distinct handles that alias one
+// target are kept apart.
 export function propertyDescriptorSummary(descriptor) {
   if (!descriptor || typeof descriptor !== 'object' || Array.isArray(descriptor)) {
     return { condition: 'malformedPropertyDescriptor' };
   }
   const summary = {
     name: typeof descriptor.name === 'string' ? descriptor.name : describeRemoteObject(descriptor.name),
-    isOwn: descriptor.isOwn !== false,
+    isOwn: typeof descriptor.isOwn === 'boolean' ? descriptor.isOwn : null,
     kind: 'data',
   };
+  if (descriptor.symbol !== undefined) {
+    summary.symbol = describeRemoteObject(descriptor.symbol);
+  }
   if (descriptor.get !== undefined || descriptor.set !== undefined) {
     summary.kind = 'accessor';
     summary.get = descriptor.get === undefined ? null : describeRemoteObject(descriptor.get);

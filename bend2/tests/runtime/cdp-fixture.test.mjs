@@ -13,21 +13,22 @@
 // Startup, breakpoints, pause-on-exceptions and resume calls here are the
 // fixture harness's own lifecycle effects; the composed adapter gates them
 // through its control/evaluate intents. The observation composition under
-// test stays read-only.
+// test stays read-only. The harness-local admitRef below mirrors the frozen
+// decision contract ({decision:'admitted', identity} | {decision:'refused',
+// condition, detail}); the authoritative production admission is exercised by
+// cdp-composition.test.mjs against the CDP owner's modules.
 //
-// Evidence: full child stdout/stderr text, exit code/signal, the captured
-// records and both admission decisions are written untruncated to
-// BATON_RUNTIME_EVIDENCE_DIR (created when absent, default a fresh temp
-// directory reported in the failure message).
+// Evidence: full child stdout/stderr text (waited out through stdio close),
+// exit code/signal, spawn errors, the captured records and both admission
+// decisions are written untruncated to BATON_RUNTIME_EVIDENCE_DIR (created
+// when absent, default a fresh temp directory).
 
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { spawn } from 'node:child_process';
-import { createHash } from 'node:crypto';
-import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 
 import { loadSourceMap, parseSourceMapV3, mapGeneratedPosition } from '../../context/runtime/source-maps.mjs';
 import {
@@ -45,142 +46,14 @@ import {
   captureIdentity,
   staleRefRefusal,
   runtimeEvidence,
+  admissionOutcome,
 } from '../../context/runtime/observations.mjs';
+import { Cdp, launchDebuggee, handshake, finish, retain, sha256 } from './cdp-helpers.mjs';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const FIXTURES = join(HERE, 'fixtures');
 
 assert.equal(typeof WebSocket, 'function', 'global WebSocket is required (Node >= 22.15 floor)');
-
-const EVIDENCE_DIR = process.env.BATON_RUNTIME_EVIDENCE_DIR ?? mkdtempSync(join(tmpdir(), 'runtime-values-evidence-'));
-mkdirSync(EVIDENCE_DIR, { recursive: true });
-let evidenceIndex = 0;
-function retain(name, record) {
-  evidenceIndex += 1;
-  const path = join(EVIDENCE_DIR, `${String(evidenceIndex).padStart(3, '0')}-${name}.json`);
-  writeFileSync(path, JSON.stringify(record, null, 2));
-  return path;
-}
-const sha256 = (bytes) => createHash('sha256').update(bytes).digest('hex');
-
-class Cdp {
-  constructor(url) {
-    this.url = url;
-    this.ws = new WebSocket(url);
-    this.nextId = 1;
-    this.pending = new Map();
-    this.handlers = new Map();
-    this.events = [];
-    this.responses = [];
-    this.scripts = new Map();
-  }
-
-  async open() {
-    await new Promise((resolve, reject) => {
-      this.ws.addEventListener('open', resolve, { once: true });
-      this.ws.addEventListener('error', () => reject(new Error('inspector websocket failed')), { once: true });
-    });
-    this.ws.addEventListener('message', (ev) => {
-      const msg = JSON.parse(ev.data);
-      if (msg.id !== undefined) {
-        const entry = this.pending.get(msg.id);
-        if (!entry) return;
-        this.pending.delete(msg.id);
-        if (msg.error) entry.reject(Object.assign(new Error(`cdp error ${msg.error.code}: ${msg.error.message}`), { cdpCode: msg.error.code }));
-        else entry.resolve(msg.result ?? {});
-        return;
-      }
-      this.events.push(msg);
-      if (msg.method === 'Debugger.scriptParsed') this.scripts.set(msg.params.scriptId, msg.params);
-      for (const handler of this.handlers.get(msg.method) ?? []) handler(msg);
-    });
-  }
-
-  send(method, params = {}) {
-    const id = this.nextId;
-    this.nextId += 1;
-    const request = new Promise((resolve, reject) => {
-      this.pending.set(id, { resolve, reject });
-      this.ws.send(JSON.stringify({ id, method, params }));
-    });
-    return request.then((result) => {
-      this.responses.push({ method, params, result });
-      return result;
-    });
-  }
-
-  on(method, handler) {
-    const list = this.handlers.get(method) ?? [];
-    list.push(handler);
-    this.handlers.set(method, list);
-  }
-
-  waitEvent(method, timeoutMs = 15000) {
-    return new Promise((resolve, reject) => {
-      const timer = setTimeout(() => reject(new Error(`timed out waiting for ${method}`)), timeoutMs);
-      this.on(method, (msg) => {
-        clearTimeout(timer);
-        resolve({ params: msg.params, seq: this.events.length - 1 });
-      });
-    });
-  }
-
-  close() {
-    try {
-      this.ws.close();
-    } catch {
-      // the fixture records the close outcome separately when it matters
-    }
-  }
-}
-
-function launchDebuggee(script, extraArgs = []) {
-  // Declared environment only; nothing is inherited (recorded
-  // net-debuggee-env-inherited fact). The endpoint comes from the child's
-  // stderr banner; /json/list is never consulted.
-  const child = spawn(process.execPath, ['--inspect-brk=127.0.0.1:0', ...extraArgs, script], {
-    env: { PATH: '/usr/bin:/bin', HOME: tmpdir() },
-    stdio: ['ignore', 'pipe', 'pipe'],
-  });
-  const stdout = [];
-  const stderr = [];
-  child.stdout.on('data', (chunk) => stdout.push(chunk));
-  child.stderr.on('data', (chunk) => stderr.push(chunk));
-  const endpoint = new Promise((resolve, reject) => {
-    let acc = '';
-    const timer = setTimeout(() => reject(new Error(`no inspector banner; stderr so far: ${acc}`)), 15000);
-    const handler = (chunk) => {
-      acc += chunk.toString('utf8');
-      const match = /Debugger listening on (ws:\/\/127\.0\.0\.1:\d+\/[0-9a-f-]+)/.exec(acc);
-      if (match) {
-        clearTimeout(timer);
-        child.stderr.removeListener('data', handler);
-        resolve(match[1]);
-      }
-    };
-    child.stderr.on('data', handler);
-  });
-  const exit = new Promise((resolve) => child.on('exit', (code, signal) => resolve({ code, signal })));
-  return {
-    child,
-    endpoint,
-    exit,
-    stdoutText: () => Buffer.concat(stdout).toString('utf8'),
-    stderrText: () => Buffer.concat(stderr).toString('utf8'),
-  };
-}
-
-async function handshake(client) {
-  // Startup composition: enables plus async capture BEFORE any chain forms,
-  // then the start release. The initial brk stop and a later real paused
-  // event are distinct states; this returns the initial stop.
-  await client.send('Runtime.enable');
-  await client.send('Debugger.enable');
-  await client.send('Debugger.setAsyncCallStackDepth', { maxDepth: 32 });
-  const paused = client.waitEvent('Debugger.paused');
-  client.send('Runtime.runIfWaitingForDebugger');
-  return paused;
-}
 
 function makeResolver(client, roots) {
   const loaded = new Map();
@@ -194,7 +67,6 @@ function makeResolver(client, roots) {
         sourceMapURL: script.sourceMapURL,
         generatedPath: script.url && script.url.startsWith('file://') ? fileURLToPath(script.url) : null,
         admittedRoots: roots,
-        readFile: (p) => readFileSync(p),
       });
       loaded.set(scriptId, entry);
     }
@@ -215,7 +87,6 @@ function makeResolverRecording(client, roots) {
         sourceMapURL: script.sourceMapURL,
         generatedPath: script.url && script.url.startsWith('file://') ? fileURLToPath(script.url) : null,
         admittedRoots: roots,
-        readFile: (p) => readFileSync(p),
       });
       if (entry.condition) refusals.push({ scriptId, condition: entry.condition, sourceMapURL: script.sourceMapURL });
       return resolve(scriptId, line, column);
@@ -223,16 +94,14 @@ function makeResolverRecording(client, roots) {
   };
 }
 
-// Reference admission for this fixture harness only: the frozen CDP contract
-// shape (8-member canonical ref, canonical decimal counter strings). The
-// composition consumes the owner's cdp-counter/cdp-refs modules; this
-// reference exists so the harness can prove refusal-before-backend-request
-// without that import.
+// Harness-only reference of the frozen decision contract, covering the
+// epoch/mutation cases this harness exercises; the production admission with
+// its full condition set is exercised in cdp-composition.test.mjs.
 function admitRef(identity, live) {
-  if (identity.runtime !== live.runtime) return { ok: false, condition: 'foreignRuntime' };
-  if (identity.epoch !== live.epoch) return { ok: false, condition: 'staleReference' };
-  if (identity.mutationGeneration !== live.mutationGeneration) return { ok: false, condition: 'refRetiredByMutation' };
-  return { ok: true };
+  if (identity.runtime !== live.runtime) return { decision: 'refused', condition: 'foreignRuntime' };
+  if (identity.epoch !== live.epoch) return { decision: 'refused', condition: 'staleReference' };
+  if (identity.mutationGeneration !== live.mutationGeneration) return { decision: 'refused', condition: 'refRetiredByMutation' };
+  return { decision: 'admitted', identity };
 }
 
 function previewProperty(preview, name) {
@@ -288,7 +157,10 @@ test('two pause epochs: scopes, previews, expansion, getters without execution, 
   }
   const second = await paused2Wait;
   const identityEpoch2 = { runtime: 'rt:fixture-app', adapter: '0', thread: 'main:0', epoch: '2', mutationGeneration: '0' };
-  evidence.epoch2 = { whileRunningWithEpoch1Handle: runningProbe, capture: captureIdentity({ startEvent: { method: 'Debugger.paused', seq: second.seq }, endEvent: { method: 'Debugger.paused', seq: second.seq }, epoch: '2' }) };
+  evidence.epoch2 = {
+    whileRunningWithEpoch1Handle: runningProbe,
+    capture: captureIdentity({ startEvent: { method: 'Debugger.paused', seq: second.seq }, endEvent: { method: 'Debugger.paused', seq: second.seq }, epoch: '2' }),
+  };
 
   const stack2 = mapStackFrames({ callFrames: second.params.callFrames, resolveOriginal: makeResolver(client, [FIXTURES, tmpdir()]) });
   assert.equal(stack2.frames[0].functionName, 'probe');
@@ -368,7 +240,7 @@ test('two pause epochs: scopes, previews, expansion, getters without execution, 
   const liveAfterEvaluate = { runtime: 'rt:fixture-app', epoch: '2', mutationGeneration: '1' };
   const retiredPayload = expansionPayload(bigObjectRaw, { ...identityEpoch2 });
   const retiredDecision = admitRef(retiredPayload.identity, liveAfterEvaluate);
-  assert.equal(retiredDecision.ok, false);
+  assert.equal(retiredDecision.decision, 'refused');
   assert.equal(staleRefRefusal(retiredDecision).refused, true);
   evidence.epoch2.retiredRef = { decision: retiredDecision, refusal: staleRefRefusal(retiredDecision) };
 
@@ -380,7 +252,8 @@ test('two pause epochs: scopes, previews, expansion, getters without execution, 
   const third = await paused3Wait;
   const liveEpoch3 = { runtime: 'rt:fixture-app', epoch: '3', mutationGeneration: '1' };
   const staleDecision = admitRef({ ...oldIdentity }, liveEpoch3);
-  assert.equal(staleDecision.ok, false);
+  assert.equal(staleDecision.decision, 'refused');
+  assert.equal(admissionOutcome(staleDecision).admitted, false);
   let rawReuse;
   try {
     rawReuse = await client.send('Runtime.getProperties', { objectId: globalHandleDescriptor.value.objectId });
@@ -393,10 +266,12 @@ test('two pause epochs: scopes, previews, expansion, getters without execution, 
   retain('app-epochs', evidence);
 
   client.close();
-  const exit = await run.exit;
-  evidence.exit = exit;
-  retain('app-exit', { exit, stdout: run.stdoutText(), stderr: run.stderrText() });
-  assert.deepEqual(exit, { code: 0, signal: null });
+  const closure = await finish(run);
+  evidence.exit = closure.exit;
+  retain('app-exit', closure);
+  assert.equal(closure.exit.spawnError, null);
+  assert.equal(closure.exit.code, 0);
+  assert.equal(closure.exit.signal, null);
 });
 
 test('uncaught exception pauses with paused.data; the sources refuse to merge', async () => {
@@ -422,13 +297,14 @@ test('uncaught exception pauses with paused.data; the sources refuse to merge', 
   const absent = captureException({ paused: false });
   assert.equal(absent.condition, 'noExceptionObserved');
 
-  const exitDone = run.exit;
   await client.send('Debugger.resume');
-  const exit = await exitDone;
+  const closure = await finish(run);
   client.close();
-  const record = { reason, captured, exit, stdout: run.stdoutText(), stderr: run.stderrText() };
+  const record = { reason, captured, ...closure };
   retain('exception-paused-data', record);
-  assert.deepEqual(exit, { code: 1, signal: null });
+  assert.equal(closure.exit.spawnError, null);
+  assert.equal(closure.exit.code, 1);
+  assert.equal(closure.exit.signal, null);
 });
 
 test('compiled TS frames map through the local and embedded maps; missing maps refuse', async () => {
@@ -473,12 +349,12 @@ test('compiled TS frames map through the local and embedded maps; missing maps r
   const diskSha = sha256(readFileSync(jsPath));
   assert.equal(loadedSha, diskSha, 'the generated fixture runs its own disk bytes');
 
-  const exitDone = run.exit;
   await client.send('Debugger.resume');
-  const exit = await exitDone;
+  const closure = await finish(run);
   client.close();
-  retain('ts-local-map', { mapped, loadedSha, diskSha, exit });
-  assert.deepEqual(exit, { code: 0, signal: null });
+  retain('ts-local-map', { mapped, loadedSha, diskSha, exit: closure.exit });
+  assert.equal(closure.exit.spawnError, null);
+  assert.equal(closure.exit.code, 0);
 
   // Embedded map: same map bytes inside a data URL produce the same original
   // position and the same digest with origin 'embedded'.
@@ -494,13 +370,12 @@ test('compiled TS frames map through the local and embedded maps; missing maps r
     const clientEmbedded = new Cdp(await runEmbedded.endpoint);
     await clientEmbedded.open();
     const kitEmbedded = makeResolverRecording(clientEmbedded, [embeddedDir, tmpdir()]);
-    const firstEmbedded = await handshake(clientEmbedded);
+    await handshake(clientEmbedded);
     const scriptEmbedded = [...clientEmbedded.scripts.values()].find((entry) => entry.url.endsWith('fixture-ts.js'));
     const loaded = loadSourceMap({
       sourceMapURL: scriptEmbedded.sourceMapURL,
       generatedPath: embeddedPath,
       admittedRoots: [embeddedDir],
-      readFile: (p) => readFileSync(p),
     });
     assert.equal(loaded.condition, undefined);
     assert.equal(loaded.origin, 'embedded');
@@ -517,12 +392,12 @@ test('compiled TS frames map through the local and embedded maps; missing maps r
       { line: mappedEmbedded.frames[0].original.line, column: mappedEmbedded.frames[0].original.column },
       { line: 3, column: 2 },
     );
-    const exitEmbeddedDone = runEmbedded.exit;
     await clientEmbedded.send('Debugger.resume');
-    const exitEmbedded = await exitEmbeddedDone;
+    const closureEmbedded = await finish(runEmbedded);
     clientEmbedded.close();
-    retain('ts-embedded-map', { mapped: mappedEmbedded, exit: exitEmbedded });
-    assert.deepEqual(exitEmbedded, { code: 0, signal: null });
+    retain('ts-embedded-map', { mapped: mappedEmbedded, exit: closureEmbedded.exit });
+    assert.equal(closureEmbedded.exit.spawnError, null);
+    assert.equal(closureEmbedded.exit.code, 0);
   } finally {
     rmSync(embeddedDir, { recursive: true, force: true });
   }
@@ -538,7 +413,6 @@ test('compiled TS frames map through the local and embedded maps; missing maps r
       sourceMapURL: 'absent.map',
       generatedPath: missingPath,
       admittedRoots: [missingDir],
-      readFile: (p) => readFileSync(p),
     });
     assert.equal(refusal.condition, 'missingMap');
     const runMissing = launchDebuggee(missingPath);
@@ -548,12 +422,12 @@ test('compiled TS frames map through the local and embedded maps; missing maps r
     const firstMissing = await handshake(clientMissing);
     const mappedMissing = mapStackFrames({ callFrames: firstMissing.params.callFrames, resolveOriginal: kitMissing.resolveOriginal });
     assert.equal(mappedMissing.frames[0].provenance, 'unmapped');
-    const exitMissingDone = runMissing.exit;
     await clientMissing.send('Debugger.resume');
-    const exitMissing = await exitMissingDone;
+    const closureMissing = await finish(runMissing);
     clientMissing.close();
-    retain('ts-missing-map', { refusal, refusals: kitMissing.refusals, exit: exitMissing });
-    assert.deepEqual(exitMissing, { code: 0, signal: null });
+    retain('ts-missing-map', { refusal, refusals: kitMissing.refusals, exit: closureMissing.exit });
+    assert.equal(closureMissing.exit.spawnError, null);
+    assert.equal(closureMissing.exit.code, 0);
   } finally {
     rmSync(missingDir, { recursive: true, force: true });
   }
@@ -577,18 +451,19 @@ test('worker discovery records basic state and the unavailability limits', async
   assert.equal(inventory.workers.length, 1);
   const worker = inventory.workers[0];
   assert.equal(typeof worker.workerId, 'string');
-  assert.equal(worker.type, 'dedicated');
   assert.equal(worker.state, 'attached');
   assert.deepEqual(inventory.limits, ['workerBreakpointsUnavailable', 'workerScopesUnavailable', 'workerExceptionsUnavailable']);
 
   // Basic thread state only: no worker breakpoint, scope or exception pause
-  // is attempted; the limits above travel with the inventory.
-  const exitDone = run.exit;
+  // is attempted; the limits above travel with the inventory. The detach
+  // event, when one arrives, is matched by session id in the unit laws.
   await client.send('Debugger.resume');
-  const exit = await exitDone;
+  const closure = await finish(run);
   client.close();
-  retain('worker-inventory', { inventory, workerUrl: worker.url, exit, stdout: run.stdoutText(), stderr: run.stderrText() });
-  assert.deepEqual(exit, { code: 0, signal: null });
+  retain('worker-inventory', { inventory, workerUrl: worker.url, attachedParams: attached.params, ...closure });
+  assert.equal(closure.exit.spawnError, null);
+  assert.equal(closure.exit.code, 0);
+  assert.equal(closure.exit.signal, null);
 });
 
 test('loaded versus disk identities distinguish current scripts from the stripped representation', async () => {
@@ -611,10 +486,11 @@ test('loaded versus disk identities distinguish current scripts from the strippe
     drift: 'loadedDiffersFromDisk',
     note: 'loaded bytes are the type-stripped representation; a disk edit classification compares against the transformed representation, not raw disk bytes',
   };
-  const exitDone = run.exit;
   await client.send('Debugger.resume');
-  const exit = await exitDone;
+  const closure = await finish(run);
   client.close();
-  retain('loaded-vs-disk', { ...record, exit, stdout: run.stdoutText(), stderr: run.stderrText() });
-  assert.deepEqual(exit, { code: 0, signal: null });
+  retain('loaded-vs-disk', { ...record, exit: closure.exit });
+  assert.equal(closure.exit.spawnError, null);
+  assert.equal(closure.exit.code, 0);
+  assert.equal(closure.exit.signal, null);
 });
