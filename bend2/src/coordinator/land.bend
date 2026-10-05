@@ -404,3 +404,84 @@ law land_checked_player_at_runs_the_reviewed_source_in_order:
 
 def land_checked_player_at_runs_the_reviewed_source_in_order(db, player, repo, target, check, files, commit):
   {==}
+
+# --- operative laws over the reviewed selection chain ------------------------
+#
+# Each step of the reviewed selection is equated with the exact IO composition it
+# runs, the literal Git argv it hands to git and the object it passes on, so a
+# step that is skipped, given different arguments or handed a different object is
+# no longer the expression stated here.
+
+# The requested commit is resolved by rev-parse with the commit peel, and the
+# caller's own text is the only value that reaches the command.
+law sel_commit_reads_the_requested_commit_with_the_literal_argv:
+  for repo: String
+  for +commit: String
+  {sel_commit(repo, commit) == (do IO<Selected>:
+    r : G.GitOut <- Git.runGit(repo, ["rev-parse", "--verify", "--quiet", "--end-of-options", Tx.str_cat(commit, "^{commit}")])
+    IO.pure(Selected, sel_commit_pick(r, commit))) : IO(Selected)}
+
+def sel_commit_reads_the_requested_commit_with_the_literal_argv(repo, commit):
+  {==}
+
+# The recorded branch is resolved as a branch ref of the landing repository.
+law sel_branch_reads_the_recorded_branch_with_the_literal_argv:
+  for repo: String
+  for +branch: String
+  {sel_branch(repo, branch) == (do IO<Selected>:
+    r : G.GitOut <- Git.runGit(repo, ["rev-parse", "--verify", "--quiet", Tx.str_cat("refs/heads/", branch)])
+    IO.pure(Selected, sel_branch_pick(r, branch))) : IO(Selected)}
+
+def sel_branch_reads_the_recorded_branch_with_the_literal_argv(repo, branch):
+  {==}
+
+# Ancestry is asked with the selected object first and the recorded branch tip
+# second, which is the order merge-base --is-ancestor is defined on.
+law sel_ancestor_runs_the_literal_ancestry_argv:
+  for repo: String
+  for +oid: String
+  for +branchOid: String
+  {sel_ancestor(repo, oid, branchOid) == (do IO<Selected>:
+    r : G.GitOut <- Git.runGit(repo, ["merge-base", "--is-ancestor", oid, branchOid])
+    IO.pure(Selected, sel_ancestor_pick(r, oid, branchOid))) : IO(Selected)}
+
+def sel_ancestor_runs_the_literal_ancestry_argv(repo, oid, branchOid):
+  {==}
+
+# A picked commit reaches the ancestry read against the resolved branch tip; a
+# result that is not picked is passed on unchanged.
+law sel_ancestor_after_branch_picked_continues_into_the_ancestry_read:
+  for +repo: String
+  for +oid: String
+  for +branchOid: String
+  {sel_ancestor_after_branch(SelPicked{branchOid}, repo, oid) == sel_ancestor(repo, oid, branchOid) : IO(Selected)}
+
+def sel_ancestor_after_branch_picked_continues_into_the_ancestry_read(repo, oid, branchOid):
+  {==}
+
+# The resolved commit is carried into the recorded-branch lookup and then into
+# the ancestry read: nothing is answered before both reads have run.
+law sel_branch_after_commit_picked_resolves_the_recorded_branch_then_the_ancestry:
+  for +repo: String
+  for +branch: String
+  for +commitOid: String
+  for commit: String
+  {sel_branch_after_commit(SelPicked{commitOid}, repo, branch, commit) == (do IO<Selected>:
+    b : Selected <- sel_branch(repo, branch)
+    sel_ancestor_after_branch(b, repo, commitOid)) : IO(Selected)}
+
+def sel_branch_after_commit_picked_resolves_the_recorded_branch_then_the_ancestry(repo, branch, commitOid, commit):
+  {==}
+
+# The reviewed selection is the requested-commit read followed by that same
+# chain; it answers nothing before both have run.
+law select_reviewed_resolves_then_checks_against_the_recorded_branch:
+  for +repo: String
+  for +branch: String
+  for +commit: String
+  {select_reviewed(repo, branch, commit) == (do IO<Selected>:
+    c : Selected <- sel_commit(repo, commit)
+    sel_branch_after_commit(c, repo, branch, commit)) : IO(Selected)}
+
+def select_reviewed_resolves_then_checks_against_the_recorded_branch(repo, branch, commit):
+  {==}
