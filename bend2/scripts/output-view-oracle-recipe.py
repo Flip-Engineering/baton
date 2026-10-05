@@ -10,7 +10,10 @@ Fact representation. A fact is null, a boolean, a string, a list, or an object. 
 is an object with exactly one key, "lexeme", whose value is the exact original spelling as a
 string, because a bare JSON number would let the host language equate distinct spellings and
 would let a boolean compare equal to a number. A bare number anywhere in a result or an
-expectation is a protocol failure. Comparison is kind sensitive and recursive: missing keys,
+expectation is a protocol failure. An object carrying the reserved key lexeme together with
+any other key is a protocol failure rather than a numeric fact, and every other object is
+compared field by field, so an added or missing key is always a difference. Comparison is
+kind sensitive and recursive: missing keys,
 extra keys, list length and list order are all reported.
 
 Manifest schema, receive-output-view-oracle/1:
@@ -18,8 +21,9 @@ Manifest schema, receive-output-view-oracle/1:
   {
     "schema": "receive-output-view-oracle/1",
     "bridges": {
-      "candidate": {"present": false, "absent_reason": ..., "path": ..., "sha256": ...},
-      "oracle":    {"present": false, "absent_reason": ...,
+      "candidate": {"identity": ..., "present": false, "absent_reason": ...,
+                    "path": ..., "sha256": ...},
+      "oracle":    {"identity": ..., "present": false, "absent_reason": ...,
                     "expressions_bound": false, "path": ..., "sha256": ...}
     },
     "dependency": {
@@ -30,7 +34,8 @@ Manifest schema, receive-output-view-oracle/1:
                     "source_sha256": {name: sha}},
       "sqlite":    {"identity": ..., "path": ..., "sha256": ...},
       "compiler":  {"identity": ..., "path": ..., "sha256": ...},
-      "oracle":    {"identity": ..., "path": ..., "extraction_sha256": {name: sha},
+      "oracle":    {"identity": ..., "path": ..., "pin": ..., "tree": ...,
+                    "source_sha256": {name: sha},
                     "expressions": {
                       "frame_kind":      {"text_sha256": ...,
                                           "source": {"path": ..., "first_line": ..., "last_line": ...},
@@ -56,7 +61,11 @@ expression is declared as a provenance record: source path, first and last line,
 pin and tree those lines belong to, and the hash of the extracted text; the harness
 re-extracts that text, verifies its hash before any invocation, writes the verified text into
 a directory, and substitutes that directory into the declared oracle argv placeholder, so the
-evaluated expression is the verified one rather than a label.
+evaluated expression is the verified one rather than a label. Every path resolves against one
+documented base, the process working directory of the run: the harness resolves the working
+directory once, records it, resolves verified files and the expression directory against that
+same base, and requires the invoked executable to resolve to the verified bridge file, whose
+resolved path replaces the argv head.
 
 What hashes prove and what they do not. A verified hash proves that the named bytes were
 present at the named path when the harness ran. It does not prove that a build consumed them,
@@ -161,7 +170,10 @@ def validate_fact(value, path):
             validate_fact(item, f'{path}[{index}]')
         return
     if isinstance(value, dict):
-        if list(value.keys()) == [LEXEME]:
+        if LEXEME in value:
+            if list(value.keys()) != [LEXEME]:
+                raise Blocker(f'{path} is a reserved numeric wrapper carrying more than its '
+                              f'{LEXEME} key; a numeric fact is exactly one {LEXEME} key')
             if not isinstance(value[LEXEME], str):
                 raise Blocker(f'{path}.{LEXEME} is not a string')
             return
@@ -176,9 +188,9 @@ def validate_fact(value, path):
 
 def fact_differences(expected, observed, path):
     """Kind-sensitive recursive differences, including missing and extra keys."""
-    if isinstance(expected, dict) and LEXEME in expected:
-        if not (isinstance(observed, dict) and LEXEME in observed):
-            return [f'{path}: expected numeric lexeme, observed {observed!r}']
+    if isinstance(expected, dict) and list(expected.keys()) == [LEXEME]:
+        if not (isinstance(observed, dict) and list(observed.keys()) == [LEXEME]):
+            return [f'{path}: expected numeric {LEXEME}, observed {observed!r}']
         if observed[LEXEME] != expected[LEXEME]:
             return [f'{path}.{LEXEME}: {observed[LEXEME]!r} does not equal {expected[LEXEME]!r}']
         return []
@@ -226,7 +238,7 @@ def verified_file(entry, label):
         raise Blocker(f'{label} hash mismatch: {actual}')
     if not entry.get('identity'):
         raise Blocker(f'{label} must declare an identity label')
-    return {'identity': entry['identity'], 'sha256': actual, 'path': str(path)}
+    return {'identity': entry['identity'], 'sha256': actual, 'path': str(path.resolve())}
 
 
 def verified_tree(entry, label):
@@ -327,17 +339,21 @@ def invocation(manifest, role, bridge):
     if entry.get('protocol') != 'json-lines':
         raise Blocker(f'{role} result protocol is unsupported: {entry.get("protocol")!r}')
     executable = entry.get('executable')
-    if not executable or pathlib.Path(argv[0]).name != pathlib.Path(executable).name:
-        raise Blocker(f'{role} argv head does not name the declared executable')
-    if str(bridge['path']) != executable and pathlib.Path(bridge['path']).name != pathlib.Path(executable).name:
-        raise Blocker(f'{role} declared executable is not the verified bridge file')
+    if not isinstance(executable, str) or not executable:
+        raise Blocker(f'{role} declares no executable')
+    resolved_bridge = pathlib.Path(bridge['path']).resolve()
+    if pathlib.Path(argv[0]).resolve() != resolved_bridge:
+        raise Blocker(f'{role} argv head does not resolve to the verified bridge file')
+    if pathlib.Path(executable).resolve() != resolved_bridge:
+        raise Blocker(f'{role} declared executable does not resolve to the verified bridge file')
     if role == 'oracle' and '{expressions_dir}' not in argv:
         raise Blocker('the oracle argv does not declare where the verified expressions are bound')
-    return {'argv': list(argv), 'protocol': entry['protocol'], 'executable': executable}
+    return {'argv': [str(resolved_bridge)] + list(argv[1:]), 'protocol': entry['protocol'],
+            'executable': str(resolved_bridge)}
 
 
 def write_expressions(workdir, expressions, verified):
-    directory = pathlib.Path(workdir) / 'expressions'
+    directory = pathlib.Path(workdir).resolve() / 'expressions'
     directory.mkdir(parents=True, exist_ok=True)
     for name in EXPRESSIONS:
         text = extracted_expression(name, expressions[name])
@@ -345,14 +361,15 @@ def write_expressions(workdir, expressions, verified):
         if digest != verified[f'expression_{name}']['text_sha256']:
             raise Blocker(f'oracle expression text hash changed while binding: {name}')
         (directory / f'{name}.sql').write_text(text, encoding='utf-8')
-    return str(directory)
+    return str(directory.resolve())
 
 
 def invoke(entry, octets, workdir, expressions_dir):
     argv = [argument.replace('{expressions_dir}', expressions_dir) for argument in entry['argv']]
     evidence = {'argv': argv}
     try:
-        completed = subprocess.run(argv, input=octets, capture_output=True, cwd=workdir)
+        completed = subprocess.run(argv, input=octets, capture_output=True,
+                                   cwd=str(pathlib.Path(workdir).resolve()))
     except OSError as exc:
         evidence['launch_failure'] = str(exc)
         return evidence
@@ -369,6 +386,9 @@ def invoke(entry, octets, workdir, expressions_dir):
 def validate_result(parsed, label):
     if not isinstance(parsed, dict):
         raise Blocker(f'{label} is not an object')
+    undeclared = sorted(set(parsed) - set(EXPECTED_KEYS))
+    if undeclared:
+        raise Blocker(f'{label} declares undeclared protocol fields {undeclared}')
     for key in EXPECTED_KEYS:
         if key not in parsed:
             raise Blocker(f'{label} declares no {key}')
@@ -409,8 +429,8 @@ def run_case(case, entries, workdir, expressions_dir, report):
     if not isinstance(name, str) or not name:
         raise Blocker('a case has no name')
     octets_hex = case.get('octets_hex')
-    if not isinstance(octets_hex, str) or not octets_hex:
-        raise Blocker(f'case {name} declares no octets')
+    if not isinstance(octets_hex, str):
+        raise Blocker(f'case {name} declares octets of the wrong type')
     try:
         octets = bytes.fromhex(octets_hex)
     except ValueError as exc:
@@ -487,6 +507,12 @@ SELF_CHECK_CONTROLS = (
     ('list-order', {'l': [{'lexeme': '1'}, {'lexeme': '2'}]},
      {'l': [{'lexeme': '2'}, {'lexeme': '1'}]}, 'differ'),
     ('boolean-versus-boolean', {'flag': False}, {'flag': False}, 'equal'),
+    ('lexeme-wrapper-with-extra-key', {'n': {'lexeme': '1', 'other': False}},
+     {'n': {'lexeme': '1', 'other': False}}, 'reject'),
+    ('lexeme-versus-lexeme-plus-extra', {'n': {'lexeme': '1'}},
+     {'n': {'lexeme': '1', 'extra': True}}, 'reject'),
+    ('missing-additional-field', {'n': {'lexeme': '1'}, 'm': {'lexeme': '2'}},
+     {'n': {'lexeme': '1'}}, None),
 )
 
 SELF_CHECK_REJECTIONS = (
@@ -496,7 +522,11 @@ SELF_CHECK_REJECTIONS = (
     ('non-finite', '{"disposition": "accepted", "fields": {"n": NaN}}'),
     ('missing-fields', '{"disposition": "accepted"}'),
     ('empty-fields', '{"disposition": "accepted", "fields": {}}'),
+    ('top-level-extra-field',
+     '{"disposition": "accepted", "fields": {"n": {"lexeme": "1"}}, "extra": true}'),
 )
+
+EMPTY_OCTETS_SHA256 = 'e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855'
 
 
 def self_check():
@@ -506,24 +536,40 @@ def self_check():
             validate_fact(expected, 'expected')
             validate_fact(observed, 'observed')
         except Blocker as exc:
-            report['self_check'].append({'control': name, 'outcome': 'rejected', 'reason': str(exc)})
-            report['mismatches'].append({'case': name, 'differences': [str(exc)]})
+            rejected = kind == 'reject'
+            report['self_check'].append(
+                {'control': name, 'outcome': 'rejected' if rejected else 'rejected-unexpectedly',
+                 'reason': str(exc)})
+            if not rejected:
+                report['mismatches'].append({'case': name,
+                                             'differences': [f'unexpected protocol rejection: {exc}']})
+            continue
+        if kind == 'reject':
+            report['self_check'].append({'control': name, 'outcome': 'accepted-unexpectedly'})
+            report['mismatches'].append({'case': name,
+                                         'differences': ['expected a protocol rejection']})
             continue
         differences = fact_differences(expected, observed, 'fields')
         if kind == 'equal':
             passed = not differences
-            recorded = 'equal'
-        elif kind == 'differ':
-            passed = bool(differences)
-            recorded = 'differ' if differences else 'equal'
+            recorded = 'equal' if passed else 'differ'
         else:
             passed = bool(differences)
-            recorded = 'differ' if differences else 'equal'
+            recorded = 'differ' if passed else 'equal'
         report['self_check'].append({'control': name, 'outcome': recorded,
                                      'differences': differences})
         if not passed:
             report['mismatches'].append({'case': name, 'differences': differences or
                                          ['expected a difference and observed none']})
+    empty = bytes.fromhex('')
+    empty_digest = digest_bytes(empty)
+    empty_ok = empty_digest == EMPTY_OCTETS_SHA256
+    report['self_check'].append({'control': 'empty-octets-accepted',
+                                 'outcome': 'accepted' if empty_ok else 'rejected',
+                                 'sha256': empty_digest})
+    if not empty_ok:
+        report['mismatches'].append({'case': 'empty-octets-accepted',
+                                     'differences': ['empty input must hash to the empty digest']})
     for name, text in SELF_CHECK_REJECTIONS:
         rejected = False
         reason = ''
@@ -559,19 +605,21 @@ def main(argv=None):
         parser.error('the manifest, its hash and a working directory are required')
 
     report = {'manifest': options.manifest, 'cases': [], 'mismatches': [], 'inconclusive': []}
+    workdir = str(pathlib.Path(options.workdir).resolve())
+    report['workdir'] = workdir
     try:
         manifest, manifest_hash = load_manifest(options)
         report['manifest_sha256'] = manifest_hash
         dependency = verify_dependency(manifest)
         report['dependency_verified'] = dependency
-        expressions_dir = write_expressions(options.workdir, manifest['dependency']['oracle']['expressions'],
+        expressions_dir = write_expressions(workdir, manifest['dependency']['oracle']['expressions'],
                                             dependency)
         report['expressions_dir'] = expressions_dir
         bridges = {role: verify_bridge(manifest, role) for role in ROLES}
         entries = {role: invocation(manifest, role, bridges[role]) for role in ROLES}
         for case in manifest['cases']:
             try:
-                run_case(case, entries, options.workdir, expressions_dir, report)
+                run_case(case, entries, workdir, expressions_dir, report)
             except Blocker as exc:
                 report['inconclusive'].append({'case': case.get('name'), 'reason': str(exc)})
     except Blocker as exc:
