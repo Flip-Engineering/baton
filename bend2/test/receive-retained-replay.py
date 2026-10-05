@@ -408,6 +408,25 @@ class ControlledFrames(ReplayBase):
         self.assertIn('429', failure[0])
         self.assertNotIn('403 earlier failure', failure[0])
 
+    def test_two_missing_identities_cannot_establish_the_current_error(self):
+        """With no response identity on either side, the result is the unavailable frame."""
+        error = assistant(stopReason='error', errorStatus=403, errorMessage='403 unidentified failure',
+                          provider='kimi-code', model='k3', content=[])
+        success = assistant(stopReason='stop', responseId='response-s1',
+                            content=[{'type': 'text', 'text': 'Complete answer.'}])
+        started = assistant(content=[])
+        notifications, code, status, bodies = self.replay([
+            {'type': 'agent_start'},
+            {'type': 'message_end', 'message': error},
+            {'type': 'message_end', 'message': success},
+            {'type': 'message_start', 'message': started},
+            {'type': 'agent_end', 'isTerminal': True, 'messages': [error, 'elided']}],
+            task='unidentified-identity')
+        self.assertIn('exit 0', status)
+        self.assertFalse([body for body in bodies if 'Native model failure' in body], bodies)
+        self.assertFalse([body for body in bodies if 'Complete answer.' in body], bodies)
+        self.assertTrue([body for body in bodies if 'unavailable' in body.lower()], bodies)
+
     def test_sequential_success_then_error_keeps_the_first_report(self):
         """Two consecutive receives: a later receive's failure does not change the earlier report."""
         sealed, code, status, bodies = self.replay([

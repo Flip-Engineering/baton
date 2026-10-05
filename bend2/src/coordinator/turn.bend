@@ -249,7 +249,7 @@ def omp_terminal_justified_sql(+activity: String, +message: String, +error_id: S
 # Whether the terminal's own last assistant error is the activity the stream
 # reached last, which keeps the terminal's own list.
 def omp_terminal_named_sql(+activity: String, +error_id: String) -> String:
-  "CASE WHEN coalesce(json_extract(" ++ omp_activity_last_sql(activity) ++ ",'$.id'),'')<>" ++ error_id ++ " THEN 0 ELSE 1 END"
+  "CASE WHEN " ++ error_id ++ "<>'' AND coalesce(json_extract(" ++ omp_activity_last_sql(activity) ++ ",'$.id'),'')=" ++ error_id ++ " THEN 1 ELSE 0 END"
 
 def omp_terminal_sql(+event: String, +message: String, +activity: String) -> String:
   "SELECT CASE WHEN " ++ omp_terminal_elided_sql(event) ++ " THEN CASE WHEN " ++ omp_terminal_error_sql(event) ++ "=0 AND " ++ C.q(message) ++ "<>'' AND " ++ omp_activity_commanding_sql(activity) ++ "=1 THEN " ++ omp_terminal_retained_sql(event,message) ++ " WHEN " ++ omp_terminal_justified_sql(activity,message,omp_terminal_error_id_sql(event)) ++ "=1 THEN " ++ omp_terminal_retained_sql(event,message) ++ " WHEN " ++ omp_terminal_named_sql(activity,omp_terminal_error_id_sql(event)) ++ "=1 THEN " ++ C.q(event) ++ " WHEN " ++ C.q(message) ++ "<>'' THEN " ++ omp_terminal_conflict_sql(event) ++ " WHEN " ++ omp_terminal_error_sql(event) ++ "=1 THEN " ++ omp_terminal_conflict_sql(event) ++ " ELSE " ++ C.q(event) ++ " END ELSE " ++ C.q(event) ++ " END;"

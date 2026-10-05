@@ -1290,7 +1290,7 @@ def omp_terminal_justified_sql_requires_observed_ordering(activity,message,error
 law omp_terminal_named_sql_keeps_the_terminals_own_error:
   for +activity: String
   for +error_id: String
-  {Turn.omp_terminal_named_sql(activity,error_id) == ("CASE WHEN coalesce(json_extract(" ++ Turn.omp_activity_last_sql(activity) ++ ",'$.id'),'')<>" ++ error_id ++ " THEN 0 ELSE 1 END") : String}
+  {Turn.omp_terminal_named_sql(activity,error_id) == ("CASE WHEN " ++ error_id ++ "<>'' AND coalesce(json_extract(" ++ Turn.omp_activity_last_sql(activity) ++ ",'$.id'),'')=" ++ error_id ++ " THEN 1 ELSE 0 END") : String}
 
 def omp_terminal_named_sql_keeps_the_terminals_own_error(activity,error_id):
   {==}
