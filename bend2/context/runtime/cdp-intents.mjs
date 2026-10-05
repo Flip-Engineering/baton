@@ -107,6 +107,14 @@ export const CONTROL_REQUESTS = Object.freeze([
 // Breakhpoint requests whose parameters are target JavaScript rather than a location.
 const BREAKPOINT_REQUESTS = Object.freeze(['Debugger.setBreakpointByUrl', 'Debugger.setBreakpoint']);
 
+// The complete parameter set this profile admits for a generated-location breakpoint. A
+// breakpoint condition, a URL pattern or any other field refuses: those parameters carry
+// target JavaScript or widen the selection beyond the decoded location.
+const BREAKPOINT_PARAMS = Object.freeze({
+  'Debugger.setBreakpointByUrl': Object.freeze(['url', 'lineNumber', 'columnNumber']),
+  'Debugger.setBreakpoint': Object.freeze(['location']),
+});
+
 // Requests that execute target code. They are admitted only through the evaluate
 // intent, which advances the mutation generation before the send.
 export const EVALUATE_REQUESTS = Object.freeze([
@@ -200,6 +208,14 @@ export function admitControlRequest(record, method, params = {}, effects = []) {
   }
   if (BREAKPOINT_REQUESTS.includes(method) && params !== null && Object.hasOwn(params, 'condition')) {
     return refusal('breakpointConditionUnsupported', 'a breakpoint condition is target JavaScript');
+  }
+  if (Object.hasOwn(BREAKPOINT_PARAMS, method)) {
+    if (params === null || typeof params !== 'object') return refusal('breakpointParamsMalformed', method);
+    for (const key of Object.keys(params)) {
+      if (!BREAKPOINT_PARAMS[method].includes(key)) {
+        return refusal('breakpointParamsUnsupported', `${method}.${key}`);
+      }
+    }
   }
   if (method === 'NodeWorker.sendMessageToWorker') {
     const inner = admitNestedWorkerMessage(params);

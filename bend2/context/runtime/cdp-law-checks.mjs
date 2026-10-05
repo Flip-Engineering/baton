@@ -330,6 +330,15 @@ export function laws(modules) {
         const located = intents.admitControlRequest(running, 'Debugger.setBreakpointByUrl',
           { url: 'file:///a.js', lineNumber: 3 }, ['controlRuntime']);
         assertEqual(located.ok, true, 'a generated-location breakpoint was refused');
+        const urlRegex = intents.admitControlRequest(running, 'Debugger.setBreakpointByUrl',
+          { urlRegex: '.*a\\.js$', lineNumber: 3 }, ['controlRuntime']);
+        assertEqual(urlRegex.condition, 'breakpointParamsUnsupported', 'a URL pattern was admitted');
+        const locatedByScript = intents.admitControlRequest(running, 'Debugger.setBreakpoint',
+          { location: { scriptId: '1', lineNumber: 3 } }, ['controlRuntime']);
+        assertEqual(locatedByScript.ok, true, 'a located breakpoint was refused');
+        const withCondition = intents.admitControlRequest(running, 'Debugger.setBreakpoint',
+          { location: { scriptId: '1', lineNumber: 3 }, condition: 'x > 1' }, ['controlRuntime']);
+        assertEqual(withCondition.condition, 'breakpointConditionUnsupported', 'a located condition was admitted');
         let thrown = null;
         try {
           intents.startupStopRequests([{ url: 'file:///a.js', lineNumber: 3, condition: 'x > 1' }]);
