@@ -16,6 +16,7 @@ import shutil
 import tempfile
 import unittest
 import urllib.request
+from unittest import mock
 
 ROOT = pathlib.Path(__file__).resolve().parents[2]
 CONTEXT = ROOT / 'bend2/context'
@@ -326,12 +327,12 @@ class ContextPackagedBytes(unittest.TestCase):
     def test_gate_refuses_unspawnable_child(self):
         real = pathlib.Path(self.host_node).resolve()
         wrapper = pathlib.Path(self.scratch.name) / 'unspawnable-node.sh'
-        # The pre-probe strips the wrapper's own exec bit, so the gate child
-        # cannot be spawned; the child and the post probe then fail
-        # independently and both failures are retained in one receipt.
+        # The pre-probe removes every execute bit while retaining read
+        # permission, so the identity byte read still completes, the gate
+        # child cannot be spawned, and the post probe fails independently.
         wrapper.write_text('#!/bin/sh\n'
                            'if [ "$1" = "--version" ]; then\n'
-                           '  chmod 000 "' + str(wrapper) + '"\n'
+                           '  chmod 444 "' + str(wrapper) + '"\n'
                            'fi\n'
                            'exec "' + str(real) + '" "$@"\n')
         wrapper.chmod(0o755)
@@ -339,16 +340,17 @@ class ContextPackagedBytes(unittest.TestCase):
             PACKAGE.run_context_gate(self.host_root, self.logs, wrapper, 'unspawnable-node')
         self.assertIn('could not be spawned', str(caught.exception))
         receipt = json.loads((self.logs / 'context-gate-unspawnable-node.json').read_text())
-        self.assertFalse(receipt['child']['spawned'])
+        self.assertIs(receipt['child']['spawned'], False)
+        self.assertEqual(receipt['child']['stage'], 'unspawned')
         self.assertIn('Errno 13', receipt['child']['error'])
         self.assertIsNone(receipt['exit_code'])
         self.assertIsNone(receipt['signal'])
+        self.assertTrue(receipt['stdout']['available'])
+        self.assertTrue(receipt['stderr']['available'])
         self.assertFalse(receipt['node']['postIdentity']['available'])
         self.assertIsNone(receipt['nodeVersionChanged'])
         self.assertIsNone(receipt['nodeIdentityChanged'])
         self.assertTrue(receipt['payloadSnapshot']['equal'])
-        self.assertTrue((self.logs / 'context-gate-unspawnable-node.stdout').is_file())
-        self.assertTrue((self.logs / 'context-gate-unspawnable-node.stderr').is_file())
         self.assertTrue(
             (self.logs / 'context-gate-unspawnable-node.payload-before.json').is_file())
         self.assertTrue(
@@ -374,6 +376,35 @@ class ContextPackagedBytes(unittest.TestCase):
         self.assertTrue(gate['payloadSnapshot']['equal'])
         self.assertEqual((self.logs / 'context-gate-signalled-node.stdout').stat().st_size, 0)
         self.assertFalse(text.strip())
+
+    def test_run_context_gates_refuses_signalled_child(self):
+        real = pathlib.Path(self.host_node).resolve()
+        bindir = pathlib.Path(self.scratch.name) / 'signalled-bin'
+        bindir.mkdir()
+        node_entry = bindir / 'node'
+        node_entry.write_text('#!/bin/sh\n'
+                              'if [ "$1" != "--version" ]; then\n'
+                              '  kill -TERM $$\n'
+                              'fi\n'
+                              'exec "' + str(real) + '" "$@"\n')
+        node_entry.chmod(0o755)
+        logs = pathlib.Path(self.scratch.name) / 'logs-gates-refusal'
+        logs.mkdir()
+
+        class Args:
+            context_node22 = None
+        patched = {'PATH': str(bindir) + os.pathsep + os.environ.get('PATH', '')}
+        with mock.patch.dict(os.environ, patched):
+            with self.assertRaises(RuntimeError) as caught:
+                PACKAGE.run_context_gates(self.host_root, logs, Args(), self.entries)
+        self.assertIn('failed on the host Node', str(caught.exception))
+        receipt = json.loads((logs / 'context-gate-host.json').read_text())
+        self.assertEqual(receipt['exit_code'], -15)
+        self.assertEqual(receipt['signal'], 'SIGTERM')
+        self.assertTrue(receipt['child']['spawned'])
+        self.assertIsNone(receipt['nodeVersionChanged'])
+        self.assertIsNone(receipt['nodeIdentityChanged'])
+        self.assertFalse((logs / 'context-gate-node22.15.0.json').exists())
 
     def test_gate_refuses_same_version_byte_drift(self):
         real = pathlib.Path(self.host_node).resolve()

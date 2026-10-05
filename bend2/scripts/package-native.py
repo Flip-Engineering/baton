@@ -448,6 +448,14 @@ def child_signal(returncode):
     return None
 
 
+def retained_stream(record, error):
+    if error is not None:
+        return {'path': record.name, 'available': False, 'error': error}
+    if not record.is_file():
+        return {'path': record.name, 'available': False, 'error': 'stream file is absent'}
+    return {'path': record.name, 'available': True, **file_info(record)}
+
+
 def context_receipt_logs(logs):
     return sorted(path for pattern in ('context-gate-*', 'context-node-version-*')
                   for path in logs.glob(pattern) if path.is_file())
@@ -472,22 +480,51 @@ def run_context_gate(payload, logs, node, name, extra_env=None):
     before = context_tree_state(payload)
     write_json(before_path, before)
     started = time.monotonic()
-    spawn_error = None
-    result = None
+    stream_error = None
+    out_handle = None
+    err_handle = None
     try:
-        with stdout.open('wb') as out, stderr.open('wb') as err:
+        out_handle = stdout.open('wb')
+        err_handle = stderr.open('wb')
+    except OSError as error:
+        stream_error = repr(error)
+    spawn_stage = 'completed'
+    spawn_error = None
+    interrupted = None
+    result = None
+    if stream_error is None:
+        try:
             result = subprocess.run([str(node), 'context-package-gate.mjs'], cwd=cwd, env=env,
-                                    stdin=subprocess.DEVNULL, stdout=out, stderr=err)
-    except BaseException as error:
-        spawn_error = repr(error)
+                                    stdin=subprocess.DEVNULL, stdout=out_handle,
+                                    stderr=err_handle)
+        except (OSError, ValueError, subprocess.SubprocessError) as error:
+            # The child was never created or the spawn arguments were invalid;
+            # spawned:false is a proven fact for these failures.
+            spawn_stage = 'unspawned'
+            spawn_error = repr(error)
+        except BaseException as error:
+            # An interruption may have occurred after process creation, so the
+            # actual child outcome is unknown rather than unspawned.
+            interrupted = error
+            spawn_stage = 'interrupted'
+            spawn_error = repr(error)
+        finally:
+            out_handle.close()
+            err_handle.close()
+    else:
+        spawn_stage = 'streams-unavailable'
+        spawn_error = stream_error
     after = context_tree_state(payload)
     write_json(after_path, after)
     post_identity = None
     post_error = None
-    try:
-        post_identity = context_node_identity(node, payload, logs, name, '-after')
-    except BaseException as error:
-        post_error = repr(error)
+    if interrupted is None:
+        try:
+            post_identity = context_node_identity(node, payload, logs, name, '-after')
+        except BaseException as error:
+            post_error = repr(error)
+    else:
+        post_error = 'not attempted: the gate child spawn raised an interruption'
     if post_identity is None:
         node_identity['postIdentity'] = {'available': False, 'error': post_error}
         node_identity['versionAfter'] = None
@@ -500,10 +537,11 @@ def run_context_gate(payload, logs, node, name, extra_env=None):
         node_identity['versionAfter'] = post_identity['version']
         node_identity['sha256After'] = post_identity['sha256']
         node_identity['bytesAfter'] = post_identity['bytes']
-    if result is None:
-        child = {'spawned': False, 'error': spawn_error}
+    if result is not None:
+        child = {'spawned': True, 'stage': spawn_stage}
     else:
-        child = {'spawned': True}
+        child = {'spawned': None if interrupted is not None else False,
+                 'stage': spawn_stage, 'error': spawn_error}
     receipt = {'runtime': name, 'node': node_identity,
                'argv': [str(node), 'context-package-gate.mjs'], 'cwd': str(cwd),
                'environmentKeys': sorted(env),
@@ -511,8 +549,8 @@ def run_context_gate(payload, logs, node, name, extra_env=None):
                'exit_code': None if result is None else result.returncode,
                'signal': child_signal(None if result is None else result.returncode),
                'elapsed_seconds': time.monotonic() - started,
-               'stdout': {'path': stdout.name, **file_info(stdout)},
-               'stderr': {'path': stderr.name, **file_info(stderr)},
+               'stdout': retained_stream(stdout, stream_error),
+               'stderr': retained_stream(stderr, stream_error),
                'payloadSnapshot': {'before': {'path': before_path.name, **file_info(before_path)},
                                    'after': {'path': after_path.name, **file_info(after_path)},
                                    'equal': before == after},
@@ -523,8 +561,13 @@ def run_context_gate(payload, logs, node, name, extra_env=None):
                                             or post_identity['bytes'] != node_identity['bytes'])}
     receipt_path = logs / ('context-gate-' + name + '.json')
     write_json(receipt_path, receipt)
-    require(result is not None,
-            'The context gate child could not be spawned: ' + str(receipt_path))
+    if interrupted is not None:
+        # The durable receipt retains the evidence; interruption semantics are
+        # preserved instead of converting the interrupt into a refusal.
+        raise interrupted
+    require(spawn_stage == 'completed',
+            'The context gate child could not be spawned or its streams were '
+            'unavailable (stage ' + spawn_stage + '): ' + str(receipt_path))
     require(post_identity is not None,
             'The context gate node identity is unavailable after the package gate: '
             + str(receipt_path))
