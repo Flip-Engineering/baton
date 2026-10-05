@@ -6,7 +6,7 @@
 typedef struct {
   char *path, *sql, *output, *error;
   size_t length;
-  int code;
+  int code, readonly;
 } BatonSql;
 
 static int baton_sql_row(void *context, int count, char **values, char **columns) {
@@ -35,13 +35,16 @@ static int baton_sql_busy(void *context, int tries) {
 static void baton_sql_call(IoWork *w) {
   BatonSql *call = (BatonSql *)w->data;
   sqlite3 *db = NULL;
-  call->code = sqlite3_open(call->path, &db);
+  call->code = call->readonly
+    ? sqlite3_open_v2(call->path, &db, SQLITE_OPEN_READONLY, NULL)
+    : sqlite3_open(call->path, &db);
   if (call->code != SQLITE_OK) {
     call->error = strdup(db ? sqlite3_errmsg(db) : "cannot open database");
   } else {
     sqlite3_busy_handler(db, baton_sql_busy, NULL);
     char *error = NULL;
-    call->code = sqlite3_exec(db, "PRAGMA foreign_keys=ON; PRAGMA synchronous=FULL;", NULL, NULL, &error);
+    if (!call->readonly)
+      call->code = sqlite3_exec(db, "PRAGMA foreign_keys=ON; PRAGMA synchronous=FULL;", NULL, NULL, &error);
     if (call->code == SQLITE_OK)
       call->code = sqlite3_exec(db, call->sql, baton_sql_row, call, &error);
     if (call->code != SQLITE_OK) {
@@ -64,10 +67,10 @@ static Term baton_sql_pack(Env e, IoWork *w) {
 }
 
 /* The effect ID uses the definition name from the Bend source. */
-#ifdef CID_SQL_QUERY
-static Term baton_sql_run(Env e, Term *f, IoWork *w) {
+static Term baton_sql_begin(Env e, Term *f, IoWork *w, int readonly) {
   BatonSql *call = calloc(1, sizeof(*call));
   if (!call) return io_fail(e, ENOMEM, NULL);
+  call->readonly = readonly;
   u64 path_n = 0, sql_n = 0;
   call->path = io_cstr(e, f[0], &path_n);
   call->sql = io_cstr(e, f[1], &sql_n);
@@ -78,7 +81,20 @@ static Term baton_sql_run(Env e, Term *f, IoWork *w) {
   w->data = (char *)call;
   return io_work(w, baton_sql_call, baton_sql_pack);
 }
+#ifdef CID_SQL_QUERY
+static Term baton_sql_run(Env e, Term *f, IoWork *w) {
+  return baton_sql_begin(e,f,w,0);
+}
 static void __attribute__((constructor)) baton_sql_use(void) {
   io_eff(CID_SQL_QUERY, baton_sql_run, 0);
+}
+#endif
+
+#ifdef CID_SQL_READ
+static Term baton_sql_read(Env e, Term *f, IoWork *w) {
+  return baton_sql_begin(e,f,w,1);
+}
+static void __attribute__((constructor)) baton_sql_read_use(void) {
+  io_eff(CID_SQL_READ, baton_sql_read, 0);
 }
 #endif

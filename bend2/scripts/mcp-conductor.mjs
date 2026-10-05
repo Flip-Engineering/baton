@@ -215,8 +215,8 @@ const TOOLS = [
   },
   {
     name: 'baton2_orchestra',
-    description: 'Inspect Players, both Conductor tiers, operators, Ensembles and their Sections.',
-    inputSchema: { type: 'object', properties: {}, additionalProperties: false },
+    description: 'Use index:true for concise Players, Conductor tiers, operators, Ensembles and Sections. session focuses a registered session and requires index. References retain their recorded parents without expanding outside branches. Legacy no-index includes report bodies.',
+    inputSchema: { type: 'object', properties: { index: { type: 'boolean' }, session: { type: 'string' }, pretty: { type: 'boolean' } }, additionalProperties: false },
   },
   {
     name: 'baton2_status',
@@ -225,12 +225,17 @@ const TOOLS = [
   },
   {
     name: 'baton2_inbox',
-    description: 'Show pending unacknowledged messages for the attached Conductor.',
-    inputSchema: {
-      type: 'object',
-      properties: { recipient: { type: 'string', description: 'Session ID (default: attached Conductor)' } },
-      additionalProperties: false,
-    },
+    description: 'Read messages for recipient (default attached session). Use index:true for concise metadata without acknowledgment; state defaults to pending and accepts acknowledged/all. sender and kind are conjunctive exact text filters, valid only with index. Use baton2_delivery for full bodies. Legacy no-index returns pending bodies.',
+    inputSchema: { type: 'object', properties: {
+      recipient: { type: 'string' }, index: { type: 'boolean' }, sender: { type: 'string' },
+      kind: { type: 'string' }, state: { type: 'string', enum: ['pending', 'acknowledged', 'all'] },
+      pretty: { type: 'boolean' },
+    }, additionalProperties: false },
+  },
+  {
+    name: 'baton2_delivery',
+    description: 'Read the full retained message body and receipt by ID, including acknowledged messages. This read does not acknowledge or retry delivery.',
+    inputSchema: { type: 'object', properties: { id: { type: 'string' }, pretty: { type: 'boolean' } }, required: ['id'], additionalProperties: false },
   },
   {
     name: 'baton2_ack',
@@ -316,8 +321,12 @@ const TOOLS = [
   },
   {
     name: 'baton2_pending',
-    description: 'List all undelivered messages with their recipients\' current native endpoints.',
-    inputSchema: { type: 'object', properties: {}, additionalProperties: false },
+    description: 'Read across all recipients by default. Use index:true for concise metadata; optional recipient, sender and kind filters combine by exact equality. state defaults to pending and accepts acknowledged/all. Filters require index. Legacy no-index includes bodies and endpoints. This read never acknowledges.',
+    inputSchema: { type: 'object', properties: {
+      index: { type: 'boolean' }, recipient: { type: 'string' }, sender: { type: 'string' },
+      kind: { type: 'string' }, state: { type: 'string', enum: ['pending', 'acknowledged', 'all'] },
+      pretty: { type: 'boolean' },
+    }, additionalProperties: false },
   },
   {
     name: 'baton2_push',
@@ -441,7 +450,7 @@ function handleMessage(msg) {
         experimental: { 'claude/channel': {} },
       },
       serverInfo: { name: 'baton-conductor', version: '0.1.0' },
-      instructions: `Baton2 ${hasParent(selectedSession()) ? 'Associate' : 'Principal'} Conductor attachment for session ${sessionId}. Use baton2_recruit to assign a Player and its worktree. Use baton2_receiver to register a Player's Codex or OMP receive endpoint, then baton2_dispatch_file to send task or guidance files. Use baton2_dispatch_turn to launch a recruited Player's task file with its recorded route. Use baton2_inbox or baton2_pending to see pending messages. Use baton2_ack to acknowledge delivery. Use baton2_guide to direct Players. Use baton2_player and baton2_players to inspect Players and both Conductor tiers. Use baton2_role, baton2_ensemble, baton2_ensemble_member, baton2_section and baton2_section_member to configure responsibilities and membership. Use baton2_orchestra to inspect the system. Use baton2_turns for turn history and baton2_land or baton2_land_checked to land a Player's changes.`,
+      instructions: `Baton2 ${hasParent(selectedSession()) ? 'Associate' : 'Principal'} Conductor attachment for session ${sessionId}. Use baton2_recruit to assign a Player and its worktree. Use baton2_receiver to register a Player's Codex or OMP receive endpoint, then baton2_dispatch_file to send task or guidance files. Use baton2_dispatch_turn to launch a recruited Player's task file with its recorded route. Use baton2_inbox with index:true for concise pending metadata scoped to this attachment; baton2_pending with index:true reads across recipients. Exact sender/kind filters combine; state:all includes acknowledged history. Use baton2_delivery to read each selected complete body. Index reads do not acknowledge, review or complete work. Use baton2_ack to acknowledge delivery. Use baton2_guide to direct Players. Use baton2_player and baton2_players to inspect Players and both Conductor tiers. Use baton2_role, baton2_ensemble, baton2_ensemble_member, baton2_section and baton2_section_member to configure responsibilities and membership. Use baton2_orchestra with index:true and session to inspect the focused system; omitted session selects the full structure. Legacy no-index readers include bodies and histories. Use baton2_turns for turn history and baton2_land or baton2_land_checked to land a Player's changes.`,
     });
     return;
   }
@@ -479,6 +488,23 @@ function handleMessage(msg) {
   if (!msg.id) return;
 
   sendError(msg.id, -32601, `Method not found: ${msg.method}`);
+}
+
+function readOptions(options, allowed) {
+  if (typeof options !== 'object' || options === null || Array.isArray(options)) throw new Error('Read options must be an object');
+  for (const [key, value] of Object.entries(options)) {
+    if (!allowed.includes(key) || typeof value !== (['index', 'pretty'].includes(key) ? 'boolean' : 'string')) throw new Error('Invalid read option: ' + key);
+  }
+}
+
+function messageReadOptions(options, inbox) {
+  readOptions(options, ['index', 'recipient', 'sender', 'kind', 'state', 'pretty']);
+  const filters = inbox ? ['sender', 'kind', 'state'] : ['recipient', 'sender', 'kind', 'state'];
+  if (!options.index && filters.some(key => options[key] !== undefined)) throw new Error('Message filters require index: true');
+  const argv = options.index ? ['--index'] : [];
+  for (const key of filters) if (options[key] !== undefined) argv.push('--' + key, options[key]);
+  if (options.pretty) argv.push('--pretty');
+  return argv;
 }
 
 function handleToolCall(msg) {
@@ -522,14 +548,24 @@ function handleToolCall(msg) {
       case 'baton2_section_member':
         result = coord('section-member', args.ensemble, args.section, args.owner ?? sessionId, player, args.action);
         break;
-      case 'baton2_orchestra':
-        result = coord('orchestra');
+      case 'baton2_orchestra': {
+        const options = args ?? {};
+        readOptions(options, ['index', 'session', 'pretty']);
+        if (options.session !== undefined && options.index !== true) throw new Error('session requires index: true');
+        result = coord('orchestra', ...(options.index ? ['--index'] : []),
+          ...(options.session === undefined ? [] : ['--for', options.session]), ...(options.pretty ? ['--pretty'] : []));
         break;
+      }
       case 'baton2_status':
         result = coord('status');
         break;
       case 'baton2_inbox':
-        result = coord('inbox', args?.recipient ?? sessionId);
+        result = coord('inbox', args?.recipient ?? sessionId, ...messageReadOptions(args ?? {}, true));
+        break;
+      case 'baton2_delivery':
+        readOptions(args ?? {}, ['id', 'pretty']);
+        if (typeof args?.id !== 'string') throw new Error('delivery requires id');
+        result = coord('delivery', args.id, ...(args.pretty ? ['--pretty'] : []));
         break;
       case 'baton2_ack':
         result = coord('ack', args.id, sessionId, args.receipt);
@@ -557,7 +593,7 @@ function handleToolCall(msg) {
         result = coord('turns', player);
         break;
       case 'baton2_pending':
-        result = coord('pending');
+        result = coord('pending', ...messageReadOptions(args ?? {}, false));
         break;
       case 'baton2_push':
         result = coord('push', args.repo, args.branch, args.remote);
