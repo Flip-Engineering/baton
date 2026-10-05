@@ -67,13 +67,17 @@ class ReplayBase(RECEIVE.Receive):
             found.append(self.accept_any())
         return found
 
-    def native_status(self):
-        """The retained wait status of the original attempt, from its own directory."""
-        identity, directory = self.original_attempt
+    def native_status(self, binding=None):
+        """The retained wait status of the bound attempt, read from its own directory."""
+        _identity, directory = self.original_attempt if binding is None else binding
         status = int((directory / 'status').read_text())
-        self.assertTrue(os.WIFEXITED(status), f'the original attempt did not exit normally: {status}')
+        self.assertTrue(os.WIFEXITED(status), f'the bound attempt did not exit normally: {status}')
         self.assertEqual(os.WEXITSTATUS(status), 0)
         return f'exit {os.WEXITSTATUS(status)}'
+
+    def reported_body(self, binding):
+        """The public report body of the bound attempt, read by its own saved id."""
+        return self.coord('delivery', binding[0])['body']
 
     def reports(self):
         """Every report body the native session delivered to the root."""
@@ -96,7 +100,9 @@ class ReplayBase(RECEIVE.Receive):
         if not hasattr(self, 'first_attempt'):
             self.first_attempt = (row[0], pathlib.Path(row[1]))
         self.original_attempt = (row[0], pathlib.Path(row[1]))
-        (self.directory / 'original-attempt-binding.json').write_text(
+        self.attempts = getattr(self, 'attempts', [])
+        self.attempts.append(self.original_attempt)
+        (self.directory / f'attempt-binding-{len(self.attempts)}.json').write_text(
             json.dumps({'id': row[0], 'directory': row[1]}))
         return observer, stream
 
@@ -479,6 +485,8 @@ class ControlledFrames(ReplayBase):
         self.assertNotEqual(later_code, 0)
         self.assertIn('Sealed first report.', self.reports()[0])
         self.assertTrue(any('Native model failure' in body for body in later_bodies), later_bodies)
+        self.assertIn('exit 0', self.native_status(self.first_attempt))
+        self.assertEqual(self.reported_body(self.first_attempt), 'Sealed first report.')
 
     def test_sequential_error_then_success_keeps_the_first_failure(self):
         """Two consecutive receives: a later success does not change the earlier failure."""
@@ -497,6 +505,8 @@ class ControlledFrames(ReplayBase):
         self.assertEqual(later_code, 0)
         self.assertIn('Native model failure', self.reports()[0])
         self.assertIn('Later successful report.', later_bodies[-1])
+        self.assertIn('exit 0', self.native_status(self.first_attempt))
+        self.assertIn('Native model failure', self.reported_body(self.first_attempt))
 
 
 if __name__ == '__main__':
