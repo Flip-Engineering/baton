@@ -66,3 +66,67 @@ The arithmetic implementation is unchanged. Raw octet transport, cursor
 attempt/stream checks, signed host offset conversion, readiness synchronization
 and post-ACK parent notice remain outside this fixture. Existing e1d/7de
 findings and the historical3a probe keep their own evidence scope.
+
+## Review of the 9930 correction
+
+Reviewed committed `9930a52f6bb33f05e40964aba630426070066c64`, tree
+`ba2c8d8cdf8251a6bf778363c3b78ae435a676cd`, including its changes from
+`5d9ff939` and the preceding parsing and runner changes from `5e722392`.
+The four supplied module, entry and runner hashes match the committed blobs.
+This review used source inspection and retained evidence. No compilation,
+syntax check, build, fixture or test ran locally or remotely in this review.
+
+Root's retained Linux evidence is under
+`.scratch/root-homelab-ci-20261005/instance-5e722392-evidence` in the root
+checkout. The before/after source records identify 5e722392 and its tree,
+and the final source-status record is empty. The two component check records
+and their outer exit records report exit 1. Receive failed at the computed
+scrutinee `match R.wake(message)`; retained-read failed at nested `match carry`.
+Both raw diagnostics request a separate definition. Their later generation,
+runtime and mutation stages did not run. The owner-admission outer record
+reports exit 0; this review does not independently audit all its raw controls.
+
+The 9930 receive entry passes the computed wake to `show_wake`, which matches
+its parameter. Retained-read introduces `offset_limit`, `offset_carry` and
+`offset_right`, and the fixture introduces `parsed_low` and `parsed_right`.
+These helpers remove the reported scrutinees and the adjacent nested matches.
+The source preserves high-word overflow refusal before carry adjustment.
+The duplicated high/low arithmetic operands have explicit duplication binders.
+The Result error/value ordering and Maybe payloads are consistent across the
+reviewed helper signatures. Compiler acceptance remains due.
+
+The complete arithmetic law suffix is byte-identical to 5e722392. Each of the
+three comparison strings targeted by the mutation runner occurs once in the
+implementation before that suffix. Public `offset_sum` and all three controls
+retain their intended arithmetic behavior and source targets.
+
+The preceding 5d parsing correction unwraps every `U32.read` result before
+constructing a ByteOffset. None follows the explicit invalid-word path.
+The runner supplies an invalid token in each of the four positions. This
+addresses the earlier source type mismatch; execution of those cases remains
+due because the original remote baseline stopped earlier.
+
+The retained-read runner now preserves each mutation directory and records an
+unobserved child when launch-record writing or waiting raises. That removes
+the earlier exception-driven TemporaryDirectory deletion path. The existing
+remote job still owns child reconciliation. An abrupt process loss can leave
+no interruption receipt, and a PID alone does not establish an ended child.
+This source correction does not prove supervision, deduplication or recovery
+after job loss.
+
+One further source risk remains in the unchanged receive-request runner.
+Its `mismatch-loses-stderr` mutation inserts `match frame` inside the False
+branch of `select`'s `match matches`. This has the nested scrutinee shape that
+9930 removes from retained-read after the actual parser refusal. Its intended
+law diagnostic has not run in the Linux evidence. Move that mutation's frame
+destructuring into a parameterized helper before treating the control as
+ready, or retain an actual admitted compiler result establishing that this
+particular form is accepted. This is a source-derived risk, not an executed
+mutation failure. The runner's named-law assertion would reject an unrelated
+parser error, so this risk causes an unfinished gate rather than a false pass.
+
+Disposition: the 5d/9930 source corrections address the identified parsing,
+typing and temporary-directory lifetime problems within their stated scope.
+The receive mutation risk and actual remote compiler/runtime/control outcomes
+remain open. No host lifetime, byte transport, readiness or shared-owner
+acceptance follows from this review.
