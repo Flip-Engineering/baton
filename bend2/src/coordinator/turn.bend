@@ -182,11 +182,40 @@ def omp_message(db: String, +event: String, previous: String, enabled: Bool) -> 
       message : String <- IO.try(String,DB.Sql.query(db,"SELECT CASE WHEN json_extract(" ++ C.q(event) ++ ",'$.type')='message_end' AND json_extract(" ++ C.q(event) ++ ",'$.message.role')='assistant' THEN json_extract(" ++ C.q(event) ++ ",'$.message') ELSE " ++ C.q(previous) ++ " END;"))
       IO.pure(String,Tx.trim_nl(message))
 
-def omp_terminal(db: String, +event: String, +message: String, enabled: Bool) -> IO(String):
+# The identity of the attempt's latest assistant activity: the response of the
+# last assistant message_start or message_end this stream carried. A terminal
+# with an elided tail truncates its own message list, so the stream is the
+# retained evidence for which assistant message the attempt reached last. The
+# state is the current native stream alone; nothing is stored across attempts.
+def omp_activity_sql(+event: String) -> String:
+  "SELECT CASE WHEN json_extract(" ++ C.q(event) ++ ",'$.type') IN ('message_start','message_end') AND json_extract(" ++ C.q(event) ++ ",'$.message.role')='assistant' THEN coalesce(json_extract(" ++ C.q(event) ++ ",'$.message.responseId'),'') ELSE '' END;"
+
+def omp_activity(db: String, +event: String, previous: String, enabled: Bool) -> IO(String):
+  match enabled:
+    case False{}: IO.pure(String,previous)
+    case True{}: do IO<String>:
+      +activity : String <- IO.try(String,DB.Sql.query(db,omp_activity_sql(event)))
+      IO.pure(String,Tx.trim_nl(Bool.pick(String,String.is_empty(Tx.trim_nl(activity)),previous,activity)))
+
+# The retained completion replaces the terminal's own truncated list only when
+# the terminal names no assistant, or when its truncated tail ends in a provider
+# error the stream shows an assistant activity after. When that activity is not a
+# usable completion the result is the truthful unavailable frame rather than the
+# older error.
+def omp_terminal_sql(+event: String, +message: String, +activity: String) -> String:
+  +frames = "CASE WHEN coalesce(json_type(" ++ C.q(event) ++ ",'$.messages'),'')='array' THEN " ++ C.q(event) ++ " ELSE json_object('messages',json_array()) END"
+  +elided = "json_extract(" ++ C.q(event) ++ ",'$.type')='agent_end' AND coalesce(json_extract(" ++ C.q(event) ++ ",'$.isTerminal'),1)=1 AND (coalesce(json_array_length(" ++ C.q(event) ++ ",'$.messages'),0)=0 OR (SELECT CASE WHEN CASE WHEN t.type='object' THEN json_extract(t.value,'$.role') END='assistant' THEN 0 ELSE 1 END FROM json_each(" ++ frames ++ ",'$.messages') t ORDER BY t.key DESC LIMIT 1)=1)"
+  +error = "coalesce((SELECT CASE WHEN CASE WHEN a.type='object' THEN json_extract(a.value,'$.role') END='assistant' THEN CASE WHEN json_extract(a.value,'$.stopReason')='error' THEN 1 ELSE 0 END ELSE 0 END FROM json_each(" ++ frames ++ ",'$.messages') a WHERE CASE WHEN a.type='object' THEN json_extract(a.value,'$.role') END='assistant' ORDER BY a.key DESC LIMIT 1),0)"
+  +named = "coalesce((SELECT CASE WHEN CASE WHEN a.type='object' THEN json_extract(a.value,'$.role') END='assistant' THEN json_extract(a.value,'$.responseId') END FROM json_each(" ++ frames ++ ",'$.messages') a WHERE CASE WHEN a.type='object' THEN json_extract(a.value,'$.role') END='assistant' ORDER BY a.key DESC LIMIT 1),'')"
+  +usable = "CASE WHEN " ++ C.q(message) ++ "<>'' AND coalesce(json_extract(" ++ C.q(message) ++ ",'$.stopReason'),'')<>'error' THEN 1 ELSE 0 END"
+  +later = "CASE WHEN " ++ C.q(activity) ++ "<>'' AND " ++ named ++ "<>'' AND " ++ named ++ "<>" ++ C.q(activity) ++ " THEN 1 ELSE 0 END"
+  "SELECT CASE WHEN " ++ elided ++ " THEN CASE WHEN " ++ error ++ "=0 AND " ++ usable ++ "=1 THEN json_set(" ++ C.q(event) ++ ",'$.messages',json_array(json(" ++ C.q(message) ++ "))) WHEN " ++ error ++ "=1 AND " ++ later ++ "=1 AND " ++ usable ++ "=1 THEN json_set(" ++ C.q(event) ++ ",'$.messages',json_array(json(" ++ C.q(message) ++ "))) WHEN " ++ error ++ "=1 AND " ++ later ++ "=1 THEN json_set(" ++ C.q(event) ++ ",'$.messages',json_array()) ELSE " ++ C.q(event) ++ " END ELSE " ++ C.q(event) ++ " END;"
+
+def omp_terminal(db: String, +event: String, +message: String, +activity: String, enabled: Bool) -> IO(String):
   match enabled:
     case False{}: IO.pure(String,event)
     case True{}: do IO<String>:
-      normalized : String <- IO.try(String,DB.Sql.query(db,"SELECT CASE WHEN json_extract(" ++ C.q(event) ++ ",'$.type')='agent_end' AND coalesce(json_extract(" ++ C.q(event) ++ ",'$.isTerminal'),1)=1 AND (coalesce(json_array_length(" ++ C.q(event) ++ ",'$.messages'),0)=0 OR (SELECT CASE WHEN CASE WHEN t.type='object' THEN json_extract(t.value,'$.role') END='assistant' THEN 0 ELSE 1 END FROM json_each(CASE WHEN coalesce(json_type(" ++ C.q(event) ++ ",'$.messages'),'')='array' THEN " ++ C.q(event) ++ " ELSE json_object('messages',json_array()) END,'$.messages') t ORDER BY t.key DESC LIMIT 1)=1) AND coalesce((SELECT CASE WHEN CASE WHEN a.type='object' THEN json_extract(a.value,'$.role') END='assistant' THEN CASE WHEN json_extract(a.value,'$.stopReason')='error' THEN 1 ELSE 0 END ELSE 0 END FROM json_each(CASE WHEN coalesce(json_type(" ++ C.q(event) ++ ",'$.messages'),'')='array' THEN " ++ C.q(event) ++ " ELSE json_object('messages',json_array()) END,'$.messages') a WHERE CASE WHEN a.type='object' THEN json_extract(a.value,'$.role') END='assistant' ORDER BY a.key DESC LIMIT 1),0)=0 AND " ++ C.q(message) ++ "<>'' THEN json_set(" ++ C.q(event) ++ ",'$.messages',json_array(json(" ++ C.q(message) ++ "))) ELSE " ++ C.q(event) ++ " END;"))
+      normalized : String <- IO.try(String,DB.Sql.query(db,omp_terminal_sql(event,message,activity)))
       IO.pure(String,Tx.trim_nl(normalized))
 
 def observe_event(db: String, player: String, id: String, line: String, relevant: Bool, sealed: Bool) -> IO(Result<&1,&1,U32 & String,String>):
@@ -250,7 +279,7 @@ def append_frame(log: String, line: String, keep: Bool) -> IO(Result<&1,&1,U32 &
 def frame_kind(db: String, line: String, omp: Bool) -> IO(String):
   match omp:
     case False{}: IO.pure(String,"")
-    case True{}: IO.try(String,DB.Sql.query(db,"WITH frame(value) AS (VALUES(" ++ C.q(line) ++ ")) SELECT CASE WHEN json_valid(value) THEN CASE json_extract(value,'$.type') WHEN 'message_update' THEN 'message_update' WHEN 'response' THEN 'response' WHEN 'message_end' THEN 'message_end' WHEN 'tool_execution_start' THEN 'tool_execution_start' WHEN 'tool_execution_end' THEN 'tool_execution_end' WHEN 'agent_end' THEN 'agent_end' WHEN 'extension_ui_request' THEN 'extension_ui_request' ELSE '' END ELSE '' END FROM frame;"))
+    case True{}: IO.try(String,DB.Sql.query(db,"WITH frame(value) AS (VALUES(" ++ C.q(line) ++ ")) SELECT CASE WHEN json_valid(value) THEN CASE json_extract(value,'$.type') WHEN 'message_update' THEN 'message_update' WHEN 'response' THEN 'response' WHEN 'message_end' THEN 'message_end' WHEN 'message_start' THEN 'message_start' WHEN 'tool_execution_start' THEN 'tool_execution_start' WHEN 'tool_execution_end' THEN 'tool_execution_end' WHEN 'agent_end' THEN 'agent_end' WHEN 'extension_ui_request' THEN 'extension_ui_request' ELSE '' END ELSE '' END FROM frame;"))
 
 # The live #379 trial filled the disk with OMP's cumulative message_update
 # snapshots. message_end supplies the complete message; keep every other frame.
@@ -293,7 +322,7 @@ def codex_frames(db: String, +previous: String, +line: String, codex: Bool) -> I
       IO.pure(String,Tx.trim_nl(value))
 
 @unsafe
-def consume(+db: String, +player: String, +id: String, +log: String, +handle: U32, +harness: String, cursor: String, last_message: String, +terminal: String, filter: String, codex_log: String, +first_error: String, sender: Chan(Result<&1,&1,U32 & String,Unit>), +attempt: String, deliveries: List<Chan(Result<&1,&1,U32 & String,String>)>, result: Result<&1,&1,U32 & String,Maybe<String>>) -> IO(Outcome & List<Chan(Result<&1,&1,U32 & String,String>)>):
+def consume(+db: String, +player: String, +id: String, +log: String, +handle: U32, +harness: String, cursor: String, last_message: String, last_activity: String, +terminal: String, filter: String, codex_log: String, +first_error: String, sender: Chan(Result<&1,&1,U32 & String,Unit>), +attempt: String, deliveries: List<Chan(Result<&1,&1,U32 & String,String>)>, result: Result<&1,&1,U32 & String,Maybe<String>>) -> IO(Outcome & List<Chan(Result<&1,&1,U32 & String,String>)>):
   match result:
     case Fail{error}: do IO<Outcome & List<Chan(Result<&1,&1,U32 & String,String>)>>:
       closed : Result<&1,&1,U32 & String,Unit> <- P.ProcessChild.close_stdin(handle)
@@ -316,7 +345,8 @@ def consume(+db: String, +player: String, +id: String, +log: String, +handle: U3
         +sealed : Bool <- IO.pure(Bool,Bool.not(String.is_empty(terminal)))
         next_cursor : String <- Guidance.observe(db,player,handle,line,cursor,Bool.and(String.eq(harness,"omp\n"),relevant),sealed)
         +message : String <- omp_message(db,line,last_message,Bool.and(String.eq(harness,"omp\n"),relevant))
-        +event : String <- omp_terminal(db,line,message,Bool.and(String.eq(harness,"omp\n"),relevant))
+        +activity : String <- omp_activity(db,line,last_activity,String.eq(harness,"omp\n"))
+        +event : String <- omp_terminal(db,line,message,activity,Bool.and(String.eq(harness,"omp\n"),relevant))
         deferred : Unit <- deferred_note(db,player,id,event,terminal,sealed)
         observed : Result<&1,&1,U32 & String,String> <- observe_event(db,player,id,event,relevant,sealed)
         ended : String <- terminal_event(db,event,terminal,relevant)
@@ -326,7 +356,7 @@ def consume(+db: String, +player: String, +id: String, +log: String, +handle: U3
         +next_filter : String <- IO.pure(String,Omp.filter_next(filter,Tx.trim_nl(mode)))
         NativeRequests.with_observation(Outcome & List<Chan(Result<&1,&1,U32 & String,String>)>,questions,wakes => question_error => do IO<Outcome & List<Chan(Result<&1,&1,U32 & String,String>)>>:
           next : Result<&1,&1,U32 & String,Maybe<String>> <- P.ProcessChild.read_line(handle)
-          consume(db,player,id,log,handle,harness,next_cursor,message,ended,next_filter,codex_state,remember(remember_write(Bool.pick(String,String.is_empty(first_error),question_error,first_error),written),observed),sender,attempt,wakes,next))
+          consume(db,player,id,log,handle,harness,next_cursor,message,activity,ended,next_filter,codex_state,remember(remember_write(Bool.pick(String,String.is_empty(first_error),question_error,first_error),written),observed),sender,attempt,wakes,next))
 
 def direct_observed(observation: Outcome & List<Chan(Result<&1,&1,U32 & String,String>)>) -> IO(Outcome):
   (outcome,deliveries)=observation
@@ -341,7 +371,7 @@ def started(+db: String, +player: String, +id: String, +log: String, prompt: Str
       do IO<Outcome>:
         sender : Chan(Result<&1,&1,U32 & String,Unit>) <- IO.fork(Result<&1,&1,U32 & String,Unit>,send_prompt(handle,prompt,harness))
         first : Result<&1,&1,U32 & String,Maybe<String>> <- P.ProcessChild.read_line(handle)
-        observation : Outcome & List<Chan(Result<&1,&1,U32 & String,String>)> <- consume(db,player,id,log,handle,harness,"0\n","","","","","",sender,"",Nil{},first)
+        observation : Outcome & List<Chan(Result<&1,&1,U32 & String,String>)> <- consume(db,player,id,log,handle,harness,"0\n","","","","","","",sender,"",Nil{},first)
         direct_observed(observation)
 
 # The retained process sends its initial input once. Reattachment reads the same
@@ -350,7 +380,7 @@ def retained_output(db: String, player: String, id: String, log: String, +harnes
   do IO<Outcome & List<Chan(Result<&1,&1,U32 & String,String>)>>:
     sender : Chan(Result<&1,&1,U32 & String,Unit>) <- IO.fork(Result<&1,&1,U32 & String,Unit>,IO.pure(Result<&1,&1,U32 & String,Unit>,Done{Unit{}}))
     first : Result<&1,&1,U32 & String,Maybe<String>> <- P.ProcessChild.read_line(handle)
-    consume(db,player,id,log,handle,harness,"0\n","","","","","",sender,attempt,Nil{},first)
+    consume(db,player,id,log,handle,harness,"0\n","","","","","","",sender,attempt,Nil{},first)
 
 def retained(+db: String, +player: String, +directory: String, +cmd: String, +model: String, +effort: String, cwd: String, +session: String, +harness: String, +sessions: String, +prompt: String, lock: U32, recovery: String) -> IO(Result<&1,&1,U32 & String,P.RetainedStart>):
   do IO<Result<&1,&1,U32 & String,P.RetainedStart>>:

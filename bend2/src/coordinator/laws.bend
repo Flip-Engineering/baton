@@ -1160,11 +1160,21 @@ law omp_terminal_recovers_truncated_history:
   for +db: String
   for +event: String
   for +message: String
-  {Turn.omp_terminal(db,event,message,True{}) == (do IO<String>:
-    normalized : String <- IO.try(String,DB.Sql.query(db,"SELECT CASE WHEN json_extract(" ++ C.q(event) ++ ",'$.type')='agent_end' AND coalesce(json_extract(" ++ C.q(event) ++ ",'$.isTerminal'),1)=1 AND (coalesce(json_array_length(" ++ C.q(event) ++ ",'$.messages'),0)=0 OR (SELECT CASE WHEN CASE WHEN t.type='object' THEN json_extract(t.value,'$.role') END='assistant' THEN 0 ELSE 1 END FROM json_each(CASE WHEN coalesce(json_type(" ++ C.q(event) ++ ",'$.messages'),'')='array' THEN " ++ C.q(event) ++ " ELSE json_object('messages',json_array()) END,'$.messages') t ORDER BY t.key DESC LIMIT 1)=1) AND coalesce((SELECT CASE WHEN CASE WHEN a.type='object' THEN json_extract(a.value,'$.role') END='assistant' THEN CASE WHEN json_extract(a.value,'$.stopReason')='error' THEN 1 ELSE 0 END ELSE 0 END FROM json_each(CASE WHEN coalesce(json_type(" ++ C.q(event) ++ ",'$.messages'),'')='array' THEN " ++ C.q(event) ++ " ELSE json_object('messages',json_array()) END,'$.messages') a WHERE CASE WHEN a.type='object' THEN json_extract(a.value,'$.role') END='assistant' ORDER BY a.key DESC LIMIT 1),0)=0 AND " ++ C.q(message) ++ "<>'' THEN json_set(" ++ C.q(event) ++ ",'$.messages',json_array(json(" ++ C.q(message) ++ "))) ELSE " ++ C.q(event) ++ " END;"))
+  for +activity: String
+  {Turn.omp_terminal(db,event,message,activity,True{}) == (do IO<String>:
+    normalized : String <- IO.try(String,DB.Sql.query(db,Turn.omp_terminal_sql(event,message,activity)))
     IO.pure(String,Tx.trim_nl(normalized))) : IO(String)}
 
-def omp_terminal_recovers_truncated_history(db,event,message):
+def omp_terminal_recovers_truncated_history(db,event,message,activity):
+  {==}
+
+# The retained activity is the response of the last assistant frame the stream
+# carried, and any other frame leaves the retained identity alone.
+law omp_activity_keeps_the_latest_assistant_response:
+  for +event: String
+  {Turn.omp_activity_sql(event) == ("SELECT CASE WHEN json_extract(" ++ C.q(event) ++ ",'$.type') IN ('message_start','message_end') AND json_extract(" ++ C.q(event) ++ ",'$.message.role')='assistant' THEN coalesce(json_extract(" ++ C.q(event) ++ ",'$.message.responseId'),'') ELSE '' END;") : String}
+
+def omp_activity_keeps_the_latest_assistant_response(event):
   {==}
 
 law receive_classifies_a_current_model_failure:
