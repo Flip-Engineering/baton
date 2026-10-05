@@ -116,6 +116,25 @@ def cases() -> List<List<U32> & S.StrResult & String>:
     ([34, 97, 34, 97], refused("trailing_data"), "trailing-bytes"),
     ([34, 97, 34, 256], fault(256), "host-octet-256"),
     ([97, 34], refused("expected_open_quote"), "missing-open-quote"),
+    ([97, 256], fault(256), "host-fault-after-plain-octet"),
+    ([34, 92, 120, 256], fault(256), "host-fault-after-malformed-escape-prefix"),
+    ([34, 194, 34, 256], fault(256), "host-fault-after-unfinished-lead"),
+    ([34, 255, 256], fault(256), "host-fault-after-invalid-lead"),
+    ([34, 255, 300, 256], fault(300), "first-competing-host-fault"),
+    ([], refused("empty_token"), "empty-input"),
+    ([34], refused("unterminated_string"), "quote-only"),
+    ([34, 97, 34, 32], refused("trailing_data"), "closed-token-then-whitespace"),
+    ([34, 97, 34, 34, 98, 34], refused("trailing_data"), "closed-token-then-second-token"),
+    ([34, 92, 117, 52], refused("incomplete_unicode_escape"), "eof-after-one-hex-digit"),
+    ([34, 92, 117, 52, 49, 50], refused("incomplete_unicode_escape"), "eof-after-three-hex-digits"),
+    ([34, 92, 117, 48, 48, 52, 49, 66, 34], ok([65, 66], [34, 92, 117, 48, 48, 52, 49, 66, 34]),
+      "hex-looking-character-after-completed-escape"),
+    ([34, 240, 128, 128, 128, 34], refused("overlong_utf8"), "four-byte-overlong"),
+    ([34, 31, 34], refused("raw_control"), "raw-31-rejected"),
+    ([34, 32, 34], ok([32], [34, 32, 34]), "raw-32-accepted"),
+    ([34, 97, 240, 159, 152, 128, 92, 110, 34],
+      ok([97, 55357, 56832, 10], [34, 97, 240, 159, 152, 128, 92, 110, 34]),
+      "supplementary-pair-between-ordinary-and-escaped-units"),
   ]
 
 def judge(actual: S.StrResult, expected: S.StrResult, name: String) -> IO(Unit):
@@ -128,6 +147,36 @@ def check(case: List<U32> & S.StrResult & String) -> IO(Unit):
   (octets, expected, name) = case
   judge(S.decode_string(octets), expected, name)
 
+def unequal_pairs() -> List<S.StrResult & S.StrResult & String>:
+  [
+    (ok([97], [34, 97, 34]), ok([98], [34, 97, 34]), "comparator-units"),
+    (ok([97], [34, 97, 34]), ok([97], [34, 98, 34]), "comparator-original-same-length"),
+    (ok([97], [34, 97, 34]), ok([97], [34, 97, 97, 34]), "comparator-original-unequal-length"),
+    (ok([97], [34, 97, 34]), refused("unterminated_string"), "comparator-disposition"),
+    (refused("raw_control"), refused("trailing_data"), "comparator-refusal-reason"),
+    (S.StrUnsupported{"raw_surrogate_encoding"}, S.StrUnsupported{"another_reason"},
+      "comparator-unsupported-reason"),
+    (fault(256), fault(255), "comparator-host-fault-value"),
+  ]
+
+def judge_unequal(left: S.StrResult, right: S.StrResult, name: String) -> IO(Unit):
+  +verdict = same_result(left, right)
+  match verdict:
+    case True{}: IO.die(Unit, 1, name)
+    case False{}: IO.pure(Unit, Unit{})
+
+def check_pair(pair: S.StrResult & S.StrResult & String) -> IO(Unit):
+  (left, right, name) = pair
+  judge_unequal(left, right, name)
+
+def run_pairs(rows: List<S.StrResult & S.StrResult & String>) -> IO(Unit):
+  match rows:
+    case Nil{}: IO.pure(Unit, Unit{})
+    case h <> t:
+      do IO<Unit>:
+        checked : Unit <- check_pair(h)
+        run_pairs(t)
+
 def run(rows: List<List<U32> & S.StrResult & String>) -> IO(Unit):
   match rows:
     case Nil{}: IO.pure(Unit, Unit{})
@@ -136,5 +185,8 @@ def run(rows: List<List<U32> & S.StrResult & String>) -> IO(Unit):
         checked : Unit <- check(h)
         run(t)
 
-def main() -> IO(Unit):
-  run(cases())
+def main() -> IO<Unit>:
+  do IO<Unit>:
+    all : Unit <- run(cases())
+    pairs : Unit <- run_pairs(unequal_pairs())
+    IO.pure(Unit, Unit{})
