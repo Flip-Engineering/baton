@@ -282,6 +282,7 @@ def parent_verdicts(text):
     ordinary route; they are never read from a retained child stream.
     """
     rows = {}
+    baseline_rows = 0
     for line in text.splitlines():
         line = line.strip()
         if not (line.startswith('{') and line.endswith('}')):
@@ -293,11 +294,19 @@ def parent_verdicts(text):
         if not isinstance(row, dict):
             continue
         if 'law' in row and 'module' in row and 'proof' in row:
-            rows['proof:' + str(row['law'])] = row
+            identity = 'proof:' + str(row['law'])
         elif 'mutation' in row and 'law' in row:
-            rows['mutation:' + str(row['mutation'])] = row
+            identity = 'mutation:' + str(row['mutation'])
         elif row.get('check') == 'entry compiles with every law proven':
-            rows['baseline'] = row
+            identity = 'baseline'
+            baseline_rows += 1
+        else:
+            continue
+        require(identity not in rows,
+                'The parent run printed more than one row for ' + json.dumps(identity))
+        rows[identity] = row
+    require(baseline_rows == 1,
+            'The parent run printed ' + str(baseline_rows) + ' baseline rows')
     return rows
 
 
@@ -567,6 +576,7 @@ def ordinary_evidence(index_path, expected, compiler=None, declared_root=None,
                 label + ' records an invalid interval')
         seen[identity] = ordinary_row(identity, expected, parent_rows)
     require(baselines == 1, 'The ordinary evidence records no baseline compile')
+    source_root = str(Path(index_path).parent.parent)
     wanted = {control['id'] for control in expected['controls']}
     missing = sorted(wanted - set(seen))
     require(not missing, 'The ordinary evidence omits controls: ' + succinct(missing))
@@ -579,7 +589,8 @@ def ordinary_evidence(index_path, expected, compiler=None, declared_root=None,
         raw[case['id']] = {'stdout': case['stdout']['sha256'],
                            'stderr': case['stderr']['sha256']}
     return {'path': str(path), **file_info(path), 'schema': ORDINARY_SCHEMA,
-            'cases': len(seen), 'run_root': str(root), 'raw': raw}
+            'cases': len(seen), 'run_root': str(root), 'source_root': source_root,
+            'raw': raw}
 
 
 def validation(logs, remote=None, ordinary=None, compiler=None):
@@ -853,10 +864,10 @@ def reuse_gates(path, expected_sha, compiler, logs, initial):
             'The supplied receipt validation disagrees with its full logs')
     ordinary = recorded.get('ordinary')
     if ordinary is not None:
-        source = verify_ordinary_graph(path.parent / 'evidence', 'The receipt ordinary evidence')
+        source_root = verify_ordinary_graph(path.parent, 'The receipt ordinary evidence')
         require(not (logs / 'evidence').exists(),
                 'The reused run already holds ordinary evidence')
-        shutil.copytree(source, logs / 'evidence')
+        shutil.copytree(source_root / 'evidence', logs / 'evidence')
         verify_ordinary_graph(logs, 'The reused ordinary evidence')
         fresh_laws = (logs / 'laws-check.log').read_text(errors='replace')
         parents = parent_verdicts(fresh_laws)

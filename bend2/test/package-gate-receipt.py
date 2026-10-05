@@ -646,11 +646,14 @@ class PackageGateReceipt(unittest.TestCase):
                     retained_name = evidence / (stem + '.retained.stdout')
                     member.rename(retained_name)
                     member.symlink_to(retained_name)
-                if tamper and case['id'] == cases[0]['id'] and name == 'stdout':
-                    member.write_bytes(b'tampered\n')
                 record = {'path': 'evidence/' + stem + '.' + name,
                           'bytes': member.stat().st_size,
                           'sha256': hashlib.sha256(member.read_bytes()).hexdigest()}
+                if tamper and case['id'] == cases[0]['id'] and name == 'stdout':
+                    # The record keeps the original length and digest, so the
+                    # consumption refuses on changed bytes rather than on a
+                    # self-consistent altered record.
+                    member.write_bytes(b'tampered\n')
                 if escape and case['id'] == cases[0]['id'] and name == 'stdout':
                     record['path'] = 'evidence/../' + stem + '.stdout'
                 streams[name] = record
@@ -683,7 +686,8 @@ class PackageGateReceipt(unittest.TestCase):
         result = PACKAGE.validation(self.logs, None, path, self.compiler())
         self.assertEqual(result['ordinary']['cases'], len(self.controls['controls']) + 1)
         self.assertEqual(result['ordinary']['schema'], 'capacity-controls/ordinary-evidence@1')
-        self.assertEqual(result['ordinary']['retained'], 'evidence/index.json')
+        self.assertEqual(result['ordinary']['retained'], 'run/evidence/index.json')
+        self.assertEqual(result['ordinary']['source_root'], str((self.logs / 'run').resolve()))
 
     def test_ordinary_evidence_defects_refuse(self):
         cases = [('incomplete run', dict(complete=False), 'does not declare a completed run'),
@@ -745,6 +749,14 @@ class PackageGateReceipt(unittest.TestCase):
                                                           reused, PACKAGE.snapshot())
         self.assertTrue((reused / 'evidence' / 'index.json').is_file())
         self.assertEqual(reused_summary['validation']['ordinary']['raw'],
+                         summary['validation']['ordinary']['raw'])
+        twice = self.home / 'ordinary-twice'
+        twice.mkdir()
+        _again_path, twice_summary = PACKAGE.reuse_gates(reused / 'summary.json',
+                                                         PACKAGE.sha256(reused / 'summary.json'),
+                                                         compiler, twice, PACKAGE.snapshot())
+        self.assertTrue((twice / 'evidence' / 'index.json').is_file())
+        self.assertEqual(twice_summary['validation']['ordinary']['raw'],
                          summary['validation']['ordinary']['raw'])
         (logs / 'evidence' / 'baseline.stdout').write_bytes(b'tampered\n')
         again = self.home / 'ordinary-again'
