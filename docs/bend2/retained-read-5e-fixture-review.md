@@ -130,3 +130,37 @@ typing and temporary-directory lifetime problems within their stated scope.
 The receive mutation risk and actual remote compiler/runtime/control outcomes
 remain open. No host lifetime, byte transport, readiness or shared-owner
 acceptance follows from this review.
+
+## Receive mutation declaration-order correction
+
+The subsequent fe07 source readback was retained in message
+`native-instance-lifetime-fe07-readback-16`. It confirmed the helper extraction
+but missed the requirement to declare that helper before its caller.
+Root's actual fe07 Linux run exposed that omission. Its retained
+`evidence/receive-request/mutation-mismatch-loses-stderr.stderr` reports
+`expected : a defined name`, `observed : mismatch_stdout`, at
+`receive-request.select`. The associated command record reports compiler
+exit 1. The runner's named-law assertion rejected this structural error.
+The wake mutation was not reached.
+
+Reviewed the complete immutable fe07-to-171 delta at
+`171bb8d7352bb77e9bcd72c9e97c0755c7d44e58`. Only the receive-request runner
+changes. Its SHA-256 is
+`d9198ce2878f46d22dd5e8c1c857f5ef5d28935ea12180f36a14535cff282a5a`.
+The module and fixture hashes match the unchanged values in the handoff.
+The mutation now replaces the full original select definition, which occurs
+exactly once in the committed module.
+
+The replacement inserts `mismatch_stdout` before `select`. OutputFrame,
+OutputRoute, Stdout and Mismatched are declared earlier; route remains after
+select. The helper matches its own parameter, retains correlation/cursor/bytes,
+and substitutes Stdout. Each retained field is consumed once. The True branch
+still returns the original Matched frame. The intended mismatch law and both
+Mismatched diagnostic checks are unchanged. No further source blocker was
+identified in this bounded delta.
+
+This corrects the earlier source disposition using actual retained remote
+evidence. It does not establish that 171 compiles or that its two remaining
+controls produce their intended diagnostics. No compiler, syntax check, build
+or test was run during this readback. Root retains remote execution ownership;
+the original fe07 source, review and failed result remain historical evidence.
