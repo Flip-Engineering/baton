@@ -827,8 +827,8 @@ class PackageGateReceipt(unittest.TestCase):
         self.assertEqual(result['ordinary']['verifier'], self.ordinary_verifier)
         self.assertEqual(result['ordinary']['endpoint_members'], list(PACKAGE.VERIFIER_MEMBERS))
         self.assertEqual(result['ordinary']['run_members'], sorted(self.ordinary_verifier))
-        # The group-run module is absent from this checkout, so its member is
-        # recorded unavailable rather than accepted or silently dropped.
+        # The controlled fixture authority is complete, so nothing is recorded
+        # unavailable here; the missing-member variant is a separate case below.
         self.assertEqual(result['ordinary']['verifier_unavailable'], [])
         self.assertTrue(result['ordinary']['run_identity_qualified'])
         self.assertEqual(result['ordinary']['run_members_beyond_contract'], [])
@@ -974,7 +974,7 @@ class PackageGateReceipt(unittest.TestCase):
         no_domain = self.ordinary_index(run_root)
         no_domain.write_text(json.dumps({**_load(no_domain), 'run': {
             **_load(no_domain)['run'], 'verifier': bad_verifier}}))
-        with self.assertRaisesRegex(RuntimeError, 'no digest domain'):
+        with self.assertRaisesRegex(RuntimeError, 'with a malformed value'):
             PACKAGE.ordinary_evidence(no_domain, controls, self.compiler(), None,
                                       self.parent_rows(), None,
                                       self.envelope(no_domain, run_root=run_root,
@@ -1083,8 +1083,8 @@ class PackageGateReceipt(unittest.TestCase):
         self.assertEqual(sorted(missing),
                          sorted(PACKAGE.ORDINARY_VERIFIER_FILES[member]
                                 for member in PACKAGE.ORDINARY_RUN_VERIFIER_MEMBERS
-                                if member not in digests))
-        self.assertIn(PACKAGE.ORDINARY_VERIFIER_FILES['group_run_module_sha256'], missing)
+                                if not (PACKAGE.ROOT
+                                        / PACKAGE.ORDINARY_VERIFIER_FILES[member]).is_file()))
         endpoint, _endpoint_missing = PACKAGE.expected_verifier_digests()
         for member, digest in endpoint.items():
             path = PACKAGE.ROOT / PACKAGE.VERIFIER_FILES[member]
@@ -1097,6 +1097,33 @@ class PackageGateReceipt(unittest.TestCase):
                          - set(PACKAGE.VERIFIER_MEMBERS), {'group_run_module_sha256'})
         self.assertEqual(set(PACKAGE.VERIFIER_MEMBERS)
                          - set(PACKAGE.ORDINARY_RUN_VERIFIER_MEMBERS), set())
+
+    def test_the_classifier_member_spelling_cases(self):
+        """Canonical, historical-only, equal duplicates and refusals."""
+        member = 'classifier_module_sha256'
+        digest = self.ordinary_verifier[member]
+        # The canonical spelling alone is the contract and reads.
+        value = PACKAGE.verifier_member_value({member: digest}, member)
+        self.assertEqual(value, digest)
+        # The historical spelling alone is tolerated.
+        value = PACKAGE.verifier_member_value({'classify_module_sha256': digest}, member)
+        self.assertEqual(value, digest)
+        # Equal duplicates are the same member.
+        value = PACKAGE.verifier_member_value(
+            {member: digest, 'classify_module_sha256': digest}, member)
+        self.assertEqual(value, digest)
+        # Conflicting duplicates refuse.
+        with self.assertRaisesRegex(RuntimeError, 'two ways with different values'):
+            PACKAGE.verifier_member_value(
+                {'classifier_module_sha256': digest, 'classify_module_sha256': 'a' * 64},
+                'classifier_module_sha256')
+        # A present malformed canonical value refuses even beside a valid alias.
+        for malformed in (None, 'not-a-digest', 17):
+            with self.subTest(malformed=malformed):
+                with self.assertRaisesRegex(RuntimeError, 'with a malformed value'):
+                    PACKAGE.verifier_member_value(
+                        {'classifier_module_sha256': malformed,
+                         'classify_module_sha256': digest}, 'classifier_module_sha256')
 
     def test_an_unavailable_run_member_is_recorded(self):
         """The controlled missing variant of the mocked run authority."""
