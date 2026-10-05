@@ -56,7 +56,7 @@ def exit_status(failed: Bool) -> IO(Result<&1,&1,U32 & String,Unit>):
 def outcome_failed(db: String, outcome: Turn.Outcome) -> IO(Bool):
   match outcome:
     case Turn.Ended{+status,+event,+error}: do IO<Bool>:
-      failure : String <- IO.try(String,DB.Sql.query(db,"SELECT CASE WHEN " ++ C.q(event) ++ "='' THEN 1 ELSE coalesce(json_extract(" ++ C.q(event) ++ ",'$.is_error'),0) END;"))
+      failure : String <- IO.try(String,DB.Sql.query(db,"SELECT CASE WHEN " ++ C.q(event) ++ "='' THEN 1 WHEN coalesce(json_extract(" ++ C.q(event) ++ ",'$.is_error'),0)=1 THEN 1 ELSE CASE WHEN json_valid(" ++ C.q(event) ++ ") THEN CASE WHEN json_type(" ++ C.q(event) ++ ",'$.messages')='array' THEN coalesce((SELECT CASE WHEN CASE WHEN a.type='object' THEN json_extract(a.value,'$.role') END='assistant' THEN CASE WHEN json_extract(a.value,'$.stopReason')='error' THEN 1 ELSE 0 END ELSE 0 END FROM json_each(" ++ C.q(event) ++ ",'$.messages') a WHERE CASE WHEN a.type='object' THEN json_extract(a.value,'$.role') END='assistant' ORDER BY a.key DESC LIMIT 1),0) ELSE 0 END ELSE 0 END END;"))
       IO.pure(Bool,Bool.or(Turn.failed(status,event,error),String.eq(failure,"1\n")))
 
 def continue_if(again: Unit -> IO(Result<&1,&1,U32 & String,Unit>), present: Bool) -> IO(Result<&1,&1,U32 & String,Unit>):
