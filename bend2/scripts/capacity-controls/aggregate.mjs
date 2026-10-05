@@ -94,6 +94,13 @@ function rewriteStream(bundleName, stream) {
 
 export function aggregate({ dir, records, definitions, moduleRoot }) {
   const expectedRecords = records ?? discoveryRecords();
+  // Duplicate IDs are refused before any ID-keyed map exists, including for
+  // caller-supplied record sets.
+  const seenIds = new Set();
+  for (const record of expectedRecords) {
+    if (seenIds.has(record.id)) throw new Error(`aggregate: duplicate control id ${record.id} in supplied records`);
+    seenIds.add(record.id);
+  }
   const expectedBinding = bindingOf(expectedRecords);
   const expectedById = new Map(expectedRecords.map((record) => [record.id, record]));
   const definitionList = definitions ?? MUTATIONS;
