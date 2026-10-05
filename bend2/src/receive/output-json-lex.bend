@@ -1,24 +1,28 @@
 # CLAIM: a complete octet input is tokenized losslessly into ordered punctuation, string,
 # number and literal tokens, with the host octet contract validated over the whole input
-# before any grammar decision and the complete original bytes retained on every disposition.
+# before any grammar decision and the complete original input retained on every disposition:
+# token results, refusals, unsupported outcomes and host faults alike.
 # Scope: tokenization only. Multiple top-level tokens and unmatched brackets remain
 # structural parser obligations, so lexical success is not whole-frame JSON acceptance, and
-# no object, array or duplicate-key representation is decided here.
-# Structure follows the reviewed number and string modules: pure helpers first, then one
-# self-recursive scan loop whose only match subjects are its own parameters, with failures
-# carried as loop phases rather than as calls back into the loop. No helper calls the loop.
+# no object, array or duplicate-key representation is decided here. A refusal reported by a
+# token decoder describes that token, not the frame.
+# Structure: pure helpers first, then next_token, then one self-recursive scan loop whose
+# first parameter is the lexer outcome. The loop matches that parameter, so there is no
+# computed scrutinee, and the only call into the loop from outside is the entry dispatcher,
+# which is declared after it. No cycle exists between helpers.
 # Quoted tokens go through the reviewed slice helper, whose prevalidated-octet precondition
 # this module satisfies by validating the whole input before any grammar decision.
-# Language forms grounded by reading the pinned Base and the reviewed number and string
-# modules: Bool.pick with a first type argument, element-with-list cons, U32.is_lt and
-# U32.is_eq, definitions before their callers, computed values bound to helper parameters
-# before being matched, and a plus binder on any value used more than once.
+# Language forms grounded by reading the pinned Base, bend2/src/json/laws.bend and the
+# reviewed number and string modules: sibling imports written as ./name.bend, Bool.pick with
+# a first type argument, element-with-list cons with plus markers on reused binders, U32.is_lt
+# and U32.is_eq, String.eq and Bool.and, definitions before their callers, and computed
+# values bound to helper parameters before being matched.
 # UNCOMPILED and UNTESTED.
 
 import Base
-import output-json-slice.bend as K
-import output-json-number.bend as N
-import output-json-string.bend as S
+import ./output-json-slice.bend as K
+import ./output-json-number.bend as N
+import ./output-json-string.bend as S
 
 type LexTok is Data:
   Punctuation{code: U32}
@@ -26,20 +30,21 @@ type LexTok is Data:
   NumTok{original: List<U32>}
   LitTok{name: String, original: List<U32>}
 
-type LexPhase is Data:
-  Done{}
-  Emit{token: LexTok, rest: List<U32>}
-  PendingString{token: List<U32>, rest: List<U32>}
-  PendingNumber{atom: List<U32>, rest: List<U32>}
-  Bad{reason: String}
-  Unsupported{reason: String}
-  Fault{value: U32}
+# Internal lexer outcomes. The unsupported constructor is deliberately named apart from the
+# final LexResult constructor of the same meaning, so the two namespaces do not collide.
+type LexOutcome is Data:
+  End{}
+  TokenAndRest{token: LexTok, next_rest: List<U32>}
+  LexStepRefused{reason: String}
+  LexStepUnsupported{reason: String}
+  LexStepFault{value: U32}
 
+# Final results. Every variant carries the whole entry input as original.
 type LexResult is Data:
   LexTokens{tokens: List<LexTok>, original: List<U32>}
-  LexRefused{reason: String}
-  LexUnsupported{reason: String}
-  LexHostFault{value: U32}
+  LexRefused{reason: String, original: List<U32>}
+  LexUnsupported{reason: String, original: List<U32>}
+  LexHostFault{value: U32, original: List<U32>}
 
 type HostScan is Data:
   HostClean{}
@@ -93,10 +98,10 @@ def is_number_start(+code: U32) -> Bool:
 def host_go(octets: List<U32>) -> HostScan:
   match octets:
     case Nil{}: HostClean{}
-    case +h <> +t: Bool.pick(HostScan, U32.is_lt(h, 256), host_go(t), HostFault{h})
+    case +h <> t: Bool.pick(HostScan, U32.is_lt(h, 256), host_go(t), HostFault{h})
 
 # One atom is the longest run up to whitespace, one of the six punctuation bytes, or the end.
-def split_atom(xs: List<U32>, acc: List<U32>) -> LexSplit:
+def split_atom(xs: List<U32>, +acc: List<U32>) -> LexSplit:
   match xs:
     case Nil{}: Split{rev_units(acc, Nil{}), Nil{}}
     case +h <> +t:
@@ -104,83 +109,85 @@ def split_atom(xs: List<U32>, acc: List<U32>) -> LexSplit:
         Bool.pick(LexSplit, is_punct(h), Split{rev_units(acc, Nil{}), h <> t},
           split_atom(t, h <> acc)))
 
-def skip_spaces(rest: List<U32>) -> List<U32>:
-  match rest:
-    case Nil{}: Nil{}
-    case +h <> +t: Bool.pick(List<U32>, is_space(h), skip_spaces(t), rest)
-
-def slice_phase(result: K.SliceResult) -> LexPhase:
+# The string decoder returns the token it was given as its own original field, so the token
+# octets are never used twice: the caller passes them once and the accepted token carries
+# them forward from the decoder result.
+def string_of(result: S.StrResult, rest: List<U32>) -> LexOutcome:
   match result:
-    case K.Closed{token, rest}: PendingString{token, rest}
-    case K.MissingClose{_scanned}: Bad{"unterminated_string"}
-    case K.MissingOpen{_original}: Bad{"expected_open_quote"}
+    case S.StrAccepted{units, source}: TokenAndRest{StrTok{units, source}, rest}
+    case S.StrRefused{reason}: LexStepRefused{reason}
+    case S.StrUnsupported{reason}: LexStepUnsupported{reason}
+    case S.StrHostFault{value}: LexStepFault{value}
 
-def string_phase(result: S.StrResult, token: List<U32>, rest: List<U32>) -> LexPhase:
+def slice_of(result: K.SliceResult) -> LexOutcome:
   match result:
-    case S.StrAccepted{units, original: _source}: Emit{StrTok{units, token}, rest}
-    case S.StrRefused{reason}: Bad{reason}
-    case S.StrUnsupported{reason}: Unsupported{reason}
-    case S.StrHostFault{value}: Fault{value}
+    case K.Closed{token, rest}: string_of(S.decode_string(token), rest)
+    case K.MissingClose{_scanned}: LexStepRefused{"unterminated_string"}
+    case K.MissingOpen{_original}: LexStepRefused{"expected_open_quote"}
 
-def number_phase(result: N.NumResult, atom: List<U32>, rest: List<U32>) -> LexPhase:
+def string_token(octets: List<U32>) -> LexOutcome:
+  slice_of(K.slice(octets))
+
+# The number decoder likewise returns the token it was given as its own original field, so
+# the raw lexeme is carried forward without a second use of the atom.
+def number_of(result: N.NumResult, rest: List<U32>) -> LexOutcome:
   match result:
-    case N.NumAccepted{minus: _sign, integer: _int, fraction: _frac, exponent: _exp,
-                       original: _source}:
-      Emit{NumTok{atom}, rest}
-    case N.NumRefused{reason}: Bad{reason}
-    case N.NumHostFault{value}: Fault{value}
+    case N.NumAccepted{_sign, _integer, _fraction, _exponent, source}:
+      TokenAndRest{NumTok{source}, rest}
+    case N.NumRefused{reason}: LexStepRefused{reason}
+    case N.NumHostFault{value}: LexStepFault{value}
 
-def literal_phase(atom: List<U32>, rest: List<U32>) -> LexPhase:
-  Bool.pick(LexPhase, same_units(atom, [116, 114, 117, 101]),
-    Emit{LitTok{"true", atom}, rest},
-    Bool.pick(LexPhase, same_units(atom, [102, 97, 108, 115, 101]),
-      Emit{LitTok{"false", atom}, rest},
-      Bool.pick(LexPhase, same_units(atom, [110, 117, 108, 108]),
-        Emit{LitTok{"null", atom}, rest}, Bad{"unrecognized_atom"})))
-
-def number_pending(split: LexSplit) -> LexPhase:
+def number_split(split: LexSplit) -> LexOutcome:
   match split:
-    case Split{atom, rest}: PendingNumber{atom, rest}
+    case Split{atom, rest}: number_of(N.decode_number(atom), rest)
 
-def literal_pending(split: LexSplit) -> LexPhase:
+def number_token(octets: List<U32>) -> LexOutcome:
+  number_split(split_atom(octets, Nil{}))
+
+# Literals are matched against the exact atom spelling, so a longer word such as truex is
+# refused rather than accepted as true.
+def literal_words(+atom: List<U32>, +rest: List<U32>) -> LexOutcome:
+  Bool.pick(LexOutcome, same_units(atom, [116, 114, 117, 101]),
+    TokenAndRest{LitTok{"true", atom}, rest},
+    Bool.pick(LexOutcome, same_units(atom, [102, 97, 108, 115, 101]),
+      TokenAndRest{LitTok{"false", atom}, rest},
+      Bool.pick(LexOutcome, same_units(atom, [110, 117, 108, 108]),
+        TokenAndRest{LitTok{"null", atom}, rest}, LexStepRefused{"unrecognized_atom"})))
+
+def literal_split(split: LexSplit) -> LexOutcome:
   match split:
-    case Split{atom, rest}: literal_phase(atom, rest)
+    case Split{atom, rest}: literal_words(atom, rest)
 
-# The phase after the leading whitespace of the remaining input. Whitespace is skipped, one
-# punctuation byte is emitted with its code, a quoted token and a number atom and a literal
-# atom are carried forward as pending phases, and any other byte is refused.
-def phase_after(rest: List<U32>) -> LexPhase:
-  match rest:
-    case Nil{}: Done{}
+def literal_token(octets: List<U32>) -> LexOutcome:
+  literal_split(split_atom(octets, Nil{}))
+
+# Whitespace is skipped explicitly. The remaining input is rebuilt as h <> t at each token
+# path because the matched binders are marked for reuse.
+def next_token(octets: List<U32>) -> LexOutcome:
+  match octets:
+    case Nil{}: End{}
     case +h <> +t:
-      Bool.pick(LexPhase, is_punct(h), Emit{Punctuation{h}, t},
-        Bool.pick(LexPhase, U32.is_eq(h, 34), slice_phase(K.slice(rest)),
-          Bool.pick(LexPhase, is_number_start(h), number_pending(split_atom(rest, Nil{})),
-            literal_pending(split_atom(rest, Nil{})))))
+      Bool.pick(LexOutcome, is_space(h), next_token(t),
+        Bool.pick(LexOutcome, is_punct(h), TokenAndRest{Punctuation{h}, t},
+          Bool.pick(LexOutcome, U32.is_eq(h, 34), string_token(h <> t),
+            Bool.pick(LexOutcome, is_number_start(h), number_token(h <> t),
+              literal_token(h <> t)))))
 
-def next_phase(rest: List<U32>) -> LexPhase:
-  phase_after(skip_spaces(rest))
+# One self-recursive loop. It matches its outcome parameter, recurses in its own body, and
+# translates internal outcomes into final results that carry the whole entry input.
+def scan_go(outcome: LexOutcome, +acc: List<LexTok>, +original: List<U32>) -> LexResult:
+  match outcome:
+    case End{}: LexTokens{rev_tokens(acc, Nil{}), original}
+    case TokenAndRest{token, next_rest}:
+      scan_go(next_token(next_rest), token <> acc, original)
+    case LexStepRefused{reason}: LexRefused{reason, original}
+    case LexStepUnsupported{reason}: LexUnsupported{reason, original}
+    case LexStepFault{value}: LexHostFault{value, original}
 
-# One self-recursive loop. Every match subject is a parameter, every helper it calls is pure,
-# and each recursive call is in this function's own body.
-def scan_go(rest: List<U32>, acc: List<LexTok>, original: List<U32>,
-            phase: LexPhase) -> LexResult:
-  match phase:
-    case Done{}: LexTokens{rev_tokens(acc, Nil{}), original}
-    case Emit{token, rest: next_rest}:
-      scan_go(next_rest, token <> acc, original, next_phase(next_rest))
-    case PendingString{token, rest: next_rest}:
-      scan_go(next_rest, acc, original, string_phase(S.decode_string(token), token, next_rest))
-    case PendingNumber{atom, rest: next_rest}:
-      scan_go(next_rest, acc, original, number_phase(N.decode_number(atom), atom, next_rest))
-    case Bad{reason}: LexRefused{reason}
-    case Unsupported{reason}: LexUnsupported{reason}
-    case Fault{value}: LexHostFault{value}
-
-def scan_of(scan: HostScan, octets: List<U32>) -> LexResult:
+def host_of(scan: HostScan, +octets: List<U32>) -> LexResult:
   match scan:
-    case HostClean{}: scan_go(octets, Nil{}, octets, next_phase(octets))
-    case HostFault{value}: LexHostFault{value}
+    case HostClean{}: scan_go(next_token(octets), Nil{}, octets)
+    case HostFault{value}: LexHostFault{value, octets}
 
-def lex(octets: List<U32>) -> LexResult:
-  scan_of(host_go(octets), octets)
+def lex(+octets: List<U32>) -> LexResult:
+  host_of(host_go(octets), octets)
