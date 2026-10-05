@@ -400,7 +400,9 @@ def run_gates(compiler, env, logs, initial, before_inputs, remote=None):
         summary['controls_evidence'] = {key: remote[key] for key in
                                         ('path', 'bytes', 'sha256', 'cases', 'groups', 'binding',
                                          'origin', 'spans', 'classifier', 'closure_sha256',
-                                         'modules')}
+                                         'modules', 'inventory_sha256', 'reduction_sha256')}
+        summary['controls_evidence']['inventory_sha256'] = remote['inventory']['inventory_sha256']
+        summary['controls_evidence']['reduction_sha256'] = remote['reduction']['sha256']
     path = logs / 'summary.json'
     write_json(path, summary)
     try:
@@ -613,31 +615,45 @@ def classify_control(case, result, streams, baseline, evidence_root, source, com
         request['supplied'] = supplied
     argv = ['node', str(ROOT / CONTROL_SCRIPT), '--classify']
     request_bytes = json.dumps(request).encode('utf-8')
-    completed = subprocess.run(argv, cwd=ROOT, input=request_bytes, capture_output=True,
-                               env={'PATH': os.environ.get('PATH', ''), 'BEND_NO_TELEMETRY': '1'})
-    acquisition = {'argv': argv, 'cwd': str(ROOT), 'returncode': completed.returncode,
-                   'signal': child_signal(completed.returncode),
-                   'spawn_error': None,
+    identity = str(case.get('id', 'case'))
+    acquire = None if audit is None else audit
+    if acquire is not None:
+        acquire.mkdir(parents=True, exist_ok=True)
+        stem = identity.replace(':', '-').replace('/', '_')
+        stem = stem + '-' + hashlib.sha256(identity.encode('utf-8')).hexdigest()[:12]
+    stdout_bytes, stderr_bytes, status, signal_name, spawn_error = b'', b'', None, None, None
+    try:
+        completed = subprocess.run(argv, cwd=ROOT, input=request_bytes, capture_output=True,
+                                   env={'PATH': os.environ.get('PATH', ''), 'BEND_NO_TELEMETRY': '1'})
+        stdout_bytes, stderr_bytes, status = completed.stdout, completed.stderr, completed.returncode
+        if status < 0:
+            signal_name, status = child_signal(status), None
+    except OSError as error:
+        spawn_error = repr(error)
+    acquisition = {'argv': argv, 'cwd': str(ROOT), 'exit_code': status, 'signal': signal_name,
+                   'spawn_error': spawn_error,
                    'request_sha256': hashlib.sha256(request_bytes).hexdigest(),
                    'request_bytes': len(request_bytes),
-                   'stdout_sha256': hashlib.sha256(completed.stdout).hexdigest(),
-                   'stdout_bytes': len(completed.stdout),
-                   'stderr_sha256': hashlib.sha256(completed.stderr).hexdigest(),
-                   'stderr_bytes': len(completed.stderr)}
-    if audit is not None:
-        slug = str(case.get('id', 'case')).replace(':', '-').replace('/', '_')
-        audit.mkdir(parents=True, exist_ok=True)
-        (audit / (slug + '.request.json')).write_bytes(request_bytes)
-        (audit / (slug + '.stdout')).write_bytes(completed.stdout)
-        (audit / (slug + '.stderr')).write_bytes(completed.stderr)
-    if completed.returncode != 0:
+                   'stdout_sha256': hashlib.sha256(stdout_bytes).hexdigest(),
+                   'stdout_bytes': len(stdout_bytes),
+                   'stderr_sha256': hashlib.sha256(stderr_bytes).hexdigest(),
+                   'stderr_bytes': len(stderr_bytes)}
+    if acquire is not None:
+        (acquire / (stem + '.request.json')).write_bytes(request_bytes)
+        (acquire / (stem + '.stdout')).write_bytes(stdout_bytes)
+        (acquire / (stem + '.stderr')).write_bytes(stderr_bytes)
+        (acquire / (stem + '.acquisition.json')).write_text(
+            json.dumps(acquisition, indent=2, sort_keys=True) + '\n')
+    require(spawn_error is None,
+            'The checker classification could not be launched: ' + str(spawn_error))
+    require(signal_name is None, 'The checker classification was signalled: ' + str(signal_name))
+    stderr_text = stderr_bytes.decode('utf-8', 'replace')
+    if status != 0:
         raise RuntimeError('The checker classification refused the request with status '
-                           + str(completed.returncode) + ': ' + completed.stderr.decode('utf-8', 'replace'))
-    require(not completed.stderr.strip(),
-            'The checker classification wrote to stderr: '
-            + completed.stderr.decode('utf-8', 'replace')[:120])
-    lines = completed.stdout.decode('utf-8').splitlines()
-    lines = [line for line in lines if line.strip()]
+                           + str(status) + ': ' + stderr_text)
+    require(not stderr_text.strip(),
+            'The checker classification wrote to stderr: ' + stderr_text[:120])
+    lines = [line for line in stdout_bytes.decode('utf-8').splitlines() if line.strip()]
     require(len(lines) == 1,
             'The checker classification printed ' + str(len(lines)) + ' response lines')
     verdict = json.loads(lines[0])
@@ -651,6 +667,28 @@ def classify_control(case, result, streams, baseline, evidence_root, source, com
     return verdict
 
 
+VERIFIER_FILES = {
+    'checker_sha256': 'bend2/scripts/laws-check.mjs',
+    'aggregate_module_sha256': 'bend2/scripts/capacity-controls/aggregate.mjs',
+    'classifier_module_sha256': 'bend2/scripts/capacity-controls/classify.mjs',
+    'work_set_module_sha256': 'bend2/scripts/capacity-controls/work-set.mjs',
+    'laws_common_module_sha256': 'bend2/scripts/capacity-controls/laws-common.mjs',
+    'definitions_module_sha256': 'bend2/scripts/laws-mutations.mjs',
+}
+
+
+def expected_verifier_digests():
+    """The admitted checker bytes of this checkout, or the files still missing."""
+    digests, missing = {}, []
+    for member, relative in VERIFIER_FILES.items():
+        path = ROOT / relative
+        if path.is_file():
+            digests[member] = sha256(path)
+        else:
+            missing.append(relative)
+    return digests, missing
+
+
 def require_verifier_closure(verdict, label):
     """A verdict must name its whole transitive verifier closure."""
     verifier = verdict.get('verifier')
@@ -658,6 +696,14 @@ def require_verifier_closure(verdict, label):
     for member in VERIFIER_MEMBERS:
         require(isinstance(verifier.get(member), str) and verifier[member],
                 'A verdict omits verifier ' + member + ': ' + label)
+    admitted, missing = expected_verifier_digests()
+    for member, digest in admitted.items():
+        require(verifier[member] == digest,
+                'The verdict names verifier ' + member + ' bytes that differ from this checkout')
+    if missing:
+        require(verdict.get('verifier_missing') == missing,
+                'A verdict must name the verifier files absent from this checkout: '
+                + succinct(missing))
     return {member: verifier[member] for member in VERIFIER_MEMBERS}
 
 
@@ -695,6 +741,10 @@ def verify_process(record, baseline, label):
             'A controls evidence ' + label + ' records no attempt identity')
     require(type(outcome.get('wrapper_pid')) is int and outcome['wrapper_pid'] > 0,
             'A controls evidence ' + label + ' records no wrapper process identity')
+    if 'wrapper_exit_code' in outcome:
+        wrapper_exit = outcome['wrapper_exit_code']
+        require(wrapper_exit is None or (type(wrapper_exit) is int and wrapper_exit >= 0),
+                'A controls evidence ' + label + ' records an invalid wrapper exit status')
     if state != 'exited':
         raise RuntimeError('A controls evidence ' + label + ' did not complete as an exited child: '
                            + json.dumps(state))
@@ -805,8 +855,8 @@ def semantic_reduction(result, inventory):
     return {'schema': REDUCTION_SCHEMA, 'document': document, 'sha256': digest}
 
 
-def controls_evidence(directory, initial, compiler, audit=None):
-    """audit is a directory that receives one acquisition record per case."""
+def controls_evidence(directory, initial, compiler, audit=None, destination=None):
+    """audit receives one acquisition record per case; destination copies the closure."""
     audit_inventory = None
     """Validate remote module-group control evidence against this source.
 
@@ -887,7 +937,7 @@ def controls_evidence(directory, initial, compiler, audit=None):
         if runtime_sha is not None:
             require(producing.get('runtime_set_sha256') == runtime_sha,
                     'A bundle used different installed Bend library bytes: ' + json.dumps(module))
-        instrument = bundle.get('instrument') or {}
+        instrument = producing.get('instrument') or {}
         require(instrument.get('tool') not in (None, '') and instrument.get('flag') not in (None, ''),
                 'A bundle names no time instrument: ' + json.dumps(module))
         bundle_origin = producing.get('origin') or {}
@@ -947,7 +997,8 @@ def controls_evidence(directory, initial, compiler, audit=None):
                        for stream in ('stdout', 'stderr')}
             verdict = classify_control(case, result, streams, baseline_reference, directory,
                                        source_pins, compiler_sha,
-                                       verify_delta(result, json.dumps(identity)), audit)
+                                       delta=verify_delta(result, json.dumps(identity)),
+                                       audit=audit)
             require(verdict.get('match') is True and verdict.get('qualified') is True
                     and verdict.get('evidence_verified') is True,
                     'The checker classifier did not qualify this control as an intended refusal: '
@@ -1000,7 +1051,7 @@ def controls_evidence(directory, initial, compiler, audit=None):
     missing_cases = sorted(set(wanted) - set(seen_cases))
     require(not missing_cases, 'The controls evidence omits controls: ' + succinct(missing_cases))
     seconds = [span['seconds'] for span in spans]
-    inventory = producer_inventory(directory)
+    inventory = producer_inventory(directory, destination)
     if audit is not None:
         audit_inventory = producer_inventory(audit)
     closure = hashlib.sha256(json.dumps(
@@ -1634,7 +1685,8 @@ def package(args):
         archive, notices = archive_inputs(args.compiler_archive.resolve(), compiler)
         write_json(output / 'compiler-archive.json', archive)
         controls = (controls_evidence(args.controls_evidence.resolve(), initial, compiler,
-                                      audit=logs / 'classifier-audit')
+                                      audit=logs / 'classifier-audit',
+                                      destination=ROOT / '.scratch/bend2/controls-evidence')
                     if args.controls_evidence else None)
         if args.gate_receipt:
             if summary.get('route') == 'remote-module-groups':

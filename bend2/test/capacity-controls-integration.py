@@ -131,9 +131,14 @@ class CapacityControlsIntegration(unittest.TestCase):
                    'toolchain': {'compiler_sha256': '0' * 64}}
         completed = self.checker('--classify', json.dumps(payload))
         if completed.returncode == 0:
-            verdict = json.loads(completed.stdout.strip())
+            lines = [line for line in completed.stdout.splitlines() if line.strip()]
+            self.assertEqual(len(lines), 1, 'the endpoint answered more than one verdict line')
+            self.assertEqual(completed.stderr, '', 'the endpoint wrote to stderr on success')
+            verdict = json.loads(lines[0])
             self.assertEqual(verdict['schema'], 'capacity-controls/classify-verdict@1')
-            self.assertIn('match', verdict)
+            for field in ('id', 'class', 'match', 'qualified', 'evidence_verified'):
+                self.assertIn(field, verdict)
+            self.assertEqual(verdict['id'], payload['case']['id'])
         else:
             self.assertEqual(completed.returncode, 2,
                              'the checker --classify mode is absent or failed: '

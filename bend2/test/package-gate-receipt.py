@@ -70,7 +70,10 @@ class PackageGateReceipt(unittest.TestCase):
             self.verdicts[case['id']] = {'streams': streams, 'baseline': baseline, 'delta': delta}
             return {'schema': 'capacity-controls/classify-verdict@1', 'id': case['id'],
                     'class': 'intended-law-refusal', 'attributed_law': case['law'],
-                    'law': case['law'], 'match': True, 'qualified': True}
+                    'law': case['law'], 'match': True, 'qualified': True,
+                    'evidence_verified': True, 'diagnostic_sha256': 'd' * 64,
+                    'verifier': {member: hashlib.sha256(member.encode()).hexdigest()
+                                 for member in PACKAGE.VERIFIER_MEMBERS}}
 
         PACKAGE.classify_control = classify
 
@@ -513,7 +516,10 @@ class PackageGateReceipt(unittest.TestCase):
                      delta=None, supplied=None):
             value = {'schema': 'capacity-controls/classify-verdict@1', 'id': case['id'],
                      'class': 'intended-law-refusal', 'attributed_law': case['law'],
-                     'law': case['law'], 'match': True, 'qualified': True}
+                     'law': case['law'], 'match': True, 'qualified': True,
+                     'evidence_verified': True, 'diagnostic_sha256': 'd' * 64,
+                     'verifier': {member: hashlib.sha256(member.encode()).hexdigest()
+                                  for member in PACKAGE.VERIFIER_MEMBERS}}
             if case['id'] == target:
                 value.update(answer)
             return value
