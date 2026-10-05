@@ -18,7 +18,12 @@ Manifest schema, receive-output-view-oracle/1:
       "sqlite":    {"identity": ..., "sha256": ...},
       "compiler":  {"identity": ...},
       "oracle":    {"path": ..., "extraction_sha256": {name: sha},
-                    "expressions": {"frame_kind": ..., "filter_mode_sql": ...}}
+                    "expressions": {
+                      "frame_kind":      {"text_sha256": ...,
+                                          "source": {"path": ..., "first_line": ..., "last_line": ...},
+                                          "source_commit": {"pin": ..., "tree": ...}},
+                      "filter_mode_sql": {"text_sha256": ..., "source": {...}, "source_commit": {...}}
+                    }}
     },
     "invocation": {
       "candidate": {"argv": [...], "protocol": "json-lines"},
@@ -32,7 +37,12 @@ Manifest schema, receive-output-view-oracle/1:
 
 The manifest carries the input octets, the expected dispositions and fields, the complete
 case definitions, both invocation commands and every dependency identity, so a case is
-defined by hashed manifest content and nothing is taken from the caller. No command line
+defined by hashed manifest content and nothing is taken from the caller. Each oracle
+expression is declared as a provenance record: the source path, the exact first and last
+line, the commit pin and tree those lines belong to, and the hash of the extracted text. The
+harness re-extracts that text from the declared lines, verifies its hash before any
+invocation, and records the verified hash in the report, so the expression cannot drift from
+the lineage it is claimed to come from. No command line
 option accepts a case name, a case label or a reported outcome, because a reported outcome is
 not evidence that a case ran. Each case's octets are re-derived from the manifest and hashed
 before use, so a case cannot be substituted.
@@ -119,6 +129,30 @@ def verify_hashed_tree(root, declared, label):
             raise Blocker(f'{label} hash mismatch: {name}')
 
 
+def extracted_expression(name, record):
+    """The exact text of one oracle expression, taken from its declared source lines."""
+    source = record.get('source')
+    if not isinstance(source, dict):
+        raise Blocker(f'oracle expression {name} declares no source provenance')
+    for key in ('path', 'first_line', 'last_line'):
+        if key not in source:
+            raise Blocker(f'oracle expression {name} is missing {key}')
+    if not isinstance(source['first_line'], int) or not isinstance(source['last_line'], int):
+        raise Blocker(f'oracle expression {name} declares non-integer line numbers')
+    if source['first_line'] < 1 or source['last_line'] < source['first_line']:
+        raise Blocker(f'oracle expression {name} declares an empty line range')
+    commit = record.get('source_commit')
+    if not isinstance(commit, dict) or not commit.get('pin') or not commit.get('tree'):
+        raise Blocker(f'oracle expression {name} declares no source commit')
+    path = pathlib.Path(source['path'])
+    if not path.is_file():
+        raise Blocker(f'oracle expression source is missing: {source["path"]}')
+    lines = path.read_text(encoding='utf-8', errors='replace').splitlines()
+    if source['last_line'] > len(lines):
+        raise Blocker(f'oracle expression {name} declares a range past the end of its source')
+    return '\n'.join(lines[source['first_line'] - 1:source['last_line']])
+
+
 def verify_dependency(manifest):
     dependency = manifest.get('dependency')
     if not isinstance(dependency, dict):
@@ -152,8 +186,12 @@ def verify_dependency(manifest):
     if not isinstance(expressions, dict):
         raise Blocker('oracle expressions are missing')
     for name in EXPRESSIONS:
-        if not expressions.get(name):
-            raise Blocker(f'oracle expression is missing: {name}')
+        record = expressions.get(name)
+        if not isinstance(record, dict):
+            raise Blocker(f'oracle expression is missing or is not a provenance record: {name}')
+        text = extracted_expression(name, record)
+        if digest_bytes(text.encode('utf-8')) != record.get('text_sha256'):
+            raise Blocker(f'oracle expression text hash mismatch: {name}')
     return dependency
 
 
@@ -265,6 +303,11 @@ def main(argv=None):
         manifest, manifest_hash = load_manifest(options)
         report['manifest_sha256'] = manifest_hash
         dependency = verify_dependency(manifest)
+        report['oracle_expression_sha256'] = {
+            name: digest_bytes(
+                extracted_expression(name, dependency['oracle']['expressions'][name]).encode('utf-8'))
+            for name in EXPRESSIONS
+        }
         report['dependency'] = dependency
         entries = {role: invocation(manifest, role) for role in ROLES}
         names = [case.get('name') for case in manifest['cases']]
