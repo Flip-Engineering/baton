@@ -81,7 +81,7 @@ class ControlIndex(unittest.TestCase):
             return db.execute('SELECT seq,id,sender,recipient,kind,body,receipt FROM messages ORDER BY seq').fetchall()
 
     def index(self, *args):
-        return self.call('message-index', *args)
+        return self.call('pending', '--index', *args)
 
     def test_selection_preserves_full_body_and_receipt(self):
         before = self.retained()
@@ -92,6 +92,7 @@ class ControlIndex(unittest.TestCase):
         self.assertEqual(row['seq'], before[0][0])
         self.assertEqual(row['bodyBytes'], len(self.bodies['pending-report'].encode()))
         self.assertEqual(row['receiptState'], 'unacknowledged')
+        self.assertEqual(selected, self.call('inbox', 'associate', '--index', '--sender', 'worker', '--kind', 'report'))
         self.assertNotIn('body', row)
         self.assertNotIn('receipt', row)
         self.assertEqual(self.index('--recipient', 'associate', '--kind', 'question'), [])
@@ -116,6 +117,40 @@ class ControlIndex(unittest.TestCase):
         self.assertEqual(rows[0]['stopId'], 'stop-id')
         self.assertIsNone(self.call('delivery', 'stopped-task')['receipt'])
 
+    def test_exact_empty_selectors_and_empty_receipt(self):
+        body = 'UTF-8 λ\0retained after NUL'
+        with closing(sqlite3.connect(self.db)) as db:
+            self.assertEqual(db.execute('PRAGMA encoding').fetchone()[0], 'UTF-8')
+            db.execute("INSERT INTO sessions(id,harness) VALUES('','fixture')")
+            db.execute('INSERT INTO messages(id,sender,recipient,kind,body,receipt) VALUES(?,?,?,?,?,?)',
+                       ('empty-fields', '', '', '', body, ''))
+            db.commit()
+        self.assertEqual(self.index('--recipient', '', '--state', 'pending'), [])
+        selected = self.index('--kind', '', '--state', 'all', '--sender', '', '--recipient', '')
+        self.assertEqual([row['id'] for row in selected], ['empty-fields'])
+        self.assertEqual(selected[0]['receiptState'], 'acknowledged')
+        self.assertEqual(selected[0]['bodyBytes'], len(body.encode()))
+        self.assertEqual(self.call('delivery', 'empty-fields')['body'], body)
+        self.assertEqual(self.index('--sender', '%'), [])
+        self.assertEqual(self.index('--kind', '_'), [])
+
+    def test_invalid_options_and_missing_database_do_not_write(self):
+        before = self.retained()
+        for args in [('pending', '--index', '--sender'),
+                     ('pending', '--index', '--state', 'invalid'),
+                     ('pending', '--index', '--sender', 'worker', '--sender', 'external'),
+                     ('inbox', 'associate', '--sender', 'worker'),
+                     ('orchestra', '--index', '--for')]:
+            with self.subTest(args=args):
+                self.call(*args, expected=2)
+        self.assertEqual(self.retained(), before)
+        missing = self.directory / 'must-not-create.db'
+        for args in [('pending', '--index'), ('pending', '--index', '--pretty'),
+                     ('orchestra', '--index'), ('orchestra', '--index', '--pretty')]:
+            result = subprocess.run([str(EXE), str(missing), *args], capture_output=True, text=True)
+            self.assertNotEqual(result.returncode, 0)
+            self.assertFalse(missing.exists(), 'Index inspection created a database')
+
     def test_structural_focus_keeps_cross_parent_references(self):
         before = self.retained()
         view = self.call('orchestra', '--index', '--for', 'associate')
@@ -137,14 +172,14 @@ class ControlIndex(unittest.TestCase):
         self.assertEqual(self.call('orchestra', '--index', '--for', 'associate', '--pretty'), view)
 
     def test_mcp_has_same_native_selection(self):
-        args = {'recipient': 'associate', 'sender': 'worker', 'kind': 'report', 'state': 'all'}
+        args = {'recipient': 'associate', 'index': True, 'sender': 'worker', 'kind': 'report', 'state': 'all'}
         requests = [
             {'jsonrpc': '2.0', 'id': 'init', 'method': 'initialize', 'params': {}},
             {'jsonrpc': '2.0', 'id': 'tools', 'method': 'tools/list'},
             {'jsonrpc': '2.0', 'id': 'index', 'method': 'tools/call',
-             'params': {'name': 'baton2_message_index', 'arguments': args}},
+             'params': {'name': 'baton2_inbox', 'arguments': args}},
             {'jsonrpc': '2.0', 'id': 'view', 'method': 'tools/call',
-             'params': {'name': 'baton2_orchestra', 'arguments': {'index': True, 'for': 'associate'}}},
+             'params': {'name': 'baton2_orchestra', 'arguments': {'index': True, 'session': 'associate'}}},
         ]
         before = self.retained()
         result = subprocess.run([os.environ.get('NODE', 'node'), str(MCP), str(self.db), str(EXE),
@@ -153,7 +188,8 @@ class ControlIndex(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stderr)
         replies = {row['id']: row for row in map(json.loads, result.stdout.splitlines()) if 'id' in row}
         tools = {item['name']: item for item in replies['tools']['result']['tools']}
-        self.assertIn('baton2_message_index', tools)
+        self.assertIn('index', tools['baton2_inbox']['inputSchema']['properties'])
+        self.assertIn('baton2_delivery', tools)
         for name in ('index', 'view'):
             self.assertNotIn('error', replies[name])
             self.assertFalse(replies[name]['result'].get('isError'))

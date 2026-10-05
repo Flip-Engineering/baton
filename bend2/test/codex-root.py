@@ -176,8 +176,8 @@ class CodexRootAdapter(unittest.TestCase):
         self.assertEqual(observed['cwd'], str(self.checkouts / associate))
         self.assertIn('Associate Conductor', observed['prompt'])
         inbox = next(line.split(' — ', 1)[0].strip() for line in observed['prompt'].splitlines()
-                     if ' — show your pending messages' in line)
-        self.assertEqual(shlex.split(inbox), [str(EXE), str(self.db), 'inbox', associate])
+                     if ' — inspect your pending message metadata' in line)
+        self.assertEqual(shlex.split(inbox), [str(EXE), str(self.db), 'inbox', associate, '--index'])
         self.assertEqual(json.loads(self.coord('role', associate))['role'], 'associate-conductor')
         reports = json.loads(self.coord('inbox', ''))
         self.assertEqual([(r['sender'], r['recipient'], r['body']) for r in reports],
@@ -284,7 +284,10 @@ class CodexRootAdapter(unittest.TestCase):
 
         stdin_content = (pathlib.Path(self.temp.name) / 'stdin.txt').read_text()
         self.assertIn('baton2', stdin_content)
-        self.assertIn('status', stdin_content)
+        self.assertIn("inbox 'root' --index", stdin_content)
+        self.assertIn('delivery ID', stdin_content)
+        self.assertIn("orchestra --index --for 'root' --pretty", stdin_content)
+        self.assertIn('--sender PLAYER --kind report --state all', stdin_content)
         self.assertIn('players', stdin_content)
         self.assertIn('land', stdin_content)
 

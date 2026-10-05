@@ -139,8 +139,8 @@ class OmpRootAdapter(unittest.TestCase):
         prompt = argv[argv.index('--system-prompt') + 1]
         self.assertIn('Associate Conductor', prompt)
         inbox = next(line.split(' — ', 1)[0].strip() for line in prompt.splitlines()
-                     if ' — show your pending messages' in line)
-        self.assertEqual(shlex.split(inbox), [str(EXE), str(self.db), 'inbox', associate])
+                     if ' — inspect your pending message metadata' in line)
+        self.assertEqual(shlex.split(inbox), [str(EXE), str(self.db), 'inbox', associate, '--index'])
         selected = json.loads(self.coord('player', associate))
         self.assertEqual(selected['role'], 'associate-conductor')
         self.assertIn(str(OMP_CONDUCTOR_SCRIPT), json.loads(selected['endpoint']))
@@ -317,7 +317,10 @@ class OmpRootAdapter(unittest.TestCase):
         args_text = (pathlib.Path(self.temp.name) / 'args.txt').read_text()
         self.assertIn('--system-prompt', args_text)
         self.assertIn('baton2', args_text)
-        self.assertIn('status', args_text)
+        self.assertIn("inbox 'root' --index", args_text)
+        self.assertIn('delivery ID', args_text)
+        self.assertIn("orchestra --index --for 'root' --pretty", args_text)
+        self.assertIn('--sender PLAYER --kind report --state all', args_text)
         self.assertIn('players', args_text)
         self.assertIn('land', args_text)
 
