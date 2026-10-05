@@ -448,6 +448,38 @@ class PackageGateReceipt(unittest.TestCase):
         self.assertNotEqual(retained['root'], str(elsewhere))
         self.assertNotEqual((self.home / 'relocated').resolve(), elsewhere)
 
+    def test_a_relocated_reader_reproduces_the_reduction(self):
+        """The copy is read through the same authority with its own audit scope."""
+        original = self.full_evidence()
+        self.rewrite_bundle(original, evidence_root=str(original))
+        first = PACKAGE.controls_evidence(original, PACKAGE.snapshot(), self.compiler())
+        self.assertIsNone(first['audit'])
+        relocated = self.home / 'relocated-evidence'
+        PACKAGE.controls_evidence(original, PACKAGE.snapshot(), self.compiler(),
+                                  destination=relocated)
+        fresh_audit = self.home / 'relocated-audit'
+        fresh_audit.mkdir()
+        (fresh_audit / 'acquisition.json').write_text(json.dumps({'scope': 'relocated'}))
+        second = PACKAGE.controls_evidence(relocated, PACKAGE.snapshot(), self.compiler(),
+                                           audit=fresh_audit)
+        self.assertEqual(second['reduction']['sha256'], first['reduction']['sha256'])
+        self.assertEqual(second['reduction']['document'], first['reduction']['document'])
+        self.assertEqual(second['inventory_sha256'], first['inventory_sha256'])
+        self.assertEqual(second['root'], str(relocated.resolve()))
+        self.assertEqual(second['root_identity']['lexical'], str(relocated))
+        self.assertEqual(second['root_identity']['resolved'], str(relocated.resolve()))
+        self.assertEqual(second['provenance'], {str(original): [second['modules'][0]]})
+        self.assertIsNotNone(second['audit'])
+        self.assertNotEqual(second['audit'], first['audit'])
+        self.assertEqual(second['cases'], first['cases'])
+
+    def test_a_symlinked_evidence_root_refuses(self):
+        original = self.full_evidence()
+        shim = self.home / 'evidence-shim'
+        shim.symlink_to(original)
+        with self.assertRaisesRegex(RuntimeError, 'is a symlink'):
+            PACKAGE.controls_evidence(shim, PACKAGE.snapshot(), self.compiler())
+
     def test_members_bind_to_the_current_root(self):
         """An absolute or symlinked recorded member refuses by name."""
         directory = self.full_evidence()

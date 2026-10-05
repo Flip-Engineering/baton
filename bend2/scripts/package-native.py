@@ -414,6 +414,24 @@ def ordinary_member(root, relative, label):
     return member
 
 
+def evidence_root_identity(directory, label):
+    """Record and check the identity of an evidence root before resolving it.
+
+    Inside this repository the root and its ancestors must be real paths. Outside
+    it the lexical and resolved identities are both recorded, so a caller's
+    resolution never erases the identity the admission checks saw.
+    """
+    directory = Path(directory)
+    require(directory.is_absolute(), label + ' is not an absolute path: ' + str(directory))
+    require(not directory.is_symlink(), label + ' is a symlink: ' + str(directory))
+    require(directory.is_dir(), label + ' is not a directory: ' + str(directory))
+    if ROOT.resolve() in directory.resolve().parents:
+        require_real_path(directory, label)
+    resolved = directory.resolve()
+    return {'lexical': str(directory), 'resolved': str(resolved),
+            'ancestors': [str(parent) for parent in resolved.parents]}
+
+
 def require_real_path(path, label):
     """Refuse a path whose own components are symbolic links."""
     path = Path(path)
@@ -679,7 +697,8 @@ def run_gates(compiler, env, logs, initial, before_inputs, remote=None, ordinary
                                         ('path', 'bytes', 'sha256', 'cases', 'groups', 'binding',
                                          'origin', 'spans', 'classifier', 'closure_sha256',
                                          'modules', 'inventory_sha256', 'reduction_sha256',
-                                         'inventory', 'reduction', 'root', 'provenance')}
+                                         'inventory', 'reduction', 'root', 'root_identity',
+                                         'provenance')}
     path = logs / 'summary.json'
     write_json(path, summary)
     try:
@@ -699,6 +718,7 @@ def run_gates(compiler, env, logs, initial, before_inputs, remote=None, ordinary
                                      'inventory_sha256': remote['inventory_sha256'],
                                      'reduction_sha256': remote['reduction_sha256'],
                                      'root': remote['root'],
+                                     'root_identity': remote['root_identity'],
                                      'provenance': remote['provenance']}
             same_source(stage['before'], initial)
             summary['stages'].append(stage)
@@ -806,7 +826,7 @@ def reuse_gates(path, expected_sha, compiler, logs, initial):
             reference = {key: record.get(key) for key in
                          ('path', 'sha256', 'binding', 'cases', 'groups', 'origin',
                           'closure_sha256', 'inventory_sha256', 'reduction_sha256',
-                          'root', 'provenance')}
+                          'root', 'root_identity', 'provenance')}
             require(stage.get('evidence') == reference,
                     'A remote stage must reference the recorded producer evidence exactly')
             require(stage.get('local_argv') == list(dict(GATES)[name]),
@@ -832,7 +852,7 @@ def reuse_gates(path, expected_sha, compiler, logs, initial):
         reference = {key: recorded.get(key) for key in
                      ('path', 'sha256', 'binding', 'cases', 'groups', 'origin',
                       'closure_sha256', 'inventory_sha256', 'reduction_sha256',
-                      'root', 'provenance')}
+                      'root', 'root_identity', 'provenance')}
         for stage in summary['stages']:
             if stage.get('route') != 'remote-module-groups':
                 continue
@@ -1292,6 +1312,8 @@ def producer_inventory(directory, destination=None, exclude=()):
     only, so the inventory can never include itself. The copy is byte-for-byte
     and re-hashed, which is what makes the closure relocatable for reuse.
     """
+    require(not Path(directory).is_symlink(),
+            'The evidence closure root is a symlink: ' + str(directory))
     root = directory.resolve()
     members = []
     for path in sorted(root.rglob('*')):
@@ -1407,6 +1429,7 @@ def controls_evidence(directory, initial, compiler, audit=None, destination=None
     checker's own classifier over those verified bytes; a producer's label is
     only compared with that verdict.
     """
+    root_identity = evidence_root_identity(directory, 'The controls evidence root')
     path = directory / 'controls-summary.json'
     require(path.is_file(), 'The controls evidence has no controls-summary.json: ' + str(path))
     summary = json.loads(path.read_text())
@@ -1649,6 +1672,7 @@ def controls_evidence(directory, initial, compiler, audit=None, destination=None
     result = {'path': str(path), **file_info(path), 'cases': len(wanted), 'groups': len(modules),
             'closure_sha256': closure,
             'root': str(Path(directory).resolve()),
+            'root_identity': root_identity,
             'provenance': {declared: sorted(modules_of) for declared, modules_of in provenance.items()},
             'binding': expected['sha256'], 'origin': origin, 'route': 'remote-module-groups',
             'checker_invocation': 'node ' + CONTROL_SCRIPT, 'modules': sorted(seen_modules),
