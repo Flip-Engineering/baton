@@ -46,8 +46,11 @@ Each admitted attempt gets a unique directory (`receive.bend:selected`:
 `<db>.attempt-<hex(id)>`). The keeper writes `status`, `released` and
 `acknowledged` marker files there (`process-spawn.c:693-695,723,728`), serves a
 Unix socket recorded in the recovery manifest (field 5), and records native
-birth in a `BrBirth`. Marker writes are idempotent: `EEXIST` is treated as
-success (`process-spawn.c:605`). `ProcessChild.recovery_argv` reads the manifest
+birth in a `BrBirth`. Marker files are written exclusively (`br_file` uses
+`O_EXCL` and reports `EEXIST`); only the release and ACK handlers treat an
+existing marker as success (`process-spawn.c:602-606`), so marker writes are
+not generally idempotent.
+`ProcessChild.recovery_argv` reads the manifest
 and returns the original `--recover-receive` invocation while the attempt is
 unacknowledged.
 
@@ -204,9 +207,12 @@ Enumeration reads the attempt directory's marker files directly (`status`,
 `released`, `acknowledged`), together with sealed reports lacking a recorded
 wake outcome, `native_requests` rows with `written=0` or `closed IS NULL`,
 `session_stops` rows with a pending `report_id`, and unreceipted messages above
-the completed cursor. A duty is open while the `acknowledged` marker is absent
-and a notification or settlement responsibility remains, regardless of the
-`released` marker.
+the completed cursor. The coordinator's own enumeration includes failed or
+pending notices and settlements after the host acknowledgment; the host's
+unacknowledged-child enumeration is another input to it, and an acknowledged
+marker alone clears no coordinator duty. A duty is open while a notification
+or settlement responsibility remains, regardless of
+the `released` marker.
 
 Rebuilt historical duties proceed under their own attempt evidence and address
 the original attempt by directory through the custody control sockets. They
@@ -231,7 +237,11 @@ the active attempt accepted newly committed input.
 Failure handling distinguishes pre-admission refusal from post-admission
 failure. A refusal before admission (unregistered session, terminal stop,
 stale slot, invalid request) returns a typed refusal and leaves no custody,
-notification or cleanup responsibility. A failure after admission leaves an
+notification or cleanup responsibility. An accepted wake that fails before
+any attempt exists is post-admission failure: it retains the request and
+session identity, the exact error, cleanup ownership and the actual parent
+notice responsibility, with an empty attempt list, and it manufactures no
+attempt or consuming-attempt identity. A failure after admission leaves an
 identified owner for cleanup, observation and notification: the duty record
 keeps the original attempt identity, the pending guidance, the sealed report
 and the error, and the recovery enumeration above re-derives the work from
@@ -374,33 +384,34 @@ guard, as section 2 specifies.
 ### 9. Prepared grants, cancellation, reap and acknowledgment
 
 The prepared-process lifecycle keeps its current shape — prepare, typed
-state transitions, cancel by signal, reap by the keeper, release and ACK by
-idempotent markers — and gains an owner-bound task-state module,
+state transitions, typed prepared cancellation, reap by the keeper, release
+and ACK by exclusive markers — and gains an owner-bound task-state module,
 `src/context/custody-tasks.bend` (new, additive), with this proposed
 surface:
 
 - `Custody.open_duty(owner, attempt) -> Duty` — freezes the owner instance and
   the admission generation and creates the duty record.
-- `Custody.close_slot(slot, session) -> Result<Slot,Refusal>` — replaces the
-  active slot and increments its generation; open duties are untouched.
-- `Custody.check_slot(slot, session, generation) -> Result<Slot,Refusal>` —
+- `Custody.check_slot(slot, session, generation) -> Result<Refusal,Slot>` —
   active-slot validation; a lower generation is a `stale-slot` refusal.
-- `Custody.check_attempt(duty, owner, attempt) -> Result<Duty,Refusal>` —
+- `Custody.advance_slot(slot, session, next_generation) -> Slot` — names the
+  replacement active slot; open duties are untouched.
+- `Custody.check_attempt(duty, owner, attempt) -> Result<Refusal,Duty>` —
   historical validation against the owner instance and the attempt's own
   identity and admission generation; the current slot generation is not read.
-- `Custody.record(duty, which, ref) -> Duty` — records one invocation result.
-  A `Fail` settles that invocation and retains its error text; fulfillment is
-  tracked separately (below).
+- `Custody.record(duty, ...) -> Duty` — records one invocation result. A
+  `Fail` settles that invocation, retains its error text, and leaves the
+  matching responsibility outstanding; fulfillment is tracked separately.
 - `Custody.duty_open(duty) -> Bool` — a duty is open while any invocation
-  result is unset or any responsibility is outstanding.
-- `Custody.rebuild(attempt, markers, pending) -> Maybe<Duty>` — the pure
-  decision over enumerated durable evidence: marker booleans (`acknowledged`,
-  `released`) and pending-responsibility flags. An attempt with the
-  `acknowledged` marker absent and any owed notification or settlement
-  rebuilds as an open duty, including the released-not-acknowledged window.
-  Durable enumeration itself (which directories and rows to read) is an
-  explicit owner interface implemented at the host boundary; this module
-  supplies its decision function.
+  result is unsettled or any responsibility is outstanding.
+- `Custody.rebuild(attempt, owner, acknowledged, native, delivery, settle) ->
+  Maybe<Duty>` — the pure decision over enumerated durable evidence (see
+  below). Durable enumeration itself is an explicit owner interface
+  implemented at the host boundary.
+
+Cancellation is the typed prepared cancellation of the controls-owned host
+API: `BR_CANCEL` validates the exact prepared identity and refuses with `EBUSY`
+once a start attempt is latched; signal delivery alone asserts no cancelled
+state.
 
 Settlement and fulfillment are distinct. A recorded `Fail` settles its
 invocation and is never discarded: the duty retains the error text after it
@@ -472,13 +483,15 @@ edit.
 The shared owner is a new internal entry, proposed as `baton2 DATABASE
 --owner-serve`, added to the CLI dispatch by synthesis handoff. The entry:
 
-1. resolves the database to an open descriptor and its device/inode identity,
-2. acquires the database-level owner lock and binds a fresh instance token,
-3. enumerates durable evidence and rebuilds open duties with
+1. resolves the selected canonical database path, checks its physical
+   identity, acquires the database-level owner lock, refuses
+   multiply-linked or replaced database files, and binds a fresh instance
+   token,
+2. enumerates durable evidence and rebuilds open duties with
    `Custody.rebuild` decisions,
-4. serves a readiness loop: control operations, custody-socket output
+3. serves a readiness loop: control operations, custody-socket output
    dispatch to task fibers, and completion-duty progress, and
-5. never runs the public `Main.execute` termination adapters inside a task;
+4. never runs the public `Main.execute` termination adapters inside a task;
    the CLI unwrapping (`IO.try` at `Main.execute` and `--recover-receive`)
    stays outside the shared task body.
 
