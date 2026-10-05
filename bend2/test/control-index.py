@@ -198,6 +198,63 @@ class ControlIndex(unittest.TestCase):
                 db.rollback()
             self.assertEqual(list(db.iterdump()), before)
 
+    def test_reference_navigation_preserves_literal_argv_through_native_and_mcp(self):
+        references = ['reference with spaces', 'reference\'s "$HOME"; $(printf literal)']
+        children = {subject: subject + ' child' for subject in references}
+        with closing(sqlite3.connect(self.db)) as db:
+            for subject, child in children.items():
+                db.executemany('INSERT INTO sessions(id,parent,harness) VALUES(?,?,?)',
+                               [(subject, 'other-root', 'fixture'), (child, subject, 'fixture')])
+                db.execute("INSERT INTO ensemble_members VALUES('team',?)", (subject,))
+            db.commit()
+        retained = self.retained()
+
+        def mcp_view(subject, pretty):
+            requests = [
+                {'jsonrpc': '2.0', 'id': 'init', 'method': 'initialize', 'params': {}},
+                {'jsonrpc': '2.0', 'id': 'view', 'method': 'tools/call',
+                 'params': {'name': 'baton2_orchestra',
+                            'arguments': {'index': True, 'session': subject, 'pretty': pretty}}},
+            ]
+            result = subprocess.run(
+                [os.environ.get('NODE', 'node'), str(MCP), str(self.db), str(EXE),
+                 '--session', 'associate'], capture_output=True, text=True,
+                input=''.join(json.dumps(item) + '\n' for item in requests))
+            self.assertEqual(result.returncode, 0, result.stderr)
+            replies = {row['id']: row for row in map(json.loads, result.stdout.splitlines())}
+            self.assertNotIn('error', replies['view'])
+            self.assertFalse(replies['view']['result'].get('isError'))
+            return json.loads(replies['view']['result']['content'][0]['text'])
+
+        for pretty in (False, True):
+            suffix = ['--pretty'] if pretty else []
+            native = self.call('orchestra', '--index', '--for', 'associate', *suffix)
+            mcp = mcp_view('associate', pretty)
+            self.assertEqual(mcp, native)
+            for surface, view in [('native', native), ('mcp', mcp)]:
+                initial_ids = {row['id'] for row in view['players']}
+                self.assertTrue(set(references) <= initial_ids)
+                self.assertTrue(set(children.values()).isdisjoint(initial_ids))
+                for subject in references:
+                    with self.subTest(pretty=pretty, surface=surface, subject=subject):
+                        reference = next(row for row in view['limitations'] if row['id'] == subject)
+                        self.assertEqual(reference['next'], ['orchestra', '--index', '--for', subject])
+                        # call passes the returned arguments directly to subprocess.run.
+                        followed = self.call(*reference['next'], *suffix)
+                        self.assertEqual(followed['subject'], subject)
+                        self.assertEqual({row['id'] for row in followed['players']},
+                                         {'other-root', 'associate', 'worker', 'stopped', 'external',
+                                          children[subject], *references})
+                        actors = {row['id']: row for row in followed['players']}
+                        self.assertFalse(actors[subject]['reference'])
+                        self.assertEqual(actors[children[subject]]['parent'], subject)
+                        self.assertEqual({row['id'] for row in followed['ensembles']}, {'team'})
+                        team = followed['ensembles'][0]
+                        self.assertEqual(team['owner'], 'associate')
+                        self.assertEqual(set(team['members']), {'worker', 'stopped', 'external', *references})
+                        self.assertEqual(mcp_view(subject, pretty), followed)
+        self.assertEqual(self.retained(), retained)
+
     def test_structural_index_preserves_native_status_and_observed_assignment(self):
         with closing(sqlite3.connect(self.db)) as db:
             db.execute("UPDATE sessions SET model=?,effort=?,observed_harness=?,"

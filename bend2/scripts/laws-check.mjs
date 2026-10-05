@@ -131,6 +131,13 @@ for (const { law, file } of rows) {
 // it claims to bind, and it is reported as a failure.
 const MUTATIONS = [
   {
+    name: 'structure-reference-navigation-loses-literal-argv',
+    file: 'bend2/src/coordinator/commands.bend',
+    find: "'next',json_array('orchestra','--index','--for',id)",
+    replace: "'next','orchestra --index --for ' || id",
+    law: 'structural_index_contains_structure_and_actor_counts',
+  },
+  {
     name: 'structure-embeds-retained-message-rows',
     file: 'bend2/src/coordinator/commands.bend',
     find: ",'limitations',(SELECT json_group_array",
