@@ -540,13 +540,15 @@ def parse_shared_base(args: List<&2,String>) -> Command:
       Bool.pick(Command,String.eq(verb,"pending"),Bool.pick(Command,index_legacy_args(rest),parse_legacy(verb <> rest),index_command(read_args(rest,ReadArgs{IndexAny{},IndexAny{},IndexAny{},IndexAny{},IndexAny{},False{},False{},"",True{}}))),
       Bool.pick(Command,String.eq(verb,"orchestra"),orchestra_command(read_args(rest,ReadArgs{IndexAny{},IndexAny{},IndexAny{},IndexAny{},IndexAny{},False{},False{},"",True{}})),parse_legacy(verb <> rest)))))
 
+def sequence_order_upper(a: String, through: IndexText) -> Bool:
+  match through:
+    case IndexAny{}: True{}
+    case IndexExact{b}: Sequence.decimal_le(a,b)
+
 def sequence_order(after: IndexText, through: IndexText) -> Bool:
   match after:
     case IndexAny{}: True{}
-    case IndexExact{a}:
-      match through:
-        case IndexAny{}: True{}
-        case IndexExact{b}: Sequence.decimal_le(a,b)
+    case IndexExact{a}: sequence_order_upper(a,through)
 
 def range_attach(command: Command, after: IndexText, through: IndexText) -> Command:
   match command:

@@ -7,25 +7,32 @@ def digits(text: String, +budget: U32) -> Bool:
     case SNil{}: True{}
     case SCon{head,tail}:
       +code = Char.to_u32(head)
-      match budget:
-        case 0: False{}
-        case remaining: Bool.and(U32.is_lt(47,code),Bool.and(U32.is_lt(code,58),digits(tail,U32.sub(remaining,1))))
+      Bool.pick(Bool,U32.is_eq(budget,0),False{},
+        Bool.and(U32.is_lt(47,code),Bool.and(U32.is_lt(code,58),digits(tail,U32.sub(budget,1)))))
 
 def width(text: String) -> U32:
   match text:
     case SNil{}: 0
     case SCon{head,tail}: U32.add(1,width(tail))
 
-def lexical_le(left: String, right: String) -> Bool:
+def first_code(text: String) -> U32:
+  match text:
+    case SNil{}: 0
+    case SCon{head,tail}: Char.to_u32(head)
+
+def remaining_text(text: String) -> String:
+  match text:
+    case SNil{}: SNil{}
+    case SCon{head,tail}: tail
+
+def lexical_le(left: String, +right: String) -> Bool:
   match left:
     case SNil{}: True{}
     case SCon{head,tail}:
-      match right:
-        case SNil{}: False{}
-        case SCon{other,rest}:
-          +a = Char.to_u32(head)
-          +b = Char.to_u32(other)
-          Bool.or(U32.is_lt(a,b),Bool.and(U32.is_eq(a,b),lexical_le(tail,rest)))
+      +a = Char.to_u32(head)
+      +b = first_code(right)
+      Bool.and(Bool.not(String.is_empty(right)),
+        Bool.or(U32.is_lt(a,b),Bool.and(U32.is_eq(a,b),lexical_le(tail,remaining_text(right)))))
 
 def decimal_le(+left: String, +right: String) -> Bool:
   +a = width(left)
