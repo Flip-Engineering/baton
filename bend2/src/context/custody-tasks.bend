@@ -177,6 +177,18 @@ def keep_error(errors: String, ref: Ref) -> String:
     case RefDone{note}: errors
     case RefFail{error}: errors ++ error ++ "\n"
 
+# Fulfillment is a recorded Done outcome. An open or failed invocation is
+# unfulfilled: a failed delivery settles and still owes the wake.
+def fulfilled(ref: Ref) -> Bool:
+  match ref:
+    case RefDone{note}: True{}
+    case other: False{}
+
+# The enumerated coordinator duties are clear only when the native outcome is
+# qualified, the parent notice is fulfilled, and settlement is fulfilled.
+def duty_clear(+native: Ref, +delivery: Ref, +settle: Ref) -> Bool:
+  Bool.and(fulfilled(native),Bool.and(fulfilled(delivery),fulfilled(settle)))
+
 # The attempt completed while owned: its outcome is recorded and the parent
 # wake becomes owed until a delivery result records it as actually delivered.
 def seal_completion(duty: Duty, +outcome: Ref) -> Duty:
@@ -233,18 +245,6 @@ def results_open(results: Results) -> Bool:
 def duty_open(+duty: Duty) -> Bool:
   Bool.or(results_open(results_of(duty)),Bool.or(wake_owed_of(duty),Bool.or(ack_owed_of(duty),settle_owed_of(duty))))
 
-# Fulfillment is a recorded Done outcome. An open or failed invocation is
-# unfulfilled: a failed delivery settles and still owes the wake.
-def fulfilled(ref: Ref) -> Bool:
-  match ref:
-    case RefDone{note}: True{}
-    case other: False{}
-
-# The enumerated coordinator duties are clear only when the native outcome is
-# qualified, the parent notice is fulfilled, and settlement is fulfilled.
-def duty_clear(+native: Ref, +delivery: Ref, +settle: Ref) -> Bool:
-  Bool.and(fulfilled(native),Bool.and(fulfilled(delivery),fulfilled(settle)))
-
 # The reconstructed ACK result preserves completed host duties: an
 # acknowledged attempt records its qualified acknowledgment instead of a
 # synthetic open invocation, so a notice-only duty can retire after the
@@ -259,13 +259,14 @@ def ack_ref(acknowledged: Bool) -> Ref:
 # evidence for the ACK responsibility, and it never clears coordinator
 # notification or settlement duties by itself. An open or failed delivery ref
 # keeps the wake owed; an open or failed settlement keeps the settlement
-# responsibility. The duty is empty only when the attempt is acknowledged and
-# every enumerated coordinator duty is fulfilled. The clear decision is
-# computed as an argument and matched as a parameter, so no computed
-# expression is a match scrutinee. The enumeration that supplies these
-# arguments is an explicit host-side owner interface.
-def rebuild(attempt: Attempt, owner: OwnerInstance, +acknowledged: Bool, native: Ref, +delivery: Ref, settle: Ref) -> Maybe<Duty>:
-  rebuild_decided(attempt,owner,acknowledged,native,delivery,settle,duty_clear(native,delivery,settle))
+# responsibility. Retirement requires the marker AND fulfilled coordinator
+# duties, so an unacknowledged attempt with fulfilled duties stays a duty
+# with its acknowledgment responsibility. The clear decision is computed as
+# an argument and matched as a parameter, so no computed expression is a
+# match scrutinee. The enumeration that supplies these arguments is an
+# explicit host-side owner interface.
+def rebuild(attempt: Attempt, owner: OwnerInstance, +acknowledged: Bool, +native: Ref, +delivery: Ref, +settle: Ref) -> Maybe<Duty>:
+  rebuild_decided(attempt,owner,acknowledged,native,delivery,settle,Bool.and(acknowledged,duty_clear(native,delivery,settle)))
 
 def rebuild_decided(+attempt: Attempt, +owner: OwnerInstance, +acknowledged: Bool, +native: Ref, +delivery: Ref, +settle: Ref, clear: Bool) -> Maybe<Duty>:
   match clear:
@@ -316,38 +317,43 @@ def acknowledged_fulfilled_duties_rebuild_empty(owner,attempt):
 
 # A failed settlement after host acknowledgment keeps the duty open: the
 # settled Fail records the error and the settlement responsibility survives.
+# The continuation reference is settled, so the open state isolates the
+# settlement responsibility.
 law a_failed_settlement_survives_host_acknowledgment:
   for +owner: OwnerInstance
   for +attempt: Attempt
-  {Bool.and(duty_open(record_ack(record_settle(record_delivery(seal_completion(open_duty(owner,attempt),RefDone{"exit 0"}),RefDone{"delivered"}),RefFail{"settle failed"}),True{},RefDone{"acknowledged"})),settle_owed_of(record_ack(record_settle(record_delivery(seal_completion(open_duty(owner,attempt),RefDone{"exit 0"}),RefDone{"delivered"}),RefFail{"settle failed"}),True{},RefDone{"acknowledged"}))) == True{} : Bool}
+  {Bool.and(duty_open(record_continuation(record_ack(record_settle(record_delivery(seal_completion(open_duty(owner,attempt),RefDone{"exit 0"}),RefDone{"delivered"}),RefFail{"settle failed"}),True{},RefDone{"acknowledged"}),RefDone{"continued"})),settle_owed_of(record_continuation(record_ack(record_settle(record_delivery(seal_completion(open_duty(owner,attempt),RefDone{"exit 0"}),RefDone{"delivered"}),RefFail{"settle failed"}),True{},RefDone{"acknowledged"}),RefDone{"continued"}))) == True{} : Bool}
 
 def a_failed_settlement_survives_host_acknowledgment(owner,attempt):
   {==}
 
 # A fulfilled settlement closes the completed duty without any child
-# reattachment.
+# reattachment; every invocation, including the continuation, is settled and
+# no responsibility is outstanding.
 law a_fulfilled_settlement_closes_the_completed_duty:
   for +owner: OwnerInstance
   for +attempt: Attempt
-  {duty_open(record_settle(record_ack(record_settle(record_delivery(seal_completion(open_duty(owner,attempt),RefDone{"exit 0"}),RefDone{"delivered"}),RefFail{"settle failed"}),True{},RefDone{"acknowledged"}),RefDone{"settled"})) == False{} : Bool}
+  {duty_open(record_settle(record_continuation(record_ack(record_settle(record_delivery(seal_completion(open_duty(owner,attempt),RefDone{"exit 0"}),RefDone{"delivered"}),RefFail{"settle failed"}),True{},RefDone{"acknowledged"}),RefDone{"continued"}),RefDone{"settled"})) == False{} : Bool}
 
 def a_fulfilled_settlement_closes_the_completed_duty(owner,attempt):
   {==}
 
-# A failed parent notice after host acknowledgment keeps the wake owed.
+# A failed parent notice after host acknowledgment keeps the wake owed; the
+# continuation reference is settled, so the open state isolates the wake.
 law a_notice_failure_keeps_the_acknowledged_wake_owed:
   for +owner: OwnerInstance
   for +attempt: Attempt
-  {duty_open(record_ack(record_settle(record_delivery(seal_completion(open_duty(owner,attempt),RefDone{"exit 0"}),RefFail{"notice failed"}),RefDone{"settled"}),True{},RefDone{"acknowledged"})) == True{} : Bool}
+  {duty_open(record_continuation(record_ack(record_settle(record_delivery(seal_completion(open_duty(owner,attempt),RefDone{"exit 0"}),RefFail{"notice failed"}),RefDone{"settled"}),True{},RefDone{"acknowledged"}),RefDone{"continued"})) == True{} : Bool}
 
 def a_notice_failure_keeps_the_acknowledged_wake_owed(owner,attempt):
   {==}
 
-# A delivered notice retry retires the acknowledged duty.
+# A delivered notice retry retires the acknowledged duty; every invocation is
+# settled and no responsibility is outstanding.
 law a_notice_retry_retires_the_acknowledged_duty:
   for +owner: OwnerInstance
   for +attempt: Attempt
-  {duty_open(record_delivery(record_ack(record_settle(record_delivery(seal_completion(open_duty(owner,attempt),RefDone{"exit 0"}),RefFail{"notice failed"}),RefDone{"settled"}),True{},RefDone{"acknowledged"}),RefDone{"retry delivered"})) == False{} : Bool}
+  {duty_open(record_delivery(record_continuation(record_ack(record_settle(record_delivery(seal_completion(open_duty(owner,attempt),RefDone{"exit 0"}),RefFail{"notice failed"}),RefDone{"settled"}),True{},RefDone{"acknowledged"}),RefDone{"continued"}),RefDone{"retry delivered"})) == False{} : Bool}
 
 def a_notice_retry_retires_the_acknowledged_duty(owner,attempt):
   {==}
@@ -371,14 +377,15 @@ def owner_check_decides_on_binding_and_token(duty,token):
   {==}
 
 # A retained attempt different from the duty's own record is refused as
-# unknown even under the duty's own owner, and the recorded attempt stays
-# required.
+# unknown even under the duty's own owner. The queried attempt is derived
+# from the duty's own attempt by prefixing its id, and a string differs from
+# its own six-character prefix extension, so the identity is guaranteed to
+# differ.
 law a_differing_attempt_is_refused_as_unknown:
   for +duty: Duty
-  for +attempt: Attempt
-  {check_attempt(duty,owner_of(duty),Attempt{"other-"++id_of(attempt),directory_of(attempt),session_of(attempt),cutoff_of(attempt),generation_of(attempt)}) == Fail{UnknownAttempt{}} : Result<&1,&1,Refusal,Duty>}
+  {check_attempt(duty,owner_of(duty),Attempt{"other-"++id_of(attempt_of(duty)),directory_of(attempt_of(duty)),session_of(attempt_of(duty)),cutoff_of(attempt_of(duty)),generation_of(attempt_of(duty))}) == Fail{UnknownAttempt{}} : Result<&1,&1,Refusal,Duty>}
 
-def a_differing_attempt_is_refused_as_unknown(duty,attempt):
+def a_differing_attempt_is_refused_as_unknown(duty):
   {==}
 
 law slot_check_accepts_the_current_generation:

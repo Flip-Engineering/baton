@@ -1,13 +1,17 @@
 #!/usr/bin/env python3
 """Build and run the custody-task fixture on an admitted remote runner.
 
-The runner requires a fresh output directory, records the source commit and
-tree, component hashes, compiler version, host compiler, platform and any
-supplied compiler-archive and library-root identities, then builds and runs
-the unmutated fixture and four intended implementation mutations. Every
-child keeps its argv, raw stdout, raw stderr and actual exit under the output
-path. A structural build failure of the unmutated fixture is retained and
-fails the runner; it is never accepted as mutation evidence.
+Evidence contract: a fresh output directory is required. The runner records
+the exact source state (commit, tree, component hashes, clean status for the
+owned files, tree recheck after the run), the supplied tool identities (bend
+executable hash and version, compiler archive hash, library-root listing
+hash, host compiler, platform), and one launch record plus one completion
+record per child, with stdout/stderr streamed to their own files from launch
+so an interrupted runner keeps partial output. The unmutated fixture must
+build and run; structural failure is retained and fails the runner. Each
+intended implementation mutation is applied to a fresh persistent scratch
+copy, and its verdict records the targeted law, the expected rejection kind
+and the observed diagnostic, never a bare nonzero exit.
 """
 
 import argparse
@@ -19,9 +23,8 @@ import platform
 import shutil
 import subprocess
 import sys
+import time
 
-# Each mutation: (name, unique source fragment, replacement, law diagnostic
-# that must name the failing proof, expected substring in stderr).
 MUTATIONS = [
     ("acknowledged-drops-duties",
      "  match clear:\n    case True{}: None{}",
@@ -40,6 +43,10 @@ MUTATIONS = [
      "Bool.and(settle_owed,fulfilled(ref))",
      "a_failed_settlement_survives_host_acknowledgment"),
 ]
+
+OWNED = ["bend2/src/context/custody-tasks.bend",
+         "bend2/test/native-instance-owner/custody-tasks.bend",
+         "bend2/test/native-instance-owner/run.py"]
 
 
 def sha256(path):
@@ -60,38 +67,67 @@ def main():
     root = Path(__file__).resolve().parents[3]
     env = dict(os.environ, BEND=str(Path(args.bend).resolve()))
 
-    def run(name, argv, cwd=None, check=None):
-        result = subprocess.run(argv, cwd=cwd or root, env=env, capture_output=True)
-        (output / (name + ".stdout")).write_bytes(result.stdout)
-        (output / (name + ".stderr")).write_bytes(result.stderr)
-        record = {"name": name, "argv": list(map(str, argv)), "cwd": str(cwd or root),
-                  "exit": result.returncode,
-                  "stdout": result.stdout.decode(errors="replace"),
-                  "stderr": result.stderr.decode(errors="replace")}
-        (output / (name + ".json")).write_text(json.dumps(record, indent=2) + "\n")
-        print(json.dumps(record), flush=True)
-        if check is not None:
-            assert result.returncode == check, f"{name}: exit {result.returncode}, expected {check}"
-        return result
+    def git(*argv):
+        return subprocess.run(["git", *argv], cwd=root, env=env,
+                              capture_output=True, check=True).stdout.decode().strip()
+
+    def record(name, payload):
+        (output / (name + ".json")).write_text(json.dumps(payload, indent=2) + "\n")
+        print(json.dumps(payload), flush=True)
+
+    def launch(name, argv, cwd):
+        streams = {1: open(output / (name + ".stdout"), "wb"),
+                   2: open(output / (name + ".stderr"), "wb")}
+        started = time.time()
+        child = subprocess.Popen(argv, cwd=cwd, env=env, stdout=streams[1], stderr=streams[2])
+        record(name + ".launch", {"name": name, "argv": list(map(str, argv)), "cwd": str(cwd),
+                                  "pid": child.pid, "started_epoch": started})
+        return child, streams, started
+
+    def complete(name, child, streams, started):
+        code = child.wait()
+        for stream in streams.values():
+            stream.close()
+        payload = {"name": name, "pid": child.pid, "exit": code,
+                   "started_epoch": started, "finished_epoch": time.time()}
+        record(name + ".completion", payload)
+        return code
 
     identity = {
-        "commit": run("source", ["git", "rev-parse", "HEAD"]).stdout.decode().strip(),
-        "tree": run("source-tree", ["git", "rev-parse", "HEAD^{tree}"]).stdout.decode().strip(),
-        "bend_version": run("compiler", [args.bend, "version"], check=0).stdout.decode().strip(),
+        "commit": git("rev-parse", "HEAD"),
+        "tree_before": git("rev-parse", "HEAD^{tree}"),
+        "owned_clean": git("status", "--porcelain", "--", *OWNED) == "",
+        "owned_status": git("status", "--porcelain", "--", *OWNED),
+        "bend_version": None,
         "bend_sha256": sha256(args.bend),
-        "module_sha256": sha256(root / "bend2/src/context/custody-tasks.bend"),
-        "fixture_sha256": sha256(root / "bend2/test/native-instance-owner/custody-tasks.bend"),
-        "runner_sha256": sha256(Path(__file__).resolve()),
-        "host_compiler": run("host-compiler", [os.environ.get("CC", "clang"), "--version"]).stdout.decode(errors="replace"),
+        "compiler_archive_sha256": sha256(args.compiler_archive) if args.compiler_archive else None,
+        "library_root": None,
+        "host_compiler": None,
         "platform": platform.platform(),
-        "compiler_archive": args.compiler_archive,
-        "library_root": args.library_root,
+        "module_sha256": sha256(root / OWNED[0]),
+        "fixture_sha256": sha256(root / OWNED[1]),
+        "runner_sha256": sha256(Path(__file__).resolve()),
     }
+    child, streams, started = launch("compiler", [args.bend, "version"], root)
+    code = complete("compiler", child, streams, started)
+    assert code == 0 and (output / "compiler.stdout").read_bytes().strip() == b"bend 2.0.25", \
+        "compiler must be Bend 2.0.25"
+    identity["bend_version"] = (output / "compiler.stdout").read_text().strip()
+    probe = subprocess.run([os.environ.get("CC", "clang"), "--version"], capture_output=True)
+    identity["host_compiler"] = probe.stdout.decode(errors="replace")
+    if args.library_root:
+        listing = sorted((p.relative_to(args.library_root).as_posix(), p.stat().st_size)
+                         for p in Path(args.library_root).rglob("*") if p.is_file())
+        identity["library_root"] = {"path": str(Path(args.library_root).resolve()),
+                                    "files": len(listing),
+                                    "listing_sha256": hashlib.sha256(
+                                        json.dumps(listing).encode()).hexdigest()}
     (output / "identity.json").write_text(json.dumps(identity, indent=2) + "\n")
 
-    built = run("build", ["sh", "bend2/scripts/build-native.sh",
-                          "bend2/test/native-instance-owner/custody-tasks.bend",
-                          str(output / "custody-fixture")], check=0)
+    child, streams, started = launch("build", ["sh", "bend2/scripts/build-native.sh",
+                                               "bend2/test/native-instance-owner/custody-tasks.bend",
+                                               str(output / "custody-fixture")], root)
+    assert complete("build", child, streams, started) == 0, "unmutated fixture build failed"
 
     expected = {
         "laws": ("0", ["owner-ready", "owner-survived",
@@ -106,12 +142,14 @@ def main():
     }
     for mode, (code, needs) in expected.items():
         name = "laws" if mode == "laws" else mode
-        result = run(name, [str(output / "custody-fixture"), mode])
-        assert result.returncode == int(code), f"{mode}: exit {result.returncode}, expected {code}"
+        child, streams, started = launch(name, [str(output / "custody-fixture"), mode], root)
+        code_actual = complete(name, child, streams, started)
+        assert code_actual == int(code), f"{mode}: exit {code_actual}, expected {code}"
+        text = (output / (name + ".stdout")).read_bytes()
         for need in needs:
-            assert need.encode() in result.stdout, f"{mode}: missing {need!r}"
+            assert need.encode() in text, f"{mode}: missing {need!r}"
 
-    module = root / "bend2/src/context/custody-tasks.bend"
+    module = root / OWNED[0]
     original = module.read_text()
     for name, old, new, law in MUTATIONS:
         assert original.count(old) == 1, f"{name}: source fragment is not unique"
@@ -120,22 +158,30 @@ def main():
         shutil.copytree(root / "bend2/src", scratch / "bend2/src")
         shutil.copytree(root / "bend2/scripts", scratch / "bend2/scripts")
         shutil.copytree(root / "bend2/test/native-instance-owner", scratch / "bend2/test/native-instance-owner")
-        mutated = scratch / "bend2/src/context/custody-tasks.bend"
+        mutated = scratch / OWNED[0]
         mutated.write_text(original.replace(old, new))
         (scratch / "mutated-source.bend").write_text(mutated.read_text())
-        result = run("mutation-" + name,
-                     ["sh", "bend2/scripts/build-native.sh",
-                      "bend2/test/native-instance-owner/custody-tasks.bend",
-                      str(scratch / "fixture")],
-                     cwd=scratch)
-        assert result.returncode != 0, f"{name}: mutated build unexpectedly succeeded"
-        assert law.encode() in result.stderr, f"{name}: expected law {law} named in build stderr"
-        (output / ("mutation-" + name + ".json")).write_text(json.dumps(
-            {"name": name, "law": law, "exit": result.returncode,
-             "stderr": result.stderr.decode(errors="replace")}, indent=2) + "\n")
+        child, streams, started = launch("mutation-" + name,
+                                         ["sh", "bend2/scripts/build-native.sh",
+                                          "bend2/test/native-instance-owner/custody-tasks.bend",
+                                          str(scratch / "fixture")], scratch)
+        code = complete("mutation-" + name, child, streams, started)
+        stderr = (output / ("mutation-" + name + ".stderr")).read_text(errors="replace")
+        verdict = {"name": name, "target_law": law,
+                   "expected": {"kind": "law-compile-failure", "exit_nonzero": True,
+                                "diagnostic_names": law},
+                   "observed": {"exit": code, "law_named": law in stderr,
+                                "diagnostic_head": stderr.splitlines()[:6]},
+                   "records": [str(output / ("mutation-" + name + ".launch.json")),
+                               str(output / ("mutation-" + name + ".completion.json")),
+                               str(scratch / "mutated-source.bend"),
+                               str(output / ("mutation-" + name + ".stderr"))]}
+        record("mutation-" + name + ".verdict", verdict)
+        assert code != 0, f"{name}: mutated build unexpectedly succeeded"
+        assert law in stderr, f"{name}: expected law {law} named in build stderr"
 
-    restored = sha256(module)
-    assert restored == identity["module_sha256"], "module changed during mutations"
+    assert sha256(module) == identity["module_sha256"], "module changed during mutations"
+    assert git("rev-parse", "HEAD^{tree}") == identity["tree_before"], "tree changed during run"
     print("custody-fixture: all modes and mutations matched", flush=True)
 
 
