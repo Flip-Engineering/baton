@@ -219,11 +219,9 @@ export function classifyControl({ state, exitCode, signal, spawnError, stderrTex
   if (!validChildOutcome({ state, exitCode, signal, spawnError })) {
     return { class: 'malformed-outcome', attributedLaw: null };
   }
-  if (spawnError !== null && spawnError !== undefined) return { class: 'spawn-error', attributedLaw: null };
-  if (signal !== null && signal !== undefined) return { class: 'crashed', attributedLaw: null };
-  if (state !== 'exited' || exitCode === null || exitCode === undefined) {
-    return { class: 'unfinished', attributedLaw: null };
-  }
+  // Accounting applies to the complete stream regardless of how the child
+  // terminated, so its validity is established before the termination
+  // classes; an invalid or contradictory block never becomes a refusal.
   const { diagnostics, accounting, profile } = splitTimeAccounting(stderrText ?? '');
   if (accounting !== null) {
     if (!accountingValid(accounting, profile)) return { class: 'accounting-invalid', attributedLaw: null };
@@ -242,6 +240,11 @@ export function classifyControl({ state, exitCode, signal, spawnError, stderrTex
       && !/Command exited with non-zero status \d+/.test(accounting)) {
       return { class: 'accounting-invalid', attributedLaw: null };
     }
+  }
+  if (spawnError !== null && spawnError !== undefined) return { class: 'spawn-error', attributedLaw: null };
+  if (signal !== null && signal !== undefined) return { class: 'crashed', attributedLaw: null };
+  if (state !== 'exited' || exitCode === null || exitCode === undefined) {
+    return { class: 'unfinished', attributedLaw: null };
   }
   if (control.kind === 'baseline') {
     return exitCode === 0

@@ -38,6 +38,10 @@ test('ordinary orchestration records full evidence and restores the tree', () =>
   const run = spawnSync(process.execPath, [CHECKER, fakeBend], {
     encoding: 'utf8', maxBuffer: Infinity,
   });
+  // The child's complete streams are retained before any assertion, so a
+  // failure keeps the actual gate output and never reports an empty record.
+  writeFileSync(join(fakeBendDir, 'checker.stdout'), run.stdout ?? '');
+  writeFileSync(join(fakeBendDir, 'checker.stderr'), run.stderr ?? '');
   assert.equal(run.status, 1, `the gate must end red when every control accepts; stderr: ${run.stderr}\nstdout: ${run.stdout}`);
   const lines = run.stdout.split('\n').filter((line) => line !== '');
   const rowsJson = lines.filter((line) => line.startsWith('{') && !line.includes('laws-check:'));

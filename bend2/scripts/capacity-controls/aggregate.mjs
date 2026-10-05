@@ -509,7 +509,13 @@ export function classifyCli(argv) {
     refusal('delta changed_sha256 differs from the retained changed bytes');
   }
   const originalText = originalBytes.toString('utf8');
+  if (!Buffer.from(originalText, 'utf8').equals(originalBytes)) {
+    refusal('the checkout module bytes are not lossless UTF-8 for text comparison');
+  }
   const changedText = changedBytes.toString('utf8');
+  if (!Buffer.from(changedText, 'utf8').equals(changedBytes)) {
+    refusal('the retained changed bytes are not lossless UTF-8 for text comparison');
+  }
 
   const definition = MUTATIONS.find((mutation) => `mutation:${mutation.name}` === discovered.id) ?? null;
   // The clean-tree observation must hold across the whole classification:

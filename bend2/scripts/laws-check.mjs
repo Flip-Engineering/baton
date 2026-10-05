@@ -157,8 +157,8 @@ retainEvidence('baseline', true, baseline.stdout, baseline.stderr, outcomeOf(bas
 console.log(JSON.stringify({ check: 'entry compiles with every law proven', passed: baseline.ok }));
 if (!baseline.ok) {
   failures++;
-  console.log(baseline.stderr.trimEnd());
-  if (baseline.stdout.trimEnd() !== '') console.log(baseline.stdout.trimEnd());
+  console.log(baseline.stderr.toString("utf8").trimEnd());
+  if (baseline.stdout.toString("utf8").trimEnd() !== '') console.log(baseline.stdout.toString("utf8").trimEnd());
   console.log(`laws-check: red - ${rows.length} laws, 1 compile, ${failures} failure; proof-removal controls did not run`);
   process.exit(1);
 }
@@ -206,7 +206,7 @@ for (const { law, file } of rows) {
       gate: passed ? 'refuses' : 'accepts',
       passed,
     }));
-    if (!passed) console.log(control.stderr.trimEnd());
+    if (!passed) console.log(control.stderr.toString("utf8").trimEnd());
   } finally {
     writeFileSync(copied, pristine.get(repoPath));
     if (readFileSync(copied, 'utf8') !== pristine.get(repoPath)) {
@@ -264,7 +264,7 @@ for (const mutation of MUTATIONS) {
       gate: passed ? 'refuses' : 'accepts',
       passed,
     }));
-    if (!passed) console.log(control.stderr.trimEnd());
+    if (!passed) console.log(control.stderr.toString("utf8").trimEnd());
   } finally {
     writeFileSync(copied, pristine.get(mutation.file));
     if (readFileSync(copied, 'utf8') !== pristine.get(mutation.file)) {
