@@ -67,7 +67,7 @@ def admit_decision_ok(decision: String) -> Bool:
   Bool.or(String.eq(decision, "accepted"), String.eq(decision, "rejected"))
 
 def admit_state_ok(state: String) -> Bool:
-  Maybe.is_some(&1, Context.QueryState, Context.query_state_of(state))
+  Maybe.is_some(&2, Context.QueryState, Context.query_state_of(state))
 
 def admit_domain(+owner: String, +request: String, +decision: String, +state: String, +cwd: String, +artifactPath: String) -> Bool:
   Bool.and(Bool.not(String.is_empty(owner)),

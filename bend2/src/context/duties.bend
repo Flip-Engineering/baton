@@ -75,7 +75,7 @@ def duty_known_kind(kind: String) -> Bool:
   Bool.or(String.eq(kind, "query"), Bool.or(String.eq(kind, "role"), String.eq(kind, "notice")))
 
 # Exactly six columns, in order.
-def duty_fields(fields: List<String>) -> Maybe<&1, DutyRecord>:
+def duty_fields(fields: List<String>) -> Maybe<&2, DutyRecord>:
   match fields:
     case +kind <> more0:
       match more0:
@@ -98,13 +98,13 @@ def duty_fields(fields: List<String>) -> Maybe<&1, DutyRecord>:
         case _: None{}
     case _: None{}
 
-def duty_checked(record: DutyRecord) -> Maybe<&1, DutyRecord>:
+def duty_checked(record: DutyRecord) -> Maybe<&2, DutyRecord>:
   match record:
     case DutyRecord{kind, subject, role, incarnation, stage, evidence}:
-      Bool.pick(Maybe<&1, DutyRecord>, duty_shaped(kind, subject, stage), Some{DutyRecord{kind, subject, role, incarnation, stage, evidence}}, None{})
+      Bool.pick(Maybe<&2, DutyRecord>, duty_shaped(kind, subject, stage), Some{DutyRecord{kind, subject, role, incarnation, stage, evidence}}, None{})
 
 # One duty row: a short, surplus or empty row is not a record.
-def duty_line(+line: String) -> Maybe<&1, DutyRecord>:
+def duty_line(+line: String) -> Maybe<&2, DutyRecord>:
   match duty_fields(Tx.split_tabs(line)):
     case None{}: None{}
     case Some{record}: duty_checked(record)

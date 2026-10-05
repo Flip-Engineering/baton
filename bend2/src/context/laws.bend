@@ -664,19 +664,19 @@ def the_owed_notice_predicate_selects_only_context_notices():
   {==}
 
 law a_duty_line_reads_six_columns:
-  {ContextDuties.duty_line("query\tq1\t\t\tcomputationOpen\t") == Some{ContextDuties.DutyRecord{"query","q1","","","computationOpen",""}} : Maybe<&1,ContextDuties.DutyRecord>}
+  {ContextDuties.duty_line("query\tq1\t\t\tcomputationOpen\t") == Some{ContextDuties.DutyRecord{"query","q1","","","computationOpen",""}} : Maybe<&2,ContextDuties.DutyRecord>}
 
 def a_duty_line_reads_six_columns():
   {==}
 
 law a_short_duty_line_is_not_a_record:
-  {ContextDuties.duty_line("query\tq1") == None{} : Maybe<&1,ContextDuties.DutyRecord>}
+  {ContextDuties.duty_line("query\tq1") == None{} : Maybe<&2,ContextDuties.DutyRecord>}
 
 def a_short_duty_line_is_not_a_record():
   {==}
 
 law a_duty_without_a_subject_is_not_a_record:
-  {ContextDuties.duty_line("query\t\t\t\topen\tevidence") == None{} : Maybe<&1,ContextDuties.DutyRecord>}
+  {ContextDuties.duty_line("query\t\t\t\topen\tevidence") == None{} : Maybe<&2,ContextDuties.DutyRecord>}
 
 def a_duty_without_a_subject_is_not_a_record():
   {==}
