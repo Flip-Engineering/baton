@@ -41,9 +41,10 @@ def digest(path):
 def stream_record(path, run=None):
     """One observed child stream, or an explicit unavailable observation.
 
-    Accounting reads cannot be allowed to supersede the exception being reported,
-    so a stream that is missing or unreadable is recorded as unavailable rather
-    than raising here.
+    This guards OSError from the stream reads only: a missing or unreadable stream
+    is recorded as unavailable instead of raising, so the accounting step does not
+    replace the exception already being reported. Other failure kinds are not
+    caught here.
     """
     try:
         if path is None or not path.exists():
@@ -317,12 +318,26 @@ def main():
             """Extract the admitted archive and read the envelope it carries."""
             settle(run, record, 'archive-retained', 'attempted',
                    source=str(args.archive), expected_sha256=args.expected_archive_sha256)
-            shutil.copyfile(args.archive, run / 'original-archive.tar.gz')
             retained_input = run / 'original-archive.tar.gz'
-            observed = digest(retained_input)
-            if observed != args.expected_archive_sha256:
-                raise SystemExit('the retained archive does not match the admitted identity: '
-                                 + observed + ' against ' + args.expected_archive_sha256)
+            try:
+                shutil.copyfile(args.archive, retained_input)
+                observed = digest(retained_input)
+                if observed != args.expected_archive_sha256:
+                    raise SystemExit('the retained archive does not match the admitted identity: '
+                                     + observed + ' against ' + args.expected_archive_sha256)
+            except BaseException as error:
+                try:
+                    settle(run, record, 'archive-retained', 'failed',
+                           retained=retained_input.name,
+                           retained_present=retained_input.is_file(),
+                           retained_sha256=(digest(retained_input)
+                                            if retained_input.is_file() else None),
+                           failure=repr(error))
+                except BaseException as record_error:
+                    setattr(error, 'record_error', record_error)
+                    setattr(error, 'record_error_text', repr(record_error))
+                    raise error from record_error
+                raise
             settle(run, record, 'archive-retained', 'verified',
                    retained='original-archive.tar.gz', sha256=observed,
                    provenance=str(args.archive),
@@ -365,8 +380,15 @@ def main():
                         archive.extract(member, target)
                         extracted.append(member.name)
                 except BaseException as error:
-                    settle(run, record, 'archive-extracted', 'failed',
-                           members_extracted=len(extracted), failure=repr(error))
+                    try:
+                        settle(run, record, 'archive-extracted', 'failed',
+                               members_extracted=len(extracted),
+                               members_extracted_names=list(extracted),
+                               failure=repr(error))
+                    except BaseException as record_error:
+                        setattr(error, 'record_error', record_error)
+                        setattr(error, 'record_error_text', repr(record_error))
+                        raise error from record_error
                     raise
             settle(run, record, 'archive-extracted', 'verified', target=str(target),
                    members=len(members), manifest_member=manifest_member)
@@ -448,10 +470,7 @@ def main():
                 if (verdict.get('acquisition') or {}) != terminal:
                     raise SystemExit('a retained terminal acquisition differs from the verdict '
                                      'acquisition: ' + identity)
-                for field in ('state', 'exit_code', 'signal', 'spawn_error'):
-                    if terminal.get(field) != (verdict.get('acquisition') or {}).get(field):
-                        raise SystemExit('a retained terminal process field differs from the '
-                                         'verdict: ' + field)
+                # The whole-terminal equality above already covers the process fields.
                 # The retained response is the verdict the readback reported, with the
                 # reader's own added fields kept separate from the endpoint contract.
                 stdout_data = (audit / (stem + '.stdout')).read_bytes()
@@ -467,6 +486,15 @@ def main():
                     if response.get(field) != verdict.get(field):
                         raise SystemExit('a retained response field differs from the reported '
                                          'verdict: ' + field + ' for ' + identity)
+                # The response verifier and diagnostic are the ones the verdict reports,
+                # compared from the single response buffer parsed above.
+                if response.get('verifier') != verdict.get('verifier_raw',
+                                                           verdict.get('verifier')):
+                    raise SystemExit('a retained response verifier differs from the reported '
+                                     'verdict: ' + identity)
+                if response.get('diagnostic_sha256') != verdict.get('diagnostic_sha256'):
+                    raise SystemExit('a retained response diagnostic differs from the reported '
+                                     'verdict: ' + identity)
             if uncovered:
                 raise SystemExit('the acquisition omits selected cases: ' + repr(uncovered))
             records = sorted(entry.name for entry in audit.rglob('*') if entry.is_file())
