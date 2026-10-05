@@ -1,15 +1,15 @@
 # Baton2 root handoff
 
 This contributor handoff preserves unfinished operator work as of 2026-10-05
-18:29 UTC. Read the native task records and current source before resuming.
+19:35 UTC. Read the native task records and current source before resuming.
 Issue records describe defects; native reports contain current ownership and evidence.
 
 ## Authority and recovery
 
 The primary branch is `bend2-rewrite`. The root checkout is
 `/Users/wahargis/Development/Experiments/baton-bend2-root-delivery-20260928`.
-Its current commit is `98fbfe03b9f47d847e2a746450005eb38f88c464`, with three
-local documentation commits after the last verified published commit
+The prior handoff was committed at `bb85f37871c32c5f84fb69864c313d90bc16c425`,
+with four local documentation commits after the last verified published commit
 `fca7af876c8260c32d17f95f3e19bc68ee1bf561`.
 
 The active native Orchestra database is
@@ -28,15 +28,27 @@ and `orchestra` queries to recover current state. Read full selected delivery
 bodies before acknowledging them. Ordinary `dispatch-file` sends current
 guidance to registered endpoints while #668 remains open.
 
-The host restarted at 2026-10-05 10:46:16 Pacific. Processes and unfinished
-gates from before that restart require actual recovery evidence. Native
-guidance 44 resumed the existing Conductors with their recorded identities.
-Completed frozen evidence retains its original source and host attribution.
+The latest verified host boot is 2026-10-05 11:56:29 Pacific. Fresh process
+inspection found no Baton, OMP, Bend or clang process remaining. Preserve
+native identities, pending input and source; stored running state requires
+process evidence. All interrupted gates remain unqualified. Native guidance
+44 predates this latest restart. Completed frozen evidence retains its
+original source and host attribution.
 
-Free disk space measured 2.8 GiB at 18:29 UTC. Inspect active processes, open
+Free disk space measured 7.4 GiB at 19:32 UTC, with zero allocated swap.
+The approved two YuE2 model downloads were removed; their manifest and source
+remain preserved. Inspect active processes, open
 files, Git changes and ownership before cleanup. Preserve unfinished source,
 music and reports. The operator approved broad safe recovery of rebuildable
 storage and requires questions where removal is uncertain.
+
+The operator explicitly directs compilation and CI/CD onto homelab runners.
+All compiler, build and test gates run remotely. The homelab is reachable;
+its Linux host has 64 cores and 251 GiB RAM, with about 228 GiB available.
+The existing Flip assignments remain protected. #675 must provide Baton
+validation there. Darwin arm64 acceptance still requires a remote Darwin
+runner. The crash attribution and limits are in
+`docs/bend2/host-crash-2026-10-05.md`.
 
 ## Standing acceptance requirements
 
@@ -77,9 +89,10 @@ Its complete law controls took 12,876 seconds, about 95 percent of gate time.
 The new work must preserve exhaustive proof-removal and mutation controls,
 source/toolchain provenance, completed process evidence and raw log integrity.
 Extend the existing checker to discover independent cases, execute isolated
-subsets and verify their exhaustive aggregation. Preserve full local checking.
-The initial hosted design uses separate existing Darwin runner jobs with one
-compiler per job; actual runner memory constrains local parallel compilation.
+subsets and verify their exhaustive aggregation. Preserve the complete checker
+invocation on remote runners. The drafts currently assume Darwin; qualify Linux
+diagnostics, process outcomes and GNU time accounting before homelab acceptance.
+Keep actual compiler/library/platform provenance through package qualification.
 The existing restricted Flip-client Linux runner remains assigned to its
 trusted workflow. New hosted speedup and acceptance are unmeasured.
 

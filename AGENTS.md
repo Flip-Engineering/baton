@@ -3,6 +3,20 @@
 These rules apply to every agent and harness working on baton, not only Claude. The first section
 applies to code and design. The rest apply to prose.
 
+## Validation execution
+
+The operator's laptop hosts orchestration, source edits and evidence review.
+Compilation, compiler checks, build and test gates, and CI/CD execute on remote
+validation runners. Homelab runners provide Linux capacity; platform-specific
+acceptance uses a remote runner for that platform. Preserve exact source and
+toolchain identity, full output and completed process evidence for each run.
+
+A background validation process remains owned until its recorded completion.
+Continue through the existing execution handle when a tool returns a running
+job. Repeated requests for that active execution must retain its ownership and
+result. The observed duplicate fixture build and crash evidence are recorded
+in `docs/bend2/host-crash-2026-10-05.md`.
+
 # Banned runtime patterns
 
 ## No pausing, idling or truncating agents
