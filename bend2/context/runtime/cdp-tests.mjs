@@ -814,6 +814,93 @@ test('rejected-resume-preserves-a-later-stop-observation', async () => {
   writeFileSync(join(dir, 'case.json'), `${JSON.stringify({ refusal: refusal.condition, after })}\n`);
 });
 
+test('resume-only-then-rejection-keeps-the-observed-resumption', async () => {
+  const slug = 'source-resume-only-rejected';
+  const dir = evidenceDir(slug);
+  let transport = null;
+  let reordered = false;
+  transport = stubTransport({
+    onSend: (method) => {
+      if (method === 'Debugger.stepOver' && !reordered) {
+        reordered = true;
+        // Only the resume is observed; no later stop masks this branch.
+        transport.emit('Debugger.resumed', {});
+        return { error: { code: -32000, message: 'Can only perform operation while paused' } };
+      }
+      return { result: {} };
+    },
+  });
+  const { session } = openSession({ slug, runtime: 'rt:resume-only', connect: async () => transport });
+  await session.execute('launch', { effects: ['controlRuntime'], webSocketUrl: 'ws://127.0.0.1:1/stub' });
+  transport.emit('Debugger.paused', { reason: 'other', callFrames: [], hitBreakpoints: [], threadId: 'main:0' });
+  const before = session.snapshot();
+  assertEqual(before.state, 'paused', 'the initial stop');
+  let refusal = null;
+  try {
+    await session.execute('resume-step', { effects: ['controlRuntime'], action: 'next', query: 'q-step' });
+  } catch (error) {
+    refusal = error;
+  }
+  assert(refusal !== null, 'the rejected resume was reported as success');
+  assertEqual(refusal.condition, 'cdpError', 'the refusal condition');
+  const after = session.snapshot();
+  // The observed resumption outranks the rejection: the record stays running and the
+  // rejection does not fabricate an unknown stop.
+  assertEqual(after.state, 'running', 'the observed resumption was overwritten by the rejection');
+  assertEqual(after.epoch, counterNext(before.epoch).value, 'the rejected request changed the epoch again');
+  assertEqual(after.lastResume === null ? null : after.lastResume.epoch, counterNext(before.epoch).value,
+    'the observed resume was not recorded');
+  assertEqual(after.lastPause.liveness, 'historical', 'the left stop is not historical');
+  assertEqual(after.targetLiveness, 'live', 'the rejection asserted a target exit');
+  assertEqual(after.pending, null, 'the rejected request stayed pending');
+  const scopeRef = refIdentity({
+    runtime: after.runtime, adapter: after.adapter, thread: 'main:0',
+    epoch: after.epoch, mutationGeneration: after.mutationGeneration, kind: 'object', handle: 'h',
+  });
+  assertEqual(session.admitRef(scopeRef).condition, 'refOutsidePause',
+    'a pause-scoped ref was admitted while the runtime is running');
+  writeFileSync(join(dir, 'case.json'), `${JSON.stringify({ refusal: refusal.condition, after })}\n`);
+});
+
+test('rejected-resume-preserves-a-later-context-destruction', async () => {
+  const slug = 'source-resume-rejected-context';
+  const dir = evidenceDir(slug);
+  let transport = null;
+  let reordered = false;
+  transport = stubTransport({
+    onSend: (method) => {
+      if (method === 'Debugger.stepOver' && !reordered) {
+        reordered = true;
+        // A destroyed context invalidates the stop and advances the epoch before the
+        // rejection arrives.
+        transport.emit('Runtime.executionContextsCleared', {});
+        return { error: { code: -32000, message: 'Can only perform operation while paused' } };
+      }
+      return { result: {} };
+    },
+  });
+  const { session } = openSession({ slug, runtime: 'rt:context', connect: async () => transport });
+  await session.execute('launch', { effects: ['controlRuntime'], webSocketUrl: 'ws://127.0.0.1:1/stub' });
+  transport.emit('Debugger.paused', { reason: 'other', callFrames: [], hitBreakpoints: [], threadId: 'main:0' });
+  const before = session.snapshot();
+  let refusal = null;
+  try {
+    await session.execute('resume-step', { effects: ['controlRuntime'], action: 'next', query: 'q-step' });
+  } catch (error) {
+    refusal = error;
+  }
+  assert(refusal !== null, 'the rejected resume was reported as success');
+  assertEqual(refusal.condition, 'cdpError', 'the refusal condition');
+  const after = session.snapshot();
+  assertEqual(after.epoch, counterNext(counterNext(before.epoch).value).value,
+    'the context destruction did not advance the epoch past the rejected request');
+  assertEqual(after.state, 'running', 'the destruction left a stopped record');
+  assertEqual(after.lastPause.liveness, 'historical', 'the destroyed context left the stop live');
+  assertEqual(after.targetLiveness, 'live', 'the rejection asserted a target exit');
+  assertEqual(after.pending, null, 'the rejected request stayed pending');
+  writeFileSync(join(dir, 'case.json'), `${JSON.stringify({ refusal: refusal.condition, after })}\n`);
+});
+
 test('ref-decisions-and-thread-membership', () => {
   const slug = 'source-ref-decisions';
   const dir = evidenceDir(slug);

@@ -223,9 +223,24 @@ async function main() {
   };
 
   const baselineCase = prepareCase('baseline', frozen);
-  const baselineModules = await loadModules(baselineCase.directory);
-  const baselineRun = await runLaws(baselineCase.directory, baselineModules);
-  const statementNames = baselineRun.statements.map((statement) => statement.name);
+  const baselineStartedAt = new Date().toISOString();
+  let baselineSetupFailure = null;
+  let baselineRun = null;
+  try {
+    const baselineModules = await loadModules(baselineCase.directory);
+    baselineRun = await runLaws(baselineCase.directory, baselineModules);
+  } catch (error) {
+    // A baseline setup failure is recorded as structured evidence rather than aborting the
+    // acquisition before the baseline path is written.
+    baselineSetupFailure = {
+      name: typeof error?.name === 'string' ? error.name : null,
+      code: typeof error?.code === 'string' || typeof error?.code === 'number' ? error.code : null,
+      message: typeof error?.message === 'string' ? error.message : String(error),
+      stack: typeof error?.stack === 'string' ? error.stack : null,
+    };
+  }
+  const baselineEndedAt = new Date().toISOString();
+  const statementNames = baselineRun === null ? [] : baselineRun.statements.map((statement) => statement.name);
   const baseline = {
     case: 'shipped-modules',
     kind: 'baseline',
@@ -241,8 +256,12 @@ async function main() {
         Object.entries(baselineCase.snapshot).map(([relative, row]) => [relative, row.casePath]),
       ),
     },
-    invocation: invocationIdentity(),
-    observation: { statementCount: statementNames.length, failures: baselineRun.failures },
+    invocation: { ...invocationIdentity(), startedAt: baselineStartedAt, endedAt: baselineEndedAt },
+    observation: {
+      statementCount: statementNames.length,
+      failures: baselineRun === null ? [] : baselineRun.failures,
+      setupFailure: baselineSetupFailure,
+    },
     attribution: { state: 'pending-shared-endpoint', endpoint: CLASSIFY_ENDPOINT },
   };
   baseline.caseJson = writeCase('baseline', baseline);

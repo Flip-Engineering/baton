@@ -196,13 +196,34 @@ law a_rejected_resume_never_asserts_a_target_exit:
 def a_rejected_resume_never_asserts_a_target_exit(epoch, mutation):
   {==}
 
-law a_rejected_resume_outside_a_resume_attempt_is_refused:
+law a_rejected_resume_outside_a_running_state_is_refused:
   for +epoch: String
   for +mutation: String
   for +liveness: R.Liveness
   {R.advance(R.Rec{R.Paused{}, epoch, mutation, R.Idle{}, liveness}, R.EvResumeRejected{}) == R.Refused{"resumeRejected from paused"} : R.Transition}
 
-def a_rejected_resume_outside_a_resume_attempt_is_refused(epoch, mutation, liveness):
+def a_rejected_resume_outside_a_running_state_is_refused(epoch, mutation, liveness):
+  {==}
+
+# The claim above is scoped to the state precondition: this module represents no request or
+# attempt identity, so it refuses a rejection outside Running rather than claiming that a
+# particular resume attempt was or was not the one that was rejected. The session owns that
+# request-relative check with the epoch it advanced and the observed resume it recorded.
+
+law an_intent_started_after_exit_is_refused:
+  for +epoch: String
+  for +mutation: String
+  {R.advance(R.Rec{R.Exited{}, epoch, mutation, R.Idle{}, R.LivenessExited{}}, R.EvIntentStarted{"pause", "q-pause"}) == R.Refused{"intentStarted after exited"} : R.Transition}
+
+def an_intent_started_after_exit_is_refused(epoch, mutation):
+  {==}
+
+law an_intent_settled_after_exit_is_refused:
+  for +epoch: String
+  for +mutation: String
+  {R.advance(R.Rec{R.Exited{}, epoch, mutation, R.InFlight{"pause", "q-pause"}, R.LivenessExited{}}, R.EvIntentSettled{}) == R.Refused{"intentSettled after exited"} : R.Transition}
+
+def an_intent_settled_after_exit_is_refused(epoch, mutation):
   {==}
 
 law a_stopped_event_records_a_live_stop:
@@ -233,11 +254,22 @@ law a_rejected_resume_leaves_the_recorded_stop_unknown:
 def a_rejected_resume_leaves_the_recorded_stop_unknown(previous):
   {==}
 
-law adapter_failure_keeps_the_recorded_stop_liveness:
-  for +previous: R.StopLiveness
-  {R.stop_liveness(previous, R.EvAdapterFailed{}) == previous : R.StopLiveness}
+law adapter_failure_marks_a_recorded_stop_historical:
+  {R.stop_liveness(R.StopLive{}, R.EvAdapterFailed{}) == R.StopHistorical{} : R.StopLiveness}
 
-def adapter_failure_keeps_the_recorded_stop_liveness(previous):
+def adapter_failure_marks_a_recorded_stop_historical():
+  {==}
+
+law adapter_failure_keeps_an_absent_stop_absent:
+  {R.stop_liveness(R.StopAbsent{}, R.EvAdapterFailed{}) == R.StopAbsent{} : R.StopLiveness}
+
+def adapter_failure_keeps_an_absent_stop_absent():
+  {==}
+
+law adapter_failure_marks_an_unknown_stop_historical:
+  {R.stop_liveness(R.StopUnknown{}, R.EvAdapterFailed{}) == R.StopHistorical{} : R.StopLiveness}
+
+def adapter_failure_marks_an_unknown_stop_historical():
   {==}
 
 law only_a_live_stop_admits_a_pause_scoped_reference:

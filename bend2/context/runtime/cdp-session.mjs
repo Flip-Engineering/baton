@@ -544,15 +544,18 @@ export function createAdapterSession({
               // A lost connection is an adapter failure. It asserts nothing about the
               // target and never reports an exit.
               onTransportFailure(error);
-            } else if (record.state === 'running' && record.epoch === requestEpoch) {
-              // Nothing observed after this request changed the record, so the rejection is
-              // the strongest evidence for this epoch: no resumption was established and
-              // the retained stop has no live evidence until a fresh stop arrives.
+            } else if (record.state === 'running'
+              && record.epoch === requestEpoch
+              && (lastResume === null || lastResume.epoch !== requestEpoch)) {
+              // Nothing observed after this request changed the record, and no resumed event
+              // was observed for the epoch this request advanced to, so the rejection is the
+              // strongest evidence for this epoch: no resumption was established and the
+              // retained stop has no live evidence until a fresh stop arrives.
               apply({ type: 'resumeRejected' });
               markPauseLiveness('unknown');
             }
-            // Otherwise a later observation stands and only the caller learns of the
-            // rejection.
+            // Otherwise a later observation stands — an intervening stop, an observed resume
+            // or a context destruction — and only the caller learns of the rejection.
             throw error;
           }
           settlePendingIntent();

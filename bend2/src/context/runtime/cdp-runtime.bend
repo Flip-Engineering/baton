@@ -244,8 +244,9 @@ def pending_name(+pending: Pending) -> String:
 
 def pending_evaluation(+pending: Pending) -> Bool:
   match pending:
-    case Idle{}: False{}
     case Evaluation{query}: True{}
+    case Idle{}: False{}
+    case InFlight{intent, query}: False{}
 
 def state_name(+state: RuntimeState) -> String:
   match state:
@@ -395,13 +396,17 @@ def advance(record: RuntimeRecord, event: RuntimeEvent) -> Transition:
             Refused{"releaseCommitted after exited"},
             Advanced{Rec{Releasing{}, epoch, mutation, pending, liveness}})
         case EvIntentStarted{intent, query}:
-          Bool.pick(Transition, is_idle(pending),
-            Advanced{Rec{state, epoch, mutation, InFlight{intent, query}, liveness}},
-            Refused{"runtimeBusy " ++ pending_name(pending)})
+          Bool.pick(Transition, is_exited(state),
+            Refused{"intentStarted after exited"},
+            Bool.pick(Transition, is_idle(pending),
+              Advanced{Rec{state, epoch, mutation, InFlight{intent, query}, liveness}},
+              Refused{"runtimeBusy " ++ pending_name(pending)}))
         case EvIntentSettled{}:
-          Bool.pick(Transition, is_idle(pending),
-            Refused{"intentSettled without an in-flight intent"},
-            Advanced{Rec{state, epoch, mutation, Idle{}, liveness}})
+          Bool.pick(Transition, is_exited(state),
+            Refused{"intentSettled after exited"},
+            Bool.pick(Transition, is_idle(pending),
+              Refused{"intentSettled without an in-flight intent"},
+              Advanced{Rec{state, epoch, mutation, Idle{}, liveness}}))
         case EvResumeRejected{}:
           Bool.pick(Transition, is_running(state),
             Advanced{Rec{Paused{}, epoch, mutation, pending, liveness}},
@@ -431,7 +436,15 @@ def stop_liveness(+previous: StopLiveness, +event: RuntimeEvent) -> StopLiveness
     case EvResumeSent{}: StopHistorical{}
     case EvContextDestroyed{}: StopHistorical{}
     case EvResumeRejected{}: StopUnknown{}
+    case EvAdapterFailed{}: stop_lost(previous)
     case other: previous
+
+# An adapter failure invalidates a recorded stop without inventing stop history: a live or
+# unknown stop becomes historical, and an absent stop stays absent.
+def stop_lost(+previous: StopLiveness) -> StopLiveness:
+  match previous:
+    case StopAbsent{}: StopAbsent{}
+    case other: StopHistorical{}
 
 # A pause-scoped reference is admitted only against a live stop.
 def stop_is_live(+stop: StopLiveness) -> Bool:

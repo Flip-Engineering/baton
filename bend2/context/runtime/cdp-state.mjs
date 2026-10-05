@@ -125,7 +125,8 @@ export function nextState(record, event) {
     }
 
     // An observed resumed event. A resume invalidates every pause-scoped ref, so it
-    // advances the epoch as well.
+    // advances the epoch whenever the record still shows a stop; an event observed while the
+    // record is already running advances nothing and is recorded as evidence by the session.
     case 'resumed': {
       if (record.state !== 'paused' && record.state !== 'pausePending') {
         return refusal('illegalTransition', `resumed from ${record.state}`);
