@@ -86,17 +86,18 @@
       "consume-propagates-the-previous-activity": {
         "discriminating": [
           "ControlledFrames.test_an_observed_later_failure_is_reported_over_an_older_observed_error",
-          "ControlledFrames.test_an_elided_terminal_repeating_an_older_error_reports_the_later_completion"
+          "ControlledFrames.test_an_elided_terminal_repeating_an_older_error_reports_the_later_completion",
+          "ControlledFrames.test_a_neutral_frame_before_the_terminal_keeps_the_later_completion"
         ],
         "companion_expected_to_pass": [
-          "ControlledFrames.test_a_neutral_frame_after_an_incomplete_start_keeps_no_success",
-          "ControlledFrames.test_a_neutral_frame_before_the_terminal_keeps_the_later_completion"
+          "ControlledFrames.test_a_neutral_frame_after_an_incomplete_start_keeps_no_success"
         ]
       },
       "consume-propagates-empty-activity": {
         "discriminating": [
           "ControlledFrames.test_an_elided_terminal_repeating_an_older_error_reports_the_later_completion",
-          "ControlledFrames.test_an_observed_later_failure_is_reported_over_an_older_observed_error"
+          "ControlledFrames.test_an_observed_later_failure_is_reported_over_an_older_observed_error",
+          "ControlledFrames.test_a_neutral_frame_before_the_terminal_keeps_the_later_completion"
         ],
         "companion_expected_to_pass": [
           "ControlledFrames.test_a_neutral_frame_after_an_incomplete_start_keeps_no_success"

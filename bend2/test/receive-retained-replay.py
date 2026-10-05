@@ -634,7 +634,7 @@ class ControlledFrames(ReplayBase):
         self.assertNotEqual(b['directory'], a['directory'])
         self.assert_snapshot_unchanged(a, after)
         self.assertEqual(a['body'],
-                         'Native model failure: status 403 from kimi-code/k3; 403 provider refused the request; '
+                         'Native model failure: status 403 from kimi-code/k3; 403 first failure; '
                          'the original terminal frame is retained in the native log for this attempt.')
         self.assertEqual(b['body'], 'Later successful report.')
 

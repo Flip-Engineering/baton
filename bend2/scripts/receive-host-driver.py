@@ -60,6 +60,9 @@ POSITIVE_CASES = [
     'ControlledFrames.test_unavailable_content_is_reported_truthfully',
     'ControlledFrames.test_sequential_success_then_error_keeps_the_first_report',
     'ControlledFrames.test_sequential_error_then_success_keeps_the_first_failure',
+    'RetainedReplay.test_original_protocol_research_stream_reports_the_retained_assistant',
+    'RetainedReplay.test_original_observations_research_stream_reports_the_retained_assistant',
+    'RetainedReplay.test_original_quota_terminal_is_classified_while_the_native_exits_zero',
 ]
 
 CONSUME_CONTROLS = [
@@ -164,12 +167,14 @@ def main(argv=None):
         record = {'control': name, 'build_exit': build['exit'], 'command': build['command']}
         if build['exit'] != 0:
             record['inconclusive'] = 'mutant build failed; not a behavioural rejection'
-            record['stderr'] = build['stderr'][-4000:]
+            record['stderr'] = build['stderr']
             summary['executions'].append(record)
+            summary['failures'].append({'control': name, 'inconclusive': record['inconclusive']})
             continue
         if not artifact.exists():
             record['inconclusive'] = 'mutant artifact missing after a successful build'
             summary['executions'].append(record)
+            summary['failures'].append({'control': name, 'inconclusive': record['inconclusive']})
             continue
         record['artifact_sha256'] = digest(artifact)
         cases = expect['discriminating'] + expect['companion_expected_to_pass']
