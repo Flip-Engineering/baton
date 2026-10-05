@@ -350,7 +350,7 @@ export function openPostgresSession({ psql, serviceFile, home, tempDirectory, pa
           refusal: {
             reason: framing.unterminated ? 'unterminatedLiteral' : 'multipleStatements',
             detail: framing.unterminated
-              ? `unterminated ${framing.unterminated.quote} at byte offset ${framing.unterminated.offset}`
+              ? `unterminated ${framing.unterminated.quote} at code-unit offset ${framing.unterminated.offset}`
               : `the text carries ${framing.statementCount} statements; admitted constant SQL is one statement`,
           },
         };

@@ -136,7 +136,7 @@ test('single-statement framing admits one statement whose closing quote ends the
   assert.equal(scan.trailingHasContent, false);
 });
 
-test('framing refuses two statements, an unterminated literal, a NUL byte and an unpaired surrogate', () => {
+test('framing refuses two statements, an unterminated literal, a NUL character and an unpaired surrogate', () => {
   assert.equal(statementFraming('SELECT 1; DROP TABLE users').reason, 'multipleStatements');
   assert.equal(statementFraming('SELECT 1; SELECT 2').reason, 'multipleStatements');
   assert.equal(statementFraming("SELECT 'abc").reason, 'unterminatedLiteral');
@@ -244,6 +244,8 @@ test('result-name origins come from qualified engine metadata or stay unavailabl
     const session = createSqliteSession({ path: fixture.path, DatabaseSync });
     try {
       assert.equal(session.originCapability.available, true);
+      assert.equal(session.originCapability.scope, 'origin-metadata-shape');
+      assert.equal(session.originCapability.probe.expected.length, 2);
       assert.ok(session.originCapability.probe.columns.every(column => column.table !== null && column.column !== null));
       const plan = session.analyze({ id: 'origins', sql: SELECT_JOIN });
       assert.equal(plan.origins.availability, 'available');

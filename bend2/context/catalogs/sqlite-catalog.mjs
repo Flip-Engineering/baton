@@ -382,7 +382,7 @@ export function createSqliteSession({ path, DatabaseSync }) {
     closed: false,
     analyze({ id = null, sql }) {
       if (session.closed) throw new Error('the session is closed');
-      return { id, ...joinRootpages({ plan: analyzeSqliteStatement({ db, sql, originCapability }), catalog }) };
+      return { id, ...joinRootpages({ plan: analyzeSqliteStatement({ db, sql, originCapability }), catalog, catalogDigest: annotated.catalogDigest }) };
     },
     join({ records, engineProbe = null }) {
       if (session.closed) throw new Error('the session is closed');

@@ -25,7 +25,7 @@ export function statementFraming(sql) {
   if (text.status !== 'admitted') return text;
   const scan = scanSqlStatements(sql, { dialect: 'sqlite' });
   if (scan.unterminated) {
-    return { status: 'refused', reason: 'unterminatedLiteral', detail: `unterminated ${scan.unterminated.quote} at byte offset ${scan.unterminated.offset}` };
+    return { status: 'refused', reason: 'unterminatedLiteral', detail: `unterminated ${scan.unterminated.quote} at code-unit offset ${scan.unterminated.offset}` };
   }
   if (scan.statementCount === 0) return { status: 'refused', reason: 'emptyStatement', detail: 'the text carries no statement' };
   if (scan.statementCount > 1 || scan.trailingHasContent) {
@@ -41,8 +41,79 @@ export function statementFraming(sql) {
 
 // Result-name origins are a provider capability, qualified by a probe over the
 // subject catalog rather than assumed from the binding version. The backing
-// C API is compile-time optional, so a non-null observation on a real
-// two-column projection is the qualification.
+// C API is compile-time optional, so the qualification needs the binding
+// method plus a probe whose returned database, table and column associations
+// equal the object and slots the probe selected.
+//
+// The probe answers one question: can this binding report result-column
+// origins for this catalog shape? Success does not establish the captured
+// connection identity, the catalog snapshot, or any source-to-object linkage;
+// those stay with the session that captured the catalog.
+//
+// The probe statement, its expected slots and a raw engine error message are
+// helper evidence kept for review. Turning them into public fixed-condition
+// fields is the caller's normalization step, not this module's.
+export const ORIGIN_PROBE_SCOPE = 'origin-metadata-shape';
+
+// SQLite identifier encoding: a double-quoted identifier with an embedded
+// double quote doubled. Values never substitute for this encoding.
+export function quoteSqliteIdentifier(name) {
+  return `"${String(name).replace(/"/g, '""')}"`;
+}
+
+// Builds the probe statement and the expectation it must satisfy. The selected
+// object is qualified with the catalog schema, and two projection slots are
+// always selected; a single-column table uses that column in both slots.
+export function buildOriginProbe({ catalog }) {
+  const schema = typeof catalog?.schema === 'string' && catalog.schema.length > 0 ? catalog.schema : 'main';
+  const entities = Array.isArray(catalog?.entities) ? catalog.entities : [];
+  const columns = Array.isArray(catalog?.columns) ? catalog.columns : [];
+  const tables = entities.filter(entity => entity?.kind === 'table' && entity.name !== 'sqlite_schema' && typeof entity.name === 'string' && entity.name.length > 0);
+  for (const entity of tables) {
+    const own = columns.filter(column => column?.table === entity.name && column?.hidden === 'normal' && typeof column.name === 'string' && column.name.length > 0);
+    if (own.length === 0) continue;
+    const slots = [own[0].name, (own[1] ?? own[0]).name];
+    const qualifiedTable = `${quoteSqliteIdentifier(schema)}.${quoteSqliteIdentifier(entity.name)}`;
+    const sql = `SELECT ${qualifiedTable}.${quoteSqliteIdentifier(slots[0])} AS "p0", ${qualifiedTable}.${quoteSqliteIdentifier(slots[1])} AS "p1" FROM ${qualifiedTable}`;
+    return {
+      status: 'built',
+      schema,
+      entity: { schema, name: entity.name, kind: entity.kind },
+      slots,
+      expected: slots.map((column, index) => ({ resultName: `p${index}`, database: schema, table: entity.name, column })),
+      sql,
+    };
+  }
+  if (tables.length > 0) {
+    return {
+      status: 'unsupported',
+      reason: 'catalogShapeUnsupported',
+      detail: 'the subject catalog holds tables, but none carries a normal column with a readable name to probe',
+    };
+  }
+  return {
+    status: 'unsupported',
+    reason: 'noProbeShape',
+    detail: 'the subject catalog holds no table with a declared column to probe',
+  };
+}
+
+// Compares the returned associations with the selected object and slots. Slot
+// count must match exactly; the result name is transport, not identity.
+export function describeOriginMismatch({ expected, observed }) {
+  if (observed.length !== expected.length) {
+    return `the probe returned ${observed.length} column metadata entries where ${expected.length} slots were selected`;
+  }
+  for (let index = 0; index < expected.length; index += 1) {
+    const want = expected[index];
+    const got = observed[index];
+    if (got.database !== want.database) return `slot ${index} reports database ${JSON.stringify(got.database)} where ${JSON.stringify(want.database)} was selected`;
+    if (got.table !== want.table) return `slot ${index} reports table ${JSON.stringify(got.table)} where ${JSON.stringify(want.table)} was selected`;
+    if (got.column !== want.column) return `slot ${index} reports column ${JSON.stringify(got.column)} where ${JSON.stringify(want.column)} was selected`;
+  }
+  return null;
+}
+
 export function probeOriginCapability({ db, catalog }) {
   if (typeof db.prepare('SELECT 1').columns !== 'function') {
     return {
@@ -50,30 +121,40 @@ export function probeOriginCapability({ db, catalog }) {
       reason: 'column_origin_metadata_unavailable',
       detail: 'the binding exposes no columns() metadata; this is the Node 22.15.0 floor',
       probe: null,
+      scope: ORIGIN_PROBE_SCOPE,
     };
   }
-  const table = catalog.entities.find(entity => entity.kind === 'table' && catalog.columns.some(column => column.table === entity.name && column.hidden === 'normal'));
-  if (table === undefined) {
-    return { available: false, reason: 'noProbeShape', detail: 'the subject catalog holds no table with a declared column to probe', probe: null };
+  const probe = buildOriginProbe({ catalog });
+  if (probe.status !== 'built') {
+    return { available: false, reason: probe.reason, detail: probe.detail, probe: null, scope: ORIGIN_PROBE_SCOPE };
   }
-  const probes = catalog.columns.filter(column => column.table === table.name && column.hidden === 'normal');
-  const first = probes[0];
-  const second = probes[1] ?? first;
-  const probeSql = `SELECT ${table.name}.${first.name} AS p0, ${table.name}.${second.name} AS p1 FROM ${table.name}`;
   let observed;
   try {
-    observed = db.prepare(probeSql).columns().map(column => ({ resultName: column.name, database: column.database ?? null, table: column.table ?? null, column: column.column ?? null }));
+    observed = db.prepare(probe.sql).columns().map(column => ({
+      resultName: column.name,
+      database: column.database ?? null,
+      table: column.table ?? null,
+      column: column.column ?? null,
+    }));
   } catch (error) {
-    return { available: false, reason: 'probeRefused', detail: error.message, probe: { sql: probeSql, columns: [] } };
+    return {
+      available: false,
+      reason: 'probeRefused',
+      detail: error.message,
+      probe: { sql: probe.sql, expected: probe.expected, columns: [] },
+      scope: ORIGIN_PROBE_SCOPE,
+    };
   }
-  const qualified = observed.length > 0 && observed.every(column => column.table !== null && column.column !== null);
+  const mismatch = describeOriginMismatch({ expected: probe.expected, observed });
+  const available = mismatch === null;
   return {
-    available: qualified,
-    reason: qualified ? null : 'probeReturnedNullOrigins',
-    detail: qualified
-      ? 'the probe returned a base table and column for every result column'
-      : 'the probe returned a null origin, so the binding cannot supply result-name origins for this subject',
-    probe: { sql: probeSql, columns: observed },
+    available,
+    reason: available ? null : 'probeOriginMismatch',
+    detail: available
+      ? `both probe slots report the expected database, table and column for ${probe.entity.schema}.${probe.entity.name}`
+      : mismatch,
+    probe: { sql: probe.sql, expected: probe.expected, columns: observed },
+    scope: ORIGIN_PROBE_SCOPE,
   };
 }
 
@@ -149,7 +230,7 @@ export function analyzeSqliteStatement({ db, sql, originCapability = null }) {
       {
         projection: 'databaseAccesses',
         code: 'statementBoundaryScan',
-        detail: 'the Node binding discards a prepare tail; the single-statement boundary and trailing-text check are a byte scan, while relation identity comes from the engine program',
+        detail: 'the Node binding discards a prepare tail; the single-statement boundary and trailing-text check are a UTF-16 code-unit scan, while relation identity comes from the engine program',
       },
     ],
   };
@@ -200,17 +281,34 @@ export function statementOrigins({ db, sql, originCapability }) {
   };
 }
 
-// Join the engine program's access operands against the captured catalog. The
-// database number and the schema are part of the key: a temp or attached
-// database, a page outside the catalog and a page matching several objects all
-// stay available as independent plan facts with an explicit reason.
-export function joinRootpages({ plan, catalog }) {
-  if (plan.status !== 'analyzed') return plan;
+// Join the engine program's access operands against the captured catalog.
+//
+// Input stage: this function admits a plan whose relations are still raw
+// operands. A plan that already carries a join is refused with a
+// `rejoinRefused` member and returned otherwise unchanged, so the prior
+// unknown operands and earlier limits are never silently dropped. A caller that
+// intends to re-derive the join against a current catalog passes
+// `allowRejoin: true`, which requires the raw operand list the first join
+// recorded as `rawOperands`; the re-derivation re-reads object identity from the
+// current catalog and preserves the prior unknown operands, de-duplicated.
+//
+// Object identity: the database number and the schema are part of the key. A
+// temp or attached database, a page outside the catalog and a page matching
+// several objects stay unavailable with an explicit reason, and a plan whose
+// status is not `analyzed` is returned unchanged, so a refusal is never read as
+// proven absence of accesses.
+export const JOIN_STAGE = 'rootpage-catalog-join';
+
+function unknownOperandKey(entry) {
+  return [entry.opcode ?? '', entry.cursor ?? '', entry.database ?? '', entry.rootpage ?? '', entry.reason ?? ''].join('\u0000');
+}
+
+function joinOperands({ plan, operands, catalog, priorUnknown, catalogDigest }) {
   const relations = [];
-  const unknownAccess = [];
-  for (const access of plan.relations) {
+  const discovered = [];
+  for (const access of operands) {
     if (access.database !== MAIN_DATABASE) {
-      unknownAccess.push({
+      discovered.push({
         ...access,
         status: 'modeledAccessUnavailable',
         reason: 'nonMainDatabaseAccess',
@@ -220,16 +318,16 @@ export function joinRootpages({ plan, catalog }) {
     }
     const owners = catalog.rootpages[access.rootpage];
     if (owners === undefined || owners.length === 0) {
-      unknownAccess.push({ ...access, status: 'modeledAccessUnavailable', reason: 'rootpageNotInCatalog' });
+      discovered.push({ ...access, status: 'modeledAccessUnavailable', reason: 'rootpageNotInCatalog' });
       continue;
     }
     if (owners.length > 1) {
-      unknownAccess.push({ ...access, status: 'modeledAccessUnavailable', reason: 'ambiguousRootpage', detail: `rootpage ${access.rootpage} names ${owners.length} catalog objects` });
+      discovered.push({ ...access, status: 'modeledAccessUnavailable', reason: 'ambiguousRootpage', detail: `rootpage ${access.rootpage} names ${owners.length} catalog objects` });
       continue;
     }
     const [owner] = owners;
     if (owner.schema !== catalog.schema) {
-      unknownAccess.push({ ...access, status: 'modeledAccessUnavailable', reason: 'nonMainSchemaObject', detail: `rootpage ${access.rootpage} belongs to schema ${owner.schema}` });
+      discovered.push({ ...access, status: 'modeledAccessUnavailable', reason: 'nonMainSchemaObject', detail: `rootpage ${access.rootpage} belongs to schema ${owner.schema}` });
       continue;
     }
     relations.push({
@@ -243,17 +341,73 @@ export function joinRootpages({ plan, catalog }) {
       engineName: access.engineName,
     });
   }
+
+  const merged = [];
+  const seen = new Set();
+  for (const entry of [...priorUnknown, ...discovered]) {
+    const key = unknownOperandKey(entry);
+    if (seen.has(key)) continue;
+    seen.add(key);
+    merged.push(entry);
+  }
+
+  // One limit describes the merged unknown set: an earlier limit of the same
+  // code is replaced rather than repeated, and any other limit is preserved.
+  const priorLimits = (Array.isArray(plan.limits) ? plan.limits : [])
+    .filter(limit => !(limit?.projection === 'databaseAccesses' && limit?.code === 'modeledAccessUnavailable'));
   return {
     ...plan,
     relations,
-    unknownAccess,
+    unknownAccess: merged,
+    rawOperands: operands.map(operand => ({ ...operand })),
+    join: {
+      stage: JOIN_STAGE,
+      schema: catalog?.schema ?? null,
+      catalogDigest: catalogDigest ?? catalog?.catalogDigest ?? null,
+      operandCount: operands.length,
+      joinedCount: relations.length,
+      unknownCount: merged.length,
+      priorUnknownPreserved: priorUnknown.length,
+    },
     limits: [
-      ...plan.limits,
-      ...(unknownAccess.length === 0 ? [] : [{
+      ...priorLimits,
+      ...(merged.length === 0 ? [] : [{
         projection: 'databaseAccesses',
         code: 'modeledAccessUnavailable',
-        detail: `${unknownAccess.length} program access operand${unknownAccess.length === 1 ? '' : 's'} name no single captured main-database catalog object; the independent plan facts are preserved`,
+        detail: `${merged.length} program access operand${merged.length === 1 ? '' : 's'} name no single captured main-database catalog object; the independent plan facts are preserved`,
       }]),
     ],
   };
+}
+
+export function joinRootpages({ plan, catalog, allowRejoin = false, catalogDigest = null }) {
+  if (plan?.status !== 'analyzed') return plan;
+  const priorUnknown = Array.isArray(plan.unknownAccess) ? plan.unknownAccess : [];
+  const operands = Array.isArray(plan.relations) ? plan.relations : [];
+  const alreadyJoined = plan.join !== undefined || operands.some(relation => relation.status !== 'pending-catalog-join');
+  if (!alreadyJoined) {
+    return joinOperands({ plan, operands, catalog, priorUnknown, catalogDigest });
+  }
+  if (!allowRejoin) {
+    return {
+      ...plan,
+      rejoinRefused: {
+        reason: 'alreadyJoined',
+        detail: 'this plan already carries a join; pass allowRejoin with its raw operand list to re-derive it against a current catalog',
+        priorUnknownAccess: priorUnknown.length,
+      },
+    };
+  }
+  const rawOperands = Array.isArray(plan.rawOperands) ? plan.rawOperands : null;
+  if (rawOperands === null) {
+    return {
+      ...plan,
+      rejoinRefused: {
+        reason: 'rawOperandsAbsent',
+        detail: 'a join cannot be re-derived without the raw operand list; the preserved plan is returned unchanged',
+        priorUnknownAccess: priorUnknown.length,
+      },
+    };
+  }
+  return joinOperands({ plan, operands: rawOperands, catalog, priorUnknown, catalogDigest });
 }
