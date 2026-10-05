@@ -1085,6 +1085,11 @@ class PackageGateReceipt(unittest.TestCase):
                                 for member in PACKAGE.ORDINARY_RUN_VERIFIER_MEMBERS
                                 if not (PACKAGE.ROOT
                                         / PACKAGE.ORDINARY_VERIFIER_FILES[member]).is_file()))
+        # The returned ordinary digests must cover every mapped member this
+        # checkout actually holds, not only the ones a case happened to name.
+        self.assertEqual(sorted(digests), sorted(
+            member for member in PACKAGE.ORDINARY_RUN_VERIFIER_MEMBERS
+            if (PACKAGE.ROOT / PACKAGE.ORDINARY_VERIFIER_FILES[member]).is_file()))
         endpoint, endpoint_missing = PACKAGE.expected_verifier_digests()
         for member, digest in endpoint.items():
             path = PACKAGE.ROOT / PACKAGE.VERIFIER_FILES[member]
@@ -1187,6 +1192,35 @@ class PackageGateReceipt(unittest.TestCase):
             PACKAGE.controls_evidence(envelope, PACKAGE.snapshot(), self.compiler(),
                                       archived=True, documents=wrong)
         self.assertEqual(calls, [])
+
+        # A document with an admitted digest but an invalid schema or embedded
+        # graph refuses before classification too, so the single defect is the
+        # document's own identity and everything else stays faithful.
+        for name, payload, message in (
+                (PACKAGE.ARCHIVE_METADATA[0], {'schema': 'other', 'members': []},
+                 'inventory document names another schema'),
+                (PACKAGE.ARCHIVE_METADATA[0],
+                 {'schema': PACKAGE.INVENTORY_SCHEMA,
+                  'members': [{'path': 'a', 'bytes': 1, 'sha256': '0' * 64}],
+                  'inventory_sha256': '1' * 64},
+                 'does not reproduce its own digest')):
+            with self.subTest(document=name, message=message):
+                broken = self.home / ('archive-document-' + message.split()[-1])
+                broken.mkdir()
+                # The document that is not under test stays coherent, so the single
+                # defect is the one this case intends.
+                empty = hashlib.sha256(json.dumps({}, sort_keys=True,
+                                                  separators=(',', ':')).encode()).hexdigest()
+                (broken / PACKAGE.ARCHIVE_METADATA[1]).write_text(json.dumps(
+                    {'schema': PACKAGE.REDUCTION_SCHEMA, 'document': {}, 'sha256': empty}))
+                (broken / name).write_text(json.dumps(payload))
+                bound = {member: hashlib.sha256(
+                    (broken / member).read_bytes()).hexdigest()
+                    for member in PACKAGE.ARCHIVE_METADATA}
+                with self.assertRaisesRegex(RuntimeError, message):
+                    PACKAGE.controls_evidence(broken, PACKAGE.snapshot(), self.compiler(),
+                                              archived=True, documents=bound)
+                self.assertEqual(calls, [])
 
         missing = envelope / PACKAGE.ARCHIVE_METADATA[0]
         parked = envelope / (PACKAGE.ARCHIVE_METADATA[0] + '.parked')

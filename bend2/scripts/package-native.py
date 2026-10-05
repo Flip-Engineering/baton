@@ -1547,7 +1547,11 @@ def classify_control(case, result, streams, baseline, evidence_root, source, com
             + json.dumps(verdict.get('schema')))
     require(verdict.get('id') == case.get('id'),
             'The checker classification answered another case')
-    require_verifier_closure(verdict, json.dumps(case.get('id')))
+    # The validated closure is carried in canonical member names, so a verdict that
+    # named the historical classifier spelling still binds downstream; the raw
+    # endpoint map is retained beside it rather than replaced.
+    verdict['verifier_raw'] = dict(verdict.get('verifier') or {})
+    verdict['verifier'] = require_verifier_closure(verdict, json.dumps(case.get('id')))
     return verdict
 
 
@@ -1785,6 +1789,47 @@ def archive_document_path(directory, name, label):
     return path
 
 
+def admit_archived_documents(directory, documents):
+    """Admit the bound documents and their embedded graph before any case work.
+
+    The bound digest proves which document this is; the embedded schema, the
+    document's own digest reproduction and the member list against the extracted
+    graph are independent of classification and are checked here, so a document
+    with an admitted digest but an invalid schema or graph refuses before any
+    discovery or endpoint work. Only the comparison with the fresh semantic
+    reduction waits for classification.
+    """
+    bound = admit_archive_documents(directory, documents)
+    inventory_path = directory / 'inventory.json'
+    reduction_path = directory / 'reduction.json'
+    archived_inventory = json.loads(inventory_path.read_text())
+    archived_reduction = json.loads(reduction_path.read_text())
+    require(archived_inventory.get('schema') == INVENTORY_SCHEMA,
+            'The archived inventory document names another schema')
+    require(archived_reduction.get('schema') == REDUCTION_SCHEMA,
+            'The archived reduction document names another schema')
+    archived_members = archived_inventory.get('members')
+    require(isinstance(archived_members, list) and archived_members,
+            'The archived inventory document holds no member list')
+    recomputed_inventory = hashlib.sha256(
+        json.dumps(archived_members, sort_keys=True, separators=(',', ':')).encode()).hexdigest()
+    require(recomputed_inventory == archived_inventory.get('inventory_sha256'),
+            'The archived inventory document does not reproduce its own digest')
+    extracted = producer_inventory(directory, exclude=ARCHIVE_METADATA)
+    require(recomputed_inventory == extracted['inventory_sha256'],
+            'The archived inventory document does not describe this member graph')
+    require(archived_members == extracted['members'],
+            'The archived inventory member list differs from the extracted graph')
+    archived_document = archived_reduction.get('document')
+    require(isinstance(archived_document, dict),
+            'The archived reduction document holds no canonical document')
+    recomputed_reduction = hashlib.sha256(
+        json.dumps(archived_document, sort_keys=True, separators=(',', ':')).encode()).hexdigest()
+    require(recomputed_reduction == archived_reduction.get('sha256'),
+            'The archived reduction document does not reproduce its own digest')
+    return bound, archived_inventory, archived_reduction
+
+
 def admit_archive_documents(directory, documents):
     """Admit the bound metadata documents before any fallible work.
 
@@ -1897,7 +1942,10 @@ def controls_evidence(directory, initial, compiler, audit=None, destination=None
     root_identity = evidence_root_identity(directory, 'The controls evidence root')
     # An extracted envelope is admitted before any summary, case or endpoint work,
     # so invalid or missing bound metadata refuses before fallible effects.
-    archived_bound = (admit_archive_documents(directory, documents) if archived else None)
+    archived_bound = archived_inventory = archived_reduction = None
+    if archived:
+        archived_bound, archived_inventory, archived_reduction = admit_archived_documents(
+            directory, documents)
     path = directory / 'controls-summary.json'
     require(path.is_file(), 'The controls evidence has no controls-summary.json: ' + str(path))
     summary = json.loads(path.read_text())
@@ -2150,33 +2198,9 @@ def controls_evidence(directory, initial, compiler, audit=None, destination=None
             'audit': audit_inventory}
     result['reduction'] = semantic_reduction(result, inventory)
     if archived:
-        archived_inventory = json.loads((directory / 'inventory.json').read_text())
-        archived_reduction = json.loads((directory / 'reduction.json').read_text())
-        require(archived_inventory.get('schema') == INVENTORY_SCHEMA,
-                'The archived inventory document names another schema')
-        require(archived_reduction.get('schema') == REDUCTION_SCHEMA,
-                'The archived reduction document names another schema')
-        archived_members = archived_inventory.get('members')
-        require(isinstance(archived_members, list) and archived_members,
-                'The archived inventory document holds no member list')
-        recomputed_inventory = hashlib.sha256(
-            json.dumps(archived_members, sort_keys=True,
-                       separators=(',', ':')).encode()).hexdigest()
-        require(recomputed_inventory == archived_inventory.get('inventory_sha256'),
-                'The archived inventory document does not reproduce its own digest')
-        require(recomputed_inventory == inventory['inventory_sha256'],
-                'The archived inventory document does not describe this member graph')
-        require(archived_members == inventory['members'],
-                'The archived inventory member list differs from the extracted graph')
-        archived_document = archived_reduction.get('document')
-        require(isinstance(archived_document, dict),
-                'The archived reduction document holds no canonical document')
-        recomputed_reduction = hashlib.sha256(
-            json.dumps(archived_document, sort_keys=True,
-                       separators=(',', ':')).encode()).hexdigest()
-        require(recomputed_reduction == archived_reduction.get('sha256'),
-                'The archived reduction document does not reproduce its own digest')
-        require(recomputed_reduction == result['reduction']['sha256'],
+        # Only the comparison with the fresh reduction depends on classification.
+        archived_document = archived_reduction['document']
+        require(archived_reduction['sha256'] == result['reduction']['sha256'],
                 'The archived reduction document does not match the fresh stable reduction')
         require(archived_document == result['reduction']['document'],
                 'The archived reduction document differs from the fresh document')

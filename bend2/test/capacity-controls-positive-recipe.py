@@ -23,7 +23,9 @@ Usage:
 import argparse
 import hashlib
 import json
+import os
 import pathlib
+import re
 import shutil
 import subprocess
 import sys
@@ -78,14 +80,24 @@ def child(record, name, argv, run, stdin=None):
 
 
 def write_record(run, record):
-    """Persist the stage record without replacing an original cause.
+    """Replace the stage record atomically, keeping the previous rows intact.
 
-    A record that cannot be written is reported as its own error, and the caller
-    keeps the exception it was already handling.
+    The replacement is written beside the record and swapped into place, so a
+    partial write cannot truncate rows this run already settled. This is an
+    immediate replacement, not a crash or power-loss durability protocol: no
+    fsync or publication step is claimed.
     """
+    path = run / 'run.json'
+    staged = run / 'run.json.next'
     try:
-        (run / 'run.json').write_text(json.dumps({'children': record}, indent=2) + '\n')
+        staged.write_text(json.dumps({'children': record}, indent=2) + '\n')
+        os.replace(staged, path)
     except OSError as error:
+        try:
+            if staged.exists():
+                staged.unlink()
+        except OSError:
+            pass
         raise RuntimeError('the run record could not be written: ' + repr(error)) from error
 
 
@@ -154,6 +166,15 @@ def main():
         raise SystemExit(str(run) + ' exists')
     for name in ('producer', 'audit', 'out', 'relocate'):
         (run / name).mkdir(parents=True, exist_ok=True)
+    if args.archive:
+        # Required invocation arguments are validated before any child effect.
+        if not args.expected_archive_sha256:
+            raise SystemExit('--archive requires --expected-archive-sha256, '
+                             'the admitted archive identity')
+        if not re.fullmatch(r'[0-9a-f]{64}', args.expected_archive_sha256):
+            raise SystemExit('--expected-archive-sha256 is not a sha256 hex digest')
+        if not args.archive.is_file():
+            raise SystemExit('the admitted archive is missing: ' + str(args.archive))
     record = []
 
     # 0. Preconditions: a clean admitted checkout and the pinned compiler.
@@ -266,28 +287,39 @@ def main():
                 raise SystemExit('the archive does not match the admitted identity: '
                                  + observed + ' against ' + args.expected_archive_sha256)
             with tarfile.open(args.archive, 'r:gz') as archive:
-                names = []
-                for member in archive.getmembers():
+                members = archive.getmembers()
+                # Complete preflight first: every member is checked and the admitted
+                # manifest member is located before a single member is extracted.
+                kinds = {}
+                for member in members:
                     name = member.name
                     relative = pathlib.PurePosixPath(name)
                     if (name != relative.as_posix() or relative.is_absolute()
                             or '..' in relative.parts or member.issym() or member.islnk()
                             or not (member.isfile() or member.isdir())):
                         raise SystemExit('the archive holds an unsupported or unsafe member: ' + name)
-                    if name in names:
+                    if name in kinds:
                         raise SystemExit('the archive names a member twice: ' + name)
-                    names.append(name)
+                    kinds[name] = 'directory' if member.isdir() else 'file'
+                for name, kind in kinds.items():
+                    prefix = name
+                    while '/' in prefix:
+                        prefix = prefix.rsplit('/', 1)[0]
+                        if kinds.get(prefix) == 'file':
+                            raise SystemExit('the archive uses a file as a directory: ' + prefix)
+                roots = sorted({name.split('/', 1)[0] for name in kinds})
+                if len(roots) != 1:
+                    raise SystemExit('the archive does not hold exactly one root: ' + repr(roots))
+                selected_root = roots[0]
+                manifest_member = selected_root + '/manifest.json'
+                if kinds.get(manifest_member) != 'file':
+                    raise SystemExit('the archive does not hold the admitted manifest member: '
+                                     + manifest_member)
+                for member in members:
                     archive.extract(member, target)
-            roots = sorted({path.name for path in target.iterdir()})
-            if len(roots) != 1:
-                raise SystemExit('the archive does not hold exactly one root: ' + repr(roots))
-            manifests = sorted(target.rglob('manifest.json'))
-            if len(manifests) != 1:
-                raise SystemExit('the archive does not hold exactly one manifest: '
-                                 + repr([str(path) for path in manifests]))
-            manifest_path = manifests[0]
+            manifest_path = target / manifest_member
             manifest = json.loads(manifest_path.read_text())
-            if roots[0] != manifest.get('archive_root'):
+            if selected_root != manifest.get('archive_root'):
                 raise SystemExit('the archive root does not match the manifest')
             archived = manifest_path.parent / 'controls-evidence'
             if not archived.is_dir():
@@ -304,17 +336,45 @@ def main():
                                                 audit=audit)
             if envelope['reduction_sha256'] != result['reduction_sha256']:
                 raise SystemExit('the archived envelope produced a different stable reduction')
-            required = sorted(entry.name for entry in audit.rglob('*') if entry.is_file())
-            if not required:
-                raise SystemExit('the archived readback retained no classifier acquisition')
-            return {'root': roots[0], 'members': len(current['members']),
+            expected_ids = sorted(str(verdict.get('id'))
+                                  for verdict in (envelope.get('classifier') or {})
+                                  .get('verdicts') or [])
+            records = sorted(entry.name for entry in audit.rglob('*') if entry.is_file())
+            if len(records) < len(expected_ids) or not records:
+                raise SystemExit('the archived readback retained fewer acquisition records than '
+                                 'cases: ' + repr(records) + ' for ' + repr(expected_ids))
+            audit_inventory = package.producer_inventory(audit)
+            # Retain the original archive and metadata bytes, and the complete returned
+            # envelope bound to this stage rather than only a count of any files.
+            shutil.copyfile(args.archive, run / 'original-archive.tar.gz')
+            metadata = run / 'archive-metadata'
+            metadata.mkdir(exist_ok=True)
+            for name in package.ARCHIVE_METADATA:
+                shutil.copyfile(archived / name, metadata / name)
+            envelope_path = run / 'archive-envelope.json'
+            envelope_path.write_text(json.dumps(envelope, indent=2) + '\n')
+            return {'root': selected_root, 'manifest_member': manifest_member,
+                    'members': len(current['members']),
                     'documents': sorted(documents), 'archive': str(args.archive),
-                    'archive_sha256': observed, 'extracted_acquisition': str(audit),
-                    'extracted_acquisition_records': len(required),
-                    'documents_staged_scope': 'this readback hashes extracted bytes; '
-                                              'the package staged record is separate'}
+                    'archive_sha256': observed,
+                    'extraction_target': str(target),
+                    'extracted_acquisition': str(audit),
+                    'extracted_acquisition_records': len(records),
+                    'expected_verdict_ids': expected_ids,
+                    'audit_inventory_sha256': audit_inventory['inventory_sha256'],
+                    'envelope': str(envelope_path.relative_to(run)),
+                    'envelope_sha256': digest(envelope_path),
+                    'original_archive': 'original-archive.tar.gz',
+                    'metadata': sorted(str(row.relative_to(run))
+                                       for row in metadata.iterdir()),
+                    'documents_staged_scope': 'this readback hashes extracted bytes and keeps '
+                                              'the original archive bytes; the package staged '
+                                              'record is separate'}
 
-        attempt(run, record, 'archive-readback', observe_archive)
+        attempt(run, record, 'archive-readback', observe_archive,
+                archive=str(args.archive),
+                expected_archive_sha256=args.expected_archive_sha256,
+                extraction_target=str(target), audit_scope=str(audit))
     if args.receipt:
         def observe_receipt():
             """Validate a supplied receipt against the fresh reduction."""
