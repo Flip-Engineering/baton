@@ -466,8 +466,26 @@ def check_refs(values, stdout, db):
     check(body == entry + "\n", "refs.found.roundtrip", f"{body!r} != {entry!r}")
 
 
-def companion_marks(stdout, key):
-    return stdout.count(key + "=")
+def keyed_lines(stdout, key):
+    """The number of observation lines that are exactly this key's line, so a substring
+    elsewhere in the output cannot stand in for the observation."""
+    prefix = key + "="
+    return sum(1 for line in stdout.splitlines() if line.startswith(prefix))
+
+
+def read_json(values, key):
+    """The setup read-back of one case as its recorded object. The role and query
+    read-backs are JSON documents, so the assertions address their members rather than
+    matching text anywhere inside them."""
+    raw = values.get(key)
+    if raw is None:
+        check(False, key, "the setup did not report")
+        return None
+    try:
+        return json.loads(raw)
+    except ValueError as error:
+        check(False, key, f"{error}: {raw!r}")
+        return None
 
 
 def check_companion(values, stdout):
@@ -491,28 +509,45 @@ def check_companion(values, stdout):
         check(values.get(key) == want, key, f"{values.get(key)!r} != {want!r}")
     # The companion cases run on their own admitted query, since the earlier control
     # surfaces leave a cleanup intent on q1 and the intent read is open while any query or
-    # role owes something. The query and both role rows must be recorded, and each role
-    # read-back must carry the row that was asked for rather than an empty answer.
-    check("companion.query.error" not in values, "companion.query", values.get("companion.query.error"))
-    check("qc1" in values.get("companion.query", ""), "companion.query.readback", repr(values.get("companion.query")))
-    for key, keeper, phase in (
-        ("companion.owed.row", "/log/qc1-owned", "pending"),
-        ("companion.settled.row", "/log/qc1-settled", "complete"),
+    # role owes something. The admitted record and both role rows must be recorded, and the
+    # assertions address the recorded members: identity, keeper path and cleanup phase.
+    admitted = read_json(values, "companion.query")
+    if admitted is not None:
+        check(
+            admitted.get("query") == "qc1" and admitted.get("owner") == "root" and admitted.get("state") == "accepted",
+            "companion.query.fields",
+            repr(admitted),
+        )
+        check(admitted.get("version") == 1, "companion.query.version", repr(admitted.get("version")))
+        check(admitted.get("result") is None, "companion.query.result", repr(admitted.get("result")))
+    for key, role, incarnation, keeper, cleanup in (
+        ("companion.owed.row", "starter", "0", "/log/qc1-owned", "pending"),
+        ("companion.settled.row", "target", "1", "/log/qc1-settled", "complete"),
     ):
-        check(key + ".error" not in values, key, values.get(key + ".error"))
-        readback = values.get(key)
-        check(readback is not None, key, "the role setup did not report")
-        if readback is None:
+        row = read_json(values, key)
+        if row is None:
             continue
-        check(keeper in readback, key + ".keeper", repr(readback))
-        check(phase in readback, key + ".phase", repr(readback))
+        check(
+            row.get("query") == "qc1" and row.get("role") == role and row.get("incarnation") == incarnation,
+            key + ".identity",
+            repr(row),
+        )
+        check(row.get("keeperPath") == keeper, key + ".keeper", repr(row))
+        check(row.get("cleanupPhase") == cleanup, key + ".cleanup", repr(row))
     # A probed duty is what separates a settled reading from the short circuit a continuing
     # or missing reading takes, and the loop's continuation is marked so its own conclusion
-    # cannot be mistaken for the loop concluding on its own.
-    for key in ("companion.settled.live.probe", "companion.settled.done.probe", "companion.loop.continuation"):
-        check(companion_marks(stdout, key) == 1, key + ".reached.once", str(companion_marks(stdout, key)))
+    # cannot be mistaken for the loop concluding on its own. Each marker must be exactly one
+    # observation line, and each absent marker must be absent as a line.
+    for key, value in (
+        ("companion.settled.live.probe", "probed"),
+        ("companion.settled.done.probe", "probed"),
+        ("companion.loop.continuation", "reached"),
+    ):
+        check(keyed_lines(stdout, key) == 1, key + ".reached.once", str(keyed_lines(stdout, key)))
+        check(values.get(key) == value, key + ".value", repr(values.get(key)))
     for key in ("companion.owed.probe", "companion.missing.probe", "companion.refused.probe", "companion.loop.probe"):
-        check(companion_marks(stdout, key) == 0, key + ".not.reached", str(companion_marks(stdout, key)))
+        check(keyed_lines(stdout, key) == 0, key + ".not.reached", str(keyed_lines(stdout, key)))
+        check(key not in values, key + ".absent", repr(values.get(key)))
     # A refused binding is a host failure carried as a failed step with its code and text,
     # never a conclusion about the role.
     refused = values.get("companion.refused", "")
