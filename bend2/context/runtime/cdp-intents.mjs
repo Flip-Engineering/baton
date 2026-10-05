@@ -113,7 +113,35 @@ const BREAKPOINT_REQUESTS = Object.freeze(['Debugger.setBreakpointByUrl', 'Debug
 const BREAKPOINT_PARAMS = Object.freeze({
   'Debugger.setBreakpointByUrl': Object.freeze(['url', 'lineNumber', 'columnNumber']),
   'Debugger.setBreakpoint': Object.freeze(['location']),
+  'Debugger.removeBreakpoint': Object.freeze(['breakpointId']),
 });
+
+const isNonNegative = (value) => Number.isSafeInteger(value) && value >= 0;
+
+// The location metadata each breakpoint request requires. A request that names no
+// location refuses here rather than reaching the backend as an error.
+function admitBreakpointLocation(method, params) {
+  if (method === 'Debugger.setBreakpointByUrl') {
+    if (typeof params.url !== 'string' || params.url.length === 0) {
+      return refusal('breakpointLocationMissing', 'url');
+    }
+    if (!isNonNegative(params.lineNumber)) return refusal('breakpointLocationMissing', 'lineNumber');
+    if (params.columnNumber !== undefined && !isNonNegative(params.columnNumber)) {
+      return refusal('breakpointLocationMissing', 'columnNumber');
+    }
+    return { ok: true };
+  }
+  if (method === 'Debugger.setBreakpoint') {
+    if (typeof params.location !== 'object' || params.location === null || Array.isArray(params.location)) {
+      return refusal('breakpointLocationMissing', 'location');
+    }
+    return { ok: true };
+  }
+  if (typeof params.breakpointId !== 'string' || params.breakpointId.length === 0) {
+    return refusal('breakpointLocationMissing', 'breakpointId');
+  }
+  return { ok: true };
+}
 
 // Requests that execute target code. They are admitted only through the evaluate
 // intent, which advances the mutation generation before the send.
@@ -216,6 +244,8 @@ export function admitControlRequest(record, method, params = {}, effects = []) {
         return refusal('breakpointParamsUnsupported', `${method}.${key}`);
       }
     }
+    const location = admitBreakpointLocation(method, params);
+    if (!location.ok) return location;
   }
   // State-changing CDP requests serialize per runtime: a control request is refused while
   // a state-changing intent is in flight, so no second request reaches the target while

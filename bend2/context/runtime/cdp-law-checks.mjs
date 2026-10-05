@@ -357,6 +357,18 @@ export function laws(modules) {
         const withCondition = intents.admitControlRequest(running, 'Debugger.setBreakpoint',
           { location: { scriptId: '1', lineNumber: 3 }, condition: 'x > 1' }, ['controlRuntime']);
         assertEqual(withCondition.condition, 'breakpointConditionUnsupported', 'a located condition was admitted');
+        // Absent location metadata refuses here rather than passing on a table entry and
+        // failing later at the backend.
+        const noUrl = intents.admitControlRequest(running, 'Debugger.setBreakpointByUrl', {}, ['controlRuntime']);
+        assertEqual(noUrl.condition, 'breakpointLocationMissing', 'a breakpoint without a url was admitted');
+        assertEqual(noUrl.detail, 'url', 'the missing url member');
+        const noLine = intents.admitControlRequest(running, 'Debugger.setBreakpointByUrl',
+          { url: 'file:///a.js' }, ['controlRuntime']);
+        assertEqual(noLine.detail, 'lineNumber', 'a breakpoint without a line was admitted');
+        const noLocation = intents.admitControlRequest(running, 'Debugger.setBreakpoint', {}, ['controlRuntime']);
+        assertEqual(noLocation.detail, 'location', 'a located breakpoint without a location was admitted');
+        const noId = intents.admitControlRequest(running, 'Debugger.removeBreakpoint', {}, ['controlRuntime']);
+        assertEqual(noId.detail, 'breakpointId', 'a removal without an id was admitted');
         let thrown = null;
         try {
           intents.startupStopRequests([{ url: 'file:///a.js', lineNumber: 3, condition: 'x > 1' }]);
