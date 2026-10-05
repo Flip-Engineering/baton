@@ -119,32 +119,11 @@
   "law": "codec_law_an_unknown_chain_entry_refuses_even_with_every_grant"
  },
  {
-  "name": "codec-subject-slot-guard-is-removed",
-  "file": "bend2/src/context/codec.bend",
-  "find": "  dispatch_guarded(subject_slot_present(req, retained_operation), req, retained_operation, grants)",
-  "replace": "  dispatch_admission(req, request_operation_chain(req, retained_operation), grants)",
-  "law": "codec_law_an_unmapped_runtime_intent_cannot_hide_behind_an_override"
- },
- {
-  "name": "codec-retained-operation-is-available-to-every-subject",
-  "file": "bend2/src/context/codec.bend",
-  "find": "      Bool.pick(String, String.eq(kind, \"ref\"), retained, SNil{})))",
-  "replace": "      retained))",
-  "law": "codec_law_an_unknown_subject_cannot_acquire_ref_authority"
- },
- {
   "name": "codec-primary-is-not-read-from-the-chain",
   "file": "bend2/src/context/codec.bend",
   "find": "def primary_operation(chain: OpChain) -> String:\n  match chain:\n    case Opnone{}: SNil{}\n    case Opcons{head, +tail}: head",
   "replace": "def primary_operation(chain: OpChain) -> String:\n  match chain:\n    case Opnone{}: SNil{}\n    case Opcons{+head, +tail}: SNil{}",
   "law": "codec_law_the_primary_operation_comes_from_the_chain"
- },
- {
-  "name": "codec-chain-drops-the-override",
-  "file": "bend2/src/context/codec.bend",
-  "find": "  chain_append(chain_append(chain_named(subject_slot(req, retained_operation)), Ops.subject_secondary(req)), Ops.request_override_operation(req))",
-  "replace": "  chain_append(chain_named(subject_slot(req, retained_operation)), Ops.subject_secondary(req))",
-  "law": "codec_law_the_chain_second_entry_is_the_override"
  },
  {
   "name": "codec-ref-required-uses-projection-names",
@@ -173,13 +152,6 @@
   "find": "    case Robj{members}: request_conv_ok(raw_to_json(v))",
   "replace": "    case Robj{+members}: RtAbsent{}",
   "law": "codec_law_a_valid_object_request_frame_is_accepted"
- },
- {
-  "name": "codec-non-u32-request-number-admitted",
-  "file": "bend2/src/context/codec.bend",
-  "find": "    case None{}: JcRefused{\"nonU32NumberInRequest\"}",
-  "replace": "    case None{}: JcJson{J.Jint{0}}",
-  "law": "codec_law_a_non_u32_request_number_refuses"
  },
  {
   "name": "codec-ref-closed-set-is-not-checked",
@@ -222,5 +194,47 @@
   "find": "    case EnvRefused{condition}: FdRefused{Context.RfValidation{}, condition}",
   "replace": "    case EnvRefused{condition}: Bool.pick(FrameDecision, meta_accepted(m), FdRefused{Context.RfValidation{}, condition}, FdRefused{Context.RfValidation{}, meta_text(m)})",
   "law": "codec_law_an_envelope_refusal_wins_over_a_metadata_defect"
+ },
+ {
+  "name": "codec-subject-chain-guard-is-removed",
+  "file": "bend2/src/context/codec.bend",
+  "find": "  dispatch_guarded(subject_chain_present(req, retained_operations), req, retained_operations, grants)",
+  "replace": "  dispatch_admission(req, request_operation_chain(req, retained_operations), grants)",
+  "law": "codec_law_an_unmapped_runtime_intent_cannot_hide_behind_an_override"
+ },
+ {
+  "name": "codec-chain-drops-the-override",
+  "file": "bend2/src/context/codec.bend",
+  "find": "  chain_append(chain_append(subject_chain(req, retained_operations), Ops.subject_secondary(req)), Ops.request_override_operation(req))",
+  "replace": "  chain_append(subject_chain(req, retained_operations), Ops.subject_secondary(req))",
+  "law": "codec_law_the_chain_second_entry_is_the_override"
+ },
+ {
+  "name": "codec-retained-operations-are-available-to-every-subject",
+  "file": "bend2/src/context/codec.bend",
+  "find": "      Bool.pick(OpChain, String.eq(kind, \"ref\"), ss_chain(retained_operations), Opnone{})))",
+  "replace": "      ss_chain(retained_operations)))",
+  "law": "codec_law_an_unknown_subject_cannot_acquire_ref_authority"
+ },
+ {
+  "name": "codec-object-wrapper-is-dropped",
+  "file": "bend2/src/context/codec.bend",
+  "find": "    case JcJson{value}: JcJson{J.Jobj{value}}",
+  "replace": "    case JcJson{value}: JcJson{value}",
+  "law": "codec_law_an_empty_object_request_round_trips_through_the_converter"
+ },
+ {
+  "name": "codec-number-decoder-is-bypassed",
+  "file": "bend2/src/context/codec.bend",
+  "find": "def number_conv(+token: String) -> JsonConv:\n  uint_conv(Uint.finish(Uint.feed(token, Uint.UintStart{})))",
+  "replace": "def number_conv(+token: String) -> JsonConv:\n  JcJson{J.Jint{0}}",
+  "law": "codec_law_a_non_u32_request_number_refuses"
+ },
+ {
+  "name": "codec-decoder-refusal-is-admitted",
+  "file": "bend2/src/context/codec.bend",
+  "find": "    case Uint.UintRefused{+reason}: JcRefused{\"nonU32NumberInRequest\"}",
+  "replace": "    case Uint.UintRefused{+reason}: JcJson{J.Jint{0}}",
+  "law": "codec_law_a_non_u32_request_number_refuses"
  }
 ]

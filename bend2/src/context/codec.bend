@@ -20,6 +20,7 @@ import ./contracts.bend as Context
 import ./request.bend as Req
 import ./operations.bend as Ops
 import ../git/text.bend as Tx
+import ../json/uint-decoder.bend as Uint
 import ./engines.bend as Eng
 import ./refs.bend as Refs
 import ./snapshot.bend as Snap
@@ -379,26 +380,32 @@ def grants_ss(xs: Context.Effects) -> Eng.SS:
     case Context.EpsNone{}: Eng.ss_empty()
     case Context.EpsCons{+head, +tail}: Eng.union_append(grants_ss(tail), Eng.ss_one(Context.effect_name(head)))
 
-def subject_slot(+req: J.Json, retained: String) -> String:
-  subject_slot_of(Ops.request_operation(req), Ops.request_subject_kind(req), Ops.request_intent(req), retained)
+def ss_chain(xs: Eng.SS) -> OpChain:
+  match xs:
+    case Eng.SSNil{}: Opnone{}
+    case Eng.SSCons{+head, +tail}: Opcons{head, ss_chain(tail)}
 
 # A subject this lane does not map is resolved through Core's closed intent mapping;
-# only a `ref` subject may use the retained selector's operation. Any other
-# unmapped subject leaves the slot empty, so its work cannot be replaced by an
-# override.
-def subject_slot_of(+mapped: String, +kind: String, +intent: String, +retained: String) -> String:
-  Bool.pick(String, String.is_empty(mapped), intent_or_retained(kind, intent, retained), mapped)
+# only a `ref` subject may use the retained selector's operations, and it uses the
+# whole authenticated chain so a model ref cannot lose one of its obligations. Any
+# other unmapped subject leaves the subject chain empty, so its work cannot be
+# replaced by an override.
+def subject_chain(+req: J.Json, retained_operations: Eng.SS) -> OpChain:
+  chain_subject(Ops.request_operation(req), Ops.request_subject_kind(req), Ops.request_intent(req), retained_operations)
 
-def intent_or_retained(+kind: String, +intent: String, +retained: String) -> String:
-  Bool.pick(String, String.eq(kind, "runtime"), Eng.runtime_operation(intent),
-    Bool.pick(String, String.eq(kind, "query-control"), Eng.query_control_operation(intent),
-      Bool.pick(String, String.eq(kind, "ref"), retained, SNil{})))
+def chain_subject(+mapped: String, +kind: String, +intent: String, +retained_operations: Eng.SS) -> OpChain:
+  Bool.pick(OpChain, String.is_empty(mapped), intent_or_retained(kind, intent, retained_operations), chain_named(mapped))
 
-def subject_slot_present(+req: J.Json, retained: String) -> Bool:
-  Bool.pick(Bool, String.is_empty(subject_slot(req, retained)), False{}, True{})
+def intent_or_retained(+kind: String, +intent: String, +retained_operations: Eng.SS) -> OpChain:
+  Bool.pick(OpChain, String.eq(kind, "runtime"), chain_named(Eng.runtime_operation(intent)),
+    Bool.pick(OpChain, String.eq(kind, "query-control"), chain_named(Eng.query_control_operation(intent)),
+      Bool.pick(OpChain, String.eq(kind, "ref"), ss_chain(retained_operations), Opnone{})))
 
-def request_operation_chain(+req: J.Json, retained_operation: String) -> OpChain:
-  chain_append(chain_append(chain_named(subject_slot(req, retained_operation)), Ops.subject_secondary(req)), Ops.request_override_operation(req))
+def subject_chain_present(+req: J.Json, retained_operations: Eng.SS) -> Bool:
+  Bool.pick(Bool, chain_is_empty(subject_chain(req, retained_operations)), False{}, True{})
+
+def request_operation_chain(+req: J.Json, retained_operations: Eng.SS) -> OpChain:
+  chain_append(chain_append(subject_chain(req, retained_operations), Ops.subject_secondary(req)), Ops.request_override_operation(req))
 
 # Core's actual verdict names the refusal: no operation, an operation outside the
 # closed set, or the first required effect the caller did not grant. An admit
@@ -424,20 +431,20 @@ def dispatch_profile(v: Req.Verdict, +chain: OpChain, +grants: Context.Effects) 
 def dispatch_admission(+req: J.Json, +chain: OpChain, +grants: Context.Effects) -> Admission:
   dispatch_profile(Req.Context.request_validate(req), chain, grants)
 
-def dispatch_guarded(present: Bool, +req: J.Json, retained: String, +grants: Context.Effects) -> Admission:
+def dispatch_guarded(present: Bool, +req: J.Json, retained_operations: Eng.SS, +grants: Context.Effects) -> Admission:
   Bool.pick(Admission, present,
-    dispatch_admission(req, request_operation_chain(req, retained), grants),
+    dispatch_admission(req, request_operation_chain(req, retained_operations), grants),
     ARefused{Context.RfValidation{}, "unknownOperation"})
 
 # The callable entry. It takes the request, the retained selector's operation for a
 # ref subject, and the caller's grants; the chain, the required subset and the
 # admission answer are all derived here, so an arbitrary chain, verdict or required
 # set cannot be substituted.
-def codec_dispatch(+req: J.Json, retained_operation: String, +grants: Context.Effects) -> Admission:
-  dispatch_guarded(subject_slot_present(req, retained_operation), req, retained_operation, grants)
+def codec_dispatch(+req: J.Json, retained_operations: Eng.SS, +grants: Context.Effects) -> Admission:
+  dispatch_guarded(subject_chain_present(req, retained_operations), req, retained_operations, grants)
 
 law codec_law_the_primary_operation_comes_from_the_chain:
-  {primary_operation(request_operation_chain(Request_sample(), "")) == "sourceAnalysis" : String}
+  {primary_operation(request_operation_chain(Request_sample(), Eng.ss_empty())) == "sourceAnalysis" : String}
 
 def codec_law_the_primary_operation_comes_from_the_chain():
   {==}
@@ -455,43 +462,43 @@ def codec_law_a_model_code_access_chain_starts_with_the_load():
   {==}
 
 law codec_law_the_chain_carries_the_override_after_the_subject:
-  {primary_operation(request_operation_chain(Join_override_sample(), "")) == "codeAccessJoin" : String}
+  {primary_operation(request_operation_chain(Join_override_sample(), Eng.ss_empty())) == "codeAccessJoin" : String}
 
 def codec_law_the_chain_carries_the_override_after_the_subject():
   {==}
 
 law codec_law_the_chain_second_entry_is_the_override:
-  {chain_second(request_operation_chain(Join_override_sample(), "")) == "toolsProbe" : String}
+  {chain_second(request_operation_chain(Join_override_sample(), Eng.ss_empty())) == "toolsProbe" : String}
 
 def codec_law_the_chain_second_entry_is_the_override():
   {==}
 
 law codec_law_an_absent_override_leaves_a_single_entry_chain:
-  {chain_count(request_operation_chain(Request_sample(), "")) == 1 : U32}
+  {chain_count(request_operation_chain(Request_sample(), Eng.ss_empty())) == 1 : U32}
 
 def codec_law_an_absent_override_leaves_a_single_entry_chain():
   {==}
 
 law codec_law_a_runtime_intent_resolves_through_core:
-  {primary_operation(request_operation_chain(Runtime_sample(), "")) == "runtimeObserve" : String}
+  {primary_operation(request_operation_chain(Runtime_sample(), Eng.ss_empty())) == "runtimeObserve" : String}
 
 def codec_law_a_runtime_intent_resolves_through_core():
   {==}
 
 law codec_law_an_unmapped_runtime_intent_cannot_hide_behind_an_override:
-  {codec_dispatch(Unmapped_runtime_override_sample(), "", Context.two_effects(Context.EfExecuteTarget{}, Context.EfControlRuntime{})) == ARefused{Context.RfValidation{}, "unknownOperation"} : Admission}
+  {codec_dispatch(Unmapped_runtime_override_sample(), Eng.ss_empty(), Context.two_effects(Context.EfExecuteTarget{}, Context.EfControlRuntime{})) == ARefused{Context.RfValidation{}, "unknownOperation"} : Admission}
 
 def codec_law_an_unmapped_runtime_intent_cannot_hide_behind_an_override():
   {==}
 
 law codec_law_a_ref_without_a_retained_selector_cannot_hide_behind_an_override:
-  {codec_dispatch(Ref_override_sample(), "", Context.one_effect(Context.EfExecuteTarget{})) == ARefused{Context.RfValidation{}, "unknownOperation"} : Admission}
+  {codec_dispatch(Ref_override_sample(), Eng.ss_empty(), Context.one_effect(Context.EfExecuteTarget{})) == ARefused{Context.RfValidation{}, "unknownOperation"} : Admission}
 
 def codec_law_a_ref_without_a_retained_selector_cannot_hide_behind_an_override():
   {==}
 
 law codec_law_a_ref_chain_uses_the_retained_selector_operation:
-  {primary_operation(request_operation_chain(Ref_override_sample(), "sourceAnalysis")) == "sourceAnalysis" : String}
+  {primary_operation(request_operation_chain(Ref_override_sample(), Eng.ss_one("sourceAnalysis"))) == "sourceAnalysis" : String}
 
 def codec_law_a_ref_chain_uses_the_retained_selector_operation():
   {==}
@@ -551,7 +558,7 @@ def Join_override_sample() -> J.Json:
     J.Jpair{"options", J.Jobj{J.Jpair{"tools", J.Jobj{J.Jnil{}}, J.Jnil{}}}, J.Jnil{}}}}}}
 
 law codec_law_an_override_adds_execute_target_without_dropping_a_plan:
-  {Eng.admit_operations(chain_ss(request_operation_chain(Join_override_sample(), "")), grants_ss(Context.one_effect(Context.EfPlanTargetSql{}))) == Eng.AdMissingEffect{"executeTarget"} : Eng.Admission}
+  {Eng.admit_operations(chain_ss(request_operation_chain(Join_override_sample(), Eng.ss_empty())), grants_ss(Context.one_effect(Context.EfPlanTargetSql{}))) == Eng.AdMissingEffect{"executeTarget"} : Eng.Admission}
 
 def codec_law_an_override_adds_execute_target_without_dropping_a_plan():
   {==}
@@ -581,25 +588,25 @@ def codec_law_an_ungranted_plan_refuses():
   {==}
 
 law codec_law_a_refused_profile_refuses_before_the_operation_is_consulted:
-  {dispatch_admission(RawRefused_sample(), request_operation_chain(Request_sample(), ""), Context.no_effects()) == ARefused{Context.RfValidation{}, "requestNotObject"} : Admission}
+  {dispatch_admission(RawRefused_sample(), request_operation_chain(Request_sample(), Eng.ss_empty()), Context.no_effects()) == ARefused{Context.RfValidation{}, "requestNotObject"} : Admission}
 
 def codec_law_a_refused_profile_refuses_before_the_operation_is_consulted():
   {==}
 
 law codec_law_an_admitted_grant_free_operation_dispatches:
-  {dispatch_admission(Request_sample(), request_operation_chain(Request_sample(), ""), Context.no_effects()) == ADispatch{"sourceAnalysis"} : Admission}
+  {dispatch_admission(Request_sample(), request_operation_chain(Request_sample(), Eng.ss_empty()), Context.no_effects()) == ADispatch{"sourceAnalysis"} : Admission}
 
 def codec_law_an_admitted_grant_free_operation_dispatches():
   {==}
 
 law codec_law_tools_and_subject_obligations_both_apply:
-  {codec_dispatch(Join_override_sample(), "", Context.one_effect(Context.EfPlanTargetSql{})) == ARefused{Context.RfValidation{}, "effectNotGranted"} : Admission}
+  {codec_dispatch(Join_override_sample(), Eng.ss_empty(), Context.one_effect(Context.EfPlanTargetSql{})) == ARefused{Context.RfValidation{}, "effectNotGranted"} : Admission}
 
 def codec_law_tools_and_subject_obligations_both_apply():
   {==}
 
 law codec_law_a_runtime_observe_needs_no_control_grant:
-  {codec_dispatch(Runtime_sample(), "", Context.no_effects()) == ADispatch{"runtimeObserve"} : Admission}
+  {codec_dispatch(Runtime_sample(), Eng.ss_empty(), Context.no_effects()) == ADispatch{"runtimeObserve"} : Admission}
 
 def codec_law_a_runtime_observe_needs_no_control_grant():
   {==}
@@ -1225,20 +1232,34 @@ def pair_then(rest: JsonConv, +value: J.Json, key: String) -> JsonConv:
     case JcJson{rest_value}: JcJson{J.Jpair{key, value, rest_value}}
     case JcRefused{condition}: JcRefused{condition}
 
-def number_conv(m: Maybe<&2, U32>) -> JsonConv:
-  match m:
-    case Some{value}: JcJson{J.Jint{value}}
-    case None{}: JcRefused{"nonU32NumberInRequest"}
+def uint_conv(r: Uint.UintResult) -> JsonConv:
+  match r:
+    case Uint.UintAccepted{value}: JcJson{J.Jint{value}}
+    case Uint.UintRefused{+reason}: JcRefused{"nonU32NumberInRequest"}
+
+# The number conversion runs the first-party qualified U32 decoder over the exact
+# document token, so admission is the canonical unsigned decimal domain itself
+# rather than a host parse whose edge behaviour is assumed.
+def number_conv(+token: String) -> JsonConv:
+  uint_conv(Uint.finish(Uint.feed(token, Uint.UintStart{})))
+
+def object_conv(members: RawMembers) -> JsonConv:
+  obj_wrap(members_conv(members))
+
+def obj_wrap(c: JsonConv) -> JsonConv:
+  match c:
+    case JcJson{value}: JcJson{J.Jobj{value}}
+    case JcRefused{condition}: JcRefused{condition}
 
 def raw_to_json(+v: RawValue) -> JsonConv:
   match v:
     case Rnull{}: JcJson{J.Jnull{}}
     case Rtrue{}: JcJson{J.Jtrue{}}
     case Rfalse{}: JcJson{J.Jfalse{}}
-    case Rnum{token}: number_conv(U32.read(token))
+    case Rnum{token}: number_conv(token)
     case Rstr{value}: JcJson{J.Jstr{value}}
     case Rarr{items}: array_conv(items, AMvalue{})
-    case Robj{members}: members_conv(members)
+    case Robj{members}: object_conv(members)
 
 def request_conv_ok(c: JsonConv) -> RequestText:
   match c:
@@ -1525,7 +1546,7 @@ def codec_law_an_unknown_retained_operation_refuses():
   {==}
 
 law codec_law_an_unknown_subject_cannot_acquire_ref_authority:
-  {codec_dispatch(Unknown_subject_sample(), "sourceAnalysis", Context.no_effects()) == ARefused{Context.RfValidation{}, "unknownOperation"} : Admission}
+  {codec_dispatch(Unknown_subject_sample(), Eng.ss_one("sourceAnalysis"), Context.no_effects()) == ARefused{Context.RfValidation{}, "unknownOperation"} : Admission}
 
 def codec_law_an_unknown_subject_cannot_acquire_ref_authority():
   {==}
@@ -1686,6 +1707,30 @@ def codec_law_a_decoded_reference_with_a_wrong_type_field_refuses():
 
 # --- closed frame shapes through the actual conversion ----------------------
 
+law codec_law_a_model_ref_keeps_both_retained_operations:
+  {chain_second(request_operation_chain(Ref_override_sample(), Eng.ss_two("modelLoad", "codeAccessJoin"))) == "codeAccessJoin" : String}
+
+def codec_law_a_model_ref_keeps_both_retained_operations():
+  {==}
+
+law codec_law_a_model_ref_chain_starts_with_its_retained_load:
+  {primary_operation(request_operation_chain(Ref_override_sample(), Eng.ss_two("modelLoad", "codeAccessJoin"))) == "modelLoad" : String}
+
+def codec_law_a_model_ref_chain_starts_with_its_retained_load():
+  {==}
+
+law codec_law_a_nested_object_request_round_trips_through_the_converter:
+  {frame_text(frame_decision(frame_envelope(nested_request_rows()))) == "{\"id\":7,\"query\":\"q1\",\"requestCanonical\":\"{\\\"a\\\":[1,2],\\\"b\\\":{\\\"c\\\":null},\\\"s\\\":\\\"x\\\"}\",\"tool\":\"context-query\",\"version\":1}" : String}
+
+def codec_law_a_nested_object_request_round_trips_through_the_converter():
+  {==}
+
+law codec_law_an_empty_object_request_round_trips_through_the_converter:
+  {frame_text(frame_decision(frame_envelope(empty_request_rows()))) == "{\"id\":7,\"query\":\"q1\",\"requestCanonical\":\"{}\",\"tool\":\"context-query\",\"version\":1}" : String}
+
+def codec_law_an_empty_object_request_round_trips_through_the_converter():
+  {==}
+
 law codec_law_a_valid_object_request_frame_is_accepted:
   {frame_text(frame_decision(frame_envelope(query_frame_rows()))) == "{\"id\":-1,\"query\":\"q1\",\"requestCanonical\":\"{\\\"version\\\":1}\",\"tool\":\"context-query\",\"version\":1}" : String}
 
@@ -1790,6 +1835,39 @@ def unknown_params_rows() -> Req.Rows:
     text_row("5", "4", "name", "context-engines"),
     object_row("6", "4", "arguments"),
     text_row("7", "4", "extra", "x")])
+
+def array_row(id: String, parent: String, key: String) -> Req.Row:
+  Req.Row{id, parent, "array", row_hex(key), SNil{}}
+
+def nested_request_rows() -> Req.Rows:
+  rows_of([
+    object_row("0", SNil{}, SNil{}),
+    text_row("1", "0", "jsonrpc", "2.0"),
+    text_row("2", "0", "method", "tools/call"),
+    number_row("3", "0", "id", "7"),
+    object_row("4", "0", "params"),
+    text_row("5", "4", "name", "context-query"),
+    object_row("6", "4", "arguments"),
+    text_row("7", "6", "query", "q1"),
+    object_row("8", "6", "request"),
+    text_row("9", "8", "s", "x"),
+    array_row("10", "8", "a"),
+    number_row("11", "10", "0", "1"),
+    number_row("12", "10", "1", "2"),
+    object_row("13", "8", "b"),
+    null_row("14", "13", "c")])
+
+def empty_request_rows() -> Req.Rows:
+  rows_of([
+    object_row("0", SNil{}, SNil{}),
+    text_row("1", "0", "jsonrpc", "2.0"),
+    text_row("2", "0", "method", "tools/call"),
+    number_row("3", "0", "id", "7"),
+    object_row("4", "0", "params"),
+    text_row("5", "4", "name", "context-query"),
+    object_row("6", "4", "arguments"),
+    text_row("7", "6", "query", "q1"),
+    object_row("8", "6", "request")])
 
 def text_request_rows() -> Req.Rows:
   rows_of([
