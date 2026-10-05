@@ -98,6 +98,23 @@ assertion passed; a refused environment exits 3. The runner persists each
 child's full stdout and stderr plus status, signal, error, timeout, byte counts
 and any refusal line, and writes `run-all.summary.json` separately.
 
+## Authoritative API of record
+
+The candidate expectations target the CDP lane's authoritative API report
+`cdp-fixture-api-8c4fa004`, source commit
+`8c4fa004bce8e7fc3cb1ed3df942e5d1a5256683`, tree
+`8963a375427815a5da33960cfad49cd894ab6875`, with `cdp-intents.mjs` sha256
+`bbfc2bbbd81cef2aea5cc76538ac354a5e1f8a69a9206178e7ca45bec45b4bbc`: exports
+`admitReadRequest`, `admitControlRequest`, `admitIntent`, `startupStopRequests`;
+no `admitRequest` and no public breakpoint intent; a conditional breakpoint
+refuses `breakpointConditionUnsupported`; unknown breakpoint parameters refuse
+`breakpointParamsUnsupported`; an absent location refuses
+`breakpointLocationMissing`; control with `controlRuntime` refuses `runtimeBusy`
+while an evaluation is pending; `session.control` refuses before the transport;
+and the release intent stays admitted while an evaluation is pending. A remote
+run that observes a different name is a real disagreement to report, not a
+fixture defect.
+
 ## Status and coverage limits
 
 Authored source; not run or parsed on the operator laptop. Unvalidated until an

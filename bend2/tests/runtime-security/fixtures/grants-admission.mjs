@@ -96,7 +96,35 @@ const observations = {
     workerInner('Runtime.runIfWaitingForDebugger'), CONTROL)),
   workerInnerEvaluate: safe(() => intents.admitControlRequest(running, 'NodeWorker.sendMessageToWorker',
     workerInner('Runtime.evaluate'), CONTROL)),
+  // The owner's release stays available while an evaluation is pending.
+  releaseWhilePendingGranted: safe(() => intents.admitIntent(pending, 'release',
+    { effects: CONTROL, signal: 'SIGTERM' })),
 };
+
+// Session-level checks: admission refuses before the transport is required, so
+// the refusal is named and no outbound frame exists. A valid granted request
+// instead reaches the transport step, which reports transportMissing on a
+// session with no connection.
+const sessionInstance = session.createAdapterSession({ runtime: 'rt:fixture', adapter: 'fixture-adapter', incarnation: '0' });
+const sessionControlProbe = async (method, params) => {
+  try {
+    await sessionInstance.control({ method, params, effects: CONTROL });
+    return { ok: true, frames: sessionInstance.frames().length };
+  } catch (error) {
+    return { refused: error.condition ?? error.name ?? String(error), frames: sessionInstance.frames().length };
+  }
+};
+observations.sessionControlCondition = await sessionControlProbe('Debugger.setBreakpointByUrl', conditionParams);
+observations.sessionControlLocationMissing = await sessionControlProbe('Debugger.setBreakpoint', {});
+observations.sessionControlValid = await sessionControlProbe('Debugger.setBreakpointByUrl', breakpointParams);
+observations.sessionSendRefusal = await (async () => {
+  try {
+    await sessionInstance.send({ method: 'Runtime.runIfWaitingForDebugger' });
+    return { ok: true };
+  } catch (error) {
+    return { refused: error.condition ?? error.name ?? String(error), frames: sessionInstance.frames().length };
+  }
+})();
 
 if (historical) {
   const historicalModule = requireHistoricalApi(intents, environment.pinName);
@@ -144,6 +172,20 @@ if (historical) {
     typeof observations.startupStopWithCondition?.threw === 'string', observations.startupStopWithCondition);
   reporter.check('worker:inner-control-refused', observations.workerInnerControl.ok === false, observations.workerInnerControl);
   reporter.check('worker:inner-evaluate-refused', observations.workerInnerEvaluate.ok === false, observations.workerInnerEvaluate);
+  reporter.check('release:admitted-while-pending-with-grants',
+    observations.releaseWhilePendingGranted.ok === true, observations.releaseWhilePendingGranted);
+  reporter.check('session:condition-refused-before-transport',
+    observations.sessionControlCondition.refused === 'breakpointConditionUnsupported'
+    && observations.sessionControlCondition.frames === 0, observations.sessionControlCondition);
+  reporter.check('session:absent-location-refused-before-transport',
+    observations.sessionControlLocationMissing.refused === 'breakpointLocationMissing'
+    && observations.sessionControlLocationMissing.frames === 0, observations.sessionControlLocationMissing);
+  reporter.check('session:valid-control-reaches-transport',
+    observations.sessionControlValid.refused === 'transportMissing'
+    && observations.sessionControlValid.frames === 0, observations.sessionControlValid);
+  reporter.check('session:read-path-refuses-control-before-transport',
+    observations.sessionSendRefusal.refused === 'controlRequiresGrant'
+    && observations.sessionSendRefusal.frames === 0, observations.sessionSendRefusal);
 }
 
 finish(environment, 'grants-admission.result.json', reporter.finalize({ historical, observations }));
