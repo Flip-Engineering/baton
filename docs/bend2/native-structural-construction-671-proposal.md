@@ -1,6 +1,7 @@
 # Native structural construction for #671
 
-Status: successor proposal for six independent reviews before implementation.
+Status: docs-only clarification successor to reviewed 71695806; independent
+delta assessment remains required before implementation.
 This is the independently composable structural part of `a0ee30bb`. That
 proposal and its original verdicts remain retained. Direct startup has a separate
 repair and review boundary, described below. The read repair remains independently
@@ -16,7 +17,9 @@ recruit PLAYER PARENT HARNESS MODEL EFFORT REPO BRANCH PATH BASE
   [--section ENSEMBLE OWNER SECTION]...
 ```
 
-Existing forms retain their behavior. The extended forms produce one native
+Existing forms retain their behavior, including the plain Ensemble owner-conflict
+error described below. Section groups require the explicit-coupling Ensemble
+form shown above. The extended forms produce one native
 result for the complete request. Any recruit extension requires explicit `--role`;
 parent and harness remain explicit ordinary recruit arguments. Preserve all
 currently supported harness assignments. These commands configure structure and
@@ -34,6 +37,11 @@ Coupling is explicitly `loose` or `tight`. A matching owner may update coupling
 and each explicitly declared Section capability; omitted Sections and membership
 remain unchanged. A different existing owner refuses before any change.
 An empty Section capability refuses. Ownership is independent of membership.
+The plain no-option `ensemble ID OWNER COUPLING` retains its current constraint
+error and transaction rollback on a different existing owner. The extended form
+with Section groups instead returns the structural refusal defined below. Both
+paths preserve prior values. Tests must distinguish their error surfaces; this
+slice does not silently change the legacy form.
 
 Extended recruit registers one child and its explicit role. The parent must
 already exist; the operation neither inserts nor promotes the parent. Every
@@ -66,7 +74,11 @@ membership clause. Extract shared expression forms from existing admission
 helpers where needed, and define literal helpers through the same predicates.
 Preserve existing standalone command admission and existing stopped-session
 grouping behavior. Evaluate effective owner roles from proposed facts when the
-operation creates those facts, and otherwise from stored facts.
+operation creates those facts, and otherwise from stored facts. In this grammar,
+Ensemble owners already exist and their roles come from stored facts. Recruit
+proposes only its child assignment/role and memberships; it creates no Ensemble.
+A passing preflight never authorizes writes: the final frozen decision evaluates
+current facts after `BEGIN IMMEDIATE` and before the first structural mutation.
 
 `Store.commit` currently commits before refusal classification. Existing refusal
 rows do not roll back preceding writes. Therefore each write must consult the
@@ -107,6 +119,41 @@ retained path/branch/base and inspection outcome. Refusals exit 2; host failures
 exit nonzero with the actual failing stage. Configuration success states that
 startup was not requested. It provides ordinary inspection and dispatch guidance
 without claiming readiness, task receipt or completed work.
+
+## Result wire shape and exit classification
+
+The extended native entry emits exactly one JSON object followed by a newline.
+Configured success goes to stdout and exits 0. Refusal or host failure goes to
+stderr and exits nonzero. No intermediate helper emits a row or diagnostic that
+precedes this object. MCP preserves the complete object and exit disposition.
+
+Every result carries `type: "structural-result"`, `status`, `phase`, `subject`,
+`requested`, `structure`, `workspace`, `condition` and `next`. `structure` holds
+committed facts or null when unavailable. `workspace` holds its disposition
+(`notRequested`, `created`, `unchanged`, `failed` or `unknown`), retained
+path/branch/stored base and observed repository/branch/HEAD/dirt when available,
+plus creation and inspection errors separately. `next` is an array of literal
+native argv arrays; the empty array means no corrective operation is required.
+A configured exact retry reports `workspace.disposition: "unchanged"`; successful
+new creation reports `created`. Neither substitutes current HEAD for stored base.
+
+Admission refusals begin exactly with `{"error":"structural-refused",` and then
+carry the common fields. Their `status` is `preflightRefused` or
+`registrationRefused`, and `phase` is respectively `preflight` or `registration`.
+Register that exact leading prefix in `Store.refused`. The extended preflight
+entry uses the same classifier and exits 2; final transaction classification
+passes the sole saved result through that classifier and also exits 2. The
+`condition` names the failed clause and `next` supplies its corrective operation.
+
+Configured success has no `error` field and uses `status: "configured"` and
+`phase: "registration"`. Host failure begins with
+`{"error":"structural-host-failure",` and uses `workspaceFailed` or
+`registrationFailed` with the corresponding phase. It additionally preserves
+`hostError: {stage, code, detail}` from the failed operation. Host failure is
+classified by its typed internal result, exits with that nonzero host code, and
+is not included in the admission-refusal prefix rule. SQLite errors roll back
+before the one registration-failure object is assembled. Laws and host tests
+must qualify both JSON shape and exit/channel behavior through the real entry.
 
 ## Discovery and MCP
 
