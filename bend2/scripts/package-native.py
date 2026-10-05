@@ -592,8 +592,12 @@ def runtime_list_digest(files):
         require(not relative.is_absolute() and '..' not in relative.parts,
                 'A runtime inventory path escapes its root: ' + raw)
         canonical = relative.as_posix()
-        require(canonical == raw and '//' not in canonical and not canonical.startswith('./'),
+        require(canonical == raw and '//' not in canonical and not canonical.startswith('./')
+                and not canonical.endswith('/') and '' not in relative.parts,
                 'A runtime inventory path is not canonical: ' + raw)
+        digest = entry['sha256']
+        require(len(digest) == 64 and all(character in '0123456789abcdef' for character in digest),
+                'A runtime inventory digest is not a lowercase sha256: ' + raw)
         require(canonical not in seen,
                 'A runtime inventory names the same path twice: ' + canonical)
         seen.add(canonical)
@@ -605,12 +609,14 @@ def runtime_list_digest(files):
 def runtime_set_digest(compiler):
     """Digest the installed Bend library files beside a compiler executable."""
     runtime = compiler.parent.parent / 'bend2'
+    if runtime.is_symlink():
+        raise RuntimeError('The installed runtime root is a symlink: ' + str(runtime))
     if not runtime.is_dir():
         return None
     rows = []
     for path in sorted(runtime.rglob('*')):
-        if path.is_symlink():
-            return None
+        require(not path.is_symlink(),
+                'The installed runtime holds a symlink: ' + str(path.relative_to(runtime)))
         if path.is_file():
             rows.append(path.relative_to(runtime).as_posix() + '\t' + sha256(path))
     return hashlib.sha256('\n'.join(sorted(rows)).encode('utf-8')).hexdigest()
@@ -677,6 +683,7 @@ def classify_control(case, result, streams, baseline, evidence_root, source, com
 
     def settle(outcome, reason):
         """Write what this terminal path actually produced, or say it is unknown."""
+        nonlocal secondary
         if stream_dir is None:
             return
         try:
@@ -695,7 +702,6 @@ def classify_control(case, result, streams, baseline, evidence_root, source, com
                                           else hashlib.sha256(err_bytes).hexdigest()),
                         'request_sha256': hashlib.sha256(request_bytes).hexdigest()})
         except BaseException as write_error:
-            nonlocal secondary
             secondary = secondary or repr(write_error)
 
     handles = []
@@ -704,7 +710,7 @@ def classify_control(case, result, streams, baseline, evidence_root, source, com
             if path is not None:
                 handles.append(path.open('wb'))
     except BaseException as error:
-        open_error = repr(error)
+        open_error = error
         while handles:
             try:
                 handles.pop().close()
@@ -712,9 +718,8 @@ def classify_control(case, result, streams, baseline, evidence_root, source, com
                 secondary = secondary or repr(close_error)
     completed = None
     if open_error is not None:
-        settle('stream-open-error', open_error)
-        raise RuntimeError('The classification streams could not be opened: ' + open_error
-                           + ('; secondary: ' + str(secondary) if secondary else ''))
+        settle('stream-open-error', repr(open_error))
+        raise open_error
     if spawn_error is None:
         try:
             launch_attempted = True
@@ -1261,6 +1266,9 @@ def controls_evidence(directory, initial, compiler, audit=None, destination=None
     present = {member['path']: member['sha256'] for member in supplied['members']}
     if archived:
         bound = documents or {}
+        require(set(bound) == set(ARCHIVE_METADATA),
+                'An archived envelope must bind exactly its metadata documents: '
+                + succinct(sorted(bound)))
         for name in ARCHIVE_METADATA:
             require(name in present, 'An archived envelope omits ' + name)
             require(bound.get(name) == present[name],
@@ -1294,6 +1302,17 @@ def controls_evidence(directory, initial, compiler, audit=None, destination=None
             'runtime_local_comparison': runtime_local,
             'audit': audit_inventory}
     result['reduction'] = semantic_reduction(result, inventory)
+    if archived:
+        archived_inventory = json.loads((directory / 'inventory.json').read_text())
+        archived_reduction = json.loads((directory / 'reduction.json').read_text())
+        require(archived_inventory.get('schema') == INVENTORY_SCHEMA,
+                'The archived inventory document names another schema')
+        require(archived_reduction.get('schema') == REDUCTION_SCHEMA,
+                'The archived reduction document names another schema')
+        require(archived_inventory.get('inventory_sha256') == inventory['inventory_sha256'],
+                'The archived inventory document does not describe this member graph')
+        require(archived_reduction.get('sha256') == result['reduction']['sha256'],
+                'The archived reduction document does not match the fresh stable reduction')
     result['inventory_sha256'] = inventory['inventory_sha256']
     result['reduction_sha256'] = result['reduction']['sha256']
     return result
