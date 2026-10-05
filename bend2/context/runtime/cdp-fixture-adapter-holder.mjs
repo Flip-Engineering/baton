@@ -22,8 +22,8 @@ const session = createAdapterSession({
 });
 
 process.stdout.write(`${JSON.stringify({ holder: 'pid', pid: process.pid })}\n`);
-await session.execute('launch', { effects: ['controlRuntime'], webSocketUrl });
-await session.execute('resume-step', { effects: ['controlRuntime'], action: 'resume' });
+await session.execute('launch', { effects: ['controlRuntime'], query: 'q-holder-launch', webSocketUrl });
+await session.execute('resume-step', { effects: ['controlRuntime'], query: 'q-holder-resume', action: 'resume' });
 process.stdout.write(`${JSON.stringify({ holder: 'ready', state: session.snapshot().state })}\n`);
 if (typeof readinessPath === 'string' && readinessPath.length > 0) {
   writeFileSync(readinessPath, `${JSON.stringify({ pid: process.pid, state: session.snapshot().state })}\n`);

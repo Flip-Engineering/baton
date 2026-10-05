@@ -35,7 +35,7 @@
 
 import { counterNext } from './cdp-counter.mjs';
 import { admitControlRequest, admitIntent, admitReadRequest, requestForIntent, startupStopRequests } from './cdp-intents.mjs';
-import { encodeFrame, sequenceAdmit } from './cdp-protocol.mjs';
+import { admitFrame, encodeFrame, sequenceAdmit } from './cdp-protocol.mjs';
 import { admitRef, decodeRefId } from './cdp-refs.mjs';
 import { createScriptTable } from './cdp-scripts.mjs';
 import { initialRecord, nextState, StateRefusal } from './cdp-state.mjs';
@@ -87,9 +87,16 @@ export function createAdapterSession({
   };
 
   // One frame on the adapter -> native observer channel, with a monotone sequence per
-  // adapter. A replay of identical bytes at a retained sequence is idempotent; the
-  // envelope is validated before it leaves this process. No endpoint identity appears.
+  // adapter. A request-associated frame carries the caller's own request identity: the
+  // publisher refuses an absent one rather than inventing an identity that would hide the
+  // caller's defect. The exact chosen envelope bytes are admitted before any state change or
+  // emission, so a refused frame consumes no sequence and no publication count. No endpoint
+  // identity appears.
   const publish = ({ query, type, payload }) => {
+    if (type !== 'state' && (typeof query !== 'string' || query.length === 0)) {
+      throw new SessionRefusal('publishQueryMissing',
+        `a ${type} frame carries the caller's request identity`);
+    }
     const sequence = sequenceState === null ? 0 : sequenceState.sequence + 1;
     const frame = {
       version: ADAPTER_VERSION,
@@ -102,6 +109,8 @@ export function createAdapterSession({
       payload,
     };
     const bytes = encodeFrame(frame);
+    const envelope = admitFrame(bytes, { runtime, role: 'adapter', incarnation, query: frame.query });
+    if (!envelope.ok) throw new SessionRefusal(envelope.condition, envelope.detail);
     const admitted = sequenceAdmit(sequenceState, sequence, bytes);
     if (!admitted.ok) throw new SessionRefusal(admitted.condition, admitted.detail);
     sequenceState = { sequence, retained: admitted.retained };
@@ -119,14 +128,22 @@ export function createAdapterSession({
     if (record.state !== 'exited' && record.state !== 'failed') {
       apply({ type: 'adapterFailed' });
     }
-    publish({
-      query: null,
-      type: 'state',
-      payload: {
-        state: record.state,
-        evidence: { transport: { condition: failure.condition, historicalPause: lastPause !== null } },
-      },
-    });
+    // This evidence path never masks the failure it reports: a refused publication of the
+    // state frame is recorded on the failure instead of replacing it.
+    try {
+      publish({
+        query: null,
+        type: 'state',
+        payload: {
+          state: record.state,
+          evidence: { transport: { condition: failure.condition, historicalPause: lastPause !== null } },
+        },
+      });
+    } catch (publication) {
+      if (failure !== null && typeof failure === 'object') {
+        failure.publicationFailure = publication.condition ?? null;
+      }
+    }
   };
 
   const handleEvent = (params, message) => {
@@ -368,7 +385,15 @@ export function createAdapterSession({
         return { category: admitted.category, method, result };
       } catch (error) {
         const condition = error instanceof TransportRefusal ? error.condition : 'transportError';
-        publish({ query, type: 'failed', payload: { error: { condition, detail: error.detail ?? error.message } } });
+        // Publishing the failure frame must not mask the failure it reports: a refused
+        // publication is recorded on the original error instead of replacing it.
+        try {
+          publish({ query, type: 'failed', payload: { error: { condition, detail: error.detail ?? error.message } } });
+        } catch (publication) {
+          if (error !== null && typeof error === 'object') {
+            error.publicationFailure = publication.condition ?? null;
+          }
+        }
         if (error instanceof TransportRefusal && error.condition !== 'cdpError') {
           onTransportFailure(error);
         }
@@ -388,7 +413,15 @@ export function createAdapterSession({
         return { category: admitted.category, method, result };
       } catch (error) {
         const condition = error instanceof TransportRefusal ? error.condition : 'transportError';
-        publish({ query, type: 'failed', payload: { error: { condition, detail: error.detail ?? error.message } } });
+        // Publishing the failure frame must not mask the failure it reports: a refused
+        // publication is recorded on the original error instead of replacing it.
+        try {
+          publish({ query, type: 'failed', payload: { error: { condition, detail: error.detail ?? error.message } } });
+        } catch (publication) {
+          if (error !== null && typeof error === 'object') {
+            error.publicationFailure = publication.condition ?? null;
+          }
+        }
         if (error instanceof TransportRefusal && error.condition !== 'cdpError') {
           onTransportFailure(error);
         }
@@ -462,6 +495,10 @@ export function createAdapterSession({
         case 'launch': {
           if (typeof params.webSocketUrl !== 'string' || params.webSocketUrl.length === 0) {
             throw new SessionRefusal('endpointMissing', 'launch needs the discovered endpoint');
+          }
+          if (typeof params.query !== 'string' || params.query.length === 0) {
+            throw new SessionRefusal('publishQueryMissing',
+              'launch publishes a request-associated frame: pass the caller request identity');
           }
           // The startup stop positions are generated locations the caller decoded; a
           // condition is refused because it is target JavaScript.
@@ -563,6 +600,10 @@ export function createAdapterSession({
         }
 
         case 'evaluate': {
+          if (typeof params.query !== 'string' || params.query.length === 0) {
+            throw new SessionRefusal('publishQueryMissing',
+              'evaluate publishes a request-associated frame: pass the caller request identity');
+          }
           const connection = requireTransport();
           const request = requestForIntent(intent, params);
           apply({ type: 'evaluationSent', query: params.query ?? null });

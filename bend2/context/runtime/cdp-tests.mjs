@@ -698,7 +698,7 @@ test('pause-acknowledgment-after-a-stopped-event-keeps-the-stop', async () => {
     runtime: 'rt:reorder',
     connect: async () => transport,
   });
-  await session.execute('launch', { effects: ['controlRuntime'], webSocketUrl: 'ws://127.0.0.1:1/stub' });
+  await session.execute('launch', { effects: ['controlRuntime'], query: 'q-launch-stub', webSocketUrl: 'ws://127.0.0.1:1/stub' });
   // The stop arrives before the acknowledgment of Debugger.pause.
   const pending = session.execute('pause', { effects: ['controlRuntime'], query: 'q-pause' });
   transport.emit('Debugger.paused', { reason: 'other', callFrames: [], hitBreakpoints: [], threadId: 'main:0' });
@@ -724,7 +724,7 @@ test('rejected-resume-retains-the-stop-without-live-evidence', async () => {
       : { result: {} }),
   });
   const { session } = openSession({ slug, runtime: 'rt:rejected', connect: async () => transport });
-  await session.execute('launch', { effects: ['controlRuntime'], webSocketUrl: 'ws://127.0.0.1:1/stub' });
+  await session.execute('launch', { effects: ['controlRuntime'], query: 'q-launch-stub', webSocketUrl: 'ws://127.0.0.1:1/stub' });
   transport.emit('Debugger.paused', { reason: 'other', callFrames: [], hitBreakpoints: [], threadId: 'main:0' });
   const before = session.snapshot();
   const ref = refIdentity({
@@ -784,7 +784,7 @@ test('rejected-resume-preserves-a-later-stop-observation', async () => {
     },
   });
   const { session } = openSession({ slug, runtime: 'rt:later', connect: async () => transport });
-  await session.execute('launch', { effects: ['controlRuntime'], webSocketUrl: 'ws://127.0.0.1:1/stub' });
+  await session.execute('launch', { effects: ['controlRuntime'], query: 'q-launch-stub', webSocketUrl: 'ws://127.0.0.1:1/stub' });
   transport.emit('Debugger.paused', { reason: 'other', callFrames: [], hitBreakpoints: [], threadId: 'main:0' });
   const before = session.snapshot();
   assertEqual(before.state, 'paused', 'the initial stop');
@@ -831,7 +831,7 @@ test('resume-only-then-rejection-keeps-the-observed-resumption', async () => {
     },
   });
   const { session } = openSession({ slug, runtime: 'rt:resume-only', connect: async () => transport });
-  await session.execute('launch', { effects: ['controlRuntime'], webSocketUrl: 'ws://127.0.0.1:1/stub' });
+  await session.execute('launch', { effects: ['controlRuntime'], query: 'q-launch-stub', webSocketUrl: 'ws://127.0.0.1:1/stub' });
   transport.emit('Debugger.paused', { reason: 'other', callFrames: [], hitBreakpoints: [], threadId: 'main:0' });
   const before = session.snapshot();
   assertEqual(before.state, 'paused', 'the initial stop');
@@ -880,7 +880,7 @@ test('rejected-resume-preserves-a-later-context-destruction', async () => {
     },
   });
   const { session } = openSession({ slug, runtime: 'rt:context', connect: async () => transport });
-  await session.execute('launch', { effects: ['controlRuntime'], webSocketUrl: 'ws://127.0.0.1:1/stub' });
+  await session.execute('launch', { effects: ['controlRuntime'], query: 'q-launch-stub', webSocketUrl: 'ws://127.0.0.1:1/stub' });
   transport.emit('Debugger.paused', { reason: 'other', callFrames: [], hitBreakpoints: [], threadId: 'main:0' });
   const before = session.snapshot();
   let refusal = null;
@@ -899,6 +899,80 @@ test('rejected-resume-preserves-a-later-context-destruction', async () => {
   assertEqual(after.targetLiveness, 'live', 'the rejection asserted a target exit');
   assertEqual(after.pending, null, 'the rejected request stayed pending');
   writeFileSync(join(dir, 'case.json'), `${JSON.stringify({ refusal: refusal.condition, after })}\n`);
+});
+
+test('publisher-refuses-a-missing-caller-identity-and-keeps-the-sequence', async () => {
+  const slug = 'source-publisher-identity';
+  const dir = evidenceDir(slug);
+  let connects = 0;
+  const transport = stubTransport();
+  const { session, framePath } = openSession({
+    slug,
+    runtime: 'rt:publisher',
+    connect: async () => { connects += 1; return transport; },
+  });
+
+  // A launch that would publish a request-associated frame without the caller's identity is
+  // refused before it connects and before anything is emitted.
+  let launchRefusal = null;
+  try {
+    await session.execute('launch', { effects: ['controlRuntime'], webSocketUrl: 'ws://127.0.0.1:1/stub' });
+  } catch (error) {
+    launchRefusal = error;
+  }
+  assertEqual(launchRefusal === null ? null : launchRefusal.condition, 'publishQueryMissing',
+    'a launch without a caller identity was accepted');
+  assertEqual(connects, 0, 'a refused launch connected to the target');
+  assertEqual(session.snapshot().emitted, 0, 'the refused launch consumed a publication count');
+  assertEqual(read(framePath).trim(), '', 'the refused launch emitted a frame');
+
+  // A valid request publishes with the expected first sequence.
+  await session.execute('launch', {
+    effects: ['controlRuntime'],
+    query: 'q-launch',
+    webSocketUrl: 'ws://127.0.0.1:1/stub',
+  });
+  const emitted = () => read(framePath).trim().split('\n')
+    .filter((line) => line.length > 0).map((line) => JSON.parse(line).frame);
+
+  // A request-associated publication without the caller's identity is refused without
+  // reaching the backend and without consuming a sequence.
+  const outboundBefore = session.frames().filter((frame) => frame.direction === 'out').length;
+  const emittedBefore = emitted().length;
+  let sendRefusal = null;
+  try {
+    await session.send({ method: 'Runtime.getProperties', params: { objectId: 'h' } });
+  } catch (error) {
+    sendRefusal = error;
+  }
+  assertEqual(sendRefusal === null ? null : sendRefusal.condition, 'publishQueryMissing',
+    'a request without a caller identity was accepted');
+  assertEqual(session.frames().filter((frame) => frame.direction === 'out').length, outboundBefore,
+    'the refused publication reached the backend');
+  assertEqual(emitted().length, emittedBefore, 'the refused publication emitted a frame');
+
+  // An unsolicited state frame still publishes, with the expected next sequence.
+  transport.emit('Debugger.paused', { reason: 'other', callFrames: [], hitBreakpoints: [], threadId: 'main:0' });
+  const frames = emitted();
+  assertEqual(frames[0].sequence, 0, 'the accepted launch frame did not carry sequence 0');
+  assertEqual(frames[0].type, 'accepted', 'the launch frame is not the accepted frame');
+  assertEqual(frames[0].query, 'q-launch', 'the accepted frame lost its caller identity');
+  assertEqual(frames[1].sequence, 1, 'the state frame did not carry the expected next sequence');
+  assertEqual(frames[1].type, 'state', 'the unsolicited state frame was not published');
+  assertEqual(frames[1].query, null, 'the unsolicited state frame carried a query');
+  assertEqual(session.snapshot().emitted, frames.length, 'the publication count does not match the frames');
+
+  // A complete frame without a caller identity is refused the same way.
+  let resultRefusal = null;
+  try {
+    session.publishResult({ result: { engine: 'cdp' } });
+  } catch (error) {
+    resultRefusal = error;
+  }
+  assertEqual(resultRefusal === null ? null : resultRefusal.condition, 'publishQueryMissing',
+    'a complete frame without a caller identity was accepted');
+  assertEqual(session.snapshot().emitted, frames.length, 'the refused complete frame consumed a count');
+  writeFileSync(join(dir, 'case.json'), `${JSON.stringify({ emitted: frames.length, connects, sequences: frames.map((f) => f.sequence) })}\n`);
 });
 
 test('ref-decisions-and-thread-membership', () => {
@@ -997,7 +1071,7 @@ test('bootstrap-exec-in-place-same-pid-and-declared-environment', async () => {
     assert(prepared.bootstrap.path.endsWith('bootstrap.mjs'), 'bootstrap path recorded');
     assertEqual(prepared.envKeys.join(','), 'BATON_CDP_FIXTURE_MARKER,PATH', 'declared environment keys');
 
-    await session.execute('launch', { effects: ['controlRuntime'], webSocketUrl: endpoint.url });
+    await session.execute('launch', { effects: ['controlRuntime'], query: 'q-launch-target', webSocketUrl: endpoint.url });
     const paused = await withDeadline(session.waitFor('Debugger.paused'), 15000, 'initial pause');
     assertEqual(paused.params.reason, 'Break on start', 'initial break');
     await session.execute('resume-step', { effects: ['controlRuntime'], action: 'resume' });
@@ -1041,7 +1115,7 @@ test('paused-target-breakpoint-stop-and-epoch-mutation-retirement', async () => 
   assert(breakLine > 0, 'fixture breakpoint line found');
   try {
     const endpoint = await withDeadline(keeper.endpoint(), 20000, 'endpoint');
-    await session.execute('launch', { effects: ['controlRuntime'], webSocketUrl: endpoint.url });
+    await session.execute('launch', { effects: ['controlRuntime'], query: 'q-launch-target', webSocketUrl: endpoint.url });
     const first = await withDeadline(session.waitFor('Debugger.paused'), 15000, 'initial pause');
     assertEqual(session.snapshot().epoch, '1', 'initial pause epoch');
     const scope = session.snapshot().refScope;
@@ -1120,7 +1194,7 @@ test('property-descriptors-do-not-execute-getters', async () => {
   const breakLine = source.findIndex((line) => line.includes('const value = counter.total;'));
   try {
     const endpoint = await withDeadline(keeper.endpoint(), 20000, 'endpoint');
-    await session.execute('launch', { effects: ['controlRuntime'], webSocketUrl: endpoint.url });
+    await session.execute('launch', { effects: ['controlRuntime'], query: 'q-launch-target', webSocketUrl: endpoint.url });
     await withDeadline(session.waitFor('Debugger.paused'), 15000, 'initial pause');
     await session.control({
       query: 'q-breakpoint',
@@ -1172,7 +1246,7 @@ test('pending-evaluation-admits-release-while-unanswered', async () => {
   const { session } = openSession({ slug, runtime: 'rt:pending', keeper });
   try {
     const endpoint = await withDeadline(keeper.endpoint(), 20000, 'endpoint');
-    await session.execute('launch', { effects: ['controlRuntime'], webSocketUrl: endpoint.url });
+    await session.execute('launch', { effects: ['controlRuntime'], query: 'q-launch-target', webSocketUrl: endpoint.url });
     await withDeadline(session.waitFor('Debugger.paused'), 15000, 'initial pause');
 
     let settled = false;
@@ -1237,7 +1311,7 @@ test('transport-loss-marks-the-stop-historical-and-keeps-target-custody', async 
   const { session } = openSession({ slug, runtime: 'rt:loss', keeper });
   try {
     const endpoint = await withDeadline(keeper.endpoint(), 20000, 'endpoint');
-    await session.execute('launch', { effects: ['controlRuntime'], webSocketUrl: endpoint.url });
+    await session.execute('launch', { effects: ['controlRuntime'], query: 'q-launch-target', webSocketUrl: endpoint.url });
     await withDeadline(session.waitFor('Debugger.paused'), 15000, 'initial pause');
     const stopped = session.snapshot();
     assertEqual(stopped.state, 'paused', 'the target is stopped');
@@ -1331,7 +1405,7 @@ test('worker-attachment-records-thread-identity', async () => {
   const { session } = openSession({ slug, runtime: 'rt:worker', keeper });
   try {
     const endpoint = await withDeadline(keeper.endpoint(), 20000, 'endpoint');
-    await session.execute('launch', { effects: ['controlRuntime'], webSocketUrl: endpoint.url });
+    await session.execute('launch', { effects: ['controlRuntime'], query: 'q-launch-target', webSocketUrl: endpoint.url });
     await withDeadline(session.waitFor('Debugger.paused'), 15000, 'initial pause');
     await session.send({ query: 'q-worker-enable', method: 'NodeWorker.enable', params: { waitForDebuggerOnStart: false } });
     const attached = session.waitFor('NodeWorker.attachedToWorker', { after: 0 });
