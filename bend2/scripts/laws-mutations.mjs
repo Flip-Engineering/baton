@@ -3,6 +3,35 @@ import { join } from 'node:path';
 
 const MUTATIONS = [
   {
+    name: 'structural-inspection-accepts-enclosing-worktree',
+    file: 'bend2/src/coordinator/structural.bend',
+    find: 'Bool.and(String.eq(root,path),Bool.and(String.eq(expected_repo,repo),String.eq(assignment_branch(assignment),actual_branch)))',
+    replace: 'Bool.and(String.eq(expected_repo,repo),String.eq(assignment_branch(assignment),actual_branch))',
+    law: 'inspected_requires_the_actual_worktree_root',
+  },
+  {
+    name: 'ordinary-role-only-recruit-shadowed-by-recovery-arity',
+    file: 'bend2/src/coordinator/main.bend',
+    find: 'case False{}: normal_cli([flag,db,session,id,cursor,cmd,model,effort,cwd,log,harness,directory,native])',
+    replace: 'case False{}: execute("",C.Invalid{})',
+    law: 'ordinary_role_only_recruit_reaches_the_public_entry',
+  },
+  {
+    name: 'structural-ensemble-parser-drops-options',
+    file: 'bend2/src/coordinator/commands.bend',
+    find: 'StructuralEnsemble{id,owner,coupling,first <> rest},parse_structural_recruit(args)',
+    replace: 'StructuralEnsemble{id,owner,coupling,Nil{}},parse_structural_recruit(args)',
+    law: 'structural_ensemble_parser_preserves_the_complete_literal_tail',
+  },
+  {
+    name: 'structural-recruit-entry-drops-options',
+    file: 'bend2/src/coordinator/main.bend',
+    find: 'Structural.recruit(db,id,parent,harness,model,effort,repo,branch,path,base,Structural.linear_args(options))',
+    replace: 'Structural.recruit(db,id,parent,harness,model,effort,repo,branch,path,base,Nil{})',
+    law: 'structural_recruit_entry_preserves_parent_and_complete_options',
+  },
+
+  {
     "name": "reviewed-selection-M0-skips-branch-and-ancestry",
     "file": "bend2/src/coordinator/land.bend",
     "find": "    case SelPicked{commitOid}:\n      do IO<Selected>:\n        b : Selected <- sel_branch(repo, branch)\n        sel_ancestor_after_branch(b, repo, commitOid)",

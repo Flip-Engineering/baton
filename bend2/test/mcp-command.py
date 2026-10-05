@@ -94,7 +94,7 @@ class McpCommand(unittest.TestCase):
         self.command()
         contracts = {
             'baton2_recruit': ({'player', 'harness', 'model', 'effort', 'repo',
-                'branch', 'workspace', 'base'}, {'parent'}),
+                'branch', 'workspace', 'base'}, {'parent', 'role', 'ensembles', 'sections'}),
             'baton2_receiver': ({'player', 'command', 'log'}, set()),
             'baton2_dispatch_file': ({'id', 'recipient', 'kind', 'path'}, {'sender'}),
             'baton2_dispatch_turn': ({'player', 'id', 'command', 'log', 'task'}, set()),
@@ -106,8 +106,8 @@ class McpCommand(unittest.TestCase):
                 self.assertFalse(schema['additionalProperties'])
                 self.assertEqual(set(schema['required']), required)
                 self.assertEqual(set(schema['properties']), required | optional)
-                for field in schema['properties'].values():
-                    self.assertEqual(field['type'], 'string')
+                for key, field in schema['properties'].items():
+                    self.assertEqual(field['type'], 'array' if key in ('ensembles', 'sections') else 'string')
 
     def test_recruit_defaults_parent_to_selected_conductor(self):
         arguments, argv = self.native_controls()['baton2_recruit']
