@@ -239,7 +239,7 @@ export function laws(modules) {
         } catch (error) {
           thrown = error.condition;
         }
-        assertEqual(thrown, 'refDecisionMalformed', 'requireAdmittedRef admitted a bare ok');
+        assertEqual(thrown, 'refDecisionRefused', 'requireAdmittedRef admitted a candidate without a decision');
         assert(refs.requireAdmittedRef(admitted) === admitted.identity, 'the admitted identity is returned');
       },
     },
@@ -248,6 +248,10 @@ export function laws(modules) {
       run() {
         assertEqual(refs.refDecision({ decision: 'admitted', ok: false, identity: liveRef }).condition,
           'refDecisionContradictory', 'an admitted decision carrying ok:false was accepted');
+        assertEqual(refs.refDecision({ decision: 'admitted', identity: liveRef }).condition,
+          'refDecisionMalformed', 'an admitted decision without ok was accepted');
+        assertEqual(refs.refDecision({ decision: 'admitted', ok: true }).condition,
+          'refDecisionMalformed', 'an admitted decision without an identity was accepted');
         assertEqual(refs.refDecision({ decision: 'admitted', ok: true, identity: liveRef }).decision,
           'admitted', 'the agreed admitted shape was refused');
         assertEqual(refs.refDecision(refs.admitRef(liveRef, liveScope)).decision, 'admitted',

@@ -142,12 +142,13 @@ export function admitRef(ref, scope) {
   return admittedDecision(identity);
 }
 
-// Normalize one candidate decision. Only `{decision:'admitted', identity}` with an
-// identity that still validates is admitted; a refusal keeps its condition; and null,
-// undefined, a missing or unknown decision, a non-object or a malformed identity refuses.
-// `ok` is retained for compatibility and must not contradict `decision`: an admitted
-// decision carrying `ok:false` refuses as refDecisionContradictory rather than being
-// silently believed.
+// Normalize one candidate decision. The admitted shape is exactly
+// `{decision:'admitted', ok:true, identity}` with an identity that still validates; a
+// refusal keeps its condition; and null, undefined, a missing or unknown decision, a
+// non-object, a missing `ok`, a missing identity or a malformed identity refuses as
+// refDecisionMalformed. An admitted decision carrying `ok:false` refuses as
+// refDecisionContradictory rather than being silently believed, so `decision` and `ok`
+// can never disagree and no candidate is admitted on a partially written shape.
 //
 // This function revalidates the identity's own shape and the decision's coherence only.
 // Admission against the live runtime, epoch and mutation generation remains
@@ -163,8 +164,13 @@ export function refDecision(value) {
       value.decision === 'refused' ? value.detail ?? null : `decision ${JSON.stringify(value.decision)}`,
     );
   }
-  if (value.ok === false) {
-    return refusedDecision('refDecisionContradictory', 'an admitted decision carried ok:false');
+  if (value.ok !== true) {
+    return value.ok === false
+      ? refusedDecision('refDecisionContradictory', 'an admitted decision carried ok:false')
+      : refusedDecision('refDecisionMalformed', 'an admitted decision must carry ok:true');
+  }
+  if (value.identity === undefined || value.identity === null) {
+    return refusedDecision('refDecisionMalformed', 'an admitted decision must carry an identity');
   }
   const admitted = admitIdentity(value.identity);
   if (!admitted.ok) return admitted;
