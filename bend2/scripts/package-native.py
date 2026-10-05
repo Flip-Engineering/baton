@@ -582,14 +582,22 @@ def runtime_list_digest(files):
     trusted, and a path that escapes its root is refused.
     """
     rows = []
+    seen = set()
     for entry in files:
         require(isinstance(entry, dict) and isinstance(entry.get('path'), str)
                 and isinstance(entry.get('sha256'), str) and entry['sha256'],
                 'A runtime inventory entry lacks a path or a digest')
-        relative = PurePosixPath(entry['path'])
+        raw = entry['path']
+        relative = PurePosixPath(raw)
         require(not relative.is_absolute() and '..' not in relative.parts,
-                'A runtime inventory path escapes its root: ' + str(entry.get('path')))
-        rows.append(relative.as_posix() + '\t' + entry['sha256'])
+                'A runtime inventory path escapes its root: ' + raw)
+        canonical = relative.as_posix()
+        require(canonical == raw and '//' not in canonical and not canonical.startswith('./'),
+                'A runtime inventory path is not canonical: ' + raw)
+        require(canonical not in seen,
+                'A runtime inventory names the same path twice: ' + canonical)
+        seen.add(canonical)
+        rows.append(canonical + '\t' + entry['sha256'])
     require(rows, 'A runtime inventory holds no installed library file')
     return hashlib.sha256('\n'.join(sorted(rows)).encode('utf-8')).hexdigest()
 
@@ -641,46 +649,79 @@ def classify_control(case, result, streams, baseline, evidence_root, source, com
         acquire.mkdir(parents=True, exist_ok=True)
         stem = identity.replace(':', '-').replace('/', '_')
         stem = stem + '-' + hashlib.sha256(identity.encode('utf-8')).hexdigest()[:12]
-    stdout_bytes, stderr_bytes, status, signal_name, spawn_error = b'', b'', None, None, None
+    stdout_bytes, stderr_bytes, status, signal_name = b'', b'', None, None
+    spawn_error = None
     interruption = None
+    capture_error = None
+    spawned = False
     stream_dir = acquire if acquire is not None else None
     if stream_dir is not None:
         (stream_dir / (stem + '.request.json')).write_bytes(request_bytes)
     out_path = (stream_dir / (stem + '.stdout')) if stream_dir is not None else None
     err_path = (stream_dir / (stem + '.stderr')) if stream_dir is not None else None
+
+    def settle(error_kind, error):
+        """Settle whatever this terminal path produced, without inventing values."""
+        if stream_dir is None:
+            return
+        try:
+            recorded_out = out_path.read_bytes() if out_path and out_path.exists() else b''
+            recorded_err = err_path.read_bytes() if err_path and err_path.exists() else b''
+        except OSError:
+            recorded_out, recorded_err = b'', b''
+        write_json(stream_dir / (stem + '.acquisition.json'),
+                   {'argv': argv, 'cwd': str(ROOT), 'outcome': error_kind,
+                    'reason': error, 'started': spawned,
+                    'exit_code': status, 'signal': signal_name,
+                    'stdout_sha256': hashlib.sha256(recorded_out).hexdigest(),
+                    'stdout_bytes': len(recorded_out),
+                    'stderr_sha256': hashlib.sha256(recorded_err).hexdigest(),
+                    'stderr_bytes': len(recorded_err),
+                    'request_sha256': hashlib.sha256(request_bytes).hexdigest()})
+
+    out_handle, err_handle = None, None
     try:
-        completed = subprocess.run(argv, cwd=ROOT, input=request_bytes,
-                                   stdout=out_path.open('wb') if out_path else subprocess.PIPE,
-                                   stderr=err_path.open('wb') if err_path else subprocess.PIPE,
-                                   env={'PATH': os.environ.get('PATH', ''), 'BEND_NO_TELEMETRY': '1'})
-        status = completed.returncode
-        stdout_bytes = out_path.read_bytes() if out_path else (completed.stdout or b'')
-        stderr_bytes = err_path.read_bytes() if err_path else (completed.stderr or b'')
-        if status < 0:
-            signal_name, status = child_signal(status), None
+        out_handle = out_path.open('wb') if out_path else None
+        err_handle = err_path.open('wb') if err_path else None
     except OSError as error:
         spawn_error = repr(error)
-    except BaseException as error:
-        interruption = repr(error)
-        if stream_dir is not None:
+    if spawn_error is None:
+        try:
+            spawned = True
+            completed = subprocess.run(
+                argv, cwd=ROOT, input=request_bytes,
+                stdout=out_handle if out_handle else subprocess.PIPE,
+                stderr=err_handle if err_handle else subprocess.PIPE,
+                env={'PATH': os.environ.get('PATH', ''), 'BEND_NO_TELEMETRY': '1'})
+            status = completed.returncode
+            if status < 0:
+                signal_name, status = child_signal(status), None
+        except OSError as error:
+            spawn_error = repr(error)
+        except BaseException as error:
+            interruption = repr(error)
+        finally:
+            for handle in (out_handle, err_handle):
+                if handle is not None:
+                    handle.close()
+        if interruption is None and spawn_error is None:
             try:
-                stdout_bytes = out_path.read_bytes() if out_path and out_path.exists() else b''
-                stderr_bytes = err_path.read_bytes() if err_path and err_path.exists() else b''
-                write_json(stream_dir / (stem + '.acquisition.json'),
-                           {'argv': argv, 'cwd': str(ROOT), 'outcome': 'interrupted',
-                            'reason': interruption,
-                            'stdout_sha256': hashlib.sha256(stdout_bytes).hexdigest(),
-                            'stdout_bytes': len(stdout_bytes),
-                            'stderr_sha256': hashlib.sha256(stderr_bytes).hexdigest(),
-                            'stderr_bytes': len(stderr_bytes),
-                            'request_sha256': hashlib.sha256(request_bytes).hexdigest()})
-            except OSError:
-                pass
-        raise
+                stdout_bytes = out_path.read_bytes() if out_path else (completed.stdout or b'')
+                stderr_bytes = err_path.read_bytes() if err_path else (completed.stderr or b'')
+            except OSError as error:
+                capture_error = repr(error)
+    if interruption is not None:
+        settle('interrupted', interruption)
+        raise RuntimeError('The checker classification was interrupted: ' + interruption)
+    if spawn_error is not None:
+        settle('spawn-error', spawn_error)
+        raise RuntimeError('The checker classification could not be launched: ' + spawn_error)
+    if capture_error is not None:
+        settle('capture-error', capture_error)
+        raise RuntimeError('The checker classification streams could not be read: ' + capture_error)
     acquisition = {'argv': argv, 'cwd': str(ROOT), 'exit_code': status,
-                   'outcome': ('spawn-error' if spawn_error else
-                               'signalled' if signal_name else 'exited'),
-                   'signal': signal_name, 'spawn_error': spawn_error,
+                   'outcome': 'signalled' if signal_name else 'exited',
+                   'signal': signal_name, 'spawn_error': None, 'started': spawned,
                    'request_sha256': hashlib.sha256(request_bytes).hexdigest(),
                    'request_bytes': len(request_bytes),
                    'stdout_sha256': hashlib.sha256(stdout_bytes).hexdigest(),
@@ -688,8 +729,6 @@ def classify_control(case, result, streams, baseline, evidence_root, source, com
                    'stderr_sha256': hashlib.sha256(stderr_bytes).hexdigest(),
                    'stderr_bytes': len(stderr_bytes)}
     if acquire is not None:
-        (acquire / (stem + '.stdout')).write_bytes(stdout_bytes)
-        (acquire / (stem + '.stderr')).write_bytes(stderr_bytes)
         (acquire / (stem + '.acquisition.json')).write_text(
             json.dumps(acquisition, indent=2, sort_keys=True) + '\n')
     require(spawn_error is None,
@@ -894,17 +933,24 @@ def verify_archived_inventory(directory, recorded):
     """Require every recorded original member to be present with identical bytes."""
     current = producer_inventory(directory, exclude=ARCHIVE_METADATA)
     present = {member['path']: member for member in current['members']}
-    for member in recorded.get('members', []):
-        found = present.get(member['path'])
+    recorded_members = {member['path']: member for member in recorded.get('members', [])}
+    for path, member in recorded_members.items():
+        found = present.get(path)
         require(found is not None and found['sha256'] == member['sha256']
                 and found['bytes'] == member['bytes'],
-                'An archived evidence member is missing or changed: ' + member['path'])
+                'An archived evidence member is missing or changed: ' + path)
+    extra = sorted(set(present) - set(recorded_members))
+    require(not extra, 'An archived evidence member was not produced: ' + succinct(extra))
     return current
 
 
 def verify_inventory(directory, recorded):
-    """Re-hash a relocated closure and require it to match its inventory."""
-    current = producer_inventory(directory)
+    """Re-hash a relocated closure and require it to match its inventory exactly."""
+    current = producer_inventory(directory, exclude=ARCHIVE_METADATA)
+    recorded_members = {member['path']: member for member in recorded.get('members', [])}
+    extra = sorted({member['path'] for member in current['members']} - set(recorded_members))
+    require(not extra, 'A relocated closure holds members that were not produced: '
+            + succinct(extra))
     require(current['inventory_sha256'] == recorded.get('inventory_sha256'),
             'The relocated evidence closure differs from its inventory')
     return current
@@ -1028,7 +1074,10 @@ def controls_evidence(directory, initial, compiler, audit=None, destination=None
                 'A bundle runtime inventory does not reproduce its digest: ' + json.dumps(module))
         require(runtime.get('sha256') == recomputed,
                 'A bundle runtime digest field disagrees with its file list: ' + json.dumps(module))
-        if runtime_sha is not None:
+        if runtime_sha is None:
+            runtime_local = 'unavailable: this checkout has no installed runtime inventory'
+        else:
+            runtime_local = 'matched'
             require(producing.get('runtime_set_sha256') == runtime_sha,
                     'A bundle used different installed Bend library bytes: ' + json.dumps(module))
         instrument = bundle.get('instrument') or {}
@@ -1160,7 +1209,11 @@ def controls_evidence(directory, initial, compiler, audit=None, destination=None
     missing_cases = sorted(set(wanted) - set(seen_cases))
     require(not missing_cases, 'The controls evidence omits controls: ' + succinct(missing_cases))
     seconds = [span['seconds'] for span in spans]
-    inventory = producer_inventory(directory, destination)
+    inventory = producer_inventory(directory, destination, exclude=ARCHIVE_METADATA)
+    present = {member['path'] for member in inventory['members']}
+    reserved = sorted(present & set(ARCHIVE_METADATA))
+    require(not reserved,
+            'The producer closure names reserved archive metadata: ' + succinct(reserved))
     if audit is not None:
         audit_inventory = producer_inventory(audit)
     closure = hashlib.sha256(json.dumps(
@@ -1182,6 +1235,7 @@ def controls_evidence(directory, initial, compiler, audit=None, destination=None
                                    for entry in seen_cases.values()),
             'largest_child_max_rss_bytes': max((entry['resource'].get('max_rss_bytes') or 0)
                                                for entry in seen_cases.values()),
+            'runtime_local_comparison': runtime_local,
             'audit': audit_inventory}
     result['reduction'] = semantic_reduction(result, inventory)
     result['inventory_sha256'] = inventory['inventory_sha256']

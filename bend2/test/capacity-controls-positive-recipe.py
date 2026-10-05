@@ -55,11 +55,17 @@ def child(record, name, argv, run, stdin=None):
     except BaseException as error:
         entry['interrupted'] = repr(error)
         entry['exit_code'] = None
+        entry['signal'] = getattr(locals().get('process', None), 'returncode', None)
         for stream, path in (('stdout', stdout), ('stderr', stderr)):
             entry[stream] = {'path': str(path.relative_to(run)) if path.exists() else None,
                              'bytes': path.stat().st_size if path.exists() else 0,
                              'sha256': digest(path) if path.exists() else None}
-        record[-1:] = [entry]
+        for position, existing in enumerate(record):
+            if existing.get('name') == name:
+                record[position] = entry
+                break
+        else:
+            record.append(entry)
         (run / 'run.json').write_text(json.dumps({'children': record}, indent=2) + '\n')
         raise
     for stream, path in (('stdout', stdout), ('stderr', stderr)):
@@ -98,21 +104,24 @@ def main():
     record = []
 
     # 0. Preconditions: a clean admitted checkout and the pinned compiler.
-    status = subprocess.check_output(['git', '-C', str(ROOT), 'status', '--porcelain=v1'],
-                                     text=True).strip()
+    git = child(record, 'precondition-git', ['git', '-C', str(ROOT), 'status', '--porcelain=v1'],
+                run)
+    status = (run / git['stdout']['path']).read_text().strip() if git['exit_code'] == 0 else None
+    compiler = child(record, 'precondition-compiler', [str(args.bend), 'version'], run)
+    version = ((run / compiler['stdout']['path']).read_text().strip()
+               if compiler['exit_code'] == 0 else None)
     record.append({'name': 'preconditions', 'cwd': str(ROOT), 'git_status': status,
-                   'bend': str(args.bend), 'compiler_archive': str(args.compiler_archive),
+                   'bend': str(args.bend), 'bend_version': version,
+                   'compiler_archive': str(args.compiler_archive),
                    'node': shutil.which('node')})
     (run / 'run.json').write_text(json.dumps({'children': record}, indent=2) + '\n')
     if status:
         raise SystemExit('the checkout is not clean')
-    version = subprocess.check_output([str(args.bend), 'version'],
-                                      env={'PATH': '/usr/bin:/bin', 'BEND_NO_TELEMETRY': '1'},
-                                      text=True).strip()
+    if version != 'bend 2.0.25':
+        raise SystemExit('the compiler is not bend 2.0.25: ' + repr(version))
     if version != 'bend 2.0.25':
         raise SystemExit('the compiler is not bend 2.0.25: ' + version)
-    record[-1]['bend_version'] = version
-    (run / 'run.json').write_text(json.dumps({'children': record}, indent=2) + '\n')
+
 
     # 1. Discovery, then one producer job per discovered group: a complete run.
     discovery = child(record, 'discover', ['node', str(CHECKER), '--discover'], run)

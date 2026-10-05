@@ -72,7 +72,7 @@ class PackageGateReceipt(unittest.TestCase):
         self.verdicts.clear()
 
         def classify(case, result, streams, baseline, evidence_root, source, compiler_sha256,
-                     delta=None, supplied=None, audit=None):
+                     compiler_path=None, delta=None, supplied=None, audit=None):
             self.verdicts[case['id']] = {'streams': streams, 'baseline': baseline, 'delta': delta}
             return {'schema': 'capacity-controls/classify-verdict@1', 'id': case['id'],
                     'class': 'intended-law-refusal', 'attributed_law': case['law'],
@@ -529,7 +529,7 @@ class PackageGateReceipt(unittest.TestCase):
         target = self.laws()[0]['id']
 
         def classify(case, result, streams, baseline, evidence_root, source, compiler_sha256,
-                     delta=None, supplied=None, audit=None):
+                     compiler_path=None, delta=None, supplied=None, audit=None):
             value = {'schema': 'capacity-controls/classify-verdict@1', 'id': case['id'],
                      'class': 'intended-law-refusal', 'attributed_law': case['law'],
                      'law': case['law'], 'match': True, 'qualified': True,
