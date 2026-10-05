@@ -100,9 +100,6 @@ def zero_pos() -> P.Pos:
 def one_pos() -> P.Pos:
   P.PosDigits{[1]}
 
-def top_pos() -> P.Pos:
-  P.PosDigits{[9, 2, 2, 3, 3, 7, 2, 0, 3, 6, 8, 5, 4, 7, 7, 5, 8, 0, 7]}
-
 def same_text(+left: String, +right: String) -> Bool:
   String.eq(left, right)
 
@@ -122,9 +119,6 @@ def same_source(+left: SourceId, +right: SourceId) -> Bool:
                       Bool.and(same_text(incarnation, b_incarnation),
                         Bool.and(same_text(contract_version, b_version),
                           same_text(lease_owner, b_owner)))))))))
-
-def at_top(+position: P.Pos) -> Bool:
-  P.passed(P.equal_checked(position, top_pos()))
 
 def bump_of(+position: P.Pos) -> P.PosSum:
   P.add_pos(position, one_pos())
@@ -186,7 +180,7 @@ def scan_prefix(+octets: List<U32>, +source: SourceId) -> ScanOutcome:
   scan_go(octets, zero_pos(), zero_pos(), Nil{}, Nil{}, source, zero_pos(),
     bump_of(zero_pos()), span_of(zero_pos(), zero_pos()))
 
-def frames_of(+runs: List[SpanRun>, +source: SourceId) -> List<Frame>:
+def frames_of(+runs: List<SpanRun>, +source: SourceId) -> List<Frame>:
   match runs:
     case Nil{}: Nil{}
     case +h <> t:
@@ -237,7 +231,7 @@ def append_frame(+frames: List<Frame>, +frame: Frame) -> List<Frame>:
     case Nil{}: frame <> Nil{}
     case +h <> t: h <> append_frame(t, frame)
 
-def sealed_result(+request: FrameRequest, +runs: List[SpanRun>, +pending: PendingSuffix,
+def sealed_result(+request: FrameRequest, +runs: List<SpanRun>, +pending: PendingSuffix,
                   +boundary: P.Pos, +inspected: P.Pos, +sealed: Bool, +source: SourceId,
                   +original: List<U32>) -> FramingResult:
   +frames = frames_of(runs, source)
