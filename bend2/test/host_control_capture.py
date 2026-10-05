@@ -13,71 +13,135 @@ def save(path, value):
     temporary.replace(path)
 
 
+def error_record(error):
+    value = {'type': type(error).__name__, 'message': str(error)}
+    if isinstance(error, OSError):
+        value['errno'] = error.errno
+    return value
+
+
 def run(directory, name, argv, timeout):
     directory = Path(directory)
-    (directory / f'{name}.capture').mkdir()
     stdout_path = directory / f'{name}.stdout'
     stderr_path = directory / f'{name}.stderr'
     outcome_path = directory / f'{name}.outcome.json'
     record = {'argv': argv, 'cwd': os.getcwd(), 'timeoutSeconds': timeout,
               'startedNs': time.time_ns(), 'pid': None, 'state': 'setup',
               'returncode': None, 'exitCode': None, 'signal': None,
-              'driverSignal': None, 'platform': list(os.uname())}
-    save(directory / f'{name}.argv.json', argv)
-    save(outcome_path, record)
+              'driverSignal': None, 'platform': list(os.uname()),
+              'primaryError': None, 'cleanup': [], 'receiptWrites': [],
+              'childCustody': 'not-launched'}
     child = None
-    previous_term = signal.getsignal(signal.SIGTERM)
+    stdout = stderr = None
+    owned = False
+    handler_installed = False
+    previous_term = None
+    primary = None
+    secondary = []
+
+    def failed(error):
+        nonlocal primary
+        if primary is None:
+            primary = (error, error.__traceback__)
+            record['primaryError'] = error_record(error)
+            record['errorType'] = type(error).__name__
+            record['error'] = str(error)
+            if isinstance(error, OSError):
+                record['errno'] = error.errno
+
+    def attempt(operation, function, category='cleanup'):
+        entry = {'operation': operation, 'state': 'started'}
+        record[category].append(entry)
+        try:
+            value = function()
+        except BaseException as error:
+            entry.update(state='failed', error=error_record(error))
+            secondary.append((error, error.__traceback__))
+            return False, None
+        entry['state'] = 'returned'
+        return True, value
+
+    def receipt(path, value, operation):
+        # This entry is included in the saved object; the final returned/failed
+        # state is also retained on any propagated exception as capture_record.
+        ok, _ = attempt(operation, lambda: save(path, value), 'receiptWrites')
+        if not ok:
+            error, traceback = secondary[-1]
+            raise error.with_traceback(traceback)
 
     def interrupted(signum, frame):
         record['driverSignal'] = signum
         raise InterruptedError(f'capture received signal {signum}')
 
+    def child_status():
+        code = child.returncode
+        record.update(returncode=code,
+                      exitCode=code if code is not None and code >= 0 else None,
+                      signal=-code if code is not None and code < 0 else None,
+                      childCustody='reaped' if code is not None else 'unresolved')
+        return code
+
     def finish_child():
         if child is None:
             return
-        if child.poll() is None:
-            child.terminate()
-            try:
-                child.wait(timeout=5)
-            except subprocess.TimeoutExpired:
-                child.kill()
-                child.wait()
-        record['returncode'] = child.returncode
-        record['exitCode'] = child.returncode if child.returncode >= 0 else None
-        record['signal'] = -child.returncode if child.returncode < 0 else None
+        record['childCustody'] = 'unresolved'
+        attempt('poll', child.poll)
+        if child_status() is None:
+            attempt('terminate', child.terminate)
+            attempt('wait-after-terminate', lambda: child.wait(timeout=5))
+            if child_status() is None:
+                attempt('kill', child.kill)
+                attempt('wait-after-kill', lambda: child.wait(timeout=5))
+                child_status()
 
-    signal.signal(signal.SIGTERM, interrupted)
     try:
-        # Exclusive creation makes evidence-name reuse fail before another launch.
-        # The child inherits these files; output survives an interrupted driver.
-        with stdout_path.open('xb', buffering=0) as stdout, stderr_path.open('xb', buffering=0) as stderr:
-            record['state'] = 'spawning'
-            save(outcome_path, record)
-            child = subprocess.Popen(argv, stdout=stdout, stderr=stderr)
-            record.update(pid=child.pid, state='running')
-            save(outcome_path, record)
-            try:
-                child.wait(timeout=timeout)
-            except subprocess.TimeoutExpired:
-                record['state'] = 'timeout'
-                finish_child()
-                raise
-            record['state'] = 'exited' if child.returncode >= 0 else 'signalled'
-            finish_child()
+        # Exclusive ownership prevents evidence-name reuse before another launch.
+        (directory / f'{name}.capture').mkdir()
+        owned = True
+        receipt(directory / f'{name}.argv.json', argv, 'argv')
+        receipt(outcome_path, record, 'setup')
+        previous_term = signal.getsignal(signal.SIGTERM)
+        signal.signal(signal.SIGTERM, interrupted)
+        handler_installed = True
+        # The child inherits raw files so bytes survive an interrupted driver.
+        stdout = stdout_path.open('xb', buffering=0)
+        stderr = stderr_path.open('xb', buffering=0)
+        record['state'] = 'spawning'
+        receipt(outcome_path, record, 'before-spawn')
+        child = subprocess.Popen(argv, stdout=stdout, stderr=stderr)
+        record.update(pid=child.pid, state='running', childCustody='owned')
+        receipt(outcome_path, record, 'running')
+        child.wait(timeout=timeout)
+        child_status()
+        record['state'] = 'exited' if child.returncode >= 0 else 'signalled'
     except BaseException as error:
-        if record['state'] != 'timeout':
-            record['state'] = ('spawn-error' if record['state'] == 'spawning' and child is None
-                               else 'setup-error' if record['state'] == 'setup'
-                               else 'interrupted')
-        record['errorType'] = type(error).__name__
-        record['error'] = str(error)
-        if isinstance(error, OSError):
-            record['errno'] = error.errno
-        finish_child()
-        raise
+        record['state'] = ('timeout' if isinstance(error, subprocess.TimeoutExpired)
+                           else 'setup-error' if record['state'] == 'setup'
+                           else 'spawn-error' if child is None
+                           else 'interrupted')
+        failed(error)
     finally:
-        signal.signal(signal.SIGTERM, previous_term)
+        # Each operation runs once. Failures do not replace the first exception
+        # or prevent the remaining bounded cleanup attempts.
+        finish_child()
+        if stdout is not None:
+            attempt('close-stdout', stdout.close)
+        if stderr is not None:
+            attempt('close-stderr', stderr.close)
+        if handler_installed:
+            attempt('restore-sigterm', lambda: signal.signal(signal.SIGTERM, previous_term))
+        if primary is None and secondary:
+            failed(secondary[0][0])
+            record['state'] = 'cleanup-error'
         record['finishedNs'] = time.time_ns()
-        save(outcome_path, record)
+        if owned:
+            attempt('final', lambda: save(outcome_path, record), 'receiptWrites')
+        if primary is None and secondary:
+            failed(secondary[0][0])
+            record['state'] = 'receipt-error'
+    if primary is not None:
+        error, traceback = primary
+        error.capture_record = record
+        raise error.with_traceback(traceback)
     return subprocess.CompletedProcess(argv, child.returncode,
                                        stdout_path.read_bytes(), stderr_path.read_bytes())
