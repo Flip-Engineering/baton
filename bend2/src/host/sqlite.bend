@@ -15,3 +15,10 @@ def Sql.binding(path: String) -> IO(Result<&1, &1, U32 & String, String>):
 # caller SQL; a match returns rows in the same format as Sql.query.
 def Sql.query_bound(path: String, binding: String, sql: String) -> IO(Result<&1, &1, U32 & String, String>):
   import "./sqlite.c"
+
+# Opens an existing database read-only, refuses an invalid UTF-8 path or statement,
+# runs no write pragma, and returns rows in the same format as Sql.query. This is a
+# separate connection from every other call: it checks nothing about a binding and
+# it establishes no custody.
+def Sql.read(path: String, sql: String) -> IO(Result<&1, &1, U32 & String, String>):
+  import "./sqlite.c"
