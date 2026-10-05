@@ -1,7 +1,7 @@
 # Baton2 root handoff
 
 This contributor handoff preserves unfinished operator work as of 2026-10-05
-20:49 UTC. Read the native task records and current source before resuming.
+20:46 UTC. Read the native task records and current source before resuming.
 Issue records describe defects; native reports contain current ownership and evidence.
 
 ## Authority and recovery
@@ -9,8 +9,8 @@ Issue records describe defects; native reports contain current ownership and evi
 The primary branch is `bend2-rewrite`. The root checkout is
 `/Users/wahargis/Development/Experiments/baton-bend2-root-delivery-20260928`.
 The prior handoff and pressure evidence were committed at
-`6315eb705812e3e1b5ae00c6e24e3fb6666ca0ff`. Native remote-tip readback at
-20:43 UTC confirmed published `bend2-rewrite` remains
+`6315eb705812e3e1b5ae00c6e24e3fb6666ca0ff`. Native remote-tip readback confirmed
+published `bend2-rewrite` remains
 `fca7af876c8260c32d17f95f3e19bc68ee1bf561`. Runtime consolidation and primary
 publication remain gated on the exact composed tree.
 
