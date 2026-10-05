@@ -567,29 +567,28 @@ def range_finish(kept: List<&2,String>, +after: IndexText, +through: IndexText) 
   Bool.pick(Command,Bool.and(index_absent(after),index_absent(through)),command,
     Bool.pick(Command,sequence_order(after,through),range_attach(command,after,through),Invalid{}))
 
-def range_bound(rest: List<&2,String>, kept: List<&2,String>, +after: IndexText, +through: IndexText, +value: String, lower: Bool) -> Command:
-  match lower:
-    case True{}:
-      Bool.pick(Command,Bool.and(index_absent(after),Sequence.valid(value)),range_scan(rest,kept,IndexExact{value},through),Invalid{})
-    case False{}:
-      Bool.pick(Command,Bool.and(index_absent(through),Sequence.valid(value)),range_scan(rest,kept,after,IndexExact{value}),Invalid{})
+def range_bound_valid(+bound: IndexText, +value: String) -> Bool:
+  Bool.and(index_absent(bound),Sequence.valid(value))
 
-# Existing filter values remain literal even when they spell a range option.
-def range_pair(+flag: String, +value: String, +rest: List<&2,String>, +kept: List<&2,String>, +after: IndexText, +through: IndexText) -> Command:
-  match flag:
-    case "--after-seq": range_bound(rest,kept,after,through,value,True{})
-    case "--through-seq": range_bound(rest,kept,after,through,value,False{})
-    case +other:
-      Bool.pick(Command,Bool.or(String.eq(other,"--recipient"),Bool.or(String.eq(other,"--sender"),Bool.or(String.eq(other,"--kind"),Bool.or(String.eq(other,"--state"),String.eq(other,"--for"))))),
-        range_scan(rest,value <> other <> kept,after,through),
-        range_scan(value <> rest,other <> kept,after,through))
+def range_value_flag(+flag: String) -> Bool:
+  Bool.or(String.eq(flag,"--recipient"),Bool.or(String.eq(flag,"--sender"),Bool.or(String.eq(flag,"--kind"),Bool.or(String.eq(flag,"--state"),String.eq(flag,"--for")))))
 
-def range_scan(args: List<&2,String>, kept: List<&2,String>, after: IndexText, through: IndexText) -> Command:
+# The scanner recurses only into itself. Existing filter values remain literal.
+def range_scan(args: List<&2,String>, +kept: List<&2,String>, +after: IndexText, +through: IndexText) -> Command:
   match args:
     case Nil{}: range_finish(kept,after,through)
     case +flag <> Nil{}:
       Bool.pick(Command,Bool.or(String.eq(flag,"--after-seq"),String.eq(flag,"--through-seq")),Invalid{},range_finish(flag <> kept,after,through))
-    case flag <> value <> rest: range_pair(flag,value,rest,kept,after,through)
+    case flag <> +value <> +rest:
+      match flag:
+        case "--after-seq":
+          Bool.pick(Command,range_bound_valid(after,value),range_scan(rest,kept,IndexExact{value},through),Invalid{})
+        case "--through-seq":
+          Bool.pick(Command,range_bound_valid(through,value),range_scan(rest,kept,after,IndexExact{value}),Invalid{})
+        case +other:
+          Bool.pick(Command,range_value_flag(other),
+            range_scan(rest,value <> other <> kept,after,through),
+            range_scan(value <> rest,other <> kept,after,through))
 
 def parse_shared(args: List<&2,String>) -> Command:
   match args:
