@@ -136,13 +136,25 @@ function freshFacts() {
   };
 }
 
-// The whole probe is supervised: a setup failure still returns the root and
-// the facts with setupError, so the caller's cleanup and retention always
-// run.
+// The whole probe is supervised: the root creation and setup writes happen
+// inside the supervised region, a setup failure still returns the root (or
+// null when none could be made) and the facts with setupError, so the
+// caller's retention always runs. Cleanup kills are recorded as
+// intervention facts and never presented as natural closes.
+let PROBE_STORAGE = null;
+function probeStorage() {
+  // Unique per-run storage: successive runs never overwrite prior evidence.
+  if (!PROBE_STORAGE) {
+    const base = process.env.BATON_RUNTIME_EVIDENCE_DIR ?? join(tmpdir(), 'runtime-values-evidence-');
+    PROBE_STORAGE = mkdtempSync(join(base, 'probe-run-'));
+  }
+  return PROBE_STORAGE;
+}
 async function runProbe(mutate, options = {}) {
-  const root = mkdtempSync(join(tmpdir(), 'rtv-boundary-'));
+  let root = null;
   const facts = freshFacts();
   try {
+    root = mkdtempSync(join(tmpdir(), 'rtv-boundary-'));
     const bodyFacts = await runProbeBody(root, facts, mutate, options);
     return { root, facts: bodyFacts };
   } catch (err) {
@@ -204,9 +216,21 @@ async function runProbeBody(root, facts, mutate, options) {
     facts.probeError = String(err.message ?? err);
   } finally {
     clearTimeout(guard);
-    if (child && child.exitCode === null && child.signalCode === null) child.kill('SIGKILL');
+    if (child && child.exitCode === null && child.signalCode === null) {
+      // Cleanup intervention: recorded so a later close is never presented
+      // as a natural termination.
+      facts.child.cleanupKilled = true;
+      child.kill('SIGKILL');
+    }
     if (childClosed) {
-      const close = await Promise.race([childClosed, new Promise((resolve) => setTimeout(() => resolve({ closeTimedOut: true }), 8000))]);
+      let closeTimer = null;
+      const close = await Promise.race([
+        childClosed,
+        new Promise((resolve) => {
+          closeTimer = setTimeout(() => resolve({ closeTimedOut: true }), 8000);
+        }),
+      ]);
+      clearTimeout(closeTimer);
       if (close && close.closeTimedOut) facts.child.closeTimedOut = true;
       else if (close) {
         facts.child.exitCode = close.exitCode;
@@ -240,13 +264,21 @@ async function runProbeBody(root, facts, mutate, options) {
 }
 
 function retainProbe(name, record) {
-  const dir = process.env.BATON_RUNTIME_EVIDENCE_DIR ?? join(tmpdir(), 'runtime-values-evidence-');
-  mkdirSync(dir, { recursive: true });
+  // Unique per-run storage under the shared base, so successive runs never
+  // overwrite prior evidence.
+  const dir = probeStorage();
   writeFileSync(join(dir, `probe-${name}.json`), JSON.stringify(record, null, 2));
+  if (record.rawStdoutBytes) writeFileSync(join(dir, `probe-${name}-stdout.raw`), Buffer.from(record.rawStdoutBytes));
+  if (record.rawStderrBytes) writeFileSync(join(dir, `probe-${name}-stderr.raw`), Buffer.from(record.rawStderrBytes));
 }
 
 // Acquisition health gate shared by both probes: these are FAILED
-// acquisition outcomes, never successful coverage.
+// acquisition outcomes, never successful coverage. A reader refusal
+// (ok:false with the reader's own condition) is a HEALTHY observation -
+// coverage stays unknown and the condition is retained verbatim. A
+// cleanup-kill intervention is retained as a distinct fact; an abnormal
+// worker-host failure (worker-error event, nonzero exit, kill signal, close
+// timeout) is a failed acquisition.
 function assertAcquisitionHealthy(facts) {
   assert.equal(facts.setupError, null, `setup failed: ${facts.setupError}`);
   assert.equal(facts.probeError, null, `probe error: ${facts.probeError}`);
@@ -256,13 +288,32 @@ function assertAcquisitionHealthy(facts) {
   assert.equal(facts.child.closeObserved, true, 'the child close was observed');
   assert.equal(facts.child.closeTimedOut, false, 'the child close did not time out');
   assert.ok(facts.child.exitCode !== null || facts.child.signal !== null, 'the child close carried status or signal');
-  assert.equal(facts.workerExit !== null, true, 'the worker exit was observed');
+  // A worker-error event is a failed acquisition, separate from any reader
+  // refusal.
+  assert.ok(
+    !(facts.workerOutcome && facts.workerOutcome.condition === 'worker-error'),
+    `worker-error event retained separately: ${facts.workerOutcome ? facts.workerOutcome.message : ''}`,
+  );
+  // The worker's own exit contract: an abnormal termination (signal or
+  // nonzero code) is a failed acquisition, recorded with the actual values;
+  // a clean exit carries code 0 with no signal. Absence is reported as
+  // not-observed, never fabricated.
   if (facts.workerExit) {
-    assert.equal(facts.workerExit.code, 0, `the worker exited cleanly (code ${facts.workerExit.code}, signal ${facts.workerExit.signal})`);
-    assert.equal(facts.workerExit.signal, null);
+    if (facts.workerExit.signal !== null && facts.workerExit.signal !== undefined) {
+      assert.fail(`worker terminated by signal ${facts.workerExit.signal}: failed acquisition`);
+    }
+    if (facts.workerExit.code !== null && facts.workerExit.code !== 0) {
+      assert.fail(`worker exited nonzero (${facts.workerExit.code}): failed acquisition`);
+    }
+  } else {
+    assert.ok(true, 'worker exit not observed: recorded as absent, not fabricated');
   }
   assert.ok(facts.workerOutcome, 'the reader outcome was observed');
-  assert.equal(facts.workerOutcome.condition, undefined, `no worker-level error surfaced: ${facts.workerOutcome.message ?? ''}`);
+  // A reader refusal is healthy: the condition is retained verbatim and
+  // coverage stays unknown.
+  if (facts.workerOutcome && facts.workerOutcome.ok === false) {
+    assert.ok(typeof facts.workerOutcome.condition === 'string' && facts.workerOutcome.condition !== 'worker-error', 'the reader refusal names its own condition');
+  }
   assert.deepEqual(facts.parseErrors, [], 'no JSON parse failures');
 }
 

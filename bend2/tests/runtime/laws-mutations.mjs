@@ -57,7 +57,7 @@
 import { spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { cpSync, existsSync, mkdirSync, readFileSync, readdirSync, readlinkSync, rmSync, writeFileSync } from 'node:fs';
-import { join, relative, resolve } from 'node:path';
+import { dirname, join, relative, resolve } from 'node:path';
 
 import { MUTATION_DEFINITIONS, LAW_ENTRY } from './laws-mutation-definitions.mjs';
 
@@ -210,11 +210,13 @@ function freezeSnapshot() {
       if (entry.isDirectory()) walk(full);
       else {
         const bytes = readFileSync(full);
-        files.push({ path: relative(snapshotRoot, full), bytes: bytes.length, sha256: sha256Hex(bytes) });
+        // One declared coordinate system: paths are bend2-relative in the
+        // manifest and in every verification walk.
+        files.push({ path: relative(join(snapshotRoot, "bend2"), full), bytes: bytes.length, sha256: sha256Hex(bytes) });
       }
     }
   };
-  walk(snapshotRoot);
+  walk(snapshot.bend2Root);
   files.sort((a, b) => (a.path < b.path ? -1 : 1));
   const manifest = { files, fileCount: files.length };
   const manifestBytes = Buffer.from(JSON.stringify(manifest), 'utf8');
@@ -555,9 +557,9 @@ try {
   }
   // Bind the executed producer bytes to the frozen copies and verify the
   // snapshot against its manifest before any case.
-  identity.entryBytes = safeFileDigest(join(snapshot.bend2Root, relative(join(ROOT, 'bend2'), LAW_ENTRY)));
-  identity.producerBytes.runnerFrozen = safeFileDigest(join(snapshot.bend2Root, relative(join(ROOT, 'bend2'), import.meta.filename)));
-  identity.producerBytes.definitionsFrozen = safeFileDigest(join(snapshot.bend2Root, relative(join(ROOT, 'bend2'), join(import.meta.dirname, 'laws-mutation-definitions.mjs'))));
+  identity.entryBytes = safeFileDigest(join(snapshot.bend2Root, relative('bend2', LAW_ENTRY)));
+  identity.producerBytes.runnerFrozen = safeFileDigest(join(snapshot.bend2Root, relative('bend2', import.meta.filename)));
+  identity.producerBytes.definitionsFrozen = safeFileDigest(join(snapshot.bend2Root, relative('bend2', join(import.meta.dirname, 'laws-mutation-definitions.mjs'))));
   identity.producerBytes.frozenCopiesMatchLive =
     identity.producerBytes.runnerFrozen.sha256 !== undefined &&
     identity.producerBytes.definitionsFrozen.sha256 !== undefined &&
@@ -580,7 +582,7 @@ try {
   const preVerify = verifySnapshot(snapshot);
   writeFileSync(join(EVIDENCE_DIR, '002-snapshot-verify-pre.json'), JSON.stringify(preVerify, null, 2));
   if (!preVerify.verified) {
-    record({ control: 'snapshot-verify-pre', kind: 'setup', acquired: false, notAcquiredClass: 'snapshot-drift', noProcess: { reason: 'frozen snapshot drifted from its manifest before any case', drift: preVerify.drift } });
+    record({ control: 'snapshot-verify-pre', kind: 'setup', acquired: false, notAcquiredClass: 'snapshot-drift', noProcess: { reason: 'frozen snapshot drifted from its manifest before any case', drift: preVerify.inputDrift } });
     const stored = writeSummary((failures += 1), { stopped: 'snapshot-drift' });
     console.log(`laws-mutations: red - snapshot drifted before any case (summary stored: ${stored.stored})`);
     process.exit(1);
@@ -652,9 +654,11 @@ try {
   // invoked, and the post-spawn verification is checked only after a run.
   // The frozen input snapshot is re-verified before every case and the whole
   // loop stops on drift.
+  let snapshotDriftStopped = false;
   function verifySnapshotOrFail(caseName) {
     const verification = verifySnapshot(snapshot);
     if (!verification.verified) {
+      snapshotDriftStopped = true;
       record({ control: `snapshot-drift:${caseName}`, kind: 'setup', acquired: false, notAcquiredClass: 'snapshot-drift', noProcess: { reason: 'the frozen input drifted before this case; all remaining acquisitions stop', drift: verification.inputDrift, manifestBinding: verification.manifestBinding } });
       return false;
     }
@@ -677,15 +681,17 @@ try {
   }
 
   for (const law of PROOF_REMOVAL_LAWS) {
+    if (snapshotDriftStopped) break;
     let phase = 'setup';
     let run = null;
+    let paths = null;
     try {
       if (!verifySnapshotOrFail(`proof-${law.name}`)) {
         failures += 1;
         break;
       }
       phase = 'copy';
-      const paths = nextCase(`proof-${law.name}`);
+      paths = nextCase(`proof-${law.name}`);
       const original = readFileSync(join(snapshot.root, law.file));
       const originalText = original.toString('utf8');
       const proofPattern = new RegExp(`\\ndef ${law.name}\\([^)]*\\):\\n  \\{==\\}\\n`);
@@ -769,15 +775,17 @@ try {
   }
 
   for (const definition of MUTATION_DEFINITIONS) {
+    if (snapshotDriftStopped) break;
     let phase = 'setup';
     let run = null;
+    let paths = null;
     try {
       if (!verifySnapshotOrFail(`mutation-${definition.name}`)) {
         failures += 1;
         break;
       }
       phase = 'copy';
-      const paths = nextCase(`mutation-${definition.name}`);
+      paths = nextCase(`mutation-${definition.name}`);
       const original = readFileSync(join(snapshot.root, definition.file));
       const edit = uniqueEdit(original, definition.find, definition.replace);
       if (!edit.found || !edit.unique) {

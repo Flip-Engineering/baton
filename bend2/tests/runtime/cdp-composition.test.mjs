@@ -177,7 +177,7 @@ test('same-epoch assembly over a real debuggee through the production session', 
   const evidence = { process: { pid: run.child.pid, execPath: process.execPath, version: process.version } };
   let session = null;
   let releaseObserved = null;
-  let outstandingAbort = null;
+  let outstandingWait = null;
   let primaryFailure = null;
   try {
     // Fixture-owned control for the child THIS harness created: a truthful
@@ -208,25 +208,29 @@ test('same-epoch assembly over a real debuggee through the production session', 
     // returned handle carries rejection ownership: cleanup aborts it, the
     // helper awaits the settled promise, and cancellation is distinguished
     // from timeout while non-abort errors are retained on the facts.
-    async function waitForStop(afterCursor, timeoutMs = 15000, facts = null) {
+    async function waitForStop(afterCursor, timeoutMs = 15000) {
       const abort = new AbortController();
-      outstandingAbort = abort;
-      const timer = setTimeout(() => abort.abort(), timeoutMs);
+      const timer = setTimeout(() => abort.abort(new Error('wait-timeout')), timeoutMs);
       const wait = session.waitFor('Debugger.paused', { after: afterCursor, signal: abort.signal });
-      const settled = wait.catch((err) => ({ rejected: true, message: String(err.message ?? err) }));
-      try {
-        const observed = await settled;
-        if (observed && observed.rejected) {
-          if (facts) facts.waitError = observed.message;
-          if (abort.signal.aborted) return { observed: null, timedOut: true, cancelled: true, waitError: observed.message };
-          return { observed: null, timedOut: false, cancelled: false, waitError: observed.message };
-        }
-        return { observed, timedOut: false, cancelled: false };
-      } finally {
-        clearTimeout(timer);
-        await settled.catch(() => {});
-        if (outstandingAbort === abort) outstandingAbort = null;
-      }
+      const settled = wait.then(
+        (observed) => ({ reason: 'completed', observed, timedOut: false, cancelled: false, rejected: false, message: null }),
+        (err) => {
+          const abortReason = abort.signal.reason instanceof Error ? abort.signal.reason.message : String(abort.signal.reason ?? 'aborted');
+          if (abort.signal.aborted && abortReason === 'wait-timeout') {
+            return { reason: 'timeout', observed: null, timedOut: true, cancelled: false, rejected: true, message: abortReason };
+          }
+          if (abort.signal.aborted) {
+            return { reason: 'cancelled', observed: null, timedOut: false, cancelled: true, rejected: true, message: abortReason };
+          }
+          return { reason: 'error', observed: null, timedOut: false, cancelled: false, rejected: true, message: String(err.message ?? err) };
+        },
+      );
+      outstandingWait = { abort, settled };
+      const result = await settled;
+      if (result.reason === 'error') evidence.waitErrors = [...(evidence.waitErrors ?? []), result.message];
+      clearTimeout(timer);
+      if (outstandingWait && outstandingWait.abort === abort) outstandingWait = null;
+      return result;
     }
 
     // LAUNCH FIRST: a wait issued before launch would reject
@@ -328,12 +332,14 @@ test('same-epoch assembly over a real debuggee through the production session', 
     // cancellation, timeout and non-abort errors distinguished on the facts.
     let later;
     try {
-      const laterStopPromise = waitForStop(initial.observed.index);
+      const laterHandle = waitForStop(initial.observed.index);
       await session.execute('resume-step', { effects: ['controlRuntime'], action: 'resume' });
-      later = await laterStopPromise;
+      later = await laterHandle;
     } catch (err) {
-      if (outstandingAbort) outstandingAbort.abort();
-      await new Promise((resolve) => setTimeout(resolve, 0));
+      if (outstandingWait) {
+        outstandingWait.abort.abort(new Error('resume-failed'));
+        evidence.resumeDrain = await outstandingWait.settled.catch((drainError) => ({ reason: 'drain-error', message: String(drainError.message ?? drainError) }));
+      }
       evidence.resumeFailure = String(err.message ?? err);
       throw err;
     }
@@ -344,9 +350,12 @@ test('same-epoch assembly over a real debuggee through the production session', 
     // a real observed later stop makes the live-stop state admit the epoch
     // check instead, which then refuses staleReference. The expected
     // condition is chosen from the actual observed state.
+    if (later.reason === 'error') {
+      assert.fail(`the later-stop wait failed with a non-abort error; absence of a stop cannot be justified: ${later.message}`);
+    }
     const expectedCondition = later.observed ? 'staleReference' : 'refOutsidePause';
     const stateFirst = binding.sample();
-    assert.equal(stateFirst.condition, expectedCondition, `the state-first refusal names the actual condition (${later.timedOut ? 'no later stop observed: running, outside a stop' : 'later stop observed'})`);
+    assert.equal(stateFirst.condition, expectedCondition, `the state-first refusal names the actual condition (${later.reason === 'timeout' ? 'no later stop observed: running, outside a stop' : 'later stop observed'})`);
     evidence.afterResume = { ...afterResume, laterStopTimedOut: later.timedOut, stateFirstCondition: stateFirst.condition };
 
     // The production release path runs and its observed result envelope is
@@ -355,9 +364,16 @@ test('same-epoch assembly over a real debuggee through the production session', 
     // the acknowledgement alone.
     releaseObserved = await session.execute('release', { effects: ['controlRuntime'], onRelease: 'terminate', signal: 'SIGKILL' });
     assert.ok(releaseObserved !== null && typeof releaseObserved === 'object', 'release returned an observed result envelope');
-    assert.ok('state' in releaseObserved, `the release envelope names its state: ${JSON.stringify(releaseObserved).slice(0, 200)}`);
-    assert.ok('keeper' in releaseObserved, 'the release envelope names its keeper disposition');
+    assert.ok(typeof releaseObserved.state === 'string' && releaseObserved.state.length > 0, `the release envelope names its observed state: ${JSON.stringify(releaseObserved).slice(0, 200)}`);
+    assert.ok(releaseObserved.keeper !== undefined, 'the release envelope names its keeper disposition');
+    assert.ok(releaseObserved.keeper === null || typeof releaseObserved.keeper === 'object', 'the keeper disposition is an object or an explicit null');
+    if (releaseObserved.keeper && typeof releaseObserved.keeper === 'object') {
+      assert.ok('signaled' in releaseObserved.keeper, 'the keeper disposition records the signal attempt');
+      assert.ok('pid' in releaseObserved.keeper, 'the keeper disposition names the pid');
+      assert.ok(typeof releaseObserved.keeper.scope === 'string' && releaseObserved.keeper.scope.includes('fixture-owned'), 'the keeper disposition carries the truthful fixture-owned scope');
+    }
     evidence.releaseResult = releaseObserved;
+    evidence.signalAttempt = releaseObserved.keeper ?? null;
 
     // The session's frame trace, when the surface exposes one, is retained
     // with the evidence.
@@ -374,8 +390,12 @@ test('same-epoch assembly over a real debuggee through the production session', 
   } finally {
     const closureFailures = [];
     try {
-      // Cancel any outstanding wait so its rejection cannot escape.
-      if (outstandingAbort) outstandingAbort.abort();
+      // Cancel any outstanding wait so its rejection cannot escape, then
+      // DRAIN the preserved settled promise before closing the session.
+      if (outstandingWait) {
+        outstandingWait.abort.abort(new Error('cleanup'));
+        await outstandingWait.settled.catch(() => {});
+      }
     } catch (err) {
       closureFailures.push(`abort outstanding wait: ${String(err.message ?? err)}`);
     }
@@ -410,11 +430,13 @@ test('same-epoch assembly over a real debuggee through the production session', 
     }
     let closure = null;
     let reapTimedOut = false;
-    const reapTimer = setTimeout(() => {}, 8000);
+    let reapTimer = null;
     try {
       closure = await Promise.race([
         finish(run),
-        new Promise((resolve) => setTimeout(() => resolve(null), 8000)),
+        new Promise((resolve) => {
+          reapTimer = setTimeout(() => resolve(null), 8000);
+        }),
       ]);
       clearTimeout(reapTimer);
       if (!closure) {
@@ -434,6 +456,13 @@ test('same-epoch assembly over a real debuggee through the production session', 
     // unresolved cleanup failure and no reap timeout is the only success
     // shape; a reap timeout is a distinct failed outcome.
     if (reapTimedOut) {
+      // Async-close latency after an acknowledged release is UNRESOLVED
+      // CUSTODY, not a failed release: the close was not observed within the
+      // bound, no exit is fabricated, and the distinction is named.
+      if (releaseObserved) {
+        evidence.releaseClosePending = true;
+        assert.fail('release acknowledged but the child close was not observed within 8s; unresolved custody, not a failed release and not a fabricated signal');
+      }
       assert.fail('child reaping timed out after 8s; no exit was observed (distinct failed outcome, not a fabricated signal)');
     }
     if (closureFailures.length > 0) {

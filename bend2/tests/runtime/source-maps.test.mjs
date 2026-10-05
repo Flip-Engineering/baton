@@ -367,16 +367,34 @@ test('the injected read capability owns enforcement and its refusal renders verb
   const dir = mkdtempSync(join(tmpdir(), 'runtime-values-sm-'));
   try {
     writeFileSync(join(dir, 'm.map'), MAP_JSON);
-    const leaky = loadSourceMap({
+    const accepted = loadSourceMap({
+      sourceMapURL: 'm.map',
+      generatedPath: join(dir, 'gen.js'),
+      admittedRoots: [],
+      readAdmitted: () => ({
+        bytes: MAP_TEXT_BYTES,
+        identity: { path: 'injected', realPath: 'injected', dev: '0', ino: '0', size: String(MAP_TEXT_BYTES.length) },
+      }),
+    });
+    // The injected capability answered with the complete decimal-string
+    // identity, so the map loads; the identity shown is the injected one and
+    // the path evidence carries it.
+    assert.equal(accepted.condition, undefined);
+    assert.equal(accepted.input.path, 'injected');
+    const missingPath = loadSourceMap({
+      sourceMapURL: 'm.map',
+      generatedPath: join(dir, 'gen.js'),
+      admittedRoots: [],
+      readAdmitted: () => ({ bytes: MAP_TEXT_BYTES, identity: { realPath: 'injected', dev: '0', ino: '0', size: '1' } }),
+    });
+    assert.equal(missingPath.condition, 'readCapabilityIdentityMissing');
+    const numericIdentity = loadSourceMap({
       sourceMapURL: 'm.map',
       generatedPath: join(dir, 'gen.js'),
       admittedRoots: [],
       readAdmitted: () => ({ bytes: MAP_TEXT_BYTES, identity: { path: 'injected', realPath: 'injected', dev: 0, ino: 0, size: MAP_TEXT_BYTES.length } }),
     });
-    // The injected capability answered, so the map loads; the identity shown
-    // is the injected one and the path evidence carries it.
-    assert.equal(leaky.condition, undefined);
-    assert.equal(leaky.input.path, 'injected');
+    assert.equal(numericIdentity.condition, 'readCapabilityIdentityMissing', 'the identity fields are decimal strings, not numbers');
     const refusing = loadSourceMap({
       sourceMapURL: 'm.map',
       generatedPath: join(dir, 'gen.js'),

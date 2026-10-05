@@ -9,23 +9,24 @@
 // observe intent requires no controlRuntime grant.
 //
 // Admission: every backend access is gated on the production ref decision.
-// The composer injects the CDP owner's admitRef (and optionally its
-// requireAdmittedRef normalizer); this module treats anything else as a
-// refusal and never derives admission from the absence of a refusal. The
-// local shape check exists only for the standalone unit path and is strictly
-// narrower than the production contract, never wider: an admitted decision
-// must be {decision:'admitted', ok:true, identity} with a complete
-// seven-member identity whose counters are canonical decimal strings. A
-// runtimeBusy answer is a terminal refusal for the capture, not a retry
-// obligation, and release stays available as an intent.
+// The injected CDP requireAdmittedRef normalizer is MANDATORY on every
+// operative normalization path - admissionOutcome, staleRefRefusal and the
+// capture binding refuse productionNormalizerRequired without it, and no
+// local shape validator exists in this module (standalone shape checks live
+// in the test files that need them). This module never derives admission
+// from the absence of a refusal. A runtimeBusy answer is a terminal refusal
+// for the capture, not a retry obligation, and release stays available as
+// an intent.
 //
 // Capture: reads run through an awaited acquisition that samples the
 // composer's live session before and after every read and at publication,
 // through the injected production admission. An identity change yields an
 // explicit changedDuringCapture result with the scopes admitted so far; the
-// raw record of a changed read is retained as pre-change evidence and never
-// reported complete. Summary rendering over already-acquired records is a
-// separate synchronous operation that performs no backend read.
+// response observed across a changed read is carried as rawRecord with an
+// explicit note that its timing relative to the mutation is NOT
+// established, and it is never reported complete. Summary rendering over
+// already-acquired records is a separate synchronous operation that
+// performs no backend read.
 //
 // Counter strings: epoch and mutationGeneration are canonical unsigned
 // decimal strings owned by the CDP counter module and pass through here
