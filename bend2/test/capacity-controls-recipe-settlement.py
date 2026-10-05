@@ -286,30 +286,61 @@ class RecipeSettlement(unittest.TestCase):
         digest = RECIPE.digest(retained)
         target = self.run / 'composed-metadata'
 
-        def run_stage(expected, staged):
+        def run_stage(name, expected, staged):
+            # Each case uses its own stage name so a later attempt does not merge the
+            # observations of an earlier one into the same row.
             return RECIPE.attempt(
-                self.run, self.record, 'archive-metadata-staged',
+                self.run, self.record, name,
                 lambda: RECIPE.stage_metadata(self.run, self.record, staged, retained,
                                               target, expected, documents),
                 archive=retained.name)
 
-        # A missing first document fails before any copy completes.
+        # A missing first document fails with the filesystem error the copy raises,
+        # before any copy completes.
         missing = self.run / 'missing-archived'
         missing.mkdir()
         (missing / 'reduction.json').write_bytes(b'{}')
-        with self.assertRaises(RECIPE.StageFailure):
-            run_stage(digest, missing)
-        row = next(row for row in self.rows() if row['name'] == 'archive-metadata-staged')
+        with self.assertRaises(FileNotFoundError):
+            run_stage('metadata-missing-stage', digest, missing)
+        row = next(row for row in self.rows() if row['name'] == 'metadata-missing-stage')
         self.assertEqual(row['outcome'], 'failed')
         self.assertEqual(row['documents_copied'], [])
         self.assertEqual(row['copy_attempted'], 'inventory.json')
 
-        # A retained archive whose digest disagrees fails at the archive check.
+        # The first document is copied and the second is missing, so both the
+        # completed copies and the destination being copied are on the row.
+        partial = self.run / 'partial-archived'
+        partial.mkdir()
+        (partial / 'inventory.json').write_bytes(b'{}')
+        with self.assertRaises(FileNotFoundError):
+            run_stage('metadata-partial-stage', digest, partial)
+        row = next(row for row in self.rows() if row['name'] == 'metadata-partial-stage')
+        self.assertEqual(row['documents_copied'], ['inventory.json'])
+        self.assertEqual(row['copy_attempted'], 'reduction.json')
+        self.assertEqual(row['documents_verified'], [])
+
+        # A retained archive whose digest disagrees fails at the archive check, and
+        # a metadata document that disagrees fails while it is being verified.
         with self.assertRaises(RECIPE.StageFailure):
-            run_stage('d' * 64, archived)
-        row = next(row for row in self.rows() if row['name'] == 'archive-metadata-staged')
+            run_stage('metadata-archive-stage', 'd' * 64, archived)
+        row = next(row for row in self.rows() if row['name'] == 'metadata-archive-stage')
         self.assertEqual(row['boundary'], 'retained-archive')
         self.assertEqual(row['documents_verified'], [])
+
+        verified_wrong = dict(documents)
+        verified_wrong['reduction.json'] = 'e' * 64
+        def run_verified_stage():
+            return RECIPE.attempt(
+                self.run, self.record, 'metadata-verified-stage',
+                lambda: RECIPE.stage_metadata(self.run, self.record, archived, retained,
+                                              target, digest, verified_wrong),
+                archive=retained.name)
+        with self.assertRaises(RECIPE.StageFailure):
+            run_verified_stage()
+        row = next(row for row in self.rows() if row['name'] == 'metadata-verified-stage')
+        self.assertEqual(row['boundary'], 'retained-metadata')
+        self.assertEqual(row['metadata_member'], 'reduction.json')
+        self.assertEqual(row['metadata_verified'], ['inventory.json'])
 
     def test_the_envelope_caller_names_the_operation_it_reached(self):
         # A written envelope reports its digest, and a write that cannot happen
@@ -331,6 +362,26 @@ class RecipeSettlement(unittest.TestCase):
         # The occupied path is a directory, so no written file is present and the
         # write operation is the one that failed.
         self.assertFalse(fields['envelope_present'])
+
+        # The write succeeds and the hash read fails, which is a later operation.
+        hashed = self.run / 'archive-envelope-hashed.json'
+        original_digest = RECIPE.digest
+
+        def failing_digest(path):
+            if pathlib.Path(path) == hashed:
+                raise OSError('the written envelope could not be read')
+            return original_digest(path)
+
+        RECIPE.digest = failing_digest
+        self.addCleanup(setattr, RECIPE, 'digest', original_digest)
+        with self.assertRaises(OSError) as raised_hash:
+            RECIPE.write_envelope(self.run, self.record, {'reduction_sha256': 'a' * 64},
+                                  hashed)
+        hash_fields = raised_hash.exception.fields
+        self.assertEqual(hash_fields['operation'], 'envelope-sha256')
+        self.assertTrue(hash_fields['envelope_present'])
+        self.assertEqual(hash_fields['envelope_bytes'],
+                         hashed.stat().st_size)
 
     def test_a_preflight_refusal_names_the_member_and_extracts_nothing(self):
         # The unsafe member is refused during the preflight, before any member is

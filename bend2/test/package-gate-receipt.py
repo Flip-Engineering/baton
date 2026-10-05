@@ -1459,6 +1459,76 @@ class PackageGateReceipt(unittest.TestCase):
         spec.loader.exec_module(recipe)
         recipe.bind_response_to_verdict(response, verdict, case['id'])
 
+    def test_the_composed_envelope_binds_the_retained_endpoint_response(self):
+        """The whole chain in one composition.
+
+        A substituted transport answers the real classifier, the composition builds
+        the envelope over those acquisitions, and the recipe consumer compares each
+        retained response with the verdict the envelope carries. The endpoint
+        process is substituted, so this is the reader and composition contract and
+        not an endpoint acquisition.
+        """
+        original_run = PACKAGE.subprocess.run
+        self.addCleanup(setattr, PACKAGE.subprocess, 'run', original_run)
+        substituted = PACKAGE.classify_control
+        PACKAGE.classify_control = self._real_classify_control
+        self.addCleanup(setattr, PACKAGE, 'classify_control', substituted)
+        case = self.laws()[0]
+        historical = {key: value for key, value in self.verifier.items()
+                      if key != 'classifier_module_sha256'}
+        historical['classify_module_sha256'] = self.verifier['classifier_module_sha256']
+        answer = {'schema': 'capacity-controls/classify-verdict@1', 'id': case['id'],
+                  'class': 'intended-law-refusal', 'attributed_law': case['law'],
+                  'law': case['law'], 'match': True, 'qualified': True,
+                  'evidence_verified': True, 'verifier': historical}
+
+        def substitute(argv, **kwargs):
+            _ = argv
+            handle = kwargs.get('stdout')
+            # The classifier writes its request beside the stream it is about to
+            # capture, so the answer names the case that was asked about.
+            asked = {}
+            try:
+                request_path = pathlib.Path(str(getattr(handle, 'name', '')))
+                asked = json.loads(request_path.read_text())['case']
+            except Exception:
+                asked = {}
+            identity = asked.get('id', case['id'])
+            law = asked.get('law', case['law'])
+            payload = (json.dumps(dict(answer, id=identity, law=law,
+                                       attributed_law=law)) + '\n').encode()
+            if hasattr(handle, 'write'):
+                handle.write(payload)
+                handle.flush()
+
+            class Completed:
+                returncode = 0
+                stdout = payload
+                stderr = b''
+            return Completed()
+
+        PACKAGE.subprocess.run = substitute
+        audit = self.home / 'composed-audit'
+        envelope = PACKAGE.controls_evidence(self.full_evidence(), PACKAGE.snapshot(),
+                                             self.compiler(), audit=audit)
+        verdicts = (envelope.get('classifier') or {}).get('verdicts') or []
+        self.assertTrue(verdicts)
+        spec = importlib.util.spec_from_file_location(
+            'capacity_controls_recipe',
+            ROOT / 'bend2/test/capacity-controls-positive-recipe.py')
+        recipe = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(recipe)
+        for verdict in verdicts:
+            identity = str(verdict['id'])
+            stem = PACKAGE.acquisition_stem(identity)
+            response = json.loads((audit / (stem + '.stdout')).read_bytes().decode('utf-8'))
+            # The composition stores the canonical closure this response normalizes
+            # to, and the consumer accepts that pair.
+            self.assertEqual(verdict['verifier'],
+                             PACKAGE.require_verifier_closure({'verifier': response['verifier']},
+                                                              identity))
+            recipe.bind_response_to_verdict(response, verdict, identity)
+
     def test_the_reader_accepts_the_historical_classifier_spelling(self):
         """A run naming only the historical spelling still reads."""
         member = 'classifier_module_sha256'
