@@ -273,7 +273,7 @@ def register_decided(+registration: Registration, +observed: Generation, identit
     case True{}: match is_cancelled:
       case True{}: registration
       case other: match busy:
-        case True{}: registration
+        case True{}: Registration{reg_identity_of(registration),reg_generation_of(registration),reg_database_of(registration),reg_owner_of(registration),reg_request_of(registration),reg_session_of(registration),reg_adoptions_of(registration),reg_references_of(registration),reg_armed_of(registration),reg_event_retained_of(registration),reg_cancelled_of(registration),reg_outstanding_of(registration),Bool.or(reg_pending_of(registration),Bool.not(no_outstanding))}
         case other: match revision:
           case True{}: Registration{reg_identity_of(registration),reg_generation_of(registration),reg_database_of(registration),reg_owner_of(registration),reg_request_of(registration),reg_session_of(registration),reg_adoptions_of(registration),reg_references_of(registration),True{},reg_event_retained_of(registration),reg_cancelled_of(registration),reg_outstanding_of(registration),reg_pending_of(registration)}
           case other: Registration{reg_identity_of(registration),reg_generation_of(registration),reg_database_of(registration),reg_owner_of(registration),reg_request_of(registration),reg_session_of(registration),reg_adoptions_of(registration),reg_references_of(registration),False{},Bool.or(reg_event_retained_of(registration),Bool.and(Bool.not(reg_event_retained_of(registration)),no_outstanding)),reg_cancelled_of(registration),reg_outstanding_of(registration),Bool.or(reg_pending_of(registration),Bool.not(no_outstanding))}
