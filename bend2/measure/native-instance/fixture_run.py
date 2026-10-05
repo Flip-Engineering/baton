@@ -13,6 +13,7 @@ Every value comes from the installed binary's own output or from ps(1).
 
 Usage: fixture_run.py FIXTURE_DIR OMP_BIN MODEL EFFORT
 """
+import glob
 import json
 import os
 import shutil
@@ -196,6 +197,11 @@ def main():
         "first_seen_s": first_seen,
         "chain_elapsed_s": round(finished - started, 3),
         "samples": samples[:400],
+        # The session read below is the session row as it stands now, not
+        # per-attempt evidence. `attempts_in_database` lets a reader decide
+        # whether that value is attributable to one attempt.
+        "session_observation": {"kind": "current", "attempts_in_database":
+                                len(glob.glob(database + ".attempt-*"))},
         "session": cli("session", "fixture-agent"),
         "inbox": cli("inbox", "operator"),
         "turns": cli("turns", "fixture-agent"),
