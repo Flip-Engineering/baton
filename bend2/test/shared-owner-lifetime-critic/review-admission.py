@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
 """Independently review the immutable owner-admission decision and law gaps.
 
-Only isolated copies are mutated. Compiler success for a mutation is a measured
-coverage gap in this historical pin, not an implementation acceptance result.
+Only isolated copies are mutated. Historical pins reproduce the coverage gap;
+the corrected pin requires rejection at each intended law. These checks cover
+the pure component and do not qualify shared runtime integration.
 """
 
 import argparse
@@ -15,6 +16,7 @@ import subprocess
 
 PIN = "bea247cc523271f2eab4199febcc47262aca8574"
 TYPED_PIN = "0dc3c99051c4df9521546f14aacbd57a19174480"
+CORRECTED_PIN = "7de194e02aa7ae0a4e7d19bf5845198182a97881"
 MODULE = Path("bend2/src/coordinator/owner-admission.bend")
 ENTRY = Path("bend2/test/owner-admission/main.bend")
 
@@ -23,7 +25,7 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--bend", required=True)
     parser.add_argument("--output", required=True)
-    parser.add_argument("--pin", choices=(PIN, TYPED_PIN), default=PIN)
+    parser.add_argument("--pin", choices=(PIN, TYPED_PIN, CORRECTED_PIN), default=PIN)
     args = parser.parse_args()
     root = Path(__file__).resolve().parents[3]
     output = Path(args.output).resolve()
@@ -66,6 +68,14 @@ def main():
                 source = source.replace(needle, "True{}")
             target.write_text(source)
         checked = run(name + "-check", [args.bend, ENTRY, "--check-only"], isolated)
+        if field and args.pin == CORRECTED_PIN:
+            diagnostic = (checked.stdout + checked.stderr).decode(errors="replace")
+            prefix = "../../src/coordinator/owner-admission."
+            assert checked.returncode == 1, (name, diagnostic)
+            assert "Location: " + prefix + "changed_" + field + "_refuses_request_reuse\n" in diagnostic
+            assert "- expected : " + prefix + "Replay{" in diagnostic
+            assert "- observed : " + prefix + "Conflict{" in diagnostic
+            continue
         assert checked.returncode == 0
         generated = isolated / "admission.c"
         binary = isolated / "admission"
@@ -79,7 +89,7 @@ def main():
             arguments[{"request": 1, "session": 2, "operation": 3}[changed_field]] = "changed"
             result = run(name + "-changed-" + changed_field, [binary, *arguments], isolated)
             assert result.returncode == 0
-            conflict = ("conflict:attempt-a:" + changed_field + "\n").encode() if args.pin == TYPED_PIN else b"conflict\n"
+            conflict = b"conflict\n" if args.pin == PIN else ("conflict:attempt-a:" + changed_field + "\n").encode()
             assert result.stdout == (conflict if field is None else b"replay:attempt-a\n")
         if field is None:
             replay = run("baseline-replay", [binary, *base], isolated)

@@ -44,6 +44,30 @@ actual exit and isolated source is retained. The runner exited 0 after
 reproducing all counterexamples. Bend 2.0.25 SHA-256 is
 `3850c7cd281a687715a181ad6a2ecdef041704f320ea2b4304cf9e802309203c`.
 
+## Corrected successor verdict
+
+Message `native-instance-lifetime-critic-identity-laws-25` supplied immutable
+`7de194e02aa7ae0a4e7d19bf5845198182a97881`. Its source delta adds actual `decide`
+laws for changed request, session and operation, with corresponding intended
+comparison-removal controls. Independent committed-blob hashes match the
+supplied module, fixture and runner hashes.
+
+The same critic runner with `--pin 7de194e02aa7ae0a4e7d19bf5845198182a97881`
+independently checked, generated and built the unmodified entry, then ran the
+three field refusals, exact replay and absent-record cases. Those processes
+exited 0. Each isolated comparison-removal mutation now exits 1 at its own
+`changed_FIELD_refuses_request_reuse` law, with `Replay` and `Conflict`
+constructors, original `attempt-a` and the corresponding Field in the complete
+diagnostic. The runner exited 0. Evidence is retained separately in
+`.scratch/lifetime-critic/admission-7de-independent` and
+`admission-7de-review.stdout`/`.stderr`; the earlier failing evidence remains.
+
+This closes the reported request/session/operation comparison-law gap at 7de.
+The verdict covers these actual-function mutations and exercised baseline
+cases. The author reports the remaining controls; this review did not rerun
+that complete author suite. Main imports, atomic bound-store callers and the
+shared runtime remain outside this component result.
+
 ## Receive admission and completion
 
 The new handoff distinguishes `OwnedWake`, `Queued` and `Refused`, and keeps
@@ -118,6 +142,25 @@ store owner. Device/inode text and a path check cannot establish identity for
 subsequent `Sql.query` calls that reopen the path. Real connection binding,
 owner exclusion, supported-path assumptions and SQLite/WAL/replacement probes
 remain unqualified here.
+
+The complete later `native-instance-lifetime-critic-atomic57-24` and
+`native-instance-lifetime-critic-host-duty58-25` contracts were also read. The
+first hosted command remains C.Receive. Accepted Direct replay retains its
+original immutable decision and preparation authority; a known accepted replay
+may resume the same idempotent grant after revalidation. Unknown commit needs
+same-binding readback. These obligations belong to the one Direct admission
+authority.
+
+Receive59 explicitly enumerates coordinator notice and settlement duties even
+after child ACK. Controls60 supplies proposed description/attachment,
+versioned readiness registration with partial-line retention, one shared
+replacement-owner responsibility and separate in-memory child/recovery
+environment snapshots. Their source-scoped contracts address the earlier
+missing host signatures. They remain unimplemented exports at the cited host
+checkpoint. Host unacknowledged-child enumeration alone cannot replace
+Receive59's enumeration of post-ACK notification obligations. The pre-attempt
+wake failure and replacement identity cases above still require concrete
+caller representation and executed probes.
 
 ## Review limits
 
