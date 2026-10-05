@@ -155,7 +155,7 @@ const runIdentity = {
   verifier: {
     checker_sha256: sha256Of(readFileSync(join(ROOT, "bend2", "scripts", "laws-check.mjs"))),
     aggregate_module_sha256: sha256Of(readFileSync(join(ROOT, "bend2", "scripts", "capacity-controls", "aggregate.mjs"))),
-    classify_module_sha256: sha256Of(readFileSync(join(ROOT, "bend2", "scripts", "capacity-controls", "classify.mjs"))),
+    classifier_module_sha256: sha256Of(readFileSync(join(ROOT, "bend2", "scripts", "capacity-controls", "classify.mjs"))),
     work_set_module_sha256: sha256Of(readFileSync(join(ROOT, "bend2", "scripts", "capacity-controls", "work-set.mjs"))),
     laws_common_module_sha256: sha256Of(readFileSync(join(ROOT, "bend2", "scripts", "laws-common.mjs"))),
     definitions_module_sha256: sha256Of(readFileSync(join(ROOT, "bend2", "scripts", "laws-mutations.mjs"))),
@@ -172,8 +172,6 @@ const writeEvidenceIndex = () => {
   for (const [path, bytes] of pristine.entries()) inputs[path] = sha256Of(bytes);
   const run = {
     ...runIdentity,
-    index_path: join(SCRATCH, 'evidence', 'index.json'),
-    scratch: SCRATCH,
   };
   writeFileSync(join(SCRATCH, 'evidence', 'index.json'), JSON.stringify({
     schema: 'capacity-controls/ordinary-evidence@2',
@@ -196,7 +194,7 @@ const retainEvidence = (id, verdict, applied, delta, stdout, stderr, outcome, ar
     changed = {
       original_sha256: delta.original_sha256,
       changed_sha256: delta.changed_sha256,
-      changed_path: `evidence/${changedName}`,
+      changed_path: changedName,
     };
   }
   evidenceIndex.push({
@@ -211,8 +209,8 @@ const retainEvidence = (id, verdict, applied, delta, stdout, stderr, outcome, ar
     // the setup transform was applied.
     argv,
     delta: changed,
-    stdout: { path: `evidence/${stdoutName}`, bytes: stdout.byteLength, sha256: sha256Of(stdout) },
-    stderr: { path: `evidence/${stderrName}`, bytes: stderr.byteLength, sha256: sha256Of(stderr) },
+    stdout: { path: stdoutName, bytes: stdout.byteLength, sha256: sha256Of(stdout) },
+    stderr: { path: stderrName, bytes: stderr.byteLength, sha256: sha256Of(stderr) },
     outcome,
     started,
     ended,
