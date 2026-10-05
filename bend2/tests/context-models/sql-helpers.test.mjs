@@ -66,7 +66,9 @@ test('the scan reports its coordinate domain and code-unit positions', () => {
   assert.equal(SCAN_COORDINATE_DOMAIN, 'utf16-code-unit');
   assert.deepEqual(SCAN_DIALECTS, ['sqlite', 'postgres']);
   assert.deepEqual(plain.separators, [8]);
-  assert.deepEqual(plain.statements.map(statement => [statement.start, statement.end]), [[0, 8], [10, 17]]);
+  // The second segment retains the space that follows the separator: it starts
+  // at code unit 9, immediately after the semicolon at 8.
+  assert.deepEqual(plain.statements.map(statement => [statement.start, statement.end]), [[0, 8], [9, 17]]);
   assert.equal(plain.statementCount, 2);
 
   const terminated = scanSqlStatements('SELECT 1;', { dialect: 'sqlite' });
@@ -79,20 +81,23 @@ test('a BMP character before the separator keeps the reported position in code u
   // SELECT 'é'; SELECT 2 : separator code unit 10, UTF-8 byte 11.
   const scan = scanSqlStatements("SELECT 'é'; SELECT 2", { dialect: 'sqlite' });
   assert.deepEqual(scan.separators, [10]);
-  assert.deepEqual(scan.statements.map(statement => [statement.start, statement.end]), [[0, 10], [12, 19]]);
+  assert.deepEqual(scan.statements.map(statement => [statement.start, statement.end]), [[0, 10], [11, 19]]);
 });
 
 test('an astral character moves code units and bytes apart', () => {
   // SELECT '😀'; SELECT 2 : separator code unit 11, UTF-8 byte 13.
   const scan = scanSqlStatements("SELECT '😀'; SELECT 2", { dialect: 'sqlite' });
   assert.deepEqual(scan.separators, [11]);
-  assert.deepEqual(scan.statements.map(statement => [statement.start, statement.end]), [[0, 11], [13, 20]]);
+  assert.deepEqual(scan.statements.map(statement => [statement.start, statement.end]), [[0, 11], [12, 20]]);
 });
 
-test('a CRLF sequence is two code units and the next statement starts after both', () => {
+test('a CRLF sequence is two code units and the segment retains both', () => {
   const scan = scanSqlStatements('SELECT 1;\r\nSELECT 2', { dialect: 'sqlite' });
   assert.deepEqual(scan.separators, [8]);
-  assert.deepEqual(scan.statements.map(statement => [statement.start, statement.end]), [[0, 8], [11, 18]]);
+  // The separator is code unit 8; the second segment starts at 9 and therefore
+  // contains the CR and the LF before the next statement.
+  assert.deepEqual(scan.statements.map(statement => [statement.start, statement.end]), [[0, 8], [9, 18]]);
+  assert.equal(scan.statements[1].text, '\r\nSELECT 2');
 });
 
 test('a separator inside a quoted region and inside a comment is not a boundary', () => {
@@ -312,6 +317,68 @@ test('identifier encoding doubles an embedded double quote', () => {
   assert.equal(quoteSqliteIdentifier('order details'), '"order details"');
 });
 
+test('a contradictory schema is never selected or overwritten', () => {
+  const foreignOnly = buildOriginProbe({
+    catalog: catalogOf({
+      schema: 'main',
+      tables: [{ schema: 'attached', name: 't' }],
+      columns: [{ schema: 'attached', table: 't', name: 'c' }],
+    }),
+  });
+  assert.equal(foreignOnly.status, 'unsupported');
+  assert.equal(foreignOnly.reason, 'catalogShapeUnsupported');
+  assert.match(foreignOnly.detail, /outside the admitted schema main/);
+  assert.equal(foreignOnly.sql, undefined, 'no statement is built for an object outside the admitted schema');
+
+  const mixedColumns = buildOriginProbe({
+    catalog: catalogOf({
+      schema: 'main',
+      tables: [{ name: 't' }],
+      columns: [{ schema: 'attached', table: 't', name: 'c' }],
+    }),
+  });
+  assert.equal(mixedColumns.status, 'unsupported');
+  assert.equal(mixedColumns.reason, 'catalogShapeUnsupported');
+  assert.match(mixedColumns.detail, /named another schema/);
+});
+
+test('a same-name table in another schema does not supply the columns of the admitted one', () => {
+  const build = buildOriginProbe({
+    catalog: catalogOf({
+      schema: 'main',
+      tables: [{ name: 't' }, { schema: 'attached', name: 't' }],
+      columns: [{ table: 't', name: 'admitted_column' }, { schema: 'attached', table: 't', name: 'foreign_column' }],
+    }),
+  });
+  assert.equal(build.status, 'built');
+  assert.equal(build.schema, 'main');
+  assert.deepEqual(build.slots, ['admitted_column', 'admitted_column']);
+  assert.equal(/foreign_column/.test(build.sql), false);
+});
+
+test('two admitted tables with one name refuse as an unambiguous shape', () => {
+  const ambiguous = buildOriginProbe({
+    catalog: catalogOf({
+      schema: 'main',
+      tables: [{ name: 't' }, { name: 't' }],
+      columns: [{ table: 't', name: 'c' }],
+    }),
+  });
+  assert.equal(ambiguous.status, 'unsupported');
+  assert.equal(ambiguous.reason, 'catalogShapeAmbiguous');
+  assert.match(ambiguous.detail, /names 2 tables called "t"/);
+});
+
+test('a missing schema member is the admitted compatible form and uses the catalog schema', () => {
+  const build = buildOriginProbe({
+    catalog: catalogOf({ schema: 'app', tables: [{ name: 't' }], columns: [{ table: 't', name: 'c' }] }),
+  });
+  assert.equal(build.status, 'built');
+  assert.equal(build.schema, 'app');
+  assert.equal(build.sql.startsWith('SELECT "app"."t"."c"'), true);
+  assert.deepEqual(build.expected[0], { resultName: 'p0', database: 'app', table: 't', column: 'c' });
+});
+
 test('the mismatch description is empty exactly when every slot matches', () => {
   const expected = [{ resultName: 'p0', database: 'main', table: 't', column: 'c' }];
   assert.equal(describeOriginMismatch({ expected, observed: [{ resultName: 'p0', database: 'main', table: 't', column: 'c' }] }), null);
@@ -357,7 +424,8 @@ test('a raw plan joins its main operand and keeps the unsupported operand as unk
   assert.equal(joined.limits.filter(limit => limit.code === 'modeledAccessUnavailable').length, 1);
   assert.equal(joined.join.stage, JOIN_STAGE);
   assert.equal(joined.join.operandCount, 2);
-  assert.equal(joined.rawOperands.length, 2);
+  assert.equal(joined.join.joinedCount, 1);
+  assert.equal(joined.join.unknownCount, 1);
 });
 
 test('engine name transport never supplies identity', () => {
@@ -398,7 +466,7 @@ test('a raw plan carrying prior unknown operands still joins and preserves them'
   assert.equal(joined.join.priorUnknownPreserved, 1);
 });
 
-test('feeding a joined plan back without allowRejoin refuses and loses nothing', () => {
+test('feeding a joined plan back refuses and loses nothing', () => {
   const first = joinRootpages({ plan: rawPlan([rawOperand(), rawOperand({ cursor: 1, database: 1 })]), catalog: CATALOG });
   const second = joinRootpages({ plan: first, catalog: CATALOG });
   assert.equal(second.rejoinRefused.reason, 'alreadyJoined');
@@ -406,33 +474,45 @@ test('feeding a joined plan back without allowRejoin refuses and loses nothing',
   assert.deepEqual(second.relations, first.relations);
   assert.equal(second.limits.filter(limit => limit.code === 'modeledAccessUnavailable').length, 1);
   assert.equal(second.rejoinRefused.priorUnknownAccess, 1);
+  assert.equal(second.rejoinRefused.priorCatalogDigest, null, 'the refusal names the refusing plan catalog association');
 });
 
-test('rejoin with allowRejoin re-derives the join and preserves prior unknown operands once', () => {
-  const first = joinRootpages({ plan: rawPlan([rawOperand(), rawOperand({ cursor: 1, database: 1 })]), catalog: CATALOG });
-  const again = joinRootpages({ plan: first, catalog: CATALOG, allowRejoin: true });
-  assert.equal(again.rejoinRefused, undefined);
-  assert.equal(again.relations.length, 1);
-  assert.equal(again.unknownAccess.length, 1);
-  assert.equal(again.limits.filter(limit => limit.code === 'modeledAccessUnavailable').length, 1);
-  assert.equal(again.join.priorUnknownPreserved, 1);
+test('a repeated refusal replaces the earlier refusal state instead of accumulating it', () => {
+  const first = joinRootpages({ plan: rawPlan([rawOperand(), rawOperand({ cursor: 1, database: 1 })]), catalog: CATALOG, catalogDigest: 'digest-a' });
+  const refused = joinRootpages({ plan: first, catalog: CATALOG });
+  assert.equal(refused.rejoinRefused.reason, 'alreadyJoined');
+  assert.equal(refused.rejoinRefused.priorCatalogDigest, 'digest-a');
+  const refusedAgain = joinRootpages({ plan: refused, catalog: CATALOG, catalogDigest: 'digest-b' });
+  assert.equal(refusedAgain.rejoinRefused.reason, 'alreadyJoined');
+  assert.equal(refusedAgain.rejoinRefused.priorCatalogDigest, 'digest-a', 'the refusal describes the plan it received, not a later catalog');
+  assert.deepEqual(refusedAgain.unknownAccess, refused.unknownAccess);
+  assert.equal(refusedAgain.relations.length, 1);
 });
 
-test('rejoin against a changed catalog re-derives object identity and moves the operand to unknown', () => {
-  const first = joinRootpages({ plan: rawPlan([rawOperand(), rawOperand({ cursor: 1, database: 1 })]), catalog: CATALOG, catalogDigest: 'digest-before' });
-  assert.equal(first.join.catalogDigest, 'digest-before');
+test('a fresh raw plan joins under the catalog it is given and records that catalog digest', () => {
+  const before = joinRootpages({ plan: rawPlan([rawOperand()]), catalog: CATALOG, catalogDigest: 'digest-before' });
+  assert.equal(before.relations.length, 1);
+  assert.equal(before.join.catalogDigest, 'digest-before');
+
+  // The same operands under a catalog that no longer holds the page: the join
+  // is computed from the corpus it was given, and no earlier classification is
+  // carried into it.
   const changed = { schema: 'main', entities: [], columns: [], rootpages: {} };
-  const second = joinRootpages({ plan: first, catalog: changed, allowRejoin: true, catalogDigest: 'digest-after' });
-  assert.equal(second.relations.length, 0, 'the prior join is not reused after the catalog changed');
-  assert.equal(second.join.catalogDigest, 'digest-after');
-  assert.equal(second.unknownAccess.length, 2);
-  assert.deepEqual([...new Set(second.unknownAccess.map(entry => entry.reason))].sort(), ['nonMainDatabaseAccess', 'rootpageNotInCatalog']);
-  assert.equal(second.limits.filter(limit => limit.code === 'modeledAccessUnavailable').length, 1);
+  const after = joinRootpages({ plan: rawPlan([rawOperand()]), catalog: changed, catalogDigest: 'digest-after' });
+  assert.equal(after.relations.length, 0);
+  assert.equal(after.join.catalogDigest, 'digest-after');
+  assert.equal(after.unknownAccess.length, 1);
+  assert.equal(after.unknownAccess[0].reason, 'rootpageNotInCatalog');
+  assert.equal(after.limits.filter(limit => limit.code === 'modeledAccessUnavailable').length, 1);
 });
 
-test('rejoin without a raw operand list refuses with its own reason', () => {
-  const foreign = { status: 'analyzed', kind: 'read', relations: [{ opcode: 'OpenRead', cursor: 0, database: 0, rootpage: '2', status: 'joined', object: { schema: 'main', name: 'users' }, name: 'users', engineName: null }], unknownAccess: [], parameters: { count: 0 }, limits: [], join: { stage: JOIN_STAGE } };
-  const result = joinRootpages({ plan: foreign, catalog: CATALOG, allowRejoin: true });
-  assert.equal(result.rejoinRefused.reason, 'rawOperandsAbsent');
-  assert.equal(result.relations.length, 1, 'the preserved plan is returned unchanged');
+test('a joined plan offers no re-derivation path', () => {
+  const first = joinRootpages({ plan: rawPlan([rawOperand()]), catalog: CATALOG, catalogDigest: 'digest-a' });
+  // allowRejoin is deliberately passed as an unrecognized property: the helper
+  // offers no re-derivation, so it must change nothing.
+  const result = joinRootpages({ plan: first, catalog: CATALOG, catalogDigest: 'digest-b', allowRejoin: true });
+  assert.equal(result.rejoinRefused.reason, 'alreadyJoined');
+  assert.equal(result.join.catalogDigest, 'digest-a', 'the admitted join keeps the catalog it was computed against');
+  assert.equal(result.relations.length, 1);
+  assert.deepEqual(result.unknownAccess, first.unknownAccess);
 });

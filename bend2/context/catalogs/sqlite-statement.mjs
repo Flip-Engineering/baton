@@ -61,40 +61,88 @@ export function quoteSqliteIdentifier(name) {
   return `"${String(name).replace(/"/g, '""')}"`;
 }
 
-// Builds the probe statement and the expectation it must satisfy. The selected
-// object is qualified with the catalog schema, and two projection slots are
-// always selected; a single-column table uses that column in both slots.
+// Builds the probe statement and the expectation it must satisfy.
+//
+// The selected object is qualified with the admitted catalog schema, and two
+// projection slots are always selected; a single-column table uses that column
+// in both slots.
+//
+// Association rules for the admitted catalog shape:
+// - an entity or column without a schema member is admitted under the catalog
+//   schema, which is the explicit compatible form;
+// - an entity or column that carries a different schema is never selected and
+//   its declared schema is never overwritten, so an attached-schema object
+//   cannot be probed as if it were the admitted one;
+// - several tables with one name inside the admitted schema make object
+//   association ambiguous and refuse instead of selecting the first;
+// - a catalog whose tables all lie outside the admitted schema refuses.
 export function buildOriginProbe({ catalog }) {
-  const schema = typeof catalog?.schema === 'string' && catalog.schema.length > 0 ? catalog.schema : 'main';
+  const admittedSchema = typeof catalog?.schema === 'string' && catalog.schema.length > 0 ? catalog.schema : 'main';
+  const schemaOf = row => (typeof row?.schema === 'string' && row.schema.length > 0 ? row.schema : admittedSchema);
   const entities = Array.isArray(catalog?.entities) ? catalog.entities : [];
   const columns = Array.isArray(catalog?.columns) ? catalog.columns : [];
-  const tables = entities.filter(entity => entity?.kind === 'table' && entity.name !== 'sqlite_schema' && typeof entity.name === 'string' && entity.name.length > 0);
-  for (const entity of tables) {
-    const own = columns.filter(column => column?.table === entity.name && column?.hidden === 'normal' && typeof column.name === 'string' && column.name.length > 0);
+  const tables = entities.filter(entity => entity?.kind === 'table' && entity?.name !== 'sqlite_schema' && typeof entity?.name === 'string' && entity.name.length > 0);
+  const admittedTables = tables.filter(entity => schemaOf(entity) === admittedSchema);
+  if (admittedTables.length === 0) {
+    if (tables.length > 0) {
+      return {
+        status: 'unsupported',
+        reason: 'catalogShapeUnsupported',
+        detail: `every table in the subject catalog lies outside the admitted schema ${admittedSchema}; the probe selects only objects in that schema`,
+      };
+    }
+    return {
+      status: 'unsupported',
+      reason: 'noProbeShape',
+      detail: 'the subject catalog holds no table with a declared column to probe',
+    };
+  }
+
+  const byName = new Map();
+  for (const entity of admittedTables) {
+    const list = byName.get(entity.name) ?? [];
+    list.push(entity);
+    byName.set(entity.name, list);
+  }
+  for (const [name, list] of byName) {
+    if (list.length > 1) {
+      return {
+        status: 'unsupported',
+        reason: 'catalogShapeAmbiguous',
+        detail: `the admitted schema ${admittedSchema} names ${list.length} tables called ${JSON.stringify(name)}; object association is ambiguous`,
+      };
+    }
+  }
+
+  let droppedColumns = 0;
+  for (const entity of admittedTables) {
+    const own = columns.filter(column => {
+      if (column?.table !== entity.name || column?.hidden !== 'normal' || typeof column?.name !== 'string' || column.name.length === 0) return false;
+      if (schemaOf(column) !== admittedSchema) {
+        droppedColumns += 1;
+        return false;
+      }
+      return true;
+    });
     if (own.length === 0) continue;
     const slots = [own[0].name, (own[1] ?? own[0]).name];
-    const qualifiedTable = `${quoteSqliteIdentifier(schema)}.${quoteSqliteIdentifier(entity.name)}`;
+    const qualifiedTable = `${quoteSqliteIdentifier(admittedSchema)}.${quoteSqliteIdentifier(entity.name)}`;
     const sql = `SELECT ${qualifiedTable}.${quoteSqliteIdentifier(slots[0])} AS "p0", ${qualifiedTable}.${quoteSqliteIdentifier(slots[1])} AS "p1" FROM ${qualifiedTable}`;
     return {
       status: 'built',
-      schema,
-      entity: { schema, name: entity.name, kind: entity.kind },
+      schema: admittedSchema,
+      entity: { schema: admittedSchema, name: entity.name, kind: entity.kind },
       slots,
-      expected: slots.map((column, index) => ({ resultName: `p${index}`, database: schema, table: entity.name, column })),
+      expected: slots.map((column, index) => ({ resultName: `p${index}`, database: admittedSchema, table: entity.name, column })),
       sql,
-    };
-  }
-  if (tables.length > 0) {
-    return {
-      status: 'unsupported',
-      reason: 'catalogShapeUnsupported',
-      detail: 'the subject catalog holds tables, but none carries a normal column with a readable name to probe',
     };
   }
   return {
     status: 'unsupported',
-    reason: 'noProbeShape',
-    detail: 'the subject catalog holds no table with a declared column to probe',
+    reason: 'catalogShapeUnsupported',
+    detail: droppedColumns > 0
+      ? `no admitted table in schema ${admittedSchema} carries a normal column declared in that schema; ${droppedColumns} column association${droppedColumns === 1 ? '' : 's'} named another schema`
+      : `no admitted table in schema ${admittedSchema} carries a normal column with a readable name to probe`,
   };
 }
 
@@ -285,12 +333,16 @@ export function statementOrigins({ db, sql, originCapability }) {
 //
 // Input stage: this function admits a plan whose relations are still raw
 // operands. A plan that already carries a join is refused with a
-// `rejoinRefused` member and returned otherwise unchanged, so the prior
-// unknown operands and earlier limits are never silently dropped. A caller that
-// intends to re-derive the join against a current catalog passes
-// `allowRejoin: true`, which requires the raw operand list the first join
-// recorded as `rawOperands`; the re-derivation re-reads object identity from the
-// current catalog and preserves the prior unknown operands, de-duplicated.
+// `rejoinRefused` member and returned otherwise unchanged, so the prior unknown
+// operands and earlier limits are never silently dropped. Re-derivation is
+// deliberately not offered: merging an earlier classification into a join
+// against a different catalog would present evidence from the first catalog as
+// current, so a caller that needs the join under another catalog analyzes the
+// statement again to obtain a fresh raw plan.
+//
+// The refusal carries the refusing plan's own catalog association and
+// overwrites any earlier refusal state, so a repeated attempt cannot
+// accumulate stale fields.
 //
 // Object identity: the database number and the schema are part of the key. A
 // temp or attached database, a page outside the catalog and a page matching
@@ -351,15 +403,15 @@ function joinOperands({ plan, operands, catalog, priorUnknown, catalogDigest }) 
     merged.push(entry);
   }
 
-  // One limit describes the merged unknown set: an earlier limit of the same
-  // code is replaced rather than repeated, and any other limit is preserved.
+  // One limit describes the merged unknown set of this join: an earlier limit
+  // of the same code is replaced rather than repeated, and any other limit is
+  // preserved.
   const priorLimits = (Array.isArray(plan.limits) ? plan.limits : [])
     .filter(limit => !(limit?.projection === 'databaseAccesses' && limit?.code === 'modeledAccessUnavailable'));
   return {
     ...plan,
     relations,
     unknownAccess: merged,
-    rawOperands: operands.map(operand => ({ ...operand })),
     join: {
       stage: JOIN_STAGE,
       schema: catalog?.schema ?? null,
@@ -380,34 +432,21 @@ function joinOperands({ plan, operands, catalog, priorUnknown, catalogDigest }) 
   };
 }
 
-export function joinRootpages({ plan, catalog, allowRejoin = false, catalogDigest = null }) {
+export function joinRootpages({ plan, catalog, catalogDigest = null }) {
   if (plan?.status !== 'analyzed') return plan;
   const priorUnknown = Array.isArray(plan.unknownAccess) ? plan.unknownAccess : [];
   const operands = Array.isArray(plan.relations) ? plan.relations : [];
   const alreadyJoined = plan.join !== undefined || operands.some(relation => relation.status !== 'pending-catalog-join');
-  if (!alreadyJoined) {
-    return joinOperands({ plan, operands, catalog, priorUnknown, catalogDigest });
-  }
-  if (!allowRejoin) {
+  if (alreadyJoined) {
     return {
       ...plan,
       rejoinRefused: {
         reason: 'alreadyJoined',
-        detail: 'this plan already carries a join; pass allowRejoin with its raw operand list to re-derive it against a current catalog',
+        detail: 'this plan already carries a join; analyze the statement again to obtain a fresh raw plan for the catalog you hold',
         priorUnknownAccess: priorUnknown.length,
+        priorCatalogDigest: plan.join?.catalogDigest ?? null,
       },
     };
   }
-  const rawOperands = Array.isArray(plan.rawOperands) ? plan.rawOperands : null;
-  if (rawOperands === null) {
-    return {
-      ...plan,
-      rejoinRefused: {
-        reason: 'rawOperandsAbsent',
-        detail: 'a join cannot be re-derived without the raw operand list; the preserved plan is returned unchanged',
-        priorUnknownAccess: priorUnknown.length,
-      },
-    };
-  }
-  return joinOperands({ plan, operands: rawOperands, catalog, priorUnknown, catalogDigest });
+  return joinOperands({ plan, operands, catalog, priorUnknown, catalogDigest });
 }
