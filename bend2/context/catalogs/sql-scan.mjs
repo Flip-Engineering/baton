@@ -2,9 +2,21 @@
 //
 // The Node SQLite binding prepares the first statement of a text and exposes no
 // tail pointer, so a text carrying a second statement would silently drop it.
-// This scan finds top-level separators and reports their byte offsets. It
-// frames the text; relation identity always comes from the engine parse of the
-// admitted single statement.
+// This scan finds top-level separators and frames the text; relation identity
+// always comes from the engine parse of the admitted single statement.
+//
+// Coordinate domain: every position this module reports (segment start and end,
+// separators, unterminated openings) is a zero-based UTF-16 code-unit index
+// into the JavaScript string it was given, which is also the index used for
+// slice. It is not a UTF-8 byte offset: for `SELECT 'é'; SELECT 2` the first
+// separator is code unit 10 and byte 11. A caller that needs byte offsets must
+// map through the strict original bytes it read; this module performs no such
+// mapping and reports the domain it used.
+//
+// String admission here applies to the decoded string. Rejecting an unpaired
+// surrogate over a JavaScript string cannot establish that the original bytes
+// were valid UTF-8 before a replacement decoder touched them; that check
+// belongs to the raw reader, and its diagnostics carry string coordinates.
 //
 // The admitted dialect matches the engine that will parse the text. SQLite
 // admits single-quoted strings, double-quoted and bracket-quoted identifiers,
@@ -14,6 +26,9 @@
 // inside it stays a separator and the text refuses.
 
 export const SCAN_DIALECTS = Object.freeze(['sqlite', 'postgres']);
+
+// The domain of every position in this module's results.
+export const SCAN_COORDINATE_DOMAIN = 'utf16-code-unit';
 
 function skipQuoted(sql, index, quote) {
   let cursor = index + 1;
@@ -58,21 +73,24 @@ function hasContent(text) {
   return false;
 }
 
-// Text admission before the engine sees the text: NUL and unpaired surrogates
-// make the byte scan and the engine's own reading describe different texts.
+// Text admission before the engine sees the text. The checks below apply to the
+// decoded string: NUL and unpaired surrogates are reported with their UTF-16
+// code-unit positions, because an original byte position is not available here.
+// Reason codes are unchanged for existing callers; only the diagnostic wording
+// names the coordinate domain.
 export function validateSqlText(sql) {
   if (typeof sql !== 'string') return { status: 'refused', reason: 'notText', detail: 'the statement must be a string' };
   const nul = sql.indexOf('\u0000');
-  if (nul !== -1) return { status: 'refused', reason: 'nulByte', detail: `the text carries a NUL byte at offset ${nul}` };
+  if (nul !== -1) return { status: 'refused', reason: 'nulByte', detail: `the text carries a NUL character at code-unit offset ${nul}` };
   for (let index = 0; index < sql.length; index += 1) {
     const code = sql.charCodeAt(index);
     if (code >= 0xd800 && code <= 0xdbff) {
       const next = sql.charCodeAt(index + 1);
-      if (!(next >= 0xdc00 && next <= 0xdfff)) return { status: 'refused', reason: 'invalidUtf8', detail: `unpaired high surrogate at offset ${index}` };
+      if (!(next >= 0xdc00 && next <= 0xdfff)) return { status: 'refused', reason: 'invalidUtf8', detail: `unpaired high surrogate at code-unit offset ${index}` };
       index += 1;
       continue;
     }
-    if (code >= 0xdc00 && code <= 0xdfff) return { status: 'refused', reason: 'invalidUtf8', detail: `unpaired low surrogate at offset ${index}` };
+    if (code >= 0xdc00 && code <= 0xdfff) return { status: 'refused', reason: 'invalidUtf8', detail: `unpaired low surrogate at code-unit offset ${index}` };
   }
   return { status: 'admitted' };
 }
@@ -138,6 +156,7 @@ export function scanSqlStatements(sql, { dialect = 'sqlite' } = {}) {
     .filter(segment => segment.hasContent);
   return {
     dialect,
+    coordinateDomain: SCAN_COORDINATE_DOMAIN,
     statements: statements.map(({ start: segmentStart, end, text, hasContent: content, position }) => ({ position, start: segmentStart, end, text, hasContent: content })),
     separators,
     statementCount: statements.length,
