@@ -284,6 +284,19 @@
   "file": "bend2/src/context/codec.bend",
   "find": "  Refs.Ref{\"r1\", \"typescript\", subject, subject, \"s1\", policy, projections}",
   "replace": "  Refs.Ref{\"r1\", \"typescript\", subject, subject, \"s1\", \"p1\", projections}",
-  "law": "codec_law_an_unestablished_policy_is_refused"
+  "law": "codec_law_an_unestablished_policy_is_refused" },
+ {
+  "name": "codec-empty-array-close-drops-the-cell",
+  "file": "bend2/src/context/codec.bend",
+  "find": "    case other: Rarr{Rnil{}, Rnil{}}",
+  "replace": "    case other: Rnil{}",
+  "law": "codec_law_an_empty_array_value_round_trips_through_the_frame"
+ },
+ {
+  "name": "codec-array-close-keeps-arrival-order",
+  "file": "bend2/src/context/codec.bend",
+  "find": "    case Rarr{+head, +tail}: rev_items(items, Rnil{})",
+  "replace": "    case Rarr{+head, +tail}: items",
+  "law": "codec_law_nested_arrays_close_in_document_order"
  }
 ]

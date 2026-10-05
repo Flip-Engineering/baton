@@ -1558,6 +1558,35 @@ def big_number_request_rows() -> Req.Rows:
     object_row("8", "6", "request"),
     real_row("9", "8", "version", "4294967296")])
 
+def empty_array_request_rows() -> Req.Rows:
+  rows_of([
+    object_row("0", SNil{}, SNil{}),
+    text_row("1", "0", "jsonrpc", "2.0"),
+    text_row("2", "0", "method", "tools/call"),
+    number_row("3", "0", "id", "7"),
+    object_row("4", "0", "params"),
+    text_row("5", "4", "name", "context-query"),
+    object_row("6", "4", "arguments"),
+    text_row("7", "6", "query", "q1"),
+    object_row("8", "6", "request"),
+    array_row("9", "8", "a")])
+
+def nested_array_request_rows() -> Req.Rows:
+  rows_of([
+    object_row("0", SNil{}, SNil{}),
+    text_row("1", "0", "jsonrpc", "2.0"),
+    text_row("2", "0", "method", "tools/call"),
+    number_row("3", "0", "id", "7"),
+    object_row("4", "0", "params"),
+    text_row("5", "4", "name", "context-query"),
+    object_row("6", "4", "arguments"),
+    text_row("7", "6", "query", "q1"),
+    object_row("8", "6", "request"),
+    array_row("9", "8", "a"),
+    array_row("10", "9", "0"),
+    number_row("11", "10", "0", "1"),
+    array_row("12", "9", "1")])
+
 def main() -> IO(Unit):
   do IO<Unit>:
     z1 : Unit <- IO.print("frame-engines " ++ frame_text(frame_decision(frame_envelope(engine_frame_rows()))))
@@ -2164,6 +2193,22 @@ law codec_law_a_nested_object_request_round_trips_through_the_converter:
   {frame_text(frame_decision(frame_envelope(nested_request_rows()))) == "{\"id\":7,\"query\":\"q1\",\"requestCanonical\":\"{\\\"a\\\":[1,2],\\\"b\\\":{\\\"c\\\":null},\\\"s\\\":\\\"x\\\"}\",\"tool\":\"context-query\",\"version\":1}" : String}
 
 def codec_law_a_nested_object_request_round_trips_through_the_converter():
+  {==}
+
+# An array with no elements closes to the canonical empty-array cell. The expected
+# canonical text is this module's own oracle and still needs independent review.
+law codec_law_an_empty_array_value_round_trips_through_the_frame:
+  {frame_text(frame_decision(frame_envelope(empty_array_request_rows()))) == "{\"id\":7,\"query\":\"q1\",\"requestCanonical\":\"{\\\"a\\\":[]}\",\"tool\":\"context-query\",\"version\":1}" : String}
+
+def codec_law_an_empty_array_value_round_trips_through_the_frame():
+  {==}
+
+# An array holding an array and an empty array closes to its elements in document
+# order, so the accumulated chain is reversed exactly once.
+law codec_law_nested_arrays_close_in_document_order:
+  {frame_text(frame_decision(frame_envelope(nested_array_request_rows()))) == "{\"id\":7,\"query\":\"q1\",\"requestCanonical\":\"{\\\"a\\\":[[1],[]]}\",\"tool\":\"context-query\",\"version\":1}" : String}
+
+def codec_law_nested_arrays_close_in_document_order():
   {==}
 
 law codec_law_an_empty_object_request_round_trips_through_the_converter:
