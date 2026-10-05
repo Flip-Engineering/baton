@@ -1,6 +1,8 @@
 # Ordinary direct startup repair for #672
 
-Status: concrete proposal for whole-critic assessment before runtime edits.
+Status: docs-only successor to 08dd2053 for bounded whole-critic assessment.
+The six original verdicts remain retained; runtime implementation awaits this
+successor assessment.
 Author: semantic-controls-next. Source baseline is the direct path inspected at
 71695806 and the retained process implementation inherited from 98fbfe03. The
 active receive successor remains independently owned and unaccepted. Application
@@ -31,7 +33,11 @@ approve runtime implementation or claim the unmeasured failure windows pass.
 
 Add one `direct_requests` table to the existing coordination database. Its key is
 the public turn ID. It retains session, versioned immutable request JSON, attempt
-directory, phase, native outcome, result-message ID and notification disposition.
+directory, immutable admission decision and reason, phase, native outcome,
+local result, nullable result-message ID and notification disposition. Admission
+decision is `accepted` or `rejected`; absence of a row means undecided. A rejected
+row preserves its normalized request and prepared directory for inspection and
+cleanup. It does not create an execution pointer or authorize a start.
 This row is required after a later execution replaces the per-session
 `executions` pointer: exact retries of an older completed ID still need its
 original request. An executions-only column cannot retain that history.
@@ -91,20 +97,39 @@ launch from `dispatch_turn`; its public answer follows the retained handoff.
    the inherited guard, control endpoint, output spool and recovery invocation.
    It cannot invoke the harness before a separate start grant. Its readiness
    answer reports `prepared`, with no native PID.
-3. The attached observer commits admission in one SQLite transaction. Recheck
-   session assignment, exact request identity, stopped state and unresolved
-   execution. Insert the immutable request and update the current execution only
-   on successful admission. The request row and execution pointer commit together.
-   This transaction is the authoritative admission decision.
+3. The attached observer selects the decision in one `BEGIN IMMEDIATE`
+   transaction. First look up the public ID: a differing immutable request or
+   directory refuses; an existing matching decision is returned unchanged.
+   If absent, materialize the admission predicates over the current assignment,
+   stop and execution facts, then insert exactly one accepted or rejected row,
+   including its reason and prepared directory. Only the accepted branch updates
+   the execution pointer in that transaction. Commit before returning the
+   decision. Every original or recovery observer uses this same function.
+   A delayed observer reads the retained rejection even if admission facts have
+   subsequently changed. Rejected rows have no transition to accepted.
 4. The observer sends an idempotent start grant for that exact request to the
    same keeper. Recovery reads the same committed row before repeating a grant.
-   A refusal cancels the prepared keeper without invoking the endpoint and
-   returns the typed refusal. The keeper does not need SQLite access.
+   A committed rejection directs cancellation of the prepared keeper and returns
+   its retained refusal. Cancellation failure records cleanup owed on that same
+   rejected row; the attached/recovery observer retries cancellation and retains
+   the guard until the keeper confirms that no grant or native start occurred.
+   No rejected decision can grant a start. The keeper does not need SQLite access.
+   A transaction error or lost commit reply is an unknown decision outcome:
+   reconcile the same ID, request and directory on the original database before
+   granting or cancelling. Do not infer rejection from a missing reply.
 5. Foreground execution observes the retained child. Detached execution transfers
    observation to the direct recovery entry and receives its attachment
    acknowledgement before reporting accepted startup. A lost public reply is
    reconciled from the same request and keeper. It does not authorize a second
-   endpoint. The caller's PID is not the handoff result.
+   endpoint. The answer is one object with `type: "direct-start"`, `requestId`,
+   `session`, `admissionDecision`, `attemptDirectory`, `processState`,
+   `observerAttached`, `resultId`, `notification` and literal `next` argv arrays.
+   `processState` comes from keeper state; attachment alone does not imply start.
+   Accepted detached success requires both a committed accepted decision and the
+   recovery observer attachment acknowledgement. Retained rejected decisions
+   return exit 2; unknown handoff returns a non-success typed uncertainty with
+   the same identity and inspection/recovery operations. Acceptance is derived
+   from the committed decision and acknowledged observer transfer.
 
 A prepared manifest is immutable bootstrap input, not a second admission store.
 The coordinator already knows the attempt directory before retain. The manifest
@@ -152,8 +177,13 @@ For selective observer loss, the keeper keeps the child, output and status and
 starts direct recovery. A recovery spawn failure or recovery child exit before
 attach keeps that responsibility. Add attempt-local retry on the keeper's existing
 poll loop, with a bounded retry interval and no terminal retry-count cutoff;
-record each error and cancel further retries only after attachment or completed
-custody transfer. At most one recovery child may be in flight. This retries only
+record the attempt number, error and latest occurrence in the attempt's
+`observer-error` state. Retry after one second on the existing keeper poll timer;
+use monotonic time and permit at most one recovery child in flight. The next
+retry is armed after spawn failure or verified pre-attach child exit. Each later
+failure replaces this diagnostic state; the original error remains separately
+retained. Raw native output and sealed results keep their existing retention.
+Cancel further retries only after attachment or completed custody transfer. This retries only
 observation of this already-owned attempt; it cannot choose or start another task.
 
 Keeper loss is separate. A surviving observer retains its guard descriptor and
@@ -165,6 +195,43 @@ must say which observation and process facts are unavailable. Simultaneous loss
 of keeper and every observer is not proven by this composition; whole-critic
 assessment must evaluate that boundary explicitly, without silently narrowing
 root's required selective-loss guarantee.
+
+## Unknown outcome and owner continuation
+
+`Unknown` describes missing process/outcome evidence and preserves the original
+request, start marker, available birth identity, output, result and notification
+facts. It never enables a fresh keeper or another start grant after keeper loss.
+A surviving keeper continues observation and recovery after selective observer
+loss. Its attached direct observer is responsible until a successor attaches.
+A surviving observer after keeper loss remains responsible for qualified orphan
+observation and a notice to the recorded report owner. It retains its inherited
+guard while the child may be live. The notice includes the exact request, what
+is unknown, last process evidence, and literal `turn-status ID` and
+`turn-recover ID` operations. Ordinary delivery/transfer must complete under the
+notification rules below; inserting the notice alone does not transfer duty.
+
+`turn-recover ID` is the public entry to the existing proposed Direct.recover
+operation. It accepts no replacement task or configuration. It validates retained
+identity and binding, attaches to a surviving original keeper when available,
+and resumes observation and owed delivery. For keeper loss it uses qualified
+original child-lifetime evidence when available; it cannot spawn the endpoint or
+claim to reap a child it does not parent. A current attached observer receives
+this request through the same attempt control channel; two observers cannot
+independently grant or finish the attempt. Inspection remains read-only.
+
+A qualified observation that the original child lifetime ended allows the owner
+observer to commit `lifetime: ended`, preserve `outcome: unknown` when exit status
+is unavailable, and release the execution guard after retaining the result and
+notice obligation. A stop request is not that observation. If child identity is
+missing or its lifetime remains unproved, the unresolved execution continues to
+refuse replacement; `turn-recover` returns that exact limitation and its retained
+notice disposition. After actual notice delivery the recorded owner has the
+explicit responsibility to choose further investigation or independent work.
+A new ID, session, timeout or retirement cannot authorize replay of the uncertain
+effect. This proposal adds no operator assertion that manufactures child exit.
+The host tests must establish both the retained refusal and the owner's actual
+wake in this unresolved case. Total loss of all holders remains a separately
+stated qualification limit, not selective-observer-loss success.
 
 ## Adapters, results and owed notification
 
@@ -204,11 +271,46 @@ native exit. Receipt arrival may settle delivery; task review remains separate.
 Test a parent that sends new work while notification is being delivered so guard
 release does not create a cycle or erase the older notification responsibility.
 
+## Parentless foreground completion
+
+Foreground `turn` continues to support a registered parentless session with no
+report recipient. Capture this as `completionTarget: local` and a null recipient
+in immutable identity. The final local result, raw frames, native status and any
+uncertainty are retained on the direct request before the keeper is acknowledged.
+No report message is inserted when the recipient is null. The foreground entry
+returns that saved result; an exact retry and `turn-status` return it after caller
+loss. Notification is explicitly `notRequiredLocal`, with no owed message IDs.
+Keeper completion requires local result commit and ended native lifetime; empty
+owed IDs alone cannot satisfy a remote notification obligation. Local uncertainty
+with an unproved child lifetime remains unresolved and blocks replacement under
+the preceding section. It does not become a completed local execution merely
+because the caller received a response.
+
+Detached start requires an existing discoverable report owner before keeper
+preparation. An absent owner returns `direct-owner-unavailable` before effects.
+A registered owner whose endpoint is unavailable remains the named owner;
+accepted work retains and retries its owed notification as described above.
+Parentless foreground recovery retains the local completion target and finishes
+that same attempt; it does not invent an operator or recipient after admission.
+This local result contract makes no remote-wake claim. Tests distinguish it from
+parentless detached refusal and from a present owner's failed delivery.
+
 ## Inspection, ownership and qualification
 
 Add ordinary `turn-status ID [--pretty]` and its thin MCP reader. It returns the
 request identity, process state, result/report IDs, owned directory and current
-notification disposition. An exact active retry returns this same information.
+notification disposition, immutable admission decision/reason and cleanup owed.
+If no direct request exists, `turn-status ID` also checks the legacy `executions`
+row by its exact turn ID and the retained report by ID. It returns
+`identityBinding: legacy-unbound`, the recorded session/mode/phase/status/directory
+(including an empty directory), any retained report ID and explicit unavailable
+request/lifetime fields. It neither backfills identity nor infers exit. A later
+execution may have overwritten this legacy pointer; if only a report remains,
+state that current execution evidence is unavailable. A wholly absent ID returns
+a typed not-found result. The unresolved legacy refusal points to this working
+reader; attempting recovery without sufficient identity returns
+`direct-history-unbound` and preserves the unresolved execution.
+An exact active retry returns this same information.
 Help and all harness briefings distinguish accepted start, observed exit,
 uncertainty and delivery. The installed cold test must discover this route and
 recover a selective observer-loss fixture without external JSON selectors.
@@ -233,7 +335,13 @@ lost grant reply; delayed recovery/original observer races; known no-spawn;
 selective observer loss during output and notification; recovery launch and
 pre-attach failure; keeper post-spawn setup failures and keeper loss; terminal
 stop winning admission; resume fallback; exact notification handoff and parent
-new-work response. Fixture endpoints independently record their own effects.
+new-work response. Add original/recovery races where rejection commits and facts
+later become admissible, lost admission replies, failed prepared cancellation,
+legacy running/starting rows with empty directories and completed reports without
+request rows. Test parentless foreground local completion and caller-loss replay,
+parentless detached refusal before effects, present-owner delivery failure, and
+Unknown continuation with both available and missing child-lifetime evidence.
+Fixture endpoints independently record their own effects.
 Assert retained identities, output, status and delivery, not only process counts.
 
 Operative laws bind actual request comparison, transactional claim/refusal,
