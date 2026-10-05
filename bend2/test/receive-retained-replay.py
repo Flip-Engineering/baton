@@ -79,6 +79,25 @@ class ReplayBase(RECEIVE.Receive):
         """The public report body of the bound attempt, read by its own saved id."""
         return self.coord('delivery', binding[0])['body']
 
+    def stored_event(self, worker='parent'):
+        """The stored turn event, read from the store."""
+        with sqlite3.connect(f'{self.db.as_uri()}?mode=ro', uri=True) as database:
+            row = database.execute("SELECT event FROM turns WHERE worker=? ORDER BY rowid LIMIT 1",
+                                   (worker,)).fetchone()
+        return row[0] if row else ''
+
+    def retained_raw_terminals(self):
+        """Every agent_end frame the native log retained, parsed."""
+        found = []
+        for line in (self.directory / 'parent.jsonl').read_text(errors='replace').splitlines():
+            try:
+                frame = json.loads(line)
+            except Exception:
+                continue
+            if frame.get('type') == 'agent_end' and frame.get('messages'):
+                found.append(frame)
+        return found
+
     def reports(self):
         """Every report body the native session delivered to the root."""
         with sqlite3.connect(f'{self.db.as_uri()}?mode=ro', uri=True) as database:
@@ -435,6 +454,11 @@ class ControlledFrames(ReplayBase):
         self.assertEqual(turns[-1]['id'], self.original_attempt[0])
         self.assertEqual(turns[-1]['reportBody'], failure[0])
         self.assertEqual(self.coord('delivery', turns[-1]['id'])['body'], failure[0])
+        self.assertIn('response-e2', self.stored_event())
+        raw = self.retained_raw_terminals()
+        self.assertTrue(raw, 'the original terminal was not retained')
+        self.assertEqual(raw[-1]['messages'][-1], 'elided')
+        self.assertIn('403 earlier failure', json.dumps(raw[-1]))
 
     def test_two_missing_identities_cannot_establish_the_current_error(self):
         """With no response identity on either side, the result is the unavailable frame."""
@@ -472,6 +496,40 @@ class ControlledFrames(ReplayBase):
         self.assertTrue(failure, bodies)
         self.assertIn('429', failure[0])
         self.assertNotIn('unavailable', failure[0].lower())
+
+    def test_a_neutral_frame_after_an_incomplete_start_keeps_no_success(self):
+        """A neutral frame between an incomplete start and an empty terminal yields unavailable."""
+        success = assistant(stopReason='stop', responseId='response-s1',
+                            content=[{'type': 'text', 'text': 'Complete answer.'}])
+        started = assistant(responseId='response-s2', content=[])
+        notifications, code, status, bodies = self.replay([
+            {'type': 'agent_start'},
+            {'type': 'message_end', 'message': success},
+            {'type': 'message_start', 'message': started},
+            {'type': 'turn_start'},
+            {'type': 'agent_end', 'isTerminal': True, 'messages': []}],
+            task='neutral-after-incomplete-start')
+        self.assertTrue([body for body in bodies if 'unavailable' in body.lower()], bodies)
+        self.assertFalse([body for body in bodies if 'Complete answer.' in body], bodies)
+
+    def test_a_neutral_frame_before_the_terminal_keeps_the_later_completion(self):
+        """The completion the stream reached last survives a neutral frame."""
+        error = assistant(stopReason='error', errorStatus=403, errorMessage='403 earlier failure',
+                          provider='kimi-code', model='k3', responseId='response-e0', content=[])
+        success = assistant(stopReason='stop', responseId='response-s1',
+                            content=[{'type': 'text', 'text': 'Complete answer.'}])
+        notifications, code, status, bodies = self.replay([
+            {'type': 'agent_start'},
+            {'type': 'message_end', 'message': error},
+            {'type': 'message_end', 'message': success},
+            {'type': 'turn_start'},
+            {'type': 'agent_end', 'isTerminal': True, 'messages': [error, 'elided']}],
+            task='neutral-before-terminal')
+        self.assertEqual(code, 0)
+        self.assertIn('exit 0', status)
+        turns = self.coord('turns', 'parent')
+        self.assertEqual(turns[-1]['reportBody'], 'Complete answer.')
+        self.assertEqual(self.coord('delivery', turns[-1]['id'])['body'], 'Complete answer.')
 
     def test_sequential_success_then_error_keeps_the_first_report(self):
         """Two consecutive receives: a later receive's failure does not change the earlier report."""
