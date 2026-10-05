@@ -325,7 +325,8 @@ function substituteRequest(value, tokens) {
 
 function prepareWork(options) {
   const root = options.work ?? mkdtempSync(join(tmpdir(), 'bend2-code-security-'));
-  const tokens = { CLANG: options.clang ?? DEFAULT_CLANG };
+  if (!options.clang) throw new Error('--clang is required: the fixture compilation databases carry the front-end identity substituted at materialization');
+  const tokens = { CLANG: options.clang };
   const launchers = join(root, 'launchers');
   mkdirSync(launchers, { recursive: true });
 
