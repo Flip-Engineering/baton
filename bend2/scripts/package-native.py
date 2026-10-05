@@ -329,7 +329,69 @@ def reconcile_controls(expected, laws, mutations):
                      'A mutation control row did not record an applied attributable refusal')
 
 
-def validation(logs, remote=None):
+ORDINARY_SCHEMA = 'capacity-controls/ordinary-evidence@1'
+
+
+def ordinary_evidence(index_path, expected):
+    """Consume the checker's retained ordinary per-case evidence.
+
+    The index is written under the checker's run-private scratch. Every control
+    the source states must appear exactly once with its applied setup, the actual
+    command that ran, verified complete streams and a terminal outcome, and the
+    index itself must declare that the run finished.
+    """
+    path = Path(index_path)
+    require(path.is_file(), 'The ordinary evidence index is missing: ' + str(path))
+    index = json.loads(path.read_text())
+    require(index.get('schema') == ORDINARY_SCHEMA,
+            'The ordinary evidence index names another schema: ' + json.dumps(index.get('schema')))
+    require(index.get('complete') is True,
+            'The ordinary evidence index does not declare a completed run')
+    cases = index.get('cases')
+    require(isinstance(cases, list) and cases,
+            'The ordinary evidence index holds no case')
+    wanted = {control['id'] for control in expected['controls']}
+    seen = set()
+    for case in cases:
+        require(isinstance(case, dict), 'An ordinary case row is not an object')
+        identity = case.get('id')
+        require(identity in wanted,
+                'An ordinary case row is absent from this source: ' + json.dumps(identity))
+        require(identity not in seen, 'An ordinary case row repeats: ' + json.dumps(identity))
+        seen.add(identity)
+        require(case.get('applied') is True,
+                'An ordinary case did not apply its setup: ' + json.dumps(identity))
+        argv = case.get('argv')
+        require(isinstance(argv, list) and argv and all(isinstance(part, str) for part in argv),
+                'An ordinary case records no command: ' + json.dumps(identity))
+        for stream in ('stdout', 'stderr'):
+            record = case.get(stream)
+            require(isinstance(record, dict), 'An ordinary case omits its ' + stream + ': '
+                    + json.dumps(identity))
+            member = (path.parent / str(record.get('path', ''))).resolve()
+            require(path.parent.resolve() in member.parents,
+                    'An ordinary case ' + stream + ' escapes the evidence root: '
+                    + json.dumps(record.get('path')))
+            require(member.is_file(), 'An ordinary case ' + stream + ' is missing: '
+                    + json.dumps(record.get('path')))
+            data = member.read_bytes()
+            require(len(data) == record.get('bytes') and hashlib.sha256(data).hexdigest()
+                    == record.get('sha256'),
+                    'An ordinary case ' + stream + ' does not match its recorded bytes: '
+                    + json.dumps(identity))
+        if 'outcome' in case:
+            verify_process({'process': case.get('outcome')}, baseline=False,
+                           label='ordinary ' + json.dumps(identity))
+        require(is_finite(case.get('started')) and is_finite(case.get('ended'))
+                and case['ended'] >= case['started'],
+                'An ordinary case records an invalid interval: ' + json.dumps(identity))
+    missing = sorted(wanted - seen)
+    require(not missing, 'The ordinary evidence omits controls: ' + succinct(missing))
+    return {'path': str(path), **file_info(path), 'schema': ORDINARY_SCHEMA,
+            'cases': len(seen)}
+
+
+def validation(logs, remote=None, ordinary=None):
     expected = discover_controls()
     laws = [control for control in expected['controls'] if control['kind'] == 'proof-removal']
     mutations = [control for control in expected['controls'] if control['kind'] == 'mutation']
@@ -353,9 +415,12 @@ def validation(logs, remote=None):
         law_rows, mutation_rows, _ = control_rows(law_text)
         reconcile_controls(expected, law_rows, mutation_rows)
     native_text = (logs / 'check-native.log').read_text(errors='replace')
-    return {'laws': counts, 'controls_sha256': expected['sha256'],
-            'route': 'remote-module-groups' if remote is not None else 'local-complete',
-            'native': reconcile_native(native_text)}
+    result = {'laws': counts, 'controls_sha256': expected['sha256'],
+              'route': 'remote-module-groups' if remote is not None else 'local-complete',
+              'native': reconcile_native(native_text)}
+    if ordinary is not None:
+        result['ordinary'] = ordinary_evidence(ordinary, expected)
+    return result
 
 
 def reconcile_native(text):
@@ -389,7 +454,7 @@ def reconcile_native(text):
     return {'python_tests': total, 'python_suites': reported}
 
 
-def run_gates(compiler, env, logs, initial, before_inputs, remote=None):
+def run_gates(compiler, env, logs, initial, before_inputs, remote=None, ordinary=None):
     summary = {'schema': RECEIPT_SCHEMA, 'status': 'running', 'worktree': str(ROOT),
                'output': str(logs),
                'before': initial, 'environment': {'BEND': str(compiler), 'BEND_NO_TELEMETRY': '1',
@@ -459,7 +524,7 @@ def run_gates(compiler, env, logs, initial, before_inputs, remote=None):
                 require(zero_exit(result_exit),
                         name + ' failed; full output is retained at ' + str(logs / stage['log']))
             same_source(stage['after'], initial)
-        summary['validation'] = validation(logs, remote)
+        summary['validation'] = validation(logs, remote, ordinary)
         summary['after'] = snapshot()
         require(summary['after']['binary_sha256'] == summary['stages'][0]['after']['binary_sha256'],
                 'The native binary changed between gate stages')
@@ -2024,7 +2089,7 @@ def package(args):
             input_boundary = 'Compiler libraries, CC and host captured after the supplied gates and checked again during packaging.'
         else:
             receipt, summary = run_gates(compiler, env, logs, initial, before_inputs,
-                                         remote=controls)
+                                         remote=controls, ordinary=args.ordinary_index)
             input_boundary = ('Compiler libraries, CC and host captured before and after the three gates.'
                               if controls is None else
                               'The laws obligation was carried by the remote module-group controls; '
@@ -2144,6 +2209,8 @@ def main():
     parser.add_argument('--gate-receipt-sha256', help='required SHA256 pin when reusing a gate receipt')
     parser.add_argument('--context-node22', type=Path,
                         help='exact Node v22.15.0 executable for the context package floor gate')
+    parser.add_argument('--ordinary-index', type=Path,
+                        help='the checker retained ordinary evidence index for this run, consumed as gate evidence')
     parser.add_argument('--controls-evidence', type=Path,
                         help='directory holding controls-summary.json and its control logs, validated against this source')
     args = parser.parse_args()

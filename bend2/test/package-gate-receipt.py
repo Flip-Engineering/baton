@@ -569,6 +569,61 @@ class PackageGateReceipt(unittest.TestCase):
         finally:
             PACKAGE.classify_control = original
 
+    def ordinary_index(self, directory, complete=True, drop=(), duplicate=False,
+                       tamper=False, escape=False):
+        """A faithful ordinary evidence index with real stream bytes."""
+        evidence = directory / 'evidence'
+        evidence.mkdir(parents=True, exist_ok=True)
+        cases = []
+        controls = list(self.controls['controls'])
+        if drop:
+            controls = [control for control in controls if control['id'] not in drop]
+        if duplicate:
+            controls = controls + [controls[0]]
+        for control in controls:
+            stem = control['id'].replace(':', '_')
+            streams = {}
+            for name, payload in (('stdout', b'ordinary stdout\n'), ('stderr', b'ordinary stderr\n')):
+                member = evidence / (stem + '.' + name)
+                member.write_bytes(payload)
+                streams[name] = {'path': 'evidence/' + member.name,
+                                 'bytes': member.stat().st_size,
+                                 'sha256': hashlib.sha256(member.read_bytes()).hexdigest()}
+            if tamper and control['id'] == controls[0]['id']:
+                (evidence / (stem + '.stdout')).write_bytes(b'tampered\n')
+            if escape and control['id'] == controls[0]['id']:
+                streams['stdout']['path'] = '../../outside.stdout'
+            cases.append({'id': control['id'], 'applied': True,
+                          'argv': ['bend', 'bend2/src/coordinator/main.bend', '--check-only'],
+                          'stdout': streams['stdout'], 'stderr': streams['stderr'],
+                          'outcome': {'state': 'exited', 'exit_code': 1, 'signal': None,
+                                      'spawn_error': None},
+                          'started': 1.0, 'ended': 2.0})
+        index = {'schema': 'capacity-controls/ordinary-evidence@1', 'complete': complete,
+                 'cases': cases}
+        path = evidence / 'index.json'
+        path.write_text(json.dumps(index))
+        return path
+
+    def test_the_ordinary_evidence_index_is_consumed(self):
+        path = self.ordinary_index(self.home / 'ordinary')
+        result = PACKAGE.validation(self.write_logs(), None, path)
+        self.assertEqual(result['ordinary']['cases'], len(self.controls['controls']))
+        self.assertEqual(result['ordinary']['schema'], 'capacity-controls/ordinary-evidence@1')
+
+    def test_ordinary_evidence_defects_refuse(self):
+        cases = [('incomplete run', dict(complete=False), 'does not declare a completed run'),
+                 ('missing case', dict(drop={self.laws()[0]['id']}), 'omits controls'),
+                 ('duplicate case', dict(duplicate=True), 'repeats'),
+                 ('altered stream', dict(tamper=True), 'does not match its recorded bytes'),
+                 ('unconfined path', dict(escape=True), 'escapes the evidence root')]
+        for name, options, message in cases:
+            with self.subTest(name=name):
+                directory = self.home / ('ordinary-' + name.replace(' ', '-'))
+                path = self.ordinary_index(directory, **options)
+                with self.assertRaisesRegex(RuntimeError, message):
+                    PACKAGE.validation(self.write_logs(), None, path)
+
     def test_the_remote_route_carries_the_laws_obligation(self):
         remote = PACKAGE.controls_evidence(self.full_evidence(), PACKAGE.snapshot(), self.compiler())
         logs = self.home / 'remote-logs'
