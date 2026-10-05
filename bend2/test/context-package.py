@@ -606,6 +606,55 @@ class ContextPackagedBytes(unittest.TestCase):
         self.assertTrue(receipt['child']['spawned'])
         self.assertEqual(receipt['exit_code'], 0)
 
+    def test_gate_refuses_close_failure_after_successful_gate(self):
+        real = pathlib.Path(self.host_node).resolve()
+        real_open = pathlib.Path.open
+
+        class CloseFailsHandle:
+            def __init__(self, handle):
+                self._handle = handle
+
+            def fileno(self):
+                return self._handle.fileno()
+
+            def flush(self):
+                return self._handle.flush()
+
+            def close(self):
+                # Flush and close the real stream, then fail the wrapper close
+                # so the gate itself keeps its output while the close is a
+                # recorded evidence failure.
+                self._handle.flush()
+                self._handle.close()
+                raise OSError('stderr close refused')
+
+        def selective_open(path, mode='r', *args, **kwargs):
+            handle = real_open(path, mode, *args, **kwargs)
+            if path.name == 'context-gate-close-fail.stderr' and mode == 'wb':
+                return CloseFailsHandle(handle)
+            return handle
+
+        with mock.patch.object(pathlib.Path, 'open', selective_open):
+            with self.assertRaises(RuntimeError) as caught:
+                PACKAGE.run_context_gate(self.host_root, self.logs, real, 'close-fail')
+        self.assertIn('evidence retention reported errors', str(caught.exception))
+        receipt = json.loads((self.logs / 'context-gate-close-fail.json').read_text())
+        self.assertEqual(receipt['exit_code'], 0)
+        self.assertTrue(receipt['child']['spawned'])
+        self.assertEqual(receipt['child']['stage'], 'completed')
+        # Both stream and snapshot evidence are available; the refusal is
+        # precisely the recorded close failure.
+        self.assertTrue(receipt['stdout']['available'])
+        self.assertTrue(receipt['stderr']['available'])
+        self.assertTrue(receipt['payloadSnapshot']['before']['available'])
+        self.assertTrue(receipt['payloadSnapshot']['after']['available'])
+        self.assertTrue(receipt['payloadSnapshot']['equal'])
+        self.assertTrue(receipt['node']['postIdentity']['available'])
+        self.assertEqual(receipt['evidenceErrors'],
+                         ['stream close failed: OSError("stderr close refused")'])
+        self.assertIn('"baton2-context-package-gate"',
+                      (self.logs / 'context-gate-close-fail.stdout').read_text())
+
     def test_gate_refuses_same_version_byte_drift(self):
         real = pathlib.Path(self.host_node).resolve()
         wrapper = pathlib.Path(self.scratch.name) / 'byte-drift-node.sh'

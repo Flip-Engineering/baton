@@ -563,8 +563,11 @@ def run_context_gate(payload, logs, node, name, extra_env=None):
                 except BaseException as reap_error:
                     cleanup['reap'] = repr(reap_error)
                 cleanup_evidence = cleanup
+                # Only actual cleanup errors are evidence failures; positive
+                # settlement facts (killCompleted, reapReturncode) are retained
+                # on the child record without ever entering evidence errors.
                 cleanup_failures = {key: value for key, value in cleanup.items()
-                                    if key != 'reapReturncode'}
+                                    if key in ('kill', 'reap')}
                 if cleanup_failures:
                     evidence_errors.append('child cleanup after interruption: '
                                            + json.dumps(cleanup_failures, sort_keys=True))
