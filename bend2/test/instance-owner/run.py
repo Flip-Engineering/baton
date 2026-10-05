@@ -81,6 +81,7 @@ def main():
                            "admitted remote executor."),
     }
     assert identity["owned_clean"], "owned files must be committed and clean"
+    (output / "identity.json").write_text(json.dumps(identity, indent=2) + "\n")
     child, streams, started = launch("compiler", [args.bend, "version"], root)
     assert complete("compiler", child, streams, started) == 0
     assert (output / "compiler.stdout").read_bytes().strip() == b"bend 2.0.25", \

@@ -183,24 +183,29 @@ def main():
         stderr = (output / ("mutation-" + name + ".stderr")).read_text(errors="replace")
         location_lines = [line.strip() for line in stderr.splitlines()
                           if "custody-tasks." in line and law in line]
-        expected = {"kind": "law-compile-failure", "compiler_exit": 1,
+        expected = {"kind": "law-compile-failure", "outer_exit_nonzero": True,
                     "compiler_error": True,
                     "location": f"custody-tasks.{law}",
                     "expected_semantics": expected_semantics}
-        observed = {"exit": code,
+        observed = {"build_exit": code,
                     "compiler_error": "Error" in stderr,
                     "location_seen": "Location" in stderr and bool(location_lines),
                     "location_lines": location_lines[:4],
                     "law_named": law in stderr,
+                    "semantic_verification": "unqualified",
                     "diagnostic_head": stderr.splitlines()[:6]}
         verdict = {"name": name, "target_law": law,
                    "expected": expected, "observed": observed,
+                   "claim": ("mutation-refusal-recorded; not qualified as a semantic "
+                             "discriminator because the Bend compiler child exit is "
+                             "not attributed and no executed diagnostic supplies "
+                             "observed semantic values"),
                    "records": [str(output / ("mutation-" + name + ".launch.json")),
                                str(output / ("mutation-" + name + ".completion.json")),
                                str(scratch / "mutated-source.bend"),
                                str(output / ("mutation-" + name + ".stderr"))]}
         record("mutation-" + name + ".verdict", verdict)
-        assert code == 1, f"{name}: compiler exit {code}, expected exact refusal 1"
+        assert code != 0, f"{name}: mutated outer build unexpectedly succeeded (exit {code})"
         assert observed["compiler_error"] and observed["location_seen"], \
             f"{name}: build stderr lacks a compiler Error with a custody-tasks.{law} Location"
         assert observed["law_named"], f"{name}: expected law {law} named in build stderr"
