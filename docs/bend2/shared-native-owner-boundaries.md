@@ -187,7 +187,11 @@ The new pure `coordinator/owner-admission.bend` exposes
 `decide(Request, Maybe<Record>) -> Decision`. `Request.Identity` carries a
 qualified database binding, durable request ID, session, operation and canonical
 payload. `Record.Recorded` retains that identity and its original attempt.
-The decisions are `Fresh`, `Replay{attempt}`, `Conflict` and `Invalid`.
+The decisions are `Fresh`, `Replay{attempt}`, `Conflict{attempt,field}` and
+`Invalid{field}`. `Field` names database, request, session, operation, payload or
+attempt. Refusals identify the violated field and preserve the conflicting
+attempt without echoing input contents. The public rendering caller supplies
+the applicable rule and inspection action from those typed facts.
 An identical retry returns the original attempt. Changed identity fields refuse
 reuse. Missing required identity or a stored empty attempt returns `Invalid`.
 The owner-process token is outside this durable request identity so a qualified
@@ -205,7 +209,8 @@ be tested through that actual caller before runtime acceptance.
 
 The isolated native fixture imports the module and its laws. The qualification
 runner executes field-change and retry cases and rejects mutations that admit a
-duplicate grant, ignore payload/database identity or treat a missing stored
+duplicate grant, discard the conflicting attempt, ignore payload/database
+identity or treat a missing stored
 attempt as a fresh request. Each rejected mutation must identify its intended
 law and expected/observed decision constructors. The module is awaiting import
 by the real native entry and bound-store composition through the current owners.

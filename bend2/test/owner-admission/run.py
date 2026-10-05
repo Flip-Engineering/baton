@@ -53,29 +53,32 @@ def main():
     base = ["db", "request", "session", "receive", "input", "stored", "attempt-a"]
     cases = {"retry": (base, "replay:attempt-a"),
              "missing-record": (base[:5] + ["absent", ""], "fresh"),
-             "missing-attempt": (base[:6] + [""], "invalid"),
+             "missing-attempt": (base[:6] + [""], "invalid:attempt"),
              "replay-original-attempt": (base[:6] + ["older-attempt"], "replay:older-attempt")}
     for index, field in enumerate(("database", "request", "session", "operation", "payload")):
         changed = base.copy()
         changed[index] = "different"
-        cases["changed-" + field] = (changed, "conflict")
+        cases["changed-" + field] = (changed, "conflict:attempt-a:" + field)
         if field != "payload":
             empty = base.copy()
             empty[index] = ""
-            cases["empty-" + field] = (empty, "invalid")
+            cases["empty-" + field] = (empty, "invalid:" + field)
     cases["empty-payload-new"] = (base[:4] + ["", "absent", ""], "fresh")
     for name, (arguments, expected) in cases.items():
         child = run("case-" + name, [executable, *arguments])
         assert child.returncode == 0 and child.stdout.decode().strip() == expected, name
 
     mutations = {
-        "duplicate-grant": ("case True{}: Replay{attempt}", "case True{}: Fresh{}",
+        "drop-conflict-attempt": ("case Some{field}: Conflict{attempt,field}",
+                                  'case Some{field}: Conflict{"",field}',
+                                  "conflict_preserves_attempt_and_field", "Conflict", "Conflict"),
+        "duplicate-grant": ("case None{}: Replay{attempt}", "case None{}: Fresh{}",
                             "identical_retry_preserves_original_attempt", "Fresh", "Replay"),
         "ignore-payload": ("String.eq(payload,other_payload)", "True{}",
                            "changed_payload_refuses_request_reuse", "Replay", "Conflict"),
         "ignore-database": ("String.eq(db,other_db)", "True{}",
                             "changed_database_refuses_request_reuse", "Replay", "Conflict"),
-        "missing-attempt-grant": ("case False{}: Invalid{}\n    case True{}: replay",
+        "missing-attempt-grant": ("case False{}: Invalid{AttemptField{}}\n    case True{}: replay",
                                   "case False{}: Fresh{}\n    case True{}: replay",
                                   "missing_attempt_does_not_authorize_new_grant", "Fresh", "Invalid"),
     }

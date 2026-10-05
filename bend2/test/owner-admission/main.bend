@@ -1,12 +1,21 @@
 import Base
 import ../../src/coordinator/owner-admission.bend as A
 
+def field_name(field: A.Field) -> String:
+  match field:
+    case A.DatabaseField{}: "database"
+    case A.RequestField{}: "request"
+    case A.SessionField{}: "session"
+    case A.OperationField{}: "operation"
+    case A.PayloadField{}: "payload"
+    case A.AttemptField{}: "attempt"
+
 def show(decision: A.Decision) -> String:
   match decision:
     case A.Fresh{}: "fresh"
     case A.Replay{attempt}: "replay:" ++ attempt
-    case A.Conflict{}: "conflict"
-    case A.Invalid{}: "invalid"
+    case A.Conflict{attempt,field}: "conflict:" ++ attempt ++ ":" ++ field_name(field)
+    case A.Invalid{field}: "invalid:" ++ field_name(field)
 
 def record(stored: String, attempt: String) -> Maybe<A.Record>:
   match stored:
