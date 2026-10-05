@@ -37,9 +37,11 @@ the supplied executable is used and its digest recorded, but that flag does
 not establish that those bytes were compiled from this ENTRY's source. Every
 invocation keeps its own evidence directory, created exclusively so a repeat
 cannot overwrite one; the spawn stage and, for checks that read an artifact
-back, a read stage are both retained. Eleven invocations run subprocesses;
-evidence-retention, duplicate-invocation and negative-controls are in-process
-checks over the retained records.
+back, a read stage are both retained. Each check runs one subprocess
+invocation, and the duplicate-invocation control runs one more before
+requiring the second attempt to be refused; duplicate-invocation's assertion,
+negative-controls and evidence-retention are in-process checks over the
+retained records.
 """
 
 import hashlib
