@@ -299,6 +299,19 @@ class PackageGateReceipt(unittest.TestCase):
                 'archive_sha256': PACKAGE.COMPILER_ARCHIVE_SHA256,
                 'runtime_set_sha256': PACKAGE.runtime_set_digest(compiler)}
 
+    def runtime_rows(self, compiler):
+        row = {'path': 'base.bend',
+               'sha256': hashlib.sha256(b'fixture base library').hexdigest()}
+        return [row]
+
+    def runtime_rows_digest(self, compiler):
+        rows = [row['path'] + '\t' + row['sha256'] for row in self.runtime_rows(compiler)]
+        return hashlib.sha256('\n'.join(sorted(rows)).encode('utf-8')).hexdigest()
+
+    def runtime_fixture(self, compiler):
+        return {'directory': str(compiler.parent.parent), 'files': self.runtime_rows(compiler),
+                'sha256': self.runtime_rows_digest(compiler)}
+
     def producing_for(self, module, compiler):
         snapshot = PACKAGE.snapshot()
         return {
@@ -309,9 +322,8 @@ class PackageGateReceipt(unittest.TestCase):
                          'sha256': hashlib.sha256(compiler.read_bytes()).hexdigest(),
                          'version': 'bend 2.0.25'},
             'archive': {'bytes': 0, 'sha256': PACKAGE.COMPILER_ARCHIVE_SHA256},
-            'runtime': {'directory': str(compiler.parent.parent),
-                        'sha256': PACKAGE.runtime_set_digest(compiler)},
-            'runtime_set_sha256': PACKAGE.runtime_set_digest(compiler),
+            'runtime': self.runtime_fixture(compiler),
+            'runtime_set_sha256': self.runtime_rows_digest(compiler),
             'origin': {'workflow': 'bend2-native-capacity-controls', 'run_id': '1',
                        'run_attempt': '1', 'job': 'controls:' + module.replace('/', '_') + ':1:1',
                        'runner_name': 'GitHub Actions 1', 'image_os': 'macos27',

@@ -115,6 +115,8 @@ def main():
                    'compiler_archive': str(args.compiler_archive),
                    'node': shutil.which('node')})
     (run / 'run.json').write_text(json.dumps({'children': record}, indent=2) + '\n')
+    if git['exit_code'] != 0:
+        raise SystemExit('the checkout status could not be read: ' + repr(git['exit_code']))
     if status:
         raise SystemExit('the checkout is not clean')
     if version != 'bend 2.0.25':
@@ -199,14 +201,29 @@ def main():
 
     if args.archive:
         import tarfile
+        target = run / 'readback'
         with tarfile.open(args.archive, 'r:gz') as archive:
-            archive.extractall(run / 'readback')
-        archived = run / 'readback' / 'baton2-development-darwin-arm64' / 'controls-evidence'
+            for member in archive.getmembers():
+                relative = pathlib.PurePosixPath(member.name.lstrip('./'))
+                if (relative.is_absolute() or '..' in relative.parts
+                        or member.issym() or member.islnk()):
+                    raise SystemExit('the archive holds an unsafe member: ' + member.name)
+                archive.extract(member, target)
+        manifest_path = next(target.rglob('manifest.json'), None)
+        if manifest_path is None:
+            raise SystemExit('the archive holds no manifest')
+        manifest = json.loads(manifest_path.read_text())
+        if manifest_path.parent.name != manifest.get('archive_root'):
+            raise SystemExit('the archive root does not match the manifest')
+        archived = manifest_path.parent / 'controls-evidence'
         if not archived.is_dir():
             raise SystemExit('the archive holds no controls evidence member')
-        current = package.verify_archived_inventory(archived, result['inventory'])
+        documents = (manifest.get('gates', {}).get('controls', {})
+                     .get('archived', {}).get('documents') or {})
+        current = package.verify_archived_inventory(archived, result['inventory'], documents)
         record.append({'name': 'archive-readback', 'outcome': 'verified',
-                       'members': len(current['members'])})
+                       'root': manifest_path.parent.name,
+                       'members': len(current['members']), 'documents': sorted(documents)})
     if args.receipt:
         import subprocess as _subprocess
         logs = run / 'receipt-logs'
@@ -217,7 +234,8 @@ def main():
         fresh = receipt.get('controls_evidence') or {}
         if fresh.get('reduction_sha256') != result['reduction_sha256']:
             raise SystemExit('the reused receipt names a different stable reduction')
-        record.append({'name': 'receipt-reuse', 'outcome': 'verified',
+        record.append({'name': 'receipt-validation', 'outcome': 'verified',
+                       'scope': 'receipt summary and logs against the fresh reduction',
                        'receipt': str(destination)})
     (run / 'run.json').write_text(json.dumps({'children': record}, indent=2) + '\n')
     print('recipe complete; child receipts and streams are under ' + str(run))

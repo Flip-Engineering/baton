@@ -649,79 +649,106 @@ def classify_control(case, result, streams, baseline, evidence_root, source, com
         acquire.mkdir(parents=True, exist_ok=True)
         stem = identity.replace(':', '-').replace('/', '_')
         stem = stem + '-' + hashlib.sha256(identity.encode('utf-8')).hexdigest()[:12]
-    stdout_bytes, stderr_bytes, status, signal_name = b'', b'', None, None
-    spawn_error = None
+    stdout_bytes, stderr_bytes = None, None
+    status, signal_name, spawn_error = None, None, None
+    launch_attempted = False
+    started = None
     interruption = None
+    secondary = None
     capture_error = None
-    spawned = False
     stream_dir = acquire if acquire is not None else None
     if stream_dir is not None:
         (stream_dir / (stem + '.request.json')).write_bytes(request_bytes)
     out_path = (stream_dir / (stem + '.stdout')) if stream_dir is not None else None
     err_path = (stream_dir / (stem + '.stderr')) if stream_dir is not None else None
 
-    def settle(error_kind, error):
-        """Settle whatever this terminal path produced, without inventing values."""
+    def observed(path):
+        """The bytes on disk, or None when they cannot be read."""
+        if path is None:
+            return None
+        try:
+            return path.read_bytes() if path.exists() else b''
+        except OSError:
+            return None
+
+    def settle(outcome, reason):
+        """Write what this terminal path actually produced, or say it is unknown."""
         if stream_dir is None:
             return
         try:
-            recorded_out = out_path.read_bytes() if out_path and out_path.exists() else b''
-            recorded_err = err_path.read_bytes() if err_path and err_path.exists() else b''
-        except OSError:
-            recorded_out, recorded_err = b'', b''
-        write_json(stream_dir / (stem + '.acquisition.json'),
-                   {'argv': argv, 'cwd': str(ROOT), 'outcome': error_kind,
-                    'reason': error, 'started': spawned,
-                    'exit_code': status, 'signal': signal_name,
-                    'stdout_sha256': hashlib.sha256(recorded_out).hexdigest(),
-                    'stdout_bytes': len(recorded_out),
-                    'stderr_sha256': hashlib.sha256(recorded_err).hexdigest(),
-                    'stderr_bytes': len(recorded_err),
-                    'request_sha256': hashlib.sha256(request_bytes).hexdigest()})
+            out_bytes = observed(out_path)
+            err_bytes = observed(err_path)
+            write_json(stream_dir / (stem + '.acquisition.json'),
+                       {'argv': argv, 'cwd': str(ROOT), 'outcome': outcome, 'reason': reason,
+                        'launch_attempted': launch_attempted, 'started': started,
+                        'exit_code': status, 'signal': signal_name, 'spawn_error': spawn_error,
+                        'secondary_error': secondary,
+                        'stdout_bytes': None if out_bytes is None else len(out_bytes),
+                        'stdout_sha256': (None if out_bytes is None
+                                          else hashlib.sha256(out_bytes).hexdigest()),
+                        'stderr_bytes': None if err_bytes is None else len(err_bytes),
+                        'stderr_sha256': (None if err_bytes is None
+                                          else hashlib.sha256(err_bytes).hexdigest()),
+                        'request_sha256': hashlib.sha256(request_bytes).hexdigest()})
+        except BaseException as write_error:
+            secondary = secondary or repr(write_error)
 
-    out_handle, err_handle = None, None
+    handles = []
     try:
-        out_handle = out_path.open('wb') if out_path else None
-        err_handle = err_path.open('wb') if err_path else None
-    except OSError as error:
+        for path in (out_path, err_path):
+            if path is not None:
+                handles.append(path.open('wb'))
+    except BaseException as error:
         spawn_error = repr(error)
+        while handles:
+            try:
+                handles.pop().close()
+            except BaseException as close_error:
+                secondary = secondary or repr(close_error)
+    completed = None
     if spawn_error is None:
         try:
-            spawned = True
+            launch_attempted = True
             completed = subprocess.run(
                 argv, cwd=ROOT, input=request_bytes,
-                stdout=out_handle if out_handle else subprocess.PIPE,
-                stderr=err_handle if err_handle else subprocess.PIPE,
+                stdout=handles[0] if len(handles) > 0 else subprocess.PIPE,
+                stderr=handles[1] if len(handles) > 1 else subprocess.PIPE,
                 env={'PATH': os.environ.get('PATH', ''), 'BEND_NO_TELEMETRY': '1'})
+            started = True
             status = completed.returncode
             if status < 0:
                 signal_name, status = child_signal(status), None
         except OSError as error:
             spawn_error = repr(error)
         except BaseException as error:
-            interruption = repr(error)
+            interruption = error
         finally:
-            for handle in (out_handle, err_handle):
-                if handle is not None:
-                    handle.close()
-        if interruption is None and spawn_error is None:
-            try:
-                stdout_bytes = out_path.read_bytes() if out_path else (completed.stdout or b'')
-                stderr_bytes = err_path.read_bytes() if err_path else (completed.stderr or b'')
-            except OSError as error:
-                capture_error = repr(error)
+            while handles:
+                try:
+                    handles.pop().close()
+                except BaseException as close_error:
+                    secondary = secondary or repr(close_error)
+        if interruption is None and spawn_error is None and completed is not None:
+            stdout_bytes = observed(out_path) if out_path is not None else completed.stdout
+            stderr_bytes = observed(err_path) if err_path is not None else completed.stderr
+            if stdout_bytes is None or stderr_bytes is None:
+                capture_error = 'the classification streams could not be read'
     if interruption is not None:
-        settle('interrupted', interruption)
-        raise RuntimeError('The checker classification was interrupted: ' + interruption)
+        settle('interrupted', repr(interruption))
+        raise interruption
     if spawn_error is not None:
         settle('spawn-error', spawn_error)
-        raise RuntimeError('The checker classification could not be launched: ' + spawn_error)
+        raise RuntimeError('The checker classification could not be launched: ' + spawn_error
+                           + ('; secondary: ' + str(secondary) if secondary else ''))
     if capture_error is not None:
         settle('capture-error', capture_error)
-        raise RuntimeError('The checker classification streams could not be read: ' + capture_error)
+        raise RuntimeError(capture_error
+                           + ('; secondary: ' + str(secondary) if secondary else ''))
     acquisition = {'argv': argv, 'cwd': str(ROOT), 'exit_code': status,
                    'outcome': 'signalled' if signal_name else 'exited',
-                   'signal': signal_name, 'spawn_error': None, 'started': spawned,
+                   'signal': signal_name, 'spawn_error': None,
+                   'launch_attempted': launch_attempted, 'started': started,
+                   'secondary_error': secondary,
                    'request_sha256': hashlib.sha256(request_bytes).hexdigest(),
                    'request_bytes': len(request_bytes),
                    'stdout_sha256': hashlib.sha256(stdout_bytes).hexdigest(),
@@ -929,8 +956,8 @@ def producer_inventory(directory, destination=None, exclude=()):
     return document
 
 
-def verify_archived_inventory(directory, recorded):
-    """Require every recorded original member to be present with identical bytes."""
+def verify_archived_inventory(directory, recorded, documents=None):
+    """Require the recorded original members and any recorded documents to match."""
     current = producer_inventory(directory, exclude=ARCHIVE_METADATA)
     present = {member['path']: member for member in current['members']}
     recorded_members = {member['path']: member for member in recorded.get('members', [])}
@@ -941,6 +968,10 @@ def verify_archived_inventory(directory, recorded):
                 'An archived evidence member is missing or changed: ' + path)
     extra = sorted(set(present) - set(recorded_members))
     require(not extra, 'An archived evidence member was not produced: ' + succinct(extra))
+    for name, digest in (documents or {}).items():
+        path = directory / name
+        require(path.is_file() and sha256(path) == digest,
+                'An archived metadata document differs from its recorded identity: ' + name)
     return current
 
 
@@ -980,6 +1011,7 @@ def semantic_reduction(result, inventory):
                 'closure_sha256': result['closure_sha256'],
                 'evidence_sha256': result['sha256'],
                 'inventory_sha256': inventory['inventory_sha256'],
+                'runtime_binding': result.get('runtime_local_comparison'),
                 'modules': result['modules'],
                 'cases': sorted(cases, key=lambda case: case['id'])}
     digest = hashlib.sha256(json.dumps(document, sort_keys=True,
@@ -1075,9 +1107,9 @@ def controls_evidence(directory, initial, compiler, audit=None, destination=None
         require(runtime.get('sha256') == recomputed,
                 'A bundle runtime digest field disagrees with its file list: ' + json.dumps(module))
         if runtime_sha is None:
-            runtime_local = 'unavailable: this checkout has no installed runtime inventory'
+            runtime_local = 'unqualified: this checkout holds no installed runtime inventory'
         else:
-            runtime_local = 'matched'
+            runtime_local = 'qualified: matched this checkout installed library bytes'
             require(producing.get('runtime_set_sha256') == runtime_sha,
                     'A bundle used different installed Bend library bytes: ' + json.dumps(module))
         instrument = bundle.get('instrument') or {}
@@ -1209,11 +1241,12 @@ def controls_evidence(directory, initial, compiler, audit=None, destination=None
     missing_cases = sorted(set(wanted) - set(seen_cases))
     require(not missing_cases, 'The controls evidence omits controls: ' + succinct(missing_cases))
     seconds = [span['seconds'] for span in spans]
-    inventory = producer_inventory(directory, destination, exclude=ARCHIVE_METADATA)
-    present = {member['path'] for member in inventory['members']}
-    reserved = sorted(present & set(ARCHIVE_METADATA))
+    supplied = producer_inventory(directory)
+    reserved = sorted({member['path'] for member in supplied['members']}
+                      & set(ARCHIVE_METADATA))
     require(not reserved,
             'The producer closure names reserved archive metadata: ' + succinct(reserved))
+    inventory = producer_inventory(directory, destination, exclude=ARCHIVE_METADATA)
     if audit is not None:
         audit_inventory = producer_inventory(audit)
     closure = hashlib.sha256(json.dumps(
@@ -1942,7 +1975,9 @@ def package(args):
             shutil.copytree(copied, archived)
             write_json(archived / 'inventory.json', controls['inventory'])
             write_json(archived / 'reduction.json', controls['reduction'])
-            require(verify_archived_inventory(archived, controls['inventory'])['members'],
+            archived_documents = {name: sha256(archived / name) for name in ARCHIVE_METADATA}
+            require(verify_archived_inventory(archived, controls['inventory'],
+                                              archived_documents)['members'],
                     'The archived controls closure holds no member')
         terms = stage_notices(payload, notices, identity['kind'])
         context = compose_context(payload, logs, args)
@@ -1990,7 +2025,8 @@ def package(args):
                 'inventory_sha256': controls['inventory_sha256'],
                 'reduction_sha256': controls['reduction_sha256'],
                 'origin': controls['origin'],
-                'members': len(controls['inventory']['members'])}
+                'members': len(controls['inventory']['members']),
+                'documents': archived_documents}
         write_json(payload / 'manifest.json', manifest)
         shutil.copyfile(payload / 'manifest.json', output / 'manifest.json')
         destination = output / (identity['archive_root'] + '-' + final['head'] + '.tar.gz')
