@@ -61,6 +61,26 @@ export function quoteSqliteIdentifier(name) {
   return `"${String(name).replace(/"/g, '""')}"`;
 }
 
+// A schema member is read by property presence, not by value shape:
+// - absent: the row has no own schema member, which is the documented
+//   compatible form and inherits the catalog schema;
+// - declared: a nonempty string, which must equal the admitted schema to be
+//   selected;
+// - malformed: the member is present but is not a nonempty string, including an
+//   explicitly supplied undefined, null, empty string or non-string. A supplied
+//   value is never rewritten into the default.
+function schemaMember(row) {
+  if (row === null || typeof row !== 'object') return { kind: 'absent' };
+  if (!Object.prototype.hasOwnProperty.call(row, 'schema')) return { kind: 'absent' };
+  const value = row.schema;
+  if (typeof value === 'string' && value.length > 0) return { kind: 'declared', value };
+  return { kind: 'malformed', value };
+}
+
+function describedValue(value) {
+  return value === undefined ? 'undefined' : JSON.stringify(value);
+}
+
 // Builds the probe statement and the expectation it must satisfy.
 //
 // The selected object is qualified with the admitted catalog schema, and two
@@ -68,21 +88,57 @@ export function quoteSqliteIdentifier(name) {
 // in both slots.
 //
 // Association rules for the admitted catalog shape:
-// - an entity or column without a schema member is admitted under the catalog
+// - an entity or column with no schema member is admitted under the catalog
 //   schema, which is the explicit compatible form;
-// - an entity or column that carries a different schema is never selected and
+// - an entity or column that declares a different schema is never selected and
 //   its declared schema is never overwritten, so an attached-schema object
 //   cannot be probed as if it were the admitted one;
+// - a schema member that is present but not a nonempty string refuses the
+//   shape, so a supplied invalid value is never read as a missing member;
 // - several tables with one name inside the admitted schema make object
 //   association ambiguous and refuse instead of selecting the first;
 // - a catalog whose tables all lie outside the admitted schema refuses.
 export function buildOriginProbe({ catalog }) {
-  const admittedSchema = typeof catalog?.schema === 'string' && catalog.schema.length > 0 ? catalog.schema : 'main';
-  const schemaOf = row => (typeof row?.schema === 'string' && row.schema.length > 0 ? row.schema : admittedSchema);
+  const catalogMember = schemaMember(catalog);
+  if (catalogMember.kind === 'malformed') {
+    return {
+      status: 'unsupported',
+      reason: 'catalogShapeUnsupported',
+      detail: `the catalog declares a malformed schema member ${describedValue(catalogMember.value)}; a supplied schema is never rewritten`,
+    };
+  }
+  const admittedSchema = catalogMember.kind === 'declared' ? catalogMember.value : 'main';
   const entities = Array.isArray(catalog?.entities) ? catalog.entities : [];
   const columns = Array.isArray(catalog?.columns) ? catalog.columns : [];
   const tables = entities.filter(entity => entity?.kind === 'table' && entity?.name !== 'sqlite_schema' && typeof entity?.name === 'string' && entity.name.length > 0);
-  const admittedTables = tables.filter(entity => schemaOf(entity) === admittedSchema);
+
+  // Every supplied schema member is validated before selection, so a malformed
+  // value refuses deterministically instead of being read as a missing member.
+  for (const entity of tables) {
+    const member = schemaMember(entity);
+    if (member.kind === 'malformed') {
+      return {
+        status: 'unsupported',
+        reason: 'catalogShapeUnsupported',
+        detail: `table ${JSON.stringify(entity.name)} declares a malformed schema member ${describedValue(member.value)}`,
+      };
+    }
+  }
+  for (const column of columns) {
+    const member = schemaMember(column);
+    if (member.kind === 'malformed') {
+      return {
+        status: 'unsupported',
+        reason: 'catalogShapeUnsupported',
+        detail: `column ${JSON.stringify(column?.table)}.${JSON.stringify(column?.name)} declares a malformed schema member ${describedValue(member.value)}`,
+      };
+    }
+  }
+
+  const admittedTables = tables.filter(entity => {
+    const member = schemaMember(entity);
+    return member.kind === 'absent' || member.value === admittedSchema;
+  });
   if (admittedTables.length === 0) {
     if (tables.length > 0) {
       return {
@@ -118,7 +174,8 @@ export function buildOriginProbe({ catalog }) {
   for (const entity of admittedTables) {
     const own = columns.filter(column => {
       if (column?.table !== entity.name || column?.hidden !== 'normal' || typeof column?.name !== 'string' || column.name.length === 0) return false;
-      if (schemaOf(column) !== admittedSchema) {
+      const member = schemaMember(column);
+      if (member.kind === 'declared' && member.value !== admittedSchema) {
         droppedColumns += 1;
         return false;
       }

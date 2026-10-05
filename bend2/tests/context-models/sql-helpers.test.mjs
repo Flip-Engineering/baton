@@ -370,14 +370,65 @@ test('two admitted tables with one name refuse as an unambiguous shape', () => {
   assert.match(ambiguous.detail, /names 2 tables called "t"/);
 });
 
-test('a missing schema member is the admitted compatible form and uses the catalog schema', () => {
-  const build = buildOriginProbe({
-    catalog: catalogOf({ schema: 'app', tables: [{ name: 't' }], columns: [{ table: 't', name: 'c' }] }),
-  });
+test('a missing schema member is inherited while a supplied one is never rewritten', () => {
+  // Literal rows without any schema member: catalogOf inserts the member on
+  // every row, so it cannot exercise omission.
+  const rows = {
+    schema: 'app',
+    entities: [{ kind: 'table', name: 't' }],
+    columns: [{ table: 't', name: 'c', hidden: 'normal' }],
+    rootpages: {},
+  };
+  const build = buildOriginProbe({ catalog: rows });
   assert.equal(build.status, 'built');
   assert.equal(build.schema, 'app');
   assert.equal(build.sql.startsWith('SELECT "app"."t"."c"'), true);
   assert.deepEqual(build.expected[0], { resultName: 'p0', database: 'app', table: 't', column: 'c' });
+
+  const defaultRows = {
+    entities: [{ kind: 'table', name: 't' }],
+    columns: [{ table: 't', name: 'c', hidden: 'normal' }],
+  };
+  assert.equal(buildOriginProbe({ catalog: defaultRows }).schema, 'main');
+});
+
+test('a supplied invalid schema member refuses instead of inheriting the default', () => {
+  const invalid = [null, '', 7, {}, undefined];
+  for (const value of invalid) {
+    const atColumn = buildOriginProbe({
+      catalog: catalogOf({ schema: 'main', tables: [{ name: 't' }], columns: [{ table: 't', name: 'c', schema: value }] }),
+    });
+    assert.equal(atColumn.status, 'unsupported', `column schema ${String(value)}`);
+    assert.equal(atColumn.reason, 'catalogShapeUnsupported');
+    assert.match(atColumn.detail, /column "t"."c" declares a malformed schema member/);
+
+    const atEntity = buildOriginProbe({
+      catalog: catalogOf({ schema: 'main', tables: [{ name: 't', schema: value }], columns: [{ table: 't', name: 'c' }] }),
+    });
+    assert.equal(atEntity.status, 'unsupported', `table schema ${String(value)}`);
+    assert.match(atEntity.detail, /table "t" declares a malformed schema member/);
+  }
+
+  const atCatalog = buildOriginProbe({
+    catalog: { schema: null, entities: [{ kind: 'table', name: 't' }], columns: [{ table: 't', name: 'c', hidden: 'normal' }] },
+  });
+  assert.equal(atCatalog.status, 'unsupported');
+  assert.equal(atCatalog.reason, 'catalogShapeUnsupported');
+  assert.match(atCatalog.detail, /catalog declares a malformed schema member null/);
+
+  const emptyCatalogSchema = buildOriginProbe({
+    catalog: { schema: '', entities: [{ kind: 'table', name: 't' }], columns: [{ table: 't', name: 'c', hidden: 'normal' }] },
+  });
+  assert.equal(emptyCatalogSchema.status, 'unsupported');
+  assert.match(emptyCatalogSchema.detail, /catalog declares a malformed schema member ""/);
+
+  // An explicitly supplied undefined member is present, so it is malformed
+  // rather than absent.
+  const suppliedUndefined = buildOriginProbe({
+    catalog: { entities: [{ kind: 'table', name: 't' }], columns: [{ table: 't', name: 'c', hidden: 'normal', schema: undefined }] },
+  });
+  assert.equal(suppliedUndefined.status, 'unsupported');
+  assert.match(suppliedUndefined.detail, /declares a malformed schema member undefined/);
 });
 
 test('the mismatch description is empty exactly when every slot matches', () => {
@@ -505,6 +556,32 @@ test('a fresh raw plan joins under the catalog it is given and records that cata
   assert.equal(after.unknownAccess.length, 1);
   assert.equal(after.unknownAccess[0].reason, 'rootpageNotInCatalog');
   assert.equal(after.limits.filter(limit => limit.code === 'modeledAccessUnavailable').length, 1);
+});
+
+test('an unknown-only join refuses on repeat and preserves its complete evidence', () => {
+  const plan = rawPlan([rawOperand({ cursor: 3, database: 1 }), rawOperand({ cursor: 4, rootpage: '77' })], { unknownAccess: [] });
+  const first = joinRootpages({ plan, catalog: CATALOG, catalogDigest: 'digest-unknown-only' });
+  assert.equal(first.relations.length, 0, 'no operand resolves under this catalog');
+  assert.equal(first.unknownAccess.length, 2);
+  assert.equal(first.join.stage, JOIN_STAGE);
+  assert.equal(first.join.joinedCount, 0);
+  assert.equal(first.join.unknownCount, 2);
+  assert.equal(first.join.catalogDigest, 'digest-unknown-only');
+
+  const evidence = first.unknownAccess.map(entry => ({
+    opcode: entry.opcode, cursor: entry.cursor, database: entry.database, rootpage: entry.rootpage, reason: entry.reason,
+  }));
+  assert.deepEqual(evidence.map(entry => entry.reason), ['nonMainDatabaseAccess', 'rootpageNotInCatalog']);
+
+  const repeated = joinRootpages({ plan: first, catalog: CATALOG });
+  assert.equal(repeated.rejoinRefused.reason, 'alreadyJoined');
+  assert.equal(repeated.rejoinRefused.priorUnknownAccess, 2);
+  assert.equal(repeated.rejoinRefused.priorCatalogDigest, 'digest-unknown-only', 'the original catalog association is unchanged');
+  assert.equal(repeated.join.catalogDigest, 'digest-unknown-only');
+  assert.deepEqual(repeated.unknownAccess.map(entry => ({
+    opcode: entry.opcode, cursor: entry.cursor, database: entry.database, rootpage: entry.rootpage, reason: entry.reason,
+  })), evidence, 'the complete unknown evidence survives the refusal');
+  assert.equal(repeated.relations.length, 0);
 });
 
 test('a joined plan offers no re-derivation path', () => {
