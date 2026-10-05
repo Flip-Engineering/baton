@@ -285,30 +285,142 @@ def require_association(+db: String, +player: String, +repo: String) -> IO(Unit)
     +workspace : String <- IO.pure(String, line(workspace_raw))
     Bool.pick(IO(Unit), String.is_empty(workspace), assoc_missing(), assoc_probe(workspace, repo))
 
-# The recorded branch tip is the default source; the reviewed entry selects an
-# exact commit from that same recorded branch and lands only that object.
+# What a reviewed selection resolved: the registered Player whose branch was
+# read, the recorded branch itself, and the immutable object the selection
+# named. The branch stays in this record so that the plan below can be stated
+# over both the object and the branch name it was resolved from.
+type ReviewedSource is Data:
+  RSource{subject: String, branch: String, oid: String}
+
+# What a reviewed caller runs, in order, as a value: the registered Player
+# lookup, the recorded branch lookup, the association with the landing
+# repository, the reviewed selection, and then the one step that carries the
+# resolved object into the landing. A caller walks the plan it built and takes
+# every argument it passes on out of the plan, so a step cannot be dropped or
+# reordered, and the step that lands carries the object the selection resolved
+# rather than the branch name the selection was made from.
+type ReviewedStep is Data:
+  RLookup{subject: String}
+  RBranch{}
+  RAssociation{landing: String}
+  RSelection{commit: String}
+  RFastForward{oid: String, target: String}
+  RChecked{oid: String, target: String, check: String, files: String}
+
+def reviewed_head(+player: String, +repo: String, +commit: String) -> List<ReviewedStep>:
+  Con{RLookup{player}, Con{RBranch{}, Con{RAssociation{repo}, Con{RSelection{commit}, Nil{}}}}}
+
+def reviewed_landing_step(src: ReviewedSource, +target: String) -> List<ReviewedStep>:
+  match src:
+    case RSource{subject, branch, oid}: Con{RFastForward{oid, target}, Nil{}}
+
+def reviewed_checked_step(src: ReviewedSource, +target: String, +check: String, +files: String) -> List<ReviewedStep>:
+  match src:
+    case RSource{subject, branch, oid}: Con{RChecked{oid, target, check, files}, Nil{}}
+
+def reviewed_plan_broken() -> IO(ReviewedSource):
+  IO.die(ReviewedSource, 1, "The reviewed caller did not state the plan it runs.")
+
+def reviewed_unexpected_step() -> IO(Unit):
+  IO.die(Unit, 1, "The reviewed caller consumed a step that is not the step it stated.")
+
+# The four steps every reviewed caller runs, in the order its plan states, with
+# the Player, the repository and the commit read out of the plan. The recorded
+# branch name never leaves this function except inside the selection record.
+def reviewed_source_selection(plan: List<ReviewedStep>, +db: String) -> IO(ReviewedSource):
+  match plan:
+    case Con{RLookup{+subject}, Con{RBranch{}, Con{RAssociation{+repo}, Con{RSelection{commit}, Nil{}}}}}:
+      do IO<ReviewedSource>:
+        player_row : String <- IO.try(String, Store.apply(db, C.Session{subject}))
+        _present : Unit <- require_player(Bool.not(String.is_empty(player_row)))
+        branch_raw : String <- IO.try(String, DB.Sql.query(db, "SELECT branch FROM sessions WHERE id=" ++ C.q(subject) ++ ";"))
+        +branch : String <- require_branch(line(branch_raw))
+        _associated : Unit <- require_association(db, subject, repo)
+        picked : Selected <- select_reviewed(repo, branch, commit)
+        oid : String <- selected_or_die(picked, subject)
+        IO.pure(ReviewedSource, RSource{subject, branch, oid})
+    case _:
+      reviewed_plan_broken()
+
+def reviewed_subject(src: ReviewedSource) -> String:
+  match src:
+    case RSource{subject, branch, oid}: subject
+
+# The one step the plan left, performed with the object the step carries.
+def reviewed_step(step: ReviewedStep, src: ReviewedSource, +db: String, +repo: String) -> IO(Unit):
+  match step:
+    case RFastForward{oid, target}:
+      do IO<Unit>:
+        outcome : G.LandOutcome <- GitLand.land_fast_forward_at(repo, oid, target)
+        show_outcome(outcome)
+    case RChecked{oid, target, check, files}:
+      do IO<Unit>:
+        subject : String <- IO.pure(String, reviewed_subject(src))
+        _landed : Unit <- run_checked(db, subject, repo, target, check, files, oid)
+        IO.pure(Unit, Unit{})
+    case RLookup{subject}: reviewed_unexpected_step()
+    case RBranch{}: reviewed_unexpected_step()
+    case RAssociation{landing}: reviewed_unexpected_step()
+    case RSelection{commit}: reviewed_unexpected_step()
+
+def reviewed_landing(steps: List<ReviewedStep>, src: ReviewedSource, +db: String, +repo: String) -> IO(Unit):
+  match steps:
+    case Con{step, rest}: reviewed_step(step, src, db, repo)
+    case Nil{}: reviewed_unexpected_step()
+
+# The recorded branch tip is the default source; each reviewed caller runs the
+# plan it states, selects an exact commit from that same recorded branch and
+# lands only the object the selection resolved.
 def land_player_at(+db: String, +player: String, +repo: String, +target: String, +commit: String) -> IO(Unit):
   do IO<Unit>:
-    player_row : String <- IO.try(String, Store.apply(db, C.Session{player}))
-    present : Unit <- require_player(Bool.not(String.is_empty(player_row)))
-    branch_raw : String <- IO.try(String, DB.Sql.query(db, "SELECT branch FROM sessions WHERE id=" ++ C.q(player) ++ ";"))
-    branch : String <- require_branch(line(branch_raw))
-    associated : Unit <- require_association(db, player, repo)
-    picked : Selected <- select_reviewed(repo, branch, commit)
-    oid : String <- selected_or_die(picked, player)
-    outcome : G.LandOutcome <- GitLand.land_fast_forward_at(repo, oid, target)
-    show_outcome(outcome)
+    plan : List<ReviewedStep> <- IO.pure(List<ReviewedStep>, reviewed_head(player, repo, commit))
+    +src : ReviewedSource <- reviewed_source_selection(plan, db)
+    reviewed_landing(reviewed_landing_step(src, target), src, db, repo)
 
 def land_checked_player_at(+db: String, +player: String, +repo: String, +target: String, +check: String, +files: String, +commit: String) -> IO(Unit):
   do IO<Unit>:
-    player_row : String <- IO.try(String, Store.apply(db, C.Session{player}))
-    present : Unit <- require_player(Bool.not(String.is_empty(player_row)))
-    branch_raw : String <- IO.try(String, DB.Sql.query(db, "SELECT branch FROM sessions WHERE id=" ++ C.q(player) ++ ";"))
-    branch : String <- require_branch(line(branch_raw))
-    associated : Unit <- require_association(db, player, repo)
-    picked : Selected <- select_reviewed(repo, branch, commit)
-    oid : String <- selected_or_die(picked, player)
-    run_checked(db, player, repo, target, check, files, oid)
+    plan : List<ReviewedStep> <- IO.pure(List<ReviewedStep>, reviewed_head(player, repo, commit))
+    +src : ReviewedSource <- reviewed_source_selection(plan, db)
+    reviewed_landing(reviewed_checked_step(src, target, check, files), src, db, repo)
+
+# --- operative laws over the reviewed callers' own steps ---------------------
+
+# The reviewed callers' plan, in order: the registered Player lookup, the
+# recorded branch lookup, the association with the landing repository, and the
+# reviewed selection of the caller's exact commit. Neither the association nor
+# the selection can be dropped from a caller's sequence, and neither can move.
+law reviewed_source_runs_the_lookup_branch_association_and_selection_in_order:
+  for +player: String
+  for +repo: String
+  for +commit: String
+  {reviewed_head(player, repo, commit) == Con{RLookup{player}, Con{RBranch{}, Con{RAssociation{repo}, Con{RSelection{commit}, Nil{}}}}} : List<ReviewedStep>}
+
+def reviewed_source_runs_the_lookup_branch_association_and_selection_in_order(player, repo, commit):
+  {==}
+
+# The fast-forward step carries the object the reviewed selection resolved and
+# the target it lands on, never the branch name the selection was made from.
+law reviewed_source_lands_the_resolved_object_and_never_the_recorded_branch:
+  for +branch: String
+  for +oid: String
+  for +target: String
+  {reviewed_landing_step(RSource{"", branch, oid}, target) == Con{RFastForward{oid, target}, Nil{}} : List<ReviewedStep>}
+
+def reviewed_source_lands_the_resolved_object_and_never_the_recorded_branch(branch, oid, target):
+  {==}
+
+# The checked step carries the same resolved object with the declared check and
+# selected files, in that order, and never the recorded branch.
+law checked_reviewed_source_carries_the_resolved_object_and_its_checks:
+  for +branch: String
+  for +oid: String
+  for +target: String
+  for +check: String
+  for +files: String
+  {reviewed_checked_step(RSource{"", branch, oid}, target, check, files) == Con{RChecked{oid, target, check, files}, Nil{}} : List<ReviewedStep>}
+
+def checked_reviewed_source_carries_the_resolved_object_and_its_checks(branch, oid, target, check, files):
+  {==}
 
 # --- operative laws ----------------------------------------------------------
 

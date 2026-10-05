@@ -225,6 +225,31 @@ class ReviewedSourceLanding(unittest.TestCase):
         self.assertEqual(self.status_porcelain(worktree), before_status)
         self.assertEqual(self.git('rev-parse', 'w1-branch').strip(), before_branch)
 
+    def test_reviewed_source_refuses_a_workspace_in_another_repository(self):
+        """The association is one of the caller's steps: a foreign workspace refuses."""
+        commit = self.recruit_and_commit()
+        other = self.directory / 'other'
+        other.mkdir()
+        identity = dict(
+            os.environ,
+            GIT_AUTHOR_NAME='Baton test', GIT_AUTHOR_EMAIL='baton@example.invalid',
+            GIT_COMMITTER_NAME='Baton test', GIT_COMMITTER_EMAIL='baton@example.invalid',
+        )
+        subprocess.run(['git', '-C', str(other), 'init', '-q', '-b', 'main'],
+                       check=True, capture_output=True)
+        subprocess.run(['git', '-C', str(other), 'commit', '-q', '--allow-empty', '-m', 'foreign'],
+                       check=True, capture_output=True, env=identity)
+        for mode, tail in (('land-player-at', []),
+                           ('land-checked-player-at', ['true', 'file.txt'])):
+            with self.subTest(mode=mode):
+                printed = self.refusal(mode, self.db, 'w1', other, 'main', *tail, commit)
+                self.assertIn('different repository', printed)
+                self.assertEqual(self.git('rev-parse', 'main').strip(), self.base,
+                                 'a foreign workspace moved the target')
+                self.assertEqual(self.scratch_trees('w1'), [],
+                                 'a foreign workspace prepared a scratch tree')
+        self.assertEqual(self.git('rev-parse', 'w1-branch').strip(), commit)
+
     def test_checked_reviewed_landing_advances_when_the_checks_pass(self):
         self.check_fixtures({'check-pass.sh': 'exit 0\n'})
         self.git('checkout', '-q', '--detach')
