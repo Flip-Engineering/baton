@@ -365,13 +365,47 @@ def reconcile_controls(expected, laws, mutations):
                      'A mutation control row did not record an applied attributable refusal')
 
 
-ORDINARY_SCHEMA = 'capacity-controls/ordinary-evidence@1'
+ORDINARY_SCHEMA = 'capacity-controls/ordinary-evidence@2'
+ORDINARY_RUN_SCHEMA = 'capacity-controls/ordinary-run@1'
 # The checker writes this index under its run-private scratch and records stream
 # paths relative to that scratch, so the evidence root is the directory holding
 # the evidence directory and every member resolves below it.
 ORDINARY_INDEX_MEMBERS = ('evidence', 'index.json')
 ORDINARY_OPERATION = '--check-only'
 ORDINARY_OUTCOME_STATES = ('exited', 'signalled', 'spawn-error', 'not-run')
+ORDINARY_VERDICT_FIELDS = ('class', 'attributed_law', 'qualified')
+ORDINARY_IDENTITY_FIELDS = ('index_path', 'scratch', 'source', 'compiler', 'entry', 'origin',
+                            'invocation', 'verifier')
+ORDINARY_INTENDED_CLASS = 'intended-law-refusal'
+
+
+def ordinary_envelope(text):
+    """Read the run envelope the checker prints as its first output line.
+
+    The envelope carries the identity of the run that produced the index: the
+    index path, its scratch root, the source pins, the compiler, the admitted
+    entry, the producing origin, the unique invocation and the verifier digests.
+    """
+    for line in text.splitlines():
+        line = line.strip()
+        if not line.startswith('{'):
+            continue
+        try:
+            record = json.loads(line)
+        except ValueError:
+            raise RuntimeError('The checker first output line is not a JSON envelope')
+        require(isinstance(record, dict) and record.get('schema') == ORDINARY_RUN_SCHEMA,
+                'The checker first output line names another envelope: '
+                + json.dumps(record.get('schema') if isinstance(record, dict) else None))
+        absent = [field for field in ORDINARY_IDENTITY_FIELDS
+                  if not isinstance(record.get(field), (dict, str)) or record.get(field) == '']
+        require(not absent, 'The run envelope omits ' + ', '.join(absent))
+        require(isinstance(record.get('invocation'), str)
+                and record['invocation'].startswith('ordinary:'),
+                'The run envelope names no ordinary invocation: '
+                + json.dumps(record.get('invocation')))
+        return record
+    raise RuntimeError('The checker printed no run envelope')
 
 
 def ordinary_root(index_path, declared=None):
@@ -488,13 +522,12 @@ def verify_ordinary_outcome(outcome, label):
     return outcome
 
 
-def ordinary_row(identity, expected, parent_rows):
-    """Bind one ordinary case to the parent checker row for that control.
+def ordinary_row(identity, expected, parent_rows, record):
+    """Check one ordinary case against the index verdict and the parent row.
 
-    The checker classifies each compile and prints the row; the retained child
-    streams are the raw compiler output. This requires the parent row for the
-    same control and re-checks the identity the parent recorded, so the raw
-    child bytes are never parsed as a verdict.
+    The index carries the checker's own verdict for the case and the parent
+    process printed the row for the same control. Both authorities are read, and
+    the raw child stream is never parsed as a verdict.
     """
     require(isinstance(parent_rows, dict) and parent_rows,
             'The ordinary route has no parent verdict rows')
@@ -503,9 +536,16 @@ def ordinary_row(identity, expected, parent_rows):
             'The parent run printed no row for ' + json.dumps(identity))
     require(row.get('passed') is True,
             'The parent row did not pass: ' + json.dumps(row, sort_keys=True))
+    verdict = record.get('verdict')
+    require(isinstance(verdict, dict) and set(verdict) == set(ORDINARY_VERDICT_FIELDS),
+            'An ordinary case carries no classifier verdict: ' + json.dumps(identity))
+    require(verdict.get('qualified') is True,
+            'The ordinary verdict did not qualify: ' + json.dumps(verdict, sort_keys=True))
     if identity == 'baseline':
         require(row.get('check') == 'entry compiles with every law proven',
                 'The parent baseline row did not name the admitting compile')
+        require(verdict.get('class') not in ('', None),
+                'The baseline verdict names no class: ' + json.dumps(verdict))
         return row
     kind, _, name = identity.partition(':')
     require(kind in ('proof', 'mutation') and name,
@@ -513,6 +553,12 @@ def ordinary_row(identity, expected, parent_rows):
     control = expected['by_id'].get(identity)
     require(control is not None,
             'An ordinary case is absent from this source: ' + json.dumps(identity))
+    require(verdict.get('class') == ORDINARY_INTENDED_CLASS,
+            'The ordinary verdict is not an intended refusal: '
+            + json.dumps(verdict, sort_keys=True))
+    require(verdict.get('attributed_law') == control['law'],
+            'The ordinary verdict attributes another law: '
+            + json.dumps(verdict, sort_keys=True))
     require(row.get('gate') == 'refuses',
             'The parent row did not record an attributable refusal: '
             + json.dumps(row, sort_keys=True))
@@ -531,45 +577,122 @@ def ordinary_row(identity, expected, parent_rows):
     return row
 
 
+def verify_ordinary_delta(record, root, control, label):
+    """Bind the applied source delta against the current admitted graph.
+
+    The producer records the original and changed digests with the changed path.
+    The current run must hold the changed bytes, and an applied control must
+    carry the delta that was actually applied.
+    """
+    delta = record.get('delta')
+    if control is None:
+        require(delta is None,
+                label + ' records an applied delta for the admitted compile')
+        return None
+    require(isinstance(delta, dict) and set(delta) == {'original_sha256', 'changed_sha256',
+                                                       'changed_path'},
+            label + ' names another delta shape: ' + succinct(sorted(delta or [])))
+    for field in ('original_sha256', 'changed_sha256'):
+        require(isinstance(delta.get(field), str) and re.fullmatch(r'[0-9a-f]{64}', delta[field]),
+                label + ' records no ' + field)
+    member = ordinary_member(root, delta.get('changed_path'), label + ' changed file')
+    data = member.read_bytes()
+    require(hashlib.sha256(data).hexdigest() == delta['changed_sha256'],
+            label + ' changed file does not match its recorded digest')
+    require(data != b'', label + ' changed file is empty')
+    require(control['module'] == delta['changed_path'],
+            label + ' changed a module other than the control module: '
+            + json.dumps(delta['changed_path']))
+    return delta
+
+
 def ordinary_evidence(index_path, expected, compiler=None, declared_root=None,
-                      parent_rows=None):
+                      parent_rows=None, producer_root=None, envelope=None):
     """Consume the checker's retained ordinary per-case evidence.
 
     The index sits at <run>/evidence/index.json and records stream paths relative
-    to <run>. Every control the source states must appear exactly once, with its
-    applied setup, the admitted compiler and entry command, both streams verified
-    byte for byte below the run root, the checker's own classifier row for that
-    control, a shared terminal outcome and a finite interval, and the index must
-    declare that the run finished and belong to this source's control identity.
+    to <run>. Its run identity must equal the envelope the checker printed for
+    the same run, every control the source states must appear exactly once with
+    its applied setup, the checker's own verdict, its delta and both raw child
+    streams verified byte for byte below the run root, exactly one positive
+    baseline compile must precede the controls, and the index must declare a
+    finished run over the admitted inputs.
     """
     root = ordinary_root(index_path, declared_root)
+    if producer_root is None:
+        producer_root = root
+    else:
+        producer_root = Path(producer_root)
+        require(producer_root.is_absolute(),
+                'The ordinary producer root is not an absolute historical path: '
+                + str(producer_root))
     path = Path(index_path)
     index = json.loads(path.read_text())
     require(index.get('schema') == ORDINARY_SCHEMA,
             'The ordinary evidence index names another schema: ' + json.dumps(index.get('schema')))
     require(index.get('complete') is True,
             'The ordinary evidence index does not declare a completed run')
-    require(isinstance(parent_rows, dict) and parent_rows,
-            'The ordinary evidence is consumed with the parent verdict rows of its own run')
+    identity = index.get('run')
+    require(isinstance(identity, dict), 'The ordinary evidence index records no run identity')
+    require(isinstance(envelope, dict), 'The ordinary evidence is consumed without its run envelope')
+    for field in ORDINARY_IDENTITY_FIELDS:
+        require(json.dumps(identity.get(field), sort_keys=True)
+                == json.dumps(envelope.get(field), sort_keys=True),
+                'The ordinary index names another run ' + field + ': '
+                + json.dumps(identity.get(field)) + ' against '
+                + json.dumps(envelope.get(field)))
+    require(isinstance(identity.get('nonce'), str) and identity['nonce'],
+            'The ordinary index records no run nonce')
+    require(identity.get('invocation') == envelope.get('invocation'),
+            'The ordinary index names another invocation')
+    require(isinstance(identity.get('checker_argv'), list) and identity['checker_argv'],
+            'The ordinary index records no checker command')
+    recorded_index = Path(str(identity.get('index_path') or ''))
+    require(recorded_index.is_absolute(),
+            'The ordinary index records no absolute index path: '
+            + json.dumps(identity.get('index_path')))
+    if Path(producer_root).resolve() == root.resolve():
+        require(recorded_index.resolve() == path.resolve(),
+                'The ordinary index path disagrees with the location recorded for this run: '
+                + json.dumps(identity.get('index_path')) + ' against ' + str(path))
+    else:
+        require(recorded_index.resolve()
+                == (Path(producer_root) / 'evidence' / 'index.json').resolve(),
+                'The ordinary index path does not match the recorded producer root: '
+                + json.dumps(identity.get('index_path')) + ' against ' + str(producer_root))
+    if compiler is not None:
+        block = identity.get('compiler') or {}
+        require(block.get('sha256') == sha256(compiler),
+                'The ordinary run used another compiler than the selected one')
+        require(block.get('path') not in (None, ''), 'The ordinary run records no compiler path')
+    source_block = identity.get('source') or {}
+    verifier = identity.get('verifier') or {}
+    admitted, _missing = expected_verifier_digests()
+    if admitted:
+        require(isinstance(verifier, dict) and verifier,
+                'The ordinary index records no verifier digests')
+        differing = sorted(key for key, digest in admitted.items() if verifier.get(key) != digest)
+        require(not differing,
+                'The ordinary run used other verifier bytes at: ' + succinct(differing))
+    admitted_inputs = index.get('inputs')
+    require(isinstance(admitted_inputs, dict) and admitted_inputs,
+            'The ordinary index records no admitted input inventory')
+    for name, digest in admitted_inputs.items():
+        require(isinstance(digest, str) and re.fullmatch(r'[0-9a-f]{64}', digest),
+                'The ordinary input inventory records no digest for ' + json.dumps(name))
     cases = index.get('cases')
     require(isinstance(cases, list) and cases,
             'The ordinary evidence index holds no case')
     seen = {}
     baselines = 0
-    for case in cases:
+    for position, case in enumerate(cases):
         require(isinstance(case, dict), 'An ordinary case row is not an object')
-        identity = case.get('id')
-        require(isinstance(identity, str) and identity,
-                'An ordinary case row names no control: ' + json.dumps(identity))
-        require(identity not in seen, 'An ordinary case row repeats: ' + json.dumps(identity))
-        label = 'ordinary ' + json.dumps(identity)
+        identity_id = case.get('id')
+        require(isinstance(identity_id, str) and identity_id,
+                'An ordinary case row names no control: ' + json.dumps(identity_id))
+        require(identity_id not in seen, 'An ordinary case row repeats: ' + json.dumps(identity_id))
+        label = 'ordinary ' + json.dumps(identity_id)
         require(case.get('applied') is True, label + ' did not apply its setup')
-        outcome = verify_ordinary_outcome(case.get('outcome'), label)
-        if identity == 'baseline':
-            baselines += 1
-            require(baselines == 1, 'The ordinary evidence records more than one baseline')
-            require(outcome['state'] == 'exited' and outcome['exit_code'] == 0,
-                    label + ' did not compile successfully: ' + json.dumps(outcome))
         argv = case.get('argv')
         require(isinstance(argv, list) and argv and all(isinstance(part, str) for part in argv),
                 label + ' records no command')
@@ -579,22 +702,31 @@ def ordinary_evidence(index_path, expected, compiler=None, declared_root=None,
                     label + ' did not run the admitted entry as a check: ' + json.dumps(argv))
             require(Path(argv[0]).resolve() == Path(compiler).resolve(),
                     label + ' ran another compiler: ' + json.dumps(argv[0]))
+        outcome = verify_ordinary_outcome(case.get('outcome'), label)
+        if identity_id == 'baseline':
+            baselines += 1
+            require(baselines == 1, 'The ordinary evidence records more than one baseline')
+            require(position == 0,
+                    'The ordinary baseline row does not precede the control rows')
+            require(outcome['state'] == 'exited' and outcome['exit_code'] == 0,
+                    label + ' did not compile successfully: ' + json.dumps(outcome))
         streams = {}
         for stream in ('stdout', 'stderr'):
-            record = case.get(stream)
-            require(isinstance(record, dict), label + ' omits its ' + stream)
-            member = ordinary_member(root, record.get('path'), label + ' ' + stream)
+            stream_record = case.get(stream)
+            require(isinstance(stream_record, dict), label + ' omits its ' + stream)
+            member = ordinary_member(root, stream_record.get('path'), label + ' ' + stream)
             data = member.read_bytes()
-            require(len(data) == record.get('bytes')
-                    and hashlib.sha256(data).hexdigest() == record.get('sha256'),
+            require(len(data) == stream_record.get('bytes')
+                    and hashlib.sha256(data).hexdigest() == stream_record.get('sha256'),
                     label + ' ' + stream + ' does not match its recorded bytes')
             streams[stream] = data
+        control = expected['by_id'].get(identity_id)
+        verify_ordinary_delta(case, root, control, label)
         require(is_finite(case.get('started')) and is_finite(case.get('ended'))
                 and case['ended'] >= case['started'],
                 label + ' records an invalid interval')
-        seen[identity] = ordinary_row(identity, expected, parent_rows)
+        seen[identity_id] = ordinary_row(identity_id, expected, parent_rows, case)
     require(baselines == 1, 'The ordinary evidence records no baseline compile')
-    source_root = str(Path(index_path).parent.parent)
     wanted = {control['id'] for control in expected['controls']}
     missing = sorted(wanted - set(seen))
     require(not missing, 'The ordinary evidence omits controls: ' + succinct(missing))
@@ -604,14 +736,16 @@ def ordinary_evidence(index_path, expected, compiler=None, declared_root=None,
             + succinct(unexpected))
     raw = {}
     for case in cases:
-        raw[case['id']] = {'stdout': case['stdout']['sha256'],
-                           'stderr': case['stderr']['sha256']}
+        raw[case['id']] = {'stdout': case['stdout']['sha256'], 'stderr': case['stderr']['sha256']}
     return {'path': str(path), **file_info(path), 'schema': ORDINARY_SCHEMA,
-            'cases': len(seen), 'run_root': str(root), 'source_root': source_root,
+            'cases': len(seen), 'run_root': str(root), 'producer_root': str(producer_root),
+            'invocation': identity['invocation'], 'nonce': identity['nonce'],
+            'compiler_sha256': (identity.get('compiler') or {}).get('sha256'),
+            'source': source_block, 'verifier': verifier, 'inputs': admitted_inputs,
             'raw': raw}
 
 
-def validation(logs, remote=None, ordinary=None, compiler=None):
+def validation(logs, remote=None, ordinary=None, compiler=None, producer_root=None):
     expected = discover_controls()
     laws = [control for control in expected['controls'] if control['kind'] == 'proof-removal']
     mutations = [control for control in expected['controls'] if control['kind'] == 'mutation']
@@ -637,12 +771,14 @@ def validation(logs, remote=None, ordinary=None, compiler=None):
         law_rows, mutation_rows, _ = control_rows(law_text)
         reconcile_controls(expected, law_rows, mutation_rows)
         parents = parent_verdicts(law_text)
+        envelope = ordinary_envelope(law_text)
     native_text = (logs / 'check-native.log').read_text(errors='replace')
     result = {'laws': counts, 'controls_sha256': expected['sha256'],
               'route': 'remote-module-groups' if remote is not None else 'local-complete',
               'native': reconcile_native(native_text)}
     if ordinary is not None:
-        consumed = ordinary_evidence(ordinary, expected, compiler, None, parents)
+        consumed = ordinary_evidence(ordinary, expected, compiler, None, parents,
+                                     producer_root, envelope)
         retained = Path(consumed['path']).resolve()
         require(logs.resolve() in retained.parents,
                 'The consumed ordinary evidence is not retained under the package run: '
@@ -758,7 +894,7 @@ def run_gates(compiler, env, logs, initial, before_inputs, remote=None, ordinary
                 require(zero_exit(result_exit),
                         name + ' failed; full output is retained at ' + str(logs / stage['log']))
             same_source(stage['after'], initial)
-        retained = None
+        retained, source_root = None, None
         if ordinary is not None:
             source_root = verify_ordinary_graph(ordinary_root(ordinary, ordinary_root_path),
                                                 'The ordinary evidence source')
@@ -767,7 +903,8 @@ def run_gates(compiler, env, logs, initial, before_inputs, remote=None, ordinary
             shutil.copytree(source_root / 'evidence', logs / 'evidence')
             verify_ordinary_graph(logs, 'The retained ordinary evidence')
             retained = logs / 'evidence' / 'index.json'
-        summary['validation'] = validation(logs, remote, retained, compiler)
+        summary['validation'] = validation(logs, remote, retained, compiler,
+                                           producer_root=source_root if ordinary is not None else None)
         summary['after'] = snapshot()
         require(summary['after']['binary_sha256'] == summary['stages'][0]['after']['binary_sha256'],
                 'The native binary changed between gate stages')
@@ -891,8 +1028,13 @@ def reuse_gates(path, expected_sha, compiler, logs, initial):
         verify_ordinary_graph(logs, 'The reused ordinary evidence')
         fresh_laws = (logs / 'laws-check.log').read_text(errors='replace')
         parents = parent_verdicts(fresh_laws)
+        envelope = ordinary_envelope(fresh_laws)
         consumed = ordinary_evidence(logs / 'evidence' / 'index.json', discover_controls(),
-                                     compiler, None, parents)
+                                     compiler, None, parents,
+                                     producer_root=ordinary.get('producer_root'),
+                                     envelope=envelope)
+        require(consumed['producer_root'] == ordinary['producer_root'],
+                'The reused ordinary evidence does not keep the producer root the receipt records')
         require(consumed['sha256'] == ordinary['sha256']
                 and consumed['cases'] == ordinary['cases']
                 and consumed['schema'] == ordinary['schema']

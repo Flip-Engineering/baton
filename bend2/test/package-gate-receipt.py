@@ -113,12 +113,14 @@ class PackageGateReceipt(unittest.TestCase):
             lines.append('Ran 2 tests in 0.001s')
         return '\n'.join(lines) + ('\n' if lines else '')
 
-    def write_logs(self, laws=None, mutations=None, summary=None, native=None, extra=()):
+    def write_logs(self, laws=None, mutations=None, summary=None, native=None, extra=(),
+                   envelope=None):
         laws = self.complete_law_rows() if laws is None else laws
         mutations = self.complete_mutation_rows() if mutations is None else mutations
         counts = (len(self.laws()), len(self.mutations()),
                   len(self.laws()) + len(self.mutations()) + 1)
-        lines = ['{"check":"entry compiles with every law proven","passed":true}']
+        lines = [json.dumps(envelope or self.envelope())]
+        lines += ['{"check":"entry compiles with every law proven","passed":true}']
         lines += [json.dumps(row) for row in laws]
         lines += [json.dumps(row) for row in mutations]
         lines += list(extra)
@@ -643,64 +645,110 @@ class PackageGateReceipt(unittest.TestCase):
         finally:
             PACKAGE.classify_control = original
 
+    def ordinary_identity(self, index_path, run_root, nonce='fixture-nonce'):
+        """The identity block the producer prints and records for one run."""
+        return {'index_path': str(index_path),
+                'scratch': str(run_root),
+                'source': {'head': 'h' * 40, 'tree': 't' * 40, 'bend2_tree': 'b' * 40},
+                'compiler': {'path': str(self.compiler()), 'version': 'bend 2.0.25',
+                             'sha256': hashlib.sha256(self.compiler().read_bytes()).hexdigest()},
+                'entry': PACKAGE.ADMITTED_ENTRY,
+                'origin': {'workflow': 'w', 'run_id': '1', 'run_attempt': '1', 'jobs': [],
+                           'image_os': 'macOS', 'image_version': 'x'},
+                'invocation': 'ordinary:' + nonce,
+                'verifier': dict(self.verifier)}
+
+    def envelope(self, index_path=None, run_root=None, **overrides):
+        index = index_path or (self.home / 'run' / 'evidence' / 'index.json')
+        record = {'schema': PACKAGE.ORDINARY_RUN_SCHEMA,
+                  **self.ordinary_identity(index, run_root or index.parent.parent)}
+        record.update(overrides)
+        return record
+
+    def envelope_for(self, index_path, **overrides):
+        """The envelope a run whose index sits at index_path would print."""
+        return self.envelope(index_path, **overrides)
+
     def ordinary_index(self, run_root, complete=True, drop=(), duplicate=False,
                        tamper=False, escape=False, symlink=False, argv=None,
-                       outcome=True, baseline_exit=0, extra=()):
-        """The producer's layout: <run>/evidence/index.json with raw child streams.
+                       outcome=True, baseline_exit=0, baseline_position=0, identity=None,
+                       verdicts=None, delta=True, inputs=None, extra=()):
+        """The v2 producer layout: an index whose run identity matches the envelope.
 
-        The checker retains the compiler's own stdout and stderr for each case and
-        classifies the compile in its parent process, so no classifier row appears
-        inside a retained stream.
+        Streams hold raw compiler bytes. The checker's verdict, the applied delta and
+        the admitted input inventory live in the index, never inside a child stream.
         """
         evidence = run_root / 'evidence'
         evidence.mkdir(parents=True, exist_ok=True)
         compiler = self.compiler()
         argv = argv or [str(compiler), PACKAGE.ADMITTED_ENTRY, PACKAGE.ORDINARY_OPERATION]
         cases = [{'id': 'baseline', 'applied': True, 'argv': list(argv),
-                  'exit': baseline_exit, 'raw': b'build output\n'}]
+                  'exit': baseline_exit, 'raw': b'build output\n', 'delta': None,
+                  'verdict': {'class': 'compile-ok', 'attributed_law': '', 'qualified': True}}]
         controls = list(self.controls['controls'])
         if drop:
             controls = [control for control in controls if control['id'] not in drop]
         if duplicate:
             controls = controls + [controls[0]]
         for control in controls:
+            verdict = {'class': 'intended-law-refusal', 'attributed_law': control['law'],
+                       'qualified': True}
+            if verdicts and control['id'] in verdicts:
+                verdict.update(verdicts[control['id']])
             cases.append({'id': control['id'], 'applied': True, 'argv': list(argv), 'exit': 1,
-                          'raw': ('error: ' + control['law'] + ' proof is missing\n').encode()})
+                          'raw': ('error: ' + control['law'] + ' proof is missing\n').encode(),
+                          'module': control['module'], 'delta': delta, 'verdict': verdict})
         cases.extend(extra)
-        records = []
+        if baseline_position:
+            cases.insert(baseline_position, cases.pop(0))
+        path = evidence / 'index.json'
+        records, changed = [], {}
         for case in cases:
             stem = case['id'].replace(':', '_')
             streams = {}
             for name, payload in (('stdout', case.pop('raw')), ('stderr', b'')):
                 member = evidence / (stem + '.' + name)
                 member.write_bytes(payload)
-                if symlink and case['id'] == cases[0]['id'] and name == 'stdout':
-                    retained_name = evidence / (stem + '.retained.stdout')
-                    member.rename(retained_name)
-                    member.symlink_to(retained_name)
                 record = {'path': 'evidence/' + stem + '.' + name,
                           'bytes': member.stat().st_size,
                           'sha256': hashlib.sha256(member.read_bytes()).hexdigest()}
                 if tamper and case['id'] == cases[0]['id'] and name == 'stdout':
-                    # The record keeps the original length and digest, so the
-                    # consumption refuses on changed bytes rather than on a
-                    # self-consistent altered record.
                     member.write_bytes(b'tampered\n')
                 if escape and case['id'] == cases[0]['id'] and name == 'stdout':
                     record['path'] = 'evidence/../' + stem + '.stdout'
+                if symlink and case['id'] == cases[0]['id'] and name == 'stdout':
+                    kept = evidence / (stem + '.retained.stdout')
+                    member.rename(kept)
+                    member.symlink_to(kept)
                 streams[name] = record
-            record = {'id': case['id'], 'applied': case['applied'], 'argv': case['argv'],
+            delta_record = None
+            if case.pop('delta', None):
+                module = case.pop('module')
+                member = run_root / module
+                member.parent.mkdir(parents=True, exist_ok=True)
+                member.write_bytes(('changed by ' + case['id'] + '\n').encode())
+                delta_record = {'original_sha256': '0' * 64,
+                                'changed_sha256': hashlib.sha256(member.read_bytes()).hexdigest(),
+                                'changed_path': module}
+                changed[module] = delta_record
+            record = {'id': case['id'], 'applied': case.pop('applied'), 'argv': case.pop('argv'),
+                      'verdict': case.pop('verdict'), 'delta': delta_record,
                       'stdout': streams['stdout'], 'stderr': streams['stderr'],
                       'started': 1.0, 'ended': 2.0}
-            record['outcome'] = ({'state': 'exited', 'exit_code': case['exit'], 'signal': None,
+            record['outcome'] = ({'state': 'exited', 'exit_code': case.pop('exit'), 'signal': None,
                                   'spawn_error': None}
                                  if case.get('outcome', outcome) else None)
             if not outcome:
                 record.pop('outcome')
             records.append(record)
-        path = evidence / 'index.json'
-        path.write_text(json.dumps({'schema': 'capacity-controls/ordinary-evidence@1',
-                                    'complete': complete, 'cases': records}))
+        identity = identity or self.ordinary_identity(path, run_root)
+        index = {'schema': PACKAGE.ORDINARY_SCHEMA, 'complete': complete,
+                 'run': {**identity, 'nonce': 'fixture-nonce',
+                         'checker_argv': ['node', 'bend2/scripts/laws-check.mjs']},
+                 'inputs': {'bend2/scripts/laws-check.mjs': hashlib.sha256(b'checker').hexdigest()}
+                 if inputs is None else inputs,
+                 'cases': records}
+        path.write_text(json.dumps(index))
         return path
 
     def parent_rows(self, **overrides):
@@ -714,12 +762,15 @@ class PackageGateReceipt(unittest.TestCase):
 
     def test_the_ordinary_evidence_index_is_consumed(self):
         path = self.ordinary_index(self.logs / 'run')
-        self.write_logs()
+        self.write_logs(envelope=self.envelope_for(path))
         result = PACKAGE.validation(self.logs, None, path, self.compiler())
         self.assertEqual(result['ordinary']['cases'], len(self.controls['controls']) + 1)
-        self.assertEqual(result['ordinary']['schema'], 'capacity-controls/ordinary-evidence@1')
+        self.assertEqual(result['ordinary']['schema'], 'capacity-controls/ordinary-evidence@2')
         self.assertEqual(result['ordinary']['retained'], 'run/evidence/index.json')
-        self.assertEqual(result['ordinary']['source_root'], str((self.logs / 'run').resolve()))
+        self.assertEqual(result['ordinary']['producer_root'], str((self.logs / 'run').resolve()))
+        self.assertEqual(result['ordinary']['run_root'], str((self.logs / 'run').resolve()))
+        self.assertEqual(result['ordinary']['invocation'], 'ordinary:fixture-nonce')
+        self.assertEqual(result['ordinary']['verifier'], self.verifier)
 
     def test_ordinary_evidence_defects_refuse(self):
         cases = [('incomplete run', dict(complete=False), 'does not declare a completed run'),
@@ -730,50 +781,115 @@ class PackageGateReceipt(unittest.TestCase):
                  ('symlinked stream', dict(symlink=True), 'passes through a symlink'),
                  ('absent outcome', dict(outcome=False), 'records no terminal outcome'),
                  ('failed baseline', dict(baseline_exit=1), 'did not compile successfully'),
+                 ('late baseline', dict(baseline_position=2), 'does not precede the control rows'),
                  ('another compiler', dict(argv=['bend', PACKAGE.ADMITTED_ENTRY, '--check-only']),
-                  'ran another compiler')]
+                  'ran another compiler'),
+                 ('unqualified verdict', dict(verdicts={self.laws()[0]['id']: {'qualified': False}}),
+                  'did not qualify'),
+                 ('accepted verdict', dict(verdicts={self.laws()[0]['id']:
+                                                     {'class': 'law-accepted'}}),
+                  'not an intended refusal'),
+                 ('another law', dict(verdicts={self.laws()[0]['id']:
+                                                {'attributed_law': 'other_law'}}),
+                  'attributes another law'),
+                 ('no inputs', dict(inputs={}), 'no admitted input inventory')]
         for name, options, message in cases:
             with self.subTest(name=name):
                 run_root = self.logs / ('run-' + name.replace(' ', '-'))
                 path = self.ordinary_index(run_root, **options)
-                self.write_logs()
+                self.write_logs(envelope=self.envelope_for(path))
                 with self.assertRaisesRegex(RuntimeError, message):
                     PACKAGE.validation(self.logs, None, path, self.compiler())
 
+    def test_ordinary_evidence_binds_the_run_identity(self):
+        path = self.ordinary_index(self.logs / 'run')
+        self.write_logs(envelope=self.envelope_for(path))
+        controls = self.controls
+        envelope = self.envelope_for(path)
+        cases = [('other invocation', {**envelope, 'invocation': 'ordinary:another'},
+                  'names another run invocation'),
+                 ('other compiler', {**envelope,
+                                     'compiler': {**envelope['compiler'], 'sha256': '0' * 64}},
+                  'names another run compiler'),
+                 ('other source', {**envelope, 'source': {'head': '0' * 40}},
+                  'names another run source'),
+                 ('other index path', {**envelope, 'index_path': str(self.home / 'elsewhere')},
+                  'names another run index_path'),
+                 ('missing verifier', {**envelope, 'verifier': {}},
+                  'names another run verifier')]
+        for name, run_envelope, message in cases:
+            with self.subTest(name=name):
+                with self.assertRaisesRegex(RuntimeError, message):
+                    PACKAGE.ordinary_evidence(path, controls, self.compiler(), None,
+                                              self.parent_rows(), None, run_envelope)
+        # The index and its envelope name one path while the bytes sit elsewhere,
+        # so the recorded and current locations are compared rather than trusted.
+        located = self.home / 'located' / 'evidence' / 'index.json'
+        located.parent.mkdir(parents=True, exist_ok=True)
+        recorded = self.home / 'recorded' / 'evidence' / 'index.json'
+        rewritten = json.loads(path.read_text())
+        located.write_text(json.dumps({**rewritten,
+                                       'run': {**rewritten['run'],
+                                               'index_path': str(recorded)}}))
+        with self.assertRaisesRegex(RuntimeError, 'disagrees with the location'):
+            PACKAGE.ordinary_evidence(located, controls, self.compiler(), None,
+                                      self.parent_rows(), None,
+                                      self.envelope(recorded, run_root=self.logs / 'run'))
+        with self.assertRaisesRegex(RuntimeError, 'no run envelope'):
+            PACKAGE.ordinary_evidence(path, controls, self.compiler(), None,
+                                      self.parent_rows(), None, None)
+        with self.assertRaisesRegex(RuntimeError, 'no run nonce'):
+            rewritten = json.loads(path.read_text())
+            rewritten['run'] = {key: value for key, value in rewritten['run'].items()
+                                if key != 'nonce'}
+            path.write_text(json.dumps(rewritten))
+            PACKAGE.ordinary_evidence(path, controls, self.compiler(), None,
+                                      self.parent_rows(), None, envelope)
+        with self.assertRaisesRegex(RuntimeError, 'no digest for'):
+            rewritten = json.loads(path.read_text())
+            rewritten['inputs'] = {'bend2/scripts/laws-check.mjs': 'not-a-digest'}
+            path.write_text(json.dumps(rewritten))
+            PACKAGE.ordinary_evidence(path, controls, self.compiler(), None,
+                                      self.parent_rows(), None, envelope)
+
     def test_ordinary_evidence_parent_rows_are_required(self):
         path = self.ordinary_index(self.logs / 'run')
-        self.write_logs()
-        controls = self.controls
-        cases = [('absent row', {self.laws()[0]['id']: None}, 'printed no row',
+        self.write_logs(envelope=self.envelope_for(path))
+        envelope = self.envelope_for(path)
+        cases = [('absent row', 'printed no row',
                   lambda rows: rows.pop(self.laws()[0]['id'])),
-                 ('failed parent row', {}, 'did not pass',
+                 ('failed parent row', 'did not pass',
                   lambda rows: rows.__setitem__(self.laws()[0]['id'],
                                                 law_row(self.laws()[0], passed=False))),
-                 ('accepted parent row', {}, 'attributable refusal',
+                 ('accepted parent row', 'attributable refusal',
                   lambda rows: rows.__setitem__(self.laws()[0]['id'],
                                                 law_row(self.laws()[0], gate='accepts'))),
-                 ('another module', {}, 'names another control',
+                 ('another module', 'names another control',
                   lambda rows: rows.__setitem__(self.laws()[0]['id'],
                                                 law_row(self.laws()[0], module=MODULE_B))),
-                 ('absent baseline row', {}, 'printed no row',
+                 ('absent baseline row', 'printed no row',
                   lambda rows: rows.pop('baseline'))]
-        for name, _unused, message, mutate in cases:
+        for name, message, mutate in cases:
             with self.subTest(name=name):
                 rows = self.parent_rows()
                 mutate(rows)
                 with self.assertRaisesRegex(RuntimeError, message):
-                    PACKAGE.ordinary_evidence(path, controls, self.compiler(), None, rows)
+                    PACKAGE.ordinary_evidence(path, self.controls, self.compiler(), None, rows,
+                                              None, envelope)
 
     def test_the_ordinary_evidence_survives_a_reuse_copy(self):
-        marker = self.home / 'ordinary-launched'
-        self.run_gates_fixture(marker, self.stub_gates(marker))
-        compiler = self.compiler()
         index = self.ordinary_index(self.home / 'ordinary-run')
+        marker = self.home / 'ordinary-launched'
+        self.run_gates_fixture(marker, self.stub_gates(marker,
+                                                       envelope=self.envelope_for(index)))
+        compiler = self.compiler()
         logs = self.home / 'ordinary-gate-logs'
         logs.mkdir()
         path, summary = PACKAGE.run_gates(compiler, {'CC': 'gcc'}, logs, PACKAGE.snapshot(),
                                           {'fixture': 'inputs'}, ordinary=index)
         self.assertEqual(summary['validation']['ordinary']['retained'], 'evidence/index.json')
+        self.assertEqual(summary['validation']['ordinary']['producer_root'],
+                         str((self.home / 'ordinary-run').resolve()))
         self.assertTrue((logs / 'evidence' / 'index.json').is_file())
         reused = self.home / 'ordinary-reused'
         reused.mkdir()
@@ -782,6 +898,9 @@ class PackageGateReceipt(unittest.TestCase):
         self.assertTrue((reused / 'evidence' / 'index.json').is_file())
         self.assertEqual(reused_summary['validation']['ordinary']['raw'],
                          summary['validation']['ordinary']['raw'])
+        self.assertEqual(reused_summary['validation']['ordinary']['producer_root'],
+                         summary['validation']['ordinary']['producer_root'])
+        self.assertEqual(reused_summary['validation']['ordinary']['run_root'], str(reused))
         twice = self.home / 'ordinary-twice'
         twice.mkdir()
         _again_path, twice_summary = PACKAGE.reuse_gates(reused / 'summary.json',
@@ -838,13 +957,14 @@ class PackageGateReceipt(unittest.TestCase):
         with self.assertRaisesRegex(RuntimeError, 'does not cover every discovered control'):
             PACKAGE.validation(logs, partial)
 
-    def stub_gates(self, marker, laws_exit=0, laws_log=None):
+    def stub_gates(self, marker, laws_exit=0, laws_log=None, envelope=None):
         """Gate commands that mark their launch and print a prepared log."""
         native = self.home / 'native-fixture.log'
         native.write_text(self.native_log())
         laws = self.home / 'laws-fixture.log'
         laws.write_text(laws_log or
-                        '\n'.join(['{"check":"entry compiles with every law proven","passed":true}']
+                        '\n'.join([json.dumps(envelope or self.envelope()),
+                                    '{"check":"entry compiles with every law proven","passed":true}']
                                   + [json.dumps(row) for row in self.complete_law_rows()]
                                   + [json.dumps(row) for row in self.complete_mutation_rows()]
                                   + ['laws-check: green - %d laws, %d mutations, %d compiles, 0 failures'
