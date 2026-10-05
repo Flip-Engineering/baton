@@ -40,7 +40,7 @@ function refusalOf(decision) {
   if (decision && typeof decision === 'object' && decision.decision === 'refused') {
     return {
       refused: true,
-      condition: typeof decision.condition === 'string' ? decision.condition : 'refDecisionMalformed',
+      condition: typeof decision.condition === 'string' ? decision.condition : 'refDecisionRefused',
       detail: decision.detail ?? null,
       note: ADMISSION_NOTE,
     };

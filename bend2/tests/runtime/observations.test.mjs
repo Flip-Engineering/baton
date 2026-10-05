@@ -325,14 +325,14 @@ test('only an explicit admitted decision permits access; everything else refuses
     assert.equal(refusal.refused, true, `candidate ${JSON.stringify(candidate)} must refuse`);
     assert.equal(refusal.condition, 'refDecisionRefused');
   }
-  for (const candidate of [{ decision: 'admitted' }, { decision: 'admitted', identity: IDENTITY }, { decision: 'refused' }, { decision: 'maybe' }]) {
+  for (const candidate of [{ decision: 'admitted' }, { decision: 'admitted', identity: IDENTITY }, { decision: 'maybe' }]) {
     const refusal = staleRefRefusal(candidate);
     assert.equal(refusal.refused, true, `candidate ${JSON.stringify(candidate)} must refuse`);
     assert.equal(refusal.condition, 'refDecisionMalformed');
   }
-  // A production-normalized candidate carries its own condition; the builder
-  // renders it instead of overriding.
-  assert.equal(staleRefRefusal({ decision: 'refused', condition: 'refDecisionRefused' }).condition, 'refDecisionRefused');
+  // A refusal without its own condition reports refDecisionRefused, matching
+  // the production normalizer.
+  assert.equal(staleRefRefusal({ decision: 'refused' }).condition, 'refDecisionRefused');
   assert.equal(admissionOutcome({ decision: 'refused', condition: 'refStopNotLive' }).condition, 'refStopNotLive');
   assert.equal(admissionOutcome('admitted').condition, 'refDecisionRefused');
 });
