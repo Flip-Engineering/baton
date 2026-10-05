@@ -1,5 +1,5 @@
 {
-  "purpose": "Handoff payload for bend2/scripts/laws-check.mjs MUTATIONS. Each entry replaces the first occurrence of a production-source string with a mutated one and is aimed at the named law when the isolated entry bend2/tests/context-core/laws-entry.bend is compiled. The operator boundary forbids local compilation; entries carried over from the pre-boundary baseline were refuted by their named law there, and every entry added or rewritten since is pending remote execution.",
+  "purpose": "Handoff payload for bend2/scripts/laws-check.mjs MUTATIONS. Each entry replaces the first occurrence of a production-source string with a mutated one and is aimed at the named law when the isolated entry bend2/tests/context-core/laws-entry.bend is compiled. The operator boundary forbids local compilation; entries carried over from the pre-boundary baseline were refuted by their named law there, and every entry added or rewritten since is unexecuted.",
   "how_to_apply": "In a scratch copy of the pinned tree: for each entry, replace the first occurrence of `find` in `file` with `replace` (first-occurrence application and the operative law bytes are preserved); compile `entry` with the pinned bend 2.0.25; record the complete raw diagnostics and the process outcome. The verdict is NOT `the output contains the law name`: a type, syntax, launch or termination failure can name a law without refuting it. The single Controls/CI classifier decides, from the complete raw diagnostics and process outcome and from the expected/observed constructor metadata of the proof failure, whether this entry was refused by that law. Execution and classification belong to Controls/CI; this payload supplies the mutations and the law each one is aimed at, not an acceptance criterion.",
   "entry": "bend2/tests/context-core/laws-entry.bend",
   "verified_baseline": "40e7060bf11ea1f8a924110e5a72815c9e343c41",
@@ -210,16 +210,16 @@
     {
       "name": "runtime-applicability-ignores-the-identity",
       "file": "bend2/src/context/snapshot.bend",
-      "find": "  Bool.pick(Applies, same_runtime_identity(recorded, now_identity(now)), rref_live(now), AHistorical{\"runtime identity changed\"})",
-      "replace": "  Bool.pick(Applies, True{}, rref_live(now), AHistorical{\"runtime identity changed\"})",
+      "find": "  Bool.pick(Applies, same_runtime_identity(recorded, now_identity(now)), rref_target(now), AHistorical{\"runtime identity changed\"})",
+      "replace": "  Bool.pick(Applies, True{}, rref_target(now), AHistorical{\"runtime identity changed\"})",
       "law": "context_snapshot_an_advanced_epoch_is_a_different_lifetime"
     },
     {
-      "name": "runtime-applicability-skips-the-recorded-stop",
+      "name": "runtime-applicability-accepts-a-recorded-only-stop",
       "file": "bend2/src/context/snapshot.bend",
-      "find": "  Bool.pick(Applies, Bool.and(now_paused(now), now_stop_recorded(now)), ACurrent{},",
-      "replace": "  Bool.pick(Applies, True{}, ACurrent{},",
-      "law": "context_snapshot_a_pause_scoped_reference_requires_a_recorded_stop"
+      "find": "  Bool.pick(Applies, Bool.and(now_record_stopped(now), R.stop_is_live(now_stop(now))), rref_thread(recorded, now),",
+      "replace": "  Bool.pick(Applies, now_record_stopped(now), rref_thread(recorded, now),",
+      "law": "context_snapshot_a_pause_scoped_reference_refuses_an_unknown_stop"
     },
     {
       "name": "plan-binding-accepts-a-detached-snapshot",

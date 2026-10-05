@@ -21,6 +21,7 @@
 import Base
 import ../json/canonical.bend as J
 import ./engines.bend as Eng
+import ./runtime/cdp-runtime.bend as R
 
 # --- captured input identities ----------------------------------------------
 # One captured input, as a provider supplies it. The kinds are the ones the
@@ -203,9 +204,10 @@ def applies_catalog(+path: String, +recorded_digest: String, +current_digest: St
   Bool.pick(Applies, String.eq(recorded_digest, current_digest), ACurrent{}, AStale{Eng.ss_one(path)})
 
 # --- runtime references ------------------------------------------------------
-# The identity a runtime reference carries. The caller obtains the same fields
-# from the owned runtime contract and the two are compared here; this module
-# reads no runtime state, advances no transition and grants nothing.
+# Recorded-stop liveness is the owned CDP model: `R.StopLiveness`, `R.Liveness`,
+# `R.stop_is_live` and `R.pause_scoped_admitted` in
+# context/runtime/cdp-runtime.bend. This module consumes those types and
+# predicates and defines no second interpretation of them.
 type RuntimeIdentity is Data:
   RId{runtime: String, adapter: String, thread: String, epoch: String, mutation: String}
 
@@ -219,64 +221,74 @@ def same_runtime_identity(+a: RuntimeIdentity, +b: RuntimeIdentity) -> Bool:
           Bool.and(String.eq(thread, other_thread),
           Bool.and(String.eq(epoch, other_epoch), String.eq(mutation, other_mutation)))))
 
-# What the owned runtime contract reports now: the canonical identity, whether
-# the thread is live, whether the child has exited, whether the runtime is
-# paused, whether a stop is recorded, and whether the reference is scoped to a
-# pause. A recorded stop committed together with an admitted record is the
-# contract's evidence; a caller-supplied decision or a liveness flag alone is
-# not authority, and nothing here grants one.
+# What the caller observed through the owned contract: the canonical identity it
+# reports now, the target liveness fact, whether the reference names a live
+# thread, the recorded-stop liveness the caller carries, whether the caller's
+# record is stopped, and whether the reference kind is pause-scoped (kind frame,
+# scope or object). A caller-supplied flag is evidence only and confers no
+# stop authority.
 type RuntimeNow is Data:
-  Now{identity: RuntimeIdentity, live_thread: Bool, child_exited: Bool, paused: Bool, stop_recorded: Bool, pause_scoped: Bool}
+  Now{identity: RuntimeIdentity, target: R.Liveness, thread_live: Bool, stop: R.StopLiveness, record_stopped: Bool, pause_scoped: Bool}
 
 def now_identity(r: RuntimeNow) -> RuntimeIdentity:
   match r:
-    case Now{identity, live_thread, child_exited, paused, stop_recorded, pause_scoped}: identity
+    case Now{identity, target, thread_live, stop, record_stopped, pause_scoped}: identity
 
-def now_live_thread(r: RuntimeNow) -> Bool:
+def now_target(r: RuntimeNow) -> R.Liveness:
   match r:
-    case Now{identity, live_thread, child_exited, paused, stop_recorded, pause_scoped}: live_thread
+    case Now{identity, target, thread_live, stop, record_stopped, pause_scoped}: target
 
-def now_child_exited(r: RuntimeNow) -> Bool:
+def now_thread_live(r: RuntimeNow) -> Bool:
   match r:
-    case Now{identity, live_thread, child_exited, paused, stop_recorded, pause_scoped}: child_exited
+    case Now{identity, target, thread_live, stop, record_stopped, pause_scoped}: thread_live
 
-def now_paused(r: RuntimeNow) -> Bool:
+def now_stop(r: RuntimeNow) -> R.StopLiveness:
   match r:
-    case Now{identity, live_thread, child_exited, paused, stop_recorded, pause_scoped}: paused
+    case Now{identity, target, thread_live, stop, record_stopped, pause_scoped}: stop
 
-def now_stop_recorded(r: RuntimeNow) -> Bool:
+def now_record_stopped(r: RuntimeNow) -> Bool:
   match r:
-    case Now{identity, live_thread, child_exited, paused, stop_recorded, pause_scoped}: stop_recorded
+    case Now{identity, target, thread_live, stop, record_stopped, pause_scoped}: record_stopped
 
 def now_pause_scoped(r: RuntimeNow) -> Bool:
   match r:
-    case Now{identity, live_thread, child_exited, paused, stop_recorded, pause_scoped}: pause_scoped
+    case Now{identity, target, thread_live, stop, record_stopped, pause_scoped}: pause_scoped
 
-# Identity is decided first: a reference whose runtime, adapter, thread, epoch
-# or mutation generation differs belongs to another lifetime, whatever the
-# current liveness. A live thread is required next, then a child that has not
-# exited; an exit makes every observation of that child historical. A reference
-# scoped to a pause additionally requires the recorded stop in a paused
-# runtime, and without that evidence its applicability is unknown with the
-# cause rather than current.
-def rref_identity(recorded: RuntimeIdentity, +now: RuntimeNow) -> Applies:
-  Bool.pick(Applies, same_runtime_identity(recorded, now_identity(now)), rref_live(now), AHistorical{"runtime identity changed"})
+def target_exited(l: R.Liveness) -> Bool:
+  match l:
+    case R.LivenessExited{}: True{}
+    case R.LivenessUnknown{}: False{}
+    case R.LivenessLive{}: False{}
 
-def rref_live(+now: RuntimeNow) -> Applies:
-  Bool.pick(Applies, now_live_thread(now), rref_exit(now), AHistorical{"runtime thread is not live"})
-
-def rref_exit(+now: RuntimeNow) -> Applies:
-  Bool.pick(Applies, now_child_exited(now), AHistorical{"runtime child exited"}, rref_scope(now))
-
-def rref_scope(+now: RuntimeNow) -> Applies:
-  Bool.pick(Applies, now_pause_scoped(now), rref_stop(now), ACurrent{})
-
-def rref_stop(+now: RuntimeNow) -> Applies:
-  Bool.pick(Applies, Bool.and(now_paused(now), now_stop_recorded(now)), ACurrent{},
-    AUnknown{"pause-scoped reference requires a recorded stop in a paused runtime"})
-
+# Steps one to three follow the owned caller contract's order: the pause-scoped
+# kind's stop requirement, then a live thread, then the canonical identity.
+# Step four is this module's own freshness check for the target-exit fact the
+# owned model records in the stop. This answers applicability; it is not the
+# admission gate. The owned caller runs its own decode, its refOutsidePause and
+# refStopNotLive refusals, its refThreadUnknown refusal and the production
+# identity checks before it uses this answer, and a refusal the owned gate makes
+# is not softened here.
 def applies_runtime_ref(recorded: RuntimeIdentity, now: RuntimeNow) -> Applies:
-  rref_identity(recorded, now)
+  rref_scope(recorded, now)
+
+def rref_scope(recorded: RuntimeIdentity, +now: RuntimeNow) -> Applies:
+  Bool.pick(Applies, now_pause_scoped(now), rref_pause(recorded, now), rref_thread(recorded, now))
+
+# A non-pause-scoped kind acquires no paused-state requirement and no stop
+# requirement; `R.stop_is_live` is the owned liveness test and is False for an
+# absent, historical or unknown stop.
+def rref_pause(recorded: RuntimeIdentity, +now: RuntimeNow) -> Applies:
+  Bool.pick(Applies, Bool.and(now_record_stopped(now), R.stop_is_live(now_stop(now))), rref_thread(recorded, now),
+    AUnknown{"a pause-scoped reference requires a live recorded stop in a stopped runtime"})
+
+def rref_thread(recorded: RuntimeIdentity, +now: RuntimeNow) -> Applies:
+  Bool.pick(Applies, now_thread_live(now), rref_identity(recorded, now), AUnknown{"runtime thread is not live"})
+
+def rref_identity(recorded: RuntimeIdentity, +now: RuntimeNow) -> Applies:
+  Bool.pick(Applies, same_runtime_identity(recorded, now_identity(now)), rref_target(now), AHistorical{"runtime identity changed"})
+
+def rref_target(+now: RuntimeNow) -> Applies:
+  Bool.pick(Applies, target_exited(now_target(now)), AHistorical{"runtime target exited"}, ACurrent{})
 
 # --- connection binding ------------------------------------------------------
 # A catalog snapshot and its target plan share one live connection and read
