@@ -1,7 +1,7 @@
 # Baton2 root handoff
 
 This contributor handoff preserves unfinished operator work as of 2026-10-05
-22:07 UTC. Host and qualification observations retain their recorded times.
+22:16 UTC. Host and qualification observations retain their recorded times.
 Read the native task records and current source before resuming.
 Issue records describe defects; native reports contain current ownership and evidence.
 
@@ -402,6 +402,11 @@ reviewers approved that design. Native guidance 39 authorized implementation.
 The operator subsequently rejected its fixed TS/C/C++ language boundary and
 requires Bend2 first, followed by modular Elixir, Rust, Go, Python and TypeScript
 support. Root81 supersedes the conflicting scope and whole-feature acceptance.
+Root83 adds automatic project detection, separate module/dependency packaging
+and activation of the selected dependency closure. Lightweight discovery must
+leave unused provider payloads, probes and processes untouched. The earlier
+static-import direction applies to individual module builds and requires a
+real load boundary in the revised specification.
 The current requirement is the feature document's Language support section and
 [language-module amendment](semantic-context-language-scope.md). Synthesis owns
 one coherent spec successor; existing domain critic Ensembles and Quality must

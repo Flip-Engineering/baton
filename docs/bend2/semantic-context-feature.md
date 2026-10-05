@@ -43,6 +43,14 @@ preferred modular targets after Bend2. Language modules use the same native
 query and result contracts. Project context and available module capabilities
 determine the applicable analysis and debugging support.
 
+Baton2 detects the relevant languages from project configuration and examined
+source, then loads the modules needed for the requested context. Language
+modules and their compiler, language-server and debugger dependencies are
+separately installable and activated as needed. Project use requires only its
+selected modules and their dependency closure. Discovery uses lightweight
+module descriptions; unused languages add no provider processes or loaded
+backend dependencies.
+
 Each module supplies language-specific facts and their evidence through a
 common interface. Adding a language module preserves the shared query surface,
 result relationships, provenance and access rules. Capability discovery states

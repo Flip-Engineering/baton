@@ -22,6 +22,39 @@ the actual target project. Project configuration and enabled module declarations
 identify applicable providers; selection records its inputs and chosen provider.
 An explicit provider selector remains available through the same query.
 
+## Project detection and loading
+
+Baton2 automatically detects applicable modules from project manifests,
+configuration and examined source. Selection covers the requested subject and
+the related facts needed to answer the query. Mixed-language projects can
+activate several modules. Explicit project configuration can resolve ambiguous
+detection through the same native operations. Detection reads target inputs
+under existing access rules; execution and package effects require admission.
+
+Lightweight trusted module descriptions provide recognition rules, capabilities,
+package identity and dependency requirements. Discovery reads this metadata
+without importing provider implementations or starting their tools. It reports
+applicability, installation and readiness separately. Project detection and
+module selection record their actual inputs and source identity.
+
+Provider implementations and language-specific compiler, language-server,
+debugger and framework dependencies are separately packaged. The baseline
+installation contains the common native runtime and the small discovery
+metadata needed for supported modules. A project's selected modules load their
+required dependency closure through existing package and lifecycle ownership.
+Ordinary context use resolves admitted available modules automatically; missing
+dependencies have a concrete native resolution path. Module retrieval and
+installation follow existing package authority and integrity requirements.
+
+Unused languages require no installed provider payloads, loaded implementation
+libraries, dependency probes or running helpers for that project. A provider
+already present for another project may remain on disk; its lifecycle retains
+that project's ownership. Changes to project inputs update applicability and
+reference freshness through the existing context rules. Activation shares
+compatible owned resources and preserves other projects' active work.
+
+## Module contracts
+
 Native validation covers the common request, subject identity, effects and result
 contract. Provider selection uses the trusted modules declared by the installed
 package and its existing configuration. A provider's own schema and negotiated
@@ -34,9 +67,14 @@ engine enumeration, filename switch, option profile or result parser to shared
 code. Use the existing package manifest and execution/lifecycle boundaries for
 module identity and ownership. The implementation spec must define the smallest
 typed provider declaration and invocation contract needed by these callers.
-An extension may add its normal Bend imports, composition declaration and
-package payload. Shared validation, selection and result algorithms consume
-those declarations. Each module's operative laws enter the composed build.
+A module build adds its normal Bend imports, typed declaration and package
+payload. Shared validation, selection and result algorithms consume the common
+declarations. Module composition must preserve separate installation and
+activation. The implementation spec must state the actual load boundary;
+importing every provider into the baseline executable violates this requirement.
+Each module's operative laws enter its build and every composition that links
+it. The common runtime proves its real selection, admission and invocation
+functions against the module contract.
 
 Modules normalize actual facts into the common source/runtime subjects,
 relationships, diagnostics and evidence model. A fact identifies its producer,
@@ -98,6 +136,17 @@ admission and result consumption work without editing core language cases.
 Cross-language projects must keep exact source and producer attribution and
 refuse unsupported joins truthfully. Effectful debugger/model operations require
 the existing grants and lifecycle qualification.
+
+Qualify automatic detection and loading on Bend2-only, individual preferred
+language and mixed-language projects through ordinary installed CLI and MCP
+operations. Check the installed payloads, dependencies, loaded libraries,
+probes and processes attributable to each query. Include an unused module
+whose payload is absent and whose initialization would leave observable
+evidence; discovery and unrelated queries must leave it untouched. Exercise
+missing selected dependencies, changed project configuration and resource
+ownership across projects. Record the package footprint and process/memory
+cost of each activated dependency closure. The shared native surface must
+provide the needed resolution and honest capability state.
 
 Operative laws cover the real native selection, admission, normalization and
 reference functions. Host/provider fixtures establish foreign facts. Whole-tree
