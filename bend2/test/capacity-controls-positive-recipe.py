@@ -150,10 +150,20 @@ def bind_response_to_verdict(response, verdict, identity):
         normalized = {member: package.verifier_member_value(
             response_verifier, member, identity)
             for member in package.VERIFIER_MEMBERS}
-    except BaseException as error:
+    except RuntimeError as error:
+        # The member contract refuses with RuntimeError; that refusal is this
+        # boundary's failure.
         raise StageFailure('a retained response verifier is not a valid closure: '
                            + identity + ': ' + str(error),
                            fields={'case': identity, 'boundary': 'response-verifier'})
+    except BaseException as error:
+        # Any other interruption keeps its own type and object, with the boundary
+        # facts attached.
+        reported = dict(getattr(error, 'fields', None) or {})
+        reported.setdefault('case', identity)
+        reported.setdefault('operation', 'response-verifier')
+        setattr(error, 'fields', reported)
+        raise
     if normalized != verdict.get('verifier'):
         raise StageFailure('a retained response verifier differs from the reported '
                            'verdict: ' + identity,
@@ -787,8 +797,10 @@ def main():
             def write_envelope():
                 envelope_path = run / 'archive-envelope.json'
                 relative = str(envelope_path.relative_to(run))
+                operation = 'envelope-write'
                 try:
                     envelope_path.write_text(json.dumps(envelope, indent=2) + '\n')
+                    operation = 'envelope-sha256'
                     return {'envelope': relative, 'envelope_sha256': digest(envelope_path)}
                 except BaseException as error:
                     present = None
@@ -800,6 +812,7 @@ def main():
                         attach_secondary(error, 'accounting_error', accounting_error)
                     setattr(error, 'fields', {
                         'envelope': relative,
+                        'operation': operation,
                         'envelope_present': present,
                         'envelope_bytes': size,
                         'accounting_error_text': (repr(error.accounting_error)
