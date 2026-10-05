@@ -99,11 +99,13 @@ fixture already shows that hard links have distinct canonical-path guards.
 
 ### Align the target and prepared semantics
 
-Section 4 retains one keeper per attempt as the default. The current conductor
-target has one fixed custody process per Orchestra. The draft also lacks the
-operative readiness and safe capability retirement contracts. An intermediate
-prototype can have narrower scope, but its API must account for the final
-shared custody, recovery ownership and resource lifetime before composition.
+Correction: the captured draft already contains fixed shared custody in section
+5, readiness-driven IO in section 6 and handle lifetime in section 7. The prior
+version of this review incorrectly attributed an earlier read to the captured
+snapshot hash. The claim that those sections were absent is withdrawn.
+Section 7 does say that allocations are freed at acknowledgment. ACK must be
+followed by capability retirement that excludes new references and waits for
+all in-flight IO and historical users before freeing. ACK alone is insufficient.
 
 Section 6 describes prepared cancellation as cancellation by signal. The
 supplied prepared checkpoint exposes identity-qualified `cancel_typed` before

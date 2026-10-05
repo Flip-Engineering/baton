@@ -68,8 +68,11 @@ it before custody transfer must produce a failing control.
 
 ## Historical finish duties and parent delivery
 
-`Receive.completed` prepares diagnostics, releases the observer guard and calls
-`ProcessChild.release`. `Receive.finish_pending` then forks `Turn.finish` and
+`Receive.completed` prepares diagnostics, releases its optional observer guard
+and calls `ProcessChild.release` to release the keeper's session lock after
+native exit. The attempt handle and completion duties remain. ACK later requires
+exit and release, records acknowledgment and permits the keeper's spool cleanup.
+`Receive.finish_pending` then forks `Turn.finish` and
 `continue_pending`. It joins delivery, settles native requests, acknowledges the
 original handle, and joins continuation. This permits the following schedule:
 
