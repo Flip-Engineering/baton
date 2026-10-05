@@ -70,11 +70,25 @@
   "law": "codec_law_a_bad_jsonrpc_refuses_before_the_tool"
  },
  {
-  "name": "codec-empty-operation-dispatches",
+  "name": "codec-unknown-operation-dispatches",
   "file": "bend2/src/context/codec.bend",
-  "find": "    ARefused{Context.RfValidation{}, \"unknownOperation\"}, dispatch_grant(operation, required, grants))",
-  "replace": "    ADispatch{operation}, dispatch_grant(operation, required, grants))",
-  "law": "codec_law_an_empty_operation_refuses"
+  "find": "  Bool.pick(Admission, admission_accepted(admission),\n    dispatch_grant(chain, required, grants), ARefused{Context.RfValidation{}, admission_condition(admission)})",
+  "replace": "  Bool.pick(Admission, True{},\n    dispatch_grant(chain, required, grants), ARefused{Context.RfValidation{}, admission_condition(admission)})",
+  "law": "codec_law_an_unknown_operation_refuses_even_with_every_grant"
+ },
+ {
+  "name": "codec-primary-is-not-read-from-the-chain",
+  "file": "bend2/src/context/codec.bend",
+  "find": "def primary_operation(chain: OpChain) -> String:\n  match chain:\n    case Opnone{}: SNil{}\n    case Opcons{head, +tail}: head",
+  "replace": "def primary_operation(chain: OpChain) -> String:\n  match chain:\n    case Opnone{}: SNil{}\n    case Opcons{+head, +tail}: SNil{}",
+  "law": "codec_law_the_primary_operation_comes_from_the_chain"
+ },
+ {
+  "name": "codec-chain-drops-the-override",
+  "file": "bend2/src/context/codec.bend",
+  "find": "  chain_append(chain_named(Ops.request_operation(req)), Ops.request_override_operation(req))",
+  "replace": "  chain_named(Ops.request_operation(req))",
+  "law": "codec_law_the_chain_second_entry_is_the_override"
  },
  {
   "name": "codec-ref-closed-set-is-not-checked",
@@ -82,5 +96,26 @@
   "find": "  Bool.pick(RefDecode, ref_closed(members), ref_object(members), RdBad{\"unknownRefField\"})",
   "replace": "  Bool.pick(RefDecode, True{}, ref_object(members), RdBad{\"unknownRefField\"})",
   "law": "codec_law_a_reference_with_an_unknown_field_refuses"
+ },
+ {
+  "name": "codec-ref-drops-its-projection-chain",
+  "file": "bend2/src/context/codec.bend",
+  "find": ", proj_of(or_json_nil(Req.member_lookup(\"projections\", members)))},",
+  "replace": ", Pnone{}},",
+  "law": "codec_law_a_retained_reference_keeps_its_projection_chain"
+ },
+ {
+  "name": "codec-absent-metadata-refuses",
+  "file": "bend2/src/context/codec.bend",
+  "find": "    case MetaAbsent{}: MetaOk{}",
+  "replace": "    case MetaAbsent{}: MetaNotObject{}",
+  "law": "codec_law_absent_metadata_is_admitted"
+ },
+ {
+  "name": "codec-malformed-row-kind-is-accepted",
+  "file": "bend2/src/context/codec.bend",
+  "find": "    case other: RFBad{\"malformedRowTransport\"}",
+  "replace": "    case other: raw_attach(stack, row_key(row), Rnull{})",
+  "law": "codec_law_a_malformed_kind_is_refused"
  }
 ]
