@@ -588,7 +588,7 @@ static int progress_cb(void *flag) {
 }
 
 static void status_json(Buf *b, BatonCtxSqlStage stage, int code, const char *message) {
-  buf_lit(b, ",\"status\":{\"stage\":");
+  buf_lit(b, ",\"status\":{\"stageHex\":");
   buf_hex_value(b, baton_ctx_sql_stage_name(stage),
                 strlen(baton_ctx_sql_stage_name(stage)));
   buf_lit(b, ",\"code\":");
@@ -597,9 +597,12 @@ static void status_json(Buf *b, BatonCtxSqlStage stage, int code, const char *me
   buf_lit(b, "}");
 }
 
-static void scratch_json(Buf *b, const char *dir, int configured) {
+static void scratch_json(Buf *b, const char *dir, int configured,
+                         int tempStoreVerified) {
   buf_lit(b, ",\"scratch\":{\"configured\":");
   buf_lit(b, configured ? "true" : "false");
+  buf_lit(b, ",\"tempStoreVerified\":");
+  buf_lit(b, tempStoreVerified ? "true" : "false");
   buf_lit(b, ",");
   buf_hex_field(b, "directoryHex", dir, dir ? strlen(dir) : 0);
   buf_lit(b, "}");
@@ -1341,7 +1344,7 @@ emit:
     lib_info_json(b, &lib);
     status_json(b, stage, code, message);
     scratch_json(b, input->scratchDirectory,
-                 input->scratchDirectory && *input->scratchDirectory);
+                 input->scratchDirectory && *input->scratchDirectory, 0);
     buf_lit(b, ",\"sourceBindingIdHex\":");
     path_hex_value(b, input->sourceBindingId);
     buf_lit(b, ",\"database\":{\"pathHex\":");
@@ -1545,7 +1548,7 @@ emit:
     lib_info_json(b, &lib);
     status_json(b, stage, code, message);
     scratch_json(b, input->scratchDirectory,
-                 input->scratchDirectory && *input->scratchDirectory);
+                 input->scratchDirectory && *input->scratchDirectory, 0);
     buf_lit(b, ",\"live\":{\"database\":{\"pathHex\":");
     path_hex_value(b, input->databasePath);
     buf_hex_field(b, "filenameHex", filename, filename ? strlen(filename) : 0);
@@ -1840,6 +1843,7 @@ int baton_ctx_sql_chain_replay(const BatonCtxSqlChainReplayInput *input,
   memset(&prefixAuth, 0, sizeof(prefixAuth));
   memset(&headAuth, 0, sizeof(headAuth));
   int closeFailed = 0;
+  int tempStoreVerified = 0;
 
   record_open(&sink.record, "context-sqlite-chain-replay");
 
@@ -1888,6 +1892,7 @@ int baton_ctx_sql_chain_replay(const BatonCtxSqlChainReplayInput *input,
       goto emit;
     }
   }
+  tempStoreVerified = 1;
 
   prefixAuth.mode = AUTH_REPLAY;
   prefixAuth.phase = "prefix-replay";
@@ -1970,7 +1975,8 @@ emit:
     lib_info_json(b, &lib);
     status_json(b, stage, code, message);
     scratch_json(b, input->scratchDirectory,
-                 input->scratchDirectory && *input->scratchDirectory);
+                 input->scratchDirectory && *input->scratchDirectory,
+                 tempStoreVerified);
     buf_lit(b, ",\"prefix\":");
     replay_section_json(b, &prefixSection);
     buf_lit(b, ",\"head\":");
