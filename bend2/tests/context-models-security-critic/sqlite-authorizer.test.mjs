@@ -35,7 +35,9 @@
 // scratch.tempStoreVerified is true only in a chain-replay record whose two
 // private connections verified PRAGMA temp_store==2, and false in planner and
 // applied-capture records; authorizer arrays appear at the top level of plan
-// records and inside the replay prefix and head sections.
+// records and inside the replay record's two top-level sections, prefix and
+// head, under phases prefix-replay and head-replay respectively
+// (producer message sqlite-section-names-1).
 //
 // Remote only; this file has not been executed locally.
 
@@ -83,6 +85,10 @@ const STAGES = new Set([
   'replayRevisionFailed', 'replayOpenTransaction',
 ]);
 const REFUSED_STAGES = new Set(['sqlUtf8', 'sqlNul', 'sqlEmpty', 'sqlBind', 'tailRemains', 'notReadonly', 'isExplain', 'sqlLengthExceedsInt']);
+
+// Authorizer event phases: the plan record's array runs under `planner`; the
+// replay record's prefix and head sections run under their own phases.
+const PHASES = new Set(['planner', 'prefix-replay', 'head-replay']);
 
 function stageOf(document, name) {
   const status = document.status;
@@ -241,12 +247,45 @@ test('replay denies extension loading, attachment, virtual tables and unknown ac
   }
 });
 
-test('a refused input stage carries its token and no target-derived prepare', () => {
+test('a refused input stage carries its token and an empty authorizer array', () => {
   const records = loadRecords('stage-');
   for (const record of records) {
     assert.ok(REFUSED_STAGES.has(record.stage), `${record.name} stage ${record.stage} is not an input-refusal stage`);
-    const targetDerived = record.events.filter(event => event.phase === 'planner' || event.phase === 'replay');
-    assert.equal(targetDerived.length, 0, `${record.name} recorded target-derived authorizer events for a refused input stage`);
+    for (const array of record.arrays) {
+      assert.equal(array.entries.length, 0,
+        `${record.name} recorded ${array.entries.length} authorizer events at ${array.path} for an input refused before the authorizer installed`);
+    }
+  }
+});
+
+test('the replay record carries its prefix and head sections under their own phases', () => {
+  const records = loadRecords('replay-');
+  for (const record of records) {
+    for (const section of ['prefix', 'head']) {
+      const value = record.document[section];
+      assert.ok(value !== null && typeof value === 'object', `${record.name} carries no ${section} section`);
+      assert.ok(Array.isArray(value.authorizer), `${record.name}.${section} carries no authorizer array`);
+      const expectedPhase = section === 'prefix' ? 'prefix-replay' : 'head-replay';
+      for (const entry of record.events.filter(event => event.section.startsWith(`$.${section}.`))) {
+        assert.equal(entry.phase, expectedPhase,
+          `${record.name}.${section}[${entry.index}] ran under phase ${JSON.stringify(entry.phase)}, expected ${expectedPhase}`);
+      }
+      assert.ok(record.events.some(event => event.section.startsWith(`$.${section}.`)) || value.authorizer.length === 0,
+        `${record.name}.${section} carries neither events nor an empty array`);
+    }
+    const topLevel = record.document.authorizer;
+    assert.ok(topLevel === undefined || (Array.isArray(topLevel) && topLevel.length === 0),
+      `${record.name} carries a top-level authorizer array on a replay record; the sections own theirs`);
+  }
+});
+
+test('every authorizer event names a known phase', () => {
+  for (const prefix of ['planner-', 'replay-', 'stage-']) {
+    for (const record of loadRecords(prefix)) {
+      for (const event of record.events) {
+        assert.ok(PHASES.has(event.phase), `${record.name} ${event.section}[${event.index}] carries phase ${JSON.stringify(event.phase)}`);
+      }
+    }
   }
 });
 
