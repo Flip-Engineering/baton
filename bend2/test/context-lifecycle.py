@@ -473,19 +473,26 @@ def keyed_lines(stdout, key):
     return sum(1 for line in stdout.splitlines() if line.startswith(prefix))
 
 
-def read_json(values, key):
-    """The setup read-back of one case as its recorded object. The role and query
-    read-backs are JSON documents, so the assertions address their members rather than
-    matching text anywhere inside them."""
+def read_record(values, stdout, key):
+    """The setup read-back of one case as its recorded object. The read-backs are JSON
+    objects, so an absent observation, malformed text and a valid non-object document are
+    each refused with a diagnostic instead of skipping the assertions that follow, and each
+    case must have exactly one setup observation carrying no error."""
+    check(key + ".error" not in values, key + ".error", values.get(key + ".error"))
+    check(keyed_lines(stdout, key) == 1, key + ".once", str(keyed_lines(stdout, key)))
     raw = values.get(key)
     if raw is None:
         check(False, key, "the setup did not report")
         return None
     try:
-        return json.loads(raw)
+        parsed = json.loads(raw)
     except ValueError as error:
-        check(False, key, f"{error}: {raw!r}")
+        check(False, key, f"not JSON: {error}: {raw!r}")
         return None
+    if not isinstance(parsed, dict):
+        check(False, key, f"not an object: {raw!r}")
+        return None
+    return parsed
 
 
 def check_companion(values, stdout):
@@ -511,7 +518,7 @@ def check_companion(values, stdout):
     # surfaces leave a cleanup intent on q1 and the intent read is open while any query or
     # role owes something. The admitted record and both role rows must be recorded, and the
     # assertions address the recorded members: identity, keeper path and cleanup phase.
-    admitted = read_json(values, "companion.query")
+    admitted = read_record(values, stdout, "companion.query")
     if admitted is not None:
         check(
             admitted.get("query") == "qc1" and admitted.get("owner") == "root" and admitted.get("state") == "accepted",
@@ -519,12 +526,15 @@ def check_companion(values, stdout):
             repr(admitted),
         )
         check(admitted.get("version") == 1, "companion.query.version", repr(admitted.get("version")))
-        check(admitted.get("result") is None, "companion.query.result", repr(admitted.get("result")))
+        # A fresh admission records an explicitly null result, which is a different fact
+        # from the member being absent entirely.
+        check("result" in admitted, "companion.query.result.present", repr(admitted))
+        check(admitted.get("result") is None, "companion.query.result.null", repr(admitted.get("result")))
     for key, role, incarnation, keeper, cleanup in (
         ("companion.owed.row", "starter", "0", "/log/qc1-owned", "pending"),
         ("companion.settled.row", "target", "1", "/log/qc1-settled", "complete"),
     ):
-        row = read_json(values, key)
+        row = read_record(values, stdout, key)
         if row is None:
             continue
         check(
