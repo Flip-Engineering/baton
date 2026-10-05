@@ -571,69 +571,77 @@ class PackageGateReceipt(unittest.TestCase):
 
     def ordinary_index(self, run_root, complete=True, drop=(), duplicate=False,
                        tamper=False, escape=False, symlink=False, argv=None,
-                       outcome=True, gate='refuses', compiler=None):
-        """The producer's actual layout: <run>/evidence/index.json, paths from <run>.
+                       outcome=True, baseline_exit=0, extra=()):
+        """The producer's layout: <run>/evidence/index.json with raw child streams.
 
-        Stream paths are recorded relative to the run root, as the checker writes
-        them, and each case carries the classifier row the checker itself emitted.
+        The checker retains the compiler's own stdout and stderr for each case and
+        classifies the compile in its parent process, so no classifier row appears
+        inside a retained stream.
         """
         evidence = run_root / 'evidence'
         evidence.mkdir(parents=True, exist_ok=True)
-        compiler = self.compiler() if compiler is None else compiler
-        cases = [{'id': 'baseline', 'applied': True,
-                  'argv': argv or [str(compiler), PACKAGE.ADMITTED_ENTRY, PACKAGE.ORDINARY_OPERATION],
-                  'stdout': None, 'stderr': None,
-                  'outcome': {'state': 'exited', 'exit_code': 0, 'signal': None,
-                              'spawn_error': None},
-                  'started': 0.5, 'ended': 1.0,
-                  'text': json.dumps({'check': 'entry compiles with every law proven',
-                                      'passed': True}) + '\n'}]
+        compiler = self.compiler()
+        argv = argv or [str(compiler), PACKAGE.ADMITTED_ENTRY, PACKAGE.ORDINARY_OPERATION]
+        cases = [{'id': 'baseline', 'applied': True, 'argv': list(argv),
+                  'exit': baseline_exit, 'raw': b'build output\n'}]
         controls = list(self.controls['controls'])
         if drop:
             controls = [control for control in controls if control['id'] not in drop]
         if duplicate:
             controls = controls + [controls[0]]
         for control in controls:
-            row = (law_row(control) if control['kind'] == 'proof-removal'
-                   else mutation_row(control))
-            row['gate'] = gate
-            row['passed'] = gate == 'refuses'
-            cases.append({'id': control['id'], 'applied': True,
-                          'argv': argv or [str(compiler), PACKAGE.ADMITTED_ENTRY,
-                                           PACKAGE.ORDINARY_OPERATION],
-                          'stdout': None, 'stderr': None,
-                          'outcome': {'state': 'exited', 'exit_code': 1, 'signal': None,
-                                      'spawn_error': None},
-                          'started': 1.0, 'ended': 2.0,
-                          'text': json.dumps(row) + '\n'})
+            cases.append({'id': control['id'], 'applied': True, 'argv': list(argv), 'exit': 1,
+                          'raw': ('error: ' + control['law'] + ' proof is missing\n').encode()})
+        cases.extend(extra)
+        records = []
         for case in cases:
             stem = case['id'].replace(':', '_')
-            if not outcome:
-                case.pop('outcome')
-            for name, payload in (('stdout', case.pop('text').encode()), ('stderr', b'')):
+            streams = {}
+            for name, payload in (('stdout', case.pop('raw')), ('stderr', b'')):
                 member = evidence / (stem + '.' + name)
                 member.write_bytes(payload)
-                case[name] = {'path': 'evidence/' + member.name,
-                              'bytes': member.stat().st_size,
-                              'sha256': hashlib.sha256(member.read_bytes()).hexdigest()}
-            if symlink and case['id'] == cases[0]['id']:
-                moved = evidence / (stem + '.retained.stdout')
-                (evidence / (stem + '.stdout')).rename(moved)
-                (evidence / (stem + '.stdout')).symlink_to(moved)
-            if tamper and case['id'] == cases[0]['id']:
-                (evidence / (stem + '.stdout')).write_bytes(b'tampered\n')
-            if escape and case['id'] == cases[0]['id']:
-                case['stdout']['path'] = '../outside.stdout'
+                if symlink and case['id'] == cases[0]['id'] and name == 'stdout':
+                    retained_name = evidence / (stem + '.retained.stdout')
+                    member.rename(retained_name)
+                    member.symlink_to(retained_name)
+                if tamper and case['id'] == cases[0]['id'] and name == 'stdout':
+                    member.write_bytes(b'tampered\n')
+                record = {'path': 'evidence/' + stem + '.' + name,
+                          'bytes': member.stat().st_size,
+                          'sha256': hashlib.sha256(member.read_bytes()).hexdigest()}
+                if escape and case['id'] == cases[0]['id'] and name == 'stdout':
+                    record['path'] = 'evidence/../' + stem + '.stdout'
+                streams[name] = record
+            record = {'id': case['id'], 'applied': case['applied'], 'argv': case['argv'],
+                      'stdout': streams['stdout'], 'stderr': streams['stderr'],
+                      'started': 1.0, 'ended': 2.0}
+            record['outcome'] = ({'state': 'exited', 'exit_code': case['exit'], 'signal': None,
+                                  'spawn_error': None}
+                                 if case.get('outcome', outcome) else None)
+            if not outcome:
+                record.pop('outcome')
+            records.append(record)
         path = evidence / 'index.json'
         path.write_text(json.dumps({'schema': 'capacity-controls/ordinary-evidence@1',
-                                    'complete': complete, 'cases': cases}))
+                                    'complete': complete, 'cases': records}))
         return path
+
+    def parent_rows(self, **overrides):
+        rows = {'baseline': {'check': 'entry compiles with every law proven', 'passed': True}}
+        for control in self.laws():
+            rows[control['id']] = law_row(control)
+        for control in self.mutations():
+            rows[control['id']] = mutation_row(control)
+        rows.update(overrides)
+        return rows
 
     def test_the_ordinary_evidence_index_is_consumed(self):
         path = self.ordinary_index(self.logs / 'run')
-        result = PACKAGE.validation(self.write_logs(), None, path, self.compiler())
+        self.write_logs()
+        result = PACKAGE.validation(self.logs, None, path, self.compiler())
         self.assertEqual(result['ordinary']['cases'], len(self.controls['controls']) + 1)
         self.assertEqual(result['ordinary']['schema'], 'capacity-controls/ordinary-evidence@1')
+        self.assertEqual(result['ordinary']['retained'], 'evidence/index.json')
 
     def test_ordinary_evidence_defects_refuse(self):
         cases = [('incomplete run', dict(complete=False), 'does not declare a completed run'),
@@ -643,15 +651,64 @@ class PackageGateReceipt(unittest.TestCase):
                  ('unqualified path', dict(escape=True), 'unqualified path'),
                  ('symlinked stream', dict(symlink=True), 'passes through a symlink'),
                  ('absent outcome', dict(outcome=False), 'records no terminal outcome'),
-                 ('accepted control', dict(gate='accepts'), 'did not pass'),
+                 ('failed baseline', dict(baseline_exit=1), 'did not compile successfully'),
                  ('another compiler', dict(argv=['bend', PACKAGE.ADMITTED_ENTRY, '--check-only']),
                   'ran another compiler')]
         for name, options, message in cases:
             with self.subTest(name=name):
                 run_root = self.logs / ('run-' + name.replace(' ', '-'))
                 path = self.ordinary_index(run_root, **options)
+                self.write_logs()
                 with self.assertRaisesRegex(RuntimeError, message):
-                    PACKAGE.validation(self.write_logs(), None, path, self.compiler())
+                    PACKAGE.validation(self.logs, None, path, self.compiler())
+
+    def test_ordinary_evidence_parent_rows_are_required(self):
+        path = self.ordinary_index(self.logs / 'run')
+        self.write_logs()
+        controls = self.controls
+        cases = [('absent row', {self.laws()[0]['id']: None}, 'printed no row',
+                  lambda rows: rows.pop(self.laws()[0]['id'])),
+                 ('failed parent row', {}, 'did not pass',
+                  lambda rows: rows.__setitem__(self.laws()[0]['id'],
+                                                law_row(self.laws()[0], passed=False))),
+                 ('accepted parent row', {}, 'attributable refusal',
+                  lambda rows: rows.__setitem__(self.laws()[0]['id'],
+                                                law_row(self.laws()[0], gate='accepts'))),
+                 ('another module', {}, 'names another control',
+                  lambda rows: rows.__setitem__(self.laws()[0]['id'],
+                                                law_row(self.laws()[0], module=MODULE_B))),
+                 ('absent baseline row', {}, 'printed no row',
+                  lambda rows: rows.pop('baseline'))]
+        for name, _unused, message, mutate in cases:
+            with self.subTest(name=name):
+                rows = self.parent_rows()
+                mutate(rows)
+                with self.assertRaisesRegex(RuntimeError, message):
+                    PACKAGE.ordinary_evidence(path, controls, self.compiler(), None, rows)
+
+    def test_the_ordinary_evidence_survives_a_reuse_copy(self):
+        marker = self.home / 'ordinary-launched'
+        self.run_gates_fixture(marker, self.stub_gates(marker))
+        compiler = self.compiler()
+        index = self.ordinary_index(self.home / 'ordinary-run')
+        logs = self.home / 'ordinary-gate-logs'
+        logs.mkdir()
+        path, summary = PACKAGE.run_gates(compiler, {'CC': 'gcc'}, logs, PACKAGE.snapshot(),
+                                          {'fixture': 'inputs'}, ordinary=index)
+        self.assertEqual(summary['validation']['ordinary']['retained'], 'evidence/index.json')
+        self.assertTrue((logs / 'evidence' / 'index.json').is_file())
+        reused = self.home / 'ordinary-reused'
+        reused.mkdir()
+        destination, reused_summary = PACKAGE.reuse_gates(path, PACKAGE.sha256(path), compiler,
+                                                          reused, PACKAGE.snapshot())
+        self.assertTrue((reused / 'evidence' / 'index.json').is_file())
+        self.assertEqual(reused_summary['validation']['ordinary']['raw'],
+                         summary['validation']['ordinary']['raw'])
+        (logs / 'evidence' / 'baseline.stdout').write_bytes(b'tampered\n')
+        again = self.home / 'ordinary-again'
+        again.mkdir()
+        with self.assertRaisesRegex(RuntimeError, 'does not match its recorded bytes'):
+            PACKAGE.reuse_gates(path, PACKAGE.sha256(path), compiler, again, PACKAGE.snapshot())
 
     def test_the_ordinary_index_layout_and_run_root_are_checked(self):
         run_root = self.home / 'declared-run'
@@ -665,6 +722,14 @@ class PackageGateReceipt(unittest.TestCase):
                                          'cases': []}))
         with self.assertRaisesRegex(RuntimeError, 'is not at'):
             PACKAGE.ordinary_root(misplaced, None)
+        linked = self.home / 'linked-run' / 'evidence' / 'index.json'
+        linked.parent.mkdir(parents=True, exist_ok=True)
+        linked.write_text(json.dumps({'schema': PACKAGE.ORDINARY_SCHEMA, 'complete': True,
+                                      'cases': []}))
+        shim = self.home / 'shim-run'
+        shim.symlink_to(self.home / 'linked-run')
+        with self.assertRaisesRegex(RuntimeError, 'passes through a symlink'):
+            PACKAGE.ordinary_root(shim / 'evidence' / 'index.json', None)
 
     def test_the_remote_route_carries_the_laws_obligation(self):
         remote = PACKAGE.controls_evidence(self.full_evidence(), PACKAGE.snapshot(), self.compiler())
