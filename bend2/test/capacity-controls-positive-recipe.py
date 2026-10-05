@@ -468,6 +468,111 @@ def write_envelope(directory, record, envelope, envelope_path):
         raise
 
 
+def bind_case_acquisitions(audit, expected_ids, verdicts):
+    """Bind each selected case's retained acquisition to its verdict.
+
+    One selected case is bound at a time: the request bytes, both raw streams and
+    the terminal record under the stem the classifier writer itself uses, with the
+    recorded digests, the verdict acquisition equality and the response contract.
+    A failure names the case and the operation it failed at on the original
+    exception. Cases with no terminal record are reported as uncovered.
+    """
+    uncovered = []
+    if len(verdicts) != len(expected_ids):
+        raise SystemExit('the readback reports a repeated or missing verdict identity')
+    for identity in expected_ids:
+        operation = 'terminal-record'
+        try:
+            operation = 'terminal-record'
+            stem = package_handle().acquisition_stem(identity)
+            terminal_path = audit / (stem + '.acquisition.json')
+            if not terminal_path.is_file():
+                uncovered.append(identity)
+                continue
+            terminal = json.loads(terminal_path.read_text())
+            # The request bytes are the ones the terminal record describes, and
+            # the parsed request is the case this run asked about.
+            operation = 'request-bytes'
+            request_data = (audit / (stem + '.request.json')).read_bytes()
+            if (len(request_data) != terminal.get('request_bytes')
+                    or hashlib.sha256(request_data).hexdigest()
+                    != terminal.get('request_sha256')):
+                raise StageFailure(
+                    'a retained request disagrees with its terminal record: ' + identity,
+                    fields={'case': identity, 'boundary': 'request-bytes'})
+            operation = 'request-parse'
+            request = json.loads(request_data)
+            if (request.get('case') or {}).get('id') != identity:
+                raise StageFailure('a retained request names another case: ' + identity,
+                               fields={'case': identity, 'boundary': 'request-case'})
+            # Both raw streams are the bytes their terminal record describes,
+            # with the digest taken from the buffer that was measured.
+            streams = {}
+            for suffix, field in (('.stdout', 'stdout'), ('.stderr', 'stderr')):
+                operation = field + '-stream'
+                stream_path = audit / (stem + suffix)
+                if not stream_path.is_file():
+                    raise StageFailure('a retained acquisition stream is missing: '
+                                       + stream_path.name,
+                                       fields={'case': identity, 'boundary': field + '-stream'})
+                data = stream_path.read_bytes()
+                if (len(data) != terminal.get(field + '_bytes')
+                        or hashlib.sha256(data).hexdigest() != terminal.get(field + '_sha256')):
+                    raise StageFailure('a retained acquisition stream disagrees with its '
+                                       'terminal record: ' + stream_path.name,
+                                       fields={'case': identity, 'boundary': field + '-stream'})
+                streams[field] = data
+            # The reported verdict is the one this acquisition recorded, and
+            # the envelope's acquisition record is this terminal.
+            verdict = verdicts.get(identity)
+            if verdict is None:
+                raise StageFailure(
+                    'the readback reported no verdict for a retained case: ' + identity,
+                    fields={'case': identity, 'boundary': 'verdict-present'})
+            if (verdict.get('acquisition') or {}) != terminal:
+                raise StageFailure(
+                    'a retained terminal acquisition differs from the verdict acquisition: '
+                    + identity,
+                    fields={'case': identity, 'boundary': 'terminal-equality'})
+            # The whole-terminal equality above already covers the process fields.
+            # The retained response is the verdict the readback reported, with the
+            # reader's own added fields kept separate from the endpoint contract.
+            # The response is parsed from the buffer already verified against the
+            # terminal record, so the bytes read and the bytes parsed are one.
+            operation = 'response-parse'
+            lines = [line for line in streams['stdout'].decode('utf-8').splitlines()
+                     if line.strip()]
+            if len(lines) != 1:
+                raise StageFailure('a retained response is not one line: ' + identity,
+                                   fields={'case': identity, 'boundary': 'response-line'})
+            response = json.loads(lines[0])
+            if (response.get('id') != identity
+                    or response.get('schema') != 'capacity-controls/classify-verdict@1'):
+                raise StageFailure('a retained response names another case or schema: '
+                                   + identity,
+                                   fields={'case': identity, 'boundary': 'response-identity'})
+            bind_response_to_verdict(response, verdict, identity)
+        except StageFailure:
+            raise
+        except BaseException as error:
+            # The case and the operation being performed are attached to
+            # the original exception, which stays the reported cause.
+            reported = dict(getattr(error, 'fields', None) or {})
+            reported.setdefault('case', identity)
+            reported.setdefault('operation', operation)
+            setattr(error, 'fields', reported)
+            raise
+    if uncovered:
+        raise StageFailure('the acquisition omits selected cases: '
+                           + repr(uncovered),
+                           fields={'cases': list(uncovered),
+                                   'boundary': 'terminal-record'})
+    return {'cases_checked': len(expected_ids),
+            'cases_uncovered': list(uncovered),
+            'acquisition_directory': str(audit)}
+
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--workdir', required=True, type=pathlib.Path)
@@ -689,110 +794,16 @@ def main():
             if len(expected_ids) != len(set(expected_ids)):
                 raise SystemExit('the readback reports a case identity twice: '
                                  + repr(expected_ids))
-            def bind_case_acquisitions():
-                """Bind each selected case's retained acquisition to its verdict."""
-                uncovered = []
-                verdicts = {str(verdict.get('id')): verdict
-                            for verdict in (envelope.get('classifier') or {}).get('verdicts') or []}
-                if len(verdicts) != len(expected_ids):
-                    raise SystemExit('the readback reports a repeated or missing verdict identity')
-                for identity in expected_ids:
-                    operation = 'terminal-record'
-                    try:
-                        operation = 'terminal-record'
-                        stem = package.acquisition_stem(identity)
-                        terminal_path = audit / (stem + '.acquisition.json')
-                        if not terminal_path.is_file():
-                            uncovered.append(identity)
-                            continue
-                        terminal = json.loads(terminal_path.read_text())
-                        # The request bytes are the ones the terminal record describes, and
-                        # the parsed request is the case this run asked about.
-                        operation = 'request-bytes'
-                        request_data = (audit / (stem + '.request.json')).read_bytes()
-                        if (len(request_data) != terminal.get('request_bytes')
-                                or hashlib.sha256(request_data).hexdigest()
-                                != terminal.get('request_sha256')):
-                            raise StageFailure(
-                                'a retained request disagrees with its terminal record: ' + identity,
-                                fields={'case': identity, 'boundary': 'request-bytes'})
-                        operation = 'request-parse'
-                        request = json.loads(request_data)
-                        if (request.get('case') or {}).get('id') != identity:
-                            raise StageFailure('a retained request names another case: ' + identity,
-                                           fields={'case': identity, 'boundary': 'request-case'})
-                        # Both raw streams are the bytes their terminal record describes,
-                        # with the digest taken from the buffer that was measured.
-                        streams = {}
-                        for suffix, field in (('.stdout', 'stdout'), ('.stderr', 'stderr')):
-                            operation = field + '-stream'
-                            stream_path = audit / (stem + suffix)
-                            if not stream_path.is_file():
-                                raise StageFailure('a retained acquisition stream is missing: '
-                                                   + stream_path.name,
-                                                   fields={'case': identity, 'boundary': field + '-stream'})
-                            data = stream_path.read_bytes()
-                            if (len(data) != terminal.get(field + '_bytes')
-                                    or hashlib.sha256(data).hexdigest() != terminal.get(field + '_sha256')):
-                                raise StageFailure('a retained acquisition stream disagrees with its '
-                                                   'terminal record: ' + stream_path.name,
-                                                   fields={'case': identity, 'boundary': field + '-stream'})
-                            streams[field] = data
-                        # The reported verdict is the one this acquisition recorded, and
-                        # the envelope's acquisition record is this terminal.
-                        verdict = verdicts.get(identity)
-                        if verdict is None:
-                            raise StageFailure(
-                                'the readback reported no verdict for a retained case: ' + identity,
-                                fields={'case': identity, 'boundary': 'verdict-present'})
-                        if (verdict.get('acquisition') or {}) != terminal:
-                            raise StageFailure(
-                                'a retained terminal acquisition differs from the verdict acquisition: '
-                                + identity,
-                                fields={'case': identity, 'boundary': 'terminal-equality'})
-                        # The whole-terminal equality above already covers the process fields.
-                        # The retained response is the verdict the readback reported, with the
-                        # reader's own added fields kept separate from the endpoint contract.
-                        # The response is parsed from the buffer already verified against the
-                        # terminal record, so the bytes read and the bytes parsed are one.
-                        operation = 'response-parse'
-                        lines = [line for line in streams['stdout'].decode('utf-8').splitlines()
-                                 if line.strip()]
-                        if len(lines) != 1:
-                            raise StageFailure('a retained response is not one line: ' + identity,
-                                               fields={'case': identity, 'boundary': 'response-line'})
-                        response = json.loads(lines[0])
-                        if (response.get('id') != identity
-                                or response.get('schema') != 'capacity-controls/classify-verdict@1'):
-                            raise StageFailure('a retained response names another case or schema: '
-                                               + identity,
-                                               fields={'case': identity, 'boundary': 'response-identity'})
-                        bind_response_to_verdict(response, verdict, identity)
-                    except StageFailure:
-                        raise
-                    except BaseException as error:
-                        # The case and the operation being performed are attached to
-                        # the original exception, which stays the reported cause.
-                        reported = dict(getattr(error, 'fields', None) or {})
-                        reported.setdefault('case', identity)
-                        reported.setdefault('operation', operation)
-                        setattr(error, 'fields', reported)
-                        raise
-                if uncovered:
-                    raise StageFailure('the acquisition omits selected cases: '
-                                       + repr(uncovered),
-                                       fields={'cases': list(uncovered),
-                                               'boundary': 'terminal-record'})
-                return {'cases_checked': len(expected_ids),
-                        'cases_uncovered': list(uncovered),
-                        'acquisition_directory': str(audit)}
-
-            bound_cases = attempt(run, record, 'archive-case-acquisition',
-                                  bind_case_acquisitions,
-                                  expected_cases=len(expected_ids),
-                                  acquisition_directory=str(audit),
-                                  scope='each selected case retains its request, both raw '
-                                        'streams and terminal record, bound to its verdict')
+            verdicts = {str(verdict.get('id')): verdict
+                        for verdict in (envelope.get('classifier') or {})
+                        .get('verdicts') or []}
+            bound_cases = attempt(
+                run, record, 'archive-case-acquisition',
+                lambda: bind_case_acquisitions(audit, expected_ids, verdicts),
+                expected_cases=len(expected_ids),
+                acquisition_directory=str(audit),
+                scope='each selected case retains its request, both raw streams and '
+                      'terminal record, bound to its verdict')
             # Each later phase settles its own result where it happens, so a failure
             # in one of them is recorded at that boundary with what it did reach.
             def compare_inventory():

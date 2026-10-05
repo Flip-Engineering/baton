@@ -1482,21 +1482,24 @@ class PackageGateReceipt(unittest.TestCase):
                   'law': case['law'], 'match': True, 'qualified': True,
                   'evidence_verified': True, 'verifier': historical}
 
+        asked_ids = []
+
         def substitute(argv, **kwargs):
-            _ = argv
-            handle = kwargs.get('stdout')
-            # The classifier writes its request beside the stream it is about to
-            # capture, so the answer names the case that was asked about.
-            asked = {}
-            try:
-                request_path = pathlib.Path(str(getattr(handle, 'name', '')))
-                asked = json.loads(request_path.read_text())['case']
-            except Exception:
-                asked = {}
-            identity = asked.get('id', case['id'])
-            law = asked.get('law', case['law'])
+            if '--classify' not in argv:
+                # Every other child process, including the snapshot's Git reads, keeps
+                # its real transport: only the classifier call is answered here.
+                return original_run(argv, **kwargs)
+            # The classifier supplies the request bytes it also retains, and that
+            # request is the only source of the case identity.
+            request = json.loads(kwargs['input'].decode('utf-8'))
+            asked = request.get('case') or {}
+            identity = asked.get('id')
+            self.assertIsNotNone(identity, 'the classifier request named no case')
+            asked_ids.append(identity)
+            law = asked.get('law')
             payload = (json.dumps(dict(answer, id=identity, law=law,
                                        attributed_law=law)) + '\n').encode()
+            handle = kwargs.get('stdout')
             if hasattr(handle, 'write'):
                 handle.write(payload)
                 handle.flush()
@@ -1518,6 +1521,9 @@ class PackageGateReceipt(unittest.TestCase):
             ROOT / 'bend2/test/capacity-controls-positive-recipe.py')
         recipe = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(recipe)
+        expected_ids = sorted(str(verdict['id']) for verdict in verdicts)
+        self.assertEqual(sorted(asked_ids), expected_ids)
+        by_id = {str(verdict['id']): verdict for verdict in verdicts}
         for verdict in verdicts:
             identity = str(verdict['id'])
             stem = PACKAGE.acquisition_stem(identity)
@@ -1528,6 +1534,34 @@ class PackageGateReceipt(unittest.TestCase):
                              PACKAGE.require_verifier_closure({'verifier': response['verifier']},
                                                               identity))
             recipe.bind_response_to_verdict(response, verdict, identity)
+
+        # The recipe's own acquisition loop runs over these writer-produced files:
+        # the request bytes, both raw streams and the terminal record per case.
+        run_root = self.home / 'recipe-run'
+        run_root.mkdir()
+        record = []
+        recipe.attempt(run_root, record, 'archive-case-acquisition',
+                       lambda: recipe.bind_case_acquisitions(audit, expected_ids, by_id),
+                       expected_cases=len(expected_ids))
+        rows = json.loads((run_root / 'run.json').read_text())['children']
+        self.assertEqual(rows[0]['outcome'], 'verified')
+        self.assertEqual(rows[0]['cases_checked'], len(expected_ids))
+        self.assertEqual(rows[0]['cases_uncovered'], [])
+
+        # An equal dual spelling traverses the same composition, and a conflicting
+        # one is refused by the composition authority.
+        dual = dict(historical)
+        for member in PACKAGE.VERIFIER_MEMBERS:
+            dual[member] = self.verifier[member]
+        answer['verifier'] = dual
+        PACKAGE.controls_evidence(self.full_evidence(), PACKAGE.snapshot(), self.compiler(),
+                                  audit=self.home / 'dual-audit')
+        conflict = dict(dual)
+        conflict['classifier_module_sha256'] = 'b' * 64
+        answer['verifier'] = conflict
+        with self.assertRaises(RuntimeError):
+            PACKAGE.controls_evidence(self.full_evidence(), PACKAGE.snapshot(),
+                                      self.compiler(), audit=self.home / 'conflict-audit')
 
     def test_the_reader_accepts_the_historical_classifier_spelling(self):
         """A run naming only the historical spelling still reads."""

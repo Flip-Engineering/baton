@@ -215,26 +215,61 @@ class RecipeSettlement(unittest.TestCase):
             self.add_member(archive, 'bend2/manifest.json', b'{}')
         target = self.run / 'cleanup-readback'
         target.mkdir()
-        calls = []
-        original_write = RECIPE.write_record
+        original_replace = RECIPE.os.replace
+        original_unlink = RECIPE.os.unlink
 
-        def writing(run, record):
-            calls.append(len(record))
-            value = original_write(run, record)
-            if len(calls) == 1:
-                # The next replacement cannot happen, and the cleanup cannot remove
-                # the staged path because it is a directory.
-                (run / 'run.json.next').mkdir()
-            return value
+        def failing_replace(source, destination):
+            raise OSError('the replacement could not be made')
 
-        RECIPE.write_record = writing
-        self.addCleanup(setattr, RECIPE, 'write_record', original_write)
+        def failing_unlink(path, **kwargs):
+            raise OSError('the staged file could not be removed')
+
+        RECIPE.os.replace = failing_replace
+        RECIPE.os.unlink = failing_unlink
+        self.addCleanup(setattr, RECIPE.os, 'replace', original_replace)
+        self.addCleanup(setattr, RECIPE.os, 'unlink', original_unlink)
         with self.assertRaises(RuntimeError) as raised:
             RECIPE.extract_archive(self.run, self.record, archive_path, target)
+        # The replacement fails, the staged file exists, and its cleanup fails too.
         self.assertIsNotNone(raised.exception.cleanup_error)
+        self.assertIn('replacement could not be made', str(raised.exception))
         self.assertEqual(raised.exception.stage, 'archive-extracted')
         self.assertEqual(raised.exception.stage_outcome, 'verified')
         self.assertEqual(raised.exception.stage_value['members'], 1)
+        row = next(row for row in self.rows() if row['name'] == 'archive-extracted')
+        self.assertEqual(row['outcome'], 'attempted')
+
+    def test_archive_work_and_recording_failures_keep_the_primary_object(self):
+        # The extraction work fails, its failure row cannot be written, and that
+        # write cannot be cleaned up: the original work exception stays primary and
+        # carries the ordered secondary observations.
+        archive_path = self.run / 'primary-archive.tar.gz'
+        with tarfile.open(archive_path, 'w:gz') as archive:
+            self.add_member(archive, 'bend2/manifest.json', b'{}')
+            self.add_member(archive, 'bend2/controls-evidence/bend2.json', b'{}')
+        target = self.run / 'primary-readback'
+        (target / 'bend2').mkdir(parents=True)
+        (target / 'bend2/controls-evidence').write_bytes(b'occupied')
+        original_write = RECIPE.write_record
+        calls = []
+
+        def writing(run, record):
+            calls.append(len(record))
+            if len(calls) > 1:
+                raise RuntimeError('the run record could not be written: blocked')
+            return original_write(run, record)
+
+        RECIPE.write_record = writing
+        self.addCleanup(setattr, RECIPE, 'write_record', original_write)
+        with self.assertRaises(OSError) as raised:
+            RECIPE.extract_archive(self.run, self.record, archive_path, target)
+        primary = raised.exception
+        # The work failure stays the primary object: the recording failure is a
+        # secondary observation attached to it.
+        self.assertIsInstance(primary, OSError)
+        self.assertNotIsInstance(primary, RuntimeError)
+        self.assertIsInstance(primary.record_error, RuntimeError)
+        self.assertIn('could not be written', str(primary.record_error))
         row = next(row for row in self.rows() if row['name'] == 'archive-extracted')
         self.assertEqual(row['outcome'], 'attempted')
 
@@ -341,6 +376,75 @@ class RecipeSettlement(unittest.TestCase):
         self.assertEqual(row['boundary'], 'retained-metadata')
         self.assertEqual(row['metadata_member'], 'reduction.json')
         self.assertEqual(row['metadata_verified'], ['inventory.json'])
+
+    def test_a_metadata_hash_read_failure_is_an_accounting_failure(self):
+        # The verification read itself fails, which is an accounting failure rather
+        # than a mismatch, and the row keeps the copies, the destination reached and
+        # the accounting text while the original read error stays primary.
+        package = RECIPE.package_handle()
+        archived = self.run / 'hash-archived'
+        archived.mkdir()
+        documents = {}
+        for name in package.ARCHIVE_METADATA:
+            (archived / name).write_bytes(json.dumps({'name': name}).encode())
+            documents[name] = RECIPE.digest(archived / name)
+        retained = self.run / 'hash-archive.tar.gz'
+        retained.write_bytes(b'archive bytes')
+        digest = RECIPE.digest(retained)
+        broken = archived / 'reduction.json'
+        original_digest = RECIPE.digest
+
+        def failing_digest(path):
+            if pathlib.Path(path) == broken:
+                raise OSError('the metadata document could not be read')
+            return original_digest(path)
+
+        RECIPE.digest = failing_digest
+        self.addCleanup(setattr, RECIPE, 'digest', original_digest)
+        with self.assertRaises(OSError) as raised:
+            RECIPE.attempt(self.run, self.record, 'metadata-hash-stage',
+                           lambda: RECIPE.stage_metadata(self.run, self.record, archived,
+                                                         retained, self.run / 'hash-metadata',
+                                                         digest, documents),
+                           archive=retained.name)
+        # The read failure is attached as an accounting observation, and the row
+        # keeps it while the original read error stays the raised object.
+        self.assertTrue(hasattr(raised.exception, 'accounting_error'))
+        row = next(row for row in self.rows() if row['name'] == 'metadata-hash-stage')
+        self.assertEqual(row['outcome'], 'failed')
+        self.assertEqual(row['documents_copied'], sorted(documents))
+        self.assertNotIn('copy_attempted', row)
+        self.assertNotIn('metadata_verifying', row)
+        self.assertEqual(row['accounting_error_text'],
+                         repr(raised.exception.accounting_error))
+        self.assertIn('could not be read', row['failure'])
+
+    def test_a_partial_envelope_write_is_a_write_operation_failure(self):
+        # The write itself fails after writing part of the payload, so the row names
+        # the write operation, the file is present and its partial size is kept.
+        blocked = self.run / 'partial-envelope.json'
+        original_write_text = RECIPE.pathlib.Path.write_text
+
+        def partial_write(path, data, **kwargs):
+            if pathlib.Path(path) == blocked:
+                original_write_text(path, str(data)[:40], **kwargs)
+                raise OSError('the envelope write was interrupted')
+            return original_write_text(path, data, **kwargs)
+
+        RECIPE.pathlib.Path.write_text = partial_write
+        self.addCleanup(setattr, RECIPE.pathlib.Path, 'write_text', original_write_text)
+        with self.assertRaises(OSError):
+            RECIPE.attempt(self.run, self.record, 'partial-envelope-stage',
+                           lambda: RECIPE.write_envelope(self.run, self.record,
+                                                         {'reduction_sha256': 'a' * 64},
+                                                         blocked),
+                           document='archive-envelope.json')
+        row = next(row for row in self.rows() if row['name'] == 'partial-envelope-stage')
+        self.assertEqual(row['outcome'], 'failed')
+        self.assertEqual(row['operation'], 'envelope-write')
+        self.assertTrue(row['envelope_present'])
+        self.assertEqual(row['envelope_bytes'], blocked.stat().st_size)
+        self.assertGreater(row['envelope_bytes'], 0)
 
     def test_the_envelope_caller_names_the_operation_it_reached(self):
         # A written envelope reports its digest, and a write that cannot happen
