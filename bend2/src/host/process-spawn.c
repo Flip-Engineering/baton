@@ -312,6 +312,14 @@ static int br_lifetime(const char *directory,int *ended) {
 }
 static int br_watch_file(int spool,const char *path);
 static void br_watch_drain(int fd);
+static void br_orphan_exit(BatonRetained *retained) {
+  char *path=br_path(retained->directory,"status");FILE *file=path?fopen(path,"r"):NULL;free(path);
+  int status;
+  if(file && fscanf(file,"%d",&status)==1){retained->status=status;retained->unknown=0;}
+  else retained->unknown=1;
+  if(file)fclose(file);
+  retained->exited=1;retained->version++;
+}
 static int br_orphan(BatonRetained *retained) {
   if(retained->guard<0)return EBUSY;
   if(retained->watch<0) {
@@ -325,23 +333,16 @@ static int br_orphan(BatonRetained *retained) {
     if(ended)retained->exited=1;
   }
   retained->orphan=1;retained->input_closed=1;retained->version++;
-  if(retained->life<0)retained->exited=1;
+  /* Qualify ended status before attachment or the locked caller publishes it. */
+  if(retained->exited || retained->life<0)br_orphan_exit(retained);
   return 0;
-}
-static void br_orphan_exit(BatonRetained *retained) {
-  char *path=br_path(retained->directory,"status");FILE *file=path?fopen(path,"r"):NULL;free(path);
-  int status;
-  if(file && fscanf(file,"%d",&status)==1){retained->status=status;retained->unknown=0;}
-  else retained->unknown=1;
-  if(file)fclose(file);
-  retained->exited=1;retained->version++;
 }
 static void *br_follow(void *argument) {
   BatonRetained *retained=argument;
   for(;;) {
     pthread_mutex_lock(&retained->state);
     if(retained->exited) {
-      br_orphan_exit(retained);pthread_cond_broadcast(&retained->changed);
+      pthread_cond_broadcast(&retained->changed);
       pthread_mutex_unlock(&retained->state);return NULL;
     }
     pthread_mutex_unlock(&retained->state);
@@ -613,11 +614,13 @@ static void baton_retained_call(BatonProcessCall *call) {
     pthread_mutex_lock(&retained->state);
     while(!retained->exited && !retained->error) pthread_cond_wait(&retained->changed,&retained->state);
     call->error=retained->error;int status=retained->status;
+    int unknown=retained->unknown;
+    int not_started=retained->prepared && (retained->snapshot.phase==BR_CANCELLED || retained->snapshot.phase==BR_UNSTARTED);
     pthread_mutex_unlock(&retained->state);
     if(call->error) return;
     char text[64];
-    if(retained->prepared && (retained->snapshot.phase==BR_CANCELLED || retained->snapshot.phase==BR_UNSTARTED))snprintf(text,sizeof(text),"not started");
-    else if(retained->unknown) snprintf(text,sizeof(text),"unknown after keeper loss");
+    if(not_started)snprintf(text,sizeof(text),"not started");
+    else if(unknown) snprintf(text,sizeof(text),"unknown after keeper loss");
     else if(WIFEXITED(status)) snprintf(text,sizeof(text),"exit %d",WEXITSTATUS(status));
     else if(WIFSIGNALED(status)) snprintf(text,sizeof(text),"signal %d",WTERMSIG(status));
     else {call->error=ECHILD;return;}
