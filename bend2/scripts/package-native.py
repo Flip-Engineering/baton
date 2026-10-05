@@ -593,7 +593,9 @@ def runtime_list_digest(files):
                 'A runtime inventory path escapes its root: ' + raw)
         canonical = relative.as_posix()
         require(canonical == raw and '//' not in canonical and not canonical.startswith('./')
-                and not canonical.endswith('/') and '' not in relative.parts,
+                and not canonical.endswith('/') and '' not in relative.parts
+                and canonical not in ('.', '..')
+                and '\t' not in canonical and '\n' not in canonical,
                 'A runtime inventory path is not canonical: ' + raw)
         digest = entry['sha256']
         require(len(digest) == 64 and all(character in '0123456789abcdef' for character in digest),
@@ -617,8 +619,14 @@ def runtime_set_digest(compiler):
     for path in sorted(runtime.rglob('*')):
         require(not path.is_symlink(),
                 'The installed runtime holds a symlink: ' + str(path.relative_to(runtime)))
-        if path.is_file():
-            rows.append(path.relative_to(runtime).as_posix() + '\t' + sha256(path))
+        if not path.is_file():
+            continue
+        name = path.relative_to(runtime).as_posix()
+        require(name not in ('.', '..') and '\t' not in name and '\n' not in name
+                and '' not in PurePosixPath(name).parts,
+                'An installed runtime file name is not canonical: ' + name)
+        rows.append(name + '\t' + sha256(path))
+    require(rows, 'The installed runtime holds no file')
     return hashlib.sha256('\n'.join(sorted(rows)).encode('utf-8')).hexdigest()
 
 
@@ -1309,10 +1317,31 @@ def controls_evidence(directory, initial, compiler, audit=None, destination=None
                 'The archived inventory document names another schema')
         require(archived_reduction.get('schema') == REDUCTION_SCHEMA,
                 'The archived reduction document names another schema')
-        require(archived_inventory.get('inventory_sha256') == inventory['inventory_sha256'],
+        archived_members = archived_inventory.get('members')
+        require(isinstance(archived_members, list) and archived_members,
+                'The archived inventory document holds no member list')
+        recomputed_inventory = hashlib.sha256(
+            json.dumps(archived_members, sort_keys=True,
+                       separators=(',', ':')).encode()).hexdigest()
+        require(recomputed_inventory == archived_inventory.get('inventory_sha256'),
+                'The archived inventory document does not reproduce its own digest')
+        require(recomputed_inventory == inventory['inventory_sha256'],
                 'The archived inventory document does not describe this member graph')
-        require(archived_reduction.get('sha256') == result['reduction']['sha256'],
+        require(archived_members == inventory['members'],
+                'The archived inventory member list differs from the extracted graph')
+        archived_document = archived_reduction.get('document')
+        require(isinstance(archived_document, dict),
+                'The archived reduction document holds no canonical document')
+        recomputed_reduction = hashlib.sha256(
+            json.dumps(archived_document, sort_keys=True,
+                       separators=(',', ':')).encode()).hexdigest()
+        require(recomputed_reduction == archived_reduction.get('sha256'),
+                'The archived reduction document does not reproduce its own digest')
+        require(recomputed_reduction == result['reduction']['sha256'],
                 'The archived reduction document does not match the fresh stable reduction')
+        require(archived_document == result['reduction']['document'],
+                'The archived reduction document differs from the fresh document')
+        result['archived_origin_root'] = archived_inventory.get('root')
     result['inventory_sha256'] = inventory['inventory_sha256']
     result['reduction_sha256'] = result['reduction']['sha256']
     return result

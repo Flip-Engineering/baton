@@ -300,13 +300,17 @@ class PackageGateReceipt(unittest.TestCase):
                 'runtime_set_sha256': PACKAGE.runtime_set_digest(compiler)}
 
     def runtime_rows(self, compiler):
-        row = {'path': 'base.bend',
-               'sha256': hashlib.sha256(b'fixture base library').hexdigest()}
-        return [row]
+        """The rows the installed reader sees, in the shared row contract."""
+        runtime = compiler.parent.parent / 'bend2'
+        rows = []
+        for path in sorted(runtime.rglob('*')):
+            if path.is_file():
+                rows.append({'path': path.relative_to(runtime).as_posix(),
+                             'sha256': hashlib.sha256(path.read_bytes()).hexdigest()})
+        return rows
 
     def runtime_rows_digest(self, compiler):
-        rows = [row['path'] + '\t' + row['sha256'] for row in self.runtime_rows(compiler)]
-        return hashlib.sha256('\n'.join(sorted(rows)).encode('utf-8')).hexdigest()
+        return PACKAGE.runtime_set_digest(compiler)
 
     def runtime_fixture(self, compiler):
         return {'directory': str(compiler.parent.parent), 'files': self.runtime_rows(compiler),
@@ -406,8 +410,15 @@ class PackageGateReceipt(unittest.TestCase):
         return self.evidence()
 
     def compiler(self):
-        path = self.home / 'compiler'
+        """A materialized toolchain: bin/bend beside a real bend2 library directory."""
+        home = self.home / 'toolchain-home'
+        path = home / 'bin' / 'bend'
+        path.parent.mkdir(parents=True, exist_ok=True)
         path.write_bytes(b'fixture compiler')
+        library = home / 'bend2' / 'base.bend'
+        library.parent.mkdir(parents=True, exist_ok=True)
+        if not library.exists():
+            library.write_bytes(b'fixture installed library bytes\n')
         return path
 
     def test_complete_controls_evidence_is_accepted(self):
