@@ -62,20 +62,15 @@ def child(record, name, argv, run, stdin=None):
             entry[stream] = {'path': str(path.relative_to(run)) if path.exists() else None,
                              'bytes': path.stat().st_size if path.exists() else 0,
                              'sha256': digest(path) if path.exists() else None}
-        for position, existing in enumerate(record):
-            if existing.get('name') == name:
-                record[position] = entry
-                break
-        else:
-            record.append(entry)
-        (run / 'run.json').write_text(json.dumps({'children': record}, indent=2) + '\n')
+        settle(run, record, name, entry.get('outcome', 'failed'), **{
+            key: value for key, value in entry.items() if key not in ('name', 'outcome')})
         raise
     for stream, path in (('stdout', stdout), ('stderr', stderr)):
         entry[stream] = {'path': str(path.relative_to(run)) if path.exists() else None,
                          'bytes': path.stat().st_size if path.exists() else 0,
                          'sha256': digest(path) if path.exists() else None}
-    record.append(entry)
-    (run / 'run.json').write_text(json.dumps({'children': record}, indent=2) + '\n')
+    settle(run, record, name, entry.get('outcome', 'completed'), **{
+        key: value for key, value in entry.items() if key not in ('name', 'outcome')})
     return entry
 
 
@@ -141,7 +136,14 @@ def attempt(run, record, name, work, **declared):
             setattr(error, 'record_error', repr(record_error))
             raise error from record_error
         raise
-    settle(run, record, name, 'verified', **(value if isinstance(value, dict) else {}))
+    try:
+        settle(run, record, name, 'verified', **(value if isinstance(value, dict) else {}))
+    except BaseException as record_error:
+        # The work completed; a failure to record that must not lose the outcome.
+        setattr(record_error, 'stage', name)
+        setattr(record_error, 'stage_outcome', 'completed')
+        setattr(record_error, 'stage_value', value if isinstance(value, dict) else None)
+        raise
     return value
 
 
@@ -189,11 +191,9 @@ def main():
     compiler = child(record, 'precondition-compiler', [str(args.bend), 'version'], run)
     version = ((run / compiler['stdout']['path']).read_text().strip()
                if compiler['exit_code'] == 0 else None)
-    record.append({'name': 'preconditions', 'cwd': str(ROOT), 'git_status': status,
-                   'bend': str(args.bend), 'bend_version': version,
-                   'compiler_archive': str(args.compiler_archive),
-                   'node': shutil.which('node')})
-    (run / 'run.json').write_text(json.dumps({'children': record}, indent=2) + '\n')
+    settle(run, record, 'preconditions', 'observed', cwd=str(ROOT), git_status=status,
+           bend=str(args.bend), bend_version=version,
+           compiler_archive=str(args.compiler_archive), node=shutil.which('node'))
     if git['exit_code'] != 0:
         raise SystemExit('the checkout status could not be read: ' + repr(git['exit_code']))
     if status:
@@ -235,13 +235,11 @@ def main():
                                            audit=run / 'audit',
                                            destination=run / 'payload-closure')
     except BaseException as error:
-        record.append({'name': 'consume', 'outcome': 'refused', 'reason': repr(error)})
-        (run / 'run.json').write_text(json.dumps({'children': record}, indent=2) + '\n')
+        settle(run, record, 'consume', 'refused', reason=repr(error))
         raise
-    record.append({'name': 'consume', 'outcome': 'qualified',
+    settle(run, record, 'consume', 'qualified', **{
                    'inventory_sha256': result['inventory_sha256'],
                    'reduction_sha256': result['reduction_sha256']})
-    (run / 'run.json').write_text(json.dumps({'children': record}, indent=2) + '\n')
     reduction_artifact = run / 'reduction.json'
     reduction_artifact.write_text(json.dumps(result['reduction'], indent=2) + '\n')
     settle(run, record, 'reduction-artifact', 'verified', artifact='reduction.json',
@@ -261,12 +259,10 @@ def main():
         relocated_result = package.controls_evidence(relocated, package.snapshot(), args.bend,
                                                      audit=run / 'relocate' / 'audit')
     except BaseException as error:
-        record.append({'name': 'relocated-consume', 'outcome': 'refused', 'reason': repr(error)})
-        (run / 'run.json').write_text(json.dumps({'children': record}, indent=2) + '\n')
+        settle(run, record, 'relocated-consume', 'refused', reason=repr(error))
         raise
-    record.append({'name': 'relocated-consume', 'outcome': 'qualified',
+    settle(run, record, 'relocated-consume', 'qualified', **{
                    'reduction_sha256': relocated_result['reduction_sha256']})
-    (run / 'run.json').write_text(json.dumps({'children': record}, indent=2) + '\n')
     if relocated_result['reduction_sha256'] != result['reduction_sha256']:
         raise SystemExit('the relocated closure produced a different stable reduction')
     (run / 'relocated-reduction.json').write_text(
@@ -347,6 +343,8 @@ def main():
             expected_ids = sorted(str(verdict.get('id'))
                                   for verdict in (envelope.get('classifier') or {})
                                   .get('verdicts') or [])
+            named = ' '.join(records)
+            uncovered = [identity for identity in expected_ids if identity not in named]
             records = sorted(entry.name for entry in audit.rglob('*') if entry.is_file())
             if len(records) < len(expected_ids) or not records:
                 raise SystemExit('the archived readback retained fewer acquisition records than '
@@ -363,6 +361,15 @@ def main():
             metadata.mkdir(exist_ok=True)
             for name in package.ARCHIVE_METADATA:
                 shutil.copyfile(archived / name, metadata / name)
+            # The retained copies are checked against the admitted identity, not
+            # only the reader's own later observation.
+            kept_archive = digest(run / 'original-archive.tar.gz')
+            if kept_archive != args.expected_archive_sha256:
+                raise SystemExit('the retained archive copy differs from the admitted identity')
+            for name in package.ARCHIVE_METADATA:
+                if digest(metadata / name) != documents[name]:
+                    raise SystemExit('the retained metadata copy differs from the admitted '
+                                     'identity: ' + name)
             envelope_path = run / 'archive-envelope.json'
             envelope_path.write_text(json.dumps(envelope, indent=2) + '\n')
             return {'root': selected_root, 'manifest_member': manifest_member,
@@ -373,6 +380,7 @@ def main():
                     'extracted_acquisition': str(audit),
                     'extracted_acquisition_records': len(records),
                     'expected_verdict_ids': expected_ids,
+                    'audit_records_uncovered_ids': uncovered,
                     'audit_inventory_sha256': audit_inventory['inventory_sha256'],
                     'envelope': str(envelope_path.relative_to(run)),
                     'envelope_sha256': digest(envelope_path),
@@ -405,7 +413,7 @@ def main():
         attempt(run, record, 'receipt-validation', observe_receipt,
                 receipt=str(args.receipt), receipt_sha256=args.receipt_sha256,
                 output_scope='gates receipts and logs under ' + str(run / 'receipt-logs'))
-    (run / 'run.json').write_text(json.dumps({'children': record}, indent=2) + '\n')
+    settle(run, record, 'recipe', 'complete', children=len(record))
     print('recipe complete; child receipts and streams are under ' + str(run))
 
 

@@ -1274,6 +1274,58 @@ class PackageGateReceipt(unittest.TestCase):
         self.assertEqual(calls, [])
         parked.rename(missing)
 
+    def test_a_faithful_archived_graph_passes_admission(self):
+        """One coherent archived graph admits without any classifier call."""
+        calls = []
+        original = PACKAGE.classify_control
+        self.addCleanup(setattr, PACKAGE, 'classify_control', original)
+        PACKAGE.classify_control = lambda *args, **kwargs: calls.append(args) or {}
+
+        envelope = self.home / 'archive-positive'
+        envelope.mkdir()
+        member = envelope / 'baseline.stdout'
+        member.write_bytes(b'build output\n')
+        row = {'path': 'baseline.stdout', 'bytes': member.stat().st_size,
+               'sha256': hashlib.sha256(member.read_bytes()).hexdigest()}
+        inventory = {'schema': PACKAGE.INVENTORY_SCHEMA, 'root': str(envelope),
+                     'members': [row]}
+        inventory['inventory_sha256'] = hashlib.sha256(json.dumps(
+            inventory['members'], sort_keys=True, separators=(',', ':')).encode()).hexdigest()
+        document = {'cases': 1}
+        reduction = {'schema': PACKAGE.REDUCTION_SCHEMA, 'document': document,
+                     'sha256': hashlib.sha256(json.dumps(
+                         document, sort_keys=True, separators=(',', ':')).encode()).hexdigest()}
+        (envelope / 'inventory.json').write_text(json.dumps(inventory))
+        (envelope / 'reduction.json').write_text(json.dumps(reduction))
+        bound = {name: hashlib.sha256((envelope / name).read_bytes()).hexdigest()
+                 for name in PACKAGE.ARCHIVE_METADATA}
+
+        admitted, raw, admitted_inventory, admitted_reduction = (
+            PACKAGE.admit_archived_documents(envelope, bound))
+        self.assertEqual(admitted_inventory['inventory_sha256'], inventory['inventory_sha256'])
+        self.assertEqual(admitted_reduction['sha256'], reduction['sha256'])
+        self.assertEqual(sorted(raw), sorted(PACKAGE.ARCHIVE_METADATA))
+        self.assertEqual(PACKAGE.require_current_metadata(envelope, admitted),
+                         {name: bound[name] for name in sorted(bound)})
+        self.assertEqual(calls, [])
+
+    def test_the_reader_accepts_the_historical_classifier_spelling(self):
+        """A run naming only the historical spelling still reads."""
+        member = 'classifier_module_sha256'
+        historical = {key: value for key, value in self.ordinary_verifier.items()
+                      if key != member}
+        historical['classify_module_sha256'] = self.ordinary_verifier[member]
+        run_root = self.home / 'run-historical'
+        index = self.ordinary_index(run_root)
+        index.write_text(json.dumps({**_load(index), 'run': {
+            **_load(index)['run'], 'verifier': historical}}))
+        self.write_logs(envelope=self.envelope(index, run_root=run_root,
+                                               verifier=historical))
+        result = PACKAGE.validation(self.logs, None, None, self.compiler())
+        self.assertEqual(result['ordinary']['verifier'], historical)
+        self.assertTrue(result['ordinary']['run_identity_qualified'])
+        self.assertEqual(result['ordinary']['verifier_unavailable'], [])
+
     def test_the_ordinary_index_layout_and_run_root_are_checked(self):
         run_root = self.home / 'declared-run'
         path = self.ordinary_index(run_root)
