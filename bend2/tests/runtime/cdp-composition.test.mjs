@@ -321,15 +321,30 @@ test('same-epoch assembly over a real debuggee through the production session', 
     const later = await laterStopPromise;
     const afterResume = liveFromSnapshot(runtime, session.snapshot());
     assert.notEqual(afterResume.epoch, identity.epoch, 'session-owned epoch advanced');
-    const expectedCondition = later.observed ? 'staleReference' : 'refStopNotLive';
+    // Facade ordering: after a successful resume while the target runs, a
+    // pause-scoped kind refuses refOutsidePause BEFORE any epoch comparison;
+    // a real observed later stop makes the live-stop state admit the epoch
+    // check instead, which then refuses staleReference. The expected
+    // condition is chosen from the actual observed state.
+    const expectedCondition = later.observed ? 'staleReference' : 'refOutsidePause';
     const stateFirst = binding.sample();
-    assert.equal(stateFirst.condition, expectedCondition, `the state-first refusal names the actual condition (${later.timedOut ? 'no later stop observed' : 'later stop observed'})`);
+    assert.equal(stateFirst.condition, expectedCondition, `the state-first refusal names the actual condition (${later.timedOut ? 'no later stop observed: running, outside a stop' : 'later stop observed'})`);
     evidence.afterResume = { ...afterResume, laterStopTimedOut: later.timedOut, stateFirstCondition: stateFirst.condition };
 
-    // The production release path runs and its observed result is asserted;
-    // the finally fallback only covers paths that never reached it.
+    // The production release path runs and its observed result envelope is
+    // retained and required to be present; child signaling is verified by
+    // the OBSERVED child end below, not by the acknowledgement alone.
     releaseObserved = await session.execute('release', { effects: ['controlRuntime'], onRelease: 'terminate', signal: 'SIGKILL' });
-    assert.ok(releaseObserved, 'release acknowledged');
+    assert.ok(releaseObserved !== null && releaseObserved !== undefined, 'release returned an observed result envelope');
+    evidence.releaseResult = releaseObserved;
+
+    // The session's frame trace, when the surface exposes one, is retained
+    // with the evidence.
+    try {
+      if (typeof session.frames === 'function') evidence.frameTrace = session.frames();
+    } catch (err) {
+      evidence.frameTraceError = String(err.message ?? err);
+    }
 
     evidence.runtimeEvidence = runtimeEvidence({ runtime, epoch: identity.epoch, thread: 'main:0', script: frame0.location?.scriptId ?? null, generated: null, original: null });
   } catch (err) {
@@ -348,11 +363,12 @@ test('same-epoch assembly over a real debuggee through the production session', 
     } catch (err) {
       closureFailures.push(`session.close: ${String(err.message ?? err)}`);
     }
-    // Direct owned-child termination is the FALLBACK: it runs only when the
-    // production release path has not already ended the child.
+    // Direct owned-child termination is the FALLBACK and follows actual
+    // child liveness, not the presence of a release acknowledgement: an
+    // acknowledgement is not an observed exit.
     try {
       const child = run.child;
-      if (child && child.exitCode === null && child.signalCode === null && !releaseObserved) child.kill('SIGKILL');
+      if (child && child.exitCode === null && child.signalCode === null) child.kill('SIGKILL');
     } catch (err) {
       closureFailures.push(`child fallback kill: ${String(err.message ?? err)}`);
     }

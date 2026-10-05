@@ -480,18 +480,23 @@ function localMapPath(sourceMapURL, generatedPath) {
 //   admittedRoots  absolute directories forming the admitted read closure,
 //                  used by the default enforced reader
 //   readAdmitted   optional composer capability (path) => {bytes, identity}
-//                  that enforces the closure itself; when absent the default
-//                  createAdmittedFileReader({admittedRoots}) enforces it
+//                  that owns the closure enforcement AND the identity
+//                  capture: the returned identity must be a complete object
+//                  with path, realPath, dev, ino and size - an admitted
+//                  descriptor capability captures that identity from the
+//                  admitted descriptor BEFORE the bytes are read and states
+//                  its capture limits; a capability that returns no or an
+//                  incomplete identity refuses 'readCapabilityIdentityMissing'
 //   expectedDigest optional SHA-256 the map bytes must match; without it the
 //                  recorded digest is provenance only
 // Returns {sourceMapURL, origin:'file'|'embedded', path?, input?, digest,
 // digestVerified, bytes, map} or a refusal {condition, sourceMapURL, ...}.
 // Refusal conditions: 'remoteMapUnavailable', 'mapOutsideAdmittedRoots',
 // 'mapReplacedDuringRead', 'missingMap', 'mapReadFailed',
-// 'mapBaseUnrecorded', 'mapDigestMismatch', 'malformedDataUrl',
-// 'malformedMap', 'unsupportedVersion', 'badVLQ', 'coordinateRangeExceeded',
-// 'sourceUrlOutOfRange', 'nameOutOfRange'. This function does not throw
-// refusal conditions.
+// 'mapBaseUnrecorded', 'mapDigestMismatch', 'readCapabilityIdentityMissing',
+// 'malformedDataUrl', 'malformedMap', 'unsupportedVersion', 'badVLQ',
+// 'coordinateRangeExceeded', 'sourceUrlOutOfRange', 'nameOutOfRange'. This
+// function does not throw refusal conditions.
 export function loadSourceMap({ sourceMapURL, generatedPath = null, admittedRoots = [], readAdmitted, expectedDigest = null }) {
   if (typeof sourceMapURL !== 'string' || sourceMapURL === '') {
     return { condition: 'missingMap', sourceMapURL: sourceMapURL ?? null };
@@ -519,6 +524,17 @@ export function loadSourceMap({ sourceMapURL, generatedPath = null, admittedRoot
       return { condition: err.condition, sourceMapURL, path: mapPath ?? null, detail: err.message };
     }
     return { condition: 'mapReadFailed', sourceMapURL, path: mapPath ?? null, detail: String(err) };
+  }
+  if (!read || typeof read !== 'object' || !read.identity || typeof read.identity !== 'object' ||
+      typeof read.identity.realPath !== 'string' ||
+      typeof read.identity.dev === 'undefined' || typeof read.identity.ino === 'undefined' ||
+      typeof read.identity.size === 'undefined') {
+    return {
+      condition: 'readCapabilityIdentityMissing',
+      sourceMapURL,
+      path: mapPath ?? null,
+      detail: 'an injected read capability must capture an admitted descriptor identity (path, realPath, dev, ino, size) before the bytes are read and state its capture limits',
+    };
   }
   try {
     const digest = sha256Hex(read.bytes);
