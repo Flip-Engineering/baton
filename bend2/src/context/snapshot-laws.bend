@@ -166,3 +166,21 @@ law context_snapshot_a_shared_plan_binding_holds:
 
 def context_snapshot_a_shared_plan_binding_holds():
   {==}
+
+law context_snapshot_a_join_with_the_same_source_and_catalog_binding_holds:
+  {Snap.join_binding("src-a", "src-a", "cat-a", "cat-a") == Snap.BShare{} : Snap.Binding}
+
+def context_snapshot_a_join_with_the_same_source_and_catalog_binding_holds():
+  {==}
+
+law context_snapshot_a_join_across_source_snapshots_refuses:
+  {Snap.join_binding("src-a", "src-b", "cat-a", "cat-a") == Snap.BRefused{"a multi-engine join requires identical shared source identities and the named database snapshot"} : Snap.Binding}
+
+def context_snapshot_a_join_across_source_snapshots_refuses():
+  {==}
+
+law context_snapshot_a_join_across_catalog_snapshots_refuses:
+  {Snap.join_binding("src-a", "src-a", "cat-a", "cat-b") == Snap.BRefused{"a multi-engine join requires identical shared source identities and the named database snapshot"} : Snap.Binding}
+
+def context_snapshot_a_join_across_catalog_snapshots_refuses():
+  {==}

@@ -219,3 +219,11 @@ type Binding is Data:
 def plan_binding(+snapshot: String, +plan_snapshot: String) -> Binding:
   Bool.pick(Binding, String.eq(snapshot, plan_snapshot), BShare{},
     BRefused{"the target plan must use the recorded catalog connection and read transaction"})
+
+# A join that spans engines (the C combined query's analyzer and catalog sides,
+# the TypeScript or entity code-access join) requires identical shared source
+# identities on both sides and the same named database snapshot identity, so a
+# same-name or same-text selection from another snapshot cannot join.
+def join_binding(+source: String, +join_source: String, +catalog: String, +join_catalog: String) -> Binding:
+  Bool.pick(Binding, Bool.and(String.eq(source, join_source), String.eq(catalog, join_catalog)), BShare{},
+    BRefused{"a multi-engine join requires identical shared source identities and the named database snapshot"})

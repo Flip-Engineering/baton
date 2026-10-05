@@ -1,13 +1,7 @@
 {
-  "purpose": "Handoff payload for bend2/scripts/laws-check.mjs MUTATIONS. Each entry mutates one context core production function and is refused by the named law when the isolated entry bend2/tests/context-core/laws-entry.bend is compiled. Thirty-three entries were refused by their named law at the verified baseline 40e7060b (.scratch/context-core-controls/run.mjs, 33 mutations, 0 failures). Entries added after that run are pending the remote validation request native-core-layout-74; the operator boundary forbids local compilation.",
+  "purpose": "Handoff payload for bend2/scripts/laws-check.mjs MUTATIONS. Each entry mutates one context core production function and is refused by the named law when the isolated entry bend2/tests/context-core/laws-entry.bend is compiled. Thirty-two entries were refused by their named law at the verified baseline 40e7060b (.scratch/context-core-controls/run.mjs, 33 mutations, 0 failures; the discovery-plan entry was rewritten with the adapter layout). Entries added after that run are pending remote validation (report native-core-layout-74); the operator boundary forbids local compilation.",
   "entry": "bend2/tests/context-core/laws-entry.bend",
   "verified_baseline": "40e7060bf11ea1f8a924110e5a72815c9e343c41",
-  "verification_pending": [
-    "runtime-ref-collapses-the-lifetime-counter",
-    "ref-subject-ignores-its-stored-engine",
-    "analyzer-serves-the-cfg-option-as-a-projection",
-    "discovery-plan-probes-a-target"
-  ],
   "entries": [
     {
       "name": "auto-ignores-the-typescript-suffix",
@@ -176,6 +170,13 @@
       "find": "  Bool.pick(Binding, String.eq(snapshot, plan_snapshot), BShare{},",
       "replace": "  Bool.pick(Binding, True{}, BShare{},",
       "law": "context_snapshot_a_detached_plan_binding_refuses"
+    },
+    {
+      "name": "join-binding-ignores-the-source-identity",
+      "file": "bend2/src/context/snapshot.bend",
+      "find": "  Bool.pick(Binding, Bool.and(String.eq(source, join_source), String.eq(catalog, join_catalog)), BShare{},",
+      "replace": "  Bool.pick(Binding, String.eq(catalog, join_catalog), BShare{},",
+      "law": "context_snapshot_a_join_across_source_snapshots_refuses"
     },
     {
       "name": "capture-check-ignores-a-changed-manifest",
