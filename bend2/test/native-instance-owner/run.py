@@ -176,14 +176,14 @@ def main():
         mutated.write_text(original.replace(old, new))
         (scratch / "mutated-source.bend").write_text(mutated.read_text())
         child, streams, started = launch("mutation-" + name,
-                                         ["sh", "bend2/scripts/build-native.sh",
+                                         [args.bend,
                                           "bend2/test/native-instance-owner/custody-tasks.bend",
-                                          str(scratch / "fixture")], scratch)
+                                          "--check-only"], scratch)
         code = complete("mutation-" + name, child, streams, started)
         stderr = (output / ("mutation-" + name + ".stderr")).read_text(errors="replace")
         location_lines = [line.strip() for line in stderr.splitlines()
                           if "custody-tasks." in line and law in line]
-        expected = {"kind": "law-compile-failure", "outer_exit_nonzero": True,
+        expected = {"kind": "law-compile-failure", "bend_check_only_exit": 1,
                     "compiler_error": True,
                     "location": f"custody-tasks.{law}",
                     "expected_semantics": expected_semantics}
