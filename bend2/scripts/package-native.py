@@ -468,10 +468,15 @@ def retained_stream(record, error):
 def snapshot_evidence(path, state, evidence_errors, label):
     try:
         write_json(path, state)
-        info = file_info(path)
     except BaseException as error:
         evidence_errors.append(label + ' snapshot write failed: ' + repr(error))
         return {'path': path.name, 'available': False, 'error': repr(error)}
+    try:
+        info = file_info(path)
+    except BaseException as error:
+        evidence_errors.append(label + ' snapshot metadata read failed: ' + repr(error))
+        return {'path': path.name, 'available': False, 'write': 'completed',
+                'error': repr(error)}
     return {'path': path.name, 'available': True, **info}
 
 
@@ -550,6 +555,7 @@ def run_context_gate(payload, logs, node, name, extra_env=None):
                 cleanup = {}
                 try:
                     process.kill()
+                    cleanup['killCompleted'] = True
                 except BaseException as kill_error:
                     cleanup['kill'] = repr(kill_error)
                 try:
@@ -566,7 +572,12 @@ def run_context_gate(payload, logs, node, name, extra_env=None):
         if handle is not None:
             try:
                 handle.close()
-            except OSError as error:
+            except BaseException as error:
+                # Any close failure is retained as evidence. On an interrupt
+                # path the close failure is recorded without replacing the
+                # original interruption that is re-raised after the receipt
+                # write; close handling is therefore coherent for every
+                # exception type, not only OSError.
                 evidence_errors.append('stream close failed: ' + repr(error))
     secondary_error = None
     if interrupted is None:
