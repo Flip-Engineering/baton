@@ -126,30 +126,35 @@ def bump_of(+position: P.Pos) -> P.PosSum:
 def span_of(+low: P.Pos, +high: P.Pos) -> P.PosSpan:
   P.span_pos(low, high)
 
-def count_go(+rest: List<U32>, +position: P.Pos, +bump: P.PosSum,
-             +original: List<U32>) -> CountOutcome:
+def count_go(+rest: List<U32>, +position: P.Pos, +original: List<U32>) -> CountOutcome:
   match rest:
     case Nil{}: Counted{position}
     case _h <> t:
+      +bump = P.add_pos(position, one_pos())
       match bump:
         case P.PosSumRefused{_reason, _l, _r}: CountRefused{"position_overflow", original}
-        case P.PosAdded{value, _left, _right}: count_go(t, value, bump_of(value), original)
+        case P.PosAdded{+value, _left, _right}: count_go(t, value, original)
+
+def count_of(+octets: List<U32>) -> CountOutcome:
+  count_go(octets, zero_pos(), octets)
 
 def counted_matches(+outcome: CountOutcome, +declared: P.Pos) -> Bool:
   match outcome:
     case Counted{value}: P.passed(P.equal_checked(value, declared))
     case CountRefused{_reason, _original}: False{}
 
+def count_refuses(+outcome: CountOutcome) -> Bool:
+  match outcome:
+    case Counted{_value}: False{}
+    case CountRefused{_reason, _original}: True{}
+
 def count_reason(+outcome: CountOutcome) -> String:
   match outcome:
     case Counted{_value}: ""
     case CountRefused{reason, _original}: reason
 
-def count_ok(+outcome: CountOutcome, +declared: P.Pos) -> Bool:
-  counted_matches(outcome, declared)
-
 def extent_matches(+octets: List<U32>, +declared: P.Pos) -> Bool:
-  count_ok(count_go(octets, zero_pos(), bump_of(zero_pos()), octets), declared)
+  counted_matches(count_of(octets), declared)
 
 def frame_of(+start: P.Pos, +end: P.Pos, +source: SourceId, +bytes: List<U32>) -> Frame:
   FrameRange{start, end, source, bytes}
@@ -159,33 +164,35 @@ def pending_state(+pending: List<U32>, +source: SourceId, +start: P.Pos,
   Bool.pick(PendingSuffix, listed(pending),
     PendingFrame{source, start, position, rev_units(pending, Nil{})}, NoPending{position})
 
-# The scan carries the checked increment and the checked interval from the frame start to the
-# position just consumed. Both are matched before use, so an overflow or a refused interval
-# becomes a framing refusal and no position is ever fabricated.
+# The loop inspects the remaining bytes first, so an empty remainder returns the current
+# validated position and never performs an increment. A nonempty remainder consumes exactly its
+# head after one checked increment, and the checked interval from the frame start through that
+# consumed byte, which includes a closing LF, is matched before any frame is emitted. A refused
+# increment or interval becomes a framing refusal, and no position is ever fabricated. The
+# interval of a retained suffix was validated when its last byte was consumed.
 def scan_go(+rest: List<U32>, +position: P.Pos, +opened: P.Pos, +runs: List<SpanRun>,
-            +pending: List<U32>, +source: SourceId, +boundary: P.Pos, +bump: P.PosSum,
-            +span: P.PosSpan) -> ScanOutcome:
-  match bump:
-    case P.PosSumRefused{_reason, _l, _r}: ScanRefused{"position_overflow"}
-    case P.PosAdded{value, _left, _right}:
-      +here = P.digits_of(value)
-      match span:
-        case P.SpanRefused{reason, _l, _h}: ScanRefused{reason}
-        case P.SpanOrdered{start, end}:
-          match rest:
-            case Nil{}:
-              ScanDone{rev_runs(runs, Nil{}), pending_state(pending, source, opened, here),
-                       boundary, here}
-            case +h <> +t:
+            +pending: List<U32>, +source: SourceId, +boundary: P.Pos) -> ScanOutcome:
+  match rest:
+    case Nil{}:
+      ScanDone{rev_runs(runs, Nil{}), pending_state(pending, source, opened, position),
+               boundary, position}
+    case +h <> +t:
+      +bump = bump_of(position)
+      match bump:
+        case P.PosSumRefused{_reason, _l, _r}: ScanRefused{"position_overflow"}
+        case P.PosAdded{+value, _left, _right}:
+          +span = span_of(opened, value)
+          match span:
+            case P.SpanRefused{reason, _l, _h}: ScanRefused{reason}
+            case P.SpanOrdered{start, end}:
               Bool.pick(ScanOutcome, is_lf(h),
-                scan_go(t, here, here, SpanClosed{start, end, rev_units(h <> pending, Nil{})} <> runs,
-                  Nil{}, source, here, bump_of(here), span_of(here, here)),
-                scan_go(t, here, opened, runs, h <> pending, source, boundary, bump_of(here),
-                  span_of(opened, here)))
+                scan_go(t, value, value,
+                  SpanClosed{start, end, rev_units(h <> pending, Nil{})} <> runs, Nil{}, source,
+                  value),
+                scan_go(t, value, opened, runs, h <> pending, source, boundary))
 
 def scan_prefix(+octets: List<U32>, +source: SourceId) -> ScanOutcome:
-  scan_go(octets, zero_pos(), zero_pos(), Nil{}, Nil{}, source, zero_pos(),
-    bump_of(zero_pos()), span_of(zero_pos(), zero_pos()))
+  scan_go(octets, zero_pos(), zero_pos(), Nil{}, Nil{}, source, zero_pos())
 
 def frames_of(+runs: List<SpanRun>, +source: SourceId) -> List<Frame>:
   match runs:
@@ -288,16 +295,18 @@ def frame_prefix(+octets: List<U32>, +extent_octets: List<U32>, +source: SourceI
   +request = ask_of(octets, extent_octets, source, observation)
   Bool.pick(FramingResult, all_octets(octets),
     Bool.pick(FramingResult, declared_is(parsed_extent(extent_octets)),
-      Bool.pick(FramingResult, extent_ok(extent_octets, octets),
-        Bool.pick(FramingResult, same_source(observation_source(observation), source),
-          Bool.pick(FramingResult, observation_fault(observation),
-            FramingRefused{observation_reason(observation), request, octets},
-            Bool.pick(FramingResult,
-              sealed_ok_for(parsed_extent(extent_octets), observation),
-              qualified(scan_prefix(octets, source), request,
-                observation_sealed(observation), source, octets),
-              FramingRefused{"sealed_extent_mismatch", request, octets})),
-          FramingRefused{"foreign_source_observation", request, octets}),
-        FramingRefused{"extent_mismatch", request, octets}),
+      Bool.pick(FramingResult, count_refuses(count_of(octets)),
+        FramingRefused{count_reason(count_of(octets)), request, octets},
+        Bool.pick(FramingResult, extent_ok(extent_octets, octets),
+          Bool.pick(FramingResult, same_source(observation_source(observation), source),
+            Bool.pick(FramingResult, observation_fault(observation),
+              FramingRefused{observation_reason(observation), request, octets},
+              Bool.pick(FramingResult,
+                sealed_ok_for(parsed_extent(extent_octets), observation),
+                qualified(scan_prefix(octets, source), request,
+                  observation_sealed(observation), source, octets),
+                FramingRefused{"sealed_extent_mismatch", request, octets})),
+            FramingRefused{"foreign_source_observation", request, octets}),
+          FramingRefused{"extent_mismatch", request, octets})),
       FramingRefused{"captured_extent_invalid", request, octets}),
     FramingRefused{"not_an_octet", request, octets})
