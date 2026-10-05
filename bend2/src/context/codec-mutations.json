@@ -21,6 +21,13 @@
   "law": "contracts_law_u32_token_refuses_the_empty_token"
  },
  {
+  "name": "codec-u32-bound-widened",
+  "file": "bend2/src/context/contracts.bend",
+  "find": "    Bool.pick(Bool, U32.is_lt(length(s), 10), True{}, digits_le(s, \"4294967295\"))",
+  "replace": "    Bool.pick(Bool, U32.is_lt(length(s), 10), True{}, digits_le(s, \"9999999999\"))",
+  "law": "contracts_law_u32_token_refuses_a_ten_digit_number_above_the_bound"
+ },
+ {
   "name": "codec-signed-safe-token-widens-its-bound",
   "file": "bend2/src/context/contracts.bend",
   "find": "    Bool.pick(Bool, U32.is_lt(length(s), 16), True{}, digits_le(s, \"9007199254740991\")))",
@@ -49,11 +56,32 @@
   "law": "operations_law_a_tool_override_keeps_the_subject_operation"
  },
  {
+  "name": "codec-security-subject-selects-nothing",
+  "file": "bend2/src/context/operations.bend",
+  "find": "    case \"security\": \"sourceAnalysis\"",
+  "replace": "    case \"security\": SNil{}",
+  "law": "operations_law_a_security_subject_is_source_analysis"
+ },
+ {
+  "name": "codec-model-join-is-dropped",
+  "file": "bend2/src/context/operations.bend",
+  "find": "    Bool.pick(String, projection_selected(req, \"codeAccesses\"), \"codeAccessJoin\", SNil{}), SNil{})",
+  "replace": "    SNil{}, SNil{})",
+  "law": "operations_law_a_model_code_access_also_needs_the_join"
+ },
+ {
   "name": "codec-projections-join-with-the-wrong-separator",
   "file": "bend2/src/context/operations.bend",
   "find": "      join_projections(tail, False{}, acc ++ Bool.pick(String, first, SNil{}, \",\") ++ Req.text_of(head))",
   "replace": "      join_projections(tail, False{}, acc ++ Bool.pick(String, first, SNil{}, \";\") ++ Req.text_of(head))",
   "law": "operations_law_projections_join_in_request_order"
+ },
+ {
+  "name": "codec-u32-bound-dropped-from-the-statement",
+  "file": "bend2/src/context/request.bend",
+  "find": "AND CAST(t -> r.fullkey AS TEXT)<='4294967295'",
+  "replace": "AND CAST(t -> r.fullkey AS TEXT)>='0'",
+  "law": "request_law_the_u32_check_states_the_upper_bound"
  },
  {
   "name": "codec-metadata-accepts-a-null-progress-token",
@@ -68,6 +96,20 @@
   "find": "  Bool.pick(EnvelopeVerdict, env_jsonrpc_ok(env), envelope_after_jsonrpc(env), EnvRefused{\"invalidJsonrpc\"})",
   "replace": "  Bool.pick(EnvelopeVerdict, env_method_ok(env), envelope_after_jsonrpc(env), EnvRefused{\"invalidJsonrpc\"})",
   "law": "codec_law_a_bad_jsonrpc_refuses_before_the_tool"
+ },
+ {
+  "name": "codec-root-shape-is-not-checked",
+  "file": "bend2/src/context/codec.bend",
+  "find": "  Bool.pick(EnvelopeVerdict, env_root_closed(env), envelope_after_root(env), EnvRefused{\"unknownFrameField\"})",
+  "replace": "  envelope_after_root(env)",
+  "law": "codec_law_an_unknown_root_field_refuses"
+ },
+ {
+  "name": "codec-params-shape-is-not-checked",
+  "file": "bend2/src/context/codec.bend",
+  "find": "  Bool.pick(EnvelopeVerdict, env_params_closed(env), envelope_after_params(env), EnvRefused{\"unknownParamsField\"})",
+  "replace": "  envelope_after_params(env)",
+  "law": "codec_law_an_unknown_params_field_refuses"
  },
  {
   "name": "codec-core-admission-verdict-is-ignored",
@@ -100,8 +142,8 @@
  {
   "name": "codec-chain-drops-the-override",
   "file": "bend2/src/context/codec.bend",
-  "find": "  chain_append(chain_named(subject_slot(req, retained_operation)), Ops.request_override_operation(req))",
-  "replace": "  chain_named(subject_slot(req, retained_operation))",
+  "find": "  chain_append(chain_append(chain_named(subject_slot(req, retained_operation)), Ops.subject_secondary(req)), Ops.request_override_operation(req))",
+  "replace": "  chain_append(chain_named(subject_slot(req, retained_operation)), Ops.subject_secondary(req))",
   "law": "codec_law_the_chain_second_entry_is_the_override"
  },
  {
@@ -117,6 +159,27 @@
   "find": "  ref_gate(Eng.ss_nonempty(operations), Eng.operations_known(operations), record, operations, requested, applicability, granted, fresh, known)",
   "replace": "  ref_gate(True{}, Eng.operations_known(operations), record, operations, requested, applicability, granted, fresh, known)",
   "law": "codec_law_a_missing_retained_operation_authority_refuses"
+ },
+ {
+  "name": "codec-field-nonempty-is-negated",
+  "file": "bend2/src/context/codec.bend",
+  "find": "  Bool.pick(Bool, field_str(members, key), nonempty_text(field_text(members, key)), False{})",
+  "replace": "  Bool.pick(Bool, field_str(members, key), String.is_empty(field_text(members, key)), False{})",
+  "law": "codec_law_a_decoded_reference_composes_into_core"
+ },
+ {
+  "name": "codec-request-object-is-not-converted",
+  "file": "bend2/src/context/codec.bend",
+  "find": "    case Robj{members}: request_conv_ok(raw_to_json(v))",
+  "replace": "    case Robj{+members}: RtAbsent{}",
+  "law": "codec_law_a_valid_object_request_frame_is_accepted"
+ },
+ {
+  "name": "codec-non-u32-request-number-admitted",
+  "file": "bend2/src/context/codec.bend",
+  "find": "    case None{}: JcRefused{\"nonU32NumberInRequest\"}",
+  "replace": "    case None{}: JcJson{J.Jint{0}}",
+  "law": "codec_law_a_non_u32_request_number_refuses"
  },
  {
   "name": "codec-ref-closed-set-is-not-checked",

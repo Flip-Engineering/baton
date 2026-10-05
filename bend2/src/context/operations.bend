@@ -134,6 +134,7 @@ def entity_operation(+req: J.Json) -> String:
 def subject_operation(+kind: String, +req: J.Json) -> String:
   match kind:
     case "model": "modelLoad"
+    case "security": "sourceAnalysis"
     case "schema": "schemaValidation"
     case "dataset": "datasetRead"
     case "program": "environmentRead"
@@ -146,6 +147,16 @@ def subject_operation(+kind: String, +req: J.Json) -> String:
 
 def request_operation(+req: J.Json) -> String:
   subject_operation(request_subject_kind(req), req)
+
+# A model request that also selects codeAccesses needs the source join as well as
+# the module load, so both obligations apply. Every other subject contributes no
+# second operation.
+def subject_secondary(+req: J.Json) -> String:
+  secondary_of(request_subject_kind(req), req)
+
+def secondary_of(+kind: String, +req: J.Json) -> String:
+  Bool.pick(String, String.eq(kind, "model"),
+    Bool.pick(String, projection_selected(req, "codeAccesses"), "codeAccessJoin", SNil{}), SNil{})
 
 # A request-local tools override is target execution and is its own operation. It
 # adds to the subject's obligation; it never replaces it, because the requested
@@ -276,6 +287,30 @@ law operations_law_a_tool_override_keeps_the_subject_operation:
   {request_operation(obj3("subject", kind_only("program"), "select", arr1(J.Jstr{"dependencies"}), "options", obj1("tools", empty_object()))) == "environmentRead" : String}
 
 def operations_law_a_tool_override_keeps_the_subject_operation():
+  {==}
+
+law operations_law_a_model_code_access_needs_the_module_load:
+  {request_operation(obj2("subject", kind_only("model"), "select", arr1(J.Jstr{"codeAccesses"}))) == "modelLoad" : String}
+
+def operations_law_a_model_code_access_needs_the_module_load():
+  {==}
+
+law operations_law_a_model_code_access_also_needs_the_join:
+  {subject_secondary(obj2("subject", kind_only("model"), "select", arr1(J.Jstr{"codeAccesses"}))) == "codeAccessJoin" : String}
+
+def operations_law_a_model_code_access_also_needs_the_join():
+  {==}
+
+law operations_law_a_model_without_code_access_needs_only_the_load:
+  {subject_secondary(obj2("subject", kind_only("model"), "select", arr1(J.Jstr{"validation"}))) == "" : String}
+
+def operations_law_a_model_without_code_access_needs_only_the_load():
+  {==}
+
+law operations_law_a_security_subject_is_source_analysis:
+  {request_operation(obj2("subject", kind_only("security"), "select", arr1(J.Jstr{"declaration"}))) == "sourceAnalysis" : String}
+
+def operations_law_a_security_subject_is_source_analysis():
   {==}
 
 law operations_law_an_entity_declares_its_database_engine:

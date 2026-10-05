@@ -310,14 +310,16 @@ def sql_quote(s: String) -> String:
 
 def Context.validate_json_text_sql(text: String) -> String:
   "WITH raw(t) AS (SELECT " ++ sql_quote(text) ++ ") "
-  ++ "SELECT json_object('valid',json_valid(t),'duplicates',"
-  ++ "(SELECT count(*) FROM json_tree(t) WHERE type IN ('text','integer','real') "
-  ++ "AND parent IS NOT NULL AND EXISTS (SELECT 1 FROM json_tree(t) p WHERE p.id=json_tree.parent "
-  ++ "AND p.key=json_tree.key AND p.rowid<>json_tree.rowid)),"
-  ++ "'tokens',(SELECT count(*) FROM json_tree(t) r WHERE r.type IN ('integer','real') "
-  ++ "AND NOT (r.type='integer' AND length(CAST(t -> r.fullkey AS TEXT))<=10 "
-  ++ "AND CAST(t -> r.fullkey AS TEXT) GLOB '[0-9]*' AND CAST(t -> r.fullkey AS TEXT) NOT GLOB '0*' "
-  ++ "OR CAST(t -> r.fullkey AS TEXT)='0'))) FROM raw;"
+  ++ "licates',(SELECT count(*) FROM json_tree(t) WHERE type IN ('text','integ"
+  ++ "er','real') AND parent IS NOT NULL AND EXISTS (SELECT 1 FROM json_tree(t"
+  ++ ") p WHERE p.id=json_tree.parent AND p.key=json_tree.key AND p.rowid<>jso"
+  ++ "n_tree.rowid)),'tokens',(SELECT count(*) FROM json_tree(t) r WHERE r.typ"
+  ++ "e IN ('integer','real') AND NOT (r.type='integer' AND (CAST(t -> r.fullk"
+  ++ "ey AS TEXT)='0' OR (CAST(t -> r.fullkey AS TEXT) GLOB '[1-9]*' AND CAST("
+  ++ "t -> r.fullkey AS TEXT) NOT GLOB '*[^0-9]*' AND (length(CAST(t -> r.full"
+  ++ "key AS TEXT))<10 OR (length(CAST(t -> r.fullkey AS TEXT))=10 AND CAST(t "
+  ++ "-> r.fullkey AS TEXT)<='4294967295'))))))) FROM raw;"
+
 
 # The strict hex row query: json_tree node id, parent, type, member key and scalar
 # value as hex, plus the raw document token for every numeric node.
@@ -721,3 +723,13 @@ def tail_fields_ok(members: J.Json) -> Verdict:
       Bool.pick(Verdict, effects_required(members), VAccepted{}, VRefused{"invalidEffects"}),
       VRefused{"invalidOptions"}),
     VRefused{"invalidCwd"})
+
+# The operative numeric check states the unsigned decimal U32 domain exactly: no
+# leading zero, at most ten digits, and a ten-digit token at most the upper-bound
+# token. The whole assembled statement is pinned, so a bound dropped from the
+# statement fails here rather than passing as a helper.
+law request_law_the_u32_check_states_the_upper_bound:
+  {Context.validate_json_text_sql("{}") == "WITH raw(t) AS (SELECT '{}') SELECT json_object('valid',json_valid(t),'duplicates',(SELECT count(*) FROM json_tree(t) WHERE type IN ('text','integer','real') AND parent IS NOT NULL AND EXISTS (SELECT 1 FROM json_tree(t) p WHERE p.id=json_tree.parent AND p.key=json_tree.key AND p.rowid<>json_tree.rowid)),'tokens',(SELECT count(*) FROM json_tree(t) r WHERE r.type IN ('integer','real') AND NOT (r.type='integer' AND (CAST(t -> r.fullkey AS TEXT)='0' OR (CAST(t -> r.fullkey AS TEXT) GLOB '[1-9]*' AND CAST(t -> r.fullkey AS TEXT) NOT GLOB '*[^0-9]*' AND (length(CAST(t -> r.fullkey AS TEXT))<10 OR (length(CAST(t -> r.fullkey AS TEXT))=10 AND CAST(t -> r.fullkey AS TEXT)<='4294967295'))))))) FROM raw;" : String}
+
+def request_law_the_u32_check_states_the_upper_bound():
+  {==}

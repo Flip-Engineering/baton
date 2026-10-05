@@ -138,6 +138,45 @@ law codec_law_a_present_metadata_still_validates_its_token:
 def codec_law_a_present_metadata_still_validates_its_token():
   {==}
 
+# The request container is a JSON object under the public schema. It is converted
+# through the raw-token tree so a number keeps its document token, and its
+# canonical text comes from the shared canonical encoder rather than a second
+# serializer. A conversion failure carries its own condition.
+type RequestText is Data:
+  RtAbsent{}
+  RtText{value: String}
+  RtBad{condition: String}
+
+def request_condition(r: RequestText) -> String:
+  match r:
+    case RtAbsent{+value}: SNil{}
+    case RtText{+value}: SNil{}
+    case RtBad{condition}: condition
+
+def request_opt(r: RequestText) -> Context.OptText:
+  match r:
+    case RtAbsent{}: Context.Absent{}
+    case RtText{value}: Context.Present{value}
+    case RtBad{+condition}: Context.Absent{}
+
+def request_absent(r: RequestText) -> Bool:
+  match r:
+    case RtAbsent{}: True{}
+    case RtText{+value}: False{}
+    case RtBad{+condition}: False{}
+
+def request_text_present(r: RequestText) -> Bool:
+  match r:
+    case RtText{+value}: True{}
+    case RtAbsent{}: False{}
+    case RtBad{+condition}: False{}
+
+def request_bad(r: RequestText) -> Bool:
+  match r:
+    case RtBad{+condition}: True{}
+    case RtAbsent{}: False{}
+    case RtText{+value}: False{}
+
 # ---------------------------------------------------------------------------
 # The frame envelope. The native entry extracts these values from the raw frame
 # bytes; the decision order below is the ordering contract, and every step refuses
@@ -145,7 +184,8 @@ def codec_law_a_present_metadata_still_validates_its_token():
 
 type Envelope is Data:
   EnvFrame{jsonrpc: String, method: String, tool: String, frame_id: Context.FrameId,
-           query: Context.OptText, request: Context.OptText}
+           query: Context.OptText, request: RequestText,
+           root_closed: Bool, params_closed: Bool, arguments_closed: Bool}
 
 type EnvelopeVerdict is Data:
   EnvAccepted{tool: Context.CodecTool, id: Context.FrameId, query: Context.OptText, request: Context.OptText}
@@ -159,27 +199,39 @@ def envelope_text(v: EnvelopeVerdict) -> String:
 
 def env_query_of(+env: Envelope) -> Context.OptText:
   match env:
-    case EnvFrame{+jsonrpc, +method, +tool, +frame_id, +query, +request}: query
+    case EnvFrame{+jsonrpc, +method, +tool, +frame_id, +query, +request, +root_closed, +params_closed, +arguments_closed}: query
 
-def env_request(+env: Envelope) -> Context.OptText:
+def env_request(+env: Envelope) -> RequestText:
   match env:
-    case EnvFrame{+jsonrpc, +method, +tool, +frame_id, +query, +request}: request
+    case EnvFrame{+jsonrpc, +method, +tool, +frame_id, +query, +request, +root_closed, +params_closed, +arguments_closed}: request
+
+def env_root_closed(+env: Envelope) -> Bool:
+  match env:
+    case EnvFrame{+jsonrpc, +method, +tool, +frame_id, +query, +request, root_closed, +params_closed, +arguments_closed}: root_closed
+
+def env_params_closed(+env: Envelope) -> Bool:
+  match env:
+    case EnvFrame{+jsonrpc, +method, +tool, +frame_id, +query, +request, +root_closed, params_closed, +arguments_closed}: params_closed
+
+def env_arguments_closed(+env: Envelope) -> Bool:
+  match env:
+    case EnvFrame{+jsonrpc, +method, +tool, +frame_id, +query, +request, +root_closed, +params_closed, arguments_closed}: arguments_closed
 
 def env_id(+env: Envelope) -> Context.FrameId:
   match env:
-    case EnvFrame{+jsonrpc, +method, +tool, +frame_id, +query, +request}: frame_id
+    case EnvFrame{+jsonrpc, +method, +tool, +frame_id, +query, +request, +root_closed, +params_closed, +arguments_closed}: frame_id
 
 def env_tool_text(+env: Envelope) -> String:
   match env:
-    case EnvFrame{+jsonrpc, +method, +tool, +frame_id, +query, +request}: tool
+    case EnvFrame{+jsonrpc, +method, +tool, +frame_id, +query, +request, +root_closed, +params_closed, +arguments_closed}: tool
 
 def env_jsonrpc_ok(+env: Envelope) -> Bool:
   match env:
-    case EnvFrame{+jsonrpc, +method, +tool, +frame_id, +query, +request}: String.eq(jsonrpc, "2.0")
+    case EnvFrame{+jsonrpc, +method, +tool, +frame_id, +query, +request, +root_closed, +params_closed, +arguments_closed}: String.eq(jsonrpc, "2.0")
 
 def env_method_ok(+env: Envelope) -> Bool:
   match env:
-    case EnvFrame{+jsonrpc, +method, +tool, +frame_id, +query, +request}: String.eq(method, "tools/call")
+    case EnvFrame{+jsonrpc, +method, +tool, +frame_id, +query, +request, +root_closed, +params_closed, +arguments_closed}: String.eq(method, "tools/call")
 
 def env_tool_known(+env: Envelope) -> Bool:
   tool_present(Context.codec_tool_of(env_tool_text(env)))
@@ -218,15 +270,18 @@ def query_shape(+tool: String, q: Context.OptText) -> Bool:
     case other: opt_nonempty(q)
 
 def env_request_ok(+env: Envelope) -> Bool:
-  request_shape(env_tool_text(env), env_request(env))
+  request_shape(env_tool_text(env), env_request(env), env_arguments_closed(env))
 
-def request_shape(+tool: String, r: Context.OptText) -> Bool:
+def request_shape(+tool: String, r: RequestText, closed: Bool) -> Bool:
   match tool:
-    case "context-query": opt_nonempty(r)
-    case other: opt_absent(r)
+    case "context-query": Bool.pick(Bool, closed, request_text_present(r), False{})
+    case other: Bool.pick(Bool, closed, request_absent(r), False{})
 
 def env_arguments_ok(+env: Envelope) -> Bool:
   Bool.pick(Bool, env_query_ok(env), env_request_ok(env), False{})
+
+def arguments_condition(+env: Envelope) -> String:
+  Bool.pick(String, request_bad(env_request(env)), request_condition(env_request(env)), "invalidArguments")
 
 def envelope_decide(+env: Envelope) -> EnvelopeVerdict:
   Bool.pick(EnvelopeVerdict, env_jsonrpc_ok(env), envelope_after_jsonrpc(env), EnvRefused{"invalidJsonrpc"})
@@ -235,16 +290,22 @@ def envelope_after_jsonrpc(+env: Envelope) -> EnvelopeVerdict:
   Bool.pick(EnvelopeVerdict, env_method_ok(env), envelope_after_method(env), EnvRefused{"invalidMethod"})
 
 def envelope_after_method(+env: Envelope) -> EnvelopeVerdict:
+  Bool.pick(EnvelopeVerdict, env_root_closed(env), envelope_after_root(env), EnvRefused{"unknownFrameField"})
+
+def envelope_after_root(+env: Envelope) -> EnvelopeVerdict:
   Bool.pick(EnvelopeVerdict, Context.frame_id_ok(env_id(env)), envelope_after_id(env), EnvRefused{"invalidFrameId"})
 
 def envelope_after_id(+env: Envelope) -> EnvelopeVerdict:
   Bool.pick(EnvelopeVerdict, env_tool_known(env), envelope_after_tool(env), EnvRefused{"unknownTool"})
 
 def envelope_after_tool(+env: Envelope) -> EnvelopeVerdict:
-  Bool.pick(EnvelopeVerdict, env_arguments_ok(env), envelope_accept(env), EnvRefused{"invalidArguments"})
+  Bool.pick(EnvelopeVerdict, env_params_closed(env), envelope_after_params(env), EnvRefused{"unknownParamsField"})
+
+def envelope_after_params(+env: Envelope) -> EnvelopeVerdict:
+  Bool.pick(EnvelopeVerdict, env_arguments_ok(env), envelope_accept(env), EnvRefused{arguments_condition(env)})
 
 def envelope_accept(+env: Envelope) -> EnvelopeVerdict:
-  EnvAccepted{env_tool(env), env_id(env), env_query_of(env), env_request(env)}
+  EnvAccepted{env_tool(env), env_id(env), env_query_of(env), request_opt(env_request(env))}
 
 # ---------------------------------------------------------------------------
 # The dispatch decision. Closed-request validation, the composed operation and the
@@ -337,7 +398,7 @@ def subject_slot_present(+req: J.Json, retained: String) -> Bool:
   Bool.pick(Bool, String.is_empty(subject_slot(req, retained)), False{}, True{})
 
 def request_operation_chain(+req: J.Json, retained_operation: String) -> OpChain:
-  chain_append(chain_named(subject_slot(req, retained_operation)), Ops.request_override_operation(req))
+  chain_append(chain_append(chain_named(subject_slot(req, retained_operation)), Ops.subject_secondary(req)), Ops.request_override_operation(req))
 
 # Core's actual verdict names the refusal: no operation, an operation outside the
 # closed set, or the first required effect the caller did not grant. An admit
@@ -379,6 +440,18 @@ law codec_law_the_primary_operation_comes_from_the_chain:
   {primary_operation(request_operation_chain(Request_sample(), "")) == "sourceAnalysis" : String}
 
 def codec_law_the_primary_operation_comes_from_the_chain():
+  {==}
+
+law codec_law_a_model_code_access_chain_carries_both_obligations:
+  {chain_second(request_operation_chain(Model_join_sample(), "")) == "codeAccessJoin" : String}
+
+def codec_law_a_model_code_access_chain_carries_both_obligations():
+  {==}
+
+law codec_law_a_model_code_access_chain_starts_with_the_load:
+  {primary_operation(request_operation_chain(Model_join_sample(), "")) == "modelLoad" : String}
+
+def codec_law_a_model_code_access_chain_starts_with_the_load():
   {==}
 
 law codec_law_the_chain_carries_the_override_after_the_subject:
@@ -442,6 +515,21 @@ def Unmapped_runtime_override_sample() -> J.Json:
     J.Jpair{"subject", J.Jobj{J.Jpair{"kind", J.Jstr{"runtime"}, J.Jpair{"intent", J.Jstr{"breakpoint"}, J.Jnil{}}}},
     J.Jpair{"select", J.Jarr{J.Jstr{"state"}, J.Jnil{}},
     J.Jpair{"options", J.Jobj{J.Jpair{"tools", J.Jobj{J.Jnil{}}, J.Jnil{}}}, J.Jnil{}}}}}}
+
+# Object builders keep the canonical field arities in one place.
+def cobj1(k1: String, v1: J.Json) -> J.Json:
+  J.Jobj{J.Jpair{k1, v1, J.Jnil{}}}
+
+def cobj3(k1: String, v1: J.Json, k2: String, v2: J.Json, k3: String, v3: J.Json) -> J.Json:
+  J.Jobj{J.Jpair{k1, v1, J.Jpair{k2, v2, J.Jpair{k3, v3, J.Jnil{}}}}}
+
+def carr1(a: J.Json) -> J.Json:
+  J.Jarr{a, J.Jnil{}}
+
+def Model_join_sample() -> J.Json:
+  cobj3("version", J.Jint{1},
+        "subject", cobj1("kind", J.Jstr{"model"}),
+        "select", carr1(J.Jstr{"codeAccesses"}))
 
 def Unknown_subject_sample() -> J.Json:
   J.Jobj{J.Jpair{"version", J.Jint{1},
@@ -578,49 +666,49 @@ def codec_law_metadata_refuses_a_non_object():
 # The envelope ordering laws. Each pins that the earlier refusal wins.
 
 law codec_law_a_bad_jsonrpc_refuses_before_the_tool:
-  {envelope_decide(EnvFrame{"1.0", "tools/call", "not-a-tool", Context.IdNumber{"7"}, Context.Absent{}, Context.Absent{}}) == EnvRefused{"invalidJsonrpc"} : EnvelopeVerdict}
+  {envelope_decide(EnvFrame{"1.0", "tools/call", "not-a-tool", Context.IdNumber{"7"}, Context.Absent{}, RtAbsent{}, True{}, True{}, True{}}) == EnvRefused{"invalidJsonrpc"} : EnvelopeVerdict}
 
 def codec_law_a_bad_jsonrpc_refuses_before_the_tool():
   {==}
 
 law codec_law_a_bad_method_refuses_before_the_frame_id:
-  {envelope_decide(EnvFrame{"2.0", "tools/list", "context-engines", Context.IdNumber{"9007199254740992"}, Context.Absent{}, Context.Absent{}}) == EnvRefused{"invalidMethod"} : EnvelopeVerdict}
+  {envelope_decide(EnvFrame{"2.0", "tools/list", "context-engines", Context.IdNumber{"9007199254740992"}, Context.Absent{}, RtAbsent{}, True{}, True{}, True{}}) == EnvRefused{"invalidMethod"} : EnvelopeVerdict}
 
 def codec_law_a_bad_method_refuses_before_the_frame_id():
   {==}
 
 law codec_law_an_above_bound_frame_id_refuses_before_the_tool:
-  {envelope_decide(EnvFrame{"2.0", "tools/call", "not-a-tool", Context.IdNumber{"9007199254740992"}, Context.Absent{}, Context.Absent{}}) == EnvRefused{"invalidFrameId"} : EnvelopeVerdict}
+  {envelope_decide(EnvFrame{"2.0", "tools/call", "not-a-tool", Context.IdNumber{"9007199254740992"}, Context.Absent{}, RtAbsent{}, True{}, True{}, True{}}) == EnvRefused{"invalidFrameId"} : EnvelopeVerdict}
 
 def codec_law_an_above_bound_frame_id_refuses_before_the_tool():
   {==}
 
 law codec_law_an_unknown_tool_refuses:
-  {envelope_decide(EnvFrame{"2.0", "tools/call", "not-a-tool", Context.IdNumber{"7"}, Context.Absent{}, Context.Absent{}}) == EnvRefused{"unknownTool"} : EnvelopeVerdict}
+  {envelope_decide(EnvFrame{"2.0", "tools/call", "not-a-tool", Context.IdNumber{"7"}, Context.Absent{}, RtAbsent{}, True{}, True{}, True{}}) == EnvRefused{"unknownTool"} : EnvelopeVerdict}
 
 def codec_law_an_unknown_tool_refuses():
   {==}
 
 law codec_law_the_engines_tool_carries_no_query:
-  {envelope_decide(EnvFrame{"2.0", "tools/call", "context-engines", Context.IdNumber{"7"}, Context.Present{"q1"}, Context.Absent{}}) == EnvRefused{"invalidArguments"} : EnvelopeVerdict}
+  {envelope_decide(EnvFrame{"2.0", "tools/call", "context-engines", Context.IdNumber{"7"}, Context.Present{"q1"}, RtAbsent{}, True{}, True{}, True{}}) == EnvRefused{"invalidArguments"} : EnvelopeVerdict}
 
 def codec_law_the_engines_tool_carries_no_query():
   {==}
 
 law codec_law_the_query_tool_needs_a_nonempty_query_id:
-  {envelope_decide(EnvFrame{"2.0", "tools/call", "context-query", Context.IdNumber{"7"}, Context.Present{""}, Context.Present{"{\"version\":1}"}}) == EnvRefused{"invalidArguments"} : EnvelopeVerdict}
+  {envelope_decide(EnvFrame{"2.0", "tools/call", "context-query", Context.IdNumber{"7"}, Context.Present{""}, RtText{"{\"version\":1}"}, True{}, True{}, True{}}) == EnvRefused{"invalidArguments"} : EnvelopeVerdict}
 
 def codec_law_the_query_tool_needs_a_nonempty_query_id():
   {==}
 
 law codec_law_the_query_tool_needs_a_request:
-  {envelope_decide(EnvFrame{"2.0", "tools/call", "context-query", Context.IdNumber{"7"}, Context.Present{"q1"}, Context.Absent{}}) == EnvRefused{"invalidArguments"} : EnvelopeVerdict}
+  {envelope_decide(EnvFrame{"2.0", "tools/call", "context-query", Context.IdNumber{"7"}, Context.Present{"q1"}, RtAbsent{}, True{}, True{}, True{}}) == EnvRefused{"invalidArguments"} : EnvelopeVerdict}
 
 def codec_law_the_query_tool_needs_a_request():
   {==}
 
 law codec_law_an_accepted_query_frame_emits_its_success_document:
-  {envelope_text(envelope_decide(EnvFrame{"2.0", "tools/call", "context-query", Context.IdNumber{"7"}, Context.Present{"q1"}, Context.Present{"{\"version\":1}"}})) == "{\"id\":7,\"query\":\"q1\",\"requestCanonical\":\"{\\\"version\\\":1}\",\"tool\":\"context-query\",\"version\":1}" : String}
+  {envelope_text(envelope_decide(EnvFrame{"2.0", "tools/call", "context-query", Context.IdNumber{"7"}, Context.Present{"q1"}, RtText{"{\"version\":1}"}, True{}, True{}, True{}})) == "{\"id\":7,\"query\":\"q1\",\"requestCanonical\":\"{\\\"version\\\":1}\",\"tool\":\"context-query\",\"version\":1}" : String}
 
 def codec_law_an_accepted_query_frame_emits_its_success_document():
   {==}
@@ -690,7 +778,10 @@ def strings_only(+j: J.Json) -> Bool:
     case J.Jobj{+members}: False{}
 
 def field_nonempty(+members: J.Json, +key: String) -> Bool:
-  Bool.pick(Bool, field_str(members, key), String.is_empty(field_text(members, key)), False{})
+  Bool.pick(Bool, field_str(members, key), nonempty_text(field_text(members, key)), False{})
+
+def nonempty_text(+text: String) -> Bool:
+  Bool.pick(Bool, String.is_empty(text), False{}, True{})
 
 def field_str(+members: J.Json, +key: String) -> Bool:
   present_str(Req.member_lookup(key, members))
@@ -754,10 +845,10 @@ def ref_projections_of(d: RefDecode) -> Proj:
 def ref_object_of(members: J.Json) -> J.Json:
   J.Jobj{members}
 
-def ref_members_base(id: String, projections: J.Json) -> J.Json:
+def ref_members_base(id: String, subject: String, projections: J.Json) -> J.Json:
   J.Jpair{"id", J.Jstr{id},
   J.Jpair{"engine", J.Jstr{"typescript"},
-  J.Jpair{"subject", J.Jstr{"symbol"},
+  J.Jpair{"subject", J.Jstr{subject},
   J.Jpair{"snapshotId", J.Jstr{"s1"},
   J.Jpair{"projections", projections, J.Jnil{}}}}}}
 
@@ -775,13 +866,13 @@ def codec_law_a_retained_reference_decodes_its_fields():
   {==}
 
 law codec_law_a_retained_reference_keeps_its_projection_chain:
-  {ref_projections_of(ref_decode(ref_object_of(ref_members_base("r", J.Jarr{J.Jstr{"definition"}, J.Jarr{J.Jstr{"calls"}, J.Jnil{}}})))) == Pcons{"definition", Pcons{"calls", Pnone{}}} : Proj}
+  {ref_projections_of(ref_decode(ref_object_of(ref_members_base("r", "symbol", J.Jarr{J.Jstr{"definition"}, J.Jarr{J.Jstr{"calls"}, J.Jnil{}}})))) == Pcons{"definition", Pcons{"calls", Pnone{}}} : Proj}
 
 def codec_law_a_retained_reference_keeps_its_projection_chain():
   {==}
 
 law codec_law_a_retained_reference_counts_its_projections:
-  {proj_count(ref_projections_of(ref_decode(ref_object_of(ref_members_base("r", J.Jarr{J.Jstr{"definition"}, J.Jarr{J.Jstr{"calls"}, J.Jnil{}}}))))) == 2 : U32}
+  {proj_count(ref_projections_of(ref_decode(ref_object_of(ref_members_base("r", "symbol", J.Jarr{J.Jstr{"definition"}, J.Jarr{J.Jstr{"calls"}, J.Jnil{}}}))))) == 2 : U32}
 
 def codec_law_a_retained_reference_counts_its_projections():
   {==}
@@ -793,13 +884,13 @@ def codec_law_a_reference_with_an_unknown_field_refuses():
   {==}
 
 law codec_law_a_reference_with_an_empty_id_refuses:
-  {ref_condition(ref_decode(ref_object_of(ref_members_base("", J.Jarr{J.Jnil{}, J.Jnil{}})))) == "invalidRefField" : String}
+  {ref_condition(ref_decode(ref_object_of(ref_members_base("", "symbol", J.Jarr{J.Jnil{}, J.Jnil{}})))) == "invalidRefField" : String}
 
 def codec_law_a_reference_with_an_empty_id_refuses():
   {==}
 
 law codec_law_a_reference_requires_a_string_projection_list:
-  {ref_condition(ref_decode(ref_object_of(ref_members_base("r", J.Jarr{J.Jint{1}, J.Jnil{}})))) == "invalidRefField" : String}
+  {ref_condition(ref_decode(ref_object_of(ref_members_base("r", "symbol", J.Jarr{J.Jint{1}, J.Jnil{}})))) == "invalidRefField" : String}
 
 def codec_law_a_reference_requires_a_string_projection_list():
   {==}
@@ -955,9 +1046,11 @@ def close_items(items: RawItems) -> RawItems:
     case RIcons{+head, +tail}: rev_items(items, RInone{})
 
 # Each completed container is attached into its parent while unwinding, so a nested
-# object followed by a sibling field keeps its contents. Array item order is not
-# guaranteed across an unwind; the only consumers here are member lookup and the
-# scalar progress token, neither of which reads array order.
+# object followed by a sibling field keeps its contents. Elements attach in arrival
+# order and the close reverses the accumulator, so array order is restored; the
+# object member chain is not re-sorted, and the consumers here (member lookup and
+# the scalar progress token) do not read member order. Canonical text is produced
+# by the shared encoder, which normalizes member order itself.
 def raw_unwind(+f: RawFrame, pid: String) -> RawFrame:
   match f:
     case RFRoot{+root}: RFRoot{root}
@@ -1053,6 +1146,123 @@ def raw_field(+v: RawValue, key: String) -> Maybe<&2, RawValue>:
 def raw_field_text(+v: RawValue, key: String) -> String:
   raw_text_of(raw_or_null(raw_field(v, key)))
 
+def raw_keys_ok(allowed: Req.Words, members: RawMembers) -> Bool:
+  match members:
+    case RMnone{}: True{}
+    case RMcons{+key, +value, +tail}: Bool.pick(Bool, Req.word_member(allowed, key), raw_keys_ok(allowed, tail), False{})
+
+def present_raw(m: Maybe<&2, RawValue>) -> Bool:
+  match m:
+    case None{}: False{}
+    case Some{+value}: True{}
+
+def raw_member_present(key: String, members: RawMembers) -> Bool:
+  present_raw(raw_member(key, members))
+
+def root_words() -> Req.Words:
+  Req.words_from(["jsonrpc", "id", "method", "params"])
+
+def params_words() -> Req.Words:
+  Req.words_from(["name", "arguments", "_meta"])
+
+def arguments_words(+tool: String) -> Req.Words:
+  match tool:
+    case "context-query": Req.words_from(["query", "request"])
+    case "context-result": Req.words_from(["query"])
+    case other: Req.words_from(Nil{})
+
+def arguments_required(+tool: String, members: RawMembers) -> Bool:
+  match tool:
+    case "context-query": Bool.pick(Bool, raw_member_present("query", members), raw_member_present("request", members), False{})
+    case "context-result": raw_member_present("query", members)
+    case other: True{}
+
+def arguments_closed_for(+tool: String, members: RawMembers) -> Bool:
+  Bool.pick(Bool, raw_keys_ok(arguments_words(tool), members), arguments_required(tool, members), False{})
+
+# --- the request container conversion --------------------------------------
+
+type JsonConv is Data:
+  JcJson{value: J.Json}
+  JcRefused{condition: String}
+
+type ArrMode is Data:
+  AMvalue{}
+  AMtail{}
+
+def array_conv(items: RawItems, mode: ArrMode) -> JsonConv:
+  match items:
+    case RInone{}: arr_empty(mode)
+    case RIcons{+head, +tail}: arr_cell(raw_to_json(head), tail, mode)
+
+def arr_empty(mode: ArrMode) -> JsonConv:
+  match mode:
+    case AMvalue{}: JcJson{J.Jarr{J.Jnil{}, J.Jnil{}}}
+    case AMtail{}: JcJson{J.Jnil{}}
+
+def arr_cell(c: JsonConv, +tail: RawItems, mode: ArrMode) -> JsonConv:
+  match c:
+    case JcJson{value}: arr_rest(array_conv(tail, AMtail{}), value)
+    case JcRefused{condition}: JcRefused{condition}
+
+def arr_rest(t: JsonConv, +value: J.Json) -> JsonConv:
+  match t:
+    case JcJson{rest}: JcJson{J.Jarr{value, rest}}
+    case JcRefused{condition}: JcRefused{condition}
+
+def members_conv(members: RawMembers) -> JsonConv:
+  match members:
+    case RMnone{}: JcJson{J.Jnil{}}
+    case RMcons{+key, +value, +tail}: pair_conv(raw_to_json(value), key, tail)
+
+def pair_conv(c: JsonConv, key: String, members: RawMembers) -> JsonConv:
+  match c:
+    case JcJson{value}: pair_then(members_conv(members), value, key)
+    case JcRefused{condition}: JcRefused{condition}
+
+def pair_then(rest: JsonConv, +value: J.Json, key: String) -> JsonConv:
+  match rest:
+    case JcJson{rest_value}: JcJson{J.Jpair{key, value, rest_value}}
+    case JcRefused{condition}: JcRefused{condition}
+
+def number_conv(m: Maybe<&2, U32>) -> JsonConv:
+  match m:
+    case Some{value}: JcJson{J.Jint{value}}
+    case None{}: JcRefused{"nonU32NumberInRequest"}
+
+def raw_to_json(+v: RawValue) -> JsonConv:
+  match v:
+    case Rnull{}: JcJson{J.Jnull{}}
+    case Rtrue{}: JcJson{J.Jtrue{}}
+    case Rfalse{}: JcJson{J.Jfalse{}}
+    case Rnum{token}: number_conv(U32.read(token))
+    case Rstr{value}: JcJson{J.Jstr{value}}
+    case Rarr{items}: array_conv(items, AMvalue{})
+    case Robj{members}: members_conv(members)
+
+def request_conv_ok(c: JsonConv) -> RequestText:
+  match c:
+    case JcJson{value}: RtText{J.json_text(value)}
+    case JcRefused{condition}: RtBad{condition}
+
+# The canonical text of a request object, or the condition that refused it. A
+# non-object or a number that is not an exact U32 token refuses here rather than
+# being coerced into another spelling.
+def request_read(+v: RawValue) -> RequestText:
+  match v:
+    case Robj{members}: request_conv_ok(raw_to_json(v))
+    case Rnull{}: RtBad{"requestNotObject"}
+    case Rtrue{}: RtBad{"requestNotObject"}
+    case Rfalse{}: RtBad{"requestNotObject"}
+    case Rnum{+token}: RtBad{"requestNotObject"}
+    case Rstr{+value}: RtBad{"requestNotObject"}
+    case Rarr{+items}: RtBad{"requestNotObject"}
+
+def request_field(m: Maybe<&2, RawValue>) -> RequestText:
+  match m:
+    case None{}: RtAbsent{}
+    case Some{value}: request_read(value)
+
 def opt_text_of(m: Maybe<&2, RawValue>) -> Context.OptText:
   match m:
     case None{}: Context.Absent{}
@@ -1086,7 +1296,10 @@ def envelope_fields(+frame: RawValue) -> Envelope:
   EnvFrame{raw_field_text(frame, "jsonrpc"), raw_field_text(frame, "method"),
            raw_field_text(params_of(frame), "name"), frame_id_of(raw_or_null(raw_field(frame, "id"))),
            opt_text_of(raw_field(arguments_of(frame), "query")),
-           opt_text_of(raw_field(arguments_of(frame), "request"))}
+           request_field(raw_field(arguments_of(frame), "request")),
+           raw_keys_ok(root_words(), raw_members_of(frame)),
+           raw_keys_ok(params_words(), raw_members_of(params_of(frame))),
+           arguments_closed_for(raw_field_text(params_of(frame), "name"), raw_members_of(arguments_of(frame)))}
 
 def envelope_read(+r: FrameRead) -> EnvelopeRead:
   match r:
@@ -1170,27 +1383,36 @@ def object_row(id: String, parent: String, key: String) -> Req.Row:
 def number_row(id: String, parent: String, key: String, token: String) -> Req.Row:
   Req.Row{id, parent, "integer", row_hex(key), row_hex(token)}
 
+# One row per transport line, so a frame's shape is readable and its close count is
+# not hand-written.
+def rows_of(rows: List<Req.Row>) -> Req.Rows:
+  match rows:
+    case Nil{}: Req.Rnone{}
+    case head <> tail: Req.Rcons{head, rows_of(tail)}
+
+
 def engine_frame_rows() -> Req.Rows:
-  Req.Rcons{object_row("0", SNil{}, SNil{}),
-  Req.Rcons{text_row("1", "0", "jsonrpc", "2.0"),
-  Req.Rcons{text_row("2", "0", "method", "tools/call"),
-  Req.Rcons{number_row("3", "0", "id", "7"),
-  Req.Rcons{object_row("4", "0", "params"),
-  Req.Rcons{text_row("5", "4", "name", "context-engines"),
-  Req.Rcons{object_row("6", "4", "arguments"),
-  Req.Rnone{}}}}}}}}
+  rows_of([
+    object_row("0", SNil{}, SNil{}),
+    text_row("1", "0", "jsonrpc", "2.0"),
+    text_row("2", "0", "method", "tools/call"),
+    number_row("3", "0", "id", "7"),
+    object_row("4", "0", "params"),
+    text_row("5", "4", "name", "context-engines"),
+    object_row("6", "4", "arguments")])
 
 def query_frame_rows() -> Req.Rows:
-  Req.Rcons{object_row("0", SNil{}, SNil{}),
-  Req.Rcons{text_row("1", "0", "jsonrpc", "2.0"),
-  Req.Rcons{text_row("2", "0", "method", "tools/call"),
-  Req.Rcons{number_row("3", "0", "id", "-1"),
-  Req.Rcons{object_row("4", "0", "params"),
-  Req.Rcons{text_row("5", "4", "name", "context-query"),
-  Req.Rcons{object_row("6", "4", "arguments"),
-  Req.Rcons{text_row("7", "6", "query", "q1"),
-  Req.Rcons{text_row("8", "6", "request", "{\"version\":1}"),
-  Req.Rnone{}}}}}}}}}}
+  rows_of([
+    object_row("0", SNil{}, SNil{}),
+    text_row("1", "0", "jsonrpc", "2.0"),
+    text_row("2", "0", "method", "tools/call"),
+    number_row("3", "0", "id", "-1"),
+    object_row("4", "0", "params"),
+    text_row("5", "4", "name", "context-query"),
+    object_row("6", "4", "arguments"),
+    text_row("7", "6", "query", "q1"),
+    object_row("8", "6", "request"),
+    number_row("9", "8", "version", "1")])
 
 # ---------------------------------------------------------------------------
 # The retained reference composes into Core's own record and query types. The
@@ -1361,17 +1583,17 @@ def null_row(id: String, parent: String, key: String) -> Req.Row:
   Req.Row{id, parent, "null", row_hex(key), SNil{}}
 
 def meta_frame_rows(kind: String, token: String) -> Req.Rows:
-  Req.Rcons{object_row("0", SNil{}, SNil{}),
-  Req.Rcons{text_row("1", "0", "jsonrpc", "2.0"),
-  Req.Rcons{text_row("2", "0", "method", "tools/call"),
-  Req.Rcons{number_row("3", "0", "id", "7"),
-  Req.Rcons{object_row("4", "0", "params"),
-  Req.Rcons{text_row("5", "4", "name", "context-result"),
-  Req.Rcons{object_row("6", "4", "arguments"),
-  Req.Rcons{text_row("7", "6", "query", "q1"),
-  Req.Rcons{object_row("8", "4", "_meta"),
-  Req.Rcons{meta_token_row("9", "8", kind, token),
-  Req.Rnone{}}}}}}}}}}}
+  rows_of([
+    object_row("0", SNil{}, SNil{}),
+    text_row("1", "0", "jsonrpc", "2.0"),
+    text_row("2", "0", "method", "tools/call"),
+    number_row("3", "0", "id", "7"),
+    object_row("4", "0", "params"),
+    text_row("5", "4", "name", "context-result"),
+    object_row("6", "4", "arguments"),
+    text_row("7", "6", "query", "q1"),
+    object_row("8", "4", "_meta"),
+    meta_token_row("9", "8", kind, token)])
 
 def meta_token_row(id: String, parent: String, kind: String, token: String) -> Req.Row:
   Bool.pick(Req.Row, String.eq(kind, "null"), null_row(id, parent, "progressToken"), real_row(id, parent, "progressToken", token))
@@ -1385,33 +1607,214 @@ def codec_law_an_envelope_refusal_wins_over_a_metadata_defect():
   {==}
 
 def bad_jsonrpc_meta_rows() -> Req.Rows:
-  Req.Rcons{object_row("0", SNil{}, SNil{}),
-  Req.Rcons{text_row("1", "0", "jsonrpc", "1.0"),
-  Req.Rcons{text_row("2", "0", "method", "tools/call"),
-  Req.Rcons{number_row("3", "0", "id", "7"),
-  Req.Rcons{object_row("4", "0", "params"),
-  Req.Rcons{text_row("5", "4", "name", "context-result"),
-  Req.Rcons{object_row("6", "4", "arguments"),
-  Req.Rcons{text_row("7", "6", "query", "q1"),
-  Req.Rcons{object_row("8", "4", "_meta"),
-  Req.Rcons{null_row("9", "8", "progressToken"),
-  Req.Rnone{}}}}}}}}}}}
+  rows_of([
+    object_row("0", SNil{}, SNil{}),
+    text_row("1", "0", "jsonrpc", "1.0"),
+    text_row("2", "0", "method", "tools/call"),
+    number_row("3", "0", "id", "7"),
+    object_row("4", "0", "params"),
+    text_row("5", "4", "name", "context-result"),
+    object_row("6", "4", "arguments"),
+    text_row("7", "6", "query", "q1"),
+    object_row("8", "4", "_meta"),
+    null_row("9", "8", "progressToken")])
 
 def broken_frame_rows() -> Req.Rows:
-  Req.Rcons{object_row("0", SNil{}, SNil{}),
-  Req.Rcons{text_row("1", "0", "jsonrpc", "2.0"),
-  Req.Rcons{text_row("2", "9", "method", "tools/call"),
-  Req.Rnone{}}}}
+  rows_of([
+    object_row("0", SNil{}, SNil{}),
+    text_row("1", "0", "jsonrpc", "2.0"),
+    text_row("2", "9", "method", "tools/call")])
 
 def bad_field_rows() -> Req.Rows:
-  Req.Rcons{object_row("0", SNil{}, SNil{}),
-  Req.Rcons{Req.Row{"1", "0", row_hex("text"), "7z", row_hex("v")},
-  Req.Rnone{}}}
+  rows_of([
+    object_row("0", SNil{}, SNil{}),
+    Req.Row{"1", "0", row_hex("text"), "7z", row_hex("v")}])
 
 def bad_utf8_rows() -> Req.Rows:
-  Req.Rcons{object_row("0", SNil{}, SNil{}),
-  Req.Rcons{Req.Row{"1", "0", row_hex("text"), row_hex("k"), "ff"},
-  Req.Rnone{}}}
+  rows_of([
+    object_row("0", SNil{}, SNil{}),
+    Req.Row{"1", "0", row_hex("text"), row_hex("k"), "ff"}])
+
+# A reference that came through the actual decoder composes into Core, and the
+# composed admission is exercised on that decoded record rather than on a
+# hand-built one.
+def decoded_record(id: String, subject: String, +projections: J.Json) -> Refs.RefRecord:
+  ref_record_of(ref_decode(ref_object_of(ref_members_base(id, subject, projections))))
+
+law codec_law_a_decoded_reference_composes_into_core:
+  {Refs.ref_id(decoded_record("r9", "symbol", J.Jarr{J.Jstr{"definition"}, J.Jnil{}})) == "r9" : String}
+
+def codec_law_a_decoded_reference_composes_into_core():
+  {==}
+
+law codec_law_a_decoded_reference_is_admitted_for_a_grant_free_expansion:
+  {Refs.condition(ref_admit(decoded_record("r9", "symbol", J.Jarr{J.Jstr{"definition"}, J.Jnil{}}), Eng.ss_one("sourceAnalysis"), Eng.ss_one("definition"), Snap.ACurrent{}, Eng.ss_empty(), "fresh", True{})) == "ok" : String}
+
+def codec_law_a_decoded_reference_is_admitted_for_a_grant_free_expansion():
+  {==}
+
+law codec_law_a_decoded_reference_with_an_unknown_subject_refuses:
+  {Refs.condition(ref_admit(decoded_record("r9", "mystery", J.Jarr{J.Jstr{"definition"}, J.Jnil{}}), Eng.ss_one("sourceAnalysis"), Eng.ss_one("definition"), Snap.ACurrent{}, Eng.ss_empty(), "fresh", True{})) == "subjectRefused" : String}
+
+def codec_law_a_decoded_reference_with_an_unknown_subject_refuses():
+  {==}
+
+def ref_members_nosubject(+projections: J.Json) -> J.Json:
+  J.Jpair{"id", J.Jstr{"r9"},
+  J.Jpair{"engine", J.Jstr{"typescript"},
+  J.Jpair{"snapshotId", J.Jstr{"s1"},
+  J.Jpair{"projections", projections, J.Jnil{}}}}}
+
+def ref_members_wrong_engine(+projections: J.Json) -> J.Json:
+  J.Jpair{"id", J.Jstr{"r9"},
+  J.Jpair{"engine", J.Jint{1},
+  J.Jpair{"subject", J.Jstr{"symbol"},
+  J.Jpair{"snapshotId", J.Jstr{"s1"},
+  J.Jpair{"projections", projections, J.Jnil{}}}}}}
+
+law codec_law_a_decoded_reference_with_an_absent_field_refuses:
+  {ref_condition(ref_decode(ref_object_of(ref_members_nosubject(J.Jarr{J.Jstr{"definition"}, J.Jnil{}})))) == "missingRefField" : String}
+
+def codec_law_a_decoded_reference_with_an_absent_field_refuses():
+  {==}
+
+law codec_law_a_decoded_reference_with_a_wrong_type_field_refuses:
+  {ref_condition(ref_decode(ref_object_of(ref_members_wrong_engine(J.Jarr{J.Jstr{"definition"}, J.Jnil{}})))) == "invalidRefField" : String}
+
+def codec_law_a_decoded_reference_with_a_wrong_type_field_refuses():
+  {==}
+
+# --- closed frame shapes through the actual conversion ----------------------
+
+law codec_law_a_valid_object_request_frame_is_accepted:
+  {frame_text(frame_decision(frame_envelope(query_frame_rows()))) == "{\"id\":-1,\"query\":\"q1\",\"requestCanonical\":\"{\\\"version\\\":1}\",\"tool\":\"context-query\",\"version\":1}" : String}
+
+def codec_law_a_valid_object_request_frame_is_accepted():
+  {==}
+
+law codec_law_an_unknown_root_field_refuses:
+  {frame_text(frame_decision(frame_envelope(unknown_root_rows()))) == "validationRefusal:unknownFrameField" : String}
+
+def codec_law_an_unknown_root_field_refuses():
+  {==}
+
+law codec_law_an_unknown_params_field_refuses:
+  {frame_text(frame_decision(frame_envelope(unknown_params_rows()))) == "validationRefusal:unknownParamsField" : String}
+
+def codec_law_an_unknown_params_field_refuses():
+  {==}
+
+law codec_law_a_non_object_request_refuses:
+  {frame_text(frame_decision(frame_envelope(text_request_rows()))) == "validationRefusal:requestNotObject" : String}
+
+def codec_law_a_non_object_request_refuses():
+  {==}
+
+law codec_law_a_non_u32_request_number_refuses:
+  {frame_text(frame_decision(frame_envelope(big_number_request_rows()))) == "validationRefusal:nonU32NumberInRequest" : String}
+
+def codec_law_a_non_u32_request_number_refuses():
+  {==}
+
+law codec_law_an_astral_transported_value_decodes_its_code_point:
+  {sole_value(root_value(frame_read(astral_rows()))) == SCon{Char.from_u32(128512), SNil{}} : String}
+
+def codec_law_an_astral_transported_value_decodes_its_code_point():
+  {==}
+
+law codec_law_a_transported_nul_value_refuses:
+  {frame_refusal(frame_read(nul_value_rows())) == "nulInField" : String}
+
+def codec_law_a_transported_nul_value_refuses():
+  {==}
+
+law codec_law_a_transported_surrogate_value_refuses:
+  {frame_refusal(frame_read(surrogate_value_rows())) == "surrogateField" : String}
+
+def codec_law_a_transported_surrogate_value_refuses():
+  {==}
+
+def root_value(r: FrameRead) -> RawValue:
+  match r:
+    case FrValue{value}: value
+    case FrRefused{+condition}: Rnull{}
+
+def sole_value(+v: RawValue) -> String:
+  match v:
+    case Robj{members}: sole_member(members)
+    case Rnull{}: SNil{}
+    case Rtrue{}: SNil{}
+    case Rfalse{}: SNil{}
+    case Rnum{+token}: SNil{}
+    case Rstr{+value}: SNil{}
+    case Rarr{+items}: SNil{}
+
+def sole_member(+m: RawMembers) -> String:
+  match m:
+    case RMcons{+key, +value, +tail}: raw_text_of(value)
+    case RMnone{}: SNil{}
+
+# Values whose bytes are written literally: an astral code point, a decoded NUL and
+# a raw surrogate sequence. The demo encoder has no four-byte branch, so these do
+# not go through it.
+def value_row(hex: String) -> Req.Rows:
+  rows_of([
+    object_row("0", SNil{}, SNil{}),
+    Req.Row{"1", "0", row_hex("text"), row_hex("k"), hex}])
+
+def astral_rows() -> Req.Rows:
+  value_row("f09f9880")
+
+def nul_value_rows() -> Req.Rows:
+  value_row("610062")
+
+def surrogate_value_rows() -> Req.Rows:
+  value_row("eda080")
+
+def extra_root_row() -> Req.Row:
+  text_row("9", "0", "extra", "x")
+
+def unknown_root_rows() -> Req.Rows:
+  rows_of([
+    object_row("0", SNil{}, SNil{}),
+    text_row("1", "0", "jsonrpc", "2.0"),
+    extra_root_row()])
+
+def unknown_params_rows() -> Req.Rows:
+  rows_of([
+    object_row("0", SNil{}, SNil{}),
+    text_row("1", "0", "jsonrpc", "2.0"),
+    text_row("2", "0", "method", "tools/call"),
+    number_row("3", "0", "id", "7"),
+    object_row("4", "0", "params"),
+    text_row("5", "4", "name", "context-engines"),
+    object_row("6", "4", "arguments"),
+    text_row("7", "4", "extra", "x")])
+
+def text_request_rows() -> Req.Rows:
+  rows_of([
+    object_row("0", SNil{}, SNil{}),
+    text_row("1", "0", "jsonrpc", "2.0"),
+    text_row("2", "0", "method", "tools/call"),
+    number_row("3", "0", "id", "7"),
+    object_row("4", "0", "params"),
+    text_row("5", "4", "name", "context-query"),
+    object_row("6", "4", "arguments"),
+    text_row("7", "6", "query", "q1"),
+    text_row("8", "6", "request", "{}")])
+
+def big_number_request_rows() -> Req.Rows:
+  rows_of([
+    object_row("0", SNil{}, SNil{}),
+    text_row("1", "0", "jsonrpc", "2.0"),
+    text_row("2", "0", "method", "tools/call"),
+    number_row("3", "0", "id", "7"),
+    object_row("4", "0", "params"),
+    text_row("5", "4", "name", "context-query"),
+    object_row("6", "4", "arguments"),
+    text_row("7", "6", "query", "q1"),
+    object_row("8", "6", "request"),
+    real_row("9", "8", "version", "4294967296")])
 
 def main() -> IO(Unit):
   do IO<Unit>:
@@ -1422,9 +1825,9 @@ def main() -> IO(Unit):
     c : Unit <- IO.print(meta_text(metadata_validate(meta_one("progressToken", Rnum{"1e400"}))))
     d : Unit <- IO.print(meta_text(metadata_validate(meta_one("progressToken", Rnull{}))))
     e : Unit <- IO.print("envelope")
-    f : Unit <- IO.print(envelope_text(envelope_decide(EnvFrame{"2.0", "tools/call", "context-engines", Context.IdNumber{"7"}, Context.Absent{}, Context.Absent{}})))
-    g : Unit <- IO.print(envelope_text(envelope_decide(EnvFrame{"2.0", "tools/call", "context-query", Context.IdText{"7"}, Context.Present{"q1"}, Context.Present{"{\"version\":1}"}})))
-    h : Unit <- IO.print(envelope_text(envelope_decide(EnvFrame{"1.0", "tools/call", "not-a-tool", Context.IdNumber{"7"}, Context.Absent{}, Context.Absent{}})))
+    f : Unit <- IO.print(envelope_text(envelope_decide(EnvFrame{"2.0", "tools/call", "context-engines", Context.IdNumber{"7"}, Context.Absent{}, RtAbsent{}, True{}, True{}, True{}})))
+    g : Unit <- IO.print(envelope_text(envelope_decide(EnvFrame{"2.0", "tools/call", "context-query", Context.IdText{"7"}, Context.Present{"q1"}, RtText{"{\"version\":1}"}, True{}, True{}, True{}})))
+    h : Unit <- IO.print(envelope_text(envelope_decide(EnvFrame{"1.0", "tools/call", "not-a-tool", Context.IdNumber{"7"}, Context.Absent{}, RtAbsent{}, True{}, True{}, True{}})))
     i : Unit <- IO.print("dispatch")
     j : Unit <- IO.print(admission_text(dispatch_admission(Request_sample(), "sqlPlan", Context.one_effect(Context.EfPlanTargetSql{}), Context.no_effects())))
     k : Unit <- IO.print(admission_text(dispatch_admission(Request_sample(), "", Context.no_effects(), Context.no_effects())))
