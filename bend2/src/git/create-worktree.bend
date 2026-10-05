@@ -31,12 +31,15 @@ def cw_stage4_pick(r: T.GitOut, bc: String, branch: String, path: String) -> CW:
     case T.GRun{code, out}: cw_stage4_ok(U32.is_eq(code, 0), out, bc, branch, path)
     case T.GBroken{detail}: CWFail{T.FCmd{"create-worktree", detail}}
 
+def worktree_args(branch: String, path: String, base: String) -> List<String>:
+  ["worktree","add","-b",branch,path,base]
+
 def cw_stage4(bc: String, repo: String, branch: String, path: String) -> IO(CW):
   +br2 = branch
   +p2 = path
   +bc2 = bc
   do IO<CW>:
-    r : T.GitOut <- Git.runGit(repo, Con{"worktree", Con{"add", Con{"-b", Con{br2, Con{p2, Con{bc2, Nil{}}}}}}})
+    r : T.GitOut <- Git.runGit(repo,worktree_args(br2,p2,bc2))
     IO.pure(CW, cw_stage4_pick(r, bc2, br2, p2))
 
 def cw_go4(r: CW, repo: String, branch: String, path: String) -> IO(CW):
