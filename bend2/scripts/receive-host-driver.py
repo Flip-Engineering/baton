@@ -114,28 +114,29 @@ def load_report(path):
         return None
 
 
+def expected_id(case):
+    """The exact test id the fixture reports for a requested case."""
+    return case if case.startswith('__main__.') else '__main__.' + case
+
+
 def case_findings(report, cases):
     """Per-case findings from the structured fixture report, or a reason it is unusable."""
-    if report is None:
-        return None, 'the structured fixture report is missing or not JSON'
+    if not isinstance(report, dict):
+        return None, 'the structured fixture report is missing or is not a mapping'
     findings = {}
     for case in cases:
-        matches = [key for key in report if key == case or key.endswith('.' + case)]
-        if len(matches) != 1:
-            findings[case] = {'outcome': 'inconclusive', 'phase': None,
-                              'reason': 'the case is not present exactly once in the report'}
-            continue
-        entries = report[matches[0]]
+        key = expected_id(case)
+        entries = report.get(key)
         if not isinstance(entries, list) or len(entries) != 1 or not isinstance(entries[0], dict):
             findings[case] = {'outcome': 'inconclusive', 'phase': None,
-                              'reason': 'the case entry is not a single structured record'}
+                              'reason': f'the report does not carry exactly one structured entry for {key}'}
             continue
         entry = entries[0]
         findings[case] = {'outcome': entry.get('outcome'),
                           'phase': entry.get('phase'),
                           'message': entry.get('message')}
-    extra = [key for key in report
-             if not any(key == case or key.endswith('.' + case) for case in cases)]
+    wanted = {expected_id(case) for case in cases}
+    extra = [key for key in report if key not in wanted]
     if extra:
         findings['__extra__'] = {'outcome': 'inconclusive', 'phase': None,
                                  'reason': f'the report carries unrequested entries: {extra}'}
@@ -191,6 +192,11 @@ def main(argv=None):
         return 1
 
     controls = json.loads(CONTROLS.read_text())
+    if not isinstance(controls, dict) or not isinstance(controls.get('controls'), list) \
+            or not isinstance(controls.get('control_expectations', {}).get('controls'), dict):
+        print(json.dumps({'failures': ['the control file does not have the expected shape']},
+                         indent=2))
+        return 1
     for entry in controls.get('immutable_inputs', []):
         if 'sha256' not in entry:
             continue
@@ -199,6 +205,17 @@ def main(argv=None):
             summary['failures'].append(f"missing input {entry['name']} in {inputs}")
         elif digest(source) != entry['sha256']:
             summary['failures'].append(f"input hash mismatch for {entry['name']}")
+    if not isinstance(controls, dict):
+        summary['failures'].append('the control file is not a mapping')
+    elif not isinstance(controls.get('controls'), list):
+        summary['failures'].append('the control file has no definitions list')
+    elif not isinstance(controls.get('control_expectations'), dict) \
+            or not isinstance(controls['control_expectations'].get('controls'), dict):
+        summary['failures'].append('the control file has no mapping of controls')
+    if summary['failures']:
+        print(json.dumps(summary, indent=2))
+        return 1
+
     declared = controls['control_expectations']['controls']
     if sorted(declared) != sorted(CONSUME_CONTROLS):
         summary['failures'].append('the control mapping does not match the four consume controls')
