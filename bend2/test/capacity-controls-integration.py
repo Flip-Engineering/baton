@@ -55,6 +55,11 @@ class CapacityControlsIntegration(unittest.TestCase):
                          hashlib.sha256(PACKAGE.binding_bytes(discovery['controls'])).hexdigest())
 
     def test_a_duplicate_discovery_id_is_refused_before_any_map(self):
+        """Scope: the real reader's own parsing and refusal, over injected discovery bytes.
+
+        The checker subprocess is replaced so the injected records reach the reader
+        unmodified; this establishes the reader's rule, not the checker's emission.
+        """
         original = PACKAGE.subprocess.check_output
         rows = [{'id': 'proof:duplicate', 'kind': 'proof-removal', 'law': 'duplicate',
                  'module': 'bend2/src/json/laws.bend',
@@ -72,9 +77,9 @@ class CapacityControlsIntegration(unittest.TestCase):
 
     def test_the_discovery_binding_bytes_are_the_shared_serialization(self):
         rows = [
-            {'id': 'mutation:astral\U00010000', 'kind': 'mutation', 'law': 'astral',
+            {'id': 'proof:\U00010000', 'kind': 'proof-removal', 'law': 'astral',
              'module': 'bend2/src/json/laws.bend', 'definition_sha256': 'f' * 64},
-            {'id': 'proof:private\ue000', 'kind': 'proof-removal', 'law': 'private',
+            {'id': 'proof:\ue000', 'kind': 'proof-removal', 'law': 'private',
              'module': 'bend2/src/json/laws.bend', 'definition_sha256': '0' * 64},
         ]
         private_use = '\t'.join(rows[1][field] for field in PACKAGE.CONTROL_FIELDS).encode('utf-8')
@@ -85,9 +90,25 @@ class CapacityControlsIntegration(unittest.TestCase):
                          'the binding must order rows by unsigned UTF-8 bytes, not by code units')
         self.assertEqual(hashlib.sha256(encoded).hexdigest(),
                          hashlib.sha256(expected).hexdigest())
-        # U+E000 starts EF 80 80 and U+10000 starts F0 90 80 80, so UTF-8 order puts the
-        # private-use id first while UTF-16 code-unit order would put the astral id first.
+        # The two ids share the prefix 'proof:' and differ at the next character: U+E000
+        # starts EF 80 80 and U+10000 starts F0 90 80 80, so UTF-8 byte order puts the
+        # private-use row first, while UTF-16 code-unit order (0xD800 before 0xE000) would
+        # put the astral row first.
         self.assertEqual(binding_order(rows), [rows[1]['id'], rows[0]['id']])
+
+    def test_python_consumes_the_checker_emitted_records(self):
+        completed = self.checker('--discover')
+        self.assertEqual(completed.returncode, 0,
+                         'the checker --discover mode is absent or failed: '
+                         + completed.stderr.strip()[:200])
+        records = [json.loads(line) for line in completed.stdout.splitlines() if line.strip()]
+        digest = hashlib.sha256(PACKAGE.binding_bytes(records)).hexdigest()
+        self.assertEqual(len(digest), 64)
+        self.assertEqual(PACKAGE.discover_controls()['sha256'], digest,
+                         'the package binding must agree with the checker-emitted records')
+        # Scope: this consumes the checker's emitted record bytes and recomputes the
+        # binding over them. It does not exercise the checker's internal row sort, which
+        # the checker asserts on its own side.
 
     def test_the_checker_answers_or_refuses_the_classification_request(self):
         payload = {'case': {'id': 'proof:absent', 'kind': 'proof-removal', 'law': 'absent',

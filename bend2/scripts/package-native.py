@@ -153,6 +153,7 @@ def archive_inputs(archive, compiler):
             'inventory': inventory}, notices
 
 
+RECEIPT_SCHEMA = 'baton2-native-gate-receipt-v2'
 CONTROL_SCRIPT = 'bend2/scripts/laws-check.mjs'
 CONTROL_FIELDS = ('id', 'kind', 'law', 'module', 'definition_sha256')
 CHILD_FIELDS = ('exit_code', 'signal', 'spawn_error')
@@ -349,7 +350,8 @@ def reconcile_native(text):
 
 
 def run_gates(compiler, env, logs, initial, before_inputs, remote=None):
-    summary = {'status': 'running', 'worktree': str(ROOT), 'output': str(logs),
+    summary = {'schema': RECEIPT_SCHEMA, 'status': 'running', 'worktree': str(ROOT),
+               'output': str(logs),
                'before': initial, 'environment': {'BEND': str(compiler), 'BEND_NO_TELEMETRY': '1',
                                                 'CC': env.get('CC', 'clang')},
                'compiler_sha256': sha256(compiler), 'runner_sha256': sha256(Path(__file__)),
@@ -366,8 +368,10 @@ def run_gates(compiler, env, logs, initial, before_inputs, remote=None):
             stage = {'name': name, 'argv': argv, 'status': 'running',
                      'before': snapshot(), 'log': name + '.log'}
             if remote is not None and name == 'laws-check':
-                stage['argv'] = [remote['checker_invocation'], '--group', remote['modules']]
+                stage['local_argv'] = list(argv)
+                stage['argv'] = [remote['checker_invocation'], '--group', '<module>']
                 stage['route'] = 'remote-module-groups'
+                stage['children'] = [dict(span) for span in remote['spans']]
             same_source(stage['before'], initial)
             summary['stages'].append(stage)
             write_json(path, summary)
@@ -375,26 +379,31 @@ def run_gates(compiler, env, logs, initial, before_inputs, remote=None):
                               'route': stage.get('route', 'local')}), flush=True)
             started = time.monotonic()
             if stage.get('route') == 'remote-module-groups':
-                receipt = {'route': 'remote-module-groups', 'evidence': remote['path'],
-                           'evidence_sha256': remote['sha256'], 'binding': remote['binding'],
-                           'cases': remote['cases'], 'groups': remote['groups'],
-                           'origin': remote['origin'], 'spans': remote['spans'],
-                           'gates': ['build-native', 'check-native']}
+                receipt = {'schema': RECEIPT_SCHEMA, 'route': 'remote-module-groups',
+                           'evidence': remote['path'], 'evidence_sha256': remote['sha256'],
+                           'binding': remote['binding'], 'cases': remote['cases'],
+                           'groups': remote['groups'], 'origin': remote['origin'],
+                           'children': remote['spans'], 'classifier': remote['classifier'],
+                           'local_gates': ['build-native', 'check-native'],
+                           'local_argv': list(argv)}
                 (logs / stage['log']).write_text(json.dumps(receipt, indent=2) + '\n')
-                result_exit = 0
+                result_exit = None
             else:
                 with (logs / stage['log']).open('wb') as log:
                     result = subprocess.run(argv, cwd=ROOT, env=env, stdin=subprocess.DEVNULL,
                                             stdout=log, stderr=subprocess.STDOUT)
                 result_exit = result.returncode
             stage.update(exit_code=result_exit, elapsed_seconds=time.monotonic() - started,
-                         status='passed' if result_exit == 0 else 'failed', after=snapshot())
+                         status='passed' if result_exit in (0, None) else 'failed',
+                         after=snapshot())
             if stage.get('route') == 'remote-module-groups':
                 stage['elapsed_seconds'] = remote['slowest_span_seconds']
                 stage['evidence_sha256'] = remote['sha256']
+                require(stage['children'], 'A remote laws stage records no producing child outcome')
             stage['log_sha256'] = sha256(logs / stage['log'])
             write_json(path, summary)
-            require(result_exit == 0, name + ' failed; full output is retained at ' + str(logs / stage['log']))
+            require(result_exit in (0, None),
+                    name + ' failed; full output is retained at ' + str(logs / stage['log']))
             same_source(stage['after'], initial)
         summary['validation'] = validation(logs, remote)
         summary['after'] = snapshot()
@@ -420,6 +429,9 @@ def reuse_gates(path, expected_sha, compiler, logs, initial):
             'The supplied gate receipt carries no historical toolchain and host inputs')
     require(summary['inputs_after'] == summary['inputs_before'],
             'The supplied gate receipt records changed inputs across its own gates')
+    require(summary.get('schema') == RECEIPT_SCHEMA,
+            'The supplied gate receipt was written to another schema: '
+            + json.dumps(summary.get('schema')))
     require(summary['status'] == 'passed' and Path(summary['worktree']).resolve() == ROOT,
             'The supplied gate receipt must pass on this exact build directory')
     same_source(summary['before'], initial)
@@ -428,10 +440,19 @@ def reuse_gates(path, expected_sha, compiler, logs, initial):
     require(summary['compiler_sha256'] == sha256(compiler), 'The receipt compiler differs from the selected compiler')
     require(summary['environment']['BEND'] == str(compiler) and summary['environment']['BEND_NO_TELEMETRY'] == '1',
             'The receipt must select this compiler with telemetry disabled')
-    require([(stage['name'], stage['argv']) for stage in summary['stages']] == list(GATES),
-            'The receipt must contain the complete three gate commands in order')
+    require([stage['name'] for stage in summary['stages']] == [name for name, _ in GATES],
+            'The receipt must contain the complete three gate stages in order')
     for stage in summary['stages']:
-        require(stage['status'] == 'passed' and stage['exit_code'] == 0, 'A supplied gate did not pass')
+        if stage.get('route') == 'remote-module-groups':
+            require(stage.get('exit_code') is None and stage.get('children'),
+                    'A remote laws stage must record its producing children and no local exit')
+            require(stage.get('local_argv') == list(dict(GATES)[stage['name']]),
+                    'A remote laws stage must keep the local gate command it replaces')
+        else:
+            require(stage.get('argv') == list(dict(GATES)[stage['name']]),
+                    'A local gate stage must name its own command')
+            require(stage['status'] == 'passed' and stage['exit_code'] == 0,
+                    'A supplied gate did not pass')
         same_source(stage['before'], initial)
         same_source(stage['after'], initial)
         require(stage['log'] == stage['name'] + '.log', 'Unexpected gate log path')
@@ -856,6 +877,13 @@ def package(args):
         controls = (controls_evidence(args.controls_evidence.resolve(), initial, compiler)
                     if args.controls_evidence else None)
         if args.gate_receipt:
+            if summary.get('route') == 'remote-module-groups':
+                record = summary.get('controls_evidence') or {}
+                require(controls is not None,
+                        'A remote-route receipt must be supplied with its producer evidence')
+                require(controls['sha256'] == record.get('sha256')
+                        and controls['binding'] == record.get('binding'),
+                        'The supplied controls evidence is not the evidence the receipt recorded')
             require(summary['inputs_after'] == before_inputs, 'The receipt toolchain or host inputs differ from current inputs')
             input_boundary = 'Compiler libraries, CC and host captured after the supplied gates and checked again during packaging.'
         else:
