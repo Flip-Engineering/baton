@@ -24,18 +24,41 @@ def shell_chars(value: String) -> String:
 def shell(value: String) -> String:
   "'" ++ shell_chars(value) ++ "'"
 
+def inspection_cli(+command: String, +session: String) -> String:
+  "  " ++ command ++ " inbox " ++ shell(session) ++ " --index\n"
+  ++ "  " ++ command ++ " inbox " ++ shell(session) ++ " --index --sender PLAYER --kind report --state all\n"
+  ++ "  " ++ command ++ " delivery MESSAGE_ID\n"
+  ++ "  " ++ command ++ " orchestra --index --for " ++ shell(session) ++ " --pretty\n"
+
+law inspection_examples_scope_metadata_to_the_recorded_session:
+  for +command: String
+  for +session: String
+  {inspection_cli(command,session) == ("  " ++ command ++ " inbox " ++ shell(session) ++ " --index\n"
+    ++ "  " ++ command ++ " inbox " ++ shell(session) ++ " --index --sender PLAYER --kind report --state all\n"
+    ++ "  " ++ command ++ " delivery MESSAGE_ID\n"
+    ++ "  " ++ command ++ " orchestra --index --for " ++ shell(session) ++ " --pretty\n") : String}
+
+def inspection_examples_scope_metadata_to_the_recorded_session(command,session):
+  {==}
+
 def instructions(executable: String, database: String, +session: String) -> String:
   +command = shell(executable) ++ " " ++ shell(database)
   "You are session " ++ session ++ " in a Baton2 Orchestra. A Player is an individual agent. Review pending messages and follow your task.\n"
   ++ "The Principal Conductor is the main orchestrator. An Associate Conductor is a sub-orchestrator. An Ensemble is a coordinated team of agents. A Section is a capability-specific subgroup. The Orchestra is the whole coordinated system. When coordinating players, direct their work according to your task.\n"
   ++ "The players command lists all Players, including Principal and Associate Conductors. PLAYER denotes a player session ID.\n"
   ++ "Public messages follow assigned roles, parent links and explicit tight Ensemble membership. A Conductor can message its descendants; report and ask reach your immediate parent. Peer messages require a shared tight Ensemble; Conductor peers must have equal hierarchy depth.\n"
-  ++ "Coordinator CLI:\n  " ++ command ++ " inbox " ++ shell(session) ++ "\n  " ++ command ++ " ack MESSAGE_ID " ++ shell(session) ++ " RECEIPT\n"
-  ++ "Acknowledge each message after accepting it.\n  " ++ command ++ " orchestra\n  " ++ command ++ " players\n  " ++ command ++ " session ID\n  " ++ command ++ " worktree ID\n  " ++ command ++ " turns ID\n"
+  ++ "Coordinator CLI: inspect message metadata first, then retrieve the selected complete body.\n" ++ inspection_cli(command,session)
+  ++ "orchestra --index returns structural records and per-actor pendingCount, unacknowledgedCount and inputRead argv. Reference limitations.next is a literal argv array; pass its elements after the executable and database to inspect that exact subject. pendingCount excludes stopped execution inputs; unacknowledgedCount includes every NULL receipt. These counts describe retained input. Run inputRead after the executable and database to list that actor's pending metadata; append --state all for receipt history. pending --index --recipient ID accepts conjunctive sender/kind selectors; delivery ID retrieves each full body. Index filters combine by exact sender/kind equality. State defaults to pending; --state all also includes acknowledged messages. pending --index selects across recipients and accepts --recipient SESSION. Index reads do not acknowledge input; receipt state records acknowledgment, not review or completed work. Legacy inbox/pending/players/turns/orchestra readers include full bodies or histories; use them when that payload is needed.\n"
+  ++ "  " ++ command ++ " ack MESSAGE_ID " ++ shell(session) ++ " RECEIPT\n"
+  ++ "Acknowledge each message after reading and accepting it.\n  " ++ command ++ " session ID\n  " ++ command ++ " worktree ID\n  " ++ command ++ " turns ID\n"
   ++ "  " ++ command ++ " recruit PLAYER " ++ shell(session) ++ " HARNESS MODEL EFFORT REPO BRANCH PATH BASE\n"
+  ++ "  " ++ command ++ " recruit PLAYER PARENT HARNESS MODEL EFFORT REPO BRANCH PATH BASE --role player|associate-conductor [--ensemble ENSEMBLE OWNER]... [--section ENSEMBLE OWNER SECTION]...\n"
+  ++ "  " ++ command ++ " ensemble ENSEMBLE OWNER loose|tight [--section SECTION CAPABILITY]...\n"
+  ++ "Extended ensemble declares Sections with fixed groups --section SECTION CAPABILITY and explicit owner/coupling. The owner is an existing Conductor; a Principal may own an Ensemble directly. Extended recruit requires explicit PARENT and --role player|associate-conductor; --ensemble ENSEMBLE OWNER adds membership, and --section ENSEMBLE OWNER SECTION adds both memberships. Repeat recruitment with the same parent for sibling Associates or an Associate parent for nested work. Sections may be empty or contain multiple Players, including a critic group. Cross-parent memberships preserve the recorded parent; ownership and membership are independent. Configuration returns one structural-result with registration and workspace phases, literal next argv arrays, and startupRequested:false on success. Inspect with orchestra --index, player, worktree, ensemble and section. Use existing receiver/dispatch-file or dispatch-turn commands to start work.\n"
   ++ "  " ++ command ++ " receiver PLAYER HARNESS_CMD OUTPUT_LOG\n  " ++ command ++ " dispatch-file ID " ++ shell(session) ++ " PLAYER task TASK_FILE\n"
   ++ "  " ++ command ++ " dispatch-turn PLAYER TURN_ID HARNESS_CMD OUTPUT_LOG TASK_FILE\n  " ++ command ++ " status --pretty\n"
-  ++ "  " ++ command ++ " message ID " ++ shell(session) ++ " PLAYER guidance BODY\n  " ++ command ++ " land-checked PLAYER REPO TARGET CHECK FILES\n"
+  ++ "  " ++ command ++ " message ID " ++ shell(session) ++ " PLAYER guidance BODY\n  " ++ command ++ " land-checked PLAYER REPO TARGET CHECK FILES [--commit COMMIT]\n"
+  ++ "land and land-checked default to the recorded branch tip. Add --commit COMMIT to select a reviewed commit from that branch while later work remains on the branch. Native selection verifies the registered workspace repository and selected commit ancestry before landing effects. Use a full reviewed object ID to name the intended source. The checked form runs the existing target/candidate checks on the selected source. Inspect the result status; selection does not grant review or landing authority.\n"
   ++ "  " ++ command ++ " role SESSION\n  " ++ command ++ " role SESSION player|principal-conductor|associate-conductor|operator\n  " ++ command ++ " ensemble ENSEMBLE\n  " ++ command ++ " ensemble ENSEMBLE OWNER [loose|tight]\n  " ++ command ++ " ensemble-member ENSEMBLE OWNER PLAYER add|remove\n  " ++ command ++ " section ENSEMBLE SECTION [OWNER CAPABILITY]\n  " ++ command ++ " section-member ENSEMBLE SECTION OWNER PLAYER add|remove\n"
   ++ "  " ++ command ++ " native-reply " ++ shell(session) ++ " REQUEST RESPONSE_JSON\n  " ++ command ++ " native-reply-file " ++ shell(session) ++ " REQUEST PATH\n"
   ++ "  " ++ command ++ " record FINDING_ID " ++ shell(session) ++ " CLAIM message:MESSAGE_ID LIMITS\n  " ++ command ++ " knowledge " ++ shell(session) ++ "\n"
