@@ -224,7 +224,7 @@ test('loadSourceMap reads a local map through the enforced reader with its read 
     assert.equal(loaded.origin, 'file');
     assert.equal(loaded.path, realpathSync(mapPath));
     assert.equal(loaded.input.realPath, realpathSync(mapPath));
-    assert.equal(loaded.input.size, MAP_TEXT_BYTES.length);
+    assert.equal(loaded.input.size, String(MAP_TEXT_BYTES.length), 'identity sizes are exact decimal text of the bigint stats');
     assert.notEqual(loaded.input.ino, undefined);
     assert.equal(loaded.digest, createHash('sha256').update(MAP_TEXT_BYTES).digest('hex'));
     assert.equal(loaded.map.sources[0], 'fixture-ts.ts');
@@ -360,7 +360,7 @@ test('loadSourceMap reports missing, unreadable and malformed local maps with di
   }
 });
 
-test('the enforced reader refuses an injected override that does not enforce the closure', () => {
+test('the injected read capability owns enforcement and its refusal renders verbatim; an accepted override is the capability contract', () => {
   // The composer capability contract: a readAdmitted injection owns the
   // enforcement, so loadSourceMap calls it verbatim and surfaces its
   // conditions unchanged.
@@ -488,6 +488,28 @@ test('resolveSourcePath composes the map base before the generated base, and URL
   );
   // A plain string base is still accepted as the generated base.
   assert.equal(resolveSourcePath(plain, 0, '/work/gen.js'), join('/work', 'a.ts'));
+});
+
+test('URL bases apply the sourceRoot in URL space before the source joins', () => {
+  const plain = parseSourceMapV3(JSON.stringify({ version: 3, sources: ['a.ts'], names: [], mappings: '' }));
+  // A generated bundle URL base without a sourceRoot resolves against the
+  // bundle's directory.
+  assert.equal(
+    resolveSourcePath(plain, 0, { mapPath: null, generatedPath: 'https://cdn.example/app/bundle.js' }),
+    'https://cdn.example/app/a.ts',
+  );
+  // A relative sourceRoot applies inside the URL directory BEFORE the source
+  // joins; a file URL base decodes to the filesystem path with the same
+  // composition.
+  const rooted = parseSourceMapV3(JSON.stringify({ version: 3, sourceRoot: 'src', sources: ['a.ts'], names: [], mappings: '' }));
+  assert.equal(
+    resolveSourcePath(rooted, 0, { mapPath: null, generatedPath: 'https://cdn.example/app/bundle.js' }),
+    'https://cdn.example/app/src/a.ts',
+  );
+  assert.equal(
+    resolveSourcePath(rooted, 0, { mapPath: 'file:///srv/maps/m.map', generatedPath: null }),
+    join('/srv', 'maps', 'src', 'a.ts'),
+  );
 });
 
 test('mapGeneratedPosition composes the original path with the map digest for provenance', () => {

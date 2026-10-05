@@ -34,7 +34,7 @@
 // enforcement; plain readFile injection is deliberately not offered.
 
 import { createHash } from 'node:crypto';
-import { closeSync, fstatSync, lstatSync, openSync, readSync, realpathSync } from 'node:fs';
+import { closeSync, constants as fsConstants, fstatSync, lstatSync, openSync, readSync, realpathSync } from 'node:fs';
 import { dirname, isAbsolute, relative, resolve as resolvePath } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -62,13 +62,29 @@ function sha256Hex(bytes) {
 // Builds the enforced local reader for one admitted closure. Root resolution
 // is lazy and refusal-shaped: a root that does not resolve surfaces as
 // 'mapReadFailed' through the reader, never as a raw throw from
-// construction. Each read resolves the requested path's real location,
-// refuses when it escapes the closure (a symlink inside an admitted root may
-// not point outside), establishes the file-identity binding with lstat
-// before opening and cross-checks it against the open descriptor, reads only
-// after that binding holds, and re-checks descriptor, path and size/mtime
-// afterwards so a replacement or a same-size content write during the read
-// refuses.
+// construction.
+//
+// Admission ordering and the stated boundary: every admission check -
+// real-path closure membership, the lstat identity binding, an immediate
+// re-resolution, and the open with O_NOFOLLOW - happens BEFORE any byte is
+// read. The interval between the closure check and the open is an explicitly
+// narrowed unresolved pre-read boundary: a parent-directory replacement by
+// symlink inside that window can make both lstat and open select an outside
+// inode, and post-read rejection refuses the capture but cannot un-read
+// those bytes or authorize the read. Within that stated boundary the final
+// path component cannot be swapped to a symlink (O_NOFOLLOW refuses it
+// pre-read), and the after checks - descriptor identity, path
+// re-resolution, size and nanosecond mtime/ctime comparison - refuse a
+// replacement or a same-size content write that happened inside the covered
+// interval.
+//
+// Timestamp limit, stated without an immutable-bytes claim: matching
+// nanosecond timestamps do not PROVE the bytes never changed - a
+// restoration that also restores timestamps, or a same-tick resolution
+// residual, can suppress detection. The digest recorded beside the identity
+// is the binding evidence for what was read; the boundary probes retained
+// with this module exercise substitution and in-place-write intervals
+// against these checks on admitted remote runs.
 export function createAdmittedFileReader({ admittedRoots = [] } = {}) {
   let roots = null;
   const resolveRoots = () => {
@@ -99,38 +115,57 @@ export function createAdmittedFileReader({ admittedRoots = [] } = {}) {
     // Establish the admitted descriptor/path binding BEFORE any byte is read.
     let before;
     try {
-      before = lstatSync(realPath);
+      before = lstatSync(realPath, { bigint: true });
     } catch (err) {
       throw new SourceMapError('mapReadFailed', `${realPath} does not stat: ${err.message}`);
     }
     if (!before.isFile()) {
       throw new SourceMapError('mapReadFailed', `${realPath} is not a regular file`);
     }
+    // Shrink the pre-open window: re-resolve immediately before the open.
+    let immediate;
+    try {
+      immediate = realpathSync(realPath);
+    } catch (err) {
+      throw new SourceMapError('mapReplacedDuringRead', `${realPath} does not re-resolve before the open: ${err.message}`);
+    }
+    if (immediate !== realPath) {
+      throw new SourceMapError('mapReplacedDuringRead', `${realPath} re-resolved to ${immediate} before the open`);
+    }
     let fd = null;
     try {
-      fd = openSync(realPath, 'r');
-      const opened = fstatSync(fd);
+      // O_NOFOLLOW refuses a final-component symlink swap that happened
+      // after the re-resolution and before the read starts.
+      fd = openSync(realPath, fsConstants.O_RDONLY | fsConstants.O_NOFOLLOW);
+      const opened = fstatSync(fd, { bigint: true });
       if (opened.dev !== before.dev || opened.ino !== before.ino) {
         throw new SourceMapError('mapReplacedDuringRead', `${realPath} changed identity between stat and open`);
       }
-      const bytes = Buffer.alloc(opened.size);
+      const size = Number(opened.size);
+      const bytes = Buffer.alloc(size);
       let offset = 0;
-      while (offset < opened.size) {
-        const read = readSync(fd, bytes, offset, opened.size - offset, offset);
+      while (offset < size) {
+        const read = readSync(fd, bytes, offset, size - offset, offset);
         if (read === 0) break;
         offset += read;
       }
-      if (offset !== opened.size) {
+      if (offset !== size) {
         throw new SourceMapError('mapReplacedDuringRead', `${realPath} changed size during the read`);
       }
-      const after = fstatSync(fd);
-      if (after.size !== opened.size || after.mtimeMs !== opened.mtimeMs) {
-        throw new SourceMapError('mapReplacedDuringRead', `${realPath} changed content during the read`);
+      const after = fstatSync(fd, { bigint: true });
+      if (after.size !== opened.size || after.mtimeNs !== opened.mtimeNs || after.ctimeNs !== opened.ctimeNs) {
+        throw new SourceMapError('mapReplacedDuringRead', `${realPath} changed content or metadata during the read`);
       }
       closeSync(fd);
       fd = null;
-      const afterStat = lstatSync(realPath);
-      if (afterStat.dev !== before.dev || afterStat.ino !== before.ino || afterStat.size !== before.size || afterStat.mtimeMs !== before.mtimeMs) {
+      const afterStat = lstatSync(realPath, { bigint: true });
+      if (
+        afterStat.dev !== before.dev ||
+        afterStat.ino !== before.ino ||
+        afterStat.size !== before.size ||
+        afterStat.mtimeNs !== before.mtimeNs ||
+        afterStat.ctimeNs !== before.ctimeNs
+      ) {
         throw new SourceMapError('mapReplacedDuringRead', `${realPath} named different content after the read`);
       }
       const finalReal = realpathSync(path);
@@ -142,10 +177,11 @@ export function createAdmittedFileReader({ admittedRoots = [] } = {}) {
         identity: {
           path,
           realPath,
-          dev: before.dev,
-          ino: before.ino,
-          size: before.size,
-          mtimeMs: before.mtimeMs,
+          dev: before.dev.toString(),
+          ino: before.ino.toString(),
+          size: before.size.toString(),
+          mtimeNs: before.mtimeNs.toString(),
+          ctimeNs: before.ctimeNs.toString(),
         },
       };
     } finally {
@@ -372,22 +408,22 @@ export function resolveSourcePath(map, sourceIndex, base = null) {
   const mapPath = base && typeof base === 'object' ? base.mapPath ?? null : null;
   const generatedPath = base && typeof base === 'object' ? base.generatedPath ?? null : base;
   const baseLocation = mapPath ?? generatedPath;
-  if (baseLocation && SCHEME.test(baseLocation) && !baseLocation.startsWith('file://')) {
-    const urlBase = baseLocation.endsWith('/') ? baseLocation : `${baseLocation}/`;
+  if (baseLocation && SCHEME.test(baseLocation)) {
+    // A URL base - remote or file - resolves entirely in URL space: the
+    // sourceRoot applies in the URL directory BEFORE the source joins, and a
+    // file:// result decodes back to a filesystem path.
+    const directory = baseLocation.slice(0, baseLocation.lastIndexOf('/') + 1);
+    const withRoot = sourceRoot ? `${directory}${sourceRoot}` : directory;
+    const urlBase = withRoot.endsWith('/') ? withRoot : `${withRoot}/`;
+    let href;
     try {
-      return new URL(source, urlBase).href;
+      href = new URL(source, urlBase).href;
     } catch (err) {
       throw new SourceMapError('malformedMap', `source does not join the URL base: ${err.message}`);
     }
+    return baseLocation.startsWith('file://') ? fileURLToPath(href) : href;
   }
-  let fileBase = baseLocation ?? null;
-  if (fileBase && fileBase.startsWith('file://')) {
-    try {
-      fileBase = fileURLToPath(fileBase);
-    } catch (err) {
-      throw new SourceMapError('malformedMap', `file URL base does not decode: ${err.message}`);
-    }
-  }
+  const fileBase = baseLocation ?? null;
   const rooted = sourceRoot
     ? (sourceRoot.endsWith('/') ? sourceRoot + source : `${sourceRoot}/${source}`)
     : source;

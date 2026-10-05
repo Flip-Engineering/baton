@@ -43,6 +43,22 @@ function admitRef(identity, live) {
   return { decision: 'admitted', ok: true, identity };
 }
 
+// Test-owned standalone normalizer built on the test helper validator. The
+// OPERATIVE path never uses this: createCaptureBinding requires the injected
+// production requireAdmittedRef and refuses with productionNormalizerRequired
+// without one.
+function requireAdmittedRef(decision) {
+  if (decision && decision.decision === 'admitted' && decision.ok === true && isValidRefIdentity(decision.identity)) {
+    return decision.identity;
+  }
+  const error = new Error('standalone normalizer refusal');
+  if (decision && typeof decision === 'object' && decision.decision === 'admitted' && decision.ok === false) error.condition = 'refDecisionContradictory';
+  else if (!decision || typeof decision !== 'object' || decision.decision === undefined) error.condition = 'refDecisionRefused';
+  else error.condition = 'refDecisionMalformed';
+  throw error;
+}
+const NORMALIZER = { requireAdmittedRef };
+
 function pauseCallFrames() {
   return [
     { functionName: 'probe', callFrameId: 'cf:1', location: { scriptId: '42', lineNumber: 10, columnNumber: 4 } },
@@ -51,7 +67,7 @@ function pauseCallFrames() {
   ];
 }
 
-test('identity validation is a strict member shape with canonical decimal counters', () => {
+test('identity validation is a test-owned standalone shape with canonical decimal counters and production ref kinds', () => {
   assert.equal(isValidRefIdentity(IDENTITY), true);
   assert.equal(isValidRefIdentity({ ...IDENTITY, epoch: '0' }), true);
   assert.equal(isValidRefIdentity({ ...IDENTITY, epoch: '4294967296' }), true);
@@ -69,6 +85,8 @@ test('identity validation is a strict member shape with canonical decimal counte
     { ...IDENTITY, epoch: '1e3' },
     { ...IDENTITY, mutationGeneration: '-1' },
     { ...IDENTITY, kind: 7 },
+    { ...IDENTITY, kind: 'bogus' },
+    { ...IDENTITY, kind: 'pause' },
   ]) {
     assert.equal(isValidRefIdentity(bad), false, JSON.stringify(bad));
   }
@@ -181,10 +199,14 @@ test('async chains are retained and mapped with parent provenance, not reduced t
   assert.ok(unenabled.async.note.length > 0);
 });
 
-test('the capture binding requires a live sampler and samples the current session', () => {
-  assert.equal(createCaptureBinding({ admitRef, ref: 'ref' }).sample().condition, 'refDecisionMalformed');
-  assert.equal(createCaptureBinding({ liveNow: () => LIVE }).sample().condition, 'refDecisionMalformed');
-  assert.equal(createCaptureBinding({ admitRef, ref: null, liveNow: () => LIVE }).sample().condition, 'refDecisionMalformed');
+test('the operative binding requires the injected production normalizer and a live sampler', () => {
+  assert.equal(createCaptureBinding({ admitRef, ref: IDENTITY, liveNow: () => ({ ...LIVE }) }).sample().condition, 'productionNormalizerRequired');
+  assert.equal(createCaptureBinding({ admitRef, ref: 'ref', liveNow: () => ({ ...LIVE }), ...NORMALIZER }).sample().condition, 'refDecisionMalformed');
+  assert.equal(createCaptureBinding({ liveNow: () => LIVE, ...NORMALIZER }).sample().condition, 'productionNormalizerRequired');
+  assert.equal(createCaptureBinding({ admitRef, ref: null, liveNow: () => ({ ...LIVE }), ...NORMALIZER }).sample().condition, 'productionNormalizerRequired');
+  const noSampler = createCaptureBinding({ admitRef, ref: IDENTITY, ...NORMALIZER });
+  assert.equal(noSampler.sample().condition, 'productionNormalizerRequired');
+  assert.ok(noSampler.sample().detail.includes('liveNow'));
 
   let samples = 0;
   const binding = createCaptureBinding({
@@ -197,9 +219,12 @@ test('the capture binding requires a live sampler and samples the current sessio
       samples += 1;
       return { ...LIVE };
     },
+    ...NORMALIZER,
   });
-  assert.equal(binding.sample().admitted, true);
+  const sampled = binding.sample();
+  assert.equal(sampled.admitted, true);
   assert.equal(samples, 2, 'each sample calls the sampler and the admission once');
+  assert.deepEqual(sampled.identity, IDENTITY);
 });
 
 test('captureScopes admits before and after every read and at publication', async () => {
@@ -216,7 +241,7 @@ test('captureScopes admits before and after every read and at publication', asyn
       reads += 1;
       return { result: [{ name: 'a', value: { type: 'number', value: 1, description: '1' } }], internalProperties: [] };
     },
-    binding: createCaptureBinding({ admitRef, ref: IDENTITY, liveNow: () => live }),
+    binding: createCaptureBinding({ admitRef, ref: IDENTITY, liveNow: () => live, ...NORMALIZER }),
   });
   assert.equal(settled.condition, undefined);
   assert.equal(reads, 2);
@@ -237,7 +262,7 @@ test('an identity change across a read is named at stage afterRead with the raw 
       live = { ...live, mutationGeneration: '4' };
       return rawRecord;
     },
-    binding: createCaptureBinding({ admitRef, ref: IDENTITY, liveNow: () => live }),
+    binding: createCaptureBinding({ admitRef, ref: IDENTITY, liveNow: () => live, ...NORMALIZER }),
   });
   assert.equal(changed.condition, 'changedDuringCapture');
   assert.equal(changed.stage, 'afterRead');
@@ -260,7 +285,7 @@ test('a change at publication refuses the whole capture after all reads admitted
       if (reads === 2) live = { ...live, epoch: '13' };
       return { result: [], internalProperties: [] };
     },
-    binding: createCaptureBinding({ admitRef, ref: IDENTITY, liveNow: () => live }),
+    binding: createCaptureBinding({ admitRef, ref: IDENTITY, liveNow: () => live, ...NORMALIZER }),
   });
   assert.equal(changed.condition, 'changedDuringCapture');
   assert.equal(changed.stage, 'publication');
@@ -273,7 +298,7 @@ test('a scope read refusal stops the capture with scopeReadRefused', async () =>
     scopeChain: [{ type: 'local', name: '', object: { type: 'object', objectId: 'obj-1' } }],
     identity: IDENTITY,
     loadScope: async () => ({ condition: 'cdpError' }),
-    binding: createCaptureBinding({ admitRef, ref: IDENTITY, liveNow: () => ({ ...LIVE }) }),
+    binding: createCaptureBinding({ admitRef, ref: IDENTITY, liveNow: () => ({ ...LIVE }), ...NORMALIZER }),
   });
   assert.equal(refused.condition, 'scopeReadRefused');
   assert.equal(refused.refusal.condition, 'cdpError');

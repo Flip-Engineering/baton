@@ -50,11 +50,18 @@ export const ADMISSION_NOTE =
 
 const CANONICAL_DECIMAL = /^0$|^[1-9][0-9]*$/;
 
-// Shape validation for the standalone unit path. This is deliberately narrow:
-// a complete seven-member identity with nonempty string members and
-// canonical decimal counter strings. Full semantic validation stays with the
-// production refDecision/requireAdmittedRef; when one is injected below it
-// decides alone.
+// The ref kinds the production admission accepts (recorded CDP contract:
+// frame, scope and object are the pause-scoped kinds; this list is the
+// test-owned standalone helper's domain restriction, not a second
+// production validator - the operative path delegates to the injected
+// production requireAdmittedRef/refDecision).
+export const REF_KINDS = ['frame', 'scope', 'object'];
+
+// Shape validation for the standalone test helper only. The operative
+// capture path never runs this: createCaptureBinding requires the injected
+// production normalizer. The helper is deliberately narrow: a complete
+// seven-member identity, a kind from REF_KINDS, and canonical decimal
+// counter strings.
 export function isValidRefIdentity(identity) {
   return (
     identity !== null &&
@@ -63,7 +70,7 @@ export function isValidRefIdentity(identity) {
     typeof identity.runtime === 'string' && identity.runtime !== '' &&
     typeof identity.adapter === 'string' && identity.adapter !== '' &&
     typeof identity.thread === 'string' && identity.thread !== '' &&
-    typeof identity.kind === 'string' && identity.kind !== '' &&
+    typeof identity.kind === 'string' && REF_KINDS.includes(identity.kind) &&
     typeof identity.handle === 'string' && identity.handle !== '' &&
     typeof identity.epoch === 'string' && CANONICAL_DECIMAL.test(identity.epoch) &&
     typeof identity.mutationGeneration === 'string' && CANONICAL_DECIMAL.test(identity.mutationGeneration)
@@ -91,14 +98,16 @@ export function admissionOutcome(decision, { requireAdmittedRef } = {}) {
   if (typeof requireAdmittedRef === 'function') {
     // The injected production normalizer decides alone: its returned
     // identity is in-contract by the producer's own guarantee, and its
-    // thrown {condition, detail} is rendered verbatim. No second validator
-    // runs here.
+    // thrown refusal renders with its ACTUAL condition and detail values -
+    // nothing is coerced into another shape. A throw without a string
+    // condition is outside the producer contract and is named
+    // refDecisionMalformed.
     try {
       const identity = requireAdmittedRef(decision);
       return { admitted: true, identity };
     } catch (err) {
       const condition = err && typeof err.condition === 'string' ? err.condition : 'refDecisionMalformed';
-      return refusal(condition, err && err.detail != null ? String(err.detail) : err && err.message ? err.message : null);
+      return refusal(condition, err && err.detail !== undefined ? err.detail : null);
     }
   }
   if (decision && typeof decision === 'object' && decision.decision === 'admitted') {
@@ -128,28 +137,33 @@ export function staleRefRefusal(decision, options) {
 }
 
 // Binds one multirequest capture to a ref the production admission issued at
-// capture start. liveNow is a function the composer supplies that returns
-// the CURRENT live record at call time (from session.snapshot()); the
-// binding never accepts a static live object as the capture's truth.
-// sample() re-admits the capture ref against a fresh sample through the
-// injected production admission; the caller gates every backend access and
-// the publication on sample(). An identity change yields the explicit
-// refusal - staleReference after a resume, refRetiredByMutation after an
-// evaluation, refStopNotLive/refThreadUnknown/refOutsidePause from the
-// session layer, runtimeBusy while an evaluation is pending - never a
-// coherent capture by assertion.
-export function createCaptureBinding({ admitRef, ref, liveNow }) {
-  if (typeof admitRef !== 'function') {
-    return { sample: () => refusal('refDecisionMalformed', 'no production admission was injected') };
-  }
-  if (ref === null || ref === undefined) {
-    return { sample: () => refusal('refDecisionMalformed', 'capture carries no issued ref') };
-  }
-  if (typeof liveNow !== 'function') {
-    return { sample: () => refusal('refDecisionMalformed', 'no live session sampler was injected; a static live object cannot gate a capture') };
+// capture start. Production normalization is MANDATORY on this operative
+// path: requireAdmittedRef (the imported/injected CDP normalizer) is
+// required, and every sample delegates to it through the injected
+// production admitRef - the standalone shape helper is never consulted
+// here. liveNow is a function the composer supplies that returns the
+// CURRENT live record at call time (from session.snapshot()); the binding
+// never accepts a static live object as the capture's truth. The
+// composer's session.admitRef remains the scope authority and runs
+// synchronously immediately before each send initiation inside loadScope;
+// the caller gates every backend access and the publication on sample().
+// An identity change yields the explicit refusal - staleReference after a
+// resume, refRetiredByMutation after an evaluation,
+// refStopNotLive/refThreadUnknown/refOutsidePause from the session layer,
+// runtimeBusy while an evaluation is pending - never a coherent capture by
+// assertion.
+export function createCaptureBinding({ admitRef, ref, liveNow, requireAdmittedRef }) {
+  const missing = [];
+  if (typeof admitRef !== 'function') missing.push('admitRef');
+  if (typeof requireAdmittedRef !== 'function') missing.push('requireAdmittedRef');
+  if (ref === null || ref === undefined) missing.push('ref');
+  if (typeof liveNow !== 'function') missing.push('liveNow');
+  if (missing.length > 0) {
+    const detail = `operative capture requires the injected production admission, normalizer and live sampler; missing: ${missing.join(', ')}`;
+    return { sample: () => refusal('productionNormalizerRequired', detail) };
   }
   return {
-    sample: () => admissionOutcome(admitRef(ref, liveNow()), { requireAdmittedRef: undefined }),
+    sample: () => admissionOutcome(admitRef(ref, liveNow()), { requireAdmittedRef }),
   };
 }
 
@@ -283,12 +297,15 @@ function scopeSummaryOf(scope, identity, record) {
 
 // The awaited capture over one pause's scope chain. Every backend read is
 // issued by loadScope AFTER the binding samples and admits the live session,
-// and sampled again after the read resolves and once more at publication:
-// an identity change across any boundary returns
-// {condition:'changedDuringCapture', scopes:<admitted prefix>, refusal,
-// stage} with the raw record of the changed read retained as pre-change
-// evidence (changedRecord) and never reported complete. A scope read that
-// returns its own refusal record stops the capture with
+// and sampled again after the read resolves and once more at publication.
+// The composer's session.admitRef runs synchronously immediately before
+// each send initiation inside loadScope. An identity change across any
+// boundary returns {condition:'changedDuringCapture', scopes:<admitted
+// prefix>, refusal, stage} with the raw response observed across the read
+// carried as rawRecord - the mutation's timing relative to the read is NOT
+// established, so that record is an observed response, never described as
+// evidence that the mutation preceded it - and never reported complete. A
+// scope read that returns its own refusal record stops the capture with
 // {condition:'scopeReadRefused', refusal, scopes}. Only a capture whose
 // before-read, after-read and publication samples all admitted returns
 // {scopes, records}.
@@ -303,16 +320,23 @@ export async function captureScopes({ scopeChain, identity = null, loadScope, bi
     if (!before.admitted) {
       return { condition: 'changedDuringCapture', scopes, refusal: before, stage: 'beforeRead' };
     }
-    const record = await loadScope(scope);
+    const rawRecord = await loadScope(scope);
     const after = binding.sample();
     if (!after.admitted) {
-      return { condition: 'changedDuringCapture', scopes, refusal: after, stage: 'afterRead', changedRecord: record };
+      return {
+        condition: 'changedDuringCapture',
+        scopes,
+        refusal: after,
+        stage: 'afterRead',
+        rawRecord,
+        rawRecordNote: 'the response observed across the read; the mutation timing relative to the read is not established',
+      };
     }
-    if (record && record.condition) {
-      return { condition: 'scopeReadRefused', refusal: { admitted: false, refused: true, condition: record.condition, detail: record.detail ?? null }, scopes };
+    if (rawRecord && rawRecord.condition) {
+      return { condition: 'scopeReadRefused', refusal: { admitted: false, refused: true, condition: rawRecord.condition, detail: rawRecord.detail ?? null }, scopes };
     }
-    records.set(scope, record);
-    scopes.push(scopeSummaryOf(scope, identity, record));
+    records.set(scope, rawRecord);
+    scopes.push(scopeSummaryOf(scope, identity, rawRecord));
   }
   const atPublication = binding.sample();
   if (!atPublication.admitted) {
