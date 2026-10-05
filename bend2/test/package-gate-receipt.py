@@ -620,7 +620,14 @@ class PackageGateReceipt(unittest.TestCase):
         self.assertEqual([stage['name'] for stage in summary['stages']],
                          ['build-native', 'laws-check', 'check-native'])
         self.assertEqual(summary['stages'][1]['route'], 'remote-module-groups')
-        self.assertEqual(summary['stages'][1]['exit_code'], 0)
+        self.assertEqual(summary['stages'][1]['kind'], 'evidence-qualification')
+        self.assertIsNone(summary['stages'][1]['exit_code'],
+                          'the remote stage must record no local exit')
+        self.assertTrue(summary['stages'][1]['spans'], 'the remote stage must name its spans')
+        self.assertEqual(summary['stages'][1]['evidence']['inventory_sha256'],
+                         remote['inventory_sha256'])
+        self.assertEqual(summary['stages'][1]['evidence']['reduction_sha256'],
+                         remote['reduction_sha256'])
         self.assertEqual(summary['route'], 'remote-module-groups')
         self.assertEqual(json.loads((logs / 'laws-check.log').read_text())['route'],
                          'remote-module-groups')
