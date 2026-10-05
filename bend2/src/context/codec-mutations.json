@@ -114,7 +114,7 @@
  {
   "name": "codec-core-admission-verdict-is-ignored",
   "file": "bend2/src/context/codec.bend",
-  "find": "  admission_decision(Eng.admit_operations(chain_ss(chain), grants_ss(grants)), primary_operation(chain))",
+  "find": "  admission_decision(Eng.admit_operations(chain_ss(chain), grants_ss(grants)), chain)",
   "replace": "  ADispatch{Opcons{primary_operation(chain), Opnone{}}, Eng.ss_empty()}",
   "law": "codec_law_an_unknown_chain_entry_refuses_even_with_every_grant"
  },
