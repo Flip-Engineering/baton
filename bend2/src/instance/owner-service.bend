@@ -15,7 +15,7 @@ import ./retained-table.bend as Table
 # operation it blocks. Startup refuses with the first missing stage so no
 # partial authority is claimed.
 type MissingPrimitive is Data:
-  LifecycleBinding{stage: String, operation: String, blocks: String}
+  LifecycleAuthority{stage: String, operation: String, blocks: String}
   ControlsReader{stage: String, operation: String, blocks: String}
   ControlsSynchronization{stage: String, operation: String, blocks: String}
   ControlsPreparation{stage: String, operation: String, blocks: String}
@@ -34,10 +34,14 @@ type OwnerFailure is Data:
   OwnerFailure{stage: String, missing: Maybe<MissingPrimitive>, binding: String, cleanup: String, unresolved: String}
 
 # The service entry Interfaces will dispatch. Stages, in order:
-# 1. database binding qualification and owner exclusion through
-#    Lifecycle's bound-SQL capability (missing:
-#    LifecycleBinding{query_bound is per-call, no atomic admission or
-#    unknown-commit readback});
+# 1. retained database-owner acquisition, service exclusion/generation and
+#    recovery release custody through Lifecycle — the per-call
+#    admission/readback exports exist (Native106: bound-admission.admit and
+#    readback with original-binding checks and transactional SQL) but do
+#    not establish the held authority or live Instance state retention
+#    (MissingPrimitive.LifecycleAuthority, blocking table initialization
+#    and every admission; a selected_database path is unacquired input
+#    until that authority is obtained);
 # 2. retained table and queue initialization (owned here, via
 #    Table.table_empty and the registry transitions);
 # 3. historical and wake duty reconstruction through the enumeration
@@ -52,10 +56,10 @@ type OwnerFailure is Data:
 # unresolved duties it already accumulated; none of them fabricates a task
 # outcome, a seal, a parent wake or an ACK.
 def serve(selected_database: String) -> IO(Result<&1,&1,OwnerFailure,OwnerStopped>):
-  IO.pure(Result<&1,&1,OwnerFailure,OwnerStopped>,Fail{OwnerFailure{stage: "database-binding",missing: Some{MissingPrimitive.LifecycleBinding{"database-binding","atomic bound-SQL admission with unknown-commit readback","table initialization and every admission"}},binding: selected_database,cleanup: "nothing staged",unresolved: "no duty accepted"}})
+  IO.pure(Result<&1,&1,OwnerFailure,OwnerStopped>,Fail{OwnerFailure{stage: "database-authority",missing: Some{MissingPrimitive.LifecycleAuthority{"database-authority","retained database-owner acquisition with service exclusion, generation and recovery release custody","table initialization and every admission"}},binding: selected_database,cleanup: "nothing staged",unresolved: "no duty accepted"}})
 
 law startup_refuses_at_the_first_missing_stage_without_authority:
-  {serve("any-database") == Fail{OwnerFailure{stage: "database-binding",missing: Some{MissingPrimitive.LifecycleBinding{"database-binding","atomic bound-SQL admission with unknown-commit readback","table initialization and every admission"}},binding: "any-database",cleanup: "nothing staged",unresolved: "no duty accepted"}} : Result<&1,&1,OwnerFailure,OwnerStopped>}
+  {serve("any-database") == Fail{OwnerFailure{stage: "database-authority",missing: Some{MissingPrimitive.LifecycleAuthority{"database-authority","retained database-owner acquisition with service exclusion, generation and recovery release custody","table initialization and every admission"}},binding: "any-database",cleanup: "nothing staged",unresolved: "no duty accepted"}} : Result<&1,&1,OwnerFailure,OwnerStopped>}
 
 def startup_refuses_at_the_first_missing_stage_without_authority():
   {==}

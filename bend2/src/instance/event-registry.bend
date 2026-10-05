@@ -56,7 +56,7 @@ type Destination is Data:
 # every issued task-event token and gives each one a distinct occurrence
 # number.
 type Registration is Data:
-  Registration{identity: String, generation: Generation, database: String, owner: String, request: String, session: String, adoptions: U32, references: U32, armed: Bool, event_retained: Bool, cancelled: Bool}
+  Registration{identity: String, generation: Generation, database: String, owner: String, request: String, session: String, adoptions: U32, references: U32, armed: Bool, event_retained: Bool, cancelled: Bool, outstanding: Maybe<U32>}
 
 type DestinationLease is Data:
   DestinationLease{destination: Destination, live: Bool}
@@ -80,6 +80,7 @@ type Resolution is Data:
 type Acceptance is Data:
   Adopted{registration: Registration, destination: Destination, outstanding: TaskEvent}
   Refused{registration: Registration, destination: Destination}
+  Exhausted{registration: Registration, destination: Destination}
 
 type Requeue is Data:
   Requeued{registration: Registration, destination: Destination, returned: TaskEvent}
@@ -123,47 +124,51 @@ def dest_tasks_of(destination: Destination) -> U32:
 
 def reg_identity_of(registration: Registration) -> String:
   match registration:
-    case Registration{identity,generation,database,owner,request,session,adoptions,references,armed,event_retained,cancelled}: identity
+    case Registration{identity,generation,database,owner,request,session,adoptions,references,armed,event_retained,cancelled,outstanding}: identity
 
 def reg_generation_of(registration: Registration) -> Generation:
   match registration:
-    case Registration{identity,generation,database,owner,request,session,adoptions,references,armed,event_retained,cancelled}: generation
+    case Registration{identity,generation,database,owner,request,session,adoptions,references,armed,event_retained,cancelled,outstanding}: generation
 
 def reg_database_of(registration: Registration) -> String:
   match registration:
-    case Registration{identity,generation,database,owner,request,session,adoptions,references,armed,event_retained,cancelled}: database
+    case Registration{identity,generation,database,owner,request,session,adoptions,references,armed,event_retained,cancelled,outstanding}: database
 
 def reg_owner_of(registration: Registration) -> String:
   match registration:
-    case Registration{identity,generation,database,owner,request,session,adoptions,references,armed,event_retained,cancelled}: owner
+    case Registration{identity,generation,database,owner,request,session,adoptions,references,armed,event_retained,cancelled,outstanding}: owner
 
 def reg_request_of(registration: Registration) -> String:
   match registration:
-    case Registration{identity,generation,database,owner,request,session,adoptions,references,armed,event_retained,cancelled}: request
+    case Registration{identity,generation,database,owner,request,session,adoptions,references,armed,event_retained,cancelled,outstanding}: request
 
 def reg_session_of(registration: Registration) -> String:
   match registration:
-    case Registration{identity,generation,database,owner,request,session,adoptions,references,armed,event_retained,cancelled}: session
+    case Registration{identity,generation,database,owner,request,session,adoptions,references,armed,event_retained,cancelled,outstanding}: session
 
 def reg_adoptions_of(registration: Registration) -> U32:
   match registration:
-    case Registration{identity,generation,database,owner,request,session,adoptions,references,armed,event_retained,cancelled}: adoptions
+    case Registration{identity,generation,database,owner,request,session,adoptions,references,armed,event_retained,cancelled,outstanding}: adoptions
 
 def reg_references_of(registration: Registration) -> U32:
   match registration:
-    case Registration{identity,generation,database,owner,request,session,adoptions,references,armed,event_retained,cancelled}: references
+    case Registration{identity,generation,database,owner,request,session,adoptions,references,armed,event_retained,cancelled,outstanding}: references
 
 def reg_armed_of(registration: Registration) -> Bool:
   match registration:
-    case Registration{identity,generation,database,owner,request,session,adoptions,references,armed,event_retained,cancelled}: armed
+    case Registration{identity,generation,database,owner,request,session,adoptions,references,armed,event_retained,cancelled,outstanding}: armed
 
 def reg_event_retained_of(registration: Registration) -> Bool:
   match registration:
-    case Registration{identity,generation,database,owner,request,session,adoptions,references,armed,event_retained,cancelled}: event_retained
+    case Registration{identity,generation,database,owner,request,session,adoptions,references,armed,event_retained,cancelled,outstanding}: event_retained
 
 def reg_cancelled_of(registration: Registration) -> Bool:
   match registration:
-    case Registration{identity,generation,database,owner,request,session,adoptions,references,armed,event_retained,cancelled}: cancelled
+    case Registration{identity,generation,database,owner,request,session,adoptions,references,armed,event_retained,cancelled,outstanding}: cancelled
+
+def reg_outstanding_of(registration: Registration) -> Maybe<U32>:
+  match registration:
+    case Registration{identity,generation,database,owner,request,session,adoptions,references,armed,event_retained,cancelled,outstanding}: outstanding
 
 def gen_owner_of(generation: Generation) -> String:
   match generation:
@@ -250,15 +255,15 @@ def same_owner_and_capability(+a: Generation, +b: Generation) -> Bool:
 def same_generation(+a: Generation, +b: Generation) -> Bool:
   Bool.and(same_owner_and_capability(a,b),U32.is_eq(gen_revision_of(a),gen_revision_of(b)))
 
-def register_decided(+registration: Registration, +observed: Generation, identity: Bool, revision: Bool, is_cancelled: Bool, busy: Bool) -> Registration:
+def register_decided(+registration: Registration, +observed: Generation, identity: Bool, revision: Bool, is_cancelled: Bool, busy: Bool, no_outstanding: Bool) -> Registration:
   match identity:
     case True{}: match is_cancelled:
       case True{}: registration
       case other: match busy:
         case True{}: registration
         case other: match revision:
-          case True{}: Registration{reg_identity_of(registration),reg_generation_of(registration),reg_database_of(registration),reg_owner_of(registration),reg_request_of(registration),reg_session_of(registration),reg_adoptions_of(registration),reg_references_of(registration),True{},reg_event_retained_of(registration),reg_cancelled_of(registration)}
-          case other: Registration{reg_identity_of(registration),reg_generation_of(registration),reg_database_of(registration),reg_owner_of(registration),reg_request_of(registration),reg_session_of(registration),reg_adoptions_of(registration),reg_references_of(registration),False{},True{},reg_cancelled_of(registration)}
+          case True{}: Registration{reg_identity_of(registration),reg_generation_of(registration),reg_database_of(registration),reg_owner_of(registration),reg_request_of(registration),reg_session_of(registration),reg_adoptions_of(registration),reg_references_of(registration),True{},reg_event_retained_of(registration),reg_cancelled_of(registration),reg_outstanding_of(registration)}
+          case other: Registration{reg_identity_of(registration),reg_generation_of(registration),reg_database_of(registration),reg_owner_of(registration),reg_request_of(registration),reg_session_of(registration),reg_adoptions_of(registration),reg_references_of(registration),False{},Bool.and(Bool.not(reg_event_retained_of(registration)),no_outstanding),reg_cancelled_of(registration),reg_outstanding_of(registration)}
     case other: registration
 
 # Registering under shared synchronization. A stale owner or capability
@@ -271,17 +276,20 @@ def register_decided(+registration: Registration, +observed: Generation, identit
 # before registration is never lost. The caller rechecks read readiness
 # after arming.
 def register_ready(+registration: Registration, +observed: Generation) -> Registration:
-  register_decided(registration,observed,same_owner_and_capability(reg_generation_of(registration),observed),U32.is_eq(gen_revision_of(reg_generation_of(registration)),gen_revision_of(observed)),reg_cancelled_of(registration),reg_armed_of(registration))
+  register_decided(registration,observed,same_owner_and_capability(reg_generation_of(registration),observed),U32.is_eq(gen_revision_of(reg_generation_of(registration)),gen_revision_of(observed)),reg_cancelled_of(registration),reg_armed_of(registration),outstanding_is_none(registration))
 
 def registration_binds(+registration: Registration, +destination: Destination) -> Bool:
   Bool.and(String.eq(reg_database_of(registration),dest_database_of(destination)),Bool.and(String.eq(reg_owner_of(registration),dest_owner_of(destination)),Bool.and(String.eq(reg_request_of(registration),dest_request_of(destination)),String.eq(reg_session_of(registration),dest_session_of(destination)))))
 
-def accept_decided(+registration: Registration, +destination: Destination, task_capacity: U32, event: Bool, bound: Bool, is_cancelled: Bool, below_task_capacity: Bool) -> Acceptance:
+def accept_decided(+registration: Registration, +destination: Destination, task_capacity: U32, event: Bool, bound: Bool, is_cancelled: Bool, no_outstanding: Bool, below_task_capacity: Bool, adoptions_exhausted: Bool) -> Acceptance:
   match event:
     case True{}: match is_cancelled:
       case True{}: Refused{registration,destination}
       case other: match bound:
-        case True{}: Bool.pick(Acceptance,below_task_capacity,Adopted{Registration{reg_identity_of(registration),reg_generation_of(registration),reg_database_of(registration),reg_owner_of(registration),reg_request_of(registration),reg_session_of(registration),U32.add(reg_adoptions_of(registration),1),reg_references_of(registration),False{},False{},reg_cancelled_of(registration)},Destination{dest_database_of(destination),dest_owner_of(destination),dest_request_of(destination),dest_session_of(destination),dest_references_of(destination),U32.add(dest_tasks_of(destination),1)},TaskEvent{reg_identity_of(registration),reg_adoptions_of(registration),reg_generation_of(registration),dest_database_of(destination),dest_owner_of(destination),dest_request_of(destination),dest_session_of(destination),AdoptedOutstanding{}}},Refused{registration,destination})
+        case True{}: match no_outstanding:
+          case True{}: match adoptions_exhausted:
+            case True{}: Exhausted{registration,destination}
+            case other: Bool.pick(Acceptance,below_task_capacity,Adopted{Registration{reg_identity_of(registration),reg_generation_of(registration),reg_database_of(registration),reg_owner_of(registration),reg_request_of(registration),reg_session_of(registration),U32.add(reg_adoptions_of(registration),1),reg_references_of(registration),False{},False{},reg_cancelled_of(registration)},Destination{dest_database_of(destination),dest_owner_of(destination),dest_request_of(destination),dest_session_of(destination),dest_references_of(destination),U32.add(dest_tasks_of(destination),1)},TaskEvent{reg_identity_of(registration),reg_adoptions_of(registration),reg_generation_of(registration),dest_database_of(destination),dest_owner_of(destination),dest_request_of(destination),dest_session_of(destination),AdoptedOutstanding{}}},Refused{registration,destination})
         case other: Refused{registration,destination}
     case other: Refused{registration,destination}
 
@@ -299,8 +307,8 @@ def accept_decided(+registration: Registration, +destination: Destination, task_
 # at task capacity refuses adoption with both records unchanged — a
 # duplicate acceptance cannot manufacture a second task event, and every
 # token occurrence is distinct.
-def accept_ready(+registration: Registration, +destination: Destination, task_capacity: U32) -> Acceptance:
-  accept_decided(registration,destination,task_capacity,reg_event_retained_of(registration),registration_binds(registration,destination),reg_cancelled_of(registration),U32.is_lt(dest_tasks_of(destination),task_capacity))
+def accept_ready(+registration: Registration, +destination: Destination, task_capacity: U32, adoptions_bound: U32) -> Acceptance:
+  accept_decided(registration,destination,task_capacity,reg_event_retained_of(registration),registration_binds(registration,destination),reg_cancelled_of(registration),outstanding_is_none(registration),U32.is_lt(dest_tasks_of(destination),task_capacity),Bool.not(U32.is_lt(reg_adoptions_of(registration),adoptions_bound)))
 
 # The token presentation an event transition requires: the token names this
 # registration's identity and current capability generation, this
@@ -308,13 +316,23 @@ def accept_ready(+registration: Registration, +destination: Destination, task_ca
 # adopted-outstanding phase, and the registration still holds the event
 # outstanding — after a requeue the event is back with the registration, so
 # an old outstanding-phase copy can no longer act on the destination.
+def outstanding_is_none(+registration: Registration) -> Bool:
+  match reg_outstanding_of(registration):
+    case None{}: True{}
+    case other: False{}
+
+def token_occurrence_matches(+registration: Registration, +outstanding: TaskEvent) -> Bool:
+  match reg_outstanding_of(registration):
+    case None{}: False{}
+    case Some{occurrence}: U32.is_eq(token_occurrence_of(outstanding),occurrence)
+
 def token_presents_for_transition(+registration: Registration, +destination: Destination, +outstanding: TaskEvent) -> Bool:
-  Bool.and(Bool.and(Bool.and(Bool.and(Bool.and(String.eq(reg_identity_of(registration),token_identity_of(outstanding)),same_generation(reg_generation_of(registration),token_generation_of(outstanding))),correlation_is(destination,token_database_of(outstanding),token_owner_of(outstanding),token_request_of(outstanding),token_session_of(outstanding))),U32.is_eq(token_occurrence_of(outstanding),U32.sub(reg_adoptions_of(registration),1))),token_is_adopted(outstanding)),Bool.not(reg_event_retained_of(registration)))
+  Bool.and(Bool.and(Bool.and(Bool.and(Bool.and(Bool.and(String.eq(reg_identity_of(registration),token_identity_of(outstanding)),same_owner_and_capability(reg_generation_of(registration),token_generation_of(outstanding))),registration_binds(registration,destination)),correlation_is(destination,token_database_of(outstanding),token_owner_of(outstanding),token_request_of(outstanding),token_session_of(outstanding))),token_occurrence_matches(registration,outstanding)),token_is_adopted(outstanding)),Bool.not(reg_event_retained_of(registration)))
 
 def requeue_decided(+registration: Registration, +destination: Destination, +outstanding: TaskEvent, presents: Bool, outstanding_tasks: Bool) -> Requeue:
   match presents:
     case True{}: match outstanding_tasks:
-      case True{}: Requeued{Registration{reg_identity_of(registration),reg_generation_of(registration),reg_database_of(registration),reg_owner_of(registration),reg_request_of(registration),reg_session_of(registration),reg_adoptions_of(registration),reg_references_of(registration),reg_armed_of(registration),True{},reg_cancelled_of(registration)},Destination{dest_database_of(destination),dest_owner_of(destination),dest_request_of(destination),dest_session_of(destination),dest_references_of(destination),U32.sub(dest_tasks_of(destination),1)},TaskEvent{reg_identity_of(registration),token_occurrence_of(outstanding),reg_generation_of(registration),dest_database_of(destination),dest_owner_of(destination),dest_request_of(destination),dest_session_of(destination),ReturnedToRegistration{}}}
+      case True{}: Requeued{Registration{reg_identity_of(registration),reg_generation_of(registration),reg_database_of(registration),reg_owner_of(registration),reg_request_of(registration),reg_session_of(registration),reg_adoptions_of(registration),reg_references_of(registration),reg_armed_of(registration),True{},reg_cancelled_of(registration),None{}},Destination{dest_database_of(destination),dest_owner_of(destination),dest_request_of(destination),dest_session_of(destination),dest_references_of(destination),U32.sub(dest_tasks_of(destination),1)},TaskEvent{reg_identity_of(registration),token_occurrence_of(outstanding),reg_generation_of(registration),dest_database_of(destination),dest_owner_of(destination),dest_request_of(destination),dest_session_of(destination),ReturnedToRegistration{}}}
       case other: Unowned{registration,destination,outstanding}
     case other: Unowned{registration,destination,outstanding}
 
@@ -332,7 +350,7 @@ def requeue_event(+registration: Registration, +destination: Destination, +outst
 def complete_decided(+registration: Registration, +destination: Destination, +outstanding: TaskEvent, presents: Bool, outstanding_tasks: Bool) -> Completion:
   match presents:
     case True{}: match outstanding_tasks:
-      case True{}: Completed{Registration{reg_identity_of(registration),reg_generation_of(registration),reg_database_of(registration),reg_owner_of(registration),reg_request_of(registration),reg_session_of(registration),reg_adoptions_of(registration),reg_references_of(registration),reg_armed_of(registration),reg_event_retained_of(registration),reg_cancelled_of(registration)},Destination{dest_database_of(destination),dest_owner_of(destination),dest_request_of(destination),dest_session_of(destination),dest_references_of(destination),U32.sub(dest_tasks_of(destination),1)},TaskEvent{reg_identity_of(registration),token_occurrence_of(outstanding),reg_generation_of(registration),dest_database_of(destination),dest_owner_of(destination),dest_request_of(destination),dest_session_of(destination),CompletedToRegistration{}}}
+      case True{}: Completed{Registration{reg_identity_of(registration),reg_generation_of(registration),reg_database_of(registration),reg_owner_of(registration),reg_request_of(registration),reg_session_of(registration),reg_adoptions_of(registration),reg_references_of(registration),reg_armed_of(registration),reg_event_retained_of(registration),reg_cancelled_of(registration),None{}},Destination{dest_database_of(destination),dest_owner_of(destination),dest_request_of(destination),dest_session_of(destination),dest_references_of(destination),U32.sub(dest_tasks_of(destination),1)},TaskEvent{reg_identity_of(registration),token_occurrence_of(outstanding),reg_generation_of(registration),dest_database_of(destination),dest_owner_of(destination),dest_request_of(destination),dest_session_of(destination),CompletedToRegistration{}}}
       case other: Unowned{registration,destination,outstanding}
     case other: Unowned{registration,destination,outstanding}
 
@@ -443,7 +461,7 @@ law registration_on_the_current_revision_arms:
   for +session: String
   for +adoptions: U32
   for +lease_references: U32
-  {register_ready(Registration{identity,Generation{owner,capability,revision},database,owner,request,session,adoptions,lease_references,False{},False{},False{}},Generation{owner,capability,revision}) == Registration{identity,Generation{owner,capability,revision},database,owner,request,session,adoptions,lease_references,True{},False{},False{}} : Registration}
+  {register_ready(Registration{identity,Generation{owner,capability,revision},database,owner,request,session,adoptions,lease_references,False{},False{},False{},None{}},Generation{owner,capability,revision}) == Registration{identity,Generation{owner,capability,revision},database,owner,request,session,adoptions,lease_references,True{},False{},False{},None{}} : Registration}
 
 def registration_on_the_current_revision_arms(identity,owner,capability,revision,database,request,session,adoptions,lease_references):
   {==}
@@ -462,7 +480,7 @@ law registration_on_a_changed_revision_retains_the_event_unarmed:
   for +session: String
   for +adoptions: U32
   for +lease_references: U32
-  {register_ready(Registration{identity,Generation{owner,capability,revision},database,owner,request,session,adoptions,lease_references,False{},False{},False{}},Generation{owner,capability,other_revision}) == Bool.pick(Registration,U32.is_eq(revision,other_revision),Registration{identity,Generation{owner,capability,revision},database,owner,request,session,adoptions,lease_references,True{},False{},False{}},Registration{identity,Generation{owner,capability,revision},database,owner,request,session,adoptions,lease_references,False{},True{},False{}}) : Registration}
+  {register_ready(Registration{identity,Generation{owner,capability,revision},database,owner,request,session,adoptions,lease_references,False{},False{},False{},None{}},Generation{owner,capability,other_revision}) == Bool.pick(Registration,U32.is_eq(revision,other_revision),Registration{identity,Generation{owner,capability,revision},database,owner,request,session,adoptions,lease_references,True{},False{},False{},None{}},Registration{identity,Generation{owner,capability,revision},database,owner,request,session,adoptions,lease_references,False{},True{},False{},None{}}) : Registration}
 
 def registration_on_a_changed_revision_retains_the_event_unarmed(identity,owner,capability,revision,other_revision,database,request,session,adoptions,lease_references):
   {==}
@@ -485,7 +503,7 @@ law a_foreign_capability_registration_is_refused:
   for +armed: Bool
   for +event: Bool
   for +cancelled: Bool
-  {register_ready(Registration{identity,Generation{owner,capability,revision},database,owner,request,session,adoptions,lease_references,armed,event,cancelled},Generation{"other-"++owner,other_capability,other_revision}) == Registration{identity,Generation{owner,capability,revision},database,owner,request,session,adoptions,lease_references,armed,event,cancelled} : Registration}
+  {register_ready(Registration{identity,Generation{owner,capability,revision},database,owner,request,session,adoptions,lease_references,armed,event,cancelled,None{}},Generation{"other-"++owner,other_capability,other_revision}) == Registration{identity,Generation{owner,capability,revision},database,owner,request,session,adoptions,lease_references,armed,event,cancelled,None{}} : Registration}
 
 def a_foreign_capability_registration_is_refused(identity,owner,capability,revision,other_capability,other_revision,database,request,session,adoptions,lease_references,armed,event,cancelled):
   {==}
@@ -545,7 +563,7 @@ law accepting_a_ready_event_issues_the_next_occurrence:
   for +database: String
   for +request: String
   for +session: String
-  {accept_ready(Registration{identity,Generation{owner,capability,revision},database,owner,request,session,adoptions,reg_references,True{},True{},False{}},Destination{database,owner,request,session,lease_references,lease_tasks},task_capacity) == Bool.pick(Acceptance,U32.is_lt(lease_tasks,task_capacity),Adopted{Registration{identity,Generation{owner,capability,revision},database,owner,request,session,U32.add(adoptions,1),reg_references,False{},False{},False{}},Destination{database,owner,request,session,lease_references,U32.add(lease_tasks,1)},TaskEvent{identity,adoptions,Generation{owner,capability,revision},database,owner,request,session,AdoptedOutstanding{}}},Refused{Registration{identity,Generation{owner,capability,revision},database,owner,request,session,adoptions,reg_references,True{},True{},False{}},Destination{database,owner,request,session,lease_references,lease_tasks}}) : Acceptance}
+  {accept_ready(Registration{identity,Generation{owner,capability,revision},database,owner,request,session,adoptions,reg_references,True{},True{},False{},None{}},Destination{database,owner,request,session,lease_references,lease_tasks},task_capacity) == Bool.pick(Acceptance,U32.is_lt(lease_tasks,task_capacity),Adopted{Registration{identity,Generation{owner,capability,revision},database,owner,request,session,U32.add(adoptions,1),reg_references,False{},False{},False{},Some{adoptions}},Destination{database,owner,request,session,lease_references,U32.add(lease_tasks,1)},TaskEvent{identity,adoptions,Generation{owner,capability,revision},database,owner,request,session,AdoptedOutstanding{}}},Refused{Registration{identity,Generation{owner,capability,revision},database,owner,request,session,adoptions,reg_references,True{},True{},False{},None{}},Destination{database,owner,request,session,lease_references,lease_tasks}}) : Acceptance}
 
 def accepting_a_ready_event_issues_the_next_occurrence(identity,owner,capability,revision,adoptions,reg_references,lease_references,lease_tasks,task_capacity,database,request,session):
   {==}
@@ -563,7 +581,7 @@ law a_returned_tokens_earlier_occurrence_no_longer_presents:
   for +request: String
   for +session: String
   for +lease_references: U32
-  {token_presents_for_transition(Registration{identity,Generation{owner,capability,revision},database,owner,request,session,U32.add(occurrence,1),lease_references,True{},False{},False{}},Destination{database,owner,request,session,lease_references,0},TaskEvent{identity,occurrence,Generation{owner,capability,revision},database,owner,request,session,ReturnedToRegistration{}}) == False{} : Bool}
+  {token_presents_for_transition(Registration{identity,Generation{owner,capability,revision},database,owner,request,session,U32.add(occurrence,1),lease_references,True{},False{},False{},None{}},Destination{database,owner,request,session,lease_references,0},TaskEvent{identity,occurrence,Generation{owner,capability,revision},database,owner,request,session,ReturnedToRegistration{}}) == False{} : Bool}
 
 def a_returned_tokens_earlier_occurrence_no_longer_presents(identity,owner,capability,revision,occurrence,database,request,session,lease_references):
   {==}
@@ -584,7 +602,7 @@ law a_presenting_requeue_drops_one_outstanding_task:
   for +database: String
   for +request: String
   for +session: String
-  {requeue_event(Registration{identity,Generation{owner,capability,revision},database,owner,request,session,adoptions,reg_references,True{},False{},False{}},Destination{database,owner,request,session,lease_references,lease_tasks},TaskEvent{identity,occurrence,Generation{owner,capability,revision},database,owner,request,session,AdoptedOutstanding{}}) == Bool.pick(Requeue,Bool.and(U32.is_eq(occurrence,U32.sub(adoptions,1)),U32.is_lt(0,lease_tasks)),Requeued{Registration{identity,Generation{owner,capability,revision},database,owner,request,session,adoptions,reg_references,True{},True{},False{}},Destination{database,owner,request,session,lease_references,U32.sub(lease_tasks,1)},TaskEvent{identity,occurrence,Generation{owner,capability,revision},database,owner,request,session,ReturnedToRegistration{}}},Unowned{Registration{identity,Generation{owner,capability,revision},database,owner,request,session,adoptions,reg_references,True{},False{},False{}},Destination{database,owner,request,session,lease_references,lease_tasks},TaskEvent{identity,occurrence,Generation{owner,capability,revision},database,owner,request,session,AdoptedOutstanding{}}}) : Requeue}
+  {requeue_event(Registration{identity,Generation{owner,capability,revision},database,owner,request,session,adoptions,reg_references,True{},False{},False{},Some{occurrence}},Destination{database,owner,request,session,lease_references,lease_tasks},TaskEvent{identity,occurrence,Generation{owner,capability,revision},database,owner,request,session,AdoptedOutstanding{}}) == Bool.pick(Requeue,Bool.and(U32.is_eq(occurrence,U32.sub(adoptions,1)),U32.is_lt(0,lease_tasks)),Requeued{Registration{identity,Generation{owner,capability,revision},database,owner,request,session,adoptions,reg_references,True{},True{},False{},None{}},Destination{database,owner,request,session,lease_references,U32.sub(lease_tasks,1)},TaskEvent{identity,occurrence,Generation{owner,capability,revision},database,owner,request,session,ReturnedToRegistration{}}},Unowned{Registration{identity,Generation{owner,capability,revision},database,owner,request,session,adoptions,reg_references,True{},False{},False{},Some{occurrence}},Destination{database,owner,request,session,lease_references,lease_tasks},TaskEvent{identity,occurrence,Generation{owner,capability,revision},database,owner,request,session,AdoptedOutstanding{}}}) : Requeue}
 
 def a_presenting_requeue_drops_one_outstanding_task(identity,owner,capability,revision,occurrence,adoptions,reg_references,lease_references,lease_tasks,database,request,session):
   {==}
@@ -603,7 +621,7 @@ law disposal_requires_cancelled_unarmed_unreferenced_state:
   for +references: U32
   for +armed: Bool
   for +event: Bool
-  {registration_disposable(Registration{identity,Generation{owner,capability,revision},database,owner,request,session,adoptions,references,armed,event,True{}}) == Bool.and(Bool.not(armed),Bool.and(Bool.not(event),U32.is_eq(references,0))) : Bool}
+  {registration_disposable(Registration{identity,Generation{owner,capability,revision},database,owner,request,session,adoptions,references,armed,event,True{},None{}}) == Bool.and(Bool.not(armed),Bool.and(Bool.not(event),U32.is_eq(references,0))) : Bool}
 
 def disposal_requires_cancelled_unarmed_unreferenced_state(identity,owner,capability,revision,database,request,session,adoptions,references,armed,event):
   {==}
