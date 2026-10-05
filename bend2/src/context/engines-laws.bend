@@ -426,6 +426,18 @@ law engine_an_aggregate_unions_the_effects_of_both_operations:
 def engine_an_aggregate_unions_the_effects_of_both_operations():
   {==}
 
+law engine_an_aggregate_keeps_the_runtime_control_the_override_did_not_cover:
+  {Eng.admit_operations(Eng.ss_two(Eng.op_tools_probe(), Eng.op_runtime_launch()), Eng.ss_one("executeTarget")) == Eng.AdMissingEffect{"controlRuntime"} : Eng.Admission}
+
+def engine_an_aggregate_keeps_the_runtime_control_the_override_did_not_cover():
+  {==}
+
+law engine_an_aggregate_admits_with_both_grants_and_names_its_union:
+  {Eng.admit_operations(Eng.ss_two(Eng.op_tools_probe(), Eng.op_runtime_launch()), Eng.ss_two("executeTarget", "controlRuntime")) == Eng.AdAdmit{Eng.ss_two("controlRuntime", "executeTarget")} : Eng.Admission}
+
+def engine_an_aggregate_admits_with_both_grants_and_names_its_union():
+  {==}
+
 law engine_missing_grant_is_named_before_the_effect:
   {Eng.missing_effects(Eng.ss_two("controlRuntime", "evaluateRuntime"), Eng.ss_one("controlRuntime")) == Eng.FxMissing{"evaluateRuntime"} : Eng.Effects}
 
