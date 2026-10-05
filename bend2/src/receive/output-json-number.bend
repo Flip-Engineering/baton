@@ -6,13 +6,13 @@
 # full JSON parser and it decides no duplicate-key or arithmetic policy.
 # Normalisation stated honestly: the integer, fraction and exponent parts carry digits
 # only. An exponent minus is carried as a leading 45 in the exponent part, an explicit
-# exponent plus is NOT carried there, and both the plus and the original case of e or E
-# are preserved only in the returned original slice. No claim is made that the parts keep
-# punctuation the code drops.
+# exponent plus is NOT carried there, and both that plus and the original case of e or E
+# are preserved only in the returned original slice.
 # Serves: LANG-CAP-06 (B2-JSON), decoder slice.
-# Fixture: bend2/test/output-json-number.bend, which asserts complete expected values.
+# Fixture: bend2/test/output-json-number.bend, which compares typed expected results.
 # Pin: bend 2.0.25, bendlang/bend@a49524265bdfa5753a4bf38e25f0574a705dd868.
-# Syntax follows bend2/src/json/uint-decoder.bend, read before writing.
+# Syntax follows bend2/src/json/uint-decoder.bend and bend2/src/json/canonical.bend, read
+# before writing, including the plus marker on values reused more than once.
 # UNCOMPILED and UNTESTED.
 
 import Base
@@ -34,9 +34,11 @@ type NumResult is Data:
   NumRefused{reason: String}
   NumHostFault{value: U32}
 
+# The scan failure is an internal constructor of its own and is converted explicitly to the
+# public NumHostFault at the entry, so the two never share a name.
 type NumScan is Data:
   NumStep{state: NumState}
-  NumHostFault{value: U32}
+  NumScanFault{value: U32}
 
 def is_digit(+code: U32) -> Bool:
   Bool.pick(Bool, U32.is_lt(code, 48), False{}, U32.is_lt(code, 58))
@@ -56,10 +58,9 @@ def is_minus(+code: U32) -> Bool:
 def bad(reason: String) -> NumState:
   NumBad{reason}
 
-# Digit accumulation uses element-with-list cons, which the repository writes as
-# `code <> list` (see cat_list in bend2/src/json/uint-decoder.bend), so the digits arrive
-# reversed and are normalised once at the end. A zero keeps its own digit, so 0, -0 and
-# 0.001 retain the [48] integer part instead of losing it.
+# Digit accumulation uses element-with-list cons, which this repository writes as
+# code <> list (see cat_list), so digits arrive reversed and normalise once at the end. A
+# zero keeps its own digit, so 0, -0 and 0.001 retain the [48] integer part.
 def step(state: NumState, code: U32) -> NumState:
   match state:
     case NumStart{}:
@@ -71,29 +72,29 @@ def step(state: NumState, code: U32) -> NumState:
       Bool.pick(NumState, is_digit(code),
         Bool.pick(NumState, U32.is_eq(code, 48), NumZero{[48]}, NumInteger{[code]}),
         bad("expected_digit"))
-    case NumZero{integer}:
+    case NumZero{+integer}:
       Bool.pick(NumState, is_digit(code), bad("leading_zero"),
         Bool.pick(NumState, is_dot(code), NumPoint{integer},
           Bool.pick(NumState, is_exp(code), NumExpMark{integer, Nil{}}, bad("trailing_data"))))
-    case NumInteger{integer}:
+    case NumInteger{+integer}:
       Bool.pick(NumState, is_digit(code), NumInteger{code <> integer},
         Bool.pick(NumState, is_dot(code), NumPoint{integer},
           Bool.pick(NumState, is_exp(code), NumExpMark{integer, Nil{}}, bad("trailing_data"))))
     case NumPoint{integer}:
       Bool.pick(NumState, is_digit(code), NumFraction{integer, [code]},
         bad("expected_fraction_digit"))
-    case NumFraction{integer, fraction}:
+    case NumFraction{+integer, +fraction}:
       Bool.pick(NumState, is_digit(code), NumFraction{integer, code <> fraction},
         Bool.pick(NumState, is_exp(code), NumExpMark{integer, fraction}, bad("trailing_data")))
-    case NumExpMark{integer, fraction}:
+    case NumExpMark{+integer, +fraction}:
       Bool.pick(NumState, is_plus(code), NumExpSign{integer, fraction, False{}},
         Bool.pick(NumState, is_minus(code), NumExpSign{integer, fraction, True{}},
           Bool.pick(NumState, is_digit(code), NumExponent{integer, fraction, False{}, [code]},
             bad("expected_exponent_digit"))))
-    case NumExpSign{integer, fraction, exp_minus}:
+    case NumExpSign{+integer, +fraction, exp_minus}:
       Bool.pick(NumState, is_digit(code), NumExponent{integer, fraction, exp_minus, [code]},
         bad("expected_exponent_digit"))
-    case NumExponent{integer, fraction, exp_minus, exponent}:
+    case NumExponent{+integer, +fraction, exp_minus, +exponent}:
       Bool.pick(NumState, is_digit(code),
         NumExponent{integer, fraction, exp_minus, code <> exponent}, bad("trailing_data"))
     case NumBad{reason}: NumBad{reason}
@@ -103,13 +104,13 @@ def reverse_go(xs: List<U32>, acc: List<U32>) -> List<U32>:
     case Nil{}: acc
     case h <> t: reverse_go(t, h <> acc)
 
-# Octets at or above 256 are a host input fault, reported as its own result rather than as
-# a malformed token.
+# Octets at or above 256 are a host input fault, reported through the internal scan
+# constructor and converted at the entry.
 def feed_go(octets: List<U32>, state: NumState) -> NumScan:
   match octets:
     case Nil{}: NumStep{state}
-    case h <> t:
-      Bool.pick(NumScan, U32.is_lt(h, 256), feed_go(t, step(state, h)), NumHostFault{h})
+    case +h <> t:
+      Bool.pick(NumScan, U32.is_lt(h, 256), feed_go(t, step(state, h)), NumScanFault{h})
 
 def accepted(state: NumState, minus: Bool, original: List<U32>) -> NumResult:
   match state:
@@ -117,7 +118,7 @@ def accepted(state: NumState, minus: Bool, original: List<U32>) -> NumResult:
     case NumInteger{integer}: NumAccepted{minus, reverse_go(integer, Nil{}), Nil{}, Nil{}, original}
     case NumFraction{integer, fraction}:
       NumAccepted{minus, reverse_go(integer, Nil{}), reverse_go(fraction, Nil{}), Nil{}, original}
-    case NumExponent{integer, fraction, exp_minus, exponent}:
+    case NumExponent{integer, fraction, +exp_minus, +exponent}:
       NumAccepted{minus, reverse_go(integer, Nil{}), reverse_go(fraction, Nil{}),
         Bool.pick(List<U32>, exp_minus, 45 <> reverse_go(exponent, Nil{}),
           reverse_go(exponent, Nil{})), original}
@@ -136,7 +137,7 @@ def finish_go(state: NumState, minus: Bool, original: List<U32>) -> NumResult:
 def leading_minus(octets: List<U32>) -> Bool:
   match octets:
     case Nil{}: False{}
-    case h <> t: is_minus(h)
+    case +h <> t: is_minus(h)
 
 # Entry: a complete token byte slice. The machine consumes the leading sign itself, so the
 # bytes are never fed twice, and the original slice is returned unmodified so an accepted
@@ -144,4 +145,4 @@ def leading_minus(octets: List<U32>) -> Bool:
 def decode_number(octets: List<U32>) -> NumResult:
   match feed_go(octets, NumStart{}):
     case NumStep{state}: finish_go(state, leading_minus(octets), octets)
-    case NumHostFault{value}: NumResult.NumHostFault{value}
+    case NumScanFault{value}: NumHostFault{value}
