@@ -102,21 +102,14 @@ def ref_fields_ok(query: String, refId: String) -> String:
 # retained yet, `RefAbsent` and `RefAmbiguous` are read from the match count, and
 # `RefMalformed` means the single matching entry lacks a member. No constructor
 # carries operation names, because no retained column holds them.
-type RefLookup is Data:
-  RefUnreadable{stage: String, answer: String}
-  RefQueryMissing{query: String, refId: String}
-  RefOpen{query: String, refId: String, state: String}
-  RefAbsent{query: String, refId: String}
-  RefAmbiguous{query: String, refId: String, count: String}
-  RefMalformed{query: String, refId: String, entry: String}
-  RefFound{query: String, refId: String, state: String, entry: String}
-
 def ref_state(query: String) -> String:
   "coalesce((SELECT state FROM semantic_queries WHERE id=" ++ C.q(query) ++ "),'')"
 
 # The result column of a query that has one, or the marker that it is not retained.
-def ref_result_state(query: String) -> String:
-  "CASE WHEN " ++ ref_state(query) ++ "='' THEN '' WHEN (SELECT result_json FROM semantic_queries WHERE id=" ++ C.q(query) ++ ") IS NULL THEN 'unretained' ELSE " ++ ref_state(query) ++ " END"
+# Whether the query's retained result exists, as its own fact, so a failed or
+# refused query keeps its authoritative state even when no result was retained.
+def ref_result_present(query: String) -> String:
+  "CASE WHEN NOT EXISTS(SELECT 1 FROM semantic_queries WHERE id=" ++ C.q(query) ++ ") THEN 'absent' WHEN (SELECT result_json FROM semantic_queries WHERE id=" ++ C.q(query) ++ ") IS NULL THEN 'null' ELSE 'present' END"
 
 def ref_match_count(query: String, refId: String) -> String:
   "(SELECT count(*) FROM json_each(coalesce((SELECT result_json FROM semantic_queries WHERE id=" ++ C.q(query) ++ "),'null'),'$.refs') WHERE " ++ ref_id_match(refId) ++ ")"
@@ -136,13 +129,13 @@ def ref_identity_nonempty(member: String) -> String:
 def ref_shape_ok(query: String, refId: String) -> String:
   "(SELECT CASE WHEN " ++ ref_member_once("engine", "text") ++ " AND " ++ ref_identity_nonempty("engine") ++ " AND " ++ ref_member_once("subject", "array") ++ " AND " ++ ref_member_once("snapshotId", "text") ++ " AND " ++ ref_identity_nonempty("snapshotId") ++ " AND " ++ ref_member_once("projections", "array") ++ " AND json_array_length(value,'$.projections')>0 THEN 1 ELSE 0 END FROM json_each(coalesce((SELECT result_json FROM semantic_queries WHERE id=" ++ C.q(query) ++ "),'null'),'$.refs') WHERE " ++ ref_id_match(refId) ++ ")"
 
-# One row of five columns, none of which echoes a caller string: the recorded result
-# state of the requested query with `unretained` for a null result, the count of
-# entries whose id matches exactly, the matching entry's stored text, and whether that
-# entry has the exact selector shape. The requested identity is supplied to the
-# decoder instead of travelling through the tab-separated row.
+# One row of five columns, none of which echoes a caller string: the recorded state of
+# the requested query, whether its result is retained, the count of entries whose id
+# matches exactly, the matching entry's stored text, and whether that entry has the
+# exact selector shape. The requested identity is supplied to the decoder instead of
+# travelling through the tab-separated row.
 def ref_lookup_sql(+query: String, +refId: String) -> String:
-  "SELECT " ++ ref_result_state(query) ++ "," ++ ref_match_count(query, refId) ++ ",coalesce(" ++ ref_first_entry(query, refId) ++ ",''),coalesce(" ++ ref_shape_ok(query, refId) ++ ",0);"
+  "SELECT " ++ ref_state(query) ++ "," ++ ref_result_present(query) ++ "," ++ ref_match_count(query, refId) ++ ",coalesce(" ++ ref_first_entry(query, refId) ++ ",''),coalesce(" ++ ref_shape_ok(query, refId) ++ ",0);"
 
 type RefLookup is Data:
   RefUnreadable{stage: String, answer: String}
@@ -156,8 +149,7 @@ type RefLookup is Data:
   RefFound{query: String, refId: String, state: String, entry: String}
 
 def ref_count_ok(count: String) -> Bool:
-  digits_only(count)
-
+  runtime_epoch_ok(count)
 def ref_flag_ok(flag: String) -> Bool:
   Bool.or(String.eq(flag, "0"), String.eq(flag, "1"))
 
@@ -170,30 +162,34 @@ def ref_failed_state(state: String) -> Bool:
 # The state decides first: an unfinished or unretained query is never reported as an
 # absent ref, and only a completed result whose retained refs array has no matching
 # entry is absent.
-def ref_decide(+query: String, +refId: String, +state: String, +count: String, +entry: String, +shape: String, +answer: String) -> RefLookup:
+def ref_decide(+query: String, +refId: String, +state: String, +result: String, +count: String, +entry: String, +shape: String, +answer: String) -> RefLookup:
   Bool.pick(RefLookup, String.is_empty(state), RefQueryMissing{query, refId},
-  Bool.pick(RefLookup, String.eq(state, "unretained"), RefUnretained{query, refId},
-  Bool.pick(RefLookup, ref_open_state(state), RefOpen{query, refId, state},
   Bool.pick(RefLookup, ref_failed_state(state), RefFailed{query, refId, state},
+  Bool.pick(RefLookup, ref_open_state(state), RefOpen{query, refId, state},
   Bool.pick(RefLookup, Bool.not(String.eq(state, "complete")), RefUnreadable{"state", answer},
+  Bool.pick(RefLookup, String.eq(result, "null"), RefUnretained{query, refId},
+  Bool.pick(RefLookup, Bool.not(String.eq(result, "present")), RefUnreadable{"result", answer},
   Bool.pick(RefLookup, Bool.not(ref_count_ok(count)), RefUnreadable{"count", answer},
   Bool.pick(RefLookup, Bool.not(ref_flag_ok(shape)), RefUnreadable{"shape", answer},
   Bool.pick(RefLookup, String.eq(count, "0"), RefAbsent{query, refId},
   Bool.pick(RefLookup, Bool.not(String.eq(count, "1")), RefAmbiguous{query, refId, count},
-  Bool.pick(RefLookup, String.eq(shape, "1"), RefFound{query, refId, state, entry}, RefMalformed{query, refId, entry}))))))))))
+  Bool.pick(RefLookup, String.eq(shape, "1"), RefFound{query, refId, state, entry}, RefMalformed{query, refId, entry}))))))))))))
 
 def ref_lookup_tabs(+query: String, +refId: String, +fields: List<String>, +answer: String) -> RefLookup:
   match fields:
     case +state <> more0:
       match more0:
-        case +count <> more1:
+        case +result <> more1:
           match more1:
-            case +entry <> more2:
+            case +count <> more2:
               match more2:
-                case +shape <> more3:
+                case +entry <> more3:
                   match more3:
-                    case Nil{}: ref_decide(query, refId, state, count, entry, shape, answer)
-                    case _: RefUnreadable{"surplus", answer}
+                    case +shape <> more4:
+                      match more4:
+                        case Nil{}: ref_decide(query, refId, state, result, count, entry, shape, answer)
+                        case _: RefUnreadable{"surplus", answer}
+                    case _: RefUnreadable{"short", answer}
                 case _: RefUnreadable{"short", answer}
             case _: RefUnreadable{"short", answer}
         case _: RefUnreadable{"short", answer}
