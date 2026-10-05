@@ -52,6 +52,8 @@ def run(argv, cwd, out_path=None):
     err_path = pathlib.Path(str(out_path) + ".stderr")
     with open(out_path, "w") as out, open(err_path, "w") as err:
         completed = subprocess.run(argv, stdout=out, stderr=err, text=True, env=env, cwd=str(cwd))
+    # Decoded copies exist only for the caller's assertions; the files stay the
+    # raw evidence.
     completed.stdout = pathlib.Path(out_path).read_text()
     completed.stderr = err_path.read_text()
     completed.args = argv
@@ -65,12 +67,13 @@ def digest(path):
 def case(name, result, out_path=None):
     entry = {"case": name, "argv": result.args, "exit": result.returncode}
     if out_path:
-        out_path.write_text(result.stdout)
-        err_path = out_path.with_suffix(".stderr")
-        err_path.write_text(result.stderr)
+        # The child's streams were written by run() while it executed; this only
+        # records the retained files and their digests. Nothing is rewritten.
+        err_path = pathlib.Path(str(out_path) + ".stderr")
         entry["stdout"] = str(out_path)
         entry["stderr"] = str(err_path)
         entry["stdout_sha256"] = digest(out_path)
+        entry["stderr_sha256"] = digest(err_path)
     EVIDENCE["cases"].append(entry)
     return entry
 

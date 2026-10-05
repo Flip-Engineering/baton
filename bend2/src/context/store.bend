@@ -40,6 +40,15 @@ def digits_only(s: String) -> Bool:
     case SNil{}: True{}
     case SCon{c, rest}: Bool.and(is_digit(c), digits_only(rest))
 
+def head_char(s: String) -> Char:
+  match s:
+    case SNil{}: Char.from_u32(0)
+    case SCon{c, rest}: c
+
+def nonzero_digit(+c: Char) -> Bool:
+  +code = Char.to_u32(c)
+  Bool.and(U32.is_lt(48, code), U32.is_lt(code, 58))
+
 def runtime_epoch_ok(+value: String) -> Bool:
   match value:
     case "":
@@ -47,7 +56,12 @@ def runtime_epoch_ok(+value: String) -> Bool:
     case "0":
       True{}
     case other:
-      Bool.and(Bool.not(String.eq(head_of(other), "0")), digits_only(tail_of(other)))
+      Bool.and(nonzero_digit(head_char(other)), digits_only(tail_of(other)))
+
+# The same profile as one SQL predicate, so the store text can refuse a malformed
+# counter in its own statement instead of storing whatever it was handed.
+def runtime_epoch_sql_ok(expr: String) -> String:
+  "((" ++ expr ++ ")='0' OR ((" ++ expr ++ ") GLOB '[1-9]*' AND (" ++ expr ++ ") NOT GLOB '*[^0-9]*'))"
 
 def runtime_epoch_value(+epoch: String) -> String:
   C.q(epoch)
@@ -140,7 +154,8 @@ def progress_guarded_sql(+admitted: String, +id: String, +owner: String, +progre
   ++ owner_notice_sql(noticeId, owner, noticeBody)
 
 def runtime_row_sql(+id: String, +owner: String, +originAttempt: String, +launchQuery: String, +adapterId: String, +state: String, +epoch: String) -> String:
-  "INSERT INTO semantic_runtimes(id,owner,origin_attempt,launch_query,adapter_id,state,epoch) VALUES("
+  "SELECT json_object('error','runtime-epoch-refused','condition','A runtime epoch is a canonical unsigned decimal counter: 0, or a nonzero digit followed by digits.','next','Read the adapter epoch as its exact decimal text; never convert it to a finite number.') WHERE NOT " ++ runtime_epoch_sql_ok(C.q(epoch)) ++ ";"
+  ++ "INSERT INTO semantic_runtimes(id,owner,origin_attempt,launch_query,adapter_id,state,epoch) VALUES("
   ++ C.q(id) ++ "," ++ C.q(owner) ++ "," ++ text_or_null(originAttempt) ++ "," ++ C.q(launchQuery) ++ "," ++ C.q(adapterId) ++ "," ++ C.q(state) ++ "," ++ runtime_epoch_value(epoch)
   ++ ") ON CONFLICT(id) DO UPDATE SET id=CASE WHEN semantic_runtimes.launch_query=excluded.launch_query AND semantic_runtimes.adapter_id=excluded.adapter_id THEN semantic_runtimes.id ELSE NULL END;"
   ++ "SELECT json_object('id',id,'owner',owner,'launchQuery',launch_query,'adapterId',adapter_id,'state',state,'epoch',epoch,'pendingQuery',pending_query,'outcome',CASE WHEN outcome_json IS NULL THEN NULL ELSE json(outcome_json) END) FROM semantic_runtimes WHERE id=" ++ C.q(id) ++ ";"
