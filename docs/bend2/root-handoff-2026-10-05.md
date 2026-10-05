@@ -77,6 +77,68 @@ Required commands are `build-native.sh`, `laws-check.mjs <bend>` and
 
 ## Hosted validation and shared native instance
 
+### Homelab runner and current qualification
+
+Root provisioned the separate organization runner group
+`baton2-native-homelab` (group 4), restricted to the Baton repository and
+`.github/workflows/bend2-homelab-trusted.yml` on
+`refs/heads/codex/bend2-homelab-validation-20261005`.
+The branch restricts pushes to `flip-engineer` and `flip-baton-gpt`, enforces
+administrator restrictions, and rejects force pushes and deletion.
+Runner 725, `atari-homelab-baton2-native`, is online on the homelab.
+
+Its dedicated account is `batonci`, UID 986, GID 978, with no Docker group
+membership. The owned storage is
+`/mnt/nvme4tb/ci-runners/baton2-native-homelab`. Its system service binds that
+storage under `/run/baton2-native-homelab`, uses the release's `runsvc.sh`,
+blocks GPU devices and user homes, hides other users' processes, and confines
+writes to its owned storage. Actual mount inspection verified the absence of
+GPU nodes and the operator's SSH home. The NVMe ancestor ACL grants the
+account directory traversal. Existing Flip assignments and services remain
+unchanged.
+
+Runner release 2.337.0 archive SHA256 is
+`70920811a4f8ad4328818682bca5c6469c1c942fab52448868071d0063816613`.
+Clang 19.1.1 and existing SQLite headers are available. Node 22 and the pinned
+Linux x64 Bend 2.0.25 archive are selected by the workflow. Service maintenance
+requires observed job completion; its upstream wrapper can force shutdown
+after its own grace period. A dedicated needrestart override prevents package
+maintenance from restarting this service.
+
+Source `0822afbdca03dea111dd3db8eec861032362c366` is independently source
+reviewed and published only on the protected validation branch. Root published
+it through native `push` with the operator's GitHub OAuth credential helper;
+workflow modification requires the operator's workflow permission. Commit
+authorship remains `Flip Baton - GPT`.
+
+[Run 37364422460](https://github.com/Flip-Engineering/baton/actions/runs/37364422460),
+attempt 2, job 111946593094, runs the complete existing Linux gate. Checkout,
+Node setup, pinned compiler installation and the law-bearing coordinator build
+passed. Full law controls are in progress; native checks remain due. The first
+attempt failed during runner-group bootstrap before any build. The initial
+service start failed because the custom installation lacked the release's
+`runsvc.sh` copy; installing the unchanged release template enabled startup.
+
+The workflow retains source, toolchain, library and completed gate evidence,
+including final capture on failed gates. Successful child diagnostics discarded
+by the existing checker are still part of #675's raw-evidence work. This run
+does not complete that work, Darwin packaging, shared-runtime qualification or
+primary publication. All local compilation remains excluded.
+
+Root recovered `semantic-synthesis` through native guidance
+`root-homelab-recovery-55-synthesis` and `root-native-operations-56-synthesis`.
+The Conductors received the remote execution boundary and preserved native
+identities and source ownership. Root56 also requires direct native control
+use throughout their work. The crash finding is recorded as
+`root-host-crash-20261005`, with `message:root-homelab-recovery-55-synthesis`
+as its evidence reference. Parentless authors generate no knowledge notice;
+the explicit recovery guidance carries the context to Synthesis.
+
+Compilation and law checking in Bend 2.0.25 execute through its CPU
+TypeScript/Bun frontend and host compiler. CUDA and Metal support executes
+Bend programs. The operator's GPU-queue question does not change the selected
+CPU compilation placement.
+
 [Issue #675](https://github.com/Flip-Engineering/baton/issues/675) covers hosted
 parallel law validation. `native-ci-conductor` owns the work under
 `semantic-synthesis`. Its implementation Sections use
@@ -130,6 +192,11 @@ counterexamples. New pure owner modules are released for implementation.
 `Turn`/receive functions belong to `native-receive-conductor`; entry/CLI/MCP
 composition belongs to the interface owner. Those existing seams require
 explicit handoff. Measure comparable before/after workloads and cleanup.
+
+Pre-restart successors `7de194e0` and `3a552336` add admission identity laws
+and Receive request/output correlation types. They remain bounded source
+work. The production entry imports, atomic admission, actual routing/custody,
+runtime failure isolation and integrated resource measurements remain due.
 
 Task and review bodies are under
 `.scratch/semantic-context-20261005/tasks/native-capacity-instance-46`.
