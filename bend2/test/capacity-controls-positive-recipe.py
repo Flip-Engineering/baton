@@ -92,7 +92,7 @@ def child(record, name, argv, run, stdin=None):
     return entry
 
 
-def write_record(run, record):
+def write_record(directory, record):
     """Replace the stage record atomically, keeping the previous rows intact.
 
     The replacement is written beside the record and swapped into place, so a
@@ -100,8 +100,8 @@ def write_record(run, record):
     immediate replacement, not a crash or power-loss durability protocol: no
     fsync or publication step is claimed.
     """
-    path = run / 'run.json'
-    staged = run / 'run.json.next'
+    path = directory / 'run.json'
+    staged = directory / 'run.json.next'
     try:
         staged.write_text(json.dumps({'children': record}, indent=2) + '\n')
         os.replace(staged, path)
@@ -119,7 +119,7 @@ def write_record(run, record):
         raise raised from error
 
 
-def settle(run, record, name, outcome, **fields):
+def settle(directory, record, name, outcome, **fields):
     """Settle one stage row and persist it before anything else can fail.
 
     The row can be declared before its fallible work and settled again afterwards,
@@ -133,22 +133,22 @@ def settle(run, record, name, outcome, **fields):
             break
     else:
         record.append(entry)
-    write_record(run, record)
+    write_record(directory, record)
     return record[-1] if record[-1].get('name') == name else entry
 
 
-def attempt(run, record, name, work, **declared):
+def attempt(directory, record, name, work, **declared):
     """Run one stage with its identity declared first and settled on every exit.
 
     The original exception is raised with any recording error attached, so a
     failure to persist the terminal row never replaces the cause it was recording.
     """
-    settle(run, record, name, 'attempted', **declared)
+    settle(directory, record, name, 'attempted', **declared)
     try:
         value = work()
     except BaseException as error:
         try:
-            settle(run, record, name, 'failed', failure=repr(error),
+            settle(directory, record, name, 'failed', failure=repr(error),
                    failure_type=type(error).__name__)
         except BaseException as record_error:
             setattr(error, 'record_error', record_error)
@@ -156,7 +156,7 @@ def attempt(run, record, name, work, **declared):
             raise error from record_error
         raise
     try:
-        settle(run, record, name, 'verified', **(value if isinstance(value, dict) else {}))
+        settle(directory, record, name, 'verified', **(value if isinstance(value, dict) else {}))
     except BaseException as record_error:
         # The work completed; a failure to record that must not lose the outcome.
         setattr(record_error, 'stage', name)
@@ -328,8 +328,9 @@ def main():
                    provenance=str(args.archive),
                    scope='the archive bytes are retained before extraction and extracted from '
                          'the retained copy; the external path stays provenance')
-            settle(run, record, 'archive-extracted', 'attempted', source='original-archive.tar.gz',
-                   target=str(target))
+            settle(run, record, 'archive-extracted', 'attempted',
+                   source='original-archive.tar.gz', target=str(target))
+            extracted = []
             with tarfile.open(retained_input, 'r:gz') as archive:
                 members = archive.getmembers()
                 # Complete preflight first: every member is checked and the admitted
@@ -359,8 +360,14 @@ def main():
                 if kinds.get(manifest_member) != 'file':
                     raise SystemExit('the archive does not hold the admitted manifest member: '
                                      + manifest_member)
-                for member in members:
-                    archive.extract(member, target)
+                try:
+                    for member in members:
+                        archive.extract(member, target)
+                        extracted.append(member.name)
+                except BaseException as error:
+                    settle(run, record, 'archive-extracted', 'failed',
+                           members_extracted=len(extracted), failure=repr(error))
+                    raise
             settle(run, record, 'archive-extracted', 'verified', target=str(target),
                    members=len(members), manifest_member=manifest_member)
             manifest_path = target / manifest_member
@@ -378,6 +385,8 @@ def main():
                    documents=sorted(documents))
             current, bound = package.verify_archived_inventory(archived, result['inventory'],
                                                                documents)
+            settle(run, record, 'archive-admitted', 'verified', root=selected_root,
+                   documents=sorted(documents), members=len(current['members']))
             audit.mkdir(exist_ok=True)
             envelope = package.controls_evidence(archived, package.snapshot(), args.bend,
                                                 archived=True, documents=documents,
@@ -390,9 +399,14 @@ def main():
             # Every selected case must have its own retained acquisition: the
             # request, both raw streams and the terminal record under the stem the
             # classifier writer itself uses, with the recorded digests agreeing.
+            if len(expected_ids) != len(set(expected_ids)):
+                raise SystemExit('the readback reports a case identity twice: '
+                                 + repr(expected_ids))
             uncovered = []
             verdicts = {str(verdict.get('id')): verdict
                         for verdict in (envelope.get('classifier') or {}).get('verdicts') or []}
+            if len(verdicts) != len(expected_ids):
+                raise SystemExit('the readback reports a repeated or missing verdict identity')
             terminals = {}
             for identity in expected_ids:
                 stem = package.acquisition_stem(identity)
@@ -402,8 +416,15 @@ def main():
                     continue
                 terminal = json.loads(terminal_path.read_text())
                 terminals[identity] = terminal
-                # The request is the case this run asked about.
-                request = json.loads((audit / (stem + '.request.json')).read_text())
+                # The request bytes are the ones the terminal record describes, and
+                # the parsed request is the case this run asked about.
+                request_data = (audit / (stem + '.request.json')).read_bytes()
+                if (len(request_data) != terminal.get('request_bytes')
+                        or hashlib.sha256(request_data).hexdigest()
+                        != terminal.get('request_sha256')):
+                    raise SystemExit('a retained request disagrees with its terminal record: '
+                                     + identity)
+                request = json.loads(request_data)
                 if (request.get('case') or {}).get('id') != identity:
                     raise SystemExit('a retained request names another case: ' + identity)
                 # Both raw streams are the bytes their terminal record describes,
@@ -431,6 +452,21 @@ def main():
                     if terminal.get(field) != (verdict.get('acquisition') or {}).get(field):
                         raise SystemExit('a retained terminal process field differs from the '
                                          'verdict: ' + field)
+                # The retained response is the verdict the readback reported, with the
+                # reader's own added fields kept separate from the endpoint contract.
+                stdout_data = (audit / (stem + '.stdout')).read_bytes()
+                lines = [line for line in stdout_data.decode('utf-8').splitlines()
+                         if line.strip()]
+                if len(lines) != 1:
+                    raise SystemExit('a retained response is not one line: ' + identity)
+                response = json.loads(lines[0])
+                if (response.get('id') != identity
+                        or response.get('schema') != 'capacity-controls/classify-verdict@1'):
+                    raise SystemExit('a retained response names another case or schema: ' + identity)
+                for field in ('class', 'attributed_law', 'match', 'qualified'):
+                    if response.get(field) != verdict.get(field):
+                        raise SystemExit('a retained response field differs from the reported '
+                                         'verdict: ' + field + ' for ' + identity)
             if uncovered:
                 raise SystemExit('the acquisition omits selected cases: ' + repr(uncovered))
             records = sorted(entry.name for entry in audit.rglob('*') if entry.is_file())

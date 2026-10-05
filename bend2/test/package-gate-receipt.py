@@ -10,6 +10,7 @@ import hashlib
 import importlib.util
 import json
 import pathlib
+import shutil
 import tempfile
 import unittest
 
@@ -1132,8 +1133,14 @@ class PackageGateReceipt(unittest.TestCase):
                                             audit=self.home / 'archived-audit')
         self.assertEqual(envelope['reduction_sha256'], result['reduction_sha256'])
         self.assertEqual(envelope['inventory_sha256'], result['inventory_sha256'])
-        self.assertEqual(envelope['archived_documents'],
-                         {member: documents[member] for member in sorted(documents)})
+        # Admission records each document with its digest and observed size; the
+        # final current-file observation records the digests alone.
+        for member in sorted(documents):
+            record = envelope['archived_documents'][member]
+            self.assertEqual(record['sha256'], documents[member])
+            self.assertEqual(record['bytes'],
+                             (archived / member).stat().st_size)
+            self.assertIsInstance(record['bytes'], int)
         self.assertEqual(envelope['archived_metadata_final'],
                          {member: documents[member] for member in sorted(documents)})
 
