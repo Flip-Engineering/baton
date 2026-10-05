@@ -10,6 +10,7 @@ from pathlib import Path, PurePosixPath
 import platform
 import re
 import shutil
+import signal
 import subprocess
 import tarfile
 import time
@@ -438,6 +439,15 @@ def context_node_identity(node, payload, logs, name, suffix=''):
             'sha256': sha256(node), 'version': version}
 
 
+def child_signal(returncode):
+    if returncode is not None and returncode < 0:
+        try:
+            return signal.Signals(-returncode).name
+        except ValueError:
+            return 'signal-' + str(-returncode)
+    return None
+
+
 def context_receipt_logs(logs):
     return sorted(path for pattern in ('context-gate-*', 'context-node-version-*')
                   for path in logs.glob(pattern) if path.is_file())
@@ -462,9 +472,14 @@ def run_context_gate(payload, logs, node, name, extra_env=None):
     before = context_tree_state(payload)
     write_json(before_path, before)
     started = time.monotonic()
-    with stdout.open('wb') as out, stderr.open('wb') as err:
-        result = subprocess.run([str(node), 'context-package-gate.mjs'], cwd=cwd, env=env,
-                                stdin=subprocess.DEVNULL, stdout=out, stderr=err)
+    spawn_error = None
+    result = None
+    try:
+        with stdout.open('wb') as out, stderr.open('wb') as err:
+            result = subprocess.run([str(node), 'context-package-gate.mjs'], cwd=cwd, env=env,
+                                    stdin=subprocess.DEVNULL, stdout=out, stderr=err)
+    except BaseException as error:
+        spawn_error = repr(error)
     after = context_tree_state(payload)
     write_json(after_path, after)
     post_identity = None
@@ -485,9 +500,16 @@ def run_context_gate(payload, logs, node, name, extra_env=None):
         node_identity['versionAfter'] = post_identity['version']
         node_identity['sha256After'] = post_identity['sha256']
         node_identity['bytesAfter'] = post_identity['bytes']
+    if result is None:
+        child = {'spawned': False, 'error': spawn_error}
+    else:
+        child = {'spawned': True}
     receipt = {'runtime': name, 'node': node_identity,
                'argv': [str(node), 'context-package-gate.mjs'], 'cwd': str(cwd),
-               'environmentKeys': sorted(env), 'exit_code': result.returncode,
+               'environmentKeys': sorted(env),
+               'child': child,
+               'exit_code': None if result is None else result.returncode,
+               'signal': child_signal(None if result is None else result.returncode),
                'elapsed_seconds': time.monotonic() - started,
                'stdout': {'path': stdout.name, **file_info(stdout)},
                'stderr': {'path': stderr.name, **file_info(stderr)},
@@ -501,6 +523,8 @@ def run_context_gate(payload, logs, node, name, extra_env=None):
                                             or post_identity['bytes'] != node_identity['bytes'])}
     receipt_path = logs / ('context-gate-' + name + '.json')
     write_json(receipt_path, receipt)
+    require(result is not None,
+            'The context gate child could not be spawned: ' + str(receipt_path))
     require(post_identity is not None,
             'The context gate node identity is unavailable after the package gate: '
             + str(receipt_path))
@@ -728,8 +752,7 @@ def package(args):
         context['dependencyClosureEntries'] = len(context_entries)
         terms['context_packages'] = context.pop('terms')
         append_context_distribution(payload, terms['context_packages'])
-        receipt_logs = sorted(path for pattern in ('context-gate-*', 'context-node-version-*')
-                              for path in logs.glob(pattern) if path.is_file())
+        receipt_logs = context_receipt_logs(logs)
         for receipt_log in receipt_logs:
             shutil.copyfile(receipt_log, payload / 'logs' / receipt_log.name)
         generated_dir = output / 'generated'

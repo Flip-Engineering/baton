@@ -323,6 +323,58 @@ class ContextPackagedBytes(unittest.TestCase):
         PACKAGE.require_gate_report(
             (self.logs / 'context-gate-vanishing-node.stdout').read_text(), len(self.entries))
 
+    def test_gate_refuses_unspawnable_child(self):
+        real = pathlib.Path(self.host_node).resolve()
+        wrapper = pathlib.Path(self.scratch.name) / 'unspawnable-node.sh'
+        # The pre-probe strips the wrapper's own exec bit, so the gate child
+        # cannot be spawned; the child and the post probe then fail
+        # independently and both failures are retained in one receipt.
+        wrapper.write_text('#!/bin/sh\n'
+                           'if [ "$1" = "--version" ]; then\n'
+                           '  chmod 000 "' + str(wrapper) + '"\n'
+                           'fi\n'
+                           'exec "' + str(real) + '" "$@"\n')
+        wrapper.chmod(0o755)
+        with self.assertRaises(RuntimeError) as caught:
+            PACKAGE.run_context_gate(self.host_root, self.logs, wrapper, 'unspawnable-node')
+        self.assertIn('could not be spawned', str(caught.exception))
+        receipt = json.loads((self.logs / 'context-gate-unspawnable-node.json').read_text())
+        self.assertFalse(receipt['child']['spawned'])
+        self.assertIn('Errno 13', receipt['child']['error'])
+        self.assertIsNone(receipt['exit_code'])
+        self.assertIsNone(receipt['signal'])
+        self.assertFalse(receipt['node']['postIdentity']['available'])
+        self.assertIsNone(receipt['nodeVersionChanged'])
+        self.assertIsNone(receipt['nodeIdentityChanged'])
+        self.assertTrue(receipt['payloadSnapshot']['equal'])
+        self.assertTrue((self.logs / 'context-gate-unspawnable-node.stdout').is_file())
+        self.assertTrue((self.logs / 'context-gate-unspawnable-node.stderr').is_file())
+        self.assertTrue(
+            (self.logs / 'context-gate-unspawnable-node.payload-before.json').is_file())
+        self.assertTrue(
+            (self.logs / 'context-gate-unspawnable-node.payload-after.json').is_file())
+
+    def test_gate_records_signal_termination(self):
+        real = pathlib.Path(self.host_node).resolve()
+        wrapper = pathlib.Path(self.scratch.name) / 'terminating-node.sh'
+        # The gate child terminates itself with SIGTERM before executing the
+        # real node; the version probes are unaffected.
+        wrapper.write_text('#!/bin/sh\n'
+                           'if [ "$1" != "--version" ]; then\n'
+                           '  kill -TERM $$\n'
+                           'fi\n'
+                           'exec "' + str(real) + '" "$@"\n')
+        wrapper.chmod(0o755)
+        gate, text = PACKAGE.run_context_gate(self.host_root, self.logs,
+                                              wrapper, 'signalled-node')
+        self.assertEqual(gate['exit_code'], -15)
+        self.assertEqual(gate['signal'], 'SIGTERM')
+        self.assertTrue(gate['child']['spawned'])
+        self.assertTrue(gate['node']['postIdentity']['available'])
+        self.assertTrue(gate['payloadSnapshot']['equal'])
+        self.assertEqual((self.logs / 'context-gate-signalled-node.stdout').stat().st_size, 0)
+        self.assertFalse(text.strip())
+
     def test_gate_refuses_same_version_byte_drift(self):
         real = pathlib.Path(self.host_node).resolve()
         wrapper = pathlib.Path(self.scratch.name) / 'byte-drift-node.sh'
