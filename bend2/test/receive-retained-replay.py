@@ -344,6 +344,7 @@ class ControlledFrames(ReplayBase):
             {'type': 'agent_end', 'isTerminal': True, 'messages': [success, error, 'elided']}],
             task='terminal-only-error')
         self.assertFalse([body for body in bodies if 'Complete answer.' in body], bodies)
+        self.assertTrue([body for body in bodies if 'unavailable' in body.lower()], bodies)
 
     def test_a_started_success_without_completion_does_not_replace_an_error(self):
         """A started message that never completed is not the attempt's result."""
@@ -359,6 +360,7 @@ class ControlledFrames(ReplayBase):
             {'type': 'agent_end', 'isTerminal': True, 'messages': [error, 'elided']}],
             task='started-without-completion')
         self.assertFalse([body for body in bodies if 'Complete answer.' in body], bodies)
+        self.assertTrue([body for body in bodies if 'unavailable' in body.lower()], bodies)
 
     def test_an_assistant_frame_without_a_response_ends_the_completion_authority(self):
         """An assistant frame that names no response still ends the retained completion's authority."""
@@ -375,6 +377,7 @@ class ControlledFrames(ReplayBase):
             {'type': 'agent_end', 'isTerminal': True, 'messages': [error, 'elided']}],
             task='unnamed-activity')
         self.assertFalse([body for body in bodies if 'Complete answer.' in body], bodies)
+        self.assertTrue([body for body in bodies if 'unavailable' in body.lower()], bodies)
 
     def test_a_started_message_over_an_empty_terminal_is_not_the_retained_success(self):
         """A started message that never completed ends the retained success's authority."""
@@ -388,6 +391,7 @@ class ControlledFrames(ReplayBase):
             {'type': 'agent_end', 'isTerminal': True, 'messages': []}],
             task='started-over-empty')
         self.assertFalse([body for body in bodies if 'Complete answer.' in body], bodies)
+        self.assertTrue([body for body in bodies if 'unavailable' in body.lower()], bodies)
 
     def test_an_observed_later_failure_is_reported_over_an_older_observed_error(self):
         """The later provider failure the stream reached last is the current result."""
@@ -426,6 +430,24 @@ class ControlledFrames(ReplayBase):
         self.assertFalse([body for body in bodies if 'Native model failure' in body], bodies)
         self.assertFalse([body for body in bodies if 'Complete answer.' in body], bodies)
         self.assertTrue([body for body in bodies if 'unavailable' in body.lower()], bodies)
+        turns = self.coord('turns', 'parent')
+        self.assertEqual(len(turns), 1)
+        self.assertEqual(self.coord('delivery', turns[0]['id'])['body'], bodies[0])
+
+    def test_empty_terminal_keeps_an_unidentified_retained_failure(self):
+        """An empty terminal with an unidentified retained failure keeps that failure."""
+        error = assistant(stopReason='error', errorStatus=429, errorMessage='429 unidentified failure',
+                          provider='kimi-code', model='k3', content=[])
+        notifications, code, status, bodies = self.replay([
+            {'type': 'message_end', 'message': error},
+            {'type': 'agent_end', 'isTerminal': True, 'messages': []}],
+            task='unidentified-retained-failure')
+        self.assertNotEqual(code, 0)
+        self.assertIn('exit 0', status)
+        failure = [body for body in bodies if 'Native model failure' in body]
+        self.assertTrue(failure, bodies)
+        self.assertIn('429', failure[0])
+        self.assertNotIn('unavailable', failure[0].lower())
 
     def test_sequential_success_then_error_keeps_the_first_report(self):
         """Two consecutive receives: a later receive's failure does not change the earlier report."""
