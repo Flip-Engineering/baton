@@ -185,7 +185,7 @@ def run(rows: List<List<U32> & S.StrResult & String>) -> IO(Unit):
         checked : Unit <- check(h)
         run(t)
 
-def main() -> IO<Unit>:
+def main() -> IO(Unit):
   do IO<Unit>:
     all : Unit <- run(cases())
     pairs : Unit <- run_pairs(unequal_pairs())
