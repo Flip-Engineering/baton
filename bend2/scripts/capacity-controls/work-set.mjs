@@ -78,7 +78,7 @@ export function discoveryRecords({ bend2Dir = join(ROOT, 'bend2') } = {}) {
       id: `proof:${law}`,
       kind: 'proof-removal',
       law,
-      module: posixPath(relative(ROOT, file).startsWith('bend2/') ? relative(ROOT, file) : join('bend2', relative(bend2Dir, file)).split(sep).join('/')),
+      module: posixPath(join('bend2', relative(bend2Dir, file))),
       definition_sha256: sha256Hex(proofDefinition(readFileSync(file, 'utf8'), law)),
     });
   }

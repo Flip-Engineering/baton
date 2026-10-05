@@ -36,29 +36,36 @@ function run(bend, args, cwd) {
   return execFileSync(bend, args, { env: ENV, cwd, encoding: 'utf8', maxBuffer: Infinity });
 }
 
-// One compile observation with its complete separate streams and its actual
+// One compile observation with its complete separate raw streams (exact
+// bytes, decoded only where classification needs text) and its actual
 // terminal outcome, including spawn failures.
 function compile(bend, cwd) {
+  const started = Date.now() / 1000;
   const result = spawnSync(bend, [ENTRY, '--check-only'], {
-    env: ENV, cwd, encoding: 'utf8', maxBuffer: Infinity, stdio: ['ignore', 'pipe', 'pipe'],
+    env: ENV, cwd, maxBuffer: Infinity, stdio: ['ignore', 'pipe', 'pipe'],
   });
+  const ended = Date.now() / 1000;
   if (result.error) {
     return {
       ok: false,
-      stdout: result.stdout ?? '',
-      stderr: result.stderr ?? '',
+      stdout: result.stdout ?? Buffer.alloc(0),
+      stderr: result.stderr ?? Buffer.alloc(0),
       exitCode: null,
       signal: null,
       spawnError: String(result.error.code ?? result.error),
+      started,
+      ended,
     };
   }
   return {
     ok: result.status === 0,
-    stdout: result.stdout ?? '',
-    stderr: result.stderr ?? '',
+    stdout: result.stdout ?? Buffer.alloc(0),
+    stderr: result.stderr ?? Buffer.alloc(0),
     exitCode: result.status,
     signal: result.signal ?? null,
     spawnError: null,
+    started,
+    ended,
   };
 }
 
@@ -120,7 +127,7 @@ const writeEvidenceIndex = () => {
     cases: evidenceIndex,
   }, null, 2) + '\n');
 };
-const retainEvidence = (id, stdout, stderr, outcome, argv) => {
+const retainEvidence = (id, applied, stdout, stderr, outcome, argv, started, ended) => {
   const stem = id.replace(/[^A-Za-z0-9_.-]/g, '_');
   const stdoutName = `${stem}.stdout`;
   const stderrName = `${stem}.stderr`;
@@ -128,19 +135,25 @@ const retainEvidence = (id, stdout, stderr, outcome, argv) => {
   writeFileSync(join(SCRATCH, 'evidence', stderrName), stderr);
   evidenceIndex.push({
     id,
-    stdout: { path: `evidence/${stdoutName}`, bytes: Buffer.byteLength(stdout), sha256: sha256Of(stdout) },
-    stderr: { path: `evidence/${stderrName}`, bytes: Buffer.byteLength(stderr), sha256: sha256Of(stderr) },
-    outcome,
+    applied,
+    // The recorded command is the compile that actually ran, whether or not
+    // the setup transform was applied.
     argv,
+    stdout: { path: `evidence/${stdoutName}`, bytes: stdout.byteLength, sha256: sha256Of(stdout) },
+    stderr: { path: `evidence/${stderrName}`, bytes: stderr.byteLength, sha256: sha256Of(stderr) },
+    outcome,
+    started,
+    ended,
   });
   writeEvidenceIndex();
 };
-function sha256Of(text) {
-  return createHash('sha256').update(text).digest('hex');
+function sha256Of(data) {
+  return createHash('sha256').update(data).digest('hex');
 }
 
 const baseline = compile(BEND, SCRATCH);
-retainEvidence('baseline', baseline.stdout, baseline.stderr, outcomeOf(baseline), [BEND, ENTRY, '--check-only']);
+retainEvidence('baseline', true, baseline.stdout, baseline.stderr, outcomeOf(baseline),
+  [BEND, ENTRY, '--check-only'], baseline.started, baseline.ended);
 console.log(JSON.stringify({ check: 'entry compiles with every law proven', passed: baseline.ok }));
 if (!baseline.ok) {
   failures++;
@@ -171,15 +184,15 @@ for (const { law, file } of rows) {
       }
     }
     control = compile(BEND, SCRATCH);
-    retainEvidence(`proof:${law}`, control.stdout, control.stderr, outcomeOf(control),
-      removed ? [BEND, ENTRY, '--check-only'] : null);
+    retainEvidence(`proof:${law}`, removed, control.stdout, control.stderr, outcomeOf(control),
+      [BEND, ENTRY, '--check-only'], control.started, control.ended);
     const verdict = classifyCase({
       control: { kind: 'proof-removal', law, module: repoPath },
       state: outcomeOf(control).state,
       exitCode: control.exitCode,
       signal: control.signal,
       spawnError: control.spawnError,
-      stderrText: control.stderr,
+      stderrText: control.stderr.toString("utf8"),
       baselineOk: baseline.ok,
       delta: removed ? { changedText, expectedChangedText } : null,
       supplied: null,
@@ -227,8 +240,8 @@ for (const mutation of MUTATIONS) {
       changedText = expectedChangedText;
     }
     control = compile(BEND, SCRATCH);
-    retainEvidence(`mutation:${mutation.name}`, control.stdout, control.stderr, outcomeOf(control),
-      applied ? [BEND, ENTRY, '--check-only'] : null);
+    retainEvidence(`mutation:${mutation.name}`, applied, control.stdout, control.stderr, outcomeOf(control),
+      [BEND, ENTRY, '--check-only'], control.started, control.ended);
     const verdict = classifyCase({
       control: { kind: 'mutation', law: mutation.law, module: mutation.file },
       expectation: definitionExpectation(mutation),
@@ -237,7 +250,7 @@ for (const mutation of MUTATIONS) {
       exitCode: control.exitCode,
       signal: control.signal,
       spawnError: control.spawnError,
-      stderrText: control.stderr,
+      stderrText: control.stderr.toString("utf8"),
       baselineOk: baseline.ok,
       delta: applied ? { changedText, expectedChangedText } : null,
       supplied: null,

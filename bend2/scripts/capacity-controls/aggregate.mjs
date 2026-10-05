@@ -452,8 +452,15 @@ export function classifyCli(argv) {
   const status = execFileSync('git', ['status', '--porcelain=v1'], { cwd: ROOT, encoding: 'utf8', maxBuffer: Infinity });
   if (status.trim() !== '') refusal('this checkout has uncommitted inputs; source binding requires a clean tree');
   const toolchain = request?.toolchain;
-  if (!toolchain || typeof toolchain.compiler_sha256 !== 'string' || toolchain.compiler_sha256 === '') {
-    refusal('request toolchain binding is missing its compiler sha256');
+  if (!toolchain || typeof toolchain.compiler_path !== 'string' || toolchain.compiler_path === ''
+    || typeof toolchain.compiler_sha256 !== 'string' || toolchain.compiler_sha256 === '') {
+    refusal('request toolchain binding is missing its compiler path and sha256');
+  }
+  const baselineArgv = request?.baseline?.argv;
+  if (!Array.isArray(baselineArgv) || baselineArgv.length !== 3
+    || baselineArgv[0] !== toolchain.compiler_path || baselineArgv[2] !== '--check-only'
+    || typeof baselineArgv[1] !== 'string' || baselineArgv[1] === '') {
+    refusal('request baseline argv must name the bound compiler, an entry and --check-only');
   }
 
   // The case identity must equal this checkout's own discovery record
@@ -490,19 +497,25 @@ export function classifyCli(argv) {
   }
   const originalPath = modulePath(join(ROOT, 'bend2'), discovered);
   if (!existsSync(originalPath)) refusal('the selected checkout has no bytes for the requested case module');
-  const originalText = readFileSync(originalPath, 'utf8');
-  if (sha256Hex(Buffer.from(originalText, 'utf8')) !== delta.original_sha256) {
+  const originalBytes = readFileSync(originalPath);
+  if (sha256Hex(originalBytes) !== delta.original_sha256) {
     refusal('delta original_sha256 differs from this checkout module bytes');
   }
   // delta.changed_path is evidence-root-relative and confined like streams.
   const changedFound = bundlePath(evidenceRoot, realEvidenceRoot, delta.changed_path);
   if (changedFound.fault) refusal(`delta changed bytes: ${changedFound.fault}`);
-  const changedText = readFileSync(changedFound.path, 'utf8');
-  if (sha256Hex(Buffer.from(changedText, 'utf8')) !== delta.changed_sha256) {
+  const changedBytes = readFileSync(changedFound.path);
+  if (sha256Hex(changedBytes) !== delta.changed_sha256) {
     refusal('delta changed_sha256 differs from the retained changed bytes');
   }
+  const originalText = originalBytes.toString('utf8');
+  const changedText = changedBytes.toString('utf8');
 
   const definition = MUTATIONS.find((mutation) => `mutation:${mutation.name}` === discovered.id) ?? null;
+  // The clean-tree observation must hold across the whole classification:
+  // original reads, stream hashing and verifier digesting happen under it.
+  const statusAfter = execFileSync('git', ['status', '--porcelain=v1'], { cwd: ROOT, encoding: 'utf8', maxBuffer: Infinity });
+  if (statusAfter !== status) refusal('this checkout changed during classification');
   const verdict = classifyCase({
     control: discovered,
     expectation: discovered.expectation ?? definitionExpectation(definition),
@@ -533,7 +546,7 @@ export function classifyCli(argv) {
       valid: accounting === null ? true : accountingValid(accounting, profile),
       present: accounting !== null,
     },
-    baseline: { state: baselineOutcome.state, exit_code: baselineOutcome.exit_code, ok: baselineOk },
+    baseline: { state: baselineOutcome.state, exit_code: baselineOutcome.exit_code, ok: baselineOk, argv_bound: true },
     expectation: discovered.expectation ?? null,
     location: discovered.location ?? null,
     supplied: request.supplied ?? null,

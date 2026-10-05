@@ -225,8 +225,16 @@ export function classifyControl({ state, exitCode, signal, spawnError, stderrTex
     return { class: 'unfinished', attributedLaw: null };
   }
   const { diagnostics, accounting, profile } = splitTimeAccounting(stderrText ?? '');
-  if (accounting !== null && !accountingValid(accounting, profile)) {
-    return { class: 'accounting-invalid', attributedLaw: null };
+  if (accounting !== null) {
+    if (!accountingValid(accounting, profile)) return { class: 'accounting-invalid', attributedLaw: null };
+    // The wrapper's reported exit must agree with the recorded child outcome;
+    // a contradiction is invalid accounting, never a refusal.
+    if (profile === 'gnu-time-v' && state === 'exited') {
+      const reported = /Exit status: (\d+)/.exec(accounting);
+      if (reported && Number(reported[1]) !== exitCode) {
+        return { class: 'accounting-invalid', attributedLaw: null };
+      }
+    }
   }
   if (control.kind === 'baseline') {
     return exitCode === 0

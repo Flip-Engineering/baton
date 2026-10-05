@@ -90,7 +90,7 @@ test('group parity runs the complete fixture work set and aggregates exhaustivel
     const selected = expectedRecords.filter((record) => record.module === moduleName);
     assert.ok(selected.length > 0, `the fixture work set must select ${moduleName}`);
     const groupDir = join(evidence, `group-${moduleName.replaceAll('/', '_')}`);
-    const { manifest } = await runGroup({
+    const { manifest, scratch } = await runGroup({
       module: moduleName,
       evidenceDir: groupDir,
       timeTool,
@@ -102,12 +102,19 @@ test('group parity runs the complete fixture work set and aggregates exhaustivel
       entry: 'bend2/src/main.bend',
       sourceRoot: null,
     });
-    groups.push({ moduleName, groupDir, manifest, selected });
+    groups.push({ moduleName, groupDir, manifest, selected, scratch });
   }
-  for (const { moduleName, manifest, selected } of groups) {
+  for (const { moduleName, manifest, selected, scratch } of groups) {
     assert.equal(manifest.entry, 'bend2/src/main.bend');
     assert.equal(manifest.baseline.process.state, 'exited');
     assert.equal(manifest.baseline.process.exit_code, 0);
+    // Complete non-target inventory: every fixture module file in the run
+    // scratch equals its original fixture bytes after the group finishes.
+    for (const record of expectedRecords.filter((entry) => entry.module === moduleName)) {
+      const original = readFileSync(join(FIXTURE_BEND2, record.module.slice('bend2/'.length)));
+      assert.ok(readFileSync(join(scratch, record.module)).equals(original),
+        `restored scratch bytes must equal the fixture original for ${record.module}`);
+    }
     // Exact produced identities: the selected set, whole and in order of none
     // other than the discovery records themselves.
     assert.deepEqual(

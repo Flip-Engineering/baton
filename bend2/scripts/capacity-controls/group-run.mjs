@@ -131,7 +131,18 @@ function runChild({ argv, cwd, env, dir, stdoutName, stderrName }) {
       finish({ state: 'spawn-error', exitCode: null, signal: null, spawnError: String(error?.code ?? error), pid: child.pid ?? null });
     });
     child.on('close', (code, signal) => {
-      finish({ state: 'exited', exitCode: code, signal: signal ?? null, spawnError: null, pid: child.pid ?? null });
+      // The wrapper's actual termination is preserved verbatim; only the
+      // wrapper-translated compiler inference above may relabel the child,
+      // and it binds the wrapper evidence separately.
+      finish({
+        state: signal !== null ? 'signalled' : 'exited',
+        exitCode: signal !== null ? null : code,
+        signal: signal ?? null,
+        spawnError: null,
+        pid: child.pid ?? null,
+        wrapperExitCode: signal !== null ? null : code,
+        wrapperSignal: signal ?? null,
+      });
     });
   });
 }
@@ -145,11 +156,12 @@ function processRecord(run, attempt) {
     started: run.started,
     ended: run.ended,
     attempt,
-    // The observed process id and the wrapper's own exit status belong to the
-    // spawned time wrapper; the compiler's pid is not observable through it,
-    // and a translated signal carries no compiler exit code.
+    // The observed process id, exit status and signal belong to the spawned
+    // time wrapper; the compiler's pid is not observable through it, and a
+    // translated signal carries no compiler exit code.
     wrapper_pid: run.pid,
     wrapper_exit_code: run.wrapperExitCode ?? null,
+    wrapper_signal: run.wrapperSignal ?? null,
   };
 }
 
@@ -248,7 +260,6 @@ export async function runGroup({
     runtime,
     runtime_set_sha256: runtime?.sha256 ?? null,
     origin: producingOrigin,
-    instrument,
   };
   mkdirSync(evidenceDir, { recursive: true });
 
@@ -287,9 +298,12 @@ export async function runGroup({
     },
   };
   if (baseline.process.state !== 'exited' || baseline.process.exit_code !== 0) {
+    // The baseline ran no transforms, but the invariant still holds and is
+    // proven before the failed-baseline manifest is written.
+    verifyRestored();
     const manifest = {
       module, binding, entry: selectedEntry, checker_sha256: checkerSha256, source, origin: origin(),
-      producing, baseline, results: [], compiler,
+      producing, instrument, baseline, results: [], compiler,
     };
     const manifestPath = join(evidenceDir, 'group-manifest.json');
     writeFileSync(manifestPath, JSON.stringify(manifest, null, 2) + '\n');
@@ -308,7 +322,29 @@ export async function runGroup({
   };
 
   const results = [];
-  for (const record of selected) {
+  let manifestStatus = 'incomplete';
+  let persisted = null;
+  const persistManifest = () => {
+    const manifest = {
+      module,
+      binding,
+      entry: selectedEntry,
+      status: manifestStatus,
+      checker_sha256: checkerSha256,
+      source,
+      origin: origin(),
+      producing,
+      instrument,
+      baseline,
+      results,
+      compiler,
+    };
+    const manifestPath = join(evidenceDir, 'group-manifest.json');
+    writeFileSync(manifestPath, JSON.stringify(manifest, null, 2) + '\n');
+    return { manifest, manifestPath };
+  };
+  try {
+    for (const record of selected) {
     const scratchModule = join(scratch, record.module);
     const originalBytes = pristine.get(record.module);
     const originalText = originalBytes.toString("utf8");
@@ -411,22 +447,13 @@ export async function runGroup({
       verifyRestored();
     }
   }
-
-  const manifest = {
-    module,
-    binding,
-    entry: selectedEntry,
-    checker_sha256: checkerSha256,
-    source,
-    origin: origin(),
-    producing,
-    baseline,
-    results,
-    compiler,
-  };
-  const manifestPath = join(evidenceDir, 'group-manifest.json');
-  writeFileSync(manifestPath, JSON.stringify(manifest, null, 2) + '\n');
-  return { manifest, manifestPath, scratch };
+  manifestStatus = 'complete';
+  } finally {
+    // Every terminal path leaves a manifest: complete after the loop, or
+    // incomplete with the results and case artifacts collected so far.
+    persisted = persistManifest();
+  }
+  return { manifest: persisted.manifest, manifestPath: persisted.manifestPath, scratch };
 }
 
 // removeProof against a scratch module, kept here so the delta capture and the

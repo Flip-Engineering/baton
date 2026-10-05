@@ -415,6 +415,7 @@ function buildEndpointRequest(bundleDir, record) {
       stderr: { path: join(bundleDir, 'case.stderr'), bytes: Buffer.byteLength(stderrText + TIME_SUFFIX), sha256: sha256(stderrText + TIME_SUFFIX) },
     },
     baseline: {
+      argv: ['/qualified/bend', 'bend2/src/coordinator/main.bend', '--check-only'],
       outcome: { state: 'exited', exit_code: 0, signal: null, spawn_error: null },
       streams: {
         stdout: { path: join(bundleDir, 'baseline.stdout'), bytes: Buffer.byteLength('baseline\n'), sha256: sha256('baseline\n') },
@@ -423,7 +424,7 @@ function buildEndpointRequest(bundleDir, record) {
     },
     evidence_root: bundleDir,
     source: ownSource(),
-    toolchain: { compiler_sha256: 'a'.repeat(64) },
+    toolchain: { compiler_path: '/qualified/bend', compiler_sha256: 'a'.repeat(64) },
     delta: {
       changed_path: 'case.changed',
       original_sha256: sha256(originalText),
