@@ -659,9 +659,34 @@ class PackageGateReceipt(unittest.TestCase):
         entry = json.loads(retained.read_text())
         entry['spans'] = []
         retained.write_text(json.dumps(entry))
+        receipt = json.loads(path.read_text())
+        for stage in receipt['stages']:
+            if stage.get('route') == 'remote-module-groups':
+                stage['log_sha256'] = PACKAGE.sha256(retained)
+        path.write_text(json.dumps(receipt))
         reused = self.home / 'field-reused'
         reused.mkdir()
         with self.assertRaisesRegex(RuntimeError, 'spans'):
+            PACKAGE.reuse_gates(path, PACKAGE.sha256(path), compiler, reused,
+                                PACKAGE.snapshot())
+
+    def test_a_raw_log_tamper_refuses_before_reconciliation(self):
+        """A log changed without updating its digest refuses on the bytes alone."""
+        marker = self.home / 'raw-receipt'
+        self.run_gates_fixture(marker, self.stub_gates(marker, laws_exit=1))
+        compiler = self.compiler()
+        remote = PACKAGE.controls_evidence(self.full_evidence(), PACKAGE.snapshot(), compiler)
+        logs = self.home / 'raw-gates'
+        logs.mkdir()
+        path, _summary = PACKAGE.run_gates(compiler, {'CC': 'gcc'}, logs, PACKAGE.snapshot(),
+                                           {'fixture': 'inputs'}, remote=remote)
+        retained = logs / 'laws-check.log'
+        entry = json.loads(retained.read_text())
+        entry['route'] = 'local-complete'
+        retained.write_text(json.dumps(entry))
+        reused = self.home / 'raw-reused'
+        reused.mkdir()
+        with self.assertRaisesRegex(RuntimeError, 'bytes changed'):
             PACKAGE.reuse_gates(path, PACKAGE.sha256(path), compiler, reused,
                                 PACKAGE.snapshot())
 

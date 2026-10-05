@@ -546,6 +546,8 @@ def reuse_gates(path, expected_sha, compiler, logs, initial):
         for stage in summary['stages']:
             if stage.get('route') != 'remote-module-groups':
                 continue
+            require(stage.get('spans') == recorded.get('spans'),
+                    'The remote stage spans disagree with the recorded controls evidence')
             retained = logs / stage['log']
             require(retained.is_file(), 'The retained remote stage log is missing: ' + str(retained))
             entry = json.loads(retained.read_text())
@@ -554,8 +556,13 @@ def reuse_gates(path, expected_sha, compiler, logs, initial):
                         'spans': stage.get('spans'), 'classifier': recorded.get('classifier'),
                         'local_gates': [name for name, _ in GATES if name != stage['name']],
                         'local_argv': stage.get('local_argv')}
-            differing = sorted(key for key in set(expected) | set(entry)
-                               if expected.get(key) != entry.get(key))
+            require(isinstance(entry, dict),
+                    'The retained remote stage log is not a receipt object')
+            unexpected = sorted(set(entry) ^ set(expected))
+            require(not unexpected,
+                    'The retained remote stage log carries another key set: '
+                    + succinct(unexpected))
+            differing = sorted(key for key in expected if entry[key] != expected[key])
             require(not differing,
                     'The retained remote stage log disagrees with the receipt at: '
                     + succinct(differing))
