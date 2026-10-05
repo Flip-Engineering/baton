@@ -29,6 +29,12 @@ Checks:
 
 Usage:
   BEND=/path/to/bend python3 bend2/tests/context-models-security-critic/run-child-boundary.py
+  ... --binary /path/to/prebuilt/child-boundary   use an externally built fixture
+
+The default route builds once into this run's own build directory; with
+--binary the supplied executable is used and its digest is recorded. Each
+check runs a "spawn" stage and, where it reads back an artifact, a "read"
+stage, and every invocation keeps its own evidence directory.
 """
 
 import hashlib
@@ -70,6 +76,7 @@ def bend_executable():
 
 
 def build():
+    """Build once into this run's own build directory; the default route."""
     os.makedirs(BUILD, exist_ok=True)
     environment = {**os.environ, "BEND": bend_executable(), "BEND_NO_TELEMETRY": "1"}
     with open(os.path.join(BUILD, "build.log"), "wb") as log:
@@ -121,9 +128,9 @@ def verify_observation(record, expected_status):
     return records
 
 
-def invoke(args, check, extra_env=None):
-    """Run one fixture invocation, retaining complete evidence under the run directory."""
-    directory = os.path.join(RUN, "checks", check)
+def invoke(args, check, stage="main", extra_env=None):
+    """Run one fixture invocation, retaining complete evidence under its own directory."""
+    directory = os.path.join(RUN, "checks", check, stage)
     os.makedirs(directory, mode=0o700, exist_ok=True)
     os.chmod(directory, 0o700)
     environment = {**os.environ, **(extra_env or {})}
@@ -131,6 +138,7 @@ def invoke(args, check, extra_env=None):
     completed = subprocess.run([BINARY, *args], capture_output=True, env=environment, cwd=ROOT)
     record = {
         "check": check,
+        "stage": stage,
         "argv": [BINARY, *args],
         "cwd": ROOT,
         "binarySha256": digest_file(BINARY),
@@ -155,8 +163,8 @@ def probe_child(*args):
     return [sys.executable, PROBE, *args]
 
 
-def check_directory(check):
-    directory = os.path.join(RUN, "checks", check)
+def check_directory(check, stage="main"):
+    directory = os.path.join(RUN, "checks", check, stage)
     os.makedirs(directory, mode=0o700, exist_ok=True)
     os.chmod(directory, 0o700)
     return directory
@@ -169,7 +177,7 @@ def env_base(directory, program):
 
 def spawn_args(check, program, spawn_mode="spawn", payload=None, signal=None):
     """argv for one check: its own private directory and retained stderr file."""
-    directory = check_directory(check)
+    directory = check_directory(check, "spawn")
     log = os.path.join(directory, "native.stderr")
     if spawn_mode == "spawn-write":
         return [spawn_mode, log, directory, payload, *program], log, directory
@@ -320,10 +328,10 @@ def private_modes():
 @check("raw-byte-read")
 def raw_byte_read():
     args, log, _ = spawn_args("raw-byte-read", probe_child("spill"))
-    record = invoke(args, "raw-byte-read")
+    record = invoke(args, "raw-byte-read", "spawn")
     verify_observation(record, "exit 0")
     log_bytes = open(log, "rb").read()
-    read_record = invoke(["read", log], "raw-byte-read")
+    read_record = invoke(["read", log], "raw-byte-read", "read")
     records = verify_single_frame(read_record, "R")
     read_back = records[0][1]
     if read_back != log_bytes:
@@ -361,6 +369,32 @@ FABRICATED_CASES = [
 ]
 
 
+def evidence_retention():
+    """Every invocation keeps its own directory: no invocation overwrites another."""
+    entries = []
+    for root, _directories, files in os.walk(os.path.join(RUN, "checks")):
+        if "invocation.json" in files:
+            with open(os.path.join(root, "invocation.json"), encoding="utf-8") as handle:
+                record = json.load(handle)
+            stdout = os.path.join(root, "stdout.bin")
+            entries.append({
+                "check": record["check"],
+                "stage": record["stage"],
+                "status": record["status"],
+                "stdoutBytes": os.path.getsize(stdout) if os.path.exists(stdout) else None,
+                "directory": os.path.relpath(root, RUN),
+            })
+    for entry in entries:
+        if entry["stdoutBytes"] is None:
+            raise AssertionError(f"the invocation record has no stdout evidence: {entry}")
+    stages = {(entry["check"], entry["stage"]) for entry in entries}
+    if len(stages) != len(entries):
+        raise AssertionError(f"two invocations share one evidence directory: {entries}")
+    if ("raw-byte-read", "spawn") not in stages or ("raw-byte-read", "read") not in stages:
+        raise AssertionError(f"the two raw-byte-read invocations are not both retained: {sorted(stages)}")
+    return {"invocations": len(entries), "stages": sorted(f"{check}/{stage}" for check, stage in stages)}
+
+
 def negative_controls():
     """Fabricated observations must be rejected by the same gate the checks use."""
     rejected = []
@@ -377,7 +411,13 @@ def negative_controls():
 
 
 def main():
-    if "--no-build" not in sys.argv:
+    if "--binary" in sys.argv:
+        index = sys.argv.index("--binary")
+        selected = sys.argv[index + 1] if index + 1 < len(sys.argv) else None
+        if selected is None or not os.path.exists(selected):
+            sys.exit("--binary requires the path of an existing prebuilt fixture")
+        globals()["BINARY"] = os.path.abspath(selected)
+    else:
         build()
     os.makedirs(RUN, exist_ok=True)
     failures = 0
@@ -389,12 +429,12 @@ def main():
         except Exception as error:  # noqa: BLE001 - every check is reported and the run continues
             failures += 1
             results.append({"check": name, "passed": False, "detail": f"{type(error).__name__}: {error}"})
-    try:
-        controls = negative_controls()
-        results.append({"check": "negative-controls", "passed": True, "detail": controls})
-    except Exception as error:  # noqa: BLE001
-        failures += 1
-        results.append({"check": "negative-controls", "passed": False, "detail": f"{type(error).__name__}: {error}"})
+    for name, function in (("evidence-retention", evidence_retention), ("negative-controls", negative_controls)):
+        try:
+            results.append({"check": name, "passed": True, "detail": function()})
+        except Exception as error:  # noqa: BLE001
+            failures += 1
+            results.append({"check": name, "passed": False, "detail": f"{type(error).__name__}: {error}"})
     for result in results:
         print(json.dumps(result, sort_keys=True))
     print(json.dumps({
