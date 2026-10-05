@@ -31,10 +31,15 @@ Usage:
   BEND=/path/to/bend python3 bend2/tests/context-models-security-critic/run-child-boundary.py
   ... --binary /path/to/prebuilt/child-boundary   use an externally built fixture
 
-The default route builds once into this run's own build directory; with
---binary the supplied executable is used and its digest is recorded. Each
-check runs a "spawn" stage and, where it reads back an artifact, a "read"
-stage, and every invocation keeps its own evidence directory.
+The complete argument list is validated before any compiler effect. The
+default route builds once into this run's own build directory; with --binary
+the supplied executable is used and its digest recorded, but that flag does
+not establish that those bytes were compiled from this ENTRY's source. Every
+invocation keeps its own evidence directory, created exclusively so a repeat
+cannot overwrite one; the spawn stage and, for checks that read an artifact
+back, a read stage are both retained. Eleven invocations run subprocesses;
+evidence-retention, duplicate-invocation and negative-controls are in-process
+checks over the retained records.
 """
 
 import hashlib
@@ -56,6 +61,25 @@ BUILD = os.path.join(SCRATCH, "build", f"{STAMP}-{os.getpid()}")
 BINARY = os.path.join(BUILD, "child-boundary")
 CANARY = "CONTEXT_CRITIC_CANARY"
 CANARY_VALUE = "harness-value-must-not-reach-the-child"
+
+
+def parse_arguments(argv):
+    """Validate the complete argument list before any compiler effect."""
+    binary = None
+    index = 1
+    while index < len(argv):
+        argument = argv[index]
+        if argument != "--binary":
+            sys.exit(f"unknown argument {argument!r}; usage: run-child-boundary.py [--binary PATH]")
+        if index + 1 >= len(argv):
+            sys.exit("--binary requires the path of an existing prebuilt fixture")
+        if binary is not None:
+            sys.exit("--binary was given more than once")
+        binary = argv[index + 1]
+        if not os.path.exists(binary):
+            sys.exit("--binary requires the path of an existing prebuilt fixture")
+        index += 2
+    return {"binary": os.path.abspath(binary) if binary is not None else None}
 
 
 def digest_file(path):
@@ -128,17 +152,32 @@ def verify_observation(record, expected_status):
     return records
 
 
-def invoke(args, check, stage="main", extra_env=None):
-    """Run one fixture invocation, retaining complete evidence under its own directory."""
+def exclusive_directory(check, stage):
+    """Create this invocation's own evidence directory, refusing to reuse one."""
     directory = os.path.join(RUN, "checks", check, stage)
-    os.makedirs(directory, mode=0o700, exist_ok=True)
+    os.makedirs(os.path.dirname(directory), mode=0o700, exist_ok=True)
+    try:
+        os.makedirs(directory, mode=0o700)
+    except FileExistsError:
+        raise AssertionError(f"the invocation evidence directory already exists: {os.path.relpath(directory, RUN)}")
+    marker = os.path.join(directory, ".invocation")
+    handle = os.open(marker, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
+    os.write(handle, f"{check}/{stage}\n".encode("utf-8"))
+    os.close(handle)
     os.chmod(directory, 0o700)
+    return directory
+
+
+def invoke(args, check, stage="spawn", extra_env=None):
+    """Run one fixture invocation, retaining complete evidence under its own directory."""
+    directory = exclusive_directory(check, stage)
     environment = {**os.environ, **(extra_env or {})}
     started = time.time()
     completed = subprocess.run([BINARY, *args], capture_output=True, env=environment, cwd=ROOT)
     record = {
         "check": check,
         "stage": stage,
+        "binaryProvenance": "supplied" if SUPPLIED_BINARY is not None else "built-this-run",
         "argv": [BINARY, *args],
         "cwd": ROOT,
         "binarySha256": digest_file(BINARY),
@@ -150,6 +189,7 @@ def invoke(args, check, stage="main", extra_env=None):
         "seconds": round(time.time() - started, 3),
         "evidenceDirectory": directory,
     }
+    INVOCATIONS.append(f"{check}/{stage}")
     with open(os.path.join(directory, "stdout.bin"), "wb") as handle:
         handle.write(completed.stdout)
     with open(os.path.join(directory, "stderr.bin"), "wb") as handle:
@@ -163,11 +203,9 @@ def probe_child(*args):
     return [sys.executable, PROBE, *args]
 
 
-def check_directory(check, stage="main"):
-    directory = os.path.join(RUN, "checks", check, stage)
-    os.makedirs(directory, mode=0o700, exist_ok=True)
-    os.chmod(directory, 0o700)
-    return directory
+def stage_path(check, stage="spawn"):
+    """The evidence directory this invocation will own. Creating it is invoke()'s job."""
+    return os.path.join(RUN, "checks", check, stage)
 
 
 def env_base(directory, program):
@@ -176,8 +214,10 @@ def env_base(directory, program):
 
 
 def spawn_args(check, program, spawn_mode="spawn", payload=None, signal=None):
-    """argv for one check: its own private directory and retained stderr file."""
-    directory = check_directory(check, "spawn")
+    """argv for one check: its own private directory and retained stderr file.
+
+    This only computes the paths; invoke() creates the directory exclusively."""
+    directory = stage_path(check, "spawn")
     log = os.path.join(directory, "native.stderr")
     if spawn_mode == "spawn-write":
         return [spawn_mode, log, directory, payload, *program], log, directory
@@ -187,6 +227,8 @@ def spawn_args(check, program, spawn_mode="spawn", payload=None, signal=None):
 
 
 CHECKS = []
+INVOCATIONS = []
+SUPPLIED_BINARY = None
 
 
 def check(name):
@@ -198,7 +240,7 @@ def check(name):
 
 @check("env-closure")
 def env_closure():
-    directory = check_directory("env-closure")
+    directory = stage_path("env-closure")
     args, log, _ = spawn_args("env-closure", env_base(directory, ["/usr/bin/env"]))
     record = invoke(args, "env-closure", extra_env={CANARY: CANARY_VALUE})
     require_clean(record)
@@ -308,7 +350,7 @@ def uncapped_stdout():
 
 @check("private-modes")
 def private_modes():
-    directory = check_directory("private-modes")
+    directory = stage_path("private-modes")
     args, log, _ = spawn_args("private-modes", env_base(directory, probe_child("spill")))
     record = invoke(args, "private-modes")
     verify_observation(record, "exit 0")
@@ -370,7 +412,10 @@ FABRICATED_CASES = [
 
 
 def evidence_retention():
-    """Every invocation keeps its own directory: no invocation overwrites another."""
+    """Every invocation keeps its own directory: no invocation overwrites another.
+
+    The identity set is compared against the invocations this run recorded, so
+    the check states a property rather than a count."""
     entries = []
     for root, _directories, files in os.walk(os.path.join(RUN, "checks")):
         if "invocation.json" in files:
@@ -387,12 +432,34 @@ def evidence_retention():
     for entry in entries:
         if entry["stdoutBytes"] is None:
             raise AssertionError(f"the invocation record has no stdout evidence: {entry}")
-    stages = {(entry["check"], entry["stage"]) for entry in entries}
+        if entry["stdoutBytes"] == 0:
+            raise AssertionError(f"the invocation record kept an empty stdout artifact: {entry}")
+    stages = {f"{entry['check']}/{entry['stage']}" for entry in entries}
     if len(stages) != len(entries):
         raise AssertionError(f"two invocations share one evidence directory: {entries}")
-    if ("raw-byte-read", "spawn") not in stages or ("raw-byte-read", "read") not in stages:
-        raise AssertionError(f"the two raw-byte-read invocations are not both retained: {sorted(stages)}")
-    return {"invocations": len(entries), "stages": sorted(f"{check}/{stage}" for check, stage in stages)}
+    expected = set(INVOCATIONS)
+    if stages != expected:
+        raise AssertionError(f"retained identities {sorted(stages)} differ from the recorded invocations {sorted(expected)}")
+    for identity in ("raw-byte-read/spawn", "raw-byte-read/read"):
+        if identity not in stages:
+            raise AssertionError(f"{identity} was not retained")
+    return {"invocations": sorted(stages)}
+
+
+def duplicate_invocation_control():
+    """A second invocation may not reuse an evidence directory, and the first stays intact."""
+    args, log, _directory = spawn_args("duplicate-invocation", ["/usr/bin/env"])
+    first = invoke(args, "duplicate-invocation", "spawn")
+    record_path = os.path.join(first["evidenceDirectory"], "invocation.json")
+    before = open(record_path, "rb").read()
+    try:
+        invoke(args, "duplicate-invocation", "spawn")
+    except AssertionError as error:
+        after = open(record_path, "rb").read()
+        if after != before:
+            raise AssertionError(f"the first invocation's record changed: {error}")
+        return {"control": "duplicate-invocation", "rejected": True, "reason": str(error)}
+    raise AssertionError("a second invocation reused the first invocation's evidence directory")
 
 
 def negative_controls():
@@ -411,12 +478,11 @@ def negative_controls():
 
 
 def main():
-    if "--binary" in sys.argv:
-        index = sys.argv.index("--binary")
-        selected = sys.argv[index + 1] if index + 1 < len(sys.argv) else None
-        if selected is None or not os.path.exists(selected):
-            sys.exit("--binary requires the path of an existing prebuilt fixture")
-        globals()["BINARY"] = os.path.abspath(selected)
+    global SUPPLIED_BINARY
+    arguments = parse_arguments(sys.argv)
+    SUPPLIED_BINARY = arguments["binary"]
+    if SUPPLIED_BINARY is not None:
+        globals()["BINARY"] = SUPPLIED_BINARY
     else:
         build()
     os.makedirs(RUN, exist_ok=True)
@@ -429,7 +495,11 @@ def main():
         except Exception as error:  # noqa: BLE001 - every check is reported and the run continues
             failures += 1
             results.append({"check": name, "passed": False, "detail": f"{type(error).__name__}: {error}"})
-    for name, function in (("evidence-retention", evidence_retention), ("negative-controls", negative_controls)):
+    for name, function in (
+        ("duplicate-invocation", duplicate_invocation_control),
+        ("negative-controls", negative_controls),
+        ("evidence-retention", evidence_retention),
+    ):
         try:
             results.append({"check": name, "passed": True, "detail": function()})
         except Exception as error:  # noqa: BLE001
@@ -443,7 +513,9 @@ def main():
         "failures": failures,
         "binary": BINARY,
         "binarySha256": digest_file(BINARY),
+        "binaryProvenance": "supplied" if SUPPLIED_BINARY is not None else "built-this-run",
         "sourceSha256": digest_file(os.path.join(ROOT, ENTRY)),
+        "correspondence": "a supplied binary's bytes are recorded but not shown to be built from sourceSha256; only a run that builds the fixture establishes that",
         "runDirectory": RUN,
     }, sort_keys=True))
     return 1 if failures else 0
