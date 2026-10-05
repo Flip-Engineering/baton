@@ -306,7 +306,11 @@ any required selected-module readiness check after admission.
 
 Ordinary queries automatically activate available admitted modules. Missing
 selected bytes return the exact package/dependency and an ordinary native
-resolution request. The proposed request uses the existing context query surface:
+resolution request. Detection before preparation returns validationRefusal without
+a query row; detection after accepted admission produces a retained failed
+operation. Preparation or admission uncertainty keeps its original reconciliation
+and cleanup duties. The missing bytes alone do not determine the outcome class.
+The proposed request uses the existing context query surface:
 subject `{kind:"module-resolution",module,intent:"inspect"}` or
 `{kind:"module-resolution",module,intent:"install",expected:{query,id}}`, with
 `select:["state"]`, engine omitted/`auto` and options empty. Module is the literal
@@ -887,7 +891,12 @@ attachment and renders `--session SESSION` from the validated scope. Missing
 attachment refuses before target inspection. Absence retains target-free
 discovery. Preliminary JSON parsing and opaque metadata supply no scope authority.
 This success-shape addition must update native codec and MCP consumer together;
-an old consumer cannot silently discard it.
+the admitted package binds this revised closed schema to its exact codec and
+bridge artifacts. Package admission rejects an incompatible pair before context
+dispatch. The bridge requires the scope member and validates the entire closed
+success shape; version 1 alone establishes no compatibility with an older shape.
+Qualification must pair each revised artifact with an old counterpart and observe
+refusal before dispatch, alongside the valid revised pair.
 Context notifications without an ID do not dispatch. A preliminary parse error
 keeps the existing no-dispatch error path. Ordinary non-context frames retain
 their existing parsing semantics; this raw validation guarantee is context-scoped.
@@ -912,7 +921,9 @@ Every query answer is `{version,query,owner,state,result,error,progress}`.
 `refused`. The last value is reserved for a retained admission rejection.
 `result` is null until complete; `error` is nonnull for failed, interrupted and
 refused outcomes. The envelope's progress always describes its own query.
-It is null for queries without managed roles, including control queries.
+It is null for queries without managed roles, including unmanaged query-control
+and inspect queries. Managed install and configure queries retain their own
+progress, control and cleanup.
 
 Module causes are versioned schema-admitted data identifying module and code,
 with their actual target/provider/protocol provenance. Common outcome categories
@@ -1895,8 +1906,8 @@ adapters are outside this initial set.
 Runtime modules declare supported intents, subjects, normalized observations,
 protocol capabilities and dependency identities. The native layer owns runtime
 identity, grants, role custody, event correlation, ref validity and settlement
-for every module. A module may support only a subset of the intents below;
-discovery and admission expose that subset before sending backend requests.
+for every module. Discovery and admission expose each module's declared runtime
+operations and capabilities before sending backend requests.
 Backend-specific state must retain its original observation and declared meaning.
 LSP/DAP availability does not establish every protocol capability.
 
