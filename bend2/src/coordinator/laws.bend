@@ -1156,6 +1156,24 @@ law terminal_reports_preserve_the_native_result:
 def terminal_reports_preserve_the_native_result(event):
   {==}
 
+law omp_terminal_recovers_truncated_history:
+  for +db: String
+  for +event: String
+  for +message: String
+  {Turn.omp_terminal(db,event,message,True{}) == (do IO<String>:
+    normalized : String <- IO.try(String,DB.Sql.query(db,"SELECT CASE WHEN json_extract(" ++ C.q(event) ++ ",'$.type')='agent_end' AND coalesce(json_extract(" ++ C.q(event) ++ ",'$.isTerminal'),1)=1 AND (coalesce(json_array_length(" ++ C.q(event) ++ ",'$.messages'),0)=0 OR (SELECT CASE WHEN CASE WHEN t.type='object' THEN json_extract(t.value,'$.role') END='assistant' THEN 0 ELSE 1 END FROM json_each(" ++ C.q(event) ++ ",'$.messages') t ORDER BY t.key DESC LIMIT 1)=1) AND coalesce((SELECT CASE WHEN CASE WHEN a.type='object' THEN json_extract(a.value,'$.role') END='assistant' THEN CASE WHEN json_extract(a.value,'$.stopReason')='error' THEN 1 ELSE 0 END ELSE 0 END FROM json_each(" ++ C.q(event) ++ ",'$.messages') a WHERE CASE WHEN a.type='object' THEN json_extract(a.value,'$.role') END='assistant' ORDER BY a.key DESC LIMIT 1),0)=0 AND " ++ C.q(message) ++ "<>'' THEN json_set(" ++ C.q(event) ++ ",'$.messages',json_array(json(" ++ C.q(message) ++ "))) ELSE " ++ C.q(event) ++ " END;"))
+    IO.pure(String,Tx.trim_nl(normalized))) : IO(String)}
+
+def omp_terminal_recovers_truncated_history(db,event,message):
+  {==}
+
+law receive_classifies_a_current_model_failure:
+  for +event: String
+  {Receive.failure_query_sql(event) == ("SELECT CASE WHEN " ++ C.q(event) ++ "='' THEN 1 WHEN coalesce(json_extract(" ++ C.q(event) ++ ",'$.is_error'),0)=1 THEN 1 ELSE CASE WHEN json_valid(" ++ C.q(event) ++ ") THEN CASE WHEN json_type(" ++ C.q(event) ++ ",'$.messages')='array' THEN coalesce((SELECT CASE WHEN CASE WHEN a.type='object' THEN json_extract(a.value,'$.role') END='assistant' THEN CASE WHEN json_extract(a.value,'$.stopReason')='error' THEN 1 ELSE 0 END ELSE 0 END FROM json_each(" ++ C.q(event) ++ ",'$.messages') a WHERE CASE WHEN a.type='object' THEN json_extract(a.value,'$.role') END='assistant' ORDER BY a.key DESC LIMIT 1),0) ELSE 0 END ELSE 0 END END;") : String}
+
+def receive_classifies_a_current_model_failure(event):
+  {==}
+
 law terminal_observation_records_the_report_and_turn:
   for +id: String
   for +player: String
