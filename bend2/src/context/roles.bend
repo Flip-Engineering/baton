@@ -34,23 +34,39 @@ def role_row_sql(+query: String, +role: String, +incarnation: String, +keeperPat
 def cursor_guard(expected: String, next: String) -> String:
   "(observer_cursor=" ++ C.q(expected) ++ " OR observer_cursor=" ++ C.q(next) ++ ")"
 
-# The role-existence guard: a missing role row assigns NULL to the retained query's
-# NOT NULL primary key, which aborts the transaction. A missing row is not a
-# successful event.
-def role_present_guard(+query: String, +role: String, +incarnation: String) -> String:
-  "UPDATE semantic_queries SET id=CASE WHEN EXISTS(SELECT 1 FROM semantic_roles WHERE query_id=" ++ C.q(query) ++ " AND role=" ++ C.q(role) ++ " AND incarnation=" ++ C.q(incarnation) ++ ") THEN id ELSE NULL END WHERE id=" ++ C.q(query) ++ ";"
+def cursor_expected(expected: String) -> String:
+  "observer_cursor=" ++ C.q(expected)
+
+def cursor_seen(next: String) -> String:
+  "observer_cursor=" ++ C.q(next)
+
+# An identical replay: the recorded cursor is already the next one and the supplied
+# evidence and progress reproduce the recorded bytes exactly. Anything else that
+# reaches this branch aborts the transaction instead of overwriting custody evidence
+# or progress.
+def replay_guard(expected: String, next: String, +captureJson: String, +exitEvidenceJson: String, +progressJson: String) -> String:
+  cursor_seen(next) ++ " AND coalesce(capture_json,'')=" ++ C.q(captureJson) ++ " AND coalesce(exit_evidence_json,'')=" ++ C.q(exitEvidenceJson) ++ " AND coalesce(progress_json,'')=" ++ C.q(progressJson)
+
+def admitted(expected: String, next: String, +captureJson: String, +exitEvidenceJson: String, +progressJson: String) -> String:
+  "(" ++ cursor_expected(expected) ++ " OR (" ++ replay_guard(expected, next, captureJson, exitEvidenceJson, progressJson) ++ "))"
+
+# The first delivery writes the supplied value; an identical replay keeps the
+# recorded bytes; anything else assigns NULL to the NOT NULL cursor column and aborts
+# the whole transaction.
+def replay_column(expected: String, next: String, value: String, +captureJson: String, +exitEvidenceJson: String, +progressJson: String, recorded: String) -> String:
+  "CASE WHEN " ++ cursor_expected(expected) ++ " THEN " ++ value ++ " WHEN " ++ replay_guard(expected, next, captureJson, exitEvidenceJson, progressJson) ++ " THEN " ++ recorded ++ " ELSE NULL END"
 
 # One committed observation event. Progress and the owed notice belong to the same
 # transaction as the cursor advance, so a recovered observer reads committed
 # progress and a notice that was never lost.
 def event_commit_sql(+query: String, +role: String, +incarnation: String, +owner: String, +expectedCursor: String, +nextCursor: String, +progressJson: String, +noticeId: String, +noticeBody: String, +captureJson: String, +exitEvidenceJson: String) -> String:
   "BEGIN IMMEDIATE;" ++ ContextStore.schema()
-  ++ "UPDATE semantic_roles SET observer_cursor=CASE WHEN " ++ cursor_guard(expectedCursor, nextCursor) ++ " THEN " ++ C.q(nextCursor) ++ " ELSE NULL END,"
-  ++ "capture_json=CASE WHEN " ++ cursor_guard(expectedCursor, nextCursor) ++ " THEN " ++ ContextStore.json_or_null(captureJson) ++ " ELSE capture_json END,"
-  ++ "exit_evidence_json=CASE WHEN " ++ cursor_guard(expectedCursor, nextCursor) ++ " THEN " ++ ContextStore.json_or_null(exitEvidenceJson) ++ " ELSE exit_evidence_json END "
+  ++ "UPDATE semantic_roles SET observer_cursor=" ++ replay_column(expectedCursor, nextCursor, C.q(nextCursor), captureJson, exitEvidenceJson, progressJson, "observer_cursor") ++ ","
+  ++ "capture_json=" ++ replay_column(expectedCursor, nextCursor, ContextStore.json_or_null(captureJson), captureJson, exitEvidenceJson, progressJson, "coalesce(capture_json,'')") ++ ","
+  ++ "exit_evidence_json=" ++ replay_column(expectedCursor, nextCursor, ContextStore.json_or_null(exitEvidenceJson), captureJson, exitEvidenceJson, progressJson, "coalesce(exit_evidence_json,'')") ++ " "
   ++ "WHERE query_id=" ++ C.q(query) ++ " AND role=" ++ C.q(role) ++ " AND incarnation=" ++ C.q(incarnation) ++ ";"
   ++ role_present_guard(query, role, incarnation)
-  ++ ContextStore.progress_body_sql(query, owner, progressJson, noticeId, noticeBody)
+  ++ ContextStore.progress_guarded_sql(admitted(expectedCursor, nextCursor, captureJson, exitEvidenceJson, progressJson), query, owner, progressJson, noticeId, noticeBody)
   ++ role_read_sql(query, role, incarnation) ++ "COMMIT;"
 
 # The signal-attempt claim. Only a pending intent, or the recorded signal itself,

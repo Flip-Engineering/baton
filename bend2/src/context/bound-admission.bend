@@ -100,8 +100,8 @@ def all_empty(xs: List<String>) -> Bool:
 
 # The nine columns after the presence marker, in order. A short or long row is
 # uncertain rather than a record.
-def ten_columns_absent(fields: List<String>) -> Bool:
-  Bool.and(U32.is_eq(field_count(fields, 0), 10), all_empty(fields))
+def nine_values_absent(values: List<String>) -> Bool:
+  Bool.and(U32.is_eq(field_count(values, 0), 9), all_empty(values))
 
 def admit_tabs(+fields: List<String>, +answer: String) -> Admission:
   match fields:

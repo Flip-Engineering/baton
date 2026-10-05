@@ -30,6 +30,9 @@ def schema() -> String:
 
 # The runtime epoch is a canonical unsigned decimal counter of arbitrary length; it
 # is stored and inserted as text so no SQLite numeric conversion can coerce it.
+# A progress write inside the observer transaction: admitted is the event's own
+# identity guard, so a replay that does not reproduce the recorded progress aborts
+# instead of writing a new document.
 def json_or_null(+value: String) -> String:
   Bool.pick(String, String.is_empty(value), "NULL", "json(" ++ C.q(value) ++ ")")
 
@@ -98,6 +101,10 @@ def progress_publish_sql(+id: String, +owner: String, +progressJson: String, +no
 
 # The progress and notice statements without a transaction boundary, so a role
 # event commit can place them inside its own transaction.
+def progress_guarded_sql(+admitted: String, +id: String, +owner: String, +progressJson: String, +noticeId: String, +noticeBody: String) -> String:
+  "UPDATE semantic_queries SET progress_json=CASE WHEN coalesce(progress_json,'')=" ++ C.q(progressJson) ++ " OR " ++ admitted ++ " THEN " ++ json_or_null(progressJson) ++ " ELSE NULL END WHERE id=" ++ C.q(id) ++ ";"
+  ++ owner_notice_sql(noticeId, owner, noticeBody)
+
 def runtime_row_sql(+id: String, +owner: String, +originAttempt: String, +launchQuery: String, +adapterId: String, +state: String, +epoch: String) -> String:
   "INSERT INTO semantic_runtimes(id,owner,origin_attempt,launch_query,adapter_id,state,epoch) VALUES("
   ++ C.q(id) ++ "," ++ C.q(owner) ++ "," ++ text_or_null(originAttempt) ++ "," ++ C.q(launchQuery) ++ "," ++ C.q(adapterId) ++ "," ++ C.q(state) ++ "," ++ runtime_epoch_value(epoch)
