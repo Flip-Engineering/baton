@@ -1,7 +1,7 @@
 # Baton2 root handoff
 
 This contributor handoff preserves unfinished operator work as of 2026-10-05
-21:16 UTC. Read the native task records and current source before resuming.
+21:37 UTC. Read the native task records and current source before resuming.
 Issue records describe defects; native reports contain current ownership and evidence.
 
 ## Authority and recovery
@@ -73,11 +73,12 @@ runner. The crash attribution and limits are in
 - Codex uses the ChatGPT subscription login. The live `baton-resident`
   checkout is protected. Claude owns the homelab Flip and Riff deployment.
 
-The qualified local compiler is Bend 2.0.25 at
+The preserved historical Darwin compiler is Bend 2.0.25 at
 `.scratch/native-artifact-qualification-20261002T174637Z/toolchain-home/bin/bend`,
 SHA-256 `3850c7cd281a687715a181ad6a2ecdef041704f320ea2b4304cf9e802309203c`.
-Required commands are `build-native.sh`, `laws-check.mjs <bend>` and
-`check-native.sh` under `bend2/scripts`, with `BEND` set to that compiler.
+It remains an artifact identity; do not execute it on the laptop. Required
+commands are `build-native.sh`, `laws-check.mjs <bend>` and `check-native.sh`
+under `bend2/scripts`, using the admitted remote platform toolchain.
 
 ## Hosted validation and shared native instance
 
@@ -271,12 +272,62 @@ profile preserved. No additional cleanup or process termination occurred
 during the component and CI qualification work above.
 
 Synthesis93 and Receive source reviews confirm historical reconstruction and
-public-log projection have separate duties. Controls owns crash-consistent
-projection by original attempt, stream and byte position; Receive owns
-reconstruction and qualification. A seek offset or append watermark alone
-does not establish lossless behavior at crash boundaries. Normal fresh/live
-tail logging remains required. The source review does not establish the
-memory-amplification cause or a later reboot's cause.
+public-log projection have separate duties. A seek offset or append watermark
+alone does not establish lossless behavior at crash boundaries. Normal
+fresh/live tail behavior remains required. The source review does not establish
+the memory-amplification cause or a later reboot's cause.
+
+Root75 asked the existing author and critic Ensembles to review whether useful
+output operations require the second persistent copy. Receive94/95 and
+Controls89 identified actual file callers and corrected the raw lifetime
+assumption: normal ACK can unlink retained stdout. Original streams in the
+affected recovery remain available; universal post-ACK availability is not
+established. Process exit and owner release also do not establish all-writer
+finality. Nonretained pipe turns have a separate source boundary.
+
+Root79 selects a native original-attempt read/follow/export view for new shared
+operation. Controls owns source identity, history, finality and passive reader
+lifetime; Interfaces owns the ordinary CLI/MCP surface and caller migration;
+Receive owns pure frame derivation and semantic reconstruction. Existing
+OUTPUT_LOG arguments, saved endpoints, live/byte-offset readers and old
+artifacts remain preserved until a coherent migration qualifies. Missing raw
+stays unavailable; a filtered legacy log is a distinct artifact. Raw retention
+can cost more disk. No new view implementation or savings is qualified.
+
+Range successor `67aca4b4cef3e1193c309fb9e14ebcf830e5c8aa`, tree
+`2624db8a18782c2bc6482b18bcfc668794abf656`, was independently reviewed and
+admitted to isolated remote qualification. Unit `baton2-range-67aca4b4.service`,
+invocation `03944bd8e38c4c55a82dfe6d968c1d9c`, completed with exit 1.
+Node syntax checks passed. Main checking refused the nested `match budget`
+in `Sequence.digits`; build and native/MCP fixtures did not run. Source and
+complete before/after toolchain/library identities matched. Original evidence
+is under remote `qualifications/range-67aca4b4`, copied to the matching root
+evidence directory. Root78 returns the exact baseline refusal to Interfaces
+through Controls and Synthesis. Corrected source `00694608433e5bb90641e81b58258eb93b43ea94`
+exists; its source review and remote qualification remain due.
+
+Root76 returned source findings on CI successor `42b023dd71c953c040fa214b77af7472860c5858`
+to the original author and critic Ensemble. Corrected committed source
+`9c5404a2cc553df50940942dec403b7d24365c66`, tree
+`3f8d2f09b8e356bc6a182766cc7c060e3909017f`, received independent source
+review for classifier, CLI and ordinary mock fixtures. The owned remote unit
+`baton2-ci-9c5404a2.service` completed those compiler-free checks in an immutable
+checkout with both compiler fallback paths absent. Current owner dirt is
+excluded. Real compiler/group effects remain withheld. Wrapper-death state
+and failed/nonempty mock output coverage remain source/qualification limits;
+the fixture's supplied successful outputs establish no compiler proof.
+Invocation `ab594bcf86944664bfee330212d28287` exited 1. The classifier and
+CLI suites each passed all seven cases; the three invalid outcome inputs
+returned malformed-outcome. The ordinary mock observed zero case rows against
+its dynamically discovered expectation of 771 and failed. It discarded the
+checker child's diagnostics at that assertion; the underlying cause remains
+unattributed. Root80 returns the original failure and required raw capture to
+the owner. Complete results are copied to `ci-9c5404a2-evidence`.
+
+A 21:37 UTC sample confirmed the same boot, 3.7 GiB free disk and 579.62 MiB
+swap used. The operator's advanced-context status question leaves the original
+approved semantic implementation active; root did not replace that task with
+CI or process repair work.
 
 [Issue #675](https://github.com/Flip-Engineering/baton/issues/675) covers hosted
 parallel law validation. `native-ci-conductor` owns the work under
