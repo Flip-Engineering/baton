@@ -370,7 +370,7 @@ def write_expressions(workdir, expressions, verified):
     directory = pathlib.Path(workdir).resolve() / 'expressions'
     directory.mkdir(parents=True, exist_ok=True)
     for name in EXPRESSIONS:
-        text = extracted_expression(name, expressions[name])
+        text = extracted_expression(name, expressions[name], workdir)
         digest = digest_bytes(text.encode('utf-8'))
         if digest != verified[f'expression_{name}']['text_sha256']:
             raise Blocker(f'oracle expression text hash changed while binding: {name}')
