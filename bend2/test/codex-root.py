@@ -285,6 +285,8 @@ class CodexRootAdapter(unittest.TestCase):
         stdin_content = (pathlib.Path(self.temp.name) / 'stdin.txt').read_text()
         self.assertIn('baton2', stdin_content)
         self.assertIn("inbox 'root' --index", stdin_content)
+        self.assertIn("[--commit COMMIT]", stdin_content)
+        self.assertIn("recorded branch tip", stdin_content)
         self.assertIn('delivery ID', stdin_content)
         self.assertIn("orchestra --index --for 'root' --pretty", stdin_content)
         self.assertIn('--sender PLAYER --kind report --state all', stdin_content)

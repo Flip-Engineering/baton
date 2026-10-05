@@ -43,6 +43,8 @@ type Command is Data:
   MessageIndex{recipient: IndexText, sender: IndexText, kind: IndexText, state: String}
   OrchestraIndex{focus: IndexText}
   Land{player: String, repo: String, target: String}
+  LandAt{player: String, repo: String, target: String, commit: String}
+  LandCheckedAt{player: String, repo: String, target: String, check: String, files: String, commit: String}
   LandChecked{player: String, repo: String, target: String, check: String, files: String}
   Push{repo: String, branch: String, remote: String}
   RemoteTip{repo: String, branch: String, remote: String}
@@ -373,6 +375,8 @@ def sql(command: Command) -> String:
     case StatusPretty{}: ""
     case Pretty{read}: ""
     case Land{player,repo,target}: ""
+    case LandAt{player,repo,target,commit}: ""
+    case LandCheckedAt{player,repo,target,check,files,commit}: ""
     case LandChecked{player,repo,target,check,files}: ""
     case Push{repo,branch,remote}: ""
     case RemoteTip{repo,branch,remote}: ""
@@ -421,12 +425,12 @@ def parse_legacy(args: List<&2,String>) -> Command:
     case +verb <> +id <> +one <> +two <> +three <> Nil{}:
       Bool.pick(Command,String.eq(verb,"section"),Section{id,one,two,three},Bool.pick(Command, String.eq(verb,"ensemble-member"),EnsembleMember{id,one,two,three},Bool.pick(Command, String.eq(verb,"attach"),Attach{id,one,two,three},Invalid{})))
     case +verb <> +id <> +one <> +two <> +three <> +four <> Nil{}:
-      Bool.pick(Command,String.eq(verb,"dispatch-turn"),DispatchTurn{id,one,two,three,four},Bool.pick(Command,String.eq(verb,"dispatch-file"),DispatchFile{id,one,two,three,four},Bool.pick(Command,String.eq(verb,"section-member"),SectionMember{id,one,two,three,four},Bool.pick(Command, String.eq(verb,"land-checked"),LandChecked{id,one,two,three,four},
+      Bool.pick(Command,Bool.and(String.eq(verb,"land"),String.eq(three,"--commit")),LandAt{id,one,two,four},Bool.pick(Command,String.eq(verb,"dispatch-turn"),DispatchTurn{id,one,two,three,four},Bool.pick(Command,String.eq(verb,"dispatch-file"),DispatchFile{id,one,two,three,four},Bool.pick(Command,String.eq(verb,"section-member"),SectionMember{id,one,two,three,four},Bool.pick(Command, String.eq(verb,"land-checked"),LandChecked{id,one,two,three,four},
       Bool.pick(Command, String.eq(verb,"bind"),Bind{id,one,two,three,four},
       Bool.pick(Command, String.eq(verb,"message"),Message{id,one,two,three,four},
-      Bool.pick(Command, String.eq(verb,"message-file"),MessageFile{id,one,two,three,four},Bool.pick(Command, String.eq(verb,"record"),KnowledgeRecord{id,one,two,three,four},Bool.pick(Command, String.eq(verb,"promote"),KnowledgePromote{id,one,two,three,four},Invalid{})))))))))
-    case +verb <> session <> cmd <> model <> effort <> cwd <> log <> message <> Nil{}:
-      Bool.pick(Command,String.eq(verb,"receive"),Receive{session,cmd,model,effort,cwd,log,message},Invalid{})
+      Bool.pick(Command, String.eq(verb,"message-file"),MessageFile{id,one,two,three,four},Bool.pick(Command, String.eq(verb,"record"),KnowledgeRecord{id,one,two,three,four},Bool.pick(Command, String.eq(verb,"promote"),KnowledgePromote{id,one,two,three,four},Invalid{}))))))))))
+    case +verb <> +session <> +cmd <> +model <> +effort <> +cwd <> +log <> +message <> Nil{}:
+      Bool.pick(Command,Bool.and(String.eq(verb,"land-checked"),String.eq(log,"--commit")),LandCheckedAt{session,cmd,model,effort,cwd,message},Bool.pick(Command,String.eq(verb,"receive"),Receive{session,cmd,model,effort,cwd,log,message},Invalid{}))
     case +verb <> +player <> +id <> +cmd <> +model <> +effort <> +cwd <> +task <> +log <> +session <> Nil{}:
       Bool.pick(Command,String.eq(verb,"start"),Start{player,id,cmd,model,effort,cwd,task,log,session},Bool.pick(Command,String.eq(verb,"turn"),RunTurn{player,id,cmd,model,effort,cwd,task,log,session},
       Bool.pick(Command,String.eq(verb,"recruit"),Recruit{player,id,cmd,model,effort,cwd,task,log,session},Invalid{})))
@@ -550,4 +554,27 @@ law remote_tip_parser_keeps_the_declared_names:
   {parse(["remote-tip",repo,branch,remote]) == RemoteTip{repo,branch,remote} : Command}
 
 def remote_tip_parser_keeps_the_declared_names(repo,branch,remote):
+  {==}
+
+
+law reviewed_land_parser_preserves_literal_selector:
+  for player: String
+  for repo: String
+  for target: String
+  for commit: String
+  {parse(["land",player,repo,target,"--commit",commit]) == LandAt{player,repo,target,commit} : Command}
+
+def reviewed_land_parser_preserves_literal_selector(player,repo,target,commit):
+  {==}
+
+law reviewed_checked_land_parser_preserves_check_files_and_selector:
+  for player: String
+  for repo: String
+  for target: String
+  for check: String
+  for files: String
+  for commit: String
+  {parse(["land-checked",player,repo,target,check,files,"--commit",commit]) == LandCheckedAt{player,repo,target,check,files,commit} : Command}
+
+def reviewed_checked_land_parser_preserves_check_files_and_selector(player,repo,target,check,files,commit):
   {==}

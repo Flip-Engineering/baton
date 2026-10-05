@@ -131,6 +131,20 @@ for (const { law, file } of rows) {
 // it claims to bind, and it is reported as a failure.
 const MUTATIONS = [
   {
+    name: 'reviewed-land-parser-substitutes-selector',
+    file: 'bend2/src/coordinator/commands.bend',
+    find: 'LandAt{id,one,two,four}',
+    replace: 'LandAt{id,one,two,id}',
+    law: 'reviewed_land_parser_preserves_literal_selector',
+  },
+  {
+    name: 'reviewed-land-entry-uses-branch-default',
+    file: 'bend2/src/coordinator/main.bend',
+    find: 'Land.land_player_at(db,player,repo,target,commit)',
+    replace: 'Land.land_player(db,player,repo,target)',
+    law: 'reviewed_land_entry_uses_selected_source',
+  },
+  {
     name: 'structure-reference-navigation-loses-literal-argv',
     file: 'bend2/src/coordinator/commands.bend',
     find: "'next',json_array('orchestra','--index','--for',id)",

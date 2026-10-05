@@ -318,6 +318,8 @@ class OmpRootAdapter(unittest.TestCase):
         self.assertIn('--system-prompt', args_text)
         self.assertIn('baton2', args_text)
         self.assertIn("inbox 'root' --index", args_text)
+        self.assertIn("[--commit COMMIT]", args_text)
+        self.assertIn("recorded branch tip", args_text)
         self.assertIn('delivery ID', args_text)
         self.assertIn("orchestra --index --for 'root' --pretty", args_text)
         self.assertIn('--sender PLAYER --kind report --state all', args_text)

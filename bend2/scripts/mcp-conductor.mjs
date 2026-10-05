@@ -283,6 +283,7 @@ const TOOLS = [
         player: { type: 'string', description: 'Player session ID' },
         repo: { type: 'string', description: 'Repository path' },
         target: { type: 'string', description: 'Target branch name' },
+        commit: { type: 'string', description: 'Optional reviewed source commit; native verifies ancestry of the recorded branch. Omission selects its tip.' },
       },
       required: ['player', 'repo', 'target'],
       additionalProperties: false,
@@ -297,6 +298,7 @@ const TOOLS = [
         player: { type: 'string', description: 'Player session ID' },
         repo: { type: 'string', description: 'Repository path' },
         target: { type: 'string', description: 'Target branch name' },
+        commit: { type: 'string', description: 'Optional reviewed source commit; native verifies ancestry of the recorded branch. Omission selects its tip.' },
         check: { type: 'string', description: 'Check script path' },
         files: { type: 'string', description: 'Space-separated list of files to check' },
       },
@@ -450,7 +452,7 @@ function handleMessage(msg) {
         experimental: { 'claude/channel': {} },
       },
       serverInfo: { name: 'baton-conductor', version: '0.1.0' },
-      instructions: `Baton2 ${hasParent(selectedSession()) ? 'Associate' : 'Principal'} Conductor attachment for session ${sessionId}. Use baton2_recruit to assign a Player and its worktree. Use baton2_receiver to register a Player's Codex or OMP receive endpoint, then baton2_dispatch_file to send task or guidance files. Use baton2_dispatch_turn to launch a recruited Player's task file with its recorded route. Use baton2_inbox with index:true for concise pending metadata scoped to this attachment; baton2_pending with index:true reads across recipients. Exact sender/kind filters combine; state:all includes acknowledged history. Use baton2_delivery to read each selected complete body. Index reads do not acknowledge, review or complete work. Use baton2_ack to acknowledge delivery. Use baton2_guide to direct Players. Use baton2_player and baton2_players to inspect Players and both Conductor tiers. Use baton2_role, baton2_ensemble, baton2_ensemble_member, baton2_section and baton2_section_member to configure responsibilities and membership. Use baton2_orchestra with index:true and session to inspect the focused system; omitted session selects the full structure. Structural output provides per-actor counts and inputRead argv. Reference limitations.next is a literal native argv array. To follow it through MCP, call baton2_orchestra with index:true and session set to the reference id. pendingCount excludes stopped execution inputs; unacknowledgedCount includes every NULL receipt. Use baton2_inbox with index:true and recipient for each actor; state:all includes receipt history. Counts describe retained input; per-message disposition is available from inbox/pending indexes. Legacy no-index readers include bodies and histories. Use baton2_turns for turn history and baton2_land or baton2_land_checked to land a Player's changes.`,
+      instructions: `Baton2 ${hasParent(selectedSession()) ? 'Associate' : 'Principal'} Conductor attachment for session ${sessionId}. Use baton2_recruit to assign a Player and its worktree. Use baton2_receiver to register a Player's Codex or OMP receive endpoint, then baton2_dispatch_file to send task or guidance files. Use baton2_dispatch_turn to launch a recruited Player's task file with its recorded route. Use baton2_inbox with index:true for concise pending metadata scoped to this attachment; baton2_pending with index:true reads across recipients. Exact sender/kind filters combine; state:all includes acknowledged history. Use baton2_delivery to read each selected complete body. Index reads do not acknowledge, review or complete work. Use baton2_ack to acknowledge delivery. Use baton2_guide to direct Players. Use baton2_player and baton2_players to inspect Players and both Conductor tiers. Use baton2_role, baton2_ensemble, baton2_ensemble_member, baton2_section and baton2_section_member to configure responsibilities and membership. Use baton2_orchestra with index:true and session to inspect the focused system; omitted session selects the full structure. Structural output provides per-actor counts and inputRead argv. Reference limitations.next is a literal native argv array. To follow it through MCP, call baton2_orchestra with index:true and session set to the reference id. pendingCount excludes stopped execution inputs; unacknowledgedCount includes every NULL receipt. Use baton2_inbox with index:true and recipient for each actor; state:all includes receipt history. Counts describe retained input; per-message disposition is available from inbox/pending indexes. Legacy no-index readers include bodies and histories. Use baton2_turns for turn history and baton2_land or baton2_land_checked to land a Player's changes. Landing defaults to the recorded branch tip; supply commit with a reviewed object ID to select an ancestor while later work remains on the branch. Native selection verifies the registered workspace repository and source ancestry. The checked form runs target/candidate checks on that source. Inspect the result status; selection does not grant review or landing authority.`,
     });
     return;
   }
@@ -505,6 +507,12 @@ function messageReadOptions(options, inbox) {
   for (const key of filters) if (options[key] !== undefined) argv.push('--' + key, options[key]);
   if (options.pretty) argv.push('--pretty');
   return argv;
+}
+
+function landCommit(args) {
+  if (args.commit === undefined) return [];
+  if (typeof args.commit !== 'string') throw new Error('commit must be a string');
+  return ['--commit', args.commit];
 }
 
 function handleToolCall(msg) {
@@ -578,10 +586,10 @@ function handleToolCall(msg) {
         result = coord('worktree', player);
         break;
       case 'baton2_land':
-        result = coord('land', player, args.repo, args.target);
+        result = coord('land', player, args.repo, args.target, ...landCommit(args));
         break;
       case 'baton2_land_checked':
-        result = coord('land-checked', player, args.repo, args.target, args.check, args.files);
+        result = coord('land-checked', player, args.repo, args.target, args.check, args.files, ...landCommit(args));
         break;
       case 'baton2_players':
         result = coord('players');

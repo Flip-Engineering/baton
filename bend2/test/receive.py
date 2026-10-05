@@ -355,6 +355,8 @@ class Receive(unittest.TestCase):
         config_path.write_text(json.dumps(config))
         observer, stream, started = self.start_question_player(answering=True)
         self.assertIn("inbox 'parent' --index", started['prompt'])
+        self.assertIn("[--commit COMMIT]", started['prompt'])
+        self.assertIn("recorded branch tip", started['prompt'])
         self.assertIn('delivery MESSAGE_ID', started['prompt'])
         self.assertIn("orchestra --index --for 'parent' --pretty", started['prompt'])
         event = {'type': 'extension_ui_request', 'id': 'input request Ω', 'method': 'input',
