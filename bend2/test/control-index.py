@@ -290,6 +290,62 @@ class ControlIndex(unittest.TestCase):
         self.assertEqual(view, self.call('orchestra', '--index', '--for', 'associate'))
         self.assertEqual(self.retained(), before)
 
+    def test_utf16_metadata_is_utf8_counted_or_explicitly_refused(self):
+        body = 'REPORT λ 日本語\0tail'
+        with closing(sqlite3.connect(self.db)) as db:
+            schema_and_rows = '\n'.join(db.iterdump())
+        for encoding in ('UTF-16le', 'UTF-16be'):
+            database = self.directory / (encoding + '.db')
+            with closing(sqlite3.connect(database)) as db:
+                db.execute("PRAGMA encoding='" + encoding + "'")
+                db.executescript(schema_and_rows)
+                db.execute("UPDATE messages SET body=? WHERE id='pending-report'", (body,))
+                db.commit()
+                self.assertEqual(db.execute('PRAGMA encoding').fetchone()[0], encoding)
+                self.assertNotEqual(db.execute("SELECT length(CAST(body AS BLOB)) FROM messages "
+                                               "WHERE id='pending-report'").fetchone()[0],
+                                    len(body.encode('utf-8')))
+            before = database.read_bytes()
+            for args in [('pending', '--index'), ('pending', '--index', '--pretty'),
+                         ('inbox', 'associate', '--index')]:
+                with self.subTest(encoding=encoding, args=args):
+                    result = subprocess.run([str(EXE), str(database), *args],
+                                            capture_output=True, text=True, timeout=10)
+                    if result.returncode == 0:
+                        row = next(row for row in json.loads(result.stdout)
+                                   if row['id'] == 'pending-report')
+                        self.assertEqual(row['bodyBytes'], len(body.encode('utf-8')))
+                    else:
+                        self.assertRegex(result.stdout + result.stderr, r'(?i)utf.?8|encoding')
+            self.assertEqual(database.read_bytes(), before)
+
+    def test_focused_routes_agree_with_native_message_admission(self):
+        self.assertIsNone(self.call('orchestra', '--index')['routes'],
+                          'An unfocused route projection is not an empty route set')
+        with closing(sqlite3.connect(self.db)) as db:
+            recipients = [row[0] for row in db.execute('SELECT id FROM sessions ORDER BY id')]
+            self.assertEqual(db.execute("SELECT id FROM sessions WHERE endpoint<>''").fetchall(), [])
+        for sender in ('associate', 'worker'):
+            view = self.call('orchestra', '--index', '--for', sender)
+            projected = {(row['sender'], row['recipient']) for row in view['routes']}
+            admitted = set()
+            for recipient in recipients:
+                ident = 'route-probe:' + sender + ':' + recipient
+                # Every endpoint is empty. The retained row establishes route
+                # admission even when stopped-recipient delivery returns an error.
+                result = subprocess.run([str(EXE), str(self.db), 'message', ident,
+                                         sender, recipient, 'note', 'fixture route check'],
+                                        capture_output=True, text=True, timeout=10)
+                with closing(sqlite3.connect(self.db)) as db:
+                    row = db.execute('SELECT sender,recipient FROM messages WHERE id=?',
+                                     (ident,)).fetchone()
+                if row is not None:
+                    admitted.add(row)
+                else:
+                    self.assertNotEqual(result.returncode, 0, result.stdout)
+                    self.assertIn('message-route-denied', result.stdout + result.stderr)
+            self.assertEqual(projected, admitted)
+
     def test_index_size_tracks_metadata_and_read_is_pure(self):
         before = self.retained()
         legacy = self.call('inbox', 'associate')
