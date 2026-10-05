@@ -144,6 +144,7 @@ class ReceiveTerminalBoundary(RECEIVE.Receive):
         self.assertIn('Native model failure', body)
         self.assertIn('403', body)
         self.assertIn('kimi-code', body)
+        self.assertIn('403 provider refused the request', body)
         self.assertEqual(self.coord('delivery', sealed)['body'], body)
         self.coord('message', 'same-attempt-guidance', 'root', 'parent', 'guidance',
                    'Guidance the sealed attempt does not accept.')

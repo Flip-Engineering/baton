@@ -47,6 +47,18 @@
     "per mutant: record shasum -a 256 .scratch/bend2/baton2 in the copy, then run the named target fixtures once with BATON_RETAINED_LOGS set, and retain that single run's command, full raw output, process exit and assertion text as the control's actual result ; any later re-run is a separate owned execution with its own record and is never merged into the first",
     "formal gate: BEND=/admitted/toolchain/bin/bend node bend2/scripts/laws-check.mjs with no outer timeout ; read the final aggregate and the actual process exit, not a trailing proof-removal line"
   ],
+  "replay_seam": {
+    "status": "corrected after reading the installed host object fca7af876c8260c32d17f95f3e19bc68ee1bf561",
+    "retracted_claim": "An earlier reading of mine said the retained replay feeds the spool back into itself. The call chain does not show that. I retract it.",
+    "actual_reading": [
+      "process-spawn.c br_path(retained->directory,\"stdout\") names the spool, br_watch_file watches that path and br_read_line preads its descriptor, so the spool is the attempt directory's stdout and is read, not written, by the replay.",
+      "Turn.record_frame appends to the separately supplied log argument, which is the receive's own log path, not the spool path. The call chain gives no alias evidence, so re-appending historical frames lands in a different file than the one being read.",
+      "Receive.started and observe_guarded both call Turn.retained_output, so that function covers fresh retained starts and live tail as well as replay. A blanket record suppression set from retained_output would disable fresh and newly arriving log output and could lose frames that were never recorded before a crash.",
+      "br_orphan_exit reads the attempt directory's status file, which is why the sealed-attempt binding reads retained->status from that exact directory."
+    ],
+    "open_question": "Whether a repeated replay double-appends the same historical frames into the log, and whether that is intended recovery behaviour, needs call-site path evidence rather than source reading.",
+    "decision": "No record-suppression flag is implemented. The seam stays open for the independent review."
+  },
   "reported_limits": [
     "No mutation in this file has been executed. Nothing here claims a run, a rejection, or a pass.",
     "Local execution of the runner, builds or fixtures is not permitted; these definitions are inputs to an admitted remote run."
