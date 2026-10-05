@@ -76,16 +76,23 @@ def admit_domain(+owner: String, +request: String, +decision: String, +state: St
   Bool.and(admit_state_ok(state),
   Bool.and(Bool.not(String.is_empty(cwd)), Bool.not(String.is_empty(artifactPath)))))))
 
-def admit_mark(+mark: String, +owner: String, +request: String, +decision: String, +state: String, +attempt: String, +keeperPath: String, +cwd: String, +artifactPath: String) -> Admission:
+def admit_mark(+mark: String, +owner: String, +request: String, +decision: String, +state: String, +attempt: String, +keeperPath: String, +cwd: String, +artifactPath: String, +answer: String) -> Admission:
   Bool.pick(Admission, String.eq(mark, "created"), AdmissionCreated{owner, request, decision, state, attempt, keeperPath, cwd, artifactPath},
   Bool.pick(Admission, String.eq(mark, "retained"), AdmissionRetained{owner, request, decision, state, attempt, keeperPath, cwd, artifactPath},
-    AdmissionUncertain{"mark", mark}))
+    AdmissionUncertain{"mark", answer}))
 
-def admit_checked(+mark: String, +owner: String, +request: String, +decision: String, +state: String, +attempt: String, +keeperPath: String, +cwd: String, +artifactPath: String) -> Admission:
+def admit_checked(+mark: String, +owner: String, +request: String, +decision: String, +state: String, +attempt: String, +keeperPath: String, +cwd: String, +artifactPath: String, +answer: String) -> Admission:
   Bool.pick(Admission, admit_domain(owner, request, decision, state, cwd, artifactPath),
-    admit_mark(mark, owner, request, decision, state, attempt, keeperPath, cwd, artifactPath),
-    AdmissionUncertain{"domain", decision})
+    admit_mark(mark, owner, request, decision, state, attempt, keeperPath, cwd, artifactPath, answer),
+    AdmissionUncertain{"domain", answer})
 
+def field_count(xs: List<String>, acc: U32) -> U32:
+  match xs:
+    case Nil{}: acc
+    case h <> t: field_count(t, U32.add(acc, 1))
+
+# An absent answer carries the same ten columns as a present one, with every value
+# column empty, so a one-column answer is not an absence.
 def all_empty(xs: List<String>) -> Bool:
   match xs:
     case Nil{}: True{}
@@ -93,6 +100,9 @@ def all_empty(xs: List<String>) -> Bool:
 
 # The nine columns after the presence marker, in order. A short or long row is
 # uncertain rather than a record.
+def ten_columns_absent(fields: List<String>) -> Bool:
+  Bool.and(U32.is_eq(field_count(fields, 0), 10), all_empty(fields))
+
 def admit_tabs(+fields: List<String>, +answer: String) -> Admission:
   match fields:
     case +mark <> more0:
@@ -113,7 +123,7 @@ def admit_tabs(+fields: List<String>, +answer: String) -> Admission:
                                   match more7:
                                     case +artifactPath <> more8:
                                       match more8:
-                                        case Nil{}: admit_checked(mark, owner, request, decision, state, attempt, keeperPath, cwd, artifactPath)
+                                        case Nil{}: admit_checked(mark, owner, request, decision, state, attempt, keeperPath, cwd, artifactPath, answer)
                                         case _: AdmissionUncertain{"surplus", answer}
                                     case _: AdmissionUncertain{"short", answer}
                                 case _: AdmissionUncertain{"short", answer}
@@ -125,6 +135,15 @@ def admit_tabs(+fields: List<String>, +answer: String) -> Admission:
         case _: AdmissionUncertain{"short", answer}
     case _: AdmissionUncertain{"short", answer}
 
+def admit_answer(+fields: List<String>, +answer: String) -> Admission:
+  match fields:
+    case +presence <> more:
+      Bool.pick(Admission, String.eq(presence, "absent"),
+        Bool.pick(Admission, ten_columns_absent(fields), AdmissionAbsent{}, AdmissionUncertain{"shape", answer}),
+        Bool.pick(Admission, String.eq(presence, "present"), admit_tabs(more, answer), AdmissionUncertain{"mark", answer}))
+    case _: AdmissionUncertain{"short", answer}
+
+# The decode: exactly one row, and either the absence row or the ten present columns.
 def admit_line(+fields: List<String>, +rest: List<String>, +answer: String) -> Admission:
   match rest:
     case Nil{}: admit_answer(fields, answer)
@@ -132,15 +151,6 @@ def admit_line(+fields: List<String>, +rest: List<String>, +answer: String) -> A
 
 # The presence marker decides between a proven absence, which must carry no other
 # value, and the recorded row the field decoder reads.
-def admit_answer(+fields: List<String>, +answer: String) -> Admission:
-  match fields:
-    case +presence <> more:
-      Bool.pick(Admission, String.eq(presence, "absent"),
-        Bool.pick(Admission, all_empty(more), AdmissionAbsent{}, AdmissionUncertain{"surplus", answer}),
-        Bool.pick(Admission, String.eq(presence, "present"), admit_tabs(more, answer), AdmissionUncertain{"mark", presence}))
-    case _: AdmissionUncertain{"short", answer}
-
-# The decode: exactly one row, and either the absence row or the ten present columns.
 def admit_decode(+row: String) -> Admission:
   match Tx.split_lines(row):
     case Nil{}: AdmissionUncertain{"empty", row}

@@ -17,6 +17,11 @@ import ../git/text.bend as Tx
 # One unsettled coordinator duty. `subject` is the query or notice identity; `role`
 # and `incarnation` are empty for a query-level or notice duty; `evidence` names the
 # recorded signal, delivery state, cleanup phase or notice kind.
+type DutyView is Data:
+  DutyNone{}
+  DutyRows{count: U32, text: String}
+  DutyUnreadable{line: String, answer: String}
+
 type DutyRecord is Data:
   DutyRecord{kind: String, subject: String, role: String, incarnation: String, stage: String, evidence: String}
 
@@ -36,7 +41,7 @@ def duty_role_open() -> String:
 # enumeration selects the context's own owed notices and leaves ordinary
 # conversation messages alone.
 def duty_notice_owed() -> String:
-  "m.receipt IS NULL AND substr(m.id,1,11)='[\"context-'"
+  "m.receipt IS NULL AND substr(m.id,1,10)='[\"context-'"
 
 def duty_query_stage() -> String:
   "CASE WHEN cleanup_intent_json IS NOT NULL THEN 'release' WHEN recovery_intent_json IS NOT NULL THEN 'recovery' WHEN " ++ duty_query_open() ++ " THEN 'computationOpen' ELSE 'cleanup' END"
@@ -57,6 +62,11 @@ def duties_sql() -> String:
 
 def duty_split(rows: String) -> List<String>:
   Tx.split_lines(rows)
+
+def field_count(xs: List<String>, acc: U32) -> U32:
+  match xs:
+    case Nil{}: acc
+    case h <> t: field_count(t, U32.add(acc, 1))
 
 def duty_kind(record: DutyRecord) -> String:
   match record:
@@ -122,7 +132,32 @@ def duty_wellformed_go(xs: List<String>) -> Bool:
 def duty_wellformed(rows: String) -> Bool:
   duty_wellformed_go(duty_split(rows))
 
-# The bound enumeration. A failed read stays a failure; the caller must not treat it
-# as a settled set.
-def duties(+db: String, +binding: String) -> IO(Result<&1,&1,U32 & String,String>):
-  DB.Sql.query_bound(db, binding, duties_sql())
+# The first line that is not a duty record, or the empty string when every line is.
+def duty_first_bad(xs: List<String>) -> String:
+  match xs:
+    case Nil{}: ""
+    case h <> t:
+      match duty_line(h):
+        case None{}: h
+        case Some{record}: duty_first_bad(t)
+
+# The exported answer. `DutyRows` exists only for a validated enumeration, and a
+# malformed line can therefore surface only as `DutyUnreadable` with the whole
+# answer, so no caller can read a shorter set as settled.
+def duty_view(rows: String) -> DutyView:
+  Bool.pick(DutyView, String.is_empty(rows), DutyNone{},
+    Bool.pick(DutyView, String.is_empty(duty_first_bad(duty_split(rows))),
+      DutyRows{field_count(duty_split(rows), 0), rows},
+      DutyUnreadable{duty_first_bad(duty_split(rows)), rows}))
+
+def duty_after(result: Result<&1,&1,U32 & String,String>) -> IO(Result<&1,&1,U32 & String,DutyView>):
+  match result:
+    case Fail{error}: IO.pure(Result<&1,&1,U32 & String,DutyView>, Fail{error})
+    case Done{+rows}: IO.pure(Result<&1,&1,U32 & String,DutyView>, Done{duty_view(rows)})
+
+# The bound enumeration. A failed read stays a failure and an unreadable answer is
+# never a settled set.
+def duties(+db: String, +binding: String) -> IO(Result<&1,&1,U32 & String,DutyView>):
+  do IO<Result<&1,&1,U32 & String,DutyView>>:
+    result : Result<&1,&1,U32 & String,String> <- DB.Sql.query_bound(db, binding, duties_sql())
+    duty_after(result)

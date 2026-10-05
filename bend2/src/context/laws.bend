@@ -569,13 +569,13 @@ def a_surplus_column_is_not_a_record():
   {==}
 
 law an_unknown_marker_is_not_a_record:
-  {ContextAdmit.admit_decode("present\tsomething\troot\trq\taccepted\taccepted\ta\t/l\t/w\t/art\n") == ContextAdmit.AdmissionUncertain{"mark","something"} : ContextAdmit.Admission}
+  {ContextAdmit.admit_decode("present\tsomething\troot\trq\taccepted\taccepted\ta\t/l\t/w\t/art\n") == ContextAdmit.AdmissionUncertain{"mark","present\tsomething\troot\trq\taccepted\taccepted\ta\t/l\t/w\t/art\n"} : ContextAdmit.Admission}
 
 def an_unknown_marker_is_not_a_record():
   {==}
 
 law a_value_outside_the_domain_is_not_a_record:
-  {ContextAdmit.admit_decode("present\tcreated\troot\trq\tbogus\taccepted\ta\t/l\t/w\t/art\n") == ContextAdmit.AdmissionUncertain{"domain","bogus"} : ContextAdmit.Admission}
+  {ContextAdmit.admit_decode("present\tcreated\troot\trq\tbogus\taccepted\ta\t/l\t/w\t/art\n") == ContextAdmit.AdmissionUncertain{"domain","present\tcreated\troot\trq\tbogus\taccepted\ta\t/l\t/w\t/art\n"} : ContextAdmit.Admission}
 
 def a_value_outside_the_domain_is_not_a_record():
   {==}
@@ -658,7 +658,7 @@ def the_open_role_predicate_names_an_unsettled_cleanup_or_release():
   {==}
 
 law the_owed_notice_predicate_selects_only_context_notices:
-  {ContextDuties.duty_notice_owed() == "m.receipt IS NULL AND substr(m.id,1,11)='[\"context-'" : String}
+  {ContextDuties.duty_notice_owed() == "m.receipt IS NULL AND substr(m.id,1,10)='[\"context-'" : String}
 
 def the_owed_notice_predicate_selects_only_context_notices():
   {==}
@@ -697,4 +697,35 @@ law one_unreadable_line_makes_the_enumeration_unusable:
   {ContextDuties.duty_wellformed("query\tq1\t\t\topen\t\nshort\n") == False{} : Bool}
 
 def one_unreadable_line_makes_the_enumeration_unusable():
+  {==}
+
+law a_one_column_absent_answer_is_not_a_proven_absence:
+  {ContextAdmit.admit_decode("absent\n") == ContextAdmit.AdmissionUncertain{"shape","absent\n"} : ContextAdmit.Admission}
+
+def a_one_column_absent_answer_is_not_a_proven_absence():
+  {==}
+
+law a_runtime_epoch_is_stored_as_decimal_text:
+  {ContextStore.runtime_epoch_column() == "epoch TEXT NOT NULL" : String}
+
+def a_runtime_epoch_is_stored_as_decimal_text():
+  {==}
+
+law a_runtime_epoch_is_inserted_as_quoted_text:
+  for +epoch: String
+  {ContextStore.runtime_epoch_value(epoch) == C.q(epoch) : String}
+
+def a_runtime_epoch_is_inserted_as_quoted_text(epoch):
+  {==}
+
+law an_empty_enumeration_is_recorded_as_no_duties:
+  {ContextDuties.duty_view("") == ContextDuties.DutyNone{} : ContextDuties.DutyView}
+
+def an_empty_enumeration_is_recorded_as_no_duties():
+  {==}
+
+law an_unreadable_enumeration_names_its_line_and_answer:
+  {ContextDuties.duty_view("short\n") == ContextDuties.DutyUnreadable{"short","short\n"} : ContextDuties.DutyView}
+
+def an_unreadable_enumeration_names_its_line_and_answer():
   {==}
