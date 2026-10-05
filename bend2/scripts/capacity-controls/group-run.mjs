@@ -9,7 +9,7 @@
 import { execFileSync, spawn } from 'node:child_process';
 import { cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, statSync, writeFileSync } from 'node:fs';
 import { dirname, join, relative, resolve, sep } from 'node:path';
-import { ENV, ENTRY, proofBlockRange, resolveBend, ROOT } from '../laws-check.mjs';
+import { ENV, ENTRY, proofBlockRange, resolveBend, ROOT } from '../laws-common.mjs';
 import { MUTATIONS } from '../laws-mutations.mjs';
 import { classifyCase, parseResourceAccounting, splitTimeAccounting } from './classify.mjs';
 import { bindingOf, definitionExpectation, definitionLocation, discoveryRecords, sha256Hex } from './work-set.mjs';

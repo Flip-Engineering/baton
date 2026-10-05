@@ -173,6 +173,7 @@ test('darwin accounting tolerates padded columns and keeps units explicit', () =
   assert.equal(split.profile, 'darwin-usr-bin-time');
   assert.equal(accountingValid(split.accounting, split.profile), true);
   const resource = parseResourceAccounting(split.accounting, split.profile);
+  assert.ok(resource, 'the darwin resource parser must read the padded header');
   assert.equal(resource.max_rss_bytes, 2152748);
   assert.equal(resource.max_rss_source_unit, 'bytes');
   const gnuResource = parseResourceAccounting(
@@ -182,6 +183,7 @@ test('darwin accounting tolerates padded columns and keeps units explicit', () =
     + '\tMaximum resident set size (kbytes): 2152748\n',
     'gnu-time-v',
   );
+  assert.ok(gnuResource, 'the gnu resource parser must read its labeled fields');
   assert.equal(gnuResource.real_seconds > 82 && gnuResource.real_seconds < 83, true);
   assert.equal(gnuResource.max_rss_bytes, 2152748 * 1024);
   assert.equal(gnuResource.max_rss_source_unit, 'kbytes');

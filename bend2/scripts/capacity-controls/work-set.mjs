@@ -8,7 +8,7 @@ import { createHash } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import { join, relative, sep } from 'node:path';
 import { MUTATIONS } from '../laws-mutations.mjs';
-import { laws, proofBlockRange, ROOT } from '../laws-check.mjs';
+import { laws, proofBlockRange, ROOT } from '../laws-common.mjs';
 
 export function sha256Hex(data) {
   return createHash('sha256').update(data).digest('hex');

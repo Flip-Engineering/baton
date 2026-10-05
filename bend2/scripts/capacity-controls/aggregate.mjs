@@ -13,7 +13,7 @@ import { existsSync, lstatSync, readdirSync, readFileSync, realpathSync, writeFi
 import { isAbsolute, join, resolve, sep } from 'node:path';
 import { accountingValid, classifyCase, splitTimeAccounting, validChildOutcome } from './classify.mjs';
 import { bindingOf, definitionExpectation, definitionLocation, discoveryRecords, sha256Hex } from './work-set.mjs';
-import { ENTRY, proofBlockRange, ROOT } from '../laws-check.mjs';
+import { ENTRY, proofBlockRange, ROOT } from '../laws-common.mjs';
 import { MUTATIONS } from '../laws-mutations.mjs';
 
 export class UsageError extends Error {}

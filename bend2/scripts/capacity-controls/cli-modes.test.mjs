@@ -56,6 +56,21 @@ test('classify mode refuses positional arguments and malformed requests', () => 
   assert.equal(malformed.stdout, '');
 });
 
+test('mode modules import cleanly after the entry module, without cycles', async () => {
+  // The executable dispatch order: the entry module evaluates first, then
+  // dynamically imports a mode module. Before the leaf split, that order
+  // produced an unsettled top-level await against the entry's back-imports.
+  const checker = await import('../laws-check.mjs');
+  const aggregate = await import('../capacity-controls/aggregate.mjs');
+  const workSet = await import('../capacity-controls/work-set.mjs');
+  const groupRun = await import('../capacity-controls/group-run.mjs');
+  assert.equal(typeof checker.main, 'function');
+  assert.equal(typeof aggregate.aggregate, 'function');
+  assert.equal(typeof aggregate.classifyCli, 'function');
+  assert.equal(typeof workSet.discoveryRecords, 'function');
+  assert.equal(typeof groupRun.runGroup, 'function');
+});
+
 test('discover answers the same records the module API discovers', async () => {
   const { discoveryRecords, bindingOf } = await import('./work-set.mjs');
   const cli = spawnSync(process.execPath, [CHECKER, '--discover'], { encoding: 'utf8', maxBuffer: Infinity });
