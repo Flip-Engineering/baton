@@ -15,12 +15,14 @@ def show(value: R.OutputRoute) -> String:
     case R.Matched{frame}: "matched:" ++ show_frame(frame)
     case R.Mismatched{frame}: "mismatched:" ++ show_frame(frame)
 
+def show_wake(value: Maybe<String>) -> IO(Unit):
+  match value:
+    case None{}: IO.print("none")
+    case Some{message}: IO.print("some:" ++ message)
+
 def cli(args: List<String>) -> IO(Unit):
   match args:
-    case Con{"wake",Con{message,Nil{}}}:
-      match R.wake(message):
-        case None{}: IO.print("none")
-        case Some{value}: IO.print("some:" ++ value)
+    case Con{"wake",Con{message,Nil{}}}: show_wake(R.wake(message))
     case Con{"stderr",Con{database,Con{owner,Con{request,Con{session,Con{cursor,Con{bytes,Nil{}}}}}}}}:
       IO.print(show(R.route(R.Correlation{"db","owner","request","session"},R.OutputFrame{R.Correlation{database,owner,request,session},R.Stderr{},cursor,bytes})))
     case Con{database,Con{owner,Con{request,Con{session,Con{cursor,Con{bytes,Nil{}}}}}}}:

@@ -27,25 +27,31 @@ type ReadRegistration is Data:
   # extends through observation even after the submitting client disconnects.
   ReadRegistration{version: ReadVersion, registration: String, sink: R.RequestOutput}
 
+def offset_limit(high: U32, low: U32, at_limit: Bool) -> Result<&2,&2,OffsetFault,ByteOffset>:
+  match at_limit:
+    case True{}: Fail{OffsetOverflow{}}
+    case False{}: Done{ByteOffset{U32.add(high,1),low}}
+
+def offset_carry(+high: U32, low: U32, carry: Bool) -> Result<&2,&2,OffsetFault,ByteOffset>:
+  match carry:
+    case False{}: Done{ByteOffset{high,low}}
+    case True{}: offset_limit(high,low,U32.is_eq(high,4294967295))
+
 def offset_result(high: U32, low: U32, carry: Bool, overflow: Bool) -> Result<&2,&2,OffsetFault,ByteOffset>:
   match overflow:
     case True{}: Fail{OffsetOverflow{}}
-    case False{}:
-      match carry:
-        case False{}: Done{ByteOffset{high,low}}
-        case True{}:
-          match U32.is_eq(high,4294967295):
-            case True{}: Fail{OffsetOverflow{}}
-            case False{}: Done{ByteOffset{U32.add(high,1),low}}
+    case False{}: offset_carry(high,low,carry)
+
+def offset_right(+high: U32, +low: U32, right: ByteOffset) -> Result<&2,&2,OffsetFault,ByteOffset>:
+  match right:
+    case ByteOffset{other_high,other_low}:
+      +next_high = U32.add(high,other_high)
+      +next_low = U32.add(low,other_low)
+      offset_result(next_high,next_low,U32.is_lt(next_low,low),U32.is_lt(next_high,high))
 
 def offset_sum(left: ByteOffset, right: ByteOffset) -> Result<&2,&2,OffsetFault,ByteOffset>:
   match left:
-    case ByteOffset{+high,+low}:
-      match right:
-        case ByteOffset{other_high,other_low}:
-          +next_high = U32.add(high,other_high)
-          +next_low = U32.add(low,other_low)
-          offset_result(next_high,next_low,U32.is_lt(next_low,low),U32.is_lt(next_high,high))
+    case ByteOffset{high,low}: offset_right(high,low,right)
 
 law offset_carry_keeps_the_high_word:
   {offset_sum(ByteOffset{0,4294967295},ByteOffset{0,1}) == Done{ByteOffset{1,0}} : Result<&2,&2,OffsetFault,ByteOffset>}

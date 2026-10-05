@@ -13,21 +13,25 @@ def examples() -> IO(Unit):
     show(R.offset_sum(R.ByteOffset{4294967295,4294967295},R.ByteOffset{0,1})) ++ "\n" ++
     show(R.offset_sum(R.ByteOffset{4,12},R.ByteOffset{0,0})))
 
+def parsed_low(high: U32, low: Maybe<&2,U32>) -> Maybe<&2,R.ByteOffset>:
+  match low:
+    case None{}: None{}
+    case Some{low_word}: Some{R.ByteOffset{high,low_word}}
+
 def parsed_offset(high: Maybe<&2,U32>, low: Maybe<&2,U32>) -> Maybe<&2,R.ByteOffset>:
   match high:
     case None{}: None{}
-    case Some{high_word}:
-      match low:
-        case None{}: None{}
-        case Some{low_word}: Some{R.ByteOffset{high_word,low_word}}
+    case Some{high_word}: parsed_low(high_word,low)
+
+def parsed_right(left: R.ByteOffset, right: Maybe<&2,R.ByteOffset>) -> IO(Unit):
+  match right:
+    case None{}: IO.die(Unit,2,"Invalid unsigned offset word.")
+    case Some{right_offset}: IO.print(show(R.offset_sum(left,right_offset)))
 
 def parsed_sum(left: Maybe<&2,R.ByteOffset>, right: Maybe<&2,R.ByteOffset>) -> IO(Unit):
   match left:
     case None{}: IO.die(Unit,2,"Invalid unsigned offset word.")
-    case Some{left_offset}:
-      match right:
-        case None{}: IO.die(Unit,2,"Invalid unsigned offset word.")
-        case Some{right_offset}: IO.print(show(R.offset_sum(left_offset,right_offset)))
+    case Some{left_offset}: parsed_right(left_offset,right)
 
 def cli(args: List<String>) -> IO(Unit):
   match args:
