@@ -857,45 +857,74 @@ law a_ref_lookup_matches_its_exact_ref_identity:
 def a_ref_lookup_matches_its_exact_ref_identity(refId):
   {==}
 
-law a_ref_lookup_reads_its_own_identity:
-  for +query: String
-  for +refId: String
-  for +state: String
-  for +entry: String
-  {ContextStore.ref_lookup_decode(query ++ "\t" ++ refId ++ "\t" ++ state ++ "\t1\t" ++ entry ++ "\t1\n") == ContextStore.RefFound{query,refId,state,entry} : ContextStore.RefLookup}
+law a_ref_lookup_decodes_against_the_requested_identity:
+  {ContextStore.ref_lookup_decode("q7","ref-1","complete\t1\t{\"engine\":\"typescript\",\"subject\":[\"position\",\"/a.ts\",1,2],\"snapshotId\":\"s1\",\"projections\":[\"definition\"]}\t1\n") == ContextStore.RefFound{"q7","ref-1","complete","{\"engine\":\"typescript\",\"subject\":[\"position\",\"/a.ts\",1,2],\"snapshotId\":\"s1\",\"projections\":[\"definition\"]}"} : ContextStore.RefLookup}
 
-def a_ref_lookup_reads_its_own_identity(query,refId,state,entry):
+def a_ref_lookup_decodes_against_the_requested_identity():
   {==}
 
-law a_ref_lookup_without_a_query_is_not_an_absent_ref:
-  for +query: String
-  for +refId: String
-  {ContextStore.ref_lookup_decode(query ++ "\t" ++ refId ++ "\t\t0\t\t0\n") == ContextStore.RefQueryMissing{query,refId} : ContextStore.RefLookup}
+law an_unfinished_query_is_not_an_absent_ref:
+  {ContextStore.ref_lookup_decode("q7","ref-1","running\t0\t\t0\n") == ContextStore.RefOpen{"q7","ref-1","running"} : ContextStore.RefLookup}
 
-def a_ref_lookup_without_a_query_is_not_an_absent_ref(query,refId):
+def an_unfinished_query_is_not_an_absent_ref():
   {==}
 
-law a_ref_lookup_counts_two_matching_entries_as_ambiguous:
-  for +query: String
-  for +refId: String
-  for +entry: String
-  {ContextStore.ref_lookup_decode(query ++ "\t" ++ refId ++ "\tcomplete\t2\t" ++ entry ++ "\t1\n") == ContextStore.RefAmbiguous{query,refId,"2"} : ContextStore.RefLookup}
+law a_query_without_a_retained_result_is_not_an_absent_ref:
+  {ContextStore.ref_lookup_decode("q7","ref-1","unretained\t0\t\t0\n") == ContextStore.RefUnretained{"q7","ref-1"} : ContextStore.RefLookup}
 
-def a_ref_lookup_counts_two_matching_entries_as_ambiguous(query,refId,entry):
+def a_query_without_a_retained_result_is_not_an_absent_ref():
   {==}
 
-law a_ref_lookup_without_its_fields_is_malformed:
-  for +query: String
-  for +refId: String
-  for +entry: String
-  {ContextStore.ref_lookup_decode(query ++ "\t" ++ refId ++ "\tcomplete\t1\t" ++ entry ++ "\t0\n") == ContextStore.RefMalformed{query,refId,entry} : ContextStore.RefLookup}
+law a_failed_query_names_its_state:
+  {ContextStore.ref_lookup_decode("q7","ref-1","failed\t0\t\t0\n") == ContextStore.RefFailed{"q7","ref-1","failed"} : ContextStore.RefLookup}
 
-def a_ref_lookup_without_its_fields_is_malformed(query,refId,entry):
+def a_failed_query_names_its_state():
   {==}
 
-law an_unreadable_ref_answer_is_not_a_lookup:
-  for +row: String
-  {ContextStore.ref_lookup_decode(row ++ "\nextra\n") == ContextStore.RefUnreadable{"surplus",row ++ "\nextra\n"} : ContextStore.RefLookup}
+law an_absent_query_row_is_not_an_absent_ref:
+  {ContextStore.ref_lookup_decode("q7","ref-1","\t0\t\t0\n") == ContextStore.RefQueryMissing{"q7","ref-1"} : ContextStore.RefLookup}
 
-def an_unreadable_ref_answer_is_not_a_lookup(row):
+def an_absent_query_row_is_not_an_absent_ref():
+  {==}
+
+law a_completed_result_without_a_matching_ref_is_absent:
+  {ContextStore.ref_lookup_decode("q7","ref-1","complete\t0\t\t0\n") == ContextStore.RefAbsent{"q7","ref-1"} : ContextStore.RefLookup}
+
+def a_completed_result_without_a_matching_ref_is_absent():
+  {==}
+
+law two_matching_entries_are_ambiguous:
+  {ContextStore.ref_lookup_decode("q7","ref-1","complete\t2\t{}\t1\n") == ContextStore.RefAmbiguous{"q7","ref-1","2"} : ContextStore.RefLookup}
+
+def two_matching_entries_are_ambiguous():
+  {==}
+
+law an_entry_without_the_exact_selector_shape_is_malformed:
+  {ContextStore.ref_lookup_decode("q7","ref-1","complete\t1\t{\"engine\":null}\t0\n") == ContextStore.RefMalformed{"q7","ref-1","{\"engine\":null}"} : ContextStore.RefLookup}
+
+def an_entry_without_the_exact_selector_shape_is_malformed():
+  {==}
+
+law an_unknown_query_state_is_unreadable:
+  {ContextStore.ref_lookup_decode("q7","ref-1","bogus\t0\t\t0\n") == ContextStore.RefUnreadable{"state","bogus\t0\t\t0\n"} : ContextStore.RefLookup}
+
+def an_unknown_query_state_is_unreadable():
+  {==}
+
+law a_noncanonical_count_is_unreadable:
+  {ContextStore.ref_lookup_decode("q7","ref-1","complete\t-1\t\t1\n") == ContextStore.RefUnreadable{"count","complete\t-1\t\t1\n"} : ContextStore.RefLookup}
+
+def a_noncanonical_count_is_unreadable():
+  {==}
+
+law an_invalid_shape_flag_is_unreadable:
+  {ContextStore.ref_lookup_decode("q7","ref-1","complete\t1\t{}\tmaybe\n") == ContextStore.RefUnreadable{"shape","complete\t1\t{}\tmaybe\n"} : ContextStore.RefLookup}
+
+def an_invalid_shape_flag_is_unreadable():
+  {==}
+
+law a_surplus_ref_row_is_unreadable:
+  {ContextStore.ref_lookup_decode("q7","ref-1","complete\t1\t{}\t1\textra\n") == ContextStore.RefUnreadable{"surplus","complete\t1\t{}\t1\textra\n"} : ContextStore.RefLookup}
+
+def a_surplus_ref_row_is_unreadable():
   {==}

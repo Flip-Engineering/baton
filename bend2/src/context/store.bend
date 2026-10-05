@@ -95,14 +95,6 @@ def ref_id_match(+refId: String) -> String:
 # exactly, the matching entry's stored text, and whether that entry carries every
 # field a selector association needs. The count is read rather than assumed, so a
 # duplicate id is visible instead of silently one of several.
-def ref_match_count(query: String, refId: String) -> String:
-  "(SELECT count(*) FROM json_each(" ++ ref_entries(query) ++ ",'$.refs') WHERE " ++ ref_id_match(refId) ++ ")"
-
-def ref_first_entry(query: String, refId: String) -> String:
-  "(SELECT value FROM json_each(" ++ ref_entries(query) ++ ",'$.refs') WHERE " ++ ref_id_match(refId) ++ ")"
-
-# A selector association is complete only when the entry carries all four retained
-# members; an entry missing one is malformed rather than partially usable.
 def ref_fields_ok(query: String, refId: String) -> String:
   "(SELECT CASE WHEN json_type(value,'$.engine') IS NOT NULL AND json_type(value,'$.subject') IS NOT NULL AND json_type(value,'$.snapshotId') IS NOT NULL AND json_type(value,'$.projections') IS NOT NULL THEN 1 ELSE 0 END FROM json_each(" ++ ref_entries(query) ++ ",'$.refs') WHERE " ++ ref_id_match(refId) ++ ")"
 
@@ -119,60 +111,114 @@ type RefLookup is Data:
   RefMalformed{query: String, refId: String, entry: String}
   RefFound{query: String, refId: String, state: String, entry: String}
 
-def ref_lookup_sql(+query: String, +refId: String) -> String:
-  "SELECT " ++ C.q(query) ++ "," ++ C.q(refId) ++ ",coalesce((SELECT state FROM semantic_queries WHERE id=" ++ C.q(query) ++ "),'')," ++ ref_match_count(query, refId) ++ ",coalesce(" ++ ref_first_entry(query, refId) ++ ",''),coalesce(" ++ ref_fields_ok(query, refId) ++ ",0);"
+def ref_state(query: String) -> String:
+  "coalesce((SELECT state FROM semantic_queries WHERE id=" ++ C.q(query) ++ "),'')"
 
-def ref_lookup_fields(+query: String, +refId: String, +state: String, +count: String, +entry: String, +fieldsOk: String, +answer: String) -> RefLookup:
+# The result column of a query that has one, or the marker that it is not retained.
+def ref_result_state(query: String) -> String:
+  "CASE WHEN " ++ ref_state(query) ++ "='' THEN '' WHEN (SELECT result_json FROM semantic_queries WHERE id=" ++ C.q(query) ++ ") IS NULL THEN 'unretained' ELSE " ++ ref_state(query) ++ " END"
+
+def ref_match_count(query: String, refId: String) -> String:
+  "(SELECT count(*) FROM json_each(coalesce((SELECT result_json FROM semantic_queries WHERE id=" ++ C.q(query) ++ "),'null'),'$.refs') WHERE " ++ ref_id_match(refId) ++ ")"
+
+def ref_first_entry(query: String, refId: String) -> String:
+  "(SELECT value FROM json_each(coalesce((SELECT result_json FROM semantic_queries WHERE id=" ++ C.q(query) ++ "),'null'),'$.refs') WHERE " ++ ref_id_match(refId) ++ ")"
+
+# One member of the entry occurs exactly once and carries the required JSON type; the
+# identity members are additionally nonempty. A JSON null, number, object, wrong
+# array element or a duplicated key fails the test.
+def ref_member_once(member: String, kind: String) -> String:
+  "(SELECT count(*) FROM json_each(value) WHERE key=" ++ C.q(member) ++ ")=1 AND json_type(value,'$." ++ member ++ "')=" ++ C.q(kind)
+
+def ref_identity_nonempty(member: String) -> String:
+  "coalesce(json_extract(value,'$." ++ member ++ "'),'')<>''"
+
+def ref_shape_ok(query: String, refId: String) -> String:
+  "(SELECT CASE WHEN " ++ ref_member_once("engine", "text") ++ " AND " ++ ref_identity_nonempty("engine") ++ " AND " ++ ref_member_once("subject", "array") ++ " AND " ++ ref_member_once("snapshotId", "text") ++ " AND " ++ ref_identity_nonempty("snapshotId") ++ " AND " ++ ref_member_once("projections", "array") ++ " AND json_array_length(value,'$.projections')>0 THEN 1 ELSE 0 END FROM json_each(coalesce((SELECT result_json FROM semantic_queries WHERE id=" ++ C.q(query) ++ "),'null'),'$.refs') WHERE " ++ ref_id_match(refId) ++ ")"
+
+# One row of five columns, none of which echoes a caller string: the recorded result
+# state of the requested query with `unretained` for a null result, the count of
+# entries whose id matches exactly, the matching entry's stored text, and whether that
+# entry has the exact selector shape. The requested identity is supplied to the
+# decoder instead of travelling through the tab-separated row.
+def ref_lookup_sql(+query: String, +refId: String) -> String:
+  "SELECT " ++ ref_result_state(query) ++ "," ++ ref_match_count(query, refId) ++ ",coalesce(" ++ ref_first_entry(query, refId) ++ ",''),coalesce(" ++ ref_shape_ok(query, refId) ++ ",0);"
+
+type RefLookup is Data:
+  RefUnreadable{stage: String, answer: String}
+  RefQueryMissing{query: String, refId: String}
+  RefUnretained{query: String, refId: String}
+  RefOpen{query: String, refId: String, state: String}
+  RefFailed{query: String, refId: String, state: String}
+  RefAbsent{query: String, refId: String}
+  RefAmbiguous{query: String, refId: String, count: String}
+  RefMalformed{query: String, refId: String, entry: String}
+  RefFound{query: String, refId: String, state: String, entry: String}
+
+def ref_count_ok(count: String) -> Bool:
+  digits_only(count)
+
+def ref_flag_ok(flag: String) -> Bool:
+  Bool.or(String.eq(flag, "0"), String.eq(flag, "1"))
+
+def ref_open_state(state: String) -> Bool:
+  Bool.or(Bool.or(String.eq(state, "accepted"), String.eq(state, "running")), String.eq(state, "cleaning"))
+
+def ref_failed_state(state: String) -> Bool:
+  Bool.or(Bool.or(String.eq(state, "failed"), String.eq(state, "interrupted")), String.eq(state, "refused"))
+
+# The state decides first: an unfinished or unretained query is never reported as an
+# absent ref, and only a completed result whose retained refs array has no matching
+# entry is absent.
+def ref_decide(+query: String, +refId: String, +state: String, +count: String, +entry: String, +shape: String, +answer: String) -> RefLookup:
   Bool.pick(RefLookup, String.is_empty(state), RefQueryMissing{query, refId},
+  Bool.pick(RefLookup, String.eq(state, "unretained"), RefUnretained{query, refId},
+  Bool.pick(RefLookup, ref_open_state(state), RefOpen{query, refId, state},
+  Bool.pick(RefLookup, ref_failed_state(state), RefFailed{query, refId, state},
+  Bool.pick(RefLookup, Bool.not(String.eq(state, "complete")), RefUnreadable{"state", answer},
+  Bool.pick(RefLookup, Bool.not(ref_count_ok(count)), RefUnreadable{"count", answer},
+  Bool.pick(RefLookup, Bool.not(ref_flag_ok(shape)), RefUnreadable{"shape", answer},
   Bool.pick(RefLookup, String.eq(count, "0"), RefAbsent{query, refId},
   Bool.pick(RefLookup, Bool.not(String.eq(count, "1")), RefAmbiguous{query, refId, count},
-  Bool.pick(RefLookup, String.eq(fieldsOk, "1"),
-    Bool.pick(RefLookup, String.eq(state, "complete"), RefFound{query, refId, state, entry}, RefOpen{query, refId, state}),
-    RefMalformed{query, refId, entry}))))
+  Bool.pick(RefLookup, String.eq(shape, "1"), RefFound{query, refId, state, entry}, RefMalformed{query, refId, entry}))))))))))
 
-def ref_lookup_tabs(+fields: List<String>, +answer: String) -> RefLookup:
+def ref_lookup_tabs(+query: String, +refId: String, +fields: List<String>, +answer: String) -> RefLookup:
   match fields:
-    case +query <> more0:
+    case +state <> more0:
       match more0:
-        case +refId <> more1:
+        case +count <> more1:
           match more1:
-            case +state <> more2:
+            case +entry <> more2:
               match more2:
-                case +count <> more3:
+                case +shape <> more3:
                   match more3:
-                    case +entry <> more4:
-                      match more4:
-                        case +fieldsOk <> more5:
-                          match more5:
-                            case Nil{}: ref_lookup_fields(query, refId, state, count, entry, fieldsOk, answer)
-                            case _: RefUnreadable{"surplus", answer}
-                        case _: RefUnreadable{"short", answer}
-                    case _: RefUnreadable{"short", answer}
+                    case Nil{}: ref_decide(query, refId, state, count, entry, shape, answer)
+                    case _: RefUnreadable{"surplus", answer}
                 case _: RefUnreadable{"short", answer}
             case _: RefUnreadable{"short", answer}
         case _: RefUnreadable{"short", answer}
     case _: RefUnreadable{"short", answer}
 
-# Exactly one row of six columns; anything else is unreadable rather than a record.
-def ref_lookup_decode(+row: String) -> RefLookup:
+# Exactly one row of five columns, decoded against the identity the caller requested.
+def ref_lookup_decode(+query: String, +refId: String, +row: String) -> RefLookup:
   match Tx.split_lines(row):
     case Nil{}: RefUnreadable{"empty", row}
     case +line <> +rest:
       match rest:
-        case Nil{}: ref_lookup_tabs(Tx.split_tabs(line), row)
+        case Nil{}: ref_lookup_tabs(query, refId, Tx.split_tabs(line), row)
         case _: RefUnreadable{"surplus", row}
 
-def ref_after(result: Result<&1,&1,U32 & String,String>) -> IO(Result<&1,&1,U32 & String,RefLookup>):
+def ref_after(+query: String, +refId: String, result: Result<&1,&1,U32 & String,String>) -> IO(Result<&1,&1,U32 & String,RefLookup>):
   match result:
     case Fail{error}: IO.pure(Result<&1,&1,U32 & String,RefLookup>, Fail{error})
-    case Done{+rows}: IO.pure(Result<&1,&1,U32 & String,RefLookup>, Done{ref_lookup_decode(rows)})
+    case Done{+rows}: IO.pure(Result<&1,&1,U32 & String,RefLookup>, Done{ref_lookup_decode(query, refId, rows)})
 
 # The bound lookup. A host or binding failure stays a failure rather than a lookup
 # answer, so an unavailable binding can never read as an absent ref.
 def ref_lookup(+db: String, +binding: String, +query: String, +refId: String) -> IO(Result<&1,&1,U32 & String,RefLookup>):
   do IO<Result<&1,&1,U32 & String,RefLookup>>:
     result : Result<&1,&1,U32 & String,String> <- DB.Sql.query_bound(db, binding, ref_lookup_sql(query, refId))
-    ref_after(result)
+    ref_after(query, refId, result)
 
 def json_or_null(+value: String) -> String:
   Bool.pick(String, String.is_empty(value), "NULL", "json(" ++ C.q(value) ++ ")")
