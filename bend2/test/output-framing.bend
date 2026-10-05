@@ -1,9 +1,10 @@
 # Executable corpus for bend2/src/receive/output-framing.bend.
-# CLAIM: every named case calls the public framer and compares the complete typed result,
+# CLAIM: every ordinary corpus case calls the public framer through frame_prefix, and every
+# control case calls a comparator helper directly. Both compare the complete typed result,
 # including the retained request and observation, every frame range with its exact bytes in
 # order, the pending suffix, the last complete boundary, the inspected extent and the refusal
 # reason. Control groups assert the comparators by requiring inequality when exactly one field
-# differs.
+# differs. The fault rows appear in two groups, so their coverage is deliberately repeated.
 # Representation. Case octets are literal byte values, and every position expectation is a
 # literal decimal digit list, so no expectation is copied from the implementation. The captured
 # extent is decimal text, as the API requires.
