@@ -119,6 +119,19 @@ export function createAdapterSession({
     return frame;
   };
 
+  // Secondary evidence never replaces the failure it describes. The record is best effort:
+  // a frozen or sealed failure object, or one whose setter throws, is left untouched so the
+  // original failure still reaches the caller.
+  const recordPublicationFailure = (failure, condition) => {
+    try {
+      if (failure !== null && typeof failure === 'object' && Object.isExtensible(failure)) {
+        failure.publicationFailure = condition ?? null;
+      }
+    } catch {
+      // A refused or unavailable secondary record is dropped; the original failure stands.
+    }
+  };
+
   // A lost or closed connection is an adapter failure. It is never a target-exit
   // assertion: the target keeps its own custody and its own observer.
   const onTransportFailure = (failure) => {
@@ -140,9 +153,7 @@ export function createAdapterSession({
         },
       });
     } catch (publication) {
-      if (failure !== null && typeof failure === 'object') {
-        failure.publicationFailure = publication.condition ?? null;
-      }
+      recordPublicationFailure(failure, publication.condition);
     }
   };
 
@@ -390,9 +401,7 @@ export function createAdapterSession({
         try {
           publish({ query, type: 'failed', payload: { error: { condition, detail: error.detail ?? error.message } } });
         } catch (publication) {
-          if (error !== null && typeof error === 'object') {
-            error.publicationFailure = publication.condition ?? null;
-          }
+          recordPublicationFailure(error, publication.condition);
         }
         if (error instanceof TransportRefusal && error.condition !== 'cdpError') {
           onTransportFailure(error);
@@ -418,9 +427,7 @@ export function createAdapterSession({
         try {
           publish({ query, type: 'failed', payload: { error: { condition, detail: error.detail ?? error.message } } });
         } catch (publication) {
-          if (error !== null && typeof error === 'object') {
-            error.publicationFailure = publication.condition ?? null;
-          }
+          recordPublicationFailure(error, publication.condition);
         }
         if (error instanceof TransportRefusal && error.condition !== 'cdpError') {
           onTransportFailure(error);

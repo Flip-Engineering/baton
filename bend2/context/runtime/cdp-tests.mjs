@@ -972,7 +972,95 @@ test('publisher-refuses-a-missing-caller-identity-and-keeps-the-sequence', async
   assertEqual(resultRefusal === null ? null : resultRefusal.condition, 'publishQueryMissing',
     'a complete frame without a caller identity was accepted');
   assertEqual(session.snapshot().emitted, frames.length, 'the refused complete frame consumed a count');
-  writeFileSync(join(dir, 'case.json'), `${JSON.stringify({ emitted: frames.length, connects, sequences: frames.map((f) => f.sequence) })}\n`);
+
+  // A caller-valid publication whose serialized envelope is invalid reaches envelope
+  // admission with its identity and is refused there. The caller object passes the
+  // complete-frame check and serializes to null, which only envelope admission refuses.
+  let envelopeRefusal = null;
+  try {
+    session.publishResult({ query: 'q-envelope', result: { toJSON: () => null } });
+  } catch (error) {
+    envelopeRefusal = error;
+  }
+  assertEqual(envelopeRefusal === null ? null : envelopeRefusal.condition, 'incompleteResult',
+    'an invalid serialized envelope was published');
+  assertEqual(session.snapshot().emitted, frames.length, 'the refused envelope consumed a count');
+  assertEqual(emitted().length, frames.length, 'the refused envelope emitted a frame');
+
+  // The valid publication after both refusals carries the next sequence, so each refusal is
+  // observed to leave the sequence and the emission untouched.
+  session.publishResult({ query: 'q-envelope-ok', result: { engine: 'cdp' } });
+  const after = emitted();
+  const last = after[after.length - 1];
+  assertEqual(after.length, frames.length + 1, 'the valid publication did not emit exactly one frame');
+  assertEqual(last.sequence, frames[frames.length - 1].sequence + 1,
+    'the valid publication after the refusals did not carry the next sequence');
+  assertEqual(last.type, 'complete', 'the valid publication is not the complete frame');
+  assertEqual(last.query, 'q-envelope-ok', 'the valid publication lost its caller identity');
+  assertEqual(session.snapshot().emitted, after.length, 'the publication count does not match the frames');
+  writeFileSync(join(dir, 'case.json'), `${JSON.stringify({
+    emitted: after.length,
+    connects,
+    sequences: after.map((frame) => frame.sequence),
+    envelopeRefusal: envelopeRefusal === null ? null : envelopeRefusal.condition,
+  })}\n`);
+});
+
+// The failure paths record a refused secondary publication without replacing the failure
+// they report. The original failure here is frozen, and the emission callback fails after
+// its sequence was committed, which is a callback-side effect and not an envelope refusal.
+test('publisher-callback-failure-preserves-the-original-error', async () => {
+  const slug = 'source-publisher-callback-failure';
+  const dir = evidenceDir(slug);
+  const emitted = [];
+  const original = Object.freeze(new Error('stopped by fixture'));
+  const transport = stubTransport({
+    // The startup requests of the launch succeed; the read request fails with the frozen
+    // original error as a plain transport failure.
+    onSend: (method) => {
+      if (method === 'Runtime.getProperties') throw original;
+      return { result: {} };
+    },
+  });
+  const session = createAdapterSession({
+    runtime: 'rt:callback',
+    adapter: 'adapter:fixture',
+    incarnation: '0',
+    connect: async () => transport,
+    emit: ({ frame }) => {
+      emitted.push(frame);
+      // The second emission is the failure frame. It throws after its sequence was
+      // committed, so the committed sequence and publication count both advance.
+      if (emitted.length === 2) throw Object.freeze(new Error('emission refused'));
+    },
+  });
+  await session.execute('launch', { effects: ['controlRuntime'], query: 'q-launch', webSocketUrl: 'ws://127.0.0.1:1/stub' });
+  assertEqual(emitted.length, 1, 'the launch did not publish the accepted frame');
+  let refusal = null;
+  try {
+    await session.send({ query: 'q-read', method: 'Runtime.getProperties', params: { objectId: 'h' } });
+  } catch (error) {
+    refusal = error;
+  }
+  assert(refusal !== null, 'the failing request was reported as success');
+  assertEqual(refusal === original, true, 'the original frozen failure was replaced');
+  assertEqual(Object.isFrozen(refusal), true, 'the original failure lost its frozen state');
+  assertEqual(refusal.message, 'stopped by fixture', 'a different failure reached the caller');
+  assertEqual(refusal.publicationFailure, undefined, 'a secondary record was written to a frozen failure');
+  // Both publications committed before the callback threw: the accepted frame and the
+  // failure frame each consumed a sequence, so this case claims no absent publication.
+  assertEqual(emitted.length, 2, 'the emission count did not match the committed publications');
+  assertEqual(session.snapshot().emitted, 2, 'the publication count did not match the committed publications');
+  assertEqual(emitted[1].type, 'failed', 'the second committed publication is not the failure frame');
+  assertEqual(emitted[1].sequence, 1, 'the failure frame did not carry the next sequence');
+  assertEqual(emitted[1].query, 'q-read', 'the failure frame lost its request identity');
+  assertEqual(emitted[1].payload.error.condition, 'transportError', 'the failure frame carried a wrong condition');
+  assertEqual(emitted[1].payload.error.detail, 'stopped by fixture', 'the failure frame lost the original detail');
+  writeFileSync(join(dir, 'case.json'), `${JSON.stringify({
+    refusal: refusal.message,
+    frozen: Object.isFrozen(refusal),
+    committed: emitted.map((frame) => ({ query: frame.query, sequence: frame.sequence, type: frame.type })),
+  })}\n`);
 });
 
 test('ref-decisions-and-thread-membership', () => {
@@ -1074,7 +1162,7 @@ test('bootstrap-exec-in-place-same-pid-and-declared-environment', async () => {
     await session.execute('launch', { effects: ['controlRuntime'], query: 'q-launch-target', webSocketUrl: endpoint.url });
     const paused = await withDeadline(session.waitFor('Debugger.paused'), 15000, 'initial pause');
     assertEqual(paused.params.reason, 'Break on start', 'initial break');
-    await session.execute('resume-step', { effects: ['controlRuntime'], action: 'resume' });
+    await session.execute('resume-step', { effects: ['controlRuntime'], query: 'q-step-resume', action: 'resume' });
 
     // The target runs, so its heartbeat carries the pid and environment it sees.
     let heartbeat = null;
@@ -1132,7 +1220,7 @@ test('paused-target-breakpoint-stop-and-epoch-mutation-retirement', async () => 
       effects: ['controlRuntime'],
     });
     assert(typeof breakpoint.result.breakpointId === 'string', 'breakpoint id recorded');
-    await session.execute('resume-step', { effects: ['controlRuntime'], action: 'resume' });
+    await session.execute('resume-step', { effects: ['controlRuntime'], query: 'q-step-resume', action: 'resume' });
     const stopped = await withDeadline(
       session.waitFor('Debugger.paused', { predicate: (params) => (params.hitBreakpoints ?? []).length > 0 }),
       15000,
@@ -1173,7 +1261,7 @@ test('paused-target-breakpoint-stop-and-epoch-mutation-retirement', async () => 
       'evaluation advances the mutation generation by exactly one successor');
     assertEqual(session.admitRef(liveRef).condition, 'refRetiredByMutation', 'the live-value ref is retired');
 
-    await session.execute('resume-step', { effects: ['controlRuntime'], action: 'resume' });
+    await session.execute('resume-step', { effects: ['controlRuntime'], query: 'q-step-resume', action: 'resume' });
     const exit = await withDeadline(keeper.exited, 15000, 'target exit');
     assertEqual(exit.code, 0, 'target exited normally');
     const summary = JSON.parse(read(keeper.stdoutPath).trim().split('\n').pop());
@@ -1202,7 +1290,7 @@ test('property-descriptors-do-not-execute-getters', async () => {
       params: { url: pathToFileURL(target).href, lineNumber: breakLine },
       effects: ['controlRuntime'],
     });
-    await session.execute('resume-step', { effects: ['controlRuntime'], action: 'resume' });
+    await session.execute('resume-step', { effects: ['controlRuntime'], query: 'q-step-resume', action: 'resume' });
     const stopped = await withDeadline(
       session.waitFor('Debugger.paused', { predicate: (params) => (params.hitBreakpoints ?? []).length > 0 }),
       15000,
@@ -1228,7 +1316,7 @@ test('property-descriptors-do-not-execute-getters', async () => {
     // The fixture counts getter invocations and is stopped before its own read,
     // so a getter ran exactly once at the end: its own read, and no descriptor
     // read executed it.
-    await session.execute('resume-step', { effects: ['controlRuntime'], action: 'resume' });
+    await session.execute('resume-step', { effects: ['controlRuntime'], query: 'q-step-resume', action: 'resume' });
     const exit = await withDeadline(keeper.exited, 15000, 'target exit');
     assertEqual(exit.code, 0, 'target exited normally');
     const summary = JSON.parse(read(keeper.stdoutPath).trim().split('\n').pop());
@@ -1409,7 +1497,7 @@ test('worker-attachment-records-thread-identity', async () => {
     await withDeadline(session.waitFor('Debugger.paused'), 15000, 'initial pause');
     await session.send({ query: 'q-worker-enable', method: 'NodeWorker.enable', params: { waitForDebuggerOnStart: false } });
     const attached = session.waitFor('NodeWorker.attachedToWorker', { after: 0 });
-    await session.execute('resume-step', { effects: ['controlRuntime'], action: 'resume' });
+    await session.execute('resume-step', { effects: ['controlRuntime'], query: 'q-step-resume', action: 'resume' });
     const event = await withDeadline(attached, 15000, 'worker attachment');
     const workerId = String(event.params.workerInfo?.workerId ?? '');
     assert(workerId.length > 0, 'worker id recorded');
