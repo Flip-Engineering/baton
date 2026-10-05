@@ -771,6 +771,14 @@ class PackageGateReceipt(unittest.TestCase):
         self.assertEqual(result['ordinary']['run_root'], str((self.logs / 'run').resolve()))
         self.assertEqual(result['ordinary']['invocation'], 'ordinary:fixture-nonce')
         self.assertEqual(result['ordinary']['verifier'], self.verifier)
+        self.assertEqual(sorted(result['ordinary']['recomputed']), sorted(self.verdicts))
+        for identity, verdict in result['ordinary']['recomputed'].items():
+            self.assertEqual(verdict['class'], 'intended-law-refusal')
+            self.assertTrue(verdict['qualified'])
+            self.assertEqual(self.verdicts[identity]['streams']['stdout']['path'],
+                             'evidence/' + identity.replace(':', '_') + '.stdout')
+            self.assertIsNotNone(self.verdicts[identity]['baseline'])
+            self.assertIsNotNone(self.verdicts[identity]['delta'])
 
     def test_ordinary_evidence_defects_refuse(self):
         cases = [('incomplete run', dict(complete=False), 'does not declare a completed run'),

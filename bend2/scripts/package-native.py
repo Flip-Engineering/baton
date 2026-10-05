@@ -633,6 +633,8 @@ def ordinary_evidence(index_path, expected, compiler=None, declared_root=None,
     require(index.get('complete') is True,
             'The ordinary evidence index does not declare a completed run')
     identity = index.get('run')
+    require(compiler is not None,
+            'The ordinary evidence is consumed without the compiler it binds')
     require(isinstance(identity, dict), 'The ordinary evidence index records no run identity')
     require(isinstance(envelope, dict), 'The ordinary evidence is consumed without its run envelope')
     for field in ORDINARY_IDENTITY_FIELDS:
@@ -685,6 +687,8 @@ def ordinary_evidence(index_path, expected, compiler=None, declared_root=None,
             'The ordinary evidence index holds no case')
     seen = {}
     baselines = 0
+    baseline_reference = None
+    recomputed = {}
     for position, case in enumerate(cases):
         require(isinstance(case, dict), 'An ordinary case row is not an object')
         identity_id = case.get('id')
@@ -721,10 +725,45 @@ def ordinary_evidence(index_path, expected, compiler=None, declared_root=None,
                     label + ' ' + stream + ' does not match its recorded bytes')
             streams[stream] = data
         control = expected['by_id'].get(identity_id)
-        verify_ordinary_delta(case, root, control, label)
         require(is_finite(case.get('started')) and is_finite(case.get('ended'))
                 and case['ended'] >= case['started'],
                 label + ' records an invalid interval')
+        outcome_claim = {'state': outcome['state'], 'exit_code': outcome['exit_code'],
+                         'signal': outcome['signal'], 'spawn_error': outcome['spawn_error']}
+        stream_records = {stream: dict(case[stream]) for stream in ('stdout', 'stderr')}
+        if identity_id == 'baseline':
+            baseline_reference = {'argv': argv, 'outcome': outcome_claim,
+                                  'streams': stream_records}
+        else:
+            require(baseline_reference is not None,
+                    label + ' is consumed without its baseline reference')
+            delta_record = verify_ordinary_delta(case, root, control, label)
+            require(delta_record['original_sha256'] == sha256(ROOT / control['module']),
+                    label + ' delta original digest is not the admitted module bytes')
+            verdict = classify_control(
+                control,
+                {'process': outcome_claim, 'setup': 'applied',
+                 'stdout': case['stdout'], 'stderr': case['stderr']},
+                stream_records, baseline_reference, root, identity.get('source') or {},
+                (identity.get('compiler') or {}).get('sha256'), compiler_path=compiler,
+                delta=delta_record)
+            require(verdict.get('match') is True and verdict.get('qualified') is True,
+                    label + ' did not classify as a qualified match: '
+                    + json.dumps(verdict.get('class')))
+            require(verdict.get('class') == ORDINARY_INTENDED_CLASS,
+                    label + ' did not classify as an intended refusal: '
+                    + json.dumps(verdict.get('class')))
+            require(verdict.get('attributed_law') == control['law'],
+                    label + ' classifier attributed another law: '
+                    + json.dumps(verdict.get('attributed_law')))
+            claimed = case.get('verdict') or {}
+            require(claimed.get('class') == verdict.get('class'),
+                    label + ' producer verdict disagrees with the recomputed verdict: '
+                    + json.dumps(claimed.get('class')) + ' against '
+                    + json.dumps(verdict.get('class')))
+            recomputed[identity_id] = {key: verdict.get(key) for key in
+                                       ('class', 'attributed_law', 'qualified', 'match',
+                                        'diagnostic_sha256', 'evidence_verified')}
         seen[identity_id] = ordinary_row(identity_id, expected, parent_rows, case)
     require(baselines == 1, 'The ordinary evidence records no baseline compile')
     wanted = {control['id'] for control in expected['controls']}
@@ -742,7 +781,7 @@ def ordinary_evidence(index_path, expected, compiler=None, declared_root=None,
             'invocation': identity['invocation'], 'nonce': identity['nonce'],
             'compiler_sha256': (identity.get('compiler') or {}).get('sha256'),
             'source': source_block, 'verifier': verifier, 'inputs': admitted_inputs,
-            'raw': raw}
+            'recomputed': recomputed, 'raw': raw}
 
 
 def validation(logs, remote=None, ordinary=None, compiler=None, producer_root=None):
