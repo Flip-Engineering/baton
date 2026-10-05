@@ -206,6 +206,10 @@ def cases() -> List<List<U32> & P.PosResult & String>:
       refused("above_domain_maximum",
         [57, 50, 50, 51, 51, 55, 50, 48, 51, 54, 56, 53, 52, 55, 55, 53, 56, 48, 56]),
       "octets-domain-maximum-plus-one-refused"),
+    ([49, 48, 48, 48, 48, 48, 48, 48, 48, 48, 48, 48, 48, 48, 48, 48, 48, 48, 48, 48],
+      refused("above_domain_maximum",
+        [49, 48, 48, 48, 48, 48, 48, 48, 48, 48, 48, 48, 48, 48, 48, 48, 48, 48, 48, 48]),
+      "octets-twenty-digits-refused"),
     ([], refused("empty_position", []), "octets-empty-refused"),
     ([45, 49], refused("not_a_decimal_digit", [45, 49]), "octets-negative-sign-refused"),
     ([43, 49], refused("not_a_decimal_digit", [43, 49]), "octets-positive-sign-refused"),
@@ -309,6 +313,13 @@ def adjacency_rows() -> List<P.PosSpan & P.Pos & P.PosAdjacency & String>:
       "digits-forged-invalid-low-refused"),
     (ordered([1], [2]), pos([1, 10]), adjacency_refused("next_position_invalid", [1], [2], [1, 10]),
       "digits-invalid-next-refused"),
+    (ordered([1], [1, 10]), pos([1]),
+      P.AdjacencyRefused{"high_position_invalid", ordered([1], [1, 10]), pos([1])},
+      "synthetic-forged-invalid-high-refused"),
+    (span_refused("endpoints_reversed", [9], [1]), pos([1]),
+      P.AdjacencyRefused{"endpoints_reversed", span_refused("endpoints_reversed", [9], [1]),
+        pos([1])},
+      "synthetic-span-refusal-propagated"),
   ]
 
 def equality_rows() -> List<P.Pos & P.Pos & P.PosEquality & String>:
@@ -344,6 +355,9 @@ def unequal_compares() -> List<P.PosCompare & P.PosCompare & String>:
       compare_refused("right_position_invalid", [1], [2]), "comparator-compare-reason"),
     (compare_refused("left_position_invalid", [1], [2]),
       compare_refused("left_position_invalid", [0, 1], [2]), "comparator-compare-refused-operand"),
+    (compare_refused("right_position_invalid", [1], [2]),
+      compare_refused("right_position_invalid", [1], [10]),
+      "synthetic-compare-refused-right-operand"),
   ]
 
 def unequal_sums() -> List<P.PosSum & P.PosSum & String>:
@@ -357,6 +371,9 @@ def unequal_sums() -> List<P.PosSum & P.PosSum & String>:
       sum_refused("right_position_invalid", [1], [2]), "comparator-sum-reason"),
     (sum_refused("left_position_invalid", [1], [2]),
       sum_refused("left_position_invalid", [0, 1], [2]), "comparator-sum-refused-operand"),
+    (sum_refused("right_position_invalid", [1], [2]),
+      sum_refused("right_position_invalid", [1], [10]),
+      "synthetic-sum-refused-right-operand"),
   ]
 
 def unequal_spans() -> List<P.PosSpan & P.PosSpan & String>:
@@ -369,6 +386,9 @@ def unequal_spans() -> List<P.PosSpan & P.PosSpan & String>:
       "comparator-span-reason"),
     (span_refused("low_position_invalid", [1], [2]),
       span_refused("low_position_invalid", [0, 1], [2]), "comparator-span-refused-endpoint"),
+    (span_refused("high_position_invalid", [1], [2]),
+      span_refused("high_position_invalid", [1], [10]),
+      "synthetic-span-refused-high-endpoint"),
   ]
 
 def unequal_equalities() -> List<P.PosEquality & P.PosEquality & String>:
@@ -378,6 +398,10 @@ def unequal_equalities() -> List<P.PosEquality & P.PosEquality & String>:
       "comparator-equality-reason"),
     (equality("left_position_invalid", [1], [2]), equality("left_position_invalid", [0, 1], [2]),
       "comparator-equality-refused-operand"),
+    (equality("right_position_invalid", [1], [2]), equality("right_position_invalid", [1], [10]),
+      "synthetic-equality-refused-right-operand"),
+    (P.PositionsEqual{}, equality("left_position_invalid", [1], [2]),
+      "synthetic-equality-refused-versus-success"),
   ]
 
 def unequal_adjacencies() -> List<P.PosAdjacency & P.PosAdjacency & String>:
@@ -390,6 +414,8 @@ def unequal_adjacencies() -> List<P.PosAdjacency & P.PosAdjacency & String>:
       "comparator-adjacency-next-position"),
     (adjacency_refused("endpoints_reversed", [1], [2], [2]),
       adjacency_refused("endpoints_reversed", [1], [3], [2]), "comparator-adjacency-span"),
+    (P.Adjacent{}, adjacency_refused("endpoints_reversed", [1], [2], [2]),
+      "synthetic-adjacency-refused-versus-success"),
   ]
 
 def judge(actual: P.PosResult, expected: P.PosResult, name: String) -> IO(Unit):
@@ -428,12 +454,18 @@ def judge_adjacency(actual: P.PosAdjacency, expected: P.PosAdjacency, name: Stri
     case True{}: IO.pure(Unit, Unit{})
     case False{}: IO.die(Unit, 1, name)
 
+def unequal_result(left: P.PosResult, right: P.PosResult, name: String) -> IO(Unit):
+  +verdict = same_result(left, right)
+  match verdict:
+    case True{}: IO.die(Unit, 1, name)
+    case False{}: IO.pure(Unit, Unit{})
+
 def unequal_result_pair(pair: P.PosResult & P.PosResult & String) -> IO(Unit):
   (left, right, name) = pair
   unequal_result(left, right, name)
 
-def unequal_result(left: P.PosResult, right: P.PosResult, name: String) -> IO(Unit):
-  +verdict = same_result(left, right)
+def unequal_compare(left: P.PosCompare, right: P.PosCompare, name: String) -> IO(Unit):
+  +verdict = same_compare(left, right)
   match verdict:
     case True{}: IO.die(Unit, 1, name)
     case False{}: IO.pure(Unit, Unit{})
@@ -442,8 +474,8 @@ def unequal_compare_pair(pair: P.PosCompare & P.PosCompare & String) -> IO(Unit)
   (left, right, name) = pair
   unequal_compare(left, right, name)
 
-def unequal_compare(left: P.PosCompare, right: P.PosCompare, name: String) -> IO(Unit):
-  +verdict = same_compare(left, right)
+def unequal_sum(left: P.PosSum, right: P.PosSum, name: String) -> IO(Unit):
+  +verdict = same_sum(left, right)
   match verdict:
     case True{}: IO.die(Unit, 1, name)
     case False{}: IO.pure(Unit, Unit{})
@@ -452,8 +484,8 @@ def unequal_sum_pair(pair: P.PosSum & P.PosSum & String) -> IO(Unit):
   (left, right, name) = pair
   unequal_sum(left, right, name)
 
-def unequal_sum(left: P.PosSum, right: P.PosSum, name: String) -> IO(Unit):
-  +verdict = same_sum(left, right)
+def unequal_span(left: P.PosSpan, right: P.PosSpan, name: String) -> IO(Unit):
+  +verdict = same_span(left, right)
   match verdict:
     case True{}: IO.die(Unit, 1, name)
     case False{}: IO.pure(Unit, Unit{})
@@ -462,8 +494,8 @@ def unequal_span_pair(pair: P.PosSpan & P.PosSpan & String) -> IO(Unit):
   (left, right, name) = pair
   unequal_span(left, right, name)
 
-def unequal_span(left: P.PosSpan, right: P.PosSpan, name: String) -> IO(Unit):
-  +verdict = same_span(left, right)
+def unequal_equality(left: P.PosEquality, right: P.PosEquality, name: String) -> IO(Unit):
+  +verdict = same_equality(left, right)
   match verdict:
     case True{}: IO.die(Unit, 1, name)
     case False{}: IO.pure(Unit, Unit{})
@@ -472,8 +504,8 @@ def unequal_equality_pair(pair: P.PosEquality & P.PosEquality & String) -> IO(Un
   (left, right, name) = pair
   unequal_equality(left, right, name)
 
-def unequal_equality(left: P.PosEquality, right: P.PosEquality, name: String) -> IO(Unit):
-  +verdict = same_equality(left, right)
+def unequal_adjacency(left: P.PosAdjacency, right: P.PosAdjacency, name: String) -> IO(Unit):
+  +verdict = same_adjacency(left, right)
   match verdict:
     case True{}: IO.die(Unit, 1, name)
     case False{}: IO.pure(Unit, Unit{})
@@ -481,12 +513,6 @@ def unequal_equality(left: P.PosEquality, right: P.PosEquality, name: String) ->
 def unequal_adjacency_pair(pair: P.PosAdjacency & P.PosAdjacency & String) -> IO(Unit):
   (left, right, name) = pair
   unequal_adjacency(left, right, name)
-
-def unequal_adjacency(left: P.PosAdjacency, right: P.PosAdjacency, name: String) -> IO(Unit):
-  +verdict = same_adjacency(left, right)
-  match verdict:
-    case True{}: IO.die(Unit, 1, name)
-    case False{}: IO.pure(Unit, Unit{})
 
 def check(case: List<U32> & P.PosResult & String) -> IO(Unit):
   (octets, expected, name) = case
