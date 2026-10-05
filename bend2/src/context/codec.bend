@@ -455,6 +455,63 @@ def dispatch_guarded(present: Bool, +req: J.Json, retained_operations: Eng.SS, +
 def codec_dispatch(+req: J.Json, retained_operations: Eng.SS, +grants: Context.Effects) -> Admission:
   dispatch_guarded(subject_chain_present(req, retained_operations), req, retained_operations, grants)
 
+# A minimal accepted closed request, so these laws exercise the real profile.
+def Request_sample() -> J.Json:
+  J.Jobj{J.Jpair{"version", J.Jint{1},
+    J.Jpair{"subject", J.Jobj{J.Jpair{"kind", J.Jstr{"symbol"}, J.Jpair{"path", J.Jstr{"a.ts"}, J.Jnil{}}}},
+    J.Jpair{"select", J.Jarr{J.Jstr{"definition"}, J.Jnil{}}, J.Jnil{}}}}}
+
+def RawRefused_sample() -> J.Json:
+  J.Jstr{"not an object"}
+
+def Runtime_sample() -> J.Json:
+  J.Jobj{J.Jpair{"version", J.Jint{1},
+    J.Jpair{"subject", J.Jobj{J.Jpair{"kind", J.Jstr{"runtime"}, J.Jpair{"intent", J.Jstr{"observe"}, J.Jnil{}}}},
+    J.Jpair{"select", J.Jarr{J.Jstr{"state"}, J.Jnil{}}, J.Jnil{}}}}}
+
+def Unmapped_runtime_override_sample() -> J.Json:
+  J.Jobj{J.Jpair{"version", J.Jint{1},
+    J.Jpair{"subject", J.Jobj{J.Jpair{"kind", J.Jstr{"runtime"}, J.Jpair{"intent", J.Jstr{"breakpoint"}, J.Jnil{}}}},
+    J.Jpair{"select", J.Jarr{J.Jstr{"state"}, J.Jnil{}},
+    J.Jpair{"options", J.Jobj{J.Jpair{"tools", J.Jobj{J.Jnil{}}, J.Jnil{}}}, J.Jnil{}}}}}}
+
+# Object builders keep the canonical field arities in one place.
+def cobj1(k1: String, v1: J.Json) -> J.Json:
+  J.Jobj{J.Jpair{k1, v1, J.Jnil{}}}
+
+def cobj2(k1: String, v1: J.Json, k2: String, v2: J.Json) -> J.Json:
+  J.Jobj{J.Jpair{k1, v1, J.Jpair{k2, v2, J.Jnil{}}}}
+
+def cobj3(k1: String, v1: J.Json, k2: String, v2: J.Json, k3: String, v3: J.Json) -> J.Json:
+  J.Jobj{J.Jpair{k1, v1, J.Jpair{k2, v2, J.Jpair{k3, v3, J.Jnil{}}}}}
+
+def carr1(a: J.Json) -> J.Json:
+  J.Jarr{a, J.Jnil{}}
+
+def Model_join_sample() -> J.Json:
+  cobj3("version", J.Jint{1},
+        "subject", cobj1("kind", J.Jstr{"model"}),
+        "select", carr1(J.Jstr{"codeAccesses"}))
+
+def Unknown_subject_sample() -> J.Json:
+  J.Jobj{J.Jpair{"version", J.Jint{1},
+    J.Jpair{"subject", J.Jobj{J.Jpair{"kind", J.Jstr{"mystery"}, J.Jnil{}}}},
+    J.Jpair{"select", J.Jarr{J.Jstr{"definition"}, J.Jnil{}}, J.Jnil{}}}}
+
+def Ref_override_sample() -> J.Json:
+  J.Jobj{J.Jpair{"version", J.Jint{1},
+    J.Jpair{"subject", J.Jobj{J.Jpair{"kind", J.Jstr{"ref"}, J.Jnil{}}}},
+    J.Jpair{"select", J.Jarr{J.Jstr{"definition"}, J.Jnil{}},
+    J.Jpair{"options", J.Jobj{J.Jpair{"tools", J.Jobj{J.Jnil{}}, J.Jnil{}}}, J.Jnil{}}}}}
+
+# A source request that selects the SQL join and carries a request-local tool
+# override, so both obligations are in one chain.
+def Join_override_sample() -> J.Json:
+  J.Jobj{J.Jpair{"version", J.Jint{1},
+    J.Jpair{"subject", J.Jobj{J.Jpair{"kind", J.Jstr{"symbol"}, J.Jpair{"path", J.Jstr{"a.ts"}, J.Jnil{}}}},
+    J.Jpair{"select", J.Jarr{J.Jstr{"databaseAccesses"}, J.Jnil{}},
+    J.Jpair{"options", J.Jobj{J.Jpair{"tools", J.Jobj{J.Jnil{}}, J.Jnil{}}}, J.Jnil{}}}}}}
+
 law codec_law_an_admitted_caller_keeps_its_whole_operation_chain:
   {chain_count(admitted_operations(dispatch_admission(Request_sample(), request_operation_chain(Join_override_sample(), Eng.ss_empty()), Context.two_effects(Context.EfPlanTargetSql{}, Context.EfExecuteTarget{})))) == 2 : U32}
 
@@ -526,63 +583,6 @@ law codec_law_a_ref_chain_uses_the_retained_selector_operation:
 
 def codec_law_a_ref_chain_uses_the_retained_selector_operation():
   {==}
-
-# A minimal accepted closed request, so these laws exercise the real profile.
-def Request_sample() -> J.Json:
-  J.Jobj{J.Jpair{"version", J.Jint{1},
-    J.Jpair{"subject", J.Jobj{J.Jpair{"kind", J.Jstr{"symbol"}, J.Jpair{"path", J.Jstr{"a.ts"}, J.Jnil{}}}},
-    J.Jpair{"select", J.Jarr{J.Jstr{"definition"}, J.Jnil{}}, J.Jnil{}}}}}
-
-def RawRefused_sample() -> J.Json:
-  J.Jstr{"not an object"}
-
-def Runtime_sample() -> J.Json:
-  J.Jobj{J.Jpair{"version", J.Jint{1},
-    J.Jpair{"subject", J.Jobj{J.Jpair{"kind", J.Jstr{"runtime"}, J.Jpair{"intent", J.Jstr{"observe"}, J.Jnil{}}}},
-    J.Jpair{"select", J.Jarr{J.Jstr{"state"}, J.Jnil{}}, J.Jnil{}}}}}
-
-def Unmapped_runtime_override_sample() -> J.Json:
-  J.Jobj{J.Jpair{"version", J.Jint{1},
-    J.Jpair{"subject", J.Jobj{J.Jpair{"kind", J.Jstr{"runtime"}, J.Jpair{"intent", J.Jstr{"breakpoint"}, J.Jnil{}}}},
-    J.Jpair{"select", J.Jarr{J.Jstr{"state"}, J.Jnil{}},
-    J.Jpair{"options", J.Jobj{J.Jpair{"tools", J.Jobj{J.Jnil{}}, J.Jnil{}}}, J.Jnil{}}}}}}
-
-# Object builders keep the canonical field arities in one place.
-def cobj1(k1: String, v1: J.Json) -> J.Json:
-  J.Jobj{J.Jpair{k1, v1, J.Jnil{}}}
-
-def cobj2(k1: String, v1: J.Json, k2: String, v2: J.Json) -> J.Json:
-  J.Jobj{J.Jpair{k1, v1, J.Jpair{k2, v2, J.Jnil{}}}}
-
-def cobj3(k1: String, v1: J.Json, k2: String, v2: J.Json, k3: String, v3: J.Json) -> J.Json:
-  J.Jobj{J.Jpair{k1, v1, J.Jpair{k2, v2, J.Jpair{k3, v3, J.Jnil{}}}}}
-
-def carr1(a: J.Json) -> J.Json:
-  J.Jarr{a, J.Jnil{}}
-
-def Model_join_sample() -> J.Json:
-  cobj3("version", J.Jint{1},
-        "subject", cobj1("kind", J.Jstr{"model"}),
-        "select", carr1(J.Jstr{"codeAccesses"}))
-
-def Unknown_subject_sample() -> J.Json:
-  J.Jobj{J.Jpair{"version", J.Jint{1},
-    J.Jpair{"subject", J.Jobj{J.Jpair{"kind", J.Jstr{"mystery"}, J.Jnil{}}}},
-    J.Jpair{"select", J.Jarr{J.Jstr{"definition"}, J.Jnil{}}, J.Jnil{}}}}
-
-def Ref_override_sample() -> J.Json:
-  J.Jobj{J.Jpair{"version", J.Jint{1},
-    J.Jpair{"subject", J.Jobj{J.Jpair{"kind", J.Jstr{"ref"}, J.Jnil{}}}},
-    J.Jpair{"select", J.Jarr{J.Jstr{"definition"}, J.Jnil{}},
-    J.Jpair{"options", J.Jobj{J.Jpair{"tools", J.Jobj{J.Jnil{}}, J.Jnil{}}}, J.Jnil{}}}}}
-
-# A source request that selects the SQL join and carries a request-local tool
-# override, so both obligations are in one chain.
-def Join_override_sample() -> J.Json:
-  J.Jobj{J.Jpair{"version", J.Jint{1},
-    J.Jpair{"subject", J.Jobj{J.Jpair{"kind", J.Jstr{"symbol"}, J.Jpair{"path", J.Jstr{"a.ts"}, J.Jnil{}}}},
-    J.Jpair{"select", J.Jarr{J.Jstr{"databaseAccesses"}, J.Jnil{}},
-    J.Jpair{"options", J.Jobj{J.Jpair{"tools", J.Jobj{J.Jnil{}}, J.Jnil{}}}, J.Jnil{}}}}}}
 
 law codec_law_an_override_adds_execute_target_without_dropping_a_plan:
   {Eng.admit_operations(chain_ss(request_operation_chain(Join_override_sample(), Eng.ss_empty())), grants_ss(Context.one_effect(Context.EfPlanTargetSql{}))) == Eng.AdMissingEffect{"executeTarget"} : Eng.Admission}
@@ -865,9 +865,6 @@ def subject_value_ok(+v: J.Json) -> Bool:
 # The retained selector is the producer's object, so this path requires it. Its
 # member names must be distinct: a duplicate key would make the derived kind
 # ambiguous, and the retained decode path has no SQL duplicate check behind it.
-def subject_object_ok(+members: J.Json) -> Bool:
-  Bool.pick(Bool, distinct_keys(members), known_kind(Req.member_lookup("kind", members)), False{})
-
 def distinct_keys(members: J.Json) -> Bool:
   match members:
     case J.Jpair{+key, +value, +rest}: Bool.pick(Bool, key_absent(key, rest), distinct_keys(rest), False{})
@@ -891,6 +888,10 @@ def key_absent(key: String, rest: J.Json) -> Bool:
     case J.Jstr{+value}: True{}
     case J.Jarr{+head, +tail}: True{}
     case J.Jobj{+members}: True{}
+
+def subject_object_ok(+members: J.Json) -> Bool:
+  Bool.pick(Bool, distinct_keys(members), known_kind(Req.member_lookup("kind", members)), False{})
+
 
 def known_kind(m: Maybe<&2, J.Json>) -> Bool:
   match m:
@@ -982,10 +983,10 @@ def ref_projections_of(d: RefDecode) -> Proj:
 def ref_object_of(members: J.Json) -> J.Json:
   J.Jobj{members}
 
-def ref_members_base(id: String, subject: String, projections: J.Json) -> J.Json:
+def ref_members_base(id: String, subject: J.Json, projections: J.Json) -> J.Json:
   J.Jpair{"id", J.Jstr{id},
   J.Jpair{"engine", J.Jstr{"typescript"},
-  J.Jpair{"subject", J.Jstr{subject},
+  J.Jpair{"subject", subject,
   J.Jpair{"snapshotId", J.Jstr{"s1"},
   J.Jpair{"projections", projections, J.Jnil{}}}}}}
 
@@ -997,19 +998,19 @@ def ref_members_extra(id: String, projections: J.Json) -> J.Json:
   J.Jpair{"projections", projections, J.Jpair{"extra", J.Jstr{"x"}, J.Jnil{}}}}}}}
 
 law codec_law_a_retained_reference_decodes_its_fields:
-  {ref_id_of(ref_decode(ref_object_of(ref_members_base("[\"source\",\"/a.ts\"]", J.Jarr{J.Jstr{"definition"}, J.Jnil{}})))) == "[\"source\",\"/a.ts\"]" : String}
+  {ref_id_of(ref_decode(ref_object_of(ref_members_base("[\"source\",\"/a.ts\"]", cobj1("kind", J.Jstr{"symbol"}), J.Jarr{J.Jstr{"definition"}, J.Jnil{}})))) == "[\"source\",\"/a.ts\"]" : String}
 
 def codec_law_a_retained_reference_decodes_its_fields():
   {==}
 
 law codec_law_a_retained_reference_keeps_its_projection_chain:
-  {ref_projections_of(ref_decode(ref_object_of(ref_members_base("r", "symbol", J.Jarr{J.Jstr{"definition"}, J.Jarr{J.Jstr{"calls"}, J.Jnil{}}})))) == Pcons{"definition", Pcons{"calls", Pnone{}}} : Proj}
+  {ref_projections_of(ref_decode(ref_object_of(ref_members_base("r", cobj1("kind", J.Jstr{"symbol"}), J.Jarr{J.Jstr{"definition"}, J.Jarr{J.Jstr{"calls"}, J.Jnil{}}})))) == Pcons{"definition", Pcons{"calls", Pnone{}}} : Proj}
 
 def codec_law_a_retained_reference_keeps_its_projection_chain():
   {==}
 
 law codec_law_a_retained_reference_counts_its_projections:
-  {proj_count(ref_projections_of(ref_decode(ref_object_of(ref_members_base("r", "symbol", J.Jarr{J.Jstr{"definition"}, J.Jarr{J.Jstr{"calls"}, J.Jnil{}}}))))) == 2 : U32}
+  {proj_count(ref_projections_of(ref_decode(ref_object_of(ref_members_base("r", cobj1("kind", J.Jstr{"symbol"}), J.Jarr{J.Jstr{"definition"}, J.Jarr{J.Jstr{"calls"}, J.Jnil{}}}))))) == 2 : U32}
 
 def codec_law_a_retained_reference_counts_its_projections():
   {==}
@@ -1021,13 +1022,13 @@ def codec_law_a_reference_with_an_unknown_field_refuses():
   {==}
 
 law codec_law_a_reference_with_an_empty_id_refuses:
-  {ref_condition(ref_decode(ref_object_of(ref_members_base("", "symbol", J.Jarr{J.Jnil{}, J.Jnil{}})))) == "invalidRefField" : String}
+  {ref_condition(ref_decode(ref_object_of(ref_members_base("", cobj1("kind", J.Jstr{"symbol"}), J.Jarr{J.Jnil{}, J.Jnil{}})))) == "invalidRefField" : String}
 
 def codec_law_a_reference_with_an_empty_id_refuses():
   {==}
 
 law codec_law_a_reference_requires_a_string_projection_list:
-  {ref_condition(ref_decode(ref_object_of(ref_members_base("r", "symbol", J.Jarr{J.Jint{1}, J.Jnil{}})))) == "invalidRefField" : String}
+  {ref_condition(ref_decode(ref_object_of(ref_members_base("r", cobj1("kind", J.Jstr{"symbol"}), J.Jarr{J.Jint{1}, J.Jnil{}})))) == "invalidRefField" : String}
 
 def codec_law_a_reference_requires_a_string_projection_list():
   {==}
@@ -1601,8 +1602,8 @@ def ref_snapshot_of(d: RefDecode) -> String:
     case RdRef{+id, +engine, +subject_kind, +subject_text, snapshot_id, +projections}: snapshot_id
     case RdBad{+condition}: SNil{}
 
-def ref_record_of(d: RefDecode) -> Refs.RefRecord:
-  Refs.Ref{ref_id_of(d), ref_engine_of(d), ref_subject_of(d), ref_snapshot_of(d), ss_of_proj(ref_projections_of(d))}
+def ref_record_of(d: RefDecode, policy: String) -> Refs.RefRecord:
+  Refs.Ref{ref_id_of(d), ref_engine_of(d), ref_subject_of(d), ref_subject_text_of(d), ref_snapshot_of(d), policy, ss_of_proj(ref_projections_of(d))}
 
 # The retained selector's operations are authenticated evidence carried beside the
 # record, because `RefRecord` does not hold them. Its effects come from Core, not
@@ -1625,7 +1626,7 @@ def ref_gate(present: Bool, k: Eng.OpsKnown, +record: Refs.RefRecord, current_po
     ref_known(k, record, current_policy, operations, requested, applicability, granted, fresh, known),
     Refs.RUnverified{"retainedSelectorOperationsUnavailable"})
 
-def ref_admit(+record: Refs.RefRecord, current_policy: String, +operations: Eng.SS, requested: Eng.SS, applicability: Snap.Applies, granted: Eng.SS, fresh: String, known: Bool+record: Refs.RefRecord, current_policy: String, +operations: Eng.SS, requested: Eng.SS, applicability: Snap.Applies, granted: Eng.SS, fresh: String, known: Bool, "p1") -> Refs.RefDecision:
+def ref_admit(+record: Refs.RefRecord, current_policy: String, +operations: Eng.SS, requested: Eng.SS, applicability: Snap.Applies, granted: Eng.SS, fresh: String, known: Bool) -> Refs.RefDecision:
   ref_gate(Eng.ss_nonempty(operations), Eng.operations_known(operations), record, current_policy, operations, requested, applicability, granted, fresh, known)
 
 def frame_text(d: FrameDecision) -> String:
@@ -1660,37 +1661,37 @@ def codec_law_an_unestablished_policy_is_refused():
   {==}
 
 law codec_law_a_grant_free_source_expansion_is_allowed:
-  {Refs.condition(ref_admit(record_probe("symbol", "p1", Eng.ss_one("definition")), Eng.ss_one("sourceAnalysis"), Eng.ss_one("definition"), Snap.ACurrent{}, Eng.ss_empty(), "fresh", True{}record_probe("symbol", "p1", Eng.ss_one("definition")), Eng.ss_one("sourceAnalysis"), Eng.ss_one("definition"), Snap.ACurrent{}, Eng.ss_empty(), "fresh", True{}, "p1")) == "ok" : String}
+  {Refs.condition(ref_admit(record_probe("symbol", "p1", Eng.ss_one("definition")), "p1", Eng.ss_one("sourceAnalysis"), Eng.ss_one("definition"), Snap.ACurrent{}, Eng.ss_empty(), "fresh", True{})) == "ok" : String}
 
 def codec_law_a_grant_free_source_expansion_is_allowed():
   {==}
 
 law codec_law_a_planning_expansion_without_its_grant_is_refused:
-  {Refs.condition(ref_admit(record_probe("symbol", "p1", Eng.ss_one("definition")), Eng.ss_one("codeAccessJoin"), Eng.ss_one("definition"), Snap.ACurrent{}, Eng.ss_empty(), "fresh", True{}record_probe("symbol", "p1", Eng.ss_one("definition")), Eng.ss_one("codeAccessJoin"), Eng.ss_one("definition"), Snap.ACurrent{}, Eng.ss_empty(), "fresh", True{}, "p1")) == "effectNotGranted" : String}
+  {Refs.condition(ref_admit(record_probe("symbol", "p1", Eng.ss_one("definition")), "p1", Eng.ss_one("codeAccessJoin"), Eng.ss_one("definition"), Snap.ACurrent{}, Eng.ss_empty(), "fresh", True{})) == "effectNotGranted" : String}
 
 def codec_law_a_planning_expansion_without_its_grant_is_refused():
   {==}
 
 law codec_law_a_planning_expansion_with_its_grant_is_allowed:
-  {Refs.condition(ref_admit(record_probe("symbol", "p1", Eng.ss_one("definition")), Eng.ss_one("codeAccessJoin"), Eng.ss_one("definition"), Snap.ACurrent{}, Eng.ss_one("planTargetSql"), "fresh", True{}record_probe("symbol", "p1", Eng.ss_one("definition")), Eng.ss_one("codeAccessJoin"), Eng.ss_one("definition"), Snap.ACurrent{}, Eng.ss_one("planTargetSql"), "fresh", True{}, "p1")) == "ok" : String}
+  {Refs.condition(ref_admit(record_probe("symbol", "p1", Eng.ss_one("definition")), "p1", Eng.ss_one("codeAccessJoin"), Eng.ss_one("definition"), Snap.ACurrent{}, Eng.ss_one("planTargetSql"), "fresh", True{})) == "ok" : String}
 
 def codec_law_a_planning_expansion_with_its_grant_is_allowed():
   {==}
 
 law codec_law_a_projection_widening_is_refused:
-  {Refs.condition(ref_admit(record_probe("symbol", "p1", Eng.ss_one("definition")), Eng.ss_one("sourceAnalysis"), Eng.ss_one("calls"), Snap.ACurrent{}, Eng.ss_empty(), "fresh", True{}record_probe("symbol", "p1", Eng.ss_one("definition")), Eng.ss_one("sourceAnalysis"), Eng.ss_one("calls"), Snap.ACurrent{}, Eng.ss_empty(), "fresh", True{}, "p1")) == "projectionRefused" : String}
+  {Refs.condition(ref_admit(record_probe("symbol", "p1", Eng.ss_one("definition")), "p1", Eng.ss_one("sourceAnalysis"), Eng.ss_one("calls"), Snap.ACurrent{}, Eng.ss_empty(), "fresh", True{})) == "projectionRefused" : String}
 
 def codec_law_a_projection_widening_is_refused():
   {==}
 
 law codec_law_a_missing_retained_operation_authority_refuses:
-  {Refs.condition(ref_admit(record_probe("symbol", "p1", Eng.ss_one("definition")), Eng.ss_empty(), Eng.ss_one("definition"), Snap.ACurrent{}, Eng.ss_empty(), "fresh", True{}record_probe("symbol", "p1", Eng.ss_one("definition")), Eng.ss_empty(), Eng.ss_one("definition"), Snap.ACurrent{}, Eng.ss_empty(), "fresh", True{}, "p1")) == "unverifiedReference" : String}
+  {Refs.condition(ref_admit(record_probe("symbol", "p1", Eng.ss_one("definition")), "p1", Eng.ss_empty(), Eng.ss_one("definition"), Snap.ACurrent{}, Eng.ss_empty(), "fresh", True{})) == "unverifiedReference" : String}
 
 def codec_law_a_missing_retained_operation_authority_refuses():
   {==}
 
 law codec_law_an_unknown_retained_operation_refuses:
-  {Refs.condition(ref_admit(record_probe("symbol", "p1", Eng.ss_one("definition")), Eng.ss_one("notAnOperation"), Eng.ss_one("definition"), Snap.ACurrent{}, Eng.ss_empty(), "fresh", True{}record_probe("symbol", "p1", Eng.ss_one("definition")), Eng.ss_one("notAnOperation"), Eng.ss_one("definition"), Snap.ACurrent{}, Eng.ss_empty(), "fresh", True{}, "p1")) == "unverifiedReference" : String}
+  {Refs.condition(ref_admit(record_probe("symbol", "p1", Eng.ss_one("definition")), "p1", Eng.ss_one("notAnOperation"), Eng.ss_one("definition"), Snap.ACurrent{}, Eng.ss_empty(), "fresh", True{})) == "unverifiedReference" : String}
 
 def codec_law_an_unknown_retained_operation_refuses():
   {==}
@@ -1809,8 +1810,8 @@ def bad_utf8_rows() -> Req.Rows:
 # A reference that came through the actual decoder composes into Core, and the
 # composed admission is exercised on that decoded record rather than on a
 # hand-built one.
-def decoded_record(id: String, subject: String, +projections: J.Json) -> Refs.RefRecord:
-  ref_record_of(ref_decode(ref_object_of(ref_members_base(id, subject, projections))))
+def decoded_record(id: String, subject: J.Json, policy: String, +projections: J.Json) -> Refs.RefRecord:
+  ref_record_of(ref_decode(ref_object_of(ref_members_base(id, subject, projections))), policy)
 
 def ref_members_subject(id: String, subject: J.Json, +projections: J.Json) -> J.Json:
   J.Jpair{"id", J.Jstr{id},
@@ -1877,21 +1878,21 @@ def codec_law_an_unknown_subject_kind_in_an_object_refuses():
   {==}
 
 law codec_law_a_decoded_reference_composes_into_core:
-  {Refs.ref_id(decoded_record("r9", "symbol", J.Jarr{J.Jstr{"definition"}, J.Jnil{}})) == "r9" : String}
+  {Refs.ref_id(decoded_record("r9", cobj1("kind", J.Jstr{"symbol"}), "p1", J.Jarr{J.Jstr{"definition"}, J.Jnil{}})) == "r9" : String}
 
 def codec_law_a_decoded_reference_composes_into_core():
   {==}
 
 law codec_law_a_decoded_reference_is_admitted_for_a_grant_free_expansion:
-  {Refs.condition(ref_admit(decoded_record("r9", "symbol", J.Jarr{J.Jstr{"definition"}, J.Jnil{}}), Eng.ss_one("sourceAnalysis"), Eng.ss_one("definition"), Snap.ACurrent{}, Eng.ss_empty(), "fresh", True{}decoded_record("r9", "symbol", J.Jarr{J.Jstr{"definition"}, J.Jnil{}}), Eng.ss_one("sourceAnalysis"), Eng.ss_one("definition"), Snap.ACurrent{}, Eng.ss_empty(), "fresh", True{}, "p1")) == "ok" : String}
+  {Refs.condition(ref_admit(decoded_record("r9", cobj1("kind", J.Jstr{"symbol"}), "p1", J.Jarr{J.Jstr{"definition"}, J.Jnil{}}), "p1", Eng.ss_one("sourceAnalysis"), Eng.ss_one("definition"), Snap.ACurrent{}, Eng.ss_empty(), "fresh", True{})) == "ok" : String}
 
 def codec_law_a_decoded_reference_is_admitted_for_a_grant_free_expansion():
   {==}
 
-law codec_law_a_decoded_reference_with_an_unknown_subject_refuses:
-  {Refs.condition(ref_admit(decoded_record("r9", "mystery", J.Jarr{J.Jstr{"definition"}, J.Jnil{}}), Eng.ss_one("sourceAnalysis"), Eng.ss_one("definition"), Snap.ACurrent{}, Eng.ss_empty(), "fresh", True{}decoded_record("r9", "mystery", J.Jarr{J.Jstr{"definition"}, J.Jnil{}}), Eng.ss_one("sourceAnalysis"), Eng.ss_one("definition"), Snap.ACurrent{}, Eng.ss_empty(), "fresh", True{}, "p1")) == "subjectRefused" : String}
+law codec_law_a_kind_outside_core_support_is_refused_by_admission:
+  {Refs.condition(ref_admit(decoded_record("r9", cobj1("kind", J.Jstr{"ref"}), "p1", J.Jarr{J.Jstr{"definition"}, J.Jnil{}}), "p1", Eng.ss_one("sourceAnalysis"), Eng.ss_one("definition"), Snap.ACurrent{}, Eng.ss_empty(), "fresh", True{})) == "subjectRefused" : String}
 
-def codec_law_a_decoded_reference_with_an_unknown_subject_refuses():
+def codec_law_a_kind_outside_core_support_is_refused_by_admission():
   {==}
 
 
@@ -1899,6 +1900,10 @@ def codec_law_a_decoded_reference_with_an_unknown_subject_refuses():
 
 
 def ref_members_nosubject(+projections: J.Json) -> J.Json:
+  J.Jpair{"id", J.Jstr{"r9"},
+  J.Jpair{"engine", J.Jstr{"typescript"},
+  J.Jpair{"snapshotId", J.Jstr{"s1"},
+  J.Jpair{"projections", projections, J.Jnil{}}}}}
 
 def ref_members_wrong_engine(+projections: J.Json) -> J.Json:
   J.Jpair{"id", J.Jstr{"r9"},
