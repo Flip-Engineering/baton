@@ -123,36 +123,62 @@ if (version !== 'bend 2.0.25') {
 
 cpSync(join(ROOT, 'bend2'), join(SCRATCH, 'bend2'), { recursive: true });
 
-const rows = laws();
+const rows = laws(join(SCRATCH, 'bend2', 'src'));
 let failures = 0;
 
-// Pristine bytes of every module the controls below mutate, read from the
-// scratch copy itself, so discovery and every restore use the one copied
-// snapshot and never re-read the live tree.
+// Pristine text of every module the controls below mutate, read from the
+// scratch copy itself as explicit UTF-8, so discovery, textual replacement
+// and every restore use the one copied snapshot and never re-read the live
+// tree.
 const pristine = new Map();
 const capture = (repoPath) => {
-  if (!pristine.has(repoPath)) pristine.set(repoPath, readFileSync(join(SCRATCH, repoPath)));
+  if (!pristine.has(repoPath)) pristine.set(repoPath, readFileSync(join(SCRATCH, repoPath), 'utf8'));
 };
 for (const { file } of rows) capture(relative(ROOT, file));
 for (const mutation of MUTATIONS) capture(mutation.file);
 
 // Raw per-case evidence for the consumption step: every control's complete
 // output bytes are retained under the run-private scratch, including the
-// baseline and every passing negative control. The stdout row and summary
-// contract is unchanged.
+// baseline and every passing negative control. The index is rewritten after
+// each case with its actual terminal outcome and argv, and marks the record
+// incomplete until the final control finishes; a run that stops early leaves
+// a partial index that says so. The stdout row and summary contract is
+// unchanged.
 mkdirSync(join(SCRATCH, 'evidence'), { recursive: true });
 const evidenceIndex = [];
-const retainEvidence = (id, output) => {
+let evidenceComplete = false;
+const writeEvidenceIndex = () => {
+  writeFileSync(join(SCRATCH, 'evidence', 'index.json'), JSON.stringify({
+    schema: 'capacity-controls/ordinary-evidence@1',
+    complete: evidenceComplete,
+    cases: evidenceIndex,
+  }, null, 2) + '\n');
+};
+const retainEvidence = (id, output, outcome, argv) => {
   const name = `${id.replace(/[^A-Za-z0-9_.-]/g, '_')}.output`;
   writeFileSync(join(SCRATCH, 'evidence', name), output);
-  evidenceIndex.push({ id, path: `evidence/${name}`, bytes: Buffer.byteLength(output), sha256: sha256Of(output) });
+  evidenceIndex.push({
+    id,
+    path: `evidence/${name}`,
+    bytes: Buffer.byteLength(output),
+    sha256: sha256Of(output),
+    outcome: { state: outcome.state, exit_code: outcome.exitCode, signal: outcome.signal },
+    argv,
+  });
+  writeEvidenceIndex();
 };
 function sha256Of(text) {
   return createHash('sha256').update(text).digest('hex');
 }
 
 const baseline = compile(BEND, SCRATCH);
-retainEvidence('baseline', baseline.output);
+retainEvidence('baseline', baseline.output,
+  {
+    state: baseline.exitCode !== null || baseline.signal !== null ? 'exited' : 'spawn-error',
+    exitCode: baseline.exitCode,
+    signal: baseline.signal,
+  },
+  [BEND, ENTRY, '--check-only']);
 console.log(JSON.stringify({ check: 'entry compiles with every law proven', passed: baseline.ok }));
 if (!baseline.ok) {
   failures++;
@@ -164,20 +190,33 @@ if (!baseline.ok) {
 for (const { law, file } of rows) {
   const repoPath = relative(ROOT, file);
   const copied = join(SCRATCH, repoPath);
-  const removed = removeProof(copied, law);
-  const control = removed ? compile(BEND, SCRATCH) : { ok: true, output: '', exitCode: null, signal: null };
-  retainEvidence(`proof:${law}`, control.output);
-  const passed = removed && refusedNormally(control) && isTodoRefusal(control.output);
-  if (!passed) failures++;
-  console.log(JSON.stringify({
-    law,
-    module: relative(ROOT, file),
-    proof: removed ? 'removed' : 'missing',
-    gate: passed ? 'refuses' : 'accepts',
-    passed,
-  }));
-  if (!passed) console.log(control.output.trimEnd());
-  writeFileSync(copied, pristine.get(repoPath));
+  try {
+    const removed = removeProof(copied, law);
+    const control = removed ? compile(BEND, SCRATCH) : { ok: true, output: '', exitCode: null, signal: null };
+    retainEvidence(`proof:${law}`, control.output,
+      {
+        state: control.exitCode !== null || control.signal !== null ? 'exited' : 'spawn-error',
+        exitCode: control.exitCode,
+        signal: control.signal,
+      },
+      removed ? [BEND, ENTRY, '--check-only'] : null);
+    const passed = removed && refusedNormally(control) && isTodoRefusal(control.output);
+    if (!passed) failures++;
+    console.log(JSON.stringify({
+      law,
+      module: repoPath,
+      proof: removed ? 'removed' : 'missing',
+      gate: passed ? 'refuses' : 'accepts',
+      passed,
+    }));
+    if (!passed) console.log(control.output.trimEnd());
+  } finally {
+    writeFileSync(copied, pristine.get(repoPath));
+    if (readFileSync(copied, 'utf8') !== pristine.get(repoPath)) {
+      console.error(`laws-check: restoration verification failed for ${repoPath}`);
+      process.exit(1);
+    }
+  }
 }
 
 // A mutation is a deliberate change to an implementation, made in the scratch
@@ -194,29 +233,39 @@ for (const mutation of MUTATIONS) {
   const copied = join(SCRATCH, mutation.file);
   const text = pristine.get(mutation.file);
   const applied = text.includes(mutation.find);
-  writeFileSync(copied, applied ? text.replace(mutation.find, mutation.replace) : text);
-  const control = applied ? compile(BEND, SCRATCH) : { ok: true, output: '', exitCode: null, signal: null };
-  retainEvidence(`mutation:${mutation.name}`, control.output);
-  const location = refusedNormally(control) ? intendedMutationRefusal(control.output, mutation.law) : null;
-  const expected = location !== null && expectationMet(control.output, definitionExpectation(mutation));
-  const passed = applied && location !== null && expected;
-  if (!passed) failures++;
-  console.log(JSON.stringify({
-    mutation: mutation.name,
-    law: mutation.law,
-    applied,
-    gate: passed ? 'refuses' : 'accepts',
-    passed,
-  }));
-  if (!passed) console.log(control.output.trimEnd());
-  writeFileSync(copied, pristine.get(mutation.file));
+  try {
+    writeFileSync(copied, applied ? text.replace(mutation.find, mutation.replace) : text);
+    const control = applied ? compile(BEND, SCRATCH) : { ok: true, output: '', exitCode: null, signal: null };
+    retainEvidence(`mutation:${mutation.name}`, control.output,
+      {
+        state: control.exitCode !== null || control.signal !== null ? 'exited' : 'spawn-error',
+        exitCode: control.exitCode,
+        signal: control.signal,
+      },
+      applied ? [BEND, ENTRY, '--check-only'] : null);
+    const location = refusedNormally(control) ? intendedMutationRefusal(control.output, mutation.law) : null;
+    const expected = location !== null && expectationMet(control.output, definitionExpectation(mutation));
+    const passed = applied && location !== null && expected;
+    if (!passed) failures++;
+    console.log(JSON.stringify({
+      mutation: mutation.name,
+      law: mutation.law,
+      applied,
+      gate: passed ? 'refuses' : 'accepts',
+      passed,
+    }));
+    if (!passed) console.log(control.output.trimEnd());
+  } finally {
+    writeFileSync(copied, pristine.get(mutation.file));
+    if (readFileSync(copied, 'utf8') !== pristine.get(mutation.file)) {
+      console.error(`laws-check: restoration verification failed for ${mutation.file}`);
+      process.exit(1);
+    }
+  }
 }
 
-writeFileSync(join(SCRATCH, 'evidence', 'index.json'), JSON.stringify({
-  schema: 'capacity-controls/ordinary-evidence@1',
-  scratch: SCRATCH,
-  cases: evidenceIndex,
-}, null, 2) + '\n');
+evidenceComplete = true;
+writeEvidenceIndex();
 
 console.log(`laws-check: ${failures === 0 ? 'green' : 'red'} - ${rows.length} laws, ${MUTATIONS.length} mutations, ${rows.length + MUTATIONS.length + 1} compiles, ${failures} failures`);
 process.exit(failures === 0 ? 0 : 1);

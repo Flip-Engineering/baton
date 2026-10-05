@@ -11,8 +11,8 @@ import { cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, 
 import { dirname, join, relative, resolve, sep } from 'node:path';
 import { ENV, ENTRY, proofBlockRange, resolveBend, ROOT } from '../laws-check.mjs';
 import { MUTATIONS } from '../laws-mutations.mjs';
-import { classifyControl, parseResourceAccounting, splitTimeAccounting } from './classify.mjs';
-import { bindingOf, definitionExpectation, discoveryRecords, sha256Hex } from './work-set.mjs';
+import { classifyCase, parseResourceAccounting, splitTimeAccounting } from './classify.mjs';
+import { bindingOf, definitionExpectation, definitionLocation, discoveryRecords, sha256Hex } from './work-set.mjs';
 
 export class UsageError extends Error {}
 
@@ -184,13 +184,34 @@ export async function runGroup({
   sourceRoot,
   scratchPrefix,
 }) {
+  if (!existsSync(timeTool)) throw new Error(`runGroup: time tool is unavailable: ${timeTool}`);
+  const bendPath = resolve(bend);
+  const version = execFileSync(bendPath, ['version'], { env: ENV, encoding: 'utf8', maxBuffer: Infinity }).trim();
+  if (version !== 'bend 2.0.25') throw new Error(`runGroup: expected bend 2.0.25, got: ${version}`);
+  const selectedEntry = entry ?? ENTRY;
+
+  // The source snapshot is read before the tree is copied, so the recorded
+  // git identity belongs to the same bytes the copy carries.
+  const sourceRootDir = sourceRoot ?? ROOT;
+  const hasGit = existsSync(join(sourceRootDir, '.git'));
+  const source = hasGit
+    ? {
+        head: git(sourceRootDir, 'rev-parse', 'HEAD'),
+        tree: git(sourceRootDir, 'rev-parse', 'HEAD^{tree}'),
+        bend2_tree: git(sourceRootDir, 'rev-parse', 'HEAD:bend2'),
+      }
+    : { head: null, tree: null, bend2_tree: null };
+
   mkdirSync(join(ROOT, '.scratch'), { recursive: true });
   const scratch = mkdtempSync(join(ROOT, '.scratch', scratchPrefix ?? 'bend2-laws-group-'));
   cpSync(copyDir ?? join(ROOT, 'bend2'), join(scratch, 'bend2'), { recursive: true });
   // Records default to the copied snapshot, so discovery, compiles and deltas
-  // bind one source tree.
+  // bind one source tree. The executed selection filters the module's cases;
+  // the binding covers the complete discovered set.
   const groupRecords = records ?? discoveryRecords({ bend2Dir: join(scratch, 'bend2') });
-  if (groupRecords.filter((record) => record.module === module).length === 0) {
+  const binding = bindingOf(groupRecords);
+  const selected = groupRecords.filter((record) => record.module === module);
+  if (selected.length === 0) {
     throw new Error(`runGroup: no controls target module ${module}`);
   }
   if (!existsSync(timeTool)) throw new Error(`runGroup: time tool is unavailable: ${timeTool}`);
@@ -208,15 +229,6 @@ export async function runGroup({
   // The installed library sits one parent above the compiler's bin directory.
   const runtimeDirectory = join(dirname(bendPath), '..', 'bend2');
   const runtime = existsSync(runtimeDirectory) ? inventory(runtimeDirectory) : null;
-  const sourceRootDir = sourceRoot ?? ROOT;
-  const hasGit = existsSync(join(sourceRootDir, '.git'));
-  const source = hasGit
-    ? {
-        head: git(sourceRootDir, 'rev-parse', 'HEAD'),
-        tree: git(sourceRootDir, 'rev-parse', 'HEAD^{tree}'),
-        bend2_tree: git(sourceRootDir, 'rev-parse', 'HEAD:bend2'),
-      }
-    : { head: null, tree: null, bend2_tree: null };
   const nonce = `${Date.now()}-${process.pid}-${Math.random().toString(36).slice(2, 10)}`;
   const producingOrigin = {
     ...origin(),
@@ -258,7 +270,7 @@ export async function runGroup({
   };
   if (baseline.process.state !== 'exited' || baseline.process.exit_code !== 0) {
     const manifest = {
-      module, binding: bindingOf(groupRecords), entry: selectedEntry, checker_sha256: checkerSha256, source, origin: origin(),
+      module, binding, entry: selectedEntry, checker_sha256: checkerSha256, source, origin: origin(),
       producing, instrument, baseline, results: [], compiler,
     };
     const manifestPath = join(evidenceDir, 'group-manifest.json');
@@ -266,11 +278,11 @@ export async function runGroup({
     return { manifest, manifestPath, scratch };
   }
 
-  // Pristine text per control module, read from the scratch copy right after
-  // it was made. Restores never re-read the live tree, and each control's
-  // changed bytes are retained as its exact applied delta.
+  // Pristine text per executed control module, read from the scratch copy
+  // right after it was made. Restores never re-read the live tree, and each
+  // control's changed bytes are retained as its exact applied delta.
   const pristine = new Map();
-  for (const record of groupRecords) {
+  for (const record of selected) {
     const scratchModule = join(scratch, record.module);
     if (!pristine.has(record.module)) pristine.set(record.module, readFileSync(scratchModule, 'utf8'));
   }
@@ -298,30 +310,43 @@ export async function runGroup({
       }
     }
     if (setup === 'applied') {
-      const run = await runChild({
-        argv: childArgv,
-        cwd: scratch,
-        env: ENV,
-        dir: evidenceDir,
-        stdoutName: fileName(record, 'stdout'),
-        stderrName: fileName(record, 'stderr'),
-      });
-      writeFileSync(scratchModule, pristine.get(record.module));
+      let run;
+      try {
+        run = await runChild({
+          argv: childArgv,
+          cwd: scratch,
+          env: ENV,
+          dir: evidenceDir,
+          stdoutName: fileName(record, 'stdout'),
+          stderrName: fileName(record, 'stderr'),
+        });
+      } finally {
+        writeFileSync(scratchModule, pristine.get(record.module));
+        if (readFileSync(scratchModule, 'utf8') !== pristine.get(record.module)) {
+          throw new Error(`runGroup: restoration verification failed for ${record.module}`);
+        }
+      }
       const changedPath = fileName(record, 'changed');
       writeFileSync(join(evidenceDir, changedPath), changedText);
       const stderrText = readFileSync(join(evidenceDir, fileName(record, 'stderr')), 'utf8');
-      // The classifier receives the complete stream and validates any
-      // accounting suffix itself; resource parsing splits the same stream.
-      const verdict = classifyControl({
+      // One shared qualification boundary: the complete stream, the matched
+      // baseline, the definition-bound metadata and the exact applied delta.
+      const definition = definitions.get(record.id.slice('mutation:'.length));
+      const verdict = classifyCase({
+        control: record,
+        expectation: definitionExpectation(definition),
+        location: definitionLocation(definition),
         state: run.state, exitCode: run.exitCode, signal: run.signal, spawnError: run.spawnError,
-        stderrText, control: record,
-        expectation: definitionExpectation(definitions.get(record.id.slice('mutation:'.length))),
+        stderrText,
+        baselineOk: baseline.process.state === 'exited' && baseline.process.exit_code === 0,
+        delta: setup === 'applied' && changedText !== null ? { changedText, expectedChangedText: changedText } : null,
+        supplied: null,
       });
       const { accounting, profile } = splitTimeAccounting(stderrText);
       results.push({
         case: record,
         setup,
-        expectation: definitionExpectation(definitions.get(record.id.slice('mutation:'.length))) ?? null,
+        expectation: definitionExpectation(definition) ?? null,
         delta: {
           original_sha256: sha256Hex(Buffer.from(originalText, 'utf8')),
           changed_sha256: sha256Hex(Buffer.from(changedText, 'utf8')),
@@ -354,7 +379,7 @@ export async function runGroup({
 
   const manifest = {
     module,
-    binding: bindingOf(groupRecords),
+    binding,
     entry: selectedEntry,
     checker_sha256: checkerSha256,
     source,

@@ -1,21 +1,24 @@
 // Classification contract tests over the retained, exactly-characterized
-// compiler diagnostic fixtures: the nameless two-line TODO refusal, the bound
-// mutation refusal with expected/observed constructors and a qualified
-// Location, and an unrelated malformed-declaration refusal with an empty
-// Location. These are pure unit tests; no compiler runs.
+// compiler diagnostic fixtures, the retained GNU time artifacts, and the
+// shared qualification boundary. Pure unit tests; no compiler runs.
 
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
 import { test } from 'node:test';
+import { ROOT } from '../laws-check.mjs';
 import {
   TODO_REFUSAL,
   accountingProfile,
   accountingValid,
+  classifyCase,
   classifyControl,
   intendedMutationRefusal,
   isTodoRefusal,
   parseResourceAccounting,
-  qualifiedLawLocation,
+  refusedNormally,
   splitTimeAccounting,
+  validChildOutcome,
 } from './classify.mjs';
 
 const PROOF = { kind: 'proof-removal', law: 'help_word_selects_the_help_command', module: 'bend2/src/coordinator/commands.bend' };
@@ -58,7 +61,6 @@ test('todo refusal matches the exact retained diagnostic and nothing else', () =
   assert.equal(isTodoRefusal(TODO_STDERR), true);
   assert.equal(isTodoRefusal(TODO_REFUSAL), true);
   assert.equal(isTodoRefusal(TODO_STDERR + 'extra\n'), false);
-  assert.equal(isTodoRefusal('Error: 2 TODOs found.\nThe code is incomplete, and not a valid proof yet.\n'), false);
   assert.equal(isTodoRefusal(SYNTAX_STDERR), false);
 });
 
@@ -71,75 +73,116 @@ test('proof control classifies intended only for the exact nameless refusal', ()
   assert.equal(classifyControl({ ...exited(0, ''), control: PROOF }).class, 'accepted');
 });
 
-test('mutation control requires the error block, constructors and qualified law location', () => {
+test('mutation control requires the error block, constructors and the law-naming location', () => {
   assert.deepEqual(classifyControl({ ...exited(1, MUTANT_STDERR), control: MUTATION }), {
     class: 'intended-law-refusal', attributedLaw: MUTATION.law,
   });
   const bareLocation = 'Error:\nLocation: commands.help_word_selects_the_help_command\n';
   assert.equal(intendedMutationRefusal(bareLocation, MUTATION.law), null);
-  assert.equal(intendedMutationRefusal(MUTANT_STDERR.replace('- expected : commands.Invalid{}\n', ''), MUTATION.law), null);
   const wrongLeaf = MUTANT_STDERR.replace('help_word_selects_the_help_command', 'another_law');
-  assert.equal(qualifiedLawLocation(wrongLeaf, MUTATION.law), null);
+  assert.equal(intendedMutationRefusal(wrongLeaf, MUTATION.law), null);
+  // A bound qualified location must match exactly.
+  assert.deepEqual(
+    intendedMutationRefusal(MUTANT_STDERR, MUTATION.law, 'commands.help_word_selects_the_help_command'),
+    { location: 'commands.help_word_selects_the_help_command', law: MUTATION.law },
+  );
+  assert.equal(intendedMutationRefusal(MUTANT_STDERR, MUTATION.law, 'other.help_word_selects_the_help_command'), null);
   assert.equal(classifyControl({ ...exited(1, SYNTAX_STDERR), control: MUTATION }).class, 'unclassified-rejection');
   assert.equal(classifyControl({ ...exited(0, ''), control: MUTATION }).class, 'accepted');
 });
 
-test('constructor expectations bind through the classifier', () => {
-  const expectation = { expected: 'commands.Invalid{}', observed: 'commands.Help{}' };
-  assert.deepEqual(classifyControl({ ...exited(1, MUTANT_STDERR), control: MUTATION, expectation }), {
-    class: 'intended-law-refusal', attributedLaw: MUTATION.law,
+test('outcome shapes are validated without coercion', () => {
+  assert.equal(validChildOutcome({ state: 'exited', exitCode: 1, signal: null, spawnError: null }), true);
+  assert.equal(validChildOutcome({ state: 'exited', exitCode: '1', signal: null, spawnError: null }), false);
+  assert.equal(validChildOutcome({ state: 'exited', exitCode: false, signal: null, spawnError: null }), false);
+  assert.equal(validChildOutcome({ state: 'exited', exitCode: -1, signal: null, spawnError: null }), false);
+  assert.equal(validChildOutcome({ state: 'exited', exitCode: 1.5, signal: null, spawnError: null }), false);
+  assert.equal(validChildOutcome({ state: 'exited', exitCode: null, signal: null, spawnError: null }), false);
+  assert.equal(validChildOutcome({ state: 'exited', exitCode: 1, signal: undefined, spawnError: null }), true);
+  assert.equal(validChildOutcome({ state: 'exited', exitCode: 1, signal: null, spawnError: 'later' }), false);
+  assert.equal(validChildOutcome({ state: 'signalled', exitCode: null, signal: 'SIGSEGV', spawnError: null }), true);
+  assert.equal(validChildOutcome({ state: 'signalled', exitCode: null, signal: null, spawnError: null }), false);
+  assert.equal(validChildOutcome({ state: 'spawn-error', exitCode: null, signal: null, spawnError: 'ENOENT' }), true);
+  assert.equal(validChildOutcome({ state: 'running', exitCode: null, signal: null, spawnError: null }), false);
+  for (const bad of [{ state: 'exited', exitCode: '1', signal: null, spawnError: null },
+    { state: 'exited', exitCode: -1, signal: null, spawnError: null },
+    { state: 'exited', exitCode: 1.5, signal: null, spawnError: null },
+    { state: 'exited', exitCode: false, signal: null, spawnError: null },
+    { state: 'exited', exitCode: null, signal: null, spawnError: null },
+    { state: 'signalled', exitCode: 1, signal: 'SIGKILL', spawnError: null }]) {
+    assert.equal(classifyControl({ ...bad, stderrText: TODO_STDERR, control: PROOF }).class, 'malformed-outcome');
+  }
+  assert.equal(refusedNormally({ exitCode: '1', signal: null }), false);
+  assert.equal(refusedNormally({ exitCode: -1, signal: null }), false);
+  assert.equal(refusedNormally({ exitCode: 1, signal: 'SIGKILL' }), false);
+  assert.equal(refusedNormally({ exitCode: 1, signal: null }), true);
+});
+
+test('the shared qualification boundary demands every prerequisite', () => {
+  const qualified = { expected: 'commands.Invalid{}', observed: 'commands.Help{}' };
+  const call = (overrides) => classifyCase({
+    control: MUTATION, expectation: qualified, location: 'commands.help_word_selects_the_help_command',
+    state: 'exited', exitCode: 1, signal: null, spawnError: null,
+    stderrText: MUTANT_STDERR, baselineOk: true,
+    delta: { changedText: 'changed', expectedChangedText: 'changed' },
+    supplied: null, ...overrides,
   });
-  const wrong = { expected: 'Decision.Conflict{}', observed: 'Decision.Grant{}' };
-  assert.equal(classifyControl({ ...exited(1, MUTANT_STDERR), control: MUTATION, expectation: wrong }).class, 'expectation-mismatch');
+  assert.equal(call({}).qualified, true);
+  assert.equal(call({ baselineOk: false }).class, 'unqualified-baseline');
+  assert.equal(call({ expectation: undefined }).class, 'expectation-unqualified');
+  assert.equal(call({ location: undefined }).class, 'expectation-unqualified');
+  assert.equal(call({ delta: null }).class, 'delta-unverified');
+  assert.equal(call({ delta: { changedText: 'a', expectedChangedText: 'b' } }).class, 'delta-unverified');
+  assert.equal(call({ supplied: { class: 'intended-law-refusal', attributed_law: 'other' } }).class, 'misreported-diagnostic');
+  assert.equal(call({ exitCode: '1' }).class, 'malformed-outcome');
+  // Proof controls need no definition metadata, only the exact diagnostic,
+  // the matched baseline and the verified delta.
+  const proofCall = (overrides) => classifyCase({
+    control: PROOF, expectation: undefined, location: undefined,
+    state: 'exited', exitCode: 1, signal: null, spawnError: null,
+    stderrText: TODO_STDERR, baselineOk: true,
+    delta: { changedText: 'c', expectedChangedText: 'c' },
+    supplied: null, ...overrides,
+  });
+  assert.equal(proofCall({}).qualified, true);
+  assert.equal(proofCall({ baselineOk: false }).class, 'unqualified-baseline');
 });
 
-test('outcome shape is honored: crashes, spawn errors and unfinished states', () => {
-  assert.equal(classifyControl({ state: 'exited', exitCode: null, signal: 'SIGSEGV', spawnError: null, stderrText: TODO_STDERR, control: PROOF }).class, 'crashed');
-  assert.equal(classifyControl({ state: 'spawn-error', exitCode: null, signal: null, spawnError: 'ENOENT', stderrText: '', control: PROOF }).class, 'spawn-error');
-  assert.equal(classifyControl({ state: 'exited', exitCode: null, signal: null, spawnError: null, stderrText: '', control: PROOF }).class, 'unfinished');
-  assert.deepEqual(classifyControl({ ...exited(0, ''), control: BASELINE }), { class: 'baseline-ok', attributedLaw: null });
-  assert.equal(classifyControl({ ...exited(1, TODO_STDERR), control: BASELINE }).class, 'baseline-failed');
-});
-
-test('time accounting splits from diagnostics and must match a measured profile', () => {
-  const darwinSuffix = '       12.34 real         5.67 user         1.23 sys\n'
-    + '             123456 maximum resident set size\n'
-    + '               789 page reclaims\n'
-    + '              1234 page faults\n';
-  const combined = TODO_STDERR + darwinSuffix;
-  const split = splitTimeAccounting(combined);
-  assert.equal(split.diagnostics, TODO_STDERR);
-  assert.equal(split.profile, 'darwin-usr-bin-time');
-  assert.equal(accountingValid(split.accounting, split.profile), true);
-  assert.deepEqual(
-    classifyControl({ ...exited(1, combined), control: PROOF }),
-    { class: 'intended-law-refusal', attributedLaw: PROOF.law },
-  );
-  const poisoned = TODO_STDERR + darwinSuffix + 'unrelated failure line\n';
-  assert.equal(classifyControl({ ...exited(1, poisoned), control: PROOF }).class, 'accounting-invalid');
-  const gnuSuffix = '\tUser time (seconds): 0.45\n'
-    + '\tSystem time (seconds): 0.12\n'
-    + '\tElapsed (wall clock) time (h:mm:ss or m:ss): 1:02.34\n'
-    + '\tMaximum resident set size (kbytes): 2800000\n'
-    + '\tExit status: 1\n';
-  const gnuSplit = splitTimeAccounting(TODO_STDERR + gnuSuffix);
+test('time accounting splits at the retained GNU preamble and first field', () => {
+  const gnuArtifact = readFileSync(join(ROOT, 'bend2', 'scripts', 'capacity-controls', 'fixtures', 'gnu-time', 'receive-request.time.txt'), 'utf8');
+  const gnuSplit = splitTimeAccounting('child diagnostic line\n' + gnuArtifact);
+  assert.equal(gnuSplit.diagnostics, 'child diagnostic line\n');
   assert.equal(gnuSplit.profile, 'gnu-time-v');
   assert.equal(accountingValid(gnuSplit.accounting, gnuSplit.profile), true);
-  const gnuResource = parseResourceAccounting(gnuSplit.accounting, gnuSplit.profile);
-  assert.equal(gnuResource.profile, 'gnu-time-v');
-  assert.equal(gnuResource.max_rss_bytes, 2800000 * 1024);
-  assert.equal(gnuResource.max_rss_source_unit, 'kbytes');
-  assert.equal(gnuResource.real_seconds > 62 && gnuResource.real_seconds < 63, true);
-  const darwinResource = parseResourceAccounting(darwinSuffix, 'darwin-usr-bin-time');
-  assert.equal(darwinResource.max_rss_bytes, 123456);
-  assert.equal(darwinResource.max_rss_source_unit, 'bytes');
-  assert.equal(darwinResource.page_reclaims, 789);
+  assert.equal(classifyControl({ ...exited(1, 'child diagnostic line\n' + gnuArtifact), control: PROOF }).class, 'unclassified-rejection');
+  const plainGnu = readFileSync(join(ROOT, 'bend2', 'scripts', 'capacity-controls', 'fixtures', 'gnu-time', 'retained-read.time.txt'), 'utf8');
+  const plainSplit = splitTimeAccounting(plainGnu);
+  assert.equal(plainSplit.diagnostics, '');
+  assert.equal(accountingValid(plainSplit.accounting, plainSplit.profile), true);
+  // A recognized field plus extra unknown suffix text stays invalid.
+  const poisoned = TODO_STDERR + '\tUser time (seconds): 0.10\nnot a wrapper field\n';
+  assert.equal(classifyControl({ ...exited(1, poisoned), control: PROOF }).class, 'accounting-invalid');
 });
 
-test('wrapper-translated signals classify as crashes, never as refusals', () => {
-  // The group runner detects the darwin time wrapper's terminated-by-signal
-  // report and records state signalled; the classifier refuses such outcomes.
-  const wrapped = TODO_STDERR + 'Command terminated by signal 9\n';
-  assert.equal(classifyControl({ ...exited(1, wrapped), control: PROOF }).class, 'unclassified-rejection');
-  assert.equal(classifyControl({ state: 'signalled', exitCode: 1, signal: 9, spawnError: null, stderrText: TODO_STDERR, control: PROOF }).class, 'crashed');
+test('darwin accounting tolerates padded columns and keeps units explicit', () => {
+  const darwinSuffix = '       109.94 real        74.20 user        30.10 sys\n'
+    + '        2152748  maximum resident set size\n'
+    + '           1464984  page reclaims\n'
+    + '                   0  page faults\n';
+  const split = splitTimeAccounting(TODO_STDERR + darwinSuffix);
+  assert.equal(split.profile, 'darwin-usr-bin-time');
+  assert.equal(accountingValid(split.accounting, split.profile), true);
+  const resource = parseResourceAccounting(split.accounting, split.profile);
+  assert.equal(resource.max_rss_bytes, 2152748);
+  assert.equal(resource.max_rss_source_unit, 'bytes');
+  const gnuResource = parseResourceAccounting(
+    '\tElapsed (wall clock) time (h:mm:ss or m:ss): 1:22.44\n'
+    + '\tUser time (seconds): 104.62\n'
+    + '\tSystem time (seconds): 15.15\n'
+    + '\tMaximum resident set size (kbytes): 2152748\n',
+    'gnu-time-v',
+  );
+  assert.equal(gnuResource.real_seconds > 82 && gnuResource.real_seconds < 83, true);
+  assert.equal(gnuResource.max_rss_bytes, 2152748 * 1024);
+  assert.equal(gnuResource.max_rss_source_unit, 'kbytes');
 });

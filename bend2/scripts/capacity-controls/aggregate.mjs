@@ -1,17 +1,18 @@
 // Validation and merge of received group evidence, plus the agreed per-case
-// classification endpoint. The aggregate recomputes every check from retained
-// bytes, the rediscovered work set and the selected checkout: classification
-// comes from the shared classifier over complete raw diagnostics and the
-// actual recorded outcome; each case's applied delta is re-derived from the
-// checkout bytes; producer inputs and baseline inputs are bound per bundle.
-// Producer labels and counts are never accepted as evidence. Retained paths
-// are confined to their bundle by filesystem identity, not lexically.
+// classification endpoint. Every acceptance decision flows through the one
+// shared qualification boundary in classify.mjs: independently discovered
+// case identity, confined immutable artifacts with verified lengths and
+// digests, a successful exact baseline for both control kinds, the mandatory
+// exact applied delta against the selected source snapshot, the actual
+// terminal outcome, and the definition-owned diagnostic constraints. Producer
+// labels and counts never establish acceptance. Retained paths are confined
+// by filesystem identity, not lexically.
 
 import { execFileSync } from 'node:child_process';
 import { existsSync, lstatSync, readdirSync, readFileSync, realpathSync, writeFileSync } from 'node:fs';
 import { isAbsolute, join, resolve, sep } from 'node:path';
-import { classifyControl } from './classify.mjs';
-import { bindingOf, definitionExpectation, discoveryRecords, sha256Hex } from './work-set.mjs';
+import { accountingValid, classifyCase, splitTimeAccounting, validChildOutcome } from './classify.mjs';
+import { bindingOf, definitionExpectation, definitionLocation, discoveryRecords, sha256Hex } from './work-set.mjs';
 import { ENTRY, proofBlockRange, ROOT } from '../laws-check.mjs';
 import { MUTATIONS } from '../laws-mutations.mjs';
 
@@ -68,12 +69,8 @@ function verifyStream(bundleDir, realBundleDir, stream) {
   if (bytes.byteLength !== stream.bytes) {
     return `stream byte count changed: ${stream.path} recorded ${stream.bytes} actual ${bytes.byteLength}`;
   }
-  if (createDigest(bytes) !== stream.sha256) return `stream sha256 changed: ${stream.path}`;
+  if (sha256Hex(bytes) !== stream.sha256) return `stream sha256 changed: ${stream.path}`;
   return null;
-}
-
-function createDigest(data) {
-  return sha256Hex(data);
 }
 
 function sameCase(actual, expected) {
@@ -252,12 +249,12 @@ export function aggregate({ dir, records, definitions, moduleRoot }) {
         rejections.push(reject('duplicate-attempt', name, `attempt id reused: ${attempt}`, caseId));
       }
       attempts.add(attempt);
-      const processValid = process.state === 'exited' && typeof process.exit_code === 'number' && process.exit_code > 0
-        && process.signal === null && process.spawn_error === null
+      const processValid = validChildOutcome(process) && process.state === 'exited'
+        && Number.isInteger(process.exit_code) && process.exit_code > 0
         && typeof process.started === 'number' && typeof process.ended === 'number'
         && process.started <= process.ended;
       if (!processValid) {
-        rejections.push(reject('unfinished-case', name, 'result did not exit normally with a nonzero code over its interval', caseId));
+        rejections.push(reject('unfinished-case', name, 'result did not exit normally with a positive integer code over its interval', caseId));
         continue;
       }
       if (typeof process.wrapper_pid !== 'number' || process.wrapper_pid <= 0) {
@@ -280,11 +277,13 @@ export function aggregate({ dir, records, definitions, moduleRoot }) {
       // Exact applied delta, re-derived from the selected tree bytes.
       const delta = result.delta;
       const originalPath = modulePath(treeRoot, expected);
+      let originalText = null;
+      let changedText = null;
       if (!delta || typeof delta.original_sha256 !== 'string' || typeof delta.changed_sha256 !== 'string'
         || typeof delta.changed_path !== 'string') {
         rejections.push(reject('delta-missing', name, 'result does not retain its applied delta', caseId));
       } else {
-        const originalText = existsSync(originalPath) ? readFileSync(originalPath, 'utf8') : null;
+        originalText = existsSync(originalPath) ? readFileSync(originalPath, 'utf8') : null;
         if (originalText === null || sha256Hex(Buffer.from(originalText, 'utf8')) !== delta.original_sha256) {
           rejections.push(reject('delta-source-mismatch', name, 'delta original does not match the selected tree bytes', caseId));
         } else {
@@ -292,38 +291,39 @@ export function aggregate({ dir, records, definitions, moduleRoot }) {
           if (changedFound.fault) {
             rejections.push(reject('delta-mismatch', name, changedFound.fault, caseId));
           } else {
-            const changedText = readFileSync(changedFound.path, 'utf8');
+            changedText = readFileSync(changedFound.path, 'utf8');
             if (sha256Hex(Buffer.from(changedText, 'utf8')) !== delta.changed_sha256) {
               rejections.push(reject('delta-mismatch', name, 'retained changed bytes differ from the recorded delta digest', caseId));
-            } else if (expectedChangedBytes(originalText, expected, definitionList) !== changedText) {
-              rejections.push(reject('delta-shape-mismatch', name, 'retained delta is not the exact intended application', caseId));
+              changedText = null;
             }
           }
         }
       }
 
-      // Classification recomputed from the complete raw diagnostics, with the
-      // definition-bound expectation and the matched baseline requirement.
+      // The one shared qualification boundary, with the producer's own label
+      // as the supplied claim it must match.
       const stderrFound = result.stderr?.path ? bundlePath(bundleDir, realBundleDir, result.stderr.path) : { fault: 'stderr path missing' };
       const stderrText = stderrFound.path ? readFileSync(stderrFound.path, 'utf8') : '';
-      let verdict = classifyControl({
+      const definition = definitionList.find((mutation) => `mutation:${mutation.name}` === expected.id) ?? null;
+      const verdict = classifyCase({
+        control: expected,
+        expectation: expected.expectation ?? definitionExpectation(definition),
+        location: expected.location ?? definitionLocation(definition),
         state: process.state,
         exitCode: process.exit_code,
         signal: process.signal,
         spawnError: process.spawn_error,
         stderrText,
-        control: expected,
-        expectation: definitionExpectation(definitionList.find((mutation) => `mutation:${mutation.name}` === expected.id))
-          ?? expected.expectation,
+        baselineOk,
+        delta: originalText !== null && changedText !== null
+          ? { changedText, expectedChangedText: expectedChangedBytes(originalText, expected, definitionList) }
+          : null,
+        supplied: result.diagnostic?.class
+          ? { class: result.diagnostic.class, attributed_law: result.diagnostic.attributed_law ?? null }
+          : null,
       });
-      if (verdict.class === 'intended-law-refusal' && expected.kind === 'proof-removal' && !baselineOk) {
-        verdict = { class: 'unclassified-rejection', attributedLaw: null };
-      }
-      if (verdict.class !== 'intended-law-refusal' || verdict.attributedLaw !== expected.law) {
-        rejections.push(reject('diagnostic-mismatch', name, `recomputed classification is ${verdict.class}`, caseId));
-      }
-      if (result.diagnostic?.class !== verdict.class || result.diagnostic?.attributed_law !== verdict.attributedLaw) {
-        rejections.push(reject('misreported-diagnostic', name, 'supplied diagnostic metadata disagrees with the recomputed classification', caseId));
+      if (verdict.class !== 'intended-law-refusal' || verdict.attributedLaw !== expected.law || !verdict.qualified) {
+        rejections.push(reject('diagnostic-mismatch', name, `recomputed qualification is ${verdict.class}`, caseId));
       }
     }
 
@@ -377,125 +377,167 @@ function refusal(reason) {
   process.exit(2);
 }
 
-// `laws-check.mjs --classify`: the single per-case classification endpoint.
-// The request arrives as one JSON object on stdin and carries the discovery
-// case, the actual process outcome, absolute stream paths and the matched
-// baseline context. The answer is one structured verdict object on stdout and
-// exit 0; a refused request prints one reason line on stderr and exits 2.
-// Unknown or disagreeing case identities are refusals, never verdicts.
+// One verified stream: an absolute path inside the declared evidence root,
+// carrying its own byte length and digest, with the file bytes matching both.
+function readVerifiedStream(label, stream, realEvidenceRoot) {
+  if (!stream || typeof stream.path !== 'string' || stream.path === '' || typeof stream.bytes !== 'number'
+    || typeof stream.sha256 !== 'string') {
+    refusal(`${label} stream must carry path, bytes and sha256`);
+  }
+  if (!isAbsolute(stream.path)) refusal(`${label} stream path must be absolute: ${stream.path}`);
+  if (!existsSync(stream.path)) refusal(`${label} stream file is missing: ${stream.path}`);
+  if (lstatSync(stream.path).isSymbolicLink()) refusal(`${label} stream file is a symlink: ${stream.path}`);
+  const real = realpathSync(stream.path);
+  if (real !== realEvidenceRoot && !real.startsWith(realEvidenceRoot + sep)) {
+    refusal(`${label} stream path escapes the evidence root: ${stream.path}`);
+  }
+  const bytes = readFileSync(stream.path);
+  if (bytes.byteLength !== stream.bytes) {
+    refusal(`${label} stream byte count mismatch: recorded ${stream.bytes} actual ${bytes.byteLength}`);
+  }
+  if (sha256Hex(bytes) !== stream.sha256) refusal(`${label} stream sha256 mismatch`);
+  return bytes.toString('utf8');
+}
+
+// `laws-check.mjs --classify`: the single per-case qualification endpoint.
+// The request carries the discovered case, the actual terminal outcome,
+// digest-bound streams under one declared evidence root, the matched baseline
+// over the same snapshot, the exact applied delta and the producing source
+// and toolchain identities. Prerequisite verification is mandatory here: a
+// verdict is produced only when every bound input verifies against this
+// checkout and the rediscovered work set, and `qualified` is true only when
+// the shared boundary accepts the whole chain. Well-formed semantic failures
+// are verdicts with exit 0; invalid requests refuse with exit 2.
 export function classifyCli(argv) {
   if (argv.length > 0) refusal(`no positional arguments are accepted, got: ${argv.join(' ')}`);
   let request;
-  let input;
   try {
-    input = readFileSync(0, 'utf8');
-  } catch (error) {
-    refusal(`stdin is unreadable: ${error}`);
-  }
-  try {
-    request = JSON.parse(input);
+    request = JSON.parse(readFileSync(0, 'utf8'));
   } catch (error) {
     refusal(`request is not JSON: ${error}`);
   }
   const requestCase = request?.case;
-  if (!requestCase || typeof requestCase.id !== 'string' || typeof requestCase.kind !== 'string'
-    || typeof requestCase.law !== 'string' || typeof requestCase.module !== 'string'
-    || typeof requestCase.definition_sha256 !== 'string') {
-    refusal('request case is missing required identity fields');
-  }
+  if (!requestCase || typeof requestCase !== 'object') refusal('request case is missing');
   const outcome = request?.outcome;
-  if (!outcome || typeof outcome.state !== 'string') refusal('request outcome is missing its state');
-  for (const key of ['stdout', 'stderr']) {
-    if (typeof request?.[key] !== 'string' || request[key] === '') refusal(`request ${key} stream path is missing`);
+  if (!outcome || typeof outcome !== 'object') refusal('request outcome is missing');
+  if (!validChildOutcome({ state: outcome.state, exitCode: outcome.exit_code, signal: outcome.signal, spawnError: outcome.spawn_error })) {
+    refusal('request outcome is malformed for a terminal child');
   }
+  if (requestCase.kind !== 'proof-removal' && requestCase.kind !== 'mutation') {
+    refusal(`request case kind is not a control kind: ${JSON.stringify(requestCase.kind)}`);
+  }
+  const evidenceRoot = request?.evidence_root;
+  if (typeof evidenceRoot !== 'string' || evidenceRoot === '' || !isAbsolute(evidenceRoot) || !existsSync(evidenceRoot)) {
+    refusal('request evidence_root must be an existing absolute directory');
+  }
+  const realEvidenceRoot = realpathSync(evidenceRoot);
+  if (typeof request?.source?.head !== 'string' || typeof request.source.tree !== 'string'
+    || typeof request.source.bend2_tree !== 'string') {
+    refusal('request source binding is missing');
+  }
+  const ownSource = ownSourceSnapshot();
+  if (ownSource === null || JSON.stringify(request.source) !== JSON.stringify(ownSource)) {
+    refusal('request source binding differs from this checkout');
+  }
+  const toolchain = request?.toolchain;
+  if (!toolchain || typeof toolchain.compiler_sha256 !== 'string' || toolchain.compiler_sha256 === '') {
+    refusal('request toolchain binding is missing its compiler sha256');
+  }
+
+  // The case identity must equal this checkout's own discovery record
+  // completely, metadata included.
   const discovered = discoveryRecords().find((record) => record.id === requestCase.id);
   if (!discovered) refusal(`case ${requestCase.id} is not in the rediscovered work set`);
-  if (discovered.definition_sha256 !== requestCase.definition_sha256
-    || discovered.law !== requestCase.law || discovered.kind !== requestCase.kind
-    || discovered.module !== requestCase.module) {
-    refusal(`case ${requestCase.id} does not match its discovery record`);
-  }
-  const readStream = (label, path) => {
-    if (typeof path !== 'string' || path === '' || !existsSync(path)) refusal(`${label} stream is unreadable: ${path}`);
-    return readFileSync(path, 'utf8');
-  };
-  const stderrText = readStream('stderr', request.stderr);
-  readStream('stdout', request.stdout);
+  if (!sameCase(requestCase, discovered)) refusal(`case ${requestCase.id} does not match its discovery record`);
+
+  const streams = request?.streams;
+  if (!streams || typeof streams !== 'object') refusal('request streams are missing');
+  const stdoutText = readVerifiedStream('stdout', streams.stdout, realEvidenceRoot);
+  const stderrText = readVerifiedStream('stderr', streams.stderr, realEvidenceRoot);
   const baseline = request?.baseline;
-  const baselineOutcome = baseline?.outcome;
-  if (!baselineOutcome || typeof baselineOutcome.state !== 'string') refusal('request baseline outcome is missing its state');
-  readStream('baseline stdout', baseline.stdout);
-  readStream('baseline stderr', baseline.stderr);
+  if (!baseline || typeof baseline.outcome !== 'object' || !baseline.streams
+    || typeof baseline.streams !== 'object') {
+    refusal('request baseline is missing its outcome and streams');
+  }
+  const baselineOutcome = baseline.outcome;
+  if (!validChildOutcome({ state: baselineOutcome.state, exitCode: baselineOutcome.exit_code, signal: baselineOutcome.signal, spawnError: baselineOutcome.spawn_error })) {
+    refusal('request baseline outcome is malformed for a terminal child');
+  }
+  readVerifiedStream('baseline stdout', baseline.streams.stdout, realEvidenceRoot);
+  readVerifiedStream('baseline stderr', baseline.streams.stderr, realEvidenceRoot);
   const baselineOk = baselineOutcome.state === 'exited' && baselineOutcome.exit_code === 0
     && baselineOutcome.signal === null && baselineOutcome.spawn_error === null;
 
-  let verdict = classifyControl({
+  // The exact applied delta is mandatory: the original comes from this
+  // checkout's own module bytes, and the changed bytes must re-derive from
+  // them under the authoritative definition.
+  const delta = request?.delta;
+  if (!delta || typeof delta.changed_path !== 'string' || typeof delta.original_sha256 !== 'string'
+    || typeof delta.changed_sha256 !== 'string') {
+    refusal('request delta is required and must carry changed_path and both digests');
+  }
+  const originalPath = modulePath(join(ROOT, 'bend2'), discovered);
+  if (!existsSync(originalPath)) refusal('the selected checkout has no bytes for the requested case module');
+  const originalText = readFileSync(originalPath, 'utf8');
+  if (sha256Hex(Buffer.from(originalText, 'utf8')) !== delta.original_sha256) {
+    refusal('delta original_sha256 differs from this checkout module bytes');
+  }
+  // delta.changed_path is evidence-root-relative and confined like streams.
+  const changedFound = bundlePath(evidenceRoot, realEvidenceRoot, delta.changed_path);
+  if (changedFound.fault) refusal(`delta changed bytes: ${changedFound.fault}`);
+  const changedText = readFileSync(changedFound.path, 'utf8');
+  if (sha256Hex(Buffer.from(changedText, 'utf8')) !== delta.changed_sha256) {
+    refusal('delta changed_sha256 differs from the retained changed bytes');
+  }
+
+  const definition = MUTATIONS.find((mutation) => `mutation:${mutation.name}` === discovered.id) ?? null;
+  const verdict = classifyCase({
+    control: discovered,
+    expectation: discovered.expectation ?? definitionExpectation(definition),
+    location: discovered.location ?? definitionLocation(definition),
     state: outcome.state,
     exitCode: outcome.exit_code,
     signal: outcome.signal,
     spawnError: outcome.spawn_error,
     stderrText,
-    control: discovered,
-    expectation: discovered.expectation,
+    baselineOk,
+    delta: { changedText, expectedChangedText: expectedChangedBytes(originalText, discovered, MUTATIONS) },
+    supplied: request.supplied ?? null,
   });
-  if (verdict.class === 'intended-law-refusal' && discovered.kind === 'proof-removal' && !baselineOk) {
-    verdict = { class: 'unclassified-rejection', attributedLaw: null };
-  }
-  let deltaChecked = false;
-  const delta = request.delta;
-  if (delta !== undefined) {
-    deltaChecked = true;
-    if (typeof delta.original_path !== 'string' || typeof delta.changed_path !== 'string'
-      || typeof delta.original_sha256 !== 'string' || typeof delta.changed_sha256 !== 'string') {
-      refusal('request delta is missing its paths or digests');
-    }
-    const originalText = existsSync(delta.original_path) ? readFileSync(delta.original_path, 'utf8') : null;
-    const changedText = existsSync(delta.changed_path) ? readFileSync(delta.changed_path, 'utf8') : null;
-    if (originalText === null || sha256Hex(Buffer.from(originalText, 'utf8')) !== delta.original_sha256
-      || changedText === null || sha256Hex(Buffer.from(changedText, 'utf8')) !== delta.changed_sha256
-      || expectedChangedBytes(originalText, discovered, MUTATIONS) !== changedText) {
-      verdict = { class: 'delta-mismatch', attributedLaw: null };
-    }
-  }
-  const diagnostics = splitDiagnostics(stderrText);
+  const { diagnostics, accounting, profile } = splitTimeAccounting(stderrText);
+  const match = verdict.class === 'intended-law-refusal' && verdict.attributedLaw === discovered.law && verdict.qualified;
   const verdictLine = {
     schema: 'capacity-controls/classify-verdict@1',
     id: discovered.id,
     class: verdict.class,
     attributed_law: verdict.attributedLaw,
     law: discovered.law,
-    match: verdict.class === 'intended-law-refusal' && verdict.attributedLaw === discovered.law,
+    match,
+    qualified: verdict.qualified === true,
     reason: verdict.reason ?? null,
     diagnostic_sha256: sha256Hex(Buffer.from(diagnostics, 'utf8')),
-    accounting: accountingOf(stderrText),
+    accounting: {
+      profile,
+      valid: accounting === null ? true : accountingValid(accounting, profile),
+      present: accounting !== null,
+    },
     baseline: { state: baselineOutcome.state, exit_code: baselineOutcome.exit_code, ok: baselineOk },
     expectation: discovered.expectation ?? null,
+    location: discovered.location ?? null,
     supplied: request.supplied ?? null,
-    supplied_agrees: request.supplied
-      ? request.supplied.class === verdict.class && request.supplied.attributed_law === verdict.attributedLaw
-      : null,
-    delta_checked: deltaChecked,
+    toolchain: { compiler_sha256: toolchain.compiler_sha256 },
+    source: request.source,
+    definition_sha256: discovered.definition_sha256,
+    evidence_verified: true,
+    verifier: {
+      checker_sha256: sha256Hex(readFileSync(join(ROOT, 'bend2', 'scripts', 'laws-check.mjs'))),
+      classifier_module_sha256: sha256Hex(readFileSync(join(ROOT, 'bend2', 'scripts', 'capacity-controls', 'classify.mjs'))),
+      work_set_module_sha256: sha256Hex(readFileSync(join(ROOT, 'bend2', 'scripts', 'capacity-controls', 'work-set.mjs'))),
+      definitions_module_sha256: sha256Hex(readFileSync(join(ROOT, 'bend2', 'scripts', 'laws-mutations.mjs'))),
+    },
   };
   console.log(JSON.stringify(verdictLine));
   process.exit(0);
-}
-
-// Split helpers reused for the verdict's evidence fields; the classifier owns
-// the same boundary.
-function splitDiagnostics(stderrText) {
-  const match = /^\s*(?:[0-9.]+ real\s+[0-9.]+ user\s+[0-9.]+ sys\s*$|Command being exectured:|User time \(seconds\):)/m.exec(stderrText);
-  return match ? stderrText.slice(0, match.index) : stderrText;
-}
-
-function accountingOf(stderrText) {
-  const diagnostics = splitDiagnostics(stderrText);
-  if (diagnostics === stderrText) return { profile: null, valid: true, present: false };
-  const suffix = stderrText.slice(diagnostics.length);
-  if (/Maximum resident set size \(kbytes\):/.test(suffix) || /User time \(seconds\):/.test(suffix)) {
-    return { profile: 'gnu-time-v', valid: true, present: true };
-  }
-  if (/maximum resident set size/.test(suffix)) return { profile: 'darwin-usr-bin-time', valid: true, present: true };
-  return { profile: 'unknown', valid: false, present: true };
 }
 
 export async function aggregateCli(argv) {

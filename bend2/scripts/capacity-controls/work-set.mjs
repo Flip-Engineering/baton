@@ -6,7 +6,7 @@
 
 import { createHash } from 'node:crypto';
 import { readFileSync } from 'node:fs';
-import { relative, sep } from 'node:path';
+import { join, relative, sep } from 'node:path';
 import { MUTATIONS } from '../laws-mutations.mjs';
 import { laws, proofBlockRange, ROOT } from '../laws-check.mjs';
 
@@ -31,32 +31,44 @@ export function proofDefinition(text, law) {
 
 // The bytes that decide one mutation control: the target file, the find and
 // replace texts, the intended law and the definition owner's expected/observed
-// constructor metadata when it is bound. External expectation sources do not
-// exist; this digest is the only binding.
+// constructor and qualified location metadata when bound. External metadata
+// sources do not exist; this digest is the only binding.
 export function mutationDefinition(mutation) {
   const definition = { file: mutation.file, find: mutation.find, replace: mutation.replace, law: mutation.law };
   if (mutation.expected !== undefined) definition.expected = mutation.expected;
   if (mutation.observed !== undefined) definition.observed = mutation.observed;
+  if (mutation.location !== undefined) definition.location = mutation.location;
   return JSON.stringify(definition);
 }
 
-// The definition owner's expected/observed metadata, or undefined.
+// The definition owner's expected/observed constructor metadata, or undefined.
 export function definitionExpectation(mutation) {
   if (mutation.expected === undefined && mutation.observed === undefined) return undefined;
   return { expected: mutation.expected, observed: mutation.observed };
 }
 
+// The definition owner's qualified diagnostic location, or undefined.
+export function definitionLocation(mutation) {
+  return mutation.location;
+}
+
 // One record per control. Ids are unique across the set; a collision is a
-// discovery failure, never a silent merge. `bend2Dir` binds discovery to one
-// copied tree: laws are read from its src and mutation target bytes from its
-// modules, so records and compiles share one snapshot. The default is the
-// live bend2 tree.
+// discovery failure, never a silent merge. Record fields must not carry the
+// binding row separators, so the tab-joined serialization stays injective.
+// `bend2Dir` binds discovery to one copied tree: laws are read from its src
+// and mutation target bytes from its modules, so records and compiles share
+// one snapshot. The default is the live bend2 tree.
 export function discoveryRecords({ bend2Dir = join(ROOT, 'bend2') } = {}) {
   const records = [];
   const seen = new Set();
   const push = (record) => {
     if (seen.has(record.id)) throw new Error(`discoveryRecords: duplicate control id ${record.id}`);
     seen.add(record.id);
+    for (const field of [record.id, record.kind, record.law, record.module]) {
+      if (field.includes('\t') || field.includes('\n') || field.includes('\r')) {
+        throw new Error(`discoveryRecords: control field carries a binding separator: ${JSON.stringify(field)}`);
+      }
+    }
     records.push(record);
   };
   for (const { law, file } of laws(join(bend2Dir, 'src'))) {
@@ -70,6 +82,7 @@ export function discoveryRecords({ bend2Dir = join(ROOT, 'bend2') } = {}) {
   }
   for (const mutation of MUTATIONS) {
     const expectation = definitionExpectation(mutation);
+    const location = definitionLocation(mutation);
     push({
       id: `mutation:${mutation.name}`,
       kind: 'mutation',
@@ -77,6 +90,7 @@ export function discoveryRecords({ bend2Dir = join(ROOT, 'bend2') } = {}) {
       module: posixPath(mutation.file),
       definition_sha256: sha256Hex(mutationDefinition(mutation)),
       ...(expectation !== undefined ? { expectation } : {}),
+      ...(location !== undefined ? { location } : {}),
     });
   }
   return records;
@@ -103,7 +117,8 @@ export function recordsForModule(records, module) {
 }
 
 export function groupModules(records) {
-  return [...new Set(records.map((record) => record.module))].sort();
+  return [...new Set(records.map((record) => record.module))]
+    .sort((left, right) => Buffer.compare(Buffer.from(left, 'utf8'), Buffer.from(right, 'utf8')));
 }
 
 // `laws-check.mjs --discover`: one JSON discovery record per line.

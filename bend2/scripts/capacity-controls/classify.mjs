@@ -21,10 +21,13 @@ export const TODO_REFUSAL = 'Error: 1 TODO found.\nThe code is incomplete, and n
 
 // The first line of time-tool accounting when the wrapper appends it to the
 // same stderr stream the child wrote. Darwin /usr/bin/time opens with its
-// real/user/sys field line; GNU time -v opens with its labeled field lines.
-// Everything from that line on is accounting, and the whole suffix must match
-// the measured platform profile.
-const ACCOUNTING = /^\s*(?:[0-9.]+ real\s+[0-9.]+ user\s+[0-9.]+ sys\s*$|Command being exectured:|User time \(seconds\):)/m;
+// real/user/sys field line. GNU time -v opens with a "Command exited with
+// non-zero status N" preamble when the child failed, then a TAB-indented
+// "Command being timed:" field carrying the quoted argv; both retained
+// instance-9930 artifacts show exactly this shape. Everything from that
+// boundary on is accounting, and the whole suffix must match the measured
+// platform profile.
+const ACCOUNTING = /^\s*(?:[0-9.]+ real\s+[0-9.]+ user\s+[0-9.]+ sys\s*$|Command exited with non-zero status \d+$|Command being timed:|User time \(seconds\):)/m;
 
 export function splitTimeAccounting(stderrText) {
   const match = ACCOUNTING.exec(stderrText);
@@ -34,14 +37,14 @@ export function splitTimeAccounting(stderrText) {
 }
 
 // Measured wrapper profiles. Darwin /usr/bin/time -l prints bare field lines
-// with the resident set in bytes; GNU time -v prints labeled lines with the
-// resident set in kbytes. GNU time spells its first field "Command being
-// exectured"; that spelling is upstream's and is matched as printed. A suffix
-// that fits neither profile is invalid evidence, and classification refuses
-// rather than trusting the prefix.
+// with the resident set in bytes; GNU time -v prints TAB-indented labeled
+// lines with the resident set in kbytes, an optional failure preamble and the
+// timed command echoed as the first field. A suffix that fits neither profile
+// is invalid evidence, and classification refuses rather than trusting the
+// prefix.
 export function accountingProfile(accounting) {
   if (accounting === null) return null;
-  if (/Maximum resident set size \(kbytes\):/.test(accounting) || /User time \(seconds\):/.test(accounting)) return 'gnu-time-v';
+  if (/Command being timed:|Exit status: \d+$|Percent of CPU this job got:/m.test(accounting)) return 'gnu-time-v';
   if (/maximum resident set size/.test(accounting)) return 'darwin-usr-bin-time';
   if (/^\s*[0-9.]+ real\s/m.test(accounting)) return 'unknown';
   return null;
@@ -63,30 +66,33 @@ const DARWIN_TIME_FIELDS = [
   /^\d+ involuntary context switches$/,
 ];
 
+// GNU time -v field lines exactly as the retained instance-9930 artifacts
+// print them, TAB prefixes trimmed. The preamble appears only on failure.
 const GNU_TIME_FIELDS = [
-  /^\s*Command being exectured:.*$/,
-  /^\s*User time \(seconds\): \d+(\.\d+)?$/,
-  /^\s*System time \(seconds\): \d+(\.\d+)?$/,
-  /^\s*Percent of CPU this job got: \d+%?$/,
-  /^\s*Elapsed \(wall clock\) time \(h:mm:ss or m:ss\): .+$/,
-  /^\s*Average shared text size \(kbytes\): \d+$/,
-  /^\s*Average unshared data size \(kbytes\): \d+$/,
-  /^\s*Average stack size \(kbytes\): \d+$/,
-  /^\s*Average total size \(kbytes\): \d+$/,
-  /^\s*Maximum resident set size \(kbytes\): \d+$/,
-  /^\s*Average resident set size \(kbytes\): \d+$/,
-  /^\s*Major \(requiring I\/O\) page faults: \d+$/,
-  /^\s*Minor \(reclaiming a frame\) page faults: \d+$/,
-  /^\s*Voluntary context switches: \d+$/,
-  /^\s*Involuntary context switches: \d+$/,
-  /^\s*Swaps: \d+$/,
-  /^\s*File system inputs: \d+$/,
-  /^\s*File system outputs: \d+$/,
-  /^\s*Socket messages sent: \d+$/,
-  /^\s*Socket messages received: \d+$/,
-  /^\s*Signals delivered: \d+$/,
-  /^\s*Page size \(bytes\): \d+$/,
-  /^\s*Exit status: \d+$/,
+  /^Command being timed: ".*"$/,
+  /^Command exited with non-zero status \d+$/,
+  /^User time \(seconds\): \d+(\.\d+)?$/,
+  /^System time \(seconds\): \d+(\.\d+)?$/,
+  /^Percent of CPU this job got: \d+%$/,
+  /^Elapsed \(wall clock\) time \(h:mm:ss or m:ss\): (\d+:)?\d{1,2}\.\d{2}$/,
+  /^Average shared text size \(kbytes\): \d+$/,
+  /^Average unshared data size \(kbytes\): \d+$/,
+  /^Average stack size \(kbytes\): \d+$/,
+  /^Average total size \(kbytes\): \d+$/,
+  /^Maximum resident set size \(kbytes\): \d+$/,
+  /^Average resident set size \(kbytes\): \d+$/,
+  /^Major \(requiring I\/O\) page faults: \d+$/,
+  /^Minor \(reclaiming a frame\) page faults: \d+$/,
+  /^Voluntary context switches: \d+$/,
+  /^Involuntary context switches: \d+$/,
+  /^Swaps: \d+$/,
+  /^File system inputs: \d+$/,
+  /^File system outputs: \d+$/,
+  /^Socket messages sent: \d+$/,
+  /^Socket messages received: \d+$/,
+  /^Signals delivered: \d+$/,
+  /^Page size \(bytes\): \d+$/,
+  /^Exit status: \d+$/,
 ];
 
 export function accountingValid(accounting, profile) {
@@ -104,9 +110,9 @@ export function accountingValid(accounting, profile) {
 export function parseResourceAccounting(accounting, profile) {
   if (accounting === null) return null;
   if (profile === 'darwin-usr-bin-time') {
-    const times = /([0-9.]+) real ([0-9.]+) user ([0-9.]+) sys/.exec(accounting);
-    const rss = /(\d+) maximum resident set size/.exec(accounting);
-    const reclaims = /(\d+) page reclaims/.exec(accounting);
+    const times = /([0-9.]+)\s+real\s+([0-9.]+)\s+user\s+([0-9.]+)\s+sys/.exec(accounting);
+    const rss = /(\d+)\s+maximum resident set size/.exec(accounting);
+    const reclaims = /(\d+)\s+page reclaims/.exec(accounting);
     if (!times) return null;
     return {
       profile,
@@ -148,30 +154,23 @@ export function isTodoRefusal(diagnostics) {
   return diagnostics === TODO_REFUSAL + '\n' || diagnostics === TODO_REFUSAL;
 }
 
-// The qualified `Location:` line a bound-mutation refusal carries. Returns the
-// parsed location when its last dotted segment equals the law, otherwise null.
-// An empty location, as an unrelated syntax error prints, never matches. The
-// qualifying prefix is not pinned here: the composed real-Main prefix is
-// measured at integration and recorded as producer evidence.
-export function qualifiedLawLocation(diagnostics, law) {
-  for (const line of diagnostics.split('\n')) {
-    if (!line.startsWith('Location: ')) continue;
-    const location = line.slice('Location: '.length).trim();
-    const leaf = location.split('.').pop();
-    if (location !== '' && leaf === law) return { location, law };
-    return null;
-  }
-  return null;
-}
-
 // The full characterized mutation refusal: an Error block with expected and
-// observed constructor lines plus a Location naming the law. A bare Location
-// line without the block is not acceptance evidence.
-export function intendedMutationRefusal(diagnostics, law) {
+// observed constructor lines plus a Location naming the law. When the
+// definition owner has bound the qualified location, the diagnostic's
+// Location must equal it exactly; otherwise the law-naming leaf matches.
+export function intendedMutationRefusal(diagnostics, law, location) {
   if (!/^Error:/m.test(diagnostics)) return null;
   if (!/^- expected : /m.test(diagnostics)) return null;
   if (!/^- observed : /m.test(diagnostics)) return null;
-  return qualifiedLawLocation(diagnostics, law);
+  for (const line of diagnostics.split('\n')) {
+    if (!line.startsWith('Location: ')) continue;
+    const value = line.slice('Location: '.length).trim();
+    if (value === '') return null;
+    if (location !== undefined) return value === location ? { location: value, law } : null;
+    const leaf = value.split('.').pop();
+    return leaf === law ? { location: value, law } : null;
+  }
+  return null;
 }
 
 // Optional expected/observed constructor metadata supplied per mutation id.
@@ -182,16 +181,52 @@ export function expectationMet(diagnostics, expectation) {
   return true;
 }
 
-// The ordinary gate's compile receipt shape: a refusal that was a normal
-// process exit with a nonzero code.
-export function refusedNormally(control) {
-  return control.exitCode !== null && control.exitCode !== undefined && control.exitCode > 0
-    && (control.signal === null || control.signal === undefined);
+// One strict process-outcome validator for every path: ordinary gate, group
+// runner receipts, aggregate loop and the per-case endpoint. Types are never
+// coerced: the exit code must be an integer, the signal and spawn error must
+// be a string or exactly null, and the fields must agree with the declared
+// state. Absent fields are not proof of a normal child.
+export function validChildOutcome({ state, exitCode, signal, spawnError }) {
+  if (state !== 'exited' && state !== 'signalled' && state !== 'spawn-error' && state !== 'not-run') return false;
+  if (exitCode !== null && exitCode !== undefined && !Number.isInteger(exitCode)) return false;
+  if (signal !== null && signal !== undefined && typeof signal !== 'string' && typeof signal !== 'number') return false;
+  if (spawnError !== null && spawnError !== undefined && typeof spawnError !== 'string') return false;
+  if (state === 'exited') {
+    if (!Number.isInteger(exitCode)) return false;
+    if (signal !== null && signal !== undefined) return false;
+    if (spawnError !== null && spawnError !== undefined) return false;
+    return true;
+  }
+  if (state === 'signalled') {
+    if (signal === null || signal === undefined) return false;
+    if (spawnError !== null && spawnError !== undefined) return false;
+    return true;
+  }
+  if (state === 'spawn-error') {
+    if (spawnError === null || spawnError === undefined) return false;
+    if (exitCode !== null && exitCode !== undefined) return false;
+    if (signal !== null && signal !== undefined) return false;
+    return true;
+  }
+  return true;
 }
 
-// One classification per completed child over complete raw diagnostics and the
-// actual recorded outcome.
-export function classifyControl({ state, exitCode, signal, spawnError, stderrText, control, expectation }) {
+// The ordinary gate's compile receipt shape: a refusal that was a valid
+// observed normal exit with a positive integer code and no signal.
+export function refusedNormally(control) {
+  if (!validChildOutcome({ state: 'exited', exitCode: control.exitCode, signal: control.signal, spawnError: null })) {
+    return false;
+  }
+  return Number.isInteger(control.exitCode) && control.exitCode > 0;
+}
+
+// One classification per completed child over complete raw diagnostics and
+// the actual recorded outcome. A type-invalid or inconsistent outcome is
+// malformed evidence in its own right and can never classify as a refusal.
+export function classifyControl({ state, exitCode, signal, spawnError, stderrText, control, expectation, location }) {
+  if (!validChildOutcome({ state, exitCode, signal, spawnError })) {
+    return { class: 'malformed-outcome', attributedLaw: null };
+  }
   if (spawnError !== null && spawnError !== undefined) return { class: 'spawn-error', attributedLaw: null };
   if (signal !== null && signal !== undefined) return { class: 'crashed', attributedLaw: null };
   if (state !== 'exited' || exitCode === null || exitCode === undefined) {
@@ -209,10 +244,56 @@ export function classifyControl({ state, exitCode, signal, spawnError, stderrTex
   if (exitCode === 0) return { class: 'accepted', attributedLaw: null };
   const refusal = control.kind === 'proof-removal'
     ? isTodoRefusal(diagnostics)
-    : control.kind === 'mutation' ? intendedMutationRefusal(diagnostics, control.law) !== null : false;
+    : control.kind === 'mutation' ? intendedMutationRefusal(diagnostics, control.law, location) !== null : false;
   if (refusal && expectationMet(diagnostics, expectation)) {
     return { class: 'intended-law-refusal', attributedLaw: control.law };
   }
   if (refusal) return { class: 'expectation-mismatch', attributedLaw: null };
   return { class: 'unclassified-rejection', attributedLaw: null };
+}
+
+// The one qualification boundary for a negative control case. The group
+// runner, the aggregate and the per-case endpoint all call this with the same
+// bound inputs, so no consumer can turn a narrow diagnostic match into
+// acceptance while a prerequisite is missing. A case qualifies only when the
+// diagnostics are the intended refusal, the matched baseline compiled, the
+// mutation's definition-owned expectation and location metadata are bound,
+// the exact applied delta verifies, and any supplied producer label agrees.
+//
+// `control` is the discovery record; `expectation` and `location` are the
+// definition-owner metadata for mutation cases (undefined while the owner has
+// not bound them); `delta` carries the retained changed bytes and the bytes
+// re-derived from the bound original, or null when unverifiable.
+export function classifyCase({
+  control,
+  expectation,
+  location,
+  state,
+  exitCode,
+  signal,
+  spawnError,
+  stderrText,
+  baselineOk,
+  delta,
+  supplied,
+}) {
+  const base = classifyControl({
+    state, exitCode, signal, spawnError, stderrText, control,
+    expectation: control.kind === 'mutation' ? expectation : undefined,
+    location: control.kind === 'mutation' ? location : undefined,
+  });
+  const qualifiedBase = base.class === 'intended-law-refusal' && base.attributedLaw === control.law;
+  if (!qualifiedBase) return { ...base, qualified: false };
+  if (!baselineOk) return { class: 'unqualified-baseline', attributedLaw: null, qualified: false };
+  if (control.kind === 'mutation' && (!expectation || expectation.expected === undefined
+    || expectation.observed === undefined || !location)) {
+    return { class: 'expectation-unqualified', attributedLaw: null, qualified: false };
+  }
+  if (!delta || typeof delta.changedText !== 'string' || delta.changedText !== delta.expectedChangedText) {
+    return { class: 'delta-unverified', attributedLaw: null, qualified: false };
+  }
+  if (supplied && (supplied.class !== base.class || supplied.attributed_law !== base.attributedLaw)) {
+    return { class: 'misreported-diagnostic', attributedLaw: null, qualified: false };
+  }
+  return { ...base, qualified: true };
 }
