@@ -140,6 +140,19 @@ class ContextPackageInput(unittest.TestCase):
             with self.assertRaises(RuntimeError):
                 PACKAGE.context_lockfile(directory)
 
+    def test_receipt_log_selection_covers_files_only(self):
+        with tempfile.TemporaryDirectory() as scratch:
+            logs = pathlib.Path(scratch)
+            expected = ['context-gate-host.json', 'context-gate-host.payload-after.json',
+                        'context-gate-host.stdout', 'context-node-version-host.json']
+            for name in expected:
+                (logs / name).write_text('x')
+            (logs / 'context-gate-home-host').mkdir()
+            (logs / 'context-dependencies').mkdir()
+            (logs / 'context-dependencies' / 'ajv.tgz').write_text('x')
+            self.assertEqual([path.name for path in PACKAGE.context_receipt_logs(logs)],
+                             expected)
+
 
 class ContextPackagedBytes(unittest.TestCase):
     @classmethod
@@ -229,24 +242,23 @@ class ContextPackagedBytes(unittest.TestCase):
     def test_gate_refuses_changed_node_identity(self):
         real = pathlib.Path(self.host_node).resolve()
         wrapper = pathlib.Path(self.scratch.name) / 'changing-node.sh'
-        flag = pathlib.Path(self.scratch.name) / 'changing-node.flag'
-        # Only --version calls observe the flag; the gate child always runs
-        # the real staged gate through the real node.
+        state = pathlib.Path(self.scratch.name) / 'changing-node.state'
+        # Only --version calls observe the state file; the gate child always
+        # runs the real staged gate through the real node.
         wrapper.write_text('#!/bin/sh\n'
                            'if [ "$1" = "--version" ]; then\n'
-                           '  if [ -f "$CHANGING_NODE_FLAG" ]; then echo v9.8.7; exit 0; fi\n'
-                           '  touch "$CHANGING_NODE_FLAG"\n'
+                           '  if [ -f "' + str(state) + '" ]; then echo v9.8.7; exit 0; fi\n'
+                           '  : > "' + str(state) + '"\n'
                            'fi\n'
                            'exec "' + str(real) + '" "$@"\n')
         wrapper.chmod(0o755)
         with self.assertRaises(RuntimeError) as caught:
-            PACKAGE.run_context_gate(self.host_root, self.logs, wrapper, 'changed-node',
-                                     {'CHANGING_NODE_FLAG': str(flag)})
+            PACKAGE.run_context_gate(self.host_root, self.logs, wrapper, 'changed-node')
         self.assertIn('different version', str(caught.exception))
         receipt = json.loads((self.logs / 'context-gate-changed-node.json').read_text())
         self.assertEqual(receipt['node']['version'], subprocess_version(real))
-        self.assertEqual(receipt['postIdentity']['status'], 'verified')
-        self.assertEqual(receipt['postIdentity']['version'], 'v9.8.7')
+        self.assertTrue(receipt['node']['postIdentity']['available'])
+        self.assertEqual(receipt['node']['versionAfter'], 'v9.8.7')
         self.assertTrue(receipt['nodeVersionChanged'])
         self.assertFalse(receipt['nodeIdentityChanged'])
         self.assertEqual(receipt['exit_code'], 0)
@@ -254,29 +266,29 @@ class ContextPackagedBytes(unittest.TestCase):
         PACKAGE.require_gate_report(
             (self.logs / 'context-gate-changed-node.stdout').read_text(), len(self.entries))
         self.assertGreater((self.logs / 'context-node-version-changed-node.json').stat().st_size, 0)
-        self.assertGreater((self.logs / 'context-node-version-changed-node-after.json').stat().st_size, 0)
+        self.assertGreater(
+            (self.logs / 'context-node-version-changed-node-after.json').stat().st_size, 0)
 
-    def test_gate_refuses_unavailable_post_identity(self):
+    def test_gate_refuses_failed_post_probe(self):
         real = pathlib.Path(self.host_node).resolve()
         wrapper = pathlib.Path(self.scratch.name) / 'failing-post-node.sh'
-        flag = pathlib.Path(self.scratch.name) / 'failing-post-node.flag'
+        state = pathlib.Path(self.scratch.name) / 'failing-post-node.state'
         # The second --version probe fails; the gate child still runs the real
-        # staged gate, so its evidence must be retained with the refusal.
+        # staged gate and its evidence must be retained with the refusal.
         wrapper.write_text('#!/bin/sh\n'
                            'if [ "$1" = "--version" ]; then\n'
-                           '  if [ -f "$FAILING_POST_FLAG" ]; then echo boom >&2; exit 7; fi\n'
-                           '  touch "$FAILING_POST_FLAG"\n'
+                           '  if [ -f "' + str(state) + '" ]; then echo boom >&2; exit 7; fi\n'
+                           '  : > "' + str(state) + '"\n'
                            'fi\n'
                            'exec "' + str(real) + '" "$@"\n')
         wrapper.chmod(0o755)
         with self.assertRaises(RuntimeError) as caught:
-            PACKAGE.run_context_gate(self.host_root, self.logs, wrapper, 'failing-post-node',
-                                     {'FAILING_POST_FLAG': str(flag)})
-        self.assertIn('could not be verified', str(caught.exception))
+            PACKAGE.run_context_gate(self.host_root, self.logs, wrapper, 'failing-post-node')
+        self.assertIn('is unavailable', str(caught.exception))
         receipt = json.loads((self.logs / 'context-gate-failing-post-node.json').read_text())
-        self.assertEqual(receipt['postIdentity']['status'], 'unavailable')
+        self.assertFalse(receipt['node']['postIdentity']['available'])
         self.assertIn('context-node-version-failing-post-node-after.json',
-                      receipt['postIdentity']['error'])
+                      receipt['node']['postIdentity']['error'])
         probe_receipt = json.loads(
             (self.logs / 'context-node-version-failing-post-node-after.json').read_text())
         self.assertEqual(probe_receipt['exit_code'], 7)
@@ -286,7 +298,67 @@ class ContextPackagedBytes(unittest.TestCase):
         self.assertTrue(receipt['payloadSnapshot']['equal'])
         PACKAGE.require_gate_report(
             (self.logs / 'context-gate-failing-post-node.stdout').read_text(), len(self.entries))
-        self.assertGreater((self.logs / 'context-node-version-failing-post-node.json').stat().st_size, 0)
+
+    def test_gate_refuses_removed_post_executable(self):
+        real = pathlib.Path(self.host_node).resolve()
+        wrapper = pathlib.Path(self.scratch.name) / 'vanishing-node.sh'
+        # The gate child removes the wrapper before executing the real node,
+        # so the post-identity probe finds no executable at all.
+        wrapper.write_text('#!/bin/sh\n'
+                           'if [ "$1" != "--version" ]; then\n'
+                           '  rm -f "' + str(wrapper) + '"\n'
+                           'fi\n'
+                           'exec "' + str(real) + '" "$@"\n')
+        wrapper.chmod(0o755)
+        with self.assertRaises(RuntimeError) as caught:
+            PACKAGE.run_context_gate(self.host_root, self.logs, wrapper, 'vanishing-node')
+        self.assertIn('is unavailable', str(caught.exception))
+        receipt = json.loads((self.logs / 'context-gate-vanishing-node.json').read_text())
+        self.assertFalse(receipt['node']['postIdentity']['available'])
+        self.assertIsNone(receipt['node']['versionAfter'])
+        self.assertIsNone(receipt['nodeVersionChanged'])
+        self.assertIsNone(receipt['nodeIdentityChanged'])
+        self.assertEqual(receipt['exit_code'], 0)
+        self.assertTrue(receipt['payloadSnapshot']['equal'])
+        PACKAGE.require_gate_report(
+            (self.logs / 'context-gate-vanishing-node.stdout').read_text(), len(self.entries))
+
+    def test_gate_refuses_same_version_byte_drift(self):
+        real = pathlib.Path(self.host_node).resolve()
+        wrapper = pathlib.Path(self.scratch.name) / 'byte-drift-node.sh'
+        # The gate child appends a byte to the wrapper itself, so the post
+        # probe rehashes different bytes while the reported version matches.
+        wrapper.write_text('#!/bin/sh\n'
+                           'if [ "$1" != "--version" ]; then\n'
+                           '  printf x >> "' + str(wrapper) + '"\n'
+                           'fi\n'
+                           'exec "' + str(real) + '" "$@"\n')
+        wrapper.chmod(0o755)
+        with self.assertRaises(RuntimeError) as caught:
+            PACKAGE.run_context_gate(self.host_root, self.logs, wrapper, 'byte-drift-node')
+        self.assertIn('executable bytes changed', str(caught.exception))
+        receipt = json.loads((self.logs / 'context-gate-byte-drift-node.json').read_text())
+        self.assertTrue(receipt['nodeIdentityChanged'])
+        self.assertFalse(receipt['nodeVersionChanged'])
+        self.assertEqual(receipt['node']['versionAfter'], receipt['node']['version'])
+        self.assertEqual(receipt['exit_code'], 0)
+        self.assertTrue(receipt['node']['postIdentity']['available'])
+        self.assertTrue(receipt['payloadSnapshot']['equal'])
+
+    def test_gate_refuses_payload_mutation(self):
+        mutation_root = pathlib.Path(self.scratch.name) / 'mutation'
+        shutil.copytree(self.host_root, mutation_root)
+        staged_gate = mutation_root / PACKAGE.CONTEXT_STAGE_ROOT / 'context-package-gate.mjs'
+        staged_gate.write_text('import fs from "node:fs";\n'
+                               'fs.appendFileSync("dependency-closure.json", "// mutated\\n");\n')
+        with self.assertRaises(RuntimeError) as caught:
+            PACKAGE.run_context_gate(mutation_root, self.logs, pathlib.Path(self.host_node),
+                                     'payload-mutation')
+        self.assertIn('changed during the package gate', str(caught.exception))
+        receipt = json.loads((self.logs / 'context-gate-payload-mutation.json').read_text())
+        self.assertFalse(receipt['payloadSnapshot']['equal'])
+        self.assertEqual(receipt['exit_code'], 0)
+        self.assertTrue(receipt['node']['postIdentity']['available'])
 
     def test_staged_notices_include_explicit_third_party_terms(self):
         terms = PACKAGE.stage_context_notices(self.host_root, self.entries)
