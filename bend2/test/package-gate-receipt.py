@@ -1554,8 +1554,55 @@ class PackageGateReceipt(unittest.TestCase):
         for member in PACKAGE.VERIFIER_MEMBERS:
             dual[member] = self.verifier[member]
         answer['verifier'] = dual
-        PACKAGE.controls_evidence(self.full_evidence(), PACKAGE.snapshot(), self.compiler(),
-                                  audit=self.home / 'dual-audit')
+        dual_audit = self.home / 'dual-audit'
+        dual_envelope = PACKAGE.controls_evidence(self.full_evidence(), PACKAGE.snapshot(),
+                                                  self.compiler(), audit=dual_audit)
+        dual_verdicts = (dual_envelope.get('classifier') or {}).get('verdicts') or []
+        dual_ids = sorted(str(verdict['id']) for verdict in dual_verdicts)
+        self.assertEqual(dual_ids, expected_ids)
+        dual_run = self.home / 'recipe-dual-run'
+        dual_run.mkdir()
+        recipe.attempt(dual_run, [], 'archive-case-acquisition',
+                       lambda: recipe.bind_case_acquisitions(
+                           dual_audit, dual_ids,
+                           {str(verdict['id']): verdict for verdict in dual_verdicts}),
+                       expected_cases=len(dual_ids))
+        dual_rows = json.loads((dual_run / 'run.json').read_text())['children']
+        self.assertEqual(dual_rows[0]['outcome'], 'verified')
+        self.assertEqual(dual_rows[0]['cases_uncovered'], [])
+
+        # A selected case whose retained stream is absent refuses at that boundary
+        # with its own identity, before any verdict comparison.
+        stem = PACKAGE.acquisition_stem(expected_ids[0])
+        missing = self.home / 'missing-audit'
+        shutil.copytree(audit, missing)
+        (missing / (stem + '.stdout')).unlink()
+        with self.assertRaises(recipe.StageFailure) as absent:
+            recipe.bind_case_acquisitions(missing, expected_ids, by_id)
+        self.assertEqual(absent.exception.fields['boundary'], 'stdout-stream')
+        self.assertEqual(absent.exception.fields['case'], expected_ids[0])
+
+        # A response whose verifier omits a member refuses at the verifier boundary,
+        # with the terminal record kept consistent with the bytes on disk so the
+        # stream check passes first.
+        malformed = self.home / 'malformed-audit'
+        shutil.copytree(audit, malformed)
+        response_path = malformed / (stem + '.stdout')
+        payload = json.loads(response_path.read_bytes().decode('utf-8'))
+        payload['verifier'] = {key: value for key, value in payload['verifier'].items()
+                               if key != 'classify_module_sha256'}
+        data = (json.dumps(payload) + '\n').encode()
+        response_path.write_bytes(data)
+        terminal_path = malformed / (stem + '.acquisition.json')
+        terminal = json.loads(terminal_path.read_text())
+        terminal['stdout_bytes'] = len(data)
+        terminal['stdout_sha256'] = hashlib.sha256(data).hexdigest()
+        terminal_path.write_text(json.dumps(terminal))
+        with self.assertRaises(recipe.StageFailure) as refused:
+            recipe.bind_case_acquisitions(malformed, expected_ids, by_id)
+        self.assertEqual(refused.exception.fields['boundary'], 'response-verifier')
+        self.assertEqual(refused.exception.fields['case'], expected_ids[0])
+
         conflict = dict(dual)
         conflict['classifier_module_sha256'] = 'b' * 64
         answer['verifier'] = conflict

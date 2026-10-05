@@ -217,20 +217,28 @@ class RecipeSettlement(unittest.TestCase):
         target.mkdir()
         original_replace = RECIPE.os.replace
         original_unlink = RECIPE.os.unlink
+        replacements = []
 
-        def failing_replace(source, destination):
-            raise OSError('the replacement could not be made')
+        def replacing(source, destination):
+            # The attempted row is the first replacement and is written; the
+            # replacement that would settle the verified outcome is refused.
+            replacements.append(str(destination))
+            if len(replacements) > 1:
+                raise OSError('the replacement could not be made')
+            return original_replace(source, destination)
 
         def failing_unlink(path, **kwargs):
             raise OSError('the staged file could not be removed')
 
-        RECIPE.os.replace = failing_replace
+        RECIPE.os.replace = replacing
         RECIPE.os.unlink = failing_unlink
         self.addCleanup(setattr, RECIPE.os, 'replace', original_replace)
         self.addCleanup(setattr, RECIPE.os, 'unlink', original_unlink)
         with self.assertRaises(RuntimeError) as raised:
             RECIPE.extract_archive(self.run, self.record, archive_path, target)
-        # The replacement fails, the staged file exists, and its cleanup fails too.
+        # The extraction itself ran before the recording failure: the member is on
+        # disk and the recording error keeps the verified outcome and its value.
+        self.assertTrue((target / 'bend2/manifest.json').is_file())
         self.assertIsNotNone(raised.exception.cleanup_error)
         self.assertIn('replacement could not be made', str(raised.exception))
         self.assertEqual(raised.exception.stage, 'archive-extracted')
@@ -248,8 +256,21 @@ class RecipeSettlement(unittest.TestCase):
             self.add_member(archive, 'bend2/manifest.json', b'{}')
             self.add_member(archive, 'bend2/controls-evidence/bend2.json', b'{}')
         target = self.run / 'primary-readback'
-        (target / 'bend2').mkdir(parents=True)
-        (target / 'bend2/controls-evidence').write_bytes(b'occupied')
+        target.mkdir()
+        control = OSError('the member bytes could not be written')
+        original_extract = RECIPE.tarfile.TarFile.extract
+        extracted_members = []
+
+        def controlled_extract(archive, member, path='.', **kwargs):
+            # The first member is extracted and the second raises the controlled
+            # object, which is the original work exception this case asserts on.
+            extracted_members.append(member.name)
+            if len(extracted_members) > 1:
+                raise control
+            return original_extract(archive, member, path, **kwargs)
+
+        RECIPE.tarfile.TarFile.extract = controlled_extract
+        self.addCleanup(setattr, RECIPE.tarfile.TarFile, 'extract', original_extract)
         original_replace = RECIPE.os.replace
         original_unlink = RECIPE.os.unlink
         replacements = []
@@ -272,16 +293,26 @@ class RecipeSettlement(unittest.TestCase):
         with self.assertRaises(OSError) as raised:
             RECIPE.extract_archive(self.run, self.record, archive_path, target)
         primary = raised.exception
-        # The work failure stays the primary object; the recording failure, with its
-        # own retained cleanup failure, is a secondary observation attached to it.
-        self.assertIsInstance(primary, OSError)
-        self.assertNotIsInstance(primary, RuntimeError)
+        # The controlled work object is the object raised, and the recording failure
+        # with its own retained cleanup failure is a secondary observation on it.
+        self.assertIs(primary, control)
+        self.assertEqual(primary.fields['members_extracted'], 1)
+        self.assertEqual(primary.fields['members_extracted_names'], ['bend2/manifest.json'])
+        self.assertEqual(primary.fields['failing_member'], 'bend2/controls-evidence/bend2.json')
         self.assertIsInstance(primary.record_error, RuntimeError)
         self.assertIn('could not be written', str(primary.record_error))
         self.assertIsNotNone(primary.record_error.cleanup_error)
         self.assertEqual(primary.record_error_text, repr(primary.record_error))
-        row = next(row for row in self.rows() if row['name'] == 'archive-extracted')
-        self.assertEqual(row['outcome'], 'attempted')
+        self.assertFalse(hasattr(primary, 'record_error_chain'))
+        self.assertTrue((target / 'bend2/manifest.json').is_file())
+        # The prior record is exactly the attempted row: the failed settlement did
+        # not replace it, and nothing else was written over it.
+        rows = self.rows()
+        self.assertEqual([row['name'] for row in rows], ['archive-extracted'])
+        self.assertEqual(rows[0]['outcome'], 'attempted')
+        self.assertEqual((self.run / 'run.json').read_bytes(),
+                         (json.dumps({'children': rows}, indent=2) + '\n').encode())
+        self.assertFalse((self.run / 'run.json.next').is_file())
 
     def test_metadata_staging_reports_copied_and_verified_separately(self):
         # The actual metadata caller copies both documents, verifies both, and a
@@ -401,7 +432,8 @@ class RecipeSettlement(unittest.TestCase):
         retained = self.run / 'hash-archive.tar.gz'
         retained.write_bytes(b'archive bytes')
         digest = RECIPE.digest(retained)
-        broken = archived / 'reduction.json'
+        # The verification reads the retained destination copy, not the source.
+        broken = self.run / 'hash-metadata' / 'reduction.json'
         original_digest = RECIPE.digest
 
         def failing_digest(path):
@@ -417,16 +449,19 @@ class RecipeSettlement(unittest.TestCase):
                                                          retained, self.run / 'hash-metadata',
                                                          digest, documents),
                            archive=retained.name)
-        # The read failure is attached as an accounting observation, and the row
-        # keeps it while the original read error stays the raised object.
-        self.assertTrue(hasattr(raised.exception, 'accounting_error'))
+        # The original read error is the primary work exception, and the row keeps
+        # the destination being verified and the documents already verified. An
+        # attached accounting failure is a different observation and is not present.
+        self.assertIsInstance(raised.exception, OSError)
+        self.assertNotIsInstance(raised.exception, RuntimeError)
+        self.assertFalse(hasattr(raised.exception, 'accounting_error'))
         row = next(row for row in self.rows() if row['name'] == 'metadata-hash-stage')
         self.assertEqual(row['outcome'], 'failed')
         self.assertEqual(row['documents_copied'], sorted(documents))
         self.assertNotIn('copy_attempted', row)
-        self.assertNotIn('metadata_verifying', row)
-        self.assertEqual(row['accounting_error_text'],
-                         repr(raised.exception.accounting_error))
+        self.assertEqual(row['metadata_verifying'], 'reduction.json')
+        self.assertEqual(row['metadata_verified'], ['inventory.json'])
+        self.assertNotIn('accounting_error_text', row)
         self.assertIn('could not be read', row['failure'])
 
     def test_a_partial_envelope_write_is_a_write_operation_failure(self):
@@ -496,6 +531,28 @@ class RecipeSettlement(unittest.TestCase):
         self.assertTrue(hash_fields['envelope_present'])
         self.assertEqual(hash_fields['envelope_bytes'],
                          hashed.stat().st_size)
+
+        # The same later-hash failure through the production attempt wrapper leaves
+        # its failed row with the later operation and the written file facts.
+        hashed_row_path = self.run / 'archive-envelope-wrapped.json'
+
+        def failing_wrapped_digest(path):
+            if pathlib.Path(path) == hashed_row_path:
+                raise OSError('the written envelope could not be read')
+            return original_digest(path)
+
+        RECIPE.digest = failing_wrapped_digest
+        with self.assertRaises(OSError):
+            RECIPE.attempt(self.run, self.record, 'envelope-hash-stage',
+                           lambda: RECIPE.write_envelope(self.run, self.record,
+                                                         {'reduction_sha256': 'a' * 64},
+                                                         hashed_row_path),
+                           document='archive-envelope.json')
+        row = next(row for row in self.rows() if row['name'] == 'envelope-hash-stage')
+        self.assertEqual(row['outcome'], 'failed')
+        self.assertEqual(row['operation'], 'envelope-sha256')
+        self.assertTrue(row['envelope_present'])
+        self.assertEqual(row['envelope_bytes'], hashed_row_path.stat().st_size)
 
     def test_a_preflight_refusal_names_the_member_and_extracts_nothing(self):
         # The unsafe member is refused during the preflight, before any member is
