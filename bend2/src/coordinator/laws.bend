@@ -1306,6 +1306,41 @@ law omp_terminal_decision_composition_is_ordered:
 def omp_terminal_decision_composition_is_ordered(event,message,activity):
   {==}
 
+# The loop composition: which frames feed the retained message, the assistant
+# activity and the terminal normalizer, and with which gates.
+law omp_retained_message_is_the_loop_call:
+  for +db: String
+  for +harness: String
+  for +line: String
+  for +previous: String
+  for +relevant: Bool
+  {Turn.omp_retained_message(db,harness,line,previous,relevant) == Turn.omp_message(db,line,previous,Turn.omp_terminal_enabled(harness,relevant)) : IO(String)}
+
+def omp_retained_message_is_the_loop_call(db,harness,line,previous,relevant):
+  {==}
+
+law omp_retained_activity_is_the_loop_call:
+  for +db: String
+  for +harness: String
+  for +line: String
+  for +previous: String
+  {Turn.omp_retained_activity(db,harness,line,previous) == Turn.omp_activity(db,line,previous,Turn.omp_activity_enabled(harness)) : IO(String)}
+
+def omp_retained_activity_is_the_loop_call(db,harness,line,previous):
+  {==}
+
+law omp_normalized_step_is_the_loop_call:
+  for +db: String
+  for +harness: String
+  for +line: String
+  for +message: String
+  for +activity: String
+  for +relevant: Bool
+  {Turn.omp_normalized_step(db,harness,line,message,activity,relevant) == Turn.omp_terminal(db,line,message,activity,Turn.omp_terminal_enabled(harness,relevant)) : IO(String)}
+
+def omp_normalized_step_is_the_loop_call(db,harness,line,message,activity,relevant):
+  {==}
+
 # The receive's outcome decision reads the retained event through the failure
 # classifier and combines that with the turn's own failure test.
 law receive_outcome_failed_reads_the_classifier:

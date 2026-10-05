@@ -261,6 +261,19 @@ def omp_terminal(db: String, +event: String, +message: String, +activity: String
       normalized : String <- IO.try(String,DB.Sql.query(db,omp_terminal_sql(event,message,activity)))
       IO.pure(String,Tx.trim_nl(normalized))
 
+# The frame step the native loop runs for every line: which frames update the
+# retained message, which update the assistant activity, and what the terminal
+# normalizer is handed. The loop calls these wrappers, so the composition and its
+# gates that the laws bind are the ones the runtime runs.
+def omp_retained_message(+db: String, +harness: String, +line: String, previous: String, relevant: Bool) -> IO(String):
+  omp_message(db,line,previous,omp_terminal_enabled(harness,relevant))
+
+def omp_retained_activity(+db: String, +harness: String, +line: String, previous: String) -> IO(String):
+  omp_activity(db,line,previous,omp_activity_enabled(harness))
+
+def omp_normalized_step(+db: String, +harness: String, +line: String, message: String, +activity: String, relevant: Bool) -> IO(String):
+  omp_terminal(db,line,message,activity,omp_terminal_enabled(harness,relevant))
+
 def observe_event(db: String, player: String, id: String, line: String, relevant: Bool, sealed: Bool) -> IO(Result<&1,&1,U32 & String,String>):
   match relevant:
     case True{}: Store.commit(db,C.Observe{id,player,line,sealed})
@@ -387,9 +400,9 @@ def consume(+db: String, +player: String, +id: String, +log: String, +handle: U3
         +relevant : Bool <- IO.pure(Bool,Guidance.relevant(kind,String.eq(harness,"omp\n")))
         +sealed : Bool <- IO.pure(Bool,Bool.not(String.is_empty(terminal)))
         next_cursor : String <- Guidance.observe(db,player,handle,line,cursor,Bool.and(String.eq(harness,"omp\n"),relevant),sealed)
-        +message : String <- omp_message(db,line,last_message,omp_terminal_enabled(harness,relevant))
-        +activity : String <- omp_activity(db,line,last_activity,omp_activity_enabled(harness))
-        +event : String <- omp_terminal(db,line,message,activity,omp_terminal_enabled(harness,relevant))
+        +message : String <- omp_retained_message(db,harness,line,last_message,relevant)
+        +activity : String <- omp_retained_activity(db,harness,line,last_activity)
+        +event : String <- omp_normalized_step(db,harness,line,message,activity,relevant)
         deferred : Unit <- deferred_note(db,player,id,event,terminal,sealed)
         observed : Result<&1,&1,U32 & String,String> <- observe_event(db,player,id,event,relevant,sealed)
         ended : String <- terminal_event(db,event,terminal,relevant)
