@@ -104,10 +104,13 @@ class TerminalFrames(unittest.TestCase):
         ]))
         self.assertEqual(body, 'Task complete after recovery.')
 
-    def test_unavailable_current_content_is_not_fabricated(self):
+    def test_unavailable_current_content_is_reported_truthfully(self):
         body = self.observe('unavailable', terminal(['marker', None, True]))
+        self.assertIn('Native report unavailable', body)
+        self.assertIn('retained in the native log', body)
         self.assertNotIn('Native model failure', body)
-        self.assertIn('agent_end', body)
+        self.assertNotIn('"messages"', body)
+        self.assertNotIn('agent_end', body)
 
 
 if __name__ == '__main__':
