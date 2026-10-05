@@ -87,17 +87,49 @@ class RecipeSettlement(unittest.TestCase):
         self.assertIn('could not be written', raised.exception.record_error)
         self.assertEqual(len(writes), 2)
 
-    def test_a_staged_cleanup_failure_is_retained(self):
-        # A directory where the replacement file belongs makes the staged write
-        # fail and its cleanup fail too, so both facts must be retained.
+    def test_a_prepopulated_record_survives_a_failed_replacement(self):
+        # An earlier completed run left rows behind. A failed staged replacement
+        # must leave those rows exactly as they were.
+        RECIPE.settle(self.run, self.record, 'preconditions', 'observed', run=1)
+        RECIPE.settle(self.run, self.record, 'consume', 'qualified', cases=3)
+        before = (self.run / 'run.json').read_bytes()
         staged = self.run / 'run.json.next'
         staged.mkdir()
         (staged / 'occupied').write_text('still here\n')
         with self.assertRaises(RuntimeError) as raised:
-            RECIPE.write_record(self.run, [{'name': 'preconditions', 'outcome': 'verified'}])
+            RECIPE.write_record(self.run, self.record + [{'name': 'archive-readback'}])
         self.assertIn('could not be written', str(raised.exception))
         self.assertIsNotNone(raised.exception.cleanup_error)
-        self.assertTrue(staged.is_dir())
+        self.assertEqual((self.run / 'run.json').read_bytes(), before)
+        self.assertEqual([row['name'] for row in self.rows()],
+                         ['preconditions', 'consume'])
+
+    def test_work_record_and_cleanup_failure_together(self):
+        # The stage fails, its terminal record cannot be written and the staged
+        # cleanup fails too: the original cause is raised and both secondary
+        # facts stay attached.
+        RECIPE.settle(self.run, self.record, 'preconditions', 'observed', run=1)
+        staged = self.run / 'run.json.next'
+        original_write = RECIPE.write_record
+        calls = []
+
+        def failing_write(run, record):
+            calls.append(len(record))
+            if len(calls) > 1:
+                raise RuntimeError('the run record could not be written: blocked')
+            return original_write(run, record)
+
+        RECIPE.write_record = failing_write
+        self.addCleanup(setattr, RECIPE, 'write_record', original_write)
+        staged.mkdir()
+        (staged / 'occupied').write_text('still here\n')
+        original = SystemExit('the stage itself failed')
+        with self.assertRaises(SystemExit) as raised:
+            RECIPE.attempt(self.run, self.record, 'archive-readback',
+                           lambda: (_ for _ in ()).throw(original))
+        self.assertIs(raised.exception, original)
+        self.assertIn('could not be written', raised.exception.record_error)
+        self.assertEqual([row['name'] for row in self.rows()], ['preconditions'])
 
     def test_settling_twice_updates_one_row(self):
         RECIPE.settle(self.run, self.record, 'archive-readback', 'attempted', archive='a')
