@@ -235,7 +235,10 @@ Sequence is canonical unsigned decimal text, monotone within the qualified
 invocation or retained role. Runtime is nullable; unsolicited query-null events
 are allowed only for a retained runtime under its authenticated original binding.
 The native observer resolves that binding and producing operation from admitted
-state, then compares the frame; the echoed text does not authenticate itself.
+state, then compares the frame before committing any state, cursor, result or
+notice. Query, owner, module/operation, role and incarnation must all agree with
+that association, including query-null runtime events. The echoed text does not
+authenticate itself.
 Type is `accepted`, `complete`, `failed` or `state`; each payload uses its selected
 declared schema within the common outcome rules.
 
@@ -304,11 +307,23 @@ any required selected-module readiness check after admission.
 Ordinary queries automatically activate available admitted modules. Missing
 selected bytes return the exact package/dependency and an ordinary native
 resolution request. The proposed request uses the existing context query surface:
-subject `{kind:"module-resolution",module,intent:"inspect"|"install"}` and
-`select:["state"]`. Inspect resolves the trusted declaration and installed
-inventory without retrieval. Install requires the proposed common effect
-`installProvider` and the existing package authority for its pinned source,
-destination and integrity policy. Target configuration supplies no package URL,
+subject `{kind:"module-resolution",module,intent:"inspect"}` or
+`{kind:"module-resolution",module,intent:"install",expected:{query,id}}`, with
+`select:["state"]`, engine omitted/`auto` and options empty. Module is the literal
+trusted description ID. Native dispatches this common control branch before
+language-provider selection. Inspect resolves description and installed inventory
+without retrieval or provider activation. It returns a retained selection ref;
+install requires that exact inspect query/ref in `expected`. Native authenticates
+its association and compares its declaration, complete package/schema closure,
+project/configuration inputs and intended installation policy with current trusted
+authority before acquisition. Changed selection refuses with a fresh-inspect
+remedy. An expected ref supplies comparison data, never trust or grants. Inspect
+may additionally name `origin:{query,id}` to resolve the exact original binding of
+a historical ref; it cannot substitute the current same-name package/schema.
+Install requires the proposed common effect `installProvider` and qualified
+installation authority for its pinned source, destination, installer and integrity
+policy. Reviewed release-building permissions do not establish that installed
+authority. Target configuration supplies no package URL,
 installer command or trust root. The native result includes the literal query
 needed to resolve the missing selected package; agents need no private scripts.
 
@@ -318,8 +333,47 @@ Their implementation must call the actual package acquisition/staging/verificati
 entry and retain its process/effect receipt through existing query custody. If
 that entry or authority is unavailable, refusal identifies the missing owned
 primitive. Metadata success cannot count as installed resolution. Acquisition is
-separate from the original analysis query; after success the agent retries its
-ordinary query with the original subject and current admitted identities.
+separate from the original analysis query. After success, fresh analysis uses a
+new query ID if the earlier analysis has a retained rejected, failed, interrupted
+or completed result. Its old ID continues to replay the immutable outcome. A
+validation refusal before preparation and without a row keeps its ordinary
+re-entry rules. Missing a row alone does not establish that precondition.
+
+Inspect uses common native admission/result retention without a language child.
+Its completed result is the closed native variant
+`{kind:"moduleResolution",producer,module,intent,selection,installation,readiness,refs,refFormat,remedies}`.
+Producer is the admitted common native operation binding. Selection identifies
+the exact retained inspect ref and its authenticated inputs; installation and
+readiness retain their distinct observed state/evidence. Refs use the versioned
+contract below. Install returns this same state variant with its actual retained
+publication evidence; historical success is separate from a later observation
+that destination bytes are absent or changed. Neither replay nor that later
+observation repeats installation or rewrites its historical outcome.
+
+Install is a retained managed one-shot operation with original starter/adapter,
+prepared/admit/grant ordering, query-control, owner-stop and notice duties. The
+installer's recorded keeper and observer retain uncertain response, publication
+and cleanup responsibility after public caller loss. ValidationRefusal before
+preparation has no row; committed admissionRejected retains its immutable row
+and cleanup. HostPreparationFailed and admissionUncertain reconcile their original
+preparation, binding and closure. An unknown outcome or a new query ID cannot
+authorize another installer. Further effects require qualified reconciliation of
+the original attempt and separate applicable authority. Inspecting uncertainty
+supplies no evidence that an earlier effect did not happen.
+
+Discovery and inspect expose `remedies`, an array of closed
+`{request,queryIdentity,cli,mcp}` templates. Request is a complete schema-valid
+context request, including the expected ref when required; queryIdentity is
+`{kind:"fresh"}` or `{kind:"original",query}`.
+CLI identifies `context-query-file` and its literal owner/selected query/stdin
+mapping; MCP identifies `baton2_context_query` and the matching query/request
+arguments. Fresh IDs are supplied by the caller under the common uniqueness rule.
+Templates keep that parameter explicit and carry the request data separately
+from argv and condition text. Missing-dependency/ambiguous-selection refusals
+retain their closed error shape and navigate to passive scoped discovery/inspect,
+where the schema-valid template is available. Original-preparation recovery
+continues to use the caller's original request. An absent primitive reports its
+actual limitation; a template is no claim that its callable is implemented.
 
 The existing explicit engine selector resolves a one-query ambiguity. Persistent
 selection updates additionally require an admitted expected-configuration
@@ -331,9 +385,12 @@ active queries and old results retain their original admitted configuration.
 Pre-preparation refusal creates no query row. A committed admission rejection
 and an admitted failed resolution retain their existing distinct result semantics.
 
-Package installation publishes only a verified selected closure. Failure and
-unknown completion preserve original artifacts, error and cleanup responsibility;
-recovery inspects the retained installation outcome before repeating effects.
+Package installation uses independently owned staging and publishes only a
+verified immutable selected closure through conflict-checked publication. Partial
+staging cannot be reported installed. Concurrent publication and cleanup preserve
+another live owner's bytes and holds. Failure and unknown completion preserve
+original artifacts, error and cleanup responsibility; recovery reconciles the
+original operation without repeating an uncertain effect.
 Package-manager scripts or target-controlled hooks retain their actual effects
 and cannot execute under metadata inspection. No implicit network download occurs
 while parsing a declaration, expanding a source ref or answering discovery.
@@ -347,6 +404,21 @@ remain on disk; an unrelated query neither loads nor probes it. Changed project
 inputs update selection and applicability while old accepted duties retain their
 original bindings. Actual table/holder and retained owner primitives remain
 required for this behavior.
+
+Live provider sharing is a proposed extension to the detailed single-owner role
+protocol below. Until an actual holder/custodian mapping is qualified, invocations
+retain independently owned processes; verified package files may still be shared.
+A shareable host has one stable physical custodian and incarnation with its actual
+keeper/observer, plus distinct authenticated logical holders for each query.
+Borrower release or owner stop releases only that borrower's hold and settles its
+pending response/notice duties. It supplies no direct signal authority over the
+shared host. Final physical disposal is serialized with acquisition: a concurrent
+borrower either obtains a live hold before disposal or observes closing/unavailable
+and takes a separately admitted path. Stale release cannot affect a replacement
+incarnation at the same path/PID. Target-process ownership remains independent of
+host reuse; shared package bytes alone provide no live-session custody. Native
+Lifecycle/Instance and Controls must supply this exact mapping before advertising
+shared live resources, retaining all unresolved holders and notices after loss.
 
 ## Bend2 frontend integration
 
@@ -424,6 +496,20 @@ normalization evidence. Public CLI text alone does not expose a qualified AST,
 complete reference index or arbitrary expression-hover API. Exact extractor
 exports and complete input capture are implementation deliverables owned by Code.
 
+Internal parse/check events require reviewed hooks in this same pinned frontend
+and an identified derived artifact with semantic-equivalence qualification.
+Outer-call wrappers establish whole-call events only. A parse-produced Var may
+represent a successful bound lookup or a deferred unbound spelling; its numeric
+index alone is not a resolved declaration. Retain owning declaration, scope,
+lookup/fallback branch, environment and checker phase. Printed HTerm types use
+the frontend's term_lower conversion before term_show, retaining display context;
+structured type facts need no forced string rendering. Def has no declaration
+span, so declaration locations need qualified position instrumentation. Optional
+Term/Err spans require original source provenance; identical source text in two
+files cannot supply file identity by itself. Capture full file digests, resolver
+attempt/state and package/store identities. A hub hash-prefix argument or a
+populated cache alone supplies no consumed-byte or integrity proof.
+
 Call-like term applications can be reported only with their resolved callee and
 static scope; higher-order/dynamic targets retain uncertainty. CFG, exception
 propagation, proof dependency completeness and debugger frames/values require
@@ -444,7 +530,7 @@ Quality review before those capabilities are advertised.
 Code's concrete initial subjects at `8a26bc3e` are
 `json/uint-decoder.bend::append_digit`,
 `json/laws.bend::m5_canonical_null_is_itself` and
-`host/files.bend::find_suffix`. They exercise quantity-aware types, an actual
+`host/files.bend::Files.find_suffix`. They exercise quantity-aware types, an actual
 declaration/fill and canonical import reference, and an IO/foreign-body assumption.
 These are proposed subject choices with source evidence, not observed successful
 queries. Derivatives changing proof, declaration order, quantity and imported
@@ -485,7 +571,8 @@ workspace or required configuration returns its exact unavailable condition.
 The optional flag and matching MCP scope are proposed shared-surface changes for
 Interfaces review. They require no separate discovery service.
 
-The requesting SESSION must exist and be active; the release exception for a
+For owner-bearing queries and scoped discovery, the requesting SESSION must exist
+and be active. Unscoped discovery requires no SESSION. The release exception for a
 stopped owner is defined in Runtime contract. Its recorded workspace supplies
 omitted `cwd`; a session without a workspace supplies `cwd`. The CLI uses the
 trusted-local declared identity convention. MCP obtains SESSION from its
@@ -575,7 +662,7 @@ profile and does not enter shared selection code.
 | `runtime` | intent-specific fields below | `state`, `frames`, `scopes`, `values`, `exception`, `threads` |
 | `query-control` | `query`, `intent:"recover"|"release"`; release also requires `signal:"SIGTERM"|"SIGKILL"` | `state` |
 | `ref` | `query`, `id` | projections admitted by the stored referenced selector |
-| `module-resolution` | `module`, `intent:"inspect"|"install"` | `state`; common package operation with the authority described above |
+| `module-resolution` | `module`, `intent:"inspect"` with optional original `origin` ref, or `intent:"install"` with required inspected `expected` ref | `state`; native control admission and package authority described above |
 
 The retained catalog profile's `database` is `{engine:"sqlite-schema",path}` or
 `{engine:"postgres-schema",connectionFile}`. The latter is an explicitly supplied libpq service file with one selected
@@ -802,6 +889,14 @@ Every query answer is `{version,query,owner,state,result,error,progress}`.
 refused outcomes. The envelope's progress always describes its own query.
 It is null for queries without managed roles, including control queries.
 
+Module causes are versioned schema-admitted data identifying module and code,
+with their actual target/provider/protocol provenance. Common outcome categories
+and fixed native validation conditions retain their meanings. Unknown semantic
+meaning is labelled; undeclared or malformed cause data fails the selected schema.
+Effect/policy descriptions can be non-authoritative facts. All authority decisions
+use the native admitted association, and required binding echoes are checked
+against it; payload descriptions grant no effect or replacement identity.
+
 Progress is the closed object `{phase,waitingFor,control,cleanup}`. Phase is
 `preparing|running|waiting|cleaning|settled`, control is
 `available|unavailable|unobserved`, and cleanup is
@@ -865,8 +960,9 @@ observations and make no claim that their author remains alive. Public recovery
 reads these records without acquiring custody. A retained rejection stays
 refused while its progress can advance through cleanup.
 
-Every other completed result has `engine`, `provider`, `moduleBinding`, `subject`, `snapshot`, `facts`,
-`relations`, `refs`, `limits`, `coverage`, `applicability` and `changedInputs`.
+Module-resolution uses the native result variant specified above. Every other
+completed result has `engine`, `provider`, `moduleBinding`, `subject`, `snapshot`, `facts`,
+`relations`, `refs`, `refFormat`, `limits`, `coverage`, `applicability` and `changedInputs`.
 `facts` and `relations` contain objects with unique local `id`, `kind`,
 `classification`, `producer`, `value`, `evidence` and `limits`. The producer is
 the admitted module/operation binding for that fact, including a declared
@@ -906,6 +1002,27 @@ remains scoped to its reported explored domain. No oracle outcome proves
 universal program behavior outside that model.
 
 `refs` is an array of `{id,engine,producer,operation,subject,snapshotId,projections}`.
+The proposed new result format records `refFormat:"context-refs-v2"` beside that
+array. Producer is the complete closed ModuleBinding for the admitted producing
+step, and operation equals its operation member. Engine equals its module ID.
+Native compares both claims with the authenticated original step and association;
+provider echoes and trusted normalization may not choose a different step. This
+format name is a review proposal for coordinated producer, Codec, Lifecycle, Core
+and Receive migration, independent of the outer envelope or module transport version.
+It does not change internal Ref7 or RQ10. Decoder output may retain typed claims
+beside those internal records; it must compare them before expansion.
+
+Each admitted format has its own complete closed required/allowed field set.
+Legacy unversioned five-member records retain raw historical readability under an
+explicit legacy policy, without invented producer/schema authority. Missing
+historical association refuses expansion. Unknown versions, malformed/foreign
+claims and structural corruption are unreadable/unverified, not qualified absence.
+An outer envelope version or a guessed key shape cannot authenticate ref format.
+Migration preserves retained winner bytes and original version; any metadata
+backfill requires independently authenticated origin. Lifecycle's five-column
+hex-framed ref lookup and ten-column admission transport remain distinct protocols.
+Actual strict readers, publication, migration laws and producer/Receive consumers
+must be reviewed together before this new result format is admitted.
 Stored entries also retain their authenticated original policy and schema
 association for expansion. The core compares those associations before dispatch;
 ref text supplied by a caller establishes none of them. IDs are
@@ -1809,7 +1926,7 @@ runtime timeout changes it to success. Static/catalog queries whose selected
 provider has an explicit response boundary return their completed result
 synchronously under M-12's query exception. clangd diagnostic queries use managed
 admission because completion depends on a later versioned publication. Model execution,
-SQL planning and migration replay with nonempty effect grants use the same
+SQL planning, migration replay and module installation with nonempty effect grants use the same
 detached admission/completion envelope and owner-notice path; their internal
 query worker uses a retained one-shot adapter. Its keeper preserves output and
 status across worker loss. Recovery attaches to that keeper and records only
@@ -2756,6 +2873,9 @@ missing import, dependency edits, a real proved law, a missing proof and an
 unsafe/foreign dependency. A wrapper-only response, source-name inventory or
 unavailable-only result cannot satisfy these cases. Runtime/debug gaps must be
 visible through discovery without suppressing useful code context.
+The uncaptured-import negative observes no BEND_HUB retrieval or BEND_LIB write,
+paired with a qualified captured-closure positive. Actual resolver observations
+and filesystem/network effects establish this boundary.
 
 Module extension qualification installs a second description and selected package with a distinct ID,
 subject/options schema and entry through the existing package path. Preserve the
@@ -2781,6 +2901,8 @@ initialization: discovery and unrelated queries must leave it untouched. Separat
 install that module with fixture instrumentation and repeat the unrelated calls;
 its initialization/probe/library markers remain untouched. A selected positive
 control must demonstrate that the instrumentation detects real initialization.
+Its expected starts/probes follow the controlled fresh invocation and resource
+state; compatible retained reuse may correctly avoid another initialization.
 Instrumentation belongs to the fixture, not the product declaration. Exercise
 missing selected dependencies through the proposed native resolution operation,
 failed/uncertain installation, changed project configuration and two projects
@@ -2788,6 +2910,28 @@ sharing a compatible selected resource. Releasing one project must preserve the
 other's live work. Measure actual package/process cost with recorded scope;
 an enabled flag or unavailable-only answer does not establish isolation or useful
 language support. These are remote qualification requirements, not measured savings.
+
+Installation controls replace the inspected declaration/configuration between
+inspect and install, omit the selected payload, deny the grant, lose the caller
+before/after admission and publication, and reconcile the original uncertain
+attempt. Inspect must still report native state while the language payload is
+absent. Pair successful install with old analysis-ID replay and fresh analysis,
+and with later destination loss plus historical install replay. Concurrent
+staging/publication/cleanup preserves other owners. Navigation must supply a
+schema-valid expected-bound request through actual CLI and MCP. Shared-host cases
+include final release concurrent with acquire and stale-incarnation release;
+observe logical holders, physical custodian, outstanding responses and notices.
+Package-file reuse and process sharing have separate evidence. Memory measurement
+distinguishes shared mappings, existing holders and transient initialization;
+unchanged aggregate RSS proves no absence of loading.
+
+Reference migration controls exercise each complete closed version, missing and
+duplicate claims, foreign producing steps, unsupported versions, legacy raw
+readability without expansion authority, and qualified absence only after intact
+version-admitted lookup. New snapshot identity algorithms bind kind in both
+construction and comparison under a reviewed version. They do not rewrite
+retained historical snapshotId bytes or prove consumed-byte consistency from
+provider tags or pre/post equality alone.
 
 Surface/protocol controls exercise unscoped and attachment-scoped MCP discovery,
 duplicate or escaped scope names, invalid scope values/types, missing attachment
@@ -3073,6 +3217,15 @@ The retained research used for this specification is retrievable with native
   `quality-loading-contributions-89-semantic-synthesis`: authenticated ref inputs,
   physical primitive gaps and controlled unused-module qualification. Actual
   package installation/configuration exports remain owner handoff work.
+- `quality-d27-review-reconciliation-91-semantic-synthesis`,
+  `controls-next-successor-review-107-synthesis`,
+  `controls-next-quality-reconciliation-108-synthesis`,
+  `code-spec-successor-review-51`, `code-author-corrections-closed-56`,
+  `code-package-reviewed-d27-57`, `models-final-review-42-synthesis`,
+  `models44-security-closure`, `runtime-spec142-final-pin-synthesis` and
+  `native117-wire-reconciliation`: retained installation navigation/custody,
+  shared-host holder, frontend precision and versioned-ref corrections. Their
+  predecessor findings retain their exact source scope.
 
 - `semantic-code-lane-report-1`: public API/binding/flow producer qualifications;
 - `semantic-models-lane-report-1`: data joins, model/migration probes, security
