@@ -40,6 +40,9 @@ MANIFEST_MAGIC = b"BATONRP1"
 # harness route response lies in the first frames of the spool. Retained spools
 # reach hundreds of megabytes, so only a bounded prefix is read.
 SPOOL_PREFIX_BYTES = 4 << 20
+# A report body is kept as a bounded preview with its length and full-content
+# digest; duplicate detection compares the whole body before any truncation.
+REPORT_PREVIEW_CHARS = 4000
 
 ROUTE_PROVENANCE = (
     "configured_route is read from each attempt's own manifest argv. observed_route is reported only "
@@ -65,7 +68,10 @@ ROUTE_PROVENANCE = (
     "repeated id with different content is a conflict where the first row is kept, and a turn row whose id "
     "or player names another session is refused for that capture. Every kept row records the index that "
     "supplied it and every row is accounted for, so only a read whose rows were all used once with none "
-    "malformed, duplicated or conflicting is complete. Per-attempt reports are retained per capture "
+    "malformed, duplicated or conflicting is complete. A retained report body is a bounded preview with "
+    "its character length, a truncation flag and a full-content digest, while duplicate detection compares "
+    "the whole body, the event type and the receipt, so a shared prefix cannot stand for equal content. "
+    "Per-attempt reports are retained per capture "
     "session, and a record's report is read only from its own session's capture. "
     "sessions.observed_model is one mutable session-level value and states nothing about an earlier "
     "attempt of the same session.")
@@ -532,11 +538,11 @@ def same_fields(left, right, keys):
     return all(left.get(key) == right.get(key) for key in keys)
 
 
-def outcome_state(rows_seen, rows_used, rows_malformed, rows_duplicate, prefix):
+def outcome_state(rows_seen, rows_used, rows_malformed, rows_duplicate, rows_conflicting, prefix):
     """`ok` only when every row was used once and none was malformed, duplicated
     or conflicting. A row that was dropped, repeated or superseded never leaves
     the read labelled complete."""
-    if rows_used and not rows_malformed and not rows_duplicate:
+    if rows_used and not rows_malformed and not rows_duplicate and not rows_conflicting:
         return "ok"
     if rows_used:
         return "%s-partial" % prefix
@@ -607,6 +613,9 @@ def validate_turns(session, rows, reports, conflicts):
     duplicates = 0
     malformed = []
     per_session = reports.setdefault(session, {})
+    # Whole report bodies for this capture, used only for duplicate comparison so
+    # the bounded preview in the entry cannot stand in for equal content.
+    full_bodies = {}
     for index, row in enumerate(rows):
         if not isinstance(row, dict):
             malformed.append({"index": index, "reason": "row is not a JSON object"})
@@ -639,19 +648,31 @@ def validate_turns(session, rows, reports, conflicts):
         if event is not None and not isinstance(event, str):
             malformed.append({"index": index, "id": row_id, "reason": "eventType is not a string"})
             continue
-        entry = {"report_body": body[:4000] if isinstance(body, str) else None,
+        entry = {"report_body": body[:REPORT_PREVIEW_CHARS] if isinstance(body, str) else None,
+                 "report_body_truncated": bool(isinstance(body, str) and len(body) > REPORT_PREVIEW_CHARS),
+                 "report_body_chars": len(body) if isinstance(body, str) else None,
+                 "report_body_sha256": hashlib.sha256(body.encode("utf-8")).hexdigest()
+                 if isinstance(body, str) else None,
                  "event_type": event, "receipt": row.get("receipt"),
                  "capture_session": session, "source_index": index}
         if row_id in per_session:
-            if same_fields(per_session[row_id], entry, ("report_body", "event_type", "receipt")):
+            # Duplicate detection compares the whole report body, the event type
+            # and the receipt. The preview in the entry is bounded, so a shared
+            # prefix cannot stand in for equal content.
+            existing = per_session[row_id]
+            same = (full_bodies[row_id] == body and existing["event_type"] == event
+                    and existing["receipt"] == row.get("receipt"))
+            if same:
                 duplicates += 1
-                per_session[row_id].setdefault("duplicate_indices", []).append(index)
+                existing.setdefault("duplicate_indices", []).append(index)
             else:
                 conflicts.append({"capture_session": session, "attempt_id": row_id, "source_index": index,
-                                  "first_index": per_session[row_id]["source_index"],
-                                  "reason": "repeated id with different content"})
+                                  "first_index": existing["source_index"],
+                                  "reason": "repeated id with different content",
+                                  "compared_fields": ["reportBody", "eventType", "receipt"]})
             continue
         per_session[row_id] = entry
+        full_bodies[row_id] = body
         used += 1
     return used, duplicates, malformed
 
@@ -685,7 +706,7 @@ def attempt_view(captures):
                                   "rows_malformed": malformed, "rows_duplicate": duplicates,
                                   "rows_conflicting": len(conflicts)}
         view["players_state"] = outcome_state(len(players["document"]), len(current), malformed,
-                                              duplicates, "players")
+                                              duplicates, len(conflicts), "players")
     for name, entry in captures["reads"].items():
         if not name.startswith("turns-"):
             continue
@@ -700,11 +721,12 @@ def attempt_view(captures):
         conflicts_before = len(view["report_conflicts"])
         used, duplicates, malformed = validate_turns(session, entry["document"], view["reports"],
                                                      view["report_conflicts"])
+        captured_conflicts = len(view["report_conflicts"]) - conflicts_before
         view["turns_state"][session] = outcome_state(len(entry["document"]), used, malformed,
-                                                     duplicates, "turns")
+                                                     duplicates, captured_conflicts, "turns")
         view["turns_detail"][session] = {"rows_seen": len(entry["document"]), "rows_used": used,
                                          "rows_malformed": malformed, "rows_duplicate": duplicates,
-                                         "rows_conflicting": len(view["report_conflicts"]) - conflicts_before}
+                                         "rows_conflicting": captured_conflicts}
     return view
 
 

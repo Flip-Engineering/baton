@@ -264,7 +264,8 @@ def case_view_row_validation(root, database):
     view = reader.attempt_view(reader.load_captures(turns_mixed, database))
     check("Z mixed turns rows report turns-partial and keep the valid report",
           view["turns_state"].get("s1") == "turns-partial"
-          and view["reports"].get("t1", {}).get("report_body") == "hello"
+          and view["reports"]["s1"]["t1"]["report_body"] == "hello"
+          and view["reports"]["s1"]["t1"]["capture_session"] == "s1"
           and len(view["turns_detail"]["s1"]["rows_malformed"]) == 1,
           {k: view.get(k) for k in ("turns_state", "reports", "turns_detail")})
 
@@ -418,6 +419,40 @@ def case_conflicting_sessions(root, database):
           {"report": report, "conflicts": document["report_conflicts"]})
 
 
+def case_long_body_comparison(root, database):
+    prefix = "p" * (reader.REPORT_PREVIEW_CHARS + 200)
+    differing = capture_set(
+        root, "long-suffix", header(database),
+        {"players": (0, "[]", ""),
+         "turns-s1": (0, json.dumps([
+             {"id": "t1", "reportBody": prefix + "-one", "eventType": "agent_end"},
+             {"id": "t1", "reportBody": prefix + "-two", "eventType": "agent_end"}]), "")})
+    view = reader.attempt_view(reader.load_captures(differing, database))
+    entry = view["reports"]["s1"]["t1"]
+    check("AG bodies sharing a long prefix with different suffixes are a conflict, not a duplicate",
+          view["turns_state"].get("s1") == "turns-partial"
+          and view["turns_detail"]["s1"]["rows_conflicting"] == 1
+          and view["turns_detail"]["s1"]["rows_duplicate"] == 0
+          and entry["report_body_truncated"] is True
+          and entry["report_body_chars"] == len(prefix) + 4
+          and entry["report_body"] == (prefix + "-one")[:reader.REPORT_PREVIEW_CHARS],
+          {k: view.get(k) for k in ("turns_state", "turns_detail")})
+
+    identical = capture_set(
+        root, "long-identical", header(database),
+        {"players": (0, "[]", ""),
+         "turns-s1": (0, json.dumps([
+             {"id": "t2", "reportBody": prefix + "-same", "eventType": "agent_end"},
+             {"id": "t2", "reportBody": prefix + "-same", "eventType": "agent_end"}]), "")})
+    view = reader.attempt_view(reader.load_captures(identical, database))
+    check("AH identical long bodies are still a duplicate, with the digest retained",
+          view["turns_state"].get("s1") == "turns-partial"
+          and view["turns_detail"]["s1"]["rows_duplicate"] == 1
+          and view["turns_detail"]["s1"]["rows_conflicting"] == 0
+          and view["reports"]["s1"]["t2"]["report_body_sha256"] is not None,
+          {k: view.get(k) for k in ("turns_state", "turns_detail")})
+
+
 def run_cases(root, database):
     case_route_parsed(root)
     case_route_then_undecodable(root)
@@ -432,6 +467,7 @@ def run_cases(root, database):
     case_view_states(root, database)
     case_view_row_validation(root, database)
     case_duplicate_and_conflict_rows(root, database)
+    case_long_body_comparison(root, database)
     case_composition(root, database)
     case_conflicting_sessions(root, database)
     records = reader.attempt_records(database)
