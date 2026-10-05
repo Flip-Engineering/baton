@@ -574,6 +574,26 @@ def evidence_stream(directory, record, label):
     return path
 
 
+def runtime_list_digest(files):
+    """Digest a claimed runtime inventory: sorted path TAB sha256 rows.
+
+    The serialization is the one runtime_set_digest uses over the installed
+    library files, so a producer's claimed list can be recomputed rather than
+    trusted, and a path that escapes its root is refused.
+    """
+    rows = []
+    for entry in files:
+        require(isinstance(entry, dict) and isinstance(entry.get('path'), str)
+                and isinstance(entry.get('sha256'), str) and entry['sha256'],
+                'A runtime inventory entry lacks a path or a digest')
+        relative = PurePosixPath(entry['path'])
+        require(not relative.is_absolute() and '..' not in relative.parts,
+                'A runtime inventory path escapes its root: ' + str(entry.get('path')))
+        rows.append(relative.as_posix() + '\t' + entry['sha256'])
+    require(rows, 'A runtime inventory holds no installed library file')
+    return hashlib.sha256('\n'.join(sorted(rows)).encode('utf-8')).hexdigest()
+
+
 def runtime_set_digest(compiler):
     """Digest the installed Bend library files beside a compiler executable."""
     runtime = compiler.parent.parent / 'bend2'
@@ -1000,8 +1020,14 @@ def controls_evidence(directory, initial, compiler, audit=None, destination=None
         require((producing.get('archive') or {}).get('sha256') == COMPILER_ARCHIVE_SHA256,
                 'A bundle preserved a different compiler archive: ' + json.dumps(module))
         runtime = producing.get('runtime') or {}
-        require(runtime.get('sha256') == producing.get('runtime_set_sha256'),
-                'A bundle runtime inventory disagrees with its digest: ' + json.dumps(module))
+        claimed = runtime.get('files')
+        require(isinstance(claimed, list) and claimed,
+                'A bundle runtime records no installed library inventory: ' + json.dumps(module))
+        recomputed = runtime_list_digest(claimed)
+        require(recomputed == producing.get('runtime_set_sha256'),
+                'A bundle runtime inventory does not reproduce its digest: ' + json.dumps(module))
+        require(runtime.get('sha256') == recomputed,
+                'A bundle runtime digest field disagrees with its file list: ' + json.dumps(module))
         if runtime_sha is not None:
             require(producing.get('runtime_set_sha256') == runtime_sha,
                     'A bundle used different installed Bend library bytes: ' + json.dumps(module))
