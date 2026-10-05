@@ -1,7 +1,7 @@
 # Ordinary direct startup repair for #672
 
-Status: docs-only successor to 08dd2053 for bounded whole-critic assessment.
-The six original verdicts remain retained; runtime implementation awaits this
+Status: docs-only successor to d47d5c11 for bounded whole-critic assessment.
+The original 08dd2053 and d47d5c11 verdicts remain retained; implementation awaits this
 successor assessment.
 Author: semantic-controls-next. Source baseline is the direct path inspected at
 71695806 and the retained process implementation inherited from 98fbfe03. The
@@ -112,7 +112,8 @@ launch from `dispatch_turn`; its public answer follows the retained handoff.
    A committed rejection directs cancellation of the prepared keeper and returns
    its retained refusal. Cancellation failure records cleanup owed on that same
    rejected row; the attached/recovery observer retries cancellation and retains
-   the guard until the keeper confirms that no grant or native start occurred.
+   the guard until the keeper confirms that no grant or native start occurred,
+   or the verified keeper-loss rejection branch below settles cleanup.
    No rejected decision can grant a start. The keeper does not need SQLite access.
    A transaction error or lost commit reply is an unknown decision outcome:
    reconcile the same ID, request and directory on the original database before
@@ -137,6 +138,26 @@ carries the request and recovery arguments needed for the original authorized
 invocation to finish admission after caller loss. A surviving recovery observer
 may perform step 3 when no decision exists, subject to the same revalidation.
 A retained rejection prevents a delayed original observer from reversing it.
+
+For rejected cleanup after keeper loss, bind the retained rejection to the exact
+immutable request, prepared-mode manifest, directory, protocol version and
+keeper birth identity returned by preparation. Settling cleanup requires all of:
+that binding agrees; the keeper's qualified lifetime has ended; the prepared
+protocol forbids spawning without an identity-bound grant; and the common
+immutable-decision function establishes that every possible grant sender must
+read accepted for this same identity. The retained rejected winner makes such a
+grant impossible, including from a delayed original observer. This is a protocol
+and decision proof plus a qualified keeper-lifetime observation. Missing child
+PID/birth files alone supply no no-execution evidence.
+
+Under those conditions commit rejected cleanup complete and release the guard;
+retain the refusal and its local result or owed owner notice. No replacement
+keeper or endpoint is started. If the manifest/version/binding is unavailable,
+keeper lifetime is unproved, or any start/grant/child evidence contradicts the
+rejected protocol, keep the rejection immutable, mark cleanup Unknown and retain
+observation and actual owner-notification duty. A public recovery call reports
+this evidence and limitation. The keeper-loss barrier test independently observes
+endpoint effects and checks the cancellation-acknowledgement loss branch.
 
 Before a keeper exists, caller loss leaves no admitted execution and cannot have
 invoked the endpoint. After keeper preparation, its disconnect recovery owns
@@ -178,9 +199,13 @@ starts direct recovery. A recovery spawn failure or recovery child exit before
 attach keeps that responsibility. Add attempt-local retry on the keeper's existing
 poll loop, with a bounded retry interval and no terminal retry-count cutoff;
 record the attempt number, error and latest occurrence in the attempt's
-`observer-error` state. Retry after one second on the existing keeper poll timer;
+`observer-error` state. Add a monotonic deadline to the keeper's currently indefinite poll, and retry
+after one second;
 use monotonic time and permit at most one recovery child in flight. The next
-retry is armed after spawn failure or verified pre-attach child exit. Each later
+retry is armed after spawn failure or verified pre-attach child exit. If spawn
+succeeds but waiter setup fails, retain that recovery child's qualified identity
+and establish its ended lifetime before another recovery spawn. Unavailable
+waiter evidence alone cannot mean no child exists. Each later
 failure replaces this diagnostic state; the original error remains separately
 retained. Raw native output and sealed results keep their existing retention.
 Cancel further retries only after attachment or completed custody transfer. This retries only
@@ -210,14 +235,40 @@ is unknown, last process evidence, and literal `turn-status ID` and
 `turn-recover ID` operations. Ordinary delivery/transfer must complete under the
 notification rules below; inserting the notice alone does not transfer duty.
 
-`turn-recover ID` is the public entry to the existing proposed Direct.recover
-operation. It accepts no replacement task or configuration. It validates retained
-identity and binding, attaches to a surviving original keeper when available,
-and resumes observation and owed delivery. For keeper loss it uses qualified
-original child-lifetime evidence when available; it cannot spawn the endpoint or
-claim to reap a child it does not parent. A current attached observer receives
-this request through the same attempt control channel; two observers cannot
-independently grant or finish the attempt. Inspection remains read-only.
+`turn-recover ID` is the public identity-only recovery entry. It accepts no
+replacement task or configuration and validates the original request/directory.
+Its behavior follows the available transport:
+
+- With a surviving keeper, a public caller queries its attempt state. If an
+  observer is attached, the keeper returns `observationOwned` with the actual
+  attachment evidence; the caller does not attach a second observer. The current
+  observer continues its existing duties autonomously. If no observer is attached,
+  the keeper serializes attachment using its existing client ownership check;
+  one accepted attachment may continue the same decision, output and notice.
+  No forwarding to an observer is promised or required by this operation.
+- With an absent or unreachable keeper, a new public caller returns
+  `controlUnavailable` with the original request/directory, retained decision,
+  last recorded lifetime/notice evidence and the failed connection observation.
+  A failed connection alone does not establish keeper death. Report current
+  observer ownership as unverified unless actual attempt-bound evidence proves
+  it; neither a busy session guard nor the current execution pointer supplies
+  that evidence. This public branch claims no request receipt or custody transfer
+  and cannot acquire orphan ownership, finish a result, grant or spawn a child.
+  Public orphan takeover is outside this repair's supported interface.
+
+An original observer that already owns the attempt continues after keeper loss
+using its inherited guard and qualified orphan/spool observation. The absent
+socket does not interrupt its independent observation and notice retry duty.
+After native lifetime ends and guard release permits newer work, that observer
+continues the historical request's notification using its retained immutable
+request/directory binding. A public caller inspecting that older ID gets the
+same unavailable-control branch, never the new attempt's ownership. An internal
+recovery process may attach through a live keeper's serialized ownership check;
+if it instead finds the keeper absent, it returns the same unavailable result
+and does not claim that acquiring the session guard identifies historical custody.
+Inspection and repeated public recovery therefore cannot create two finishers.
+The total-loss limitation remains explicit; this public refusal is not proof of
+a surviving continuation when all historical holders are gone.
 
 A qualified observation that the original child lifetime ended allows the owner
 observer to commit `lifetime: ended`, preserve `outcome: unknown` when exit status
@@ -300,6 +351,8 @@ parentless detached refusal and from a present owner's failed delivery.
 Add ordinary `turn-status ID [--pretty]` and its thin MCP reader. It returns the
 request identity, process state, result/report IDs, owned directory and current
 notification disposition, immutable admission decision/reason and cleanup owed.
+It exposes the exact attempt's lifetime evidence and first/latest `observer-error`
+state with observation provenance; absent evidence is explicitly unavailable.
 If no direct request exists, `turn-status ID` also checks the legacy `executions`
 row by its exact turn ID and the retained report by ID. It returns
 `identityBinding: legacy-unbound`, the recorded session/mode/phase/status/directory
@@ -321,7 +374,9 @@ request predicates/laws and direct host fixtures on
 active `turn.bend` edits in audit-native, including consume threading and entry
 callers. Direct integration waits for its frozen handoff and preserves those
 functions. The interfaces Player owns shared parser/main/MCP/help/briefing edits
-and final #671 source. Explicit function/file handoffs precede shared edits.
+and final #671 source. This includes `turn-recover` parser/MCP/help/briefing
+integration; controls-next owns its Direct operation and status predicates.
+Explicit function/file handoffs precede shared edits.
 Controls-next also owns the proposed ProcessChild extension on its own branch
 within the existing structure Section; no other host editor is authorized by
 this proposal. Quality owns independent reviews; root owns combined
@@ -341,6 +396,12 @@ legacy running/starting rows with empty directories and completed reports withou
 request rows. Test parentless foreground local completion and caller-loss replay,
 parentless detached refusal before effects, present-owner delivery failure, and
 Unknown continuation with both available and missing child-lifetime evidence.
+Add keeper death after rejected decision commit and before cancellation
+acknowledgement, and keeper-dead/original-observer-live public recovery both
+before guard release and during historical notification after newer work starts.
+Assert `controlUnavailable`, no duplicate ownership/effects and the original
+observer's actual owner notice. Exercise contradictory/unavailable cleanup
+evidence separately from a fully bound rejected preparation.
 Fixture endpoints independently record their own effects.
 Assert retained identities, output, status and delivery, not only process counts.
 
