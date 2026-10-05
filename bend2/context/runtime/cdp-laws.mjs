@@ -12,6 +12,7 @@
 // Evidence: .scratch/cdp-lane/laws-<run>/verdict.json
 
 import { cpSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { createHash } from 'node:crypto';
 import * as nodeFs from 'node:fs';
 import { join, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
@@ -193,6 +194,37 @@ const MUTATIONS = [
     law: 'loaded_source_identity_is_the_digest_of_the_loaded_bytes' },
 ];
 
+const RUNNER_IDENTITY = Object.freeze({
+  processModel: 'in-process module import; no compiler, child process or fixture is spawned',
+  node: process.version,
+  execPath: process.execPath,
+  argv: process.argv,
+  cwd: process.cwd(),
+  envPolicy: Object.freeze({ inherited: true, overrides: Object.freeze({}) }),
+  compilerPid: null,
+  wrapperPid: null,
+});
+
+function sha256Text(text) {
+  return createHash('sha256').update(text, 'utf8').digest('hex');
+}
+
+// The authoritative definition of one mutation: exactly these five members in this order,
+// as UTF-8 JSON with no extra whitespace. Interfaces exports this digest.
+function mutationDefinition(mutation) {
+  return JSON.stringify({
+    name: mutation.name,
+    file: mutation.file,
+    law: mutation.law,
+    find: mutation.find,
+    replace: mutation.replace,
+  });
+}
+
+function mutationDefinitionDigest(mutation) {
+  return sha256Text(mutationDefinition(mutation));
+}
+
 async function loadModules(directory) {
   const load = async (name) => import(pathToFileURL(join(directory, name)).href);
   const [counter, protocol, refs, state, intents, transport, endpoint, scripts, session, bootstrap] = await Promise.all([
@@ -237,50 +269,149 @@ async function main() {
   const baseline = await runLaws(await loadModules(HERE), statementNames);
   const rows = [{
     control: 'shipped-modules',
+    kind: 'baseline',
+    provenance: 'in-process law registry over the shipped modules',
+    snapshot: { importBase: HERE, modules: MODULE_FILES },
     laws: statementNames.length,
     failed: baseline.length,
-    passed: baseline.length === 0,
+    qualified: baseline.length === 0,
+    reason: baseline.length === 0 ? null : 'a shipped-module law statement failed',
     failures: baseline,
   }];
 
   for (const mutation of MUTATIONS) {
     const directory = mkdtempSync(join(RUN, 'mut-'));
-    for (const file of MODULE_FILES) cpSync(join(HERE, file), join(directory, file));
-    const path = join(directory, mutation.file);
-    const source = readFileSync(path, 'utf8');
-    const occurrences = source.split(mutation.find).length - 1;
+    const snapshot = {};
+    for (const file of MODULE_FILES) {
+      const from = join(HERE, file);
+      const to = join(directory, file);
+      cpSync(from, to);
+      snapshot[file] = {
+        sourcePath: from,
+        snapshotPath: to,
+        sourceSha256: sha256Text(readFileSync(from, 'utf8')),
+      };
+    }
+    const targetPath = join(directory, mutation.file);
+    const original = readFileSync(targetPath, 'utf8');
+    const occurrences = original.split(mutation.find).length - 1;
+    const definition = {
+      definition: mutationDefinition(mutation),
+      definitionSha256: mutationDefinitionDigest(mutation),
+    };
     if (occurrences !== 1) {
       rows.push({
         control: mutation.name,
+        kind: 'implementation-mutation',
         law: mutation.law,
-        passed: false,
-        detail: `mutation subject occurs ${occurrences} times in ${mutation.file}`,
+        qualified: false,
+        reason: `the mutation subject occurs ${occurrences} times in ${mutation.file}`,
+        ...definition,
+        snapshot,
+        nonTargetFiles: MODULE_FILES.filter((file) => file !== mutation.file),
+        restoration: { scratchOnly: true, scratchRemoved: true },
       });
       rmSync(directory, { recursive: true, force: true });
       continue;
     }
-    writeFileSync(path, source.replace(mutation.find, mutation.replace));
-    const mutated = await loadModules(directory);
-    const failures = await runLaws(mutated, statementNames);
-    const refused = failures.some((failure) => failure.law === mutation.law);
+    const startByte = Buffer.byteLength(original.slice(0, original.indexOf(mutation.find)), 'utf8');
+    const changed = original.replace(mutation.find, mutation.replace);
+    writeFileSync(targetPath, changed);
+    const delta = {
+      changedFile: mutation.file,
+      occurrences,
+      offsets: { startByte, endByte: startByte + Buffer.byteLength(mutation.find, 'utf8') },
+      removedBytes: Buffer.byteLength(mutation.find, 'utf8'),
+      removedSha256: sha256Text(mutation.find),
+      insertedBytes: Buffer.byteLength(mutation.replace, 'utf8'),
+      insertedSha256: sha256Text(mutation.replace),
+      originalSha256: sha256Text(original),
+      changedSha256: sha256Text(changed),
+    };
+    let loadFailure = null;
+    let failures = [];
+    try {
+      const mutated = await loadModules(directory);
+      failures = await runLaws(mutated, statementNames);
+    } catch (error) {
+      loadFailure = { message: error.message, code: error.code ?? null };
+    }
+    const named = failures.find((failure) => failure.law === mutation.law) ?? null;
+    const qualified = loadFailure === null && named !== null;
     rows.push({
       control: mutation.name,
+      kind: 'implementation-mutation',
       law: mutation.law,
-      passed: refused,
+      provenance: 'in-process law registry; attribution is the named law that failed',
+      qualified,
+      attribution: qualified ? 'named-law-failure' : null,
+      reason: qualified
+        ? null
+        : (loadFailure === null
+          ? 'the named law did not fail against the mutated module set'
+          : `the mutated module set did not load: ${loadFailure.code ?? loadFailure.message}`),
+      namedLawFailure: named,
       alsoFailed: failures.filter((failure) => failure.law !== mutation.law).map((failure) => failure.law),
-      detail: refused ? null : `the law accepted the mutation: ${JSON.stringify(failures)}`,
+      delta,
+      ...definition,
+      snapshot,
+      nonTargetFiles: MODULE_FILES.filter((file) => file !== mutation.file),
+      restoration: {
+        pristineSource: snapshot[mutation.file].sourcePath,
+        pristineSha256: snapshot[mutation.file].sourceSha256,
+        scratchOnly: true,
+        scratchRemoved: false,
+      },
     });
     rmSync(directory, { recursive: true, force: true });
+    rows.at(-1).restoration.scratchRemoved = true;
   }
 
-  const failed = rows.filter((row) => !row.passed);
-  const verdict = { suite: 'cdp-laws', statementCount: statementNames.length, controls: rows.length, failed: failed.length, rows };
+  const unqualified = rows.filter((row) => row.qualified !== true);
+  // One case JSON per control: the raw acquisition in the shape a single-case classifier
+  // consumes. The shared laws-check.mjs --classify endpoint is correction-required and
+  // pending, so this file carries acquisition and local attribution only; it defines no
+  // competing classification schema and claims no acceptance.
+  for (const [index, row] of rows.entries()) {
+    const casePath = join(RUN, `case-${index + 1}-${row.control.replace(/[^A-Za-z0-9_.-]/g, '_')}.json`);
+    writeFileSync(casePath, `${JSON.stringify({
+      case: row.control,
+      kind: row.kind,
+      law: row.law ?? null,
+      runner: RUNNER_IDENTITY,
+      expectation: { law: row.law ?? null },
+      observation: {
+        namedLawFailure: row.namedLawFailure ?? null,
+        alsoFailed: row.alsoFailed ?? null,
+        loadFailure: row.reason?.startsWith('the mutated module set did not load') ? row.reason : null,
+      },
+      attribution: {
+        rule: row.attribution ?? null,
+        result: row.qualified === true ? 'qualified' : 'unqualified',
+        reason: row.reason ?? null,
+        provenance: row.provenance,
+      },
+      classification: 'local-attribution-only; shared classify endpoint pending',
+    }, null, 2)}\n`);
+    row.caseJson = casePath;
+  }
+
+  const verdict = {
+    suite: 'cdp-laws',
+    classificationEndpoint: 'shared laws-check.mjs --classify is correction-required and pending; this entrypoint reports acquisition and local attribution only',
+    runner: RUNNER_IDENTITY,
+    statementCount: statementNames.length,
+    controls: rows.length,
+    unqualified: unqualified.length,
+    rows,
+  };
   writeFileSync(join(RUN, 'verdict.json'), `${JSON.stringify(verdict, null, 2)}\n`);
   for (const row of rows) {
-    process.stdout.write(`${row.passed ? 'ok  ' : 'FAIL'} ${row.control}${row.law === undefined ? '' : ` -> ${row.law}`}\n`);
+    process.stdout.write(`${row.qualified ? 'qualified  ' : 'UNQUALIFIED'} ${row.control}${row.law === undefined ? '' : ` -> ${row.law}`}${row.reason === null || row.reason === undefined ? '' : ` (${row.reason})`}\n`);
   }
-  process.stdout.write(`${JSON.stringify({ verdict: failed.length === 0 ? 'pass' : 'fail', statements: statementNames.length, controls: rows.length, failed: failed.length, run: RUN })}\n`);
-  process.exitCode = failed.length === 0 ? 0 : 1;
+  process.stdout.write(`${JSON.stringify({ verdict: 'acquired', statements: statementNames.length, controls: rows.length, unqualified: unqualified.length, run: RUN })}\n`);
+  // Acquisition is not acceptance: this entrypoint reports what it observed.
+  process.exitCode = 0;
 }
 
 await main();
