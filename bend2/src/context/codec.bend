@@ -314,12 +314,24 @@ def envelope_accept(+env: Envelope) -> EnvelopeVerdict:
 # before any effect.
 
 type Admission is Data:
-  ADispatch{operation: String}
+  ADispatch{operations: OpChain, effects: Eng.SS}
   ARefused{class: Context.RefusalClass, condition: String}
+
+# The admitted value carries the whole operation chain and Core's authorized effect
+# union, so the caller's executor does not have to reconstruct them.
+def admitted_operations(a: Admission) -> OpChain:
+  match a:
+    case ADispatch{operations, +effects}: operations
+    case ARefused{+cls, +condition}: Opnone{}
+
+def admitted_effects(a: Admission) -> Eng.SS:
+  match a:
+    case ADispatch{+operations, effects}: effects
+    case ARefused{+cls, +condition}: Eng.ss_empty()
 
 def admission_text(a: Admission) -> String:
   match a:
-    case ADispatch{operation}: "dispatch:" ++ operation
+    case ADispatch{operations, +effects}: "dispatch:" ++ primary_operation(operations) ++ ":" ++ U32.show(chain_count(operations))
     case ARefused{cls, condition}: "refused:" ++ Context.refusal_class_name(cls) ++ ":" ++ condition
 
 # The request-derived operation chain. The primary dispatch operation is always
@@ -410,15 +422,15 @@ def request_operation_chain(+req: J.Json, retained_operations: Eng.SS) -> OpChai
 # Core's actual verdict names the refusal: no operation, an operation outside the
 # closed set, or the first required effect the caller did not grant. An admit
 # carries the authorized union; the codec dispatches the chain's primary.
-def admission_decision(a: Eng.Admission, +operation: String) -> Admission:
+def admission_decision(a: Eng.Admission, +chain: OpChain) -> Admission:
   match a:
-    case Eng.AdAdmit{+effects}: ADispatch{operation}
+    case Eng.AdAdmit{effects}: ADispatch{chain, effects}
     case Eng.AdNoOperation{}: ARefused{Context.RfValidation{}, "unknownOperation"}
-    case Eng.AdUnknownOperation{+operation_text}: ARefused{Context.RfValidation{}, "unknownOperation"}
+    case Eng.AdUnknownOperation{+operation}: ARefused{Context.RfValidation{}, "unknownOperation"}
     case Eng.AdMissingEffect{+effect}: ARefused{Context.RfValidation{}, "effectNotGranted"}
 
 def dispatch_operation(+chain: OpChain, +grants: Context.Effects) -> Admission:
-  admission_decision(Eng.admit_operations(chain_ss(chain), grants_ss(grants)), primary_operation(chain))
+  admission_decision(Eng.admit_operations(chain_ss(chain), grants_ss(grants)), chain)
 
 def dispatch_profile(v: Req.Verdict, +chain: OpChain, +grants: Context.Effects) -> Admission:
   match v:
@@ -442,6 +454,18 @@ def dispatch_guarded(present: Bool, +req: J.Json, retained_operations: Eng.SS, +
 # set cannot be substituted.
 def codec_dispatch(+req: J.Json, retained_operations: Eng.SS, +grants: Context.Effects) -> Admission:
   dispatch_guarded(subject_chain_present(req, retained_operations), req, retained_operations, grants)
+
+law codec_law_an_admitted_caller_keeps_its_whole_operation_chain:
+  {chain_count(admitted_operations(dispatch_admission(Request_sample(), request_operation_chain(Join_override_sample(), Eng.ss_empty()), Context.two_effects(Context.EfPlanTargetSql{}, Context.EfExecuteTarget{})))) == 2 : U32}
+
+def codec_law_an_admitted_caller_keeps_its_whole_operation_chain():
+  {==}
+
+law codec_law_an_admitted_caller_keeps_core_authorized_effects:
+  {Eng.ss_member(admitted_effects(dispatch_admission(Request_sample(), request_operation_chain(Join_override_sample(), Eng.ss_empty()), Context.two_effects(Context.EfPlanTargetSql{}, Context.EfExecuteTarget{}))), "executeTarget") == True{} : Bool}
+
+def codec_law_an_admitted_caller_keeps_core_authorized_effects():
+  {==}
 
 law codec_law_the_primary_operation_comes_from_the_chain:
   {primary_operation(request_operation_chain(Request_sample(), Eng.ss_empty())) == "sourceAnalysis" : String}
@@ -566,6 +590,18 @@ law codec_law_an_override_adds_execute_target_without_dropping_a_plan:
 def codec_law_an_override_adds_execute_target_without_dropping_a_plan():
   {==}
 
+law codec_law_a_refused_admission_authorizes_nothing:
+  {chain_count(admitted_operations(dispatch_admission(Request_sample(), Opcons{"sqlPlan", Opnone{}}, Context.no_effects()))) == 0 : U32}
+
+def codec_law_a_refused_admission_authorizes_nothing():
+  {==}
+
+law codec_law_a_refused_admission_carries_no_effect_union:
+  {Eng.ss_member(admitted_effects(dispatch_admission(Request_sample(), Opcons{"sqlPlan", Opnone{}}, Context.no_effects())), "planTargetSql") == False{} : Bool}
+
+def codec_law_a_refused_admission_carries_no_effect_union():
+  {==}
+
 law codec_law_an_empty_chain_refuses:
   {dispatch_admission(Request_sample(), Opnone{}, Context.no_effects()) == ARefused{Context.RfValidation{}, "unknownOperation"} : Admission}
 
@@ -579,7 +615,7 @@ def codec_law_an_unknown_chain_entry_refuses_even_with_every_grant():
   {==}
 
 law codec_law_a_missing_grant_refuses_before_dispatch:
-  {dispatch_admission(Request_sample(), Opcons{"sqlPlan", Opnone{}}, Context.one_effect(Context.EfPlanTargetSql{})) == ADispatch{"sqlPlan"} : Admission}
+  {admission_text(dispatch_admission(Request_sample(), Opcons{"sqlPlan", Opnone{}}, Context.one_effect(Context.EfPlanTargetSql{}))) == "dispatch:sqlPlan:1" : String}
 
 def codec_law_a_missing_grant_refuses_before_dispatch():
   {==}
@@ -597,7 +633,7 @@ def codec_law_a_refused_profile_refuses_before_the_operation_is_consulted():
   {==}
 
 law codec_law_an_admitted_grant_free_operation_dispatches:
-  {dispatch_admission(Request_sample(), request_operation_chain(Request_sample(), Eng.ss_empty()), Context.no_effects()) == ADispatch{"sourceAnalysis"} : Admission}
+  {primary_operation(admitted_operations(dispatch_admission(Request_sample(), request_operation_chain(Request_sample(), Eng.ss_empty()), Context.no_effects()))) == "sourceAnalysis" : String}
 
 def codec_law_an_admitted_grant_free_operation_dispatches():
   {==}
@@ -609,7 +645,7 @@ def codec_law_tools_and_subject_obligations_both_apply():
   {==}
 
 law codec_law_a_runtime_observe_needs_no_control_grant:
-  {codec_dispatch(Runtime_sample(), Eng.ss_empty(), Context.no_effects()) == ADispatch{"runtimeObserve"} : Admission}
+  {primary_operation(admitted_operations(codec_dispatch(Runtime_sample(), Eng.ss_empty(), Context.no_effects()))) == "runtimeObserve" : String}
 
 def codec_law_a_runtime_observe_needs_no_control_grant():
   {==}
@@ -817,8 +853,8 @@ def subject_selector_ok(+members: J.Json) -> Bool:
 
 def subject_value_ok(+v: J.Json) -> Bool:
   match v:
-    case J.Jstr{value}: nonempty_text(value)
     case J.Jobj{members}: subject_object_ok(members)
+    case J.Jstr{+value}: False{}
     case J.Jnull{}: False{}
     case J.Jtrue{}: False{}
     case J.Jfalse{}: False{}
@@ -826,8 +862,35 @@ def subject_value_ok(+v: J.Json) -> Bool:
     case J.Jarr{+head, +tail}: False{}
     case J.Jnil{}: False{}
 
+# The retained selector is the producer's object, so this path requires it. Its
+# member names must be distinct: a duplicate key would make the derived kind
+# ambiguous, and the retained decode path has no SQL duplicate check behind it.
 def subject_object_ok(+members: J.Json) -> Bool:
-  known_kind(Req.member_lookup("kind", members))
+  Bool.pick(Bool, distinct_keys(members), known_kind(Req.member_lookup("kind", members)), False{})
+
+def distinct_keys(members: J.Json) -> Bool:
+  match members:
+    case J.Jpair{+key, +value, +rest}: Bool.pick(Bool, key_absent(key, rest), distinct_keys(rest), False{})
+    case J.Jnil{}: True{}
+    case J.Jnull{}: True{}
+    case J.Jtrue{}: True{}
+    case J.Jfalse{}: True{}
+    case J.Jint{+value}: True{}
+    case J.Jstr{+value}: True{}
+    case J.Jarr{+head, +tail}: True{}
+    case J.Jobj{+members}: True{}
+
+def key_absent(key: String, rest: J.Json) -> Bool:
+  match rest:
+    case J.Jpair{+other, +value, +tail}: Bool.pick(Bool, String.eq(key, other), False{}, key_absent(key, tail))
+    case J.Jnil{}: True{}
+    case J.Jnull{}: True{}
+    case J.Jtrue{}: True{}
+    case J.Jfalse{}: True{}
+    case J.Jint{+value}: True{}
+    case J.Jstr{+value}: True{}
+    case J.Jarr{+head, +tail}: True{}
+    case J.Jobj{+members}: True{}
 
 def known_kind(m: Maybe<&2, J.Json>) -> Bool:
   match m:
@@ -1737,6 +1800,28 @@ def bad_utf8_rows() -> Req.Rows:
 def decoded_record(id: String, subject: String, +projections: J.Json) -> Refs.RefRecord:
   ref_record_of(ref_decode(ref_object_of(ref_members_base(id, subject, projections))))
 
+def ref_members_subject(id: String, subject: J.Json, +projections: J.Json) -> J.Json:
+  J.Jpair{"id", J.Jstr{id},
+  J.Jpair{"engine", J.Jstr{"typescript"},
+  J.Jpair{"subject", subject,
+  J.Jpair{"snapshotId", J.Jstr{"s1"},
+  J.Jpair{"projections", projections, J.Jnil{}}}}}}
+
+def ref_members_object_subject(id: String, +projections: J.Json) -> J.Json:
+  ref_members_subject(id, cobj2("kind", J.Jstr{"entity"}, "name", J.Jstr{"t"}), projections)
+
+def ref_members_string_subject(id: String, +projections: J.Json) -> J.Json:
+  ref_members_subject(id, J.Jstr{"symbol"}, projections)
+
+def ref_members_duplicate_subject(id: String, +projections: J.Json) -> J.Json:
+  ref_members_subject(id, cobj2("kind", J.Jstr{"entity"}, "kind", J.Jstr{"symbol"}), projections)
+
+def ref_members_kindless_subject(id: String, +projections: J.Json) -> J.Json:
+  ref_members_subject(id, cobj1("name", J.Jstr{"t"}), projections)
+
+def ref_members_mystery_subject(id: String, +projections: J.Json) -> J.Json:
+  ref_members_subject(id, cobj1("kind", J.Jstr{"mystery"}), projections)
+
 law codec_law_an_object_subject_selector_decodes_its_kind:
   {ref_subject_of(ref_decode(ref_object_of(ref_members_object_subject("r9", J.Jarr{J.Jstr{"definition"}, J.Jnil{}})))) == "entity" : String}
 
@@ -1753,6 +1838,18 @@ law codec_law_an_object_subject_selector_composes_into_core:
   {Refs.ref_subject(ref_record_of(ref_decode(ref_object_of(ref_members_object_subject("r9", J.Jarr{J.Jstr{"definition"}, J.Jnil{}}))))) == "entity" : String}
 
 def codec_law_an_object_subject_selector_composes_into_core():
+  {==}
+
+law codec_law_a_string_selector_is_not_the_supported_retained_form:
+  {ref_condition(ref_decode(ref_object_of(ref_members_string_subject("r9", J.Jarr{J.Jstr{"definition"}, J.Jnil{}})))) == "invalidRefField" : String}
+
+def codec_law_a_string_selector_is_not_the_supported_retained_form():
+  {==}
+
+law codec_law_a_duplicate_selector_key_refuses:
+  {ref_condition(ref_decode(ref_object_of(ref_members_duplicate_subject("r9", J.Jarr{J.Jstr{"definition"}, J.Jnil{}})))) == "invalidRefField" : String}
+
+def codec_law_a_duplicate_selector_key_refuses():
   {==}
 
 law codec_law_a_subject_object_without_a_kind_refuses:
@@ -1785,27 +1882,11 @@ law codec_law_a_decoded_reference_with_an_unknown_subject_refuses:
 def codec_law_a_decoded_reference_with_an_unknown_subject_refuses():
   {==}
 
-def ref_members_subject(id: String, subject: J.Json, +projections: J.Json) -> J.Json:
-  J.Jpair{"id", J.Jstr{id},
-  J.Jpair{"engine", J.Jstr{"typescript"},
-  J.Jpair{"subject", subject,
-  J.Jpair{"snapshotId", J.Jstr{"s1"},
-  J.Jpair{"projections", projections, J.Jnil{}}}}}}
 
-def ref_members_object_subject(id: String, +projections: J.Json) -> J.Json:
-  ref_members_subject(id, cobj2("kind", J.Jstr{"entity"}, "name", J.Jstr{"t"}), projections)
 
-def ref_members_kindless_subject(id: String, +projections: J.Json) -> J.Json:
-  ref_members_subject(id, cobj1("name", J.Jstr{"t"}), projections)
 
-def ref_members_mystery_subject(id: String, +projections: J.Json) -> J.Json:
-  ref_members_subject(id, cobj1("kind", J.Jstr{"mystery"}), projections)
 
 def ref_members_nosubject(+projections: J.Json) -> J.Json:
-  J.Jpair{"id", J.Jstr{"r9"},
-  J.Jpair{"engine", J.Jstr{"typescript"},
-  J.Jpair{"snapshotId", J.Jstr{"s1"},
-  J.Jpair{"projections", projections, J.Jnil{}}}}}
 
 def ref_members_wrong_engine(+projections: J.Json) -> J.Json:
   J.Jpair{"id", J.Jstr{"r9"},

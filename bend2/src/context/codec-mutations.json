@@ -115,7 +115,7 @@
   "name": "codec-core-admission-verdict-is-ignored",
   "file": "bend2/src/context/codec.bend",
   "find": "  admission_decision(Eng.admit_operations(chain_ss(chain), grants_ss(grants)), primary_operation(chain))",
-  "replace": "  ADispatch{primary_operation(chain)}",
+  "replace": "  ADispatch{Opcons{primary_operation(chain), Opnone{}}, Eng.ss_empty()}",
   "law": "codec_law_an_unknown_chain_entry_refuses_even_with_every_grant"
  },
  {
@@ -250,5 +250,26 @@
   "find": "  J.json_text(or_json_nil(Req.member_lookup(\"subject\", members)))",
   "replace": "  SNil{}",
   "law": "codec_law_an_object_subject_selector_keeps_its_evidence"
+ },
+ {
+  "name": "codec-admitted-chain-is-narrowed",
+  "file": "bend2/src/context/codec.bend",
+  "find": "    case Eng.AdAdmit{effects}: ADispatch{chain, effects}",
+  "replace": "    case Eng.AdAdmit{+effects}: ADispatch{Opnone{}, Eng.ss_empty()}",
+  "law": "codec_law_an_admitted_caller_keeps_its_whole_operation_chain"
+ },
+ {
+  "name": "codec-subject-string-selector-is-accepted",
+  "file": "bend2/src/context/codec.bend",
+  "find": "def subject_value_ok(+v: J.Json) -> Bool:\n  match v:\n    case J.Jobj{members}: subject_object_ok(members)\n    case J.Jstr{+value}: False{}",
+  "replace": "def subject_value_ok(+v: J.Json) -> Bool:\n  match v:\n    case J.Jobj{members}: subject_object_ok(members)\n    case J.Jstr{value}: nonempty_text(value)",
+  "law": "codec_law_a_string_selector_is_not_the_supported_retained_form"
+ },
+ {
+  "name": "codec-subject-duplicate-key-is-accepted",
+  "file": "bend2/src/context/codec.bend",
+  "find": "  Bool.pick(Bool, distinct_keys(members), known_kind(Req.member_lookup(\"kind\", members)), False{})",
+  "replace": "  Bool.pick(Bool, True{}, known_kind(Req.member_lookup(\"kind\", members)), False{})",
+  "law": "codec_law_a_duplicate_selector_key_refuses"
  }
 ]
