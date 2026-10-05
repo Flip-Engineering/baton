@@ -5,6 +5,7 @@ these fixtures test the validator's reconciliation rules directly. The real
 discovery the validator calls is the checker's own API; one test states whether
 that API answers in this source.
 """
+import contextlib
 import hashlib
 import importlib.util
 import json
@@ -58,8 +59,20 @@ class PackageGateReceipt(unittest.TestCase):
         self.logs = self.home / 'logs'
         self.logs.mkdir()
         self.controls = synthetic_controls()
-        self.addCleanup(setattr, PACKAGE, 'discover_controls', PACKAGE.discover_controls)
+        self.verdicts = {}
+        for name in ('discover_controls', 'classify_control'):
+            self.addCleanup(setattr, PACKAGE, name, getattr(PACKAGE, name))
         PACKAGE.discover_controls = lambda: self.controls
+        self.verdicts.clear()
+
+        def classify(case, result, streams, baseline, evidence_root, source, compiler_sha256,
+                     delta=None, supplied=None):
+            self.verdicts[case['id']] = {'streams': streams, 'baseline': baseline, 'delta': delta}
+            return {'schema': 'capacity-controls/classify-verdict@1', 'id': case['id'],
+                    'class': 'intended-law-refusal', 'attributed_law': case['law'],
+                    'law': case['law'], 'match': True, 'qualified': True}
+
+        PACKAGE.classify_control = classify
 
     def laws(self):
         return [control for control in self.controls['controls']
@@ -198,18 +211,12 @@ class PackageGateReceipt(unittest.TestCase):
         with self.assertRaisesRegex(RuntimeError, 'duplicate native suite runs'):
             PACKAGE.validation(self.logs)
 
-    def test_the_source_control_discovery_api_answers(self):
-        original = PACKAGE.discover_controls
-        PACKAGE.discover_controls = original
-        self.addCleanup(setattr, PACKAGE, 'discover_controls', original)
-        try:
-            discovery = original()
-        except RuntimeError as error:
-            self.skipTest('the checker discovery API is not implemented yet: ' + str(error))
-        self.assertTrue(discovery['controls'], 'the checker discovery returned no control')
-        for control in discovery['controls']:
-            for field in PACKAGE.CONTROL_FIELDS:
-                self.assertIn(field, control)
+    def test_the_composed_integration_test_owns_the_real_apis(self):
+        # The real discovery and classification APIs are exercised by
+        # bend2/test/capacity-controls-integration.py, which fails while either
+        # API is absent. This file stubs both boundaries on purpose.
+        self.assertTrue(callable(PACKAGE.discover_controls))
+        self.assertTrue(callable(PACKAGE.classify_control))
 
     def receipt(self, **overrides):
         initial = PACKAGE.snapshot()
@@ -263,10 +270,40 @@ class PackageGateReceipt(unittest.TestCase):
         path.write_bytes(data)
         return {'path': name, 'bytes': len(data), 'sha256': hashlib.sha256(data).hexdigest()}
 
+    def checker_sha(self):
+        return hashlib.sha256((ROOT / 'bend2/scripts/laws-check.mjs').read_bytes()).hexdigest()
+
+    def inputs_for(self, compiler):
+        return {'compiler_sha256': hashlib.sha256(compiler.read_bytes()).hexdigest(),
+                'checker_sha256': self.checker_sha(),
+                'archive_sha256': PACKAGE.COMPILER_ARCHIVE_SHA256,
+                'runtime_set_sha256': PACKAGE.runtime_set_digest(compiler)}
+
+    def producing_for(self, module, compiler):
+        snapshot = PACKAGE.snapshot()
+        return {
+            'checker_sha256': hashlib.sha256(
+                (ROOT / 'bend2/scripts/laws-check.mjs').read_bytes()).hexdigest(),
+            'source': {key: snapshot[key] for key in ('head', 'tree', 'bend2_tree')},
+            'compiler': {'path': str(compiler), 'bytes': compiler.stat().st_size,
+                         'sha256': hashlib.sha256(compiler.read_bytes()).hexdigest(),
+                         'version': 'bend 2.0.25'},
+            'archive': {'bytes': 0, 'sha256': PACKAGE.COMPILER_ARCHIVE_SHA256},
+            'runtime': {'directory': str(compiler.parent.parent),
+                        'sha256': PACKAGE.runtime_set_digest(compiler)},
+            'runtime_set_sha256': PACKAGE.runtime_set_digest(compiler),
+            'instrument': {'tool': '/usr/bin/time', 'flag': '-l'},
+            'origin': {'workflow': 'bend2-native-capacity-controls', 'run_id': '1',
+                       'run_attempt': '1', 'job': 'controls:' + module.replace('/', '_') + ':1:1',
+                       'runner_name': 'GitHub Actions 1', 'image_os': 'macos27',
+                       'image_version': '20260928.0222.1'},
+        }
+
     def bundle_for(self, directory, module, results=None):
         module_controls = [control for control in self.controls['controls']
                            if control['module'] == module]
         results = module_controls if results is None else results
+        compiler = self.compiler()
         rows = []
         for index, control in enumerate(results):
             attempt = 'attempt-%s-%d' % (module.replace('/', '_'), index)
@@ -274,27 +311,36 @@ class PackageGateReceipt(unittest.TestCase):
                 'case': control,
                 'setup': 'applied',
                 'process': {'state': 'exited', 'exit_code': 1, 'signal': None, 'spawn_error': None,
-                            'started': 10.0 + index, 'ended': 11.0 + index, 'attempt': attempt},
+                            'started': 10.0 + index, 'ended': 11.0 + index, 'attempt': attempt,
+                            'wrapper_pid': 4242 + index},
+                'delta': {'original_sha256': hashlib.sha256(b'original').hexdigest(),
+                          'changed_sha256': hashlib.sha256(b'changed').hexdigest(),
+                          'changed_path': 'results/%s.changed' % control['id'].replace(':', '-')},
                 'diagnostic': {'class': 'intended-law-refusal', 'attributed_law': control['law'],
                                'sha256': hashlib.sha256(b'diagnostic').hexdigest()},
                 'stdout': self.stream(directory, control['id'].replace(':', '-') + '.stdout',
                                       b'refusal stdout\n'),
                 'stderr': self.stream(directory, control['id'].replace(':', '-') + '.stderr',
                                       b'Location: ' + control['law'].encode() + b'\n'),
-                'resource': {'real_seconds': 17.1, 'user_seconds': 16.9, 'sys_seconds': 0.1,
-                             'max_rss_bytes': 1024, 'page_reclaims': 12},
+                'resource': {'profile': 'darwin-usr-bin-time', 'real_seconds': 17.1,
+                             'user_seconds': 16.9, 'sys_seconds': 0.1, 'max_rss_bytes': 1024,
+                             'max_rss_source_unit': 'bytes', 'page_reclaims': 12},
             })
         return {
             'module': module,
             'binding': self.controls['sha256'],
+            'entry': 'bend2/src/coordinator/main.bend',
+            'producing': self.producing_for(module, compiler),
             'baseline': {
-                'argv': ['bend', 'bend2/src/coordinator/main.bend', '--check-only'],
+                'argv': [str(compiler), 'bend2/src/coordinator/main.bend', '--check-only'],
                 'process': {'state': 'exited', 'exit_code': 0, 'signal': None, 'spawn_error': None,
-                            'started': 1.0, 'ended': 2.0, 'attempt': 'baseline-' + module},
+                            'started': 1.0, 'ended': 2.0, 'attempt': 'baseline-' + module,
+                            'wrapper_pid': 4241},
                 'stdout': self.stream(directory, 'baseline-%s.stdout' % module.replace('/', '_'),
                                       b'\n'),
                 'stderr': self.stream(directory, 'baseline-%s.stderr' % module.replace('/', '_'),
                                       b'\n'),
+                'inputs': self.inputs_for(compiler),
             },
             'results': rows,
         }
@@ -368,12 +414,25 @@ class PackageGateReceipt(unittest.TestCase):
             ('altered case definition', lambda directory: self.rewrite_result(
                 directory, 0, case={**self.laws()[0], 'definition_sha256': '0' * 64}),
              'definition differs'),
-            ('unattributed diagnostic', lambda directory: self.rewrite_result(
-                directory, 0, diagnostic={'class': 'unrelated-error'}), 'intended law refusal'),
-            ('diagnostic naming another law', lambda directory: self.rewrite_result(
-                directory, 0, diagnostic={'class': 'intended-law-refusal',
-                                          'attributed_law': 'another_law'}),
-             'names another law'),
+            ('produced label disagrees with its bytes', lambda directory: self.rewrite_result(
+                directory, 0, diagnostic={'class': 'unrelated-error'}), 'label disagrees'),
+            ('bundle producer checker', lambda directory: self.rewrite_producing(
+                directory, checker_sha256='0' * 64), 'different checker bytes'),
+            ('bundle producer source', lambda directory: self.rewrite_producing(
+                directory, source={'head': '0' * 40, 'tree': '0' * 40, 'bend2_tree': '0' * 40}),
+             'different source'),
+            ('bundle producer compiler', lambda directory: self.rewrite_producing(
+                directory, compiler={'sha256': '0' * 64, 'version': 'bend 2.0.25'}),
+             'different compiler'),
+            ('bundle producer archive', lambda directory: self.rewrite_producing(
+                directory, archive={'bytes': 0, 'sha256': '0' * 64}), 'different compiler archive'),
+            ('bundle from another run', lambda directory: self.rewrite_producing(
+                directory, origin={'workflow': 'bend2-native-capacity-controls', 'run_id': '9',
+                                   'run_attempt': '1', 'job': 'controls-elsewhere',
+                                   'image_version': '20260928.0222.1'}), 'names another run'),
+            ('bundle without baseline inputs', lambda directory: self.rewrite_bundle(
+                directory, baseline={**self.bundle(directory)['baseline'], 'inputs': None}),
+             'does not name the inputs'),
             ('case before baseline', lambda directory: self.rewrite_result(
                 directory, 0, process={'state': 'exited', 'exit_code': 1, 'signal': None,
                                        'spawn_error': None, 'started': 0.5, 'ended': 1.5,
@@ -437,6 +496,146 @@ class PackageGateReceipt(unittest.TestCase):
         results = self.results(directory, 0)
         results[index].update(overrides)
         self.write(directory, 0, results=results)
+
+    def rewrite_producing(self, directory, **overrides):
+        bundle = self.bundle(directory)
+        producing = bundle['producing']
+        producing.update(overrides)
+        self.write(directory, 0, producing=producing)
+
+    @contextlib.contextmanager
+    def verdict(self, **answer):
+        """Make the classifier answer `answer` for the first proof control."""
+        original = PACKAGE.classify_control
+        target = self.laws()[0]['id']
+
+        def classify(case, result, streams, baseline, evidence_root, source, compiler_sha256,
+                     delta=None, supplied=None):
+            value = {'schema': 'capacity-controls/classify-verdict@1', 'id': case['id'],
+                     'class': 'intended-law-refusal', 'attributed_law': case['law'],
+                     'law': case['law'], 'match': True, 'qualified': True}
+            if case['id'] == target:
+                value.update(answer)
+            return value
+
+        PACKAGE.classify_control = classify
+        try:
+            yield
+        finally:
+            PACKAGE.classify_control = original
+
+    def test_the_remote_route_carries_the_laws_obligation(self):
+        remote = PACKAGE.controls_evidence(self.full_evidence(), PACKAGE.snapshot(), self.compiler())
+        logs = self.home / 'remote-logs'
+        logs.mkdir()
+        (logs / 'check-native.log').write_text(self.native_log())
+        summary = PACKAGE.validation(logs, remote)
+        self.assertEqual(summary['route'], 'remote-module-groups')
+        self.assertEqual(summary['laws']['laws'], len(self.laws()))
+        self.assertEqual(summary['laws']['mutations'], len(self.mutations()))
+        self.assertEqual(summary['controls_sha256'], self.controls['sha256'])
+        self.assertEqual(summary['native']['python_suites'], len(PACKAGE.native_suites()))
+
+    def test_the_remote_route_still_refuses_a_partial_discovery(self):
+        remote = PACKAGE.controls_evidence(self.full_evidence(), PACKAGE.snapshot(), self.compiler())
+        logs = self.home / 'partial-logs'
+        logs.mkdir()
+        (logs / 'check-native.log').write_text(self.native_log())
+        partial = {**remote, 'cases': remote['cases'] - 1}
+        with self.assertRaisesRegex(RuntimeError, 'does not cover every discovered control'):
+            PACKAGE.validation(logs, partial)
+
+    def stub_gates(self, marker, laws_exit=0, laws_log=None):
+        """Gate commands that mark their launch and print a prepared log."""
+        native = self.home / 'native-fixture.log'
+        native.write_text(self.native_log())
+        laws = self.home / 'laws-fixture.log'
+        laws.write_text(laws_log or
+                        '\n'.join(['{"check":"entry compiles with every law proven","passed":true}']
+                                  + [json.dumps(row) for row in self.complete_law_rows()]
+                                  + [json.dumps(row) for row in self.complete_mutation_rows()]
+                                  + ['laws-check: green - %d laws, %d mutations, %d compiles, 0 failures'
+                                     % (len(self.laws()), len(self.mutations()),
+                                        len(self.laws()) + len(self.mutations()) + 1)]) + '\n')
+        return (('build-native', ['sh', '-c', f'echo build >> {marker}']),
+                ('laws-check', ['sh', '-c', f'echo laws >> {marker}; cat {laws}; exit {laws_exit}']),
+                ('check-native', ['sh', '-c', f'echo check >> {marker}; cat {native}']))
+
+    def run_gates_fixture(self, marker, gates):
+        original = {name: getattr(PACKAGE, name) for name in ('GATES', 'snapshot', 'inputs')}
+        for name, value in original.items():
+            self.addCleanup(setattr, PACKAGE, name, value)
+        PACKAGE.GATES = gates
+        PACKAGE.snapshot = lambda: {'head': 'h', 'tree': 't', 'bend2_tree': 'b', 'status': '',
+                                    'binary_sha256': 'x'}
+        PACKAGE.inputs = lambda *args: {'fixture': 'inputs'}
+
+    def test_run_gates_skips_the_local_laws_command_with_remote_evidence(self):
+        marker = self.home / 'launched'
+        self.run_gates_fixture(marker, self.stub_gates(marker, laws_exit=1))
+        compiler = self.compiler()
+        remote = PACKAGE.controls_evidence(self.full_evidence(), PACKAGE.snapshot(), compiler)
+        logs = self.home / 'gate-logs'
+        logs.mkdir()
+        path, summary = PACKAGE.run_gates(compiler, {'CC': 'gcc'}, logs, PACKAGE.snapshot(),
+                                          {'fixture': 'inputs'}, remote=remote)
+        launched = marker.read_text() if marker.exists() else ''
+        self.assertNotIn('laws', launched, 'the local laws command ran beside the remote evidence')
+        self.assertIn('build', launched)
+        self.assertIn('check', launched)
+        self.assertEqual([stage['name'] for stage in summary['stages']],
+                         ['build-native', 'laws-check', 'check-native'])
+        self.assertEqual(summary['stages'][1]['route'], 'remote-module-groups')
+        self.assertEqual(summary['stages'][1]['exit_code'], 0)
+        self.assertEqual(summary['route'], 'remote-module-groups')
+        self.assertEqual(json.loads((logs / 'laws-check.log').read_text())['route'],
+                         'remote-module-groups')
+        self.assertEqual(summary['validation']['route'], 'remote-module-groups')
+        self.assertEqual(path.name, 'summary.json')
+
+    def test_run_gates_launches_the_local_laws_command_without_remote_evidence(self):
+        marker = self.home / 'launched-local'
+        self.run_gates_fixture(marker, self.stub_gates(marker))
+        logs = self.home / 'local-gate-logs'
+        logs.mkdir()
+        _path, summary = PACKAGE.run_gates(self.compiler(), {'CC': 'gcc'}, logs, PACKAGE.snapshot(),
+                                           {'fixture': 'inputs'})
+        self.assertIn('laws', marker.read_text())
+        self.assertEqual(summary['route'], 'local-complete')
+        self.assertEqual(summary['validation']['route'], 'local-complete')
+        self.assertNotIn('route', summary['stages'][1])
+
+    def test_the_classifier_verdict_governs_refusal(self):
+        cases = [('classified diagnostic names another law', {'attributed_law': 'another_law'},
+                  'classified diagnostic names another law'),
+                 ('classifier finds no refusal', {'class': 'unrelated-error'},
+                  'not an intended law refusal')]
+        for name, answer, message in cases:
+            with self.subTest(name=name):
+                directory = self.full_evidence()
+                with self.verdict(**answer):
+                    with self.assertRaisesRegex(RuntimeError, message):
+                        PACKAGE.controls_evidence(directory, PACKAGE.snapshot(), self.compiler())
+
+    def test_a_repeated_group_job_refuses(self):
+        directory = self.full_evidence()
+        summary = self.load(directory)
+        first_job = summary['bundles'][0]['producing']['origin']['job']
+        summary['bundles'][1]['producing']['origin']['job'] = first_job
+        (directory / 'controls-summary.json').write_text(json.dumps(summary))
+        with self.assertRaisesRegex(RuntimeError, 'repeated or absent job'):
+            PACKAGE.controls_evidence(directory, PACKAGE.snapshot(), self.compiler())
+
+    def test_the_classifier_receives_the_verified_streams_and_baseline(self):
+        directory = self.full_evidence()
+        PACKAGE.controls_evidence(directory, PACKAGE.snapshot(), self.compiler())
+        identity = self.laws()[0]['id']
+        self.assertIn(identity, self.verdicts)
+        record = self.verdicts[identity]
+        self.assertTrue(pathlib.Path(record['streams']['stdout']['path']).is_file())
+        self.assertTrue(pathlib.Path(record['streams']['stderr']['path']).is_file())
+        self.assertTrue(pathlib.Path(record['baseline']['streams']['stdout']['path']).is_file())
+        self.assertEqual(record['baseline']['outcome']['exit_code'], 0)
 
     def alter_stream(self, directory):
         bundle = self.bundle(directory)

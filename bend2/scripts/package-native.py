@@ -4,6 +4,7 @@ import argparse
 import datetime
 import hashlib
 import json
+import math
 import os
 from pathlib import Path, PurePosixPath
 import platform
@@ -158,6 +159,22 @@ CHILD_FIELDS = ('exit_code', 'signal', 'spawn_error')
 ORIGIN_FIELDS = ('workflow', 'run_id', 'run_attempt', 'jobs', 'image_os', 'image_version')
 
 
+def binding_bytes(controls):
+    """The binding serialization shared with the checker's bindingRows.
+
+    Fields joined by TAB, rows by LF, no trailing newline, rows ordered by
+    unsigned UTF-8 bytes. Rows are sorted as bytes rather than as strings so a
+    non-ASCII id cannot order differently in the two languages.
+    """
+    rows = [b'\t'.join(control[field].encode('utf-8') for field in CONTROL_FIELDS)
+            for control in controls]
+    return b'\n'.join(sorted(rows))
+
+
+def is_finite(value):
+    return isinstance(value, (int, float)) and not isinstance(value, bool) and math.isfinite(value)
+
+
 def discover_controls():
     """Read the control definitions through the checker's own discovery API."""
     script = ROOT / CONTROL_SCRIPT
@@ -168,6 +185,7 @@ def discover_controls():
     except (OSError, subprocess.CalledProcessError) as error:
         raise RuntimeError('The checker discovery API did not answer: ' + repr(error)) from error
     controls = []
+    seen = {}
     for line in output.splitlines():
         if not line.strip():
             continue
@@ -181,14 +199,13 @@ def discover_controls():
                 + json.dumps(record, sort_keys=True))
         require((ROOT / record['module']).is_file(),
                 'A discovered control names a module outside this source: ' + str(record['module']))
-        controls.append({field: record[field] for field in CONTROL_FIELDS})
-    identities = [(control['id'], control['definition_sha256']) for control in controls]
-    require(len(identities) == len(set(identities)), 'The discovered controls are not unique')
-    ordered = sorted(controls, key=lambda control: control['id'])
-    return {'controls': ordered,
-            'sha256': hashlib.sha256('\n'.join(
-                '\t'.join(control[field] for field in CONTROL_FIELDS)
-                for control in ordered).encode()).hexdigest()}
+        require(record['id'] not in seen,
+                'The checker discovery listed a duplicate control id: ' + json.dumps(record['id']))
+        seen[record['id']] = record
+        controls.append(record)
+    ordered = sorted(controls, key=lambda control: control['id'].encode('utf-8'))
+    return {'controls': ordered, 'by_id': {control['id']: control for control in ordered},
+            'sha256': hashlib.sha256(binding_bytes(ordered)).hexdigest()}
 
 
 def native_suites():
@@ -271,26 +288,32 @@ def reconcile_controls(expected, laws, mutations):
                      'A mutation control row did not record an applied attributable refusal')
 
 
-def validation(logs):
-    law_text = (logs / 'laws-check.log').read_text(errors='replace')
-    match = re.search(r'^laws-check: green - (\d+) laws, (\d+) mutations, (\d+) compiles, 0 failures$',
-                      law_text, re.MULTILINE)
-    require(match is not None, 'The complete laws-check success summary is missing')
-    counts = dict(zip(('laws', 'mutations', 'compiles'), map(int, match.groups())))
+def validation(logs, remote=None):
     expected = discover_controls()
     laws = [control for control in expected['controls'] if control['kind'] == 'proof-removal']
     mutations = [control for control in expected['controls'] if control['kind'] == 'mutation']
-    require(counts['laws'] == len(laws) and counts['mutations'] == len(mutations),
-            'The laws-check summary counts ' + str(counts['laws']) + ' laws and '
-            + str(counts['mutations']) + ' mutations; this source defines ' + str(len(laws))
-            + ' laws and ' + str(len(mutations)) + ' mutations')
-    require(counts['compiles'] == counts['laws'] + counts['mutations'] + 1,
-            'The laws-check compile count does not equal its controls plus one baseline: '
-            + str(counts['compiles']))
-    law_rows, mutation_rows, _ = control_rows(law_text)
-    reconcile_controls(expected, law_rows, mutation_rows)
+    counts = {'laws': len(laws), 'mutations': len(mutations),
+              'compiles': len(laws) + len(mutations) + 1}
+    if remote is not None:
+        require(remote.get('binding') == expected['sha256'],
+                'The remote laws obligation checked a different control definition set')
+        require(remote.get('cases') == len(expected['controls'])
+                and remote.get('groups') == len({control['module'] for control in expected['controls']}),
+                'The remote laws obligation does not cover every discovered control')
+    else:
+        law_text = (logs / 'laws-check.log').read_text(errors='replace')
+        match = re.search(r'^laws-check: green - (\d+) laws, (\d+) mutations, (\d+) compiles, 0 failures$',
+                          law_text, re.MULTILINE)
+        require(match is not None, 'The complete laws-check success summary is missing')
+        observed = dict(zip(('laws', 'mutations', 'compiles'), map(int, match.groups())))
+        require(observed == counts,
+                'The laws-check summary counts ' + json.dumps(observed) + '; this source defines '
+                + json.dumps(counts))
+        law_rows, mutation_rows, _ = control_rows(law_text)
+        reconcile_controls(expected, law_rows, mutation_rows)
     native_text = (logs / 'check-native.log').read_text(errors='replace')
     return {'laws': counts, 'controls_sha256': expected['sha256'],
+            'route': 'remote-module-groups' if remote is not None else 'local-complete',
             'native': reconcile_native(native_text)}
 
 
@@ -325,33 +348,55 @@ def reconcile_native(text):
     return {'python_tests': total, 'python_suites': reported}
 
 
-def run_gates(compiler, env, logs, initial, before_inputs):
+def run_gates(compiler, env, logs, initial, before_inputs, remote=None):
     summary = {'status': 'running', 'worktree': str(ROOT), 'output': str(logs),
                'before': initial, 'environment': {'BEND': str(compiler), 'BEND_NO_TELEMETRY': '1',
                                                 'CC': env.get('CC', 'clang')},
                'compiler_sha256': sha256(compiler), 'runner_sha256': sha256(Path(__file__)),
+               'route': 'local-complete' if remote is None else 'remote-module-groups',
                'inputs_before': before_inputs, 'stages': []}
+    if remote is not None:
+        summary['controls_evidence'] = {key: remote[key] for key in
+                                        ('path', 'bytes', 'sha256', 'cases', 'groups', 'binding',
+                                         'origin', 'spans')}
     path = logs / 'summary.json'
     write_json(path, summary)
     try:
         for name, argv in GATES:
             stage = {'name': name, 'argv': argv, 'status': 'running',
                      'before': snapshot(), 'log': name + '.log'}
+            if remote is not None and name == 'laws-check':
+                stage['argv'] = [remote['checker_invocation'], '--group', remote['modules']]
+                stage['route'] = 'remote-module-groups'
             same_source(stage['before'], initial)
             summary['stages'].append(stage)
             write_json(path, summary)
-            print(json.dumps({'stage': name, 'status': 'running', 'log': str(logs / stage['log'])}), flush=True)
+            print(json.dumps({'stage': name, 'status': 'running', 'log': str(logs / stage['log']),
+                              'route': stage.get('route', 'local')}), flush=True)
             started = time.monotonic()
-            with (logs / stage['log']).open('wb') as log:
-                result = subprocess.run(argv, cwd=ROOT, env=env, stdin=subprocess.DEVNULL,
-                                        stdout=log, stderr=subprocess.STDOUT)
-            stage.update(exit_code=result.returncode, elapsed_seconds=time.monotonic() - started,
-                         status='passed' if result.returncode == 0 else 'failed', after=snapshot())
+            if stage.get('route') == 'remote-module-groups':
+                receipt = {'route': 'remote-module-groups', 'evidence': remote['path'],
+                           'evidence_sha256': remote['sha256'], 'binding': remote['binding'],
+                           'cases': remote['cases'], 'groups': remote['groups'],
+                           'origin': remote['origin'], 'spans': remote['spans'],
+                           'gates': ['build-native', 'check-native']}
+                (logs / stage['log']).write_text(json.dumps(receipt, indent=2) + '\n')
+                result_exit = 0
+            else:
+                with (logs / stage['log']).open('wb') as log:
+                    result = subprocess.run(argv, cwd=ROOT, env=env, stdin=subprocess.DEVNULL,
+                                            stdout=log, stderr=subprocess.STDOUT)
+                result_exit = result.returncode
+            stage.update(exit_code=result_exit, elapsed_seconds=time.monotonic() - started,
+                         status='passed' if result_exit == 0 else 'failed', after=snapshot())
+            if stage.get('route') == 'remote-module-groups':
+                stage['elapsed_seconds'] = remote['slowest_span_seconds']
+                stage['evidence_sha256'] = remote['sha256']
             stage['log_sha256'] = sha256(logs / stage['log'])
             write_json(path, summary)
-            require(result.returncode == 0, name + ' failed; full output is retained at ' + str(logs / stage['log']))
+            require(result_exit == 0, name + ' failed; full output is retained at ' + str(logs / stage['log']))
             same_source(stage['after'], initial)
-        summary['validation'] = validation(logs)
+        summary['validation'] = validation(logs, remote)
         summary['after'] = snapshot()
         require(summary['after']['binary_sha256'] == summary['stages'][0]['after']['binary_sha256'],
                 'The native binary changed between gate stages')
@@ -395,7 +440,8 @@ def reuse_gates(path, expected_sha, compiler, logs, initial):
         shutil.copyfile(source, logs / stage['log'])
     require(summary['stages'][0]['after']['binary_sha256'] == initial['binary_sha256'],
             'The original build-stage binary differs from the receipt binary')
-    require(validation(logs) == summary['validation'], 'The supplied receipt validation disagrees with its full logs')
+    require(validation(logs, summary.get('controls_evidence')) == summary['validation'],
+            'The supplied receipt validation disagrees with its full logs')
     destination = logs / 'summary.json'
     shutil.copyfile(path, destination)
     return destination, summary
@@ -414,45 +460,152 @@ def evidence_stream(directory, record, label):
     return path
 
 
+def runtime_set_digest(compiler):
+    """Digest the installed Bend library files beside a compiler executable."""
+    runtime = compiler.parent.parent / 'bend2'
+    if not runtime.is_dir():
+        return None
+    rows = []
+    for path in sorted(runtime.rglob('*')):
+        if path.is_file():
+            rows.append(path.relative_to(runtime).as_posix() + '\t' + sha256(path))
+    return hashlib.sha256('\n'.join(rows).encode()).hexdigest()
+
+
+def classify_control(case, result, streams, baseline, evidence_root, source, compiler_sha256,
+                    delta=None, supplied=None):
+    """Ask the checker's classifier what the verified bytes establish.
+
+    One JSON request on stdin, one verdict line on stdout. The checker owns the
+    classifier; the package recomputes the verdict over the streams and the
+    actual child outcome it verified, and compares the producer's claim with it.
+    """
+    outcome = result.get('process') or {}
+    request = {
+        'case': case,
+        'outcome': {'state': outcome.get('state'), 'exit_code': outcome.get('exit_code'),
+                    'signal': outcome.get('signal'), 'spawn_error': outcome.get('spawn_error')},
+        'streams': streams,
+        'baseline': baseline,
+        'evidence_root': str(evidence_root),
+        'source': source,
+        'toolchain': {'compiler_sha256': compiler_sha256},
+    }
+    if delta is not None:
+        request['delta'] = delta
+    if supplied is not None:
+        request['supplied'] = supplied
+    completed = subprocess.run(['node', str(ROOT / CONTROL_SCRIPT), '--classify'], cwd=ROOT,
+                               env={'PATH': os.environ.get('PATH', ''), 'BEND_NO_TELEMETRY': '1'},
+                               input=json.dumps(request), text=True, capture_output=True)
+    if completed.returncode != 0:
+        raise RuntimeError('The checker classification refused the request: '
+                           + completed.stderr.strip()[:200])
+    require(not completed.stderr.strip(),
+            'The checker classification wrote to stderr: ' + completed.stderr[:120])
+    lines = [line for line in completed.stdout.splitlines() if line.strip()]
+    require(len(lines) == 1,
+            'The checker classification printed ' + str(len(lines)) + ' response lines')
+    verdict = json.loads(lines[0])
+    require(verdict.get('schema') == 'capacity-controls/classify-verdict@1',
+            'The checker classification answered another schema: '
+            + json.dumps(verdict.get('schema')))
+    require(verdict.get('id') == case.get('id'),
+            'The checker classification answered another case')
+    return verdict
+
+
 def verify_process(record, baseline, label):
+    """Validate one recorded child outcome by type and state consistency."""
     outcome = record.get('process')
     require(isinstance(outcome, dict), 'A controls evidence ' + label + ' omits its process outcome')
-    require(outcome.get('state') == 'exited' and outcome.get('signal') is None
-            and outcome.get('spawn_error') is None,
-            'A controls evidence ' + label + ' did not complete as an exited child')
-    code = outcome.get('exit_code')
-    require(type(code) is int and (code == 0 if baseline else code > 0),
-            'A controls evidence ' + label + ' records exit ' + repr(code))
-    require(outcome.get('ended') >= outcome.get('started') >= 0,
-            'A controls evidence ' + label + ' records an invalid child interval')
+    state = outcome.get('state')
+    require(state in ('exited', 'signalled', 'spawn-error', 'not-run'),
+            'A controls evidence ' + label + ' records state ' + json.dumps(state))
+    signal = outcome.get('signal')
+    spawn_error = outcome.get('spawn_error')
+    exit_code = outcome.get('exit_code')
+    if state == 'exited':
+        require(type(exit_code) is int and exit_code >= 0 and signal is None and spawn_error is None,
+                'A controls evidence ' + label + ' records an inconsistent exited outcome: '
+                + json.dumps(outcome, sort_keys=True))
+    elif state == 'signalled':
+        require(isinstance(signal, str) and signal and exit_code is None and spawn_error is None,
+                'A controls evidence ' + label + ' records an inconsistent signalled outcome')
+    elif state == 'spawn-error':
+        require(isinstance(spawn_error, str) and spawn_error and exit_code is None and signal is None,
+                'A controls evidence ' + label + ' records an inconsistent spawn-error outcome')
+    else:
+        require(exit_code is None and signal is None and spawn_error is None,
+                'A controls evidence ' + label + ' records a not-run outcome with child fields')
+    started, ended = outcome.get('started'), outcome.get('ended')
+    require(is_finite(started) and is_finite(ended) and ended >= started >= 0,
+            'A controls evidence ' + label + ' records an invalid child interval: '
+            + json.dumps([started, ended]))
     require(outcome.get('attempt') not in (None, ''),
             'A controls evidence ' + label + ' records no attempt identity')
+    require(type(outcome.get('wrapper_pid')) is int and outcome['wrapper_pid'] > 0,
+            'A controls evidence ' + label + ' records no wrapper process identity')
+    if state != 'exited':
+        raise RuntimeError('A controls evidence ' + label + ' did not complete as an exited child: '
+                           + json.dumps(state))
     return outcome
+
+
+def stream_record(directory, record, label):
+    path = evidence_stream(directory, record, label)
+    return {'path': str(path), 'bytes': record['bytes'], 'sha256': record['sha256']}
+
+
+def verify_resource(record, label):
+    resource = record.get('resource')
+    require(isinstance(resource, dict), 'A control carries no resource sample: ' + label)
+    require(resource.get('profile') in ('darwin-usr-bin-time', 'gnu-time-v'),
+            'A control resource sample names no qualified time profile: ' + label)
+    for field in ('real_seconds', 'user_seconds', 'sys_seconds'):
+        require(is_finite(resource.get(field)) and resource[field] >= 0,
+                'A control resource sample records an invalid ' + field + ': ' + label)
+    require(type(resource.get('max_rss_bytes')) is int and resource['max_rss_bytes'] >= 0
+            and resource.get('max_rss_source_unit') in ('bytes', 'kbytes'),
+            'A control resource sample records no maximum resident size in stated units: ' + label)
+    return resource
+
+
+def verify_delta(record, label):
+    delta = record.get('delta')
+    require(isinstance(delta, dict), 'A control records no applied source delta: ' + label)
+    for field in ('original_sha256', 'changed_sha256', 'changed_path'):
+        require(isinstance(delta.get(field), str) and delta[field],
+                'A control delta omits ' + field + ': ' + label)
+    return delta
 
 
 def controls_evidence(directory, initial, compiler):
     """Validate remote module-group control evidence against this source.
 
     The evidence is the aggregate of one control job per module group. Each
-    bundle carries its baseline child outcome, every control's definition, its
-    process outcome, its diagnostic classification and the complete hashes of its
-    two output streams. This qualifies the narrow remote controls; it replaces no
-    local gate.
+    bundle binds its producing checker, source, compiler, archive and installed
+    library bytes and its own origin, and each baseline binds the command and the
+    inputs it ran with. Every control carries its definition, the applied source
+    delta, its actual child outcome with the wrapper identity, the complete two
+    output streams and its resource sample. Classification is recomputed by the
+    checker's own classifier over those verified bytes; a producer's label is
+    only compared with that verdict.
     """
     path = directory / 'controls-summary.json'
     require(path.is_file(), 'The controls evidence has no controls-summary.json: ' + str(path))
     summary = json.loads(path.read_text())
     expected = discover_controls()
-    wanted = {control['id']: control for control in expected['controls']}
+    wanted = expected['by_id']
     modules = {control['module'] for control in expected['controls']}
     require(not summary.get('rejections'),
-            'The controls evidence reports rejections: ' + json.dumps(summary.get('rejections', [])[:3]))
+            'The controls evidence reports rejections: '
+            + json.dumps(summary.get('rejections', [])[:3]))
     require(summary.get('binding') == expected['sha256'],
             'The controls evidence checked a different control definition set')
     for field, value in (('source_sha', initial['head']), ('source_tree', initial['tree']),
                          ('source_bend2_tree', initial['bend2_tree'])):
-        require(summary.get(field) == value,
-                'The controls evidence names a different ' + field)
+        require(summary.get(field) == value, 'The controls evidence names a different ' + field)
     require(summary.get('checker_sha256') == sha256(ROOT / CONTROL_SCRIPT),
             'The controls evidence names different checker bytes')
     require(summary.get('compiler_sha256') == sha256(compiler),
@@ -469,7 +622,12 @@ def controls_evidence(directory, initial, compiler):
 
     bundles = summary.get('bundles')
     require(isinstance(bundles, list) and bundles, 'The controls evidence holds no module bundles')
-    seen_modules, seen_cases, attempts = set(), {}, {}
+    compiler_sha = sha256(compiler)
+    runtime_sha = runtime_set_digest(compiler)
+    inputs = {'compiler_sha256': compiler_sha, 'checker_sha256': sha256(ROOT / CONTROL_SCRIPT),
+              'archive_sha256': COMPILER_ARCHIVE_SHA256, 'runtime_set_sha256': runtime_sha}
+    source_pins = {key: initial[key] for key in ('head', 'tree', 'bend2_tree')}
+    seen_modules, seen_cases, seen_jobs, spans = set(), {}, set(), []
     for bundle in bundles:
         module = bundle.get('module')
         require(module in modules, 'A controls evidence bundle is absent from this source: '
@@ -479,13 +637,61 @@ def controls_evidence(directory, initial, compiler):
         seen_modules.add(module)
         require(bundle.get('binding') == expected['sha256'],
                 'A bundle checked a different control definition set: ' + json.dumps(module))
-        baseline = verify_process(bundle.get('baseline') or {}, baseline=True,
-                                  label='baseline of ' + json.dumps(module))
-        baseline_streams = [evidence_stream(directory, (bundle.get('baseline') or {}).get(stream),
-                                            'baseline ' + stream)
-                            for stream in ('stdout', 'stderr')]
-        intervals = [(baseline['started'], baseline['ended'])]
-        attempts = {baseline['attempt']}
+        entry = bundle.get('entry')
+        require(isinstance(entry, str) and (ROOT / entry).is_file(),
+                'A bundle names no entry from this source: ' + json.dumps(entry))
+        producing = bundle.get('producing') or {}
+        require(producing.get('checker_sha256') == sha256(ROOT / CONTROL_SCRIPT),
+                'A bundle names different checker bytes: ' + json.dumps(module))
+        require(producing.get('source') == source_pins,
+                'A bundle names a different source: ' + json.dumps(module))
+        bundle_compiler = producing.get('compiler') or {}
+        require(bundle_compiler.get('sha256') == compiler_sha
+                and bundle_compiler.get('version') == 'bend 2.0.25'
+                and bundle_compiler.get('path') not in (None, ''),
+                'A bundle used a different compiler: ' + json.dumps(module))
+        require((producing.get('archive') or {}).get('sha256') == COMPILER_ARCHIVE_SHA256,
+                'A bundle preserved a different compiler archive: ' + json.dumps(module))
+        runtime = producing.get('runtime') or {}
+        require(runtime.get('sha256') == producing.get('runtime_set_sha256'),
+                'A bundle runtime inventory disagrees with its digest: ' + json.dumps(module))
+        if runtime_sha is not None:
+            require(producing.get('runtime_set_sha256') == runtime_sha,
+                    'A bundle used different installed Bend library bytes: ' + json.dumps(module))
+        instrument = producing.get('instrument') or {}
+        require(instrument.get('tool') not in (None, '') and instrument.get('flag') not in (None, ''),
+                'A bundle names no time instrument: ' + json.dumps(module))
+        bundle_origin = producing.get('origin') or {}
+        for field in ('workflow', 'run_id', 'run_attempt'):
+            require(str(bundle_origin.get(field)) == str(origin[field]),
+                    'A bundle names another run ' + field + ': ' + json.dumps(module))
+        job = bundle_origin.get('job')
+        require(job not in (None, '') and job not in seen_jobs,
+                'A bundle names a repeated or absent producing job: ' + json.dumps(module))
+        seen_jobs.add(job)
+        if origin.get('image_version'):
+            require(bundle_origin.get('image_version') == origin['image_version'],
+                    'A bundle ran on another image: ' + json.dumps(module))
+        baseline = bundle.get('baseline') or {}
+        baseline_outcome = verify_process(baseline, baseline=True,
+                                          label='baseline of ' + json.dumps(module))
+        require(baseline_outcome['exit_code'] == 0,
+                'A group baseline did not exit 0: ' + json.dumps(module))
+        require(baseline.get('argv') == [bundle_compiler['path'], entry, '--check-only'],
+                'A baseline ran another command: ' + json.dumps(module))
+        require(baseline.get('inputs') == inputs,
+                'A baseline does not name the inputs it ran with: ' + json.dumps(module))
+        baseline_reference = {
+            'outcome': {'state': baseline_outcome['state'],
+                        'exit_code': baseline_outcome['exit_code'],
+                        'signal': baseline_outcome['signal'],
+                        'spawn_error': baseline_outcome['spawn_error']},
+            'streams': {stream: stream_record(directory, baseline.get(stream),
+                                              'baseline ' + stream + ' of ' + json.dumps(module))
+                        for stream in ('stdout', 'stderr')},
+        }
+        intervals = [(baseline_outcome['started'], baseline_outcome['ended'])]
+        attempts = {baseline_outcome['attempt']}
         for result in bundle.get('results') or []:
             case = result.get('case') or {}
             identity = case.get('id')
@@ -504,30 +710,45 @@ def controls_evidence(directory, initial, compiler):
             require(outcome['attempt'] not in attempts, 'A controls evidence attempt repeats: '
                     + json.dumps(outcome['attempt']))
             attempts.add(outcome['attempt'])
-            require(outcome['started'] >= baseline['ended'],
+            require(outcome['started'] >= baseline_outcome['ended'],
                     'A control started before its baseline ended: ' + json.dumps(identity))
             intervals.append((outcome['started'], outcome['ended']))
-            diagnostic = result.get('diagnostic') or {}
-            require(diagnostic.get('class') == 'intended-law-refusal',
-                    'A control diagnostic is not an intended law refusal: ' + json.dumps(identity))
-            require(diagnostic.get('attributed_law') == control['law'],
-                    'A control diagnostic names another law: ' + json.dumps(identity))
-            for stream in ('stdout', 'stderr'):
-                evidence_stream(directory, result.get(stream), json.dumps(identity) + ' ' + stream)
-            resource = result.get('resource') or {}
-            require(bool(resource.get('real_seconds')),
-                    'A control carries no resource sample: ' + json.dumps(identity))
-            seen_cases[identity] = {'resource': resource, 'group': module}
+            streams = {stream: stream_record(directory, result.get(stream),
+                                             json.dumps(identity) + ' ' + stream)
+                       for stream in ('stdout', 'stderr')}
+            verdict = classify_control(case, result, streams, baseline_reference, directory,
+                                       source_pins, compiler_sha,
+                                       verify_delta(result, json.dumps(identity)))
+            require(verdict.get('match') is True and verdict.get('qualified') is True,
+                    'The checker classifier did not qualify this control as an intended refusal: '
+                    + json.dumps(identity) + ' ' + json.dumps(verdict.get('class')))
+            require(verdict.get('attributed_law') == control['law']
+                    and verdict.get('law') == control['law'],
+                    'The classified diagnostic names another law: ' + json.dumps(identity))
+            claim = result.get('diagnostic') or {}
+            if claim:
+                require(claim.get('class') == verdict['class']
+                        and claim.get('attributed_law') == verdict['attributed_law'],
+                        'A produced diagnostic label disagrees with its bytes: '
+                        + json.dumps(identity))
+            seen_cases[identity] = {'resource': verify_resource(result, json.dumps(identity)),
+                                    'group': module}
         intervals.sort()
         require(all(left[1] <= right[0] for left, right in zip(intervals, intervals[1:])),
                 'Two compilers overlapped in one module group: ' + json.dumps(module))
+        spans.append({'module': module, 'job': job, 'cases': len(bundle.get('results') or []),
+                      'started': intervals[0][0], 'ended': intervals[-1][1],
+                      'seconds': round(intervals[-1][1] - intervals[0][0], 3)})
     missing_modules = sorted(modules - seen_modules)
     require(not missing_modules, 'The controls evidence omits module groups: '
             + succinct(missing_modules))
     missing_cases = sorted(set(wanted) - set(seen_cases))
     require(not missing_cases, 'The controls evidence omits controls: ' + succinct(missing_cases))
+    seconds = [span['seconds'] for span in spans]
     return {'path': str(path), **file_info(path), 'cases': len(wanted), 'groups': len(modules),
-            'binding': expected['sha256'], 'origin': origin,
+            'binding': expected['sha256'], 'origin': origin, 'route': 'remote-module-groups',
+            'checker_invocation': 'node ' + CONTROL_SCRIPT, 'modules': sorted(seen_modules),
+            'spans': spans, 'slowest_span_seconds': max(seconds) if seconds else 0,
             'slowest_seconds': max(entry['resource']['real_seconds']
                                    for entry in seen_cases.values()),
             'largest_child_max_rss_bytes': max((entry['resource'].get('max_rss_bytes') or 0)
@@ -631,8 +852,12 @@ def package(args):
             require(summary['inputs_after'] == before_inputs, 'The receipt toolchain or host inputs differ from current inputs')
             input_boundary = 'Compiler libraries, CC and host captured after the supplied gates and checked again during packaging.'
         else:
-            receipt, summary = run_gates(compiler, env, logs, initial, before_inputs)
-            input_boundary = 'Compiler libraries, CC and host captured before and after the three gates.'
+            receipt, summary = run_gates(compiler, env, logs, initial, before_inputs,
+                                         remote=controls)
+            input_boundary = ('Compiler libraries, CC and host captured before and after the three gates.'
+                              if controls is None else
+                              'The laws obligation was carried by the remote module-group controls; '
+                              'compiler libraries, CC and host captured before and after the two local gates.')
         binary = ROOT / '.scratch/bend2/baton2'
         generated = ROOT / '.scratch/bend2/baton2.c'
         require(binary.is_file() and generated.is_file(), 'The gated executable and generated C are required')
@@ -681,6 +906,7 @@ def package(args):
                       'linked_libraries': libraries},
             'gates': {'receipt': 'logs/summary.json', **file_info(receipt),
                       'validation': summary['validation'], 'reused': bool(args.gate_receipt),
+                      'route': summary.get('route', 'local-complete'),
                       **({'controls': controls} if controls else {})},
             'terms': terms,
         }
