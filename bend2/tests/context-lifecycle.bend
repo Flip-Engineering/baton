@@ -426,39 +426,54 @@ def intent_surfaces() -> IO(Unit):
 def show_step(key: String, step: ContextLifecycle.CompanionStep) -> IO(Unit):
   obs(key, ContextLifecycle.companion_text(step))
 
-def show_step_result(key: String, result: Result<&1,&1,U32 & String,ContextLifecycle.CompanionStep>) -> IO(Unit):
-  match result:
-    case Done{+step}: show_step(key, step)
-    case Fail{error}:
-      match error:
-        case (code, message): obs(key ++ ".error", message)
+# The settled reading's duty probe, marked under a key of its own so the driver can tell a
+# probed conclusion from the short circuit a continuing or missing reading takes.
+def probe_live(+key: String) -> IO(Bool):
+  do IO<Bool>:
+    marked : Unit <- obs(key, "probed")
+    IO.pure(Bool, True{})
 
-# The companion through the bound read: an owed cleanup phase continues, a settled phase
-# ends with the caller's duty probe deciding both ways, a role that was never recorded is
-# missing with its own answer, and a refused binding is the host failure rather than any of
-# those conclusions.
+def probe_settled(+key: String) -> IO(Bool):
+  do IO<Bool>:
+    marked : Unit <- obs(key, "probed")
+    IO.pure(Bool, False{})
+
+# The continuation the streaming loop takes after a continuing reading, marked so the
+# driver can tell that it ran rather than that the loop concluded on its own.
+def continuation(+key: String) -> IO(ContextLifecycle.CompanionStep):
+  do IO<ContextLifecycle.CompanionStep>:
+    marked : Unit <- obs(key, "reached")
+    IO.pure(ContextLifecycle.CompanionStep, ContextLifecycle.StepSettled{})
+
+# The companion through the bound read, on a query of its own: the earlier control surfaces
+# persist a cleanup intent for q1, and the intent read is open while the query or the role
+# owes anything, so a settled reading can only be established on a query that carries no
+# intent and no owed notice. The two role rows take keeper paths of their own because the
+# keeper path is unique across the role table.
 def companion_surfaces(+db: String, +binding: String, +log: String) -> IO(Unit):
   do IO<Unit>:
     +anchor : String <- IO.pure(String, ContextRole.guard_anchor(log))
-    owed_identity : String <- IO.pure(String, ContextRole.guard_identity(binding, ContextRole.SubjectQuery{"q1"}, ContextRole.RoleStarter{}, "2"))
+    admitted : Result<&1,&1,U32 & String,String> <- DB.Sql.query_bound(db, binding, ContextStore.accept_sql("qc1", "root", "{\"version\":1,\"engine\":\"typescript\"}", "/work", "", "/log/qc1", "/art/qc1"))
+    show("companion.query", admitted)
+    owed_identity : String <- IO.pure(String, ContextRole.guard_identity(binding, ContextRole.SubjectQuery{"qc1"}, ContextRole.RoleStarter{}, "0"))
     owed_key : String <- IO.try(String, ContextRole.role_guard_key(owed_identity))
-    owed : Result<&1,&1,U32 & String,String> <- DB.Sql.query_bound(db, binding, ContextRoles.role_row_sql("q1", "starter", "2", "/log/q1", anchor, owed_key, owed_identity, "[\"bat\",\"--recover-context-role\"]", binding, "prepared", "pending"))
+    owed : Result<&1,&1,U32 & String,String> <- DB.Sql.query_bound(db, binding, ContextRoles.role_row_sql("qc1", "starter", "0", "/log/qc1-owned", anchor, owed_key, owed_identity, "[\"bat\",\"--recover-context-role\"]", binding, "prepared", "pending"))
     show("companion.owed.row", owed)
-    settled_identity : String <- IO.pure(String, ContextRole.guard_identity(binding, ContextRole.SubjectQuery{"q1"}, ContextRole.RoleTarget{}, "3"))
+    settled_identity : String <- IO.pure(String, ContextRole.guard_identity(binding, ContextRole.SubjectQuery{"qc1"}, ContextRole.RoleTarget{}, "1"))
     settled_key : String <- IO.try(String, ContextRole.role_guard_key(settled_identity))
-    settled : Result<&1,&1,U32 & String,String> <- DB.Sql.query_bound(db, binding, ContextRoles.role_row_sql("q1", "target", "3", "/log/q1", anchor, settled_key, settled_identity, "[\"bat\",\"--recover-context-role\"]", binding, "settled", "complete"))
+    settled : Result<&1,&1,U32 & String,String> <- DB.Sql.query_bound(db, binding, ContextRoles.role_row_sql("qc1", "target", "1", "/log/qc1-settled", anchor, settled_key, settled_identity, "[\"bat\",\"--recover-context-role\"]", binding, "settled", "complete"))
     show("companion.settled.row", settled)
-    owed_read : Result<&1,&1,U32 & String,ContextLifecycle.CompanionStep> <- ContextLifecycle.companion_step(db, binding, "q1", "starter", "2", u => IO.pure(Bool, True{}))
-    show_step_result("companion.owed", owed_read)
-    settled_live : Result<&1,&1,U32 & String,ContextLifecycle.CompanionStep> <- ContextLifecycle.companion_step(db, binding, "q1", "target", "3", u => IO.pure(Bool, True{}))
-    show_step_result("companion.settled.live", settled_live)
-    settled_done : Result<&1,&1,U32 & String,ContextLifecycle.CompanionStep> <- ContextLifecycle.companion_step(db, binding, "q1", "target", "3", u => IO.pure(Bool, False{}))
-    show_step_result("companion.settled.done", settled_done)
-    missing_read : Result<&1,&1,U32 & String,ContextLifecycle.CompanionStep> <- ContextLifecycle.companion_step(db, binding, "q1", "adapter", "9", u => IO.pure(Bool, False{}))
-    show_step_result("companion.missing", missing_read)
-    refused : Result<&1,&1,U32 & String,ContextLifecycle.CompanionStep> <- ContextLifecycle.companion_step(db, binding ++ "-absent", "q1", "starter", "2", u => IO.pure(Bool, True{}))
-    show_step_result("companion.refused", refused)
-    looped : ContextLifecycle.CompanionStep <- ContextLifecycle.reconcile_intents(db, binding, "q1", "starter", "2", u => IO.pure(Bool, True{}), u => IO.pure(ContextLifecycle.CompanionStep, ContextLifecycle.StepSettled{}))
+    owed_read : ContextLifecycle.CompanionStep <- ContextLifecycle.companion_step(db, binding, "qc1", "starter", "0", u => probe_settled("companion.owed.probe"))
+    show_step("companion.owed", owed_read)
+    settled_live : ContextLifecycle.CompanionStep <- ContextLifecycle.companion_step(db, binding, "qc1", "target", "1", u => probe_live("companion.settled.live.probe"))
+    show_step("companion.settled.live", settled_live)
+    settled_done : ContextLifecycle.CompanionStep <- ContextLifecycle.companion_step(db, binding, "qc1", "target", "1", u => probe_settled("companion.settled.done.probe"))
+    show_step("companion.settled.done", settled_done)
+    missing_read : ContextLifecycle.CompanionStep <- ContextLifecycle.companion_step(db, binding, "qc1", "adapter", "9", u => probe_settled("companion.missing.probe"))
+    show_step("companion.missing", missing_read)
+    refused : ContextLifecycle.CompanionStep <- ContextLifecycle.companion_step(db, binding ++ "-absent", "qc1", "starter", "0", u => probe_settled("companion.refused.probe"))
+    show_step("companion.refused", refused)
+    looped : ContextLifecycle.CompanionStep <- ContextLifecycle.reconcile_intents(db, binding, "qc1", "starter", "0", u => probe_live("companion.loop.probe"), u => continuation("companion.loop.continuation"))
     show_step("companion.loop", looped)
     IO.pure(Unit, Unit{})
 

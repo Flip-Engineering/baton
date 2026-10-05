@@ -28,8 +28,9 @@ def release_ack_delivery(+acknowledged: Bool) -> String:
 def owns_live_duty(+recorded: String) -> Bool:
   Bool.or(Bool.or(String.eq(recorded, "pending"), String.eq(recorded, "attempted")), Bool.or(String.eq(recorded, "unknown"), String.eq(recorded, "unavailable")))
 
-# The companion's read answers `1\n` while this role still has a live or unsettled
-# duty; anything else is a settled role and ends the companion.
+# The companion's read answers `1` while this role has a live or unsettled duty, `0` for a
+# recorded role with nothing outstanding, and `missing` when no role row is recorded. Any
+# other answer is carried as unreadable rather than being read as a settled role.
 def intent_owed(+row: String) -> Bool:
   String.eq(Tx.trim_nl(row), "1")
 

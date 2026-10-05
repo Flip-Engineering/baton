@@ -466,7 +466,11 @@ def check_refs(values, stdout, db):
     check(body == entry + "\n", "refs.found.roundtrip", f"{body!r} != {entry!r}")
 
 
-def check_companion(values):
+def companion_marks(stdout, key):
+    return stdout.count(key + "=")
+
+
+def check_companion(values, stdout):
     expected = {
         "intent.step.owed": "continue",
         "intent.step.settled": "settled",
@@ -485,13 +489,39 @@ def check_companion(values):
     }
     for key, want in expected.items():
         check(values.get(key) == want, key, f"{values.get(key)!r} != {want!r}")
-    # The role rows the bound readings depend on must have been recorded, and a refused
-    # binding must be a host failure rather than a conclusion about the role.
-    for key in ("companion.owed.row", "companion.settled.row"):
-        check(key in values, key, "the role setup did not report")
+    # The companion cases run on their own admitted query, since the earlier control
+    # surfaces leave a cleanup intent on q1 and the intent read is open while any query or
+    # role owes something. The query and both role rows must be recorded, and each role
+    # read-back must carry the row that was asked for rather than an empty answer.
+    check("companion.query.error" not in values, "companion.query", values.get("companion.query.error"))
+    check("qc1" in values.get("companion.query", ""), "companion.query.readback", repr(values.get("companion.query")))
+    for key, keeper, phase in (
+        ("companion.owed.row", "/log/qc1-owned", "pending"),
+        ("companion.settled.row", "/log/qc1-settled", "complete"),
+    ):
         check(key + ".error" not in values, key, values.get(key + ".error"))
-    check("companion.refused.error" in values, "companion.refused.error", "a refused binding answered a companion reading")
-    check("companion.refused" not in values, "companion.refused.absent", repr(values.get("companion.refused")))
+        readback = values.get(key)
+        check(readback is not None, key, "the role setup did not report")
+        if readback is None:
+            continue
+        check(keeper in readback, key + ".keeper", repr(readback))
+        check(phase in readback, key + ".phase", repr(readback))
+    # A probed duty is what separates a settled reading from the short circuit a continuing
+    # or missing reading takes, and the loop's continuation is marked so its own conclusion
+    # cannot be mistaken for the loop concluding on its own.
+    for key in ("companion.settled.live.probe", "companion.settled.done.probe", "companion.loop.continuation"):
+        check(companion_marks(stdout, key) == 1, key + ".reached.once", str(companion_marks(stdout, key)))
+    for key in ("companion.owed.probe", "companion.missing.probe", "companion.refused.probe", "companion.loop.probe"):
+        check(companion_marks(stdout, key) == 0, key + ".not.reached", str(companion_marks(stdout, key)))
+    # A refused binding is a host failure carried as a failed step with its code and text,
+    # never a conclusion about the role.
+    refused = values.get("companion.refused", "")
+    parts = refused.split(":", 2)
+    check(
+        refused.startswith("failed:") and len(parts) == 3 and parts[1].isdigit() and parts[2] != "",
+        "companion.refused.failed",
+        repr(refused),
+    )
 
 
 def check_control(values):
@@ -640,7 +670,7 @@ def main():
     check_runtime_rows(values)
     check_control(values)
     check_refs(values, result.stdout, str(db))
-    check_companion(values)
+    check_companion(values, result.stdout)
     if os.environ.get("CONTEXT_LIFECYCLE_MUTATIONS") == "1":
         proof_removal_check()
         mutation_checks()
