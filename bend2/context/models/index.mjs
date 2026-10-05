@@ -28,4 +28,6 @@ export {
 
 export { joinModelUses } from './model-use-join.mjs';
 
+export { loadPackagedAjv, modelAdapterMain } from './adapter.mjs';
+
 export { MODEL_OPERATIONS } from './operations.mjs';

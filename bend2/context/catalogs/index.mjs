@@ -35,7 +35,9 @@ export {
   postgresEnvironment,
 } from './postgres-catalog.mjs';
 
-export { joinConstantSql, joinPostgresRelations } from './sql-join.mjs';
+export { admitSqlCallRecord, joinConstantSql, joinPostgresRelations } from './sql-join.mjs';
+
+export { catalogAdapterMain } from './adapter.mjs';
 
 export { canonicalJson, digestJson, sha256Hex } from './canonical.mjs';
 

@@ -15,6 +15,9 @@
 // the exact SQL text. A second record that reuses a source binding with
 // different text or a different snapshot is reanalyzed under its own key and
 // reported as a conflicting binding; a plan is never relabeled for new text.
+//
+// `admitSqlCallRecord` is exported so the PostgreSQL adapter binds provenance
+// with the same rules instead of planning any supplied text.
 
 import { digestJson } from './canonical.mjs';
 
@@ -56,6 +59,74 @@ function sourceRefFromSite(site, snapshotId, projection) {
   };
 }
 
+// Record admission shared by the SQLite join and the PostgreSQL adapter. A
+// relation may only come from a record whose resolver snapshot, captured call
+// site, resolved callee and receiver declarations, admitted client comparison
+// and constant literal are all present.
+export function admitSqlCallRecord(fact) {
+  if (fact?.kind !== 'sqlCall') {
+    return { status: 'refused', code: ABANDONED, detail: `fact kind ${JSON.stringify(fact?.kind)} is outside the constant-SQL join` };
+  }
+  const value = fact.value ?? {};
+  const record = value.record;
+  if (record === null || typeof record !== 'object') {
+    return { status: 'refused', code: 'recordAbsent', detail: 'the fact carries no project record; the flat proposal shape is not consumed' };
+  }
+  if (record.kind !== 'constantSql') {
+    return { status: 'refused', code: 'recordKindMismatch', detail: `the record kind is ${JSON.stringify(record.kind)}` };
+  }
+  if (typeof record.snapshotId !== 'string' || record.snapshotId.length === 0) {
+    return { status: 'refused', code: 'resolverSnapshotAbsent', detail: 'the record carries no resolver snapshot identity' };
+  }
+  const callSite = siteIdentity(record.callSite);
+  if (callSite === null) {
+    return { status: 'refused', code: 'callSiteAbsent', detail: 'the record carries no captured call-site bytes and range' };
+  }
+  if (record.callee?.status !== 'resolved') {
+    return { status: 'refused', code: 'calleeUnresolved', detail: `the callee resolution is ${JSON.stringify(record.callee?.status ?? 'absent')}${record.callee?.reason ? `: ${record.callee.reason}` : ''}` };
+  }
+  if (declarationIdentity(record.callee.declaration) === null) {
+    return { status: 'refused', code: 'calleeDeclarationIncomplete', detail: 'the resolved callee carries no complete declaration path, digest and range' };
+  }
+  if (record.receiver?.status !== 'resolved') {
+    return { status: 'refused', code: 'databaseReceiverUnresolved', detail: `the database receiver resolution is ${JSON.stringify(record.receiver?.status ?? 'absent')}${record.receiver?.reason ? `: ${record.receiver.reason}` : ''}` };
+  }
+  if (declarationIdentity(record.receiver.declaration) === null) {
+    return { status: 'refused', code: 'receiverDeclarationIncomplete', detail: 'the resolved receiver carries no complete declaration path, digest and range' };
+  }
+  if (value.clientMatch === undefined) {
+    return { status: 'refused', code: 'clientMatchAbsent', detail: 'the fact carries no result of the options.client comparison' };
+  }
+  if (value.clientMatch !== 'matched') {
+    return { status: 'refused', code: 'clientDeclarationNotMatched', detail: `the resolver reported clientMatch=${JSON.stringify(value.clientMatch)} against the admitted client declaration` };
+  }
+  if (typeof value.sourceBinding !== 'string' || value.sourceBinding.length === 0) {
+    return { status: 'refused', code: 'admittedClientBindingAbsent', detail: 'the fact carries no admitted client binding identity to bind the plan and the relation to' };
+  }
+  if (record.sql?.status !== 'constant') {
+    return {
+      status: 'refused',
+      code: record.sql?.status === 'dynamic' ? 'dynamicSql' : 'statementTextAbsent',
+      detail: `the statement is not one constant literal: status=${JSON.stringify(record.sql?.status ?? 'absent')}${record.sql?.reason ? `: ${record.sql.reason}` : ''}`,
+    };
+  }
+  if (typeof record.sql.text !== 'string' || record.sql.text.length === 0) {
+    return { status: 'refused', code: 'statementTextAbsent', detail: 'the constant literal carries no text' };
+  }
+  return {
+    status: 'admitted',
+    value,
+    record,
+    callSite,
+    sourceBinding: value.sourceBinding,
+    resolverSnapshotId: record.snapshotId,
+    sqlText: record.sql.text,
+    literalKind: record.sql.literalKind ?? null,
+    statementKind: record.statementKind ?? 'unknown',
+    planKey: [record.snapshotId, value.sourceBinding, record.sql.text].join('\u0000'),
+  };
+}
+
 function entityRef({ object, session }) {
   const database = session.identity.engine === 'sqlite-schema'
     ? { engine: 'sqlite-schema', path: session.identity.realPath }
@@ -77,90 +148,36 @@ export function joinConstantSql({ session, catalog, plans, records, engineProbe 
   let ordinal = 0;
 
   for (const fact of records) {
-    if (fact.kind !== 'sqlCall') {
-      limits.push(recordLimit(fact.value, ABANDONED, `fact kind ${JSON.stringify(fact.kind)} is outside the constant-SQL join`));
+    const admission = admitSqlCallRecord(fact);
+    if (admission.status !== 'admitted') {
+      limits.push(recordLimit(fact?.value, admission.code, admission.detail));
       continue;
     }
-    const value = fact.value ?? {};
-    const record = value.record;
-    if (record === null || typeof record !== 'object') {
-      limits.push(recordLimit(value, 'recordAbsent', 'the fact carries no project record; the flat proposal shape is not consumed'));
-      continue;
-    }
-    if (record.kind !== 'constantSql') {
-      limits.push(recordLimit(value, 'recordKindMismatch', `the record kind is ${JSON.stringify(record.kind)}`));
-      continue;
-    }
-    if (typeof record.snapshotId !== 'string' || record.snapshotId.length === 0) {
-      limits.push(recordLimit(value, 'resolverSnapshotAbsent', 'the record carries no resolver snapshot identity'));
-      continue;
-    }
-    const callSite = siteIdentity(record.callSite);
-    if (callSite === null) {
-      limits.push(recordLimit(value, 'callSiteAbsent', 'the record carries no captured call-site bytes and range'));
-      continue;
-    }
-    if (record.callee?.status !== 'resolved') {
-      limits.push(recordLimit(value, 'calleeUnresolved', `the callee resolution is ${JSON.stringify(record.callee?.status ?? 'absent')}${record.callee?.reason ? `: ${record.callee.reason}` : ''}`));
-      continue;
-    }
-    if (declarationIdentity(record.callee.declaration) === null) {
-      limits.push(recordLimit(value, 'calleeDeclarationIncomplete', 'the resolved callee carries no complete declaration path, digest and range'));
-      continue;
-    }
-    if (record.receiver?.status !== 'resolved') {
-      limits.push(recordLimit(value, 'databaseReceiverUnresolved', `the database receiver resolution is ${JSON.stringify(record.receiver?.status ?? 'absent')}${record.receiver?.reason ? `: ${record.receiver.reason}` : ''}`));
-      continue;
-    }
-    if (declarationIdentity(record.receiver.declaration) === null) {
-      limits.push(recordLimit(value, 'receiverDeclarationIncomplete', 'the resolved receiver carries no complete declaration path, digest and range'));
-      continue;
-    }
-    if (value.clientMatch === undefined) {
-      limits.push(recordLimit(value, 'clientMatchAbsent', 'the fact carries no result of the options.client comparison'));
-      continue;
-    }
-    if (value.clientMatch !== 'matched') {
-      limits.push(recordLimit(value, 'clientDeclarationNotMatched', `the resolver reported clientMatch=${JSON.stringify(value.clientMatch)} against the admitted client declaration`));
-      continue;
-    }
-    if (typeof value.sourceBinding !== 'string' || value.sourceBinding.length === 0) {
-      limits.push(recordLimit(value, 'admittedClientBindingAbsent', 'the fact carries no admitted client binding identity to bind the plan and the relation to'));
-      continue;
-    }
-    if (record.sql?.status !== 'constant') {
-      limits.push(recordLimit(value, record.sql?.status === 'dynamic' ? 'dynamicSql' : 'statementTextAbsent',
-        `the statement is not one constant literal: status=${JSON.stringify(record.sql?.status ?? 'absent')}${record.sql?.reason ? `: ${record.sql.reason}` : ''}`));
-      continue;
-    }
-    if (typeof record.sql.text !== 'string' || record.sql.text.length === 0) {
-      limits.push(recordLimit(value, 'statementTextAbsent', 'the constant literal carries no text'));
-      continue;
-    }
+    const { value, record, callSite, sourceBinding, sqlText, statementKind } = admission;
 
-    const key = [record.snapshotId, value.sourceBinding, record.sql.text].join('\u0000');
-    const seen = bindingKeys.get(value.sourceBinding);
+    const key = admission.planKey;
+    const seen = bindingKeys.get(sourceBinding);
     if (seen !== undefined && seen !== key) {
       limits.push(recordLimit(value, 'conflictingSourceBinding',
         'this source binding was already used with a different resolver snapshot or statement text; the plan is reanalyzed under its own identity'));
     }
-    bindingKeys.set(value.sourceBinding, key);
+    bindingKeys.set(sourceBinding, key);
 
     let plan = plans.get(key);
     if (plan === undefined) {
-      plan = session.analyze({ id: key, sql: record.sql.text });
+      plan = session.analyze({ id: key, sql: sqlText });
       plans.set(key, plan);
     }
     if (plan.status !== 'analyzed') {
       limits.push(recordLimit(value, plan.refusal?.reason ?? 'statementRefused', plan.refusal?.detail ?? 'the engine refused the statement'));
       continue;
     }
-    if (record.statementKind !== 'unknown' && plan.kind !== null && record.statementKind !== plan.kind) {
+    if (statementKind !== 'unknown' && plan.kind !== null && statementKind !== plan.kind) {
       limits.push(recordLimit(value, 'statementKindDisagreement',
-        `the record reports ${record.statementKind} and the engine program is ${plan.kind}; the engine program decides the published kind`));
+        `the record reports ${statementKind} and the engine program is ${plan.kind}; the engine program decides the published kind`));
     }
 
-    const callSiteRef = sourceRefFromSite(callSite, record.snapshotId, 'databaseAccesses');
+    const callSiteRef = sourceRefFromSite(callSite, admission.resolverSnapshotId, 'databaseAccesses');
     refs.push(callSiteRef);
     if (plan.relations.length === 0) {
       limits.push(recordLimit(value, 'noCatalogObjectRead', 'the engine program opens no catalog object; the statement reads no stored relation'));
@@ -182,15 +199,15 @@ export function joinConstantSql({ session, catalog, plans, records, engineProbe 
         evidence.push({ kind: 'probe', executable: engineProbe.executable, sha256: engineProbe.sha256, version: engineProbe.version, operation: 'explain' });
       }
       relations.push({
-        id: refId(['relation', 'databaseAccess', value.sourceBinding, String(ordinal)]),
+        id: refId(['relation', 'databaseAccess', sourceBinding, String(ordinal)]),
         kind: 'databaseAccess',
         classification: 'static-possible',
         value: {
-          sourceBindingId: value.sourceBinding,
-          resolverSnapshotId: record.snapshotId,
+          sourceBindingId: sourceBinding,
+          resolverSnapshotId: admission.resolverSnapshotId,
           catalogSnapshotId: session.identity.snapshotId,
-          statementText: record.sql.text,
-          literalKind: record.sql.literalKind ?? null,
+          statementText: sqlText,
+          literalKind: admission.literalKind,
           statementKind: plan.kind,
           object: access.object,
           rootpage: access.rootpage,

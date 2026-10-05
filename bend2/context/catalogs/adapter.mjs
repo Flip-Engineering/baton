@@ -6,47 +6,60 @@
 // stdin: exactly one frame, then EOF:
 //   {"version":1,"provider":"sqlite-schema"|"postgres-schema","query":"<query id>",
 //    "request":<canonical request text>,
-//    "inputs":{"records":[<sqlCall facts>]}}
-// `inputs.records` is required for a codeAccessJoin request and is supplied by
-// the native core from its own TypeScript provider run; the adapter never runs
-// a second resolver.
+//    "inputs":{"records":[<sqlCall facts>],
+//              "psql":"<absolute psql>","home":"<private HOME>","tempDirectory":"<private TMPDIR>"}}
+// The launch inputs are required for postgres-schema: this provider performs no
+// executable discovery and reads no ambient HOME or TMPDIR. `inputs.records` is
+// required for a codeAccessJoin request and is supplied by the native core from
+// its own TypeScript provider run; the adapter runs no second resolver.
 //
 // stdout: exactly one frame, newline terminated, and nothing else:
 //   success (exit 0):
 //   {"version":1,"provider":..,"query":..,"operation":"catalogCapture"|"codeAccessJoin",
-//    "subject":..,"snapshot":..,"facts":[..],"relations":[..],"refs":[..],"limits":[..],
-//    "coverage":{..},"applicability":..,"changedInputs":[..]}
+//    "requiredEffects":[..],"subject":..,"snapshot":..,"facts":[..],"relations":[..],
+//    "refs":[..],"limits":[..],"coverage":{..},"applicability":..,"changedInputs":[..]}
 //   refusal (exit 2): {"version":1,"provider":..,"query":..,
 //     "error":{"kind":"validationRefusal"|"operationRefused","condition":"<fixed text>","limits":[]}}
 //   failure (exit 1): stderr only; the core publishes no result.
 //
-// The adapter validates the request members it consumes. Closed request
-// validation, the canonical result composition and managed admission remain
-// with the codec, the core and the lifecycle.
+// Closed request validation, canonical result composition, managed admission
+// and the sole effect constructor remain with the codec, the core and the
+// lifecycle.
 
 import { DatabaseSync } from 'node:sqlite';
 import { pathToFileURL } from 'node:url';
 
 import { createSqliteSession } from './sqlite-catalog.mjs';
 import { openPostgresSession } from './postgres-catalog.mjs';
-import { joinPostgresRelations } from './sql-join.mjs';
+import { admitSqlCallRecord, joinPostgresRelations } from './sql-join.mjs';
 import { CATALOG_OPERATIONS } from './operations.mjs';
 
 const PROVIDERS = new Set(['sqlite-schema', 'postgres-schema']);
-const CATALOG_PROJECTIONS = new Set(['entities', 'columns', 'relationships', 'constraints', 'keys', 'indexes']);
+const SERVED_PROJECTIONS = new Set(['entities', 'columns', 'relationships', 'constraints', 'keys', 'indexes', 'codeAccesses', 'columnOrigins']);
 
-function operationFor({ provider, select, records }) {
+function operationFor({ select, records }) {
   if (records.length > 0 || select.includes('codeAccesses')) return 'codeAccessJoin';
   return 'catalogCapture';
 }
 
 function requiredEffectsFor(operation) {
-  const entry = CATALOG_OPERATIONS.find(row => row.operation === operation);
-  return entry?.requiredEffects ?? [];
+  return CATALOG_OPERATIONS.find(row => row.operation === operation)?.requiredEffects ?? [];
 }
 
-function factsFromSnapshot({ provider, snapshot, select }) {
+function refusal(query, provider, condition, kind = 'validationRefusal') {
+  return { version: 1, provider, query, error: { kind, condition, limits: [] } };
+}
+
+function selectedEntity(entity, subject) {
+  if (typeof subject.schema === 'string' && entity.schema !== subject.schema) return false;
+  if (typeof subject.name === 'string' && entity.name !== subject.name) return false;
+  return true;
+}
+
+function factsFromSnapshot({ provider, snapshot, select, subject }) {
   const facts = [];
+  const selected = new Set(snapshot.catalog.entities.filter(entity => selectedEntity(entity, subject)).map(entity => `${entity.schema}\u0000${entity.name}`));
+  const inScope = row => selected.size === 0 || selected.has(`${row.schema}\u0000${row.table}`);
   const evidence = object => [{
     kind: 'schema',
     databaseIdentity: snapshot.identity.snapshotId,
@@ -55,7 +68,7 @@ function factsFromSnapshot({ provider, snapshot, select }) {
     column: null,
   }];
   if (select.includes('entities')) {
-    for (const entity of snapshot.catalog.entities) {
+    for (const entity of snapshot.catalog.entities.filter(entity => selectedEntity(entity, subject))) {
       facts.push({
         id: `entity:${entity.schema}.${entity.name}`,
         kind: 'entity',
@@ -67,6 +80,8 @@ function factsFromSnapshot({ provider, snapshot, select }) {
           withoutRowid: entity.withoutRowid ?? null,
           strict: entity.strict ?? null,
           rowidAliasColumn: entity.rowidAliasColumn ?? null,
+          persistence: entity.persistence ?? null,
+          rowSecurity: entity.rowSecurity ?? entity.rowsecurity ?? null,
         },
         evidence: evidence(`${entity.schema}.${entity.name}`),
         limits: [],
@@ -74,7 +89,7 @@ function factsFromSnapshot({ provider, snapshot, select }) {
     }
   }
   if (select.includes('columns')) {
-    for (const column of snapshot.catalog.columns) {
+    for (const column of snapshot.catalog.columns.filter(inScope)) {
       facts.push({
         id: `column:${column.schema}.${column.table}.${column.name}`,
         kind: 'column',
@@ -84,11 +99,12 @@ function factsFromSnapshot({ provider, snapshot, select }) {
           table: column.table,
           name: column.name,
           ordinal: column.ordinal,
-          declaredType: column.declaredType,
+          declaredType: column.declaredType ?? column.type ?? null,
           notNull: column.notNull,
-          defaultValue: column.defaultValue,
-          primaryKeyOrdinal: column.primaryKeyOrdinal,
-          hidden: column.hidden ?? null,
+          defaultValue: column.defaultValue ?? column.default ?? null,
+          primaryKeyOrdinal: column.primaryKeyOrdinal ?? null,
+          identity: column.identity ?? null,
+          generated: column.generated ?? column.hidden ?? null,
         },
         evidence: evidence(`${column.schema}.${column.table}`),
         limits: [],
@@ -96,7 +112,7 @@ function factsFromSnapshot({ provider, snapshot, select }) {
     }
   }
   if (select.includes('relationships')) {
-    for (const relationship of snapshot.catalog.relationships) {
+    for (const relationship of snapshot.catalog.relationships.filter(inScope)) {
       facts.push({
         id: `relationship:${relationship.schema}.${relationship.table}.${relationship.name ?? relationship.id}`,
         kind: 'relationship',
@@ -109,6 +125,7 @@ function factsFromSnapshot({ provider, snapshot, select }) {
           references: relationship.references,
           onUpdate: relationship.onUpdate ?? null,
           onDelete: relationship.onDelete ?? null,
+          match: relationship.match ?? null,
           validated: relationship.validated ?? null,
           deferrable: relationship.deferrable ?? null,
         },
@@ -118,7 +135,7 @@ function factsFromSnapshot({ provider, snapshot, select }) {
     }
   }
   if (select.includes('constraints')) {
-    for (const constraint of snapshot.catalog.constraints) {
+    for (const constraint of snapshot.catalog.constraints.filter(inScope)) {
       facts.push({
         id: `constraint:${constraint.schema}.${constraint.table}.${constraint.kind}.${constraint.name ?? 'definition'}`,
         kind: 'constraint',
@@ -140,8 +157,20 @@ function factsFromSnapshot({ provider, snapshot, select }) {
       });
     }
   }
+  if (select.includes('keys')) {
+    for (const key of (snapshot.catalog.keys ?? []).filter(inScope)) {
+      facts.push({
+        id: `key:${key.schema}.${key.table}.${key.kind}.${key.columns.join('+')}`,
+        kind: 'key',
+        classification: 'observed',
+        value: { schema: key.schema, table: key.table, kind: key.kind, columns: key.columns, index: key.index ?? null, origin: key.origin ?? null },
+        evidence: evidence(`${key.schema}.${key.table}`),
+        limits: [],
+      });
+    }
+  }
   if (select.includes('indexes')) {
-    for (const index of snapshot.catalog.indexes) {
+    for (const index of snapshot.catalog.indexes.filter(inScope)) {
       facts.push({
         id: `index:${index.schema}.${index.name}`,
         kind: 'index',
@@ -151,6 +180,7 @@ function factsFromSnapshot({ provider, snapshot, select }) {
           table: index.table,
           name: index.name,
           unique: index.unique,
+          primary: index.primary ?? null,
           origin: index.origin ?? null,
           partial: index.partial ?? null,
           columns: index.columns ?? null,
@@ -165,21 +195,35 @@ function factsFromSnapshot({ provider, snapshot, select }) {
   return facts;
 }
 
-function refsFromSnapshot({ provider, snapshot }) {
-  const database = provider === 'sqlite-schema'
+function refsFromSnapshot({ provider, snapshot, subject, databaseSelector }) {
+  const database = databaseSelector ?? (provider === 'sqlite-schema'
     ? { engine: 'sqlite-schema', path: snapshot.identity.realPath }
-    : { engine: 'postgres-schema', database: snapshot.identity.database };
-  return snapshot.catalog.entities.map(entity => ({
-    id: JSON.stringify(['entity', snapshot.identity.snapshotId, entity.schema, entity.name]),
-    engine: provider,
-    subject: { kind: 'entity', database, schema: entity.schema, name: entity.name },
-    snapshotId: snapshot.identity.snapshotId,
-    projections: ['entities', 'columns', 'relationships', 'constraints'],
-  }));
+    : { engine: 'postgres-schema', connectionFile: null });
+  return snapshot.catalog.entities
+    .filter(entity => selectedEntity(entity, subject))
+    .map(entity => ({
+      id: JSON.stringify(['entity', snapshot.identity.snapshotId, entity.schema, entity.name]),
+      engine: provider,
+      subject: { kind: 'entity', database, schema: entity.schema, name: entity.name },
+      snapshotId: snapshot.identity.snapshotId,
+      projections: ['entities', 'columns', 'relationships', 'constraints'],
+    }));
 }
 
-function refusal(query, provider, condition, kind = 'validationRefusal') {
-  return { version: 1, provider, query, error: { kind, condition, limits: [] } };
+function projectionLimits(select, unsupported) {
+  const limits = unsupported.map(projection => ({
+    projection,
+    code: 'unsupportedProjection',
+    detail: `the ${projection} projection is outside the entity catalog profile this adapter serves`,
+  }));
+  if (select.includes('columnOrigins')) {
+    limits.push({
+      projection: 'columnOrigins',
+      code: 'statementScoped',
+      detail: 'result-name origins are reported per analyzed statement, not per catalog entity',
+    });
+  }
+  return limits;
 }
 
 export async function catalogAdapterMain({ readStdin, writeStdout, writeStderr }) {
@@ -187,7 +231,7 @@ export async function catalogAdapterMain({ readStdin, writeStdout, writeStderr }
   let frame;
   try {
     frame = JSON.parse(raw);
-  } catch (error) {
+  } catch {
     writeStdout(`${JSON.stringify(refusal(null, null, 'the input frame is not JSON'))}\n`);
     return 2;
   }
@@ -199,7 +243,7 @@ export async function catalogAdapterMain({ readStdin, writeStdout, writeStderr }
   let request;
   try {
     request = JSON.parse(frame.request);
-  } catch (error) {
+  } catch {
     writeStdout(`${JSON.stringify(refusal(query, provider, 'the canonical request text is not JSON'))}\n`);
     return 2;
   }
@@ -226,8 +270,9 @@ export async function catalogAdapterMain({ readStdin, writeStdout, writeStderr }
     writeStdout(`${JSON.stringify(refusal(query, provider, 'the request selects no projection'))}\n`);
     return 2;
   }
+  const unsupported = select.filter(projection => !SERVED_PROJECTIONS.has(projection) || projection === 'columnOrigins');
   const records = Array.isArray(frame.inputs?.records) ? frame.inputs.records : [];
-  const operation = operationFor({ provider, select, records });
+  const operation = operationFor({ select, records });
   const requiredEffects = requiredEffectsFor(operation);
   const effects = Array.isArray(request.effects) ? request.effects : [];
   // Component defense for a directly invoked provider. Managed admission
@@ -246,62 +291,106 @@ export async function catalogAdapterMain({ readStdin, writeStdout, writeStderr }
       let snapshot;
       try {
         if (operation === 'codeAccessJoin') joined = session.join({ records });
-        snapshot = { identity: session.identity, catalog: session.catalog, limits: session.limits, stableWithinTransaction: session.stability().stableWithinTransaction };
+        snapshot = {
+          identity: session.identity,
+          catalog: session.catalog,
+          limits: session.limits,
+          stableWithinTransaction: session.stability().stableWithinTransaction,
+          originCapability: session.originCapability,
+        };
       } finally {
         session.close();
       }
-      const facts = [
-        ...factsFromSnapshot({ provider, snapshot, select }),
-        ...(select.includes('columnOrigins') ? [{
+      const databaseSelector = { engine: 'sqlite-schema', path: snapshot.identity.realPath };
+      const facts = factsFromSnapshot({ provider, snapshot, select, subject });
+      if (select.includes('columnOrigins')) {
+        facts.push({
           id: 'columnOrigins:provider',
           kind: 'columnOrigins',
           classification: 'observed',
-          value: { availability: session.originCapability.available ? 'available' : 'unavailable', reason: session.originCapability.reason, probe: session.originCapability.probe },
+          value: { availability: snapshot.originCapability.available ? 'available' : 'unavailable', reason: snapshot.originCapability.reason, probe: snapshot.originCapability.probe },
           evidence: [{ kind: 'schema', databaseIdentity: snapshot.identity.snapshotId, schemaDigest: snapshot.identity.catalogDigest, object: null, column: null }],
           limits: [],
-        }] : []),
-      ];
-      const limits = [...snapshot.limits, ...joined.limits];
+        });
+      }
       writeStdout(`${JSON.stringify({
         version: 1,
         provider,
         query,
         operation,
         requiredEffects,
-        subject: { kind: 'entity', database: { engine: 'sqlite-schema', path: snapshot.identity.realPath } },
-        snapshot: { snapshotId: snapshot.identity.snapshotId, engine: snapshot.identity.engine, version: snapshot.identity.version, sourceId: snapshot.identity.sourceId, fileIdentity: snapshot.identity.fileIdentity, catalogDigest: snapshot.identity.catalogDigest, connection: snapshot.identity.connection, observations: snapshot.identity.observations },
+        subject: { kind: 'entity', database: databaseSelector, ...(typeof subject.schema === 'string' ? { schema: subject.schema } : {}), ...(typeof subject.name === 'string' ? { name: subject.name } : {}) },
+        snapshot: {
+          snapshotId: snapshot.identity.snapshotId,
+          engine: snapshot.identity.engine,
+          version: snapshot.identity.version,
+          sourceId: snapshot.identity.sourceId,
+          fileIdentity: snapshot.identity.fileIdentity,
+          catalogDigest: snapshot.identity.catalogDigest,
+          connection: snapshot.identity.connection,
+          observations: snapshot.identity.observations,
+        },
         facts,
         relations: joined.relations,
-        refs: [...refsFromSnapshot({ provider, snapshot }), ...joined.refs],
-        limits,
-        coverage: { examined: [snapshot.identity.realPath], excluded: [], providerCompletion: snapshot.stableWithinTransaction, unsupported: [] },
+        refs: [...refsFromSnapshot({ provider, snapshot, subject, databaseSelector }), ...joined.refs],
+        limits: [...snapshot.limits, ...joined.limits, ...projectionLimits(select, unsupported)],
+        coverage: {
+          examined: [snapshot.identity.realPath],
+          excluded: [],
+          providerCompletion: snapshot.stableWithinTransaction,
+          unsupported,
+          entity: typeof subject.name === 'string' ? `${subject.schema ?? 'main'}.${subject.name}` : null,
+        },
         applicability: 'current',
         changedInputs: [],
       })}\n`);
       return 0;
     }
 
-    const session = openPostgresSession({ psql: process.env.BATON2_CONTEXT_PSQL ?? 'psql', serviceFile: database.connectionFile, home: process.env.HOME, tempDirectory: process.env.TMPDIR });
+    const inputs = frame.inputs ?? {};
+    if (typeof inputs.psql !== 'string' || typeof inputs.home !== 'string' || typeof inputs.tempDirectory !== 'string') {
+      writeStdout(`${JSON.stringify(refusal(query, provider, 'the postgres-schema provider needs inputs.psql, inputs.home and inputs.tempDirectory from the admitted launch'))}\n`);
+      return 2;
+    }
+    const databaseSelector = { engine: 'postgres-schema', connectionFile: database.connectionFile };
+    const session = openPostgresSession({ psql: inputs.psql, serviceFile: database.connectionFile, home: inputs.home, tempDirectory: inputs.tempDirectory });
     if (session.status !== 'captured') {
       writeStdout(`${JSON.stringify(refusal(query, provider, `catalog capture failed: ${session.refusal?.reason ?? 'unknown'}`))}\n`);
       writeStderr(`${JSON.stringify(session.refusal ?? {})}\n`);
       return 2;
     }
     const snapshot = { identity: session.identity, catalog: session.catalog, limits: session.limits };
-    let relations = [];
+    const relations = [];
+    const refs = [];
     let limits = [...session.limits];
     if (operation === 'codeAccessJoin') {
       for (const fact of records) {
-        const text = fact?.value?.record?.sql?.text;
-        if (typeof text !== 'string' || text.length === 0) continue;
-        const plan = session.analyze({ sql: text, effects: ['planTargetSql'] });
+        // The same provenance admission the SQLite join applies: a malformed or
+        // unmatched record yields a limit, never a plan of its text.
+        const admission = admitSqlCallRecord(fact);
+        if (admission.status !== 'admitted') {
+          limits.push({ projection: 'databaseAccesses', code: admission.code, detail: admission.detail, sourceBindingId: fact?.value?.sourceBinding ?? null });
+          continue;
+        }
+        const plan = session.analyze({ sql: admission.sqlText, effects: ['planTargetSql'] });
         if (plan.status !== 'analyzed') {
           limits.push({ projection: 'databaseAccesses', code: plan.refusal?.reason ?? 'statementRefused', detail: plan.refusal?.detail ?? 'the engine refused the statement' });
           continue;
         }
         const joinedPlan = joinPostgresRelations({ plan, catalog: session.catalog, session });
-        relations = relations.concat(joinedPlan.relations);
-        limits = limits.concat(joinedPlan.unknownAccess.map(access => ({ projection: 'databaseAccesses', code: 'modeledAccessUnavailable', detail: `${access.schema ?? '?'}.${access.name ?? '?'}: ${access.reason}` })));
+        relations.push(...joinedPlan.relations.map(relation => ({ ...relation, value: { ...relation.value, sourceBindingId: admission.sourceBinding, resolverSnapshotId: admission.resolverSnapshotId } })));
+        refs.push({
+          id: JSON.stringify(['source', admission.callSite.path, admission.callSite.sha256, admission.callSite.range.start.line, admission.callSite.range.start.column, 'databaseAccesses']),
+          engine: 'typescript',
+          subject: { kind: 'position', path: admission.callSite.path, line: admission.callSite.range.start.line, column: admission.callSite.range.start.column },
+          snapshotId: admission.resolverSnapshotId,
+          projections: ['databaseAccesses'],
+        });
+        limits = limits.concat(joinedPlan.unknownAccess.map(access => ({
+          projection: 'databaseAccesses',
+          code: 'modeledAccessUnavailable',
+          detail: `${access.schema ?? '?'}.${access.name ?? '?'}: ${access.reason}`,
+        })));
       }
     }
     session.close();
@@ -311,13 +400,28 @@ export async function catalogAdapterMain({ readStdin, writeStdout, writeStderr }
       query,
       operation,
       requiredEffects,
-      subject: { kind: 'entity', database: { engine: 'postgres-schema', database: snapshot.identity.database } },
-      snapshot: { snapshotId: snapshot.identity.snapshotId, engine: snapshot.identity.engine, version: snapshot.identity.version, database: snapshot.identity.database, role: snapshot.identity.role, searchPath: snapshot.identity.searchPath, catalogDigest: snapshot.identity.catalogDigest },
-      facts: factsFromSnapshot({ provider, snapshot, select }),
+      subject: { kind: 'entity', database: databaseSelector, ...(typeof subject.schema === 'string' ? { schema: subject.schema } : {}), ...(typeof subject.name === 'string' ? { name: subject.name } : {}) },
+      snapshot: {
+        snapshotId: snapshot.identity.snapshotId,
+        engine: snapshot.identity.engine,
+        version: snapshot.identity.version,
+        database: snapshot.identity.database,
+        role: snapshot.identity.role,
+        searchPath: snapshot.identity.searchPath,
+        connectionSearchPath: snapshot.identity.connectionSearchPath,
+        catalogDigest: snapshot.identity.catalogDigest,
+      },
+      facts: factsFromSnapshot({ provider, snapshot, select, subject }),
       relations,
-      refs: refsFromSnapshot({ provider, snapshot }),
-      limits,
-      coverage: { examined: [snapshot.identity.database], excluded: [], providerCompletion: true, unsupported: [] },
+      refs: [...refsFromSnapshot({ provider, snapshot, subject, databaseSelector }), ...refs],
+      limits: [...limits, ...projectionLimits(select, unsupported)],
+      coverage: {
+        examined: [snapshot.identity.database],
+        excluded: [],
+        providerCompletion: true,
+        unsupported,
+        entity: typeof subject.name === 'string' ? `${subject.schema ?? 'public'}.${subject.name}` : null,
+      },
       applicability: 'current',
       changedInputs: [],
     })}\n`);
