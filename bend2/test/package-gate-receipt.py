@@ -599,6 +599,30 @@ class PackageGateReceipt(unittest.TestCase):
         self.assertEqual(summary['validation']['route'], 'remote-module-groups')
         self.assertEqual(path.name, 'summary.json')
 
+    def test_a_self_produced_remote_receipt_reuses(self):
+        """A receipt this package produced reuses against its own evidence."""
+        marker = self.home / 'self-receipt'
+        self.run_gates_fixture(marker, self.stub_gates(marker, laws_exit=1))
+        compiler = self.compiler()
+        remote = PACKAGE.controls_evidence(self.full_evidence(), PACKAGE.snapshot(), compiler)
+        logs = self.home / 'self-gates'
+        logs.mkdir()
+        path, summary = PACKAGE.run_gates(compiler, {'CC': 'gcc'}, logs, PACKAGE.snapshot(),
+                                          {'fixture': 'inputs'}, remote=remote)
+        record = summary['controls_evidence']
+        self.assertEqual(record['inventory_sha256'], remote['inventory_sha256'])
+        self.assertEqual(record['reduction_sha256'], remote['reduction_sha256'])
+        self.assertEqual(record['path'], remote['path'])
+        reused = self.home / 'self-reused'
+        reused.mkdir()
+        destination, again = PACKAGE.reuse_gates(path, PACKAGE.sha256(path), compiler, reused,
+                                                 PACKAGE.snapshot())
+        self.assertEqual(destination, reused / 'summary.json')
+        self.assertEqual(again['controls_evidence']['reduction_sha256'],
+                         remote['reduction_sha256'])
+        self.assertEqual(again['controls_evidence']['inventory_sha256'],
+                         remote['inventory_sha256'])
+
     def test_run_gates_launches_the_local_laws_command_without_remote_evidence(self):
         marker = self.home / 'launched-local'
         self.run_gates_fixture(marker, self.stub_gates(marker))

@@ -343,7 +343,7 @@ class ContextPackagedBytes(unittest.TestCase):
         receipt = json.loads((self.logs / 'context-gate-unspawnable-node.json').read_text())
         self.assertIs(receipt['child']['spawned'], False)
         self.assertEqual(receipt['child']['stage'], 'unspawned')
-        self.assertIn('Errno 13', receipt['child']['error'])
+        self.assertIn('PermissionError', receipt['child']['error'])
         self.assertIsNone(receipt['exit_code'])
         self.assertIsNone(receipt['signal'])
         self.assertTrue(receipt['stdout']['available'])
@@ -447,7 +447,8 @@ class ContextPackagedBytes(unittest.TestCase):
         self.assertIs(receipt['child']['spawned'], True)
         self.assertEqual(receipt['child']['stage'], 'started-outcome-unknown')
         self.assertIn('KeyboardInterrupt', receipt['child']['error'])
-        self.assertEqual(receipt['child']['cleanup'], {'reapReturncode': -9})
+        self.assertEqual(receipt['child']['cleanup'],
+                         {'killCompleted': True, 'reapReturncode': -9})
         self.assertIsNone(receipt['exit_code'])
         self.assertIsNone(receipt['signal'])
         self.assertTrue(receipt['payloadSnapshot']['equal'])
@@ -493,13 +494,21 @@ class ContextPackagedBytes(unittest.TestCase):
         real = pathlib.Path(self.host_node).resolve()
         real_popen = subprocess.Popen
         created = []
+        original_interrupt = KeyboardInterrupt()
+        reap_interrupt = KeyboardInterrupt()
 
         class KillFailsProcess:
             def __init__(self):
                 self.args = [str(real), 'context-package-gate.mjs']
+                self.wait_calls = 0
 
             def wait(self):
-                raise KeyboardInterrupt
+                self.wait_calls += 1
+                if self.wait_calls == 1:
+                    raise original_interrupt
+                # The reap wait raises a DIFFERENT interrupt instance; the
+                # re-raised exception must be the original object.
+                raise reap_interrupt
 
             def kill(self):
                 raise OSError('kill refused')
@@ -517,7 +526,10 @@ class ContextPackagedBytes(unittest.TestCase):
         with mock.patch.object(PACKAGE.subprocess, 'Popen', fake_popen):
             with self.assertRaises(KeyboardInterrupt) as caught:
                 PACKAGE.run_context_gate(self.host_root, self.logs, real, 'cleanup-failure')
-        self.assertIs(type(caught.exception), KeyboardInterrupt)
+        # The raised object IS the original wait interruption; the separate
+        # reap interrupt instance did not replace it.
+        self.assertIs(caught.exception, original_interrupt)
+        self.assertIsNot(caught.exception, reap_interrupt)
         self.assertEqual(len(created), 1)
         receipt = json.loads((self.logs / 'context-gate-cleanup-failure.json').read_text())
         self.assertIs(receipt['child']['spawned'], True)
@@ -526,10 +538,284 @@ class ContextPackagedBytes(unittest.TestCase):
         self.assertIsNone(receipt['exit_code'])
         self.assertIsNone(receipt['signal'])
         self.assertIn('kill refused', receipt['child']['cleanup']['kill'])
-        self.assertIn('KeyboardInterrupt', receipt['child']['cleanup']['reap'])
+        self.assertIn(repr(reap_interrupt), receipt['child']['cleanup']['reap'])
+        self.assertNotIn('killCompleted', receipt['child']['cleanup'])
         self.assertTrue(any('kill refused' in row for row in receipt['evidenceErrors']))
         self.assertTrue(any('child cleanup after interruption' in row
                             for row in receipt['evidenceErrors']))
+
+    def test_gate_refuses_failed_before_snapshot_retention(self):
+        real = pathlib.Path(self.host_node).resolve()
+        real_write = PACKAGE.write_json
+
+        def failing_write(path, value):
+            if path.name.endswith('payload-before.json'):
+                raise OSError('before snapshot refused')
+            real_write(path, value)
+
+        with mock.patch.object(PACKAGE, 'write_json', failing_write):
+            with self.assertRaises(RuntimeError) as caught:
+                PACKAGE.run_context_gate(self.host_root, self.logs, real, 'before-fail')
+        self.assertIn('snapshot evidence is incomplete', str(caught.exception))
+        receipt = json.loads((self.logs / 'context-gate-before-fail.json').read_text())
+        self.assertFalse(receipt['payloadSnapshot']['before']['available'])
+        self.assertIn('before snapshot refused', receipt['payloadSnapshot']['before']['error'])
+        self.assertTrue(receipt['payloadSnapshot']['after']['available'])
+        self.assertIn('before-payload snapshot write failed', receipt['evidenceErrors'][0])
+        self.assertTrue(receipt['child']['spawned'])
+        self.assertEqual(receipt['exit_code'], 0)
+        self.assertTrue(receipt['node']['postIdentity']['available'])
+
+    def test_gate_refuses_unavailable_raw_stream(self):
+        real = pathlib.Path(self.host_node).resolve()
+        # A directory at the stderr stream path makes its open fail with a
+        # real OSError while the stdout stream opens normally.
+        (self.logs / 'context-gate-stderr-dir.stderr').mkdir()
+        with self.assertRaises(RuntimeError) as caught:
+            PACKAGE.run_context_gate(self.host_root, self.logs, real, 'stderr-dir')
+        self.assertIn('did not complete', str(caught.exception))
+        receipt = json.loads((self.logs / 'context-gate-stderr-dir.json').read_text())
+        self.assertEqual(receipt['child']['stage'], 'streams-unavailable')
+        self.assertIs(receipt['child']['spawned'], False)
+        self.assertIsNone(receipt['exit_code'])
+        self.assertIsNone(receipt['signal'])
+        self.assertFalse(receipt['stderr']['available'])
+        self.assertIn('IsADirectoryError', receipt['stderr']['error'])
+        self.assertTrue(receipt['stdout']['available'])
+        self.assertTrue(receipt['payloadSnapshot']['equal'])
+
+    def test_gate_refuses_failed_after_snapshot_retention(self):
+        real = pathlib.Path(self.host_node).resolve()
+        real_write = PACKAGE.write_json
+
+        def failing_write(path, value):
+            if path.name.endswith('payload-after.json'):
+                raise OSError('after snapshot refused')
+            real_write(path, value)
+
+        with mock.patch.object(PACKAGE, 'write_json', failing_write):
+            with self.assertRaises(RuntimeError) as caught:
+                PACKAGE.run_context_gate(self.host_root, self.logs, real, 'after-fail')
+        self.assertIn('snapshot evidence is incomplete', str(caught.exception))
+        receipt = json.loads((self.logs / 'context-gate-after-fail.json').read_text())
+        self.assertTrue(receipt['payloadSnapshot']['before']['available'])
+        self.assertFalse(receipt['payloadSnapshot']['after']['available'])
+        self.assertIn('after snapshot refused', receipt['payloadSnapshot']['after']['error'])
+        self.assertIn('after-payload snapshot write failed', receipt['evidenceErrors'][0])
+        self.assertIsNone(receipt['payloadSnapshot']['equal'])
+        self.assertTrue(receipt['child']['spawned'])
+        self.assertEqual(receipt['exit_code'], 0)
+
+    def test_gate_refuses_close_failure_after_successful_gate(self):
+        real = pathlib.Path(self.host_node).resolve()
+        real_open = pathlib.Path.open
+        close_error = OSError('stderr close refused')
+
+        class CloseFailsHandle:
+            def __init__(self, handle):
+                self._handle = handle
+
+            def fileno(self):
+                return self._handle.fileno()
+
+            def flush(self):
+                return self._handle.flush()
+
+            def close(self):
+                # Flush and close the real stream, then fail the wrapper close
+                # so the gate itself keeps its output while the close is a
+                # recorded evidence failure.
+                self._handle.flush()
+                self._handle.close()
+                raise close_error
+
+        def selective_open(path, mode='r', *args, **kwargs):
+            handle = real_open(path, mode, *args, **kwargs)
+            if path.name == 'context-gate-close-fail.stderr' and mode == 'wb':
+                return CloseFailsHandle(handle)
+            return handle
+
+        with mock.patch.object(pathlib.Path, 'open', selective_open):
+            with self.assertRaises(RuntimeError) as caught:
+                PACKAGE.run_context_gate(self.host_root, self.logs, real, 'close-fail')
+        self.assertIn('evidence retention reported errors', str(caught.exception))
+        receipt = json.loads((self.logs / 'context-gate-close-fail.json').read_text())
+        self.assertEqual(receipt['exit_code'], 0)
+        self.assertTrue(receipt['child']['spawned'])
+        self.assertEqual(receipt['child']['stage'], 'completed')
+        # Both stream and snapshot evidence are available; the refusal is
+        # precisely the recorded close failure.
+        self.assertTrue(receipt['stdout']['available'])
+        self.assertTrue(receipt['stderr']['available'])
+        self.assertTrue(receipt['payloadSnapshot']['before']['available'])
+        self.assertTrue(receipt['payloadSnapshot']['after']['available'])
+        self.assertTrue(receipt['payloadSnapshot']['equal'])
+        self.assertTrue(receipt['node']['postIdentity']['available'])
+        self.assertEqual(receipt['evidenceErrors'],
+                         ['stream close failed: ' + repr(close_error)])
+        self.assertIn('"baton2-context-package-gate"',
+                      (self.logs / 'context-gate-close-fail.stdout').read_text())
+
+    def test_gate_preserves_fresh_close_interrupt_after_receipt(self):
+        real = pathlib.Path(self.host_node).resolve()
+        real_open = pathlib.Path.open
+        close_interrupt = KeyboardInterrupt()
+
+        class CloseInterruptHandle:
+            def __init__(self, handle):
+                self._handle = handle
+
+            def fileno(self):
+                return self._handle.fileno()
+
+            def flush(self):
+                return self._handle.flush()
+
+            def close(self):
+                self._handle.flush()
+                self._handle.close()
+                raise close_interrupt
+
+        def selective_open(path, mode='r', *args, **kwargs):
+            handle = real_open(path, mode, *args, **kwargs)
+            if path.name == 'context-gate-close-interrupt.stderr' and mode == 'wb':
+                return CloseInterruptHandle(handle)
+            return handle
+
+        with mock.patch.object(pathlib.Path, 'open', selective_open):
+            with self.assertRaises(KeyboardInterrupt) as caught:
+                PACKAGE.run_context_gate(self.host_root, self.logs, real, 'close-interrupt')
+        # The fresh close interruption is re-raised as the same object after
+        # the completed receipt; it never becomes a RuntimeError refusal.
+        self.assertIs(caught.exception, close_interrupt)
+        receipt = json.loads((self.logs / 'context-gate-close-interrupt.json').read_text())
+        self.assertEqual(receipt['exit_code'], 0)
+        self.assertTrue(receipt['child']['spawned'])
+        self.assertEqual(receipt['child']['stage'], 'completed')
+        self.assertTrue(receipt['stderr']['available'])
+        self.assertTrue(receipt['payloadSnapshot']['equal'])
+        self.assertTrue(any('stream close failed' in row for row in receipt['evidenceErrors']))
+        self.assertIn('"baton2-context-package-gate"',
+                      (self.logs / 'context-gate-close-interrupt.stdout').read_text())
+
+    def test_gate_retains_original_interrupt_over_close_interrupt(self):
+        real = pathlib.Path(self.host_node).resolve()
+        real_popen = subprocess.Popen
+        real_open = pathlib.Path.open
+        original_interrupt = KeyboardInterrupt()
+        close_interrupt = KeyboardInterrupt()
+        created = []
+
+        class OriginalInterruptProcess:
+            def __init__(self):
+                self.args = [str(real), 'context-package-gate.mjs']
+                self.killed = False
+
+            def wait(self):
+                raise original_interrupt
+
+            def kill(self):
+                self.killed = True
+
+        class CloseInterruptHandle:
+            def __init__(self, handle, label):
+                self._handle = handle
+                self._label = label
+
+            def fileno(self):
+                return self._handle.fileno()
+
+            def flush(self):
+                return self._handle.flush()
+
+            def close(self):
+                attempted.append(self._label)
+                self._handle.flush()
+                self._handle.close()
+                raise close_interrupt
+
+        def fake_popen(argv, **kwargs):
+            if argv[-1] == 'context-package-gate.mjs':
+                process = OriginalInterruptProcess()
+                created.append(process)
+                return process
+            return real_popen(argv, **kwargs)
+
+        def selective_open(path, mode='r', *args, **kwargs):
+            handle = real_open(path, mode, *args, **kwargs)
+            if mode == 'wb' and path.name in ('context-gate-original-close.stderr',
+                                              'context-gate-original-close.stdout'):
+                return CloseInterruptHandle(handle, path.name)
+            return handle
+
+        attempted = []
+        with mock.patch.object(PACKAGE.subprocess, 'Popen', fake_popen):
+            with mock.patch.object(pathlib.Path, 'open', selective_open):
+                with self.assertRaises(KeyboardInterrupt) as caught:
+                    PACKAGE.run_context_gate(self.host_root, self.logs, real, 'original-close')
+        # A second interruption during close never replaces the original.
+        self.assertIs(caught.exception, original_interrupt)
+        self.assertIsNot(caught.exception, close_interrupt)
+        self.assertTrue(created[0].killed)
+        # Both named stream handles were wrapped and both closures attempted.
+        self.assertEqual(sorted(attempted),
+                         ['context-gate-original-close.stderr',
+                          'context-gate-original-close.stdout'])
+        receipt = json.loads((self.logs / 'context-gate-original-close.json').read_text())
+        self.assertIsNone(receipt['exit_code'])
+        self.assertEqual(receipt['child']['stage'], 'started-outcome-unknown')
+        close_rows = [row for row in receipt['evidenceErrors']
+                      if 'stream close failed' in row]
+        self.assertEqual(len(close_rows), 2)
+        self.assertTrue(all(repr(close_interrupt) in row for row in close_rows))
+        self.assertTrue(any('child cleanup after interruption' in row
+                            for row in receipt['evidenceErrors']))
+
+    def test_gate_chains_receipt_failure_after_fresh_close_interrupt(self):
+        real = pathlib.Path(self.host_node).resolve()
+        real_open = pathlib.Path.open
+        real_write = PACKAGE.write_json
+        close_interrupt = KeyboardInterrupt()
+
+        class CloseInterruptHandle:
+            def __init__(self, handle):
+                self._handle = handle
+
+            def fileno(self):
+                return self._handle.fileno()
+
+            def flush(self):
+                return self._handle.flush()
+
+            def close(self):
+                self._handle.flush()
+                self._handle.close()
+                raise close_interrupt
+
+        def selective_open(path, mode='r', *args, **kwargs):
+            handle = real_open(path, mode, *args, **kwargs)
+            if path.name == 'context-gate-close-write-fail.stderr' and mode == 'wb':
+                return CloseInterruptHandle(handle)
+            return handle
+
+        def failing_write(path, value):
+            if path.name == 'context-gate-close-write-fail.json':
+                raise OSError('receipt write refused')
+            real_write(path, value)
+
+        with mock.patch.object(pathlib.Path, 'open', selective_open):
+            with mock.patch.object(PACKAGE, 'write_json', failing_write):
+                with self.assertRaises(KeyboardInterrupt) as caught:
+                    PACKAGE.run_context_gate(self.host_root, self.logs, real,
+                                             'close-write-fail')
+        # The fresh close interruption wins precedence over the receipt-write
+        # failure, which is retained as its chained cause. No receipt file
+        # could be written; the raw stream evidence files survive.
+        self.assertIs(caught.exception, close_interrupt)
+        self.assertIsInstance(caught.exception.__cause__, OSError)
+        self.assertFalse((self.logs / 'context-gate-close-write-fail.json').exists())
+        self.assertTrue((self.logs / 'context-gate-close-write-fail.stdout').is_file())
+        self.assertTrue((self.logs / 'context-gate-close-write-fail.stderr').is_file())
 
     def test_gate_refuses_same_version_byte_drift(self):
         real = pathlib.Path(self.host_node).resolve()

@@ -400,9 +400,8 @@ def run_gates(compiler, env, logs, initial, before_inputs, remote=None):
         summary['controls_evidence'] = {key: remote[key] for key in
                                         ('path', 'bytes', 'sha256', 'cases', 'groups', 'binding',
                                          'origin', 'spans', 'classifier', 'closure_sha256',
-                                         'modules', 'inventory_sha256', 'reduction_sha256')}
-        summary['controls_evidence']['inventory_sha256'] = remote['inventory']['inventory_sha256']
-        summary['controls_evidence']['reduction_sha256'] = remote['reduction']['sha256']
+                                         'modules', 'inventory_sha256', 'reduction_sha256',
+                                         'inventory', 'reduction')}
     path = logs / 'summary.json'
     write_json(path, summary)
     try:
@@ -419,8 +418,8 @@ def run_gates(compiler, env, logs, initial, before_inputs, remote=None):
                                      'binding': remote['binding'], 'cases': remote['cases'],
                                      'groups': remote['groups'], 'origin': remote['origin'],
                                      'closure_sha256': remote['closure_sha256'],
-                                     'inventory_sha256': remote['inventory']['inventory_sha256'],
-                                     'reduction_sha256': remote['reduction']['sha256']}
+                                     'inventory_sha256': remote['inventory_sha256'],
+                                     'reduction_sha256': remote['reduction_sha256']}
             same_source(stage['before'], initial)
             summary['stages'].append(stage)
             write_json(path, summary)
@@ -672,7 +671,7 @@ VERIFIER_FILES = {
     'aggregate_module_sha256': 'bend2/scripts/capacity-controls/aggregate.mjs',
     'classifier_module_sha256': 'bend2/scripts/capacity-controls/classify.mjs',
     'work_set_module_sha256': 'bend2/scripts/capacity-controls/work-set.mjs',
-    'laws_common_module_sha256': 'bend2/scripts/capacity-controls/laws-common.mjs',
+    'laws_common_module_sha256': 'bend2/scripts/laws-common.mjs',
     'definitions_module_sha256': 'bend2/scripts/laws-mutations.mjs',
 }
 
@@ -697,13 +696,12 @@ def require_verifier_closure(verdict, label):
         require(isinstance(verifier.get(member), str) and verifier[member],
                 'A verdict omits verifier ' + member + ': ' + label)
     admitted, missing = expected_verifier_digests()
+    require(not missing,
+            'This checkout lacks admitted verifier source, so no verdict can be qualified: '
+            + succinct(missing))
     for member, digest in admitted.items():
         require(verifier[member] == digest,
                 'The verdict names verifier ' + member + ' bytes that differ from this checkout')
-    if missing:
-        require(verdict.get('verifier_missing') == missing,
-                'A verdict must name the verifier files absent from this checkout: '
-                + succinct(missing))
     return {member: verifier[member] for member in VERIFIER_MEMBERS}
 
 
@@ -781,6 +779,10 @@ def verify_delta(record, control, directory, label):
     require(module.is_file(), 'A control names no module in this checkout: ' + control['module'])
     require(delta['original_sha256'] == sha256(module),
             'A control delta original digest is not the admitted module bytes: ' + label)
+    walked = directory.resolve()
+    for part in PurePosixPath(delta['changed_path']).parts[:-1]:
+        walked = walked / part
+        require(not walked.is_symlink(), 'A control changed path crosses a symlink: ' + label)
     changed = (directory / delta['changed_path']).resolve()
     require(directory.resolve() in changed.parents,
             'A control changed file escapes the evidence closure: ' + label)
@@ -1032,10 +1034,10 @@ def controls_evidence(directory, initial, compiler, audit=None, destination=None
                     and verdict.get('law') == control['law'],
                     'The classified diagnostic names another law: ' + json.dumps(identity))
             acquisition = verdict.get('acquisition') or {}
-            require(type(acquisition.get('exit_code')) is int and acquisition['exit_code'] > 0
+            require(type(acquisition.get('exit_code')) is int and acquisition['exit_code'] == 0
                     and acquisition.get('signal') is None
                     and acquisition.get('spawn_error') is None,
-                    'The classification child did not exit with a refusal status: '
+                    'The classification endpoint did not exit zero for this case: '
                     + json.dumps(identity))
             reported = verdict.get('baseline')
             if isinstance(reported, dict):
@@ -1100,6 +1102,8 @@ def controls_evidence(directory, initial, compiler, audit=None, destination=None
                                                for entry in seen_cases.values()),
             'audit': audit_inventory}
     result['reduction'] = semantic_reduction(result, inventory)
+    result['inventory_sha256'] = inventory['inventory_sha256']
+    result['reduction_sha256'] = result['reduction']['sha256']
     return result
 
 
@@ -1323,10 +1327,15 @@ def retained_stream(record, error):
 def snapshot_evidence(path, state, evidence_errors, label):
     try:
         write_json(path, state)
-        info = file_info(path)
     except BaseException as error:
         evidence_errors.append(label + ' snapshot write failed: ' + repr(error))
         return {'path': path.name, 'available': False, 'error': repr(error)}
+    try:
+        info = file_info(path)
+    except BaseException as error:
+        evidence_errors.append(label + ' snapshot metadata read failed: ' + repr(error))
+        return {'path': path.name, 'available': False, 'write': 'completed',
+                'error': repr(error)}
     return {'path': path.name, 'available': True, **info}
 
 
@@ -1369,6 +1378,7 @@ def run_context_gate(payload, logs, node, name, extra_env=None):
     spawn_stage = 'completed'
     spawn_error = None
     interrupted = None
+    close_interrupt = None
     outcome = None
     cleanup_evidence = None
     if stream_errors:
@@ -1405,6 +1415,7 @@ def run_context_gate(payload, logs, node, name, extra_env=None):
                 cleanup = {}
                 try:
                     process.kill()
+                    cleanup['killCompleted'] = True
                 except BaseException as kill_error:
                     cleanup['kill'] = repr(kill_error)
                 try:
@@ -1412,8 +1423,11 @@ def run_context_gate(payload, logs, node, name, extra_env=None):
                 except BaseException as reap_error:
                     cleanup['reap'] = repr(reap_error)
                 cleanup_evidence = cleanup
+                # Only actual cleanup errors are evidence failures; positive
+                # settlement facts (killCompleted, reapReturncode) are retained
+                # on the child record without ever entering evidence errors.
                 cleanup_failures = {key: value for key, value in cleanup.items()
-                                    if key != 'reapReturncode'}
+                                    if key in ('kill', 'reap')}
                 if cleanup_failures:
                     evidence_errors.append('child cleanup after interruption: '
                                            + json.dumps(cleanup_failures, sort_keys=True))
@@ -1421,7 +1435,16 @@ def run_context_gate(payload, logs, node, name, extra_env=None):
         if handle is not None:
             try:
                 handle.close()
-            except OSError as error:
+            except BaseException as error:
+                # Every close failure is retained as evidence. A fresh
+                # KeyboardInterrupt/SystemExit while no interruption exists
+                # becomes the first interruption and is re-raised after the
+                # receipt write; a close failure after an existing
+                # interruption is recorded without replacing that original
+                # object, and the remaining handle is still closed.
+                if (close_interrupt is None and interrupted is None
+                        and isinstance(error, (KeyboardInterrupt, SystemExit))):
+                    close_interrupt = error
                 evidence_errors.append('stream close failed: ' + repr(error))
     secondary_error = None
     if interrupted is None:
@@ -1491,11 +1514,17 @@ def run_context_gate(payload, logs, node, name, extra_env=None):
                                                 or post_identity['bytes'] != node_identity['bytes'])}
         write_json(receipt_path, receipt)
     except BaseException as error:
-        original = interrupted if interrupted is not None else secondary_error
+        # The FIRST interruption wins precedence across all subsequent
+        # evidence failures: a pre-existing child/wait interrupt, then a
+        # fresh close interrupt, then the first secondary capture failure.
+        # Phase records in the receipt stay truthful regardless of which
+        # original wins; the new failure is chained as its cause.
+        original = interrupted
+        if original is None:
+            original = close_interrupt
+        if original is None:
+            original = secondary_error
         if original is not None:
-            # The original interruption (or the first secondary failure) stays
-            # the raised exception; the new failure is retained as its chained
-            # cause across the whole post-child evidence path.
             raise original from error
         raise
     if interrupted is not None:
@@ -1504,6 +1533,10 @@ def run_context_gate(payload, logs, node, name, extra_env=None):
         # The completed receipt retains the evidence; interruption semantics
         # are preserved instead of converting the interrupt into a refusal.
         raise interrupted
+    if close_interrupt is not None:
+        # A fresh interruption during close becomes the first interruption;
+        # the completed receipt retains all recorded evidence.
+        raise close_interrupt
     require(spawn_stage == 'completed',
             'The context gate child did not complete (stage ' + spawn_stage + '): '
             + str(receipt_path))
@@ -1709,10 +1742,14 @@ def package(args):
         before_inputs = inputs(compiler, env, logs, 'before')
         archive, notices = archive_inputs(args.compiler_archive.resolve(), compiler)
         write_json(output / 'compiler-archive.json', archive)
-        controls = (controls_evidence(args.controls_evidence.resolve(), initial, compiler,
-                                      audit=logs / 'classifier-audit',
-                                      destination=ROOT / '.scratch/bend2/controls-evidence')
-                    if args.controls_evidence else None)
+        if args.controls_evidence:
+            destination = output / 'controls-evidence'
+            require(not destination.exists(),
+                    'The controls evidence destination already exists: ' + str(destination))
+            controls = controls_evidence(args.controls_evidence.resolve(), initial, compiler,
+                                         audit=logs / 'classifier-audit', destination=destination)
+        else:
+            controls = None
         if args.gate_receipt:
             if summary.get('route') == 'remote-module-groups':
                 record = summary.get('controls_evidence') or {}
@@ -1721,8 +1758,8 @@ def package(args):
                 for field, fresh in (('sha256', controls['sha256']),
                                      ('binding', controls['binding']),
                                      ('closure_sha256', controls['closure_sha256']),
-                                     ('inventory_sha256', controls['inventory']['inventory_sha256']),
-                                     ('reduction_sha256', controls['reduction']['sha256'])):
+                                     ('inventory_sha256', controls['inventory_sha256']),
+                                     ('reduction_sha256', controls['reduction_sha256'])):
                     require(fresh == record.get(field),
                             'The supplied controls evidence differs from the receipt at '
                             + field + ': fresh ' + str(fresh) + ', recorded '
