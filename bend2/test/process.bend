@@ -137,6 +137,19 @@ def recovery_cli(args: List<String>) -> IO(Unit):
       retained_lines(handle,None{},sender,first)
     case _: IO.die(Unit,2,"recover-retained ATTEMPT")
 
+def typed_state_name(state: P.PreparedState) -> String:
+  match state:
+    case P.StatePrepared{detail}: "prepared"
+    case P.StateStarting{detail}: "starting"
+    case P.StateRunning{detail}: "running"
+    case P.StateExited{detail}: "exited"
+    case P.StateUnstarted{detail}: "unstarted"
+    case P.StateUnknown{detail}: "unknown"
+    case P.StateCancelled{detail}: "cancelled"
+
+def typed_state_print(+state: P.PreparedState) -> IO(Unit):
+  IO.print("{\"typedState\":\"" ++ typed_state_name(state) ++ "\",\"snapshot\":" ++ P.prepared_state_detail(state) ++ "}")
+
 def grant_refusal(result: Result<&1,&1,U32 & String,String>) -> IO(Unit):
   match result:
     case Done{state}: IO.die(Unit,1,"wrong identity was accepted")
@@ -164,24 +177,24 @@ def prepared_observe(handle: U32, lock: Maybe<U32>, mode: String, unstarted: Boo
 def prepared_action(+handle: U32, lock: Maybe<U32>, +identity: String, +mode: String, cancel: Bool) -> IO(Unit):
   match cancel:
     case True{}: do IO<Unit>:
-      state : String <- IO.try(String,P.ProcessChild.cancel_prepared(handle,identity))
-      printed : Unit <- IO.print(state)
+      state : P.PreparedState <- IO.try(P.PreparedState,P.ProcessChild.cancel_typed(handle,identity))
+      printed : Unit <- typed_state_print(state)
       prepared_finish(handle,lock,"prepared-cancelled")
     case False{}: do IO<Unit>:
       wrong : Result<&1,&1,U32 & String,String> <- P.ProcessChild.start(handle,identity ++ "-wrong")
       refused : Unit <- grant_refusal(wrong)
-      first : String <- IO.try(String,P.ProcessChild.start(handle,identity))
-      printed : Unit <- IO.print(first)
-      second : String <- IO.try(String,P.ProcessChild.start(handle,identity))
-      replay : Unit <- IO.print(second)
+      first : P.PreparedState <- IO.try(P.PreparedState,P.ProcessChild.start_typed(handle,identity))
+      printed : Unit <- typed_state_print(first)
+      second : P.PreparedState <- IO.try(P.PreparedState,P.ProcessChild.start_typed(handle,identity))
+      replay : Unit <- typed_state_print(second)
       prepared_observe(handle,lock,mode,String.eq(mode,"unstarted"))
 
 def prepared_started(start: P.RetainedStart, lock: U32, identity: String, +mode: String) -> IO(Unit):
   match start:
     case P.Unstarted{error}: IO.die(Unit,1,error)
     case P.Retained{+handle}: do IO<Unit>:
-      state : String <- IO.try(String,P.ProcessChild.state(handle))
-      printed : Unit <- IO.print(state)
+      state : P.PreparedState <- IO.try(P.PreparedState,P.ProcessChild.state_typed(handle))
+      printed : Unit <- typed_state_print(state)
       gate : String <- IO.try(String,Text.Text.read("-"))
       prepared_action(handle,Some{lock},identity,mode,String.eq(mode,"cancel"))
 
@@ -202,8 +215,8 @@ def prepared_recover_cli(args: List<String>) -> IO(Unit):
   match args:
     case +directory <> identity <> Nil{}: do IO<Unit>:
       +handle : U32 <- IO.try(U32,P.ProcessChild.attach(directory))
-      state : String <- IO.try(String,P.ProcessChild.state(handle))
-      printed : Unit <- IO.print(state)
+      state : P.PreparedState <- IO.try(P.PreparedState,P.ProcessChild.state_typed(handle))
+      printed : Unit <- typed_state_print(state)
       prepared_action(handle,None{},identity,"read-only",False{})
     case _: IO.die(Unit,2,"recover-prepared ATTEMPT IDENTITY")
 

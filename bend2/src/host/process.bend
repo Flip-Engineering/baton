@@ -47,6 +47,98 @@ def ProcessChild.state(handle: U32) -> IO(Result<&1,&1,U32 & String,String>):
 def ProcessChild.cancel_prepared(handle: U32, identity: String) -> IO(Result<&1,&1,U32 & String,String>):
   import "./process-spawn.c"
 
+# The phase tag and retained JSON detail come from one locked keeper snapshot.
+type PreparedState is Data:
+  StatePrepared{detail: String}
+  StateStarting{detail: String}
+  StateRunning{detail: String}
+  StateExited{detail: String}
+  StateUnstarted{detail: String}
+  StateUnknown{detail: String}
+  StateCancelled{detail: String}
+
+def prepared_state_detail(state: PreparedState) -> String:
+  match state:
+    case StatePrepared{detail}: detail
+    case StateStarting{detail}: detail
+    case StateRunning{detail}: detail
+    case StateExited{detail}: detail
+    case StateUnstarted{detail}: detail
+    case StateUnknown{detail}: detail
+    case StateCancelled{detail}: detail
+
+def prepared_state_tag(tag: U32, detail: String) -> Result<&1,&1,U32 & String,PreparedState>:
+  match tag:
+    case 0: Done{StatePrepared{detail}}
+    case 1: Done{StateStarting{detail}}
+    case 2: Done{StateRunning{detail}}
+    case 3: Done{StateExited{detail}}
+    case 4: Done{StateUnstarted{detail}}
+    case 5: Done{StateUnknown{detail}}
+    case 6: Done{StateCancelled{detail}}
+    case _: Fail{(22,"Invalid retained process state tag: " ++ detail)}
+
+def prepared_state(result: Result<&1,&1,U32 & String,U32 & String>) -> Result<&1,&1,U32 & String,PreparedState>:
+  match result:
+    case Fail{error}: Fail{error}
+    case Done{(tag,detail)}: prepared_state_tag(tag,detail)
+
+def ProcessChild.start_snapshot(handle: U32, identity: String) -> IO(Result<&1,&1,U32 & String,U32 & String>):
+  import "./process-spawn.c"
+
+def ProcessChild.state_snapshot(handle: U32) -> IO(Result<&1,&1,U32 & String,U32 & String>):
+  import "./process-spawn.c"
+
+def ProcessChild.cancel_snapshot(handle: U32, identity: String) -> IO(Result<&1,&1,U32 & String,U32 & String>):
+  import "./process-spawn.c"
+
+def ProcessChild.start_typed(handle: U32, identity: String) -> IO(Result<&1,&1,U32 & String,PreparedState>):
+  do IO<Result<&1,&1,U32 & String,PreparedState>>:
+    result : Result<&1,&1,U32 & String,U32 & String> <- ProcessChild.start_snapshot(handle,identity)
+    IO.pure(Result<&1,&1,U32 & String,PreparedState>,prepared_state(result))
+
+def ProcessChild.state_typed(handle: U32) -> IO(Result<&1,&1,U32 & String,PreparedState>):
+  do IO<Result<&1,&1,U32 & String,PreparedState>>:
+    result : Result<&1,&1,U32 & String,U32 & String> <- ProcessChild.state_snapshot(handle)
+    IO.pure(Result<&1,&1,U32 & String,PreparedState>,prepared_state(result))
+
+def ProcessChild.cancel_typed(handle: U32, identity: String) -> IO(Result<&1,&1,U32 & String,PreparedState>):
+  do IO<Result<&1,&1,U32 & String,PreparedState>>:
+    result : Result<&1,&1,U32 & String,U32 & String> <- ProcessChild.cancel_snapshot(handle,identity)
+    IO.pure(Result<&1,&1,U32 & String,PreparedState>,prepared_state(result))
+
+law prepared_snapshot_keeps_its_unstarted_phase:
+  for detail: String
+  {prepared_state(Done{(0,detail)}) == Done{StatePrepared{detail}} : Result<&1,&1,U32 & String,PreparedState>}
+
+def prepared_snapshot_keeps_its_unstarted_phase(detail):
+  {==}
+
+law unknown_snapshot_preserves_uncertainty:
+  for detail: String
+  {prepared_state(Done{(5,detail)}) == Done{StateUnknown{detail}} : Result<&1,&1,U32 & String,PreparedState>}
+
+def unknown_snapshot_preserves_uncertainty(detail):
+  {==}
+
+law snapshot_transport_failure_is_preserved:
+  for error: U32 & String
+  {prepared_state(Fail{error}) == Fail{error} : Result<&1,&1,U32 & String,PreparedState>}
+
+def snapshot_transport_failure_is_preserved(error):
+  {==}
+
+law typed_start_reads_one_original_identity_snapshot:
+  for handle: U32
+  for identity: String
+  {ProcessChild.start_typed(handle,identity) == do IO<Result<&1,&1,U32 & String,PreparedState>>:
+    result : Result<&1,&1,U32 & String,U32 & String> <- ProcessChild.start_snapshot(handle,identity)
+    IO.pure(Result<&1,&1,U32 & String,PreparedState>,prepared_state(result))
+   : IO(Result<&1,&1,U32 & String,PreparedState>)}
+
+def typed_start_reads_one_original_identity_snapshot(handle,identity):
+  {==}
+
 def ProcessChild.attach(directory: String) -> IO(Result<&1,&1,U32 & String,U32>):
   import "./process-spawn.c"
 

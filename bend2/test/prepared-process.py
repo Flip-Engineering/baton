@@ -33,7 +33,12 @@ class Prepared(unittest.TestCase):
         result = child.stdout.readline()
         if not result:
             self.fail(child.stderr.read().decode())
-        return result.decode().strip()
+        text = result.decode().strip()
+        if text.startswith('{'):
+            typed = json.loads(text)
+            self.assertEqual(typed['typedState'], typed['snapshot']['processState'])
+            return json.dumps(typed['snapshot'])
+        return text
 
     def start(self, mode='start', native=None, exe=EXE):
         native = native or self.f.write_program('native', 'native', exe)

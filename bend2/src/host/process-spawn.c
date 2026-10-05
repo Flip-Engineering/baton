@@ -19,7 +19,7 @@ typedef struct {
   char *args, *cwd, *log, *text;
   size_t length;
   u32 handle, signal;
-  int kind, error, eof, unstarted;
+  int kind, error, eof, unstarted, typed_state;
   char *directory, *initial, *recovery, *detail;
   size_t initial_length, recovery_length;
   u32 keep_stdin, lock;
@@ -31,7 +31,8 @@ static size_t baton_child_count, baton_child_capacity;
 enum { BP_SPAWN, BP_WRITE, BP_CLOSE, BP_READ, BP_WAIT, BP_SIGNAL, BP_PID,
        BP_RETAIN, BP_ATTACH, BP_RELEASE, BP_ACK, BP_KEEPER, BP_INPUT_CLOSED,
        BP_CONTROL_WRITE, BP_CONTROL_SIGNAL, BP_ATTACH_OWNED, BP_RECOVERY,
-       BP_PREPARE, BP_START, BP_STATE, BP_CANCEL };
+       BP_PREPARE, BP_START, BP_STATE, BP_CANCEL,
+       BP_START_SNAPSHOT, BP_STATE_SNAPSHOT, BP_CANCEL_SNAPSHOT };
 
 static int baton_pipe(int fds[2]) {
   if (pipe(fds)) return errno;
@@ -640,6 +641,8 @@ static void baton_retained_call(BatonProcessCall *call) {
   }
   if(!call->error && (call->kind==BP_START || call->kind==BP_STATE || call->kind==BP_CANCEL)) {
     pthread_mutex_lock(&retained->state);BrSnapshot state=retained->snapshot;pthread_mutex_unlock(&retained->state);
+    if(state.phase<BR_PREPARED || state.phase>BR_CANCELLED) {call->error=EPROTO;return;}
+    call->signal=(u32)state.phase;
     const char *phases[]={"prepared","starting","running","exited","unstarted","unknown","cancelled"};
     char text[512];
     int n=snprintf(text,sizeof(text),"{\"protocol\":1,\"preparedMode\":%s,\"processState\":\"%s\",\"nativePid\":%d,\"waitStatus\":%d,\"startError\":%d,\"observerAttached\":%s,\"released\":%s,\"keeper\":{\"pid\":%d,\"first\":%llu,\"second\":%llu}}",
@@ -1428,6 +1431,7 @@ static Term baton_process_pack(Env e, IoWork *w) {
       io_str(e,call->unstarted?error:"",call->unstarted?strlen(error):0));
   }
 #endif
+  if(!call->error && call->typed_state) value=io_tup(e,(Term)call->signal,value);
   Term result=call->error && !call->unstarted ? io_fail(e,call->error,call->detail) : io_done(e,value);
   if((call->kind==BP_SPAWN || call->kind==BP_RETAIN || call->kind==BP_PREPARE || call->kind==BP_ATTACH || call->kind==BP_ATTACH_OWNED) && call->error) {
     baton_children[call->handle]=NULL;free(call->child);
@@ -1441,6 +1445,10 @@ static Term baton_process_pack(Env e, IoWork *w) {
 static Term baton_process_begin(Env e, Term *f, IoWork *w, int kind) {
   BatonProcessCall *call=calloc(1,sizeof(*call));
   if(!call) return io_fail(e,ENOMEM,NULL);
+  if(kind==BP_START_SNAPSHOT || kind==BP_STATE_SNAPSHOT || kind==BP_CANCEL_SNAPSHOT) {
+    call->typed_state=1;
+    kind=kind==BP_START_SNAPSHOT?BP_START:kind==BP_STATE_SNAPSHOT?BP_STATE:BP_CANCEL;
+  }
   call->kind=kind;
   if(kind==BP_SPAWN || kind==BP_RETAIN || kind==BP_PREPARE || kind==BP_ATTACH || kind==BP_ATTACH_OWNED) {
     if(baton_child_count==UINT32_MAX) {free(call);return io_fail(e,ENOMEM,NULL);}
@@ -1560,6 +1568,16 @@ BP_EFFECT(baton_process_state,CID_PROCESSCHILD_STATE,BP_STATE)
 #endif
 #ifdef CID_PROCESSCHILD_CANCEL_PREPARED
 BP_EFFECT(baton_process_cancel,CID_PROCESSCHILD_CANCEL_PREPARED,BP_CANCEL)
+#endif
+
+#ifdef CID_PROCESSCHILD_START_SNAPSHOT
+BP_EFFECT(baton_process_start_snapshot,CID_PROCESSCHILD_START_SNAPSHOT,BP_START_SNAPSHOT)
+#endif
+#ifdef CID_PROCESSCHILD_STATE_SNAPSHOT
+BP_EFFECT(baton_process_state_snapshot,CID_PROCESSCHILD_STATE_SNAPSHOT,BP_STATE_SNAPSHOT)
+#endif
+#ifdef CID_PROCESSCHILD_CANCEL_SNAPSHOT
+BP_EFFECT(baton_process_cancel_snapshot,CID_PROCESSCHILD_CANCEL_SNAPSHOT,BP_CANCEL_SNAPSHOT)
 #endif
 
 #undef BP_EFFECT
