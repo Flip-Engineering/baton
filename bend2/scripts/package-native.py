@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Build a Darwin arm64 native artifact with exact-source gate evidence."""
 import argparse
+import base64
 import datetime
 import hashlib
 import json
@@ -12,6 +13,7 @@ import shutil
 import subprocess
 import tarfile
 import time
+import urllib.request
 
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -20,6 +22,13 @@ COMPILER_ARCHIVE_SHA256 = 'c5bb22ba029d5909da9c6db82aa037278a66d1cf8a5572f433879
 COMPILER_ARCHIVE_URL = 'https://github.com/bendlang/bend/releases/download/v2.0.25/bend-2.0.25-darwin-arm64.tar.gz'
 COMPILER_LICENSE_URL = 'https://raw.githubusercontent.com/bendlang/bend/v2.0.25/LICENSE'
 COMPILER_LICENSE_SHA256 = '0beb288abd3d067e231f3fbe7df1f8ee37344061fc67f22018150a19e4b26c35'
+CONTEXT_PACKAGE_DIR = ROOT / 'bend2/context'
+CONTEXT_STAGE_ROOT = 'libexec/baton2/context'
+CONTEXT_PACKAGE_NAME = 'baton2-context'
+CONTEXT_NODE_FLOOR = '>=22.15.0'
+CONTEXT_DEPENDENCY_PINS = {'ajv': '8.17.1', 'typescript': '5.9.3', 'zod': '4.3.6'}
+# License/notice files the LICENSE/NOTICE/COPYING prefix rule does not capture.
+CONTEXT_EXTRA_NOTICES = {'typescript': ('ThirdPartyNoticeText.txt',)}
 GATES = (
     ('build-native', ['sh', 'bend2/scripts/build-native.sh']),
     ('laws-check', ['node', 'bend2/scripts/laws-check.mjs']),
@@ -243,6 +252,311 @@ def stage_adapters(payload):
     shutil.copyfile(ROOT / 'bend2/harness/git-series.mjs', directory / 'git-series.mjs')
 
 
+def context_package_manifest(directory=None):
+    source = (directory or CONTEXT_PACKAGE_DIR) / 'package.json'
+    require(source.is_file(), 'The context package manifest is missing: ' + str(source))
+    manifest = json.loads(source.read_text())
+    require(manifest.get('name') == CONTEXT_PACKAGE_NAME,
+            'The context package name is fixed: ' + CONTEXT_PACKAGE_NAME)
+    require(manifest.get('private') is True, 'The context package must be private')
+    require(manifest.get('type') == 'module', 'The context package must be an ECMAScript module package')
+    require(manifest.get('engines') == {'node': CONTEXT_NODE_FLOOR},
+            'The context package must pin the Node floor ' + CONTEXT_NODE_FLOOR)
+    require(manifest.get('dependencies') == CONTEXT_DEPENDENCY_PINS,
+            'Context dependencies must equal the approved exact pins '
+            + repr(dict(sorted(CONTEXT_DEPENDENCY_PINS.items()))))
+    return manifest
+
+
+def context_lockfile(directory=None):
+    source = (directory or CONTEXT_PACKAGE_DIR) / 'package-lock.json'
+    require(source.is_file(), 'The context lockfile is missing: ' + str(source))
+    lock = json.loads(source.read_text())
+    require(lock.get('name') == CONTEXT_PACKAGE_NAME and lock.get('version') == '0.0.0',
+            'The context lockfile must name ' + CONTEXT_PACKAGE_NAME + ' 0.0.0')
+    require(lock.get('lockfileVersion') == 3, 'The context lockfile must use lockfileVersion 3')
+    packages = lock.get('packages')
+    require(isinstance(packages, dict), 'The context lockfile has no packages map')
+    root = packages.get('')
+    require(isinstance(root, dict), 'The context lockfile has no root entry')
+    require(root.get('dependencies') == CONTEXT_DEPENDENCY_PINS,
+            'Lock root dependencies must equal the approved exact pins')
+    require(root.get('engines') == {'node': CONTEXT_NODE_FLOOR},
+            'Lock root engines must pin the Node floor ' + CONTEXT_NODE_FLOOR)
+    entries = {}
+    for key, row in packages.items():
+        if key == '':
+            continue
+        name = key.removeprefix('node_modules/')
+        # Conflicting nested transitive versions would stage an ambiguous tree;
+        # the approved closure resolves to one version per package.
+        require(key == 'node_modules/' + name and '/' not in name,
+                'Unexpected nested lock entry: ' + key)
+        resolved = row.get('resolved')
+        require(isinstance(resolved, str) and resolved.startswith('https://registry.npmjs.org/'),
+                'Lock entry must resolve from the npm registry: ' + name)
+        integrity = row.get('integrity')
+        require(isinstance(integrity, str) and integrity.startswith('sha512-'),
+                'Lock entry must carry a sha512 integrity: ' + name)
+        digest = base64.b64decode(integrity[len('sha512-'):], validate=True)
+        require(len(digest) == 64, 'Lock integrity must decode to a sha512 digest: ' + name)
+        require(isinstance(row.get('version'), str), 'Lock entry has no version: ' + name)
+        entries[name] = row
+    for name, version in CONTEXT_DEPENDENCY_PINS.items():
+        require(entries.get(name, {}).get('version') == version,
+                'Lock must pin ' + name + ' at exactly ' + version)
+    for name, row in entries.items():
+        for dependency in row.get('dependencies', {}):
+            require(dependency in entries,
+                    'Lock closure is missing ' + dependency + ' required by ' + name)
+    return entries
+
+
+def fetch_context_dependencies(entries, logs):
+    destination = logs / 'context-dependencies'
+    destination.mkdir(parents=True, exist_ok=True)
+    fetched = []
+    for name, row in sorted(entries.items()):
+        with urllib.request.urlopen(row['resolved'], timeout=300) as response:
+            data = response.read()
+        require(base64.b64encode(hashlib.sha512(data).digest()).decode('ascii')
+                == row['integrity'][len('sha512-'):],
+                'Dependency bytes do not match the lockfile integrity: ' + name)
+        path = destination / (name + '.tgz')
+        path.write_bytes(data)
+        fetched.append({'name': name, 'version': row['version'], 'resolved': row['resolved'],
+                        'integrity': row['integrity'],
+                        'tarball': {'bytes': len(data), 'sha256': hashlib.sha256(data).hexdigest()}})
+    return fetched
+
+
+def extract_context_dependency(payload, name, tarball_path):
+    module = payload / CONTEXT_STAGE_ROOT / 'node_modules' / name
+    module.mkdir(parents=True)
+    extracted = 0
+    with tarfile.open(tarball_path, 'r:gz') as archive:
+        for member in archive.getmembers():
+            member_path = PurePosixPath(member.name)
+            require(not member_path.is_absolute() and '..' not in member_path.parts,
+                    'Unsafe dependency archive member: ' + member.name)
+            if not member.isfile():
+                require(member.isdir() and member.name == 'package',
+                        'Unsafe dependency archive member: ' + member.name)
+                continue
+            relative = member_path.relative_to('package')
+            destination = module.joinpath(*relative.parts)
+            destination.parent.mkdir(parents=True, exist_ok=True)
+            destination.write_bytes(archive.extractfile(member).read())
+            destination.chmod(0o644)
+            extracted += 1
+    require(extracted > 0, 'Dependency archive staged no files: ' + name)
+    return module
+
+
+def context_tree_digest(directory):
+    digest = hashlib.sha256()
+    for relative, path in sorted((path.relative_to(directory).as_posix(), path)
+                                 for path in directory.rglob('*') if path.is_file()):
+        digest.update(relative.encode('utf-8'))
+        digest.update(b'\0')
+        digest.update(sha256(path).encode('ascii'))
+        digest.update(b'\n')
+    return digest.hexdigest()
+
+
+def context_closure_manifest(entries, digests):
+    packages = {name: {'version': row['version'], 'integrity': row['integrity'],
+                       'treeSha256': digests[name]}
+                for name, row in sorted(entries.items())}
+    return {'schema': 'baton2-context-dependency-closure-v1', 'packages': packages}
+
+
+def stage_context_sources(payload):
+    directory = payload / CONTEXT_STAGE_ROOT
+    directory.mkdir(parents=True)
+    staged = []
+    for source in sorted(CONTEXT_PACKAGE_DIR.rglob('*')):
+        if not source.is_file():
+            continue
+        relative = source.relative_to(CONTEXT_PACKAGE_DIR)
+        if relative.parts[0] == 'node_modules' or relative.as_posix() in ('package.json', 'package-lock.json'):
+            continue
+        destination = directory / relative
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copyfile(source, destination)
+        destination.chmod(0o644)
+        staged.append(relative.as_posix())
+    return staged
+
+
+def stage_context_notices(payload, entries):
+    directory = payload / 'notices/context'
+    directory.mkdir(parents=True, exist_ok=True)
+    terms = {}
+    for name, row in sorted(entries.items()):
+        module = payload / CONTEXT_STAGE_ROOT / 'node_modules' / name
+        files = []
+        for candidate in sorted(module.rglob('*')):
+            if not candidate.is_file():
+                continue
+            base = candidate.name.upper()
+            if (base in ('LICENSE', 'NOTICE', 'COPYING')
+                    or base.startswith(('LICENSE.', 'NOTICE.', 'COPYING.'))
+                    or candidate.name in CONTEXT_EXTRA_NOTICES.get(name, ())):
+                destination = directory / name / candidate.name
+                destination.parent.mkdir(parents=True, exist_ok=True)
+                shutil.copyfile(candidate, destination)
+                files.append({'path': destination.relative_to(payload).as_posix(),
+                              'source': CONTEXT_STAGE_ROOT + '/node_modules/' + name + '/'
+                                        + candidate.relative_to(module).as_posix(),
+                              **file_info(destination)})
+        require(files, 'Staged dependency has no staged license or notice file: ' + name)
+        terms[name] = {'version': row['version'], 'license': row.get('license'), 'files': files}
+    lines = ['Context dependency terms staged from lockfile-resolved npm bytes verified',
+             'against the lockfile integrity hashes.', '']
+    for name, row in terms.items():
+        lines.append(name + '@' + row['version'] + ' - ' + str(row['license'])
+                     + ' - ' + ', '.join(item['path'] for item in row['files']))
+    (directory / 'context-packages.md').write_text('\n'.join(lines) + '\n')
+    return terms
+
+
+def context_gate_environment(node, logs, name):
+    home = logs / ('context-gate-home-' + name)
+    scratch = logs / ('context-gate-tmp-' + name)
+    home.mkdir(parents=True, exist_ok=True)
+    scratch.mkdir(parents=True, exist_ok=True)
+    return {'PATH': str(node.parent) + ':/usr/bin:/bin', 'HOME': str(home),
+            'TMPDIR': str(scratch), 'LC_ALL': 'C'}
+
+
+def context_tree_state(payload):
+    directory = payload / CONTEXT_STAGE_ROOT
+    return {path.relative_to(payload).as_posix(): file_info(path)
+            for path in sorted(directory.rglob('*')) if path.is_file()}
+
+
+def run_context_gate(payload, logs, node, name, extra_env=None):
+    env = context_gate_environment(node, logs, name)
+    if extra_env:
+        env.update(extra_env)
+    cwd = payload / CONTEXT_STAGE_ROOT
+    stdout = logs / ('context-gate-' + name + '.stdout')
+    stderr = logs / ('context-gate-' + name + '.stderr')
+    before = context_tree_state(payload)
+    started = time.monotonic()
+    with stdout.open('wb') as out, stderr.open('wb') as err:
+        result = subprocess.run([str(node), 'context-package-gate.mjs'], cwd=cwd, env=env,
+                                stdin=subprocess.DEVNULL, stdout=out, stderr=err)
+    require(before == context_tree_state(payload),
+            'The context payload changed during the package gate')
+    receipt = {'runtime': name, 'node': {'path': str(node.resolve()), **file_info(node)},
+               'argv': [str(node), 'context-package-gate.mjs'], 'cwd': str(cwd),
+               'environmentKeys': sorted(env), 'exit_code': result.returncode,
+               'elapsed_seconds': time.monotonic() - started,
+               'stdout': {'path': stdout.name, **file_info(stdout)},
+               'stderr': {'path': stderr.name, **file_info(stderr)},
+               'payloadUnchanged': True}
+    write_json(logs / ('context-gate-' + name + '.json'), receipt)
+    return receipt, stdout.read_text(errors='replace')
+
+
+def require_gate_report(text, expected_packages):
+    require(text.strip(), 'The context package gate printed no report')
+    report = json.loads(text)
+    require(report.get('gate') == 'baton2-context-package-gate',
+            'Unexpected context gate report identity')
+    closure = report.get('closure')
+    require(isinstance(closure, dict) and closure.get('digestsVerified') is True
+            and closure.get('packages') == expected_packages,
+            'The context gate closure verification is missing or incomplete')
+    stages = report.get('stages')
+    require(isinstance(stages, list) and len(stages) == 3,
+            'The context gate report is missing probes')
+    ajv, zod_probe, typescript = stages
+    require(ajv.get('version') == '8.17.1' and len(ajv.get('invalidErrors', [])) >= 2,
+            'The Ajv gate probe is not useful')
+    require(zod_probe.get('version') == '4.3.6'
+            and zod_probe.get('validValue') == {'id': 7, 'name': 'report'}
+            and len(zod_probe.get('invalidIssues', [])) >= 2,
+            'The Zod gate probe is not useful')
+    require(typescript.get('version') == '5.9.3'
+            and typescript.get('resolvedDeclarationType') == '(name: string) => string'
+            and typescript.get('messageType') == 'string',
+            'The TypeScript gate probe is not useful')
+    return report
+
+
+def run_context_gates(payload, logs, args, entries):
+    runs = []
+    floor = {'requested': '22.15.0'}
+    if args.context_node22 is not None:
+        node22 = args.context_node22.resolve()
+        version = command([str(node22), '--version'], payload,
+                          context_gate_environment(node22, logs, 'floor-version'),
+                          logs, 'context-floor-version')
+        require(version == 'v22.15.0',
+                'The supplied context floor node is not v22.15.0: ' + version)
+        floor['available'] = True
+        floor['node'] = {'path': str(node22), **file_info(node22)}
+        receipt, text = run_context_gate(payload, logs, node22, 'node22.15.0')
+        require(receipt['exit_code'] == 0,
+                'The context package gate failed on the Node 22.15.0 floor; see '
+                + str(logs / 'context-gate-node22.15.0.json'))
+        require_gate_report(text, len(entries))
+        runs.append(receipt)
+    else:
+        floor['available'] = False
+        floor['reason'] = ('No --context-node22 executable was supplied; '
+                           'floor gate evidence is pending provision.')
+    host_node = executable('node')
+    receipt, text = run_context_gate(payload, logs, host_node, 'host')
+    require(receipt['exit_code'] == 0,
+            'The context package gate failed on the host Node; see '
+            + str(logs / 'context-gate-host.json'))
+    require_gate_report(text, len(entries))
+    runs.append(receipt)
+    return {'floor': floor, 'runs': runs}
+
+
+def compose_context(payload, logs, args):
+    entries = context_lockfile()
+    context_package_manifest()
+    fetched = fetch_context_dependencies(entries, logs)
+    staged_first_party = stage_context_sources(payload)
+    for row in fetched:
+        extract_context_dependency(payload, row['name'],
+                                   logs / 'context-dependencies' / (row['name'] + '.tgz'))
+    digests = {name: context_tree_digest(payload / CONTEXT_STAGE_ROOT / 'node_modules' / name)
+               for name in entries}
+    closure = context_closure_manifest(entries, digests)
+    (payload / CONTEXT_STAGE_ROOT / 'dependency-closure.json').write_text(
+        json.dumps(closure, indent=2, sort_keys=True) + '\n')
+    terms = stage_context_notices(payload, entries)
+    gate = run_context_gates(payload, logs, args, entries)
+    return {'pins': dict(sorted(CONTEXT_DEPENDENCY_PINS.items())),
+            'manifest': {'path': 'bend2/context/package.json',
+                         **file_info(CONTEXT_PACKAGE_DIR / 'package.json')},
+            'lockfile': {'path': 'bend2/context/package-lock.json',
+                         **file_info(CONTEXT_PACKAGE_DIR / 'package-lock.json')},
+            'dependencies': fetched,
+            'stagedFirstParty': staged_first_party,
+            'dependencyClosure': closure,
+            'gate': gate,
+            'terms': terms}
+
+
+def append_context_distribution(payload, terms):
+    lines = ['',
+             'Context dependencies are staged from lockfile-resolved npm tarballs verified',
+             'against the lockfile integrity hashes before staging.']
+    for name, row in terms.items():
+        lines.append(name + '@' + row['version'] + ' is distributed under ' + str(row['license'])
+                     + '; staged terms: ' + ', '.join(item['path'] for item in row['files']) + '.')
+    with (payload / 'notices/distribution.md').open('a') as distribution:
+        distribution.write('\n'.join(lines) + '\n')
+
+
 def stage_notices(payload, archive_notices, kind='development'):
     directory = payload / 'notices'
     directory.mkdir()
@@ -316,6 +630,8 @@ def package(args):
         require(platform.system() == 'Darwin' and platform.machine() == 'arm64', 'This native artifact requires a Darwin arm64 build host')
         initial = snapshot()
         same_source(initial, initial)
+        context_package_manifest()
+        context_entries = context_lockfile()
         identity = artifact_identity(args.release_version)
         compiler = args.bend.resolve()
         env = dict(os.environ, BEND=str(compiler), BEND_NO_TELEMETRY='1')
@@ -354,8 +670,12 @@ def package(args):
         shutil.copyfile(binary, payload / 'bin/baton2')
         (payload / 'bin/baton2').chmod(0o755)
         stage_adapters(payload)
+        context = compose_context(payload, logs, args)
+        context['dependencyClosureEntries'] = len(context_entries)
         shutil.copytree(logs, payload / 'logs')
         terms = stage_notices(payload, notices, identity['kind'])
+        terms['context_packages'] = context.pop('terms')
+        append_context_distribution(payload, terms['context_packages'])
         generated_dir = output / 'generated'
         generated_dir.mkdir()
         shutil.copyfile(generated, generated_dir / 'baton2.c')
@@ -409,6 +729,8 @@ def main():
     parser.add_argument('--release-version', help='version identifier for a release archive; requires the project root LICENSE')
     parser.add_argument('--gate-receipt', type=Path, help='reuse a completed exact-source three-gate summary')
     parser.add_argument('--gate-receipt-sha256', help='required SHA256 pin when reusing a gate receipt')
+    parser.add_argument('--context-node22', type=Path,
+                        help='exact Node v22.15.0 executable for the context package floor gate')
     args = parser.parse_args()
     require(bool(args.gate_receipt) == bool(args.gate_receipt_sha256), 'Gate receipt and SHA256 must be supplied together')
     package(args)

@@ -1,0 +1,240 @@
+"""Context package manifest, lockfile and staged-bytes gate controls.
+
+The static tests verify the single dependency pin pair and the lockfile
+closure shape. The functional tests stage the lockfile-resolved bytes into a
+private payload, run the packaged gate from inside it, and prove that a
+missing staged dependency refuses even with a working ancestor bait package
+and that a NODE_PATH bait cannot replace the staged bytes.
+"""
+import base64
+import hashlib
+import importlib.util
+import json
+import os
+import pathlib
+import shutil
+import tempfile
+import unittest
+import urllib.request
+
+ROOT = pathlib.Path(__file__).resolve().parents[2]
+CONTEXT = ROOT / 'bend2/context'
+SPEC = importlib.util.spec_from_file_location('package_native', ROOT / 'bend2/scripts/package-native.py')
+PACKAGE = importlib.util.module_from_spec(SPEC)
+SPEC.loader.exec_module(PACKAGE)
+PINS = {'ajv': '8.17.1', 'typescript': '5.9.3', 'zod': '4.3.6'}
+# Independently provisioned exact-floor executable; override with CONTEXT_NODE22.
+NODE22_CANDIDATES = (
+    pathlib.Path('/Users/wahargis/Development/Experiments/baton-bend2-root-delivery-20260928/'
+                 '.scratch/semantic-context-20261005/probes/native-package-critic/toolchain/'
+                 'node-v22.15.0-darwin-arm64/bin/node'),
+)
+TARBALL_CACHE = ROOT / '.scratch/bend2/context-deps/tarballs'
+
+
+def write_manifest(directory, manifest):
+    (directory / 'package.json').write_text(json.dumps(manifest, indent=2) + '\n')
+    shutil.copyfile(CONTEXT / 'package-lock.json', directory / 'package-lock.json')
+
+
+def write_lock(directory, lock):
+    (directory / 'package-lock.json').write_text(json.dumps(lock, indent=2) + '\n')
+    shutil.copyfile(CONTEXT / 'package.json', directory / 'package.json')
+
+
+def cached_tarballs():
+    """Return {name: path} of lockfile-resolved tarballs, cached by integrity."""
+    entries = PACKAGE.context_lockfile()
+    TARBALL_CACHE.mkdir(parents=True, exist_ok=True)
+    paths = {}
+    for name, row in sorted(entries.items()):
+        path = TARBALL_CACHE / (name + '.tgz')
+        expected = row['integrity'][len('sha512-'):]
+        if path.is_file():
+            digest = base64.b64encode(hashlib.sha512(path.read_bytes()).digest()).decode('ascii')
+            if digest == expected:
+                paths[name] = path
+                continue
+        with urllib.request.urlopen(row['resolved'], timeout=300) as response:
+            data = response.read()
+        digest = base64.b64encode(hashlib.sha512(data).digest()).decode('ascii')
+        if digest != expected:
+            raise AssertionError('registry bytes do not match the lockfile integrity: ' + name)
+        path.write_bytes(data)
+        paths[name] = path
+    return paths
+
+
+def build_payload(directory):
+    entries = PACKAGE.context_lockfile()
+    PACKAGE.stage_context_sources(directory)
+    for name, tarball in cached_tarballs().items():
+        PACKAGE.extract_context_dependency(directory, name, tarball)
+    digests = {name: PACKAGE.context_tree_digest(
+        directory / PACKAGE.CONTEXT_STAGE_ROOT / 'node_modules' / name) for name in entries}
+    closure = PACKAGE.context_closure_manifest(entries, digests)
+    (directory / PACKAGE.CONTEXT_STAGE_ROOT / 'dependency-closure.json').write_text(
+        json.dumps(closure, indent=2, sort_keys=True) + '\n')
+    PACKAGE.stage_context_notices(directory, entries)
+    return entries
+
+
+class ContextPackageInput(unittest.TestCase):
+    def test_manifest_pins_exact_approved_set(self):
+        manifest = PACKAGE.context_package_manifest()
+        self.assertEqual(manifest['dependencies'], PINS)
+        self.assertEqual(manifest['engines'], {'node': '>=22.15.0'})
+        self.assertTrue(manifest['private'])
+        self.assertEqual(manifest['type'], 'module')
+
+    def test_lock_pins_exact_versions_from_registry(self):
+        entries = PACKAGE.context_lockfile()
+        for name, version in PINS.items():
+            self.assertEqual(entries[name]['version'], version)
+            self.assertTrue(entries[name]['resolved'].startswith('https://registry.npmjs.org/'))
+        # Ajv's resolved transitive closure is carried by the lock itself.
+        self.assertIn('fast-uri', entries)
+
+    def test_lock_rejects_range_specifier(self):
+        with tempfile.TemporaryDirectory() as scratch:
+            directory = pathlib.Path(scratch)
+            manifest = json.loads((CONTEXT / 'package.json').read_text())
+            manifest['dependencies']['typescript'] = '^5.9.3'
+            write_manifest(directory, manifest)
+            with self.assertRaises(RuntimeError):
+                PACKAGE.context_package_manifest(directory)
+
+    def test_lock_rejects_unapproved_dependency(self):
+        with tempfile.TemporaryDirectory() as scratch:
+            directory = pathlib.Path(scratch)
+            manifest = json.loads((CONTEXT / 'package.json').read_text())
+            manifest['dependencies']['lodash'] = '4.17.21'
+            write_manifest(directory, manifest)
+            with self.assertRaises(RuntimeError):
+                PACKAGE.context_package_manifest(directory)
+
+    def test_lock_rejects_missing_integrity(self):
+        with tempfile.TemporaryDirectory() as scratch:
+            directory = pathlib.Path(scratch)
+            lock = json.loads((CONTEXT / 'package-lock.json').read_text())
+            del lock['packages']['node_modules/zod']['integrity']
+            write_lock(directory, lock)
+            with self.assertRaises(RuntimeError):
+                PACKAGE.context_lockfile(directory)
+
+    def test_lock_rejects_wrong_lockfile_version(self):
+        with tempfile.TemporaryDirectory() as scratch:
+            directory = pathlib.Path(scratch)
+            lock = json.loads((CONTEXT / 'package-lock.json').read_text())
+            lock['lockfileVersion'] = 2
+            write_lock(directory, lock)
+            with self.assertRaises(RuntimeError):
+                PACKAGE.context_lockfile(directory)
+
+    def test_lock_rejects_incomplete_closure(self):
+        with tempfile.TemporaryDirectory() as scratch:
+            directory = pathlib.Path(scratch)
+            lock = json.loads((CONTEXT / 'package-lock.json').read_text())
+            del lock['packages']['node_modules/fast-uri']
+            write_lock(directory, lock)
+            with self.assertRaises(RuntimeError):
+                PACKAGE.context_lockfile(directory)
+
+
+class ContextPackagedBytes(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        cls.scratch = tempfile.TemporaryDirectory(prefix='baton2-context-package-')
+        cls.host_root = pathlib.Path(cls.scratch.name) / 'host'
+        cls.host_root.mkdir()
+        cls.entries = build_payload(cls.host_root)
+        cls.logs = pathlib.Path(cls.scratch.name) / 'logs'
+        cls.logs.mkdir()
+        cls.host_node = shutil.which('node')
+        if cls.host_node is None:
+            raise unittest.SkipTest('no node executable on PATH')
+        node22 = os.environ.get('CONTEXT_NODE22')
+        if node22:
+            cls.node22 = pathlib.Path(node22)
+        else:
+            cls.node22 = next((path for path in NODE22_CANDIDATES if path.is_file()), None)
+        gate, text = PACKAGE.run_context_gate(cls.host_root, cls.logs,
+                                              pathlib.Path(cls.host_node), 'host')
+        if gate['exit_code'] != 0:
+            detail = (cls.logs / 'context-gate-host.stderr').read_text(errors='replace')
+            raise AssertionError('packaged gate failed on host node: ' + detail)
+        cls.report = PACKAGE.require_gate_report(text, len(cls.entries))
+
+    @classmethod
+    def tearDownClass(cls):
+        cls.scratch.cleanup()
+
+    def test_gate_proves_useful_staged_projections(self):
+        versions = [stage['version'] for stage in self.report['stages']]
+        self.assertEqual(versions, ['8.17.1', '4.3.6', '5.9.3'])
+        self.assertTrue(self.report['closure']['digestsVerified'])
+        typescript = self.report['stages'][2]
+        self.assertEqual(typescript['resolvedDeclarationType'], '(name: string) => string')
+        self.assertEqual(typescript['messageType'], 'string')
+
+    def test_gate_runs_on_exact_node22_floor(self):
+        if self.node22 is None:
+            self.skipTest('no exact Node 22.15.0 executable available; set CONTEXT_NODE22')
+        version = subprocess_version(self.node22)
+        if version != 'v22.15.0':
+            self.skipTest('CONTEXT_NODE22 is not v22.15.0: ' + version)
+        gate, text = PACKAGE.run_context_gate(self.host_root, self.logs, self.node22, 'node22.15.0')
+        self.assertEqual(gate['exit_code'], 0,
+                         (self.logs / 'context-gate-node22.15.0.stderr').read_text(errors='replace'))
+        report = PACKAGE.require_gate_report(text, len(self.entries))
+        self.assertTrue(report['closure']['digestsVerified'])
+
+    def test_missing_staged_transitive_refuses_with_ancestor_bait(self):
+        bait_root = pathlib.Path(self.scratch.name) / 'bait'
+        shutil.copytree(self.host_root, bait_root)
+        modules = bait_root / PACKAGE.CONTEXT_STAGE_ROOT / 'node_modules'
+        shutil.rmtree(modules / 'fast-deep-equal')
+        ancestor = bait_root / 'node_modules' / 'fast-deep-equal'
+        ancestor.mkdir(parents=True)
+        (ancestor / 'package.json').write_text(json.dumps(
+            {'name': 'fast-deep-equal', 'version': '3.1.3', 'main': 'index.js'}))
+        (ancestor / 'index.js').write_text('module.exports = {eq: () => true};')
+        gate, _ = PACKAGE.run_context_gate(bait_root, self.logs,
+                                           pathlib.Path(self.host_node), 'bait-missing-transitive')
+        self.assertEqual(gate['exit_code'], 2)
+        refusal = json.loads((self.logs / 'context-gate-bait-missing-transitive.stderr').read_text())
+        self.assertIn('fast-deep-equal', refusal['error']['detail'])
+
+    def test_nodepath_bait_cannot_replace_staged_bytes(self):
+        bait = pathlib.Path(self.scratch.name) / 'nodepath-bait' / 'node_modules' / 'zod'
+        bait.mkdir(parents=True, exist_ok=True)
+        (bait / 'package.json').write_text(json.dumps({'name': 'zod', 'version': '9.9.9'}))
+        (bait / 'index.mjs').write_text('export const z = {};')
+        gate, text = PACKAGE.run_context_gate(
+            self.host_root, self.logs, pathlib.Path(self.host_node), 'nodepath-bait',
+            {'NODE_PATH': str(bait.parents[1])})
+        self.assertEqual(gate['exit_code'], 0,
+                         (self.logs / 'context-gate-nodepath-bait.stderr').read_text(errors='replace'))
+        report = PACKAGE.require_gate_report(text, len(self.entries))
+        self.assertEqual(report['stages'][1]['version'], '4.3.6')
+
+    def test_staged_notices_include_explicit_third_party_terms(self):
+        terms = PACKAGE.stage_context_notices(self.host_root, self.entries)
+        sources = {row['source'] for row in terms['typescript']['files']}
+        self.assertIn(PACKAGE.CONTEXT_STAGE_ROOT + '/node_modules/typescript/ThirdPartyNoticeText.txt',
+                      sources)
+        fast_uri = terms['fast-uri']
+        self.assertEqual(fast_uri['license'], 'BSD-3-Clause')
+        self.assertTrue(fast_uri['files'])
+        for name in self.entries:
+            self.assertTrue(terms[name]['files'], 'no staged notice for ' + name)
+
+
+def subprocess_version(node):
+    import subprocess
+    return subprocess.run([str(node), '--version'], capture_output=True,
+                          text=True, check=True).stdout.strip()
+
+
+if __name__ == '__main__':
+    unittest.main()
