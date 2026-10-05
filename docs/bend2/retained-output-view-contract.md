@@ -54,6 +54,8 @@ The existing frame-oriented offer helper can serve Receive's selected-frame deri
 
 An accepted observation contains source incarnation, monotone revision, available byte end and one of Open, Sealed(final_end), or Fault(original_error, last_qualified_end). End and revision use exact wide integers across FFI/transport. Available bytes can be read while Open. End is returned only after consuming Sealed(final_end). A temporary regular-file EOF returns Waiting while Open; an unterminated tail cannot be certified final then.
 
+For version1 byte positions and extents are canonical unsigned decimal strings in the range0 through9223372036854775807. This matches the current source helper's INT64_MAX checks before off_t conversion. Arithmetic and transport decoding must check this bound and interval order. Revisions and capability incarnations are separate identities; they are not byte offsets or truncated JSON numbers.
+
 Current br_keeper and br_grant pass the regular spool to native fd1; fd2 is also a regular log descriptor. Descendants can retain these descriptors. br_native_exited waits for one PID. Release/ACK and a stable size do not establish closure of every writer. There is currently no callable all-writer seal export.
 
 The smallest proposed writer change uses the existing keeper as the sole spool appender. Each captured native stream is passed through an owned pipe; the keeper retains its read side and closes every local write-side duplicate after spawn. Descendants inherit the pipe writer rather than the spool descriptor. The keeper drains accepted bytes to that stream's existing spool, retains partial append/error outcomes and publishes available end only for bytes actually appended. It seals only after pipe EOF, drained buffers and the final append outcome, with no remaining owned path that can append. Stdout and stderr have separate extents and faults. Unexpected source mutation is a source fault. This proposal requires review of keeper failure, descendant inheritance and existing host ownership before implementation; no writer plumbing has been changed.
@@ -70,7 +72,26 @@ Raw snapshot chooses a qualified available end and exports exactly that byte int
 
 Selected-frame continuation positions occur only at complete raw frame boundaries. Receive's pure derivation must reconstruct filter state from the original prefix or provide source-bound sufficient derivation state. Re-reading a prefix is passive. A derived final filter note has a separate representation/phase so reconnect neither repeats it as a native frame nor omits it. Existing selected-log file offsets remain selected-log offsets until explicitly migrated; they cannot be relabelled as raw positions.
 
+A selected continuation needs both resumeAt, the last completely folded frame boundary, and scannedThrough, the captured extent already inspected. An open partial frame lies between them and is reconstructed from the original source on reconnect. If no new bytes/finality/fault exist beyond scannedThrough, a follow step arms/rechecks readiness rather than immediately returning that same partial suffix. Suppressed complete frames advance resumeAt even when no selected record is emitted. Receive must validate the prefix/frame boundary and derivation phase; a caller-supplied field cannot skip unprocessed bytes. Current reader-generation revisions are used for registration, while these source positions survive a new reader incarnation.
+
+A derived note is emitted once along a continuation that advances through its final-note phase. Retrying an older token after lost transport completion may replay that interval and note. This passive protocol does not establish exactly-once delivery to an external caller. Records carry source/view/position or derived-note identity so a caller can recognize replay without content-based deduplication. A missing completion record is not evidence that the operation delivered no bytes.
+
 Interfaces selects a transport that preserves opaque raw bytes for CLI export and MCP results. Structured selected frames carry byte positions and representation tags; derived metadata is labelled. The public caller never needs a private decoder or a filesystem naming rule.
+
+## Explicit raw export
+
+Proposed additional host boundary:
+
+    export_output(source_lease, raw_start, captured_end, destination, retained_task)
+      -> Result<ExportFault, ExportReceipt>
+
+It uses a captured qualified source interval and never follows beyond captured_end. Interfaces91's raw-only, new-file export fits this boundary. Resolve and pin the existing destination parent directory under the original invocation cwd; do not create parent directories. Create the requested final basename exclusively with restrictive permissions and no symlink following. An existing file, directory, symlink or hardlink is a refusal; never truncate or replace it. Preserve the actual destination identity and original requested path in the receipt.
+
+This smallest contract writes directly to the exclusively created final path. The path can be visible while incomplete. It has no atomic-publication promise. On write, source, cancellation, sync or close failure, retain the created artifact and its identity, intended interval, known written prefix and exact uncertain operation. Do not silently unlink it or retry export over it. The retained export task owns cleanup/error reporting after client disconnect; it does not own semantic attempt completion. A caller can explicitly choose another new path for a retry.
+
+Success requires complete interval write, file sync, one close attempt and parent-directory sync; the receipt reports each outcome independently. Failure still performs possible cleanup once, retaining the primary error and later close/sync outcomes. A write that returns a count advances the known prefix by that count; an interrupted operation with unknown effect remains uncertain. Never retry a failed close by numeric descriptor after its ownership is consumed. If completion transport is lost after success, the next exclusive create refuses the existing path; no idempotent retry success is invented.
+
+The MCP adapter must preserve partial native records and final status on operation failure. A transport limit or decoder failure cannot be reported as complete success or advance beyond the last validated safe continuation. An asynchronous child path must keep unrelated calls runnable and tie cancellation to the exact retained reader/export task. Whole-result text buffering is not itself a proof of complete unbounded export support.
 
 ## Lifetime and disposal
 
