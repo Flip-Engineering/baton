@@ -68,10 +68,12 @@ class ReplayBase(RECEIVE.Receive):
         return found
 
     def native_status(self):
-        with sqlite3.connect(f'{self.db.as_uri()}?mode=ro', uri=True) as database:
-            row = database.execute(
-                "SELECT status FROM executions WHERE session='parent' ORDER BY rowid DESC LIMIT 1").fetchone()
-        return row[0] if row else '(none)'
+        """The retained wait status of the original attempt, from its own directory."""
+        identity, directory = self.original_attempt
+        status = int((directory / 'status').read_text())
+        self.assertTrue(os.WIFEXITED(status), f'the original attempt did not exit normally: {status}')
+        self.assertEqual(os.WEXITSTATUS(status), 0)
+        return f'exit {os.WEXITSTATUS(status)}'
 
     def reports(self):
         """Every report body the native session delivered to the root."""
@@ -86,6 +88,14 @@ class ReplayBase(RECEIVE.Receive):
         observer = self.spawn(*self.receive_args('parent'))
         stream, started = self.accept('parent')
         self.assertIn(f'[id: {task}]', started['prompt'])
+        with sqlite3.connect(f'{self.db.as_uri()}?mode=ro', uri=True) as database:
+            row = database.execute(
+                "SELECT id, directory FROM executions WHERE session='parent'").fetchone()
+        self.assertIsNotNone(row, 'the original attempt was not recorded at start')
+        self.assertTrue(row[0] and row[1], 'the original attempt has no id or directory')
+        self.original_attempt = (row[0], pathlib.Path(row[1]))
+        (self.directory / 'original-attempt-binding.json').write_text(
+            json.dumps({'id': row[0], 'directory': row[1]}))
         return observer, stream
 
     def emit(self, stream, frames):
@@ -111,6 +121,8 @@ class ReplayBase(RECEIVE.Receive):
     def assert_report(self, notifications, body):
         """The sealed turn and the public delivery both carry exactly the body."""
         turns = self.coord('turns', 'parent')
+        self.assertEqual(turns[-1]['id'], self.original_attempt[0],
+                         'the reported turn is not the original attempt')
         self.assertEqual(turns[-1]['reportBody'], body)
         self.assertEqual(self.coord('delivery', turns[-1]['id'])['body'], body)
         prompts = [prompt for _session, prompt in notifications]
