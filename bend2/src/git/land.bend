@@ -330,11 +330,14 @@ def publish_observe(+destination: String, +target: String, +oid: String, +basis:
 #
 # Supported record grammar, stated: the listing is a sequence of blocks separated by
 # blank lines. A block is one "worktree <path>" line followed by at least one state
-# line, one of "HEAD <oid>", "detached" or "bare", at most one of "locked [<reason>]"
-# or "prunable <reason>", and AT MOST ONE "branch refs/heads/<name>" line. The supported
-# transport is the line-separated porcelain form; git recommends
-# `worktree list --porcelain -z` for unusual paths, so that lossless NUL form and its
-# quoting decoder remain explicit unimplemented work. Completion criteria: every block
+# line, one of "HEAD <oid>", "detached" or "bare", and AT MOST ONE
+# "branch refs/heads/<name>" line. Implemented exactly and no further: a modifier line
+# ("locked", "locked <reason>" or "prunable <reason>") requires an open block and never
+# completes one, and the accumulator does not count modifiers, so no multiplicity rule is
+# claimed for them. The supported transport is the line-separated porcelain form. NUL
+# separation and text quoting are distinct unimplemented encoding choices: the
+# `worktree list --porcelain -z` form would avoid text quoting, and the documentation
+# consulted for this pin is current reference material, not a pinned executable contract. Completion criteria: every block
 # carries a valid unquoted non-empty absolute path and at least one state line, every
 # line belongs to the grammar, and at most one block names the target branch. Under
 # those criteria the parsed observation may be read: exactly one qualified target match
@@ -376,6 +379,7 @@ type HolderDiscovery is Data:
 # caller keeps the raw result and the request identity alongside the verdict.
 type HolderObservation is Data:
   HolderObserved{request: HolderRequest, code: U32, out: String, verdict: HolderVerdict}
+  HolderObservedBroken{request: HolderRequest, detail: String, verdict: HolderVerdict}
 
 type HolderVerdict is Data:
   VerdictFound{request: HolderRequest, path: String}
@@ -410,8 +414,10 @@ def holder_required_state(+line: String) -> Bool:
     Bool.pick(Bool, Tx.str_eq(line, "HEAD "), False{}, True{}),
     Bool.pick(Bool, Tx.str_eq(line, "detached"), True{}, Tx.str_eq(line, "bare")))
 
+# The label alone or the label plus its reason boundary; never an arbitrary lockedXYZ.
 def holder_modifier(+line: String) -> Bool:
-  Bool.pick(Bool, Tx.str_eq(line, "locked"), True{}, Tx.starts_with(line, "prunable "))
+  Bool.pick(Bool, Tx.str_eq(line, "locked"), True{},
+    Bool.pick(Bool, Tx.starts_with(line, "locked "), True{}, Tx.starts_with(line, "prunable ")))
 
 def holder_valid_branch(+line: String) -> Bool:
   match prefix_drop(line, "branch refs/heads/"):
@@ -481,7 +487,10 @@ def holder_branch_ok(+acc: HolderScan, +request: String) -> HolderScan:
   match acc:
     case ScanState{block, match, seen, bad, blocks}:
       match block:
-        case InBlock{path, has_state, branches}: ScanState{InBlock{path, has_state, U32.add(branches, 1)}, match, seen, bad, blocks}
+        case InBlock{path, has_state, branches}:
+          Bool.pick(HolderScan, U32.is_lt(0, branches),
+            ScanState{InBlock{path, has_state, branches}, match, seen, U32.add(bad, 1), blocks},
+            ScanState{InBlock{path, has_state, U32.add(branches, 1)}, match, seen, bad, blocks})
         case NoBlock{}: ScanState{NoBlock{}, match, seen, U32.add(bad, 1), blocks}
 
 def holder_verdict(+acc: HolderScan, +request: HolderRequest) -> HolderVerdict:
@@ -559,7 +568,7 @@ def holder_verdict_of_discovery(discovery: HolderDiscovery) -> HolderVerdict:
 def holder_read(discovery: HolderDiscovery) -> HolderObservation:
   match discovery:
     case DiscoverRead{request, code, out}: HolderObserved{request, code, out, holder_verdict_of_discovery(discovery)}
-    case DiscoverBroken{request, detail}: HolderObserved{request, 0, detail, holder_verdict_of_discovery(discovery)}
+    case DiscoverBroken{request, detail}: HolderObservedBroken{request, detail, holder_verdict_of_discovery(discovery)}
 
 def holder_state(+path: String) -> IO(HolderState):
   +p2 = path
@@ -1455,37 +1464,37 @@ def remote_tip_git(repo: String, branch: String, remote: String) -> IO(T.GitOut)
 # test. No live caller uses these helpers and no compile has been run.
 
 law prepared_publication_reads_a_well_formed_applied_record:
-  {pub_record(" \tabc123:refs/heads/main\told..new", publish_field("abc123")) == RecordMatched{"applied", " \tabc123:refs/heads/main\told..new"} : PubRecord}
+  {pub_record(" \tabc123:refs/heads/main\told..new", publish_field("abc123", "main")) == RecordMatched{"applied", " \tabc123:refs/heads/main\told..new"} : PubRecord}
 
 def prepared_publication_reads_a_well_formed_applied_record():
   {==}
 
 law prepared_publication_reads_a_well_formed_already_record:
-  {pub_record("=\tabc123:refs/heads/main\t[up to date]", publish_field("abc123")) == RecordMatched{"already", "=\tabc123:refs/heads/main\t[up to date]"} : PubRecord}
+  {pub_record("=\tabc123:refs/heads/main\t[up to date]", publish_field("abc123", "main")) == RecordMatched{"already", "=\tabc123:refs/heads/main\t[up to date]"} : PubRecord}
 
 def prepared_publication_reads_a_well_formed_already_record():
   {==}
 
 law prepared_publication_refuses_a_prefix_collision:
-  {pub_record(" \tabc123:refs/heads/main-longer\tcollision", publish_field("abc123")) == RecordAmbiguous{1, " \tabc123:refs/heads/main-longer\tcollision"} : PubRecord}
+  {pub_record(" \tabc123:refs/heads/main-longer\tcollision", publish_field("abc123", "main")) == RecordAmbiguous{1, " \tabc123:refs/heads/main-longer\tcollision"} : PubRecord}
 
 def prepared_publication_refuses_a_prefix_collision():
   {==}
 
 law prepared_publication_refuses_an_unrelated_record:
-  {pub_record(" \tabc999:refs/heads/other\tunrelated", publish_field("abc123")) == RecordAmbiguous{1, " \tabc999:refs/heads/other\tunrelated"} : PubRecord}
+  {pub_record(" \tabc999:refs/heads/other\tunrelated", publish_field("abc123", "main")) == RecordAmbiguous{1, " \tabc999:refs/heads/other\tunrelated"} : PubRecord}
 
 def prepared_publication_refuses_an_unrelated_record():
   {==}
 
 law prepared_publication_refuses_a_newline_smuggled_record:
-  {pub_record(" \tabc123:refs/heads/main\trow\n \tabc999:refs/heads/main\tother", publish_field("abc123")) == RecordAmbiguous{2, " \tabc123:refs/heads/main\trow"} : PubRecord}
+  {pub_record(" \tabc123:refs/heads/main\trow\n \tabc999:refs/heads/main\tother", publish_field("abc123", "main")) == RecordAmbiguous{2, " \tabc123:refs/heads/main\trow"} : PubRecord}
 
 def prepared_publication_refuses_a_newline_smuggled_record():
   {==}
 
 law prepared_publication_refuses_a_flag_line_without_its_fields:
-  {pub_record("!abc123:refs/heads/main", publish_field("abc123")) == RecordAbsent{} : PubRecord}
+  {pub_record("!abc123:refs/heads/main", publish_field("abc123", "main")) == RecordAbsent{} : PubRecord}
 
 def prepared_publication_refuses_a_flag_line_without_its_fields():
   {==}
@@ -1530,6 +1539,18 @@ law prepared_holder_discovery_rejects_a_missing_record_separator:
   {holder_verdict_of_discovery(holder_discover(HolderRequest{"/r", "main", "git worktree list --porcelain"}, T.GRun{0, "worktree /a\nHEAD aa\nbranch refs/heads/main\nworktree /b\nHEAD bb\nbranch refs/heads/other\n"})) == VerdictAmbiguous{HolderRequest{"/r", "main", "git worktree list --porcelain"}, "the worktree listing is unsupported, incomplete or malformed"} : HolderVerdict}
 
 def prepared_holder_discovery_rejects_a_missing_record_separator():
+  {==}
+
+law prepared_holder_read_keeps_a_failed_read_typed:
+  {holder_read(holder_discover(HolderRequest{"/r", "main", "git worktree list --porcelain"}, T.GRun{128, "fatal: not a git repository"})) == HolderObserved{HolderRequest{"/r", "main", "git worktree list --porcelain"}, 128, "fatal: not a git repository", VerdictUnreadable{HolderRequest{"/r", "main", "git worktree list --porcelain"}, 128, "fatal: not a git repository"}} : HolderObservation}
+
+def prepared_holder_read_keeps_a_failed_read_typed():
+  {==}
+
+law prepared_holder_read_keeps_a_broken_command_typed:
+  {holder_read(holder_discover(HolderRequest{"/r", "main", "git worktree list --porcelain"}, T.GBroken{"git could not be executed"})) == HolderObservedBroken{HolderRequest{"/r", "main", "git worktree list --porcelain"}, "git could not be executed", VerdictBroken{HolderRequest{"/r", "main", "git worktree list --porcelain"}, "git could not be executed"}} : HolderObservation}
+
+def prepared_holder_read_keeps_a_broken_command_typed():
   {==}
 
 law prepared_holder_discovery_rejects_a_second_branch_in_one_block:
