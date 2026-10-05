@@ -274,6 +274,27 @@ class ReviewedSourceLanding(unittest.TestCase):
         scratch = repo / '.scratch'
         return sorted(p.name for p in scratch.glob(f'bend2-land-{player}-*')) if scratch.exists() else []
 
+    def test_reviewed_source_refuses_a_divergent_commit_in_the_same_repository(self):
+        """A commit that exists here but is not an ancestor of the recorded branch refuses."""
+        commit = self.recruit_and_commit()
+        self.check_fixtures({'check-pass.sh': 'exit 0\n'})
+        divergent = self.git('rev-parse', 'main').strip()
+        self.assertNotEqual(divergent, commit, 'the fixture did not create a divergent commit')
+        target_before = self.git('rev-parse', 'main').strip()
+        for mode, tail in (('land-player-at', []),
+                           ('land-checked-player-at', ['check-pass.sh', 'file.txt'])):
+            with self.subTest(mode=mode):
+                printed = self.refusal(mode, self.db, 'w1', self.repo, 'main', *tail, divergent)
+                self.assertIn('is not an ancestor of the recorded branch', printed)
+                self.assertEqual(self.git('rev-parse', 'main').strip(), target_before,
+                                 'the target moved for a divergent selection')
+                self.assertEqual(self.git('rev-parse', 'w1-branch').strip(), commit,
+                                 'the recorded branch moved for a divergent selection')
+                self.assertEqual(self.scratch_trees('w1'), [],
+                                 'a divergent selection prepared a scratch tree')
+        self.assertEqual((self.repo / 'wt' / 'file.txt').read_text(), 'worker change for w1\n',
+                         'the recorded workspace changed')
+
     def test_checked_reviewed_landing_advances_when_the_checks_pass(self):
         self.check_fixtures({'check-pass.sh': 'exit 0\n'})
         self.git('checkout', '-q', '--detach')
