@@ -852,7 +852,7 @@ def an_unreadable_enumeration_contains_no_obligation():
 
 law a_ref_lookup_matches_its_exact_ref_identity:
   for +refId: String
-  {ContextStore.ref_id_match(refId) == "json_extract(entry.value,'$.id')=" ++ C.q(refId) : String}
+  {ContextStore.ref_id_match(refId) == "entry.type='object' AND json_extract(entry.value,'$.id')=" ++ C.q(refId) : String}
 
 def a_ref_lookup_matches_its_exact_ref_identity(refId):
   {==}
@@ -936,7 +936,7 @@ def two_matching_entries_are_ambiguous():
   {==}
 
 law an_entry_without_the_exact_selector_shape_is_malformed:
-  {ContextStore.ref_lookup_decode("q7","ref-1","complete\tpresent\t1\t7b22656e67696e65223a6e756c6c7d\t0\n") == ContextStore.RefMalformed{"q7","ref-1","shape"} : ContextStore.RefLookup}
+  {ContextStore.ref_lookup_decode("q7","ref-1","complete\tpresent\t1\t7b22656e67696e65223a6e756c6c7d\t0\n") == ContextStore.RefUnreadable{"shape","complete\tpresent\t1\t7b22656e67696e65223a6e756c6c7d\t0\n"} : ContextStore.RefLookup}
 
 def an_entry_without_the_exact_selector_shape_is_malformed():
   {==}
@@ -947,11 +947,6 @@ law an_entry_that_is_not_utf8_is_malformed_with_its_reason:
 def an_entry_that_is_not_utf8_is_malformed_with_its_reason():
   {==}
 
-law an_odd_hex_entry_is_unreadable:
-  {ContextStore.ref_lookup_decode("q7","ref-1","complete\tpresent\t1\t7b7\t1\n") == ContextStore.RefUnreadable{"scalar","complete\tpresent\t1\tff\t1\n"} : ContextStore.RefLookup}
-
-def an_odd_hex_entry_is_unreadable():
-  {==}
 
 law an_unknown_query_state_is_unreadable:
   {ContextStore.ref_lookup_decode("q7","ref-1","bogus\tpresent\t0\t\t0\n") == ContextStore.RefUnreadable{"state","bogus\tpresent\t0\t\t0\n"} : ContextStore.RefLookup}

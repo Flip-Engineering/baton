@@ -165,7 +165,6 @@ type RefLookup is Data:
   RefFailed{query: String, refId: String, state: String}
   RefAbsent{query: String, refId: String}
   RefAmbiguous{query: String, refId: String, count: String}
-  RefMalformed{query: String, refId: String, entry: String}
   RefFound{query: String, refId: String, state: String, entry: String}
 
 def ref_count_ok(count: String) -> Bool:
@@ -208,7 +207,7 @@ def ref_decide(+query: String, +refId: String, +state: String, +result: String, 
   Bool.pick(RefLookup, Bool.not(ref_flag_ok(shape)), RefUnreadable{"shape", answer},
   Bool.pick(RefLookup, String.eq(count, "0"), RefAbsent{query, refId},
   Bool.pick(RefLookup, Bool.not(String.eq(count, "1")), RefAmbiguous{query, refId, count},
-  Bool.pick(RefLookup, Bool.not(String.eq(shape, "1")), RefMalformed{query, refId, "shape"},
+  Bool.pick(RefLookup, Bool.not(String.eq(shape, "1")), RefUnreadable{"shape", answer},
     ref_entry_answer(query, refId, state, hexEntry, answer)))))))))))
 
 # Only a qualified found branch reaches here, so the scalar is decoded once and its
