@@ -88,10 +88,16 @@ the result protocol prevented observation. A compile, setup, launch or protocol 
 inconclusive and is never recorded as a semantic rejection of the behaviour under test. A
 conclusion is reported for a case only when both roles produced valid facts.
 
-Per-case evidence retained, written as soon as it is available and independently per role:
-the case name, its octets hash, each role's exact argv, process exit, stdout and stderr
-hashes, and either the parsed facts or the parse or launch failure. A later failure in the
-other role never discards an already observed side.
+Per-case evidence, retained independently per role: the case name, its octets hash, each
+role's exact argv and executable, process exit, stdout and stderr hashes, and either the
+parsed facts or the parse or launch failure. The case is registered in the report before
+either role is invoked, each role's evidence is retained before it is parsed, and a role-local
+launch or protocol failure is recorded as that role's failure so a later failure never
+discards an already observed side. This is in-memory accumulation: the report is emitted once,
+at completion, and no incremental or durable output is written per case. The verified argv
+head is preserved through launch construction, and placeholders bind only in protocol
+arguments, so a bridge whose own path contains the placeholder is refused rather than
+substituted.
 
 Named negative controls that must identify their designated semantic mismatch on a successful
 build, once the bridges exist: filter-only-in-delta, filter-stderr, advance-only-when-visible,
@@ -254,6 +260,8 @@ def verified_file(entry, label, base):
 
 
 def verified_tree(entry, label, base):
+    if not isinstance(entry, dict):
+        raise Blocker(f'{label} is not a record')
     declared = entry.get('source_sha256')
     if not isinstance(declared, dict) or not declared:
         raise Blocker(f'{label} must declare at least one file to verify')
@@ -278,7 +286,7 @@ def extracted_expression(name, record, base):
     for key in ('path', 'first_line', 'last_line'):
         if key not in source:
             raise Blocker(f'oracle expression {name} is missing {key}')
-    if not isinstance(source['first_line'], int) or not isinstance(source['last_line'], int):
+    if type(source['first_line']) is not int or type(source['last_line']) is not int:
         raise Blocker(f'oracle expression {name} declares non-integer line numbers')
     if source['first_line'] < 1 or source['last_line'] < source['first_line']:
         raise Blocker(f'oracle expression {name} declares an empty line range')
@@ -340,14 +348,21 @@ def verify_bridge(manifest, role, base):
     return verified
 
 
+PLACEHOLDER = '{expressions_dir}'
+
+
 def invocation(manifest, role, bridge, base):
     declared = manifest.get('invocation')
     if not isinstance(declared, dict) or role not in declared:
         raise Blocker(f'{role} invocation is not declared')
     entry = declared[role]
+    if not isinstance(entry, dict):
+        raise Blocker(f'{role} invocation is not a record')
     argv = entry.get('argv')
     if not isinstance(argv, list) or not argv or not all(isinstance(a, str) and a for a in argv):
         raise Blocker(f'{role} argv must be a non-empty list of non-empty strings')
+    if any('\x00' in argument for argument in argv):
+        raise Blocker(f'{role} argv contains a forbidden NUL byte')
     if entry.get('protocol') != 'json-lines':
         raise Blocker(f'{role} result protocol is unsupported: {entry.get("protocol")!r}')
     executable = entry.get('executable')
@@ -360,8 +375,11 @@ def invocation(manifest, role, bridge, base):
     if resolve_path(base, executable) != resolved_bridge:
         raise Blocker(f'{role} declared executable does not resolve to the verified bridge file '
                       'under the declared base')
-    if role == 'oracle' and '{expressions_dir}' not in argv:
-        raise Blocker('the oracle argv does not declare where the verified expressions are bound')
+    if PLACEHOLDER in argv[0] or PLACEHOLDER in executable:
+        raise Blocker(f'{role} executable path contains the reserved {PLACEHOLDER} placeholder')
+    if role == 'oracle' and not any(PLACEHOLDER in argument for argument in argv[1:]):
+        raise Blocker('the oracle argv does not bind the verified expressions in a protocol '
+                      'argument')
     return {'argv': [str(resolved_bridge)] + list(argv[1:]), 'protocol': entry['protocol'],
             'executable': str(resolved_bridge)}
 
@@ -378,14 +396,24 @@ def write_expressions(workdir, expressions, verified):
     return str(directory.resolve())
 
 
-def invoke(entry, octets, workdir, expressions_dir):
-    argv = [argument.replace('{expressions_dir}', expressions_dir) for argument in entry['argv']]
-    evidence = {'argv': argv}
+def launch_argv(entry, expressions_dir):
+    """The verified head is preserved; placeholders bind only in protocol arguments."""
+    return [entry['argv'][0]] + [argument.replace(PLACEHOLDER, expressions_dir)
+                                 for argument in entry['argv'][1:]]
+
+
+def invoke(entry, octets, workdir, expressions_dir, launcher=None):
+    argv = launch_argv(entry, expressions_dir)
+    evidence = {'argv': argv, 'executable': entry.get('executable')}
+    if argv[0] != entry.get('executable'):
+        evidence['launch_failure'] = 'the constructed launch head is not the verified executable'
+        return evidence
+    run = subprocess.run if launcher is None else launcher
     try:
-        completed = subprocess.run(argv, input=octets, capture_output=True,
-                                   cwd=str(pathlib.Path(workdir).resolve()))
-    except OSError as exc:
-        evidence['launch_failure'] = str(exc)
+        completed = run(argv, input=octets, capture_output=True,
+                        cwd=str(pathlib.Path(workdir).resolve()))
+    except Exception as exc:
+        evidence['launch_failure'] = f'{type(exc).__name__}: {exc}'
         return evidence
     evidence['exit'] = completed.returncode
     evidence['stdout_sha256'] = digest_bytes(completed.stdout)
@@ -453,7 +481,7 @@ def case_octets(case):
     return octets
 
 
-def run_case(case, entries, workdir, expressions_dir, report):
+def run_case(case, entries, workdir, expressions_dir, report, launcher=None):
     name = case.get('name')
     if not isinstance(name, str) or not name:
         raise Blocker('a case has no name')
@@ -468,22 +496,27 @@ def run_case(case, entries, workdir, expressions_dir, report):
     validate_fact(expected['fields'], f'case {name} expected fields')
 
     outcome = {'case': name, 'octets_sha256': case['octets_sha256'], 'roles': {}, 'differences': []}
+    report['cases'].append(outcome)
     parsed = {}
+    failures = []
     for role in ROLES:
-        evidence = invoke(entries[role], octets, workdir, expressions_dir)
+        try:
+            evidence = invoke(entries[role], octets, workdir, expressions_dir, launcher)
+        except Exception as exc:
+            evidence = {'argv': entries[role].get('argv'),
+                        'construction_failure': f'{type(exc).__name__}: {exc}'}
+        outcome['roles'][role] = evidence
         try:
             facts = parse_result(evidence, role)
             evidence['facts'] = facts
             parsed[role] = facts
-        except Blocker as exc:
-            evidence['failure'] = str(exc)
-        outcome['roles'][role] = evidence
-    report['cases'].append(outcome)
+        except Exception as exc:
+            evidence['failure'] = f'{type(exc).__name__}: {exc}'
+            failures.append(f'{role}: {evidence["failure"]}')
 
-    missing = [f'{role}: {outcome["roles"][role].get("failure")}' for role in ROLES
-               if role not in parsed]
-    if missing:
-        report['inconclusive'].append({'case': name, 'reason': '; '.join(missing)})
+    if len(parsed) != len(ROLES):
+        outcome['inconclusive'] = '; '.join(failures)
+        report['inconclusive'].append({'case': name, 'reason': outcome['inconclusive']})
         return
     differences = compare(case, parsed['candidate'], parsed['oracle'])
     outcome['differences'] = differences
@@ -504,7 +537,9 @@ def load_manifest(options):
     except UnicodeDecodeError as exc:
         raise Blocker(f'manifest is not valid UTF-8: {exc}')
     manifest = strict_json(text, 'manifest')
-    if not isinstance(manifest, dict) or manifest.get('schema') != SCHEMA:
+    if not isinstance(manifest, dict):
+        raise Blocker(f'the manifest is not an object: {type(manifest).__name__}')
+    if manifest.get('schema') != SCHEMA:
         raise Blocker(f'unknown manifest schema: {manifest.get("schema")!r}')
     cases = manifest.get('cases')
     if not isinstance(cases, list) or not cases:
@@ -614,6 +649,65 @@ def self_check():
     if not base_ok:
         report['mismatches'].append({'case': 'path-base-distinguishes-directories',
                                      'differences': ['the declared base must decide the resolved path']})
+    class _Completed(object):
+        def __init__(self, stdout):
+            self.returncode = 0
+            self.stdout = stdout.encode('utf-8')
+            self.stderr = b''
+
+    def _fault_after_first(argv, input=None, capture_output=True, cwd=None):
+        if any(PLACEHOLDER in argument for argument in argv):
+            raise ValueError('embedded null byte')
+        return _Completed('{"disposition": "accepted", "fields": {"n": {"lexeme": "1"}}}')
+
+    retention_case = {
+        'name': 'retention', 'octets_hex': '', 'octets_sha256': EMPTY_OCTETS_SHA256,
+        'expected': {'disposition': 'accepted', 'fields': {'n': {'lexeme': '1'}}},
+    }
+    retention_entries = {
+        'candidate': {'argv': ['/candidate/bridge', '--protocol'],
+                      'executable': '/candidate/bridge', 'protocol': 'json-lines'},
+        'oracle': {'argv': ['/oracle/bridge', PLACEHOLDER + '/frame_kind.sql'],
+                   'executable': '/oracle/bridge', 'protocol': 'json-lines'},
+    }
+    retention_report = {'cases': [], 'mismatches': [], 'inconclusive': []}
+    run_case(retention_case, retention_entries, '/work/base', '/work/base/expressions',
+             retention_report, _fault_after_first)
+    observed = retention_report['cases'][0] if retention_report['cases'] else {}
+    roles = observed.get('roles', {})
+    retention_ok = (len(retention_report['cases']) == 1
+                    and observed.get('case') == 'retention'
+                    and set(roles) == set(ROLES)
+                    and bool(roles.get('candidate', {}).get('facts'))
+                    and 'launch_failure' in roles.get('oracle', {})
+                    and len(retention_report['inconclusive']) == 1
+                    and not retention_report['mismatches'])
+    report['self_check'].append({'control': 'second-role-fault-retains-both-roles',
+                                 'outcome': 'accepted' if retention_ok else 'rejected',
+                                 'roles': sorted(roles)})
+    if not retention_ok:
+        report['mismatches'].append({'case': 'second-role-fault-retains-both-roles',
+                                     'differences': ['the case and both role records must survive']})
+
+    placeholder_bridge = {'path': '/w/' + PLACEHOLDER + '/bridge'}
+    placeholder_manifest = {'invocation': {'oracle': {
+        'executable': '/w/' + PLACEHOLDER + '/bridge',
+        'argv': ['/w/' + PLACEHOLDER + '/bridge', PLACEHOLDER],
+        'protocol': 'json-lines'}}}
+    head = launch_argv({'argv': ['/w/' + PLACEHOLDER + '/bridge', PLACEHOLDER]}, '/w/expressions')[0]
+    try:
+        invocation(placeholder_manifest, 'oracle', placeholder_bridge, '/w')
+        head_ok = False
+        reason = 'the reserved placeholder in an executable path was accepted'
+    except Blocker as exc:
+        head_ok = head == '/w/' + PLACEHOLDER + '/bridge'
+        reason = str(exc)
+    report['self_check'].append({'control': 'placeholder-in-executable-head',
+                                 'outcome': 'accepted' if head_ok else 'rejected',
+                                 'head': head, 'reason': reason})
+    if not head_ok:
+        report['mismatches'].append({'case': 'placeholder-in-executable-head',
+                                     'differences': ['the verified head must stay unchanged or be refused']})
     for name, text in SELF_CHECK_REJECTIONS:
         rejected = False
         reason = ''
