@@ -226,6 +226,14 @@ def resolve(doc: V.Doc, pointer: String) -> Found:
         ptr_walk(rest, doc, SNil{}),
         FBad{"not-rfc6901-pointer"})
 
+# The report text of one resolution: the pointer it reached, the pointer that
+# selected nothing, or the refusal condition.
+def found_text(f: Found) -> String:
+  match f:
+    case FOk{doc, pointer}: "ok:" ++ pointer ++ ":" ++ V.doc_text(doc)
+    case FMissing{pointer}: "missing:" ++ pointer
+    case FBad{condition}: "bad:" ++ condition
+
 # --- structure ---------------------------------------------------------------
 
 def member_kids(members: V.Doc, pointer: String, acc: Work) -> Work:
