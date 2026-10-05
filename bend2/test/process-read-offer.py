@@ -62,6 +62,9 @@ def main():
         ('forget-source-fault',
          'if (reader->fault) return reader->fault;', '(void)reader->fault;',
          b'failed: br_read_offer_ready(&reader, 5, 0, &kind, &retry) == ENOENT'),
+        ('forget-pending-contradiction',
+         'reader->fault = EINVAL;', '(void)reader->fault;',
+         b'failed: reader.fault == EINVAL'),
     ]
     for name, find, replace, expected in variants:
         directory = destination / name

@@ -10,6 +10,29 @@
   fprintf(stderr, "setup failed: %s (errno %d)\n", #condition, errno); return 2; \
 } } while (0)
 
+static int pending_contradiction(int directory, int writer, int unseal) {
+  BrOfferedReader reader;
+  BrFrameOffer first, retry;
+  BrReadFrame taken;
+  int kind = -1;
+  REQUIRE(br_read_offer_init(&reader, directory, writer, "stdout", 0) == 0);
+  EXPECT(br_read_offer_ready(&reader, 5, unseal, &kind, &first) == 0);
+  EXPECT(kind == BR_BUFFER_FRAME && first.length == 4);
+  EXPECT(br_read_offer_ready(&reader, unseal ? 5 : 4, 0, &kind, &retry) == EINVAL);
+  EXPECT(reader.fault == EINVAL);
+  EXPECT(!retry.bytes && reader.offered && reader.pending.bytes == first.bytes);
+  EXPECT(reader.source.buffer.observed_end == 5 && reader.source.buffer.sealed == unseal);
+  /* A later consistent observation cannot erase the contradiction. */
+  EXPECT(br_read_offer_ready(&reader, 5, unseal, &kind, &retry) == EINVAL);
+  EXPECT(!retry.bytes && reader.source.buffer.scan == 4);
+  EXPECT(br_read_offer_dispose(&reader) == EBUSY);
+  EXPECT(br_read_offer_take(&reader, first.serial, &taken) == 0);
+  EXPECT(taken.bytes == first.bytes && taken.length == 4 && reader.fault == EINVAL);
+  free(taken.bytes);
+  EXPECT(br_read_offer_dispose(&reader) == 0);
+  return 0;
+}
+
 int main(int argc, char **argv) {
   if (argc != 2) return 2;
   int directory = open(argv[1], O_RDONLY | O_DIRECTORY | O_CLOEXEC);
@@ -54,8 +77,6 @@ int main(int argc, char **argv) {
   EXPECT(kind == BR_BUFFER_FRAME && first.length == 4);
   EXPECT(br_read_offer_ready(&reader, 5, 1, &kind, &retry) == 0);
   EXPECT(retry.serial == first.serial && retry.bytes == first.bytes);
-  EXPECT(br_read_offer_ready(&reader, 5, 0, &kind, &retry) == EINVAL);
-  EXPECT(!retry.bytes && reader.offered && reader.source.buffer.sealed);
   EXPECT(br_read_offer_take(&reader, first.serial, &taken) == 0);
   EXPECT(taken.bytes == first.bytes && taken.length == 4 && taken.start == 0 && taken.next == 4);
   EXPECT(!reader.offered && !reader.pending.bytes);
@@ -75,6 +96,11 @@ int main(int argc, char **argv) {
   EXPECT(br_read_offer_dispose(&reader) == 0);
   EXPECT(br_read_offer_ready(&reader, 5, 1, &kind, &retry) == EBADF);
   EXPECT(br_read_offer_dispose(&reader) == 0);
+
+  int result = pending_contradiction(directory, writer, 0);
+  if (result) return result;
+  result = pending_contradiction(directory, writer, 1);
+  if (result) return result;
 
   /* Serial exhaustion refuses before consuming bytes or creating serial zero. */
   REQUIRE(br_read_offer_init(&reader, directory, writer, "stdout", 0) == 0);

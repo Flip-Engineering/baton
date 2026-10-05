@@ -28,6 +28,9 @@ static inline int br_read_offer_init(BrOfferedReader *reader, int directory,
   return br_read_source_init(&reader->source, directory, spool, name, cursor);
 }
 
+/* End and sealed are qualified current observations. The outer wrapper rejects
+   stale event revisions before this call. A contradiction here retains a fault
+   whether a frame is pending or the next core read has not yet offered one. */
 static inline int br_read_offer_ready(BrOfferedReader *reader, uint64_t end,
                                      int sealed, int *kind, BrFrameOffer *offer) {
   memset(offer, 0, sizeof(*offer));
@@ -37,7 +40,10 @@ static inline int br_read_offer_ready(BrOfferedReader *reader, uint64_t end,
   if (reader->offered) {
     BrReadBuffer *buffer = &reader->source.buffer;
     if (end < buffer->observed_end ||
-        (buffer->sealed && (!sealed || end != buffer->observed_end))) return EINVAL;
+        (buffer->sealed && (!sealed || end != buffer->observed_end))) {
+      reader->fault = EINVAL;
+      return EINVAL;
+    }
     /* Record new extent/finality evidence without reading the next frame. */
     buffer->observed_end = end;
     buffer->sealed = sealed != 0;
