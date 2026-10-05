@@ -221,6 +221,69 @@ class NativeProjection(unittest.TestCase):
         self.assertEqual(failure['status'], 'registrationFailed')
         self.assertEqual(self.f.scalar('SELECT count(*) FROM ensembles'), 0)
 
+    def test_nested_workspace_creation_and_exact_retry_through_mcp(self):
+        args = self.recruit('nested-workspace')
+        path = self.f.root / 'missing parent' / 'nested' / "child's λ"
+        args['workspace'] = str(path)
+        self.assertFalse(path.parent.exists())
+        result = self.call('baton2_recruit', args)
+        self.assertFalse(result.get('isError'), result)
+        created = json.loads(result['content'][0]['text'])
+        self.assertEqual(created['status'], 'configured')
+        self.assertEqual(created['workspace']['disposition'], 'created')
+        self.assertEqual(created['workspace']['path'], str(path))
+        self.assertEqual(created['workspace']['observed']['root'], str(path.resolve()))
+        self.assertEqual(created['workspace']['observed']['canonicalPath'], str(path.resolve()))
+        before = self.f.rows('SELECT * FROM sessions ORDER BY id')
+        retry = self.same('baton2_recruit', args, self.argv(args))
+        self.assertEqual(retry['workspace']['disposition'], 'unchanged')
+        self.assertEqual(self.f.rows('SELECT * FROM sessions ORDER BY id'), before)
+        self.assertEqual(fixtures.git(path, 'rev-parse', 'HEAD'), self.f.base)
+
+    def test_enclosing_root_refusal_preserves_native_result_and_assignment(self):
+        args = self.recruit('replaced-workspace')
+        path = self.f.repo / 'child'
+        args['workspace'] = str(path)
+        result = self.call('baton2_recruit', args)
+        self.assertFalse(result.get('isError'), result)
+        fixtures.git(self.f.repo, 'worktree', 'remove', str(path))
+        fixtures.git(self.f.repo, 'checkout', '-q', args['branch'])
+        path.mkdir()
+        marker = path / 'preserve'
+        marker.write_bytes(b'\x00owned directory')
+        before = self.f.rows('SELECT * FROM sessions ORDER BY id')
+        refs = fixtures.git(self.f.repo, 'show-ref')
+        failure = self.same('baton2_recruit', args, self.argv(args))
+        self.assertEqual(failure['status'], 'registrationRefused')
+        self.assertEqual(failure['workspace']['path'], str(path))
+        self.assertEqual(failure['workspace']['observed']['root'], str(self.f.repo.resolve()))
+        self.assertEqual(failure['workspace']['observed']['canonicalPath'], str(path.resolve()))
+        self.assertEqual(failure['next'], [['worktree', args['player']]])
+        self.assertEqual(self.f.rows('SELECT * FROM sessions ORDER BY id'), before)
+        self.assertEqual(fixtures.git(self.f.repo, 'show-ref'), refs)
+        self.assertEqual(marker.read_bytes(), b'\x00owned directory')
+
+    def test_canonical_alias_dirty_retry_preserves_recorded_path_and_bytes(self):
+        alias = self.f.root / 'alias'
+        alias.symlink_to(self.f.root, target_is_directory=True)
+        args = self.recruit('alias-workspace')
+        path = alias / 'child'
+        args['workspace'] = str(path)
+        result = self.call('baton2_recruit', args)
+        self.assertFalse(result.get('isError'), result)
+        (path / 'seed.txt').write_text('dirty\n')
+        (path / 'untracked').write_bytes(b'\x00preserved')
+        before = self.f.rows('SELECT * FROM sessions ORDER BY id')
+        retry = self.same('baton2_recruit', args, self.argv(args))
+        self.assertEqual(retry['workspace']['disposition'], 'unchanged')
+        self.assertEqual(retry['workspace']['path'], str(path))
+        self.assertEqual(retry['workspace']['observed']['root'], str(path.resolve()))
+        self.assertEqual(retry['workspace']['observed']['canonicalPath'], str(path.resolve()))
+        self.assertTrue(retry['workspace']['observed']['dirty'])
+        self.assertEqual(self.f.rows('SELECT * FROM sessions ORDER BY id'), before)
+        self.assertEqual((path / 'seed.txt').read_text(), 'dirty\n')
+        self.assertEqual((path / 'untracked').read_bytes(), b'\x00preserved')
+
 
 if __name__ == '__main__':
     unittest.main()

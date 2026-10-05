@@ -131,6 +131,13 @@ for (const { law, file } of rows) {
 // it claims to bind, and it is reported as a failure.
 const MUTATIONS = [
   {
+    name: 'structural-inspection-accepts-enclosing-worktree',
+    file: 'bend2/src/coordinator/structural.bend',
+    find: 'Bool.and(String.eq(root,path),Bool.and(String.eq(expected_repo,repo),String.eq(assignment_branch(assignment),actual_branch)))',
+    replace: 'Bool.and(String.eq(expected_repo,repo),String.eq(assignment_branch(assignment),actual_branch))',
+    law: 'inspected_requires_the_actual_worktree_root',
+  },
+  {
     name: 'ordinary-role-only-recruit-shadowed-by-recovery-arity',
     file: 'bend2/src/coordinator/main.bend',
     find: 'case False{}: normal_cli([flag,db,session,id,cursor,cmd,model,effort,cwd,log,harness,directory,native])',
