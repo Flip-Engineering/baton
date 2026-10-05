@@ -105,6 +105,35 @@ line semantics, partial-line retention, final unterminated frame before EOF,
 and version-bound register/recheck without losing a ready event. Waiting must
 preserve the entire consume state. These remain owner implementation seams.
 
+## Successor e1d source review
+
+Reviewed the complete three-file delta from 370 to immutable
+`e1d85f8766466e828f9047025865366e8d9a6f15`. Independently matched its supplied
+module, fixture and runner SHA-256 values. Executable routing and wake
+functions remain unchanged.
+
+The added `mismatched_output_preserves_entire_frame` law quantifies stream,
+cursor and bytes under the other-owner mismatch. This covers the proposed
+false-branch stream rewrite. The revised nonempty wake law quantifies Char
+head and String tail through `SCon`; it covers arbitrary nonempty identifiers
+and the proposed constant substitution. Those are appropriate source changes
+for the two reported gaps. They remain uncompiled under the remote-only
+boundary, so this review does not close the gaps by execution.
+
+The fixture now exposes stream identity, exercises stderr for each correlation
+mismatch and prints literal wake results. The runner installs the exact two
+critic-proposed mutations, checks the intended law locations and decision
+constructors, and refuses to reuse its output directory. Its new optional
+qualification matcher for Base.Some must be measured against the admitted
+compiler diagnostic. Source inspection supplies no Linux diagnostic result.
+
+The historical 3a counterexample fixture remains pinned and unexecuted.
+The successor should receive its own root-admitted execution after preserving
+any already-owned 370 run. No duplicate validation request or remote launch
+was made by this review. The unchanged retained-read/host agreements were not
+re-reviewed. Full transport, task lifetime and parent delivery qualification
+remain outside this source correction.
+
 ## Remote validation request
 
 The new review files are
