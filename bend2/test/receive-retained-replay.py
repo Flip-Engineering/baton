@@ -106,9 +106,15 @@ class ReplayBase(RECEIVE.Receive):
                 found.append(frame)
         return found
 
-    def original_spool_bytes(self, binding):
-        """The bound attempt's own raw stdout spool, read as bytes."""
-        return (binding[1] / 'stdout').read_bytes()
+    def spool_terminals(self, binding):
+        """The bound attempt's own stdout spool, decoded strictly and parsed."""
+        text = (binding[1] / 'stdout').read_bytes().decode('utf-8')
+        found = []
+        for line in text.splitlines():
+            frame = json.loads(line)
+            if frame.get('type') == 'agent_end' and frame.get('messages'):
+                found.append(frame)
+        return found
 
     def reports(self):
         """Every report body the native session delivered to the root."""
@@ -476,9 +482,11 @@ class ControlledFrames(ReplayBase):
         self.assertTrue(public, 'the terminal frame was not retained in the public log')
         self.assertEqual(public[-1]['messages'][-1], 'elided')
         self.assertIn('403 earlier failure', json.dumps(public[-1]))
-        spool = self.original_spool_bytes(self.original_attempt)
-        self.assertIn(b'response-e0', spool)
-        self.assertIn(b'elided', spool)
+        spool = self.spool_terminals(self.original_attempt)
+        self.assertEqual(spool, public,
+                         'the raw spool terminal is not the public log terminal')
+        self.assertEqual(spool[-1]['messages'][-1], 'elided')
+        self.assertIn('403 earlier failure', json.dumps(spool[-1]))
 
     def test_two_missing_identities_cannot_establish_the_current_error(self):
         """With no response identity on either side, the result is the unavailable frame."""

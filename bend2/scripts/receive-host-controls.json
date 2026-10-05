@@ -38,6 +38,14 @@
       "replace": "          consume(db,player,id,log,handle,harness,next_cursor,message,\"\",ended,next_filter,codex_state,",
       "targets": ["ControlledFrames.test_an_elided_terminal_repeating_an_older_error_reports_the_later_completion"],
       "why": "The activity state is dropped on every recursion, so the multi-frame sequence loses the assistant activity it accumulated and the normalizer cannot establish which completion the stream reached last."
+    },
+    {
+      "name": "consume-propagates-the-previous-activity",
+      "file": "bend2/src/coordinator/turn.bend",
+      "find": "          consume(db,player,id,log,handle,harness,next_cursor,message,activity,ended,next_filter,codex_state,",
+      "replace": "          consume(db,player,id,log,handle,harness,next_cursor,message,last_activity,ended,next_filter,codex_state,",
+      "targets": ["ControlledFrames.test_an_observed_later_failure_is_reported_over_an_older_observed_error"],
+      "why": "The recursion forwards the state carried into the current frame instead of the state this frame produced, so the terminal frame sees the activity as of the frame before the later completion and keeps its own earlier error rather than the completion the stream reached last. When the first assistant frame is also the only assistant activity, the forwarded state can remain initially empty throughout, in which case the predicted mismatch is the unavailable frame instead of the earlier error. This control shares its target text with the empty-activity control and is distinguished only by its replacement."
     }
   ],
   "remote_recipe": [
