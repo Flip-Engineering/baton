@@ -46,11 +46,13 @@ type CompanionStep is Data:
   StepContinue{}
   StepSettled{}
   StepMissing{answer: String}
+  StepUnreadable{answer: String}
   StepFailed{code: U32, message: String}
 
 def intent_step(answer: String) -> CompanionStep:
   Bool.pick(CompanionStep, intent_owed(answer), StepContinue{},
-  Bool.pick(CompanionStep, intent_settled(answer), StepSettled{}, StepMissing{answer}))
+  Bool.pick(CompanionStep, intent_settled(answer), StepSettled{},
+  Bool.pick(CompanionStep, intent_missing(answer), StepMissing{answer}, StepUnreadable{answer})))
 
 # One reading: the bound intent answer, then the caller's duty probe while the
 # recorded duties are settled but the role may still be live.
@@ -59,8 +61,9 @@ def companion_answer(+db: String, +binding: String, +query: String, +role: Strin
     case StepContinue{}: IO.pure(CompanionStep, StepContinue{})
     case StepSettled{}: do IO<CompanionStep>:
       live : Bool <- duty(Unit{})
-      Bool.pick(CompanionStep, live, StepContinue{}, StepSettled{})
+      IO.pure(CompanionStep, Bool.pick(CompanionStep, live, StepContinue{}, StepSettled{}))
     case StepMissing{answer}: IO.pure(CompanionStep, StepMissing{answer})
+    case StepUnreadable{answer}: IO.pure(CompanionStep, StepUnreadable{answer})
     case StepFailed{code, message}: IO.pure(CompanionStep, StepFailed{code, message})
 
 # The companion: one reading, then one second of waiting and the continuation while
@@ -82,6 +85,7 @@ def reconcile_step(+db: String, +binding: String, +query: String, +role: String,
       again(Unit{})
     case StepSettled{}: IO.pure(CompanionStep, StepSettled{})
     case StepMissing{answer}: IO.pure(CompanionStep, StepMissing{answer})
+    case StepUnreadable{answer}: IO.pure(CompanionStep, StepUnreadable{answer})
     case StepFailed{code, message}: IO.pure(CompanionStep, StepFailed{code, message})
 
 # The role observer starts exactly one in-process companion and keeps its own handle

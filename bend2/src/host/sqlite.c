@@ -6,7 +6,7 @@
 typedef struct {
   char *path, *sql, *output, *error;
   size_t length;
-  int code;
+  int code, mode;
 } BatonSql;
 
 static int baton_sql_row(void *context, int count, char **values, char **columns) {
@@ -616,14 +616,26 @@ static int baton_sql_utf8_ok(const unsigned char *text, size_t length) {
   return 1;
 }
 
-typedef struct {
-  char *path, *sql, *output, *error;
-  size_t length;
-  int code;
-} BatonSqlRead;
+/* The read-only call shares BatonSql and the existing row callback and pack
+   function, so no second structure layout can diverge from the callback's cast. */
+static int baton_sql_encoding_ok(sqlite3 *db, char **error) {
+  sqlite3_stmt *statement = NULL;
+  if (sqlite3_prepare_v2(db, "PRAGMA encoding;", -1, &statement, NULL) != SQLITE_OK) {
+    *error = strdup(sqlite3_errmsg(db));
+    return 0;
+  }
+  int ok = 0;
+  if (sqlite3_step(statement) == SQLITE_ROW) {
+    const unsigned char *value = sqlite3_column_text(statement, 0);
+    ok = value && sqlite3_stricmp((const char *)value, "UTF-8") == 0;
+  }
+  if (!ok && !*error) *error = strdup("database encoding is not UTF-8");
+  sqlite3_finalize(statement);
+  return ok;
+}
 
 static void baton_sql_read_call(IoWork *w) {
-  BatonSqlRead *call = (BatonSqlRead *)w->data;
+  BatonSql *call = (BatonSql *)w->data;
   sqlite3 *db = NULL;
   call->code = sqlite3_open_v2(call->path, &db, SQLITE_OPEN_READONLY, NULL);
   if (call->code != SQLITE_OK) {
@@ -631,9 +643,11 @@ static void baton_sql_read_call(IoWork *w) {
   } else {
     sqlite3_busy_handler(db, baton_sql_busy, NULL);
     char *error = NULL;
-    /* A read-only connection runs no write pragma; foreign keys are a read-side
-       setting and stay on. */
+    /* A read-only connection runs no write pragma. Foreign keys are a read-side
+       setting; the opened database's encoding is admitted before any caller SQL
+       because compact projections measure bytes with CAST(text AS BLOB). */
     call->code = sqlite3_exec(db, "PRAGMA foreign_keys=ON;", NULL, NULL, &error);
+    if (call->code == SQLITE_OK && !baton_sql_encoding_ok(db, &error)) call->code = SQLITE_ERROR;
     if (call->code == SQLITE_OK)
       call->code = sqlite3_exec(db, call->sql, baton_sql_row, call, &error);
     if (call->code != SQLITE_OK) {
@@ -645,20 +659,11 @@ static void baton_sql_read_call(IoWork *w) {
   if (db) sqlite3_close(db);
 }
 
-static Term baton_sql_read_pack(Env e, IoWork *w) {
-  BatonSqlRead *call = (BatonSqlRead *)w->data;
-  Term result = call->code == SQLITE_OK
-    ? io_done(e, io_str(e, call->output ? call->output : "", call->length))
-    : io_fail(e, call->code, call->error ? call->error : "SQLite read failed");
-  free(call->path); free(call->sql); free(call->output); free(call->error); free(call);
-  w->data = NULL;
-  return result;
-}
-
 #ifdef CID_SQL_READ
 static Term baton_sql_read_run(Env e, Term *f, IoWork *w) {
-  BatonSqlRead *call = calloc(1, sizeof(*call));
+  BatonSql *call = calloc(1, sizeof(*call));
   if (!call) return io_fail(e, ENOMEM, NULL);
+  call->mode = 1;
   u64 path_n = 0, sql_n = 0;
   call->path = io_cstr(e, f[0], &path_n);
   call->sql = io_cstr(e, f[1], &sql_n);
@@ -672,7 +677,7 @@ static Term baton_sql_read_run(Env e, Term *f, IoWork *w) {
     return io_fail(e, EINVAL, "database path or SQL is not valid UTF-8");
   }
   w->data = (char *)call;
-  return io_work(w, baton_sql_read_call, baton_sql_read_pack);
+  return io_work(w, baton_sql_read_call, baton_sql_pack);
 }
 static void __attribute__((constructor)) baton_sql_read_use(void) {
   io_eff(CID_SQL_READ, baton_sql_read_run, 0);
