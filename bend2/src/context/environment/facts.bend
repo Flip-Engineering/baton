@@ -13,6 +13,7 @@
 # projections; allowlist.bend states the grammars.
 
 import Base
+import ../../json/canonical.bend as J
 import ./allowlist.bend as A
 import ./tsconfig.bend as TS
 
@@ -137,3 +138,7 @@ def field_spec(field: String) -> A.Spec:
 # The decision for one field and one candidate value.
 def field_admission(field: String, value: J.Json) -> A.Admission:
   A.admit_value(field_spec(field), value)
+
+# The decision for one field and one candidate string value.
+def field_text_admission(field: String, text: String) -> A.Admission:
+  A.admit_value(field_spec(field), J.Jstr{text})

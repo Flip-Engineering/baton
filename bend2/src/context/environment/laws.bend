@@ -366,11 +366,29 @@ def request_override_naming_the_deployment_path_refuses_without_the_grant():
 law request_override_with_the_grant_plans_the_version_probe:
   {T.plan_probe(T.RequestOverride{"node", "/opt/providers/node", True{}}) == T.PReady{P.argv(["/opt/providers/node", "--version"]), "/opt/providers/node", "toolsProbe", True{}} : T.ProbePlan}
 
+law a_deployment_probe_reports_no_request_local_operation:
+  {T.plan_request_local(T.plan_probe(T.DeploymentTool{"node", "/opt/providers/node"})) == False{} : Bool}
+
+def a_deployment_probe_reports_no_request_local_operation():
+  {==}
+
+law a_request_override_reports_the_request_local_operation:
+  {T.plan_operation(T.plan_probe(T.RequestOverride{"node", "/opt/providers/node", True{}})) == "toolsProbe" : String}
+
+def a_request_override_reports_the_request_local_operation():
+  {==}
+
+law a_refused_override_names_its_condition:
+  {T.plan_condition(T.plan_probe(T.RequestOverride{"node", "/opt/providers/node", False{}})) == "request-local-tool-override-requires-executeTarget" : String}
+
+def a_refused_override_names_its_condition():
+  {==}
+
 def request_override_with_the_grant_plans_the_version_probe():
   {==}
 
 law deployment_tool_plans_the_version_probe:
-  {T.plan_probe(T.DeploymentTool{"node", "/opt/providers/node"}) == T.PReady{P.argv(["/opt/providers/node", "--version"]), "/opt/providers/node", "toolsProbe", False{}} : T.ProbePlan}
+  {T.plan_probe(T.DeploymentTool{"node", "/opt/providers/node"}) == T.PReady{P.argv(["/opt/providers/node", "--version"]), "/opt/providers/node", "deploymentToolProbe", False{}} : T.ProbePlan}
 
 def deployment_tool_plans_the_version_probe():
   {==}

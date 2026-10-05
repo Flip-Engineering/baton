@@ -33,7 +33,7 @@ def null_doc() -> V.Doc:
 def empty_array_doc() -> V.Doc:
   V.VArr{V.VEnd{}}
 
-def empty_object_doc() -> V.VObj:
+def empty_object_doc() -> V.Doc:
   V.VObj{V.VEnd{}}
 
 # --- pointer resolution ------------------------------------------------------

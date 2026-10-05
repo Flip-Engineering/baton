@@ -62,11 +62,34 @@ def probe_env_names() -> A.Names:
 def plan_probe(request: ToolRequest) -> ProbePlan:
   match request:
     case DeploymentTool{name, executable}:
-      PReady{probe_argv(executable), executable, "toolsProbe", False{}}
+      PReady{probe_argv(executable), executable, "deploymentToolProbe", False{}}
     case RequestOverride{name, executable, executeTarget}:
       Bool.pick(ProbePlan, executeTarget,
         PReady{probe_argv(executable), executable, "toolsProbe", True{}},
         PRefused{"request-local-tool-override-requires-executeTarget"})
+
+# The selected operation label of one plan. A deployment probe reports
+# deploymentToolProbe; a request-local override reports toolsProbe and carries
+# requestLocal true, because that operation requires executeTarget.
+def plan_operation(plan: ProbePlan) -> String:
+  match plan:
+    case PReady{argv, executable, operation, requestLocal}: operation
+    case PRefused{condition}: "refused"
+
+def plan_request_local(plan: ProbePlan) -> Bool:
+  match plan:
+    case PReady{argv, executable, operation, requestLocal}: requestLocal
+    case PRefused{condition}: False{}
+
+def plan_argv(plan: ProbePlan) -> String:
+  match plan:
+    case PReady{argv, executable, operation, requestLocal}: argv
+    case PRefused{condition}: SNil{}
+
+def plan_condition(plan: ProbePlan) -> String:
+  match plan:
+    case PReady{argv, executable, operation, requestLocal}: SNil{}
+    case PRefused{condition}: condition
 
 def is_sep(c: Char) -> Bool:
   +code = Char.to_u32(c)
@@ -82,7 +105,7 @@ def first_version(s: String, +acc: String) -> String:
   match s:
     case SNil{}: Bool.pick(String, A.version_token(acc), acc, SNil{})
     case SCon{+c, +rest}:
-      Bool.pick(Bool, is_sep(c),
+      Bool.pick(String, is_sep(c),
         on_sep(acc, rest),
         first_version(rest, acc ++ SCon{c, SNil{}}))
 
