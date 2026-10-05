@@ -519,6 +519,7 @@ def run_context_gate(payload, logs, node, name, extra_env=None):
     spawn_stage = 'completed'
     spawn_error = None
     interrupted = None
+    close_interrupt = None
     outcome = None
     cleanup_evidence = None
     if stream_errors:
@@ -576,11 +577,15 @@ def run_context_gate(payload, logs, node, name, extra_env=None):
             try:
                 handle.close()
             except BaseException as error:
-                # Any close failure is retained as evidence. On an interrupt
-                # path the close failure is recorded without replacing the
-                # original interruption that is re-raised after the receipt
-                # write; close handling is therefore coherent for every
-                # exception type, not only OSError.
+                # Every close failure is retained as evidence. A fresh
+                # KeyboardInterrupt/SystemExit while no interruption exists
+                # becomes the first interruption and is re-raised after the
+                # receipt write; a close failure after an existing
+                # interruption is recorded without replacing that original
+                # object, and the remaining handle is still closed.
+                if (close_interrupt is None and interrupted is None
+                        and isinstance(error, (KeyboardInterrupt, SystemExit))):
+                    close_interrupt = error
                 evidence_errors.append('stream close failed: ' + repr(error))
     secondary_error = None
     if interrupted is None:
@@ -663,6 +668,10 @@ def run_context_gate(payload, logs, node, name, extra_env=None):
         # The completed receipt retains the evidence; interruption semantics
         # are preserved instead of converting the interrupt into a refusal.
         raise interrupted
+    if close_interrupt is not None:
+        # A fresh interruption during close becomes the first interruption;
+        # the completed receipt retains all recorded evidence.
+        raise close_interrupt
     require(spawn_stage == 'completed',
             'The context gate child did not complete (stage ' + spawn_stage + '): '
             + str(receipt_path))
