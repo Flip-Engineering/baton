@@ -1582,26 +1582,55 @@ class PackageGateReceipt(unittest.TestCase):
         self.assertEqual(absent.exception.fields['boundary'], 'stdout-stream')
         self.assertEqual(absent.exception.fields['case'], expected_ids[0])
 
-        # A response whose verifier omits a member refuses at the verifier boundary,
-        # with the terminal record kept consistent with the bytes on disk so the
-        # stream check passes first.
-        malformed = self.home / 'malformed-audit'
-        shutil.copytree(audit, malformed)
-        response_path = malformed / (stem + '.stdout')
-        payload = json.loads(response_path.read_bytes().decode('utf-8'))
-        payload['verifier'] = {key: value for key, value in payload['verifier'].items()
-                               if key != 'classify_module_sha256'}
-        data = (json.dumps(payload) + '\n').encode()
-        response_path.write_bytes(data)
-        terminal_path = malformed / (stem + '.acquisition.json')
-        terminal = json.loads(terminal_path.read_text())
-        terminal['stdout_bytes'] = len(data)
-        terminal['stdout_sha256'] = hashlib.sha256(data).hexdigest()
-        terminal_path.write_text(json.dumps(terminal))
+        # A response whose verifier omits a member refuses at the verifier boundary.
+        # The rewritten bytes are bound to a revised terminal record and to a verdict
+        # copy that agrees with it, so the stream and terminal checks pass and the one
+        # defect under test is the absent member. The positive objects stay unchanged.
+        def rewritten_response(mutate, name):
+            directory = self.home / name
+            shutil.copytree(audit, directory)
+            response = directory / (stem + '.stdout')
+            payload = json.loads(response.read_bytes().decode('utf-8'))
+            mutate(payload)
+            data = (json.dumps(payload) + '\n').encode()
+            response.write_bytes(data)
+            recorded = json.loads((directory / (stem + '.acquisition.json')).read_text())
+            recorded['stdout_bytes'] = len(data)
+            recorded['stdout_sha256'] = hashlib.sha256(data).hexdigest()
+            (directory / (stem + '.acquisition.json')).write_text(json.dumps(recorded))
+            isolated = {identity: dict(verdict) for identity, verdict in by_id.items()}
+            isolated[expected_ids[0]]['acquisition'] = recorded
+            return directory, isolated
+
+        def without_member(payload):
+            payload['verifier'] = {key: value for key, value in payload['verifier'].items()
+                                   if key != 'classify_module_sha256'}
+
+        absent_member, absent_ids = rewritten_response(without_member, 'absent-member-audit')
         with self.assertRaises(recipe.StageFailure) as refused:
-            recipe.bind_case_acquisitions(malformed, expected_ids, by_id)
+            recipe.bind_case_acquisitions(absent_member, expected_ids, absent_ids)
         self.assertEqual(refused.exception.fields['boundary'], 'response-verifier')
         self.assertEqual(refused.exception.fields['case'], expected_ids[0])
+
+        # A present member with a malformed value is a different defect and refuses
+        # at the same boundary with the member contract message.
+        def malformed_member(payload):
+            payload['verifier'] = dict(payload['verifier'],
+                                       classify_module_sha256='not-a-digest')
+
+        bad_value, bad_ids = rewritten_response(malformed_member, 'malformed-member-audit')
+        with self.assertRaises(recipe.StageFailure) as malformed:
+            recipe.bind_case_acquisitions(bad_value, expected_ids, bad_ids)
+        self.assertEqual(malformed.exception.fields['boundary'], 'response-verifier')
+        self.assertEqual(malformed.exception.fields['case'], expected_ids[0])
+        self.assertIn('malformed', str(malformed.exception))
+
+        # A terminal record that disagrees with its verdict is its own boundary.
+        mismatched = {identity: dict(verdict) for identity, verdict in by_id.items()}
+        mismatched[expected_ids[0]]['acquisition'] = {'exit_code': 0}
+        with self.assertRaises(recipe.StageFailure) as terminal:
+            recipe.bind_case_acquisitions(audit, expected_ids, mismatched)
+        self.assertEqual(terminal.exception.fields['boundary'], 'terminal-equality')
 
         conflict = dict(dual)
         conflict['classifier_module_sha256'] = 'b' * 64

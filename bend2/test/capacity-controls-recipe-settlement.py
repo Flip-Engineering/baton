@@ -218,14 +218,18 @@ class RecipeSettlement(unittest.TestCase):
         original_replace = RECIPE.os.replace
         original_unlink = RECIPE.os.unlink
         replacements = []
+        captured = {}
 
         def replacing(source, destination):
-            # The attempted row is the first replacement and is written; the
-            # replacement that would settle the verified outcome is refused.
+            # The attempted row is the first replacement and is written; its bytes
+            # are captured at that boundary, and the replacement that would settle
+            # the verified outcome is refused.
             replacements.append(str(destination))
             if len(replacements) > 1:
                 raise OSError('the replacement could not be made')
-            return original_replace(source, destination)
+            value = original_replace(source, destination)
+            captured['record'] = pathlib.Path(destination).read_bytes()
+            return value
 
         def failing_unlink(path, **kwargs):
             raise OSError('the staged file could not be removed')
@@ -246,6 +250,10 @@ class RecipeSettlement(unittest.TestCase):
         self.assertEqual(raised.exception.stage_value['members'], 1)
         row = next(row for row in self.rows() if row['name'] == 'archive-extracted')
         self.assertEqual(row['outcome'], 'attempted')
+        # The record on disk is byte for byte the record written at the attempted
+        # boundary, and the staged file the failed cleanup left remains.
+        self.assertEqual((self.run / 'run.json').read_bytes(), captured['record'])
+        self.assertTrue((self.run / 'run.json.next').is_file())
 
     def test_archive_work_and_recording_failures_keep_the_primary_object(self):
         # The extraction work fails, its failure row cannot be written, and that
@@ -260,6 +268,8 @@ class RecipeSettlement(unittest.TestCase):
         control = OSError('the member bytes could not be written')
         original_extract = RECIPE.tarfile.TarFile.extract
         extracted_members = []
+
+        captured = {}
 
         def controlled_extract(archive, member, path='.', **kwargs):
             # The first member is extracted and the second raises the controlled
@@ -281,7 +291,9 @@ class RecipeSettlement(unittest.TestCase):
             replacements.append(str(destination))
             if len(replacements) > 1:
                 raise OSError('the replacement could not be made')
-            return original_replace(source, destination)
+            value = original_replace(source, destination)
+            captured['record'] = pathlib.Path(destination).read_bytes()
+            return value
 
         def failing_unlink(path, **kwargs):
             raise OSError('the staged file could not be removed')
@@ -305,14 +317,13 @@ class RecipeSettlement(unittest.TestCase):
         self.assertEqual(primary.record_error_text, repr(primary.record_error))
         self.assertFalse(hasattr(primary, 'record_error_chain'))
         self.assertTrue((target / 'bend2/manifest.json').is_file())
-        # The prior record is exactly the attempted row: the failed settlement did
-        # not replace it, and nothing else was written over it.
+        # The record on disk is byte for byte the record written at the attempted
+        # boundary, and the staged file the failed cleanup left remains.
         rows = self.rows()
         self.assertEqual([row['name'] for row in rows], ['archive-extracted'])
         self.assertEqual(rows[0]['outcome'], 'attempted')
-        self.assertEqual((self.run / 'run.json').read_bytes(),
-                         (json.dumps({'children': rows}, indent=2) + '\n').encode())
-        self.assertFalse((self.run / 'run.json.next').is_file())
+        self.assertEqual((self.run / 'run.json').read_bytes(), captured['record'])
+        self.assertTrue((self.run / 'run.json.next').is_file())
 
     def test_metadata_staging_reports_copied_and_verified_separately(self):
         # The actual metadata caller copies both documents, verifies both, and a
@@ -436,9 +447,11 @@ class RecipeSettlement(unittest.TestCase):
         broken = self.run / 'hash-metadata' / 'reduction.json'
         original_digest = RECIPE.digest
 
+        control = OSError('the metadata document could not be read')
+
         def failing_digest(path):
             if pathlib.Path(path) == broken:
-                raise OSError('the metadata document could not be read')
+                raise control
             return original_digest(path)
 
         RECIPE.digest = failing_digest
@@ -452,15 +465,16 @@ class RecipeSettlement(unittest.TestCase):
         # The original read error is the primary work exception, and the row keeps
         # the destination being verified and the documents already verified. An
         # attached accounting failure is a different observation and is not present.
-        self.assertIsInstance(raised.exception, OSError)
-        self.assertNotIsInstance(raised.exception, RuntimeError)
+        self.assertIs(raised.exception, control)
         self.assertFalse(hasattr(raised.exception, 'accounting_error'))
         row = next(row for row in self.rows() if row['name'] == 'metadata-hash-stage')
         self.assertEqual(row['outcome'], 'failed')
+        self.assertEqual(row['failure_type'], 'OSError')
         self.assertEqual(row['documents_copied'], sorted(documents))
         self.assertNotIn('copy_attempted', row)
         self.assertEqual(row['metadata_verifying'], 'reduction.json')
-        self.assertEqual(row['metadata_verified'], ['inventory.json'])
+        self.assertEqual(row['documents_verified'], ['inventory.json'])
+        self.assertNotIn('metadata_verified', row)
         self.assertNotIn('accounting_error_text', row)
         self.assertIn('could not be read', row['failure'])
 

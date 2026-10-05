@@ -250,6 +250,9 @@ def extract_archive(directory, record, retained_input, target):
         reported.setdefault('target_present', target_present)
         if getattr(error, 'accounting_error', None) is not None:
             reported.setdefault('accounting_error_text', repr(error.accounting_error))
+        # The observations the phase reached are attached to the original work
+        # object before the fallible recording, so they survive a failed write.
+        setattr(error, 'fields', reported)
         try:
             settle(directory, record, 'archive-extracted', 'failed', **reported,
                    failure=repr(error), failure_type=type(error).__name__)
