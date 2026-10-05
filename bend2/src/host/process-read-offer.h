@@ -29,7 +29,8 @@ static inline int br_read_offer_init(BrOfferedReader *reader, int directory,
 }
 
 /* End and sealed are qualified current observations. The outer wrapper rejects
-   stale event revisions before this call. A contradiction here retains a fault
+   stale event revisions within the same serialized observation/read operation.
+   A contradiction here retains a fault
    whether a frame is pending or the next core read has not yet offered one. */
 static inline int br_read_offer_ready(BrOfferedReader *reader, uint64_t end,
                                      int sealed, int *kind, BrFrameOffer *offer) {
@@ -66,7 +67,8 @@ static inline int br_read_offer_ready(BrOfferedReader *reader, uint64_t end,
   return 0;
 }
 
-/* The retained task invokes take after arranging ownership of this allocation.
+/* Output storage must be empty and unowned; even a refusal clears it.
+   The retained task invokes take after arranging ownership of this allocation.
    A conversion failure or client disconnect performs no take. Success transfers
    the complete frame to that task, which must free it after its duties end.
    Transfer does not advance a durable interpretation/effect checkpoint. A
@@ -86,11 +88,13 @@ static inline int br_read_offer_take(BrOfferedReader *reader, uint64_t serial,
 
 /* Quiescent disposal requires the registry to have retired all reader/event
    references. Pending offers must first transfer to a retained task, including
-   a task retaining cancellation or read-failure duties. */
+   a task retaining cancellation or read-failure duties. The result reports the
+   first close error, and source.cleanup retains both outcomes. Before retiring
+   storage, the owner adopts that detail into its cleanup duty. Repeated calls
+   return the retained error and perform no descriptor-number retry. */
 static inline int br_read_offer_dispose(BrOfferedReader *reader) {
   if (reader->offered) return EBUSY;
-  br_read_source_dispose(&reader->source);
-  return 0;
+  return br_read_source_dispose(&reader->source);
 }
 
 #endif

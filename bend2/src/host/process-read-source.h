@@ -5,6 +5,13 @@
 #include <sys/stat.h>
 #include "process-read-buffer.h"
 
+/* A nonzero close outcome leaves resource disposition uncertain. Each syscall
+   is attempted once; the registry retains this detail with its cleanup duty. */
+typedef struct {
+  int spool_attempted, spool_error;
+  int directory_attempted, directory_error;
+} BrReadCleanup;
+
 /* The owner supplies its already-qualified attempt directory and open spool.
    Duplicated descriptors pin those objects until disposal. The owner serializes
    access and retirement and permits only append operations on the original file.
@@ -17,15 +24,27 @@ typedef struct {
   dev_t device;
   ino_t inode;
   BrReadBuffer buffer;
+  BrReadCleanup cleanup;
 } BrReadSource;
 
-static inline void br_read_source_dispose(BrReadSource *source) {
-  if (source->spool >= 0) close(source->spool);
-  if (source->directory >= 0) close(source->directory);
+static inline int br_read_source_dispose(BrReadSource *source) {
+  if (source->spool >= 0) {
+    int descriptor = source->spool;
+    source->spool = -1;
+    source->cleanup.spool_attempted = 1;
+    if (close(descriptor)) source->cleanup.spool_error = errno;
+  }
+  if (source->directory >= 0) {
+    int descriptor = source->directory;
+    source->directory = -1;
+    source->cleanup.directory_attempted = 1;
+    if (close(descriptor)) source->cleanup.directory_error = errno;
+  }
   free(source->name);
   br_read_buffer_dispose(&source->buffer);
-  source->spool = source->directory = -1;
   source->name = NULL;
+  return source->cleanup.spool_error ? source->cleanup.spool_error
+                                     : source->cleanup.directory_error;
 }
 
 static inline int br_read_source_validate(BrReadSource *source, uint64_t end,
@@ -74,7 +93,8 @@ static inline int br_read_source_init(BrReadSource *source, int directory,
     if (source->spool < 0) error = errno;
   }
   if (!error) error = br_read_source_validate(source, cursor, 0);
-  if (error) br_read_source_dispose(source);
+  /* Keep the primary init error and retain any cleanup errors separately. */
+  if (error) (void)br_read_source_dispose(source);
   return error;
 }
 
