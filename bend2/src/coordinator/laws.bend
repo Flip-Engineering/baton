@@ -1182,6 +1182,133 @@ law omp_activity_keeps_the_latest_assistant_response:
 def omp_activity_keeps_the_latest_assistant_response(db,event,previous):
   {==}
 
+law omp_activity_enabled_is_the_harness_gate:
+  for harness: String
+  {Turn.omp_activity_enabled(harness) == String.eq(harness,"omp\n") : Bool}
+
+def omp_activity_enabled_is_the_harness_gate(harness):
+  {==}
+
+law omp_terminal_enabled_is_the_omp_relevance_gate:
+  for harness: String
+  for relevant: Bool
+  {Turn.omp_terminal_enabled(harness,relevant) == Bool.and(String.eq(harness,"omp\n"),relevant) : Bool}
+
+def omp_terminal_enabled_is_the_omp_relevance_gate(harness,relevant):
+  {==}
+
+law omp_activity_appends_only_assistant_activity:
+  for +event: String
+  for +previous: String
+  {Turn.omp_activity_sql(event,previous) == ("SELECT CASE WHEN CASE WHEN json_valid(" ++ C.q(event) ++ ") AND json_extract(" ++ C.q(event) ++ ",'$.type') IN ('message_start','message_end') AND json_extract(" ++ C.q(event) ++ ",'$.message.role')='assistant' THEN json_object('kind',json_extract(" ++ C.q(event) ++ ",'$.type'),'id',coalesce(json_extract(" ++ C.q(event) ++ ",'$.message.responseId'),'')) END IS NOT NULL THEN json_insert(CASE WHEN json_valid(" ++ C.q(previous) ++ ") AND json_type(" ++ C.q(previous) ++ ")='array' THEN " ++ C.q(previous) ++ " ELSE json_array() END,'$[#]',json(CASE WHEN json_valid(" ++ C.q(event) ++ ") AND json_extract(" ++ C.q(event) ++ ",'$.type') IN ('message_start','message_end') AND json_extract(" ++ C.q(event) ++ ",'$.message.role')='assistant' THEN json_object('kind',json_extract(" ++ C.q(event) ++ ",'$.type'),'id',coalesce(json_extract(" ++ C.q(event) ++ ",'$.message.responseId'),'')) END)) ELSE CASE WHEN json_valid(" ++ C.q(previous) ++ ") AND json_type(" ++ C.q(previous) ++ ")='array' THEN " ++ C.q(previous) ++ " ELSE json_array() END END;") : String}
+
+def omp_activity_appends_only_assistant_activity(event,previous):
+  {==}
+
+law omp_transcript_sql_is_the_terminal_message_list:
+  for +event: String
+  {Turn.omp_transcript_sql(event) == ("CASE WHEN coalesce(json_type(" ++ C.q(event) ++ ",'$.messages'),'')='array' THEN " ++ C.q(event) ++ " ELSE json_object('messages',json_array()) END") : String}
+
+def omp_transcript_sql_is_the_terminal_message_list(event):
+  {==}
+
+law omp_terminal_elided_sql_is_the_truncated_terminal_test:
+  for +event: String
+  {Turn.omp_terminal_elided_sql(event) == ("json_extract(" ++ C.q(event) ++ ",'$.type')='agent_end' AND coalesce(json_extract(" ++ C.q(event) ++ ",'$.isTerminal'),1)=1 AND (coalesce(json_array_length(" ++ C.q(event) ++ ",'$.messages'),0)=0 OR (SELECT CASE WHEN CASE WHEN t.type='object' THEN json_extract(t.value,'$.role') END='assistant' THEN 0 ELSE 1 END FROM json_each(" ++ Turn.omp_transcript_sql(event) ++ ",'$.messages') t ORDER BY t.key DESC LIMIT 1)=1)") : String}
+
+def omp_terminal_elided_sql_is_the_truncated_terminal_test(event):
+  {==}
+
+law omp_terminal_error_sql_is_the_last_assistant_error:
+  for +event: String
+  {Turn.omp_terminal_error_sql(event) == ("coalesce((SELECT CASE WHEN CASE WHEN a.type='object' THEN json_extract(a.value,'$.role') END='assistant' THEN CASE WHEN json_extract(a.value,'$.stopReason')='error' THEN 1 ELSE 0 END ELSE 0 END FROM json_each(" ++ Turn.omp_transcript_sql(event) ++ ",'$.messages') a WHERE CASE WHEN a.type='object' THEN json_extract(a.value,'$.role') END='assistant' ORDER BY a.key DESC LIMIT 1),0)") : String}
+
+def omp_terminal_error_sql_is_the_last_assistant_error(event):
+  {==}
+
+law omp_terminal_error_id_sql_is_the_last_assistant_response:
+  for +event: String
+  {Turn.omp_terminal_error_id_sql(event) == ("coalesce((SELECT CASE WHEN CASE WHEN a.type='object' THEN json_extract(a.value,'$.role') END='assistant' THEN json_extract(a.value,'$.responseId') END FROM json_each(" ++ Turn.omp_transcript_sql(event) ++ ",'$.messages') a WHERE CASE WHEN a.type='object' THEN json_extract(a.value,'$.role') END='assistant' ORDER BY a.key DESC LIMIT 1),'')") : String}
+
+def omp_terminal_error_id_sql_is_the_last_assistant_response(event):
+  {==}
+
+law omp_terminal_retained_sql_substitutes_the_retained_message:
+  for +event: String
+  for +message: String
+  {Turn.omp_terminal_retained_sql(event,message) == ("CASE WHEN " ++ C.q(message) ++ "<>'' THEN json_set(" ++ C.q(event) ++ ",'$.messages',json_array(json(" ++ C.q(message) ++ "))) ELSE " ++ C.q(event) ++ " END") : String}
+
+def omp_terminal_retained_sql_substitutes_the_retained_message(event,message):
+  {==}
+
+law omp_terminal_conflict_sql_clears_the_message_list:
+  for +event: String
+  {Turn.omp_terminal_conflict_sql(event) == ("json_set(" ++ C.q(event) ++ ",'$.messages',json_array())") : String}
+
+def omp_terminal_conflict_sql_clears_the_message_list(event):
+  {==}
+
+law omp_activity_last_sql_is_the_last_activity:
+  for +activity: String
+  {Turn.omp_activity_last_sql(activity) == ("CASE WHEN json_valid(" ++ C.q(activity) ++ ") AND json_type(" ++ C.q(activity) ++ ")='array' AND json_array_length(" ++ C.q(activity) ++ ")>0 THEN json_extract(" ++ C.q(activity) ++ ",'$[#-1]') ELSE json_object('kind','','id','') END") : String}
+
+def omp_activity_last_sql_is_the_last_activity(activity):
+  {==}
+
+law omp_activity_commanding_sql_requires_a_completed_activity:
+  for +activity: String
+  {Turn.omp_activity_commanding_sql(activity) == ("CASE WHEN coalesce(json_extract(" ++ Turn.omp_activity_last_sql(activity) ++ ",'$.kind'),'')='message_end' THEN 1 ELSE 0 END") : String}
+
+def omp_activity_commanding_sql_requires_a_completed_activity(activity):
+  {==}
+
+law omp_activity_seen_sql_requires_the_observed_error:
+  for +activity: String
+  for +error_id: String
+  {Turn.omp_activity_seen_sql(activity,error_id) == ("CASE WHEN " ++ error_id ++ "<>'' AND json_valid(" ++ C.q(activity) ++ ") AND json_type(" ++ C.q(activity) ++ ")='array' AND EXISTS(SELECT 1 FROM json_each(" ++ C.q(activity) ++ ") o WHERE coalesce(json_extract(o.value,'$.id'),'')=" ++ error_id ++ ") THEN 1 ELSE 0 END") : String}
+
+def omp_activity_seen_sql_requires_the_observed_error(activity,error_id):
+  {==}
+
+law omp_activity_same_sql_binds_the_completion_to_the_activity:
+  for +activity: String
+  for +message: String
+  {Turn.omp_activity_same_sql(activity,message) == ("CASE WHEN coalesce(json_extract(" ++ Turn.omp_activity_last_sql(activity) ++ ",'$.id'),'')<>'' AND " ++ C.q(message) ++ "<>'' AND coalesce(json_extract(" ++ Turn.omp_activity_last_sql(activity) ++ ",'$.id'),'')=coalesce(json_extract(" ++ C.q(message) ++ ",'$.responseId'),'') THEN 1 ELSE 0 END") : String}
+
+def omp_activity_same_sql_binds_the_completion_to_the_activity(activity,message):
+  {==}
+
+law omp_terminal_justified_sql_requires_observed_ordering:
+  for +activity: String
+  for +message: String
+  for +error_id: String
+  {Turn.omp_terminal_justified_sql(activity,message,error_id) == ("CASE WHEN " ++ Turn.omp_activity_commanding_sql(activity) ++ "=1 AND " ++ Turn.omp_activity_same_sql(activity,message) ++ "=1 AND " ++ Turn.omp_activity_seen_sql(activity,error_id) ++ "=1 THEN 1 ELSE 0 END") : String}
+
+def omp_terminal_justified_sql_requires_observed_ordering(activity,message,error_id):
+  {==}
+
+law omp_terminal_named_sql_keeps_the_terminals_own_error:
+  for +activity: String
+  for +error_id: String
+  {Turn.omp_terminal_named_sql(activity,error_id) == ("CASE WHEN coalesce(json_extract(" ++ Turn.omp_activity_last_sql(activity) ++ ",'$.id'),'')<>" ++ error_id ++ " THEN 0 ELSE 1 END") : String}
+
+def omp_terminal_named_sql_keeps_the_terminals_own_error(activity,error_id):
+  {==}
+
+# The receive's outcome decision reads the retained event through the failure
+# classifier and combines that with the turn's own failure test.
+law receive_outcome_failed_reads_the_classifier:
+  for +db: String
+  for +status: String
+  for +event: String
+  for +error: String
+  {Receive.outcome_failed(db,Turn.Ended{status,event,error}) == (do IO<Bool>:
+    failure : String <- IO.try(String,DB.Sql.query(db,Receive.failure_query_sql(event)))
+    IO.pure(Bool,Bool.or(Turn.failed(status,event,error),String.eq(failure,"1\n")))) : IO(Bool)}
+
+def receive_outcome_failed_reads_the_classifier(db,status,event,error):
+  {==}
+
 law receive_classifies_a_current_model_failure:
   for +event: String
   {Receive.failure_query_sql(event) == ("SELECT CASE WHEN " ++ C.q(event) ++ "='' THEN 1 WHEN coalesce(json_extract(" ++ C.q(event) ++ ",'$.is_error'),0)=1 THEN 1 ELSE CASE WHEN json_valid(" ++ C.q(event) ++ ") THEN CASE WHEN json_type(" ++ C.q(event) ++ ",'$.messages')='array' THEN coalesce((SELECT CASE WHEN CASE WHEN a.type='object' THEN json_extract(a.value,'$.role') END='assistant' THEN CASE WHEN json_extract(a.value,'$.stopReason')='error' THEN 1 ELSE 0 END ELSE 0 END FROM json_each(CASE WHEN coalesce(json_type(" ++ C.q(event) ++ ",'$.messages'),'')='array' THEN " ++ C.q(event) ++ " ELSE json_object('messages',json_array()) END,'$.messages') a WHERE CASE WHEN a.type='object' THEN json_extract(a.value,'$.role') END='assistant' ORDER BY a.key DESC LIMIT 1),0) ELSE 0 END ELSE 0 END END;") : String}

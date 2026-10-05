@@ -189,9 +189,7 @@ def omp_message(db: String, +event: String, previous: String, enabled: Bool) -> 
 # authority of the retained completion. Native output that is not JSON, and any
 # frame that is not an assistant activity, leave the retained state alone.
 def omp_activity_sql(+event: String, +previous: String) -> String:
-  +retained = "CASE WHEN json_valid(" ++ C.q(previous) ++ ") AND json_type(" ++ C.q(previous) ++ ")='array' THEN " ++ C.q(previous) ++ " ELSE json_array() END"
-  +activity = "CASE WHEN json_valid(" ++ C.q(event) ++ ") AND json_extract(" ++ C.q(event) ++ ",'$.type') IN ('message_start','message_end') AND json_extract(" ++ C.q(event) ++ ",'$.message.role')='assistant' THEN json_object('kind',json_extract(" ++ C.q(event) ++ ",'$.type'),'id',coalesce(json_extract(" ++ C.q(event) ++ ",'$.message.responseId'),'')) END"
-  "SELECT CASE WHEN " ++ activity ++ " IS NOT NULL THEN json_insert(" ++ retained ++ ",'$[#]',json(" ++ activity ++ ")) ELSE " ++ retained ++ " END;"
+  "SELECT CASE WHEN CASE WHEN json_valid(" ++ C.q(event) ++ ") AND json_extract(" ++ C.q(event) ++ ",'$.type') IN ('message_start','message_end') AND json_extract(" ++ C.q(event) ++ ",'$.message.role')='assistant' THEN json_object('kind',json_extract(" ++ C.q(event) ++ ",'$.type'),'id',coalesce(json_extract(" ++ C.q(event) ++ ",'$.message.responseId'),'')) END IS NOT NULL THEN json_insert(CASE WHEN json_valid(" ++ C.q(previous) ++ ") AND json_type(" ++ C.q(previous) ++ ")='array' THEN " ++ C.q(previous) ++ " ELSE json_array() END,'$[#]',json(CASE WHEN json_valid(" ++ C.q(event) ++ ") AND json_extract(" ++ C.q(event) ++ ",'$.type') IN ('message_start','message_end') AND json_extract(" ++ C.q(event) ++ ",'$.message.role')='assistant' THEN json_object('kind',json_extract(" ++ C.q(event) ++ ",'$.type'),'id',coalesce(json_extract(" ++ C.q(event) ++ ",'$.message.responseId'),'')) END)) ELSE CASE WHEN json_valid(" ++ C.q(previous) ++ ") AND json_type(" ++ C.q(previous) ++ ")='array' THEN " ++ C.q(previous) ++ " ELSE json_array() END END;"
 
 def omp_activity(db: String, +event: String, previous: String, enabled: Bool) -> IO(String):
   match enabled:
@@ -200,28 +198,61 @@ def omp_activity(db: String, +event: String, previous: String, enabled: Bool) ->
       +activity : String <- IO.try(String,DB.Sql.query(db,omp_activity_sql(event,previous)))
       IO.pure(String,Tx.trim_nl(activity))
 
-# The retained completion replaces the terminal's own truncated list when the
-# terminal names no assistant error and the completion is the activity the
-# stream reached last. When the terminal names an error, the replacement also
-# requires that the stream observed that error and that the completion is the
-# last activity. Every other conflict reports the unavailable frame, so neither
-# an older error nor an older completion is presented as the current result.
+def omp_activity_enabled(harness: String) -> Bool:
+  String.eq(harness,"omp\n")
+
+def omp_terminal_enabled(harness: String, relevant: Bool) -> Bool:
+  Bool.and(String.eq(harness,"omp\n"),relevant)
+
+# The terminal's own message list, or an empty list when the frame carries none.
+def omp_transcript_sql(+event: String) -> String:
+  "CASE WHEN coalesce(json_type(" ++ C.q(event) ++ ",'$.messages'),'')='array' THEN " ++ C.q(event) ++ " ELSE json_object('messages',json_array()) END"
+
+# A terminal whose own list is absent, empty or ends in something other than an
+# assistant message.
+def omp_terminal_elided_sql(+event: String) -> String:
+  "json_extract(" ++ C.q(event) ++ ",'$.type')='agent_end' AND coalesce(json_extract(" ++ C.q(event) ++ ",'$.isTerminal'),1)=1 AND (coalesce(json_array_length(" ++ C.q(event) ++ ",'$.messages'),0)=0 OR (SELECT CASE WHEN CASE WHEN t.type='object' THEN json_extract(t.value,'$.role') END='assistant' THEN 0 ELSE 1 END FROM json_each(" ++ omp_transcript_sql(event) ++ ",'$.messages') t ORDER BY t.key DESC LIMIT 1)=1)"
+
+# Whether the terminal's own last assistant carries a provider error, and which
+# response that assistant names.
+def omp_terminal_error_sql(+event: String) -> String:
+  "coalesce((SELECT CASE WHEN CASE WHEN a.type='object' THEN json_extract(a.value,'$.role') END='assistant' THEN CASE WHEN json_extract(a.value,'$.stopReason')='error' THEN 1 ELSE 0 END ELSE 0 END FROM json_each(" ++ omp_transcript_sql(event) ++ ",'$.messages') a WHERE CASE WHEN a.type='object' THEN json_extract(a.value,'$.role') END='assistant' ORDER BY a.key DESC LIMIT 1),0)"
+
+def omp_terminal_error_id_sql(+event: String) -> String:
+  "coalesce((SELECT CASE WHEN CASE WHEN a.type='object' THEN json_extract(a.value,'$.role') END='assistant' THEN json_extract(a.value,'$.responseId') END FROM json_each(" ++ omp_transcript_sql(event) ++ ",'$.messages') a WHERE CASE WHEN a.type='object' THEN json_extract(a.value,'$.role') END='assistant' ORDER BY a.key DESC LIMIT 1),'')"
+
+def omp_terminal_retained_sql(+event: String, +message: String) -> String:
+  "CASE WHEN " ++ C.q(message) ++ "<>'' THEN json_set(" ++ C.q(event) ++ ",'$.messages',json_array(json(" ++ C.q(message) ++ "))) ELSE " ++ C.q(event) ++ " END"
+
+def omp_terminal_conflict_sql(+event: String) -> String:
+  "json_set(" ++ C.q(event) ++ ",'$.messages',json_array())"
+
+# The last assistant activity the stream reached, and whether it is the
+# completion the receive retained.
+def omp_activity_last_sql(+activity: String) -> String:
+  "CASE WHEN json_valid(" ++ C.q(activity) ++ ") AND json_type(" ++ C.q(activity) ++ ")='array' AND json_array_length(" ++ C.q(activity) ++ ")>0 THEN json_extract(" ++ C.q(activity) ++ ",'$[#-1]') ELSE json_object('kind','','id','') END"
+
+def omp_activity_commanding_sql(+activity: String) -> String:
+  "CASE WHEN coalesce(json_extract(" ++ omp_activity_last_sql(activity) ++ ",'$.kind'),'')='message_end' THEN 1 ELSE 0 END"
+
+def omp_activity_seen_sql(+activity: String, +error_id: String) -> String:
+  "CASE WHEN " ++ error_id ++ "<>'' AND json_valid(" ++ C.q(activity) ++ ") AND json_type(" ++ C.q(activity) ++ ")='array' AND EXISTS(SELECT 1 FROM json_each(" ++ C.q(activity) ++ ") o WHERE coalesce(json_extract(o.value,'$.id'),'')=" ++ error_id ++ ") THEN 1 ELSE 0 END"
+
+def omp_activity_same_sql(+activity: String, +message: String) -> String:
+  "CASE WHEN coalesce(json_extract(" ++ omp_activity_last_sql(activity) ++ ",'$.id'),'')<>'' AND " ++ C.q(message) ++ "<>'' AND coalesce(json_extract(" ++ omp_activity_last_sql(activity) ++ ",'$.id'),'')=coalesce(json_extract(" ++ C.q(message) ++ ",'$.responseId'),'') THEN 1 ELSE 0 END"
+
+# The stream observed the terminal's error and then reached the retained
+# completion, which is the only case where that completion replaces the error.
+def omp_terminal_justified_sql(+activity: String, +message: String, +error_id: String) -> String:
+  "CASE WHEN " ++ omp_activity_commanding_sql(activity) ++ "=1 AND " ++ omp_activity_same_sql(activity,message) ++ "=1 AND " ++ omp_activity_seen_sql(activity,error_id) ++ "=1 THEN 1 ELSE 0 END"
+
+# Whether the terminal's own last assistant error is the activity the stream
+# reached last, which keeps the terminal's own list.
+def omp_terminal_named_sql(+activity: String, +error_id: String) -> String:
+  "CASE WHEN coalesce(json_extract(" ++ omp_activity_last_sql(activity) ++ ",'$.id'),'')<>" ++ error_id ++ " THEN 0 ELSE 1 END"
+
 def omp_terminal_sql(+event: String, +message: String, +activity: String) -> String:
-  +frames = "CASE WHEN coalesce(json_type(" ++ C.q(event) ++ ",'$.messages'),'')='array' THEN " ++ C.q(event) ++ " ELSE json_object('messages',json_array()) END"
-  +elided = "json_extract(" ++ C.q(event) ++ ",'$.type')='agent_end' AND coalesce(json_extract(" ++ C.q(event) ++ ",'$.isTerminal'),1)=1 AND (coalesce(json_array_length(" ++ C.q(event) ++ ",'$.messages'),0)=0 OR (SELECT CASE WHEN CASE WHEN t.type='object' THEN json_extract(t.value,'$.role') END='assistant' THEN 0 ELSE 1 END FROM json_each(" ++ frames ++ ",'$.messages') t ORDER BY t.key DESC LIMIT 1)=1)"
-  +error = "coalesce((SELECT CASE WHEN CASE WHEN a.type='object' THEN json_extract(a.value,'$.role') END='assistant' THEN CASE WHEN json_extract(a.value,'$.stopReason')='error' THEN 1 ELSE 0 END ELSE 0 END FROM json_each(" ++ frames ++ ",'$.messages') a WHERE CASE WHEN a.type='object' THEN json_extract(a.value,'$.role') END='assistant' ORDER BY a.key DESC LIMIT 1),0)"
-  +error_id = "coalesce((SELECT CASE WHEN CASE WHEN a.type='object' THEN json_extract(a.value,'$.role') END='assistant' THEN json_extract(a.value,'$.responseId') END FROM json_each(" ++ frames ++ ",'$.messages') a WHERE CASE WHEN a.type='object' THEN json_extract(a.value,'$.role') END='assistant' ORDER BY a.key DESC LIMIT 1),'')"
-  +retained = "CASE WHEN " ++ C.q(message) ++ "<>'' THEN json_set(" ++ C.q(event) ++ ",'$.messages',json_array(json(" ++ C.q(message) ++ "))) ELSE " ++ C.q(event) ++ " END"
-  +usable = "CASE WHEN " ++ C.q(message) ++ "<>'' AND coalesce(json_extract(" ++ C.q(message) ++ ",'$.stopReason'),'')<>'error' THEN 1 ELSE 0 END"
-  +last = "CASE WHEN json_valid(" ++ C.q(activity) ++ ") AND json_type(" ++ C.q(activity) ++ ")='array' AND json_array_length(" ++ C.q(activity) ++ ")>0 THEN json_extract(" ++ C.q(activity) ++ ",'$[#-1]') ELSE json_object('kind','','id','') END"
-  +last_kind = "coalesce(json_extract(" ++ last ++ ",'$.kind'),'')"
-  +last_id = "coalesce(json_extract(" ++ last ++ ",'$.id'),'')"
-  +last_is_error = "CASE WHEN " ++ last_id ++ "<>" ++ error_id ++ " THEN 0 ELSE 1 END"
-  +authoritative = "CASE WHEN " ++ last_kind ++ "='message_end' THEN 1 ELSE 0 END"
-  +seen = "CASE WHEN " ++ error_id ++ "<>'' AND json_valid(" ++ C.q(activity) ++ ") AND json_type(" ++ C.q(activity) ++ ")='array' AND EXISTS(SELECT 1 FROM json_each(" ++ C.q(activity) ++ ") o WHERE coalesce(json_extract(o.value,'$.id'),'')=" ++ error_id ++ ") THEN 1 ELSE 0 END"
-  +same = "CASE WHEN " ++ last_id ++ "<>'' AND " ++ C.q(message) ++ "<>'' AND " ++ last_id ++ "=coalesce(json_extract(" ++ C.q(message) ++ ",'$.responseId'),'') THEN 1 ELSE 0 END"
-  +justified = "CASE WHEN " ++ authoritative ++ "=1 AND " ++ same ++ "=1 AND " ++ seen ++ "=1 THEN 1 ELSE 0 END"
-  "SELECT CASE WHEN " ++ elided ++ " THEN CASE WHEN " ++ error ++ "=0 AND " ++ C.q(message) ++ "<>'' AND " ++ authoritative ++ "=1 THEN " ++ retained ++ " WHEN " ++ justified ++ "=1 AND " ++ usable ++ "=1 THEN " ++ retained ++ " WHEN " ++ last_is_error ++ "=1 THEN " ++ C.q(event) ++ " WHEN " ++ C.q(message) ++ "<>'' THEN json_set(" ++ C.q(event) ++ ",'$.messages',json_array()) WHEN " ++ error ++ "=1 THEN json_set(" ++ C.q(event) ++ ",'$.messages',json_array()) ELSE " ++ C.q(event) ++ " END ELSE " ++ C.q(event) ++ " END;"
+  "SELECT CASE WHEN " ++ omp_terminal_elided_sql(event) ++ " THEN CASE WHEN " ++ omp_terminal_error_sql(event) ++ "=0 AND " ++ C.q(message) ++ "<>'' AND " ++ omp_activity_commanding_sql(activity) ++ "=1 THEN " ++ omp_terminal_retained_sql(event,message) ++ " WHEN " ++ omp_terminal_justified_sql(activity,message,omp_terminal_error_id_sql(event)) ++ "=1 THEN " ++ omp_terminal_retained_sql(event,message) ++ " WHEN " ++ omp_terminal_named_sql(activity,omp_terminal_error_id_sql(event)) ++ "=1 THEN " ++ C.q(event) ++ " WHEN " ++ C.q(message) ++ "<>'' THEN " ++ omp_terminal_conflict_sql(event) ++ " WHEN " ++ omp_terminal_error_sql(event) ++ "=1 THEN " ++ omp_terminal_conflict_sql(event) ++ " ELSE " ++ C.q(event) ++ " END ELSE " ++ C.q(event) ++ " END;"
 
 def omp_terminal(db: String, +event: String, +message: String, +activity: String, enabled: Bool) -> IO(String):
   match enabled:
@@ -356,9 +387,9 @@ def consume(+db: String, +player: String, +id: String, +log: String, +handle: U3
         +relevant : Bool <- IO.pure(Bool,Guidance.relevant(kind,String.eq(harness,"omp\n")))
         +sealed : Bool <- IO.pure(Bool,Bool.not(String.is_empty(terminal)))
         next_cursor : String <- Guidance.observe(db,player,handle,line,cursor,Bool.and(String.eq(harness,"omp\n"),relevant),sealed)
-        +message : String <- omp_message(db,line,last_message,Bool.and(String.eq(harness,"omp\n"),relevant))
-        +activity : String <- omp_activity(db,line,last_activity,String.eq(harness,"omp\n"))
-        +event : String <- omp_terminal(db,line,message,activity,Bool.and(String.eq(harness,"omp\n"),relevant))
+        +message : String <- omp_message(db,line,last_message,omp_terminal_enabled(harness,relevant))
+        +activity : String <- omp_activity(db,line,last_activity,omp_activity_enabled(harness))
+        +event : String <- omp_terminal(db,line,message,activity,omp_terminal_enabled(harness,relevant))
         deferred : Unit <- deferred_note(db,player,id,event,terminal,sealed)
         observed : Result<&1,&1,U32 & String,String> <- observe_event(db,player,id,event,relevant,sealed)
         ended : String <- terminal_event(db,event,terminal,relevant)

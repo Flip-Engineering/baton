@@ -389,6 +389,25 @@ class ControlledFrames(ReplayBase):
             task='started-over-empty')
         self.assertFalse([body for body in bodies if 'Complete answer.' in body], bodies)
 
+    def test_an_observed_later_failure_is_reported_over_an_older_observed_error(self):
+        """The later provider failure the stream reached last is the current result."""
+        earlier = assistant(stopReason='error', errorStatus=403, errorMessage='403 earlier failure',
+                            provider='kimi-code', model='k3', responseId='response-e0', content=[])
+        later = assistant(stopReason='error', errorStatus=429, errorMessage='429 later failure',
+                          provider='kimi-code', model='k3', responseId='response-e2', content=[])
+        notifications, code, status, bodies = self.replay([
+            {'type': 'agent_start'},
+            {'type': 'message_end', 'message': earlier},
+            {'type': 'message_end', 'message': later},
+            {'type': 'agent_end', 'isTerminal': True, 'messages': [earlier, 'elided']}],
+            task='observed-later-failure')
+        self.assertNotEqual(code, 0)
+        self.assertIn('exit 0', status)
+        failure = [body for body in bodies if 'Native model failure' in body]
+        self.assertTrue(failure, bodies)
+        self.assertIn('429', failure[0])
+        self.assertNotIn('403 earlier failure', failure[0])
+
     def test_sequential_success_then_error_keeps_the_first_report(self):
         """Two consecutive receives: a later receive's failure does not change the earlier report."""
         sealed, code, status, bodies = self.replay([

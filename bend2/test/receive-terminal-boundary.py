@@ -77,7 +77,8 @@ class ReceiveTerminalBoundary(RECEIVE.Receive):
         self.assertNotIn('[id: late-error-task]', resumed['prompt'])
         self.action(continuation, body='Continuation after the late error.')
         self.finish(observer)
-        self.assertIn('exit 0', self.native_status())
+        execution, _status = self.native_status()
+        self.assertNotEqual(execution, sealed, 'the session row still names the sealed attempt')
         turns = self.coord('turns', 'parent')
         self.assertEqual(turns[0]['id'], sealed)
         self.assertEqual(turns[0]['reportBody'], 'First sealed report.')
@@ -98,10 +99,12 @@ class ReceiveTerminalBoundary(RECEIVE.Receive):
         return row[0] if row else ''
 
     def native_status(self):
-        """The recorded execution status of the native child for the current attempt."""
+        """The execution row of the session, which the next attempt replaces."""
         with sqlite3.connect(f'{self.db.as_uri()}?mode=ro', uri=True) as database:
-            row = database.execute("SELECT status FROM executions WHERE session='parent'").fetchone()
-        return row[0] if row else '(none)'
+            row = database.execute(
+                "SELECT id, status FROM executions WHERE session='parent'").fetchone()
+        self.assertIsNotNone(row, 'no execution row for the session')
+        return row
 
     def test_same_attempt_error_then_late_success_keeps_the_sealed_failure(self):
         """A structured first provider failure is sealed; a later success in that episode does not replace it."""
@@ -138,7 +141,8 @@ class ReceiveTerminalBoundary(RECEIVE.Receive):
         self.assertIn('[id: same-attempt-task]', resumed['prompt'])
         self.action(continuation, body='Continuation after the sealed failure.')
         self.finish(observer, ok=False)
-        self.assertIn('exit 0', self.native_status())
+        execution, _status = self.native_status()
+        self.assertNotEqual(execution, sealed, 'the session row still names the sealed attempt')
         turns = self.coord('turns', 'parent')
         self.assertEqual(turns[0]['id'], sealed)
         self.assertEqual(turns[0]['reportBody'], body)
