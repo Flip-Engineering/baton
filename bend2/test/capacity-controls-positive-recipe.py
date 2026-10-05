@@ -101,6 +101,8 @@ def main():
 
     # 1. Discovery, then one producer job per discovered group: a complete run.
     discovery = child(record, 'discover', ['node', str(CHECKER), '--discover'], run)
+    if discovery['exit_code'] != 0:
+        raise SystemExit('discovery failed with ' + repr(discovery['exit_code']))
     cases = [json.loads(line) for line in
              (run / discovery['stdout']['path']).read_text().splitlines() if line.strip()]
     groups = sorted({case['module'] for case in cases})
@@ -123,9 +125,18 @@ def main():
 
     # 2. Consumer: verify bytes, classification, references, then copy the closure.
     package = package_module()
-    result = package.controls_evidence(run / 'producer', package.snapshot(), args.bend,
-                                       audit=run / 'audit',
-                                       destination=run / 'payload-closure')
+    try:
+        result = package.controls_evidence(run / 'producer', package.snapshot(), args.bend,
+                                           audit=run / 'audit',
+                                           destination=run / 'payload-closure')
+    except BaseException as error:
+        record.append({'name': 'consume', 'outcome': 'refused', 'reason': repr(error)})
+        (run / 'run.json').write_text(json.dumps({'children': record}, indent=2) + '\n')
+        raise
+    record.append({'name': 'consume', 'outcome': 'qualified',
+                   'inventory_sha256': result['inventory_sha256'],
+                   'reduction_sha256': result['reduction_sha256']})
+    (run / 'run.json').write_text(json.dumps({'children': record}, indent=2) + '\n')
     (run / 'reduction.json').write_text(json.dumps(result['reduction'], indent=2) + '\n')
     print(json.dumps({'cases': result['cases'], 'groups': result['groups'],
                       'inventory_sha256': result['inventory']['inventory_sha256'],

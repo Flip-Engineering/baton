@@ -621,6 +621,9 @@ def classify_control(case, result, streams, baseline, evidence_root, source, com
         stem = identity.replace(':', '-').replace('/', '_')
         stem = stem + '-' + hashlib.sha256(identity.encode('utf-8')).hexdigest()[:12]
     stdout_bytes, stderr_bytes, status, signal_name, spawn_error = b'', b'', None, None, None
+    interruption = None
+    if acquire is not None:
+        (acquire / (stem + '.request.json')).write_bytes(request_bytes)
     try:
         completed = subprocess.run(argv, cwd=ROOT, input=request_bytes, capture_output=True,
                                    env={'PATH': os.environ.get('PATH', ''), 'BEND_NO_TELEMETRY': '1'})
@@ -629,8 +632,18 @@ def classify_control(case, result, streams, baseline, evidence_root, source, com
             signal_name, status = child_signal(status), None
     except OSError as error:
         spawn_error = repr(error)
-    acquisition = {'argv': argv, 'cwd': str(ROOT), 'exit_code': status, 'signal': signal_name,
-                   'spawn_error': spawn_error,
+    except BaseException as error:
+        if acquire is not None:
+            (acquire / (stem + '.stdout')).write_bytes(stdout_bytes)
+            (acquire / (stem + '.stderr')).write_bytes(stderr_bytes)
+            write_json(acquire / (stem + '.acquisition.json'),
+                       {'argv': argv, 'cwd': str(ROOT), 'outcome': 'interrupted',
+                        'reason': repr(error),
+                        'request_sha256': hashlib.sha256(request_bytes).hexdigest()})
+        raise
+    acquisition = {'argv': argv, 'cwd': str(ROOT), 'exit_code': status,
+                   'outcome': 'spawn-error' if spawn_error else 'exited',
+                   'signal': signal_name, 'spawn_error': spawn_error,
                    'request_sha256': hashlib.sha256(request_bytes).hexdigest(),
                    'request_bytes': len(request_bytes),
                    'stdout_sha256': hashlib.sha256(stdout_bytes).hexdigest(),
@@ -638,7 +651,6 @@ def classify_control(case, result, streams, baseline, evidence_root, source, com
                    'stderr_sha256': hashlib.sha256(stderr_bytes).hexdigest(),
                    'stderr_bytes': len(stderr_bytes)}
     if acquire is not None:
-        (acquire / (stem + '.request.json')).write_bytes(request_bytes)
         (acquire / (stem + '.stdout')).write_bytes(stdout_bytes)
         (acquire / (stem + '.stderr')).write_bytes(stderr_bytes)
         (acquire / (stem + '.acquisition.json')).write_text(
