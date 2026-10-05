@@ -55,6 +55,11 @@ def file_info(path):
 
 
 def write_json(path, value):
+    """Write value as indented JSON and return only after the completed write.
+
+    The guarantee is a complete written and closed file before the caller
+    proceeds; it is not crash or power-loss durability, and no fsync is added.
+    """
     path.write_text(json.dumps(value, indent=2, ensure_ascii=False) + '\n')
 
 
@@ -456,6 +461,15 @@ def retained_stream(record, error):
     return {'path': record.name, 'available': True, **file_info(record)}
 
 
+def snapshot_evidence(path, state, evidence_errors, label):
+    try:
+        write_json(path, state)
+    except BaseException as error:
+        evidence_errors.append(label + ' snapshot write failed: ' + repr(error))
+        return {'path': path.name, 'available': False, 'error': repr(error)}
+    return {'path': path.name, 'available': True, **file_info(path)}
+
+
 def context_receipt_logs(logs):
     return sorted(path for pattern in ('context-gate-*', 'context-node-version-*')
                   for path in logs.glob(pattern) if path.is_file())
@@ -477,54 +491,84 @@ def run_context_gate(payload, logs, node, name, extra_env=None):
     stderr = logs / ('context-gate-' + name + '.stderr')
     before_path = logs / ('context-gate-' + name + '.payload-before.json')
     after_path = logs / ('context-gate-' + name + '.payload-after.json')
+    evidence_errors = []
     before = context_tree_state(payload)
-    write_json(before_path, before)
+    before_ref = snapshot_evidence(before_path, before, evidence_errors, 'before-payload')
     started = time.monotonic()
-    stream_error = None
+    stream_errors = {}
     out_handle = None
     err_handle = None
     try:
         out_handle = stdout.open('wb')
+    except OSError as error:
+        stream_errors['stdout'] = repr(error)
+    try:
         err_handle = stderr.open('wb')
     except OSError as error:
-        stream_error = repr(error)
+        stream_errors['stderr'] = repr(error)
     spawn_stage = 'completed'
     spawn_error = None
     interrupted = None
-    result = None
-    if stream_error is None:
+    outcome = None
+    if stream_errors:
+        spawn_stage = 'streams-unavailable'
+        spawn_error = '; '.join(name + ': ' + value
+                                for name, value in sorted(stream_errors.items()))
+    else:
+        process = None
         try:
-            result = subprocess.run([str(node), 'context-package-gate.mjs'], cwd=cwd, env=env,
-                                    stdin=subprocess.DEVNULL, stdout=out_handle,
-                                    stderr=err_handle)
-        except (OSError, ValueError, subprocess.SubprocessError) as error:
-            # The child was never created or the spawn arguments were invalid;
-            # spawned:false is a proven fact for these failures.
+            # Only a Popen construction failure proves non-creation.
+            process = subprocess.Popen([str(node), 'context-package-gate.mjs'], cwd=cwd, env=env,
+                                       stdin=subprocess.DEVNULL, stdout=out_handle,
+                                       stderr=err_handle)
+        except (OSError, ValueError) as error:
             spawn_stage = 'unspawned'
             spawn_error = repr(error)
         except BaseException as error:
-            # An interruption may have occurred after process creation, so the
-            # actual child outcome is unknown rather than unspawned.
-            interrupted = error
             spawn_stage = 'interrupted'
             spawn_error = repr(error)
-        finally:
-            out_handle.close()
-            err_handle.close()
-    else:
-        spawn_stage = 'streams-unavailable'
-        spawn_error = stream_error
-    after = context_tree_state(payload)
-    write_json(after_path, after)
-    post_identity = None
-    post_error = None
+            interrupted = error
+        if process is not None:
+            try:
+                outcome = subprocess.CompletedProcess(process.args, process.wait())
+                spawn_stage = 'completed'
+            except BaseException as error:
+                # Preserve subprocess.run owned-child cleanup: terminate and
+                # reap before re-raising, never leaking a running child and
+                # never claiming a settled outcome.
+                process.kill()
+                try:
+                    process.wait()
+                except BaseException:
+                    pass
+                spawn_stage = 'started-outcome-unknown'
+                spawn_error = repr(error)
+                interrupted = error
+    for handle in (out_handle, err_handle):
+        if handle is not None:
+            try:
+                handle.close()
+            except OSError as error:
+                evidence_errors.append('stream close failed: ' + repr(error))
+    secondary_error = None
     if interrupted is None:
+        after = context_tree_state(payload)
+        after_ref = snapshot_evidence(after_path, after, evidence_errors, 'after-payload')
+        post_identity = None
+        post_error = None
         try:
             post_identity = context_node_identity(node, payload, logs, name, '-after')
         except BaseException as error:
             post_error = repr(error)
     else:
-        post_error = 'not attempted: the gate child spawn raised an interruption'
+        post_identity = None
+        post_error = 'not attempted: the gate child raised an interruption'
+        try:
+            after = context_tree_state(payload)
+            after_ref = snapshot_evidence(after_path, after, evidence_errors, 'after-payload')
+        except BaseException as error:
+            secondary_error = error
+            after_ref = {'path': after_path.name, 'available': False, 'error': repr(error)}
     if post_identity is None:
         node_identity['postIdentity'] = {'available': False, 'error': post_error}
         node_identity['versionAfter'] = None
@@ -537,37 +581,50 @@ def run_context_gate(payload, logs, node, name, extra_env=None):
         node_identity['versionAfter'] = post_identity['version']
         node_identity['sha256After'] = post_identity['sha256']
         node_identity['bytesAfter'] = post_identity['bytes']
-    if result is not None:
+    if outcome is not None:
         child = {'spawned': True, 'stage': spawn_stage}
+    elif spawn_stage == 'started-outcome-unknown':
+        child = {'spawned': True, 'stage': spawn_stage, 'error': spawn_error}
     else:
         child = {'spawned': None if interrupted is not None else False,
-                 'stage': spawn_stage, 'error': spawn_error}
+                 'stage': spawn_stage}
+        if spawn_error is not None:
+            child['error'] = spawn_error
     receipt = {'runtime': name, 'node': node_identity,
                'argv': [str(node), 'context-package-gate.mjs'], 'cwd': str(cwd),
                'environmentKeys': sorted(env),
                'child': child,
-               'exit_code': None if result is None else result.returncode,
-               'signal': child_signal(None if result is None else result.returncode),
+               'exit_code': None if outcome is None else outcome.returncode,
+               'signal': child_signal(None if outcome is None else outcome.returncode),
                'elapsed_seconds': time.monotonic() - started,
-               'stdout': retained_stream(stdout, stream_error),
-               'stderr': retained_stream(stderr, stream_error),
-               'payloadSnapshot': {'before': {'path': before_path.name, **file_info(before_path)},
-                                   'after': {'path': after_path.name, **file_info(after_path)},
-                                   'equal': before == after},
+               'stdout': retained_stream(stdout, stream_errors.get('stdout')),
+               'stderr': retained_stream(stderr, stream_errors.get('stderr')),
+               'payloadSnapshot': {'before': before_ref, 'after': after_ref,
+                                   'equal': None if not after_ref.get('available')
+                                            else before == after},
+               'evidenceErrors': evidence_errors,
                'nodeVersionChanged': None if post_identity is None
                                      else post_identity['version'] != node_identity['version'],
                'nodeIdentityChanged': None if post_identity is None
                                       else (post_identity['sha256'] != node_identity['sha256']
                                             or post_identity['bytes'] != node_identity['bytes'])}
     receipt_path = logs / ('context-gate-' + name + '.json')
-    write_json(receipt_path, receipt)
+    try:
+        write_json(receipt_path, receipt)
+    except BaseException as error:
+        if interrupted is not None or secondary_error is not None:
+            original = interrupted if interrupted is not None else secondary_error
+            # The original interruption stays the raised exception; the
+            # receipt-write failure is retained as its chained cause.
+            raise original from error
+        raise
     if interrupted is not None:
-        # The durable receipt retains the evidence; interruption semantics are
-        # preserved instead of converting the interrupt into a refusal.
+        # The completed receipt retains the evidence; interruption semantics
+        # are preserved instead of converting the interrupt into a refusal.
         raise interrupted
     require(spawn_stage == 'completed',
-            'The context gate child could not be spawned or its streams were '
-            'unavailable (stage ' + spawn_stage + '): ' + str(receipt_path))
+            'The context gate child did not complete (stage ' + spawn_stage + '): '
+            + str(receipt_path))
     require(post_identity is not None,
             'The context gate node identity is unavailable after the package gate: '
             + str(receipt_path))

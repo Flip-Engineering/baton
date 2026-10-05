@@ -13,6 +13,7 @@ import json
 import os
 import pathlib
 import shutil
+import subprocess
 import tempfile
 import unittest
 import urllib.request
@@ -402,9 +403,86 @@ class ContextPackagedBytes(unittest.TestCase):
         self.assertEqual(receipt['exit_code'], -15)
         self.assertEqual(receipt['signal'], 'SIGTERM')
         self.assertTrue(receipt['child']['spawned'])
-        self.assertIsNone(receipt['nodeVersionChanged'])
-        self.assertIsNone(receipt['nodeIdentityChanged'])
-        self.assertFalse((logs / 'context-gate-node22.15.0.json').exists())
+        # The wrapper answers --version with the real node both times, so the
+        # post probe succeeds and both identity flags are False, not None.
+        self.assertIs(receipt['nodeVersionChanged'], False)
+        self.assertIs(receipt['nodeIdentityChanged'], False)
+
+    def test_gate_records_started_child_with_unknown_outcome(self):
+        real = pathlib.Path(self.host_node).resolve()
+        created = []
+
+        class FakeOutcomeProcess:
+            def __init__(self):
+                self.args = [str(real), 'context-package-gate.mjs']
+                self.killed = False
+                self.reaped = False
+
+            def wait(self):
+                if not self.killed:
+                    raise KeyboardInterrupt
+                self.reaped = True
+                return -9
+
+            def kill(self):
+                self.killed = True
+
+        def fake_popen(argv, **kwargs):
+            if argv[-1] == 'context-package-gate.mjs':
+                process = FakeOutcomeProcess()
+                created.append(process)
+                return process
+            return subprocess.Popen(argv, **kwargs)
+
+        with mock.patch.object(PACKAGE.subprocess, 'Popen', fake_popen):
+            with self.assertRaises(KeyboardInterrupt):
+                PACKAGE.run_context_gate(self.host_root, self.logs, real, 'outcome-unknown')
+        self.assertEqual(len(created), 1)
+        self.assertTrue(created[0].killed)
+        self.assertTrue(created[0].reaped)
+        receipt = json.loads((self.logs / 'context-gate-outcome-unknown.json').read_text())
+        self.assertIs(receipt['child']['spawned'], True)
+        self.assertEqual(receipt['child']['stage'], 'started-outcome-unknown')
+        self.assertIn('KeyboardInterrupt', receipt['child']['error'])
+        self.assertIsNone(receipt['exit_code'])
+        self.assertIsNone(receipt['signal'])
+        self.assertTrue(receipt['payloadSnapshot']['equal'])
+        self.assertEqual(receipt['evidenceErrors'], [])
+
+    def test_gate_preserves_interrupt_with_chained_write_failure(self):
+        real = pathlib.Path(self.host_node).resolve()
+
+        class InterruptingWait:
+            args = [str(real), 'context-package-gate.mjs']
+
+            def wait(self):
+                raise KeyboardInterrupt
+
+            def kill(self):
+                pass
+
+        def fake_popen(argv, **kwargs):
+            if argv[-1] == 'context-package-gate.mjs':
+                return InterruptingWait()
+            return subprocess.Popen(argv, **kwargs)
+
+        real_write = PACKAGE.write_json
+
+        def failing_write(path, value):
+            if path.name == 'context-gate-write-interrupt.json':
+                raise OSError('receipt write refused')
+            real_write(path, value)
+
+        with mock.patch.object(PACKAGE.subprocess, 'Popen', fake_popen):
+            with mock.patch.object(PACKAGE, 'write_json', failing_write):
+                with self.assertRaises(KeyboardInterrupt) as caught:
+                    PACKAGE.run_context_gate(self.host_root, self.logs, real, 'write-interrupt')
+        self.assertIs(type(caught.exception), KeyboardInterrupt)
+        self.assertIsInstance(caught.exception.__cause__, OSError)
+        # Raw evidence files survive even though the receipt write failed.
+        self.assertTrue((self.logs / 'context-gate-write-interrupt.stdout').is_file())
+        self.assertTrue(
+            (self.logs / 'context-gate-write-interrupt.payload-before.json').is_file())
 
     def test_gate_refuses_same_version_byte_drift(self):
         real = pathlib.Path(self.host_node).resolve()
