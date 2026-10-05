@@ -32,6 +32,26 @@ static int baton_sql_busy(void *context, int tries) {
   return 1;
 }
 
+/* BLOB length follows the database encoding. Compact projections explicitly
+   admit UTF-8 databases so their byte counts have the documented meaning. */
+static int baton_sql_utf8(sqlite3 *db, char **error) {
+  sqlite3_stmt *statement = NULL;
+  int code = sqlite3_prepare_v2(db, "PRAGMA encoding", -1, &statement, NULL);
+  if (code == SQLITE_OK) {
+    code = sqlite3_step(statement);
+    if (code == SQLITE_ROW) {
+      const unsigned char *encoding = sqlite3_column_text(statement, 0);
+      if (encoding && strcmp((const char *)encoding, "UTF-8") == 0) code = SQLITE_OK;
+      else {
+        code = SQLITE_MISMATCH;
+        *error = sqlite3_mprintf("Compact reads require a UTF-8 coordination database. Use the existing full inbox, pending or orchestra reader for this database; no encoding conversion was performed.");
+      }
+    }
+  }
+  sqlite3_finalize(statement);
+  return code;
+}
+
 static void baton_sql_call(IoWork *w) {
   BatonSql *call = (BatonSql *)w->data;
   sqlite3 *db = NULL;
@@ -43,7 +63,8 @@ static void baton_sql_call(IoWork *w) {
   } else {
     sqlite3_busy_handler(db, baton_sql_busy, NULL);
     char *error = NULL;
-    if (!call->readonly)
+    if (call->readonly) call->code = baton_sql_utf8(db, &error);
+    else
       call->code = sqlite3_exec(db, "PRAGMA foreign_keys=ON; PRAGMA synchronous=FULL;", NULL, NULL, &error);
     if (call->code == SQLITE_OK)
       call->code = sqlite3_exec(db, call->sql, baton_sql_row, call, &error);
