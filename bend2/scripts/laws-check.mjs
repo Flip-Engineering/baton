@@ -162,7 +162,7 @@ const writeEvidenceIndex = () => {
   // mirrors index_path and scratch so envelope and index agree on the
   // launched-run location without fallback parsing.
   const inputs = {};
-  for (const [path, bytes] of pristine.entries()) inputs[path] = { sha256: sha256Of(bytes) };
+  for (const [path, bytes] of pristine.entries()) inputs[path] = sha256Of(bytes);
   const run = {
     ...runIdentity,
     index_path: join(SCRATCH, 'evidence', 'index.json'),
