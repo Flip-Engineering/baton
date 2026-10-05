@@ -112,9 +112,17 @@ def pending_after_comma(+stack: List<Container>) -> Pending:
     case CArr{_items, _started} <> _t: PValue{}
     case CObj{_members, _started} <> _t: PKey{}
 
-# A closing byte is accepted only where the innermost open container is still fresh, so a
-# trailing comma cannot be closed away.
-def close_here(+stack: List<Container>, +tok: L.LexTok) -> Bool:
+# The matching closer of the innermost open container, and separately the case of a container
+# that is still fresh. A fresh container may be closed empty where only its first element or
+# key could otherwise appear; a started container may be closed after a completed element but
+# not where a value or a key is required, which is what refuses a trailing comma.
+def close_any_here(+stack: List<Container>, +tok: L.LexTok) -> Bool:
+  match stack:
+    case Nil{}: False{}
+    case CArr{_items, _started} <> _t: is_code(tok, 93)
+    case CObj{_members, _started} <> _t: is_code(tok, 125)
+
+def close_empty_here(+stack: List<Container>, +tok: L.LexTok) -> Bool:
   match stack:
     case Nil{}: False{}
     case CArr{_items, started} <> _t:
@@ -146,7 +154,7 @@ def step(tokens: List<L.LexTok>, +stack: List<Container>, pending: Pending,
               step(t, absorb_value(stack, lit_value(name)),
                 value_pending(stack, lit_value(name)), original)
             case L.Punctuation{+code}:
-              Bool.pick(FrameResult, close_here(stack, h),
+              Bool.pick(FrameResult, close_empty_here(stack, h),
                 step(t, close_stack(stack), close_pending(stack), original),
                 Bool.pick(FrameResult, U32.is_eq(code, 123),
                   step(t, CObj{Nil{}, False{}} <> stack, PKey{}, original),
@@ -159,7 +167,7 @@ def step(tokens: List<L.LexTok>, +stack: List<Container>, pending: Pending,
         case +h <> +t:
           match h:
             case L.Punctuation{_code}:
-              Bool.pick(FrameResult, close_here(stack, h),
+              Bool.pick(FrameResult, close_empty_here(stack, h),
                 step(t, close_stack(stack), close_pending(stack), original),
                 FrameRefused{"expected_key", original})
             case L.StrTok{units, tok}:
@@ -174,9 +182,7 @@ def step(tokens: List<L.LexTok>, +stack: List<Container>, pending: Pending,
             case L.Punctuation{code}:
               Bool.pick(FrameResult, U32.is_eq(code, 58),
                 step(t, stack, PValue{}, original),
-                Bool.pick(FrameResult, close_here(stack, h),
-                  step(t, close_stack(stack), close_pending(stack), original),
-                  FrameRefused{"expected_colon", original}))
+                FrameRefused{"expected_colon", original})
             case L.StrTok{_u, _o}: FrameRefused{"expected_colon", original}
             case L.NumTok{_o}: FrameRefused{"expected_colon", original}
             case L.LitTok{_n, _o}: FrameRefused{"expected_colon", original}
@@ -186,7 +192,7 @@ def step(tokens: List<L.LexTok>, +stack: List<Container>, pending: Pending,
         case +h <> +t:
           match h:
             case L.Punctuation{code}:
-              Bool.pick(FrameResult, close_here(stack, h),
+              Bool.pick(FrameResult, close_any_here(stack, h),
                 step(t, close_stack(stack), close_pending(stack), original),
                 Bool.pick(FrameResult, U32.is_eq(code, 44),
                   step(t, stack, pending_after_comma(stack), original),

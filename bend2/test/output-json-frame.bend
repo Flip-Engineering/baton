@@ -11,12 +11,22 @@
 # written independently of the implementation.
 # Expectations are written independently and name every expected byte. Refusal reasons are the
 # literals the frame and lexer steps produce, read from those sources.
+# The construction invariant is demonstrated only by cases whose inputs the implementation
+# accepts, because a refused input yields no tree to inspect.
 # Language forms: definitions before their callers, nested matches over the pinned result
 # constructors with positional binders, Bool.pick with a first type argument, and a computed
 # value bound to a parameter before it is matched. UNCOMPILED and UNTESTED.
 
 import Base
 import ../src/receive/output-json-frame.bend as F
+
+# One comparison task: a value pair, a list pair, or a task that has already been determined
+# different. The worklist keeps the value comparison single-recursive, because a task is
+# pushed for a child pair instead of being compared by a second recursive function.
+type Work is Data:
+  WVal{left: F.FrameVal, right: F.FrameVal}
+  WList{left: List<F.FrameVal>, right: List<F.FrameVal>}
+  WDiff{}
 
 def same_units(left: List<U32>, right: List<U32>) -> Bool:
   match left:
@@ -29,68 +39,93 @@ def same_units(left: List<U32>, right: List<U32>) -> Bool:
         case Nil{}: False{}
         case rh <> rt: Bool.pick(Bool, U32.is_eq(lh, rh), same_units(lt, rt), False{})
 
-def same_vals(left: List<F.FrameVal>, right: List<F.FrameVal>) -> Bool:
+def agree() -> List<Work>:
+  Nil{}
+
+def diff() -> List<Work>:
+  [WDiff{}]
+
+def choose(+held: Bool) -> List<Work>:
+  Bool.pick(List<Work>, held, Nil{}, [WDiff{}])
+
+def step_list(+left: List<F.FrameVal>, +right: List<F.FrameVal>) -> List<Work>:
   match left:
     case Nil{}:
       match right:
-        case Nil{}: True{}
-        case _r <> _rt: False{}
+        case Nil{}: Nil{}
+        case _r <> _rt: [WDiff{}]
     case lh <> lt:
       match right:
-        case Nil{}: False{}
-        case rh <> rt: Bool.pick(Bool, same_val(lh, rh), same_vals(lt, rt), False{})
+        case Nil{}: [WDiff{}]
+        case +rh <> +rt: [WVal{lh, rh}, WList{lt, rt}]
 
-def same_val(left: F.FrameVal, right: F.FrameVal) -> Bool:
+def step_val(+left: F.FrameVal, +right: F.FrameVal) -> List<Work>:
   match left:
     case F.FNull{}:
       match right:
-        case F.FNull{}: True{}
-        case F.FBool{_b}: False{}
-        case F.FNum{_o}: False{}
-        case F.FStr{_u, _o}: False{}
-        case F.FArr{_i}: False{}
-        case F.FObj{_m}: False{}
+        case F.FNull{}: agree()
+        case F.FBool{_b}: diff()
+        case F.FNum{_o}: diff()
+        case F.FStr{_u, _o}: diff()
+        case F.FArr{_i}: diff()
+        case F.FObj{_m}: diff()
     case F.FBool{a_value}:
       match right:
-        case F.FNull{}: False{}
-        case F.FBool{b_value}: Bool.pick(Bool, a_value, b_value, Bool.pick(Bool, b_value, False{}, True{}))
-        case F.FNum{_o}: False{}
-        case F.FStr{_u, _o}: False{}
-        case F.FArr{_i}: False{}
-        case F.FObj{_m}: False{}
+        case F.FNull{}: diff()
+        case F.FBool{+b_value}:
+          choose(Bool.pick(Bool, a_value, b_value, Bool.pick(Bool, b_value, False{}, True{})))
+        case F.FNum{_o}: diff()
+        case F.FStr{_u, _o}: diff()
+        case F.FArr{_i}: diff()
+        case F.FObj{_m}: diff()
     case F.FNum{a_orig}:
       match right:
-        case F.FNull{}: False{}
-        case F.FBool{_b}: False{}
-        case F.FNum{b_orig}: same_units(a_orig, b_orig)
-        case F.FStr{_u, _o}: False{}
-        case F.FArr{_i}: False{}
-        case F.FObj{_m}: False{}
+        case F.FNull{}: diff()
+        case F.FBool{_b}: diff()
+        case F.FNum{b_orig}: choose(same_units(a_orig, b_orig))
+        case F.FStr{_u, _o}: diff()
+        case F.FArr{_i}: diff()
+        case F.FObj{_m}: diff()
     case F.FStr{a_units, a_orig}:
       match right:
-        case F.FNull{}: False{}
-        case F.FBool{_b}: False{}
-        case F.FNum{_o}: False{}
+        case F.FNull{}: diff()
+        case F.FBool{_b}: diff()
+        case F.FNum{_o}: diff()
         case F.FStr{b_units, b_orig}:
-          Bool.and(same_units(a_units, b_units), same_units(a_orig, b_orig))
-        case F.FArr{_i}: False{}
-        case F.FObj{_m}: False{}
+          choose(Bool.and(same_units(a_units, b_units), same_units(a_orig, b_orig)))
+        case F.FArr{_i}: diff()
+        case F.FObj{_m}: diff()
     case F.FArr{a_items}:
       match right:
-        case F.FNull{}: False{}
-        case F.FBool{_b}: False{}
-        case F.FNum{_o}: False{}
-        case F.FStr{_u, _o}: False{}
-        case F.FArr{b_items}: same_vals(a_items, b_items)
-        case F.FObj{_m}: False{}
+        case F.FNull{}: diff()
+        case F.FBool{_b}: diff()
+        case F.FNum{_o}: diff()
+        case F.FStr{_u, _o}: diff()
+        case F.FArr{b_items}: [WList{a_items, b_items}]
+        case F.FObj{_m}: diff()
     case F.FObj{a_members}:
       match right:
-        case F.FNull{}: False{}
-        case F.FBool{_b}: False{}
-        case F.FNum{_o}: False{}
-        case F.FStr{_u, _o}: False{}
-        case F.FArr{_i}: False{}
-        case F.FObj{b_members}: same_vals(a_members, b_members)
+        case F.FNull{}: diff()
+        case F.FBool{_b}: diff()
+        case F.FNum{_o}: diff()
+        case F.FStr{_u, _o}: diff()
+        case F.FArr{_i}: diff()
+        case F.FObj{b_members}: [WList{a_members, b_members}]
+
+# One self-recursive comparison over the worklist. It matches its own list parameter, pushes
+# child tasks instead of calling a second recursive function, and stops at the first
+# difference, so no two helpers call each other.
+def all_same(work: List<Work>) -> Bool:
+  match work:
+    case Nil{}: True{}
+    case h <> t:
+      match h:
+        case WDiff{}: False{}
+        case WVal{left, right}: all_same(step_val(left, right) <> t)
+        case WList{left, right}: all_same(step_list(left, right) <> t)
+
+def same_val(left: F.FrameVal, right: F.FrameVal) -> Bool:
+  all_same([WVal{left, right}])
 
 def same_result(left: F.FrameResult, right: F.FrameResult) -> Bool:
   match left:
@@ -220,6 +255,14 @@ def cases() -> List<List<U32> & F.FrameResult & String>:
     ([91, 91, 91, 91, 49, 93, 93, 93, 93],
       ok(varr([varr([varr([varr([vnum([49])])])])]), [91, 91, 91, 91, 49, 93, 93, 93, 93]),
       "nested-arrays-four-deep"),
+    ([91, 49, 93], ok(varr([vnum([49])]), [91, 49, 93]), "array-one-number-closes"),
+    ([91, 91, 93, 93], ok(varr([varr([])]), [91, 91, 93, 93]),
+      "array-containing-empty-array-closes"),
+    ([123, 34, 97, 34, 58, 123, 125, 125],
+      ok(vobj([vstr([97], [34, 97, 34]), vobj([])]), [123, 34, 97, 34, 58, 123, 125, 125]),
+      "object-member-empty-object-closes"),
+    ([91, 91, 49, 44, 93, 93], refused("expected_value", [91, 91, 49, 44, 93, 93]),
+      "nested-trailing-comma-refused"),
     ([49, 32, 50], refused("trailing_data", [49, 32, 50]), "trailing-top-level-token-refused"),
     ([], refused("unexpected_end", []), "empty-input-frame-refusal"),
     ([32, 9], refused("unexpected_end", [32, 9]), "whitespace-only-frame-refusal"),
@@ -251,6 +294,12 @@ def cases() -> List<List<U32> & F.FrameResult & String>:
     ([34, 0, 34], refused("raw_control", [34, 0, 34]), "string-refusal-propagated"),
   ]
 
+# The controls isolate one comparator field at a time by changing it and nothing else, so each
+# pair fails on exactly that field. Several pairs are synthetic results that the lexer and the
+# frame step cannot produce, including reordered and duplicated member lists and reordered
+# array items; that is their purpose and they are not claims about reachable output. Object
+# lists in this group keep string keys in even positions, so the pair differs in the field
+# named and not merely in validity.
 def unequal_pairs() -> List<F.FrameResult & F.FrameResult & String>:
   [
     (ok(vnull(), [110, 117, 108, 108]), ok(vbool(True{}), [110, 117, 108, 108]),
@@ -259,8 +308,11 @@ def unequal_pairs() -> List<F.FrameResult & F.FrameResult & String>:
       ok(varr([vnum([50]), vnum([49])]), [91, 49, 44, 50, 93]), "comparator-array-order"),
     (ok(varr([vnum([49])]), [91, 49, 93]), ok(varr([vnum([49]), vnum([49])]), [91, 49, 93]),
       "comparator-array-multiplicity"),
-    (ok(vobj([vstr([97], [34, 97, 34]), vnum([49])]), [123, 125]),
-      ok(vobj([vnum([49]), vstr([97], [34, 97, 34])]), [123, 125]), "comparator-member-order"),
+    (ok(vobj([vstr([97], [34, 97, 34]), vnum([49]), vstr([98], [34, 98, 34]), vnum([50])]),
+       [123, 125]),
+      ok(vobj([vstr([98], [34, 98, 34]), vnum([50]), vstr([97], [34, 97, 34]), vnum([49])]),
+       [123, 125]),
+      "comparator-member-order"),
     (ok(vobj([vstr([97], [34, 97, 34]), vnum([49])]), [123, 125]),
       ok(vobj([vstr([97], [34, 97, 34]), vnum([49]), vstr([97], [34, 97, 34]), vnum([49])]),
         [123, 125]),
@@ -286,6 +338,8 @@ def unequal_pairs() -> List<F.FrameResult & F.FrameResult & String>:
     (fault(256, [256]), unsupported("reason", [256]), "comparator-fault-disposition"),
     (unsupported("first_reason", [1]), unsupported("second_reason", [1]),
       "comparator-unsupported-reason"),
+    (unsupported("same_reason", [1]), unsupported("same_reason", [1, 2]),
+      "comparator-unsupported-original"),
     (ok(vnull(), [110, 117, 108, 108]), ok(vnull(), [110, 117, 108, 108, 32]),
       "comparator-full-original"),
   ]
