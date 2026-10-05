@@ -330,18 +330,142 @@ def reconcile_controls(expected, laws, mutations):
 
 
 ORDINARY_SCHEMA = 'capacity-controls/ordinary-evidence@1'
+# The checker writes this index under its run-private scratch and records stream
+# paths relative to that scratch, so the evidence root is the directory holding
+# the evidence directory and every member resolves below it.
+ORDINARY_INDEX_MEMBERS = ('evidence', 'index.json')
+ORDINARY_OPERATION = '--check-only'
+ORDINARY_OUTCOME_STATES = ('exited', 'signalled', 'spawn-error')
 
 
-def ordinary_evidence(index_path, expected):
-    """Consume the checker's retained ordinary per-case evidence.
-
-    The index is written under the checker's run-private scratch. Every control
-    the source states must appear exactly once with its applied setup, the actual
-    command that ran, verified complete streams and a terminal outcome, and the
-    index itself must declare that the run finished.
-    """
+def ordinary_root(index_path, declared=None):
+    """Resolve and check the run-private evidence root the index belongs to."""
     path = Path(index_path)
     require(path.is_file(), 'The ordinary evidence index is missing: ' + str(path))
+    require(path.parts[-2:] == ORDINARY_INDEX_MEMBERS,
+            'The ordinary evidence index is not at <run>/evidence/index.json: ' + str(path))
+    root = path.parent.parent
+    require(root.is_absolute() and root.is_dir(),
+            'The ordinary evidence run root is not an absolute directory: ' + str(root))
+    if declared is not None:
+        require(Path(declared).resolve() == root.resolve(),
+                'The declared ordinary run root disagrees with the index location: '
+                + str(declared))
+    return root
+
+
+def ordinary_member(root, relative, label):
+    """Resolve one recorded stream path below the run root, refusing symlinks."""
+    require(isinstance(relative, str) and relative, label + ' records no path')
+    candidate = PurePosixPath(relative)
+    require(not candidate.is_absolute()
+            and all(part not in ('', '.', '..') for part in candidate.parts),
+            label + ' records an unqualified path: ' + json.dumps(relative))
+    member = root
+    for part in candidate.parts:
+        member = member / part
+        require(not member.is_symlink(), label + ' passes through a symlink: '
+                + json.dumps(relative))
+    require(member.is_file(), label + ' is missing: ' + json.dumps(relative))
+    require(root.resolve() in member.resolve().parents,
+            label + ' escapes the run root: ' + json.dumps(relative))
+    return member
+
+
+def verify_ordinary_outcome(outcome, label):
+    """Check the ordinary terminal record against the shared process contract.
+
+    The ordinary route records the checker's own child outcome with the four
+    shared fields and no wrapper receipt, so this shares the state semantics
+    without inventing wrapper identity. An absent outcome is not skipped.
+    """
+    require(isinstance(outcome, dict), label + ' records no terminal outcome')
+    require(set(outcome) == {'state', 'exit_code', 'signal', 'spawn_error'},
+            label + ' names another outcome shape: ' + succinct(sorted(outcome)))
+    state = outcome['state']
+    require(state in ORDINARY_OUTCOME_STATES,
+            label + ' names no terminal state: ' + json.dumps(state))
+    if state == 'exited':
+        require(type(outcome['exit_code']) is int and outcome['signal'] is None
+                and outcome['spawn_error'] is None,
+                label + ' records an inconsistent exited outcome: ' + json.dumps(outcome))
+    elif state == 'signalled':
+        require(outcome['exit_code'] is None and type(outcome['signal']) is int
+                and outcome['signal'] > 0 and outcome['spawn_error'] is None,
+                label + ' records an inconsistent signalled outcome: ' + json.dumps(outcome))
+    else:
+        require(outcome['exit_code'] is None and outcome['signal'] is None
+                and isinstance(outcome['spawn_error'], str) and outcome['spawn_error'],
+                label + ' records an inconsistent spawn-error outcome: ' + json.dumps(outcome))
+
+
+def ordinary_row(identity, text, expected):
+    """Bind one ordinary case to the classifier row the checker recorded.
+
+    The checker's shared classifier decides each row's gate and pass fields; this
+    reads that recorded verdict and cross-checks its identity against the
+    discovered control rather than interpreting the raw stream itself.
+    """
+    records = []
+    for line in text.splitlines():
+        line = line.strip()
+        if not line.startswith('{'):
+            continue
+        try:
+            record = json.loads(line)
+        except ValueError:
+            continue
+        if isinstance(record, dict):
+            records.append(record)
+    require(records, 'An ordinary case recorded no classifier row: ' + json.dumps(identity))
+    if identity == 'baseline':
+        row = records[0]
+        require(row.get('check') == 'entry compiles with every law proven'
+                and row.get('passed') is True,
+                'The ordinary baseline row did not report a passing compile: '
+                + json.dumps(row, sort_keys=True))
+        return row
+    kind, _, name = identity.partition(':')
+    require(kind in ('proof', 'mutation') and name,
+            'An ordinary case names no control kind: ' + json.dumps(identity))
+    control = expected['by_id'].get(identity)
+    require(control is not None,
+            'An ordinary case is absent from this source: ' + json.dumps(identity))
+    matching = [row for row in records
+                if row.get('law' if kind == 'proof' else 'mutation') == name]
+    require(len(matching) == 1, 'An ordinary case recorded ' + str(len(matching))
+            + ' classifier rows for ' + json.dumps(identity))
+    row = matching[0]
+    require(row.get('passed') is True,
+            'The ordinary classifier row did not pass: ' + json.dumps(row, sort_keys=True))
+    if kind == 'proof':
+        require(row.get('law') == control['law'] and row.get('module') == control['module'],
+                'An ordinary proof row names another control: ' + json.dumps(row, sort_keys=True))
+        require(row.get('proof') == 'removed',
+                'An ordinary proof row did not apply its removal: '
+                + json.dumps(row, sort_keys=True))
+    else:
+        require(row.get('applied') is True,
+                'An ordinary mutation row did not apply its change: '
+                + json.dumps(row, sort_keys=True))
+    require(row.get('gate') == 'refuses',
+            'An ordinary case did not record an attributable refusal: '
+            + json.dumps(row, sort_keys=True))
+    return row
+
+
+def ordinary_evidence(index_path, expected, compiler=None, declared_root=None):
+    """Consume the checker's retained ordinary per-case evidence.
+
+    The index sits at <run>/evidence/index.json and records stream paths relative
+    to <run>. Every control the source states must appear exactly once, with its
+    applied setup, the admitted compiler and entry command, both streams verified
+    byte for byte below the run root, the checker's own classifier row for that
+    control, a shared terminal outcome and a finite interval, and the index must
+    declare that the run finished and belong to this source's control identity.
+    """
+    root = ordinary_root(index_path, declared_root)
+    path = Path(index_path)
     index = json.loads(path.read_text())
     require(index.get('schema') == ORDINARY_SCHEMA,
             'The ordinary evidence index names another schema: ' + json.dumps(index.get('schema')))
@@ -350,48 +474,48 @@ def ordinary_evidence(index_path, expected):
     cases = index.get('cases')
     require(isinstance(cases, list) and cases,
             'The ordinary evidence index holds no case')
-    wanted = {control['id'] for control in expected['controls']}
-    seen = set()
+    seen = {}
     for case in cases:
         require(isinstance(case, dict), 'An ordinary case row is not an object')
         identity = case.get('id')
-        require(identity in wanted,
-                'An ordinary case row is absent from this source: ' + json.dumps(identity))
+        require(isinstance(identity, str) and identity,
+                'An ordinary case row names no control: ' + json.dumps(identity))
         require(identity not in seen, 'An ordinary case row repeats: ' + json.dumps(identity))
-        seen.add(identity)
-        require(case.get('applied') is True,
-                'An ordinary case did not apply its setup: ' + json.dumps(identity))
+        label = 'ordinary ' + json.dumps(identity)
+        require(case.get('applied') is True, label + ' did not apply its setup')
         argv = case.get('argv')
         require(isinstance(argv, list) and argv and all(isinstance(part, str) for part in argv),
-                'An ordinary case records no command: ' + json.dumps(identity))
+                label + ' records no command')
+        if compiler is not None:
+            require(len(argv) == 3 and argv[1] == ADMITTED_ENTRY
+                    and argv[2] == ORDINARY_OPERATION,
+                    label + ' did not run the admitted entry as a check: ' + json.dumps(argv))
+            require(Path(argv[0]).resolve() == Path(compiler).resolve(),
+                    label + ' ran another compiler: ' + json.dumps(argv[0]))
+        streams = {}
         for stream in ('stdout', 'stderr'):
             record = case.get(stream)
-            require(isinstance(record, dict), 'An ordinary case omits its ' + stream + ': '
-                    + json.dumps(identity))
-            member = (path.parent / str(record.get('path', ''))).resolve()
-            require(path.parent.resolve() in member.parents,
-                    'An ordinary case ' + stream + ' escapes the evidence root: '
-                    + json.dumps(record.get('path')))
-            require(member.is_file(), 'An ordinary case ' + stream + ' is missing: '
-                    + json.dumps(record.get('path')))
+            require(isinstance(record, dict), label + ' omits its ' + stream)
+            member = ordinary_member(root, record.get('path'), label + ' ' + stream)
             data = member.read_bytes()
-            require(len(data) == record.get('bytes') and hashlib.sha256(data).hexdigest()
-                    == record.get('sha256'),
-                    'An ordinary case ' + stream + ' does not match its recorded bytes: '
-                    + json.dumps(identity))
-        if 'outcome' in case:
-            verify_process({'process': case.get('outcome')}, baseline=False,
-                           label='ordinary ' + json.dumps(identity))
+            require(len(data) == record.get('bytes')
+                    and hashlib.sha256(data).hexdigest() == record.get('sha256'),
+                    label + ' ' + stream + ' does not match its recorded bytes')
+            streams[stream] = data
+        verify_ordinary_outcome(case.get('outcome'), label)
         require(is_finite(case.get('started')) and is_finite(case.get('ended'))
                 and case['ended'] >= case['started'],
-                'An ordinary case records an invalid interval: ' + json.dumps(identity))
-    missing = sorted(wanted - seen)
+                label + ' records an invalid interval')
+        seen[identity] = ordinary_row(identity, streams['stdout'].decode('utf-8', 'replace'),
+                                      expected)
+    wanted = {control['id'] for control in expected['controls']}
+    missing = sorted(wanted - set(seen))
     require(not missing, 'The ordinary evidence omits controls: ' + succinct(missing))
     return {'path': str(path), **file_info(path), 'schema': ORDINARY_SCHEMA,
-            'cases': len(seen)}
+            'cases': len(seen), 'run_root': str(root)}
 
 
-def validation(logs, remote=None, ordinary=None):
+def validation(logs, remote=None, ordinary=None, compiler=None):
     expected = discover_controls()
     laws = [control for control in expected['controls'] if control['kind'] == 'proof-removal']
     mutations = [control for control in expected['controls'] if control['kind'] == 'mutation']
@@ -419,7 +543,13 @@ def validation(logs, remote=None, ordinary=None):
               'route': 'remote-module-groups' if remote is not None else 'local-complete',
               'native': reconcile_native(native_text)}
     if ordinary is not None:
-        result['ordinary'] = ordinary_evidence(ordinary, expected)
+        consumed = ordinary_evidence(ordinary, expected, compiler)
+        retained = Path(consumed['path']).resolve()
+        require(logs.resolve() in retained.parents,
+                'The consumed ordinary evidence is not retained under the package run: '
+                + str(retained))
+        consumed['retained'] = str(retained.relative_to(logs.resolve()))
+        result['ordinary'] = consumed
     return result
 
 
@@ -454,7 +584,8 @@ def reconcile_native(text):
     return {'python_tests': total, 'python_suites': reported}
 
 
-def run_gates(compiler, env, logs, initial, before_inputs, remote=None, ordinary=None):
+def run_gates(compiler, env, logs, initial, before_inputs, remote=None, ordinary=None,
+              ordinary_root_path=None):
     summary = {'schema': RECEIPT_SCHEMA, 'status': 'running', 'worktree': str(ROOT),
                'output': str(logs),
                'before': initial, 'environment': {'BEND': str(compiler), 'BEND_NO_TELEMETRY': '1',
@@ -524,7 +655,14 @@ def run_gates(compiler, env, logs, initial, before_inputs, remote=None, ordinary
                 require(zero_exit(result_exit),
                         name + ' failed; full output is retained at ' + str(logs / stage['log']))
             same_source(stage['after'], initial)
-        summary['validation'] = validation(logs, remote, ordinary)
+        retained = None
+        if ordinary is not None:
+            source_root = ordinary_root(ordinary, ordinary_root_path)
+            require(not (logs / 'evidence').exists(),
+                    'The package run already retains ordinary evidence')
+            shutil.copytree(source_root / 'evidence', logs / 'evidence')
+            retained = logs / 'evidence' / 'index.json'
+        summary['validation'] = validation(logs, remote, retained, compiler)
         summary['after'] = snapshot()
         require(summary['after']['binary_sha256'] == summary['stages'][0]['after']['binary_sha256'],
                 'The native binary changed between gate stages')
@@ -633,8 +771,20 @@ def reuse_gates(path, expected_sha, compiler, logs, initial):
                     + succinct(differing))
     require(summary['stages'][0]['after']['binary_sha256'] == initial['binary_sha256'],
             'The original build-stage binary differs from the receipt binary')
-    require(validation(logs, summary.get('controls_evidence')) == summary['validation'],
+    recorded = summary['validation']
+    fresh = validation(logs, summary.get('controls_evidence'))
+    require({key: value for key, value in recorded.items() if key != 'ordinary'} == fresh,
             'The supplied receipt validation disagrees with its full logs')
+    ordinary = recorded.get('ordinary')
+    if ordinary is not None:
+        retained = path.parent / ordinary['retained']
+        consumed = ordinary_evidence(retained, discover_controls(), compiler)
+        require(consumed['sha256'] == ordinary['sha256']
+                and consumed['cases'] == ordinary['cases']
+                and consumed['schema'] == ordinary['schema'],
+                'The retained ordinary evidence disagrees with the receipt')
+        require(consumed['run_root'] == str(path.parent),
+                'The retained ordinary evidence is not rooted at the receipt directory')
     destination = logs / 'summary.json'
     shutil.copyfile(path, destination)
     return destination, summary
@@ -2088,8 +2238,18 @@ def package(args):
             require(summary['inputs_after'] == before_inputs, 'The receipt toolchain or host inputs differ from current inputs')
             input_boundary = 'Compiler libraries, CC and host captured after the supplied gates and checked again during packaging.'
         else:
+            if args.ordinary_index is not None:
+                source_root = ordinary_root(args.ordinary_index, args.ordinary_run).resolve()
+                output_root = Path(args.output).resolve()
+                require(source_root != output_root
+                        and output_root not in source_root.parents
+                        and source_root not in output_root.parents,
+                        'The ordinary evidence run root and the package output must be disjoint')
+                require(source_root != ROOT.resolve(),
+                        'The ordinary evidence run root must be a run-private directory')
             receipt, summary = run_gates(compiler, env, logs, initial, before_inputs,
-                                         remote=controls, ordinary=args.ordinary_index)
+                                         remote=controls, ordinary=args.ordinary_index,
+                                         ordinary_root_path=args.ordinary_run)
             input_boundary = ('Compiler libraries, CC and host captured before and after the three gates.'
                               if controls is None else
                               'The laws obligation was carried by the remote module-group controls; '
@@ -2211,6 +2371,8 @@ def main():
                         help='exact Node v22.15.0 executable for the context package floor gate')
     parser.add_argument('--ordinary-index', type=Path,
                         help='the checker retained ordinary evidence index for this run, consumed as gate evidence')
+    parser.add_argument('--ordinary-run', type=Path,
+                        help='the run root the ordinary evidence index belongs to, checked against the index location')
     parser.add_argument('--controls-evidence', type=Path,
                         help='directory holding controls-summary.json and its control logs, validated against this source')
     args = parser.parse_args()

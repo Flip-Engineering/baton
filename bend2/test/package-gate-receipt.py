@@ -569,46 +569,70 @@ class PackageGateReceipt(unittest.TestCase):
         finally:
             PACKAGE.classify_control = original
 
-    def ordinary_index(self, directory, complete=True, drop=(), duplicate=False,
-                       tamper=False, escape=False):
-        """A faithful ordinary evidence index with real stream bytes."""
-        evidence = directory / 'evidence'
+    def ordinary_index(self, run_root, complete=True, drop=(), duplicate=False,
+                       tamper=False, escape=False, symlink=False, argv=None,
+                       outcome=True, gate='refuses', compiler=None):
+        """The producer's actual layout: <run>/evidence/index.json, paths from <run>.
+
+        Stream paths are recorded relative to the run root, as the checker writes
+        them, and each case carries the classifier row the checker itself emitted.
+        """
+        evidence = run_root / 'evidence'
         evidence.mkdir(parents=True, exist_ok=True)
-        cases = []
+        compiler = self.compiler() if compiler is None else compiler
+        cases = [{'id': 'baseline', 'applied': True,
+                  'argv': argv or [str(compiler), PACKAGE.ADMITTED_ENTRY, PACKAGE.ORDINARY_OPERATION],
+                  'stdout': None, 'stderr': None,
+                  'outcome': {'state': 'exited', 'exit_code': 0, 'signal': None,
+                              'spawn_error': None},
+                  'started': 0.5, 'ended': 1.0,
+                  'text': json.dumps({'check': 'entry compiles with every law proven',
+                                      'passed': True}) + '\n'}]
         controls = list(self.controls['controls'])
         if drop:
             controls = [control for control in controls if control['id'] not in drop]
         if duplicate:
             controls = controls + [controls[0]]
         for control in controls:
-            stem = control['id'].replace(':', '_')
-            streams = {}
-            for name, payload in (('stdout', b'ordinary stdout\n'), ('stderr', b'ordinary stderr\n')):
-                member = evidence / (stem + '.' + name)
-                member.write_bytes(payload)
-                streams[name] = {'path': 'evidence/' + member.name,
-                                 'bytes': member.stat().st_size,
-                                 'sha256': hashlib.sha256(member.read_bytes()).hexdigest()}
-            if tamper and control['id'] == controls[0]['id']:
-                (evidence / (stem + '.stdout')).write_bytes(b'tampered\n')
-            if escape and control['id'] == controls[0]['id']:
-                streams['stdout']['path'] = '../../outside.stdout'
+            row = (law_row(control) if control['kind'] == 'proof-removal'
+                   else mutation_row(control))
+            row['gate'] = gate
+            row['passed'] = gate == 'refuses'
             cases.append({'id': control['id'], 'applied': True,
-                          'argv': ['bend', 'bend2/src/coordinator/main.bend', '--check-only'],
-                          'stdout': streams['stdout'], 'stderr': streams['stderr'],
+                          'argv': argv or [str(compiler), PACKAGE.ADMITTED_ENTRY,
+                                           PACKAGE.ORDINARY_OPERATION],
+                          'stdout': None, 'stderr': None,
                           'outcome': {'state': 'exited', 'exit_code': 1, 'signal': None,
                                       'spawn_error': None},
-                          'started': 1.0, 'ended': 2.0})
-        index = {'schema': 'capacity-controls/ordinary-evidence@1', 'complete': complete,
-                 'cases': cases}
+                          'started': 1.0, 'ended': 2.0,
+                          'text': json.dumps(row) + '\n'})
+        for case in cases:
+            stem = case['id'].replace(':', '_')
+            if not outcome:
+                case.pop('outcome')
+            for name, payload in (('stdout', case.pop('text').encode()), ('stderr', b'')):
+                member = evidence / (stem + '.' + name)
+                member.write_bytes(payload)
+                case[name] = {'path': 'evidence/' + member.name,
+                              'bytes': member.stat().st_size,
+                              'sha256': hashlib.sha256(member.read_bytes()).hexdigest()}
+            if symlink and case['id'] == cases[0]['id']:
+                moved = evidence / (stem + '.retained.stdout')
+                (evidence / (stem + '.stdout')).rename(moved)
+                (evidence / (stem + '.stdout')).symlink_to(moved)
+            if tamper and case['id'] == cases[0]['id']:
+                (evidence / (stem + '.stdout')).write_bytes(b'tampered\n')
+            if escape and case['id'] == cases[0]['id']:
+                case['stdout']['path'] = '../outside.stdout'
         path = evidence / 'index.json'
-        path.write_text(json.dumps(index))
+        path.write_text(json.dumps({'schema': 'capacity-controls/ordinary-evidence@1',
+                                    'complete': complete, 'cases': cases}))
         return path
 
     def test_the_ordinary_evidence_index_is_consumed(self):
-        path = self.ordinary_index(self.home / 'ordinary')
-        result = PACKAGE.validation(self.write_logs(), None, path)
-        self.assertEqual(result['ordinary']['cases'], len(self.controls['controls']))
+        path = self.ordinary_index(self.logs / 'run')
+        result = PACKAGE.validation(self.write_logs(), None, path, self.compiler())
+        self.assertEqual(result['ordinary']['cases'], len(self.controls['controls']) + 1)
         self.assertEqual(result['ordinary']['schema'], 'capacity-controls/ordinary-evidence@1')
 
     def test_ordinary_evidence_defects_refuse(self):
@@ -616,13 +640,31 @@ class PackageGateReceipt(unittest.TestCase):
                  ('missing case', dict(drop={self.laws()[0]['id']}), 'omits controls'),
                  ('duplicate case', dict(duplicate=True), 'repeats'),
                  ('altered stream', dict(tamper=True), 'does not match its recorded bytes'),
-                 ('unconfined path', dict(escape=True), 'escapes the evidence root')]
+                 ('unqualified path', dict(escape=True), 'unqualified path'),
+                 ('symlinked stream', dict(symlink=True), 'passes through a symlink'),
+                 ('absent outcome', dict(outcome=False), 'records no terminal outcome'),
+                 ('accepted control', dict(gate='accepts'), 'did not pass'),
+                 ('another compiler', dict(argv=['bend', PACKAGE.ADMITTED_ENTRY, '--check-only']),
+                  'ran another compiler')]
         for name, options, message in cases:
             with self.subTest(name=name):
-                directory = self.home / ('ordinary-' + name.replace(' ', '-'))
-                path = self.ordinary_index(directory, **options)
+                run_root = self.logs / ('run-' + name.replace(' ', '-'))
+                path = self.ordinary_index(run_root, **options)
                 with self.assertRaisesRegex(RuntimeError, message):
-                    PACKAGE.validation(self.write_logs(), None, path)
+                    PACKAGE.validation(self.write_logs(), None, path, self.compiler())
+
+    def test_the_ordinary_index_layout_and_run_root_are_checked(self):
+        run_root = self.home / 'declared-run'
+        path = self.ordinary_index(run_root)
+        self.assertEqual(PACKAGE.ordinary_root(path, run_root), run_root)
+        with self.assertRaisesRegex(RuntimeError, 'disagrees with the index location'):
+            PACKAGE.ordinary_root(path, self.home / 'other-run')
+        misplaced = self.home / 'misplaced' / 'index.json'
+        misplaced.parent.mkdir(parents=True, exist_ok=True)
+        misplaced.write_text(json.dumps({'schema': PACKAGE.ORDINARY_SCHEMA, 'complete': True,
+                                         'cases': []}))
+        with self.assertRaisesRegex(RuntimeError, 'is not at'):
+            PACKAGE.ordinary_root(misplaced, None)
 
     def test_the_remote_route_carries_the_laws_obligation(self):
         remote = PACKAGE.controls_evidence(self.full_evidence(), PACKAGE.snapshot(), self.compiler())
