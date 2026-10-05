@@ -61,11 +61,16 @@ expression is declared as a provenance record: source path, first and last line,
 pin and tree those lines belong to, and the hash of the extracted text; the harness
 re-extracts that text, verifies its hash before any invocation, writes the verified text into
 a directory, and substitutes that directory into the declared oracle argv placeholder, so the
-evaluated expression is the verified one rather than a label. Every path resolves against one
-documented base, the process working directory of the run: the harness resolves the working
-directory once, records it, resolves verified files and the expression directory against that
-same base, and requires the invoked executable to resolve to the verified bridge file, whose
-resolved path replaces the argv head.
+verified text is supplied to the invoked bridge rather than a label. It does not establish
+that the bridge
+evaluated that text, that the source commit label is a verified Git linkage, or that the
+linked SQLite is the one the artifact loads; those require the real adapter and extractor plus
+admitted evidence. Every path resolves against one documented base, the working directory
+given on the command line, which the harness resolves once, records, and applies to every
+manifest path before any hashing and to the argv head, which must resolve to the verified
+bridge file; the manifest argument itself resolves against the launching process's working
+directory. Arguments after the argv head stay protocol arguments and are not interpreted as
+file paths.
 
 What hashes prove and what they do not. A verified hash proves that the named bytes were
 present at the named path when the harness ran. It does not prove that a build consumed them,
@@ -223,14 +228,21 @@ def fact_differences(expected, observed, path):
     return [] if expected == observed else [f'{path}: {observed!r} does not equal {expected!r}']
 
 
-def verified_file(entry, label):
+def resolve_path(base, value):
+    """One explicit base: an absolute path is kept, a relative one resolves against base."""
+    if not isinstance(value, str) or not value:
+        raise Blocker('a manifest path is missing or is not a string')
+    path = pathlib.Path(value)
+    return (path if path.is_absolute() else pathlib.Path(base) / path).resolve()
+
+
+def verified_file(entry, label, base):
     if not isinstance(entry, dict):
         raise Blocker(f'{label} is not a record')
-    path_value = entry.get('path')
+    path = resolve_path(base, entry.get('path'))
     declared = entry.get('sha256')
-    if not path_value or not declared:
-        raise Blocker(f'{label} must declare a path and a hash')
-    path = pathlib.Path(path_value)
+    if not declared:
+        raise Blocker(f'{label} must declare a hash')
     if not path.is_file():
         raise Blocker(f'{label} is missing: {path}')
     actual = digest_file(path)
@@ -238,16 +250,16 @@ def verified_file(entry, label):
         raise Blocker(f'{label} hash mismatch: {actual}')
     if not entry.get('identity'):
         raise Blocker(f'{label} must declare an identity label')
-    return {'identity': entry['identity'], 'sha256': actual, 'path': str(path.resolve())}
+    return {'identity': entry['identity'], 'sha256': actual, 'path': str(path)}
 
 
-def verified_tree(entry, label):
+def verified_tree(entry, label, base):
     declared = entry.get('source_sha256')
     if not isinstance(declared, dict) or not declared:
         raise Blocker(f'{label} must declare at least one file to verify')
-    base = pathlib.Path(entry.get('path', ''))
+    root = resolve_path(base, entry.get('path'))
     for name, sha in sorted(declared.items()):
-        path = base / name
+        path = root / name
         if not path.is_file():
             raise Blocker(f'{label} file is missing: {name}')
         if digest_file(path) != sha:
@@ -255,10 +267,10 @@ def verified_tree(entry, label):
     if not entry.get('pin') or not entry.get('tree'):
         raise Blocker(f'{label} must declare a pin and a tree')
     return {'identity': entry.get('identity', ''), 'pin': entry['pin'], 'tree': entry['tree'],
-            'files': sorted(declared)}
+            'files': sorted(declared), 'root': str(root)}
 
 
-def extracted_expression(name, record):
+def extracted_expression(name, record, base):
     """The exact text of one oracle expression, taken from its declared source lines."""
     source = record.get('source')
     if not isinstance(source, dict):
@@ -273,7 +285,7 @@ def extracted_expression(name, record):
     commit = record.get('source_commit')
     if not isinstance(commit, dict) or not commit.get('pin') or not commit.get('tree'):
         raise Blocker(f'oracle expression {name} declares no source commit')
-    path = pathlib.Path(source['path'])
+    path = resolve_path(base, source['path'])
     if not path.is_file():
         raise Blocker(f'oracle expression source is missing: {source["path"]}')
     lines = path.read_text(encoding='utf-8').splitlines()
@@ -285,20 +297,20 @@ def extracted_expression(name, record):
     return text
 
 
-def verify_dependency(manifest):
+def verify_dependency(manifest, base):
     dependency = manifest.get('dependency')
     if not isinstance(dependency, dict):
         raise Blocker('dependency identities are missing')
     for key in DEPENDENCIES:
         if key not in dependency:
             raise Blocker(f'dependency identity is missing: {key}')
-    verified = {'artifact': verified_file(dependency['artifact'], 'admitted artifact'),
-                'sqlite': verified_file(dependency['sqlite'], 'linked sqlite'),
-                'compiler': verified_file(dependency['compiler'], 'compiler'),
-                'candidate': verified_tree(dependency['candidate'], 'candidate source'),
-                'original': verified_tree(dependency['original'], 'original source')}
+    verified = {'artifact': verified_file(dependency['artifact'], 'admitted artifact', base),
+                'sqlite': verified_file(dependency['sqlite'], 'linked sqlite', base),
+                'compiler': verified_file(dependency['compiler'], 'compiler', base),
+                'candidate': verified_tree(dependency['candidate'], 'candidate source', base),
+                'original': verified_tree(dependency['original'], 'original source', base)}
     oracle = dependency['oracle']
-    verified['oracle'] = verified_tree(oracle, 'oracle extraction')
+    verified['oracle'] = verified_tree(oracle, 'oracle extraction', base)
     expressions = oracle.get('expressions')
     if not isinstance(expressions, dict):
         raise Blocker('oracle expressions are missing')
@@ -308,12 +320,12 @@ def verify_dependency(manifest):
             raise Blocker(f'oracle expression is missing or is not a provenance record: {name}')
         key = record.get('source_commit', {}).get('pin', '')
         verified[f'expression_{name}'] = {
-            'text_sha256': digest_bytes(extracted_expression(name, record).encode('utf-8')),
+            'text_sha256': digest_bytes(extracted_expression(name, record, base).encode('utf-8')),
             'source_commit': key}
     return verified
 
 
-def verify_bridge(manifest, role):
+def verify_bridge(manifest, role, base):
     bridges = manifest.get('bridges')
     if not isinstance(bridges, dict):
         raise Blocker('bridge declarations are missing')
@@ -322,13 +334,13 @@ def verify_bridge(manifest, role):
         raise Blocker(f'{role} bridge declaration is missing')
     if bridge.get('present') is not True:
         raise Blocker(f'{role} bridge is declared absent: {bridge.get("absent_reason", "no reason")}')
-    verified = verified_file(bridge, f'{role} bridge')
+    verified = verified_file(bridge, f'{role} bridge', base)
     if role == 'oracle' and bridge.get('expressions_bound') is not True:
         raise Blocker('the oracle bridge does not declare the verified expressions bound')
     return verified
 
 
-def invocation(manifest, role, bridge):
+def invocation(manifest, role, bridge, base):
     declared = manifest.get('invocation')
     if not isinstance(declared, dict) or role not in declared:
         raise Blocker(f'{role} invocation is not declared')
@@ -342,10 +354,12 @@ def invocation(manifest, role, bridge):
     if not isinstance(executable, str) or not executable:
         raise Blocker(f'{role} declares no executable')
     resolved_bridge = pathlib.Path(bridge['path']).resolve()
-    if pathlib.Path(argv[0]).resolve() != resolved_bridge:
-        raise Blocker(f'{role} argv head does not resolve to the verified bridge file')
-    if pathlib.Path(executable).resolve() != resolved_bridge:
-        raise Blocker(f'{role} declared executable does not resolve to the verified bridge file')
+    if resolve_path(base, argv[0]) != resolved_bridge:
+        raise Blocker(f'{role} argv head does not resolve to the verified bridge file under the '
+                      'declared base')
+    if resolve_path(base, executable) != resolved_bridge:
+        raise Blocker(f'{role} declared executable does not resolve to the verified bridge file '
+                      'under the declared base')
     if role == 'oracle' and '{expressions_dir}' not in argv:
         raise Blocker('the oracle argv does not declare where the verified expressions are bound')
     return {'argv': [str(resolved_bridge)] + list(argv[1:]), 'protocol': entry['protocol'],
@@ -424,19 +438,26 @@ def compare(case, candidate, oracle):
     return differences
 
 
-def run_case(case, entries, workdir, expressions_dir, report):
+def case_octets(case):
+    """The case input bytes, or a protocol failure: absent, wrong type, bad hex or bad hash."""
     name = case.get('name')
-    if not isinstance(name, str) or not name:
-        raise Blocker('a case has no name')
     octets_hex = case.get('octets_hex')
     if not isinstance(octets_hex, str):
-        raise Blocker(f'case {name} declares octets of the wrong type')
+        raise Blocker(f'case {name} declares octets of the wrong type or not at all')
     try:
         octets = bytes.fromhex(octets_hex)
     except ValueError as exc:
         raise Blocker(f'case {name} declares octets that are not hex: {exc}')
     if digest_bytes(octets) != case.get('octets_sha256'):
         raise Blocker(f'case {name} octets hash mismatch')
+    return octets
+
+
+def run_case(case, entries, workdir, expressions_dir, report):
+    name = case.get('name')
+    if not isinstance(name, str) or not name:
+        raise Blocker('a case has no name')
+    octets = case_octets(case)
     expected = case.get('expected')
     if not isinstance(expected, dict) or set(expected) != set(EXPECTED_KEYS):
         raise Blocker(f'case {name} must declare exactly a disposition and fields')
@@ -561,15 +582,38 @@ def self_check():
         if not passed:
             report['mismatches'].append({'case': name, 'differences': differences or
                                          ['expected a difference and observed none']})
-    empty = bytes.fromhex('')
-    empty_digest = digest_bytes(empty)
-    empty_ok = empty_digest == EMPTY_OCTETS_SHA256
-    report['self_check'].append({'control': 'empty-octets-accepted',
-                                 'outcome': 'accepted' if empty_ok else 'rejected',
-                                 'sha256': empty_digest})
-    if not empty_ok:
-        report['mismatches'].append({'case': 'empty-octets-accepted',
-                                     'differences': ['empty input must hash to the empty digest']})
+    for name, case, should_pass in (
+            ('valid-empty-input',
+             {'name': 'empty-input', 'octets_hex': '', 'octets_sha256': EMPTY_OCTETS_SHA256}, True),
+            ('absent-input', {'name': 'absent-input'}, False),
+            ('wrong-type-input',
+             {'name': 'wrong-type-input', 'octets_hex': 5, 'octets_sha256': EMPTY_OCTETS_SHA256},
+             False),
+            ('bad-hash-input',
+             {'name': 'bad-hash-input', 'octets_hex': '', 'octets_sha256': 'ff'}, False)):
+        try:
+            octets = case_octets(case)
+            ok = should_pass
+            outcome = 'accepted' if ok else 'accepted-unexpectedly'
+            reason = f'{len(octets)} bytes'
+        except Blocker as exc:
+            ok = not should_pass
+            outcome = 'rejected' if ok else 'rejected-unexpectedly'
+            reason = str(exc)
+        report['self_check'].append({'control': name, 'outcome': outcome, 'reason': reason})
+        if not ok:
+            report['mismatches'].append({'case': name, 'differences': [reason]})
+    first = resolve_path('/one/base', 'tools/bridge')
+    second = resolve_path('/other/base', 'tools/bridge')
+    base_ok = (str(first) == '/one/base/tools/bridge' and str(second) == '/other/base/tools/bridge'
+               and first != second
+               and resolve_path('/one/base', '/absolute/bridge') == pathlib.Path('/absolute/bridge'))
+    report['self_check'].append({'control': 'path-base-distinguishes-directories',
+                                 'outcome': 'accepted' if base_ok else 'rejected',
+                                 'resolved': [str(first), str(second)]})
+    if not base_ok:
+        report['mismatches'].append({'case': 'path-base-distinguishes-directories',
+                                     'differences': ['the declared base must decide the resolved path']})
     for name, text in SELF_CHECK_REJECTIONS:
         rejected = False
         reason = ''
@@ -610,13 +654,13 @@ def main(argv=None):
     try:
         manifest, manifest_hash = load_manifest(options)
         report['manifest_sha256'] = manifest_hash
-        dependency = verify_dependency(manifest)
+        dependency = verify_dependency(manifest, workdir)
         report['dependency_verified'] = dependency
         expressions_dir = write_expressions(workdir, manifest['dependency']['oracle']['expressions'],
                                             dependency)
         report['expressions_dir'] = expressions_dir
-        bridges = {role: verify_bridge(manifest, role) for role in ROLES}
-        entries = {role: invocation(manifest, role, bridges[role]) for role in ROLES}
+        bridges = {role: verify_bridge(manifest, role, workdir) for role in ROLES}
+        entries = {role: invocation(manifest, role, bridges[role], workdir) for role in ROLES}
         for case in manifest['cases']:
             try:
                 run_case(case, entries, workdir, expressions_dir, report)
