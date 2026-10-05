@@ -91,6 +91,7 @@ import ./knowledge-laws.bend as KnowledgeLaws
 import ./messaging-laws.bend as MessagingLaws
 import ./connect-laws.bend as ConnectLaws
 import ./naming-laws.bend as NamingLaws
+import ./index-laws.bend as IndexLaws
 import ./delivery.bend as Delivery
 import ./turn.bend as Turn
 import ./commands.bend as C
