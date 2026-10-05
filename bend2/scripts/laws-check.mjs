@@ -111,34 +111,93 @@ for (const { file } of rows) capture(repoPathOf(file));
 for (const mutation of MUTATIONS) capture(mutation.file);
 
 // Raw per-case evidence for the consumption step: every control's complete
-// output bytes are retained under the run-private scratch, including the
-// baseline and every passing negative control. The index is rewritten after
-// each case with its actual terminal outcome and argv, and marks the record
-// incomplete until the final control finishes; a run that stops early leaves
-// a partial index that says so. The stdout row and summary contract is
-// unchanged.
-mkdirSync(join(SCRATCH, 'evidence'), { recursive: true });
+// separate raw streams, the parent classifier verdict, the exact applied
+// delta and the run identity are retained under the run-private scratch,
+// including the baseline and every passing negative control. The index is
+// rewritten after each case with its actual terminal outcome and argv, and
+// marks the record incomplete until the final control finishes; a run that
+// stops early leaves a partial index that says so. Child streams stay raw
+// compiler bytes: the parent rows and this index carry the classification.
+mkdirSync(join(SCRATCH, "evidence"), { recursive: true });
 const evidenceIndex = [];
 let evidenceComplete = false;
+function sha256Of(data) {
+  return createHash("sha256").update(data).digest("hex");
+}
+const gitIdentity = () => {
+  if (!existsSync(join(ROOT, ".git"))) return { head: null, tree: null, bend2_tree: null };
+  const git = (...args) => execFileSync("git", args, { cwd: ROOT, encoding: "utf8", maxBuffer: Infinity }).trim();
+  return { head: git("rev-parse", "HEAD"), tree: git("rev-parse", "HEAD^{tree}"), bend2_tree: git("rev-parse", "HEAD:bend2") };
+};
+const ordinaryNonce = `${Date.now()}-${process.pid}-${Math.random().toString(36).slice(2, 10)}`;
+const runIdentity = {
+  source: gitIdentity(),
+  compiler: { path: resolve(BEND), version, sha256: sha256Hex(readFileSync(BEND)) },
+  entry: ENTRY,
+  checker_argv: [resolve(BEND), ENTRY, "--check-only"],
+  origin: {
+    workflow: process.env.GITHUB_WORKFLOW ?? null,
+    run_id: process.env.GITHUB_RUN_ID ?? null,
+    run_attempt: process.env.GITHUB_RUN_ATTEMPT ?? null,
+    jobs: process.env.GITHUB_JOB ? [process.env.GITHUB_JOB] : [],
+    image_os: process.env.ImageOS ?? null,
+    image_version: process.env.ImageVersion ?? null,
+  },
+  invocation: `ordinary:${ordinaryNonce}`,
+  nonce: ordinaryNonce,
+  verifier: {
+    checker_sha256: sha256Of(readFileSync(join(ROOT, "bend2", "scripts", "laws-check.mjs"))),
+    laws_common_module_sha256: sha256Of(readFileSync(join(ROOT, "bend2", "scripts", "laws-common.mjs"))),
+    definitions_module_sha256: sha256Of(readFileSync(join(ROOT, "bend2", "scripts", "laws-mutations.mjs"))),
+    classify_module_sha256: sha256Of(readFileSync(join(ROOT, "bend2", "scripts", "capacity-controls", "classify.mjs"))),
+    work_set_module_sha256: sha256Of(readFileSync(join(ROOT, "bend2", "scripts", "capacity-controls", "work-set.mjs"))),
+    aggregate_module_sha256: sha256Of(readFileSync(join(ROOT, "bend2", "scripts", "capacity-controls", "aggregate.mjs"))),
+    group_run_module_sha256: sha256Of(readFileSync(join(ROOT, "bend2", "scripts", "capacity-controls", "group-run.mjs"))),
+  },
+};
 const writeEvidenceIndex = () => {
+  // Complete admitted-input inventory: the full captured tree with byte
+  // digests, so consumers verify non-target files against their originals
+  // and bind every input through completion.
+  const inputs = [...pristine.entries()].map(([path, bytes]) => ({ path, sha256: sha256Of(bytes) }));
   writeFileSync(join(SCRATCH, 'evidence', 'index.json'), JSON.stringify({
-    schema: 'capacity-controls/ordinary-evidence@1',
+    schema: 'capacity-controls/ordinary-evidence@2',
+    run: runIdentity,
+    index_path: join(SCRATCH, 'evidence', 'index.json'),
+    scratch: SCRATCH,
+    inputs,
     complete: evidenceComplete,
     cases: evidenceIndex,
   }, null, 2) + '\n');
 };
-const retainEvidence = (id, applied, stdout, stderr, outcome, argv, started, ended) => {
-  const stem = id.replace(/[^A-Za-z0-9_.-]/g, '_');
+const retainEvidence = (id, verdict, applied, delta, stdout, stderr, outcome, argv, started, ended) => {
+  const stem = id.replace(/[^A-Za-z0-9_.-]/g, "_");
   const stdoutName = `${stem}.stdout`;
   const stderrName = `${stem}.stderr`;
-  writeFileSync(join(SCRATCH, 'evidence', stdoutName), stdout);
-  writeFileSync(join(SCRATCH, 'evidence', stderrName), stderr);
+  writeFileSync(join(SCRATCH, "evidence", stdoutName), stdout);
+  writeFileSync(join(SCRATCH, "evidence", stderrName), stderr);
+  let changed = null;
+  if (delta !== null) {
+    const changedName = `${stem}.changed`;
+    writeFileSync(join(SCRATCH, "evidence", changedName), Buffer.from(delta.changedText, "utf8"));
+    changed = {
+      original_sha256: delta.original_sha256,
+      changed_sha256: delta.changed_sha256,
+      changed_path: `evidence/${changedName}`,
+    };
+  }
   evidenceIndex.push({
     id,
     applied,
+    // The parent classifier verdict is retained separately from the raw
+    // child streams: the child stdout is compiler bytes, never checker rows.
+    verdict: verdict === null ? null : {
+      class: verdict.class, attributed_law: verdict.attributedLaw, qualified: verdict.qualified === true,
+    },
     // The recorded command is the compile that actually ran, whether or not
     // the setup transform was applied.
     argv,
+    delta: changed,
     stdout: { path: `evidence/${stdoutName}`, bytes: stdout.byteLength, sha256: sha256Of(stdout) },
     stderr: { path: `evidence/${stderrName}`, bytes: stderr.byteLength, sha256: sha256Of(stderr) },
     outcome,
@@ -148,11 +207,27 @@ const retainEvidence = (id, applied, stdout, stderr, outcome, argv, started, end
   writeEvidenceIndex();
 };
 function sha256Of(data) {
-  return createHash('sha256').update(data).digest('hex');
+  return createHash("sha256").update(data).digest("hex");
 }
 
 const baseline = compile(BEND, SCRATCH);
-retainEvidence('baseline', true, baseline.stdout, baseline.stderr, outcomeOf(baseline),
+// The consumer envelope names the run identity and the retained index path
+// as the first stdout line; the checker rows and final summary keep their
+// existing contract, and the child streams stay raw compiler bytes.
+console.log(JSON.stringify({
+  schema: 'capacity-controls/ordinary-run@1',
+  index_path: join(SCRATCH, 'evidence', 'index.json'),
+  scratch: SCRATCH,
+  source: runIdentity.source,
+  compiler: runIdentity.compiler,
+  entry: ENTRY,
+  origin: runIdentity.origin,
+  invocation: runIdentity.invocation,
+  verifier: runIdentity.verifier,
+}));
+retainEvidence('baseline', {
+  class: baseline.ok ? 'baseline-ok' : 'baseline-failed', attributedLaw: null, qualified: baseline.ok,
+}, true, null, baseline.stdout, baseline.stderr, outcomeOf(baseline),
   [BEND, ENTRY, '--check-only'], baseline.started, baseline.ended);
 console.log(JSON.stringify({ check: 'entry compiles with every law proven', passed: baseline.ok }));
 if (!baseline.ok) {
@@ -166,7 +241,8 @@ if (!baseline.ok) {
 for (const { law, file } of rows) {
   const repoPath = repoPathOf(file);
   const copied = join(SCRATCH, repoPath);
-  const originalText = pristine.get(repoPath);
+  const originalBytes = pristine.get(repoPath);
+  const originalText = originalBytes.toString('utf8');
   let removed = false;
   let changedText = null;
   let expectedChangedText = null;
@@ -184,8 +260,11 @@ for (const { law, file } of rows) {
       }
     }
     control = compile(BEND, SCRATCH);
-    retainEvidence(`proof:${law}`, removed, control.stdout, control.stderr, outcomeOf(control),
-      [BEND, ENTRY, '--check-only'], control.started, control.ended);
+    const proofDelta = removed ? {
+      original_sha256: sha256Of(originalBytes),
+      changed_sha256: sha256Of(Buffer.from(changedText, 'utf8')),
+      changedText,
+    } : null;
     const verdict = classifyCase({
       control: { kind: 'proof-removal', law, module: repoPath },
       state: outcomeOf(control).state,
@@ -197,6 +276,8 @@ for (const { law, file } of rows) {
       delta: removed ? { changedText, expectedChangedText } : null,
       supplied: null,
     });
+    retainEvidence(`proof:${law}`, verdict, removed, proofDelta, control.stdout, control.stderr, outcomeOf(control),
+      [BEND, ENTRY, '--check-only'], control.started, control.ended);
     const passed = removed && verdict.class === 'intended-law-refusal' && verdict.qualified;
     if (!passed) failures++;
     console.log(JSON.stringify({
@@ -208,8 +289,8 @@ for (const { law, file } of rows) {
     }));
     if (!passed) console.log(control.stderr.toString("utf8").trimEnd());
   } finally {
-    writeFileSync(copied, pristine.get(repoPath));
-    if (readFileSync(copied, 'utf8') !== pristine.get(repoPath)) {
+    writeFileSync(copied, originalBytes);
+    if (!readFileSync(copied).equals(originalBytes)) {
       console.error(`laws-check: restoration verification failed for ${repoPath}`);
       process.exit(1);
     }
@@ -228,7 +309,8 @@ for (const { law, file } of rows) {
 
 for (const mutation of MUTATIONS) {
   const copied = join(SCRATCH, mutation.file);
-  const text = pristine.get(mutation.file);
+  const originalBytes = pristine.get(mutation.file);
+  const text = originalBytes.toString("utf8");
   const applied = text.includes(mutation.find);
   let changedText = null;
   let expectedChangedText = null;
@@ -240,8 +322,11 @@ for (const mutation of MUTATIONS) {
       changedText = expectedChangedText;
     }
     control = compile(BEND, SCRATCH);
-    retainEvidence(`mutation:${mutation.name}`, applied, control.stdout, control.stderr, outcomeOf(control),
-      [BEND, ENTRY, '--check-only'], control.started, control.ended);
+    const mutationDelta = applied ? {
+      original_sha256: sha256Of(originalBytes),
+      changed_sha256: sha256Of(Buffer.from(changedText, 'utf8')),
+      changedText,
+    } : null;
     const verdict = classifyCase({
       control: { kind: 'mutation', law: mutation.law, module: mutation.file },
       expectation: definitionExpectation(mutation),
@@ -255,6 +340,8 @@ for (const mutation of MUTATIONS) {
       delta: applied ? { changedText, expectedChangedText } : null,
       supplied: null,
     });
+    retainEvidence(`mutation:${mutation.name}`, verdict, applied, mutationDelta, control.stdout, control.stderr, outcomeOf(control),
+      [BEND, ENTRY, '--check-only'], control.started, control.ended);
     const passed = applied && verdict.class === 'intended-law-refusal' && verdict.qualified;
     if (!passed) failures++;
     console.log(JSON.stringify({
@@ -266,8 +353,8 @@ for (const mutation of MUTATIONS) {
     }));
     if (!passed) console.log(control.stderr.toString("utf8").trimEnd());
   } finally {
-    writeFileSync(copied, pristine.get(mutation.file));
-    if (readFileSync(copied, 'utf8') !== pristine.get(mutation.file)) {
+    writeFileSync(copied, originalBytes);
+    if (!readFileSync(copied).equals(originalBytes)) {
       console.error(`laws-check: restoration verification failed for ${mutation.file}`);
       process.exit(1);
     }
