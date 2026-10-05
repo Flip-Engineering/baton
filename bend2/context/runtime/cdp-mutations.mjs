@@ -104,6 +104,16 @@ export const NATIVE_MUTATIONS = Object.freeze([
     find: 'Bool.and(serializes, Bool.not(is_idle(pending))),',
     replace: 'False{},',
     expectedConstructors: Object.freeze(['RuntimeBusy', 'Admitted']) },
+  { name: 'child-exit-keeps-the-recorded-stop',
+    law: 'a_child_exit_leaves_no_recorded_stop',
+    file: 'bend2/src/context/runtime/cdp-runtime.bend',
+    find: '    case EvChildExit{}: StopAbsent{}',
+    replace: '    case EvChildExit{}: previous',
+    expectedConstructors: Object.freeze(['StopAbsent', 'previous']),
+    // Declared from the law's two sides, not measured in a run. The mutant makes the right
+    // side the law's own quantified variable, so the observed term is symbolic.
+    expectedTerm: 'StopAbsent{}',
+    observedTerm: 'previous' },
   { name: 'pause-scoped-admission-ignores-the-stop',
     law: 'a_pause_scoped_reference_is_refused_against_a_historical_stop',
     file: 'bend2/src/context/runtime/cdp-runtime.bend',

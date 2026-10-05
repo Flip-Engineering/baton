@@ -439,6 +439,7 @@ def stop_liveness(+previous: StopLiveness, +event: RuntimeEvent) -> StopLiveness
     case EvContextDestroyed{}: StopHistorical{}
     case EvResumeRejected{}: StopUnknown{}
     case EvAdapterFailed{}: stop_lost(previous)
+    case EvChildExit{}: StopAbsent{}
     case other: previous
 
 # An adapter failure invalidates a recorded stop without inventing stop history: a live or
@@ -462,12 +463,26 @@ def stop_is_live(+stop: StopLiveness) -> Bool:
 # caller owner's module. This module supplies the model and the predicates only; it holds no
 # reference identity, no counter and no admission authority of its own.
 #
+# Caller contract. Three limits belong to any caller that carries this model:
+#  1. pause_scoped_admitted is a stop-liveness predicate, not a complete admission, and it
+#     cannot stand alone for any part of one. The caller applies its own ordered checks first:
+#     the record is stopped (refOutsidePause), the reference names a live thread, and the
+#     runtime, adapter, epoch and mutation generation match canonically; stop liveness is the
+#     additional gate for a pause-scoped kind, checked after those.
+#  2. The caller updates the stop only for a transition its record actually admits. It
+#     evaluates stop_liveness beside advance and keeps the previous stop when advance refuses
+#     the event; a refused event cannot mutate the stop merely because it was attempted.
+#  3. The bare event transition covers the ordinary cases only. An observed resume while the
+#     record is already running, and a rejected send, are reconciliation cases the caller owns
+#     with its own request-epoch and observed-resume evidence: this module records no request
+#     identity and observes no event stream, so it supplies no such reconciliation.
+#
 # The complete native contribution a caller needs is the predicate below: it takes the
 # caller's already parsed kind flag and the caller's carried stop, and decides whether a
 # pause-scoped reference may be admitted. A caller that keeps its own record applies
-# stop_liveness at each event beside advance and passes the result here; a caller that wants
-# one value to carry both facts can widen its own record, which is the caller's decision
-# because every Rec{...} literal in the law module would change with it.
+# stop_liveness at each admitted transition beside advance and passes the result here; a
+# caller that wants one value to carry both facts can widen its own record, which is the
+# caller's decision because every Rec{...} literal in the law module would change with it.
 def pause_scoped_admitted(+stop: StopLiveness, +pause_scoped: Bool) -> Bool:
   Bool.pick(Bool, pause_scoped, stop_is_live(stop), True{})
 

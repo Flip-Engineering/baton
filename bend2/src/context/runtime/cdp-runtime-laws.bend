@@ -298,6 +298,13 @@ law adapter_failure_marks_an_unknown_stop_historical:
 def adapter_failure_marks_an_unknown_stop_historical():
   {==}
 
+law a_child_exit_leaves_no_recorded_stop:
+  for +previous: R.StopLiveness
+  {R.stop_liveness(previous, R.EvChildExit{}) == R.StopAbsent{} : R.StopLiveness}
+
+def a_child_exit_leaves_no_recorded_stop(previous):
+  {==}
+
 law only_a_live_stop_admits_a_pause_scoped_reference:
   {R.stop_is_live(R.StopLive{}) == True{} : Bool}
 
