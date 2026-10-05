@@ -462,8 +462,10 @@ def run_context_gate(payload, logs, node, name, extra_env=None):
                                 stdin=subprocess.DEVNULL, stdout=out, stderr=err)
     after = context_tree_state(payload)
     write_json(after_path, after)
-    node_identity['versionAfter'] = command([str(node), '--version'], payload, env, logs,
-                                            'context-node-version-' + name + '-after')
+    after_identity = context_node_identity(node, payload, logs, name, '-after')
+    node_identity['versionAfter'] = after_identity['version']
+    node_identity['sha256After'] = after_identity['sha256']
+    node_identity['bytesAfter'] = after_identity['bytes']
     receipt = {'runtime': name, 'node': node_identity,
                'argv': [str(node), 'context-package-gate.mjs'], 'cwd': str(cwd),
                'environmentKeys': sorted(env), 'exit_code': result.returncode,
@@ -472,11 +474,20 @@ def run_context_gate(payload, logs, node, name, extra_env=None):
                'stderr': {'path': stderr.name, **file_info(stderr)},
                'payloadSnapshot': {'before': {'path': before_path.name, **file_info(before_path)},
                                    'after': {'path': after_path.name, **file_info(after_path)},
-                                   'equal': before == after}}
-    write_json(logs / ('context-gate-' + name + '.json'), receipt)
+                                   'equal': before == after},
+               'nodeVersionChanged': after_identity['version'] != node_identity['version'],
+               'nodeIdentityChanged': (after_identity['sha256'] != node_identity['sha256']
+                                       or after_identity['bytes'] != node_identity['bytes'])}
+    receipt_path = logs / ('context-gate-' + name + '.json')
+    write_json(receipt_path, receipt)
+    require(not receipt['nodeVersionChanged'],
+            'The context gate node reported a different version after the package gate: '
+            + str(receipt_path))
+    require(not receipt['nodeIdentityChanged'],
+            'The context gate node executable bytes changed during the package gate: '
+            + str(receipt_path))
     require(receipt['payloadSnapshot']['equal'],
-            'The context payload changed during the package gate: '
-            + str(logs / ('context-gate-' + name + '.json')))
+            'The context payload changed during the package gate: ' + str(receipt_path))
     return receipt, stdout.read_text(errors='replace')
 
 
@@ -693,7 +704,9 @@ def package(args):
         context['dependencyClosureEntries'] = len(context_entries)
         terms['context_packages'] = context.pop('terms')
         append_context_distribution(payload, terms['context_packages'])
-        for receipt_log in sorted(path for path in logs.glob('context-gate-*') if path.is_file()):
+        receipt_logs = sorted(path for pattern in ('context-gate-*', 'context-node-version-*')
+                              for path in logs.glob(pattern) if path.is_file())
+        for receipt_log in receipt_logs:
             shutil.copyfile(receipt_log, payload / 'logs' / receipt_log.name)
         generated_dir = output / 'generated'
         generated_dir.mkdir()

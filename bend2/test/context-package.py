@@ -226,6 +226,29 @@ class ContextPackagedBytes(unittest.TestCase):
         report = PACKAGE.require_gate_report(text, len(self.entries))
         self.assertEqual(report['stages'][1]['version'], '4.3.6')
 
+    def test_gate_refuses_changed_node_identity(self):
+        real = pathlib.Path(self.host_node).resolve()
+        wrapper = pathlib.Path(self.scratch.name) / 'changing-node.sh'
+        flag = pathlib.Path(self.scratch.name) / 'changing-node.flag'
+        wrapper.write_text('#!/bin/sh\n'
+                           'if [ -f "$CHANGING_NODE_FLAG" ]; then echo v9.8.7; exit 0; fi\n'
+                           'touch "$CHANGING_NODE_FLAG"\n'
+                           'exec "' + str(real) + '" "$@"\n')
+        wrapper.chmod(0o755)
+        with self.assertRaises(RuntimeError) as caught:
+            PACKAGE.run_context_gate(self.host_root, self.logs, wrapper, 'changed-node',
+                                     {'CHANGING_NODE_FLAG': str(flag)})
+        self.assertIn('different version', str(caught.exception))
+        receipt = json.loads((self.logs / 'context-gate-changed-node.json').read_text())
+        self.assertEqual(receipt['node']['version'], subprocess_version(real))
+        self.assertEqual(receipt['node']['versionAfter'], 'v9.8.7')
+        self.assertTrue(receipt['nodeVersionChanged'])
+        self.assertFalse(receipt['nodeIdentityChanged'])
+        self.assertEqual(receipt['exit_code'], 0)
+        self.assertTrue(receipt['payloadSnapshot']['equal'])
+        self.assertGreater((self.logs / 'context-node-version-changed-node.json').stat().st_size, 0)
+        self.assertGreater((self.logs / 'context-node-version-changed-node-after.json').stat().st_size, 0)
+
     def test_staged_notices_include_explicit_third_party_terms(self):
         terms = PACKAGE.stage_context_notices(self.host_root, self.entries)
         sources = {row['source'] for row in terms['typescript']['files']}
