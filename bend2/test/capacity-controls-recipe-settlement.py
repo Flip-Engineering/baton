@@ -87,6 +87,18 @@ class RecipeSettlement(unittest.TestCase):
         self.assertIn('could not be written', raised.exception.record_error)
         self.assertEqual(len(writes), 2)
 
+    def test_a_staged_cleanup_failure_is_retained(self):
+        # A directory where the replacement file belongs makes the staged write
+        # fail and its cleanup fail too, so both facts must be retained.
+        staged = self.run / 'run.json.next'
+        staged.mkdir()
+        (staged / 'occupied').write_text('still here\n')
+        with self.assertRaises(RuntimeError) as raised:
+            RECIPE.write_record(self.run, [{'name': 'preconditions', 'outcome': 'verified'}])
+        self.assertIn('could not be written', str(raised.exception))
+        self.assertIsNotNone(raised.exception.cleanup_error)
+        self.assertTrue(staged.is_dir())
+
     def test_settling_twice_updates_one_row(self):
         RECIPE.settle(self.run, self.record, 'archive-readback', 'attempted', archive='a')
         RECIPE.settle(self.run, self.record, 'archive-readback', 'verified', members=1)

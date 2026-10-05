@@ -93,12 +93,17 @@ def write_record(run, record):
         staged.write_text(json.dumps({'children': record}, indent=2) + '\n')
         os.replace(staged, path)
     except OSError as error:
+        cleanup_error = None
         try:
             if staged.exists():
                 staged.unlink()
-        except OSError:
-            pass
-        raise RuntimeError('the run record could not be written: ' + repr(error)) from error
+        except OSError as secondary:
+            # A cleanup failure is retained beside the write failure rather than
+            # discarded, so the record of what happened stays complete.
+            cleanup_error = repr(secondary)
+        raised = RuntimeError('the run record could not be written: ' + repr(error))
+        raised.cleanup_error = cleanup_error
+        raise raised from error
 
 
 def settle(run, record, name, outcome, **fields):
@@ -237,7 +242,10 @@ def main():
                    'inventory_sha256': result['inventory_sha256'],
                    'reduction_sha256': result['reduction_sha256']})
     (run / 'run.json').write_text(json.dumps({'children': record}, indent=2) + '\n')
-    (run / 'reduction.json').write_text(json.dumps(result['reduction'], indent=2) + '\n')
+    reduction_artifact = run / 'reduction.json'
+    reduction_artifact.write_text(json.dumps(result['reduction'], indent=2) + '\n')
+    settle(run, record, 'reduction-artifact', 'verified', artifact='reduction.json',
+           sha256=digest(reduction_artifact))
     print(json.dumps({'cases': result['cases'], 'groups': result['groups'],
                       'inventory_sha256': result['inventory']['inventory_sha256'],
                       'closure_sha256': result['closure_sha256'],
@@ -344,6 +352,10 @@ def main():
                 raise SystemExit('the archived readback retained fewer acquisition records than '
                                  'cases: ' + repr(records) + ' for ' + repr(expected_ids))
             audit_inventory = package.producer_inventory(audit)
+            bound_audit = (envelope.get('audit') or {})
+            if audit_inventory['inventory_sha256'] != bound_audit.get('inventory_sha256'):
+                raise SystemExit('the current acquisition inventory differs from the one the '
+                                 'retained envelope binds')
             # Retain the original archive and metadata bytes, and the complete returned
             # envelope bound to this stage rather than only a count of any files.
             shutil.copyfile(args.archive, run / 'original-archive.tar.gz')
