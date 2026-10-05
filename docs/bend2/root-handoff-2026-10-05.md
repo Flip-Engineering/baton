@@ -1,16 +1,18 @@
 # Baton2 root handoff
 
 This contributor handoff preserves unfinished operator work as of 2026-10-05
-19:35 UTC. Read the native task records and current source before resuming.
+20:49 UTC. Read the native task records and current source before resuming.
 Issue records describe defects; native reports contain current ownership and evidence.
 
 ## Authority and recovery
 
 The primary branch is `bend2-rewrite`. The root checkout is
 `/Users/wahargis/Development/Experiments/baton-bend2-root-delivery-20260928`.
-The prior handoff was committed at `bb85f37871c32c5f84fb69864c313d90bc16c425`,
-with four local documentation commits after the last verified published commit
-`fca7af876c8260c32d17f95f3e19bc68ee1bf561`.
+The prior handoff and pressure evidence were committed at
+`6315eb705812e3e1b5ae00c6e24e3fb6666ca0ff`. Native remote-tip readback at
+20:43 UTC confirmed published `bend2-rewrite` remains
+`fca7af876c8260c32d17f95f3e19bc68ee1bf561`. Runtime consolidation and primary
+publication remain gated on the exact composed tree.
 
 The active native Orchestra database is
 `.scratch/baton2-audit-followups-20261004/orchestra.db` in that checkout.
@@ -28,14 +30,16 @@ and `orchestra` queries to recover current state. Read full selected delivery
 bodies before acknowledging them. Ordinary `dispatch-file` sends current
 guidance to registered endpoints while #668 remains open.
 
-The latest verified host boot is 2026-10-05 11:56:29 Pacific. Fresh process
-inspection found no Baton, OMP, Bend or clang process remaining. Preserve
-native identities, pending input and source; stored running state requires
-process evidence. All interrupted gates remain unqualified. Native guidance
-44 predates this latest restart. Completed frozen evidence retains its
-original source and host attribution.
+The latest verified host boot is 2026-10-05 11:56:29 Pacific. The initial
+post-boot inspection found no Baton, OMP, Bend or clang process remaining.
+The existing Orchestra subsequently resumed through its recorded identities.
+Preserve native identities, pending input and source; stored running state
+requires process evidence. All interrupted gates remain unqualified. Native
+guidance 44 predates this latest restart. Completed frozen evidence retains
+its original source and host attribution.
 
-Free disk space measured 7.4 GiB at 19:32 UTC, with zero allocated swap.
+Free disk space measured 4.3 GiB at approximately 20:33 UTC, with 659.62 MiB
+swap used after the approved normal Chrome quit and natural turn completion.
 The approved two YuE2 model downloads were removed; their manifest and source
 remain preserved. Inspect active processes, open
 files, Git changes and ownership before cleanup. Preserve unfinished source,
@@ -169,6 +173,66 @@ Native guidance `root-instance-remote-result-61` gives the existing Conductor
 the exact failures and authorizes a reviewed immutable successor. These
 component results qualify neither shared host/caller integration nor Darwin
 artifacts. Preserve the failed source and results.
+
+Successor `9930a52f6bb33f05e40964aba630426070066c64`, tree
+`ba2c8d8cdf8251a6bf778363c3b78ae435a676cd`, completed an affected-component
+remote job with exit 1 and cgroup memory peak 2192011264 bytes. Retained-read
+passed checking, native execution, six independent integer-oracle cases,
+invalid-word refusal and all three intended implementation controls. Receive
+passed its baseline and runtime cases and seven controls; its stderr mutation
+failed structurally before the intended law. The later wake control did not
+run. Unchanged owner-admission source was not tested again.
+
+Receive-only successor `fe07d18f4f6c8c8464ef95093609c15a0a415de6`, tree
+`e907b9861727c6b586d31d10d69833107dd2e012`, also completed with exit 1.
+Its baseline, runtime cases and first seven controls passed. The stderr
+mutation called a helper before its declaration; Bend refused the name before
+checking the intended law. Neither failed mutation qualifies stderr
+preservation. Root guidance 63 and 66 retains the exact diagnostics and
+requires the intended-law assertion to remain unchanged.
+
+The independently reviewed correction is
+`171bb8d7352bb77e9bcd72c9e97c0755c7d44e58`, tree
+`1f334998bdbb62d586c9aac07fd42c113b7e4c59`. Its immutable Receive-only
+remote job is `baton2-instance-171bb8d7.service`, invocation
+`eebc28c1224f4680bc32662859fbb775`. It completed with exit 0 after 79.58
+seconds. Baseline, native runtime cases and all nine intended implementation
+controls passed, including stderr preservation and wake identity. The source
+stayed exact and clean; compiler, archive and complete library before/after
+hashes matched. Cgroup memory peak was 1509879808 bytes; GNU time separately
+reported maximum RSS 2296808 KiB. These are different measurement scopes.
+The unchanged passed admission and retained-read evidence remains bounded to
+those components. Full copied results are under
+`.scratch/root-homelab-ci-20261005/instance-9930a52f-evidence` and
+`instance-fe07d18f-evidence`. Remote source, recipes and outputs for each
+attempt remain in its own qualification directory. The complete successful
+Receive evidence is copied under `instance-171bb8d7-evidence` beside them.
+Guidance 68 carries root's bounded result to Instance and Synthesis and
+continues actual host/caller integration through their original owners.
+
+Root guidance `root-dependent-continuation-62` ended the temporary admission
+hold for dependent source and review work after observed relief. Conductors
+continue through original actors after actual custody checks, with no fixed
+actor limit and all compilation remote. Guidance 65 forwards Controls78's
+source closure and actual Direct/shared-runtime dependencies through Synthesis.
+It assigns an observed index-read problem to the existing Interfaces owner:
+native sequence-range selection must preserve complete historical messages,
+ordering, filters, read-only behavior and exact body readback.
+
+Root67 adds two current CI source concerns to the existing owner: a missing
+`join` import in work-set discovery, and the GNU time header mismatch.
+Original GNU output says `Command being timed`; the draft matches
+`Command being exectured`. Its corrected committed JSON-stdin classifier
+remains a dependency for Runtime Values and package qualification. Source
+corrections and remote execution remain separate gates.
+
+Synthesis93 and Receive source reviews confirm historical reconstruction and
+public-log projection have separate duties. Controls owns crash-consistent
+projection by original attempt, stream and byte position; Receive owns
+reconstruction and qualification. A seek offset or append watermark alone
+does not establish lossless behavior at crash boundaries. Normal fresh/live
+tail logging remains required. The source review does not establish the
+memory-amplification cause or a later reboot's cause.
 
 [Issue #675](https://github.com/Flip-Engineering/baton/issues/675) covers hosted
 parallel law validation. `native-ci-conductor` owns the work under
