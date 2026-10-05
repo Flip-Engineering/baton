@@ -59,8 +59,8 @@ def admit_sql(+id: String, +owner: String, +requestJson: String, +keeperPath: St
 # The same-binding read-back: the identical ten-column answer for a committed
 # decision, run on the qualified connection. This statement inserts no admission row, and
 # it is not a read-only operation: it begins an immediate transaction for the write lock
-# and carries the schema's create-if-missing statements, and the bound call runs its two
-# write pragmas on the connection before it.
+# and carries the schema's create-if-missing statements. The bound call configures its
+# connection with two pragmas before it, and those are connection settings, not writes.
 def readback_sql(+id: String) -> String:
   "BEGIN IMMEDIATE;" ++ ContextStore.schema() ++ admit_row_sql(id) ++ "COMMIT;"
 
