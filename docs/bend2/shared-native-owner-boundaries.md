@@ -275,6 +275,40 @@ by the real native entry and bound-store composition through the current owners.
 
 ## Source handoffs
 
+`context/receive-request.bend` supplies initial compiled transport data types:
+`InvocationContext` retains literal argv, cwd, captured stdin and captured files;
+`ReceiveRequest` retains version, correlation, invocation, existing Receive
+arguments and an optional wake message. `Correlation` separates database,
+owner-instance, request and session values. These are issued by the qualified
+caller; the module does not establish their authority or capture input itself.
+The envelope's owner names the current qualified transport generation. Durable
+request identity remains separate, as in `OwnerAdmission.Request`. A replacement
+owner must reconcile the original request before issuing a new transport
+envelope; historical child callbacks keep their original capability binding.
+The routing comparison alone performs neither reconciliation nor rebinding.
+
+`RequestOutput` associates that correlation with an owner-resolved sink
+reference. `OutputFrame` carries correlation, stream, cursor and content.
+`route(expected, frame)` compares each correlation field and returns either
+`Matched{frame}` or `Mismatched{frame}`, retaining the original frame in both
+cases. Its laws and implementation controls cover each comparison and content,
+stream and cursor preservation. The host must qualify the sink, preserve
+ordering and incomplete output, handle disconnects and retain owed results.
+These pure types do not implement output I/O or historical duty recovery.
+
+The ordinary empty appended Receive message becomes `None`; a nonempty message
+becomes `Some{message}`. This preserves the distinction between an internal
+continuation and a named wake. The module supplies no consuming-attempt field.
+Receive admission and completion statuses will use the source-owner exports;
+the module does not duplicate native status, Delivery or prepared-grant types.
+
+Independent review `native-instance-lifetime-0dc-review-7` identifies an accepted
+wake that fails before any native attempt exists. Its retained failure must
+preserve the wake reference, exact error, acquired guard cleanup and responsible
+notification owner even with an empty attempt list. Receive's outer result and
+the owner's retained task record must represent this state. An attempt-only
+completion list cannot carry that responsibility after a client disconnect.
+
 The new task-state module and isolated fixtures can be developed independently.
 Integration requires explicit owner agreement for these interfaces:
 
