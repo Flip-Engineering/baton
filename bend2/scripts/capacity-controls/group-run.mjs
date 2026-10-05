@@ -324,8 +324,7 @@ export async function runGroup({
   let manifestStatus = "incomplete";
   let manifestCaught = null;
   let manifestError = null;
-  let persisted = null;
-  let manifestWritten = false;
+  let secondaryTerminal = null;
   let outcome = null;
   const persistManifest = () => {
     const manifest = {
@@ -345,7 +344,6 @@ export async function runGroup({
     };
     const manifestPath = join(evidenceDir, "group-manifest.json");
     writeFileSync(manifestPath, JSON.stringify(manifest, null, 2) + "\n");
-    manifestWritten = true;
     return { manifest, manifestPath };
   };
   try {
@@ -373,140 +371,183 @@ export async function runGroup({
     if (baseline.process.state !== "exited" || baseline.process.exit_code !== 0) {
       manifestStatus = "failed-baseline";
       verifyRestored();
-      persisted = persistManifest();
-      outcome = { manifest: persisted.manifest, manifestPath: persisted.manifestPath, scratch };
-      return;
-    }
-    for (const record of selected) {
-      const scratchModule = join(scratch, record.module);
-      const originalBytes = pristine.get(record.module);
-      const originalText = originalBytes.toString("utf8");
-      if (!Buffer.from(originalText, "utf8").equals(originalBytes)) {
-        throw new Error(`runGroup: lossy text decode for ${record.module}`);
-      }
-      // The case row exists from the moment the case starts, so an
-      // interruption retains it; completion fills it in place.
-      const result = {
-        case: record,
-        setup: "applied",
-        expectation: null,
-        delta: null,
-        process: { state: "not-run", exit_code: null, signal: null, spawn_error: null, started: null, ended: null, attempt: null, wrapper_pid: null, wrapper_exit_code: null, wrapper_signal: null },
-        diagnostic: { class: "not-run", attributed_law: null, sha256: null },
-        stdout: { path: null, bytes: null, sha256: null },
-        stderr: { path: null, bytes: null, sha256: null },
-        resource: null,
-      };
-      results.push(result);
-      let changedText = null;
-      let expectedChangedText = null;
-      try {
-        const definition = definitions.get(record.id.slice("mutation:".length));
-        if (record.kind === "proof-removal") {
-          const block = proofBlockRange(originalText, record.law);
-          if (!block) {
-            result.setup = "missing";
-          } else {
-            const lines = originalText.split("\n");
-            lines.splice(block.start, block.end - block.start);
-            expectedChangedText = lines.join("\n");
-            removeProofText(scratchModule, record.law);
-            dirty.add(record.module);
-            changedText = readFileSync(scratchModule, "utf8");
-            if (!Buffer.from(changedText, "utf8").equals(readFileSync(scratchModule))) {
-              throw new Error(`runGroup: lossy text decode for ${record.id}`);
+    } else {
+      for (const record of selected) {
+        const scratchModule = join(scratch, record.module);
+        const originalBytes = pristine.get(record.module);
+        const originalText = originalBytes.toString("utf8");
+        if (!Buffer.from(originalText, "utf8").equals(originalBytes)) {
+          throw new Error(`runGroup: lossy text decode for ${record.module}`);
+        }
+        // The case row exists from the moment the case starts, so an
+        // interruption retains it; completion fills it in place at the real
+        // boundaries: setup state first, then observed child completion,
+        // then the diagnostic.
+        const result = {
+          case: record,
+          setup: "applied",
+          expectation: null,
+          delta: null,
+          process: { state: "not-run", exit_code: null, signal: null, spawn_error: null, started: null, ended: null, attempt: null, wrapper_pid: null, wrapper_exit_code: null, wrapper_signal: null },
+          diagnostic: { class: "not-run", attributed_law: null, sha256: null },
+          stdout: { path: null, bytes: null, sha256: null },
+          stderr: { path: null, bytes: null, sha256: null },
+          resource: null,
+        };
+        results.push(result);
+        let changedText = null;
+        let expectedChangedText = null;
+        let controlError = null;
+        try {
+          const definition = definitions.get(record.id.slice("mutation:".length));
+          if (record.kind === "proof-removal") {
+            const block = proofBlockRange(originalText, record.law);
+            if (!block) {
+              result.setup = "missing";
+            } else {
+              const lines = originalText.split("\n");
+              lines.splice(block.start, block.end - block.start);
+              expectedChangedText = lines.join("\n");
+              dirty.add(record.module);
+              removeProofText(scratchModule, record.law);
+              changedText = readFileSync(scratchModule, "utf8");
+              if (!Buffer.from(changedText, "utf8").equals(readFileSync(scratchModule))) {
+                throw new Error(`runGroup: lossy text decode for ${record.id}`);
+              }
+              if (changedText !== expectedChangedText) {
+                throw new Error(`runGroup: proof application mismatch for ${record.id}`);
+              }
             }
-            if (changedText !== expectedChangedText) {
-              throw new Error(`runGroup: proof application mismatch for ${record.id}`);
+          } else {
+            if (!definition) throw new Error(`runGroup: no definition for ${record.id}`);
+            if (!originalText.includes(definition.find)) {
+              result.setup = "missing";
+            } else {
+              expectedChangedText = originalText.replace(definition.find, definition.replace);
+              dirty.add(record.module);
+              writeFileSync(scratchModule, expectedChangedText);
+              changedText = readFileSync(scratchModule, "utf8");
+              if (!Buffer.from(changedText, "utf8").equals(readFileSync(scratchModule))) {
+                throw new Error(`runGroup: lossy text decode for ${record.id}`);
+              }
+              if (changedText !== expectedChangedText) {
+                throw new Error(`runGroup: mutation application mismatch for ${record.id}`);
+              }
             }
           }
-        } else {
-          if (!definition) throw new Error(`runGroup: no definition for ${record.id}`);
-          if (!originalText.includes(definition.find)) {
-            result.setup = "missing";
-          } else {
-            expectedChangedText = originalText.replace(definition.find, definition.replace);
-            writeFileSync(scratchModule, expectedChangedText);
-            dirty.add(record.module);
-            changedText = readFileSync(scratchModule, "utf8");
-            if (!Buffer.from(changedText, "utf8").equals(readFileSync(scratchModule))) {
-              throw new Error(`runGroup: lossy text decode for ${record.id}`);
-            }
-            if (changedText !== expectedChangedText) {
-              throw new Error(`runGroup: mutation application mismatch for ${record.id}`);
-            }
+          if (result.setup !== "applied") continue;
+          const run = await runChild({
+            argv: childArgv,
+            cwd: scratch,
+            env: ENV,
+            dir: evidenceDir,
+            stdoutName: fileName(record, "stdout"),
+            stderrName: fileName(record, "stderr"),
+          });
+          const changedPath = fileName(record, "changed");
+          writeFileSync(join(evidenceDir, changedPath), changedText);
+          const stderrText = readFileSync(join(evidenceDir, fileName(record, "stderr")), "utf8");
+          // Observed child completion is attached at its real boundary,
+          // before any classification; a classification failure leaves the
+          // observed completion intact and names the failure separately.
+          result.expectation = definitionExpectation(definition) ?? null;
+          result.delta = {
+            original_sha256: sha256Hex(originalBytes),
+            changed_sha256: sha256Hex(readFileSync(join(evidenceDir, changedPath))),
+            changed_path: changedPath,
+          };
+          result.process = processRecord(run, `${record.id}-${nonce}-${results.length}`);
+          result.stdout = run.stdout;
+          result.stderr = run.stderr;
+          let verdict;
+          try {
+            verdict = classifyCase({
+              control: record,
+              expectation: definitionExpectation(definition),
+              location: definitionLocation(definition),
+              state: run.state, exitCode: run.exitCode, signal: run.signal, spawnError: run.spawnError,
+              stderrText,
+              baselineOk: baseline.process.state === "exited" && baseline.process.exit_code === 0,
+              delta: { changedText, expectedChangedText },
+              supplied: null,
+            });
+          } catch (error) {
+            result.classification_error = error?.message ?? String(error);
+            throw error;
+          }
+          const { accounting, profile } = splitTimeAccounting(stderrText);
+          result.diagnostic = {
+            class: verdict.class,
+            attributed_law: verdict.attributedLaw,
+            sha256: sha256Hex(splitTimeAccounting(stderrText).diagnostics),
+          };
+          result.resource = parseResourceAccounting(accounting, profile);
+        } catch (error) {
+          controlError = error;
+        } finally {
+          if (dirty.has(record.module)) {
+            writeFileSync(scratchModule, pristine.get(record.module));
+            dirty.delete(record.module);
+          }
+          try {
+            verifyRestored();
+          } catch (error) {
+            controlError = controlError ?? error;
+            if (controlError !== error) controlError = new Error(`${String(controlError?.message ?? controlError)}; secondary restoration failure: ${String(error?.message ?? error)}`);
           }
         }
-        if (result.setup !== "applied") continue;
-        const run = await runChild({
-          argv: childArgv,
-          cwd: scratch,
-          env: ENV,
-          dir: evidenceDir,
-          stdoutName: fileName(record, "stdout"),
-          stderrName: fileName(record, "stderr"),
-        });
-        const changedPath = fileName(record, "changed");
-        writeFileSync(join(evidenceDir, changedPath), changedText);
-        const stderrText = readFileSync(join(evidenceDir, fileName(record, "stderr")), "utf8");
-        const verdict = classifyCase({
-          control: record,
-          expectation: definitionExpectation(definition),
-          location: definitionLocation(definition),
-          state: run.state, exitCode: run.exitCode, signal: run.signal, spawnError: run.spawnError,
-          stderrText,
-          baselineOk: baseline.process.state === "exited" && baseline.process.exit_code === 0,
-          delta: { changedText, expectedChangedText },
-          supplied: null,
-        });
-        const { accounting, profile } = splitTimeAccounting(stderrText);
-        result.expectation = definitionExpectation(definition) ?? null;
-        result.delta = {
-          original_sha256: sha256Hex(originalBytes),
-          changed_sha256: sha256Hex(readFileSync(join(evidenceDir, changedPath))),
-          changed_path: changedPath,
-        };
-        result.process = processRecord(run, `${record.id}-${nonce}-${results.length}`);
-        result.diagnostic = {
-          class: verdict.class,
-          attributed_law: verdict.attributedLaw,
-          sha256: sha256Hex(splitTimeAccounting(stderrText).diagnostics),
-        };
-        result.stdout = run.stdout;
-        result.stderr = run.stderr;
-        result.resource = parseResourceAccounting(accounting, profile);
-      } finally {
-        if (dirty.has(record.module)) {
-          writeFileSync(scratchModule, pristine.get(record.module));
-          dirty.delete(record.module);
-        }
-        verifyRestored();
+        if (controlError !== null) throw controlError;
       }
+      manifestStatus = "complete";
     }
-    manifestStatus = "complete";
+    outcome = { manifest: null, manifestPath: null, scratch };
   } catch (caught) {
     manifestCaught = caught;
     manifestError = caught?.message ?? String(caught);
+    if (manifestStatus === "complete") manifestStatus = "incomplete";
   } finally {
-    let secondary = null;
     try {
       verifyRestored();
     } catch (error) {
-      secondary = `restoration: ${error?.message ?? error}`;
+      secondaryTerminal = `restoration: ${error?.message ?? error}`;
+      if (manifestStatus === "complete") manifestStatus = "incomplete";
+      manifestError = manifestError ?? secondaryTerminal;
     }
-    if (!manifestWritten) {
-      try {
-        persisted = persistManifest();
-      } catch (error) {
-        secondary = secondary ? `${secondary}; manifest: ${error?.message ?? error}` : `manifest: ${error?.message ?? error}`;
-      }
-    }
-    if (secondary !== null && persisted !== null) persisted.manifest.secondary_error = secondary;
+  }
+  // One durable serialization with the settled status, primary error and any
+  // secondary terminal failure recorded inside the manifest bytes.
+  try {
+    const manifest = {
+      module,
+      binding,
+      entry: selectedEntry,
+      status: manifestStatus,
+      ...(manifestError !== null ? { error: manifestError } : {}),
+      ...(secondaryTerminal !== null ? { secondary_error: secondaryTerminal } : {}),
+      checker_sha256: checkerSha256,
+      source,
+      origin: origin(),
+      producing,
+      instrument,
+      ...(baseline !== null ? { baseline } : {}),
+      results,
+      compiler,
+    };
+    const manifestPath = join(evidenceDir, "group-manifest.json");
+    writeFileSync(manifestPath, JSON.stringify(manifest, null, 2) + "\n");
+    outcome = { manifest, manifestPath, scratch };
+  } catch (error) {
+    // A serialization failure is secondary: the primary cause is preserved
+    // and re-raised, with the manifest failure bound to it.
+    const primary = manifestCaught ?? error;
+    if (error !== primary) primary.secondary_manifest_error = String(error?.message ?? error);
+    throw primary;
   }
   if (manifestCaught !== null) throw manifestCaught;
-  if (persisted === null) throw new Error("runGroup: no manifest was persisted");
-  return outcome ?? { manifest: persisted.manifest, manifestPath: persisted.manifestPath, scratch };
-  
+  if (secondaryTerminal !== null) throw new Error(`runGroup: terminal restoration failure: ${secondaryTerminal}`);
+  if (outcome === null) throw new Error("runGroup: no manifest was persisted");
+  return outcome;
+
 }
 
 // removeProof against a scratch module, kept here so the delta capture and the

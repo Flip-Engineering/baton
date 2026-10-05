@@ -310,6 +310,8 @@ export function aggregate({ dir, records, definitions, moduleRoot }) {
       const stderrFound = result.stderr?.path ? bundlePath(bundleDir, realBundleDir, result.stderr.path) : { fault: 'stderr path missing' };
       const stderrText = stderrFound.path ? readFileSync(stderrFound.path, 'utf8') : '';
       const definition = definitionList.find((mutation) => `mutation:${mutation.name}` === expected.id) ?? null;
+      // The aggregate classifies through the shared boundary directly; the
+      // per-case endpoint carries the transitive verifier closure.
       const verdict = classifyCase({
         control: expected,
         expectation: expected.expectation ?? definitionExpectation(definition),
@@ -520,8 +522,6 @@ export function classifyCli(argv) {
   const definition = MUTATIONS.find((mutation) => `mutation:${mutation.name}` === discovered.id) ?? null;
   // The clean-tree observation must hold across the whole classification:
   // original reads, stream hashing and verifier digesting happen under it.
-  const statusAfter = execFileSync('git', ['status', '--porcelain=v1'], { cwd: ROOT, encoding: 'utf8', maxBuffer: Infinity });
-  if (statusAfter !== status) refusal('this checkout changed during classification');
   const verdict = classifyCase({
     control: discovered,
     expectation: discovered.expectation ?? definitionExpectation(definition),
@@ -560,15 +560,23 @@ export function classifyCli(argv) {
     source: request.source,
     definition_sha256: discovered.definition_sha256,
     evidence_verified: true,
-    verifier: {
-      checker_sha256: sha256Hex(readFileSync(join(ROOT, 'bend2', 'scripts', 'laws-check.mjs'))),
-      aggregate_module_sha256: sha256Hex(readFileSync(join(ROOT, 'bend2', 'scripts', 'capacity-controls', 'aggregate.mjs'))),
-      classifier_module_sha256: sha256Hex(readFileSync(join(ROOT, 'bend2', 'scripts', 'capacity-controls', 'classify.mjs'))),
-      work_set_module_sha256: sha256Hex(readFileSync(join(ROOT, 'bend2', 'scripts', 'capacity-controls', 'work-set.mjs'))),
-      laws_common_module_sha256: sha256Hex(readFileSync(join(ROOT, 'bend2', 'scripts', 'laws-common.mjs'))),
-      definitions_module_sha256: sha256Hex(readFileSync(join(ROOT, 'bend2', 'scripts', 'laws-mutations.mjs'))),
-    },
+    verifier,
   };
+  // Stable snapshot check: the last fact established before emission.
+  // Git status is a limited observation; it is paired with the input
+  // snapshot digest, which binds the case, delta, source, toolchain,
+  // baseline outcome and the six verifier members as read.
+  const statusAfter = execFileSync('git', ['status', '--porcelain=v1'], { cwd: ROOT, encoding: 'utf8', maxBuffer: Infinity });
+  if (statusAfter !== status) refusal('this checkout changed during classification');
+  verdictLine.input_snapshot_sha256 = sha256Hex(Buffer.from(JSON.stringify({
+    schema: 'capacity-controls/classify-input-snapshot@1',
+    case: discovered,
+    source: request.source,
+    toolchain,
+    baseline_outcome: baselineOutcome,
+    delta: request.delta ?? null,
+    verifier,
+  }), 'utf8'));
   console.log(JSON.stringify(verdictLine));
   process.exit(0);
 }
