@@ -6,16 +6,16 @@
 # which the interfaces owner wires.
 #
 # Build and run from the repository root:
-#   sh bend2/scripts/build-native.sh bend2/src/context/laws-entry.bend .scratch/context-laws-entry
-#   ./.scratch/context-laws-entry
+#   sh bend2/scripts/build-native.sh bend2/tests/context-core/laws-entry.bend .scratch/context-core-entry
+#   ./.scratch/context-core-entry
 
 import Base
-import ./engines.bend as Eng
-import ./snapshot.bend as Snap
-import ./refs.bend as Refs
-import ./engines-laws.bend as EngLaws
-import ./snapshot-laws.bend as SnapLaws
-import ./refs-laws.bend as RefLaws
+import ../../src/context/engines.bend as Eng
+import ../../src/context/snapshot.bend as Snap
+import ../../src/context/refs.bend as Refs
+import ../../src/context/engines-laws.bend as EngLaws
+import ../../src/context/snapshot-laws.bend as SnapLaws
+import ../../src/context/refs-laws.bend as RefLaws
 
 def choice_text(c: Eng.EngineChoice) -> String:
   match c:
@@ -78,9 +78,13 @@ def all_ok() -> List<Bool>:
     String.eq(decision_text(Refs.admit(Refs.RQ{True{}, "symbol", Eng.ss_one("authorization"), Eng.ss_one("authorization"), Snap.ACurrent{}, Eng.ss_one("planTargetSql"), Eng.SSNil{}, "[]"})), "missing:planTargetSql"),
     String.eq(decision_text(Refs.admit(Refs.RQ{True{}, "symbol", Eng.ss_one("definition"), Eng.ss_one("definition"), Snap.ACurrent{}, Eng.SSNil{}, Eng.SSNil{}, "[]"})), "allow"),
     String.eq(Refs.condition(Refs.RStaleRef{"[]"}), "staleReference"),
-    String.eq(effects_text(Eng.required_effects("cdp", "observe", Eng.ss_one("frames"))), ""),
-    String.eq(effects_text(Eng.required_effects("cdp", "evaluate", Eng.ss_one("values"))), "controlRuntime,evaluateRuntime"),
-    String.eq(effects_text(Eng.required_effects("query-control", "release", Eng.ss_one("state"))), "controlRuntime"),
+    String.eq(effects_text(Eng.required_effects(Eng.op_runtime_observe())), ""),
+    String.eq(effects_text(Eng.required_effects(Eng.op_runtime_evaluate())), "controlRuntime,evaluateRuntime"),
+    String.eq(effects_text(Eng.required_effects(Eng.op_schema_validation())), ""),
+    String.eq(effects_text(Eng.required_effects(Eng.op_migration_replay())), "replayMigrations"),
+    String.eq(effects_text(Eng.required_effects(Eng.op_code_access_join())), "planTargetSql"),
+    String.eq(effects_text(Eng.required_effects(Eng.op_query_control_release())), "controlRuntime"),
+    String.eq(effects_text(Eng.required_effects(Eng.op_query_control_recover())), ""),
     String.eq(choice_text(Eng.auto("runtime", "", "", Eng.ss_one("state"))), "one:cdp") ]
 
 def run_go(xs: List<Bool>, +i: U32) -> IO(Unit):

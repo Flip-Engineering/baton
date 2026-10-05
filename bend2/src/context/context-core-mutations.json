@@ -1,0 +1,238 @@
+{
+  "purpose": "Handoff payload for bend2/scripts/laws-check.mjs MUTATIONS. Each entry mutates one context core production function and is refused by the named law when the isolated entry bend2/tests/context-core/laws-entry.bend is compiled. Verified green by .scratch/context-core-controls/run.mjs: entry compiles with every law proven, 33 mutations, 0 failures.",
+  "entry": "bend2/tests/context-core/laws-entry.bend",
+  "baseline": "fa44a0e0b6dc72187ad632170fd1770585eb04cc",
+  "entries": [
+    {
+      "name": "auto-ignores-the-typescript-suffix",
+      "file": "bend2/src/context/engines.bend",
+      "find": "  Bool.or(String.ends_with(path, \".ts\"),",
+      "replace": "  Bool.or(String.ends_with(path, \".tsx\"),",
+      "law": "engine_auto_typescript_position_selects_typescript"
+    },
+    {
+      "name": "auto-ignores-the-postgres-declaration",
+      "file": "bend2/src/context/engines.bend",
+      "find": "  Bool.pick(EngineChoice, String.eq(declared, e_postgres()), EOne{e_postgres()},",
+      "replace": "  Bool.pick(EngineChoice, String.eq(declared, e_postgres()), EOne{e_sqlite()},",
+      "law": "engine_auto_entity_uses_the_declared_postgres_engine"
+    },
+    {
+      "name": "auto-lets-cpp-analysis-through",
+      "file": "bend2/src/context/engines.bend",
+      "find": "    ENone{\"C++ analysis projections are outside the initial supported set\"},",
+      "replace": "    served_choice(e_clangd(), projections),",
+      "law": "engine_auto_cpp_analysis_names_its_scope"
+    },
+    {
+      "name": "auto-resolves-an-ambiguous-suffix-speculatively",
+      "file": "bend2/src/context/engines.bend",
+      "find": "    EMany{ss_two(e_typescript(), e_clangd())},",
+      "replace": "    EOne{e_typescript()},",
+      "law": "engine_auto_unknown_suffix_returns_candidates"
+    },
+    {
+      "name": "required-effects-drop-the-join-planning-grant",
+      "file": "bend2/src/context/engines.bend",
+      "find": "  Bool.pick(SS, String.eq(operation, op_code_access_join()), ss_one(\"planTargetSql\"),",
+      "replace": "  Bool.pick(SS, String.eq(operation, op_code_access_join()), ss_empty(),",
+      "law": "engine_the_c_code_access_join_requires_planning"
+    },
+    {
+      "name": "required-effects-drop-the-migration-replay-grant",
+      "file": "bend2/src/context/engines.bend",
+      "find": "  Bool.pick(SS, String.eq(operation, op_migration_replay()), ss_one(\"replayMigrations\"),",
+      "replace": "  Bool.pick(SS, String.eq(operation, op_migration_replay()), ss_empty(),",
+      "law": "engine_a_migration_replay_requires_replay_for_the_chosen_operation"
+    },
+    {
+      "name": "required-effects-drop-the-tools-override-grant",
+      "file": "bend2/src/context/engines.bend",
+      "find": "  Bool.pick(SS, String.eq(operation, op_tools_probe()), ss_one(\"executeTarget\"),",
+      "replace": "  Bool.pick(SS, String.eq(operation, op_tools_probe()), ss_empty(),",
+      "law": "engine_a_request_local_tools_override_requires_target_execution"
+    },
+    {
+      "name": "observation-demands-target-control",
+      "file": "bend2/src/context/engines.bend",
+      "find": "def op_runtime_observe() -> String:\n  \"runtimeObserve\"",
+      "replace": "def op_runtime_observe() -> String:\n  \"runtimeLaunch\"",
+      "law": "engine_runtime_observation_requires_no_target_control"
+    },
+    {
+      "name": "query-control-recovery-demands-target-control",
+      "file": "bend2/src/context/engines.bend",
+      "find": "def op_query_control_recover() -> String:\n  \"queryControlRecover\"",
+      "replace": "def op_query_control_recover() -> String:\n  \"queryControlRelease\"",
+      "law": "engine_query_control_recovery_requires_no_effect"
+    },
+    {
+      "name": "schema-validation-demands-target-execution",
+      "file": "bend2/src/context/engines.bend",
+      "find": "def op_schema_validation() -> String:\n  \"schemaValidation\"",
+      "replace": "def op_schema_validation() -> String:\n  \"modelLoad\"",
+      "law": "engine_a_bundled_schema_validation_requires_no_target_execution"
+    },
+    {
+      "name": "missing-effects-ignore-the-grant",
+      "file": "bend2/src/context/engines.bend",
+      "find": "      Bool.pick(Effects, ss_member(granted, h), missing_effects(r, granted), FxMissing{h})",
+      "replace": "      missing_effects(r, granted)",
+      "law": "engine_missing_grant_is_named_before_the_effect"
+    },
+    {
+      "name": "resolution-ignores-availability",
+      "file": "bend2/src/context/engines.bend",
+      "find": "        case AvUnavailable{reason}: RUnavailable{engine, reason}",
+      "replace": "        case AvUnavailable{reason}: RSelected{engine, provider, version, executable}",
+      "law": "engine_unavailable_engine_is_reported_with_its_cause"
+    },
+    {
+      "name": "resolution-invents-a-missing-selection",
+      "file": "bend2/src/context/engines.bend",
+      "find": "  match catalog:\n    case Nil{}: RNone{String.append(\"engine is outside the deployment provider selection: \", engine)}",
+      "replace": "  match catalog:\n    case Nil{}: RSelected{engine, \"invented\", \"0\", \"\"}",
+      "law": "engine_engine_outside_the_deployment_selection_refuses"
+    },
+    {
+      "name": "discovery-plan-probes-a-target",
+      "file": "bend2/src/context/engines.bend",
+      "find": "        Probe{e_clangd(), \"version\", clangd, ss_one(\"--version\")},",
+      "replace": "        Probe{e_clangd(), \"version\", clangd, ss_two(\"--project\", \"target.json\")},",
+      "law": "engine_the_probe_plan_is_fixed_and_names_no_target_path"
+    },
+    {
+      "name": "probe-mismatch-reads-as-available",
+      "file": "bend2/src/context/engines.bend",
+      "find": "      Bool.pick(Availability, String.eq(version, expected), AvAvailable{},",
+      "replace": "      Bool.pick(Availability, True{}, AvAvailable{},",
+      "law": "engine_a_mismatched_probe_version_is_unavailable_and_names_both"
+    },
+    {
+      "name": "snapshot-identity-drops-the-inputs",
+      "file": "bend2/src/context/snapshot.bend",
+      "find": "J.Jarr{strs_array(options), J.Jarr{fps_array(inputs), J.Jnil{}}}",
+      "replace": "J.Jarr{strs_array(options), J.Jarr{J.Jarr{J.Jnil{}, J.Jnil{}}, J.Jnil{}}}",
+      "law": "context_snapshot_identity_text_is_canonical"
+    },
+    {
+      "name": "snapshot-comparison-ignores-the-digest",
+      "file": "bend2/src/context/snapshot.bend",
+      "find": "), String.eq(fp_marker(c), fp_marker(h)), input_unchanged(h, cs))",
+      "replace": "), True{}, input_unchanged(h, cs))",
+      "law": "context_snapshot_a_changed_digest_is_stale_and_names_the_path"
+    },
+    {
+      "name": "snapshot-comparison-ignores-a-missing-input",
+      "file": "bend2/src/context/snapshot.bend",
+      "find": "    case FpsNil{}: False{}\n    case FpsCons{+c, cs}:",
+      "replace": "    case FpsNil{}: True{}\n    case FpsCons{+c, cs}:",
+      "law": "context_snapshot_a_missing_input_is_stale"
+    },
+    {
+      "name": "snapshot-forgets-the-absent-lookup-marker",
+      "file": "bend2/src/context/snapshot.bend",
+      "find": "    case FpAbsent{role, path}: \"absent\"",
+      "replace": "    case FpAbsent{role, path}: \"present\"",
+      "law": "context_snapshot_an_absent_lookup_is_a_distinct_identity"
+    },
+    {
+      "name": "catalog-applicability-ignores-the-schema-digest",
+      "file": "bend2/src/context/snapshot.bend",
+      "find": "  Bool.pick(Applies, String.eq(recorded_digest, current_digest), ACurrent{}, AStale{Eng.ss_one(path)})",
+      "replace": "  ACurrent{}",
+      "law": "context_snapshot_a_changed_schema_digest_is_stale_with_the_path"
+    },
+    {
+      "name": "runtime-applicability-always-reads-current",
+      "file": "bend2/src/context/snapshot.bend",
+      "find": "  Bool.pick(Applies, Bool.and(live, U32.is_eq(recorded_epoch, live_epoch)), ACurrent{},",
+      "replace": "  Bool.pick(Applies, True{}, ACurrent{},",
+      "law": "context_snapshot_an_advanced_epoch_is_historical"
+    },
+    {
+      "name": "plan-binding-accepts-a-detached-snapshot",
+      "file": "bend2/src/context/snapshot.bend",
+      "find": "  Bool.pick(Binding, String.eq(snapshot, plan_snapshot), BShare{},",
+      "replace": "  Bool.pick(Binding, True{}, BShare{},",
+      "law": "context_snapshot_a_detached_plan_binding_refuses"
+    },
+    {
+      "name": "capture-check-ignores-a-changed-manifest",
+      "file": "bend2/src/context/snapshot.bend",
+      "find": "def capture_check(recorded: Fps, verified: Fps) -> CaptureCheck:\n  capture_decision(changed_inputs(recorded, verified))",
+      "replace": "def capture_check(recorded: Fps, verified: Fps) -> CaptureCheck:\n  CCIntact{}",
+      "law": "context_snapshot_a_changed_manifest_names_the_changed_paths"
+    },
+    {
+      "name": "ref-id-drops-the-family-tag",
+      "file": "bend2/src/context/refs.bend",
+      "find": "  encode([Rt{\"source\"}, Rt{path}, Rt{sha256}, Rn{line}, Rn{column}, Rt{projection}])",
+      "replace": "  encode([Rt{path}, Rt{sha256}, Rn{line}, Rn{column}, Rt{projection}])",
+      "law": "context_refs_a_source_id_is_a_canonical_array"
+    },
+    {
+      "name": "ref-id-uses-unescaped-text",
+      "file": "bend2/src/context/refs.bend",
+      "find": "    case Rt{value}: J.string_literal(value)",
+      "replace": "    case Rt{value}: \"\\\"\" ++ value ++ \"\\\"\"",
+      "law": "context_refs_a_quoted_component_is_escaped"
+    },
+    {
+      "name": "ref-admission-ignores-the-stored-projections",
+      "file": "bend2/src/context/refs.bend",
+      "find": "      Bool.pick(Eng.SS, Eng.ss_member(stored, h), first_outside(stored, r), Eng.ss_one(h))",
+      "replace": "      first_outside(stored, r)",
+      "law": "context_refs_a_projection_outside_the_stored_selector_refuses"
+    },
+    {
+      "name": "ref-admission-ignores-the-effect-grant",
+      "file": "bend2/src/context/refs.bend",
+      "find": "    case Eng.FxMissing{effect}: REffectMissing{effect}",
+      "replace": "    case Eng.FxMissing{effect}: admit_projections(q)",
+      "law": "context_refs_a_missing_grant_refuses_before_expansion"
+    },
+    {
+      "name": "ref-admission-expands-a-stale-snapshot",
+      "file": "bend2/src/context/refs.bend",
+      "find": "    case Snap.AStale{changed}: RStaleRef{rq_fresh(q)}",
+      "replace": "    case Snap.AStale{changed}: admit_effect(approve(q), q)",
+      "law": "context_refs_a_stale_snapshot_returns_the_fresh_selector"
+    },
+    {
+      "name": "ref-admission-expands-a-historical-runtime",
+      "file": "bend2/src/context/refs.bend",
+      "find": "    case Snap.AHistorical{reason}: RStaleRef{rq_fresh(q)}",
+      "replace": "    case Snap.AHistorical{reason}: admit_effect(approve(q), q)",
+      "law": "context_refs_a_historical_snapshot_returns_the_fresh_selector"
+    },
+    {
+      "name": "ref-admission-accepts-an-unsupported-subject-kind",
+      "file": "bend2/src/context/refs.bend",
+      "find": "  Bool.pick(RefDecision, supported_subject(rq_subject(q)), admit_applicability(rq_applicability(q), q),",
+      "replace": "  Bool.pick(RefDecision, True{}, admit_applicability(rq_applicability(q), q),",
+      "law": "context_refs_an_unsupported_subject_refuses"
+    },
+    {
+      "name": "expansion-strengthens-a-declaration",
+      "file": "bend2/src/context/refs.bend",
+      "find": "  Bool.pick(Classification, U32.is_le(strength(a), strength(b)), a, b)",
+      "replace": "  Bool.pick(Classification, U32.is_le(strength(a), strength(b)), b, a)",
+      "law": "context_refs_expansion_cannot_strengthen_an_observation"
+    },
+    {
+      "name": "ref-conditions-rename-the-stale-refusal",
+      "file": "bend2/src/context/refs.bend",
+      "find": "    case RStaleRef{fresh}: \"staleReference\"",
+      "replace": "    case RStaleRef{fresh}: \"ok\"",
+      "law": "context_refs_the_stale_condition_is_named_stale_reference"
+    },
+    {
+      "name": "ref-conditions-rename-the-unknown-id-refusal",
+      "file": "bend2/src/context/refs.bend",
+      "find": "    case RUnknownId{}: \"unknownReference\"",
+      "replace": "    case RUnknownId{}: \"unknown\"",
+      "law": "context_refs_the_unknown_condition_is_named"
+    }
+  ]
+}

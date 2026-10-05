@@ -164,60 +164,112 @@ def unsupported_reason(+engine: String, unsupported: SS) -> String:
     case SSCons{h, r}: String.append(String.append(String.append("projection is not served by ", engine), ": "), h)
 
 # --- the declared effect table -----------------------------------------------
-# Which effect each operation requires, per the specification's fixed subsets:
-# target SQL planning requires planTargetSql, migration replay requires
-# replayMigrations, model loading requires executeTarget, and a runtime intent
-# requires controlRuntime (evaluation also requires evaluateRuntime). A
-# read-only catalog or source operation requires none.
-def needs_plan(+projections: SS) -> Bool:
-  Bool.or(ss_member(projections, "databaseAccesses"),
-  Bool.or(ss_member(projections, "predicateQueries"),
-         ss_member(projections, "codeAccesses")))
+# Effects follow the selected operation, not the engine or a projection name
+# alone. A JSON Schema validation runs in the bundled Ajv provider and needs no
+# target effect; a Zod model load imports target code and requires
+# executeTarget; a catalog-only capture reads fixed catalogs with no grant;
+# a selected target statement or the native C planner requires planTargetSql;
+# a migration replay executes captured scripts and requires replayMigrations
+# whatever projection was requested; a request-local tools override requires
+# executeTarget before its probe runs.
+def op_source_analysis() -> String:
+  "sourceAnalysis"
 
-def analyzer_effects(+projections: SS) -> SS:
-  Bool.pick(SS, needs_plan(projections), ss_one("planTargetSql"), ss_empty())
+def op_code_access_join() -> String:
+  "codeAccessJoin"
 
-def catalog_effects(+projections: SS) -> SS:
-  Bool.pick(SS, ss_member(projections, "codeAccesses"), ss_one("planTargetSql"), ss_empty())
+def op_sql_plan() -> String:
+  "sqlPlan"
 
-def datamodel_effects(+projections: SS) -> SS:
-  Bool.pick(SS, ss_member(projections, "migrations"), ss_one("replayMigrations"),
-  Bool.pick(SS, ss_member(projections, "validation"), ss_one("executeTarget"),
-  Bool.pick(SS, ss_member(projections, "serialization"), ss_one("executeTarget"), ss_empty())))
+def op_catalog_capture() -> String:
+  "catalogCapture"
 
-def cdp_effects(+intent: String) -> SS:
-  Bool.pick(SS, String.eq(intent, "evaluate"), ss_two("controlRuntime", "evaluateRuntime"),
-  Bool.pick(SS, String.eq(intent, "launch"), ss_one("controlRuntime"),
-  Bool.pick(SS, String.eq(intent, "pause"), ss_one("controlRuntime"),
-  Bool.pick(SS, String.eq(intent, "resume-step"), ss_one("controlRuntime"),
-  Bool.pick(SS, String.eq(intent, "release"), ss_one("controlRuntime"),
-  ss_empty())))))
+def op_migration_replay() -> String:
+  "migrationReplay"
 
-# Release is the only query-control intent with an effect: it signals the owned
-# process. Recovery reads retained state and requires no grant. An intent
-# outside the closed set is refused by closed request validation, and this
-# composition requires no effect for it.
-def query_control_effects(+intent: String) -> SS:
-  Bool.pick(SS, String.eq(intent, "release"), ss_one("controlRuntime"), ss_empty())
+def op_schema_validation() -> String:
+  "schemaValidation"
 
-def required_effects(+engine: String, +intent: String, +projections: SS) -> SS:
-  Bool.pick(SS, String.eq(engine, e_clang_analyzer()), analyzer_effects(projections),
-  Bool.pick(SS, String.eq(engine, e_cdp()), cdp_effects(intent),
-  Bool.pick(SS, String.eq(engine, e_query_control()), query_control_effects(intent),
-  Bool.pick(SS, String.eq(engine, e_datamodel()), datamodel_effects(projections),
-  Bool.pick(SS, String.eq(engine, e_sqlite()), catalog_effects(projections),
-  Bool.pick(SS, String.eq(engine, e_postgres()), catalog_effects(projections),
-  ss_empty()))))))
+def op_model_load() -> String:
+  "modelLoad"
+
+def op_tools_probe() -> String:
+  "toolsProbe"
+
+def op_environment_read() -> String:
+  "environmentRead"
+
+def op_dataset_read() -> String:
+  "datasetRead"
+
+def op_runtime_launch() -> String:
+  "runtimeLaunch"
+
+def op_runtime_observe() -> String:
+  "runtimeObserve"
+
+def op_runtime_pause() -> String:
+  "runtimePause"
+
+def op_runtime_resume() -> String:
+  "runtimeResume"
+
+def op_runtime_release() -> String:
+  "runtimeRelease"
+
+def op_runtime_evaluate() -> String:
+  "runtimeEvaluate"
+
+def op_query_control_recover() -> String:
+  "queryControlRecover"
+
+def op_query_control_release() -> String:
+  "queryControlRelease"
+
+# An operation outside this closed set is refused by closed request
+# validation; this composition requires no effect for it.
+def required_effects(+operation: String) -> SS:
+  Bool.pick(SS, String.eq(operation, op_code_access_join()), ss_one("planTargetSql"),
+  Bool.pick(SS, String.eq(operation, op_sql_plan()), ss_one("planTargetSql"),
+  Bool.pick(SS, String.eq(operation, op_migration_replay()), ss_one("replayMigrations"),
+  Bool.pick(SS, String.eq(operation, op_model_load()), ss_one("executeTarget"),
+  Bool.pick(SS, String.eq(operation, op_tools_probe()), ss_one("executeTarget"),
+  Bool.pick(SS, String.eq(operation, op_runtime_evaluate()), ss_two("controlRuntime", "evaluateRuntime"),
+  Bool.pick(SS, String.eq(operation, op_runtime_launch()), ss_one("controlRuntime"),
+  Bool.pick(SS, String.eq(operation, op_runtime_pause()), ss_one("controlRuntime"),
+  Bool.pick(SS, String.eq(operation, op_runtime_resume()), ss_one("controlRuntime"),
+  Bool.pick(SS, String.eq(operation, op_runtime_release()), ss_one("controlRuntime"),
+  Bool.pick(SS, String.eq(operation, op_query_control_release()), ss_one("controlRuntime"),
+  ss_empty())))))))))))
+
+# The runtime intent of a request names the operation its subject selects. An
+# ordinary non-evaluating observation controls no target.
+def runtime_operation(+intent: String) -> String:
+  Bool.pick(String, String.eq(intent, "launch"), op_runtime_launch(),
+  Bool.pick(String, String.eq(intent, "observe"), op_runtime_observe(),
+  Bool.pick(String, String.eq(intent, "pause"), op_runtime_pause(),
+  Bool.pick(String, String.eq(intent, "resume-step"), op_runtime_resume(),
+  Bool.pick(String, String.eq(intent, "release"), op_runtime_release(),
+  Bool.pick(String, String.eq(intent, "evaluate"), op_runtime_evaluate(),
+  ""))))))
+
+# The query-control intent names its operation: recovery reads retained state
+# and needs no grant, release signals the owned process.
+def query_control_operation(+intent: String) -> String:
+  Bool.pick(String, String.eq(intent, "release"), op_query_control_release(),
+  Bool.pick(String, String.eq(intent, "recover"), op_query_control_recover(), ""))
 
 # The set an engine can require, for its context-engines entry.
 def effects_of(+engine: String) -> SS:
+  Bool.pick(SS, String.eq(engine, e_typescript()), ss_one("planTargetSql"),
   Bool.pick(SS, String.eq(engine, e_clang_analyzer()), ss_one("planTargetSql"),
   Bool.pick(SS, String.eq(engine, e_cdp()), ss_two("controlRuntime", "evaluateRuntime"),
   Bool.pick(SS, String.eq(engine, e_query_control()), ss_one("controlRuntime"),
   Bool.pick(SS, String.eq(engine, e_datamodel()), ss_two("replayMigrations", "executeTarget"),
   Bool.pick(SS, String.eq(engine, e_sqlite()), ss_one("planTargetSql"),
   Bool.pick(SS, String.eq(engine, e_postgres()), ss_one("planTargetSql"),
-  ss_empty()))))))
+  Bool.pick(SS, String.eq(engine, e_environment()), ss_one("executeTarget"),
+  ss_empty()))))))))
 
 # The first required effect the caller did not grant. Admission refuses on
 # Missing before any provider or target effect.

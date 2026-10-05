@@ -152,77 +152,179 @@ law engine_auto_unsupported_cpp_projection_refuses_and_names_it:
 def engine_auto_unsupported_cpp_projection_refuses_and_names_it():
   {==}
 
-# --- required effects --------------------------------------------------------
-law engine_required_effects_of_a_read_only_source_query_are_empty:
-  {Eng.required_effects("typescript", "", Eng.ss_one("definition")) == Eng.SSNil{} : Eng.SS}
+# --- selected operation and its required effects ----------------------------
+law engine_source_analysis_requires_no_effect:
+  {Eng.required_effects(Eng.op_source_analysis()) == Eng.SSNil{} : Eng.SS}
 
-def engine_required_effects_of_a_read_only_source_query_are_empty():
+def engine_source_analysis_requires_no_effect():
   {==}
 
-law engine_required_effects_of_the_c_sql_join_require_planning:
-  {Eng.required_effects("clang-analyzer", "", Eng.ss_two("authorization", "databaseAccesses")) == Eng.ss_one("planTargetSql") : Eng.SS}
+law engine_runtime_observation_requires_no_target_control:
+  {Eng.required_effects(Eng.op_runtime_observe()) == Eng.SSNil{} : Eng.SS}
 
-def engine_required_effects_of_the_c_sql_join_require_planning():
+def engine_runtime_observation_requires_no_target_control():
   {==}
 
-law engine_required_effects_of_a_c_predicate_query_require_planning:
-  {Eng.required_effects("clang-analyzer", "", Eng.ss_two("type", "predicateQueries")) == Eng.ss_one("planTargetSql") : Eng.SS}
+law engine_a_catalog_only_capture_requires_no_effect:
+  {Eng.required_effects(Eng.op_catalog_capture()) == Eng.SSNil{} : Eng.SS}
 
-def engine_required_effects_of_a_c_predicate_query_require_planning():
+def engine_a_catalog_only_capture_requires_no_effect():
   {==}
 
-law engine_required_effects_of_model_validation_require_execution:
-  {Eng.required_effects("data-model", "", Eng.ss_one("validation")) == Eng.ss_one("executeTarget") : Eng.SS}
+law engine_a_bundled_schema_validation_requires_no_target_execution:
+  {Eng.required_effects(Eng.op_schema_validation()) == Eng.SSNil{} : Eng.SS}
 
-def engine_required_effects_of_model_validation_require_execution():
+def engine_a_bundled_schema_validation_requires_no_target_execution():
   {==}
 
-law engine_required_effects_of_migration_replay:
-  {Eng.required_effects("data-model", "", Eng.ss_one("migrations")) == Eng.ss_one("replayMigrations") : Eng.SS}
+law engine_an_environment_read_requires_no_effect:
+  {Eng.required_effects(Eng.op_environment_read()) == Eng.SSNil{} : Eng.SS}
 
-def engine_required_effects_of_migration_replay():
+def engine_an_environment_read_requires_no_effect():
   {==}
 
-law engine_required_effects_of_runtime_evaluation_require_both_grants:
-  {Eng.required_effects("cdp", "evaluate", Eng.ss_one("values")) == Eng.ss_two("controlRuntime", "evaluateRuntime") : Eng.SS}
+law engine_a_dataset_read_requires_no_effect:
+  {Eng.required_effects(Eng.op_dataset_read()) == Eng.SSNil{} : Eng.SS}
 
-def engine_required_effects_of_runtime_evaluation_require_both_grants():
+def engine_a_dataset_read_requires_no_effect():
   {==}
 
-law engine_required_effects_of_observing_an_owned_runtime_are_empty:
-  {Eng.required_effects("cdp", "observe", Eng.ss_one("frames")) == Eng.SSNil{} : Eng.SS}
+law engine_query_control_recovery_requires_no_effect:
+  {Eng.required_effects(Eng.op_query_control_recover()) == Eng.SSNil{} : Eng.SS}
 
-def engine_required_effects_of_observing_an_owned_runtime_are_empty():
+def engine_query_control_recovery_requires_no_effect():
   {==}
 
-law engine_required_effects_of_launching_an_owned_runtime_control_it:
-  {Eng.required_effects("cdp", "launch", Eng.ss_one("state")) == Eng.ss_one("controlRuntime") : Eng.SS}
+law engine_the_c_code_access_join_requires_planning:
+  {Eng.required_effects(Eng.op_code_access_join()) == Eng.ss_one("planTargetSql") : Eng.SS}
 
-def engine_required_effects_of_launching_an_owned_runtime_control_it():
+def engine_the_c_code_access_join_requires_planning():
   {==}
 
-law engine_required_effects_of_releasing_an_owned_runtime_control_it:
-  {Eng.required_effects("cdp", "release", Eng.ss_one("state")) == Eng.ss_one("controlRuntime") : Eng.SS}
+law engine_the_target_sql_plan_requires_planning:
+  {Eng.required_effects(Eng.op_sql_plan()) == Eng.ss_one("planTargetSql") : Eng.SS}
 
-def engine_required_effects_of_releasing_an_owned_runtime_control_it():
+def engine_the_target_sql_plan_requires_planning():
   {==}
 
-law engine_required_effects_of_query_control_recovery_are_empty:
-  {Eng.required_effects("query-control", "recover", Eng.ss_one("state")) == Eng.SSNil{} : Eng.SS}
+law engine_a_migration_replay_requires_replay_for_the_chosen_operation:
+  {Eng.required_effects(Eng.op_migration_replay()) == Eng.ss_one("replayMigrations") : Eng.SS}
 
-def engine_required_effects_of_query_control_recovery_are_empty():
+def engine_a_migration_replay_requires_replay_for_the_chosen_operation():
   {==}
 
-law engine_required_effects_of_query_control_release_control_the_owned_process:
-  {Eng.required_effects("query-control", "release", Eng.ss_one("state")) == Eng.ss_one("controlRuntime") : Eng.SS}
+law engine_a_zod_model_load_requires_target_execution:
+  {Eng.required_effects(Eng.op_model_load()) == Eng.ss_one("executeTarget") : Eng.SS}
 
-def engine_required_effects_of_query_control_release_control_the_owned_process():
+def engine_a_zod_model_load_requires_target_execution():
   {==}
 
-law engine_required_effects_of_a_catalog_access_require_planning:
-  {Eng.required_effects("sqlite-schema", "", Eng.ss_one("codeAccesses")) == Eng.ss_one("planTargetSql") : Eng.SS}
+law engine_a_request_local_tools_override_requires_target_execution:
+  {Eng.required_effects(Eng.op_tools_probe()) == Eng.ss_one("executeTarget") : Eng.SS}
 
-def engine_required_effects_of_a_catalog_access_require_planning():
+def engine_a_request_local_tools_override_requires_target_execution():
+  {==}
+
+law engine_runtime_launch_requires_target_control:
+  {Eng.required_effects(Eng.op_runtime_launch()) == Eng.ss_one("controlRuntime") : Eng.SS}
+
+def engine_runtime_launch_requires_target_control():
+  {==}
+
+law engine_runtime_pause_requires_target_control:
+  {Eng.required_effects(Eng.op_runtime_pause()) == Eng.ss_one("controlRuntime") : Eng.SS}
+
+def engine_runtime_pause_requires_target_control():
+  {==}
+
+law engine_runtime_resume_requires_target_control:
+  {Eng.required_effects(Eng.op_runtime_resume()) == Eng.ss_one("controlRuntime") : Eng.SS}
+
+def engine_runtime_resume_requires_target_control():
+  {==}
+
+law engine_runtime_release_requires_target_control:
+  {Eng.required_effects(Eng.op_runtime_release()) == Eng.ss_one("controlRuntime") : Eng.SS}
+
+def engine_runtime_release_requires_target_control():
+  {==}
+
+law engine_runtime_evaluation_requires_both_grants:
+  {Eng.required_effects(Eng.op_runtime_evaluate()) == Eng.ss_two("controlRuntime", "evaluateRuntime") : Eng.SS}
+
+def engine_runtime_evaluation_requires_both_grants():
+  {==}
+
+law engine_query_control_release_controls_the_owned_process:
+  {Eng.required_effects(Eng.op_query_control_release()) == Eng.ss_one("controlRuntime") : Eng.SS}
+
+def engine_query_control_release_controls_the_owned_process():
+  {==}
+
+law engine_an_observe_intent_selects_the_observation_operation:
+  {Eng.runtime_operation("observe") == "runtimeObserve" : String}
+
+def engine_an_observe_intent_selects_the_observation_operation():
+  {==}
+
+law engine_an_evaluate_intent_selects_the_evaluation_operation:
+  {Eng.runtime_operation("evaluate") == "runtimeEvaluate" : String}
+
+def engine_an_evaluate_intent_selects_the_evaluation_operation():
+  {==}
+
+law engine_a_resume_step_intent_selects_the_resume_operation:
+  {Eng.runtime_operation("resume-step") == "runtimeResume" : String}
+
+def engine_a_resume_step_intent_selects_the_resume_operation():
+  {==}
+
+law engine_an_unknown_runtime_intent_selects_no_operation:
+  {Eng.runtime_operation("nonsense") == "" : String}
+
+def engine_an_unknown_runtime_intent_selects_no_operation():
+  {==}
+
+law engine_a_recovery_intent_selects_the_recovery_operation:
+  {Eng.query_control_operation("recover") == "queryControlRecover" : String}
+
+def engine_a_recovery_intent_selects_the_recovery_operation():
+  {==}
+
+law engine_a_control_release_intent_selects_the_release_operation:
+  {Eng.query_control_operation("release") == "queryControlRelease" : String}
+
+def engine_a_control_release_intent_selects_the_release_operation():
+  {==}
+
+law engine_the_declared_typescript_effects_cover_its_selected_join:
+  {Eng.missing_effects(Eng.required_effects(Eng.op_code_access_join()), Eng.effects_of("typescript")) == Eng.FxGranted{} : Eng.Effects}
+
+def engine_the_declared_typescript_effects_cover_its_selected_join():
+  {==}
+
+law engine_the_declared_model_effects_cover_a_model_load:
+  {Eng.missing_effects(Eng.required_effects(Eng.op_model_load()), Eng.effects_of("data-model")) == Eng.FxGranted{} : Eng.Effects}
+
+def engine_the_declared_model_effects_cover_a_model_load():
+  {==}
+
+law engine_the_declared_model_effects_cover_a_migration_replay:
+  {Eng.missing_effects(Eng.required_effects(Eng.op_migration_replay()), Eng.effects_of("data-model")) == Eng.FxGranted{} : Eng.Effects}
+
+def engine_the_declared_model_effects_cover_a_migration_replay():
+  {==}
+
+law engine_the_declared_runtime_effects_cover_an_evaluation:
+  {Eng.missing_effects(Eng.required_effects(Eng.op_runtime_evaluate()), Eng.effects_of("cdp")) == Eng.FxGranted{} : Eng.Effects}
+
+def engine_the_declared_runtime_effects_cover_an_evaluation():
+  {==}
+
+law engine_the_declared_environment_effects_cover_a_tools_override:
+  {Eng.missing_effects(Eng.required_effects(Eng.op_tools_probe()), Eng.effects_of("environment")) == Eng.FxGranted{} : Eng.Effects}
+
+def engine_the_declared_environment_effects_cover_a_tools_override():
   {==}
 
 law engine_missing_grant_is_named_before_the_effect:
