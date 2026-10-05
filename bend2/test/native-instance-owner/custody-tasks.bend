@@ -49,6 +49,11 @@ def rebuild_open(result: Maybe<Custody.Duty>) -> Bool:
     case Some{+duty}: Custody.duty_open(duty)
     case None{}: False{}
 
+def rebuild_acks_owed(result: Maybe<Custody.Duty>) -> Bool:
+  match result:
+    case Some{+duty}: Bool.and(Custody.duty_open(duty),Bool.and(Custody.ack_owed_of(duty),Bool.not(Custody.wake_owed_of(duty))))
+    case None{}: False{}
+
 def rebuild_carries(result: Maybe<Custody.Duty>, expected: String) -> Bool:
   match result:
     case Some{duty}: String.eq(Custody.errors_of(duty),expected)
@@ -80,11 +85,11 @@ def checks() -> IO(Unit):
     acknotice : Unit <- check("acknowledged-owed-notice-stays-open",rebuild_open_with_wake(Custody.rebuild(attempt,owner,True{},Custody.RefDone{"enumerated"},Custody.RefFail{"delivery failed"},Custody.RefDone{"settled"},Custody.RefDone{"recovered"},"enumerated delivery failure\n")))
     clear : Unit <- check("acknowledged-fulfilled-rebuilds-empty",rebuild_empty(Custody.rebuild(attempt,owner,True{},Custody.RefDone{"enumerated"},Custody.RefDone{"report delivered"},Custody.RefDone{"settled"},Custody.RefDone{"recovered"},"")))
     opencont : Unit <- check("acknowledged-open-continuation-stays-open",rebuild_open(Custody.rebuild(attempt,owner,True{},Custody.RefDone{"enumerated"},Custody.RefDone{"report delivered"},Custody.RefDone{"settled"},Custody.RefOpen{},"")))
-    unackedclear : Unit <- check("unacknowledged-fulfilled-rebuilds-open",rebuild_open(Custody.rebuild(attempt,owner,False{},Custody.RefDone{"enumerated"},Custody.RefDone{"delivered"},Custody.RefDone{"settled"},Custody.RefDone{"recovered"},"")))
+    unackedclear : Unit <- check("unacknowledged-fulfilled-rebuilds-open",rebuild_acks_owed(Custody.rebuild(attempt,owner,False{},Custody.RefDone{"enumerated"},Custody.RefDone{"delivered"},Custody.RefDone{"settled"},Custody.RefDone{"recovered"},"")))
     carries : Unit <- check("rebuild-carries-enumerated-errors",rebuild_carries(Custody.rebuild(attempt,owner,True{},Custody.RefDone{"enumerated"},Custody.RefFail{"delivery failed"},Custody.RefDone{"settled"},Custody.RefDone{"recovered"},"enumerated delivery failure\n"),"enumerated delivery failure\n"))
     +rebuilt : Maybe<Custody.Duty> <- IO.pure(Maybe<Custody.Duty>,Custody.rebuild(attempt,owner,True{},Custody.RefDone{"enumerated"},Custody.RefFail{"enumerated delivery failure"},Custody.RefDone{"settled"},Custody.RefDone{"recovered"},"enumerated delivery failure\n"))
     present : Unit <- match rebuilt:
-      case Some{duty}: check("rebuild-owed-notice-is-present",Bool.and(Custody.wake_owed_of(duty),Bool.not(Custody.ack_owed_of(duty))))
+      case Some{+duty}: check("rebuild-owed-notice-is-present",Bool.and(Custody.wake_owed_of(duty),Bool.not(Custody.ack_owed_of(duty))))
       case None{}: check("rebuild-owed-notice-is-present",False{})
     +retriednotice : Custody.Duty <- match rebuilt:
       case Some{duty}: IO.pure(Custody.Duty,duty)

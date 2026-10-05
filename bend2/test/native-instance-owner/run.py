@@ -25,23 +25,30 @@ import subprocess
 import sys
 import time
 
+# Each mutation: (name, unique source fragment, replacement, law proof name
+# whose compile refusal must appear, and the semantic value the actual law
+# requires, stated from the law itself).
 MUTATIONS = [
     ("acknowledged-drops-duties",
      "  match clear:\n    case True{}: None{}",
      "  match acknowledged:\n    case True{}: None{}",
-     "acknowledged_attempt_with_owed_notice_stays_a_duty"),
+     "acknowledged_attempt_with_owed_notice_stays_a_duty",
+     "acknowledged rebuild with failed delivery stays Some{Duty} with wake_owed true"),
     ("ref-open-wake",
      "Bool.not(fulfilled(delivery)),Bool.not(acknowledged),Bool.not(fulfilled(settle))",
      "ref_open(delivery),Bool.not(acknowledged),Bool.not(fulfilled(settle))",
-     "unacknowledged_failed_delivery_keeps_the_wake_owed"),
+     "unacknowledged_failed_delivery_keeps_the_wake_owed",
+     "unacknowledged failed-delivery rebuild keeps wake_owed true"),
     ("wrong-attempt-accepted",
      "attempt_eq(attempt_of(duty),attempt)",
      "True{}",
-     "a_differing_attempt_is_refused_as_unknown"),
+     "a_differing_attempt_is_refused_as_unknown",
+     "differing attempt resolves to Fail{UnknownAttempt{}}"),
     ("settlement-fail-clears",
      "Bool.and(settle_owed,Bool.not(fulfilled(ref)))",
      "Bool.and(settle_owed,fulfilled(ref))",
-     "a_failed_settlement_survives_host_acknowledgment"),
+     "a_failed_settlement_survives_host_acknowledgment",
+     "failed settlement keeps settle_owed true after host acknowledgment"),
 ]
 
 OWNED = ["bend2/src/context/custody-tasks.bend",
@@ -120,7 +127,7 @@ def main():
         "compiler must be Bend 2.0.25"
     identity["bend_version"] = (output / "compiler.stdout").read_text().strip()
     child, streams, started = launch("host-compiler", [os.environ.get("CC", "clang"), "--version"], root)
-    complete("host-compiler", child, streams, started)
+    assert complete("host-compiler", child, streams, started) == 0, "host compiler probe failed"
     identity["host_compiler"] = (output / "host-compiler.stdout").read_text(errors="replace")
     if args.library_root:
         listing = sorted((p.relative_to(args.library_root).as_posix(), sha256(p))
@@ -158,7 +165,7 @@ def main():
 
     module = root / OWNED[0]
     original = module.read_text()
-    for name, old, new, law in MUTATIONS:
+    for name, old, new, law, expected_semantics in MUTATIONS:
         assert original.count(old) == 1, f"{name}: source fragment is not unique"
         scratch = output / ("mutation-" + name)
         scratch.mkdir()
@@ -175,10 +182,11 @@ def main():
         code = complete("mutation-" + name, child, streams, started)
         stderr = (output / ("mutation-" + name + ".stderr")).read_text(errors="replace")
         location_lines = [line.strip() for line in stderr.splitlines()
-                          if "custody-tasks." in line]
-        expected = {"kind": "law-compile-failure", "exit_nonzero": True,
-                    "compiler_error": True, "location_module_prefix": "custody-tasks.",
-                    "diagnostic_names": law}
+                          if "custody-tasks." in line and law in line]
+        expected = {"kind": "law-compile-failure", "compiler_exit": 1,
+                    "compiler_error": True,
+                    "location": f"custody-tasks.{law}",
+                    "expected_semantics": expected_semantics}
         observed = {"exit": code,
                     "compiler_error": "Error" in stderr,
                     "location_seen": "Location" in stderr and bool(location_lines),
@@ -192,9 +200,9 @@ def main():
                                str(scratch / "mutated-source.bend"),
                                str(output / ("mutation-" + name + ".stderr"))]}
         record("mutation-" + name + ".verdict", verdict)
-        assert code != 0, f"{name}: mutated build unexpectedly succeeded"
+        assert code == 1, f"{name}: compiler exit {code}, expected exact refusal 1"
         assert observed["compiler_error"] and observed["location_seen"], \
-            f"{name}: build stderr lacks a compiler Error/Location naming the custody module"
+            f"{name}: build stderr lacks a compiler Error with a custody-tasks.{law} Location"
         assert observed["law_named"], f"{name}: expected law {law} named in build stderr"
 
     for path in OWNED:

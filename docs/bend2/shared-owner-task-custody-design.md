@@ -550,6 +550,26 @@ task/correlation responsibility with the allocation. Take grants allocation
 custody only; it advances no durable interpretation or effect checkpoint and
 grants no ordinary interpretation permission.
 
+Two transfers stay distinct. Readiness-event acceptance
+(`Registry.accept_ready`) moves the responsibility to wake and retry
+`read_ready` to the owning task; it transfers no offered allocation. Frame
+adoption is a separate hosted operation after an actual `OfferedFrame`,
+preserving the original correlation, the exact reader incarnation and serial,
+the latched fault and task ownership before take. Event, task and destination
+ownership is conserved across keyed adoption, requeue and completion: the
+pure transitions refuse duplicate adoption, refuse requeue without an
+outstanding task event, and check every increment and decrement, and the
+module deliberately provides no unkeyed task-count debit.
+
+The precise missing primitive preventing a concrete hosted call site is the
+owner event-loop entry itself: the `--owner-serve` dispatch handoff
+(Main/synthesis) that would host the in-memory retained destination table,
+its uniqueness, and the Controls lease exports (`attach_reader`, `read_ready`,
+`register_ready_event`, `cancel_registration`, `release_frame/release_reader/
+release_destination`, `prepare_env`) as callable operations. Until that entry
+exists, the instance region can supply only these pure decisions and their
+evidence, and no hosted storage claim is made.
+
 The custody-task module and isolated fixtures can be developed now in this
 worktree. Imports into the protected regions wait for the accepted handoffs;
 the real native entry (`main.bend` importing `laws.bend`) must import every new
