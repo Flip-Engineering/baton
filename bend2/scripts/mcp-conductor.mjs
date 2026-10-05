@@ -331,6 +331,15 @@ const TOOLS = [
     }, additionalProperties: false },
   },
   {
+    name: 'baton2_knowledge',
+    description: 'Read findings visible to reader (default attached session). index:true returns complete metadata with UTF-8 byte lengths, evidence-message identity/receipt state, visible destinations and literal detailRead argv. id selects zero or one full finding with complete claim, limits, cited evidence and reader-visible promotion history, including acknowledged evidence. index and id are mutually exclusive. These modes use read-only connections and never create knowledge tables or acknowledge evidence; both absent tables return [], partial schemas refuse. Invisible and absent IDs both return []. Omit index/id for the existing full view.',
+    inputSchema: { type: 'object', properties: {
+      reader: { type: 'string' }, index: { type: 'boolean' },
+      id: { type: 'string', description: 'Exact literal finding ID; use the id from detailRead.' },
+      pretty: { type: 'boolean' },
+    }, additionalProperties: false },
+  },
+  {
     name: 'baton2_push',
     description: 'Push a branch to a remote after landing.',
     inputSchema: {
@@ -452,7 +461,7 @@ function handleMessage(msg) {
         experimental: { 'claude/channel': {} },
       },
       serverInfo: { name: 'baton-conductor', version: '0.1.0' },
-      instructions: `Baton2 ${hasParent(selectedSession()) ? 'Associate' : 'Principal'} Conductor attachment for session ${sessionId}. Use baton2_recruit to assign a Player and its worktree. Use baton2_receiver to register a Player's Codex or OMP receive endpoint, then baton2_dispatch_file to send task or guidance files. Use baton2_dispatch_turn to launch a recruited Player's task file with its recorded route. Use baton2_inbox with index:true for concise pending metadata scoped to this attachment; baton2_pending with index:true reads across recipients. Exact sender/kind filters combine; state:all includes acknowledged history. Use baton2_delivery to read each selected complete body. Index reads do not acknowledge, review or complete work. Use baton2_ack to acknowledge delivery. Use baton2_guide to direct Players. Use baton2_player and baton2_players to inspect Players and both Conductor tiers. Use baton2_role, baton2_ensemble, baton2_ensemble_member, baton2_section and baton2_section_member to configure responsibilities and membership. Use baton2_orchestra with index:true and session to inspect the focused system; omitted session selects the full structure. Structural output provides per-actor counts and inputRead argv. Reference limitations.next is a literal native argv array. To follow it through MCP, call baton2_orchestra with index:true and session set to the reference id. pendingCount excludes stopped execution inputs; unacknowledgedCount includes every NULL receipt. Use baton2_inbox with index:true and recipient for each actor; state:all includes receipt history. Counts describe retained input; per-message disposition is available from inbox/pending indexes. Legacy no-index readers include bodies and histories. Use baton2_turns for turn history and baton2_land or baton2_land_checked to land a Player's changes. Landing defaults to the recorded branch tip; supply commit with a reviewed object ID to select an ancestor while later work remains on the branch. Native selection verifies the registered workspace repository and source ancestry. The checked form runs target/candidate checks on that source. Inspect the result status; selection does not grant review or landing authority.`,
+      instructions: `Baton2 ${hasParent(selectedSession()) ? 'Associate' : 'Principal'} Conductor attachment for session ${sessionId}. Use baton2_recruit to assign a Player and its worktree. Use baton2_receiver to register a Player's Codex or OMP receive endpoint, then baton2_dispatch_file to send task or guidance files. Use baton2_dispatch_turn to launch a recruited Player's task file with its recorded route. Use baton2_inbox with index:true for concise pending metadata scoped to this attachment; baton2_pending with index:true reads across recipients. Exact sender/kind filters combine; state:all includes acknowledged history. Use baton2_delivery to read each selected complete body. Index reads do not acknowledge, review or complete work. Use baton2_knowledge with index:true to list visible finding metadata; use id with the selected literal finding ID to read its complete claim, limits, evidence and visible promotion history. Reader defaults to this session. Acknowledged evidence remains readable. Use baton2_ack to acknowledge delivery. Use baton2_guide to direct Players. Use baton2_player and baton2_players to inspect Players and both Conductor tiers. Use baton2_role, baton2_ensemble, baton2_ensemble_member, baton2_section and baton2_section_member to configure responsibilities and membership. Use baton2_orchestra with index:true and session to inspect the focused system; omitted session selects the full structure. Structural output provides per-actor counts and inputRead argv. Reference limitations.next is a literal native argv array. To follow it through MCP, call baton2_orchestra with index:true and session set to the reference id. pendingCount excludes stopped execution inputs; unacknowledgedCount includes every NULL receipt. Use baton2_inbox with index:true and recipient for each actor; state:all includes receipt history. Counts describe retained input; per-message disposition is available from inbox/pending indexes. Legacy no-index readers include bodies and histories. Use baton2_turns for turn history and baton2_land or baton2_land_checked to land a Player's changes. Landing defaults to the recorded branch tip; supply commit with a reviewed object ID to select an ancestor while later work remains on the branch. Native selection verifies the registered workspace repository and source ancestry. The checked form runs target/candidate checks on that source. Inspect the result status; selection does not grant review or landing authority.`,
     });
     return;
   }
@@ -603,6 +612,16 @@ function handleToolCall(msg) {
       case 'baton2_pending':
         result = coord('pending', ...messageReadOptions(args ?? {}, false));
         break;
+      case 'baton2_knowledge': {
+        const options = args ?? {};
+        readOptions(options, ['reader', 'index', 'id', 'pretty']);
+        if (options.index === true && options.id !== undefined) throw new Error('knowledge index and id are mutually exclusive');
+        result = coord('knowledge', options.reader ?? sessionId,
+          ...(options.index ? ['--index'] : []),
+          ...(options.id === undefined ? [] : ['--id', options.id]),
+          ...(options.pretty ? ['--pretty'] : []));
+        break;
+      }
       case 'baton2_push':
         result = coord('push', args.repo, args.branch, args.remote);
         break;

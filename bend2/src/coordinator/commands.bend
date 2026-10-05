@@ -60,6 +60,8 @@ type Command is Data:
   Turns{id: String}
   KnowledgeRecord{id: String, author: String, claim: String, evidence: String, limits: String}
   KnowledgeRead{reader: String}
+  KnowledgeIndex{reader: String}
+  KnowledgeDetail{reader: String, id: String}
   KnowledgePromote{id: String, promoter: String, source: String, destination: String, finding: String}
   Help{}
   Invalid{}
@@ -385,6 +387,8 @@ def sql(command: Command) -> String:
     case Worktree{id}: ""
     case KnowledgeRecord{id,author,claim,evidence,limits}: ""
     case KnowledgeRead{reader}: ""
+    case KnowledgeIndex{reader}: ""
+    case KnowledgeDetail{reader,id}: ""
     case KnowledgePromote{id,promoter,source,destination,finding}: ""
     case Help{}: ""
     case Invalid{}: ""
@@ -506,13 +510,24 @@ def parse_inbox_index(args: List<&2,String>) -> Command:
     case +id <> +rest:
       Bool.pick(Command,index_legacy_args(rest),parse_legacy("inbox" <> id <> rest),index_command(read_args(rest,ReadArgs{IndexExact{id},IndexAny{},IndexAny{},IndexAny{},IndexAny{},False{},False{},"",True{}})))
 
+def parse_knowledge(args: List<&2,String>) -> Command:
+  match args:
+    case reader <> "--index" <> Nil{}: KnowledgeIndex{reader}
+    case reader <> "--id" <> id <> Nil{}: KnowledgeDetail{reader,id}
+    case reader <> "--index" <> "--pretty" <> Nil{}: Pretty{KnowledgeIndex{reader}}
+    case reader <> "--pretty" <> "--index" <> Nil{}: Pretty{KnowledgeIndex{reader}}
+    case reader <> "--id" <> id <> "--pretty" <> Nil{}: Pretty{KnowledgeDetail{reader,id}}
+    case reader <> "--pretty" <> "--id" <> id <> Nil{}: Pretty{KnowledgeDetail{reader,id}}
+    case other: parse_legacy("knowledge" <> other)
+
 def parse_shared(args: List<&2,String>) -> Command:
   match args:
     case Nil{}: Invalid{}
     case +verb <> +rest:
+      Bool.pick(Command,String.eq(verb,"knowledge"),parse_knowledge(rest),
       Bool.pick(Command,String.eq(verb,"inbox"),parse_inbox_index(rest),
       Bool.pick(Command,String.eq(verb,"pending"),Bool.pick(Command,index_legacy_args(rest),parse_legacy(verb <> rest),index_command(read_args(rest,ReadArgs{IndexAny{},IndexAny{},IndexAny{},IndexAny{},IndexAny{},False{},False{},"",True{}}))),
-      Bool.pick(Command,String.eq(verb,"orchestra"),orchestra_command(read_args(rest,ReadArgs{IndexAny{},IndexAny{},IndexAny{},IndexAny{},IndexAny{},False{},False{},"",True{}})),parse_legacy(verb <> rest))))
+      Bool.pick(Command,String.eq(verb,"orchestra"),orchestra_command(read_args(rest,ReadArgs{IndexAny{},IndexAny{},IndexAny{},IndexAny{},IndexAny{},False{},False{},"",True{}})),parse_legacy(verb <> rest)))))
 
 def shared_args(args: List<String>) -> List<&2,String>:
   match args:

@@ -259,5 +259,43 @@ class ControlIndexMcp(unittest.TestCase):
                              {'pending', 'acknowledged', 'all'})
 
 
+    def test_knowledge_literal_translation_and_scope(self):
+        for arguments, expected in [
+            ({}, ['knowledge', 'attached']),
+            ({'index': True}, ['knowledge', 'attached', '--index']),
+            ({'reader': '', 'id': '--pretty'}, ['knowledge', '', '--id', '--pretty']),
+            ({'reader': "reader ' λ", 'id': '', 'pretty': True},
+             ['knowledge', "reader ' λ", '--id', '', '--pretty']),
+        ]:
+            result, calls = self.exchange('baton2_knowledge', arguments)
+            self.assertFalse(result.get('isError'), result)
+            self.assertEqual(calls, [[str(self.database), *expected]])
+        schema = self.advertised['baton2_knowledge']['inputSchema']
+        self.assertFalse(schema['additionalProperties'])
+        self.assertEqual(schema.get('required', []), [])
+        self.assertEqual({k: v['type'] for k, v in schema['properties'].items()},
+                         {'reader': 'string', 'index': 'boolean', 'id': 'string', 'pretty': 'boolean'})
+
+    def test_knowledge_invalid_arguments_launch_no_native_process(self):
+        for arguments in [{'index': True, 'id': ''}, {'reader': None}, {'id': 1},
+                          {'index': 'true'}, {'pretty': 1}, {'extra': True}, []]:
+            result, calls = self.exchange('baton2_knowledge', arguments)
+            self.assertTrue(result.get('isError'), result)
+            self.assertEqual(calls, [])
+
+    def test_knowledge_preserves_large_results_and_native_failures(self):
+        body = json.dumps([{'claim': 'λ' * 200000, 'limits': 'complete'}])
+        result, calls = self.exchange('baton2_knowledge', {'id': 'chosen'}, stdout=body+'\n')
+        self.assertEqual(result['content'][0]['text'], body)
+        self.assertEqual(calls, [[str(self.database), 'knowledge', 'attached', '--id', 'chosen']])
+        result, _ = self.exchange('baton2_knowledge', {'index': True},
+                                  stdout='retained stdout\n', stderr='exact failure\n', code=2)
+        self.assertTrue(result.get('isError'), result)
+        text = result['content'][0]['text']
+        self.assertIn('retained stdout', text)
+        self.assertIn('exact failure', text)
+        self.assertIn('2', text)
+
+
 if __name__ == '__main__':
     unittest.main()

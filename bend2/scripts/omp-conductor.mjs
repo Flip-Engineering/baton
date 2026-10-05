@@ -104,6 +104,8 @@ function systemPrompt(session) {
     `  ${command} push REPO BRANCH REMOTE — push a branch to a remote after landing`,
     `  ${command} worktree PLAYER — show a player's Git state`,
     `  ${command} record FINDING_ID ${recipient} CLAIM message:MESSAGE_ID LIMITS — record your finding`,
+    `  ${command} knowledge ${recipient} --index — list visible finding metadata and literal detailRead argv`,
+    `  ${command} knowledge ${recipient} --id FINDING_ID — read one complete finding, evidence and visible promotion history`,
     `  ${command} knowledge ${recipient} — list all findings visible to you with evidence and promotion history`,
     `  ${command} promote PROMOTION_ID ${recipient} SOURCE ${recipient} FINDING_ID — promote from SOURCE into your scope`,
     '',
@@ -113,7 +115,7 @@ function systemPrompt(session) {
     'land and land-checked default to the recorded branch tip. Add --commit COMMIT to select a reviewed commit from that branch while later work remains on the branch. Native selection verifies the registered workspace repository and selected commit ancestry before landing effects. Use a full reviewed object ID to name the intended source. The checked form runs the existing target/candidate checks on the selected source. Inspect the result status; selection does not grant review or landing authority.',
     'Author findings from reviewed evidence. Cite an existing retained message you sent or received and state the claim\'s limits.',
     'Review a finding before explicitly promoting it from its recorded source scope. Its original author remains recorded.',
-    'A promotion notice names a finding shared into your scope. Retrieve it with knowledge, review its evidence and decide which players should receive a message about it.',
+    'A promotion notice names a finding shared into your scope. Read that literal ID with knowledge READER --id FINDING_ID, review its complete evidence and decide which players should receive a message about it.',
     'When you receive a player report, review it and acknowledge it.',
     'If the player made changes, inspect its worktree state and land them when ready.',
   ].join('\n');
