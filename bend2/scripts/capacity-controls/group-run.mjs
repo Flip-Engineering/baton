@@ -413,8 +413,8 @@ export async function runGroup({
           setup,
           expectation: definitionExpectation(definition) ?? null,
           delta: {
-            original_sha256: sha256Hex(Buffer.from(originalText, 'utf8')),
-            changed_sha256: sha256Hex(Buffer.from(changedText, 'utf8')),
+            original_sha256: sha256Hex(originalBytes),
+            changed_sha256: sha256Hex(readFileSync(join(evidenceDir, changedPath))),
             changed_path: changedPath,
           },
           process: processRecord(run, `${record.id}-${nonce}-${results.length}`),

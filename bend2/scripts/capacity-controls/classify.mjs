@@ -235,6 +235,13 @@ export function classifyControl({ state, exitCode, signal, spawnError, stderrTex
         return { class: 'accounting-invalid', attributedLaw: null };
       }
     }
+    // A translated compiler signal must be corroborated by the wrapper's own
+    // failure preamble in the same accounting block; the stderr regex alone
+    // does not qualify the inference.
+    if (state === 'signalled' && profile === 'gnu-time-v'
+      && !/Command exited with non-zero status \d+/.test(accounting)) {
+      return { class: 'accounting-invalid', attributedLaw: null };
+    }
   }
   if (control.kind === 'baseline') {
     return exitCode === 0
