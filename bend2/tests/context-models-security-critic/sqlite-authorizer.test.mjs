@@ -86,9 +86,12 @@ const STAGES = new Set([
 ]);
 const REFUSED_STAGES = new Set(['sqlUtf8', 'sqlNul', 'sqlEmpty', 'sqlBind', 'tailRemains', 'notReadonly', 'isExplain', 'sqlLengthExceedsInt']);
 
-// Authorizer event phases: the plan record's array runs under `planner`; the
-// replay record's prefix and head sections run under their own phases.
-const PHASES = new Set(['planner', 'prefix-replay', 'head-replay']);
+// Authorizer event phases, exactly as the emitter names them (producer message
+// sqlite-phase-vocab-1). Plan records use the first five; the replay sections
+// use the last two.
+const PLAN_PHASES = new Set(['capture', 'original-prepare', 'explain-prepare', 'explain-step', 'cleanup']);
+const SECTION_PHASES = new Set(['prefix-replay', 'head-replay']);
+const PHASES = new Set([...PLAN_PHASES, ...SECTION_PHASES]);
 
 function stageOf(document, name) {
   const status = document.status;
@@ -296,24 +299,52 @@ test('each replay section reports its own terminal facts truthfully', () => {
         assert.notEqual(record.stage, 'ok', `${record.name}.${name} reports an aborted replay under stage ok`);
       }
       if (section.autocommitAtEnd === false) {
-        assert.equal(record.stage, 'replayOpenTransaction',
-          `${record.name}.${name} reports an open transaction but the record stage is ${record.stage}`);
+        // An open transaction promotes the stage only when no earlier terminal
+        // failure exists; cancellation and a revision failure keep their stage.
+        assert.ok(['replayOpenTransaction', 'cancelled', 'replayRevisionFailed'].includes(record.stage),
+          `${record.name}.${name} reports an open transaction under stage ${record.stage}`);
       }
     }
     if (record.stage === 'cancelled') {
       assert.ok(sections.some(([, section]) => section.cancelled === true),
         `${record.name} reports stage cancelled while neither section reports cancellation`);
     }
+    if (record.stage === 'replayOpenTransaction') {
+      assert.ok(sections.some(([, section]) => section.autocommitAtEnd === false),
+        `${record.name} reports stage replayOpenTransaction while no section reports an open transaction`);
+    }
   }
 });
 
-test('every authorizer event names a known phase', () => {
-  for (const prefix of ['planner-', 'replay-', 'stage-']) {
+test('every authorizer event names a known phase for its record kind', () => {
+  for (const record of loadRecords('planner-')) {
+    for (const event of record.events) {
+      assert.ok(PLAN_PHASES.has(event.phase),
+        `${record.name} ${event.section}[${event.index}] carries phase ${JSON.stringify(event.phase)}; a plan record admits only ${[...PLAN_PHASES].join(', ')}`);
+    }
+  }
+  for (const prefix of ['replay-', 'stage-']) {
     for (const record of loadRecords(prefix)) {
       for (const event of record.events) {
         assert.ok(PHASES.has(event.phase), `${record.name} ${event.section}[${event.index}] carries phase ${JSON.stringify(event.phase)}`);
       }
     }
+  }
+});
+
+test('the prefix revision sequence is the head sequence truncated', () => {
+  for (const record of loadRecords('replay-')) {
+    const prefix = record.document.prefix;
+    const head = record.document.head;
+    assert.ok(Array.isArray(prefix.revisionsHex), `${record.name}.prefix.revisionsHex must be an array`);
+    assert.ok(Array.isArray(head.revisionsHex), `${record.name}.head.revisionsHex must be an array`);
+    if (prefix.revisionsHex.length > 0) {
+      assert.ok(head.revisionsHex.length >= prefix.revisionsHex.length,
+        `${record.name}: prefix carries ${prefix.revisionsHex.length} revisions and head only ${head.revisionsHex.length}; the prefix is a chain truncation`);
+    }
+    const truncated = head.revisionsHex.slice(0, prefix.revisionsHex.length);
+    assert.deepEqual(prefix.revisionsHex, truncated,
+      `${record.name}: prefix revisions must be the head sequence truncated to the prefix length, in the same order`);
   }
 });
 
