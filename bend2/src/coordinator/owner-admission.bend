@@ -111,6 +111,24 @@ law changed_database_refuses_request_reuse:
 def changed_database_refuses_request_reuse():
   {==}
 
+law changed_request_refuses_request_reuse:
+  {decide(Identity{"db","other-request","session","receive","input"},Some{Recorded{Identity{"db","request","session","receive","input"},"attempt-a"}}) == Conflict{"attempt-a",RequestField{}} : Decision}
+
+def changed_request_refuses_request_reuse():
+  {==}
+
+law changed_session_refuses_request_reuse:
+  {decide(Identity{"db","request","other-session","receive","input"},Some{Recorded{Identity{"db","request","session","receive","input"},"attempt-a"}}) == Conflict{"attempt-a",SessionField{}} : Decision}
+
+def changed_session_refuses_request_reuse():
+  {==}
+
+law changed_operation_refuses_request_reuse:
+  {decide(Identity{"db","request","session","turn","input"},Some{Recorded{Identity{"db","request","session","receive","input"},"attempt-a"}}) == Conflict{"attempt-a",OperationField{}} : Decision}
+
+def changed_operation_refuses_request_reuse():
+  {==}
+
 law missing_attempt_does_not_authorize_new_grant:
   {decide(Identity{"db","request","session","receive","input"},Some{Recorded{Identity{"db","request","session","receive","input"},""}}) == Invalid{AttemptField{}} : Decision}
 
