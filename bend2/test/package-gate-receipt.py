@@ -1443,6 +1443,22 @@ class PackageGateReceipt(unittest.TestCase):
         for suffix in PACKAGE.ACQUISITION_SUFFIXES:
             self.assertTrue((audit / (stem + suffix)).is_file(), suffix)
 
+        # The consumer composition: the retained response this endpoint wrote is
+        # compared with the verdict through the recipe's own comparison contract,
+        # and the composition stores the canonical closure that same response
+        # normalizes to.
+        response = json.loads((audit / (stem + '.stdout')).read_bytes().decode('utf-8'))
+        self.assertEqual(response['verifier'], historical)
+        self.assertEqual(verdict['verifier'],
+                         PACKAGE.require_verifier_closure({'verifier': response['verifier']},
+                                                          'endpoint'))
+        spec = importlib.util.spec_from_file_location(
+            'capacity_controls_recipe',
+            ROOT / 'bend2/test/capacity-controls-positive-recipe.py')
+        recipe = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(recipe)
+        recipe.bind_response_to_verdict(response, verdict, case['id'])
+
     def test_the_reader_accepts_the_historical_classifier_spelling(self):
         """A run naming only the historical spelling still reads."""
         member = 'classifier_module_sha256'
