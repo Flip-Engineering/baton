@@ -135,8 +135,8 @@
  {
   "name": "codec-ref-authority-presence-is-not-checked",
   "file": "bend2/src/context/codec.bend",
-  "find": "  ref_gate(Eng.ss_nonempty(operations), Eng.operations_known(operations), record, operations, requested, applicability, granted, fresh, known)",
-  "replace": "  ref_gate(True{}, Eng.operations_known(operations), record, operations, requested, applicability, granted, fresh, known)",
+  "find": "  ref_gate(Eng.ss_nonempty(operations), Eng.operations_known(operations), record, current_policy, operations, requested, applicability, granted, fresh, known)",
+  "replace": "  ref_gate(True{}, Eng.operations_known(operations), record, current_policy, operations, requested, applicability, granted, fresh, known)",
   "law": "codec_law_a_missing_retained_operation_authority_refuses"
  },
  {
@@ -271,5 +271,19 @@
   "find": "  Bool.pick(Bool, distinct_keys(members), known_kind(Req.member_lookup(\"kind\", members)), False{})",
   "replace": "  Bool.pick(Bool, True{}, known_kind(Req.member_lookup(\"kind\", members)), False{})",
   "law": "codec_law_a_duplicate_selector_key_refuses"
+ },
+ {
+  "name": "codec-stored-policy-is-invented",
+  "file": "bend2/src/context/codec.bend",
+  "find": "  Refs.RQ{known, Refs.ref_subject_kind(record), Refs.ref_policy(record), current_policy,",
+  "replace": "  Refs.RQ{known, Refs.ref_subject_kind(record), \"p1\", current_policy,",
+  "law": "codec_law_an_unestablished_policy_is_refused"
+ },
+ {
+  "name": "codec-probe-invents-a-stored-policy",
+  "file": "bend2/src/context/codec.bend",
+  "find": "  Refs.Ref{\"r1\", \"typescript\", subject, subject, \"s1\", policy, projections}",
+  "replace": "  Refs.Ref{\"r1\", \"typescript\", subject, subject, \"s1\", \"p1\", projections}",
+  "law": "codec_law_an_unestablished_policy_is_refused"
  }
 ]

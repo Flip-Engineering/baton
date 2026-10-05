@@ -1608,25 +1608,25 @@ def ref_record_of(d: RefDecode) -> Refs.RefRecord:
 # record, because `RefRecord` does not hold them. Its effects come from Core, not
 # from a projection name, and a missing or unknown authority refuses rather than
 # being fabricated from the request.
-def ref_query_of(+record: Refs.RefRecord, +operations: Eng.SS, requested: Eng.SS, applicability: Snap.Applies, granted: Eng.SS, fresh: String, known: Bool) -> Refs.RefQuery:
-  Refs.RQ{known, Refs.ref_subject(record), Refs.ref_projections(record), requested, applicability,
-          Eng.effects_union(operations), granted, fresh}
+def ref_query_of(+record: Refs.RefRecord, current_policy: String, +operations: Eng.SS, requested: Eng.SS, applicability: Snap.Applies, granted: Eng.SS, fresh: String, known: Bool) -> Refs.RefQuery:
+  Refs.RQ{known, Refs.ref_subject_kind(record), Refs.ref_policy(record), current_policy,
+          Refs.ref_projections(record), requested, applicability, Eng.effects_union(operations), granted, fresh}
 
-def ref_query_admit(+record: Refs.RefRecord, +operations: Eng.SS, requested: Eng.SS, applicability: Snap.Applies, granted: Eng.SS, fresh: String, known: Bool) -> Refs.RefDecision:
-  Refs.admit(ref_query_of(record, operations, requested, applicability, granted, fresh, known))
-
-def ref_known(k: Eng.OpsKnown, +record: Refs.RefRecord, +operations: Eng.SS, requested: Eng.SS, applicability: Snap.Applies, granted: Eng.SS, fresh: String, known: Bool) -> Refs.RefDecision:
+# The stored policy must exist before it can equal the caller's authenticated one,
+# so an absent policy refuses as unestablished and is never filled with an invented
+# identity. Core owns both the comparison and that refusal.
+def ref_known(k: Eng.OpsKnown, +record: Refs.RefRecord, current_policy: String, +operations: Eng.SS, requested: Eng.SS, applicability: Snap.Applies, granted: Eng.SS, fresh: String, known: Bool) -> Refs.RefDecision:
   match k:
-    case Eng.OkAllKnown{}: ref_query_admit(record, operations, requested, applicability, granted, fresh, known)
+    case Eng.OkAllKnown{}: Refs.admit(ref_query_of(record, current_policy, operations, requested, applicability, granted, fresh, known))
     case Eng.OkUnknown{+operation}: Refs.RUnverified{"retainedSelectorOperationUnknown"}
 
-def ref_gate(present: Bool, k: Eng.OpsKnown, +record: Refs.RefRecord, +operations: Eng.SS, requested: Eng.SS, applicability: Snap.Applies, granted: Eng.SS, fresh: String, known: Bool) -> Refs.RefDecision:
+def ref_gate(present: Bool, k: Eng.OpsKnown, +record: Refs.RefRecord, current_policy: String, +operations: Eng.SS, requested: Eng.SS, applicability: Snap.Applies, granted: Eng.SS, fresh: String, known: Bool) -> Refs.RefDecision:
   Bool.pick(Refs.RefDecision, present,
-    ref_known(k, record, operations, requested, applicability, granted, fresh, known),
+    ref_known(k, record, current_policy, operations, requested, applicability, granted, fresh, known),
     Refs.RUnverified{"retainedSelectorOperationsUnavailable"})
 
-def ref_admit(+record: Refs.RefRecord, +operations: Eng.SS, requested: Eng.SS, applicability: Snap.Applies, granted: Eng.SS, fresh: String, known: Bool) -> Refs.RefDecision:
-  ref_gate(Eng.ss_nonempty(operations), Eng.operations_known(operations), record, operations, requested, applicability, granted, fresh, known)
+def ref_admit(+record: Refs.RefRecord, current_policy: String, +operations: Eng.SS, requested: Eng.SS, applicability: Snap.Applies, granted: Eng.SS, fresh: String, known: Bool+record: Refs.RefRecord, current_policy: String, +operations: Eng.SS, requested: Eng.SS, applicability: Snap.Applies, granted: Eng.SS, fresh: String, known: Bool, "p1") -> Refs.RefDecision:
+  ref_gate(Eng.ss_nonempty(operations), Eng.operations_known(operations), record, current_policy, operations, requested, applicability, granted, fresh, known)
 
 def frame_text(d: FrameDecision) -> String:
   match d:
@@ -1638,47 +1638,59 @@ def frame_refusal(r: FrameRead) -> String:
     case FrValue{+value}: SNil{}
     case FrRefused{condition}: condition
 
-def record_probe(subject: String, +projections: Eng.SS) -> Refs.RefRecord:
-  Refs.Ref{"r1", "typescript", subject, "s1", projections}
+def record_probe(subject: String, policy: String, +projections: Eng.SS) -> Refs.RefRecord:
+  Refs.Ref{"r1", "typescript", subject, subject, "s1", policy, projections}
 
 law codec_law_a_retained_record_composes_into_core:
-  {Refs.ref_id(record_probe("symbol", Eng.ss_one("definition"))) == "r1" : String}
+  {Refs.ref_id(record_probe("symbol", "p1", Eng.ss_one("definition"))) == "r1" : String}
 
 def codec_law_a_retained_record_composes_into_core():
   {==}
 
+law codec_law_a_stored_policy_mismatch_is_refused:
+  {Refs.condition(ref_admit(record_probe("symbol", "p1", Eng.ss_one("definition")), "p2", Eng.ss_one("sourceAnalysis"), Eng.ss_one("definition"), Snap.ACurrent{}, Eng.ss_empty(), "fresh", True{})) == "refPolicyMismatch" : String}
+
+def codec_law_a_stored_policy_mismatch_is_refused():
+  {==}
+
+law codec_law_an_unestablished_policy_is_refused:
+  {Refs.condition(ref_admit(record_probe("symbol", "", Eng.ss_one("definition")), "p2", Eng.ss_one("sourceAnalysis"), Eng.ss_one("definition"), Snap.ACurrent{}, Eng.ss_empty(), "fresh", True{})) == "refPolicyUnestablished" : String}
+
+def codec_law_an_unestablished_policy_is_refused():
+  {==}
+
 law codec_law_a_grant_free_source_expansion_is_allowed:
-  {Refs.condition(ref_admit(record_probe("symbol", Eng.ss_one("definition")), Eng.ss_one("sourceAnalysis"), Eng.ss_one("definition"), Snap.ACurrent{}, Eng.ss_empty(), "fresh", True{})) == "ok" : String}
+  {Refs.condition(ref_admit(record_probe("symbol", "p1", Eng.ss_one("definition")), Eng.ss_one("sourceAnalysis"), Eng.ss_one("definition"), Snap.ACurrent{}, Eng.ss_empty(), "fresh", True{}record_probe("symbol", "p1", Eng.ss_one("definition")), Eng.ss_one("sourceAnalysis"), Eng.ss_one("definition"), Snap.ACurrent{}, Eng.ss_empty(), "fresh", True{}, "p1")) == "ok" : String}
 
 def codec_law_a_grant_free_source_expansion_is_allowed():
   {==}
 
 law codec_law_a_planning_expansion_without_its_grant_is_refused:
-  {Refs.condition(ref_admit(record_probe("symbol", Eng.ss_one("definition")), Eng.ss_one("codeAccessJoin"), Eng.ss_one("definition"), Snap.ACurrent{}, Eng.ss_empty(), "fresh", True{})) == "effectNotGranted" : String}
+  {Refs.condition(ref_admit(record_probe("symbol", "p1", Eng.ss_one("definition")), Eng.ss_one("codeAccessJoin"), Eng.ss_one("definition"), Snap.ACurrent{}, Eng.ss_empty(), "fresh", True{}record_probe("symbol", "p1", Eng.ss_one("definition")), Eng.ss_one("codeAccessJoin"), Eng.ss_one("definition"), Snap.ACurrent{}, Eng.ss_empty(), "fresh", True{}, "p1")) == "effectNotGranted" : String}
 
 def codec_law_a_planning_expansion_without_its_grant_is_refused():
   {==}
 
 law codec_law_a_planning_expansion_with_its_grant_is_allowed:
-  {Refs.condition(ref_admit(record_probe("symbol", Eng.ss_one("definition")), Eng.ss_one("codeAccessJoin"), Eng.ss_one("definition"), Snap.ACurrent{}, Eng.ss_one("planTargetSql"), "fresh", True{})) == "ok" : String}
+  {Refs.condition(ref_admit(record_probe("symbol", "p1", Eng.ss_one("definition")), Eng.ss_one("codeAccessJoin"), Eng.ss_one("definition"), Snap.ACurrent{}, Eng.ss_one("planTargetSql"), "fresh", True{}record_probe("symbol", "p1", Eng.ss_one("definition")), Eng.ss_one("codeAccessJoin"), Eng.ss_one("definition"), Snap.ACurrent{}, Eng.ss_one("planTargetSql"), "fresh", True{}, "p1")) == "ok" : String}
 
 def codec_law_a_planning_expansion_with_its_grant_is_allowed():
   {==}
 
 law codec_law_a_projection_widening_is_refused:
-  {Refs.condition(ref_admit(record_probe("symbol", Eng.ss_one("definition")), Eng.ss_one("sourceAnalysis"), Eng.ss_one("calls"), Snap.ACurrent{}, Eng.ss_empty(), "fresh", True{})) == "projectionRefused" : String}
+  {Refs.condition(ref_admit(record_probe("symbol", "p1", Eng.ss_one("definition")), Eng.ss_one("sourceAnalysis"), Eng.ss_one("calls"), Snap.ACurrent{}, Eng.ss_empty(), "fresh", True{}record_probe("symbol", "p1", Eng.ss_one("definition")), Eng.ss_one("sourceAnalysis"), Eng.ss_one("calls"), Snap.ACurrent{}, Eng.ss_empty(), "fresh", True{}, "p1")) == "projectionRefused" : String}
 
 def codec_law_a_projection_widening_is_refused():
   {==}
 
 law codec_law_a_missing_retained_operation_authority_refuses:
-  {Refs.condition(ref_admit(record_probe("symbol", Eng.ss_one("definition")), Eng.ss_empty(), Eng.ss_one("definition"), Snap.ACurrent{}, Eng.ss_empty(), "fresh", True{})) == "unverifiedReference" : String}
+  {Refs.condition(ref_admit(record_probe("symbol", "p1", Eng.ss_one("definition")), Eng.ss_empty(), Eng.ss_one("definition"), Snap.ACurrent{}, Eng.ss_empty(), "fresh", True{}record_probe("symbol", "p1", Eng.ss_one("definition")), Eng.ss_empty(), Eng.ss_one("definition"), Snap.ACurrent{}, Eng.ss_empty(), "fresh", True{}, "p1")) == "unverifiedReference" : String}
 
 def codec_law_a_missing_retained_operation_authority_refuses():
   {==}
 
 law codec_law_an_unknown_retained_operation_refuses:
-  {Refs.condition(ref_admit(record_probe("symbol", Eng.ss_one("definition")), Eng.ss_one("notAnOperation"), Eng.ss_one("definition"), Snap.ACurrent{}, Eng.ss_empty(), "fresh", True{})) == "unverifiedReference" : String}
+  {Refs.condition(ref_admit(record_probe("symbol", "p1", Eng.ss_one("definition")), Eng.ss_one("notAnOperation"), Eng.ss_one("definition"), Snap.ACurrent{}, Eng.ss_empty(), "fresh", True{}record_probe("symbol", "p1", Eng.ss_one("definition")), Eng.ss_one("notAnOperation"), Eng.ss_one("definition"), Snap.ACurrent{}, Eng.ss_empty(), "fresh", True{}, "p1")) == "unverifiedReference" : String}
 
 def codec_law_an_unknown_retained_operation_refuses():
   {==}
@@ -1871,13 +1883,13 @@ def codec_law_a_decoded_reference_composes_into_core():
   {==}
 
 law codec_law_a_decoded_reference_is_admitted_for_a_grant_free_expansion:
-  {Refs.condition(ref_admit(decoded_record("r9", "symbol", J.Jarr{J.Jstr{"definition"}, J.Jnil{}}), Eng.ss_one("sourceAnalysis"), Eng.ss_one("definition"), Snap.ACurrent{}, Eng.ss_empty(), "fresh", True{})) == "ok" : String}
+  {Refs.condition(ref_admit(decoded_record("r9", "symbol", J.Jarr{J.Jstr{"definition"}, J.Jnil{}}), Eng.ss_one("sourceAnalysis"), Eng.ss_one("definition"), Snap.ACurrent{}, Eng.ss_empty(), "fresh", True{}decoded_record("r9", "symbol", J.Jarr{J.Jstr{"definition"}, J.Jnil{}}), Eng.ss_one("sourceAnalysis"), Eng.ss_one("definition"), Snap.ACurrent{}, Eng.ss_empty(), "fresh", True{}, "p1")) == "ok" : String}
 
 def codec_law_a_decoded_reference_is_admitted_for_a_grant_free_expansion():
   {==}
 
 law codec_law_a_decoded_reference_with_an_unknown_subject_refuses:
-  {Refs.condition(ref_admit(decoded_record("r9", "mystery", J.Jarr{J.Jstr{"definition"}, J.Jnil{}}), Eng.ss_one("sourceAnalysis"), Eng.ss_one("definition"), Snap.ACurrent{}, Eng.ss_empty(), "fresh", True{})) == "subjectRefused" : String}
+  {Refs.condition(ref_admit(decoded_record("r9", "mystery", J.Jarr{J.Jstr{"definition"}, J.Jnil{}}), Eng.ss_one("sourceAnalysis"), Eng.ss_one("definition"), Snap.ACurrent{}, Eng.ss_empty(), "fresh", True{}decoded_record("r9", "mystery", J.Jarr{J.Jstr{"definition"}, J.Jnil{}}), Eng.ss_one("sourceAnalysis"), Eng.ss_one("definition"), Snap.ACurrent{}, Eng.ss_empty(), "fresh", True{}, "p1")) == "subjectRefused" : String}
 
 def codec_law_a_decoded_reference_with_an_unknown_subject_refuses():
   {==}
