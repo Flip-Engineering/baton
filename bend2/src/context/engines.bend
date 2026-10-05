@@ -340,12 +340,19 @@ def effects_union(operations: SS) -> SS:
 
 type OpsKnown is Data:
   OkAllKnown{}
-  OkEmpty{}
   OkUnknown{operation: String}
 
+def ss_nonempty(xs: SS) -> Bool:
+  match xs:
+    case SSNil{}: False{}
+    case SSCons{h, r}: True{}
+
+# Exhaustion after every member was validated answers OkAllKnown; the empty
+# selection is decided by admit_operations before this walk, so an empty chain
+# here means the last member was known.
 def operations_known(operations: SS) -> OpsKnown:
   match operations:
-    case SSNil{}: OkEmpty{}
+    case SSNil{}: OkAllKnown{}
     case SSCons{+h, r}: Bool.pick(OpsKnown, operation_known(h), operations_known(r), OkUnknown{h})
 
 type Admission is Data:
@@ -362,7 +369,6 @@ def admit_effects(m: Effects, union: SS) -> Admission:
 def admit_after_known(k: OpsKnown, +operations: SS, +granted: SS) -> Admission:
   match k:
     case OkAllKnown{}: admit_effects(missing_effects(effects_union(operations), granted), effects_union(operations))
-    case OkEmpty{}: AdNoOperation{}
     case OkUnknown{operation}: AdUnknownOperation{operation}
 
 # The caller-level refusal: an empty selection and an operation outside the
@@ -370,7 +376,7 @@ def admit_after_known(k: OpsKnown, +operations: SS, +granted: SS) -> Admission:
 # grant is incomplete names the first effect it lacks. An admit carries the
 # union as its evidence of what was authorized.
 def admit_operations(+operations: SS, +granted: SS) -> Admission:
-  admit_after_known(operations_known(operations), operations, granted)
+  Bool.pick(Admission, ss_nonempty(operations), admit_after_known(operations_known(operations), operations, granted), AdNoOperation{})
 
 # --- automatic engine selection ----------------------------------------------
 type EngineChoice is Data:

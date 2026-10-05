@@ -1,5 +1,5 @@
 {
-  "purpose": "Handoff payload for bend2/scripts/laws-check.mjs MUTATIONS. Each entry replaces the first occurrence of a production-source string with a mutated one and is aimed at the named law when the isolated entry bend2/tests/context-core/laws-entry.bend is compiled. The operator boundary forbids local compilation; the baseline entries below were refuted by their named law before it took effect, and every entry later rewritten or added is pending remote execution.",
+  "purpose": "Handoff payload for bend2/scripts/laws-check.mjs MUTATIONS. Each entry replaces the first occurrence of a production-source string with a mutated one and is aimed at the named law when the isolated entry bend2/tests/context-core/laws-entry.bend is compiled. The operator boundary forbids local compilation; entries carried over from the pre-boundary baseline were refuted by their named law there, and every entry added or rewritten since is pending remote execution.",
   "how_to_apply": "In a scratch copy of the pinned tree: for each entry, replace the first occurrence of `find` in `file` with `replace` (first-occurrence application and the operative law bytes are preserved); compile `entry` with the pinned bend 2.0.25; record the complete raw diagnostics and the process outcome. The verdict is NOT `the output contains the law name`: a type, syntax, launch or termination failure can name a law without refuting it. The single Controls/CI classifier decides, from the complete raw diagnostics and process outcome and from the expected/observed constructor metadata of the proof failure, whether this entry was refused by that law. Execution and classification belong to Controls/CI; this payload supplies the mutations and the law each one is aimed at, not an acceptance criterion.",
   "entry": "bend2/tests/context-core/laws-entry.bend",
   "verified_baseline": "40e7060bf11ea1f8a924110e5a72815c9e343c41",
@@ -87,6 +87,20 @@
       "find": "    case SSCons{h, r}: union_add(required_effects(h), effects_union(r))",
       "replace": "    case SSCons{h, r}: required_effects(h)",
       "law": "engine_an_aggregate_names_the_missing_planning_grant"
+    },
+    {
+      "name": "admission-exhaustion-reports-an-unknown-operation",
+      "file": "bend2/src/context/engines.bend",
+      "find": "    case SSNil{}: OkAllKnown{}",
+      "replace": "    case SSNil{}: OkUnknown{operation: SNil{}}",
+      "law": "engine_a_grantless_operation_admits_without_a_grant"
+    },
+    {
+      "name": "admission-skips-the-empty-selection-guard",
+      "file": "bend2/src/context/engines.bend",
+      "find": "def admit_operations(+operations: SS, +granted: SS) -> Admission:\n  Bool.pick(Admission, ss_nonempty(operations), admit_after_known(operations_known(operations), operations, granted), AdNoOperation{})",
+      "replace": "def admit_operations(+operations: SS, +granted: SS) -> Admission:\n  admit_after_known(operations_known(operations), operations, granted)",
+      "law": "engine_no_selected_operation_refuses"
     },
     {
       "name": "unknown-operation-reads-as-known",
