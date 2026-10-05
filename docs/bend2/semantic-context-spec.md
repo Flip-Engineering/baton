@@ -6,15 +6,18 @@ requires the independent review and root feature comparison. The requirement is
 credential clarification `98fbfe03`. Source baseline is `98fbfe03`; Bend remains
 2.0.25 and the adapter Node floor remains 22.15.0.
 
-The control conventions are sections 3.1–3.5 and 6 of the Orchestra-control
-specification. The current cross-reference is successor
-`47ec9c9b57be68601cc60fb3d1829f7a5521b26b`, following `75eee9a7` and its
-review corrections. `semantic-controls-next` owns that document. Its six
-independent re-reviews require a successor; this pin remains unapproved. The
-final approved pin must replace this review status before root authorizes
-semantic implementation. Root separately authorized the bounded native
-control-surface repairs in #671; those repairs have their own implementation
-review and qualification.
+The approved control references are structural proposal
+`2543678035631371a6f024a1c58ac9ec16239c12` and direct-start proposal
+`95bfccf0acefa151a667fa40a5f1fdfedafc5a80`. Root authorized their bounded
+implementation; actual composed source, artifacts and host behavior retain their
+qualification gates. Stable read composition
+`e2e06950d1ccf6a61d66ac0eb2f623fbbb3eb2d7` supplies the separately reviewed
+read/discovery scope on `98fbfe03`, excluding provisional receive runtime.
+Its bounded composition acceptance leaves root full checks, landing and installed
+cold discovery open. `semantic-controls-next` and the registered interfaces
+owner retain their respective module and shared-surface ownership. These scoped
+references support the common conventions; root separately decides semantic
+implementation after independent review and whole-feature comparison.
 
 ## Supported scope
 
@@ -289,19 +292,39 @@ The MCP bridge retains raw Buffer frames split at byte 0x0A. A preliminary
 `JSON.parse` selects only whether a frame names one of the three context tools;
 it performs no dispatch. Selected context frames go as original bytes to the
 native internal `--context-request-codec` entry. That entry checks the entire
-frame for invalid UTF-8 and duplicates. Its native closed frame shape is
-`{jsonrpc:"2.0",id,method:"tools/call",params:{name,arguments}}`; `id` is a
+frame for invalid UTF-8 and duplicates. Its frame shape is
+`{jsonrpc:"2.0",id,method:"tools/call",params:{name,arguments,_meta?}}`; `id` is a
 string or a signed safe-integer token. It admits exactly the three named context
 tools. Query arguments are `{query,request}`, result arguments are `{query}`,
 and engines arguments are `{}`. Query IDs are nonempty strings; request is an
-object. Unknown fields refuse at each envelope level. After these checks the
-entry extracts the request container with SQLite `json_extract`, which preserves
-its numeric tokens. The request follows the shared profile above. Hex-encoded
-frame string fields pass through the same pure scalar decoder, including fields
-outside the request. The signed safe-integer frame ID is validated as its exact
-JSON token and retained as envelope transport; it does not enter the request's
-U32 tree. No complete canonical frame representation is needed. SQLite's JSON
-validity alone does not establish scalar-string validity.
+object. The root, params and arguments objects reject unknown fields except for
+the declared metadata extension. After these checks the entry extracts the request
+container with SQLite `json_extract`, which preserves its numeric tokens. That
+container follows the shared request profile above. Hex-encoded frame string
+fields pass through the same pure scalar decoder, including all metadata names
+and values. The signed safe-integer frame ID is validated as its exact JSON token
+and retained as envelope transport. SQLite's JSON validity alone does not
+establish scalar-string validity.
+
+Optional `params._meta` is an object. Its optional `progressToken` accepts a
+string or JSON number, as specified by the
+[MCP 2024-11-05 Request and ProgressToken schema](https://raw.githubusercontent.com/modelcontextprotocol/specification/main/schema/2024-11-05/schema.ts).
+Additional metadata members are opaque transport data subject to the same raw
+JSON, duplicate-name and scalar-string validation. The
+[JSON schema](https://raw.githubusercontent.com/modelcontextprotocol/specification/main/schema/2024-11-05/schema.json)
+places no integer or range restriction on ProgressToken numbers. The metadata
+numeric profile admits strict JSON number tokens, including negative, fractional,
+exponent and above-U32 forms, independently of the request U32 and frame-ID
+safe-integer profiles. Validation uses the raw token and JSON node kind without
+conversion through Bend U32 or a JS Number; a valid large token is not rejected
+because a host numeric conversion would round or overflow. Null, booleans,
+arrays and objects are invalid progress tokens. Raw `NaN` and `Infinity` are
+invalid JSON. The metadata object is validated and then discarded before codec
+success; it enters neither the canonical request tree nor the success document,
+query identity, grants or provider dispatch. No full canonical frame tree is
+needed. This adapter emits no MCP progress notifications; the protocol permits
+a receiver to omit them. Managed query progress and owner notices retain their
+existing lifecycle contracts.
 
 Codec success is one JSON document:
 `{version:1,tool,id,query,requestCanonical}`. `tool` is `context-query`,
@@ -2084,7 +2107,8 @@ mutation controls; unimported scratch laws establish no delivery gate.
 Required real-function laws cover command/closed-schema parsing; exact declared
 engine selection; missing-effect refusal before spawn; strict scalar UTF-8
 decoding of hex-framed SQLite values; parent-linked JSON reconstruction and
-array ordering; canonical retry/conflict;
+array ordering; MCP metadata validation and exclusion from canonical identity
+and effect admission; canonical retry/conflict;
 result ID/owner/evidence validation; failed-provider no-publication; structural
 environment value exclusion; explicit adapter environment construction; ref
 snapshot/epoch validation; applicability from recorded/current identities; query
@@ -2167,6 +2191,22 @@ multidigit array indices, and code-point key ordering. CLI file/stdin and select
 frames must share the admitted canonical request and effect refusal. Rejected
 requests must leave query state and target launch markers unchanged. These
 tests qualify the foreign parsers; native ordering mutations qualify the laws.
+Native codec and MCP integration cases exercise all three context tools with
+metadata absent, `{}`, string progress tokens (including astral characters), and
+numeric tokens `-1`, `0.5`, `1e3`, `4294967296`, `9007199254740993` and `1e400`.
+Direct CLI and MCP submissions of the same owner/query/request must store identical
+canonical bytes and replay the same admitted query when only metadata changes.
+Observe actual query rows and provider launch markers: metadata must neither
+create another effect nor supply a missing grant. Codec output and forwarded
+request bytes must exclude metadata. An opaque metadata member containing nested
+JSON exercises whole-frame validation without entering the request tree.
+Malformed metadata containers, invalid progress-token types, duplicate escaped
+`_meta` or `progressToken` names, malformed UTF-8, lone surrogates and decoded NUL
+must refuse before dispatch with unchanged state and launch markers. A paired
+negative case places a fractional, signed, exponent or above-U32 token in a
+context request numeric field and still refuses, even with valid metadata.
+An ID-less frame with valid metadata still performs no dispatch. These are
+candidate acceptance requirements; this specification supplies no execution result.
 An environment tool-override fixture writes a harmless marker before emitting
 a valid version. Without `executeTarget`, admission refuses and no marker or
 child launch occurs. With the grant, the execution and its effects are recorded
@@ -2266,8 +2306,12 @@ The retained research used for this specification is retrievable with native
   root M-12 delivery decision: scope, final review gate and ownership;
 - `root-semantic-build-trust-boundary-20`: initial source-model guarantee and
   separation of historical executable contribution from modeled access;
-- control `47ec9c9b` under review (following `75eee9a7`) and continuation ownership
-  exchanges: common conventions;
+- approved structural `2543678035631371a6f024a1c58ac9ec16239c12`, direct-start
+  `95bfccf0acefa151a667fa40a5f1fdfedafc5a80` and scoped stable read
+  `e2e06950d1ccf6a61d66ac0eb2f623fbbb3eb2d7`: common control/read conventions,
+  with their separate implementation, host and installed qualification gates;
+- `root-semantic-mcp-metadata-30`: transport metadata compatibility and replacement
+  of the stale control cross-reference;
 - `semantic-observations-synthesis-verdict-1`,
   `semantic-security-synthesis-contract-1`,
   `semantic-models-data-critic-corrections-1` and
@@ -2277,5 +2321,5 @@ Research demonstrations establish component feasibility under their stated pins.
 This specification chooses the narrower qualified profiles above. Its new joins,
 transport composition, runtime worker and owner cleanup are implementation work,
 with host acceptance required before support can be advertised. Independent
-review and the final approved control citation remain prerequisites to root's
+review and root whole-feature comparison remain prerequisites to root's
 implementation authorization.
