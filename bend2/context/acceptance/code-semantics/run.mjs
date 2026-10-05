@@ -125,6 +125,9 @@ async function runOracles(oracleModules, probe, args) {
     }
     suites.push(suiteResult);
   }
+  if (suites.length === 0 || totalChecks === 0) {
+    throw new Error("the selection produced no oracle checks");
+  }
   const report = {
     runtime: { node: process.version },
     provider: probe.providerIdentity ?? null,

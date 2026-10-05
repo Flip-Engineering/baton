@@ -12,10 +12,11 @@ import path from "node:path";
 import { pathToFileURL } from "node:url";
 import { sha256, locate } from "../lib/util.mjs";
 
-const DEFAULT_TYPESCRIPT = "/Users/wahargis/node_modules/typescript/lib/typescript.js";
-
 async function loadTypescript(explicitPath) {
-  const resolved = path.resolve(explicitPath ?? DEFAULT_TYPESCRIPT);
+  if (typeof explicitPath !== "string" || !path.isAbsolute(explicitPath)) {
+    throw new Error("an absolute staged TypeScript library path is required");
+  }
+  const resolved = path.resolve(explicitPath);
   const module = await import(pathToFileURL(resolved).href);
   return { ts: module.default ?? module, resolved };
 }

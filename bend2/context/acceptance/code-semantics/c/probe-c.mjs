@@ -9,9 +9,6 @@ import fs from "node:fs";
 import path from "node:path";
 import { locate } from "../lib/util.mjs";
 
-const DEFAULT_CLANG = "/opt/homebrew/opt/llvm/bin/clang";
-const DEFAULT_CLANGD = "/opt/homebrew/opt/llvm/bin/clangd";
-
 function runClang(clangPath, fixtureRoot, relativeFile, extraArgs) {
   const result = spawnSync(
     clangPath,
@@ -387,8 +384,13 @@ function collectRefs(tu, fn) {
 }
 
 export async function createCProbe(options = {}) {
-  const clangPath = path.resolve(options.clangPath ?? DEFAULT_CLANG);
-  const clangdPath = path.resolve(options.clangdPath ?? DEFAULT_CLANGD);
+  for (const name of ["clangPath", "clangdPath"]) {
+    if (typeof options[name] !== "string" || !path.isAbsolute(options[name])) {
+      throw new Error(`an absolute ${name} is required`);
+    }
+  }
+  const clangPath = path.resolve(options.clangPath);
+  const clangdPath = path.resolve(options.clangdPath);
   const fixtureRoot = path.resolve(options.fixtureRoot);
 
   const providerVersions = {};
@@ -402,7 +404,7 @@ export async function createCProbe(options = {}) {
   }
 
   function astDump(relativeFile) {
-    const run = runClang(clangPath, fixtureRoot, relativeFile, ["-Xclang", "-ast-dump=json"]);
+    const run = runClang(clangPath, fixtureRoot, relativeFile, ["-fsyntax-only", "-Xclang", "-ast-dump=json"]);
     if (run.status !== 0) {
       return { error: `clang ast-dump failed: ${run.stderr.slice(0, 2000)}` };
     }
