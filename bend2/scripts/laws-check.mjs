@@ -130,6 +130,36 @@ for (const { law, file } of rows) {
 // mutation that still compiles means the law it names does not bind the code
 // it claims to bind, and it is reported as a failure.
 const MUTATIONS = [
+  ...[
+    ['land_player_at', '    outcome : G.LandOutcome <- GitLand.land_fast_forward_at(repo, oid, target)'],
+    ['land_checked_player_at', '    run_checked(db, player, repo, target, check, files, oid)'],
+  ].flatMap(([caller, landing]) => {
+    const association = '    associated : Unit <- require_association(db, player, repo)';
+    const body = [
+      '    branch : String <- require_branch(line(branch_raw))',
+      association,
+      '    picked : Selected <- select_reviewed(repo, branch, commit)',
+      '    oid : String <- selected_or_die(picked, player)',
+      landing,
+    ].join('\n');
+    return [
+      {
+        name: `${caller}-omits-repository-association`,
+        file: 'bend2/src/coordinator/land.bend',
+        find: body,
+        replace: body.replace(association + '\n', ''),
+        law: `${caller}_runs_the_reviewed_source_in_order`,
+      },
+      {
+        name: `${caller}-lands-copyable-branch`,
+        file: 'bend2/src/coordinator/land.bend',
+        find: body,
+        replace: body.replace('    branch :', '    +branch :')
+          .replace(landing, landing.replace(/\boid\b/, 'branch')),
+        law: `${caller}_runs_the_reviewed_source_in_order`,
+      },
+    ];
+  }),
   {
     name: 'reviewed-land-parser-substitutes-selector',
     file: 'bend2/src/coordinator/commands.bend',
