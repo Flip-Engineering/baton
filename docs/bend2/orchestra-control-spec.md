@@ -1,12 +1,13 @@
 # Native Orchestra control — implementation specification
 
-Status: successor draft for root review, consolidating root review
-`semantic-root-controls-review-2`, root's M-12 delivery decision, root's
-structure-critic decisions, and all six independent verdicts from the
-`semantic-critical-review` Ensemble (fidelity-critic, fidelity-research,
-acceptance-critic, acceptance-research, architecture-critic,
-architecture-research; each verdict is
-its author's own). Implements `docs/bend2/orchestra-control-feature.md`
+Status: successor draft incorporating the six independent reviews of
+`75eee9a7` and root review `root-control-successor-review-3-semantic-controls-next`.
+The retained consolidation is `quality-control-six-verdicts-75eee9a7-author`.
+Individual verdicts and their severity disagreements remain unchanged; that
+pin did not reach consensus. Earlier drafts `d00c9369` and `85f20618`, root's
+M-12 decision and authority decisions remain requirement history. This
+successor requires its own six independent verdicts and root review.
+Implements `docs/bend2/orchestra-control-feature.md`
 (commit `c8b5057d`). Baseline under audit:
 `6929bffeeac32514968dd3d104dd7503eec1fba5`, installed release
 `1.1.0-fca7af876c8260c32d17f95f3e19bc68ee1bf561`. No runtime change is
@@ -26,7 +27,8 @@ Runtime file ownership is assigned in section 7.
 ## 1. Stored model — unchanged
 
 The specification reuses the current coordination records. Composed prompts
-are retained operational files as specified in section 5:
+and delivery correlation artifacts are retained operational files specified
+in sections 5 and 6.1:
 
 - Sessions: recorded `parent`, `harness`, `model`, `effort`, `workspace`,
   `branch`, `base`, endpoint. Public role derives from the stored conductor
@@ -103,13 +105,15 @@ fidelity researcher independently reproducing the route and refusal claims:
    arrays; membership, Conductor depth and permitted routes require manual
    joins.
 3. Ensemble/Section setup failures return a generic empty-result refusal
-   (`main.bend:13-18`), except Sections which return a structured refusal
+   (`main.bend:21-24`), except Sections which return a structured refusal
    (`section_refusal`, `commands.bend:249-250`). A conflicting Ensemble owner
    returns raw SQLite text (`NOT NULL constraint failed: ensembles.id`, exit
    19; probed by two reporters). A parentless non-conductor `report` or `ask`
    returns raw SQLite text (`NOT NULL constraint failed:
-   messages.recipient`, exit 19) because `report_recipient`
-   (`commands.bend:169-170`) resolves to NULL; no row is stored and no
+   messages.recipient`, exit 19) because the command-specific recipient
+   resolves to NULL: `Report` uses
+   `report_recipient` (`commands.bend:169-170,292-293`), while `Ask` uses
+   the recorded parent (`commands.bend:294-295`); no row is stored and no
    endpoint launches.
 4. The 3-token form `ensemble ID OWNER` parses to the same constructor as an
    explicit `loose` (`commands.bend:364-365`, pinned by
@@ -141,10 +145,10 @@ fidelity researcher independently reproducing the route and refusal claims:
    `{"deliveryPid":N,"state":"launched"}` (`control.bend:149-166`,
    `host/control.c:119-149,218-228`). Endpoint failure on the synchronous
    path already answers named text separating commitment from delivery
-   (`delivery.bend:20-25`), and the message stays pending. MCP `baton2_guide`
+   (`delivery.bend:14-17`), and the message stays pending. MCP `baton2_guide`
    calls the synchronous `message` path via `execFileSync`
    (`mcp-conductor.mjs:111-122,537-539`).
-8. MCP tool descriptions (`mcp-conductor.mjs:124-323`, 22 tools) are one
+8. MCP tool descriptions (`mcp-conductor.mjs:125-336`, 22 tools) are one
    sentence each and omit ordering constraints, defaults and next operations.
    The tool list has no `baton2_delivery`. The adapter supplies an explicit
    `loose` coupling whenever an owner is present without coupling
@@ -207,6 +211,14 @@ briefing block follows them, including the semantic-context surface.
   refusal family (section 3.2) exits 2 uniformly; the exit status is part of
   the refusal contract and is stated centrally here.
 
+Existing singleton readers (`delivery`, `player`, `session`, `ensemble` and
+`section`) retain the generic empty-result exit 1 when no row matches.
+Existing list readers, including `inbox`, `pending` and `turns`, retain a
+successful empty array when their selection is empty. The new focused
+`orchestra` unknown-subject case alone adds its section 3.3 structured exit 2
+refusal to these control readers. Semantic-context defines the refusals for
+its own new reader family. This feature does not convert all empty reads.
+
 ### 3.2 Refusal shape
 
 Every refused setup or messaging operation exits 2 with one JSON object:
@@ -230,12 +242,15 @@ shape is the template. The shape extends to `ensemble`, `ensemble-member`,
 `role` (already `invalid-role`), message routing (already
 `message-route-denied`), endpoint operations (already `invalid-endpoint`)
 and the parentless `report`/`ask` case. New codes: `ensemble-refused`,
-`ensemble-member-refused`, `report-refused`, `ask-refused`. The report/ask
-refusal fires when `report_recipient` resolves to NULL (including a parentless
-non-conductor or a parentless Conductor with missing operator setup); a
-parentless Conductor's report keeps routing to the registered operator
-(`commands.bend:169-170`). Every admission refusal code is registered in the
-refusal classifier (`Store.refused`, `store.bend:18-24`), so a refused
+`ensemble-member-refused`, `report-refused`, `ask-refused`. Each refusal
+tests its command's actual recipient expression inside the
+transaction, before insertion. `Report` uses `report_recipient`, including
+the registered operator fallback for a parentless Conductor. `Ask` and
+`ask-file` use only the recorded immediate parent. A NULL result refuses
+that command. A parentless Principal with a configured operator can report
+and receives `ask-refused` when asking. No Ask route extension is proposed
+(`commands.bend:169-170,292-295`). Every admission refusal code is registered
+in the refusal classifier (`Store.refused`, `store.bend:18-24`), so a refused
 operation commits no coordination change and launches no endpoint; the
 route-gated insert leaves no row (structure critic 3.2). Admission failures
 return the structured refusal; the owner-conflict clause in `ensemble_sql` (`commands.bend:234`) is
@@ -261,7 +276,7 @@ forms render it:
   Each Player row gains `ensembles` (Ensemble IDs), `sections`
   (Ensemble/Section pairs) and `depth` (parent-chain length), all derived
   joins; the pinning laws for the changed row assemblers are restated
-  (`naming-laws.bend:130-140` pins `players_json` and `orchestra_sql`
+  (`naming-laws.bend:130-150` pins `players_json` and `orchestra_sql`
   verbatim today). Each Ensemble keeps its existing `members` array of
   session-ID strings unchanged and gains an additive `memberRoles` object
   mapping each member ID to its public role; Section `members` arrays are
@@ -354,6 +369,24 @@ forms render it:
   envelopes (`isError` text, `mcp-conductor.mjs:572-575`) the refusal JSON
   object of section 3.2 is embedded intact with its fields preserved.
 
+Runtime notification provenance is carried by the typed body defined in
+section 6 and an additive derived `provenance` field on message projections.
+For a valid runtime notice this field names `origin: "coordinator"`, its
+actual `observer`, `originalMessage`, `deliveryAttempt` and failed recipient.
+Ordinary or malformed opaque bodies have `provenance: null`. This describes
+the recorded observation under the trusted-local model; it authenticates no
+OS caller. Existing `body`, `sender`, `kind` and receipt values are preserved.
+`inbox`, `pending`, `delivery`, latest-report displays in `players` and any
+turn report presentation label a valid notice as a coordinator observation,
+with the recorded sender identified as its routing session. The label
+establishes no failed-agent authorship, reading, acceptance or review.
+`orchestra` structural rows retain only report identity and provenance, with
+full content available through `delivery`. Receive message introductions,
+generated briefing, attached-Conductor notifications and MCP text use the same
+classification. In particular `mcp-conductor.mjs` `notifyPending` must stop
+labelling a typed runtime report as `Player report from SENDER`. The ordinary
+report kind remains unchanged; a dedicated message kind is not introduced.
+
 ### 3.4 MCP tool description format
 
 Each MCP tool description has four parts, in order: the operation in one
@@ -393,17 +426,26 @@ It is used by every entry path (section 5). Layout, in order:
    grants no route. Concrete IDs are named categorically: the immediate
    recorded parent always, and every peer route through each Ensemble the session
    belongs to, filtered through `message_route`. Parentless Conductor reports
-   name the operator. Parentless Player report/ask names the prerequisite
-   refusal and available setup inspection. Any further permitted sessions (for example a Conductor's
+   name the operator. Every parentless session's ask names `ask-refused`
+   and parent inspection.
+   Parentless Player reports and parentless Conductor reports with missing
+   operator setup name `report-refused` and the appropriate setup inspection.
+   Any further permitted sessions (for example a Conductor's
    descendant set) are given by rule plus the native retrieval command
    `orchestra --for SESSION`, which returns the complete concrete route set
    computed from current records. No count-based choice exists anywhere in
    the block.
-5. Completion semantics: the delivery contract of section 6 — every input
-   operation acknowledges commitment and delivery initiation; `--wait`
-   joins endpoint completion; committed, delivered and accepted (`ack`) are
-   three distinct states — and how to inspect completion (`turns`, `inbox`,
-   `delivery`, output logs).
+5. Completion semantics: explain the actual state returned by section 6.
+   `committed: true` establishes retained input. `launched` establishes a
+   delivery worker start. `pending` and `continuation-unavailable` by
+   themselves prove no endpoint launch or owner wake; any notification
+   initiation is reported separately. `endpoint-completed` establishes observed
+   successful endpoint exit after explicit `--wait`. None of these facts
+   establishes agent consumption or review. A receipt records the separate
+   acknowledgment fact. `in-flight` reports a concurrent delivery owner;
+   it establishes no new attempt by this call. Name `turns`, `inbox`, `delivery` and the actual logs
+   for subsequent observations. A known launch failure names retained input
+   and caller responsibility without claiming initiation.
 6. Command list: the coordinator CLI lines, now including `delivery ID`,
    `report`, `ask`, `player`, `pending`, `orchestra --for`,
    `orchestra --view` and the `help` topics.
@@ -540,9 +582,10 @@ Only reviewed changes are supplied to the landing example.
   unregistered or operator session, unknown action word) return
   `ensemble-member-refused` with the missing record named. `remove` of a
   non-member stays idempotent and reports `membership:"remove"`.
-- `report`/`ask` from a session whose report recipient resolves to NULL
-  refuse with `report-refused`/`ask-refused` (section 3.2); nothing is
-  stored and no endpoint launches.
+- `report` tests `report_recipient`; `ask` and `ask-file` test the recorded
+  immediate parent. A NULL command-specific recipient refuses with
+  `report-refused`/`ask-refused` (section 3.2); no message is stored and no
+  endpoint launches. Report's operator fallback remains unchanged.
 - Removing Ensemble membership continues to cascade Section membership in
   that Ensemble (`commands.bend:75`, `PRAGMA foreign_keys=ON`); the cascade
   is stated in `help ensemble-member`.
@@ -602,8 +645,9 @@ Public completion contract (changed per root's M-12 decision): every public
 input operation — `message`, `message-file`, `report`, `ask`, `ask-file`,
 `dispatch` and `dispatch-file` — commits through `Store.commit` with the
 original `C.Message`, `C.Report` or `C.Ask` command and its route-gated SQL
-in one transaction. `Report`/`Ask` resolve `report_recipient` within that
-transaction; callers do not replace parent routing with a pre-read recipient.
+in one transaction. `Report` resolves `report_recipient`, while `Ask` and
+`ask-file` resolve the recorded immediate parent, within that transaction.
+Callers do not replace parent routing with a pre-read recipient.
 After the stored refusal and stopped-input classification, the ordinary path
 uses `Control.dispatch_admitted` and `Host.Control.launch` to start
 `baton2 --dispatch-message DATABASE ID`. That worker enters `Control.deliver`
@@ -611,8 +655,8 @@ and `Delivery.deliver`. The public default's entry arms bypass
 `main.run -> Store.apply -> Store.committed -> Delivery.after`, which joins
 endpoint execution. Shared code is factored within these existing modules;
 `Control.dispatch_body` and `dispatch_file` use that same commit/launch helper.
-The public default returns acceptance of the committed input and
-the delivery initiation without joining the recipient's managed lifetime.
+The public default returns the retained input status and actual delivery
+initiation state without joining the recipient's managed lifetime.
 The current implicit synchronous default (acceptance returns only after
 endpoint exit on the registered-endpoint path) is replaced. The existing
 M-12 laws cover the no-delivery and empty-endpoint branches; this
@@ -630,6 +674,14 @@ specification extends the same guarantee to the registered-endpoint branch.
   only. `deliveryPid` is null if no process was launched. A stored receipt,
   successful endpoint exit and recipient review remain separately observed
   facts. An unacknowledged body stays pending after a successful endpoint exit.
+  An already acknowledged input returns `state: "acknowledged"` with no new
+  endpoint attempt. A `--wait` call with no endpoint returns the applicable
+  `pending` or `continuation-unavailable` state, never `endpoint-completed`.
+  A busy existing delivery returns `in-flight` even under `--wait`; no second
+  endpoint is started or completion claimed. The explicit wait applies to the
+  endpoint attempt actually owned by that invocation.
+  Attempt identity is established inside the endpoint branch (section 6.1);
+  the detached launch result does not claim it already exists.
 - Caller-selected completion wait uses these exact forms, each accepting an
   optional final `--wait`: `message ID SENDER RECIPIENT KIND BODY`,
   `message-file ID SENDER RECIPIENT KIND PATH`, `report ID PLAYER BODY`,
@@ -657,21 +709,35 @@ specification extends the same guarantee to the registered-endpoint branch.
   `Delivery.deliver` and branch on it before `IO.try` can discard context.
   `Delivery.completed` must similarly preserve process IO failures and
   distinguish them from an observed nonzero exit. Each known failure is
-  logged against the original ID and creates an ordinary retained report
+  logged with its section 6.1 occurrence identity and creates an ordinary
+  retained report
   from the failed recipient to `report_recipient(recipient)`, following the
-  existing `Delivery.handoff_sql` pattern. The report names the original ID,
-  failed recipient, failure class, diagnostic file paths and exact recovery
-  command. Its body excludes endpoint argv, original body and raw stderr.
-  Its identity is `delivery-failed:HEX(ORIGINAL_ID):HEX(FAILED_RECIPIENT)`;
-  first committed meaning is retained on retry, with later diagnostics in
-  the existing delivery logs. The failed input's body and receipt are preserved.
+  existing `Delivery.handoff_sql` pattern. The insertion checks the resolved
+  recipient for NULL in its transaction. If the first post-launch owner is
+  absent, it inserts no notification row, retains the terminal diagnostic
+  with `continuation: "unavailable"`, exposes that observation through
+  `delivery ID` and its MCP equivalent, and claims no wake. This check also
+  covers owner/operator configuration changed after launch.
+  Otherwise the report has `kind: "report"` and a JSON body with
+  `type: "runtime-delivery-failure"`, the actual native `observer`,
+  `inputMessage`, `originalMessage`, `deliveryAttempt`, `failedRecipient`,
+  `originNotice` (nullable), `originAttempt`, `failureClass`, diagnostic paths,
+  and exact recovery guidance. Default worker observations name
+  `Control.deliver`; the explicit-wait helper names `Control.wait_delivery`,
+  and receive continuation names `Delivery.wake_pending`. These entry names
+  are passed with the attempt context to the common observer. The sender supports existing parent routing
+  and establishes no failed-agent authorship, reading, acceptance or review.
+  Its body excludes endpoint argv, original body and raw stderr.
+  Section 6.1 defines notice identity, durable observation and replay. The
+  original input and every earlier notice retain their body and receipt.
 - The worker immediately delivers that failure report through the same
   endpoint path. The recipient's recorded parent is the continuation owner;
   a parentless Conductor uses the registered operator via `report_recipient`.
   This rule is independent of whether the original sender has a parent.
   A notice that itself cannot be delivered is escalated by applying
   `report_recipient` to that failed owner and sending its report to the next
-  existing parent. Carry the original ID and visited session IDs through
+  existing parent. Carry the original ID, observer provenance, occurrence
+  identity and visited session IDs through
   this existing delivery traversal, stop at the operator or an absent/repeated
   parent, and retain every report. Termination follows the finite recorded
   parent chain, with no time or count cutoff. Stopped-parent handling composes
@@ -695,8 +761,8 @@ specification extends the same guarantee to the registered-endpoint branch.
   storage failure can make observation unavailable; it is a failure of the
   execution environment, never evidence of successful continuation.
   Inspection derives failure/continuation facts from these retained reports,
-  receipts and existing execution records. Diagnostic paths identify external
-  evidence; their mere existence proves no outcome. An unexplained worker
+  receipts, existing execution records and the validated native diagnostic
+  named in section 6.1. File existence alone proves no outcome. An unexplained worker
   disappearance stays unresolved and names the responsible owner and logs.
 - Recovery uses the existing exact-retry public command:
   `dispatch-file ID SENDER RECIPIENT KIND PATH`, with exactly the stored
@@ -711,8 +777,8 @@ specification extends the same guarantee to the registered-endpoint branch.
 - Compatibility and migration: the default for `message`, `message-file`,
   `report`, `ask` and `ask-file` changes from joined to detached. Callers
   and harness instructions that relied on the implicit wait add `--wait`.
-  MCP clients of `baton2_guide` now receive a launch acknowledgment and
-  retrieve outcomes through `baton2_delivery`, `baton2_inbox` and
+  MCP clients of `baton2_guide` receive the actual committed/initiation state
+  and retrieve outcomes through `baton2_delivery`, `baton2_inbox` and
   `baton2_turns`. Help, the briefing and `docs/bend2/messaging.md` state the
   changed contract. Inline, file and MCP forms share these semantics because
   all of them call the same coordinator commands.
@@ -747,6 +813,146 @@ No new scheduling, parking, outcome store or duplicate routing mechanism is
 introduced. Turn end continues to wake the recorded report recipient with the
 report.
 
+### 6.1 Failure occurrence identity and retention
+
+The existing `Control.dispatch_admitted` and `Host.Control.launch` retain
+message identity and process logs, but supply no unique endpoint-attempt
+identity. The following narrow file effect and function changes are proposed
+requirements owned by `semantic-controls-next`; they are not baseline behavior.
+
+Earlier refusal/stopped checks and `Delivery.launch`'s empty-endpoint branch
+create no endpoint attempt. An acknowledged input takes the empty branch.
+On the nonempty branch, immediately before `Process.run`, the new
+`Delivery.prepare_attempt` helper allocates a token with SQLite
+`lower(hex(randomblob(16)))` and calls the new host-control
+`retain_delivery_attempt` operation. Keeping this helper in Delivery preserves
+the current Control-to-Delivery import direction.
+It returns `{inputMessage, recipient, attempt, observer, intentPath, logKey}`.
+All call sites use that one helper, including the detached worker, explicit
+wait, receive continuation and actual notification-endpoint invocations.
+
+Artifact inspection and preparation for a given input are serialized by a
+nonblocking advisory lock at `DATABASE.delivery-HEX(INPUT_ID).lock`, using
+the host's existing lock operation pattern with this distinct delivery path.
+The host-control acquire/release primitive owns the handle; the observer
+retains it through endpoint outcome recording and releases it before notifying
+another input's owner. Busy acquisition returns `state: "in-flight"` and the
+input's observation reader without launching another endpoint. After acquiring
+the lock, the worker rechecks receipt, endpoint and retained attempt evidence.
+A prior unresolved attempt still prevents automatic execution after its old
+lock holder dies. Observation recovery uses the same lock and checks described
+below. This provides exclusive execution within one input's native delivery
+path and does not change session roles, messaging routes or agent lifetime.
+
+The host operation exclusively creates
+`DATABASE.delivery-HEX(INPUT_ID)-ATTEMPT.intent`, mode 0600 with symlink
+following disabled, writes version 1 and the input ID, selected recipient,
+attempt token, actual observer and origin-notice/attempt references, then
+flushes both file and containing directory. Collision or write/flush failure
+returns a known no-endpoint-launch error; the original input remains retained.
+No prior artifact is overwritten. The artifact contains correlation and
+provenance, with no endpoint argv, task body, receipt, outcome or permission.
+It does not authorize execution on recovery. The native worker owns this
+write and keeps the returned token through `Delivery.launch`, `completed`
+and the failure handoff builder. The token is separate from the process PID.
+`Host.Control` owns the file primitive; shared entry wiring is a reviewed
+handoff to `semantic-synthesis`.
+
+Native diagnostic logging uses the existing `baton_control_log` path rule
+with `logKey = INPUT_ID ++ ":" ++ ATTEMPT`. Thus the native diagnostic is
+retained at `DATABASE.dispatch-HEX(logKey).stderr`; the original worker logs
+and aggregate root log remain available. Before a failure notice is committed,
+the observing component writes and flushes a framed, coordinator-generated
+diagnostic containing that occurrence identity, safe observed failure class,
+origin references and continuation disposition. Endpoint output is retained
+as opaque output in its existing output log. The per-attempt diagnostic stream
+is opened only by the coordinator and is never passed to the endpoint as a
+stdout/stderr descriptor. Each native frame is one complete newline-terminated
+JSON object with `version: 1` and `type: "native-delivery-observation"`;
+subsequent disposition frames cite the same immutable failure observation.
+The native reader accepts only complete
+diagnostic frames bound to the intent artifact; raw endpoint output, a partial
+write or contradictory frames establish no known failure. The host-control
+operation `record_delivery_diagnostic` owns this append/flush and the matching
+reader. These are additions to native logging, not a separate outcome table;
+ordinary message rows remain the notification and receipt record. Failure to
+retain a diagnostic is reported as a host failure with unresolved notification
+status. Neither file existence nor random-token allocation proves durability
+or interface delivery; those are host-test obligations.
+
+For one observed failed endpoint attempt, the notice ID is
+`delivery-failed:HEX(INPUT_ID):ATTEMPT:HEX(FAILED_RECIPIENT)`.
+`INPUT_ID` identifies the message actually attempted. `originalMessage` names
+the root input; for its first failure these are equal. The typed report is
+committed through the existing message insertion semantics. The handoff
+transaction first looks up that notice ID. An existing notice is returned
+with its original body, recipient and receipt; it is never rebuilt using a
+later parent configuration. If absent, the transaction resolves the current
+report recipient, applies the NULL guard and commits the observation's fixed
+meaning to that recipient. Replaying that observation supplies the same token
+and observed failure facts. A later authorized endpoint attempt on the
+same still-unacknowledged input allocates a new token. A later known failure
+therefore creates a different notice and owes a new owner wake even when the
+earlier notice was acknowledged.
+
+Every actual attempt to deliver a notification gets its own token through
+`Delivery.prepare_attempt`. If it fails, the next report uses that notification
+ID as `inputMessage` and its new token as `deliveryAttempt`, while preserving
+`originalMessage`, `originNotice`, `originAttempt` and the originating observer
+in an `origin` object. The current observer and failed notification recipient
+remain separate fields. This rule applies at every escalation level. The
+visited ancestor set is retained in the diagnostic and carried on replay;
+escalation cannot reset that set by treating a nested notification as a new
+root input. An acknowledged notice is read successfully without invoking its
+endpoint or allocating an attempt. A new failure of a later attempt at any
+level has a new notice identity, retaining all earlier receipts.
+
+Known missing-endpoint prerequisites allocate no endpoint-attempt artifact.
+If an idle-input prerequisite requires a parent wake, its coordinator notice
+uses `type: "runtime-delivery-prerequisite"`, `deliveryAttempt: null` and an
+observation token allocated once for that newly observed prerequisite. The
+token and safe condition are flushed in the same native diagnostic format
+before inserting its ordinary report. Replay uses the recorded token; a new
+explicit send that still finds the prerequisite missing constitutes a new
+observation and can wake the owner again. Readers use the same coordinator
+provenance rule for this notice. Absent first owner and ancestor exhaustion
+produce the explicit unavailable diagnostic without inserting a NULL recipient.
+
+Same-observation continuation is a diagnostic-to-notice operation. The new
+internal entry `baton2 --delivery-observation DATABASE INPUT_ID TOKEN` calls
+`Control.resume_delivery_observation`, validates the retained native frame
+and its intent binding (or prerequisite record), and resumes only notice
+materialization and delivery. It never invokes the original failed endpoint.
+An existing notice receipt suppresses further delivery. Before invoking an
+unacknowledged notice endpoint, recovery checks that notice's own attempt
+artifacts and native diagnostics. No prior attempt permits its first delivery.
+A known failed notice attempt resumes its recorded escalation, retaining that
+attempt's identity. A running, unknown or successful-but-unacknowledged notice
+attempt permits no automatic repeat. It returns the observed pending or
+unresolved state for owner judgment. Native completion diagnostics record
+successful exits as well as known failures, but only known failure observations
+create failure notices. A later owner-authorized exact send is the operation
+that may create a new endpoint attempt; observation replay never supplies that
+authorization. This rule applies recursively to every notice in the chain.
+No valid complete observation means an unresolved host-state result and no
+launch. Existing `--dispatch-message DATABASE ID` remains the normal worker
+entry and evaluates current input state before any new endpoint attempt.
+Default and wait paths pass the prepared token as a native function argument;
+they do not reconstruct identity from argv, log position or a timestamp.
+There is no automatic replay trigger or retry policy in this feature.
+
+Public `delivery ID` and `baton2_delivery` retain their ordinary body lookup
+and add `deliveryObservations`, obtained from matching native diagnostics
+and ordinary notice rows. Each observation names its identity, paths, notice
+ID when committed, actual continuation disposition and an exact native next
+operation. Observation recovery names the internal entry above; recovery of
+an already retained notice uses the ordinary exact-send command on that notice.
+Reads execute neither operation. Missing or invalid diagnostic evidence is
+shown as unavailable, with no fabricated outcome. These host observations
+are identified separately from the database snapshot used for structural views.
+Pending/inbox summaries link to this reader and label coordinator notices
+as specified in section 3.3. Existing receipts and input bodies remain intact.
+
 ## 7. Runtime file ownership and handoff
 
 Runtime file ownership follows root's continuation assignment and peer
@@ -779,7 +985,10 @@ root approves the feature:
   `host/control.bend`, `host/control.c`, `control-laws.bend`,
   `receive-laws.bend`, and control/delivery/receive/turn host tests. This
   includes detached admission, launch-result diagnostics, failure handoff,
-  prompt retention and the real-function laws local to those modules.
+  `Delivery.prepare_attempt`, host-control intent/diagnostic file operations,
+  observation recovery, prompt retention and the real-function laws local to
+  those modules. Section 3.3's provenance fields and MCP notification labels
+  use reviewed handoffs to the shared-file owner.
   Changes to shared law imports and check registration are handed to
   `semantic-synthesis`. Semantic-context runtime operations using Control
   submit their exact handoffs to this owner.
@@ -815,7 +1024,7 @@ receive laws), imported into the entry's law gate (`main.bend:5,17`;
   (restating `ensemble_creation_defaults_to_loose`); the `--wait` flag;
   `orchestra --for/--view` forms; the inline `dispatch` form.
 - `player_snapshot_names_its_ensemble_and_section_members` — the new joins
-  in `players_json`; restates the verbatim pins at `naming-laws.bend:130-140`
+  in `players_json`; restates the verbatim pins at `naming-laws.bend:130-150`
   for the changed `players_json`/`orchestra_sql` text.
 - `orchestra_read_and_ensemble_read_agree_on_membership` — nested members in
   `ensemble_row` equal the per-row `ensembles` projection for every listed
@@ -829,7 +1038,7 @@ receive laws), imported into the entry's law gate (`main.bend:5,17`;
   a row or byte count.
 - Refusal registration: every section 3.2 code appears in `Store.refused`;
   a refused input commits nothing and launches no process (extending
-  `denied_detached_input_cannot_launch_a_process`, `control.bend:192-199`,
+  `denied_detached_input_cannot_launch_a_process`, `control.bend:191-198`,
   and `detached_delivery_commits_before_launch_and_checks_refusals`,
   `control-laws.bend:48-60`, to the inline and `--wait` forms).
 - Delivery default: ordinary acceptance returns after commit and launch
@@ -842,6 +1051,20 @@ receive laws), imported into the entry's law gate (`main.bend:5,17`;
   an explicit unavailable result. Host checks establish the actual wake,
   endpoint-error capture and loop termination; SQL-builder equalities alone
   do not establish those effects.
+- Occurrence identity: `Delivery.prepare_attempt` is reached only after a
+  nonempty endpoint selection. The real failure-notice ID builder includes
+  input, occurrence and failed recipient; replay supplies the retained
+  occurrence, while a newly authorized actual attempt supplies a new token.
+  Notice insertion retains prior body and receipt. Nested escalation preserves
+  root provenance and the visited set while naming the current input/attempt.
+  `Control.resume_delivery_observation` can call notice materialization and
+  delivery only after a valid recorded observation; it cannot call the
+  original endpoint path. Host file and renewed-wake effects are tested.
+- Recipient resolution: Report's actual SQL uses `report_recipient`; Ask's
+  SQL uses the recorded parent. Each NULL guard precedes its own insertion.
+  A runtime handoff with a NULL initial owner inserts no report; it selects
+  the unavailable-diagnostic path. Retained readers and message introductions
+  derive their runtime label from the same typed observation projection.
 - Orientation: the briefing contains the recorded parent, memberships and
   sections of its session; the receive and dispatch-turn paths compose the
   same orientation function output; the authored task body appears verbatim
@@ -923,6 +1146,35 @@ post-commit launch failure and a forced post-launch endpoint failure each
   does not authorize duplicate endpoint execution. These are effect assertions,
   not output-count or source-line assertions.
 
+The repeated-failure case is explicit: fail an endpoint attempt, observe the
+registered owner's interface receive its notice, acknowledge that notice,
+authorize a new attempt of the still-unacknowledged original input, fail it
+again, and observe a new notice and renewed owner invocation. Both notices,
+their distinct attempt identities and the first receipt remain retrievable.
+Replay the first observation and its notice to show idempotency and no original
+endpoint invocation. Repeat this scenario for a notification endpoint during
+escalation. Fixtures also cover an owner removed between launch and failure:
+the first NULL recipient produces no invalid insert and exposes the retained
+unavailable diagnostic. Inspect actual reader, receive and MCP notification
+output to verify runtime provenance rather than failed-agent attribution.
+
+Attempt-file qualification checks the exclusive write, file/directory flush
+order, known no-launch result on each preparation failure, collision preservation,
+and distinct known attempt versus unknown crashed-worker state. Empty, refused,
+acknowledged and endpoint-less paths create no endpoint-attempt artifacts.
+Concurrent observation replay or sends for one retained input exercise the
+delivery lock: the second call returns in-flight, preserves input and launches
+no endpoint; after an owner disappears, an unresolved retained attempt prevents
+automatic replay even though its advisory lock is available.
+Observation recovery requires a complete native diagnostic, preserves the
+visited ancestry and never re-executes the original endpoint. A malformed,
+partial or mismatched diagnostic produces an unresolved result and no launch.
+Normal parented Report/Ask success, parentless Principal Report to operator,
+parentless Principal Ask refusal and missing-operator Report refusal are
+separate host cases. Reader tests preserve legacy singleton exit 1, empty-list
+success and new focused-subject structured exit 2. All new-family MCP results
+and labels match the corresponding native operation.
+
 Native use is qualified by an installed cold-agent run:
 
 - Environment contract: the candidate archive, manifest, binary and adapter
@@ -941,16 +1193,26 @@ Native use is qualified by an installed cold-agent run:
   multiple sibling Associates and a nested Associate, each with an owned
   Ensemble and multi-Player capability Sections. The review Ensemble has
   fidelity, architecture and acceptance Sections with independent critic and
-  researcher Players. No instruction beyond the installed package and the generated
-  briefing is supplied; product help (including `help team`) counts as
-  product surface, not private instruction.
+  researcher Players. Supply a declared high-level task and necessary
+  installation, workspace and harness configuration values. Team-construction
+  commands, ordering recipes and recovery procedures must be discovered from
+  installed help, MCP descriptions and the generated briefing. The initial
+  task and every later intervention are retained. Product help, including
+  `help team`, is an allowed source of procedures.
 - The run demonstrates concurrent dispatch (shown by overlapping live
   harness execution observations, not merely two launched PIDs), scoped
   tight-Ensemble peer messages, loose-peer and unequal-depth refusals,
   parent reports, acknowledgment with full report retrieval through
   `delivery`, inspection that identifies ownership, cross-parent membership
-  and a subject belonging to an Ensemble owned outside its branch (both
-  absent from the current run database, so fixture-built), incomplete-setup
+  and a subject belonging to an Ensemble owned outside its branch through
+  purpose-built fixtures. The live continuation Ensembles additionally show
+  this relation: `semantic-control-continuation` is owned by
+  `semantic-controls-next` with members still parented under `semantic-controls`;
+  `semantic-review-continuation` is owned by `semantic-quality` with members
+  still parented under `semantic-review`. These observed records supplement
+  the fixtures; root has since stopped the original Conductor assignments
+  while retaining these parent and membership records. The run also demonstrates
+  incomplete-setup
   refusal recovery using only help and refusal text, and reviewed landing of
   an approved change into an external fixture repository. The landed change
   cites the approving review record (reviewer session, verdict, message ID)
@@ -968,9 +1230,11 @@ Native use is qualified by an installed cold-agent run:
 - An independent critic, not drawn from run participants, evaluates the
   retained evidence: the exact initial task, the generated briefing, the
   installed help/tool discovery output and the ensuing agent/tool transcript
-  including every intervention. Per construction step the critic records
-  which product surface (help text, MCP description, generated briefing) the
-  step came from; a step with no cited source fails the run.
+  including every intervention. The critic separates the permitted high-level
+  task and configuration values from procedural instructions. For each
+  construction or recovery step, the critic cites the installed help text,
+  MCP description or generated briefing used to discover it. A procedural
+  step supplied externally or lacking a product-surface citation fails the run.
 - Readable and structured views are compared field-by-field against an
   independently inspected stored snapshot that includes incomplete setup and
   retained historical sessions.
