@@ -473,13 +473,15 @@ parameter, and `process-spawn.c` passes that envp to `posix_spawnp` in place
 of `environ`. The proposed additive signatures, following the controls-next
 conditions:
 
-- `ProcessChild.spawn_env(argv, cwd, stderr, env: List<String & String>) -> ...`
-- `ProcessChild.retain_env(directory, argv, cwd, stderr, initial, keep_stdin,
-  lock, recovery, env: List<String & String>) -> ...`
-
-The environment is a complete immutable snapshot for that one child, captured
-and validated before prepare returns (duplicate keys refused), and the owner
-never
+The Controls-owned preparation contract (unimplemented export, proposed
+shape) is `prepare_env(original_bootstrap, child_snapshot,
+recovery_snapshot) -> Result<fault,PreparedWithSnapshotReceipt>` with
+`describe_preparation(original_bootstrap)` and
+`dispose_preparation(original_preparation)`: both complete immutable
+snapshots are captured and validated before prepare returns, custody
+retains both copies across qualified owner replacement, and loss of the
+original in-memory copies stays uncertain. Duplicate keys are refused, the
+owner never
 calls `setenv`/`unsetenv` on itself. Native launch and recovery launch are
 distinct roles; a recovery launch sources its argv from the recorded manifest
 and the same explicit environment rule, so neither role inherits a previous
@@ -535,6 +537,18 @@ report/question routing and the knowledge plane are unchanged.
 | `src/coordinator/main.bend`, `commands.bend`, `scripts/mcp-conductor.mjs` | synthesis | owner resolution, request/reply correlation, law import through the real entry | accepted handoff required |
 | `src/coordinator/native-requests.bend` | this design composes; receive owner owns observation | no structural change | compose only |
 | `src/instance/event-registry.bend` (new) | this design | retained event-destination registry decisions: full-correlation resolution, registration arming, reference and disposal lifecycle | additive, owned here; Controls owns the file effects, reader serialization and shared event synchronization it composes |
+
+The registry composes with the Controls offered-reader layer at
+`72f081d3f5702c6afc244cbf2a7c8fc09742e0fb` (`br_read_offer_init/ready/take/
+dispose`, internal, unexported): the version-qualified Controls wrapper
+rejects stale observations before invocation, a pending contradiction latches
+the reader fault, and one pending offer allocation exists at a time — the
+instance retains the original task and destination and an in-flight reference
+before borrowing, takes by exact serial only after task adoption, and a
+retained failure task carries the latched fault and the original
+task/correlation responsibility with the allocation. Take grants allocation
+custody only; it advances no durable interpretation or effect checkpoint and
+grants no ordinary interpretation permission.
 
 The custody-task module and isolated fixtures can be developed now in this
 worktree. Imports into the protected regions wait for the accepted handoffs;

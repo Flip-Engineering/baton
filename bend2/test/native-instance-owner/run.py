@@ -105,6 +105,10 @@ def main():
         "library_root": None,
         "host_compiler": None,
         "platform": platform.platform(),
+        "custody_limits": ("OWNED files cover the author's source only; "
+                           "build-native.sh, the stop.bend import closure and any "
+                           "executor-side children are bound by the admitted remote "
+                           "executor, not by this runner."),
         "module_sha256": sha256(root / OWNED[0]),
         "fixture_sha256": sha256(root / OWNED[1]),
         "runner_sha256": sha256(Path(__file__).resolve()),
@@ -115,8 +119,9 @@ def main():
     assert code == 0 and (output / "compiler.stdout").read_bytes().strip() == b"bend 2.0.25", \
         "compiler must be Bend 2.0.25"
     identity["bend_version"] = (output / "compiler.stdout").read_text().strip()
-    probe = subprocess.run([os.environ.get("CC", "clang"), "--version"], capture_output=True)
-    identity["host_compiler"] = probe.stdout.decode(errors="replace")
+    child, streams, started = launch("host-compiler", [os.environ.get("CC", "clang"), "--version"], root)
+    complete("host-compiler", child, streams, started)
+    identity["host_compiler"] = (output / "host-compiler.stdout").read_text(errors="replace")
     if args.library_root:
         listing = sorted((p.relative_to(args.library_root).as_posix(), sha256(p))
                          for p in Path(args.library_root).rglob("*") if p.is_file())
@@ -169,12 +174,15 @@ def main():
                                           str(scratch / "fixture")], scratch)
         code = complete("mutation-" + name, child, streams, started)
         stderr = (output / ("mutation-" + name + ".stderr")).read_text(errors="replace")
+        location_lines = [line.strip() for line in stderr.splitlines()
+                          if "custody-tasks." in line]
         expected = {"kind": "law-compile-failure", "exit_nonzero": True,
-                    "compiler_error": True, "diagnostic_location": OWNED[0],
+                    "compiler_error": True, "location_module_prefix": "custody-tasks.",
                     "diagnostic_names": law}
         observed = {"exit": code,
                     "compiler_error": "Error" in stderr,
-                    "location_seen": "Location" in stderr and OWNED[0] in stderr,
+                    "location_seen": "Location" in stderr and bool(location_lines),
+                    "location_lines": location_lines[:4],
                     "law_named": law in stderr,
                     "diagnostic_head": stderr.splitlines()[:6]}
         verdict = {"name": name, "target_law": law,
@@ -186,12 +194,16 @@ def main():
         record("mutation-" + name + ".verdict", verdict)
         assert code != 0, f"{name}: mutated build unexpectedly succeeded"
         assert observed["compiler_error"] and observed["location_seen"], \
-            f"{name}: build stderr lacks a compiler Error/Location naming {OWNED[0]}"
+            f"{name}: build stderr lacks a compiler Error/Location naming the custody module"
         assert observed["law_named"], f"{name}: expected law {law} named in build stderr"
 
     for path in OWNED:
         assert sha256(root / path) == identity["owned_sha256_before"][path], \
             f"owned file changed during run: {path}"
+    assert sha256(args.bend) == identity["bend_sha256"], "compiler changed during run"
+    if args.compiler_archive:
+        assert sha256(args.compiler_archive) == identity["compiler_archive_sha256"], \
+            "compiler archive changed during run"
     assert git("rev-parse", "HEAD^{tree}") == identity["tree_before"], "tree changed during run"
     print("custody-fixture: all modes and mutations matched", flush=True)
 

@@ -208,18 +208,18 @@ def record_native(duty: Duty, +ref: Ref) -> Duty:
 # that is used again.
 def record_delivery(duty: Duty, +ref: Ref) -> Duty:
   match duty:
-    case Duty{owner,attempt,results,wake_owed,ack_owed,settle_owed,errors}:
+    case Duty{+owner,+attempt,+results,wake_owed,+ack_owed,+settle_owed,+errors}:
       Bool.pick(Duty,fulfilled(ref),Duty{owner,attempt,put_delivery(results,ref),False{},ack_owed,settle_owed,keep_error(errors,ref)},Duty{owner,attempt,put_delivery(results,ref),wake_owed,ack_owed,settle_owed,keep_error(errors,ref)})
 
 def record_settle(duty: Duty, +ref: Ref) -> Duty:
   match duty:
-    case Duty{owner,attempt,results,wake_owed,ack_owed,settle_owed,errors}:
+    case Duty{owner,attempt,results,wake_owed,ack_owed,+settle_owed,errors}:
       Duty{owner,attempt,put_settle(results,ref),wake_owed,ack_owed,Bool.and(settle_owed,Bool.not(fulfilled(ref))),keep_error(errors,ref)}
 
 # The ACK result clears the responsibility only with marker evidence.
 def record_ack(duty: Duty, marker: Bool, +ref: Ref) -> Duty:
   match duty:
-    case Duty{owner,attempt,results,wake_owed,ack_owed,settle_owed,errors}:
+    case Duty{owner,attempt,results,wake_owed,+ack_owed,settle_owed,errors}:
       Duty{owner,attempt,put_ack(results,ref),wake_owed,Bool.and(ack_owed,Bool.not(marker)),settle_owed,keep_error(errors,ref)}
 
 # A failed continuation never closes another attempt's work and changes no
@@ -267,7 +267,11 @@ def ack_ref(acknowledged: Bool) -> Ref:
 # process-local operations ended and their continuation duties are
 # re-enumerated and owned by this recovery; the constructor settles no live
 # join and confers no owner-replacement authority, which the host guard and
-# custody acquisition establish. `errors` carries the enumerated retained
+# custody acquisition establish. Retirement requires the continuation
+# invocation to be settled, and an open continuation ref keeps the duty open
+# with its pending responsibility and the duty's own identified owner; a
+# settled continuation Fail carries its error evidence in the duty and does
+# not block retirement. `errors` carries the enumerated retained
 # error record; when the decision is empty the durable error record remains
 # authoritative and no duty copy is retained. The clear decision is computed
 # as an argument and matched as a parameter, so no computed expression is a
@@ -279,7 +283,7 @@ def rebuild_decided(+attempt: Attempt, +owner: OwnerInstance, +acknowledged: Boo
     case False{}: Some{Duty{owner,attempt,Results{native,delivery,settle,ack_ref(acknowledged),continuation},Bool.not(fulfilled(delivery)),Bool.not(acknowledged),Bool.not(fulfilled(settle)),errors}}
 
 def rebuild(attempt: Attempt, owner: OwnerInstance, +acknowledged: Bool, +native: Ref, +delivery: Ref, +settle: Ref, +continuation: Ref, errors: String) -> Maybe<Duty>:
-  rebuild_decided(attempt,owner,acknowledged,native,delivery,settle,continuation,errors,Bool.and(acknowledged,duty_clear(native,delivery,settle)))
+  rebuild_decided(attempt,owner,acknowledged,native,delivery,settle,continuation,errors,Bool.and(acknowledged,Bool.and(duty_clear(native,delivery,settle),Bool.not(ref_open(continuation)))))
 
 # --- laws -------------------------------------------------------------------
 
@@ -316,7 +320,18 @@ law unacknowledged_failed_delivery_keeps_the_wake_owed:
 def unacknowledged_failed_delivery_keeps_the_wake_owed(owner,attempt,error):
   {==}
 
-# A fully fulfilled, acknowledged attempt leaves no open duty.
+# An open enumerated continuation keeps a fulfilled acknowledged attempt
+# open: retirement requires the continuation to record recovery as well.
+law acknowledged_open_continuation_stays_a_duty:
+  for +owner: OwnerInstance
+  for +attempt: Attempt
+  {rebuild(attempt,owner,True{},RefDone{"status"},RefDone{"report delivered"},RefDone{"settled"},RefOpen{},"") == Some{Duty{owner,attempt,Results{RefDone{"status"},RefDone{"report delivered"},RefDone{"settled"},RefDone{"acknowledged"},RefOpen{}},False{},False{},False{},""}} : Maybe<Duty>}
+
+def acknowledged_open_continuation_stays_a_duty(owner,attempt):
+  {==}
+
+# A fully fulfilled, acknowledged attempt with recovered continuation leaves
+# no open duty.
 law acknowledged_fulfilled_duties_rebuild_empty:
   for +owner: OwnerInstance
   for +attempt: Attempt
