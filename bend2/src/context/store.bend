@@ -10,6 +10,8 @@
 # verbatim, so the stored request body is compared exactly on replay.
 import Base
 import ../coordinator/commands.bend as C
+import ../git/text.bend as Tx
+import ../host/sqlite.bend as DB
 
 # The three specification tables. JSON columns carry json_valid checks, so a
 # malformed retained document cannot be committed. `observer_cursor` and `state`
@@ -87,8 +89,90 @@ def ref_id_match(+refId: String) -> String:
 # the operation names the selector was originally admitted under, because no retained
 # column records them; a re-derivation is Core's current check, not retained evidence,
 # and absent evidence refuses.
+# The retained per-ref association of one stored result, as one row of six
+# tab-separated columns: the requested query and ref identity, the query's recorded
+# state (empty when the query is absent), the count of entries whose id matches
+# exactly, the matching entry's stored text, and whether that entry carries every
+# field a selector association needs. The count is read rather than assumed, so a
+# duplicate id is visible instead of silently one of several.
+def ref_match_count(query: String, refId: String) -> String:
+  "(SELECT count(*) FROM json_each(" ++ ref_entries(query) ++ ",'$.refs') WHERE " ++ ref_id_match(refId) ++ ")"
+
+def ref_first_entry(query: String, refId: String) -> String:
+  "(SELECT value FROM json_each(" ++ ref_entries(query) ++ ",'$.refs') WHERE " ++ ref_id_match(refId) ++ ")"
+
+# A selector association is complete only when the entry carries all four retained
+# members; an entry missing one is malformed rather than partially usable.
+def ref_fields_ok(query: String, refId: String) -> String:
+  "(SELECT CASE WHEN json_type(value,'$.engine') IS NOT NULL AND json_type(value,'$.subject') IS NOT NULL AND json_type(value,'$.snapshotId') IS NOT NULL AND json_type(value,'$.projections') IS NOT NULL THEN 1 ELSE 0 END FROM json_each(" ++ ref_entries(query) ++ ",'$.refs') WHERE " ++ ref_id_match(refId) ++ ")"
+
+# One retained association. `RefOpen` means the referenced query's result is not
+# retained yet, `RefAbsent` and `RefAmbiguous` are read from the match count, and
+# `RefMalformed` means the single matching entry lacks a member. No constructor
+# carries operation names, because no retained column holds them.
+type RefLookup is Data:
+  RefUnreadable{stage: String, answer: String}
+  RefQueryMissing{query: String, refId: String}
+  RefOpen{query: String, refId: String, state: String}
+  RefAbsent{query: String, refId: String}
+  RefAmbiguous{query: String, refId: String, count: String}
+  RefMalformed{query: String, refId: String, entry: String}
+  RefFound{query: String, refId: String, state: String, entry: String}
+
 def ref_lookup_sql(+query: String, +refId: String) -> String:
-  "SELECT json_object('found',CASE WHEN EXISTS(SELECT 1 FROM json_each(" ++ ref_entries(query) ++ ",'$.refs') WHERE " ++ ref_id_match(refId) ++ ") THEN 1 ELSE 0 END,'engine',coalesce((SELECT json_extract(value,'$.engine') FROM json_each(" ++ ref_entries(query) ++ ",'$.refs') WHERE " ++ ref_id_match(refId) ++ "),''),'subject',coalesce((SELECT json_extract(value,'$.subject') FROM json_each(" ++ ref_entries(query) ++ ",'$.refs') WHERE " ++ ref_id_match(refId) ++ "),''),'snapshotId',coalesce((SELECT json_extract(value,'$.snapshotId') FROM json_each(" ++ ref_entries(query) ++ ",'$.refs') WHERE " ++ ref_id_match(refId) ++ "),''),'projections',coalesce((SELECT json_extract(value,'$.projections') FROM json_each(" ++ ref_entries(query) ++ ",'$.refs') WHERE " ++ ref_id_match(refId) ++ "),json('[]')));"
+  "SELECT " ++ C.q(query) ++ "," ++ C.q(refId) ++ ",coalesce((SELECT state FROM semantic_queries WHERE id=" ++ C.q(query) ++ "),'')," ++ ref_match_count(query, refId) ++ ",coalesce(" ++ ref_first_entry(query, refId) ++ ",''),coalesce(" ++ ref_fields_ok(query, refId) ++ ",0);"
+
+def ref_lookup_fields(+query: String, +refId: String, +state: String, +count: String, +entry: String, +fieldsOk: String, +answer: String) -> RefLookup:
+  Bool.pick(RefLookup, String.is_empty(state), RefQueryMissing{query, refId},
+  Bool.pick(RefLookup, String.eq(count, "0"), RefAbsent{query, refId},
+  Bool.pick(RefLookup, Bool.not(String.eq(count, "1")), RefAmbiguous{query, refId, count},
+  Bool.pick(RefLookup, String.eq(fieldsOk, "1"),
+    Bool.pick(RefLookup, String.eq(state, "complete"), RefFound{query, refId, state, entry}, RefOpen{query, refId, state}),
+    RefMalformed{query, refId, entry}))))
+
+def ref_lookup_tabs(+fields: List<String>, +answer: String) -> RefLookup:
+  match fields:
+    case +query <> more0:
+      match more0:
+        case +refId <> more1:
+          match more1:
+            case +state <> more2:
+              match more2:
+                case +count <> more3:
+                  match more3:
+                    case +entry <> more4:
+                      match more4:
+                        case +fieldsOk <> more5:
+                          match more5:
+                            case Nil{}: ref_lookup_fields(query, refId, state, count, entry, fieldsOk, answer)
+                            case _: RefUnreadable{"surplus", answer}
+                        case _: RefUnreadable{"short", answer}
+                    case _: RefUnreadable{"short", answer}
+                case _: RefUnreadable{"short", answer}
+            case _: RefUnreadable{"short", answer}
+        case _: RefUnreadable{"short", answer}
+    case _: RefUnreadable{"short", answer}
+
+# Exactly one row of six columns; anything else is unreadable rather than a record.
+def ref_lookup_decode(+row: String) -> RefLookup:
+  match Tx.split_lines(row):
+    case Nil{}: RefUnreadable{"empty", row}
+    case +line <> +rest:
+      match rest:
+        case Nil{}: ref_lookup_tabs(Tx.split_tabs(line), row)
+        case _: RefUnreadable{"surplus", row}
+
+def ref_after(result: Result<&1,&1,U32 & String,String>) -> IO(Result<&1,&1,U32 & String,RefLookup>):
+  match result:
+    case Fail{error}: IO.pure(Result<&1,&1,U32 & String,RefLookup>, Fail{error})
+    case Done{+rows}: IO.pure(Result<&1,&1,U32 & String,RefLookup>, Done{ref_lookup_decode(rows)})
+
+# The bound lookup. A host or binding failure stays a failure rather than a lookup
+# answer, so an unavailable binding can never read as an absent ref.
+def ref_lookup(+db: String, +binding: String, +query: String, +refId: String) -> IO(Result<&1,&1,U32 & String,RefLookup>):
+  do IO<Result<&1,&1,U32 & String,RefLookup>>:
+    result : Result<&1,&1,U32 & String,String> <- DB.Sql.query_bound(db, binding, ref_lookup_sql(query, refId))
+    ref_after(result)
 
 def json_or_null(+value: String) -> String:
   Bool.pick(String, String.is_empty(value), "NULL", "json(" ++ C.q(value) ++ ")")

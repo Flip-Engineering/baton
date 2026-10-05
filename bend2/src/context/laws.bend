@@ -856,3 +856,46 @@ law a_ref_lookup_matches_its_exact_ref_identity:
 
 def a_ref_lookup_matches_its_exact_ref_identity(refId):
   {==}
+
+law a_ref_lookup_reads_its_own_identity:
+  for +query: String
+  for +refId: String
+  for +state: String
+  for +entry: String
+  {ContextStore.ref_lookup_decode(query ++ "\t" ++ refId ++ "\t" ++ state ++ "\t1\t" ++ entry ++ "\t1\n") == ContextStore.RefFound{query,refId,state,entry} : ContextStore.RefLookup}
+
+def a_ref_lookup_reads_its_own_identity(query,refId,state,entry):
+  {==}
+
+law a_ref_lookup_without_a_query_is_not_an_absent_ref:
+  for +query: String
+  for +refId: String
+  {ContextStore.ref_lookup_decode(query ++ "\t" ++ refId ++ "\t\t0\t\t0\n") == ContextStore.RefQueryMissing{query,refId} : ContextStore.RefLookup}
+
+def a_ref_lookup_without_a_query_is_not_an_absent_ref(query,refId):
+  {==}
+
+law a_ref_lookup_counts_two_matching_entries_as_ambiguous:
+  for +query: String
+  for +refId: String
+  for +entry: String
+  {ContextStore.ref_lookup_decode(query ++ "\t" ++ refId ++ "\tcomplete\t2\t" ++ entry ++ "\t1\n") == ContextStore.RefAmbiguous{query,refId,"2"} : ContextStore.RefLookup}
+
+def a_ref_lookup_counts_two_matching_entries_as_ambiguous(query,refId,entry):
+  {==}
+
+law a_ref_lookup_without_its_fields_is_malformed:
+  for +query: String
+  for +refId: String
+  for +entry: String
+  {ContextStore.ref_lookup_decode(query ++ "\t" ++ refId ++ "\tcomplete\t1\t" ++ entry ++ "\t0\n") == ContextStore.RefMalformed{query,refId,entry} : ContextStore.RefLookup}
+
+def a_ref_lookup_without_its_fields_is_malformed(query,refId,entry):
+  {==}
+
+law an_unreadable_ref_answer_is_not_a_lookup:
+  for +row: String
+  {ContextStore.ref_lookup_decode(row ++ "\nextra\n") == ContextStore.RefUnreadable{"surplus",row ++ "\nextra\n"} : ContextStore.RefLookup}
+
+def an_unreadable_ref_answer_is_not_a_lookup(row):
+  {==}
