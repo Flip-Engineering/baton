@@ -1,0 +1,197 @@
+[
+  {
+    "directory": ".",
+    "arguments": [
+      "clang",
+      "-std=gnu89",
+      "-Wall",
+      "-Wextra",
+      "-Iinclude",
+      "-c",
+      "src/handler-guard.c"
+    ],
+    "file": "src/handler-guard.c"
+  },
+  {
+    "directory": ".",
+    "arguments": [
+      "clang",
+      "-std=gnu89",
+      "-Wall",
+      "-Wextra",
+      "-Iinclude",
+      "-c",
+      "src/handler-noguard.c"
+    ],
+    "file": "src/handler-noguard.c"
+  },
+  {
+    "directory": ".",
+    "arguments": [
+      "clang",
+      "-std=gnu89",
+      "-Wall",
+      "-Wextra",
+      "-Iinclude",
+      "-c",
+      "src/handler-multi.c"
+    ],
+    "file": "src/handler-multi.c"
+  },
+  {
+    "directory": ".",
+    "arguments": [
+      "clang",
+      "-std=gnu89",
+      "-Wall",
+      "-Wextra",
+      "-Iinclude",
+      "-c",
+      "src/handler-cycle.c"
+    ],
+    "file": "src/handler-cycle.c"
+  },
+  {
+    "directory": ".",
+    "arguments": [
+      "clang",
+      "-std=gnu89",
+      "-Wall",
+      "-Wextra",
+      "-Iinclude",
+      "-c",
+      "src/handler-volatile.c"
+    ],
+    "file": "src/handler-volatile.c"
+  },
+  {
+    "directory": ".",
+    "arguments": [
+      "clang",
+      "-std=gnu89",
+      "-Wall",
+      "-Wextra",
+      "-Iinclude",
+      "-c",
+      "src/handler-deref.c"
+    ],
+    "file": "src/handler-deref.c"
+  },
+  {
+    "directory": ".",
+    "arguments": [
+      "clang",
+      "-std=gnu89",
+      "-Wall",
+      "-Wextra",
+      "-Iinclude",
+      "-c",
+      "src/handler-macro.c"
+    ],
+    "file": "src/handler-macro.c"
+  },
+  {
+    "directory": ".",
+    "arguments": [
+      "clang",
+      "-std=gnu89",
+      "-Wall",
+      "-Wextra",
+      "-Iinclude",
+      "-c",
+      "src/handler-shadow.c"
+    ],
+    "file": "src/handler-shadow.c"
+  },
+  {
+    "directory": ".",
+    "arguments": [
+      "clang",
+      "-std=gnu89",
+      "-Wall",
+      "-Wextra",
+      "-Iinclude",
+      "-c",
+      "src/indirect-call.c"
+    ],
+    "file": "src/indirect-call.c"
+  },
+  {
+    "directory": ".",
+    "arguments": [
+      "clang",
+      "-std=gnu89",
+      "-Wall",
+      "-Wextra",
+      "-Iinclude",
+      "-c",
+      "src/signature.c"
+    ],
+    "file": "src/signature.c"
+  },
+  {
+    "directory": ".",
+    "arguments": [
+      "clang",
+      "-std=gnu89",
+      "-Wall",
+      "-Wextra",
+      "-Iinclude",
+      "-c",
+      "src/db.c"
+    ],
+    "file": "src/db.c"
+  },
+  {
+    "directory": ".",
+    "arguments": [
+      "clang",
+      "-std=gnu89",
+      "-Wall",
+      "-Wextra",
+      "-Iinclude",
+      "-c",
+      "src/prepare-profile.c"
+    ],
+    "file": "src/prepare-profile.c"
+  },
+  {
+    "directory": ".",
+    "arguments": [
+      "clang",
+      "-std=gnu89",
+      "-Wall",
+      "-Wextra",
+      "-Iinclude",
+      "-c",
+      "src/cfg-shapes.c"
+    ],
+    "file": "src/cfg-shapes.c"
+  },
+  {
+    "directory": ".",
+    "arguments": [
+      "clang",
+      "-std=gnu89",
+      "-Wall",
+      "-Wextra",
+      "-Iinclude",
+      "-c",
+      "src/handler-not.c"
+    ],
+    "file": "src/handler-not.c"
+  },
+  {
+    "directory": ".",
+    "arguments": [
+      "clang",
+      "-std=gnu89",
+      "-Wall",
+      "-Wextra",
+      "-Iinclude",
+      "-c",
+      "src/handler-or.c"
+    ],
+    "file": "src/handler-or.c"
+  }
+]
