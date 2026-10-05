@@ -49,6 +49,16 @@ type CompanionStep is Data:
   StepUnreadable{answer: String}
   StepFailed{code: U32, message: String}
 
+# One companion conclusion as text, the same way the duty and admission modules render
+# theirs, so a caller can observe a step without re-deriving it.
+def companion_text(+step: CompanionStep) -> String:
+  match step:
+    case StepContinue{}: "continue"
+    case StepSettled{}: "settled"
+    case StepMissing{+answer}: "missing:" ++ Tx.trim_nl(answer)
+    case StepUnreadable{+answer}: "unreadable:" ++ Tx.trim_nl(answer)
+    case StepFailed{+code, +message}: "failed:" ++ U32.show(code) ++ ":" ++ message
+
 def intent_step(answer: String) -> CompanionStep:
   Bool.pick(CompanionStep, intent_owed(answer), StepContinue{},
   Bool.pick(CompanionStep, intent_settled(answer), StepSettled{},
