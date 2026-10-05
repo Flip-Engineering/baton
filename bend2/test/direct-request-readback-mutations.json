@@ -1,0 +1,16 @@
+[
+  {
+    "name": "direct-readback-drops-exact-identity",
+    "file": "bend2/src/coordinator/direct-request.bend",
+    "find": "i LEFT JOIN direct_requests r ON r.id=i.id;",
+    "replace": "i LEFT JOIN direct_requests r ON 1=1;",
+    "law": "recovery_lookup_selects_the_original_identity"
+  },
+  {
+    "name": "direct-readback-labels-absence-retained",
+    "file": "bend2/src/coordinator/direct-request.bend",
+    "find": "json_object('lookup','absent','requestId',i.id)",
+    "replace": "json_object('lookup','retained','requestId',i.id)",
+    "law": "recovery_lookup_selects_the_original_identity"
+  }
+]

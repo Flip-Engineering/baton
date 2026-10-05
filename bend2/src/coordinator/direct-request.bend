@@ -96,6 +96,13 @@ def decision_result() -> String:
 def decide_sql(+id: String, request: Request, preparation: Preparation, +detached: Bool) -> String:
   "BEGIN IMMEDIATE;" ++ C.schema() ++ schema() ++ input_table(id,request,preparation,detached) ++ frozen_decision(detached) ++ insert_decision() ++ publish_execution() ++ decision_result() ++ "COMMIT;"
 
+# Recovery executes this lookup through the original qualified database binding.
+# A missing table or failed query remains an error. Only a successful lookup can
+# return absent. The retained request and preparation still require caller checks
+# before any grant or cancellation; the JSON answer carries evidence only.
+def readback_sql(id: String) -> String:
+  "SELECT CASE WHEN r.id IS NULL THEN json_object('lookup','absent','requestId',i.id) ELSE json_object('lookup','retained','requestId',r.id,'session',r.session,'request',json(r.request),'attemptDirectory',r.directory,'keeper',json(r.keeper),'protocol',r.protocol,'admissionDecision',r.decision,'reason',r.reason,'phase',r.phase,'outcome',r.outcome,'notification',r.notification,'cleanup',r.cleanup,'lifetime',r.lifetime,'resultId',r.result_message,'localResult',r.local_result) END FROM (SELECT " ++ C.q(id) ++ " AS id) i LEFT JOIN direct_requests r ON r.id=i.id;"
+
 # The caller holds the session guard and owns the prepared keeper. The returned
 # row is the sole admission authority; host errors require same-binding readback.
 def decide(db: String, id: String, request: Request, preparation: Preparation, detached: Bool) -> IO(Result<&1,&1,U32 & String,String>):
@@ -129,4 +136,11 @@ law local_completion_target_is_explicit:
   {completion_target(None{}) == "local" : String}
 
 def local_completion_target_is_explicit():
+  {==}
+
+law recovery_lookup_selects_the_original_identity:
+  for id: String
+  {readback_sql(id) == "SELECT CASE WHEN r.id IS NULL THEN json_object('lookup','absent','requestId',i.id) ELSE json_object('lookup','retained','requestId',r.id,'session',r.session,'request',json(r.request),'attemptDirectory',r.directory,'keeper',json(r.keeper),'protocol',r.protocol,'admissionDecision',r.decision,'reason',r.reason,'phase',r.phase,'outcome',r.outcome,'notification',r.notification,'cleanup',r.cleanup,'lifetime',r.lifetime,'resultId',r.result_message,'localResult',r.local_result) END FROM (SELECT " ++ C.q(id) ++ " AS id) i LEFT JOIN direct_requests r ON r.id=i.id;" : String}
+
+def recovery_lookup_selects_the_original_identity(id):
   {==}

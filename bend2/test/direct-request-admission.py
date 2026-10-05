@@ -17,6 +17,27 @@ import unittest
 
 EXE = os.environ.get('BATON2_DIRECT_ADMISSION_EXE')
 BASELINE = os.environ.get('BATON2_BASELINE_EXE')
+EVIDENCE = Path(tempfile.mkdtemp(prefix='direct-admission-evidence-'))
+print(f'Direct admission child evidence: {EVIDENCE}', flush=True)
+
+
+def captured(argv, check=False):
+    destination = Path(tempfile.mkdtemp(prefix='child-', dir=EVIDENCE))
+    (destination / 'argv.json').write_text(json.dumps(argv), encoding='utf-8')
+    try:
+        result = subprocess.run(argv, capture_output=True, timeout=20)
+    except subprocess.TimeoutExpired as error:
+        (destination / 'stdout').write_bytes(error.stdout or b'')
+        (destination / 'stderr').write_bytes(error.stderr or b'')
+        (destination / 'outcome.json').write_text(json.dumps({'timeout': error.timeout}))
+        raise
+    (destination / 'stdout').write_bytes(result.stdout)
+    (destination / 'stderr').write_bytes(result.stderr)
+    (destination / 'outcome.json').write_text(json.dumps({'returncode': result.returncode}))
+    if check:
+        result.check_returncode()
+    return subprocess.CompletedProcess(argv, result.returncode,
+                                       result.stdout.decode('utf-8'), result.stderr.decode('utf-8'))
 
 
 class Admission(unittest.TestCase):
@@ -27,8 +48,7 @@ class Admission(unittest.TestCase):
         self.addCleanup(self.temp.cleanup)
         self.db = Path(self.temp.name) / 'fixture.db'
         for name in ('owner', 'child'):
-            subprocess.run([BASELINE, str(self.db), 'attach', name, 'muse', '', ''],
-                           capture_output=True, text=True, check=True, timeout=20)
+            captured([BASELINE, str(self.db), 'attach', name, 'muse', '', ''], check=True)
         self.sql("UPDATE sessions SET parent='owner',model='model',effort='high',workspace='/workspace' WHERE id='child'")
 
     def sql(self, sql, parameters=()):
@@ -36,14 +56,69 @@ class Admission(unittest.TestCase):
             return db.execute(sql, parameters).fetchall()
 
     def run_decision(self, ident='first', directory='/attempt-first', task='task'):
-        return subprocess.run([EXE, str(self.db), ident, directory, task],
-                              capture_output=True, text=True, timeout=20)
+        return captured([EXE, str(self.db), ident, directory, task])
 
     def decide(self, *args):
         result = self.run_decision(*args)
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertEqual(result.stderr, '')
         return json.loads(result.stdout)
+
+    def run_readback(self, ident='first'):
+        # This fixture executes the SQL on its own database. It does not supply
+        # the qualified binding or prepared keeper required by a product caller.
+        return captured([EXE, 'readback', str(self.db), ident])
+
+    def readback(self, ident='first'):
+        result = self.run_readback(ident)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(result.stderr, '')
+        return json.loads(result.stdout)
+
+    def test_readback_keeps_original_completion_after_newer_admission(self):
+        admitted = self.decide()
+        self.sql("UPDATE direct_requests SET phase='exited',outcome='exit 7',local_result='original result',result_message='original-report',notification='pending',cleanup='owed',lifetime='ended' WHERE id='first'")
+        self.sql("UPDATE executions SET phase='exited',status='exit 7'")
+        original = self.readback()
+        self.assertEqual(original, dict(admitted, lookup='retained', phase='exited',
+                                       outcome='exit 7', localResult='original result',
+                                       resultId='original-report', notification='pending',
+                                       cleanup='owed', lifetime='ended'))
+        self.assertEqual(original['lookup'], 'retained')
+        self.assertEqual(original['attemptDirectory'], '/attempt-first')
+        self.assertEqual(original['keeper'], {'pid': 42, 'birth': 'fixture'})
+        self.assertEqual(original['localResult'], 'original result')
+        self.assertEqual(original['resultId'], 'original-report')
+        self.assertEqual(original['outcome'], 'exit 7')
+        self.assertEqual(original['notification'], 'pending')
+        self.assertEqual(original['cleanup'], 'owed')
+        self.assertEqual(original['lifetime'], 'ended')
+        self.decide('second', '/attempt-second', 'second task')
+        before = self.sql('SELECT * FROM direct_requests'), self.sql('SELECT * FROM executions')
+        self.assertEqual(self.readback(), original)
+        self.assertEqual((self.sql('SELECT * FROM direct_requests'), self.sql('SELECT * FROM executions')), before)
+
+    def test_readback_preserves_rejection_after_predicates_change(self):
+        self.sql("INSERT INTO session_stops(session,id,reason,outcome) VALUES('child','stop','fixture','stopped')")
+        rejected = self.decide()
+        self.sql('DELETE FROM session_stops')
+        self.assertEqual(self.readback(), dict(rejected, lookup='retained'))
+        self.assertEqual(self.sql('SELECT * FROM executions'), [])
+
+    def test_readback_absence_and_literal_identity_do_not_admit(self):
+        self.decide()
+        ident = "absent' OR 1=1; -- λ\n"
+        before = self.sql('SELECT * FROM direct_requests'), self.sql('SELECT * FROM executions')
+        self.assertEqual(self.readback(ident), {'lookup': 'absent', 'requestId': ident})
+        self.assertEqual((self.sql('SELECT * FROM direct_requests'), self.sql('SELECT * FROM executions')), before)
+
+    def test_readback_missing_schema_is_an_error(self):
+        result = self.run_readback()
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn('no such table: direct_requests', result.stderr)
+        self.assertEqual(result.stdout, '')
+        self.assertEqual(self.sql("SELECT name FROM sqlite_master WHERE name='direct_requests'"), [])
+        self.assertEqual(self.sql('SELECT * FROM executions'), [])
 
     def test_exact_replay_preserves_request_and_execution(self):
         first = self.decide()
@@ -63,13 +138,11 @@ class Admission(unittest.TestCase):
         for field in sorted(expected):
             with self.subTest(field=field):
                 changed = {**original, field: 'different'}
-                answer = subprocess.run([EXE, str(self.db), json.dumps(original), json.dumps(changed)],
-                                        capture_output=True, text=True, timeout=20)
+                answer = captured([EXE, str(self.db), json.dumps(original), json.dumps(changed)])
                 self.assertEqual(answer.returncode, 0, answer.stderr)
                 self.assertEqual(answer.stdout, field + '\n')
         changed = {**original, 'explicitResume': ''}
-        answer = subprocess.run([EXE, str(self.db), json.dumps(original), json.dumps(changed)],
-                                capture_output=True, text=True, timeout=20)
+        answer = captured([EXE, str(self.db), json.dumps(original), json.dumps(changed)])
         self.assertEqual(answer.stdout, 'explicitResume\n')
 
     def test_different_ids_compete_without_overwriting_active_execution(self):
