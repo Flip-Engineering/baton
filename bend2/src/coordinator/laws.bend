@@ -1168,13 +1168,18 @@ law omp_terminal_recovers_truncated_history:
 def omp_terminal_recovers_truncated_history(db,event,message,activity):
   {==}
 
-# The retained activity is the response of the last assistant frame the stream
-# carried, and any other frame leaves the retained identity alone.
+# The activity reader delegates to its expression, which appends the response an
+# assistant frame names and keeps the retained state for every other frame,
+# including native output that is not JSON.
 law omp_activity_keeps_the_latest_assistant_response:
+  for +db: String
   for +event: String
-  {Turn.omp_activity_sql(event) == ("SELECT CASE WHEN json_extract(" ++ C.q(event) ++ ",'$.type') IN ('message_start','message_end') AND json_extract(" ++ C.q(event) ++ ",'$.message.role')='assistant' THEN coalesce(json_extract(" ++ C.q(event) ++ ",'$.message.responseId'),'') ELSE '' END;") : String}
+  for +previous: String
+  {Turn.omp_activity(db,event,previous,True{}) == (do IO<String>:
+    activity : String <- IO.try(String,DB.Sql.query(db,Turn.omp_activity_sql(event,previous)))
+    IO.pure(String,Tx.trim_nl(activity))) : IO(String)}
 
-def omp_activity_keeps_the_latest_assistant_response(event):
+def omp_activity_keeps_the_latest_assistant_response(db,event,previous):
   {==}
 
 law receive_classifies_a_current_model_failure:

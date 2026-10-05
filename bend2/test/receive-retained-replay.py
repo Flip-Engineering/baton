@@ -319,6 +319,47 @@ class ControlledFrames(ReplayBase):
         self.assertTrue(failure, bodies)
         self.assertNotIn('Complete answer.', failure[0])
 
+    def test_empty_terminal_keeps_a_retained_failure(self):
+        """An empty terminal with a retained provider failure keeps that failure."""
+        notifications, code, status, bodies = self.replay([
+            {'type': 'message_end', 'message': assistant(
+                stopReason='error', errorStatus=403, errorMessage='403 retained failure',
+                provider='kimi-code', model='k3', responseId='response-e1', content=[])},
+            {'type': 'agent_end', 'isTerminal': True, 'messages': []}],
+            task='empty-terminal-failure')
+        self.assertNotEqual(code, 0)
+        self.assertIn('exit 0', status)
+        failure = [body for body in bodies if 'Native model failure' in body]
+        self.assertTrue(failure, bodies)
+
+    def test_a_terminal_only_error_after_an_observed_success_is_not_a_success(self):
+        """An error the stream never carried does not make the older success current."""
+        success = assistant(stopReason='stop', responseId='response-s1',
+                            content=[{'type': 'text', 'text': 'Complete answer.'}])
+        error = assistant(stopReason='error', errorStatus=403, errorMessage='403 unobserved failure',
+                          provider='kimi-code', model='k3', responseId='response-e2', content=[])
+        notifications, code, status, bodies = self.replay([
+            {'type': 'agent_start'},
+            {'type': 'message_end', 'message': success},
+            {'type': 'agent_end', 'isTerminal': True, 'messages': [success, error, 'elided']}],
+            task='terminal-only-error')
+        self.assertFalse([body for body in bodies if 'Complete answer.' in body], bodies)
+
+    def test_a_started_success_without_completion_does_not_replace_an_error(self):
+        """A started message that never completed is not the attempt's result."""
+        error = assistant(stopReason='error', errorStatus=403, errorMessage='403 reported failure',
+                          provider='kimi-code', model='k3', responseId='response-e1', content=[])
+        success = assistant(stopReason='stop', responseId='response-s1',
+                            content=[{'type': 'text', 'text': 'Complete answer.'}])
+        started = assistant(responseId='response-s2', content=[])
+        notifications, code, status, bodies = self.replay([
+            {'type': 'agent_start'},
+            {'type': 'message_end', 'message': success},
+            {'type': 'message_start', 'message': started},
+            {'type': 'agent_end', 'isTerminal': True, 'messages': [error, 'elided']}],
+            task='started-without-completion')
+        self.assertFalse([body for body in bodies if 'Complete answer.' in body], bodies)
+
     def test_sequential_success_then_error_keeps_the_first_report(self):
         """Two consecutive receives: a later receive's failure does not change the earlier report."""
         sealed, code, status, bodies = self.replay([
