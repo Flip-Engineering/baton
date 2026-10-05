@@ -1,6 +1,14 @@
 // RemoteObject value observation (docs/bend2/semantic-context-spec.md,
 // Runtime contract; the recorded CDP research facts).
 //
+// Module boundary: these are CDP-specific value shapes for the optional CDP
+// module. Generalized value semantics keep each provider's own types,
+// representation, completeness and actual availability: no universal
+// JavaScript null/undefined model, no getter-execution or stepping
+// assumptions, and no completeness claim beyond what the provider actually
+// returned. The reusable parts for other modules are the capture/provenance
+// records and their admission, not these protocol shapes.
+//
 // Non-evaluating only: values and previews come from Runtime.getProperties
 // responses. Accessor properties remain descriptors and no getter executes
 // during observation; Runtime.callFunctionOn and evaluateOnCallFrame are

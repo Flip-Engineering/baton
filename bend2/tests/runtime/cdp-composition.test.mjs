@@ -204,20 +204,28 @@ test('same-epoch assembly over a real debuggee through the production session', 
 
     // Observation through the session's waitFor surface. waitFor returns an
     // ABSOLUTE frame cursor in observed.index; the next wait uses that
-    // cursor so a retained frame is never replayed as a later stop.
-    async function waitForStop(afterCursor, timeoutMs = 15000) {
+    // cursor so a retained frame is never replayed as a later stop. The
+    // returned handle carries rejection ownership: cleanup aborts it, the
+    // helper awaits the settled promise, and cancellation is distinguished
+    // from timeout while non-abort errors are retained on the facts.
+    async function waitForStop(afterCursor, timeoutMs = 15000, facts = null) {
       const abort = new AbortController();
       outstandingAbort = abort;
       const timer = setTimeout(() => abort.abort(), timeoutMs);
+      const wait = session.waitFor('Debugger.paused', { after: afterCursor, signal: abort.signal });
+      const settled = wait.catch((err) => ({ rejected: true, message: String(err.message ?? err) }));
       try {
-        const observed = await session.waitFor('Debugger.paused', { after: afterCursor, signal: abort.signal });
-        return { observed, timedOut: false };
-      } catch (err) {
-        if (abort.signal.aborted) return { observed: null, timedOut: true, waitError: String(err.message ?? err) };
-        throw err;
+        const observed = await settled;
+        if (observed && observed.rejected) {
+          if (facts) facts.waitError = observed.message;
+          if (abort.signal.aborted) return { observed: null, timedOut: true, cancelled: true, waitError: observed.message };
+          return { observed: null, timedOut: false, cancelled: false, waitError: observed.message };
+        }
+        return { observed, timedOut: false, cancelled: false };
       } finally {
         clearTimeout(timer);
-        outstandingAbort = null;
+        await settled.catch(() => {});
+        if (outstandingAbort === abort) outstandingAbort = null;
       }
     }
 
@@ -315,10 +323,20 @@ test('same-epoch assembly over a real debuggee through the production session', 
     assert.equal(retired.condition, 'refRetiredByMutation');
 
     // Resume and require a REAL later stop, waited with the returned cursor
-    // so the first pause cannot replay as the later one.
-    const laterStopPromise = waitForStop(initial.observed.index);
-    await session.execute('resume-step', { effects: ['controlRuntime'], action: 'resume' });
-    const later = await laterStopPromise;
+    // so the first pause cannot replay as the later one. A resume failure
+    // drains the outstanding wait: it is aborted and awaited here, with
+    // cancellation, timeout and non-abort errors distinguished on the facts.
+    let later;
+    try {
+      const laterStopPromise = waitForStop(initial.observed.index);
+      await session.execute('resume-step', { effects: ['controlRuntime'], action: 'resume' });
+      later = await laterStopPromise;
+    } catch (err) {
+      if (outstandingAbort) outstandingAbort.abort();
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      evidence.resumeFailure = String(err.message ?? err);
+      throw err;
+    }
     const afterResume = liveFromSnapshot(runtime, session.snapshot());
     assert.notEqual(afterResume.epoch, identity.epoch, 'session-owned epoch advanced');
     // Facade ordering: after a successful resume while the target runs, a
@@ -332,10 +350,13 @@ test('same-epoch assembly over a real debuggee through the production session', 
     evidence.afterResume = { ...afterResume, laterStopTimedOut: later.timedOut, stateFirstCondition: stateFirst.condition };
 
     // The production release path runs and its observed result envelope is
-    // retained and required to be present; child signaling is verified by
-    // the OBSERVED child end below, not by the acknowledgement alone.
+    // inspected for its actual fields: state plus the keeper disposition.
+    // Child signaling is verified by the OBSERVED child end below, not by
+    // the acknowledgement alone.
     releaseObserved = await session.execute('release', { effects: ['controlRuntime'], onRelease: 'terminate', signal: 'SIGKILL' });
-    assert.ok(releaseObserved !== null && releaseObserved !== undefined, 'release returned an observed result envelope');
+    assert.ok(releaseObserved !== null && typeof releaseObserved === 'object', 'release returned an observed result envelope');
+    assert.ok('state' in releaseObserved, `the release envelope names its state: ${JSON.stringify(releaseObserved).slice(0, 200)}`);
+    assert.ok('keeper' in releaseObserved, 'the release envelope names its keeper disposition');
     evidence.releaseResult = releaseObserved;
 
     // The session's frame trace, when the surface exposes one, is retained
@@ -359,26 +380,43 @@ test('same-epoch assembly over a real debuggee through the production session', 
       closureFailures.push(`abort outstanding wait: ${String(err.message ?? err)}`);
     }
     try {
+      // Frame trace is captured BEFORE the session closes, on every path; an
+      // absent frames surface is recorded explicitly instead of silently
+      // omitted.
+      if (session) {
+        if (typeof session.frames === 'function') evidence.frameTrace = session.frames();
+        else evidence.frameTrace = { unavailable: true, reason: 'the session surface exposes no frames()' };
+      }
+    } catch (err) {
+      evidence.frameTrace = { unavailable: true, reason: String(err.message ?? err) };
+    }
+    try {
       if (session && typeof session.close === 'function') session.close();
     } catch (err) {
       closureFailures.push(`session.close: ${String(err.message ?? err)}`);
     }
     // Direct owned-child termination is the FALLBACK and follows actual
     // child liveness, not the presence of a release acknowledgement: an
-    // acknowledgement is not an observed exit.
+    // acknowledgement is not an observed exit. Intervening here is distinct
+    // evidence that the release path did not end the child.
     try {
       const child = run.child;
-      if (child && child.exitCode === null && child.signalCode === null) child.kill('SIGKILL');
+      if (child && child.exitCode === null && child.signalCode === null) {
+        const fallbackSignaled = child.kill('SIGKILL');
+        evidence.fallbackKill = { intervened: true, signaled: fallbackSignaled, pid: child.pid, note: 'release did not end the child before this fallback' };
+      }
     } catch (err) {
       closureFailures.push(`child fallback kill: ${String(err.message ?? err)}`);
     }
     let closure = null;
     let reapTimedOut = false;
+    const reapTimer = setTimeout(() => {}, 8000);
     try {
       closure = await Promise.race([
         finish(run),
         new Promise((resolve) => setTimeout(() => resolve(null), 8000)),
       ]);
+      clearTimeout(reapTimer);
       if (!closure) {
         reapTimedOut = true;
         closure = { exit: { code: null, signal: null, spawnError: null }, stdout: run.stdoutText(), stderr: run.stderrText(), reapTimedOut: true };

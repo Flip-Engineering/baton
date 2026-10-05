@@ -103,13 +103,27 @@ function makeResolverRecording(client, roots) {
 // Harness-only reference of the frozen decision contract, covering the
 // epoch/mutation cases this harness exercises; the asserted admitted shape
 // is {decision:'admitted', ok:true, identity}. The production admission with
-// its full condition set is exercised in cdp-composition.test.mjs.
+// its full condition set is exercised in cdp-composition.test.mjs. This
+// mirror and the manual epochs establish exploration behavior only; they do
+// not prove session authority.
 function admitRef(identity, live) {
   if (identity.runtime !== live.runtime) return { decision: 'refused', condition: 'foreignRuntime' };
   if (identity.epoch !== live.epoch) return { decision: 'refused', condition: 'staleReference' };
   if (identity.mutationGeneration !== live.mutationGeneration) return { decision: 'refused', condition: 'refRetiredByMutation' };
   return { decision: 'admitted', ok: true, identity };
 }
+
+// Test-owned normalizer mirror so the rendering path runs under the
+// mandatory injected-normalizer contract even in this exploration fixture.
+function requireAdmittedRef(decision) {
+  if (decision && decision.decision === 'admitted' && decision.ok === true && decision.identity && typeof decision.identity === 'object') {
+    return decision.identity;
+  }
+  const error = new Error('exploration normalizer refusal');
+  error.condition = decision && decision.decision === 'refused' && typeof decision.condition === 'string' ? decision.condition : 'refDecisionMalformed';
+  throw error;
+}
+const NORMALIZER = { requireAdmittedRef };
 
 function previewProperty(preview, name) {
   for (const property of preview?.properties ?? []) {
@@ -176,9 +190,12 @@ test('two pause epochs: scopes, previews, expansion, getters without execution, 
   const frame0 = second.params.callFrames[0];
   const localScope = frame0.scopeChain.find((scope) => scope.type === 'local');
   const scopeResponses = [];
+  const records = new Map();
   for (const scope of frame0.scopeChain) {
     if (scope.object && scope.object.objectId) {
-      scopeResponses.push(await client.send('Runtime.getProperties', { objectId: scope.object.objectId, generatePreview: true, ownAndAccessorProperties: true }));
+      const response = await client.send('Runtime.getProperties', { objectId: scope.object.objectId, generatePreview: true, ownAndAccessorProperties: true });
+      scopeResponses.push(response);
+      records.set(scope, response); // keyed by the ORIGINAL scope objects
     } else {
       scopeResponses.push(null);
     }
@@ -186,7 +203,7 @@ test('two pause epochs: scopes, previews, expansion, getters without execution, 
   const scopes = scopeSummaries({
     scopeChain: frame0.scopeChain,
     identity: identityEpoch2,
-    loadScope: (scope) => scopeResponses[frame0.scopeChain.indexOf(scope)] ?? { condition: 'noScopeObject' },
+    records,
   });
   assert.equal(scopes.condition, undefined);
   const localIndex = frame0.scopeChain.findIndex((scope) => scope.type === 'local');
@@ -249,8 +266,8 @@ test('two pause epochs: scopes, previews, expansion, getters without execution, 
   const retiredPayload = expansionPayload(bigObjectRaw, { ...identityEpoch2 });
   const retiredDecision = admitRef(retiredPayload.identity, liveAfterEvaluate);
   assert.equal(retiredDecision.decision, 'refused');
-  assert.equal(staleRefRefusal(retiredDecision).refused, true);
-  evidence.epoch2.retiredRef = { decision: retiredDecision, refusal: staleRefRefusal(retiredDecision) };
+  assert.equal(staleRefRefusal(retiredDecision, NORMALIZER).condition, 'refRetiredByMutation');
+  evidence.epoch2.retiredRef = { decision: retiredDecision, refusal: staleRefRefusal(retiredDecision, NORMALIZER) };
 
   // Epoch '3': the first-epoch object ref refuses by epoch string before any
   // backend request. The raw backend behavior with the old raw handle is
@@ -261,7 +278,9 @@ test('two pause epochs: scopes, previews, expansion, getters without execution, 
   const liveEpoch3 = { runtime: 'rt:fixture-app', epoch: '3', mutationGeneration: '1' };
   const staleDecision = admitRef({ ...oldIdentity }, liveEpoch3);
   assert.equal(staleDecision.decision, 'refused');
-  assert.equal(admissionOutcome(staleDecision).admitted, false);
+  const staleOutcome = admissionOutcome(staleDecision, NORMALIZER);
+  assert.equal(staleOutcome.admitted, false);
+  assert.equal(staleOutcome.condition, 'staleReference');
   let rawReuse;
   try {
     rawReuse = await client.send('Runtime.getProperties', { objectId: globalHandleDescriptor.value.objectId });
@@ -270,7 +289,7 @@ test('two pause epochs: scopes, previews, expansion, getters without execution, 
   }
   const stack3 = mapStackFrames({ callFrames: third.params.callFrames, resolveOriginal: makeResolver(client, [FIXTURES, tmpdir()]) });
   assert.equal(stack3.frames[0].functionName, 'second');
-  evidence.epoch3 = { staleDecision, refusal: staleRefRefusal(staleDecision), rawReuseWithOldHandle: rawReuse };
+  evidence.epoch3 = { staleDecision, refusal: staleRefRefusal(staleDecision, NORMALIZER), rawReuseWithOldHandle: rawReuse };
   retain('app-epochs', evidence);
 
   client.close();

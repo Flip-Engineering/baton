@@ -11,7 +11,9 @@
 // re-verified against its manifest before and after every case. Case
 // directories are exclusive (reserved with exclusive creation, never
 // deleted or reused), separate the compiled input tree from the evidence
-// area, and are retained. Each case follows one fixed order: copy the
+// area, and are retained. The frozen input snapshot is re-verified before
+// every case and after the whole loop, and detected drift stops all
+// remaining acquisitions. Each case follows one fixed order: copy the
 // frozen input, verify the copied input is unchanged against the snapshot
 // (a failure prevents the spawn), make the single exact edit, verify the
 // edited input against the snapshot with the declared change (a failure
@@ -102,12 +104,15 @@ function resolveBend() {
   return null;
 }
 
-// Exclusive evidence root reservation: recursive:false mkdir succeeds only
-// for the creator, so two concurrent runs never share or delete each other's
-// evidence.
+// Exclusive evidence root reservation: the parent is created with
+// recursive:true first (shared-safe), then the leaf is reserved with
+// recursive:false so only the creator wins. A storage failure before the
+// root exists is reported truthfully on the console; no summary at a null
+// path is promised.
 function reserveEvidenceRoot() {
   const base = process.env.BATON_RUNTIME_EVIDENCE_DIR
     ?? join(ROOT, '.scratch', 'runtime-values-laws-evidence', new Date().toISOString().replace(/[:.]/g, '-'));
+  mkdirSync(dirname(base), { recursive: true });
   try {
     mkdirSync(base, { recursive: false });
     return base;
@@ -226,9 +231,11 @@ function freezeSnapshot() {
   };
 }
 
-// Re-verifies the frozen snapshot against its own manifest: every file must
-// still exist with the recorded bytes, and no file may have appeared. Used
-// before and after the case loop.
+// Re-verifies the frozen INPUT snapshot against its own manifest: the walk
+// covers the bend2 input root only (the metadata manifest.json was written
+// after the file inventory, so it is not an input); the manifest document
+// itself is bound separately by digest. Every input file must still exist
+// with the recorded bytes, and no input file may have appeared.
 function verifySnapshot(snapshot) {
   const files = [];
   const walk = (dir) => {
@@ -237,11 +244,11 @@ function verifySnapshot(snapshot) {
       if (entry.isDirectory()) walk(full);
       else {
         const bytes = readFileSync(full);
-        files.push({ path: relative(snapshot.root, full), bytes: bytes.length, sha256: sha256Hex(bytes) });
+        files.push({ path: relative(snapshot.bend2Root, full), bytes: bytes.length, sha256: sha256Hex(bytes) });
       }
     }
   };
-  walk(snapshot.root);
+  walk(snapshot.bend2Root);
   files.sort((a, b) => (a.path < b.path ? -1 : 1));
   const recorded = JSON.parse(snapshot.manifestBytes.toString('utf8')).files;
   const drift = [];
@@ -249,13 +256,15 @@ function verifySnapshot(snapshot) {
   const currentPaths = new Set(files.map((file) => file.path));
   for (const file of recorded) {
     const current = files.find((candidate) => candidate.path === file.path);
-    if (!current) drift.push({ path: file.path, reason: 'missing from the frozen snapshot' });
+    if (!current) drift.push({ path: file.path, reason: 'missing from the frozen input' });
     else if (current.sha256 !== file.sha256 || current.bytes !== file.bytes) drift.push({ path: file.path, reason: 'content differs from the manifest' });
   }
   for (const file of files) {
     if (!recordedPaths.has(file.path)) drift.push({ path: file.path, reason: 'appeared after the manifest was written' });
   }
-  return { verified: drift.length === 0, drift };
+  const manifestNow = safeFileDigest(join(snapshot.root, 'manifest.json'));
+  const manifestBinding = { manifestPath: 'snapshot/manifest.json', digest: manifestNow.sha256, matchesReservation: manifestNow.sha256 === snapshot.manifestDigest };
+  return { verified: drift.length === 0 && manifestBinding.matchesReservation, inputDrift: drift, manifestBinding };
 }
 
 // Prepares a retained case directory with a separated input tree and
@@ -394,8 +403,7 @@ const rows = [];
 let summaryWritten = false;
 let storageFailures = 0;
 function writeSummary(failures, extra) {
-  if (summaryWritten) return;
-  summaryWritten = true;
+  if (summaryWritten) return { stored: true };
   const total = failures + storageFailures;
   try {
     writeFileSync(
@@ -437,8 +445,14 @@ function writeSummary(failures, extra) {
         ...extra,
       }, null, 2),
     );
+    summaryWritten = true;
+    return { stored: true };
   } catch (err) {
-    console.log(JSON.stringify({ summaryWriteError: String(err.message ?? err) }));
+    // Summary persistence is REQUIRED evidence: a failed write is a storage
+    // failure that fails the run, and the rows remain only on the console.
+    storageFailures += 1;
+    console.log(JSON.stringify({ summaryWriteError: String(err.message ?? err), storageFailures }));
+    return { stored: false };
   }
 }
 
@@ -541,19 +555,34 @@ try {
   }
   // Bind the executed producer bytes to the frozen copies and verify the
   // snapshot against its manifest before any case.
-  identity.entryBytes = safeFileDigest(join(snapshot.root, LAW_ENTRY));
-  identity.producerBytes.runnerFrozen = safeFileDigest(join(snapshot.root, relative(join(ROOT, 'bend2'), import.meta.filename)));
-  identity.producerBytes.definitionsFrozen = safeFileDigest(join(snapshot.root, relative(join(ROOT, 'bend2'), join(import.meta.dirname, 'laws-mutation-definitions.mjs'))));
+  identity.entryBytes = safeFileDigest(join(snapshot.bend2Root, relative(join(ROOT, 'bend2'), LAW_ENTRY)));
+  identity.producerBytes.runnerFrozen = safeFileDigest(join(snapshot.bend2Root, relative(join(ROOT, 'bend2'), import.meta.filename)));
+  identity.producerBytes.definitionsFrozen = safeFileDigest(join(snapshot.bend2Root, relative(join(ROOT, 'bend2'), join(import.meta.dirname, 'laws-mutation-definitions.mjs'))));
   identity.producerBytes.frozenCopiesMatchLive =
+    identity.producerBytes.runnerFrozen.sha256 !== undefined &&
+    identity.producerBytes.definitionsFrozen.sha256 !== undefined &&
     identity.producerBytes.runnerFrozen.sha256 === identity.producerBytes.runnerLive.sha256 &&
     identity.producerBytes.definitionsFrozen.sha256 === identity.producerBytes.definitionsLive.sha256;
+  if (!identity.producerBytes.frozenCopiesMatchLive) {
+    record({
+      control: 'producer-bytes-mismatch',
+      kind: 'setup',
+      acquired: false,
+      notAcquiredClass: 'producer-bytes-mismatch',
+      noProcess: { reason: 'the executed runner/definition bytes do not match their frozen snapshot copies; refusing before baseline', producerBytes: identity.producerBytes },
+    });
+    const stored = writeSummary((failures += 1), { stopped: 'producer-bytes-mismatch' });
+    console.log(`laws-mutations: red - producer bytes do not match the frozen snapshot (summary stored: ${stored.stored})`);
+    process.exit(1);
+  }
   identity.baseInputClosure = { manifestDigest: snapshot.manifestDigest, fileCount: snapshot.fileCount, bytes: snapshot.bytes };
   writeFileSync(join(EVIDENCE_DIR, '000-run-identity.json'), JSON.stringify(identity, null, 2));
   const preVerify = verifySnapshot(snapshot);
   writeFileSync(join(EVIDENCE_DIR, '002-snapshot-verify-pre.json'), JSON.stringify(preVerify, null, 2));
   if (!preVerify.verified) {
     record({ control: 'snapshot-verify-pre', kind: 'setup', acquired: false, notAcquiredClass: 'snapshot-drift', noProcess: { reason: 'frozen snapshot drifted from its manifest before any case', drift: preVerify.drift } });
-    writeSummary((failures += 1), { stopped: 'snapshot-drift' });
+    const stored = writeSummary((failures += 1), { stopped: 'snapshot-drift' });
+    console.log(`laws-mutations: red - snapshot drifted before any case (summary stored: ${stored.stored})`);
     process.exit(1);
   }
 
@@ -564,7 +593,8 @@ try {
   const baselinePreDiff = closureDiff(baseline.inputBend2Dir, snapshot.bend2Root, null);
   if (!baselinePreDiff.closureMatches) {
     record({ control: 'baseline', kind: 'baseline', acquired: false, notAcquiredClass: 'pre-spawn-closure-mismatch', executedCwd: baseline.inputDir, preDiff: baselinePreDiff, noProcess: { reason: 'the copied input did not match the frozen snapshot before the spawn' } });
-    writeSummary((failures += 1), { stopped: 'baseline-closure' });
+    const stored = writeSummary((failures += 1), { stopped: 'baseline-closure' });
+    console.log(`laws-mutations: red - baseline closure mismatch (summary stored: ${stored.stored})`);
     process.exit(1);
   }
   const baselineRun = runCompiler(baseline.inputDir);
@@ -606,8 +636,8 @@ try {
     rawStreams: writeProcessStreams(baseline.evidenceDir, baselineRun),
   });
   if (!baselineAcquired) {
-    writeSummary((failures += 1), { stopped: 'baseline-did-not-compile-cleanly', baselineObservationDigest });
-    console.log('laws-mutations: red - baseline did not compile cleanly on the frozen snapshot');
+    const stored = writeSummary((failures += 1), { stopped: 'baseline-did-not-compile-cleanly', baselineObservationDigest });
+    console.log(`laws-mutations: red - baseline did not compile cleanly on the frozen snapshot (summary stored: ${stored.stored})`);
     process.exit(1);
   }
 
@@ -617,13 +647,25 @@ try {
   }
 
   // Case order: copy -> verify unchanged (prevents spawn) -> edit -> verify
-  // edited (prevents spawn) -> compile -> verify edited again.
-  function verifyOrFail(paths, law, preDiff, editedDiff, postDiff) {
-    if (!preDiff.closureMatches) {
+  // edited (prevents spawn) -> compile -> verify edited again. Each phase is
+  // explicit: the edited verification is REQUIRED before the compiler is
+  // invoked, and the post-spawn verification is checked only after a run.
+  // The frozen input snapshot is re-verified before every case and the whole
+  // loop stops on drift.
+  function verifySnapshotOrFail(caseName) {
+    const verification = verifySnapshot(snapshot);
+    if (!verification.verified) {
+      record({ control: `snapshot-drift:${caseName}`, kind: 'setup', acquired: false, notAcquiredClass: 'snapshot-drift', noProcess: { reason: 'the frozen input drifted before this case; all remaining acquisitions stop', drift: verification.inputDrift, manifestBinding: verification.manifestBinding } });
+      return false;
+    }
+    return true;
+  }
+  function verifyOrFail(paths, law, { preDiff, editedDiff = null, postDiff = null }) {
+    if (!preDiff || !preDiff.closureMatches) {
       record({ control: `${law.kind}:${law.name}`, kind: law.kind, law: law.name, source: law.source, acquired: false, notAcquiredClass: 'pre-spawn-closure-mismatch', executedCwd: paths.inputDir, preDiff, noProcess: { reason: 'the copied input did not match the frozen snapshot before the edit' } });
       return false;
     }
-    if (!editedDiff.closureMatches) {
+    if (!editedDiff || !editedDiff.closureMatches) {
       record({ control: `${law.kind}:${law.name}`, kind: law.kind, law: law.name, source: law.source, acquired: false, notAcquiredClass: 'edited-closure-mismatch', executedCwd: paths.inputDir, editedDiff, noProcess: { reason: 'the edited input did not match the snapshot with exactly the declared change' } });
       return false;
     }
@@ -635,7 +677,14 @@ try {
   }
 
   for (const law of PROOF_REMOVAL_LAWS) {
+    let phase = 'setup';
+    let run = null;
     try {
+      if (!verifySnapshotOrFail(`proof-${law.name}`)) {
+        failures += 1;
+        break;
+      }
+      phase = 'copy';
       const paths = nextCase(`proof-${law.name}`);
       const original = readFileSync(join(snapshot.root, law.file));
       const originalText = original.toString('utf8');
@@ -649,23 +698,29 @@ try {
       const edit = uniqueEdit(original, matches[0], '\n');
       const changed = Buffer.from(originalText.slice(0, edit.charOffset) + '\n' + originalText.slice(edit.charOffset + matches[0].length), 'utf8');
       const targetRelative = relative('bend2', law.file);
+      phase = 'pre-verify';
       const preDiff = closureDiff(paths.inputBend2Dir, snapshot.bend2Root, null);
-      if (!verifyOrFail(paths, { kind: 'proof-removal', name: law.name, source: law.file }, preDiff, null, null)) {
+      if (!verifyOrFail(paths, { kind: 'proof-removal', name: law.name, source: law.file }, { preDiff })) {
         failures += 1;
         continue;
       }
+      phase = 'edit';
       writeFileSync(join(paths.inputDir, law.file), changed);
       const editedDiff = closureDiff(paths.inputBend2Dir, snapshot.bend2Root, { relativePath: targetRelative, bytes: changed });
-      if (!verifyOrFail(paths, { kind: 'proof-removal', name: law.name, source: law.file }, preDiff, editedDiff, null)) {
+      if (!verifyOrFail(paths, { kind: 'proof-removal', name: law.name, source: law.file }, { preDiff, editedDiff })) {
         failures += 1;
         continue;
       }
+      phase = 'evidence';
       const lawBlock = extractLawBlock(original, law.name);
       const changedLawBlock = extractLawBlock(changed, law.name);
       if (lawBlock) writeFileSync(join(paths.evidenceDir, `law-${law.name}.txt`), lawBlock.bytes);
       writeFileSync(join(paths.evidenceDir, 'removed-proof.txt'), Buffer.from(matches[0], 'utf8'));
-      const run = runCompiler(paths.inputDir);
+      phase = 'compile';
+      run = runCompiler(paths.inputDir);
+      phase = 'post-verify';
       const postDiff = closureDiff(paths.inputBend2Dir, snapshot.bend2Root, { relativePath: targetRelative, bytes: changed });
+      phase = 'streams';
       const rawStreams = writeProcessStreams(paths.evidenceDir, run);
       const closureOk = postDiff.closureMatches;
       const lawUnchanged = lawBlock !== null && changedLawBlock !== null && lawBlock.bytes.equals(changedLawBlock.bytes);
@@ -699,13 +754,29 @@ try {
       });
       if (!acquired) failures += 1;
     } catch (caseError) {
-      record({ control: `proof-removal:${law.name}`, kind: 'proof-removal', law: law.name, acquired: false, notAcquiredClass: 'case-setup-failure', noProcess: { reason: String(caseError.message ?? caseError) } });
+      // Phase-truthful failure: after the compiler ran, the process record
+      // and post-diff phase are preserved instead of an invented noProcess.
+      if (run) {
+        record({ control: `proof-removal:${law.name}`, kind: 'proof-removal', law: law.name, acquired: false, notAcquiredClass: 'case-teardown-failure', phase, process: run, noProcess: undefined, caseError: String(caseError.message ?? caseError) });
+        try {
+          writeProcessStreams(paths?.evidenceDir ?? join(CASES_DIR, 'orphan'), run);
+        } catch {}
+      } else {
+        record({ control: `proof-removal:${law.name}`, kind: 'proof-removal', law: law.name, acquired: false, notAcquiredClass: 'case-setup-failure', phase, noProcess: { reason: String(caseError.message ?? caseError) } });
+      }
       failures += 1;
     }
   }
 
   for (const definition of MUTATION_DEFINITIONS) {
+    let phase = 'setup';
+    let run = null;
     try {
+      if (!verifySnapshotOrFail(`mutation-${definition.name}`)) {
+        failures += 1;
+        break;
+      }
+      phase = 'copy';
       const paths = nextCase(`mutation-${definition.name}`);
       const original = readFileSync(join(snapshot.root, definition.file));
       const edit = uniqueEdit(original, definition.find, definition.replace);
@@ -716,22 +787,28 @@ try {
       }
       const changed = Buffer.from(original.toString('utf8').slice(0, edit.charOffset) + definition.replace + original.toString('utf8').slice(edit.charOffset + definition.find.length), 'utf8');
       const targetRelative = relative('bend2', definition.file);
+      phase = 'pre-verify';
       const preDiff = closureDiff(paths.inputBend2Dir, snapshot.bend2Root, null);
-      if (!verifyOrFail(paths, { kind: 'mutation', name: definition.name, source: definition.file }, preDiff, null, null)) {
+      if (!verifyOrFail(paths, { kind: 'mutation', name: definition.name, source: definition.file }, { preDiff })) {
         failures += 1;
         continue;
       }
+      phase = 'edit';
       writeFileSync(join(paths.inputDir, definition.file), changed);
       const editedDiff = closureDiff(paths.inputBend2Dir, snapshot.bend2Root, { relativePath: targetRelative, bytes: changed });
-      if (!verifyOrFail(paths, { kind: 'mutation', name: definition.name, source: definition.file }, preDiff, editedDiff, null)) {
+      if (!verifyOrFail(paths, { kind: 'mutation', name: definition.name, source: definition.file }, { preDiff, editedDiff })) {
         failures += 1;
         continue;
       }
+      phase = 'evidence';
       const lawBlock = extractLawBlock(original, definition.law);
       const changedLawBlock = extractLawBlock(changed, definition.law);
       if (lawBlock) writeFileSync(join(paths.evidenceDir, `law-${definition.law}.txt`), lawBlock.bytes);
-      const run = runCompiler(paths.inputDir);
+      phase = 'compile';
+      run = runCompiler(paths.inputDir);
+      phase = 'post-verify';
       const postDiff = closureDiff(paths.inputBend2Dir, snapshot.bend2Root, { relativePath: targetRelative, bytes: changed });
+      phase = 'streams';
       const rawStreams = writeProcessStreams(paths.evidenceDir, run);
       const closureOk = postDiff.closureMatches;
       const lawUnchanged = lawBlock !== null && changedLawBlock !== null && lawBlock.bytes.equals(changedLawBlock.bytes);
@@ -778,7 +855,14 @@ try {
       });
       if (!acquired) failures += 1;
     } catch (caseError) {
-      record({ control: `mutation:${definition.name}`, kind: 'mutation', law: definition.law, acquired: false, notAcquiredClass: 'case-setup-failure', noProcess: { reason: String(caseError.message ?? caseError) } });
+      if (run) {
+        record({ control: `mutation:${definition.name}`, kind: 'mutation', law: definition.law, acquired: false, notAcquiredClass: 'case-teardown-failure', phase, process: run, noProcess: undefined, caseError: String(caseError.message ?? caseError) });
+        try {
+          writeProcessStreams(paths?.evidenceDir ?? join(CASES_DIR, 'orphan'), run);
+        } catch {}
+      } else {
+        record({ control: `mutation:${definition.name}`, kind: 'mutation', law: definition.law, acquired: false, notAcquiredClass: 'case-setup-failure', phase, noProcess: { reason: String(caseError.message ?? caseError) } });
+      }
       failures += 1;
     }
   }
@@ -787,11 +871,12 @@ try {
   const postVerify = verifySnapshot(snapshot);
   writeFileSync(join(EVIDENCE_DIR, '003-snapshot-verify-post.json'), JSON.stringify(postVerify, null, 2));
   if (!postVerify.verified) failures += 1;
-  writeSummary(failures, { snapshot: { manifestDigest: snapshot.manifestDigest, fileCount: snapshot.fileCount }, snapshotVerifiedPost: postVerify.verified });
+  const summary = writeSummary(failures, { snapshot: { manifestDigest: snapshot.manifestDigest, fileCount: snapshot.fileCount }, snapshotVerifiedPost: postVerify.verified });
+  const runHealthy = failures === 0 && storageFailures === 0 && postVerify.verified && summary.stored;
   console.log(
-    `laws-mutations: ${failures === 0 && storageFailures === 0 ? 'complete' : 'incomplete'} - baseline + ${PROOF_REMOVAL_LAWS.length} proof removals + ${MUTATION_DEFINITIONS.length} mutations, ${failures} failures, ${storageFailures} storage failures, evidence in ${EVIDENCE_DIR}`,
+    `laws-mutations: ${runHealthy ? 'complete' : 'incomplete'} - baseline + ${PROOF_REMOVAL_LAWS.length} proof removals + ${MUTATION_DEFINITIONS.length} mutations, ${failures} failures, ${storageFailures} storage failures, summary stored: ${summary.stored}, evidence in ${EVIDENCE_DIR}`,
   );
-  process.exit(failures === 0 && storageFailures === 0 ? 0 : 1);
+  process.exit(runHealthy ? 0 : 1);
 } catch (runError) {
   failures += 1;
   writeSummary(failures, { stopped: `setup-failure: ${String(runError && runError.stack ? runError.stack : runError)}` });

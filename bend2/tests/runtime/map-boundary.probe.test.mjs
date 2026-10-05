@@ -11,22 +11,27 @@
 // Noncoverage and reader errors are reported as UNEXERCISED or FAILED
 // acquisition outcomes, never as passed defect coverage. Every run retains
 // the boundary, mutation-completion, worker outcome and child completion
-// facts separately, with complete raw child streams.
+// facts separately, with exact raw stdout and stderr buffers (lengths and
+// digests, never re-encoded) and any JSON parse failures.
 //
 // Synchronization and ownership: the child (which spawns the worker) is
 // spawned asynchronously; the parent waits for the worker's 'started'
 // message through one continuously installed line queue, applies the
 // mutation, awaits its completion, then collects the outcome and the child
-// close through the same queue and a separate close promise. runProbe owns
-// all cleanup in its own finally: the child is killed if still alive, its
-// close is awaited even on failures, and every failure field is retained.
-// No artificial child outcome is ever produced.
+// close through the same queue and a separate close promise. The close
+// promise settles ONLY on an actual close; an error event is recorded
+// separately. runProbe owns all cleanup in its own finally: the child is
+// killed if still alive, its close is awaited even on failures, and every
+// failure field is retained. The whole probe is supervised: a setup failure
+// still returns the root and facts so the caller's retention runs. No
+// artificial child outcome is ever produced.
 
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { StringDecoder } from 'node:string_decoder';
 import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
 import { pathToFileURL, fileURLToPath } from 'node:url';
@@ -56,27 +61,36 @@ function buildWorkerSource() {
 }
 
 // One continuously installed byte-retaining parser: every chunk is kept in
-// the raw log and complete lines are queued from spawn onward, so messages
-// that arrive before a wait - or several in one chunk - are never
-// discarded. waitFor scans the queue first, then waits for new lines.
+// the raw log and complete lines are queued from spawn onward. Streaming
+// StringDecoder keeps split multibyte sequences intact across chunks, and a
+// JSON parse failure is retained instead of escaping through the data
+// callback. The exact raw bytes stay in rawChunks; nothing decoded is ever
+// written back as raw evidence.
 class LineQueue {
-  constructor(stream) {
+  constructor(stream, parseErrors) {
     this.lines = [];
     this.rawChunks = [];
     this.waiters = [];
+    this.parseErrors = parseErrors;
+    const decoder = new StringDecoder('utf8');
     let buffer = '';
     stream.on('data', (chunk) => {
       this.rawChunks.push(Buffer.from(chunk));
-      buffer += chunk.toString('utf8');
+      buffer += decoder.write(chunk);
       let index;
       while ((index = buffer.indexOf('\n')) !== -1) {
         const line = buffer.slice(0, index);
         buffer = buffer.slice(index + 1);
         if (line.startsWith('{')) {
-          const parsed = JSON.parse(line);
+          let parsed;
+          try {
+            parsed = JSON.parse(line);
+          } catch (err) {
+            this.parseErrors.push({ line: line.slice(0, 200), error: String(err.message ?? err) });
+            continue;
+          }
           this.lines.push(parsed);
-          const stillWaiting = this.waiters.filter((waiter) => !waiter.settled);
-          for (const waiter of stillWaiting) {
+          for (const waiter of this.waiters.filter((waiter) => !waiter.settled)) {
             const hit = this.lines.find(waiter.predicate);
             if (hit) {
               waiter.settled = true;
@@ -105,25 +119,43 @@ class LineQueue {
   }
 }
 
-// Runs one stress probe. Owns all cleanup: on any failure the child is
-// killed and its close awaited inside this function, the facts retain the
-// actual failure fields, and no exception escapes before the caller has the
-// root and facts.
-async function runProbe(mutate, options = {}) {
-  const root = mkdtempSync(join(tmpdir(), 'rtv-boundary-'));
-  const target = join(root, 'big.map');
-  writeFileSync(target, ORIGINAL_CHUNK);
-  const workerFile = join(root, 'reader-worker.mjs');
-  writeFileSync(workerFile, buildWorkerSource());
-  const facts = {
+function freshFacts() {
+  return {
     boundaryReached: false,
     mutationCompleted: false,
     mutationError: null,
     workerOutcome: null,
-    child: { exitCode: null, signal: null, error: null, closeTimedOut: false },
+    workerExit: null,
+    child: { exitCode: null, signal: null, error: null, closeObserved: false, closeTimedOut: false },
     rawStdout: [],
+    rawStderr: [],
+    parseErrors: [],
     coverage: 'unknown',
+    setupError: null,
+    probeError: null,
   };
+}
+
+// The whole probe is supervised: a setup failure still returns the root and
+// the facts with setupError, so the caller's cleanup and retention always
+// run.
+async function runProbe(mutate, options = {}) {
+  const root = mkdtempSync(join(tmpdir(), 'rtv-boundary-'));
+  const facts = freshFacts();
+  try {
+    const bodyFacts = await runProbeBody(root, facts, mutate, options);
+    return { root, facts: bodyFacts };
+  } catch (err) {
+    facts.setupError = String(err.message ?? err);
+    return { root, facts };
+  }
+}
+
+async function runProbeBody(root, facts, mutate, options) {
+  const target = join(root, 'big.map');
+  writeFileSync(target, ORIGINAL_CHUNK);
+  const workerFile = join(root, 'reader-worker.mjs');
+  writeFileSync(workerFile, buildWorkerSource());
   let child = null;
   let childClosed = null;
   const guard = setTimeout(() => {
@@ -134,18 +166,24 @@ async function runProbe(mutate, options = {}) {
       `const { Worker } = require('node:worker_threads');`,
       `const worker = new Worker(${JSON.stringify(workerFile)}, { workerData: { path: ${JSON.stringify(target)}, admittedRoots: [${JSON.stringify(root)}] } });`,
       'worker.on("message", (m) => { console.log(JSON.stringify(m)); });',
-      'worker.on("error", (e) => { console.log(JSON.stringify({ outcome: { ok: false, condition: "worker-error", message: String(e) } })); });',
+      'worker.on("error", (e) => { console.log(JSON.stringify({ workerError: String(e) })); });',
       'worker.on("exit", (code, signal) => { console.log(JSON.stringify({ workerExit: { code, signal } })); });',
       '',
     ].join('\n')], { stdio: ['ignore', 'pipe', 'pipe'] });
-    const queue = new LineQueue(child.stdout);
-    child.stderr.on('data', (chunk) => facts.rawStdout.push(Buffer.from(`[stderr] ${chunk}`)));
+    facts.rawStdout = [];
+    facts.rawStderr = [];
+    const queue = new LineQueue(child.stdout, facts.parseErrors);
+    child.stderr.on('data', (chunk) => facts.rawStderr.push(Buffer.from(chunk)));
+    // The close promise settles ONLY on an actual close; an error event is
+    // recorded separately and does not masquerade as reaping.
     childClosed = new Promise((resolve) => {
       child.on('error', (err) => {
         facts.child.error = String(err.message ?? err);
-        resolve({ exitCode: null, signal: null, error: facts.child.error });
       });
-      child.on('close', (code, signal) => resolve({ exitCode: code, signal, error: null }));
+      child.on('close', (code, signal) => {
+        facts.child.closeObserved = true;
+        resolve({ exitCode: code, signal });
+      });
     });
 
     const started = await queue.waitFor((message) => message.event === 'started', options.startTimeoutMs ?? 30000, () => null);
@@ -173,15 +211,21 @@ async function runProbe(mutate, options = {}) {
       else if (close) {
         facts.child.exitCode = close.exitCode;
         facts.child.signal = close.signal;
-        facts.child.error = close.error;
       }
     }
     facts.rawStdoutBytes = Buffer.concat(facts.rawStdout);
+    facts.rawStderrBytes = Buffer.concat(facts.rawStderr);
+    facts.rawStdoutLength = facts.rawStdoutBytes.length;
+    facts.rawStderrLength = facts.rawStderrBytes.length;
+    facts.rawStdoutSha256 = createHash('sha256').update(facts.rawStdoutBytes).digest('hex');
+    facts.rawStderrSha256 = createHash('sha256').update(facts.rawStderrBytes).digest('hex');
     facts.rawStdoutText = facts.rawStdoutBytes.toString('utf8');
   }
   // Coverage stays UNKNOWN by design: no internal admission/open/read
   // sequence is observed, so neither the refusal nor the success identifies
-  // the tested interval.
+  // the tested interval. Worker errors, missing outcomes and nonzero worker
+  // exits are recorded as facts and classified as failed acquisition by the
+  // tests; the recorded verdict and read digest facts stand on their own.
   if (facts.workerOutcome && facts.workerOutcome.ok === false && facts.workerOutcome.condition === 'mapReplacedDuringRead') {
     facts.readerVerdict = 'mapReplacedDuringRead';
   } else if (facts.workerOutcome && facts.workerOutcome.ok === true) {
@@ -192,7 +236,7 @@ async function runProbe(mutate, options = {}) {
   } else {
     facts.readerVerdict = facts.workerOutcome ? `condition:${facts.workerOutcome.condition ?? 'unknown'}` : 'no-outcome';
   }
-  return { root, facts };
+  return facts;
 }
 
 function retainProbe(name, record) {
@@ -201,23 +245,34 @@ function retainProbe(name, record) {
   writeFileSync(join(dir, `probe-${name}.json`), JSON.stringify(record, null, 2));
 }
 
+// Acquisition health gate shared by both probes: these are FAILED
+// acquisition outcomes, never successful coverage.
+function assertAcquisitionHealthy(facts) {
+  assert.equal(facts.setupError, null, `setup failed: ${facts.setupError}`);
+  assert.equal(facts.probeError, null, `probe error: ${facts.probeError}`);
+  assert.equal(facts.boundaryReached, true, 'the worker reported its start boundary');
+  assert.equal(facts.mutationError, null, `mutation completed: ${facts.mutationError ?? ''}`);
+  assert.equal(facts.child.error, null, `no child error: ${facts.child.error}`);
+  assert.equal(facts.child.closeObserved, true, 'the child close was observed');
+  assert.equal(facts.child.closeTimedOut, false, 'the child close did not time out');
+  assert.ok(facts.child.exitCode !== null || facts.child.signal !== null, 'the child close carried status or signal');
+  assert.equal(facts.workerExit !== null, true, 'the worker exit was observed');
+  if (facts.workerExit) {
+    assert.equal(facts.workerExit.code, 0, `the worker exited cleanly (code ${facts.workerExit.code}, signal ${facts.workerExit.signal})`);
+    assert.equal(facts.workerExit.signal, null);
+  }
+  assert.ok(facts.workerOutcome, 'the reader outcome was observed');
+  assert.equal(facts.workerOutcome.condition, undefined, `no worker-level error surfaced: ${facts.workerOutcome.message ?? ''}`);
+  assert.deepEqual(facts.parseErrors, [], 'no JSON parse failures');
+}
+
 test('in-place same-size concurrent stress: acquired facts retained, coverage unknown by design', async () => {
   const { root, facts } = await runProbe(async (rootDir, targetPath) => {
     writeFileSync(targetPath, REPLACED_CHUNK);
   });
   try {
     retainProbe('in-place', facts);
-    // Acquisition health is the failure surface: a missing boundary, an
-    // incomplete mutation, a child error, a close timeout, or a missing
-    // outcome is a FAILED acquisition, never successful coverage.
-    assert.equal(facts.boundaryReached, true, 'the worker reported its start boundary');
-    assert.equal(facts.mutationError, null, `mutation completed: ${facts.mutationError ?? ''}`);
-    assert.equal(facts.child.error, null, `no child error: ${facts.child.error}`);
-    assert.equal(facts.child.closeTimedOut, false, 'the child close was observed');
-    assert.ok(facts.child.exitCode !== null || facts.child.signal !== null, 'the child close was observed with status or signal');
-    assert.ok(facts.workerOutcome, 'the reader outcome was observed');
-    // Interval coverage is reported unknown; only the recorded verdict and
-    // read digest facts stand.
+    assertAcquisitionHealthy(facts);
     assert.equal(facts.coverage, 'unknown');
     if (facts.readerVerdict === 'accepted') {
       assert.ok(
@@ -239,12 +294,7 @@ test('rename-over substitution concurrent stress: verdicts are recorded, coverag
   });
   try {
     retainProbe('substitution', facts);
-    assert.equal(facts.boundaryReached, true, 'the worker reported its start boundary');
-    assert.equal(facts.mutationError, null, `mutation completed: ${facts.mutationError ?? ''}`);
-    assert.equal(facts.child.error, null, `no child error: ${facts.child.error}`);
-    assert.equal(facts.child.closeTimedOut, false, 'the child close was observed');
-    assert.ok(facts.child.exitCode !== null || facts.child.signal !== null, 'the child close was observed with status or signal');
-    assert.ok(facts.workerOutcome, 'the reader outcome was observed');
+    assertAcquisitionHealthy(facts);
     assert.equal(facts.coverage, 'unknown');
     // A mapReadFailed refusal is recorded as a reader condition, never as
     // covered replacement coverage.

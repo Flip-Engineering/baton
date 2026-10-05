@@ -82,9 +82,11 @@ function sha256Hex(bytes) {
 // nanosecond timestamps do not PROVE the bytes never changed - a
 // restoration that also restores timestamps, or a same-tick resolution
 // residual, can suppress detection. The digest recorded beside the identity
-// is the binding evidence for what was read; the boundary probes retained
-// with this module exercise substitution and in-place-write intervals
-// against these checks on admitted remote runs.
+// is the binding evidence for what was read. The retained boundary probes
+// are CONCURRENT STRESS ACQUISITION with interval coverage UNKNOWN by
+// design: they record reader verdicts and read digests against these
+// checks on admitted remote runs and never claim that an interval was
+// exercised.
 export function createAdmittedFileReader({ admittedRoots = [] } = {}) {
   let roots = null;
   const resolveRoots = () => {
@@ -526,14 +528,16 @@ export function loadSourceMap({ sourceMapURL, generatedPath = null, admittedRoot
     return { condition: 'mapReadFailed', sourceMapURL, path: mapPath ?? null, detail: String(err) };
   }
   if (!read || typeof read !== 'object' || !read.identity || typeof read.identity !== 'object' ||
-      typeof read.identity.realPath !== 'string' ||
-      typeof read.identity.dev === 'undefined' || typeof read.identity.ino === 'undefined' ||
-      typeof read.identity.size === 'undefined') {
+      typeof read.identity.path !== 'string' || read.identity.path === '' ||
+      typeof read.identity.realPath !== 'string' || read.identity.realPath === '' ||
+      typeof read.identity.dev !== 'string' || !/^[0-9]+$/.test(read.identity.dev) ||
+      typeof read.identity.ino !== 'string' || !/^[0-9]+$/.test(read.identity.ino) ||
+      typeof read.identity.size !== 'string' || !/^[0-9]+$/.test(read.identity.size)) {
     return {
       condition: 'readCapabilityIdentityMissing',
       sourceMapURL,
       path: mapPath ?? null,
-      detail: 'an injected read capability must capture an admitted descriptor identity (path, realPath, dev, ino, size) before the bytes are read and state its capture limits',
+      detail: "an injected read capability must capture an admitted descriptor identity BEFORE the bytes are read and state its capture limits; the identity shape is {path, realPath, dev, ino, size} with dev/ino/size as decimal strings, and capture-before-read is the capability implementation's own guarantee - this guard checks the returned record, not the capture moment",
     };
   }
   try {
