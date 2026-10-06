@@ -1203,3 +1203,33 @@ law a_custody_naming_another_keeper_is_foreign:
 
 def a_custody_naming_another_keeper_is_foreign():
   {==}
+
+law a_claim_is_issued_against_the_matched_label:
+  {ContextObserver.claim_statement("q1","starter","0","pending","{}") == ContextRoles.release_claim_sql("q1","starter","0","pending","{}") : String}
+
+def a_claim_is_issued_against_the_matched_label():
+  {==}
+
+law an_attempt_claim_matches_the_committed_delivery:
+  {ContextObserver.claim_attempt_statement("q1","starter","0","pending","{\"delivery\":\"attempted\"}") == ContextRoles.release_claim_sql("q1","starter","0","pending","{\"delivery\":\"attempted\"}") : String}
+
+def an_attempt_claim_matches_the_committed_delivery():
+  {==}
+
+law a_completion_claim_matches_the_attempt_state:
+  {ContextObserver.claim_completion_statement("q1","starter","0","attempted","{\"delivery\":\"acknowledged\"}") == ContextRoles.release_claim_sql("q1","starter","0","attempted","{\"delivery\":\"acknowledged\"}") : String}
+
+def a_completion_claim_matches_the_attempt_state():
+  {==}
+
+law a_release_refusal_of_a_mismatched_binding_names_both:
+  {ContextObserver.release_refusal_of("b1",ContextObserver.CustodyMismatch{"b1","b2"}) == Some{ContextObserver.ReleaseCustodyMismatch{"b1","b2"}} : Maybe<&2,ContextObserver.ReleaseOutcome>}
+
+def a_release_refusal_of_a_mismatched_binding_names_both():
+  {==}
+
+law a_release_refusal_of_an_admitted_custody_is_absent:
+  {ContextObserver.release_refusal_of("b1",ContextObserver.CustodyAdmitted{"b1"}) == None{} : Maybe<&2,ContextObserver.ReleaseOutcome>}
+
+def a_release_refusal_of_an_admitted_custody_is_absent():
+  {==}
