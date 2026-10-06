@@ -28,6 +28,7 @@
 # The host digest, the guard-anchor directory creation and SQLite execution remain
 # foreign assumptions exercised by the native fixture.
 import Base
+import ./equality.bend as ContextEquality
 import ../json/canonical.bend as J
 import ../coordinator/commands.bend as C
 import ./contracts.bend as Context
@@ -783,6 +784,7 @@ law a_repeated_event_identity_admits_only_an_identical_replay:
   {ContextRoles.replay_column(next,query,role,incarnation,next,"value",capture,evidence,progress,recorded) == ContextRoles.strict_replay_column(query,role,incarnation,next,capture,evidence,progress,recorded) : String}
 
 def a_repeated_event_identity_admits_only_an_identical_replay(query,role,incarnation,next,capture,evidence,progress,recorded):
+  %ContextEquality.string_eq_self(next) : {ContextRoles.replay_column(next,query,role,incarnation,next,"value",capture,evidence,progress,recorded) == Bool.pick(String,_,ContextRoles.strict_replay_column(query,role,incarnation,next,capture,evidence,progress,recorded),ContextRoles.first_or_replay_column(next,query,role,incarnation,next,"value",capture,evidence,progress,recorded)) : String}
   {==}
 
 law a_large_canonical_counter_is_admitted:
