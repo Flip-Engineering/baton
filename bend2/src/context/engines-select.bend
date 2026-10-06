@@ -1293,3 +1293,36 @@ def transfer_of_edge(+p: Plan, +ref: StepRef) -> TransferOutcome:
   transfer_finish(step_lookup(p, step_ref_module(ref), step_ref_digest(ref),
                               step_ref_operation(ref)),
                   plan_inputs(p))
+
+# --- the declared dependency records -----------------------------------------
+# The admitted captured records of the steps a step declares as dependencies. Each
+# record keeps its own producing step, so a TypeScript record a catalog step
+# consumes is delivered under the TypeScript producer and is never reattributed to
+# the consuming step. A dependency the plan does not hold contributes no record.
+def captures_append(+a: Captures, +b: Captures) -> Captures:
+  match a:
+    case CapNil{}: b
+    case CapCons{head, rest}: CapCons{head, captures_append(rest, b)}
+
+def ref_step_captures(+st: StepState, +xs: Captures) -> Captures:
+  match st:
+    case StepMissing{module_id, declaration_digest, operation}: CapNil{}
+    case StepFound{step}: captures_of_step(xs, step)
+
+def dependency_captures(+refs: StepRefs, +p: Plan, +xs: Captures) -> Captures:
+  match refs:
+    case StepRefsNil{}: CapNil{}
+    case StepRefsCons{head, rest}:
+      captures_append(
+        ref_step_captures(step_lookup(p, step_ref_module(head),
+                                      step_ref_digest(head),
+                                      step_ref_operation(head)), xs),
+        dependency_captures(rest, p, xs))
+
+# The records of the step one declared edge names.
+def dependency_inputs(+p: Plan, +ref: StepRef) -> Captures:
+  dependency_captures(StepRefsCons{ref, StepRefsNil{}}, p, plan_inputs(p))
+
+# The records of every step one step declares as its dependencies.
+def dependency_inputs_of_step(+p: Plan, +step: Step) -> Captures:
+  dependency_captures(step_dependencies(step), p, plan_inputs(p))

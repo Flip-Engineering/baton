@@ -26,14 +26,14 @@ import ./engines-select.bend as Sel
 # An identity set renders as an array of strings, and an artifact identity as an
 # object of path, digest and role, with the same array shape the identity text
 # already uses.
-def ss_json(+xs: SS) -> J.Json:
-  match xs:
-    case Eng.SSNil{}: J.Jarr{J.Jnil{}, J.Jnil{}}
-    case Eng.SSCons{head, rest}: J.Jarr{J.Jstr{head}, ss_json_tail(rest)}
-
 def ss_json_tail(+xs: SS) -> J.Json:
   match xs:
     case Eng.SSNil{}: J.Jnil{}
+    case Eng.SSCons{head, rest}: J.Jarr{J.Jstr{head}, ss_json_tail(rest)}
+
+def ss_json(+xs: SS) -> J.Json:
+  match xs:
+    case Eng.SSNil{}: J.Jarr{J.Jnil{}, J.Jnil{}}
     case Eng.SSCons{head, rest}: J.Jarr{J.Jstr{head}, ss_json_tail(rest)}
 
 def wire_obj(+k: String, +v: J.Json, +rest: J.Json) -> J.Json:
@@ -46,11 +46,6 @@ def art_json(+a: Decl.Art) -> J.Json:
              wire_obj("sha256", J.Jstr{sha256},
              wire_obj("role", J.Jstr{role}, J.Jnil{})))}
 
-def arts_json(+a: Decl.Arts) -> J.Json:
-  match a:
-    case Decl.ArtsNil{}: J.Jarr{J.Jnil{}, J.Jnil{}}
-    case Decl.ArtsCons{head, rest}: J.Jarr{art_json(head), arts_json_tail(rest)}
-
 def arts_json_tail(+a: Decl.Arts) -> J.Json:
   match a:
     case Decl.ArtsNil{}: J.Jnil{}
@@ -58,6 +53,11 @@ def arts_json_tail(+a: Decl.Arts) -> J.Json:
       J.Jarr{art_json(head), arts_json_tail(rest)}
 
 # --- the frozen selected binding ---------------------------------------------
+def arts_json(+a: Decl.Arts) -> J.Json:
+  match a:
+    case Decl.ArtsNil{}: J.Jarr{J.Jnil{}, J.Jnil{}}
+    case Decl.ArtsCons{head, rest}: J.Jarr{art_json(head), arts_json_tail(rest)}
+
 def exec_token(+e: Decl.Exec) -> String:
   match e:
     case Decl.ExPure{}: "pure"
@@ -88,15 +88,15 @@ def step_ref_json(+r: Sel.StepRef) -> J.Json:
              wire_obj("declarationDigest", J.Jstr{declaration_digest},
              wire_obj("operation", J.Jstr{operation}, J.Jnil{})))}
 
-def step_refs_json(+rs: Sel.StepRefs) -> J.Json:
-  match rs:
-    case Sel.StepRefsNil{}: J.Jarr{J.Jnil{}, J.Jnil{}}
-    case Sel.StepRefsCons{head, rest}:
-      J.Jarr{step_ref_json(head), step_refs_json_tail(rest)}
-
 def step_refs_json_tail(+rs: Sel.StepRefs) -> J.Json:
   match rs:
     case Sel.StepRefsNil{}: J.Jnil{}
+    case Sel.StepRefsCons{head, rest}:
+      J.Jarr{step_ref_json(head), step_refs_json_tail(rest)}
+
+def step_refs_json(+rs: Sel.StepRefs) -> J.Json:
+  match rs:
+    case Sel.StepRefsNil{}: J.Jarr{J.Jnil{}, J.Jnil{}}
     case Sel.StepRefsCons{head, rest}:
       J.Jarr{step_ref_json(head), step_refs_json_tail(rest)}
 
@@ -112,16 +112,16 @@ def step_json(+s: Sel.Step) -> J.Json:
              wire_obj("resultSchema", J.Jstr{result_schema},
                       J.Jnil{}))))))}
 
-def steps_json(+xs: Sel.Steps) -> J.Json:
-  match xs:
-    case Sel.StepsNil{}: J.Jarr{J.Jnil{}, J.Jnil{}}
-    case Sel.StepsCons{head, rest}: J.Jarr{step_json(head), steps_json_tail(rest)}
-
 def steps_json_tail(+xs: Sel.Steps) -> J.Json:
   match xs:
     case Sel.StepsNil{}: J.Jnil{}
     case Sel.StepsCons{head, rest}:
       J.Jarr{step_json(head), steps_json_tail(rest)}
+
+def steps_json(+xs: Sel.Steps) -> J.Json:
+  match xs:
+    case Sel.StepsNil{}: J.Jarr{J.Jnil{}, J.Jnil{}}
+    case Sel.StepsCons{head, rest}: J.Jarr{step_json(head), steps_json_tail(rest)}
 
 def plan_text(+xs: Sel.Steps) -> String:
   J.json_text(steps_json(xs))
@@ -142,15 +142,15 @@ def capture_json(+c: Sel.Capture) -> J.Json:
              wire_obj("producerOperation", J.Jstr{producer_operation},
                       J.Jnil{})))))))))}
 
-def captures_json(+xs: Sel.Captures) -> J.Json:
-  match xs:
-    case Sel.CapNil{}: J.Jarr{J.Jnil{}, J.Jnil{}}
-    case Sel.CapCons{head, rest}:
-      J.Jarr{capture_json(head), captures_json_tail(rest)}
-
 def captures_json_tail(+xs: Sel.Captures) -> J.Json:
   match xs:
     case Sel.CapNil{}: J.Jnil{}
+    case Sel.CapCons{head, rest}:
+      J.Jarr{capture_json(head), captures_json_tail(rest)}
+
+def captures_json(+xs: Sel.Captures) -> J.Json:
+  match xs:
+    case Sel.CapNil{}: J.Jarr{J.Jnil{}, J.Jnil{}}
     case Sel.CapCons{head, rest}:
       J.Jarr{capture_json(head), captures_json_tail(rest)}
 

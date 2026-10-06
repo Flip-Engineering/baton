@@ -582,3 +582,41 @@ law selection_step_ref_readers_agree_with_the_edge:
 
 def selection_step_ref_readers_agree_with_the_edge():
   {==}
+
+# --- the declared dependency records -----------------------------------------
+def fx_capture_of_ts() -> Sel.Capture:
+  Sel.Capture{"file", "source", "/work/b.ts", "bb", "capturedTsSource", "utf8",
+              "m2", "d2", "definition"}
+
+def fx_captures_both() -> Sel.Captures:
+  Sel.CapCons{fx_capture(), Sel.CapCons{fx_capture_of_ts(), Sel.CapNil{}}}
+
+# The same plan fixture with both records present, so the two directions are
+# distinguished rather than trivially separated.
+def fx_plan_both() -> Sel.Plan:
+  Sel.Plan{fx_bind(), "sourceAnalysis",
+           Sel.StepsCons{fx_step_m1(),
+                         Sel.StepsCons{fx_step_m2(), Sel.StepsNil{}}},
+           Eng.ss_empty(), fx_captures_both(), True{}}
+
+# The catalog step's declared edge delivers the TypeScript record under the
+# TypeScript producer, not the catalog step's own record.
+law selection_dependency_inputs_carry_the_dependency_producer:
+  {Sel.dependency_inputs(fx_plan_both(), Sel.StepRef{"m2", "d2", "definition"}) == Sel.CapCons{fx_capture_of_ts(), Sel.CapNil{}} : Sel.Captures}
+
+def selection_dependency_inputs_carry_the_dependency_producer():
+  {==}
+
+law selection_dependency_inputs_of_a_step_walk_its_edges:
+  {Sel.dependency_inputs_of_step(fx_plan_both(), fx_step_m1()) == Sel.CapCons{fx_capture_of_ts(), Sel.CapNil{}} : Sel.Captures}
+
+def selection_dependency_inputs_of_a_step_walk_its_edges():
+  {==}
+
+# A step's own transfer keeps only its own records, so the two directions stay
+# separate even when both records are present in the plan.
+law selection_transfer_of_a_step_keeps_only_its_own_records:
+  {Sel.transfer_of_edge(fx_plan_both(), Sel.StepRef{"m1", "d1", "definition"}) == Sel.TransferReady{Sel.StepTransfer{fx_bind(), "sourceAnalysis", Eng.ss_empty(), "res", Sel.StepRefsCons{Sel.StepRef{"m2", "d2", "definition"}, Sel.StepRefsNil{}}, Sel.CapCons{fx_capture(), Sel.CapNil{}}}} : Sel.TransferOutcome}
+
+def selection_transfer_of_a_step_keeps_only_its_own_records():
+  {==}
