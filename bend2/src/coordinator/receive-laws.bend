@@ -482,60 +482,46 @@ law ordinary_receive_admission_binds_the_guarded_database:
 def ordinary_receive_admission_binds_the_guarded_database(db,session,cmd,model,effort,cwd,log):
   {==}
 
-# A retained recovery wake keeps an absent eligible input, an absent endpoint and
-# a delivered invocation distinct, resolves the message and its endpoint from one
-# selection read, and launches with an explicit nonempty endpoint so a completed
-# result follows an actual process.
-law absent_eligible_input_is_not_a_wake:
-  for db: String
-  for id: String
-  for argv: String
-  {Receive.wake_absent(db,id,argv,True{}) == IO.pure(Result<&1,&1,U32 & String,Receive.RecoveryWake>,Done{Receive.NoEligibleInput{"No unacknowledged input is eligible for this session; the retained attempt keeps its current owner."}}) : IO(Result<&1,&1,U32 & String,Receive.RecoveryWake>)}
-
-def absent_eligible_input_is_not_a_wake(db,id,argv):
-  {==}
-
-law empty_rows_are_not_a_wake:
-  for db: String
-  {Receive.wake_rows(db,Nil{}) == IO.pure(Result<&1,&1,U32 & String,Receive.RecoveryWake>,Done{Receive.NoEligibleInput{"No unacknowledged input is eligible for this session; the retained attempt keeps its current owner."}}) : IO(Result<&1,&1,U32 & String,Receive.RecoveryWake>)}
-
-def empty_rows_are_not_a_wake(db):
-  {==}
-
-law empty_recorded_endpoint_is_not_a_wake:
-  for db: String
-  for id: String
-  for argv: String
-  {Receive.wake_endpoint(db,id,argv,True{}) == IO.pure(Result<&1,&1,U32 & String,Receive.RecoveryWake>,Done{Receive.EndpointAbsent{"The recorded endpoint is empty; the retained attempt and its input stay with their current owner."}}) : IO(Result<&1,&1,U32 & String,Receive.RecoveryWake>)}
-
-def empty_recorded_endpoint_is_not_a_wake(db,id,argv):
-  {==}
-
-law eligible_retained_wake_launches_the_resolved_endpoint:
+# The configuration-recovery hook keeps each blocked case explicit: a changed
+# attempt, an absent responsible recipient and an unusable recipient endpoint each
+# refuse with the original attempt preserved, and only a resolved report reaches
+# delivery by its own id.
+law changed_attempt_refuses_the_handoff:
   for +db: String
+  for +session: String
+  for requester: String
+  for +directory: String
+  for observed: String
+  {Receive.recovery_attempt(db,session,requester,directory,observed,False{}) == IO.pure(Result<&1,&1,U32 & String,String>,Fail{(2,"The retained attempt changed or completed before the configuration-recovery handoff; the recorded attempt is " ++ observed ++ ". Configuration did not run and the attempt is preserved.")}) : IO(Result<&1,&1,U32 & String,String>)}
+
+def changed_attempt_refuses_the_handoff(db,session,requester,directory,observed):
+  {==}
+
+law absent_recipient_refuses_the_handoff:
+  for db: String
+  for parent: String
+  for retained: Result<&1,&1,U32 & String,String>
+  {Receive.recovery_parent_ready(db,parent,retained,True{}) == IO.pure(Result<&1,&1,U32 & String,String>,Fail{(2,"The retained attempt has no responsible recorded recipient; configuration did not run and the attempt, its input and its manifest are preserved.")}) : IO(Result<&1,&1,U32 & String,String>)}
+
+def absent_recipient_refuses_the_handoff(db,parent,retained):
+  {==}
+
+law unusable_recipient_endpoint_refuses_delivery:
+  for db: String
+  for parent: String
+  for retained: Result<&1,&1,U32 & String,String>
+  {Receive.recovery_endpoint_ready(db,parent,retained,True{}) == IO.pure(Result<&1,&1,U32 & String,String>,Fail{(2,"The responsible recipient " ++ parent ++ " has no usable recorded endpoint; the recovery report is retained in its inbox and the original attempt is preserved.")}) : IO(Result<&1,&1,U32 & String,String>)}
+
+def unusable_recipient_endpoint_refuses_delivery(db,parent,retained):
+  {==}
+
+law retained_report_is_delivered_by_its_own_id:
+  for +db: String
+  for parent: String
   for +id: String
-  for argv: String
-  {Receive.wake_endpoint(db,id,argv,False{}) == launched_retained_wake(db,id,argv) : IO(Result<&1,&1,U32 & String,Receive.RecoveryWake>)}
+  {Receive.recovery_deliver(db,parent,Done{id}) == Delivery.deliver(db,id,"1","") : IO(Result<&1,&1,U32 & String,String>)}
 
-def launched_retained_wake(+db: String, +id: String, argv: String) -> IO(Result<&1,&1,U32 & String,Receive.RecoveryWake>):
-  do IO<Result<&1,&1,U32 & String,Receive.RecoveryWake>>:
-    run : Result<&1,&1,U32 & String,String> <- Delivery.launch(db,id,"",argv,False{})
-    IO.pure(Result<&1,&1,U32 & String,Receive.RecoveryWake>,Receive.wake_outcome(id,run))
-
-def eligible_retained_wake_launches_the_resolved_endpoint(db,id,argv):
-  {==}
-
-law retained_wake_selects_one_row_before_launching:
-  for +db: String
-  for session: String
-  {Receive.wake_retained(db,session) == retained_wake_from_one_row(db,session) : IO(Result<&1,&1,U32 & String,Receive.RecoveryWake>)}
-
-def retained_wake_from_one_row(+db: String, session: String) -> IO(Result<&1,&1,U32 & String,Receive.RecoveryWake>):
-  do IO<Result<&1,&1,U32 & String,Receive.RecoveryWake>>:
-    selected : String <- IO.try(String,DB.Sql.query(db,Receive.retained_wake_sql(session)))
-    Receive.wake_rows(db,Tx.split_lines(Tx.trim_nl(selected)))
-
-def retained_wake_selects_one_row_before_launching(db,session):
+def retained_report_is_delivered_by_its_own_id(db,parent,id):
   {==}
 
 def completion_prepares_before_owner_release(+db: String, +session: String, +id: String, +log: String, stderr: String, cursor: String, +handle: U32, lock: Maybe<U32>, +outcome: Turn.Outcome, deliveries: List<Chan(Result<&1,&1,U32 & String,String>)>, again: Unit -> IO(Result<&1,&1,U32 & String,Unit>)) -> IO(Result<&1,&1,U32 & String,Unit>):

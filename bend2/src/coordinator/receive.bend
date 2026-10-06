@@ -11,14 +11,6 @@ import ../host/process.bend as P
 import ../git/text.bend as Tx
 import ../host/text.bend as Text
 
-# The outcome of a retained-recovery wake. An absent eligible input and an
-# absent recorded endpoint stay distinct from a delivered invocation, so a
-# caller never reads a silent no-op as an owner being woken.
-type RecoveryWake is Data:
-  Woken{message: String}
-  NoEligibleInput{reason: String}
-  EndpointAbsent{reason: String}
-
 def field(+db: String, session: String, name: String, +supplied: String) -> IO(String):
   do IO<String>:
     value : String <- IO.try(String,DB.Sql.query(db,"SELECT CASE WHEN " ++ C.q(supplied) ++ "<>'' THEN " ++ C.q(supplied) ++ " ELSE " ++ name ++ " END FROM sessions WHERE id=" ++ C.q(session) ++ ";"))
@@ -322,41 +314,58 @@ def observe_attached(+db: String, +session: String, id: String, cursor: String, 
 def recover(+db: String, +session: String, id: String, cursor: String, +cmd: String, +model: String, +effort: String, +cwd: String, +log: String, harness: String, +directory: String, native: String) -> IO(Result<&1,&1,U32 & String,Unit>):
   attach_recorded(directory,handle => observe_attached(db,session,id,cursor,cmd,model,effort,cwd,log,harness,directory,native,handle,u => run(db,session,cmd,model,effort,cwd,log,"")))
 
-# A retained recovery wake for a session whose attempt has no live owner. The
-# eligible message and its recorded endpoint come from one selection read, and
-# the invocation uses that resolved endpoint with an explicit nonempty flag, so
-# a completed result means a process ran. The caller releases the session guard
-# before this operation reads anything, and it selects only the earliest eligible
-# row rather than the original invocation's message.
-def retained_wake_sql(+session: String) -> String:
-  "SELECT coalesce((SELECT m.id || char(10) || coalesce((SELECT group_concat(length(CAST(value AS BLOB)) || ':' || value,'') FROM json_each(s.endpoint)),'') FROM messages m JOIN sessions s ON s.id=m.recipient WHERE m.recipient=" ++ C.q(session) ++ " AND m.receipt IS NULL AND NOT " ++ C.stopped_session_sql(C.q(session)) ++ " AND CASE WHEN json_valid(s.endpoint) THEN json_type(s.endpoint)='array' AND json_array_length(s.endpoint)>0 ELSE 0 END ORDER BY m.seq LIMIT 1),'');"
+# A configuration-recovery handoff. Apply carries the blocked observation
+# through release and calls this once, after the guard is gone, so none of the
+# reads below is the one Apply held. The original attempt, its input and its
+# manifest stay in place; this operation retains one report for the responsible
+# recorded recipient and surfaces the actual delivery outcome. A completed
+# result means the recipient's endpoint process ran, and nothing more about
+# attachment, provider state or physical custody.
+def retained_directory_sql(+session: String) -> String:
+  "SELECT coalesce((SELECT directory FROM executions WHERE session=" ++ C.q(session) ++ " AND mode='retained'),'');"
 
-def wake_outcome(id: String, run: Result<&1,&1,U32 & String,String>) -> Result<&1,&1,U32 & String,RecoveryWake>:
-  match run:
-    case Fail{error}: Fail{error}
-    case Done{_}: Done{Woken{id}}
+def recovery_recipient_sql(+session: String) -> String:
+  "SELECT coalesce(" ++ C.report_recipient(C.q(session)) ++ ",'');"
 
-def wake_endpoint(db: String, +id: String, argv: String, empty: Bool) -> IO(Result<&1,&1,U32 & String,RecoveryWake>):
-  match empty:
-    case True{}: IO.pure(Result<&1,&1,U32 & String,RecoveryWake>,Done{EndpointAbsent{"The recorded endpoint is empty; the retained attempt and its input stay with their current owner."}})
-    case False{}: do IO<Result<&1,&1,U32 & String,RecoveryWake>>:
-      run : Result<&1,&1,U32 & String,String> <- Delivery.launch(db,id,"",argv,False{})
-      IO.pure(Result<&1,&1,U32 & String,RecoveryWake>,wake_outcome(id,run))
+def recovery_usable_endpoint_sql(+recipient: String) -> String:
+  "SELECT CASE WHEN json_valid(endpoint) AND json_type(endpoint)='array' AND json_array_length(endpoint)>0 THEN '1' ELSE '' END FROM sessions WHERE id=" ++ C.q(recipient) ++ ";"
 
-def wake_absent(db: String, id: String, +argv: String, absent: Bool) -> IO(Result<&1,&1,U32 & String,RecoveryWake>):
+def recovery_report_sql(+session: String, +requester: String, +directory: String) -> String:
+  "BEGIN IMMEDIATE;INSERT INTO messages(id,sender,recipient,kind,body) SELECT 'configuration-recovery-' || lower(hex(" ++ C.q(directory) ++ "))," ++ C.q(session) ++ "," ++ C.report_recipient(C.q(session)) ++ ",'report',json_object('type','configuration-recovery','session'," ++ C.q(session) ++ ",'requester'," ++ C.q(requester) ++ ",'attemptDirectory'," ++ C.q(directory) ++ ",'disposition','Configuration did not run. The retained native attempt keeps its observation and acknowledgement work.')" ++ C.message_upsert()
+  ++ "SELECT coalesce((SELECT id FROM messages WHERE id='configuration-recovery-' || lower(hex(" ++ C.q(directory) ++ ")) AND recipient=" ++ C.report_recipient(C.q(session)) ++ "),'');COMMIT;"
+
+def recovery_deliver(db: String, parent: String, retained: Result<&1,&1,U32 & String,String>) -> IO(Result<&1,&1,U32 & String,String>):
+  match retained:
+    case Fail{error}: IO.pure(Result<&1,&1,U32 & String,String>,Fail{error})
+    case Done{id}: Delivery.deliver(db,id,"1","")
+
+def recovery_endpoint_ready(db: String, parent: String, retained: Result<&1,&1,U32 & String,String>, unusable: Bool) -> IO(Result<&1,&1,U32 & String,String>):
+  match unusable:
+    case True{}: IO.pure(Result<&1,&1,U32 & String,String>,Fail{(2,"The responsible recipient " ++ parent ++ " has no usable recorded endpoint; the recovery report is retained in its inbox and the original attempt is preserved.")})
+    case False{}: recovery_deliver(db,parent,retained)
+
+def recovery_parent_ready(db: String, parent: String, retained: Result<&1,&1,U32 & String,String>, absent: Bool) -> IO(Result<&1,&1,U32 & String,String>):
   match absent:
-    case True{}: IO.pure(Result<&1,&1,U32 & String,RecoveryWake>,Done{NoEligibleInput{"No unacknowledged input is eligible for this session; the retained attempt keeps its current owner."}})
-    case False{}: wake_endpoint(db,id,argv,String.is_empty(argv))
+    case True{}: IO.pure(Result<&1,&1,U32 & String,String>,Fail{(2,"The retained attempt has no responsible recorded recipient; configuration did not run and the attempt, its input and its manifest are preserved.")})
+    case False{}: do IO<Result<&1,&1,U32 & String,String>>:
+      usable : String <- IO.try(String,DB.Sql.query(db,recovery_usable_endpoint_sql(parent)))
+      recovery_endpoint_ready(db,parent,retained,String.is_empty(usable))
 
-def wake_first(db: String, +id: String, argv: String) -> IO(Result<&1,&1,U32 & String,RecoveryWake>):
-  wake_absent(db,id,argv,String.is_empty(id))
+def recovery_attempt(+db: String, +session: String, requester: String, +directory: String, attempt: String, same: Bool) -> IO(Result<&1,&1,U32 & String,String>):
+  match same:
+    case False{}: IO.pure(Result<&1,&1,U32 & String,String>,Fail{(2,"The retained attempt changed or completed before the configuration-recovery handoff; the recorded attempt is " ++ attempt ++ ". Configuration did not run and the attempt is preserved.")})
+    case True{}: do IO<Result<&1,&1,U32 & String,String>>:
+      found : String <- IO.try(String,DB.Sql.query(db,recovery_recipient_sql(session)))
+      +parent : String <- IO.pure(String,Tx.trim_nl(found))
+      retained : Result<&1,&1,U32 & String,String> <- DB.Sql.query(db,recovery_report_sql(session,requester,directory))
+      recovery_parent_ready(db,parent,retained,String.is_empty(parent))
 
-def wake_rows(db: String, rows: List<String>) -> IO(Result<&1,&1,U32 & String,RecoveryWake>):
-  match rows:
-    case id <> tail: wake_first(db,id,Tx.join("\n",tail))
-    case other: IO.pure(Result<&1,&1,U32 & String,RecoveryWake>,Done{NoEligibleInput{"No unacknowledged input is eligible for this session; the retained attempt keeps its current owner."}})
-
-def wake_retained(+db: String, session: String) -> IO(Result<&1,&1,U32 & String,RecoveryWake>):
-  do IO<Result<&1,&1,U32 & String,RecoveryWake>>:
-    selected : String <- IO.try(String,DB.Sql.query(db,retained_wake_sql(session)))
-    wake_rows(db,Tx.split_lines(Tx.trim_nl(selected)))
+# Apply carries the blocked observation through release and calls this once after
+# the guard is gone. The requester is authorization context; the responsible
+# recipient is the recorded parent, or the existing operator fallback, resolved
+# from current recorded authority.
+def report_configuration_recovery(+db: String, +session: String, requester: String, +directory: String) -> IO(Result<&1,&1,U32 & String,String>):
+  do IO<Result<&1,&1,U32 & String,String>>:
+    recorded : String <- IO.try(String,DB.Sql.query(db,retained_directory_sql(session)))
+    +observed : String <- IO.pure(String,Tx.trim_nl(recorded))
+    recovery_attempt(db,session,requester,directory,observed,String.eq(observed,directory))
