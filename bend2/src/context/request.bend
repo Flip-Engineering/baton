@@ -239,7 +239,7 @@ def fields_len(fs: Fields) -> U32:
     case Fnone{}: 0
     case Fcons{+head, +tail}: U32.add(1, fields_len(tail))
 
-def fields_at(fs: Fields, i: U32) -> String:
+def fields_at(fs: Fields, +i: U32) -> String:
   match fs:
     case Fnone{}: SNil{}
     case Fcons{+head, +tail}: Bool.pick(String, U32.is_eq(i, 0), head, fields_at(tail, U32.sub(i, 1)))

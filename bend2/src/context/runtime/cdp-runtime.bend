@@ -151,24 +151,29 @@ def counter_valid(+text: String) -> Bool:
       Bool.and(is_decimal_digit(h),
         Bool.and(Bool.pick(Bool, is_zero_char(h), is_nil(t), True{}), all_digits(t)))
 
-def inc(text: String) -> Carry:
-  match text:
-    case SNil{}: Carry{SNil{}, True{}}
-    case SCon{h, t}:
-      match inc(t):
-        case Carry{value, out}:
-          Bool.pick(Carry, out,
-            Bool.pick(Carry, is_nine_char(h),
-              Carry{SCon{one_zero(), value}, True{}},
-              Carry{SCon{one_up(h), value}, False{}}),
-            Carry{SCon{h, value}, False{}})
-
 def one_zero() -> Char:
   Char.from_u32(48)
 
+def inc_tail(+h: Char, carry: Carry) -> Carry:
+  match carry:
+    case Carry{+value, out}:
+      Bool.pick(Carry, out,
+        Bool.pick(Carry, is_nine_char(h),
+          Carry{SCon{one_zero(), value}, True{}},
+          Carry{SCon{one_up(h), value}, False{}}),
+        Carry{SCon{h, value}, False{}})
+
+def inc(text: String) -> Carry:
+  match text:
+    case SNil{}: Carry{SNil{}, True{}}
+    case SCon{h, t}: inc_tail(h, inc(t))
+
+def counter_carry(carry: Carry) -> String:
+  match carry:
+    case Carry{+value, out}: Bool.pick(String, out, SCon{Char.from_u32(49), value}, value)
+
 def counter_next(+text: String) -> String:
-  match inc(text):
-    case Carry{value, out}: Bool.pick(String, out, SCon{Char.from_u32(49), value}, value)
+  counter_carry(inc(text))
 
 # State predicates. A value is compared by matching it, so no separate equality
 # procedure over Data is introduced.

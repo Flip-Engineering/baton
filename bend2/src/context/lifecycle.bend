@@ -80,14 +80,17 @@ def companion_answer(+db: String, +binding: String, +query: String, +role: Strin
 # The companion: one reading, then one second of waiting and the continuation while
 # the role has a live or unsettled duty. A settled, missing or failed conclusion ends
 # the companion and is returned to its caller.
+def companion_read(+db: String, +binding: String, +query: String, +role: String, +incarnation: String, duty: Unit -> IO(Bool), read: Result<&1,&1,U32 & String,String>) -> IO(CompanionStep):
+  match read:
+    case Fail{error}:
+      match error:
+        case (code, message): IO.pure(CompanionStep, StepFailed{code, message})
+    case Done{+answer}: companion_answer(db, binding, query, role, incarnation, duty, intent_step(answer))
+
 def companion_step(+db: String, +binding: String, +query: String, +role: String, +incarnation: String, duty: Unit -> IO(Bool)) -> IO(CompanionStep):
   do IO<CompanionStep>:
     read : Result<&1,&1,U32 & String,String> <- DB.Sql.query_bound(db, binding, ContextRoles.intent_read_sql(query, role, incarnation))
-    match read:
-      case Fail{error}:
-        match error:
-          case (code, message): IO.pure(CompanionStep, StepFailed{code, message})
-      case Done{+answer}: companion_answer(db, binding, query, role, incarnation, duty, intent_step(answer))
+    companion_read(db, binding, query, role, incarnation, duty, read)
 
 def reconcile_step(+db: String, +binding: String, +query: String, +role: String, +incarnation: String, duty: Unit -> IO(Bool), again: Unit -> IO(CompanionStep), step: CompanionStep) -> IO(CompanionStep):
   match step:
