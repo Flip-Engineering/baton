@@ -407,7 +407,7 @@ def claim_release(+db: String, +binding: String, +query: String, +role: String, 
 
 def release_completed_after(+db: String, +binding: String, +query: String, +role: String, +incarnation: String, +claim: String, +effect: String, read: ReleaseIntent) -> IO(ReleaseOutcome):
   match read:
-    case IntentAdmissible{recorded}: IO.pure(ReleaseOutcome, ReleaseEffectCompleted{claim, effect, document: recorded})
+    case IntentAdmissible{recorded}: IO.pure(ReleaseOutcome, ReleaseEffectCompleted{claim, effect, recorded})
     case IntentMissing{stage}: IO.pure(ReleaseOutcome, ReleaseEffectUnpersisted{claim, effect, "completion:missing:" ++ stage})
     case IntentStale{recorded, expected}: IO.pure(ReleaseOutcome, ReleaseEffectUnpersisted{claim, effect, "completion:unconfirmed:" ++ recorded ++ ":" ++ expected})
     case IntentUnreadable{stage, answer}: IO.pure(ReleaseOutcome, ReleaseEffectUnpersisted{claim, effect, "completion:unreadable:" ++ stage ++ ":" ++ answer})

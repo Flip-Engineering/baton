@@ -417,7 +417,7 @@ def subject_words(subject: Context.SubjectKind) -> Words:
     case Context.SkQueryControl{}: words_from(["kind", "query", "intent", "signal"])
     case Context.SkRef{}: words_from(["kind", "query", "id"])
 
-def member_lookup(k: String, members: J.Json) -> Maybe<&2, J.Json>:
+def member_lookup(+k: String, members: J.Json) -> Maybe<&2, J.Json>:
   match members:
     case J.Jnil{}: None{}
     case J.Jpair{+key, +value, +rest}: Bool.pick(Maybe<&2,J.Json>, String.eq(k, key), Some{value}, member_lookup(k, rest))
