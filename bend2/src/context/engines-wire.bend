@@ -39,10 +39,13 @@ def ss_json(+xs: SS) -> J.Json:
 def wire_obj(+k: String, +v: J.Json, +rest: J.Json) -> J.Json:
   J.Jpair{k, v, rest}
 
+# The member names are the specification's Artifact spelling for the installed
+# module contract, packagePath, sha256 and role, which is what a reader of the
+# binding expects.
 def art_json(+a: Decl.Art) -> J.Json:
   match a:
     case Decl.Art{path, sha256, role}:
-      J.Jobj{wire_obj("path", J.Jstr{path},
+      J.Jobj{wire_obj("packagePath", J.Jstr{path},
              wire_obj("sha256", J.Jstr{sha256},
              wire_obj("role", J.Jstr{role}, J.Jnil{})))}
 

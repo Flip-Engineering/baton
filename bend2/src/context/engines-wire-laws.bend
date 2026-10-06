@@ -60,7 +60,7 @@ def wire_empty_identity_set_renders_as_an_empty_array():
   {==}
 
 law wire_artifact_identity_renders_its_three_members:
-  {Wire.art_json(Decl.Art{"/pkg/m1.bin", "aa", "entry"}) == J.Jobj{Wire.wire_obj("path", J.Jstr{"/pkg/m1.bin"}, Wire.wire_obj("sha256", J.Jstr{"aa"}, Wire.wire_obj("role", J.Jstr{"entry"}, J.Jnil{})))} : J.Json}
+  {Wire.art_json(Decl.Art{"/pkg/m1.bin", "aa", "entry"}) == J.Jobj{Wire.wire_obj("packagePath", J.Jstr{"/pkg/m1.bin"}, Wire.wire_obj("sha256", J.Jstr{"aa"}, Wire.wire_obj("role", J.Jstr{"entry"}, J.Jnil{})))} : J.Json}
 
 def wire_artifact_identity_renders_its_three_members():
   {==}
