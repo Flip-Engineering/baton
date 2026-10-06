@@ -62,7 +62,7 @@ def association_mark(+mark: String, +plan: String, +identity: String, +schema: S
     Bool.pick(Association, Bool.and(Bool.and(hex_ok(plan), hex_ok(identity)), hex_ok(schema)), AssociationStored{Tx.hex_decode(plan), Tx.hex_decode(identity), Tx.hex_decode(schema)}, AssociationMalformed{"framing", answer}),
     AssociationMalformed{"mark", answer}))
 
-def association_fields(+fields: List<String>, +answer: String) -> Association:
+def association_fields(fields: List<String>, +answer: String) -> Association:
   match fields:
     case +mark <> more0:
       match more0:
@@ -79,7 +79,7 @@ def association_fields(+fields: List<String>, +answer: String) -> Association:
         case _: AssociationMalformed{"short", answer}
     case _: AssociationMalformed{"short", answer}
 
-def association_decode_lines(+lines: List<String>, +answer: String) -> Association:
+def association_decode_lines(lines: List<String>, +answer: String) -> Association:
   match lines:
     case Nil{}: AssociationMalformed{"empty", answer}
     case +line <> +rest:
@@ -167,7 +167,7 @@ def all_empty(xs: List<String>) -> Bool:
 def nine_values_absent(values: List<String>) -> Bool:
   Bool.and(U32.is_eq(field_count(values, 0), 9), all_empty(values))
 
-def admit_tabs(+fields: List<String>, +answer: String) -> Admission:
+def admit_tabs(fields: List<String>, +answer: String) -> Admission:
   match fields:
     case +mark <> more0:
       match more0:
@@ -199,7 +199,7 @@ def admit_tabs(+fields: List<String>, +answer: String) -> Admission:
         case _: AdmissionUncertain{"short", answer}
     case _: AdmissionUncertain{"short", answer}
 
-def admit_answer(+fields: List<String>, +answer: String) -> Admission:
+def admit_answer(fields: List<String>, +answer: String) -> Admission:
   match fields:
     case +presence <> more:
       Bool.pick(Admission, String.eq(presence, "absent"),
@@ -208,14 +208,14 @@ def admit_answer(+fields: List<String>, +answer: String) -> Admission:
     case _: AdmissionUncertain{"short", answer}
 
 # The decode: exactly one row, and either the absence row or the ten present columns.
-def admit_line(+fields: List<String>, +rest: List<String>, +answer: String) -> Admission:
+def admit_line(fields: List<String>, rest: List<String>, +answer: String) -> Admission:
   match rest:
     case Nil{}: admit_answer(fields, answer)
     case _: AdmissionUncertain{"surplus", answer}
 
 # The presence marker decides between a proven absence, which must carry no other
 # value, and the recorded row the field decoder reads.
-def admit_decode_lines(+lines: List<String>, +answer: String) -> Admission:
+def admit_decode_lines(lines: List<String>, +answer: String) -> Admission:
   match lines:
     case Nil{}: AdmissionUncertain{"empty", answer}
     case +line <> +rest: admit_line(Tx.split_tabs(line), rest, answer)

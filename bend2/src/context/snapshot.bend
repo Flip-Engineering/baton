@@ -268,27 +268,28 @@ def target_exited(l: R.Liveness) -> Bool:
 # refStopNotLive refusals, its refThreadUnknown refusal and the production
 # identity checks before it uses this answer, and a refusal the owned gate makes
 # is not softened here.
-def applies_runtime_ref(recorded: RuntimeIdentity, now: RuntimeNow) -> Applies:
-  rref_scope(recorded, now)
+def rref_target(+now: RuntimeNow) -> Applies:
+  Bool.pick(Applies, target_exited(now_target(now)), AHistorical{"runtime target exited"}, ACurrent{})
 
-def rref_scope(recorded: RuntimeIdentity, +now: RuntimeNow) -> Applies:
+
+def rref_identity(recorded: RuntimeIdentity, +now: RuntimeNow) -> Applies:
+  Bool.pick(Applies, same_runtime_identity(recorded, now_identity(now)), rref_target(now), AHistorical{"runtime identity changed"})
+
+def rref_thread(recorded: RuntimeIdentity, +now: RuntimeNow) -> Applies:
+  Bool.pick(Applies, now_thread_live(now), rref_identity(recorded, now), AUnknown{"runtime thread is not live"})
+
+def rref_pause(recorded: RuntimeIdentity, +now: RuntimeNow) -> Applies:
+  Bool.pick(Applies, Bool.and(now_record_stopped(now), R.stop_is_live(now_stop(now))), rref_thread(recorded, now),
+    AUnknown{"a pause-scoped reference requires a live recorded stop in a stopped runtime"})
+
+def rref_scope(+recorded: RuntimeIdentity, +now: RuntimeNow) -> Applies:
   Bool.pick(Applies, now_pause_scoped(now), rref_pause(recorded, now), rref_thread(recorded, now))
 
 # A non-pause-scoped kind acquires no paused-state requirement and no stop
 # requirement; `R.stop_is_live` is the owned liveness test and is False for an
 # absent, historical or unknown stop.
-def rref_pause(recorded: RuntimeIdentity, +now: RuntimeNow) -> Applies:
-  Bool.pick(Applies, Bool.and(now_record_stopped(now), R.stop_is_live(now_stop(now))), rref_thread(recorded, now),
-    AUnknown{"a pause-scoped reference requires a live recorded stop in a stopped runtime"})
-
-def rref_thread(recorded: RuntimeIdentity, +now: RuntimeNow) -> Applies:
-  Bool.pick(Applies, now_thread_live(now), rref_identity(recorded, now), AUnknown{"runtime thread is not live"})
-
-def rref_identity(recorded: RuntimeIdentity, +now: RuntimeNow) -> Applies:
-  Bool.pick(Applies, same_runtime_identity(recorded, now_identity(now)), rref_target(now), AHistorical{"runtime identity changed"})
-
-def rref_target(+now: RuntimeNow) -> Applies:
-  Bool.pick(Applies, target_exited(now_target(now)), AHistorical{"runtime target exited"}, ACurrent{})
+def applies_runtime_ref(recorded: RuntimeIdentity, now: RuntimeNow) -> Applies:
+  rref_scope(recorded, now)
 
 # --- connection binding ------------------------------------------------------
 # A catalog snapshot and its target plan share one live connection and read
