@@ -38,7 +38,11 @@ frontend read them.
 | File | Imports |
 | --- | --- |
 | `source-binding.mjs` | `node:crypto` |
+| `frontend-hook-events.mjs` | none |
+| `frontend-adapter.mjs` | `./source-binding.mjs`, `./frontend-hook-events.mjs` |
+| `frontend-hooks.mjs` | `node:crypto` |
 | `source-binding.test.mjs` | `node:test`, `node:assert/strict`, `./source-binding.mjs` |
+| `frontend-adapter.test.mjs` | `node:test`, `node:assert/strict`, `./frontend-adapter.mjs`, `./frontend-hook-events.mjs`, `./frontend-hooks.mjs` |
 | `README.md` | none |
 
 ## API
@@ -96,12 +100,79 @@ caller; or the proposed common result/ref format migration. The full `Comp`, `Ba
 closure, the loader instrumented bridge, declaration and event hooks, resolved checker context and
 the admitted caller remain separate unqualified dependencies.
 
+## Producer hooks and adapter
+
+`frontend-hooks.mjs` is the retained patch. It carries no frontend source and imports no frontend:
+it applies an ordered set of anchored operations to a caller-supplied copy of an upstream file and
+returns the derived text, the applied operation ids and the output digest. Every anchor must occur
+exactly once, so a missing or ambiguous anchor refuses the derivation instead of producing a
+partially hooked file. `verifyHookAnchors` reports the counts without deriving anything.
+
+Upstream inputs, retrieved read-only from the repository's documented pin
+`a49524265bdfa5753a4bf38e25f0574a705dd868` under the Apache-2.0 license (HigherOrderCO 2026):
+
+| File | SHA256 |
+| --- | --- |
+| `bend2/bend.ts` | `93c2a43deeb82c15683e4e25bbc5dec5ac3edff9f54e09acc0975e290fcaeb85` |
+| `bend2/main.ts` | `92dcdb49e82fd59443e3aea10784f7dcf03a93f5a21920666543098b657b6b1e` |
+| `bend2/comp.ts` | `ad8b82137e5decf588d507d008cb8ccf24bd0b94043de8bd6e048d0faedcf959` |
+| `bend2/base.bend` | `e5639663177f2de93ef34867c029698aa4e68a98d46629f0b15452b67b99d798` |
+| `LICENSE` | `0beb288abd3d067e231f3fbe7df1f8ee37344061fc67f22018150a19e4b26c35` |
+
+The upstream originals stay intact. The derived copy is an owned artifact of this task, identified by
+its upstream input digest and its own output digest; nothing here writes to an upstream file.
+
+Operations cover the real statements: the hook registry and emit helper; the hook-aware source read
+where the loader consumes input (`bend.ts` 1057); the hub-fetch guard in capture-only mode (1030);
+the import-line removal with its exact removed range (1089) and the alias table and load completion
+at the parse call (1097); the file identity carried on the `Parse` record and through `parse_book`;
+declaration events for `def`, law-fill, `type` and `law`; parse-time reference events for the bound,
+dotted and unbound-fallback branches of `parse_var`; the parse diagnostic; the `Err` constructor;
+checker entry, success and failure around `def_check`; the `book_valid` start and its successful
+exit; and in `main.ts` the PROOF/LAWS gate, the ownership gate around `Comp.book_owned(book,
+Comp.SYNTH)`, and the incomplete-proof text diagnostic thrown as its original string.
+
+`frontend-adapter.mjs` installs the sink the patched frontend calls and turns those events into
+source-identity records by driving `source-binding.mjs`. It never parses, resolves, checks, fetches
+or writes. Its behaviour:
+
+- source capture happens at `readSource`, the same call the loader uses for its text, so the captured
+  bytes are the consumed bytes; a file the caller did not capture is refused with an explicit
+  `uncapturedDependency` limitation, and in capture-only mode the patched loader raises its own
+  missing-file diagnostic instead of reading the host;
+- captures, views and pending transformations are query-local: a later query acquires its bytes
+  again and never reuses a stale capture;
+- every span is attributed by the file the frontend reported for it, never by matching source text,
+  and a span the frontend did not supply stays `missingSpan`; a span that crosses removed import
+  text stays `spansOmitted`;
+- parse references record their actual branch, binder index or frame index, and are marked
+  `resolved: false` with basis `parseOutcome`;
+- checker failures and completion gates are recorded as phase observations; no proved-law claim is
+  made, and hook or adapter failures are counted separately from frontend diagnostics.
+
+Derive a hooked copy (remote, exact Root admission):
+
+```text
+node --input-type=module -e "import { readFileSync, writeFileSync } from 'node:fs'; import { deriveHookedSource } from './bend2/context/bend2/frontend-hooks.mjs'; const text = readFileSync(process.env.BATON2_FRONTEND_BEND, 'utf8'); const derived = deriveHookedSource({ target: 'bend', text }); if (derived.status !== 'derived') { throw new Error(JSON.stringify(derived)); } writeFileSync(process.env.BATON2_DERIVED_BEND, derived.text); console.log(derived.outputDigest);"
+```
+
+The same command with `target: 'main'` derives the main-side hooks. The hooks are inert until a caller
+installs the sink with `bendHooks(...)`; no module in this repository imports a frontend, and no
+frontend behaviour changes when the sink is absent or declines.
+
+Remaining: the `comp.ts` `book_owned` entry and throw detail (its exact anchor text is not yet read,
+so no replacement is guessed), the admitted selected-step invocation ABI and its native export, the
+`BASE_BEND` import-time realpath (a captured base must arrive through acquisition; suppressing the
+import-time access needs a bootstrap or a lazy accessor with its main caller updated), and all
+runtime, deployment and semantic-equivalence qualification.
+
 ## Regression command
 
 Authored for remote execution under exact Root admission:
 
 ```text
 node --test bend2/context/bend2/source-binding.test.mjs
+node --test bend2/context/bend2/frontend-adapter.test.mjs
 ```
 
 Covered areas: strict decoding and code-point byte offsets; identical text under two caller
