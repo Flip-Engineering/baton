@@ -239,7 +239,7 @@ def ref_decide(+query: String, +refId: String, +state: String, +result: String, 
 
 # Only a qualified found branch reaches here, so the scalar is decoded once and its
 # failure keeps the whole raw answer with the stage that failed.
-def ref_lookup_tabs(+query: String, +refId: String, +fields: List<String>, +answer: String) -> RefLookup:
+def ref_lookup_tabs(+query: String, +refId: String, fields: List<String>, +answer: String) -> RefLookup:
   match fields:
     case +state <> more0:
       match more0:
@@ -260,7 +260,7 @@ def ref_lookup_tabs(+query: String, +refId: String, +fields: List<String>, +answ
     case _: RefUnreadable{"short", answer}
 
 # Exactly one row of five columns, decoded against the identity the caller requested.
-def ref_lookup_lines(+query: String, +refId: String, +row: String, +lines: List<String>) -> RefLookup:
+def ref_lookup_lines(+query: String, +refId: String, +row: String, lines: List<String>) -> RefLookup:
   match lines:
     case Nil{}: RefUnreadable{"empty", row}
     case +line <> +rest:

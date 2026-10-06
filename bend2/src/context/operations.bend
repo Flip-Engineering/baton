@@ -156,9 +156,6 @@ def request_operation(+req: J.Json) -> String:
 # A model request that also selects codeAccesses needs the source join as well as
 # the module load, so both obligations apply. Every other subject contributes no
 # second operation.
-def subject_secondary(+req: J.Json) -> String:
-  secondary_of(request_subject_kind(req), req)
-
 def secondary_of(+kind: String, +req: J.Json) -> String:
   Bool.pick(String, String.eq(kind, "model"),
     Bool.pick(String, projection_selected(req, "codeAccesses"), "codeAccessJoin", SNil{}), SNil{})
@@ -166,8 +163,9 @@ def secondary_of(+kind: String, +req: J.Json) -> String:
 # A request-local tools override is target execution and is its own operation. It
 # adds to the subject's obligation; it never replaces it, because the requested
 # work still executes.
-def request_override_operation(+req: J.Json) -> String:
-  Bool.pick(String, tool_override(req), "toolsProbe", SNil{})
+def subject_secondary(+req: J.Json) -> String:
+  secondary_of(request_subject_kind(req), req)
+
 
 def tool_override(+req: J.Json) -> Bool:
   Req.present_of(Req.member_lookup("tools", options_members(req)))
@@ -176,6 +174,10 @@ def tool_override(+req: J.Json) -> Bool:
 # Sample construction. The helpers keep the canonical constructor arities in one
 # place: an array cell is `Jarr{element, rest}` ending in `Jnil`, and an object is
 # a `Jpair` chain ending in `Jnil`.
+
+def request_override_operation(+req: J.Json) -> String:
+  Bool.pick(String, tool_override(req), "toolsProbe", SNil{})
+
 
 def arr1(a: J.Json) -> J.Json:
   J.Jarr{a, J.Jnil{}}
