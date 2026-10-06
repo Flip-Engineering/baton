@@ -41,6 +41,8 @@ import ./lifecycle.bend as ContextLifecycle
 import ./bound.bend as ContextBound
 import ./bound-admission.bend as ContextAdmit
 import ./duties.bend as ContextDuties
+import ./observer.bend as ContextObserver
+import ./service.bend as ContextService
 
 # ---------------------------------------------------------------------------
 # Role identity. The identity is the canonical array of the fixed tag, binding,
@@ -988,4 +990,168 @@ law a_non_array_refs_container_is_unreadable:
   {ContextStore.ref_lookup_decode("q7","ref-1","complete\tpresent\tcontainer\t\t0\n") == ContextStore.RefUnreadable{"count","complete\tpresent\tcontainer\t\t0\n"} : ContextStore.RefLookup}
 
 def a_non_array_refs_container_is_unreadable():
+  {==}
+
+# --- the effect service and the observer consumer -----------------------------
+
+law an_envelope_statement_is_its_body_plus_its_terminator:
+  {ContextStore.envelope_sql(id) == ContextStore.envelope_body_sql(id) ++ ";" : String}
+
+def an_envelope_statement_is_its_body_plus_its_terminator():
+  {==}
+
+law a_retained_read_is_one_observation_of_state_and_envelope:
+  {ContextService.retained_sql(query) == "SELECT CASE WHEN EXISTS(SELECT 1 FROM semantic_queries WHERE id=" ++ C.q(query) ++ ") THEN 'present' ELSE 'absent' END," ++ "coalesce((SELECT state FROM semantic_queries WHERE id=" ++ C.q(query) ++ "),'')," ++ "coalesce((" ++ ContextStore.envelope_body_sql(query) ++ "),'');" : String}
+
+def a_retained_read_is_one_observation_of_state_and_envelope():
+  {==}
+
+law the_terminal_payload_guard_compares_result_and_error:
+  {ContextObserver.terminal_payload_matches(next, result, error) == "state=" ++ C.q(next) ++ " AND result_json IS " ++ ContextStore.json_or_null(result) ++ " AND error_json IS " ++ ContextStore.json_or_null(error) : String}
+
+def the_terminal_payload_guard_compares_result_and_error():
+  {==}
+
+law a_present_retained_row_is_found:
+  {ContextService.retained_decode("q7","present\tcomplete\t{\"v\":1}\n") == ContextService.RetainedFound{"complete","{\"v\":1}"} : ContextService.Retained}
+
+def a_present_retained_row_is_found():
+  {==}
+
+law an_absent_retained_row_is_absent:
+  {ContextService.retained_decode("q7","absent\t\t\n") == ContextService.RetainedAbsent{"q7"} : ContextService.Retained}
+
+def an_absent_retained_row_is_absent():
+  {==}
+
+law an_absent_retained_row_carrying_a_state_is_malformed:
+  {ContextService.retained_decode("q7","absent\tcomplete\t\n") == ContextService.RetainedUnreadable{"absentShape","absent\tcomplete\t\n"} : ContextService.Retained}
+
+def an_absent_retained_row_carrying_a_state_is_malformed():
+  {==}
+
+law a_present_retained_row_without_an_envelope_is_malformed:
+  {ContextService.retained_decode("q7","present\tcomplete\t\n") == ContextService.RetainedUnreadable{"presentEnvelope","present\tcomplete\t\n"} : ContextService.Retained}
+
+def a_present_retained_row_without_an_envelope_is_malformed():
+  {==}
+
+law a_present_retained_row_with_an_unknown_state_is_malformed:
+  {ContextService.retained_decode("q7","present\tqueued\t{\"v\":1}\n") == ContextService.RetainedUnreadable{"stateDomain","present\tqueued\t{\"v\":1}\n"} : ContextService.Retained}
+
+def a_present_retained_row_with_an_unknown_state_is_malformed():
+  {==}
+
+law a_present_retained_row_whose_envelope_is_not_an_object_is_malformed:
+  {ContextService.retained_decode("q7","present\tcomplete\tnot-json\n") == ContextService.RetainedUnreadable{"envelopeShape","present\tcomplete\tnot-json\n"} : ContextService.Retained}
+
+def a_present_retained_row_whose_envelope_is_not_an_object_is_malformed():
+  {==}
+
+law a_short_retained_row_is_unreadable:
+  {ContextService.retained_decode("q7","present\n") == ContextService.RetainedUnreadable{"short","present\n"} : ContextService.Retained}
+
+def a_short_retained_row_is_unreadable():
+  {==}
+
+law a_created_admission_is_admitted:
+  {ContextService.submission_of("root","{\"v\":1}",ContextAdmit.AdmissionCreated{"root","{\"v\":1}","accepted","accepted","","/k","/w","/a"}) == ContextService.SubmissionAdmitted{ContextAdmit.AdmissionCreated{"root","{\"v\":1}","accepted","accepted","","/k","/w","/a"}} : ContextService.Submission}
+
+def a_created_admission_is_admitted():
+  {==}
+
+law a_retained_admission_of_this_owner_and_request_is_admitted:
+  {ContextService.submission_of("root","{\"v\":1}",ContextAdmit.AdmissionRetained{"root","{\"v\":1}","accepted","accepted","","/k","/w","/a"}) == ContextService.SubmissionAdmitted{ContextAdmit.AdmissionRetained{"root","{\"v\":1}","accepted","accepted","","/k","/w","/a"}} : ContextService.Submission}
+
+def a_retained_admission_of_this_owner_and_request_is_admitted():
+  {==}
+
+law a_retained_admission_of_another_owner_is_foreign:
+  {ContextService.submission_of("root","{\"v\":1}",ContextAdmit.AdmissionRetained{"kid","{\"v\":1}","accepted","accepted","","/k","/w","/a"}) == ContextService.SubmissionForeign{"kid","{\"v\":1}"} : ContextService.Submission}
+
+def a_retained_admission_of_another_owner_is_foreign():
+  {==}
+
+law an_absent_admission_is_absent:
+  {ContextService.submission_of("root","{\"v\":1}",ContextAdmit.AdmissionAbsent{}) == ContextService.SubmissionAbsent{} : ContextService.Submission}
+
+def an_absent_admission_is_absent():
+  {==}
+
+law an_uncertain_admission_keeps_its_stage:
+  {ContextService.submission_of("root","{\"v\":1}",ContextAdmit.AdmissionUncertain{"shape","short"}) == ContextService.SubmissionUncertain{"shape","short"} : ContextService.Submission}
+
+def an_uncertain_admission_keeps_its_stage():
+  {==}
+
+law a_custody_under_this_binding_is_admitted:
+  {ContextObserver.custody_check("b1","b1") == ContextObserver.CustodyAdmitted{"b1"} : ContextObserver.CustodyCheck}
+
+def a_custody_under_this_binding_is_admitted():
+  {==}
+
+law a_custody_under_another_binding_is_a_mismatch:
+  {ContextObserver.custody_check("b1","b2") == ContextObserver.CustodyMismatch{"b1","b2"} : ContextObserver.CustodyCheck}
+
+def a_custody_under_another_binding_is_a_mismatch():
+  {==}
+
+law a_release_without_custody_names_the_missing_operand:
+  {ContextObserver.release_refusal("b1",None{}) == Some{ContextObserver.ReleaseMissingCustody{"keeper under admitted custody"}} : Maybe<&2,ContextObserver.ReleaseOutcome>}
+
+def a_release_without_custody_names_the_missing_operand():
+  {==}
+
+law a_release_under_another_binding_names_both_bindings:
+  {ContextObserver.release_refusal("b1",Some{ContextObserver.Custody{"k1","b2","h"}}) == Some{ContextObserver.ReleaseCustodyMismatch{"b1","b2"}} : Maybe<&2,ContextObserver.ReleaseOutcome>}
+
+def a_release_under_another_binding_names_both_bindings():
+  {==}
+
+law a_release_with_matching_custody_has_no_refusal:
+  {ContextObserver.release_refusal("b1",Some{ContextObserver.Custody{"k1","b1","h"}}) == None{} : Maybe<&2,ContextObserver.ReleaseOutcome>}
+
+def a_release_with_matching_custody_has_no_refusal():
+  {==}
+
+law an_unavailable_keeper_action_names_the_primitive:
+  {ContextObserver.release_unavailable("k1","h","keeper release effect") == ContextObserver.ReleaseEffectUnavailable{"k1","h","keeper release effect"} : ContextObserver.ReleaseOutcome}
+
+def an_unavailable_keeper_action_names_the_primitive():
+  {==}
+
+law a_committed_row_is_a_commit_and_an_absent_row_is_not:
+  {ContextObserver.step_after(Done{"{}"}) == ContextObserver.ObserverCommitted{"{}"} : ContextObserver.ObserverStep}
+
+def a_committed_row_is_a_commit_and_an_absent_row_is_not():
+  {==}
+
+law an_absent_observer_row_is_not_a_commit:
+  {ContextObserver.step_after(Done{""}) == ContextObserver.ObserverAbsent{"role row"} : ContextObserver.ObserverStep}
+
+def an_absent_observer_row_is_not_a_commit():
+  {==}
+
+law a_malformed_observer_row_is_unreadable:
+  {ContextObserver.step_after(Done{"nope"}) == ContextObserver.ObserverUnreadable{"row","nope"} : ContextObserver.ObserverStep}
+
+def a_malformed_observer_row_is_unreadable():
+  {==}
+
+law a_host_failure_stays_a_failure:
+  {ContextObserver.step_after(Fail{(7,"host")}) == ContextObserver.ObserverFailed{7,"host"} : ContextObserver.ObserverStep}
+
+def a_host_failure_stays_a_failure():
+  {==}
+
+law an_empty_failure_document_is_absent:
+  {ContextObserver.failure_schema("") == None{} : Maybe<&2,String>}
+
+def an_empty_failure_document_is_absent():
+  {==}
+
+law a_rendered_failure_document_is_present:
+  {ContextObserver.failure_schema("{\"code\":2}") == Some{"{\"code\":2}"} : Maybe<&2,String>}
+
+def a_rendered_failure_document_is_present():
   {==}

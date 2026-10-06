@@ -3,14 +3,13 @@
 # and performs passive discovery through a supplied catalog selection, with every failure
 # keeping its original code and detail.
 #
-# The Core selected-plan validation and the catalog selection arrive as supplied operands,
-# because Core's modules are not part of this worktree's closure and this module does not
-# invent a bridge to them. A pure plan decision is validation, not an effect callable, and
-# this module calls it as such.
+# The Core plan validation and the catalog selection arrive as supplied operands, because
+# Core's modules are not part of this worktree's closure and this module invents no bridge to
+# them. A pure plan decision is validation, not an effect callable. The catalog operand stays
+# unconnected until the actual passive catalog consumer is bound.
 #
-# Reference expansion is not restated here: ContextStore.ref_lookup is the typed ref access
-# of this service, with its own staged answers and its own host failure, and a second shape
-# for the same operation would add nothing.
+# Reference expansion is not restated here: ContextStore.ref_lookup is the typed ref access of
+# this service, with its own staged answers and its own host failure.
 import Base
 import ./bound-admission.bend as ContextAdmit
 import ./store.bend as ContextStore
@@ -18,16 +17,20 @@ import ../host/sqlite.bend as DB
 import ../git/text.bend as Tx
 import ../coordinator/commands.bend as C
 
-# What one submission concluded. The refusal keeps the host or validation code with its
-# detail, and the uncertain answer keeps the stage and the raw answer so a caller never reads
-# a short, surplus or malformed admission answer as an admitted one.
+# What one submission concluded. Every admission variant is carried as itself: an answer this
+# run created, a retained row whose owner and request are the caller's own, a retained row
+# that belongs to another owner or request, a read-back absence, and uncertainty with its
+# stage and raw answer.
 type Submission is Data:
   SubmissionAdmitted{admission: ContextAdmit.Admission}
+  SubmissionAbsent{}
+  SubmissionForeign{owner: String, request: String}
   SubmissionRefused{code: U32, detail: String}
   SubmissionUncertain{stage: String, answer: String}
 
 # What one retained read concluded, from a single statement so the state and the envelope
-# describe the same row.
+# describe the same row. An empty present envelope and a non-empty absent row are malformed
+# answers rather than found or absent ones.
 type Retained is Data:
   RetainedFound{state: String, envelope: String}
   RetainedAbsent{query: String}
@@ -41,15 +44,27 @@ type Discovery is Data:
   DiscoveryRefused{code: U32, detail: String}
 
 # The retained read of one query: whether the row exists, its state, and its envelope. The
-# envelope is one line of JSON, so the row framing cannot be broken by its content.
+# envelope expression is the unterminated body, because the terminated statement cannot be
+# embedded inside a scalar subquery. The envelope is one line of JSON, so the row framing
+# cannot be broken by its content.
 def retained_sql(+query: String) -> String:
   "SELECT CASE WHEN EXISTS(SELECT 1 FROM semantic_queries WHERE id=" ++ C.q(query) ++ ") THEN 'present' ELSE 'absent' END,"
   ++ "coalesce((SELECT state FROM semantic_queries WHERE id=" ++ C.q(query) ++ "),''),"
-  ++ "coalesce((" ++ ContextStore.envelope_sql(query) ++ "),'');"
+  ++ "coalesce((" ++ ContextStore.envelope_body_sql(query) ++ "),'');"
+
+def retained_absent_shape(+query: String, +state: String, +envelope: String, +answer: String) -> Retained:
+  Bool.pick(Retained, Bool.and(String.is_empty(state), String.is_empty(envelope)), RetainedAbsent{query}, RetainedUnreadable{"absentShape", answer})
+
+def retained_present_document(+query: String, +state: String, +envelope: String, +answer: String) -> Retained:
+  Bool.pick(Retained, String.starts_with(envelope, "{"), RetainedFound{state, envelope}, RetainedUnreadable{"envelopeShape", answer})
+
+def retained_present_shape(+query: String, +state: String, +envelope: String, +answer: String) -> Retained:
+  Bool.pick(Retained, String.is_empty(envelope), RetainedUnreadable{"presentEnvelope", answer},
+  Bool.pick(Retained, ContextAdmit.admit_state_ok(state), retained_present_document(query, state, envelope, answer), RetainedUnreadable{"stateDomain", answer}))
 
 def retained_answer(+query: String, +presence: String, +state: String, +envelope: String, +answer: String) -> Retained:
-  Bool.pick(Retained, String.eq(presence, "absent"), RetainedAbsent{query},
-  Bool.pick(Retained, String.eq(presence, "present"), RetainedFound{state, envelope}, RetainedUnreadable{"presence", answer}))
+  Bool.pick(Retained, String.eq(presence, "absent"), retained_absent_shape(query, state, envelope, answer),
+  Bool.pick(Retained, String.eq(presence, "present"), retained_present_shape(query, state, envelope, answer), RetainedUnreadable{"presence", answer}))
 
 def retained_tabs(+query: String, +fields: List<String>, +answer: String) -> Retained:
   match fields:
@@ -86,15 +101,26 @@ def retained(+db: String, +binding: String, +query: String) -> IO(Retained):
     result : Result<&1,&1,U32 & String,String> <- DB.Sql.query_bound(db, binding, retained_sql(query))
     retained_after(query, result)
 
-def submission_after(result: Result<&1,&1,U32 & String,ContextAdmit.Admission>) -> IO(Submission):
+# A retained row is admitted only when its owner and request are the caller's own.
+def submission_retained(+expectedOwner: String, +expectedRequest: String, admission: ContextAdmit.Admission, +owner: String, +request: String) -> Submission:
+  Bool.pick(Submission, ContextAdmit.admit_identical(admission, expectedOwner, expectedRequest), SubmissionAdmitted{admission}, SubmissionForeign{owner, request})
+
+def submission_of(+expectedOwner: String, +expectedRequest: String, admission: ContextAdmit.Admission) -> Submission:
+  match admission:
+    case ContextAdmit.AdmissionCreated{owner, request, decision, state, attempt, keeperPath, cwd, artifactPath}: SubmissionAdmitted{admission}
+    case ContextAdmit.AdmissionRetained{owner, request, decision, state, attempt, keeperPath, cwd, artifactPath}: submission_retained(expectedOwner, expectedRequest, admission, owner, request)
+    case ContextAdmit.AdmissionAbsent{}: SubmissionAbsent{}
+    case ContextAdmit.AdmissionUncertain{stage, answer}: SubmissionUncertain{stage, answer}
+
+def submission_after(+expectedOwner: String, +expectedRequest: String, result: Result<&1,&1,U32 & String,ContextAdmit.Admission>) -> IO(Submission):
   match result:
-    case Done{+admission}: IO.pure(Submission, SubmissionAdmitted{admission})
+    case Done{+admission}: IO.pure(Submission, submission_of(expectedOwner, expectedRequest, admission))
     case Fail{error}:
       match error:
         case (code, detail): IO.pure(Submission, SubmissionRefused{code, detail})
 
 # One submission: the Core plan validation runs first and a refusal there creates no row, then
-# the atomic admission creates or replays the row and returns its own answer.
+# the atomic admission creates or replays the row and its answer is dispatched as itself.
 def submit(+db: String, +binding: String, +id: String, +owner: String, +requestJson: String, +keeperPath: String, +cwd: String, +originAttempt: String, +artifactPath: String, validate: String -> IO(Result<&1,&1,U32 & String,String>)) -> IO(Submission):
   do IO<Submission>:
     verdict : Result<&1,&1,U32 & String,String> <- validate(requestJson)
@@ -104,10 +130,10 @@ def submit(+db: String, +binding: String, +id: String, +owner: String, +requestJ
           case (code, detail): IO.pure(Submission, SubmissionRefused{code, detail})
       case Done{+accepted}:
         admitted : Result<&1,&1,U32 & String,ContextAdmit.Admission> <- ContextAdmit.admit(db, binding, id, owner, accepted, keeperPath, cwd, originAttempt, artifactPath)
-        submission_after(admitted)
+        submission_after(owner, accepted, admitted)
 
 # Passive discovery: the supplied catalog selection answers, and this module reads no target,
-# starts no module and admits nothing.
+# starts no module and admits nothing. Unconnected until the actual catalog consumer is bound.
 def discover(catalog: Unit -> IO(Result<&1,&1,U32 & String,String>)) -> IO(Discovery):
   do IO<Discovery>:
     selected : Result<&1,&1,U32 & String,String> <- catalog(Unit{})

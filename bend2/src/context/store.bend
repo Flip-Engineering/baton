@@ -274,8 +274,13 @@ def replay_guard() -> String:
   " ON CONFLICT(id) DO UPDATE SET id=CASE WHEN semantic_queries.owner=excluded.owner AND semantic_queries.request_json=excluded.request_json THEN semantic_queries.id ELSE NULL END;"
 
 # The closed answer envelope of one retained query. A missing ID returns no row.
+def envelope_body_sql(+id: String) -> String:
+  "SELECT json_object('version',1,'query',id,'owner',owner,'state',state,'result',CASE WHEN result_json IS NULL THEN NULL ELSE json(result_json) END,'error',CASE WHEN error_json IS NULL THEN NULL ELSE json(error_json) END,'progress',CASE WHEN progress_json IS NULL THEN NULL ELSE json(progress_json) END) FROM semantic_queries WHERE id=" ++ C.q(id)
+
+# The terminated envelope statement: the body plus its terminator, byte-identical for every
+# existing caller and for the law that pins the publish statement text.
 def envelope_sql(+id: String) -> String:
-  "SELECT json_object('version',1,'query',id,'owner',owner,'state',state,'result',CASE WHEN result_json IS NULL THEN NULL ELSE json(result_json) END,'error',CASE WHEN error_json IS NULL THEN NULL ELSE json(error_json) END,'progress',CASE WHEN progress_json IS NULL THEN NULL ELSE json(progress_json) END) FROM semantic_queries WHERE id=" ++ C.q(id) ++ ";"
+  envelope_body_sql(id) ++ ";"
 
 # One committed admission decision. The row is created before any provider effect;
 # `state` is `accepted` and the observers advance it through the guarded publish
