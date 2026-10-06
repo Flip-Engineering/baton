@@ -434,6 +434,15 @@ while True: time.sleep(1)
                 except ProcessLookupError: pass
             turn.communicate(timeout=10)
 
+    def test_later_direct_turn_preserves_an_earlier_checkpoint(self):
+        previous = json.dumps({'type': 'tool_execution_update', 'toolCallId': 'previous',
+                               'partialResult': {'content': [{'type': 'text', 'text': 'earlier partial'}]}})
+        pending = self.cwd / 'turn.jsonl.pending'
+        pending.write_text(previous)
+        self.stream([self.terminal()])
+        self.assertIn(json.loads(previous), [json.loads(line) for line in self.lines()])
+        self.assertFalse(pending.exists())
+
     def test_unwritable_log_reports_the_failure_and_keeps_the_report(self):
         unwritable = self.cwd / 'log-directory'
         unwritable.mkdir()
