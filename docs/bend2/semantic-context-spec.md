@@ -1,14 +1,19 @@
 # Native semantic context implementation specification
 
-Status: revised design candidate for independent review. The requirements are
+Status: implementation authorized under Root110. The requirements are
 [Native semantic context](semantic-context-feature.md) and the Root81
 [language scope amendment](semantic-context-language-scope.md), including
 Root83/84's project detection and selective package-loading requirement. Bend2 is the
 first target. The amendment withdraws whole-feature and language-boundary
 acceptance of `8a26bc3e7f9d5355b72f1291d95620b218b5c8e2`. Prior reviews and
-provider evidence retain their original scope. This revision requires new domain
-review, whole Quality review and Root comparison before affected shared
-implementation is accepted. Compatible repairs retain their existing owners.
+provider evidence retain their original scope. Root has compared this revised
+scope with the feature requirement and authorized the useful Bend2-first native
+implementation. Existing owners proceed with source changes and settle callable
+interfaces directly in their tight Ensembles. Independent critics assess
+substantive contracts, changed behavior and unresolved defects. Unchanged material
+retains its review; partial edits require no further Root authorization or repeated
+final-pin reconciliation. Real laws, safety and ownership rules, remote execution
+and accurate external facts remain required.
 
 The frontend source examined for this revision is Bend 2.0.25. Provider versions
 and runtime dependencies belong to individual module declarations. Node 22.15.0
@@ -25,8 +30,7 @@ read/discovery scope on `98fbfe03`, excluding provisional receive runtime.
 Its bounded composition acceptance leaves root full checks, landing and installed
 cold discovery open. `semantic-controls-next` and the registered interfaces
 owner retain their respective module and shared-surface ownership. These scoped
-references support the common conventions; root separately decides semantic
-implementation after independent review and whole-feature comparison.
+references support the common conventions and retain their bounded evidence.
 
 ## Supported scope
 
@@ -331,8 +335,9 @@ authority. Target configuration supplies no package URL,
 installer command or trust root. The native result includes the literal query
 needed to resolve the missing selected package; agents need no private scripts.
 
-This operation and effect are review proposals owned jointly by Native's package,
-Core/Codec/Lifecycle owners and sole Interfaces. They are not existing exports.
+This operation and effect are implementation obligations owned jointly by Native's
+package, Core/Codec/Lifecycle owners and sole Interfaces. Owners supply the actual
+callable exports and identify any missing primitive to its consuming owner.
 Their implementation must call the actual package acquisition/staging/verification
 entry and retain its process/effect receipt through existing query custody. If
 that entry or authority is unavailable, refusal identifies the missing owned
@@ -398,9 +403,10 @@ the same four admission outcomes and immutable historical replay. Its result use
 the native moduleResolution state variant. Expected-state comparison and effect
 completion need the actual config owner's primitive: a SQLite transaction alone
 cannot make an external-file compare/write atomic. The exact callable and both
-new effect meanings require Package/Core/Codec/Lifecycle/Interfaces and Root
-review before implementation acceptance. Target execution and package
-installation grants do not implicitly grant configuration changes. An unknown
+new effect meanings require direct Package/Core/Codec/Lifecycle/Interfaces
+agreement and substantive independent review of changed contracts. Target
+execution and package installation grants do not implicitly grant configuration
+changes. An unknown
 apply outcome returns to its original retained operation for reconciliation;
 active queries and old results retain their original admitted configuration.
 Pre-preparation refusal creates no query row. A committed admission rejection
@@ -2159,8 +2165,8 @@ The startup composition uses the proposed ordinary retained-process primitive
 in `95bfccf0acefa151a667fa40a5f1fdfedafc5a80:docs/bend2/direct-start-672-proposal.md`,
 the docs-only successor to `d47d5c11` with six independent design ACCEPTs.
 These reviews establish the proposal assessment. Root has authorized bounded
-direct95 implementation; shared host qualification and semantic implementation
-authorization remain separate. The `08dd2053` and `d47d5c11` reports
+direct95 and semantic implementation; shared host qualification remains required.
+The `08dd2053` and `d47d5c11` reports
 remain attached to their original pins.
 `ProcessChild.prepare`, `start` and
 `state` are proposed extensions of the existing keeper. Semantic composition
@@ -2905,8 +2911,10 @@ merely Node22 latest is insufficient floor evidence.
 Whole-feature review uses the corrected Bend2-first language scope. Earlier
 backend approvals retain their measured/source scope. They do not qualify this
 module contract by inference. Independent criticism covers language/module
-extension, semantic correctness, agent ease-of-use and minimality. Root compares
-the revised specification with the feature requirement after Quality's review.
+extension, semantic correctness, agent ease-of-use and minimality. Root's feature
+comparison is complete for this scope. Review of changed behavior and unresolved
+defects proceeds with implementation. Historical missing final-spec reports and
+unchanged final-pin reconciliation do not block this authorized work.
 
 The first useful installed qualification is Bend2. Through actual CLI and MCP,
 select real definitions and imports from the admitted source closure, expand refs,
@@ -3178,10 +3186,12 @@ for the optional Node profile, dependency packaging, migration
 provider compatibility and runtime cleanup/notification remain acceptance gates.
 This document does not claim those installed native gates have run.
 
-Root gates the composed candidate with `build-native`, full `laws-check.mjs` and
-`check-native`, followed by independent review, native fast-forward publication
-and remote readback. The landing gate compares selected tests on target and change
-and blocks regressions; known target breakage belongs in the issue tracker.
+The composed candidate runs `build-native`, full `laws-check.mjs` and
+`check-native` on admitted remote runners. Independent substantive review covers
+changed contracts and behavior; completed reviews remain attached to their scope.
+Native fast-forward publication and remote readback retain their actual authority
+and evidence requirements. The landing gate compares selected tests on target and
+change and blocks regressions; known target breakage belongs in the issue tracker.
 
 ## Ownership and evidence
 
@@ -3193,14 +3203,17 @@ archive closure with CI and the original package owner. Models owns framework,
 data/security/environment relationships through this boundary. Runtime owns
 debug capability mapping and the existing CDP/Values work. Controls and sole
 Interfaces own the shared command/MCP/discovery/orientation composition. Existing
-domain critics and the whole Quality Ensemble independently assess the revised
-contract; Synthesis integrates their source-scoped contributions before Root's
-final feature comparison. No new actor or parallel specification editor is needed.
+domain critics and the Quality Ensemble independently assess substantive changed
+contracts and behavior. Synthesis integrates their source-scoped contributions and
+resolves cross-owner dependencies. Existing owners exchange concrete callable
+arguments, results and source changes directly through registered tight peer routes.
 
 Compatible pure/result/provenance/grant/lifecycle repairs, CI, Instance and Receive
 continue under their current assignments. Affected fixed-provider paths cannot
-land as satisfying the corrected feature. Source/design preparation is independent
-where dependencies permit; shared implementation uses the reviewed contract.
+land as satisfying the corrected feature. Source implementation proceeds in parallel
+where dependencies permit, using the reviewed contract. Runtime and Models work
+continues independently of unrelated module gates. Optional modules carry their
+own dependencies and operative laws.
 For the independently authorized #671 repair,
 the registered `semantic-controls-interfaces-research` Player exclusively owns
 shared commands/main/MCP/help/briefing and the final read candidate. Structural
@@ -3209,14 +3222,14 @@ controls-next owns its structural module, laws and Recruit factoring, with a
 separately owned structural fixture. That approval performs no semantic or
 optional-startup effect. Controls-next owns the #672 direct-start proposal and
 shared keeper design, with bounded direct95 implementation authorized and host
-qualification still open. Semantic package/store/law
-and entry changes require explicit reviewed handoffs after authorization.
+qualification still open. Semantic package/store/law and entry owners coordinate
+concrete producer/consumer changes directly within this implementation authority.
 `native-receive-conductor` first owns #669/#670 repair to
 commands/turn/receive and associated laws/tests. Feature branches rebase onto its
 reviewed landed result before overlapping edits. No shared file is edited by
 both feature owners concurrently.
 
-After revised-boundary review, existing Sections implement the Bend2 module,
+Existing Sections implement the Bend2 module,
 common module boundary and the independently supported module profiles in parallel
 according to their real dependencies. Each source/test region keeps one owner.
 Qualification proceeds Bend2 first, then the preferred modules with their own
@@ -3251,7 +3264,8 @@ The retained research used for this specification is retrievable with native
   `native114-reviewed-successors-supplement` and `models-module-final-38-synthesis`:
   common effect minima, authenticated original/current ref associations, actual
   storage migration requirements and payload numeric-domain limits. Their concrete
-  source/design proposals remain subject to the complete successor review.
+  proposals retain their original scope; changed contracts and unresolved defects
+  receive substantive review during implementation.
 - `quality-language-fidelity-contributions-83-semantic-synthesis` and
   `quality-language-critic-contributions-84-semantic-synthesis`: independent
   candidate requirements, including their retained corrections to earlier
@@ -3305,6 +3319,6 @@ Research demonstrations establish component feasibility under their stated pins.
 This specification preserves those optional profiles within the common module
 boundary. Its Bend2 integration, module extension, new joins,
 transport composition, runtime worker and owner cleanup are implementation work,
-with host acceptance required before support can be advertised. Independent
-review and root whole-feature comparison remain prerequisites to root's
-implementation authorization.
+with host acceptance required before support can be advertised. Root110 authorizes
+this implementation. Independent criticism, operative laws and remote acceptance
+establish the behavior delivered by the resulting source and installed artifacts.
