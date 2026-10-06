@@ -50,15 +50,18 @@ def requested_holder(request: IntentInput) -> String:
 
 # A separator in the requested path would make the comparison ambiguous, because the
 # producer does not escape it.
-def carries_tab(text: String) -> Bool:
+def carries_tab_go(text: String, found: Bool) -> Bool:
   match text:
-    case SNil{}: False{}
-    case SCon{c, rest}: carries_tab_step(c, rest)
+    case SNil{}: found
+    case SCon{c, rest}:
+      +here = c
+      +hit = Tx.is_tab(here)
+      +next = Bool.or(found, hit)
+      carries_tab_go(rest, next)
 
-def carries_tab_step(c: Char, rest: String) -> Bool:
-  match Tx.is_tab(c):
-    case True{}: True{}
-    case False{}: carries_tab(rest)
+def carries_tab(text: String) -> Bool:
+  +start = False{}
+  carries_tab_go(text, start)
 
 # Leaves first. Every supported shape is compared whole, so a missing or extra separator
 # and a malformed pending field each reach their own refusal instead of being flattened.
@@ -71,35 +74,40 @@ def verdict_trailing(raw: String, path: String) -> ReceiptVerdict:
 def verdict_no_final_separator(raw: String, path: String) -> ReceiptVerdict:
   VerdictRefused{raw, "record is missing its final separator"}
 
-def verdict_exact(raw: String, wanted: String) -> ReceiptVerdict:
-  match Tx.str_eq(raw, Tx.str_cat("qualified\t", Tx.str_cat(wanted, "\t0\t\t0\t"))):
-    case True{}: VerdictAdmitted{raw, wanted}
-    case False{}: verdict_second(raw, wanted)
-
-def verdict_second(raw: String, wanted: String) -> ReceiptVerdict:
-  match Tx.str_eq(raw, Tx.str_cat("qualified\t", Tx.str_cat(wanted, "\t0\t\t1\t"))):
-    case True{}: VerdictPending{raw, wanted, "1"}
-    case False{}: verdict_third(raw, wanted)
-
-def verdict_third(raw: String, wanted: String) -> ReceiptVerdict:
-  match Tx.str_eq(raw, Tx.str_cat("qualified\t", Tx.str_cat(wanted, "\t0\t\t0"))):
-    case True{}: verdict_no_final_separator(raw, wanted)
-    case False{}: verdict_fourth(raw, wanted)
+def verdict_fifth(raw: String, wanted: String) -> ReceiptVerdict:
+  match Tx.str_eq(raw, Tx.str_cat("qualified\t", Tx.str_cat(wanted, "\t0\t\t"))):
+    case True{}: verdict_pending_missing(raw, wanted)
+    case False{}: VerdictRefused{raw, "record does not match the qualified production shape"}
 
 def verdict_fourth(raw: String, wanted: String) -> ReceiptVerdict:
   match Tx.str_eq(raw, Tx.str_cat("qualified\t", Tx.str_cat(wanted, "\t0\t\t0\t\t"))):
     case True{}: verdict_trailing(raw, wanted)
     case False{}: verdict_fifth(raw, wanted)
 
-def verdict_fifth(raw: String, wanted: String) -> ReceiptVerdict:
-  match Tx.str_eq(raw, Tx.str_cat("qualified\t", Tx.str_cat(wanted, "\t0\t\t"))):
-    case True{}: verdict_pending_missing(raw, wanted)
-    case False{}: VerdictRefused{raw, "record does not match the qualified production shape"}
+def verdict_third(raw: String, wanted: String) -> ReceiptVerdict:
+  match Tx.str_eq(raw, Tx.str_cat("qualified\t", Tx.str_cat(wanted, "\t0\t\t0"))):
+    case True{}: verdict_no_final_separator(raw, wanted)
+    case False{}: verdict_fourth(raw, wanted)
+
+def verdict_second(raw: String, wanted: String) -> ReceiptVerdict:
+  match Tx.str_eq(raw, Tx.str_cat("qualified\t", Tx.str_cat(wanted, "\t0\t\t1\t"))):
+    case True{}: VerdictPending{raw, wanted, "1"}
+    case False{}: verdict_third(raw, wanted)
+
+def verdict_exact(raw: String, wanted: String) -> ReceiptVerdict:
+  +r8 = raw
+  +w8 = wanted
+  +whole8 = Tx.str_cat("qualified\t", Tx.str_cat(w8, "\t0\t\t0\t"))
+  match Tx.str_eq(r8, whole8):
+    case True{}: VerdictAdmitted{raw, wanted}
+    case False{}: verdict_second(raw, wanted)
 
 def receipt_verdict(record: String, wanted: String) -> ReceiptVerdict:
-  match carries_tab(wanted):
-    case True{}: VerdictRefused{record, "requested path carries a separator"}
-    case False{}: verdict_exact(record, wanted)
+  +raw = record
+  +path = wanted
+  match carries_tab(path):
+    case True{}: VerdictRefused{raw, "requested path carries a separator"}
+    case False{}: verdict_exact(raw, path)
 
 def verdict_admitted(verdict: ReceiptVerdict) -> Bool:
   match verdict:
@@ -111,12 +119,15 @@ def verdict_admitted(verdict: ReceiptVerdict) -> Bool:
 # qualified raw record is retained, and the branch is an observation: the exact attempt,
 # content and association are not established here, so nothing claims readiness.
 def Intent.observe_holder(request: IntentInput, raw: String, qualified_path: String) -> IO(IntentPrepared):
-  +h = requested_holder(request)
+  +req = request
+  +record = raw
+  +path = qualified_path
+  +h = requested_holder(req)
   do IO<IntentPrepared>:
     head : T.GitOut <- Git.runGit(h, ["rev-parse", "HEAD"])
     index : T.GitOut <- Git.runGit(h, ["diff", "--cached", "--name-status"])
     status : T.GitOut <- Git.runGit(h, ["status", "--porcelain"])
-    IO.pure(IntentPrepared, IntentObserved{request, raw, qualified_path, head, index, status})
+    IO.pure(IntentPrepared, IntentObserved{req, record, path, head, index, status})
 
 def Intent.decided(request: IntentInput, raw: String, verdict: ReceiptVerdict) -> IO(IntentPrepared):
   match verdict:
@@ -125,7 +136,10 @@ def Intent.decided(request: IntentInput, raw: String, verdict: ReceiptVerdict) -
     case VerdictRefused{refused_raw, reason}: IO.pure(IntentPrepared, IntentUnready{"record", reason, refused_raw})
 
 def Intent.recorded(request: IntentInput, raw: String) -> IO(IntentPrepared):
-  Intent.decided(request, raw, receipt_verdict(raw, requested_path(request)))
+  +req = request
+  +record = raw
+  +path = requested_path(req)
+  Intent.decided(req, record, receipt_verdict(record, path))
 
 def Intent.record_observed(request: IntentInput, observed: Result<U32 & String, String>) -> IO(IntentPrepared):
   match observed:
@@ -133,9 +147,10 @@ def Intent.record_observed(request: IntentInput, observed: Result<U32 & String, 
     case Done{raw}: Intent.recorded(request, raw)
 
 def Intent.read_observed(request: IntentInput, observed: Result<U32 & String, String>) -> IO(IntentPrepared):
+  +req = request
   match observed:
-    case Fail{error}: IO.pure(IntentPrepared, IntentHostFailed{"qualify", request, error})
-    case Done{raw}: Intent.record_observed(request, Done{raw})
+    case Fail{error}: IO.pure(IntentPrepared, IntentHostFailed{"qualify", req, error})
+    case Done{raw}: Intent.record_observed(req, Done{raw})
 
 def Intent.prepare(request: IntentInput) -> IO(IntentPrepared):
   do IO<IntentPrepared>:
@@ -192,11 +207,19 @@ law a_requested_path_with_a_separator_is_refused:
 def a_requested_path_with_a_separator_is_refused():
   {==}
 
-law a_semantic_refusal_reaches_unready_with_its_reason_and_raw_record:
-  for request: IntentInput
-  {Intent.recorded(request, "absent\t/x\t0\tqualify\t0\tabsent") == IO.pure(IntentPrepared, IntentUnready{"record", "record does not match the qualified production shape", "absent\t/x\t0\tqualify\t0\tabsent"}) : IO(IntentPrepared)}
+# The reason precedence is real: a record for a path carrying a separator is refused for
+# the separator before the record is even compared, so this law is stated for a path
+# without one, and the counterpart below states the separator case.
+law a_semantic_refusal_for_a_valid_path_reaches_unready_with_its_reason_and_raw_record:
+  {Intent.recorded(IntentRequested{"a", "/c", "refs/heads/t", "/d", "cand", "base", "/x", "/h", ""}, "absent\t/x\t0\tqualify\t0\tabsent") == IO.pure(IntentPrepared, IntentUnready{"record", "record does not match the qualified production shape", "absent\t/x\t0\tqualify\t0\tabsent"}) : IO(IntentPrepared)}
 
-def a_semantic_refusal_reaches_unready_with_its_reason_and_raw_record(request):
+def a_semantic_refusal_for_a_valid_path_reaches_unready_with_its_reason_and_raw_record():
+  {==}
+
+law a_requested_path_with_a_separator_reaches_unready_for_the_separator:
+  {Intent.recorded(IntentRequested{"a", "/c", "refs/heads/t", "/d", "cand", "base", "/x\ty", "/h", ""}, "qualified\t/x\ty\t0\t\t0\t") == IO.pure(IntentPrepared, IntentUnready{"record", "requested path carries a separator", "qualified\t/x\ty\t0\t\t0\t"}) : IO(IntentPrepared)}
+
+def a_requested_path_with_a_separator_reaches_unready_for_the_separator():
   {==}
 
 law a_host_failure_keeps_the_request_the_step_and_the_exact_error:
