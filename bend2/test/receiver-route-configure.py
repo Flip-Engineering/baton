@@ -156,7 +156,7 @@ class ConfigureRoute(unittest.TestCase):
             _fields_ = [('pid', ctypes.c_int32), ('first', ctypes.c_uint64),
                         ('second', ctypes.c_uint64)]
 
-        directory = self.root / 'retained-attempt'
+        directory = self.root / 'retained\nattempt\n'
         directory.mkdir()
         recovery = [str(self.exe), '--recover-receive', str(self.db), 'child', 'pending', '0',
                     str(self.command), 'old', 'high', str(self.root), str(self.log),
@@ -171,18 +171,37 @@ class ConfigureRoute(unittest.TestCase):
         (directory / 'launch').write_text('retained')
         with sqlite3.connect(self.db) as db:
             db.execute("INSERT INTO executions(session,id,mode,directory,phase) VALUES('child','retained','retained',?,'exited')", (str(directory),))
-        for failed in (False, True):
-            with self.subTest(observer_failed=failed):
+        for failed, acknowledged in ((False, False), (True, False), (True, True)):
+            with self.subTest(observer_failed=failed, input_acknowledged=acknowledged):
+                receipt = 'external-ack' if acknowledged else None
+                with sqlite3.connect(self.db) as db:
+                    db.execute("UPDATE messages SET receipt=? WHERE id='pending'", (receipt,))
                 if failed:
                     (directory / 'observer-error').write_text('2: observer executable missing\n')
                 run = self.configure(expected=2)
-                self.assertIn('retains observation or acknowledgement work', run.stderr)
+                answer = json.loads(run.stderr)
+                self.assertEqual(answer['status'], 'configuration-recovery-required')
+                self.assertFalse(answer['configurationApplied'])
+                self.assertEqual(answer['blocked'], {'database': str(self.db), 'session': 'child',
+                                                     'requester': 'parent', 'directory': str(directory)})
+                # This fixture has an empty parent endpoint and no live observer.
+                # Receive must surface unavailable delivery; Done alone is insufficient.
+                self.assertEqual(answer['handoff']['kind'], 'failed')
+                self.assertIsInstance(answer['handoff']['code'], int)
+                self.assertTrue(answer['handoff']['error'])
                 self.assertEqual(self.snapshot(), self.original)
                 self.assertTrue((directory / 'manifest').exists())
                 self.assertFalse((directory / 'acknowledged').exists())
                 with sqlite3.connect(self.db) as db:
-                    self.assertEqual(db.execute("SELECT body,receipt FROM messages WHERE id='pending'").fetchone(), ('original pending input', None))
+                    self.assertEqual(db.execute("SELECT body,receipt FROM messages WHERE id='pending'").fetchone(), ('original pending input', receipt))
                     self.assertEqual(db.execute('SELECT event FROM turns').fetchall(), [('original event',)])
+
+    def test_nul_retained_directory_refuses_before_recovery(self):
+        with sqlite3.connect(self.db) as db:
+            db.execute("INSERT INTO executions(session,id,mode,directory,phase) VALUES('child','retained','retained',?,'exited')", ('/attempt\x00suffix',))
+        run = self.configure(expected=2)
+        self.assertIn('Retained directory row is unsupported or malformed', run.stderr)
+        self.assertEqual(self.snapshot(), self.original)
 
     def test_revision_route_and_history(self):
         answer = self.configure()

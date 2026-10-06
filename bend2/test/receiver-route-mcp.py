@@ -1,5 +1,6 @@
 """Future adapter cases using the existing recording-executable fixture."""
 import importlib.util
+import json
 from pathlib import Path
 import unittest
 
@@ -58,6 +59,18 @@ class ReceiverRouteMcp(unittest.TestCase):
         self.assertEqual(len(calls), 1)
         self.assertTrue(result['isError'])
         self.assertIn('configuration-outcome-unknown', result['content'][0]['text'])
+
+    def test_recovery_handoff_results_remain_configuration_errors(self):
+        args = {'player': 'child', 'expectedAssignment': '{}', 'harness': 'omp',
+                'model': 'new', 'effort': 'high', 'command': '/omp', 'log': '/out'}
+        for handoff in ({'kind': 'done', 'output': ''},
+                        {'kind': 'failed', 'code': 73, 'error': 'endpoint changed before invocation'}):
+            body = json.dumps({'status': 'configuration-recovery-required',
+                               'configurationApplied': False, 'handoff': handoff})
+            result, calls = self.exchange('baton2_receiver_route', args, code=2, stderr=body)
+            self.assertEqual(len(calls), 1)
+            self.assertTrue(result['isError'])
+            self.assertIn(body, result['content'][0]['text'])
 
 
 if __name__ == '__main__':

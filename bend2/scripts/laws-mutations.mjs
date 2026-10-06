@@ -3,6 +3,41 @@ import { join } from 'node:path';
 
 const MUTATIONS = [
   {
+    name: 'configuration-trims-retained-directory-newlines',
+    file: 'bend2/src/coordinator/receiver-route-apply.bend',
+    find: 'case True{}: Done{Tx.str_rev(rest)}',
+    replace: 'case True{}: Done{Tx.trim_nl(Tx.str_rev(rest))}',
+    law: 'retained_directory_preserves_internal_and_trailing_newlines',
+  },
+  {
+    name: 'configuration-discards-blocked-recovery',
+    file: 'bend2/src/coordinator/receiver-route-apply.bend',
+    find: 'IO.pure(Stage,Blocked{db,session,requester,directory})',
+    replace: 'IO.pure(Stage,SettledOk{"configured"})',
+    law: 'retained_original_attempt_preserves_its_blocked_identity',
+  },
+  {
+    name: 'configuration-release-failure-allows-recovery',
+    file: 'bend2/src/coordinator/receiver-route-apply.bend',
+    find: 'released_stage(result,release)',
+    replace: 'result',
+    law: 'held_configuration_releases_after_the_conditional_effect',
+  },
+  {
+    name: 'configuration-recovery-replaces-authority-with-subject',
+    file: 'bend2/src/coordinator/receiver-route-apply.bend',
+    find: 'recovery(database,session,requester,directory)',
+    replace: 'recovery(database,session,session,directory)',
+    law: 'released_blocked_attempt_reaches_one_handoff',
+  },
+  {
+    name: 'configuration-ignores-recovery-result',
+    file: 'bend2/src/coordinator/receiver-route-apply.bend',
+    find: 'recovery_answer(database,session,requester,directory,result)',
+    replace: 'Done{"configured"}',
+    law: 'released_blocked_attempt_reaches_one_handoff',
+  },
+  {
     name: 'legacy-route-allows-malformed-helper-prefix',
     file: 'bend2/src/coordinator/receiver-route-sql.bend',
     find: "json_extract(endpoint,'$[2]')='launch'",
@@ -56,7 +91,7 @@ const MUTATIONS = [
     name: 'route-configuration-skips-custody',
     file: 'bend2/src/coordinator/receiver-route-apply.bend',
     find: 'case Some{lock}: held(db,request,origin,binding,lock)',
-    replace: 'case Some{lock}: IO.pure(Result<&1,&1,U32 & String,String>,Done{"configured"})',
+    replace: 'case Some{lock}: IO.pure(Stage,SettledOk{"configured"})',
     law: 'acquired_configuration_enters_the_guarded_caller',
   },
   {

@@ -100,7 +100,7 @@ def execute(db: String, command: C.Command) -> IO(Unit):
   match command:
     case C.ReceiverRouteRead{session}: ReceiverRouteApply.inspect(db,session)
     case C.ReceiverRouteApply{session,requester,expected,harness,model,effort,command,log}:
-      ReceiverRouteApply.run(db,ReceiverRouteApply.Request{session,requester,expected,harness,model,effort,command,log})
+      ReceiverRouteApply.run(db,ReceiverRouteApply.Request{session,requester,expected,harness,model,effort,command,log},database => subject => actor => directory => Receive.report_configuration_recovery(database,subject,actor,directory))
     case C.ReceiveConfigured{session,configuration,harness,model,effort,command,log,message}:
       IO.try(Unit,Receive.run_configured(db,session,configuration,harness,model,effort,command,log,message))
     case C.ReceiverRouteInspect{session,expected,endpoint,requested}: ReceiverRoute.inspect(db,session,expected,endpoint,requested)
@@ -631,7 +631,7 @@ law route_configuration_entry_uses_the_guarded_caller:
   for effort: String
   for command: String
   for log: String
-  {execute(db,C.ReceiverRouteApply{session,requester,expected,harness,model,effort,command,log}) == ReceiverRouteApply.run(db,ReceiverRouteApply.Request{session,requester,expected,harness,model,effort,command,log}) : IO(Unit)}
+  {execute(db,C.ReceiverRouteApply{session,requester,expected,harness,model,effort,command,log}) == ReceiverRouteApply.run(db,ReceiverRouteApply.Request{session,requester,expected,harness,model,effort,command,log},database => subject => actor => directory => Receive.report_configuration_recovery(database,subject,actor,directory)) : IO(Unit)}
 
 def route_configuration_entry_uses_the_guarded_caller(db,session,requester,expected,harness,model,effort,command,log):
   {==}
