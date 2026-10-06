@@ -562,14 +562,15 @@ class PackageGateReceipt(unittest.TestCase):
             ('missing origin field', lambda directory: self.rewrite(
                 directory, origin={'workflow': 'w'}), 'producing origin'),
             ('unfinished baseline', lambda directory: self.rewrite_bundle(
-                directory, baseline={'process': {
+                directory, baseline={**self.baseline(directory), 'process': {
                     **self.process(directory, baseline=True), 'state': 'signalled',
                     'exit_code': None, 'signal': 'SIGKILL', 'spawn_error': None}}),
              'did not complete'),
             ('baseline exit nonzero', lambda directory: self.rewrite_bundle(
-                directory, baseline={'process': {
+                directory, baseline={**self.baseline(directory), 'process': {
                     **self.process(directory, baseline=True), 'state': 'exited',
-                    'exit_code': 1, 'signal': None, 'spawn_error': None}}), 'records exit'),
+                    'exit_code': 1, 'signal': None, 'spawn_error': None}}),
+             'A group baseline did not exit 0'),
             ('missing case', lambda directory: self.rewrite_bundle(
                 directory, results=[]), 'omits controls'),
             ('altered case definition', lambda directory: self.rewrite_result(
@@ -637,6 +638,10 @@ class PackageGateReceipt(unittest.TestCase):
 
     def attempt(self, directory, index):
         return self.results(directory, 0)[index]['process']['attempt']
+
+    def baseline(self, directory):
+        """The complete valid baseline record, so a defect overlays one field."""
+        return dict(self.bundle(directory)['baseline'])
 
     def process(self, directory, index=None, baseline=False):
         """The valid process record of one result, or of the bundle baseline.
@@ -1861,7 +1866,10 @@ class PackageGateReceipt(unittest.TestCase):
                   'classified diagnostic names another law'),
                  ('diagnostic label disagrees with the answered class',
                   {'class': 'unrelated-error'},
-                  'produced diagnostic label disagrees with its bytes')]
+                  'produced diagnostic label disagrees with its bytes'),
+                 ('non-refusal fails the intended-refusal qualification guard',
+                  {'match': False, 'qualified': False},
+                  'did not qualify this control as an intended refusal')]
         for name, answer, message in cases:
             with self.subTest(name=name):
                 directory = self.full_evidence()
