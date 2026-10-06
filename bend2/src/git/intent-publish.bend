@@ -144,10 +144,11 @@ def Intent.published(request: I.IntentInput, path: String, content: String, obse
         case False{}: refuse_unless_safe(req, "publish", "", r)
         case True{}: Intent.read_back(req, r, p, want)
 
-def Intent.ensured(request: I.IntentInput, path: String, content: String, name: String, observed: Result<U32 & String, String>) -> IO(IntentPublish):
+def Intent.ensured(request: I.IntentInput, path: String, content: String, directory: String, name: String, observed: Result<U32 & String, String>) -> IO(IntentPublish):
   +req = request
   +p = path
   +want = content
+  +dir = directory
   +n = name
   match observed:
     case Fail{error}: IO.pure(IntentPublish, PublishHostFailed{"ensure", req, error})
@@ -155,15 +156,16 @@ def Intent.ensured(request: I.IntentInput, path: String, content: String, name: 
       +r = raw
       match ensure_ok(r):
         case False{}: refuse_unless_safe(req, "ensure", "", r)
-        case True{}: Intent.publish_now(req, p, want, n)
+        case True{}: Intent.publish_now(req, p, want, dir, n)
 
-def Intent.publish_now(request: I.IntentInput, path: String, content: String, name: String) -> IO(IntentPublish):
+def Intent.publish_now(request: I.IntentInput, path: String, content: String, directory: String, name: String) -> IO(IntentPublish):
   +req = request
   +p = path
   +want = content
+  +dir = directory
   +n = name
   do IO<IntentPublish>:
-    observed : Result<U32 & String, String> <- R.Receipt.publish(I.requested_directory(req), n, want)
+    observed : Result<U32 & String, String> <- R.Receipt.publish(dir, n, want)
     Intent.published(req, p, want, observed)
 
 # The entry: a directory and a name that cannot carry the separator, the owned attempt
@@ -180,7 +182,7 @@ def Intent.publish_intent(request: I.IntentInput, directory: String, name: Strin
       +safe = dir
       do IO<IntentPublish>:
         observed : Result<U32 & String, String> <- R.Receipt.ensure(safe)
-        Intent.ensured(req, p, want, n, observed)
+        Intent.ensured(req, p, want, safe, n, observed)
 
 law a_published_tag_is_recognised:
   {publish_tag("published\t/x\t0\t\t0\t/published") == "published" : String}
