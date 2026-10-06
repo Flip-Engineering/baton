@@ -351,28 +351,28 @@ def sel_only(+cs: Cands, +subject: String) -> SelOutcome:
     case CandsNil{}: SelRefused{reason: SelNoCandidate{subject}}
     case CandsCons{h, r}: SelChosen{candidates: cand_ids(cs), chosen: h}
 
-def sel_ordinary_state(+ord: Cands, +subject: String) -> SelOutcome:
+# A singular candidate chain selects its only member, an empty one refuses, and
+# anything longer is the explicit ambiguity the specification requires. The chain
+# is bound once with the duplication annotation, so the derivation runs once per
+# call and the refusal names the candidates it considered.
+def sel_ordinary(+cat: Decl.Cat, +inputs: SelInputs, +inv: Decl.Inv,
+                 +subject: String, +common: String) -> SelOutcome:
+  +ord = ordinary_cands(cat, inputs, inv, common)
   Bool.pick(SelOutcome, cands_singular(ord), sel_only(ord, subject),
     Bool.pick(SelOutcome, cands_nonempty(ord),
               SelRefused{reason: SelAmbiguous{candidates: cand_ids(ord)}},
               SelRefused{reason: SelNoCandidate{subject}}))
 
-def sel_ordinary(+cat: Decl.Cat, +inputs: SelInputs, +inv: Decl.Inv,
-                 +subject: String, +common: String) -> SelOutcome:
-  sel_ordinary_state(ordinary_cands(cat, inputs, inv, common), subject)
-
-def sel_preferred_state(+pref: Cands, +subject: String, +cat: Decl.Cat,
-                        +inputs: SelInputs, +inv: Decl.Inv,
-                        +common: String) -> SelOutcome:
+# The configured preference is applied first: a unique preferred candidate wins,
+# several preferred candidates are the ambiguity, and with none preferred the
+# ordinary candidates decide.
+def sel_preferred(+cat: Decl.Cat, +inputs: SelInputs, +inv: Decl.Inv,
+                  +subject: String, +common: String) -> SelOutcome:
+  +pref = preferred_cands(cat, inputs, inv, common)
   Bool.pick(SelOutcome, cands_singular(pref), sel_only(pref, subject),
     Bool.pick(SelOutcome, cands_nonempty(pref),
               SelRefused{reason: SelAmbiguous{candidates: cand_ids(pref)}},
               sel_ordinary(cat, inputs, inv, subject, common)))
-
-def sel_preferred(+cat: Decl.Cat, +inputs: SelInputs, +inv: Decl.Inv,
-                  +subject: String, +common: String) -> SelOutcome:
-  sel_preferred_state(preferred_cands(cat, inputs, inv, common), subject, cat,
-                      inputs, inv, common)
 
 def select_known(+known: Bool, +cat: Decl.Cat, +inputs: SelInputs,
                  +inv: Decl.Inv, +subject: String, +explicit: String,
