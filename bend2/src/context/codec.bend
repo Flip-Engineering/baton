@@ -1021,7 +1021,7 @@ def raw_field_text(+v: RawValue, key: String) -> String:
 
 def raw_keys_ok(allowed: Req.Words, members: RawValue) -> Bool:
   match members:
-    case Rpair{+key, +value, +tail}: Bool.pick(Bool, Req.word_member(allowed, key), raw_keys_ok(allowed, tail), False{})
+    case Rpair{+key, +value, +tail}: Bool.pick(Bool, Req.word_member(allowed, key), Bool.pick(Bool, raw_member_present(key, tail), False{}, raw_keys_ok(allowed, tail)), False{})
     case Rnil{}: True{}
     case other: False{}
 
@@ -1062,18 +1062,12 @@ def scope_value_of(m: Maybe<&2, RawValue>) -> Bool:
 def scope_value_ok(+members: RawValue) -> Bool:
   scope_value_of(raw_member("scope", members))
 
-def keys_unique(+members: RawValue) -> Bool:
-  match members:
-    case Rpair{+key, +value, +tail}: Bool.pick(Bool, raw_member_present(key, tail), False{}, keys_unique(tail))
-    case Rnil{}: True{}
-    case other: False{}
-
 def arguments_values_ok(+tool: String, members: RawValue) -> Bool:
   Bool.pick(Bool, String.eq(tool, "context-engines"), scope_value_ok(members), True{})
 
 def arguments_closed_for(+tool: String, +members: RawValue) -> Bool:
   Bool.pick(Bool, raw_keys_ok(arguments_words(tool), members),
-    Bool.pick(Bool, keys_unique(members), Bool.pick(Bool, arguments_required(tool, members), arguments_values_ok(tool, members), False{}), False{}), False{})
+    Bool.pick(Bool, arguments_required(tool, members), arguments_values_ok(tool, members), False{}), False{})
 
 # The scope the success document reports: the validated session scope of a scoped
 # engines frame, and absent otherwise.
@@ -2428,6 +2422,27 @@ law codec_law_a_duplicated_scope_argument_refuses:
   {arguments_closed_for("context-engines", Rpair{"scope", Rstr{"session"}, Rpair{"scope", Rstr{"session"}, Rnil{}}}) == False{} : Bool}
 
 def codec_law_a_duplicated_scope_argument_refuses():
+  {==}
+
+# The member keys here carry decoded text, so a key written plain and the same key
+# written with escapes in the document reach this comparison as the same string and
+# refuse together.
+law codec_law_a_duplicated_root_key_refuses:
+  {raw_keys_ok(root_words(), Rpair{"jsonrpc", Rstr{"2.0"}, Rpair{"jsonrpc", Rstr{"2.0"}, Rnil{}}}) == False{} : Bool}
+
+def codec_law_a_duplicated_root_key_refuses():
+  {==}
+
+law codec_law_a_duplicated_params_key_refuses:
+  {raw_keys_ok(params_words(), Rpair{"name", Rstr{"x"}, Rpair{"name", Rstr{"x"}, Rnil{}}}) == False{} : Bool}
+
+def codec_law_a_duplicated_params_key_refuses():
+  {==}
+
+law codec_law_a_single_root_member_still_admits:
+  {raw_keys_ok(root_words(), Rpair{"jsonrpc", Rstr{"2.0"}, Rnil{}}) == True{} : Bool}
+
+def codec_law_a_single_root_member_still_admits():
   {==}
 
 law codec_law_a_null_scope_argument_refuses:

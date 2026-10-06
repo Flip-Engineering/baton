@@ -328,11 +328,11 @@
   "law": "codec_law_a_null_scope_argument_refuses"
  },
  {
-  "name": "codec-duplicate-argument-keys-are-accepted",
+  "name": "codec-duplicate-object-keys-are-accepted",
   "file": "bend2/src/context/codec.bend",
-  "find": "    case Rpair{+key, +value, +tail}: Bool.pick(Bool, raw_member_present(key, tail), False{}, keys_unique(tail))",
-  "replace": "    case Rpair{+key, +value, +tail}: keys_unique(tail)",
-  "law": "codec_law_a_duplicated_scope_argument_refuses"
+  "find": "    case Rpair{+key, +value, +tail}: Bool.pick(Bool, Req.word_member(allowed, key), Bool.pick(Bool, raw_member_present(key, tail), False{}, raw_keys_ok(allowed, tail)), False{})",
+  "replace": "    case Rpair{+key, +value, +tail}: Bool.pick(Bool, Req.word_member(allowed, key), raw_keys_ok(allowed, tail), False{})",
+  "law": "codec_law_a_duplicated_root_key_refuses"
  },
  {
   "name": "codec-scope-member-is-admitted-for-the-query-tool",
