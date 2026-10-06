@@ -680,8 +680,16 @@ def ref_members(+members: J.Json) -> RefDecode:
 def ref_object(+members: J.Json) -> RefDecode:
   Bool.pick(RefDecode, ref_required(members), ref_members(members), RdBad{"missingRefField"})
 
+# A duplicated top-level field is a member-set defect like an unknown field, so it is
+# refused after the unknown-field test and before the required-field test: a record
+# that both repeats a field and omits a required one reports the duplicate. Unknown
+# field still precedes missing field, and the presence and value stages are unchanged.
+# `distinct_keys` is the existing J.Json helper the nested selector check already uses.
+def ref_distinct(+members: J.Json) -> RefDecode:
+  Bool.pick(RefDecode, distinct_keys(members), ref_object(members), RdBad{"duplicateRefField"})
+
 def ref_fields(+members: J.Json) -> RefDecode:
-  Bool.pick(RefDecode, ref_closed(members), ref_object(members), RdBad{"unknownRefField"})
+  Bool.pick(RefDecode, ref_closed(members), ref_distinct(members), RdBad{"unknownRefField"})
 
 def ref_kind(ok: Bool, +j: J.Json) -> RefDecode:
   Bool.pick(RefDecode, ok, ref_fields(Ops.obj_members(j)), RdBad{"refNotObject"})
@@ -1422,6 +1430,15 @@ def ref_members_string_subject(id: String, +projections: J.Json) -> J.Json:
 def ref_members_duplicate_subject(id: String, +projections: J.Json) -> J.Json:
   ref_members_subject(id, cobj2("kind", J.Jstr{"entity"}, "kind", J.Jstr{"symbol"}), projections)
 
+# Two otherwise valid five-member records whose only defect is a repeated top-level
+# field, once with conflicting values and once with equal values. The check is on the
+# key, so both refuse, and `ref_members_subject` without the extra pair is the control.
+def ref_members_conflicting_duplicate_id(id: String, +projections: J.Json) -> J.Json:
+  J.Jpair{"id", J.Jstr{"r0"}, ref_members_subject(id, cobj1("kind", J.Jstr{"symbol"}), projections)}
+
+def ref_members_equal_duplicate_id(id: String, +projections: J.Json) -> J.Json:
+  J.Jpair{"id", J.Jstr{id}, ref_members_subject(id, cobj1("kind", J.Jstr{"symbol"}), projections)}
+
 def ref_members_kindless_subject(id: String, +projections: J.Json) -> J.Json:
   ref_members_subject(id, cobj1("name", J.Jstr{"t"}), projections)
 
@@ -2091,6 +2108,27 @@ law codec_law_a_duplicate_selector_key_refuses:
   {ref_condition(ref_decode(ref_object_of(ref_members_duplicate_subject("r9", J.Jarr{J.Jstr{"definition"}, J.Jnil{}})))) == "invalidRefField" : String}
 
 def codec_law_a_duplicate_selector_key_refuses():
+  {==}
+
+law codec_law_a_conflicting_duplicate_ref_field_refuses:
+  {ref_condition(ref_decode(ref_object_of(ref_members_conflicting_duplicate_id("r9", J.Jarr{J.Jstr{"definition"}, J.Jnil{}})))) == "duplicateRefField" : String}
+
+def codec_law_a_conflicting_duplicate_ref_field_refuses():
+  {==}
+
+law codec_law_an_equal_duplicate_ref_field_refuses:
+  {ref_condition(ref_decode(ref_object_of(ref_members_equal_duplicate_id("r9", J.Jarr{J.Jstr{"definition"}, J.Jnil{}})))) == "duplicateRefField" : String}
+
+def codec_law_an_equal_duplicate_ref_field_refuses():
+  {==}
+
+# The valid control for both refusals above: the same builder chain without the repeated
+# pair decodes with no condition, so the refusals are attributable to the duplicate key
+# rather than to the record shape.
+law codec_law_a_wire_reference_with_distinct_fields_decodes:
+  {ref_condition(ref_decode(ref_object_of(ref_members_object_subject("r9", J.Jarr{J.Jstr{"definition"}, J.Jnil{}})))) == "" : String}
+
+def codec_law_a_wire_reference_with_distinct_fields_decodes():
   {==}
 
 law codec_law_a_subject_object_without_a_kind_refuses:
