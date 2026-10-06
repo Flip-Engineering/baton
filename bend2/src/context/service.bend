@@ -244,11 +244,14 @@ def admitted_associated(+db: String, +binding: String, +id: String, +owner: Stri
     admitted_stored(owner, requestJson, identity, resultSchema, db, binding, id, answer)
 
 
+def discover_result(selected: Result<&1,&1,U32 & String,String>) -> IO(Discovery):
+  match selected:
+    case Done{+document}: IO.pure(Discovery, DiscoverySelected{document})
+    case Fail{error}:
+      match error:
+        case (code, detail): IO.pure(Discovery, DiscoveryRefused{code, detail})
+
 def discover(catalog: Unit -> IO(Result<&1,&1,U32 & String,String>)) -> IO(Discovery):
   do IO<Discovery>:
     selected : Result<&1,&1,U32 & String,String> <- catalog(Unit{})
-    match selected:
-      case Done{+document}: IO.pure(Discovery, DiscoverySelected{document})
-      case Fail{error}:
-        match error:
-          case (code, detail): IO.pure(Discovery, DiscoveryRefused{code, detail})
+    discover_result(selected)

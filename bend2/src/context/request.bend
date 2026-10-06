@@ -29,7 +29,7 @@ def tail_s(s: String) -> String:
 def ch_of(+code: U32) -> Char:
   Char.from_u32(code)
 
-def length_go(s: String, acc: U32) -> U32:
+def length_go(s: String, +acc: U32) -> U32:
   match s:
     case SNil{}: acc
     case SCon{+head, +tail}: length_go(tail, U32.add(acc, 1))
@@ -37,7 +37,7 @@ def length_go(s: String, acc: U32) -> U32:
 def length(s: String) -> U32:
   length_go(s, 0)
 
-def rev_go(s: String, acc: String) -> String:
+def rev_go(s: String, +acc: String) -> String:
   match s:
     case SNil{}: acc
     case SCon{+head, +tail}: rev_go(tail, SCon{head, acc})
@@ -204,7 +204,7 @@ def state_scalar(state: DState) -> Scalar:
     case DPendCb{b0, b1, acc}: ScalarBadUtf8{}
     case DPendCc{b0, b1, b2, acc}: ScalarBadUtf8{}
 
-def Context.decode_scalar_utf8(bytes: String) -> Scalar:
+def Context.decode_scalar_utf8(+bytes: String) -> Scalar:
   state_scalar(feed_state(bytes, DStart{SNil{}}))
 
 # ---------------------------------------------------------------------------
@@ -218,7 +218,7 @@ type Fields is Data:
   Fnone{}
   Fcons{head: String, tail: Fields}
 
-def fields_add(fs: Fields, s: String) -> Fields:
+def fields_add(fs: Fields, +s: String) -> Fields:
   match fs:
     case Fnone{}: Fcons{s, Fnone{}}
     case Fcons{+head, +tail}: Fcons{head, fields_add(tail, s)}
@@ -286,7 +286,7 @@ def rows_go(rest: String, +cur: String, +rows: Rows) -> Rows:
     case SCon{+head, +tail}:
       Bool.pick(Rows, U32.is_eq(Char.to_u32(head), 10), rows_go(tail, SNil{}, line_rows(cur, rows)), rows_go(tail, cur ++ SCon{head, SNil{}}, rows))
 
-def Context.parse_rows(text: String) -> Rows:
+def Context.parse_rows(+text: String) -> Rows:
   rows_go(text, SNil{}, Rnone{})
 
 # ---------------------------------------------------------------------------
@@ -417,7 +417,7 @@ def subject_words(subject: Context.SubjectKind) -> Words:
     case Context.SkQueryControl{}: words_from(["kind", "query", "intent", "signal"])
     case Context.SkRef{}: words_from(["kind", "query", "id"])
 
-def member_lookup(+k: String, members: J.Json) -> Maybe<&2, J.Json>:
+def member_lookup(+k: String, +members: J.Json) -> Maybe<&2, J.Json>:
   match members:
     case J.Jnil{}: None{}
     case J.Jpair{+key, +value, +rest}: Bool.pick(Maybe<&2,J.Json>, String.eq(k, key), Some{value}, member_lookup(k, rest))
@@ -518,7 +518,7 @@ def all_present(required: Words, +members: J.Json) -> Bool:
     case Wnone{}: True{}
     case Wcons{+head, +tail}: Bool.pick(Bool, member_present(head, members), all_present(tail, members), False{})
 
-def keys_allowed(+allowed: Words, members: J.Json) -> Bool:
+def keys_allowed(+allowed: Words, +members: J.Json) -> Bool:
   match members:
     case J.Jnil{}: True{}
     case J.Jpair{+key, +value, +rest}: Bool.pick(Bool, word_member(allowed, key), keys_allowed(allowed, rest), False{})
@@ -530,7 +530,7 @@ def keys_allowed(+allowed: Words, members: J.Json) -> Bool:
     case J.Jarr{+head, +tail}: True{}
     case J.Jobj{+members}: True{}
 
-def root_keys_ok(members: J.Json) -> Bool:
+def root_keys_ok(+members: J.Json) -> Bool:
   match members:
     case J.Jnil{}: True{}
     case J.Jpair{+key, +value, +rest}: Bool.pick(Bool, word_member(request_words(), key), root_keys_ok(rest), False{})
@@ -542,16 +542,16 @@ def root_keys_ok(members: J.Json) -> Bool:
     case J.Jarr{+head, +tail}: True{}
     case J.Jobj{+members}: True{}
 
-def coordinate_fields_ok(members: J.Json) -> Bool:
+def coordinate_fields_ok(+members: J.Json) -> Bool:
   Bool.pick(Bool, optional_int("line", members), optional_int("column", members), False{})
 
-def coordinates_ok(kind: Context.SubjectKind, members: J.Json) -> Bool:
+def coordinates_ok(kind: Context.SubjectKind, +members: J.Json) -> Bool:
   match kind:
     case Context.SkPosition{}: coordinate_fields_ok(members)
     case Context.SkDiagnostic{}: coordinate_fields_ok(members)
     case other: True{}
 
-def subject_shape_ok(kind: Context.SubjectKind, members: J.Json) -> Bool:
+def subject_shape_ok(+kind: Context.SubjectKind, +members: J.Json) -> Bool:
   Bool.pick(Bool, keys_allowed(subject_words(kind), members),
     Bool.pick(Bool, all_present(subject_words(kind), members), coordinates_ok(kind, members), False{}), False{})
 
@@ -580,7 +580,7 @@ def subject_kind_ok(subject: J.Json) -> Bool:
     case J.Jpair{key, value, rest}: False{}
     case J.Jnil{}: False{}
 
-def subject_ok(subject: J.Json) -> Bool:
+def subject_ok(+subject: J.Json) -> Bool:
   Bool.pick(Bool, is_jobj(subject), subject_kind_ok(subject), False{})
 
 def subject_present(m: Maybe<&2, J.Json>) -> Bool:
@@ -603,11 +603,11 @@ def projections_ok(select: J.Json) -> Bool:
     case J.Jpair{key, value, rest}: False{}
     case J.Jnil{}: False{}
 
-def projections_walk(selected: J.Json, rest: J.Json) -> Bool:
+def projections_walk(+selected: J.Json, +rest: J.Json) -> Bool:
   Bool.pick(Bool, word_member(projection_words(), text_of(selected)),
     Bool.pick(Bool, distinct_from(text_of(selected), rest), projections_rest(rest), False{}), False{})
 
-def projections_rest(rest: J.Json) -> Bool:
+def projections_rest(+rest: J.Json) -> Bool:
   match rest:
     case J.Jarr{head, tail}: Bool.pick(Bool, is_jstr(head), projections_walk(head, tail), False{})
     case J.Jpair{key, value, rest}: True{}
@@ -619,7 +619,7 @@ def projections_rest(rest: J.Json) -> Bool:
     case J.Jstr{+value}: True{}
     case J.Jobj{+members}: True{}
 
-def distinct_from(+name: String, rest: J.Json) -> Bool:
+def distinct_from(+name: String, +rest: J.Json) -> Bool:
   match rest:
     case J.Jarr{+head, +tail}: Bool.pick(Bool, String.eq(text_of(head), name), False{}, distinct_from(name, tail))
     case J.Jpair{key, value, rest}: True{}
@@ -643,11 +643,11 @@ def effects_ok(effects: J.Json) -> Bool:
     case J.Jstr{+value}: False{}
     case J.Jobj{+members}: False{}
 
-def effects_walk(granted: J.Json, +rest: J.Json) -> Bool:
+def effects_walk(+granted: J.Json, +rest: J.Json) -> Bool:
   Bool.pick(Bool, word_member(effect_words(), text_of(granted)),
     Bool.pick(Bool, distinct_from(text_of(granted), rest), effects_rest(rest), False{}), False{})
 
-def effects_rest(rest: J.Json) -> Bool:
+def effects_rest(+rest: J.Json) -> Bool:
   match rest:
     case J.Jarr{head, tail}: effects_walk(head, tail)
     case J.Jpair{key, value, rest}: True{}
@@ -672,7 +672,7 @@ def engine_of(m: Maybe<&2, J.Json>) -> Bool:
     case None{}: True{}
     case Some{value}: word_member(engine_words(), text_of(value))
 
-def engine_ok(members: J.Json) -> Bool:
+def engine_ok(+members: J.Json) -> Bool:
   Bool.pick(Bool, optional_text("engine", members), engine_of(member_lookup("engine", members)), False{})
 
 def options_no_value(m: Maybe<&2, J.Json>) -> Bool:
@@ -695,7 +695,7 @@ def options_shape(options: J.Json) -> Bool:
     case J.Jpair{key, value, rest}: False{}
     case J.Jnil{}: False{}
 
-def options_values(members: J.Json) -> Bool:
+def options_values(+members: J.Json) -> Bool:
   Bool.pick(Bool, optional_text("database", members),
     Bool.pick(Bool, optional_text("client", members),
       Bool.pick(Bool, optional_text("analysis", members), True{}, False{}), False{}), False{})
@@ -723,15 +723,15 @@ def Context.request_validate(req: J.Json) -> Verdict:
     case J.Jpair{key, value, rest}: VRefused{"requestNotObject"}
     case J.Jnil{}: VRefused{"requestNotObject"}
 
-def request_members_ok(members: J.Json) -> Verdict:
+def request_members_ok(+members: J.Json) -> Verdict:
   Bool.pick(Verdict, root_keys_ok(members), root_fields_ok(members), VRefused{"unknownRequestField"})
 
-def root_fields_ok(members: J.Json) -> Verdict:
+def root_fields_ok(+members: J.Json) -> Verdict:
   Bool.pick(Verdict, version_ok(members),
     Bool.pick(Verdict, engine_ok(members), root_after_engine(members), VRefused{"unknownEngine"}),
     VRefused{"unsupportedVersion"})
 
-def root_after_engine(members: J.Json) -> Verdict:
+def root_after_engine(+members: J.Json) -> Verdict:
   Bool.pick(Verdict, subject_required(members), select_required(members), VRefused{"missingSubject"})
 
 def select_of(m: Maybe<&2, J.Json>, members: J.Json) -> Verdict:
@@ -739,10 +739,10 @@ def select_of(m: Maybe<&2, J.Json>, members: J.Json) -> Verdict:
     case None{}: VRefused{"missingSelect"}
     case Some{value}: Bool.pick(Verdict, projections_ok(value), tail_fields_ok(members), VRefused{"invalidSelect"})
 
-def select_required(members: J.Json) -> Verdict:
+def select_required(+members: J.Json) -> Verdict:
   select_of(member_lookup("select", members), members)
 
-def tail_fields_ok(members: J.Json) -> Verdict:
+def tail_fields_ok(+members: J.Json) -> Verdict:
   Bool.pick(Verdict, cwd_ok(members),
     Bool.pick(Verdict, options_ok(members),
       Bool.pick(Verdict, effects_required(members), VAccepted{}, VRefused{"invalidEffects"}),
