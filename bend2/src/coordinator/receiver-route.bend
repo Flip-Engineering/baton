@@ -1,92 +1,6 @@
 import Base
 import ./commands.bend as C
-import ./control.bend as Control
-import ./receiver-route-protocol.bend as Protocol
 import ../host/sqlite.bend as DB
-import ../host/control.bend as Host
-import ../host/session-lock.bend as Lock
-
-type Assignment is Data:
-  Assignment{session: String, parent: String, harness: String, model: String, effort: String, workspace: String, branch: String, base: String, native: String, endpoint: String}
-
-type Change is Data:
-  Change{requester: String, expected: Assignment, binding: Protocol.Binding, executable: String, database: String, identity: String & String}
-
-# Prepared transaction text only. A future caller must hold the canonical
-# session guard and the Receive owner's route-admission fence through commit.
-# That fence must also cover old endpoint launches and post-release continuations.
-# There is no IO entry for this transaction in this source contribution.
-def assignment_predicate(expected: Assignment) -> String:
-  match expected:
-    case Assignment{session,parent,harness,model,effort,workspace,branch,base,native,endpoint}:
-      "id=" ++ C.q(session) ++ " AND parent=" ++ C.q(parent) ++ " AND harness=" ++ C.q(harness)
-      ++ " AND model=" ++ C.q(model) ++ " AND effort=" ++ C.q(effort) ++ " AND workspace=" ++ C.q(workspace)
-      ++ " AND branch=" ++ C.q(branch) ++ " AND base=" ++ C.q(base) ++ " AND native=" ++ C.q(native) ++ " AND endpoint=" ++ C.q(endpoint)
-
-def hierarchy_predicate(+requester: String, +session: String) -> String:
-  "(EXISTS(SELECT 1 FROM sessions WHERE id=" ++ C.q(requester) ++ ") AND "
-  ++ C.assigned_role(C.q(requester)) ++ "='conductor' AND " ++ C.q(requester) ++ "<>" ++ C.q(session)
-  ++ " AND " ++ C.descendant(C.q(requester),C.q(session))
-  ++ " AND NOT " ++ C.stopped_session_sql(C.q(requester)) ++ ")"
-
-# Native conversation IDs are harness-specific. An existing native ID permits
-# only the recorded harness; an empty native permits a supported harness change.
-def replacement_sql(requester: String, +expected: Assignment, +harness: String, +model: String, +effort: String, +endpoint: String) -> String:
-  "BEGIN IMMEDIATE;UPDATE sessions SET harness=" ++ C.q(harness) ++ ",model=" ++ C.q(model) ++ ",effort=" ++ C.q(effort) ++ ",endpoint=" ++ C.q(endpoint)
-  ++ " WHERE " ++ assignment_predicate(expected)
-  ++ " AND " ++ hierarchy_predicate(requester,assignment_session(expected))
-  ++ " AND parent IS NOT NULL AND harness IN ('omp','codex') AND " ++ C.q(harness) ++ " IN ('omp','codex')"
-  ++ " AND (harness=" ++ C.q(harness) ++ " OR native='')"
-  ++ " AND " ++ C.q(model) ++ "<>'' AND instr(" ++ C.q(model) ++ ",char(0))=0 AND instr(" ++ C.q(effort) ++ ",char(0))=0"
-  ++ " AND " ++ C.q(endpoint) ++ "<>'' AND " ++ C.endpoint_admitted(endpoint)
-  ++ " AND coalesce(json_extract(" ++ C.q(endpoint) ++ ",'$[12]'),'')<>''"
-  ++ " AND NOT EXISTS(SELECT 1 FROM session_stops WHERE session=sessions.id)"
-  ++ " AND NOT EXISTS(SELECT 1 FROM executions WHERE session=sessions.id AND phase<>'exited');"
-  ++ "SELECT json_object('type','receiver-route-configuration','configurationApplied',json(CASE WHEN changes()=1 THEN 'true' ELSE 'false' END),"
-  ++ "'status',CASE WHEN changes()=1 THEN 'configured' ELSE 'expected-assignment-or-admission-conflict' END,'providerStarted',json('false'));COMMIT;"
-
-def assignment_session(expected: Assignment) -> String:
-  match expected:
-    case Assignment{session,parent,harness,model,effort,workspace,branch,base,native,endpoint}: session
-
-# Change contains resolved executable/database/command/output paths and a checked
-# registry/helper pair. The future transaction must run on that same database.
-# The replacement endpoint is built here from the same requested model.
-def configured_args(executable: String, database: String, session: String, binding: Protocol.Binding, identity: String & String) -> List<String>:
-  (registry,helper)=identity
-  Protocol.route_args(Protocol.Origin{executable,database,session,registry,helper},binding)
-
-def change_sql(change: Change) -> String:
-  match change:
-    case Change{requester,+expected,binding,executable,database,identity}:
-      match binding:
-        case Protocol.Binding{configuration,+harness,+model,+effort,command,log}:
-          replacement_sql(requester,expected,harness,model,effort,"[" ++ Control.strings(configured_args(executable,database,assignment_session(expected),Protocol.Binding{configuration,harness,model,effort,command,log},identity)) ++ "]")
-
-# The configuration owner may compose this preparation with its admitted caller.
-# It invokes the existing series mapping check and remains outside inspection.
-def required_identity(registry: String, helper: String, missing: Bool) -> IO(String & String):
-  match missing:
-    case True{}: IO.die(String & String,2,"Route configuration requires the configured Git-series registry and canonical helper; retain the recorded route and inspect the installation.")
-    case False{}: IO.pure(String & String,(registry,helper))
-
-def route_identity(identity: String & String) -> IO(String & String):
-  (registry,helper)=identity
-  +configured=registry
-  +executable=helper
-  required_identity(configured,executable,Bool.or(String.is_empty(configured),String.is_empty(executable)))
-
-def prepare(db: String, requester: String, expected: Assignment, configuration: String, harness: String, +model: String, effort: String, +command: String, log: String) -> IO(Change):
-  do IO<Change>:
-    present : Unit <- Control.command_present(String.is_empty(command))
-    native : String <- IO.try(String,Host.Control.command(command))
-    +executable : String <- IO.try(String,Lock.SessionLock.executable())
-    database : String <- IO.try(String,Lock.SessionLock.canonical(db))
-    output : String <- IO.try(String,Host.Control.output(log))
-    identity : String & String <- IO.try(String & String,Host.Control.identity(executable))
-    required : String & String <- route_identity(identity)
-    checked : String & String <- Control.identity_checked(required,model)
-    IO.pure(Change,Change{requester,expected,Protocol.Binding{configuration,harness,model,effort,native,output},executable,database,checked})
 
 # This operation reports the missing admission boundary without changing a route.
 # A recorded exited phase cannot exclude a delayed endpoint or continuation.
@@ -112,13 +26,6 @@ def inspect(db: String, session: String, expected: String, endpoint: String, req
     saved : String <- IO.try(String,snapshot(db,session,expected,endpoint,requested))
     IO.die(Unit,2,saved)
 
-# Prepared endpoint construction for the admission owner. Inputs must come from
-# Control's canonical command/database/output and checked identity resolution.
-# Explicit model and helper model-key agree. This does not fence old endpoints.
-# The inspection entry neither invokes this helper nor publishes its result.
-def candidate_args(executable: String, db: String, session: String, cmd: String, +model: String, log: String, identity: String & String) -> List<String>:
-  Control.identity_args([executable,db,"receive",session,cmd,model,"","",log],model,identity)
-
 law route_inspection_uses_the_readonly_connection:
   for db: String
   for session: String
@@ -143,14 +50,3 @@ law unavailable_route_configuration_returns_failure_after_inspection:
 def unavailable_route_configuration_returns_failure_after_inspection(db,session,expected,endpoint,requested):
   {==}
 
-law proposed_endpoint_binds_the_explicit_model_and_series_key:
-  {candidate_args("/bin/baton2","/db","player","/bin/omp","deepseek/deepseek-flash","/log",("/registry","/helper")) == ["node","/helper","launch","--registry","/registry","--model-key","deepseek/deepseek-flash","--","/bin/baton2","/db","receive","player","/bin/omp","deepseek/deepseek-flash","","","/log"] : List<String>}
-
-def proposed_endpoint_binds_the_explicit_model_and_series_key():
-  {==}
-
-law proposed_configured_endpoint_binds_revision_route_and_series:
-  {configured_args("/baton","/db","child",Protocol.Binding{"revision","omp","deepseek/deepseek-flash","high","/omp","/log"},("/registry","/helper")) == ["node","/helper","launch","--registry","/registry","--model-key","deepseek/deepseek-flash","--","/baton","/db","receive-configured","child","revision","omp","deepseek/deepseek-flash","high","/omp","/log"] : List<String>}
-
-def proposed_configured_endpoint_binds_revision_route_and_series():
-  {==}

@@ -3,6 +3,14 @@ import { join } from 'node:path';
 
 const MUTATIONS = [
   {
+    name: 'legacy-receiver-overwrites-configured-endpoint',
+    file: 'bend2/src/coordinator/control.bend',
+    find: 'C.configured_route("endpoint")',
+    replace: '"0"',
+    law: 'legacy_receiver_requires_an_unconfigured_assignment',
+  },
+
+  {
     name: 'route-inspection-opens-writable-database',
     file: 'bend2/src/coordinator/receiver-route.bend',
     find: 'DB.Sql.read(db,inspect_sql(session,expected,endpoint,requested))',
@@ -17,11 +25,18 @@ const MUTATIONS = [
     law: 'unavailable_route_configuration_returns_failure_after_inspection',
   },
   {
-    name: 'route-endpoint-omits-effective-model',
-    file: 'bend2/src/coordinator/receiver-route.bend',
-    find: '[executable,db,"receive",session,cmd,model,"","",log]',
-    replace: '[executable,db,"receive",session,cmd,"","","",log]',
-    law: 'proposed_endpoint_binds_the_explicit_model_and_series_key',
+    name: 'configured-receive-drops-wake',
+    file: 'bend2/src/coordinator/commands.bend',
+    find: 'ReceiveConfigured{session,configuration,harness,model,effort,command,log,message}\n',
+    replace: 'ReceiveConfigured{session,configuration,harness,model,effort,command,log,""}\n',
+    law: 'configured_receive_parser_retains_the_actual_wake',
+  },
+  {
+    name: 'route-configuration-skips-custody',
+    file: 'bend2/src/coordinator/receiver-route-apply.bend',
+    find: 'case Some{lock}: held(db,request,origin,binding,lock)',
+    replace: 'case Some{lock}: IO.pure(Result<&1,&1,U32 & String,String>,Done{"configured"})',
+    law: 'acquired_configuration_enters_the_guarded_caller',
   },
   {
     name: 'structural-inspection-accepts-enclosing-worktree',

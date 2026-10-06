@@ -34,6 +34,31 @@ class ReceiverRouteMcp(unittest.TestCase):
                 self.assertTrue(result['isError'])
                 self.assertEqual(calls, [])
 
+    def test_configuration_uses_attachment_requester_and_literal_snapshot(self):
+        snapshot = '{"model":"old", "endpoint":"line\\nvalue"}'
+        args = {'player': 'child', 'expectedAssignment': snapshot, 'harness': 'omp',
+                'model': 'new', 'effort': 'high', 'command': '/native with spaces', 'log': '/out'}
+        result, calls = self.exchange('baton2_receiver_route', args, session='actual-parent',
+                                      stdout='{"status":"configured","providerStarted":false}\n')
+        self.assertEqual(calls, [[str(self.database), 'receiver-route', 'child', 'actual-parent',
+                                 snapshot, 'omp', 'new', 'high', '/native with spaces', '/out', '--apply']])
+        self.assertFalse(result.get('isError'))
+        for key in ('requester', 'configuration', 'session'):
+            result, calls = self.exchange('baton2_receiver_route', dict(args, **{key: 'injected'}))
+            self.assertTrue(result['isError'])
+            self.assertEqual(calls, [])
+
+    def test_new_inspection_and_configuration_uncertainty(self):
+        result, calls = self.exchange('baton2_receiver_route', {'player': 'child'})
+        self.assertEqual(calls, [[str(self.database), 'receiver-route', 'child', '--inspect']])
+        args = {'player': 'child', 'expectedAssignment': '{}', 'harness': 'omp',
+                'model': 'new', 'effort': '', 'command': '/omp', 'log': '/out'}
+        result, calls = self.exchange('baton2_receiver_route', args, code=2,
+                                      stderr='{"status":"configuration-outcome-unknown","configurationApplied":null}\n')
+        self.assertEqual(len(calls), 1)
+        self.assertTrue(result['isError'])
+        self.assertIn('configuration-outcome-unknown', result['content'][0]['text'])
+
 
 if __name__ == '__main__':
     unittest.main()

@@ -40,7 +40,7 @@ def principal_startup_checks_assignment_and_operator_scope(session,harness,model
 law native_receiver_checks_harness_stop_and_endpoint_admission:
   for +session: String
   for +endpoint: String
-  {Control.receiver_admitted(session,endpoint) == ("(EXISTS(SELECT 1 FROM sessions WHERE id=" ++ C.q(session) ++ " AND harness IN ('codex','omp')) AND NOT " ++ C.stopped_session_sql(C.q(session)) ++ " AND " ++ C.endpoint_admitted(endpoint) ++ ")") : String}
+  {Control.receiver_admitted(session,endpoint) == ("(EXISTS(SELECT 1 FROM sessions WHERE id=" ++ C.q(session) ++ " AND harness IN ('codex','omp') AND NOT " ++ C.configured_route("endpoint") ++ ") AND NOT " ++ C.stopped_session_sql(C.q(session)) ++ " AND " ++ C.endpoint_admitted(endpoint) ++ ")") : String}
 
 def native_receiver_checks_harness_stop_and_endpoint_admission(session,endpoint):
   {==}

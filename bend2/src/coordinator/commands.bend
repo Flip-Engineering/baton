@@ -13,6 +13,9 @@ type Command is Data:
   Receive{session: String, cmd: String, model: String, effort: String, cwd: String, log: String, message: String}
   Start{session: String, harness: String, cmd: String, model: String, effort: String, cwd: String, log: String, id: String, task: String}
   Receiver{session: String, cmd: String, log: String}
+  ReceiverRouteRead{session: String}
+  ReceiverRouteApply{session: String, requester: String, expected: String, harness: String, model: String, effort: String, command: String, log: String}
+  ReceiveConfigured{session: String, configuration: String, harness: String, model: String, effort: String, command: String, log: String, message: String}
   ReceiverRouteInspect{session: String, expected: String, endpoint: String, requested: String}
   DispatchFile{id: String, sender: String, recipient: String, kind: String, path: String}
   DispatchTurn{player: String, id: String, cmd: String, log: String, task: String}
@@ -161,10 +164,15 @@ def player_sql(+id: String, +parent: String, +harness: String, +model: String, +
 def endpoint_admitted(+endpoint: String) -> String:
   "(" ++ q(endpoint) ++ "='' OR CASE WHEN json_valid(" ++ q(endpoint) ++ ") THEN json_type(" ++ q(endpoint) ++ ")='array' AND json_array_length(" ++ q(endpoint) ++ ")>0 AND NOT EXISTS(SELECT 1 FROM json_each(" ++ q(endpoint) ++ ") WHERE type<>'text' OR instr(value,char(0))>0) AND coalesce(json_extract(" ++ q(endpoint) ++ ",'$[0]'),'')<>'' ELSE 0 END)"
 
+# Configured endpoints retain their revision through every public replacement.
+# Legacy writers refuse this form; the guarded route caller advances it.
+def configured_route(+endpoint_expression: String) -> String:
+  "(CASE WHEN json_valid(" ++ endpoint_expression ++ ") THEN EXISTS(SELECT 1 FROM json_each(" ++ endpoint_expression ++ ") WHERE value='receive-configured') ELSE instr(" ++ endpoint_expression ++ ",'receive-configured')>0 END)"
+
 def connect_sql(+id: String, native: String, +endpoint: String) -> String:
-  "UPDATE sessions SET native=" ++ q(native) ++ ",endpoint=" ++ q(endpoint) ++ " WHERE id=" ++ q(id) ++ " AND " ++ endpoint_admitted(endpoint) ++ ";"
-  ++ "SELECT json_object('error','invalid-endpoint','session'," ++ q(id) ++ ",'condition','Use an empty endpoint to disconnect, or a nonempty JSON array of text arguments with a nonempty executable and no NUL characters.','next','Pass the JSON argv array itself as one ENDPOINT argument; inspect session and inbox, then retry retained input after connecting.') WHERE NOT " ++ endpoint_admitted(endpoint) ++ ";"
-  ++ session_result_where("id=" ++ q(id) ++ " AND " ++ endpoint_admitted(endpoint))
+  "UPDATE sessions SET native=" ++ q(native) ++ ",endpoint=" ++ q(endpoint) ++ " WHERE id=" ++ q(id) ++ " AND NOT " ++ configured_route("endpoint") ++ " AND NOT " ++ configured_route(q(endpoint)) ++ " AND " ++ endpoint_admitted(endpoint) ++ ";"
+  ++ "SELECT json_object('error','invalid-endpoint','session'," ++ q(id) ++ ",'condition','Configured routes require receiver-route with the expected assignment. Other endpoints require literal text argv without NUL.','next','Read receiver-route SESSION --inspect and retain pending input.') WHERE NOT " ++ endpoint_admitted(endpoint) ++ " OR " ++ configured_route(q(endpoint)) ++ " OR EXISTS(SELECT 1 FROM sessions WHERE id=" ++ q(id) ++ " AND " ++ configured_route("endpoint") ++ ");"
+  ++ session_result_where("id=" ++ q(id) ++ " AND NOT " ++ configured_route("endpoint") ++ " AND NOT " ++ configured_route(q(endpoint)) ++ " AND " ++ endpoint_admitted(endpoint))
 
 def message_result(id: String) -> String:
   "SELECT json_patch(json_object('id',id,'sender',sender,'recipient',recipient,'kind',kind,'body',body,'receipt',receipt)," ++ input_state_sql("messages") ++ ") FROM messages WHERE id=" ++ q(id) ++ ";"
@@ -331,8 +339,10 @@ def orchestra_index_sql(+focus: IndexText) -> String:
 def sql(command: Command) -> String:
   match command:
     case Observe{id,player,event,sealed}: observe_sql(id,player,event,sealed)
-    case Attach{+id, harness, native, endpoint}:
-      "INSERT INTO sessions(id,harness,native,endpoint) VALUES(" ++ q(id) ++ "," ++ q(harness) ++ "," ++ q(native) ++ "," ++ q(endpoint) ++ ") ON CONFLICT(id) DO UPDATE SET id=CASE WHEN sessions.parent IS NULL THEN sessions.id ELSE NULL END,harness=excluded.harness,native=excluded.native,endpoint=excluded.endpoint;" ++ session_result(id)
+    case Attach{+id, harness, native, +endpoint}:
+      "INSERT INTO sessions(id,harness,native,endpoint) SELECT " ++ q(id) ++ "," ++ q(harness) ++ "," ++ q(native) ++ "," ++ q(endpoint) ++ " WHERE NOT " ++ configured_route(q(endpoint)) ++ " ON CONFLICT(id) DO UPDATE SET id=CASE WHEN sessions.parent IS NULL AND NOT " ++ configured_route("sessions.endpoint") ++ " THEN sessions.id ELSE NULL END,harness=excluded.harness,native=excluded.native,endpoint=excluded.endpoint;"
+      ++ "SELECT json_object('error','invalid-endpoint','condition','Configured endpoints require the guarded receiver-route operation.') WHERE " ++ configured_route(q(endpoint)) ++ ";"
+      ++ session_result_where("id=" ++ q(id) ++ " AND NOT " ++ configured_route(q(endpoint)))
     case Player{+id, parent, harness, model, effort, workspace, branch, base}:
       player_sql(id,parent,harness,model,effort,workspace,branch,base)
     case Connect{+id,native,endpoint}:
@@ -386,6 +396,9 @@ def sql(command: Command) -> String:
     case Receive{session,cmd,model,effort,cwd,log,message}: ""
     case Start{session,harness,cmd,model,effort,cwd,log,id,task}: ""
     case Receiver{session,cmd,log}: ""
+    case ReceiverRouteRead{session}: ""
+    case ReceiverRouteApply{session,requester,expected,harness,model,effort,command,log}: ""
+    case ReceiveConfigured{session,configuration,harness,model,effort,command,log,message}: ""
     case ReceiverRouteInspect{session,expected,endpoint,requested}: ""
     case DispatchFile{id,sender,recipient,kind,path}: ""
     case DispatchTurn{player,id,cmd,log,task}: ""
@@ -612,6 +625,9 @@ def range_scan(args: List<&2,String>, +kept: List<&2,String>, +after: IndexText,
 
 def parse_shared(args: List<&2,String>) -> Command:
   match args:
+    case "receiver-route" <> session <> "--inspect" <> Nil{}: ReceiverRouteRead{session}
+    case "receiver-route" <> session <> requester <> expected <> harness <> model <> effort <> command <> log <> "--apply" <> Nil{}: ReceiverRouteApply{session,requester,expected,harness,model,effort,command,log}
+    case "receive-configured" <> session <> configuration <> harness <> model <> effort <> command <> log <> message <> Nil{}: ReceiveConfigured{session,configuration,harness,model,effort,command,log,message}
     case "receiver-route" <> session <> expected <> endpoint <> requested <> "--inspect" <> Nil{}: ReceiverRouteInspect{session,expected,endpoint,requested}
     case "pending" <> rest: range_scan(rest,["pending"],IndexAny{},IndexAny{})
     case "inbox" <> id <> rest: range_scan(rest,[id,"inbox"],IndexAny{},IndexAny{})
@@ -724,4 +740,16 @@ law structural_recruit_parser_preserves_parent_and_complete_literal_tail:
   {parse_structural("recruit" <> id <> parent <> harness <> model <> effort <> repo <> branch <> path <> base <> first <> rest) == StructuralRecruit{id,parent,harness,model,effort,repo,branch,path,base,first <> rest} : Command}
 
 def structural_recruit_parser_preserves_parent_and_complete_literal_tail(id,parent,harness,model,effort,repo,branch,path,base,first,rest):
+  {==}
+
+law route_configuration_parser_preserves_expected_assignment_and_requested_route:
+  {parse(["receiver-route","child","parent","snapshot","omp","new","high","/omp","/log","--apply"]) == ReceiverRouteApply{"child","parent","snapshot","omp","new","high","/omp","/log"} : Command}
+
+def route_configuration_parser_preserves_expected_assignment_and_requested_route():
+  {==}
+
+law configured_receive_parser_retains_the_actual_wake:
+  {parse(["receive-configured","child","2","omp","new","high","/omp","/log","pending-id"]) == ReceiveConfigured{"child","2","omp","new","high","/omp","/log","pending-id"} : Command}
+
+def configured_receive_parser_retains_the_actual_wake():
   {==}

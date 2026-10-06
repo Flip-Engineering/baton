@@ -99,7 +99,7 @@ def configured_endpoint(+db: String, session: String, +cmd: String, log: String,
     IO.pure(String,identity_endpoint(executable,database,session,native,output,model,checked))
 
 def receiver_admitted(+session: String, endpoint: String) -> String:
-  "(EXISTS(SELECT 1 FROM sessions WHERE id=" ++ C.q(session) ++ " AND harness IN ('codex','omp')) AND NOT " ++ C.stopped_session_sql(C.q(session)) ++ " AND " ++ C.endpoint_admitted(endpoint) ++ ")"
+  "(EXISTS(SELECT 1 FROM sessions WHERE id=" ++ C.q(session) ++ " AND harness IN ('codex','omp') AND NOT " ++ C.configured_route("endpoint") ++ ") AND NOT " ++ C.stopped_session_sql(C.q(session)) ++ " AND " ++ C.endpoint_admitted(endpoint) ++ ")"
 
 def receiver_update_sql(+session: String, +endpoint: String, +admitted: String) -> String:
   "UPDATE sessions SET endpoint=" ++ C.q(endpoint) ++ " WHERE id=" ++ C.q(session) ++ " AND " ++ admitted ++ ";"
@@ -283,4 +283,12 @@ law authorized_detached_delivery_launches_the_native_self_entry:
     IO.pure(String,launched)) : IO(String)}
 
 def authorized_detached_delivery_launches_the_native_self_entry(db,id,saved):
+  {==}
+
+law legacy_receiver_requires_an_unconfigured_assignment:
+  for +session: String
+  for endpoint: String
+  {receiver_admitted(session,endpoint) == "(EXISTS(SELECT 1 FROM sessions WHERE id=" ++ C.q(session) ++ " AND harness IN ('codex','omp') AND NOT " ++ C.configured_route("endpoint") ++ ") AND NOT " ++ C.stopped_session_sql(C.q(session)) ++ " AND " ++ C.endpoint_admitted(endpoint) ++ ")" : String}
+
+def legacy_receiver_requires_an_unconfigured_assignment(session,endpoint):
   {==}

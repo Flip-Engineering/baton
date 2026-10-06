@@ -159,6 +159,15 @@ const TOOLS = [
     }, required: ['player', 'command', 'log'], additionalProperties: false },
   },
   {
+    name: 'baton2_receiver_route',
+    description: 'Inspect a Player route with player alone. For configuration pass the exact expectedAssignment JSON text returned by inspection plus harness, model, effort, command and log. The requester comes from this attached session. Native hierarchy, assignment and custody checks decide admission. Configuration success does not report provider completion; inspect uncertainty before retrying.',
+    inputSchema: { type: 'object', properties: {
+      player: { type: 'string' }, expectedAssignment: { type: 'string' },
+      harness: { type: 'string', enum: ['omp', 'codex'] }, model: { type: 'string' },
+      effort: { type: 'string' }, command: { type: 'string' }, log: { type: 'string' },
+    }, required: ['player'], additionalProperties: false },
+  },
+  {
     name: 'baton2_receiver_route_inspect',
     description: 'Inspect a requested OMP child route change. The native operation reports why configuration is unavailable, returns exit 2 and preserves assignment, observations and pending work.',
     inputSchema: { type: 'object', properties: {
@@ -602,6 +611,21 @@ function handleToolCall(msg) {
   try {
     let result;
     switch (name) {
+      case 'baton2_receiver_route': {
+        const keys = ['player', 'expectedAssignment', 'harness', 'model', 'effort', 'command', 'log'];
+        if (!args || Array.isArray(args) || typeof args !== 'object'
+            || Object.keys(args).some(key => !keys.includes(key))
+            || Object.entries(args).some(([, value]) => typeof value !== 'string' || value.includes('\0'))
+            || typeof args.player !== 'string') throw new Error('Route fields must be literal strings without NUL');
+        if (Object.keys(args).length === 1) result = coord('receiver-route', args.player, '--inspect');
+        else {
+          if (keys.some(key => typeof args[key] !== 'string') || !['omp', 'codex'].includes(args.harness))
+            throw new Error('Configuration requires the complete expected assignment and requested harness/model/effort/command/log');
+          result = coord('receiver-route', args.player, sessionId, args.expectedAssignment,
+            args.harness, args.model, args.effort, args.command, args.log, '--apply');
+        }
+        break;
+      }
       case 'baton2_receiver_route_inspect': {
         const keys = ['player', 'expectedModel', 'expectedEndpoint', 'model'];
         if (!args || Array.isArray(args) || typeof args !== 'object'

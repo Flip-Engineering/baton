@@ -754,7 +754,9 @@ law m8_attach_never_overwrites_a_player_row:
   for +harness: String
   for +native: String
   for +endpoint: String
-  {C.sql(C.Attach{id, harness, native, endpoint}) == "INSERT INTO sessions(id,harness,native,endpoint) VALUES(" ++ C.q(id) ++ "," ++ C.q(harness) ++ "," ++ C.q(native) ++ "," ++ C.q(endpoint) ++ ") ON CONFLICT(id) DO UPDATE SET id=CASE WHEN sessions.parent IS NULL THEN sessions.id ELSE NULL END,harness=excluded.harness,native=excluded.native,endpoint=excluded.endpoint;" ++ C.session_result(id) : String}
+  {C.sql(C.Attach{id, harness, native, endpoint}) == "INSERT INTO sessions(id,harness,native,endpoint) SELECT " ++ C.q(id) ++ "," ++ C.q(harness) ++ "," ++ C.q(native) ++ "," ++ C.q(endpoint) ++ " WHERE NOT " ++ C.configured_route(C.q(endpoint)) ++ " ON CONFLICT(id) DO UPDATE SET id=CASE WHEN sessions.parent IS NULL AND NOT " ++ C.configured_route("sessions.endpoint") ++ " THEN sessions.id ELSE NULL END,harness=excluded.harness,native=excluded.native,endpoint=excluded.endpoint;"
+    ++ "SELECT json_object('error','invalid-endpoint','condition','Configured endpoints require the guarded receiver-route operation.') WHERE " ++ C.configured_route(C.q(endpoint)) ++ ";"
+    ++ C.session_result_where("id=" ++ C.q(id) ++ " AND NOT " ++ C.configured_route(C.q(endpoint))) : String}
 
 def m8_attach_never_overwrites_a_player_row(id, harness, native, endpoint):
   {==}
