@@ -63,24 +63,22 @@ static void git_proc_free_argv(char** argv) {
   free(argv);
 }
 
-/* The claim a guarded effect must hold across supervisor loss. The descriptor is
-   transferred into the child by a spawn file action, which clears FD_CLOEXEC on the
-   new descriptor (POSIX), so the lock's open file description outlives the supervisor.
-   Whether the executed program or its descendants keep it open is NOT assumed here:
-   that is what the surviving-child reproduction must establish on the admitted
-   executable, and the fixture records it rather than this comment. */
-#define BATON_CLAIM_FD 9
-
-/* An arbitrary descriptor number is not a claim. The caller must pass a descriptor
-   that is open, refers to a regular file, and whose lock this process still holds;
-   a re-lock of the same description succeeds, a foreign one answers EWOULDBLOCK. */
-static int git_claim_check(int claim_fd) {
+/* A claim this effect may transfer. An arbitrary descriptor number establishes
+   nothing: the descriptor must be open, refer to a regular file, and be the SAME file
+   as the caller's canonical guard path (same device and inode), so a descriptor that
+   merely happens to be an unlocked regular file is refused. The lock test rejects a
+   claim another process currently holds. This does not by itself prove the caller
+   claimed this attempt: that is the caller contract, named here rather than assumed. */
+static int git_claim_check(int claim_fd, const char* guard) {
   if (claim_fd < 0) return EBADF;
   if (fcntl(claim_fd, F_GETFD) < 0) return errno;
-  struct stat state;
-  if (fstat(claim_fd, &state)) return errno;
-  if (!S_ISREG(state.st_mode)) return EINVAL;
-  if (fcntl(BATON_CLAIM_FD, F_GETFD) >= 0 || errno != EBADF) return EBUSY;
+  struct stat held;
+  if (fstat(claim_fd, &held)) return errno;
+  if (!S_ISREG(held.st_mode)) return EINVAL;
+  if (!guard || !guard[0]) return EINVAL;
+  struct stat canonical;
+  if (stat(guard, &canonical)) return errno;
+  if (held.st_dev != canonical.st_dev || held.st_ino != canonical.st_ino) return EXDEV;
   if (flock(claim_fd, LOCK_EX | LOCK_NB)) return errno;
   return 0;
 }
@@ -93,21 +91,47 @@ static void git_proc_call_with_stderr(IoWork* w, int stderr_fd, int claim_fd) {
     w->code = errno;
     return;
   }
+  /* The claim is transferred as an inherited duplicate taken AFTER the pipe exists,
+     so its number cannot collide with the pipe or with the dup2 destinations 1 and 2,
+     and so no spawn action has to name it: dup() clears FD_CLOEXEC, which is exactly
+     the inheritance the child needs. A fixed destination descriptor would be wrong
+     here, because a later addclose on a pipe end can remove it again. */
+  int transferred = -1;
+  if (claim_fd >= 0) {
+    transferred = dup(claim_fd);
+    if (transferred < 0) { int e = errno; close(fds[0]); close(fds[1]); w->code = e; return; }
+    while (transferred < 3 || transferred == fds[0] || transferred == fds[1]) {
+      int again = dup(claim_fd);
+      if (again < 0) { int e = errno; close(transferred); close(fds[0]); close(fds[1]); w->code = e; return; }
+      if (again == transferred) { close(transferred); close(fds[0]); close(fds[1]); w->code = EBUSY; return; }
+      close(transferred);
+      transferred = again;
+    }
+  }
   posix_spawn_file_actions_t acts;
   int action = posix_spawn_file_actions_init(&acts);
-  if (action) { w->code = action; return; }
-  /* Every action is checked: a silently failed dup2 would leave the child with the
-     wrong streams, and a failed claim transfer would leave it without custody. */
-  if ((action = posix_spawn_file_actions_addclose(&acts, fds[0]))) { w->code = action; return; }
-  if ((action = posix_spawn_file_actions_adddup2(&acts, fds[1], 1))) { w->code = action; return; }
-  if (stderr_fd >= 0 && (action = posix_spawn_file_actions_adddup2(&acts, stderr_fd, 2))) { w->code = action; return; }
-  if (claim_fd >= 0 && (action = posix_spawn_file_actions_adddup2(&acts, claim_fd, BATON_CLAIM_FD))) { w->code = action; return; }
-  if ((action = posix_spawn_file_actions_addclose(&acts, fds[1]))) { w->code = action; return; }
-  if ((action = posix_spawn_file_actions_addchdir_np(&acts, cwd))) { w->code = action; return; }
+  if (action) { close(transferred >= 0 ? transferred : -1); close(fds[0]); close(fds[1]); w->code = action; return; }
+  /* Every action is checked and every failure takes the one cleanup path below, so an
+     action error cannot leak the pipe or leave the file actions undestroyed. */
+  if (!action) action = posix_spawn_file_actions_addclose(&acts, fds[0]);
+  if (!action) action = posix_spawn_file_actions_adddup2(&acts, fds[1], 1);
+  if (!action && stderr_fd >= 0) action = posix_spawn_file_actions_adddup2(&acts, stderr_fd, 2);
+  if (!action) action = posix_spawn_file_actions_addclose(&acts, fds[1]);
+  if (!action) action = posix_spawn_file_actions_addchdir_np(&acts, cwd);
+  if (action) {
+    posix_spawn_file_actions_destroy(&acts);
+    if (transferred >= 0) close(transferred);
+    close(fds[0]);
+    close(fds[1]);
+    w->code = action;
+    return;
+  }
   pid_t pid = -1;
   int rc = posix_spawnp(&pid, argv[0], &acts, NULL, argv, environ);
   posix_spawn_file_actions_destroy(&acts);
   close(fds[1]);
+  /* The parent's copy goes away; the child's inherited copy keeps the lock. */
+  if (transferred >= 0) close(transferred);
   if (rc != 0) {
     close(fds[0]);
     w->code = (u32)rc;
@@ -125,6 +149,8 @@ static void git_proc_call_with_stderr(IoWork* w, int stderr_fd, int claim_fd) {
       }
       w->code = errno;
       close(fds[0]);
+      int reaped = 0;
+      if (waitpid(pid, &reaped, 0) < 0 && !w->code) w->code = errno;
       return;
     }
     if (got == 0) {
@@ -203,6 +229,7 @@ typedef struct {
   char *diagnostic;
   size_t diagnostic_size;
   int claim;        /* -1 when the caller holds no claim: legacy behaviour */
+  char *guard;      /* the canonical guard path the claim must be the same file as */
   char *artifact;   /* NULL: unlinked diagnostic file; else the attempt-bound path */
 } GitCapture;
 
@@ -211,16 +238,19 @@ static void git_capture_call(IoWork *w) {
   FILE *diagnostic = NULL;
   if (capture->claim >= 0) {
     /* An unvalidated descriptor number establishes nothing. */
-    int claim_error = git_claim_check(capture->claim);
+    int claim_error = git_claim_check(capture->claim, capture->guard);
     if (claim_error) { capture->process.code = claim_error; return; }
   }
   if (capture->artifact) {
-    /* Durable attempt evidence: a named file the attempt retains, not an unlinked
-       one. It is created or truncated here, kept on every exit path including host
-       failure and interrupted observation, and never unlinked by this effect. */
-    int fd = open(capture->artifact, O_CREAT | O_WRONLY | O_TRUNC | O_CLOEXEC, 0600);
+    /* Attempt evidence is created once and never truncated: O_EXCL refuses an existing
+       path, so a retry has to choose a new name instead of destroying retained bytes,
+       and O_NOFOLLOW refuses an aliased final component. The stream is opened read/write
+       because the bytes are read back from it. Partial writes and an unreadable back
+       read leave the file in place; the fsync below is reached only on the normal path,
+       so a supervisor that dies before it leaves bytes that may not be durable. */
+    int fd = open(capture->artifact, O_CREAT | O_EXCL | O_RDWR | O_NOFOLLOW | O_CLOEXEC, 0600);
     if (fd < 0) { capture->process.code = errno; return; }
-    diagnostic = fdopen(fd, "w");
+    diagnostic = fdopen(fd, "w+");
     if (!diagnostic) { int e = errno; close(fd); capture->process.code = e; return; }
   } else {
     diagnostic = tmpfile();
@@ -268,11 +298,12 @@ static Term git_capture_pack(Env e, IoWork *w) {
     free(out);
   }
   git_proc_free_argv((char **)p->hand);
-  free(p->text); free(p->data); free(capture->diagnostic); free(capture->artifact); free(capture);
+  free(p->text); free(p->data); free(capture->diagnostic); free(capture->artifact); free(capture->guard); free(capture);
   w->data = NULL;
   return result;
 }
 
+#ifdef CID_PROCESS_CAPTURE
 static Term git_capture_run(Env e, Term *f, IoWork *w) {
   GitCapture *capture = calloc(1, sizeof(*capture));
   if (!capture) return io_fail(e, ENOMEM, NULL);
@@ -296,6 +327,7 @@ static void __attribute__((constructor)) git_capture_use(void) {
   io_eff(CID_PROCESS_CAPTURE, git_capture_run, 0);
 }
 #endif
+#endif
 
 #ifdef CID_PROCESS_CAPTURE_HOLDING
 /* The guarded variant. It differs from Process.capture only in that the caller supplies
@@ -312,12 +344,22 @@ static Term git_capture_holding_run(Env e, Term *f, IoWork *w) {
     free(args); free(capture->process.text); free(capture);
     return io_fail(e, EINVAL, "process arguments or directory contain NUL");
   }
-  capture->claim = (int)(u32)f[2];
+  /* A supplied claim is never accepted through the legacy sentinel: a value that does
+     not fit a target int, or that names no descriptor, is refused before any artifact
+     is created or child is spawned. */
+  u32 raw = (u32)f[2];
+  if (raw > (u32)INT32_MAX) {
+    free(args); free(capture->process.text); free(capture);
+    return io_fail(e, EINVAL, "claim handle out of range");
+  }
+  capture->claim = (int)raw;
+  u64 guard_n = 0;
+  capture->guard = io_cstr(e, f[3], &guard_n);
   u64 art_n = 0;
-  capture->artifact = io_cstr(e, f[3], &art_n);
-  if (strlen(capture->artifact) != art_n) {
-    free(args); free(capture->process.text); free(capture->artifact); free(capture);
-    return io_fail(e, EINVAL, "artifact path contains NUL");
+  capture->artifact = io_cstr(e, f[4], &art_n);
+  if (strlen(capture->guard) != guard_n || strlen(capture->artifact) != art_n) {
+    free(args); free(capture->process.text); free(capture->guard); free(capture->artifact); free(capture);
+    return io_fail(e, EINVAL, "guard or artifact path contains NUL");
   }
   capture->process.hand = (intptr_t)git_proc_parse_argv(args);
   free(args);
