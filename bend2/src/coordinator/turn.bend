@@ -309,9 +309,11 @@ def checkpoint_restore_read(found: Result<&1,&1,U32 & String,String>, +log: Stri
   match found:
     case Fail{(+code,text)}:
       IO.pure(Result<&1,&1,U32 & String,Unit>,Bool.pick(Result<&1,&1,U32 & String,Unit>,U32.is_eq(code,2),Done{Unit{}},Fail{(code,text)}))
-    case Done{text}: do IO<Result<&1,&1,U32 & String,Unit>>:
-      +written : Result<&1,&1,U32 & String,Unit> <- T.Text.append(log,text ++ "\n")
-      checkpoint_written(written,True{},log,"")
+    case Done{text}:
+      do IO<Result<&1,&1,U32 & String,Unit>>:
+        written : Result<&1,&1,U32 & String,Unit> <- T.Text.append(log,text ++ "\n")
+        cleared : Result<&1,&1,U32 & String,Unit> <- checkpoint_written(written,True{},log,"")
+        IO.pure(Result<&1,&1,U32 & String,Unit>,cleared)
 
 def checkpoint_restore_file(+log: String) -> IO(Result<&1,&1,U32 & String,Unit>):
   do IO<Result<&1,&1,U32 & String,Unit>>:
