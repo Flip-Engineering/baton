@@ -282,11 +282,6 @@ def frame_id_text(f: FrameId) -> String:
     case IdText{value}: J.json_text(J.Jstr{value})
     case IdNumber{token}: token
 
-def frame_id_ok(+f: FrameId) -> Bool:
-  match f:
-    case IdText{value}: True{}
-    case IdNumber{token}: signed_safe_token_ok(token)
-
 def codec_success_text(tool: CodecTool, ident: FrameId, query: OptText, request: OptText, scope: OptText) -> String:
   "{\"id\":" ++ frame_id_text(ident)
   ++ ",\"query\":" ++ opt_text_text(query)
@@ -400,6 +395,11 @@ def unsigned_rest(s: String) -> String:
 def signed_safe_token_ok(+s: String) -> Bool:
   Bool.pick(Bool, String.is_empty(s), False{},
     Bool.pick(Bool, U32.is_eq(cp(head_ch(s)), 45), safe_integer_token_ok(unsigned_rest(s)), safe_integer_token_ok(s)))
+
+def frame_id_ok(+f: FrameId) -> Bool:
+  match f:
+    case IdText{value}: True{}
+    case IdNumber{token}: signed_safe_token_ok(token)
 
 # A monotone lifetime counter token: unsigned decimal, "0" or [1-9][0-9]*, with no
 # magnitude bound, admitted as exact text and never normalized. Malformed aliases

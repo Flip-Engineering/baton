@@ -45,16 +45,16 @@ type RuntimeState is Data:
   Exited{}
   Failed{}
 
-// Target liveness: whether the owned child is believed alive, exited, or unobserved. This
-// is distinct from stop liveness below and only target exit evidence sets it to exited.
+# Target liveness: whether the owned child is believed alive, exited, or unobserved. This
+# is distinct from stop liveness below and only target exit evidence sets it to exited.
 type Liveness is Data:
   LivenessUnknown{}
   LivenessLive{}
   LivenessExited{}
 
-// Recorded-stop liveness: whether the last recorded stop is current evidence. It is a
-// separate fact from target liveness, because a rejected resume or a destroyed context
-// invalidates the stop while the target is still alive.
+# Recorded-stop liveness: whether the last recorded stop is current evidence. It is a
+# separate fact from target liveness, because a rejected resume or a destroyed context
+# invalidates the stop while the target is still alive.
 type StopLiveness is Data:
   StopAbsent{}
   StopLive{}

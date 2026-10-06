@@ -260,13 +260,16 @@ def ref_lookup_tabs(+query: String, +refId: String, +fields: List<String>, +answ
     case _: RefUnreadable{"short", answer}
 
 # Exactly one row of five columns, decoded against the identity the caller requested.
-def ref_lookup_decode(+query: String, +refId: String, +row: String) -> RefLookup:
-  match Tx.split_lines(row):
+def ref_lookup_lines(+query: String, +refId: String, +row: String, +lines: List<String>) -> RefLookup:
+  match lines:
     case Nil{}: RefUnreadable{"empty", row}
     case +line <> +rest:
       match rest:
         case Nil{}: ref_lookup_tabs(query, refId, Tx.split_tabs(line), row)
         case _: RefUnreadable{"surplus", row}
+
+def ref_lookup_decode(+query: String, +refId: String, +row: String) -> RefLookup:
+  ref_lookup_lines(query, refId, row, Tx.split_lines(row))
 
 def ref_after(+query: String, +refId: String, result: Result<&1,&1,U32 & String,String>) -> IO(Result<&1,&1,U32 & String,RefLookup>):
   match result:
