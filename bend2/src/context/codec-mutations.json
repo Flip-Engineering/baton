@@ -305,5 +305,12 @@
   "find": "  Bool.pick(RefDecode, distinct_keys(members), ref_object(members), RdBad{\"duplicateRefField\"})",
   "replace": "  Bool.pick(RefDecode, True{}, ref_object(members), RdBad{\"duplicateRefField\"})",
   "law": "codec_law_a_conflicting_duplicate_ref_field_refuses"
+ },
+ {
+  "name": "codec-public-mcp-name-maps-to-the-wrong-tool",
+  "file": "bend2/src/context/codec.bend",
+  "find": "    case \"baton2_context_query\": \"context-query\"",
+  "replace": "    case \"baton2_context_query\": \"context-engines\"",
+  "law": "codec_law_a_public_mcp_query_name_decides_as_the_native_name"
  }
 ]

@@ -219,10 +219,27 @@ def tool_present(m: Maybe<&2, Context.CodecTool>) -> Bool:
     case Some{+value}: True{}
     case None{}: False{}
 
+# The public MCP names and the native tool names address the same three tools. This
+# mapping is explicit and closed: the public names are accepted at this boundary, the
+# native names are retained for the existing internal call sites and fixtures, and any
+# other name falls through unchanged so `codec_tool_of` refuses it as unknownTool.
+# Neither the internal tool vocabulary nor the emitted tool names change, and the
+# original params.name bytes remain in the frame.
+def tool_input_name(+name: String) -> String:
+  match name:
+    case "baton2_context_query": "context-query"
+    case "baton2_context_result": "context-result"
+    case "baton2_context_engines": "context-engines"
+    case other: name
+
+def env_tool_name(+env: Envelope) -> String:
+  tool_input_name(env_tool_text(env))
+
+def env_tool_known(+env: Envelope) -> Bool:
+  tool_present(Context.codec_tool_of(env_tool_name(env)))
+
 # The acceptance path is guarded by `env_tool_known`, so the fallback here is
 # unreachable for an accepted envelope.
-def env_tool_known(+env: Envelope) -> Bool:
-  tool_present(Context.codec_tool_of(env_tool_text(env)))
 
 def tool_value(m: Maybe<&2, Context.CodecTool>) -> Context.CodecTool:
   match m:
@@ -230,7 +247,7 @@ def tool_value(m: Maybe<&2, Context.CodecTool>) -> Context.CodecTool:
     case None{}: Context.CtEngines{}
 
 def env_tool(+env: Envelope) -> Context.CodecTool:
-  tool_value(Context.codec_tool_of(env_tool_text(env)))
+  tool_value(Context.codec_tool_of(env_tool_name(env)))
 
 def opt_absent(q: Context.OptText) -> Bool:
   match q:
@@ -248,7 +265,7 @@ def query_shape(+tool: String, q: Context.OptText) -> Bool:
     case other: opt_nonempty(q)
 
 def env_query_ok(+env: Envelope) -> Bool:
-  query_shape(env_tool_text(env), env_query_of(env))
+  query_shape(env_tool_name(env), env_query_of(env))
 
 def request_shape(+tool: String, r: RequestText, closed: Bool) -> Bool:
   match tool:
@@ -256,7 +273,7 @@ def request_shape(+tool: String, r: RequestText, closed: Bool) -> Bool:
     case other: Bool.pick(Bool, closed, request_absent(r), False{})
 
 def env_request_ok(+env: Envelope) -> Bool:
-  request_shape(env_tool_text(env), env_request(env), env_arguments_closed(env))
+  request_shape(env_tool_name(env), env_request(env), env_arguments_closed(env))
 
 def env_arguments_ok(+env: Envelope) -> Bool:
   Bool.pick(Bool, env_query_ok(env), env_request_ok(env), False{})
@@ -1194,7 +1211,7 @@ def envelope_fields(+frame: RawValue) -> Envelope:
            request_field(raw_field(arguments_of(frame), "request")),
            raw_keys_ok(root_words(), raw_members_of(frame)),
            raw_keys_ok(params_words(), raw_members_of(params_of(frame))),
-           arguments_closed_for(raw_field_text(params_of(frame), "name"), raw_members_of(arguments_of(frame)))}
+           arguments_closed_for(tool_input_name(raw_field_text(params_of(frame), "name")), raw_members_of(arguments_of(frame)))}
 
 def envelope_read(+r: FrameRead) -> EnvelopeRead:
   match r:
@@ -2130,6 +2147,28 @@ law codec_law_a_wire_reference_with_distinct_fields_decodes:
   {ref_condition(ref_decode(ref_object_of(ref_members_subject("r9", cobj1("kind", J.Jstr{"symbol"}), J.Jarr{J.Jstr{"definition"}, J.Jnil{}})))) == "" : String}
 
 def codec_law_a_wire_reference_with_distinct_fields_decodes():
+  {==}
+
+law codec_law_a_public_mcp_name_maps_to_its_native_tool_name:
+  {tool_input_name("baton2_context_result") == "context-result" : String}
+
+def codec_law_a_public_mcp_name_maps_to_its_native_tool_name():
+  {==}
+
+# A frame that differs only in which of the two accepted names it carries decides
+# identically, so the alias does not change the accepted envelope shape.
+law codec_law_a_public_mcp_query_name_decides_as_the_native_name:
+  {envelope_text(envelope_decide(EnvFrame{"2.0", "tools/call", "baton2_context_query", Context.IdText{"7"}, Context.Present{"q1"}, RtText{"{\"version\":1}"}, True{}, True{}, True{}})) == envelope_text(envelope_decide(EnvFrame{"2.0", "tools/call", "context-query", Context.IdText{"7"}, Context.Present{"q1"}, RtText{"{\"version\":1}"}, True{}, True{}, True{}})) : String}
+
+def codec_law_a_public_mcp_query_name_decides_as_the_native_name():
+  {==}
+
+# A name outside both accepted sets falls through the mapping unchanged and is refused
+# exactly as an unknown native name is, so the input vocabulary does not widen.
+law codec_law_an_unlisted_public_name_refuses_as_an_unknown_tool:
+  {envelope_text(envelope_decide(EnvFrame{"2.0", "tools/call", "baton2_context_other", Context.IdText{"7"}, Context.Absent{}, RtAbsent{}, True{}, True{}, True{}})) == envelope_text(envelope_decide(EnvFrame{"2.0", "tools/call", "not-a-tool", Context.IdText{"7"}, Context.Absent{}, RtAbsent{}, True{}, True{}, True{}})) : String}
+
+def codec_law_an_unlisted_public_name_refuses_as_an_unknown_tool():
   {==}
 
 law codec_law_a_subject_object_without_a_kind_refuses:
