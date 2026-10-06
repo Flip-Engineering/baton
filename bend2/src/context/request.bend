@@ -570,7 +570,7 @@ def kind_field_ok(kind: Maybe<&2, J.Json>, members: J.Json) -> Bool:
 
 def subject_kind_ok(subject: J.Json) -> Bool:
   match subject:
-    case J.Jobj{members}: kind_field_ok(member_lookup("kind", members), members)
+    case J.Jobj{+members}: kind_field_ok(member_lookup("kind", members), members)
     case J.Jnull{}: False{}
     case J.Jtrue{}: False{}
     case J.Jfalse{}: False{}
@@ -593,7 +593,7 @@ def subject_required(members: J.Json) -> Bool:
 
 def projections_ok(select: J.Json) -> Bool:
   match select:
-    case J.Jarr{head, tail}: Bool.pick(Bool, is_jstr(head), projections_walk(head, tail), False{})
+    case J.Jarr{+head, +tail}: Bool.pick(Bool, is_jstr(head), projections_walk(head, tail), False{})
     case J.Jnull{}: False{}
     case J.Jtrue{}: False{}
     case J.Jfalse{}: False{}
@@ -609,7 +609,7 @@ def projections_walk(+selected: J.Json, +rest: J.Json) -> Bool:
 
 def projections_rest(+rest: J.Json) -> Bool:
   match rest:
-    case J.Jarr{head, tail}: Bool.pick(Bool, is_jstr(head), projections_walk(head, tail), False{})
+    case J.Jarr{+head, +tail}: Bool.pick(Bool, is_jstr(head), projections_walk(head, tail), False{})
     case J.Jpair{key, value, rest}: True{}
     case J.Jnil{}: True{}
     case J.Jnull{}: True{}
@@ -633,7 +633,7 @@ def distinct_from(+name: String, +rest: J.Json) -> Bool:
 
 def effects_ok(effects: J.Json) -> Bool:
   match effects:
-    case J.Jarr{head, tail}: Bool.pick(Bool, is_jstr(head), effects_walk(head, tail), False{})
+    case J.Jarr{+head, +tail}: Bool.pick(Bool, is_jstr(head), effects_walk(head, tail), False{})
     case J.Jpair{key, value, rest}: True{}
     case J.Jnil{}: True{}
     case J.Jnull{}: False{}
@@ -649,7 +649,7 @@ def effects_walk(+granted: J.Json, +rest: J.Json) -> Bool:
 
 def effects_rest(+rest: J.Json) -> Bool:
   match rest:
-    case J.Jarr{head, tail}: effects_walk(head, tail)
+    case J.Jarr{+head, +tail}: effects_walk(head, tail)
     case J.Jpair{key, value, rest}: True{}
     case J.Jnil{}: True{}
     case J.Jnull{}: True{}
@@ -685,7 +685,7 @@ def options_ok(members: J.Json) -> Bool:
 
 def options_shape(options: J.Json) -> Bool:
   match options:
-    case J.Jobj{members}: Bool.pick(Bool, keys_allowed(option_words(), members), options_values(members), False{})
+    case J.Jobj{+members}: Bool.pick(Bool, keys_allowed(option_words(), members), options_values(members), False{})
     case J.Jnull{}: False{}
     case J.Jtrue{}: False{}
     case J.Jfalse{}: False{}
@@ -713,7 +713,7 @@ def effects_required(members: J.Json) -> Bool:
 
 def Context.request_validate(req: J.Json) -> Verdict:
   match req:
-    case J.Jobj{members}: request_members_ok(members)
+    case J.Jobj{+members}: request_members_ok(members)
     case J.Jnull{}: VRefused{"requestNotObject"}
     case J.Jtrue{}: VRefused{"requestNotObject"}
     case J.Jfalse{}: VRefused{"requestNotObject"}
