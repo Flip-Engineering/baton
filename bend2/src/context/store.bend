@@ -77,13 +77,6 @@ def runtime_epoch_value(+epoch: String) -> String:
 def association_schema() -> String:
   "CREATE TABLE IF NOT EXISTS semantic_admissions (query_id TEXT PRIMARY KEY NOT NULL REFERENCES semantic_queries(id),plan_value TEXT NOT NULL,result_schema TEXT NOT NULL,origin_attempt TEXT,CHECK(json_valid(plan_value)));"
 
-# The association insert is guarded by `changes()`, which still refers to the insert of
-# the query row because that insert is the statement immediately before it. So it runs
-# only in the transaction that created that row, and a replay writes nothing: a caller
-# that replays an old row cannot attach its own plan to a row admitted without one.
-def association_insert_sql(+id: String, +planValue: String, +resultSchema: String, +originAttempt: String) -> String:
-  "INSERT INTO semantic_admissions(query_id,plan_value,result_schema,origin_attempt) SELECT " ++ C.q(id) ++ "," ++ C.q(planValue) ++ "," ++ C.q(resultSchema) ++ "," ++ text_or_null(originAttempt) ++ " WHERE changes()=1 AND NOT EXISTS(SELECT 1 FROM semantic_admissions WHERE query_id=" ++ C.q(id) ++ ");"
-
 def association_present(id: String) -> String:
   "EXISTS(SELECT 1 FROM semantic_admissions WHERE query_id=" ++ C.q(id) ++ ")"
 
@@ -291,6 +284,13 @@ def json_or_null(+value: String) -> String:
 
 def text_or_null(+value: String) -> String:
   Bool.pick(String, String.is_empty(value), "NULL", C.q(value))
+
+# The association insert is guarded by `changes()`, which still refers to the insert of
+# the query row because that insert is the statement immediately before it. So it runs
+# only in the transaction that created that row, and a replay writes nothing: a caller
+# that replays an old row cannot attach its own plan to a row admitted without one.
+def association_insert_sql(+id: String, +planValue: String, +resultSchema: String, +originAttempt: String) -> String:
+  "INSERT INTO semantic_admissions(query_id,plan_value,result_schema,origin_attempt) SELECT " ++ C.q(id) ++ "," ++ C.q(planValue) ++ "," ++ C.q(resultSchema) ++ "," ++ text_or_null(originAttempt) ++ " WHERE changes()=1 AND NOT EXISTS(SELECT 1 FROM semantic_admissions WHERE query_id=" ++ C.q(id) ++ ");"
 
 # The repeated-ID rule of the store: the same ID, owner and canonical request text
 # replay the stored row; any other reuse aborts the transaction through the NOT NULL
