@@ -1217,19 +1217,19 @@ def a_receipt_row_of_the_requested_identity_is_committed():
   {==}
 
 law a_receipt_row_of_another_incarnation_is_malformed:
-  {ContextObserver.receipt_decode("q1","starter","0","2","present\t1\t1\t0\t1\t1\t1\t0\n") == ContextObserver.ReceiptMalformed{"identity","1101110"} : ContextObserver.ReceiptRead}
+  {ContextObserver.receipt_decode("q1","starter","0","2","present\t1\t1\t0\t1\t1\t1\t0\n") == ContextObserver.ReceiptMalformed{"identity","present\t1\t1\t0\t1\t1\t1\t0\n"} : ContextObserver.ReceiptRead}
 
 def a_receipt_row_of_another_incarnation_is_malformed():
   {==}
 
 law a_receipt_row_at_another_cursor_is_malformed:
-  {ContextObserver.receipt_decode("q1","starter","0","2","present\t1\t1\t1\t0\t1\t1\t0\n") == ContextObserver.ReceiptMalformed{"identity","1110110"} : ContextObserver.ReceiptRead}
+  {ContextObserver.receipt_decode("q1","starter","0","2","present\t1\t1\t1\t0\t1\t1\t0\n") == ContextObserver.ReceiptMalformed{"cursor","present\t1\t1\t1\t0\t1\t1\t0\n"} : ContextObserver.ReceiptRead}
 
 def a_receipt_row_at_another_cursor_is_malformed():
   {==}
 
 law an_absent_receipt_row_with_stray_columns_is_malformed:
-  {ContextObserver.receipt_decode("q1","starter","0","2","absent\t1\t1\t1\t1\t1\t1\t0\n") == ContextObserver.ReceiptMalformed{"absentShape","1111110"} : ContextObserver.ReceiptRead}
+  {ContextObserver.receipt_decode("q1","starter","0","2","absent\t1\t1\t1\t1\t1\t1\t0\n") == ContextObserver.ReceiptMalformed{"absentShape","absent\t1\t1\t1\t1\t1\t1\t0\n"} : ContextObserver.ReceiptRead}
 
 def an_absent_receipt_row_with_stray_columns_is_malformed():
   {==}
