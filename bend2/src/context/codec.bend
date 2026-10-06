@@ -1430,10 +1430,22 @@ def plan_of_read(+r: Raw.RawRead) -> InputPlan:
     case Raw.RawNul{+offset}: IpRefused{validation_refusal("nulByte")}
     case Raw.RawBom{}: IpRefused{validation_refusal("bom")}
 
-# The complete row to document export: the reviewed row framing decoded, walked and
-# rendered through the existing frame path.
-def document_of_rows(rows: String) -> String:
-  frame_text(frame_decision(frame_envelope(Req.Context.parse_rows(rows))))
+# The complete document contract. The variant carries the discriminator the caller
+# needs for its stdout/exit0 and stderr/exit2 branches, so no caller parses a status
+# out of a string. A refusal keeps the class and condition the decision actually
+# carries and renders through the fixed complete refusal renderer; a success renders
+# through the success renderer.
+type Document is Data:
+  DocOk{document: String}
+  DocRefused{document: String}
+
+def decision_document(+d: FrameDecision) -> Document:
+  match d:
+    case FdOk{tool, id, query, request}: DocOk{Context.codec_success_text(tool, id, query, request)}
+    case FdRefused{cls, condition}: DocRefused{Context.refusal_text(Context.Refuse{cls, "context-request-codec", Context.text_condition(condition), Context.NextStop{}})}
+
+def document_of_rows(rows: String) -> Document:
+  decision_document(frame_decision(frame_envelope(Req.Context.parse_rows(rows))))
 
 def record_probe(subject: String, policy: String, +projections: Eng.SS) -> Refs.RefRecord:
   Refs.Ref{"r1", "typescript", subject, subject, "s1", policy, projections}
@@ -2242,33 +2254,63 @@ def codec_law_the_valid_observation_returns_the_selected_row_plan():
   {==}
 
 law codec_law_the_invalid_observation_returns_its_complete_document:
-  {finish_validation("{}", "0\n") == IpRefused{"{\"error\":\"validationRefusal\",\"command\":\"context-request-codec\",\"condition\":\"invalidJson\",\"next\":[]}"} : InputPlan}
+  {finish_validation("{}", "0\n") == IpRefused{"{\"command\":\"context-request-codec\",\"condition\":\"invalidJson\",\"error\":\"validationRefusal\",\"next\":[]}"} : InputPlan}
 
 def codec_law_the_invalid_observation_returns_its_complete_document():
   {==}
 
 law codec_law_a_bare_lf_observation_is_malformed_transport:
-  {finish_validation("{}", "\n") == IpRefused{"{\"error\":\"validationRefusal\",\"command\":\"context-request-codec\",\"condition\":\"malformedValidationObservation\",\"next\":[]}"} : InputPlan}
+  {finish_validation("{}", "\n") == IpRefused{"{\"command\":\"context-request-codec\",\"condition\":\"malformedValidationObservation\",\"error\":\"validationRefusal\",\"next\":[]}"} : InputPlan}
 
 def codec_law_a_bare_lf_observation_is_malformed_transport():
   {==}
 
 law codec_law_an_observation_without_its_framing_is_malformed_transport:
-  {finish_validation("{}", "1") == IpRefused{"{\"error\":\"validationRefusal\",\"command\":\"context-request-codec\",\"condition\":\"malformedValidationObservation\",\"next\":[]}"} : InputPlan}
+  {finish_validation("{}", "1") == IpRefused{"{\"command\":\"context-request-codec\",\"condition\":\"malformedValidationObservation\",\"error\":\"validationRefusal\",\"next\":[]}"} : InputPlan}
 
 def codec_law_an_observation_without_its_framing_is_malformed_transport():
   {==}
 
 law codec_law_a_multirow_observation_is_malformed_transport:
-  {finish_validation("{}", "1\n0\n") == IpRefused{"{\"error\":\"validationRefusal\",\"command\":\"context-request-codec\",\"condition\":\"malformedValidationObservation\",\"next\":[]}"} : InputPlan}
+  {finish_validation("{}", "1\n0\n") == IpRefused{"{\"command\":\"context-request-codec\",\"condition\":\"malformedValidationObservation\",\"error\":\"validationRefusal\",\"next\":[]}"} : InputPlan}
 
 def codec_law_a_multirow_observation_is_malformed_transport():
   {==}
 
 law codec_law_a_bom_answer_returns_its_complete_document:
-  {plan_of_read(Raw.RawBom{}) == IpRefused{"{\"error\":\"validationRefusal\",\"command\":\"context-request-codec\",\"condition\":\"bom\",\"next\":[]}"} : InputPlan}
+  {plan_of_read(Raw.RawBom{}) == IpRefused{"{\"command\":\"context-request-codec\",\"condition\":\"bom\",\"error\":\"validationRefusal\",\"next\":[]}"} : InputPlan}
 
 def codec_law_a_bom_answer_returns_its_complete_document():
+  {==}
+
+law codec_law_a_decoded_text_body_plans_the_validity_statement:
+  {plan_of_read(Raw.RawText{"{}"}) == IpValidate{"{}", "WITH raw(t) AS (SELECT '{}') SELECT json_valid(t) FROM raw;"} : InputPlan}
+
+def codec_law_a_decoded_text_body_plans_the_validity_statement():
+  {==}
+
+law codec_law_an_invalid_utf8_answer_returns_its_complete_document:
+  {plan_of_read(Raw.RawInvalidUtf8{"7"}) == IpRefused{"{\"command\":\"context-request-codec\",\"condition\":\"invalidUtf8\",\"error\":\"validationRefusal\",\"next\":[]}"} : InputPlan}
+
+def codec_law_an_invalid_utf8_answer_returns_its_complete_document():
+  {==}
+
+law codec_law_a_nul_answer_returns_its_complete_document:
+  {plan_of_read(Raw.RawNul{"7"}) == IpRefused{"{\"command\":\"context-request-codec\",\"condition\":\"nulByte\",\"error\":\"validationRefusal\",\"next\":[]}"} : InputPlan}
+
+def codec_law_a_nul_answer_returns_its_complete_document():
+  {==}
+
+law codec_law_an_empty_row_set_returns_a_refusal_document:
+  {document_of_rows("") == DocRefused{"{\"command\":\"context-request-codec\",\"condition\":\"emptyFrame\",\"error\":\"validationRefusal\",\"next\":[]}"} : Document}
+
+def codec_law_an_empty_row_set_returns_a_refusal_document():
+  {==}
+
+law codec_law_an_accepted_decision_returns_a_success_document:
+  {decision_document(frame_envelope_then_meta(envelope_decide(EnvFrame{"2.0", "tools/call", "baton2_context_query", Context.IdNumber{"7"}, Context.Present{"q1"}, RtText{"{\"version\":1}"}, True{}, True{}, True{}}), MetaOk{})) == DocOk{"{\"id\":7,\"query\":\"q1\",\"requestCanonical\":\"{\\\"version\\\":1}\",\"tool\":\"context-query\",\"version\":1}"} : Document}
+
+def codec_law_an_accepted_decision_returns_a_success_document():
   {==}
 
 law codec_law_a_public_mcp_name_maps_to_its_native_tool_name:
