@@ -333,6 +333,146 @@
       "find": "    case RUnknownId{}: \"unknownReference\"",
       "replace": "    case RUnknownId{}: \"unknown\"",
       "law": "context_refs_the_unknown_condition_is_named"
+    },
+    {
+      "name": "decl-version-table-accepts-another-schema-version",
+      "file": "bend2/src/context/engines-decl.bend",
+      "find": "  String.eq(v, \"1\")",
+      "replace": "  String.eq(v, \"2\")",
+      "law": "decl_refuses_an_unsupported_declaration_version"
+    },
+    {
+      "name": "decl-effect-vocabulary-accepts-every-name",
+      "file": "bend2/src/context/engines-decl.bend",
+      "find": "  Eng.ss_member(admitted_effect_vocabulary(), effect)",
+      "replace": "  True{}",
+      "law": "decl_vocabulary_refuses_an_unknown_effect"
+    },
+    {
+      "name": "decl-conflict-test-never-fires",
+      "file": "bend2/src/context/engines-decl.bend",
+      "find": "  Bool.pick(Bool, String.eq(module_id, want_module),",
+      "replace": "  Bool.pick(Bool, False{},",
+      "law": "decl_refuses_a_conflicting_id"
+    },
+    {
+      "name": "selection-disabled-configuration-ignored",
+      "file": "bend2/src/context/engines-select.bend",
+      "find": "  Bool.not(Eng.ss_member(proj_disabled(inputs_project(inputs)),",
+      "replace": "  Bool.not(Eng.ss_member(Eng.ss_empty(),",
+      "law": "selection_auto_excludes_a_disabled_candidate"
+    },
+    {
+      "name": "selection-preference-tie-picks-a-winner",
+      "file": "bend2/src/context/engines-select.bend",
+      "find": "              SelRefused{reason: SelAmbiguous{candidates: cand_ids(pref)}},",
+      "replace": "              sel_only(pref, subject),",
+      "law": "selection_auto_refuses_two_preferred_candidates"
+    },
+    {
+      "name": "selection-cycle-not-refused",
+      "file": "bend2/src/context/engines-select.bend",
+      "find": "    walk_fail(w, PfAt{PlanCycle{module_id: pending_module(head)}}),",
+      "replace": "    w,",
+      "law": "selection_plan_refuses_a_cycle"
+    },
+    {
+      "name": "selection-plan-erases-the-effect-floor",
+      "file": "bend2/src/context/engines-select.bend",
+      "find": "                                              Eng.effects_union(commons)),",
+      "replace": "                                              Eng.ss_empty()),",
+      "law": "selection_plan_carries_the_common_operation_minimum"
+    },
+    {
+      "name": "selection-digest-comparison-ignored",
+      "file": "bend2/src/context/engines-select.bend",
+      "find": "        Bool.pick(MatchState, String.eq(digest_at(inv, module_id), want_digest),",
+      "replace": "        Bool.pick(MatchState, True{},",
+      "law": "selection_freeze_refuses_a_changed_declaration"
+    },
+    {
+      "name": "selection-step-lookup-ignores-the-digest",
+      "file": "bend2/src/context/engines-select.bend",
+      "find": "  Bool.and(String.eq(bind_digest(step_binding(step)), digest),",
+      "replace": "  Bool.and(True{},",
+      "law": "selection_invocation_for_a_foreign_digest_is_named"
+    },
+    {
+      "name": "frame-binding-revision-ignored",
+      "file": "bend2/src/context/snapshot-validate.bend",
+      "find": "    String.eq(Sel.bind_revision(want), Sel.bind_revision(saw)),",
+      "replace": "    True{},",
+      "law": "frame_validation_refuses_a_foreign_binding_revision"
+    },
+    {
+      "name": "frame-binding-digest-ignored",
+      "file": "bend2/src/context/snapshot-validate.bend",
+      "find": "    String.eq(Sel.bind_digest(want), Sel.bind_digest(saw)),",
+      "replace": "    True{},",
+      "law": "frame_validation_refuses_a_foreign_binding_digest"
+    },
+    {
+      "name": "frame-binding-protocol-ignored",
+      "file": "bend2/src/context/snapshot-validate.bend",
+      "find": "    String.eq(Sel.bind_protocol(want), Sel.bind_protocol(saw)),",
+      "replace": "    True{},",
+      "law": "frame_validation_refuses_a_foreign_binding_protocol"
+    },
+    {
+      "name": "frame-artifact-identities-ignored",
+      "file": "bend2/src/context/snapshot-validate.bend",
+      "find": "    arts_equal(Sel.bind_artifacts(want), Sel.bind_artifacts(saw)),",
+      "replace": "    True{},",
+      "law": "frame_validation_refuses_foreign_artifact_identities"
+    },
+    {
+      "name": "frame-schema-identities-ignored",
+      "file": "bend2/src/context/snapshot-validate.bend",
+      "find": "    ss_same_members(Sel.bind_schemas(want), Sel.bind_schemas(saw)), FsSame{},",
+      "replace": "    True{}, FsSame{},",
+      "law": "frame_validation_refuses_foreign_schema_identities"
+    },
+    {
+      "name": "frame-sequence-text-accepts-a-leading-zero",
+      "file": "bend2/src/context/snapshot-validate.bend",
+      "find": "           Bool.not(Bool.and(String.starts_with(s, \"0\"),",
+      "replace": "           Bool.not(Bool.and(False{},",
+      "law": "frame_sequence_text_rejects_a_leading_zero"
+    },
+    {
+      "name": "frame-query-null-rule-dropped",
+      "file": "bend2/src/context/snapshot-validate.bend",
+      "find": "    v_chk(Bool.not(String.is_empty(expect_runtime(e))),",
+      "replace": "    v_chk(True{},",
+      "law": "frame_validation_refuses_a_query_null_frame_without_a_retained_runtime"
+    },
+    {
+      "name": "frame-compatibility-ignores-evidence",
+      "file": "bend2/src/context/snapshot-validate.bend",
+      "find": "  Bool.pick(CompatOutcome, ties, CompatAdmitted{compat_evidence_basis(e)},",
+      "replace": "  Bool.pick(CompatOutcome, True{}, CompatAdmitted{compat_evidence_basis(e)},",
+      "law": "frame_equal_effect_sets_alone_establish_no_compatibility"
+    },
+    {
+      "name": "ref-legacy-rule-dropped",
+      "file": "bend2/src/context/snapshot-validate.bend",
+      "find": "           Bool.not(ref_claim_declares_producer(c)))",
+      "replace": "           False{})",
+      "law": "ref_claim_keeps_a_legacy_record_unestablished"
+    },
+    {
+      "name": "frame-sequence-text-accepts-non-digits",
+      "file": "bend2/src/context/snapshot-validate.bend",
+      "find": "    case h <> t: Bool.and(Char.is_digit(h), digits_only(t))",
+      "replace": "    case h <> t: digits_only(t)",
+      "law": "frame_validation_refuses_a_non_decimal_sequence"
+    },
+    {
+      "name": "selection-discovery-drops-the-shared-context",
+      "file": "bend2/src/context/engines-select.bend",
+      "find": "      DscCons{discovery_entry(context, inv, installed, head),",
+      "replace": "      DscCons{discovery_entry(rest, inv, installed, head),",
+      "law": "selection_discovery_admits_every_entry_against_the_whole_set"
     }
   ]
 }

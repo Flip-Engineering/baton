@@ -41,6 +41,8 @@ import ./lifecycle.bend as ContextLifecycle
 import ./bound.bend as ContextBound
 import ./bound-admission.bend as ContextAdmit
 import ./duties.bend as ContextDuties
+import ./observer.bend as ContextObserver
+import ./service.bend as ContextService
 
 # ---------------------------------------------------------------------------
 # Role identity. The identity is the canonical array of the fixed tag, binding,
@@ -988,4 +990,446 @@ law a_non_array_refs_container_is_unreadable:
   {ContextStore.ref_lookup_decode("q7","ref-1","complete\tpresent\tcontainer\t\t0\n") == ContextStore.RefUnreadable{"count","complete\tpresent\tcontainer\t\t0\n"} : ContextStore.RefLookup}
 
 def a_non_array_refs_container_is_unreadable():
+  {==}
+
+# --- the effect service and the observer consumer -----------------------------
+
+law an_envelope_statement_is_its_body_plus_its_terminator:
+  {ContextStore.envelope_sql(id) == ContextStore.envelope_body_sql(id) ++ ";" : String}
+
+def an_envelope_statement_is_its_body_plus_its_terminator():
+  {==}
+
+law a_retained_read_is_one_observation_of_state_and_envelope:
+  {ContextService.retained_sql(query) == "SELECT CASE WHEN EXISTS(SELECT 1 FROM semantic_queries WHERE id=" ++ C.q(query) ++ ") THEN 'present' ELSE 'absent' END," ++ "coalesce((SELECT state FROM semantic_queries WHERE id=" ++ C.q(query) ++ "),'')," ++ "coalesce((" ++ ContextStore.envelope_body_sql(query) ++ "),'');" : String}
+
+def a_retained_read_is_one_observation_of_state_and_envelope():
+  {==}
+
+law the_terminal_payload_guard_compares_result_and_error:
+  {ContextObserver.terminal_payload_matches(next, result, error) == "state=" ++ C.q(next) ++ " AND result_json IS " ++ ContextStore.json_or_null(result) ++ " AND error_json IS " ++ ContextStore.json_or_null(error) : String}
+
+def the_terminal_payload_guard_compares_result_and_error():
+  {==}
+
+law a_present_retained_row_is_found:
+  {ContextService.retained_decode("q7","present\tcomplete\t{\"v\":1}\n") == ContextService.RetainedFound{"complete","{\"v\":1}"} : ContextService.Retained}
+
+def a_present_retained_row_is_found():
+  {==}
+
+law an_absent_retained_row_is_absent:
+  {ContextService.retained_decode("q7","absent\t\t\n") == ContextService.RetainedAbsent{"q7"} : ContextService.Retained}
+
+def an_absent_retained_row_is_absent():
+  {==}
+
+law an_absent_retained_row_carrying_a_state_is_malformed:
+  {ContextService.retained_decode("q7","absent\tcomplete\t\n") == ContextService.RetainedUnreadable{"absentShape","absent\tcomplete\t\n"} : ContextService.Retained}
+
+def an_absent_retained_row_carrying_a_state_is_malformed():
+  {==}
+
+law a_present_retained_row_without_an_envelope_is_malformed:
+  {ContextService.retained_decode("q7","present\tcomplete\t\n") == ContextService.RetainedUnreadable{"presentEnvelope","present\tcomplete\t\n"} : ContextService.Retained}
+
+def a_present_retained_row_without_an_envelope_is_malformed():
+  {==}
+
+law a_present_retained_row_with_an_unknown_state_is_malformed:
+  {ContextService.retained_decode("q7","present\tqueued\t{\"v\":1}\n") == ContextService.RetainedUnreadable{"stateDomain","present\tqueued\t{\"v\":1}\n"} : ContextService.Retained}
+
+def a_present_retained_row_with_an_unknown_state_is_malformed():
+  {==}
+
+law a_present_retained_row_whose_envelope_is_not_an_object_is_malformed:
+  {ContextService.retained_decode("q7","present\tcomplete\tnot-json\n") == ContextService.RetainedUnreadable{"envelopeShape","present\tcomplete\tnot-json\n"} : ContextService.Retained}
+
+def a_present_retained_row_whose_envelope_is_not_an_object_is_malformed():
+  {==}
+
+law a_short_retained_row_is_unreadable:
+  {ContextService.retained_decode("q7","present\n") == ContextService.RetainedUnreadable{"short","present\n"} : ContextService.Retained}
+
+def a_short_retained_row_is_unreadable():
+  {==}
+
+law a_created_admission_is_admitted:
+  {ContextService.submission_of("root","{\"v\":1}","plan-1","schema-1",ContextAdmit.AdmissionCreated{"root","{\"v\":1}","accepted","accepted","","/k","/w","/a"}) == ContextService.SubmissionAdmitted{ContextAdmit.AdmissionCreated{"root","{\"v\":1}","accepted","accepted","","/k","/w","/a"},"plan-1","schema-1"} : ContextService.Submission}
+
+def a_created_admission_is_admitted():
+  {==}
+
+law a_retained_admission_of_this_owner_and_request_is_unverified:
+  {ContextService.submission_of("root","{\"v\":1}","plan-1","schema-1",ContextAdmit.AdmissionRetained{"root","{\"v\":1}","accepted","accepted","","/k","/w","/a"}) == ContextService.SubmissionRetainedUnverified{ContextAdmit.AdmissionRetained{"root","{\"v\":1}","accepted","accepted","","/k","/w","/a"},"plan-1","schema-1"} : ContextService.Submission}
+
+def a_retained_admission_of_this_owner_and_request_is_unverified():
+  {==}
+
+law a_retained_admission_of_another_owner_is_foreign:
+  {ContextService.submission_of("root","{\"v\":1}","plan-1","schema-1",ContextAdmit.AdmissionRetained{"kid","{\"v\":1}","accepted","accepted","","/k","/w","/a"}) == ContextService.SubmissionForeign{"kid","{\"v\":1}"} : ContextService.Submission}
+
+def a_retained_admission_of_another_owner_is_foreign():
+  {==}
+
+law an_absent_admission_is_absent:
+  {ContextService.submission_of("root","{\"v\":1}","plan-1","schema-1",ContextAdmit.AdmissionAbsent{}) == ContextService.SubmissionAbsent{} : ContextService.Submission}
+
+def an_absent_admission_is_absent():
+  {==}
+
+law an_uncertain_admission_keeps_its_stage:
+  {ContextService.submission_of("root","{\"v\":1}","plan-1","schema-1",ContextAdmit.AdmissionUncertain{"shape","short"}) == ContextService.SubmissionUncertain{"shape","short"} : ContextService.Submission}
+
+def an_uncertain_admission_keeps_its_stage():
+  {==}
+
+law a_custody_under_this_binding_is_admitted:
+  {ContextObserver.custody_check("b1","b1","k1","k1") == ContextObserver.CustodyAdmitted{"b1"} : ContextObserver.CustodyCheck}
+
+def a_custody_under_this_binding_is_admitted():
+  {==}
+
+law a_custody_under_another_binding_is_a_mismatch:
+  {ContextObserver.custody_check("b1","b2","k1","k1") == ContextObserver.CustodyMismatch{"b1","b2"} : ContextObserver.CustodyCheck}
+
+def a_custody_under_another_binding_is_a_mismatch():
+  {==}
+
+law a_release_without_custody_names_the_missing_operand:
+  {ContextObserver.release_refusal("b1","k1",None{}) == Some{ContextObserver.ReleaseMissingCustody{"keeper under admitted custody"}} : Maybe<&2,ContextObserver.ReleaseOutcome>}
+
+def a_release_without_custody_names_the_missing_operand():
+  {==}
+
+law a_release_under_another_binding_names_both_bindings:
+  {ContextObserver.release_refusal("b1","k1",Some{ContextObserver.Custody{"k1","b2","h"}}) == Some{ContextObserver.ReleaseCustodyMismatch{"b1","b2"}} : Maybe<&2,ContextObserver.ReleaseOutcome>}
+
+def a_release_under_another_binding_names_both_bindings():
+  {==}
+
+law a_release_with_matching_custody_has_no_refusal:
+  {ContextObserver.release_refusal("b1","k1",Some{ContextObserver.Custody{"k1","b1","h"}}) == None{} : Maybe<&2,ContextObserver.ReleaseOutcome>}
+
+def a_release_with_matching_custody_has_no_refusal():
+  {==}
+
+law an_unavailable_keeper_action_names_the_primitive:
+  {ContextObserver.release_unavailable("k1","h","keeper release effect") == ContextObserver.ReleaseEffectUnavailable{"k1","h","keeper release effect"} : ContextObserver.ReleaseOutcome}
+
+def an_unavailable_keeper_action_names_the_primitive():
+  {==}
+
+law an_empty_failure_document_is_absent:
+  {ContextObserver.failure_schema("") == None{} : Maybe<&2,String>}
+
+def an_empty_failure_document_is_absent():
+  {==}
+
+law a_rendered_failure_document_is_present:
+  {ContextObserver.failure_schema("{\"code\":2}") == Some{"{\"code\":2}"} : Maybe<&2,String>}
+
+def a_rendered_failure_document_is_present():
+  {==}
+
+law a_retained_rejected_admission_is_not_admitted:
+  {ContextService.submission_of("root","{\"v\":1}","plan-1","schema-1",ContextAdmit.AdmissionRetained{"root","{\"v\":1}","rejected","refused","","/k","/w","/a"}) == ContextService.SubmissionRetainedRejected{"rejected","refused","root","{\"v\":1}"} : ContextService.Submission}
+
+def a_retained_rejected_admission_is_not_admitted():
+  {==}
+
+law a_retained_accepted_record_for_another_request_is_foreign:
+  {ContextService.submission_of("root","{\"v\":1}","plan-1","schema-1",ContextAdmit.AdmissionRetained{"root","{\"v\":2}","accepted","accepted","","/k","/w","/a"}) == ContextService.SubmissionForeign{"root","{\"v\":2}"} : ContextService.Submission}
+
+def a_retained_accepted_record_for_another_request_is_foreign():
+  {==}
+
+law a_retained_completed_record_replays_without_claiming_the_plan:
+  {ContextService.submission_of("root","{\"v\":1}","plan-1","schema-1",ContextAdmit.AdmissionRetained{"root","{\"v\":1}","accepted","complete","","/k","/w","/a"}) == ContextService.SubmissionRetainedUnverified{ContextAdmit.AdmissionRetained{"root","{\"v\":1}","accepted","complete","","/k","/w","/a"},"plan-1","schema-1"} : ContextService.Submission}
+
+def a_retained_completed_record_replays_without_claiming_the_plan():
+  {==}
+
+law an_admissible_intent_is_the_recorded_delivery:
+  {ContextObserver.intent_decision("present","1","pending","pending") == ContextObserver.IntentAdmissible{"pending"} : ContextObserver.ReleaseIntent}
+
+def an_admissible_intent_is_the_recorded_delivery():
+  {==}
+
+law a_different_delivery_state_is_a_stale_intent:
+  {ContextObserver.intent_decision("present","1","attempted","pending") == ContextObserver.IntentStale{"attempted","pending"} : ContextObserver.ReleaseIntent}
+
+def a_different_delivery_state_is_a_stale_intent():
+  {==}
+
+law an_absent_role_has_no_release_intent:
+  {ContextObserver.intent_decision("absent","0","","pending") == ContextObserver.IntentMissing{"role"} : ContextObserver.ReleaseIntent}
+
+def an_absent_role_has_no_release_intent():
+  {==}
+
+law a_role_without_an_intent_column_has_no_release_intent:
+  {ContextObserver.intent_decision("present","0","","pending") == ContextObserver.IntentMissing{"intent"} : ContextObserver.ReleaseIntent}
+
+def a_role_without_an_intent_column_has_no_release_intent():
+  {==}
+
+law a_custody_naming_another_keeper_is_foreign:
+  {ContextObserver.custody_check("b1","b1","k2","k1") == ContextObserver.CustodyForeignKeeper{"k2","k1"} : ContextObserver.CustodyCheck}
+
+def a_custody_naming_another_keeper_is_foreign():
+  {==}
+
+law a_claim_is_issued_against_the_matched_label:
+  {ContextObserver.claim_statement("q1","starter","0","pending","{}") == ContextRoles.release_claim_sql("q1","starter","0","pending","{}") : String}
+
+def a_claim_is_issued_against_the_matched_label():
+  {==}
+
+law an_attempt_claim_matches_the_committed_delivery:
+  {ContextObserver.claim_attempt_statement("q1","starter","0","pending","{\"delivery\":\"attempted\"}") == ContextRoles.release_claim_sql("q1","starter","0","pending","{\"delivery\":\"attempted\"}") : String}
+
+def an_attempt_claim_matches_the_committed_delivery():
+  {==}
+
+law a_completion_claim_matches_the_attempt_state:
+  {ContextObserver.claim_completion_statement("q1","starter","0","attempted","{\"delivery\":\"acknowledged\"}") == ContextRoles.release_claim_sql("q1","starter","0","attempted","{\"delivery\":\"acknowledged\"}") : String}
+
+def a_completion_claim_matches_the_attempt_state():
+  {==}
+
+law a_release_refusal_of_a_mismatched_binding_names_both:
+  {ContextObserver.release_refusal_of("b1",ContextObserver.CustodyMismatch{"b1","b2"}) == Some{ContextObserver.ReleaseCustodyMismatch{"b1","b2"}} : Maybe<&2,ContextObserver.ReleaseOutcome>}
+
+def a_release_refusal_of_a_mismatched_binding_names_both():
+  {==}
+
+law a_release_refusal_of_an_admitted_custody_is_absent:
+  {ContextObserver.release_refusal_of("b1",ContextObserver.CustodyAdmitted{"b1"}) == None{} : Maybe<&2,ContextObserver.ReleaseOutcome>}
+
+def a_release_refusal_of_an_admitted_custody_is_absent():
+  {==}
+
+law a_receipt_row_of_the_requested_identity_is_committed:
+  {ContextObserver.receipt_decode("q1","starter","0","2","present\t1\t1\t1\t1\t1\t0\n") == ContextObserver.ReceiptPresent{ContextObserver.Receipt{"q1","starter","0","2",True{},False{}}} : ContextObserver.ReceiptRead}
+
+def a_receipt_row_of_the_requested_identity_is_committed():
+  {==}
+
+law a_receipt_row_of_another_incarnation_is_malformed:
+  {ContextObserver.receipt_decode("q1","starter","0","2","present\t1\t1\t0\t1\t1\t0\n") == ContextObserver.ReceiptMalformed{"identity","present\t1\t1\t0\t1\t1\t0\n"} : ContextObserver.ReceiptRead}
+
+def a_receipt_row_of_another_incarnation_is_malformed():
+  {==}
+
+law a_receipt_row_at_another_cursor_is_malformed:
+  {ContextObserver.receipt_decode("q1","starter","0","2","present\t1\t1\t1\t0\t1\t0\n") == ContextObserver.ReceiptMalformed{"cursor","present\t1\t1\t1\t0\t1\t0\n"} : ContextObserver.ReceiptRead}
+
+def a_receipt_row_at_another_cursor_is_malformed():
+  {==}
+
+law an_absent_receipt_row_with_stray_columns_is_malformed:
+  {ContextObserver.receipt_decode("q1","starter","0","2","absent\t1\t1\t1\t1\t1\t0\n") == ContextObserver.ReceiptMalformed{"absentShape","absent\t1\t1\t1\t1\t1\t0\n"} : ContextObserver.ReceiptRead}
+
+def an_absent_receipt_row_with_stray_columns_is_malformed():
+  {==}
+
+law a_document_shaped_answer_is_not_a_committed_receipt:
+  {ContextObserver.receipt_decode("q1","starter","0","2","{}\n") == ContextObserver.ReceiptMalformed{"short","{}\n"} : ContextObserver.ReceiptRead}
+
+def a_document_shaped_answer_is_not_a_committed_receipt():
+  {==}
+
+law an_absent_receipt_row_of_all_zero_flags_is_absent:
+  {ContextObserver.receipt_decode("q1","starter","0","2","absent\t0\t0\t0\t0\t0\t0\n") == ContextObserver.ReceiptAbsent{} : ContextObserver.ReceiptRead}
+
+def an_absent_receipt_row_of_all_zero_flags_is_absent():
+  {==}
+
+law an_eight_column_receipt_row_is_surplus:
+  {ContextObserver.receipt_decode("q1","starter","0","2","present\t1\t1\t1\t1\t1\t1\t0\n") == ContextObserver.ReceiptMalformed{"surplus","present\t1\t1\t1\t1\t1\t1\t0\n"} : ContextObserver.ReceiptRead}
+
+def an_eight_column_receipt_row_is_surplus():
+  {==}
+
+law a_receipt_row_with_an_invalid_capture_flag_is_malformed:
+  {ContextObserver.receipt_decode("q1","starter","0","2","present\t1\t1\t1\t1\tx\t0\n") == ContextObserver.ReceiptMalformed{"evidence","present\t1\t1\t1\t1\tx\t0\n"} : ContextObserver.ReceiptRead}
+
+def a_receipt_row_with_an_invalid_capture_flag_is_malformed():
+  {==}
+
+law a_receipt_row_with_an_invalid_exit_flag_is_malformed:
+  {ContextObserver.receipt_decode("q1","starter","0","2","present\t1\t1\t1\t1\t1\tx\n") == ContextObserver.ReceiptMalformed{"evidence","present\t1\t1\t1\t1\t1\tx\n"} : ContextObserver.ReceiptRead}
+
+def a_receipt_row_with_an_invalid_exit_flag_is_malformed():
+  {==}
+
+law a_receipt_row_missing_its_last_flag_is_short:
+  {ContextObserver.receipt_decode("q1","starter","0","2","present\t1\t1\t1\t1\t1\n") == ContextObserver.ReceiptMalformed{"short","present\t1\t1\t1\t1\t1\n"} : ContextObserver.ReceiptRead}
+
+def a_receipt_row_missing_its_last_flag_is_short():
+  {==}
+
+law a_retained_replay_does_not_claim_the_supplied_plan:
+  {ContextService.submission_of("root","{\"v\":1}","plan-2","schema-2",ContextAdmit.AdmissionRetained{"root","{\"v\":1}","accepted","complete","","/k","/w","/a"}) == ContextService.SubmissionRetainedUnverified{ContextAdmit.AdmissionRetained{"root","{\"v\":1}","accepted","complete","","/k","/w","/a"},"plan-2","schema-2"} : ContextService.Submission}
+
+def a_retained_replay_does_not_claim_the_supplied_plan():
+  {==}
+
+law an_empty_plan_identity_is_absent:
+  {ContextService.plan_identity_present("") == False{} : Bool}
+
+def an_empty_plan_identity_is_absent():
+  {==}
+
+law a_supplied_plan_identity_is_carried_unexamined:
+  {ContextService.plan_identity_present("plan-1") == True{} : Bool}
+
+def a_supplied_plan_identity_is_carried_unexamined():
+  {==}
+
+# ---------------------------------------------------------------------------
+# The retained admission association.
+
+law an_absent_association_row_is_a_missing_association:
+  {ContextAdmit.association_decode("absent\t\t\n") == ContextAdmit.AssociationMissing{} : ContextAdmit.Association}
+
+def an_absent_association_row_is_a_missing_association():
+  {==}
+
+law a_stored_association_row_decodes_its_plan_and_schema:
+  {ContextAdmit.association_decode("present\t706c616e\t6964656e74697479\t736368656d61\n") == ContextAdmit.AssociationStored{"plan","identity","schema"} : ContextAdmit.Association}
+
+def a_stored_association_row_decodes_its_plan_and_schema():
+  {==}
+
+law an_absent_association_row_carrying_a_value_is_malformed:
+  {ContextAdmit.association_decode("absent\t706c616e\t\t\n") == ContextAdmit.AssociationMalformed{"shape","absent\t706c616e\t\t\n"} : ContextAdmit.Association}
+
+def an_absent_association_row_carrying_a_value_is_malformed():
+  {==}
+
+law a_stored_association_row_with_odd_framing_is_malformed:
+  {ContextAdmit.association_decode("present\t706c61\t6964\t736368656d61\n") == ContextAdmit.AssociationMalformed{"framing","present\t706c61\t6964\t736368656d61\n"} : ContextAdmit.Association}
+
+def a_stored_association_row_with_odd_framing_is_malformed():
+  {==}
+
+law a_short_association_row_is_malformed:
+  {ContextAdmit.association_decode("present\t706c616e\n") == ContextAdmit.AssociationMalformed{"short","present\t706c616e\n"} : ContextAdmit.Association}
+
+def a_short_association_row_is_malformed():
+  {==}
+
+law a_surplus_association_column_is_malformed:
+  {ContextAdmit.association_decode("present\t706c616e\t6964656e74697479\t736368656d61\textra\n") == ContextAdmit.AssociationMalformed{"surplus","present\t706c616e\t6964656e74697479\t736368656d61\textra\n"} : ContextAdmit.Association}
+
+def a_surplus_association_column_is_malformed():
+  {==}
+
+law an_empty_association_answer_is_malformed:
+  {ContextAdmit.association_decode("") == ContextAdmit.AssociationMalformed{"empty",""} : ContextAdmit.Association}
+
+def an_empty_association_answer_is_malformed():
+  {==}
+
+law the_association_is_written_only_by_the_transaction_that_created_the_row:
+  for +id: String
+  for +planValue: String
+  for +resultSchema: String
+  for +originAttempt: String
+  {ContextStore.association_insert_sql(id,planValue,planIdentity,resultSchema,originAttempt) == "INSERT INTO semantic_admissions(query_id,plan_value,plan_identity,result_schema,origin_attempt) SELECT " ++ C.q(id) ++ "," ++ C.q(planValue) ++ "," ++ C.q(planIdentity) ++ "," ++ C.q(resultSchema) ++ "," ++ ContextStore.text_or_null(originAttempt) ++ " WHERE changes()=1 AND NOT EXISTS(SELECT 1 FROM semantic_admissions WHERE query_id=" ++ C.q(id) ++ ");" : String}
+
+def the_association_is_written_only_by_the_transaction_that_created_the_row(id,planValue,resultSchema,originAttempt):
+  {==}
+
+law the_associated_admission_records_the_association_before_the_readback:
+  for +id: String
+  for +owner: String
+  for +requestJson: String
+  for +keeperPath: String
+  for +cwd: String
+  for +originAttempt: String
+  for +artifactPath: String
+  for +planValue: String
+  for +planIdentity: String
+  for +resultSchema: String
+  {ContextAdmit.admit_associated_sql(id,owner,requestJson,keeperPath,cwd,originAttempt,artifactPath,planValue,planIdentity,resultSchema) == "BEGIN IMMEDIATE;" ++ ContextStore.schema() ++ ContextAdmit.admit_query_insert_sql(id,owner,requestJson,keeperPath,cwd,originAttempt,artifactPath) ++ ContextStore.association_insert_sql(id,planValue,planIdentity,resultSchema,originAttempt) ++ ContextAdmit.admit_row_sql(id) ++ "COMMIT;" : String}
+
+def the_associated_admission_records_the_association_before_the_readback(id,owner,requestJson,keeperPath,cwd,originAttempt,artifactPath,planValue,resultSchema):
+  {==}
+
+law two_different_plans_do_not_share_an_association_insert:
+  for +id: String
+  for +originAttempt: String
+  {Bool.not(String.eq(ContextStore.association_insert_sql(id,"plan-a","id-a","schema-a",originAttempt), ContextStore.association_insert_sql(id,"plan-b","id-b","schema-a",originAttempt))) == True{} : Bool}
+
+def two_different_plans_do_not_share_an_association_insert(id,originAttempt):
+  {==}
+
+law two_different_schemas_do_not_share_an_association_insert:
+  for +id: String
+  for +originAttempt: String
+  {Bool.not(String.eq(ContextStore.association_insert_sql(id,"plan-a","id-a","schema-a",originAttempt), ContextStore.association_insert_sql(id,"plan-a","id-a","schema-b",originAttempt))) == True{} : Bool}
+
+def two_different_schemas_do_not_share_an_association_insert(id,originAttempt):
+  {==}
+
+law an_association_answer_row_carries_the_absent_marker_for_a_row_without_one:
+  {ContextStore.association_row_sql("q1") == "SELECT CASE WHEN " ++ ContextStore.association_present("q1") ++ " THEN 'present' ELSE 'absent' END," ++ "coalesce((SELECT hex(plan_value) FROM semantic_admissions WHERE query_id=" ++ C.q("q1") ++ "),'')," ++ "coalesce((SELECT hex(plan_identity) FROM semantic_admissions WHERE query_id=" ++ C.q("q1") ++ "),'')," ++ "coalesce((SELECT hex(result_schema) FROM semantic_admissions WHERE query_id=" ++ C.q("q1") ++ "),'');" : String}
+
+def an_association_answer_row_carries_the_absent_marker_for_a_row_without_one():
+  {==}
+
+law an_absent_plan_identity_refuses_without_reaching_the_admission:
+  for +db: String
+  for +binding: String
+  for +id: String
+  for +owner: String
+  for +requestJson: String
+  for +keeperPath: String
+  for +cwd: String
+  for +originAttempt: String
+  for +artifactPath: String
+  for +plan: String
+  for +resultSchema: String
+  {ContextService.submit_identified(True{},db,binding,id,owner,requestJson,keeperPath,cwd,originAttempt,artifactPath,plan,resultSchema) == IO.pure(ContextService.Submission, ContextService.SubmissionPlanRefused{"plan","absent"}) : IO(ContextService.Submission)}
+
+def an_absent_plan_identity_refuses_without_reaching_the_admission(db,binding,id,owner,requestJson,keeperPath,cwd,originAttempt,artifactPath,plan,resultSchema):
+  {==}
+
+law a_replayed_identity_that_equals_the_stored_one_verifies_the_association:
+  {ContextService.submission_replayed("root","rq","plan","schema",ContextAdmit.AdmissionRetained{"root","rq","accepted","complete","a","/l","/w","/art"},ContextAdmit.AssociationStored{"pv","plan","s"}) == ContextService.SubmissionRetainedVerified{ContextAdmit.AdmissionRetained{"root","rq","accepted","complete","a","/l","/w","/art"},"pv","s"} : ContextService.Submission}
+
+def a_replayed_identity_that_equals_the_stored_one_verifies_the_association():
+  {==}
+
+law a_replayed_identity_that_differs_from_the_stored_one_refuses_as_stale:
+  {ContextService.submission_replayed("root","rq","other-plan","schema",ContextAdmit.AdmissionRetained{"root","rq","accepted","complete","a","/l","/w","/art"},ContextAdmit.AssociationStored{"pv","plan","s"}) == ContextService.SubmissionPlanRefused{"plan","stale"} : ContextService.Submission}
+
+def a_replayed_identity_that_differs_from_the_stored_one_refuses_as_stale():
+  {==}
+
+law a_created_admission_answers_with_the_stored_rendering_and_schema:
+  {ContextService.submission_replayed("root","rq","plan","schema",ContextAdmit.AdmissionCreated{"root","rq","accepted","accepted","a","/l","/w","/art"},ContextAdmit.AssociationStored{"pv","plan","s"}) == ContextService.SubmissionAdmitted{ContextAdmit.AdmissionCreated{"root","rq","accepted","accepted","a","/l","/w","/art"},"pv","s"} : ContextService.Submission}
+
+def a_created_admission_answers_with_the_stored_rendering_and_schema():
+  {==}
+
+law a_row_without_a_stored_association_stays_unestablished:
+  {ContextService.submission_replayed("root","rq","plan","schema",ContextAdmit.AdmissionRetained{"root","rq","accepted","complete","a","/l","/w","/art"},ContextAdmit.AssociationMissing{}) == ContextService.SubmissionRetainedUnverified{ContextAdmit.AdmissionRetained{"root","rq","accepted","complete","a","/l","/w","/art"},"plan","schema"} : ContextService.Submission}
+
+def a_row_without_a_stored_association_stays_unestablished():
+  {==}
+
+law a_retained_row_of_another_owner_is_foreign_however_its_association_reads:
+  {ContextService.submission_replayed("root","rq","plan","schema",ContextAdmit.AdmissionRetained{"kid","rq","accepted","complete","a","/l","/w","/art"},ContextAdmit.AssociationStored{"pv","plan","s"}) == ContextService.SubmissionForeign{"kid","rq"} : ContextService.Submission}
+
+def a_retained_row_of_another_owner_is_foreign_however_its_association_reads():
+  {==}
+
+law a_malformed_association_keeps_its_stage:
+  {ContextService.submission_replayed("root","rq","plan","schema",ContextAdmit.AdmissionRetained{"root","rq","accepted","complete","a","/l","/w","/art"},ContextAdmit.AssociationMalformed{"framing","x"}) == ContextService.SubmissionUncertain{"framing","x"} : ContextService.Submission}
+
+def a_malformed_association_keeps_its_stage():
   {==}

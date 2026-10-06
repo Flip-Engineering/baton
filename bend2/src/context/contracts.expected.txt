@@ -71,9 +71,9 @@ false/true/true
 false/false/true
 ["context-result","q7"]
 empty-next []
-id-number {"id":7,"query":null,"requestCanonical":null,"tool":"context-engines","version":1}
-id-string {"id":"7","query":"q7","requestCanonical":"{\"version\":1}","tool":"context-query","version":1}
-id-negative {"id":-9007199254740991,"query":"q1","requestCanonical":null,"tool":"context-result","version":1}
+id-number {"id":7,"query":null,"requestCanonical":null,"scope":null,"tool":"context-engines","version":1}
+id-string {"id":"7","query":"q7","requestCanonical":"{\"version\":1}","scope":null,"tool":"context-query","version":1}
+id-negative {"id":-9007199254740991,"query":"q1","requestCanonical":null,"scope":null,"tool":"context-result","version":1}
 {"command":"context-query","condition":"admission rejected","error":"admissionRejected","next":["context-result","q7"]}
 signed true,true,true,true,false
 counter true,true,false,false,true

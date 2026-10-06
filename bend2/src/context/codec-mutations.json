@@ -79,8 +79,8 @@
  {
   "name": "codec-u32-bound-dropped-from-the-statement",
   "file": "bend2/src/context/request.bend",
-  "find": "AND CAST(t -> r.fullkey AS TEXT)<='4294967295'",
-  "replace": "AND CAST(t -> r.fullkey AS TEXT)>='0'",
+  "find": "  ++ \" AS TEXT)<='4294967295'))))))) FROM raw;\"",
+  "replace": "  ++ \" AS TEXT)<='0'))))))) FROM raw;\"",
   "law": "request_law_the_u32_check_states_the_upper_bound"
  },
  {
@@ -305,5 +305,131 @@
   "find": "  Bool.pick(RefDecode, distinct_keys(members), ref_object(members), RdBad{\"duplicateRefField\"})",
   "replace": "  Bool.pick(RefDecode, True{}, ref_object(members), RdBad{\"duplicateRefField\"})",
   "law": "codec_law_a_conflicting_duplicate_ref_field_refuses"
+ },
+ {
+  "name": "codec-public-mcp-name-maps-to-the-wrong-tool",
+  "file": "bend2/src/context/codec.bend",
+  "find": "    case \"baton2_context_result\": \"context-result\"",
+  "replace": "    case \"baton2_context_result\": \"context-query\"",
+  "law": "codec_law_a_public_mcp_name_maps_to_its_native_tool_name"
+ },
+ {
+  "name": "codec-validity-observation-loses-its-framing",
+  "file": "bend2/src/context/codec.bend",
+  "find": "    case \"1\\n\": VoValid{}",
+  "replace": "    case \"1\": VoValid{}",
+  "law": "codec_law_the_valid_observation_is_exact"
+ },
+ {
+  "name": "codec-scope-value-accepts-any-member-value",
+  "file": "bend2/src/context/codec.bend",
+  "find": "    case Some{value}: String.eq(raw_text_of(value), \"session\")",
+  "replace": "    case Some{value}: True{}",
+  "law": "codec_law_a_null_scope_argument_refuses"
+ },
+ {
+  "name": "codec-duplicate-object-keys-are-accepted",
+  "file": "bend2/src/context/codec.bend",
+  "find": "    case Rpair{+key, +value, +tail}: Bool.pick(Bool, Req.word_member(allowed, key), Bool.pick(Bool, raw_member_present(key, tail), False{}, raw_keys_ok(allowed, tail)), False{})",
+  "replace": "    case Rpair{+key, +value, +tail}: Bool.pick(Bool, Req.word_member(allowed, key), raw_keys_ok(allowed, tail), False{})",
+  "law": "codec_law_a_duplicated_root_key_refuses"
+ },
+ {
+  "name": "codec-scope-member-is-admitted-for-the-query-tool",
+  "file": "bend2/src/context/codec.bend",
+  "find": "    case \"context-query\": Req.words_from([\"query\", \"request\"])",
+  "replace": "    case \"context-query\": Req.words_from([\"query\", \"request\", \"scope\"])",
+  "law": "codec_law_the_query_arguments_refuse_a_scope_member"
+ },
+ {
+  "name": "codec-engines-arguments-admit-no-member",
+  "file": "bend2/src/context/codec.bend",
+  "find": "    case \"context-engines\": Req.words_from([\"scope\"])",
+  "replace": "    case \"context-engines\": Req.words_from(Nil{})",
+  "law": "codec_law_a_scoped_engines_frame_from_literal_transport_reports_the_session_scope"
+ },
+ {
+  "name": "codec-envelope-drops-the-validated-scope",
+  "file": "bend2/src/context/codec.bend",
+  "find": "           scope_of(raw_members_of(arguments_of(frame)))}",
+  "replace": "           Context.Absent{}}",
+  "law": "codec_law_a_scoped_engines_frame_from_literal_transport_reports_the_session_scope"
+ },
+ {
+  "name": "codec-verdict-renderer-drops-the-scope-member",
+  "file": "bend2/src/context/codec.bend",
+  "find": "      Context.codec_success_text(tool, id, query, request, scope)",
+  "replace": "      Context.codec_success_text(tool, id, query, request, Context.Absent{})",
+  "law": "codec_law_a_scoped_engines_frame_reports_the_session_scope"
+ },
+ {
+  "name": "codec-success-document-drops-the-scope-member",
+  "file": "bend2/src/context/contracts.bend",
+  "find": "  ++ \",\\\"scope\\\":\" ++ opt_text_text(scope)",
+  "replace": "  ++ \"\"",
+  "law": "codec_law_a_scoped_engines_frame_reports_the_session_scope"
+ },
+ {
+  "name": "codec-correlated-ignores-the-id-check",
+  "file": "bend2/src/context/codec.bend",
+  "find": "    case FdRefused{cls, condition}: Bool.pick(CorrelatedDecision, Context.frame_id_ok(env_id(env)), CdRefused{env_id(env), cls, condition}, CdUncorrelated{condition})",
+  "replace": "    case FdRefused{cls, condition}: CdRefused{env_id(env), cls, condition}",
+  "law": "codec_law_an_unchecked_frame_id_correlates_nothing"
+ },
+ {
+  "name": "codec-correlated-reports-the-wrong-tool",
+  "file": "bend2/src/context/codec.bend",
+  "find": "    case FdOk{+tool, +id, +query, +request, +scope}: CdAccepted{id, tool, query, request, scope}",
+  "replace": "    case FdOk{+tool, +id, +query, +request, +scope}: CdAccepted{id, Context.CtEngines{}, query, request, scope}",
+  "law": "codec_law_a_strict_numeric_metadata_frame_correlates_as_accepted"
+ },
+ {
+  "name": "schema-open-record-accepts-an-undeclared-field",
+  "file": "bend2/src/context/codec-schema.bend",
+  "find": "        Bool.pick(SchemaVerdict, members_declared(field_names(fields), members), fields_admit(defs, fields, members), SvRefused{\"undeclaredField\"}),",
+  "replace": "        fields_admit(defs, fields, members),",
+  "law": "schema_law_a_closed_record_refuses_an_undeclared_field"
+ },
+ {
+  "name": "schema-unguarded-cycle-is-accepted",
+  "file": "bend2/src/context/codec-schema.bend",
+  "find": "            Bool.pick(Bool, unguarded_cycle(all, name), False{}, defs_checked(all, tail)), False{})",
+  "replace": "            defs_checked(all, tail), False{})",
+  "law": "schema_law_an_unguarded_cycle_refuses"
+ },
+ {
+  "name": "schema-number-profile-accepts-any-token-kind",
+  "file": "bend2/src/context/codec-schema.bend",
+  "find": "    case Codec.Rnum{+token}: number_admit(kind, token)",
+  "replace": "    case Codec.Rnum{+token}: SvOk{}",
+  "law": "schema_law_the_u32_profile_refuses_a_wider_token"
+ },
+ {
+  "name": "schema-json-profile-ignores-duplicates",
+  "file": "bend2/src/context/codec-schema.bend",
+  "find": "  Bool.pick(SchemaVerdict, keys_unique(members), json_member_admit(members), SvRefused{\"duplicateKey\"})",
+  "replace": "  json_member_admit(members)",
+  "law": "schema_law_a_json_object_refuses_a_duplicate_member"
+ },
+ {
+  "name": "schema-dictionary-admits-undeclared-keys",
+  "file": "bend2/src/context/codec-schema.bend",
+  "find": "    case SkDeclared{+names}: members_declared(names, members)",
+  "replace": "    case SkDeclared{+names}: True{}",
+  "law": "schema_law_a_dictionary_without_a_declared_key_refuses"
+ },
+ {
+  "name": "schema-empty-array-sentinel-refused",
+  "file": "bend2/src/context/codec-schema.bend",
+  "find": "    case Codec.Rarr{Codec.Rnil{}, Codec.Rnil{}}: SvOk{}\n    case Codec.Rarr{+head, +tail}: array_head_admit(defs, item, head, tail)",
+  "replace": "    case Codec.Rarr{+head, +tail}: array_head_admit(defs, item, head, tail)",
+  "law": "schema_law_the_canonical_empty_array_admits_an_array_position"
+ },
+ {
+  "name": "schema-duplicate-union-tags-accepted",
+  "file": "bend2/src/context/codec-schema.bend",
+  "find": "  Bool.pick(Bool, names_unique(case_tags(cases)), cases_nested_ambiguous(cases), True{})",
+  "replace": "  cases_nested_ambiguous(cases)",
+  "law": "schema_law_a_repeated_union_tag_is_ambiguous"
  }
 ]

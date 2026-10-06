@@ -30,6 +30,66 @@ type Admission is Data:
   AdmissionAbsent{}
   AdmissionUncertain{stage: String, answer: String}
 
+# The retained association of one committed admission. `AssociationStored` is the plan
+# rendering and result schema the creating transaction recorded; `AssociationMissing` is a
+# row that carries none, which is how a database created before any association existed
+# answers; `AssociationMalformed` keeps the failing stage and the raw answer.
+type Association is Data:
+  AssociationStored{planValue: String, planIdentity: String, resultSchema: String}
+  AssociationMissing{}
+  AssociationMalformed{stage: String, answer: String}
+
+def hex_digit_ok(c: Char) -> Bool:
+  +code = Char.to_u32(c)
+  Bool.or(Bool.and(U32.is_lt(47, code), U32.is_lt(code, 58)),
+  Bool.or(Bool.and(U32.is_lt(64, code), U32.is_lt(code, 71)),
+          Bool.and(U32.is_lt(96, code), U32.is_lt(code, 103))))
+
+# Framing is hex in whole bytes: a value with an odd count or a character outside the hex
+# alphabet is malformed rather than decoded.
+def hex_ok(s: String) -> Bool:
+  match s:
+    case SNil{}: True{}
+    case SCon{a, rest}:
+      match rest:
+        case SNil{}: False{}
+        case SCon{b, more}: Bool.and(Bool.and(hex_digit_ok(a), hex_digit_ok(b)), hex_ok(more))
+
+def association_mark(+mark: String, +plan: String, +identity: String, +schema: String, +answer: String) -> Association:
+  Bool.pick(Association, String.eq(mark, "absent"),
+    Bool.pick(Association, Bool.and(Bool.and(String.is_empty(plan), String.is_empty(identity)), String.is_empty(schema)), AssociationMissing{}, AssociationMalformed{"shape", answer}),
+  Bool.pick(Association, String.eq(mark, "present"),
+    Bool.pick(Association, Bool.and(Bool.and(hex_ok(plan), hex_ok(identity)), hex_ok(schema)), AssociationStored{Tx.hex_decode(plan), Tx.hex_decode(identity), Tx.hex_decode(schema)}, AssociationMalformed{"framing", answer}),
+    AssociationMalformed{"mark", answer}))
+
+def association_fields(+fields: List<String>, +answer: String) -> Association:
+  match fields:
+    case +mark <> more0:
+      match more0:
+        case +plan <> more1:
+          match more1:
+            case +identity <> more2:
+              match more2:
+                case +schema <> more3:
+                  match more3:
+                    case Nil{}: association_mark(mark, plan, identity, schema, answer)
+                    case _: AssociationMalformed{"surplus", answer}
+                case _: AssociationMalformed{"short", answer}
+            case _: AssociationMalformed{"short", answer}
+        case _: AssociationMalformed{"short", answer}
+    case _: AssociationMalformed{"short", answer}
+
+def association_decode_lines(+lines: List<String>, +answer: String) -> Association:
+  match lines:
+    case Nil{}: AssociationMalformed{"empty", answer}
+    case +line <> +rest:
+      match rest:
+        case Nil{}: association_fields(Tx.split_tabs(line), answer)
+        case _: AssociationMalformed{"surplus", answer}
+
+def association_decode(+row: String) -> Association:
+  association_decode_lines(Tx.split_lines(row), row)
+
 def admit_present(id: String) -> String:
   "EXISTS(SELECT 1 FROM semantic_queries WHERE id=" ++ C.q(id) ++ ")"
 
@@ -49,20 +109,21 @@ def admit_row_sql(+id: String) -> String:
 # absent, the retained row's read-back, and the commit. The transaction holds the
 # database write lock across both statements, so a concurrent admission of the same
 # identity resolves to exactly one row and this run's answer names what it did.
-def admit_sql(+id: String, +owner: String, +requestJson: String, +keeperPath: String, +cwd: String, +originAttempt: String, +artifactPath: String) -> String:
-  "BEGIN IMMEDIATE;" ++ ContextStore.schema()
-  ++ "INSERT INTO semantic_queries(id,owner,request_json,admission_decision,prepared_keeper_path,cwd,origin_attempt,state,artifact_path) SELECT "
+def admit_query_insert_sql(+id: String, +owner: String, +requestJson: String, +keeperPath: String, +cwd: String, +originAttempt: String, +artifactPath: String) -> String:
+  "INSERT INTO semantic_queries(id,owner,request_json,admission_decision,prepared_keeper_path,cwd,origin_attempt,state,artifact_path) SELECT "
   ++ C.q(id) ++ "," ++ C.q(owner) ++ "," ++ C.q(requestJson) ++ ",'accepted'," ++ ContextStore.text_or_null(keeperPath) ++ "," ++ C.q(cwd) ++ "," ++ ContextStore.text_or_null(originAttempt) ++ ",'accepted'," ++ C.q(artifactPath)
   ++ " WHERE NOT EXISTS(SELECT 1 FROM semantic_queries WHERE id=" ++ C.q(id) ++ ");"
-  ++ admit_row_sql(id) ++ "COMMIT;"
 
-# The same-binding read-back: the identical ten-column answer for a committed
-# decision, run on the qualified connection. This statement inserts no admission row, and
-# it is not a read-only operation: it begins an immediate transaction for the write lock
-# and carries the schema's create-if-missing statements. The bound call configures its
-# connection with two pragmas before it, and those are connection settings, not writes.
-def readback_sql(+id: String) -> String:
-  "BEGIN IMMEDIATE;" ++ ContextStore.schema() ++ admit_row_sql(id) ++ "COMMIT;"
+def admit_sql(+id: String, +owner: String, +requestJson: String, +keeperPath: String, +cwd: String, +originAttempt: String, +artifactPath: String) -> String:
+  "BEGIN IMMEDIATE;" ++ ContextStore.schema() ++ admit_query_insert_sql(id, owner, requestJson, keeperPath, cwd, originAttempt, artifactPath) ++ admit_row_sql(id) ++ "COMMIT;"
+
+# The same atomic admission, additionally recording the admitted plan rendering and its
+# result schema. The association insert is the statement between the query insert and the
+# read-back, so `changes()` still refers to the query insert and the association is
+# written only by the run that created the row, inside the same BEGIN IMMEDIATE.
+def admit_associated_sql(+id: String, +owner: String, +requestJson: String, +keeperPath: String, +cwd: String, +originAttempt: String, +artifactPath: String, +planValue: String, +planIdentity: String, +resultSchema: String) -> String:
+  "BEGIN IMMEDIATE;" ++ ContextStore.schema() ++ admit_query_insert_sql(id, owner, requestJson, keeperPath, cwd, originAttempt, artifactPath) ++ ContextStore.association_insert_sql(id, planValue, planIdentity, resultSchema, originAttempt) ++ admit_row_sql(id) ++ "COMMIT;"
+
 
 # The decision domain is the one the schema constrains; the state spelling comes
 # from the canonical contract module rather than a second list here.
@@ -154,10 +215,15 @@ def admit_line(+fields: List<String>, +rest: List<String>, +answer: String) -> A
 
 # The presence marker decides between a proven absence, which must carry no other
 # value, and the recorded row the field decoder reads.
+def admit_decode_lines(+lines: List<String>, +answer: String) -> Admission:
+  match lines:
+    case Nil{}: AdmissionUncertain{"empty", answer}
+    case +line <> +rest: admit_line(Tx.split_tabs(line), rest, answer)
+
+# The raw row is parsed once here into the lines the decoder consumes, so a caller that
+# already holds the lines decodes them directly.
 def admit_decode(+row: String) -> Admission:
-  match Tx.split_lines(row):
-    case Nil{}: AdmissionUncertain{"empty", row}
-    case +line <> +rest: admit_line(Tx.split_tabs(line), rest, row)
+  admit_decode_lines(Tx.split_lines(row), row)
 
 def admit_after(result: Result<&1,&1,U32 & String,String>) -> IO(Result<&1,&1,U32 & String,Admission>):
   match result:
@@ -171,11 +237,43 @@ def admit(+db: String, +binding: String, +id: String, +owner: String, +requestJs
     result : Result<&1,&1,U32 & String,String> <- DB.Sql.query_bound(db, binding, admit_sql(id, owner, requestJson, keeperPath, cwd, originAttempt, artifactPath))
     admit_after(result)
 
+# The same-binding read-back: the identical ten-column answer for a committed
+# decision, run on the qualified connection. This statement inserts no admission row, and
+# it is not a read-only operation: it begins an immediate transaction for the write lock
+# and carries the schema's create-if-missing statements. The bound call configures its
+# connection with two pragmas before it, and those are connection settings, not writes.
+def readback_sql(+id: String) -> String:
+  "BEGIN IMMEDIATE;" ++ ContextStore.schema() ++ admit_row_sql(id) ++ "COMMIT;"
+
 # The read-back of one committed decision on the same qualified binding.
 def readback(+db: String, +binding: String, +id: String) -> IO(Result<&1,&1,U32 & String,Admission>):
   do IO<Result<&1,&1,U32 & String,Admission>>:
     result : Result<&1,&1,U32 & String,String> <- DB.Sql.query_bound(db, binding, readback_sql(id))
     admit_after(result)
+
+# The stored association of one committed admission, read on the qualified binding after
+# the caller has established that the row is its own. The statement writes nothing: a row
+# created before any association existed answers missing and is never repaired here.
+def association_readback_sql(+id: String) -> String:
+  "BEGIN IMMEDIATE;" ++ ContextStore.schema() ++ ContextStore.association_row_sql(id) ++ "COMMIT;"
+
+# The admission record is read back from the row this transaction wrote; the association
+# is the value the statement text recorded, not the caller's argument.
+def admit_associated(+db: String, +binding: String, +id: String, +owner: String, +requestJson: String, +keeperPath: String, +cwd: String, +originAttempt: String, +artifactPath: String, +planValue: String, +planIdentity: String, +resultSchema: String) -> IO(Result<&1,&1,U32 & String,Admission>):
+  do IO<Result<&1,&1,U32 & String,Admission>>:
+    result : Result<&1,&1,U32 & String,String> <- DB.Sql.query_bound(db, binding, admit_associated_sql(id, owner, requestJson, keeperPath, cwd, originAttempt, artifactPath, planValue, planIdentity, resultSchema))
+    admit_after(result)
+
+
+def association_after(result: Result<&1,&1,U32 & String,String>) -> IO(Result<&1,&1,U32 & String,Association>):
+  match result:
+    case Fail{error}: IO.pure(Result<&1,&1,U32 & String,Association>, Fail{error})
+    case Done{+rows}: IO.pure(Result<&1,&1,U32 & String,Association>, Done{association_decode(rows)})
+
+def readback_association(+db: String, +binding: String, +id: String) -> IO(Result<&1,&1,U32 & String,Association>):
+  do IO<Result<&1,&1,U32 & String,Association>>:
+    result : Result<&1,&1,U32 & String,String> <- DB.Sql.query_bound(db, binding, association_readback_sql(id))
+    association_after(result)
 
 # Whether a retained answer carries the caller's own owner and canonical request.
 # A different owner or request is a conflict the caller must refuse; this predicate

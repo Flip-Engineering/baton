@@ -287,10 +287,11 @@ def frame_id_ok(+f: FrameId) -> Bool:
     case IdText{value}: True{}
     case IdNumber{token}: signed_safe_token_ok(token)
 
-def codec_success_text(tool: CodecTool, ident: FrameId, query: OptText, request: OptText) -> String:
+def codec_success_text(tool: CodecTool, ident: FrameId, query: OptText, request: OptText, scope: OptText) -> String:
   "{\"id\":" ++ frame_id_text(ident)
   ++ ",\"query\":" ++ opt_text_text(query)
   ++ ",\"requestCanonical\":" ++ opt_text_text(request)
+  ++ ",\"scope\":" ++ opt_text_text(scope)
   ++ ",\"tool\":" ++ J.json_text(J.Jstr{codec_tool_name(tool)})
   ++ ",\"version\":1}"
 
@@ -779,19 +780,19 @@ def contracts_law_frame_id_refuses_an_above_bound_numeric_token():
   {==}
 
 law contracts_law_codec_success_names_the_query_tool:
-  {codec_success_text(CtQuery{}, IdText{"7"}, Present{"q7"}, Present{"{\"version\":1}"}) == "{\"id\":\"7\",\"query\":\"q7\",\"requestCanonical\":\"{\\\"version\\\":1}\",\"tool\":\"context-query\",\"version\":1}" : String}
+  {codec_success_text(CtQuery{}, IdText{"7"}, Present{"q7"}, Present{"{\"version\":1}"}, Absent{}) == "{\"id\":\"7\",\"query\":\"q7\",\"requestCanonical\":\"{\\\"version\\\":1}\",\"scope\":null,\"tool\":\"context-query\",\"version\":1}" : String}
 
 def contracts_law_codec_success_names_the_query_tool():
   {==}
 
 law contracts_law_codec_success_emits_a_numeric_id_unquoted:
-  {codec_success_text(CtEngines{}, IdNumber{"7"}, Absent{}, Absent{}) == "{\"id\":7,\"query\":null,\"requestCanonical\":null,\"tool\":\"context-engines\",\"version\":1}" : String}
+  {codec_success_text(CtEngines{}, IdNumber{"7"}, Absent{}, Absent{}, Absent{}) == "{\"id\":7,\"query\":null,\"requestCanonical\":null,\"scope\":null,\"tool\":\"context-engines\",\"version\":1}" : String}
 
 def contracts_law_codec_success_emits_a_numeric_id_unquoted():
   {==}
 
 law contracts_law_codec_success_emits_a_negative_numeric_id:
-  {codec_success_text(CtResult{}, IdNumber{"-9007199254740991"}, Present{"q1"}, Absent{}) == "{\"id\":-9007199254740991,\"query\":\"q1\",\"requestCanonical\":null,\"tool\":\"context-result\",\"version\":1}" : String}
+  {codec_success_text(CtResult{}, IdNumber{"-9007199254740991"}, Present{"q1"}, Absent{}, Absent{}) == "{\"id\":-9007199254740991,\"query\":\"q1\",\"requestCanonical\":null,\"scope\":null,\"tool\":\"context-result\",\"version\":1}" : String}
 
 def contracts_law_codec_success_emits_a_negative_numeric_id():
   {==}
@@ -828,9 +829,9 @@ def main() -> IO(Unit):
     p : Unit <- print_tokens(token_corpus())
     q : Unit <- IO.print(next_text(NextArg{"context-result", NextArg{"q7", NextStop{}}}))
     q2 : Unit <- IO.print("empty-next " ++ next_text(NextStop{}))
-    r : Unit <- IO.print("id-number " ++ codec_success_text(CtEngines{}, IdNumber{"7"}, Absent{}, Absent{}))
-    r2 : Unit <- IO.print("id-string " ++ codec_success_text(CtQuery{}, IdText{"7"}, Present{"q7"}, Present{"{\"version\":1}"}))
-    r3 : Unit <- IO.print("id-negative " ++ codec_success_text(CtResult{}, IdNumber{"-9007199254740991"}, Present{"q1"}, Absent{}))
+    r : Unit <- IO.print("id-number " ++ codec_success_text(CtEngines{}, IdNumber{"7"}, Absent{}, Absent{}, Absent{}))
+    r2 : Unit <- IO.print("id-string " ++ codec_success_text(CtQuery{}, IdText{"7"}, Present{"q7"}, Present{"{\"version\":1}"}, Absent{}))
+    r3 : Unit <- IO.print("id-negative " ++ codec_success_text(CtResult{}, IdNumber{"-9007199254740991"}, Present{"q1"}, Absent{}, Absent{}))
     s : Unit <- IO.print(refusal_text(Refuse{RfAdmissionRejected{}, "context-query", text_condition("admission rejected"), NextArg{"context-result", NextArg{"q7", NextStop{}}}}))
     t : Unit <- IO.print("signed " ++ signed_verdict())
     u : Unit <- IO.print("counter " ++ counter_verdict())
