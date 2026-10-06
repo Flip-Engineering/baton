@@ -158,6 +158,12 @@ or writes. Its behaviour:
   mode the patched loader raises its own missing-file diagnostic instead of reading the host;
 - captures, views and pending transformations are query-local: a later query acquires its bytes
   again and never reuses a stale capture;
+- the acquisition outcome keeps three cases distinct, so a consumer does not have to collapse them: the
+  closure answering that an input is not there is `absent`; an unanswerable lookup, a cached failure, a
+  refusal or a conflict is `unavailable` with the reason; and a captured file of zero bytes is a valid
+  capture whose parse view has empty text and from which no spans arise. A record's producer fields
+  travel with the capture as the claimed producing association, and the producer schema belongs to the
+  admitted step the caller holds, not to this component;
 - every span is attributed by the file the frontend reported for it, never by matching source text,
   and a span the frontend did not supply stays `missingSpan`; a span that crosses removed import
   text stays `spansOmitted`;
