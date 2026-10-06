@@ -225,11 +225,14 @@ def role_sql(+session: String, +role: String) -> String:
   ++ "SELECT json_object('error','invalid-role','session'," ++ q(session) ++ ",'requested'," ++ q(role) ++ ",'condition','Principal Conductors and operators require no parent; Associate Conductors require a parent.','next','Read session ID. Assign player, principal-conductor, associate-conductor or operator to match its recorded parentage; conductor remains a compatible family declaration.') WHERE NOT " ++ role_admitted(session,role) ++ ";"
   ++ "SELECT json_object('session',id,'kind'," ++ session_kind("sessions.id") ++ ",'role'," ++ public_role("sessions.id") ++ ") FROM sessions WHERE id=" ++ q(session) ++ " AND " ++ role_admitted(session,role) ++ ";"
 
+def member_present(+session: String) -> String:
+  "EXISTS(SELECT 1 FROM sessions WHERE sessions.id=" ++ session ++ ")"
+
 def section_row(+row: String) -> String:
-  "json_object('ensemble'," ++ row ++ ".ensemble,'id'," ++ row ++ ".id,'capability'," ++ row ++ ".capability,'members',(SELECT json_group_array(session) FROM (SELECT session FROM section_members WHERE ensemble=" ++ row ++ ".ensemble AND section=" ++ row ++ ".id ORDER BY session)))"
+  "json_object('ensemble'," ++ row ++ ".ensemble,'id'," ++ row ++ ".id,'capability'," ++ row ++ ".capability,'members',(SELECT json_group_array(session) FROM (SELECT session FROM section_members WHERE ensemble=" ++ row ++ ".ensemble AND section=" ++ row ++ ".id AND " ++ member_present("section_members.session") ++ " ORDER BY session)))"
 
 def ensemble_row(+row: String) -> String:
-  "json_object('id'," ++ row ++ ".id,'owner'," ++ row ++ ".owner,'coupling'," ++ row ++ ".coupling,'members',(SELECT json_group_array(session) FROM (SELECT session FROM ensemble_members WHERE ensemble=" ++ row ++ ".id ORDER BY session)),'sections',(SELECT json_group_array(json(item)) FROM (SELECT " ++ section_row("sc") ++ " AS item FROM sections sc WHERE sc.ensemble=" ++ row ++ ".id ORDER BY sc.id)))"
+  "json_object('id'," ++ row ++ ".id,'owner'," ++ row ++ ".owner,'coupling'," ++ row ++ ".coupling,'members',(SELECT json_group_array(session) FROM (SELECT session FROM ensemble_members WHERE ensemble=" ++ row ++ ".id AND " ++ member_present("ensemble_members.session") ++ " ORDER BY session)),'sections',(SELECT json_group_array(json(item)) FROM (SELECT " ++ section_row("sc") ++ " AS item FROM sections sc WHERE sc.ensemble=" ++ row ++ ".id ORDER BY sc.id)))"
 
 def ensemble_sql(+id: String, +owner: String, +coupling: String) -> String:
   "INSERT INTO ensembles(id,owner,coupling) SELECT " ++ q(id) ++ "," ++ q(owner) ++ "," ++ q(coupling) ++ " WHERE " ++ assigned_role(q(owner)) ++ "='conductor' AND " ++ q(coupling) ++ " IN ('loose','tight') ON CONFLICT(id) DO UPDATE SET id=CASE WHEN ensembles.owner=excluded.owner THEN ensembles.id ELSE NULL END,coupling=excluded.coupling;SELECT " ++ ensemble_row("ensembles") ++ " FROM ensembles WHERE id=" ++ q(id) ++ " AND owner=" ++ q(owner) ++ " AND coupling=" ++ q(coupling) ++ ";"

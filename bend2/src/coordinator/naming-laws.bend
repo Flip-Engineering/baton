@@ -51,16 +51,23 @@ def role_reads_the_canonical_stored_responsibility(session):
 
 law section_read_names_capability_and_its_own_members:
   for +row: String
-  {C.section_row(row) == "json_object('ensemble'," ++ row ++ ".ensemble,'id'," ++ row ++ ".id,'capability'," ++ row ++ ".capability,'members',(SELECT json_group_array(session) FROM (SELECT session FROM section_members WHERE ensemble=" ++ row ++ ".ensemble AND section=" ++ row ++ ".id ORDER BY session)))" : String}
+  {C.section_row(row) == "json_object('ensemble'," ++ row ++ ".ensemble,'id'," ++ row ++ ".id,'capability'," ++ row ++ ".capability,'members',(SELECT json_group_array(session) FROM (SELECT session FROM section_members WHERE ensemble=" ++ row ++ ".ensemble AND section=" ++ row ++ ".id AND " ++ C.member_present("section_members.session") ++ " ORDER BY session)))" : String}
 
 def section_read_names_capability_and_its_own_members(row):
   {==}
 
 law ensemble_read_includes_its_own_sections:
   for +row: String
-  {C.ensemble_row(row) == "json_object('id'," ++ row ++ ".id,'owner'," ++ row ++ ".owner,'coupling'," ++ row ++ ".coupling,'members',(SELECT json_group_array(session) FROM (SELECT session FROM ensemble_members WHERE ensemble=" ++ row ++ ".id ORDER BY session)),'sections',(SELECT json_group_array(json(item)) FROM (SELECT " ++ C.section_row("sc") ++ " AS item FROM sections sc WHERE sc.ensemble=" ++ row ++ ".id ORDER BY sc.id)))" : String}
+  {C.ensemble_row(row) == "json_object('id'," ++ row ++ ".id,'owner'," ++ row ++ ".owner,'coupling'," ++ row ++ ".coupling,'members',(SELECT json_group_array(session) FROM (SELECT session FROM ensemble_members WHERE ensemble=" ++ row ++ ".id AND " ++ C.member_present("ensemble_members.session") ++ " ORDER BY session)),'sections',(SELECT json_group_array(json(item)) FROM (SELECT " ++ C.section_row("sc") ++ " AS item FROM sections sc WHERE sc.ensemble=" ++ row ++ ".id ORDER BY sc.id)))" : String}
 
 def ensemble_read_includes_its_own_sections(row):
+  {==}
+
+law member_presence_requires_a_stored_player_record:
+  for +session: String
+  {C.member_present(session) == "EXISTS(SELECT 1 FROM sessions WHERE sessions.id=" ++ session ++ ")" : String}
+
+def member_presence_requires_a_stored_player_record(session):
   {==}
 
 law sections_use_the_existing_ensemble_conductor_owner:
