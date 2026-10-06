@@ -87,6 +87,130 @@ class Land(unittest.TestCase):
         self.assertEqual(result['status'], 'blocked')
         self.assertIn('not a fast-forward', result['reason'])
 
+    def tracked_status(self):
+        """The tracked index and worktree deltas of the landing repository."""
+        return self.git('status', '--porcelain', '--untracked-files=no')
+
+    def test_fast_forward_landing_onto_a_checked_out_target_updates_its_worktree(self):
+        # The repository's own worktree holds the target. The landing must move
+        # the branch, the index and the files together: a landing that only
+        # moves the ref leaves the held tree reporting the landed paths as
+        # deleted.
+        commit = self.recruit_and_commit()
+        result = self.call('land', 'w1', self.repo, 'main')
+        self.assertEqual(result['status'], 'landed')
+        self.assertEqual(result['commit'], commit)
+        self.assertEqual(self.git('rev-parse', 'main').strip(), commit)
+        self.assertEqual(self.tracked_status(), '')
+        self.assertEqual((self.repo / 'file.txt').read_text(),
+                         'worker change for w1')
+
+    def test_checked_landing_onto_a_checked_out_target_updates_its_worktree(self):
+        (self.repo / 'check-pass.sh').write_text('exit 0\n')
+        self.git('add', 'check-pass.sh')
+        self.git('commit', '-q', '-m', 'check fixture')
+        self.base = self.git('rev-parse', 'HEAD').strip()
+        self.recruit_and_commit()
+        result = self.call('land-checked', 'w1', self.repo, 'main',
+                           'check-pass.sh', 'file.txt')
+        self.assertEqual(result['status'], 'landed')
+        self.assertEqual(self.git('rev-parse', 'main').strip(), result['commit'])
+        self.assertEqual(self.tracked_status(), '')
+        self.assertEqual((self.repo / 'file.txt').read_text(),
+                         'worker change for w1')
+
+    def test_checked_landing_on_a_checked_out_target_preserves_uncommitted_work(self):
+        (self.repo / 'check-pass.sh').write_text('exit 0\n')
+        (self.repo / 'keep.txt').write_text('fixture\n')
+        self.git('add', 'check-pass.sh')
+        self.git('add', 'keep.txt')
+        self.git('commit', '-q', '-m', 'check fixture')
+        self.base = self.git('rev-parse', 'HEAD').strip()
+        self.recruit_and_commit()
+        (self.repo / 'keep.txt').write_text('local edit\n')
+        result = self.call('land-checked', 'w1', self.repo, 'main',
+                           'check-pass.sh', 'file.txt')
+        self.assertEqual(result['status'], 'landed')
+        self.assertEqual(self.git('rev-parse', 'main').strip(), result['commit'])
+        self.assertEqual((self.repo / 'keep.txt').read_text(), 'local edit\n')
+        self.assertEqual((self.repo / 'file.txt').read_text(),
+                         'worker change for w1')
+        self.assertEqual(self.tracked_status(), ' M keep.txt\n')
+
+    def test_checked_out_target_preserves_uncommitted_work(self):
+        (self.repo / 'keep.txt').write_text('fixture\n')
+        self.git('add', 'keep.txt')
+        self.git('commit', '-q', '-m', 'tracked fixture')
+        self.base = self.git('rev-parse', 'HEAD').strip()
+        commit = self.recruit_and_commit()
+        (self.repo / 'keep.txt').write_text('local edit\n')
+        result = self.call('land', 'w1', self.repo, 'main')
+        self.assertEqual(result['status'], 'landed')
+        self.assertEqual(result['commit'], commit)
+        self.assertEqual((self.repo / 'keep.txt').read_text(), 'local edit\n')
+        self.assertEqual((self.repo / 'file.txt').read_text(),
+                         'worker change for w1')
+        self.assertEqual(self.tracked_status(), ' M keep.txt\n')
+
+    def test_checked_out_target_blocks_on_overlapping_uncommitted_work(self):
+        (self.repo / 'file.txt').write_text('fixture\n')
+        self.git('add', 'file.txt')
+        self.git('commit', '-q', '-m', 'tracked fixture')
+        self.base = self.git('rev-parse', 'HEAD').strip()
+        self.assertNotEqual(self.recruit_and_commit(), self.base)
+        (self.repo / 'file.txt').write_text('local edit\n')
+        result = self.call('land', 'w1', self.repo, 'main')
+        self.assertEqual(result['status'], 'blocked')
+        self.assertIn('is checked out at', result['reason'])
+        self.assertIn('commit or stash', result['reason'])
+        self.assertIn('rerun land', result['reason'])
+        self.assertEqual(self.git('rev-parse', 'main').strip(), self.base)
+        self.assertEqual((self.repo / 'file.txt').read_text(), 'local edit\n')
+        self.assertEqual(self.tracked_status(), ' M file.txt\n')
+
+    def test_landing_onto_a_target_held_by_a_separate_worktree(self):
+        holder = self.repo / 'holder'
+        self.git('checkout', '-q', '--detach')
+        self.git('worktree', 'add', '-q', str(holder), 'main')
+        commit = self.recruit_and_commit()
+        result = self.call('land', 'w1', self.repo, 'main')
+        self.assertEqual(result['status'], 'landed')
+        self.assertEqual(result['commit'], commit)
+        self.assertEqual(self.git('rev-parse', 'main').strip(), commit)
+        status = subprocess.run(
+            ['git', '-C', str(holder), 'status', '--porcelain',
+             '--untracked-files=no'],
+            check=True, text=True, capture_output=True,
+        ).stdout
+        self.assertEqual(status, '')
+        self.assertEqual((holder / 'file.txt').read_text(),
+                         'worker change for w1')
+        self.assertTrue((self.repo / 'wt' / 'file.txt').is_file())
+
+    def test_target_moves_under_a_checked_out_target_and_the_retry_lands(self):
+        self.waiting_checks()
+        self.recruit_and_write('w1', 'wa', 'wt1', 'a.txt', 'alpha\n')
+        self.recruit_and_write('w2', 'wb', 'wt2', 'b.txt', 'beta\n')
+        moved, under = self.land_under_a_move('w2', 'w1')
+        self.assertEqual(moved['status'], 'landed')
+        self.assertEqual(under['status'], 'blocked')
+        self.assertIn('target moved', under['reason'])
+        self.assertIn('rerun land-checked', under['reason'])
+        self.assertEqual(self.git('rev-parse', 'main').strip(), moved['commit'])
+        self.assertEqual((self.repo / 'a.txt').read_text(), 'alpha\n')
+        self.assertEqual(self.tracked_status(), '')
+        self.assertEqual(len(self.scratch_trees('w2')), 2)
+        retry = self.call('land-checked', 'w2', self.repo, 'main',
+                          'check-plain.sh', 'file.txt')
+        self.assertEqual(retry['status'], 'landed')
+        self.assertEqual(self.git('rev-parse', 'main').strip(), retry['commit'])
+        self.assertEqual(self.git('show', 'main:a.txt').strip(), 'alpha')
+        self.assertEqual(self.git('show', 'main:b.txt').strip(), 'beta')
+        self.assertEqual((self.repo / 'a.txt').read_text(), 'alpha\n')
+        self.assertEqual((self.repo / 'b.txt').read_text(), 'beta\n')
+        self.assertEqual(self.tracked_status(), '')
+        self.assertEqual(self.scratch_trees('w2'), [])
+
     def test_checked_landing_advances(self):
         (self.repo / 'check-pass.sh').write_text('exit 0\n')
         self.git('add', 'check-pass.sh')

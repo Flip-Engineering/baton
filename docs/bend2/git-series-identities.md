@@ -80,6 +80,12 @@ public user metadata. GitHub's own action documents this
 `Claude`, `GLM` or `Kimi`. The helper adds `Flip Baton - ` to that verified
 label for commit names. GitHub controls the App account login's `[bot]` suffix;
 the bot login, numeric ID, noreply email and authenticated actor stay unchanged.
+Each App registration's `name` also uses `Flip Baton - SERIES`. GitHub's action
+interface derives a normalized lowercase, hyphenated label from that name.
+Its managed Bot object exposes the actor login and avatar. Linked contributor
+views can therefore display the bot login while the commit retains its author
+name. See [App naming](https://docs.github.com/en/apps/creating-github-apps/registering-a-github-app/registering-a-github-app)
+and [Bot fields](https://docs.github.com/en/graphql/reference/apps#bot).
 The helper reads the fixed public filename and uses the adjacent key to sign
 an RS256 App JWT with Node's built-in cryptography library.
 

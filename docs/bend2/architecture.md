@@ -262,16 +262,24 @@ blocks and names its cause; an unjudged target run blocks when its candidate run
 fails. The caller supplies the check script and file selection; the coordinator
 does not infer a suite from changed paths.
 
-The target advances through a compare-and-swap ref update using the checked
-candidate and the checked target commit as the expected old value. If the target
+The target advances through one path every landing entry uses. Where a worktree
+holds the target branch, the landing advances the branch inside that worktree as
+a fast-forward, so the branch, the index and the files move together and that
+worktree's uncommitted work survives wherever it does not overlap the advance.
+Where no worktree holds the target, the branch advances through a compare-and-swap
+ref update using the checked candidate and the checked target commit as the
+expected old value. If the target
 moved during the checks, the command returns `blocked` with a retry instruction.
 A failed ref update returns a command failure. A new `land-checked` invocation
 prepares and checks a candidate against the current target. Conflicts name the
 paths and the scratch checkout they keep. A landing that answers
 `landed` or `already` removes the candidate and target worktrees it prepared; a
 refused or conflicted landing keeps them for the requester, and that Player's
-next landing request drops them before preparing its own. A target held by a checked-out worktree produces the current
-`target busy` command failure. Player guidance can resolve the branch against
+next landing request drops them before preparing its own. A fast-forward the
+holding worktree refuses, because its own uncommitted changes overlap the advance
+or an earlier operation there is unfinished, returns `blocked` naming that
+worktree, the refused fast-forward and the operation that resolves it; the target
+stays where it was. Player guidance can resolve the branch against
 the moved target, after which a new landing request judges the revised work.
 
 `landed` names the new target commit; `already` names the Player commit that

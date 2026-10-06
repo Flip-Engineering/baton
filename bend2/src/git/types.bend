@@ -34,15 +34,14 @@ type GitFail is Data:
   FBranchExists{branch: String}
   FPathExists{path: String}
   FUnknownBase{base: String}
-  FTargetBusy{branch: String}
   FCmd{op: String, detail: String}
 
 # The answer of land. LLanded names the actual target commit after the
 # advance. LAlready answers a retry whose worker commit the target already
 # contains and names that worker commit. LConflict names the unmerged paths
 # and keeps the prepared worktree at dir for the requester. LBlocked names
-# the failure identities that are new on the candidate or the selected files
-# no run could judge.
+# the failure identities that are new on the candidate, the selected files
+# no run could judge, or a target a worktree holds and refused to follow.
 type LandOutcome is Data:
   LLanded{target: String, commit: String}
   LAlready{commit: String}
@@ -61,5 +60,4 @@ def fail_text(f: GitFail) -> String:
     case FBranchExists{branch}: str_cat2("branch exists: ", branch)
     case FPathExists{path}: str_cat2("path exists: ", path)
     case FUnknownBase{base}: str_cat2("unknown base: ", base)
-    case FTargetBusy{branch}: str_cat2("target busy: ", branch)
     case FCmd{op, detail}: str_cat3(op, ": ", detail)
