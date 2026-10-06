@@ -108,7 +108,7 @@ def receipt_sql(+query: String, +role: String, +incarnation: String, +cursor: St
   ++ "CASE WHEN (SELECT role FROM semantic_roles WHERE query_id=" ++ C.q(query) ++ " AND role=" ++ C.q(role) ++ " AND incarnation=" ++ C.q(incarnation) ++ ")=" ++ C.q(role) ++ " THEN '1' ELSE '0' END,"
   ++ "CASE WHEN (SELECT incarnation FROM semantic_roles WHERE query_id=" ++ C.q(query) ++ " AND role=" ++ C.q(role) ++ " AND incarnation=" ++ C.q(incarnation) ++ ")=" ++ C.q(incarnation) ++ " THEN '1' ELSE '0' END,"
   ++ "CASE WHEN (SELECT observer_cursor FROM semantic_roles WHERE query_id=" ++ C.q(query) ++ " AND role=" ++ C.q(role) ++ " AND incarnation=" ++ C.q(incarnation) ++ ")=" ++ C.q(cursor) ++ " THEN '1' ELSE '0' END,"
-  ++ "CASE WHEN (SELECT phase FROM semantic_roles WHERE query_id=" ++ C.q(query) ++ " AND role=" ++ C.q(role) ++ " AND incarnation=" ++ C.q(incarnation) ++ ")<>'' AND instr((SELECT phase FROM semantic_roles WHERE query_id=" ++ C.q(query) ++ " AND role=" ++ C.q(role) ++ " AND incarnation=" ++ C.q(incarnation) ++ "),char(9))=0 THEN '1' ELSE '0' END,"
+  ++ "CASE WHEN (SELECT phase FROM semantic_roles WHERE query_id=" ++ C.q(query) ++ " AND role=" ++ C.q(role) ++ " AND incarnation=" ++ C.q(incarnation) ++ ") IN ('prepared','settled') AND (SELECT cleanup_phase FROM semantic_roles WHERE query_id=" ++ C.q(query) ++ " AND role=" ++ C.q(role) ++ " AND incarnation=" ++ C.q(incarnation) ++ ") IN ('notRequested','pending','complete','unavailable') THEN '1' ELSE '0' END,"
   ++ "CASE WHEN (SELECT capture_json FROM semantic_roles WHERE query_id=" ++ C.q(query) ++ " AND role=" ++ C.q(role) ++ " AND incarnation=" ++ C.q(incarnation) ++ ") IS NULL THEN '0' ELSE '1' END,"
   ++ "CASE WHEN (SELECT exit_evidence_json FROM semantic_roles WHERE query_id=" ++ C.q(query) ++ " AND role=" ++ C.q(role) ++ " AND incarnation=" ++ C.q(incarnation) ++ ") IS NULL THEN '0' ELSE '1' END;"
 
@@ -118,20 +118,20 @@ def receipt_all_off(+qm: String, +rm: String, +im: String, +cm: String, +pm: Str
 def receipt_absent(+answer: String, +qm: String, +rm: String, +im: String, +cm: String, +pm: String, +cap: String, +ext: String) -> ReceiptRead:
   Bool.pick(ReceiptRead, receipt_all_off(qm, rm, im, cm, pm, cap, ext), ReceiptAbsent{}, ReceiptMalformed{"absentShape", answer})
 
-def receipt_cursor(+query: String, +role: String, +incarnation: String, +cursor: String, +answer: String, +cm: String, +pm: String, +cap: String, +ext: String) -> ReceiptRead:
-  Bool.pick(ReceiptRead, String.eq(cm, "1"),
-    receipt_phase(query, role, incarnation, cursor, answer, pm, cap, ext),
-    ReceiptMalformed{"cursor", answer})
+def receipt_evidence(+query: String, +role: String, +incarnation: String, +cursor: String, +answer: String, +cap: String, +ext: String) -> ReceiptRead:
+  Bool.pick(ReceiptRead, flag_on(ext),
+    ReceiptPresent{Receipt{query, role, incarnation, cursor, flag_true(cap), flag_true(ext)}},
+    ReceiptMalformed{"evidence", answer})
 
 def receipt_phase(+query: String, +role: String, +incarnation: String, +cursor: String, +answer: String, +pm: String, +cap: String, +ext: String) -> ReceiptRead:
   Bool.pick(ReceiptRead, Bool.and(String.eq(pm, "1"), flag_on(cap)),
     receipt_evidence(query, role, incarnation, cursor, answer, cap, ext),
     ReceiptMalformed{"phase", answer})
 
-def receipt_evidence(+query: String, +role: String, +incarnation: String, +cursor: String, +answer: String, +cap: String, +ext: String) -> ReceiptRead:
-  Bool.pick(ReceiptRead, flag_on(ext),
-    ReceiptPresent{Receipt{query, role, incarnation, cursor, flag_true(cap), flag_true(ext)}},
-    ReceiptMalformed{"evidence", answer})
+def receipt_cursor(+query: String, +role: String, +incarnation: String, +cursor: String, +answer: String, +cm: String, +pm: String, +cap: String, +ext: String) -> ReceiptRead:
+  Bool.pick(ReceiptRead, String.eq(cm, "1"),
+    receipt_phase(query, role, incarnation, cursor, answer, pm, cap, ext),
+    ReceiptMalformed{"cursor", answer})
 
 def receipt_present(+query: String, +role: String, +incarnation: String, +cursor: String, +answer: String, +qm: String, +rm: String, +im: String, +cm: String, +pm: String, +cap: String, +ext: String) -> ReceiptRead:
   Bool.pick(ReceiptRead, Bool.and(Bool.and(String.eq(qm, "1"), String.eq(rm, "1")), String.eq(im, "1")),
@@ -253,18 +253,9 @@ def commit_event_sql(+query: String, +role: String, +incarnation: String, +owner
 # alone.
 def commit_result_sql(+query: String, +role: String, +incarnation: String, +owner: String, +expectedCursor: String, +nextCursor: String, +next: String, +resultJson: String, +errorJson: String, +progressJson: String, +noticeId: String, +noticeBody: String, +captureJson: String, +exitEvidenceJson: String) -> String:
   "BEGIN IMMEDIATE;" ++ ContextStore.schema()
-  ++ "UPDATE semantic_queries SET state=CASE WHEN " ++ ContextStore.terminal_recorded() ++ " THEN CASE WHEN " ++ terminal_payload_matches(next, resultJson, errorJson) ++ " THEN state ELSE NULL END ELSE " ++ C.q(next) ++ " END,"
-  ++ "result_json=CASE WHEN " ++ ContextStore.terminal_recorded() ++ " THEN result_json ELSE " ++ ContextStore.json_or_null(resultJson) ++ " END,"
-  ++ "error_json=CASE WHEN " ++ ContextStore.terminal_recorded() ++ " THEN error_json ELSE " ++ ContextStore.json_or_null(errorJson) ++ " END "
-  ++ "WHERE id=" ++ C.q(query) ++ ";"
-  ++ "UPDATE semantic_roles SET observer_cursor=" ++ ContextRoles.replay_column(expectedCursor, query, role, incarnation, nextCursor, C.q(nextCursor), captureJson, exitEvidenceJson, progressJson, "observer_cursor") ++ ","
-  ++ "capture_json=" ++ ContextRoles.replay_column(expectedCursor, query, role, incarnation, nextCursor, ContextStore.json_or_null(captureJson), captureJson, exitEvidenceJson, progressJson, "capture_json") ++ ","
-  ++ "exit_evidence_json=" ++ ContextRoles.replay_column(expectedCursor, query, role, incarnation, nextCursor, ContextStore.json_or_null(exitEvidenceJson), captureJson, exitEvidenceJson, progressJson, "exit_evidence_json") ++ " "
-  ++ "WHERE query_id=" ++ C.q(query) ++ " AND role=" ++ C.q(role) ++ " AND incarnation=" ++ C.q(incarnation) ++ ";"
-  ++ ContextRoles.role_present_guard(query, role, incarnation)
-  ++ "UPDATE semantic_queries SET progress_json=" ++ ContextStore.json_or_null(progressJson) ++ " WHERE id=" ++ C.q(query) ++ ";"
-  ++ ContextStore.owner_notice_bound_sql(noticeId, owner, noticeBody, query)
-  ++ ContextRoles.role_read_sql(query, role, incarnation) ++ "COMMIT;"
+  ++ commit_state_clause(query, next, resultJson, errorJson)
+  ++ commit_role_clause(query, role, incarnation, expectedCursor, nextCursor, captureJson, exitEvidenceJson, progressJson)
+  ++ commit_tail_clause(query, role, incarnation, owner, progressJson, noticeId, noticeBody)
 
 def commit_event(+db: String, +binding: String, +query: String, +role: String, +incarnation: String, +owner: String, +expectedCursor: String, +nextCursor: String, +progressJson: String, +noticeId: String, +noticeBody: String, +captureJson: String, +exitEvidenceJson: String) -> IO(ObserverStep):
   do IO<ObserverStep>:
