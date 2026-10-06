@@ -67,7 +67,7 @@ def retained_answer(+query: String, +presence: String, +state: String, +envelope
   Bool.pick(Retained, String.eq(presence, "absent"), retained_absent_shape(query, state, envelope, answer),
   Bool.pick(Retained, String.eq(presence, "present"), retained_present_shape(query, state, envelope, answer), RetainedUnreadable{"presence", answer}))
 
-def retained_tabs(+query: String, +fields: List<String>, +answer: String) -> Retained:
+def retained_tabs(+query: String, fields: List<&2, String>, +answer: String) -> Retained:
   match fields:
     case +presence <> more0:
       match more0:
@@ -81,10 +81,10 @@ def retained_tabs(+query: String, +fields: List<String>, +answer: String) -> Ret
         case _: RetainedUnreadable{"short", answer}
     case _: RetainedUnreadable{"short", answer}
 
-def retained_lines(+query: String, +row: String, lines: List<String>) -> Retained:
+def retained_lines(+query: String, +row: String, lines: List<&2, String>) -> Retained:
   match lines:
     case Nil{}: RetainedUnreadable{"empty", row}
-    case +line <> +rest:
+    case +line <> rest:
       match rest:
         case Nil{}: retained_tabs(query, Tx.split_tabs(line), row)
         case _: RetainedUnreadable{"surplus", row}
