@@ -35,7 +35,7 @@ def cursor_seen(next: String) -> String:
 
 # The recorded progress of the query this role belongs to, read by its identity. A
 # role row has no progress column of its own.
-def recorded_progress(query: String) -> String:
+def recorded_progress(+query: String) -> String:
   "(SELECT coalesce(progress_json,'') FROM semantic_queries WHERE id=" ++ C.q(query) ++ ")"
 
 # An identical replay: the recorded cursor is already the next one, the supplied
@@ -51,7 +51,7 @@ def admitted(expected: String, query: String, role: String, incarnation: String,
 # value, and anything else assigns NULL to the NOT NULL cursor column. The recorded
 # value is the column itself, so a retained NULL stays NULL and never becomes an
 # empty string that the json_valid checks would refuse.
-def first_or_replay_column(expected: String, query: String, role: String, incarnation: String, next: String, value: String, +captureJson: String, +exitEvidenceJson: String, +progressJson: String, recorded: String) -> String:
+def first_or_replay_column(+expected: String, query: String, role: String, incarnation: String, +next: String, value: String, +captureJson: String, +exitEvidenceJson: String, +progressJson: String, recorded: String) -> String:
   "CASE WHEN " ++ cursor_expected(expected) ++ " THEN " ++ value ++ " WHEN " ++ replay_guard(query, role, incarnation, next, captureJson, exitEvidenceJson, progressJson) ++ " THEN " ++ recorded ++ " ELSE NULL END"
 
 # When the expected and next cursors are the same event identity, only an identical
@@ -60,7 +60,7 @@ def first_or_replay_column(expected: String, query: String, role: String, incarn
 def strict_replay_column(query: String, role: String, incarnation: String, next: String, +captureJson: String, +exitEvidenceJson: String, +progressJson: String, recorded: String) -> String:
   "CASE WHEN " ++ replay_guard(query, role, incarnation, next, captureJson, exitEvidenceJson, progressJson) ++ " THEN " ++ recorded ++ " ELSE NULL END"
 
-def replay_column(expected: String, query: String, role: String, incarnation: String, next: String, value: String, +captureJson: String, +exitEvidenceJson: String, +progressJson: String, recorded: String) -> String:
+def replay_column(+expected: String, +query: String, +role: String, +incarnation: String, +next: String, value: String, +captureJson: String, +exitEvidenceJson: String, +progressJson: String, +recorded: String) -> String:
   Bool.pick(String, String.eq(expected, next),
     strict_replay_column(query, role, incarnation, next, captureJson, exitEvidenceJson, progressJson, recorded),
     first_or_replay_column(expected, query, role, incarnation, next, value, captureJson, exitEvidenceJson, progressJson, recorded))
@@ -68,7 +68,7 @@ def replay_column(expected: String, query: String, role: String, incarnation: St
 # A missing role row aborts the transaction, because the cursor column is NOT NULL.
 # When the query row itself is missing the update matches no row, so nothing is
 # written and the caller's role read returns no row.
-def role_present_guard(query: String, role: String, incarnation: String) -> String:
+def role_present_guard(+query: String, +role: String, +incarnation: String) -> String:
   "UPDATE semantic_queries SET id=CASE WHEN EXISTS(SELECT 1 FROM semantic_roles WHERE query_id=" ++ C.q(query) ++ " AND role=" ++ C.q(role) ++ " AND incarnation=" ++ C.q(incarnation) ++ ") THEN id ELSE NULL END WHERE id=" ++ C.q(query) ++ ";"
 
 # One committed observation event. The role update carries the cursor rule; the
@@ -108,19 +108,19 @@ def release_claim_sql(+query: String, +role: String, +incarnation: String, +expe
 def owed_notice_for(query: String) -> String:
   "EXISTS(SELECT 1 FROM messages m WHERE m.receipt IS NULL AND json_valid(m.id) AND json_extract(m.id,'$[1]')=" ++ C.q(query) ++ " AND json_extract(m.id,'$[0]') IN ('context-progress','context-terminal','context-admission-rejected'))"
 
-def role_present(query: String, role: String, incarnation: String) -> String:
+def role_present(+query: String, +role: String, +incarnation: String) -> String:
   "(EXISTS(SELECT 1 FROM semantic_roles WHERE query_id=" ++ C.q(query) ++ " AND role=" ++ C.q(role) ++ " AND incarnation=" ++ C.q(incarnation) ++ ") AND EXISTS(SELECT 1 FROM semantic_queries WHERE id=" ++ C.q(query) ++ "))"
 
-def intent_open(query: String, role: String, incarnation: String) -> String:
+def intent_open(+query: String, +role: String, +incarnation: String) -> String:
   "EXISTS(SELECT 1 FROM semantic_roles WHERE query_id=" ++ C.q(query) ++ " AND role=" ++ C.q(role) ++ " AND incarnation=" ++ C.q(incarnation) ++ " AND (cleanup_phase IN ('pending','unavailable') OR (release_intent_json IS NOT NULL AND json_extract(release_intent_json,'$.delivery') IN ('pending','attempted','unknown')))) OR EXISTS(SELECT 1 FROM semantic_queries WHERE id=" ++ C.q(query) ++ " AND (cleanup_intent_json IS NOT NULL OR recovery_intent_json IS NOT NULL)) OR " ++ owed_notice_for(query)
 
 # A recovery intent is a request to resume the existing duty. The observer clears it
 # in the same transaction that records its observation, so a later reader sees the
 # observation rather than a stale request.
-def intent_read_sql(+query: String, role: String, incarnation: String) -> String:
+def intent_read_sql(+query: String, +role: String, +incarnation: String) -> String:
   "SELECT CASE WHEN NOT (" ++ role_present(query, role, incarnation) ++ ") THEN 'missing' WHEN " ++ intent_open(query, role, incarnation) ++ " THEN '1' ELSE '0' END;"
 
-def recovery_observed_sql(+query: String, controlQuery: String) -> String:
+def recovery_observed_sql(+query: String, +controlQuery: String) -> String:
   "BEGIN IMMEDIATE;" ++ ContextStore.schema()
   ++ "UPDATE semantic_queries SET recovery_intent_json=NULL WHERE id=" ++ C.q(query) ++ " AND json_extract(recovery_intent_json,'$.controlQuery')=" ++ C.q(controlQuery) ++ ";"
   ++ ContextStore.envelope_sql(query) ++ "COMMIT;"
