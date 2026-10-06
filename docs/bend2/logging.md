@@ -10,6 +10,7 @@ space. `bend2/src/coordinator/logs.bend` implements the policy and
 | Path | Writer | Owner |
 | --- | --- | --- |
 | `OUTPUT_LOG` | the turn or receive supervisor, one JSON frame per line | Baton2 |
+| `OUTPUT_LOG.pending` | atomic latest incomplete frames for a direct turn | Baton2 |
 | `OUTPUT_LOG.stderr` | the native process's stderr file | Baton2 |
 | `<database>.root.log` | each successful message delivery | Baton2 |
 | `<database>.dispatch-*` | a detached coordinator delivery | Baton2 |
@@ -31,7 +32,7 @@ keep their contents.
 
 | Level | Frames the public log receives |
 | --- | --- |
-| `default` | Every frame the classification names, except the cumulative snapshots `message_update` and `tool_execution_update`. The newest `tool_execution_update` of each open `toolCallId` and the newest `message_start` of each message identity are held in memory. A held update is written immediately before its `tool_execution_end`; a held `message_start` is dropped when its `message_end` arrives. At the end of the turn, everything still held is written. |
+| `default` | Keeps complete frames and holds the newest `tool_execution_update`, `message_start`, and `message_update` for each open identity. Tool completion writes its latest partial result before the final result. Message completion supersedes its held start and update. Turn completion writes the remaining incomplete frames. |
 | `quiet` | Terminal frames (`agent_end`, `result`, `turn_end`) and every frame the classification does not name. |
 | `diagnostic` | Every frame verbatim. |
 
@@ -42,16 +43,18 @@ every level. The classification covers the OMP frame vocabulary
 `extension_ui_request`); a Codex, Muse or Claude frame therefore keeps its
 default record until its types are classified.
 
-The held frames are what an interrupted turn keeps. A turn that exits during a
-long tool call writes the last observed partial result of that call, and the
-`tool_execution_end` that never arrived is not invented. `message_update`
-frames are not held: after the issue #662 `set_event_filter` request the server
-sends per-delta frames, `message_end` carries the complete message, and a
-`message_update` frame alone carries no completed message.
+A direct turn atomically replaces `OUTPUT_LOG.pending` when its incomplete
+frames change. The replacement is synced before its name becomes visible.
+An observer process killed during a tool call leaves the newest observed
+partial result in that file. A later direct turn appends the checkpoint to the
+public log before new frames and removes it after that append succeeds.
+Retained receive attempts keep their raw stream in the attempt directory.
+The checkpoint contains frames the provider emitted; provider filtering can
+reduce the available partial information.
 
 ## Rotation
 
-`budget_bytes` bounds each public log. Before a frame is written, the
+`budget_bytes` sets the rotation threshold for each public log. Before a frame is written, the
 coordinator reads the file size. At the budget the numbered segments shift one
 position up, the replacement of the highest one included, and the live log then
 takes the name `<log>.1` and opens with one `baton_log_rotation` frame naming
@@ -60,12 +63,10 @@ rotation ran. The live log moves exactly once per rotation.
 A budget admits 65536 bytes or more, which holds at least one
 observed frame: a measured OMP seat wrote 47 KB per retained frame, and a
 budget below one frame rotates on every append. The upper bound is the U32
-representation. `keep_segments` admits 1 to 4 segments today: the shift is one
-explicit rename chain per admitted count, because the language's termination
-checker requires a structurally decreasing argument and a numbered shift cannot
-recurse on a counter. That bound is temporary and its measurement is owed; a
-directory-listing effect would let the segment probe and the shift walk the
-segments that exist, which removes the bound and the unrolled chain together.
+representation. `keep_segments` accepts positive U32 values. Rotation,
+inspection, and cleanup enumerate the canonical numbered files in the log's
+directory. Their work follows the existing files. The policy migration retains
+stored rows and the registered log paths.
 A reader following the
 log by path reopens it after a change of
 name. Each step is one `rename`, so a concurrent reader sees either the old or
@@ -75,7 +76,8 @@ A session with unacknowledged input rotates nothing. The shift overwrites the
 oldest numbered segment whether or not the unlink ran, so a rotation that would
 drop it is skipped and the live log records
 `{"type":"baton_log_rotation","skipped":"pending-input",...}` while it keeps
-growing. Answering the input lets the next turn rotate. For every other session
+growing. The coordinator refreshes pending input protection during the turn and before
+rotation. Acknowledged input lets a subsequent frame rotate. For every other session
 the oldest segment leaves the count: a retained receive keeps the same frames in
 its attempt directory, every report and terminal frame is in the database, and
 the note names the numbered segments that held a file when the rotation ran, so
@@ -88,9 +90,9 @@ the rest of the turn.
 
 The defaults are 32 MiB and two retained segments. A measured OMP seat wrote
 47 KB per retained frame and one live log reached 773 MB, of which 95.8% of
-bytes were `tool_execution_update` snapshots. The budget bounds one log at
-three segments and the retained segments keep the frames that preceded the
-current one.
+bytes were `tool_execution_update` snapshots. A session eligible for rotation retains the live log and two numbered segments.
+A single frame can exceed the remaining budget. Pending input protects its
+existing evidence and permits the public log to exceed that threshold.
 
 ## Storage inspection and cleanup
 
@@ -101,7 +103,8 @@ baton2 DATABASE logs-clean SESSION
 
 `logs-storage` reads and writes no file of its own. Its answer names the
 database and root-log sizes, the defaults, one entry per registered public log
-with its live size, its stderr size and its numbered segments, and one entry
+with its live size, its stderr size, its incomplete checkpoint path and size,
+and its numbered segments, and one entry
 per attempt directory with the sizes of its `stdout`, `native.stderr`,
 `observer.log` and `keeper.log`, its retained byte total, and its release and
 acknowledgement markers. A segment the session's `keep_segments` no longer
@@ -110,7 +113,9 @@ covers is marked `"eligible": true`.
 `logs-clean SESSION` removes the segments marked eligible for that session and
 answers with each removed path, its index and its size. It reads the same
 eligibility rule `logs-storage` reports. The live log, `OUTPUT_LOG.stderr`,
-attempt directories, pending messages and provider stores stay untouched. A
+the incomplete checkpoint, attempt directories, pending messages and provider
+stores stay untouched. A live turn holds the session lock; cleanup reports
+`"skipped":"session-busy"` when that lock is held. A
 session with unacknowledged input removes nothing and its answer names
 `"skipped":"pending-input"` and the pending count. A session with no registered
 log answers with an empty removal list.
@@ -144,15 +149,9 @@ and a `raw` batch that fixes the retention semantics of frames that name
 
 ## Open work
 
-A held prefix frame lives in the coordinator's memory until the frame that
-closes its call arrives or the turn reaches the end of its output. A
-coordinator killed before that point writes no held frame. A retained receive
-keeps the raw stream in its attempt directory, which holds the same frames; a
-direct turn loses the last partial update of every call it had open.
-
 A receive that attaches to a retained attempt reads the attempt from its first
-frame and appends each retained frame to the public log again. Rotation bounds
-the result, and a lossless reconstruction watermark remains unqualified.
+frame and appends each retained frame to the public log again. Its public frames remain subject to the rotation threshold and pending input
+protection. A lossless reconstruction watermark remains unqualified.
 
 The provider's `set_event_filter` accepts `events` and `messageUpdates` alone,
 so the reduction of intermediate tool output is the coordinator's own. The

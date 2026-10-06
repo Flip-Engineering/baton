@@ -171,7 +171,7 @@ assert sys.stdin.read()==''
 ''')
         self.call('turn','omp-worker','retained-turn',str(self.player),'model','low',str(self.cwd),str(self.task),str(self.log),'')
         note='{"type":"baton_event_filter","requested":"delta","active":false,"outcome":"unacknowledged"}'
-        self.assertEqual(self.log.read_text().splitlines(),retained+[terminal,note])
+        self.assertEqual(self.log.read_text().splitlines(),retained+[terminal,omitted[1],note])
         self.assertEqual(json.loads(self.call('delivery','retained-turn'))['body'],final_text)
 
     def test_omp_empty_terminal_envelope_delivers_streamed_trial_report(self):
@@ -252,7 +252,7 @@ assert state['type']=='get_state'
 prompt=json.loads(sys.stdin.readline())['message']
 emit({'type':'response','command':'get_state','success':True,'id':state['id'],'data':{'sessionId':'omp-delta','model':{'provider':'provider','id':'actual-model'}}})
 emit({'type':'message_update','messageId':'m1','assistantMessageEvent':{'type':'text_delta','delta':'partial λ'}})
-emit({'type':'message_end','message':{'role':'assistant','provider':'provider','model':'actual-model','content':[{'type':'text','text':'delta answer λ'}]}})
+emit({'type':'message_end','message':{'id':'m1','role':'assistant','provider':'provider','model':'actual-model','content':[{'type':'text','text':'delta answer λ'}]}})
 emit({'type':'agent_end','isTerminal':True,'messages':[{'role':'assistant','content':[{'type':'text','text':'delta answer λ'}]}]})
 pathlib.Path('emitted.jsonl').write_text(chr(10).join(emitted)+chr(10))
 ''')
