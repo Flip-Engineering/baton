@@ -393,8 +393,8 @@
  {
   "name": "schema-unguarded-cycle-is-accepted",
   "file": "bend2/src/context/codec-schema.bend",
-  "find": "            Bool.pick(Bool, unguarded_cycle(defs, name), False{}, defs_checked(tail)), False{})",
-  "replace": "            defs_checked(tail), False{})",
+  "find": "            Bool.pick(Bool, unguarded_cycle(all, name), False{}, defs_checked(all, tail)), False{})",
+  "replace": "            defs_checked(all, tail), False{})",
   "law": "schema_law_an_unguarded_cycle_refuses"
  },
  {
@@ -417,5 +417,19 @@
   "find": "    case SkDeclared{+names}: members_declared(names, members)",
   "replace": "    case SkDeclared{+names}: True{}",
   "law": "schema_law_a_dictionary_without_a_declared_key_refuses"
+ },
+ {
+  "name": "schema-empty-array-sentinel-refused",
+  "file": "bend2/src/context/codec-schema.bend",
+  "find": "    case Codec.Rarr{Codec.Rnil{}, Codec.Rnil{}}: SvOk{}\n    case Codec.Rarr{+head, +tail}: array_head_admit(defs, item, head, tail)",
+  "replace": "    case Codec.Rarr{+head, +tail}: array_head_admit(defs, item, head, tail)",
+  "law": "schema_law_the_canonical_empty_array_admits_an_array_position"
+ },
+ {
+  "name": "schema-duplicate-union-tags-accepted",
+  "file": "bend2/src/context/codec-schema.bend",
+  "find": "  Bool.pick(Bool, names_unique(case_tags(cases)), cases_nested_ambiguous(cases), True{})",
+  "replace": "  cases_nested_ambiguous(cases)",
+  "law": "schema_law_a_repeated_union_tag_is_ambiguous"
  }
 ]
