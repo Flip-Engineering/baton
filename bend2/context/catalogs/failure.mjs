@@ -15,11 +15,22 @@
 // describes a failure for a retained internal channel.
 
 export function cleanupDiagnostic(stage, cleanupError) {
+  const code = readMember(cleanupError, 'code');
+  const message = readMember(cleanupError, 'message');
   return {
     stage,
-    code: cleanupError?.code ?? null,
-    message: asText(cleanupError?.message ?? cleanupError, 'unreadable cleanup failure'),
+    code: code.status === 'read' ? (code.value ?? null) : null,
+    message: message.status === 'read' && message.value !== null && message.value !== undefined
+      ? asText(message.value, 'unreadable message')
+      : asText(cleanupError, 'unreadable cleanup failure'),
   };
+}
+
+// Formats raw cleanup outcomes once every physical release has been attempted.
+// Keeping formatting separate from the release attempts means an unreadable
+// failure object cannot stop a later close.
+export function formatCleanupOutcomes(outcomes) {
+  return (Array.isArray(outcomes) ? outcomes : []).map(outcome => cleanupDiagnostic(outcome.stage, outcome.cleanupError));
 }
 
 function asText(value, fallback) {
@@ -30,11 +41,14 @@ function asText(value, fallback) {
   }
 }
 
+// A guarded member read. The catch performs no property read on the thrown
+// value, so a getter that throws another object with its own throwing members
+// cannot escape this function.
 function readMember(target, key) {
   try {
     return { status: 'read', value: target[key] };
-  } catch (error) {
-    return { status: 'unreadable', detail: asText(error?.message ?? error, 'unreadable member') };
+  } catch {
+    return { status: 'unreadable' };
   }
 }
 
@@ -127,7 +141,7 @@ function describe(error, seen) {
     kind: name.status === 'read' && name.value !== null && name.value !== undefined ? asText(name.value, 'Error') : 'Error',
     message: message.status === 'read'
       ? asText(message.value ?? '', 'unreadable message')
-      : `unreadable message: ${message.detail}`,
+      : 'unreadable message',
     code: code.status === 'read' ? (code.value ?? null) : null,
     stack: stack.status === 'read' ? (stack.value ?? null) : null,
     cleanup: cleanup.status === 'read' && Array.isArray(cleanup.value) ? cleanup.value : [],

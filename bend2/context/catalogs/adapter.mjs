@@ -307,11 +307,15 @@ export async function catalogAdapterMain({ readStdin, writeStdout, writeStderr }
       } finally {
         release = session.close();
         if (release.diagnostics.length > 0) {
-          // The release evidence is attached to the primary failure before it is
-          // reported, and it always reaches the retained internal channel, since
-          // a wrapped error cannot replace one that is already being thrown.
-          if (failure !== null) attachDiagnostics(failure, release.diagnostics);
+          // The release evidence always reaches the retained internal channel. It
+          // is also attached to the primary failure; when that failure cannot
+          // carry it, the returned carrier is rethrown after cleanup with the
+          // original kept as its cause, so no evidence is dropped.
           writeStderr(`${JSON.stringify({ stage: 'catalogAdapterMain:sessionRelease', closed: release.closed, diagnostics: release.diagnostics })}\n`);
+          if (failure !== null) {
+            const carried = attachDiagnostics(failure, release.diagnostics);
+            if (carried !== failure) throw carried;
+          }
         }
       }
       // Every release diagnostic reaches the frame. A failed commit with a

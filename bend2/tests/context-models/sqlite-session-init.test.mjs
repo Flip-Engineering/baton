@@ -74,7 +74,9 @@ function scriptedDatabase({ realPath, rows = {}, failures = {}, execFailures = {
     exec(sql) {
       this.execs.push(sql);
       for (const [match, behavior] of Object.entries(execFailures)) {
-        if (sql.includes(match)) throw new Error(behavior.message);
+        if (!sql.includes(match)) continue;
+        if ('thrown' in behavior) throw behavior.thrown;
+        throw new Error(behavior.message);
       }
     }
 
@@ -465,6 +467,59 @@ test('the failure description tolerates throwing members and a cyclic cause', ()
   const attached = attachDiagnostics(hostile, [{ stage: 's', code: null, message: 'm' }]);
   assert.deepEqual(attached.cleanup, [{ stage: 's', code: null, message: 'm' }], 'the diagnostics are retained');
   assert.equal(attached.cause, hostile, 'the original failure is retained as the cause when the member cannot be replaced');
+});
+
+test('a release is attempted even when a cleanup failure object is unreadable', () => {
+  const subject = subjectFile();
+  try {
+    const hostile = {};
+    Object.defineProperty(hostile, 'code', { get() { throw new Error('code getter failed'); } });
+    Object.defineProperty(hostile, 'message', { get() { throw new Error('message getter failed'); } });
+    const closeError = Object.assign(new Error('close refused'), { code: 'SQLITE_BUSY' });
+    const scripted = scriptedDatabase({
+      realPath: subject.realPath,
+      rows: HAPPY_ROWS,
+      failures: { sqlite_schema: { message: 'read failed' } },
+      execFailures: { ROLLBACK: { thrown: hostile } },
+      closeError,
+    });
+    assert.throws(
+      () => createSqliteSession({ path: subject.path, DatabaseSync: scripted.DatabaseSync }),
+      error => {
+        assert.equal(error.message, 'read failed');
+        assert.deepEqual(error.cleanup, [
+          { stage: 'createSqliteSession:rollback', code: null, message: 'unreadable message' },
+          { stage: 'createSqliteSession:close', code: 'SQLITE_BUSY', message: 'close refused' },
+        ], 'formatting an unreadable failure neither prevents nor hides the close');
+        return true;
+      },
+    );
+    const [instance] = scripted.instances;
+    assert.deepEqual(instance.execs, ['BEGIN DEFERRED', 'ROLLBACK']);
+    assert.equal(instance.closes, 1, 'the close is attempted after the unreadable rollback failure');
+  } finally {
+    subject.remove();
+  }
+});
+
+test('a commit failure with unreadable fields still closes the connection', () => {
+  const subject = subjectFile();
+  try {
+    const hostile = {};
+    Object.defineProperty(hostile, 'code', { get() { throw new Error('code getter failed'); } });
+    Object.defineProperty(hostile, 'message', { get() { throw new Error('message getter failed'); } });
+    const scripted = scriptedDatabase({ realPath: subject.realPath, rows: HAPPY_ROWS, execFailures: { COMMIT: { thrown: hostile } } });
+    const session = createSqliteSession({ path: subject.path, DatabaseSync: scripted.DatabaseSync });
+    const release = session.close();
+    assert.equal(release.closed, true, 'the connection is still released');
+    assert.equal(release.diagnostics.length, 1);
+    assert.equal(release.diagnostics[0].stage, 'sqliteSession:commit');
+    assert.equal(release.diagnostics[0].code, null);
+    assert.equal(release.diagnostics[0].message, 'unreadable message');
+    assert.equal(scripted.instances[0].closes, 1, 'the close runs after the unreadable commit failure');
+  } finally {
+    subject.remove();
+  }
 });
 
 test('a successful construction keeps one connection and the caller owns its close', () => {

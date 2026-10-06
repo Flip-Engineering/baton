@@ -17,7 +17,7 @@
 import { existsSync, realpathSync, statSync } from 'node:fs';
 
 import { canonicalJson, digestJson } from './canonical.mjs';
-import { attachDiagnostics, cleanupDiagnostic } from './failure.mjs';
+import { attachDiagnostics, formatCleanupOutcomes } from './failure.mjs';
 import { analyzeSqliteStatement, joinRootpages, probeOriginCapability } from './sqlite-statement.mjs';
 import { joinConstantSql } from './sql-join.mjs';
 
@@ -101,15 +101,15 @@ export function openReadOnlySqlite({ path, DatabaseSync }) {
     }
     return { db, path, fileIdentity };
   } catch (error) {
-    // Collect the cleanup outcome, then attach once, so the throw always carries
-    // both the original failure and the release evidence.
-    const diagnostics = [];
+    // The physical release runs first and its raw outcome is recorded; formatting
+    // cannot prevent it. The evidence is attached once, afterwards.
+    const rawCleanupOutcomes = [];
     try {
       db.close();
     } catch (cleanupError) {
-      diagnostics.push(cleanupDiagnostic('openReadOnlySqlite:close', cleanupError));
+      rawCleanupOutcomes.push({ stage: 'openReadOnlySqlite:close', cleanupError });
     }
-    throw attachDiagnostics(error, diagnostics);
+    throw attachDiagnostics(error, formatCleanupOutcomes(rawCleanupOutcomes));
   }
 }
 
@@ -426,43 +426,46 @@ export function createSqliteSession({ path, DatabaseSync }) {
       // `sessionUsable` states that this session refuses further work.
       close() {
         if (releaseOutcome !== null) return { ...releaseOutcome, alreadyClosed: true };
-        const diagnostics = [];
+        // The commit attempt and the close both run before any outcome is
+        // formatted, so an unreadable commit failure cannot prevent the close.
+        const rawCleanupOutcomes = [];
         try {
           db.exec('COMMIT');
         } catch (commitError) {
-          diagnostics.push(cleanupDiagnostic('sqliteSession:commit', commitError));
+          rawCleanupOutcomes.push({ stage: 'sqliteSession:commit', cleanupError: commitError });
         }
         let handleClosed = false;
         try {
           db.close();
           handleClosed = true;
         } catch (closeError) {
-          diagnostics.push(cleanupDiagnostic('sqliteSession:close', closeError));
+          rawCleanupOutcomes.push({ stage: 'sqliteSession:close', cleanupError: closeError });
         }
         session.closed = true;
-        releaseOutcome = { closed: handleClosed, sessionUsable: false, diagnostics };
+        releaseOutcome = { closed: handleClosed, sessionUsable: false, diagnostics: formatCleanupOutcomes(rawCleanupOutcomes) };
         return { ...releaseOutcome, alreadyClosed: false };
       },
     };
     return session;
   } catch (error) {
-    // Collect every cleanup outcome locally, then attach once: a wrapper returned
-    // by an earlier attachment must not be discarded, and every physical release
-    // is attempted before any evidence is attached.
-    const diagnostics = [];
+    // Every physical release runs before any outcome is formatted or attached:
+    // rollback first, then close, with raw outcomes collected in between so an
+    // unreadable failure object cannot skip the close. The evidence is attached
+    // once, afterwards, so a wrapper from an earlier attachment is never dropped.
+    const rawCleanupOutcomes = [];
     if (transactionOpen) {
       try {
         db.exec('ROLLBACK');
       } catch (cleanupError) {
-        diagnostics.push(cleanupDiagnostic('createSqliteSession:rollback', cleanupError));
+        rawCleanupOutcomes.push({ stage: 'createSqliteSession:rollback', cleanupError });
       }
     }
     try {
       db.close();
     } catch (cleanupError) {
-      diagnostics.push(cleanupDiagnostic('createSqliteSession:close', cleanupError));
+      rawCleanupOutcomes.push({ stage: 'createSqliteSession:close', cleanupError });
     }
-    throw attachDiagnostics(error, diagnostics);
+    throw attachDiagnostics(error, formatCleanupOutcomes(rawCleanupOutcomes));
   }
 }
 
