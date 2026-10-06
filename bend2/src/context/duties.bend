@@ -70,11 +70,11 @@ def field_count(xs: List<String>, acc: U32) -> U32:
 
 def duty_kind(record: DutyRecord) -> String:
   match record:
-    case DutyRecord{kind, subject, role, incarnation, stage, evidence}: kind
+    case DutyRecord{+kind, +subject, role, incarnation, +stage, evidence}: kind
 
 def duty_subject(record: DutyRecord) -> String:
   match record:
-    case DutyRecord{kind, subject, role, incarnation, stage, evidence}: subject
+    case DutyRecord{+kind, +subject, role, incarnation, +stage, evidence}: subject
 
 # A record needs a nonempty kind, subject and stage; the evidence may be empty when
 # the recorded row carries none.
@@ -110,7 +110,7 @@ def duty_fields(fields: List<String>) -> Maybe<&2, DutyRecord>:
 
 def duty_checked(record: DutyRecord) -> Maybe<&2, DutyRecord>:
   match record:
-    case DutyRecord{kind, subject, role, incarnation, stage, evidence}:
+    case DutyRecord{+kind, +subject, role, incarnation, +stage, evidence}:
       Bool.pick(Maybe<&2, DutyRecord>, duty_shaped(kind, subject, stage), Some{DutyRecord{kind, subject, role, incarnation, stage, evidence}}, None{})
 
 # One duty row: a short, surplus or empty row is not a record.
