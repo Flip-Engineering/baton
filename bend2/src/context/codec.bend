@@ -1479,33 +1479,37 @@ def document_of_rows(rows: String) -> Document:
 # ---------------------------------------------------------------------------
 # The correlated frame decision. A caller that answers one frame correlates its
 # response with the frame's own id, so this decision carries the checked id with the
-# tool, the query, the canonical request and the scope through acceptance and through
-# refusal. A frame whose id did not pass the signed-safe check, and a frame that never
-# decoded, carry no correlation at all, so a response is never attributed to an id the
-# codec did not check.
+# admitted tool, query, canonical request and scope for an accepted frame, and the
+# checked id with the refusal class and condition for a refused one. The refusal
+# variant carries no admitted field, because an unknown tool has no tool and a refused
+# envelope carries derived values only. A frame whose id did not pass the signed-safe
+# check, and a frame that never decoded, carry no correlation at all.
+#
+# The decision composed here is the complete one: the envelope, then the metadata
+# profile through metadata_admit, exactly as frame_decision builds it. The envelope
+# refusal keeps its ordering, class and condition, so a bad jsonrpc refuses before a
+# bad metadata value is read.
 
 type CorrelatedDecision is Data:
-  CdChecked{id: Context.FrameId, tool: Context.CodecTool, query: Context.OptText, request: Context.OptText, scope: Context.OptText, condition: String, accepted: Bool}
-  CdUnchecked{condition: String}
+  CdAccepted{id: Context.FrameId, tool: Context.CodecTool, query: Context.OptText, request: Context.OptText, scope: Context.OptText}
+  CdRefused{id: Context.FrameId, class: Context.RefusalClass, condition: String}
+  CdUncorrelated{condition: String}
 
-def correlated_of_verdict(+env: Envelope, +v: EnvelopeVerdict) -> CorrelatedDecision:
-  match v:
-    case EnvAccepted{+tool, +id, +query, +request, +scope}: CdChecked{id, tool, query, request, scope, "", True{}}
-    case EnvRefused{+condition}: Bool.pick(CorrelatedDecision, Context.frame_id_ok(env_id(env)), CdChecked{env_id(env), env_tool(env), env_query_of(env), request_opt(env_request(env)), env_scope(env), condition, False{}}, CdUnchecked{"invalidFrameId"})
+def correlated_of_decision(+d: FrameDecision, +env: Envelope) -> CorrelatedDecision:
+  match d:
+    case FdOk{+tool, +id, +query, +request, +scope}: CdAccepted{id, tool, query, request, scope}
+    case FdRefused{cls, condition}: Bool.pick(CorrelatedDecision, Context.frame_id_ok(env_id(env)), CdRefused{env_id(env), cls, condition}, CdUncorrelated{condition})
 
-def correlated_of_envelope(+env: Envelope) -> CorrelatedDecision:
-  correlated_of_verdict(env, envelope_decide(env))
+def correlated_of_parts(+env: Envelope, +meta: MetaInput) -> CorrelatedDecision:
+  correlated_of_decision(frame_envelope_decision(env, metadata_admit(meta)), env)
 
-def correlated_of_frame(+frame: RawValue) -> CorrelatedDecision:
-  correlated_of_envelope(envelope_fields(frame))
-
-def correlated_of_read(+r: FrameRead) -> CorrelatedDecision:
+def correlated_of_envelope_read(+r: EnvelopeRead) -> CorrelatedDecision:
   match r:
-    case FrValue{+value}: correlated_of_frame(value)
-    case FrRefused{condition}: CdUnchecked{condition}
+    case ErEnvelope{+env, +meta}: correlated_of_parts(env, meta)
+    case ErRefused{condition}: CdUncorrelated{condition}
 
 def correlated_decision(rows: Req.Rows) -> CorrelatedDecision:
-  correlated_of_read(frame_read(rows))
+  correlated_of_envelope_read(frame_envelope(rows))
 
 def correlated_decision_of_text(text: String) -> CorrelatedDecision:
   correlated_decision(Req.Context.parse_rows(text))
@@ -2479,30 +2483,60 @@ law codec_law_a_single_root_member_still_admits:
 def codec_law_a_single_root_member_still_admits():
   {==}
 
-# The correlated decision laws. An accepted frame correlates with its checked id; a
-# refused frame still correlates, so its response answers against its request; a frame
-# whose id did not pass the signed-safe check and a frame that never decoded correlate
-# with nothing.
-law codec_law_an_accepted_frame_correlates_with_its_checked_id:
-  {correlated_decision(engine_frame_rows()) == CdChecked{Context.IdNumber{"7"}, Context.CtEngines{}, Context.Absent{}, Context.Absent{}, Context.Absent{}, "", True{}} : CorrelatedDecision}
+# The correlated decision laws. An accepted frame correlates with its checked id and
+# its admitted fields; a refused frame carries the checked id with the refusal class and
+# condition and no admitted field; a frame whose id did not pass the signed-safe check
+# and a frame that never decoded correlate with nothing.
 
-def codec_law_an_accepted_frame_correlates_with_its_checked_id():
+def non_object_meta_rows() -> Req.Rows:
+  rows_of([
+    object_row("0", SNil{}, SNil{}),
+    text_row("1", "0", "jsonrpc", "2.0"),
+    text_row("2", "0", "method", "tools/call"),
+    number_row("3", "0", "id", "7"),
+    object_row("4", "0", "params"),
+    text_row("5", "4", "name", "baton2_context_engines"),
+    object_row("6", "4", "arguments"),
+    text_row("7", "4", "_meta", "x")])
+
+law codec_law_a_transported_engines_frame_correlates_with_its_checked_id:
+  {correlated_decision(engine_frame_rows()) == CdAccepted{Context.IdNumber{"7"}, Context.CtEngines{}, Context.Absent{}, Context.Absent{}, Context.Absent{}} : CorrelatedDecision}
+
+def codec_law_a_transported_engines_frame_correlates_with_its_checked_id():
   {==}
 
-law codec_law_a_refused_frame_still_correlates_with_its_checked_id:
-  {correlated_decision(bad_jsonrpc_meta_rows()) == CdChecked{Context.IdNumber{"7"}, Context.CtResult{}, Context.Present{"q1"}, Context.Absent{}, Context.Absent{}, "invalidJsonrpc", False{}} : CorrelatedDecision}
+law codec_law_a_strict_numeric_metadata_frame_correlates_as_accepted:
+  {correlated_decision(meta_frame_rows("real", "0.5")) == CdAccepted{Context.IdNumber{"7"}, Context.CtResult{}, Context.Present{"q1"}, Context.Absent{}, Context.Absent{}} : CorrelatedDecision}
 
-def codec_law_a_refused_frame_still_correlates_with_its_checked_id():
+def codec_law_a_strict_numeric_metadata_frame_correlates_as_accepted():
+  {==}
+
+law codec_law_a_bad_jsonrpc_correlates_as_refused_before_the_metadata:
+  {correlated_decision(bad_jsonrpc_meta_rows()) == CdRefused{Context.IdNumber{"7"}, Context.RfValidation{}, "invalidJsonrpc"} : CorrelatedDecision}
+
+def codec_law_a_bad_jsonrpc_correlates_as_refused_before_the_metadata():
+  {==}
+
+law codec_law_a_non_object_metadata_correlates_as_refused:
+  {correlated_decision(non_object_meta_rows()) == CdRefused{Context.IdNumber{"7"}, Context.RfValidation{}, "metadataNotObject"} : CorrelatedDecision}
+
+def codec_law_a_non_object_metadata_correlates_as_refused():
+  {==}
+
+law codec_law_a_null_progress_token_correlates_as_refused:
+  {correlated_decision(meta_frame_rows("null", "")) == CdRefused{Context.IdNumber{"7"}, Context.RfValidation{}, "invalidProgressToken"} : CorrelatedDecision}
+
+def codec_law_a_null_progress_token_correlates_as_refused():
   {==}
 
 law codec_law_an_unchecked_frame_id_correlates_nothing:
-  {correlated_of_verdict(EnvFrame{"1.0", "tools/call", "not-a-tool", Context.IdNumber{"9007199254740992"}, Context.Absent{}, RtAbsent{}, True{}, True{}, True{}, Context.Absent{}}, EnvRefused{"invalidFrameId"}) == CdUnchecked{"invalidFrameId"} : CorrelatedDecision}
+  {correlated_of_decision(FdRefused{Context.RfValidation{}, "invalidFrameId"}, EnvFrame{"1.0", "tools/call", "not-a-tool", Context.IdNumber{"9007199254740992"}, Context.Absent{}, RtAbsent{}, True{}, True{}, True{}, Context.Absent{}}) == CdUncorrelated{"invalidFrameId"} : CorrelatedDecision}
 
 def codec_law_an_unchecked_frame_id_correlates_nothing():
   {==}
 
 law codec_law_an_undecoded_frame_correlates_nothing:
-  {correlated_of_read(frame_read(bad_field_rows())) == CdUnchecked{"malformedHexField"} : CorrelatedDecision}
+  {correlated_of_envelope_read(frame_envelope(bad_field_rows())) == CdUncorrelated{"malformedHexField"} : CorrelatedDecision}
 
 def codec_law_an_undecoded_frame_correlates_nothing():
   {==}
