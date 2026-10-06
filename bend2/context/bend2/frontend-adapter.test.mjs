@@ -12,7 +12,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { createFrontendAdapter } from './frontend-adapter.mjs';
 import { HOOK_KINDS, HOOK_PHASES, validateHookEvent } from './frontend-hook-events.mjs';
-import { HOOK_OPERATIONS, UPSTREAM_INPUTS, UPSTREAM_PIN, deriveHookedSource, verifyHookAnchors } from './frontend-hooks.mjs';
+import { HOOK_OPERATIONS, UPSTREAM_INPUTS, UPSTREAM_PIN, applyHookOperations, deriveHookedSource, verifyHookAnchors } from './frontend-hooks.mjs';
 
 const bytesOf = (text) => Buffer.from(text, 'utf8');
 
@@ -183,12 +183,14 @@ test('a parsed reference keeps its actual branch and never claims resolution', (
   const references = adapter.report().sessions[0].references;
   assert.equal(references.length, 2);
   assert.equal(references[0].branch, 'bound');
+  assert.equal(references[0].resolution, 'binderLookup');
   assert.equal(references[0].binderIndex, 1);
   assert.equal(references[1].branch, 'unboundFallback');
+  assert.equal(references[1].resolution, 'fallbackFrame');
   assert.equal(references[1].frameIndex, 0);
   for (const reference of references) {
-    assert.equal(reference.resolved, false);
-    assert.equal(reference.basis, 'parseOutcome');
+    assert.equal(reference.phase, 'parse');
+    assert.ok(reference.scope.namespace !== undefined);
   }
 });
 
@@ -263,26 +265,120 @@ test('the event contract rejects malformed events and accepts the real shapes', 
   assert.equal(validateHookEvent({ kind: HOOK_KINDS.importLine, phase: HOOK_PHASES.load, file: '/a.bend', removedFrom: 5, removedTo: 2, removedText: 'x' }).reason, 'removedRangeInvalid');
 });
 
-test('the patch spec binds the upstream inputs and refuses a missing or ambiguous anchor', () => {
-  assert.equal(UPSTREAM_INPUTS.bend.sha256, '93c2a43deeb82c15683e4e25bbc5dec5ac3edff9f54e09acc0975e290fcaeb85');
-  assert.equal(UPSTREAM_INPUTS.main.sha256, '92dcdb49e82fd59443e3aea10784f7dcf03a93f5a21920666543098b657b6b1e');
-  assert.equal(UPSTREAM_INPUTS.comp.sha256, 'ad8b82137e5decf588d507d008cb8ccf24bd0b94043de8bd6e048d0faedcf959');
-  assert.equal(UPSTREAM_PIN, 'a49524265bdfa5753a4bf38e25f0574a705dd868');
-  assert.equal(HOOK_OPERATIONS.bend.length > 0, true);
-  assert.equal(HOOK_OPERATIONS.main.length > 0, true);
+test('multiple imports finalize one view and resolve spans emitted before completion', () => {
+  const text = 'import Base\nimport ./d.bend as D\nvalue\n';
+  const captureLength = text.length;
+  const adapter = adapterWith({ '/work/multi.bend': text });
+  adapter.beginQuery({ identity: '/work/multi.bend' });
+  loadFile(adapter, '/work/multi.bend');
+  // Two removals: 'import Base' at [0,11) and 'import ./d.bend as D' at [12,31).
+  adapter.sink.emit({ kind: HOOK_KINDS.importLine, phase: HOOK_PHASES.load, file: '/work/multi.bend', namespace: '', alias: null, specifier: 'Base', removedFrom: 0, removedTo: 11, removedText: 'import Base', specifierSpan: { src: text, beg: 7, end: 11 } });
+  adapter.sink.emit({ kind: HOOK_KINDS.importLine, phase: HOOK_PHASES.load, file: '/work/multi.bend', namespace: '', alias: 'D', specifier: './d.bend', removedFrom: 12, removedTo: 31, removedText: 'import ./d.bend as D', specifierSpan: { src: text, beg: 19, end: 27 } });
+  // The declaration precedes loadComplete, exactly as the patched frontend orders it; its span is in
+  // the transformed text '\n\nvalue\n' where 'value' starts at index 2.
+  declare(adapter, '/work/multi.bend', 'value', { src: '\n\nvalue\n', beg: 2, end: 7 });
+  completeFile(adapter, '/work/multi.bend', 1);
+  adapter.endQuery();
 
+  const session = adapter.report().sessions[0];
+  assert.equal(session.imports.length, 2);
+  // The loader span belongs to the original text, so it maps even though that text left the parse view.
+  assert.equal(session.imports[1].specifierSpan.status, 'mapped');
+  assert.deepEqual(session.imports[1].specifierSpan.byteRange, { start: 19, end: 27 });
+  // The declaration span was deferred until the view was finalized after both removals.
+  assert.equal(session.declarations[0].span.status, 'mapped');
+  assert.equal(session.declarations[0].span.original.start.index, captureLength - 'value\n'.length);
+  assert.equal(captureLength > 31, true);
+  assert.equal(session.completeness, 'complete');
+});
+
+test('an import attempt and a closure-supplied identity are recorded without a host check', () => {
+  const text = 'import ./dep.bend as P\n';
+  const adapter = createFrontendAdapter({
+    acquisition: {
+      resolve: (identity) => ({ exists: identity === '/work/dep.bend', identity }),
+      read: (identity) => (identity === '/work/dep.bend' ? { identity, bytes: bytesOf('def d() -> U32:\n  1\n') } : { refuse: 'not in closure' }),
+    },
+  });
+  adapter.beginQuery({ identity: '/work/root.bend' });
+  adapter.sink.emit({ kind: HOOK_KINDS.importAttempt, phase: HOOK_PHASES.load, file: '/work/dep.bend', identity: '/work/dep.bend', exists: true, captured: true });
+  assert.deepEqual(adapter.sink.resolveSource('/work/dep.bend'), { exists: true, identity: '/work/dep.bend' });
+  adapter.sink.emit({ kind: HOOK_KINDS.importAttempt, phase: HOOK_PHASES.load, file: '/work/other.bend', identity: '/work/other.bend', exists: false, captured: true });
+  assert.deepEqual(adapter.sink.resolveSource('/work/other.bend'), { exists: false, identity: '/work/other.bend' });
+  adapter.sink.sourceFailure('/work/other.bend', 'missingInClosure');
+  adapter.endQuery();
+
+  const session = adapter.report().sessions[0];
+  assert.equal(session.attempts.length, 2);
+  assert.equal(adapter.counters.acquisitionFailures, 1);
+  assert.ok(session.limitations.some((entry) => entry.code === 'acquisitionFailure'));
+  assert.equal(session.completeness, 'incomplete');
+  assert.ok(session.incompleteness.includes('acquisitionFailure'));
+  assert.equal(text.length > 0, true);
+});
+
+test('an overlapping invocation and an outside read are refused', () => {
+  const adapter = adapterWith({ '/work/one.bend': 'def a() -> U32:\n  1\n' });
+  assert.equal(adapter.sink.readSource('/work/one.bend'), undefined);
+  assert.equal(adapter.counters.outsideQueryReads, 1);
+  const first = adapter.beginQuery({ identity: '/work/one.bend' });
+  assert.equal(first.status, 'started');
+  const second = adapter.beginQuery({ identity: '/work/two.bend' });
+  assert.equal(second.status, 'rejected');
+  assert.equal(second.reason, 'queryActive');
+  assert.equal(adapter.counters.overlappingQueries, 1);
+  loadFile(adapter, '/work/one.bend');
+  completeFile(adapter, '/work/one.bend', 1);
+  const session = adapter.endQuery();
+  assert.equal(session.token, first.token);
+  assert.ok(session.incompleteness.includes('outsideQueryRead'));
+  assert.ok(session.incompleteness.includes('overlappingQuery'));
+});
+
+test('declared and inferred type observations keep their status and quantities', () => {
+  const adapter = adapterWith({ '/work/types.bend': 'def id(+x: U32) -> U32:\n  x\n' });
+  adapter.beginQuery({ identity: '/work/types.bend' });
+  loadFile(adapter, '/work/types.bend');
+  completeFile(adapter, '/work/types.bend', 1);
+  adapter.sink.emit({ kind: HOOK_KINDS.typeObservation, phase: HOOK_PHASES.parse, status: 'declared', qualified: 'id', file: '/work/types.bend', text: 'U32 -> U32', quantities: [{ quant: '2', name: 'x' }], span: null });
+  adapter.sink.emit({ kind: HOOK_KINDS.typeObservation, phase: HOOK_PHASES.parse, status: 'inferred', qualified: 'id', file: '/work/types.bend', text: 'U32', quantities: [], span: null });
+  adapter.endQuery();
+
+  const types = adapter.report().sessions[0].types;
+  assert.deepEqual(types.map((entry) => entry.status), ['declared', 'inferred']);
+  assert.deepEqual(types[0].quantities, [{ quant: '2', name: 'x' }]);
+  assert.equal(types[0].text, 'U32 -> U32');
+});
+
+test('the invocation entry rejects a frontend that lacks the required exports', async () => {
+  const { runFrontendInvocation } = await import('./frontend-invocation.mjs');
+  const adapter = adapterWith({ '/work/root.bend': 'def a() -> U32:\n  1\n' });
+  const rejected = await runFrontendInvocation({ frontend: {}, adapter, root: '/work/root.bend' });
+  assert.equal(rejected.status, 'rejected');
+  assert.equal(rejected.reason, 'frontendExportMissing');
+  const missingAdapter = await runFrontendInvocation({ frontend: null, adapter, root: '/work/root.bend' });
+  assert.equal(missingAdapter.reason, 'frontendMissing');
+});
+
+test('the patch spec verifies the input identity and applies anchors mechanically', () => {
   const registryAnchor = HOOK_OPERATIONS.bend[0].anchor;
   assert.equal(verifyHookAnchors({ target: 'bend', text: registryAnchor }).counts[0].count, 1);
 
-  const missing = deriveHookedSource({ target: 'bend', text: registryAnchor });
-  assert.equal(missing.status, 'unavailable');
+  // A synthetic input cannot stand in for the pinned upstream file: the identity check refuses it.
+  const refused = deriveHookedSource({ target: 'bend', text: registryAnchor });
+  assert.equal(refused.status, 'unavailable');
+  assert.equal(refused.reason, 'inputIdentityMismatch');
+  assert.equal(refused.detail.expected, UPSTREAM_INPUTS.bend.sha256);
+  assert.notEqual(refused.detail.observed, refused.detail.expected);
+
+  // Anchor mechanics are exercised separately from the identity check.
+  const missing = applyHookOperations({ target: 'bend', text: registryAnchor });
   assert.equal(missing.reason, 'anchorMissing');
   assert.equal(missing.detail.id, HOOK_OPERATIONS.bend[1].id);
 
-  const ambiguous = deriveHookedSource({ target: 'bend', text: `${registryAnchor}\n${registryAnchor}\n` });
+  const ambiguous = applyHookOperations({ target: 'bend', text: `${registryAnchor}\n${registryAnchor}\n` });
   assert.equal(ambiguous.reason, 'anchorAmbiguous');
   assert.equal(ambiguous.detail.count, 2);
 
-  const unsupported = deriveHookedSource({ target: 'comp', text: 'x' });
-  assert.equal(unsupported.reason, 'targetUnsupported');
+  assert.equal(applyHookOperations({ target: 'comp', text: 'x' }).reason, 'targetUnsupported');
 });

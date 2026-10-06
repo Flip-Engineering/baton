@@ -156,6 +156,23 @@ Derive a hooked copy (remote, exact Root admission):
 node --input-type=module -e "import { readFileSync, writeFileSync } from 'node:fs'; import { deriveHookedSource } from './bend2/context/bend2/frontend-hooks.mjs'; const text = readFileSync(process.env.BATON2_FRONTEND_BEND, 'utf8'); const derived = deriveHookedSource({ target: 'bend', text }); if (derived.status !== 'derived') { throw new Error(JSON.stringify(derived)); } writeFileSync(process.env.BATON2_DERIVED_BEND, derived.text); console.log(derived.outputDigest);"
 ```
 
+`deriveHookedSource` hashes the supplied text and refuses `inputIdentityMismatch` unless it equals the
+pinned digest for that target, so an alteration outside the anchors cannot pass under the original
+pin. `applyHookOperations` exposes the anchor mechanics alone for tests.
+
+The internal invocation entry installs the scoped producer, loads a caller-supplied closure, calls
+the frontend's actual parser, checker and completion primitives for the requested phases, and returns
+the observations plus the raw outcome, restoring the hooks in `finally`:
+
+```text
+node --test bend2/context/bend2/frontend-adapter.test.mjs
+```
+
+Its prerequisite for a real run: a derived frontend module (from the derivation command above, for
+`bend` and `main`), the supplied `comp.ts` module for the completion phase, and Node 22.15.0 or
+later. The `bend` module needs `bend.ts`'s exports plus, for the completion phase, `main.ts`'s
+composition; a run that only parses needs no completion module.
+
 The same command with `target: 'main'` derives the main-side hooks. The hooks are inert until a caller
 installs the sink with `bendHooks(...)`; no module in this repository imports a frontend, and no
 frontend behaviour changes when the sink is absent or declines.

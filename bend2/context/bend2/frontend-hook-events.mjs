@@ -27,6 +27,8 @@ export const HOOK_KINDS = Object.freeze({
   validationStart: 'validationStart',
   validationResult: 'validationResult',
   completionGate: 'completionGate',
+  importAttempt: 'importAttempt',
+  typeObservation: 'typeObservation',
 });
 
 // The completion gates main.ts composes after the kernel gate: the ownership check and the
@@ -40,7 +42,15 @@ export const REFERENCE_BRANCHES = Object.freeze(['bound', 'dotted', 'unboundFall
 
 export const DECLARATION_FORMS = Object.freeze(['def', 'type', 'law', 'fill']);
 
-export const DIAGNOSTIC_FORMS = Object.freeze(['err', 'text']);
+export const DIAGNOSTIC_FORMS = Object.freeze(['err', 'text', 'thrown']);
+
+// A type observation comes from the invocation entry, not from a patched call site: it reads the
+// frontend's own declared type term and its inferred type and records which one it is.
+export const TYPE_STATUSES = Object.freeze(['declared', 'inferred']);
+
+// The reference outcome the adapter records. They stay distinct: a binder lookup, a declared
+// qualified name, an undeclared qualified name and an unbound fallback frame are different facts.
+export const REFERENCE_RESOLUTIONS = Object.freeze(['binderLookup', 'declaredName', 'undeclaredName', 'fallbackFrame']);
 
 const PHASE_VALUES = Object.freeze(Object.values(HOOK_PHASES));
 const KIND_VALUES = Object.freeze(Object.values(HOOK_KINDS));
@@ -116,7 +126,20 @@ export function validateHookEvent(event) {
       if (!DIAGNOSTIC_FORMS.includes(event.form)) return invalid('diagnosticFormUnsupported', String(event.form));
       if (event.form === 'err' && event.condition === undefined) return invalid('diagnosticConditionMissing');
       if (event.form === 'text' && !isNonEmptyString(event.text)) return invalid('diagnosticTextMissing');
+      if (event.form === 'thrown' && !isNonEmptyString(event.raw)) return invalid('diagnosticRawMissing');
       if (event.span !== null && event.span !== undefined && !isSpanLike(event.span)) return invalid('diagnosticSpanInvalid');
+      return valid();
+    case HOOK_KINDS.importAttempt:
+      if (!isNonEmptyString(event.file)) return invalid('fileMissing');
+      if (typeof event.exists !== 'boolean') return invalid('importExistsMissing');
+      if (typeof event.captured !== 'boolean') return invalid('importCapturedMissing');
+      if (!isNonEmptyString(event.identity)) return invalid('importIdentityMissing');
+      return valid();
+    case HOOK_KINDS.typeObservation:
+      if (!TYPE_STATUSES.includes(event.status)) return invalid('typeStatusUnsupported', String(event.status));
+      if (!isNonEmptyString(event.qualified)) return invalid('typeQualifiedMissing');
+      if (typeof event.text !== 'string') return invalid('typeTextMissing');
+      if (!Array.isArray(event.quantities)) return invalid('typeQuantitiesMissing');
       return valid();
     case HOOK_KINDS.checkEntry:
     case HOOK_KINDS.checkSuccess:
