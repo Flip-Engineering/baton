@@ -106,7 +106,10 @@ DIRECTORY` starts a provider-free OMP receiver and measures the bytes each
 frame batch contributes to the retained log. The batches are `small` and
 `cumulative` `message_update` frames, `tool` `tool_execution_update` frames,
 and a `raw` batch that fixes the retention semantics of frames that name
-`message_update` in unusual ways.
+`message_update` in unusual ways. The
+[2026-10-06 measurement](measurements/2026-10-06-logging-policy.json) records
+26,164,652 retained bytes before the policy and 112 after it on the same
+`tool_execution_update` workload.
 
 ## Open work
 
