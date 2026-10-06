@@ -158,7 +158,7 @@ def waiting_json(waiting: List<Waiting>) -> J.Json:
     case Nil{}: J.Jarr{J.Jnil{}, J.Jnil{}}
     case h <> t: J.Jarr{waiting_item(h), waiting_chain(t)}
 
-def progress_document(+phase: Phase, +waiting: List<Waiting>, +control: Control, +cleanup: Cleanup) -> String:
+def progress_document(+phase: Phase, waiting: List<Waiting>, +control: Control, +cleanup: Cleanup) -> String:
   J.json_text(J.Jobj{J.Jpair{"cleanup", J.Jstr{cleanup_text(cleanup)},
     J.Jpair{"control", J.Jstr{control_text(control)},
     J.Jpair{"phase", J.Jstr{phase_text(phase)},

@@ -668,6 +668,11 @@ def engine_of(m: Maybe<&2, J.Json>) -> Bool:
 def engine_ok(+members: J.Json) -> Bool:
   Bool.pick(Bool, optional_text("engine", members), engine_of(member_lookup("engine", members)), False{})
 
+def options_values(+members: J.Json) -> Bool:
+  Bool.pick(Bool, optional_text("database", members),
+    Bool.pick(Bool, optional_text("client", members),
+      Bool.pick(Bool, optional_text("analysis", members), True{}, False{}), False{}), False{})
+
 def options_shape(options: J.Json) -> Bool:
   match options:
     case J.Jobj{+members}: Bool.pick(Bool, keys_allowed(option_words(), members), options_values(members), False{})
@@ -689,10 +694,6 @@ def options_ok(members: J.Json) -> Bool:
   options_no_value(member_lookup("options", members))
 
 
-def options_values(+members: J.Json) -> Bool:
-  Bool.pick(Bool, optional_text("database", members),
-    Bool.pick(Bool, optional_text("client", members),
-      Bool.pick(Bool, optional_text("analysis", members), True{}, False{}), False{}), False{})
 
 def cwd_ok(members: J.Json) -> Bool:
   optional_text("cwd", members)
