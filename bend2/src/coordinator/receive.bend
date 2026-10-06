@@ -283,23 +283,23 @@ def available(+db: String, +session: String, again: Unit -> IO(Result<&1,&1,U32 
     case False{}: Lock.SessionLock.acquire_session(Result<&1,&1,U32 & String,Unit>,db,session,
       +database => lock => acquired(database,session,lock,again,fresh))
 
-# The fresh admission an ordinary receive supplies. It runs the queued-input
-# admission on the database the guard resolved, and its continuation re-enters
-# run with the caller's own database argument.
-def fresh_pending_admission(original: String, canonical: String, held: U32, +session: String, cmd: String, model: String, effort: String, cwd: String, log: String) -> IO(Result<&1,&1,U32 & String,Unit>):
-  acquired_pending(canonical,session,cmd,model,effort,cwd,log,held,u => run(original,session,cmd,model,effort,cwd,log,""))
+# The queued-input admission an ordinary receive supplies. It runs
+# acquired_pending on the database the canonical guard resolved and continues
+# through the continuation its caller supplies, so it names no other def.
+def fresh_pending_admission(canonical: String, held: U32, session: String, cmd: String, model: String, effort: String, cwd: String, log: String, next: Unit -> IO(Result<&1,&1,U32 & String,Unit>)) -> IO(Result<&1,&1,U32 & String,Unit>):
+  acquired_pending(canonical,session,cmd,model,effort,cwd,log,held,next)
 
 # MESSAGE_ID names the wake. The lock owner reads all pending inputs together.
 # The recorded-attempt branch is observed through its saved arguments; the fresh
-# admission operation supplied here runs only when no attempt is recorded and
-# takes the canonical database from the guard rather than this argument.
+# admission operation supplied here runs only when no attempt is recorded, binds
+# the canonical database the guard resolved, and re-enters this same def.
 @unsafe
 def run(+db: String, +session: String, +cmd: String, +model: String, +effort: String, +cwd: String, +log: String, message: String) -> IO(Result<&1,&1,U32 & String,Unit>):
   do IO<Result<&1,&1,U32 & String,Unit>>:
     recorded : String <- IO.try(String,Store.commit(db,C.Session{session}))
     exists : Unit <- registered(Bool.not(String.is_empty(recorded)))
     closed : Bool <- Stop.stopped(db,session)
-    available(db,session,u => run(db,session,cmd,model,effort,cwd,log,""),canonical => lock => fresh_pending_admission(db,canonical,lock,session,cmd,model,effort,cwd,log),closed)
+    available(db,session,u => run(db,session,cmd,model,effort,cwd,log,""),canonical => lock => fresh_pending_admission(canonical,lock,session,cmd,model,effort,cwd,log,u => run(db,session,cmd,model,effort,cwd,log,"")),closed)
 
 def attach_recorded(directory: String, next: @+handle: U32 -> IO(Result<&1,&1,U32 & String,Unit>)) -> IO(Result<&1,&1,U32 & String,Unit>):
   do IO<Result<&1,&1,U32 & String,Unit>>:
