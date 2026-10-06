@@ -127,7 +127,7 @@ def admit_associated_sql(+id: String, +owner: String, +requestJson: String, +kee
 
 # The decision domain is the one the schema constrains; the state spelling comes
 # from the canonical contract module rather than a second list here.
-def admit_decision_ok(decision: String) -> Bool:
+def admit_decision_ok(+decision: String) -> Bool:
   Bool.or(String.eq(decision, "accepted"), String.eq(decision, "rejected"))
 
 def admit_state_ok(state: String) -> Bool:

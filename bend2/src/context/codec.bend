@@ -326,6 +326,10 @@ def envelope_after_jsonrpc(+env: Envelope) -> EnvelopeVerdict:
 def envelope_decide(+env: Envelope) -> EnvelopeVerdict:
   Bool.pick(EnvelopeVerdict, env_jsonrpc_ok(env), envelope_after_jsonrpc(env), EnvRefused{"invalidJsonrpc"})
 
+type OpChain is Data:
+  Opnone{}
+  Opcons{head: String, tail: OpChain}
+
 type Admission is Data:
   ADispatch{operations: OpChain, effects: Eng.SS}
   ARefused{class: Context.RefusalClass, condition: String}
@@ -337,9 +341,7 @@ def admitted_effects(a: Admission) -> Eng.SS:
     case ADispatch{+operations, effects}: effects
     case ARefused{+cls, +condition}: Eng.ss_empty()
 
-type OpChain is Data:
-  Opnone{}
-  Opcons{head: String, tail: OpChain}
+
 
 def admitted_operations(a: Admission) -> OpChain:
   match a:
