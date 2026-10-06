@@ -1085,31 +1085,31 @@ def an_uncertain_admission_keeps_its_stage():
   {==}
 
 law a_custody_under_this_binding_is_admitted:
-  {ContextObserver.custody_check("b1","b1") == ContextObserver.CustodyAdmitted{"b1"} : ContextObserver.CustodyCheck}
+  {ContextObserver.custody_check("b1","b1","k1","k1") == ContextObserver.CustodyAdmitted{"b1"} : ContextObserver.CustodyCheck}
 
 def a_custody_under_this_binding_is_admitted():
   {==}
 
 law a_custody_under_another_binding_is_a_mismatch:
-  {ContextObserver.custody_check("b1","b2") == ContextObserver.CustodyMismatch{"b1","b2"} : ContextObserver.CustodyCheck}
+  {ContextObserver.custody_check("b1","b2","k1","k1") == ContextObserver.CustodyMismatch{"b1","b2"} : ContextObserver.CustodyCheck}
 
 def a_custody_under_another_binding_is_a_mismatch():
   {==}
 
 law a_release_without_custody_names_the_missing_operand:
-  {ContextObserver.release_refusal("b1",None{}) == Some{ContextObserver.ReleaseMissingCustody{"keeper under admitted custody"}} : Maybe<&2,ContextObserver.ReleaseOutcome>}
+  {ContextObserver.release_refusal("b1","k1",None{}) == Some{ContextObserver.ReleaseMissingCustody{"keeper under admitted custody"}} : Maybe<&2,ContextObserver.ReleaseOutcome>}
 
 def a_release_without_custody_names_the_missing_operand():
   {==}
 
 law a_release_under_another_binding_names_both_bindings:
-  {ContextObserver.release_refusal("b1",Some{ContextObserver.Custody{"k1","b2","h"}}) == Some{ContextObserver.ReleaseCustodyMismatch{"b1","b2"}} : Maybe<&2,ContextObserver.ReleaseOutcome>}
+  {ContextObserver.release_refusal("b1","k1",Some{ContextObserver.Custody{"k1","b2","h"}}) == Some{ContextObserver.ReleaseCustodyMismatch{"b1","b2"}} : Maybe<&2,ContextObserver.ReleaseOutcome>}
 
 def a_release_under_another_binding_names_both_bindings():
   {==}
 
 law a_release_with_matching_custody_has_no_refusal:
-  {ContextObserver.release_refusal("b1",Some{ContextObserver.Custody{"k1","b1","h"}}) == None{} : Maybe<&2,ContextObserver.ReleaseOutcome>}
+  {ContextObserver.release_refusal("b1","k1",Some{ContextObserver.Custody{"k1","b1","h"}}) == None{} : Maybe<&2,ContextObserver.ReleaseOutcome>}
 
 def a_release_with_matching_custody_has_no_refusal():
   {==}
@@ -1154,4 +1154,52 @@ law a_rendered_failure_document_is_present:
   {ContextObserver.failure_schema("{\"code\":2}") == Some{"{\"code\":2}"} : Maybe<&2,String>}
 
 def a_rendered_failure_document_is_present():
+  {==}
+
+law a_retained_rejected_admission_is_not_admitted:
+  {ContextService.submission_of("root","{\"v\":1}",ContextAdmit.AdmissionRetained{"root","{\"v\":1}","rejected","refused","","/k","/w","/a"}) == ContextService.SubmissionRetainedRejected{"rejected","refused","root","{\"v\":1}"} : ContextService.Submission}
+
+def a_retained_rejected_admission_is_not_admitted():
+  {==}
+
+law a_retained_accepted_record_for_another_request_is_foreign:
+  {ContextService.submission_of("root","{\"v\":1}",ContextAdmit.AdmissionRetained{"root","{\"v\":2}","accepted","accepted","","/k","/w","/a"}) == ContextService.SubmissionForeign{"root","{\"v\":2}"} : ContextService.Submission}
+
+def a_retained_accepted_record_for_another_request_is_foreign():
+  {==}
+
+law a_retained_completed_record_replays_with_its_recorded_state:
+  {ContextService.submission_of("root","{\"v\":1}",ContextAdmit.AdmissionRetained{"root","{\"v\":1}","accepted","complete","","/k","/w","/a"}) == ContextService.SubmissionAdmitted{ContextAdmit.AdmissionRetained{"root","{\"v\":1}","accepted","complete","","/k","/w","/a"}} : ContextService.Submission}
+
+def a_retained_completed_record_replays_with_its_recorded_state():
+  {==}
+
+law an_admissible_intent_is_the_recorded_delivery:
+  {ContextObserver.intent_decision("present","1","pending","pending") == ContextObserver.IntentAdmissible{"pending"} : ContextObserver.ReleaseIntent}
+
+def an_admissible_intent_is_the_recorded_delivery():
+  {==}
+
+law a_different_delivery_state_is_a_stale_intent:
+  {ContextObserver.intent_decision("present","1","attempted","pending") == ContextObserver.IntentStale{"attempted","pending"} : ContextObserver.ReleaseIntent}
+
+def a_different_delivery_state_is_a_stale_intent():
+  {==}
+
+law an_absent_role_has_no_release_intent:
+  {ContextObserver.intent_decision("absent","0","","pending") == ContextObserver.IntentMissing{"role"} : ContextObserver.ReleaseIntent}
+
+def an_absent_role_has_no_release_intent():
+  {==}
+
+law a_role_without_an_intent_column_has_no_release_intent:
+  {ContextObserver.intent_decision("present","0","","pending") == ContextObserver.IntentMissing{"intent"} : ContextObserver.ReleaseIntent}
+
+def a_role_without_an_intent_column_has_no_release_intent():
+  {==}
+
+law a_custody_naming_another_keeper_is_foreign:
+  {ContextObserver.custody_check("b1","b1","k2","k1") == ContextObserver.CustodyForeignKeeper{"k2","k1"} : ContextObserver.CustodyCheck}
+
+def a_custody_naming_another_keeper_is_foreign():
   {==}

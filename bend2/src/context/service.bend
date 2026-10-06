@@ -23,6 +23,7 @@ import ../coordinator/commands.bend as C
 # stage and raw answer.
 type Submission is Data:
   SubmissionAdmitted{admission: ContextAdmit.Admission}
+  SubmissionRetainedRejected{decision: String, state: String, owner: String, request: String}
   SubmissionAbsent{}
   SubmissionForeign{owner: String, request: String}
   SubmissionRefused{code: U32, detail: String}
@@ -80,13 +81,17 @@ def retained_tabs(+query: String, +fields: List<String>, +answer: String) -> Ret
         case _: RetainedUnreadable{"short", answer}
     case _: RetainedUnreadable{"short", answer}
 
-def retained_decode(+query: String, +row: String) -> Retained:
-  match Tx.split_lines(row):
+def retained_lines(+query: String, +row: String, lines: List<String>) -> Retained:
+  match lines:
     case Nil{}: RetainedUnreadable{"empty", row}
     case +line <> +rest:
       match rest:
         case Nil{}: retained_tabs(query, Tx.split_tabs(line), row)
         case _: RetainedUnreadable{"surplus", row}
+
+# The rows are bound before they are inspected, so the scrutinee is a parameter.
+def retained_decode(+query: String, +row: String) -> Retained:
+  retained_lines(query, row, Tx.split_lines(row))
 
 def retained_after(+query: String, result: Result<&1,&1,U32 & String,String>) -> IO(Retained):
   match result:
@@ -102,13 +107,15 @@ def retained(+db: String, +binding: String, +query: String) -> IO(Retained):
     retained_after(query, result)
 
 # A retained row is admitted only when its owner and request are the caller's own.
-def submission_retained(+expectedOwner: String, +expectedRequest: String, admission: ContextAdmit.Admission, +owner: String, +request: String) -> Submission:
-  Bool.pick(Submission, ContextAdmit.admit_identical(admission, expectedOwner, expectedRequest), SubmissionAdmitted{admission}, SubmissionForeign{owner, request})
+def submission_retained(+expectedOwner: String, +expectedRequest: String, admission: ContextAdmit.Admission, +owner: String, +request: String, +decision: String, +state: String) -> Submission:
+  Bool.pick(Submission, String.eq(decision, "accepted"),
+    Bool.pick(Submission, ContextAdmit.admit_identical(admission, expectedOwner, expectedRequest), SubmissionAdmitted{admission}, SubmissionForeign{owner, request}),
+    SubmissionRetainedRejected{decision, state, owner, request})
 
 def submission_of(+expectedOwner: String, +expectedRequest: String, admission: ContextAdmit.Admission) -> Submission:
   match admission:
     case ContextAdmit.AdmissionCreated{owner, request, decision, state, attempt, keeperPath, cwd, artifactPath}: SubmissionAdmitted{admission}
-    case ContextAdmit.AdmissionRetained{owner, request, decision, state, attempt, keeperPath, cwd, artifactPath}: submission_retained(expectedOwner, expectedRequest, admission, owner, request)
+    case ContextAdmit.AdmissionRetained{owner, request, decision, state, attempt, keeperPath, cwd, artifactPath}: submission_retained(expectedOwner, expectedRequest, admission, owner, request, decision, state)
     case ContextAdmit.AdmissionAbsent{}: SubmissionAbsent{}
     case ContextAdmit.AdmissionUncertain{stage, answer}: SubmissionUncertain{stage, answer}
 

@@ -42,25 +42,39 @@ type ObserverStep is Data:
   ObserverUnreadable{stage: String, answer: String}
   ObserverFailed{code: U32, detail: String}
 
-# One release outcome. Claim-only and effect-completed are distinct answers, missing custody is
-# its own answer, an unavailable keeper action names the missing primitive, and a custody held
-# under a different binding answers with both bindings.
+# One release outcome. Claim-only and effect-completed are distinct answers, an effect that ran
+# but could not be recorded keeps its own outcome with the effect's observation, an
+# inadmissible retained intent is refused before any effect, missing or foreign custody answers
+# before any effect, and an unavailable keeper action names the missing primitive.
 type ReleaseOutcome is Data:
-  ReleaseEffectCompleted{effect: String, document: String}
+  ReleaseEffectCompleted{claim: String, effect: String, document: String}
+  ReleaseEffectUnpersisted{claim: String, effect: String, fate: String}
   ReleaseClaimOnly{document: String}
+  ReleaseIntentRefused{stage: String, detail: String}
   ReleaseEffectUnavailable{keeper: String, holder: String, need: String}
   ReleaseMissingCustody{need: String}
   ReleaseCustodyMismatch{binding: String, custodyBinding: String}
+  ReleaseForeignKeeper{keeper: String, expectedKeeper: String}
   ReleaseFailed{code: U32, detail: String}
   ReleaseUnreadable{stage: String, answer: String}
 
-def single_line(+row: String) -> Bool:
-  match Tx.split_lines(row):
+# The decision of one retained release intent, taken before any effect runs.
+type ReleaseIntent is Data:
+  IntentAdmissible{delivery: String}
+  IntentMissing{stage: String}
+  IntentStale{recorded: String, expected: String}
+
+def line_count_ok(lines: List<String>) -> Bool:
+  match lines:
     case Nil{}: True{}
     case +line <> +rest:
       match rest:
         case Nil{}: Bool.not(String.is_empty(line))
         case _: False{}
+
+# The rows are bound before they are inspected, so the scrutinee is a parameter.
+def single_line(+row: String) -> Bool:
+  line_count_ok(Tx.split_lines(row))
 
 def row_shaped(+answer: String) -> Bool:
   Bool.and(single_line(answer), String.starts_with(answer, "{"))
@@ -101,8 +115,61 @@ def claim_of(read: RowRead) -> ReleaseOutcome:
     case RowDocument{document}: ReleaseClaimOnly{document}
     case RowMalformed{answer}: ReleaseUnreadable{"row", answer}
 
-def custody_check(+binding: String, +custodyBinding: String) -> CustodyCheck:
-  Bool.pick(CustodyCheck, String.eq(custodyBinding, binding), CustodyAdmitted{binding}, CustodyMismatch{binding, custodyBinding})
+def custody_check(+binding: String, +custodyBinding: String, +keeper: String, +expectedKeeper: String) -> CustodyCheck:
+  Bool.pick(CustodyCheck, String.eq(custodyBinding, binding),
+    Bool.pick(CustodyCheck, String.eq(keeper, expectedKeeper), CustodyAdmitted{binding}, CustodyForeignKeeper{keeper, expectedKeeper}),
+    CustodyMismatch{binding, custodyBinding})
+
+# The retained release intent as fixed columns: presence, whether the intent column is set, and
+# the recorded delivery state.
+def intent_sql(+query: String, +role: String, +incarnation: String) -> String:
+  "SELECT CASE WHEN EXISTS(SELECT 1 FROM semantic_roles WHERE query_id=" ++ C.q(query) ++ " AND role=" ++ C.q(role) ++ " AND incarnation=" ++ C.q(incarnation) ++ ") THEN 'present' ELSE 'absent' END,"
+  ++ "CASE WHEN (SELECT release_intent_json FROM semantic_roles WHERE query_id=" ++ C.q(query) ++ " AND role=" ++ C.q(role) ++ " AND incarnation=" ++ C.q(incarnation) ++ ") IS NULL THEN '0' ELSE '1' END,"
+  ++ "coalesce((SELECT json_extract(release_intent_json,'$.delivery') FROM semantic_roles WHERE query_id=" ++ C.q(query) ++ " AND role=" ++ C.q(role) ++ " AND incarnation=" ++ C.q(incarnation) ++ "),'');"
+
+def intent_decision(+presence: String, +hasIntent: String, +recorded: String, +expected: String) -> ReleaseIntent:
+  Bool.pick(ReleaseIntent, String.eq(presence, "absent"), IntentMissing{"role"},
+  Bool.pick(ReleaseIntent, Bool.not(String.eq(hasIntent, "1")), IntentMissing{"intent"},
+  Bool.pick(ReleaseIntent, String.eq(recorded, expected), IntentAdmissible{recorded}, IntentStale{recorded, expected})))
+
+
+
+
+
+
+def intent_tabs(+expected: String, +row: String, fields: List<String>) -> ReleaseIntent:
+  match fields:
+    case +presence <> m0:
+      match m0:
+        case +hasIntent <> m1:
+          match m1:
+            case +recorded <> m2:
+              match m2:
+                case Nil{}: intent_decision(presence, hasIntent, recorded, expected)
+                case _: IntentMissing{"shape"}
+            case _: IntentMissing{"short"}
+        case _: IntentMissing{"short"}
+    case _: IntentMissing{"short"}
+def intent_fields(+expected: String, +row: String, lines: List<String>) -> ReleaseIntent:
+  match lines:
+    case Nil{}: IntentMissing{"empty"}
+    case +line <> +rest:
+      match rest:
+        case Nil{}: intent_tabs(expected, row, Tx.split_tabs(line))
+        case _: IntentMissing{"surplus"}
+def intent_decode(+expected: String, +row: String) -> ReleaseIntent:
+  intent_fields(expected, row, Tx.split_lines(row))
+def intent_after(+db: String, +binding: String, +query: String, +role: String, +incarnation: String, +expected: String, result: Result<&1,&1,U32 & String,String>) -> IO(ReleaseIntent):
+  match result:
+    case Fail{error}:
+      match error:
+        case (code, detail): IO.pure(ReleaseIntent, IntentMissing{"host:" ++ U32.show(code) ++ ":" ++ detail})
+    case Done{+rows}: IO.pure(ReleaseIntent, intent_decode(expected, rows))
+
+def intent_read(+db: String, +binding: String, +query: String, +role: String, +incarnation: String, +expected: String) -> IO(ReleaseIntent):
+  do IO<ReleaseIntent>:
+    read : Result<&1,&1,U32 & String,String> <- DB.Sql.query_bound(db, binding, intent_sql(query, role, incarnation))
+    intent_after(db, binding, query, role, incarnation, expected, read)
 
 # A rendered error document, when the caller supplied one. The empty case is its own value so
 # the commit below branches on a parameter rather than on a computed condition. This checks
@@ -150,71 +217,139 @@ def commit_event(+db: String, +binding: String, +query: String, +role: String, +
 # The database claim alone: it records the committed intent's delivery state and completes the
 # release state while the query's evaluation state stays untouched. It proves no keeper
 # release and is not a substitute for the effect.
-def claim_release(+db: String, +binding: String, +query: String, +role: String, +incarnation: String, +expectedDelivery: String, +nextJson: String) -> IO(ReleaseOutcome):
+
+
+
+
+
+
+
+
+
+
+
+def release_claim_state(+db: String, +binding: String, +query: String, +role: String, +incarnation: String, +delivery: String, result: Result<&1,&1,U32 & String,String>) -> IO(ReleaseOutcome):
+  match result:
+    case Fail{error}:
+      match error:
+        case (code, detail): IO.pure(ReleaseOutcome, ReleaseFailed{code, detail})
+    case Done{+answer}: IO.pure(ReleaseOutcome, ReleaseClaimOnly{delivery})
+
+# The completion stage: the effect already ran, so a failed or unverified completion keeps the
+# effect observation rather than losing it behind the failure.
+
+def claim_release_run(+db: String, +binding: String, +query: String, +role: String, +incarnation: String, +expectedDelivery: String, +nextJson: String, +claim: String) -> IO(ReleaseOutcome):
   do IO<ReleaseOutcome>:
     claimed : Result<&1,&1,U32 & String,String> <- DB.Sql.query_bound(db, binding, ContextRoles.release_claim_sql(query, role, incarnation, expectedDelivery, nextJson))
-    match claimed:
-      case Done{+answer}: IO.pure(ReleaseOutcome, claim_of(row_read(answer)))
-      case Fail{error}:
-        match error:
-          case (code, detail): IO.pure(ReleaseOutcome, ReleaseFailed{code, detail})
-
-
-
-
-
-
-
-
-
-
-
-def release_unavailable(+keeper: String, +holder: String, +need: String) -> ReleaseOutcome:
-  ReleaseEffectUnavailable{keeper, holder, need}
+    release_claim_state(db, binding, query, role, incarnation, claim, claimed)
 
 # One release: the committed target intent and the original keeper under admitted custody. The
 # supplied keeper action runs first; only when it answers does the database claim follow, so a
 # completed release carries the effect's own answer beside the claim's read-back. Missing
 # custody and a custody held under another binding are answered before any effect.
 
-def release_refusal_check(+binding: String, +admitted: String) -> Maybe<ReleaseOutcome>:
-  match custody_check(binding, admitted):
+def claim_release_after(+db: String, +binding: String, +query: String, +role: String, +incarnation: String, +expectedDelivery: String, +nextJson: String, read: ReleaseIntent) -> IO(ReleaseOutcome):
+  match read:
+    case IntentAdmissible{delivery}: claim_release_run(db, binding, query, role, incarnation, expectedDelivery, nextJson, delivery)
+    case IntentMissing{stage}: IO.pure(ReleaseOutcome, ReleaseIntentRefused{"missing", stage})
+    case IntentStale{recorded, expected}: IO.pure(ReleaseOutcome, ReleaseIntentRefused{"stale", recorded ++ ":" ++ expected})
+
+def claim_release(+db: String, +binding: String, +query: String, +role: String, +incarnation: String, +expectedDelivery: String, +nextJson: String) -> IO(ReleaseOutcome):
+  do IO<ReleaseOutcome>:
+    read : ReleaseIntent <- intent_read(db, binding, query, role, incarnation, expectedDelivery)
+    claim_release_after(db, binding, query, role, incarnation, expectedDelivery, nextJson, read)
+
+def release_refusal_check(+binding: String, +keeper: String, +expectedKeeper: String, +admitted: String) -> Maybe<ReleaseOutcome>:
+  match custody_check(binding, admitted, keeper, expectedKeeper):
     case CustodyMismatch{binding, custodyBinding}: Some{ReleaseCustodyMismatch{binding, custodyBinding}}
+    case CustodyForeignKeeper{keeper, expectedKeeper}: Some{ReleaseForeignKeeper{keeper, expectedKeeper}}
     case CustodyAdmitted{binding}: None{}
 
-def release_refusal(+binding: String, custody: Maybe<Custody>) -> Maybe<ReleaseOutcome>:
+def release_refusal(+binding: String, +expectedKeeper: String, custody: Maybe<Custody>) -> Maybe<ReleaseOutcome>:
   match custody:
     case None{}: Some{ReleaseMissingCustody{"keeper under admitted custody"}}
     case Some{+held}:
       match held:
-        case Custody{keeper, admitted, holder}: release_refusal_check(binding, admitted)
+        case Custody{keeper, admitted, holder}: release_refusal_check(binding, keeper, expectedKeeper, admitted)
 
 
 
-def release_claimed(+db: String, +binding: String, +query: String, +role: String, +incarnation: String, +expectedDelivery: String, +nextJson: String, +evidence: String) -> IO(ReleaseOutcome):
+
+
+def intent_refusal_text(read: ReleaseIntent) -> String:
+  match read:
+    case IntentAdmissible{delivery}: ""
+    case IntentMissing{stage}: "missing:" ++ stage
+    case IntentStale{recorded, expected}: "stale:" ++ recorded ++ ":" ++ expected
+
+def release_completed_after(+db: String, +binding: String, +query: String, +role: String, +incarnation: String, +claim: String, +effect: String, +delivery: String, read: ReleaseIntent) -> IO(ReleaseOutcome):
+  match read:
+    case IntentAdmissible{recorded}: IO.pure(ReleaseOutcome, ReleaseEffectCompleted{claim, effect, document: recorded})
+    case IntentMissing{stage}: IO.pure(ReleaseOutcome, ReleaseEffectUnpersisted{claim, effect, "completion:missing:" ++ stage})
+    case IntentStale{recorded, expected}: IO.pure(ReleaseOutcome, ReleaseEffectUnpersisted{claim, effect, "completion:stale:" ++ recorded ++ ":" ++ expected})
+
+def release_completion(+db: String, +binding: String, +query: String, +role: String, +incarnation: String, +expectedDelivery: String, +completionDelivery: String, +completionJson: String, +claim: String, +effect: String) -> IO(ReleaseOutcome):
   do IO<ReleaseOutcome>:
-    claimed : Result<&1,&1,U32 & String,String> <- DB.Sql.query_bound(db, binding, ContextRoles.release_claim_sql(query, role, incarnation, expectedDelivery, nextJson))
-    IO.pure(ReleaseOutcome, release_row(evidence, claimed))
+    written : Result<&1,&1,U32 & String,String> <- DB.Sql.query_bound(db, binding, ContextRoles.release_claim_sql(query, role, incarnation, expectedDelivery, completionJson))
+    match written:
+      case Fail{error}:
+        match error:
+          case (code, detail): IO.pure(ReleaseOutcome, ReleaseEffectUnpersisted{claim, effect, U32.show(code) ++ ":" ++ detail})
+      case Done{+answer}:
+        read : ReleaseIntent <- intent_read(db, binding, query, role, incarnation, completionDelivery)
+        release_completed_after(db, binding, query, role, incarnation, claim, effect, completionDelivery, read)
 
-# The pre-effect refusal, as a pure decision so it can be law-tested: missing custody, a
-# custody held under another binding, or nothing when the effect may run.
+def release_effect_after(+db: String, +binding: String, +query: String, +role: String, +incarnation: String, +expectedDelivery: String, +completionDelivery: String, +completionJson: String, +claim: String, result: Result<&1,&1,U32 & String,String>) -> IO(ReleaseOutcome):
+  match result:
+    case Fail{error}:
+      match error:
+        case (code, detail): IO.pure(ReleaseOutcome, ReleaseFailed{code, detail})
+    case Done{+effect}: release_completion(db, binding, query, role, incarnation, expectedDelivery, completionDelivery, completionJson, claim, effect)
 
-def release_effect(+db: String, +binding: String, +query: String, +role: String, +incarnation: String, +expectedDelivery: String, +nextJson: String, action: Unit -> IO(Result<&1,&1,U32 & String,String>)) -> IO(ReleaseOutcome):
+# Stage two: the intent was claimed, so the effect may run. Its answer is kept either way.
+def release_effect_run(+db: String, +binding: String, +query: String, +role: String, +incarnation: String, +expectedDelivery: String, +completionDelivery: String, +completionJson: String, +claim: String, action: Unit -> IO(Result<&1,&1,U32 & String,String>)) -> IO(ReleaseOutcome):
   do IO<ReleaseOutcome>:
-    effected : Result<&1,&1,U32 & String,String> <- action(Unit{})
-    match effected:
+    acted : Result<&1,&1,U32 & String,String> <- action(Unit{})
+    release_effect_after(db, binding, query, role, incarnation, expectedDelivery, completionDelivery, completionJson, claim, acted)
+
+# Stage one: the retained intent decides, then the attempt claim records it. Only a recorded
+# claim lets the effect run, so a missing or stale intent can no longer reach the keeper.
+def release_claim_run(+db: String, +binding: String, +query: String, +role: String, +incarnation: String, +expectedDelivery: String, +completionDelivery: String, +completionJson: String, +claim: String, action: Unit -> IO(Result<&1,&1,U32 & String,String>)) -> IO(ReleaseOutcome):
+  do IO<ReleaseOutcome>:
+    claimed : Result<&1,&1,U32 & String,String> <- DB.Sql.query_bound(db, binding, ContextRoles.release_claim_sql(query, role, incarnation, expectedDelivery, claim))
+    match claimed:
       case Fail{error}:
         match error:
           case (code, detail): IO.pure(ReleaseOutcome, ReleaseFailed{code, detail})
-      case Done{+evidence}: release_claimed(db, binding, query, role, incarnation, expectedDelivery, nextJson, evidence)
+      case Done{+answer}: release_effect_run(db, binding, query, role, incarnation, expectedDelivery, completionDelivery, completionJson, claim, action)
 
-def release_start(+db: String, +binding: String, +query: String, +role: String, +incarnation: String, +expectedDelivery: String, +nextJson: String, action: Unit -> IO(Result<&1,&1,U32 & String,String>), refusal: Maybe<ReleaseOutcome>) -> IO(ReleaseOutcome):
+def release_claim_after(+db: String, +binding: String, +query: String, +role: String, +incarnation: String, +expectedDelivery: String, +completionDelivery: String, +completionJson: String, action: Unit -> IO(Result<&1,&1,U32 & String,String>), read: ReleaseIntent) -> IO(ReleaseOutcome):
+  match read:
+    case IntentAdmissible{delivery}: release_claim_run(db, binding, query, role, incarnation, expectedDelivery, completionDelivery, completionJson, delivery, action)
+    case IntentMissing{stage}: IO.pure(ReleaseOutcome, ReleaseIntentRefused{"missing", stage})
+    case IntentStale{recorded, expected}: IO.pure(ReleaseOutcome, ReleaseIntentRefused{"stale", recorded ++ ":" ++ expected})
+
+def release_intent_after(+db: String, +binding: String, +query: String, +role: String, +incarnation: String, +expectedDelivery: String, +completionDelivery: String, +completionJson: String, action: Unit -> IO(Result<&1,&1,U32 & String,String>), read: ReleaseIntent) -> IO(ReleaseOutcome):
+  release_claim_after(db, binding, query, role, incarnation, expectedDelivery, completionDelivery, completionJson, action, read)
+
+# The release: custody refusal first, then the retained intent, then the claim, then the effect,
+# then the completion read-back. Each stage is distinct, and the effect's observation survives a
+# later persistence failure.
+def release_intent_read(+db: String, +binding: String, +query: String, +role: String, +incarnation: String, +expectedDelivery: String, +completionDelivery: String, +completionJson: String, action: Unit -> IO(Result<&1,&1,U32 & String,String>)) -> IO(ReleaseOutcome):
+  do IO<ReleaseOutcome>:
+    read : ReleaseIntent <- intent_read(db, binding, query, role, incarnation, expectedDelivery)
+    release_intent_after(db, binding, query, role, incarnation, expectedDelivery, completionDelivery, completionJson, action, read)
+
+def release_intent_start(+db: String, +binding: String, +query: String, +role: String, +incarnation: String, +expectedDelivery: String, +completionDelivery: String, +completionJson: String, +expectedKeeper: String, action: Unit -> IO(Result<&1,&1,U32 & String,String>), refusal: Maybe<ReleaseOutcome>) -> IO(ReleaseOutcome):
   match refusal:
     case Some{+outcome}: IO.pure(ReleaseOutcome, outcome)
-    case None{}: release_effect(db, binding, query, role, incarnation, expectedDelivery, nextJson, action)
+    case None{}: release_intent_read(db, binding, query, role, incarnation, expectedDelivery, completionDelivery, completionJson, action)
 
-def release_target(+db: String, +binding: String, +query: String, +role: String, +incarnation: String, +expectedDelivery: String, +nextJson: String, action: Unit -> IO(Result<&1,&1,U32 & String,String>), custody: Maybe<Custody>) -> IO(ReleaseOutcome):
-  release_start(db, binding, query, role, incarnation, expectedDelivery, nextJson, action, release_refusal(binding, custody))
+def release_target(+db: String, +binding: String, +query: String, +role: String, +incarnation: String, +expectedDelivery: String, +completionDelivery: String, +completionJson: String, +expectedKeeper: String, action: Unit -> IO(Result<&1,&1,U32 & String,String>), custody: Maybe<Custody>) -> IO(ReleaseOutcome):
+  release_intent_start(db, binding, query, role, incarnation, expectedDelivery, completionDelivery, completionJson, expectedKeeper, action, release_refusal(binding, expectedKeeper, custody))
+
+def release_unavailable(+keeper: String, +holder: String, +need: String) -> ReleaseOutcome:
+  ReleaseEffectUnavailable{keeper, holder, need}
 
 def commit_failed_schema(+db: String, +binding: String, +query: String, +role: String, +incarnation: String, +owner: String, +expectedCursor: String, +nextCursor: String, +progressJson: String, +noticeId: String, +noticeBody: String, +captureJson: String, +exitEvidenceJson: String, +code: U32, +detail: String, schema: Maybe<String>) -> IO(ObserverStep):
   match schema:
