@@ -21,20 +21,22 @@ import ../coordinator/commands.bend as C
 # run created, a retained row whose owner and request are the caller's own, a retained row
 # that belongs to another owner or request, a read-back absence, and uncertainty with its
 # stage and raw answer.
-# The admitted plan decision Core's verdict produces, as this lane can consume it: the frozen plan and
-# the result schema identity as text, or a typed refusal carrying Core's stage, code and detail. The
-# caller maps Sel.AdmissionDecision into this value; this lane imports no Core closure and the request
-# text is never parsed here.
+# The admitted plan decision Core's verdict produces, as this lane can consume it. Every value here is
+# the caller's proposed lossless carrier and this lane neither interprets it nor treats it as a retained
+# association: the plan and schema fields are PROPOSED INPUTS, and they must not be read as the plan a
+# retained row was admitted with. The refusal carries Core's literal stage and the reason as another
+# proposed carrier, preserving its operands rather than flattening them into a code. No mapper and no
+# Core import exist in this lane, and the request text is never parsed here.
 type PlanDecision is Data:
-  PlanAdmits{plan: String, resultSchema: String}
-  PlanRefuses{stage: String, code: String, detail: String}
+  PlanAdmits{proposedPlan: String, proposedSchema: String}
+  PlanRefuses{stage: String, reason: String}
 
 # The plan and schema arrive as the caller's lossless carrier of the frozen plan, whose exact
 # representation must be agreed with Core; this lane never interprets them.
 type Submission is Data:
-  SubmissionAdmitted{admission: ContextAdmit.Admission, plan: String, resultSchema: String}
-  SubmissionRetainedUnverified{admission: ContextAdmit.Admission, plan: String, resultSchema: String}
-  SubmissionPlanRefused{stage: String, code: String, detail: String}
+  SubmissionAdmitted{admission: ContextAdmit.Admission, proposedPlan: String, proposedSchema: String}
+  SubmissionRetainedUnverified{admission: ContextAdmit.Admission, proposedPlan: String, proposedSchema: String}
+  SubmissionPlanRefused{stage: String, reason: String}
   SubmissionRetainedRejected{decision: String, state: String, owner: String, request: String}
   SubmissionAbsent{}
   SubmissionForeign{owner: String, request: String}
@@ -147,8 +149,8 @@ def admitted(+db: String, +binding: String, +id: String, +owner: String, +reques
 
 def submit(+db: String, +binding: String, +id: String, +owner: String, +requestJson: String, +keeperPath: String, +cwd: String, +originAttempt: String, +artifactPath: String, decision: PlanDecision) -> IO(Submission):
   match decision:
-    case PlanRefuses{stage, code, detail}: IO.pure(Submission, SubmissionPlanRefused{stage, code, detail})
-    case PlanAdmits{plan, resultSchema}: admitted(db, binding, id, owner, requestJson, keeperPath, cwd, originAttempt, artifactPath, plan, resultSchema)
+    case PlanRefuses{stage, reason}: IO.pure(Submission, SubmissionPlanRefused{stage, reason})
+    case PlanAdmits{proposedPlan, proposedSchema}: admitted(db, binding, id, owner, requestJson, keeperPath, cwd, originAttempt, artifactPath, proposedPlan, proposedSchema)
 
 def discover(catalog: Unit -> IO(Result<&1,&1,U32 & String,String>)) -> IO(Discovery):
   do IO<Discovery>:
