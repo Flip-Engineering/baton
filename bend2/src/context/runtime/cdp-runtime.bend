@@ -303,10 +303,10 @@ def granted(effects: List<Effect>, +want: Effect) -> Bool:
             case ControlRuntime{}: True{}
             case other: granted(t, want)
 
-def granted_control(+effects: List<Effect>) -> Bool:
+def granted_control(effects: List<Effect>) -> Bool:
   granted(effects, ControlRuntime{})
 
-def granted_evaluate(+effects: List<Effect>) -> Bool:
+def granted_evaluate(effects: List<Effect>) -> Bool:
   granted(effects, EvaluateRuntime{})
 
 # The states each public intent is admitted from.
@@ -503,7 +503,7 @@ def pause_scoped_admitted(+stop: StopLiveness, +pause_scoped: Bool) -> Bool:
 
 # An intent that needs the control-runtime grant only.
 def admit_control(
-  +effects: List<Effect>,
+  effects: List<Effect>,
   +state_ok: Bool,
   +pending: Pending,
   +serializes: Bool,
@@ -522,7 +522,7 @@ def admit_granted(+state_ok: Bool, +intent: IntentName) -> Decision:
   Bool.pick(Decision, state_ok, Admitted{}, IntentNotAdmitted{intent_name(intent)})
 
 def admit_evaluate(
-  +effects: List<Effect>,
+  effects: List<Effect>,
   +state_ok: Bool,
   +pending: Pending,
   +intent: IntentName
@@ -538,7 +538,7 @@ def admit_evaluate(
 # Release stays available to the owner during a pending evaluation. An explicit SIGKILL
 # intent cannot be overwritten by SIGTERM, and an unlisted signal refuses.
 def admit_release(
-  +effects: List<Effect>,
+  effects: List<Effect>,
   +state_ok: Bool,
   +signal: String,
   +prior_signal: String,
@@ -559,7 +559,7 @@ def admit_release(
 def admit_intent(
   record: RuntimeRecord,
   +intent: IntentName,
-  +effects: List<Effect>,
+  effects: List<Effect>,
   +signal: String,
   +prior_signal: String
 ) -> Decision:

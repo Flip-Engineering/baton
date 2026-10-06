@@ -263,7 +263,7 @@ def ref_lookup_tabs(+query: String, +refId: String, fields: List<String>, +answe
 def ref_lookup_lines(+query: String, +refId: String, +row: String, lines: List<String>) -> RefLookup:
   match lines:
     case Nil{}: RefUnreadable{"empty", row}
-    case +line <> +rest:
+    case +line <> rest:
       match rest:
         case Nil{}: ref_lookup_tabs(query, refId, Tx.split_tabs(line), row)
         case _: RefUnreadable{"surplus", row}
