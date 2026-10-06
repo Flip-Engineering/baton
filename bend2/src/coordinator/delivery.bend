@@ -187,15 +187,15 @@ def report_digit(c: Char) -> Maybe<U32>:
 
 # Exactly the declared number of characters, with the unused suffix returned so
 # the next field is read from it. A shorter row is refused.
-def report_take(count: U32, target: U32, rest: String, seen: String) -> Maybe<String & String>:
+def report_take(count: U32, target: U32, rest: String, seen: String) -> Maybe<(String, String)>:
   report_take_step(U32.is_lt(count,target), count, target, rest, seen)
 
-def report_take_step(short: Bool, count: U32, target: U32, rest: String, seen: String) -> Maybe<String & String>:
+def report_take_step(short: Bool, count: U32, target: U32, rest: String, seen: String) -> Maybe<(String, String)>:
   match short:
-    case False{}: Some{seen & rest}
+    case False{}: Some{(seen, rest)}
     case True{}: report_take_more(count, target, rest, seen)
 
-def report_take_more(count: U32, target: U32, rest: String, seen: String) -> Maybe<String & String>:
+def report_take_more(count: U32, target: U32, rest: String, seen: String) -> Maybe<(String, String)>:
   match rest:
     case SNil{}: None{}
     case SCon{c, more}: report_take((count + 1 : U32), target, more, seen ++ Tx.one_char(c))
@@ -206,23 +206,33 @@ def report_take_more(count: U32, target: U32, rest: String, seen: String) -> May
 # The bounded marker is classified first, so a missing or ineligible row reports
 # its own disposition instead of failing a framed shape only the eligible row
 # carries. The marker's trailing newline is consumed with the token.
-def report_row(+db: String, +id: String, row: String) -> IO(Result<&1,&1,U32 & String,String>):
+def report_row(+db: String, +id: String, +row: String) -> IO(Result<&1,&1,U32 & String,String>):
   report_classify(db,id,report_token(row,""),report_drop_token(row))
 
+# A missing, ineligible or unknown marker carries nothing but its own token, so the
+# row must end in exactly one host delimiter and no suffix at all.
 def report_classify(+db: String, +id: String, marker: String, rest: String) -> IO(Result<&1,&1,U32 & String,String>):
   match marker:
     case "o": report_head(db,id,rest)
-    case "i": report_failed(id,"report-ineligible","The message is not an eligible retained report; its input is retained.")
-    case "m": report_failed(id,"report-missing","No message matches this report id; its input is retained.")
-    case other: report_failed(id,"report-marker-unknown","The retained report marker is unknown; the report and its input are retained.")
+    case "i": report_bounded(id,"report-ineligible","The message is not an eligible retained report; its input is retained.",rest)
+    case "m": report_bounded(id,"report-missing","No message matches this report id; its input is retained.",rest)
+    case other: report_bounded(id,"report-marker-unknown","The retained report marker is unknown; the report and its input are retained.",rest)
 
-def report_head(+db: String, +id: String, rest: String) -> IO(Result<&1,&1,U32 & String,String>):
+def report_bounded(+id: String, +disposition: String, +detail: String, rest: String) -> IO(Result<&1,&1,U32 & String,String>):
+  report_bounded_step(id,disposition,detail,String.eq(rest,"\n"))
+
+def report_bounded_step(+id: String, +disposition: String, +detail: String, bounded: Bool) -> IO(Result<&1,&1,U32 & String,String>):
+  match bounded:
+    case True{}: report_failed(id,disposition,detail)
+    case False{}: report_failed(id,"report-framing-rejected","The retained report row does not end in exactly one host delimiter; the report and its input are retained.")
+
+def report_head(+db: String, +id: String, +rest: String) -> IO(Result<&1,&1,U32 & String,String>):
   report_head2(db,id,report_token(rest,""),report_drop_token(rest))
 
-def report_head2(+db: String, +id: String, +receipt: String, rest: String) -> IO(Result<&1,&1,U32 & String,String>):
+def report_head2(+db: String, +id: String, +receipt: String, +rest: String) -> IO(Result<&1,&1,U32 & String,String>):
   report_head3(db,id,receipt,report_token(rest,""),report_drop_token(rest))
 
-def report_head3(+db: String, +id: String, +receipt: String, +state: String, rest: String) -> IO(Result<&1,&1,U32 & String,String>):
+def report_head3(+db: String, +id: String, +receipt: String, +state: String, +rest: String) -> IO(Result<&1,&1,U32 & String,String>):
   report_length(db,id,receipt,state,report_digits(report_token(rest,""),0,False{}),report_drop_token(rest))
 
 def report_length(+db: String, +id: String, +receipt: String, +state: String, target: Maybe<U32>, rest: String) -> IO(Result<&1,&1,U32 & String,String>):
@@ -232,17 +242,17 @@ def report_length(+db: String, +id: String, +receipt: String, +state: String, ta
 
 # The producer owes exactly one separator after the recipient, so other text
 # before that newline is refused rather than skipped.
-def report_recipient(+db: String, +id: String, +receipt: String, +state: String, taken: Maybe<String & String>) -> IO(Result<&1,&1,U32 & String,String>):
+def report_recipient(+db: String, +id: String, +receipt: String, +state: String, taken: Maybe<(String, String)>) -> IO(Result<&1,&1,U32 & String,String>):
   match taken:
     case None{}: report_failed(id,"report-truncated","The retained report row is shorter than its declared recipient length; the report and its input are retained.")
-    case Some{recipient & after}: report_separator(db,id,receipt,state,recipient,after,String.starts_with(after,"\n"))
+    case Some{(recipient, after)}: report_separator(db,id,receipt,state,recipient,after,String.starts_with(after,"\n"))
 
 def report_separator(+db: String, +id: String, +receipt: String, +state: String, +recipient: String, after: String, ok: Bool) -> IO(Result<&1,&1,U32 & String,String>):
   match ok:
     case False{}: report_failed(id,"report-separator-required","The retained report row does not carry exactly one separator after the recipient; the report and its input are retained.")
     case True{}: report_argv_length(db,id,receipt,state,recipient,report_drop_token(after))
 
-def report_argv_length(+db: String, +id: String, +receipt: String, +state: String, +recipient: String, rest: String) -> IO(Result<&1,&1,U32 & String,String>):
+def report_argv_length(+db: String, +id: String, +receipt: String, +state: String, +recipient: String, +rest: String) -> IO(Result<&1,&1,U32 & String,String>):
   report_argv_value(db,id,receipt,state,recipient,report_digits(report_token(rest,""),0,False{}),report_drop_token(rest))
 
 def report_argv_value(+db: String, +id: String, +receipt: String, +state: String, +recipient: String, target: Maybe<U32>, rest: String) -> IO(Result<&1,&1,U32 & String,String>):
@@ -250,10 +260,10 @@ def report_argv_value(+db: String, +id: String, +receipt: String, +state: String
     case None{}: report_failed(id,"report-length-refused","The retained report argv length is missing, malformed or out of range; the report and its input are retained.")
     case Some{n}: report_argv_payload(db,id,receipt,state,recipient,report_take(0,n,rest,""))
 
-def report_argv_payload(+db: String, +id: String, +receipt: String, +state: String, +recipient: String, taken: Maybe<String & String>) -> IO(Result<&1,&1,U32 & String,String>):
+def report_argv_payload(+db: String, +id: String, +receipt: String, +state: String, +recipient: String, taken: Maybe<(String, String)>) -> IO(Result<&1,&1,U32 & String,String>):
   match taken:
     case None{}: report_failed(id,"report-truncated","The retained report row is shorter than its declared argv length; the report and its input are retained.")
-    case Some{payload & suffix}: report_suffix(db,id,receipt,state,recipient,payload,suffix)
+    case Some{(payload, suffix)}: report_suffix(db,id,receipt,state,recipient,payload,suffix)
 
 def report_suffix(+db: String, +id: String, +receipt: String, +state: String, +recipient: String, +payload: String, suffix: String) -> IO(Result<&1,&1,U32 & String,String>):
   report_suffix_step(db,id,receipt,state,recipient,payload,String.eq(suffix,"\n"))
@@ -296,13 +306,6 @@ def report_receipt(+db: String, +id: String, +recipient: String, receipt: String
     case "a": IO.pure(Result<&1,&1,U32 & String,String>,Done{report_envelope(id,id,recipient,"already-acknowledged",False{},"","The retained report already has a receipt; no endpoint was invoked.")})
     case "p": report_endpoint(db,id,recipient,state,payload)
     case other: report_selected_failed(id,recipient,"report-state-unknown","The retained report state is unknown; the report and its input are retained.")
-
-def report_marker(+db: String, +id: String, marker: String, +receipt: String, +state: String, +recipient: String, +payload: String) -> IO(Result<&1,&1,U32 & String,String>):
-  match marker:
-    case "o": report_receipt(db,id,recipient,receipt,state,payload)
-    case "i": report_failed(id,"report-ineligible","The message is not an eligible retained report; its input is retained.")
-    case "m": report_failed(id,"report-missing","No message matches this report id; its input is retained.")
-    case other: report_failed(id,"report-marker-unknown","The retained report marker is unknown; the report and its input are retained.")
 
 def report_queried(+db: String, +id: String, selected: Result<&1,&1,U32 & String,String>) -> IO(Result<&1,&1,U32 & String,String>):
   match selected:

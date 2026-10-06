@@ -527,23 +527,64 @@ def retained_report_is_delivered_by_its_own_id(db,parent,id):
 # The strict report delivery keeps a missing message, an ineligible message, an
 # already-acknowledged report, an absent or malformed endpoint, an observed zero
 # exit and a failed launch as distinct results, and always carries the requested
-# and selected identities.
-law missing_row_is_not_an_invocation:
+# and selected identities. The framing laws bind the whole row, not a supplied
+# marker, so a truncated or suffixed marker row cannot pass.
+law missing_row_requires_its_own_frame:
   for db: String
   for id: String
-  for rest: String
-  {Delivery.report_classify(db,id,"m",rest) == Delivery.report_failed(id,"report-missing","No message matches this report id; its input is retained.") : IO(Result<&1,&1,U32 & String,String>)}
+  {Delivery.report_row(db,id,"m\n") == Delivery.report_failed(id,"report-missing","No message matches this report id; its input is retained.") : IO(Result<&1,&1,U32 & String,String>)}
 
-def missing_row_is_not_an_invocation(db,id,rest):
+def missing_row_requires_its_own_frame(db,id):
   {==}
 
-law ineligible_row_is_not_an_invocation:
+law ineligible_row_requires_its_own_frame:
   for db: String
   for id: String
-  for rest: String
-  {Delivery.report_classify(db,id,"i",rest) == Delivery.report_failed(id,"report-ineligible","The message is not an eligible retained report; its input is retained.") : IO(Result<&1,&1,U32 & String,String>)}
+  {Delivery.report_row(db,id,"i\n") == Delivery.report_failed(id,"report-ineligible","The message is not an eligible retained report; its input is retained.") : IO(Result<&1,&1,U32 & String,String>)}
 
-def ineligible_row_is_not_an_invocation(db,id,rest):
+def ineligible_row_requires_its_own_frame(db,id):
+  {==}
+
+law marker_row_without_its_delimiter_is_rejected:
+  for db: String
+  for id: String
+  {Delivery.report_row(db,id,"m") == Delivery.report_failed(id,"report-framing-rejected","The retained report row does not end in exactly one host delimiter; the report and its input are retained.") : IO(Result<&1,&1,U32 & String,String>)}
+
+def marker_row_without_its_delimiter_is_rejected(db,id):
+  {==}
+
+law marker_row_with_a_suffix_is_rejected:
+  for db: String
+  for id: String
+  {Delivery.report_row(db,id,"m\njunk") == Delivery.report_failed(id,"report-framing-rejected","The retained report row does not end in exactly one host delimiter; the report and its input are retained.") : IO(Result<&1,&1,U32 & String,String>)}
+
+def marker_row_with_a_suffix_is_rejected(db,id):
+  {==}
+
+law eligible_frame_decodes_to_its_fields:
+  for db: String
+  for id: String
+  for payload: String
+  {Delivery.report_row(db,id,"o\np\na\n4\nroot\n13\n" ++ payload ++ "\n") == Delivery.report_receipt(db,id,"root","p","a",payload) : IO(Result<&1,&1,U32 & String,String>)}
+
+def eligible_frame_decodes_to_its_fields(db,id,payload):
+  {==}
+
+law eligible_frame_with_a_short_payload_is_rejected:
+  for db: String
+  for id: String
+  {Delivery.report_row(db,id,"o\np\na\n4\nroot\n13\nshort\n") == Delivery.report_failed(id,"report-truncated","The retained report row is shorter than its declared argv length; the report and its input are retained.") : IO(Result<&1,&1,U32 & String,String>)}
+
+def eligible_frame_with_a_short_payload_is_rejected(db,id):
+  {==}
+
+law eligible_frame_without_its_delimiter_is_rejected:
+  for db: String
+  for id: String
+  for payload: String
+  {Delivery.report_row(db,id,"o\np\na\n4\nroot\n13\n" ++ payload) == Delivery.report_failed(id,"report-framing-rejected","The retained report row does not end in exactly one host delimiter; the report and its input are retained.") : IO(Result<&1,&1,U32 & String,String>)}
+
+def eligible_frame_without_its_delimiter_is_rejected(db,id,payload):
   {==}
 
 law acknowledged_report_is_not_an_invocation:
