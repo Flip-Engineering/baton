@@ -35,6 +35,7 @@ def obj_members(+j: J.Json) -> J.Json:
     case J.Jint{+value}: J.Jnil{}
     case J.Jstr{+value}: J.Jnil{}
     case J.Jarr{+head, +tail}: J.Jnil{}
+    case J.Jpair{key, value, rest}: J.Jnil{}
     case J.Jnil{}: J.Jnil{}
 
 def or_nil(m: Maybe<&2, J.Json>) -> J.Json:
@@ -95,6 +96,7 @@ def join_projections(+j: J.Json, first: Bool, +acc: String) -> String:
   match j:
     case J.Jarr{+head, +tail}:
       join_projections(tail, False{}, acc ++ Bool.pick(String, first, SNil{}, ",") ++ Req.text_of(head))
+    case J.Jpair{key, value, rest}: acc
     case J.Jnil{}: acc
     case J.Jnull{}: acc
     case J.Jtrue{}: acc
@@ -107,6 +109,7 @@ def selected_name(+j: J.Json, +name: String) -> Bool:
   match j:
     case J.Jarr{+head, +tail}:
       Bool.pick(Bool, String.eq(Req.text_of(head), name), True{}, selected_name(tail, name))
+    case J.Jpair{key, value, rest}: False{}
     case J.Jnil{}: False{}
     case J.Jnull{}: False{}
     case J.Jtrue{}: False{}
