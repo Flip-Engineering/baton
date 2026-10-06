@@ -187,8 +187,15 @@ or writes. Its behaviour:
   marker must be the content digest of the supplied bytes, and the path must be present and equal to
   the canonical identity in hand; a link descriptor, a directory or a configuration record is refused
   as source input rather than being read as bytes, and an absence record must name the input it is an
-  absence of. The producer fields are retained as the record's claimed association, never as
-  authority.
+  absence of. The producer fields are retained as the record's claimed association, never as authority.
+
+Dependency evidence binds through the producing step: the admitted plan's edge transfer carries that
+step's binding, effects and result schema, and a dependency output that used the primary binding would
+name a different producer. The plan identity renders the primary binding, the common text, the steps
+and the effective effects, so it is comparison material for a caller that already holds the admitted
+retained plan; it authenticates nobody and replaces no retained input association. The trusted reader
+that yields exact bytes for a captured identity belongs to the retained acquisition and custody service
+under Lifecycle and Interfaces, which Core does not own and this component does not provide.
 
 Derive a hooked copy (remote, exact Root admission):
 
