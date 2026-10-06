@@ -79,8 +79,8 @@
  {
   "name": "codec-u32-bound-dropped-from-the-statement",
   "file": "bend2/src/context/request.bend",
-  "find": "AND CAST(t -> r.fullkey AS TEXT)<='4294967295'",
-  "replace": "AND CAST(t -> r.fullkey AS TEXT)>='0'",
+  "find": "  ++ \" AS TEXT)<='4294967295'))))))) FROM raw;\"",
+  "replace": "  ++ \" AS TEXT)<='0'))))))) FROM raw;\"",
   "law": "request_law_the_u32_check_states_the_upper_bound"
  },
  {
