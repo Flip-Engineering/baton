@@ -266,14 +266,18 @@ source-level statement and not a measured one.
 
 Remaining, and precisely what is unconnected:
 
-- the trusted custody reader that yields the exact accepted bytes for a captured identity. Its owner is
-  the retained acquisition service under Lifecycle and Interfaces, not this component and not Core,
-  which authenticates no bytes. Until it exists, a caller that already holds the exact bytes uses the
-  capture closure directly; the wire-record path refuses with the operand named instead of inferring
-  custody. The callable this consumer needs is a synchronous, immutable, per-invocation answer set:
-  existence and canonical identity for a requested name, the exact bytes for that identity, and the
-  producing binding (`module_id`, `declaration_digest`, `operation`) of the admitted capture, with no
-  host fallback and one canonical identity per requested name.
+- the trusted reader that yields the exact accepted bytes for a captured identity. Its owner is the
+  capture set, not this component, not Core and not the admission lane: the Lifecycle/Interfaces lane
+  answered that its own state is the admission, association and lifecycle store keyed by a query id,
+  that it holds no capture-name index and no captured payload store, and that reading bytes out of the
+  plan carrier's captured records would present a claimed association as custody, which it declines to
+  author. The callable this consumer needs is a synchronous, immutable, per-invocation answer set:
+  existence and canonical identity for a requested name, the exact bytes for that identity, and no host
+  fallback, with one canonical identity per requested name. The base identity of `base.bend` is a
+  separate operand on the interfaces and coordinator side, and the producing binding of a capture comes
+  from the admitted plan through Core's step-edge transfer, not from any of these stores. Until the
+  capture-set owner exists, a caller that already holds the exact bytes uses the capture closure
+  directly, and the wire-record path refuses with the operand named.
 - the native invocation entry and the publication decision. The selected-step and wire exports are
   supplied and consumed here, but the admitted native invocation entry, its export identity and the
   decision to publish a result belong to the caller that owns invocation and publication. A source
