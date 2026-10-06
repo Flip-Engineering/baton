@@ -2313,6 +2313,27 @@ law codec_law_an_accepted_decision_returns_a_success_document:
 def codec_law_an_accepted_decision_returns_a_success_document():
   {==}
 
+# The same export's decision path over real transported rows: the query fixture's rows
+# decode, walk and decide into the success variant, so the positive branch is exercised
+# through the transported row fixtures rather than only by a hand-built envelope.
+law codec_law_a_transported_query_frame_returns_a_success_document_from_rows:
+  {decision_document(frame_decision(frame_envelope(query_frame_rows()))) == DocOk{frame_text(frame_decision(frame_envelope(query_frame_rows())))} : Document}
+
+def codec_law_a_transported_query_frame_returns_a_success_document_from_rows():
+  {==}
+
+law codec_law_an_empty_observation_is_malformed_transport:
+  {finish_validation("{}", "") == IpRefused{"{\"command\":\"context-request-codec\",\"condition\":\"malformedValidationObservation\",\"error\":\"validationRefusal\",\"next\":[]}"} : InputPlan}
+
+def codec_law_an_empty_observation_is_malformed_transport():
+  {==}
+
+law codec_law_a_padded_observation_is_malformed_transport:
+  {finish_validation("{}", "1\nx") == IpRefused{"{\"command\":\"context-request-codec\",\"condition\":\"malformedValidationObservation\",\"error\":\"validationRefusal\",\"next\":[]}"} : InputPlan}
+
+def codec_law_a_padded_observation_is_malformed_transport():
+  {==}
+
 law codec_law_a_public_mcp_name_maps_to_its_native_tool_name:
   {tool_input_name("baton2_context_result") == "context-result" : String}
 
