@@ -1038,6 +1038,7 @@ def arguments_words(+tool: String) -> Req.Words:
   match tool:
     case "context-query": Req.words_from(["query", "request"])
     case "context-result": Req.words_from(["query"])
+    case "context-engines": Req.words_from(["scope"])
     case other: Req.words_from(Nil{})
 
 def arguments_required(+tool: String, members: RawValue) -> Bool:
@@ -1046,8 +1047,27 @@ def arguments_required(+tool: String, members: RawValue) -> Bool:
     case "context-result": raw_member_present("query", members)
     case other: True{}
 
+# The scope member is the only admitted engines argument and it carries no identity: it
+# is exactly the string session, and any other value or type refuses.
+def scope_value_ok(+members: RawValue) -> Bool:
+  match raw_member("scope", members):
+    case None{}: True{}
+    case Some{value}: String.eq(raw_text_of(value), "session")
+
+def arguments_values_ok(+tool: String, members: RawValue) -> Bool:
+  Bool.pick(Bool, String.eq(tool, "context-engines"), scope_value_ok(members), True{})
+
 def arguments_closed_for(+tool: String, members: RawValue) -> Bool:
-  Bool.pick(Bool, raw_keys_ok(arguments_words(tool), members), arguments_required(tool, members), False{})
+  Bool.pick(Bool, raw_keys_ok(arguments_words(tool), members),
+    Bool.pick(Bool, arguments_required(tool, members), arguments_values_ok(tool, members), False{}), False{})
+
+# The scope the success document reports: the validated session scope of a scoped
+# engines frame, and absent otherwise.
+def scope_member_present(+members: RawValue) -> Bool:
+  Bool.pick(Bool, raw_member_present("scope", members), scope_value_ok(members), False{})
+
+def scope_of(+members: RawValue) -> Context.OptText:
+  Bool.pick(Context.OptText, scope_member_present(members), Context.Present{"session"}, Context.Absent{})
 
 # --- the request container conversion --------------------------------------
 
@@ -2281,6 +2301,24 @@ law codec_law_a_bom_answer_returns_its_complete_document:
   {plan_of_read(Raw.RawBom{}) == IpRefused{"{\"command\":\"context-request-codec\",\"condition\":\"bom\",\"error\":\"validationRefusal\",\"next\":[]}"} : InputPlan}
 
 def codec_law_a_bom_answer_returns_its_complete_document():
+  {==}
+
+law codec_law_the_engines_arguments_admit_the_session_scope:
+  {arguments_closed_for("context-engines", Rpair{"scope", Rstr{"session"}, Rnil{}}) == True{} : Bool}
+
+def codec_law_the_engines_arguments_admit_the_session_scope():
+  {==}
+
+law codec_law_a_scope_member_with_any_other_value_refuses:
+  {arguments_values_ok("context-engines", Rpair{"scope", Rstr{"player-7"}, Rnil{}}) == False{} : Bool}
+
+def codec_law_a_scope_member_with_any_other_value_refuses():
+  {==}
+
+law codec_law_the_scope_of_a_session_scoped_frame_is_the_session_value:
+  {scope_of(Rpair{"scope", Rstr{"session"}, Rnil{}}) == Context.Present{"session"} : Context.OptText}
+
+def codec_law_the_scope_of_a_session_scoped_frame_is_the_session_value():
   {==}
 
 law codec_law_a_decoded_text_body_plans_the_validity_statement:
