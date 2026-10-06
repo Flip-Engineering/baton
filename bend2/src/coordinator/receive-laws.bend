@@ -138,19 +138,15 @@ law receive_status_returns_output_failure:
 def receive_status_returns_output_failure(db,session,status):
   {==}
 
-# A busy session reports queued for every launch argument and continuation.
+# A busy session reports queued without consulting the admission operation.
 law busy_receive_only_reports_queued:
   for +db: String
   for +session: String
-  for cmd: String
-  for model: String
-  for effort: String
-  for cwd: String
-  for log: String
   for again: Unit -> IO(Result<&1,&1,U32 & String,Unit>)
-  {Receive.acquired(db,session,cmd,model,effort,cwd,log,None{},again) == Receive.receive_status(db,session,"queued") : IO(Result<&1,&1,U32 & String,Unit>)}
+  for fresh: @+lock: U32 -> IO(Result<&1,&1,U32 & String,Unit>)
+  {Receive.acquired(db,session,None{},again,fresh) == Receive.receive_status(db,session,"queued") : IO(Result<&1,&1,U32 & String,Unit>)}
 
-def busy_receive_only_reports_queued(db,session,cmd,model,effort,cwd,log,again):
+def busy_receive_only_reports_queued(db,session,again,fresh):
   {==}
 
 # The recovery attachment boundary opens the supplied attempt directory and
@@ -364,55 +360,62 @@ def m17_recovery_input_is_one_guarded_transaction(db,session,id,native,note):
 law acquired_native_owner_resolves_recorded_attempt:
   for db: String
   for session: String
-  for cmd: String
-  for model: String
-  for effort: String
-  for cwd: String
-  for log: String
   for lock: U32
   for again: Unit -> IO(Result<&1,&1,U32 & String,Unit>)
-  {Receive.acquired(db,session,cmd,model,effort,cwd,log,Some{lock},again) == Receive.acquired_recorded(db,session,cmd,model,effort,cwd,log,lock,again) : IO(Result<&1,&1,U32 & String,Unit>)}
+  for fresh: @+lock: U32 -> IO(Result<&1,&1,U32 & String,Unit>)
+  {Receive.acquired(db,session,Some{lock},again,fresh) == Receive.acquired_recorded(db,session,lock,again,fresh) : IO(Result<&1,&1,U32 & String,Unit>)}
 
-def acquired_native_owner_resolves_recorded_attempt(db,session,cmd,model,effort,cwd,log,lock,again):
+def acquired_native_owner_resolves_recorded_attempt(db,session,lock,again,fresh):
   {==}
 
-def recorded_attempt_before_pending(+db: String, +session: String, cmd: String, model: String, effort: String, cwd: String, log: String, +lock: U32, again: Unit -> IO(Result<&1,&1,U32 & String,Unit>)) -> IO(Result<&1,&1,U32 & String,Unit>):
+def recorded_attempt_before_pending(+db: String, +session: String, +lock: U32, again: Unit -> IO(Result<&1,&1,U32 & String,Unit>), fresh: @+lock: U32 -> IO(Result<&1,&1,U32 & String,Unit>)) -> IO(Result<&1,&1,U32 & String,Unit>):
   do IO<Result<&1,&1,U32 & String,Unit>>:
     +directory : String <- IO.try(String,DB.Sql.query(db,"SELECT coalesce((SELECT directory FROM executions WHERE session=" ++ C.q(session) ++ " AND mode='retained'),'');"))
     +attempt : String <- IO.pure(String,Tx.trim_nl(directory))
     recovery : Maybe<String> <- IO.try(Maybe<String>,P.ProcessChild.recovery_argv(attempt))
-    Receive.acquired_attempt(db,session,cmd,model,effort,cwd,log,lock,attempt,recovery,again)
+    Receive.acquired_attempt(db,session,lock,attempt,recovery,again,fresh)
 
 law native_admission_reads_current_attempt_before_pending_input:
   for +db: String
   for +session: String
-  for cmd: String
-  for model: String
-  for effort: String
-  for cwd: String
-  for log: String
   for +lock: U32
   for -again: Unit -> IO(Result<&1,&1,U32 & String,Unit>)
-  {Receive.acquired_recorded(db,session,cmd,model,effort,cwd,log,lock,again) == recorded_attempt_before_pending(db,session,cmd,model,effort,cwd,log,lock,again) : IO(Result<&1,&1,U32 & String,Unit>)}
+  for -fresh: @+lock: U32 -> IO(Result<&1,&1,U32 & String,Unit>)
+  {Receive.acquired_recorded(db,session,lock,again,fresh) == recorded_attempt_before_pending(db,session,lock,again,fresh) : IO(Result<&1,&1,U32 & String,Unit>)}
 
-def native_admission_reads_current_attempt_before_pending_input(db,session,cmd,model,effort,cwd,log,lock,again):
+def native_admission_reads_current_attempt_before_pending_input(db,session,lock,again,fresh):
   {==}
 
+# A retained attempt reaches recovery with its saved arguments; the supplied
+# fresh admission operation is never evaluated on this branch.
 law surviving_attempt_recovery_preserves_its_guard:
   for db: String
   for session: String
-  for cmd: String
-  for model: String
-  for effort: String
-  for cwd: String
-  for log: String
   for lock: U32
   for directory: String
   for args: String
   for again: Unit -> IO(Result<&1,&1,U32 & String,Unit>)
-  {Receive.acquired_attempt(db,session,cmd,model,effort,cwd,log,lock,directory,Some{args},again) == Receive.recover_owned(db,session,directory,lock,String.split(args,Char.from_u32(0)),again) : IO(Result<&1,&1,U32 & String,Unit>)}
+  for fresh: @+lock: U32 -> IO(Result<&1,&1,U32 & String,Unit>)
+  {Receive.acquired_attempt(db,session,lock,directory,Some{args},again,fresh) == Receive.recover_owned(db,session,directory,lock,String.split(args,Char.from_u32(0)),again) : IO(Result<&1,&1,U32 & String,Unit>)}
 
-def surviving_attempt_recovery_preserves_its_guard(db,session,cmd,model,effort,cwd,log,lock,directory,args,again):
+def surviving_attempt_recovery_preserves_its_guard(db,session,lock,directory,args,again,fresh):
+  {==}
+
+# Without a recorded attempt the guard's lock goes to the supplied fresh
+# admission operation.
+def fresh_only_admission(held: U32, fresh: @+lock: U32 -> IO(Result<&1,&1,U32 & String,Unit>)) -> IO(Result<&1,&1,U32 & String,Unit>):
+  fresh(held)
+
+law absent_attempt_runs_the_supplied_fresh_admission:
+  for db: String
+  for session: String
+  for +lock: U32
+  for directory: String
+  for again: Unit -> IO(Result<&1,&1,U32 & String,Unit>)
+  for -fresh: @+lock: U32 -> IO(Result<&1,&1,U32 & String,Unit>)
+  {Receive.acquired_attempt(db,session,lock,directory,None{},again,fresh) == fresh_only_admission(lock,fresh) : IO(Result<&1,&1,U32 & String,Unit>)}
+
+def absent_attempt_runs_the_supplied_fresh_admission(db,session,lock,directory,again,fresh):
   {==}
 
 def completion_prepares_before_owner_release(+db: String, +session: String, +id: String, +log: String, stderr: String, cursor: String, +handle: U32, lock: Maybe<U32>, +outcome: Turn.Outcome, deliveries: List<Chan(Result<&1,&1,U32 & String,String>)>, again: Unit -> IO(Result<&1,&1,U32 & String,Unit>)) -> IO(Result<&1,&1,U32 & String,Unit>):
