@@ -11,6 +11,7 @@
 # Reference expansion is not restated here: ContextStore.ref_lookup is the typed ref access of
 # this service, with its own staged answers and its own host failure.
 import Base
+import ./text.bend as ContextText
 import ./bound-admission.bend as ContextAdmit
 import ./store.bend as ContextStore
 import ../host/sqlite.bend as DB
@@ -124,7 +125,7 @@ def retained_lines(+query: String, +row: String, lines: List<String>) -> Retaine
     case Nil{}: RetainedUnreadable{"empty", row}
     case +line <> rest:
       match rest:
-        case Nil{}: retained_tabs(query, Tx.split_tabs(line), row)
+        case Nil{}: retained_tabs(query, ContextText.split_tabs(line), row)
         case _: RetainedUnreadable{"surplus", row}
 
 # The rows are bound before they are inspected, so the scrutinee is a parameter.

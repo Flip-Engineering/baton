@@ -11,6 +11,7 @@
 # records the intent's delivery state and proves no keeper release. A caller that has no
 # keeper action answers with release_unavailable, naming the missing primitive.
 import Base
+import ./text.bend as ContextText
 import ./roles.bend as ContextRoles
 import ./store.bend as ContextStore
 import ../host/sqlite.bend as DB
@@ -170,7 +171,7 @@ def receipt_lines(+query: String, +role: String, +incarnation: String, +cursor: 
     case Nil{}: ReceiptMalformed{"empty", answer}
     case +line <> rest:
       match rest:
-        case Nil{}: receipt_identity(query, role, incarnation, cursor, answer, Tx.split_tabs(line))
+        case Nil{}: receipt_identity(query, role, incarnation, cursor, answer, ContextText.split_tabs(line))
         case _: ReceiptMalformed{"surplus", answer}
 
 def receipt_decode(+query: String, +role: String, +incarnation: String, +cursor: String, +answer: String) -> ReceiptRead:
@@ -316,7 +317,7 @@ def intent_fields(+expected: String, +row: String, lines: List<String>) -> Relea
     case Nil{}: IntentUnreadable{"empty", row}
     case +line <> rest:
       match rest:
-        case Nil{}: intent_tabs(expected, row, Tx.split_tabs(line))
+        case Nil{}: intent_tabs(expected, row, ContextText.split_tabs(line))
         case _: IntentUnreadable{"surplus", row}
 
 def intent_decode(+expected: String, +row: String) -> ReleaseIntent:

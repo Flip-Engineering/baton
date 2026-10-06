@@ -551,9 +551,40 @@ def coordinates_ok(kind: Context.SubjectKind, +members: J.Json) -> Bool:
     case Context.SkDiagnostic{}: coordinate_fields_ok(members)
     case other: True{}
 
+def runtime_required_words(intent: String) -> Words:
+  match intent:
+    case "launch": words_from(["kind", "intent", "program", "args", "env", "onOwnerStop"])
+    case "observe": words_from(["kind", "intent", "session"])
+    case "pause": words_from(["kind", "intent", "session"])
+    case "resume-step": words_from(["kind", "intent", "session", "action"])
+    case "evaluate": words_from(["kind", "intent", "session", "expression"])
+    case "release": words_from(["kind", "intent", "session", "onRelease", "signal"])
+    case other: words_from(["invalidRuntimeIntent"])
+
+def or_subject_intent(value: Maybe<&2, J.Json>) -> J.Json:
+  match value:
+    case None{}: J.Jnull{}
+    case Some{value}: value
+
+def subject_required_words(kind: Context.SubjectKind, members: J.Json) -> Words:
+  match kind:
+    case Context.SkPosition{}: words_from(["kind", "path", "line", "column"])
+    case Context.SkSymbol{}: words_from(["kind", "path", "name"])
+    case Context.SkDiagnostic{}: words_from(["kind", "path", "line", "column", "code"])
+    case Context.SkEntity{}: words_from(["kind", "database"])
+    case Context.SkModel{}: words_from(["kind", "module", "export", "sample"])
+    case Context.SkSchema{}: words_from(["kind", "path", "sample"])
+    case Context.SkSecurity{}: words_from(["kind", "declaration", "requirementId"])
+    case Context.SkMigration{}: words_from(["kind", "database", "chain", "applied"])
+    case Context.SkProgram{}: words_from(["kind", "path"])
+    case Context.SkDataset{}: words_from(["kind", "path", "pointer"])
+    case Context.SkRuntime{}: runtime_required_words(text_of(or_subject_intent(member_lookup("intent", members))))
+    case Context.SkQueryControl{}: words_from(["kind", "query", "intent"])
+    case Context.SkRef{}: words_from(["kind", "query", "id"])
+
 def subject_shape_ok(+kind: Context.SubjectKind, +members: J.Json) -> Bool:
   Bool.pick(Bool, keys_allowed(subject_words(kind), members),
-    Bool.pick(Bool, all_present(subject_words(kind), members), coordinates_ok(kind, members), False{}), False{})
+    Bool.pick(Bool, all_present(subject_required_words(kind, members), members), coordinates_ok(kind, members), False{}), False{})
 
 def kind_shape(kind: Maybe<&2, Context.SubjectKind>, members: J.Json) -> Bool:
   match kind:

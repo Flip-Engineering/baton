@@ -9,6 +9,7 @@
 # coordinator's own tables. JSON documents arrive as canonical text and are stored
 # verbatim, so the stored request body is compared exactly on replay.
 import Base
+import ./text.bend as ContextText
 import ../coordinator/commands.bend as C
 import ../git/text.bend as Tx
 import ./request.bend as Request
@@ -265,7 +266,7 @@ def ref_lookup_lines(+query: String, +refId: String, +row: String, lines: List<S
     case Nil{}: RefUnreadable{"empty", row}
     case +line <> rest:
       match rest:
-        case Nil{}: ref_lookup_tabs(query, refId, Tx.split_tabs(line), row)
+        case Nil{}: ref_lookup_tabs(query, refId, ContextText.split_tabs(line), row)
         case _: RefUnreadable{"surplus", row}
 
 def ref_lookup_decode(+query: String, +refId: String, +row: String) -> RefLookup:

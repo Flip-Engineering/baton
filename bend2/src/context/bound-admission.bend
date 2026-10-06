@@ -13,6 +13,7 @@
 # as absent. Missing, malformed and unknown therefore stay distinct from a committed
 # grant, and a failed bound call stays a failure rather than an absence.
 import Base
+import ./text.bend as ContextText
 import ../coordinator/commands.bend as C
 import ../host/sqlite.bend as DB
 import ../git/text.bend as Tx
@@ -84,7 +85,7 @@ def association_decode_lines(lines: List<String>, +answer: String) -> Associatio
     case Nil{}: AssociationMalformed{"empty", answer}
     case +line <> rest:
       match rest:
-        case Nil{}: association_fields(Tx.split_tabs(line), answer)
+        case Nil{}: association_fields(ContextText.split_tabs(line), answer)
         case _: AssociationMalformed{"surplus", answer}
 
 def association_decode(+row: String) -> Association:
@@ -225,7 +226,7 @@ def admit_line(fields: List<String>, rest: List<String>, +answer: String) -> Adm
 def admit_decode_lines(lines: List<String>, +answer: String) -> Admission:
   match lines:
     case Nil{}: AdmissionUncertain{"empty", answer}
-    case +line <> rest: admit_line(Tx.split_tabs(line), rest, answer)
+    case +line <> rest: admit_line(ContextText.split_tabs(line), rest, answer)
 
 # The raw row is parsed once here into the lines the decoder consumes, so a caller that
 # already holds the lines decodes them directly.

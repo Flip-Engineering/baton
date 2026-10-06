@@ -10,6 +10,7 @@
 # tell an empty enumeration from an unreadable one. The enumeration is a bound read:
 # a failed or unreadable answer is an error, never a settled state.
 import Base
+import ./text.bend as ContextText
 import ../coordinator/commands.bend as C
 import ../host/sqlite.bend as DB
 import ../git/text.bend as Tx
@@ -120,7 +121,7 @@ def duty_line_record(parsed: Maybe<&2, DutyRecord>) -> Maybe<&2, DutyRecord>:
     case Some{record}: duty_checked(record)
 
 def duty_line(+line: String) -> Maybe<&2, DutyRecord>:
-  duty_line_record(duty_fields(Tx.split_tabs(line)))
+  duty_line_record(duty_fields(ContextText.split_tabs(line)))
 
 # Every line of the answer must be a known record; a single unreadable line makes the
 # enumeration unusable rather than quietly shorter.

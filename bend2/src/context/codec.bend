@@ -454,8 +454,7 @@ def dispatch_profile(v: Req.Verdict, +chain: OpChain, +grants: Context.Effects) 
     case Req.VRefused{condition}: ARefused{Context.RfValidation{}, condition}
 
 # `Req.request_validate` is the callable form: request.bend declares the
-# spec-named functions with their `Context.` prefix, so a caller reaches them
-# through the module alias as well.
+# public profile through the request module alias.
 def dispatch_admission(+req: J.Json, +chain: OpChain, +grants: Context.Effects) -> Admission:
   dispatch_profile(Req.request_validate(req), chain, grants)
 
@@ -474,7 +473,7 @@ def codec_dispatch(+req: J.Json, +retained_operations: Eng.SS, +grants: Context.
 # A minimal accepted closed request, so these laws exercise the real profile.
 def Request_sample() -> J.Json:
   J.Jobj{J.Jpair{"version", J.Jint{1},
-    J.Jpair{"subject", J.Jobj{J.Jpair{"kind", J.Jstr{"symbol"}, J.Jpair{"path", J.Jstr{"a.ts"}, J.Jnil{}}}},
+    J.Jpair{"subject", J.Jobj{J.Jpair{"kind", J.Jstr{"symbol"}, J.Jpair{"path", J.Jstr{"a.ts"}, J.Jpair{"name", J.Jstr{"f"}, J.Jnil{}}}}},
     J.Jpair{"select", J.Jarr{J.Jstr{"definition"}, J.Jnil{}}, J.Jnil{}}}}}
 
 def RawRefused_sample() -> J.Json:
