@@ -805,3 +805,15 @@ law request_law_the_validity_stage_observes_only_json_valid:
 
 def request_law_the_validity_stage_observes_only_json_valid():
   {==}
+
+law an_optional_symbol_container_can_be_absent:
+  {subject_shape_ok(Context.SkSymbol{}, J.Jpair{"kind", J.Jstr{"symbol"}, J.Jpair{"path", J.Jstr{"a.ts"}, J.Jpair{"name", J.Jstr{"f"}, J.Jnil{}}}}) == True{} : Bool}
+
+def an_optional_symbol_container_can_be_absent():
+  {==}
+
+law a_required_symbol_name_cannot_be_absent:
+  {subject_shape_ok(Context.SkSymbol{}, J.Jpair{"kind", J.Jstr{"symbol"}, J.Jpair{"path", J.Jstr{"a.ts"}, J.Jnil{}}}) == False{} : Bool}
+
+def a_required_symbol_name_cannot_be_absent():
+  {==}

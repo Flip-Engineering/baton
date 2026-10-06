@@ -15,3 +15,15 @@ def split_tabs(s: String) -> List<String>:
   match s:
     case SNil{}: Con{"", Nil{}}
     case SCon{head, tail}: split_tab_cons(head, split_tabs(tail))
+
+law trailing_empty_columns_are_preserved:
+  {split_tabs("a\t\t") == ["a", "", ""] : List<String>}
+
+def trailing_empty_columns_are_preserved():
+  {==}
+
+law an_empty_column_has_one_field:
+  {split_tabs("") == [""] : List<String>}
+
+def an_empty_column_has_one_field():
+  {==}
