@@ -564,9 +564,17 @@ def marker_row_with_a_suffix_is_rejected(db,id):
 law eligible_frame_decodes_to_its_fields:
   for db: String
   for id: String
-  {Delivery.report_row(db,id,"o\np\na\n4\nroot\n5\n2:ab\n") == Delivery.report_receipt(db,id,"root","p","a","2:ab") : IO(Result<&1,&1,U32 & String,String>)}
+  {Delivery.report_row(db,id,"o\np\na\n4\nroot\n4\n2:ab\n") == Delivery.report_receipt(db,id,"root","p","a","2:ab") : IO(Result<&1,&1,U32 & String,String>)}
 
 def eligible_frame_decodes_to_its_fields(db,id):
+  {==}
+
+law eligible_frame_with_a_short_payload_is_rejected:
+  for db: String
+  for id: String
+  {Delivery.report_row(db,id,"o\np\na\n4\nroot\n13\nshort\n") == Delivery.report_failed(id,"report-truncated","The retained report row is shorter than its declared argv length; the report and its input are retained.") : IO(Result<&1,&1,U32 & String,String>)}
+
+def eligible_frame_with_a_short_payload_is_rejected(db,id):
   {==}
 
 law eligible_frame_keeps_an_empty_later_argument:
@@ -596,7 +604,7 @@ def eligible_frame_keeps_a_trailing_newline(db,id):
 law eligible_frame_keeps_a_unicode_recipient:
   for db: String
   for id: String
-  {Delivery.report_row(db,id,"o\np\na\n2\nrΩ\n5\n2:ab\n") == Delivery.report_receipt(db,id,"rΩ","p","a","2:ab") : IO(Result<&1,&1,U32 & String,String>)}
+  {Delivery.report_row(db,id,"o\np\na\n2\nrΩ\n4\n2:ab\n") == Delivery.report_receipt(db,id,"rΩ","p","a","2:ab") : IO(Result<&1,&1,U32 & String,String>)}
 
 def eligible_frame_keeps_a_unicode_recipient(db,id):
   {==}
@@ -604,7 +612,7 @@ def eligible_frame_keeps_a_unicode_recipient(db,id):
 law eligible_frame_without_its_delimiter_is_rejected:
   for db: String
   for id: String
-  {Delivery.report_row(db,id,"o\np\na\n4\nroot\n5\n2:ab") == Delivery.report_failed(id,"report-framing-rejected","The retained report row does not end in exactly one host delimiter; the report and its input are retained.") : IO(Result<&1,&1,U32 & String,String>)}
+  {Delivery.report_row(db,id,"o\np\na\n4\nroot\n4\n2:ab") == Delivery.report_failed(id,"report-framing-rejected","The retained report row does not end in exactly one host delimiter; the report and its input are retained.") : IO(Result<&1,&1,U32 & String,String>)}
 
 def eligible_frame_without_its_delimiter_is_rejected(db,id):
   {==}
