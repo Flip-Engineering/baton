@@ -67,6 +67,14 @@ def prepare_guard_anchor(log_dir: String) -> IO(Result<&1,&1,U32 & String,String
 def hex_digit(+n: U32) -> Char:
   Bool.pick(Char, U32.is_lt(n, 10), Char.from_u32(U32.add(48, n)), Char.from_u32(U32.add(87, n)))
 
+def str_rev_go(s: String, +acc: String) -> String:
+  match s:
+    case SNil{}: acc
+    case SCon{c, rest}: str_rev_go(rest, SCon{c, acc})
+
+def str_rev(s: String) -> String:
+  str_rev_go(s, SNil{})
+
 # Two hexadecimal characters per key byte, high nibble first. The accumulator is
 # built reversed (low nibble first) and reversed once at the end, which puts the
 # high nibble before the low nibble in the result.
@@ -79,14 +87,6 @@ def hex_expand_go(+s: String, +acc: String) -> String:
       hex_expand_go(rest,
         SCon{hex_digit(U32.and(code, 15)),
         SCon{hex_digit(U32.and(U32.shrn(code, 4n), 15)), acc2}})
-
-def str_rev(s: String) -> String:
-  str_rev_go(s, SNil{})
-
-def str_rev_go(s: String, +acc: String) -> String:
-  match s:
-    case SNil{}: acc
-    case SCon{c, rest}: str_rev_go(rest, SCon{c, acc})
 
 def hex_expand(+key: String) -> String:
   hex_expand_go(key, SNil{})
