@@ -78,104 +78,139 @@ def line_count_ok(lines: List<String>) -> Bool:
 def single_line(+row: String) -> Bool:
   line_count_ok(Tx.split_lines(row))
 
-def row_shaped(+answer: String) -> Bool:
-  Bool.and(single_line(answer), String.starts_with(answer, "{"))
+def receipt_flag(+flag: String) -> Bool:
+  String.eq(flag, "1")
 
-def row_read(+answer: String) -> RowRead:
-  Bool.pick(RowRead, String.is_empty(answer), RowAbsent{},
-  Bool.pick(RowRead, row_shaped(answer), RowDocument{answer}, RowMalformed{answer}))
+def receipt_flag_ok(+flag: String) -> Bool:
+  Bool.or(String.eq(flag, "0"), String.eq(flag, "1"))
 
-def step_of(read: RowRead) -> ObserverStep:
-  match read:
-    case RowAbsent{}: ObserverAbsent{"role row"}
-    case RowDocument{document}: ObserverCommitted{document}
-    case RowMalformed{answer}: ObserverUnreadable{"row", answer}
-
-def step_after(result: Result<&1,&1,U32 & String,String>) -> ObserverStep:
-  match result:
-    case Done{+answer}: step_of(row_read(answer))
-    case Fail{error}:
-      match error:
-        case (code, detail): ObserverFailed{code, detail}
-
-def release_of(+effect: String, read: RowRead) -> ReleaseOutcome:
-  match read:
-    case RowAbsent{}: ReleaseUnreadable{"row", ""}
-    case RowDocument{document}: ReleaseEffectCompleted{effect, document}
-    case RowMalformed{answer}: ReleaseUnreadable{"row", answer}
-
-def release_row(+effect: String, result: Result<&1,&1,U32 & String,String>) -> ReleaseOutcome:
-  match result:
-    case Done{+answer}: release_of(effect, row_read(answer))
-    case Fail{error}:
-      match error:
-        case (code, detail): ReleaseFailed{code, detail}
-
-def claim_of(read: RowRead) -> ReleaseOutcome:
-  match read:
-    case RowAbsent{}: ReleaseUnreadable{"row", ""}
-    case RowDocument{document}: ReleaseClaimOnly{document}
-    case RowMalformed{answer}: ReleaseUnreadable{"row", answer}
-
-def custody_check(+binding: String, +custodyBinding: String, +keeper: String, +expectedKeeper: String) -> CustodyCheck:
-  Bool.pick(CustodyCheck, String.eq(custodyBinding, binding),
-    Bool.pick(CustodyCheck, String.eq(keeper, expectedKeeper), CustodyAdmitted{binding}, CustodyForeignKeeper{keeper, expectedKeeper}),
-    CustodyMismatch{binding, custodyBinding})
-
-# The retained release intent as fixed columns: presence, whether the intent column is set, and
-# the recorded delivery state.
-def intent_sql(+query: String, +role: String, +incarnation: String) -> String:
+# The fixed-column receipt of one role row: presence, the three identity columns, the cursor, the
+# phases and the two evidence flags. Nothing here is a document, so no prefix can stand in for a
+# decoded receipt.
+def receipt_sql(+query: String, +role: String, +incarnation: String) -> String:
   "SELECT CASE WHEN EXISTS(SELECT 1 FROM semantic_roles WHERE query_id=" ++ C.q(query) ++ " AND role=" ++ C.q(role) ++ " AND incarnation=" ++ C.q(incarnation) ++ ") THEN 'present' ELSE 'absent' END,"
-  ++ "CASE WHEN (SELECT release_intent_json FROM semantic_roles WHERE query_id=" ++ C.q(query) ++ " AND role=" ++ C.q(role) ++ " AND incarnation=" ++ C.q(incarnation) ++ ") IS NULL THEN '0' ELSE '1' END,"
-  ++ "coalesce((SELECT json_extract(release_intent_json,'$.delivery') FROM semantic_roles WHERE query_id=" ++ C.q(query) ++ " AND role=" ++ C.q(role) ++ " AND incarnation=" ++ C.q(incarnation) ++ "),'');"
+  ++ "coalesce((SELECT query_id FROM semantic_roles WHERE query_id=" ++ C.q(query) ++ " AND role=" ++ C.q(role) ++ " AND incarnation=" ++ C.q(incarnation) ++ "),''),"
+  ++ "coalesce((SELECT role FROM semantic_roles WHERE query_id=" ++ C.q(query) ++ " AND role=" ++ C.q(role) ++ " AND incarnation=" ++ C.q(incarnation) ++ "),''),"
+  ++ "coalesce((SELECT incarnation FROM semantic_roles WHERE query_id=" ++ C.q(query) ++ " AND role=" ++ C.q(role) ++ " AND incarnation=" ++ C.q(incarnation) ++ "),''),"
+  ++ "coalesce((SELECT observer_cursor FROM semantic_roles WHERE query_id=" ++ C.q(query) ++ " AND role=" ++ C.q(role) ++ " AND incarnation=" ++ C.q(incarnation) ++ "),''),"
+  ++ "coalesce((SELECT phase FROM semantic_roles WHERE query_id=" ++ C.q(query) ++ " AND role=" ++ C.q(role) ++ " AND incarnation=" ++ C.q(incarnation) ++ "),''),"
+  ++ "coalesce((SELECT cleanup_phase FROM semantic_roles WHERE query_id=" ++ C.q(query) ++ " AND role=" ++ C.q(role) ++ " AND incarnation=" ++ C.q(incarnation) ++ "),''),"
+  ++ "CASE WHEN (SELECT capture_json FROM semantic_roles WHERE query_id=" ++ C.q(query) ++ " AND role=" ++ C.q(role) ++ " AND incarnation=" ++ C.q(incarnation) ++ ") IS NULL THEN '0' ELSE '1' END,"
+  ++ "CASE WHEN (SELECT exit_evidence_json FROM semantic_roles WHERE query_id=" ++ C.q(query) ++ " AND role=" ++ C.q(role) ++ " AND incarnation=" ++ C.q(incarnation) ++ ") IS NULL THEN '0' ELSE '1' END;"
 
-def intent_decision(+presence: String, +hasIntent: String, +recorded: String, +expected: String) -> ReleaseIntent:
-  Bool.pick(ReleaseIntent, String.eq(presence, "absent"), IntentMissing{"role"},
-  Bool.pick(ReleaseIntent, Bool.not(String.eq(hasIntent, "1")), IntentMissing{"intent"},
-  Bool.pick(ReleaseIntent, String.eq(recorded, expected), IntentAdmissible{recorded}, IntentStale{recorded, expected})))
+def receipt_domain_checked(+query: String, +role: String, +incarnation: String, +cursor: String, +rcursor: String, +phase: String, +cleanup: String, +capture: String, +exit: String, +answer: String) -> ReceiptRead:
+  Bool.pick(ReceiptRead, Bool.and(Bool.and(Bool.not(String.is_empty(phase)), Bool.not(String.is_empty(cleanup))), Bool.and(receipt_flag_ok(capture), receipt_flag_ok(exit))),
+    ReceiptPresent{Receipt{query, role, incarnation, cursor, phase, cleanup, receipt_flag(capture), receipt_flag(exit)}},
+    ReceiptMalformed{"domain", answer})
 
+def receipt_cursor_checked(+query: String, +role: String, +incarnation: String, +cursor: String, +rcursor: String, +phase: String, +cleanup: String, +capture: String, +exit: String, +answer: String) -> ReceiptRead:
+  Bool.pick(ReceiptRead, String.eq(rcursor, cursor),
+    receipt_domain_checked(query, role, incarnation, cursor, rcursor, phase, cleanup, capture, exit, answer),
+    ReceiptMalformed{"cursor", answer})
 
+def receipt_checked(+query: String, +role: String, +incarnation: String, +cursor: String, +rquery: String, +rrole: String, +rincarnation: String, +rcursor: String, +phase: String, +cleanup: String, +capture: String, +exit: String, +answer: String) -> ReceiptRead:
+  Bool.pick(ReceiptRead, Bool.and(Bool.and(String.eq(rquery, query), String.eq(rrole, role)), String.eq(rincarnation, incarnation)),
+    receipt_cursor_checked(query, role, incarnation, cursor, rcursor, phase, cleanup, capture, exit, answer),
+    ReceiptMalformed{"identity", answer})
 
+def receipt_answer(+query: String, +role: String, +incarnation: String, +cursor: String, +presence: String, +rquery: String, +rrole: String, +rincarnation: String, +rcursor: String, +phase: String, +cleanup: String, +capture: String, +exit: String, +answer: String) -> ReceiptRead:
+  Bool.pick(ReceiptRead, String.eq(presence, "absent"), ReceiptAbsent{},
+  Bool.pick(ReceiptRead, String.eq(presence, "present"),
+    receipt_checked(query, role, incarnation, cursor, rquery, rrole, rincarnation, rcursor, phase, cleanup, capture, exit, answer),
+    ReceiptMalformed{"presence", answer}))
 
-
-
-def intent_tabs(+expected: String, +row: String, fields: List<String>) -> ReleaseIntent:
+def receipt_tabs(+query: String, +role: String, +incarnation: String, +cursor: String, fields: List<String>, +answer: String) -> ReceiptRead:
   match fields:
     case +presence <> m0:
       match m0:
-        case +hasIntent <> m1:
+        case +rquery <> m1:
           match m1:
-            case +recorded <> m2:
+            case +rrole <> m2:
               match m2:
-                case Nil{}: intent_decision(presence, hasIntent, recorded, expected)
-                case _: IntentUnreadable{"shape", row}
-            case _: IntentUnreadable{"short", row}
-        case _: IntentUnreadable{"short", row}
-    case _: IntentUnreadable{"short", row}
-def intent_fields(+expected: String, +row: String, lines: List<String>) -> ReleaseIntent:
+                case +rincarnation <> m3:
+                  match m3:
+                    case +rcursor <> m4:
+                      match m4:
+                        case +phase <> m5:
+                          match m5:
+                            case +cleanup <> m6:
+                              match m6:
+                                case +capture <> m7:
+                                  match m7:
+                                    case +exit <> m8:
+                                      match m8:
+                                        case Nil{}: receipt_answer(query, role, incarnation, cursor, presence, rquery, rrole, rincarnation, rcursor, phase, cleanup, capture, exit, answer)
+                                        case _: ReceiptMalformed{"surplus", answer}
+                                    case _: ReceiptMalformed{"short", answer}
+                                case _: ReceiptMalformed{"short", answer}
+                            case _: ReceiptMalformed{"short", answer}
+                        case _: ReceiptMalformed{"short", answer}
+                    case _: ReceiptMalformed{"short", answer}
+                case _: ReceiptMalformed{"short", answer}
+            case _: ReceiptMalformed{"short", answer}
+        case _: ReceiptMalformed{"short", answer}
+    case _: ReceiptMalformed{"short", answer}
+
+def receipt_lines(+query: String, +role: String, +incarnation: String, +cursor: String, +answer: String, lines: List<String>) -> ReceiptRead:
   match lines:
-    case Nil{}: IntentUnreadable{"empty", row}
+    case Nil{}: ReceiptMalformed{"empty", answer}
     case +line <> rest:
       match rest:
-        case Nil{}: intent_tabs(expected, row, Tx.split_tabs(line))
-        case _: IntentUnreadable{"surplus", row}
-def intent_decode(+expected: String, +row: String) -> ReleaseIntent:
-  intent_fields(expected, row, Tx.split_lines(row))
-def intent_after(+db: String, +binding: String, +query: String, +role: String, +incarnation: String, +expected: String, result: Result<&1,&1,U32 & String,String>) -> IO(ReleaseIntent):
+        case Nil{}: receipt_tabs(query, role, incarnation, cursor, Tx.split_tabs(line), answer)
+        case _: ReceiptMalformed{"surplus", answer}
+
+def receipt_decode(+query: String, +role: String, +incarnation: String, +cursor: String, +answer: String) -> ReceiptRead:
+  receipt_lines(query, role, incarnation, cursor, answer, Tx.split_lines(answer))
+
+def step_of(read: ReceiptRead) -> ObserverStep:
+  match read:
+    case ReceiptAbsent{}: ObserverAbsent{"role"}
+    case ReceiptPresent{receipt}: ObserverCommitted{receipt}
+    case ReceiptMalformed{stage, answer}: ObserverUnreadable{stage, answer}
+
+# The receipt read is a later observation than the commit, and the commit's own answer stays
+# unused: only the fixed columns decide whether the commit is observed.
+def receipt_after(+db: String, +binding: String, +query: String, +role: String, +incarnation: String, +cursor: String) -> IO(ObserverStep):
+  do IO<ObserverStep>:
+    read : Result<&1,&1,U32 & String,String> <- DB.Sql.query_bound(db, binding, receipt_sql(query, role, incarnation))
+    match read:
+      case Fail{error}:
+        match error:
+          case (code, detail): IO.pure(ObserverStep, ObserverFailed{code, detail})
+      case Done{+answer}: IO.pure(ObserverStep, step_of(receipt_decode(query, role, incarnation, cursor, answer)))
+
+def step_after(+db: String, +binding: String, +query: String, +role: String, +incarnation: String, +cursor: String, result: Result<&1,&1,U32 & String,String>) -> IO(ObserverStep):
   match result:
     case Fail{error}:
       match error:
-        case (code, detail): IO.pure(ReleaseIntent, IntentUnreadable{"host", U32.show(code) ++ ":" ++ detail})
-    case Done{+rows}: IO.pure(ReleaseIntent, intent_decode(expected, rows))
+        case (code, detail): IO.pure(ObserverStep, ObserverFailed{code, detail})
+    case Done{+answer}: receipt_after(db, binding, query, role, incarnation, cursor)
 
-def intent_read(+db: String, +binding: String, +query: String, +role: String, +incarnation: String, +expected: String) -> IO(ReleaseIntent):
-  do IO<ReleaseIntent>:
-    read : Result<&1,&1,U32 & String,String> <- DB.Sql.query_bound(db, binding, intent_sql(query, role, incarnation))
-    intent_after(db, binding, query, role, incarnation, expected, read)
+# --- the commit statement, as named clauses so a law can pin each one and their assembly ---
+def terminal_payload_matches(+next: String, +resultJson: String, +errorJson: String) -> String:
+  "state=" ++ C.q(next) ++ " AND result_json IS " ++ ContextStore.json_or_null(resultJson) ++ " AND error_json IS " ++ ContextStore.json_or_null(errorJson)
 
-# A rendered error document, when the caller supplied one. The empty case is its own value so
-# the commit below branches on a parameter rather than on a computed condition. This checks
-# non-empty text only: it is not schema validation, which remains the caller's operand.
+# One event commit: the same statement the role observer already uses, whose guards keep the
+# cursor, the capture and the exit evidence replay-safe and whose notice is bound to the query.
+
+def commit_state_clause(+query: String, +next: String, +resultJson: String, +errorJson: String) -> String:
+  "UPDATE semantic_queries SET state=CASE WHEN " ++ ContextStore.terminal_recorded() ++ " THEN CASE WHEN " ++ terminal_payload_matches(next, resultJson, errorJson) ++ " THEN state ELSE NULL END ELSE " ++ C.q(next) ++ " END,"
+  ++ "result_json=CASE WHEN " ++ ContextStore.terminal_recorded() ++ " THEN result_json ELSE " ++ ContextStore.json_or_null(resultJson) ++ " END,"
+  ++ "error_json=CASE WHEN " ++ ContextStore.terminal_recorded() ++ " THEN error_json ELSE " ++ ContextStore.json_or_null(errorJson) ++ " END "
+  ++ "WHERE id=" ++ C.q(query) ++ ";"
+
+def commit_role_clause(+query: String, +role: String, +incarnation: String, +expectedCursor: String, +nextCursor: String, +captureJson: String, +exitEvidenceJson: String, +progressJson: String) -> String:
+  "UPDATE semantic_roles SET observer_cursor=" ++ ContextRoles.replay_column(expectedCursor, query, role, incarnation, nextCursor, C.q(nextCursor), captureJson, exitEvidenceJson, progressJson, "observer_cursor") ++ ","
+  ++ "capture_json=" ++ ContextRoles.replay_column(expectedCursor, query, role, incarnation, nextCursor, ContextStore.json_or_null(captureJson), captureJson, exitEvidenceJson, progressJson, "capture_json") ++ ","
+  ++ "exit_evidence_json=" ++ ContextRoles.replay_column(expectedCursor, query, role, incarnation, nextCursor, ContextStore.json_or_null(exitEvidenceJson), captureJson, exitEvidenceJson, progressJson, "exit_evidence_json") ++ " "
+  ++ "WHERE query_id=" ++ C.q(query) ++ " AND role=" ++ C.q(role) ++ " AND incarnation=" ++ C.q(incarnation) ++ ";"
+
+def commit_tail_clause(+query: String, +role: String, +incarnation: String, +owner: String, +progressJson: String, +noticeId: String, +noticeBody: String) -> String:
+  ContextRoles.role_present_guard(query, role, incarnation)
+  ++ "UPDATE semantic_queries SET progress_json=" ++ ContextStore.json_or_null(progressJson) ++ " WHERE id=" ++ C.q(query) ++ ";"
+  ++ ContextStore.owner_notice_bound_sql(noticeId, owner, noticeBody, query)
+  ++ ContextRoles.role_read_sql(query, role, incarnation) ++ "COMMIT;"
+
 def failure_schema(+failureJson: String) -> Maybe<String>:
   Bool.pick(Maybe<String>, String.is_empty(failureJson), None{}, Some{failureJson})
 
@@ -184,11 +219,6 @@ def failure_schema(+failureJson: String) -> Maybe<String>:
 # write uses. A changed document assigns NULL to the not-null state column, which aborts the
 # whole transaction before any progress or notice is applied. This is deliberately stricter
 # than the publish path, whose text stays untouched.
-def terminal_payload_matches(+next: String, +resultJson: String, +errorJson: String) -> String:
-  "state=" ++ C.q(next) ++ " AND result_json IS " ++ ContextStore.json_or_null(resultJson) ++ " AND error_json IS " ++ ContextStore.json_or_null(errorJson)
-
-# One event commit: the same statement the role observer already uses, whose guards keep the
-# cursor, the capture and the exit evidence replay-safe and whose notice is bound to the query.
 def commit_event_sql(+query: String, +role: String, +incarnation: String, +owner: String, +expectedCursor: String, +nextCursor: String, +progressJson: String, +noticeId: String, +noticeBody: String, +captureJson: String, +exitEvidenceJson: String) -> String:
   ContextRoles.event_commit_sql(query, role, incarnation, owner, expectedCursor, nextCursor, progressJson, noticeId, noticeBody, captureJson, exitEvidenceJson)
 
@@ -213,8 +243,8 @@ def commit_result_sql(+query: String, +role: String, +incarnation: String, +owne
 
 def commit_event(+db: String, +binding: String, +query: String, +role: String, +incarnation: String, +owner: String, +expectedCursor: String, +nextCursor: String, +progressJson: String, +noticeId: String, +noticeBody: String, +captureJson: String, +exitEvidenceJson: String) -> IO(ObserverStep):
   do IO<ObserverStep>:
-    result : Result<&1,&1,U32 & String,String> <- DB.Sql.query_bound(db, binding, commit_event_sql(query, role, incarnation, owner, expectedCursor, nextCursor, progressJson, noticeId, noticeBody, captureJson, exitEvidenceJson))
-    IO.pure(ObserverStep, step_after(result))
+    committed : Result<&1,&1,U32 & String,String> <- DB.Sql.query_bound(db, binding, commit_event_sql(query, role, incarnation, owner, expectedCursor, nextCursor, progressJson, noticeId, noticeBody, captureJson, exitEvidenceJson))
+    step_after(db, binding, query, role, incarnation, nextCursor, committed)
 
 # The database claim alone: it records the committed intent's delivery state and completes the
 # release state while the query's evaluation state stays untouched. It proves no keeper
@@ -399,8 +429,8 @@ def commit_failed_schema(+db: String, +binding: String, +query: String, +role: S
     case None{}: IO.pure(ObserverStep, ObserverFailed{code, detail})
     case Some{+rendered}:
       do IO<ObserverStep>:
-        committed : Result<&1,&1,U32 & String,String> <- DB.Sql.query_bound(db, binding, commit_result_sql(query, role, incarnation, owner, expectedCursor, nextCursor, "failed", "", rendered, progressJson, noticeId, noticeBody, captureJson, exitEvidenceJson))
-        IO.pure(ObserverStep, step_after(committed))
+        written : Result<&1,&1,U32 & String,String> <- DB.Sql.query_bound(db, binding, commit_result_sql(query, role, incarnation, owner, expectedCursor, nextCursor, "failed", "", rendered, progressJson, noticeId, noticeBody, captureJson, exitEvidenceJson))
+        step_after(db, binding, query, role, incarnation, nextCursor, written)
 
 def commit_failed(+db: String, +binding: String, +query: String, +role: String, +incarnation: String, +owner: String, +expectedCursor: String, +nextCursor: String, +failureJson: String, +progressJson: String, +noticeId: String, +noticeBody: String, +captureJson: String, +exitEvidenceJson: String, +code: U32, +detail: String) -> IO(ObserverStep):
   do IO<ObserverStep>:
@@ -415,8 +445,8 @@ def commit_result(+db: String, +binding: String, +query: String, +role: String, 
   match verdict:
     case Done{+document}:
       do IO<ObserverStep>:
-        committed : Result<&1,&1,U32 & String,String> <- DB.Sql.query_bound(db, binding, commit_result_sql(query, role, incarnation, owner, expectedCursor, nextCursor, "complete", document, "", progressJson, noticeId, noticeBody, captureJson, exitEvidenceJson))
-        IO.pure(ObserverStep, step_after(committed))
+        written : Result<&1,&1,U32 & String,String> <- DB.Sql.query_bound(db, binding, commit_result_sql(query, role, incarnation, owner, expectedCursor, nextCursor, "complete", document, "", progressJson, noticeId, noticeBody, captureJson, exitEvidenceJson))
+        step_after(db, binding, query, role, incarnation, nextCursor, written)
     case Fail{error}:
       match error:
         case (code, detail): commit_failed(db, binding, query, role, incarnation, owner, expectedCursor, nextCursor, failureJson, progressJson, noticeId, noticeBody, captureJson, exitEvidenceJson, code, detail)
