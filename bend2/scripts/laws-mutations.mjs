@@ -3,6 +3,20 @@ import { join } from 'node:path';
 
 const MUTATIONS = [
   {
+    name: 'report-file-discards-literal-path',
+    file: 'bend2/src/coordinator/commands.bend',
+    find: 'case "report-file" <> id <> player <> path <> Nil{}: ReportFile{id,player,path}',
+    replace: 'case "report-file" <> id <> player <> path <> Nil{}: ReportFile{id,player,"-"}',
+    law: 'report_file_command_preserves_literal_path_and_identity',
+  },
+  {
+    name: 'report-file-changes-report-to-question',
+    file: 'bend2/src/coordinator/main.bend',
+    find: 'run(db,C.Report{id,player,body})',
+    replace: 'run(db,C.Ask{id,player,body})',
+    law: 'report_file_entry_reads_before_running_the_report',
+  },
+  {
     name: 'configuration-trims-retained-directory-newlines',
     file: 'bend2/src/coordinator/receiver-route-apply.bend',
     find: 'case True{}: Done{Tx.str_rev(rest)}',

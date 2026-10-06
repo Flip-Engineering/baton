@@ -38,6 +38,7 @@ type Command is Data:
   Observe{id: String, player: String, event: String, sealed: Bool}
   ObserveFile{id: String, player: String, path: String}
   Report{id: String, sender: String, body: String}
+  ReportFile{id: String, player: String, path: String}
   Ask{id: String, player: String, body: String}
   AskFile{id: String, player: String, path: String}
   NativeReply{parent: String, id: String, response: String}
@@ -388,6 +389,7 @@ def sql(command: Command) -> String:
     case ObserveFile{id,player,path}: ""
     case MessageFile{id,sender,recipient,kind,path}: ""
     case AskFile{id,player,path}: ""
+    case ReportFile{id,player,path}: ""
     case NativeReply{parent,id,response}: ""
     case NativeReplyFile{parent,id,path}: ""
     case Stop{session,id,reason}: ""
@@ -625,6 +627,7 @@ def range_scan(args: List<&2,String>, +kept: List<&2,String>, +after: IndexText,
 
 def parse_shared(args: List<&2,String>) -> Command:
   match args:
+    case "report-file" <> id <> player <> path <> Nil{}: ReportFile{id,player,path}
     case "receiver-route" <> session <> "--inspect" <> Nil{}: ReceiverRouteRead{session}
     case "receiver-route" <> session <> requester <> expected <> harness <> model <> effort <> command <> log <> "--apply" <> Nil{}: ReceiverRouteApply{session,requester,expected,harness,model,effort,command,log}
     case "receive-configured" <> session <> configuration <> harness <> model <> effort <> command <> log <> message <> Nil{}: ReceiveConfigured{session,configuration,harness,model,effort,command,log,message}

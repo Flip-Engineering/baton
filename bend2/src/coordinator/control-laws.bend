@@ -143,6 +143,42 @@ law receiver_command_parses_its_native_arguments:
 def receiver_command_parses_its_native_arguments(session,cmd,log):
   {==}
 
+law report_file_command_preserves_literal_path_and_identity:
+  for id: String
+  for player: String
+  for path: String
+  {C.parse(["report-file",id,player,path]) == C.ReportFile{id,player,path} : C.Command}
+
+def report_file_command_preserves_literal_path_and_identity(id,player,path):
+  {==}
+
+law report_file_stdin_keeps_the_text_reader_sentinel:
+  {C.parse(["report-file","report-id","child","-"]) == C.ReportFile{"report-id","child","-"} : C.Command}
+
+def report_file_stdin_keeps_the_text_reader_sentinel():
+  {==}
+
+law report_file_rejects_a_missing_path:
+  {C.parse(["report-file","report-id","child"]) == C.Invalid{} : C.Command}
+
+def report_file_rejects_a_missing_path():
+  {==}
+
+law report_file_rejects_an_extra_operand:
+  {C.parse(["report-file","report-id","child","path","extra"]) == C.Invalid{} : C.Command}
+
+def report_file_rejects_an_extra_operand():
+  {==}
+
+law inline_report_keeps_its_original_command:
+  for id: String
+  for player: String
+  for body: String
+  {C.parse(["report",id,player,body]) == C.Report{id,player,body} : C.Command}
+
+def inline_report_keeps_its_original_command(id,player,body):
+  {==}
+
 law dispatch_file_command_parses_its_native_arguments:
   for id: String
   for sender: String
