@@ -121,25 +121,6 @@ def admit_sql(+id: String, +owner: String, +requestJson: String, +keeperPath: St
 def admit_associated_sql(+id: String, +owner: String, +requestJson: String, +keeperPath: String, +cwd: String, +originAttempt: String, +artifactPath: String, +planValue: String, +resultSchema: String) -> String:
   "BEGIN IMMEDIATE;" ++ ContextStore.schema() ++ admit_query_insert_sql(id, owner, requestJson, keeperPath, cwd, originAttempt, artifactPath) ++ ContextStore.association_insert_sql(id, planValue, resultSchema, originAttempt) ++ admit_row_sql(id) ++ "COMMIT;"
 
-# The admission record is read back from the row this transaction wrote; the association
-# is the value the statement text recorded, not the caller's argument.
-def admit_associated(+db: String, +binding: String, +id: String, +owner: String, +requestJson: String, +keeperPath: String, +cwd: String, +originAttempt: String, +artifactPath: String, +planValue: String, +resultSchema: String) -> IO(Result<&1,&1,U32 & String,Admission>):
-  do IO<Result<&1,&1,U32 & String,Admission>>:
-    result : Result<&1,&1,U32 & String,String> <- DB.Sql.query_bound(db, binding, admit_associated_sql(id, owner, requestJson, keeperPath, cwd, originAttempt, artifactPath, planValue, resultSchema))
-    admit_after(result)
-
-# The same-binding read-back: the identical ten-column answer for a committed
-# decision, run on the qualified connection. This statement inserts no admission row, and
-# it is not a read-only operation: it begins an immediate transaction for the write lock
-# and carries the schema's create-if-missing statements. The bound call configures its
-# connection with two pragmas before it, and those are connection settings, not writes.
-def readback_sql(+id: String) -> String:
-  "BEGIN IMMEDIATE;" ++ ContextStore.schema() ++ admit_row_sql(id) ++ "COMMIT;"
-
-# The decision domain is the one the schema constrains; the state spelling comes
-# from the canonical contract module rather than a second list here.
-def admit_decision_ok(decision: String) -> Bool:
-  Bool.or(String.eq(decision, "accepted"), String.eq(decision, "rejected"))
 
 def admit_state_ok(state: String) -> Bool:
   Maybe.is_some(&2, Context.QueryState, Context.query_state_of(state))
@@ -259,6 +240,26 @@ def readback(+db: String, +binding: String, +id: String) -> IO(Result<&1,&1,U32 
 # created before any association existed answers missing and is never repaired here.
 def association_readback_sql(+id: String) -> String:
   "BEGIN IMMEDIATE;" ++ ContextStore.schema() ++ ContextStore.association_row_sql(id) ++ "COMMIT;"
+
+# The admission record is read back from the row this transaction wrote; the association
+# is the value the statement text recorded, not the caller's argument.
+def admit_associated(+db: String, +binding: String, +id: String, +owner: String, +requestJson: String, +keeperPath: String, +cwd: String, +originAttempt: String, +artifactPath: String, +planValue: String, +resultSchema: String) -> IO(Result<&1,&1,U32 & String,Admission>):
+  do IO<Result<&1,&1,U32 & String,Admission>>:
+    result : Result<&1,&1,U32 & String,String> <- DB.Sql.query_bound(db, binding, admit_associated_sql(id, owner, requestJson, keeperPath, cwd, originAttempt, artifactPath, planValue, resultSchema))
+    admit_after(result)
+
+# The same-binding read-back: the identical ten-column answer for a committed
+# decision, run on the qualified connection. This statement inserts no admission row, and
+# it is not a read-only operation: it begins an immediate transaction for the write lock
+# and carries the schema's create-if-missing statements. The bound call configures its
+# connection with two pragmas before it, and those are connection settings, not writes.
+def readback_sql(+id: String) -> String:
+  "BEGIN IMMEDIATE;" ++ ContextStore.schema() ++ admit_row_sql(id) ++ "COMMIT;"
+
+# The decision domain is the one the schema constrains; the state spelling comes
+# from the canonical contract module rather than a second list here.
+def admit_decision_ok(decision: String) -> Bool:
+  Bool.or(String.eq(decision, "accepted"), String.eq(decision, "rejected"))
 
 def association_after(result: Result<&1,&1,U32 & String,String>) -> IO(Result<&1,&1,U32 & String,Association>):
   match result:

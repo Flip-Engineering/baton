@@ -1379,3 +1379,20 @@ law an_association_answer_row_carries_the_absent_marker_for_a_row_without_one:
 
 def an_association_answer_row_carries_the_absent_marker_for_a_row_without_one():
   {==}
+
+law an_absent_plan_identity_refuses_without_reaching_the_admission:
+  for +db: String
+  for +binding: String
+  for +id: String
+  for +owner: String
+  for +requestJson: String
+  for +keeperPath: String
+  for +cwd: String
+  for +originAttempt: String
+  for +artifactPath: String
+  for +plan: String
+  for +resultSchema: String
+  {ContextService.submit_identified(True{},db,binding,id,owner,requestJson,keeperPath,cwd,originAttempt,artifactPath,plan,resultSchema) == IO.pure(ContextService.Submission, ContextService.SubmissionPlanRefused{"plan","absent"}) : IO(ContextService.Submission)}
+
+def an_absent_plan_identity_refuses_without_reaching_the_admission(db,binding,id,owner,requestJson,keeperPath,cwd,originAttempt,artifactPath,plan,resultSchema):
+  {==}

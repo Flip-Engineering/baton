@@ -39,9 +39,11 @@ import ../coordinator/commands.bend as C
 # an empty identity is an absent association and refuses before any row is created, while any other
 # value is carried unexamined.
 #
-# The refusal carries Core's literal stage together with the reason as this lane's own carrier; Core's
-# AdmissionRefuses additionally derives a code and a detail from that same reason, and either carriage
-# is acceptable as long as the typed reason itself is not lost.
+# The refusal carries Core's literal stage together with Core's reason as this lane's own carrier, and
+# that is all it carries literally: this value holds a reason string, and no mapper to a code and a
+# detail exists in this lane. Core's AdmissionRefuses derives that code and detail from the same reason
+# and keeps the typed reason under native173, so connecting the two is Core's to supply rather than
+# something this comment may claim.
 #
 # The dependency this lane waits on is the Codec decode of the admitted canonical request into
 # Sel.RequestOperands plus the request text; Sel.ProjectState is configured, inventoried or observed and
@@ -171,13 +173,19 @@ def admitted(+db: String, +binding: String, +id: String, +owner: String, +reques
     answer : Result<&1,&1,U32 & String,ContextAdmit.Admission> <- ContextAdmit.admit(db, binding, id, owner, requestJson, keeperPath, cwd, originAttempt, artifactPath)
     submission_after(owner, requestJson, plan, resultSchema, answer)
 
+# The presence of the identity is bound before it is inspected, so the scrutinee is a
+# parameter and the IO action is chosen inside the match: an absent identity refuses in
+# this branch and reaches no bound call, and a present one proceeds to the admission.
+def submit_identified(+absent: Bool, +db: String, +binding: String, +id: String, +owner: String, +requestJson: String, +keeperPath: String, +cwd: String, +originAttempt: String, +artifactPath: String, +plan: String, +resultSchema: String) -> IO(Submission):
+  match absent:
+    case True{}: IO.pure(Submission, SubmissionPlanRefused{"plan", "absent"})
+    case False{}: admitted(db, binding, id, owner, requestJson, keeperPath, cwd, originAttempt, artifactPath, plan, resultSchema)
+
 def submit(+db: String, +binding: String, +id: String, +owner: String, +requestJson: String, +keeperPath: String, +cwd: String, +originAttempt: String, +artifactPath: String, decision: PlanDecision) -> IO(Submission):
   match decision:
     case PlanRefuses{stage, reason}: IO.pure(Submission, SubmissionPlanRefused{stage, reason})
     case PlanAdmits{proposedPlan, proposedSchema}:
-      Bool.pick(IO(Submission), plan_identity_present(proposedPlan),
-        admitted(db, binding, id, owner, requestJson, keeperPath, cwd, originAttempt, artifactPath, proposedPlan, proposedSchema),
-        IO.pure(Submission, SubmissionPlanRefused{"plan", "absent"}))
+      submit_identified(plan_identity_present(proposedPlan), db, binding, id, owner, requestJson, keeperPath, cwd, originAttempt, artifactPath, proposedPlan, proposedSchema)
 
 def discover(catalog: Unit -> IO(Result<&1,&1,U32 & String,String>)) -> IO(Discovery):
   do IO<Discovery>:
