@@ -382,5 +382,40 @@
   "find": "    case FdOk{+tool, +id, +query, +request, +scope}: CdAccepted{id, tool, query, request, scope}",
   "replace": "    case FdOk{+tool, +id, +query, +request, +scope}: CdAccepted{id, Context.CtEngines{}, query, request, scope}",
   "law": "codec_law_a_strict_numeric_metadata_frame_correlates_as_accepted"
+ },
+ {
+  "name": "schema-open-record-accepts-an-undeclared-field",
+  "file": "bend2/src/context/codec-schema.bend",
+  "find": "        Bool.pick(SchemaVerdict, members_declared(field_names(fields), members), fields_admit(defs, fields, members), SvRefused{\"undeclaredField\"}),",
+  "replace": "        fields_admit(defs, fields, members),",
+  "law": "schema_law_a_closed_record_refuses_an_undeclared_field"
+ },
+ {
+  "name": "schema-unguarded-cycle-is-accepted",
+  "file": "bend2/src/context/codec-schema.bend",
+  "find": "            Bool.pick(Bool, unguarded_cycle(defs, name), False{}, defs_checked(tail)), False{})",
+  "replace": "            defs_checked(tail), False{})",
+  "law": "schema_law_an_unguarded_cycle_refuses"
+ },
+ {
+  "name": "schema-number-profile-accepts-any-token-kind",
+  "file": "bend2/src/context/codec-schema.bend",
+  "find": "    case Codec.Rnum{+token}: number_admit(kind, token)",
+  "replace": "    case Codec.Rnum{+token}: SvOk{}",
+  "law": "schema_law_the_u32_profile_refuses_a_wider_token"
+ },
+ {
+  "name": "schema-json-profile-ignores-duplicates",
+  "file": "bend2/src/context/codec-schema.bend",
+  "find": "  Bool.pick(SchemaVerdict, keys_unique(members), json_member_admit(members), SvRefused{\"duplicateKey\"})",
+  "replace": "  json_member_admit(members)",
+  "law": "schema_law_a_json_object_refuses_a_duplicate_member"
+ },
+ {
+  "name": "schema-dictionary-admits-undeclared-keys",
+  "file": "bend2/src/context/codec-schema.bend",
+  "find": "    case SkDeclared{+names}: members_declared(names, members)",
+  "replace": "    case SkDeclared{+names}: True{}",
+  "law": "schema_law_a_dictionary_without_a_declared_key_refuses"
  }
 ]
