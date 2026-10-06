@@ -1635,9 +1635,13 @@ class PackageGateReceipt(unittest.TestCase):
         conflict = dict(dual)
         conflict['classifier_module_sha256'] = 'b' * 64
         answer['verifier'] = conflict
-        with self.assertRaises(RuntimeError):
+        with self.assertRaises(RuntimeError) as refused_conflict:
             PACKAGE.controls_evidence(self.full_evidence(), PACKAGE.snapshot(),
                                       self.compiler(), audit=self.home / 'conflict-audit')
+        # The refusal names the two spellings carrying different values, so an
+        # unrelated earlier refusal cannot satisfy this assertion.
+        self.assertIn('two ways with different values', str(refused_conflict.exception))
+        self.assertIn('classifier_module_sha256', str(refused_conflict.exception))
 
     def test_the_reader_accepts_the_historical_classifier_spelling(self):
         """A run naming only the historical spelling still reads."""
