@@ -47,8 +47,16 @@ export const REPRESENTATION_LIMITS = Object.freeze([
     detail: 'indices, columns and frontend Loc are UTF-16 code units of the captured source',
   }),
   Object.freeze({
-    code: 'lineZeroBasedColumnOneBased',
-    detail: 'line is zero-based; column follows parse_col and is one-based',
+    code: 'lineZeroBasedColumnFollowsParseCol',
+    detail: 'line is zero-based; column is pos - src.lastIndexOf("\\n", pos - 1) exactly as parse_col, which yields 1 at an ordinary line start and 0 at index 0 of text that begins with a line feed',
+  }),
+  Object.freeze({
+    code: 'junctionRightAffinity',
+    detail: 'a zero-length point at a join between two segments maps to the later segment; that is a mapping convention for a frontend position, not evidence of which side an arbitrary span originated on',
+  }),
+  Object.freeze({
+    code: 'bytesNotRetained',
+    detail: 'the capture retains the digest and the derived text and maps; the private byte snapshot taken for decoding and hashing is discarded',
   }),
   Object.freeze({
     code: 'codePointBoundaries',
@@ -97,6 +105,12 @@ function isContinuation(byte) {
 // sequence is an outcome with the offending byte offset. The code-point byte lengths are returned
 // so the caller can build validated UTF-16/byte mappings.
 export function decodeStrictUtf8(bytes) {
+  if (!(bytes instanceof Uint8Array)) {
+    return unavailable('bytesMissing', { detail: 'exact captured bytes are required' });
+  }
+  if (typeof SharedArrayBuffer !== 'undefined' && bytes.buffer instanceof SharedArrayBuffer) {
+    return unavailable('sharedBufferUnsupported', { detail: 'shared memory has no qualified synchronization contract' });
+  }
   const codePoints = [];
   const codePointByteOffsets = [];
   let index = 0;
@@ -154,9 +168,10 @@ export function decodeStrictUtf8(bytes) {
   });
 }
 
-// Capture the exact bytes a caller read from admission. The digest is over those bytes; the decoded
-// text retains a byte order mark, carriage returns and every other code point. The byte array is
-// kept privately so that no caller can mutate the identity after capture.
+// Capture the exact bytes a caller read from admission. One private snapshot is copied before any
+// derivation, decoded strictly and hashed; the snapshot is then discarded, so no caller can mutate
+// the identity after capture and no byte array is retained. The decoded text retains a byte order
+// mark, carriage returns and every other code point.
 export function captureSource({ identity, bytes } = {}) {
   if (typeof identity !== 'string' || identity.length === 0) {
     return unavailable('identityMissing', { detail: 'a file identity from admission is required' });
@@ -164,10 +179,18 @@ export function captureSource({ identity, bytes } = {}) {
   if (!(bytes instanceof Uint8Array)) {
     return unavailable('bytesMissing', { detail: 'exact captured bytes are required' });
   }
-  const decoded = decodeStrictUtf8(bytes);
+  if (typeof SharedArrayBuffer !== 'undefined' && bytes.buffer instanceof SharedArrayBuffer) {
+    return unavailable('sharedBufferUnsupported', { detail: 'shared memory has no qualified synchronization contract' });
+  }
+  // One private snapshot is taken before any derivation, so a caller that keeps writing to its own
+  // view cannot mix the decoded text with the digest. Every derived field reads that snapshot, and
+  // the snapshot is discarded once the capture is built.
+  const snapshot = new Uint8Array(bytes.length);
+  snapshot.set(bytes);
+  const decoded = decodeStrictUtf8(snapshot);
   if (decoded.status !== 'decoded') return decoded;
 
-  const byteLength = bytes.length;
+  const byteLength = snapshot.length;
   let utf16Length = 0;
   for (const codePoint of decoded.codePoints) utf16Length += codePoint > 0xffff ? 2 : 1;
 
@@ -206,7 +229,7 @@ export function captureSource({ identity, bytes } = {}) {
   flush();
   const text = parts.join('');
 
-  const digest = createHash('sha256').update(bytes).digest('hex');
+  const digest = createHash('sha256').update(snapshot).digest('hex');
   const byteOffsetForUtf16 = (index) => {
     if (!Number.isInteger(index)) return unavailable('notInteger');
     if (index < 0 || index > utf16Length) return unavailable('outOfRange');
@@ -302,7 +325,17 @@ function locateSegment(table, index) {
   return unavailable('outOfRange');
 }
 
-function mapRange(table, transformedLength, start, end) {
+// A mapped range is validated against the capture boundary table before it is returned, so the
+// public mapRange contract refuses a surrogate-interior endpoint on its own.
+function validatedPoint(capture, originalStart, originalEnd) {
+  const startBoundary = capture.byteOffsetForUtf16(originalStart);
+  if (startBoundary.status !== 'mapped') return startBoundary;
+  const endBoundary = capture.byteOffsetForUtf16(originalEnd);
+  if (endBoundary.status !== 'mapped') return endBoundary;
+  return mappedPoint(originalStart, originalEnd);
+}
+
+function mapRange(capture, table, transformedLength, start, end) {
   if (!Number.isInteger(start) || !Number.isInteger(end)) return unavailable('notInteger');
   if (end < start) return unavailable('reversedRange');
   if (start < 0 || end > transformedLength) return unavailable('outOfRange');
@@ -312,14 +345,14 @@ function mapRange(table, transformedLength, start, end) {
       const last = table[table.length - 1];
       if (last === undefined) return unavailable('emptyView');
       if (last.kind !== 'original') return unavailable('unmappedBoundary');
-      return mappedPoint(last.originalTo, last.originalTo);
+      return validatedPoint(capture, last.originalTo, last.originalTo);
     }
     const located = locateSegment(table, start);
     if (located.status !== 'located') return located;
     const segment = table[located.index];
     if (segment.kind !== 'original') return unavailable('unmappedBoundary');
     const originalIndex = segment.originalFrom + (start - segment.transformedStart);
-    return mappedPoint(originalIndex, originalIndex);
+    return validatedPoint(capture, originalIndex, originalIndex);
   }
 
   const first = locateSegment(table, start);
@@ -345,7 +378,7 @@ function mapRange(table, transformedLength, start, end) {
   const lastSegment = table[last.index];
   const originalStart = firstSegment.originalFrom + (start - firstSegment.transformedStart);
   const originalEnd = lastSegment.originalFrom + (end - lastSegment.transformedStart);
-  return mappedPoint(originalStart, originalEnd);
+  return validatedPoint(capture, originalStart, originalEnd);
 }
 
 function mappedPoint(originalStart, originalEnd) {
@@ -374,7 +407,7 @@ export function createView(capture, { segments } = {}) {
     text,
     utf16Length,
     segments: table,
-    mapRange: (start, end) => mapRange(table, utf16Length, start, end),
+    mapRange: (start, end) => mapRange(capture, table, utf16Length, start, end),
   });
 }
 

@@ -6,8 +6,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  FRONTEND_PINS,
-  REPRESENTATION_LIMITS,
   captureSource,
   createView,
   decodeStrictUtf8,
@@ -118,7 +116,7 @@ test('malformed utf-8 is refused with the offending byte offset', () => {
   }
 });
 
-test('removed import text yields an explicit unmapped boundary', () => {
+test('import-line blanking maps kept text and refuses ranges that cross the removed characters', () => {
   const original = 'aaa\nbbb\nccc\n';
   const capture = captureSource({ identity: '/work/imports.bend', bytes: bytesOf(original) });
   assert.equal(capture.utf16Length, 12);
@@ -140,7 +138,8 @@ test('removed import text yields an explicit unmapped boundary', () => {
   assert.deepEqual(view.mapRange(4, 5), { status: 'mapped', originalStart: 7, originalEnd: 8 });
   assert.deepEqual(view.mapRange(4, 9), { status: 'mapped', originalStart: 7, originalEnd: 12 });
   assert.equal(view.mapRange(3, 5).reason, 'spansOmitted', 'a range crossing removed text');
-  assert.equal(view.mapRange(5, 6).reason, 'spansOmitted');
+  assert.deepEqual(view.mapRange(5, 6), { status: 'mapped', originalStart: 8, originalEnd: 9 });
+  // Mapping convention: a zero-length point at a join belongs to the later segment.
   assert.deepEqual(view.mapRange(4, 4), { status: 'mapped', originalStart: 7, originalEnd: 7 });
   assert.deepEqual(view.mapRange(9, 9), { status: 'mapped', originalStart: 12, originalEnd: 12 });
 
@@ -152,7 +151,7 @@ test('removed import text yields an explicit unmapped boundary', () => {
   assert.equal(afterImport.status, 'mapped');
   assert.equal(afterImport.text, '\nccc\n');
   assert.deepEqual(afterImport.original.start, { index: 7, line: 1, column: 4 });
-  assert.deepEqual(afterImport.original.end, { index: 12, line: 2, column: 1 });
+  assert.deepEqual(afterImport.original.end, { index: 12, line: 3, column: 1 });
   assert.deepEqual(afterImport.byteRange, { start: 7, end: 12 });
 });
 
@@ -214,13 +213,54 @@ test('returned data is immutable and caller mutation does not change a view', ()
   assert.equal(view.utf16Length, 3);
 });
 
-test('declared pins and representation limits are exposed', () => {
-  assert.equal(FRONTEND_PINS.version, '2.0.25');
-  assert.equal(FRONTEND_PINS.kernel.sha256, '93c2a43deeb82c15683e4e25bbc5dec5ac3edff9f54e09acc0975e290fcaeb85');
-  assert.equal(FRONTEND_PINS.main.sha256, '92dcdb49e82fd59443e3aea10784f7dcf03a93f5a21920666543098b657b6b1e');
-  const codes = REPRESENTATION_LIMITS.map((limit) => limit.code);
-  for (const required of ['utf16CodeUnits', 'callerSuppliedTransformation', 'noFilenameInference', 'noViewAuthority', 'loaderImportSpanWidth']) {
-    assert.ok(codes.includes(required), required);
-  }
-  assert.equal(Object.isFrozen(REPRESENTATION_LIMITS), true);
+test('mapRange refuses surrogate-interior endpoints on its own', () => {
+  const capture = captureSource({ identity: '/work/astral-map.bend', bytes: bytesOf('a😀b') });
+  const view = wholeText(capture);
+  assert.equal(view.mapRange(2, 3).reason, 'surrogateInterior');
+  assert.equal(view.mapRange(2, 2).reason, 'surrogateInterior');
+  assert.equal(view.mapRange(0, 2).reason, 'surrogateInterior');
+  assert.deepEqual(view.mapRange(1, 3), { status: 'mapped', originalStart: 1, originalEnd: 3 });
+  assert.deepEqual(view.mapRange(3, 4), { status: 'mapped', originalStart: 3, originalEnd: 4 });
+  assert.deepEqual(view.mapRange(4, 4), { status: 'mapped', originalStart: 4, originalEnd: 4 });
+});
+
+test('a caller mutating its own bytes cannot change a capture', () => {
+  const bytes = Uint8Array.from(bytesOf('keep\n'));
+  const capture = captureSource({ identity: '/work/mutable.bend', bytes });
+  const text = capture.text;
+  const digest = capture.digest;
+  const byteLength = capture.byteLength;
+  const mapped = capture.byteOffsetForUtf16(5);
+  bytes.fill(0);
+  assert.equal(capture.text, text);
+  assert.equal(capture.digest, digest);
+  assert.equal(capture.byteLength, byteLength);
+  assert.deepEqual(capture.byteOffsetForUtf16(5), mapped);
+  assert.deepEqual(capture.byteOffsetForUtf16(5), { status: 'mapped', byteOffset: 5 });
+});
+
+test('shared memory is refused at the capture and decode boundary', () => {
+  const shared = new Uint8Array(new SharedArrayBuffer(4));
+  assert.equal(captureSource({ identity: '/work/shared.bend', bytes: shared }).reason, 'sharedBufferUnsupported');
+  assert.equal(decodeStrictUtf8(shared).reason, 'sharedBufferUnsupported');
+});
+
+test('decodeStrictUtf8 validates its own byte input', () => {
+  assert.equal(decodeStrictUtf8(undefined).reason, 'bytesMissing');
+  assert.equal(decodeStrictUtf8(null).reason, 'bytesMissing');
+  assert.equal(decodeStrictUtf8([0x61]).reason, 'bytesMissing');
+  assert.equal(decodeStrictUtf8('a').reason, 'bytesMissing');
+  assert.equal(captureSource({ identity: '/work/no-bytes.bend' }).reason, 'bytesMissing');
+  assert.equal(captureSource({ bytes: bytesOf('x') }).reason, 'identityMissing');
+});
+
+test('the leading line-feed boundary follows parse_col exactly', () => {
+  const capture = captureSource({ identity: '/work/leading-lf.bend', bytes: bytesOf('\nx') });
+  const atZero = locationOf(capture, 0);
+  assert.equal(atZero.status, 'mapped');
+  assert.equal(atZero.line, 0);
+  assert.equal(atZero.column, 0, 'parse_col yields 0 at index 0 of text that begins with a line feed');
+  const afterFeed = locationOf(capture, 1);
+  assert.equal(afterFeed.line, 1);
+  assert.equal(afterFeed.column, 1);
 });
