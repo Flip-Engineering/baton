@@ -316,7 +316,7 @@ def admit_text(admission: Admission) -> String:
     case AdmissionUncertain{stage, answer}: "uncertain:" ++ stage
 
 law a_retained_association_decodes_unicode_scalars:
-  {association_decode("present\tc3a9e4b8ad\t6964\te4b8ad\n") == AssociationStored{"é中", "id", "中"} : Association}
+  {association_decode("present\tc3a9e4b8adf09fa7aa\t6964\te4b8ad\n") == AssociationStored{"é中🧪", "id", "中"} : Association}
 
 def a_retained_association_decodes_unicode_scalars():
   {==}

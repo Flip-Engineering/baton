@@ -2273,7 +2273,7 @@ def codec_law_an_object_subject_selector_keeps_its_evidence():
   {==}
 
 law codec_law_an_object_subject_selector_composes_into_core:
-  {Refs.ref_subject_kind(ref_record_of(ref_decode(ref_object_of(ref_members_object_subject("r9", J.Jarr{J.Jstr{"definition"}, J.Jnil{}}))))) == "entity" : String}
+  {Refs.ref_subject_kind(ref_record_of(ref_decode(ref_object_of(ref_members_object_subject("r9", J.Jarr{J.Jstr{"definition"}, J.Jnil{}}))), "p1")) == "entity" : String}
 
 def codec_law_an_object_subject_selector_composes_into_core():
   {==}

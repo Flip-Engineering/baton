@@ -823,3 +823,9 @@ law a_required_symbol_name_cannot_be_absent:
 
 def a_required_symbol_name_cannot_be_absent():
   {==}
+
+law a_four_byte_scalar_preserves_all_continuation_bits:
+  {decode_scalar_utf8("\u{f0}\u{9f}\u{a7}\u{aa}") == ScalarText{"🧪"} : Scalar}
+
+def a_four_byte_scalar_preserves_all_continuation_bits():
+  {==}
