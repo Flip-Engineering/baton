@@ -481,7 +481,7 @@ def RawRefused_sample() -> J.Json:
 
 def Runtime_sample() -> J.Json:
   J.Jobj{J.Jpair{"version", J.Jint{1},
-    J.Jpair{"subject", J.Jobj{J.Jpair{"kind", J.Jstr{"runtime"}, J.Jpair{"intent", J.Jstr{"observe"}, J.Jnil{}}}},
+    J.Jpair{"subject", J.Jobj{J.Jpair{"kind", J.Jstr{"runtime"}, J.Jpair{"intent", J.Jstr{"observe"}, J.Jpair{"session", J.Jstr{"runtime-1"}, J.Jnil{}}}}},
     J.Jpair{"select", J.Jarr{J.Jstr{"state"}, J.Jnil{}}, J.Jnil{}}}}}
 
 def Unmapped_runtime_override_sample() -> J.Json:
@@ -521,7 +521,7 @@ def Ref_override_sample() -> J.Json:
 # A source request that selects the SQL join and carries a request-local tool override.
 def Join_override_sample() -> J.Json:
   J.Jobj{J.Jpair{"version", J.Jint{1},
-    J.Jpair{"subject", cobj2("kind", J.Jstr{"symbol"}, "path", J.Jstr{"a.ts"}),
+    J.Jpair{"subject", cobj3("kind", J.Jstr{"symbol"}, "path", J.Jstr{"a.ts"}, "name", J.Jstr{"f"}),
     J.Jpair{"select", carr1(J.Jstr{"databaseAccesses"}),
     J.Jpair{"options", cobj1("tools", J.Jobj{J.Jnil{}}), J.Jnil{}}}}}}
 
