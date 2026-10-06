@@ -989,7 +989,7 @@ def a_surplus_ref_row_is_unreadable():
   {==}
 
 law a_non_array_refs_container_is_unreadable:
-  {ContextStore.ref_lookup_decode("q7","ref-1","complete\tpresent\tcontainer\t\t0\n") == ContextStore.RefUnreadable{"count","complete\tpresent\tcontainer\t\t0\n"} : ContextStore.RefLookup}
+  {ContextStore.ref_lookup_decode("q7","ref-1","complete\tpresent\tcontainer\t\t0\n") == ContextStore.RefUnreadable{"container","complete\tpresent\tcontainer\t\t0\n"} : ContextStore.RefLookup}
 
 def a_non_array_refs_container_is_unreadable():
   {==}
