@@ -1239,3 +1239,27 @@ law a_document_shaped_answer_is_not_a_committed_receipt:
 
 def a_document_shaped_answer_is_not_a_committed_receipt():
   {==}
+
+law an_absent_receipt_row_of_all_zero_flags_is_absent:
+  {ContextObserver.receipt_decode("q1","starter","0","2","absent\t0\t0\t0\t0\t0\t0\n") == ContextObserver.ReceiptAbsent{} : ContextObserver.ReceiptRead}
+
+def an_absent_receipt_row_of_all_zero_flags_is_absent():
+  {==}
+
+law an_eight_column_receipt_row_is_surplus:
+  {ContextObserver.receipt_decode("q1","starter","0","2","present\t1\t1\t1\t1\t1\t1\t0\n") == ContextObserver.ReceiptMalformed{"surplus","present\t1\t1\t1\t1\t1\t1\t0\n"} : ContextObserver.ReceiptRead}
+
+def an_eight_column_receipt_row_is_surplus():
+  {==}
+
+law a_receipt_row_with_an_invalid_capture_flag_is_malformed:
+  {ContextObserver.receipt_decode("q1","starter","0","2","present\t1\t1\t1\t1\tx\t0\n") == ContextObserver.ReceiptMalformed{"evidence","present\t1\t1\t1\t1\tx\t0\n"} : ContextObserver.ReceiptRead}
+
+def a_receipt_row_with_an_invalid_capture_flag_is_malformed():
+  {==}
+
+law a_receipt_row_with_an_invalid_exit_flag_is_malformed:
+  {ContextObserver.receipt_decode("q1","starter","0","2","present\t1\t1\t1\t1\t1\tx\n") == ContextObserver.ReceiptMalformed{"evidence","present\t1\t1\t1\t1\t1\tx\n"} : ContextObserver.ReceiptRead}
+
+def a_receipt_row_with_an_invalid_exit_flag_is_malformed():
+  {==}

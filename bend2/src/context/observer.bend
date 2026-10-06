@@ -118,7 +118,7 @@ def receipt_absent(+answer: String, +qm: String, +rm: String, +im: String, +cm: 
   Bool.pick(ReceiptRead, receipt_all_off(qm, rm, im, cm, cap, ext), ReceiptAbsent{}, ReceiptMalformed{"absentShape", answer})
 
 def receipt_evidence(+query: String, +role: String, +incarnation: String, +cursor: String, +answer: String, +cap: String, +ext: String) -> ReceiptRead:
-  Bool.pick(ReceiptRead, flag_on(ext),
+  Bool.pick(ReceiptRead, Bool.and(flag_on(cap), flag_on(ext)),
     ReceiptPresent{Receipt{query, role, incarnation, cursor, flag_true(cap), flag_true(ext)}},
     ReceiptMalformed{"evidence", answer})
 
@@ -134,9 +134,9 @@ def receipt_present(+query: String, +role: String, +incarnation: String, +cursor
 
 def receipt_of(+query: String, +role: String, +incarnation: String, +cursor: String, +answer: String, +presence: String, +qm: String, +rm: String, +im: String, +cm: String, +cap: String, +ext: String) -> ReceiptRead:
   Bool.pick(ReceiptRead, String.eq(presence, "present"),
-    receipt_present(query, role, incarnation, cursor, answer, qm, rm, im, cm, pm, cap, ext),
+    receipt_present(query, role, incarnation, cursor, answer, qm, rm, im, cm, cap, ext),
   Bool.pick(ReceiptRead, String.eq(presence, "absent"),
-    receipt_absent(answer, qm, rm, im, cm, pm, cap, ext),
+    receipt_absent(answer, qm, rm, im, cm, cap, ext),
     ReceiptMalformed{"presence", answer}))
 
 def receipt_identity(+query: String, +role: String, +incarnation: String, +cursor: String, +answer: String, flags: List<String>) -> ReceiptRead:
@@ -151,11 +151,9 @@ def receipt_identity(+query: String, +role: String, +incarnation: String, +curso
                   match m3:
                     case +cm <> m4:
                       match m4:
-                        case +pm <> m5:
-                          match m5:
-                            case +cap <> m6:
-                              match m6:
-                                case +ext <> m7:
+                        case +cap <> m6:
+                          match m6:
+                            case +ext <> m7:
                                   match m7:
                                     case Nil{}: receipt_of(query, role, incarnation, cursor, answer, presence, qm, rm, im, cm, cap, ext)
                                     case _: ReceiptMalformed{"surplus", answer}

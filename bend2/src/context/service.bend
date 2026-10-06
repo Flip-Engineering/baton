@@ -137,15 +137,15 @@ def submission_after(+expectedOwner: String, +expectedRequest: String, +plan: St
 
 # One submission: the Core plan validation runs first and a refusal there creates no row, then
 # the atomic admission creates or replays the row and its answer is dispatched as itself.
-def submit(+db: String, +binding: String, +id: String, +owner: String, +requestJson: String, +keeperPath: String, +cwd: String, +originAttempt: String, +artifactPath: String, decision: PlanDecision) -> IO(Submission):
-  match decision:
-    case PlanRefuses{stage, code, detail}: IO.pure(Submission, SubmissionPlanRefused{stage, code, detail})
-    case PlanAdmits{plan, resultSchema}: admitted(db, binding, id, owner, requestJson, keeperPath, cwd, originAttempt, artifactPath, plan, resultSchema)
-
 def admitted(+db: String, +binding: String, +id: String, +owner: String, +requestJson: String, +keeperPath: String, +cwd: String, +originAttempt: String, +artifactPath: String, +plan: String, +resultSchema: String) -> IO(Submission):
   do IO<Submission>:
     answer : Result<&1,&1,U32 & String,ContextAdmit.Admission> <- ContextAdmit.admit(db, binding, id, owner, requestJson, keeperPath, cwd, originAttempt, artifactPath)
     submission_after(owner, requestJson, plan, resultSchema, answer)
+
+def submit(+db: String, +binding: String, +id: String, +owner: String, +requestJson: String, +keeperPath: String, +cwd: String, +originAttempt: String, +artifactPath: String, decision: PlanDecision) -> IO(Submission):
+  match decision:
+    case PlanRefuses{stage, code, detail}: IO.pure(Submission, SubmissionPlanRefused{stage, code, detail})
+    case PlanAdmits{plan, resultSchema}: admitted(db, binding, id, owner, requestJson, keeperPath, cwd, originAttempt, artifactPath, plan, resultSchema)
 
 def discover(catalog: Unit -> IO(Result<&1,&1,U32 & String,String>)) -> IO(Discovery):
   do IO<Discovery>:
