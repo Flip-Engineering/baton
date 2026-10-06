@@ -108,37 +108,31 @@ def receipt_sql(+query: String, +role: String, +incarnation: String, +cursor: St
   ++ "CASE WHEN (SELECT role FROM semantic_roles WHERE query_id=" ++ C.q(query) ++ " AND role=" ++ C.q(role) ++ " AND incarnation=" ++ C.q(incarnation) ++ ")=" ++ C.q(role) ++ " THEN '1' ELSE '0' END,"
   ++ "CASE WHEN (SELECT incarnation FROM semantic_roles WHERE query_id=" ++ C.q(query) ++ " AND role=" ++ C.q(role) ++ " AND incarnation=" ++ C.q(incarnation) ++ ")=" ++ C.q(incarnation) ++ " THEN '1' ELSE '0' END,"
   ++ "CASE WHEN (SELECT observer_cursor FROM semantic_roles WHERE query_id=" ++ C.q(query) ++ " AND role=" ++ C.q(role) ++ " AND incarnation=" ++ C.q(incarnation) ++ ")=" ++ C.q(cursor) ++ " THEN '1' ELSE '0' END,"
-  ++ "CASE WHEN (SELECT phase FROM semantic_roles WHERE query_id=" ++ C.q(query) ++ " AND role=" ++ C.q(role) ++ " AND incarnation=" ++ C.q(incarnation) ++ ") IN ('prepared','settled') AND (SELECT cleanup_phase FROM semantic_roles WHERE query_id=" ++ C.q(query) ++ " AND role=" ++ C.q(role) ++ " AND incarnation=" ++ C.q(incarnation) ++ ") IN ('notRequested','pending','complete','unavailable') THEN '1' ELSE '0' END,"
   ++ "CASE WHEN (SELECT capture_json FROM semantic_roles WHERE query_id=" ++ C.q(query) ++ " AND role=" ++ C.q(role) ++ " AND incarnation=" ++ C.q(incarnation) ++ ") IS NULL THEN '0' ELSE '1' END,"
   ++ "CASE WHEN (SELECT exit_evidence_json FROM semantic_roles WHERE query_id=" ++ C.q(query) ++ " AND role=" ++ C.q(role) ++ " AND incarnation=" ++ C.q(incarnation) ++ ") IS NULL THEN '0' ELSE '1' END;"
 
-def receipt_all_off(+qm: String, +rm: String, +im: String, +cm: String, +pm: String, +cap: String, +ext: String) -> Bool:
-  Bool.and(Bool.and(Bool.and(String.eq(qm, "0"), String.eq(rm, "0")), Bool.and(String.eq(im, "0"), String.eq(cm, "0"))), Bool.and(String.eq(pm, "0"), Bool.and(String.eq(cap, "0"), String.eq(ext, "0"))))
+def receipt_all_off(+qm: String, +rm: String, +im: String, +cm: String, +cap: String, +ext: String) -> Bool:
+  Bool.and(Bool.and(Bool.and(String.eq(qm, "0"), String.eq(rm, "0")), Bool.and(String.eq(im, "0"), String.eq(cm, "0"))), Bool.and(String.eq(cap, "0"), String.eq(ext, "0")))
 
-def receipt_absent(+answer: String, +qm: String, +rm: String, +im: String, +cm: String, +pm: String, +cap: String, +ext: String) -> ReceiptRead:
-  Bool.pick(ReceiptRead, receipt_all_off(qm, rm, im, cm, pm, cap, ext), ReceiptAbsent{}, ReceiptMalformed{"absentShape", answer})
+def receipt_absent(+answer: String, +qm: String, +rm: String, +im: String, +cm: String, +cap: String, +ext: String) -> ReceiptRead:
+  Bool.pick(ReceiptRead, receipt_all_off(qm, rm, im, cm, cap, ext), ReceiptAbsent{}, ReceiptMalformed{"absentShape", answer})
 
 def receipt_evidence(+query: String, +role: String, +incarnation: String, +cursor: String, +answer: String, +cap: String, +ext: String) -> ReceiptRead:
   Bool.pick(ReceiptRead, flag_on(ext),
     ReceiptPresent{Receipt{query, role, incarnation, cursor, flag_true(cap), flag_true(ext)}},
     ReceiptMalformed{"evidence", answer})
 
-def receipt_phase(+query: String, +role: String, +incarnation: String, +cursor: String, +answer: String, +pm: String, +cap: String, +ext: String) -> ReceiptRead:
-  Bool.pick(ReceiptRead, Bool.and(String.eq(pm, "1"), flag_on(cap)),
-    receipt_evidence(query, role, incarnation, cursor, answer, cap, ext),
-    ReceiptMalformed{"phase", answer})
-
-def receipt_cursor(+query: String, +role: String, +incarnation: String, +cursor: String, +answer: String, +cm: String, +pm: String, +cap: String, +ext: String) -> ReceiptRead:
+def receipt_cursor(+query: String, +role: String, +incarnation: String, +cursor: String, +answer: String, +cm: String, +cap: String, +ext: String) -> ReceiptRead:
   Bool.pick(ReceiptRead, String.eq(cm, "1"),
-    receipt_phase(query, role, incarnation, cursor, answer, pm, cap, ext),
+    receipt_evidence(query, role, incarnation, cursor, answer, cap, ext),
     ReceiptMalformed{"cursor", answer})
 
-def receipt_present(+query: String, +role: String, +incarnation: String, +cursor: String, +answer: String, +qm: String, +rm: String, +im: String, +cm: String, +pm: String, +cap: String, +ext: String) -> ReceiptRead:
+def receipt_present(+query: String, +role: String, +incarnation: String, +cursor: String, +answer: String, +qm: String, +rm: String, +im: String, +cm: String, +cap: String, +ext: String) -> ReceiptRead:
   Bool.pick(ReceiptRead, Bool.and(Bool.and(String.eq(qm, "1"), String.eq(rm, "1")), String.eq(im, "1")),
-    receipt_cursor(query, role, incarnation, cursor, answer, cm, pm, cap, ext),
+    receipt_cursor(query, role, incarnation, cursor, answer, cm, cap, ext),
     ReceiptMalformed{"identity", answer})
 
-def receipt_of(+query: String, +role: String, +incarnation: String, +cursor: String, +answer: String, +presence: String, +qm: String, +rm: String, +im: String, +cm: String, +pm: String, +cap: String, +ext: String) -> ReceiptRead:
+def receipt_of(+query: String, +role: String, +incarnation: String, +cursor: String, +answer: String, +presence: String, +qm: String, +rm: String, +im: String, +cm: String, +cap: String, +ext: String) -> ReceiptRead:
   Bool.pick(ReceiptRead, String.eq(presence, "present"),
     receipt_present(query, role, incarnation, cursor, answer, qm, rm, im, cm, pm, cap, ext),
   Bool.pick(ReceiptRead, String.eq(presence, "absent"),
@@ -163,7 +157,7 @@ def receipt_identity(+query: String, +role: String, +incarnation: String, +curso
                               match m6:
                                 case +ext <> m7:
                                   match m7:
-                                    case Nil{}: receipt_of(query, role, incarnation, cursor, answer, presence, qm, rm, im, cm, pm, cap, ext)
+                                    case Nil{}: receipt_of(query, role, incarnation, cursor, answer, presence, qm, rm, im, cm, cap, ext)
                                     case _: ReceiptMalformed{"surplus", answer}
                                 case _: ReceiptMalformed{"short", answer}
                             case _: ReceiptMalformed{"short", answer}
