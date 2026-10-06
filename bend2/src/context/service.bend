@@ -176,6 +176,7 @@ def admitted(+db: String, +binding: String, +id: String, +owner: String, +reques
     answer : Result<&1,&1,U32 & String,ContextAdmit.Admission> <- ContextAdmit.admit(db, binding, id, owner, requestJson, keeperPath, cwd, originAttempt, artifactPath)
     submission_after(owner, requestJson, plan, resultSchema, answer)
 
+
 # The presence of the identity is bound before it is inspected, so the scrutinee is a
 # parameter and the IO action is chosen inside the match: an absent identity refuses in
 # this branch and reaches no bound call, and a present one proceeds to the admission.
@@ -210,6 +211,38 @@ def submission_replayed(+expectedOwner: String, +expectedRequest: String, +plan:
     case ContextAdmit.AssociationStored{planValue, planIdentity, resultSchema: storedSchema}: submission_stored(expectedOwner, expectedRequest, plan, admission, planValue, planIdentity, storedSchema)
     case ContextAdmit.AssociationMissing{}: submission_of(expectedOwner, expectedRequest, plan, resultSchema, admission)
     case ContextAdmit.AssociationMalformed{stage, answer}: SubmissionUncertain{stage, answer}
+
+# The stored association decides the replay, and a failed read-back stays a host refusal
+# rather than an absence: a row whose association cannot be read must not be answered as
+# unestablished when the read failed.
+def association_after(+expectedOwner: String, +expectedRequest: String, +identity: String, +resultSchema: String, admission: ContextAdmit.Admission, result: Result<&1,&1,U32 & String,ContextAdmit.Association>) -> IO(Submission):
+  match result:
+    case Done{+association}: IO.pure(Submission, submission_replayed(expectedOwner, expectedRequest, identity, resultSchema, admission, association))
+    case Fail{error}:
+      match error:
+        case (code, detail): IO.pure(Submission, SubmissionRefused{code, detail})
+
+# A created or retained row is known before the association is read, so the read runs only
+# after the admission answered.
+def admitted_stored(+expectedOwner: String, +expectedRequest: String, +identity: String, +resultSchema: String, +db: String, +binding: String, +id: String, result: Result<&1,&1,U32 & String,ContextAdmit.Admission>) -> IO(Submission):
+  match result:
+    case Fail{error}:
+      match error:
+        case (code, detail): IO.pure(Submission, SubmissionRefused{code, detail})
+    case Done{+admission}:
+      do IO<Submission>:
+        stored : Result<&1,&1,U32 & String,ContextAdmit.Association> <- ContextAdmit.readback_association(db, binding, id)
+        association_after(expectedOwner, expectedRequest, identity, resultSchema, admission, stored)
+
+# The submission that records the association. `planValue` is the complete rendering the
+# creating transaction stores as the carrier and `identity` is the rendering over the
+# members that decide what will run, which is what a replay compares; the association is
+# written in the same BEGIN IMMEDIATE as the query row and read back for the answer.
+def admitted_associated(+db: String, +binding: String, +id: String, +owner: String, +requestJson: String, +keeperPath: String, +cwd: String, +originAttempt: String, +artifactPath: String, +planValue: String, +identity: String, +resultSchema: String) -> IO(Submission):
+  do IO<Submission>:
+    answer : Result<&1,&1,U32 & String,ContextAdmit.Admission> <- ContextAdmit.admit_associated(db, binding, id, owner, requestJson, keeperPath, cwd, originAttempt, artifactPath, planValue, identity, resultSchema)
+    admitted_stored(owner, requestJson, identity, resultSchema, db, binding, id, answer)
+
 
 def discover(catalog: Unit -> IO(Result<&1,&1,U32 & String,String>)) -> IO(Discovery):
   do IO<Discovery>:

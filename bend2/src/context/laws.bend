@@ -1433,3 +1433,9 @@ law a_malformed_association_keeps_its_stage:
 
 def a_malformed_association_keeps_its_stage():
   {==}
+
+law a_read_back_association_decides_the_replay:
+  {ContextService.association_after("root","rq","plan","schema",ContextAdmit.AdmissionRetained{"root","rq","accepted","complete","a","/l","/w","/art"},Done{ContextAdmit.AssociationStored{"pv","plan","s"}}) == IO.pure(ContextService.Submission, ContextService.SubmissionRetainedVerified{ContextAdmit.AdmissionRetained{"root","rq","accepted","complete","a","/l","/w","/art"},"pv","s"}) : IO(ContextService.Submission)}
+
+def a_read_back_association_decides_the_replay():
+  {==}
