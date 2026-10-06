@@ -155,9 +155,6 @@ def wire_event_names_present(+members: Codec.RawValue) -> Bool:
 # Each direction requires its exact member set: the allowed-and-unique admission rejects
 # an undeclared or repeated member, and the kind walk requires every declared member and
 # the kind of each.
-def wire_invocation_kinds_ok(+members: Codec.RawValue) -> Bool:
-  Bool.pick(Bool, Codec.raw_keys_ok(wire_invocation_names(), members), wire_invocation_kinds_go(members), False{})
-
 def wire_invocation_kinds_go(+members: Codec.RawValue) -> Bool:
   Bool.pick(Bool, wire_kind_is("textOrNull", "query", members),
     Bool.pick(Bool, wire_kind_is("textOrNull", "owner", members),
@@ -169,8 +166,8 @@ def wire_invocation_kinds_go(+members: Codec.RawValue) -> Bool:
                 Bool.pick(Bool, wire_kind_is("any", "inputIdentities", members),
                   wire_kind_is("any", "operationPlan", members), False{}), False{}), False{}), False{}), False{}), False{}), False{})
 
-def wire_event_kinds_ok(+members: Codec.RawValue) -> Bool:
-  Bool.pick(Bool, Codec.raw_keys_ok(wire_event_names(), members), wire_event_kinds_go(members), False{})
+def wire_invocation_kinds_ok(+members: Codec.RawValue) -> Bool:
+  Bool.pick(Bool, Codec.raw_keys_ok(wire_invocation_names(), members), wire_invocation_kinds_go(members), False{})
 
 def wire_event_kinds_go(+members: Codec.RawValue) -> Bool:
   Bool.pick(Bool, wire_kind_is("textOrNull", "query", members),
@@ -183,6 +180,9 @@ def wire_event_kinds_go(+members: Codec.RawValue) -> Bool:
                 Bool.pick(Bool, wire_sequence_ok(wire_sequence_member(members)),
                   Bool.pick(Bool, wire_frame_type_ok(members),
                     wire_kind_is("any", "payload", members), False{}), False{}), False{}), False{}), False{}), False{}), False{}))
+
+def wire_event_kinds_ok(+members: Codec.RawValue) -> Bool:
+  Bool.pick(Bool, Codec.raw_keys_ok(wire_event_names(), members), wire_event_kinds_go(members), False{})
 
 # --- the reader ------------------------------------------------------------
 
