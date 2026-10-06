@@ -75,17 +75,18 @@ def runtime_epoch_value(+epoch: String) -> String:
 # that is already there. The plan rendering is stored as JSON text and is checked, so a
 # malformed rendering cannot be committed.
 def association_schema() -> String:
-  "CREATE TABLE IF NOT EXISTS semantic_admissions (query_id TEXT PRIMARY KEY NOT NULL REFERENCES semantic_queries(id),plan_value TEXT NOT NULL,result_schema TEXT NOT NULL,origin_attempt TEXT,CHECK(json_valid(plan_value)));"
+  "CREATE TABLE IF NOT EXISTS semantic_admissions (query_id TEXT PRIMARY KEY NOT NULL REFERENCES semantic_queries(id),plan_value TEXT NOT NULL,plan_identity TEXT NOT NULL,result_schema TEXT NOT NULL,origin_attempt TEXT,CHECK(json_valid(plan_value)));"
 
 def association_present(id: String) -> String:
   "EXISTS(SELECT 1 FROM semantic_admissions WHERE query_id=" ++ C.q(id) ++ ")"
 
-# The stored association as three columns: a marker, and the plan rendering and result
-# schema as hex, because the rendering is arbitrary JSON text and a tab or a newline
-# inside it would otherwise split the tab-separated answer row. A row with no
-# association answers the absent marker with two empty values.
+# The stored association as four columns: a marker, then the complete rendering, the
+# identity over the deciding members, and the result schema, each as hex, because a
+# rendering is arbitrary JSON text and a tab or a newline inside it would otherwise split
+# the tab-separated answer row. A row with no association answers the absent marker with
+# three empty values.
 def association_row_sql(+id: String) -> String:
-  "SELECT CASE WHEN " ++ association_present(id) ++ " THEN 'present' ELSE 'absent' END," ++ "coalesce((SELECT hex(plan_value) FROM semantic_admissions WHERE query_id=" ++ C.q(id) ++ "),'')," ++ "coalesce((SELECT hex(result_schema) FROM semantic_admissions WHERE query_id=" ++ C.q(id) ++ "),'');"
+  "SELECT CASE WHEN " ++ association_present(id) ++ " THEN 'present' ELSE 'absent' END," ++ "coalesce((SELECT hex(plan_value) FROM semantic_admissions WHERE query_id=" ++ C.q(id) ++ "),'')," ++ "coalesce((SELECT hex(plan_identity) FROM semantic_admissions WHERE query_id=" ++ C.q(id) ++ "),'')," ++ "coalesce((SELECT hex(result_schema) FROM semantic_admissions WHERE query_id=" ++ C.q(id) ++ "),'');"
 
 def schema() -> String:
   "CREATE TABLE IF NOT EXISTS semantic_queries (id TEXT PRIMARY KEY NOT NULL,owner TEXT NOT NULL REFERENCES sessions(id),request_json TEXT NOT NULL,admission_decision TEXT NOT NULL CHECK(admission_decision IN ('accepted','rejected')),prepared_keeper_path TEXT,cwd TEXT NOT NULL,origin_attempt TEXT,state TEXT NOT NULL CHECK(state IN ('accepted','running','complete','failed','interrupted','refused')),result_json TEXT,error_json TEXT,progress_json TEXT,cleanup_intent_json TEXT,recovery_intent_json TEXT,runtime_id TEXT,artifact_path TEXT NOT NULL,CHECK(json_valid(request_json)),CHECK(result_json IS NULL OR json_valid(result_json)),CHECK(error_json IS NULL OR json_valid(error_json)),CHECK(progress_json IS NULL OR json_valid(progress_json)),CHECK(cleanup_intent_json IS NULL OR json_valid(cleanup_intent_json)),CHECK(recovery_intent_json IS NULL OR json_valid(recovery_intent_json)));"
@@ -288,9 +289,11 @@ def text_or_null(+value: String) -> String:
 # The association insert is guarded by `changes()`, which still refers to the insert of
 # the query row because that insert is the statement immediately before it. So it runs
 # only in the transaction that created that row, and a replay writes nothing: a caller
-# that replays an old row cannot attach its own plan to a row admitted without one.
-def association_insert_sql(+id: String, +planValue: String, +resultSchema: String, +originAttempt: String) -> String:
-  "INSERT INTO semantic_admissions(query_id,plan_value,result_schema,origin_attempt) SELECT " ++ C.q(id) ++ "," ++ C.q(planValue) ++ "," ++ C.q(resultSchema) ++ "," ++ text_or_null(originAttempt) ++ " WHERE changes()=1 AND NOT EXISTS(SELECT 1 FROM semantic_admissions WHERE query_id=" ++ C.q(id) ++ ");"
+# that replays an old row cannot attach its own plan to a row admitted without one. The
+# complete rendering and the identity over the deciding members are both stored: the
+# rendering is the carrier, and the identity is what a replay compares without parsing.
+def association_insert_sql(+id: String, +planValue: String, +planIdentity: String, +resultSchema: String, +originAttempt: String) -> String:
+  "INSERT INTO semantic_admissions(query_id,plan_value,plan_identity,result_schema,origin_attempt) SELECT " ++ C.q(id) ++ "," ++ C.q(planValue) ++ "," ++ C.q(planIdentity) ++ "," ++ C.q(resultSchema) ++ "," ++ text_or_null(originAttempt) ++ " WHERE changes()=1 AND NOT EXISTS(SELECT 1 FROM semantic_admissions WHERE query_id=" ++ C.q(id) ++ ");"
 
 # The repeated-ID rule of the store: the same ID, owner and canonical request text
 # replay the stored row; any other reuse aborts the transaction through the NOT NULL

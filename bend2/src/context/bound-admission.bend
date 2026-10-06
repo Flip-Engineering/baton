@@ -35,7 +35,7 @@ type Admission is Data:
 # row that carries none, which is how a database created before any association existed
 # answers; `AssociationMalformed` keeps the failing stage and the raw answer.
 type Association is Data:
-  AssociationStored{planValue: String, resultSchema: String}
+  AssociationStored{planValue: String, planIdentity: String, resultSchema: String}
   AssociationMissing{}
   AssociationMalformed{stage: String, answer: String}
 
@@ -55,11 +55,11 @@ def hex_ok(s: String) -> Bool:
         case SNil{}: False{}
         case SCon{b, more}: Bool.and(Bool.and(hex_digit_ok(a), hex_digit_ok(b)), hex_ok(more))
 
-def association_mark(+mark: String, +plan: String, +schema: String, +answer: String) -> Association:
+def association_mark(+mark: String, +plan: String, +identity: String, +schema: String, +answer: String) -> Association:
   Bool.pick(Association, String.eq(mark, "absent"),
-    Bool.pick(Association, Bool.and(String.is_empty(plan), String.is_empty(schema)), AssociationMissing{}, AssociationMalformed{"shape", answer}),
+    Bool.pick(Association, Bool.and(Bool.and(String.is_empty(plan), String.is_empty(identity)), String.is_empty(schema)), AssociationMissing{}, AssociationMalformed{"shape", answer}),
   Bool.pick(Association, String.eq(mark, "present"),
-    Bool.pick(Association, Bool.and(hex_ok(plan), hex_ok(schema)), AssociationStored{Tx.hex_decode(plan), Tx.hex_decode(schema)}, AssociationMalformed{"framing", answer}),
+    Bool.pick(Association, Bool.and(Bool.and(hex_ok(plan), hex_ok(identity)), hex_ok(schema)), AssociationStored{Tx.hex_decode(plan), Tx.hex_decode(identity), Tx.hex_decode(schema)}, AssociationMalformed{"framing", answer}),
     AssociationMalformed{"mark", answer}))
 
 def association_fields(+fields: List<String>, +answer: String) -> Association:
@@ -68,10 +68,13 @@ def association_fields(+fields: List<String>, +answer: String) -> Association:
       match more0:
         case +plan <> more1:
           match more1:
-            case +schema <> more2:
+            case +identity <> more2:
               match more2:
-                case Nil{}: association_mark(mark, plan, schema, answer)
-                case _: AssociationMalformed{"surplus", answer}
+                case +schema <> more3:
+                  match more3:
+                    case Nil{}: association_mark(mark, plan, identity, schema, answer)
+                    case _: AssociationMalformed{"surplus", answer}
+                case _: AssociationMalformed{"short", answer}
             case _: AssociationMalformed{"short", answer}
         case _: AssociationMalformed{"short", answer}
     case _: AssociationMalformed{"short", answer}
@@ -118,8 +121,8 @@ def admit_sql(+id: String, +owner: String, +requestJson: String, +keeperPath: St
 # result schema. The association insert is the statement between the query insert and the
 # read-back, so `changes()` still refers to the query insert and the association is
 # written only by the run that created the row, inside the same BEGIN IMMEDIATE.
-def admit_associated_sql(+id: String, +owner: String, +requestJson: String, +keeperPath: String, +cwd: String, +originAttempt: String, +artifactPath: String, +planValue: String, +resultSchema: String) -> String:
-  "BEGIN IMMEDIATE;" ++ ContextStore.schema() ++ admit_query_insert_sql(id, owner, requestJson, keeperPath, cwd, originAttempt, artifactPath) ++ ContextStore.association_insert_sql(id, planValue, resultSchema, originAttempt) ++ admit_row_sql(id) ++ "COMMIT;"
+def admit_associated_sql(+id: String, +owner: String, +requestJson: String, +keeperPath: String, +cwd: String, +originAttempt: String, +artifactPath: String, +planValue: String, +planIdentity: String, +resultSchema: String) -> String:
+  "BEGIN IMMEDIATE;" ++ ContextStore.schema() ++ admit_query_insert_sql(id, owner, requestJson, keeperPath, cwd, originAttempt, artifactPath) ++ ContextStore.association_insert_sql(id, planValue, planIdentity, resultSchema, originAttempt) ++ admit_row_sql(id) ++ "COMMIT;"
 
 
 # The decision domain is the one the schema constrains; the state spelling comes
@@ -256,9 +259,9 @@ def association_readback_sql(+id: String) -> String:
 
 # The admission record is read back from the row this transaction wrote; the association
 # is the value the statement text recorded, not the caller's argument.
-def admit_associated(+db: String, +binding: String, +id: String, +owner: String, +requestJson: String, +keeperPath: String, +cwd: String, +originAttempt: String, +artifactPath: String, +planValue: String, +resultSchema: String) -> IO(Result<&1,&1,U32 & String,Admission>):
+def admit_associated(+db: String, +binding: String, +id: String, +owner: String, +requestJson: String, +keeperPath: String, +cwd: String, +originAttempt: String, +artifactPath: String, +planValue: String, +planIdentity: String, +resultSchema: String) -> IO(Result<&1,&1,U32 & String,Admission>):
   do IO<Result<&1,&1,U32 & String,Admission>>:
-    result : Result<&1,&1,U32 & String,String> <- DB.Sql.query_bound(db, binding, admit_associated_sql(id, owner, requestJson, keeperPath, cwd, originAttempt, artifactPath, planValue, resultSchema))
+    result : Result<&1,&1,U32 & String,String> <- DB.Sql.query_bound(db, binding, admit_associated_sql(id, owner, requestJson, keeperPath, cwd, originAttempt, artifactPath, planValue, planIdentity, resultSchema))
     admit_after(result)
 
 

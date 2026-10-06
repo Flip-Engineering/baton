@@ -55,6 +55,9 @@ type PlanDecision is Data:
 # The plan and schema arrive as the caller's lossless carrier of the frozen plan, whose exact
 # representation must be agreed with Core; this lane never interprets them.
 type Submission is Data:
+  # A retained row whose stored identity equals the identity the caller supplied, carrying
+  # the stored complete rendering and schema rather than the caller's proposed ones.
+  SubmissionRetainedVerified{admission: ContextAdmit.Admission, planValue: String, resultSchema: String}
   SubmissionAdmitted{admission: ContextAdmit.Admission, proposedPlan: String, proposedSchema: String}
   SubmissionRetainedUnverified{admission: ContextAdmit.Admission, proposedPlan: String, proposedSchema: String}
   SubmissionPlanRefused{stage: String, reason: String}
@@ -186,6 +189,27 @@ def submit(+db: String, +binding: String, +id: String, +owner: String, +requestJ
     case PlanRefuses{stage, reason}: IO.pure(Submission, SubmissionPlanRefused{stage, reason})
     case PlanAdmits{proposedPlan, proposedSchema}:
       submit_identified(plan_identity_present(proposedPlan), db, binding, id, owner, requestJson, keeperPath, cwd, originAttempt, artifactPath, proposedPlan, proposedSchema)
+
+# The replay decision over the stored association. The stored identity is compared with
+# the identity the caller supplied, which is the only comparison available without a
+# parser: equal identities verify the retained association and return its stored rendering,
+# a different identity refuses at the plan stage rather than attaching a fresh plan to a
+# retained row, and a row that carries no association stays unestablished because nothing
+# here can repair it.
+def submission_stored(+expectedOwner: String, +expectedRequest: String, +plan: String, admission: ContextAdmit.Admission, +planValue: String, +planIdentity: String, +storedSchema: String) -> Submission:
+  match admission:
+    case ContextAdmit.AdmissionCreated{owner, request, decision, state, attempt, keeperPath, cwd, artifactPath}: SubmissionAdmitted{admission, planValue, storedSchema}
+    case ContextAdmit.AdmissionRetained{owner, request, decision, state, attempt, keeperPath, cwd, artifactPath}:
+      Bool.pick(Submission, ContextAdmit.admit_identical(admission, expectedOwner, expectedRequest),
+        Bool.pick(Submission, String.eq(planIdentity, plan), SubmissionRetainedVerified{admission, planValue, storedSchema}, SubmissionPlanRefused{"plan", "stale"}),
+        submission_of(expectedOwner, expectedRequest, plan, storedSchema, admission))
+    case _: SubmissionUncertain{"association", "unexpectedAdmission"}
+
+def submission_replayed(+expectedOwner: String, +expectedRequest: String, +plan: String, +resultSchema: String, admission: ContextAdmit.Admission, association: ContextAdmit.Association) -> Submission:
+  match association:
+    case ContextAdmit.AssociationStored{planValue, planIdentity, resultSchema: storedSchema}: submission_stored(expectedOwner, expectedRequest, plan, admission, planValue, planIdentity, storedSchema)
+    case ContextAdmit.AssociationMissing{}: submission_of(expectedOwner, expectedRequest, plan, resultSchema, admission)
+    case ContextAdmit.AssociationMalformed{stage, answer}: SubmissionUncertain{stage, answer}
 
 def discover(catalog: Unit -> IO(Result<&1,&1,U32 & String,String>)) -> IO(Discovery):
   do IO<Discovery>:

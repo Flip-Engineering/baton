@@ -1298,19 +1298,19 @@ def an_absent_association_row_is_a_missing_association():
   {==}
 
 law a_stored_association_row_decodes_its_plan_and_schema:
-  {ContextAdmit.association_decode("present\t706c616e\t736368656d61\n") == ContextAdmit.AssociationStored{"plan","schema"} : ContextAdmit.Association}
+  {ContextAdmit.association_decode("present\t706c616e\t6964656e74697479\t736368656d61\n") == ContextAdmit.AssociationStored{"plan","identity","schema"} : ContextAdmit.Association}
 
 def a_stored_association_row_decodes_its_plan_and_schema():
   {==}
 
 law an_absent_association_row_carrying_a_value_is_malformed:
-  {ContextAdmit.association_decode("absent\t706c616e\t\n") == ContextAdmit.AssociationMalformed{"shape","absent\t706c616e\t\n"} : ContextAdmit.Association}
+  {ContextAdmit.association_decode("absent\t706c616e\t\t\n") == ContextAdmit.AssociationMalformed{"shape","absent\t706c616e\t\t\n"} : ContextAdmit.Association}
 
 def an_absent_association_row_carrying_a_value_is_malformed():
   {==}
 
 law a_stored_association_row_with_odd_framing_is_malformed:
-  {ContextAdmit.association_decode("present\t706c61\t736368656d61\n") == ContextAdmit.AssociationMalformed{"framing","present\t706c61\t736368656d61\n"} : ContextAdmit.Association}
+  {ContextAdmit.association_decode("present\t706c61\t6964\t736368656d61\n") == ContextAdmit.AssociationMalformed{"framing","present\t706c61\t6964\t736368656d61\n"} : ContextAdmit.Association}
 
 def a_stored_association_row_with_odd_framing_is_malformed():
   {==}
@@ -1322,7 +1322,7 @@ def a_short_association_row_is_malformed():
   {==}
 
 law a_surplus_association_column_is_malformed:
-  {ContextAdmit.association_decode("present\t706c616e\t736368656d61\textra\n") == ContextAdmit.AssociationMalformed{"surplus","present\t706c616e\t736368656d61\textra\n"} : ContextAdmit.Association}
+  {ContextAdmit.association_decode("present\t706c616e\t6964656e74697479\t736368656d61\textra\n") == ContextAdmit.AssociationMalformed{"surplus","present\t706c616e\t6964656e74697479\t736368656d61\textra\n"} : ContextAdmit.Association}
 
 def a_surplus_association_column_is_malformed():
   {==}
@@ -1338,7 +1338,7 @@ law the_association_is_written_only_by_the_transaction_that_created_the_row:
   for +planValue: String
   for +resultSchema: String
   for +originAttempt: String
-  {ContextStore.association_insert_sql(id,planValue,resultSchema,originAttempt) == "INSERT INTO semantic_admissions(query_id,plan_value,result_schema,origin_attempt) SELECT " ++ C.q(id) ++ "," ++ C.q(planValue) ++ "," ++ C.q(resultSchema) ++ "," ++ ContextStore.text_or_null(originAttempt) ++ " WHERE changes()=1 AND NOT EXISTS(SELECT 1 FROM semantic_admissions WHERE query_id=" ++ C.q(id) ++ ");" : String}
+  {ContextStore.association_insert_sql(id,planValue,planIdentity,resultSchema,originAttempt) == "INSERT INTO semantic_admissions(query_id,plan_value,plan_identity,result_schema,origin_attempt) SELECT " ++ C.q(id) ++ "," ++ C.q(planValue) ++ "," ++ C.q(planIdentity) ++ "," ++ C.q(resultSchema) ++ "," ++ ContextStore.text_or_null(originAttempt) ++ " WHERE changes()=1 AND NOT EXISTS(SELECT 1 FROM semantic_admissions WHERE query_id=" ++ C.q(id) ++ ");" : String}
 
 def the_association_is_written_only_by_the_transaction_that_created_the_row(id,planValue,resultSchema,originAttempt):
   {==}
@@ -1352,8 +1352,9 @@ law the_associated_admission_records_the_association_before_the_readback:
   for +originAttempt: String
   for +artifactPath: String
   for +planValue: String
+  for +planIdentity: String
   for +resultSchema: String
-  {ContextAdmit.admit_associated_sql(id,owner,requestJson,keeperPath,cwd,originAttempt,artifactPath,planValue,resultSchema) == "BEGIN IMMEDIATE;" ++ ContextStore.schema() ++ ContextAdmit.admit_query_insert_sql(id,owner,requestJson,keeperPath,cwd,originAttempt,artifactPath) ++ ContextStore.association_insert_sql(id,planValue,resultSchema,originAttempt) ++ ContextAdmit.admit_row_sql(id) ++ "COMMIT;" : String}
+  {ContextAdmit.admit_associated_sql(id,owner,requestJson,keeperPath,cwd,originAttempt,artifactPath,planValue,planIdentity,resultSchema) == "BEGIN IMMEDIATE;" ++ ContextStore.schema() ++ ContextAdmit.admit_query_insert_sql(id,owner,requestJson,keeperPath,cwd,originAttempt,artifactPath) ++ ContextStore.association_insert_sql(id,planValue,planIdentity,resultSchema,originAttempt) ++ ContextAdmit.admit_row_sql(id) ++ "COMMIT;" : String}
 
 def the_associated_admission_records_the_association_before_the_readback(id,owner,requestJson,keeperPath,cwd,originAttempt,artifactPath,planValue,resultSchema):
   {==}
@@ -1361,7 +1362,7 @@ def the_associated_admission_records_the_association_before_the_readback(id,owne
 law two_different_plans_do_not_share_an_association_insert:
   for +id: String
   for +originAttempt: String
-  {Bool.not(String.eq(ContextStore.association_insert_sql(id,"plan-a","schema-a",originAttempt), ContextStore.association_insert_sql(id,"plan-b","schema-a",originAttempt))) == True{} : Bool}
+  {Bool.not(String.eq(ContextStore.association_insert_sql(id,"plan-a","id-a","schema-a",originAttempt), ContextStore.association_insert_sql(id,"plan-b","id-b","schema-a",originAttempt))) == True{} : Bool}
 
 def two_different_plans_do_not_share_an_association_insert(id,originAttempt):
   {==}
@@ -1369,13 +1370,13 @@ def two_different_plans_do_not_share_an_association_insert(id,originAttempt):
 law two_different_schemas_do_not_share_an_association_insert:
   for +id: String
   for +originAttempt: String
-  {Bool.not(String.eq(ContextStore.association_insert_sql(id,"plan-a","schema-a",originAttempt), ContextStore.association_insert_sql(id,"plan-a","schema-b",originAttempt))) == True{} : Bool}
+  {Bool.not(String.eq(ContextStore.association_insert_sql(id,"plan-a","id-a","schema-a",originAttempt), ContextStore.association_insert_sql(id,"plan-a","id-a","schema-b",originAttempt))) == True{} : Bool}
 
 def two_different_schemas_do_not_share_an_association_insert(id,originAttempt):
   {==}
 
 law an_association_answer_row_carries_the_absent_marker_for_a_row_without_one:
-  {ContextStore.association_row_sql("q1") == "SELECT CASE WHEN " ++ ContextStore.association_present("q1") ++ " THEN 'present' ELSE 'absent' END," ++ "coalesce((SELECT hex(plan_value) FROM semantic_admissions WHERE query_id=" ++ C.q("q1") ++ "),'')," ++ "coalesce((SELECT hex(result_schema) FROM semantic_admissions WHERE query_id=" ++ C.q("q1") ++ "),'');" : String}
+  {ContextStore.association_row_sql("q1") == "SELECT CASE WHEN " ++ ContextStore.association_present("q1") ++ " THEN 'present' ELSE 'absent' END," ++ "coalesce((SELECT hex(plan_value) FROM semantic_admissions WHERE query_id=" ++ C.q("q1") ++ "),'')," ++ "coalesce((SELECT hex(plan_identity) FROM semantic_admissions WHERE query_id=" ++ C.q("q1") ++ "),'')," ++ "coalesce((SELECT hex(result_schema) FROM semantic_admissions WHERE query_id=" ++ C.q("q1") ++ "),'');" : String}
 
 def an_association_answer_row_carries_the_absent_marker_for_a_row_without_one():
   {==}
@@ -1395,4 +1396,40 @@ law an_absent_plan_identity_refuses_without_reaching_the_admission:
   {ContextService.submit_identified(True{},db,binding,id,owner,requestJson,keeperPath,cwd,originAttempt,artifactPath,plan,resultSchema) == IO.pure(ContextService.Submission, ContextService.SubmissionPlanRefused{"plan","absent"}) : IO(ContextService.Submission)}
 
 def an_absent_plan_identity_refuses_without_reaching_the_admission(db,binding,id,owner,requestJson,keeperPath,cwd,originAttempt,artifactPath,plan,resultSchema):
+  {==}
+
+law a_replayed_identity_that_equals_the_stored_one_verifies_the_association:
+  {ContextService.submission_replayed("root","rq","plan","schema",ContextAdmit.AdmissionRetained{"root","rq","accepted","complete","a","/l","/w","/art"},ContextAdmit.AssociationStored{"pv","plan","s"}) == ContextService.SubmissionRetainedVerified{ContextAdmit.AdmissionRetained{"root","rq","accepted","complete","a","/l","/w","/art"},"pv","s"} : ContextService.Submission}
+
+def a_replayed_identity_that_equals_the_stored_one_verifies_the_association():
+  {==}
+
+law a_replayed_identity_that_differs_from_the_stored_one_refuses_as_stale:
+  {ContextService.submission_replayed("root","rq","other-plan","schema",ContextAdmit.AdmissionRetained{"root","rq","accepted","complete","a","/l","/w","/art"},ContextAdmit.AssociationStored{"pv","plan","s"}) == ContextService.SubmissionPlanRefused{"plan","stale"} : ContextService.Submission}
+
+def a_replayed_identity_that_differs_from_the_stored_one_refuses_as_stale():
+  {==}
+
+law a_created_admission_answers_with_the_stored_rendering_and_schema:
+  {ContextService.submission_replayed("root","rq","plan","schema",ContextAdmit.AdmissionCreated{"root","rq","accepted","accepted","a","/l","/w","/art"},ContextAdmit.AssociationStored{"pv","plan","s"}) == ContextService.SubmissionAdmitted{ContextAdmit.AdmissionCreated{"root","rq","accepted","accepted","a","/l","/w","/art"},"pv","s"} : ContextService.Submission}
+
+def a_created_admission_answers_with_the_stored_rendering_and_schema():
+  {==}
+
+law a_row_without_a_stored_association_stays_unestablished:
+  {ContextService.submission_replayed("root","rq","plan","schema",ContextAdmit.AdmissionRetained{"root","rq","accepted","complete","a","/l","/w","/art"},ContextAdmit.AssociationMissing{}) == ContextService.SubmissionRetainedUnverified{ContextAdmit.AdmissionRetained{"root","rq","accepted","complete","a","/l","/w","/art"},"plan","schema"} : ContextService.Submission}
+
+def a_row_without_a_stored_association_stays_unestablished():
+  {==}
+
+law a_retained_row_of_another_owner_is_foreign_however_its_association_reads:
+  {ContextService.submission_replayed("root","rq","plan","schema",ContextAdmit.AdmissionRetained{"kid","rq","accepted","complete","a","/l","/w","/art"},ContextAdmit.AssociationStored{"pv","plan","s"}) == ContextService.SubmissionForeign{"kid","rq"} : ContextService.Submission}
+
+def a_retained_row_of_another_owner_is_foreign_however_its_association_reads():
+  {==}
+
+law a_malformed_association_keeps_its_stage:
+  {ContextService.submission_replayed("root","rq","plan","schema",ContextAdmit.AdmissionRetained{"root","rq","accepted","complete","a","/l","/w","/art"},ContextAdmit.AssociationMalformed{"framing","x"}) == ContextService.SubmissionUncertain{"framing","x"} : ContextService.Submission}
+
+def a_malformed_association_keeps_its_stage():
   {==}
