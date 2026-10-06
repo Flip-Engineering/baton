@@ -47,7 +47,7 @@ type RawValue is Data:
   Rpair{key: String, value: RawValue, rest: RawValue}
   Rnil{}
 
-def raw_member(key: String, members: RawValue) -> Maybe<&2, RawValue>:
+def raw_member(+key: String, members: RawValue) -> Maybe<&2, RawValue>:
   match members:
     case Rpair{+name, +value, +tail}:
       Bool.pick(Maybe<&2, RawValue>, String.eq(name, key), Some{value}, raw_member(key, tail))
