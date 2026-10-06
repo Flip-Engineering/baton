@@ -313,10 +313,14 @@ def checkpoint_restore_read(found: Result<&1,&1,U32 & String,String>, +log: Stri
       +written : Result<&1,&1,U32 & String,Unit> <- T.Text.append(log,text ++ "\n")
       checkpoint_written(written,True{},log,"")
 
-def checkpoint_restore(+log: String) -> IO(Result<&1,&1,U32 & String,Unit>):
+def checkpoint_restore_file(+log: String) -> IO(Result<&1,&1,U32 & String,Unit>):
   do IO<Result<&1,&1,U32 & String,Unit>>:
     found : Result<&1,&1,U32 & String,String> <- T.Text.read(log ++ ".pending")
     checkpoint_restore_read(found,log)
+
+def checkpoint_restore(+log: String) -> IO(Result<&1,&1,U32 & String,Unit>):
+  Bool.pick(IO(Result<&1,&1,U32 & String,Unit>),String.is_empty(log),
+    IO.pure(Result<&1,&1,U32 & String,Unit>,Done{Unit{}}),checkpoint_restore_file(log))
 
 @unsafe
 def consume(+db: String, +player: String, +id: String, +log: String, +policy: Logs.Policy, +held: String, +log_failed: Bool, +handle: U32, +harness: String, cursor: String, last_message: String, +terminal: String, filter: String, codex_log: String, +first_error: String, sender: Chan(Result<&1,&1,U32 & String,Unit>), +attempt: String, deliveries: List<Chan(Result<&1,&1,U32 & String,String>)>, result: Result<&1,&1,U32 & String,Maybe<String>>) -> IO(Outcome & List<Chan(Result<&1,&1,U32 & String,String>)>):
