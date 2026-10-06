@@ -88,7 +88,7 @@ def outcome_condition(o: Outcome) -> J.Json:
   match o:
     case OutcomeValidation{command, condition}: Context.text_condition(condition)
     case OutcomeRejected{query, condition}: Context.text_condition(condition)
-    case OutcomePrepareFailed{stage, query, owner, plannedDirectory, evidence, code, retained}:
+    case OutcomePrepareFailed{stage, +query, +owner, plannedDirectory, evidence, code, retained}:
       prepare_condition(stage, query, owner, plannedDirectory, evidence, code)
     case OutcomeUncertain{query, owner, plannedDirectory, evidence, retained}:
       uncertain_condition(query, owner, plannedDirectory, evidence)
@@ -106,7 +106,7 @@ def outcome_next(o: Outcome) -> Context.Next:
   match o:
     case OutcomeValidation{command, condition}: Context.NextArg{"context-engines", Context.NextStop{}}
     case OutcomeRejected{query, condition}: result_next(query)
-    case OutcomePrepareFailed{stage, query, owner, plannedDirectory, evidence, code, retained}:
+    case OutcomePrepareFailed{stage, +query, +owner, plannedDirectory, evidence, code, retained}:
       retained_next(retained, query, owner)
     case OutcomeUncertain{query, owner, plannedDirectory, evidence, retained}:
       retained_next(retained, query, owner)
@@ -120,7 +120,7 @@ def admission_refusal(o: Outcome) -> Context.Refusal:
       Context.Refuse{Context.RfValidation{}, command, Context.text_condition(condition), Context.NextArg{"context-engines", Context.NextStop{}}}
     case OutcomeRejected{query, condition}:
       Context.Refuse{Context.RfAdmissionRejected{}, "context-query", Context.text_condition(condition), result_next(query)}
-    case OutcomePrepareFailed{stage, query, owner, plannedDirectory, evidence, code, retained}:
+    case OutcomePrepareFailed{stage, +query, +owner, plannedDirectory, evidence, code, retained}:
       Context.Refuse{Context.RfHostPreparation{}, "context-query", prepare_condition(stage, query, owner, plannedDirectory, evidence, code), retained_next(retained, query, owner)}
     case OutcomeUncertain{query, owner, plannedDirectory, evidence, retained}:
       Context.Refuse{Context.RfAdmissionUncertain{}, "context-query", uncertain_condition(query, owner, plannedDirectory, evidence), retained_next(retained, query, owner)}
