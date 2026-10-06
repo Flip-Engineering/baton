@@ -16,6 +16,11 @@ import ../json/canonical.bend as J
 type Binding is Data:
   Binding{scheme: String, version: U32, path: String, device: String, file: String, birth: String, vfs: String, token: String}
 
+def token_member(+token: String) -> J.Json:
+  Bool.pick(J.Json, String.is_empty(token), J.Jnil{}, J.Jpair{"token", J.Jstr{token}, J.Jnil{}})
+
+# The physical tuple a bound call compares first. It names the discriminator scheme
+# so a future scheme cannot be compared as if it were this one.
 def binding_document(b: Binding) -> String:
   Binding{scheme, version, path, device, file, birth, vfs, token} = b
   J.json_text(J.Jobj{J.Jpair{"birth", J.Jstr{birth},
@@ -27,11 +32,7 @@ def binding_document(b: Binding) -> String:
     J.Jpair{"vfs", J.Jstr{vfs},
     token_member(token)}}}}}}}})
 
-def token_member(+token: String) -> J.Json:
-  Bool.pick(J.Json, String.is_empty(token), J.Jnil{}, J.Jpair{"token", J.Jstr{token}, J.Jnil{}})
 
-# The physical tuple a bound call compares first. It names the discriminator scheme
-# so a future scheme cannot be compared as if it were this one.
 def physical_tuple(b: Binding) -> String:
   Binding{scheme, version, path, device, file, birth, vfs, token} = b
   scheme ++ "|" ++ U32.show(version) ++ "|" ++ device ++ "|" ++ file ++ "|" ++ birth
