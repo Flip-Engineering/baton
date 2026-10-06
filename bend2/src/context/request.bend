@@ -706,6 +706,33 @@ def effects_of(m: Maybe<&2, J.Json>) -> Bool:
 def effects_required(members: J.Json) -> Bool:
   effects_of(member_lookup("effects", members))
 
+def tail_fields_ok(+members: J.Json) -> Verdict:
+  Bool.pick(Verdict, cwd_ok(members),
+    Bool.pick(Verdict, options_ok(members),
+      Bool.pick(Verdict, effects_required(members), VAccepted{}, VRefused{"invalidEffects"}),
+      VRefused{"invalidOptions"}),
+    VRefused{"invalidCwd"})
+
+
+def select_of(m: Maybe<&2, J.Json>, members: J.Json) -> Verdict:
+  match m:
+    case None{}: VRefused{"missingSelect"}
+    case Some{+value}: Bool.pick(Verdict, projections_ok(value), tail_fields_ok(members), VRefused{"invalidSelect"})
+
+def select_required(+members: J.Json) -> Verdict:
+  select_of(member_lookup("select", members), members)
+
+def root_after_engine(+members: J.Json) -> Verdict:
+  Bool.pick(Verdict, subject_required(members), select_required(members), VRefused{"missingSubject"})
+
+def root_fields_ok(+members: J.Json) -> Verdict:
+  Bool.pick(Verdict, version_ok(members),
+    Bool.pick(Verdict, engine_ok(members), root_after_engine(members), VRefused{"unknownEngine"}),
+    VRefused{"unsupportedVersion"})
+
+def request_members_ok(+members: J.Json) -> Verdict:
+  Bool.pick(Verdict, root_keys_ok(members), root_fields_ok(members), VRefused{"unknownRequestField"})
+
 def Context.request_validate(req: J.Json) -> Verdict:
   match req:
     case J.Jobj{+members}: request_members_ok(members)
@@ -717,32 +744,6 @@ def Context.request_validate(req: J.Json) -> Verdict:
     case J.Jarr{+head, +tail}: VRefused{"requestNotObject"}
     case J.Jpair{key, value, rest}: VRefused{"requestNotObject"}
     case J.Jnil{}: VRefused{"requestNotObject"}
-
-def request_members_ok(+members: J.Json) -> Verdict:
-  Bool.pick(Verdict, root_keys_ok(members), root_fields_ok(members), VRefused{"unknownRequestField"})
-
-def root_fields_ok(+members: J.Json) -> Verdict:
-  Bool.pick(Verdict, version_ok(members),
-    Bool.pick(Verdict, engine_ok(members), root_after_engine(members), VRefused{"unknownEngine"}),
-    VRefused{"unsupportedVersion"})
-
-def root_after_engine(+members: J.Json) -> Verdict:
-  Bool.pick(Verdict, subject_required(members), select_required(members), VRefused{"missingSubject"})
-
-def select_of(m: Maybe<&2, J.Json>, members: J.Json) -> Verdict:
-  match m:
-    case None{}: VRefused{"missingSelect"}
-    case Some{+value}: Bool.pick(Verdict, projections_ok(value), tail_fields_ok(members), VRefused{"invalidSelect"})
-
-def select_required(+members: J.Json) -> Verdict:
-  select_of(member_lookup("select", members), members)
-
-def tail_fields_ok(+members: J.Json) -> Verdict:
-  Bool.pick(Verdict, cwd_ok(members),
-    Bool.pick(Verdict, options_ok(members),
-      Bool.pick(Verdict, effects_required(members), VAccepted{}, VRefused{"invalidEffects"}),
-      VRefused{"invalidOptions"}),
-    VRefused{"invalidCwd"})
 
 # The operative numeric check states the unsigned decimal U32 domain exactly: no
 # leading zero, at most ten digits, and a ten-digit token at most the upper-bound
