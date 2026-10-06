@@ -451,11 +451,11 @@ def dispatch_profile(v: Req.Verdict, +chain: OpChain, +grants: Context.Effects) 
     case Req.VAccepted{}: dispatch_operation(chain, grants)
     case Req.VRefused{condition}: ARefused{Context.RfValidation{}, condition}
 
-# `Req.Context.request_validate` is the callable form: request.bend declares the
+# `Req.request_validate` is the callable form: request.bend declares the
 # spec-named functions with their `Context.` prefix, so a caller reaches them
 # through the module alias as well.
 def dispatch_admission(+req: J.Json, +chain: OpChain, +grants: Context.Effects) -> Admission:
-  dispatch_profile(Req.Context.request_validate(req), chain, grants)
+  dispatch_profile(Req.request_validate(req), chain, grants)
 
 def dispatch_guarded(present: Bool, +req: J.Json, retained_operations: Eng.SS, +grants: Context.Effects) -> Admission:
   Bool.pick(Admission, present,
@@ -839,7 +839,7 @@ def text_field_scalar(+scalar: Req.Scalar) -> FieldText:
     case Req.ScalarNul{}: FtBad{"nulInField"}
 
 def text_field_checked(ok: Bool, +hex: String) -> FieldText:
-  Bool.pick(FieldText, ok, text_field_scalar(Req.Context.decode_scalar_utf8(Tx.hex_decode(hex))), FtBad{"malformedHexField"})
+  Bool.pick(FieldText, ok, text_field_scalar(Req.decode_scalar_utf8(Tx.hex_decode(hex))), FtBad{"malformedHexField"})
 
 def text_field(+hex: String) -> FieldText:
   text_field_checked(Req.hex_ok(hex), hex)
@@ -1442,7 +1442,7 @@ def validation_refusal(condition: String) -> String:
 
 def finish_observed(+retained: String, +v: ValidationObserved) -> InputPlan:
   match v:
-    case VoValid{}: IpRows{retained, Req.Context.json_tree_sql(retained)}
+    case VoValid{}: IpRows{retained, Req.json_tree_sql(retained)}
     case VoInvalid{}: IpRefused{validation_refusal("invalidJson")}
     case VoMalformed{}: IpRefused{validation_refusal("malformedValidationObservation")}
 
@@ -1454,7 +1454,7 @@ def finish_validation(+retained: String, observed: String) -> InputPlan:
 # document. Host failure is the caller's branch and never reaches this definition.
 def plan_of_read(+r: Raw.RawRead) -> InputPlan:
   match r:
-    case Raw.RawText{+value}: IpValidate{value, Req.Context.validity_sql(value)}
+    case Raw.RawText{+value}: IpValidate{value, Req.validity_sql(value)}
     case Raw.RawInvalidUtf8{+offset}: IpRefused{validation_refusal("invalidUtf8")}
     case Raw.RawNul{+offset}: IpRefused{validation_refusal("nulByte")}
     case Raw.RawBom{}: IpRefused{validation_refusal("bom")}
@@ -1474,7 +1474,7 @@ def decision_document(+d: FrameDecision) -> Document:
     case FdRefused{cls, condition}: DocRefused{Context.refusal_text(Context.Refuse{cls, "context-request-codec", Context.text_condition(condition), Context.NextStop{}})}
 
 def document_of_rows(rows: String) -> Document:
-  decision_document(frame_decision(frame_envelope(Req.Context.parse_rows(rows))))
+  decision_document(frame_decision(frame_envelope(Req.parse_rows(rows))))
 
 # ---------------------------------------------------------------------------
 # The correlated frame decision. A caller that answers one frame correlates its
@@ -1512,7 +1512,7 @@ def correlated_decision(rows: Req.Rows) -> CorrelatedDecision:
   correlated_of_envelope_read(frame_envelope(rows))
 
 def correlated_decision_of_text(text: String) -> CorrelatedDecision:
-  correlated_decision(Req.Context.parse_rows(text))
+  correlated_decision(Req.parse_rows(text))
 
 def record_probe(subject: String, policy: String, +projections: Eng.SS) -> Refs.RefRecord:
   Refs.Ref{"r1", "typescript", subject, subject, "s1", policy, projections}
@@ -2560,13 +2560,13 @@ def codec_law_a_scoped_engines_frame_from_literal_transport_reports_the_session_
   {==}
 
 law codec_law_a_row_line_missing_a_column_classifies_as_a_malformed_row:
-  {Req.Context.parse_rows("30\u{9}\u{9}6f626a656374\u{9}\n") == Req.Rcons{Req.Row{"", "", "malformed", "", ""}, Req.Rnone{}} : Req.Rows}
+  {Req.parse_rows("30\u{9}\u{9}6f626a656374\u{9}\n") == Req.Rcons{Req.Row{"", "", "malformed", "", ""}, Req.Rnone{}} : Req.Rows}
 
 def codec_law_a_row_line_missing_a_column_classifies_as_a_malformed_row():
   {==}
 
 law codec_law_a_row_line_with_an_extra_column_classifies_as_a_malformed_row:
-  {Req.Context.parse_rows("30\u{9}\u{9}6f626a656374\u{9}\u{9}\u{9}\n") == Req.Rcons{Req.Row{"", "", "malformed", "", ""}, Req.Rnone{}} : Req.Rows}
+  {Req.parse_rows("30\u{9}\u{9}6f626a656374\u{9}\u{9}\u{9}\n") == Req.Rcons{Req.Row{"", "", "malformed", "", ""}, Req.Rnone{}} : Req.Rows}
 
 def codec_law_a_row_line_with_an_extra_column_classifies_as_a_malformed_row():
   {==}

@@ -204,7 +204,7 @@ def state_scalar(state: DState) -> Scalar:
     case DPendCb{b0, b1, acc}: ScalarBadUtf8{}
     case DPendCc{b0, b1, b2, acc}: ScalarBadUtf8{}
 
-def Context.decode_scalar_utf8(+bytes: String) -> Scalar:
+def decode_scalar_utf8(+bytes: String) -> Scalar:
   state_scalar(feed_state(bytes, DStart{SNil{}}))
 
 # ---------------------------------------------------------------------------
@@ -286,13 +286,13 @@ def rows_go(rest: String, +cur: String, +rows: Rows) -> Rows:
     case SCon{+head, +tail}:
       Bool.pick(Rows, U32.is_eq(Char.to_u32(head), 10), rows_go(tail, SNil{}, line_rows(cur, rows)), rows_go(tail, cur ++ SCon{head, SNil{}}, rows))
 
-def Context.parse_rows(+text: String) -> Rows:
+def parse_rows(+text: String) -> Rows:
   rows_go(text, SNil{}, Rnone{})
 
 # ---------------------------------------------------------------------------
 # Canonical identity is the shared encoder's text; no second encoder exists.
 
-def Context.request_identity(req: J.Json) -> String:
+def request_identity(req: J.Json) -> String:
   J.json_text(req)
 
 # ---------------------------------------------------------------------------
@@ -308,7 +308,7 @@ def sql_quote_go(s: String, +acc: String) -> String:
 def sql_quote(s: String) -> String:
   "\u{27}" ++ sql_quote_go(s, SNil{}) ++ "\u{27}"
 
-def Context.validate_json_text_sql(text: String) -> String:
+def validate_json_text_sql(text: String) -> String:
   "WITH raw(t) AS (SELECT " ++ sql_quote(text) ++ ") "
   ++ "SELECT json_object('valid',json_valid(t),'duplicates',(SELECT"
   ++ " count(*) FROM json_tree(t) c WHERE c.parent IS NOT NULL AND"
@@ -326,7 +326,7 @@ def Context.validate_json_text_sql(text: String) -> String:
 
 # The strict hex row query: json_tree node id, parent, type, member key and scalar
 # value as hex, plus the raw document token for every numeric node.
-def Context.json_tree_sql(text: String) -> String:
+def json_tree_sql(text: String) -> String:
   "WITH raw(t) AS (SELECT " ++ sql_quote(text) ++ ") "
   ++ "SELECT hex(CAST(r.id AS TEXT)), hex(CAST(r.parent AS TEXT)), hex(CAST(r.type AS TEXT)), "
   ++ "hex(CAST(r.key AS TEXT)), hex(CAST(CASE WHEN r.type IN ('integer','real') "
@@ -339,7 +339,7 @@ def Context.json_tree_sql(text: String) -> String:
 # invalid, and anything else is malformed transport that this lane refuses as its own
 # condition. The request-profile token clause of the combined statement stays separate
 # and is not a whole-frame numeric guard.
-def Context.validity_sql(text: String) -> String:
+def validity_sql(text: String) -> String:
   "WITH raw(t) AS (SELECT " ++ sql_quote(text) ++ ") SELECT json_valid(t) FROM raw;"
 
 # ---------------------------------------------------------------------------
@@ -733,7 +733,7 @@ def root_fields_ok(+members: J.Json) -> Verdict:
 def request_members_ok(+members: J.Json) -> Verdict:
   Bool.pick(Verdict, root_keys_ok(members), root_fields_ok(members), VRefused{"unknownRequestField"})
 
-def Context.request_validate(req: J.Json) -> Verdict:
+def request_validate(req: J.Json) -> Verdict:
   match req:
     case J.Jobj{+members}: request_members_ok(members)
     case J.Jnull{}: VRefused{"requestNotObject"}
@@ -750,7 +750,7 @@ def Context.request_validate(req: J.Json) -> Verdict:
 # token. The whole assembled statement is pinned, so a bound dropped from the
 # statement fails here rather than passing as a helper.
 law request_law_the_u32_check_states_the_upper_bound:
-  {Context.validate_json_text_sql("{}") == "WITH raw(t) AS (SELECT '{}') SELECT json_object('valid',json_valid(t),'duplicates',(SELECT count(*) FROM json_tree(t) c WHERE c.parent IS NOT NULL AND EXISTS (SELECT 1 FROM json_tree(t) p WHERE p.id=c.parent AND p.type='object') AND EXISTS (SELECT 1 FROM json_tree(t) s WHERE s.parent=c.parent AND s.key=c.key AND s.rowid<>c.rowid)),'tokens',(SELECT count(*) FROM json_tree(t) r WHERE r.type IN ('integer','real') AND NOT (r.type='integer' AND (CAST(t -> r.fullkey AS TEXT)='0' OR (CAST(t -> r.fullkey AS TEXT) GLOB '[1-9]*' AND CAST(t -> r.fullkey AS TEXT) NOT GLOB '*[^0-9]*' AND (length(CAST(t -> r.fullkey AS TEXT))<10 OR (length(CAST(t -> r.fullkey AS TEXT))=10 AND CAST(t -> r.fullkey AS TEXT)<='4294967295'))))))) FROM raw;" : String}
+  {validate_json_text_sql("{}") == "WITH raw(t) AS (SELECT '{}') SELECT json_object('valid',json_valid(t),'duplicates',(SELECT count(*) FROM json_tree(t) c WHERE c.parent IS NOT NULL AND EXISTS (SELECT 1 FROM json_tree(t) p WHERE p.id=c.parent AND p.type='object') AND EXISTS (SELECT 1 FROM json_tree(t) s WHERE s.parent=c.parent AND s.key=c.key AND s.rowid<>c.rowid)),'tokens',(SELECT count(*) FROM json_tree(t) r WHERE r.type IN ('integer','real') AND NOT (r.type='integer' AND (CAST(t -> r.fullkey AS TEXT)='0' OR (CAST(t -> r.fullkey AS TEXT) GLOB '[1-9]*' AND CAST(t -> r.fullkey AS TEXT) NOT GLOB '*[^0-9]*' AND (length(CAST(t -> r.fullkey AS TEXT))<10 OR (length(CAST(t -> r.fullkey AS TEXT))=10 AND CAST(t -> r.fullkey AS TEXT)<='4294967295'))))))) FROM raw;" : String}
 
 def request_law_the_u32_check_states_the_upper_bound():
   {==}
@@ -761,7 +761,7 @@ def request_law_the_u32_check_states_the_upper_bound():
 # emitted statement for a document carrying duplicates of several kinds; the counted
 # duplicates themselves remain unexecuted source semantics.
 law request_law_the_duplicate_subquery_covers_every_member_kind:
-  {Context.validate_json_text_sql("{\"a\":1,\"a\":2,\"b\":true,\"b\":false,\"c\":null,\"c\":null,\"e\":{},\"e\":{}}") == "WITH raw(t) AS (SELECT '{\"a\":1,\"a\":2,\"b\":true,\"b\":false,\"c\":null,\"c\":null,\"e\":{},\"e\":{}}') SELECT json_object('valid',json_valid(t),'duplicates',(SELECT count(*) FROM json_tree(t) c WHERE c.parent IS NOT NULL AND EXISTS (SELECT 1 FROM json_tree(t) p WHERE p.id=c.parent AND p.type='object') AND EXISTS (SELECT 1 FROM json_tree(t) s WHERE s.parent=c.parent AND s.key=c.key AND s.rowid<>c.rowid)),'tokens',(SELECT count(*) FROM json_tree(t) r WHERE r.type IN ('integer','real') AND NOT (r.type='integer' AND (CAST(t -> r.fullkey AS TEXT)='0' OR (CAST(t -> r.fullkey AS TEXT) GLOB '[1-9]*' AND CAST(t -> r.fullkey AS TEXT) NOT GLOB '*[^0-9]*' AND (length(CAST(t -> r.fullkey AS TEXT))<10 OR (length(CAST(t -> r.fullkey AS TEXT))=10 AND CAST(t -> r.fullkey AS TEXT)<='4294967295'))))))) FROM raw;" : String}
+  {validate_json_text_sql("{\"a\":1,\"a\":2,\"b\":true,\"b\":false,\"c\":null,\"c\":null,\"e\":{},\"e\":{}}") == "WITH raw(t) AS (SELECT '{\"a\":1,\"a\":2,\"b\":true,\"b\":false,\"c\":null,\"c\":null,\"e\":{},\"e\":{}}') SELECT json_object('valid',json_valid(t),'duplicates',(SELECT count(*) FROM json_tree(t) c WHERE c.parent IS NOT NULL AND EXISTS (SELECT 1 FROM json_tree(t) p WHERE p.id=c.parent AND p.type='object') AND EXISTS (SELECT 1 FROM json_tree(t) s WHERE s.parent=c.parent AND s.key=c.key AND s.rowid<>c.rowid)),'tokens',(SELECT count(*) FROM json_tree(t) r WHERE r.type IN ('integer','real') AND NOT (r.type='integer' AND (CAST(t -> r.fullkey AS TEXT)='0' OR (CAST(t -> r.fullkey AS TEXT) GLOB '[1-9]*' AND CAST(t -> r.fullkey AS TEXT) NOT GLOB '*[^0-9]*' AND (length(CAST(t -> r.fullkey AS TEXT))<10 OR (length(CAST(t -> r.fullkey AS TEXT))=10 AND CAST(t -> r.fullkey AS TEXT)<='4294967295'))))))) FROM raw;" : String}
 
 def request_law_the_duplicate_subquery_covers_every_member_kind():
   {==}
@@ -770,7 +770,7 @@ def request_law_the_duplicate_subquery_covers_every_member_kind():
 # a malformed document cannot fail a json_tree subquery inside it and the caller reads a
 # verdict instead of a host error.
 law request_law_the_validity_stage_observes_only_json_valid:
-  {Context.validity_sql("{}") == "WITH raw(t) AS (SELECT '{}') SELECT json_valid(t) FROM raw;" : String}
+  {validity_sql("{}") == "WITH raw(t) AS (SELECT '{}') SELECT json_valid(t) FROM raw;" : String}
 
 def request_law_the_validity_stage_observes_only_json_valid():
   {==}
