@@ -572,7 +572,7 @@ def eligible_frame_decodes_to_its_fields(db,id):
 law eligible_frame_with_a_short_payload_is_rejected:
   for db: String
   for id: String
-  {Delivery.report_row(db,id,id,"o\np\na\n4\nroot\n13\nshort\n") == Delivery.report_failed(id,"report-truncated","The retained report row is shorter than its declared argv length; the report and its input are retained.") : IO(Result<&1,&1,U32 & String,String>)}
+  {Delivery.report_row(db,id,id,"o\np\na\n4\nroot\n13\nshort\n") == Delivery.report_selected_failed(id,id,"root","report-truncated","The retained report row is shorter than its declared argv length; the report and its input are retained.") : IO(Result<&1,&1,U32 & String,String>)}
 
 def eligible_frame_with_a_short_payload_is_rejected(db,id):
   {==}
@@ -612,7 +612,7 @@ def eligible_frame_keeps_a_unicode_recipient(db,id):
 law eligible_frame_without_its_delimiter_is_rejected:
   for db: String
   for id: String
-  {Delivery.report_row(db,id,id,"o\np\na\n4\nroot\n4\n2:ab") == Delivery.report_failed(id,"report-framing-rejected","The retained report row does not end in exactly one host delimiter; the report and its input are retained.") : IO(Result<&1,&1,U32 & String,String>)}
+  {Delivery.report_row(db,id,id,"o\np\na\n4\nroot\n4\n2:ab") == Delivery.report_selected_failed(id,id,"root","report-framing-rejected","The retained report row does not end in exactly one host delimiter; the report and its input are retained.") : IO(Result<&1,&1,U32 & String,String>)}
 
 def eligible_frame_without_its_delimiter_is_rejected(db,id):
   {==}
@@ -684,14 +684,25 @@ law stopped_ineligible_input_produces_no_handoff:
 def stopped_ineligible_input_produces_no_handoff(db,id):
   {==}
 
-# A failure after selection keeps the requested and the selected identity apart.
-law query_failure_keeps_both_identities:
+# A query failure before any selection carries the request with no delivered
+# identity, while one after a handoff keeps the selected notification. The
+# distinction comes from the call site, not from comparing the two ids.
+law pre_selection_query_failure_leaves_no_selected_identity:
   for db: String
   for code: U32
   for detail: String
-  {Delivery.report_queried(db,"requested-report","selected-report",Fail{(code,detail)}) == IO.pure(Result<&1,&1,U32 & String,String>,Fail{(code,Delivery.report_envelope("requested-report","selected-report","","report-query-failed",False{},"",detail))}) : IO(Result<&1,&1,U32 & String,String>)}
+  {Delivery.report_queried(db,"requested-report","","selected-report",Fail{(code,detail)}) == IO.pure(Result<&1,&1,U32 & String,String>,Fail{(code,Delivery.report_envelope("requested-report","","","report-query-failed",False{},"",detail))}) : IO(Result<&1,&1,U32 & String,String>)}
 
-def query_failure_keeps_both_identities(db,code,detail):
+def pre_selection_query_failure_leaves_no_selected_identity(db,code,detail):
+  {==}
+
+law post_handoff_query_failure_keeps_the_notification:
+  for db: String
+  for code: U32
+  for detail: String
+  {Delivery.report_queried(db,"requested-report","notification-report","notification-report",Fail{(code,detail)}) == IO.pure(Result<&1,&1,U32 & String,String>,Fail{(code,Delivery.report_envelope("requested-report","notification-report","","report-query-failed",False{},"",detail))}) : IO(Result<&1,&1,U32 & String,String>)}
+
+def post_handoff_query_failure_keeps_the_notification(db,code,detail):
   {==}
 
 law launch_outcome_keeps_both_identities:

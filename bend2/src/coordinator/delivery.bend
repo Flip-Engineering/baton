@@ -311,15 +311,18 @@ def report_receipt(+db: String, +requested: String, +id: String, +recipient: Str
     case "p": report_endpoint(db,requested,id,recipient,state,payload)
     case other: report_selected_failed(requested,id,recipient,"report-state-unknown","The retained report state is unknown; the report and its input are retained.")
 
-def report_queried(+db: String, +requested: String, +id: String, selected: Result<&1,&1,U32 & String,String>) -> IO(Result<&1,&1,U32 & String,String>):
-  match selected:
-    case Fail{(code,detail)}: IO.pure(Result<&1,&1,U32 & String,String>,Fail{(code,report_envelope(requested,id,"","report-query-failed",False{},"",detail))})
+def report_queried(+db: String, +requested: String, +selected: String, +id: String, result: Result<&1,&1,U32 & String,String>) -> IO(Result<&1,&1,U32 & String,String>):
+  match result:
+    case Fail{(code,detail)}: IO.pure(Result<&1,&1,U32 & String,String>,Fail{(code,report_envelope(requested,selected,"","report-query-failed",False{},"",detail))})
     case Done{+row}: report_row(db,requested,id,row)
 
-def report_selected(+db: String, +requested: String, +id: String) -> IO(Result<&1,&1,U32 & String,String>):
+# The selected identity is empty for a fresh query and carries the handoff
+# notification when one has already been selected, so a query failure before any
+# selection never claims a delivered report.
+def report_selected(+db: String, +requested: String, +selected: String, +id: String) -> IO(Result<&1,&1,U32 & String,String>):
   do IO<Result<&1,&1,U32 & String,String>>:
-    selected : Result<&1,&1,U32 & String,String> <- DB.Sql.query(db,report_projection_sql(id))
-    report_queried(db,requested,id,selected)
+    queried : Result<&1,&1,U32 & String,String> <- DB.Sql.query(db,report_projection_sql(id))
+    report_queried(db,requested,selected,id,queried)
 
 # A stopped recipient is validated first: only an eligible retained report may
 # reach the handoff, so ineligible input produces no side effect. The handoff's
@@ -332,10 +335,18 @@ def report_stopped_queried(+db: String, +id: String, requested: Result<&1,&1,U32
 
 def report_stopped_row(+db: String, +id: String, marker: String, row: String) -> IO(Result<&1,&1,U32 & String,String>):
   match marker:
-    case "o": stopped_delivery(db,id,notification => report_selected(db,id,Tx.trim_nl(notification)),True{})
+    case "o": stopped_delivery(db,id,notification => report_handoff_selected(db,id,notification),True{})
     case "i": report_failed(id,"report-ineligible","The message is not an eligible retained report; its input is retained.")
     case "m": report_failed(id,"report-missing","No message matches this report id; its input is retained.")
     case other: report_failed(id,"report-marker-unknown","The retained report marker is unknown; the report and its input are retained.")
+
+# The handoff notification is already selected, so its identity is carried into
+# the strict query and kept if that query fails.
+def report_handoff_selected(+db: String, +requested: String, notification: String) -> IO(Result<&1,&1,U32 & String,String>):
+  report_handoff_go(db,requested,Tx.trim_nl(notification))
+
+def report_handoff_go(+db: String, +requested: String, +notification: String) -> IO(Result<&1,&1,U32 & String,String>):
+  report_selected(db,requested,notification,notification)
 
 def report_selected_stopped(+db: String, +id: String) -> IO(Result<&1,&1,U32 & String,String>):
   do IO<Result<&1,&1,U32 & String,String>>:
@@ -344,7 +355,7 @@ def report_selected_stopped(+db: String, +id: String) -> IO(Result<&1,&1,U32 & S
 
 def report_route_kind(+db: String, +id: String, kind: String) -> IO(Result<&1,&1,U32 & String,String>):
   match kind:
-    case "": report_selected(db,id,id)
+    case "": report_selected(db,id,"",id)
     case other: report_selected_stopped(db,id)
 
 def report_route(+db: String, +id: String, stopped: Result<&1,&1,U32 & String,String>) -> IO(Result<&1,&1,U32 & String,String>):
