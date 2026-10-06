@@ -21,7 +21,9 @@ import ../../src/context/snapshot-laws.bend as SnapLaws
 import ../../src/context/refs-laws.bend as RefLaws
 import ../../src/context/engines-decl-laws.bend as DeclLaws
 import ../../src/context/engines-select-laws.bend as SelLaws
+import ../../src/context/engines-wire.bend as Wire
 import ../../src/context/snapshot-validate-laws.bend as SVLaws
+import ../../src/context/engines-wire-laws.bend as WireLaws
 
 def choice_text(c: Eng.EngineChoice) -> String:
   match c:

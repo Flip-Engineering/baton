@@ -432,8 +432,10 @@ type Steps is Data:
 # `capture_kind` names the input kind in snapshot's vocabulary: file, absent,
 # dir, link or config. `payload` carries the exact accepted bytes in the named
 # `payload_encoding`, so a byte order mark, a carriage return or a byte sequence
-# that is not valid UTF-8 travels without re-encoding; an encoding that cannot
-# round-trip the accepted bytes refuses rather than being used. `marker` is the
+# that is not valid UTF-8 travels without re-encoding. This module neither decodes
+# nor verifies the encoding: it carries the field, and the producer that owns those
+# bytes owes the round trip and refuses on its own side when no encoding reproduces
+# them. `marker` is the
 # digest-bearing component exactly as snapshot's fp_marker defines it: the content
 # digest for a file, directory or configuration input, the resolved target for a
 # link, and the literal "absent" for an absent input. It is not the expected
@@ -472,6 +474,15 @@ def cap_path(+c: Capture) -> String:
     case Capture{capture_kind, role, path, marker, payload, payload_encoding,
                  producer_module, producer_digest, producer_operation}:
       path
+
+# The digest-bearing component of one captured input, in snapshot's own sense:
+# the content digest for a file, directory or configuration input, the resolved
+# target for a link, and the literal "absent" for an absent input.
+def cap_marker(+c: Capture) -> String:
+  match c:
+    case Capture{capture_kind, role, path, marker, payload, payload_encoding,
+                 producer_module, producer_digest, producer_operation}:
+      marker
 
 def cap_payload(+c: Capture) -> String:
   match c:
@@ -1149,7 +1160,8 @@ def request_verdict(+cat: Decl.Cat, +inputs: SelInputs, +inv: Decl.Inv,
 # caller maps it to its own closed shape and to its own numbers.
 type AdmissionDecision is Data:
   AdmissionAdmits{plan: Plan, result_schema: String}
-  AdmissionRefuses{stage: String, code: String, detail: String}
+  AdmissionRefuses{stage: String, code: String, detail: String,
+                   reason: RqReason}
 
 def decl_reject_code(+r: Decl.DeclReject) -> String:
   match r:
@@ -1212,7 +1224,7 @@ def decision_of(+v: Verdict) -> AdmissionDecision:
   match v:
     case VerdictAdmitted{plan, result_schema}: AdmissionAdmits{plan, result_schema}
     case VerdictRefused{stage, reason}:
-      AdmissionRefuses{stage, rq_code(reason), rq_detail(reason)}
+      AdmissionRefuses{stage, rq_code(reason), rq_detail(reason), reason}
 
 # --- the selected-step transfer a consumer receives --------------------------
 # The exact operands one consumer receives for one selected step: that step's own

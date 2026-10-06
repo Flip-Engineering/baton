@@ -529,13 +529,13 @@ def selection_admission_decision_carries_the_plan():
   {==}
 
 law selection_admission_decision_names_the_refusal_code:
-  {Sel.decision_of(Sel.VerdictRefused{"selection", Sel.RqSelectionRefused{Sel.SelAmbiguous{Eng.ss_two("m1", "m2")}}}) == Sel.AdmissionRefuses{"selection", "ambiguousSelection", "selection ambiguousSelection"} : Sel.AdmissionDecision}
+  {Sel.decision_of(Sel.VerdictRefused{"selection", Sel.RqSelectionRefused{Sel.SelAmbiguous{Eng.ss_two("m1", "m2")}}}) == Sel.AdmissionRefuses{"selection", "ambiguousSelection", "selection ambiguousSelection", Sel.RqSelectionRefused{Sel.SelAmbiguous{Eng.ss_two("m1", "m2")}}} : Sel.AdmissionDecision}
 
 def selection_admission_decision_names_the_refusal_code():
   {==}
 
 law selection_admission_decision_names_a_catalog_refusal:
-  {Sel.decision_of(Sel.VerdictRefused{"catalog", Sel.RqCatalogRefused{"m1", Decl.DrMissingArtifact{"m1", "/pkg/m1.bin"}}}) == Sel.AdmissionRefuses{"catalog", "missingArtifact", "declaration m1"} : Sel.AdmissionDecision}
+  {Sel.decision_of(Sel.VerdictRefused{"catalog", Sel.RqCatalogRefused{"m1", Decl.DrMissingArtifact{"m1", "/pkg/m1.bin"}}}) == Sel.AdmissionRefuses{"catalog", "missingArtifact", "declaration m1", Sel.RqCatalogRefused{"m1", Decl.DrMissingArtifact{"m1", "/pkg/m1.bin"}}} : Sel.AdmissionDecision}
 
 def selection_admission_decision_names_a_catalog_refusal():
   {==}
