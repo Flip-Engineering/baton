@@ -254,6 +254,7 @@ test('a declared producer edge is served only from records that producer returne
     idStatus: TYPESCRIPT_PRODUCER_ID_STATUS,
     schema: TYPESCRIPT_RECORD_SCHEMA,
     kind: TYPESCRIPT_RECORD_KIND,
+    envelope: { factKind: 'sqlCall', recordMember: 'value.record' },
   }]);
 
   // A source capture is the producer's own input, not the record it returned.
