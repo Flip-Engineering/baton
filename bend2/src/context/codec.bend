@@ -1684,6 +1684,11 @@ def unknown_root_rows() -> Req.Rows:
   rows_of([
     object_row("0", SNil{}, SNil{}),
     text_row("1", "0", "jsonrpc", "2.0"),
+    text_row("2", "0", "method", "tools/call"),
+    number_row("3", "0", "id", "7"),
+    object_row("4", "0", "params"),
+    text_row("5", "4", "name", "baton2_context_engines"),
+    object_row("6", "4", "arguments"),
     extra_root_row()])
 
 def unknown_params_rows() -> Req.Rows:

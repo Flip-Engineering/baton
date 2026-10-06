@@ -997,6 +997,7 @@ def a_non_array_refs_container_is_unreadable():
 # --- the effect service and the observer consumer -----------------------------
 
 law an_envelope_statement_is_its_body_plus_its_terminator:
+  for +id: String
   {ContextStore.envelope_sql(id) == ContextStore.envelope_body_sql(id) ++ ";" : String}
 
 def an_envelope_statement_is_its_body_plus_its_terminator():
