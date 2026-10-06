@@ -64,7 +64,7 @@ type ReleaseIntent is Data:
   IntentMissing{stage: String}
   IntentStale{recorded: String, expected: String}
 
-def line_count_ok(lines: List<&2, String>) -> Bool:
+def line_count_ok(lines: List<String>) -> Bool:
   match lines:
     case Nil{}: True{}
     case +line <> rest:
@@ -137,7 +137,7 @@ def intent_decision(+presence: String, +hasIntent: String, +recorded: String, +e
 
 
 
-def intent_tabs(+expected: String, +row: String, fields: List<&2, String>) -> ReleaseIntent:
+def intent_tabs(+expected: String, +row: String, fields: List<String>) -> ReleaseIntent:
   match fields:
     case +presence <> m0:
       match m0:
@@ -150,9 +150,9 @@ def intent_tabs(+expected: String, +row: String, fields: List<&2, String>) -> Re
             case _: IntentMissing{"short"}
         case _: IntentMissing{"short"}
     case _: IntentMissing{"short"}
-def intent_fields(+expected: String, +row: String, lines: List<&2, String>) -> ReleaseIntent:
+def intent_fields(+expected: String, +row: String, lines: List<String>) -> ReleaseIntent:
   match lines:
-    case Nil{}: IntentMissing{}
+    case Nil{}: IntentMissing{"empty"}
     case +line <> rest:
       match rest:
         case Nil{}: intent_tabs(expected, row, Tx.split_tabs(line))
@@ -257,29 +257,32 @@ def claim_release_after(+db: String, +binding: String, +query: String, +role: St
 
 def claim_verified(+db: String, +binding: String, +query: String, +role: String, +incarnation: String, +label: String, read: ReleaseIntent) -> IO(ReleaseOutcome):
   match read:
-    case IntentAdmissible{recorded}: IO.pure(ReleaseOutcome, ReleaseClaimOnly{label})
-    case IntentMissing{stage}: IO.pure(ReleaseOutcome, ReleaseIntentRefused{"attempt", stage})
-    case IntentStale{recorded, expected}: IO.pure(ReleaseOutcome, ReleaseIntentRefused{"attempt", recorded ++ ":" ++ expected})
+    case IntentAdmissible{recorded}: IO.pure(ReleaseOutcome, ReleaseClaimOnly{recorded})
+    case IntentMissing{stage}: IO.pure(ReleaseOutcome, ReleaseIntentRefused{"claim", stage})
+    case IntentStale{recorded, expected}: IO.pure(ReleaseOutcome, ReleaseIntentRefused{"claim", recorded ++ ":" ++ expected})
 
-def claim_verify(+db: String, +binding: String, +query: String, +role: String, +incarnation: String, +label: String, +answer: String) -> IO(ReleaseOutcome):
+def claim_verify(+db: String, +binding: String, +query: String, +role: String, +incarnation: String, +label: String) -> IO(ReleaseOutcome):
   do IO<ReleaseOutcome>:
     read : ReleaseIntent <- intent_read(db, binding, query, role, incarnation, label)
     claim_verified(db, binding, query, role, incarnation, label, read)
 
-def claim_run(+db: String, +binding: String, +query: String, +role: String, +incarnation: String, +label: String, +nextJson: String) -> IO(ReleaseOutcome):
+def claim_run(+db: String, +binding: String, +query: String, +role: String, +incarnation: String, +expected: String, +next: String, +nextJson: String) -> IO(ReleaseOutcome):
   do IO<ReleaseOutcome>:
-    claimed : Result<&1,&1,U32 & String,String> <- DB.Sql.query_bound(db, binding, ContextRoles.release_claim_sql(query, role, incarnation, label, nextJson))
+    claimed : Result<&1,&1,U32 & String,String> <- DB.Sql.query_bound(db, binding, ContextRoles.release_claim_sql(query, role, incarnation, expected, nextJson))
     match claimed:
       case Fail{error}:
         match error:
           case (code, detail): IO.pure(ReleaseOutcome, ReleaseFailed{code, detail})
-      case Done{+answer}: claim_verify(db, binding, query, role, incarnation, label, answer)
+      case Done{+answer}: claim_verify(db, binding, query, role, incarnation, next)
 
+# The claim-only path: the committed state decides, the caller's complete intent document is
+# claimed against it, and the read-back must show the NEW label, so an unchanged old label cannot
+# satisfy the claim and a real transition is confirmed rather than refused.
 def claim_release(+db: String, +binding: String, +query: String, +role: String, +incarnation: String, +expectedDelivery: String, +nextDelivery: String, +nextJson: String) -> IO(ReleaseOutcome):
   do IO<ReleaseOutcome>:
     read : ReleaseIntent <- intent_read(db, binding, query, role, incarnation, expectedDelivery)
     match read:
-      case IntentAdmissible{recorded}: claim_run(db, binding, query, role, incarnation, recorded, nextJson)
+      case IntentAdmissible{recorded}: claim_run(db, binding, query, role, incarnation, recorded, nextDelivery, nextJson)
       case IntentMissing{stage}: IO.pure(ReleaseOutcome, ReleaseIntentRefused{"missing", stage})
       case IntentStale{recorded, expected}: IO.pure(ReleaseOutcome, ReleaseIntentRefused{"stale", recorded ++ ":" ++ expected})
 
@@ -349,6 +352,19 @@ def release_intent_start(+db: String, +binding: String, +query: String, +role: S
   match refusal:
     case Some{+outcome}: IO.pure(ReleaseOutcome, outcome)
     case None{}: release_intent_read(db, binding, query, role, incarnation, expectedDelivery, attempt, attemptJson, completion, completionJson, action)
+
+def release_refusal_check(+binding: String, +keeper: String, +expectedKeeper: String, +admitted: String) -> Maybe<ReleaseOutcome>:
+  match custody_check(binding, admitted, keeper, expectedKeeper):
+    case CustodyMismatch{binding, custodyBinding}: Some{ReleaseCustodyMismatch{binding, custodyBinding}}
+    case CustodyForeignKeeper{keeper, expectedKeeper}: Some{ReleaseForeignKeeper{keeper, expectedKeeper}}
+    case CustodyAdmitted{binding}: None{}
+
+def release_refusal(+binding: String, +expectedKeeper: String, custody: Maybe<Custody>) -> Maybe<ReleaseOutcome>:
+  match custody:
+    case None{}: Some{ReleaseMissingCustody{"keeper under admitted custody"}}
+    case Some{+held}:
+      match held:
+        case Custody{keeper, admitted, holder}: release_refusal_check(binding, keeper, expectedKeeper, admitted)
 
 def release_target(+db: String, +binding: String, +query: String, +role: String, +incarnation: String, +expectedDelivery: String, +attempt: String, +attemptJson: String, +completion: String, +completionJson: String, +expectedKeeper: String, action: Unit -> IO(Result<&1,&1,U32 & String,String>), custody: Maybe<Custody>) -> IO<ReleaseOutcome>:
   release_intent_start(db, binding, query, role, incarnation, expectedDelivery, attempt, attemptJson, completion, completionJson, action, release_refusal(binding, expectedKeeper, custody))
