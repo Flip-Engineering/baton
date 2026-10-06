@@ -2,7 +2,8 @@
 
 `bend2/harness/git-series.mjs` is an optional process launcher and HTTPS
 credential helper. It selects a GitHub App for GPT, Muse, DeepSeek, Claude,
-GLM or Kimi. Commit author and committer names use the exact format
+GLM or Kimi. A registry-level attribution can select one name and email for
+every series. By default, commit author and committer names use the exact format
 `Flip Baton - GPT`, `Flip Baton - Muse`, `Flip Baton - DeepSeek`,
 `Flip Baton - Claude`, `Flip Baton - GLM` or `Flip Baton - Kimi`. Native
 execution keeps its exact model identifier.
@@ -46,6 +47,26 @@ The registry has explicit exact-model mappings and series directories:
 }
 ```
 
+The optional registry-level `attribution` object selects both Git author and
+committer for every series:
+
+```json
+{
+  "attribution": {
+    "name": "Flip - Baton",
+    "email": "baton@example.invalid"
+  }
+}
+```
+
+Add this property to the registry object and replace the example address with
+the verified owned email. The name must be nonempty, have no leading or trailing
+whitespace, and contain no control or formatting characters, line separators or
+angle brackets. The email must be a plain address without whitespace, control
+or formatting characters, quoted parts or address-list delimiters. A present
+object requires both values; malformed settings refuse before launch or credential
+issuance. Shared attribution takes precedence over a series's `authorEmail`.
+
 Each public identity has this shape. Replace the unset GitHub values with
 verified App, bot, installation and repository metadata before launch:
 
@@ -78,9 +99,9 @@ The bot login is `SLUG[bot]`; the commit email is
 public user metadata. GitHub's own action documents this
 [email format](https://github.com/actions/create-github-app-token#configure-git-cli-for-an-apps-bot-user).
 `displaySeries` must match the selected label: `GPT`, `Muse`, `DeepSeek`,
-`Claude`, `GLM` or `Kimi`. The helper adds `Flip Baton - ` to that verified
-label for commit names. Each App registration's `name` also uses
-`Flip Baton - SERIES`.
+`Claude`, `GLM` or `Kimi`. With registry attribution omitted, the helper adds
+`Flip Baton - ` to that verified label for commit names. Each App registration's
+`name` also uses `Flip Baton - SERIES`.
 The helper reads the fixed public filename and uses the adjacent key to sign
 an RS256 App JWT with Node's built-in cryptography library.
 
@@ -93,17 +114,18 @@ commit byline. The earlier Claude commit
 [61025b33](https://github.com/Flip-Engineering/baton/commit/61025b33e4fcb7fbd4547d8abdd482017e161c52)
 uses `noreply@anthropic.com` and currently links to the `claude` user account.
 
-The optional `authorEmail` selects a separate attribution email for both Git
-author and committer. The example address must be replaced with an owned
-public mailbox or alias. Select an email that GitHub leaves unlinked and
-qualify the full series name on its commit page. GitHub App authentication uses the verified
-`github` fields and the signing key. Omitting `authorEmail` preserves the
-canonical bot email used by existing installations.
+Registry `attribution` supplies the shared name and email. With that object
+omitted, the optional per-series `authorEmail` selects the email and the series
+label supplies the name. Omitting both preserves the canonical bot email and
+series name used by existing installations. GitHub App authentication always
+uses the selected series's verified `github` fields and signing key. Shared
+attribution carries no credential or repository authority. Native execution
+retains its model and worker provenance.
 
-Each selected email needs separate qualification of its name, avatar and
-account association on an actual GitHub commit page. Gravatar can associate the
-approved series PNG with the owned email; confirm GitHub serves that image
-before activating the identity. All commit emails are public. GitHub's
+Qualify the raw author and committer headers, account association, rendered
+name and approved avatar on an actual GitHub commit page before activating
+shared attribution. A working Gravatar endpoint alone does not establish that
+GitHub displays the image. All commit emails are public. GitHub's
 Insights contributor graph counts linked accounts, so an unlinked author has
 different graph attribution. See
 [commit association](https://docs.github.com/en/pull-requests/committing-changes-to-your-project/troubleshooting-commits/why-are-my-commits-linked-to-the-wrong-user)
@@ -137,8 +159,9 @@ keep the session's stored endpoint unchanged, and leave any pending input
 unaccepted, so an unmapped model refuses where it is configured.
 
 The helper replaces inherited Git identity in the launched session with the
-selected recipient series. Native tool calls inherit that identity. Registry
-configuration and keys remain outside the installed prefix and task files.
+configured attribution for the selected recipient series. Native tool calls
+inherit that identity. Registry configuration and keys remain outside the
+installed prefix and task files.
 Follow [harness setup](harness-setup.md#native-controls) for native startup.
 
 ## Direct command selection
