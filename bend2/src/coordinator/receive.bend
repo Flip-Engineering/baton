@@ -11,6 +11,14 @@ import ../host/process.bend as P
 import ../git/text.bend as Tx
 import ../host/text.bend as Text
 
+# The outcome of a retained-recovery wake. An absent eligible input and an
+# absent recorded endpoint stay distinct from a delivered invocation, so a
+# caller never reads a silent no-op as an owner being woken.
+type RecoveryWake is Data:
+  Woken{message: String}
+  NoEligibleInput{reason: String}
+  EndpointAbsent{reason: String}
+
 def field(+db: String, session: String, name: String, +supplied: String) -> IO(String):
   do IO<String>:
     value : String <- IO.try(String,DB.Sql.query(db,"SELECT CASE WHEN " ++ C.q(supplied) ++ "<>'' THEN " ++ C.q(supplied) ++ " ELSE " ++ name ++ " END FROM sessions WHERE id=" ++ C.q(session) ++ ";"))
@@ -285,7 +293,7 @@ def available(+db: String, +session: String, again: Unit -> IO(Result<&1,&1,U32 
 
 # The queued-input admission an ordinary receive supplies. It runs
 # acquired_pending on the database the canonical guard resolved and continues
-# through the continuation its caller supplies, so it names no other def.
+# through the continuation its caller supplies, and it never names run.
 def fresh_pending_admission(canonical: String, held: U32, session: String, cmd: String, model: String, effort: String, cwd: String, log: String, next: Unit -> IO(Result<&1,&1,U32 & String,Unit>)) -> IO(Result<&1,&1,U32 & String,Unit>):
   acquired_pending(canonical,session,cmd,model,effort,cwd,log,held,next)
 
@@ -313,3 +321,42 @@ def observe_attached(+db: String, +session: String, id: String, cursor: String, 
 # observer exits. Attachment never launches a native process or sends its prompt.
 def recover(+db: String, +session: String, id: String, cursor: String, +cmd: String, +model: String, +effort: String, +cwd: String, +log: String, harness: String, +directory: String, native: String) -> IO(Result<&1,&1,U32 & String,Unit>):
   attach_recorded(directory,handle => observe_attached(db,session,id,cursor,cmd,model,effort,cwd,log,harness,directory,native,handle,u => run(db,session,cmd,model,effort,cwd,log,"")))
+
+# A retained recovery wake for a session whose attempt has no live owner. The
+# eligible message and its recorded endpoint come from one selection read, and
+# the invocation uses that resolved endpoint with an explicit nonempty flag, so
+# a completed result means a process ran. The caller releases the session guard
+# before this operation reads anything, and it selects only the earliest eligible
+# row rather than the original invocation's message.
+def retained_wake_sql(+session: String) -> String:
+  "SELECT coalesce((SELECT m.id || char(10) || coalesce((SELECT group_concat(length(CAST(value AS BLOB)) || ':' || value,'') FROM json_each(s.endpoint)),'') FROM messages m JOIN sessions s ON s.id=m.recipient WHERE m.recipient=" ++ C.q(session) ++ " AND m.receipt IS NULL AND NOT " ++ C.stopped_session_sql(C.q(session)) ++ " AND CASE WHEN json_valid(s.endpoint) THEN json_type(s.endpoint)='array' AND json_array_length(s.endpoint)>0 ELSE 0 END ORDER BY m.seq LIMIT 1),'');"
+
+def wake_outcome(id: String, run: Result<&1,&1,U32 & String,String>) -> Result<&1,&1,U32 & String,RecoveryWake>:
+  match run:
+    case Fail{error}: Fail{error}
+    case Done{_}: Done{Woken{id}}
+
+def wake_endpoint(db: String, +id: String, argv: String, empty: Bool) -> IO(Result<&1,&1,U32 & String,RecoveryWake>):
+  match empty:
+    case True{}: IO.pure(Result<&1,&1,U32 & String,RecoveryWake>,Done{EndpointAbsent{"The recorded endpoint is empty; the retained attempt and its input stay with their current owner."}})
+    case False{}: do IO<Result<&1,&1,U32 & String,RecoveryWake>>:
+      run : Result<&1,&1,U32 & String,String> <- Delivery.launch(db,id,"",argv,False{})
+      IO.pure(Result<&1,&1,U32 & String,RecoveryWake>,wake_outcome(id,run))
+
+def wake_absent(db: String, id: String, +argv: String, absent: Bool) -> IO(Result<&1,&1,U32 & String,RecoveryWake>):
+  match absent:
+    case True{}: IO.pure(Result<&1,&1,U32 & String,RecoveryWake>,Done{NoEligibleInput{"No unacknowledged input is eligible for this session; the retained attempt keeps its current owner."}})
+    case False{}: wake_endpoint(db,id,argv,String.is_empty(argv))
+
+def wake_first(db: String, +id: String, argv: String) -> IO(Result<&1,&1,U32 & String,RecoveryWake>):
+  wake_absent(db,id,argv,String.is_empty(id))
+
+def wake_rows(db: String, rows: List<String>) -> IO(Result<&1,&1,U32 & String,RecoveryWake>):
+  match rows:
+    case id <> tail: wake_first(db,id,Tx.join("\n",tail))
+    case other: IO.pure(Result<&1,&1,U32 & String,RecoveryWake>,Done{NoEligibleInput{"No unacknowledged input is eligible for this session; the retained attempt keeps its current owner."}})
+
+def wake_retained(+db: String, session: String) -> IO(Result<&1,&1,U32 & String,RecoveryWake>):
+  do IO<Result<&1,&1,U32 & String,RecoveryWake>>:
+    selected : String <- IO.try(String,DB.Sql.query(db,retained_wake_sql(session)))
+    wake_rows(db,Tx.split_lines(Tx.trim_nl(selected)))
