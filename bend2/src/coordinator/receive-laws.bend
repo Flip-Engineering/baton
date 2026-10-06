@@ -527,13 +527,14 @@ def retained_report_is_delivered_by_its_own_id(db,parent,id):
 # The strict report delivery keeps a missing message, an ineligible message, an
 # already-acknowledged report, an absent or malformed endpoint, an observed zero
 # exit and a failed launch as distinct results, and always carries the requested
-# and selected identities. The framing laws bind the whole row with the actual
+# and selected identities. The framing laws bind the whole row with the strict
 # routing mode and known selection, so a known handoff notification stays named
-# and an initial unselected row reports none.
+# and an initial unselected row reports none. The kind and the recipient's
+# stopped state now ride the frame tail, so no positional routing flag remains.
 law missing_row_requires_its_own_frame:
   for db: String
   for id: String
-  {Delivery.report_row(db,id,"",False{},id,"m\n") == Delivery.report_selected_failed(id,"","","report-missing","No message matches this report id; its input is retained.") : IO(Result<&1,&1,U32 & String,String>)}
+  {Delivery.report_row(db,id,"","strict",id,"m\n") == Delivery.report_selected_failed(id,"","","report-missing","No message matches this report id; its input is retained.") : IO(Delivery.ReportOutcome)}
 
 def missing_row_requires_its_own_frame(db,id):
   {==}
@@ -541,21 +542,21 @@ def missing_row_requires_its_own_frame(db,id):
 law ineligible_row_requires_its_own_frame:
   for db: String
   for id: String
-  {Delivery.report_row(db,id,"",False{},id,"i\n") == Delivery.report_selected_failed(id,"","","report-ineligible","The message is not an eligible retained report; its input is retained.") : IO(Result<&1,&1,U32 & String,String>)}
+  {Delivery.report_row(db,id,"","strict",id,"i\n") == Delivery.report_selected_failed(id,"","","report-ineligible","The message is not an eligible retained report; its input is retained.") : IO(Delivery.ReportOutcome)}
 
 def ineligible_row_requires_its_own_frame(db,id):
   {==}
 
 law missing_row_keeps_a_known_notification:
   for db: String
-  {Delivery.report_row(db,"requested-report","notification-report",False{},"notification-report","m\n") == Delivery.report_selected_failed("requested-report","notification-report","","report-missing","No message matches this report id; its input is retained.") : IO(Result<&1,&1,U32 & String,String>)}
+  {Delivery.report_row(db,"requested-report","notification-report","strict","notification-report","m\n") == Delivery.report_selected_failed("requested-report","notification-report","","report-missing","No message matches this report id; its input is retained.") : IO(Delivery.ReportOutcome)}
 
 def missing_row_keeps_a_known_notification(db):
   {==}
 
 law ineligible_row_keeps_a_known_notification:
   for db: String
-  {Delivery.report_row(db,"requested-report","notification-report",False{},"notification-report","i\n") == Delivery.report_selected_failed("requested-report","notification-report","","report-ineligible","The message is not an eligible retained report; its input is retained.") : IO(Result<&1,&1,U32 & String,String>)}
+  {Delivery.report_row(db,"requested-report","notification-report","strict","notification-report","i\n") == Delivery.report_selected_failed("requested-report","notification-report","","report-ineligible","The message is not an eligible retained report; its input is retained.") : IO(Delivery.ReportOutcome)}
 
 def ineligible_row_keeps_a_known_notification(db):
   {==}
@@ -563,7 +564,7 @@ def ineligible_row_keeps_a_known_notification(db):
 law marker_row_without_its_delimiter_is_rejected:
   for db: String
   for id: String
-  {Delivery.report_row(db,id,"",False{},id,"m") == Delivery.report_selected_failed(id,"","","report-framing-rejected","The retained report row does not end in exactly one host delimiter; the report and its input are retained.") : IO(Result<&1,&1,U32 & String,String>)}
+  {Delivery.report_row(db,id,"","strict",id,"m") == Delivery.report_selected_failed(id,"","","report-framing-rejected","The retained report row does not end in exactly one host delimiter; the report and its input are retained.") : IO(Delivery.ReportOutcome)}
 
 def marker_row_without_its_delimiter_is_rejected(db,id):
   {==}
@@ -571,7 +572,7 @@ def marker_row_without_its_delimiter_is_rejected(db,id):
 law marker_row_with_a_suffix_is_rejected:
   for db: String
   for id: String
-  {Delivery.report_row(db,id,"",False{},id,"m\njunk") == Delivery.report_selected_failed(id,"","","report-framing-rejected","The retained report row does not end in exactly one host delimiter; the report and its input are retained.") : IO(Result<&1,&1,U32 & String,String>)}
+  {Delivery.report_row(db,id,"","strict",id,"m\njunk") == Delivery.report_selected_failed(id,"","","report-framing-rejected","The retained report row does not end in exactly one host delimiter; the report and its input are retained.") : IO(Delivery.ReportOutcome)}
 
 def marker_row_with_a_suffix_is_rejected(db,id):
   {==}
@@ -579,15 +580,19 @@ def marker_row_with_a_suffix_is_rejected(db,id):
 law marker_row_with_a_doubled_delimiter_is_rejected:
   for db: String
   for id: String
-  {Delivery.report_row(db,id,"",False{},id,"m\n\n") == Delivery.report_selected_failed(id,"","","report-framing-rejected","The retained report row does not end in exactly one host delimiter; the report and its input are retained.") : IO(Result<&1,&1,U32 & String,String>)}
+  {Delivery.report_row(db,id,"","strict",id,"m\n\n") == Delivery.report_selected_failed(id,"","","report-framing-rejected","The retained report row does not end in exactly one host delimiter; the report and its input are retained.") : IO(Delivery.ReportOutcome)}
 
 def marker_row_with_a_doubled_delimiter_is_rejected(db,id):
   {==}
 
+# The eligible frame carries the kind and the recipient's stopped state as two
+# counted fields after the argv payload and before the one host delimiter, so a
+# running row ends in "\n6\nreport\n0\n\n" and a stopped row in
+# "\n6\nreport\n8\nstopped\n".
 law eligible_frame_decodes_to_its_fields:
   for db: String
   for id: String
-  {Delivery.report_row(db,id,"",False{},id,"o\np\na\n4\nroot\n4\n2:ab\n") == Delivery.report_endpoint(db,id,id,"root","a","2:ab") : IO(Result<&1,&1,U32 & String,String>)}
+  {Delivery.report_row(db,id,"","strict",id,"o\np\na\n4\nroot\n4\n2:ab" ++ "\n6\nreport\n0\n\n") == Delivery.report_endpoint(db,id,id,"root","a","2:ab") : IO(Delivery.ReportOutcome)}
 
 def eligible_frame_decodes_to_its_fields(db,id):
   {==}
@@ -595,7 +600,7 @@ def eligible_frame_decodes_to_its_fields(db,id):
 law eligible_frame_keeps_an_empty_later_argument:
   for db: String
   for id: String
-  {Delivery.report_row(db,id,"",False{},id,"o\np\na\n4\nroot\n6\n2:ab0:\n") == Delivery.report_endpoint(db,id,id,"root","a","2:ab0:") : IO(Result<&1,&1,U32 & String,String>)}
+  {Delivery.report_row(db,id,"","strict",id,"o\np\na\n4\nroot\n6\n2:ab0:" ++ "\n6\nreport\n0\n\n") == Delivery.report_endpoint(db,id,id,"root","a","2:ab0:") : IO(Delivery.ReportOutcome)}
 
 def eligible_frame_keeps_an_empty_later_argument(db,id):
   {==}
@@ -603,7 +608,7 @@ def eligible_frame_keeps_an_empty_later_argument(db,id):
 law eligible_frame_keeps_an_internal_newline:
   for db: String
   for id: String
-  {Delivery.report_row(db,id,"",False{},id,"o\np\na\n4\nroot\n11\n2:ab0:3:x\ny\n") == Delivery.report_endpoint(db,id,id,"root","a","2:ab0:3:x\ny") : IO(Result<&1,&1,U32 & String,String>)}
+  {Delivery.report_row(db,id,"","strict",id,"o\np\na\n4\nroot\n11\n2:ab0:3:x\ny" ++ "\n6\nreport\n0\n\n") == Delivery.report_endpoint(db,id,id,"root","a","2:ab0:3:x\ny") : IO(Delivery.ReportOutcome)}
 
 def eligible_frame_keeps_an_internal_newline(db,id):
   {==}
@@ -611,7 +616,7 @@ def eligible_frame_keeps_an_internal_newline(db,id):
 law eligible_frame_keeps_a_trailing_newline:
   for db: String
   for id: String
-  {Delivery.report_row(db,id,"",False{},id,"o\np\na\n4\nroot\n4\n2:x\n\n") == Delivery.report_endpoint(db,id,id,"root","a","2:x\n") : IO(Result<&1,&1,U32 & String,String>)}
+  {Delivery.report_row(db,id,"","strict",id,"o\np\na\n4\nroot\n4\n2:x\n" ++ "\n6\nreport\n0\n\n") == Delivery.report_endpoint(db,id,id,"root","a","2:x\n") : IO(Delivery.ReportOutcome)}
 
 def eligible_frame_keeps_a_trailing_newline(db,id):
   {==}
@@ -619,7 +624,7 @@ def eligible_frame_keeps_a_trailing_newline(db,id):
 law eligible_frame_keeps_a_unicode_recipient:
   for db: String
   for id: String
-  {Delivery.report_row(db,id,"",False{},id,"o\np\na\n2\nrΩ\n4\n2:ab\n") == Delivery.report_endpoint(db,id,id,"rΩ","a","2:ab") : IO(Result<&1,&1,U32 & String,String>)}
+  {Delivery.report_row(db,id,"","strict",id,"o\np\na\n2\nrΩ\n4\n2:ab" ++ "\n6\nreport\n0\n\n") == Delivery.report_endpoint(db,id,id,"rΩ","a","2:ab") : IO(Delivery.ReportOutcome)}
 
 def eligible_frame_keeps_a_unicode_recipient(db,id):
   {==}
@@ -627,7 +632,7 @@ def eligible_frame_keeps_a_unicode_recipient(db,id):
 law eligible_frame_with_a_short_payload_is_rejected:
   for db: String
   for id: String
-  {Delivery.report_row(db,id,"",False{},id,"o\np\na\n4\nroot\n13\nshort\n") == Delivery.report_selected_failed(id,"","root","report-truncated","The retained report row is shorter than its declared argv length; the report and its input are retained.") : IO(Result<&1,&1,U32 & String,String>)}
+  {Delivery.report_row(db,id,"","strict",id,"o\np\na\n4\nroot\n20\nshort" ++ "\n6\nreport\n0\n\n") == Delivery.report_selected_failed(id,"","root","report-truncated","The retained report row is shorter than its declared argv length; the report and its input are retained.") : IO(Delivery.ReportOutcome)}
 
 def eligible_frame_with_a_short_payload_is_rejected(db,id):
   {==}
@@ -635,7 +640,7 @@ def eligible_frame_with_a_short_payload_is_rejected(db,id):
 law eligible_frame_without_its_delimiter_is_rejected:
   for db: String
   for id: String
-  {Delivery.report_row(db,id,"",False{},id,"o\np\na\n4\nroot\n4\n2:ab") == Delivery.report_selected_failed(id,"","root","report-framing-rejected","The retained report row does not end in exactly one host delimiter; the report and its input are retained.") : IO(Result<&1,&1,U32 & String,String>)}
+  {Delivery.report_row(db,id,"","strict",id,"o\np\na\n4\nroot\n4\n2:ab" ++ "\n6\nreport\n0") == Delivery.report_selected_failed(id,"","root","report-framing-rejected","The retained report row does not end in exactly one host delimiter; the report and its input are retained.") : IO(Delivery.ReportOutcome)}
 
 def eligible_frame_without_its_delimiter_is_rejected(db,id):
   {==}
@@ -644,17 +649,61 @@ def eligible_frame_without_its_delimiter_is_rejected(db,id):
 law stopped_malformed_frame_refuses_before_handoff:
   for db: String
   for id: String
-  {Delivery.report_row(db,id,"",True{},id,"o\np\ne\n4\nroot\n4\n2:ab") == Delivery.report_selected_failed(id,"","root","report-framing-rejected","The retained report row does not end in exactly one host delimiter; the report and its input are retained.") : IO(Result<&1,&1,U32 & String,String>)}
+  {Delivery.report_row(db,id,"","strict",id,"o\np\ne\n4\nroot\n4\n2:ab" ++ "\n6\nreport\n8\nstopped") == Delivery.report_selected_failed(id,"","root","report-framing-rejected","The retained report row does not end in exactly one host delimiter; the report and its input are retained.") : IO(Delivery.ReportOutcome)}
 
 def stopped_malformed_frame_refuses_before_handoff(db,id):
   {==}
 
+# The wider frame is rejected when either tail field falls short or its delimiter
+# is missing; each row below carries the fields it can and fails the end check,
+# so the refusal still names the decoded recipient and no selected identity.
+law truncated_kind_field_is_rejected:
+  for db: String
+  for id: String
+  {Delivery.report_row(db,id,"","strict",id,"o\np\na\n4\nroot\n4\n2:ab" ++ "\n6\nrep") == Delivery.report_selected_failed(id,"","root","report-framing-rejected","The retained report row does not end in exactly one host delimiter; the report and its input are retained.") : IO(Delivery.ReportOutcome)}
+
+def truncated_kind_field_is_rejected(db,id):
+  {==}
+
+law missing_kind_delimiter_is_rejected:
+  for db: String
+  for id: String
+  {Delivery.report_row(db,id,"","strict",id,"o\np\na\n4\nroot\n4\n2:ab" ++ "\n6\nreport0\n\n") == Delivery.report_selected_failed(id,"","root","report-framing-rejected","The retained report row does not end in exactly one host delimiter; the report and its input are retained.") : IO(Delivery.ReportOutcome)}
+
+def missing_kind_delimiter_is_rejected(db,id):
+  {==}
+
+law truncated_stopped_field_is_rejected:
+  for db: String
+  for id: String
+  {Delivery.report_row(db,id,"","strict",id,"o\np\na\n4\nroot\n4\n2:ab" ++ "\n6\nreport\n8\nsto") == Delivery.report_selected_failed(id,"","root","report-framing-rejected","The retained report row does not end in exactly one host delimiter; the report and its input are retained.") : IO(Delivery.ReportOutcome)}
+
+def truncated_stopped_field_is_rejected(db,id):
+  {==}
+
+law missing_stopped_delimiter_is_rejected:
+  for db: String
+  for id: String
+  {Delivery.report_row(db,id,"","strict",id,"o\np\na\n4\nroot\n4\n2:ab" ++ "\n6\nreport\n8\nstopped") == Delivery.report_selected_failed(id,"","root","report-framing-rejected","The retained report row does not end in exactly one host delimiter; the report and its input are retained.") : IO(Delivery.ReportOutcome)}
+
+def missing_stopped_delimiter_is_rejected(db,id):
+  {==}
+
+law running_tail_is_not_a_framing_rejection:
+  for db: String
+  for id: String
+  {Delivery.report_row(db,id,"","strict",id,"o\np\ne\n4\nroot\n4\n2:ab" ++ "\n6\nreport\n0\n\n") == Delivery.report_endpoint(db,id,id,"root","e","2:ab") : IO(Delivery.ReportOutcome)}
+
+def running_tail_is_not_a_framing_rejection(db,id):
+  {==}
+
 # A stopped pending admission reaches the shared handoff whether its own recorded
-# endpoint is absent or malformed, which is what these two frames share.
+# endpoint is absent or malformed, which is what these two frames share. The
+# stopped state rides the frame tail, so no positional routing flag remains.
 law stopped_pending_absent_endpoint_reaches_handoff:
   for db: String
   for id: String
-  {Delivery.report_row(db,id,"",True{},id,"o\np\ne\n4\nroot\n4\n2:ab\n") == stopped_delivery(db,id,notification => Delivery.report_handoff(db,id,notification),True{}) : IO(Result<&1,&1,U32 & String,String>)}
+  {Delivery.report_row(db,id,"","strict",id,"o\np\ne\n4\nroot\n4\n2:ab" ++ "\n6\nreport\n8\nstopped\n") == Delivery.report_handoff_admit(db,id,id) : IO(Delivery.ReportOutcome)}
 
 def stopped_pending_absent_endpoint_reaches_handoff(db,id):
   {==}
@@ -662,17 +711,145 @@ def stopped_pending_absent_endpoint_reaches_handoff(db,id):
 law stopped_pending_malformed_endpoint_reaches_handoff:
   for db: String
   for id: String
-  {Delivery.report_row(db,id,"",True{},id,"o\np\nx\n4\nroot\n4\n2:ab\n") == stopped_delivery(db,id,notification => Delivery.report_handoff(db,id,notification),True{}) : IO(Result<&1,&1,U32 & String,String>)}
+  {Delivery.report_row(db,id,"","strict",id,"o\np\nx\n4\nroot\n4\n2:ab" ++ "\n6\nreport\n8\nstopped\n") == Delivery.report_handoff_admit(db,id,id) : IO(Delivery.ReportOutcome)}
 
 def stopped_pending_malformed_endpoint_reaches_handoff(db,id):
   {==}
 
-# An acknowledged report completes during receipt classification, before either
-# routing mode is considered, so both modes return the same acknowledgment.
+# The routing decision is total over the mode, the decoded kind and the decoded
+# stopped state, and it is taken after the decode and before any launch: a strict
+# admission refuses every kind that is not a report before any invocation, both
+# admissions send a stopped report to the shared handoff, an ordinary admission
+# stops a stopped row of every other kind, and it accepts every unstopped row.
+# Each family carries its own negative control, which asserts the rival route.
+law strict_routing_refuses_a_non_report_kind:
+  {Delivery.report_routing("strict","message","") == Delivery.Refused{} : Delivery.ReportRouting}
+
+def strict_routing_refuses_a_non_report_kind():
+  {==}
+
+law strict_routing_refuses_a_non_report_kind_as_an_envelope:
+  {Delivery.strict_outcome("requested-report",Delivery.Refused{2,"","","report-ineligible","The message is not an eligible retained report; its input is retained."}) == Fail{(2,Delivery.report_envelope("requested-report","","","report-ineligible",False{},"","The message is not an eligible retained report; its input is retained."))} : Result<&1,&1,U32 & String,String>}
+
+def strict_routing_refuses_a_non_report_kind_as_an_envelope():
+  {==}
+
+law invoked_routing_is_not_the_refusal:
+  {Delivery.strict_outcome("requested-report",Delivery.Reached{0,"","","invoked",True{},"0","Endpoint process completed and exited zero."}) == Done{Delivery.report_envelope("requested-report","","","invoked",True{},"0","Endpoint process completed and exited zero.")} : Result<&1,&1,U32 & String,String>}
+
+def invoked_routing_is_not_the_refusal():
+  {==}
+
+law strict_routing_retains_a_stopped_report_for_any_kind:
+  {Delivery.report_routing("strict","report","stopped") == Delivery.Retained{} : Delivery.ReportRouting}
+
+def strict_routing_retains_a_stopped_report_for_any_kind():
+  {==}
+
+law strict_routing_refuses_a_stopped_non_report_kind:
+  {Delivery.report_routing("strict","message","stopped") == Delivery.Refused{} : Delivery.ReportRouting}
+
+def strict_routing_refuses_a_stopped_non_report_kind():
+  {==}
+
+law ordinary_routing_retains_a_stopped_report:
+  {Delivery.report_routing("ordinary","report","stopped") == Delivery.Retained{} : Delivery.ReportRouting}
+
+def ordinary_routing_retains_a_stopped_report():
+  {==}
+
+law ordinary_routing_retains_a_stopped_question:
+  {Delivery.report_routing("ordinary","question","stopped") == Delivery.Retained{} : Delivery.ReportRouting}
+
+def ordinary_routing_retains_a_stopped_question():
+  {==}
+
+law ordinary_routing_does_not_retain_an_unstopped_report:
+  {Delivery.report_routing("ordinary","report","") == Delivery.Accepted{} : Delivery.ReportRouting}
+
+def ordinary_routing_does_not_retain_an_unstopped_report():
+  {==}
+
+law ordinary_routing_stops_a_stopped_other_kind:
+  {Delivery.report_routing("ordinary","message","stopped") == Delivery.Stopped{} : Delivery.ReportRouting}
+
+def ordinary_routing_stops_a_stopped_other_kind():
+  {==}
+
+law ordinary_routing_stops_a_stopped_other_kind_as_the_stop_text:
+  for db: String
+  for id: String
+  for recipient: String
+  for saved: String
+  {Delivery.ordinary_outcome(db,id,saved,Delivery.Refused{2,id,recipient,"terminally-stopped","Session is terminally stopped; the retained input will not execute. Inspect its session and inbox."}) == Fail{(2,"Session is terminally stopped; the retained input will not execute. Inspect its session and inbox.")} : Result<&1,&1,U32 & String,String>}
+
+def ordinary_routing_stops_a_stopped_other_kind_as_the_stop_text(db,id,recipient,saved):
+  {==}
+
+law ordinary_routing_does_not_stop_a_stopped_report:
+  {Delivery.report_routing("ordinary","report","stopped") == Delivery.Retained{} : Delivery.ReportRouting}
+
+def ordinary_routing_does_not_stop_a_stopped_report():
+  {==}
+
+law ordinary_routing_accepts_every_unstopped_kind:
+  for kind: String
+  {Delivery.report_routing("ordinary",kind,"") == Delivery.Accepted{} : Delivery.ReportRouting}
+
+def ordinary_routing_accepts_every_unstopped_kind(kind):
+  {==}
+
+law ordinary_routing_observes_a_failed_query_before_the_saved_result:
+  for db: String
+  for id: String
+  for saved: String
+  for code: U32
+  for detail: String
+  {Delivery.ordinary_outcome(db,id,saved,Delivery.Refused{code,"","","report-query-failed",detail}) == Fail{(code,detail)} : Result<&1,&1,U32 & String,String>}
+
+def ordinary_routing_observes_a_failed_query_before_the_saved_result(db,id,saved,code,detail):
+  {==}
+
+law ordinary_routing_renders_an_invoked_reach_as_the_saved_result:
+  for db: String
+  for id: String
+  for recipient: String
+  for saved: String
+  {Delivery.ordinary_outcome(db,id,saved,Delivery.Reached{0,id,recipient,"invoked",True{},"0","Endpoint process completed and exited zero."}) == Done{saved} : Result<&1,&1,U32 & String,String>}
+
+def ordinary_routing_renders_an_invoked_reach_as_the_saved_result(db,id,recipient,saved):
+  {==}
+
+law ordinary_routing_renders_a_failed_invocation_as_the_log_text:
+  for db: String
+  for id: String
+  for recipient: String
+  for saved: String
+  for detail: String
+  {Delivery.ordinary_outcome(db,id,saved,Delivery.Reached{1,id,recipient,"invocation-failed",True{},"",detail}) == Fail{(1,"Message committed; session delivery failed. Read " ++ db ++ ".root.log and retry delivery from the pending inbox.")} : Result<&1,&1,U32 & String,String>}
+
+def ordinary_routing_renders_a_failed_invocation_as_the_log_text(db,id,recipient,saved,detail):
+  {==}
+
+law stopped_field_matches_the_handoff_query:
+  {Delivery.report_routing("strict","report","stopped") == Delivery.Retained{} : Delivery.ReportRouting}
+
+def stopped_field_matches_the_handoff_query():
+  {==}
+
+law empty_stopped_field_matches_the_own_endpoint_route:
+  {Delivery.report_routing("strict","report","") == Delivery.Accepted{} : Delivery.ReportRouting}
+
+def empty_stopped_field_matches_the_own_endpoint_route():
+  {==}
+
+# An acknowledged report completes during receipt classification, before the
+# routing decision is taken, so a running and a stopped row return the same
+# acknowledgment and no endpoint is invoked.
 law acknowledged_frame_completes_for_the_ordinary_mode:
   for db: String
   for id: String
-  {Delivery.report_row(db,id,"",False{},id,"o\na\na\n4\nroot\n4\n2:ab\n") == IO.pure(Result<&1,&1,U32 & String,String>,Done{Delivery.report_envelope(id,id,"root","already-acknowledged",False{},"","The retained report already has a receipt; no endpoint was invoked.")}) : IO(Result<&1,&1,U32 & String,String>)}
+  {Delivery.report_row(db,id,"","strict",id,"o\na\na\n4\nroot\n4\n2:ab" ++ "\n6\nreport\n0\n\n") == IO.pure(Delivery.ReportOutcome,Delivery.Reached{0,id,"root","already-acknowledged",False{},"","The retained report already has a receipt; no endpoint was invoked."}) : IO(Delivery.ReportOutcome)}
 
 def acknowledged_frame_completes_for_the_ordinary_mode(db,id):
   {==}
@@ -680,7 +857,7 @@ def acknowledged_frame_completes_for_the_ordinary_mode(db,id):
 law acknowledged_frame_completes_for_the_stopped_mode:
   for db: String
   for id: String
-  {Delivery.report_row(db,id,"",True{},id,"o\na\na\n4\nroot\n4\n2:ab\n") == IO.pure(Result<&1,&1,U32 & String,String>,Done{Delivery.report_envelope(id,id,"root","already-acknowledged",False{},"","The retained report already has a receipt; no endpoint was invoked.")}) : IO(Result<&1,&1,U32 & String,String>)}
+  {Delivery.report_row(db,id,"","strict",id,"o\na\na\n4\nroot\n4\n2:ab" ++ "\n6\nreport\n8\nstopped\n") == IO.pure(Delivery.ReportOutcome,Delivery.Reached{0,id,"root","already-acknowledged",False{},"","The retained report already has a receipt; no endpoint was invoked."}) : IO(Delivery.ReportOutcome)}
 
 def acknowledged_frame_completes_for_the_stopped_mode(db,id):
   {==}
@@ -690,7 +867,7 @@ law absent_endpoint_is_not_an_invocation:
   for id: String
   for recipient: String
   for payload: String
-  {Delivery.report_endpoint(db,id,id,recipient,"e",payload) == IO.pure(Result<&1,&1,U32 & String,String>,Fail{(2,Delivery.report_envelope(id,id,recipient,"endpoint-absent",False{},"","The recorded endpoint is absent; the report and its input are retained."))}) : IO(Result<&1,&1,U32 & String,String>)}
+  {Delivery.report_endpoint(db,id,id,recipient,"e",payload) == Delivery.report_selected_failed(id,id,recipient,"endpoint-absent","The recorded endpoint is absent; the report and its input are retained.") : IO(Delivery.ReportOutcome)}
 
 def absent_endpoint_is_not_an_invocation(db,id,recipient,payload):
   {==}
@@ -700,7 +877,7 @@ law malformed_endpoint_is_not_an_invocation:
   for id: String
   for recipient: String
   for payload: String
-  {Delivery.report_endpoint(db,id,id,recipient,"x",payload) == IO.pure(Result<&1,&1,U32 & String,String>,Fail{(2,Delivery.report_envelope(id,id,recipient,"endpoint-malformed",False{},"","The recorded endpoint is not a complete usable argument array; the report and its input are retained."))}) : IO(Result<&1,&1,U32 & String,String>)}
+  {Delivery.report_endpoint(db,id,id,recipient,"x",payload) == Delivery.report_selected_failed(id,id,recipient,"endpoint-malformed","The recorded endpoint is not a complete usable argument array; the report and its input are retained.") : IO(Delivery.ReportOutcome)}
 
 def malformed_endpoint_is_not_an_invocation(db,id,recipient,payload):
   {==}
@@ -710,7 +887,7 @@ law acknowledged_report_is_not_an_invocation:
   for id: String
   for recipient: String
   for payload: String
-  {Delivery.report_receipt(db,id,id,False{},id,recipient,"a","a",payload) == IO.pure(Result<&1,&1,U32 & String,String>,Done{Delivery.report_envelope(id,id,recipient,"already-acknowledged",False{},"","The retained report already has a receipt; no endpoint was invoked.")}) : IO(Result<&1,&1,U32 & String,String>)}
+  {Delivery.report_receipt(db,id,id,"strict",id,recipient,"a","a","report","",payload) == IO.pure(Delivery.ReportOutcome,Delivery.Reached{0,id,recipient,"already-acknowledged",False{},"","The retained report already has a receipt; no endpoint was invoked."}) : IO(Delivery.ReportOutcome)}
 
 def acknowledged_report_is_not_an_invocation(db,id,recipient,payload):
   {==}
@@ -719,7 +896,7 @@ law zero_exit_reports_the_invoked_disposition:
   for id: String
   for recipient: String
   for saved: String
-  {Delivery.report_launch_outcome(id,id,recipient,Done{saved}) == Done{Delivery.report_envelope(id,id,recipient,"invoked",True{},"0","Endpoint process completed and exited zero.")} : Result<&1,&1,U32 & String,String>}
+  {Delivery.report_launch_outcome(id,id,recipient,Done{saved}) == Delivery.Reached{0,id,recipient,"invoked",True{},"0","Endpoint process completed and exited zero."} : Delivery.ReportOutcome}
 
 def zero_exit_reports_the_invoked_disposition(id,recipient,saved):
   {==}
@@ -729,26 +906,27 @@ law failed_launch_keeps_its_code_and_identity:
   for recipient: String
   for code: U32
   for detail: String
-  {Delivery.report_launch_outcome(id,id,recipient,Fail{(code,detail)}) == Fail{(code,Delivery.report_envelope(id,id,recipient,"invocation-failed",True{},"",detail))} : Result<&1,&1,U32 & String,String>}
+  {Delivery.report_launch_outcome(id,id,recipient,Fail{(code,detail)}) == Delivery.Reached{code,id,recipient,"invocation-failed",True{},"",detail} : Delivery.ReportOutcome}
 
 def failed_launch_keeps_its_code_and_identity(id,recipient,code,detail):
   {==}
 
 law launch_outcome_keeps_both_identities:
   for saved: String
-  {Delivery.report_launch_outcome("requested-report","selected-report","recipient-session",Done{saved}) == Done{Delivery.report_envelope("requested-report","selected-report","recipient-session","invoked",True{},"0","Endpoint process completed and exited zero.")} : Result<&1,&1,U32 & String,String>}
+  {Delivery.report_launch_outcome("requested-report","selected-report","recipient-session",Done{saved}) == Delivery.Reached{0,"selected-report","recipient-session","invoked",True{},"0","Endpoint process completed and exited zero."} : Delivery.ReportOutcome}
 
 def launch_outcome_keeps_both_identities(saved):
   {==}
 
 # A query failure before any selection carries the request with no delivered
 # identity, while one after a handoff keeps the selected notification. The
-# distinction comes from the call site, not from comparing the two ids.
+# distinction comes from the call site, not from comparing the two ids, and the
+# observation is a refusal the caller renders.
 law pre_selection_query_failure_leaves_no_selected_identity:
   for db: String
   for code: U32
   for detail: String
-  {Delivery.report_queried(db,"requested-report","",False{},"selected-report",Fail{(code,detail)}) == IO.pure(Result<&1,&1,U32 & String,String>,Fail{(code,Delivery.report_envelope("requested-report","","","report-query-failed",False{},"",detail))}) : IO(Result<&1,&1,U32 & String,String>)}
+  {Delivery.report_queried(db,"requested-report","","strict","selected-report",Fail{(code,detail)}) == IO.pure(Delivery.ReportOutcome,Delivery.Refused{code,"","","report-query-failed",detail}) : IO(Delivery.ReportOutcome)}
 
 def pre_selection_query_failure_leaves_no_selected_identity(db,code,detail):
   {==}
@@ -757,33 +935,49 @@ law post_handoff_query_failure_keeps_the_notification:
   for db: String
   for code: U32
   for detail: String
-  {Delivery.report_queried(db,"requested-report","notification-report",False{},"notification-report",Fail{(code,detail)}) == IO.pure(Result<&1,&1,U32 & String,String>,Fail{(code,Delivery.report_envelope("requested-report","notification-report","","report-query-failed",False{},"",detail))}) : IO(Result<&1,&1,U32 & String,String>)}
+  {Delivery.report_queried(db,"requested-report","notification-report","strict","notification-report",Fail{(code,detail)}) == IO.pure(Delivery.ReportOutcome,Delivery.Refused{code,"notification-report","","report-query-failed",detail}) : IO(Delivery.ReportOutcome)}
 
 def post_handoff_query_failure_keeps_the_notification(db,code,detail):
   {==}
 
-# The handoff route failure and the unavailable route are strict outcomes carrying
-# the requested identity, the observed code and detail, and no selected identity,
-# because nothing has been selected when the handoff has not run.
+# The handoff route failure and the unavailable route are observed as refusals
+# carrying the observed code and detail and no selected identity, because nothing
+# has been selected when the handoff has not run. Rendering them through the one
+# envelope builder is what carries the requested identity, so that claim is
+# stated over the renderer and the observation itself over the chain.
 law handoff_route_failure_carries_the_requested_identity:
+  for code: U32
+  for detail: String
+  {Delivery.strict_outcome("requested-report",Delivery.Refused{code,"","","stopped-route-query-failed",detail}) == Fail{(code,Delivery.report_envelope("requested-report","","","stopped-route-query-failed",False{},"",detail))} : Result<&1,&1,U32 & String,String>}
+
+def handoff_route_failure_carries_the_requested_identity(code,detail):
+  {==}
+
+law handoff_route_failure_observes_its_code_and_detail:
   for db: String
   for code: U32
   for detail: String
-  {Delivery.report_handoff_available(db,"requested-report","stopped-report",Fail{(code,detail)}) == IO.pure(Result<&1,&1,U32 & String,String>,Fail{(code,Delivery.report_envelope("requested-report","","","stopped-route-query-failed",False{},"",detail))}) : IO(Result<&1,&1,U32 & String,String>)}
+  {Delivery.report_handoff_available(db,"requested-report","stopped-report",Fail{(code,detail)}) == IO.pure(Delivery.ReportOutcome,Delivery.Refused{code,"","","stopped-route-query-failed",detail}) : IO(Delivery.ReportOutcome)}
 
-def handoff_route_failure_carries_the_requested_identity(db,code,detail):
+def handoff_route_failure_observes_its_code_and_detail(db,code,detail):
   {==}
 
 law unavailable_handoff_route_is_not_an_invocation:
   for db: String
-  {Delivery.report_handoff_unavailable(db,"requested-report","stopped-report","",True{}) == IO.pure(Result<&1,&1,U32 & String,String>,Fail{(2,Delivery.report_envelope("requested-report","","","stopped-route-unavailable",False{},"","Higher-parent delivery is unavailable; the retained input and the original report are preserved."))}) : IO(Result<&1,&1,U32 & String,String>)}
+  {Delivery.report_handoff_unavailable(db,"requested-report","stopped-report","",True{}) == IO.pure(Delivery.ReportOutcome,Delivery.Refused{2,"","","stopped-route-unavailable","Higher-parent delivery is unavailable; the retained input and the original report are preserved."}) : IO(Delivery.ReportOutcome)}
 
 def unavailable_handoff_route_is_not_an_invocation(db):
   {==}
 
+law unavailable_handoff_route_renders_without_an_invocation:
+  {Delivery.strict_outcome("requested-report",Delivery.Refused{2,"","","stopped-route-unavailable","Higher-parent delivery is unavailable; the retained input and the original report are preserved."}) == Fail{(2,Delivery.report_envelope("requested-report","","","stopped-route-unavailable",False{},"","Higher-parent delivery is unavailable; the retained input and the original report are preserved."))} : Result<&1,&1,U32 & String,String>}
+
+def unavailable_handoff_route_renders_without_an_invocation():
+  {==}
+
 law available_handoff_route_reaches_the_handoff:
   for db: String
-  {Delivery.report_handoff_unavailable(db,"requested-report","stopped-report","notification-report",False{}) == stopped_delivery(db,"stopped-report",notification => Delivery.report_handoff("requested-report",notification),True{}) : IO(Result<&1,&1,U32 & String,String>)}
+  {Delivery.report_handoff_unavailable(db,"requested-report","stopped-report","notification-report",False{}) == Delivery.handoff(db,"stopped-report",notification => Delivery.report_handoff("requested-report",notification)) : IO(Delivery.ReportOutcome)}
 
 def available_handoff_route_reaches_the_handoff(db):
   {==}
@@ -791,15 +985,15 @@ def available_handoff_route_reaches_the_handoff(db):
 # The strict selection reads the shared projection with the unconditional
 # predicate, so the ordinary predicates can be supplied by the other caller
 # without a second selection builder.
-def strict_selection(+db: String, +id: String) -> IO(Result<&1,&1,U32 & String,String>):
-  do IO<Result<&1,&1,U32 & String,String>>:
+def strict_selection(+db: String, +id: String) -> IO(Delivery.ReportOutcome):
+  do IO<Delivery.ReportOutcome>:
     queried : Result<&1,&1,U32 & String,String> <- DB.Sql.query(db,Delivery.report_projection_sql(id,"1"))
-    Delivery.report_queried(db,id,"",False{},id,queried)
+    Delivery.report_queried(db,id,"","strict",id,queried)
 
 law strict_selection_uses_the_unconditional_predicate:
   for db: String
   for id: String
-  {Delivery.report_selected(db,id,"",False{},id) == strict_selection(db,id) : IO(Result<&1,&1,U32 & String,String>)}
+  {Delivery.report_selected(db,id,"","strict",id,"1") == strict_selection(db,id) : IO(Delivery.ReportOutcome)}
 
 def strict_selection_uses_the_unconditional_predicate(db,id):
   {==}
