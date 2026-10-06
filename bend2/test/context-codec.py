@@ -31,11 +31,13 @@ implementation change and the law that must refuse it. This driver requires each
 record to be applicable in the source it mutates, to name a law the fixture
 compiles, and to name a module the mutated module is reached by. It then applies
 each record in an isolated copy and requires the law's module to refuse the
-compile, retaining every raw diagnostic. A record whose mutated tree still
-compiles is reported as a surviving mutation, which is a failure of the fixture.
-A record whose law's module does not compile before the mutation stays unapplied
-and counts as unqualified. Which law a refusal is the verdict of stays with the
-single Controls/CI classifier; this driver retains the raw process outcome for it.
+compile while naming that law in the diagnostic. A refusal that does not name the
+recorded law is unattributed: a parser, arity or unrelated type error is not that
+law's verdict, so it fails the run as a surviving mutation does, and the raw
+diagnostics are retained for the single Controls/CI classifier. A record whose
+mutated tree still compiles is reported as a surviving mutation, which is a
+failure of the fixture. A record whose law's module does not compile before the
+mutation stays unapplied and counts as unqualified.
 """
 
 import argparse
@@ -233,7 +235,8 @@ def review_mutations(record, bend, out):
     """Validate the lane's mutation payload and run it as a negative control."""
     records = json.loads(MUTATIONS.read_text())
     laws = law_modules()
-    record["mutations"] = {"count": len(records), "records": [], "refused": 0, "survived": 0, "unqualified": 0}
+    record["mutations"] = {"count": len(records), "records": [], "refused": 0, "survived": 0,
+                           "unattributed": 0, "unqualified": 0}
     applicable = []
     for index, item in enumerate(records):
         entry = {"name": item["name"], "law": item["law"], "file": item["file"]}
@@ -296,18 +299,28 @@ def review_mutations(record, bend, out):
         source_file.write_bytes(pristine)
         if source_file.read_bytes() != (ROOT / item["file"]).read_bytes():
             record["failures"].append(f"the mutation copy was not restored: {item['name']}")
-        outcome = "refused" if entry["status"] != 0 else "survived"
+        # Only a refusal whose diagnostic names the recorded law is evidence that
+        # the law binds this code; any other refusal is an unrelated failure.
         named = item["law"] in (stdout + stderr).decode("utf-8", "replace")
+        outcome = "survived"
+        if entry["status"] != 0:
+            outcome = "refused" if named else "unattributed"
         if outcome == "refused":
             record["mutations"]["refused"] += 1
         else:
-            # The mutated module is the evidence a surviving record needs.
+            # The mutated module is the evidence a record that did not reach its
+            # law needs, whether it still compiled or refused for another reason.
             survivor = control / f"{stem}.bend"
             survivor.write_bytes(mutated)
-            record["mutations"]["survived"] += 1
-            record["mutations"]["records"][index]["surviving_source"] = str(survivor)
-            record["failures"].append(f"mutation survived the fixture: {item['name']} ({item['law']})")
+            record["mutations"][outcome] += 1
+            record["mutations"]["records"][index]["retained_source"] = str(survivor)
+            if outcome == "survived":
+                record["failures"].append(f"mutation survived the fixture: {item['name']} ({item['law']})")
+            else:
+                record["failures"].append(
+                    f"the mutated tree refused without naming the law: {item['name']} ({item['law']})")
         record["mutations"]["records"][index]["outcome"] = outcome
+        record["mutations"]["records"][index]["status"] = entry["status"]
         record["mutations"]["records"][index]["baseline_status"] = baseline.get(module)
         record["mutations"]["records"][index]["diagnostic_names_the_law"] = named
     shutil.rmtree(tree)
@@ -409,7 +422,8 @@ def main():
                       "qualification": record["qualification"], "exit": status,
                       "failures": record["failures"], "unqualified": [u["module"] for u in record["unqualified"]],
                       "raw_cases": len(RAW_CASES) + 1,
-                      "mutations": {k: record["mutations"][k] for k in ("count", "refused", "survived", "unqualified")},
+                      "mutations": {k: record["mutations"][k]
+                                    for k in ("count", "refused", "survived", "unattributed", "unqualified")},
                       "byte_mismatches": [d for d in record["discrepancies"] if d.get("match") is False]}, indent=1))
     return status
 
