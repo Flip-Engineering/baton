@@ -56,6 +56,12 @@ frontend read them.
 - `view.mapRange(start, end)` returns `{ status: "mapped", originalStart, originalEnd }` or an unavailable outcome. It validates both mapped original endpoints against the capture boundary table before returning, so a surrogate-interior endpoint refuses here as well as in `locateSpan`.
 - `locationOf(capture, index)` returns `{ status: "mapped", index, line, column, byteOffset }` with a zero-based line and the column of the frontend `parse_col` rule, whose edge at a leading line feed is declared below.
 - `locateSpan(capture, view, span)` returns a frozen `{ status: "mapped", claim: "source-identity", identity, digest, text, original: { start, end }, byteRange: { start, end }, limits }` or an unavailable outcome. `span.src` is compared with the supplied view text to check the association; it never selects a file.
+- `decodeCoreCapture(record)` decodes a Core capture record (`capture_kind`, `payload`,
+  `payload_encoding`, `marker`) into `{ status: "bytes", bytes, marker, kind }`, `{ status: "absent" }`
+  or an unavailable outcome (`captureRecordMissing`, `captureKindUnsupported`, `payloadMissing`,
+  `payloadEncodingInvalid`, `payloadNotRoundTrip`, `payloadEncodingUnsupported`). Only encodings that
+  reproduce the accepted bytes byte for byte are used, the marker is returned for comparison, and no
+  value is re-encoded to fit.
 - `REPRESENTATION_LIMITS` lists the declared representation limits described below.
 
 Unavailable reasons are `identityMissing`, `bytesMissing`, `sharedBufferUnsupported`, `captureUnavailable`, `segmentsMissing`, `segmentInvalid`, `segmentKindUnsupported`, `segmentsNotOrdered`, `emptySegment`, `emptyView`, `notInteger`, `outOfRange`, `reversedRange`, `surrogateInterior`, `byteInterior`, `unmappedSegment`, `unmappedBoundary`, `spansOmitted`, `viewUnavailable`, `viewCaptureMismatch`, `spanMissing`, `spanSourceMissing`, `sourceAssociationMismatch`, and the UTF-8 decoding reasons `unexpectedContinuation`, `truncatedSequence`, `invalidContinuation`, `overlongEncoding`, `surrogateEncoding`, `outOfRangeCodePoint`, `invalidStartByte`.
@@ -140,9 +146,13 @@ source-identity records by driving `source-binding.mjs`. It never parses, resolv
 or writes. Its behaviour:
 
 - source capture happens at `readSource`, the same call the loader uses for its text, so the captured
-  bytes are the consumed bytes; a file the caller did not capture is refused with an explicit
-  `uncapturedDependency` limitation, and in capture-only mode the patched loader raises its own
-  missing-file diagnostic instead of reading the host;
+  bytes are the consumed bytes; a closure entry may supply exact bytes directly or a Core capture
+  record, whose `payload_encoding` must reproduce the accepted bytes byte for byte (base64 or hex,
+  since a byte order mark, a carriage return or a byte that is not valid UTF-8 must survive) and
+  whose `marker` is compared with the digest of those bytes as evidence; an unnamed encoding, an
+  encoding that does not round-trip, or a marker mismatch refuses the acquisition. A file the caller
+  did not capture is refused with an explicit `uncapturedDependency` limitation, and in capture-only
+  mode the patched loader raises its own missing-file diagnostic instead of reading the host;
 - captures, views and pending transformations are query-local: a later query acquires its bytes
   again and never reuses a stale capture;
 - every span is attributed by the file the frontend reported for it, never by matching source text,

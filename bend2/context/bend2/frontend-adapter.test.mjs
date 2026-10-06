@@ -11,6 +11,7 @@
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import { createHash } from 'node:crypto';
 import { createFrontendAdapter } from './frontend-adapter.mjs';
 import { HOOK_KINDS, HOOK_PHASES } from './frontend-hook-events.mjs';
 import { applyHookOperations, deriveHookedSource } from './frontend-hooks.mjs';
@@ -268,6 +269,39 @@ test('a non-acquiring lookup answers presence without reading bytes', () => {
   assert.equal(adapter.reads.length, 0, 'a lookup acquires nothing');
   assert.equal(adapter.counters.uncapturedDependencies, 0);
   adapter.endQuery();
+});
+
+
+test('a Core capture record supplies exact bytes through its named encoding', () => {
+  // A byte order mark and a carriage return must survive the agreed encoding byte for byte.
+  const bytes = Buffer.from([0xef, 0xbb, 0xbf, 0x61, 0x0d, 0x0a, 0x62]);
+  const digest = createHash('sha256').update(bytes).digest('hex');
+  const record = { capture_kind: 'file', payload: bytes.toString('base64'), payload_encoding: 'base64', marker: digest };
+  const adapter = createFrontendAdapter({
+    captureOnly: true,
+    acquisition: { read: (identity) => ({ ...record, identity }), resolve: (identity) => ({ exists: true, identity }) },
+  });
+  const owner = start(adapter, '/work/bom.bend');
+  const text = adapter.sink.readSource('/work/bom.bend', owner);
+  assert.equal(text.charCodeAt(0), 0xfeff, 'the byte order mark is retained');
+  assert.equal(text.includes('\r\n'), true, 'the carriage return is retained');
+  adapter.endQuery();
+  const session = adapter.report().sessions[0];
+  assert.equal(session.completeness, 'complete');
+  assert.equal(session.acquisitions[0].status, 'captured');
+
+  // An encoding the contract does not name is refused, not re-encoded.
+  const unsupported = createFrontendAdapter({
+    captureOnly: true,
+    acquisition: { read: (identity) => ({ capture_kind: 'file', payload: 'abc', payload_encoding: 'utf8-text', marker: null, identity }), resolve: (identity) => ({ exists: true, identity }) },
+  });
+  const owner2 = start(unsupported, '/work/other.bend');
+  assert.equal(unsupported.sink.readSource('/work/other.bend', owner2), undefined);
+  unsupported.endQuery();
+  const refused = unsupported.report().sessions[0];
+  assert.equal(refused.acquisitions[0].status, 'failed');
+  assert.equal(refused.acquisitions[0].detail, 'payloadEncodingUnsupported: utf8-text');
+  assert.ok(refused.incompleteness.includes('acquisitionFailure'));
 });
 
 

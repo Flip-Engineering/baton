@@ -414,6 +414,38 @@ export function createView(capture, { segments } = {}) {
   });
 }
 
+// Decode a Core capture record into the exact accepted bytes.
+//
+// The record's payload_encoding must name a lossless byte-exact encoding of the accepted bytes, so a
+// byte order mark, a carriage return or a byte that is not valid UTF-8 survives. A payload that does
+// not reproduce byte for byte is refused rather than re-encoded. Nothing here authenticates the bytes:
+// the marker is returned for the caller to compare, and a comparison is not custody.
+export function decodeCoreCapture(record) {
+  if (record === null || typeof record !== 'object') return unavailable('captureRecordMissing');
+  const kind = record.capture_kind;
+  if (kind === 'absent') return Object.freeze({ status: 'absent' });
+  if (kind !== 'file' && kind !== 'dir' && kind !== 'link' && kind !== 'config') {
+    return unavailable('captureKindUnsupported', typeof kind === 'string' ? kind : 'missing');
+  }
+  const payload = record.payload;
+  const encoding = record.payload_encoding;
+  if (typeof payload !== 'string') return unavailable('payloadMissing');
+  const marker = typeof record.marker === 'string' ? record.marker : null;
+  if (encoding === 'base64') {
+    if (payload.length % 4 !== 0 || !/^[A-Za-z0-9+/]*={0,2}$/.test(payload)) return unavailable('payloadEncodingInvalid', 'base64');
+    const bytes = Buffer.from(payload, 'base64');
+    if (bytes.toString('base64') !== payload) return unavailable('payloadNotRoundTrip', 'base64');
+    return Object.freeze({ status: 'bytes', bytes, marker, kind });
+  }
+  if (encoding === 'hex') {
+    if (payload.length % 2 !== 0 || !/^[0-9a-fA-F]*$/.test(payload)) return unavailable('payloadEncodingInvalid', 'hex');
+    const bytes = Buffer.from(payload, 'hex');
+    if (bytes.toString('hex') !== payload.toLowerCase()) return unavailable('payloadNotRoundTrip', 'hex');
+    return Object.freeze({ status: 'bytes', bytes, marker, kind });
+  }
+  return unavailable('payloadEncodingUnsupported', typeof encoding === 'string' ? encoding : 'missing');
+}
+
 // The zero-based line and the parse_col column of a validated original index; following parse_col,
 // the column is 0 at index 0 of text that begins with a line feed.
 export function locationOf(capture, index) {

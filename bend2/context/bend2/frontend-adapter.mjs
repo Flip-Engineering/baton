@@ -17,7 +17,7 @@
 //   * invocation: one invocation at a time. Overlapping begins are rejected, reads outside an
 //     invocation are refused, and each invocation reports whether its capture was complete.
 
-import { captureSource, createView, locateSpan } from './source-binding.mjs';
+import { captureSource, createView, decodeCoreCapture, locateSpan } from './source-binding.mjs';
 import { HOOK_KINDS, HOOK_PHASES, REFERENCE_RESOLUTIONS, validateHookEvent } from './frontend-hook-events.mjs';
 
 const CLOSURE_LIMITATIONS = Object.freeze([
@@ -135,6 +135,22 @@ export function createFrontendAdapter({ acquisition, captureOnly = true } = {}) 
     return String(error);
   }
 
+  // A closure entry supplies exact bytes directly or a Core capture record whose payload the agreed
+  // encoding reproduces byte for byte. An encoding that cannot round-trip, or that is not one the
+  // contract names, is refused rather than re-encoded; a marker is returned for comparison only.
+  function providedBytes(provided) {
+    if (provided.bytes instanceof Uint8Array) {
+      return { status: 'bytes', bytes: provided.bytes, marker: typeof provided.marker === 'string' ? provided.marker : null, kind: typeof provided.kind === 'string' ? provided.kind : null };
+    }
+    if (provided.capture_kind !== undefined || provided.payload !== undefined || provided.payload_encoding !== undefined) {
+      const decoded = decodeCoreCapture(provided);
+      if (decoded.status === 'bytes') return decoded;
+      if (decoded.status === 'absent') return { status: 'absent' };
+      return { status: 'undecodable', detail: decoded.detail === undefined ? decoded.reason : `${decoded.reason}: ${decoded.detail}` };
+    }
+    return { status: 'bytes', bytes: provided.bytes, marker: null, kind: null };
+  }
+
   // One immutable acquisition per requested identity. The closure's canonical identity, its
   // existence answer and its captured bytes are recorded together, so every later read for that
   // identity uses exactly the bytes that were acquired instead of reacquiring a possibly different
@@ -164,11 +180,17 @@ export function createFrontendAdapter({ acquisition, captureOnly = true } = {}) 
     }
     if (provided === undefined || provided === null) return Object.freeze({ status: 'unavailable', requested: identity, canonical });
     if (provided.refuse !== undefined) return Object.freeze({ status: 'refused', requested: identity, canonical, detail: String(provided.refuse) });
-    if (!(provided.bytes instanceof Uint8Array)) {
+    const shaped = providedBytes(provided);
+    if (shaped.status === 'absent') return Object.freeze({ status: 'absent', requested: identity, canonical });
+    if (shaped.status === 'undecodable') {
+      counters.acquisitionFailures += 1;
+      return Object.freeze({ status: 'failed', requested: identity, canonical, detail: shaped.detail });
+    }
+    if (!(shaped.bytes instanceof Uint8Array)) {
       counters.acquisitionFailures += 1;
       return Object.freeze({ status: 'failed', requested: identity, canonical, detail: 'bytesMissing' });
     }
-    return Object.freeze({ status: 'provided', requested: identity, canonical, bytes: provided.bytes });
+    return Object.freeze({ status: 'provided', requested: identity, canonical, bytes: shaped.bytes, marker: shaped.marker, kind: shaped.kind });
   }
 
   function acquireRecord(session, identity) {
@@ -179,6 +201,17 @@ export function createFrontendAdapter({ acquisition, captureOnly = true } = {}) 
     if (outcome.status === 'provided') {
       const captured = captureSource({ identity: outcome.canonical, bytes: outcome.bytes });
       if (captured.status === 'captured') {
+        // A Core marker for a file, directory or configuration is the content digest, so it is
+        // compared with the digest of the bytes this side captured. The comparison is evidence, not
+        // authentication: a mismatch refuses the acquisition instead of accepting either value.
+        const contentKind = outcome.kind === null || outcome.kind === 'file' || outcome.kind === 'dir' || outcome.kind === 'config';
+        if (outcome.marker !== null && contentKind && outcome.marker !== captured.digest) {
+          counters.evidenceFailures += 1;
+          note(session, 'markerMismatch', `${identity}: the record marker is not the digest of the supplied bytes`);
+          record = Object.freeze({ status: 'conflict', requested: identity, canonical: captured.identity, detail: 'markerMismatch' });
+          session.acquisitions.set(identity, record);
+          return record;
+        }
         // The requested name and the canonical identity are one acquisition. A later request under
         // either key finds this record, so the bytes the loader observed are the bytes it reads. An
         // alias that resolves to bytes already captured differently is refused, not overwritten.
