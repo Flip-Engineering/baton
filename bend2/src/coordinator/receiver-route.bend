@@ -53,9 +53,8 @@ def assignment_session(expected: Assignment) -> String:
 # registry/helper pair. The future transaction must run on that same database.
 # The replacement endpoint is built here from the same requested model.
 def configured_args(executable: String, database: String, session: String, binding: Protocol.Binding, identity: String & String) -> List<String>:
-  match binding:
-    case Protocol.Binding{configuration,harness,+model,effort,command,log}:
-      Control.identity_args(Protocol.entry_args(executable,database,session,Protocol.Binding{configuration,harness,model,effort,command,log}),model,identity)
+  (registry,helper)=identity
+  Protocol.route_args(Protocol.Origin{executable,database,session,registry,helper},binding)
 
 def change_sql(change: Change) -> String:
   match change:
