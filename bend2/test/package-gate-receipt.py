@@ -1868,7 +1868,7 @@ class PackageGateReceipt(unittest.TestCase):
                   {'class': 'unrelated-error'},
                   'produced diagnostic label disagrees with its bytes'),
                  ('non-refusal fails the intended-refusal qualification guard',
-                  {'match': False, 'qualified': False},
+                  {'class': 'unrelated-error', 'match': False, 'qualified': False},
                   'did not qualify this control as an intended refusal')]
         for name, answer, message in cases:
             with self.subTest(name=name):
