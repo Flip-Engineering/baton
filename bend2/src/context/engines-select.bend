@@ -299,7 +299,7 @@ def ex_present_of(+decl: Decl.Decl, +ops: Decl.Ops, +inputs: SelInputs,
                   +inv: Decl.Inv, +common: String) -> ExState:
   match ops:
     case Decl.OpsNil{}: ExWrongOperation{}
-    case Decl.OpsCons{head, rest}:
+    case Decl.OpsCons{+head, rest}:
       Bool.pick(ExState, String.eq(Decl.op_common(head), common),
                 ExPresent{cand_of(decl, head,
                                   digest_at(inv, Decl.decl_module_id(decl)),
@@ -323,7 +323,7 @@ def explicit_state(+cat: Decl.Cat, +inputs: SelInputs, +inv: Decl.Inv,
                    +explicit: String, +common: String) -> ExState:
   match cat:
     case Decl.CatNil{}: ExAbsent{}
-    case Decl.CatCons{head, rest}:
+    case Decl.CatCons{+head, rest}:
       Bool.pick(ExState, String.eq(Decl.decl_module_id(head), explicit),
                 ex_state(head, inputs, inv, common),
                 explicit_state(rest, inputs, inv, explicit, common))
@@ -549,7 +549,7 @@ def captures_nonempty(xs: Captures) -> Bool:
 def captures_of_step(+xs: Captures, +step: Step) -> Captures:
   match xs:
     case CapNil{}: CapNil{}
-    case CapCons{head, rest}:
+    case CapCons{+head, +rest}:
       Bool.pick(Captures,
                 capture_of_step(head, step),
                 CapCons{head, captures_of_step(rest, step)},
@@ -630,7 +630,7 @@ def match_catalog(+cat: Decl.Cat, +inv: Decl.Inv, +module_id: String,
                   +want_digest: String) -> MatchState:
   match cat:
     case Decl.CatNil{}: MsNone{}
-    case Decl.CatCons{head, rest}:
+    case Decl.CatCons{+head, rest}:
       Bool.pick(MatchState, String.eq(Decl.decl_module_id(head), module_id),
         Bool.pick(MatchState, String.eq(digest_at(inv, module_id), want_digest),
                   MsFound{head}, MsStale{}),
@@ -643,7 +643,7 @@ type OpState is Data:
 def ops_lookup(+ops: Decl.Ops, +want: String) -> OpState:
   match ops:
     case Decl.OpsNil{}: OpNone{}
-    case Decl.OpsCons{head, rest}:
+    case Decl.OpsCons{+head, rest}:
       Bool.pick(OpState, String.eq(Decl.op_operation(head), want),
                 OpFound{head}, ops_lookup(rest, want))
 
@@ -710,7 +710,7 @@ def ops_pending(+decl: Decl.Decl, +ops: Decl.Ops, +want: String,
                 +digest: String, +path: SS) -> Pendings:
   match ops:
     case Decl.OpsNil{}: PendsNil{}
-    case Decl.OpsCons{head, rest}:
+    case Decl.OpsCons{+head, rest}:
       Bool.pick(Pendings, String.eq(Decl.op_operation(head), want),
                 PendsCons{Pending{decl, head, digest, path}, PendsNil{}},
                 ops_pending(decl, rest, want, digest, path))
@@ -719,7 +719,7 @@ def decl_pending(+cat: Decl.Cat, +inv: Decl.Inv, +module_id: String,
                  +want_digest: String, +want: String, +path: SS) -> Pendings:
   match cat:
     case Decl.CatNil{}: PendsNil{}
-    case Decl.CatCons{head, rest}:
+    case Decl.CatCons{+head, rest}:
       Bool.pick(Pendings, String.eq(Decl.decl_module_id(head), module_id),
         Bool.pick(Pendings, String.eq(digest_at(inv, module_id), want_digest),
                   ops_pending(head, Decl.decl_operations(head), want,
@@ -744,7 +744,7 @@ def ops_known(+ops: Decl.Ops, +want: String) -> Bool:
 def decl_ops_known(+cat: Decl.Cat, +module_id: String, +want: String) -> Bool:
   match cat:
     case Decl.CatNil{}: False{}
-    case Decl.CatCons{head, rest}:
+    case Decl.CatCons{+head, rest}:
       Bool.pick(Bool, String.eq(Decl.decl_module_id(head), module_id),
                 ops_known(Decl.decl_operations(head), want),
                 decl_ops_known(rest, module_id, want))
@@ -765,7 +765,7 @@ def resolve_edges(+edges: Decl.ModRefs, +path: SS, +cat: Decl.Cat,
     case Decl.ModRefsNil{}: Resolved{acc, fail}
     case Decl.ModRefsCons{h, r}:
       match h:
-        case Decl.ModRef{module_id, declaration_digest, operation}:
+        case Decl.ModRef{+module_id, +declaration_digest, +operation}:
           resolve_edges(r, path, cat, inv,
                         pendings_append(
                           decl_pending(cat, inv, module_id, declaration_digest,
@@ -836,7 +836,7 @@ def plan_drain(+pending: Pendings, +cat: Decl.Cat, +inv: Decl.Inv,
                +w: Walk) -> Walk:
   match pending:
     case PendsNil{}: w
-    case PendsCons{head, rest}:
+    case PendsCons{+head, rest}:
       plan_drain(plan_pending_next(Eng.ss_member(pending_path(head),
                                                  pending_step_key(head)),
                                    head, rest, cat, inv),
@@ -881,7 +881,7 @@ def freeze_state(+m: MatchState, +cand: Cand, +cat: Decl.Cat, +inv: Decl.Inv,
   match m:
     case MsNone{}: PlanRefused{reason: PlanStaleSelection{cand_module(cand)}}
     case MsStale{}: PlanRefused{reason: PlanStaleSelection{cand_module(cand)}}
-    case MsFound{decl}:
+    case MsFound{+decl}:
       freeze_op(decl,
                 ops_lookup(Decl.decl_operations(decl), cand_operation(cand)),
                 cand, cat, inv, captures)
@@ -979,7 +979,7 @@ def steps_lookup(+steps: Steps, +module_id: String, +digest: String,
                  +want: String) -> StepState:
   match steps:
     case StepsNil{}: StepMissing{module_id, digest, want}
-    case StepsCons{head, rest}:
+    case StepsCons{+head, rest}:
       Bool.pick(StepState, step_matches(head, module_id, digest, want),
                 StepFound{head},
                 steps_lookup(rest, module_id, digest, want))
@@ -1075,7 +1075,7 @@ type Discoveries is Data:
 def discovery_state(+o: Decl.DeclOutcome, +installed: Bool) -> DiscoveryState:
   match o:
     case Decl.DeclRefused{reason}: DsRefused{reason}
-    case Decl.DeclAdmitted{decl, digest}:
+    case Decl.DeclAdmitted{decl, +digest}:
       Bool.pick(DiscoveryState, installed, DsAdmitted{digest},
                 DsUnavailable{digest})
 
@@ -1126,14 +1126,14 @@ def schema_of_step(+st: StepState) -> String:
 # The result schema of the plan's primary step.
 def plan_primary_schema(+p: Plan) -> String:
   match p:
-    case Plan{primary, common, steps, effective_effects, inputs, available}:
+    case Plan{+primary, common, steps, effective_effects, inputs, available}:
       schema_of_step(step_lookup(p, bind_module(primary), bind_digest(primary),
                                  bind_operation(primary)))
 
 def verdict_frozen(+o: PlanOutcome, +cat: Decl.Cat) -> Verdict:
   match o:
     case PlanRefused{reason}: VerdictRefused{"plan", RqPlanRefused{reason}}
-    case PlanFrozen{plan}: VerdictAdmitted{plan, plan_primary_schema(plan)}
+    case PlanFrozen{+plan}: VerdictAdmitted{plan, plan_primary_schema(plan)}
 
 def verdict_plan(+cand: Cand, +cat: Decl.Cat, +inv: Decl.Inv,
                  +captures: Captures) -> Verdict:
@@ -1151,7 +1151,7 @@ def verdict_catalog(+o: Decl.CatOutcome, +cat: Decl.Cat, +inputs: SelInputs,
   match o:
     case Decl.CatRefused{module_id, reason}:
       VerdictRefused{"catalog", RqCatalogRefused{module_id, reason}}
-    case Decl.CatAdmitted{admitted}:
+    case Decl.CatAdmitted{+admitted}:
       verdict_chosen(select(admitted, inputs, inv), admitted, inv, captures)
 
 # The operands are supplied by their owners and none is produced here: package
@@ -1235,7 +1235,7 @@ def rq_detail(+r: RqReason) -> String:
 def decision_of(+v: Verdict) -> AdmissionDecision:
   match v:
     case VerdictAdmitted{plan, result_schema}: AdmissionAdmits{plan, result_schema}
-    case VerdictRefused{stage, reason}:
+    case VerdictRefused{stage, +reason}:
       AdmissionRefuses{stage, rq_code(reason), rq_detail(reason), reason}
 
 # --- the selected-step transfer a consumer receives --------------------------
@@ -1340,7 +1340,7 @@ def ref_step_captures(+st: StepState, +xs: Captures) -> Captures:
 def dependency_captures(+refs: StepRefs, +p: Plan, +xs: Captures) -> Captures:
   match refs:
     case StepRefsNil{}: CapNil{}
-    case StepRefsCons{head, rest}:
+    case StepRefsCons{+head, rest}:
       captures_append(
         ref_step_captures(step_lookup(p, step_ref_module(head),
                                       step_ref_digest(head),

@@ -47,7 +47,7 @@ type RawValue is Data:
   Rpair{key: String, value: RawValue, rest: RawValue}
   Rnil{}
 
-def raw_member(+key: String, members: RawValue) -> Maybe<&2, RawValue>:
+def raw_member(+key: String, +members: RawValue) -> Maybe<&2, RawValue>:
   match members:
     case Rpair{+name, +value, +tail}:
       Bool.pick(Maybe<&2, RawValue>, String.eq(name, key), Some{value}, raw_member(key, tail))
@@ -283,7 +283,7 @@ def query_shape(+tool: String, q: Context.OptText) -> Bool:
 def env_query_ok(+env: Envelope) -> Bool:
   query_shape(env_tool_name(env), env_query_of(env))
 
-def request_shape(+tool: String, r: RequestText, closed: Bool) -> Bool:
+def request_shape(+tool: String, r: RequestText, +closed: Bool) -> Bool:
   match tool:
     case "context-query": Bool.pick(Bool, closed, request_text_present(r), False{})
     case other: Bool.pick(Bool, closed, request_absent(r), False{})
@@ -388,14 +388,14 @@ def admission_text(a: Admission) -> String:
 # read out of this chain, and the chain's subject slot is filled from Core's closed
 # intent mapping, so a runtime, query-control or ref subject can never collapse into
 # an override-only chain. `chain_with` only appends.
-def chain_is_empty(chain: OpChain) -> Bool:
+def chain_is_empty(+chain: OpChain) -> Bool:
   match chain:
     case Opnone{}: True{}
     case Opcons{+head, +tail}: False{}
 
 # The single conversion of the derived chain to Core's string chain. Admission
 # consumes this, so no caller-supplied required set is involved.
-def chain_ss(chain: OpChain) -> Eng.SS:
+def chain_ss(+chain: OpChain) -> Eng.SS:
   match chain:
     case Opnone{}: Eng.ss_empty()
     case Opcons{+head, +tail}: Eng.SSCons{head, chain_ss(tail)}
@@ -612,7 +612,7 @@ def ref_required(+members: J.Json) -> Bool:
 # or a full subject object such as {kind:entity,database,schema,name}. The object is
 # validated for a known kind and kept whole as evidence; only the kind is derived
 # for Core's admission, and no public field changes.
-def key_absent(key: String, rest: J.Json) -> Bool:
+def key_absent(+key: String, rest: J.Json) -> Bool:
   match rest:
     case J.Jpair{+other, +value, +tail}: Bool.pick(Bool, String.eq(key, other), False{}, key_absent(key, tail))
     case J.Jnil{}: True{}
@@ -624,7 +624,7 @@ def key_absent(key: String, rest: J.Json) -> Bool:
     case J.Jarr{+head, +tail}: True{}
     case J.Jobj{+members}: True{}
 
-def distinct_keys(members: J.Json) -> Bool:
+def distinct_keys(+members: J.Json) -> Bool:
   match members:
     case J.Jpair{+key, +value, +rest}: Bool.pick(Bool, key_absent(key, rest), distinct_keys(rest), False{})
     case J.Jnil{}: True{}
@@ -643,7 +643,7 @@ def kind_present(m: Maybe<&2, Context.SubjectKind>) -> Bool:
 
 def kind_value_ok(+v: J.Json) -> Bool:
   match v:
-    case J.Jstr{value}: Bool.pick(Bool, String.is_empty(value), False{}, kind_present(Context.subject_kind_of(value)))
+    case J.Jstr{+value}: Bool.pick(Bool, String.is_empty(value), False{}, kind_present(Context.subject_kind_of(value)))
     case J.Jnull{}: False{}
     case J.Jtrue{}: False{}
     case J.Jfalse{}: False{}
@@ -758,14 +758,14 @@ def ref_projections_of(d: RefDecode) -> Proj:
 def ref_object_of(members: J.Json) -> J.Json:
   J.Jobj{members}
 
-def ref_members_base(id: String, subject: J.Json, projections: J.Json) -> J.Json:
+def ref_members_base(+id: String, +subject: J.Json, +projections: J.Json) -> J.Json:
   J.Jpair{"id", J.Jstr{id},
   J.Jpair{"engine", J.Jstr{"typescript"},
   J.Jpair{"subject", subject,
   J.Jpair{"snapshotId", J.Jstr{"s1"},
   J.Jpair{"projections", projections, J.Jnil{}}}}}}
 
-def ref_members_extra(id: String, projections: J.Json) -> J.Json:
+def ref_members_extra(+id: String, +projections: J.Json) -> J.Json:
   J.Jpair{"id", J.Jstr{id},
   J.Jpair{"engine", J.Jstr{"typescript"},
   J.Jpair{"subject", cobj1("kind", J.Jstr{"symbol"}),
@@ -849,7 +849,7 @@ def text_field_checked(ok: Bool, +hex: String) -> FieldText:
 def text_field(+hex: String) -> FieldText:
   text_field_checked(Req.hex_ok(hex), hex)
 
-def merge_bad(a: String, +b: String) -> String:
+def merge_bad(+a: String, +b: String) -> String:
   Bool.pick(String, String.is_empty(a), b, a)
 
 def build_row(i: FieldText, p: FieldText, k: FieldText, key: FieldText, v: FieldText) -> DecodedRow:
@@ -898,14 +898,14 @@ def raw_or_null(m: Maybe<&2, RawValue>) -> RawValue:
     case None{}: Rnull{}
     case Some{value}: value
 
-def raw_attach(+up: RawFrame, key: String, value: RawValue) -> RawFrame:
+def raw_attach(+up: RawFrame, key: String, +value: RawValue) -> RawFrame:
   match up:
     case RFRoot{+root}: RFRoot{ROsome{value}}
     case RFObj{id, pkey, members, up2}: RFObj{id, pkey, Rpair{key, value, members}, up2}
     case RFArr{id, pkey, items, up2}: RFArr{id, pkey, Rarr{value, items}, up2}
     case RFBad{condition}: RFBad{condition}
 
-def rev_items(a: RawValue, acc: RawValue) -> RawValue:
+def rev_items(+a: RawValue, +acc: RawValue) -> RawValue:
   match a:
     case Rarr{+head, +tail}: rev_items(tail, Rarr{head, acc})
     case other: acc
@@ -914,7 +914,7 @@ def rev_items(a: RawValue, acc: RawValue) -> RawValue:
 # accumulation reverses to its own cell chain, and an empty accumulation becomes the
 # canonical empty-array cell `Rarr{Rnil, Rnil}`. The completed value is attached to its
 # parent exactly once; no extra array wrapper is added around it.
-def array_value(items: RawValue) -> RawValue:
+def array_value(+items: RawValue) -> RawValue:
   match items:
     case Rarr{+head, +tail}: rev_items(items, Rnil{})
     case other: Rarr{Rnil{}, Rnil{}}
@@ -925,13 +925,13 @@ def array_value(items: RawValue) -> RawValue:
 # object member chain is not re-sorted, and the consumers here (member lookup and
 # the scalar progress token) do not read member order. Canonical text is produced
 # by the shared encoder, which normalizes member order itself.
-def raw_unwind(+f: RawFrame, pid: String) -> RawFrame:
+def raw_unwind(+f: RawFrame, +pid: String) -> RawFrame:
   match f:
     case RFRoot{+root}: RFRoot{root}
-    case RFObj{+id, +key, +members, up}:
+    case RFObj{+id, +key, +members, +up}:
       Bool.pick(RawFrame, String.eq(id, pid), RFObj{id, key, members, up},
         raw_attach(raw_unwind(up, pid), key, Robj{members}))
-    case RFArr{+id, +key, +items, up}:
+    case RFArr{+id, +key, +items, +up}:
       Bool.pick(RawFrame, String.eq(id, pid), RFArr{id, key, items, up},
         raw_attach(raw_unwind(up, pid), key, array_value(items)))
     case RFBad{+condition}: RFBad{condition}
@@ -1051,7 +1051,7 @@ def arguments_words(+tool: String) -> Req.Words:
     case "context-engines": Req.words_from(["scope"])
     case other: Req.words_from(Nil{})
 
-def arguments_required(+tool: String, members: RawValue) -> Bool:
+def arguments_required(+tool: String, +members: RawValue) -> Bool:
   match tool:
     case "context-query": Bool.pick(Bool, raw_member_present("query", members), raw_member_present("request", members), False{})
     case "context-result": raw_member_present("query", members)
@@ -1503,7 +1503,7 @@ type CorrelatedDecision is Data:
 def correlated_of_decision(+d: FrameDecision, +env: Envelope) -> CorrelatedDecision:
   match d:
     case FdOk{+tool, +id, +query, +request, +scope}: CdAccepted{id, tool, query, request, scope}
-    case FdRefused{cls, condition}: Bool.pick(CorrelatedDecision, Context.frame_id_ok(env_id(env)), CdRefused{env_id(env), cls, condition}, CdUncorrelated{condition})
+    case FdRefused{cls, +condition}: Bool.pick(CorrelatedDecision, Context.frame_id_ok(env_id(env)), CdRefused{env_id(env), cls, condition}, CdUncorrelated{condition})
 
 def correlated_of_parts(+env: Envelope, +meta: MetaInput) -> CorrelatedDecision:
   correlated_of_decision(frame_envelope_decision(env, metadata_admit(meta)), env)
@@ -1519,7 +1519,7 @@ def correlated_decision(rows: Req.Rows) -> CorrelatedDecision:
 def correlated_decision_of_text(text: String) -> CorrelatedDecision:
   correlated_decision(Req.parse_rows(text))
 
-def record_probe(subject: String, policy: String, +projections: Eng.SS) -> Refs.RefRecord:
+def record_probe(+subject: String, policy: String, +projections: Eng.SS) -> Refs.RefRecord:
   Refs.Ref{"r1", "typescript", subject, subject, "s1", policy, projections}
 
 def real_row(id: String, parent: String, key: String, token: String) -> Req.Row:
@@ -1528,7 +1528,7 @@ def real_row(id: String, parent: String, key: String, token: String) -> Req.Row:
 def null_row(id: String, parent: String, key: String) -> Req.Row:
   Req.Row{id, parent, "null", row_hex(key), SNil{}}
 
-def meta_token_row(id: String, parent: String, kind: String, token: String) -> Req.Row:
+def meta_token_row(+id: String, +parent: String, kind: String, token: String) -> Req.Row:
   Bool.pick(Req.Row, String.eq(kind, "null"), null_row(id, parent, "progressToken"), real_row(id, parent, "progressToken", token))
 
 # A frame with two defects at once: a refused envelope and a refused metadata
@@ -1581,7 +1581,7 @@ def bad_utf8_rows() -> Req.Rows:
 def decoded_record(id: String, subject: J.Json, policy: String, +projections: J.Json) -> Refs.RefRecord:
   ref_record_of(ref_decode(ref_object_of(ref_members_base(id, subject, projections))), policy)
 
-def ref_members_subject(id: String, subject: J.Json, +projections: J.Json) -> J.Json:
+def ref_members_subject(+id: String, +subject: J.Json, +projections: J.Json) -> J.Json:
   J.Jpair{"id", J.Jstr{id},
   J.Jpair{"engine", J.Jstr{"typescript"},
   J.Jpair{"subject", subject,
@@ -1600,10 +1600,10 @@ def ref_members_duplicate_subject(id: String, +projections: J.Json) -> J.Json:
 # Two otherwise valid five-member records whose only defect is a repeated top-level
 # field, once with conflicting values and once with equal values. The check is on the
 # key, so both refuse, and `ref_members_subject` without the extra pair is the control.
-def ref_members_conflicting_duplicate_id(id: String, +projections: J.Json) -> J.Json:
+def ref_members_conflicting_duplicate_id(+id: String, +projections: J.Json) -> J.Json:
   J.Jpair{"id", J.Jstr{"r0"}, ref_members_subject(id, cobj1("kind", J.Jstr{"symbol"}), projections)}
 
-def ref_members_equal_duplicate_id(id: String, +projections: J.Json) -> J.Json:
+def ref_members_equal_duplicate_id(+id: String, +projections: J.Json) -> J.Json:
   J.Jpair{"id", J.Jstr{id}, ref_members_subject(id, cobj1("kind", J.Jstr{"symbol"}), projections)}
 
 def ref_members_kindless_subject(id: String, +projections: J.Json) -> J.Json:

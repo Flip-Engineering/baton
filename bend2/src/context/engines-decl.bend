@@ -276,7 +276,7 @@ def check_artifact(+module_id: String, +art: Art, +inv: Inv) -> Chk:
   match inv:
     case Inv{artifacts, schemas, digests}:
       match art:
-        case Art{path, sha256, role}:
+        case Art{+path, sha256, role}:
           check_artifact_digest(module_id, path, sha256,
                                 artifact_digest(artifacts, path))
 
@@ -308,7 +308,7 @@ def check_schemas(+module_id: String, +operation: String, +subject: String,
                   +options: String, +result: String, +reference: String,
                   +event: String, +inv: Inv) -> Chk:
   match inv:
-    case Inv{artifacts, schemas, digests}:
+    case Inv{artifacts, +schemas, digests}:
       then_chk(check_schema(module_id, operation, subject, schemas),
       then_chk(check_schema(module_id, operation, options, schemas),
       then_chk(check_schema(module_id, operation, result, schemas),
@@ -319,7 +319,7 @@ def check_schemas(+module_id: String, +operation: String, +subject: String,
 def check_effects(+module_id: String, +operation: String, +effects: SS) -> Chk:
   match effects:
     case Eng.SSNil{}: ChkOk{}
-    case Eng.SSCons{head, rest}:
+    case Eng.SSCons{+head, rest}:
       then_chk(bool_chk(known_effect(head),
                         DrEffectRequiresReview{module_id, operation, head}),
                check_effects(module_id, operation, rest))
@@ -369,7 +369,7 @@ def check_one_operation(+module_id: String, +op: Op, +remaining: Ops,
 def check_operations(+module_id: String, +ops: Ops, +inv: Inv) -> Chk:
   match ops:
     case OpsNil{}: ChkOk{}
-    case OpsCons{head, rest}:
+    case OpsCons{head, +rest}:
       then_chk(check_one_operation(module_id, head, rest, inv),
                check_operations(module_id, rest, inv))
 
@@ -391,7 +391,7 @@ def check_edge_digest(+module_id: String, +operation: String,
 def check_edge(+module_id: String, +operation: String, +edge: ModRef,
                +inv: Inv) -> Chk:
   match edge:
-    case ModRef{dependency_module, declaration_digest, dependency_operation}:
+    case ModRef{+dependency_module, declaration_digest, dependency_operation}:
       then_chk(bool_chk(Bool.and(Bool.not(String.is_empty(dependency_module)),
                                  Bool.not(String.is_empty(dependency_operation))),
                         DrEmptyId{what: "dependency"}),
@@ -619,7 +619,7 @@ def admit_catalog_walk(+remaining: Cat, +context: Cat, +inv: Inv, +acc: Cat,
                        +fail: CatFail) -> CatOutcome:
   match remaining:
     case CatNil{}: cat_finish(fail, acc)
-    case CatCons{head, rest}:
+    case CatCons{+head, rest}:
       admit_catalog_walk(rest, context, inv, CatCons{head, acc},
                          cat_record(fail, admit_declaration(head, context, inv),
                                     head))

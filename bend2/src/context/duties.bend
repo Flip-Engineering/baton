@@ -63,7 +63,7 @@ def duties_sql() -> String:
 def duty_split(rows: String) -> List<String>:
   Tx.split_lines(rows)
 
-def field_count(xs: List<String>, acc: U32) -> U32:
+def field_count(xs: List<String>, +acc: U32) -> U32:
   match xs:
     case Nil{}: acc
     case h <> t: field_count(t, U32.add(acc, 1))

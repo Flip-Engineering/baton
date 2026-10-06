@@ -139,7 +139,7 @@ def waiting_item(w: Waiting) -> J.Json:
   match w:
     case WaitingProviderResponse{}:
       J.Jobj{J.Jpair{"kind", J.Jstr{"providerResponse"}, J.Jnil{}}}
-    case WaitingDiagnostics{uri, version}:
+    case WaitingDiagnostics{+uri, +version}:
       J.Jobj{J.Jpair{"kind", J.Jstr{"clangdDiagnostics"},
         J.Jpair{"reason", J.Jstr{"diagnosticsUnobserved"},
         J.Jpair{"uri", J.Jstr{uri},
@@ -148,7 +148,7 @@ def waiting_item(w: Waiting) -> J.Json:
       role_event("childExit", role, incarnation)
     case WaitingKeeperControl{role, incarnation}:
       role_event("keeperControl", role, incarnation)
-    case WaitingNoticeDelivery{message}:
+    case WaitingNoticeDelivery{+message}:
       J.Jobj{J.Jpair{"kind", J.Jstr{"noticeDelivery"},
         J.Jpair{"message", J.Jstr{message}, J.Jnil{}}}}
 

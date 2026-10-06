@@ -354,6 +354,8 @@ def claim_release_after(+db: String, +binding: String, +query: String, +role: St
     case IntentMissing{stage}: IO.pure(ReleaseOutcome, ReleaseIntentRefused{"missing", stage})
     case IntentStale{recorded, expected}: IO.pure(ReleaseOutcome, ReleaseIntentRefused{"stale", recorded ++ ":" ++ expected})
 
+    case IntentUnreadable{stage, answer}: IO.pure(ReleaseOutcome, ReleaseIntentRefused{"unreadable", stage ++ ":" ++ answer})
+
 # The claim statement of one stage. The matched label is the state this claim compares against,
 # so the attempt stage passes the committed state and the completion stage passes the state the
 # attempt recorded. Single-sourcing the three call sites keeps the label argument law-visible.

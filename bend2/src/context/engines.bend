@@ -514,7 +514,7 @@ def entry_engine(e: EngineEntry) -> String:
 
 def entry_resolved(e: EngineEntry) -> EngineResolved:
   match e:
-    case Engine{engine, provider, version, executable, projections, effects, availability, limits}:
+    case Engine{+engine, provider, version, executable, projections, effects, availability, limits}:
       match availability:
         case AvAvailable{}: RSelected{engine, provider, version, executable}
         case AvUnavailable{reason}: RUnavailable{engine, reason}

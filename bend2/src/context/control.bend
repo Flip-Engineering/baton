@@ -17,16 +17,16 @@ import ./admission.bend as ContextAdmission
 
 # The committed intents. The stored text and the pure builder are the same
 # expression, so the SQL insert cannot drift from the recorded document.
-def cleanup_intent_text(controlQuery: String, signal: String) -> String:
+def cleanup_intent_text(+controlQuery: String, +signal: String) -> String:
   J.json_text(J.Jobj{J.Jpair{"controlQuery", J.Jstr{controlQuery}, J.Jpair{"signal", J.Jstr{signal}, J.Jnil{}}}})
 
-def role_release_intent_text(controlQuery: String, signal: String, delivery: String, evidence: ContextAdmission.Evidence) -> String:
+def role_release_intent_text(+controlQuery: String, +signal: String, +delivery: String, evidence: ContextAdmission.Evidence) -> String:
   J.json_text(J.Jobj{J.Jpair{"controlQuery", J.Jstr{controlQuery},
     J.Jpair{"delivery", J.Jstr{delivery},
     J.Jpair{"evidence", ContextAdmission.evidence_json(evidence),
     J.Jpair{"signal", J.Jstr{signal}, J.Jnil{}}}}}})
 
-def recovery_intent_text(controlQuery: String) -> String:
+def recovery_intent_text(+controlQuery: String) -> String:
   J.json_text(J.Jobj{J.Jpair{"controlQuery", J.Jstr{controlQuery}, J.Jnil{}}})
 
 def pending_release_text(controlQuery: String, +signal: String) -> String:
@@ -38,7 +38,7 @@ def signal_ordering(+recorded: String, requested: String) -> String:
 
 # The controller's own row is withheld unless the subject is an existing managed
 # query of this owner with no runtime attachment and is not itself a control query.
-def controllable(owner: String, controlledQuery: String) -> String:
+def controllable(+owner: String, controlledQuery: String) -> String:
   "EXISTS(SELECT 1 FROM semantic_queries c WHERE c.id=" ++ C.q(controlledQuery) ++ " AND c.owner=" ++ C.q(owner) ++ " AND c.runtime_id IS NULL AND NOT (c.result_json IS NOT NULL AND json_extract(c.result_json,'$.kind')='queryControl'))"
 
 # Release records the query-wide cleanup intent first, so a role prepared after this

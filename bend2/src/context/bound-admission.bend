@@ -90,7 +90,7 @@ def association_decode_lines(lines: List<String>, +answer: String) -> Associatio
 def association_decode(+row: String) -> Association:
   association_decode_lines(Tx.split_lines(row), row)
 
-def admit_present(id: String) -> String:
+def admit_present(+id: String) -> String:
   "EXISTS(SELECT 1 FROM semantic_queries WHERE id=" ++ C.q(id) ++ ")"
 
 # Every value column is empty for an absent identity, so a present answer is the
@@ -150,7 +150,7 @@ def admit_checked(+mark: String, +owner: String, +request: String, +decision: St
     admit_mark(mark, owner, request, decision, state, attempt, keeperPath, cwd, artifactPath, answer),
     AdmissionUncertain{"domain", answer})
 
-def field_count(xs: List<String>, acc: U32) -> U32:
+def field_count(xs: List<String>, +acc: U32) -> U32:
   match xs:
     case Nil{}: acc
     case h <> t: field_count(t, U32.add(acc, 1))
@@ -164,7 +164,7 @@ def all_empty(xs: List<String>) -> Bool:
 
 # The nine columns after the presence marker, in order. A short or long row is
 # uncertain rather than a record.
-def absent_values_count(values: List<String>, count: U32) -> Bool:
+def absent_values_count(values: List<String>, +count: U32) -> Bool:
   match values:
     case Nil{}: U32.is_eq(count, 9)
     case h <> t: Bool.and(String.is_empty(h), absent_values_count(t, U32.add(count, 1)))

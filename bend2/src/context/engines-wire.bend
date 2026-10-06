@@ -48,7 +48,7 @@ def wire_obj(+k: String, +v: J.Json, +rest: J.Json) -> J.Json:
 # binding expects.
 def art_json(+a: Decl.Art) -> J.Json:
   match a:
-    case Decl.Art{path, sha256, role}:
+    case Decl.Art{path, +sha256, +role}:
       J.Jobj{wire_obj("packagePath", J.Jstr{path},
              wire_obj("sha256", J.Jstr{sha256},
              wire_obj("role", J.Jstr{role}, J.Jnil{})))}
@@ -90,7 +90,7 @@ def bind_text(+b: Sel.MBind) -> String:
 # --- dependency edges and the plan's steps -----------------------------------
 def step_ref_json(+r: Sel.StepRef) -> J.Json:
   match r:
-    case Sel.StepRef{module_id, declaration_digest, operation}:
+    case Sel.StepRef{module_id, declaration_digest, +operation}:
       J.Jobj{wire_obj("moduleId", J.Jstr{module_id},
              wire_obj("declarationDigest", J.Jstr{declaration_digest},
              wire_obj("operation", J.Jstr{operation}, J.Jnil{})))}
@@ -197,7 +197,7 @@ def event_members_json(+producer: Sel.MBind) -> J.Json:
 # own record: equality over this rendering does not carry them.
 def plan_identity_json(+p: Sel.Plan) -> J.Json:
   match p:
-    case Sel.Plan{primary, common, steps, effective_effects, inputs, available}:
+    case Sel.Plan{+primary, +common, +steps, effective_effects, inputs, available}:
       J.Jobj{wire_obj("primary", bind_json(primary),
              wire_obj("common", J.Jstr{common},
              wire_obj("steps", steps_json(steps),
@@ -224,7 +224,7 @@ def bool_json(+b: Bool) -> J.Json:
 
 def plan_value_json(+p: Sel.Plan) -> J.Json:
   match p:
-    case Sel.Plan{primary, common, steps, effective_effects, inputs, available}:
+    case Sel.Plan{+primary, +common, +steps, effective_effects, +inputs, +available}:
       J.Jobj{wire_obj("primary", bind_json(primary),
              wire_obj("common", J.Jstr{common},
              wire_obj("steps", steps_json(steps),
@@ -248,13 +248,13 @@ def plan_value(+p: Sel.Plan) -> String:
 # capture or a grant.
 def dr_reason_json(+r: Decl.DeclReject) -> J.Json:
   match r:
-    case Decl.DrUnsupportedDeclarationVersion{saw}:
+    case Decl.DrUnsupportedDeclarationVersion{+saw}:
       J.Jobj{wire_obj("kind", J.Jstr{"unsupportedDeclarationVersion"},
              wire_obj("saw", J.Jstr{saw}, J.Jnil{})}
-    case Decl.DrUnsupportedProtocolVersion{saw}:
+    case Decl.DrUnsupportedProtocolVersion{+saw}:
       J.Jobj{wire_obj("kind", J.Jstr{"unsupportedProtocolVersion"},
              wire_obj("saw", J.Jstr{saw}, J.Jnil{})}
-    case Decl.DrEmptyId{what}:
+    case Decl.DrEmptyId{+what}:
       J.Jobj{wire_obj("kind", J.Jstr{"emptyId"},
              wire_obj("what", J.Jstr{what}, J.Jnil{})}
     case Decl.DrConflictingId{module_id, package_identity}:
@@ -264,11 +264,11 @@ def dr_reason_json(+r: Decl.DeclReject) -> J.Json:
     case Decl.DrMissingDeclarationDigest{module_id}:
       J.Jobj{wire_obj("kind", J.Jstr{"missingDeclarationDigest"},
              wire_obj("moduleId", J.Jstr{module_id}, J.Jnil{})}
-    case Decl.DrMissingArtifact{module_id, path}:
+    case Decl.DrMissingArtifact{module_id, +path}:
       J.Jobj{wire_obj("kind", J.Jstr{"missingArtifact"},
              wire_obj("moduleId", J.Jstr{module_id},
              wire_obj("path", J.Jstr{path}, J.Jnil{}))}
-    case Decl.DrArtifactMismatch{module_id, path, want, saw}:
+    case Decl.DrArtifactMismatch{module_id, +path, +want, +saw}:
       J.Jobj{wire_obj("kind", J.Jstr{"artifactMismatch"},
              wire_obj("moduleId", J.Jstr{module_id},
              wire_obj("path", J.Jstr{path},
@@ -276,35 +276,35 @@ def dr_reason_json(+r: Decl.DeclReject) -> J.Json:
              wire_obj("saw", J.Jstr{saw}, J.Jnil{}))))}
     case Decl.DrEmptyEntryVector{}:
       J.Jobj{wire_obj("kind", J.Jstr{"emptyEntryVector"}, J.Jnil{})}
-    case Decl.DrMissingSchema{module_id, operation, schema}:
+    case Decl.DrMissingSchema{module_id, +operation, +schema}:
       J.Jobj{wire_obj("kind", J.Jstr{"missingSchema"},
              wire_obj("moduleId", J.Jstr{module_id},
              wire_obj("operation", J.Jstr{operation},
              wire_obj("schema", J.Jstr{schema}, J.Jnil{})))}
-    case Decl.DrDuplicateOperation{module_id, operation}:
+    case Decl.DrDuplicateOperation{module_id, +operation}:
       J.Jobj{wire_obj("kind", J.Jstr{"duplicateOperation"},
              wire_obj("moduleId", J.Jstr{module_id},
              wire_obj("operation", J.Jstr{operation}, J.Jnil{}))}
-    case Decl.DrUnknownCommonOperation{module_id, operation, common}:
+    case Decl.DrUnknownCommonOperation{module_id, +operation, +common}:
       J.Jobj{wire_obj("kind", J.Jstr{"unknownCommonOperation"},
              wire_obj("moduleId", J.Jstr{module_id},
              wire_obj("operation", J.Jstr{operation},
              wire_obj("common", J.Jstr{common}, J.Jnil{})))}
-    case Decl.DrEffectRequiresReview{module_id, operation, effect}:
+    case Decl.DrEffectRequiresReview{module_id, +operation, +effect}:
       J.Jobj{wire_obj("kind", J.Jstr{"effectRequiresReview"},
              wire_obj("moduleId", J.Jstr{module_id},
              wire_obj("operation", J.Jstr{operation},
              wire_obj("effect", J.Jstr{effect}, J.Jnil{})))}
-    case Decl.DrMissingLifetimeProfile{module_id, operation}:
+    case Decl.DrMissingLifetimeProfile{module_id, +operation}:
       J.Jobj{wire_obj("kind", J.Jstr{"missingLifetimeProfile"},
              wire_obj("moduleId", J.Jstr{module_id},
              wire_obj("operation", J.Jstr{operation}, J.Jnil{}))}
-    case Decl.DrDependencyUnresolved{module_id, operation, dependency}:
+    case Decl.DrDependencyUnresolved{module_id, +operation, +dependency}:
       J.Jobj{wire_obj("kind", J.Jstr{"dependencyUnresolved"},
              wire_obj("moduleId", J.Jstr{module_id},
              wire_obj("operation", J.Jstr{operation},
              wire_obj("dependency", J.Jstr{dependency}, J.Jnil{})))}
-    case Decl.DrDependencyDigestMismatch{module_id, dependency, want, saw}:
+    case Decl.DrDependencyDigestMismatch{module_id, +dependency, +want, +saw}:
       J.Jobj{wire_obj("kind", J.Jstr{"dependencyDigestMismatch"},
              wire_obj("moduleId", J.Jstr{module_id},
              wire_obj("dependency", J.Jstr{dependency},
@@ -313,7 +313,7 @@ def dr_reason_json(+r: Decl.DeclReject) -> J.Json:
 
 def sel_reason_json(+r: Sel.SelReason) -> J.Json:
   match r:
-    case Sel.SelUnknownCommonOperation{common}:
+    case Sel.SelUnknownCommonOperation{+common}:
       J.Jobj{wire_obj("kind", J.Jstr{"unknownCommonOperation"},
              wire_obj("common", J.Jstr{common}, J.Jnil{})}
     case Sel.SelExplicitUnknown{module_id}:
@@ -325,14 +325,14 @@ def sel_reason_json(+r: Sel.SelReason) -> J.Json:
     case Sel.SelExplicitIncompatible{module_id}:
       J.Jobj{wire_obj("kind", J.Jstr{"explicitIncompatible"},
              wire_obj("moduleId", J.Jstr{module_id}, J.Jnil{})}
-    case Sel.SelExplicitWrongOperation{module_id, operation}:
+    case Sel.SelExplicitWrongOperation{module_id, +operation}:
       J.Jobj{wire_obj("kind", J.Jstr{"explicitWrongOperation"},
              wire_obj("moduleId", J.Jstr{module_id},
              wire_obj("operation", J.Jstr{operation}, J.Jnil{}))}
-    case Sel.SelAmbiguous{candidates}:
+    case Sel.SelAmbiguous{+candidates}:
       J.Jobj{wire_obj("kind", J.Jstr{"ambiguousSelection"},
              wire_obj("candidates", ss_json(candidates), J.Jnil{})}
-    case Sel.SelNoCandidate{subject}:
+    case Sel.SelNoCandidate{+subject}:
       J.Jobj{wire_obj("kind", J.Jstr{"noCandidate"},
              wire_obj("subject", J.Jstr{subject}, J.Jnil{})}
 
@@ -341,15 +341,15 @@ def plan_reason_json(+r: Sel.PlanReason) -> J.Json:
     case Sel.PlanStaleSelection{module_id}:
       J.Jobj{wire_obj("kind", J.Jstr{"staleSelection"},
              wire_obj("moduleId", J.Jstr{module_id}, J.Jnil{})}
-    case Sel.PlanMissingOperation{module_id, operation}:
+    case Sel.PlanMissingOperation{module_id, +operation}:
       J.Jobj{wire_obj("kind", J.Jstr{"missingOperation"},
              wire_obj("moduleId", J.Jstr{module_id},
              wire_obj("operation", J.Jstr{operation}, J.Jnil{}))}
-    case Sel.PlanDependencyUnresolved{dependency, operation}:
+    case Sel.PlanDependencyUnresolved{+dependency, +operation}:
       J.Jobj{wire_obj("kind", J.Jstr{"dependencyUnresolved"},
              wire_obj("dependency", J.Jstr{dependency},
              wire_obj("operation", J.Jstr{operation}, J.Jnil{}))}
-    case Sel.PlanDependencyDigestMismatch{dependency, want, saw}:
+    case Sel.PlanDependencyDigestMismatch{+dependency, +want, +saw}:
       J.Jobj{wire_obj("kind", J.Jstr{"dependencyDigestMismatch"},
              wire_obj("dependency", J.Jstr{dependency},
              wire_obj("want", J.Jstr{want},
@@ -360,13 +360,13 @@ def plan_reason_json(+r: Sel.PlanReason) -> J.Json:
 
 def rq_reason_json(+r: Sel.RqReason) -> J.Json:
   match r:
-    case Sel.RqCatalogRefused{module_id, reason}:
+    case Sel.RqCatalogRefused{module_id, +reason}:
       J.Jobj{wire_obj("family", J.Jstr{"catalog"},
              wire_obj("reason", dr_reason_json(reason), J.Jnil{})}
-    case Sel.RqSelectionRefused{reason}:
+    case Sel.RqSelectionRefused{+reason}:
       J.Jobj{wire_obj("family", J.Jstr{"selection"},
              wire_obj("reason", sel_reason_json(reason), J.Jnil{})}
-    case Sel.RqPlanRefused{reason}:
+    case Sel.RqPlanRefused{+reason}:
       J.Jobj{wire_obj("family", J.Jstr{"plan"},
              wire_obj("reason", plan_reason_json(reason), J.Jnil{})}
 
@@ -376,11 +376,11 @@ def rq_reason_json(+r: Sel.RqReason) -> J.Json:
 # derived code and detail, and every operand of its typed reason.
 def decision_outcome_json(+d: Sel.AdmissionDecision) -> J.Json:
   match d:
-    case Sel.AdmissionAdmits{plan, result_schema}:
+    case Sel.AdmissionAdmits{+plan, result_schema}:
       J.Jobj{wire_obj("kind", J.Jstr{"admit"},
              wire_obj("plan", plan_value_json(plan),
              wire_obj("resultSchema", J.Jstr{result_schema}, J.Jnil{}))}
-    case Sel.AdmissionRefuses{stage, code, detail, reason}:
+    case Sel.AdmissionRefuses{+stage, +code, +detail, +reason}:
       J.Jobj{wire_obj("kind", J.Jstr{"refuse"},
              wire_obj("stage", J.Jstr{stage},
              wire_obj("code", J.Jstr{code},

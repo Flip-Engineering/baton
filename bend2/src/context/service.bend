@@ -188,7 +188,7 @@ def submit_identified(+absent: Bool, +db: String, +binding: String, +id: String,
 def submit(+db: String, +binding: String, +id: String, +owner: String, +requestJson: String, +keeperPath: String, +cwd: String, +originAttempt: String, +artifactPath: String, decision: PlanDecision) -> IO(Submission):
   match decision:
     case PlanRefuses{stage, reason}: IO.pure(Submission, SubmissionPlanRefused{stage, reason})
-    case PlanAdmits{proposedPlan, proposedSchema}:
+    case PlanAdmits{+proposedPlan, proposedSchema}:
       submit_identified(plan_identity_present(proposedPlan), db, binding, id, owner, requestJson, keeperPath, cwd, originAttempt, artifactPath, proposedPlan, proposedSchema)
 
 # The replay decision over the stored association. The stored identity is compared with

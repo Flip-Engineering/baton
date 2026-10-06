@@ -194,10 +194,10 @@ def obj2(k1: String, v1: J.Json, k2: String, v2: J.Json) -> J.Json:
 def obj3(k1: String, v1: J.Json, k2: String, v2: J.Json, k3: String, v3: J.Json) -> J.Json:
   J.Jobj{J.Jpair{k1, v1, J.Jpair{k2, v2, J.Jpair{k3, v3, J.Jnil{}}}}}
 
-def kind_only(kind: String) -> J.Json:
+def kind_only(+kind: String) -> J.Json:
   obj1("kind", J.Jstr{kind})
 
-def subject_with_select(subject: J.Json, select: J.Json) -> J.Json:
+def subject_with_select(+subject: J.Json, +select: J.Json) -> J.Json:
   obj2("subject", subject, "select", select)
 
 def empty_object() -> J.Json:

@@ -50,7 +50,7 @@ type Evidence is Data:
 def evidence_json(e: Evidence) -> J.Json:
   match e:
     case NoEvidence{}: J.Jnull{}
-    case ArtifactEvidence{path, sha256, pointer}:
+    case ArtifactEvidence{+path, +sha256, +pointer}:
       J.Jobj{J.Jpair{"path", J.Jstr{path},
         J.Jpair{"pointer", J.Jstr{pointer},
         J.Jpair{"sha256", J.Jstr{sha256}, J.Jnil{}}}}}
@@ -69,7 +69,7 @@ type Outcome is Data:
 def optional_text(+value: String) -> J.Json:
   Bool.pick(J.Json, String.eq(value, ""), J.Jnull{}, J.Jstr{value})
 
-def prepare_condition(stage: Stage, query: String, owner: String, plannedDirectory: String, evidence: Evidence, code: Code) -> J.Json:
+def prepare_condition(stage: Stage, +query: String, +owner: String, +plannedDirectory: String, evidence: Evidence, code: Code) -> J.Json:
   J.Jobj{J.Jpair{"code", code_json(code),
     J.Jpair{"owner", J.Jstr{owner},
     J.Jpair{"plannedDirectory", optional_text(plannedDirectory),
@@ -77,7 +77,7 @@ def prepare_condition(stage: Stage, query: String, owner: String, plannedDirecto
     J.Jpair{"query", J.Jstr{query},
     J.Jpair{"stage", J.Jstr{stage_text(stage)}, J.Jnil{}}}}}}}}
 
-def uncertain_condition(query: String, owner: String, plannedDirectory: String, evidence: Evidence) -> J.Json:
+def uncertain_condition(+query: String, +owner: String, +plannedDirectory: String, evidence: Evidence) -> J.Json:
   J.Jobj{J.Jpair{"decision", J.Jstr{"unverified"},
     J.Jpair{"owner", J.Jstr{owner},
     J.Jpair{"plannedDirectory", optional_text(plannedDirectory),
@@ -118,7 +118,7 @@ def admission_refusal(o: Outcome) -> Context.Refusal:
   match o:
     case OutcomeValidation{command, condition}:
       Context.Refuse{Context.RfValidation{}, command, Context.text_condition(condition), Context.NextArg{"context-engines", Context.NextStop{}}}
-    case OutcomeRejected{query, condition}:
+    case OutcomeRejected{+query, condition}:
       Context.Refuse{Context.RfAdmissionRejected{}, "context-query", Context.text_condition(condition), result_next(query)}
     case OutcomePrepareFailed{stage, +query, +owner, plannedDirectory, evidence, code, retained}:
       Context.Refuse{Context.RfHostPreparation{}, "context-query", prepare_condition(stage, query, owner, plannedDirectory, evidence, code), retained_next(retained, query, owner)}
@@ -128,14 +128,14 @@ def admission_refusal(o: Outcome) -> Context.Refusal:
 # The retained row's own error object. Its kind is the canonical class name taken
 # from the contract module, and its limits are empty: the rejection records the
 # failed predicate, not an analysis bound.
-def rejection_error(condition: String) -> String:
+def rejection_error(+condition: String) -> String:
   J.json_text(J.Jobj{J.Jpair{"condition", J.Jstr{condition},
     J.Jpair{"kind", J.Jstr{Context.refusal_class_name(Context.RfAdmissionRejected{})},
     J.Jpair{"limits", J.Jarr{J.Jnil{}, J.Jnil{}}, J.Jnil{}}}}})
 
 # The stable identity of the rejection notice: the canonical array of the fixed tag
 # and the query ID, so a later cleanup change preserves the original notice.
-def rejection_message_id(query: String) -> String:
+def rejection_message_id(+query: String) -> String:
   J.json_text(J.Jarr{J.Jstr{"context-admission-rejected"}, J.Jarr{J.Jstr{query}, J.Jnil{}}})
 
 type OwnerSubject is Data:

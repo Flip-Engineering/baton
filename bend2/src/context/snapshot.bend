@@ -153,7 +153,7 @@ def input_unchanged(+h: Fp, current: Fps) -> Bool:
 # The paths of the recorded inputs whose identity no longer matches, in the
 # recorded order. Also the result's changedInputs field and the capture
 # consistency check.
-def ss_rev_go(xs: Eng.SS, acc: Eng.SS) -> Eng.SS:
+def ss_rev_go(xs: Eng.SS, +acc: Eng.SS) -> Eng.SS:
   match xs:
     case Eng.SSNil{}: acc
     case Eng.SSCons{h, r}: ss_rev_go(r, Eng.SSCons{h, acc})
@@ -170,7 +170,7 @@ def changed_go(recorded: Fps, +current: Fps, +acc: Eng.SS) -> Eng.SS:
 def changed_inputs(recorded: Fps, current: Fps) -> Eng.SS:
   ss_rev(changed_go(recorded, current, Eng.SSNil{}))
 
-def applies_decision(changed: Eng.SS) -> Applies:
+def applies_decision(+changed: Eng.SS) -> Applies:
   match changed:
     case Eng.SSNil{}: ACurrent{}
     case Eng.SSCons{h, r}: AStale{changed}
@@ -189,7 +189,7 @@ type CaptureCheck is Data:
   CCIntact{}
   CCChanged{paths: Eng.SS}
 
-def capture_decision(changed: Eng.SS) -> CaptureCheck:
+def capture_decision(+changed: Eng.SS) -> CaptureCheck:
   match changed:
     case Eng.SSNil{}: CCIntact{}
     case Eng.SSCons{h, r}: CCChanged{changed}
@@ -278,7 +278,7 @@ def rref_identity(recorded: RuntimeIdentity, +now: RuntimeNow) -> Applies:
 def rref_thread(recorded: RuntimeIdentity, +now: RuntimeNow) -> Applies:
   Bool.pick(Applies, now_thread_live(now), rref_identity(recorded, now), AUnknown{"runtime thread is not live"})
 
-def rref_pause(recorded: RuntimeIdentity, +now: RuntimeNow) -> Applies:
+def rref_pause(+recorded: RuntimeIdentity, +now: RuntimeNow) -> Applies:
   Bool.pick(Applies, Bool.and(now_record_stopped(now), R.stop_is_live(now_stop(now))), rref_thread(recorded, now),
     AUnknown{"a pause-scoped reference requires a live recorded stop in a stopped runtime"})
 

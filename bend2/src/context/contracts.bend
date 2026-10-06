@@ -35,7 +35,7 @@ def tail_of(s: String) -> String:
     case SNil{}: SNil{}
     case SCon{+head, +tail}: tail
 
-def length_go(s: String, acc: U32) -> U32:
+def length_go(s: String, +acc: U32) -> U32:
   match s:
     case SNil{}: acc
     case SCon{+head, +tail}: length_go(tail, U32.add(acc, 1))
@@ -246,7 +246,7 @@ type Refusal is Data:
 
 def refusal_json(r: Refusal) -> J.Json:
   match r:
-    case Refuse{cls, command, condition, next}:
+    case Refuse{cls, +command, +condition, +next}:
       J.Jobj{J.Jpair{"error", J.Jstr{refusal_class_name(cls)},
              J.Jpair{"command", J.Jstr{command},
              J.Jpair{"condition", condition,
@@ -346,7 +346,7 @@ def is_zero(s: String) -> Bool:
     case SNil{}: False{}
     case SCon{+head, +tail}: Bool.pick(Bool, String.is_empty(tail), U32.is_eq(cp(head), 48), False{})
 
-def digits_le(a: String, +b: String) -> Bool:
+def digits_le(+a: String, +b: String) -> Bool:
   match a:
     case SNil{}: True{}
     case SCon{+ha, +ta}:
@@ -387,7 +387,7 @@ def safe_integer_token_ok(+s: String) -> Bool:
 # A signed safe-integer token: an optional minus over the unsigned profile. This
 # is the frame-id profile; an id may be a signed safe integer, and the unsigned
 # declaration profile above stays separate.
-def unsigned_rest(s: String) -> String:
+def unsigned_rest(+s: String) -> String:
   match s:
     case SNil{}: s
     case SCon{+head, +tail}: Bool.pick(String, U32.is_eq(cp(head), 45), tail, s)
@@ -503,7 +503,7 @@ def strict_number_token_ok(s: String) -> Bool:
 
 # A metadata progress token is a string or a strict JSON number token; null,
 # booleans, arrays and objects are not progress tokens.
-def progress_scalar_ok(kind: String, raw: String) -> Bool:
+def progress_scalar_ok(kind: String, +raw: String) -> Bool:
   match kind:
     case "text": True{}
     case "integer": strict_number_token_ok(raw)

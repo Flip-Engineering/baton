@@ -11,7 +11,7 @@
 import Base
 import ./raw.bend as Raw
 
-def code_points(s: String, acc: String) -> String:
+def code_points(s: String, +acc: String) -> String:
   match s:
     case SNil{}: acc
     case SCon{+head, +tail}: code_points(tail, acc ++ " " ++ U32.show(Char.to_u32(head)))
@@ -23,7 +23,7 @@ def render(r: Raw.RawRead) -> String:
     case Raw.RawNul{offset}: "nul " ++ offset
     case Raw.RawBom{}: "bom"
 
-def report(path: String, result: Result<&1,&1,U32 & String,Raw.RawRead>) -> String:
+def report(+path: String, result: Result<&1,&1,U32 & String,Raw.RawRead>) -> String:
   match result:
     case Done{value}: path ++ " " ++ render(value)
     case Fail{error}: path ++ " hostfail"

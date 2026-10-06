@@ -147,7 +147,7 @@ def all_digits(xs: String) -> Bool:
 def counter_valid(+text: String) -> Bool:
   match text:
     case SNil{}: False{}
-    case SCon{h, t}:
+    case SCon{+h, +t}:
       Bool.and(is_decimal_digit(h),
         Bool.and(Bool.pick(Bool, is_zero_char(h), is_nil(t), True{}), all_digits(t)))
 
@@ -509,7 +509,7 @@ def effect_bits(effect: Effect) -> U32:
     case EvaluateRuntime{}: 2
     case other: 0
 
-def grant_bits(effects: List<Effect>, bits: U32) -> U32:
+def grant_bits(effects: List<Effect>, +bits: U32) -> U32:
   match effects:
     case Nil{}: bits
     case h <> t: grant_bits(t, U32.or(bits, effect_bits(h)))
