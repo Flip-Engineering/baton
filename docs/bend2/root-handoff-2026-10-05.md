@@ -1,7 +1,7 @@
 # Baton2 root handoff
 
 This contributor handoff preserves unfinished operator work as of 2026-10-06
-01:12 UTC. Host and qualification observations retain their recorded times.
+03:21 UTC. Host and qualification observations retain their recorded times.
 Read the native task records and current source before resuming.
 Issue records describe defects; native reports contain current ownership and evidence.
 
@@ -93,15 +93,25 @@ Affected GLM quota failures remain failures, including nominal exit-zero turns.
 New provider execution requires actual harness evidence. Remaining critic and
 implementation work remains owned by the original hierarchy.
 
-The original hosted full-law job remains active. At about 00:39 UTC, a fresh
-homelab process sample found its checker and a child Bend compiler using about
-212 percent CPU and 1.75 GiB RSS. GitHub reports attempt 2 in progress. The
-completed law-bearing build, active controls and due native checks retain
-their separate status. Do not launch a duplicate full-law execution.
+The original hosted baseline attempt 2 completed with failure at 02:06:26 UTC.
+Its law-bearing build and exhaustive law controls passed. Native checks failed
+while the Receive replay fixture passed a 480000-byte report as one argument;
+Linux refused process launch with `E2BIG` before the replay assertions. Later
+native suites did not run. #679 belongs to the original Receive and Controls
+owners; the existing `message-file` command carries the fixture report.
+The complete result and exact source remain preserved below.
 
-The laptop sample during this recovery had about 1.1 GiB free disk and
-943 MiB swap used. Compilation and tests remain remote. Actual resource
-observations guide continuations without creating a hardcoded actor ceiling.
+Root100–102 continue the original CI, Receive, Controls and Synthesis hierarchy
+through recorded identities and worktrees. Models' bounded review is closed.
+Bend2-first Code binding, the generic native module ABI, Runtime/CDP/map work
+and shared-instance integration remain open. Safe landing under #674 and
+provider configuration recovery under #678 remain dependencies.
+
+At 03:12 UTC the laptop had 768 MiB free disk and 887 MiB swap used.
+Cleanup reclaimed 118 MiB from inactive caches. Source, evidence, music,
+Chrome state and protected system caches remain preserved. Compilation and
+tests remain remote. Actual resource observations guide continuations without
+creating a hardcoded actor ceiling.
 
 ## Standing acceptance requirements
 
@@ -166,18 +176,65 @@ workflow modification requires the operator's workflow permission. Commit
 authorship remains `Flip Baton - GPT`.
 
 [Run 37364422460](https://github.com/Flip-Engineering/baton/actions/runs/37364422460),
-attempt 2, job 111946593094, runs the complete existing Linux gate. Checkout,
-Node setup, pinned compiler installation and the law-bearing coordinator build
-passed. Full law controls are in progress; native checks remain due. The first
-attempt failed during runner-group bootstrap before any build. The initial
-service start failed because the custom installation lacked the release's
+attempt 2, job 111946593094, completed with failure at 02:06:26 UTC.
+Checkout, Node setup, pinned compiler installation and the law-bearing
+coordinator build passed. The exhaustive law gate passed 578 proof removals,
+172 mutations and the entry check: 751 compiles, zero failures, exit 0.
+Native checks exited 1 in `accept-kimi-hierarchy.py`'s generated Receive check.
+`receive.py` created a 480000-byte report and supplied it as one command-line
+argument. Python's process launch raised `E2BIG` before Baton ran that setup
+command or reached the replay and queued-input assertions. The outer native
+suite stopped there; later Python suites and the Git-series suite did not run.
+The first attempt failed during runner-group bootstrap before any build.
+The initial service start failed because the custom installation lacked the release's
 `runsvc.sh` copy; installing the unchanged release template enabled startup.
+
+Before/final evidence confirms exact source
+`0822afbdca03dea111dd3db8eec861032362c366`, tree
+`c22d9c84f32074926b2ca9c1e6b7cc6af172b0fa`, Bend2 tree
+`7ae6adf62ed60e2f0e1c15e887c695c0a2fca472`, and clean final tracked status.
+Compiler and library manifests match before and after. Original artifact
+11386190449 and selected raw logs are retained under
+`.scratch/root-homelab-ci-20261005/root-review-37364422460-attempt2.bOL4R9`.
+[Issue #679](https://github.com/Flip-Engineering/baton/issues/679) assigns the
+fixture repair to the original Receive/Controls owners. Seed the complete
+fixture report with `message-file saved-turn parent root report PATH` and
+retain the blocking-output and queued-input assertions.
 
 The workflow retains source, toolchain, library and completed gate evidence,
 including final capture on failed gates. Successful child diagnostics discarded
 by the existing checker are still part of #675's raw-evidence work. This run
 does not complete that work, Darwin packaging, shared-runtime qualification or
 primary publication. All local compilation remains excluded.
+
+CI165 completed Root100's bounded Platform qualification on exact source
+`27a4da41b7e44689d761e11f7fd00f55ab11ecfc`, tree
+`e6ba1b86433459bfec25c736ca16307cef3d3b87`. Settlement ran 23 tests with
+`OK (skipped=1)`; receipt ran 56 tests with `OK`. Both suites, wrapper and
+executor exited 0. Source stayed exact and clean, and source/tool/runtime
+manifests matched. Complete local evidence is under
+`.scratch/semantic-context-20261005/worktrees/native-ci-conductor/.scratch/native-ci-evidence/qualification165`.
+The settlement skip records missing classifier/checker companions. Discovery,
+classifier responses and gate commands are synthetic fixture inputs. These
+results qualify settlement and receipt-reader contracts; real endpoints,
+native integration, packaging and the full recipe remain unqualified.
+The earlier failed CI156 fixture result and all prior immutable source and
+gate results remain preserved.
+
+Root103 directed publication through the original Platform review branch.
+Independent native `remote-tip` readback confirms
+`codex/baton2-native-capacity-platform-20261005` advertises exact qualified
+`27a4da41b7e44689d761e11f7fd00f55ab11ecfc`. The primary remote still advertises
+`fca7af876c8260c32d17f95f3e19bc68ee1bf561`.
+
+Receive208 nominated the fixture-only delta
+`537758f3cd6d46579ff57db35e63683b604292bc` for its original independent critic.
+It carries the report through `message-file` to the recorded parent, checks the
+full stored tuple and body, and compares the complete replay document.
+Root104 requires that single delta on coherent baseline `0822afbd`, preserving
+authorship. The nominee's parent also contains eight unrelated prompt
+assertions; copying its complete file would import those assertions.
+Independent review, source composition and remote execution remain due.
 
 Root recovered `semantic-synthesis` through native guidance
 `root-homelab-recovery-55-synthesis` and `root-native-operations-56-synthesis`.
@@ -313,11 +370,12 @@ evidence directories. Node 22.23.3 SHA256 is
 Existing implementation Sections and critic Ensembles continue correction.
 Complete new group/ordinary effects, package reuse and speedup acceptance
 remain withheld pending a coherent source closure. The protected original
-baseline run continues its full law controls separately.
+baseline completed separately with the build/law passes and native failure
+recorded above.
 
 A 21:16 UTC sample confirmed the same 11:56:29 Pacific boot, 3.8 GiB free
-disk and 603.62 MiB swap used. Chrome remains closed normally with its
-profile preserved. No additional cleanup or process termination occurred
+disk and 603.62 MiB swap used. Chrome was closed normally with its
+profile preserved at that sample. No additional cleanup or process termination occurred
 during the component and CI qualification work above.
 
 Synthesis93 and Receive source reviews confirm historical reconstruction and
@@ -485,10 +543,13 @@ security relationships, managed lifecycle integration, pinned dependencies and
 useful installed-provider results. Ordinary operations are `context-engines`,
 `context-query[-file]`, `context-result` and their attached MCP tools.
 
-Draft reviews found lifecycle transition/guard defects; catalog export
+Earlier draft reviews found lifecycle transition/guard defects; catalog export
 misclassified SQL and guessed provenance; codec output stringified frame IDs
-and had signed-number and grant-scope gaps. Actual reproductions and fixes
-remain due. No semantic runtime module has received full root acceptance.
+and had signed-number and grant-scope gaps. Models' bounded source review is
+closed. Bend2-first Code binding, the generic native module ABI, Runtime/CDP/map
+work and shared-instance integration remain open through the original
+implementation and critic hierarchy. No semantic runtime module has received
+full root acceptance.
 
 Implementation tasks are under `tasks/semantic-implementation-authorized-39`
 and `tasks/semantic-native-implementation-39` in the semantic scratch directory.
@@ -509,6 +570,15 @@ establishes composed execution, landing or release acceptance.
 
 ## Existing native repair and consolidation work
 
+- [#679](https://github.com/Flip-Engineering/baton/issues/679): the completed
+  Linux baseline exposed the Receive fixture's oversized report argument.
+  Original Receive/Controls own the `message-file` repair and qualification;
+  the replay and wake assertions remain required.
+- [#678](https://github.com/Flip-Engineering/baton/issues/678): original
+  Controls/Interfaces and Receive own faithful configured-provider changes
+  for existing Players, preserving native identity, pending work and matched
+  Git-series settings. Stale endpoints and delayed continuations require
+  fencing before provider recovery qualifies.
 - [#671](https://github.com/Flip-Engineering/baton/issues/671): accepted native
   read freeze `e2e06950d1ccf6a61d66ac0eb2f623fbbb3eb2d7`; structural successor
   `51808f0e7d6fd10da80af5be6a9baf90ae810b93` fixes actual Git worktree-root
