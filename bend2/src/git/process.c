@@ -86,13 +86,17 @@ static int git_claim_check(int claim_fd, const char* guard) {
 /* The spawn actions install the standard destinations 0, 1 and 2. If the caller's
    process has any of them closed, the diagnostic file and the pipe would take those
    numbers, and an action that closes a pipe end would then close an installed stream.
-   Every source descriptor is therefore moved above the standard destinations first. */
-static int git_to_high(int fd) {
-  if (fd < 0 || fd > 2) return fd;
-  int moved = fcntl(fd, F_DUPFD, 3);
-  if (moved < 0) return -1;
-  close(fd);
-  return moved;
+   A source descriptor at 0, 1 or 2 is therefore duplicated above them.
+   The duplicate is close-on-exec from the moment it exists: F_DUPFD_CLOEXEC sets the
+   flag atomically, so no spawn in this process can inherit it in the interval that a
+   separate fcntl would leave open, and a descriptor that already had close-on-exec
+   keeps it. This function never closes its argument: on failure the caller still owns
+   the original descriptor and closes it, and on success the caller closes it once the
+   stream or the array has been rebound to the duplicate. */
+static int git_dup_high(int fd) {
+  if (fd < 0) return -1;
+  if (fd > 2) return fd;
+  return fcntl(fd, F_DUPFD_CLOEXEC, 3);
 }
 
 static void git_proc_call_with_stderr(IoWork* w, int stderr_fd, int claim_fd) {
@@ -103,11 +107,20 @@ static void git_proc_call_with_stderr(IoWork* w, int stderr_fd, int claim_fd) {
     w->code = errno;
     return;
   }
-  if ((fds[0] = git_to_high(fds[0])) < 0 || (fds[1] = git_to_high(fds[1])) < 0) {
-    int e = errno;
-    close(fds[0] >= 0 ? fds[0] : -1); close(fds[1] >= 0 ? fds[1] : -1);
-    w->code = e;
-    return;
+  {
+    int low0 = fds[0], low1 = fds[1];
+    int high0 = git_dup_high(low0), high1 = git_dup_high(low1);
+    if (high0 < 0 || high1 < 0) {
+      int e = errno;
+      if (high0 >= 0) close(high0);
+      if (high1 >= 0) close(high1);
+      close(low0); close(low1);
+      w->code = e;
+      return;
+    }
+    if (high0 != low0) close(low0);
+    if (high1 != low1) close(low1);
+    fds[0] = high0; fds[1] = high1;
   }
   if (stderr_fd > 2 && (stderr_fd == fds[0] || stderr_fd == fds[1])) {
     close(fds[0]); close(fds[1]);
@@ -116,28 +129,26 @@ static void git_proc_call_with_stderr(IoWork* w, int stderr_fd, int claim_fd) {
   }
   /* The claim is transferred as an inherited duplicate taken AFTER the pipe exists,
      so its number cannot collide with the pipe or with the dup2 destinations 1 and 2,
-     and so no spawn action has to name it: dup() clears FD_CLOEXEC, which is exactly
-     the inheritance the child needs. A fixed destination descriptor would be wrong
-     here, because a later addclose on a pipe end can remove it again. */
+     so its number cannot collide with the pipe or with the dup2 destinations 1 and
+     2. A fixed destination descriptor was wrong here, because a later addclose on a
+     pipe end could remove it again; the slot is computed from the descriptors this
+     spawn actually holds, and one action installs the duplicate in that slot alone. */
   int transferred = -1;
   int slot = -1;
   if (claim_fd >= 0) {
     /* An inheritable duplicate sitting in the parent would be picked up by any other
        spawn in this process, so the duplicate carries FD_CLOEXEC and only the spawn
        action below clears it, for this child alone. */
-    transferred = dup(claim_fd);
+    transferred = fcntl(claim_fd, F_DUPFD_CLOEXEC, 3);
     if (transferred < 0) { int e = errno; close(fds[0]); close(fds[1]); w->code = e; return; }
     int attempts = 0;
-    while (transferred < 3 || transferred == fds[0] || transferred == fds[1]) {
+    while (transferred == fds[0] || transferred == fds[1]) {
       if (++attempts > 64) { close(transferred); close(fds[0]); close(fds[1]); w->code = EMFILE; return; }
-      int again = dup(claim_fd);
+      int again = fcntl(claim_fd, F_DUPFD_CLOEXEC, 3);
       if (again < 0) { int e = errno; close(transferred); close(fds[0]); close(fds[1]); w->code = e; return; }
       if (again == transferred) { close(transferred); close(fds[0]); close(fds[1]); w->code = EBUSY; return; }
       close(transferred);
       transferred = again;
-    }
-    if (fcntl(transferred, F_SETFD, FD_CLOEXEC) < 0) {
-      int e = errno; close(transferred); close(fds[0]); close(fds[1]); w->code = e; return;
     }
     slot = 3;
     while (slot == fds[0] || slot == fds[1] || slot == transferred) slot += 1;
@@ -287,7 +298,10 @@ static void git_capture_call(IoWork *w) {
        so a supervisor that dies before it leaves bytes that may not be durable. */
     int fd = open(capture->artifact, O_CREAT | O_EXCL | O_RDWR | O_NOFOLLOW | O_CLOEXEC, 0600);
     if (fd < 0) { capture->process.code = errno; return; }
-    if ((fd = git_to_high(fd)) < 0) { capture->process.code = errno; return; }
+    int high = git_dup_high(fd);
+    if (high < 0) { capture->process.code = errno; close(fd); return; }
+    if (high != fd) close(fd);
+    fd = high;
     diagnostic = fdopen(fd, "w+");
     if (!diagnostic) { int e = errno; close(fd); capture->process.code = e; return; }
   } else {
@@ -296,11 +310,14 @@ static void git_capture_call(IoWork *w) {
     if (fcntl(fileno(diagnostic), F_SETFD, FD_CLOEXEC) < 0) {
       capture->process.code = errno; fclose(diagnostic); return;
     }
-    int moved = git_to_high(fileno(diagnostic));
-    if (moved < 0) { capture->process.code = errno; fclose(diagnostic); return; }
-    if (moved != fileno(diagnostic)) {
+    int low = fileno(diagnostic);
+    int moved = git_dup_high(low);
+    if (moved < 0) { capture->process.code = errno; return; }
+    if (moved != low) {
+      /* the new stream owns the duplicate; fclose releases the original descriptor
+         exactly once, and the FILE* is never left pointing at a closed number */
       FILE *again = fdopen(moved, "w+");
-      if (!again) { capture->process.code = errno; close(moved); fclose(diagnostic); return; }
+      if (!again) { capture->process.code = errno; close(moved); return; }
       fclose(diagnostic);
       diagnostic = again;
     }
