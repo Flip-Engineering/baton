@@ -936,12 +936,22 @@ def raw_unwind(+f: RawFrame, +pid: String) -> RawFrame:
         raw_attach(raw_unwind(up, pid), key, array_value(items)))
     case RFBad{+condition}: RFBad{condition}
 
-def raw_finish(+f: RawFrame) -> RawFrame:
+def raw_finish_step(f: RawFrame) -> RawFrame:
   match f:
-    case RFRoot{+root}: RFRoot{root}
-    case RFObj{+id, key, members, up}: raw_finish(raw_attach(up, key, Robj{members}))
-    case RFArr{+id, key, items, up}: raw_finish(raw_attach(up, key, array_value(items)))
-    case RFBad{+condition}: RFBad{condition}
+    case RFRoot{root}: RFRoot{root}
+    case RFObj{id, key, members, up}: raw_attach(up, key, Robj{members})
+    case RFArr{id, key, items, up}: raw_attach(up, key, array_value(items))
+    case RFBad{condition}: RFBad{condition}
+
+def raw_finish_path(path: RawFrame, frame: RawFrame) -> RawFrame:
+  match path:
+    case RFRoot{root}: frame
+    case RFObj{id, key, members, up}: raw_finish_path(up, raw_finish_step(frame))
+    case RFArr{id, key, items, up}: raw_finish_path(up, raw_finish_step(frame))
+    case RFBad{condition}: frame
+
+def raw_finish(+f: RawFrame) -> RawFrame:
+  raw_finish_path(f, f)
 
 def raw_hex_number(+stack: RawFrame, +d: DecodedRow) -> RawFrame:
   raw_attach(stack, dr_key(d), Rnum{dr_value(d)})

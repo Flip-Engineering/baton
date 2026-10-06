@@ -342,7 +342,7 @@ law an_owner_notice_is_a_self_addressed_report_under_the_shared_upsert:
   for +id: String
   for +owner: String
   for +body: String
-  {ContextStore.owner_notice_sql(id,owner,body) == "INSERT INTO messages(id,sender,recipient,kind,body) SELECT " ++ C.q(id) ++ ",s.id,s.id,'report'," ++ C.q(body) ++ " FROM sessions s WHERE s.id=" ++ C.q(owner) ++ ContextStore.notice_upsert() : String}
+  {ContextStore.owner_notice_sql(id,owner,body) == "INSERT INTO messages(id,sender,recipient,kind,body) SELECT " ++ C.q(id) ++ ",s.id,s.id,'report'," ++ C.q(body) ++ " FROM sessions s WHERE s.id=" ++ C.q(owner) ++ C.message_upsert() : String}
 
 def an_owner_notice_is_a_self_addressed_report_under_the_shared_upsert(id,owner,body):
   {==}
