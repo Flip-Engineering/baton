@@ -81,24 +81,113 @@ Current App avatars and published history remain preserved.
 
 ## Domain and browser setup
 
-Public DNS for `flip.engineering` uses Cloudflare and has no MX records.
-The current Flip configuration includes a SendGrid key for outbound delivery;
-inbound address administration is separate. The existing tunnel belongs to
-a Cloudflare account with prefix `b63d9e71`. Google SSO authenticated the
-available browser to an account with prefix `17a47a00`; these identities
-differ. Verify domain membership and the appropriate account before creating
-mail routing.
+Before activation, public DNS for `flip.engineering` used Cloudflare and had
+no MX records. The current Flip configuration includes a SendGrid key for
+outbound delivery. The existing tunnel belongs to an account with prefix
+`b63d9e71`. Initial Google SSO selected an account with prefix `17a47a00`.
+The operator identified the owning Google login.
+Existing Google SSO authenticated that account, whose actual domain list
+contains `flip.engineering` and whose identity matches the tunnel account.
+
+Cloudflare Email Routing is enabled for `flip.engineering`. Its destination
+address is operator-owned and verified. The following six saved rules
+are active and forward to that address:
+
+| Series | Receiving address |
+|---|---|
+| GPT | `gpt@flip.engineering` |
+| Muse | `muse@flip.engineering` |
+| DeepSeek | `deepseek@flip.engineering` |
+| Claude | `claude@flip.engineering` |
+| GLM | `glm@flip.engineering` |
+| Kimi | `kimi@flip.engineering` |
+
+Authenticated browser navigation reloaded the saved rules and verified all
+six addresses, destinations and enabled states. The catch-all rule is
+disabled. Authoritative DNS confirms the three Cloudflare MX records, its SPF
+record and its separate DKIM selector. Readback also confirms the Microsoft
+verification TXT, DMARC policy, SendGrid return-path CNAME and both SendGrid
+DKIM CNAMEs retain their earlier values. A genuine Gravatar verification email
+addressed to `gpt@flip.engineering` reached the destination Gmail account.
+The receiving receipt is `gpt-receiving.json`; it contains sender and recipient
+evidence and excludes the verification code. The other five addresses have
+configuration evidence; their end-to-end delivery remains due.
+The generated configuration receipt and screenshot are
+`.scratch/contributor-byline-evidence-20261005/contributor-routes.json` and
+`contributor-routes.png`.
 
 Browser Use's Browser Harness 0.1.13 and its MCP executable are installed
 outside the repository, using prebuilt packages and the existing Python 3.13.
 The installed environment uses 44 MiB. Its agent skill is registered at
 `~/.codex/skills/browser-harness/SKILL.md`. Local recordings and telemetry
-are disabled. Chrome's one-time remote-debugging checkbox remains pending;
-the current daemon health is unqualified. The operator has been asked to enable
-it on the opened `chrome://inspect/#remote-debugging` page. Subsequent
-browser operations should use the installed control tool after connection.
+are disabled. The operator enabled Chrome's remote-debugging checkbox.
 
-No live series email, App slug, avatar or installed Baton2 helper has changed.
-The remaining work is correct domain access, receiving addresses, a fresh
-name-and-image receipt for each series, and qualified native composition.
+At 23:25 UTC, the default daemon's JSON health report returned `alive: true`,
+`browser_ready: true` and `healthy: true`. `Browser.getVersion` returned
+Chrome 154.0.8037.93. Browser Harness operations selected the existing
+Cloudflare task tab, read its accessibility tree, clicked its account selector
+and read the resulting account choices. The existing Chrome process remains
+the browser host.
 
+Default connection discovery failed because macOS refused the read of Chrome's
+`DevToolsActivePort` file. Chrome was listening on loopback port 9222.
+[Chromium's approval-only connection handler](https://chromium.googlesource.com/chromium/src/+/main/content/browser/devtools/devtools_http_handler.cc)
+accepts the `/devtools/browser` path and asks for user approval. The explicit
+`BU_CDP_WS=ws://127.0.0.1:9222/devtools/browser/` setting connected through that
+path. The unchanged Browser Harness approval AppleScript accepted Chrome's
+exact `Allow remote debugging?` sheet. The normal `mac-approve` wrapper also
+depends on protected profile-file discovery and could not complete here.
+Timed-out attempts and their remaining sheets were resolved before the
+successful connection.
+
+Subsequent operations use `BH_REQUIRE_EXISTING_DAEMON=1` and the same default
+daemon. Explicit WebSocket configuration uses a finite handshake wait in this
+release; its local pending-connection lock does not apply to that mode.
+Preserve one original connection attempt during cold setup. The MCP executable
+is installed; this session uses the supported CLI browser helpers and has not
+registered a global per-agent MCP process.
+
+Live Git author-email settings, App slugs, avatars and the installed Baton2
+helper remain unchanged. Controls125 reports that clean source
+`e536f03383a4cb8a40860bbf383e79a158add31f` contains the three reviewed
+`177fbf73` source blobs. That is an owner-attributed composition report;
+composed runtime gates and installed acceptance remain due.
+
+The GPT Gravatar registration verified `gpt@flip.engineering`. Its profile
+name is `Flip Baton - GPT`, and the approved `flip-gpt.png` was uploaded.
+The public email-derived avatar endpoint returned HTTP 200 and a 200px PNG;
+visual inspection confirmed the approved character, pose and GPT beret logo.
+The served image SHA-256 is
+`7ee36dd77b73c6fb793ed07a09a5f739aec5c1bb9f5c4fa6805a34e172a9f72c`.
+The local copy is `gpt-gravatar-live.png` in the evidence directory.
+Earlier verification attempts selected stale mail; the fresh message in the
+receiving inbox completed verification.
+
+The fresh [GPT pilot commit](https://github.com/Flip-Engineering/baton/commit/d64aec32d1c77192d5f821f3eb46c9186d4a0648)
+was published on the existing contributor review branch through the GPT App.
+Both Git headers use `Flip Baton - GPT <gpt@flip.engineering>`. GitHub's API
+returns null author and committer associations. The actual browser page shows
+`Flip Baton - GPT` and selects
+`https://github.githubassets.com/images/gravatars/gravatar-user-420.png?size=40`
+for its author image. The exact name passed; the approved avatar failed.
+The rendered receipt and screenshot are `gpt-github-pilot.json` and
+`gpt-github-pilot.png` in the evidence directory. A separate, owned pilot
+registry supplied the email; the six live registry identities remain unchanged.
+
+The alias-plus-Gravatar route therefore has an observed avatar failure on this
+fresh contribution. Account-backed series identities can retain the requested
+profile names and avatars; linked commit bylines use their account usernames.
+The operator's choice of display tradeoff is pending. Other receiving checks,
+per-series account/image qualification and native installed acceptance remain
+due. No account purchase or account creation was performed on GitHub.
+
+GitHub documents [email-based commit association](https://docs.github.com/en/pull-requests/how-tos/commit-changes/troubleshooting-commits)
+and [profile avatars](https://docs.github.com/en/account-and-profile/reference/profile-reference)
+for ordinary accounts. Its [account terms](https://docs.github.com/en/site-policy/github-terms/github-terms-of-service)
+require human-created machine accounts
+and permit one free machine account per operator. A six-account route requires
+an appropriate licensed arrangement and actual UI qualification. The current
+organization reports the Team plan. [Enterprise profile-name visibility](https://docs.github.com/en/enterprise-cloud@latest/admin/managing-your-enterprise-account/configuring-user-display-names-for-your-enterprise)
+adds names alongside usernames; an exact public byline is still a separate
+acceptance obligation. These findings do not establish a selected account or
+subscription change.

@@ -1,7 +1,7 @@
 # Baton2 root handoff
 
-This contributor handoff preserves unfinished operator work as of 2026-10-05
-23:18 UTC. Host and qualification observations retain their recorded times.
+This contributor handoff preserves unfinished operator work as of 2026-10-06
+00:10 UTC. Host and qualification observations retain their recorded times.
 Read the native task records and current source before resuming.
 Issue records describe defects; native reports contain current ownership and evidence.
 
@@ -447,6 +447,18 @@ and `tasks/semantic-native-implementation-39` in the semantic scratch directory.
 The live native report `semantic-synthesis-first-draft-progress-45-root`
 contains the source corrections and evidence paths.
 
+Root read and acknowledged the complete Synthesis163, 164, 169 and 178
+reports. Synthesis reports candidate
+`40fd15f14347fa5b729e8251f67cff8db850fc0d` with bounded Models source
+acceptance. The position critic reports bounded source PASS at
+`ef1f46a7d2d069388aac4746545b444d95aa4d3a`; framing, capture/seal custody,
+fold/cursor/bridge integration and host acceptance remain assigned to Receive.
+CI139 reports fixture corrections at
+`5cb3d3d63cd967afad9dfecd918179c3e798bdbe`, with remaining injection-stage
+and copied-destination hash defects. These are owner-attributed source
+reports. Their original Platform and critic owners continue the work; none
+establishes composed execution, landing or release acceptance.
+
 ## Existing native repair and consolidation work
 
 - [#671](https://github.com/Flip-Engineering/baton/issues/671): accepted native
@@ -517,12 +529,29 @@ names with the approved avatars. Earlier Claude commits link to the separate
 `claude` user account. Root's optional `authorEmail` repair is published at
 `177fbf73c8380280f7b9127ae7b228d1e75214dc` and passed 15 scoped remote fixtures;
 Controls owns later source composition. The operator selected `flip.engineering`
-for the six addresses. Live email activation and name/avatar acceptance are due.
+for the six addresses. All six receiving aliases are now active in Cloudflare
+Email Routing and forward to the verified operator-owned destination. Authenticated
+reload and authoritative DNS readback confirm the configuration. A genuine
+Gravatar verification email to `gpt@flip.engineering` reached the destination.
+The other five receiving checks remain due. GPT's Gravatar registration is
+verified, with profile name
+`Flip Baton - GPT` and the approved GPT PNG. Its public avatar endpoint returns
+the approved image. Fresh pilot commit `d64aec32d1c77192d5f821f3eb46c9186d4a0648`
+uses both owned-email Git identities and renders the exact full name, with null
+GitHub account associations and the gray fallback image. The approved-avatar
+requirement failed. A separate pilot registry leaves live identities unchanged.
+The operator's choice of account-backed username/avatar display is pending;
+no GitHub account creation or purchase has occurred.
 Two measured GitHub examples render gray avatars despite live Gravatars, so
-the avatar path remains unqualified. Browser Harness is installed and its
-first Chrome connection setting is pending. The active browser's Cloudflare
-account differs from the existing Flip tunnel account. Verify domain authority
-before creating addresses. [The qualification report](contributor-attribution-2026-10-05.md)
+the avatar path remains unqualified. Browser Harness 0.1.13 is connected to
+the existing Chrome instance; its default daemon passed the health check and
+actual account-selector interaction. Use `BH_REQUIRE_EXISTING_DAEMON=1` for
+ordinary operations. The operator identified the owning Cloudflare login;
+Google SSO authenticated the account matching the existing tunnel and actual
+`flip.engineering` domain. SendGrid authentication, DMARC and Microsoft
+verification records remain preserved. Live Git author-email configuration,
+App identities and installed helper remain unchanged pending acceptance.
+[The qualification report](contributor-attribution-2026-10-05.md)
 preserves source, evidence and the remaining work. Published history is preserved.
 
 Validated work must reach the appropriate repository branch. Consolidate
