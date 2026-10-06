@@ -101,7 +101,8 @@ baton2 DATABASE logs-storage
 baton2 DATABASE logs-clean SESSION
 ```
 
-`logs-storage` reads and writes no file of its own. Its answer names the
+`logs-storage` initializes or migrates the policy schema and inspects the
+registered artifact files. Its answer names the
 database and root-log sizes, the defaults, one entry per registered public log
 with its live size, its stderr size, its incomplete checkpoint path and size,
 and its numbered segments, and one entry
