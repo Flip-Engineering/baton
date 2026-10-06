@@ -303,6 +303,21 @@ def checkpoint_written(written: Result<&1,&1,U32 & String,Unit>, enabled: Bool, 
     case Fail{error}: IO.pure(Result<&1,&1,U32 & String,Unit>,Fail{error})
     case Done{unit}: checkpoint(enabled,log,held)
 
+# A later direct turn appends an earlier observer's incomplete checkpoint
+# before producing new frames. Removal follows the successful append.
+def checkpoint_restore_read(found: Result<&1,&1,U32 & String,String>, +log: String) -> IO(Result<&1,&1,U32 & String,Unit>):
+  match found:
+    case Fail{(+code,text)}:
+      IO.pure(Result<&1,&1,U32 & String,Unit>,Bool.pick(Result<&1,&1,U32 & String,Unit>,U32.is_eq(code,2),Done{Unit{}},Fail{(code,text)}))
+    case Done{text}: do IO<Result<&1,&1,U32 & String,Unit>>:
+      +written : Result<&1,&1,U32 & String,Unit> <- T.Text.append(log,text ++ "\n")
+      checkpoint_written(written,True{},log,"")
+
+def checkpoint_restore(+log: String) -> IO(Result<&1,&1,U32 & String,Unit>):
+  do IO<Result<&1,&1,U32 & String,Unit>>:
+    found : Result<&1,&1,U32 & String,String> <- T.Text.read(log ++ ".pending")
+    checkpoint_restore_read(found,log)
+
 @unsafe
 def consume(+db: String, +player: String, +id: String, +log: String, +policy: Logs.Policy, +held: String, +log_failed: Bool, +handle: U32, +harness: String, cursor: String, last_message: String, +terminal: String, filter: String, codex_log: String, +first_error: String, sender: Chan(Result<&1,&1,U32 & String,Unit>), +attempt: String, deliveries: List<Chan(Result<&1,&1,U32 & String,String>)>, result: Result<&1,&1,U32 & String,Maybe<String>>) -> IO(Outcome & List<Chan(Result<&1,&1,U32 & String,String>)>):
   match result:
@@ -363,9 +378,10 @@ def started(+db: String, +player: String, +id: String, +log: String, prompt: Str
     case Done{+handle}:
       do IO<Outcome>:
         +policy : Logs.Policy <- Logs.open(db,player,log)
+        restored : Result<&1,&1,U32 & String,Unit> <- checkpoint_restore(log)
         sender : Chan(Result<&1,&1,U32 & String,Unit>) <- IO.fork(Result<&1,&1,U32 & String,Unit>,send_prompt(handle,prompt,harness))
         first : Result<&1,&1,U32 & String,Maybe<String>> <- P.ProcessChild.read_line(handle)
-        observation : Outcome & List<Chan(Result<&1,&1,U32 & String,String>)> <- consume(db,player,id,log,policy,"",False{},handle,harness,"0\n","","","","","",sender,"",Nil{},first)
+        observation : Outcome & List<Chan(Result<&1,&1,U32 & String,String>)> <- consume(db,player,id,log,policy,"",False{},handle,harness,"0\n","","","","",remember_write("",restored),sender,"",Nil{},first)
         direct_observed(observation)
 
 # The retained process sends its initial input once. Reattachment reads the same
