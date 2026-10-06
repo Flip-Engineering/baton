@@ -503,6 +503,17 @@ def stop_is_live(+stop: StopLiveness) -> Bool:
 def pause_scoped_admitted(+stop: StopLiveness, +pause_scoped: Bool) -> Bool:
   Bool.pick(Bool, pause_scoped, stop_is_live(stop), True{})
 
+def effect_bits(effect: Effect) -> U32:
+  match effect:
+    case ControlRuntime{}: 1
+    case EvaluateRuntime{}: 2
+    case other: 0
+
+def grant_bits(effects: List<Effect>, bits: U32) -> U32:
+  match effects:
+    case Nil{}: bits
+    case h <> t: grant_bits(t, U32.or(bits, effect_bits(h)))
+
 # An intent that needs the control-runtime grant only.
 def admit_control(
   effects: List<Effect>,
@@ -523,19 +534,22 @@ def admit_control(
 def admit_granted(+state_ok: Bool, +intent: IntentName) -> Decision:
   Bool.pick(Decision, state_ok, Admitted{}, IntentNotAdmitted{intent_name(intent)})
 
-def admit_evaluate(
-  effects: List<Effect>,
+def admit_evaluate_bits(
+  +bits: U32,
   +state_ok: Bool,
   +pending: Pending,
   +intent: IntentName
 ) -> Decision:
-  Bool.pick(Decision, granted_control(effects),
-    Bool.pick(Decision, granted_evaluate(effects),
+  Bool.pick(Decision, U32.is_eq(U32.and(bits, 1), 1),
+    Bool.pick(Decision, U32.is_eq(U32.and(bits, 2), 2),
       Bool.pick(Decision, state_ok,
         Bool.pick(Decision, is_idle(pending), Admitted{}, RuntimeBusy{pending_name(pending)}),
         IntentNotAdmitted{intent_name(intent)}),
       MissingEffect{"evaluateRuntime"}),
     MissingEffect{"controlRuntime"})
+
+def admit_evaluate(effects: List<Effect>, +state_ok: Bool, +pending: Pending, +intent: IntentName) -> Decision:
+  admit_evaluate_bits(grant_bits(effects, 0), state_ok, pending, intent)
 
 # Release stays available to the owner during a pending evaluation. An explicit SIGKILL
 # intent cannot be overwritten by SIGTERM, and an unlisted signal refuses.
