@@ -1000,19 +1000,23 @@ law an_envelope_statement_is_its_body_plus_its_terminator:
   for +id: String
   {ContextStore.envelope_sql(id) == ContextStore.envelope_body_sql(id) ++ ";" : String}
 
-def an_envelope_statement_is_its_body_plus_its_terminator():
+def an_envelope_statement_is_its_body_plus_its_terminator(id):
   {==}
 
 law a_retained_read_is_one_observation_of_state_and_envelope:
+  for +query: String
   {ContextService.retained_sql(query) == "SELECT CASE WHEN EXISTS(SELECT 1 FROM semantic_queries WHERE id=" ++ C.q(query) ++ ") THEN 'present' ELSE 'absent' END," ++ "coalesce((SELECT state FROM semantic_queries WHERE id=" ++ C.q(query) ++ "),'')," ++ "coalesce((" ++ ContextStore.envelope_body_sql(query) ++ "),'');" : String}
 
-def a_retained_read_is_one_observation_of_state_and_envelope():
+def a_retained_read_is_one_observation_of_state_and_envelope(query):
   {==}
 
 law the_terminal_payload_guard_compares_result_and_error:
+  for +error: String
+  for +result: String
+  for +next: String
   {ContextObserver.terminal_payload_matches(next, result, error) == "state=" ++ C.q(next) ++ " AND result_json IS " ++ ContextStore.json_or_null(result) ++ " AND error_json IS " ++ ContextStore.json_or_null(error) : String}
 
-def the_terminal_payload_guard_compares_result_and_error():
+def the_terminal_payload_guard_compares_result_and_error(error,result,next):
   {==}
 
 law a_present_retained_row_is_found:
@@ -1337,13 +1341,14 @@ def an_empty_association_answer_is_malformed():
   {==}
 
 law the_association_is_written_only_by_the_transaction_that_created_the_row:
+  for +planIdentity: String
   for +id: String
   for +planValue: String
   for +resultSchema: String
   for +originAttempt: String
   {ContextStore.association_insert_sql(id,planValue,planIdentity,resultSchema,originAttempt) == "INSERT INTO semantic_admissions(query_id,plan_value,plan_identity,result_schema,origin_attempt) SELECT " ++ C.q(id) ++ "," ++ C.q(planValue) ++ "," ++ C.q(planIdentity) ++ "," ++ C.q(resultSchema) ++ "," ++ ContextStore.text_or_null(originAttempt) ++ " WHERE changes()=1 AND NOT EXISTS(SELECT 1 FROM semantic_admissions WHERE query_id=" ++ C.q(id) ++ ");" : String}
 
-def the_association_is_written_only_by_the_transaction_that_created_the_row(id,planValue,resultSchema,originAttempt):
+def the_association_is_written_only_by_the_transaction_that_created_the_row(planIdentity,id,planValue,resultSchema,originAttempt):
   {==}
 
 law the_associated_admission_records_the_association_before_the_readback:
