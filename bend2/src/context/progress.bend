@@ -130,27 +130,6 @@ def phase_admitted(phase: Phase, cleanup: Cleanup, owed: U32) -> Bool:
 # The stored `progress_json` is the same closed object the envelope returns, and a
 # query with no managed roles stores SQL null rather than an empty fragment.
 
-def progress_document(+phase: Phase, +waiting: List<Waiting>, +control: Control, +cleanup: Cleanup) -> String:
-  J.json_text(J.Jobj{J.Jpair{"cleanup", J.Jstr{cleanup_text(cleanup)},
-    J.Jpair{"control", J.Jstr{control_text(control)},
-    J.Jpair{"phase", J.Jstr{phase_text(phase)},
-    J.Jpair{"waitingFor", waiting_json(waiting), J.Jnil{}}}}}})
-
-# The waitingFor value is already the complete array: the empty set is the empty
-# array, and a nonempty list is the element chain the shared encoder walks.
-def progress_json(has_roles: Bool, +phase: Phase, waiting: List<Waiting>, control: Control, cleanup: Cleanup) -> String:
-  Bool.pick(String, has_roles, progress_document(phase, waiting, control, cleanup), "null")
-
-def waiting_json(waiting: List<Waiting>) -> J.Json:
-  match waiting:
-    case Nil{}: J.Jarr{J.Jnil{}, J.Jnil{}}
-    case h <> t: J.Jarr{waiting_item(h), waiting_chain(t)}
-
-def waiting_chain(waiting: List<Waiting>) -> J.Json:
-  match waiting:
-    case Nil{}: J.Jnil{}
-    case h <> t: J.Jarr{waiting_item(h), waiting_chain(t)}
-
 def waiting_item(w: Waiting) -> J.Json:
   match w:
     case WaitingProviderResponse{}:
@@ -167,6 +146,28 @@ def waiting_item(w: Waiting) -> J.Json:
     case WaitingNoticeDelivery{message}:
       J.Jobj{J.Jpair{"kind", J.Jstr{"noticeDelivery"},
         J.Jpair{"message", J.Jstr{message}, J.Jnil{}}}}
+
+
+def waiting_chain(waiting: List<Waiting>) -> J.Json:
+  match waiting:
+    case Nil{}: J.Jnil{}
+    case h <> t: J.Jarr{waiting_item(h), waiting_chain(t)}
+
+def waiting_json(waiting: List<Waiting>) -> J.Json:
+  match waiting:
+    case Nil{}: J.Jarr{J.Jnil{}, J.Jnil{}}
+    case h <> t: J.Jarr{waiting_item(h), waiting_chain(t)}
+
+def progress_document(+phase: Phase, +waiting: List<Waiting>, +control: Control, +cleanup: Cleanup) -> String:
+  J.json_text(J.Jobj{J.Jpair{"cleanup", J.Jstr{cleanup_text(cleanup)},
+    J.Jpair{"control", J.Jstr{control_text(control)},
+    J.Jpair{"phase", J.Jstr{phase_text(phase)},
+    J.Jpair{"waitingFor", waiting_json(waiting), J.Jnil{}}}}}})
+
+# The waitingFor value is already the complete array: the empty set is the empty
+# array, and a nonempty list is the element chain the shared encoder walks.
+def progress_json(has_roles: Bool, +phase: Phase, waiting: List<Waiting>, control: Control, cleanup: Cleanup) -> String:
+  Bool.pick(String, has_roles, progress_document(phase, waiting, control, cleanup), "null")
 
 def role_event(+kind: String, +role: String, +incarnation: String) -> J.Json:
   J.Jobj{J.Jpair{"incarnation", J.Jstr{incarnation},
