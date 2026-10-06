@@ -543,7 +543,7 @@ law the_admission_inserts_only_an_absent_identity:
   for +cwd: String
   for +originAttempt: String
   for +artifactPath: String
-  {ContextAdmit.admit_sql(id,owner,requestJson,keeperPath,cwd,originAttempt,artifactPath) == "BEGIN IMMEDIATE;" ++ ContextStore.schema() ++ "INSERT INTO semantic_queries(id,owner,request_json,admission_decision,prepared_keeper_path,cwd,origin_attempt,state,artifact_path) SELECT " ++ C.q(id) ++ "," ++ C.q(owner) ++ "," ++ C.q(requestJson) ++ ",'accepted'," ++ ContextStore.text_or_null(keeperPath) ++ "," ++ C.q(cwd) ++ "," ++ ContextStore.text_or_null(originAttempt) ++ ",'accepted'," ++ C.q(artifactPath) ++ " WHERE NOT EXISTS(SELECT 1 FROM semantic_queries WHERE id=" ++ C.q(id) ++ ");" ++ ContextAdmit.admit_row_sql(id) ++ "COMMIT;" : String}
+  {ContextAdmit.admit_sql(id,owner,requestJson,keeperPath,cwd,originAttempt,artifactPath) == "BEGIN IMMEDIATE;" ++ ContextStore.schema() ++ ("INSERT INTO semantic_queries(id,owner,request_json,admission_decision,prepared_keeper_path,cwd,origin_attempt,state,artifact_path) SELECT " ++ C.q(id) ++ "," ++ C.q(owner) ++ "," ++ C.q(requestJson) ++ ",'accepted'," ++ ContextStore.text_or_null(keeperPath) ++ "," ++ C.q(cwd) ++ "," ++ ContextStore.text_or_null(originAttempt) ++ ",'accepted'," ++ C.q(artifactPath) ++ " WHERE NOT EXISTS(SELECT 1 FROM semantic_queries WHERE id=" ++ C.q(id) ++ ");") ++ ContextAdmit.admit_row_sql(id) ++ "COMMIT;" : String}
 
 def the_admission_inserts_only_an_absent_identity(id,owner,requestJson,keeperPath,cwd,originAttempt,artifactPath):
   {==}
