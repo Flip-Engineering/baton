@@ -833,9 +833,13 @@ and actual native refusal/admission/spawn ordering have operative laws.
 
 The MCP bridge retains raw Buffer frames split at byte 0x0A. A preliminary
 `JSON.parse` selects only whether a frame names one of the three context tools;
-it performs no dispatch. Selected context frames go as original bytes to the
-native internal `--context-request-codec` entry. That entry checks the entire
-frame for invalid UTF-8 and duplicates. Its frame shape is
+it performs no semantic dispatch. Interfaces forwards selected context frames as
+original bytes, with the authenticated attachment, to the ordinary native context
+operation. That operation consumes Codec directly, validates the complete frame
+and calls the actual Core/Lifecycle query, result or discovery effect. Root111
+supersedes the separate public decoder entry and per-request decoder subprocess.
+The native operation checks the entire frame for invalid UTF-8 and duplicates.
+Its frame shape is
 `{jsonrpc:"2.0",id,method:"tools/call",params:{name,arguments,_meta?}}`; `id` is a
 string or a signed safe-integer token. It admits exactly the three named context
 tools. Query arguments are `{query,request}`, result arguments are `{query}`,
@@ -843,7 +847,7 @@ and engines arguments are `{}` or `{scope:"session"}`. Scope has no other
 admitted value or type; the arguments cannot contain a session identity.
 Query IDs are nonempty strings; request is an
 object. The root, params and arguments objects reject unknown fields except for
-the declared metadata extension. After these checks the entry extracts the request
+the declared metadata extension. After these checks the operation extracts the request
 container with SQLite `json_extract`, which preserves its numeric tokens. That
 container follows the shared request profile above. Hex-encoded frame string
 fields pass through the same pure scalar decoder, including all metadata names
@@ -870,37 +874,39 @@ safe-integer profiles. Validation uses the raw token and JSON node kind without
 conversion through Bend U32 or a JS Number; a valid large token is not rejected
 because a host numeric conversion would round or overflow. Null, booleans,
 arrays and objects are invalid progress tokens. Raw `NaN` and `Infinity` are
-invalid JSON. The metadata object is validated and then discarded before codec
-success; it enters neither the canonical request tree nor the success document,
+invalid JSON. The metadata object is validated and then discarded before native
+dispatch; it enters neither the canonical request tree nor the decoded operation,
 query identity, grants or provider dispatch. No full canonical frame tree is
 needed. This adapter emits no MCP progress notifications; the protocol permits
 a receiver to omit them. Managed query progress and owner notices retain their
 existing lifecycle contracts.
 
-Codec success is one JSON document:
-`{version:1,tool,id,query,requestCanonical,scope}`. `tool` is `context-query`,
+Codec supplies the native caller a typed decoded operation carrying
+`{version:1,tool,id,query,requestCanonical,scope}`. This is an internal callable
+contract. `tool` is `context-query`,
 `context-engines` or `context-result`; `query` is null for engines and the
 validated query ID otherwise; `requestCanonical` is canonical text for query
 and null otherwise. `scope` is `"session"` only for validated scoped engines
-arguments, and null otherwise. `id` is the validated frame ID, emitted from its checked
-JSON token. The bridge dispatches solely
-from this result, forwarding request text verbatim to `context-query-file`.
-It never rebuilds that request from a parsed JS object.
+arguments, and null otherwise. `id` retains the validated frame ID's exact JSON
+token for response correlation. The native caller dispatches from this typed
+operation and passes canonical request text directly to the common query effect.
+CLI `context-query-file` consumes the same Codec and effect functions. MCP performs
+transport framing and response wrapping; schema interpretation remains native.
 For successful results, the MCP bridge wraps the native-validated JSON document
 as text, preserving the contained JSON text through outer JSON-RPC string
 escaping. It does not parse/re-serialize payload numbers through JS Number.
 A rounded structured convenience copy cannot become authoritative. This covers
 negative zero, nested values, signed/exponent tokens and number-versus-text
 identity on query, result retrieval and ref expansion alike.
-For scoped discovery, the bridge obtains SESSION solely from its authenticated
-attachment and renders `--session SESSION` from the validated scope. Missing
-attachment refuses before target inspection. Absence retains target-free
+Response correlation uses the native-validated ID token without conversion through
+JS Number. For scoped discovery, the native operation uses SESSION solely from
+the bridge's authenticated attachment and Codec's validated scope. Missing
+attachment refuses before target inspection. Absent scope retains target-free
 discovery. Preliminary JSON parsing and opaque metadata supply no scope authority.
-This success-shape addition must update native codec and MCP consumer together;
-the admitted package binds this revised closed schema to its exact codec and
-bridge artifacts. Package admission rejects an incompatible pair before context
-dispatch. The bridge requires the scope member and validates the entire closed
-success shape; version 1 alone establishes no compatibility with an older shape.
+The admitted package binds the native operation's transport contract to its
+executable and bridge artifacts. Package admission rejects an incompatible pair
+before context dispatch. Native validation requires the complete closed frame
+and operation shapes; version 1 alone establishes no artifact compatibility.
 Qualification must pair each revised artifact with an old counterpart and observe
 refusal before dispatch, alongside the valid revised pair.
 Context notifications without an ID do not dispatch. A preliminary parse error
@@ -910,7 +916,7 @@ Duplicate method/name fields use JS last-wins behavior only for selection. If
 the selected name is a context tool, the raw duplicate check refuses the frame;
 if it selects another tool, the existing non-context path applies.
 
-Public and internal codec refusals use exit 2 and the structured refusal JSON
+Native context validation refusals use exit 2 and the structured refusal JSON
 on stderr, with empty stdout. The bridge decodes that document into `isError`
 content. Conditions use fixed text; only the raw byte reader can supply a byte
 offset. Input member names, tokens and paths are not echoed. Allocation failure
