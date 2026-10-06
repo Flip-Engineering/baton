@@ -510,23 +510,21 @@ def Model_join_sample() -> J.Json:
         "select", carr1(J.Jstr{"codeAccesses"}))
 
 def Unknown_subject_sample() -> J.Json:
-  J.Jobj{J.Jpair{"version", J.Jint{1},
-    J.Jpair{"subject", J.Jobj{J.Jpair{"kind", J.Jstr{"mystery"}, J.Jnil{}}}},
-    J.Jpair{"select", J.Jarr{J.Jstr{"definition"}, J.Jnil{}}, J.Jnil{}}}}
+  cobj3("version", J.Jint{1}, "subject", cobj1("kind", J.Jstr{"mystery"}),
+    "select", carr1(J.Jstr{"definition"}))
 
 def Ref_override_sample() -> J.Json:
   J.Jobj{J.Jpair{"version", J.Jint{1},
-    J.Jpair{"subject", J.Jobj{J.Jpair{"kind", J.Jstr{"ref"}, J.Jnil{}}}},
-    J.Jpair{"select", J.Jarr{J.Jstr{"definition"}, J.Jnil{}},
-    J.Jpair{"options", J.Jobj{J.Jpair{"tools", J.Jobj{J.Jnil{}}, J.Jnil{}}}, J.Jnil{}}}}}
+    J.Jpair{"subject", cobj1("kind", J.Jstr{"ref"}),
+    J.Jpair{"select", carr1(J.Jstr{"definition"}),
+    J.Jpair{"options", cobj1("tools", J.Jobj{J.Jnil{}}), J.Jnil{}}}}}
 
-# A source request that selects the SQL join and carries a request-local tool
-# override, so both obligations are in one chain.
+# A source request that selects the SQL join and carries a request-local tool override.
 def Join_override_sample() -> J.Json:
   J.Jobj{J.Jpair{"version", J.Jint{1},
-    J.Jpair{"subject", J.Jobj{J.Jpair{"kind", J.Jstr{"symbol"}, J.Jpair{"path", J.Jstr{"a.ts"}, J.Jnil{}}}},
-    J.Jpair{"select", J.Jarr{J.Jstr{"databaseAccesses"}, J.Jnil{}},
-    J.Jpair{"options", J.Jobj{J.Jpair{"tools", J.Jobj{J.Jnil{}}, J.Jnil{}}}, J.Jnil{}}}}}}
+    J.Jpair{"subject", cobj2("kind", J.Jstr{"symbol"}, "path", J.Jstr{"a.ts"}),
+    J.Jpair{"select", carr1(J.Jstr{"databaseAccesses"}),
+    J.Jpair{"options", cobj1("tools", J.Jobj{J.Jnil{}}), J.Jnil{}}}}}
 
 type Proj is Data:
   Pnone{}

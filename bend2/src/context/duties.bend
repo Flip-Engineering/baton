@@ -81,7 +81,7 @@ def duty_subject(record: DutyRecord) -> String:
 def duty_shaped(+kind: String, +subject: String, +stage: String) -> Bool:
   Bool.and(Bool.not(String.is_empty(kind)), Bool.and(Bool.not(String.is_empty(subject)), Bool.not(String.is_empty(stage))))
 
-def duty_known_kind(kind: String) -> Bool:
+def duty_known_kind(+kind: String) -> Bool:
   Bool.or(String.eq(kind, "query"), Bool.or(String.eq(kind, "role"), String.eq(kind, "notice")))
 
 # Exactly six columns, in order.
