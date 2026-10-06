@@ -566,6 +566,12 @@ def or_subject_intent(value: Maybe<&2, J.Json>) -> J.Json:
     case None{}: J.Jnull{}
     case Some{value}: value
 
+def query_control_required_words(intent: String) -> Words:
+  match intent:
+    case "recover": words_from(["kind", "query", "intent"])
+    case "release": words_from(["kind", "query", "intent", "signal"])
+    case other: words_from(["invalidQueryControlIntent"])
+
 def subject_required_words(kind: Context.SubjectKind, members: J.Json) -> Words:
   match kind:
     case Context.SkPosition{}: words_from(["kind", "path", "line", "column"])
@@ -579,7 +585,7 @@ def subject_required_words(kind: Context.SubjectKind, members: J.Json) -> Words:
     case Context.SkProgram{}: words_from(["kind", "path"])
     case Context.SkDataset{}: words_from(["kind", "path", "pointer"])
     case Context.SkRuntime{}: runtime_required_words(text_of(or_subject_intent(member_lookup("intent", members))))
-    case Context.SkQueryControl{}: words_from(["kind", "query", "intent"])
+    case Context.SkQueryControl{}: query_control_required_words(text_of(or_subject_intent(member_lookup("intent", members))))
     case Context.SkRef{}: words_from(["kind", "query", "id"])
 
 def subject_shape_ok(+kind: Context.SubjectKind, +members: J.Json) -> Bool:
