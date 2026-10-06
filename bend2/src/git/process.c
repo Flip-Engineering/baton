@@ -195,7 +195,7 @@ static void __attribute__((constructor)) process_run_use(void) {
 
 #endif
 
-#ifdef CID_PROCESS_CAPTURE
+#if defined(CID_PROCESS_CAPTURE) || defined(CID_PROCESS_CAPTURE_HOLDING)
 /* Capture stderr in an unlinked file so both streams are complete without
    blocking one pipe while the other fills. Legacy Process.run inherits stderr. */
 typedef struct {
@@ -295,6 +295,39 @@ static Term git_capture_run(Env e, Term *f, IoWork *w) {
 static void __attribute__((constructor)) git_capture_use(void) {
   io_eff(CID_PROCESS_CAPTURE, git_capture_run, 0);
 }
+#endif
+
+#ifdef CID_PROCESS_CAPTURE_HOLDING
+/* The guarded variant. It differs from Process.capture only in that the caller supplies
+   the claim it already holds and the attempt-bound artifact that must survive, so the
+   custody machinery above is reachable rather than dead: without these arguments the
+   claim stays -1 and the diagnostic stays an unlinked file. */
+static Term git_capture_holding_run(Env e, Term *f, IoWork *w) {
+  GitCapture *capture = calloc(1, sizeof(*capture));
+  if (!capture) return io_fail(e, ENOMEM, NULL);
+  u64 args_n = 0, cwd_n = 0;
+  char *args = io_cstr(e, f[0], &args_n);
+  capture->process.text = io_cstr(e, f[1], &cwd_n);
+  if (strlen(args) != args_n || strlen(capture->process.text) != cwd_n) {
+    free(args); free(capture->process.text); free(capture);
+    return io_fail(e, EINVAL, "process arguments or directory contain NUL");
+  }
+  capture->claim = (int)(u32)f[2];
+  u64 art_n = 0;
+  capture->artifact = io_cstr(e, f[3], &art_n);
+  if (strlen(capture->artifact) != art_n) {
+    free(args); free(capture->process.text); free(capture->artifact); free(capture);
+    return io_fail(e, EINVAL, "artifact path contains NUL");
+  }
+  capture->process.hand = (intptr_t)git_proc_parse_argv(args);
+  free(args);
+  capture->process.word = 65536;
+  capture->process.data = io_mem(malloc(capture->process.word));
+  w->data = (char *)capture;
+  return io_work(w, git_capture_call, git_capture_pack);
+}
+
+static void __attribute__((constructor)) git_capture_holding_use(void) {io_eff(CID_PROCESS_CAPTURE_HOLDING, git_capture_holding_run, 0);}
 #endif
 
 #ifdef CID_PROCESS_PATH_EXISTS
