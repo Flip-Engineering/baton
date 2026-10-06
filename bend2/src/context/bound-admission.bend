@@ -60,7 +60,7 @@ def association_mark(+mark: String, +plan: String, +identity: String, +schema: S
   Bool.pick(Association, String.eq(mark, "absent"),
     Bool.pick(Association, Bool.and(Bool.and(String.is_empty(plan), String.is_empty(identity)), String.is_empty(schema)), AssociationMissing{}, AssociationMalformed{"shape", answer}),
   Bool.pick(Association, String.eq(mark, "present"),
-    Bool.pick(Association, Bool.and(Bool.and(hex_ok(plan), hex_ok(identity)), hex_ok(schema)), AssociationStored{Tx.hex_decode(plan), Tx.hex_decode(identity), Tx.hex_decode(schema)}, AssociationMalformed{"framing", answer}),
+    Bool.pick(Association, Bool.and(Bool.and(hex_ok(plan), hex_ok(identity)), hex_ok(schema)), AssociationStored{ContextText.hex_decode(plan), ContextText.hex_decode(identity), ContextText.hex_decode(schema)}, AssociationMalformed{"framing", answer}),
     AssociationMalformed{"mark", answer}))
 
 def association_fields(fields: List<String>, +answer: String) -> Association:

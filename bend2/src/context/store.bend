@@ -199,7 +199,7 @@ def ref_count_ok(count: String) -> Bool:
 # The entry column is hex of the stored bytes: the codec's hex framing check and
 # scalar decoder convert it exactly once, and any other shape keeps its raw answer.
 def ref_entry_scalar(+hexText: String) -> Request.Scalar:
-  Bool.pick(Request.Scalar, Request.hex_ok(hexText), Request.decode_scalar_utf8(Tx.hex_decode(hexText)), Request.ScalarBadUtf8{})
+  Bool.pick(Request.Scalar, Request.hex_ok(hexText), Request.decode_scalar_utf8(ContextText.hex_decode(hexText)), Request.ScalarBadUtf8{})
 def ref_flag_ok(+flag: String) -> Bool:
   Bool.or(String.eq(flag, "0"), String.eq(flag, "1"))
 

@@ -15,6 +15,7 @@
 # Fixture: the codec entry prints one line per decision; its expected output is an
 # independently reviewed oracle and is not checked in yet.
 import Base
+import ./text.bend as ContextText
 import ../json/canonical.bend as J
 import ./contracts.bend as Context
 import ./request.bend as Req
@@ -843,7 +844,7 @@ def text_field_scalar(+scalar: Req.Scalar) -> FieldText:
     case Req.ScalarNul{}: FtBad{"nulInField"}
 
 def text_field_checked(ok: Bool, +hex: String) -> FieldText:
-  Bool.pick(FieldText, ok, text_field_scalar(Req.decode_scalar_utf8(Tx.hex_decode(hex))), FtBad{"malformedHexField"})
+  Bool.pick(FieldText, ok, text_field_scalar(Req.decode_scalar_utf8(ContextText.hex_decode(hex))), FtBad{"malformedHexField"})
 
 def text_field(+hex: String) -> FieldText:
   text_field_checked(Req.hex_ok(hex), hex)
@@ -2141,7 +2142,7 @@ def codec_law_only_an_accepted_metadata_verdict_is_admitted():
   {==}
 
 law codec_law_a_malformed_kind_is_refused:
-  {raw_kind("float", RFRoot{ROnone{}}, row_sample()) == RFBad{"malformedRowTransport"} : RawFrame}
+  {raw_kind("float", RFRoot{ROnone{}}, decode_row(row_sample())) == RFBad{"malformedRowKind"} : RawFrame}
 
 def codec_law_a_malformed_kind_is_refused():
   {==}

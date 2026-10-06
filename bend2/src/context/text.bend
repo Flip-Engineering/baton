@@ -27,3 +27,23 @@ law an_empty_column_has_one_field:
 
 def an_empty_column_has_one_field():
   {==}
+
+def hex_val(+c: Char) -> U32:
+  +code = Char.to_u32(c)
+  Bool.pick(U32, U32.is_lt(code, 58), U32.sub(code, 48),
+    Bool.pick(U32, U32.is_lt(code, 71), U32.sub(code, 55), U32.sub(code, 87)))
+
+def hex_decode(s: String) -> String:
+  match s:
+    case SNil{}: ""
+    case SCon{head, tail}:
+      match tail:
+        case SNil{}: ""
+        case SCon{low, rest}:
+          SCon{Char.from_u32(U32.add(U32.mul(hex_val(head), 16), hex_val(low))), hex_decode(rest)}
+
+law hexadecimal_pairs_decode_once:
+  {hex_decode("7b2261223a317d") == "{\"a\":1}" : String}
+
+def hexadecimal_pairs_decode_once():
+  {==}
