@@ -1307,7 +1307,17 @@ def transfer_of_edge(+p: Plan, +ref: StepRef) -> TransferOutcome:
 # The admitted captured records of the steps a step declares as dependencies. Each
 # record keeps its own producing step, so a TypeScript record a catalog step
 # consumes is delivered under the TypeScript producer and is never reattributed to
-# the consuming step. A dependency the plan does not hold contributes no record.
+# the consuming step.
+#
+# Caller condition: a dependency the plan does not hold contributes no record, so
+# an empty result here is ambiguous between a producer that is absent and a
+# producer that completed with nothing. A caller that must tell those apart
+# resolves the edge first, with transfer_of_edge or step_lookup, whose
+# TransferMissing or StepMissing names the absent producer, and treats an empty
+# capture set from a resolved producer as a completed empty result. These
+# selectors are conveniences over an edge the caller already holds from the
+# retained consuming step; they establish no ownership of that edge and admit no
+# record themselves.
 def captures_append(+a: Captures, +b: Captures) -> Captures:
   match a:
     case CapNil{}: b
