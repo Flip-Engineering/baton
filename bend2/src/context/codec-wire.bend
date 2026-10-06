@@ -44,11 +44,46 @@ type WireRead is Data:
   WrEvent{version: String, query: Context.OptText, owner: Context.OptText, producer: Codec.RawValue, runtime: Context.OptText, role: Context.OptText, incarnation: Context.OptText, sequence: String, frame_type: String, payload: Codec.RawValue}
   WrRefused{condition: String}
 
+# --- the owned value encoder ----------------------------------------------
+# One self-recursive walk with a mode, so it needs no forward reference, and it keeps an
+# exact number token verbatim: 1e400 and a negative decimal stay numbers, and text stays
+# text. The mode names whether the value opens a container or continues one.
+
+def wire_value_text(+v: Codec.RawValue, +mode: String) -> String:
+  match mode:
+    case "value":
+      match v:
+        case Codec.Rnull{}: "null"
+        case Codec.Rtrue{}: "true"
+        case Codec.Rfalse{}: "false"
+        case Codec.Rstr{+text}: J.json_text(J.Jstr{text})
+        case Codec.Rnum{+token}: token
+        case Codec.Rarr{Codec.Rnil{}, Codec.Rnil{}}: "[]"
+        case Codec.Rarr{+head, +tail}: "[" ++ wire_value_text(head, "value") ++ wire_value_text(tail, "items")
+        case Codec.Robj{Codec.Rnil{}}: "{}"
+        case Codec.Robj{Codec.Rpair{+key, +value, +rest}}: "{" ++ J.json_text(J.Jstr{key}) ++ ":" ++ wire_value_text(value, "value") ++ wire_value_text(rest, "members")
+        case Codec.Robj{+members}: "{}"
+        case other: "null"
+    case "items":
+      match v:
+        case Codec.Rnil{}: "]"
+        case Codec.Rarr{+head, +tail}: "," ++ wire_value_text(head, "value") ++ wire_value_text(tail, "items")
+        case other: "]"
+    case "members":
+      match v:
+        case Codec.Rnil{}: "}"
+        case Codec.Rpair{+key, +value, +rest}: "," ++ J.json_text(J.Jstr{key}) ++ ":" ++ wire_value_text(value, "value") ++ wire_value_text(rest, "members")
+        case other: "}"
+    case other: ""
+
+def wire_value(+v: Codec.RawValue) -> String:
+  wire_value_text(v, "value")
+
+# A scalar member: null when it is absent, otherwise the canonical text of the string.
+def wire_scalar_text(+text: String) -> String:
+  Bool.pick(String, String.is_empty(text), "null", J.json_text(J.Jstr{text}))
+
 # --- member helpers --------------------------------------------------------
-
-def wire_nullable(+text: String) -> J.Json:
-  Bool.pick(J.Json, String.is_empty(text), J.Jnull{}, J.Jstr{text})
-
 def wire_value_or(found: Maybe<&2, Codec.RawValue>) -> Codec.RawValue:
   match found:
     case None{}: Codec.Rnil{}
@@ -57,11 +92,13 @@ def wire_value_or(found: Maybe<&2, Codec.RawValue>) -> Codec.RawValue:
 def wire_value_member(+name: String, +members: Codec.RawValue) -> Codec.RawValue:
   wire_value_or(Codec.raw_member(name, members))
 
+# A present null is absent, and a present empty text is a present empty text: an empty
+# role cannot normalize into the null of a direct invocation. A value of another kind is
+# unreachable here because the kind walk refused it first.
 def wire_text_value(value: Codec.RawValue) -> Context.OptText:
   match value:
     case Codec.Rnull{}: Context.Absent{}
-    case Codec.Rstr{+text}:
-      Bool.pick(Context.OptText, String.is_empty(text), Context.Absent{}, Context.Present{text})
+    case Codec.Rstr{+text}: Context.Present{text}
     case other: Context.Absent{}
 
 def wire_text_of(found: Maybe<&2, Codec.RawValue>) -> Context.OptText:
@@ -112,6 +149,16 @@ def wire_any_kind(value: Codec.RawValue) -> Bool:
     case Codec.Rpair{+key, +value, +rest}: False{}
     case other: True{}
 
+def wire_object_kind(value: Codec.RawValue) -> Bool:
+  match value:
+    case Codec.Robj{+members}: True{}
+    case other: False{}
+
+def wire_array_kind(value: Codec.RawValue) -> Bool:
+  match value:
+    case Codec.Rarr{+head, +tail}: True{}
+    case other: False{}
+
 def wire_version_is_two(value: Codec.RawValue) -> Bool:
   match value:
     case Codec.Rnum{+token}: String.eq(token, "2")
@@ -122,6 +169,8 @@ def wire_kind_of_value(+kind: String, value: Codec.RawValue) -> Bool:
     case "textOrNull": wire_text_or_null(value)
     case "text": wire_text_kind(value)
     case "any": wire_any_kind(value)
+    case "object": wire_object_kind(value)
+    case "array": wire_array_kind(value)
     case other: False{}
 
 def wire_kind_is(+kind: String, +name: String, +members: Codec.RawValue) -> Bool:
@@ -161,10 +210,10 @@ def wire_invocation_kinds_go(+members: Codec.RawValue) -> Bool:
       Bool.pick(Bool, wire_kind_is("textOrNull", "role", members),
         Bool.pick(Bool, wire_kind_is("textOrNull", "incarnation", members),
           Bool.pick(Bool, wire_version_is_two(wire_value_member("version", members)),
-            Bool.pick(Bool, wire_kind_is("any", "moduleBinding", members),
-              Bool.pick(Bool, wire_kind_is("any", "request", members),
-                Bool.pick(Bool, wire_kind_is("any", "inputIdentities", members),
-                  wire_kind_is("any", "operationPlan", members), False{}), False{}), False{}), False{}), False{}), False{}), False{})
+            Bool.pick(Bool, wire_kind_is("object", "moduleBinding", members),
+              Bool.pick(Bool, wire_kind_is("object", "request", members),
+                Bool.pick(Bool, wire_kind_is("array", "inputIdentities", members),
+                  wire_kind_is("array", "operationPlan", members), False{}), False{}), False{}), False{}), False{}), False{}), False{})
 
 def wire_invocation_kinds_ok(+members: Codec.RawValue) -> Bool:
   Bool.pick(Bool, Codec.raw_keys_ok(wire_invocation_names(), members), wire_invocation_kinds_go(members), False{})
@@ -176,7 +225,7 @@ def wire_event_kinds_go(+members: Codec.RawValue) -> Bool:
         Bool.pick(Bool, wire_kind_is("textOrNull", "role", members),
           Bool.pick(Bool, wire_kind_is("textOrNull", "incarnation", members),
             Bool.pick(Bool, wire_version_is_two(wire_value_member("version", members)),
-              Bool.pick(Bool, wire_kind_is("any", "moduleBinding", members),
+              Bool.pick(Bool, wire_kind_is("object", "moduleBinding", members),
                 Bool.pick(Bool, wire_sequence_ok(wire_sequence_member(members)),
                   Bool.pick(Bool, wire_frame_type_ok(members),
                     wire_kind_is("any", "payload", members), False{}), False{}), False{}), False{}), False{}), False{}), False{}))
@@ -186,18 +235,62 @@ def wire_event_kinds_ok(+members: Codec.RawValue) -> Bool:
 
 # --- the reader ------------------------------------------------------------
 
+# The checked value rule. One self-recursive structural walk with a mode, so it needs no
+# forward reference. A number token must be a valid token, so a constructed one refuses;
+# a decoded key that appears twice in one object refuses at every depth; and the empty
+# array sentinel is a value rather than a missing element. Number tokens stay numbers:
+# the rule admits -0.25, 0.5 and 1e400 exactly as written.
+def wire_value_ok(+v: Codec.RawValue, +mode: String) -> Bool:
+  match mode:
+    case "value":
+      match v:
+        case Codec.Rnull{}: True{}
+        case Codec.Rtrue{}: True{}
+        case Codec.Rfalse{}: True{}
+        case Codec.Rstr{+text}: True{}
+        case Codec.Rnum{+token}: Context.strict_number_token_ok(token)
+        case Codec.Rarr{Codec.Rnil{}, Codec.Rnil{}}: True{}
+        case Codec.Rarr{+head, +tail}: Bool.pick(Bool, wire_value_ok(head, "value"), wire_value_ok(tail, "items"), False{})
+        case Codec.Robj{Codec.Rnil{}}: True{}
+        case Codec.Robj{Codec.Rpair{+key, +value, +rest}}: Bool.pick(Bool, Codec.raw_member_present(key, rest), False{}, Bool.pick(Bool, wire_value_ok(value, "value"), wire_value_ok(rest, "members"), False{}))
+        case Codec.Robj{+members}: False{}
+        case other: False{}
+    case "items":
+      match v:
+        case Codec.Rnil{}: True{}
+        case Codec.Rarr{+head, +tail}: Bool.pick(Bool, wire_value_ok(head, "value"), wire_value_ok(tail, "items"), False{})
+        case other: False{}
+    case "members":
+      match v:
+        case Codec.Rnil{}: True{}
+        case Codec.Rpair{+key, +value, +rest}: Bool.pick(Bool, Codec.raw_member_present(key, rest), False{}, Bool.pick(Bool, wire_value_ok(value, "value"), wire_value_ok(rest, "members"), False{}))
+        case other: False{}
+    case other: False{}
+
+def wire_payload_ok(+v: Codec.RawValue) -> Bool:
+  wire_value_ok(v, "value")
+
 def wire_read_invocation(+members: Codec.RawValue) -> WireRead:
   WrInvocation{"2", wire_text_member("query", members), wire_text_member("owner", members),
     wire_value_member("moduleBinding", members), wire_value_member("request", members),
     wire_value_member("inputIdentities", members), wire_value_member("operationPlan", members),
     wire_text_member("role", members), wire_text_member("incarnation", members)}
 
-def wire_read_event(+members: Codec.RawValue) -> WireRead:
+def wire_read_event_ok(+members: Codec.RawValue) -> WireRead:
   WrEvent{"2", wire_text_member("query", members), wire_text_member("owner", members),
     wire_value_member("moduleBinding", members), wire_text_member("runtime", members),
     wire_text_member("role", members), wire_text_member("incarnation", members),
     wire_sequence_value(wire_value_member("sequence", members)), wire_type_value(wire_value_member("type", members)),
     wire_value_member("payload", members)}
+
+# The payload is the admitted json-value profile, so it is checked here: a constructed
+# number token that is not a valid number and a decoded key that appears twice in one
+# object both refuse before the frame is answered.
+def wire_read_event_payload(+members: Codec.RawValue, payload_ok: Bool) -> WireRead:
+  Bool.pick(WireRead, payload_ok, wire_read_event_ok(members), WrRefused{"invalidPayload"})
+
+def wire_read_event(+members: Codec.RawValue) -> WireRead:
+  wire_read_event_payload(members, wire_payload_ok(wire_value_member("payload", members)))
 
 # Neither direction admitted the frame: answer with the finer condition of the direction
 # whose member names are all present, so a missing member and a member of the wrong kind
@@ -231,37 +324,31 @@ def wire_read(rows: Req.Rows) -> WireRead:
   wire_of_frame(Codec.frame_read(rows))
 
 # --- the serializer --------------------------------------------------------
+# The composite members arrive as the canonical text their owners rendered, so this
+# module splices them verbatim and does not re-spell them. The scalars are rendered here
+# and the payload is rendered by the owned value encoder, so an exact number token in an
+# admitted json-value survives.
 
-def wire_invocation_value(+query: String, +owner: String, +binding: J.Json, +request: J.Json, +inputs: J.Json, +plan: J.Json, +role: String, +incarnation: String) -> J.Json:
-  J.Jobj{
-    J.Jpair{"version", J.Jint{2},
-      J.Jpair{"query", wire_nullable(query),
-        J.Jpair{"owner", wire_nullable(owner),
-          J.Jpair{"moduleBinding", binding,
-            J.Jpair{"request", request,
-              J.Jpair{"inputIdentities", inputs,
-                J.Jpair{"operationPlan", plan,
-                  J.Jpair{"role", wire_nullable(role),
-                    J.Jpair{"incarnation", wire_nullable(incarnation), J.Jnil{}}}}}}}}}}}
+def invocation_frame(+query: String, +owner: String, +binding_text: String, +request_value_text: String, +inputs_text: String, +plan_text: String, +role: String, +incarnation: String) -> String:
+  "{\"version\":2,\"query\":" ++ wire_scalar_text(query)
+  ++ ",\"owner\":" ++ wire_scalar_text(owner)
+  ++ ",\"moduleBinding\":" ++ binding_text
+  ++ ",\"request\":" ++ request_value_text
+  ++ ",\"inputIdentities\":" ++ inputs_text
+  ++ ",\"operationPlan\":" ++ plan_text
+  ++ ",\"role\":" ++ wire_scalar_text(role)
+  ++ ",\"incarnation\":" ++ wire_scalar_text(incarnation) ++ "}"
 
-def invocation_frame(+query: String, +owner: String, +binding: J.Json, +request: J.Json, +inputs: J.Json, +plan: J.Json, +role: String, +incarnation: String) -> String:
-  J.json_text(wire_invocation_value(query, owner, binding, request, inputs, plan, role, incarnation))
-
-def wire_event_value(+query: String, +owner: String, +producer: J.Json, +runtime: String, +role: String, +incarnation: String, +sequence: String, +frame_type: String, +payload: J.Json) -> J.Json:
-  J.Jobj{
-    J.Jpair{"version", J.Jint{2},
-      J.Jpair{"query", wire_nullable(query),
-        J.Jpair{"owner", wire_nullable(owner),
-          J.Jpair{"moduleBinding", producer,
-            J.Jpair{"runtime", wire_nullable(runtime),
-              J.Jpair{"role", wire_nullable(role),
-                J.Jpair{"incarnation", wire_nullable(incarnation),
-                  J.Jpair{"sequence", J.Jstr{sequence},
-                    J.Jpair{"type", J.Jstr{frame_type},
-                      J.Jpair{"payload", payload, J.Jnil{}}}}}}}}}}}}
-
-def event_frame(+query: String, +owner: String, +producer: J.Json, +runtime: String, +role: String, +incarnation: String, +sequence: String, +frame_type: String, +payload: J.Json) -> String:
-  J.json_text(wire_event_value(query, owner, producer, runtime, role, incarnation, sequence, frame_type, payload))
+def event_frame(+query: String, +owner: String, +producer_text: String, +runtime: String, +role: String, +incarnation: String, +sequence: String, +frame_type: String, +payload: Codec.RawValue) -> String:
+  "{\"version\":2,\"query\":" ++ wire_scalar_text(query)
+  ++ ",\"owner\":" ++ wire_scalar_text(owner)
+  ++ ",\"moduleBinding\":" ++ producer_text
+  ++ ",\"runtime\":" ++ wire_scalar_text(runtime)
+  ++ ",\"role\":" ++ wire_scalar_text(role)
+  ++ ",\"incarnation\":" ++ wire_scalar_text(incarnation)
+  ++ ",\"sequence\":" ++ J.json_text(J.Jstr{sequence})
+  ++ ",\"type\":" ++ J.json_text(J.Jstr{frame_type})
+  ++ ",\"payload\":" ++ wire_value(payload) ++ "}"
 
 # --- rows for the laws -----------------------------------------------------
 
@@ -453,4 +540,58 @@ law wire_law_a_text_version_refuses:
   {wire_version_is_two(Codec.Rstr{"2"}) == False{} : Bool}
 
 def wire_law_a_text_version_refuses():
+  {==}
+
+law wire_law_a_duplicate_key_inside_the_payload_refuses:
+  {wire_payload_ok(Codec.Robj{Codec.Rpair{"k", Codec.Rstr{"a"}, Codec.Rpair{"k", Codec.Rstr{"b"}, Codec.Rnil{}}}}) == False{} : Bool}
+
+def wire_law_a_duplicate_key_inside_the_payload_refuses():
+  {==}
+
+law wire_law_an_exact_token_inside_the_payload_passes:
+  {wire_payload_ok(Codec.Robj{Codec.Rpair{"k", Codec.Rnum{"1e400"}, Codec.Rnil{}}}) == True{} : Bool}
+
+def wire_law_an_exact_token_inside_the_payload_passes():
+  {==}
+
+law wire_law_a_negative_decimal_inside_the_payload_passes:
+  {wire_value_ok(Codec.Rnum{"-0.25"}, "value") == True{} : Bool}
+
+def wire_law_a_negative_decimal_inside_the_payload_passes():
+  {==}
+
+law wire_law_a_constructed_token_that_is_not_a_number_refuses:
+  {wire_value_ok(Codec.Rnum{"x"}, "value") == False{} : Bool}
+
+def wire_law_a_constructed_token_that_is_not_a_number_refuses():
+  {==}
+
+law wire_law_the_empty_array_sentinel_passes_the_value_rule:
+  {wire_payload_ok(Codec.Rarr{Codec.Rnil{}, Codec.Rnil{}}) == True{} : Bool}
+
+def wire_law_the_empty_array_sentinel_passes_the_value_rule():
+  {==}
+
+law wire_law_a_boolean_binding_refuses_the_object_kind:
+  {wire_kind_is("object", "moduleBinding", Codec.Rpair{"moduleBinding", Codec.Rtrue{}, Codec.Rnil{}}) == False{} : Bool}
+
+def wire_law_a_boolean_binding_refuses_the_object_kind():
+  {==}
+
+law wire_law_a_text_operation_plan_refuses_the_array_kind:
+  {wire_kind_is("array", "operationPlan", Codec.Rpair{"operationPlan", Codec.Rstr{"x"}, Codec.Rnil{}}) == False{} : Bool}
+
+def wire_law_a_text_operation_plan_refuses_the_array_kind():
+  {==}
+
+law wire_law_a_null_request_value_refuses_the_object_kind:
+  {wire_kind_is("object", "request", Codec.Rpair{"request", Codec.Rnull{}, Codec.Rnil{}}) == False{} : Bool}
+
+def wire_law_a_null_request_value_refuses_the_object_kind():
+  {==}
+
+law wire_law_an_empty_text_member_is_present_and_not_absent:
+  {wire_text_value(Codec.Rstr{""}) == Context.Present{""} : Context.OptText}
+
+def wire_law_an_empty_text_member_is_present_and_not_absent():
   {==}
