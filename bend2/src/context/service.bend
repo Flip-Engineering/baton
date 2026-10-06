@@ -29,8 +29,11 @@ type PlanDecision is Data:
   PlanAdmits{plan: String, resultSchema: String}
   PlanRefuses{stage: String, code: String, detail: String}
 
+# The plan and schema arrive as the caller's lossless carrier of the frozen plan, whose exact
+# representation must be agreed with Core; this lane never interprets them.
 type Submission is Data:
   SubmissionAdmitted{admission: ContextAdmit.Admission, plan: String, resultSchema: String}
+  SubmissionRetainedUnverified{admission: ContextAdmit.Admission, plan: String, resultSchema: String}
   SubmissionPlanRefused{stage: String, code: String, detail: String}
   SubmissionRetainedRejected{decision: String, state: String, owner: String, request: String}
   SubmissionAbsent{}
@@ -118,7 +121,7 @@ def retained(+db: String, +binding: String, +query: String) -> IO(Retained):
 # A retained row is admitted only when its owner and request are the caller's own.
 def submission_retained(+expectedOwner: String, +expectedRequest: String, +plan: String, +resultSchema: String, admission: ContextAdmit.Admission, +owner: String, +request: String, +decision: String, +state: String) -> Submission:
   Bool.pick(Submission, String.eq(decision, "accepted"),
-    Bool.pick(Submission, ContextAdmit.admit_identical(admission, expectedOwner, expectedRequest), SubmissionAdmitted{admission, plan, resultSchema}, SubmissionForeign{owner, request}),
+    Bool.pick(Submission, ContextAdmit.admit_identical(admission, expectedOwner, expectedRequest), SubmissionRetainedUnverified{admission, plan, resultSchema}, SubmissionForeign{owner, request}),
     SubmissionRetainedRejected{decision, state, owner, request})
 
 def submission_of(+expectedOwner: String, +expectedRequest: String, +plan: String, +resultSchema: String, admission: ContextAdmit.Admission) -> Submission:

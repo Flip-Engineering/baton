@@ -1055,7 +1055,7 @@ def a_short_retained_row_is_unreadable():
   {==}
 
 law a_created_admission_is_admitted:
-  {ContextService.submission_of("root","{\"v\":1}","plan-1","schema-1",ContextAdmit.AdmissionCreated{"root","{\"v\":1}","accepted","accepted","","/k","/w","/a"}) == ContextService.SubmissionAdmitted{ContextAdmit.AdmissionCreated{"root","{\"v\":1}","accepted","accepted","","/k","/w","/a"}} : ContextService.Submission}
+  {ContextService.submission_of("root","{\"v\":1}","plan-1","schema-1",ContextAdmit.AdmissionCreated{"root","{\"v\":1}","accepted","accepted","","/k","/w","/a"}) == ContextService.SubmissionAdmitted{ContextAdmit.AdmissionCreated{"root","{\"v\":1}","accepted","accepted","","/k","/w","/a"},"plan-1","schema-1"} : ContextService.Submission}
 
 def a_created_admission_is_admitted():
   {==}
@@ -1144,10 +1144,10 @@ law a_retained_accepted_record_for_another_request_is_foreign:
 def a_retained_accepted_record_for_another_request_is_foreign():
   {==}
 
-law a_retained_completed_record_replays_with_its_recorded_state:
+law a_retained_completed_record_replays_without_claiming_the_plan:
   {ContextService.submission_of("root","{\"v\":1}","plan-1","schema-1",ContextAdmit.AdmissionRetained{"root","{\"v\":1}","accepted","complete","","/k","/w","/a"}) == ContextService.SubmissionAdmitted{ContextAdmit.AdmissionRetained{"root","{\"v\":1}","accepted","complete","","/k","/w","/a"}} : ContextService.Submission}
 
-def a_retained_completed_record_replays_with_its_recorded_state():
+def a_retained_completed_record_replays_without_claiming_the_plan():
   {==}
 
 law an_admissible_intent_is_the_recorded_delivery:
@@ -1268,4 +1268,10 @@ law a_receipt_row_missing_its_last_flag_is_short:
   {ContextObserver.receipt_decode("q1","starter","0","2","present\t1\t1\t1\t1\t1\n") == ContextObserver.ReceiptMalformed{"short","present\t1\t1\t1\t1\t1\n"} : ContextObserver.ReceiptRead}
 
 def a_receipt_row_missing_its_last_flag_is_short():
+  {==}
+
+law a_retained_replay_does_not_claim_the_supplied_plan:
+  {ContextService.submission_of("root","{\"v\":1}","plan-2","schema-2",ContextAdmit.AdmissionRetained{"root","{\"v\":1}","accepted","complete","","/k","/w","/a"}) == ContextService.SubmissionRetainedUnverified{ContextAdmit.AdmissionRetained{"root","{\"v\":1}","accepted","complete","","/k","/w","/a"},"plan-2","schema-2"} : ContextService.Submission}
+
+def a_retained_replay_does_not_claim_the_supplied_plan():
   {==}

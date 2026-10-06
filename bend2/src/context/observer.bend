@@ -139,8 +139,8 @@ def receipt_of(+query: String, +role: String, +incarnation: String, +cursor: Str
     receipt_absent(answer, qm, rm, im, cm, cap, ext),
     ReceiptMalformed{"presence", answer}))
 
-def receipt_identity(+query: String, +role: String, +incarnation: String, +cursor: String, +answer: String, flags: List<String>) -> ReceiptRead:
-  match flags:
+def receipt_identity(+query: String, +role: String, +incarnation: String, +cursor: String, +answer: String, fields: List<String>) -> ReceiptRead:
+  match fields:
     case +presence <> m0:
       match m0:
         case +qm <> m1:
@@ -151,13 +151,12 @@ def receipt_identity(+query: String, +role: String, +incarnation: String, +curso
                   match m3:
                     case +cm <> m4:
                       match m4:
-                        case +cap <> m6:
-                          match m6:
-                            case +ext <> m7:
-                                  match m7:
-                                    case Nil{}: receipt_of(query, role, incarnation, cursor, answer, presence, qm, rm, im, cm, cap, ext)
-                                    case _: ReceiptMalformed{"surplus", answer}
-                                case _: ReceiptMalformed{"short", answer}
+                        case +cap <> m5:
+                          match m5:
+                            case +ext <> m6:
+                              match m6:
+                                case Nil{}: receipt_of(query, role, incarnation, cursor, answer, presence, qm, rm, im, cm, cap, ext)
+                                case _: ReceiptMalformed{"surplus", answer}
                             case _: ReceiptMalformed{"short", answer}
                         case _: ReceiptMalformed{"short", answer}
                     case _: ReceiptMalformed{"short", answer}
@@ -166,8 +165,6 @@ def receipt_identity(+query: String, +role: String, +incarnation: String, +curso
         case _: ReceiptMalformed{"short", answer}
     case _: ReceiptMalformed{"short", answer}
 
-# An absent row is an absent receipt only when every flag agrees, so a host answer that carries
-# stray columns cannot pass as absence. A present row is a receipt only when every comparison holds.
 def receipt_lines(+query: String, +role: String, +incarnation: String, +cursor: String, +answer: String, lines: List<String>) -> ReceiptRead:
   match lines:
     case Nil{}: ReceiptMalformed{"empty", answer}
