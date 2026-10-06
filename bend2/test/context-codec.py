@@ -288,21 +288,29 @@ def review_mutations(record, bend, out):
             continue
         source_file = tree / "bend2" / "src" / "context" / Path(item["file"]).name
         pristine = source_file.read_bytes()
-        source_file.write_bytes(pristine.replace(item["find"].encode(), item["replace"].encode(), 1))
+        mutated = pristine.replace(item["find"].encode(), item["replace"].encode(), 1)
+        source_file.write_bytes(mutated)
         stem = f"{index:03d}-{item['name']}"
         entry, stdout, stderr = run(record, f"mutation-{stem}",
                                     [bend, "--check-only", tree / "bend2" / "src" / "context" / module], tree)
         source_file.write_bytes(pristine)
+        if source_file.read_bytes() != (ROOT / item["file"]).read_bytes():
+            record["failures"].append(f"the mutation copy was not restored: {item['name']}")
         outcome = "refused" if entry["status"] != 0 else "survived"
         named = item["law"] in (stdout + stderr).decode("utf-8", "replace")
         if outcome == "refused":
             record["mutations"]["refused"] += 1
         else:
+            # The mutated module is the evidence a surviving record needs.
+            survivor = control / f"{stem}.bend"
+            survivor.write_bytes(mutated)
             record["mutations"]["survived"] += 1
+            record["mutations"]["records"][index]["surviving_source"] = str(survivor)
             record["failures"].append(f"mutation survived the fixture: {item['name']} ({item['law']})")
         record["mutations"]["records"][index]["outcome"] = outcome
         record["mutations"]["records"][index]["baseline_status"] = baseline.get(module)
         record["mutations"]["records"][index]["diagnostic_names_the_law"] = named
+    shutil.rmtree(tree)
 
 
 def main():
