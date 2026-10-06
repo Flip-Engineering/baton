@@ -338,6 +338,13 @@ def serialized(+intent: IntentName) -> Bool:
 
 # One event advances the record, or refuses with a named reason. No elapsed time, no
 # timer and no caller request participates: every transition names its own evidence.
+def context_after(+state: RuntimeState) -> RuntimeState:
+  Bool.pick(RuntimeState, Bool.or(is_paused(state), is_pause_pending(state)), Running{}, state)
+
+# Recorded-stop liveness advances on the same events that invalidate a stop, on its own
+# evidence and independently of target liveness. A stopped event records a live stop; a
+# resume attempt, an observed resume and a destroyed context leave it historical; a rejected
+# resume leaves it unknown, because no resumption was established and no fresh stop arrived.
 def advance(record: RuntimeRecord, event: RuntimeEvent) -> Transition:
   match record:
     case Rec{state, epoch, mutation, pending, liveness}:
@@ -429,13 +436,7 @@ def advance(record: RuntimeRecord, event: RuntimeEvent) -> Transition:
 
 # A destroyed context ends a stop or an acknowledged pause request and leaves every other
 # state as it was.
-def context_after(+state: RuntimeState) -> RuntimeState:
-  Bool.pick(RuntimeState, Bool.or(is_paused(state), is_pause_pending(state)), Running{}, state)
 
-# Recorded-stop liveness advances on the same events that invalidate a stop, on its own
-# evidence and independently of target liveness. A stopped event records a live stop; a
-# resume attempt, an observed resume and a destroyed context leave it historical; a rejected
-# resume leaves it unknown, because no resumption was established and no fresh stop arrived.
 def stop_liveness(+previous: StopLiveness, +event: RuntimeEvent) -> StopLiveness:
   match event:
     case EvPaused{}: StopLive{}
