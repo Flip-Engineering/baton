@@ -381,7 +381,7 @@ def chain_count(chain: OpChain) -> U32:
 
 def admission_text(a: Admission) -> String:
   match a:
-    case ADispatch{operations, +effects}: "dispatch:" ++ primary_operation(operations) ++ ":" ++ U32.show(chain_count(operations))
+    case ADispatch{+operations, +effects}: "dispatch:" ++ primary_operation(operations) ++ ":" ++ U32.show(chain_count(operations))
     case ARefused{cls, condition}: "refused:" ++ Context.refusal_class_name(cls) ++ ":" ++ condition
 
 # The request-derived operation chain. The primary dispatch operation is always
