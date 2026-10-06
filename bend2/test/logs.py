@@ -99,7 +99,7 @@ assert sys.stdin.read()==''
                         'args': {'command': 'echo ' + payload}}),
             json.dumps({'type': 'tool_execution_end', 'toolCallId': 'tool-1', 'toolName': 'bash',
                         'result': {'content': [{'type': 'text', 'text': payload}]}, 'isError': False}),
-            json.dumps({'type': 'message_end', 'message': {'role': 'assistant', 'provider': 'provider',
+            json.dumps({'type': 'message_end', 'message': {'id': 'm1', 'role': 'assistant', 'provider': 'provider',
                                                            'model': 'actual', 'content': [{'type': 'text', 'text': 'Complete answer λ'}]}}),
             self.terminal(),
             '{"probe":"unclassified frame"}',
@@ -453,6 +453,44 @@ while True: time.sleep(1)
         self.stream(frames + [self.terminal()])
         updates = [row for row in map(json.loads, self.lines()) if row.get('type') == 'message_update']
         self.assertEqual(updates, [json.loads(frames[-1])])
+
+    def test_existing_policy_constraint_migrates_with_rows_and_registry(self):
+        import sqlite3
+        with sqlite3.connect(self.db) as connection:
+            connection.executescript("CREATE TABLE log_policies(session TEXT PRIMARY KEY,level TEXT NOT NULL,budget_bytes INTEGER NOT NULL,keep_segments INTEGER NOT NULL CHECK(keep_segments BETWEEN 1 AND 4));"
+                                     "CREATE TABLE log_files(session TEXT NOT NULL,log TEXT NOT NULL,PRIMARY KEY(session,log));")
+            connection.execute('INSERT INTO log_policies VALUES(?,?,?,?)',
+                               ('omp-worker', 'diagnostic', 1048576, 3))
+            connection.execute('INSERT INTO log_files VALUES(?,?)', ('omp-worker', str(self.log)))
+        before = json.loads(self.call('logs', 'omp-worker'))
+        self.assertEqual((before['level'], before['budgetBytes'], before['keepSegments'], before['registeredLogs']),
+                         ('diagnostic', 1048576, 3, 1))
+        after = json.loads(self.call('logs', 'omp-worker', 'diagnostic', '', '101'))
+        self.assertEqual((after['level'], after['budgetBytes'], after['keepSegments'], after['registeredLogs']),
+                         ('diagnostic', 1048576, 101, 1))
+        with sqlite3.connect(self.db) as connection:
+            self.assertEqual(connection.execute('SELECT count(*) FROM log_policies').fetchone()[0], 1)
+            self.assertEqual(connection.execute('SELECT log FROM log_files').fetchone()[0], str(self.log))
+
+    def test_sparse_segments_and_checkpoint_are_reported_and_preserved(self):
+        self.call('logs', 'omp-worker', 'default', '65536', '4294967295')
+        self.stream([self.terminal()])
+        for index in (65, 101, 4294967295):
+            (self.cwd / ('turn.jsonl.%d' % index)).write_text('retained sparse evidence\n')
+        excluded = ['turn.jsonl.pending', 'turn.jsonl.pending.tmp.owner', 'turn.jsonl.01',
+                    'turn.jsonl.+9', 'turn.jsonl. 9', 'turn.jsonl.9.stderr', 'turn.jsonl.4294967296']
+        for name in excluded:
+            (self.cwd / name).write_text('preserved artifact\n')
+        entry = next(row for row in json.loads(self.call('logs-storage'))['logs']
+                     if row['path'] == str(self.log))
+        self.assertEqual({row['index'] for row in entry['rotated']}, {65, 101, 4294967295})
+        self.assertEqual(entry['pendingBytes'], (self.cwd / 'turn.jsonl.pending').stat().st_size)
+        self.assertEqual(entry['pendingPath'], str(self.cwd / 'turn.jsonl.pending'))
+        self.call('logs', 'omp-worker', 'default', '65536', '2')
+        removed = json.loads(self.call('logs-clean', 'omp-worker'))['removed']
+        self.assertEqual({row['index'] for row in removed}, {65, 101, 4294967295})
+        for name in excluded:
+            self.assertEqual((self.cwd / name).read_text(), 'preserved artifact\n')
 
     def test_unwritable_log_reports_the_failure_and_keeps_the_report(self):
         unwritable = self.cwd / 'log-directory'
