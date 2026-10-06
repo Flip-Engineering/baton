@@ -32,6 +32,7 @@
 import Base
 import ./engines.bend as Eng
 import ./engines-decl.bend as Decl
+import ./snapshot.bend as Snap
 
 # --- candidates --------------------------------------------------------------
 # One declared operation of one admitted module, with the configured state
@@ -376,50 +377,96 @@ type Steps is Data:
 # it, and the typed payload schema of a captured record belongs to that producer
 # and to Codec. A caller holding no admitted capture passes CapNil{}, and the plan
 # then records no captured input rather than a fabricated one.
+# `capture_kind` names the input kind in snapshot's vocabulary: file, absent,
+# dir, link or config. `payload` carries the exact accepted bytes in the named
+# `payload_encoding`, so a byte order mark, a carriage return or a byte sequence
+# that is not valid UTF-8 travels without re-encoding; an encoding that cannot
+# round-trip the accepted bytes refuses rather than being used. `marker` is the
+# digest-bearing component exactly as snapshot's fp_marker defines it: the content
+# digest for a file, directory or configuration input, the resolved target for a
+# link, and the literal "absent" for an absent input. It is not the expected
+# declaration digest. `path` is the canonical admitted path the capture recorded;
+# a producer that resolves an alias or a relative specifier records that
+# resolution and Core compares the recorded path verbatim.
 type Capture is Data:
-  Capture{role: String, path: String, marker: String, payload: String,
-          producer_module: String, producer_digest: String,
-          producer_operation: String}
+  Capture{capture_kind: String, role: String, path: String, marker: String,
+          payload: String, payload_encoding: String, producer_module: String,
+          producer_digest: String, producer_operation: String}
 
 type Captures is Data:
   CapNil{}
   CapCons{head: Capture, rest: Captures}
 
+def cap_kind(+c: Capture) -> String:
+  match c:
+    case Capture{capture_kind, role, path, marker, payload, payload_encoding,
+                 producer_module, producer_digest, producer_operation}:
+      capture_kind
+
+def cap_encoding(+c: Capture) -> String:
+  match c:
+    case Capture{capture_kind, role, path, marker, payload, payload_encoding,
+                 producer_module, producer_digest, producer_operation}:
+      payload_encoding
+
 def cap_role(+c: Capture) -> String:
   match c:
-    case Capture{role, path, marker, payload, producer_module, producer_digest,
-                 producer_operation}:
+    case Capture{capture_kind, role, path, marker, payload, payload_encoding,
+                 producer_module, producer_digest, producer_operation}:
       role
 
 def cap_path(+c: Capture) -> String:
   match c:
-    case Capture{role, path, marker, payload, producer_module, producer_digest,
-                 producer_operation}:
+    case Capture{capture_kind, role, path, marker, payload, payload_encoding,
+                 producer_module, producer_digest, producer_operation}:
       path
 
 def cap_payload(+c: Capture) -> String:
   match c:
-    case Capture{role, path, marker, payload, producer_module, producer_digest,
-                 producer_operation}:
+    case Capture{capture_kind, role, path, marker, payload, payload_encoding,
+                 producer_module, producer_digest, producer_operation}:
       payload
 
 def cap_producer_module(+c: Capture) -> String:
   match c:
-    case Capture{role, path, marker, payload, producer_module, producer_digest,
-                 producer_operation}:
+    case Capture{capture_kind, role, path, marker, payload, payload_encoding,
+                 producer_module, producer_digest, producer_operation}:
       producer_module
 
 def cap_producer_digest(+c: Capture) -> String:
   match c:
-    case Capture{role, path, marker, payload, producer_module, producer_digest,
-                 producer_operation}:
+    case Capture{capture_kind, role, path, marker, payload, payload_encoding,
+                 producer_module, producer_digest, producer_operation}:
       producer_digest
 
 def cap_producer_operation(+c: Capture) -> String:
   match c:
-    case Capture{role, path, marker, payload, producer_module, producer_digest,
-                 producer_operation}:
+    case Capture{capture_kind, role, path, marker, payload, payload_encoding,
+                 producer_module, producer_digest, producer_operation}:
       producer_operation
+
+# The admitted identity of one captured record, in snapshot's own vocabulary, so
+# a producer closure and the identity text key on the same value. An unknown kind
+# is named rather than coerced to another kind.
+type FcState is Data:
+  FcMapped{fp: Snap.Fp}
+  FcUnknownKind{kind: String}
+
+def capture_fp_kind(+kind: String, +c: Capture) -> FcState:
+  Bool.pick(FcState, String.eq(kind, "file"),
+    FcMapped{Snap.FpFile{cap_role(c), cap_path(c), cap_marker(c)}},
+  Bool.pick(FcState, String.eq(kind, "absent"),
+    FcMapped{Snap.FpAbsent{cap_role(c), cap_path(c)}},
+  Bool.pick(FcState, String.eq(kind, "dir"),
+    FcMapped{Snap.FpDir{cap_role(c), cap_path(c), cap_marker(c)}},
+  Bool.pick(FcState, String.eq(kind, "link"),
+    FcMapped{Snap.FpLink{cap_role(c), cap_path(c), cap_marker(c)}},
+  Bool.pick(FcState, String.eq(kind, "config"),
+    FcMapped{Snap.FpConfig{cap_role(c), cap_path(c), cap_marker(c)}},
+    FcUnknownKind{kind}))))))
+
+def capture_fp(+c: Capture) -> FcState:
+  capture_fp_kind(cap_kind(c), c)
 
 def captures_nonempty(xs: Captures) -> Bool:
   match xs:

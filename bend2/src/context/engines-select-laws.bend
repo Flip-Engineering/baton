@@ -195,8 +195,8 @@ def fx_bind() -> Sel.MBind:
             Decl.op_schema_set(fx_op_common("sourceAnalysis"))}
 
 def fx_capture() -> Sel.Capture:
-  Sel.Capture{"source", "/work/a.ts", "aa", "capturedSourceText", "m1", "d1",
-              "definition"}
+  Sel.Capture{"file", "source", "/work/a.ts", "aa", "capturedSourceText", "utf8",
+              "m1", "d1", "definition"}
 
 def fx_captures() -> Sel.Captures:
   Sel.CapCons{fx_capture(), Sel.CapNil{}}
@@ -478,4 +478,29 @@ law selection_discovery_admits_every_entry_against_the_whole_set:
   {Sel.discovery(fx_cat_conflicting(), fx_inv(), Eng.ss_one("m1")) == Sel.DscCons{Sel.Discovery{"m1", Sel.DsRefused{Decl.DrConflictingId{"m1", "pkg-m1"}}}, Sel.DscCons{Sel.Discovery{"m1", Sel.DsRefused{Decl.DrConflictingId{"m1", "pkg-other"}}}, Sel.DscNil{}}} : Sel.Discoveries}
 
 def selection_discovery_admits_every_entry_against_the_whole_set():
+  {==}
+
+# --- capture identity in snapshot's vocabulary -------------------------------
+law selection_capture_maps_to_a_file_identity:
+  {Sel.capture_fp(fx_capture()) == Sel.FcMapped{Snap.FpFile{"source", "/work/a.ts", "aa"}} : Sel.FcState}
+
+def selection_capture_maps_to_a_file_identity():
+  {==}
+
+law selection_capture_maps_to_an_absent_identity:
+  {Sel.capture_fp(Sel.Capture{"absent", "source", "/work/missing.ts", "absent", "", "", "m1", "d1", "definition"}) == Sel.FcMapped{Snap.FpAbsent{"source", "/work/missing.ts"}} : Sel.FcState}
+
+def selection_capture_maps_to_an_absent_identity():
+  {==}
+
+law selection_capture_of_an_unknown_kind_is_named:
+  {Sel.capture_fp(Sel.Capture{"symlink", "source", "/work/a.ts", "aa", "", "", "m1", "d1", "definition"}) == Sel.FcUnknownKind{"symlink"} : Sel.FcState}
+
+def selection_capture_of_an_unknown_kind_is_named():
+  {==}
+
+law selection_capture_records_its_payload_encoding:
+  {Sel.cap_encoding(fx_capture()) == "utf8" : String}
+
+def selection_capture_records_its_payload_encoding():
   {==}
