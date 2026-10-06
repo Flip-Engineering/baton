@@ -16,9 +16,10 @@ def Process.run(argv: String, cwd: String) -> IO(Result<&1, &1, U32 & String, St
 def Process.capture(argv: String, cwd: String) -> IO(Result<&1,&1,U32 & String,String & String>):
   import "./process.c"
 
-# The guarded variant: the claim the caller holds is transferred into the child, and the
-# attempt-bound artifact retains the complete diagnostics on every exit path.
-def Process.capture_holding(argv: String, cwd: String, claim: U32, artifact: String) -> IO(Result<&1,&1,U32 & String,String & String>):
+# The guarded variant: the caller supplies the claim it holds, the canonical guard path
+# that claim must be the same file as, and the attempt-bound artifact path. The artifact
+# retains the captured diagnostics; the effect reports them through its ordinary result.
+def Process.capture_holding(argv: String, cwd: String, claim: U32, guard: String, artifact: String) -> IO(Result<&1,&1,U32 & String,String & String>):
   import "./process.c"
 
 def Process.path_exists(path: String) -> IO(Result<&1,&1,U32 & String,Bool>):
