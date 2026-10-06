@@ -129,8 +129,6 @@ def phase_admitted(phase: Phase, cleanup: Cleanup, owed: U32) -> Bool:
 
 # The stored `progress_json` is the same closed object the envelope returns, and a
 # query with no managed roles stores SQL null rather than an empty fragment.
-def progress_json(has_roles: Bool, +phase: Phase, waiting: List<Waiting>, control: Control, cleanup: Cleanup) -> String:
-  Bool.pick(String, has_roles, progress_document(phase, waiting, control, cleanup), "null")
 
 def progress_document(+phase: Phase, +waiting: List<Waiting>, +control: Control, +cleanup: Cleanup) -> String:
   J.json_text(J.Jobj{J.Jpair{"cleanup", J.Jstr{cleanup_text(cleanup)},
@@ -140,6 +138,9 @@ def progress_document(+phase: Phase, +waiting: List<Waiting>, +control: Control,
 
 # The waitingFor value is already the complete array: the empty set is the empty
 # array, and a nonempty list is the element chain the shared encoder walks.
+def progress_json(has_roles: Bool, +phase: Phase, waiting: List<Waiting>, control: Control, cleanup: Cleanup) -> String:
+  Bool.pick(String, has_roles, progress_document(phase, waiting, control, cleanup), "null")
+
 def waiting_json(waiting: List<Waiting>) -> J.Json:
   match waiting:
     case Nil{}: J.Jarr{J.Jnil{}, J.Jnil{}}

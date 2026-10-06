@@ -591,34 +591,6 @@ def subject_present(m: Maybe<&2, J.Json>) -> Bool:
 def subject_required(members: J.Json) -> Bool:
   subject_present(member_lookup("subject", members))
 
-def projections_ok(select: J.Json) -> Bool:
-  match select:
-    case J.Jarr{+head, +tail}: Bool.pick(Bool, is_jstr(head), projections_walk(head, tail), False{})
-    case J.Jnull{}: False{}
-    case J.Jtrue{}: False{}
-    case J.Jfalse{}: False{}
-    case J.Jint{+value}: False{}
-    case J.Jstr{+value}: False{}
-    case J.Jobj{+members}: False{}
-    case J.Jpair{key, value, rest}: False{}
-    case J.Jnil{}: False{}
-
-def projections_walk(+selected: J.Json, +rest: J.Json) -> Bool:
-  Bool.pick(Bool, word_member(projection_words(), text_of(selected)),
-    Bool.pick(Bool, distinct_from(text_of(selected), rest), projections_rest(rest), False{}), False{})
-
-def projections_rest(+rest: J.Json) -> Bool:
-  match rest:
-    case J.Jarr{+head, +tail}: Bool.pick(Bool, is_jstr(head), projections_walk(head, tail), False{})
-    case J.Jpair{key, value, rest}: True{}
-    case J.Jnil{}: True{}
-    case J.Jnull{}: True{}
-    case J.Jtrue{}: True{}
-    case J.Jfalse{}: True{}
-    case J.Jint{+value}: True{}
-    case J.Jstr{+value}: True{}
-    case J.Jobj{+members}: True{}
-
 def distinct_from(+name: String, +rest: J.Json) -> Bool:
   match rest:
     case J.Jarr{+head, +tail}: Bool.pick(Bool, String.eq(text_of(head), name), False{}, distinct_from(name, tail))
@@ -631,25 +603,9 @@ def distinct_from(+name: String, +rest: J.Json) -> Bool:
     case J.Jstr{+value}: True{}
     case J.Jobj{+members}: True{}
 
-def effects_ok(effects: J.Json) -> Bool:
-  match effects:
-    case J.Jarr{+head, +tail}: Bool.pick(Bool, is_jstr(head), effects_walk(head, tail), False{})
-    case J.Jpair{key, value, rest}: True{}
-    case J.Jnil{}: True{}
-    case J.Jnull{}: False{}
-    case J.Jtrue{}: False{}
-    case J.Jfalse{}: False{}
-    case J.Jint{+value}: False{}
-    case J.Jstr{+value}: False{}
-    case J.Jobj{+members}: False{}
-
-def effects_walk(+granted: J.Json, +rest: J.Json) -> Bool:
-  Bool.pick(Bool, word_member(effect_words(), text_of(granted)),
-    Bool.pick(Bool, distinct_from(text_of(granted), rest), effects_rest(rest), False{}), False{})
-
-def effects_rest(+rest: J.Json) -> Bool:
+def projections_rest(+rest: J.Json) -> Bool:
   match rest:
-    case J.Jarr{+head, +tail}: effects_walk(head, tail)
+    case J.Jarr{+head, +tail}: Bool.pick(Bool, is_jstr(head), Bool.pick(Bool, word_member(projection_words(), text_of(head)), Bool.pick(Bool, distinct_from(text_of(head), tail), projections_rest(tail), False{}), False{}), False{})
     case J.Jpair{key, value, rest}: True{}
     case J.Jnil{}: True{}
     case J.Jnull{}: True{}
@@ -658,6 +614,43 @@ def effects_rest(+rest: J.Json) -> Bool:
     case J.Jint{+value}: True{}
     case J.Jstr{+value}: True{}
     case J.Jobj{+members}: True{}
+
+def projections_ok(select: J.Json) -> Bool:
+  match select:
+    case J.Jarr{+head, +tail}: projections_rest(J.Jarr{head, tail})
+    case J.Jnull{}: False{}
+    case J.Jtrue{}: False{}
+    case J.Jfalse{}: False{}
+    case J.Jint{+value}: False{}
+    case J.Jstr{+value}: False{}
+    case J.Jobj{+members}: False{}
+    case J.Jpair{key, value, rest}: False{}
+    case J.Jnil{}: False{}
+
+def effects_rest(+rest: J.Json) -> Bool:
+  match rest:
+    case J.Jarr{+head, +tail}: Bool.pick(Bool, is_jstr(head), Bool.pick(Bool, word_member(effect_words(), text_of(head)), Bool.pick(Bool, distinct_from(text_of(head), tail), effects_rest(tail), False{}), False{}), False{})
+    case J.Jpair{key, value, rest}: True{}
+    case J.Jnil{}: True{}
+    case J.Jnull{}: True{}
+    case J.Jtrue{}: True{}
+    case J.Jfalse{}: True{}
+    case J.Jint{+value}: True{}
+    case J.Jstr{+value}: True{}
+    case J.Jobj{+members}: True{}
+
+
+def effects_ok(effects: J.Json) -> Bool:
+  match effects:
+    case J.Jarr{+head, +tail}: effects_rest(J.Jarr{head, tail})
+    case J.Jpair{key, value, rest}: True{}
+    case J.Jnil{}: True{}
+    case J.Jnull{}: False{}
+    case J.Jtrue{}: False{}
+    case J.Jfalse{}: False{}
+    case J.Jint{+value}: False{}
+    case J.Jstr{+value}: False{}
+    case J.Jobj{+members}: False{}
 
 def version_of(m: Maybe<&2, J.Json>) -> Bool:
   match m:
