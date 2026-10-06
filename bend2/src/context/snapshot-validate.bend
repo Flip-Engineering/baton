@@ -24,6 +24,19 @@
 # schema identity the retained binding does not hold refuses, and a caller with no
 # schema identity for the operation is told that operand is missing.
 #
+# The named schema requirement composes with Codec's published callable: the
+# caller runs Schema.schema_declaration_ok(defs) and then
+# Schema.schema_admit(defs, form, value) over the decoded value, where that value
+# is Codec's raw model rather than an encoded string, so an exact number token
+# never passes through a host number. Its verdict is SvOk or
+# SvRefused{condition} with the conditions declarationRefused, undeclaredField,
+# missingField, duplicateKey, wrongKind, enumLiteral, unknownTag, dictKeyRefused
+# and unknownReference (bend2/src/context/codec-schema.bend, Codec commit
+# abc169b9740717e161c7cf1604670b350c8fa99d, blob
+# c59c6dce74e4266c03e0b12603da48352fa1ee49). `payload` here is the encoded
+# payload text the caller decodes before that call; this module reads neither and
+# imports no Codec module, so the wiring owner adds the import in its own closure.
+#
 # The expectation constructors below are derived from the frozen step, so a
 # caller cannot build an expectation from a module name or a digest it chose, and
 # a dependency result is compared against its own step's binding.
@@ -440,6 +453,8 @@ def frame_checks(+f: Frame, +e: Expect) -> VChk:
   then_v(check_schema(f, e),
          VcOk{}))))))))))
 
+# VOk names the schema identity the payload must still satisfy under the composed
+# Codec call above; it is not a schema verdict and authorizes no publication.
 def validate_finish(+c: VChk, +f: Frame, +e: Expect) -> VOutcome:
   match c:
     case VcFail{reason}: VRefused{reason}
