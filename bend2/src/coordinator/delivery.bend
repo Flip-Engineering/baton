@@ -316,10 +316,31 @@ def report_receipt(+db: String, +requested: String, +selected: String, stopped: 
 # endpoint governs the result.
 def report_pending(+db: String, +requested: String, +id: String, +recipient: String, state: String, +payload: String, stopped: Bool) -> IO(Result<&1,&1,U32 & String,String>):
   match stopped:
-    case True{}: stopped_delivery(db,id,notification => report_handoff_go(db,requested,notification),True{})
+    case True{}: report_handoff_admit(db,requested,id)
     case False{}: report_endpoint(db,requested,id,recipient,state,payload)
 
-def report_handoff_go(+db: String, +requested: String, notification: String) -> IO(Result<&1,&1,U32 & String,String>):
+# The shared handoff expression is read before the handoff runs, so a query
+# failure and an unavailable higher-parent route are reported as strict outcomes
+# carrying the requested identity and the observed code and detail. Nothing has
+# been selected at this point, so no selected identity is claimed.
+def report_handoff_admit(+db: String, +requested: String, +id: String) -> IO(Result<&1,&1,U32 & String,String>):
+  do IO<Result<&1,&1,U32 & String,String>>:
+    available : Result<&1,&1,U32 & String,String> <- DB.Sql.query(db,handoff_sql(id))
+    report_handoff_available(db,requested,id,available)
+
+def report_handoff_available(+db: String, +requested: String, +id: String, available: Result<&1,&1,U32 & String,String>) -> IO(Result<&1,&1,U32 & String,String>):
+  match available:
+    case Fail{(code,detail)}: IO.pure(Result<&1,&1,U32 & String,String>,Fail{(code,report_envelope(requested,"","","stopped-route-query-failed",False{},"",detail))})
+    case Done{+notification}: report_handoff_unavailable(db,requested,id,notification,String.is_empty(Tx.trim_nl(notification)))
+
+def report_handoff_unavailable(+db: String, +requested: String, +id: String, notification: String, unavailable: Bool) -> IO(Result<&1,&1,U32 & String,String>):
+  match unavailable:
+    case True{}: IO.pure(Result<&1,&1,U32 & String,String>,Fail{(2,report_envelope(requested,"","","stopped-route-unavailable",False{},"","Higher-parent delivery is unavailable; the retained input and the original report are preserved.")}))
+    case False{}: stopped_delivery(db,id,n => report_handoff(db,requested,n),True{})
+
+# The handoff entry trims the selected notification and delegates; the selection
+# step performs the strict query for that notification's own result.
+def report_handoff(+db: String, +requested: String, notification: String) -> IO(Result<&1,&1,U32 & String,String>):
   report_handoff_selected(db,requested,Tx.trim_nl(notification))
 
 def report_handoff_selected(+db: String, +requested: String, +notification: String) -> IO(Result<&1,&1,U32 & String,String>):

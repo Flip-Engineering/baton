@@ -654,7 +654,7 @@ def stopped_malformed_frame_refuses_before_handoff(db,id):
 law stopped_pending_absent_endpoint_reaches_handoff:
   for db: String
   for id: String
-  {Delivery.report_row(db,id,"",True{},id,"o\np\ne\n4\nroot\n4\n2:ab\n") == stopped_delivery(db,id,notification => Delivery.report_handoff_go(db,id,notification),True{}) : IO(Result<&1,&1,U32 & String,String>)}
+  {Delivery.report_row(db,id,"",True{},id,"o\np\ne\n4\nroot\n4\n2:ab\n") == stopped_delivery(db,id,notification => Delivery.report_handoff(db,id,notification),True{}) : IO(Result<&1,&1,U32 & String,String>)}
 
 def stopped_pending_absent_endpoint_reaches_handoff(db,id):
   {==}
@@ -662,7 +662,7 @@ def stopped_pending_absent_endpoint_reaches_handoff(db,id):
 law stopped_pending_malformed_endpoint_reaches_handoff:
   for db: String
   for id: String
-  {Delivery.report_row(db,id,"",True{},id,"o\np\nx\n4\nroot\n4\n2:ab\n") == stopped_delivery(db,id,notification => Delivery.report_handoff_go(db,id,notification),True{}) : IO(Result<&1,&1,U32 & String,String>)}
+  {Delivery.report_row(db,id,"",True{},id,"o\np\nx\n4\nroot\n4\n2:ab\n") == stopped_delivery(db,id,notification => Delivery.report_handoff(db,id,notification),True{}) : IO(Result<&1,&1,U32 & String,String>)}
 
 def stopped_pending_malformed_endpoint_reaches_handoff(db,id):
   {==}
@@ -760,6 +760,32 @@ law post_handoff_query_failure_keeps_the_notification:
   {Delivery.report_queried(db,"requested-report","notification-report",False{},"notification-report",Fail{(code,detail)}) == IO.pure(Result<&1,&1,U32 & String,String>,Fail{(code,Delivery.report_envelope("requested-report","notification-report","","report-query-failed",False{},"",detail))}) : IO(Result<&1,&1,U32 & String,String>)}
 
 def post_handoff_query_failure_keeps_the_notification(db,code,detail):
+  {==}
+
+# The handoff route failure and the unavailable route are strict outcomes carrying
+# the requested identity, the observed code and detail, and no selected identity,
+# because nothing has been selected when the handoff has not run.
+law handoff_route_failure_carries_the_requested_identity:
+  for db: String
+  for code: U32
+  for detail: String
+  {Delivery.report_handoff_available(db,"requested-report","stopped-report",Fail{(code,detail)}) == IO.pure(Result<&1,&1,U32 & String,String>,Fail{(code,Delivery.report_envelope("requested-report","","","stopped-route-query-failed",False{},"",detail))}) : IO(Result<&1,&1,U32 & String,String>)}
+
+def handoff_route_failure_carries_the_requested_identity(db,code,detail):
+  {==}
+
+law unavailable_handoff_route_is_not_an_invocation:
+  for db: String
+  {Delivery.report_handoff_unavailable(db,"requested-report","stopped-report","",True{}) == IO.pure(Result<&1,&1,U32 & String,String>,Fail{(2,Delivery.report_envelope("requested-report","","","stopped-route-unavailable",False{},"","Higher-parent delivery is unavailable; the retained input and the original report are preserved."))}) : IO(Result<&1,&1,U32 & String,String>)}
+
+def unavailable_handoff_route_is_not_an_invocation(db):
+  {==}
+
+law available_handoff_route_reaches_the_handoff:
+  for db: String
+  {Delivery.report_handoff_unavailable(db,"requested-report","stopped-report","notification-report",False{}) == stopped_delivery(db,"stopped-report",notification => Delivery.report_handoff("requested-report",notification),True{}) : IO(Result<&1,&1,U32 & String,String>)}
+
+def available_handoff_route_reaches_the_handoff(db):
   {==}
 
 def completion_prepares_before_owner_release(+db: String, +session: String, +id: String, +log: String, stderr: String, cursor: String, +handle: U32, lock: Maybe<U32>, +outcome: Turn.Outcome, deliveries: List<Chan(Result<&1,&1,U32 & String,String>)>, again: Unit -> IO(Result<&1,&1,U32 & String,Unit>)) -> IO(Result<&1,&1,U32 & String,Unit>):
