@@ -1840,13 +1840,13 @@ def codec_law_the_primary_operation_comes_from_the_chain():
   {==}
 
 law codec_law_a_model_code_access_chain_carries_both_obligations:
-  {chain_second(request_operation_chain(Model_join_sample(), "")) == "codeAccessJoin" : String}
+  {chain_second(request_operation_chain(Model_join_sample(), Eng.ss_empty())) == "codeAccessJoin" : String}
 
 def codec_law_a_model_code_access_chain_carries_both_obligations():
   {==}
 
 law codec_law_a_model_code_access_chain_starts_with_the_load:
-  {primary_operation(request_operation_chain(Model_join_sample(), "")) == "modelLoad" : String}
+  {primary_operation(request_operation_chain(Model_join_sample(), Eng.ss_empty())) == "modelLoad" : String}
 
 def codec_law_a_model_code_access_chain_starts_with_the_load():
   {==}
