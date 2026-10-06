@@ -524,6 +524,63 @@ law retained_report_is_delivered_by_its_own_id:
 def retained_report_is_delivered_by_its_own_id(db,parent,id):
   {==}
 
+# The strict report delivery keeps an already-acknowledged report, an absent or
+# malformed endpoint, a missing report, an observed zero exit and an observed
+# nonzero exit as distinct results, and always carries the report identity.
+law acknowledged_report_is_not_an_invocation:
+  for db: String
+  for id: String
+  for recipient: String
+  for argv: String
+  {Delivery.report_receipt(db,id,recipient,"a","a",argv) == IO.pure(Result<&1,&1,U32 & String,String>,Done{Delivery.report_envelope(id,recipient,"already-acknowledged",False{},"","The retained report already has a receipt; no endpoint was invoked.")}) : IO(Result<&1,&1,U32 & String,String>)}
+
+def acknowledged_report_is_not_an_invocation(db,id,recipient,argv):
+  {==}
+
+law absent_endpoint_is_not_an_invocation:
+  for db: String
+  for id: String
+  for recipient: String
+  for argv: String
+  {Delivery.report_endpoint(db,id,recipient,"e",argv) == IO.pure(Result<&1,&1,U32 & String,String>,Fail{(2,Delivery.report_envelope(id,recipient,"endpoint-absent",False{},"","The recorded endpoint is absent; the report and its input are retained."))}) : IO(Result<&1,&1,U32 & String,String>)}
+
+def absent_endpoint_is_not_an_invocation(db,id,recipient,argv):
+  {==}
+
+law malformed_endpoint_is_not_an_invocation:
+  for db: String
+  for id: String
+  for recipient: String
+  for argv: String
+  {Delivery.report_endpoint(db,id,recipient,"x",argv) == IO.pure(Result<&1,&1,U32 & String,String>,Fail{(2,Delivery.report_envelope(id,recipient,"endpoint-malformed",False{},"","The recorded endpoint is not a usable argument array; the report and its input are retained."))}) : IO(Result<&1,&1,U32 & String,String>)}
+
+def malformed_endpoint_is_not_an_invocation(db,id,recipient,argv):
+  {==}
+
+law missing_projection_is_a_missing_report:
+  for db: String
+  for id: String
+  {Delivery.report_present(db,id,"",True{}) == IO.pure(Result<&1,&1,U32 & String,String>,Fail{(2,Delivery.report_envelope(id,"","report-missing",False{},"","No eligible retained report matches this id; its input is retained."))}) : IO(Result<&1,&1,U32 & String,String>)}
+
+def missing_projection_is_a_missing_report(db,id):
+  {==}
+
+law zero_exit_is_an_observed_invocation:
+  for id: String
+  for recipient: String
+  {Delivery.report_run(id,recipient,T.RRun{T.SExit{0},""}) == Done{Delivery.report_envelope(id,recipient,"invoked",True{},"0","Endpoint process completed and exited zero.")} : Result<&1,&1,U32 & String,String>}
+
+def zero_exit_is_an_observed_invocation(id,recipient):
+  {==}
+
+law nonzero_exit_keeps_the_completion_and_fails:
+  for id: String
+  for recipient: String
+  {Delivery.report_run(id,recipient,T.RRun{T.SExit{7},""}) == Fail{(1,Delivery.report_envelope(id,recipient,"invoked-failed",True{},U32.show(7),"Endpoint process completed without exit zero."))} : Result<&1,&1,U32 & String,String>}
+
+def nonzero_exit_keeps_the_completion_and_fails(id,recipient):
+  {==}
+
 def completion_prepares_before_owner_release(+db: String, +session: String, +id: String, +log: String, stderr: String, cursor: String, +handle: U32, lock: Maybe<U32>, +outcome: Turn.Outcome, deliveries: List<Chan(Result<&1,&1,U32 & String,String>)>, again: Unit -> IO(Result<&1,&1,U32 & String,Unit>)) -> IO(Result<&1,&1,U32 & String,Unit>):
   do IO<Result<&1,&1,U32 & String,Unit>>:
     prepared : Unit <- Turn.prepare(db,session,id,log,stderr,outcome)
