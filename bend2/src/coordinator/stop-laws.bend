@@ -14,7 +14,7 @@ law stopped_receive_cannot_acquire_an_owner:
   for db: String
   for session: String
   for again: Unit -> IO(Result<&1,&1,U32 & String,Unit>)
-  for fresh: @+lock: U32 -> IO(Result<&1,&1,U32 & String,Unit>)
+  for fresh: @+database: String -> @+lock: U32 -> IO(Result<&1,&1,U32 & String,Unit>)
   {Receive.available(db,session,again,fresh,True{}) == IO.pure(Result<&1,&1,U32 & String,Unit>,Fail{(2,"Session is terminally stopped; queued input will not execute. Read its session and retained inbox.")}) : IO(Result<&1,&1,U32 & String,Unit>)}
 
 def stopped_receive_cannot_acquire_an_owner(db,session,again,fresh):

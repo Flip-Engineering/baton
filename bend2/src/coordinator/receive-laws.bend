@@ -143,7 +143,7 @@ law busy_receive_only_reports_queued:
   for +db: String
   for +session: String
   for again: Unit -> IO(Result<&1,&1,U32 & String,Unit>)
-  for fresh: @+lock: U32 -> IO(Result<&1,&1,U32 & String,Unit>)
+  for fresh: @+database: String -> @+lock: U32 -> IO(Result<&1,&1,U32 & String,Unit>)
   {Receive.acquired(db,session,None{},again,fresh) == Receive.receive_status(db,session,"queued") : IO(Result<&1,&1,U32 & String,Unit>)}
 
 def busy_receive_only_reports_queued(db,session,again,fresh):
@@ -362,13 +362,13 @@ law acquired_native_owner_resolves_recorded_attempt:
   for session: String
   for lock: U32
   for again: Unit -> IO(Result<&1,&1,U32 & String,Unit>)
-  for fresh: @+lock: U32 -> IO(Result<&1,&1,U32 & String,Unit>)
+  for fresh: @+database: String -> @+lock: U32 -> IO(Result<&1,&1,U32 & String,Unit>)
   {Receive.acquired(db,session,Some{lock},again,fresh) == Receive.acquired_recorded(db,session,lock,again,fresh) : IO(Result<&1,&1,U32 & String,Unit>)}
 
 def acquired_native_owner_resolves_recorded_attempt(db,session,lock,again,fresh):
   {==}
 
-def recorded_attempt_before_pending(+db: String, +session: String, +lock: U32, again: Unit -> IO(Result<&1,&1,U32 & String,Unit>), fresh: @+lock: U32 -> IO(Result<&1,&1,U32 & String,Unit>)) -> IO(Result<&1,&1,U32 & String,Unit>):
+def recorded_attempt_before_pending(+db: String, +session: String, +lock: U32, again: Unit -> IO(Result<&1,&1,U32 & String,Unit>), fresh: @+database: String -> @+lock: U32 -> IO(Result<&1,&1,U32 & String,Unit>)) -> IO(Result<&1,&1,U32 & String,Unit>):
   do IO<Result<&1,&1,U32 & String,Unit>>:
     +directory : String <- IO.try(String,DB.Sql.query(db,"SELECT coalesce((SELECT directory FROM executions WHERE session=" ++ C.q(session) ++ " AND mode='retained'),'');"))
     +attempt : String <- IO.pure(String,Tx.trim_nl(directory))
@@ -380,7 +380,7 @@ law native_admission_reads_current_attempt_before_pending_input:
   for +session: String
   for +lock: U32
   for -again: Unit -> IO(Result<&1,&1,U32 & String,Unit>)
-  for -fresh: @+lock: U32 -> IO(Result<&1,&1,U32 & String,Unit>)
+  for -fresh: @+database: String -> @+lock: U32 -> IO(Result<&1,&1,U32 & String,Unit>)
   {Receive.acquired_recorded(db,session,lock,again,fresh) == recorded_attempt_before_pending(db,session,lock,again,fresh) : IO(Result<&1,&1,U32 & String,Unit>)}
 
 def native_admission_reads_current_attempt_before_pending_input(db,session,lock,again,fresh):
@@ -395,27 +395,47 @@ law surviving_attempt_recovery_preserves_its_guard:
   for directory: String
   for args: String
   for again: Unit -> IO(Result<&1,&1,U32 & String,Unit>)
-  for fresh: @+lock: U32 -> IO(Result<&1,&1,U32 & String,Unit>)
+  for fresh: @+database: String -> @+lock: U32 -> IO(Result<&1,&1,U32 & String,Unit>)
   {Receive.acquired_attempt(db,session,lock,directory,Some{args},again,fresh) == Receive.recover_owned(db,session,directory,lock,String.split(args,Char.from_u32(0)),again) : IO(Result<&1,&1,U32 & String,Unit>)}
 
 def surviving_attempt_recovery_preserves_its_guard(db,session,lock,directory,args,again,fresh):
   {==}
 
-# Without a recorded attempt the guard's lock goes to the supplied fresh
-# admission operation.
-def fresh_only_admission(held: U32, fresh: @+lock: U32 -> IO(Result<&1,&1,U32 & String,Unit>)) -> IO(Result<&1,&1,U32 & String,Unit>):
-  fresh(held)
+# Without a recorded attempt the guard hands its canonical database and its lock
+# to the supplied fresh admission operation.
+def fresh_only_admission(database: String, held: U32, fresh: @+database: String -> @+lock: U32 -> IO(Result<&1,&1,U32 & String,Unit>)) -> IO(Result<&1,&1,U32 & String,Unit>):
+  fresh(database,held)
 
 law absent_attempt_runs_the_supplied_fresh_admission:
-  for db: String
+  for +db: String
   for session: String
   for +lock: U32
   for directory: String
   for again: Unit -> IO(Result<&1,&1,U32 & String,Unit>)
-  for -fresh: @+lock: U32 -> IO(Result<&1,&1,U32 & String,Unit>)
-  {Receive.acquired_attempt(db,session,lock,directory,None{},again,fresh) == fresh_only_admission(lock,fresh) : IO(Result<&1,&1,U32 & String,Unit>)}
+  for -fresh: @+database: String -> @+lock: U32 -> IO(Result<&1,&1,U32 & String,Unit>)
+  {Receive.acquired_attempt(db,session,lock,directory,None{},again,fresh) == fresh_only_admission(db,lock,fresh) : IO(Result<&1,&1,U32 & String,Unit>)}
 
 def absent_attempt_runs_the_supplied_fresh_admission(db,session,lock,directory,again,fresh):
+  {==}
+
+# The guarded caller passes the database the session lock acquisition resolved,
+# so the fresh admission runs on the same database identity as the
+# recorded-attempt path.
+def guarded_admission_carries_the_canonical_database(+db: String, +session: String, again: Unit -> IO(Result<&1,&1,U32 & String,Unit>), fresh: @+database: String -> @+lock: U32 -> IO(Result<&1,&1,U32 & String,Unit>), closed: Bool) -> IO(Result<&1,&1,U32 & String,Unit>):
+  match closed:
+    case True{}: IO.pure(Result<&1,&1,U32 & String,Unit>,Fail{(2,"Session is terminally stopped; queued input will not execute. Read its session and retained inbox.")})
+    case False{}: Lock.SessionLock.acquire_session(Result<&1,&1,U32 & String,Unit>,db,session,
+      +database => lock => Receive.acquired(database,session,lock,again,fresh))
+
+law canonical_database_reaches_the_guarded_fresh_admission:
+  for +db: String
+  for +session: String
+  for -again: Unit -> IO(Result<&1,&1,U32 & String,Unit>)
+  for -fresh: @+database: String -> @+lock: U32 -> IO(Result<&1,&1,U32 & String,Unit>)
+  for closed: Bool
+  {Receive.available(db,session,again,fresh,closed) == guarded_admission_carries_the_canonical_database(db,session,again,fresh,closed) : IO(Result<&1,&1,U32 & String,Unit>)}
+
+def canonical_database_reaches_the_guarded_fresh_admission(db,session,again,fresh,closed):
   {==}
 
 def completion_prepares_before_owner_release(+db: String, +session: String, +id: String, +log: String, stderr: String, cursor: String, +handle: U32, lock: Maybe<U32>, +outcome: Turn.Outcome, deliveries: List<Chan(Result<&1,&1,U32 & String,String>)>, again: Unit -> IO(Result<&1,&1,U32 & String,Unit>)) -> IO(Result<&1,&1,U32 & String,Unit>):

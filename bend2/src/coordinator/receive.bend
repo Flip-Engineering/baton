@@ -251,22 +251,23 @@ def recover_owned(+db: String, +session: String, +directory: String, +lock: U32,
     case other: IO.pure(Result<&1,&1,U32 & String,Unit>,Fail{(2,"Recorded native recovery arguments are invalid; retain the attempt and inspect its manifest.")})
 
 # A recorded attempt is observed through its saved arguments. Only an absent
-# attempt reaches the supplied fresh admission, which runs under the same lock.
-def acquired_attempt(db: String, session: String, lock: U32, directory: String, recovery: Maybe<String>, again: Unit -> IO(Result<&1,&1,U32 & String,Unit>), fresh: @+lock: U32 -> IO(Result<&1,&1,U32 & String,Unit>)) -> IO(Result<&1,&1,U32 & String,Unit>):
+# attempt reaches the supplied fresh admission, which receives the guard's
+# canonical database and its lock.
+def acquired_attempt(db: String, session: String, lock: U32, directory: String, recovery: Maybe<String>, again: Unit -> IO(Result<&1,&1,U32 & String,Unit>), fresh: @+database: String -> @+lock: U32 -> IO(Result<&1,&1,U32 & String,Unit>)) -> IO(Result<&1,&1,U32 & String,Unit>):
   match recovery:
-    case None{}: fresh(lock)
+    case None{}: fresh(db,lock)
     case Some{args}: recover_owned(db,session,directory,lock,String.split(args,Char.from_u32(0)),again)
 
 # The canonical guard owner resolves the current durable attempt before admission,
 # so a configured caller's fresh admission does not run on the recovery branch.
-def acquired_recorded(+db: String, +session: String, +lock: U32, again: Unit -> IO(Result<&1,&1,U32 & String,Unit>), fresh: @+lock: U32 -> IO(Result<&1,&1,U32 & String,Unit>)) -> IO(Result<&1,&1,U32 & String,Unit>):
+def acquired_recorded(+db: String, +session: String, +lock: U32, again: Unit -> IO(Result<&1,&1,U32 & String,Unit>), fresh: @+database: String -> @+lock: U32 -> IO(Result<&1,&1,U32 & String,Unit>)) -> IO(Result<&1,&1,U32 & String,Unit>):
   do IO<Result<&1,&1,U32 & String,Unit>>:
     +directory : String <- IO.try(String,DB.Sql.query(db,"SELECT coalesce((SELECT directory FROM executions WHERE session=" ++ C.q(session) ++ " AND mode='retained'),'');"))
     +attempt : String <- IO.pure(String,Tx.trim_nl(directory))
     recovery : Maybe<String> <- IO.try(Maybe<String>,P.ProcessChild.recovery_argv(attempt))
     acquired_attempt(db,session,lock,attempt,recovery,again,fresh)
 
-def acquired(db: String, session: String, result: Maybe<U32>, again: Unit -> IO(Result<&1,&1,U32 & String,Unit>), fresh: @+lock: U32 -> IO(Result<&1,&1,U32 & String,Unit>)) -> IO(Result<&1,&1,U32 & String,Unit>):
+def acquired(db: String, session: String, result: Maybe<U32>, again: Unit -> IO(Result<&1,&1,U32 & String,Unit>), fresh: @+database: String -> @+lock: U32 -> IO(Result<&1,&1,U32 & String,Unit>)) -> IO(Result<&1,&1,U32 & String,Unit>):
   match result:
     case None{}: receive_status(db,session,"queued")
     case Some{lock}: acquired_recorded(db,session,lock,again,fresh)
@@ -276,7 +277,7 @@ def registered(exists: Bool) -> IO(Unit):
     case True{}: IO.pure(Unit,Unit{})
     case False{}: IO.die(Unit,2,"Session is not registered; attach a conductor or recruit a player before receiving messages.")
 
-def available(+db: String, +session: String, again: Unit -> IO(Result<&1,&1,U32 & String,Unit>), fresh: @+lock: U32 -> IO(Result<&1,&1,U32 & String,Unit>), closed: Bool) -> IO(Result<&1,&1,U32 & String,Unit>):
+def available(+db: String, +session: String, again: Unit -> IO(Result<&1,&1,U32 & String,Unit>), fresh: @+database: String -> @+lock: U32 -> IO(Result<&1,&1,U32 & String,Unit>), closed: Bool) -> IO(Result<&1,&1,U32 & String,Unit>):
   match closed:
     case True{}: IO.pure(Result<&1,&1,U32 & String,Unit>,Fail{(2,"Session is terminally stopped; queued input will not execute. Read its session and retained inbox.")})
     case False{}: Lock.SessionLock.acquire_session(Result<&1,&1,U32 & String,Unit>,db,session,
@@ -284,14 +285,15 @@ def available(+db: String, +session: String, again: Unit -> IO(Result<&1,&1,U32 
 
 # MESSAGE_ID names the wake. The lock owner reads all pending inputs together.
 # The recorded-attempt branch is observed through its saved arguments; the fresh
-# admission operation supplied here runs only when no attempt is recorded.
+# admission operation supplied here runs only when no attempt is recorded and
+# takes the canonical database from the guard rather than this argument.
 @unsafe
 def run(+db: String, +session: String, +cmd: String, +model: String, +effort: String, +cwd: String, +log: String, message: String) -> IO(Result<&1,&1,U32 & String,Unit>):
   do IO<Result<&1,&1,U32 & String,Unit>>:
     recorded : String <- IO.try(String,Store.commit(db,C.Session{session}))
     exists : Unit <- registered(Bool.not(String.is_empty(recorded)))
     closed : Bool <- Stop.stopped(db,session)
-    available(db,session,u => run(db,session,cmd,model,effort,cwd,log,""),lock => acquired_pending(db,session,cmd,model,effort,cwd,log,lock,u => run(db,session,cmd,model,effort,cwd,log,"")),closed)
+    available(db,session,u => run(db,session,cmd,model,effort,cwd,log,""),canonical => lock => acquired_pending(canonical,session,cmd,model,effort,cwd,log,lock,u => run(db,session,cmd,model,effort,cwd,log,"")),closed)
 
 def attach_recorded(directory: String, next: @+handle: U32 -> IO(Result<&1,&1,U32 & String,Unit>)) -> IO(Result<&1,&1,U32 & String,Unit>):
   do IO<Result<&1,&1,U32 & String,Unit>>:
