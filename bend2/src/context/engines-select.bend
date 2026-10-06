@@ -370,6 +370,12 @@ type Steps is Data:
 # record, and a record without its producing step cannot be attributed. The
 # payload is opaque here: it is the captured bytes or value as its owner recorded
 # them, carried through without parsing.
+# The records are supplied admitted values. This module does not authenticate
+# their provenance, does not read the payload beyond carrying it and establishes no
+# custody: the producer of an admitted capture is the provider step that recorded
+# it, and the typed payload schema of a captured record belongs to that producer
+# and to Codec. A caller holding no admitted capture passes CapNil{}, and the plan
+# then records no captured input rather than a fabricated one.
 type Capture is Data:
   Capture{role: String, path: String, marker: String, payload: String,
           producer_module: String, producer_digest: String,
@@ -958,12 +964,20 @@ def discovery_entry(+cat: Decl.Cat, +inv: Decl.Inv, +installed: SS,
                             Eng.ss_member(installed,
                                           Decl.decl_module_id(decl)))}
 
-def discovery(+cat: Decl.Cat, +inv: Decl.Inv, +installed: SS) -> Discoveries:
-  match cat:
+def discovery_walk(+remaining: Decl.Cat, +context: Decl.Cat, +inv: Decl.Inv,
+                   +installed: SS) -> Discoveries:
+  match remaining:
     case Decl.CatNil{}: DscNil{}
     case Decl.CatCons{head, rest}:
-      DscCons{discovery_entry(cat, inv, installed, head),
-              discovery(cat, rest, inv, installed)}
+      DscCons{discovery_entry(context, inv, installed, head),
+              discovery_walk(rest, context, inv, installed)}
+
+# Discovery over the declared inventory. `remaining` is the part still to report
+# and `context` is the whole candidate set, so admission of one declaration sees
+# every other declaration of the same set; walking a shrinking list without the
+# context would let a later entry miss an earlier declaration's identity.
+def discovery(+cat: Decl.Cat, +inv: Decl.Inv, +installed: SS) -> Discoveries:
+  discovery_walk(cat, cat, inv, installed)
 
 # --- the admission and preparation consumer ----------------------------------
 # One composed entry for a caller that holds a canonical request and the supplied
@@ -1018,6 +1032,12 @@ def verdict_catalog(+o: Decl.CatOutcome, +cat: Decl.Cat, +inputs: SelInputs,
     case Decl.CatAdmitted{admitted}:
       verdict_chosen(select(admitted, inputs, inv), admitted, inv, captures)
 
+# The operands are supplied by their owners and none is produced here: package
+# admission supplies the admitted catalog, the inventory digests, the artifact and
+# schema identities and the installed closure; the provider step and its retained
+# observation supply the captured records; and Codec supplies the decoded request
+# operands. Until those counterparts publish, a caller cannot call this entry with
+# real operands, and this module invents no substitute for them.
 def request_verdict(+cat: Decl.Cat, +inputs: SelInputs, +inv: Decl.Inv,
                     +captures: Captures) -> Verdict:
   verdict_catalog(Decl.admit_catalog(cat, inv), cat, inputs, inv, captures)

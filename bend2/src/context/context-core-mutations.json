@@ -435,8 +435,8 @@
     {
       "name": "frame-sequence-text-accepts-a-leading-zero",
       "file": "bend2/src/context/snapshot-validate.bend",
-      "find": "    case Some{n}: String.eq(U32.show(n), s)",
-      "replace": "    case Some{n}: True{}",
+      "find": "           Bool.not(Bool.and(String.starts_with(s, \"0\"),",
+      "replace": "           Bool.not(Bool.and(False{},",
       "law": "frame_sequence_text_rejects_a_leading_zero"
     },
     {
@@ -459,6 +459,20 @@
       "find": "           Bool.not(ref_claim_declares_producer(c)))",
       "replace": "           False{})",
       "law": "ref_claim_keeps_a_legacy_record_unestablished"
+    },
+    {
+      "name": "frame-sequence-text-accepts-non-digits",
+      "file": "bend2/src/context/snapshot-validate.bend",
+      "find": "    case h <> t: Bool.and(Char.is_digit(h), digits_only(t))",
+      "replace": "    case h <> t: digits_only(t)",
+      "law": "frame_validation_refuses_a_non_decimal_sequence"
+    },
+    {
+      "name": "selection-discovery-drops-the-shared-context",
+      "file": "bend2/src/context/engines-select.bend",
+      "find": "      DscCons{discovery_entry(context, inv, installed, head),",
+      "replace": "      DscCons{discovery_entry(rest, inv, installed, head),",
+      "law": "selection_discovery_admits_every_entry_against_the_whole_set"
     }
   ]
 }

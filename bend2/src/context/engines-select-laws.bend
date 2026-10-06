@@ -438,3 +438,44 @@ law selection_captures_of_another_step_are_not_attributed:
 
 def selection_captures_of_another_step_are_not_attributed():
   {==}
+
+# --- discovery consumes the traversal -----------------------------------------
+def fx_decl_package(+module_id: String, +artifact_digest: String,
+                    +package_identity: String) -> Decl.Decl:
+  Decl.Decl{"1", module_id, "rev1", "2", package_identity,
+            Decl.ENative{Decl.Art{"/pkg/" ++ module_id ++ ".bin",
+                                  artifact_digest, "entry"},
+                         module_id ++ ".export"},
+            Decl.ArtsNil{},
+            Decl.OpsCons{Decl.Op{"definition", "sourceAnalysis", "sub", "opt",
+                                 Eng.ss_one("definition"), Eng.ss_empty(),
+                                 Decl.ExDirect{}, "res", "ref", "evt", "",
+                                 Decl.ModRefsNil{}},
+                         Decl.OpsNil{}},
+            Decl.RulesCons{Decl.RSubject{"handler"}, Decl.RulesNil{}}}
+
+def fx_cat_pair() -> Decl.Cat:
+  Decl.CatCons{fx_decl("m1", "aa"),
+  Decl.CatCons{fx_decl_dep("m2", "bb", Decl.ModRef{"m1", "d1", "definition"}),
+               Decl.CatNil{}}}
+
+def fx_cat_conflicting() -> Decl.Cat:
+  Decl.CatCons{fx_decl("m1", "aa"),
+  Decl.CatCons{fx_decl_package("m1", "aa", "pkg-other"), Decl.CatNil{}}}
+
+# The walk visits every declaration and admits the second one even though it
+# depends on the first, which the walking list alone no longer holds.
+law selection_discovery_walks_a_multi_entry_catalog:
+  {Sel.discovery(fx_cat_pair(), fx_inv(), Eng.ss_two("m1", "m2")) == Sel.DscCons{Sel.Discovery{"m1", Sel.DsAdmitted{"d1"}}, Sel.DscCons{Sel.Discovery{"m2", Sel.DsAdmitted{"d2"}}, Sel.DscNil{}}} : Sel.Discoveries}
+
+def selection_discovery_walks_a_multi_entry_catalog():
+  {==}
+
+# Every entry is admitted against the whole candidate set: with the context
+# dropped, the second declaration would see only its own tail and admit, so this
+# law fails if the walk stops carrying the full set.
+law selection_discovery_admits_every_entry_against_the_whole_set:
+  {Sel.discovery(fx_cat_conflicting(), fx_inv(), Eng.ss_one("m1")) == Sel.DscCons{Sel.Discovery{"m1", Sel.DsRefused{Decl.DrConflictingId{"m1", "pkg-m1"}}}, Sel.DscCons{Sel.Discovery{"m1", Sel.DsRefused{Decl.DrConflictingId{"m1", "pkg-other"}}}, Sel.DscNil{}}} : Sel.Discoveries}
+
+def selection_discovery_admits_every_entry_against_the_whole_set():
+  {==}

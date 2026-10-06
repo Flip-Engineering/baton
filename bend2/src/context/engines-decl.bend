@@ -574,6 +574,10 @@ def rules_hold(+rules: Rules, +paths: SS, +manifests: SS, +subject: String,
                 rules_hold(rest, paths, manifests, subject, projections),
                 False{})
 
+# The module id of one declaration. This reader is the one the catalog admission
+# and the selection composition consume, so it is defined here rather than left to
+# each caller's own pattern match.
+def decl_module_id(+decl: Decl) -> String:
   match decl:
     case Decl{decl_version, module_id, revision, protocol_version,
               package_identity, entry, dependencies, operations,

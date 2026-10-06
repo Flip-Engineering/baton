@@ -408,3 +408,22 @@ law frame_compatibility_refuses_evidence_for_other_bindings:
 
 def frame_compatibility_refuses_evidence_for_other_bindings():
   {==}
+
+# --- canonical sequence text has no numeric bound ----------------------------
+law frame_sequence_text_is_canonical_above_the_u32_domain:
+  {SV.canonical_unsigned_decimal("4294967296") == True{} : Bool}
+
+def frame_sequence_text_is_canonical_above_the_u32_domain():
+  {==}
+
+law frame_sequence_text_orders_above_the_u32_domain:
+  {SV.sequence_after("4294967295", "4294967296") == True{} : Bool}
+
+def frame_sequence_text_orders_above_the_u32_domain():
+  {==}
+
+law frame_sequence_text_rejects_a_non_digit_above_the_u32_domain:
+  {SV.canonical_unsigned_decimal("4294967296x") == False{} : Bool}
+
+def frame_sequence_text_rejects_a_non_digit_above_the_u32_domain():
+  {==}

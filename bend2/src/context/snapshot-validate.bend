@@ -357,17 +357,25 @@ def v_binding_state(+fs: FieldState) -> VChk:
     case FsSchemas{want, saw}: VcFail{reason: VrBindingSchemas{want, saw}}
 
 # --- canonical sequence text -------------------------------------------------
-# A sequence is canonical unsigned decimal text. The admitted numeric domain is
-# the U32 decimal range, and the round trip through the admitted reader is what
-# rejects a leading zero: "007" reads as 7 and does not print as itself.
-def canonical_decimal_of(+m: Maybe<&2, U32>, +s: String) -> Bool:
-  match m:
-    case None{}: False{}
-    case Some{n}: String.eq(U32.show(n), s)
+# A sequence is canonical unsigned decimal text and carries no numeric domain
+# bound: the digits are checked as text, so a value above the U32 range is
+# canonical and still orders correctly. Canonical means nonempty, every character a
+# decimal digit, and no leading zero, so "007" refuses while "4294967296" is
+# admitted.
+def digits_only(+xs: List<&2, Char>) -> Bool:
+  match xs:
+    case Nil{}: True{}
+    case h <> t: Bool.and(Char.is_digit(h), digits_only(t))
 
 def canonical_unsigned_decimal(+s: String) -> Bool:
-  canonical_decimal_of(U32.read(s), s)
+  Bool.and(Bool.not(String.is_empty(s)),
+  Bool.and(digits_only(String.to_list(s)),
+           Bool.not(Bool.and(String.starts_with(s, "0"),
+                             Bool.not(String.eq(s, "0"))))))
 
+# Strictly greater than the last committed sequence. Canonical text without a
+# leading zero orders by length first and lexically within one length, for any
+# digit count, so this needs no arithmetic and no numeric bound.
 def sequence_greater(+longer: Bool, +same_length: Bool, +last: String,
                      +saw: String) -> Bool:
   Bool.pick(Bool, longer, True{},
