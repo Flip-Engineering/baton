@@ -358,8 +358,8 @@
     {
       "name": "selection-disabled-configuration-ignored",
       "file": "bend2/src/context/engines-select.bend",
-      "find": "      Bool.not(Eng.ss_member(disabled, Decl.decl_module_id(decl)))",
-      "replace": "      True{}",
+      "find": "  Bool.not(Eng.ss_member(proj_disabled(inputs_project(inputs)),",
+      "replace": "  Bool.not(Eng.ss_member(Eng.ss_empty(),",
       "law": "selection_auto_excludes_a_disabled_candidate"
     },
     {

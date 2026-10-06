@@ -88,18 +88,34 @@ def fx_cat_two() -> Decl.Cat:
   Decl.CatCons{fx_decl("m1", "aa"),
   Decl.CatCons{fx_decl("m2", "bb"), Decl.CatNil{}}}
 
+# The request operands and the project state stay separate, and sel_inputs is the
+# one assembly point, so a law cannot present configured or observed state as
+# request authority.
+def fx_request() -> Sel.RequestOperands:
+  Sel.RequestOperands{"handler", Eng.ss_one("definition"), "", "sourceAnalysis"}
+
+def fx_project() -> Sel.ProjectState:
+  Sel.ProjectState{Eng.ss_one("src/handler.ts"), Eng.ss_empty(),
+                   Eng.ss_two("m1", "m2"), Eng.ss_empty(), Eng.ss_empty()}
+
+def request_at(+subject: String, +explicit: String,
+               +common: String) -> Sel.RequestOperands:
+  Sel.RequestOperands{subject, Eng.ss_one("definition"), explicit, common}
+
+def project_at(+installed: SS, +disabled: SS,
+               +preferred: SS) -> Sel.ProjectState:
+  Sel.ProjectState{Eng.ss_one("src/handler.ts"), Eng.ss_empty(), installed,
+                   disabled, preferred}
+
 # The configured state: both modules installed, nothing disabled or preferred,
 # and no explicit selector unless a law says otherwise.
 def fx_inputs() -> Sel.SelInputs:
-  Sel.SelInputs{Eng.ss_one("src/handler.ts"), Eng.ss_empty(), "handler",
-                Eng.ss_one("definition"), Eng.ss_two("m1", "m2"), Eng.ss_empty(),
-                Eng.ss_empty(), "", "sourceAnalysis"}
+  Sel.sel_inputs(fx_request(), fx_project())
 
 def inputs_at(+explicit: String, +common: String, +disabled: SS,
               +preferred: SS, +installed: SS, +subject: String) -> Sel.SelInputs:
-  Sel.SelInputs{Eng.ss_one("src/handler.ts"), Eng.ss_empty(), subject,
-                Eng.ss_one("definition"), installed, disabled, preferred,
-                explicit, common}
+  Sel.sel_inputs(request_at(subject, explicit, common),
+                 project_at(installed, disabled, preferred))
 
 # --- candidates --------------------------------------------------------------
 def fx_cand(+module_id: String, +digest: String, +preferred: Bool,
@@ -503,4 +519,23 @@ law selection_capture_records_its_payload_encoding:
   {Sel.cap_encoding(fx_capture()) == "utf8" : String}
 
 def selection_capture_records_its_payload_encoding():
+  {==}
+
+# --- the admission decision a caller fills ------------------------------------
+law selection_admission_decision_carries_the_plan:
+  {Sel.decision_of(Sel.VerdictAdmitted{fx_plan(), "res"}) == Sel.AdmissionAdmits{fx_plan(), "res"} : Sel.AdmissionDecision}
+
+def selection_admission_decision_carries_the_plan():
+  {==}
+
+law selection_admission_decision_names_the_refusal_code:
+  {Sel.decision_of(Sel.VerdictRefused{"selection", Sel.RqSelectionRefused{Sel.SelAmbiguous{Eng.ss_two("m1", "m2")}}}) == Sel.AdmissionRefuses{"selection", "ambiguousSelection", "selection ambiguousSelection"} : Sel.AdmissionDecision}
+
+def selection_admission_decision_names_the_refusal_code():
+  {==}
+
+law selection_admission_decision_names_a_catalog_refusal:
+  {Sel.decision_of(Sel.VerdictRefused{"catalog", Sel.RqCatalogRefused{"m1", Decl.DrMissingArtifact{"m1", "/pkg/m1.bin"}}}) == Sel.AdmissionRefuses{"catalog", "missingArtifact", "declaration m1"} : Sel.AdmissionDecision}
+
+def selection_admission_decision_names_a_catalog_refusal():
   {==}

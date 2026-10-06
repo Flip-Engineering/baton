@@ -24,18 +24,28 @@
 # schema identity the retained binding does not hold refuses, and a caller with no
 # schema identity for the operation is told that operand is missing.
 #
-# The named schema requirement composes with Codec's published callable: the
-# caller runs Schema.schema_declaration_ok(defs) and then
-# Schema.schema_admit(defs, form, value) over the decoded value, where that value
-# is Codec's raw model rather than an encoded string, so an exact number token
-# never passes through a host number. Its verdict is SvOk or
-# SvRefused{condition} with the conditions declarationRefused, undeclaredField,
+# The named schema requirement composes with Codec's checked entry:
+# Schema.schema_admit_value(defs: List<SchemaDef>, form: SchemaForm, input:
+# Codec.RawValue) -> SchemaVerdict runs the declaration preflight over the
+# definitions and the root form and then walks the value, and that value is
+# Codec's raw model rather than encoded text, so an exact number token never
+# passes through a host number. Schema.schema_walk is Codec-internal and only the
+# checked entry reaches it, and Schema.schema_preflight, schema_declaration_ok and
+# json_admit are also exported. The verdict is SvOk or SvRefused{condition} with
+# the conditions ambiguousDeclaration, declarationRefused, undeclaredField,
 # missingField, duplicateKey, wrongKind, enumLiteral, unknownTag, dictKeyRefused
 # and unknownReference (bend2/src/context/codec-schema.bend, Codec commit
-# abc169b9740717e161c7cf1604670b350c8fa99d, blob
-# c59c6dce74e4266c03e0b12603da48352fa1ee49). `payload` here is the encoded
-# payload text the caller decodes before that call; this module reads neither and
-# imports no Codec module, so the wiring owner adds the import in its own closure.
+# 84daf82ec1e92242eb6740fbe3ddf7711ae9ea43, blob
+# 1f319fa8a224a04799a90ff652bd548180310973). `payload` here is the encoded payload
+# text the caller decodes before that call; this module reads neither and imports
+# no Codec module, so the wiring owner adds the import in its own closure.
+#
+# Wire mapping, agreed with Codec and owned by them on the encoding side: the
+# version member here is the text "2" while the closed wire shape carries the
+# numeric 2; role and incarnation here are empty strings for a direct invocation
+# while that shape carries null; and the request member is the canonical request
+# value, which travels as that value rather than as a quoted string. These are
+# mappings, not identities this module asserts.
 #
 # The expectation constructors below are derived from the frozen step, so a
 # caller cannot build an expectation from a module name or a digest it chose, and

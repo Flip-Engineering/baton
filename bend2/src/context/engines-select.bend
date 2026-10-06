@@ -114,56 +114,108 @@ def cand_ids(xs: Cands) -> SS:
 # --- selection inputs --------------------------------------------------------
 # The recorded selection inputs: the admitted project facts, the installed and
 # configured module state, the explicit selector when a request carries one, and
-# the common operation the request asks for. `explicit` is the empty string for
-# auto. Project configuration can disable and prefer installed modules; it
-# cannot install a declaration or widen a grant.
+# the common operation the request asks for.
+
+# --- the separated inputs a selection assembles ------------------------------
+# Request-derived operands come from the decoded canonical request: the subject,
+# the requested projections, the explicit selector and the common operation. The
+# project state comes from owner-supplied configuration, inventory and
+# observation: the examined paths and manifests, and the installed, disabled and
+# preferred module sets. They stay separate, so a configured or observed fact
+# never enters as request authority and a request cannot present installed or
+# disabled state as its own, and `sel_inputs` is the one place that assembles
+# them.
+type RequestOperands is Data:
+  RequestOperands{subject: String, projections: SS, explicit: String,
+                  common: String}
+
+type ProjectState is Data:
+  ProjectState{paths: SS, manifests: SS, installed: SS, disabled: SS,
+               preferred: SS}
+
+def req_subject(+r: RequestOperands) -> String:
+  match r:
+    case RequestOperands{subject, projections, explicit, common}: subject
+
+def req_projections(+r: RequestOperands) -> SS:
+  match r:
+    case RequestOperands{subject, projections, explicit, common}: projections
+
+def req_explicit(+r: RequestOperands) -> String:
+  match r:
+    case RequestOperands{subject, projections, explicit, common}: explicit
+
+def req_common(+r: RequestOperands) -> String:
+  match r:
+    case RequestOperands{subject, projections, explicit, common}: common
+
+def proj_paths(+p: ProjectState) -> SS:
+  match p:
+    case ProjectState{paths, manifests, installed, disabled, preferred}: paths
+
+def proj_manifests(+p: ProjectState) -> SS:
+  match p:
+    case ProjectState{paths, manifests, installed, disabled, preferred}:
+      manifests
+
+def proj_installed(+p: ProjectState) -> SS:
+  match p:
+    case ProjectState{paths, manifests, installed, disabled, preferred}:
+      installed
+
+def proj_disabled(+p: ProjectState) -> SS:
+  match p:
+    case ProjectState{paths, manifests, installed, disabled, preferred}:
+      disabled
+
+def proj_preferred(+p: ProjectState) -> SS:
+  match p:
+    case ProjectState{paths, manifests, installed, disabled, preferred}:
+      preferred
+
+# The assembled selection inputs. A caller reaches this only through sel_inputs,
+# which takes the two separated operands.
 type SelInputs is Data:
-  SelInputs{paths: SS, manifests: SS, subject: String, projections: SS,
-            installed: SS, disabled: SS, preferred: SS, explicit: String,
-            common: String}
+  SelInputs{request: RequestOperands, project: ProjectState}
+
+def sel_inputs(+r: RequestOperands, +p: ProjectState) -> SelInputs:
+  SelInputs{r, p}
+
+def inputs_request(+inputs: SelInputs) -> RequestOperands:
+  match inputs:
+    case SelInputs{request, project}: request
+
+def inputs_project(+inputs: SelInputs) -> ProjectState:
+  match inputs:
+    case SelInputs{request, project}: project
 
 def decl_enabled(+decl: Decl.Decl, +inputs: SelInputs) -> Bool:
-  match inputs:
-    case SelInputs{paths, manifests, subject, projections, installed, disabled,
-                   preferred, explicit, common}:
-      Bool.not(Eng.ss_member(disabled, Decl.decl_module_id(decl)))
+  Bool.not(Eng.ss_member(proj_disabled(inputs_project(inputs)),
+                         Decl.decl_module_id(decl)))
 
 def decl_preferred(+decl: Decl.Decl, +inputs: SelInputs) -> Bool:
-  match inputs:
-    case SelInputs{paths, manifests, subject, projections, installed, disabled,
-                   preferred, explicit, common}:
-      Eng.ss_member(preferred, Decl.decl_module_id(decl))
+  Eng.ss_member(proj_preferred(inputs_project(inputs)),
+                Decl.decl_module_id(decl))
 
 def decl_installed(+decl: Decl.Decl, +inputs: SelInputs) -> Bool:
-  match inputs:
-    case SelInputs{paths, manifests, subject, projections, installed, disabled,
-                   preferred, explicit, common}:
-      Eng.ss_member(installed, Decl.decl_module_id(decl))
+  Eng.ss_member(proj_installed(inputs_project(inputs)),
+                Decl.decl_module_id(decl))
 
 def decl_applicable(+decl: Decl.Decl, +inputs: SelInputs) -> Bool:
-  match inputs:
-    case SelInputs{paths, manifests, subject, projections, installed, disabled,
-                   preferred, explicit, common}:
-      Decl.rules_hold(Decl.decl_applicability(decl), paths, manifests, subject,
-                      projections)
+  Decl.rules_hold(Decl.decl_applicability(decl),
+                  proj_paths(inputs_project(inputs)),
+                  proj_manifests(inputs_project(inputs)),
+                  req_subject(inputs_request(inputs)),
+                  req_projections(inputs_request(inputs)))
 
 def subject_of(+inputs: SelInputs) -> String:
-  match inputs:
-    case SelInputs{paths, manifests, subject, projections, installed, disabled,
-                   preferred, explicit, common}:
-      subject
+  req_subject(inputs_request(inputs))
 
 def explicit_of(+inputs: SelInputs) -> String:
-  match inputs:
-    case SelInputs{paths, manifests, subject, projections, installed, disabled,
-                   preferred, explicit, common}:
-      explicit
+  req_explicit(inputs_request(inputs))
 
 def common_of(+inputs: SelInputs) -> String:
-  match inputs:
-    case SelInputs{paths, manifests, subject, projections, installed, disabled,
-                   preferred, explicit, common}:
-      common
+  req_common(inputs_request(inputs))
 
 def digests_of(+inv: Decl.Inv) -> Decl.Digs:
   match inv:
@@ -1088,3 +1140,76 @@ def verdict_catalog(+o: Decl.CatOutcome, +cat: Decl.Cat, +inputs: SelInputs,
 def request_verdict(+cat: Decl.Cat, +inputs: SelInputs, +inv: Decl.Inv,
                     +captures: Captures) -> Verdict:
   verdict_catalog(Decl.admit_catalog(cat, inv), cat, inputs, inv, captures)
+
+# --- the admission decision a caller fills -----------------------------------
+# The typed decision a submit path consumes before it creates a row: on success
+# the frozen plan and the result schema identity, and on refusal the stage, a code
+# naming the typed reason and a rendered detail. The code is the name of the typed
+# reason, so no numeric code and no second error vocabulary is invented here; a
+# caller maps it to its own closed shape and to its own numbers.
+type AdmissionDecision is Data:
+  AdmissionAdmits{plan: Plan, result_schema: String}
+  AdmissionRefuses{stage: String, code: String, detail: String}
+
+def decl_reject_code(+r: Decl.DeclReject) -> String:
+  match r:
+    case Decl.DrUnsupportedDeclarationVersion{saw}: "unsupportedDeclarationVersion"
+    case Decl.DrUnsupportedProtocolVersion{saw}: "unsupportedProtocolVersion"
+    case Decl.DrEmptyId{what}: "emptyId"
+    case Decl.DrConflictingId{module_id, package_identity}: "conflictingId"
+    case Decl.DrMissingDeclarationDigest{module_id}: "missingDeclarationDigest"
+    case Decl.DrMissingArtifact{module_id, path}: "missingArtifact"
+    case Decl.DrArtifactMismatch{module_id, path, want, saw}: "artifactMismatch"
+    case Decl.DrEmptyEntryVector{}: "emptyEntryVector"
+    case Decl.DrMissingSchema{module_id, operation, schema}: "missingSchema"
+    case Decl.DrDuplicateOperation{module_id, operation}: "duplicateOperation"
+    case Decl.DrUnknownCommonOperation{module_id, operation, common}:
+      "unknownCommonOperation"
+    case Decl.DrEffectRequiresReview{module_id, operation, effect}:
+      "effectRequiresReview"
+    case Decl.DrMissingLifetimeProfile{module_id, operation}:
+      "missingLifetimeProfile"
+    case Decl.DrDependencyUnresolved{module_id, operation, dependency}:
+      "dependencyUnresolved"
+    case Decl.DrDependencyDigestMismatch{module_id, dependency, want, saw}:
+      "dependencyDigestMismatch"
+
+def sel_reason_code(+r: SelReason) -> String:
+  match r:
+    case SelUnknownCommonOperation{common}: "unknownCommonOperation"
+    case SelExplicitUnknown{module_id}: "explicitUnknown"
+    case SelExplicitDisabled{module_id}: "explicitDisabled"
+    case SelExplicitIncompatible{module_id}: "explicitIncompatible"
+    case SelExplicitWrongOperation{module_id, operation}: "explicitWrongOperation"
+    case SelAmbiguous{candidates}: "ambiguousSelection"
+    case SelNoCandidate{subject}: "noCandidate"
+
+def plan_reason_code(+r: PlanReason) -> String:
+  match r:
+    case PlanStaleSelection{module_id}: "staleSelection"
+    case PlanMissingOperation{module_id, operation}: "missingOperation"
+    case PlanDependencyUnresolved{dependency, operation}: "dependencyUnresolved"
+    case PlanDependencyDigestMismatch{dependency, want, saw}:
+      "dependencyDigestMismatch"
+    case PlanCycle{module_id}: "cycle"
+
+def rq_code(+r: RqReason) -> String:
+  match r:
+    case RqCatalogRefused{module_id, reason}: decl_reject_code(reason)
+    case RqSelectionRefused{reason}: sel_reason_code(reason)
+    case RqPlanRefused{reason}: plan_reason_code(reason)
+
+def rq_detail(+r: RqReason) -> String:
+  match r:
+    case RqCatalogRefused{module_id, reason}:
+      String.append("declaration ", module_id)
+    case RqSelectionRefused{reason}:
+      String.append("selection ", sel_reason_code(reason))
+    case RqPlanRefused{reason}:
+      String.append("plan ", plan_reason_code(reason))
+
+def decision_of(+v: Verdict) -> AdmissionDecision:
+  match v:
+    case VerdictAdmitted{plan, result_schema}: AdmissionAdmits{plan, result_schema}
+    case VerdictRefused{stage, reason}:
+      AdmissionRefuses{stage, rq_code(reason), rq_detail(reason)}
