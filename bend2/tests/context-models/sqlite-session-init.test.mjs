@@ -16,6 +16,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { test } from 'node:test';
 
+import { attachDiagnostics, describeFailure } from '../../context/catalogs/failure.mjs';
 import { captureSqliteSnapshot, createSqliteSession, openReadOnlySqlite } from '../../context/catalogs/sqlite-catalog.mjs';
 
 function subjectFile() {
@@ -31,7 +32,9 @@ function scriptedDatabase({ realPath, rows = {}, failures = {}, execFailures = {
   const instances = [];
   const dispatch = (sql, instance) => {
     for (const [match, behavior] of Object.entries(failures)) {
-      if (sql.includes(match)) throw Object.assign(new Error(behavior.message), { code: behavior.code ?? null });
+      if (!sql.includes(match)) continue;
+      if ('thrown' in behavior) throw behavior.thrown;
+      throw Object.assign(new Error(behavior.message), { code: behavior.code ?? null });
     }
     if (sql.startsWith('EXPLAIN ')) return { all: () => rows.explain ?? [] };
     if (sql.includes('sqlite_version()')) return { get: () => ({ version: '3.53.0', source_id: 'scripted-source-id' }) };
@@ -322,6 +325,107 @@ test('the capture wrapper returns the release record and attaches its diagnostic
   } finally {
     subject.remove();
   }
+});
+
+test('cleanup evidence survives an original failure that cannot be mutated', () => {
+  const subject = subjectFile();
+  try {
+    const frozen = Object.freeze(Object.assign(new Error('read failed'), { code: 'SQLITE_CORRUPT' }));
+    const closeError = Object.assign(new Error('close refused'), { code: 'SQLITE_BUSY' });
+    const scripted = scriptedDatabase({
+      realPath: subject.realPath,
+      rows: HAPPY_ROWS,
+      failures: { sqlite_schema: { thrown: frozen } },
+      closeError,
+    });
+    assert.throws(
+      () => createSqliteSession({ path: subject.path, DatabaseSync: scripted.DatabaseSync }),
+      error => {
+        assert.equal(error.message, 'read failed', 'the original message is retained');
+        assert.equal(error.cause, frozen, 'the original value is retained as the cause');
+        assert.deepEqual(error.cleanup, [{ stage: 'createSqliteSession:close', code: 'SQLITE_BUSY', message: 'close refused' }]);
+        return true;
+      },
+    );
+    const [instance] = scripted.instances;
+    assert.deepEqual(instance.execs, ['BEGIN DEFERRED', 'ROLLBACK'], 'the rollback still ran first');
+    assert.equal(instance.closes, 1, 'the close still ran even though attachment could not mutate the original');
+  } finally {
+    subject.remove();
+  }
+});
+
+test('a non-writable cleanup member and a primitive throw both keep every diagnostic', () => {
+  const subject = subjectFile();
+  try {
+    const sealed = new Error('read failed');
+    Object.defineProperty(sealed, 'cleanup', { value: [], writable: false, enumerable: true, configurable: false });
+    const closeError = Object.assign(new Error('close refused'), { code: 'SQLITE_BUSY' });
+    const sealedRun = scriptedDatabase({
+      realPath: subject.realPath,
+      rows: HAPPY_ROWS,
+      failures: { sqlite_schema: { thrown: sealed } },
+      execFailures: { ROLLBACK: { message: 'rollback refused' } },
+      closeError,
+    });
+    assert.throws(
+      () => createSqliteSession({ path: subject.path, DatabaseSync: sealedRun.DatabaseSync }),
+      error => {
+        assert.equal(error.message, 'read failed');
+        assert.deepEqual(error.cleanup, [
+          { stage: 'createSqliteSession:rollback', code: null, message: 'rollback refused' },
+          { stage: 'createSqliteSession:close', code: 'SQLITE_BUSY', message: 'close refused' },
+        ], 'both cleanup failures are retained in order');
+        assert.equal(error.cause, sealed);
+        return true;
+      },
+    );
+    assert.equal(sealedRun.instances[0].closes, 1);
+
+    const primitiveRun = scriptedDatabase({
+      realPath: subject.realPath,
+      rows: HAPPY_ROWS,
+      failures: { sqlite_schema: { thrown: 'read failed as a string' } },
+      closeError,
+    });
+    assert.throws(
+      () => createSqliteSession({ path: subject.path, DatabaseSync: primitiveRun.DatabaseSync }),
+      error => {
+        assert.match(error.message, /non-error throw: read failed as a string/);
+        assert.equal(error.cause, 'read failed as a string');
+        assert.deepEqual(error.cleanup, [{ stage: 'createSqliteSession:close', code: 'SQLITE_BUSY', message: 'close refused' }]);
+        return true;
+      },
+    );
+    assert.equal(primitiveRun.instances[0].closes, 1, 'a primitive throw does not skip the close');
+  } finally {
+    subject.remove();
+  }
+});
+
+test('the failure description keeps the provider error, codes and cleanup evidence', () => {
+  const provider = Object.assign(new Error('read failed'), { code: 'SQLITE_CORRUPT' });
+  provider.cleanup = [{ stage: 'sqliteSession:close', code: 'SQLITE_BUSY', message: 'close refused' }];
+  const described = describeFailure(provider);
+  assert.equal(described.kind, 'Error');
+  assert.equal(described.message, 'read failed');
+  assert.equal(described.code, 'SQLITE_CORRUPT');
+  assert.equal(described.cleanup.length, 1);
+  assert.equal(described.cause, null);
+
+  const primitive = describeFailure('plain string failure');
+  assert.equal(primitive.kind, 'non-error-throw');
+  assert.equal(primitive.message, 'plain string failure');
+  assert.deepEqual(primitive.cleanup, []);
+  assert.equal(primitive.cause, null);
+
+  const wrapped = attachDiagnostics(Object.freeze(new Error('frozen failure')), [
+    { stage: 'createSqliteSession:close', code: null, message: 'close refused' },
+  ]);
+  const describedWrapped = describeFailure(wrapped);
+  assert.equal(describedWrapped.message, 'frozen failure');
+  assert.equal(describedWrapped.cleanup.length, 1);
+  assert.equal(describedWrapped.cause.message, 'frozen failure', 'the retained original is described through the cause');
 });
 
 test('a successful construction keeps one connection and the caller owns its close', () => {

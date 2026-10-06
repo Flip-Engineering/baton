@@ -37,6 +37,7 @@ import { dirname, join } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { createHash } from 'node:crypto';
 
+import { describeFailure } from '../catalogs/failure.mjs';
 import { createJsonSchemaProvider } from './json-schema.mjs';
 import { readJsonSample } from './sample.mjs';
 import { runZodModelChild } from './zod-model.mjs';
@@ -225,7 +226,7 @@ async function modelLoad({ query, request, select, writeStdout, writeStderr, chi
       outputDirectory: inputs.outputDirectory,
     });
   } catch (error) {
-    writeStderr(`${String(error?.stack ?? error)}\n`);
+    writeStderr(`${JSON.stringify(describeFailure(error))}\n`);
     return 1;
   }
   if (result.status !== 'ok') {
@@ -471,7 +472,7 @@ export async function modelAdapterMain({ readStdin, writeStdout, writeStderr, ch
     if (operation === 'modelLoad') return await modelLoad({ query, request, select, writeStdout, writeStderr, childPath, node });
     return await sourceAnalysis({ frame, query, request, select, writeStdout });
   } catch (error) {
-    writeStderr(`${String(error?.stack ?? error)}\n`);
+    writeStderr(`${JSON.stringify(describeFailure(error))}\n`);
     return 1;
   }
 }

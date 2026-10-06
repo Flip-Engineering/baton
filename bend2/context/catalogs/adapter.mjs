@@ -30,6 +30,7 @@ import { DatabaseSync } from 'node:sqlite';
 import { pathToFileURL } from 'node:url';
 
 import { createSqliteSession } from './sqlite-catalog.mjs';
+import { describeFailure } from './failure.mjs';
 import { openPostgresSession } from './postgres-catalog.mjs';
 import { admitSqlCallRecord, joinPostgresRelations } from './sql-join.mjs';
 import { CATALOG_OPERATIONS } from './operations.mjs';
@@ -435,7 +436,7 @@ export async function catalogAdapterMain({ readStdin, writeStdout, writeStderr }
     })}\n`);
     return 0;
   } catch (error) {
-    writeStderr(`${String(error?.stack ?? error)}\n`);
+    writeStderr(`${JSON.stringify(describeFailure(error))}\n`);
     return 1;
   }
 }

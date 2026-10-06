@@ -17,6 +17,7 @@
 import { existsSync, realpathSync, statSync } from 'node:fs';
 
 import { canonicalJson, digestJson } from './canonical.mjs';
+import { attachCleanup, attachDiagnostics, cleanupDiagnostic } from './failure.mjs';
 import { analyzeSqliteStatement, joinRootpages, probeOriginCapability } from './sqlite-statement.mjs';
 import { joinConstantSql } from './sql-join.mjs';
 
@@ -66,30 +67,8 @@ export function fileIdentityOf(path) {
   return { realPath, device: String(stat.dev), inode: String(stat.ino), bytes: stat.size, mode: stat.mode };
 }
 
-// Failure cleanup never replaces the original error. The thrown error is
-// rethrown unchanged, and a cleanup that itself fails is reported on it as a
-// `cleanup` entry, so a failure never reads as a successful release.
-function cleanupDiagnostic(stage, cleanupError) {
-  return {
-    stage,
-    code: cleanupError?.code ?? null,
-    message: String(cleanupError?.message ?? cleanupError),
-  };
-}
-
-function attachDiagnostics(error, diagnostics) {
-  if (!Array.isArray(diagnostics) || diagnostics.length === 0) return error;
-  if (error !== null && typeof error === 'object') {
-    const existing = Array.isArray(error.cleanup) ? error.cleanup : [];
-    error.cleanup = [...existing, ...diagnostics];
-  }
-  return error;
-}
-
-function attachCleanup(error, stage, cleanupError) {
-  return attachDiagnostics(error, [cleanupDiagnostic(stage, cleanupError)]);
-}
-
+// Every cleanup action runs before any evidence is attached, and attachment
+// cannot throw or discard diagnostics; the shared module owns that behavior.
 function closeOnFailure(db, error, stage) {
   try {
     db.close();
