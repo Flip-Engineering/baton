@@ -1,3 +1,13 @@
+# STATUS: INCOMPLETE AND UNACCEPTED DRAFT. This file does not satisfy task169 and must not be
+# used as source. The paired fixture does not exist. Known defects, from reading the committed
+# bytes: the child-internal failure path in data_occurrence manufactures a placeholder child
+# instead of reporting the failure, which is the manufacturing of a missing field this slice is
+# required to avoid; tag_from is a pointless identity helper; collect_tagged recomputes the key
+# tag it is already given and carries redundant arguments; and nothing here establishes that the
+# declared types line up with the bodies. An earlier commit message for this file also claimed
+# it called helpers that do not exist and named guard, first_child and insert_fault; that claim
+# was false and is retracted, as those names appear nowhere in the file. The intended shape is
+# described by the claim below and is not yet correctly implemented.
 # CLAIM: a complete frame of original octets is decoded by the reviewed frame decoder and
 # inspected for the fields an output classifier needs, with the complete original decoded tree
 # and the original octets retained and with every relevant occurrence kept in source member
