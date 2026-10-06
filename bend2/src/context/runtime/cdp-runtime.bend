@@ -437,6 +437,12 @@ def advance(record: RuntimeRecord, event: RuntimeEvent) -> Transition:
 # A destroyed context ends a stop or an acknowledged pause request and leaves every other
 # state as it was.
 
+def stop_lost(+previous: StopLiveness) -> StopLiveness:
+  match previous:
+    case StopAbsent{}: StopAbsent{}
+    case other: StopHistorical{}
+
+# A pause-scoped reference is admitted only against a live stop.
 def stop_liveness(+previous: StopLiveness, +event: RuntimeEvent) -> StopLiveness:
   match event:
     case EvPaused{}: StopLive{}
@@ -450,12 +456,7 @@ def stop_liveness(+previous: StopLiveness, +event: RuntimeEvent) -> StopLiveness
 
 # An adapter failure invalidates a recorded stop without inventing stop history: a live or
 # unknown stop becomes historical, and an absent stop stays absent.
-def stop_lost(+previous: StopLiveness) -> StopLiveness:
-  match previous:
-    case StopAbsent{}: StopAbsent{}
-    case other: StopHistorical{}
 
-# A pause-scoped reference is admitted only against a live stop.
 def stop_is_live(+stop: StopLiveness) -> Bool:
   match stop:
     case StopLive{}: True{}

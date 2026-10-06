@@ -92,7 +92,7 @@ def companion_step(+db: String, +binding: String, +query: String, +role: String,
     read : Result<&1,&1,U32 & String,String> <- DB.Sql.query_bound(db, binding, ContextRoles.intent_read_sql(query, role, incarnation))
     companion_read(db, binding, query, role, incarnation, duty, read)
 
-def reconcile_step(+db: String, +binding: String, +query: String, +role: String, +incarnation: String, duty: Unit -> IO(Bool), again: Unit -> IO(CompanionStep), step: CompanionStep) -> IO(CompanionStep):
+def reconcile_step(+db: String, +binding: String, +query: String, +role: String, +incarnation: String, again: Unit -> IO(CompanionStep), step: CompanionStep) -> IO(CompanionStep):
   match step:
     case StepContinue{}: do IO<CompanionStep>:
       waited : Unit <- IO.sleep(1000)
@@ -107,7 +107,7 @@ def reconcile_step(+db: String, +binding: String, +query: String, +role: String,
 def reconcile_intents(+db: String, +binding: String, +query: String, +role: String, +incarnation: String, duty: Unit -> IO(Bool), again: Unit -> IO(CompanionStep)) -> IO(CompanionStep):
   do IO<CompanionStep>:
     step : CompanionStep <- companion_step(db, binding, query, role, incarnation, duty)
-    reconcile_step(db, binding, query, role, incarnation, duty, again, step)
+    reconcile_step(db, binding, query, role, incarnation, again, step)
 
 def start_reconcile(+db: String, +binding: String, +query: String, +role: String, +incarnation: String, duty: Unit -> IO(Bool), again: Unit -> IO(CompanionStep)) -> IO(Chan(CompanionStep)):
   IO.fork(CompanionStep, reconcile_intents(db, binding, query, role, incarnation, duty, again))
