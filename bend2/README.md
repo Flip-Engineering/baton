@@ -214,6 +214,23 @@ available. Read `session ID` and `worktree ID`, retry the recorded assignment,
 or recruit a new ID with a new branch and unused path.
 `worktree ID` reads its current Git branch, commit and dirty state.
 
+`configure ID HARNESS MODEL EFFORT HARNESS_CMD OUTPUT_LOG EXPECTED_HARNESS
+EXPECTED_MODEL EXPECTED_EFFORT` moves an existing registered session's next
+admitted turn to another provider route. It keeps the Player's identity,
+parentage, workspace, branch, base, native conversation and every stored
+message, and rebuilds the receiver endpoint from `MODEL` for a Codex or OMP
+route. A Muse or Claude harness keeps no receiver endpoint, because
+`dispatch-turn` reads the recorded route when it launches. The expected route is
+the route the caller read first: a delayed or repeated change that still names
+the old route is refused, so a continuation that lost its transport response
+cannot reconfigure a session whose route already moved. A terminal stop, an
+owned attempt, a harness a Player is not launched with, an empty model or an
+endpoint that is not admissible argv returns `configure-refused` with exit
+status 2; an unmapped model key is refused before any row is written. To
+continue a Player whose provider stopped accepting work, read `session` and
+`inbox`, configure the recorded route to an available provider, and deliver the
+retained input again.
+
 `land PLAYER_ID REPO TARGET_BRANCH` looks up the Player's branch from the
 database, verifies the Player tip is a fast-forward from the target, and
 advances the target with a compare-and-swap `update-ref`. The answer is JSON
