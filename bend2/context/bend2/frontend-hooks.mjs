@@ -42,18 +42,32 @@ export const UPSTREAM_INPUTS = Object.freeze({
 const REGISTRY = `// Bend2 frontend hook registry. Installed by an external bridge before the frontend is used.
 // With no sink installed, or with a sink that declines, every path below is unchanged.
 export type BendHookEvent = unknown;
+export interface BendHookResolution { status: string; identity?: string; digest?: string; requested?: string; detail?: string | null; }
+export interface BendHookBasePath { status: string; path?: string; digest?: string; detail?: string | null; }
 export interface BendHookSink {
-  emit(event: BendHookEvent): void;
-  readSource?(file: string): string | undefined;
-  resolveSource?(file: string): { exists: boolean; identity?: string } | undefined;
-  sourceFailure?(file: string, reason: string): void;
+  emit(event: BendHookEvent, owner?: string): void;
+  readSource?(file: string, owner?: string): string | undefined;
+  resolveSource?(file: string, owner?: string): BendHookResolution | undefined;
+  baseBendPath?(owner?: string): BendHookBasePath | undefined;
+  sourceFailure?(file: string, reason: string, owner?: string): void;
   captureOnly?: boolean;
-  baseBendPath?(): string | undefined;
 }
+export interface BendHookInstall { status: "installed" | "refused"; owner: string; reason?: string; }
 let bendHookSink: BendHookSink | null = null;
-export const bendHookState = { failures: 0, refusals: 0 };
-export function bendHooks(sink: BendHookSink | null): void {
+export const bendHookState = { failures: 0, refusals: 0, owner: "", installs: 0, refusedInstalls: 0 };
+export function bendHooks(sink: BendHookSink | null, owner?: string): BendHookInstall {
+  const token = owner === undefined ? "" : owner;
+  if (bendHookState.owner !== "" && bendHookState.owner !== token) {
+    bendHookState.refusedInstalls += 1;
+    return { status: "refused", owner: bendHookState.owner, reason: "ownedByAnother" };
+  }
   bendHookSink = sink;
+  bendHookState.owner = sink === null ? "" : token;
+  if (sink !== null) bendHookState.installs += 1;
+  return { status: "installed", owner: bendHookState.owner };
+}
+export function bendHookOwner(): string {
+  return bendHookState.owner;
 }
 export function bendHookFailures(): number {
   return bendHookState.failures;
@@ -62,49 +76,114 @@ export function bendEmit(event: BendHookEvent): void {
   const sink = bendHookSink;
   if (sink === null) return;
   try {
-    sink.emit(event);
+    sink.emit(event, bendHookState.owner);
   } catch {
     bendHookState.failures += 1;
   }
 }
-function bendHookResolve(file: string): { exists: boolean; identity: string; captured: boolean } {
+function bendShow(value: unknown): string | null {
+  try {
+    if (value !== null && typeof value === "object" && (value as { $?: string }).$ === "Err") return err_show(value as Err);
+    return String(value);
+  } catch {
+    bendHookState.failures += 1;
+    return null;
+  }
+}
+function bendTermShow(value: unknown): string | null {
+  try {
+    return term_show(term_lower(value as LTerm));
+  } catch {
+    bendHookState.failures += 1;
+    return null;
+  }
+}
+export function bendHookShow(value: unknown): string | null {
+  return bendShow(value);
+}
+// The association an Err already carries: its definition and its span. Reading them is what keeps a
+// caught value's source association without replacing or rewriting the value itself.
+function bendThrownContext(value: unknown): { definition: string | null; span: Span | null } {
+  try {
+    if (value === null || typeof value !== "object") return { definition: null, span: null };
+    const err = value as { def?: Name; spn?: Span };
+    return { definition: err.def === undefined ? null : err.def, span: err.spn === undefined ? null : (err.spn ?? null) };
+  } catch {
+    bendHookState.failures += 1;
+    return { definition: null, span: null };
+  }
+}
+function bendHookResolve(file: string): { status: string; exists: boolean; identity: string; captured: boolean; detail: string | null } {
   const sink = bendHookSink;
   if (sink !== null && typeof sink.resolveSource === "function") {
-    const resolved = sink.resolveSource(file);
+    const resolved = sink.resolveSource(file, bendHookState.owner);
     if (resolved !== undefined && resolved !== null) {
-      return { exists: resolved.exists === true, identity: resolved.identity === undefined ? file : resolved.identity, captured: true };
+      if (resolved.status === "captured") {
+        return { status: "captured", exists: true, identity: resolved.identity === undefined ? file : resolved.identity, captured: true, detail: null };
+      }
+      if (resolved.status === "absent") {
+        return { status: "absent", exists: false, identity: resolved.identity === undefined ? file : resolved.identity, captured: true, detail: null };
+      }
+      return { status: "unavailable", exists: false, identity: file, captured: true, detail: resolved.detail === undefined ? null : resolved.detail };
     }
   }
-  return { exists: fs.existsSync(file), identity: file, captured: false };
+  if (sink !== null && sink.captureOnly === true) {
+    // In capture-only mode an unanswered lookup is a refusal, never a host lookup.
+    return { status: "unavailable", exists: false, identity: file, captured: true, detail: "closureUndefinedResolution" };
+  }
+  return { status: "host", exists: fs.existsSync(file), identity: file, captured: false, detail: null };
 }
 function bendHookAcquisitionFailure(file: string, reason: string): void {
   const sink = bendHookSink;
   if (sink !== null && typeof sink.sourceFailure === "function") {
     try {
-      sink.sourceFailure(file, reason);
+      sink.sourceFailure(file, reason, bendHookState.owner);
     } catch {
       bendHookState.failures += 1;
     }
   }
 }
+function bendHookRefuse(book: Book, file: string, reason: string, spn?: Span): never {
+  bendHookAcquisitionFailure(file, reason);
+  bendHookState.refusals += 1;
+  throw Err(book, ctx_nil(), "no such file: " + file, undefined, spn);
+}
 function bendHookSource(book: Book, file: string, spn?: Span): string {
   const sink = bendHookSink;
   const resolved = bendHookResolve(file);
-  if (sink !== null && typeof sink.readSource === "function" && (resolved.captured || sink.captureOnly !== true)) {
-    const provided = sink.readSource(resolved.identity);
+  if (resolved.status === "captured") {
+    const provided = sink !== null && typeof sink.readSource === "function" ? sink.readSource(resolved.identity, bendHookState.owner) : undefined;
     if (typeof provided === "string") return provided;
-    if (resolved.captured) {
-      bendHookAcquisitionFailure(file, "readUnavailable");
-      bendHookState.refusals += 1;
-      throw Err(book, ctx_nil(), "no such file: " + file, undefined, spn);
-    }
+    bendHookRefuse(book, file, "readUnavailable", spn);
   }
-  if (sink !== null && sink.captureOnly === true) {
-    bendHookAcquisitionFailure(file, "notInClosure");
-    bendHookState.refusals += 1;
-    throw Err(book, ctx_nil(), "no such file: " + file, undefined, spn);
-  }
+  if (resolved.status === "absent") bendHookRefuse(book, file, "missingInClosure", spn);
+  if (resolved.status === "unavailable") bendHookRefuse(book, file, resolved.detail === null ? "unavailableInClosure" : resolved.detail, spn);
   return fs.readFileSync(resolved.identity, "utf8");
+}
+function bendHookLibCaptured(book: Book, file: string, spn?: Span): boolean {
+  const sink = bendHookSink;
+  if (sink === null || sink.captureOnly !== true || !file.startsWith(BEND_LIB + "/")) return false;
+  const resolved = bendHookResolve(file);
+  if (resolved.status === "captured") return true;
+  bendHookRefuse(book, file, resolved.status === "absent" ? "missingInClosure" : "unavailableInClosure", spn);
+}
+function bendHostBase(): string {
+  if (BASE_BEND === "") BASE_BEND = fs.realpathSync(path.join(BEND_DIR, "base.bend"));
+  return BASE_BEND;
+}
+function bendHookBasePath(): string | null {
+  const sink = bendHookSink;
+  if (sink === null || typeof sink.baseBendPath !== "function") return null;
+  const provided = sink.baseBendPath(bendHookState.owner);
+  if (provided !== undefined && provided !== null && provided.status === "captured" && typeof provided.path === "string") return provided.path;
+  return null;
+}
+function bendHookIsBase(real: string): boolean {
+  const capturedBase = bendHookBasePath();
+  if (capturedBase !== null) return real === capturedBase;
+  const sink = bendHookSink;
+  if (sink !== null && sink.captureOnly === true) return false;
+  return real === bendHostBase();
 }
 `;
 
@@ -120,13 +199,13 @@ export const HOOK_OPERATIONS = Object.freeze({
       id: 'bend.loaderHostInput',
       summary: 'captured closure supplies existence, identity and bytes; failures are reported distinctly',
       anchor: '  if (!fs.existsSync(file)) {\n    throw Err(book, ctx_nil(), "no such file: " + file, undefined, spn);\n  }\n  const real = fs.realpathSync(file);',
-      replacement: '  const bendResolved = bendHookResolve(file);\n  bendEmit({ kind: "importAttempt", phase: "load", file, identity: bendResolved.identity, exists: bendResolved.exists, captured: bendResolved.captured });\n  if (!bendResolved.exists) {\n    if (bendResolved.captured) bendHookAcquisitionFailure(file, "missingInClosure");\n    throw Err(book, ctx_nil(), "no such file: " + file, undefined, spn);\n  }\n  const real = bendResolved.captured ? bendResolved.identity : fs.realpathSync(file);',
+      replacement: '  const bendResolved = bendHookResolve(file);\n  bendEmit({ kind: "importAttempt", phase: "load", file, identity: bendResolved.identity, exists: bendResolved.exists, captured: bendResolved.captured });\n  if (bendResolved.status === "absent") bendHookRefuse(book, file, "missingInClosure", spn);\n  if (bendResolved.status === "unavailable") bendHookRefuse(book, file, bendResolved.detail === null ? "unavailableInClosure" : bendResolved.detail, spn);\n  if (!bendResolved.exists) {\n    throw Err(book, ctx_nil(), "no such file: " + file, undefined, spn);\n  }\n  const real = bendResolved.captured ? bendResolved.identity : fs.realpathSync(file);',
     }),
     Object.freeze({
       id: 'bend.hubGuard',
       summary: 'refuse the hub fetch path in capture-only mode',
       anchor: '  if (file.startsWith(BEND_LIB + "/") && !fs.existsSync(file)) {',
-      replacement: '  if (file.startsWith(BEND_LIB + "/") && !fs.existsSync(file)) {\n    if (bendHookSink !== null && bendHookSink.captureOnly === true) {\n      bendHookState.refusals += 1;\n      throw Err(book, ctx_nil(), "no such file: " + file, undefined, spn);\n    }',
+      replacement: '  const bendHubResolved = bendHookLibCaptured(book, file, spn);\n  if (!bendHubResolved && file.startsWith(BEND_LIB + "/") && !fs.existsSync(file)) {',
     }),
     Object.freeze({
       id: 'bend.importSyntaxDiagnostics',
@@ -144,13 +223,13 @@ export const HOOK_OPERATIONS = Object.freeze({
       id: 'bend.cycleAndNamespaceDiagnostics',
       summary: 'emit the cycle and namespace diagnostics',
       anchor: '  const done = seen.get(real);\n  if (done === null) {\n    throw Err(book, ctx_nil(), "an import cycle through " + file, undefined, spn);\n  }\n  if (done !== undefined) {\n    if (done !== ns) {\n      throw Err(book, ctx_nil(), "one namespace per file (" + file + " is both \'" + done + "\' and \'" + ns + "\')", undefined, spn);\n    }\n    return book.order.length;\n  }',
-      replacement: '  const done = seen.get(real);\n  if (done === null) {\n    bendEmit({ kind: "diagnostic", phase: "load", form: "err", file, condition: "an import cycle through " + file, observed: null, definition: null, note: null, span: spn === undefined ? null : spn });\n    throw Err(book, ctx_nil(), "an import cycle through " + file, undefined, spn);\n  }\n  if (done !== undefined) {\n    if (done !== ns) {\n      bendEmit({ kind: "diagnostic", phase: "load", form: "err", file, condition: "one namespace per file", observed: ns, definition: null, note: "already bound as " + done, span: spn === undefined ? null : spn });\n      throw Err(book, ctx_nil(), "one namespace per file (" + file + " is both \'" + done + "\' and \'" + ns + "\')", undefined, spn);\n    }\n    return book.order.length;\n  }',
+      replacement: '  const done = seen.get(real);\n  if (done === null) {\n    bendEmit({ kind: "diagnostic", phase: "load", form: "err", file: null, condition: "an import cycle through " + file, observed: null, definition: null, note: null, span: spn === undefined ? null : spn });\n    throw Err(book, ctx_nil(), "an import cycle through " + file, undefined, spn);\n  }\n  if (done !== undefined) {\n    if (done !== ns) {\n      bendEmit({ kind: "diagnostic", phase: "load", form: "err", file: null, condition: "one namespace per file", observed: ns, definition: null, note: "already bound as " + done, span: spn === undefined ? null : spn });\n      throw Err(book, ctx_nil(), "one namespace per file (" + file + " is both \'" + done + "\' and \'" + ns + "\')", undefined, spn);\n    }\n    return book.order.length;\n  }',
     }),
     Object.freeze({
       id: 'bend.lazyBase',
       summary: 'resolve base.bend lazily through the sink instead of at module load',
       anchor: 'export const BASE_BEND = fs.realpathSync(path.join(BEND_DIR, "base.bend"));',
-      replacement: 'export let BASE_BEND = "";\nexport function base_bend(): string {\n  if (BASE_BEND === "") {\n    const sink = bendHookSink;\n    if (sink !== null && typeof sink.baseBendPath === "function") {\n      const provided = sink.baseBendPath();\n      if (typeof provided === "string" && provided.length > 0) {\n        BASE_BEND = provided;\n        return BASE_BEND;\n      }\n    }\n    BASE_BEND = fs.realpathSync(path.join(BEND_DIR, "base.bend"));\n  }\n  return BASE_BEND;\n}',
+      replacement: 'export let BASE_BEND = "";\nexport function base_bend(): string {\n  if (BASE_BEND !== "") return BASE_BEND;\n  const sink = bendHookSink;\n  if (sink !== null) {\n    const provided = bendHookBasePath();\n    if (provided !== null) return provided;\n    if (sink.captureOnly === true) {\n      // No Base in the captured closure: keep the requested path so the loader resolution refuses\n      // explicitly, and never resolve a host path in capture-only mode.\n      bendHookState.refusals += 1;\n      return path.join(BEND_DIR, "base.bend");\n    }\n  }\n  BASE_BEND = fs.realpathSync(path.join(BEND_DIR, "base.bend"));\n  return BASE_BEND;\n}',
     }),
     Object.freeze({
       id: 'bend.baseImportUse',
@@ -162,7 +241,7 @@ export const HOOK_OPERATIONS = Object.freeze({
       id: 'bend.baseMarkUse',
       summary: 'compare against the lazily resolved base path',
       anchor: '  if (real === BASE_BEND) {',
-      replacement: '  if (real === base_bend()) {',
+      replacement: '  if (bendHookIsBase(real)) {',
     }),
     Object.freeze({
       id: 'bend.sourceRead',
@@ -186,7 +265,7 @@ export const HOOK_OPERATIONS = Object.freeze({
       id: 'bend.parseCall',
       summary: 'emit the alias table and the load completion, and tag the parse with its file',
       anchor: '  parse_book(book, dir, lines.join("\\n"), ns, al);',
-      replacement: '  bendEmit({ kind: "importAliases", phase: "load", file, namespace: ns, aliases: { ...al } });\n  parse_book(book, dir, lines.join("\\n"), ns, al, file);\n  bendEmit({ kind: "loadComplete", phase: "load", file, namespace: ns, orderLength: book.order.length });',
+      replacement: '  bendEmit({ kind: "importAliases", phase: "load", file, namespace: ns, aliases: { ...al }, parsedText: lines.join("\\n") });\n  parse_book(book, dir, lines.join("\\n"), ns, al, file);\n  bendEmit({ kind: "loadComplete", phase: "load", file, namespace: ns, orderLength: book.order.length });',
     }),
     Object.freeze({
       id: 'bend.parseType',
@@ -240,7 +319,7 @@ export const HOOK_OPERATIONS = Object.freeze({
       id: 'bend.parseFail',
       summary: 'emit the parse diagnostic before the original throw',
       anchor: '  const obs = p.pos < p.str.length ? "\'" + p.str[p.pos] + "\'" : "end of input";\n  throw Err(p.book, ctx_nil(), exp, obs, { src: p.str, beg: p.pos, end: p.pos });',
-      replacement: '  const obs = p.pos < p.str.length ? "\'" + p.str[p.pos] + "\'" : "end of input";\n  bendEmit({ kind: "diagnostic", phase: "parse", form: "err", file: p.bf === undefined ? null : p.bf, condition: exp, observed: obs, definition: null, note: null, span: { src: p.str, beg: p.pos, end: p.pos } });\n  throw Err(p.book, ctx_nil(), exp, obs, { src: p.str, beg: p.pos, end: p.pos });',
+      replacement: '  const obs = p.pos < p.str.length ? "\'" + p.str[p.pos] + "\'" : "end of input";\n  const bendParseError = Err(p.book, ctx_nil(), exp, obs, { src: p.str, beg: p.pos, end: p.pos });\n  bendEmit({ kind: "diagnostic", phase: "parse", form: "thrown", file: p.bf === undefined ? null : p.bf, thrown: bendParseError, rendered: bendShow(bendParseError), definition: null, span: { src: p.str, beg: p.pos, end: p.pos } });\n  throw bendParseError;',
     }),
     Object.freeze({
       id: 'bend.checkEntry',
@@ -252,13 +331,13 @@ export const HOOK_OPERATIONS = Object.freeze({
       id: 'bend.checkPreRegion',
       summary: 'observe failures before the final term_check as well',
       anchor: '  const qs = tele_unbind(book, def.T).doms.map((dom) => dom[0]);\n  const gen = def.x === 0 ? book : { ...book, tlds: Object.create(book.tlds) };\n  let [t, v, T]: HTerm[] = [Ref(k), def.v as HTerm, def.T];\n  for (let j = 0; j < def.x; j++) {\n    const h = tele_head(gen, T, ctx_nil(), k);\n    const o = k + "~" + h.k;\n    if (o in gen.tlds) {\n      throw Err(book, ctx_nil(), "a fresh ~ binder name", h.k, h.s);\n    }\n    gen.tlds[o] = { $: "Def", n: 0, x: 0, T: h.A, v: null, b: true };\n    t = App(t, Ref(o));\n    v = term_apply(v, Ref(o));\n    T = h.B(Ref(o));\n  }',
-      replacement: '  let qs: Quant[] = [];\n  let gen: Book = book;\n  let t: HTerm = Ref(k);\n  let v: HTerm = def.v as HTerm;\n  let T: HTerm = def.T;\n  try {\n    qs = tele_unbind(book, def.T).doms.map((dom) => dom[0]);\n    gen = def.x === 0 ? book : { ...book, tlds: Object.create(book.tlds) };\n    [t, v, T] = [Ref(k), def.v as HTerm, def.T];\n    for (let j = 0; j < def.x; j++) {\n      const h = tele_head(gen, T, ctx_nil(), k);\n      const o = k + "~" + h.k;\n      if (o in gen.tlds) {\n        throw Err(book, ctx_nil(), "a fresh ~ binder name", h.k, h.s);\n      }\n      gen.tlds[o] = { $: "Def", n: 0, x: 0, T: h.A, v: null, b: true };\n      t = App(t, Ref(o));\n      v = term_apply(v, Ref(o));\n      T = h.B(Ref(o));\n    }\n  } catch (bendTemplate) {\n    bendEmit({ kind: "checkFailure", phase: "check", definition: k, thrownDiagnostic: bendTemplate !== null && typeof bendTemplate === "object" && (bendTemplate as { $?: string }).$ === "Err" });\n    bendEmit({ kind: "diagnostic", phase: "check", form: "thrown", file: null, definition: k, span: null, thrownKind: bendTemplate !== null && typeof bendTemplate === "object" && (bendTemplate as { $?: string }).$ === "Err" ? "Err" : "Error", raw: bendTemplate !== null && typeof bendTemplate === "object" && (bendTemplate as { $?: string }).$ === "Err" ? err_show(bendTemplate as Err) : String(bendTemplate), text: null });\n    throw bendTemplate;\n  }',
+      replacement: '  let qs: Quant[] = [];\n  let bendQuantities: Array<{ quant: string; name: Name }> = [];\n  let gen: Book = book;\n  let t: HTerm = Ref(k);\n  let v: HTerm = def.v as HTerm;\n  let T: HTerm = def.T;\n  try {\n    const bendDoms = tele_unbind(book, def.T).doms;\n    qs = bendDoms.map((dom) => dom[0]);\n    bendQuantities = bendDoms.map((dom) => ({ quant: quant_show(dom[0]), name: dom[1] }));\n    gen = def.x === 0 ? book : { ...book, tlds: Object.create(book.tlds) };\n    [t, v, T] = [Ref(k), def.v as HTerm, def.T];\n    for (let j = 0; j < def.x; j++) {\n      const h = tele_head(gen, T, ctx_nil(), k);\n      const o = k + "~" + h.k;\n      if (o in gen.tlds) {\n        throw Err(book, ctx_nil(), "a fresh ~ binder name", h.k, h.s);\n      }\n      gen.tlds[o] = { $: "Def", n: 0, x: 0, T: h.A, v: null, b: true };\n      t = App(t, Ref(o));\n      v = term_apply(v, Ref(o));\n      T = h.B(Ref(o));\n    }\n  } catch (bendTemplate) {\n    const bendTemplateIsErr = bendTemplate !== null && typeof bendTemplate === "object" && (bendTemplate as { $?: string }).$ === "Err";\n    bendEmit({ kind: "checkFailure", phase: "check", definition: k, thrownDiagnostic: bendTemplateIsErr });\n    const bendTemplateContext = bendThrownContext(bendTemplate);\n    bendEmit({ kind: "diagnostic", phase: "check", form: "thrown", file: null, thrown: bendTemplate, rendered: bendShow(bendTemplate), definition: bendTemplateContext.definition === null ? k : bendTemplateContext.definition, span: bendTemplateContext.span });\n    throw bendTemplate;\n  }\n  const bendDeclaredText = bendTermShow(def.T);\n  if (bendDeclaredText !== null) {\n    bendEmit({ kind: "typeObservation", phase: "check", status: "declared", qualified: k, definition: k, file: null, text: bendDeclaredText, quantities: bendQuantities, span: def.T.s === undefined ? null : def.T.s });\n  }',
     }),
     Object.freeze({
       id: 'bend.checkOutcome',
       summary: 'emit checker success or failure around the original check, preserving the throw',
       anchor: '  return term_check(gen, { t, n: def.n - def.x, def: k, qs, u: def.u, z }, v, Lone(), T, ctx_nil(), 0).tm;',
-      replacement: '  try {\n    const bendChecked = term_check(gen, { t, n: def.n - def.x, def: k, qs, u: def.u, z }, v, Lone(), T, ctx_nil(), 0).tm;\n    bendEmit({ kind: "checkSuccess", phase: "check", definition: k });\n    return bendChecked;\n  } catch (bendError) {\n    bendEmit({ kind: "checkFailure", phase: "check", definition: k, thrownDiagnostic: bendError !== null && typeof bendError === "object" && (bendError as { $?: string }).$ === "Err" });\n    throw bendError;\n  }',
+      replacement: '  try {\n    const bendChecked = term_check(gen, { t, n: def.n - def.x, def: k, qs, u: def.u, z }, v, Lone(), T, ctx_nil(), 0).tm;\n    bendEmit({ kind: "checkSuccess", phase: "check", definition: k });\n    const bendCheckedText = bendTermShow(bendChecked);\n    if (bendCheckedText !== null) {\n      bendEmit({ kind: "typeObservation", phase: "check", status: "elaborated", qualified: k, definition: k, file: null, text: bendCheckedText, quantities: [], span: null });\n    }\n    return bendChecked;\n  } catch (bendCheckError) {\n    const bendCheckIsErr = bendCheckError !== null && typeof bendCheckError === "object" && (bendCheckError as { $?: string }).$ === "Err";\n    bendEmit({ kind: "checkFailure", phase: "check", definition: k, thrownDiagnostic: bendCheckIsErr });\n    const bendCheckContext = bendThrownContext(bendCheckError);\n    bendEmit({ kind: "diagnostic", phase: "check", form: "thrown", file: null, thrown: bendCheckError, rendered: bendShow(bendCheckError), definition: bendCheckContext.definition === null ? k : bendCheckContext.definition, span: bendCheckContext.span });\n    throw bendCheckError;\n  }',
     }),
     Object.freeze({
       id: 'bend.validStart',
@@ -296,7 +375,7 @@ export const HOOK_OPERATIONS = Object.freeze({
       id: 'main.completionBoundary',
       summary: 'gates, the original hole refusal and a boundary catch that keeps the real thrown value',
       anchor: '  Bend.book_valid(book, base?.order.length ?? 0);\n  Comp.book_owned(book, Comp.SYNTH);\n  const hols = book.hols + book.open;\n  if (hols > 0) {\n    throw "Error: " + String(hols) + " TODO" + (hols === 1 ? "" : "s")\n      + " found.\\nThe code is incomplete, and not a valid proof yet.";\n  }',
-      replacement: '  try {\n    Bend.book_valid(book, base?.order.length ?? 0);\n    bendEmitMain({ kind: "completionGate", phase: "completion", gate: "ownership", checkSet: "SYNTH", started: true });\n    Comp.book_owned(book, Comp.SYNTH);\n    bendEmitMain({ kind: "completionGate", phase: "completion", gate: "ownership", checkSet: "SYNTH", completed: true });\n    const hols = book.hols + book.open;\n    if (hols > 0) {\n      const bendText = "Error: " + String(hols) + " TODO" + (hols === 1 ? "" : "s")\n        + " found.\\nThe code is incomplete, and not a valid proof yet.";\n      bendEmitMain({ kind: "diagnostic", phase: "completion", form: "thrown", file: null, text: bendText, raw: bendText, thrownKind: "string", definition: null, span: null, holes: book.hols, open: book.open });\n      throw bendText;\n    }\n    bendEmitMain({ kind: "completionGate", phase: "completion", gate: "holes", started: true, completed: true });\n  } catch (bendThrown) {\n    const bendKind = typeof bendThrown === "string" ? "string" : bendThrown !== null && typeof bendThrown === "object" && (bendThrown as { $?: string }).$ === "Err" ? "Err" : "Error";\n    bendEmitMain({ kind: "diagnostic", phase: "completion", form: "thrown", file: null, raw: bendKind === "Err" ? Bend.err_show(bendThrown as Bend.Err) : String(bendThrown), text: null, thrownKind: bendKind, definition: typeof bendThrown === "string" ? null : null, span: null });\n    throw bendThrown;\n  }',
+      replacement: '  Bend.book_valid(book, base?.order.length ?? 0);\n  bendEmitMain({ kind: "completionGate", phase: "completion", gate: "ownership", checkSet: "SYNTH", started: true });\n  try {\n    Comp.book_owned(book, Comp.SYNTH);\n  } catch (bendOwned) {\n    bendEmitMain({ kind: "diagnostic", phase: "completion", form: "thrown", file: null, thrown: bendOwned, rendered: Bend.bendHookShow(bendOwned), definition: null, span: null });\n    throw bendOwned;\n  }\n  bendEmitMain({ kind: "completionGate", phase: "completion", gate: "ownership", checkSet: "SYNTH", completed: true });\n  const hols = book.hols + book.open;\n  if (hols > 0) {\n    const bendText = "Error: " + String(hols) + " TODO" + (hols === 1 ? "" : "s")\n      + " found.\\nThe code is incomplete, and not a valid proof yet.";\n    bendEmitMain({ kind: "completionGate", phase: "completion", gate: "holes", started: true, completed: false });\n    bendEmitMain({ kind: "diagnostic", phase: "completion", form: "thrown", file: null, thrown: bendText, rendered: bendText, definition: null, span: null });\n    throw bendText;\n  }\n  bendEmitMain({ kind: "completionGate", phase: "completion", gate: "holes", started: true, completed: true });',
     }),
   ]),
 });

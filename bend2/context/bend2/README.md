@@ -160,18 +160,42 @@ node --input-type=module -e "import { readFileSync, writeFileSync } from 'node:f
 pinned digest for that target, so an alteration outside the anchors cannot pass under the original
 pin. `applyHookOperations` exposes the anchor mechanics alone for tests.
 
-The internal invocation entry installs the scoped producer, loads a caller-supplied closure, calls
-the frontend's actual parser, checker and completion primitives for the requested phases, and returns
-the observations plus the raw outcome, restoring the hooks in `finally`:
+The internal invocation entry takes ownership of the frontend hook, loads a caller-supplied capture
+closure through the frontend's own loader, and runs the requested phases with the real primitives:
+
+```text
+phases: parse       book_load on the root, which loads every import and parses each file
+        check       book_valid(book, 0): a fresh book validates from zero, imports included
+        completion  Comp.book_owned(book, Comp.SYNTH) followed by the hole scan main.ts performs
+```
+
+A request that names an unknown phase, asks for completion without check, or omits the completion
+module or its check set is refused with the missing operand named, and a refused request starts no
+invocation. `book_load`'s return value is the root declaration start after imports, so it is reported
+and never used as a validated seed count. Type observations come from the checker call site during
+`check`, so there is no separate inference step. The entry releases only the hook it owns and ends the
+adapter session in the same call even when the release, a rendering step or an observation throws,
+and a frontend already owned by another invocation is refused with its sink left untouched.
 
 ```text
 node --test bend2/context/bend2/frontend-adapter.test.mjs
 ```
 
-Its prerequisite for a real run: a derived frontend module (from the derivation command above, for
-`bend` and `main`), the supplied `comp.ts` module for the completion phase, and Node 22.15.0 or
-later. The `bend` module needs `bend.ts`'s exports plus, for the completion phase, `main.ts`'s
-composition; a run that only parses needs no completion module.
+The real composed run needs a derived frontend module (from the derivation command above, for `bend`
+and `main`), the pinned `comp.ts` module, a fixture project, and Node 22 or later with TypeScript
+execution. It is the harness, and it is authored for the remote runner:
+
+```text
+BATON2_BEND_TS=<bend.ts> BATON2_MAIN_TS=<main.ts> BATON2_COMP_TS=<comp.ts> \
+BATON2_BASE_BEND=<base.bend> BATON2_FIXTURE_DIR=<fixtures> \
+node --experimental-strip-types bend2/context/bend2/frontend-invocation.harness.mjs
+```
+
+The harness checks every pinned input digest, derives both sources, imports the derived kernel and the
+matching completion module, and runs the cases (complete project, imported invalid definition, parse
+error, acquisition refusal, throwing reader, a second adapter refused while one owns the hook, and
+cleanup after a failing completion). Its stdout is one JSON report of per-case phases, mapped
+diagnostics, session completeness and counters.
 
 The same command with `target: 'main'` derives the main-side hooks. The hooks are inert until a caller
 installs the sink with `bendHooks(...)`; no module in this repository imports a frontend, and no

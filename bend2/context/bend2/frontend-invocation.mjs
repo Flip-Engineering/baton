@@ -1,151 +1,201 @@
-// Internal invocation entry for the derived Bend2 frontend.
+// Internal invocation entry for a derived Bend2 frontend.
 //
-// This is the non-CLI entry that installs the scoped producer, loads a caller-supplied closure,
-// calls the frontend's actual parser, checker and completion primitives for the requested phases,
-// and returns the observations and the raw outcome. It restores hooks in a finally block and
-// enforces one invocation at a time through the adapter.
+// This is the non-CLI entry that takes ownership of the frontend hook, loads a caller-supplied
+// closure through the frontend's own loader, runs the requested phases with the real primitives and
+// returns the observations plus the raw outcome. It restores the hook it owns in a finally block and
+// ends the adapter session even when observation, rendering or hook installation fails.
 //
 // It imports no frontend: the caller passes the derived module, so nothing in this repository loads
 // a frontend at module scope and the hooks stay disabled until a caller installs them.
+//
+// Phases are the real frontend steps, and each one is refused rather than approximated:
+//   parse      book_load on the root, which loads every import and parses each file
+//   check      book_valid from zero, so the imported declarations are validated too
+//   completion Comp.book_owned(book, Comp.SYNTH) plus the hole scan main.ts performs
+// Type observations are produced by the checker call site during check; there is no separate
+// inference step here.
 
-const REQUIRED_EXPORTS = ['bendHooks', 'book_nil', 'book_load', 'book_valid', 'term_lower', 'term_show', 'quant_show', 'ctx_nil', 'Lone'];
+const PHASES = Object.freeze(['parse', 'check', 'completion']);
 
-const ALL_PHASES = ['parse', 'types', 'check', 'completion'];
+const REQUIRED_EXPORTS = Object.freeze({
+  parse: Object.freeze(['bendHooks', 'book_nil', 'book_load']),
+  check: Object.freeze(['book_nil', 'book_load', 'book_valid']),
+  completion: Object.freeze(['book_nil', 'book_load', 'book_valid']),
+});
 
-function thrownKind(frontend, error) {
-  if (typeof error === 'string') return { kind: 'string', raw: error };
-  if (error !== null && typeof error === 'object' && error.$ === 'Err') {
-    return { kind: 'Err', raw: typeof frontend.err_show === 'function' ? frontend.err_show(error) : String(error) };
+function rejected(reason, detail) {
+  return Object.freeze(detail === undefined ? { status: 'rejected', reason } : { status: 'rejected', reason, detail });
+}
+
+function describeThrown(value) {
+  if (value === null) return Object.freeze({ kind: 'null' });
+  if (typeof value === 'string') return Object.freeze({ kind: 'string' });
+  if (typeof value !== 'object') return Object.freeze({ kind: typeof value });
+  return Object.freeze({ kind: typeof value.$ === 'string' ? value.$ : 'object' });
+}
+
+// The association a caught Err already carries; reading it does not rewrite the value.
+function thrownContext(value) {
+  if (value === null || typeof value !== 'object') return { definition: null, span: null };
+  const definition = typeof value.def === 'string' ? value.def : null;
+  const span = value.spn !== undefined && value.spn !== null ? value.spn : null;
+  return { definition, span };
+}
+
+function renderThrown(frontend, value) {
+  try {
+    if (typeof value === 'string') return value;
+    if (value !== null && typeof value === 'object' && value.$ === 'Err' && typeof frontend.err_show === 'function') {
+      return frontend.err_show(value);
+    }
+    if (value !== null && typeof value === 'object' && typeof frontend.bendHookShow === 'function') return frontend.bendHookShow(value);
+    return String(value);
+  } catch {
+    return null;
   }
-  return { kind: 'Error', raw: String(error) };
 }
 
-function quantityFacts(frontend, book, type) {
-  if (typeof frontend.tele_unbind !== 'function') return [];
-  const doms = frontend.tele_unbind(book, type).doms;
-  return doms.map((domain) => ({
-    quant: typeof frontend.quant_show === 'function' ? frontend.quant_show(domain[0]) : 'unknown',
-    name: typeof domain[1] === 'string' ? domain[1] : null,
-  }));
-}
-
-// Emit declared and, when requested, inferred type observations for the definitions the root file
-// contributed, using the frontend's own terms and context.
-function observeTypes(frontend, adapter, book, names, inferred) {
-  for (const qualified of names) {
-    const definition = book.tlds[qualified];
-    if (definition === undefined) continue;
-    adapter.sink.emit({
-      kind: 'typeObservation',
-      phase: 'parse',
-      status: 'declared',
-      qualified,
-      file: null,
-      text: frontend.term_show(frontend.term_lower(definition.T)),
-      quantities: quantityFacts(frontend, book, definition.T),
-      span: null,
-    });
-    if (!inferred || definition.v === null || typeof frontend.term_infer !== 'function') continue;
-    try {
-      const lhs = { t: frontend.Ref(qualified), n: definition.n, def: qualified, qs: [], u: definition.u };
-      const result = frontend.term_infer(book, lhs, definition.v, frontend.Lone(), frontend.ctx_nil(), 0);
-      adapter.sink.emit({
-        kind: 'typeObservation',
-        phase: 'parse',
-        status: 'inferred',
-        qualified,
-        file: null,
-        text: frontend.term_show(frontend.term_lower(result.ty)),
-        quantities: quantityFacts(frontend, book, result.ty),
-        span: null,
-      });
-    } catch (error) {
-      const thrown = thrownKind(frontend, error);
-      adapter.sink.emit({ kind: 'diagnostic', phase: 'check', form: 'thrown', file: null, definition: qualified, span: null, thrownKind: thrown.kind, raw: thrown.raw, text: null });
+function validateRequest({ frontend, adapter, root, phases, comp }) {
+  if (frontend === null || typeof frontend !== 'object') return rejected('frontendMissing');
+  if (adapter === null || typeof adapter !== 'object') return rejected('adapterMissing');
+  if (typeof root !== 'string' || root.length === 0) return rejected('rootMissing');
+  if (!Array.isArray(phases) || phases.length === 0) return rejected('phasesMissing');
+  const unknown = phases.filter((phase) => !PHASES.includes(phase));
+  if (unknown.length > 0) return rejected('phaseUnsupported', unknown.join(','));
+  for (const phase of phases) {
+    for (const name of REQUIRED_EXPORTS[phase]) {
+      if (typeof frontend[name] !== 'function') return rejected('frontendExportMissing', `${phase}: ${name}`);
     }
   }
+  if (phases.includes('completion')) {
+    // The completion boundary is the kernel gate followed by Comp.book_owned, then the hole scan.
+    // It is never reported as reached when the call could not be made.
+    if (!phases.includes('check')) return rejected('completionRequiresCheck');
+    if (comp === null || typeof comp !== 'object') return rejected('completionModuleMissing');
+    if (typeof comp.book_owned !== 'function') return rejected('completionOwnedMissing');
+    if (comp.SYNTH === undefined || comp.SYNTH === null) return rejected('completionCheckSetMissing');
+  }
+  return null;
 }
 
-export async function runFrontendInvocation({ frontend, adapter, root, phases = ['parse'], comp = null } = {}) {
-  if (frontend === null || typeof frontend !== 'object') {
-    return Object.freeze({ status: 'rejected', reason: 'frontendMissing' });
-  }
-  for (const name of REQUIRED_EXPORTS) {
-    if (typeof frontend[name] !== 'function') {
-      return Object.freeze({ status: 'rejected', reason: 'frontendExportMissing', detail: name });
-    }
-  }
-  if (typeof root !== 'string' || root.length === 0) {
-    return Object.freeze({ status: 'rejected', reason: 'rootMissing' });
-  }
-  const requested = phases.filter((phase) => ALL_PHASES.includes(phase));
+export async function runFrontendInvocation({ frontend, adapter, root, phases = ['parse'], comp = null, seen } = {}) {
+  const invalid = validateRequest({ frontend, adapter, root, phases, comp });
+  if (invalid !== null) return invalid;
+
   const started = adapter.beginQuery({ identity: root });
-  if (started.status !== 'started') return Object.freeze({ status: 'rejected', reason: started.reason, token: started.token ?? null });
+  if (started.status !== 'started') return rejected(started.reason, started.token);
 
+  const owner = started.token;
   const phasesRun = [];
   let outcome = null;
-  let topLevelCount = null;
+  let rootDeclarationStart = null;
+  let installed = false;
+
   try {
-    frontend.bendHooks(adapter.sink);
-    const book = frontend.book_nil();
-    const seen = new Map();
+    let install;
     try {
-      topLevelCount = await frontend.book_load(book, root, '', seen, undefined);
+      install = frontend.bendHooks(adapter.sink, owner);
+    } catch (error) {
+      adapter.sink.evidenceFailure('hookInstallThrew', owner, String(error && error.message ? error.message : error));
+      return Object.freeze({ status: 'failed', phasesRun: Object.freeze([]), owner, outcome: Object.freeze({ phase: 'parse', thrown: describeThrown(error), rendered: renderThrown(frontend, error) }) });
+    }
+    if (install === undefined || install === null || install.status !== 'installed') {
+      // Another invocation owns the frontend hook. The active sink is left exactly as it was.
+      return rejected('frontendOwned', install === undefined || install === null ? undefined : install.owner);
+    }
+    installed = true;
+
+    const book = frontend.book_nil();
+    const seenIdentities = seen ?? new Map();
+    try {
+      rootDeclarationStart = await frontend.book_load(book, root, '', seenIdentities, undefined);
       phasesRun.push('parse');
     } catch (error) {
-      const thrown = thrownKind(frontend, error);
-      adapter.sink.emit({ kind: 'diagnostic', phase: 'load', form: 'thrown', file: root, definition: null, span: null, thrownKind: thrown.kind, raw: thrown.raw, text: null });
-      outcome = Object.freeze({ phase: 'load', thrownKind: thrown.kind, raw: thrown.raw });
+      const context = thrownContext(error);
+      adapter.sink.emit({
+        kind: 'diagnostic',
+        owner,
+        phase: 'load',
+        form: 'thrown',
+        file: null,
+        definition: context.definition,
+        span: context.span,
+        thrown: error,
+        rendered: renderThrown(frontend, error),
+      });
+      outcome = Object.freeze({ phase: 'load', thrown: describeThrown(error), rendered: renderThrown(frontend, error) });
     }
 
-    if (outcome === null && (requested.includes('types') || requested.includes('check'))) {
-      const names = typeof topLevelCount === 'number' ? book.order.slice(topLevelCount) : [...book.order];
-      observeTypes(frontend, adapter, book, names, requested.includes('check'));
-      phasesRun.push('types');
-    }
-
-    if (outcome === null && requested.includes('check')) {
+    if (outcome === null && phases.includes('check')) {
       try {
-        frontend.book_valid(book, typeof topLevelCount === 'number' ? topLevelCount : 0);
+        // A fresh book validates from zero: book_load's return is the root declaration start after
+        // imports, a parse position, and never a count of already validated seeds.
+        frontend.book_valid(book, 0);
         phasesRun.push('check');
       } catch (error) {
-        const thrown = thrownKind(frontend, error);
-        adapter.sink.emit({ kind: 'diagnostic', phase: 'validate', form: 'thrown', file: null, definition: null, span: null, thrownKind: thrown.kind, raw: thrown.raw, text: null });
-        outcome = Object.freeze({ phase: 'check', thrownKind: thrown.kind, raw: thrown.raw });
+        const context = thrownContext(error);
+        adapter.sink.emit({
+          kind: 'diagnostic',
+          owner,
+          phase: 'check',
+          form: 'thrown',
+          file: null,
+          definition: context.definition,
+          span: context.span,
+          thrown: error,
+          rendered: renderThrown(frontend, error),
+        });
+        outcome = Object.freeze({ phase: 'check', thrown: describeThrown(error), rendered: renderThrown(frontend, error) });
       }
     }
 
-    if (outcome === null && requested.includes('completion')) {
-      adapter.sink.emit({ kind: 'completionGate', phase: 'completion', gate: 'ownership', checkSet: comp === null ? null : 'SYNTH', started: true });
+    if (outcome === null && phases.includes('completion')) {
       try {
-        if (comp !== null && typeof comp.book_owned === 'function') comp.book_owned(book, comp.SYNTH);
-        adapter.sink.emit({ kind: 'completionGate', phase: 'completion', gate: 'ownership', checkSet: comp === null ? null : 'SYNTH', completed: true });
+        comp.book_owned(book, comp.SYNTH);
         const holes = book.hols + book.open;
         if (holes > 0) {
           const text = 'Error: ' + String(holes) + ' TODO' + (holes === 1 ? '' : 's') + ' found.\nThe code is incomplete, and not a valid proof yet.';
-          adapter.sink.emit({ kind: 'diagnostic', phase: 'completion', form: 'thrown', file: null, definition: null, span: null, thrownKind: 'string', raw: text, text });
-          outcome = Object.freeze({ phase: 'completion', thrownKind: 'string', raw: text });
-        } else {
-          adapter.sink.emit({ kind: 'completionGate', phase: 'completion', gate: 'holes', started: true, completed: true });
+          adapter.sink.emit({ kind: 'diagnostic', owner, phase: 'completion', form: 'thrown', file: null, definition: null, span: null, thrown: text, rendered: text });
+          outcome = Object.freeze({ phase: 'completion', thrown: describeThrown(text), rendered: text, holes });
         }
         phasesRun.push('completion');
       } catch (error) {
-        const thrown = thrownKind(frontend, error);
-        adapter.sink.emit({ kind: 'diagnostic', phase: 'completion', form: 'thrown', file: null, definition: null, span: null, thrownKind: thrown.kind, raw: thrown.raw, text: null });
-        outcome = Object.freeze({ phase: 'completion', thrownKind: thrown.kind, raw: thrown.raw });
+        const context = thrownContext(error);
+        adapter.sink.emit({
+          kind: 'diagnostic',
+          owner,
+          phase: 'completion',
+          form: 'thrown',
+          file: null,
+          definition: context.definition,
+          span: context.span,
+          thrown: error,
+          rendered: renderThrown(frontend, error),
+        });
+        outcome = Object.freeze({ phase: 'completion', thrown: describeThrown(error), rendered: renderThrown(frontend, error) });
       }
     }
+  } catch (error) {
+    // An unexpected failure is still an outcome: the session ends and the raw value is reported.
+    outcome = Object.freeze({ phase: 'invocation', thrown: describeThrown(error), rendered: renderThrown(frontend, error) });
   } finally {
-    frontend.bendHooks(null);
+    if (installed) {
+      // Release only the hook this invocation owns; another owner's sink is never cleared.
+      try {
+        frontend.bendHooks(null, owner);
+      } catch (error) {
+        adapter.sink.evidenceFailure('hookReleaseThrew', owner, String(error && error.message ? error.message : error));
+      }
+    }
   }
-
-  const session = adapter.endQuery();
+  // The session ends even when the release or an observation above threw.
+  const ended = adapter.endQuery();
   return Object.freeze({
     status: outcome === null ? 'completed' : 'failed',
     phasesRun: Object.freeze([...phasesRun]),
-    topLevelCount,
+    owner,
+    rootDeclarationStart,
     outcome,
-    session,
-    counters: Object.freeze({ ...adapter.counters }),
+    session: ended,
   });
 }

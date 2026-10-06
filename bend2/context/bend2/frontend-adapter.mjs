@@ -67,11 +67,19 @@ function freezeDeep(value) {
   return Object.freeze(value);
 }
 
+let ADAPTER_SEQUENCE = 0;
+
 export function createFrontendAdapter({ acquisition, captureOnly = true } = {}) {
+  const adapterId = `adapter-${ADAPTER_SEQUENCE + 1}`;
+  ADAPTER_SEQUENCE += 1;
   const counters = {
     adapterFailures: 0,
     acquisitionFailures: 0,
+    evidenceFailures: 0,
+    foreignOwnerEvents: 0,
+    hookInstallFailures: 0,
     invalidEvents: 0,
+    preParseMismatches: 0,
     uncapturedDependencies: 0,
     outsideQuery: 0,
     outsideQueryReads: 0,
@@ -82,8 +90,10 @@ export function createFrontendAdapter({ acquisition, captureOnly = true } = {}) 
   let sequence = 0;
 
   function newSession(identity) {
+    const token = `${adapterId}-invocation-${sequence + 1}`;
     return {
-      token: `invocation-${sequence + 1}`,
+      token,
+      owner: token,
       identity: typeof identity === 'string' && identity.length > 0 ? identity : null,
       startedCounters: { ...counters },
       files: [],
@@ -97,6 +107,7 @@ export function createFrontendAdapter({ acquisition, captureOnly = true } = {}) 
       phases: [],
       limitations: [...CLOSURE_LIMITATIONS],
       captures: new Map(),
+      acquisitions: new Map(),
       originalViews: new Map(),
       parseViews: new Map(),
       removed: new Map(),
@@ -116,51 +127,78 @@ export function createFrontendAdapter({ acquisition, captureOnly = true } = {}) 
     if (!session.limitations.some((entry) => entry.code === code)) session.limitations.push(limitation(code, detail));
   }
 
+  function errorText(error) {
+    if (error !== null && typeof error === 'object' && typeof error.message === 'string' && error.message.length > 0) return error.message;
+    return String(error);
+  }
+
+  // One immutable acquisition per requested identity. The closure's canonical identity, its
+  // existence answer and its captured bytes are recorded together, so every later read for that
+  // identity uses exactly the bytes that were acquired instead of reacquiring a possibly different
+  // canonical input. A reader that throws is counted once, here; the caller only records the failure.
   function provide(identity) {
-    if (acquisition === undefined || typeof acquisition.read !== 'function') return null;
+    if (acquisition === undefined || typeof acquisition.read !== 'function') return Object.freeze({ status: 'unavailable', requested: identity });
+    let canonical = identity;
     if (typeof acquisition.resolve === 'function') {
-      const resolved = acquisition.resolve(identity);
-      if (resolved !== undefined && resolved !== null && resolved.exists === false) return { missing: true };
+      let resolved;
+      try {
+        resolved = acquisition.resolve(identity);
+      } catch (error) {
+        counters.acquisitionFailures += 1;
+        return Object.freeze({ status: 'failed', requested: identity, canonical, detail: errorText(error) });
+      }
+      if (resolved !== undefined && resolved !== null) {
+        if (typeof resolved.identity === 'string' && resolved.identity.length > 0) canonical = resolved.identity;
+        if (resolved.exists === false) return Object.freeze({ status: 'absent', requested: identity, canonical });
+      }
     }
     let provided;
     try {
-      provided = acquisition.read(identity);
+      provided = acquisition.read(canonical);
     } catch (error) {
       counters.acquisitionFailures += 1;
-      return { failed: String(error && error.message ? error.message : error) };
+      return Object.freeze({ status: 'failed', requested: identity, canonical, detail: errorText(error) });
     }
-    if (provided === undefined || provided === null) return { missing: true };
-    if (provided.refuse !== undefined) return { missing: true, reason: String(provided.refuse) };
-    if (!(provided.bytes instanceof Uint8Array)) return { failed: 'bytesMissing' };
-    return { provided };
+    if (provided === undefined || provided === null) return Object.freeze({ status: 'unavailable', requested: identity, canonical });
+    if (provided.refuse !== undefined) return Object.freeze({ status: 'refused', requested: identity, canonical, detail: String(provided.refuse) });
+    if (!(provided.bytes instanceof Uint8Array)) {
+      counters.acquisitionFailures += 1;
+      return Object.freeze({ status: 'failed', requested: identity, canonical, detail: 'bytesMissing' });
+    }
+    return Object.freeze({ status: 'provided', requested: identity, canonical, bytes: provided.bytes });
+  }
+
+  function acquireRecord(session, identity) {
+    const known = session.acquisitions.get(identity);
+    if (known !== undefined) return known;
+    const outcome = provide(identity);
+    let record;
+    if (outcome.status === 'provided') {
+      const captured = captureSource({ identity: outcome.canonical, bytes: outcome.bytes });
+      if (captured.status === 'captured') {
+        record = Object.freeze({ status: 'captured', requested: identity, canonical: captured.identity, capture: captured });
+        session.captures.set(identity, captured);
+      } else {
+        counters.evidenceFailures += 1;
+        note(session, 'captureUnavailable', `${identity}: ${captured.reason}`);
+        record = Object.freeze({ status: 'unavailable', requested: identity, canonical: outcome.canonical, detail: captured.reason });
+      }
+    } else if (outcome.status === 'failed') {
+      // The reader threw or supplied malformed bytes; provide already counted it once.
+      note(session, 'acquisitionFailed', `${identity}: ${outcome.detail}`);
+      record = outcome;
+    } else {
+      counters.uncapturedDependencies += 1;
+      note(session, outcome.status === 'refused' ? 'uncapturedDependency' : 'acquisitionMissing', outcome.detail === undefined ? identity : `${identity}: ${outcome.detail}`);
+      record = outcome;
+    }
+    session.acquisitions.set(identity, record);
+    return record;
   }
 
   function acquire(session, identity) {
-    const known = session.captures.get(identity);
-    if (known !== undefined) return known;
-    const outcome = provide(identity);
-    if (outcome === null) {
-      counters.uncapturedDependencies += 1;
-      note(session, 'acquisitionMissing', identity);
-      return null;
-    }
-    if (outcome.missing === true) {
-      counters.uncapturedDependencies += 1;
-      note(session, 'uncapturedDependency', outcome.reason === undefined ? identity : `${identity}: ${outcome.reason}`);
-      return null;
-    }
-    if (outcome.failed !== undefined) {
-      counters.acquisitionFailures += 1;
-      note(session, 'acquisitionFailed', `${identity}: ${outcome.failed}`);
-      return null;
-    }
-    const captured = captureSource({ identity: outcome.provided.identity ?? identity, bytes: outcome.provided.bytes });
-    if (captured.status !== 'captured') {
-      note(session, 'captureUnavailable', `${identity}: ${captured.reason}`);
-      return null;
-    }
-    session.captures.set(identity, captured);
-    return captured;
+    const record = acquireRecord(session, identity);
+    return record.status === 'captured' ? record.capture : null;
   }
 
   function originalView(session, identity) {
@@ -235,11 +273,20 @@ export function createFrontendAdapter({ acquisition, captureOnly = true } = {}) 
     return spanOutcome(locateSpan(capture, view, span));
   }
 
+  // A file identity comes from what the frontend actually said: the file it named, then the
+  // declaration that owns the definition, then the captured file whose text is the span's own
+  // source. Source text selects a file only when it is exactly one of the captured texts.
   function fileForDiagnostic(session, event) {
     if (typeof event.file === 'string' && event.file.length > 0) return event.file;
     if (typeof event.definition === 'string' && event.definition.length > 0) {
       for (let index = session.declarations.length - 1; index >= 0; index -= 1) {
         if (session.declarations[index].qualified === event.definition) return session.declarations[index].file;
+      }
+    }
+    const src = event.span !== null && event.span !== undefined && typeof event.span.src === 'string' ? event.span.src : null;
+    if (src !== null) {
+      for (const [identity, capture] of session.captures) {
+        if (capture.text === src) return identity;
       }
     }
     return null;
@@ -266,6 +313,21 @@ export function createFrontendAdapter({ acquisition, captureOnly = true } = {}) 
     };
     deferParseSpan(session, event.file ?? null, record, event.span);
     session.references.push(record);
+  }
+
+  // Describe a thrown value without touching it. The frontend keeps ownership of its own objects, so
+  // only the value's own primitive fields are copied, and the rendering the caller computed stays a
+  // separate field: a renderer failure can never replace the value the frontend actually threw.
+  function describeThrown(value) {
+    if (typeof value === 'string') return Object.freeze({ kind: 'string', value });
+    if (value === null) return Object.freeze({ kind: 'null', value: null });
+    if (typeof value !== 'object') return Object.freeze({ kind: typeof value, value: String(value) });
+    const tag = typeof value.$ === 'string' ? value.$ : null;
+    const fields = {};
+    for (const [key, entry] of Object.entries(value)) {
+      if (entry === null || typeof entry === 'string' || typeof entry === 'number' || typeof entry === 'boolean') fields[key] = entry;
+    }
+    return Object.freeze({ kind: tag === null ? 'object' : tag, fields: Object.freeze(fields) });
   }
 
   function handle(event) {
@@ -323,7 +385,24 @@ export function createFrontendAdapter({ acquisition, captureOnly = true } = {}) 
         return;
       }
       case HOOK_KINDS.importAliases: {
-        session.aliases.push({ file: event.file, namespace: event.namespace ?? '', aliases: { ...event.aliases } });
+        // The pre-parse boundary: every import removal for this file has already been emitted, and
+        // parsedText is the exact transformed string the loader hands to the parser. The view is
+        // finalized here, so a parser failure still has a validated view to map its spans through.
+        const view = finalizeParseView(session, event.file);
+        const parsed = typeof event.parsedText === 'string' ? event.parsedText : null;
+        const matches = view !== null && parsed !== null && view.text === parsed;
+        if (view !== null && parsed !== null && !matches) {
+          counters.preParseMismatches += 1;
+          note(session, 'preParseMismatch', event.file);
+        }
+        session.aliases.push({
+          file: event.file,
+          namespace: event.namespace ?? '',
+          aliases: { ...event.aliases },
+          preParse: true,
+          view: view === null ? 'unavailable' : 'finalized',
+          parsedTextMatchesView: parsed === null ? null : matches,
+        });
         return;
       }
       case HOOK_KINDS.loadComplete: {
@@ -371,8 +450,8 @@ export function createFrontendAdapter({ acquisition, captureOnly = true } = {}) 
           observed: event.observed ?? null,
           note: event.note ?? null,
           text: event.form === 'text' ? event.text : null,
-          raw: event.form === 'thrown' ? event.raw : null,
-          thrownKind: event.thrownKind ?? null,
+          thrown: event.form === 'thrown' ? describeThrown(event.thrown) : null,
+          rendered: event.form === 'thrown' ? event.rendered ?? null : null,
           definition: typeof event.definition === 'string' ? event.definition : null,
           file,
           span: unavailableSpan('viewNotFinalized'),
@@ -386,11 +465,14 @@ export function createFrontendAdapter({ acquisition, captureOnly = true } = {}) 
         return;
       }
       case HOOK_KINDS.typeObservation: {
+        // The checker call site does not name the file it is checking, so the observation is
+        // attributed through the declaration that owns the qualified name.
         const record = {
           phase: event.phase,
           status: event.status,
           qualified: event.qualified,
-          file: event.file ?? null,
+          definition: typeof event.definition === 'string' ? event.definition : null,
+          file: fileForDiagnostic(session, event),
           text: event.text,
           quantities: event.quantities.map((entry) => ({
             quant: entry && typeof entry.quant === 'string' ? entry.quant : 'unknown',
@@ -441,38 +523,102 @@ export function createFrontendAdapter({ acquisition, captureOnly = true } = {}) 
     }
   }
 
-  function sinkEmit(event) {
+  // Every sink callback is bound to the invocation that owns the installed hook. A callback that
+  // arrives with a different or absent owner is refused and counted, so a sink retained by an older
+  // invocation cannot publish into a later one, and beginning an invocation never changes the sink
+  // another invocation installed.
+  function ownsActive(owner) {
+    return active !== null && typeof owner === 'string' && owner === active.owner;
+  }
+
+  function baseBendRequested() {
+    const source = acquisition === undefined ? undefined : acquisition.baseBend;
+    if (source === undefined) return undefined;
+    if (typeof source === 'function') {
+      try {
+        return source();
+      } catch (error) {
+        counters.acquisitionFailures += 1;
+        return undefined;
+      }
+    }
+    return source;
+  }
+
+  function sinkEmit(event, owner) {
+    if (active === null) {
+      counters.outsideQuery += 1;
+      return;
+    }
+    const eventOwner = event !== null && typeof event === 'object' ? event.owner : undefined;
+    if (eventOwner !== active.owner || (owner !== undefined && owner !== active.owner)) {
+      counters.foreignOwnerEvents += 1;
+      note(active, 'foreignOwnerEvent', typeof eventOwner === 'string' ? eventOwner : String(eventOwner));
+      return;
+    }
     try {
       handle(event);
     } catch (error) {
-      counters.adapterFailures += 1;
-      note(active, 'adapterFailure', String(error && error.message ? error.message : error));
+      counters.evidenceFailures += 1;
+      note(active, 'evidenceFailure', errorText(error));
     }
   }
 
-  function sinkReadSource(file) {
-    if (active === null) {
-      // A read outside an invocation is refused and never cached.
+  function sinkReadSource(file, owner) {
+    if (!ownsActive(owner)) {
+      // A read outside the owning invocation is refused and never cached.
       counters.outsideQueryReads += 1;
       return undefined;
     }
-    const captured = acquire(active, file);
-    return captured === null ? undefined : captured.text;
+    const record = acquireRecord(active, file);
+    return record.status === 'captured' ? record.capture.text : undefined;
   }
 
-  function sinkResolveSource(file) {
-    if (active === null) {
+  // The loader asks the closure whether a file exists and what its canonical identity is. The
+  // outcome is explicit: 'captured' carries bytes and identity, 'absent' is the closure answering
+  // that the file is not in the capture, and 'unavailable' is the closure having no answer. The
+  // loader decides what each means, so in capture-only mode it never falls back to the host.
+  function sinkResolveSource(file, owner) {
+    if (!ownsActive(owner)) {
       counters.outsideQueryReads += 1;
       return undefined;
     }
-    const captured = acquire(active, file);
-    if (captured === null) return { exists: false, identity: file };
-    return { exists: true, identity: captured.identity };
+    const record = acquireRecord(active, file);
+    if (record.status === 'captured') {
+      return Object.freeze({ status: 'captured', identity: record.canonical, digest: record.capture.digest });
+    }
+    if (record.status === 'absent') return Object.freeze({ status: 'absent', identity: record.canonical });
+    return Object.freeze({ status: 'unavailable', requested: record.requested, detail: record.detail ?? null });
   }
 
-  function sinkSourceFailure(file, reason) {
+  function sinkBaseBendPath(owner) {
+    if (!ownsActive(owner)) {
+      counters.outsideQueryReads += 1;
+      return undefined;
+    }
+    const requested = baseBendRequested();
+    if (requested === undefined) return Object.freeze({ status: 'unavailable', detail: 'closureBaseMissing' });
+    const record = acquireRecord(active, requested);
+    if (record.status === 'captured') return Object.freeze({ status: 'captured', path: record.canonical, digest: record.capture.digest });
+    return Object.freeze({ status: 'unavailable', detail: record.status });
+  }
+
+  function sinkSourceFailure(file, reason, owner) {
+    if (!ownsActive(owner)) {
+      if (active === null) counters.outsideQuery += 1;
+      return;
+    }
     counters.acquisitionFailures += 1;
     note(active, 'acquisitionFailure', `${file}: ${reason}`);
+  }
+
+  // An evidence failure is the observer's own failure: rendering, hook installation, hook release or
+  // a consumer error. It is recorded apart from anything the frontend did, and it never replaces a
+  // frontend outcome.
+  function sinkEvidenceFailure(code, owner, detail) {
+    counters.evidenceFailures += 1;
+    if (code === 'hookInstallThrew' || code === 'hookReleaseThrew') counters.hookInstallFailures += 1;
+    note(ownsActive(owner) ? active : null, code, detail === undefined ? null : detail);
   }
 
   function snapshot(session) {
@@ -481,17 +627,32 @@ export function createFrontendAdapter({ acquisition, captureOnly = true } = {}) 
     const unresolved = session.declarations
       .concat(session.references, session.diagnostics, session.types)
       .filter((record) => record.span !== null && record.span !== undefined && record.span.reason === 'viewNotFinalized').length;
+    // Counters are process-wide. A session delta covers only what happened while that invocation was
+    // active: a read or an emit outside every invocation is counted but belongs to no invocation, so
+    // it is reported through the counters rather than as that invocation's incompleteness.
     const incompleteness = [];
     if (delta.adapterFailures > 0) incompleteness.push('adapterFailure');
-    if (delta.invalidEvents > 0) incompleteness.push('invalidEvent');
     if (delta.acquisitionFailures > 0) incompleteness.push('acquisitionFailure');
+    if (delta.evidenceFailures > 0) incompleteness.push('evidenceFailure');
+    if (delta.foreignOwnerEvents > 0) incompleteness.push('foreignOwnerEvent');
+    if (delta.hookInstallFailures > 0) incompleteness.push('hookInstallFailure');
+    if (delta.invalidEvents > 0) incompleteness.push('invalidEvent');
+    if (delta.preParseMismatches > 0) incompleteness.push('preParseMismatch');
     if (delta.uncapturedDependencies > 0) incompleteness.push('uncapturedDependency');
     if (delta.outsideQuery > 0) incompleteness.push('outsideQueryEvent');
     if (delta.outsideQueryReads > 0) incompleteness.push('outsideQueryRead');
     if (delta.overlappingQueries > 0) incompleteness.push('overlappingQuery');
     if (unresolved > 0) incompleteness.push('unresolvedSpans');
+    // What the closure was asked for, and what each request actually produced.
+    const acquisitions = [...session.acquisitions.entries()].map(([requested, record]) => ({
+      requested,
+      status: record.status,
+      canonical: record.canonical ?? null,
+      detail: record.detail ?? null,
+    }));
     return {
       token: session.token,
+      owner: session.owner,
       identity: session.identity,
       completeness: incompleteness.length === 0 ? 'complete' : 'incomplete',
       incompleteness,
@@ -506,6 +667,7 @@ export function createFrontendAdapter({ acquisition, captureOnly = true } = {}) 
       types: session.types,
       phases: session.phases,
       limitations: session.limitations,
+      acquisitions,
     };
   }
 
@@ -514,7 +676,9 @@ export function createFrontendAdapter({ acquisition, captureOnly = true } = {}) 
       emit: sinkEmit,
       readSource: sinkReadSource,
       resolveSource: sinkResolveSource,
+      baseBendPath: sinkBaseBendPath,
       sourceFailure: sinkSourceFailure,
+      evidenceFailure: sinkEvidenceFailure,
       captureOnly: captureOnly === true,
     }),
     counters,

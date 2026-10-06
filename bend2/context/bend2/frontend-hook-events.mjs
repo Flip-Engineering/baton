@@ -44,9 +44,10 @@ export const DECLARATION_FORMS = Object.freeze(['def', 'type', 'law', 'fill']);
 
 export const DIAGNOSTIC_FORMS = Object.freeze(['err', 'text', 'thrown']);
 
-// A type observation comes from the invocation entry, not from a patched call site: it reads the
-// frontend's own declared type term and its inferred type and records which one it is.
-export const TYPE_STATUSES = Object.freeze(['declared', 'inferred']);
+// A type observation comes from the patched checker call site, describing a definition the checker
+// actually processed: the declared term it prepared and the checked term it produced, with the
+// quantities from the checker's own domain analysis.
+export const TYPE_STATUSES = Object.freeze(['declared', 'elaborated']);
 
 // The reference outcome the adapter records. They stay distinct: a binder lookup, a declared
 // qualified name, an undeclared qualified name and an unbound fallback frame are different facts.
@@ -84,6 +85,7 @@ function valid() {
 // is admitted as null and is reported unavailable by the consumer rather than invented.
 export function validateHookEvent(event) {
   if (!isPlainObject(event)) return invalid('eventMissing');
+  if (!isNonEmptyString(event.owner)) return invalid('ownerMissing');
   if (!isNonEmptyString(event.kind) || !KIND_VALUES.includes(event.kind)) return invalid('kindUnsupported', String(event.kind));
   if (!isNonEmptyString(event.phase) || !PHASE_VALUES.includes(event.phase)) return invalid('phaseUnsupported', String(event.phase));
   switch (event.kind) {
@@ -103,6 +105,9 @@ export function validateHookEvent(event) {
       for (const value of Object.values(event.aliases)) {
         if (typeof value !== 'string') return invalid('aliasValueInvalid');
       }
+      // The transformed text the loader is about to hand to the parser. It marks the pre-parse
+      // boundary: every import removal for this file has already happened when it is emitted.
+      if (typeof event.parsedText !== 'string') return invalid('parsedTextMissing');
       return valid();
     case HOOK_KINDS.loadComplete:
       if (!isNonEmptyString(event.file)) return invalid('fileMissing');
@@ -126,7 +131,12 @@ export function validateHookEvent(event) {
       if (!DIAGNOSTIC_FORMS.includes(event.form)) return invalid('diagnosticFormUnsupported', String(event.form));
       if (event.form === 'err' && event.condition === undefined) return invalid('diagnosticConditionMissing');
       if (event.form === 'text' && !isNonEmptyString(event.text)) return invalid('diagnosticTextMissing');
-      if (event.form === 'thrown' && !isNonEmptyString(event.raw)) return invalid('diagnosticRawMissing');
+      if (event.form === 'thrown') {
+        // The original thrown value travels as it was thrown; the safe rendering is separate, so a
+        // renderer failure cannot replace or rewrite the value the frontend actually threw.
+        if (event.thrown === undefined) return invalid('diagnosticThrownMissing');
+        if (event.rendered !== null && !isNonEmptyString(event.rendered)) return invalid('diagnosticRenderedInvalid');
+      }
       if (event.span !== null && event.span !== undefined && !isSpanLike(event.span)) return invalid('diagnosticSpanInvalid');
       return valid();
     case HOOK_KINDS.importAttempt:
