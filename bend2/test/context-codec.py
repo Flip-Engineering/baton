@@ -30,16 +30,17 @@ The mutation records in bend2/src/context/codec-mutations.json name an
 implementation change and the law that must refuse it. This driver requires each
 record to be applicable in the source it mutates, to name a law the fixture
 compiles, and to name a module the mutated module is reached by. It then applies
-each record in an isolated copy and requires the law's module to refuse the
-compile while naming that law in the diagnostic. A refusal that does not name the
-recorded law is unattributed: a parser, arity or unrelated type error is not that
-law's verdict, so it fails the run as a surviving mutation does, and the raw
-diagnostics are retained for the single Controls/CI classifier. A record whose
-mutated tree still compiles is reported as a surviving mutation, which is a
-failure of the fixture. A record whose law's module does not compile before the
-mutation stays unapplied and counts as unqualified. The record carries the
-compiler's `Location:` value beside the whole diagnostic, so the classifier reads
-where the compiler placed the failure instead of trusting this driver's match.
+each record in an isolated copy and reads what the compiler answered. A refusal
+counts as detection only when the diagnostic names the recorded law as a whole
+identifier. A refusal the compiler places at another law of this lane is recorded
+as `refused-other-law` and counts as unqualified, because the classifier decides
+whether that refusal refutes the recorded law. A refusal placed at no law is a
+parser, arity or unrelated type error, which no record can claim, so it is
+`unattributed` and fails the run as a surviving mutation does. A record whose law
+module does not compile before the mutation is `baseline-unqualified`. Every one
+of these keeps the mutated module and the raw streams, and the record carries the
+compiler's `Location:` value, so the classifier reads where the compiler placed
+the failure instead of trusting this driver's match.
 """
 
 import argparse
@@ -237,8 +238,7 @@ def review_mutations(record, bend, out):
     """Validate the lane's mutation payload and run it as a negative control."""
     records = json.loads(MUTATIONS.read_text())
     laws = law_modules()
-    record["mutations"] = {"count": len(records), "records": [], "refused": 0, "survived": 0,
-                           "unattributed": 0, "unqualified": 0}
+    record["mutations"] = {"count": len(records), "records": [], "outcomes": {}, "unqualified": 0}
     applicable = []
     for index, item in enumerate(records):
         entry = {"name": item["name"], "law": item["law"], "file": item["file"]}
@@ -288,6 +288,8 @@ def review_mutations(record, bend, out):
             # A refusal from a module that does not compile before the mutation
             # says nothing about the mutation, so the record stays unapplied.
             record["mutations"]["unqualified"] += 1
+            record["mutations"]["outcomes"]["baseline-unqualified"] = \
+                record["mutations"]["outcomes"].get("baseline-unqualified", 0) + 1
             record["mutations"]["records"][index]["outcome"] = "baseline-unqualified"
             record["mutations"]["records"][index]["baseline_status"] = baseline.get(module)
             continue
@@ -301,35 +303,46 @@ def review_mutations(record, bend, out):
         source_file.write_bytes(pristine)
         if source_file.read_bytes() != (ROOT / item["file"]).read_bytes():
             record["failures"].append(f"the mutation copy was not restored: {item['name']}")
-        # Only a refusal whose diagnostic names the recorded law is evidence that
-        # the law binds this code; any other refusal is an unrelated failure. The
-        # name must stand as a whole identifier, so a longer name that contains it
-        # is not a match.
+        # A refusal counts as this record's detection only when the diagnostic
+        # names the recorded law, as a whole identifier. A refusal the compiler
+        # places at another law of this lane is law-level evidence for the
+        # classifier, not a detection here. Any other refusal is a parser, arity
+        # or unrelated type error, which no record can claim.
         diagnostic = (stdout + stderr).decode("utf-8", "replace")
-        named = re.search(rf"(?<![A-Za-z0-9_]){re.escape(item['law'])}(?![A-Za-z0-9_])", diagnostic) is not None
-        outcome = "survived"
-        if entry["status"] != 0:
-            outcome = "refused" if named else "unattributed"
-        if outcome == "refused":
-            record["mutations"]["refused"] += 1
-        else:
-            # The mutated module is the evidence a record that did not reach its
-            # law needs, whether it still compiled or refused for another reason.
-            survivor = control / f"{stem}.bend"
-            survivor.write_bytes(mutated)
-            record["mutations"][outcome] += 1
-            record["mutations"]["records"][index]["retained_source"] = str(survivor)
-            if outcome == "survived":
-                record["failures"].append(f"mutation survived the fixture: {item['name']} ({item['law']})")
-            else:
-                record["failures"].append(
-                    f"the mutated tree refused without naming the law: {item['name']} ({item['law']})")
-        record["mutations"]["records"][index]["outcome"] = outcome
-        record["mutations"]["records"][index]["status"] = entry["status"]
-        record["mutations"]["records"][index]["baseline_status"] = baseline.get(module)
-        record["mutations"]["records"][index]["diagnostic_names_the_law"] = named
         location = re.search(r"^Location:\s*(\S+)\s*$", diagnostic, re.M)
-        record["mutations"]["records"][index]["diagnostic_location"] = location.group(1) if location else None
+        placed = location.group(1) if location else None
+        names_recorded = re.search(rf"(?<![A-Za-z0-9_]){re.escape(item['law'])}(?![A-Za-z0-9_])",
+                                   diagnostic) is not None
+        if entry["status"] == 0:
+            outcome = "survived"
+        elif names_recorded:
+            outcome = "refused"
+        elif placed in laws:
+            outcome = "refused-other-law"
+        else:
+            outcome = "unattributed"
+        record["mutations"]["outcomes"][outcome] = record["mutations"]["outcomes"].get(outcome, 0) + 1
+        item_record = record["mutations"]["records"][index]
+        item_record["outcome"] = outcome
+        item_record["status"] = entry["status"]
+        item_record["baseline_status"] = baseline.get(module)
+        item_record["diagnostic_names_the_law"] = names_recorded
+        item_record["diagnostic_location"] = placed
+        if outcome == "refused":
+            continue
+        # A record that did not reach its recorded law keeps the mutated module
+        # the classifier needs.
+        retained = control / f"{stem}.bend"
+        retained.write_bytes(mutated)
+        item_record["retained_source"] = str(retained)
+        if outcome == "survived":
+            record["failures"].append(f"mutation survived the fixture: {item['name']} ({item['law']})")
+        elif outcome == "unattributed":
+            record["failures"].append(
+                f"the mutated tree refused without naming a law: {item['name']} ({item['law']})")
+        else:
+            record["mutations"]["unqualified"] += 1
+            item_record["unqualified_reason"] = f"the refusal names {placed}, not {item['law']}"
     shutil.rmtree(tree)
 
 
@@ -420,17 +433,19 @@ def main():
             record["failures"].append(f"source changed during the run: {path}")
 
     del record["_out"]
-    status = 1 if record["failures"] else (2 if record["unqualified"] else 0)
+    unqualified = len(record["unqualified"]) + record.get("mutations", {}).get("unqualified", 0)
+    status = 1 if record["failures"] else (2 if unqualified else 0)
     record["collection"] = "incomplete" if any(c.get("spawn", "").startswith("failed") for c in record["commands"]) else "complete"
-    record["qualification"] = "failed" if record["failures"] else ("unqualified" if record["unqualified"] else "qualified")
+    record["qualification"] = "failed" if record["failures"] else ("unqualified" if unqualified else "qualified")
     record["exit"] = status
     (out / "evidence.json").write_text(json.dumps(record, indent=1, default=str) + "\n")
     print(json.dumps({"out": str(out), "collection": record["collection"],
                       "qualification": record["qualification"], "exit": status,
                       "failures": record["failures"], "unqualified": [u["module"] for u in record["unqualified"]],
                       "raw_cases": len(RAW_CASES) + 1,
-                      "mutations": {k: record["mutations"][k]
-                                    for k in ("count", "refused", "survived", "unattributed", "unqualified")},
+                      "mutations": {"count": record.get("mutations", {}).get("count", 0),
+                                    "outcomes": record.get("mutations", {}).get("outcomes", {}),
+                                    "unqualified": record.get("mutations", {}).get("unqualified", 0)},
                       "byte_mismatches": [d for d in record["discrepancies"] if d.get("match") is False]}, indent=1))
     return status
 
