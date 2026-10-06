@@ -75,32 +75,44 @@ def verdict_no_final_separator(raw: String, path: String) -> ReceiptVerdict:
   VerdictRefused{raw, "record is missing its final separator"}
 
 def verdict_fifth(raw: String, wanted: String) -> ReceiptVerdict:
-  match Tx.str_eq(raw, Tx.str_cat("qualified\t", Tx.str_cat(wanted, "\t0\t\t"))):
-    case True{}: verdict_pending_missing(raw, wanted)
-    case False{}: VerdictRefused{raw, "record does not match the qualified production shape"}
+  +r5 = raw
+  +w5 = wanted
+  +whole5 = Tx.str_cat("qualified\t", Tx.str_cat(w5, "\t0\t\t"))
+  match Tx.str_eq(r5, whole5):
+    case True{}: verdict_pending_missing(r5, w5)
+    case False{}: VerdictRefused{r5, "record does not match the qualified production shape"}
 
 def verdict_fourth(raw: String, wanted: String) -> ReceiptVerdict:
-  match Tx.str_eq(raw, Tx.str_cat("qualified\t", Tx.str_cat(wanted, "\t0\t\t0\t\t"))):
-    case True{}: verdict_trailing(raw, wanted)
-    case False{}: verdict_fifth(raw, wanted)
+  +r4 = raw
+  +w4 = wanted
+  +whole4 = Tx.str_cat("qualified\t", Tx.str_cat(w4, "\t0\t\t0\t\t"))
+  match Tx.str_eq(r4, whole4):
+    case True{}: verdict_trailing(r4, w4)
+    case False{}: verdict_fifth(r4, w4)
 
 def verdict_third(raw: String, wanted: String) -> ReceiptVerdict:
-  match Tx.str_eq(raw, Tx.str_cat("qualified\t", Tx.str_cat(wanted, "\t0\t\t0"))):
-    case True{}: verdict_no_final_separator(raw, wanted)
-    case False{}: verdict_fourth(raw, wanted)
+  +r3 = raw
+  +w3 = wanted
+  +whole3 = Tx.str_cat("qualified\t", Tx.str_cat(w3, "\t0\t\t0"))
+  match Tx.str_eq(r3, whole3):
+    case True{}: verdict_no_final_separator(r3, w3)
+    case False{}: verdict_fourth(r3, w3)
 
 def verdict_second(raw: String, wanted: String) -> ReceiptVerdict:
-  match Tx.str_eq(raw, Tx.str_cat("qualified\t", Tx.str_cat(wanted, "\t0\t\t1\t"))):
-    case True{}: VerdictPending{raw, wanted, "1"}
-    case False{}: verdict_third(raw, wanted)
+  +r2 = raw
+  +w2 = wanted
+  +whole2 = Tx.str_cat("qualified\t", Tx.str_cat(w2, "\t0\t\t1\t"))
+  match Tx.str_eq(r2, whole2):
+    case True{}: VerdictPending{r2, w2, "1"}
+    case False{}: verdict_third(r2, w2)
 
 def verdict_exact(raw: String, wanted: String) -> ReceiptVerdict:
   +r8 = raw
   +w8 = wanted
   +whole8 = Tx.str_cat("qualified\t", Tx.str_cat(w8, "\t0\t\t0\t"))
   match Tx.str_eq(r8, whole8):
-    case True{}: VerdictAdmitted{raw, wanted}
-    case False{}: verdict_second(raw, wanted)
+    case True{}: VerdictAdmitted{r8, w8}
+    case False{}: verdict_second(r8, w8)
 
 def receipt_verdict(record: String, wanted: String) -> ReceiptVerdict:
   +raw = record
@@ -153,12 +165,13 @@ def Intent.read_observed(request: IntentInput, observed: Result<U32 & String, St
     case Done{raw}: Intent.record_observed(req, Done{raw})
 
 def Intent.prepare(request: IntentInput) -> IO(IntentPrepared):
+  +req = request
+  +path = requested_path(req)
+  +again = req
   do IO<IntentPrepared>:
-    observed : Result<U32 & String, String> <- R.Receipt.qualify(requested_path(request))
-    Intent.read_observed(request, observed)
+    observed : Result<U32 & String, String> <- R.Receipt.qualify(path)
+    Intent.read_observed(again, observed)
 
-# Laws over the actual decoder and caller. Every record here is the exact raw bytes the
-# producer would build or a neighbouring malformation of them.
 law a_complete_qualified_record_is_admitted:
   {receipt_verdict("qualified\t/x\t0\t\t0\t", "/x") == VerdictAdmitted{"qualified\t/x\t0\t\t0\t", "/x"} : ReceiptVerdict}
 
