@@ -698,7 +698,7 @@ def an_empty_enumeration_is_wellformed():
   {==}
 
 law an_unknown_duty_kind_makes_the_enumeration_unusable:
-  {ContextDuties.duty_wellformed("notice\tnot-a-context-id\t\t\tnotice\treport\n") == False{} : Bool}
+  {ContextDuties.duty_wellformed("unknown\tnot-a-context-id\t\t\tnotice\treport\n") == False{} : Bool}
 
 def an_unknown_duty_kind_makes_the_enumeration_unusable():
   {==}
