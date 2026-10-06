@@ -1060,10 +1060,10 @@ law a_created_admission_is_admitted:
 def a_created_admission_is_admitted():
   {==}
 
-law a_retained_admission_of_this_owner_and_request_is_admitted:
+law a_retained_admission_of_this_owner_and_request_is_unverified:
   {ContextService.submission_of("root","{\"v\":1}","plan-1","schema-1",ContextAdmit.AdmissionRetained{"root","{\"v\":1}","accepted","accepted","","/k","/w","/a"}) == ContextService.SubmissionAdmitted{ContextAdmit.AdmissionRetained{"root","{\"v\":1}","accepted","accepted","","/k","/w","/a"}} : ContextService.Submission}
 
-def a_retained_admission_of_this_owner_and_request_is_admitted():
+def a_retained_admission_of_this_owner_and_request_is_unverified():
   {==}
 
 law a_retained_admission_of_another_owner_is_foreign:
