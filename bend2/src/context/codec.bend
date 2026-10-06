@@ -1476,6 +1476,40 @@ def decision_document(+d: FrameDecision) -> Document:
 def document_of_rows(rows: String) -> Document:
   decision_document(frame_decision(frame_envelope(Req.Context.parse_rows(rows))))
 
+# ---------------------------------------------------------------------------
+# The correlated frame decision. A caller that answers one frame correlates its
+# response with the frame's own id, so this decision carries the checked id with the
+# tool, the query, the canonical request and the scope through acceptance and through
+# refusal. A frame whose id did not pass the signed-safe check, and a frame that never
+# decoded, carry no correlation at all, so a response is never attributed to an id the
+# codec did not check.
+
+type CorrelatedDecision is Data:
+  CdChecked{id: Context.FrameId, tool: Context.CodecTool, query: Context.OptText, request: Context.OptText, scope: Context.OptText, condition: String, accepted: Bool}
+  CdUnchecked{condition: String}
+
+def correlated_of_verdict(+env: Envelope, +v: EnvelopeVerdict) -> CorrelatedDecision:
+  match v:
+    case EnvAccepted{+tool, +id, +query, +request, +scope}: CdChecked{id, tool, query, request, scope, "", True{}}
+    case EnvRefused{+condition}: Bool.pick(CorrelatedDecision, Context.frame_id_ok(env_id(env)), CdChecked{env_id(env), env_tool(env), env_query_of(env), request_opt(env_request(env)), env_scope(env), condition, False{}}, CdUnchecked{"invalidFrameId"})
+
+def correlated_of_envelope(+env: Envelope) -> CorrelatedDecision:
+  correlated_of_verdict(env, envelope_decide(env))
+
+def correlated_of_frame(+frame: RawValue) -> CorrelatedDecision:
+  correlated_of_envelope(envelope_fields(frame))
+
+def correlated_of_read(+r: FrameRead) -> CorrelatedDecision:
+  match r:
+    case FrValue{+value}: correlated_of_frame(value)
+    case FrRefused{condition}: CdUnchecked{condition}
+
+def correlated_decision(rows: Req.Rows) -> CorrelatedDecision:
+  correlated_of_read(frame_read(rows))
+
+def correlated_decision_of_text(text: String) -> CorrelatedDecision:
+  correlated_decision(Req.Context.parse_rows(text))
+
 def record_probe(subject: String, policy: String, +projections: Eng.SS) -> Refs.RefRecord:
   Refs.Ref{"r1", "typescript", subject, subject, "s1", policy, projections}
 
@@ -2443,6 +2477,34 @@ law codec_law_a_single_root_member_still_admits:
   {raw_keys_ok(root_words(), Rpair{"jsonrpc", Rstr{"2.0"}, Rnil{}}) == True{} : Bool}
 
 def codec_law_a_single_root_member_still_admits():
+  {==}
+
+# The correlated decision laws. An accepted frame correlates with its checked id; a
+# refused frame still correlates, so its response answers against its request; a frame
+# whose id did not pass the signed-safe check and a frame that never decoded correlate
+# with nothing.
+law codec_law_an_accepted_frame_correlates_with_its_checked_id:
+  {correlated_decision(engine_frame_rows()) == CdChecked{Context.IdNumber{"7"}, Context.CtEngines{}, Context.Absent{}, Context.Absent{}, Context.Absent{}, "", True{}} : CorrelatedDecision}
+
+def codec_law_an_accepted_frame_correlates_with_its_checked_id():
+  {==}
+
+law codec_law_a_refused_frame_still_correlates_with_its_checked_id:
+  {correlated_decision(bad_jsonrpc_meta_rows()) == CdChecked{Context.IdNumber{"7"}, Context.CtResult{}, Context.Present{"q1"}, Context.Absent{}, Context.Absent{}, "invalidJsonrpc", False{}} : CorrelatedDecision}
+
+def codec_law_a_refused_frame_still_correlates_with_its_checked_id():
+  {==}
+
+law codec_law_an_unchecked_frame_id_correlates_nothing:
+  {correlated_of_verdict(EnvFrame{"1.0", "tools/call", "not-a-tool", Context.IdNumber{"9007199254740992"}, Context.Absent{}, RtAbsent{}, True{}, True{}, True{}, Context.Absent{}}, EnvRefused{"invalidFrameId"}) == CdUnchecked{"invalidFrameId"} : CorrelatedDecision}
+
+def codec_law_an_unchecked_frame_id_correlates_nothing():
+  {==}
+
+law codec_law_an_undecoded_frame_correlates_nothing:
+  {correlated_of_read(frame_read(bad_field_rows())) == CdUnchecked{"malformedHexField"} : CorrelatedDecision}
+
+def codec_law_an_undecoded_frame_correlates_nothing():
   {==}
 
 law codec_law_a_null_scope_argument_refuses:

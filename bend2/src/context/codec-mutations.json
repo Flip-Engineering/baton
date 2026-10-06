@@ -368,5 +368,19 @@
   "find": "  ++ \",\\\"scope\\\":\" ++ opt_text_text(scope)",
   "replace": "  ++ \"\"",
   "law": "codec_law_a_scoped_engines_frame_reports_the_session_scope"
+ },
+ {
+  "name": "codec-correlated-ignores-the-id-check",
+  "file": "bend2/src/context/codec.bend",
+  "find": "    case EnvRefused{+condition}: Bool.pick(CorrelatedDecision, Context.frame_id_ok(env_id(env)), CdChecked{env_id(env), env_tool(env), env_query_of(env), request_opt(env_request(env)), env_scope(env), condition, False{}}, CdUnchecked{\"invalidFrameId\"})",
+  "replace": "    case EnvRefused{+condition}: CdChecked{env_id(env), env_tool(env), env_query_of(env), request_opt(env_request(env)), env_scope(env), condition, False{}}",
+  "law": "codec_law_an_unchecked_frame_id_correlates_nothing"
+ },
+ {
+  "name": "codec-correlated-reports-the-wrong-tool",
+  "file": "bend2/src/context/codec.bend",
+  "find": "    case EnvAccepted{+tool, +id, +query, +request, +scope}: CdChecked{id, tool, query, request, scope, \"\", True{}}",
+  "replace": "    case EnvAccepted{+tool, +id, +query, +request, +scope}: CdChecked{id, Context.CtEngines{}, query, request, scope, \"\", True{}}",
+  "law": "codec_law_an_accepted_frame_correlates_with_its_checked_id"
  }
 ]
