@@ -81,16 +81,14 @@ def request_intent(+req: J.Json) -> String:
 def source_path(+req: J.Json) -> String:
   subject_field(req, "path")
 
-def entity_database_engine(+req: J.Json) -> String:
-  database_engine(Req.member_lookup("database", subject_members(req)))
-
 def database_engine(m: Maybe<&2, J.Json>) -> String:
   match m:
     case None{}: SNil{}
     case Some{value}: member_text(obj_members(value), "engine")
 
-def request_projections(+req: J.Json) -> String:
-  join_projections(select_value(req), True{}, SNil{})
+def entity_database_engine(+req: J.Json) -> String:
+  database_engine(Req.member_lookup("database", subject_members(req)))
+
 
 def join_projections(+j: J.Json, first: Bool, +acc: String) -> String:
   match j:
@@ -104,6 +102,10 @@ def join_projections(+j: J.Json, first: Bool, +acc: String) -> String:
     case J.Jint{+value}: acc
     case J.Jstr{+value}: acc
     case J.Jobj{+members}: acc
+
+def request_projections(+req: J.Json) -> String:
+  join_projections(select_value(req), True{}, SNil{})
+
 
 def selected_name(+j: J.Json, +name: String) -> Bool:
   match j:
