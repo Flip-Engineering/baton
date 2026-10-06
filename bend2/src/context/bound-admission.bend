@@ -204,12 +204,14 @@ def admit_tabs(fields: List<String>, +answer: String) -> Admission:
         case _: AdmissionUncertain{"short", answer}
     case _: AdmissionUncertain{"short", answer}
 
+def admit_presence(absent: Bool, +presence: String, more: List<String>, +answer: String) -> Admission:
+  match absent:
+    case True{}: Bool.pick(Admission, nine_values_absent(more), AdmissionAbsent{}, AdmissionUncertain{"shape", answer})
+    case False{}: Bool.pick(Admission, String.eq(presence, "present"), admit_tabs(more, answer), AdmissionUncertain{"mark", answer})
+
 def admit_answer(fields: List<String>, +answer: String) -> Admission:
   match fields:
-    case +presence <> more:
-      Bool.pick(Admission, String.eq(presence, "absent"),
-        Bool.pick(Admission, nine_values_absent(more), AdmissionAbsent{}, AdmissionUncertain{"shape", answer}),
-        Bool.pick(Admission, String.eq(presence, "present"), admit_tabs(more, answer), AdmissionUncertain{"mark", answer}))
+    case +presence <> more: admit_presence(String.eq(presence, "absent"), presence, more, answer)
     case _: AdmissionUncertain{"short", answer}
 
 # The decode: exactly one row, and either the absence row or the ten present columns.

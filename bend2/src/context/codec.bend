@@ -459,7 +459,7 @@ def dispatch_profile(v: Req.Verdict, +chain: OpChain, +grants: Context.Effects) 
 def dispatch_admission(+req: J.Json, +chain: OpChain, +grants: Context.Effects) -> Admission:
   dispatch_profile(Req.request_validate(req), chain, grants)
 
-def dispatch_guarded(present: Bool, +req: J.Json, retained_operations: Eng.SS, +grants: Context.Effects) -> Admission:
+def dispatch_guarded(present: Bool, +req: J.Json, +retained_operations: Eng.SS, +grants: Context.Effects) -> Admission:
   Bool.pick(Admission, present,
     dispatch_admission(req, request_operation_chain(req, retained_operations), grants),
     ARefused{Context.RfValidation{}, "unknownOperation"})
@@ -468,7 +468,7 @@ def dispatch_guarded(present: Bool, +req: J.Json, retained_operations: Eng.SS, +
 # ref subject, and the caller's grants; the chain, the required subset and the
 # admission answer are all derived here, so an arbitrary chain, verdict or required
 # set cannot be substituted.
-def codec_dispatch(+req: J.Json, retained_operations: Eng.SS, +grants: Context.Effects) -> Admission:
+def codec_dispatch(+req: J.Json, +retained_operations: Eng.SS, +grants: Context.Effects) -> Admission:
   dispatch_guarded(subject_chain_present(req, retained_operations), req, retained_operations, grants)
 
 # A minimal accepted closed request, so these laws exercise the real profile.
