@@ -177,6 +177,14 @@ def admitted(+db: String, +binding: String, +id: String, +owner: String, +reques
     submission_after(owner, requestJson, plan, resultSchema, answer)
 
 
+# The presence of the identity is bound before it is inspected, so the scrutinee is a
+# parameter and the IO action is chosen inside the match: an absent identity refuses in
+# this branch and reaches no bound call, and a present one proceeds to the admission.
+def submit_identified(+absent: Bool, +db: String, +binding: String, +id: String, +owner: String, +requestJson: String, +keeperPath: String, +cwd: String, +originAttempt: String, +artifactPath: String, +plan: String, +resultSchema: String) -> IO(Submission):
+  match absent:
+    case True{}: IO.pure(Submission, SubmissionPlanRefused{"plan", "absent"})
+    case False{}: admitted(db, binding, id, owner, requestJson, keeperPath, cwd, originAttempt, artifactPath, plan, resultSchema)
+
 def submit(+db: String, +binding: String, +id: String, +owner: String, +requestJson: String, +keeperPath: String, +cwd: String, +originAttempt: String, +artifactPath: String, decision: PlanDecision) -> IO(Submission):
   match decision:
     case PlanRefuses{stage, reason}: IO.pure(Submission, SubmissionPlanRefused{stage, reason})
@@ -235,13 +243,6 @@ def admitted_associated(+db: String, +binding: String, +id: String, +owner: Stri
     answer : Result<&1,&1,U32 & String,ContextAdmit.Admission> <- ContextAdmit.admit_associated(db, binding, id, owner, requestJson, keeperPath, cwd, originAttempt, artifactPath, planValue, identity, resultSchema)
     admitted_stored(owner, requestJson, identity, resultSchema, db, binding, id, answer)
 
-# The presence of the identity is bound before it is inspected, so the scrutinee is a
-# parameter and the IO action is chosen inside the match: an absent identity refuses in
-# this branch and reaches no bound call, and a present one proceeds to the admission.
-def submit_identified(+absent: Bool, +db: String, +binding: String, +id: String, +owner: String, +requestJson: String, +keeperPath: String, +cwd: String, +originAttempt: String, +artifactPath: String, +plan: String, +resultSchema: String) -> IO(Submission):
-  match absent:
-    case True{}: IO.pure(Submission, SubmissionPlanRefused{"plan", "absent"})
-    case False{}: admitted(db, binding, id, owner, requestJson, keeperPath, cwd, originAttempt, artifactPath, plan, resultSchema)
 
 def discover(catalog: Unit -> IO(Result<&1,&1,U32 & String,String>)) -> IO(Discovery):
   do IO<Discovery>:
