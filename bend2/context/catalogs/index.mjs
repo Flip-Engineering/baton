@@ -46,3 +46,30 @@ export { DIALECTS, foldIdentifier, identifiersMatch } from './sql-identifiers.mj
 export { SCAN_DIALECTS, scanSqlStatements, validateSqlText } from './sql-scan.mjs';
 
 export { CATALOG_OPERATIONS } from './operations.mjs';
+
+export {
+  CATALOG_COMMON_OPERATIONS,
+  CATALOG_EXECUTION,
+  CONTRACT_VERSION,
+  PROTOCOL_VERSION,
+  PROVIDER_DECLARATIONS,
+  PROVIDER_DECLARATION_SCHEMA,
+  TYPESCRIPT_PRODUCER_ID_STATUS,
+  TYPESCRIPT_PRODUCER_MODULE,
+  TYPESCRIPT_PRODUCER_OPERATION,
+  TYPESCRIPT_RECORD_KIND,
+  TYPESCRIPT_RECORD_SCHEMA,
+  checkProviderDeclaration,
+  declarationForModule,
+} from './provider-declaration.mjs';
+
+export {
+  BINDING_MEMBERS,
+  CAPTURE_MEMBERS,
+  INVOCATION_MEMBERS,
+  SOURCE_CAPTURE_ROLE,
+  STEP_MEMBERS,
+  STEP_REF_MEMBERS,
+  captureProducer,
+  mapInvocationFrame,
+} from './transfer-mapping.mjs';

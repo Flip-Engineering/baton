@@ -37,6 +37,12 @@ const MUTATIONS = [
   { name: 'rollback-diagnostic-dropped', file: 'context/catalogs/sqlite-catalog.mjs', find: "        rawCleanupOutcomes.push({ stage: 'createSqliteSession:rollback', cleanupError });", replace: '        void cleanupError;', tests: ['sqlite-session-init.test.mjs'] },
   { name: 'repeat-close-loses-cached-outcome', file: 'context/catalogs/sqlite-catalog.mjs', find: '        if (releaseOutcome !== null) return { ...releaseOutcome, alreadyClosed: true };', replace: '        if (releaseOutcome !== null) return { closed: true, sessionUsable: false, alreadyClosed: true, diagnostics: [] };', tests: ['sqlite-session-init.test.mjs'] },
   { name: 'cleanup-unreadable-status-falls-back', file: 'context/catalogs/failure.mjs', find: "    text = 'unreadable message';", replace: "    text = asText(cleanupError, 'unreadable cleanup failure');", tests: ['sqlite-session-init.test.mjs'] },
+  { name: 'declaration-effect-drift', file: 'context/catalogs/provider-declaration.mjs', find: "      { operation: 'sqlPlan', execution: CATALOG_EXECUTION, effects: ['planTargetSql'], resultSchema: resultSchema(moduleId, 'sqlPlan'), consumes: [] },", replace: "      { operation: 'sqlPlan', execution: CATALOG_EXECUTION, effects: ['planTargetSql', 'executeTarget'], resultSchema: resultSchema(moduleId, 'sqlPlan'), consumes: [] },", tests: ['provider-declaration.test.mjs'] },
+  { name: 'dependency-schema-distinctness-removed', file: 'context/catalogs/provider-declaration.mjs', find: '      if (edge.schema === operation.resultSchema) {', replace: '      if (false) {', tests: ['provider-declaration.test.mjs'] },
+  { name: 'edge-record-absence-tolerated', file: 'context/catalogs/transfer-mapping.mjs', find: '    if (bucket.records.length === 0) {', replace: '    if (false) {', tests: ['provider-declaration.test.mjs'] },
+  { name: 'source-capture-accepted-as-record', file: 'context/catalogs/transfer-mapping.mjs', find: '    if (record[CAPTURE_MEMBERS.role] === SOURCE_CAPTURE_ROLE) {', replace: '    if (false) {', tests: ['provider-declaration.test.mjs'] },
+  { name: 'capture-attribution-ignored', file: 'context/catalogs/transfer-mapping.mjs', find: '    if (producer.moduleId === moduleId && producer.operation === operationName && producer.declarationDigest === declarationDigest) {', replace: '    if (true) {', tests: ['provider-declaration.test.mjs'] },
+  { name: 'transfer-result-schema-check-removed', file: 'context/catalogs/transfer-mapping.mjs', find: '  if (resultSchema !== operation.resultSchema) {', replace: '  if (false) {', tests: ['provider-declaration.test.mjs'] },
   { name: 'cleanup-reader-unguarded', file: 'context/catalogs/failure.mjs', find: 'function readMember(target, key) {\n  try {\n    return { status: \'read\', value: target[key] };\n  } catch {\n    return { status: \'unreadable\' };\n  }\n}', replace: 'function readMember(target, key) {\n  return { status: \'read\', value: target[key] };\n}', tests: ['sqlite-session-init.test.mjs'] },
   { name: 'origin-identifier-quoting-removed', file: 'context/catalogs/sqlite-statement.mjs', find: 'return `"${String(name).replace(/"/g, \'""\')}"`;', replace: 'return String(name);', tests: ['sql-helpers.test.mjs'] },
   { name: 'rejoin-refusal-removed', file: 'context/catalogs/sqlite-statement.mjs', find: "const alreadyJoined = plan.join !== undefined || operands.some(relation => relation.status !== 'pending-catalog-join');", replace: 'const alreadyJoined = false;', tests: ['sql-helpers.test.mjs'] },
@@ -88,7 +94,7 @@ function summary(output) {
 }
 
 copyTree();
-const baseline = runTests(['sql-helpers.test.mjs', 'sqlite-session-init.test.mjs', 'sqlite-catalog.test.mjs', 'json-schema.test.mjs', 'zod-model.test.mjs', 'model-use-join.test.mjs', 'postgres-catalog.test.mjs']);
+const baseline = runTests(['sql-helpers.test.mjs', 'sqlite-session-init.test.mjs', 'provider-declaration.test.mjs', 'sqlite-catalog.test.mjs', 'json-schema.test.mjs', 'zod-model.test.mjs', 'model-use-join.test.mjs', 'postgres-catalog.test.mjs']);
 if (baseline.status !== 0) {
   console.error(`baseline failed: ${summary(baseline.stdout)}`);
   console.error(baseline.stderr);
