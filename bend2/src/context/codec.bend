@@ -2122,11 +2122,12 @@ law codec_law_an_equal_duplicate_ref_field_refuses:
 def codec_law_an_equal_duplicate_ref_field_refuses():
   {==}
 
-# The valid control for both refusals above: the same builder chain without the repeated
-# pair decodes with no condition, so the refusals are attributable to the duplicate key
-# rather than to the record shape.
+# The valid control for both refusals above: the duplicate builders' own underlying
+# five-member record, with the extra id pair absent, decodes with no condition. The only
+# difference from either duplicate case is the repeated key, so the refusals are
+# attributable to the duplicate alone rather than to the record shape or its subject kind.
 law codec_law_a_wire_reference_with_distinct_fields_decodes:
-  {ref_condition(ref_decode(ref_object_of(ref_members_object_subject("r9", J.Jarr{J.Jstr{"definition"}, J.Jnil{}})))) == "" : String}
+  {ref_condition(ref_decode(ref_object_of(ref_members_subject("r9", cobj1("kind", J.Jstr{"symbol"}), J.Jarr{J.Jstr{"definition"}, J.Jnil{}})))) == "" : String}
 
 def codec_law_a_wire_reference_with_distinct_fields_decodes():
   {==}
