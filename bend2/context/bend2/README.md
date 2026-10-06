@@ -252,16 +252,30 @@ hook, a throwing installation, and an ownerless installation. Each case asserts 
 status, phase, diagnostic identity and mapped span, completeness, preserved hook owner and closed
 session; the run exits non-zero and names the failed claim. Its stdout is one JSON report.
 
-The same command with `target: 'main'` derives the main-side hooks. The hooks are inert until a caller
-installs the sink with `bendHooks(...)`; no module in this repository imports a frontend, and no
-frontend behaviour changes when the sink is absent or declines.
+The same command with `target: 'main'` derives the main-side hooks. In source, every hook path consults
+the installed sink before it does anything, a declining or absent sink leaves the pre-existing path in
+place, and no module in this repository imports a frontend. Equivalence between a hooked frontend with
+an absent or declining sink and an unhooked frontend has not been executed anywhere, so it is a
+source-level statement and not a measured one.
 
-Remaining: the `comp.ts` `book_owned` entry and throw detail (its exact anchor text is not yet read, so
-no replacement is guessed), the admitted selected-step invocation ABI and its native export, the Core
-capture payload encoding and marker meaning (the record path is refused until those operands are
-named, because exact original bytes cannot be recovered from an unspecified string), and all runtime,
-deployment and semantic-equivalence qualification. The Base path resolves lazily through the closure
-and takes precedence over any host path cached before a captured invocation.
+Remaining, and precisely what is unconnected:
+
+- the trusted custody reader that yields the exact accepted bytes for a captured identity. Its owner is
+  the retained acquisition service under Lifecycle and Interfaces, not this component and not Core,
+  which authenticates no bytes. Until it exists, a caller that already holds the exact bytes uses the
+  capture closure directly; the wire-record path refuses with the operand named instead of inferring
+  custody. The callable this consumer needs is a synchronous, immutable, per-invocation answer set:
+  existence and canonical identity for a requested name, the exact bytes for that identity, and the
+  producing binding (`module_id`, `declaration_digest`, `operation`) of the admitted capture, with no
+  host fallback and one canonical identity per requested name.
+- the native invocation entry and the publication decision. The selected-step and wire exports are
+  supplied and consumed here, but the admitted native invocation entry, its export identity and the
+  decision to publish a result belong to the caller that owns invocation and publication. A source
+  decoder and an internal entry are not native admission.
+- runtime, deployment and semantic-equivalence qualification, which needs admitted remote execution.
+
+The Base path resolves lazily through the closure and takes precedence over any host path cached before
+a captured invocation.
 
 ## Regression command
 
