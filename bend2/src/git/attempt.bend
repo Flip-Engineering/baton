@@ -82,7 +82,7 @@ law the_capture_attempts_the_release_after_the_effect_and_keeps_both:
 def the_capture_attempts_the_release_after_the_effect_and_keeps_both(handle,guard,artifact,argv,cwd):
   {==}
 
-law the_entry_decides_the_claim_branch_and_runs_no_effect_itself:
+law the_entry_claims_the_guard_then_decides_the_branch:
   for common: String
   for target: String
   for guard: String
@@ -93,5 +93,5 @@ law the_entry_decides_the_claim_branch_and_runs_no_effect_itself:
     claimed : Result<U32 & String, Maybe<U32>> <- R.Receipt.claim(common, target)
     Attempt.claimed(claimed, target, guard, artifact, argv, cwd)) : IO(AttemptCapture)}
 
-def the_entry_decides_the_claim_branch_and_runs_no_effect_itself(common,target,guard,artifact,argv,cwd):
+def the_entry_claims_the_guard_then_decides_the_branch(common,target,guard,artifact,argv,cwd):
   {==}
