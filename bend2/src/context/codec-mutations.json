@@ -372,8 +372,8 @@
  {
   "name": "codec-correlated-ignores-the-id-check",
   "file": "bend2/src/context/codec.bend",
-  "find": "    case FdRefused{cls, condition}: Bool.pick(CorrelatedDecision, Context.frame_id_ok(env_id(env)), CdRefused{env_id(env), cls, condition}, CdUncorrelated{condition})",
-  "replace": "    case FdRefused{cls, condition}: CdRefused{env_id(env), cls, condition}",
+  "find": "    case FdRefused{cls, +condition}: Bool.pick(CorrelatedDecision, Context.frame_id_ok(env_id(env)), CdRefused{env_id(env), cls, condition}, CdUncorrelated{condition})",
+  "replace": "    case FdRefused{cls, +condition}: CdRefused{env_id(env), cls, condition}",
   "law": "codec_law_an_unchecked_frame_id_correlates_nothing"
  },
  {
