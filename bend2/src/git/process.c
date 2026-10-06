@@ -108,12 +108,22 @@ static void git_proc_call_with_stderr(IoWork* w, int stderr_fd, int claim_fd) {
     return;
   }
   {
+    /* Each handle is closed once. git_dup_high leaves its argument owned by the caller,
+       so an unchanged handle is still the original and must not be closed twice, and a
+       failed second move must not close the first move's duplicate through the same
+       number. The first failure's errno is taken before any later call can replace it. */
     int low0 = fds[0], low1 = fds[1];
-    int high0 = git_dup_high(low0), high1 = git_dup_high(low1);
-    if (high0 < 0 || high1 < 0) {
+    int high0 = git_dup_high(low0);
+    if (high0 < 0) {
       int e = errno;
-      if (high0 >= 0) close(high0);
-      if (high1 >= 0) close(high1);
+      close(low0); close(low1);
+      w->code = e;
+      return;
+    }
+    int high1 = git_dup_high(low1);
+    if (high1 < 0) {
+      int e = errno;
+      if (high0 != low0) close(high0);
       close(low0); close(low1);
       w->code = e;
       return;
@@ -299,7 +309,7 @@ static void git_capture_call(IoWork *w) {
     int fd = open(capture->artifact, O_CREAT | O_EXCL | O_RDWR | O_NOFOLLOW | O_CLOEXEC, 0600);
     if (fd < 0) { capture->process.code = errno; return; }
     int high = git_dup_high(fd);
-    if (high < 0) { capture->process.code = errno; close(fd); return; }
+    if (high < 0) { int e = errno; close(fd); capture->process.code = e; return; }
     if (high != fd) close(fd);
     fd = high;
     diagnostic = fdopen(fd, "w+");
@@ -312,12 +322,12 @@ static void git_capture_call(IoWork *w) {
     }
     int low = fileno(diagnostic);
     int moved = git_dup_high(low);
-    if (moved < 0) { capture->process.code = errno; return; }
+    /* git_dup_high does not close its argument, so the FILE* still owns the original
+       descriptor and fclose releases it exactly once on every one of these paths. */
+    if (moved < 0) { int e = errno; fclose(diagnostic); capture->process.code = e; return; }
     if (moved != low) {
-      /* the new stream owns the duplicate; fclose releases the original descriptor
-         exactly once, and the FILE* is never left pointing at a closed number */
       FILE *again = fdopen(moved, "w+");
-      if (!again) { capture->process.code = errno; close(moved); return; }
+      if (!again) { int e = errno; close(moved); fclose(diagnostic); capture->process.code = e; return; }
       fclose(diagnostic);
       diagnostic = again;
     }
