@@ -1034,6 +1034,12 @@ def raw_field(+v: RawValue, key: String) -> Maybe<&2, RawValue>:
 def raw_field_text(+v: RawValue, key: String) -> String:
   raw_text_of(raw_or_null(raw_field(v, key)))
 
+def present_raw(m: Maybe<&2, RawValue>) -> Bool:
+  match m:
+    case None{}: False{}
+    case Some{+value}: True{}
+
+
 def raw_member_present(key: String, members: RawValue) -> Bool:
   present_raw(raw_member(key, members))
 
@@ -1042,11 +1048,6 @@ def raw_keys_ok(+allowed: Req.Words, members: RawValue) -> Bool:
     case Rpair{+key, +value, +tail}: Bool.pick(Bool, Req.word_member(allowed, key), Bool.pick(Bool, raw_member_present(key, tail), False{}, raw_keys_ok(allowed, tail)), False{})
     case Rnil{}: True{}
     case other: False{}
-
-def present_raw(m: Maybe<&2, RawValue>) -> Bool:
-  match m:
-    case None{}: False{}
-    case Some{+value}: True{}
 
 
 def root_words() -> Req.Words:
