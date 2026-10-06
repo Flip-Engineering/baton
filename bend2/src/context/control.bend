@@ -20,7 +20,7 @@ import ./admission.bend as ContextAdmission
 def cleanup_intent_text(+controlQuery: String, +signal: String) -> String:
   J.json_text(J.Jobj{J.Jpair{"controlQuery", J.Jstr{controlQuery}, J.Jpair{"signal", J.Jstr{signal}, J.Jnil{}}}})
 
-def role_release_intent_text(+controlQuery: String, +signal: String, +delivery: String, evidence: ContextAdmission.Evidence) -> String:
+def role_release_intent_text(+controlQuery: String, +signal: String, +delivery: String, +evidence: ContextAdmission.Evidence) -> String:
   J.json_text(J.Jobj{J.Jpair{"controlQuery", J.Jstr{controlQuery},
     J.Jpair{"delivery", J.Jstr{delivery},
     J.Jpair{"evidence", ContextAdmission.evidence_json(evidence),

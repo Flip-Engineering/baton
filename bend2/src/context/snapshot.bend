@@ -178,7 +178,7 @@ def applies_decision(+changed: Eng.SS) -> Applies:
 def applies_ok(recorded: Fps, current: Fps) -> Applies:
   applies_decision(changed_inputs(recorded, current))
 
-def applies(recorded: Fps, revalidation: Revalidation) -> Applies:
+def applies(+recorded: Fps, revalidation: Revalidation) -> Applies:
   match revalidation:
     case RvFailed{reason}: AUnknown{reason}
     case RvOk{current}: applies_ok(recorded, current)

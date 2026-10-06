@@ -275,7 +275,7 @@ def opt_nonempty(q: Context.OptText) -> Bool:
     case Context.Absent{}: False{}
     case Context.Present{value}: Bool.pick(Bool, String.is_empty(value), False{}, True{})
 
-def query_shape(+tool: String, q: Context.OptText) -> Bool:
+def query_shape(+tool: String, +q: Context.OptText) -> Bool:
   match tool:
     case "context-engines": opt_absent(q)
     case other: opt_nonempty(q)
@@ -283,7 +283,7 @@ def query_shape(+tool: String, q: Context.OptText) -> Bool:
 def env_query_ok(+env: Envelope) -> Bool:
   query_shape(env_tool_name(env), env_query_of(env))
 
-def request_shape(+tool: String, r: RequestText, +closed: Bool) -> Bool:
+def request_shape(+tool: String, +r: RequestText, +closed: Bool) -> Bool:
   match tool:
     case "context-query": Bool.pick(Bool, closed, request_text_present(r), False{})
     case other: Bool.pick(Bool, closed, request_absent(r), False{})
@@ -379,7 +379,7 @@ def chain_count(chain: OpChain) -> U32:
     case Opnone{}: 0
     case Opcons{+head, +tail}: U32.add(1, chain_count(tail))
 
-def admission_text(a: Admission) -> String:
+def admission_text(+a: Admission) -> String:
   match a:
     case ADispatch{+operations, +effects}: "dispatch:" ++ primary_operation(operations) ++ ":" ++ U32.show(chain_count(operations))
     case ARefused{cls, condition}: "refused:" ++ Context.refusal_class_name(cls) ++ ":" ++ condition
@@ -852,7 +852,7 @@ def text_field(+hex: String) -> FieldText:
 def merge_bad(+a: String, +b: String) -> String:
   Bool.pick(String, String.is_empty(a), b, a)
 
-def build_row(i: FieldText, p: FieldText, k: FieldText, key: FieldText, v: FieldText) -> DecodedRow:
+def build_row(+i: FieldText, +p: FieldText, +k: FieldText, +key: FieldText, +v: FieldText) -> DecodedRow:
   DRow{ft_text(i), ft_text(p), ft_text(k), ft_text(key), ft_text(v),
        merge_bad(merge_bad(merge_bad(merge_bad(ft_bad(i), ft_bad(p)), ft_bad(k)), ft_bad(key)), ft_bad(v))}
 
@@ -972,7 +972,7 @@ def raw_step(+frame: RawFrame, +row: Req.Row) -> RawFrame:
     case RFBad{+condition}: RFBad{condition}
     case other_frame: raw_place(other_frame, decode_row(row))
 
-def raw_fold(rows: Req.Rows, frame: RawFrame) -> RawFrame:
+def raw_fold(rows: Req.Rows, +frame: RawFrame) -> RawFrame:
   match rows:
     case Req.Rnone{}: raw_finish(frame)
     case Req.Rcons{+head, +tail}: raw_fold(tail, raw_step(frame, head))
@@ -1024,7 +1024,7 @@ def raw_field(+v: RawValue, key: String) -> Maybe<&2, RawValue>:
 def raw_field_text(+v: RawValue, key: String) -> String:
   raw_text_of(raw_or_null(raw_field(v, key)))
 
-def raw_keys_ok(allowed: Req.Words, members: RawValue) -> Bool:
+def raw_keys_ok(+allowed: Req.Words, members: RawValue) -> Bool:
   match members:
     case Rpair{+key, +value, +tail}: Bool.pick(Bool, Req.word_member(allowed, key), Bool.pick(Bool, raw_member_present(key, tail), False{}, raw_keys_ok(allowed, tail)), False{})
     case Rnil{}: True{}
@@ -1145,13 +1145,13 @@ def mode_is_member(mode: ConvMode) -> Bool:
     case CmValue{}: False{}
     case CmArray{}: False{}
 
-def arr_rest(rest: JsonConv, +head: J.Json) -> JsonConv:
+def arr_rest(+rest: JsonConv, +head: J.Json) -> JsonConv:
   Bool.pick(JsonConv, cv_ok(rest), JcJson{J.Jarr{head, cv_json(rest)}}, JcRefused{cv_bad(rest)})
 
 def arr_mode(rest: JsonConv, +head: J.Json, mode: ConvMode) -> JsonConv:
   Bool.pick(JsonConv, mode_is_member(mode), JcRefused{"arrayCellInMemberChain"}, arr_rest(rest, head))
 
-def arr_step(c: JsonConv, rest: JsonConv, mode: ConvMode) -> JsonConv:
+def arr_step(+c: JsonConv, rest: JsonConv, mode: ConvMode) -> JsonConv:
   Bool.pick(JsonConv, cv_ok(c), arr_mode(rest, cv_json(c), mode), JcRefused{cv_bad(c)})
 
 def obj_wrap(c: JsonConv) -> JsonConv:
@@ -1162,13 +1162,13 @@ def obj_wrap(c: JsonConv) -> JsonConv:
 def obj_step(c: JsonConv, mode: ConvMode) -> JsonConv:
   Bool.pick(JsonConv, mode_is_value(mode), obj_wrap(c), JcRefused{"objectOutsideValuePosition"})
 
-def pair_rest(rest: JsonConv, +key: String, +value: J.Json) -> JsonConv:
+def pair_rest(+rest: JsonConv, +key: String, +value: J.Json) -> JsonConv:
   Bool.pick(JsonConv, cv_ok(rest), JcJson{J.Jpair{key, value, cv_json(rest)}}, JcRefused{cv_bad(rest)})
 
 def pair_mode(rest: JsonConv, +key: String, +value: J.Json, mode: ConvMode) -> JsonConv:
   Bool.pick(JsonConv, mode_is_member(mode), pair_rest(rest, key, value), JcRefused{"memberCellOutsideObject"})
 
-def pair_step(c: JsonConv, rest: JsonConv, key: String, mode: ConvMode) -> JsonConv:
+def pair_step(+c: JsonConv, rest: JsonConv, key: String, mode: ConvMode) -> JsonConv:
   Bool.pick(JsonConv, cv_ok(c), pair_mode(rest, key, cv_json(c), mode), JcRefused{cv_bad(c)})
 
 def scalar_in_mode(+value: J.Json, mode: ConvMode) -> JsonConv:
@@ -1377,7 +1377,7 @@ def ref_snapshot_of(d: RefDecode) -> String:
     case RdRef{+id, +engine, +subject_kind, +subject_text, snapshot_id, +projections}: snapshot_id
     case RdBad{+condition}: SNil{}
 
-def ref_record_of(d: RefDecode, policy: String) -> Refs.RefRecord:
+def ref_record_of(+d: RefDecode, policy: String) -> Refs.RefRecord:
   Refs.Ref{ref_id_of(d), ref_engine_of(d), ref_subject_of(d), ref_subject_text_of(d), ref_snapshot_of(d), policy, ss_of_proj(ref_projections_of(d))}
 
 # The retained selector's operations are authenticated evidence carried beside the

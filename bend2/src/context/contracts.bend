@@ -282,7 +282,7 @@ def frame_id_text(f: FrameId) -> String:
     case IdText{value}: J.json_text(J.Jstr{value})
     case IdNumber{token}: token
 
-def codec_success_text(tool: CodecTool, ident: FrameId, query: OptText, request: OptText, scope: OptText) -> String:
+def codec_success_text(+tool: CodecTool, ident: FrameId, +query: OptText, +request: OptText, +scope: OptText) -> String:
   "{\"id\":" ++ frame_id_text(ident)
   ++ ",\"query\":" ++ opt_text_text(query)
   ++ ",\"requestCanonical\":" ++ opt_text_text(request)
@@ -318,7 +318,7 @@ def effect_member(xs: Effects, +e: Effect) -> Bool:
 # The union builder for required-effect sets. A caller composes the subset of
 # every selected operation with it, so an override adds its effect without
 # dropping another operation's requirement.
-def cat_effects(xs: Effects, ys: Effects) -> Effects:
+def cat_effects(xs: Effects, +ys: Effects) -> Effects:
   match xs:
     case EpsNone{}: ys
     case EpsCons{+head, +tail}: EpsCons{head, cat_effects(tail, ys)}
@@ -480,7 +480,7 @@ def num_step(state: NumState, +c: Char) -> NumState:
     case NumExpDigit{}: num_from_expdigit(c)
     case NumBad{}: NumBad{}
 
-def num_feed(s: String, state: NumState) -> NumState:
+def num_feed(s: String, +state: NumState) -> NumState:
   match s:
     case SNil{}: state
     case SCon{+head, +tail}: num_feed(tail, num_step(state, head))

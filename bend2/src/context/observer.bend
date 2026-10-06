@@ -176,7 +176,7 @@ def receipt_lines(+query: String, +role: String, +incarnation: String, +cursor: 
 def receipt_decode(+query: String, +role: String, +incarnation: String, +cursor: String, +answer: String) -> ReceiptRead:
   receipt_lines(query, role, incarnation, cursor, answer, Tx.split_lines(answer))
 
-def step_of(+query: String, +role: String, +incarnation: String, +cursor: String, read: ReceiptRead) -> ObserverStep:
+def step_of(+query: String, +role: String, +incarnation: String, +cursor: String, +read: ReceiptRead) -> ObserverStep:
   match read:
     case ReceiptAbsent{}: ObserverAbsent{"role"}
     case ReceiptPresent{receipt}: ObserverCommitted{receipt}

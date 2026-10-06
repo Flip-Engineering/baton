@@ -188,7 +188,7 @@ def step_state(state: DState, +b: U32) -> DState:
     case DPendCc{b0, b1, b2, acc}: pend_cc(b0, b1, b2, acc, b)
     case DBad{reason}: DBad{reason}
 
-def feed_state(rest: String, state: DState) -> DState:
+def feed_state(rest: String, +state: DState) -> DState:
   match rest:
     case SNil{}: state
     case SCon{+head, +tail}: feed_state(tail, step_state(state, Char.to_u32(head)))
@@ -251,7 +251,7 @@ type Rows is Data:
   Rnone{}
   Rcons{head: Row, tail: Rows}
 
-def rows_add(rows: Rows, r: Row) -> Rows:
+def rows_add(rows: Rows, +r: Row) -> Rows:
   match rows:
     case Rnone{}: Rcons{r, Rnone{}}
     case Rcons{+head, +tail}: Rcons{head, rows_add(tail, r)}

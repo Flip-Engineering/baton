@@ -145,12 +145,12 @@ def retained(+db: String, +binding: String, +query: String) -> IO(Retained):
     retained_after(query, result)
 
 # A retained row is admitted only when its owner and request are the caller's own.
-def submission_retained(+expectedOwner: String, +expectedRequest: String, +plan: String, +resultSchema: String, admission: ContextAdmit.Admission, +owner: String, +request: String, +decision: String, +state: String) -> Submission:
+def submission_retained(+expectedOwner: String, +expectedRequest: String, +plan: String, +resultSchema: String, +admission: ContextAdmit.Admission, +owner: String, +request: String, +decision: String, +state: String) -> Submission:
   Bool.pick(Submission, String.eq(decision, "accepted"),
     Bool.pick(Submission, ContextAdmit.admit_identical(admission, expectedOwner, expectedRequest), SubmissionRetainedUnverified{admission, plan, resultSchema}, SubmissionForeign{owner, request}),
     SubmissionRetainedRejected{decision, state, owner, request})
 
-def submission_of(+expectedOwner: String, +expectedRequest: String, +plan: String, +resultSchema: String, admission: ContextAdmit.Admission) -> Submission:
+def submission_of(+expectedOwner: String, +expectedRequest: String, +plan: String, +resultSchema: String, +admission: ContextAdmit.Admission) -> Submission:
   match admission:
     case ContextAdmit.AdmissionCreated{owner, request, decision, state, attempt, keeperPath, cwd, artifactPath}: SubmissionAdmitted{admission, plan, resultSchema}
     case ContextAdmit.AdmissionRetained{owner, request, decision, state, attempt, keeperPath, cwd, artifactPath}: submission_retained(expectedOwner, expectedRequest, plan, resultSchema, admission, owner, request, decision, state)
@@ -185,7 +185,7 @@ def submit_identified(+absent: Bool, +db: String, +binding: String, +id: String,
     case True{}: IO.pure(Submission, SubmissionPlanRefused{"plan", "absent"})
     case False{}: admitted(db, binding, id, owner, requestJson, keeperPath, cwd, originAttempt, artifactPath, plan, resultSchema)
 
-def submit(+db: String, +binding: String, +id: String, +owner: String, +requestJson: String, +keeperPath: String, +cwd: String, +originAttempt: String, +artifactPath: String, decision: PlanDecision) -> IO(Submission):
+def submit(+db: String, +binding: String, +id: String, +owner: String, +requestJson: String, +keeperPath: String, +cwd: String, +originAttempt: String, +artifactPath: String, +decision: PlanDecision) -> IO(Submission):
   match decision:
     case PlanRefuses{stage, reason}: IO.pure(Submission, SubmissionPlanRefused{stage, reason})
     case PlanAdmits{+proposedPlan, proposedSchema}:
@@ -197,7 +197,7 @@ def submit(+db: String, +binding: String, +id: String, +owner: String, +requestJ
 # a different identity refuses at the plan stage rather than attaching a fresh plan to a
 # retained row, and a row that carries no association stays unestablished because nothing
 # here can repair it.
-def submission_stored(+expectedOwner: String, +expectedRequest: String, +plan: String, admission: ContextAdmit.Admission, +planValue: String, +planIdentity: String, +storedSchema: String) -> Submission:
+def submission_stored(+expectedOwner: String, +expectedRequest: String, +plan: String, +admission: ContextAdmit.Admission, +planValue: String, +planIdentity: String, +storedSchema: String) -> Submission:
   match admission:
     case ContextAdmit.AdmissionCreated{owner, request, decision, state, attempt, keeperPath, cwd, artifactPath}: SubmissionAdmitted{admission, planValue, storedSchema}
     case ContextAdmit.AdmissionRetained{owner, request, decision, state, attempt, keeperPath, cwd, artifactPath}:
@@ -206,7 +206,7 @@ def submission_stored(+expectedOwner: String, +expectedRequest: String, +plan: S
         submission_of(expectedOwner, expectedRequest, plan, storedSchema, admission))
     case _: SubmissionUncertain{"association", "unexpectedAdmission"}
 
-def submission_replayed(+expectedOwner: String, +expectedRequest: String, +plan: String, +resultSchema: String, admission: ContextAdmit.Admission, association: ContextAdmit.Association) -> Submission:
+def submission_replayed(+expectedOwner: String, +expectedRequest: String, +plan: String, +resultSchema: String, +admission: ContextAdmit.Admission, +association: ContextAdmit.Association) -> Submission:
   match association:
     case ContextAdmit.AssociationStored{planValue, planIdentity, storedSchema}: submission_stored(expectedOwner, expectedRequest, plan, admission, planValue, planIdentity, storedSchema)
     case ContextAdmit.AssociationMissing{}: submission_of(expectedOwner, expectedRequest, plan, resultSchema, admission)
@@ -215,7 +215,7 @@ def submission_replayed(+expectedOwner: String, +expectedRequest: String, +plan:
 # The stored association decides the replay, and a failed read-back stays a host refusal
 # rather than an absence: a row whose association cannot be read must not be answered as
 # unestablished when the read failed.
-def association_after(+expectedOwner: String, +expectedRequest: String, +identity: String, +resultSchema: String, admission: ContextAdmit.Admission, result: Result<&1,&1,U32 & String,ContextAdmit.Association>) -> IO(Submission):
+def association_after(+expectedOwner: String, +expectedRequest: String, +identity: String, +resultSchema: String, +admission: ContextAdmit.Admission, result: Result<&1,&1,U32 & String,ContextAdmit.Association>) -> IO(Submission):
   match result:
     case Done{+association}: IO.pure(Submission, submission_replayed(expectedOwner, expectedRequest, identity, resultSchema, admission, association))
     case Fail{error}:

@@ -143,7 +143,7 @@ def wire_text_kind(value: Codec.RawValue) -> Bool:
     case Codec.Rstr{+text}: True{}
     case other: False{}
 
-def wire_any_kind(value: Codec.RawValue) -> Bool:
+def wire_any_kind(+value: Codec.RawValue) -> Bool:
   match value:
     case Codec.Rnil{}: False{}
     case Codec.Rpair{+key, +value, +rest}: False{}
@@ -164,7 +164,7 @@ def wire_version_is_two(value: Codec.RawValue) -> Bool:
     case Codec.Rnum{+token}: String.eq(token, "2")
     case other: False{}
 
-def wire_kind_of_value(+kind: String, value: Codec.RawValue) -> Bool:
+def wire_kind_of_value(+kind: String, +value: Codec.RawValue) -> Bool:
   match kind:
     case "textOrNull": wire_text_or_null(value)
     case "text": wire_text_kind(value)
@@ -190,7 +190,7 @@ def wire_invocation_names() -> Req.Words:
 def wire_event_names() -> Req.Words:
   Req.words_from(["version", "query", "owner", "moduleBinding", "runtime", "role", "incarnation", "sequence", "type", "payload"])
 
-def wire_all_present(words: Req.Words, members: Codec.RawValue) -> Bool:
+def wire_all_present(words: Req.Words, +members: Codec.RawValue) -> Bool:
   match words:
     case Req.Wnone{}: True{}
     case Req.Wcons{+head, +tail}: Bool.pick(Bool, wire_name_present(head, members), wire_all_present(tail, members), False{})

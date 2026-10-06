@@ -310,7 +310,7 @@ type Effects is Data:
   FxGranted{}
   FxMissing{effect: String}
 
-def missing_effects(required: SS, +granted: SS) -> Effects:
+def missing_effects(+required: SS, +granted: SS) -> Effects:
   match required:
     case SSNil{}: FxGranted{}
     case SSCons{+h, r}:

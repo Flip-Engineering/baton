@@ -69,7 +69,7 @@ type Outcome is Data:
 def optional_text(+value: String) -> J.Json:
   Bool.pick(J.Json, String.eq(value, ""), J.Jnull{}, J.Jstr{value})
 
-def prepare_condition(stage: Stage, +query: String, +owner: String, +plannedDirectory: String, evidence: Evidence, code: Code) -> J.Json:
+def prepare_condition(+stage: Stage, +query: String, +owner: String, +plannedDirectory: String, evidence: Evidence, +code: Code) -> J.Json:
   J.Jobj{J.Jpair{"code", code_json(code),
     J.Jpair{"owner", J.Jstr{owner},
     J.Jpair{"plannedDirectory", optional_text(plannedDirectory),
