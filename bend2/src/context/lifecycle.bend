@@ -60,7 +60,7 @@ def companion_text(+step: CompanionStep) -> String:
     case StepUnreadable{+answer}: "unreadable:" ++ Tx.trim_nl(answer)
     case StepFailed{+code, +message}: "failed:" ++ U32.show(code) ++ ":" ++ message
 
-def intent_step(answer: String) -> CompanionStep:
+def intent_step(+answer: String) -> CompanionStep:
   Bool.pick(CompanionStep, intent_owed(answer), StepContinue{},
   Bool.pick(CompanionStep, intent_settled(answer), StepSettled{},
   Bool.pick(CompanionStep, intent_missing(answer), StepMissing{answer}, StepUnreadable{answer})))

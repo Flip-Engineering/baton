@@ -347,7 +347,7 @@ def context_after(+state: RuntimeState) -> RuntimeState:
 # resume leaves it unknown, because no resumption was established and no fresh stop arrived.
 def advance(record: RuntimeRecord, event: RuntimeEvent) -> Transition:
   match record:
-    case Rec{state, epoch, mutation, pending, liveness}:
+    case Rec{+state, +epoch, +mutation, +pending, +liveness}:
       match event:
         case EvLaunchStarted{}:
           Bool.pick(Transition, is_starting(state),
@@ -565,7 +565,7 @@ def admit_intent(
   +prior_signal: String
 ) -> Decision:
   match record:
-    case Rec{state, epoch, mutation, pending, liveness}:
+    case Rec{+state, +epoch, +mutation, +pending, +liveness}:
       match intent:
         case IntentLaunch{}:
           admit_control(effects, launch_state(state), pending, serialized(intent), intent)
