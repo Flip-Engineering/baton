@@ -335,6 +335,105 @@ assert sys.stdin.read()==''
         self.assertTrue((self.cwd / 'turn.jsonl.1').exists())
         self.assertTrue((self.cwd / 'turn.jsonl.2').exists())
 
+    def test_retention_count_above_four_preserves_requested_history(self):
+        policy = json.loads(self.call('logs', 'omp-worker', 'default', '65536', '7'))
+        self.assertEqual(policy['keepSegments'], 7)
+        frames = [json.dumps({'type': 'response', 'id': 'r%d' % i,
+                             'command': 'probe', 'pad': 'y' * 40000}) for i in range(20)]
+        self.stream(frames + [self.terminal()])
+        self.assertTrue((self.cwd / 'turn.jsonl.7').exists())
+        self.assertFalse((self.cwd / 'turn.jsonl.8').exists())
+        entry = next(row for row in json.loads(self.call('logs-storage'))['logs']
+                     if row['path'] == str(self.log))
+        self.assertEqual({row['index'] for row in entry['rotated']}, set(range(1, 8)))
+        self.call('logs', 'omp-worker', 'default', '65536', '2')
+        removed = json.loads(self.call('logs-clean', 'omp-worker'))['removed']
+        self.assertEqual({row['index'] for row in removed}, set(range(3, 8)))
+        self.assertTrue(all(row['removed'] for row in removed))
+        self.assertTrue((self.cwd / 'turn.jsonl.2').exists())
+
+    def test_input_arriving_during_turn_protects_existing_segments(self):
+        import time
+        self.call('logs', 'omp-worker', 'default', '65536', '1')
+        protected = self.cwd / 'turn.jsonl.1'
+        protected.write_text('sole earlier evidence\n')
+        self.harness("""import pathlib,sys,time
+sys.stdin.readline()
+sys.stdin.readline()
+sys.stdin.readline()
+pathlib.Path('ready').write_text('ready')
+while not pathlib.Path('release').exists(): time.sleep(.01)
+print(pathlib.Path('events.jsonl').read_text(),end='',flush=True)
+assert sys.stdin.read()==''
+""")
+        self.events.write_text('\n'.join(json.dumps({'type': 'response', 'id': 'r%d' % i,
+                                                    'pad': 'z' * 40000}) for i in range(6))
+                               + '\n' + self.terminal() + '\n')
+        turn = subprocess.Popen([str(EXE), str(self.db), 'turn', 'omp-worker', 'late-input-turn',
+                                 str(self.player), 'model', 'low', str(self.cwd), str(self.task),
+                                 str(self.log), ''], stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                                text=True)
+        try:
+            deadline = time.monotonic() + 30
+            while not (self.cwd / 'ready').exists():
+                self.assertIsNone(turn.poll(), 'turn stopped before harness was ready')
+                self.assertLess(time.monotonic(), deadline, 'harness readiness deadline')
+                time.sleep(.01)
+            self.call('message', 'late-guidance', 'root', 'omp-worker', 'guidance',
+                      'Keep the earlier evidence until this input is answered.')
+            (self.cwd / 'release').write_text('go')
+            stdout, stderr = turn.communicate(timeout=60)
+            self.assertEqual(turn.returncode, 0, stderr)
+            self.assertEqual(protected.read_text(), 'sole earlier evidence\n')
+            self.assertIn('pending-input', self.log.read_text())
+        finally:
+            if turn.poll() is None:
+                turn.kill()
+                turn.communicate()
+
+    def test_abrupt_observer_exit_preserves_latest_incomplete_frame(self):
+        import os
+        import signal
+        import time
+        updates = [json.dumps({'type': 'tool_execution_update', 'toolCallId': 'unfinished',
+                               'partialResult': {'content': [{'type': 'text',
+                                                             'text': 'partial %d' % i}]}})
+                   for i in range(3)]
+        self.events.write_text('\n'.join(updates) + '\n')
+        self.harness("""import os,pathlib,sys,time
+sys.stdin.readline()
+sys.stdin.readline()
+sys.stdin.readline()
+pathlib.Path('harness.pid').write_text(str(os.getpid()))
+print(pathlib.Path('events.jsonl').read_text(),end='',flush=True)
+while True: time.sleep(1)
+""")
+        turn = subprocess.Popen([str(EXE), str(self.db), 'turn', 'omp-worker', 'abrupt-turn',
+                                 str(self.player), 'model', 'low', str(self.cwd), str(self.task),
+                                 str(self.log), ''], stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                                text=True)
+        pending = self.cwd / 'turn.jsonl.pending'
+        try:
+            deadline = time.monotonic() + 30
+            while not pending.exists() or 'partial 2' not in pending.read_text():
+                self.assertIsNone(turn.poll(), 'observer stopped before receiving latest update')
+                self.assertLess(time.monotonic(), deadline, 'latest incomplete frame was not persisted')
+                time.sleep(.01)
+            turn.kill()
+            turn.wait(timeout=10)
+            self.assertEqual([json.loads(line) for line in pending.read_text().splitlines()],
+                             [json.loads(updates[-1])])
+            self.assertEqual(list(self.cwd.glob('turn.jsonl.pending.tmp.*')), [])
+        finally:
+            if turn.poll() is None:
+                turn.kill()
+                turn.wait(timeout=10)
+            pid_file = self.cwd / 'harness.pid'
+            if pid_file.exists():
+                try: os.kill(int(pid_file.read_text()), signal.SIGKILL)
+                except ProcessLookupError: pass
+            turn.communicate(timeout=10)
+
     def test_unwritable_log_reports_the_failure_and_keeps_the_report(self):
         unwritable = self.cwd / 'log-directory'
         unwritable.mkdir()
