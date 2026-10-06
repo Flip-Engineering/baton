@@ -560,3 +560,25 @@ law selection_transfer_names_a_step_the_plan_does_not_hold:
 
 def selection_transfer_names_a_step_the_plan_does_not_hold():
   {==}
+
+# --- the declared dependency edge --------------------------------------------
+# The catalog step declares a dependency on the TypeScript operation, and the
+# accessor resolves that edge to the dependency's own binding and its own result
+# schema, which is not the consuming step's schema.
+law selection_transfer_of_a_declared_edge_delivers_the_dependency_output:
+  {Sel.transfer_of_edge(fx_plan_chain(), Sel.StepRef{"m2", "d2", "definition"}) == Sel.TransferReady{Sel.StepTransfer{fx_bind_m2(), "sourceAnalysis", Eng.ss_empty(), "res", Sel.StepRefsNil{}, Sel.CapNil{}}} : Sel.TransferOutcome}
+
+def selection_transfer_of_a_declared_edge_delivers_the_dependency_output():
+  {==}
+
+law selection_transfer_of_an_unknown_edge_is_named:
+  {Sel.transfer_of_edge(fx_plan_chain(), Sel.StepRef{"m3", "d3", "definition"}) == Sel.TransferMissing{"m3", "d3", "definition"} : Sel.TransferOutcome}
+
+def selection_transfer_of_an_unknown_edge_is_named():
+  {==}
+
+law selection_step_ref_readers_agree_with_the_edge:
+  {Sel.step_ref_module(Sel.StepRef{"m2", "d2", "definition"}) == "m2" : String}
+
+def selection_step_ref_readers_agree_with_the_edge():
+  {==}

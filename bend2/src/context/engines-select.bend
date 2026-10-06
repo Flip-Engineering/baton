@@ -941,17 +941,20 @@ def bind_operation(+b: MBind) -> String:
 
 def step_binding(+step: Step) -> MBind:
   match step:
-    case Step{binding, common, declared_effects, execution, dependencies}:
+    case Step{binding, common, declared_effects, execution, dependencies,
+              result_schema}:
       binding
 
 def step_common(+step: Step) -> String:
   match step:
-    case Step{binding, common, declared_effects, execution, dependencies}:
+    case Step{binding, common, declared_effects, execution, dependencies,
+              result_schema}:
       common
 
 def step_dependencies(+step: Step) -> StepRefs:
   match step:
-    case Step{binding, common, declared_effects, execution, dependencies}:
+    case Step{binding, common, declared_effects, execution, dependencies,
+              result_schema}:
       dependencies
 
 def step_matches(+step: Step, +module_id: String, +digest: String,
@@ -1268,3 +1271,25 @@ def transfer_finish(+st: StepState, +inputs: Captures) -> TransferOutcome:
 def transfer_for_step(+p: Plan, +module_id: String, +digest: String,
                       +want: String) -> TransferOutcome:
   transfer_finish(step_lookup(p, module_id, digest, want), plan_inputs(p))
+
+# --- the declared dependency edge as an accessor -----------------------------
+# A consuming step declares its edges as StepRefs. These readers and the accessor
+# below let a consumer resolve the producing operation from that edge itself, so a
+# TypeScript dependency result is delivered under its own producer binding and its
+# own result schema rather than being relabelled as the consuming step's output.
+def step_ref_module(+r: StepRef) -> String:
+  match r:
+    case StepRef{module_id, declaration_digest, operation}: module_id
+
+def step_ref_digest(+r: StepRef) -> String:
+  match r:
+    case StepRef{module_id, declaration_digest, operation}: declaration_digest
+
+def step_ref_operation(+r: StepRef) -> String:
+  match r:
+    case StepRef{module_id, declaration_digest, operation}: operation
+
+def transfer_of_edge(+p: Plan, +ref: StepRef) -> TransferOutcome:
+  transfer_finish(step_lookup(p, step_ref_module(ref), step_ref_digest(ref),
+                              step_ref_operation(ref)),
+                  plan_inputs(p))

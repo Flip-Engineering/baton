@@ -91,3 +91,23 @@ law wire_capture_renders_all_nine_members:
 
 def wire_capture_renders_all_nine_members():
   {==}
+
+# --- the plan identity --------------------------------------------------------
+def fx_plan() -> Sel.Plan:
+  Sel.Plan{fx_bind(), "sourceAnalysis",
+           Sel.StepsCons{fx_step(), Sel.StepsNil{}},
+           Eng.ss_one("executeTarget"), Sel.CapNil{}, True{}}
+
+law wire_plan_identity_renders_the_frozen_members:
+  {Wire.plan_identity_json(fx_plan()) == J.Jobj{Wire.wire_obj("primary", Wire.bind_json(fx_bind()), Wire.wire_obj("common", J.Jstr{"sourceAnalysis"}, Wire.wire_obj("steps", Wire.steps_json(Sel.StepsCons{fx_step(), Sel.StepsNil{}}), Wire.wire_obj("effectiveEffects", Wire.ss_json(Eng.ss_one("executeTarget")), J.Jnil{}))))} : J.Json}
+
+def wire_plan_identity_renders_the_frozen_members():
+  {==}
+
+# The identity does not consult availability or the captured records, so two
+# plans differing only in those still share one identity.
+law wire_plan_identity_ignores_availability_and_captures:
+  {Wire.plan_identity_json(fx_plan()) == Wire.plan_identity_json(Sel.Plan{fx_bind(), "sourceAnalysis", Sel.StepsCons{fx_step(), Sel.StepsNil{}}, Eng.ss_one("executeTarget"), Sel.CapCons{Sel.Capture{"file", "source", "/work/a.ts", "aa", "text", "utf8", "m1", "d1", "definition"}, Sel.CapNil{}}, False{}}) : J.Json}
+
+def wire_plan_identity_ignores_availability_and_captures():
+  {==}

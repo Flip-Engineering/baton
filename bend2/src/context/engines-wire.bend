@@ -168,3 +168,25 @@ def invocation_members_json(+binding: Sel.MBind, +inputs: Sel.Captures,
 
 def event_members_json(+producer: Sel.MBind) -> J.Json:
   J.Jobj{wire_obj("moduleBinding", bind_json(producer), J.Jnil{})}
+
+# --- the plan identity a caller carries ---------------------------------------
+# The frozen members of one plan rendered as one canonical value: the primary
+# binding, the common operation, the ordered steps and the effective requirement.
+# Availability is observed state rather than plan identity, and the captured
+# records travel with the invocation, so neither is part of this value. A caller
+# that cannot hold the plan value carries this rendering instead, and a replay
+# compares it against the rendering of the plan it retained; because it renders
+# the members rather than summarizing them, a changed binding, step, dependency,
+# effect or operation changes the identity, and a caller cannot invent one that
+# matches.
+def plan_identity_json(+p: Sel.Plan) -> J.Json:
+  match p:
+    case Sel.Plan{primary, common, steps, effective_effects, inputs, available}:
+      J.Jobj{wire_obj("primary", bind_json(primary),
+             wire_obj("common", J.Jstr{common},
+             wire_obj("steps", steps_json(steps),
+             wire_obj("effectiveEffects", ss_json(effective_effects),
+                      J.Jnil{}))))}
+
+def plan_identity(+p: Sel.Plan) -> String:
+  J.json_text(plan_identity_json(p))
