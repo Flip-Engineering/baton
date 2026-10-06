@@ -30,6 +30,15 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
+      # Many fixtures commit inside repositories they create themselves, and a hosted runner
+      # supplies no committer identity: on run 36541398950 (master 6ccb2a6d, 2026-09-29) every
+      # such commit failed with "fatal: empty ident name ... not allowed", which failed 248 cases
+      # across the suite. The identity is set once here; a fixture that sets its own keeps it.
+      - name: Configure the committer identity
+        run: |
+          git config --global user.name 'baton-ci'
+          git config --global user.email 'baton-ci@example.invalid'
+
       - name: Setup Node
         uses: actions/setup-node@v4
         with:
