@@ -12,8 +12,10 @@
 #   published\t<directory>/<name>\t0\t\t0\t
 # because that call made and removed its own temp and recorded pending 0; an existing
 # receipt reached through the probe or a losing link keeps pending 0 or 1; may-exist,
-# unpublished, uncertain and failed all carry an error. Ensure reports present, created or
-# failed. Every comparison is against the whole supported record, never a leading tag, so a
+# unpublished and failed carry an error, while an uncertain record from the pending probe
+# of an existing or qualified receipt can retain error 0. Ensure reports present, created or
+# failed; a successful ensure writes error 0, empty phase and empty detail with pending 0,
+# which receipt.c ensure_call leaves from its calloc. Every comparison is against the whole supported record, never a leading tag, so a
 # wrong path, a nonzero error or an unsupported pending value cannot proceed on a shared
 # prefix. Anything else is refused with its raw record.
 #
@@ -47,38 +49,104 @@ def production_record(tag: String, path: String, pending: String) -> String:
   +n = pending
   Tx.str_cat(t, Tx.str_cat("\t", Tx.str_cat(p, Tx.str_cat("\t0\t\t", Tx.str_cat(n, "\t")))))
 
-def name_has_slash(name: String) -> Bool:
-  +n = name
-  match Tx.str_eq(n, ""):
+# The producer's alphabet is letters, digits, dot, underscore and hyphen, with dot and
+# dot-dot rejected whole. This worker mirrors the checks that can be made before the effect:
+# tab, NUL and the separator are refused here, and the remaining alphabet is enforced by
+# Receipt.publish itself, whose refusal arrives as a host failure. The predicate is named
+# for what it establishes, not for the producer's full check.
+def name_char_ok(c: Char) -> Bool:
+  +ch = c
+  match Tx.is_tab(ch):
     case True{}: False{}
-    case False{}: name_ok_otherwise(n)
+    case False{}: name_char_ok_next(ch)
 
-def name_ok_otherwise(name: String) -> Bool:
-  +n = name
-  match Tx.starts_with(n, "/"):
+def name_char_ok_next(c: Char) -> Bool:
+  +ch = c
+  match Tx.is_nul(ch):
+    case True{}: False{}
+    case False{}: name_char_ok_slash(ch)
+
+def name_char_ok_slash(c: Char) -> Bool:
+  +ch = c
+  match Char.is_eq(ch, Char.from_u32(47)):
     case True{}: False{}
     case False{}: True{}
 
-def name_is_safe(name: String) -> Bool:
-  +n = name
-  match I.carries_tab(n):
+def name_go(text: String, ok: Bool) -> Bool:
+  match text:
+    case SNil{}: ok
+    case SCon{c, rest}:
+      +here = c
+      name_go_char(rest, ok, here)
+
+def name_go_char(rest: String, ok: Bool, c: Char) -> Bool:
+  +tail = rest
+  +sofar = ok
+  +here = c
+  match name_char_ok(here):
+    case False{}: False{}
+    case True{}: name_go(tail, sofar)
+
+def name_has_nul_go(text: String) -> Bool:
+  match text:
+    case SNil{}: False{}
+    case SCon{c, rest}:
+      +here = c
+      +hit = Tx.is_nul(here)
+      +found = Bool.or(False{}, hit)
+      +total = Bool.or(found, name_has_nul_go(rest))
+      total
+
+def name_not_dot(text: String) -> Bool:
+  +n = text
+  match Tx.str_eq(n, "."):
     case True{}: False{}
-    case False{}: name_has_slash(n)
+    case False{}: name_not_dot_dot(n)
 
-# Whole-record classification, one comparison per supported shape.
-def classify_publish(raw: String, path: String) -> String:
-  +r = raw
-  +p = path
-  match Tx.str_eq(r, production_record("published", p, "0")):
-    case True{}: "published"
-    case False{}: publish_second(r, p)
+def name_not_dot_dot(text: String) -> Bool:
+  +n = text
+  match Tx.str_eq(n, ".."):
+    case True{}: False{}
+    case False{}: True{}
 
-def publish_second(raw: String, path: String) -> String:
-  +r = raw
-  +p = path
-  match Tx.str_eq(r, production_record("existing", p, "0")):
-    case True{}: "existing"
-    case False{}: publish_third(r, p)
+def name_precondition(name: String) -> Bool:
+  +n = name
+  match Tx.str_eq(n, ""):
+    case True{}: False{}
+    case False{}: name_precondition_go(n)
+
+def name_precondition_go(name: String) -> Bool:
+  +n = name
+  match name_go(n, True{}):
+    case False{}: False{}
+    case True{}: name_precondition_dots(n)
+
+def name_precondition_dots(name: String) -> Bool:
+  +n = name
+  match name_not_dot(n):
+    case False{}: False{}
+    case True{}: name_not_dot_dot(n)
+
+# The directory precondition the ensure effect itself enforces: empty and NUL are outer
+# failures there, and a tab is refused by publish. Checked before ensure so no effect runs
+# on a directory the producer would reject.
+def directory_precondition(directory: String) -> Bool:
+  +d = directory
+  match Tx.str_eq(d, ""):
+    case True{}: False{}
+    case False{}: directory_next(d)
+
+def directory_next(directory: String) -> Bool:
+  +d = directory
+  match name_has_nul_go(d):
+    case True{}: False{}
+    case False{}: directory_tab(d)
+
+def directory_tab(directory: String) -> Bool:
+  +d = directory
+  match I.carries_tab(d):
+    case True{}: False{}
+    case False{}: True{}
 
 def publish_third(raw: String, path: String) -> String:
   +r = raw
@@ -87,12 +155,19 @@ def publish_third(raw: String, path: String) -> String:
     case True{}: "existing-pending"
     case False{}: "other"
 
-def classify_ensure(raw: String, path: String) -> String:
+def publish_second(raw: String, path: String) -> String:
   +r = raw
   +p = path
-  match Tx.str_eq(r, production_record("created", p, "0")):
-    case True{}: "created"
-    case False{}: ensure_second(r, p)
+  match Tx.str_eq(r, production_record("existing", p, "0")):
+    case True{}: "existing"
+    case False{}: publish_third(r, p)
+
+def classify_publish(raw: String, path: String) -> String:
+  +r = raw
+  +p = path
+  match Tx.str_eq(r, production_record("published", p, "0")):
+    case True{}: "published"
+    case False{}: publish_second(r, p)
 
 def ensure_second(raw: String, path: String) -> String:
   +r = raw
@@ -100,6 +175,13 @@ def ensure_second(raw: String, path: String) -> String:
   match Tx.str_eq(r, production_record("present", p, "0")):
     case True{}: "present"
     case False{}: "other"
+
+def classify_ensure(raw: String, path: String) -> String:
+  +r = raw
+  +p = path
+  match Tx.str_eq(r, production_record("created", p, "0")):
+    case True{}: "created"
+    case False{}: ensure_second(r, p)
 
 def Intent.refused(request: I.IntentInput, step: String, name: String, raw: String) -> IO(IntentPublish):
   +req = request
@@ -110,15 +192,6 @@ def Intent.refused(request: I.IntentInput, step: String, name: String, raw: Stri
 
 # The publication observation is carried into the readback failure so a receipt that exists
 # cannot be mistaken for a publication that never happened.
-def Intent.read_back_seen(request: I.IntentInput, publication: String, path: String, content: String, observed: Result<&1, &1, U32 & String, String>) -> IO(IntentPublish):
-  +req = request
-  +pub = publication
-  +p = path
-  +want = content
-  match observed:
-    case Fail{(code, detail)}: IO.pure(IntentPublish, PublishReadbackFailed{req, pub, p, (code, detail)})
-    case Done{found}: Intent.read_back_compare(req, pub, p, want, found)
-
 def Intent.read_back_compare(request: I.IntentInput, publication: String, path: String, content: String, seen: String) -> IO(IntentPublish):
   +req = request
   +pub = publication
@@ -129,6 +202,15 @@ def Intent.read_back_compare(request: I.IntentInput, publication: String, path: 
     case True{}: IO.pure(IntentPublish, IntentBytesPublished{req, pub, p, got})
     case False{}: IO.pure(IntentPublish, PublishContentMismatch{req, pub, want, got})
 
+def Intent.read_back_seen(request: I.IntentInput, publication: String, path: String, content: String, observed: Result<&1, &1, U32 & String, String>) -> IO(IntentPublish):
+  +req = request
+  +pub = publication
+  +p = path
+  +want = content
+  match observed:
+    case Fail{(code, detail)}: IO.pure(IntentPublish, PublishReadbackFailed{req, pub, p, (code, detail)})
+    case Done{found}: Intent.read_back_compare(req, pub, p, want, found)
+
 def Intent.read_back(request: I.IntentInput, publication: String, path: String, content: String) -> IO(IntentPublish):
   +req = request
   +pub = publication
@@ -138,32 +220,35 @@ def Intent.read_back(request: I.IntentInput, publication: String, path: String, 
     observed : Result<&1, &1, U32 & String, String> <- Text.Text.read(p)
     Intent.read_back_seen(req, pub, p, want, observed)
 
-def publish_admit_second(request: I.IntentInput, path: String, content: String, raw: String, kind: String) -> IO(IntentPublish):
-  +req = request
-  +p = path
-  +want = content
-  +r = raw
-  match Tx.str_eq(kind, "existing"):
-    case True{}: Intent.read_back(req, r, p, want)
-    case False{}: publish_admit_third(req, p, want, r, kind)
-
 def publish_admit_third(request: I.IntentInput, path: String, content: String, raw: String, kind: String) -> IO(IntentPublish):
   +req = request
   +p = path
   +want = content
   +r = raw
-  match Tx.str_eq(kind, "existing-pending"):
+  +k = kind
+  match Tx.str_eq(k, "existing-pending"):
     case True{}: IO.pure(IntentPublish, PublishExistingPending{req, r, p})
     case False{}: Intent.refused(req, "publish", "", r)
+
+def publish_admit_second(request: I.IntentInput, path: String, content: String, raw: String, kind: String) -> IO(IntentPublish):
+  +req = request
+  +p = path
+  +want = content
+  +r = raw
+  +k = kind
+  match Tx.str_eq(k, "existing"):
+    case True{}: Intent.read_back(req, r, p, want)
+    case False{}: publish_admit_third(req, p, want, r, k)
 
 def Intent.publish_admit(request: I.IntentInput, path: String, content: String, raw: String, kind: String) -> IO(IntentPublish):
   +req = request
   +p = path
   +want = content
   +r = raw
-  match Tx.str_eq(kind, "published"):
+  +k = kind
+  match Tx.str_eq(k, "published"):
     case True{}: Intent.read_back(req, r, p, want)
-    case False{}: publish_admit_second(req, p, want, r, kind)
+    case False{}: publish_admit_second(req, p, want, r, k)
 
 def Intent.publish_classify(request: I.IntentInput, path: String, content: String, raw: String) -> IO(IntentPublish):
   +req = request
@@ -180,6 +265,16 @@ def Intent.published(request: I.IntentInput, path: String, content: String, obse
   match observed:
     case Fail{error}: IO.pure(IntentPublish, PublishHostFailed{"publish", req, error})
     case Done{raw}: Intent.publish_classify(req, p, want, raw)
+
+def Intent.publish_now(request: I.IntentInput, path: String, content: String, directory: String, name: String) -> IO(IntentPublish):
+  +req = request
+  +p = path
+  +want = content
+  +dir = directory
+  +n = name
+  do IO<IntentPublish>:
+    observed : Result<U32 & String, String> <- R.Receipt.publish(dir, n, want)
+    Intent.published(req, p, want, observed)
 
 def Intent.ensure_next(request: I.IntentInput, path: String, content: String, directory: String, name: String, raw: String, kind: String) -> IO(IntentPublish):
   +req = request
@@ -212,39 +307,47 @@ def Intent.ensured(request: I.IntentInput, path: String, content: String, direct
     case Fail{error}: IO.pure(IntentPublish, PublishHostFailed{"ensure", req, error})
     case Done{raw}: Intent.ensure_admit(req, p, want, dir, n, raw)
 
-def Intent.publish_now(request: I.IntentInput, path: String, content: String, directory: String, name: String) -> IO(IntentPublish):
-  +req = request
-  +p = path
-  +want = content
-  +dir = directory
-  +n = name
-  do IO<IntentPublish>:
-    observed : Result<U32 & String, String> <- R.Receipt.publish(dir, n, want)
-    Intent.published(req, p, want, observed)
-
 def publish_directory(request: I.IntentInput, path: String, content: String, directory: String, name: String) -> IO(IntentPublish):
   +req = request
   +p = path
   +want = content
   +dir = directory
   +n = name
-  match I.carries_tab(dir):
-    case True{}: IO.pure(IntentPublish, PublishRefused{req, "directory", n, dir})
-    case False{}:
-      +safe = dir
-      do IO<IntentPublish>:
-        observed : Result<U32 & String, String> <- R.Receipt.ensure(safe)
-        Intent.ensured(req, p, want, safe, n, observed)
+  do IO<IntentPublish>:
+    observed : Result<U32 & String, String> <- R.Receipt.ensure(dir)
+    Intent.ensured(req, p, want, dir, n, observed)
 
-# The entry. The name is validated before any effect runs.
+# The entry. The requested receipt path and the derived path are the same one, and the name
+# and directory preconditions hold, before any effect runs.
 def Intent.publish_intent(request: I.IntentInput, directory: String, name: String, content: String) -> IO(IntentPublish):
   +req = request
   +dir = directory
   +n = name
   +want = content
-  +p = intent_path(dir, n)
-  match name_is_safe(n):
+  +derived = intent_path(dir, n)
+  +asked = I.requested_path(req)
+  match Tx.str_eq(asked, derived):
+    case False{}: IO.pure(IntentPublish, PublishRefused{req, "association", n, derived})
+    case True{}: preflight_name(req, derived, want, dir, n)
+
+def preflight_name(request: I.IntentInput, path: String, content: String, directory: String, name: String) -> IO(IntentPublish):
+  +req = request
+  +p = path
+  +want = content
+  +dir = directory
+  +n = name
+  match name_precondition(n):
     case False{}: IO.pure(IntentPublish, PublishRefused{req, "name", n, ""})
+    case True{}: preflight_directory(req, p, want, dir, n)
+
+def preflight_directory(request: I.IntentInput, path: String, content: String, directory: String, name: String) -> IO<IntentPublish>:
+  +req = request
+  +p = path
+  +want = content
+  +dir = directory
+  +n = name
+  match directory_precondition(dir):
+    case False{}: IO.pure(IntentPublish, PublishRefused{req, "directory", n, dir})
     case True{}: publish_directory(req, p, want, dir, n)
 
 law a_fresh_publication_record_is_admitted:
@@ -376,4 +479,61 @@ law an_unsupported_record_reaches_the_refusal_with_its_raw_bytes:
   {Intent.publish_admit(request, "/d/n", "wanted", "may-exist\t/d/n\t13\tfsync-dir\t0\t", "other") == IO.pure(IntentPublish, PublishRefused{request, "publish", "", "may-exist\t/d/n\t13\tfsync-dir\t0\t"}) : IO(IntentPublish)}
 
 def an_unsupported_record_reaches_the_refusal_with_its_raw_bytes(request):
+  {==}
+
+law a_published_record_reaches_the_reader:
+  for request: I.IntentInput
+  {Intent.publish_admit(request, "/d/n", "wanted", "published\t/d/n\t0\t\t0\t", "published") == (do IO<IntentPublish>:
+    seen : Result<&1, &1, U32 & String, String> <- Text.Text.read("/d/n")
+    Intent.read_back_seen(request, "published\t/d/n\t0\t\t0\t", "/d/n", "wanted", seen)) : IO(IntentPublish)}
+
+def a_published_record_reaches_the_reader(request):
+  {==}
+
+law a_name_precondition_refuses_the_dot_name:
+  {name_precondition(".") == False{} : Bool}
+
+def a_name_precondition_refuses_the_dot_name():
+  {==}
+
+law a_name_precondition_refuses_the_dot_dot_name:
+  {name_precondition("..") == False{} : Bool}
+
+def a_name_precondition_refuses_the_dot_dot_name():
+  {==}
+
+law a_name_precondition_refuses_the_separator:
+  {name_precondition("a/b") == False{} : Bool}
+
+def a_name_precondition_refuses_the_separator():
+  {==}
+
+law a_name_precondition_admits_the_producer_alphabet:
+  {name_precondition("a-z_0.9") == True{} : Bool}
+
+def a_name_precondition_admits_the_producer_alphabet():
+  {==}
+
+law a_mismatched_requested_path_is_refused_before_any_effect:
+  {Intent.publish_intent(IntentRequested{"a", "/c", "refs/heads/t", "/d", "cand", "base", "/elsewhere", "/h", ""}, "/d", "n", "wanted") == IO.pure(IntentPublish, PublishRefused{IntentRequested{"a", "/c", "refs/heads/t", "/d", "cand", "base", "/elsewhere", "/h", ""}, "association", "n", "/d/n"}) : IO(IntentPublish)}
+
+def a_mismatched_requested_path_is_refused_before_any_effect():
+  {==}
+
+law a_successful_entry_ensures_then_publishes:
+  for request: I.IntentInput
+  {Intent.publish_intent(request, "/d", "n", "wanted") == (do IO<IntentPublish>:
+    ensured : Result<U32 & String, String> <- R.Receipt.ensure("/d")
+    Intent.ensured(request, "/d/n", "wanted", "/d", "n", ensured)) : IO(IntentPublish)}
+
+def a_successful_entry_ensures_then_publishes(request):
+  {==}
+
+law a_successful_ensure_reaches_the_publication:
+  for request: I.IntentInput
+  {Intent.ensured(request, "/d/n", "wanted", "/d", "n", Done{"created\t/d\t0\t\t0\t"}) == (do IO<IntentPublish>:
+    published : Result<U32 & String, String> <- R.Receipt.publish("/d", "n", "wanted")
+    Intent.published(request, "/d/n", "wanted", published)) : IO(IntentPublish)}
+
+def a_successful_ensure_reaches_the_publication(request):
   {==}
