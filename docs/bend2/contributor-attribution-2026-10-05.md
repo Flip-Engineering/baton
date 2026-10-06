@@ -124,7 +124,7 @@ are disabled. The operator enabled Chrome's remote-debugging checkbox.
 
 At 23:25 UTC, the default daemon's JSON health report returned `alive: true`,
 `browser_ready: true` and `healthy: true`. `Browser.getVersion` returned
-Chrome 154.0.8037.93. Native browser operations selected the existing
+Chrome 154.0.8037.93. Browser Harness operations selected the existing
 Cloudflare task tab, read its accessibility tree, clicked its account selector
 and read the resulting account choices. The existing Chrome process remains
 the browser host.
@@ -161,11 +161,27 @@ The served image SHA-256 is
 `7ee36dd77b73c6fb793ed07a09a5f739aec5c1bb9f5c4fa6805a34e172a9f72c`.
 The local copy is `gpt-gravatar-live.png` in the evidence directory.
 Earlier verification attempts selected stale mail; the fresh message in the
-receiving inbox completed verification. The remaining contributor work is
-the other five receiving checks and a fresh GitHub name-and-image receipt for
-each series before live identity activation.
+receiving inbox completed verification.
 
-GitHub documents [verified-email author association](https://docs.github.com/en/pull-requests/how-tos/commit-changes/troubleshooting-commits)
+The fresh [GPT pilot commit](https://github.com/Flip-Engineering/baton/commit/d64aec32d1c77192d5f821f3eb46c9186d4a0648)
+was published on the existing contributor review branch through the GPT App.
+Both Git headers use `Flip Baton - GPT <gpt@flip.engineering>`. GitHub's API
+returns null author and committer associations. The actual browser page shows
+`Flip Baton - GPT` and selects
+`https://github.githubassets.com/images/gravatars/gravatar-user-420.png?size=40`
+for its author image. The exact name passed; the approved avatar failed.
+The rendered receipt and screenshot are `gpt-github-pilot.json` and
+`gpt-github-pilot.png` in the evidence directory. A separate, owned pilot
+registry supplied the email; the six live registry identities remain unchanged.
+
+The alias-plus-Gravatar route therefore has an observed avatar failure on this
+fresh contribution. Account-backed series identities can retain the requested
+profile names and avatars; linked commit bylines use their account usernames.
+The operator's choice of display tradeoff is pending. Other receiving checks,
+per-series account/image qualification and native installed acceptance remain
+due. No account purchase or account creation was performed on GitHub.
+
+GitHub documents [email-based commit association](https://docs.github.com/en/pull-requests/how-tos/commit-changes/troubleshooting-commits)
 and [profile avatars](https://docs.github.com/en/account-and-profile/reference/profile-reference)
 for ordinary accounts. Its [account terms](https://docs.github.com/en/site-policy/github-terms/github-terms-of-service)
 require human-created machine accounts
