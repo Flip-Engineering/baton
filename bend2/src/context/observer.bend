@@ -417,7 +417,7 @@ def release_completion_read_result(+db: String, +binding: String, +query: String
     case Fail{error}:
       match error:
         case (code, detail): IO.pure(ReleaseOutcome, ReleaseEffectUnpersisted{attempt, effect, U32.show(code) ++ ":" ++ detail})
-    case Done{+answer}:
+    case Done{+answer}: do IO<ReleaseOutcome>:
       read : ReleaseIntent <- intent_read(db, binding, query, role, incarnation, completion)
       release_completed_after(db, binding, query, role, incarnation, attempt, effect, read)
 

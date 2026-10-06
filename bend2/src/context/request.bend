@@ -446,6 +446,7 @@ def is_jstr(j: J.Json) -> Bool:
     case J.Jint{+value}: False{}
     case J.Jarr{+head, +tail}: False{}
     case J.Jobj{+members}: False{}
+    case J.Jpair{key, value, rest}: False{}
     case J.Jnil{}: False{}
 
 def is_jint(j: J.Json) -> Bool:
@@ -457,6 +458,7 @@ def is_jint(j: J.Json) -> Bool:
     case J.Jstr{+value}: False{}
     case J.Jarr{+head, +tail}: False{}
     case J.Jobj{+members}: False{}
+    case J.Jpair{key, value, rest}: False{}
     case J.Jnil{}: False{}
 
 def is_jobj(j: J.Json) -> Bool:
@@ -468,6 +470,7 @@ def is_jobj(j: J.Json) -> Bool:
     case J.Jint{+value}: False{}
     case J.Jstr{+value}: False{}
     case J.Jarr{+head, +tail}: False{}
+    case J.Jpair{key, value, rest}: False{}
     case J.Jnil{}: False{}
 
 def text_of(j: J.Json) -> String:
@@ -479,6 +482,7 @@ def text_of(j: J.Json) -> String:
     case J.Jint{+value}: SNil{}
     case J.Jarr{+head, +tail}: SNil{}
     case J.Jobj{+members}: SNil{}
+    case J.Jpair{key, value, rest}: SNil{}
     case J.Jnil{}: SNil{}
 
 def is_one(j: J.Json) -> Bool:
@@ -490,6 +494,7 @@ def is_one(j: J.Json) -> Bool:
     case J.Jstr{+value}: False{}
     case J.Jarr{+head, +tail}: False{}
     case J.Jobj{+members}: False{}
+    case J.Jpair{key, value, rest}: False{}
     case J.Jnil{}: False{}
 
 def text_optional_ok(m: Maybe<&2, J.Json>) -> Bool:
@@ -572,6 +577,7 @@ def subject_kind_ok(subject: J.Json) -> Bool:
     case J.Jint{+value}: False{}
     case J.Jstr{+value}: False{}
     case J.Jarr{+head, +tail}: False{}
+    case J.Jpair{key, value, rest}: False{}
     case J.Jnil{}: False{}
 
 def subject_ok(subject: J.Json) -> Bool:
@@ -594,6 +600,7 @@ def projections_ok(select: J.Json) -> Bool:
     case J.Jint{+value}: False{}
     case J.Jstr{+value}: False{}
     case J.Jobj{+members}: False{}
+    case J.Jpair{key, value, rest}: False{}
     case J.Jnil{}: False{}
 
 def projections_walk(selected: J.Json, rest: J.Json) -> Bool:
@@ -603,6 +610,7 @@ def projections_walk(selected: J.Json, rest: J.Json) -> Bool:
 def projections_rest(rest: J.Json) -> Bool:
   match rest:
     case J.Jarr{head, tail}: Bool.pick(Bool, is_jstr(head), projections_walk(head, tail), False{})
+    case J.Jpair{key, value, rest}: True{}
     case J.Jnil{}: True{}
     case J.Jnull{}: True{}
     case J.Jtrue{}: True{}
@@ -614,6 +622,7 @@ def projections_rest(rest: J.Json) -> Bool:
 def distinct_from(+name: String, rest: J.Json) -> Bool:
   match rest:
     case J.Jarr{+head, +tail}: Bool.pick(Bool, String.eq(text_of(head), name), False{}, distinct_from(name, tail))
+    case J.Jpair{key, value, rest}: True{}
     case J.Jnil{}: True{}
     case J.Jnull{}: True{}
     case J.Jtrue{}: True{}
@@ -625,6 +634,7 @@ def distinct_from(+name: String, rest: J.Json) -> Bool:
 def effects_ok(effects: J.Json) -> Bool:
   match effects:
     case J.Jarr{head, tail}: Bool.pick(Bool, is_jstr(head), effects_walk(head, tail), False{})
+    case J.Jpair{key, value, rest}: True{}
     case J.Jnil{}: True{}
     case J.Jnull{}: False{}
     case J.Jtrue{}: False{}
@@ -640,6 +650,7 @@ def effects_walk(granted: J.Json, +rest: J.Json) -> Bool:
 def effects_rest(rest: J.Json) -> Bool:
   match rest:
     case J.Jarr{head, tail}: effects_walk(head, tail)
+    case J.Jpair{key, value, rest}: True{}
     case J.Jnil{}: True{}
     case J.Jnull{}: True{}
     case J.Jtrue{}: True{}
@@ -681,6 +692,7 @@ def options_shape(options: J.Json) -> Bool:
     case J.Jint{+value}: False{}
     case J.Jstr{+value}: False{}
     case J.Jarr{+head, +tail}: False{}
+    case J.Jpair{key, value, rest}: False{}
     case J.Jnil{}: False{}
 
 def options_values(members: J.Json) -> Bool:
@@ -708,6 +720,7 @@ def Context.request_validate(req: J.Json) -> Verdict:
     case J.Jint{+value}: VRefused{"requestNotObject"}
     case J.Jstr{+value}: VRefused{"requestNotObject"}
     case J.Jarr{+head, +tail}: VRefused{"requestNotObject"}
+    case J.Jpair{key, value, rest}: VRefused{"requestNotObject"}
     case J.Jnil{}: VRefused{"requestNotObject"}
 
 def request_members_ok(members: J.Json) -> Verdict:
