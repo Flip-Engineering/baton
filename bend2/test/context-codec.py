@@ -37,7 +37,9 @@ law's verdict, so it fails the run as a surviving mutation does, and the raw
 diagnostics are retained for the single Controls/CI classifier. A record whose
 mutated tree still compiles is reported as a surviving mutation, which is a
 failure of the fixture. A record whose law's module does not compile before the
-mutation stays unapplied and counts as unqualified.
+mutation stays unapplied and counts as unqualified. The record carries the
+compiler's `Location:` value beside the whole diagnostic, so the classifier reads
+where the compiler placed the failure instead of trusting this driver's match.
 """
 
 import argparse
@@ -300,8 +302,11 @@ def review_mutations(record, bend, out):
         if source_file.read_bytes() != (ROOT / item["file"]).read_bytes():
             record["failures"].append(f"the mutation copy was not restored: {item['name']}")
         # Only a refusal whose diagnostic names the recorded law is evidence that
-        # the law binds this code; any other refusal is an unrelated failure.
-        named = item["law"] in (stdout + stderr).decode("utf-8", "replace")
+        # the law binds this code; any other refusal is an unrelated failure. The
+        # name must stand as a whole identifier, so a longer name that contains it
+        # is not a match.
+        diagnostic = (stdout + stderr).decode("utf-8", "replace")
+        named = re.search(rf"(?<![A-Za-z0-9_]){re.escape(item['law'])}(?![A-Za-z0-9_])", diagnostic) is not None
         outcome = "survived"
         if entry["status"] != 0:
             outcome = "refused" if named else "unattributed"
@@ -323,6 +328,8 @@ def review_mutations(record, bend, out):
         record["mutations"]["records"][index]["status"] = entry["status"]
         record["mutations"]["records"][index]["baseline_status"] = baseline.get(module)
         record["mutations"]["records"][index]["diagnostic_names_the_law"] = named
+        location = re.search(r"^Location:\s*(\S+)\s*$", diagnostic, re.M)
+        record["mutations"]["records"][index]["diagnostic_location"] = location.group(1) if location else None
     shutil.rmtree(tree)
 
 
