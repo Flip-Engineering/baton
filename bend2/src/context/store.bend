@@ -69,12 +69,37 @@ def runtime_epoch_sql_ok(expr: String) -> String:
 def runtime_epoch_value(+epoch: String) -> String:
   C.q(epoch)
 
+# The retained admission association lives in its own keyed relation. A database created
+# before any association existed gains it from the same create-if-missing schema text,
+# which is the only way an existing table can gain it: a column cannot be added to a table
+# that is already there. The plan rendering is stored as JSON text and is checked, so a
+# malformed rendering cannot be committed.
+def association_schema() -> String:
+  "CREATE TABLE IF NOT EXISTS semantic_admissions (query_id TEXT PRIMARY KEY NOT NULL REFERENCES semantic_queries(id),plan_value TEXT NOT NULL,result_schema TEXT NOT NULL,origin_attempt TEXT,CHECK(json_valid(plan_value)));"
+
+# The association insert is guarded by `changes()`, which still refers to the insert of
+# the query row because that insert is the statement immediately before it. So it runs
+# only in the transaction that created that row, and a replay writes nothing: a caller
+# that replays an old row cannot attach its own plan to a row admitted without one.
+def association_insert_sql(+id: String, +planValue: String, +resultSchema: String, +originAttempt: String) -> String:
+  "INSERT INTO semantic_admissions(query_id,plan_value,result_schema,origin_attempt) SELECT " ++ C.q(id) ++ "," ++ C.q(planValue) ++ "," ++ C.q(resultSchema) ++ "," ++ text_or_null(originAttempt) ++ " WHERE changes()=1 AND NOT EXISTS(SELECT 1 FROM semantic_admissions WHERE query_id=" ++ C.q(id) ++ ");"
+
+def association_present(id: String) -> String:
+  "EXISTS(SELECT 1 FROM semantic_admissions WHERE query_id=" ++ C.q(id) ++ ")"
+
+# The stored association as three columns: a marker, and the plan rendering and result
+# schema as hex, because the rendering is arbitrary JSON text and a tab or a newline
+# inside it would otherwise split the tab-separated answer row. A row with no
+# association answers the absent marker with two empty values.
+def association_row_sql(+id: String) -> String:
+  "SELECT CASE WHEN " ++ association_present(id) ++ " THEN 'present' ELSE 'absent' END," ++ "coalesce((SELECT hex(plan_value) FROM semantic_admissions WHERE query_id=" ++ C.q(id) ++ "),'')," ++ "coalesce((SELECT hex(result_schema) FROM semantic_admissions WHERE query_id=" ++ C.q(id) ++ "),'');"
+
 def schema() -> String:
   "CREATE TABLE IF NOT EXISTS semantic_queries (id TEXT PRIMARY KEY NOT NULL,owner TEXT NOT NULL REFERENCES sessions(id),request_json TEXT NOT NULL,admission_decision TEXT NOT NULL CHECK(admission_decision IN ('accepted','rejected')),prepared_keeper_path TEXT,cwd TEXT NOT NULL,origin_attempt TEXT,state TEXT NOT NULL CHECK(state IN ('accepted','running','complete','failed','interrupted','refused')),result_json TEXT,error_json TEXT,progress_json TEXT,cleanup_intent_json TEXT,recovery_intent_json TEXT,runtime_id TEXT,artifact_path TEXT NOT NULL,CHECK(json_valid(request_json)),CHECK(result_json IS NULL OR json_valid(result_json)),CHECK(error_json IS NULL OR json_valid(error_json)),CHECK(progress_json IS NULL OR json_valid(progress_json)),CHECK(cleanup_intent_json IS NULL OR json_valid(cleanup_intent_json)),CHECK(recovery_intent_json IS NULL OR json_valid(recovery_intent_json)));"
   ++ "CREATE TABLE IF NOT EXISTS semantic_runtimes (id TEXT PRIMARY KEY NOT NULL,owner TEXT NOT NULL REFERENCES sessions(id),origin_attempt TEXT,launch_query TEXT NOT NULL UNIQUE,adapter_id TEXT NOT NULL,state TEXT NOT NULL," ++ runtime_epoch_column() ++ ",pending_query TEXT,outcome_json TEXT,CHECK(outcome_json IS NULL OR json_valid(outcome_json)));"
   ++ "CREATE TABLE IF NOT EXISTS semantic_roles (query_id TEXT NOT NULL REFERENCES semantic_queries(id),role TEXT NOT NULL CHECK(role IN ('starter','target','adapter')),incarnation TEXT NOT NULL,keeper_path TEXT NOT NULL UNIQUE,guard_anchor TEXT NOT NULL,guard_key TEXT NOT NULL,guard_identity_json TEXT NOT NULL,recovery_argv_json TEXT NOT NULL,database_binding_json TEXT NOT NULL,phase TEXT NOT NULL,observer_identity_json TEXT,observer_cursor TEXT NOT NULL,exit_evidence_json TEXT,capture_json TEXT,release_intent_json TEXT,cleanup_phase TEXT NOT NULL,PRIMARY KEY(query_id,role,incarnation),CHECK(json_valid(guard_identity_json)),CHECK(json_valid(recovery_argv_json)),CHECK(json_valid(database_binding_json)),CHECK(observer_identity_json IS NULL OR json_valid(observer_identity_json)),CHECK(exit_evidence_json IS NULL OR json_valid(exit_evidence_json)),CHECK(capture_json IS NULL OR json_valid(capture_json)),CHECK(release_intent_json IS NULL OR json_valid(release_intent_json)));"
   ++ "CREATE INDEX IF NOT EXISTS semantic_queries_owner ON semantic_queries(owner);"
-  ++ "CREATE INDEX IF NOT EXISTS semantic_roles_keeper ON semantic_roles(guard_key);"
+  ++ "CREATE INDEX IF NOT EXISTS semantic_roles_keeper ON semantic_roles(guard_key);" ++ association_schema()
 
 # The runtime epoch is a canonical unsigned decimal counter of arbitrary length; it
 # is stored and inserted as text so no SQLite numeric conversion can coerce it.
