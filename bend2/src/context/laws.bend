@@ -1055,31 +1055,31 @@ def a_short_retained_row_is_unreadable():
   {==}
 
 law a_created_admission_is_admitted:
-  {ContextService.submission_of("root","{\"v\":1}",ContextAdmit.AdmissionCreated{"root","{\"v\":1}","accepted","accepted","","/k","/w","/a"}) == ContextService.SubmissionAdmitted{ContextAdmit.AdmissionCreated{"root","{\"v\":1}","accepted","accepted","","/k","/w","/a"}} : ContextService.Submission}
+  {ContextService.submission_of("root","{\"v\":1}","plan-1","schema-1",ContextAdmit.AdmissionCreated{"root","{\"v\":1}","accepted","accepted","","/k","/w","/a"}) == ContextService.SubmissionAdmitted{ContextAdmit.AdmissionCreated{"root","{\"v\":1}","accepted","accepted","","/k","/w","/a"}} : ContextService.Submission}
 
 def a_created_admission_is_admitted():
   {==}
 
 law a_retained_admission_of_this_owner_and_request_is_admitted:
-  {ContextService.submission_of("root","{\"v\":1}",ContextAdmit.AdmissionRetained{"root","{\"v\":1}","accepted","accepted","","/k","/w","/a"}) == ContextService.SubmissionAdmitted{ContextAdmit.AdmissionRetained{"root","{\"v\":1}","accepted","accepted","","/k","/w","/a"}} : ContextService.Submission}
+  {ContextService.submission_of("root","{\"v\":1}","plan-1","schema-1",ContextAdmit.AdmissionRetained{"root","{\"v\":1}","accepted","accepted","","/k","/w","/a"}) == ContextService.SubmissionAdmitted{ContextAdmit.AdmissionRetained{"root","{\"v\":1}","accepted","accepted","","/k","/w","/a"}} : ContextService.Submission}
 
 def a_retained_admission_of_this_owner_and_request_is_admitted():
   {==}
 
 law a_retained_admission_of_another_owner_is_foreign:
-  {ContextService.submission_of("root","{\"v\":1}",ContextAdmit.AdmissionRetained{"kid","{\"v\":1}","accepted","accepted","","/k","/w","/a"}) == ContextService.SubmissionForeign{"kid","{\"v\":1}"} : ContextService.Submission}
+  {ContextService.submission_of("root","{\"v\":1}","plan-1","schema-1",ContextAdmit.AdmissionRetained{"kid","{\"v\":1}","accepted","accepted","","/k","/w","/a"}) == ContextService.SubmissionForeign{"kid","{\"v\":1}"} : ContextService.Submission}
 
 def a_retained_admission_of_another_owner_is_foreign():
   {==}
 
 law an_absent_admission_is_absent:
-  {ContextService.submission_of("root","{\"v\":1}",ContextAdmit.AdmissionAbsent{}) == ContextService.SubmissionAbsent{} : ContextService.Submission}
+  {ContextService.submission_of("root","{\"v\":1}","plan-1","schema-1",ContextAdmit.AdmissionAbsent{}) == ContextService.SubmissionAbsent{} : ContextService.Submission}
 
 def an_absent_admission_is_absent():
   {==}
 
 law an_uncertain_admission_keeps_its_stage:
-  {ContextService.submission_of("root","{\"v\":1}",ContextAdmit.AdmissionUncertain{"shape","short"}) == ContextService.SubmissionUncertain{"shape","short"} : ContextService.Submission}
+  {ContextService.submission_of("root","{\"v\":1}","plan-1","schema-1",ContextAdmit.AdmissionUncertain{"shape","short"}) == ContextService.SubmissionUncertain{"shape","short"} : ContextService.Submission}
 
 def an_uncertain_admission_keeps_its_stage():
   {==}
@@ -1133,19 +1133,19 @@ def a_rendered_failure_document_is_present():
   {==}
 
 law a_retained_rejected_admission_is_not_admitted:
-  {ContextService.submission_of("root","{\"v\":1}",ContextAdmit.AdmissionRetained{"root","{\"v\":1}","rejected","refused","","/k","/w","/a"}) == ContextService.SubmissionRetainedRejected{"rejected","refused","root","{\"v\":1}"} : ContextService.Submission}
+  {ContextService.submission_of("root","{\"v\":1}","plan-1","schema-1",ContextAdmit.AdmissionRetained{"root","{\"v\":1}","rejected","refused","","/k","/w","/a"}) == ContextService.SubmissionRetainedRejected{"rejected","refused","root","{\"v\":1}"} : ContextService.Submission}
 
 def a_retained_rejected_admission_is_not_admitted():
   {==}
 
 law a_retained_accepted_record_for_another_request_is_foreign:
-  {ContextService.submission_of("root","{\"v\":1}",ContextAdmit.AdmissionRetained{"root","{\"v\":2}","accepted","accepted","","/k","/w","/a"}) == ContextService.SubmissionForeign{"root","{\"v\":2}"} : ContextService.Submission}
+  {ContextService.submission_of("root","{\"v\":1}","plan-1","schema-1",ContextAdmit.AdmissionRetained{"root","{\"v\":2}","accepted","accepted","","/k","/w","/a"}) == ContextService.SubmissionForeign{"root","{\"v\":2}"} : ContextService.Submission}
 
 def a_retained_accepted_record_for_another_request_is_foreign():
   {==}
 
 law a_retained_completed_record_replays_with_its_recorded_state:
-  {ContextService.submission_of("root","{\"v\":1}",ContextAdmit.AdmissionRetained{"root","{\"v\":1}","accepted","complete","","/k","/w","/a"}) == ContextService.SubmissionAdmitted{ContextAdmit.AdmissionRetained{"root","{\"v\":1}","accepted","complete","","/k","/w","/a"}} : ContextService.Submission}
+  {ContextService.submission_of("root","{\"v\":1}","plan-1","schema-1",ContextAdmit.AdmissionRetained{"root","{\"v\":1}","accepted","complete","","/k","/w","/a"}) == ContextService.SubmissionAdmitted{ContextAdmit.AdmissionRetained{"root","{\"v\":1}","accepted","complete","","/k","/w","/a"}} : ContextService.Submission}
 
 def a_retained_completed_record_replays_with_its_recorded_state():
   {==}

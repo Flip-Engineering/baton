@@ -21,8 +21,17 @@ import ../coordinator/commands.bend as C
 # run created, a retained row whose owner and request are the caller's own, a retained row
 # that belongs to another owner or request, a read-back absence, and uncertainty with its
 # stage and raw answer.
+# The admitted plan decision Core's verdict produces, as this lane can consume it: the frozen plan and
+# the result schema identity as text, or a typed refusal carrying Core's stage, code and detail. The
+# caller maps Sel.AdmissionDecision into this value; this lane imports no Core closure and the request
+# text is never parsed here.
+type PlanDecision is Data:
+  PlanAdmits{plan: String, resultSchema: String}
+  PlanRefuses{stage: String, code: String, detail: String}
+
 type Submission is Data:
-  SubmissionAdmitted{admission: ContextAdmit.Admission}
+  SubmissionAdmitted{admission: ContextAdmit.Admission, plan: String, resultSchema: String}
+  SubmissionPlanRefused{stage: String, code: String, detail: String}
   SubmissionRetainedRejected{decision: String, state: String, owner: String, request: String}
   SubmissionAbsent{}
   SubmissionForeign{owner: String, request: String}
@@ -107,40 +116,37 @@ def retained(+db: String, +binding: String, +query: String) -> IO(Retained):
     retained_after(query, result)
 
 # A retained row is admitted only when its owner and request are the caller's own.
-def submission_retained(+expectedOwner: String, +expectedRequest: String, admission: ContextAdmit.Admission, +owner: String, +request: String, +decision: String, +state: String) -> Submission:
+def submission_retained(+expectedOwner: String, +expectedRequest: String, +plan: String, +resultSchema: String, admission: ContextAdmit.Admission, +owner: String, +request: String, +decision: String, +state: String) -> Submission:
   Bool.pick(Submission, String.eq(decision, "accepted"),
-    Bool.pick(Submission, ContextAdmit.admit_identical(admission, expectedOwner, expectedRequest), SubmissionAdmitted{admission}, SubmissionForeign{owner, request}),
+    Bool.pick(Submission, ContextAdmit.admit_identical(admission, expectedOwner, expectedRequest), SubmissionAdmitted{admission, plan, resultSchema}, SubmissionForeign{owner, request}),
     SubmissionRetainedRejected{decision, state, owner, request})
 
-def submission_of(+expectedOwner: String, +expectedRequest: String, admission: ContextAdmit.Admission) -> Submission:
+def submission_of(+expectedOwner: String, +expectedRequest: String, +plan: String, +resultSchema: String, admission: ContextAdmit.Admission) -> Submission:
   match admission:
-    case ContextAdmit.AdmissionCreated{owner, request, decision, state, attempt, keeperPath, cwd, artifactPath}: SubmissionAdmitted{admission}
-    case ContextAdmit.AdmissionRetained{owner, request, decision, state, attempt, keeperPath, cwd, artifactPath}: submission_retained(expectedOwner, expectedRequest, admission, owner, request, decision, state)
+    case ContextAdmit.AdmissionCreated{owner, request, decision, state, attempt, keeperPath, cwd, artifactPath}: SubmissionAdmitted{admission, plan, resultSchema}
+    case ContextAdmit.AdmissionRetained{owner, request, decision, state, attempt, keeperPath, cwd, artifactPath}: submission_retained(expectedOwner, expectedRequest, plan, resultSchema, admission, owner, request, decision, state)
     case ContextAdmit.AdmissionAbsent{}: SubmissionAbsent{}
     case ContextAdmit.AdmissionUncertain{stage, answer}: SubmissionUncertain{stage, answer}
 
-def submission_after(+expectedOwner: String, +expectedRequest: String, result: Result<&1,&1,U32 & String,ContextAdmit.Admission>) -> IO(Submission):
+def submission_after(+expectedOwner: String, +expectedRequest: String, +plan: String, +resultSchema: String, result: Result<&1,&1,U32 & String,ContextAdmit.Admission>) -> IO(Submission):
   match result:
-    case Done{+admission}: IO.pure(Submission, submission_of(expectedOwner, expectedRequest, admission))
+    case Done{+admission}: IO.pure(Submission, submission_of(expectedOwner, expectedRequest, plan, resultSchema, admission))
     case Fail{error}:
       match error:
         case (code, detail): IO.pure(Submission, SubmissionRefused{code, detail})
 
 # One submission: the Core plan validation runs first and a refusal there creates no row, then
 # the atomic admission creates or replays the row and its answer is dispatched as itself.
-def submit(+db: String, +binding: String, +id: String, +owner: String, +requestJson: String, +keeperPath: String, +cwd: String, +originAttempt: String, +artifactPath: String, validate: String -> IO(Result<&1,&1,U32 & String,String>)) -> IO(Submission):
-  do IO<Submission>:
-    verdict : Result<&1,&1,U32 & String,String> <- validate(requestJson)
-    match verdict:
-      case Fail{error}:
-        match error:
-          case (code, detail): IO.pure(Submission, SubmissionRefused{code, detail})
-      case Done{+accepted}:
-        admitted : Result<&1,&1,U32 & String,ContextAdmit.Admission> <- ContextAdmit.admit(db, binding, id, owner, accepted, keeperPath, cwd, originAttempt, artifactPath)
-        submission_after(owner, accepted, admitted)
+def submit(+db: String, +binding: String, +id: String, +owner: String, +requestJson: String, +keeperPath: String, +cwd: String, +originAttempt: String, +artifactPath: String, decision: PlanDecision) -> IO(Submission):
+  match decision:
+    case PlanRefuses{stage, code, detail}: IO.pure(Submission, SubmissionPlanRefused{stage, code, detail})
+    case PlanAdmits{plan, resultSchema}: admitted(db, binding, id, owner, requestJson, keeperPath, cwd, originAttempt, artifactPath, plan, resultSchema)
 
-# Passive discovery: the supplied catalog selection answers, and this module reads no target,
-# starts no module and admits nothing. Unconnected until the actual catalog consumer is bound.
+def admitted(+db: String, +binding: String, +id: String, +owner: String, +requestJson: String, +keeperPath: String, +cwd: String, +originAttempt: String, +artifactPath: String, +plan: String, +resultSchema: String) -> IO(Submission):
+  do IO<Submission>:
+    answer : Result<&1,&1,U32 & String,ContextAdmit.Admission> <- ContextAdmit.admit(db, binding, id, owner, requestJson, keeperPath, cwd, originAttempt, artifactPath)
+    submission_after(owner, requestJson, plan, resultSchema, answer)
+
 def discover(catalog: Unit -> IO(Result<&1,&1,U32 & String,String>)) -> IO(Discovery):
   do IO<Discovery>:
     selected : Result<&1,&1,U32 & String,String> <- catalog(Unit{})
