@@ -112,15 +112,21 @@ client.close()
 
 
 class Control(unittest.TestCase):
-    def setUp(self):
+    def setUp(self, *, preserve_home=False):
         self.assertTrue(EXE.is_file(), f'Coordinator must be built at {EXE}')
         retained = ROOT / '.scratch/bend2/control-fixtures'
         retained.mkdir(parents=True, exist_ok=True)
         self.directory = pathlib.Path(tempfile.mkdtemp(prefix="control ' λ ", dir=retained))
         self.home = self.directory / 'isolated-home'
         self.home.mkdir()
-        self.environment = dict(os.environ, HOME=str(self.home),
-                                OPENAI_API_KEY='fixture-unused', CODEX_API_KEY='fixture-unused')
+        self.environment = dict(os.environ, OPENAI_API_KEY='fixture-unused', CODEX_API_KEY='fixture-unused')
+        if preserve_home:
+            for key in list(self.environment):
+                if key in ('GIT_CONFIG_PARAMETERS', 'GIT_CONFIG_COUNT') or key.startswith(('GIT_CONFIG_KEY_', 'GIT_CONFIG_VALUE_')):
+                    del self.environment[key]
+            self.environment.update(GIT_CONFIG_GLOBAL=os.devnull, GIT_CONFIG_NOSYSTEM='1')
+        else:
+            self.environment['HOME'] = str(self.home)
         self.environment.pop('BATON2_GIT_REGISTRY', None)
         self.repo = self.directory / 'repository'
         self.repo.mkdir()
