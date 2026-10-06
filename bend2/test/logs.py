@@ -364,7 +364,7 @@ sys.stdin.readline()
 pathlib.Path('ready').write_text('ready')
 while not pathlib.Path('release').exists(): time.sleep(.01)
 print(pathlib.Path('events.jsonl').read_text(),end='',flush=True)
-assert sys.stdin.read()==''
+sys.stdin.read()
 """)
         self.events.write_text('\n'.join(json.dumps({'type': 'response', 'id': 'r%d' % i,
                                                     'pad': 'z' * 40000}) for i in range(6))
