@@ -17,7 +17,7 @@
 import { existsSync, realpathSync, statSync } from 'node:fs';
 
 import { canonicalJson, digestJson } from './canonical.mjs';
-import { attachCleanup, attachDiagnostics, cleanupDiagnostic } from './failure.mjs';
+import { attachDiagnostics, cleanupDiagnostic } from './failure.mjs';
 import { analyzeSqliteStatement, joinRootpages, probeOriginCapability } from './sqlite-statement.mjs';
 import { joinConstantSql } from './sql-join.mjs';
 
@@ -67,16 +67,9 @@ export function fileIdentityOf(path) {
   return { realPath, device: String(stat.dev), inode: String(stat.ino), bytes: stat.size, mode: stat.mode };
 }
 
-// Every cleanup action runs before any evidence is attached, and attachment
-// cannot throw or discard diagnostics; the shared module owns that behavior.
-function closeOnFailure(db, error, stage) {
-  try {
-    db.close();
-  } catch (cleanupError) {
-    attachCleanup(error, `${stage}:close`, cleanupError);
-  }
-  return error;
-}
+// The open and the session constructor collect their cleanup outcomes locally and
+// attach them once, so a wrapper returned by an earlier attachment is never
+// discarded and every physical release is attempted.
 
 // A read-only open refuses a missing subject file instead of creating it. The
 // admitted operand is an existing regular file named by an ordinary path: a
@@ -108,7 +101,15 @@ export function openReadOnlySqlite({ path, DatabaseSync }) {
     }
     return { db, path, fileIdentity };
   } catch (error) {
-    throw closeOnFailure(db, error, 'openReadOnlySqlite');
+    // Collect the cleanup outcome, then attach once, so the throw always carries
+    // both the original failure and the release evidence.
+    const diagnostics = [];
+    try {
+      db.close();
+    } catch (cleanupError) {
+      diagnostics.push(cleanupDiagnostic('openReadOnlySqlite:close', cleanupError));
+    }
+    throw attachDiagnostics(error, diagnostics);
   }
 }
 
@@ -380,6 +381,7 @@ export function createSqliteSession({ path, DatabaseSync }) {
   const opened = openReadOnlySqlite({ path, DatabaseSync });
   const { db } = opened;
   let transactionOpen = false;
+  let releaseOutcome = null;
   try {
     db.exec('BEGIN DEFERRED');
     transactionOpen = true;
@@ -418,37 +420,49 @@ export function createSqliteSession({ path, DatabaseSync }) {
         return { stableWithinTransaction: canonicalJson(connection) === canonicalJson(after), before: connection, after };
       },
       // Release is reported, never thrown: a caller's finally must not mask an
-      // earlier error, and a failed commit or close must not read as success.
-      // The returned record names what actually happened so a caller keeps the
-      // evidence instead of inferring it from the absence of a throw.
+      // earlier error, and a failed commit or close must not read as success. The
+      // outcome is cached so a repeat reports what actually happened rather than
+      // a blank success: `closed` states that the handle was freed, and
+      // `sessionUsable` states that this session refuses further work.
       close() {
-        if (session.closed) return { closed: true, alreadyClosed: true, diagnostics: [] };
-        session.closed = true;
+        if (releaseOutcome !== null) return { ...releaseOutcome, alreadyClosed: true };
         const diagnostics = [];
         try {
           db.exec('COMMIT');
         } catch (commitError) {
           diagnostics.push(cleanupDiagnostic('sqliteSession:commit', commitError));
         }
+        let handleClosed = false;
         try {
           db.close();
-          return { closed: true, alreadyClosed: false, diagnostics };
+          handleClosed = true;
         } catch (closeError) {
           diagnostics.push(cleanupDiagnostic('sqliteSession:close', closeError));
-          return { closed: false, alreadyClosed: false, diagnostics };
         }
+        session.closed = true;
+        releaseOutcome = { closed: handleClosed, sessionUsable: false, diagnostics };
+        return { ...releaseOutcome, alreadyClosed: false };
       },
     };
     return session;
   } catch (error) {
+    // Collect every cleanup outcome locally, then attach once: a wrapper returned
+    // by an earlier attachment must not be discarded, and every physical release
+    // is attempted before any evidence is attached.
+    const diagnostics = [];
     if (transactionOpen) {
       try {
         db.exec('ROLLBACK');
       } catch (cleanupError) {
-        attachCleanup(error, 'createSqliteSession:rollback', cleanupError);
+        diagnostics.push(cleanupDiagnostic('createSqliteSession:rollback', cleanupError));
       }
     }
-    throw closeOnFailure(db, error, 'createSqliteSession');
+    try {
+      db.close();
+    } catch (cleanupError) {
+      diagnostics.push(cleanupDiagnostic('createSqliteSession:close', cleanupError));
+    }
+    throw attachDiagnostics(error, diagnostics);
   }
 }
 

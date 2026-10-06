@@ -30,7 +30,7 @@ import { DatabaseSync } from 'node:sqlite';
 import { pathToFileURL } from 'node:url';
 
 import { createSqliteSession } from './sqlite-catalog.mjs';
-import { describeFailure } from './failure.mjs';
+import { attachDiagnostics, describeFailure } from './failure.mjs';
 import { openPostgresSession } from './postgres-catalog.mjs';
 import { admitSqlCallRecord, joinPostgresRelations } from './sql-join.mjs';
 import { CATALOG_OPERATIONS } from './operations.mjs';
@@ -291,6 +291,7 @@ export async function catalogAdapterMain({ readStdin, writeStdout, writeStderr }
       let joined = { relations: [], refs: [], limits: [] };
       let snapshot;
       let release = null;
+      let failure = null;
       try {
         if (operation === 'codeAccessJoin') joined = session.join({ records });
         snapshot = {
@@ -300,15 +301,26 @@ export async function catalogAdapterMain({ readStdin, writeStdout, writeStderr }
           stableWithinTransaction: session.stability().stableWithinTransaction,
           originCapability: session.originCapability,
         };
+      } catch (error) {
+        failure = error;
+        throw error;
       } finally {
         release = session.close();
+        if (release.diagnostics.length > 0) {
+          // The release evidence is attached to the primary failure before it is
+          // reported, and it always reaches the retained internal channel, since
+          // a wrapped error cannot replace one that is already being thrown.
+          if (failure !== null) attachDiagnostics(failure, release.diagnostics);
+          writeStderr(`${JSON.stringify({ stage: 'catalogAdapterMain:sessionRelease', closed: release.closed, diagnostics: release.diagnostics })}\n`);
+        }
       }
-      // A release that could not confirm the connection was freed is reported as
-      // a limit rather than implied by a successful frame.
-      const releaseLimits = release.closed === true ? [] : [{
+      // Every release diagnostic reaches the frame. A failed commit with a
+      // successful close is not an unconfirmed release, so the two cases carry
+      // different codes instead of implying a clean release.
+      const releaseLimits = release.diagnostics.length === 0 ? [] : [{
         projection: 'catalog',
-        code: 'sessionReleaseUnconfirmed',
-        detail: `the read-only connection release reported ${release.diagnostics.map(entry => entry.stage).join(', ')}`,
+        code: release.closed === true ? 'sessionReleaseDiagnostics' : 'sessionReleaseUnconfirmed',
+        detail: `the read-only connection release reported ${release.diagnostics.map(entry => `${entry.stage}${entry.code === null ? '' : ` (${entry.code})`}`).join(', ')}`,
       }];
       const databaseSelector = { engine: 'sqlite-schema', path: snapshot.identity.realPath };
       const facts = factsFromSnapshot({ provider, snapshot, select, subject });

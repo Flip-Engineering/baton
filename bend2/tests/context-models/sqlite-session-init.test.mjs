@@ -30,9 +30,13 @@ function subjectFile() {
 // the table below, and every instance records its execs, prepares and closes.
 function scriptedDatabase({ realPath, rows = {}, failures = {}, execFailures = {}, closeError = null }) {
   const instances = [];
+  const counts = new Map();
   const dispatch = (sql, instance) => {
     for (const [match, behavior] of Object.entries(failures)) {
       if (!sql.includes(match)) continue;
+      const seen = (counts.get(match) ?? 0) + 1;
+      counts.set(match, seen);
+      if (behavior.after !== undefined && seen <= behavior.after) continue;
       if ('thrown' in behavior) throw behavior.thrown;
       throw Object.assign(new Error(behavior.message), { code: behavior.code ?? null });
     }
@@ -275,9 +279,14 @@ test('the release reports what happened instead of throwing or swallowing it', (
     const failingSession = createSqliteSession({ path: subject.path, DatabaseSync: failing.DatabaseSync });
     const release = failingSession.close();
     assert.equal(release.closed, false, 'a release that could not free the connection says so');
+    assert.equal(release.sessionUsable, false);
     assert.deepEqual(release.diagnostics, [{ stage: 'sqliteSession:close', code: 'SQLITE_BUSY', message: 'close refused' }]);
     assert.equal(failing.instances[0].closes, 1);
-    assert.deepEqual(failingSession.close(), { closed: true, alreadyClosed: true, diagnostics: [] }, 'a repeat release is a no-op');
+    const repeat = failingSession.close();
+    assert.equal(repeat.closed, false, 'a repeat reports the cached outcome, not a blank success');
+    assert.equal(repeat.alreadyClosed, true);
+    assert.deepEqual(repeat.diagnostics, release.diagnostics);
+    assert.equal(failing.instances[0].closes, 1, 'a repeat release attempts no second close');
 
     const commitFailing = scriptedDatabase({
       realPath: subject.realPath,
@@ -287,12 +296,13 @@ test('the release reports what happened instead of throwing or swallowing it', (
     const commitSession = createSqliteSession({ path: subject.path, DatabaseSync: commitFailing.DatabaseSync });
     const commitRelease = commitSession.close();
     assert.equal(commitRelease.closed, true, 'the connection still closes');
+    assert.equal(commitRelease.sessionUsable, false, 'the session refuses further work either way');
     assert.deepEqual(commitRelease.diagnostics, [{ stage: 'sqliteSession:commit', code: null, message: 'no transaction is active' }]);
     assert.equal(commitFailing.instances[0].closes, 1);
 
     const clean = scriptedDatabase({ realPath: subject.realPath, rows: HAPPY_ROWS });
     const cleanSession = createSqliteSession({ path: subject.path, DatabaseSync: clean.DatabaseSync });
-    assert.deepEqual(cleanSession.close(), { closed: true, alreadyClosed: false, diagnostics: [] });
+    assert.deepEqual(cleanSession.close(), { closed: true, sessionUsable: false, alreadyClosed: false, diagnostics: [] });
   } finally {
     subject.remove();
   }
@@ -303,20 +313,31 @@ test('the capture wrapper returns the release record and attaches its diagnostic
   try {
     const clean = scriptedDatabase({ realPath: subject.realPath, rows: HAPPY_ROWS });
     const snapshot = captureSqliteSnapshot({ path: subject.path, DatabaseSync: clean.DatabaseSync, statements: [] });
-    assert.deepEqual(snapshot.release, { closed: true, alreadyClosed: false, diagnostics: [] });
+    assert.deepEqual(snapshot.release, { closed: true, sessionUsable: false, alreadyClosed: false, diagnostics: [] });
     assert.equal(clean.instances[0].closes, 1);
 
+    // A refused analysis stays a refusal with its release information, because
+    // analyzeSqliteStatement reports a prepare failure as engineParseRefused.
+    const refusing = scriptedDatabase({ realPath: subject.realPath, rows: HAPPY_ROWS, failures: { 'EXPLAIN ': { message: 'parse refused' } } });
+    const refused = captureSqliteSnapshot({ path: subject.path, DatabaseSync: refusing.DatabaseSync, statements: [{ id: 'x', sql: 'SELECT a FROM t' }] });
+    assert.equal(refused.plans[0].status, 'refused');
+    assert.equal(refused.plans[0].refusal.reason, 'engineParseRefused');
+    assert.deepEqual(refused.release, { closed: true, sessionUsable: false, alreadyClosed: false, diagnostics: [] });
+    assert.equal(refusing.instances[0].closes, 1);
+
+    // The second identity read inside the same transaction is what escapes the
+    // wrapper, so a controlled failure there exercises the error path.
     const closeError = Object.assign(new Error('close refused'), { code: 'SQLITE_BUSY' });
     const failing = scriptedDatabase({
       realPath: subject.realPath,
       rows: HAPPY_ROWS,
-      failures: { 'EXPLAIN SQL': { message: 'statement analysis failed' } },
+      failures: { 'sqlite_version()': { after: 1, message: 'stability probe failed' } },
       closeError,
     });
     assert.throws(
-      () => captureSqliteSnapshot({ path: subject.path, DatabaseSync: failing.DatabaseSync, statements: [{ sql: 'SQL' }] }),
+      () => captureSqliteSnapshot({ path: subject.path, DatabaseSync: failing.DatabaseSync, statements: [] }),
       error => {
-        assert.equal(error.message, 'statement analysis failed', 'the analysis error stays the thrown one');
+        assert.equal(error.message, 'stability probe failed', 'the escaping error stays the thrown one');
         assert.deepEqual(error.cleanup, [{ stage: 'sqliteSession:close', code: 'SQLITE_BUSY', message: 'close refused' }]);
         return true;
       },
@@ -428,6 +449,24 @@ test('the failure description keeps the provider error, codes and cleanup eviden
   assert.equal(describedWrapped.cause.message, 'frozen failure', 'the retained original is described through the cause');
 });
 
+test('the failure description tolerates throwing members and a cyclic cause', () => {
+  const hostile = new Error('hostile');
+  Object.defineProperty(hostile, 'cleanup', { get() { throw new Error('cleanup getter failed'); } });
+  const described = describeFailure(hostile);
+  assert.equal(described.message, 'hostile');
+  assert.deepEqual(described.cleanup, [], 'an unreadable cleanup member yields no diagnostics instead of throwing');
+
+  const cyclic = new Error('cyclic');
+  cyclic.cause = cyclic;
+  const cyclicDescribed = describeFailure(cyclic);
+  assert.equal(cyclicDescribed.message, 'cyclic');
+  assert.equal(cyclicDescribed.cause.kind, 'cycle', 'a cyclic cause chain is cut');
+
+  const attached = attachDiagnostics(hostile, [{ stage: 's', code: null, message: 'm' }]);
+  assert.deepEqual(attached.cleanup, [{ stage: 's', code: null, message: 'm' }], 'the diagnostics are retained');
+  assert.equal(attached.cause, hostile, 'the original failure is retained as the cause when the member cannot be replaced');
+});
+
 test('a successful construction keeps one connection and the caller owns its close', () => {
   const subject = subjectFile();
   try {
@@ -451,10 +490,12 @@ test('a successful construction keeps one connection and the caller owns its clo
     assert.equal(plan.relations[0].object.name, 't');
     assert.equal(plan.join.schema, 'main');
 
-    session.close();
+    const release = session.close();
     assert.equal(instance.closes, 1, 'the caller closes once');
+    assert.equal(release.closed, true);
     assert.equal(session.closed, true);
-    session.close();
+    const repeat = session.close();
+    assert.equal(repeat.alreadyClosed, true);
     assert.equal(instance.closes, 1, 'a repeat close is a no-op');
   } finally {
     subject.remove();
