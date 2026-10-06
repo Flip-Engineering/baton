@@ -83,7 +83,6 @@ export function createFrontendAdapter({ acquisition, captureOnly = true } = {}) 
     invalidEvents: 0,
     ownerlessEvents: 0,
     preParseMismatches: 0,
-    staleGenerationEvents: 0,
     uncapturedDependencies: 0,
     outsideQuery: 0,
     outsideQueryReads: 0,
@@ -99,7 +98,6 @@ export function createFrontendAdapter({ acquisition, captureOnly = true } = {}) 
       token,
       owner: token,
       identity: typeof identity === 'string' && identity.length > 0 ? identity : null,
-      hookGeneration: null,
       startedCounters: { ...counters },
       files: [],
       attempts: [],
@@ -141,20 +139,28 @@ export function createFrontendAdapter({ acquisition, captureOnly = true } = {}) 
   // encoding reproduces byte for byte. An encoding that cannot round-trip, or that is not one the
   // contract names, is refused rather than re-encoded; a marker is returned for comparison only.
   function providedBytes(provided, canonical) {
+    const wireShaped = provided.captureKind !== undefined || provided.payload !== undefined || provided.payloadEncoding !== undefined || provided.capture_kind !== undefined;
+    // One representation per answer: a record carrying wire discriminants is consumed as a record, and
+    // an answer that carries both a record and raw bytes is refused rather than resolved either way.
+    if (wireShaped && provided.bytes !== undefined) return { status: 'undecodable', detail: 'mixedRepresentation' };
     if (provided.bytes instanceof Uint8Array) {
       return { status: 'bytes', bytes: provided.bytes, marker: typeof provided.marker === 'string' ? provided.marker : null, kind: typeof provided.kind === 'string' ? provided.kind : null, role: null, producer: null };
     }
-    if (provided.captureKind !== undefined || provided.payload !== undefined || provided.payloadEncoding !== undefined) {
+    if (wireShaped) {
       const decoded = decodeCoreCapture(provided);
-      if (decoded.status === 'absent') return { status: 'absent' };
+      if (decoded.status === 'absent') {
+        // An absence names the input it is an absence of; an unassociated absence token says nothing
+        // about the requested file.
+        return { status: 'absent', canonical: decoded.path };
+      }
       if (decoded.status !== 'bytes') return { status: 'undecodable', detail: decoded.detail === undefined ? decoded.reason : `${decoded.reason}: ${decoded.detail}` };
-      // A source input is a file record carrying a content marker. A link record names a target and is
-      // not source bytes; a directory or configuration record describes structure, not content. The
-      // record's path is the admitted canonical path and must agree with the identity in hand. The
-      // producer fields travel with the record as a claimed association, never as authority.
+      // A source input is a file record carrying a content marker and the admitted canonical path. A
+      // link record names a target and is not source bytes; a directory or configuration record
+      // describes structure, not content. The producer fields travel as a claimed association only.
       if (decoded.kind !== 'file') return { status: 'undecodable', detail: `sourceInputKindUnsupported: ${decoded.kind}` };
       if (decoded.marker === null) return { status: 'undecodable', detail: 'markerMissing' };
-      if (decoded.path !== null && decoded.path !== canonical) return { status: 'undecodable', detail: `pathMismatch: ${decoded.path}` };
+      if (decoded.path === null) return { status: 'undecodable', detail: 'pathMissing' };
+      if (decoded.path !== canonical) return { status: 'undecodable', detail: `pathMismatch: ${decoded.path}` };
       return decoded;
     }
     return { status: 'bytes', bytes: provided.bytes, marker: null, kind: null, role: null, producer: null };
@@ -190,7 +196,17 @@ export function createFrontendAdapter({ acquisition, captureOnly = true } = {}) 
     if (provided === undefined || provided === null) return Object.freeze({ status: 'unavailable', requested: identity, canonical });
     if (provided.refuse !== undefined) return Object.freeze({ status: 'refused', requested: identity, canonical, detail: String(provided.refuse) });
     const shaped = providedBytes(provided, canonical);
-    if (shaped.status === 'absent') return Object.freeze({ status: 'absent', requested: identity, canonical });
+    if (shaped.status === 'absent') {
+      if (shaped.canonical === null || shaped.canonical === undefined) {
+        counters.acquisitionFailures += 1;
+        return Object.freeze({ status: 'failed', requested: identity, canonical, detail: 'absentWithoutIdentity' });
+      }
+      if (shaped.canonical !== identity && shaped.canonical !== canonical) {
+        counters.acquisitionFailures += 1;
+        return Object.freeze({ status: 'failed', requested: identity, canonical, detail: `absentIdentityMismatch: ${shaped.canonical}` });
+      }
+      return Object.freeze({ status: 'absent', requested: identity, canonical: shaped.canonical });
+    }
     if (shaped.status === 'undecodable') {
       counters.acquisitionFailures += 1;
       return Object.freeze({ status: 'failed', requested: identity, canonical, detail: shaped.detail });
@@ -623,18 +639,6 @@ export function createFrontendAdapter({ acquisition, captureOnly = true } = {}) 
       note(active, 'foreignOwnerEvent', typeof eventOwner === 'string' ? eventOwner : owner);
       return;
     }
-    // The first accepted event fixes the installation generation; an event from another installation
-    // is refused, so a producer retained across installations cannot publish here.
-    const generation = event !== null && typeof event === 'object' && Number.isInteger(event.generation) ? event.generation : null;
-    if (generation !== null) {
-      if (active.hookGeneration === null) {
-        active.hookGeneration = generation;
-      } else if (generation !== active.hookGeneration) {
-        counters.staleGenerationEvents += 1;
-        note(active, 'staleGeneration', String(generation));
-        return;
-      }
-    }
     try {
       handle(event);
     } catch (error) {
@@ -654,7 +658,9 @@ export function createFrontendAdapter({ acquisition, captureOnly = true } = {}) 
     if (known !== undefined) {
       if (known.status === 'captured') return Object.freeze({ status: 'captured', identity: known.canonical });
       if (known.status === 'absent') return Object.freeze({ status: 'absent', identity: known.canonical });
-      return Object.freeze({ status: 'unavailable', requested: known.requested });
+      // A cached failure, refusal or conflict is not evidence of absence: the answer is unavailable
+      // with the detail the acquisition recorded.
+      return Object.freeze({ status: 'unavailable', requested: known.requested ?? file, detail: known.detail ?? known.status });
     }
     if (acquisition === undefined || typeof acquisition.resolve !== 'function') {
       return Object.freeze({ status: 'unknown', requested: file, detail: 'closureResolutionMissing' });
@@ -766,7 +772,6 @@ export function createFrontendAdapter({ acquisition, captureOnly = true } = {}) 
     if (delta.invalidEvents > 0) incompleteness.push('invalidEvent');
     if (delta.ownerlessEvents > 0) incompleteness.push('ownerlessEvent');
     if (delta.preParseMismatches > 0) incompleteness.push('preParseMismatch');
-    if (delta.staleGenerationEvents > 0) incompleteness.push('staleGeneration');
     if (delta.uncapturedDependencies > 0) incompleteness.push('uncapturedDependency');
     if (delta.outsideQuery > 0) incompleteness.push('outsideQueryEvent');
     if (delta.outsideQueryReads > 0) incompleteness.push('outsideQueryRead');

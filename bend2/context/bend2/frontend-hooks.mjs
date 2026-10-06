@@ -54,7 +54,7 @@ export interface BendHookSink {
 }
 export interface BendHookInstall { status: "installed" | "refused"; owner: string; reason?: string; }
 let bendHookSink: BendHookSink | null = null;
-export const bendHookState = { failures: 0, refusals: 0, owner: "", installs: 0, refusedInstalls: 0, generation: 0 };
+export const bendHookState = { failures: 0, refusals: 0, owner: "", installs: 0, refusedInstalls: 0 };
 export function bendHooks(sink: BendHookSink | null, owner?: string): BendHookInstall {
   const token = owner === undefined ? "" : owner;
   if (sink !== null && token === "") {
@@ -79,22 +79,21 @@ export function bendHookFailures(): number {
 export function bendEmit(event: BendHookEvent): void {
   const sink = bendHookSink;
   if (sink === null) return;
-  // Lifetime boundary: a producer call site reads the installed sink, its owner and its installation
-  // generation at emission time. The owner travels in the event and as the call argument, and the
-  // generation lets a consumer detect an event produced by an older installation. A producer cannot
-  // outlive its invocation through this path: the consumer refuses an installation while another
-  // owner holds the hook, refuses an event after its session ended, and refuses an event whose
-  // generation differs from the one it first accepted.
-  const owner = bendHookState.owner;
-  const generation = bendHookState.generation;
+  // Ownership guarantee: exactly one sink is installed at a time, installation is refused while
+  // another owner holds the hook and is refused without an owner, and the owner travels in the event
+  // and as the call argument. Because this registry holds one sink and one owner, an emission belongs
+  // to the installation that is current when it happens. The internal invocation covers the narrow
+  // interval that guarantee needs: it owns the hook across a fully awaited loader call (every
+  // recursive book_load call on the pinned loader is awaited), a synchronous whole-book validation
+  // and synchronous closure callbacks, and it releases the hook only after those calls return.
+  // Outside that contract is a caller that keeps a producer or sink reference and calls it after the
+  // invocation returned, or concurrently without awaiting the invocation: such an emission is refused
+  // while no session is active, but it cannot be attributed to an earlier installation from here.
   try {
-    sink.emit(Object.assign({}, event as object, { owner, generation }), owner);
+    sink.emit(Object.assign({}, event as object, { owner: bendHookState.owner }), bendHookState.owner);
   } catch {
     bendHookState.failures += 1;
   }
-}
-export function bendHookGeneration(): number {
-  return bendHookState.generation;
 }
 export function bendHookRefusals(): number {
   return bendHookState.refusals;

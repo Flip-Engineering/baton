@@ -172,17 +172,23 @@ or writes. Its behaviour:
   claim is made; one acquisition outcome is counted once, a frontend refusal is separate evidence, and
   the observer's own failures are counted as evidence apart from frontend diagnostics;
 - the frontend hook is owned: installation is refused for a second owner and for no owner, every event
-  and sink callback carries the owning invocation and the installation generation, and a foreign,
-  ownerless or wrongly generationed callback is refused and counted. A producer call site reads the
-  installed sink at emission time, so a producer cannot outlive its invocation: the consumer refuses
-  an installation while another owner holds the hook and refuses an event after its session ended;
+  and sink callback carries the owning invocation, and a foreign or ownerless callback is refused and
+  counted. The guarantee is exactly one sink and one owner at a time, and the internal entry holds them
+  across a fully awaited loader call, a synchronous whole-book validation and synchronous closure
+  callbacks, releasing the hook only after those calls return; a change of owner during that interval
+  is recorded as evidence. A caller that keeps a producer or sink reference and calls it after the
+  invocation returned, or concurrently without awaiting the invocation, is outside this contract: such
+  an emission is refused while no session is active, and it cannot be attributed to an earlier
+  installation from this side;
 - a closure entry may be a Core wire record (`captureKind`, `role`, `path`, `marker`, `payload`,
   `payloadEncoding`, `producerModule`, `producerDigest`, `producerOperation`). Only that wire spelling
-  is accepted, so one mapping keeps a single protocol. For a source input the kind must be `file`, the
-  marker must be the content digest of the supplied bytes, and the record path must be the canonical
-  identity in hand; a link descriptor, a directory or a configuration record is refused as source
-  input rather than being read as bytes. The producer fields are retained as the record's claimed
-  association, never as authority.
+  is accepted, so one mapping keeps a single protocol, and an answer carrying both a record and raw
+  bytes is refused rather than resolved either way. For a source input the kind must be `file`, the
+  marker must be the content digest of the supplied bytes, and the path must be present and equal to
+  the canonical identity in hand; a link descriptor, a directory or a configuration record is refused
+  as source input rather than being read as bytes, and an absence record must name the input it is an
+  absence of. The producer fields are retained as the record's claimed association, never as
+  authority.
 
 Derive a hooked copy (remote, exact Root admission):
 

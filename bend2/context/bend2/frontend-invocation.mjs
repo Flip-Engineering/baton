@@ -115,8 +115,13 @@ function proofLawsGate({ frontend, adapter, owner, root, seen }) {
   const lawsPath = join(dirname(root), 'LAWS.bend');
   const lookup = adapter.sink.lookupSource(lawsPath, owner);
   if (lookup === undefined) return Object.freeze({ status: 'unavailable', reason: 'outsideInvocation' });
-  if (lookup.status === 'unknown') return Object.freeze({ status: 'unavailable', reason: lookup.detail ?? 'closureResolutionMissing' });
-  if (lookup.status === 'absent' || lookup.status === 'unavailable') return Object.freeze({ status: 'notApplicable', presence: lookup.status });
+  // Only the closure answering that the sibling is not there means the rule does not apply. A lookup
+  // this side could not answer, or answered with a cached failure, is unavailable with its reason:
+  // a failed acquisition is not evidence of absence.
+  if (lookup.status === 'absent') return Object.freeze({ status: 'notApplicable', presence: 'absent' });
+  if (lookup.status === 'unavailable') return Object.freeze({ status: 'unavailable', reason: lookup.detail === undefined || lookup.detail === null ? 'closureUnavailable' : lookup.detail });
+  if (lookup.status === 'unknown') return Object.freeze({ status: 'unavailable', reason: lookup.detail === undefined || lookup.detail === null ? 'closureResolutionMissing' : lookup.detail });
+  if (lookup.status !== 'present' && lookup.status !== 'captured') return Object.freeze({ status: 'unavailable', reason: `lookupUnsupported: ${String(lookup.status)}` });
   const imported = seen.has(lookup.identity);
   if (imported) return Object.freeze({ status: 'satisfied', identity: lookup.identity });
   return Object.freeze({ status: 'refused', identity: lookup.identity, message: 'PROOF.bend must import ./LAWS.bend' });
@@ -214,6 +219,18 @@ async function runOwned({ frontend, adapter, owner, root, phases, comp, seen, st
     } else {
       if (failures > baseline.failures) adapter.sink.evidenceFailure('frontendHookFailures', owner, String(failures - baseline.failures));
       if (refusals > baseline.refusals) adapter.sink.evidenceFailure('frontendHookRefusals', owner, String(refusals - baseline.refusals));
+    }
+  }
+
+  // The ownership interval is exclusive. If the owner changed while the awaited loader and the
+  // synchronous checker ran, that is recorded as evidence instead of silently releasing a hook this
+  // invocation no longer owns.
+  if (typeof frontend.bendHookOwner === 'function') {
+    try {
+      const currentOwner = frontend.bendHookOwner();
+      if (currentOwner !== owner) adapter.sink.evidenceFailure('hookOwnershipLost', owner, String(currentOwner));
+    } catch (error) {
+      adapter.sink.evidenceFailure('hookOwnershipCheckThrew', owner, errorText(error));
     }
   }
 

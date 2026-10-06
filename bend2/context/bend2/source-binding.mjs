@@ -431,13 +431,13 @@ export function decodeCoreCapture(record) {
     digest: typeof record.producerDigest === 'string' && record.producerDigest.length > 0 ? record.producerDigest : null,
     operation: typeof record.producerOperation === 'string' && record.producerOperation.length > 0 ? record.producerOperation : null,
   });
-  if (kind === 'absent') return Object.freeze({ status: 'absent', producer });
+  const path = typeof record.path === 'string' && record.path.length > 0 ? record.path : null;
+  if (kind === 'absent') return Object.freeze({ status: 'absent', producer, path });
   if (kind !== 'file' && kind !== 'dir' && kind !== 'link' && kind !== 'config') return unavailable('captureKindUnsupported', kind);
   const payload = record.payload;
   const encoding = record.payloadEncoding;
   if (typeof payload !== 'string') return unavailable('payloadMissing');
   const marker = typeof record.marker === 'string' && record.marker.length > 0 ? record.marker : null;
-  const path = typeof record.path === 'string' && record.path.length > 0 ? record.path : null;
   const role = typeof record.role === 'string' && record.role.length > 0 ? record.role : null;
   if (encoding === 'base64') {
     if (payload.length % 4 !== 0 || !/^[A-Za-z0-9+/]*={0,2}$/.test(payload)) return unavailable('payloadEncodingInvalid', 'base64');

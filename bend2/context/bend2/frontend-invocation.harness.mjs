@@ -329,9 +329,16 @@ async function cases(kernel, compModule, fixture, inputs, derived) {
     const aliasBytes = Buffer.from('import Base\n\ndef twice(x: U32) -> U32:\n  0\n', 'utf8');
     // Only the alias resolves to the canonical file, and it supplies different bytes. The canonical
     // acquisition happens first, then the alias is requested, then the canonical is read again.
+    let aliasReads = 0;
     const reader = closureReader(fixture.files, {
       resolveHook: (identity) => (identity === aliasPath ? { exists: true, identity: canonical } : { exists: fixture.files.has(identity), identity }),
-      readHook: (identity) => (identity === aliasPath ? { identity, bytes: aliasBytes } : undefined),
+      // The alias resolves to the canonical identity, so the conflicting acquisition is the SECOND
+      // read of that identity, requested through the alias.
+      readHook: (identity) => {
+        if (identity !== canonical) return undefined;
+        aliasReads += 1;
+        return { identity, bytes: aliasReads === 1 ? canonicalBytes : aliasBytes };
+      },
     });
     const adapter = createFrontendAdapter({ captureOnly: true, acquisition: { read: reader.read, resolve: reader.resolve, baseBend: fixture.basePath } });
     const started = adapter.beginQuery({ identity: canonical });
@@ -350,6 +357,7 @@ async function cases(kernel, compModule, fixture, inputs, derived) {
     });
     const conflict = report.acquisitions.find((entry) => entry.status === 'conflict');
     check(report, 'the canonical file is acquired first', report.firstMatchesFixture === true, report.firstMatchesFixture);
+    check(report, 'the canonical identity is read twice, the second time through the alias', JSON.stringify(reader.reads) === JSON.stringify([canonical, canonical]), reader.reads);
     check(report, 'the alias is refused as a conflict', conflict !== undefined && conflict.detail === 'bytesDiffer', report.acquisitions);
     check(report, 'the conflict names the rejected alias', conflict !== undefined && conflict.requested === aliasPath, conflict);
     check(report, 'the alias read returns nothing', report.aliasRefused === true, report.aliasRefused);

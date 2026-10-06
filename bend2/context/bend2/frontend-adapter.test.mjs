@@ -308,7 +308,14 @@ test('a Core wire record supplies exact bytes and refuses malformed or non-file 
     ['a directory record is not source bytes', { captureKind: 'dir', path: '/work/dir', marker: 'd', payload: Buffer.from('x').toString('base64'), payloadEncoding: 'base64' }, 'sourceInputKindUnsupported: dir'],
     ['a file record without a content marker is refused', { captureKind: 'file', path: '/work/bom.bend', marker: '', payload: Buffer.from('x').toString('base64'), payloadEncoding: 'base64' }, 'markerMissing'],
     ['a record whose path is not the identity in hand is refused', { captureKind: 'file', path: '/work/other.bend', marker: 'd', payload: Buffer.from('x').toString('base64'), payloadEncoding: 'base64' }, 'pathMismatch: /work/other.bend'],
+    ['a file record without a path is refused', { captureKind: 'file', marker: 'd', payload: Buffer.from('x').toString('base64'), payloadEncoding: 'base64' }, 'pathMissing'],
+    ['a file record with a malformed path is refused', { captureKind: 'file', path: 42, marker: 'd', payload: Buffer.from('x').toString('base64'), payloadEncoding: 'base64' }, 'pathMissing'],
+    ['a file record with an empty path is refused', { captureKind: 'file', path: '', marker: 'd', payload: Buffer.from('x').toString('base64'), payloadEncoding: 'base64' }, 'pathMissing'],
+    ['a record carrying bytes as well is refused', { captureKind: 'file', path: '/work/bom.bend', marker: 'd', payload: Buffer.from('x').toString('base64'), payloadEncoding: 'base64', bytes: bytesOf('x') }, 'mixedRepresentation'],
+    ['an absence that names no input is refused', { captureKind: 'absent' }, 'absentWithoutIdentity'],
+    ['an absence that names another input is refused', { captureKind: 'absent', path: '/work/elsewhere.bend' }, 'absentIdentityMismatch: /work/elsewhere.bend'],
     ['an unnamed encoding is refused rather than re-encoded', { captureKind: 'file', path: '/work/bom.bend', marker: 'd', payload: 'abc', payloadEncoding: 'utf8-text' }, 'payloadEncodingUnsupported: utf8-text'],
+    ['a missing kind is refused', { payload: 'abc', payloadEncoding: 'base64' }, 'captureKindMissing'],
   ];
   for (const [claim, bad, expected] of cases) {
     const refused = createFrontendAdapter({
@@ -385,16 +392,37 @@ test('a lookup refuses an answer that does not state existence', () => {
   adapter.endQuery();
 });
 
-test('an event from another installation is refused', () => {
-  const text = 'def value() -> U32:\n  1\n';
-  const adapter = adapterWith({ '/work/one.bend': text });
-  const owner = start(adapter, '/work/one.bend');
-  adapter.sink.emit({ owner, generation: 7, kind: HOOK_KINDS.loadStart, phase: HOOK_PHASES.load, file: '/work/one.bend', namespace: '' }, owner);
-  adapter.sink.emit({ owner, generation: 8, kind: HOOK_KINDS.loadStart, phase: HOOK_PHASES.load, file: '/work/one.bend', namespace: '' }, owner);
-  adapter.endQuery();
-  const session = adapter.report().sessions[0];
-  assert.equal(session.files.length, 1, 'only the first installation generation is accepted');
-  assert.ok(session.incompleteness.includes('staleGeneration'));
+test('a cached failed LAWS acquisition refuses the gate with its reason and enters no validation', async () => {
+  const { runFrontendInvocation } = await import('./frontend-invocation.mjs');
+  const proofDir = '/work/proof';
+  const root = `${proofDir}/PROOF.bend`;
+  const lawsIdentity = `${proofDir}/LAWS.bend`;
+  const files = { [root]: 'import Base\n', [lawsIdentity]: 'import Base\n' };
+  const comp = { SYNTH: 'SYNTH', book_owned() {} };
+  // The loader attempts the sibling LAWS while loading and the reader throws, so the acquisition is
+  // cached as a failure. The gate must report unavailable with that reason, never a known absence.
+  const adapter = createFrontendAdapter({
+    captureOnly: true,
+    acquisition: {
+      resolve: (identity) => ({ exists: files[identity] !== undefined, identity }),
+      read(identity) {
+        if (identity.endsWith('LAWS.bend')) throw new Error('custody reader unavailable');
+        return { identity, bytes: bytesOf(files[identity]) };
+      },
+    },
+  });
+  const frontend = frontendDouble({ attemptLaws: true, lawsIdentity });
+  const result = await runFrontendInvocation({ frontend, adapter, root, phases: ['parse', 'check', 'completion'], comp });
+  assert.equal(result.status, 'failed');
+  assert.equal(result.outcome.gate, 'proofLawsRule');
+  assert.equal(result.outcome.refusal, 'gateOperandUnavailable');
+  assert.equal(result.outcome.gateReason, 'custody reader unavailable');
+  assert.equal(result.outcome.thrownValue, undefined);
+  assert.equal(frontend.calls.some((call) => call[0] === 'book_valid'), false, 'validation was never entered');
+  assert.ok(!result.phasesRun.includes('check'));
+  assert.ok(!result.phasesRun.includes('completion'));
+  assert.equal(frontend.bendHookOwner(), '', 'the hook is released');
+  assert.equal(adapter.currentSession(), null);
 });
 
 
@@ -503,9 +531,9 @@ test('declared type and elaborated term observations keep their status and quant
 
 // A frontend double for the invocation entry: it records the calls it receives and can be told to
 // fail at a chosen step. It is not a frontend and proves nothing about Bend2 semantics.
-function frontendDouble({ failAt = null, owned = null, throwInstall = false, importLaws = false, lawsIdentity = null } = {}) {
+function frontendDouble({ failAt = null, owned = null, throwInstall = false, importLaws = false, lawsIdentity = null, attemptLaws = false } = {}) {
   const calls = [];
-  const state = { owner: owned };
+  const state = { owner: owned, sink: null };
   return {
     calls,
     state,
@@ -516,11 +544,16 @@ function frontendDouble({ failAt = null, owned = null, throwInstall = false, imp
       if (sink === null) {
         if (state.owner !== null && state.owner !== owner) return { status: 'refused', owner: state.owner, reason: 'ownedByAnother' };
         state.owner = null;
+        state.sink = null;
         return { status: 'installed', owner: '' };
       }
       if (state.owner !== null && state.owner !== owner) return { status: 'refused', owner: state.owner, reason: 'ownedByAnother' };
       state.owner = owner;
+      state.sink = sink;
       return { status: 'installed', owner };
+    },
+    bendHookOwner() {
+      return state.owner === null ? '' : state.owner;
     },
     book_nil() {
       calls.push(['book_nil']);
@@ -529,6 +562,15 @@ function frontendDouble({ failAt = null, owned = null, throwInstall = false, imp
     async book_load(book, file, ns, seen) {
       calls.push(['book_load', file, seen instanceof Map]);
       if (failAt === 'load') throw { $: 'Err', def: 'imported', spn: null };
+      // The pinned loader attempts every import; this makes the attempt observable so a cached
+      // acquisition outcome exists when the PROOF/LAWS rule is evaluated.
+      if (attemptLaws && lawsIdentity !== null && state.sink !== null) {
+        try {
+          state.sink.readSource(lawsIdentity, state.owner);
+        } catch {
+          calls.push(['lawsReadThrew']);
+        }
+      }
       // The real loader keys the seen map by the canonical identity it loaded.
       if (importLaws && lawsIdentity !== null) seen.set(lawsIdentity, '');
       return 2;
