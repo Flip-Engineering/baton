@@ -1275,3 +1275,15 @@ law a_retained_replay_does_not_claim_the_supplied_plan:
 
 def a_retained_replay_does_not_claim_the_supplied_plan():
   {==}
+
+law an_empty_plan_identity_is_absent:
+  {ContextService.plan_identity_present("") == False{} : Bool}
+
+def an_empty_plan_identity_is_absent():
+  {==}
+
+law a_supplied_plan_identity_is_carried_unexamined:
+  {ContextService.plan_identity_present("plan-1") == True{} : Bool}
+
+def a_supplied_plan_identity_is_carried_unexamined():
+  {==}

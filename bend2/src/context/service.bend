@@ -22,11 +22,20 @@ import ../coordinator/commands.bend as C
 # that belongs to another owner or request, a read-back absence, and uncertainty with its
 # stage and raw answer.
 # The admitted plan decision Core's verdict produces, as this lane can consume it. Every value here is
-# the caller's proposed lossless carrier and this lane neither interprets it nor treats it as a retained
-# association: the plan and schema fields are PROPOSED INPUTS, and they must not be read as the plan a
-# retained row was admitted with. The refusal carries Core's literal stage and the reason as another
-# proposed carrier, preserving its operands rather than flattening them into a code. No mapper and no
-# Core import exist in this lane, and the request text is never parsed here.
+# the caller's proposed carrier and this lane neither interprets it nor treats it as a retained
+# association. The plan field is Core's plan identity rendering, Wire.plan_identity(plan), which is
+# lossless over the members that decide what runs, but it is a reproducible rendering and NOT evidence
+# of prior admission: equal caller supplied text authorizes nothing. The retained association work must
+# therefore persist the identity and compare it against the trusted retained owner, query and request
+# state and the original frozen plan association, refuse at the plan stage when a replayed candidate
+# differs from the re-rendering of the retained plan, and keep the association unestablished when no
+# retained identity exists. An empty identity is an absent association and refuses rather than matching.
+# The refusal carries Core's literal stage with the reason, which is rq_code(reason) with
+# rq_detail(reason) and the typed reason itself, so the original evidence is not lost.
+#
+# The dependency this lane waits on is the Codec decode of the admitted canonical request into
+# Sel.RequestOperands plus the request text; Sel.ProjectState is configured, inventoried or observed and
+# is supplied by its own owner separately, assembled through Sel.sel_inputs, never as request authority.
 type PlanDecision is Data:
   PlanAdmits{proposedPlan: String, proposedSchema: String}
   PlanRefuses{stage: String, reason: String}
@@ -142,6 +151,11 @@ def submission_after(+expectedOwner: String, +expectedRequest: String, +plan: St
 
 # One submission: the Core plan validation runs first and a refusal there creates no row, then
 # the atomic admission creates or replays the row and its answer is dispatched as itself.
+# Presence only: an empty identity is an absent association. Any other value is carried unexamined,
+# because a caller supplied rendering authorizes nothing here on its own.
+def plan_identity_present(+identity: String) -> Bool:
+  Bool.not(String.is_empty(identity))
+
 def admitted(+db: String, +binding: String, +id: String, +owner: String, +requestJson: String, +keeperPath: String, +cwd: String, +originAttempt: String, +artifactPath: String, +plan: String, +resultSchema: String) -> IO(Submission):
   do IO<Submission>:
     answer : Result<&1,&1,U32 & String,ContextAdmit.Admission> <- ContextAdmit.admit(db, binding, id, owner, requestJson, keeperPath, cwd, originAttempt, artifactPath)
@@ -150,7 +164,10 @@ def admitted(+db: String, +binding: String, +id: String, +owner: String, +reques
 def submit(+db: String, +binding: String, +id: String, +owner: String, +requestJson: String, +keeperPath: String, +cwd: String, +originAttempt: String, +artifactPath: String, decision: PlanDecision) -> IO(Submission):
   match decision:
     case PlanRefuses{stage, reason}: IO.pure(Submission, SubmissionPlanRefused{stage, reason})
-    case PlanAdmits{proposedPlan, proposedSchema}: admitted(db, binding, id, owner, requestJson, keeperPath, cwd, originAttempt, artifactPath, proposedPlan, proposedSchema)
+    case PlanAdmits{proposedPlan, proposedSchema}:
+      Bool.pick(IO(Submission), plan_identity_present(proposedPlan),
+        admitted(db, binding, id, owner, requestJson, keeperPath, cwd, originAttempt, artifactPath, proposedPlan, proposedSchema),
+        IO.pure(Submission, SubmissionPlanRefused{"plan", "absent"}))
 
 def discover(catalog: Unit -> IO(Result<&1,&1,U32 & String,String>)) -> IO(Discovery):
   do IO<Discovery>:
