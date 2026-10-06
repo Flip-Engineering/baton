@@ -1640,8 +1640,8 @@ def main() -> IO(Unit):
     c : Unit <- IO.print(meta_text(metadata_validate(meta_one("progressToken", Rnum{"1e400"}))))
     d : Unit <- IO.print(meta_text(metadata_validate(meta_one("progressToken", Rnull{}))))
     e : Unit <- IO.print("envelope")
-    f : Unit <- IO.print(envelope_text(envelope_decide(EnvFrame{"2.0", "tools/call", "context-engines", Context.IdNumber{"7"}, Context.Absent{}, RtAbsent{}, True{}, True{}, True{}})))
-    g : Unit <- IO.print(envelope_text(envelope_decide(EnvFrame{"2.0", "tools/call", "context-query", Context.IdText{"7"}, Context.Present{"q1"}, RtText{"{\"version\":1}"}, True{}, True{}, True{}})))
+    f : Unit <- IO.print(envelope_text(envelope_decide(EnvFrame{"2.0", "tools/call", "baton2_context_engines", Context.IdNumber{"7"}, Context.Absent{}, RtAbsent{}, True{}, True{}, True{}})))
+    g : Unit <- IO.print(envelope_text(envelope_decide(EnvFrame{"2.0", "tools/call", "baton2_context_query", Context.IdText{"7"}, Context.Present{"q1"}, RtText{"{\"version\":1}"}, True{}, True{}, True{}})))
     h : Unit <- IO.print(envelope_text(envelope_decide(EnvFrame{"1.0", "tools/call", "not-a-tool", Context.IdNumber{"7"}, Context.Absent{}, RtAbsent{}, True{}, True{}, True{}})))
     i : Unit <- IO.print("dispatch")
     j : Unit <- IO.print(admission_text(dispatch_admission(Request_sample(), "sqlPlan", Context.one_effect(Context.EfPlanTargetSql{}), Context.no_effects())))
@@ -1894,25 +1894,25 @@ def codec_law_an_unknown_tool_refuses():
   {==}
 
 law codec_law_the_engines_tool_carries_no_query:
-  {envelope_decide(EnvFrame{"2.0", "tools/call", "context-engines", Context.IdNumber{"7"}, Context.Present{"q1"}, RtAbsent{}, True{}, True{}, True{}}) == EnvRefused{"invalidArguments"} : EnvelopeVerdict}
+  {envelope_decide(EnvFrame{"2.0", "tools/call", "baton2_context_engines", Context.IdNumber{"7"}, Context.Present{"q1"}, RtAbsent{}, True{}, True{}, True{}}) == EnvRefused{"invalidArguments"} : EnvelopeVerdict}
 
 def codec_law_the_engines_tool_carries_no_query():
   {==}
 
 law codec_law_the_query_tool_needs_a_nonempty_query_id:
-  {envelope_decide(EnvFrame{"2.0", "tools/call", "context-query", Context.IdNumber{"7"}, Context.Present{""}, RtText{"{\"version\":1}"}, True{}, True{}, True{}}) == EnvRefused{"invalidArguments"} : EnvelopeVerdict}
+  {envelope_decide(EnvFrame{"2.0", "tools/call", "baton2_context_query", Context.IdNumber{"7"}, Context.Present{""}, RtText{"{\"version\":1}"}, True{}, True{}, True{}}) == EnvRefused{"invalidArguments"} : EnvelopeVerdict}
 
 def codec_law_the_query_tool_needs_a_nonempty_query_id():
   {==}
 
 law codec_law_the_query_tool_needs_a_request:
-  {envelope_decide(EnvFrame{"2.0", "tools/call", "context-query", Context.IdNumber{"7"}, Context.Present{"q1"}, RtAbsent{}, True{}, True{}, True{}}) == EnvRefused{"invalidArguments"} : EnvelopeVerdict}
+  {envelope_decide(EnvFrame{"2.0", "tools/call", "baton2_context_query", Context.IdNumber{"7"}, Context.Present{"q1"}, RtAbsent{}, True{}, True{}, True{}}) == EnvRefused{"invalidArguments"} : EnvelopeVerdict}
 
 def codec_law_the_query_tool_needs_a_request():
   {==}
 
 law codec_law_an_accepted_query_frame_emits_its_success_document:
-  {envelope_text(envelope_decide(EnvFrame{"2.0", "tools/call", "context-query", Context.IdNumber{"7"}, Context.Present{"q1"}, RtText{"{\"version\":1}"}, True{}, True{}, True{}})) == "{\"id\":7,\"query\":\"q1\",\"requestCanonical\":\"{\\\"version\\\":1}\",\"tool\":\"context-query\",\"version\":1}" : String}
+  {envelope_text(envelope_decide(EnvFrame{"2.0", "tools/call", "baton2_context_query", Context.IdNumber{"7"}, Context.Present{"q1"}, RtText{"{\"version\":1}"}, True{}, True{}, True{}})) == "{\"id\":7,\"query\":\"q1\",\"requestCanonical\":\"{\\\"version\\\":1}\",\"tool\":\"context-query\",\"version\":1}" : String}
 
 def codec_law_an_accepted_query_frame_emits_its_success_document():
   {==}
