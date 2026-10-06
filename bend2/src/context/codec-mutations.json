@@ -314,7 +314,7 @@
   "law": "codec_law_a_public_mcp_name_maps_to_its_native_tool_name"
  },
  {
-  "name": "codec-validity-observation-is-trimmed",
+  "name": "codec-validity-observation-loses-its-framing",
   "file": "bend2/src/context/codec.bend",
   "find": "    case \"1\\n\": VoValid{}",
   "replace": "    case \"1\": VoValid{}",

@@ -18,6 +18,7 @@ import Base
 import ../json/canonical.bend as J
 import ./contracts.bend as Context
 import ./request.bend as Req
+import ./raw.bend as Raw
 import ./operations.bend as Ops
 import ../git/text.bend as Tx
 import ../json/uint-decoder.bend as Uint
@@ -1396,19 +1397,13 @@ def validation_observed(observed: String) -> ValidationObserved:
     case "0\n": VoInvalid{}
     case other: VoMalformed{}
 
+# The finite typed stages. A caller discriminates on the variant and never reads a
+# sentinel from an accessor. The row plan carries the producer statement this lane
+# selected over the same retained raw document.
 type InputPlan is Data:
-  IpRows{raw: String}
+  IpValidate{raw: String, sql: String}
+  IpRows{raw: String, sql: String}
   IpRefused{document: String}
-
-def plan_raw(+p: InputPlan) -> String:
-  match p:
-    case IpRows{raw}: raw
-    case IpRefused{+document}: SNil{}
-
-def plan_document(+p: InputPlan) -> String:
-  match p:
-    case IpRows{+raw}: SNil{}
-    case IpRefused{document}: document
 
 # The fixed refusal documents. The command names the agreed internal entry, the
 # condition is one fixed name that echoes no input, and the next value is the literal
@@ -1418,12 +1413,27 @@ def validation_refusal(condition: String) -> String:
 
 def finish_observed(retained: String, +v: ValidationObserved) -> InputPlan:
   match v:
-    case VoValid{}: IpRows{retained}
+    case VoValid{}: IpRows{retained, Req.Context.json_tree_sql(retained)}
     case VoInvalid{}: IpRefused{validation_refusal("invalidJson")}
     case VoMalformed{}: IpRefused{validation_refusal("malformedValidationObservation")}
 
 def finish_validation(retained: String, observed: String) -> InputPlan:
   finish_observed(retained, validation_observed(observed))
+
+# The reader classifier. A decoded text body plans the validity statement; the three
+# reader refusals are answers about the input, so each becomes its own complete
+# document. Host failure is the caller's branch and never reaches this definition.
+def plan_of_read(+r: Raw.RawRead) -> InputPlan:
+  match r:
+    case Raw.RawText{value}: IpValidate{value, Req.Context.validity_sql(value)}
+    case Raw.RawInvalidUtf8{+offset}: IpRefused{validation_refusal("invalidUtf8")}
+    case Raw.RawNul{+offset}: IpRefused{validation_refusal("nulByte")}
+    case Raw.RawBom{}: IpRefused{validation_refusal("bom")}
+
+# The complete row to document export: the reviewed row framing decoded, walked and
+# rendered through the existing frame path.
+def document_of_rows(rows: String) -> String:
+  frame_text(frame_decision(frame_envelope(Req.Context.parse_rows(rows))))
 
 def record_probe(subject: String, policy: String, +projections: Eng.SS) -> Refs.RefRecord:
   Refs.Ref{"r1", "typescript", subject, subject, "s1", policy, projections}
@@ -2223,28 +2233,42 @@ law codec_law_any_other_observation_is_malformed:
 def codec_law_any_other_observation_is_malformed():
   {==}
 
-law codec_law_the_valid_observation_returns_the_row_plan_over_the_retained_raw_text:
-  {plan_raw(finish_validation("{}", "1\n")) == "{}" : String}
+# The valid branch returns the row plan over the same retained raw document, carrying
+# the producer statement this lane selected.
+law codec_law_the_valid_observation_returns_the_selected_row_plan:
+  {finish_validation("{}", "1\n") == IpRows{"{}", "WITH raw(t) AS (SELECT '{}') SELECT hex(CAST(r.id AS TEXT)), hex(CAST(r.parent AS TEXT)), hex(CAST(r.type AS TEXT)), hex(CAST(r.key AS TEXT)), hex(CAST(CASE WHEN r.type IN ('integer','real') THEN CAST(t -> r.fullkey AS TEXT) ELSE CAST(r.value AS TEXT) END AS TEXT)) FROM raw, json_tree(raw.t) r;"} : InputPlan}
 
-def codec_law_the_valid_observation_returns_the_row_plan_over_the_retained_raw_text():
+def codec_law_the_valid_observation_returns_the_selected_row_plan():
   {==}
 
-law codec_law_the_valid_observation_carries_no_document:
-  {String.is_empty(plan_document(finish_validation("{}", "1\n"))) == True{} : Bool}
+law codec_law_the_invalid_observation_returns_its_complete_document:
+  {finish_validation("{}", "0\n") == IpRefused{"{\"error\":\"validationRefusal\",\"command\":\"context-request-codec\",\"condition\":\"invalidJson\",\"next\":[]}"} : InputPlan}
 
-def codec_law_the_valid_observation_carries_no_document():
+def codec_law_the_invalid_observation_returns_its_complete_document():
   {==}
 
-law codec_law_the_invalid_observation_returns_a_refusal_document:
-  {String.is_empty(plan_document(finish_validation("{}", "0\n"))) == False{} : Bool}
+law codec_law_a_bare_lf_observation_is_malformed_transport:
+  {finish_validation("{}", "\n") == IpRefused{"{\"error\":\"validationRefusal\",\"command\":\"context-request-codec\",\"condition\":\"malformedValidationObservation\",\"next\":[]}"} : InputPlan}
 
-def codec_law_the_invalid_observation_returns_a_refusal_document():
+def codec_law_a_bare_lf_observation_is_malformed_transport():
   {==}
 
-law codec_law_the_malformed_observation_returns_a_refusal_document:
-  {String.is_empty(plan_document(finish_validation("{}", "\n"))) == False{} : Bool}
+law codec_law_an_observation_without_its_framing_is_malformed_transport:
+  {finish_validation("{}", "1") == IpRefused{"{\"error\":\"validationRefusal\",\"command\":\"context-request-codec\",\"condition\":\"malformedValidationObservation\",\"next\":[]}"} : InputPlan}
 
-def codec_law_the_malformed_observation_returns_a_refusal_document():
+def codec_law_an_observation_without_its_framing_is_malformed_transport():
+  {==}
+
+law codec_law_a_multirow_observation_is_malformed_transport:
+  {finish_validation("{}", "1\n0\n") == IpRefused{"{\"error\":\"validationRefusal\",\"command\":\"context-request-codec\",\"condition\":\"malformedValidationObservation\",\"next\":[]}"} : InputPlan}
+
+def codec_law_a_multirow_observation_is_malformed_transport():
+  {==}
+
+law codec_law_a_bom_answer_returns_its_complete_document:
+  {plan_of_read(Raw.RawBom{}) == IpRefused{"{\"error\":\"validationRefusal\",\"command\":\"context-request-codec\",\"condition\":\"bom\",\"next\":[]}"} : InputPlan}
+
+def codec_law_a_bom_answer_returns_its_complete_document():
   {==}
 
 law codec_law_a_public_mcp_name_maps_to_its_native_tool_name:
