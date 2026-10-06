@@ -11,8 +11,12 @@
 #
 # The binding uses the specification's ModuleBinding spelling: id, revision,
 # declarationDigest, protocolVersion, operation, artifactIdentities and
-# schemaIdentities. The step and capture records have no specification spelling,
-# so they use the field names of their declarations in the wire's own style. This
+# schemaIdentities, with each artifact identity carrying packagePath, sha256 and
+# role. Its first member is `id`, not `moduleId`: a binding is one module's full
+# identity. A dependency edge is a different record and uses `moduleId`, because an
+# edge names the module it points at rather than restating a whole binding. The
+# step and capture records have no specification spelling, so they use the field
+# names of their declarations in the wire's own style. This
 # module reads no payload, compares nothing and asserts no identity: it renders
 # values a caller already holds.
 
