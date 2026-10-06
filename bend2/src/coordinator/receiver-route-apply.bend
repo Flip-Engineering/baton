@@ -84,12 +84,12 @@ def recovery_ready(+db: String, +request: Request, origin: Protocol.Origin, bind
     case Fail{error}: IO.pure(Result<&1,&1,U32 & String,String>,Fail{error})
     case Done{recovery}:
       match recovery:
-        case Some{args}: IO.pure(Result<&1,&1,U32 & String,String>,refused("An original native attempt retains observation or acknowledgement work. Let its current Receive owner finish recovery before configuring the next route."))
+        case Some{args}: IO.pure(Result<&1,&1,U32 & String,String>,refused("An original native attempt retains observation or acknowledgement work. Configuration did not run. Inspect session and turns with the responsible Conductor; this result does not establish a live recovery observer or deliver a recovery wake."))
         case None{}:
           match request:
             case Request{session,requester,expected,harness,model,effort,command,log}:
               do IO<Result<&1,&1,U32 & String,String>>:
-                revision : Result<&1,&1,U32 & String,String> <- DB.Sql.read(db,RouteSql.revision_sql(session))
+                revision : Result<&1,&1,U32 & String,String> <- DB.Sql.read(db,RouteSql.revision_sql(db,session))
                 revision_ready(db,request,origin,binding,revision)
 
 def directory_ready(db: String, request: Request, origin: Protocol.Origin, binding: Protocol.Binding, result: Result<&1,&1,U32 & String,String>) -> IO(Result<&1,&1,U32 & String,String>):
@@ -210,7 +210,7 @@ law retained_original_attempt_refuses_configuration:
   for origin: Protocol.Origin
   for binding: Protocol.Binding
   for args: String
-  {recovery_ready(db,request,origin,binding,Done{Some{args}}) == IO.pure(Result<&1,&1,U32 & String,String>,refused("An original native attempt retains observation or acknowledgement work. Let its current Receive owner finish recovery before configuring the next route.")) : IO(Result<&1,&1,U32 & String,String>)}
+  {recovery_ready(db,request,origin,binding,Done{Some{args}}) == IO.pure(Result<&1,&1,U32 & String,String>,refused("An original native attempt retains observation or acknowledgement work. Configuration did not run. Inspect session and turns with the responsible Conductor; this result does not establish a live recovery observer or deliver a recovery wake.")) : IO(Result<&1,&1,U32 & String,String>)}
 
 def retained_original_attempt_refuses_configuration(db,request,origin,binding,args):
   {==}

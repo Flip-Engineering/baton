@@ -3,6 +3,27 @@ import { join } from 'node:path';
 
 const MUTATIONS = [
   {
+    name: 'legacy-route-allows-malformed-helper-prefix',
+    file: 'bend2/src/coordinator/receiver-route-sql.bend',
+    find: "json_extract(endpoint,'$[2]')='launch'",
+    replace: '1',
+    law: 'legacy_wrapped_route_requires_the_actual_helper_prefix',
+  },
+  {
+    name: 'legacy-route-allows-empty-executable',
+    file: 'bend2/src/coordinator/receiver-route-sql.bend',
+    find: '"substr(" ++ endpoint_field(index) ++ ",1,1)=\'/\' AND length(" ++ endpoint_field(index) ++ ")>1"',
+    replace: '"1"',
+    law: 'legacy_executable_requires_an_absolute_nonempty_path',
+  },
+  {
+    name: 'legacy-route-allows-different-model-override',
+    file: 'bend2/src/coordinator/receiver-route-sql.bend',
+    find: '"(" ++ endpoint_field(index) ++ "=\'\' OR " ++ endpoint_field(index) ++ "=" ++ column ++ ")"',
+    replace: '"1"',
+    law: 'legacy_model_override_preserves_the_recorded_route',
+  },
+  {
     name: 'legacy-receiver-overwrites-configured-endpoint',
     file: 'bend2/src/coordinator/control.bend',
     find: 'C.configured_route("endpoint")',

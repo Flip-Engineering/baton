@@ -4,6 +4,7 @@ BATON2_ROUTE_EXE and BATON2_ROUTE_HELPER name the exact admitted artifacts.
 The fixture stages them in a temporary installation. The harness only records
 unexpected invocation. Provider resume/custody cases remain Receive-owned.
 """
+import ctypes
 import fcntl
 import json
 import os
@@ -72,11 +73,116 @@ class ConfigureRoute(unittest.TestCase):
     def snapshot(self):
         return json.loads(self.call('receiver-route', 'child', '--inspect', expected=0).stdout)['expectedAssignment']
 
-    def configure(self, snapshot=None, model='new', harness='omp', requester='parent', expected=0):
+    def configure(self, snapshot=None, model='new', harness='omp', requester='parent', effort='high', expected=0):
         run = self.call('receiver-route', 'child', requester,
                         json.dumps(self.original if snapshot is None else snapshot),
-                        harness, model, 'high', str(self.command), str(self.log), '--apply', expected=expected)
+                        harness, model, effort, str(self.command), str(self.log), '--apply', expected=expected)
         return json.loads(run.stdout) if run.returncode == 0 else run
+
+    def legacy_endpoint(self, wrapped=False, overrides=False):
+        # Control.receiver_args supplies blank overrides. Explicit matching
+        # values are also accepted by the historical Receive field selection.
+        args = [str(self.exe), str(self.db), 'receive', 'child', str(self.command),
+                'old' if overrides else '', 'high' if overrides else '',
+                str(self.root) if overrides else '', str(self.log)]
+        if wrapped:
+            args = ['node', str(self.helper), 'launch', '--registry', str(self.registry),
+                    '--model-key', 'old', '--', *args]
+        return args
+
+    def set_endpoint(self, endpoint):
+        with sqlite3.connect(self.db) as db:
+            db.execute("UPDATE sessions SET endpoint=? WHERE id='child'", (json.dumps(endpoint),))
+        return self.snapshot()
+
+    def test_recognized_legacy_constructors_and_matching_overrides(self):
+        for wrapped in (False, True):
+            for overrides in (False, True):
+                with self.subTest(wrapped=wrapped, overrides=overrides):
+                    with sqlite3.connect(self.db) as db:
+                        db.execute("UPDATE sessions SET model='old', effort='high' WHERE id='child'")
+                    before = self.set_endpoint(self.legacy_endpoint(wrapped, overrides))
+                    self.configure(before)
+                    self.assertEqual(json.loads(self.snapshot()['endpoint'])[12], '1')
+
+    def test_malformed_legacy_and_route_mismatches_refuse(self):
+        cases = [["", "", "receive", "child", "", "", "", "", ""],
+                 ['arbitrary'] * 10 + ['receive', 'child'] + ['arbitrary'] * 5]
+        for wrapped in (False, True):
+            offset = 8 if wrapped else 0
+            changes = [(0, ''), (0, 'relative-baton'), (1, '/other-db'), (3, 'other-child'),
+                       (4, ''), (4, 'relative-harness'), (5, 'new'), (6, 'low'),
+                       (7, '/other-workspace'), (8, ''), (8, 'relative-log'), (4, '/bad\x00command')]
+            for index, value in changes:
+                endpoint = self.legacy_endpoint(wrapped)
+                endpoint[offset + index] = value
+                cases.append(endpoint)
+        for index, value in [(0, ''), (1, ''), (1, 'relative-helper'), (2, 'check'),
+                             (3, '--other'), (4, 'relative-registry'), (5, '--other-key'),
+                             (6, 'new'), (7, '-')]:
+            endpoint = self.legacy_endpoint(True)
+            endpoint[index] = value
+            cases.append(endpoint)
+        for endpoint in cases:
+            with self.subTest(endpoint=endpoint):
+                before = self.set_endpoint(endpoint)
+                self.configure(before, expected=2)
+                self.assertEqual(self.snapshot(), before)
+
+    def test_effort_only_change_preserves_model_and_history(self):
+        self.configure(model='old', effort='low')
+        current = self.snapshot()
+        self.assertEqual(current['model'], 'old')
+        self.assertEqual(current['effort'], 'low')
+        self.assertEqual(json.loads(current['endpoint'])[15], 'low')
+        for key in ('parent', 'native', 'workspace', 'branch', 'base',
+                    'observedHarness', 'observedModel', 'observedEffort'):
+            self.assertEqual(current[key], self.original[key])
+
+    def test_unrelated_conductor_cannot_configure_child(self):
+        self.call('attach', 'unrelated', 'omp', '', '', expected=0)
+        self.call('role', 'unrelated', 'principal-conductor', expected=0)
+        self.configure(requester='unrelated', expected=2)
+        self.assertEqual(self.snapshot(), self.original)
+
+    def test_retained_recovery_refuses_even_when_observer_is_absent_or_failed(self):
+        # Synthetic retained files exercise only br_recovery's read contract.
+        # Native C layouts match the fixture host ABI; no keeper or provider starts.
+        class ManifestHeader(ctypes.Structure):
+            _fields_ = [('magic', ctypes.c_char * 8), ('lengths', ctypes.c_uint64 * 6),
+                        ('keep_stdin', ctypes.c_uint32), ('reserved', ctypes.c_uint32)]
+
+        class Birth(ctypes.Structure):
+            _fields_ = [('pid', ctypes.c_int32), ('first', ctypes.c_uint64),
+                        ('second', ctypes.c_uint64)]
+
+        directory = self.root / 'retained-attempt'
+        directory.mkdir()
+        recovery = [str(self.exe), '--recover-receive', str(self.db), 'child', 'pending', '0',
+                    str(self.command), 'old', 'high', str(self.root), str(self.log),
+                    'omp', str(directory), 'original-native']
+        fields = [os.fsencode(self.command) + b'\0', os.fsencode(self.root),
+                  b'', b'', b'\0'.join(os.fsencode(arg) for arg in recovery) + b'\0', b'']
+        header = ManifestHeader()
+        header.magic = b'BATONRP1'
+        header.lengths[:] = [len(field) for field in fields]
+        (directory / 'manifest').write_bytes(bytes(header) + b''.join(fields))
+        (directory / 'native.birth').write_bytes(bytes(Birth()))
+        (directory / 'launch').write_text('retained')
+        with sqlite3.connect(self.db) as db:
+            db.execute("INSERT INTO executions(session,id,mode,directory,phase) VALUES('child','retained','retained',?,'exited')", (str(directory),))
+        for failed in (False, True):
+            with self.subTest(observer_failed=failed):
+                if failed:
+                    (directory / 'observer-error').write_text('2: observer executable missing\n')
+                run = self.configure(expected=2)
+                self.assertIn('retains observation or acknowledgement work', run.stderr)
+                self.assertEqual(self.snapshot(), self.original)
+                self.assertTrue((directory / 'manifest').exists())
+                self.assertFalse((directory / 'acknowledged').exists())
+                with sqlite3.connect(self.db) as db:
+                    self.assertEqual(db.execute("SELECT body,receipt FROM messages WHERE id='pending'").fetchone(), ('original pending input', None))
+                    self.assertEqual(db.execute('SELECT event FROM turns').fetchall(), [('original event',)])
 
     def test_revision_route_and_history(self):
         answer = self.configure()
@@ -185,6 +291,9 @@ class ConfigureRoute(unittest.TestCase):
     def test_duplicate_snapshot_member_and_unmapped_model_refuse(self):
         duplicate = json.dumps(self.original)[:-1] + ',"model":"old"}'
         self.call('receiver-route', 'child', 'parent', duplicate, 'omp', 'new', 'high',
+                  str(self.command), str(self.log), '--apply', expected=2)
+        escaped_duplicate = json.dumps(self.original)[:-1] + ',"m\\u006fdel":"old"}'
+        self.call('receiver-route', 'child', 'parent', escaped_duplicate, 'omp', 'new', 'high',
                   str(self.command), str(self.log), '--apply', expected=2)
         self.configure(model='unmapped', expected=2)
         self.assertEqual(self.snapshot(), self.original)
