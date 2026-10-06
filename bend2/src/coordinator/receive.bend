@@ -283,6 +283,12 @@ def available(+db: String, +session: String, again: Unit -> IO(Result<&1,&1,U32 
     case False{}: Lock.SessionLock.acquire_session(Result<&1,&1,U32 & String,Unit>,db,session,
       +database => lock => acquired(database,session,lock,again,fresh))
 
+# The fresh admission an ordinary receive supplies. It runs the queued-input
+# admission on the database the guard resolved, and its continuation re-enters
+# run with the caller's own database argument.
+def fresh_pending_admission(original: String, canonical: String, held: U32, +session: String, cmd: String, model: String, effort: String, cwd: String, log: String) -> IO(Result<&1,&1,U32 & String,Unit>):
+  acquired_pending(canonical,session,cmd,model,effort,cwd,log,held,u => run(original,session,cmd,model,effort,cwd,log,""))
+
 # MESSAGE_ID names the wake. The lock owner reads all pending inputs together.
 # The recorded-attempt branch is observed through its saved arguments; the fresh
 # admission operation supplied here runs only when no attempt is recorded and
@@ -293,7 +299,7 @@ def run(+db: String, +session: String, +cmd: String, +model: String, +effort: St
     recorded : String <- IO.try(String,Store.commit(db,C.Session{session}))
     exists : Unit <- registered(Bool.not(String.is_empty(recorded)))
     closed : Bool <- Stop.stopped(db,session)
-    available(db,session,u => run(db,session,cmd,model,effort,cwd,log,""),canonical => lock => acquired_pending(canonical,session,cmd,model,effort,cwd,log,lock,u => run(db,session,cmd,model,effort,cwd,log,"")),closed)
+    available(db,session,u => run(db,session,cmd,model,effort,cwd,log,""),canonical => lock => fresh_pending_admission(db,canonical,lock,session,cmd,model,effort,cwd,log),closed)
 
 def attach_recorded(directory: String, next: @+handle: U32 -> IO(Result<&1,&1,U32 & String,Unit>)) -> IO(Result<&1,&1,U32 & String,Unit>):
   do IO<Result<&1,&1,U32 & String,Unit>>:

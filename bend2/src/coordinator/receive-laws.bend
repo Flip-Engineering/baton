@@ -438,6 +438,28 @@ law canonical_database_reaches_the_guarded_fresh_admission:
 def canonical_database_reaches_the_guarded_fresh_admission(db,session,again,fresh,closed):
   {==}
 
+# The ordinary fresh admission runs the queued-input admission on the database
+# the guard resolved, while its continuation re-enters with the database its own
+# caller received. The two names are distinct symbolic inputs, so an admission
+# that used the caller's argument would not satisfy this equation.
+def fresh_pending_for_guarded_database(original: String, canonical: String, held: U32, +session: String, cmd: String, model: String, effort: String, cwd: String, log: String) -> IO(Result<&1,&1,U32 & String,Unit>):
+  Receive.acquired_pending(canonical,session,cmd,model,effort,cwd,log,held,u => Receive.run(original,session,cmd,model,effort,cwd,log,""))
+
+law fresh_pending_admission_selects_the_guarded_database:
+  for original: String
+  for canonical: String
+  for held: U32
+  for +session: String
+  for cmd: String
+  for model: String
+  for effort: String
+  for cwd: String
+  for log: String
+  {Receive.fresh_pending_admission(original,canonical,held,session,cmd,model,effort,cwd,log) == fresh_pending_for_guarded_database(original,canonical,held,session,cmd,model,effort,cwd,log) : IO(Result<&1,&1,U32 & String,Unit>)}
+
+def fresh_pending_admission_selects_the_guarded_database(original,canonical,held,session,cmd,model,effort,cwd,log):
+  {==}
+
 def completion_prepares_before_owner_release(+db: String, +session: String, +id: String, +log: String, stderr: String, cursor: String, +handle: U32, lock: Maybe<U32>, +outcome: Turn.Outcome, deliveries: List<Chan(Result<&1,&1,U32 & String,String>)>, again: Unit -> IO(Result<&1,&1,U32 & String,Unit>)) -> IO(Result<&1,&1,U32 & String,Unit>):
   do IO<Result<&1,&1,U32 & String,Unit>>:
     prepared : Unit <- Turn.prepare(db,session,id,log,stderr,outcome)
