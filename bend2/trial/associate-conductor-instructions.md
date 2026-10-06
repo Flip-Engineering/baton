@@ -80,8 +80,10 @@ output if its Bend observer exits. Read the
 [recovery boundary](../../docs/bend2/receive-recovery-2026-09-28.md#recovery-boundary)
 for its validated scope.
 
-End your turn after starting independent Players concurrently. Their reports
-invoke your registered receiver and resume your native session for review.
+Start independent Players concurrently. Continue independent work, then end your
+turn when it is complete. Their reports invoke your registered receiver and
+resume your native session for review. Act on completed work, changed
+requirements and failures; routine edits need no additional parent approval.
 
 ## Muse Players
 
@@ -117,20 +119,23 @@ OMP accepts guidance during a running Player turn:
 ```
 
 Read `delivery MESSAGE_ID --pretty` for its receipt to establish native acceptance.
-For an OMP correction, write a new task file and repeat `dispatch-file` with a
-fresh message ID and the new file path. Keep the player ID and registered
+For an OMP correction, use `dispatch-file` with a fresh message ID. `PATH -`
+reads the body from standard input. Keep the player ID and registered
 endpoint. The receiver selects its saved native conversation and workspace for
 each turn. Use `kind=task` for the next turn's work and `kind=guidance` for OMP
 steering during a turn.
 
-On each report, inspect the actual branch diff and run the selected tests. Read
+For completed work, inspect the actual branch diff and relevant check results. Read
 `players --pretty`, `turns PLAYER --pretty`, `worktree PLAYER` and
 `inbox ASSOCIATE_ID --pretty` as needed.
 Acknowledge the reviewed report. Request corrections through the same Player
-when necessary. Run the tests selected for the issue. The repository's
+when necessary. `land-checked` runs the selected tests on both trees. Repeat
+checks when source changes or an unresolved failure requires investigation. The repository's
 dependencies must resolve in the Player and both checked trees. Python checks
 under `bend2/test/` build the coordinator in each checked tree using the supplied
-absolute `BEND` path. Report missing dependencies to your Principal Conductor.
+absolute `BEND` path. Compilation and tests execute on the assigned remote
+validation runner through the configured check program. Report missing
+dependencies to your Principal Conductor.
 
 Land a reviewed Player onto your Associate Conductor branch using `$TRIAL_CHECK`,
 the program selected by the caller. Set `SELECTED_TESTS` to the selected paths
@@ -146,13 +151,12 @@ existing behavior tests for changed production code. The adapter compares typed
 verdicts on both trees. New failures and unjudged candidate runs block; an
 unjudged target blocks when the candidate fails. Resolve the named cause of a
 refused landing. For a conflict, guide the player to rebase onto the
-current Associate Conductor branch and review the resolution. Ask the Principal Conductor to choose a check
-when the change has no applicable test. Keep the shared check adapter intact.
+current Associate Conductor branch and review the resolution. Use the configured
+check to establish the assigned behavior; ask your parent when a material scope or
+authority decision is needed. Keep the shared check adapter intact.
 
-Inspect the final Associate Conductor branch tree and run the selected tests on that tree.
-Your completion report must name the issue, child IDs and parent bindings,
-Player commits, Player landing commits, exact Associate Conductor branch tip, tests, guidance
-receipts when used, and any remaining limitation. State that the branch is ready
-for Principal Conductor review only when the assigned work is complete. Keep workspaces and
-native sessions available for corrections. The Principal Conductor owns the final integration landing
-and remote publication.
+Inspect the completed Associate Conductor branch. Report the change, branch tip,
+check results and remaining limitations in your final response. Native records
+and tool logs retain Player assignments and landing details. Keep workspaces
+and native sessions available for corrections. Your parent owns final
+integration and remote publication.
