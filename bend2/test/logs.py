@@ -443,6 +443,17 @@ while True: time.sleep(1)
         self.assertIn(json.loads(previous), [json.loads(line) for line in self.lines()])
         self.assertFalse(pending.exists())
 
+    def test_unfinished_assistant_message_keeps_latest_update(self):
+        frames = [json.dumps({'type': 'message_start', 'messageId': 'unfinished-message',
+                             'message': {'id': 'unfinished-message', 'role': 'assistant', 'content': []}})]
+        frames.extend(json.dumps({'type': 'message_update', 'messageId': 'unfinished-message',
+                                  'message': {'id': 'unfinished-message', 'role': 'assistant',
+                                              'content': [{'type': 'text', 'text': 'partial answer %d' % i}]}})
+                      for i in range(3))
+        self.stream(frames)
+        updates = [row for row in map(json.loads, self.lines()) if row.get('type') == 'message_update']
+        self.assertEqual(updates, [json.loads(frames[-1])])
+
     def test_unwritable_log_reports_the_failure_and_keeps_the_report(self):
         unwritable = self.cwd / 'log-directory'
         unwritable.mkdir()
