@@ -13,6 +13,7 @@ type Command is Data:
   Receive{session: String, cmd: String, model: String, effort: String, cwd: String, log: String, message: String}
   Start{session: String, harness: String, cmd: String, model: String, effort: String, cwd: String, log: String, id: String, task: String}
   Receiver{session: String, cmd: String, log: String}
+  ReceiverRouteInspect{session: String, expected: String, endpoint: String, requested: String}
   DispatchFile{id: String, sender: String, recipient: String, kind: String, path: String}
   DispatchTurn{player: String, id: String, cmd: String, log: String, task: String}
   StatusPretty{}
@@ -385,6 +386,7 @@ def sql(command: Command) -> String:
     case Receive{session,cmd,model,effort,cwd,log,message}: ""
     case Start{session,harness,cmd,model,effort,cwd,log,id,task}: ""
     case Receiver{session,cmd,log}: ""
+    case ReceiverRouteInspect{session,expected,endpoint,requested}: ""
     case DispatchFile{id,sender,recipient,kind,path}: ""
     case DispatchTurn{player,id,cmd,log,task}: ""
     case StatusPretty{}: ""
@@ -610,6 +612,7 @@ def range_scan(args: List<&2,String>, +kept: List<&2,String>, +after: IndexText,
 
 def parse_shared(args: List<&2,String>) -> Command:
   match args:
+    case "receiver-route" <> session <> expected <> endpoint <> requested <> "--inspect" <> Nil{}: ReceiverRouteInspect{session,expected,endpoint,requested}
     case "pending" <> rest: range_scan(rest,["pending"],IndexAny{},IndexAny{})
     case "inbox" <> id <> rest: range_scan(rest,[id,"inbox"],IndexAny{},IndexAny{})
     case other: parse_shared_base(other)
@@ -621,6 +624,22 @@ def shared_args(args: List<String>) -> List<&2,String>:
 
 def parse(args: List<String>) -> Command:
   parse_shared(shared_args(args))
+
+law route_inspection_parser_preserves_literal_expected_and_requested_routes:
+  for session: String
+  for expected: String
+  for endpoint: String
+  for requested: String
+  {parse(["receiver-route",session,expected,endpoint,requested,"--inspect"]) == ReceiverRouteInspect{session,expected,endpoint,requested} : Command}
+
+def route_inspection_parser_preserves_literal_expected_and_requested_routes(session,expected,endpoint,requested):
+  {==}
+
+law route_mutation_has_no_admitted_parser_entry:
+  {parse(["receiver-route","player","old","[]","new","--apply"]) == Invalid{} : Command}
+
+def route_mutation_has_no_admitted_parser_entry():
+  {==}
 
 law help_word_selects_the_help_command:
   {parse(["help"]) == Help{} : Command}

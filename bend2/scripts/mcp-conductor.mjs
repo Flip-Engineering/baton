@@ -159,6 +159,15 @@ const TOOLS = [
     }, required: ['player', 'command', 'log'], additionalProperties: false },
   },
   {
+    name: 'baton2_receiver_route_inspect',
+    description: 'Inspect a requested OMP child route change. The native operation reports why configuration is unavailable, returns exit 2 and preserves assignment, observations and pending work.',
+    inputSchema: { type: 'object', properties: {
+      player: { type: 'string' }, expectedModel: { type: 'string' },
+      expectedEndpoint: { type: 'string', description: 'Exact endpoint text from the recorded session' },
+      model: { type: 'string', description: 'Requested model; this call does not configure it' },
+    }, required: ['player', 'expectedModel', 'expectedEndpoint', 'model'], additionalProperties: false },
+  },
+  {
     name: 'baton2_dispatch_file',
     description: 'Commit a file as authorized message input and launch delivery to its registered recipient.',
     inputSchema: { type: 'object', properties: {
@@ -593,6 +602,16 @@ function handleToolCall(msg) {
   try {
     let result;
     switch (name) {
+      case 'baton2_receiver_route_inspect': {
+        const keys = ['player', 'expectedModel', 'expectedEndpoint', 'model'];
+        if (!args || Array.isArray(args) || typeof args !== 'object'
+            || Object.keys(args).some(key => !keys.includes(key))
+            || keys.some(key => typeof args[key] !== 'string' || args[key].includes('\0'))) {
+          throw new Error('Route inspection requires only player, expectedModel, expectedEndpoint and model as literal strings without NUL');
+        }
+        result = coord('receiver-route', args.player, args.expectedModel, args.expectedEndpoint, args.model, '--inspect');
+        break;
+      }
       case 'baton2_player':
         result = coord('player', player);
         break;

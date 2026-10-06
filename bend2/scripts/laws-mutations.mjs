@@ -3,6 +3,27 @@ import { join } from 'node:path';
 
 const MUTATIONS = [
   {
+    name: 'route-inspection-opens-writable-database',
+    file: 'bend2/src/coordinator/receiver-route.bend',
+    find: 'DB.Sql.read(db,inspect_sql(session,expected,endpoint,requested))',
+    replace: 'DB.Sql.query(db,inspect_sql(session,expected,endpoint,requested))',
+    law: 'route_inspection_uses_the_readonly_connection',
+  },
+  {
+    name: 'route-inspection-reports-success',
+    file: 'bend2/src/coordinator/receiver-route.bend',
+    find: 'IO.die(Unit,2,saved)',
+    replace: 'IO.write(saved)',
+    law: 'unavailable_route_configuration_returns_failure_after_inspection',
+  },
+  {
+    name: 'route-endpoint-omits-effective-model',
+    file: 'bend2/src/coordinator/receiver-route.bend',
+    find: '[executable,db,"receive",session,cmd,model,"","",log]',
+    replace: '[executable,db,"receive",session,cmd,"","","",log]',
+    law: 'proposed_endpoint_binds_the_explicit_model_and_series_key',
+  },
+  {
     name: 'structural-inspection-accepts-enclosing-worktree',
     file: 'bend2/src/coordinator/structural.bend',
     find: 'Bool.and(String.eq(root,path),Bool.and(String.eq(expected_repo,repo),String.eq(assignment_branch(assignment),actual_branch)))',
