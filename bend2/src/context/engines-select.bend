@@ -117,8 +117,17 @@ def cand_ids(xs: Cands) -> SS:
 # the common operation the request asks for.
 
 # --- the separated inputs a selection assembles ------------------------------
-# Request-derived operands come from the decoded canonical request: the subject,
-# the requested projections, the explicit selector and the common operation. The
+# Request-derived operands come from the decoded canonical request. `subject` is
+# the request subject's kind string, which is what a declarative applicability rule
+# compares against; a coordinate such as a path or a line stays in the canonical
+# request and reaches a rule through the project facts instead, since paths and
+# manifests are matched by their own rule kinds. `projections` is the request's
+# select array of strings, `explicit` is the request's engine member with the empty
+# string standing for auto, and `common` is not a request member: it is the common
+# operation the subject kind and intent imply through the existing Eng mappings,
+# which a declaration ties to its own operation ids through Op.implements_operation.
+#
+# The
 # project state comes from owner-supplied configuration, inventory and
 # observation: the examined paths and manifests, and the installed, disabled and
 # preferred module sets. They stay separate, so a configured or observed fact
