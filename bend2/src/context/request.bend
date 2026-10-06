@@ -432,7 +432,7 @@ def member_lookup(+k: String, +members: J.Json) -> Maybe<&2, J.Json>:
 def present_of(m: Maybe<&2, J.Json>) -> Bool:
   match m:
     case None{}: False{}
-    case Some{value}: True{}
+    case Some{+value}: True{}
 
 def member_present(k: String, members: J.Json) -> Bool:
   present_of(member_lookup(k, members))
@@ -500,7 +500,7 @@ def is_one(j: J.Json) -> Bool:
 def text_optional_ok(m: Maybe<&2, J.Json>) -> Bool:
   match m:
     case None{}: True{}
-    case Some{value}: is_jstr(value)
+    case Some{+value}: is_jstr(value)
 
 def optional_text(k: String, members: J.Json) -> Bool:
   text_optional_ok(member_lookup(k, members))
@@ -508,7 +508,7 @@ def optional_text(k: String, members: J.Json) -> Bool:
 def int_optional_ok(m: Maybe<&2, J.Json>) -> Bool:
   match m:
     case None{}: True{}
-    case Some{value}: is_jint(value)
+    case Some{+value}: is_jint(value)
 
 def optional_int(k: String, members: J.Json) -> Bool:
   int_optional_ok(member_lookup(k, members))
@@ -557,7 +557,7 @@ def subject_shape_ok(+kind: Context.SubjectKind, +members: J.Json) -> Bool:
 
 def kind_shape(kind: Maybe<&2, Context.SubjectKind>, members: J.Json) -> Bool:
   match kind:
-    case Some{value}: subject_shape_ok(value, members)
+    case Some{+value}: subject_shape_ok(value, members)
     case None{}: False{}
 
 def subject_kind_field(value: J.Json, members: J.Json) -> Bool:
@@ -565,7 +565,7 @@ def subject_kind_field(value: J.Json, members: J.Json) -> Bool:
 
 def kind_field_ok(kind: Maybe<&2, J.Json>, members: J.Json) -> Bool:
   match kind:
-    case Some{value}: subject_kind_field(value, members)
+    case Some{+value}: subject_kind_field(value, members)
     case None{}: False{}
 
 def subject_kind_ok(subject: J.Json) -> Bool:
@@ -586,7 +586,7 @@ def subject_ok(+subject: J.Json) -> Bool:
 def subject_present(m: Maybe<&2, J.Json>) -> Bool:
   match m:
     case None{}: False{}
-    case Some{value}: subject_ok(value)
+    case Some{+value}: subject_ok(value)
 
 def subject_required(members: J.Json) -> Bool:
   subject_present(member_lookup("subject", members))
@@ -655,7 +655,7 @@ def effects_ok(effects: J.Json) -> Bool:
 def version_of(m: Maybe<&2, J.Json>) -> Bool:
   match m:
     case None{}: False{}
-    case Some{value}: is_one(value)
+    case Some{+value}: is_one(value)
 
 def version_ok(members: J.Json) -> Bool:
   version_of(member_lookup("version", members))
@@ -663,7 +663,7 @@ def version_ok(members: J.Json) -> Bool:
 def engine_of(m: Maybe<&2, J.Json>) -> Bool:
   match m:
     case None{}: True{}
-    case Some{value}: word_member(engine_words(), text_of(value))
+    case Some{+value}: word_member(engine_words(), text_of(value))
 
 def engine_ok(+members: J.Json) -> Bool:
   Bool.pick(Bool, optional_text("engine", members), engine_of(member_lookup("engine", members)), False{})
@@ -688,7 +688,7 @@ def options_shape(options: J.Json) -> Bool:
 def options_no_value(m: Maybe<&2, J.Json>) -> Bool:
   match m:
     case None{}: True{}
-    case Some{value}: Bool.pick(Bool, is_jobj(value), options_shape(value), False{})
+    case Some{+value}: Bool.pick(Bool, is_jobj(value), options_shape(value), False{})
 
 def options_ok(members: J.Json) -> Bool:
   options_no_value(member_lookup("options", members))
@@ -701,7 +701,7 @@ def cwd_ok(members: J.Json) -> Bool:
 def effects_of(m: Maybe<&2, J.Json>) -> Bool:
   match m:
     case None{}: True{}
-    case Some{value}: effects_ok(value)
+    case Some{+value}: effects_ok(value)
 
 def effects_required(members: J.Json) -> Bool:
   effects_of(member_lookup("effects", members))
@@ -732,7 +732,7 @@ def root_after_engine(+members: J.Json) -> Verdict:
 def select_of(m: Maybe<&2, J.Json>, members: J.Json) -> Verdict:
   match m:
     case None{}: VRefused{"missingSelect"}
-    case Some{value}: Bool.pick(Verdict, projections_ok(value), tail_fields_ok(members), VRefused{"invalidSelect"})
+    case Some{+value}: Bool.pick(Verdict, projections_ok(value), tail_fields_ok(members), VRefused{"invalidSelect"})
 
 def select_required(+members: J.Json) -> Verdict:
   select_of(member_lookup("select", members), members)
