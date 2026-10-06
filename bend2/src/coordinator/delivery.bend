@@ -114,7 +114,7 @@ def wake_pending(+db: String, session: String, cursor: String) -> IO(Result<&1,&
 # own byte lengths because its characters pass through unchanged. JSON iteration
 # and type access stay behind json_valid.
 def report_projection_sql(+id: String) -> String:
-  "SELECT CASE WHEN EXISTS(SELECT 1 FROM messages m JOIN sessions s ON s.id=m.recipient WHERE m.id=" ++ C.q(id) ++ " AND m.kind='report' AND m.recipient IS NOT NULL) THEN 'o' || char(10) || CASE WHEN m.receipt IS NULL THEN 'p' ELSE 'a' END || char(10) || CASE WHEN s.endpoint IS NULL OR s.endpoint='' THEN 'e' WHEN json_valid(s.endpoint) THEN CASE WHEN json_type(s.endpoint)='array' AND json_array_length(s.endpoint)>0 AND json_extract(s.endpoint,'$[0]')<>'' AND NOT EXISTS(SELECT 1 FROM json_each(s.endpoint) WHERE type<>'text' OR instr(value,char(0))>0) THEN 'a' ELSE 'x' END ELSE 'x' END || char(10) || CAST(length(m.recipient) AS TEXT) || char(10) || m.recipient || char(10) || CAST(length(coalesce(CASE WHEN json_valid(s.endpoint) THEN (SELECT group_concat(length(CAST(value AS BLOB)) || ':' || value,'') FROM json_each(s.endpoint)) ELSE '' END,'')) AS TEXT) || char(10) || coalesce(CASE WHEN json_valid(s.endpoint) THEN (SELECT group_concat(length(CAST(value AS BLOB)) || ':' || value,'') FROM json_each(s.endpoint)) ELSE '' END,'') FROM messages m JOIN sessions s ON s.id=m.recipient WHERE m.id=" ++ C.q(id) ++ " AND m.kind='report' AND m.recipient IS NOT NULL ELSE CASE WHEN EXISTS(SELECT 1 FROM messages WHERE id=" ++ C.q(id) ++ ") THEN 'i' ELSE 'm' END END;"
+  "SELECT coalesce((SELECT 'o' || char(10) || CASE WHEN m.receipt IS NULL THEN 'p' ELSE 'a' END || char(10) || CASE WHEN s.endpoint IS NULL OR s.endpoint='' THEN 'e' WHEN json_valid(s.endpoint) THEN CASE WHEN json_type(s.endpoint)='array' AND json_array_length(s.endpoint)>0 AND json_extract(s.endpoint,'$[0]')<>'' AND NOT EXISTS(SELECT 1 FROM json_each(s.endpoint) WHERE type<>'text' OR instr(value,char(0))>0) THEN 'a' ELSE 'x' END ELSE 'x' END || char(10) || CAST(length(m.recipient) AS TEXT) || char(10) || m.recipient || char(10) || CAST(length(coalesce(CASE WHEN json_valid(s.endpoint) THEN (SELECT group_concat(length(CAST(value AS BLOB)) || ':' || value,'') FROM json_each(s.endpoint)) ELSE '' END,'')) AS TEXT) || char(10) || coalesce(CASE WHEN json_valid(s.endpoint) THEN (SELECT group_concat(length(CAST(value AS BLOB)) || ':' || value,'') FROM json_each(s.endpoint)) ELSE '' END,'') FROM messages m JOIN sessions s ON s.id=m.recipient WHERE m.id=" ++ C.q(id) ++ " AND m.kind='report' AND m.recipient IS NOT NULL),(SELECT CASE WHEN EXISTS(SELECT 1 FROM messages WHERE id=" ++ C.q(id) ++ ") THEN 'i' ELSE 'm' END));"
 
 # The token before the first newline, and that token with its newline removed.
 def report_token(rest: String, seen: String) -> String:
@@ -164,7 +164,7 @@ def report_accumulate(digit: Maybe<U32>, more: String, value: U32, seen: Bool) -
 def report_scale(room: Bool, d: U32, more: String, value: U32, seen: Bool) -> Maybe<U32>:
   match room:
     case False{}: None{}
-    case True{}: report_fit(U32.is_lt((value * 10 : U32),((4294967295 - d) : U32)), d, more, value, seen)
+    case True{}: report_fit(Bool.not(U32.is_lt(((4294967295 - d) : U32),((value * 10 : U32)))), d, more, value, seen)
 
 def report_fit(fits: Bool, d: U32, more: String, value: U32, seen: Bool) -> Maybe<U32>:
   match fits:
@@ -203,48 +203,65 @@ def report_take_more(count: U32, target: U32, rest: String, seen: String) -> May
 # The decoded row: the marker, the receipt state, the endpoint state, then the
 # recipient and the encoded argv each behind its declared character count, and
 # finally exactly the one host delimiter, which is consumed.
+# The bounded marker is classified first, so a missing or ineligible row reports
+# its own disposition instead of failing a framed shape only the eligible row
+# carries. The marker's trailing newline is consumed with the token.
 def report_row(+db: String, +id: String, row: String) -> IO(Result<&1,&1,U32 & String,String>):
-  report_head(db,id,report_token(row,""),report_drop_token(row))
+  report_classify(db,id,report_token(row,""),report_drop_token(row))
 
-def report_head(+db: String, +id: String, +marker: String, rest: String) -> IO(Result<&1,&1,U32 & String,String>):
-  report_head2(db,id,marker,report_token(rest,""),report_drop_token(rest))
+def report_classify(+db: String, +id: String, marker: String, rest: String) -> IO(Result<&1,&1,U32 & String,String>):
+  match marker:
+    case "o": report_head(db,id,rest)
+    case "i": report_failed(id,"report-ineligible","The message is not an eligible retained report; its input is retained.")
+    case "m": report_failed(id,"report-missing","No message matches this report id; its input is retained.")
+    case other: report_failed(id,"report-marker-unknown","The retained report marker is unknown; the report and its input are retained.")
 
-def report_head2(+db: String, +id: String, +marker: String, +receipt: String, rest: String) -> IO(Result<&1,&1,U32 & String,String>):
-  report_head3(db,id,marker,receipt,report_token(rest,""),report_drop_token(rest))
+def report_head(+db: String, +id: String, rest: String) -> IO(Result<&1,&1,U32 & String,String>):
+  report_head2(db,id,report_token(rest,""),report_drop_token(rest))
 
-def report_head3(+db: String, +id: String, +marker: String, +receipt: String, +state: String, rest: String) -> IO(Result<&1,&1,U32 & String,String>):
-  report_length(db,id,marker,receipt,state,report_digits(report_token(rest,""),0,False{}),report_drop_token(rest))
+def report_head2(+db: String, +id: String, +receipt: String, rest: String) -> IO(Result<&1,&1,U32 & String,String>):
+  report_head3(db,id,receipt,report_token(rest,""),report_drop_token(rest))
 
-def report_length(+db: String, +id: String, +marker: String, +receipt: String, +state: String, target: Maybe<U32>, rest: String) -> IO(Result<&1,&1,U32 & String,String>):
+def report_head3(+db: String, +id: String, +receipt: String, +state: String, rest: String) -> IO(Result<&1,&1,U32 & String,String>):
+  report_length(db,id,receipt,state,report_digits(report_token(rest,""),0,False{}),report_drop_token(rest))
+
+def report_length(+db: String, +id: String, +receipt: String, +state: String, target: Maybe<U32>, rest: String) -> IO(Result<&1,&1,U32 & String,String>):
   match target:
     case None{}: report_failed(id,"report-length-refused","The retained report recipient length is missing, malformed or out of range; the report and its input are retained.")
-    case Some{n}: report_recipient(db,id,marker,receipt,state,report_take(0,n,rest,""))
+    case Some{n}: report_recipient(db,id,receipt,state,report_take(0,n,rest,""))
 
-def report_recipient(+db: String, +id: String, +marker: String, +receipt: String, +state: String, taken: Maybe<String & String>) -> IO(Result<&1,&1,U32 & String,String>):
+# The producer owes exactly one separator after the recipient, so other text
+# before that newline is refused rather than skipped.
+def report_recipient(+db: String, +id: String, +receipt: String, +state: String, taken: Maybe<String & String>) -> IO(Result<&1,&1,U32 & String,String>):
   match taken:
     case None{}: report_failed(id,"report-truncated","The retained report row is shorter than its declared recipient length; the report and its input are retained.")
-    case Some{recipient & after}: report_argv_length(db,id,marker,receipt,state,recipient,report_drop_token(after))
+    case Some{recipient & after}: report_separator(db,id,receipt,state,recipient,after,String.starts_with(after,"\n"))
 
-def report_argv_length(+db: String, +id: String, +marker: String, +receipt: String, +state: String, +recipient: String, rest: String) -> IO(Result<&1,&1,U32 & String,String>):
-  report_argv_value(db,id,marker,receipt,state,recipient,report_digits(report_token(rest,""),0,False{}),report_drop_token(rest))
+def report_separator(+db: String, +id: String, +receipt: String, +state: String, +recipient: String, after: String, ok: Bool) -> IO(Result<&1,&1,U32 & String,String>):
+  match ok:
+    case False{}: report_failed(id,"report-separator-required","The retained report row does not carry exactly one separator after the recipient; the report and its input are retained.")
+    case True{}: report_argv_length(db,id,receipt,state,recipient,report_drop_token(after))
 
-def report_argv_value(+db: String, +id: String, +marker: String, +receipt: String, +state: String, +recipient: String, target: Maybe<U32>, rest: String) -> IO(Result<&1,&1,U32 & String,String>):
+def report_argv_length(+db: String, +id: String, +receipt: String, +state: String, +recipient: String, rest: String) -> IO(Result<&1,&1,U32 & String,String>):
+  report_argv_value(db,id,receipt,state,recipient,report_digits(report_token(rest,""),0,False{}),report_drop_token(rest))
+
+def report_argv_value(+db: String, +id: String, +receipt: String, +state: String, +recipient: String, target: Maybe<U32>, rest: String) -> IO(Result<&1,&1,U32 & String,String>):
   match target:
     case None{}: report_failed(id,"report-length-refused","The retained report argv length is missing, malformed or out of range; the report and its input are retained.")
-    case Some{n}: report_argv_payload(db,id,marker,receipt,state,recipient,report_take(0,n,rest,""))
+    case Some{n}: report_argv_payload(db,id,receipt,state,recipient,report_take(0,n,rest,""))
 
-def report_argv_payload(+db: String, +id: String, +marker: String, +receipt: String, +state: String, +recipient: String, taken: Maybe<String & String>) -> IO(Result<&1,&1,U32 & String,String>):
+def report_argv_payload(+db: String, +id: String, +receipt: String, +state: String, +recipient: String, taken: Maybe<String & String>) -> IO(Result<&1,&1,U32 & String,String>):
   match taken:
     case None{}: report_failed(id,"report-truncated","The retained report row is shorter than its declared argv length; the report and its input are retained.")
-    case Some{payload & suffix}: report_suffix(db,id,marker,receipt,state,recipient,payload,suffix)
+    case Some{payload & suffix}: report_suffix(db,id,receipt,state,recipient,payload,suffix)
 
-def report_suffix(+db: String, +id: String, +marker: String, +receipt: String, +state: String, +recipient: String, +payload: String, suffix: String) -> IO(Result<&1,&1,U32 & String,String>):
-  report_suffix_step(db,id,marker,receipt,state,recipient,payload,String.eq(suffix,"\n"))
+def report_suffix(+db: String, +id: String, +receipt: String, +state: String, +recipient: String, +payload: String, suffix: String) -> IO(Result<&1,&1,U32 & String,String>):
+  report_suffix_step(db,id,receipt,state,recipient,payload,String.eq(suffix,"\n"))
 
-def report_suffix_step(+db: String, +id: String, +marker: String, +receipt: String, +state: String, +recipient: String, +payload: String, sealed: Bool) -> IO(Result<&1,&1,U32 & String,String>):
+def report_suffix_step(+db: String, +id: String, +receipt: String, +state: String, +recipient: String, +payload: String, sealed: Bool) -> IO(Result<&1,&1,U32 & String,String>):
   match sealed:
     case False{}: report_failed(id,"report-framing-rejected","The retained report row does not end in exactly one host delimiter; the report and its input are retained.")
-    case True{}: report_marker(db,id,marker,receipt,state,recipient,payload)
+    case True{}: report_receipt(db,id,recipient,receipt,state,payload)
 
 # The envelope carries the requested identity, the selected identity once one is
 # selected, the recipient, the disposition and the observed status.

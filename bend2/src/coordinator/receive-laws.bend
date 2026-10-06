@@ -524,61 +524,75 @@ law retained_report_is_delivered_by_its_own_id:
 def retained_report_is_delivered_by_its_own_id(db,parent,id):
   {==}
 
-# The strict report delivery keeps an already-acknowledged report, an absent or
-# malformed endpoint, a missing report, an observed zero exit and an observed
-# nonzero exit as distinct results, and always carries the report identity.
+# The strict report delivery keeps a missing message, an ineligible message, an
+# already-acknowledged report, an absent or malformed endpoint, an observed zero
+# exit and a failed launch as distinct results, and always carries the requested
+# and selected identities.
+law missing_row_is_not_an_invocation:
+  for db: String
+  for id: String
+  for rest: String
+  {Delivery.report_classify(db,id,"m",rest) == Delivery.report_failed(id,"report-missing","No message matches this report id; its input is retained.") : IO(Result<&1,&1,U32 & String,String>)}
+
+def missing_row_is_not_an_invocation(db,id,rest):
+  {==}
+
+law ineligible_row_is_not_an_invocation:
+  for db: String
+  for id: String
+  for rest: String
+  {Delivery.report_classify(db,id,"i",rest) == Delivery.report_failed(id,"report-ineligible","The message is not an eligible retained report; its input is retained.") : IO(Result<&1,&1,U32 & String,String>)}
+
+def ineligible_row_is_not_an_invocation(db,id,rest):
+  {==}
+
 law acknowledged_report_is_not_an_invocation:
   for db: String
   for id: String
   for recipient: String
-  for argv: String
-  {Delivery.report_receipt(db,id,recipient,"a","a",argv) == IO.pure(Result<&1,&1,U32 & String,String>,Done{Delivery.report_envelope(id,recipient,"already-acknowledged",False{},"","The retained report already has a receipt; no endpoint was invoked.")}) : IO(Result<&1,&1,U32 & String,String>)}
+  for payload: String
+  {Delivery.report_receipt(db,id,recipient,"a","a",payload) == IO.pure(Result<&1,&1,U32 & String,String>,Done{Delivery.report_envelope(id,id,recipient,"already-acknowledged",False{},"","The retained report already has a receipt; no endpoint was invoked.")}) : IO(Result<&1,&1,U32 & String,String>)}
 
-def acknowledged_report_is_not_an_invocation(db,id,recipient,argv):
+def acknowledged_report_is_not_an_invocation(db,id,recipient,payload):
   {==}
 
 law absent_endpoint_is_not_an_invocation:
   for db: String
   for id: String
   for recipient: String
-  for argv: String
-  {Delivery.report_endpoint(db,id,recipient,"e",argv) == IO.pure(Result<&1,&1,U32 & String,String>,Fail{(2,Delivery.report_envelope(id,recipient,"endpoint-absent",False{},"","The recorded endpoint is absent; the report and its input are retained."))}) : IO(Result<&1,&1,U32 & String,String>)}
+  for payload: String
+  {Delivery.report_endpoint(db,id,recipient,"e",payload) == IO.pure(Result<&1,&1,U32 & String,String>,Fail{(2,Delivery.report_envelope(id,id,recipient,"endpoint-absent",False{},"","The recorded endpoint is absent; the report and its input are retained."))}) : IO(Result<&1,&1,U32 & String,String>)}
 
-def absent_endpoint_is_not_an_invocation(db,id,recipient,argv):
+def absent_endpoint_is_not_an_invocation(db,id,recipient,payload):
   {==}
 
 law malformed_endpoint_is_not_an_invocation:
   for db: String
   for id: String
   for recipient: String
-  for argv: String
-  {Delivery.report_endpoint(db,id,recipient,"x",argv) == IO.pure(Result<&1,&1,U32 & String,String>,Fail{(2,Delivery.report_envelope(id,recipient,"endpoint-malformed",False{},"","The recorded endpoint is not a usable argument array; the report and its input are retained."))}) : IO(Result<&1,&1,U32 & String,String>)}
+  for payload: String
+  {Delivery.report_endpoint(db,id,recipient,"x",payload) == IO.pure(Result<&1,&1,U32 & String,String>,Fail{(2,Delivery.report_envelope(id,id,recipient,"endpoint-malformed",False{},"","The recorded endpoint is not a complete usable argument array; the report and its input are retained."))}) : IO(Result<&1,&1,U32 & String,String>)}
 
-def malformed_endpoint_is_not_an_invocation(db,id,recipient,argv):
+def malformed_endpoint_is_not_an_invocation(db,id,recipient,payload):
   {==}
 
-law missing_projection_is_a_missing_report:
-  for db: String
-  for id: String
-  {Delivery.report_present(db,id,"",True{}) == IO.pure(Result<&1,&1,U32 & String,String>,Fail{(2,Delivery.report_envelope(id,"","report-missing",False{},"","No eligible retained report matches this id; its input is retained."))}) : IO(Result<&1,&1,U32 & String,String>)}
-
-def missing_projection_is_a_missing_report(db,id):
-  {==}
-
-law zero_exit_is_an_observed_invocation:
+law zero_exit_reports_the_invoked_disposition:
   for id: String
   for recipient: String
-  {Delivery.report_run(id,recipient,T.RRun{T.SExit{0},""}) == Done{Delivery.report_envelope(id,recipient,"invoked",True{},"0","Endpoint process completed and exited zero.")} : Result<&1,&1,U32 & String,String>}
+  for saved: String
+  {Delivery.report_launch_outcome(id,recipient,Done{saved}) == Done{Delivery.report_envelope(id,id,recipient,"invoked",True{},"0","Endpoint process completed and exited zero.")} : Result<&1,&1,U32 & String,String>}
 
-def zero_exit_is_an_observed_invocation(id,recipient):
+def zero_exit_reports_the_invoked_disposition(id,recipient,saved):
   {==}
 
-law nonzero_exit_keeps_the_completion_and_fails:
+law failed_launch_keeps_its_code_and_identity:
   for id: String
   for recipient: String
-  {Delivery.report_run(id,recipient,T.RRun{T.SExit{7},""}) == Fail{(1,Delivery.report_envelope(id,recipient,"invoked-failed",True{},U32.show(7),"Endpoint process completed without exit zero."))} : Result<&1,&1,U32 & String,String>}
+  for code: U32
+  for detail: String
+  {Delivery.report_launch_outcome(id,recipient,Fail{(code,detail)}) == Fail{(code,Delivery.report_envelope(id,id,recipient,"invocation-failed",True{},"",detail))} : Result<&1,&1,U32 & String,String>}
 
-def nonzero_exit_keeps_the_completion_and_fails(id,recipient):
+def failed_launch_keeps_its_code_and_identity(id,recipient,code,detail):
   {==}
 
 def completion_prepares_before_owner_release(+db: String, +session: String, +id: String, +log: String, stderr: String, cursor: String, +handle: U32, lock: Maybe<U32>, +outcome: Turn.Outcome, deliveries: List<Chan(Result<&1,&1,U32 & String,String>)>, again: Unit -> IO(Result<&1,&1,U32 & String,Unit>)) -> IO(Result<&1,&1,U32 & String,Unit>):
