@@ -246,6 +246,8 @@ assert sys.stdin.read()==''
         self.call('logs', 'omp-worker', 'default', '65536', '4')
         frames = [json.dumps({'type': 'response', 'id': 'r%d' % i, 'command': 'probe', 'pad': 'y' * 20000}) for i in range(16)]
         self.stream(frames + [self.terminal()])
+        self.assertTrue((self.cwd / "turn.jsonl.4").exists())
+        self.assertIn("r0", (self.cwd / "turn.jsonl.4").read_text())
         self.register('second-worker', 'root', 'omp', 'model', 'low')
         self.log = self.cwd / 'second.jsonl'
         self.stream([self.terminal('Second answer')], 'second-worker', 'second-turn')
@@ -255,11 +257,12 @@ assert sys.stdin.read()==''
         answer = json.loads(self.call('logs-clean', 'omp-worker'))
         self.assertEqual(answer['session'], 'omp-worker')
         self.assertTrue(all(item['removed'] for item in answer['removed']), answer)
-        self.assertEqual(sorted(item['index'] for item in answer['removed']), [2, 3])
+        self.assertEqual(sorted(item['index'] for item in answer['removed']), [2, 3, 4])
         self.assertTrue(all(item['bytes'] > 0 for item in answer['removed']), answer)
         self.assertTrue((self.cwd / 'turn.jsonl.1').exists())
         self.assertFalse((self.cwd / 'turn.jsonl.2').exists())
         self.assertFalse((self.cwd / 'turn.jsonl.3').exists())
+        self.assertFalse((self.cwd / 'turn.jsonl.4').exists())
         self.assertTrue(self.log.exists())
         self.assertEqual((self.cwd / 'second.jsonl').read_text(), kept)
         self.assertEqual(sorted(p.name for p in self.cwd.glob('second.jsonl.*')), second_rotated)
@@ -491,6 +494,22 @@ while True: time.sleep(1)
         self.assertEqual({row['index'] for row in removed}, {65, 101, 4294967295})
         for name in excluded:
             self.assertEqual((self.cwd / name).read_text(), 'preserved artifact\n')
+
+    def test_failed_migration_preserves_original_rows_and_refuses_success(self):
+        import sqlite3
+        with sqlite3.connect(self.db) as connection:
+            connection.executescript('CREATE TABLE log_policies(session TEXT PRIMARY KEY,level TEXT NOT NULL,budget_bytes INTEGER NOT NULL,keep_segments INTEGER NOT NULL CHECK(keep_segments BETWEEN 1 AND 4));')
+            connection.execute('INSERT INTO log_policies VALUES(?,?,?,?)',
+                               ('omp-worker', 'invalid-legacy-level', 1048576, 3))
+        result = subprocess.run([str(EXE), str(self.db), 'logs', 'omp-worker'],
+                                text=True, capture_output=True, timeout=60)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn('CHECK constraint failed', result.stderr)
+        self.assertNotIn('"keepSegments"', result.stdout)
+        with sqlite3.connect(self.db) as connection:
+            self.assertEqual(connection.execute('SELECT level,keep_segments FROM log_policies').fetchall(),
+                             [('invalid-legacy-level', 3)])
+            self.assertEqual(connection.execute("SELECT count(*) FROM sqlite_master WHERE name='log_policies_legacy'").fetchone()[0], 0)
 
     def test_unwritable_log_reports_the_failure_and_keeps_the_report(self):
         unwritable = self.cwd / 'log-directory'

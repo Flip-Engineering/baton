@@ -504,8 +504,8 @@ def rotation_failed(failed: Result<&1,&1,U32 & String,Unit>, +log: String) -> IO
     case Fail{error}: T.Text.append(log,rotation_failed_note(error) ++ "\n")
     case Done{unit}: IO.pure(Result<&1,&1,U32 & String,Unit>,Done{Unit{}})
 
-# One retained frame. The size check runs before the append, so a log at its
-# budget rotates instead of growing past it.
+# One retained frame. The size check runs before append and triggers rotation
+# at the configured threshold.
 def append(+policy: Policy, +log: String, line: String) -> IO(Result<&1,&1,U32 & String,Unit>):
   match policy:
     case Policy{+level,+budget,+segments,pending0,db0,session0}: do IO<Result<&1,&1,U32 & String,Unit>>:
@@ -670,8 +670,8 @@ def storage_json(db: String, database: U32, root: U32, logs: String, attempts: S
   ++ ",\"logs\":[" ++ logs ++ "]"
   ++ ",\"attempts\":[" ++ attempts ++ "]}"
 
-# Read-only: the measured paths, and the same cleanup candidates `logs-clean`
-# removes, with no write of its own.
+# Inspects registered artifact paths and cleanup candidates. The policy schema
+# is initialized or migrated before the read.
 def storage(+db: String) -> IO(String):
   do IO<String>:
     ensured : Unit <- Schema.ensure(db)
