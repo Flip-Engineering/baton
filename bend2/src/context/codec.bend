@@ -538,6 +538,7 @@ type RefDecode is Data:
 def proj_of(+j: J.Json) -> Proj:
   match j:
     case J.Jarr{+head, +tail}: Pcons{Req.text_of(head), proj_of(tail)}
+    case J.Jpair{key, value, rest}: Pnone{}
     case J.Jnil{}: Pnone{}
     case J.Jnull{}: Pnone{}
     case J.Jtrue{}: Pnone{}
@@ -572,6 +573,7 @@ def present_str(m: Maybe<&2, J.Json>) -> Bool:
 def strings_only(+j: J.Json) -> Bool:
   match j:
     case J.Jarr{+head, +tail}: Bool.pick(Bool, Req.is_jstr(head), strings_only(tail), False{})
+    case J.Jpair{key, value, rest}: True{}
     case J.Jnil{}: True{}
     case J.Jnull{}: False{}
     case J.Jtrue{}: False{}
@@ -648,6 +650,7 @@ def kind_value_ok(+v: J.Json) -> Bool:
     case J.Jint{+value}: False{}
     case J.Jarr{+head, +tail}: False{}
     case J.Jobj{+members}: False{}
+    case J.Jpair{key, value, rest}: False{}
     case J.Jnil{}: False{}
 
 def known_kind(m: Maybe<&2, J.Json>) -> Bool:
@@ -668,6 +671,7 @@ def subject_value_ok(+v: J.Json) -> Bool:
     case J.Jfalse{}: False{}
     case J.Jint{+value}: False{}
     case J.Jarr{+head, +tail}: False{}
+    case J.Jpair{key, value, rest}: False{}
     case J.Jnil{}: False{}
 
 # The retained selector is the producer's object, so this path requires it. Its
@@ -690,6 +694,7 @@ def subject_kind_value(+v: J.Json) -> String:
     case J.Jfalse{}: SNil{}
     case J.Jint{+value}: SNil{}
     case J.Jarr{+head, +tail}: SNil{}
+    case J.Jpair{key, value, rest}: SNil{}
     case J.Jnil{}: SNil{}
 
 def subject_kind_of_members(+members: J.Json) -> String:
