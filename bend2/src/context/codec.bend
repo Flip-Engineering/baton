@@ -1796,8 +1796,8 @@ def main() -> IO(Unit):
     g : Unit <- IO.print(envelope_text(envelope_decide(EnvFrame{"2.0", "tools/call", "baton2_context_query", Context.IdText{"7"}, Context.Present{"q1"}, RtText{"{\"version\":1}"}, True{}, True{}, True{}, Context.Absent{}})))
     h : Unit <- IO.print(envelope_text(envelope_decide(EnvFrame{"1.0", "tools/call", "not-a-tool", Context.IdNumber{"7"}, Context.Absent{}, RtAbsent{}, True{}, True{}, True{}, Context.Absent{}})))
     i : Unit <- IO.print("dispatch")
-    j : Unit <- IO.print(admission_text(dispatch_admission(Request_sample(), "sqlPlan", Context.one_effect(Context.EfPlanTargetSql{}), Context.no_effects())))
-    k : Unit <- IO.print(admission_text(dispatch_admission(Request_sample(), "", Context.no_effects(), Context.no_effects())))
+    j : Unit <- IO.print(admission_text(dispatch_admission(Request_sample(), Opcons{"sqlPlan", Opnone{}}, Context.no_effects())))
+    k : Unit <- IO.print(admission_text(dispatch_admission(Request_sample(), Opnone{}, Context.no_effects())))
     IO.print("end")
 
 law codec_law_absent_metadata_is_admitted:
