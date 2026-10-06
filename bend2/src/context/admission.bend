@@ -90,7 +90,7 @@ def outcome_condition(o: Outcome) -> J.Json:
     case OutcomeRejected{query, condition}: Context.text_condition(condition)
     case OutcomePrepareFailed{stage, +query, +owner, plannedDirectory, evidence, code, retained}:
       prepare_condition(stage, query, owner, plannedDirectory, evidence, code)
-    case OutcomeUncertain{query, owner, plannedDirectory, evidence, retained}:
+    case OutcomeUncertain{+query, +owner, plannedDirectory, evidence, retained}:
       uncertain_condition(query, owner, plannedDirectory, evidence)
 
 # A verified retained row is addressed by its query ID; without one the caller must
@@ -108,7 +108,7 @@ def outcome_next(o: Outcome) -> Context.Next:
     case OutcomeRejected{query, condition}: result_next(query)
     case OutcomePrepareFailed{stage, +query, +owner, plannedDirectory, evidence, code, retained}:
       retained_next(retained, query, owner)
-    case OutcomeUncertain{query, owner, plannedDirectory, evidence, retained}:
+    case OutcomeUncertain{+query, +owner, plannedDirectory, evidence, retained}:
       retained_next(retained, query, owner)
 
 # The closed outcome surface: class, command, condition and navigation. The
@@ -122,7 +122,7 @@ def admission_refusal(o: Outcome) -> Context.Refusal:
       Context.Refuse{Context.RfAdmissionRejected{}, "context-query", Context.text_condition(condition), result_next(query)}
     case OutcomePrepareFailed{stage, +query, +owner, plannedDirectory, evidence, code, retained}:
       Context.Refuse{Context.RfHostPreparation{}, "context-query", prepare_condition(stage, query, owner, plannedDirectory, evidence, code), retained_next(retained, query, owner)}
-    case OutcomeUncertain{query, owner, plannedDirectory, evidence, retained}:
+    case OutcomeUncertain{+query, +owner, plannedDirectory, evidence, retained}:
       Context.Refuse{Context.RfAdmissionUncertain{}, "context-query", uncertain_condition(query, owner, plannedDirectory, evidence), retained_next(retained, query, owner)}
 
 # The retained row's own error object. Its kind is the canonical class name taken
