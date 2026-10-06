@@ -1,9 +1,11 @@
 import Base
 import ./commands.bend as C
+import ./log-schema.bend as Schema
 import ../host/sqlite.bend as DB
 import ../host/text.bend as T
 import ../host/files.bend as F
 import ../git/text.bend as Tx
+import ../host/session-lock.bend as Lock
 import ../json/canonical.bend as J
 
 # Baton2-owned log policy, rotation, storage inspection and cleanup.
@@ -43,11 +45,10 @@ def default_segments() -> String:
   "2"
 
 def schema() -> String:
-  "CREATE TABLE IF NOT EXISTS log_policies (session TEXT PRIMARY KEY NOT NULL,level TEXT NOT NULL CHECK(level IN ('quiet','default','diagnostic')),budget_bytes INTEGER NOT NULL CHECK(budget_bytes BETWEEN 65536 AND 4294967295),keep_segments INTEGER NOT NULL CHECK(keep_segments BETWEEN 1 AND 4));"
-  ++ "CREATE TABLE IF NOT EXISTS log_files (session TEXT NOT NULL,log TEXT NOT NULL,PRIMARY KEY(session,log));"
+  Schema.tables()
 
 type Policy is Data:
-  Policy{level: String, budget: U32, segments: U32, pending: Bool}
+  Policy{level: String, budget: U32, segments: U32, pending: Bool, db: String, session: String}
 
 def fallback_level(+value: String) -> String:
   Bool.pick(String,String.is_empty(value),default_level(),value)
@@ -60,23 +61,34 @@ def number_of(value: Maybe<&2,U32>, fallback: U32) -> U32:
     case None{}: fallback
     case Some{found}: found
 
-def policy_fields(fields: List<String>) -> Policy:
+def policy_fields(db: String, session: String, fields: List<String>) -> Policy:
   match fields:
     case level <> budget <> segments <> pending <> rest:
-      Policy{fallback_level(level),number_of(U32.read(fallback_number(budget,default_budget())),33554432),number_of(U32.read(fallback_number(segments,default_segments())),2),Bool.not(String.eq(pending,"0"))}
-    case other: Policy{default_level(),33554432,2,True{}}
+      Policy{fallback_level(level),number_of(U32.read(fallback_number(budget,default_budget())),33554432),number_of(U32.read(fallback_number(segments,default_segments())),2),Bool.not(String.eq(pending,"0")),db,session}
+    case other: Policy{default_level(),33554432,2,True{},db,session}
 
-def policy_row(row: String) -> Policy:
-  policy_fields(Tx.split_tabs(row))
+def policy_row(db: String, session: String, row: String) -> Policy:
+  policy_fields(db,session,Tx.split_tabs(row))
+
+def pending_sql(+session: String) -> String:
+  "SELECT count(*) FROM messages WHERE recipient=" ++ C.q(session) ++ " AND receipt IS NULL;"
+
+# The unacknowledged input a rotation reads again, so guidance that arrives
+# while the turn runs protects the evidence as soon as it exists.
+def pending_count(db: String, session: String) -> IO(String):
+  do IO<String>:
+    found : String <- IO.try(String,DB.Sql.query(db,pending_sql(session)))
+    IO.pure(String,Tx.trim_nl(found))
 
 def policy_sql(+session: String) -> String:
   "SELECT coalesce((SELECT level FROM log_policies WHERE session=" ++ C.q(session) ++ "),''),coalesce((SELECT budget_bytes FROM log_policies WHERE session=" ++ C.q(session) ++ "),''),coalesce((SELECT keep_segments FROM log_policies WHERE session=" ++ C.q(session) ++ "),''),(SELECT count(*) FROM messages WHERE recipient=" ++ C.q(session) ++ " AND receipt IS NULL);"
 
 # The effective policy: a session without a stored row runs the defaults.
-def policy(db: String, session: String) -> IO(Policy):
+def policy(+db: String, +session: String) -> IO(Policy):
   do IO<Policy>:
+    ensured : Unit <- Schema.ensure(db)
     row : String <- IO.try(String,DB.Sql.query(db,schema() ++ policy_sql(session)))
-    IO.pure(Policy,policy_row(Tx.trim_nl(row)))
+    IO.pure(Policy,policy_row(db,session,Tx.trim_nl(row)))
 
 def known(+session: String) -> String:
   "EXISTS(SELECT 1 FROM sessions WHERE id=" ++ C.q(session) ++ ")"
@@ -88,7 +100,7 @@ def budget_admitted(+budget: String) -> String:
   "(nullif(" ++ C.q(budget) ++ ",'') IS NULL OR (" ++ C.q(budget) ++ " NOT GLOB '*[^0-9]*' AND CAST(" ++ C.q(budget) ++ " AS INTEGER) BETWEEN 65536 AND 4294967295))"
 
 def segments_admitted(+segments: String) -> String:
-  "(nullif(" ++ C.q(segments) ++ ",'') IS NULL OR (" ++ C.q(segments) ++ " NOT GLOB '*[^0-9]*' AND CAST(" ++ C.q(segments) ++ " AS INTEGER) BETWEEN 1 AND 4))"
+  "(nullif(" ++ C.q(segments) ++ ",'') IS NULL OR (" ++ C.q(segments) ++ " NOT GLOB '*[^0-9]*' AND CAST(" ++ C.q(segments) ++ " AS INTEGER) BETWEEN 1 AND 4294967295))"
 
 def admitted(level: String, budget: String, segments: String) -> String:
   "(" ++ level_admitted(level) ++ " AND " ++ budget_admitted(budget) ++ " AND " ++ segments_admitted(segments) ++ ")"
@@ -96,8 +108,9 @@ def admitted(level: String, budget: String, segments: String) -> String:
 def read_sql(+session: String) -> String:
   "SELECT json_object('session'," ++ C.q(session) ++ ",'level',coalesce((SELECT level FROM log_policies WHERE session=" ++ C.q(session) ++ ")," ++ C.q(default_level()) ++ "),'budgetBytes',coalesce((SELECT budget_bytes FROM log_policies WHERE session=" ++ C.q(session) ++ ")," ++ default_budget() ++ "),'keepSegments',coalesce((SELECT keep_segments FROM log_policies WHERE session=" ++ C.q(session) ++ ")," ++ default_segments() ++ "),'registeredLogs',(SELECT count(*) FROM log_files WHERE session=" ++ C.q(session) ++ ")) WHERE " ++ known(session) ++ ";"
 
-def read(db: String, session: String) -> IO(String):
+def read(+db: String, session: String) -> IO(String):
   do IO<String>:
+    ensured : Unit <- Schema.ensure(db)
     saved : String <- IO.try(String,DB.Sql.query(db,schema() ++ read_sql(session)))
     IO.pure(String,Tx.trim_nl(saved))
 
@@ -111,11 +124,12 @@ def write_sql(+session: String, +level: String, +budget: String, +segments: Stri
   ++ " WHERE " ++ known(session) ++ " AND " ++ admitted(level,budget,segments)
   ++ " ON CONFLICT(session) DO UPDATE SET level=excluded.level,budget_bytes=excluded.budget_bytes,keep_segments=excluded.keep_segments;"
   ++ "SELECT json_object('error','unknown-session','session'," ++ C.q(session) ++ ",'next','Read session ID; recruit or attach the session before setting its log policy.') WHERE NOT " ++ known(session) ++ ";"
-  ++ "SELECT json_object('error','invalid-log-setting','session'," ++ C.q(session) ++ ",'level'," ++ C.q(level) ++ ",'budgetBytes'," ++ C.q(budget) ++ ",'keepSegments'," ++ C.q(segments) ++ ",'condition','A level is quiet, default or diagnostic; a budget is 65536 bytes or more; a retention count is between 1 and 4.','next','Read logs SESSION for the stored policy and retry with admitted values.') WHERE " ++ known(session) ++ " AND NOT " ++ admitted(level,budget,segments) ++ ";"
+  ++ "SELECT json_object('error','invalid-log-setting','session'," ++ C.q(session) ++ ",'level'," ++ C.q(level) ++ ",'budgetBytes'," ++ C.q(budget) ++ ",'keepSegments'," ++ C.q(segments) ++ ",'condition','A level is quiet, default or diagnostic; a budget is 65536 bytes or more; a retention count fits a positive unsigned 32-bit integer.','next','Read logs SESSION for the stored policy and retry with admitted values.') WHERE " ++ known(session) ++ " AND NOT " ++ admitted(level,budget,segments) ++ ";"
   ++ "SELECT json_object('session',session,'level',level,'budgetBytes',budget_bytes,'keepSegments',keep_segments,'registeredLogs',(SELECT count(*) FROM log_files WHERE session=log_policies.session)) FROM log_policies WHERE session=" ++ C.q(session) ++ " AND " ++ admitted(level,budget,segments) ++ ";"
 
-def write(db: String, session: String, level: String, budget: String, segments: String) -> IO(String):
+def write(+db: String, session: String, level: String, budget: String, segments: String) -> IO(String):
   do IO<String>:
+    ensured : Unit <- Schema.ensure(db)
     saved : String <- IO.try(String,DB.Sql.query(db,"BEGIN IMMEDIATE;" ++ schema() ++ write_sql(session,level,budget,segments) ++ "COMMIT;"))
     IO.pure(String,Tx.trim_nl(saved))
 
@@ -214,7 +228,7 @@ def held_all(held: String) -> List<String>:
   all_walk(Tx.split_lines(held))
 
 def prefix_kind(+kind: String) -> Bool:
-  Bool.or(String.eq(kind,"tool_execution_update"),String.eq(kind,"message_start"))
+  Bool.or(String.eq(kind,"tool_execution_update"),Bool.or(String.eq(kind,"message_start"),String.eq(kind,"message_update")))
 
 def close_kind(+kind: String) -> Bool:
   Bool.or(String.eq(kind,"tool_execution_end"),String.eq(kind,"message_end"))
@@ -241,9 +255,9 @@ def quiet_keep(keep: Bool, +line: String, held: String) -> List<String> & String
 def step_quiet(+kind: String, +line: String, held: String) -> List<String> & String:
   quiet_keep(Bool.or(terminal_kind(kind),String.is_empty(kind)),line,held)
 
-def step_message_end(end: Bool, +kind: String, +id: String, +line: String, held: String) -> List<String> & String:
+def step_message_end(end: Bool, +kind: String, +id: String, +line: String, +held: String) -> List<String> & String:
   match end:
-    case True{}: (Con{line,Nil{}}, held_drop(held,"message_start",id))
+    case True{}: (Con{line,Nil{}}, held_drop(held_drop(held,"message_start",id),"message_update",id))
     case False{}: (Con{line,Nil{}}, held)
 
 def step_tool_end(end: Bool, +kind: String, +id: String, +line: String, +held: String) -> List<String> & String:
@@ -251,9 +265,12 @@ def step_tool_end(end: Bool, +kind: String, +id: String, +line: String, +held: S
     case True{}: (List.append(&1,String,held_lines(held,"tool_execution_update",id),Con{line,Nil{}}), held_drop(held,"tool_execution_update",id))
     case False{}: step_message_end(String.eq(kind,"message_end"),kind,id,line,held)
 
+# A message_update carries the running view of a message the provider resends;
+# the newest one is held like any other prefix frame, so an assistant stream
+# that dies before its message_end still leaves the text it had produced.
 def step_snapshot(snapshot: Bool, +kind: String, +id: String, +line: String, held: String) -> List<String> & String:
   match snapshot:
-    case True{}: (Nil{},held)
+    case True{}: (Nil{}, held_put(held,"message_update",id,line))
     case False{}: step_tool_end(String.eq(kind,"tool_execution_end"),kind,id,line,held)
 
 def step_start(start: Bool, +kind: String, +id: String, +line: String, held: String) -> List<String> & String:
@@ -284,7 +301,7 @@ def step_choose_step(diagnostic: Bool, +level: String, +kind: String, +id: Strin
 # still holds.
 def frame_step(policy: Policy, +kind: String, +id: String, +line: String, held: String) -> List<String> & String:
   match policy:
-    case Policy{+level,budget,segments,pending}: step_choose_step(String.eq(level,"diagnostic"),level,kind,id,line,held)
+    case Policy{+level,budget,segments,pending,db,session}: step_choose_step(String.eq(level,"diagnostic"),level,kind,id,line,held)
 
 def step_lines(step: List<String> & String) -> List<String>:
   (lines,held)=step
@@ -327,75 +344,107 @@ def append_text(+log: String, +line: String, size: U32) -> IO(Result<&1,&1,U32 &
 def segment(+log: String, index: U32) -> String:
   log ++ "." ++ U32.show(index)
 
-# The numbered segments that hold a file when the rotation runs. The note names
-# them, so a rename whose source was already absent is visible rather than
-# hidden by the rename's no-op answer.
 def items_join(+items: String, +item: String) -> String:
   Bool.pick(String,String.is_empty(item),items,Bool.pick(String,String.is_empty(items),item,items ++ "," ++ item))
 
-def segment_index(log: String, +index: U32, acc: String) -> IO(String):
-  do IO<String>:
-    size : U32 <- IO.try(U32,F.Files.size(segment(log,index)))
-    IO.pure(String,items_join(acc,Bool.pick(String,U32.is_lt(0,size),U32.show(index),"")))
+# The numbered segments beside one log come from the directory that holds it:
+# every entry named <log>.<number>. The report, the shift and the cleanup work
+# from that list, so no admitted count is unrolled and no index space is
+# searched on a guess.
+def segment_indices(log: String) -> IO(List<String>):
+  do IO<List<String>>:
+    found : String <- IO.try(String,F.Files.segments(log))
+    IO.pure(List<String>,Tx.split_lines(found))
 
+def segment_number(index: String) -> U32:
+  number_of(U32.read(index),0)
+
+def index_items(indices: List<String>, acc: String) -> String:
+  match indices:
+    case Nil{}: acc
+    case Con{head, rest}: index_items(rest,items_join(acc,head))
+
+# The rotation note lists the numbered segments present before its renames.
 def present_segments(+log: String) -> IO(String):
   do IO<String>:
-    first : String <- segment_index(log,1,"")
-    second : String <- segment_index(log,2,first)
-    third : String <- segment_index(log,3,second)
-    fourth : String <- segment_index(log,4,third)
-    IO.pure(String,fourth)
+    indices : List<String> <- segment_indices(log)
+    IO.pure(String,index_items(indices,""))
 
-# The numbered segments shift away from the live log before the live log takes
-# the first name. The retention count is bounded, so each admitted count names
-# its own shift and no numeric recursion is needed.
-def shift_one(log: String) -> IO(Result<&1,&1,U32 & String,Unit>):
-  IO.pure(Result<&1,&1,U32 & String,Unit>,Done{Unit{}})
+# A walk carries the first failed operation as text, empty for none.
+def fold_state(+text: String, step: Result<&1,&1,U32 & String,Unit>) -> String:
+  match step:
+    case Fail{(code,detail)}: Bool.pick(String,String.is_empty(text),U32.show(code) ++ ": " ++ detail,text)
+    case Done{unit}: text
 
-# A retention count of two moves the first segment to the second. The live log
-# keeps its name here: `rotate_renamed` moves it once, after the shift.
-def shift_two(+log: String) -> IO(Result<&1,&1,U32 & String,Unit>):
-  F.Files.rename(segment(log,1),segment(log,2))
+def state_result(empty: Bool, +text: String) -> Result<&1,&1,U32 & String,Unit>:
+  match empty:
+    case True{}: Done{Unit{}}
+    case False{}: Fail{(1,text)}
 
-def shift_three_after(moved: Result<&1,&1,U32 & String,Unit>, +log: String) -> IO(Result<&1,&1,U32 & String,Unit>):
-  match moved:
-    case Fail{error}: IO.pure(Result<&1,&1,U32 & String,Unit>,Fail{error})
-    case Done{unit}: shift_two(log)
+# A segment at or above the retention count leaves the window, so the removal
+# runs before the shift, and once a step fails every later step is a no-op.
+def drop_step(outside: Bool, number: U32, log: String) -> IO(Result<&1,&1,U32 & String,Unit>):
+  match outside:
+    case False{}: IO.pure(Result<&1,&1,U32 & String,Unit>,Done{Unit{}})
+    case True{}: F.Files.remove(segment(log,number))
 
-def shift_three(+log: String) -> IO(Result<&1,&1,U32 & String,Unit>):
+def drop_one(+number: U32, log: String, keep: U32) -> IO(Result<&1,&1,U32 & String,Unit>):
+  drop_step(U32.is_lt(keep,number),number,log)
+
+def drop_guarded(failed: Bool, number: U32, log: String, keep: U32) -> IO(Result<&1,&1,U32 & String,Unit>):
+  match failed:
+    case True{}: IO.pure(Result<&1,&1,U32 & String,Unit>,Done{Unit{}})
+    case False{}: drop_one(number,log,keep)
+
+def drop_items(+log: String, indices: List<String>, +keep: U32, +state: String) -> IO(Result<&1,&1,U32 & String,Unit>):
+  match indices:
+    case Nil{}: IO.pure(Result<&1,&1,U32 & String,Unit>,state_result(String.is_empty(state),state))
+    case head <> tail: do IO<Result<&1,&1,U32 & String,Unit>>:
+      +number : U32 <- IO.pure(U32,segment_number(head))
+      step : Result<&1,&1,U32 & String,Unit> <- drop_guarded(Bool.not(String.is_empty(state)),number,log,keep)
+      +next : String <- IO.pure(String,fold_state(state,step))
+      deeper : Result<&1,&1,U32 & String,Unit> <- drop_items(log,tail,keep,next)
+      IO.pure(Result<&1,&1,U32 & String,Unit>,deeper)
+
+# The segments below the retention count move one number up, highest first, and
+# the live log keeps its name here: `rotate_renamed` moves it once, after the
+# shift.
+def shift_step(within: Bool, +number: U32, +log: String) -> IO(Result<&1,&1,U32 & String,Unit>):
+  match within:
+    case False{}: IO.pure(Result<&1,&1,U32 & String,Unit>,Done{Unit{}})
+    case True{}: do IO<Result<&1,&1,U32 & String,Unit>>:
+      +next : U32 <- IO.pure(U32,U32.add(number,1))
+      F.Files.rename(segment(log,number),segment(log,next))
+
+def shift_guarded(failed: Bool, +number: U32, +log: String, keep: U32) -> IO(Result<&1,&1,U32 & String,Unit>):
+  match failed:
+    case True{}: IO.pure(Result<&1,&1,U32 & String,Unit>,Done{Unit{}})
+    case False{}: shift_step(U32.is_lt(number,keep),number,log)
+
+def shift_items(+log: String, indices: List<String>, +keep: U32, +state: String) -> IO(Result<&1,&1,U32 & String,Unit>):
+  match indices:
+    case Nil{}: IO.pure(Result<&1,&1,U32 & String,Unit>,state_result(String.is_empty(state),state))
+    case head <> tail: do IO<Result<&1,&1,U32 & String,Unit>>:
+      +number : U32 <- IO.pure(U32,segment_number(head))
+      step : Result<&1,&1,U32 & String,Unit> <- shift_guarded(Bool.not(String.is_empty(state)),number,log,keep)
+      +next : String <- IO.pure(String,fold_state(state,step))
+      deeper : Result<&1,&1,U32 & String,Unit> <- shift_items(log,tail,keep,next)
+      IO.pure(Result<&1,&1,U32 & String,Unit>,deeper)
+
+def shift(+log: String, +keep: U32) -> IO(Result<&1,&1,U32 & String,Unit>):
   do IO<Result<&1,&1,U32 & String,Unit>>:
-    moved : Result<&1,&1,U32 & String,Unit> <- F.Files.rename(segment(log,2),segment(log,3))
-    shift_three_after(moved,log)
+    indices : List<String> <- segment_indices(log)
+    shift_items(log,List.reverse(&1,String,indices),keep,"")
 
-def shift_four_after(moved: Result<&1,&1,U32 & String,Unit>, +log: String) -> IO(Result<&1,&1,U32 & String,Unit>):
-  match moved:
-    case Fail{error}: IO.pure(Result<&1,&1,U32 & String,Unit>,Fail{error})
-    case Done{unit}: shift_three(log)
-
-def shift_four(+log: String) -> IO(Result<&1,&1,U32 & String,Unit>):
+def drop_listed(+log: String, keep: U32) -> IO(Result<&1,&1,U32 & String,Unit>):
   do IO<Result<&1,&1,U32 & String,Unit>>:
-    moved : Result<&1,&1,U32 & String,Unit> <- F.Files.rename(segment(log,3),segment(log,4))
-    shift_four_after(moved,log)
+    indices : List<String> <- segment_indices(log)
+    drop_items(log,indices,keep,"")
 
-def shift_more(three: Bool, log: String) -> IO(Result<&1,&1,U32 & String,Unit>):
-  match three:
-    case True{}: shift_four(log)
-    case False{}: shift_three(log)
-
-def shift_two_or_more(two: Bool, three: Bool, log: String) -> IO(Result<&1,&1,U32 & String,Unit>):
-  match two:
-    case True{}: shift_two(log)
-    case False{}: shift_more(three,log)
-
-def shift_step(one: Bool, two: Bool, three: Bool, log: String) -> IO(Result<&1,&1,U32 & String,Unit>):
-  match one:
-    case True{}: shift_one(log)
-    case False{}: shift_two_or_more(two,three,log)
-
-# A real rename error stops the chain: the remaining segments stay where they
-# are and the failure reaches the frame that was rotating.
-def shift(+count: U32, log: String) -> IO(Result<&1,&1,U32 & String,Unit>):
-  shift_step(U32.is_eq(count,1),U32.is_eq(count,2),U32.is_eq(count,3),log)
+def shift_after_drop(dropped: Result<&1,&1,U32 & String,Unit>, +log: String, keep: U32) -> IO(Result<&1,&1,U32 & String,Unit>):
+  match dropped:
+    case Fail{error}: IO.pure(Result<&1,&1,U32 & String,Unit>,Fail{error})
+    case Done{unit}: shift(log,keep)
 
 # The oldest numbered segment leaves the count only when the session holds no
 # unacknowledged input. The shift overwrites that segment whether or not the
@@ -425,19 +474,23 @@ def rotate_skipped(pending: Bool, +log: String, budget: U32, +segments: U32, lev
     case True{}: T.Text.append(log,rotation_skipped_note(budget,segments,level) ++ "\n")
     case False{}: do IO<Result<&1,&1,U32 & String,Unit>>:
       +moved : String <- present_segments(log)
-      shifted : Result<&1,&1,U32 & String,Unit> <- shift(segments,log)
+      dropped : Result<&1,&1,U32 & String,Unit> <- drop_listed(log,segments)
+      shifted : Result<&1,&1,U32 & String,Unit> <- shift_after_drop(dropped,log,segments)
       rotate_shifted(shifted,log,budget,segments,level,moved)
 
 # Rotation moves the live log and shifts the retained segments. The chain stops
 # at the first failed step, so a partial rotation leaves the remaining segments
 # where they are and reports the failure beside the frame it kept.
-def rotate(+log: String, budget: U32, +segments: U32, level: String, pending: Bool) -> IO(Result<&1,&1,U32 & String,Unit>):
-  rotate_skipped(pending,log,budget,segments,level)
+def rotate(policy: Policy, +log: String, budget: U32, +segments: U32, level: String) -> IO(Result<&1,&1,U32 & String,Unit>):
+  match policy:
+    case Policy{level0,budget0,segments0,pending0,db,session}: do IO<Result<&1,&1,U32 & String,Unit>>:
+      +fresh : String <- pending_count(db,session)
+      rotate_skipped(Bool.not(String.eq(fresh,"0")),log,budget,segments,level)
 
-def rotate_over(log: String, +budget: U32, segments: U32, level: String, pending: Bool, size: U32) -> IO(Result<&1,&1,U32 & String,Unit>):
+def rotate_over(policy: Policy, log: String, +budget: U32, segments: U32, level: String, size: U32) -> IO(Result<&1,&1,U32 & String,Unit>):
   Bool.pick(IO(Result<&1,&1,U32 & String,Unit>),U32.is_lt(size,budget),
     IO.pure(Result<&1,&1,U32 & String,Unit>,Done{Unit{}}),
-    rotate(log,budget,segments,level,pending))
+    rotate(policy,log,budget,segments,level))
 
 def rotation_failed_note(error: U32 & String) -> String:
   (code,text)=error
@@ -451,13 +504,13 @@ def rotation_failed(failed: Result<&1,&1,U32 & String,Unit>, +log: String) -> IO
     case Fail{error}: T.Text.append(log,rotation_failed_note(error) ++ "\n")
     case Done{unit}: IO.pure(Result<&1,&1,U32 & String,Unit>,Done{Unit{}})
 
-# One retained frame. The size check runs before the append, so a log at its
-# budget rotates instead of growing past it.
-def append(policy: Policy, +log: String, line: String) -> IO(Result<&1,&1,U32 & String,Unit>):
+# One retained frame. The size check runs before append and triggers rotation
+# at the configured threshold.
+def append(+policy: Policy, +log: String, line: String) -> IO(Result<&1,&1,U32 & String,Unit>):
   match policy:
-    case Policy{+level,+budget,+segments,+pending}: do IO<Result<&1,&1,U32 & String,Unit>>:
+    case Policy{+level,+budget,+segments,pending0,db0,session0}: do IO<Result<&1,&1,U32 & String,Unit>>:
       +size : U32 <- IO.try(U32,F.Files.size(log))
-      rotated : Result<&1,&1,U32 & String,Unit> <- rotate_over(log,budget,segments,level,pending,size)
+      rotated : Result<&1,&1,U32 & String,Unit> <- rotate_over(policy,log,budget,segments,level,size)
       noted : Result<&1,&1,U32 & String,Unit> <- rotation_failed(rotated,log)
       written : Result<&1,&1,U32 & String,Unit> <- append_text(log,line,size)
       IO.pure(Result<&1,&1,U32 & String,Unit>,written)
@@ -489,10 +542,11 @@ def write_lines(policy: Policy, log: String, lines: List<String>, stopped: Bool)
 def register_sql(session: String, log: String) -> String:
   "INSERT OR IGNORE INTO log_files(session,log) VALUES(" ++ C.q(session) ++ "," ++ C.q(log) ++ ");"
 
-def register_if(empty: Bool, db: String, session: String, log: String) -> IO(Unit):
+def register_if(empty: Bool, +db: String, session: String, log: String) -> IO(Unit):
   match empty:
     case True{}: IO.pure(Unit,Unit{})
     case False{}: do IO<Unit>:
+      ensured : Unit <- Schema.ensure(db)
       listed : String <- IO.try(String,DB.Sql.query(db,schema() ++ register_sql(session,log)))
       IO.pure(Unit,Unit{})
 
@@ -509,28 +563,29 @@ def segment_json(log: String, +index: U32, keep: U32, +size: U32, pending: Strin
   Bool.pick(String,U32.is_eq(size,0),"",
     "{\"path\":" ++ J.string_literal(segment(log,index)) ++ ",\"index\":" ++ U32.show(index) ++ ",\"bytes\":" ++ U32.show(size) ++ ",\"eligible\":" ++ Bool.pick(String,Bool.and(U32.is_lt(keep,index),String.eq(pending,"0")),"true","false") ++ "}")
 
-# The rotated segments beside one log. Rotation never produces an index above
-# the retention count, which is bounded, so the four admitted indices are
-# probed in order and no numeric recursion is needed. A segment is eligible for
-# explicit cleanup when the retention count no longer covers it and the session
-# holds no unacknowledged input, which is the rule `logs-clean` applies.
-def segment_at(+log: String, +index: U32, keep: U32, pending: String, items: String) -> IO(String):
-  do IO<String>:
-    size : U32 <- IO.try(U32,F.Files.size(segment(log,index)))
-    IO.pure(String,items_join(items,segment_json(log,index,keep,size,pending)))
+# The storage report inspects each canonical numbered segment found beside
+# the registered log. Cleanup eligibility depends on its index and pending input.
+def segment_items(+log: String, indices: List<String>, +keep: U32, +pending: String, acc: String) -> IO(String):
+  match indices:
+    case Nil{}: IO.pure(String,acc)
+    case head <> tail: do IO<String>:
+      +number : U32 <- IO.pure(U32,segment_number(head))
+      size : U32 <- IO.try(U32,F.Files.size(segment(log,number)))
+      deeper : String <- segment_items(log,tail,keep,pending,items_join(acc,segment_json(log,number,keep,size,pending)))
+      IO.pure(String,deeper)
 
-def segments_4(+log: String, +keep: U32, +pending: String) -> IO(String):
+# The rotated segments the directory holds, each marked for explicit cleanup when
+# the retention count no longer covers it and the session holds no unanswered
+# input.
+def listed_segments(+log: String, +keep: U32, pending: String) -> IO(String):
   do IO<String>:
-    first : String <- segment_at(log,1,keep,pending,"")
-    second : String <- segment_at(log,2,keep,pending,first)
-    third : String <- segment_at(log,3,keep,pending,second)
-    fourth : String <- segment_at(log,4,keep,pending,third)
-    IO.pure(String,fourth)
+    indices : List<String> <- segment_indices(log)
+    segment_items(log,indices,keep,pending,"")
 
 def log_rows_sql() -> String:
   "SELECT lf.session,lf.log,coalesce((SELECT level FROM log_policies WHERE session=lf.session)," ++ C.q(default_level()) ++ "),coalesce((SELECT budget_bytes FROM log_policies WHERE session=lf.session)," ++ default_budget() ++ "),coalesce((SELECT keep_segments FROM log_policies WHERE session=lf.session)," ++ default_segments() ++ "),(SELECT count(*) FROM messages WHERE recipient=lf.session AND receipt IS NULL) FROM log_files lf ORDER BY lf.session,lf.log;"
 
-def log_json(session: String, log: String, level: String, budget: String, keep: String, pending: String, size: U32, stderr: U32, rotated: String) -> String:
+def log_json(session: String, +log: String, level: String, budget: String, keep: String, pending: String, size: U32, stderr: U32, checkpoint: U32, rotated: String) -> String:
   "{\"session\":" ++ J.string_literal(session)
   ++ ",\"path\":" ++ J.string_literal(log)
   ++ ",\"level\":" ++ J.string_literal(level)
@@ -539,6 +594,8 @@ def log_json(session: String, log: String, level: String, budget: String, keep: 
   ++ ",\"pendingInput\":" ++ pending
   ++ ",\"bytes\":" ++ U32.show(size)
   ++ ",\"stderrBytes\":" ++ U32.show(stderr)
+  ++ ",\"pendingBytes\":" ++ U32.show(checkpoint)
+  ++ ",\"pendingPath\":" ++ J.string_literal(log ++ ".pending")
   ++ ",\"rotated\":[" ++ rotated ++ "]}"
 
 def log_fields(fields: List<String>) -> IO(String):
@@ -546,8 +603,9 @@ def log_fields(fields: List<String>) -> IO(String):
     case session <> +log <> level <> budget <> +keep <> +pending <> rest: do IO<String>:
       size : U32 <- IO.try(U32,F.Files.size(log))
       stderr : U32 <- IO.try(U32,F.Files.size(log ++ ".stderr"))
-      rotated : String <- segments_4(log,number_of(U32.read(keep),2),pending)
-      IO.pure(String,log_json(session,log,level,budget,keep,pending,size,stderr,rotated))
+      checkpoint : U32 <- IO.try(U32,F.Files.size(log ++ ".pending"))
+      rotated : String <- listed_segments(log,number_of(U32.read(keep),2),pending)
+      IO.pure(String,log_json(session,log,level,budget,keep,pending,size,stderr,checkpoint,rotated))
     case other: IO.pure(String,"")
 
 def log_item(row: String) -> IO(String):
@@ -612,10 +670,11 @@ def storage_json(db: String, database: U32, root: U32, logs: String, attempts: S
   ++ ",\"logs\":[" ++ logs ++ "]"
   ++ ",\"attempts\":[" ++ attempts ++ "]}"
 
-# Read-only: the measured paths, and the same cleanup candidates `logs-clean`
-# removes, with no write of its own.
+# Inspects registered artifact paths and cleanup candidates. The policy schema
+# is initialized or migrated before the read.
 def storage(+db: String) -> IO(String):
   do IO<String>:
+    ensured : Unit <- Schema.ensure(db)
     log_text : String <- IO.try(String,DB.Sql.query(db,schema() ++ log_rows_sql()))
     logs : String <- log_items(Tx.split_lines(log_text),"")
     attempt_text : String <- IO.try(String,DB.Sql.query(db,attempt_rows_sql()))
@@ -643,24 +702,25 @@ def clean_eligible(eligible: Bool, +log: String, keep: U32, +index: U32, size: U
 def clean_item(+log: String, +keep: U32, +index: U32, +size: U32) -> IO(String):
   clean_eligible(Bool.and(U32.is_lt(0,size),U32.is_lt(keep,index)),log,keep,index,size)
 
-def clean_at(+log: String, +keep: U32, +index: U32, removed: String) -> IO(String):
-  do IO<String>:
-    size : U32 <- IO.try(U32,F.Files.size(segment(log,index)))
-    item : String <- clean_item(log,keep,index,size)
-    IO.pure(String,items_join(removed,item))
+def clean_items(+log: String, indices: List<String>, +keep: U32, removed: String) -> IO(String):
+  match indices:
+    case Nil{}: IO.pure(String,removed)
+    case head <> tail: do IO<String>:
+      +number : U32 <- IO.pure(U32,segment_number(head))
+      size : U32 <- IO.try(U32,F.Files.size(segment(log,number)))
+      item : String <- clean_item(log,keep,number,size)
+      deeper : String <- clean_items(log,tail,keep,items_join(removed,item))
+      IO.pure(String,deeper)
 
-# The same four admitted indices, in the same order as the storage report.
-def clean_segments_4(+log: String, +keep: U32) -> IO(String):
+# The segments the directory holds, in the same order as the storage report.
+def clean_listed(+log: String, keep: U32) -> IO(String):
   do IO<String>:
-    first : String <- clean_at(log,keep,1,"")
-    second : String <- clean_at(log,keep,2,first)
-    third : String <- clean_at(log,keep,3,second)
-    fourth : String <- clean_at(log,keep,4,third)
-    IO.pure(String,fourth)
+    indices : List<String> <- segment_indices(log)
+    clean_items(log,indices,keep,"")
 
 def clean_fields(fields: List<String>) -> IO(String):
   match fields:
-    case log <> keep <> rest: clean_segments_4(log,number_of(U32.read(keep),2))
+    case log <> keep <> rest: clean_listed(log,number_of(U32.read(keep),2))
     case other: IO.pure(String,"")
 
 def clean_row(row: String) -> IO(String):
@@ -703,6 +763,24 @@ def cleaned(db: String, +session: String) -> IO(String):
 def clean_known(db: String, +session: String, +pending: String) -> IO(String):
   Bool.pick(IO(String),String.eq(pending,"0"),cleaned(db,session),IO.pure(String,clean_skipped(session,pending)))
 
+def clean_busy(session: String) -> String:
+  "{\"session\":" ++ J.string_literal(session) ++ ",\"removed\":[],\"skipped\":\"session-busy\"}"
+
+# The decision and the unlink happen under the session's own lock, so a turn
+# that starts while cleanup runs takes the log for itself first and a cleanup
+# that loses the race removes nothing.
+def clean_owned(+db: String, +session: String, lock: Maybe<U32>) -> IO(String):
+  match lock:
+    case None{}: IO.pure(String,clean_busy(session))
+    case Some{handle}: do IO<String>:
+      +fresh : String <- pending_count(db,session)
+      answer : String <- clean_known(db,session,fresh)
+      released : Unit <- IO.try(Unit,Lock.SessionLock.release(handle))
+      IO.pure(String,answer)
+
+def clean_started(+db: String, +session: String) -> IO(String):
+  Lock.SessionLock.acquire_session(String,db,session, +database => lock => clean_owned(database,session,lock))
+
 # Explicit cleanup of the named session's rotated public-log segments. The live
 # log, rotated stderr files, pending messages, attempt directories, native
 # conversation stores and every other artifact stay untouched; logs-storage
@@ -710,7 +788,7 @@ def clean_known(db: String, +session: String, +pending: String) -> IO(String):
 # unacknowledged input keeps every segment and the answer names the count.
 def clean(+db: String, +session: String) -> IO(String):
   do IO<String>:
+    ensured : Unit <- Schema.ensure(db)
     +present : String <- IO.try(String,DB.Sql.query(db,schema() ++ "SELECT count(*) FROM sessions WHERE id=" ++ C.q(session) ++ ";"))
-    +pending : String <- IO.try(String,DB.Sql.query(db,clean_pending_sql(session)))
-    answer : String <- Bool.pick(IO(String),String.eq(Tx.trim_nl(present),"1"),clean_known(db,session,Tx.trim_nl(pending)),IO.pure(String,unknown_session(session)))
+    answer : String <- Bool.pick(IO(String),String.eq(Tx.trim_nl(present),"1"),clean_started(db,session),IO.pure(String,unknown_session(session)))
     IO.pure(String,answer)

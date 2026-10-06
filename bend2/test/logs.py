@@ -99,7 +99,7 @@ assert sys.stdin.read()==''
                         'args': {'command': 'echo ' + payload}}),
             json.dumps({'type': 'tool_execution_end', 'toolCallId': 'tool-1', 'toolName': 'bash',
                         'result': {'content': [{'type': 'text', 'text': payload}]}, 'isError': False}),
-            json.dumps({'type': 'message_end', 'message': {'role': 'assistant', 'provider': 'provider',
+            json.dumps({'type': 'message_end', 'message': {'id': 'm1', 'role': 'assistant', 'provider': 'provider',
                                                            'model': 'actual', 'content': [{'type': 'text', 'text': 'Complete answer λ'}]}}),
             self.terminal(),
             '{"probe":"unclassified frame"}',
@@ -246,6 +246,8 @@ assert sys.stdin.read()==''
         self.call('logs', 'omp-worker', 'default', '65536', '4')
         frames = [json.dumps({'type': 'response', 'id': 'r%d' % i, 'command': 'probe', 'pad': 'y' * 20000}) for i in range(16)]
         self.stream(frames + [self.terminal()])
+        self.assertTrue((self.cwd / "turn.jsonl.4").exists())
+        self.assertIn("r0", (self.cwd / "turn.jsonl.4").read_text())
         self.register('second-worker', 'root', 'omp', 'model', 'low')
         self.log = self.cwd / 'second.jsonl'
         self.stream([self.terminal('Second answer')], 'second-worker', 'second-turn')
@@ -255,11 +257,12 @@ assert sys.stdin.read()==''
         answer = json.loads(self.call('logs-clean', 'omp-worker'))
         self.assertEqual(answer['session'], 'omp-worker')
         self.assertTrue(all(item['removed'] for item in answer['removed']), answer)
-        self.assertEqual(sorted(item['index'] for item in answer['removed']), [2, 3])
+        self.assertEqual(sorted(item['index'] for item in answer['removed']), [2, 3, 4])
         self.assertTrue(all(item['bytes'] > 0 for item in answer['removed']), answer)
         self.assertTrue((self.cwd / 'turn.jsonl.1').exists())
         self.assertFalse((self.cwd / 'turn.jsonl.2').exists())
         self.assertFalse((self.cwd / 'turn.jsonl.3').exists())
+        self.assertFalse((self.cwd / 'turn.jsonl.4').exists())
         self.assertTrue(self.log.exists())
         self.assertEqual((self.cwd / 'second.jsonl').read_text(), kept)
         self.assertEqual(sorted(p.name for p in self.cwd.glob('second.jsonl.*')), second_rotated)
@@ -334,6 +337,179 @@ assert sys.stdin.read()==''
         self.assertEqual(answer['pendingInput'], 1)
         self.assertTrue((self.cwd / 'turn.jsonl.1').exists())
         self.assertTrue((self.cwd / 'turn.jsonl.2').exists())
+
+    def test_retention_count_above_four_preserves_requested_history(self):
+        policy = json.loads(self.call('logs', 'omp-worker', 'default', '65536', '7'))
+        self.assertEqual(policy['keepSegments'], 7)
+        frames = [json.dumps({'type': 'response', 'id': 'r%d' % i,
+                             'command': 'probe', 'pad': 'y' * 40000}) for i in range(20)]
+        self.stream(frames + [self.terminal()])
+        self.assertTrue((self.cwd / 'turn.jsonl.7').exists())
+        self.assertFalse((self.cwd / 'turn.jsonl.8').exists())
+        entry = next(row for row in json.loads(self.call('logs-storage'))['logs']
+                     if row['path'] == str(self.log))
+        self.assertEqual({row['index'] for row in entry['rotated']}, set(range(1, 8)))
+        self.call('logs', 'omp-worker', 'default', '65536', '2')
+        removed = json.loads(self.call('logs-clean', 'omp-worker'))['removed']
+        self.assertEqual({row['index'] for row in removed}, set(range(3, 8)))
+        self.assertTrue(all(row['removed'] for row in removed))
+        self.assertTrue((self.cwd / 'turn.jsonl.2').exists())
+
+    def test_input_arriving_during_turn_protects_existing_segments(self):
+        import time
+        self.call('logs', 'omp-worker', 'default', '65536', '1')
+        protected = self.cwd / 'turn.jsonl.1'
+        protected.write_text('sole earlier evidence\n')
+        self.harness("""import pathlib,sys,time
+sys.stdin.readline()
+sys.stdin.readline()
+sys.stdin.readline()
+pathlib.Path('ready').write_text('ready')
+while not pathlib.Path('release').exists(): time.sleep(.01)
+print(pathlib.Path('events.jsonl').read_text(),end='',flush=True)
+sys.stdin.read()
+""")
+        self.events.write_text('\n'.join(json.dumps({'type': 'response', 'id': 'r%d' % i,
+                                                    'pad': 'z' * 40000}) for i in range(6))
+                               + '\n' + self.terminal() + '\n')
+        turn = subprocess.Popen([str(EXE), str(self.db), 'turn', 'omp-worker', 'late-input-turn',
+                                 str(self.player), 'model', 'low', str(self.cwd), str(self.task),
+                                 str(self.log), ''], stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                                text=True)
+        try:
+            deadline = time.monotonic() + 30
+            while not (self.cwd / 'ready').exists():
+                self.assertIsNone(turn.poll(), 'turn stopped before harness was ready')
+                self.assertLess(time.monotonic(), deadline, 'harness readiness deadline')
+                time.sleep(.01)
+            self.call('message', 'late-guidance', 'root', 'omp-worker', 'guidance',
+                      'Keep the earlier evidence until this input is answered.')
+            (self.cwd / 'release').write_text('go')
+            stdout, stderr = turn.communicate(timeout=60)
+            self.assertEqual(turn.returncode, 0, stderr)
+            self.assertEqual(protected.read_text(), 'sole earlier evidence\n')
+            self.assertIn('pending-input', self.log.read_text())
+        finally:
+            if turn.poll() is None:
+                turn.kill()
+                turn.communicate()
+
+    def test_abrupt_observer_exit_preserves_latest_incomplete_frame(self):
+        import os
+        import signal
+        import time
+        updates = [json.dumps({'type': 'tool_execution_update', 'toolCallId': 'unfinished',
+                               'partialResult': {'content': [{'type': 'text',
+                                                             'text': 'partial %d' % i}]}})
+                   for i in range(3)]
+        self.events.write_text('\n'.join(updates) + '\n')
+        self.harness("""import os,pathlib,sys,time
+sys.stdin.readline()
+sys.stdin.readline()
+sys.stdin.readline()
+pathlib.Path('harness.pid').write_text(str(os.getpid()))
+print(pathlib.Path('events.jsonl').read_text(),end='',flush=True)
+while True: time.sleep(1)
+""")
+        turn = subprocess.Popen([str(EXE), str(self.db), 'turn', 'omp-worker', 'abrupt-turn',
+                                 str(self.player), 'model', 'low', str(self.cwd), str(self.task),
+                                 str(self.log), ''], stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                                text=True)
+        pending = self.cwd / 'turn.jsonl.pending'
+        try:
+            deadline = time.monotonic() + 30
+            while not pending.exists() or 'partial 2' not in pending.read_text():
+                self.assertIsNone(turn.poll(), 'observer stopped before receiving latest update')
+                self.assertLess(time.monotonic(), deadline, 'latest incomplete frame was not persisted')
+                time.sleep(.01)
+            turn.kill()
+            turn.wait(timeout=10)
+            self.assertEqual([json.loads(line) for line in pending.read_text().splitlines()],
+                             [json.loads(updates[-1])])
+            self.assertEqual(list(self.cwd.glob('turn.jsonl.pending.tmp.*')), [])
+        finally:
+            if turn.poll() is None:
+                turn.kill()
+                turn.wait(timeout=10)
+            pid_file = self.cwd / 'harness.pid'
+            if pid_file.exists():
+                try: os.kill(int(pid_file.read_text()), signal.SIGKILL)
+                except ProcessLookupError: pass
+            turn.communicate(timeout=10)
+
+    def test_later_direct_turn_preserves_an_earlier_checkpoint(self):
+        previous = json.dumps({'type': 'tool_execution_update', 'toolCallId': 'previous',
+                               'partialResult': {'content': [{'type': 'text', 'text': 'earlier partial'}]}})
+        pending = self.cwd / 'turn.jsonl.pending'
+        pending.write_text(previous)
+        self.stream([self.terminal()])
+        self.assertIn(json.loads(previous), [json.loads(line) for line in self.lines()])
+        self.assertFalse(pending.exists())
+
+    def test_unfinished_assistant_message_keeps_latest_update(self):
+        frames = [json.dumps({'type': 'message_start', 'messageId': 'unfinished-message',
+                             'message': {'id': 'unfinished-message', 'role': 'assistant', 'content': []}})]
+        frames.extend(json.dumps({'type': 'message_update', 'messageId': 'unfinished-message',
+                                  'message': {'id': 'unfinished-message', 'role': 'assistant',
+                                              'content': [{'type': 'text', 'text': 'partial answer %d' % i}]}})
+                      for i in range(3))
+        self.stream(frames + [self.terminal()])
+        updates = [row for row in map(json.loads, self.lines()) if row.get('type') == 'message_update']
+        self.assertEqual(updates, [json.loads(frames[-1])])
+
+    def test_existing_policy_constraint_migrates_with_rows_and_registry(self):
+        import sqlite3
+        with sqlite3.connect(self.db) as connection:
+            connection.executescript("CREATE TABLE log_policies(session TEXT PRIMARY KEY,level TEXT NOT NULL,budget_bytes INTEGER NOT NULL,keep_segments INTEGER NOT NULL CHECK(keep_segments BETWEEN 1 AND 4));"
+                                     "CREATE TABLE log_files(session TEXT NOT NULL,log TEXT NOT NULL,PRIMARY KEY(session,log));")
+            connection.execute('INSERT INTO log_policies VALUES(?,?,?,?)',
+                               ('omp-worker', 'diagnostic', 1048576, 3))
+            connection.execute('INSERT INTO log_files VALUES(?,?)', ('omp-worker', str(self.log)))
+        before = json.loads(self.call('logs', 'omp-worker'))
+        self.assertEqual((before['level'], before['budgetBytes'], before['keepSegments'], before['registeredLogs']),
+                         ('diagnostic', 1048576, 3, 1))
+        after = json.loads(self.call('logs', 'omp-worker', 'diagnostic', '', '101'))
+        self.assertEqual((after['level'], after['budgetBytes'], after['keepSegments'], after['registeredLogs']),
+                         ('diagnostic', 1048576, 101, 1))
+        with sqlite3.connect(self.db) as connection:
+            self.assertEqual(connection.execute('SELECT count(*) FROM log_policies').fetchone()[0], 1)
+            self.assertEqual(connection.execute('SELECT log FROM log_files').fetchone()[0], str(self.log))
+
+    def test_sparse_segments_and_checkpoint_are_reported_and_preserved(self):
+        self.call('logs', 'omp-worker', 'default', '65536', '4294967295')
+        self.stream([self.terminal()])
+        for index in (65, 101, 4294967295):
+            (self.cwd / ('turn.jsonl.%d' % index)).write_text('retained sparse evidence\n')
+        excluded = ['turn.jsonl.pending', 'turn.jsonl.pending.tmp.owner', 'turn.jsonl.01',
+                    'turn.jsonl.+9', 'turn.jsonl. 9', 'turn.jsonl.9.stderr', 'turn.jsonl.4294967296']
+        for name in excluded:
+            (self.cwd / name).write_text('preserved artifact\n')
+        entry = next(row for row in json.loads(self.call('logs-storage'))['logs']
+                     if row['path'] == str(self.log))
+        self.assertEqual({row['index'] for row in entry['rotated']}, {65, 101, 4294967295})
+        self.assertEqual(entry['pendingBytes'], (self.cwd / 'turn.jsonl.pending').stat().st_size)
+        self.assertEqual(entry['pendingPath'], str(self.cwd / 'turn.jsonl.pending'))
+        self.call('logs', 'omp-worker', 'default', '65536', '2')
+        removed = json.loads(self.call('logs-clean', 'omp-worker'))['removed']
+        self.assertEqual({row['index'] for row in removed}, {65, 101, 4294967295})
+        for name in excluded:
+            self.assertEqual((self.cwd / name).read_text(), 'preserved artifact\n')
+
+    def test_failed_migration_preserves_original_rows_and_refuses_success(self):
+        import sqlite3
+        with sqlite3.connect(self.db) as connection:
+            connection.executescript('CREATE TABLE log_policies(session TEXT PRIMARY KEY,level TEXT NOT NULL,budget_bytes INTEGER NOT NULL,keep_segments INTEGER NOT NULL CHECK(keep_segments BETWEEN 1 AND 4));')
+            connection.execute('INSERT INTO log_policies VALUES(?,?,?,?)',
+                               ('omp-worker', 'invalid-legacy-level', 1048576, 3))
+        result = subprocess.run([str(EXE), str(self.db), 'logs', 'omp-worker'],
+                                text=True, capture_output=True, timeout=60)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn('CHECK constraint failed', result.stderr)
+        self.assertNotIn('"keepSegments"', result.stdout)
+        with sqlite3.connect(self.db) as connection:
+            self.assertEqual(connection.execute('SELECT level,keep_segments FROM log_policies').fetchall(),
+                             [('invalid-legacy-level', 3)])
+            self.assertEqual(connection.execute("SELECT count(*) FROM sqlite_master WHERE name='log_policies_legacy'").fetchone()[0], 0)
 
     def test_unwritable_log_reports_the_failure_and_keeps_the_report(self):
         unwritable = self.cwd / 'log-directory'
