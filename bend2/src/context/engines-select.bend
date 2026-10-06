@@ -1277,6 +1277,15 @@ def transfer_for_step(+p: Plan, +module_id: String, +digest: String,
 # below let a consumer resolve the producing operation from that edge itself, so a
 # TypeScript dependency result is delivered under its own producer binding and its
 # own result schema rather than being relabelled as the consuming step's output.
+#
+# What these functions do not do: transfer_of_edge accepts any edge and looks it
+# up in the plan it is handed, so it does not establish that the requesting
+# consumer owns that edge; it executes no producer; and it neither ingests nor
+# admits a dependency result that has just been returned. The caller sources the
+# edge from the consuming step it retained, and the admitted dependency outputs
+# must already have been supplied as the plan's captured records by whoever
+# admitted them, since a result that has not been admitted is not part of this
+# value.
 def step_ref_module(+r: StepRef) -> String:
   match r:
     case StepRef{module_id, declaration_digest, operation}: module_id

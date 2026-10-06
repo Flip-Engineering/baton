@@ -173,12 +173,14 @@ def event_members_json(+producer: Sel.MBind) -> J.Json:
 # The frozen members of one plan rendered as one canonical value: the primary
 # binding, the common operation, the ordered steps and the effective requirement.
 # Availability is observed state rather than plan identity, and the captured
-# records travel with the invocation, so neither is part of this value. A caller
-# that cannot hold the plan value carries this rendering instead, and a replay
-# compares it against the rendering of the plan it retained; because it renders
-# the members rather than summarizing them, a changed binding, step, dependency,
-# effect or operation changes the identity, and a caller cannot invent one that
-# matches.
+# records travel with the invocation, so neither is part of this value.
+#
+# The rendering is reproducible, and that is all it is: it establishes equality
+# between two renderings, not provenance. A caller holding the same public member
+# values can reproduce the same text, so equality is useful only against a plan
+# that the comparing party retained and trusts. Retention of that plan, the
+# caller's association with it, replay selection and any authority over which plan
+# applies belong to the owner of that state and are not established here.
 def plan_identity_json(+p: Sel.Plan) -> J.Json:
   match p:
     case Sel.Plan{primary, common, steps, effective_effects, inputs, available}:
