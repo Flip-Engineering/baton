@@ -146,7 +146,7 @@ def duty_wellformed(rows: String) -> Bool:
 def duty_bad_line(xs: List<String>) -> String:
   match xs:
     case Nil{}: ""
-    case h <> t: Bool.pick(String, duty_record_ok(h), duty_bad_line(t), h)
+    case +h <> t: Bool.pick(String, duty_record_ok(h), duty_bad_line(t), h)
 
 def duty_all_valid(xs: List<String>) -> Bool:
   match xs:
@@ -156,7 +156,7 @@ def duty_all_valid(xs: List<String>) -> Bool:
 # The exported answer. `DutyRows` exists only for a validated enumeration, and a
 # malformed line can therefore surface only as `DutyUnreadable` with the whole
 # answer, so no caller can read a shorter set as settled.
-def duty_view(rows: String) -> DutyView:
+def duty_view(+rows: String) -> DutyView:
   Bool.pick(DutyView, String.is_empty(rows), DutyNone{},
     Bool.pick(DutyView, duty_all_valid(duty_split(rows)),
       DutyRows{field_count(duty_split(rows), 0), rows},
@@ -172,7 +172,7 @@ def duty_after(result: Result<&1,&1,U32 & String,String>) -> IO(Result<&1,&1,U32
 def duty_matches_record(parsed: Maybe<&2, DutyRecord>, +kind: String, +subject: String) -> Bool:
   match parsed:
     case None{}: False{}
-    case Some{record}: Bool.and(String.eq(duty_kind(record), kind), String.eq(duty_subject(record), subject))
+    case Some{+record}: Bool.and(String.eq(duty_kind(record), kind), String.eq(duty_subject(record), subject))
 
 def duty_matches(line: String, +kind: String, +subject: String) -> Bool:
   duty_matches_record(duty_line(line), kind, subject)
