@@ -37,8 +37,20 @@ type RowRead is Data:
   RowMalformed{answer: String}
 
 # One observer step. A failed step keeps the host or validation code and detail.
+# One observed receipt. The identity and cursor are the requested ones, which the statement has
+# already compared, and the two flags say which evidence the row retains. Nothing here is a
+# document, and no column carries arbitrary text.
+type Receipt is Data:
+  Receipt{query: String, role: String, incarnation: String, cursor: String, captureRetained: Bool, exitRetained: Bool}
+
+# How one receipt read concluded.
+type ReceiptRead is Data:
+  ReceiptAbsent{}
+  ReceiptPresent{receipt: Receipt}
+  ReceiptMalformed{stage: String, answer: String}
+
 type ObserverStep is Data:
-  ObserverCommitted{document: String}
+  ObserverCommitted{receipt: Receipt}
   ObserverAbsent{stage: String}
   ObserverUnreadable{stage: String, answer: String}
   ObserverFailed{code: U32, detail: String}
@@ -78,91 +90,94 @@ def line_count_ok(lines: List<String>) -> Bool:
 def single_line(+row: String) -> Bool:
   line_count_ok(Tx.split_lines(row))
 
-def receipt_flag(+flag: String) -> Bool:
+def flag_true(+flag: String) -> Bool:
   String.eq(flag, "1")
 
-def receipt_flag_ok(+flag: String) -> Bool:
+def flag_on(+flag: String) -> Bool:
   Bool.or(String.eq(flag, "0"), String.eq(flag, "1"))
 
-# The fixed-column receipt of one role row: presence, the three identity columns, the cursor, the
-# phases and the two evidence flags. Nothing here is a document, so no prefix can stand in for a
-# decoded receipt.
-def receipt_sql(+query: String, +role: String, +incarnation: String) -> String:
+def receipt_match(+query: String, +role: String, +incarnation: String, +cursor: String, expr: String) -> String:
+  expr
+
+# The receipt of one role row as presence plus flags only. Every comparison happens inside SQL, so
+# no identity, cursor or phase text travels as a tab or newline separated column and no delimiter
+# can appear in it.
+def receipt_sql(+query: String, +role: String, +incarnation: String, +cursor: String) -> String:
   "SELECT CASE WHEN EXISTS(SELECT 1 FROM semantic_roles WHERE query_id=" ++ C.q(query) ++ " AND role=" ++ C.q(role) ++ " AND incarnation=" ++ C.q(incarnation) ++ ") THEN 'present' ELSE 'absent' END,"
-  ++ "coalesce((SELECT query_id FROM semantic_roles WHERE query_id=" ++ C.q(query) ++ " AND role=" ++ C.q(role) ++ " AND incarnation=" ++ C.q(incarnation) ++ "),''),"
-  ++ "coalesce((SELECT role FROM semantic_roles WHERE query_id=" ++ C.q(query) ++ " AND role=" ++ C.q(role) ++ " AND incarnation=" ++ C.q(incarnation) ++ "),''),"
-  ++ "coalesce((SELECT incarnation FROM semantic_roles WHERE query_id=" ++ C.q(query) ++ " AND role=" ++ C.q(role) ++ " AND incarnation=" ++ C.q(incarnation) ++ "),''),"
-  ++ "coalesce((SELECT observer_cursor FROM semantic_roles WHERE query_id=" ++ C.q(query) ++ " AND role=" ++ C.q(role) ++ " AND incarnation=" ++ C.q(incarnation) ++ "),''),"
-  ++ "coalesce((SELECT phase FROM semantic_roles WHERE query_id=" ++ C.q(query) ++ " AND role=" ++ C.q(role) ++ " AND incarnation=" ++ C.q(incarnation) ++ "),''),"
-  ++ "coalesce((SELECT cleanup_phase FROM semantic_roles WHERE query_id=" ++ C.q(query) ++ " AND role=" ++ C.q(role) ++ " AND incarnation=" ++ C.q(incarnation) ++ "),''),"
+  ++ "CASE WHEN (SELECT query_id FROM semantic_roles WHERE query_id=" ++ C.q(query) ++ " AND role=" ++ C.q(role) ++ " AND incarnation=" ++ C.q(incarnation) ++ ")=" ++ C.q(query) ++ " THEN '1' ELSE '0' END,"
+  ++ "CASE WHEN (SELECT role FROM semantic_roles WHERE query_id=" ++ C.q(query) ++ " AND role=" ++ C.q(role) ++ " AND incarnation=" ++ C.q(incarnation) ++ ")=" ++ C.q(role) ++ " THEN '1' ELSE '0' END,"
+  ++ "CASE WHEN (SELECT incarnation FROM semantic_roles WHERE query_id=" ++ C.q(query) ++ " AND role=" ++ C.q(role) ++ " AND incarnation=" ++ C.q(incarnation) ++ ")=" ++ C.q(incarnation) ++ " THEN '1' ELSE '0' END,"
+  ++ "CASE WHEN (SELECT observer_cursor FROM semantic_roles WHERE query_id=" ++ C.q(query) ++ " AND role=" ++ C.q(role) ++ " AND incarnation=" ++ C.q(incarnation) ++ ")=" ++ C.q(cursor) ++ " THEN '1' ELSE '0' END,"
+  ++ "CASE WHEN (SELECT phase FROM semantic_roles WHERE query_id=" ++ C.q(query) ++ " AND role=" ++ C.q(role) ++ " AND incarnation=" ++ C.q(incarnation) ++ ")<>'' AND instr((SELECT phase FROM semantic_roles WHERE query_id=" ++ C.q(query) ++ " AND role=" ++ C.q(role) ++ " AND incarnation=" ++ C.q(incarnation) ++ "),char(9))=0 THEN '1' ELSE '0' END,"
   ++ "CASE WHEN (SELECT capture_json FROM semantic_roles WHERE query_id=" ++ C.q(query) ++ " AND role=" ++ C.q(role) ++ " AND incarnation=" ++ C.q(incarnation) ++ ") IS NULL THEN '0' ELSE '1' END,"
   ++ "CASE WHEN (SELECT exit_evidence_json FROM semantic_roles WHERE query_id=" ++ C.q(query) ++ " AND role=" ++ C.q(role) ++ " AND incarnation=" ++ C.q(incarnation) ++ ") IS NULL THEN '0' ELSE '1' END;"
 
-def receipt_domain_checked(+query: String, +role: String, +incarnation: String, +cursor: String, +rcursor: String, +phase: String, +cleanup: String, +capture: String, +exit: String, +answer: String) -> ReceiptRead:
-  Bool.pick(ReceiptRead, Bool.and(Bool.and(Bool.not(String.is_empty(phase)), Bool.not(String.is_empty(cleanup))), Bool.and(receipt_flag_ok(capture), receipt_flag_ok(exit))),
-    ReceiptPresent{Receipt{query, role, incarnation, cursor, phase, cleanup, receipt_flag(capture), receipt_flag(exit)}},
-    ReceiptMalformed{"domain", answer})
+def receipt_all_off(+qm: String, +rm: String, +im: String, +cm: String, +pm: String, +cap: String, +ext: String) -> Bool:
+  Bool.and(Bool.and(Bool.and(String.eq(qm, "0"), String.eq(rm, "0")), Bool.and(String.eq(im, "0"), String.eq(cm, "0"))), Bool.and(String.eq(pm, "0"), Bool.and(String.eq(cap, "0"), String.eq(ext, "0"))))
 
-def receipt_cursor_checked(+query: String, +role: String, +incarnation: String, +cursor: String, +rcursor: String, +phase: String, +cleanup: String, +capture: String, +exit: String, +answer: String) -> ReceiptRead:
-  Bool.pick(ReceiptRead, String.eq(rcursor, cursor),
-    receipt_domain_checked(query, role, incarnation, cursor, rcursor, phase, cleanup, capture, exit, answer),
-    ReceiptMalformed{"cursor", answer})
+def receipt_absent(+qm: String, +rm: String, +im: String, +cm: String, +pm: String, +cap: String, +ext: String) -> ReceiptRead:
+  Bool.pick(ReceiptRead, receipt_all_off(qm, rm, im, cm, pm, cap, ext), ReceiptAbsent{}, ReceiptMalformed{"absentShape", qm ++ rm ++ im ++ cm ++ pm ++ cap ++ ext})
 
-def receipt_checked(+query: String, +role: String, +incarnation: String, +cursor: String, +rquery: String, +rrole: String, +rincarnation: String, +rcursor: String, +phase: String, +cleanup: String, +capture: String, +exit: String, +answer: String) -> ReceiptRead:
-  Bool.pick(ReceiptRead, Bool.and(Bool.and(String.eq(rquery, query), String.eq(rrole, role)), String.eq(rincarnation, incarnation)),
-    receipt_cursor_checked(query, role, incarnation, cursor, rcursor, phase, cleanup, capture, exit, answer),
-    ReceiptMalformed{"identity", answer})
+def receipt_evidence(+query: String, +role: String, +incarnation: String, +cursor: String, +cap: String, +ext: String) -> ReceiptRead:
+  Bool.pick(ReceiptRead, flag_on(ext),
+    ReceiptPresent{Receipt{query, role, incarnation, cursor, flag_true(cap), flag_true(ext)}},
+    ReceiptMalformed{"evidence", cap ++ ext})
 
-def receipt_answer(+query: String, +role: String, +incarnation: String, +cursor: String, +presence: String, +rquery: String, +rrole: String, +rincarnation: String, +rcursor: String, +phase: String, +cleanup: String, +capture: String, +exit: String, +answer: String) -> ReceiptRead:
-  Bool.pick(ReceiptRead, String.eq(presence, "absent"), ReceiptAbsent{},
+def receipt_present(+query: String, +role: String, +incarnation: String, +cursor: String, +qm: String, +rm: String, +im: String, +cm: String, +pm: String, +cap: String, +ext: String) -> ReceiptRead:
+  Bool.pick(ReceiptRead, Bool.and(Bool.and(Bool.and(String.eq(qm, "1"), String.eq(rm, "1")), Bool.and(String.eq(im, "1"), String.eq(cm, "1"))), Bool.and(String.eq(pm, "1"), flag_on(cap))),
+    receipt_evidence(query, role, incarnation, cursor, cap, ext),
+    ReceiptMalformed{"identity", qm ++ rm ++ im ++ cm ++ pm})
+
+def receipt_of(+query: String, +role: String, +incarnation: String, +cursor: String, +presence: String, +qm: String, +rm: String, +im: String, +cm: String, +pm: String, +cap: String, +ext: String) -> ReceiptRead:
   Bool.pick(ReceiptRead, String.eq(presence, "present"),
-    receipt_checked(query, role, incarnation, cursor, rquery, rrole, rincarnation, rcursor, phase, cleanup, capture, exit, answer),
-    ReceiptMalformed{"presence", answer}))
+    receipt_present(query, role, incarnation, cursor, qm, rm, im, cm, pm, cap, ext),
+  Bool.pick(ReceiptRead, String.eq(presence, "absent"),
+    receipt_absent(qm, rm, im, cm, pm, cap, ext),
+    ReceiptMalformed{"presence", presence}))
 
-def receipt_tabs(+query: String, +role: String, +incarnation: String, +cursor: String, fields: List<String>, +answer: String) -> ReceiptRead:
-  match fields:
+def receipt_identity(+query: String, +role: String, +incarnation: String, +cursor: String, flags: List<String>) -> ReceiptRead:
+  match flags:
     case +presence <> m0:
       match m0:
-        case +rquery <> m1:
+        case +qm <> m1:
           match m1:
-            case +rrole <> m2:
+            case +rm <> m2:
               match m2:
-                case +rincarnation <> m3:
+                case +im <> m3:
                   match m3:
-                    case +rcursor <> m4:
+                    case +cm <> m4:
                       match m4:
-                        case +phase <> m5:
+                        case +pm <> m5:
                           match m5:
-                            case +cleanup <> m6:
+                            case +cap <> m6:
                               match m6:
-                                case +capture <> m7:
+                                case +ext <> m7:
                                   match m7:
-                                    case +exit <> m8:
-                                      match m8:
-                                        case Nil{}: receipt_answer(query, role, incarnation, cursor, presence, rquery, rrole, rincarnation, rcursor, phase, cleanup, capture, exit, answer)
-                                        case _: ReceiptMalformed{"surplus", answer}
-                                    case _: ReceiptMalformed{"short", answer}
-                                case _: ReceiptMalformed{"short", answer}
-                            case _: ReceiptMalformed{"short", answer}
-                        case _: ReceiptMalformed{"short", answer}
-                    case _: ReceiptMalformed{"short", answer}
-                case _: ReceiptMalformed{"short", answer}
-            case _: ReceiptMalformed{"short", answer}
-        case _: ReceiptMalformed{"short", answer}
-    case _: ReceiptMalformed{"short", answer}
+                                    case Nil{}: receipt_of(query, role, incarnation, cursor, presence, qm, rm, im, cm, pm, cap, ext)
+                                    case _: ReceiptMalformed{"surplus", ""}
+                                case _: ReceiptMalformed{"short", ""}
+                            case _: ReceiptMalformed{"short", ""}
+                        case _: ReceiptMalformed{"short", ""}
+                    case _: ReceiptMalformed{"short", ""}
+                case _: ReceiptMalformed{"short", ""}
+            case _: ReceiptMalformed{"short", ""}
+        case _: ReceiptMalformed{"short", ""}
+    case _: ReceiptMalformed{"short", ""}
 
+# An absent row is an absent receipt only when every flag agrees, so a host answer that carries
+# stray columns cannot pass as absence. A present row is a receipt only when every comparison holds.
 def receipt_lines(+query: String, +role: String, +incarnation: String, +cursor: String, +answer: String, lines: List<String>) -> ReceiptRead:
   match lines:
     case Nil{}: ReceiptMalformed{"empty", answer}
     case +line <> rest:
       match rest:
-        case Nil{}: receipt_tabs(query, role, incarnation, cursor, Tx.split_tabs(line), answer)
+        case Nil{}: receipt_identity(query, role, incarnation, cursor, Tx.split_tabs(line))
         case _: ReceiptMalformed{"surplus", answer}
 
 def receipt_decode(+query: String, +role: String, +incarnation: String, +cursor: String, +answer: String) -> ReceiptRead:
   receipt_lines(query, role, incarnation, cursor, answer, Tx.split_lines(answer))
 
-def step_of(read: ReceiptRead) -> ObserverStep:
+def step_of(+query: String, +role: String, +incarnation: String, +cursor: String, read: ReceiptRead) -> ObserverStep:
   match read:
     case ReceiptAbsent{}: ObserverAbsent{"role"}
     case ReceiptPresent{receipt}: ObserverCommitted{receipt}
@@ -172,12 +187,12 @@ def step_of(read: ReceiptRead) -> ObserverStep:
 # unused: only the fixed columns decide whether the commit is observed.
 def receipt_after(+db: String, +binding: String, +query: String, +role: String, +incarnation: String, +cursor: String) -> IO(ObserverStep):
   do IO<ObserverStep>:
-    read : Result<&1,&1,U32 & String,String> <- DB.Sql.query_bound(db, binding, receipt_sql(query, role, incarnation))
+    read : Result<&1,&1,U32 & String,String> <- DB.Sql.query_bound(db, binding, receipt_sql(query, role, incarnation, cursor))
     match read:
       case Fail{error}:
         match error:
           case (code, detail): IO.pure(ObserverStep, ObserverFailed{code, detail})
-      case Done{+answer}: IO.pure(ObserverStep, step_of(receipt_decode(query, role, incarnation, cursor, answer)))
+      case Done{+answer}: IO.pure(ObserverStep, step_of(query, role, incarnation, cursor, receipt_decode(query, role, incarnation, cursor, answer)))
 
 def step_after(+db: String, +binding: String, +query: String, +role: String, +incarnation: String, +cursor: String, result: Result<&1,&1,U32 & String,String>) -> IO(ObserverStep):
   match result:
@@ -270,6 +285,65 @@ def release_claim_state(+db: String, +binding: String, +query: String, +role: St
 
 # The claim-only path: the intent decides, the caller's complete intent document is claimed, and
 # the recorded state is read back rather than assumed from the call succeeding.
+
+def custody_check(+binding: String, +custodyBinding: String, +keeper: String, +expectedKeeper: String) -> CustodyCheck:
+  Bool.pick(CustodyCheck, String.eq(custodyBinding, binding),
+    Bool.pick(CustodyCheck, String.eq(keeper, expectedKeeper), CustodyAdmitted{binding}, CustodyForeignKeeper{keeper, expectedKeeper}),
+    CustodyMismatch{binding, custodyBinding})
+
+# The retained release intent as fixed columns: presence, whether the intent column is set, and
+# the recorded delivery state.
+
+def intent_sql(+query: String, +role: String, +incarnation: String) -> String:
+  "SELECT CASE WHEN EXISTS(SELECT 1 FROM semantic_roles WHERE query_id=" ++ C.q(query) ++ " AND role=" ++ C.q(role) ++ " AND incarnation=" ++ C.q(incarnation) ++ ") THEN 'present' ELSE 'absent' END,"
+  ++ "CASE WHEN (SELECT release_intent_json FROM semantic_roles WHERE query_id=" ++ C.q(query) ++ " AND role=" ++ C.q(role) ++ " AND incarnation=" ++ C.q(incarnation) ++ ") IS NULL THEN '0' ELSE '1' END,"
+  ++ "coalesce((SELECT json_extract(release_intent_json,'$.delivery') FROM semantic_roles WHERE query_id=" ++ C.q(query) ++ " AND role=" ++ C.q(role) ++ " AND incarnation=" ++ C.q(incarnation) ++ "),'');"
+
+def intent_decision(+presence: String, +hasIntent: String, +recorded: String, +expected: String) -> ReleaseIntent:
+  Bool.pick(ReleaseIntent, String.eq(presence, "absent"), IntentMissing{"role"},
+  Bool.pick(ReleaseIntent, Bool.not(String.eq(hasIntent, "1")), IntentMissing{"intent"},
+  Bool.pick(ReleaseIntent, String.eq(recorded, expected), IntentAdmissible{recorded}, IntentStale{recorded, expected})))
+
+def intent_tabs(+expected: String, +row: String, fields: List<String>) -> ReleaseIntent:
+  match fields:
+    case +presence <> m0:
+      match m0:
+        case +hasIntent <> m1:
+          match m1:
+            case +recorded <> m2:
+              match m2:
+                case Nil{}: intent_decision(presence, hasIntent, recorded, expected)
+                case _: IntentUnreadable{"shape", row}
+            case _: IntentUnreadable{"short", row}
+        case _: IntentUnreadable{"short", row}
+    case _: IntentUnreadable{"short", row}
+
+def intent_fields(+expected: String, +row: String, lines: List<String>) -> ReleaseIntent:
+  match lines:
+    case Nil{}: IntentUnreadable{"empty", row}
+    case +line <> rest:
+      match rest:
+        case Nil{}: intent_tabs(expected, row, Tx.split_tabs(line))
+        case _: IntentUnreadable{"surplus", row}
+
+def intent_decode(+expected: String, +row: String) -> ReleaseIntent:
+  intent_fields(expected, row, Tx.split_lines(row))
+
+def intent_after(+db: String, +binding: String, +query: String, +role: String, +incarnation: String, +expected: String, result: Result<&1,&1,U32 & String,String>) -> IO(ReleaseIntent):
+  match result:
+    case Fail{error}:
+      match error:
+        case (code, detail): IO.pure(ReleaseIntent, IntentUnreadable{"host", U32.show(code) ++ ":" ++ detail})
+    case Done{+rows}: IO.pure(ReleaseIntent, intent_decode(expected, rows))
+
+def intent_read(+db: String, +binding: String, +query: String, +role: String, +incarnation: String, +expected: String) -> IO(ReleaseIntent):
+  do IO<ReleaseIntent>:
+    read : Result<&1,&1,U32 & String,String> <- DB.Sql.query_bound(db, binding, intent_sql(query, role, incarnation))
+    intent_after(db, binding, query, role, incarnation, expected, read)
+
+# A rendered error document, when the caller supplied one. The empty case is its own value so
+# the commit below branches on a parameter rather than on a computed condition. This checks
+# non-empty text only: it is not schema validation, which remains the caller's operand.
 
 def claim_release_run(+db: String, +binding: String, +query: String, +role: String, +incarnation: String, +expectedDelivery: String, +nextJson: String, +claim: String) -> IO(ReleaseOutcome):
   do IO<ReleaseOutcome>:

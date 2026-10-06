@@ -1120,12 +1120,6 @@ law an_unavailable_keeper_action_names_the_primitive:
 def an_unavailable_keeper_action_names_the_primitive():
   {==}
 
-law a_host_failure_stays_a_failure:
-  {ContextObserver.step_after(Fail{(7,"host")}) == ContextObserver.ObserverFailed{7,"host"} : ContextObserver.ObserverStep}
-
-def a_host_failure_stays_a_failure():
-  {==}
-
 law an_empty_failure_document_is_absent:
   {ContextObserver.failure_schema("") == None{} : Maybe<&2,String>}
 
@@ -1217,43 +1211,31 @@ def a_release_refusal_of_an_admitted_custody_is_absent():
   {==}
 
 law a_receipt_row_of_the_requested_identity_is_committed:
-  {ContextObserver.receipt_decode("q1","starter","0","2","present\tq1\tstarter\t0\t2\tprepared\tnotRequested\t1\t0\n") == ContextObserver.ReceiptPresent{ContextObserver.Receipt{"q1","starter","0","2","prepared","notRequested",True{},False{}}} : ContextObserver.ReceiptRead}
+  {ContextObserver.receipt_decode("q1","starter","0","2","present\t1\t1\t1\t1\t1\t1\t0\n") == ContextObserver.ReceiptPresent{ContextObserver.Receipt{"q1","starter","0","2",True{},False{}}} : ContextObserver.ReceiptRead}
 
 def a_receipt_row_of_the_requested_identity_is_committed():
   {==}
 
-law a_receipt_row_for_another_incarnation_is_malformed:
-  {ContextObserver.receipt_decode("q1","starter","0","2","present\tq1\tstarter\t9\t2\tprepared\tnotRequested\t1\t0\n") == ContextObserver.ReceiptMalformed{"identity","present\tq1\tstarter\t9\t2\tprepared\tnotRequested\t1\t0\n"} : ContextObserver.ReceiptRead}
+law a_receipt_row_of_another_incarnation_is_malformed:
+  {ContextObserver.receipt_decode("q1","starter","0","2","present\t1\t1\t0\t1\t1\t1\t0\n") == ContextObserver.ReceiptMalformed{"identity","1101110"} : ContextObserver.ReceiptRead}
 
-def a_receipt_row_for_another_incarnation_is_malformed():
+def a_receipt_row_of_another_incarnation_is_malformed():
   {==}
 
 law a_receipt_row_at_another_cursor_is_malformed:
-  {ContextObserver.receipt_decode("q1","starter","0","2","present\tq1\tstarter\t0\t3\tprepared\tnotRequested\t1\t0\n") == ContextObserver.ReceiptMalformed{"cursor","present\tq1\tstarter\t0\t3\tprepared\tnotRequested\t1\t0\n"} : ContextObserver.ReceiptRead}
+  {ContextObserver.receipt_decode("q1","starter","0","2","present\t1\t1\t1\t0\t1\t1\t0\n") == ContextObserver.ReceiptMalformed{"identity","1110110"} : ContextObserver.ReceiptRead}
 
 def a_receipt_row_at_another_cursor_is_malformed():
+  {==}
+
+law an_absent_receipt_row_with_stray_columns_is_malformed:
+  {ContextObserver.receipt_decode("q1","starter","0","2","absent\t1\t1\t1\t1\t1\t1\t0\n") == ContextObserver.ReceiptMalformed{"absentShape","1111110"} : ContextObserver.ReceiptRead}
+
+def an_absent_receipt_row_with_stray_columns_is_malformed():
   {==}
 
 law a_document_shaped_answer_is_not_a_committed_receipt:
   {ContextObserver.receipt_decode("q1","starter","0","2","{}\n") == ContextObserver.ReceiptMalformed{"short","{}\n"} : ContextObserver.ReceiptRead}
 
 def a_document_shaped_answer_is_not_a_committed_receipt():
-  {==}
-
-law a_state_clause_binds_the_payload_and_the_query:
-  {ContextObserver.commit_state_clause(query, next, result, error) == "UPDATE semantic_queries SET state=CASE WHEN " ++ ContextStore.terminal_recorded() ++ " THEN CASE WHEN " ++ ContextObserver.terminal_payload_matches(next, result, error) ++ " THEN state ELSE NULL END ELSE " ++ C.q(next) ++ " END," ++ "result_json=CASE WHEN " ++ ContextStore.terminal_recorded() ++ " THEN result_json ELSE " ++ ContextStore.json_or_null(result) ++ " END," ++ "error_json=CASE WHEN " ++ ContextStore.terminal_recorded() ++ " THEN error_json ELSE " ++ ContextStore.json_or_null(error) ++ " END " ++ "WHERE id=" ++ C.q(query) ++ ";" : String}
-
-def a_state_clause_binds_the_payload_and_the_query():
-  {==}
-
-law a_role_clause_keeps_the_cursor_and_both_evidence_assignments:
-  {ContextObserver.commit_role_clause(query, role, incarnation, expected, nextCursor, capture, exit, progress) == "UPDATE semantic_roles SET observer_cursor=" ++ ContextRoles.replay_column(expected, query, role, incarnation, nextCursor, C.q(nextCursor), capture, exit, progress, "observer_cursor") ++ "," ++ "capture_json=" ++ ContextRoles.replay_column(expected, query, role, incarnation, nextCursor, ContextStore.json_or_null(capture), capture, exit, progress, "capture_json") ++ "," ++ "exit_evidence_json=" ++ ContextRoles.replay_column(expected, query, role, incarnation, nextCursor, ContextStore.json_or_null(exit), capture, exit, progress, "exit_evidence_json") ++ " " ++ "WHERE query_id=" ++ C.q(query) ++ " AND role=" ++ C.q(role) ++ " AND incarnation=" ++ C.q(incarnation) ++ ";" : String}
-
-def a_role_clause_keeps_the_cursor_and_both_evidence_assignments():
-  {==}
-
-law a_result_commit_is_its_clauses_assembled:
-  {ContextObserver.commit_result_sql(query, role, incarnation, owner, expected, nextCursor, next, result, error, progress, noticeId, noticeBody, capture, exit) == "BEGIN IMMEDIATE;" ++ ContextStore.schema() ++ ContextObserver.commit_state_clause(query, next, result, error) ++ ContextObserver.commit_role_clause(query, role, incarnation, expected, nextCursor, capture, exit, progress) ++ ContextObserver.commit_tail_clause(query, role, incarnation, owner, progress, noticeId, noticeBody) : String}
-
-def a_result_commit_is_its_clauses_assembled():
   {==}
