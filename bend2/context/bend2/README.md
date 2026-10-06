@@ -20,17 +20,18 @@ Frontend facts this library relies on, with their kernel anchors:
 
 - `Loc` is a UTF-16 code-unit index into a source string (`332`, `parse_peek` `1599`).
 - `Span` is `{ src, beg, end }`, where `src` is source text rather than a path (`336`, `parse_span` `1590`).
-- `parse_col` computes a one-based column as `pos - src.lastIndexOf("\n", pos - 1)` (`1586`).
+- `parse_col` computes a column as `pos - src.lastIndexOf("\n", pos - 1)` (`1586`); that yields 1 at an ordinary line start and 0 at index 0 of text beginning with a line feed, because the platform `lastIndexOf` clamps its search position.
 - The loader reads the file as decoded UTF-8 text (`fs.readFileSync(file, "utf8")` `1057`) and splits
   that string on `"\n"` (`1058`), replaces each matched import line with the empty string (`1089`)
   and parses `lines.join("\n")` (`1097`). The import-line characters are removed and the newline
   separators remain.
 - The loader's own import span is zero-width at the specifier start (`1065`).
 
-The pins are a requirement on the input: a caller must supply bytes read from the frontend build
-identified by these digests, and must supply the correspondence the pinned loader produced. The
-library records the digest of the bytes it receives; it does not authenticate them and cannot verify
-which frontend read them.
+The pins constrain the compatible frontend implementation and the transformation observed in it: a
+caller must supply the correspondence that this pinned loader produced. Capture identity and digest
+refer to the target source bytes the caller supplies, which are not frontend artifact bytes. The
+library records the digest of those bytes; it does not authenticate them and cannot verify which
+frontend read them.
 
 ## Files and import closure
 

@@ -15,8 +15,11 @@
 // Frontend facts this module relies on, with their anchors in the kernel:
 //   Loc is a UTF-16 code-unit index into a source string (332, parse_peek 1599).
 //   Span is { src: string, beg: Loc, end: Loc }; src is source text, not a path (336, 1590).
-//   parse_col computes a one-based column as pos - src.lastIndexOf("\n", pos - 1) (1586).
-//   The loader reads bytes with fs.readFileSync(file, "utf8") (1057), splits on "\n" (1058),
+//   parse_col computes a column as pos - src.lastIndexOf("\n", pos - 1) (1586); that yields 1 at
+//     an ordinary line start and 0 at index 0 of text beginning with a line feed, because the
+//     platform lastIndexOf clamps its search position.
+//   The loader reads the file as decoded UTF-8 text (fs.readFileSync(file, "utf8"), 1057), splits
+//     that string on "\n" (1058),
 //   replaces each matched import line with the empty string (1089) and parses lines.join("\n")
 //   (1097). The transformation is therefore a removal of the import-line characters with the
 //   newline separators retained; this module never recomputes it, it consumes the caller's
@@ -411,7 +414,8 @@ export function createView(capture, { segments } = {}) {
   });
 }
 
-// The zero-based line and one-based column of a validated original index, following parse_col.
+// The zero-based line and the parse_col column of a validated original index; following parse_col,
+// the column is 0 at index 0 of text that begins with a line feed.
 export function locationOf(capture, index) {
   if (!isCapture(capture)) return unavailable('captureUnavailable');
   const bytes = capture.byteOffsetForUtf16(index);
