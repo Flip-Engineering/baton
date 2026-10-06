@@ -52,15 +52,39 @@ sends per-delta frames, `message_end` carries the complete message, and a
 ## Rotation
 
 `budget_bytes` bounds each public log. Before a frame is written, the
-coordinator reads the file size. At the budget the live log takes the name
-`<log>.1`, the numbered segments shift upward, the segment above
-`keep_segments` is removed, and the new live log opens with one
-`baton_log_rotation` frame naming the level, the budget and the retained
-segment count. `keep_segments` admits 1 to 4 segments. A reader following the
+coordinator reads the file size. At the budget the numbered segments shift one
+position up, the replacement of the highest one included, and the live log then
+takes the name `<log>.1` and opens with one `baton_log_rotation` frame naming
+the level, the budget and the numbered segments that held a file when the
+rotation ran. The live log moves exactly once per rotation.
+A budget admits 65536 bytes or more, which holds at least one
+observed frame: a measured OMP seat wrote 47 KB per retained frame, and a
+budget below one frame rotates on every append. The upper bound is the U32
+representation. `keep_segments` admits 1 to 4 segments today: the shift is one
+explicit rename chain per admitted count, because the language's termination
+checker requires a structurally decreasing argument and a numbered shift cannot
+recurse on a counter. That bound is temporary and its measurement is owed; a
+directory-listing effect would let the segment probe and the shift walk the
+segments that exist, which removes the bound and the unrolled chain together.
+A reader following the
 log by path reopens it after a change of
-name. Rotation uses one `rename` per segment and one `unlink` for the segment
-that leaves the count, so a concurrent reader sees either the old or the new
-name for each segment.
+name. Each step is one `rename`, so a concurrent reader sees either the old or
+the new name for each segment.
+
+A session with unacknowledged input rotates nothing. The shift overwrites the
+oldest numbered segment whether or not the unlink ran, so a rotation that would
+drop it is skipped and the live log records
+`{"type":"baton_log_rotation","skipped":"pending-input",...}` while it keeps
+growing. Answering the input lets the next turn rotate. For every other session
+the oldest segment leaves the count: a retained receive keeps the same frames in
+its attempt directory, every report and terminal frame is in the database, and
+the note names the numbered segments that held a file when the rotation ran, so
+a rename whose source was already gone is visible. A step that fails stops the
+chain: the remaining segments stay where they are, the frame the step was
+rotating for is still appended, and each append that could not rotate writes one
+`baton_log_rotation` frame with `"failed":true` naming the error. Appends
+continue after a failed rotation; an append that fails itself stops that log for
+the rest of the turn.
 
 The defaults are 32 MiB and two retained segments. A measured OMP seat wrote
 47 KB per retained frame and one live log reached 773 MB, of which 95.8% of
@@ -87,7 +111,9 @@ covers is marked `"eligible": true`.
 answers with each removed path, its index and its size. It reads the same
 eligibility rule `logs-storage` reports. The live log, `OUTPUT_LOG.stderr`,
 attempt directories, pending messages and provider stores stay untouched. A
-session with no registered log answers with an empty removal list.
+session with unacknowledged input removes nothing and its answer names
+`"skipped":"pending-input"` and the pending count. A session with no registered
+log answers with an empty removal list.
 
 ## Write failures
 
@@ -98,6 +124,11 @@ and the failure reaches the parent as a native output observation. A delivery
 whose `<database>.root.log` record cannot be written answers with a failure
 that names the delivery log; the endpoint has already run and the recipient's
 inbox holds the message.
+
+A turn whose native output read fails writes the prefix frames it still holds
+and then one `baton_log_interrupted` frame naming how many it wrote, so the
+partial output is in the log and its interruption is named. Both writes are
+best effort: a log that already failed takes neither.
 
 ## Measurement
 
@@ -112,6 +143,12 @@ and a `raw` batch that fixes the retention semantics of frames that name
 `tool_execution_update` workload.
 
 ## Open work
+
+A held prefix frame lives in the coordinator's memory until the frame that
+closes its call arrives or the turn reaches the end of its output. A
+coordinator killed before that point writes no held frame. A retained receive
+keeps the raw stream in its attempt directory, which holds the same frames; a
+direct turn loses the last partial update of every call it had open.
 
 A receive that attaches to a retained attempt reads the attempt from its first
 frame and appends each retained frame to the public log again. Rotation bounds

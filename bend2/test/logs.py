@@ -73,6 +73,16 @@ assert sys.stdin.read()==''
     def lines(self, path=None):
         return (path or self.log).read_text().splitlines()
 
+    def rotated_frames(self):
+        """Every frame line, oldest first, across the numbered segments and the live log."""
+        lines = []
+        for index in (4, 3, 2, 1):
+            path = self.cwd / ('turn.jsonl.%d' % index)
+            if path.exists() and path.is_file():
+                lines += path.read_text().splitlines()
+        lines += self.lines()
+        return [line for line in lines if 'baton_log_rotation' not in line and 'baton_event_filter' not in line]
+
     def terminal(self, text='Complete answer λ'):
         return json.dumps({'type': 'agent_end', 'isTerminal': True,
                            'messages': [{'role': 'assistant', 'content': [{'type': 'text', 'text': text}]}]})
@@ -155,14 +165,51 @@ assert sys.stdin.read()==''
         self.stream(frames + [self.terminal()])
         self.assertTrue((self.cwd / 'turn.jsonl.1').exists())
         live = self.lines()
-        self.assertEqual(json.loads(live[0]), {'type': 'baton_log_rotation', 'level': 'default',
-                                               'budgetBytes': 65536, 'retainedSegments': 2})
+        note = json.loads(live[0])
+        self.assertEqual(note['type'], 'baton_log_rotation')
+        self.assertEqual(note['level'], 'default')
+        self.assertEqual(note['budgetBytes'], 65536)
+        self.assertEqual(note['retainedSegments'], 2)
+        self.assertEqual(note['moved'], [1])
         self.assertLess(self.log.stat().st_size, 65536 + len(self.terminal()) + 200)
         self.assertLessEqual((self.cwd / 'turn.jsonl.1').stat().st_size, 65536 + 20000)
         self.assertFalse((self.cwd / 'turn.jsonl.3').exists())
         note = '{"type":"baton_event_filter","requested":"delta","active":false,"outcome":"unacknowledged"}'
         self.assertEqual(live[-1], note)
         self.assertEqual(live[-2], self.terminal())
+        self.assertEqual([json.loads(line).get('id') for line in self.rotated_frames()],
+                         ['r%d' % i for i in range(10)] + [None])
+
+    def test_rotation_is_skipped_while_input_is_unanswered(self):
+        self.call('message', 'hold-1', 'root', 'omp-worker', 'guidance', 'Answer this before rotating.')
+        self.call('logs', 'omp-worker', 'default', '65536', '2')
+        frames = [json.dumps({'type': 'response', 'id': 'r%d' % i, 'command': 'probe', 'pad': 'y' * 20000}) for i in range(10)]
+        self.stream(frames + [self.terminal()])
+        live = self.lines()
+        skipping = [line for line in live if '"skipped":"pending-input"' in line]
+        self.assertTrue(skipping, live[-3:])
+        self.assertEqual(json.loads(skipping[0])['budgetBytes'], 65536)
+        self.assertFalse((self.cwd / 'turn.jsonl.1').exists())
+        self.assertGreater(self.log.stat().st_size, 65536)
+        self.assertEqual(json.loads(self.call('inbox', 'omp-worker'))[0]['id'], 'hold-1')
+
+    def test_rotation_stops_when_a_shift_step_fails(self):
+        self.call('logs', 'omp-worker', 'default', '65536', '2')
+        blocker = self.cwd / 'turn.jsonl.2'
+        blocker.mkdir()
+        frames = [json.dumps({'type': 'response', 'id': 'r%d' % i, 'command': 'probe', 'pad': 'y' * 20000}) for i in range(10)]
+        self.stream(frames + [self.terminal()])
+        self.assertTrue(blocker.is_dir())
+        self.assertTrue((self.cwd / 'turn.jsonl.1').exists())
+        live = self.lines()
+        self.assertEqual(len([line for line in live if '"moved"' in line]), 1)
+        failures = [json.loads(line) for line in live if '"failed":true' in line]
+        self.assertTrue(failures, live[-4:])
+        self.assertTrue(all('error' in item for item in failures), failures)
+        self.assertIn('r9', self.log.read_text())
+        self.assertIn('r0', (self.cwd / 'turn.jsonl.1').read_text())
+        self.assertTrue(blocker.is_dir())
+        self.assertTrue((self.cwd / 'turn.jsonl.1').exists())
 
     def test_rotation_removes_the_segment_above_the_count(self):
         self.call('logs', 'omp-worker', 'default', '65536', '1')
@@ -274,6 +321,19 @@ assert sys.stdin.read()==''
                          ['message_end', 'agent_end', 'message_start', 'baton_event_filter'])
         self.assertEqual([json.loads(line).get('messageId') for line in self.lines()][:3],
                          ['closed-1', None, 'open-1'])
+
+    def test_cleanup_keeps_segments_while_input_is_unanswered(self):
+        self.call('logs', 'omp-worker', 'default', '65536', '2')
+        frames = [json.dumps({'type': 'response', 'id': 'r%d' % i, 'command': 'probe', 'pad': 'y' * 20000}) for i in range(16)]
+        self.stream(frames + [self.terminal()])
+        self.call('logs', 'omp-worker', 'default', '65536', '1')
+        self.call('message', 'hold-2', 'root', 'omp-worker', 'guidance', 'Answer this before cleanup.')
+        answer = json.loads(self.call('logs-clean', 'omp-worker'))
+        self.assertEqual(answer['removed'], [])
+        self.assertEqual(answer['skipped'], 'pending-input')
+        self.assertEqual(answer['pendingInput'], 1)
+        self.assertTrue((self.cwd / 'turn.jsonl.1').exists())
+        self.assertTrue((self.cwd / 'turn.jsonl.2').exists())
 
     def test_unwritable_log_reports_the_failure_and_keeps_the_report(self):
         unwritable = self.cwd / 'log-directory'

@@ -297,6 +297,8 @@ def consume(+db: String, +player: String, +id: String, +log: String, +policy: Lo
       closed : Result<&1,&1,U32 & String,Unit> <- P.ProcessChild.close_stdin(handle)
       sent : Result<&1,&1,U32 & String,Unit> <- IO.join(Result<&1,&1,U32 & String,Unit>,sender)
       waited : Result<&1,&1,U32 & String,String> <- P.ProcessChild.wait(handle)
+      flushed : Result<&1,&1,U32 & String,Unit> <- Logs.write_lines(policy,log,Logs.flush(held),log_failed)
+      named : Result<&1,&1,U32 & String,Unit> <- Logs.write_lines(policy,log,Logs.interrupted(held),log_failed)
       IO.pure(Outcome & List<Chan(Result<&1,&1,U32 & String,String>)>,(Ended{status_text(waited),terminal,"Native output read failed: " ++ error_text(error)},deliveries))
     case Done{None{}}:
       do IO<Outcome & List<Chan(Result<&1,&1,U32 & String,String>)>>:

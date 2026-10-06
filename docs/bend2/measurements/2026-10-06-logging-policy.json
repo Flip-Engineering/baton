@@ -2,7 +2,9 @@
   "description": "Retained public-log bytes for one controlled OMP frame workload, before and after the issue #686 log policy. Both runs use the same driver, the same batches and the same provider-free fixture; only the executable differs.",
   "source_revisions": {
     "baseline": "fca7af876c8260c32d17f95f3e19bc68ee1bf561",
-    "candidate": "1edeb0f9"
+    "candidate_feature": "1edeb0f9501679a6819426eab825e820faf33119",
+    "candidate_measured": "f438f2d3d8927df64d40843d3f7fa172aefe8fc4",
+    "candidate_branch": "codex/logging-impl-20261006"
   },
   "executable_sha256": {
     "baseline": "972d620ce6209193cb91273350a9c1ea2713cac6b4b2bcf692a6303df75c766c",
