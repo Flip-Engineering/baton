@@ -16,7 +16,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { test } from 'node:test';
 
-import { createSqliteSession, openReadOnlySqlite } from '../../context/catalogs/sqlite-catalog.mjs';
+import { captureSqliteSnapshot, createSqliteSession, openReadOnlySqlite } from '../../context/catalogs/sqlite-catalog.mjs';
 
 function subjectFile() {
   const directory = mkdtempSync(join(tmpdir(), 'baton-context-session-'));
@@ -259,6 +259,66 @@ test('an open-path close failure is reported on the open error', () => {
         return true;
       },
     );
+  } finally {
+    subject.remove();
+  }
+});
+
+test('the release reports what happened instead of throwing or swallowing it', () => {
+  const subject = subjectFile();
+  try {
+    const closeError = Object.assign(new Error('close refused'), { code: 'SQLITE_BUSY' });
+    const failing = scriptedDatabase({ realPath: subject.realPath, rows: HAPPY_ROWS, closeError });
+    const failingSession = createSqliteSession({ path: subject.path, DatabaseSync: failing.DatabaseSync });
+    const release = failingSession.close();
+    assert.equal(release.closed, false, 'a release that could not free the connection says so');
+    assert.deepEqual(release.diagnostics, [{ stage: 'sqliteSession:close', code: 'SQLITE_BUSY', message: 'close refused' }]);
+    assert.equal(failing.instances[0].closes, 1);
+    assert.deepEqual(failingSession.close(), { closed: true, alreadyClosed: true, diagnostics: [] }, 'a repeat release is a no-op');
+
+    const commitFailing = scriptedDatabase({
+      realPath: subject.realPath,
+      rows: HAPPY_ROWS,
+      execFailures: { COMMIT: { message: 'no transaction is active' } },
+    });
+    const commitSession = createSqliteSession({ path: subject.path, DatabaseSync: commitFailing.DatabaseSync });
+    const commitRelease = commitSession.close();
+    assert.equal(commitRelease.closed, true, 'the connection still closes');
+    assert.deepEqual(commitRelease.diagnostics, [{ stage: 'sqliteSession:commit', code: null, message: 'no transaction is active' }]);
+    assert.equal(commitFailing.instances[0].closes, 1);
+
+    const clean = scriptedDatabase({ realPath: subject.realPath, rows: HAPPY_ROWS });
+    const cleanSession = createSqliteSession({ path: subject.path, DatabaseSync: clean.DatabaseSync });
+    assert.deepEqual(cleanSession.close(), { closed: true, alreadyClosed: false, diagnostics: [] });
+  } finally {
+    subject.remove();
+  }
+});
+
+test('the capture wrapper returns the release record and attaches its diagnostics on failure', () => {
+  const subject = subjectFile();
+  try {
+    const clean = scriptedDatabase({ realPath: subject.realPath, rows: HAPPY_ROWS });
+    const snapshot = captureSqliteSnapshot({ path: subject.path, DatabaseSync: clean.DatabaseSync, statements: [] });
+    assert.deepEqual(snapshot.release, { closed: true, alreadyClosed: false, diagnostics: [] });
+    assert.equal(clean.instances[0].closes, 1);
+
+    const closeError = Object.assign(new Error('close refused'), { code: 'SQLITE_BUSY' });
+    const failing = scriptedDatabase({
+      realPath: subject.realPath,
+      rows: HAPPY_ROWS,
+      failures: { 'EXPLAIN SQL': { message: 'statement analysis failed' } },
+      closeError,
+    });
+    assert.throws(
+      () => captureSqliteSnapshot({ path: subject.path, DatabaseSync: failing.DatabaseSync, statements: [{ sql: 'SQL' }] }),
+      error => {
+        assert.equal(error.message, 'statement analysis failed', 'the analysis error stays the thrown one');
+        assert.deepEqual(error.cleanup, [{ stage: 'sqliteSession:close', code: 'SQLITE_BUSY', message: 'close refused' }]);
+        return true;
+      },
+    );
+    assert.equal(failing.instances[0].closes, 1);
   } finally {
     subject.remove();
   }

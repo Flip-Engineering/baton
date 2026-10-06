@@ -289,6 +289,7 @@ export async function catalogAdapterMain({ readStdin, writeStdout, writeStderr }
       const session = createSqliteSession({ path: database.path, DatabaseSync });
       let joined = { relations: [], refs: [], limits: [] };
       let snapshot;
+      let release = null;
       try {
         if (operation === 'codeAccessJoin') joined = session.join({ records });
         snapshot = {
@@ -299,8 +300,15 @@ export async function catalogAdapterMain({ readStdin, writeStdout, writeStderr }
           originCapability: session.originCapability,
         };
       } finally {
-        session.close();
+        release = session.close();
       }
+      // A release that could not confirm the connection was freed is reported as
+      // a limit rather than implied by a successful frame.
+      const releaseLimits = release.closed === true ? [] : [{
+        projection: 'catalog',
+        code: 'sessionReleaseUnconfirmed',
+        detail: `the read-only connection release reported ${release.diagnostics.map(entry => entry.stage).join(', ')}`,
+      }];
       const databaseSelector = { engine: 'sqlite-schema', path: snapshot.identity.realPath };
       const facts = factsFromSnapshot({ provider, snapshot, select, subject });
       if (select.includes('columnOrigins')) {
@@ -333,7 +341,7 @@ export async function catalogAdapterMain({ readStdin, writeStdout, writeStderr }
         facts,
         relations: joined.relations,
         refs: [...refsFromSnapshot({ provider, snapshot, subject, databaseSelector }), ...joined.refs],
-        limits: [...snapshot.limits, ...joined.limits, ...projectionLimits(select, unsupported)],
+        limits: [...snapshot.limits, ...joined.limits, ...projectionLimits(select, unsupported), ...releaseLimits],
         coverage: {
           examined: [snapshot.identity.realPath],
           excluded: [],

@@ -69,17 +69,25 @@ export function fileIdentityOf(path) {
 // Failure cleanup never replaces the original error. The thrown error is
 // rethrown unchanged, and a cleanup that itself fails is reported on it as a
 // `cleanup` entry, so a failure never reads as a successful release.
-function attachCleanup(error, stage, cleanupError) {
-  const diagnostic = {
+function cleanupDiagnostic(stage, cleanupError) {
+  return {
     stage,
     code: cleanupError?.code ?? null,
     message: String(cleanupError?.message ?? cleanupError),
   };
+}
+
+function attachDiagnostics(error, diagnostics) {
+  if (!Array.isArray(diagnostics) || diagnostics.length === 0) return error;
   if (error !== null && typeof error === 'object') {
     const existing = Array.isArray(error.cleanup) ? error.cleanup : [];
-    error.cleanup = [...existing, diagnostic];
+    error.cleanup = [...existing, ...diagnostics];
   }
-  return diagnostic;
+  return error;
+}
+
+function attachCleanup(error, stage, cleanupError) {
+  return attachDiagnostics(error, [cleanupDiagnostic(stage, cleanupError)]);
 }
 
 function closeOnFailure(db, error, stage) {
@@ -430,16 +438,26 @@ export function createSqliteSession({ path, DatabaseSync }) {
         const after = connectionIdentity(db);
         return { stableWithinTransaction: canonicalJson(connection) === canonicalJson(after), before: connection, after };
       },
+      // Release is reported, never thrown: a caller's finally must not mask an
+      // earlier error, and a failed commit or close must not read as success.
+      // The returned record names what actually happened so a caller keeps the
+      // evidence instead of inferring it from the absence of a throw.
       close() {
-        if (session.closed) return;
+        if (session.closed) return { closed: true, alreadyClosed: true, diagnostics: [] };
         session.closed = true;
+        const diagnostics = [];
         try {
           db.exec('COMMIT');
-        } catch {
-          // A read-only transaction that already ended reports its own error
-          // here; the close below still releases the connection.
+        } catch (commitError) {
+          diagnostics.push(cleanupDiagnostic('sqliteSession:commit', commitError));
         }
-        db.close();
+        try {
+          db.close();
+          return { closed: true, alreadyClosed: false, diagnostics };
+        } catch (closeError) {
+          diagnostics.push(cleanupDiagnostic('sqliteSession:close', closeError));
+          return { closed: false, alreadyClosed: false, diagnostics };
+        }
       },
     };
     return session;
@@ -456,15 +474,18 @@ export function createSqliteSession({ path, DatabaseSync }) {
 }
 
 // Convenience wrapper for callers that need a capture and no later analysis.
-// The session is the only path to statement analysis inside the snapshot.
+// The session is the only path to statement analysis inside the snapshot. The
+// release record is returned on success and attached to a thrown error, so a
+// caller sees what the release actually did on either path.
 export function captureSqliteSnapshot({ path, DatabaseSync, statements = [] }) {
   const session = createSqliteSession({ path, DatabaseSync });
   try {
     const plans = statements.map(statement => session.analyze(statement));
     const { catalog, limits, identity } = session;
-    return { identity, catalog, plans, limits, stableWithinTransaction: session.stability().stableWithinTransaction };
-  } finally {
-    session.close();
+    const snapshot = { identity, catalog, plans, limits, stableWithinTransaction: session.stability().stableWithinTransaction };
+    return { ...snapshot, release: session.close() };
+  } catch (error) {
+    throw attachDiagnostics(error, session.close().diagnostics);
   }
 }
 
