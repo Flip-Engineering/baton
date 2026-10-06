@@ -235,8 +235,18 @@ def tool_input_name(+name: String) -> String:
 def env_tool_name(+env: Envelope) -> String:
   tool_input_name(env_tool_text(env))
 
+# The raw MCP-envelope input boundary admits only the three public names, so an internal
+# tool name is refused here even though `codec_tool_of` keeps the native vocabulary for
+# internal consumers and for the emitted document.
+def public_tool_name_ok(+name: String) -> Bool:
+  match name:
+    case "baton2_context_query": True{}
+    case "baton2_context_result": True{}
+    case "baton2_context_engines": True{}
+    case other: False{}
+
 def env_tool_known(+env: Envelope) -> Bool:
-  tool_present(Context.codec_tool_of(env_tool_name(env)))
+  Bool.and(public_tool_name_ok(env_tool_text(env)), tool_present(Context.codec_tool_of(env_tool_name(env))))
 
 # The acceptance path is guarded by `env_tool_known`, so the fallback here is
 # unreachable for an accepted envelope.
@@ -2155,12 +2165,25 @@ law codec_law_a_public_mcp_name_maps_to_its_native_tool_name:
 def codec_law_a_public_mcp_name_maps_to_its_native_tool_name():
   {==}
 
-# A frame that differs only in which of the two accepted names it carries decides
-# identically, so the alias does not change the accepted envelope shape.
-law codec_law_a_public_mcp_query_name_decides_as_the_native_name:
-  {envelope_text(envelope_decide(EnvFrame{"2.0", "tools/call", "baton2_context_query", Context.IdText{"7"}, Context.Present{"q1"}, RtText{"{\"version\":1}"}, True{}, True{}, True{}})) == envelope_text(envelope_decide(EnvFrame{"2.0", "tools/call", "context-query", Context.IdText{"7"}, Context.Present{"q1"}, RtText{"{\"version\":1}"}, True{}, True{}, True{}})) : String}
+# A public name is admitted and an internal tool name is not: the internal name decides
+# exactly as an unknown name does, so the input vocabulary is the three public names
+# while `codec_tool_of` keeps the native vocabulary for internal consumers.
+law codec_law_a_public_mcp_query_name_is_an_admitted_input:
+  {public_tool_name_ok("baton2_context_query") == True{} : Bool}
 
-def codec_law_a_public_mcp_query_name_decides_as_the_native_name():
+def codec_law_a_public_mcp_query_name_is_an_admitted_input():
+  {==}
+
+law codec_law_an_internal_tool_name_is_not_an_admitted_input:
+  {public_tool_name_ok("context-query") == False{} : Bool}
+
+def codec_law_an_internal_tool_name_is_not_an_admitted_input():
+  {==}
+
+law codec_law_an_internal_tool_name_refuses_as_an_unknown_tool:
+  {envelope_text(envelope_decide(EnvFrame{"2.0", "tools/call", "context-query", Context.IdText{"7"}, Context.Present{"q1"}, RtText{"{\"version\":1}"}, True{}, True{}, True{}})) == envelope_text(envelope_decide(EnvFrame{"2.0", "tools/call", "not-a-tool", Context.IdText{"7"}, Context.Present{"q1"}, RtText{"{\"version\":1}"}, True{}, True{}, True{}})) : String}
+
+def codec_law_an_internal_tool_name_refuses_as_an_unknown_tool():
   {==}
 
 # A name outside both accepted sets falls through the mapping unchanged and is refused

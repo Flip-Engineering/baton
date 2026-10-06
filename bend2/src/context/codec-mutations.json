@@ -309,8 +309,8 @@
  {
   "name": "codec-public-mcp-name-maps-to-the-wrong-tool",
   "file": "bend2/src/context/codec.bend",
-  "find": "    case \"baton2_context_query\": \"context-query\"",
-  "replace": "    case \"baton2_context_query\": \"context-engines\"",
-  "law": "codec_law_a_public_mcp_query_name_decides_as_the_native_name"
+  "find": "    case \"baton2_context_result\": \"context-result\"",
+  "replace": "    case \"baton2_context_result\": \"context-query\"",
+  "law": "codec_law_a_public_mcp_name_maps_to_its_native_tool_name"
  }
 ]
