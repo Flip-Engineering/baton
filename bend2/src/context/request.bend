@@ -123,10 +123,10 @@ def tail_pair(+head: U32, +next: U32) -> U32:
   U32.or(U32.mul(U32.and(head, 31), 64), low6(next))
 
 def three_cp(+b0: U32, +b1: U32, +b2: U32) -> U32:
-  U32.or(U32.mul(U32.and(b0, 15), 4096), tail_pair(b1, b2))
+  U32.or(U32.mul(U32.and(b0, 15), 4096), U32.or(U32.mul(low6(b1), 64), low6(b2)))
 
 def four_cp(+b0: U32, +b1: U32, +b2: U32, +b3: U32) -> U32:
-  U32.or(U32.mul(U32.and(b0, 7), 262144), U32.or(U32.mul(U32.and(b1, 63), 4096), tail_pair(b2, b3)))
+  U32.or(U32.mul(U32.and(b0, 7), 262144), U32.or(U32.mul(U32.and(b1, 63), 4096), U32.or(U32.mul(low6(b2), 64), low6(b3))))
 
 def overlong3(+b0: U32, +b1: U32) -> Bool:
   Bool.pick(Bool, U32.is_eq(b0, 224), U32.is_lt(b1, 160), False{})

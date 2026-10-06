@@ -13,6 +13,7 @@
 # as absent. Missing, malformed and unknown therefore stay distinct from a committed
 # grant, and a failed bound call stays a failure rather than an absence.
 import Base
+import ./request.bend as Request
 import ./text.bend as ContextText
 import ../coordinator/commands.bend as C
 import ../host/sqlite.bend as DB
@@ -56,11 +57,22 @@ def hex_ok(s: String) -> Bool:
         case SNil{}: False{}
         case SCon{b, more}: Bool.and(Bool.and(hex_digit_ok(a), hex_digit_ok(b)), hex_ok(more))
 
+def association_scalars(plan: Request.Scalar, identity: Request.Scalar, schema: Request.Scalar, +answer: String) -> Association:
+  match plan:
+    case Request.ScalarText{planValue}:
+      match identity:
+        case Request.ScalarText{identityValue}:
+          match schema:
+            case Request.ScalarText{schemaValue}: AssociationStored{planValue, identityValue, schemaValue}
+            case _: AssociationMalformed{"scalar", answer}
+        case _: AssociationMalformed{"scalar", answer}
+    case _: AssociationMalformed{"scalar", answer}
+
 def association_mark(+mark: String, +plan: String, +identity: String, +schema: String, +answer: String) -> Association:
   Bool.pick(Association, String.eq(mark, "absent"),
     Bool.pick(Association, Bool.and(Bool.and(String.is_empty(plan), String.is_empty(identity)), String.is_empty(schema)), AssociationMissing{}, AssociationMalformed{"shape", answer}),
   Bool.pick(Association, String.eq(mark, "present"),
-    Bool.pick(Association, Bool.and(Bool.and(hex_ok(plan), hex_ok(identity)), hex_ok(schema)), AssociationStored{ContextText.hex_decode(plan), ContextText.hex_decode(identity), ContextText.hex_decode(schema)}, AssociationMalformed{"framing", answer}),
+    Bool.pick(Association, Bool.and(Bool.and(hex_ok(plan), hex_ok(identity)), hex_ok(schema)), association_scalars(Request.decode_scalar_utf8(ContextText.hex_decode(plan)), Request.decode_scalar_utf8(ContextText.hex_decode(identity)), Request.decode_scalar_utf8(ContextText.hex_decode(schema)), answer), AssociationMalformed{"framing", answer}),
     AssociationMalformed{"mark", answer}))
 
 def association_fields(fields: List<String>, +answer: String) -> Association:
@@ -302,3 +314,9 @@ def admit_text(admission: Admission) -> String:
     case AdmissionRetained{owner, request, decision, state, attempt, keeperPath, cwd, artifactPath}: "retained:" ++ decision ++ ":" ++ state ++ ":" ++ attempt
     case AdmissionAbsent{}: "absent"
     case AdmissionUncertain{stage, answer}: "uncertain:" ++ stage
+
+law a_retained_association_decodes_unicode_scalars:
+  {association_decode("present\tc3a9e4b8ad\t6964\te4b8ad\n") == AssociationStored{"é中", "id", "中"} : Association}
+
+def a_retained_association_decodes_unicode_scalars():
+  {==}

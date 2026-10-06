@@ -1307,20 +1307,21 @@ def frame_decision(+r: EnvelopeRead) -> FrameDecision:
 
 # --- laws ------------------------------------------------------------------
 
-def row_sample() -> Req.Row:
-  Req.Row{"1", "0", "text", "6a736f6e727063", "322e30"}
-
 def row_hex(text: String) -> String:
   J.utf8_hex(J.utf8(text))
 
+def row_sample() -> Req.Row:
+  Req.Row{row_hex("1"), row_hex("0"), row_hex("text"), "6a736f6e727063", "322e30"}
+
+
 def text_row(id: String, parent: String, key: String, value: String) -> Req.Row:
-  Req.Row{id, parent, "text", row_hex(key), row_hex(value)}
+  Req.Row{row_hex(id), row_hex(parent), row_hex("text"), row_hex(key), row_hex(value)}
 
 def object_row(id: String, parent: String, key: String) -> Req.Row:
-  Req.Row{id, parent, "object", row_hex(key), SNil{}}
+  Req.Row{row_hex(id), row_hex(parent), row_hex("object"), row_hex(key), SNil{}}
 
 def number_row(id: String, parent: String, key: String, token: String) -> Req.Row:
-  Req.Row{id, parent, "integer", row_hex(key), row_hex(token)}
+  Req.Row{row_hex(id), row_hex(parent), row_hex("integer"), row_hex(key), row_hex(token)}
 
 # One row per transport line, so a frame's shape is readable and its close count is
 # not hand-written.
@@ -1535,10 +1536,10 @@ def record_probe(+subject: String, policy: String, +projections: Eng.SS) -> Refs
   Refs.Ref{"r1", "typescript", subject, subject, "s1", policy, projections}
 
 def real_row(id: String, parent: String, key: String, token: String) -> Req.Row:
-  Req.Row{id, parent, "real", row_hex(key), row_hex(token)}
+  Req.Row{row_hex(id), row_hex(parent), row_hex("real"), row_hex(key), row_hex(token)}
 
 def null_row(id: String, parent: String, key: String) -> Req.Row:
-  Req.Row{id, parent, "null", row_hex(key), SNil{}}
+  Req.Row{row_hex(id), row_hex(parent), row_hex("null"), row_hex(key), SNil{}}
 
 def meta_token_row(+id: String, +parent: String, kind: String, token: String) -> Req.Row:
   Bool.pick(Req.Row, String.eq(kind, "null"), null_row(id, parent, "progressToken"), real_row(id, parent, "progressToken", token))
@@ -1580,12 +1581,12 @@ def broken_frame_rows() -> Req.Rows:
 def bad_field_rows() -> Req.Rows:
   rows_of([
     object_row("0", SNil{}, SNil{}),
-    Req.Row{"1", "0", row_hex("text"), "7z", row_hex("v")}])
+    Req.Row{row_hex("1"), row_hex("0"), row_hex("text"), "7z", row_hex("v")}])
 
 def bad_utf8_rows() -> Req.Rows:
   rows_of([
     object_row("0", SNil{}, SNil{}),
-    Req.Row{"1", "0", row_hex("text"), row_hex("k"), "ff"}])
+    Req.Row{row_hex("1"), row_hex("0"), row_hex("text"), row_hex("k"), "ff"}])
 
 # A reference that came through the actual decoder composes into Core, and the
 # composed admission is exercised on that decoded record rather than on a
@@ -1665,7 +1666,7 @@ def sole_value(+v: RawValue) -> String:
 def value_row(hex: String) -> Req.Rows:
   rows_of([
     object_row("0", SNil{}, SNil{}),
-    Req.Row{"1", "0", row_hex("text"), row_hex("k"), hex}])
+    Req.Row{row_hex("1"), row_hex("0"), row_hex("text"), row_hex("k"), hex}])
 
 def astral_rows() -> Req.Rows:
   value_row("f09f9880")
@@ -1697,7 +1698,7 @@ def unknown_params_rows() -> Req.Rows:
     text_row("7", "4", "extra", "x")])
 
 def array_row(id: String, parent: String, key: String) -> Req.Row:
-  Req.Row{id, parent, "array", row_hex(key), SNil{}}
+  Req.Row{row_hex(id), row_hex(parent), row_hex("array"), row_hex(key), SNil{}}
 
 def nested_request_rows() -> Req.Rows:
   rows_of([
