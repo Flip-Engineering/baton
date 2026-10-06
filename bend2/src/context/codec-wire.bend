@@ -1,21 +1,27 @@
 # CLAIM: the common module transport envelope is one closed shape per direction, and
-# this module renders and reads it. The invocation carries version, query, owner, the
-# module binding, the canonical request value, the admitted input identities, the
-# granted operation plan, and the role and incarnation; the event and result carry
-# version, query, owner, the binding, the runtime, role, incarnation, sequence, type and
-# payload.
+# this module renders it and reads it back.
 #
-# The composite members are canonical JSON values supplied by their owners, so the
-# module binding, the operation plan, the input identities and a payload keep one source
-# each and this module does not spell them a second time. The scalar members are mapped
-# here: the version is the number 2, an empty query, owner, runtime, role or incarnation
-# is null, and the sequence keeps its exact decimal text as text, because the canonical
-# encoder has no numeric form wider than U32 and the profile requires the exact text.
+# The reader requires the full member set of a direction and the kind of every member
+# before it extracts anything, so a frame with only a version is not an invocation, a
+# null is distinct from a missing member and from a member of the wrong kind, and an
+# incomplete frame refuses instead of arriving with defaulted fields. The direction is
+# reached from the member set and the member kinds together, so no partial frame is
+# ambiguous.
 #
-# The reader checks the member set of each direction through the same key admission the
-# frame path uses, so a duplicate or unknown member refuses, and it requires the version
-# to be the number two. A decoded composite member is carried as the raw value it
-# decoded to.
+# The sequence composes Core's own canonical unsigned decimal, so there is one policy for
+# it and a leading zero refuses, and the sequence keeps its exact text with no upper
+# bound.
+#
+# The composite members are canonical JSON values supplied by their owners, so the module
+# binding, the plan, the input identities and a producer keep one source and this module
+# does not spell them a second time. The scalar members are mapped here: the version is
+# the number 2, and an empty query, owner, runtime, role or incarnation is null.
+#
+# Known limitation, reported rather than hidden: the canonical encoder has no numeric
+# form wider than U32, so a payload supplied as a canonical JSON value cannot carry a
+# number token such as 1e400 or a negative decimal. Such a value needs the lane's raw
+# value encoder or Core ownership, and it is not silently narrowed or turned into text
+# here.
 #
 # Ownership: the members belong to their producers; this module owns the envelope member
 # set and order. The declaration and schema identity are package-supplied.
@@ -25,6 +31,9 @@ import ../json/canonical.bend as J
 import ./codec.bend as Codec
 import ./contracts.bend as Context
 import ./request.bend as Req
+# The sequence policy is Core's, so this import resolves when the codec and Core closure
+# is merged; it is the one cross-worktree dependency of this module.
+import ./snapshot-validate.bend as SV
 
 # --- the closed shapes -----------------------------------------------------
 
@@ -33,12 +42,185 @@ type WireRead is Data:
   WrEvent{version: String, query: Context.OptText, owner: Context.OptText, producer: Codec.RawValue, runtime: Context.OptText, role: Context.OptText, incarnation: Context.OptText, sequence: String, frame_type: String, payload: Codec.RawValue}
   WrRefused{condition: String}
 
-# --- the serializer --------------------------------------------------------
+# --- small helpers ---------------------------------------------------------
 
-# A member that is absent when its text is empty. A direct invocation carries no role
-# and no incarnation, and an unsolicited query-null event carries no query.
 def wire_nullable(+text: String) -> J.Json:
   Bool.pick(J.Json, String.is_empty(text), J.Jnull{}, J.Jstr{text})
+
+def wire_value_member(+name: String, +members: Codec.RawValue) -> Codec.RawValue:
+  wire_value_or(Codec.raw_member(name, members))
+
+def wire_value_or(found: Maybe<&2, Codec.RawValue>) -> Codec.RawValue:
+  match found:
+    case None{}: Codec.Rnil{}
+    case Some{value}: value
+
+def wire_text_member(+name: String, +members: Codec.RawValue) -> Context.OptText:
+  wire_text_of(Codec.raw_member(name, members))
+
+def wire_text_of(found: Maybe<&2, Codec.RawValue>) -> Context.OptText:
+  match found:
+    case None{}: Context.Absent{}
+    case Some{value}: wire_text_value(value)
+
+def wire_text_value(value: Codec.RawValue) -> Context.OptText:
+  match value:
+    case Codec.Rnull{}: Context.Absent{}
+    case Codec.Rstr{+text}:
+      Bool.pick(Context.OptText, String.is_empty(text), Context.Absent{}, Context.Present{text})
+    case other: Context.Absent{}
+
+def wire_name_present(+name: String, +members: Codec.RawValue) -> Bool:
+  Codec.raw_member_present(name, members)
+
+# A member of one of the kinds the shape allows at its position.
+def wire_kind_is(+kind: String, +name: String, +members: Codec.RawValue) -> Bool:
+  Bool.pick(Bool, wire_name_present(name, members), wire_kind_of_value(kind, wire_value_member(name, members)), False{})
+
+def wire_kind_of_value(+kind: String, value: Codec.RawValue) -> Bool:
+  match kind:
+    case "textOrNull": wire_text_or_null(value)
+    case "text": wire_text_kind(value)
+    case "any": wire_any_kind(value)
+    case other: False{}
+
+def wire_text_or_null(value: Codec.RawValue) -> Bool:
+  match value:
+    case Codec.Rnull{}: True{}
+    case Codec.Rstr{+text}: True{}
+    case other: False{}
+
+def wire_text_kind(value: Codec.RawValue) -> Bool:
+  match value:
+    case Codec.Rstr{+text}: True{}
+    case other: False{}
+
+def wire_any_kind(value: Codec.RawValue) -> Bool:
+  match value:
+    case Codec.Rnil{}: False{}
+    case Codec.Rpair{+key, +value, +rest}: False{}
+    case other: True{}
+
+def wire_version_is_two(value: Codec.RawValue) -> Bool:
+  match value:
+    case Codec.Rnum{+token}: String.eq(token, "2")
+    case other: False{}
+
+# --- the member plans ------------------------------------------------------
+
+def wire_invocation_names() -> Req.Words:
+  Req.words_from(["version", "query", "owner", "moduleBinding", "request", "inputIdentities", "operationPlan", "role", "incarnation"])
+
+def wire_event_names() -> Req.Words:
+  Req.words_from(["version", "query", "owner", "moduleBinding", "runtime", "role", "incarnation", "sequence", "type", "payload"])
+
+def wire_invocation_names_present(+members: Codec.RawValue) -> Bool:
+  wire_all_present(wire_invocation_names(), members)
+
+def wire_event_names_present(+members: Codec.RawValue) -> Bool:
+  wire_all_present(wire_event_names(), members)
+
+def wire_all_present(words: Req.Words, members: Codec.RawValue) -> Bool:
+  match words:
+    case Req.Wnone{}: True{}
+    case Req.Wcons{+head, +tail}: Bool.pick(Bool, wire_name_present(head, members), wire_all_present(tail, members), False{})
+
+# The scalar and composite kinds of each direction, checked member by member.
+def wire_invocation_kinds_ok(+members: Codec.RawValue) -> Bool:
+  Bool.pick(Bool, wire_kind_is("textOrNull", "query", members),
+    Bool.pick(Bool, wire_kind_is("textOrNull", "owner", members),
+      Bool.pick(Bool, wire_kind_is("textOrNull", "role", members),
+        Bool.pick(Bool, wire_kind_is("textOrNull", "incarnation", members),
+          Bool.pick(Bool, wire_version_is_two(wire_value_member("version", members)),
+            Bool.pick(Bool, wire_kind_is("any", "moduleBinding", members),
+              Bool.pick(Bool, wire_kind_is("any", "request", members),
+                Bool.pick(Bool, wire_kind_is("any", "inputIdentities", members),
+                  wire_kind_is("any", "operationPlan", members), False{}), False{}), False{}), False{}), False{}), False{}), False{}
+
+def wire_event_kinds_ok(+members: Codec.RawValue) -> Bool:
+  Bool.pick(Bool, wire_kind_is("textOrNull", "query", members),
+    Bool.pick(Bool, wire_kind_is("textOrNull", "owner", members),
+      Bool.pick(Bool, wire_kind_is("textOrNull", "runtime", members),
+        Bool.pick(Bool, wire_kind_is("textOrNull", "role", members),
+          Bool.pick(Bool, wire_kind_is("textOrNull", "incarnation", members),
+            Bool.pick(Bool, wire_version_is_two(wire_value_member("version", members)),
+              Bool.pick(Bool, wire_kind_is("any", "moduleBinding", members),
+                Bool.pick(Bool, wire_sequence_ok(wire_sequence_member(members)),
+                  Bool.pick(Bool, wire_frame_type_ok(members),
+                    wire_kind_is("any", "payload", members), False{}), False{}), False{}), False{}), False{}), False{}), False{}
+
+# The sequence is Core's canonical unsigned decimal, with no upper bound here.
+def wire_sequence_ok(+text: String) -> Bool:
+  SV.canonical_unsigned_decimal(text)
+
+def wire_sequence_member(+members: Codec.RawValue) -> String:
+  wire_sequence_of(Codec.raw_member("sequence", members))
+
+def wire_sequence_of(found: Maybe<&2, Codec.RawValue>) -> String:
+  match found:
+    case None{}: SNil{}
+    case Some{value}: wire_sequence_value(value)
+
+def wire_sequence_value(value: Codec.RawValue) -> String:
+  match value:
+    case Codec.Rstr{+text}: text
+    case other: SNil{}
+
+def wire_frame_type_ok(+members: Codec.RawValue) -> Bool:
+  wire_kind_is("text", "type", members)
+
+# --- the reader ------------------------------------------------------------
+
+def wire_read(rows: Req.Rows) -> WireRead:
+  wire_of_frame(Codec.frame_read(rows))
+
+def wire_of_frame(+r: Codec.FrameRead) -> WireRead:
+  match r:
+    case Codec.FrValue{+value}: wire_of_root(value)
+    case Codec.FrRefused{condition}: WrRefused{condition}
+
+def wire_of_root(+root: Codec.RawValue) -> WireRead:
+  match root:
+    case Codec.Robj{+members}: wire_direction(members)
+    case other: WrRefused{"wrongKind"}
+
+def wire_direction(+members: Codec.RawValue) -> WireRead:
+  Bool.pick(WireRead, wire_version_is_two(wire_value_member("version", members)), wire_with_version(members), WrRefused{"wrongVersion"})
+
+def wire_with_version(+members: Codec.RawValue) -> WireRead:
+  Bool.pick(WireRead, wire_invocation_kinds_ok(members), wire_read_invocation(members), wire_event_direction(members))
+
+def wire_event_direction(+members: Codec.RawValue) -> WireRead:
+  Bool.pick(WireRead, wire_event_kinds_ok(members), wire_read_event(members), wire_incomplete(members))
+
+# Neither direction admitted the frame: answer with the finer condition of the direction
+# whose member names are all present, so a missing member and a member of the wrong kind
+# stay distinct.
+def wire_incomplete(+members: Codec.RawValue) -> WireRead:
+  Bool.pick(WireRead, wire_invocation_names_present(members), WrRefused{"invalidMember"}, wire_event_incomplete(members))
+
+def wire_event_incomplete(+members: Codec.RawValue) -> WireRead:
+  Bool.pick(WireRead, wire_event_names_present(members), WrRefused{"invalidMember"}, WrRefused{"missingMember"})
+
+def wire_read_invocation(+members: Codec.RawValue) -> WireRead:
+  WrInvocation{"2", wire_text_member("query", members), wire_text_member("owner", members),
+    wire_value_member("moduleBinding", members), wire_value_member("request", members),
+    wire_value_member("inputIdentities", members), wire_value_member("operationPlan", members),
+    wire_text_member("role", members), wire_text_member("incarnation", members)}
+
+def wire_read_event(+members: Codec.RawValue) -> WireRead:
+  WrEvent{"2", wire_text_member("query", members), wire_text_member("owner", members),
+    wire_value_member("moduleBinding", members), wire_text_member("runtime", members),
+    wire_text_member("role", members), wire_text_member("incarnation", members),
+    wire_sequence_value(wire_value_member("sequence", members)), wire_type_value(wire_value_member("type", members)),
+    wire_value_member("payload", members)}
+
+def wire_type_value(value: Codec.RawValue) -> String:
+  match value:
+    case Codec.Rstr{+text}: text
+    case other: SNil{}
+
+# --- the serializer --------------------------------------------------------
 
 def invocation_frame(+query: String, +owner: String, +binding: J.Json, +request: J.Json, +inputs: J.Json, +plan: J.Json, +role: String, +incarnation: String) -> String:
   J.json_text(wire_invocation_value(query, owner, binding, request, inputs, plan, role, incarnation))
@@ -71,122 +253,81 @@ def wire_event_value(+query: String, +owner: String, +producer: J.Json, +runtime
                     J.Jpair{"type", J.Jstr{frame_type},
                       J.Jpair{"payload", payload, J.Jnil{}}}}}}}}}}}}
 
-# --- the reader ------------------------------------------------------------
+# --- rows for the laws -----------------------------------------------------
 
-def wire_digits_ok(s: String) -> Bool:
-  match s:
-    case SNil{}: False{}
-    case SCon{+head, +tail}: wire_digits_rest(tail, wire_digit_ok(head))
+def wire_rows_full() -> Req.Rows:
+  Codec.rows_of([
+    Codec.object_row("0", SNil{}, SNil{}),
+    Codec.number_row("1", "0", "version", "2"),
+    Codec.text_row("2", "0", "query", "q1"),
+    Codec.text_row("3", "0", "owner", "o1"),
+    Codec.object_row("4", "0", "moduleBinding"),
+    Codec.text_row("5", "4", "id", "m"),
+    Codec.object_row("6", "0", "request"),
+    Codec.object_row("7", "0", "inputIdentities"),
+    Codec.object_row("8", "0", "operationPlan"),
+    Codec.text_row("9", "0", "role", "r1"),
+    Codec.text_row("10", "0", "incarnation", "i1")])
 
-def wire_digit_ok(c: Char) -> Bool:
-  Bool.pick(Bool, U32.is_lt(Char.to_u32(c), 48), False{}, U32.is_lt(Char.to_u32(c), 58))
+def wire_rows_version_only() -> Req.Rows:
+  Codec.rows_of([
+    Codec.object_row("0", SNil{}, SNil{}),
+    Codec.number_row("1", "0", "version", "2")])
 
-def wire_digits_rest(rest: String, so_far: Bool) -> Bool:
-  Bool.pick(Bool, so_far, wire_digits_tail(rest), False{})
+def wire_rows_wrong_kind() -> Req.Rows:
+  Codec.rows_of([
+    Codec.object_row("0", SNil{}, SNil{}),
+    Codec.number_row("1", "0", "version", "2"),
+    Codec.text_row("2", "0", "query", "q1"),
+    Codec.text_row("3", "0", "owner", "o1"),
+    Codec.object_row("4", "0", "moduleBinding"),
+    Codec.object_row("5", "0", "request"),
+    Codec.object_row("6", "0", "inputIdentities"),
+    Codec.object_row("7", "0", "operationPlan"),
+    Codec.text_row("8", "0", "role", "r1"),
+    Codec.text_row("9", "0", "incarnation", "i1"),
+    Codec.text_row("10", "0", "extra", "x")])
 
-def wire_digits_tail(rest: String) -> Bool:
-  match rest:
-    case SNil{}: True{}
-    case SCon{+head, +tail}: wire_digits_rest(tail, wire_digit_ok(head))
+def wire_rows_null_scalar() -> Req.Rows:
+  Codec.rows_of([
+    Codec.object_row("0", SNil{}, SNil{}),
+    Codec.number_row("1", "0", "version", "2"),
+    Codec.null_row("2", "0", "query"),
+    Codec.text_row("3", "0", "owner", "o1"),
+    Codec.object_row("4", "0", "moduleBinding"),
+    Codec.object_row("5", "0", "request"),
+    Codec.object_row("6", "0", "inputIdentities"),
+    Codec.object_row("7", "0", "operationPlan"),
+    Codec.text_row("8", "0", "role", "r1"),
+    Codec.text_row("9", "0", "incarnation", "i1")])
 
-def wire_invocation_words() -> Req.Words:
-  Req.words_from(["version", "query", "owner", "moduleBinding", "request", "inputIdentities", "operationPlan", "role", "incarnation"])
+def wire_rows_event_leading_zero() -> Req.Rows:
+  Codec.rows_of([
+    Codec.object_row("0", SNil{}, SNil{}),
+    Codec.number_row("1", "0", "version", "2"),
+    Codec.text_row("2", "0", "query", "q1"),
+    Codec.text_row("3", "0", "owner", "o1"),
+    Codec.object_row("4", "0", "moduleBinding"),
+    Codec.text_row("5", "0", "runtime", "managed"),
+    Codec.text_row("6", "0", "role", "w"),
+    Codec.text_row("7", "0", "incarnation", "i"),
+    Codec.text_row("8", "0", "sequence", "07"),
+    Codec.text_row("9", "0", "type", "event"),
+    Codec.object_row("10", "0", "payload")])
 
-def wire_event_words() -> Req.Words:
-  Req.words_from(["version", "query", "owner", "moduleBinding", "runtime", "role", "incarnation", "sequence", "type", "payload"])
-
-def wire_read(rows: Req.Rows) -> WireRead:
-  wire_of_frame(Codec.frame_read(rows))
-
-def wire_of_frame(+r: Codec.FrameRead) -> WireRead:
-  match r:
-    case Codec.FrValue{+value}: wire_of_root(value)
-    case Codec.FrRefused{condition}: WrRefused{condition}
-
-def wire_of_root(+root: Codec.RawValue) -> WireRead:
-  match root:
-    case Codec.Robj{+members}: wire_version_step(members, Codec.raw_member("version", members))
-    case other: WrRefused{"wrongKind"}
-
-def wire_version_step(+members: Codec.RawValue, version: Maybe<&2, Codec.RawValue>) -> WireRead:
-  match version:
-    case None{}: WrRefused{"missingVersion"}
-    case Some{value}: wire_version_ok_step(members, wire_version_is_two(value))
-
-def wire_version_ok_step(+members: Codec.RawValue, ok: Bool) -> WireRead:
-  Bool.pick(WireRead, ok, wire_direction(members), WrRefused{"wrongVersion"})
-
-def wire_version_is_two(value: Codec.RawValue) -> Bool:
-  match value:
-    case Codec.Rnum{+token}: String.eq(token, "2")
-    case other: False{}
-
-def wire_direction(+members: Codec.RawValue) -> WireRead:
-  Bool.pick(WireRead, Codec.raw_keys_ok(wire_invocation_words(), members), wire_read_invocation(members), wire_event_direction(members))
-
-def wire_event_direction(+members: Codec.RawValue) -> WireRead:
-  Bool.pick(WireRead, Codec.raw_keys_ok(wire_event_words(), members), wire_read_event(members), WrRefused{"unknownMember"})
-
-def wire_read_invocation(+members: Codec.RawValue) -> WireRead:
-  WrInvocation{"2", wire_text_member("query", members), wire_text_member("owner", members),
-    wire_value_member("moduleBinding", members), wire_value_member("request", members),
-    wire_value_member("inputIdentities", members), wire_value_member("operationPlan", members),
-    wire_text_member("role", members), wire_text_member("incarnation", members)}
-
-def wire_read_event(+members: Codec.RawValue) -> WireRead:
-  WrEvent{"2", wire_text_member("query", members), wire_text_member("owner", members),
-    wire_value_member("moduleBinding", members), wire_text_member("runtime", members),
-    wire_text_member("role", members), wire_text_member("incarnation", members),
-    wire_sequence_member(members), wire_type_member(members), wire_value_member("payload", members)}
-
-def wire_value_member(+name: String, +members: Codec.RawValue) -> Codec.RawValue:
-  wire_value_or(Codec.raw_member(name, members))
-
-def wire_value_or(found: Maybe<&2, Codec.RawValue>) -> Codec.RawValue:
-  match found:
-    case None{}: Codec.Rnil{}
-    case Some{value}: value
-
-def wire_text_member(+name: String, +members: Codec.RawValue) -> Context.OptText:
-  wire_text_of(Codec.raw_member(name, members))
-
-def wire_text_of(found: Maybe<&2, Codec.RawValue>) -> Context.OptText:
-  match found:
-    case None{}: Context.Absent{}
-    case Some{value}: wire_text_value(value)
-
-def wire_text_value(value: Codec.RawValue) -> Context.OptText:
-  match value:
-    case Codec.Rnull{}: Context.Absent{}
-    case Codec.Rstr{+text}:
-      Bool.pick(Context.OptText, String.is_empty(text), Context.Absent{}, Context.Present{text})
-    case other: Context.Absent{}
-
-def wire_sequence_member(+members: Codec.RawValue) -> String:
-  wire_sequence_of(Codec.raw_member("sequence", members))
-
-def wire_sequence_of(found: Maybe<&2, Codec.RawValue>) -> String:
-  match found:
-    case None{}: SNil{}
-    case Some{value}: wire_sequence_value(value)
-
-def wire_sequence_value(value: Codec.RawValue) -> String:
-  match value:
-    case Codec.Rstr{+text}: Bool.pick(String, wire_digits_ok(text), text, SNil{})
-    case other: SNil{}
-
-def wire_type_member(+members: Codec.RawValue) -> String:
-  wire_type_of(Codec.raw_member("type", members))
-
-def wire_type_of(found: Maybe<&2, Codec.RawValue>) -> String:
-  match found:
-    case None{}: SNil{}
-    case Some{value}: wire_type_value(value)
-
-def wire_type_value(value: Codec.RawValue) -> String:
-  match value:
-    case Codec.Rstr{+text}: text
-    case other: SNil{}
+def wire_rows_event_good() -> Req.Rows:
+  Codec.rows_of([
+    Codec.object_row("0", SNil{}, SNil{}),
+    Codec.number_row("1", "0", "version", "2"),
+    Codec.text_row("2", "0", "query", "q1"),
+    Codec.text_row("3", "0", "owner", "o1"),
+    Codec.object_row("4", "0", "moduleBinding"),
+    Codec.text_row("5", "0", "runtime", "managed"),
+    Codec.text_row("6", "0", "role", "w"),
+    Codec.text_row("7", "0", "incarnation", "i"),
+    Codec.text_row("8", "0", "sequence", "10"),
+    Codec.text_row("9", "0", "type", "event"),
+    Codec.object_row("10", "0", "payload")])
 
 # --- laws ------------------------------------------------------------------
 
@@ -232,80 +373,74 @@ law wire_law_a_retained_role_and_incarnation_travel_as_strings:
 def wire_law_a_retained_role_and_incarnation_travel_as_strings():
   {==}
 
-def wire_invocation_rows() -> Req.Rows:
-  Codec.rows_of([
-    Codec.object_row("0", SNil{}, SNil{}),
-    Codec.number_row("1", "0", "version", "2"),
-    Codec.text_row("2", "0", "query", "q1"),
-    Codec.text_row("3", "0", "owner", "o1"),
-    Codec.object_row("4", "0", "moduleBinding"),
-    Codec.text_row("5", "4", "id", "m"),
-    Codec.object_row("6", "0", "request"),
-    Codec.object_row("7", "0", "inputIdentities"),
-    Codec.object_row("8", "0", "operationPlan"),
-    Codec.text_row("9", "0", "role", "r1"),
-    Codec.text_row("10", "0", "incarnation", "i1")])
-
-def wire_unknown_member_rows() -> Req.Rows:
-  Codec.rows_of([
-    Codec.object_row("0", SNil{}, SNil{}),
-    Codec.number_row("1", "0", "version", "2"),
-    Codec.text_row("2", "0", "query", "q1"),
-    Codec.text_row("3", "0", "owner", "o1"),
-    Codec.object_row("4", "0", "moduleBinding"),
-    Codec.object_row("5", "0", "request"),
-    Codec.object_row("6", "0", "inputIdentities"),
-    Codec.object_row("7", "0", "operationPlan"),
-    Codec.text_row("8", "0", "role", "r1"),
-    Codec.text_row("9", "0", "incarnation", "i1"),
-    Codec.text_row("10", "0", "extra", "x")])
-
-def wire_duplicate_member_rows() -> Req.Rows:
-  Codec.rows_of([
-    Codec.object_row("0", SNil{}, SNil{}),
-    Codec.number_row("1", "0", "version", "2"),
-    Codec.text_row("2", "0", "query", "q1"),
-    Codec.text_row("3", "0", "query", "q2"),
-    Codec.text_row("4", "0", "owner", "o1"),
-    Codec.object_row("5", "0", "moduleBinding"),
-    Codec.object_row("6", "0", "request"),
-    Codec.object_row("7", "0", "inputIdentities"),
-    Codec.object_row("8", "0", "operationPlan"),
-    Codec.text_row("9", "0", "role", "r1"),
-    Codec.text_row("10", "0", "incarnation", "i1")])
-
 law wire_law_a_transported_invocation_reads_its_members:
-  {wire_read(wire_invocation_rows()) == WrInvocation{"2", Context.Present{"q1"}, Context.Present{"o1"}, Codec.Robj{Codec.Rpair{"id", Codec.Rstr{"m"}, Codec.Rnil{}}}, Codec.Robj{Codec.Rnil{}}, Codec.Robj{Codec.Rnil{}}, Codec.Robj{Codec.Rnil{}}, Context.Present{"r1"}, Context.Present{"i1"}} : WireRead}
+  {wire_read(wire_rows_full()) == WrInvocation{"2", Context.Present{"q1"}, Context.Present{"o1"}, Codec.Robj{Codec.Rpair{"id", Codec.Rstr{"m"}, Codec.Rnil{}}}, Codec.Robj{Codec.Rnil{}}, Codec.Robj{Codec.Rnil{}}, Codec.Robj{Codec.Rnil{}}, Context.Present{"r1"}, Context.Present{"i1"}} : WireRead}
 
 def wire_law_a_transported_invocation_reads_its_members():
   {==}
 
-law wire_law_an_unknown_member_refuses:
-  {wire_read(wire_unknown_member_rows()) == WrRefused{"unknownMember"} : WireRead}
+law wire_law_a_frame_with_only_a_version_is_not_an_invocation:
+  {wire_read(wire_rows_version_only()) == WrRefused{"missingMember"} : WireRead}
 
-def wire_law_an_unknown_member_refuses():
+def wire_law_a_frame_with_only_a_version_is_not_an_invocation():
   {==}
 
-law wire_law_a_duplicate_member_refuses:
-  {wire_read(wire_duplicate_member_rows()) == WrRefused{"unknownMember"} : WireRead}
+law wire_law_an_undeclared_member_refuses:
+  {wire_read(wire_rows_wrong_kind()) == WrRefused{"invalidMember"} : WireRead}
 
-def wire_law_a_duplicate_member_refuses():
+def wire_law_an_undeclared_member_refuses():
+  {==}
+
+law wire_law_a_null_scalar_member_reads_as_absent:
+  {wire_read(wire_rows_null_scalar()) == WrInvocation{"2", Context.Absent{}, Context.Present{"o1"}, Codec.Robj{Codec.Rnil{}}, Codec.Robj{Codec.Rnil{}}, Codec.Robj{Codec.Rnil{}}, Codec.Robj{Codec.Rnil{}}, Context.Present{"r1"}, Context.Present{"i1"}} : WireRead}
+
+def wire_law_a_null_scalar_member_reads_as_absent():
+  {==}
+
+law wire_law_a_wrong_scalar_kind_refuses:
+  {wire_kind_is("textOrNull", "query", Codec.Rpair{"query", Codec.Rtrue{}, Codec.Rnil{}}) == False{} : Bool}
+
+def wire_law_a_wrong_scalar_kind_refuses():
+  {==}
+
+law wire_law_a_missing_member_is_not_present:
+  {wire_name_present("query", Codec.Rpair{"owner", Codec.Rstr{"o"}, Codec.Rnil{}}) == False{} : Bool}
+
+def wire_law_a_missing_member_is_not_present():
+  {==}
+
+law wire_law_an_event_sequence_with_a_leading_zero_refuses:
+  {wire_read(wire_rows_event_leading_zero()) == WrRefused{"missingMember"} : WireRead}
+
+def wire_law_an_event_sequence_with_a_leading_zero_refuses():
+  {==}
+
+law wire_law_an_event_frame_with_a_canonical_sequence_reads:
+  {wire_read(wire_rows_event_good()) == WrEvent{"2", Context.Present{"q1"}, Context.Present{"o1"}, Codec.Robj{Codec.Rnil{}}, Context.Present{"managed"}, Context.Present{"w"}, Context.Present{"i"}, "10", "event", Codec.Robj{Codec.Rnil{}}} : WireRead}
+
+def wire_law_an_event_frame_with_a_canonical_sequence_reads():
+  {==}
+
+law wire_law_the_sequence_policy_is_canonical_unsigned_decimal:
+  {wire_sequence_ok("10") == True{} : Bool}
+
+def wire_law_the_sequence_policy_is_canonical_unsigned_decimal():
+  {==}
+
+law wire_law_a_leading_zero_is_not_a_canonical_sequence:
+  {wire_sequence_ok("07") == False{} : Bool}
+
+def wire_law_a_leading_zero_is_not_a_canonical_sequence():
+  {==}
+
+law wire_law_a_sequence_wider_than_u32_is_still_canonical:
+  {wire_sequence_ok("4294967296") == True{} : Bool}
+
+def wire_law_a_sequence_wider_than_u32_is_still_canonical():
   {==}
 
 law wire_law_a_text_version_refuses:
   {wire_version_is_two(Codec.Rstr{"2"}) == False{} : Bool}
 
 def wire_law_a_text_version_refuses():
-  {==}
-
-law wire_law_a_sequence_of_digits_is_a_sequence:
-  {wire_sequence_value(Codec.Rstr{"12345678901234567890"}) == "12345678901234567890" : String}
-
-def wire_law_a_sequence_of_digits_is_a_sequence():
-  {==}
-
-law wire_law_a_sequence_that_is_not_digits_is_not_a_sequence:
-  {wire_sequence_value(Codec.Rstr{"1x"}) == SNil{} : String}
-
-def wire_law_a_sequence_that_is_not_digits_is_not_a_sequence():
   {==}
