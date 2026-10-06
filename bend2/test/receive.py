@@ -1571,7 +1571,19 @@ class Receive(unittest.TestCase):
         self.player()
         report = self.directory / 'large report'
         report.write_text('retained report\n' * 30000)
-        self.coord('report', 'saved-turn', 'parent', report.read_text())
+        # The report body travels through the existing message file carrier, so
+        # no process operand ever holds it. The recipient is the actor's recorded
+        # parent read back from the public player surface, not a chosen name.
+        recorded_parent = self.coord('player', 'parent')['parent']
+        self.assertEqual(recorded_parent, 'root')
+        self.coord('message-file', 'saved-turn', 'parent', recorded_parent, 'report', str(report))
+        retained = self.coord('delivery', 'saved-turn')
+        self.assertEqual(retained['id'], 'saved-turn')
+        self.assertEqual(retained['sender'], 'parent')
+        self.assertEqual(retained['recipient'], recorded_parent)
+        self.assertEqual(retained['kind'], 'report')
+        self.assertEqual(retained['body'], report.read_text())
+        self.assertIsNone(retained['receipt'])
         self.connect('parent')
         child = self.spawn('turn', 'parent', 'saved-turn', self.fixture, 'parent', 'low',
                            self.directory, self.directory / 'unused task',
@@ -1590,6 +1602,12 @@ class Receive(unittest.TestCase):
         self.assertFalse(drain.is_alive())
         self.finish(child)
         self.assertIn('retained report', output[0])
+        returned = json.loads('{' + output[0])
+        self.assertEqual(returned['id'], 'saved-turn')
+        self.assertEqual(returned['sender'], 'parent')
+        self.assertEqual(returned['recipient'], recorded_parent)
+        self.assertEqual(returned['kind'], 'report')
+        self.assertEqual(returned['body'], report.read_text())
         self.assertEqual(self.coord('inbox', 'parent'), [])
 
 
