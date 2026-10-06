@@ -26,6 +26,9 @@ const MUTATIONS = [
   { name: 'child-stdout-line-count-ignored', file: 'context/models/zod-model.mjs', find: 'if (lines.length !== 1) {', replace: 'if (false) {', tests: ['zod-model.test.mjs'] },
   { name: 'exclusive-artifact-creation-removed', file: 'context/models/zod-child.mjs', find: "descriptor = openSync(path, 'wx', 0o600);", replace: "descriptor = openSync(path, 'w', 0o600);", tests: ['zod-model.test.mjs'] },
   { name: 'custody-limit-blanked', file: 'context/models/zod-model.mjs', find: "export const CUSTODY_BOUNDARY = 'the driver holds", replace: "export const CUSTODY_BOUNDARY = 'x-the driver holds", tests: ['zod-model.test.mjs'] },
+  { name: 'session-cleanup-release-removed', file: 'context/catalogs/sqlite-catalog.mjs', find: "    throw closeOnFailure(db, error, 'createSqliteSession');", replace: '    throw error;', tests: ['sqlite-session-init.test.mjs'] },
+  { name: 'open-cleanup-release-removed', file: 'context/catalogs/sqlite-catalog.mjs', find: "    throw closeOnFailure(db, error, 'openReadOnlySqlite');", replace: '    throw error;', tests: ['sqlite-session-init.test.mjs'] },
+  { name: 'cleanup-diagnostic-swallowed', file: 'context/catalogs/sqlite-catalog.mjs', find: '    attachCleanup(error, `${stage}:close`, cleanupError);', replace: '    void cleanupError;', tests: ['sqlite-session-init.test.mjs'] },
   { name: 'origin-identifier-quoting-removed', file: 'context/catalogs/sqlite-statement.mjs', find: 'return `"${String(name).replace(/"/g, \'""\')}"`;', replace: 'return String(name);', tests: ['sql-helpers.test.mjs'] },
   { name: 'rejoin-refusal-removed', file: 'context/catalogs/sqlite-statement.mjs', find: "const alreadyJoined = plan.join !== undefined || operands.some(relation => relation.status !== 'pending-catalog-join');", replace: 'const alreadyJoined = false;', tests: ['sql-helpers.test.mjs'] },
   { name: 'prior-unknown-preservation-removed', file: 'context/catalogs/sqlite-statement.mjs', find: 'for (const entry of [...priorUnknown, ...discovered]) {', replace: 'for (const entry of discovered) {', tests: ['sql-helpers.test.mjs'] },
@@ -76,7 +79,7 @@ function summary(output) {
 }
 
 copyTree();
-const baseline = runTests(['sql-helpers.test.mjs', 'sqlite-catalog.test.mjs', 'json-schema.test.mjs', 'zod-model.test.mjs', 'model-use-join.test.mjs', 'postgres-catalog.test.mjs']);
+const baseline = runTests(['sql-helpers.test.mjs', 'sqlite-session-init.test.mjs', 'sqlite-catalog.test.mjs', 'json-schema.test.mjs', 'zod-model.test.mjs', 'model-use-join.test.mjs', 'postgres-catalog.test.mjs']);
 if (baseline.status !== 0) {
   console.error(`baseline failed: ${summary(baseline.stdout)}`);
   console.error(baseline.stderr);

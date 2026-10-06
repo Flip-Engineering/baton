@@ -66,11 +66,37 @@ export function fileIdentityOf(path) {
   return { realPath, device: String(stat.dev), inode: String(stat.ino), bytes: stat.size, mode: stat.mode };
 }
 
+// Failure cleanup never replaces the original error. The thrown error is
+// rethrown unchanged, and a cleanup that itself fails is reported on it as a
+// `cleanup` entry, so a failure never reads as a successful release.
+function attachCleanup(error, stage, cleanupError) {
+  const diagnostic = {
+    stage,
+    code: cleanupError?.code ?? null,
+    message: String(cleanupError?.message ?? cleanupError),
+  };
+  if (error !== null && typeof error === 'object') {
+    const existing = Array.isArray(error.cleanup) ? error.cleanup : [];
+    error.cleanup = [...existing, diagnostic];
+  }
+  return diagnostic;
+}
+
+function closeOnFailure(db, error, stage) {
+  try {
+    db.close();
+  } catch (cleanupError) {
+    attachCleanup(error, `${stage}:close`, cleanupError);
+  }
+  return error;
+}
+
 // A read-only open refuses a missing subject file instead of creating it. The
 // admitted operand is an existing regular file named by an ordinary path: a
 // `file:` URI, a VFS selector or a non-regular file refuses before the open,
 // and the opened connection must report that same real path as its main
-// database.
+// database. Every check after the open releases the handle before the error is
+// rethrown, because the caller receives no handle to close.
 export function openReadOnlySqlite({ path, DatabaseSync }) {
   if (typeof path !== 'string' || path.length === 0) throw new TypeError('path must name the subject database');
   if (typeof DatabaseSync !== 'function') throw new TypeError('DatabaseSync constructor is required');
@@ -84,18 +110,19 @@ export function openReadOnlySqlite({ path, DatabaseSync }) {
   const stat = statSync(fileIdentity.realPath);
   if (!stat.isFile()) throw new RangeError(`the subject path ${fileIdentity.realPath} is not a regular file`);
   const db = new DatabaseSync(path, { readOnly: true, enableForeignKeyConstraints: true });
-  const list = db.prepare('PRAGMA main.database_list').all();
-  const main = list.find(row => row.name === SQLITE_SCHEMA);
-  if (main === undefined || main.file === '' || main.file === null) {
-    db.close();
-    throw new RangeError('the opened connection reports no main database file');
+  try {
+    const list = db.prepare('PRAGMA main.database_list').all();
+    const main = list.find(row => row.name === SQLITE_SCHEMA);
+    if (main === undefined || main.file === '' || main.file === null) {
+      throw new RangeError('the opened connection reports no main database file');
+    }
+    if (realpathSync(main.file) !== fileIdentity.realPath) {
+      throw new RangeError(`the opened connection reports ${realpathSync(main.file)}, not the admitted path ${fileIdentity.realPath}`);
+    }
+    return { db, path, fileIdentity };
+  } catch (error) {
+    throw closeOnFailure(db, error, 'openReadOnlySqlite');
   }
-  if (realpathSync(main.file) !== fileIdentity.realPath) {
-    const reported = realpathSync(main.file);
-    db.close();
-    throw new RangeError(`the opened connection reports ${reported}, not the admitted path ${fileIdentity.realPath}`);
-  }
-  return { db, path, fileIdentity };
 }
 
 export function readSqliteCatalog(db, { schema = SQLITE_SCHEMA } = {}) {
@@ -359,56 +386,73 @@ export function compareSqliteIdentities(before, after) {
 }
 
 export function createSqliteSession({ path, DatabaseSync }) {
+  // The constructor owns the connection until it returns a session. Every
+  // failure after the open ends the read transaction and releases the handle
+  // before the original error is rethrown; a failing cleanup is reported on that
+  // error instead of replacing it, and no partial session object escapes.
   const opened = openReadOnlySqlite({ path, DatabaseSync });
   const { db } = opened;
-  db.exec('BEGIN DEFERRED');
-  const connection = connectionIdentity(db);
-  const { catalog, limits } = readSqliteCatalog(db, { schema: SQLITE_SCHEMA });
-  const catalogDigest = sqliteCatalogDigest(catalog);
-  const identity = snapshotIdentity({ opened, connection, catalogDigest });
-  const originCapability = probeOriginCapability({ db, catalog });
-  const annotated = { ...identity, snapshotId: digestJson({ provider: identity.engine, version: identity.version, sourceId: identity.sourceId, path: identity.realPath, fileIdentity: identity.fileIdentity, catalogDigest }) };
-  const planCache = new Map();
-  const session = {
-    kind: 'sqliteSession',
-    identity: annotated,
-    catalog,
-    originCapability,
-    limits: [...CATALOG_LIMITS, ...limits, ...(originCapability.available ? [] : [{
-      projection: 'columnOrigins',
-      code: originCapability.reason ?? 'originCapabilityUnqualified',
-      detail: originCapability.detail ?? 'result-name origins are unavailable for this subject',
-    }])],
-    closed: false,
-    analyze({ id = null, sql }) {
-      if (session.closed) throw new Error('the session is closed');
-      return { id, ...joinRootpages({ plan: analyzeSqliteStatement({ db, sql, originCapability }), catalog, catalogDigest: annotated.catalogDigest }) };
-    },
-    join({ records, engineProbe = null }) {
-      if (session.closed) throw new Error('the session is closed');
-      return joinConstantSql({ session, catalog, plans: planCache, records, engineProbe });
-    },
-    // Re-read of the connection identity inside the open transaction. The
-    // catalog digest cannot move inside one read transaction; the observation
-    // reports that the connection values the capture used still hold.
-    stability() {
-      if (session.closed) throw new Error('the session is closed');
-      const after = connectionIdentity(db);
-      return { stableWithinTransaction: canonicalJson(connection) === canonicalJson(after), before: connection, after };
-    },
-    close() {
-      if (session.closed) return;
-      session.closed = true;
+  let transactionOpen = false;
+  try {
+    db.exec('BEGIN DEFERRED');
+    transactionOpen = true;
+    const connection = connectionIdentity(db);
+    const { catalog, limits } = readSqliteCatalog(db, { schema: SQLITE_SCHEMA });
+    const catalogDigest = sqliteCatalogDigest(catalog);
+    const identity = snapshotIdentity({ opened, connection, catalogDigest });
+    const originCapability = probeOriginCapability({ db, catalog });
+    const annotated = { ...identity, snapshotId: digestJson({ provider: identity.engine, version: identity.version, sourceId: identity.sourceId, path: identity.realPath, fileIdentity: identity.fileIdentity, catalogDigest }) };
+    const planCache = new Map();
+    const session = {
+      kind: 'sqliteSession',
+      identity: annotated,
+      catalog,
+      originCapability,
+      limits: [...CATALOG_LIMITS, ...limits, ...(originCapability.available ? [] : [{
+        projection: 'columnOrigins',
+        code: originCapability.reason ?? 'originCapabilityUnqualified',
+        detail: originCapability.detail ?? 'result-name origins are unavailable for this subject',
+      }])],
+      closed: false,
+      analyze({ id = null, sql }) {
+        if (session.closed) throw new Error('the session is closed');
+        return { id, ...joinRootpages({ plan: analyzeSqliteStatement({ db, sql, originCapability }), catalog, catalogDigest: annotated.catalogDigest }) };
+      },
+      join({ records, engineProbe = null }) {
+        if (session.closed) throw new Error('the session is closed');
+        return joinConstantSql({ session, catalog, plans: planCache, records, engineProbe });
+      },
+      // Re-read of the connection identity inside the open transaction. The
+      // catalog digest cannot move inside one read transaction; the observation
+      // reports that the connection values the capture used still hold.
+      stability() {
+        if (session.closed) throw new Error('the session is closed');
+        const after = connectionIdentity(db);
+        return { stableWithinTransaction: canonicalJson(connection) === canonicalJson(after), before: connection, after };
+      },
+      close() {
+        if (session.closed) return;
+        session.closed = true;
+        try {
+          db.exec('COMMIT');
+        } catch {
+          // A read-only transaction that already ended reports its own error
+          // here; the close below still releases the connection.
+        }
+        db.close();
+      },
+    };
+    return session;
+  } catch (error) {
+    if (transactionOpen) {
       try {
-        db.exec('COMMIT');
-      } catch {
-        // A read-only transaction that already ended reports its own error
-        // here; the close below still releases the connection.
+        db.exec('ROLLBACK');
+      } catch (cleanupError) {
+        attachCleanup(error, 'createSqliteSession:rollback', cleanupError);
       }
-      db.close();
-    },
-  };
-  return session;
+    }
+    throw closeOnFailure(db, error, 'createSqliteSession');
+  }
 }
 
 // Convenience wrapper for callers that need a capture and no later analysis.
