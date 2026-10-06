@@ -113,8 +113,8 @@ def wake_pending(+db: String, session: String, cursor: String) -> IO(Result<&1,&
 # trailing newlines and valid UTF-8 survive and the inner argv encoding keeps its
 # own byte lengths because its characters pass through unchanged. JSON iteration
 # and type access stay behind json_valid.
-def report_projection_sql(+id: String) -> String:
-  "SELECT coalesce((SELECT 'o' || char(10) || CASE WHEN m.receipt IS NULL THEN 'p' ELSE 'a' END || char(10) || CASE WHEN s.endpoint IS NULL OR s.endpoint='' THEN 'e' WHEN json_valid(s.endpoint) THEN CASE WHEN json_type(s.endpoint)='array' AND json_array_length(s.endpoint)>0 AND json_extract(s.endpoint,'$[0]')<>'' AND NOT EXISTS(SELECT 1 FROM json_each(s.endpoint) WHERE type<>'text' OR instr(value,char(0))>0) THEN 'a' ELSE 'x' END ELSE 'x' END || char(10) || CAST(length(m.recipient) AS TEXT) || char(10) || m.recipient || char(10) || CAST(length(coalesce(CASE WHEN json_valid(s.endpoint) THEN (SELECT group_concat(length(CAST(value AS BLOB)) || ':' || value,'') FROM json_each(s.endpoint)) ELSE '' END,'')) AS TEXT) || char(10) || coalesce(CASE WHEN json_valid(s.endpoint) THEN (SELECT group_concat(length(CAST(value AS BLOB)) || ':' || value,'') FROM json_each(s.endpoint)) ELSE '' END,'') FROM messages m JOIN sessions s ON s.id=m.recipient WHERE m.id=" ++ C.q(id) ++ " AND m.kind='report' AND m.recipient IS NOT NULL),(SELECT CASE WHEN EXISTS(SELECT 1 FROM messages WHERE id=" ++ C.q(id) ++ ") THEN 'i' ELSE 'm' END));"
+def report_projection_sql(+id: String, +condition: String) -> String:
+  "SELECT coalesce((SELECT 'o' || char(10) || CASE WHEN m.receipt IS NULL THEN 'p' ELSE 'a' END || char(10) || CASE WHEN s.endpoint IS NULL OR s.endpoint='' THEN 'e' WHEN json_valid(s.endpoint) THEN CASE WHEN json_type(s.endpoint)='array' AND json_array_length(s.endpoint)>0 AND json_extract(s.endpoint,'$[0]')<>'' AND NOT EXISTS(SELECT 1 FROM json_each(s.endpoint) WHERE type<>'text' OR instr(value,char(0))>0) THEN 'a' ELSE 'x' END ELSE 'x' END || char(10) || CAST(length(m.recipient) AS TEXT) || char(10) || m.recipient || char(10) || CAST(length(coalesce(CASE WHEN json_valid(s.endpoint) THEN (SELECT group_concat(length(CAST(value AS BLOB)) || ':' || value,'') FROM json_each(s.endpoint)) ELSE '' END,'')) AS TEXT) || char(10) || coalesce(CASE WHEN json_valid(s.endpoint) THEN (SELECT group_concat(length(CAST(value AS BLOB)) || ':' || value,'') FROM json_each(s.endpoint)) ELSE '' END,'') FROM messages m JOIN sessions s ON s.id=m.recipient WHERE m.id=" ++ C.q(id) ++ " AND m.kind='report' AND m.recipient IS NOT NULL AND " ++ condition ++ "),(SELECT CASE WHEN EXISTS(SELECT 1 FROM messages WHERE id=" ++ C.q(id) ++ ") THEN 'i' ELSE 'm' END));"
 
 # The token before the first newline, and that token with its newline removed.
 def report_token(rest: String, seen: String) -> String:
@@ -356,7 +356,7 @@ def report_queried(+db: String, +requested: String, +selected: String, stopped: 
 # selection never claims a delivered report.
 def report_selected(+db: String, +requested: String, +selected: String, stopped: Bool, +id: String) -> IO(Result<&1,&1,U32 & String,String>):
   do IO<Result<&1,&1,U32 & String,String>>:
-    queried : Result<&1,&1,U32 & String,String> <- DB.Sql.query(db,report_projection_sql(id))
+    queried : Result<&1,&1,U32 & String,String> <- DB.Sql.query(db,report_projection_sql(id,"1"))
     report_queried(db,requested,selected,stopped,id,queried)
 
 # Both admissions run the same decoder. A stopped admission carries no known

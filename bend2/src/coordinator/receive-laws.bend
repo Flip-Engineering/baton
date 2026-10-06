@@ -788,6 +788,22 @@ law available_handoff_route_reaches_the_handoff:
 def available_handoff_route_reaches_the_handoff(db):
   {==}
 
+# The strict selection reads the shared projection with the unconditional
+# predicate, so the ordinary predicates can be supplied by the other caller
+# without a second selection builder.
+def strict_selection(+db: String, +id: String) -> IO(Result<&1,&1,U32 & String,String>):
+  do IO<Result<&1,&1,U32 & String,String>>:
+    queried : Result<&1,&1,U32 & String,String> <- DB.Sql.query(db,Delivery.report_projection_sql(id,"1"))
+    Delivery.report_queried(db,id,"",False{},id,queried)
+
+law strict_selection_uses_the_unconditional_predicate:
+  for db: String
+  for id: String
+  {Delivery.report_selected(db,id,"",False{},id) == strict_selection(db,id) : IO(Result<&1,&1,U32 & String,String>)}
+
+def strict_selection_uses_the_unconditional_predicate(db,id):
+  {==}
+
 def completion_prepares_before_owner_release(+db: String, +session: String, +id: String, +log: String, stderr: String, cursor: String, +handle: U32, lock: Maybe<U32>, +outcome: Turn.Outcome, deliveries: List<Chan(Result<&1,&1,U32 & String,String>)>, again: Unit -> IO(Result<&1,&1,U32 & String,Unit>)) -> IO(Result<&1,&1,U32 & String,Unit>):
   do IO<Result<&1,&1,U32 & String,Unit>>:
     prepared : Unit <- Turn.prepare(db,session,id,log,stderr,outcome)
