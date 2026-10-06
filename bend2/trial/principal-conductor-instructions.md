@@ -11,10 +11,10 @@ development source and its native `start`, `receiver` and dispatch commands.
 
 The operator starts your native Codex subscription session with `start root`.
 The command records `root` as the Principal Conductor and `operator` as the
-human operator. Recruit one OMP Associate Conductor for the
-issue. The Associate Conductor recruits its own Players, reviews their work,
-and lands it onto its branch. You review and land the Associate Conductor branch
-onto the assigned integration branch, publish it, and report to the operator.
+human operator. Assign Associate Conductors and Ensembles according to the work.
+Each Associate Conductor recruits its Players, reviews their work,
+and lands it onto its branch. You review and land completed Associate Conductor branches
+onto the assigned integration branch, publish them, and report to the operator.
 The coordinator stores the
 parent relationships, messages and turn observations in `$DB`.
 
@@ -26,7 +26,8 @@ checkout supplies these adapters and the coordinator. Test dependencies must
 resolve from the Associate Conductor, Players and both checked trees. Python checks under
 `bend2/test/` build the coordinator in each checked tree using the supplied
 absolute `BEND` path. Report missing dependencies or an unjudged check to the
-operator. Run only selected tests for this issue.
+operator. Compilation and tests execute on the assigned remote validation runner.
+The configured check program must dispatch them there. Run selected tests for this issue.
 
 ## Recruit the Associate Conductor
 
@@ -64,8 +65,7 @@ hierarchy and Ensemble coupling.
 Use the Associate Conductor's native tool log as its landing record in the assignment and review.
 Do not ask the Associate Conductor to write a separate landing-record file.
 The OMP adapter stores the native log under `$DB.session-<hex of lead ID>/`; match the
-`land-checked` tool call to its result using the tool-call ID. The Principal Conductor records
-its own command and answer in the Principal Conductor landing file described below.
+`land-checked` tool call to its result using the tool-call ID.
 
 Dispatch the task through the registered receiver:
 
@@ -77,9 +77,9 @@ Dispatch the task through the registered receiver:
 The command commits the task and launches detached delivery with regular output
 files. Its result names the launched PID. Acknowledge your operator input with
 `"$B2" "$DB" ack MESSAGE_ID root RECEIPT`
-and end your turn. Each Associate Conductor turn reports to you automatically and resumes your
-native session. Review and acknowledge progress reports, then end your turn
-while the Associate Conductor's Players continue. The coordinator serializes turns for each session.
+and end your turn when no independent work remains. Each Associate Conductor turn
+reports to you automatically and resumes your native session. Act on completed
+work, changed requirements and failures. The coordinator serializes turns for each session.
 
 ## Review the Associate Conductor
 
@@ -90,8 +90,8 @@ actual Associate Conductor branch diff, Player commits, checked landing results 
 tests. A progress report may describe work still running; land the branch only
 when the Associate Conductor reports the assigned change ready for review.
 
-For a correction, write a new task file and send it through `dispatch-file` with
-a fresh message ID to the same Associate Conductor, then end your turn. Keep
+For a correction, send `dispatch-file` with a fresh message ID to the same
+Associate Conductor. `PATH -` reads the body from standard input. Keep
 its recorded workspace and native session. The receiver queues further tasks
 while its native turn is active. Name missing prerequisites to the operator
 when necessary.
@@ -107,8 +107,6 @@ both levels of landing. Set `SELECTED_TESTS` to the issue's selected paths:
 "$B2" "$DB" land-checked issue-N-lead "$TRIAL_REPO" "$TRIAL_TARGET" \
   "$TRIAL_CHECK" "$SELECTED_TESTS"
 ```
-
-Record the Principal Conductor's own call as evidence: write the exact command line and its answer to `$TRIAL_STATE/issue-N-root-land-checked.log`.
 
 The adapter runs the repository's selected tests on both trees. A new failure
 blocks; matching target failures compare by their four-field identity. An
@@ -131,17 +129,11 @@ Report publication only when `push` answers `pushed` and the advertised ref
 matches the target commit. Never force-push. The operator's Principal Conductor owns promotion
 to the repository's integration branch and tracker closure.
 
-Send the operator a coordinator message with the issue, Associate Conductor ID, Player and Associate Conductor
-commits, both levels' landing results, selected checks, publication result and
-advertised ref. Use a unique message ID:
-
-```sh
-"$B2" "$DB" message issue-N-landed-COMMIT root operator report 'ISSUE and exact evidence'
-```
-
-Include that report in your final response and end the lane's work. Name a failed
-publication or missing prerequisite in the report. The operator reads
-`inbox operator --pretty` and `$DB.root.log`.
+Report the completed change, published commit, checks and remaining limitations
+in your final response. Native supervision delivers that response to the operator.
+The operator can inspect detailed Player and landing records through the native
+commands and tool logs. Routine edits need no additional approval. Request an
+operator decision when scope, authority or an unresolved technical choice requires it.
 
 ## Continue and rebuild
 

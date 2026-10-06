@@ -171,17 +171,24 @@ behavior as their specification. The
 [measurement artifact](measurements/2026-09-28-checked-landing.json) describe the
 gate and the target-movement scenario.
 
-A successful landing advances the target to the checked candidate through a
-compare-and-swap ref update using the checked target commit as the expected old
-value, so it advances only while that commit still matches. A target that moved
+A successful landing advances the target to the checked candidate through one
+path every landing entry uses. Where a worktree holds the target branch, the
+branch advances inside that worktree as a fast-forward, so the branch, the index
+and the files move together and that worktree's uncommitted work survives wherever
+it does not overlap the advance. Where no worktree holds the target, the branch
+advances through a compare-and-swap ref update using the checked target commit as
+the expected old value, so it advances only while that commit still matches. A
+target that moved
 during the checks blocks that invocation and retains the candidate and worker
 work; a new `land-checked` invocation prepares and checks a candidate against the
-current target. A landed or already-merged answer removes the two scratch
+current target. A held target whose fast-forward the holding worktree refuses,
+because its own uncommitted changes overlap the advance or an earlier operation
+there is unfinished, blocks with an answer naming that worktree and the operation
+that resolves it, and the target stays where it was. A landed or already-merged
+answer removes the two scratch
 worktrees it prepared, and a blocked or conflicted answer keeps them until that
-worker's next attempt. The target branch must be free of another checked-out
-worktree before a direct ref update, and a held target returns its `target busy`
-failure. The caller reads Git to resolve a lost acknowledgment; worker branches
-remain available. The result names the actual target commit.
+worker's next attempt. The caller reads Git to resolve a lost acknowledgment;
+worker branches remain available. The result names the actual target commit.
 
 `push REPO BRANCH REMOTE` publishes an advanced target with Git's ordinary push
 and answers `pushed` with the branch and remote, or `rejected` with a
