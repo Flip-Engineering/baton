@@ -161,6 +161,87 @@ test('each series selects its attribution email while retaining its App identity
   }
 });
 
+test('registry attribution controls real headers for every series and preserves canonical App credentials', async () => {
+  const sharedRegistry = join(directory, 'shared-attribution.json');
+  const attribution = { name: 'Flip - Baton', email: 'baton@example.invalid' };
+  const repository = join(directory, 'shared-attribution-repository');
+  const inherited = { PATH: process.env.PATH, GIT_AUTHOR_NAME: 'inherited author',
+    GIT_AUTHOR_EMAIL: 'author@example.invalid', GIT_COMMITTER_NAME: 'inherited committer',
+    GIT_COMMITTER_EMAIL: 'committer@example.invalid' };
+  const git = (key, ...command) => child([SOURCE, 'launch', '--registry', sharedRegistry,
+    '--series-key', key, '--', 'git', ...command], { env: inherited });
+  save(sharedRegistry, { models, series, attribution });
+  const initialized = await git('gpt', 'init', '--bare', repository);
+  assert.equal(initialized.code, 0, initialized.stderr);
+  const tree = await git('gpt', '-C', repository, 'hash-object', '-w', '-t', 'tree', '--stdin');
+  assert.equal(tree.code, 0, tree.stderr);
+  async function headers(key, name, email) {
+    const committed = await git(key, '-C', repository, 'commit-tree', tree.stdout.trim(), '-m', 'Shared attribution fixture');
+    assert.equal(committed.code, 0, committed.stderr);
+    const readback = await git(key, '-C', repository, 'cat-file', 'commit', committed.stdout.trim());
+    assert.equal(readback.code, 0, readback.stderr);
+    for (const field of ['author', 'committer']) {
+      assert.ok(readback.stdout.split('\n').some(line => line.startsWith(`${field} ${name} <${email}> `)), readback.stdout);
+    }
+  }
+  for (const key of model.SERIES) {
+    const filename = join(series[key], 'identity-series.json');
+    const identity = { seriesKey: key, displaySeries: model.SERIES_LABELS[key], github: identities[key] };
+    try {
+      save(filename, { ...identity, authorEmail: `${key}@example.invalid` });
+      save(sharedRegistry, { models, series, attribution });
+      const [selected, home, github, email, name] = model.selected_identity(sharedRegistry, null, key);
+      assert.equal(selected, key);
+      assert.equal(home, series[key]);
+      assert.deepEqual(github, identities[key]);
+      assert.equal(name, attribution.name);
+      assert.equal(email, attribution.email);
+      await headers(key, attribution.name, attribution.email);
+      let issued = 0, output = '';
+      await model.helper({ registry: sharedRegistry, series_key: key, operation: 'get' },
+        Readable.from([`protocol=https\nhost=github.com\npath=${model.REPOSITORY}.git\n\n`]),
+        { write(value) { output += value; } }, async (directory, authenticated) => {
+          issued++;
+          assert.equal(directory, series[key]);
+          assert.deepEqual(authenticated, identities[key]);
+          return 'fixture-token-no-network';
+        });
+      assert.equal(issued, 1);
+      assert.equal(output, 'username=x-access-token\npassword=fixture-token-no-network\n\n');
+      save(sharedRegistry, { models, series });
+      await headers(key, 'Flip Baton - ' + model.SERIES_LABELS[key], `${key}@example.invalid`);
+      save(filename, identity);
+      await headers(key, 'Flip Baton - ' + model.SERIES_LABELS[key], identities[key].commitEmail);
+    } finally {
+      save(filename, identity);
+    }
+  }
+});
+
+test('malformed registry attribution refuses before launch or credential issuance', async () => {
+  const alternative = join(directory, 'invalid-shared-attribution.json');
+  const valid = { name: 'Flip - Baton', email: 'baton@example.invalid' };
+  const invalid = [null, [], '', 42, {}, { name: valid.name }, { email: valid.email },
+    ...[null, 42, '', ' ', ' leading', 'trailing ', 'A<B', 'A>B', 'A\nB', 'A\rB',
+      'A\0B', 'A\tB', 'A\u0001B', 'A\u007fB', 'A\u0085B', 'A\u200bB', 'A\u2028B', 'A\u2029B']
+      .map(name => ({ ...valid, name })),
+    ...[null, 42, '', 'missing-domain', 'a@localhost', 'a@@example.invalid',
+      'Display <a@example.invalid>', 'a@example.invalid,b@example.invalid', 'a@example.invalid;',
+      'a@example.invalid\n', 'a@example.invalid\r', 'a@example.invalid\0',
+      'a\u0001@example.invalid', 'a\u007f@example.invalid', 'a\u200b@example.invalid',
+      '"a"@example.invalid', 'a\\b@example.invalid', 'a(b)@example.invalid']
+      .map(email => ({ ...valid, email }))];
+  for (const attribution of invalid) {
+    save(alternative, { models, series, attribution });
+    const selected = { ...args('gpt-6-astra', ['git', 'status']), registry: alternative };
+    assert.throws(() => model.launch(selected, {}, () => assert.fail('unexpected launch')), model.Refusal);
+    await assert.rejects(model.helper({ registry: alternative, series_key: 'gpt', operation: 'get' },
+      Readable.from([`protocol=https\nhost=github.com\npath=${model.REPOSITORY}.git\n\n`]),
+      { write() { assert.fail('unexpected credential output'); } },
+      async () => { assert.fail('unexpected credential issuer'); }), model.Refusal);
+  }
+});
+
 test('configured attribution emails reject absent values, multiple addresses and control characters', () => {
   const key = 'gpt', filename = join(series[key], 'identity-series.json');
   const identity = { seriesKey: key, displaySeries: model.SERIES_LABELS[key], github: identities[key] };
