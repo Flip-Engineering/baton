@@ -31,11 +31,14 @@
 # an internal invariant failure are four distinct results with their exact payloads; none is
 # turned into a successful empty object. A valid non-object root is its own explicit result and
 # never yields invented matching fields.
-# Language forms grounded on the reviewed frame and number modules and the pinned Base:
-# element-with-list cons, Bool.pick with a first type argument, U32.is_eq, definitions before
-# their callers, positional constructor patterns, computed results bound before matching, and a
-# plus binder on any binding used more than once. Every function is declared before the
-# functions that call it, none is mutually recursive, and no match subject is a computed call.
+# Language forms intended, and not achieved here: element-with-list cons, Bool.pick with a
+# first type argument, U32.is_eq, definitions before their callers, positional constructor
+# patterns, computed results bound before matching, and a plus binder on any binding used more
+# than once. The further claim made by an earlier revision of this header, that none of the
+# helpers is mutually recursive and that every function is declared before the functions that
+# call it, is false for this draft and is retracted: collect_children and collect_child call each
+# other, and collect_members and collect_tagged call each other. Those cycles and the placeholder
+# substitution are recorded in the status note above as repair obligations.
 # UNCOMPILED and UNTESTED.
 
 import Base
