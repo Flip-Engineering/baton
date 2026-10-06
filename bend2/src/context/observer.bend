@@ -184,14 +184,17 @@ def step_of(+query: String, +role: String, +incarnation: String, +cursor: String
 
 # The receipt read is a later observation than the commit, and the commit's own answer stays
 # unused: only the fixed columns decide whether the commit is observed.
+def receipt_after_read_result(+db: String, +binding: String, +query: String, +role: String, +incarnation: String, +cursor: String, read: Result<&1,&1,U32 & String,String>) -> IO(ObserverStep):
+  match read:
+    case Fail{error}:
+      match error:
+        case (code, detail): IO.pure(ObserverStep, ObserverFailed{code, detail})
+    case Done{+answer}: IO.pure(ObserverStep, step_of(query, role, incarnation, cursor, receipt_decode(query, role, incarnation, cursor, answer)))
+
 def receipt_after(+db: String, +binding: String, +query: String, +role: String, +incarnation: String, +cursor: String) -> IO(ObserverStep):
   do IO<ObserverStep>:
     read : Result<&1,&1,U32 & String,String> <- DB.Sql.query_bound(db, binding, receipt_sql(query, role, incarnation, cursor))
-    match read:
-      case Fail{error}:
-        match error:
-          case (code, detail): IO.pure(ObserverStep, ObserverFailed{code, detail})
-      case Done{+answer}: IO.pure(ObserverStep, step_of(query, role, incarnation, cursor, receipt_decode(query, role, incarnation, cursor, answer)))
+    receipt_after_read_result(db, binding, query, role, incarnation, cursor, read)
 
 def step_after(+db: String, +binding: String, +query: String, +role: String, +incarnation: String, +cursor: String, result: Result<&1,&1,U32 & String,String>) -> IO(ObserverStep):
   match result:
@@ -375,26 +378,32 @@ def claim_verify(+db: String, +binding: String, +query: String, +role: String, +
     read : ReleaseIntent <- intent_read(db, binding, query, role, incarnation, label)
     claim_verified(db, binding, query, role, incarnation, label, read)
 
+def claim_run_read_result(+db: String, +binding: String, +query: String, +role: String, +incarnation: String, +expected: String, +next: String, +nextJson: String, claimed: Result<&1,&1,U32 & String,String>) -> IO(ReleaseOutcome):
+  match claimed:
+    case Fail{error}:
+      match error:
+        case (code, detail): IO.pure(ReleaseOutcome, ReleaseFailed{code, detail})
+    case Done{+answer}: claim_verify(db, binding, query, role, incarnation, next)
+
 def claim_run(+db: String, +binding: String, +query: String, +role: String, +incarnation: String, +expected: String, +next: String, +nextJson: String) -> IO(ReleaseOutcome):
   do IO<ReleaseOutcome>:
     claimed : Result<&1,&1,U32 & String,String> <- DB.Sql.query_bound(db, binding, claim_statement(query, role, incarnation, expected, nextJson))
-    match claimed:
-      case Fail{error}:
-        match error:
-          case (code, detail): IO.pure(ReleaseOutcome, ReleaseFailed{code, detail})
-      case Done{+answer}: claim_verify(db, binding, query, role, incarnation, next)
+    claim_run_read_result(db, binding, query, role, incarnation, expected, next, nextJson, claimed)
 
 # The claim-only path: the committed state decides, the caller's complete intent document is
 # claimed against it, and the read-back must show the NEW label, so an unchanged old label cannot
 # satisfy the claim and a real transition is confirmed rather than refused.
+def claim_release_read_result(+db: String, +binding: String, +query: String, +role: String, +incarnation: String, +expectedDelivery: String, +nextDelivery: String, +nextJson: String, read: ReleaseIntent) -> IO(ReleaseOutcome):
+  match read:
+    case IntentAdmissible{recorded}: claim_run(db, binding, query, role, incarnation, recorded, nextDelivery, nextJson)
+    case IntentMissing{stage}: IO.pure(ReleaseOutcome, ReleaseIntentRefused{"missing", stage})
+    case IntentStale{recorded, expected}: IO.pure(ReleaseOutcome, ReleaseIntentRefused{"stale", recorded ++ ":" ++ expected})
+    case IntentUnreadable{stage, answer}: IO.pure(ReleaseOutcome, ReleaseIntentRefused{"unreadable", stage ++ ":" ++ answer})
+
 def claim_release(+db: String, +binding: String, +query: String, +role: String, +incarnation: String, +expectedDelivery: String, +nextDelivery: String, +nextJson: String) -> IO(ReleaseOutcome):
   do IO<ReleaseOutcome>:
     read : ReleaseIntent <- intent_read(db, binding, query, role, incarnation, expectedDelivery)
-    match read:
-      case IntentAdmissible{recorded}: claim_run(db, binding, query, role, incarnation, recorded, nextDelivery, nextJson)
-      case IntentMissing{stage}: IO.pure(ReleaseOutcome, ReleaseIntentRefused{"missing", stage})
-      case IntentStale{recorded, expected}: IO.pure(ReleaseOutcome, ReleaseIntentRefused{"stale", recorded ++ ":" ++ expected})
-      case IntentUnreadable{stage, answer}: IO.pure(ReleaseOutcome, ReleaseIntentRefused{"unreadable", stage ++ ":" ++ answer})
+    claim_release_read_result(db, binding, query, role, incarnation, expectedDelivery, nextDelivery, nextJson, read)
 
 def release_completed_after(+db: String, +binding: String, +query: String, +role: String, +incarnation: String, +claim: String, +effect: String, read: ReleaseIntent) -> IO(ReleaseOutcome):
   match read:
@@ -403,16 +412,19 @@ def release_completed_after(+db: String, +binding: String, +query: String, +role
     case IntentStale{recorded, expected}: IO.pure(ReleaseOutcome, ReleaseEffectUnpersisted{claim, effect, "completion:unconfirmed:" ++ recorded ++ ":" ++ expected})
     case IntentUnreadable{stage, answer}: IO.pure(ReleaseOutcome, ReleaseEffectUnpersisted{claim, effect, "completion:unreadable:" ++ stage ++ ":" ++ answer})
 
+def release_completion_read_result(+db: String, +binding: String, +query: String, +role: String, +incarnation: String, +attempt: String, +completion: String, +completionJson: String, +effect: String, written: Result<&1,&1,U32 & String,String>) -> IO(ReleaseOutcome):
+  match written:
+    case Fail{error}:
+      match error:
+        case (code, detail): IO.pure(ReleaseOutcome, ReleaseEffectUnpersisted{attempt, effect, U32.show(code) ++ ":" ++ detail})
+    case Done{+answer}:
+      read : ReleaseIntent <- intent_read(db, binding, query, role, incarnation, completion)
+      release_completed_after(db, binding, query, role, incarnation, attempt, effect, read)
+
 def release_completion(+db: String, +binding: String, +query: String, +role: String, +incarnation: String, +attempt: String, +completion: String, +completionJson: String, +effect: String) -> IO(ReleaseOutcome):
   do IO<ReleaseOutcome>:
     written : Result<&1,&1,U32 & String,String> <- DB.Sql.query_bound(db, binding, claim_completion_statement(query, role, incarnation, attempt, completionJson))
-    match written:
-      case Fail{error}:
-        match error:
-          case (code, detail): IO.pure(ReleaseOutcome, ReleaseEffectUnpersisted{attempt, effect, U32.show(code) ++ ":" ++ detail})
-      case Done{+answer}:
-        read : ReleaseIntent <- intent_read(db, binding, query, role, incarnation, completion)
-        release_completed_after(db, binding, query, role, incarnation, attempt, effect, read)
+    release_completion_read_result(db, binding, query, role, incarnation, attempt, completion, completionJson, effect, written)
 
 def release_effect_after(+db: String, +binding: String, +query: String, +role: String, +incarnation: String, +attempt: String, +completion: String, +completionJson: String, result: Result<&1,&1,U32 & String,String>) -> IO(ReleaseOutcome):
   match result:
@@ -440,14 +452,17 @@ def release_attempt_verify(+db: String, +binding: String, +query: String, +role:
     read : ReleaseIntent <- intent_read(db, binding, query, role, incarnation, attempt)
     release_attempt_verified(db, binding, query, role, incarnation, attempt, completion, completionJson, action, read)
 
+def release_attempt_claim_read_result(+db: String, +binding: String, +query: String, +role: String, +incarnation: String, +expectedDelivery: String, +attempt: String, +attemptJson: String, +completion: String, +completionJson: String, action: Unit -> IO(Result<&1,&1,U32 & String,String>), claimed: Result<&1,&1,U32 & String,String>) -> IO(ReleaseOutcome):
+  match claimed:
+    case Fail{error}:
+      match error:
+        case (code, detail): IO.pure(ReleaseOutcome, ReleaseFailed{code, detail})
+    case Done{+answer}: release_attempt_verify(db, binding, query, role, incarnation, attempt, completion, completionJson, action, answer)
+
 def release_attempt_claim(+db: String, +binding: String, +query: String, +role: String, +incarnation: String, +expectedDelivery: String, +attempt: String, +attemptJson: String, +completion: String, +completionJson: String, action: Unit -> IO(Result<&1,&1,U32 & String,String>)) -> IO(ReleaseOutcome):
   do IO<ReleaseOutcome>:
     claimed : Result<&1,&1,U32 & String,String> <- DB.Sql.query_bound(db, binding, claim_attempt_statement(query, role, incarnation, expectedDelivery, attemptJson))
-    match claimed:
-      case Fail{error}:
-        match error:
-          case (code, detail): IO.pure(ReleaseOutcome, ReleaseFailed{code, detail})
-      case Done{+answer}: release_attempt_verify(db, binding, query, role, incarnation, attempt, completion, completionJson, action, answer)
+    release_attempt_claim_read_result(db, binding, query, role, incarnation, expectedDelivery, attempt, attemptJson, completion, completionJson, action, claimed)
 
 def release_intent_after(+db: String, +binding: String, +query: String, +role: String, +incarnation: String, +expectedDelivery: String, +attempt: String, +attemptJson: String, +completion: String, +completionJson: String, action: Unit -> IO(Result<&1,&1,U32 & String,String>), read: ReleaseIntent) -> IO(ReleaseOutcome):
   match read:

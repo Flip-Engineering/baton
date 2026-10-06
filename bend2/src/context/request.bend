@@ -299,7 +299,7 @@ def Context.request_identity(req: J.Json) -> String:
 # SQL builders. The document is embedded as a quoted literal; a request's own
 # bytes never become SQL syntax, and the literal encoder doubles every quote.
 
-def sql_quote_go(s: String, acc: String) -> String:
+def sql_quote_go(s: String, +acc: String) -> String:
   match s:
     case SNil{}: acc
     case SCon{+head, +tail}:
