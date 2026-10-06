@@ -23,15 +23,25 @@ import ../coordinator/commands.bend as C
 # stage and raw answer.
 # The admitted plan decision Core's verdict produces, as this lane can consume it. Every value here is
 # the caller's proposed carrier and this lane neither interprets it nor treats it as a retained
-# association. The plan field is Core's plan identity rendering, Wire.plan_identity(plan), which is
-# lossless over the members that decide what runs, but it is a reproducible rendering and NOT evidence
-# of prior admission: equal caller supplied text authorizes nothing. The retained association work must
-# therefore persist the identity and compare it against the trusted retained owner, query and request
-# state and the original frozen plan association, refuse at the plan stage when a replayed candidate
-# differs from the re-rendering of the retained plan, and keep the association unestablished when no
-# retained identity exists. An empty identity is an absent association and refuses rather than matching.
-# The refusal carries Core's literal stage with the reason, which is rq_code(reason) with
-# rq_detail(reason) and the typed reason itself, so the original evidence is not lost.
+# association.
+#
+# Core publishes two renderings and they answer different questions. The association this lane carries
+# must be the complete rendering, Wire.plan_value(plan), because it has to be written atomically with
+# creation and read back as the original frozen plan. Comparisons use Wire.plan_identity(plan), which
+# renders only the members that decide what will run and therefore treats two plans that differ only in
+# observed availability or in their captured records as the same plan.
+#
+# The identity text establishes equality between two renderings and nothing more. A caller holding the
+# same member values can reproduce it, so equal caller supplied text authorizes nothing here; Core
+# provides no parser, and reconstruction from the text belongs to the parsing owner. A literal
+# placeholder cannot be told from a real rendering by this lane, so a placeholder refuses where the
+# association is actually compared, in the retained comparison below, not in the presence check here:
+# an empty identity is an absent association and refuses before any row is created, while any other
+# value is carried unexamined.
+#
+# The refusal carries Core's literal stage together with the reason as this lane's own carrier; Core's
+# AdmissionRefuses additionally derives a code and a detail from that same reason, and either carriage
+# is acceptable as long as the typed reason itself is not lost.
 #
 # The dependency this lane waits on is the Codec decode of the admitted canonical request into
 # Sel.RequestOperands plus the request text; Sel.ProjectState is configured, inventoried or observed and
