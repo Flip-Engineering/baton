@@ -17,8 +17,9 @@
 //   6. asserts per case and prints one JSON report.
 //
 // Prerequisites
-//   A TypeScript loader that resolves the upstream extensionless relative imports (for example tsx, a
-//   node resolve hook, or an equivalent), plus these environment variables:
+//   The pinned sources import the node builtins and their siblings by explicit `.ts` specifier
+//   (`import * as Bend from "./bend.ts"`, `import * as Comp from "./comp.ts"`; the `bun` import is
+//   type-only), so Node 22.7 or later with TypeScript stripping runs the derived copies directly:
 //     BATON2_BEND_TS BATON2_MAIN_TS BATON2_COMP_TS BATON2_BASE_BEND : pinned upstream files
 //     BATON2_FIXTURE_DIR : the committed fixture directory (bend2/context/bend2/fixtures)
 //
@@ -43,7 +44,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { createFrontendAdapter } from './frontend-adapter.mjs';
-import { UPSTREAM_INPUTS, UPSTREAM_PIN, deriveHookedSource } from './frontend-hooks.mjs';
+import { UPSTREAM_INPUTS, UPSTREAM_PIN, HOOK_OPERATIONS, applyHookOperations, deriveHookedSource, verifyHookAnchors } from './frontend-hooks.mjs';
 import { runFrontendInvocation } from './frontend-invocation.mjs';
 
 const ENV = ['BATON2_BEND_TS', 'BATON2_MAIN_TS', 'BATON2_COMP_TS', 'BATON2_BASE_BEND', 'BATON2_FIXTURE_DIR'];
@@ -122,7 +123,11 @@ function closureReader(files, options = {}) {
     if (!files.has(identity)) return { refuse: 'not in the captured closure' };
     return { identity, bytes: files.get(identity) };
   };
-  const resolve = options.resolveHook === undefined ? undefined : (identity) => options.resolveHook(identity, files);
+  // The non-acquiring resolver answers existence from the same immutable fixture catalog the reads
+  // come from, so a presence question never depends on whether the bytes were acquired yet.
+  const resolve = options.resolveHook === undefined
+    ? (identity) => ({ exists: files.has(identity), identity })
+    : (identity) => options.resolveHook(identity, files);
   return { reads, read, resolve };
 }
 
@@ -130,7 +135,7 @@ function adapterFor(fixture, options = {}) {
   const reader = closureReader(fixture.files, options);
   const adapter = createFrontendAdapter({
     captureOnly: true,
-    acquisition: { read: reader.read, ...(reader.resolve === undefined ? {} : { resolve: reader.resolve }), baseBend: fixture.basePath },
+    acquisition: { read: reader.read, resolve: reader.resolve, baseBend: fixture.basePath },
   });
   return { adapter, reads: reader.reads };
 }
@@ -182,7 +187,7 @@ async function runCase(name, body) {
   }
 }
 
-async function cases(kernel, compModule, fixture) {
+async function cases(kernel, compModule, fixture, inputs, derived) {
   const reports = [];
   const dir = fixture.dir;
   const compCalls = [];
@@ -262,6 +267,26 @@ async function cases(kernel, compModule, fixture) {
     return report;
   }));
 
+  reports.push(await runCase('pinned-derivation', async () => {
+    const report = { name: 'pinned-derivation', status: 'checked', assertions: [], failed: false };
+    const bendText = inputs.bend.toString('utf8');
+    const preflight = verifyHookAnchors({ target: 'bend', text: bendText });
+    check(report, 'every operation anchor occurs exactly once in the pinned kernel', preflight.status === 'checked' && preflight.counts.every((entry) => entry.count === 1), preflight.counts.filter((entry) => entry.count !== 1));
+    check(report, 'the pinned kernel derives', derived.bend.status === 'derived', derived.bend.status === 'derived' ? { operations: derived.bend.operations.length, outputDigest: derived.bend.outputDigest } : derived.bend);
+    const mainPreflight = verifyHookAnchors({ target: 'main', text: inputs.main.toString('utf8') });
+    check(report, 'every main-side anchor occurs exactly once', mainPreflight.status === 'checked' && mainPreflight.counts.every((entry) => entry.count === 1), mainPreflight.counts.filter((entry) => entry.count !== 1));
+    check(report, 'the pinned main derives', derived.main.status === 'derived', derived.main.status === 'derived' ? { operations: derived.main.operations.length, outputDigest: derived.main.outputDigest } : derived.main);
+    // A real missing anchor refuses: the first anchored statement is replaced by unrelated text.
+    const missing = bendText.replace(HOOK_OPERATIONS.bend[0].anchor, 'const bendRemovedAnchor = 1;');
+    const refused = applyHookOperations({ target: 'bend', text: missing });
+    check(report, 'a missing anchor refuses the derivation', refused.status === 'unavailable' && refused.reason === 'anchorMissing' && refused.detail.id === HOOK_OPERATIONS.bend[0].id, refused);
+    // An ambiguous anchor refuses as well.
+    const ambiguous = bendText.replace(HOOK_OPERATIONS.bend[0].anchor, `${HOOK_OPERATIONS.bend[0].anchor}\n${HOOK_OPERATIONS.bend[0].anchor}`);
+    const duplicated = applyHookOperations({ target: 'bend', text: ambiguous });
+    check(report, 'an ambiguous anchor refuses the derivation', duplicated.status === 'unavailable' && duplicated.reason === 'anchorAmbiguous', duplicated);
+    return report;
+  }));
+
   reports.push(await runCase('virtual-absent-module', async () => {
     const virtualPath = join(dir, VIRTUAL);
     const { adapter, reads } = adapterFor(fixture);
@@ -300,18 +325,37 @@ async function cases(kernel, compModule, fixture) {
   reports.push(await runCase('alias-conflict-refused', async () => {
     const canonical = join(dir, 'dep.bend');
     const aliasPath = join(dir, 'dep-alias.bend');
+    const canonicalBytes = readFileSync(canonical);
+    const aliasBytes = Buffer.from('import Base\n\ndef twice(x: U32) -> U32:\n  0\n', 'utf8');
+    // Only the alias resolves to the canonical file, and it supplies different bytes. The canonical
+    // acquisition happens first, then the alias is requested, then the canonical is read again.
     const reader = closureReader(fixture.files, {
-      resolveHook: (identity) => ({ exists: true, identity: canonical }),
-      readHook: (identity) => {
-        if (identity !== canonical) return undefined;
-        const first = readFileSync(canonical);
-        return { identity, bytes: reader.reads.filter((entry) => entry === canonical).length === 1 ? first : Buffer.from('import Base\n\ndef twice(x: U32) -> U32:\n  0\n', 'utf8') };
-      },
+      resolveHook: (identity) => (identity === aliasPath ? { exists: true, identity: canonical } : { exists: fixture.files.has(identity), identity }),
+      readHook: (identity) => (identity === aliasPath ? { identity, bytes: aliasBytes } : undefined),
     });
     const adapter = createFrontendAdapter({ captureOnly: true, acquisition: { read: reader.read, resolve: reader.resolve, baseBend: fixture.basePath } });
-    const result = await runFrontendInvocation({ frontend: kernel, adapter, root: join(dir, 'alias-root.bend'), phases: ['parse'] });
-    const report = reportOf('alias-conflict-refused', result, adapter, { aliasPath, ownerAfter: kernel.bendHookOwner(), sessionClosed: adapter.currentSession() === null });
-    check(report, 'a conflicting alias acquisition is recorded as evidence', report.incompleteness.includes('evidenceFailure'), report.incompleteness);
+    const started = adapter.beginQuery({ identity: canonical });
+    const owner = started.token;
+    const firstText = adapter.sink.readSource(canonical, owner);
+    const aliasText = adapter.sink.readSource(aliasPath, owner);
+    const secondText = adapter.sink.readSource(canonical, owner);
+    const session = adapter.endQuery();
+    const report = reportOf('alias-conflict-refused', { status: 'checked', phasesRun: [], outcome: null, session }, adapter, {
+      canonical,
+      aliasPath,
+      firstMatchesFixture: firstText === canonicalBytes.toString('utf8'),
+      aliasRefused: aliasText === undefined,
+      canonicalUnchanged: secondText === canonicalBytes.toString('utf8'),
+      sessionClosed: adapter.currentSession() === null,
+    });
+    const conflict = report.acquisitions.find((entry) => entry.status === 'conflict');
+    check(report, 'the canonical file is acquired first', report.firstMatchesFixture === true, report.firstMatchesFixture);
+    check(report, 'the alias is refused as a conflict', conflict !== undefined && conflict.detail === 'bytesDiffer', report.acquisitions);
+    check(report, 'the conflict names the rejected alias', conflict !== undefined && conflict.requested === aliasPath, conflict);
+    check(report, 'the alias read returns nothing', report.aliasRefused === true, report.aliasRefused);
+    check(report, 'the canonical bytes are unchanged afterwards', report.canonicalUnchanged === true, report.canonicalUnchanged);
+    check(report, 'the canonical record is still captured', report.acquisitions.some((entry) => entry.canonical === canonical && entry.status === 'captured'), report.acquisitions);
+    check(report, 'the conflict is evidence and the capture is incomplete', report.incompleteness.includes('evidenceFailure'), report.incompleteness);
     check(report, 'the session was closed', report.sessionClosed === true, report.sessionClosed);
     return report;
   }));
@@ -407,7 +451,7 @@ async function main() {
   const fixture = fixtures(inputs.base);
   const kernel = await import(pathToFileURL(join(derived.dir, 'bend.ts')).href);
   const compModule = await import(pathToFileURL(join(derived.dir, 'comp.ts')).href);
-  const reports = await cases(kernel, compModule, fixture);
+  const reports = await cases(kernel, compModule, fixture, inputs, derived);
   const failed = reports.filter((report) => report.failed === true);
   process.stdout.write(`${JSON.stringify({
     upstreamPin: UPSTREAM_PIN,

@@ -56,12 +56,15 @@ frontend read them.
 - `view.mapRange(start, end)` returns `{ status: "mapped", originalStart, originalEnd }` or an unavailable outcome. It validates both mapped original endpoints against the capture boundary table before returning, so a surrogate-interior endpoint refuses here as well as in `locateSpan`.
 - `locationOf(capture, index)` returns `{ status: "mapped", index, line, column, byteOffset }` with a zero-based line and the column of the frontend `parse_col` rule, whose edge at a leading line feed is declared below.
 - `locateSpan(capture, view, span)` returns a frozen `{ status: "mapped", claim: "source-identity", identity, digest, text, original: { start, end }, byteRange: { start, end }, limits }` or an unavailable outcome. `span.src` is compared with the supplied view text to check the association; it never selects a file.
-- `decodeCoreCapture(record)` decodes a Core capture record (`capture_kind`, `payload`,
-  `payload_encoding`, `marker`) into `{ status: "bytes", bytes, marker, kind }`, `{ status: "absent" }`
-  or an unavailable outcome (`captureRecordMissing`, `captureKindUnsupported`, `payloadMissing`,
-  `payloadEncodingInvalid`, `payloadNotRoundTrip`, `payloadEncodingUnsupported`). Only encodings that
-  reproduce the accepted bytes byte for byte are used, the marker is returned for comparison, and no
-  value is re-encoded to fit.
+- `decodeCoreCapture(record)` decodes a Core wire capture record in the rendered spelling
+  (`captureKind`, `role`, `path`, `marker`, `payload`, `payloadEncoding`, `producerModule`,
+  `producerDigest`, `producerOperation`) into `{ status: "bytes", bytes, marker, kind, path, role,
+  producer }`, `{ status: "absent", producer }` or an unavailable outcome (`captureRecordMissing`,
+  `captureKindMissing`, `captureKindUnsupported`, `payloadMissing`, `payloadEncodingInvalid`,
+  `payloadNotRoundTrip`, `payloadEncodingUnsupported`). Only encodings that reproduce the accepted
+  bytes byte for byte are used, the marker, path and producer fields are returned for the consumer to
+  compare and associate, and nothing is re-encoded or authenticated. Internal record names are not
+  accepted at this boundary.
 - `REPRESENTATION_LIMITS` lists the declared representation limits described below.
 
 Unavailable reasons are `identityMissing`, `bytesMissing`, `sharedBufferUnsupported`, `captureUnavailable`, `segmentsMissing`, `segmentInvalid`, `segmentKindUnsupported`, `segmentsNotOrdered`, `emptySegment`, `emptyView`, `notInteger`, `outOfRange`, `reversedRange`, `surrogateInterior`, `byteInterior`, `unmappedSegment`, `unmappedBoundary`, `spansOmitted`, `viewUnavailable`, `viewCaptureMismatch`, `spanMissing`, `spanSourceMissing`, `sourceAssociationMismatch`, and the UTF-8 decoding reasons `unexpectedContinuation`, `truncatedSequence`, `invalidContinuation`, `overlongEncoding`, `surrogateEncoding`, `outOfRangeCodePoint`, `invalidStartByte`.
@@ -169,8 +172,17 @@ or writes. Its behaviour:
   claim is made; one acquisition outcome is counted once, a frontend refusal is separate evidence, and
   the observer's own failures are counted as evidence apart from frontend diagnostics;
 - the frontend hook is owned: installation is refused for a second owner and for no owner, every event
-  and sink callback carries the owning invocation, and a foreign or ownerless callback is refused and
-  counted.
+  and sink callback carries the owning invocation and the installation generation, and a foreign,
+  ownerless or wrongly generationed callback is refused and counted. A producer call site reads the
+  installed sink at emission time, so a producer cannot outlive its invocation: the consumer refuses
+  an installation while another owner holds the hook and refuses an event after its session ended;
+- a closure entry may be a Core wire record (`captureKind`, `role`, `path`, `marker`, `payload`,
+  `payloadEncoding`, `producerModule`, `producerDigest`, `producerOperation`). Only that wire spelling
+  is accepted, so one mapping keeps a single protocol. For a source input the kind must be `file`, the
+  marker must be the content digest of the supplied bytes, and the record path must be the canonical
+  identity in hand; a link descriptor, a directory or a configuration record is refused as source
+  input rather than being read as bytes. The producer fields are retained as the record's claimed
+  association, never as authority.
 
 Derive a hooked copy (remote, exact Root admission):
 

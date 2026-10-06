@@ -54,7 +54,7 @@ export interface BendHookSink {
 }
 export interface BendHookInstall { status: "installed" | "refused"; owner: string; reason?: string; }
 let bendHookSink: BendHookSink | null = null;
-export const bendHookState = { failures: 0, refusals: 0, owner: "", installs: 0, refusedInstalls: 0 };
+export const bendHookState = { failures: 0, refusals: 0, owner: "", installs: 0, refusedInstalls: 0, generation: 0 };
 export function bendHooks(sink: BendHookSink | null, owner?: string): BendHookInstall {
   const token = owner === undefined ? "" : owner;
   if (sink !== null && token === "") {
@@ -79,15 +79,22 @@ export function bendHookFailures(): number {
 export function bendEmit(event: BendHookEvent): void {
   const sink = bendHookSink;
   if (sink === null) return;
-  // The owner recorded when this sink was installed travels both in the event and as the call
-  // argument, so a consumer can bind the event to the invocation that installed the hook rather than
-  // to whatever owner happens to be current when the event arrives.
+  // Lifetime boundary: a producer call site reads the installed sink, its owner and its installation
+  // generation at emission time. The owner travels in the event and as the call argument, and the
+  // generation lets a consumer detect an event produced by an older installation. A producer cannot
+  // outlive its invocation through this path: the consumer refuses an installation while another
+  // owner holds the hook, refuses an event after its session ended, and refuses an event whose
+  // generation differs from the one it first accepted.
   const owner = bendHookState.owner;
+  const generation = bendHookState.generation;
   try {
-    sink.emit(Object.assign({}, event as object, { owner }), owner);
+    sink.emit(Object.assign({}, event as object, { owner, generation }), owner);
   } catch {
     bendHookState.failures += 1;
   }
+}
+export function bendHookGeneration(): number {
+  return bendHookState.generation;
 }
 export function bendHookRefusals(): number {
   return bendHookState.refusals;
@@ -154,29 +161,33 @@ function bendHookAcquisitionFailure(file: string, reason: string): void {
     }
   }
 }
-function bendHookRefuse(book: Book, file: string, reason: string, spn?: Span): never {
+function bendHookRefuse(book: Book, file: string, reason: string, spn?: Span, imp?: string): never {
   bendHookAcquisitionFailure(file, reason);
   bendHookState.refusals += 1;
-  throw Err(book, ctx_nil(), "no such file: " + file, undefined, spn);
+  // The frontend reports the same Err it throws, at the site that failed, with the importer identity
+  // and the original coordinates, so a missing captured import keeps its diagnostic and its span.
+  const bendRefusal = Err(book, ctx_nil(), "no such file: " + file, undefined, spn);
+  bendEmit({ kind: "diagnostic", phase: "load", form: "thrown", file: imp === undefined ? null : imp, thrown: bendRefusal, rendered: bendShow(bendRefusal), definition: null, span: spn === undefined ? null : spn });
+  throw bendRefusal;
 }
-function bendHookSource(book: Book, file: string, spn?: Span): string {
+function bendHookSource(book: Book, file: string, spn?: Span, imp?: string): string {
   const sink = bendHookSink;
   const resolved = bendHookResolve(file);
   if (resolved.status === "captured") {
     const provided = sink !== null && typeof sink.readSource === "function" ? sink.readSource(resolved.identity, bendHookState.owner) : undefined;
     if (typeof provided === "string") return provided;
-    bendHookRefuse(book, file, "readUnavailable", spn);
+    bendHookRefuse(book, file, "readUnavailable", spn, imp);
   }
-  if (resolved.status === "absent") bendHookRefuse(book, file, "missingInClosure", spn);
-  if (resolved.status === "unavailable") bendHookRefuse(book, file, resolved.detail === null ? "unavailableInClosure" : resolved.detail, spn);
+  if (resolved.status === "absent") bendHookRefuse(book, file, "missingInClosure", spn, imp);
+  if (resolved.status === "unavailable") bendHookRefuse(book, file, resolved.detail === null ? "unavailableInClosure" : resolved.detail, spn, imp);
   return fs.readFileSync(resolved.identity, "utf8");
 }
-function bendHookLibCaptured(book: Book, file: string, spn?: Span): boolean {
+function bendHookLibCaptured(book: Book, file: string, spn?: Span, imp?: string): boolean {
   const sink = bendHookSink;
   if (sink === null || sink.captureOnly !== true || !file.startsWith(BEND_LIB + "/")) return false;
   const resolved = bendHookResolve(file);
   if (resolved.status === "captured") return true;
-  bendHookRefuse(book, file, resolved.status === "absent" ? "missingInClosure" : "unavailableInClosure", spn);
+  bendHookRefuse(book, file, resolved.status === "absent" ? "missingInClosure" : "unavailableInClosure", spn, imp);
 }
 function bendHostBase(): string {
   if (BASE_BEND === "") BASE_BEND = fs.realpathSync(path.join(BEND_DIR, "base.bend"));
@@ -210,19 +221,13 @@ export const HOOK_OPERATIONS = Object.freeze({
       id: 'bend.loaderHostInput',
       summary: 'captured closure supplies existence, identity and bytes; failures are reported distinctly',
       anchor: '  if (!fs.existsSync(file)) {\n    throw Err(book, ctx_nil(), "no such file: " + file, undefined, spn);\n  }\n  const real = fs.realpathSync(file);',
-      replacement: '  const bendResolved = bendHookResolve(file);\n  bendEmit({ kind: "importAttempt", phase: "load", file, importer: imp === undefined ? null : imp, identity: bendResolved.identity, exists: bendResolved.exists, captured: bendResolved.captured });\n  if (bendResolved.status === "absent") bendHookRefuse(book, file, "missingInClosure", spn);\n  if (bendResolved.status === "unavailable") bendHookRefuse(book, file, bendResolved.detail === null ? "unavailableInClosure" : bendResolved.detail, spn);\n  if (!bendResolved.exists) {\n    throw Err(book, ctx_nil(), "no such file: " + file, undefined, spn);\n  }\n  const real = bendResolved.captured ? bendResolved.identity : fs.realpathSync(file);',
+      replacement: '  const bendResolved = bendHookResolve(file);\n  bendEmit({ kind: "importAttempt", phase: "load", file, importer: imp === undefined ? null : imp, identity: bendResolved.identity, exists: bendResolved.exists, captured: bendResolved.captured });\n  if (bendResolved.status === "absent") bendHookRefuse(book, file, "missingInClosure", spn, imp);\n  if (bendResolved.status === "unavailable") bendHookRefuse(book, file, bendResolved.detail === null ? "unavailableInClosure" : bendResolved.detail, spn, imp);\n  if (!bendResolved.exists) {\n    throw Err(book, ctx_nil(), "no such file: " + file, undefined, spn);\n  }\n  const real = bendResolved.captured ? bendResolved.identity : fs.realpathSync(file);',
     }),
     Object.freeze({
       id: 'bend.loaderImporter',
       summary: 'accept the importer identity so a load failure names the file that imported it',
       anchor: 'export async function book_load(book: Book, file: string, ns: string, seen: Map<string, string | null>, spn?: Span): Promise<number> {',
       replacement: 'export async function book_load(book: Book, file: string, ns: string, seen: Map<string, string | null>, spn?: Span, imp?: string): Promise<number> {',
-    }),
-    Object.freeze({
-      id: 'bend.baseImportUse',
-      summary: 'pass the importer identity on the Base import',
-      anchor: '        await book_load(book, base_bend(), "", seen, sp);',
-      replacement: '        await book_load(book, base_bend(), "", seen, sp, file);',
     }),
     Object.freeze({
       id: 'bend.recursiveImportUse',
@@ -234,7 +239,7 @@ export const HOOK_OPERATIONS = Object.freeze({
       id: 'bend.hubGuard',
       summary: 'refuse the hub fetch path in capture-only mode',
       anchor: '  if (file.startsWith(BEND_LIB + "/") && !fs.existsSync(file)) {',
-      replacement: '  const bendHubResolved = bendHookLibCaptured(book, file, spn);\n  if (!bendHubResolved && file.startsWith(BEND_LIB + "/") && !fs.existsSync(file)) {',
+      replacement: '  const bendHubResolved = bendHookLibCaptured(book, file, spn, imp);\n  if (!bendHubResolved && file.startsWith(BEND_LIB + "/") && !fs.existsSync(file)) {',
     }),
     Object.freeze({
       id: 'bend.importSyntaxDiagnostics',
@@ -262,9 +267,9 @@ export const HOOK_OPERATIONS = Object.freeze({
     }),
     Object.freeze({
       id: 'bend.baseImportUse',
-      summary: 'load Base through the lazy accessor',
+      summary: 'load Base through the lazy accessor and pass the importer identity',
       anchor: '        await book_load(book, BASE_BEND, "", seen, sp);',
-      replacement: '        await book_load(book, base_bend(), "", seen, sp);',
+      replacement: '        await book_load(book, base_bend(), "", seen, sp, file);',
     }),
     Object.freeze({
       id: 'bend.baseMarkUse',
@@ -276,7 +281,7 @@ export const HOOK_OPERATIONS = Object.freeze({
       id: 'bend.sourceRead',
       summary: 'source capture where the loader consumes input',
       anchor: '  const text  = fs.readFileSync(file, "utf8");',
-      replacement: '  bendEmit({ kind: "loadStart", phase: "load", file, namespace: ns });\n  const text  = bendHookSource(book, file, spn);',
+      replacement: '  bendEmit({ kind: "loadStart", phase: "load", file, namespace: ns });\n  const text  = bendHookSource(book, file, spn, imp);',
     }),
     Object.freeze({
       id: 'bend.importLine',

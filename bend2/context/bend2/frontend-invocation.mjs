@@ -73,6 +73,19 @@ function outcomeOf(frontend, phase, value, extra) {
   });
 }
 
+// A boundary refusal is this side declining to proceed, not a value the frontend threw: it carries no
+// thrown value and names the missing operand instead of presenting an invented error object.
+function refusalOf(phase, reason, rendered, extra) {
+  return Object.freeze({
+    phase,
+    refusal: reason,
+    thrownSummary: null,
+    thrownValue: undefined,
+    rendered: rendered === undefined ? null : rendered,
+    ...(extra ?? {}),
+  });
+}
+
 function validateRequest({ frontend, adapter, root, phases, comp }) {
   if (frontend === null || typeof frontend !== 'object') return rejected('frontendMissing');
   if (adapter === null || typeof adapter !== 'object') return rejected('adapterMissing');
@@ -142,6 +155,20 @@ async function runOwned({ frontend, adapter, owner, root, phases, comp, seen, st
     outcome = outcomeOf(frontend, 'load', error);
   }
 
+  // The PROOF/LAWS rule sits at its original boundary: main.ts applies it after loading and before
+  // validating, so an invalid definition cannot hide a missing LAWS import.
+  let gate = null;
+  if (outcome === null && phases.includes('completion')) {
+    gate = proofLawsGate({ frontend, adapter, owner, root, seen: seenIdentities });
+    if (gate.status === 'unavailable') {
+      emitEvent(adapter, owner, { kind: 'completionGate', phase: 'completion', gate: 'proofLawsRule', started: false, completed: false });
+      outcome = refusalOf('completion', 'gateOperandUnavailable', null, { gate: 'proofLawsRule', gateReason: gate.reason });
+    } else if (gate.status === 'refused') {
+      emitEvent(adapter, owner, { kind: 'completionGate', phase: 'completion', gate: 'proofLawsRule', started: true, completed: false });
+      outcome = refusalOf('completion', 'proofLawsImportMissing', gate.message, { gate: 'proofLawsRule', gateIdentity: gate.identity });
+    }
+  }
+
   if (outcome === null && phases.includes('check')) {
     try {
       // A fresh book validates from zero: book_load's return is the root declaration start after
@@ -156,29 +183,22 @@ async function runOwned({ frontend, adapter, owner, root, phases, comp, seen, st
   }
 
   if (outcome === null && phases.includes('completion')) {
-    const gate = proofLawsGate({ frontend, adapter, owner, root, seen: seenIdentities });
-    if (gate.status === 'unavailable') {
-      emitEvent(adapter, owner, { kind: 'completionGate', phase: 'completion', gate: 'proofLawsRule', started: false, completed: false });
-      outcome = outcomeOf(frontend, 'completion', { $: 'Err', exp: 'the admitted closure to answer for LAWS.bend' }, { gate: 'proofLawsRule', gateReason: gate.reason });
-    } else if (gate.status === 'refused') {
-      emitEvent(adapter, owner, { kind: 'completionGate', phase: 'completion', gate: 'proofLawsRule', started: true, completed: false });
-      outcome = outcomeOf(frontend, 'completion', gate.message, { gate: 'proofLawsRule', gateIdentity: gate.identity });
-    } else {
-      if (gate.status === 'satisfied') emitEvent(adapter, owner, { kind: 'completionGate', phase: 'completion', gate: 'proofLawsRule', started: true, completed: true });
-      try {
-        comp.book_owned(book, comp.SYNTH);
-        const holes = book.hols + book.open;
-        if (holes > 0) {
-          const text = 'Error: ' + String(holes) + ' TODO' + (holes === 1 ? '' : 's') + ' found.\nThe code is incomplete, and not a valid proof yet.';
-          emitEvent(adapter, owner, { kind: 'diagnostic', phase: 'completion', form: 'thrown', file: null, definition: null, span: null, thrown: text, rendered: text });
-          outcome = outcomeOf(frontend, 'completion', text, { gate: 'holes', holes });
-        }
-        phasesRun.push('completion');
-      } catch (error) {
-        const context = thrownContext(error);
-        emitEvent(adapter, owner, { kind: 'diagnostic', phase: 'completion', form: 'thrown', file: null, definition: context.definition, span: context.span, thrown: error, rendered: renderThrown(frontend, error) });
-        outcome = outcomeOf(frontend, 'completion', error, { gate: 'ownership' });
+    if (gate !== null && gate.status === 'satisfied') {
+      emitEvent(adapter, owner, { kind: 'completionGate', phase: 'completion', gate: 'proofLawsRule', started: true, completed: true });
+    }
+    try {
+      comp.book_owned(book, comp.SYNTH);
+      const holes = book.hols + book.open;
+      if (holes > 0) {
+        const text = 'Error: ' + String(holes) + ' TODO' + (holes === 1 ? '' : 's') + ' found.\nThe code is incomplete, and not a valid proof yet.';
+        emitEvent(adapter, owner, { kind: 'diagnostic', phase: 'completion', form: 'thrown', file: null, definition: null, span: null, thrown: text, rendered: text });
+        outcome = outcomeOf(frontend, 'completion', text, { gate: 'holes', holes });
       }
+      phasesRun.push('completion');
+    } catch (error) {
+      const context = thrownContext(error);
+      emitEvent(adapter, owner, { kind: 'diagnostic', phase: 'completion', form: 'thrown', file: null, definition: context.definition, span: context.span, thrown: error, rendered: renderThrown(frontend, error) });
+      outcome = outcomeOf(frontend, 'completion', error, { gate: 'ownership' });
     }
   }
 

@@ -414,34 +414,42 @@ export function createView(capture, { segments } = {}) {
   });
 }
 
-// Decode a Core capture record into the exact accepted bytes.
+// Decode a Core wire capture record into the exact accepted bytes.
 //
-// The record's payload_encoding must name a lossless byte-exact encoding of the accepted bytes, so a
-// byte order mark, a carriage return or a byte that is not valid UTF-8 survives. A payload that does
-// not reproduce byte for byte is refused rather than re-encoded. Nothing here authenticates the bytes:
-// the marker is returned for the caller to compare, and a comparison is not custody.
+// The public boundary speaks the rendered wire spelling that Core's `Wire.capture_json` emits:
+// `{captureKind, role, path, marker, payload, payloadEncoding, producerModule, producerDigest,
+// producerOperation}`. Internal Bend record names are not accepted here, so one explicit mapping
+// keeps a single wire protocol. The encoding must reproduce the accepted bytes byte for byte. The
+// marker, path, role and producer fields are returned for the consumer to compare and associate; none
+// of them is authenticated and no custody is claimed.
 export function decodeCoreCapture(record) {
   if (record === null || typeof record !== 'object') return unavailable('captureRecordMissing');
-  const kind = record.capture_kind;
-  if (kind === 'absent') return Object.freeze({ status: 'absent' });
-  if (kind !== 'file' && kind !== 'dir' && kind !== 'link' && kind !== 'config') {
-    return unavailable('captureKindUnsupported', typeof kind === 'string' ? kind : 'missing');
-  }
+  const kind = record.captureKind;
+  if (typeof kind !== 'string' || kind.length === 0) return unavailable('captureKindMissing');
+  const producer = Object.freeze({
+    module: typeof record.producerModule === 'string' && record.producerModule.length > 0 ? record.producerModule : null,
+    digest: typeof record.producerDigest === 'string' && record.producerDigest.length > 0 ? record.producerDigest : null,
+    operation: typeof record.producerOperation === 'string' && record.producerOperation.length > 0 ? record.producerOperation : null,
+  });
+  if (kind === 'absent') return Object.freeze({ status: 'absent', producer });
+  if (kind !== 'file' && kind !== 'dir' && kind !== 'link' && kind !== 'config') return unavailable('captureKindUnsupported', kind);
   const payload = record.payload;
-  const encoding = record.payload_encoding;
+  const encoding = record.payloadEncoding;
   if (typeof payload !== 'string') return unavailable('payloadMissing');
-  const marker = typeof record.marker === 'string' ? record.marker : null;
+  const marker = typeof record.marker === 'string' && record.marker.length > 0 ? record.marker : null;
+  const path = typeof record.path === 'string' && record.path.length > 0 ? record.path : null;
+  const role = typeof record.role === 'string' && record.role.length > 0 ? record.role : null;
   if (encoding === 'base64') {
     if (payload.length % 4 !== 0 || !/^[A-Za-z0-9+/]*={0,2}$/.test(payload)) return unavailable('payloadEncodingInvalid', 'base64');
     const bytes = Buffer.from(payload, 'base64');
     if (bytes.toString('base64') !== payload) return unavailable('payloadNotRoundTrip', 'base64');
-    return Object.freeze({ status: 'bytes', bytes, marker, kind });
+    return Object.freeze({ status: 'bytes', bytes, marker, kind, path, role, producer });
   }
   if (encoding === 'hex') {
     if (payload.length % 2 !== 0 || !/^[0-9a-fA-F]*$/.test(payload)) return unavailable('payloadEncodingInvalid', 'hex');
     const bytes = Buffer.from(payload, 'hex');
     if (bytes.toString('hex') !== payload.toLowerCase()) return unavailable('payloadNotRoundTrip', 'hex');
-    return Object.freeze({ status: 'bytes', bytes, marker, kind });
+    return Object.freeze({ status: 'bytes', bytes, marker, kind, path, role, producer });
   }
   return unavailable('payloadEncodingUnsupported', typeof encoding === 'string' ? encoding : 'missing');
 }

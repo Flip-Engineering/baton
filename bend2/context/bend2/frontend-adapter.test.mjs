@@ -272,36 +272,129 @@ test('a non-acquiring lookup answers presence without reading bytes', () => {
 });
 
 
-test('a Core capture record supplies exact bytes through its named encoding', () => {
-  // A byte order mark and a carriage return must survive the agreed encoding byte for byte.
+test('a Core wire record supplies exact bytes and refuses malformed or non-file records', () => {
+  // The rendered wire spelling: a byte order mark and a carriage return must survive byte for byte.
   const bytes = Buffer.from([0xef, 0xbb, 0xbf, 0x61, 0x0d, 0x0a, 0x62]);
-  const digest = createHash('sha256').update(bytes).digest('hex');
-  const record = { capture_kind: 'file', payload: bytes.toString('base64'), payload_encoding: 'base64', marker: digest };
+  const identity = '/work/bom.bend';
+  const record = {
+    captureKind: 'file',
+    role: 'frontend-source',
+    path: identity,
+    marker: createHash('sha256').update(bytes).digest('hex'),
+    payload: bytes.toString('base64'),
+    payloadEncoding: 'base64',
+    producerModule: 'bend2-frontend',
+    producerDigest: 'abc123',
+    producerOperation: 'sourceAnalysis',
+  };
   const adapter = createFrontendAdapter({
     captureOnly: true,
-    acquisition: { read: (identity) => ({ ...record, identity }), resolve: (identity) => ({ exists: true, identity }) },
+    acquisition: { read: (requested) => ({ ...record, path: identity }), resolve: (requested) => ({ exists: true, identity: requested }) },
   });
-  const owner = start(adapter, '/work/bom.bend');
-  const text = adapter.sink.readSource('/work/bom.bend', owner);
+  const owner = start(adapter, identity);
+  const text = adapter.sink.readSource(identity, owner);
   assert.equal(text.charCodeAt(0), 0xfeff, 'the byte order mark is retained');
   assert.equal(text.includes('\r\n'), true, 'the carriage return is retained');
   adapter.endQuery();
   const session = adapter.report().sessions[0];
   assert.equal(session.completeness, 'complete');
   assert.equal(session.acquisitions[0].status, 'captured');
+  assert.equal(session.acquisitions[0].role, 'frontend-source');
+  assert.deepEqual(session.acquisitions[0].producer, { module: 'bend2-frontend', digest: 'abc123', operation: 'sourceAnalysis' });
 
-  // An encoding the contract does not name is refused, not re-encoded.
-  const unsupported = createFrontendAdapter({
+  // Every refusal below is a record the source boundary does not accept, with its reason named.
+  const cases = [
+    ['a link descriptor is not source bytes', { captureKind: 'link', path: '/work/link.bend', marker: '/work/target.bend', payload: Buffer.from('x').toString('base64'), payloadEncoding: 'base64' }, 'sourceInputKindUnsupported: link'],
+    ['a directory record is not source bytes', { captureKind: 'dir', path: '/work/dir', marker: 'd', payload: Buffer.from('x').toString('base64'), payloadEncoding: 'base64' }, 'sourceInputKindUnsupported: dir'],
+    ['a file record without a content marker is refused', { captureKind: 'file', path: '/work/bom.bend', marker: '', payload: Buffer.from('x').toString('base64'), payloadEncoding: 'base64' }, 'markerMissing'],
+    ['a record whose path is not the identity in hand is refused', { captureKind: 'file', path: '/work/other.bend', marker: 'd', payload: Buffer.from('x').toString('base64'), payloadEncoding: 'base64' }, 'pathMismatch: /work/other.bend'],
+    ['an unnamed encoding is refused rather than re-encoded', { captureKind: 'file', path: '/work/bom.bend', marker: 'd', payload: 'abc', payloadEncoding: 'utf8-text' }, 'payloadEncodingUnsupported: utf8-text'],
+  ];
+  for (const [claim, bad, expected] of cases) {
+    const refused = createFrontendAdapter({
+      captureOnly: true,
+      acquisition: { read: () => ({ ...bad }), resolve: () => ({ exists: true, identity }) },
+    });
+    const owner2 = start(refused, identity);
+    assert.equal(refused.sink.readSource(identity, owner2), undefined, claim);
+    refused.endQuery();
+    const reported = refused.report().sessions[0];
+    assert.equal(reported.acquisitions[0].status, 'failed', claim);
+    assert.equal(reported.acquisitions[0].detail, expected, claim);
+    assert.ok(reported.incompleteness.includes('acquisitionFailure'), claim);
+  }
+
+  // A marker that is not the digest of the supplied bytes refuses the acquisition and keeps nothing.
+  const mismatched = createFrontendAdapter({
     captureOnly: true,
-    acquisition: { read: (identity) => ({ capture_kind: 'file', payload: 'abc', payload_encoding: 'utf8-text', marker: null, identity }), resolve: (identity) => ({ exists: true, identity }) },
+    acquisition: { read: () => ({ ...record, marker: 'f'.repeat(64) }), resolve: (requested) => ({ exists: true, identity: requested }) },
   });
-  const owner2 = start(unsupported, '/work/other.bend');
-  assert.equal(unsupported.sink.readSource('/work/other.bend', owner2), undefined);
-  unsupported.endQuery();
-  const refused = unsupported.report().sessions[0];
-  assert.equal(refused.acquisitions[0].status, 'failed');
-  assert.equal(refused.acquisitions[0].detail, 'payloadEncodingUnsupported: utf8-text');
-  assert.ok(refused.incompleteness.includes('acquisitionFailure'));
+  const owner3 = start(mismatched, identity);
+  assert.equal(mismatched.sink.readSource(identity, owner3), undefined);
+  mismatched.endQuery();
+  const conflict = mismatched.report().sessions[0];
+  assert.equal(conflict.acquisitions[0].status, 'conflict');
+  assert.equal(conflict.acquisitions[0].detail, 'markerMismatch');
+  assert.ok(conflict.incompleteness.includes('evidenceFailure'));
+});
+
+
+test('a conflicting alias is refused while the canonical bytes stay unchanged', () => {
+  const canonical = '/work/real/dep.bend';
+  const alias = '/work/alias/dep.bend';
+  const canonicalBytes = bytesOf('def twice(x: U32) -> U32:\n  x\n');
+  const aliasBytes = bytesOf('def twice(x: U32) -> U32:\n  0\n');
+  let reads = 0;
+  const adapter = createFrontendAdapter({
+    captureOnly: true,
+    acquisition: {
+      resolve: (identity) => ({ exists: true, identity: canonical }),
+      read(identity) {
+        reads += 1;
+        return { identity, bytes: reads === 1 ? canonicalBytes : aliasBytes };
+      },
+    },
+  });
+  const owner = start(adapter, canonical);
+  const first = adapter.sink.readSource(canonical, owner);
+  assert.equal(first, canonicalBytes.toString('utf8'));
+  const canonicalRecord = adapter.currentSession().acquisitions.get(canonical);
+  // The alias resolves to the canonical identity but yields different bytes: the refusal must not
+  // replace the accepted canonical record.
+  assert.equal(adapter.sink.readSource(alias, owner), undefined);
+  assert.equal(adapter.sink.readSource(canonical, owner), canonicalBytes.toString('utf8'), 'the canonical bytes are unchanged');
+  assert.equal(adapter.currentSession().acquisitions.get(canonical), canonicalRecord, 'the canonical record is the same object');
+  adapter.endQuery();
+  const session = adapter.report().sessions[0];
+  const conflict = session.acquisitions.find((entry) => entry.status === 'conflict');
+  assert.equal(conflict.detail, 'bytesDiffer');
+  assert.equal(conflict.requested, alias);
+  assert.ok(session.completeness === 'incomplete');
+  assert.ok(session.incompleteness.includes('evidenceFailure'));
+});
+
+test('a lookup refuses an answer that does not state existence', () => {
+  const adapter = createFrontendAdapter({
+    captureOnly: true,
+    acquisition: { read: () => ({ refuse: 'none' }), resolve: () => ({ identity: '/work/x.bend' }) },
+  });
+  const owner = start(adapter, '/work/x.bend');
+  const answer = adapter.sink.lookupSource('/work/x.bend', owner);
+  assert.equal(answer.status, 'unknown');
+  assert.equal(answer.detail, 'resolutionAnswerMalformed');
+  adapter.endQuery();
+});
+
+test('an event from another installation is refused', () => {
+  const text = 'def value() -> U32:\n  1\n';
+  const adapter = adapterWith({ '/work/one.bend': text });
+  const owner = start(adapter, '/work/one.bend');
+  adapter.sink.emit({ owner, generation: 7, kind: HOOK_KINDS.loadStart, phase: HOOK_PHASES.load, file: '/work/one.bend', namespace: '' }, owner);
+  adapter.sink.emit({ owner, generation: 8, kind: HOOK_KINDS.loadStart, phase: HOOK_PHASES.load, file: '/work/one.bend', namespace: '' }, owner);
+  adapter.endQuery();
+  const session = adapter.report().sessions[0];
+  assert.equal(session.files.length, 1, 'only the first installation generation is accepted');
+  assert.ok(session.incompleteness.includes('staleGeneration'));
 });
 
 
@@ -517,6 +610,53 @@ test('a frontend owned by another invocation is refused without touching its sin
   assert.equal(frontend.state.owner, 'other-invocation', "the active owner is unchanged");
   assert.equal(adapter.currentSession(), null);
 });
+
+test('the PROOF rule is evaluated before validation, so an invalid body cannot hide it', async () => {
+  const { runFrontendInvocation } = await import('./frontend-invocation.mjs');
+  const proofDir = '/work/proof';
+  const root = `${proofDir}/PROOF.bend`;
+  const lawsIdentity = `${proofDir}/LAWS.bend`;
+  const files = { [root]: 'import Base\n', [lawsIdentity]: 'import Base\n' };
+  const comp = { SYNTH: 'SYNTH', book_owned() {} };
+
+  // A body that would fail the check, with LAWS present but never imported: the original gate wins
+  // and validation is never entered.
+  const frontend = frontendDouble({ failAt: 'check' });
+  const adapter = adapterWith(files);
+  const result = await runFrontendInvocation({ frontend, adapter, root, phases: ['parse', 'check', 'completion'], comp });
+  assert.equal(result.status, 'failed');
+  assert.equal(result.outcome.gate, 'proofLawsRule');
+  assert.equal(result.outcome.refusal, 'proofLawsImportMissing');
+  assert.equal(result.outcome.rendered, 'PROOF.bend must import ./LAWS.bend');
+  assert.equal(result.outcome.thrownValue, undefined, 'a boundary refusal is not a thrown value');
+  assert.equal(frontend.calls.some((call) => call[0] === 'book_valid'), false, 'validation was never entered');
+  assert.ok(!result.phasesRun.includes('check'));
+});
+
+test('an absent sibling LAWS leaves the rule inapplicable and an unanswered lookup refuses', async () => {
+  const { runFrontendInvocation } = await import('./frontend-invocation.mjs');
+  const proofDir = '/work/proof';
+  const root = `${proofDir}/PROOF.bend`;
+  const comp = { SYNTH: 'SYNTH', book_owned() {} };
+
+  // No LAWS in the closure: the rule does not apply and completion proceeds.
+  const absent = adapterWith({ [root]: 'import Base\n' });
+  const proceeded = await runFrontendInvocation({ frontend: frontendDouble(), adapter: absent, root, phases: ['parse', 'check', 'completion'], comp });
+  assert.equal(proceeded.status, 'completed');
+  assert.deepEqual([...proceeded.phasesRun], ['parse', 'check', 'completion']);
+  assert.equal(proceeded.session.phases.filter((entry) => entry.kind === 'completionGate' && entry.gate === 'proofLawsRule').length, 0);
+
+  // A closure that cannot answer existence refuses with the operand named, not as inapplicable.
+  const unanswered = createFrontendAdapter({ captureOnly: true, acquisition: { read: () => ({ refuse: 'none' }) } });
+  const refused = await runFrontendInvocation({ frontend: frontendDouble(), adapter: unanswered, root, phases: ['parse', 'check', 'completion'], comp });
+  assert.equal(refused.status, 'failed');
+  assert.equal(refused.outcome.gate, 'proofLawsRule');
+  assert.equal(refused.outcome.refusal, 'gateOperandUnavailable');
+  assert.equal(refused.outcome.gateReason, 'closureResolutionMissing');
+  assert.equal(refused.outcome.thrownValue, undefined);
+  assert.ok(!refused.phasesRun.includes('check'));
+});
+
 
 test('a throwing install closes the session and frees the adapter for the next invocation', async () => {
   const { runFrontendInvocation } = await import('./frontend-invocation.mjs');

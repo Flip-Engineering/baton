@@ -83,6 +83,7 @@ export function createFrontendAdapter({ acquisition, captureOnly = true } = {}) 
     invalidEvents: 0,
     ownerlessEvents: 0,
     preParseMismatches: 0,
+    staleGenerationEvents: 0,
     uncapturedDependencies: 0,
     outsideQuery: 0,
     outsideQueryReads: 0,
@@ -98,6 +99,7 @@ export function createFrontendAdapter({ acquisition, captureOnly = true } = {}) 
       token,
       owner: token,
       identity: typeof identity === 'string' && identity.length > 0 ? identity : null,
+      hookGeneration: null,
       startedCounters: { ...counters },
       files: [],
       attempts: [],
@@ -138,17 +140,24 @@ export function createFrontendAdapter({ acquisition, captureOnly = true } = {}) 
   // A closure entry supplies exact bytes directly or a Core capture record whose payload the agreed
   // encoding reproduces byte for byte. An encoding that cannot round-trip, or that is not one the
   // contract names, is refused rather than re-encoded; a marker is returned for comparison only.
-  function providedBytes(provided) {
+  function providedBytes(provided, canonical) {
     if (provided.bytes instanceof Uint8Array) {
-      return { status: 'bytes', bytes: provided.bytes, marker: typeof provided.marker === 'string' ? provided.marker : null, kind: typeof provided.kind === 'string' ? provided.kind : null };
+      return { status: 'bytes', bytes: provided.bytes, marker: typeof provided.marker === 'string' ? provided.marker : null, kind: typeof provided.kind === 'string' ? provided.kind : null, role: null, producer: null };
     }
-    if (provided.capture_kind !== undefined || provided.payload !== undefined || provided.payload_encoding !== undefined) {
+    if (provided.captureKind !== undefined || provided.payload !== undefined || provided.payloadEncoding !== undefined) {
       const decoded = decodeCoreCapture(provided);
-      if (decoded.status === 'bytes') return decoded;
       if (decoded.status === 'absent') return { status: 'absent' };
-      return { status: 'undecodable', detail: decoded.detail === undefined ? decoded.reason : `${decoded.reason}: ${decoded.detail}` };
+      if (decoded.status !== 'bytes') return { status: 'undecodable', detail: decoded.detail === undefined ? decoded.reason : `${decoded.reason}: ${decoded.detail}` };
+      // A source input is a file record carrying a content marker. A link record names a target and is
+      // not source bytes; a directory or configuration record describes structure, not content. The
+      // record's path is the admitted canonical path and must agree with the identity in hand. The
+      // producer fields travel with the record as a claimed association, never as authority.
+      if (decoded.kind !== 'file') return { status: 'undecodable', detail: `sourceInputKindUnsupported: ${decoded.kind}` };
+      if (decoded.marker === null) return { status: 'undecodable', detail: 'markerMissing' };
+      if (decoded.path !== null && decoded.path !== canonical) return { status: 'undecodable', detail: `pathMismatch: ${decoded.path}` };
+      return decoded;
     }
-    return { status: 'bytes', bytes: provided.bytes, marker: null, kind: null };
+    return { status: 'bytes', bytes: provided.bytes, marker: null, kind: null, role: null, producer: null };
   }
 
   // One immutable acquisition per requested identity. The closure's canonical identity, its
@@ -180,7 +189,7 @@ export function createFrontendAdapter({ acquisition, captureOnly = true } = {}) 
     }
     if (provided === undefined || provided === null) return Object.freeze({ status: 'unavailable', requested: identity, canonical });
     if (provided.refuse !== undefined) return Object.freeze({ status: 'refused', requested: identity, canonical, detail: String(provided.refuse) });
-    const shaped = providedBytes(provided);
+    const shaped = providedBytes(provided, canonical);
     if (shaped.status === 'absent') return Object.freeze({ status: 'absent', requested: identity, canonical });
     if (shaped.status === 'undecodable') {
       counters.acquisitionFailures += 1;
@@ -190,7 +199,7 @@ export function createFrontendAdapter({ acquisition, captureOnly = true } = {}) 
       counters.acquisitionFailures += 1;
       return Object.freeze({ status: 'failed', requested: identity, canonical, detail: 'bytesMissing' });
     }
-    return Object.freeze({ status: 'provided', requested: identity, canonical, bytes: shaped.bytes, marker: shaped.marker, kind: shaped.kind });
+    return Object.freeze({ status: 'provided', requested: identity, canonical, bytes: shaped.bytes, marker: shaped.marker, kind: shaped.kind, role: shaped.role ?? null, producer: shaped.producer ?? null });
   }
 
   function acquireRecord(session, identity) {
@@ -218,10 +227,13 @@ export function createFrontendAdapter({ acquisition, captureOnly = true } = {}) 
         const existing = session.acquisitions.get(captured.identity);
         if (existing !== undefined && existing.status === 'captured' && existing.capture.digest !== captured.digest) {
           counters.evidenceFailures += 1;
-          note(session, 'aliasConflict', `${identity} and ${captured.identity} resolve to different bytes`);
+          note(session, 'aliasConflict', `${identity} resolves to ${captured.identity}, already captured with different bytes`);
           record = Object.freeze({ status: 'conflict', requested: identity, canonical: captured.identity, detail: 'bytesDiffer' });
+          // The alias is refused; the accepted canonical acquisition stays exactly as it was.
+          session.acquisitions.set(identity, record);
+          return record;
         } else {
-          record = Object.freeze({ status: 'captured', requested: identity, canonical: captured.identity, capture: captured });
+          record = Object.freeze({ status: 'captured', requested: identity, canonical: captured.identity, capture: captured, role: outcome.role ?? null, producer: outcome.producer ?? null });
           session.captures.set(identity, captured);
           session.captures.set(captured.identity, captured);
         }
@@ -240,7 +252,11 @@ export function createFrontendAdapter({ acquisition, captureOnly = true } = {}) 
       record = outcome;
     }
     session.acquisitions.set(identity, record);
-    if (record.canonical !== undefined) session.acquisitions.set(record.canonical, record);
+    if (record.status === 'captured') {
+      session.acquisitions.set(record.canonical, record);
+    } else if (record.canonical !== undefined && session.acquisitions.get(record.canonical) === undefined) {
+      session.acquisitions.set(record.canonical, record);
+    }
     return record;
   }
 
@@ -607,6 +623,18 @@ export function createFrontendAdapter({ acquisition, captureOnly = true } = {}) 
       note(active, 'foreignOwnerEvent', typeof eventOwner === 'string' ? eventOwner : owner);
       return;
     }
+    // The first accepted event fixes the installation generation; an event from another installation
+    // is refused, so a producer retained across installations cannot publish here.
+    const generation = event !== null && typeof event === 'object' && Number.isInteger(event.generation) ? event.generation : null;
+    if (generation !== null) {
+      if (active.hookGeneration === null) {
+        active.hookGeneration = generation;
+      } else if (generation !== active.hookGeneration) {
+        counters.staleGenerationEvents += 1;
+        note(active, 'staleGeneration', String(generation));
+        return;
+      }
+    }
     try {
       handle(event);
     } catch (error) {
@@ -634,8 +662,10 @@ export function createFrontendAdapter({ acquisition, captureOnly = true } = {}) 
     try {
       const resolved = acquisition.resolve(file);
       if (resolved === undefined || resolved === null) return Object.freeze({ status: 'unknown', requested: file, detail: 'closureResolutionUndefined' });
+      if (resolved.exists === true) return Object.freeze({ status: 'present', identity: typeof resolved.identity === 'string' && resolved.identity.length > 0 ? resolved.identity : file });
       if (resolved.exists === false) return Object.freeze({ status: 'absent', identity: typeof resolved.identity === 'string' ? resolved.identity : file });
-      return Object.freeze({ status: 'present', identity: typeof resolved.identity === 'string' && resolved.identity.length > 0 ? resolved.identity : file });
+      // An answer that does not state existence is not a presence claim.
+      return Object.freeze({ status: 'unknown', requested: file, detail: 'resolutionAnswerMalformed' });
     } catch (error) {
       counters.evidenceFailures += 1;
       note(active, 'closureResolutionThrew', errorText(error));
@@ -736,6 +766,7 @@ export function createFrontendAdapter({ acquisition, captureOnly = true } = {}) 
     if (delta.invalidEvents > 0) incompleteness.push('invalidEvent');
     if (delta.ownerlessEvents > 0) incompleteness.push('ownerlessEvent');
     if (delta.preParseMismatches > 0) incompleteness.push('preParseMismatch');
+    if (delta.staleGenerationEvents > 0) incompleteness.push('staleGeneration');
     if (delta.uncapturedDependencies > 0) incompleteness.push('uncapturedDependency');
     if (delta.outsideQuery > 0) incompleteness.push('outsideQueryEvent');
     if (delta.outsideQueryReads > 0) incompleteness.push('outsideQueryRead');
@@ -747,6 +778,8 @@ export function createFrontendAdapter({ acquisition, captureOnly = true } = {}) 
       status: record.status,
       canonical: record.canonical ?? null,
       detail: record.detail ?? null,
+      role: record.role ?? null,
+      producer: record.producer ?? null,
     }));
     return {
       token: session.token,
