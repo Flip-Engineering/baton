@@ -20,6 +20,10 @@ character using a baton like Mickey Mouse from Fantasia." Sorcerer hat
 - `baton-logo.svg` / `baton-logo-512.png` — the pfp/avatar mark (Flip + hat + baton on the
   dark tile; reads at 48px). Mirrored at `.github/assets/logo.svg` (+ `logo-192.png`,
   `logo-512.png`).
+- `baton-contributor.svg` / `baton-contributor.png` — the shared `Flip - Baton`
+  contributor avatar. Its editable layers contain the field, face, eyes,
+  expression, hat, hand/baton and tip accent. The 512px PNG supports circular
+  account crops and small commit displays.
 - `baton-banner.svg` / `baton-banner-1280x640.png` — GitHub repo social-preview banner
   (upload at repo Settings → Social preview). The README header banner is
   `.github/assets/banner.svg` (900×400, Flip + hat + baton + the six-seat fleet).
@@ -29,10 +33,11 @@ character using a baton like Mickey Mouse from Fantasia." Sorcerer hat
 
 ## Usage
 
-- **Committer pfp:** the dogfood committer (`baton 0.1.0 <baton-dogfood@localhost>`) is a
-  local-only identity; to give it a face on GitHub, attach `baton-logo-512.png` to whatever
-  account displays the commits (a bot account, or a Gravatar registered for the noreply
-  address — GitHub renders Gravatar for unknown emails).
+- **Contributor avatar:** upload `baton-contributor.png` to the shared GitHub
+  account. Its verified email associates commit authors with that account.
+  Check the actual commit page's selected image. A public Gravatar image alone
+  does not establish GitHub's rendered avatar. The current qualification state
+  is recorded in [the contributor report](../../bend2/contributor-attribution-2026-10-05.md).
 - **Repo social preview:** upload `baton-banner-1280x640.png` in repo Settings.
 - Regenerate previews: `qlmanage -t -s <px> -o <dir> <svg>`; crop with `sips -c <h> <w>`.
 - Terminal faces: `import { flipFace, flipLine } from '../src/brand.mjs'` — smile for

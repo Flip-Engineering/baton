@@ -1,7 +1,7 @@
 # Baton2 root handoff
 
 This contributor handoff preserves unfinished operator work as of 2026-10-06
-00:10 UTC. Host and qualification observations retain their recorded times.
+01:12 UTC. Host and qualification observations retain their recorded times.
 Read the native task records and current source before resuming.
 Issue records describe defects; native reports contain current ownership and evidence.
 
@@ -54,6 +54,54 @@ The existing Flip assignments remain protected. #675 must provide Baton
 validation there. Darwin arm64 acceptance still requires a remote Darwin
 runner. The crash attribution and limits are in
 `docs/bend2/host-crash-2026-10-05.md`.
+
+### Current native continuations
+
+Fresh inspection found the recorded Orchestra had no active receive/keeper
+or OMP implementation process before root's current continuations. Its native
+structure contains one Principal, nineteen Associate Conductors and seventy-one
+Players, with forty-one Ensembles and eighty-seven Sections. These registrations
+include historical and empty groups. They do not count active executions.
+
+Root90 resumed the existing Receive Conductor. Root91 resumed Synthesis and
+authorized available-provider recovery through existing identities, native
+conversations, worktrees, pending input and authored history. Both Conductors
+acknowledged. Receive169 reports bounded independent source review of framing
+fixture `2022746c696ec690a8c26ad7a2ad91103d55690d`, followed by a same-owner
+output-frame-fields continuation. Wider framing/fold/cursor/bridge and host
+qualification remain open. No execution result follows from the source review.
+
+Root92 authorizes the original Controls/Structure/Interfaces owners to integrate
+the prepared receipt primitives with real guarded landing callers. The c19
+identifier is archive SHA-256
+`c19f92355ce66300ebaf182811bea4f5f7116aa3ed68b9be5b56788ab38a2157`.
+It is not a Git commit. Both Controls128 and Synthesis188 acknowledged the
+source disposition. Surviving effect-child custody, exact attempt association,
+lossless holder state, permitted partial retries and operative caller laws
+remain required. Controls130 corrected the initial broad stderr statement:
+the current composed `Process.capture` has separate stderr capture; durable
+attempt binding and complete interrupted outcomes remain open.
+
+Provider recovery exposed a real native configuration gap. Changed-model
+`recruit` returns `player-assignment-conflict`; `receiver` regenerates from the
+unchanged recorded model. `connect` and a transient override do not reconcile
+that configured default. Root93 assigns the faithful existing-Player route
+operation to the original Controls/Interfaces and Receive owners. Their source
+review also requires fencing stale registered endpoints and delayed pending
+continuations, with matching Git-series configuration. Controls131 acknowledged.
+Affected GLM quota failures remain failures, including nominal exit-zero turns.
+New provider execution requires actual harness evidence. Remaining critic and
+implementation work remains owned by the original hierarchy.
+
+The original hosted full-law job remains active. At about 00:39 UTC, a fresh
+homelab process sample found its checker and a child Bend compiler using about
+212 percent CPU and 1.75 GiB RSS. GitHub reports attempt 2 in progress. The
+completed law-bearing build, active controls and due native checks retain
+their separate status. Do not launch a duplicate full-law execution.
+
+The laptop sample during this recovery had about 1.1 GiB free disk and
+943 MiB swap used. Compilation and tests remain remote. Actual resource
+observations guide continuations without creating a hardcoded actor ceiling.
 
 ## Standing acceptance requirements
 
@@ -523,9 +571,14 @@ lease; its exact tip remains at an archive tag and in `master` history.
 [The cleanup report](branch-consolidation-2026-10-05.md) records exact identities
 and the remaining integration work. Active source and worktrees remain owned.
 
-All six contributor App registrations have the requested `Flip Baton - SERIES`
-names. The operator requires the actual contribution display to use those
-names with the approved avatars. Earlier Claude commits link to the separate
+The operator now selected one shared contributor, `Flip - Baton`, for every
+model series. Root94 assigns one optional registry-level shared author/committer
+configuration to the original Controls source owner. Controls131 acknowledged.
+Canonical selected-series App credentials remain the push authority; worker
+and model provenance remain recorded independently. The earlier six-account
+plan is superseded. All six existing App avatars match their approved 200px
+source pixels. Their registration names and original assets remain preserved.
+Earlier Claude commits link to the separate
 `claude` user account. Root's optional `authorEmail` repair is published at
 `177fbf73c8380280f7b9127ae7b228d1e75214dc` and passed 15 scoped remote fixtures;
 Controls owns later source composition. The operator selected `flip.engineering`
@@ -533,24 +586,59 @@ for the six addresses. All six receiving aliases are now active in Cloudflare
 Email Routing and forward to the verified operator-owned destination. Authenticated
 reload and authoritative DNS readback confirm the configuration. A genuine
 Gravatar verification email to `gpt@flip.engineering` reached the destination.
-The other five receiving checks remain due. GPT's Gravatar registration is
+GPT was the only series alias with verified end-to-end delivery before the
+shared-account selection. GPT's Gravatar registration is
 verified, with profile name
 `Flip Baton - GPT` and the approved GPT PNG. Its public avatar endpoint returns
 the approved image. Fresh pilot commit `d64aec32d1c77192d5f821f3eb46c9186d4a0648`
 uses both owned-email Git identities and renders the exact full name, with null
 GitHub account associations and the gray fallback image. The approved-avatar
 requirement failed. A separate pilot registry leaves live identities unchanged.
-The operator's choice of account-backed username/avatar display is pending;
-no GitHub account creation or purchase has occurred.
-Two measured GitHub examples render gray avatars despite live Gravatars, so
-the avatar path remains unqualified. Browser Harness 0.1.13 is connected to
+Root saved the additional active receiving alias `baton@flip.engineering` to
+the existing verified destination. Genuine GitHub mail reached that alias.
+The operator registered and signed into `Flip-Baton` in the separate Chrome
+context; email verification completed. GitHub User 338365132 has profile name
+`Flip - Baton` and the uploaded shared PNG. No purchase or organization
+membership change occurred. Shared SVG/PNG source
+`docs/assets/brand/baton-contributor.svg` has actual 200px and circular 60px/32px
+browser previews under the contributor evidence directory. Independent visual
+review accepted its recognizable face, grip and safe circular margins.
+Two measured GitHub examples and the earlier GPT pilot render gray avatars
+despite live Gravatars. The shared User account has its own passing acceptance.
+Browser Harness 0.1.13 is connected to
 the existing Chrome instance; its default daemon passed the health check and
 actual account-selector interaction. Use `BH_REQUIRE_EXISTING_DAEMON=1` for
 ordinary operations. The operator identified the owning Cloudflare login;
 Google SSO authenticated the account matching the existing tunnel and actual
 `flip.engineering` domain. SendGrid authentication, DMARC and Microsoft
-verification records remain preserved. Live Git author-email configuration,
-App identities and installed helper remain unchanged pending acceptance.
+verification records remain preserved.
+
+Controls source `fe0b05e696d4712f1f5826092f0b432c0e78e1df` passed independent
+review and Root96's remote qualification: all 17 Node fixtures passed with
+fixture and wrapper exit 0, empty stderr and matching source/tool identities.
+Complete evidence is under the original CI owner's
+`.scratch/native-ci-evidence/qualification150` directory. Root composed the
+exact helper/test/docs blobs as `94bdf4b806a4749aa7780efbb50bef09602475bb`
+on the existing review branch. The shared-author asset contribution
+`4f048d6e130932ba66c4783adfa2fb785ff6ca1b` was published through native
+fast-forward `push` and separately read back with native `remote-tip`.
+Both Git headers are `Flip - Baton <baton@flip.engineering>`. GitHub associates
+both with the ordinary `Flip-Baton` User, and the actual browser page displays
+that login with the shared avatar and no bot suffix. Root retained and
+visually inspected `shared-github-pilot.json` and its screenshot.
+
+The owned pilot registry and tested helper are under
+`~/.config/baton/github-apps/qualification-shared-20261006`.
+Live author-email configuration, App identities and the installed immutable
+helper remain unchanged. The original Controls and CI owners must qualify
+the native configured-receiver seam and exact-source package, then migrate
+receivers faithfully after their existing attempts settle. The existing
+package procedure requires a remote Darwin arm64 runner. Preserve the fca
+prefix, native IDs, workspace assignments and old recovery paths.
+Root98 sends the qualified receipt and native activation requirements through
+the original Controls, Synthesis and CI hierarchy. A 01:12 UTC laptop sample
+found 949 MiB free disk and 927.12 MiB swap used. Compilation and fixture
+execution remain remote; no laptop compiler was running in that sample.
 [The qualification report](contributor-attribution-2026-10-05.md)
 preserves source, evidence and the remaining work. Published history is preserved.
 
@@ -579,8 +667,8 @@ its old implementation belongs in Baton2.
 
 Keep the operator's remaining product requirements attached to acceptance:
 consistent naming in code/docs/control surfaces; knowledge promotion notifying
-the appropriate scope's Conductor; Apache 2.0; model-series Git identities and
-approved modular Flip avatars; and eventual safe removal of obsolete v1
+the appropriate scope's Conductor; Apache 2.0; shared `Flip - Baton` contribution
+identity, preserved model provenance and modular Flip avatars; and eventual safe removal of obsolete v1
 components after replacement qualification. Verify current source and service
 state before reopening previously completed branding or licensing work.
 Local songs remain protected until remote copies are verified. The protected
