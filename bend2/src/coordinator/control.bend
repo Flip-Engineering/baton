@@ -4,6 +4,7 @@ import ./store.bend as Store
 import ./recruit.bend as Recruit
 import ./knowledge.bend as Knowledge
 import ./delivery.bend as Delivery
+import ./wake.bend as Wake
 import ../host/sqlite.bend as DB
 import ../host/text.bend as Text
 import ../host/session-lock.bend as Lock
@@ -158,7 +159,9 @@ def dispatch_admitted(+db: String, +id: String, +saved: String, denied: Bool) ->
 def dispatch_body(+db: String, +id: String, sender: String, recipient: String, kind: String, body: String) -> IO(String):
   do IO<String>:
     +saved : String <- IO.try(String,Store.commit(db,C.Message{id,sender,recipient,kind,body}))
-    dispatch_admitted(db,id,saved,Bool.or(Store.refused(saved),Tx.starts_with(saved,"{\"error\":\"session-stopped\"")))
+    launched : String <- dispatch_admitted(db,id,saved,Bool.or(Store.refused(saved),Tx.starts_with(saved,"{\"error\":\"session-stopped\"")))
+    woken : Result<&1,&1,U32 & String,Unit> <- Wake.drive_id(db,id)
+    IO.pure(String,launched)
 
 def dispatch_file(+db: String, +id: String, sender: String, recipient: String, kind: String, path: String) -> IO(String):
   do IO<String>:

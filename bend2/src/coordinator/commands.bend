@@ -83,8 +83,19 @@ def messaging_schema() -> String:
 # Stored role families and turn columns retain their existing names. Section
 # membership references the existing Ensemble membership of each Player.
 
+# Wake-claim table for issue #685. The claim records which driver holds a
+# session while it evaluates the pending obligation, so two drivers cannot
+# satisfy one obligation at once and an exit during evaluation does not lose
+# it. States are claimed and unclaimed; the row is deleted when
+# acknowledgement clears the obligation. A separate table keeps existing
+# databases upgrade-safe: every commit runs schema(), so the table
+# self-creates on first commit after upgrade, and readers tolerate absence.
+def wake_claim_schema() -> String:
+  "CREATE TABLE IF NOT EXISTS wake_claims (session TEXT PRIMARY KEY NOT NULL REFERENCES sessions(id), state TEXT NOT NULL DEFAULT 'claimed');"
+
 def schema() -> String:
-  "CREATE TABLE IF NOT EXISTS sessions (id TEXT PRIMARY KEY NOT NULL, parent TEXT REFERENCES sessions(id), harness TEXT NOT NULL, model TEXT NOT NULL DEFAULT '', effort TEXT NOT NULL DEFAULT '', native TEXT NOT NULL DEFAULT '', observed_harness TEXT NOT NULL DEFAULT '', observed_model TEXT NOT NULL DEFAULT '', observed_effort TEXT NOT NULL DEFAULT '', endpoint TEXT NOT NULL DEFAULT '', workspace TEXT NOT NULL DEFAULT '', branch TEXT NOT NULL DEFAULT '', base TEXT NOT NULL DEFAULT '');"
+  wake_claim_schema()
+  ++ "CREATE TABLE IF NOT EXISTS sessions (id TEXT PRIMARY KEY NOT NULL, parent TEXT REFERENCES sessions(id), harness TEXT NOT NULL, model TEXT NOT NULL DEFAULT '', effort TEXT NOT NULL DEFAULT '', native TEXT NOT NULL DEFAULT '', observed_harness TEXT NOT NULL DEFAULT '', observed_model TEXT NOT NULL DEFAULT '', observed_effort TEXT NOT NULL DEFAULT '', endpoint TEXT NOT NULL DEFAULT '', workspace TEXT NOT NULL DEFAULT '', branch TEXT NOT NULL DEFAULT '', base TEXT NOT NULL DEFAULT '');"
   ++ "CREATE TABLE IF NOT EXISTS messages (seq INTEGER PRIMARY KEY AUTOINCREMENT, id TEXT UNIQUE NOT NULL, sender TEXT NOT NULL REFERENCES sessions(id), recipient TEXT NOT NULL REFERENCES sessions(id), kind TEXT NOT NULL, body TEXT NOT NULL, receipt TEXT);"
   ++ "CREATE TABLE IF NOT EXISTS turns (id TEXT PRIMARY KEY NOT NULL REFERENCES messages(id), worker TEXT NOT NULL REFERENCES sessions(id), event TEXT NOT NULL);"
   ++ "CREATE TABLE IF NOT EXISTS executions (session TEXT PRIMARY KEY NOT NULL REFERENCES sessions(id), id TEXT NOT NULL, mode TEXT NOT NULL, directory TEXT NOT NULL, phase TEXT NOT NULL, status TEXT NOT NULL DEFAULT '');"
@@ -100,8 +111,43 @@ def execution_input_sql(kind: String) -> String:
 def input_state_sql(+row: String) -> String:
   "CASE WHEN " ++ stopped_session_sql(row ++ ".recipient") ++ " THEN json_object('stopId',(SELECT id FROM session_stops WHERE session=" ++ row ++ ".recipient),'executionDisposition',CASE WHEN " ++ row ++ ".receipt IS NOT NULL THEN 'accepted' WHEN " ++ execution_input_sql(row ++ ".kind") ++ " THEN 'stopped' ELSE 'retained-for-stopped-session' END) ELSE json('{}') END"
 
-def session_state_sql(session: String) -> String:
-  "coalesce((SELECT json_object('stop',json_object('id',id,'reason',reason,'status',outcome,'attempt',nullif(attempt,''),'requestedSignal',CASE WHEN attempt='' THEN NULL ELSE signal END,'submittedSignal',nullif(applied_signal,0),'controlError',nullif(control_error,''),'nativeStatus',nullif(native_status,''),'reportId',nullif(report_id,''))) FROM session_stops WHERE session=" ++ session ++ "),json('{}'))"
+# Blocked-cause classification for issue #685. Derived from retained facts in
+# precedence order: terminal stop, harness without receiver support, absent
+# endpoint, failed provider attempt. Capacity refusal has no retained signal
+# in these sources and stays an open evidence question; the classifier
+# carries the four derivable values. The record is session-scoped because two
+# of the five causes fire before any message row exists.
+def blocked_endpoint_absent_sql(+session: String) -> String:
+  "(" ++ "(SELECT endpoint FROM sessions WHERE id=" ++ session ++ ")=''"
+  ++ " OR NOT (json_valid((SELECT endpoint FROM sessions WHERE id=" ++ session ++ "))"
+  ++ " AND json_type((SELECT endpoint FROM sessions WHERE id=" ++ session ++ "))='array'"
+  ++ " AND json_array_length((SELECT endpoint FROM sessions WHERE id=" ++ session ++ "))>0"
+  ++ " AND NOT EXISTS(SELECT 1 FROM json_each((SELECT endpoint FROM sessions WHERE id=" ++ session ++ ")) WHERE type<>'text' OR instr(value,char(0))>0)"
+  ++ " AND coalesce(json_extract((SELECT endpoint FROM sessions WHERE id=" ++ session ++ "),'$[0]'),'')<>''))"
+
+def blocked_cause_sql(+session: String) -> String:
+  "CASE WHEN " ++ stopped_session_sql(session) ++ " THEN 'terminal-stop'"
+  ++ " WHEN (SELECT harness FROM sessions WHERE id=" ++ session ++ ") NOT IN ('codex','omp') THEN 'harness-unsupported'"
+  ++ " WHEN " ++ blocked_endpoint_absent_sql(session) ++ " THEN 'endpoint-absent'"
+  ++ " WHEN EXISTS(SELECT 1 FROM executions WHERE session=" ++ session ++ " AND phase='exited' AND status<>'exit 0') THEN 'provider-failure'"
+  ++ " ELSE '' END"
+
+# Wake and ownership projection shared by every session surface. Pending input
+# uses the continuation count: unacknowledged input on an unstopped session.
+# The claim reads the wake_claims table, which every commit creates through
+# schema() before any surface query runs in the same transaction.
+def wake_state_sql(+session: String) -> String:
+  "json_object('pending',(SELECT count(*) FROM messages WHERE recipient=" ++ session ++ " AND receipt IS NULL AND NOT " ++ stopped_session_sql(session) ++ "),'claim',coalesce((SELECT state FROM wake_claims WHERE session=" ++ session ++ "),'') )"
+
+# The accountable owner for blocked input: the recorded parent, else the
+# registered operator. This mirrors report_recipient without naming it, which
+# is defined below; the SQL shape is the same parent-first fallback.
+def blocked_owner_sql(+session: String) -> String:
+  "(SELECT CASE WHEN report_sender.parent IS NOT NULL THEN report_sender.parent WHEN coalesce((SELECT role FROM session_roles WHERE session=report_sender.id),'player')='conductor' THEN (SELECT report_owner.id FROM sessions report_owner WHERE report_owner.id='operator' AND report_owner.parent IS NULL AND coalesce((SELECT role FROM session_roles WHERE session=report_owner.id),'player')='operator') END FROM sessions report_sender WHERE report_sender.id=" ++ session ++ ")"
+
+def session_state_sql(+session: String) -> String:
+  "json_patch(coalesce((SELECT json_object('stop',json_object('id',id,'reason',reason,'status',outcome,'attempt',nullif(attempt,''),'requestedSignal',CASE WHEN attempt='' THEN NULL ELSE signal END,'submittedSignal',nullif(applied_signal,0),'controlError',nullif(control_error,''),'nativeStatus',nullif(native_status,''),'reportId',nullif(report_id,''))) FROM session_stops WHERE session=" ++ session ++ "),json('{}'))"
+  ++ ",json_object('blockedCause'," ++ blocked_cause_sql(session) ++ ",'blockedOwner'," ++ blocked_owner_sql(session) ++ ",'wake'," ++ wake_state_sql(session) ++ "))"
 
 def assigned_role(session: String) -> String:
   "coalesce((SELECT role FROM session_roles WHERE session=" ++ session ++ "),'player')"
@@ -175,10 +221,21 @@ def terminal_body(+event: String) -> String:
 def observe_identity_sql(+player: String, +event: String) -> String:
   "UPDATE sessions SET native=coalesce(CASE WHEN json_extract(" ++ q(event) ++ ",'$.type')='response' AND json_extract(" ++ q(event) ++ ",'$.command')='get_state' AND json_extract(" ++ q(event) ++ ",'$.success')=1 THEN json_extract(" ++ q(event) ++ ",'$.data.sessionId') END,CASE WHEN json_extract(" ++ q(event) ++ ",'$.type')='thread.started' THEN json_extract(" ++ q(event) ++ ",'$.thread_id') END,json_extract(" ++ q(event) ++ ",'$.session_id'),CASE WHEN json_extract(" ++ q(event) ++ ",'$.type')='session' THEN json_extract(" ++ q(event) ++ ",'$.id') END,CASE WHEN json_extract(" ++ q(event) ++ ",'$.stream.kind')='session' THEN json_extract(" ++ q(event) ++ ",'$.stream.id') END,native),observed_model=coalesce(CASE WHEN json_extract(" ++ q(event) ++ ",'$.type')='response' AND json_extract(" ++ q(event) ++ ",'$.command')='get_state' AND json_extract(" ++ q(event) ++ ",'$.success')=1 THEN json_extract(" ++ q(event) ++ ",'$.data.model.provider') || '/' || json_extract(" ++ q(event) ++ ",'$.data.model.id') END,CASE WHEN json_extract(" ++ q(event) ++ ",'$.payload_type')='run.model.configured' THEN json_extract(" ++ q(event) ++ ",'$.payload.model_id') END,CASE WHEN json_extract(" ++ q(event) ++ ",'$.message.provider') IS NOT NULL AND json_extract(" ++ q(event) ++ ",'$.message.model') IS NOT NULL THEN json_extract(" ++ q(event) ++ ",'$.message.provider') || '/' || json_extract(" ++ q(event) ++ ",'$.message.model') END,json_extract(" ++ q(event) ++ ",'$.message.model'),json_extract(" ++ q(event) ++ ",'$.model'),observed_model) WHERE id=" ++ q(player) ++ ";"
 
+# Completion gate for issue #685. A completion report and its turn row are
+# recorded only when the completing session has no unreconciled input, using
+# the continuation count: unacknowledged input on an unstopped session, which
+# is why explicitly blocked stopped input does not hold the gate. Otherwise
+# nothing is recorded and the answer carries the reconciliation state.
+def completion_pending_sql(+player: String) -> String:
+  "(SELECT count(*) FROM messages WHERE recipient=" ++ q(player) ++ " AND receipt IS NULL AND NOT " ++ stopped_session_sql(q(player)) ++ ")"
+
+def completion_oldest_sql(+player: String) -> String:
+  "(SELECT id FROM messages WHERE recipient=" ++ q(player) ++ " AND receipt IS NULL AND NOT " ++ stopped_session_sql(q(player)) ++ " ORDER BY seq LIMIT 1)"
+
 def completion_sql(+id: String, +player: String, +event: String) -> String:
-  "INSERT INTO messages(id,sender,recipient,kind,body) SELECT " ++ q(id) ++ ",id," ++ report_recipient("sessions.id") ++ ",'report'," ++ terminal_body(event) ++ " FROM sessions WHERE id=" ++ q(player) ++ " AND " ++ report_recipient("sessions.id") ++ " IS NOT NULL AND " ++ terminal(event) ++ message_upsert()
-  ++ "INSERT INTO turns(id,worker,event) SELECT " ++ q(id) ++ "," ++ q(player) ++ "," ++ q(event) ++ " WHERE " ++ report_recipient(q(player)) ++ " IS NOT NULL AND " ++ terminal(event) ++ " ON CONFLICT(id) DO UPDATE SET id=CASE WHEN turns.worker=excluded.worker AND turns.event=excluded.event THEN turns.id ELSE NULL END;"
-  ++ "SELECT json_object('player',id,'native',native,'eventType',coalesce(json_extract(" ++ q(event) ++ ",'$.type'),json_extract(" ++ q(event) ++ ",'$.payload_type')),'reportId',CASE WHEN " ++ report_recipient("sessions.id") ++ " IS NOT NULL AND " ++ terminal(event) ++ " THEN " ++ q(id) ++ " ELSE NULL END) FROM sessions WHERE id=" ++ q(player) ++ ";"
+  "INSERT INTO messages(id,sender,recipient,kind,body) SELECT " ++ q(id) ++ ",id," ++ report_recipient("sessions.id") ++ ",'report'," ++ terminal_body(event) ++ " FROM sessions WHERE id=" ++ q(player) ++ " AND " ++ report_recipient("sessions.id") ++ " IS NOT NULL AND " ++ terminal(event) ++ " AND " ++ completion_pending_sql(player) ++ "=0" ++ message_upsert()
+  ++ "INSERT INTO turns(id,worker,event) SELECT " ++ q(id) ++ "," ++ q(player) ++ "," ++ q(event) ++ " WHERE " ++ report_recipient(q(player)) ++ " IS NOT NULL AND " ++ terminal(event) ++ " AND " ++ completion_pending_sql(player) ++ "=0 ON CONFLICT(id) DO UPDATE SET id=CASE WHEN turns.worker=excluded.worker AND turns.event=excluded.event THEN turns.id ELSE NULL END;"
+  ++ "SELECT json_object('player',id,'native',native,'eventType',coalesce(json_extract(" ++ q(event) ++ ",'$.type'),json_extract(" ++ q(event) ++ ",'$.payload_type')),'reportId',CASE WHEN " ++ report_recipient("sessions.id") ++ " IS NOT NULL AND " ++ terminal(event) ++ " AND " ++ completion_pending_sql(player) ++ "=0 THEN " ++ q(id) ++ " ELSE NULL END,'reconciliation',CASE WHEN " ++ completion_pending_sql(player) ++ ">0 THEN json_object('pendingCount'," ++ completion_pending_sql(player) ++ ",'oldestPendingId'," ++ completion_oldest_sql(player) ++ ",'next','Reconcile the pending input before completion; wake the session or record the blocked cause.') ELSE NULL END) FROM sessions WHERE id=" ++ q(player) ++ ";"
 
 def observe_completion_sql(+id: String, +player: String, +event: String, sealed: Bool) -> String:
   Bool.pick(String,sealed,"",completion_sql(id,player,event))
@@ -294,7 +351,7 @@ def sql(command: Command) -> String:
     case Ask{+id, +player, body}:
       "INSERT INTO messages(id,sender,recipient,kind,body) VALUES(" ++ q(id) ++ "," ++ q(player) ++ ",(SELECT parent FROM sessions WHERE id=" ++ q(player) ++ "),'question'," ++ q(body) ++ ")" ++ message_upsert() ++ message_result(id)
     case Ack{+id, +recipient, receipt}:
-      "UPDATE messages SET receipt=coalesce(receipt," ++ q(receipt) ++ ") WHERE id=" ++ q(id) ++ " AND recipient=" ++ q(recipient) ++ ";SELECT json_object('id',id,'receipt',receipt) FROM messages WHERE id=" ++ q(id) ++ " AND recipient=" ++ q(recipient) ++ ";"
+      "UPDATE messages SET receipt=coalesce(receipt," ++ q(receipt) ++ ") WHERE id=" ++ q(id) ++ " AND recipient=" ++ q(recipient) ++ ";DELETE FROM wake_claims WHERE session=" ++ q(recipient) ++ ";SELECT json_object('id',id,'receipt',receipt) FROM messages WHERE id=" ++ q(id) ++ " AND recipient=" ++ q(recipient) ++ ";"
     case Session{id}: session_result(id)
     case Delivery{id}:
       "SELECT " ++ delivery_row() ++ " FROM messages m JOIN sessions s ON s.id=m.recipient WHERE m.id=" ++ q(id) ++ ";"

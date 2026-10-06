@@ -14,6 +14,7 @@ import ./knowledge.bend as Knowledge
 import ./usage.bend as Usage
 import ./commands.bend as C
 import ./control.bend as Control
+import ./wake.bend as Wake
 import ./control-laws.bend as ControlLaws
 import ../host/text.bend as T
 import ../host/process.bend as P
@@ -61,9 +62,12 @@ law m1_a_stored_answer_is_written_unchanged:
 def m1_a_stored_answer_is_written_unchanged(h, t):
   {==}
 
-def run(db: String, command: C.Command) -> IO(Unit):
+# A committed message admission is evaluated for a due wake before the entry
+# answers. Refused admissions never reach the driver: Store.apply fails first.
+def run(+db: String, +command: C.Command) -> IO(Unit):
   do IO<Unit>:
     result : String <- IO.try(String, Store.apply(db,command))
+    woken : Result<&1,&1,U32 & String,Unit> <- Wake.drive_command(db,command,Done{result})
     print_result(result)
 
 law stored_command_entry_uses_the_actual_store:
@@ -71,6 +75,7 @@ law stored_command_entry_uses_the_actual_store:
   for command: C.Command
   {run(db,command) == (do IO<Unit>:
     result : String <- IO.try(String,Store.apply(db,command))
+    woken : Result<&1,&1,U32 & String,Unit> <- Wake.drive_command(db,command,Done{result})
     print_result(result)) : IO(Unit)}
 
 def stored_command_entry_uses_the_actual_store(db,command):
