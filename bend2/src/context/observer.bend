@@ -148,17 +148,17 @@ def intent_tabs(+expected: String, +row: String, fields: List<String>) -> Releas
             case +recorded <> m2:
               match m2:
                 case Nil{}: intent_decision(presence, hasIntent, recorded, expected)
-                case _: IntentMissing{"shape"}
-            case _: IntentMissing{"short"}
-        case _: IntentMissing{"short"}
-    case _: IntentMissing{"short"}
+                case _: IntentUnreadable{"shape", row}
+            case _: IntentUnreadable{"short", row}
+        case _: IntentUnreadable{"short", row}
+    case _: IntentUnreadable{"short", row}
 def intent_fields(+expected: String, +row: String, lines: List<String>) -> ReleaseIntent:
   match lines:
-    case Nil{}: IntentMissing{"empty"}
+    case Nil{}: IntentUnreadable{"empty", row}
     case +line <> rest:
       match rest:
         case Nil{}: intent_tabs(expected, row, Tx.split_tabs(line))
-        case _: IntentMissing{"surplus"}
+        case _: IntentUnreadable{"surplus", row}
 def intent_decode(+expected: String, +row: String) -> ReleaseIntent:
   intent_fields(expected, row, Tx.split_lines(row))
 def intent_after(+db: String, +binding: String, +query: String, +role: String, +incarnation: String, +expected: String, result: Result<&1,&1,U32 & String,String>) -> IO(ReleaseIntent):
@@ -257,8 +257,6 @@ def claim_release_after(+db: String, +binding: String, +query: String, +role: St
     case IntentMissing{stage}: IO.pure(ReleaseOutcome, ReleaseIntentRefused{"missing", stage})
     case IntentStale{recorded, expected}: IO.pure(ReleaseOutcome, ReleaseIntentRefused{"stale", recorded ++ ":" ++ expected})
 
-case IntentUnreadable{stage, answer}: IO.pure(ReleaseOutcome, ReleaseIntentRefused{"unreadable", stage ++ ":" ++ answer})
-
 # The claim statement of one stage. The matched label is the state this claim compares against,
 # so the attempt stage passes the committed state and the completion stage passes the state the
 # attempt recorded. Single-sourcing the three call sites keeps the label argument law-visible.
@@ -276,8 +274,7 @@ def claim_verified(+db: String, +binding: String, +query: String, +role: String,
     case IntentAdmissible{recorded}: IO.pure(ReleaseOutcome, ReleaseClaimOnly{recorded})
     case IntentMissing{stage}: IO.pure(ReleaseOutcome, ReleaseIntentRefused{"claim", stage})
     case IntentStale{recorded, expected}: IO.pure(ReleaseOutcome, ReleaseIntentRefused{"claim", recorded ++ ":" ++ expected})
-
-case IntentUnreadable{stage, answer}: IO.pure(ReleaseOutcome, ReleaseIntentRefused{"unreadable", stage ++ ":" ++ answer})
+    case IntentUnreadable{stage, answer}: IO.pure(ReleaseOutcome, ReleaseIntentRefused{"claim", stage ++ ":" ++ answer})
 
 def claim_verify(+db: String, +binding: String, +query: String, +role: String, +incarnation: String, +label: String) -> IO(ReleaseOutcome):
   do IO<ReleaseOutcome>:
@@ -303,16 +300,14 @@ def claim_release(+db: String, +binding: String, +query: String, +role: String, 
       case IntentAdmissible{recorded}: claim_run(db, binding, query, role, incarnation, recorded, nextDelivery, nextJson)
       case IntentMissing{stage}: IO.pure(ReleaseOutcome, ReleaseIntentRefused{"missing", stage})
       case IntentStale{recorded, expected}: IO.pure(ReleaseOutcome, ReleaseIntentRefused{"stale", recorded ++ ":" ++ expected})
-
-case IntentUnreadable{stage, answer}: IO.pure(ReleaseOutcome, ReleaseIntentRefused{"unreadable", stage ++ ":" ++ answer})
+      case IntentUnreadable{stage, answer}: IO.pure(ReleaseOutcome, ReleaseIntentRefused{"unreadable", stage ++ ":" ++ answer})
 
 def release_completed_after(+db: String, +binding: String, +query: String, +role: String, +incarnation: String, +claim: String, +effect: String, read: ReleaseIntent) -> IO(ReleaseOutcome):
   match read:
     case IntentAdmissible{recorded}: IO.pure(ReleaseOutcome, ReleaseEffectCompleted{claim, effect, document: recorded})
     case IntentMissing{stage}: IO.pure(ReleaseOutcome, ReleaseEffectUnpersisted{claim, effect, "completion:missing:" ++ stage})
     case IntentStale{recorded, expected}: IO.pure(ReleaseOutcome, ReleaseEffectUnpersisted{claim, effect, "completion:unconfirmed:" ++ recorded ++ ":" ++ expected})
-
-case IntentUnreadable{stage, answer}: IO.pure(ReleaseOutcome, ReleaseIntentRefused{"unreadable", stage ++ ":" ++ answer})
+    case IntentUnreadable{stage, answer}: IO.pure(ReleaseOutcome, ReleaseEffectUnpersisted{claim, effect, "completion:unreadable:" ++ stage ++ ":" ++ answer})
 
 def release_completion(+db: String, +binding: String, +query: String, +role: String, +incarnation: String, +attempt: String, +completion: String, +completionJson: String, +effect: String) -> IO(ReleaseOutcome):
   do IO<ReleaseOutcome>:
@@ -344,8 +339,7 @@ def release_attempt_verified(+db: String, +binding: String, +query: String, +rol
     case IntentAdmissible{recorded}: release_effect_run(db, binding, query, role, incarnation, attempt, completion, completionJson, action)
     case IntentMissing{stage}: IO.pure(ReleaseOutcome, ReleaseIntentRefused{"attempt", stage})
     case IntentStale{recorded, expected}: IO.pure(ReleaseOutcome, ReleaseIntentRefused{"attempt", recorded ++ ":" ++ expected})
-
-case IntentUnreadable{stage, answer}: IO.pure(ReleaseOutcome, ReleaseIntentRefused{"unreadable", stage ++ ":" ++ answer})
+    case IntentUnreadable{stage, answer}: IO.pure(ReleaseOutcome, ReleaseIntentRefused{"attempt", stage ++ ":" ++ answer})
 
 def release_attempt_verify(+db: String, +binding: String, +query: String, +role: String, +incarnation: String, +attempt: String, +completion: String, +completionJson: String, action: Unit -> IO(Result<&1,&1,U32 & String,String>), answer: String) -> IO(ReleaseOutcome):
   do IO<ReleaseOutcome>:
@@ -366,8 +360,7 @@ def release_intent_after(+db: String, +binding: String, +query: String, +role: S
     case IntentAdmissible{recorded}: release_attempt_claim(db, binding, query, role, incarnation, recorded, attempt, attemptJson, completion, completionJson, action)
     case IntentMissing{stage}: IO.pure(ReleaseOutcome, ReleaseIntentRefused{"missing", stage})
     case IntentStale{recorded, expected}: IO.pure(ReleaseOutcome, ReleaseIntentRefused{"stale", recorded ++ ":" ++ expected})
-
-case IntentUnreadable{stage, answer}: IO.pure(ReleaseOutcome, ReleaseIntentRefused{"unreadable", stage ++ ":" ++ answer})
+    case IntentUnreadable{stage, answer}: IO.pure(ReleaseOutcome, ReleaseIntentRefused{"unreadable", stage ++ ":" ++ answer})
 
 def release_intent_read(+db: String, +binding: String, +query: String, +role: String, +incarnation: String, +expectedDelivery: String, +attempt: String, +attemptJson: String, +completion: String, +completionJson: String, action: Unit -> IO(Result<&1,&1,U32 & String,String>)) -> IO(ReleaseOutcome):
   do IO<ReleaseOutcome>:
