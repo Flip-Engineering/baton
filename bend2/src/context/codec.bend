@@ -1071,7 +1071,7 @@ def keys_unique(+members: RawValue) -> Bool:
 def arguments_values_ok(+tool: String, members: RawValue) -> Bool:
   Bool.pick(Bool, String.eq(tool, "context-engines"), scope_value_ok(members), True{})
 
-def arguments_closed_for(+tool: String, members: RawValue) -> Bool:
+def arguments_closed_for(+tool: String, +members: RawValue) -> Bool:
   Bool.pick(Bool, raw_keys_ok(arguments_words(tool), members),
     Bool.pick(Bool, keys_unique(members), Bool.pick(Bool, arguments_required(tool, members), arguments_values_ok(tool, members), False{}), False{}), False{})
 
@@ -1446,13 +1446,13 @@ type InputPlan is Data:
 def validation_refusal(condition: String) -> String:
   Context.refusal_text(Context.Refuse{Context.RfValidation{}, "context-request-codec", Context.text_condition(condition), Context.NextStop{}})
 
-def finish_observed(retained: String, +v: ValidationObserved) -> InputPlan:
+def finish_observed(+retained: String, +v: ValidationObserved) -> InputPlan:
   match v:
     case VoValid{}: IpRows{retained, Req.Context.json_tree_sql(retained)}
     case VoInvalid{}: IpRefused{validation_refusal("invalidJson")}
     case VoMalformed{}: IpRefused{validation_refusal("malformedValidationObservation")}
 
-def finish_validation(retained: String, observed: String) -> InputPlan:
+def finish_validation(+retained: String, observed: String) -> InputPlan:
   finish_observed(retained, validation_observed(observed))
 
 # The reader classifier. A decoded text body plans the validity statement; the three
@@ -1460,7 +1460,7 @@ def finish_validation(retained: String, observed: String) -> InputPlan:
 # document. Host failure is the caller's branch and never reaches this definition.
 def plan_of_read(+r: Raw.RawRead) -> InputPlan:
   match r:
-    case Raw.RawText{value}: IpValidate{value, Req.Context.validity_sql(value)}
+    case Raw.RawText{+value}: IpValidate{value, Req.Context.validity_sql(value)}
     case Raw.RawInvalidUtf8{+offset}: IpRefused{validation_refusal("invalidUtf8")}
     case Raw.RawNul{+offset}: IpRefused{validation_refusal("nulByte")}
     case Raw.RawBom{}: IpRefused{validation_refusal("bom")}
