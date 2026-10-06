@@ -518,7 +518,7 @@ def all_present(required: Words, +members: J.Json) -> Bool:
     case Wnone{}: True{}
     case Wcons{+head, +tail}: Bool.pick(Bool, member_present(head, members), all_present(tail, members), False{})
 
-def keys_allowed(allowed: Words, members: J.Json) -> Bool:
+def keys_allowed(+allowed: Words, members: J.Json) -> Bool:
   match members:
     case J.Jnil{}: True{}
     case J.Jpair{+key, +value, +rest}: Bool.pick(Bool, word_member(allowed, key), keys_allowed(allowed, rest), False{})

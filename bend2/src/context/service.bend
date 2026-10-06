@@ -208,7 +208,7 @@ def submission_stored(+expectedOwner: String, +expectedRequest: String, +plan: S
 
 def submission_replayed(+expectedOwner: String, +expectedRequest: String, +plan: String, +resultSchema: String, admission: ContextAdmit.Admission, association: ContextAdmit.Association) -> Submission:
   match association:
-    case ContextAdmit.AssociationStored{planValue, planIdentity, resultSchema: storedSchema}: submission_stored(expectedOwner, expectedRequest, plan, admission, planValue, planIdentity, storedSchema)
+    case ContextAdmit.AssociationStored{planValue, planIdentity, storedSchema}: submission_stored(expectedOwner, expectedRequest, plan, admission, planValue, planIdentity, storedSchema)
     case ContextAdmit.AssociationMissing{}: submission_of(expectedOwner, expectedRequest, plan, resultSchema, admission)
     case ContextAdmit.AssociationMalformed{stage, answer}: SubmissionUncertain{stage, answer}
 
