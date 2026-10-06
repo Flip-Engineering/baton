@@ -131,7 +131,7 @@ type RequestText is Data:
 
 def request_condition(r: RequestText) -> String:
   match r:
-    case RtAbsent{+value}: SNil{}
+    case RtAbsent{}: SNil{}
     case RtText{+value}: SNil{}
     case RtBad{condition}: condition
 

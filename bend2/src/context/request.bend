@@ -271,14 +271,14 @@ def hex_ok(s: String) -> Bool:
         case SNil{}: False{}
         case SCon{+h2, +t2}: Bool.pick(Bool, hex_digit_ok(head), Bool.pick(Bool, hex_digit_ok(h2), hex_ok(t2), False{}), False{})
 
-def line_rows(line: String, rows: Rows) -> Rows:
-  Bool.pick(Rows, is_empty_s(line), rows, rows_add(rows, row_from_fields(fields_of(line))))
+def row_exact(+fs: Fields) -> Row:
+  Row{fields_at(fs, 0), fields_at(fs, 1), fields_at(fs, 2), fields_at(fs, 3), fields_at(fs, 4)}
 
-def row_from_fields(fs: Fields) -> Row:
+def row_from_fields(+fs: Fields) -> Row:
   Bool.pick(Row, U32.is_eq(fields_len(fs), 5), row_exact(fs), Row{"", "", "malformed", "", ""})
 
-def row_exact(fs: Fields) -> Row:
-  Row{fields_at(fs, 0), fields_at(fs, 1), fields_at(fs, 2), fields_at(fs, 3), fields_at(fs, 4)}
+def line_rows(+line: String, +rows: Rows) -> Rows:
+  Bool.pick(Rows, is_empty_s(line), rows, rows_add(rows, row_from_fields(fields_of(line))))
 
 def rows_go(rest: String, +cur: String, +rows: Rows) -> Rows:
   match rest:

@@ -114,29 +114,31 @@ def duty_checked(record: DutyRecord) -> Maybe<&2, DutyRecord>:
       Bool.pick(Maybe<&2, DutyRecord>, duty_shaped(kind, subject, stage), Some{DutyRecord{kind, subject, role, incarnation, stage, evidence}}, None{})
 
 # One duty row: a short, surplus or empty row is not a record.
-def duty_line(+line: String) -> Maybe<&2, DutyRecord>:
-  match duty_fields(Tx.split_tabs(line)):
+def duty_line_record(parsed: Maybe<&2, DutyRecord>) -> Maybe<&2, DutyRecord>:
+  match parsed:
     case None{}: None{}
     case Some{record}: duty_checked(record)
 
+def duty_line(+line: String) -> Maybe<&2, DutyRecord>:
+  duty_line_record(duty_fields(Tx.split_tabs(line)))
+
 # Every line of the answer must be a known record; a single unreadable line makes the
 # enumeration unusable rather than quietly shorter.
+def duty_record_known(parsed: Maybe<&2, DutyRecord>) -> Bool:
+  match parsed:
+    case None{}: False{}
+    case Some{record}: duty_known_kind(duty_kind(record))
+
+def duty_record_ok(line: String) -> Bool:
+  duty_record_known(duty_line(line))
+
 def duty_wellformed_go(xs: List<String>) -> Bool:
   match xs:
     case Nil{}: True{}
-    case h <> t:
-      match duty_line(h):
-        case None{}: False{}
-        case Some{record}: Bool.and(duty_wellformed_go(t), duty_known_kind(duty_kind(record)))
+    case h <> t: Bool.and(duty_record_ok(h), duty_wellformed_go(t))
 
 def duty_wellformed(rows: String) -> Bool:
   duty_wellformed_go(duty_split(rows))
-
-# A duty line is a record with a kind this module knows.
-def duty_record_ok(line: String) -> Bool:
-  match duty_line(line):
-    case None{}: False{}
-    case Some{record}: duty_known_kind(duty_kind(record))
 
 # The first line that is not a duty record; its value is read only when the
 # validator below reports that some line failed, so an empty offending line cannot
@@ -167,10 +169,13 @@ def duty_after(result: Result<&1,&1,U32 & String,String>) -> IO(Result<&1,&1,U32
 
 # Whether the validated enumeration contains this exact duty. It is the obligation a
 # caller asserts, so no caller has to infer identity from an aggregate count.
-def duty_matches(line: String, +kind: String, +subject: String) -> Bool:
-  match duty_line(line):
+def duty_matches_record(parsed: Maybe<&2, DutyRecord>, +kind: String, +subject: String) -> Bool:
+  match parsed:
     case None{}: False{}
     case Some{record}: Bool.and(String.eq(duty_kind(record), kind), String.eq(duty_subject(record), subject))
+
+def duty_matches(line: String, +kind: String, +subject: String) -> Bool:
+  duty_matches_record(duty_line(line), kind, subject)
 
 # A safe rendering of the exported view for a caller that only needs the disposition.
 def duty_contains_rows(xs: List<String>, +kind: String, +subject: String) -> Bool:
