@@ -4,10 +4,14 @@
 # check file runs on the candidate and on a detached tree at the target tip;
 # a candidate failure blocks unless the target run shows the same failure
 # identity (file, test, failure type, code) as AGENTS.md requires. A run with
-# no verdict blocks. The target advances through update-ref with the observed
-# tip as the old value, so the branch moves only while it still matches the
-# prepared basis. A target that moved meanwhile returns a retry instruction
-# and keeps the checked candidate worktree for the requester. A landing whose
+# no verdict blocks. The target advances while it still reads as the prepared
+# basis. Where a worktree holds the target branch, the advance runs in that
+# worktree as a fast-forward, so the branch, the index and the files move
+# together and that worktree's uncommitted work survives wherever it does not
+# overlap; where no worktree holds it, the branch advances through update-ref
+# with the observed tip as the old value. A target that moved meanwhile returns
+# a retry instruction and keeps the checked candidate worktree for the
+# requester. A landing whose
 # worker commit the target already contains answers LAlready without
 # preparing anything. LAlready names the worker commit on the fast-forward and
 # the checked path alike.
@@ -48,6 +52,212 @@ import ./debris.bend as Deb
 # The fast-forward landing below is the coordinator's current entry point;
 # land_checked is the gated landing described in target-architecture.md.
 
+# ---------------------------------------------------------------------------
+# The target's advance. Every landing entry moves the target branch through this
+# one path, so a branch a worktree holds and that worktree always move together.
+
+# The path one worktree-list line names: the line with its label matched off,
+# or the empty string for a line that does not carry the label.
+def wt_path_go(line: String, label: String) -> String:
+  match line label:
+    case SNil{} SNil{}: ""
+    case SNil{} SCon{lc, lr}: ""
+    case SCon{c, rest} SNil{}: line
+    case SCon{c, rest} SCon{lc, lr}:
+      Bool.pick(String, Char.is_eq(c, lc), wt_path_go(rest, lr), "")
+
+def wt_path(line: String) -> String:
+  wt_path_go(line, "worktree ")
+
+# The branch line a worktree report carries when it holds the target.
+def ld_hold_branch(target: String) -> String:
+  Tx.str_cat("branch refs/heads/", target)
+
+# The holder's block in a `git worktree list --porcelain` report: each block is
+# one "worktree <path>" line and the state lines that follow it, and the block
+# whose branch line names the target branch is the worktree that holds it. The
+# path is taken from the line as Git writes it, so a path Git quoted is not a
+# path this module can enter and the advance never runs in one.
+type LdHoldScan is Data:
+  HoldScan{cur: String, found: String, seen: U32}
+
+# One branch line that names the target: the first one records the path of the
+# block it appeared in, and any later one, or one that appeared before any
+# block, makes the listing unusable.
+def ld_hold_named(+cur: String, +found: String, +seen: U32) -> LdHoldScan:
+  Bool.pick(LdHoldScan, String.is_empty(cur),
+    HoldScan{cur, found, 2},
+    Bool.pick(LdHoldScan, U32.is_eq(seen, 0),
+      HoldScan{cur, cur, 1},
+      HoldScan{cur, found, 2}))
+
+def ld_hold_line(+line: String, acc: LdHoldScan, want: String) -> LdHoldScan:
+  match acc:
+    case HoldScan{+cur, +found, +seen}:
+      Bool.pick(LdHoldScan, Tx.starts_with(line, "worktree "),
+        HoldScan{wt_path(line), found, seen},
+        Bool.pick(LdHoldScan, Tx.str_eq(line, want),
+          ld_hold_named(cur, found, seen),
+          HoldScan{cur, found, seen}))
+
+def ld_hold_scan(lines: List<String>, acc: LdHoldScan, +want: String) -> LdHoldScan:
+  match lines:
+    case Nil{}: acc
+    case Con{h, rest}: ld_hold_scan(rest, ld_hold_line(h, acc, want), want)
+
+# The worktree that holds the target: its path, none, or the reason the report
+# cannot be trusted to name exactly one.
+type LdHold is Data:
+  HoldNone{}
+  HoldPath{path: String}
+  HoldBlocked{detail: String}
+
+# The holder one report names, or the reason it names no usable one.
+def ld_hold_end(acc: LdHoldScan) -> LdHold:
+  match acc:
+    case HoldScan{cur, found, +seen}:
+      Bool.pick(LdHold, U32.is_eq(seen, 0), HoldNone{},
+        Bool.pick(LdHold, U32.is_eq(seen, 1), HoldPath{found},
+          HoldBlocked{"the worktree listing names the target branch in more than one block, or outside a block"}))
+
+def ld_hold_of(out: String, target: String) -> LdHold:
+  ld_hold_end(ld_hold_scan(Tx.split_lines(out), HoldScan{"", "", 0}, ld_hold_branch(target)))
+
+# The holder of a listing that ran: the report's holder, or the reason the
+# listing itself cannot be read.
+def ld_hold_read(g: T.GitOut, target: String) -> LdHold:
+  match g:
+    case T.GRun{code, out}:
+      Bool.pick(LdHold, U32.is_eq(code, 0),
+        ld_hold_of(out, target),
+        HoldBlocked{"the worktree listing could not be read"})
+    case T.GBroken{detail}: HoldBlocked{detail}
+
+# The target commit as the read names it.
+def ld_tip_argv(target: String) -> List<String>:
+  ["rev-parse", "--verify", Tx.str_cat(target, "^{commit}")]
+
+# The update-ref argv: the target ref, the candidate and the basis it advanced
+# from, so the branch moves only while it still reads as that basis.
+def ld_update_argv(target: String, cand: String, basis: String) -> List<String>:
+  ["update-ref", Tx.str_cat("refs/heads/", target), cand, basis]
+
+# How the target branch advanced, or why it did not.
+type LAdv is Data:
+  AdvLanded{}
+  AdvMoved{}
+  AdvHeld{path: String}
+  AdvRefused{}
+  AdvBroken{detail: String}
+
+# The compare-and-swap where no worktree holds the target.
+def ld_adv_cas(g: T.GitOut) -> LAdv:
+  match g:
+    case T.GRun{code, out}: Bool.pick(LAdv, U32.is_eq(code, 0), AdvLanded{}, AdvRefused{})
+    case T.GBroken{detail}: AdvBroken{detail}
+
+def ld_adv_cas_run(repo: String, target: String, cand: String, basis: String) -> IO(LAdv):
+  +r2 = repo
+  +t2 = target
+  +c2 = cand
+  +b2 = basis
+  do IO<LAdv>:
+    g : T.GitOut <- Git.runGit(r2, ld_update_argv(t2, c2, b2))
+    IO.pure(LAdv, ld_adv_cas(g))
+
+# A refused fast-forward of a target that still reads as the basis is that
+# worktree's own state: uncommitted changes in the way, or an unfinished
+# operation. A target that no longer reads as the basis moved instead.
+def ld_adv_refused_same(same: Bool, path: String) -> LAdv:
+  match same:
+    case True{}: AdvHeld{path}
+    case False{}: AdvMoved{}
+
+def ld_adv_refused_pick(g: T.GitOut, path: String, basis: String) -> LAdv:
+  match g:
+    case T.GRun{code, out}:
+      Bool.pick(LAdv, U32.is_eq(code, 0),
+        ld_adv_refused_same(Tx.str_eq(Tx.trim_nl(out), basis), path),
+        AdvBroken{"the target commit could not be read after a refused fast-forward"})
+    case T.GBroken{detail}: AdvBroken{detail}
+
+def ld_adv_wt_refused(path: String, repo: String, target: String, basis: String) -> IO(LAdv):
+  +p2 = path
+  +r2 = repo
+  +b2 = basis
+  do IO<LAdv>:
+    g : T.GitOut <- Git.runGit(r2, ld_tip_argv(target))
+    IO.pure(LAdv, ld_adv_refused_pick(g, p2, b2))
+
+# The fast-forward through the worktree that holds the target. Git moves the
+# branch, the index and the files together in one two-way update, and it keeps
+# the worktree's uncommitted changes wherever they do not overlap the advance.
+def ld_adv_wt_pick(g: T.GitOut, path: String, repo: String, target: String, basis: String) -> IO(LAdv):
+  match g:
+    case T.GRun{code, out}:
+      Bool.pick(IO(LAdv), U32.is_eq(code, 0),
+        IO.pure(LAdv, AdvLanded{}),
+        ld_adv_wt_refused(path, repo, target, basis))
+    case T.GBroken{detail}: IO.pure(LAdv, AdvBroken{detail})
+
+def ld_adv_wt(path: String, repo: String, target: String, cand: String, basis: String) -> IO(LAdv):
+  +p2 = path
+  +r2 = repo
+  +t2 = target
+  +c2 = cand
+  +b2 = basis
+  do IO<LAdv>:
+    g : T.GitOut <- Git.runGit(p2, ["merge", "--ff-only", c2])
+    ld_adv_wt_pick(g, p2, r2, t2, b2)
+
+# The advance of a target no worktree holds, and of one a worktree holds.
+def ld_adv_holder(hold: LdHold, repo: String, target: String, cand: String, basis: String) -> IO(LAdv):
+  match hold:
+    case HoldNone{}: ld_adv_cas_run(repo, target, cand, basis)
+    case HoldPath{path}: ld_adv_wt(path, repo, target, cand, basis)
+    case HoldBlocked{detail}: IO.pure(LAdv, AdvBroken{detail})
+
+# The holder is read only for a target that still reads as the basis, so a
+# moved target answers the movement before any worktree is touched.
+def ld_adv_same(same: Bool, repo: String, target: String, cand: String, basis: String) -> IO(LAdv):
+  match same:
+    case False{}: IO.pure(LAdv, AdvMoved{})
+    case True{}:
+      +r2 = repo
+      +t2 = target
+      do IO<LAdv>:
+        gl : T.GitOut <- Git.runGit(r2, ["worktree", "list", "--porcelain"])
+        ld_adv_holder(ld_hold_read(gl, t2), r2, t2, cand, basis)
+
+def ld_adv_pick(g: T.GitOut, repo: String, target: String, cand: String, basis: String) -> IO(LAdv):
+  match g:
+    case T.GRun{code, out}:
+      +b2 = basis
+      Bool.pick(IO(LAdv), U32.is_eq(code, 0),
+        ld_adv_same(Tx.str_eq(Tx.trim_nl(out), b2), repo, target, cand, b2),
+        IO.pure(LAdv, AdvBroken{"the target commit could not be read before publication"}))
+    case T.GBroken{detail}: IO.pure(LAdv, AdvBroken{detail})
+
+# The advance: read the target tip, then move the branch only while it still
+# reads as the basis the candidate was checked against. The tip read is what
+# refuses a branch nobody holds that moved since the candidate was prepared,
+# and what keeps the update-ref compare-and-swap honest.
+def ld_adv_run(repo: String, target: String, cand: String, basis: String) -> IO(LAdv):
+  +r2 = repo
+  +t2 = target
+  +c2 = cand
+  +b2 = basis
+  do IO<LAdv>:
+    g : T.GitOut <- Git.runGit(r2, ld_tip_argv(t2))
+    ld_adv_pick(g, r2, t2, c2, b2)
+
+# What a refused fast-forward of a held target answers. Git's own message for
+# the refusal is in the coordinator log; the answer names the worktree and the
+# operation that resolves it.
+def ld_adv_held_text(target: String, path: String) -> String:
+  "the target branch " ++ target ++ " is checked out at " ++ path ++ "; the fast-forward into that worktree was refused (git's own message is in the coordinator log); commit or stash that worktree's changes, or repair the worktree, and "
+
+# ---------------------------------------------------------------------------
 
 type FFLD is Data:
   FFDone{outcome: T.LandOutcome}
@@ -149,16 +359,15 @@ def ff_go4(r: FFLD, repo: String, target: String) -> IO(FFLD):
     case FFDone{outcome}: IO.pure(FFLD, FFDone{outcome})
     case FFNext{wc, tb}: ff_stage4(wc, tb, repo, target)
 
-# Stage 5: CAS update-ref to advance the target branch.
-def ff_stage5_ok(ok: Bool, wc: String, target: String) -> FFLD:
-  match ok:
-    case True{}: FFDone{T.LLanded{target, wc}}
-    case False{}: FFDone{T.LBlocked{"target moved during landing; retry"}}
-
-def ff_stage5_pick(r: T.GitOut, wc: String, target: String) -> FFLD:
-  match r:
-    case T.GRun{code, out}: ff_stage5_ok(U32.is_eq(code, 0), wc, target)
-    case T.GBroken{detail}: FFDone{T.LBlocked{detail}}
+# Stage 5: advance the target branch from the recorded tip to the worker
+# commit through the shared advance.
+def ff_adv_answer(a: LAdv, wc: String, target: String) -> FFLD:
+  match a:
+    case AdvLanded{}: FFDone{T.LLanded{target, wc}}
+    case AdvMoved{}: FFDone{T.LBlocked{"target moved during landing; retry"}}
+    case AdvRefused{}: FFDone{T.LBlocked{"target moved during landing; retry"}}
+    case AdvHeld{path}: FFDone{T.LBlocked{ld_adv_held_text(target, path) ++ "rerun land"}}
+    case AdvBroken{detail}: FFDone{T.LBlocked{detail}}
 
 def ff_stage5(wc: String, tb: String, repo: String, target: String) -> IO(FFLD):
   +wc2 = wc
@@ -166,8 +375,8 @@ def ff_stage5(wc: String, tb: String, repo: String, target: String) -> IO(FFLD):
   +rp = repo
   +tg = target
   do IO<FFLD>:
-    r : T.GitOut <- Git.runGit(rp, Con{"update-ref", Con{Tx.str_cat("refs/heads/", tg), Con{wc2, Con{tb2, Nil{}}}}})
-    IO.pure(FFLD, ff_stage5_pick(r, wc2, tg))
+    r : LAdv <- ld_adv_run(rp, tg, wc2, tb2)
+    IO.pure(FFLD, ff_adv_answer(r, wc2, tg))
 
 def ff_go5(r: FFLD, repo: String, target: String) -> IO(FFLD):
   match r:
@@ -408,28 +617,6 @@ def run_pairs(script: String, files: List<String>, candTree: String, targTree: S
   +tt2 = targTree
   run_pair_go(s2, files, ct2, tt2, Nil{})
 
-# The branch line a worktree report carries when it holds the target.
-def ld_busy_branch(target: String) -> String:
-  Tx.str_cat("branch refs/heads/", target)
-
-def ld_busy_any(lines: List<String>, want: String) -> Bool:
-  match lines:
-    case Nil{}: False{}
-    case Con{h, rest}:
-      +w2 = want
-      +hit = Tx.str_eq(h, w2)
-      Bool.pick(Bool, hit, True{}, ld_busy_any(rest, w2))
-
-def ld_update_ok(ok: Bool, out: String, target: String, cand: String) -> Ld:
-  match ok:
-    case True{}: LdDone{T.LLanded{target, cand}}
-    case False{}: LdFail{T.FCmd{"land", "git update-ref failed; inspect the target and rerun land-checked to prepare and check a new candidate"}}
-
-def ld_update_pick(g: T.GitOut, target: String, cand: String) -> Ld:
-  match g:
-    case T.GRun{code, out}: ld_update_ok(U32.is_eq(code, 0), Tx.trim_nl(out), target, cand)
-    case T.GBroken{detail}: LdFail{T.FCmd{"land", detail}}
-
 def ld_conflict_of(has: Bool, paths: String, scratch: String, why: String) -> Ld:
   match has:
     case True{}: LdDone{T.LConflict{paths, scratch}}
@@ -451,64 +638,23 @@ def ld_unmerged(scratch: String, why: String) -> IO(Ld):
     g : T.GitOut <- Git.runGit(sc, ["diff", "--name-only", "--diff-filter=U"])
     IO.pure(Ld, ld_unmerged_pick(g, sc, w2))
 
-def ld_update_argv(target: String, cand: String, basis: String) -> List<String>:
-  ["update-ref", Tx.str_cat("refs/heads/", target), cand, basis]
+# The checked landing's answer for each advance.
+def ld_adv_answer(a: LAdv, target: String, cand: String) -> Ld:
+  match a:
+    case AdvLanded{}: LdDone{T.LLanded{target, cand}}
+    case AdvMoved{}: LdDone{T.LBlocked{"target moved during checked landing; rerun land-checked to prepare and check against the current target"}}
+    case AdvHeld{path}: LdDone{T.LBlocked{ld_adv_held_text(target, path) ++ "rerun land-checked to prepare and check against the current target"}}
+    case AdvRefused{}: LdFail{T.FCmd{"land", "git update-ref failed; inspect the target and rerun land-checked to prepare and check a new candidate"}}
+    case AdvBroken{detail}: LdFail{T.FCmd{"land", detail}}
 
-def ld_adv_update(repo: String, target: String, cand: String, basis: String) -> IO(Ld):
-  +r2 = repo
-  +t2 = target
-  +c2 = cand
-  +b2 = basis
-  do IO<Ld>:
-    g : T.GitOut <- Git.runGit(r2, ld_update_argv(t2, c2, b2))
-    IO.pure(Ld, ld_update_pick(g, t2, c2))
-
-def ld_adv_same(same: Bool, repo: String, target: String, cand: String, basis: String) -> IO(Ld):
-  match same:
-    case True{}: ld_adv_update(repo, target, cand, basis)
-    case False{}: IO.pure(Ld, LdDone{T.LBlocked{"target moved during checked landing; rerun land-checked to prepare and check against the current target"}})
-
-def ld_adv_tip_pick(g: T.GitOut, repo: String, target: String, cand: String, basis: String) -> IO(Ld):
-  match g:
-    case T.GRun{code, out}:
-      +b2 = basis
-      +o2 = Tx.trim_nl(out)
-      Bool.pick(IO(Ld), U32.is_eq(code, 0),
-        ld_adv_same(Tx.str_eq(o2, b2), repo, target, cand, b2),
-        IO.pure(Ld, LdFail{T.FCmd{"land", "the target commit could not be read before publication"}}))
-    case T.GBroken{detail}: IO.pure(Ld, LdFail{T.FCmd{"land", detail}})
-
-def ld_adv_tip(repo: String, target: String, cand: String, basis: String) -> IO(Ld):
-  +r2 = repo
-  +t2 = target
-  +c2 = cand
-  +b2 = basis
-  do IO<Ld>:
-    g : T.GitOut <- Git.runGit(r2, ["rev-parse", "--verify", Tx.str_cat(t2, "^{commit}")])
-    ld_adv_tip_pick(g, r2, t2, c2, b2)
-
-def ld_adv_busy_go(busy: Bool, repo: String, target: String, cand: String, basis: String) -> IO(Ld):
-  match busy:
-    case True{}: IO.pure(Ld, LdFail{T.FTargetBusy{target}})
-    case False{}: ld_adv_tip(repo, target, cand, basis)
-
-def ld_adv_busy(g: T.GitOut, repo: String, target: String, cand: String, basis: String) -> IO(Ld):
-  match g:
-    case T.GRun{code, out}:
-      +t3 = target
-      ld_adv_busy_go(ld_busy_any(Tx.split_lines(out), ld_busy_branch(t3)), repo, t3, cand, basis)
-    case T.GBroken{detail}: IO.pure(Ld, LdFail{T.FCmd{"land", detail}})
-
-# Publish the checked candidate against its checked basis. A changed target
+# Advance the checked candidate from its checked basis. A changed target
 # returns an explicit retry result; the next invocation prepares both trees.
 def ld_advance(repo: String, target: String, cand: String, basis: String) -> IO(Ld):
-  +r2 = repo
   +t2 = target
   +c2 = cand
-  +b2 = basis
   do IO<Ld>:
-    gl : T.GitOut <- Git.runGit(r2, ["worktree", "list", "--porcelain"])
-    ld_adv_busy(gl, r2, t2, c2, b2)
+    a : LAdv <- ld_adv_run(repo, t2, c2, basis)
+    IO.pure(Ld, ld_adv_answer(a, t2, c2))
 
 # Stage 1 resolves the worker commit; the pipeline carries the resolved sha
 # so the LAlready answer names the worker commit.
@@ -805,19 +951,6 @@ def ld_go5(r: Ld, repo: String, target: String, script: String, files: List<Stri
 # name that belongs to the worker rather than to the attempt.
 def scratch_prefix(repo: String, worker: String) -> String:
   T.str_cat3(repo, "/.scratch/bend2-land-", Tx.str_cat(worker, "-"))
-
-# The path one worktree-list line names: the line with its label matched off,
-# or the empty string for a line that does not carry the label.
-def wt_path_go(line: String, label: String) -> String:
-  match line label:
-    case SNil{} SNil{}: ""
-    case SNil{} SCon{lc, lr}: ""
-    case SCon{c, rest} SNil{}: line
-    case SCon{c, rest} SCon{lc, lr}:
-      Bool.pick(String, Char.is_eq(c, lc), wt_path_go(rest, lr), "")
-
-def wt_path(line: String) -> String:
-  wt_path_go(line, "worktree ")
 
 def scratch_remove1(repo: String, dir: String) -> IO(Unit):
   +r2 = repo
