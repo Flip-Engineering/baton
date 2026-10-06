@@ -539,3 +539,24 @@ law selection_admission_decision_names_a_catalog_refusal:
 
 def selection_admission_decision_names_a_catalog_refusal():
   {==}
+
+# --- the selected-step transfer ----------------------------------------------
+law selection_transfer_carries_the_producing_step_binding:
+  {Sel.transfer_for_step(fx_plan_chain(), "m2", "d2", "definition") == Sel.TransferReady{Sel.StepTransfer{fx_bind_m2(), "sourceAnalysis", Eng.ss_empty(), "res", Sel.StepRefsNil{}, Sel.CapNil{}}} : Sel.TransferOutcome}
+
+def selection_transfer_carries_the_producing_step_binding():
+  {==}
+
+# The primary step's transfer carries the captures attributed to it, and the
+# dependency step's transfer carries none of them.
+law selection_transfer_attributes_only_that_step_captures:
+  {Sel.transfer_for_step(fx_plan_chain(), "m1", "d1", "definition") == Sel.TransferReady{Sel.StepTransfer{fx_bind(), "sourceAnalysis", Eng.ss_empty(), "res", Sel.StepRefsCons{Sel.StepRef{"m2", "d2", "definition"}, Sel.StepRefsNil{}}, fx_captures()}} : Sel.TransferOutcome}
+
+def selection_transfer_attributes_only_that_step_captures():
+  {==}
+
+law selection_transfer_names_a_step_the_plan_does_not_hold:
+  {Sel.transfer_for_step(fx_plan_chain(), "m3", "d3", "definition") == Sel.TransferMissing{"m3", "d3", "definition"} : Sel.TransferOutcome}
+
+def selection_transfer_names_a_step_the_plan_does_not_hold():
+  {==}

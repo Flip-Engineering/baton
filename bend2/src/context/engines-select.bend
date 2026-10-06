@@ -1213,3 +1213,46 @@ def decision_of(+v: Verdict) -> AdmissionDecision:
     case VerdictAdmitted{plan, result_schema}: AdmissionAdmits{plan, result_schema}
     case VerdictRefused{stage, reason}:
       AdmissionRefuses{stage, rq_code(reason), rq_detail(reason)}
+
+# --- the selected-step transfer a consumer receives --------------------------
+# The exact operands one consumer receives for one selected step: that step's own
+# binding, its common operation, its declared effects, its result schema, its
+# dependency edges, and the admitted captured records attributed to that step.
+# A step the plan does not hold is named rather than substituted, and the records
+# are the ones whose producing step is this step, so a dependency result never
+# carries the primary step's captures. This assembles values the plan already
+# holds; it is not a second interpreter and it wraps no other module.
+type StepTransfer is Data:
+  StepTransfer{binding: MBind, common: String, declared_effects: SS,
+               result_schema: String, dependencies: StepRefs, inputs: Captures}
+
+type TransferOutcome is Data:
+  TransferReady{transfer: StepTransfer}
+  TransferMissing{module_id: String, declaration_digest: String,
+                  operation: String}
+
+def step_effects(+step: Step) -> SS:
+  match step:
+    case Step{binding, common, declared_effects, execution, dependencies,
+              result_schema}:
+      declared_effects
+
+def plan_inputs(+p: Plan) -> Captures:
+  match p:
+    case Plan{primary, common, steps, effective_effects, inputs, available}:
+      inputs
+
+def transfer_of(+step: Step, +inputs: Captures) -> StepTransfer:
+  StepTransfer{step_binding(step), step_common(step), step_effects(step),
+               step_result_schema(step), step_dependencies(step),
+               captures_of_step(inputs, step)}
+
+def transfer_finish(+st: StepState, +inputs: Captures) -> TransferOutcome:
+  match st:
+    case StepMissing{module_id, declaration_digest, operation}:
+      TransferMissing{module_id, declaration_digest, operation}
+    case StepFound{step}: TransferReady{transfer_of(step, inputs)}
+
+def transfer_for_step(+p: Plan, +module_id: String, +digest: String,
+                      +want: String) -> TransferOutcome:
+  transfer_finish(step_lookup(p, module_id, digest, want), plan_inputs(p))
