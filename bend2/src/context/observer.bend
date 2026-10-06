@@ -165,14 +165,14 @@ def receipt_identity(+query: String, +role: String, +incarnation: String, +curso
                                   match m7:
                                     case Nil{}: receipt_of(query, role, incarnation, cursor, answer, presence, qm, rm, im, cm, pm, cap, ext)
                                     case _: ReceiptMalformed{"surplus", answer}
-                                case _: ReceiptMalformed{"short", ""}
-                            case _: ReceiptMalformed{"short", ""}
-                        case _: ReceiptMalformed{"short", ""}
-                    case _: ReceiptMalformed{"short", ""}
-                case _: ReceiptMalformed{"short", ""}
-            case _: ReceiptMalformed{"short", ""}
-        case _: ReceiptMalformed{"short", ""}
-    case _: ReceiptMalformed{"short", ""}
+                                case _: ReceiptMalformed{"short", answer}
+                            case _: ReceiptMalformed{"short", answer}
+                        case _: ReceiptMalformed{"short", answer}
+                    case _: ReceiptMalformed{"short", answer}
+                case _: ReceiptMalformed{"short", answer}
+            case _: ReceiptMalformed{"short", answer}
+        case _: ReceiptMalformed{"short", answer}
+    case _: ReceiptMalformed{"short", answer}
 
 # An absent row is an absent receipt only when every flag agrees, so a host answer that carries
 # stray columns cannot pass as absence. A present row is a receipt only when every comparison holds.
