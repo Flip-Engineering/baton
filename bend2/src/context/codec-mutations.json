@@ -156,8 +156,8 @@
  {
   "name": "codec-ref-closed-set-is-not-checked",
   "file": "bend2/src/context/codec.bend",
-  "find": "  Bool.pick(RefDecode, ref_closed(members), ref_object(members), RdBad{\"unknownRefField\"})",
-  "replace": "  Bool.pick(RefDecode, True{}, ref_object(members), RdBad{\"unknownRefField\"})",
+  "find": "  Bool.pick(RefDecode, ref_closed(members), ref_distinct(members), RdBad{\"unknownRefField\"})",
+  "replace": "  Bool.pick(RefDecode, True{}, ref_distinct(members), RdBad{\"unknownRefField\"})",
   "law": "codec_law_a_reference_with_an_unknown_field_refuses"
  },
  {
@@ -298,5 +298,12 @@
   "find": "    case Rarr{+head, +tail}: rev_items(items, Rnil{})",
   "replace": "    case Rarr{+head, +tail}: items",
   "law": "codec_law_nested_arrays_close_in_document_order"
+ },
+ {
+  "name": "codec-ref-duplicate-field-is-accepted",
+  "file": "bend2/src/context/codec.bend",
+  "find": "  Bool.pick(RefDecode, distinct_keys(members), ref_object(members), RdBad{\"duplicateRefField\"})",
+  "replace": "  Bool.pick(RefDecode, True{}, ref_object(members), RdBad{\"duplicateRefField\"})",
+  "law": "codec_law_a_conflicting_duplicate_ref_field_refuses"
  }
 ]
