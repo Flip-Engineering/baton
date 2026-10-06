@@ -2306,6 +2306,18 @@ law codec_law_an_observation_without_its_framing_is_malformed_transport:
 def codec_law_an_observation_without_its_framing_is_malformed_transport():
   {==}
 
+law codec_law_an_observation_with_an_extra_column_is_malformed_transport:
+  {finish_validation("{}", "1\u{9}\n") == IpRefused{"{\"command\":\"context-request-codec\",\"condition\":\"malformedValidationObservation\",\"error\":\"validationRefusal\",\"next\":[]}"} : InputPlan}
+
+def codec_law_an_observation_with_an_extra_column_is_malformed_transport():
+  {==}
+
+law codec_law_a_null_like_observation_is_malformed_transport:
+  {finish_validation("{}", "NULL\n") == IpRefused{"{\"command\":\"context-request-codec\",\"condition\":\"malformedValidationObservation\",\"error\":\"validationRefusal\",\"next\":[]}"} : InputPlan}
+
+def codec_law_a_null_like_observation_is_malformed_transport():
+  {==}
+
 law codec_law_a_multirow_observation_is_malformed_transport:
   {finish_validation("{}", "1\n0\n") == IpRefused{"{\"command\":\"context-request-codec\",\"condition\":\"malformedValidationObservation\",\"error\":\"validationRefusal\",\"next\":[]}"} : InputPlan}
 
@@ -2378,16 +2390,32 @@ law codec_law_a_scoped_engines_frame_keeps_the_five_validated_members:
 def codec_law_a_scoped_engines_frame_keeps_the_five_validated_members():
   {==}
 
-law codec_law_the_query_tool_refuses_a_scope_argument:
-  {envelope_decide(EnvFrame{"2.0", "tools/call", "baton2_context_query", Context.IdNumber{"7"}, Context.Present{"q1"}, RtText{"{\"version\":1}"}, True{}, True{}, True{}, Context.Present{"session"}}) == EnvRefused{"invalidArguments"} : EnvelopeVerdict}
+law codec_law_the_query_arguments_refuse_a_scope_member:
+  {arguments_closed_for("context-query", Rpair{"scope", Rstr{"session"}, Rpair{"query", Rstr{"q1"}, Rpair{"request", Robj{Rnil{}}, Rnil{}}}}) == False{} : Bool}
 
-def codec_law_the_query_tool_refuses_a_scope_argument():
+def codec_law_the_query_arguments_refuse_a_scope_member():
   {==}
 
-law codec_law_the_result_tool_refuses_a_scope_argument:
-  {envelope_decide(EnvFrame{"2.0", "tools/call", "baton2_context_result", Context.IdNumber{"7"}, Context.Present{"q1"}, RtAbsent{}, True{}, True{}, True{}, Context.Present{"session"}}) == EnvRefused{"invalidArguments"} : EnvelopeVerdict}
+law codec_law_the_result_arguments_refuse_a_scope_member:
+  {arguments_closed_for("context-result", Rpair{"scope", Rstr{"session"}, Rpair{"query", Rstr{"q1"}, Rnil{}}}) == False{} : Bool}
 
-def codec_law_the_result_tool_refuses_a_scope_argument():
+def codec_law_the_result_arguments_refuse_a_scope_member():
+  {==}
+
+# The envelope builder derives `arguments_closed` from the raw members above, so these
+# two laws carry that derived value: the frame that a scoped query or result produces is
+# `arguments_closed = False`, and the acceptance path refuses it. A hand-built envelope
+# with the flag forced true is malformed input and not a source path.
+law codec_law_a_query_frame_with_an_unclosed_arguments_object_refuses:
+  {envelope_decide(EnvFrame{"2.0", "tools/call", "baton2_context_query", Context.IdNumber{"7"}, Context.Present{"q1"}, RtText{"{\"version\":1}"}, True{}, True{}, False{}, Context.Present{"session"}}) == EnvRefused{"invalidArguments"} : EnvelopeVerdict}
+
+def codec_law_a_query_frame_with_an_unclosed_arguments_object_refuses():
+  {==}
+
+law codec_law_a_result_frame_with_an_unclosed_arguments_object_refuses:
+  {envelope_decide(EnvFrame{"2.0", "tools/call", "baton2_context_result", Context.IdNumber{"7"}, Context.Present{"q1"}, RtAbsent{}, True{}, True{}, False{}, Context.Present{"session"}}) == EnvRefused{"invalidArguments"} : EnvelopeVerdict}
+
+def codec_law_a_result_frame_with_an_unclosed_arguments_object_refuses():
   {==}
 
 law codec_law_an_unknown_engines_argument_refuses:
@@ -2415,19 +2443,33 @@ def codec_law_a_numbered_scope_argument_refuses():
   {==}
 
 law codec_law_a_scoped_engines_frame_from_literal_transport_reports_the_session_scope:
-  {document_of_rows("0\u{9}\u{9}object\u{9}\u{9}\n1\u{9}0\u{9}text\u{9}6a736f6e727063\u{9}322e30\n2\u{9}0\u{9}text\u{9}6d6574686f64\u{9}746f6f6c732f63616c6c\n3\u{9}0\u{9}integer\u{9}6964\u{9}37\n4\u{9}0\u{9}object\u{9}706172616d73\u{9}\n5\u{9}4\u{9}text\u{9}6e616d65\u{9}6261746f6e325f636f6e746578745f656e67696e6573\n6\u{9}4\u{9}object\u{9}617267756d656e7473\u{9}\n7\u{9}6\u{9}text\u{9}73636f7065\u{9}73657373696f6e\n") == DocOk{"{\"id\":7,\"query\":null,\"requestCanonical\":null,\"scope\":\"session\",\"tool\":\"context-engines\",\"version\":1}"} : Document}
+  {document_of_rows("30\u{9}\u{9}6f626a656374\u{9}\u{9}\n31\u{9}30\u{9}74657874\u{9}6a736f6e727063\u{9}322e30\n32\u{9}30\u{9}74657874\u{9}6d6574686f64\u{9}746f6f6c732f63616c6c\n33\u{9}30\u{9}696e7465676572\u{9}6964\u{9}37\n34\u{9}30\u{9}6f626a656374\u{9}706172616d73\u{9}\n35\u{9}34\u{9}74657874\u{9}6e616d65\u{9}6261746f6e325f636f6e746578745f656e67696e6573\n36\u{9}34\u{9}6f626a656374\u{9}617267756d656e7473\u{9}\n37\u{9}36\u{9}74657874\u{9}73636f7065\u{9}73657373696f6e\n") == DocOk{"{\"id\":7,\"query\":null,\"requestCanonical\":null,\"scope\":\"session\",\"tool\":\"context-engines\",\"version\":1}"} : Document}
 
 def codec_law_a_scoped_engines_frame_from_literal_transport_reports_the_session_scope():
   {==}
 
+law codec_law_a_row_line_missing_a_column_classifies_as_a_malformed_row:
+  {Req.Context.parse_rows("30\u{9}\u{9}6f626a656374\u{9}\n") == Req.Rcons{Req.Row{"", "", "malformed", "", ""}, Req.Rnone{}} : Req.Rows}
+
+def codec_law_a_row_line_missing_a_column_classifies_as_a_malformed_row():
+  {==}
+
+law codec_law_a_row_line_with_an_extra_column_classifies_as_a_malformed_row:
+  {Req.Context.parse_rows("30\u{9}\u{9}6f626a656374\u{9}\u{9}\u{9}\n") == Req.Rcons{Req.Row{"", "", "malformed", "", ""}, Req.Rnone{}} : Req.Rows}
+
+def codec_law_a_row_line_with_an_extra_column_classifies_as_a_malformed_row():
+  {==}
+
+# The malformed row's kind field is not hex, so the first field check refuses it before
+# the kind is ever read. The document therefore answers `malformedHexField`.
 law codec_law_a_row_line_missing_a_column_is_malformed_transport:
-  {document_of_rows("0\u{9}\u{9}object\u{9}\n") == DocRefused{"{\"command\":\"context-request-codec\",\"condition\":\"malformedRowKind\",\"error\":\"validationRefusal\",\"next\":[]}"} : Document}
+  {document_of_rows("30\u{9}\u{9}6f626a656374\u{9}\n") == DocRefused{"{\"command\":\"context-request-codec\",\"condition\":\"malformedHexField\",\"error\":\"validationRefusal\",\"next\":[]}"} : Document}
 
 def codec_law_a_row_line_missing_a_column_is_malformed_transport():
   {==}
 
 law codec_law_a_row_line_with_an_extra_column_is_malformed_transport:
-  {document_of_rows("0\u{9}\u{9}object\u{9}\u{9}\u{9}\n") == DocRefused{"{\"command\":\"context-request-codec\",\"condition\":\"malformedRowKind\",\"error\":\"validationRefusal\",\"next\":[]}"} : Document}
+  {document_of_rows("30\u{9}\u{9}6f626a656374\u{9}\u{9}\u{9}\n") == DocRefused{"{\"command\":\"context-request-codec\",\"condition\":\"malformedHexField\",\"error\":\"validationRefusal\",\"next\":[]}"} : Document}
 
 def codec_law_a_row_line_with_an_extra_column_is_malformed_transport():
   {==}

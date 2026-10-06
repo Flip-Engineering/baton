@@ -319,5 +319,54 @@
   "find": "    case \"1\\n\": VoValid{}",
   "replace": "    case \"1\": VoValid{}",
   "law": "codec_law_the_valid_observation_is_exact"
+ },
+ {
+  "name": "codec-scope-value-accepts-any-member-value",
+  "file": "bend2/src/context/codec.bend",
+  "find": "    case Some{value}: String.eq(raw_text_of(value), \"session\")",
+  "replace": "    case Some{value}: True{}",
+  "law": "codec_law_a_null_scope_argument_refuses"
+ },
+ {
+  "name": "codec-duplicate-argument-keys-are-accepted",
+  "file": "bend2/src/context/codec.bend",
+  "find": "    case Rpair{+key, +value, +tail}: Bool.pick(Bool, raw_member_present(key, tail), False{}, keys_unique(tail))",
+  "replace": "    case Rpair{+key, +value, +tail}: keys_unique(tail)",
+  "law": "codec_law_a_duplicated_scope_argument_refuses"
+ },
+ {
+  "name": "codec-scope-member-is-admitted-for-the-query-tool",
+  "file": "bend2/src/context/codec.bend",
+  "find": "    case \"context-query\": Req.words_from([\"query\", \"request\"])",
+  "replace": "    case \"context-query\": Req.words_from([\"query\", \"request\", \"scope\"])",
+  "law": "codec_law_the_query_arguments_refuse_a_scope_member"
+ },
+ {
+  "name": "codec-engines-arguments-admit-no-member",
+  "file": "bend2/src/context/codec.bend",
+  "find": "    case \"context-engines\": Req.words_from([\"scope\"])",
+  "replace": "    case \"context-engines\": Req.words_from(Nil{})",
+  "law": "codec_law_a_scoped_engines_frame_reports_the_session_scope"
+ },
+ {
+  "name": "codec-envelope-drops-the-validated-scope",
+  "file": "bend2/src/context/codec.bend",
+  "find": "           scope_of(raw_members_of(arguments_of(frame)))}",
+  "replace": "           Context.Absent{}}",
+  "law": "codec_law_a_scoped_engines_frame_reports_the_session_scope"
+ },
+ {
+  "name": "codec-verdict-renderer-drops-the-scope-member",
+  "file": "bend2/src/context/codec.bend",
+  "find": "      Context.codec_success_text(tool, id, query, request, scope)",
+  "replace": "      Context.codec_success_text(tool, id, query, request, Context.Absent{})",
+  "law": "codec_law_a_scoped_engines_frame_reports_the_session_scope"
+ },
+ {
+  "name": "codec-success-document-drops-the-scope-member",
+  "file": "bend2/src/context/contracts.bend",
+  "find": "  ++ \",\\\"scope\\\":\" ++ opt_text_text(scope)",
+  "replace": "  ++ \"\"",
+  "law": "codec_law_a_scoped_engines_frame_reports_the_session_scope"
  }
 ]
