@@ -26,6 +26,9 @@ function adapterWith(files, options = {}) {
       if (entry === undefined) return { refuse: 'not in the captured closure' };
       return { identity, bytes: typeof entry === 'string' ? bytesOf(entry) : entry };
     },
+    resolve(identity) {
+      return { exists: files[identity] !== undefined, identity };
+    },
   };
   if (options.baseBend !== undefined) acquisition.baseBend = options.baseBend;
   const adapter = createFrontendAdapter({ acquisition, captureOnly: options.captureOnly ?? true });
@@ -164,30 +167,39 @@ test('a span crossing a removed import is refused, and a mismatched pre-parse te
   assert.ok(session.incompleteness.includes('preParseMismatch'));
 });
 
-test('a load-phase diagnostic with no file is attributed through its span source', () => {
+test('a diagnostic names its file or stays unattributed, even when two captures share text', () => {
   const importer = 'import ./dep.bend as P\nvalue\n';
-  const adapter = adapterWith({ '/work/importer.bend': importer, '/work/dep.bend': 'def d() -> U32:\n  1\n' });
+  const adapter = adapterWith({ '/work/importer.bend': importer, '/work/twin.bend': importer });
   const owner = start(adapter, '/work/importer.bend');
   loadFile(adapter, owner, '/work/importer.bend');
-  // The cycle throw inherits the importer's span while naming the child: the source text identifies
-  // the importer, not the child.
-  emit(adapter, owner, {
-    kind: HOOK_KINDS.diagnostic,
-    phase: HOOK_PHASES.load,
-    form: 'err',
-    file: null,
-    condition: 'an import cycle through /work/dep.bend',
-    observed: null,
-    definition: null,
-    note: null,
-    span: { src: importer, beg: 0, end: 0 },
-  });
+  // The loader carries the importer identity, so the cycle event names it directly.
+  emit(adapter, owner, { kind: HOOK_KINDS.diagnostic, phase: HOOK_PHASES.load, form: 'err', file: '/work/importer.bend', condition: 'an import cycle through /work/dep.bend', observed: null, definition: null, note: null, span: { src: importer, beg: 0, end: 0 } });
+  // With no named file and no unique owning declaration the diagnostic stays unattributed: identical
+  // text in two captures is a normal case, not an identity.
+  emit(adapter, owner, { kind: HOOK_KINDS.diagnostic, phase: HOOK_PHASES.load, form: 'err', file: null, condition: 'a cycle with no importer named', observed: null, definition: null, note: null, span: { src: importer, beg: 0, end: 0 } });
   adapter.endQuery();
 
   const session = adapter.report().sessions[0];
   assert.equal(session.diagnostics[0].file, '/work/importer.bend');
   assert.equal(session.diagnostics[0].span.status, 'mapped');
   assert.equal(session.diagnostics[0].span.identity, '/work/importer.bend');
+  assert.equal(session.diagnostics[1].file, null);
+  assert.equal(session.diagnostics[1].span.status, 'unavailable');
+});
+
+test('an ambiguous owning name is recorded instead of attributed', () => {
+  const text = 'def value() -> U32:\n  1\n';
+  const adapter = adapterWith({ '/work/one.bend': text, '/work/two.bend': text });
+  const owner = start(adapter, '/work/one.bend');
+  loadFile(adapter, owner, '/work/one.bend');
+  declare(adapter, owner, '/work/one.bend', 'value', { src: text, beg: 0, end: 3 });
+  declare(adapter, owner, '/work/two.bend', 'value', { src: text, beg: 0, end: 3 });
+  emit(adapter, owner, { kind: HOOK_KINDS.diagnostic, phase: HOOK_PHASES.check, form: 'thrown', file: null, thrown: { $: 'Err' }, rendered: 'r', definition: 'value', span: null });
+  adapter.endQuery();
+
+  const session = adapter.report().sessions[0];
+  assert.equal(session.diagnostics[0].file, null);
+  assert.ok(session.incompleteness.includes('ambiguousDeclaration'));
 });
 
 test('capture-only resolution answers from the closure and carries one cached acquisition', () => {
@@ -213,6 +225,51 @@ test('capture-only resolution answers from the closure and carries one cached ac
   assert.equal(base.path, '/lib/base.bend');
   adapter.endQuery();
 });
+
+test('an alias and its canonical identity share one acquisition', () => {
+  const canonical = '/work/real/dep.bend';
+  const alias = '/work/alias/dep.bend';
+  const reads = [];
+  let served = 0;
+  const adapter = createFrontendAdapter({
+    captureOnly: true,
+    acquisition: {
+      resolve: (identity) => ({ exists: true, identity: canonical }),
+      read(identity) {
+        reads.push(identity);
+        served += 1;
+        // The second read would return different bytes: a second acquisition would be visible as a
+        // different capture, and a conflicting alias must be refused rather than overwritten.
+        const text = served === 1 ? 'def twice(x: U32) -> U32:\n  x\n' : 'def twice(x: U32) -> U32:\n  0\n';
+        return { identity, bytes: bytesOf(text) };
+      },
+    },
+  });
+  const owner = start(adapter, alias);
+  assert.equal(adapter.sink.readSource(alias, owner), 'def twice(x: U32) -> U32:\n  x\n');
+  assert.equal(adapter.sink.readSource(canonical, owner), 'def twice(x: U32) -> U32:\n  x\n');
+  assert.deepEqual(reads, [canonical], 'the canonical identity is acquired once and reused');
+  const conflict = adapter.sink.resolveSource(alias, owner);
+  assert.equal(conflict.status, 'captured');
+  adapter.endQuery();
+  const session = adapter.report().sessions[0];
+  assert.equal(session.completeness, 'complete');
+  assert.equal(session.acquisitions.length, 1, 'requested and canonical names share one record');
+});
+
+test('a non-acquiring lookup answers presence without reading bytes', () => {
+  const text = 'import Base\n';
+  const adapter = adapterWith({ '/work/root.bend': text });
+  const owner = start(adapter, '/work/root.bend');
+  const missing = adapter.sink.lookupSource('/work/elsewhere/LAWS.bend', owner);
+  assert.equal(missing.status, 'absent');
+  const present = adapter.sink.lookupSource('/work/root.bend', owner);
+  assert.equal(present.status, 'present');
+  assert.equal(adapter.reads.length, 0, 'a lookup acquires nothing');
+  assert.equal(adapter.counters.uncapturedDependencies, 0);
+  adapter.endQuery();
+});
+
 
 test('a closure with no base answers unavailable rather than resolving a host path', () => {
   const adapter = adapterWith({ '/work/root.bend': 'def a() -> U32:\n  1\n' });
@@ -299,7 +356,7 @@ test('an invalid event and an unfinished view both make the capture incomplete',
   assert.equal(session.completeness, 'incomplete');
 });
 
-test('declared and elaborated type observations keep their status and quantities', () => {
+test('declared type and elaborated term observations keep their status and quantities', () => {
   const text = 'def id(+x: U32) -> U32:\n  x\n';
   const adapter = adapterWith({ '/work/types.bend': text });
   const owner = start(adapter, '/work/types.bend');
@@ -307,11 +364,11 @@ test('declared and elaborated type observations keep their status and quantities
   declare(adapter, owner, '/work/types.bend', 'id', { src: text, beg: 0, end: 3 });
   preParse(adapter, owner, '/work/types.bend', text);
   emit(adapter, owner, { kind: HOOK_KINDS.typeObservation, phase: HOOK_PHASES.check, status: 'declared', qualified: 'id', definition: 'id', file: null, text: 'U32 -o U32', quantities: [{ quant: '+', name: 'x' }], span: null });
-  emit(adapter, owner, { kind: HOOK_KINDS.typeObservation, phase: HOOK_PHASES.check, status: 'elaborated', qualified: 'id', definition: 'id', file: null, text: 'U32', quantities: [], span: null });
+  emit(adapter, owner, { kind: HOOK_KINDS.typeObservation, phase: HOOK_PHASES.check, status: 'elaboratedTerm', qualified: 'id', definition: 'id', file: null, text: 'U32', quantities: [], span: null });
   adapter.endQuery();
 
   const types = adapter.report().sessions[0].types;
-  assert.deepEqual(types.map((entry) => entry.status), ['declared', 'elaborated']);
+  assert.deepEqual(types.map((entry) => entry.status), ['declared', 'elaboratedTerm']);
   assert.deepEqual(types[0].quantities, [{ quant: '+', name: 'x' }]);
   // The checker site names no file, so the declaration that owns the name attributes the observation.
   assert.equal(types[0].file, '/work/types.bend');
@@ -319,7 +376,7 @@ test('declared and elaborated type observations keep their status and quantities
 
 // A frontend double for the invocation entry: it records the calls it receives and can be told to
 // fail at a chosen step. It is not a frontend and proves nothing about Bend2 semantics.
-function frontendDouble({ failAt = null, owned = null } = {}) {
+function frontendDouble({ failAt = null, owned = null, throwInstall = false, importLaws = false, lawsIdentity = null } = {}) {
   const calls = [];
   const state = { owner: owned };
   return {
@@ -328,6 +385,7 @@ function frontendDouble({ failAt = null, owned = null } = {}) {
     err_show: (value) => `err:${value && value.$ === 'Err' ? 'Err' : 'other'}`,
     bendHooks(sink, owner) {
       calls.push(['bendHooks', sink === null ? null : 'sink', owner]);
+      if (throwInstall && sink !== null) throw new Error('hook installation refused by the consumer');
       if (sink === null) {
         if (state.owner !== null && state.owner !== owner) return { status: 'refused', owner: state.owner, reason: 'ownedByAnother' };
         state.owner = null;
@@ -344,6 +402,8 @@ function frontendDouble({ failAt = null, owned = null } = {}) {
     async book_load(book, file, ns, seen) {
       calls.push(['book_load', file, seen instanceof Map]);
       if (failAt === 'load') throw { $: 'Err', def: 'imported', spn: null };
+      // The real loader keys the seen map by the canonical identity it loaded.
+      if (importLaws && lawsIdentity !== null) seen.set(lawsIdentity, '');
       return 2;
     },
     book_valid(book, done) {
@@ -423,6 +483,46 @@ test('a frontend owned by another invocation is refused without touching its sin
   assert.equal(frontend.state.owner, 'other-invocation', "the active owner is unchanged");
   assert.equal(adapter.currentSession(), null);
 });
+
+test('a throwing install closes the session and frees the adapter for the next invocation', async () => {
+  const { runFrontendInvocation } = await import('./frontend-invocation.mjs');
+  const adapter = adapterWith({ '/work/root.bend': 'def a() -> U32:\n  1\n' });
+  const result = await runFrontendInvocation({ frontend: frontendDouble({ throwInstall: true }), adapter, root: '/work/root.bend', phases: ['parse'] });
+  assert.equal(result.status, 'failed');
+  assert.equal(result.outcome.phase, 'install');
+  assert.equal(adapter.currentSession(), null, 'the session is ended on the install branch');
+  assert.ok(result.session.incompleteness.includes('evidenceFailure') || result.session.incompleteness.includes('hookInstallFailure'));
+
+  const after = await runFrontendInvocation({ frontend: frontendDouble(), adapter, root: '/work/root.bend', phases: ['parse'] });
+  assert.equal(after.status, 'completed', 'a later invocation starts on the same adapter');
+  assert.equal(adapter.currentSession(), null);
+});
+
+test('the PROOF rule refuses a present unimported LAWS and passes an imported one', async () => {
+  const { runFrontendInvocation } = await import('./frontend-invocation.mjs');
+  const proofDir = '/work/proof';
+  const root = `${proofDir}/PROOF.bend`;
+  const lawsIdentity = `${proofDir}/LAWS.bend`;
+  const files = { [root]: 'import Base\n', [lawsIdentity]: 'import Base\n' };
+  const comp = { SYNTH: 'SYNTH', book_owned() {} };
+
+  const importedAdapter = adapterWith(files);
+  const imported = await runFrontendInvocation({ frontend: frontendDouble({ importLaws: true, lawsIdentity }), adapter: importedAdapter, root, phases: ['parse', 'check', 'completion'], comp });
+  assert.equal(imported.status, 'completed');
+  assert.deepEqual([...imported.phasesRun], ['parse', 'check', 'completion']);
+  const satisfied = imported.session.phases.filter((entry) => entry.kind === 'completionGate' && entry.gate === 'proofLawsRule');
+  assert.equal(satisfied.length, 1);
+  assert.equal(satisfied[0].completed, true);
+
+  const missingAdapter = adapterWith(files);
+  const refused = await runFrontendInvocation({ frontend: frontendDouble(), adapter: missingAdapter, root, phases: ['parse', 'check', 'completion'], comp });
+  assert.equal(refused.status, 'failed');
+  assert.equal(refused.outcome.gate, 'proofLawsRule');
+  assert.equal(refused.outcome.rendered, 'PROOF.bend must import ./LAWS.bend');
+  assert.ok(!refused.phasesRun.includes('completion'), 'completion is never reported without the gate');
+  assert.equal(refused.session.phases.filter((entry) => entry.kind === 'completionGate' && entry.gate === 'proofLawsRule')[0].completed, false);
+});
+
 
 test('the patch spec refuses a foreign input and reports anchor mechanics', () => {
   const registryAnchor = 'export function Err(bok: Book, ctx: Ctx, exp: Expr, obs?: Expr, spn?: Span, def?: Name, nte?: string): Err {';

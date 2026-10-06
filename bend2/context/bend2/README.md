@@ -41,6 +41,9 @@ frontend read them.
 | `frontend-hook-events.mjs` | none |
 | `frontend-adapter.mjs` | `./source-binding.mjs`, `./frontend-hook-events.mjs` |
 | `frontend-hooks.mjs` | `node:crypto` |
+| `frontend-invocation.mjs` | `node:path` |
+| `frontend-invocation.harness.mjs` | `node:fs`, `node:crypto`, `node:os`, `node:path`, `node:url`, `./frontend-adapter.mjs`, `./frontend-hooks.mjs`, `./frontend-invocation.mjs` |
+| `fixtures/*.bend` | none |
 | `source-binding.test.mjs` | `node:test`, `node:assert/strict`, `./source-binding.mjs` |
 | `frontend-adapter.test.mjs` | `node:test`, `node:assert/strict`, `./frontend-adapter.mjs`, `./frontend-hook-events.mjs`, `./frontend-hooks.mjs` |
 | `README.md` | none |
@@ -145,10 +148,19 @@ or writes. Its behaviour:
 - every span is attributed by the file the frontend reported for it, never by matching source text,
   and a span the frontend did not supply stays `missingSpan`; a span that crosses removed import
   text stays `spansOmitted`;
-- parse references record their actual branch, binder index or frame index, and are marked
-  `resolved: false` with basis `parseOutcome`;
-- checker failures and completion gates are recorded as phase observations; no proved-law claim is
-  made, and hook or adapter failures are counted separately from frontend diagnostics.
+- parse references record the frontend's own branch, its binder or frame index, its resolution
+  classification, and the declaration and scope that own them; none is promoted to a resolved
+  declaration;
+- a diagnostic is attributed by the file the frontend named for it or by the declaration that owns
+  its definition; a name matching more than one declaration stays unattributed with an
+  `ambiguousDeclaration` note, and no source-text match ever selects a file;
+- checker failures and completion gates are recorded as phase observations with the original thrown
+  value, a separately computed safe rendering, and the value's own definition and span; no proved-law
+  claim is made; one acquisition outcome is counted once, a frontend refusal is separate evidence, and
+  the observer's own failures are counted as evidence apart from frontend diagnostics;
+- the frontend hook is owned: installation is refused for a second owner and for no owner, every event
+  and sink callback carries the owning invocation, and a foreign or ownerless callback is refused and
+  counted.
 
 Derive a hooked copy (remote, exact Root admission):
 
@@ -172,10 +184,14 @@ phases: parse       book_load on the root, which loads every import and parses e
 A request that names an unknown phase, asks for completion without check, or omits the completion
 module or its check set is refused with the missing operand named, and a refused request starts no
 invocation. `book_load`'s return value is the root declaration start after imports, so it is reported
-and never used as a validated seed count. Type observations come from the checker call site during
-`check`, so there is no separate inference step. The entry releases only the hook it owns and ends the
-adapter session in the same call even when the release, a rendering step or an observation throws,
-and a frontend already owned by another invocation is refused with its sink left untouched.
+and never used as a validated seed count. Type observations are the declared type and the elaborated
+body term the real check produced; the elaborated term is a term and not a type, and no inferred type
+is claimed, because the call site produces none. Completion runs the PROOF/LAWS rule exactly as
+`main.ts` applies it, against the captured closure instead of the host, then
+`Comp.book_owned(book, Comp.SYNTH)` and the hole scan; a gate is recorded as reached only when it was.
+The entry releases only the hook it owns and ends the adapter session on every entered path, including
+a refused installation and a throwing installation, so the next invocation can start; a frontend
+already owned by another invocation is refused with its sink left untouched.
 
 ```text
 node --test bend2/context/bend2/frontend-adapter.test.mjs
@@ -191,21 +207,26 @@ BATON2_BASE_BEND=<base.bend> BATON2_FIXTURE_DIR=<fixtures> \
 node --experimental-strip-types bend2/context/bend2/frontend-invocation.harness.mjs
 ```
 
-The harness checks every pinned input digest, derives both sources, imports the derived kernel and the
-matching completion module, and runs the cases (complete project, imported invalid definition, parse
-error, acquisition refusal, throwing reader, a second adapter refused while one owns the hook, and
-cleanup after a failing completion). Its stdout is one JSON report of per-case phases, mapped
-diagnostics, session completeness and counters.
+The harness checks every pinned input digest, derives both sources, materializes `bend.ts`, `main.ts`
+and the pinned `comp.ts` in one directory so every relative import of the derived sources resolves
+inside that directory, verifies that layout, and then runs asserted cases over the committed fixtures
+in `fixtures/`: a valid root, an imported invalid definition, a parse error, an acquisition refusal, a
+throwing reader, a module that exists only in the closure, aliased and canonical acquisition, alias
+conflict, both PROOF/LAWS outcomes, the hole refusal, a second adapter refused while one owns the
+hook, a throwing installation, and an ownerless installation. Each case asserts its own intended
+status, phase, diagnostic identity and mapped span, completeness, preserved hook owner and closed
+session; the run exits non-zero and names the failed claim. Its stdout is one JSON report.
 
 The same command with `target: 'main'` derives the main-side hooks. The hooks are inert until a caller
 installs the sink with `bendHooks(...)`; no module in this repository imports a frontend, and no
 frontend behaviour changes when the sink is absent or declines.
 
-Remaining: the `comp.ts` `book_owned` entry and throw detail (its exact anchor text is not yet read,
-so no replacement is guessed), the admitted selected-step invocation ABI and its native export, the
-`BASE_BEND` import-time realpath (a captured base must arrive through acquisition; suppressing the
-import-time access needs a bootstrap or a lazy accessor with its main caller updated), and all
-runtime, deployment and semantic-equivalence qualification.
+Remaining: the `comp.ts` `book_owned` entry and throw detail (its exact anchor text is not yet read, so
+no replacement is guessed), the admitted selected-step invocation ABI and its native export, the Core
+capture payload encoding and marker meaning (the record path is refused until those operands are
+named, because exact original bytes cannot be recovered from an unspecified string), and all runtime,
+deployment and semantic-equivalence qualification. The Base path resolves lazily through the closure
+and takes precedence over any host path cached before a captured invocation.
 
 ## Regression command
 

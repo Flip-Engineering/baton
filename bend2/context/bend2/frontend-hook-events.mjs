@@ -44,10 +44,10 @@ export const DECLARATION_FORMS = Object.freeze(['def', 'type', 'law', 'fill']);
 
 export const DIAGNOSTIC_FORMS = Object.freeze(['err', 'text', 'thrown']);
 
-// A type observation comes from the patched checker call site, describing a definition the checker
-// actually processed: the declared term it prepared and the checked term it produced, with the
-// quantities from the checker's own domain analysis.
-export const TYPE_STATUSES = Object.freeze(['declared', 'elaborated']);
+// A type observation comes from the patched checker call site. `declared` is the declared type term
+// the definition carries; `elaboratedTerm` is the body term the real check produced, which is a term
+// and not a type. The call site yields no inferred type, so none is claimed.
+export const TYPE_STATUSES = Object.freeze(['declared', 'elaboratedTerm']);
 
 // The reference outcome the adapter records. They stay distinct: a binder lookup, a declared
 // qualified name, an undeclared qualified name and an unbound fallback frame are different facts.

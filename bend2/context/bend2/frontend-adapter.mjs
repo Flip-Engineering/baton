@@ -75,10 +75,13 @@ export function createFrontendAdapter({ acquisition, captureOnly = true } = {}) 
   const counters = {
     adapterFailures: 0,
     acquisitionFailures: 0,
+    ambiguousAttributions: 0,
     evidenceFailures: 0,
     foreignOwnerEvents: 0,
+    frontendRefusals: 0,
     hookInstallFailures: 0,
     invalidEvents: 0,
+    ownerlessEvents: 0,
     preParseMismatches: 0,
     uncapturedDependencies: 0,
     outsideQuery: 0,
@@ -176,8 +179,19 @@ export function createFrontendAdapter({ acquisition, captureOnly = true } = {}) 
     if (outcome.status === 'provided') {
       const captured = captureSource({ identity: outcome.canonical, bytes: outcome.bytes });
       if (captured.status === 'captured') {
-        record = Object.freeze({ status: 'captured', requested: identity, canonical: captured.identity, capture: captured });
-        session.captures.set(identity, captured);
+        // The requested name and the canonical identity are one acquisition. A later request under
+        // either key finds this record, so the bytes the loader observed are the bytes it reads. An
+        // alias that resolves to bytes already captured differently is refused, not overwritten.
+        const existing = session.acquisitions.get(captured.identity);
+        if (existing !== undefined && existing.status === 'captured' && existing.capture.digest !== captured.digest) {
+          counters.evidenceFailures += 1;
+          note(session, 'aliasConflict', `${identity} and ${captured.identity} resolve to different bytes`);
+          record = Object.freeze({ status: 'conflict', requested: identity, canonical: captured.identity, detail: 'bytesDiffer' });
+        } else {
+          record = Object.freeze({ status: 'captured', requested: identity, canonical: captured.identity, capture: captured });
+          session.captures.set(identity, captured);
+          session.captures.set(captured.identity, captured);
+        }
       } else {
         counters.evidenceFailures += 1;
         note(session, 'captureUnavailable', `${identity}: ${captured.reason}`);
@@ -193,6 +207,7 @@ export function createFrontendAdapter({ acquisition, captureOnly = true } = {}) 
       record = outcome;
     }
     session.acquisitions.set(identity, record);
+    if (record.canonical !== undefined) session.acquisitions.set(record.canonical, record);
     return record;
   }
 
@@ -232,6 +247,7 @@ export function createFrontendAdapter({ acquisition, captureOnly = true } = {}) 
     if (cursor < capture.utf16Length) segments.push({ kind: 'original', from: cursor, to: capture.utf16Length });
     const view = createView(capture, { segments });
     if (view.status !== 'view') {
+      counters.evidenceFailures += 1;
       note(session, 'viewUnavailable', `${identity}: ${view.reason}`);
       return null;
     }
@@ -273,22 +289,30 @@ export function createFrontendAdapter({ acquisition, captureOnly = true } = {}) 
     return spanOutcome(locateSpan(capture, view, span));
   }
 
-  // A file identity comes from what the frontend actually said: the file it named, then the
-  // declaration that owns the definition, then the captured file whose text is the span's own
-  // source. Source text selects a file only when it is exactly one of the captured texts.
+  // A file identity comes only from what the frontend said: the file it named, or the declaration
+  // whose qualified name matches the diagnostic's owner. A name that matches more than one
+  // declaration is ambiguous and stays unattributed, and source text selects nothing: identical text
+  // in two files is a normal case, not an identity.
+  function declarationFileFor(session, qualified) {
+    let found = null;
+    let matches = 0;
+    for (let index = 0; index < session.declarations.length; index += 1) {
+      if (session.declarations[index].qualified === qualified) {
+        matches += 1;
+        found = session.declarations[index];
+      }
+    }
+    if (matches === 1) return found.file;
+    if (matches > 1) {
+      counters.ambiguousAttributions += 1;
+      note(session, 'ambiguousDeclaration', qualified);
+    }
+    return null;
+  }
+
   function fileForDiagnostic(session, event) {
     if (typeof event.file === 'string' && event.file.length > 0) return event.file;
-    if (typeof event.definition === 'string' && event.definition.length > 0) {
-      for (let index = session.declarations.length - 1; index >= 0; index -= 1) {
-        if (session.declarations[index].qualified === event.definition) return session.declarations[index].file;
-      }
-    }
-    const src = event.span !== null && event.span !== undefined && typeof event.span.src === 'string' ? event.span.src : null;
-    if (src !== null) {
-      for (const [identity, capture] of session.captures) {
-        if (capture.text === src) return identity;
-      }
-    }
+    if (typeof event.definition === 'string' && event.definition.length > 0) return declarationFileFor(session, event.definition);
     return null;
   }
 
@@ -523,12 +547,67 @@ export function createFrontendAdapter({ acquisition, captureOnly = true } = {}) 
     }
   }
 
-  // Every sink callback is bound to the invocation that owns the installed hook. A callback that
-  // arrives with a different or absent owner is refused and counted, so a sink retained by an older
-  // invocation cannot publish into a later one, and beginning an invocation never changes the sink
-  // another invocation installed.
+  // Every sink callback is bound to the invocation that owns the installed hook: a callback that
+  // arrives with a different or absent owner is refused, so a sink retained by an older invocation
+  // cannot publish into a later one, and beginning an invocation never changes the sink another
+  // invocation installed.
   function ownsActive(owner) {
     return active !== null && typeof owner === 'string' && owner === active.owner;
+  }
+
+  // The ownership contract for events: the sink call carries the owner the hook was installed with,
+  // and the event may carry the same owner as a member. The call argument is authoritative; a missing
+  // or different argument is refused, and a member that disagrees is refused too.
+  function sinkEmit(event, owner) {
+    if (active === null) {
+      counters.outsideQuery += 1;
+      return;
+    }
+    if (typeof owner !== 'string' || owner.length === 0) {
+      counters.ownerlessEvents += 1;
+      note(active, 'ownerlessEvent');
+      return;
+    }
+    const eventOwner = event !== null && typeof event === 'object' ? event.owner : undefined;
+    if (owner !== active.owner || (eventOwner !== undefined && eventOwner !== active.owner)) {
+      counters.foreignOwnerEvents += 1;
+      note(active, 'foreignOwnerEvent', typeof eventOwner === 'string' ? eventOwner : owner);
+      return;
+    }
+    try {
+      handle(event);
+    } catch (error) {
+      counters.evidenceFailures += 1;
+      note(active, 'evidenceFailure', errorText(error));
+    }
+  }
+
+  // A non-acquiring existence query, for a caller that evaluates a condition on closure presence
+  // (the PROOF/LAWS import rule). It reads no bytes, caches nothing and counts no dependency.
+  function sinkLookupSource(file, owner) {
+    if (!ownsActive(owner)) {
+      counters.outsideQueryReads += 1;
+      return undefined;
+    }
+    const known = active.acquisitions.get(file);
+    if (known !== undefined) {
+      if (known.status === 'captured') return Object.freeze({ status: 'captured', identity: known.canonical });
+      if (known.status === 'absent') return Object.freeze({ status: 'absent', identity: known.canonical });
+      return Object.freeze({ status: 'unavailable', requested: known.requested });
+    }
+    if (acquisition === undefined || typeof acquisition.resolve !== 'function') {
+      return Object.freeze({ status: 'unknown', requested: file, detail: 'closureResolutionMissing' });
+    }
+    try {
+      const resolved = acquisition.resolve(file);
+      if (resolved === undefined || resolved === null) return Object.freeze({ status: 'unknown', requested: file, detail: 'closureResolutionUndefined' });
+      if (resolved.exists === false) return Object.freeze({ status: 'absent', identity: typeof resolved.identity === 'string' ? resolved.identity : file });
+      return Object.freeze({ status: 'present', identity: typeof resolved.identity === 'string' && resolved.identity.length > 0 ? resolved.identity : file });
+    } catch (error) {
+      counters.evidenceFailures += 1;
+      note(active, 'closureResolutionThrew', errorText(error));
+      return Object.freeze({ status: 'unknown', requested: file, detail: errorText(error) });
+    }
   }
 
   function baseBendRequested() {
@@ -543,25 +622,6 @@ export function createFrontendAdapter({ acquisition, captureOnly = true } = {}) 
       }
     }
     return source;
-  }
-
-  function sinkEmit(event, owner) {
-    if (active === null) {
-      counters.outsideQuery += 1;
-      return;
-    }
-    const eventOwner = event !== null && typeof event === 'object' ? event.owner : undefined;
-    if (eventOwner !== active.owner || (owner !== undefined && owner !== active.owner)) {
-      counters.foreignOwnerEvents += 1;
-      note(active, 'foreignOwnerEvent', typeof eventOwner === 'string' ? eventOwner : String(eventOwner));
-      return;
-    }
-    try {
-      handle(event);
-    } catch (error) {
-      counters.evidenceFailures += 1;
-      note(active, 'evidenceFailure', errorText(error));
-    }
   }
 
   function sinkReadSource(file, owner) {
@@ -603,13 +663,15 @@ export function createFrontendAdapter({ acquisition, captureOnly = true } = {}) 
     return Object.freeze({ status: 'unavailable', detail: record.status });
   }
 
+  // The frontend reporting that it could not obtain a file is frontend evidence, not a second
+  // acquisition failure: the acquisition already produced exactly one outcome for that identity.
   function sinkSourceFailure(file, reason, owner) {
     if (!ownsActive(owner)) {
       if (active === null) counters.outsideQuery += 1;
       return;
     }
-    counters.acquisitionFailures += 1;
-    note(active, 'acquisitionFailure', `${file}: ${reason}`);
+    counters.frontendRefusals += 1;
+    note(active, 'frontendRefusal', `${file}: ${reason}`);
   }
 
   // An evidence failure is the observer's own failure: rendering, hook installation, hook release or
@@ -633,10 +695,13 @@ export function createFrontendAdapter({ acquisition, captureOnly = true } = {}) 
     const incompleteness = [];
     if (delta.adapterFailures > 0) incompleteness.push('adapterFailure');
     if (delta.acquisitionFailures > 0) incompleteness.push('acquisitionFailure');
+    if (delta.ambiguousAttributions > 0) incompleteness.push('ambiguousDeclaration');
     if (delta.evidenceFailures > 0) incompleteness.push('evidenceFailure');
     if (delta.foreignOwnerEvents > 0) incompleteness.push('foreignOwnerEvent');
+    if (delta.frontendRefusals > 0) incompleteness.push('frontendRefusal');
     if (delta.hookInstallFailures > 0) incompleteness.push('hookInstallFailure');
     if (delta.invalidEvents > 0) incompleteness.push('invalidEvent');
+    if (delta.ownerlessEvents > 0) incompleteness.push('ownerlessEvent');
     if (delta.preParseMismatches > 0) incompleteness.push('preParseMismatch');
     if (delta.uncapturedDependencies > 0) incompleteness.push('uncapturedDependency');
     if (delta.outsideQuery > 0) incompleteness.push('outsideQueryEvent');
@@ -679,6 +744,7 @@ export function createFrontendAdapter({ acquisition, captureOnly = true } = {}) 
       baseBendPath: sinkBaseBendPath,
       sourceFailure: sinkSourceFailure,
       evidenceFailure: sinkEvidenceFailure,
+      lookupSource: sinkLookupSource,
       captureOnly: captureOnly === true,
     }),
     counters,

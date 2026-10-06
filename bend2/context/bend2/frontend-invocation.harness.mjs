@@ -1,28 +1,41 @@
 // Remote composed harness for the derived Bend2 frontend and the internal invocation entry.
 //
-// This harness is authored for the remote validation runner. It is not executed on the operator
-// host, and nothing in this repository runs it. It performs the real composition end to end:
+// Authored for the remote validation runner. Nothing in this repository runs it and no result is
+// claimed from it here. It performs the real composition and asserts per case, so a run either
+// establishes the behavior or names the assertion that failed.
 //
-//   1. reads the pinned upstream inputs from mandatory explicit paths,
-//   2. refuses any input whose sha256 is not the pinned digest (compile-time identity, no guessing),
-//   3. derives the hooked copies of bend.ts and main.ts with deriveHookedSource,
-//   4. imports the derived kernel and the matching Comp module,
-//   5. runs runFrontendInvocation over a capture closure built from the fixture project, so the
-//      frontend reads every file through the sink and no host path is consulted,
-//   6. prints one JSON report with the observations, the mapped diagnostics and the counters.
+// What it does
+//   1. reads the pinned upstream inputs from mandatory explicit paths and refuses any input whose
+//      sha256 is not the pinned digest,
+//   2. derives the hooked copies of bend.ts and main.ts,
+//   3. materializes bend.ts, main.ts and the pinned comp.ts in ONE directory, so every relative
+//      import of the derived sources resolves inside that directory and no original sibling kernel
+//      is reached, and verifies that layout,
+//   4. imports the derived kernel and the completion module from that directory,
+//   5. runs runFrontendInvocation over capture closures built from the committed fixtures, so the
+//      frontend reads every file through the sink and consults no host path,
+//   6. asserts per case and prints one JSON report.
 //
 // Prerequisites
-//   node >= 22 (the derived sources are TypeScript; run with --experimental-strip-types)
-//   BATON2_BEND_TS, BATON2_MAIN_TS, BATON2_COMP_TS, BATON2_BASE_BEND : pinned upstream files
-//   BATON2_FIXTURE_DIR : a directory containing the fixture project files named in FIXTURES
+//   A TypeScript loader that resolves the upstream extensionless relative imports (for example tsx, a
+//   node resolve hook, or an equivalent), plus these environment variables:
+//     BATON2_BEND_TS BATON2_MAIN_TS BATON2_COMP_TS BATON2_BASE_BEND : pinned upstream files
+//     BATON2_FIXTURE_DIR : the committed fixture directory (bend2/context/bend2/fixtures)
 //
 // Command
+//   BATON2_BEND_TS=... BATON2_MAIN_TS=... BATON2_COMP_TS=... BATON2_BASE_BEND=... \
+//   BATON2_FIXTURE_DIR=bend2/context/bend2/fixtures \
 //   node --experimental-strip-types bend2/context/bend2/frontend-invocation.harness.mjs
 //
-// Artifacts
-//   stdout JSON: per-case status, phasesRun, mapped diagnostics (file, phase, original line/column),
-//   session completeness and counters, plus the derived output digests. Exit status is non-zero if
-//   any case fails or any pinned input does not match.
+// Fixture expectations, each derived from the pinned kernel source
+//   valid.bend          a def with a U32 parameter and a variable body: loads and checks
+//   invalid.bend        a body calling an undefined name: book_valid reports an undefined reference
+//   invalid-root.bend   imports invalid.bend; the check failure belongs to the imported file
+//   typo.bend           an unbalanced parenthesis: parse_fail throws at the transformed position
+//   dep.bend            loaded through two aliases from alias-root.bend
+//   virtual.bend        supplied only by the closure, never present on disk
+//   holes.bend          a law with no fill: an open declaration, so the hole refusal fires
+//   proof/**/PROOF.bend with and without an import of its sibling LAWS.bend
 
 import { existsSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
 import { createHash } from 'node:crypto';
@@ -33,18 +46,19 @@ import { createFrontendAdapter } from './frontend-adapter.mjs';
 import { UPSTREAM_INPUTS, UPSTREAM_PIN, deriveHookedSource } from './frontend-hooks.mjs';
 import { runFrontendInvocation } from './frontend-invocation.mjs';
 
-const REQUIRED_ENV = ['BATON2_BEND_TS', 'BATON2_MAIN_TS', 'BATON2_COMP_TS', 'BATON2_BASE_BEND', 'BATON2_FIXTURE_DIR'];
+const ENV = ['BATON2_BEND_TS', 'BATON2_MAIN_TS', 'BATON2_COMP_TS', 'BATON2_BASE_BEND', 'BATON2_FIXTURE_DIR'];
 
-// Every fixture the cases consume. A missing one is a named operand, never a skipped case.
-const FIXTURES = Object.freeze([
-  'root.bend',
-  'dep.bend',
-  'invalid.bend',
-  'typo.bend',
-  'absent-on-disk.bend',
-]);
+// Every fixture that must exist on disk. virtual.bend is deliberately absent: it is supplied only by
+// the capture closure, so the run proves that a captured module needs no host file.
+const ON_DISK = [
+  'valid.bend', 'invalid.bend', 'invalid-root.bend', 'typo.bend', 'dep.bend', 'alias-root.bend',
+  'virtual-root.bend', 'holes.bend', 'proof/with-import/PROOF.bend', 'proof/with-import/LAWS.bend',
+  'proof/without-import/PROOF.bend', 'proof/without-import/LAWS.bend',
+];
+const VIRTUAL = 'virtual.bend';
+const VIRTUAL_SOURCE = 'import Base\n\ndef pick(x: U32) -> U32:\n  x\n';
 
-function fail(reason, detail) {
+function refuse(reason, detail) {
   process.stdout.write(`${JSON.stringify({ status: 'refused', reason, detail }, null, 2)}\n`);
   process.exit(2);
 }
@@ -53,169 +67,354 @@ function sha256(bytes) {
   return createHash('sha256').update(bytes).digest('hex');
 }
 
-function requireEnv() {
-  const missing = REQUIRED_ENV.filter((name) => typeof process.env[name] !== 'string' || process.env[name].length === 0);
-  if (missing.length > 0) fail('missingInputPath', missing.join(','));
+function check(report, claim, ok, observed) {
+  report.assertions.push({ claim, ok: ok === true, observed: observed === undefined ? null : observed });
+  if (ok !== true) report.failed = true;
 }
 
-function pinned() {
+function pinnedInputs() {
+  const missing = ENV.filter((name) => typeof process.env[name] !== 'string' || process.env[name].length === 0);
+  if (missing.length > 0) refuse('missingInputPath', missing.join(','));
   const read = (envName, key) => {
     const bytes = readFileSync(process.env[envName]);
     const digest = sha256(bytes);
-    const expected = UPSTREAM_INPUTS[key].sha256;
-    if (digest !== expected) fail('inputIdentityMismatch', { envName, expected, observed: digest });
+    if (digest !== UPSTREAM_INPUTS[key].sha256) refuse('inputIdentityMismatch', { envName, expected: UPSTREAM_INPUTS[key].sha256, observed: digest });
     return bytes;
   };
-  return {
-    bend: read('BATON2_BEND_TS', 'bend'),
-    main: read('BATON2_MAIN_TS', 'main'),
-    comp: read('BATON2_COMP_TS', 'comp'),
-    base: read('BATON2_BASE_BEND', 'base'),
-  };
+  return { bend: read('BATON2_BEND_TS', 'bend'), main: read('BATON2_MAIN_TS', 'main'), comp: read('BATON2_COMP_TS', 'comp'), base: read('BATON2_BASE_BEND', 'base') };
 }
 
-// Derive the two hooked sources and materialize them beside the pinned inputs so the derived modules
-// can import each other exactly as the upstream layout does.
-function derive(inputs) {
+function materialize(inputs) {
   const dir = mkdtempSync(join(tmpdir(), 'bend2-harness-'));
   const bend = deriveHookedSource({ target: 'bend', text: inputs.bend.toString('utf8') });
-  if (bend.status !== 'derived') fail('deriveRefused', bend);
+  if (bend.status !== 'derived') refuse('deriveRefused', bend);
   const main = deriveHookedSource({ target: 'main', text: inputs.main.toString('utf8') });
-  if (main.status !== 'derived') fail('deriveRefused', main);
+  if (main.status !== 'derived') refuse('deriveRefused', main);
+  // One directory: the derived kernel, the derived main and the pinned completion module. Their
+  // relative imports resolve among these copies, never among the original siblings.
   writeFileSync(join(dir, 'bend.ts'), bend.text);
   writeFileSync(join(dir, 'main.ts'), main.text);
+  writeFileSync(join(dir, 'comp.ts'), inputs.comp);
+  const layout = ['bend.ts', 'main.ts', 'comp.ts'].map((name) => existsSync(join(dir, name)));
+  if (layout.some((present) => !present)) refuse('layoutIncomplete', layout);
   return { dir, bend, main };
 }
 
-// The capture closure: the harness holds the fixture bytes and hands them to the frontend through the
-// adapter, so the loader never reads a path. One fixture is deliberately absent on disk.
-function closure(fixtureDir, baseBytes) {
+function fixtures(baseBytes) {
+  const dir = process.env.BATON2_FIXTURE_DIR;
+  const missing = ON_DISK.filter((name) => !existsSync(join(dir, name)));
+  if (missing.length > 0) refuse('fixtureMissing', missing.join(','));
   const files = new Map();
-  for (const name of FIXTURES) {
-    const path0 = join(fixtureDir, name);
-    if (!existsSync(path0)) fail('fixtureMissing', { name, path: path0 });
-    files.set(path0, readFileSync(path0));
-  }
-  const basePath = join(fixtureDir, 'base.bend');
-  files.set(basePath, baseBytes);
-  const read = (identity) => (files.has(identity) ? { identity, bytes: files.get(identity) } : { refuse: 'not in the captured closure' });
-  return { files, basePath, read };
+  for (const name of ON_DISK) files.set(join(dir, name), readFileSync(join(dir, name)));
+  files.set(join(dir, 'base.bend'), baseBytes);
+  files.set(join(dir, VIRTUAL), Buffer.from(VIRTUAL_SOURCE, 'utf8'));
+  return { dir, files, basePath: join(dir, 'base.bend') };
 }
 
-function adapterFor(captured) {
-  return createFrontendAdapter({
+function closureReader(files, options = {}) {
+  const reads = [];
+  const read = (identity) => {
+    reads.push(identity);
+    if (options.readHook !== undefined) {
+      const hooked = options.readHook(identity, reads.length);
+      if (hooked !== undefined) return hooked;
+    }
+    if (!files.has(identity)) return { refuse: 'not in the captured closure' };
+    return { identity, bytes: files.get(identity) };
+  };
+  const resolve = options.resolveHook === undefined ? undefined : (identity) => options.resolveHook(identity, files);
+  return { reads, read, resolve };
+}
+
+function adapterFor(fixture, options = {}) {
+  const reader = closureReader(fixture.files, options);
+  const adapter = createFrontendAdapter({
     captureOnly: true,
-    acquisition: { read: captured.read, baseBend: captured.basePath },
+    acquisition: { read: reader.read, ...(reader.resolve === undefined ? {} : { resolve: reader.resolve }), baseBend: fixture.basePath },
   });
+  return { adapter, reads: reader.reads };
 }
 
-function summarize(name, result) {
+function reportOf(name, result, adapter, extra) {
   const session = result.session ?? null;
-  return {
+  const report = {
     name,
     status: result.status,
     reason: result.reason ?? null,
-    phasesRun: result.phasesRun ? [...result.phasesRun] : [],
-    outcome: result.outcome ?? null,
+    phasesRun: result.phasesRun === undefined ? [] : [...result.phasesRun],
+    outcome: result.outcome === null || result.outcome === undefined ? null : {
+      phase: result.outcome.phase,
+      gate: result.outcome.gate ?? null,
+      thrownKind: result.outcome.thrownSummary === undefined ? null : result.outcome.thrownSummary.kind,
+      thrownIsValue: result.outcome.thrownValue !== undefined,
+      rendered: result.outcome.rendered ?? null,
+    },
     diagnostics: session === null ? [] : session.diagnostics.map((entry) => ({
       phase: entry.phase,
       form: entry.form,
       file: entry.file,
       definition: entry.definition,
       thrownKind: entry.thrown === null ? null : entry.thrown.kind,
-      rendered: entry.rendered,
       span: entry.span.status === 'mapped'
         ? { status: 'mapped', identity: entry.span.identity, line: entry.span.original.start.line, column: entry.span.original.start.column, text: entry.span.text }
-        : entry.span,
+        : { status: entry.span.status, reason: entry.span.reason ?? null },
     })),
-    types: session === null ? [] : session.types.map((entry) => ({ status: entry.status, qualified: entry.qualified, text: entry.text, file: entry.file })),
+    gates: session === null ? [] : session.phases.filter((entry) => entry.kind === 'completionGate'),
+    types: session === null ? [] : session.types.map((entry) => ({ status: entry.status, qualified: entry.qualified, file: entry.file })),
     completeness: session === null ? null : session.completeness,
     incompleteness: session === null ? [] : [...session.incompleteness],
     acquisitions: session === null ? [] : session.acquisitions,
+    counters: session === null ? null : session.counterDelta,
+    assertions: [],
+    failed: false,
   };
+  Object.assign(report, extra ?? {});
+  void adapter;
+  return report;
 }
 
-async function cases(kernel, comp, captured) {
-  const reports = [];
-  const root = join(process.env.BATON2_FIXTURE_DIR, 'root.bend');
+async function runCase(name, body) {
+  try {
+    return await body();
+  } catch (error) {
+    const report = { name, status: 'harnessError', failed: true, assertions: [{ claim: 'case runs', ok: false, observed: String(error && error.message ? error.message : error) }] };
+    return report;
+  }
+}
 
-  // 1. A complete project: imports, an invalid imported definition, Base and completion.
-  {
-    const adapter = adapterFor(captured);
-    const result = await runFrontendInvocation({ frontend: kernel, adapter, root, phases: ['parse', 'check', 'completion'], comp });
-    reports.push(summarize('complete-project', result));
-  }
-  // 2. An imported invalid definition: the check diagnostic is attributed to the imported file.
-  {
-    const adapter = adapterFor(captured);
-    const result = await runFrontendInvocation({ frontend: kernel, adapter, root, phases: ['parse', 'check'], comp: null });
-    reports.push(summarize('imported-invalid-definition', result));
-  }
-  // 3. A parse error in the root, with its span mapped into the original capture.
-  {
-    const adapter = adapterFor(captured);
-    const broken = join(process.env.BATON2_FIXTURE_DIR, 'typo.bend');
-    const result = await runFrontendInvocation({ frontend: kernel, adapter, root: broken, phases: ['parse'], comp: null });
-    reports.push(summarize('parse-error', result));
-  }
-  // 4. An acquisition failure: the closure refuses a file the root imports.
-  {
-    const adapter = createFrontendAdapter({ captureOnly: true, acquisition: { read: () => ({ refuse: 'not captured for this query' }), baseBend: captured.basePath } });
-    const result = await runFrontendInvocation({ frontend: kernel, adapter, root, phases: ['parse'], comp: null });
-    reports.push(summarize('acquisition-refused', result));
-  }
-  // 5. A throwing reader: counted once, reported as an acquisition failure, not a frontend error.
-  {
-    const adapter = createFrontendAdapter({
-      captureOnly: true,
-      acquisition: {
-        read(identity) {
-          if (identity.endsWith('dep.bend')) throw new Error('closure reader unavailable');
-          return captured.files.has(identity) ? { identity, bytes: captured.files.get(identity) } : { refuse: 'not in the captured closure' };
-        },
-        baseBend: captured.basePath,
+async function cases(kernel, compModule, fixture) {
+  const reports = [];
+  const dir = fixture.dir;
+  const compCalls = [];
+  const comp = {
+    SYNTH: compModule.SYNTH,
+    book_owned(book, checkSet) {
+      compCalls.push(checkSet);
+      return compModule.book_owned(book, checkSet);
+    },
+  };
+
+  reports.push(await runCase('valid-root-parse-check', async () => {
+    const { adapter, reads } = adapterFor(fixture);
+    const result = await runFrontendInvocation({ frontend: kernel, adapter, root: join(dir, 'valid.bend'), phases: ['parse', 'check'] });
+    const report = reportOf('valid-root-parse-check', result, adapter, { reads: [...reads], ownerAfter: kernel.bendHookOwner(), sessionClosed: adapter.currentSession() === null });
+    check(report, 'the run completes', report.status === 'completed', report.status);
+    check(report, 'both phases ran in order', JSON.stringify(report.phasesRun) === JSON.stringify(['parse', 'check']), report.phasesRun);
+    check(report, 'no diagnostic was reported', report.diagnostics.length === 0, report.diagnostics);
+    check(report, 'the capture is complete', report.completeness === 'complete', report.incompleteness);
+    check(report, 'the owned hook was released', report.ownerAfter === '', report.ownerAfter);
+    check(report, 'the session was closed', report.sessionClosed === true, report.sessionClosed);
+    check(report, 'the root was acquired once', reads.filter((identity) => identity.endsWith('valid.bend')).length === 1, reads);
+    return report;
+  }));
+
+  reports.push(await runCase('imported-invalid-definition', async () => {
+    const { adapter } = adapterFor(fixture);
+    const result = await runFrontendInvocation({ frontend: kernel, adapter, root: join(dir, 'invalid-root.bend'), phases: ['parse', 'check'] });
+    const report = reportOf('imported-invalid-definition', result, adapter, { ownerAfter: kernel.bendHookOwner(), sessionClosed: adapter.currentSession() === null });
+    check(report, 'the check fails', report.status === 'failed' && report.outcome !== null && report.outcome.phase === 'check', report.outcome);
+    check(report, 'the real thrown value is retained', report.outcome !== null && report.outcome.thrownIsValue === true, report.outcome);
+    const diagnostic = report.diagnostics.find((entry) => entry.form === 'thrown');
+    check(report, 'a thrown diagnostic was reported', diagnostic !== undefined, report.diagnostics);
+    check(report, 'the failure is attributed to the imported file', diagnostic !== undefined && typeof diagnostic.file === 'string' && diagnostic.file.endsWith('invalid.bend'), diagnostic);
+    check(report, 'its span is mapped into that file', diagnostic !== undefined && diagnostic.span.status === 'mapped' && diagnostic.span.identity.endsWith('invalid.bend'), diagnostic === undefined ? null : diagnostic.span);
+    check(report, 'the capture is complete', report.completeness === 'complete', report.incompleteness);
+    check(report, 'the hook was released and the session closed', report.ownerAfter === '' && report.sessionClosed === true, { ownerAfter: report.ownerAfter, closed: report.sessionClosed });
+    return report;
+  }));
+
+  reports.push(await runCase('parse-error-mapped-span', async () => {
+    const { adapter } = adapterFor(fixture);
+    const result = await runFrontendInvocation({ frontend: kernel, adapter, root: join(dir, 'typo.bend'), phases: ['parse'] });
+    const report = reportOf('parse-error-mapped-span', result, adapter, { ownerAfter: kernel.bendHookOwner(), sessionClosed: adapter.currentSession() === null });
+    check(report, 'the load or parse step fails', report.status === 'failed' && report.outcome !== null, report.outcome);
+    const diagnostic = report.diagnostics.find((entry) => entry.phase === 'parse');
+    check(report, 'a parse diagnostic was reported', diagnostic !== undefined, report.diagnostics);
+    check(report, 'the diagnostic names the parsed file', diagnostic !== undefined && typeof diagnostic.file === 'string' && diagnostic.file.endsWith('typo.bend'), diagnostic);
+    check(report, 'the span is mapped to the original capture', diagnostic !== undefined && diagnostic.span.status === 'mapped', diagnostic === undefined ? null : diagnostic.span);
+    check(report, 'the span sits on the unbalanced line', diagnostic !== undefined && diagnostic.span.line === 3, diagnostic === undefined ? null : diagnostic.span);
+    check(report, 'the hook was released and the session closed', report.ownerAfter === '' && report.sessionClosed === true, { ownerAfter: report.ownerAfter, closed: report.sessionClosed });
+    return report;
+  }));
+
+  reports.push(await runCase('acquisition-refused', async () => {
+    const reader = closureReader(fixture.files, { readHook: (identity) => (identity.endsWith('invalid.bend') ? { refuse: 'not captured for this query' } : undefined) });
+    const adapter = createFrontendAdapter({ captureOnly: true, acquisition: { read: reader.read, resolve: (identity) => (fixture.files.has(identity) ? { exists: true, identity } : { exists: false, identity }), baseBend: fixture.basePath } });
+    const result = await runFrontendInvocation({ frontend: kernel, adapter, root: join(dir, 'invalid-root.bend'), phases: ['parse'] });
+    const report = reportOf('acquisition-refused', result, adapter, { ownerAfter: kernel.bendHookOwner(), sessionClosed: adapter.currentSession() === null });
+    check(report, 'the load step fails', report.status === 'failed' && report.outcome !== null && report.outcome.phase === 'load', report.outcome);
+    check(report, 'the closure refusal is recorded', report.incompleteness.includes('frontendRefusal') || report.incompleteness.includes('uncapturedDependency'), report.incompleteness);
+    check(report, 'no reader threw', report.counters !== null && report.counters.acquisitionFailures === 0, report.counters);
+    check(report, 'the hook was released and the session closed', report.ownerAfter === '' && report.sessionClosed === true, { ownerAfter: report.ownerAfter, closed: report.sessionClosed });
+    return report;
+  }));
+
+  reports.push(await runCase('throwing-reader', async () => {
+    const reader = closureReader(fixture.files, { readHook: (identity) => { if (identity.endsWith('invalid.bend')) throw new Error('closure reader unavailable'); return undefined; } });
+    const adapter = createFrontendAdapter({ captureOnly: true, acquisition: { read: reader.read, resolve: (identity) => (fixture.files.has(identity) ? { exists: true, identity } : { exists: false, identity }), baseBend: fixture.basePath } });
+    const result = await runFrontendInvocation({ frontend: kernel, adapter, root: join(dir, 'invalid-root.bend'), phases: ['parse'] });
+    const report = reportOf('throwing-reader', result, adapter, { ownerAfter: kernel.bendHookOwner(), sessionClosed: adapter.currentSession() === null });
+    check(report, 'the reader failure is counted once', report.counters !== null && report.counters.acquisitionFailures === 1, report.counters);
+    check(report, 'the frontend refusal is separate evidence', report.counters !== null && report.counters.frontendRefusals >= 1, report.counters);
+    check(report, 'the acquisition detail is retained', report.acquisitions.some((entry) => entry.detail === 'closure reader unavailable' || entry.status === 'failed'), report.acquisitions);
+    check(report, 'the capture is incomplete', report.completeness === 'incomplete', report.incompleteness);
+    check(report, 'the hook was released and the session closed', report.ownerAfter === '' && report.sessionClosed === true, { ownerAfter: report.ownerAfter, closed: report.sessionClosed });
+    return report;
+  }));
+
+  reports.push(await runCase('virtual-absent-module', async () => {
+    const virtualPath = join(dir, VIRTUAL);
+    const { adapter, reads } = adapterFor(fixture);
+    const result = await runFrontendInvocation({ frontend: kernel, adapter, root: join(dir, 'virtual-root.bend'), phases: ['parse', 'check'] });
+    const report = reportOf('virtual-absent-module', result, adapter, { reads: [...reads], virtualOnDisk: existsSync(virtualPath), ownerAfter: kernel.bendHookOwner(), sessionClosed: adapter.currentSession() === null });
+    check(report, 'the module is not on disk', report.virtualOnDisk === false, report.virtualOnDisk);
+    check(report, 'the run completes from the closure', report.status === 'completed', { status: report.status, outcome: report.outcome });
+    check(report, 'the virtual module was acquired', reads.some((identity) => identity.endsWith(VIRTUAL)), reads);
+    check(report, 'the capture is complete', report.completeness === 'complete', report.incompleteness);
+    check(report, 'the hook was released and the session closed', report.ownerAfter === '' && report.sessionClosed === true, { ownerAfter: report.ownerAfter, closed: report.sessionClosed });
+    return report;
+  }));
+
+  reports.push(await runCase('alias-canonical-single-acquisition', async () => {
+    let depReads = 0;
+    const reader = closureReader(fixture.files, {
+      // The reader returns different bytes for the second read of the same path: a second acquisition
+      // would be observable as a different capture digest.
+      readHook: (identity) => {
+        if (!identity.endsWith('dep.bend')) return undefined;
+        depReads += 1;
+        const bytes = depReads === 1 ? readFileSync(join(dir, 'dep.bend')) : Buffer.from('import Base\n\ndef twice(x: U32) -> U32:\n  0\n', 'utf8');
+        return { identity, bytes };
       },
     });
-    const result = await runFrontendInvocation({ frontend: kernel, adapter, root, phases: ['parse'], comp: null });
-    reports.push(summarize('throwing-reader', result));
+    const adapter = createFrontendAdapter({ captureOnly: true, acquisition: { read: reader.read, resolve: (identity) => ({ exists: fixture.files.has(identity), identity }), baseBend: fixture.basePath } });
+    const result = await runFrontendInvocation({ frontend: kernel, adapter, root: join(dir, 'alias-root.bend'), phases: ['parse', 'check'] });
+    const report = reportOf('alias-canonical-single-acquisition', result, adapter, { depReads, ownerAfter: kernel.bendHookOwner(), sessionClosed: adapter.currentSession() === null });
+    check(report, 'the aliased file is acquired once', depReads === 1, depReads);
+    check(report, 'the run completes', report.status === 'completed', { status: report.status, outcome: report.outcome });
+    check(report, 'no alias conflict was recorded', !report.incompleteness.includes('evidenceFailure'), report.incompleteness);
+    check(report, 'the hook was released and the session closed', report.ownerAfter === '' && report.sessionClosed === true, { ownerAfter: report.ownerAfter, closed: report.sessionClosed });
+    return report;
+  }));
+
+  reports.push(await runCase('alias-conflict-refused', async () => {
+    const canonical = join(dir, 'dep.bend');
+    const aliasPath = join(dir, 'dep-alias.bend');
+    const reader = closureReader(fixture.files, {
+      resolveHook: (identity) => ({ exists: true, identity: canonical }),
+      readHook: (identity) => {
+        if (identity !== canonical) return undefined;
+        const first = readFileSync(canonical);
+        return { identity, bytes: reader.reads.filter((entry) => entry === canonical).length === 1 ? first : Buffer.from('import Base\n\ndef twice(x: U32) -> U32:\n  0\n', 'utf8') };
+      },
+    });
+    const adapter = createFrontendAdapter({ captureOnly: true, acquisition: { read: reader.read, resolve: reader.resolve, baseBend: fixture.basePath } });
+    const result = await runFrontendInvocation({ frontend: kernel, adapter, root: join(dir, 'alias-root.bend'), phases: ['parse'] });
+    const report = reportOf('alias-conflict-refused', result, adapter, { aliasPath, ownerAfter: kernel.bendHookOwner(), sessionClosed: adapter.currentSession() === null });
+    check(report, 'a conflicting alias acquisition is recorded as evidence', report.incompleteness.includes('evidenceFailure'), report.incompleteness);
+    check(report, 'the session was closed', report.sessionClosed === true, report.sessionClosed);
+    return report;
+  }));
+
+  for (const [name, fixtureName, expectImported] of [['proof-laws-with-import', 'with-import', true], ['proof-laws-without-import', 'without-import', false]]) {
+    reports.push(await runCase(name, async () => {
+      const proofDir = join(dir, 'proof', fixtureName);
+      const { adapter } = adapterFor(fixture);
+      const result = await runFrontendInvocation({ frontend: kernel, adapter, root: join(proofDir, 'PROOF.bend'), phases: ['parse', 'check', 'completion'], comp });
+      const report = reportOf(name, result, adapter, { calls: compCalls.length, ownerAfter: kernel.bendHookOwner(), sessionClosed: adapter.currentSession() === null });
+      const gate = report.gates.filter((entry) => entry.gate === 'proofLawsRule');
+      check(report, 'the PROOF/LAWS gate was recorded', gate.length >= 1, report.gates);
+      check(report, `the gate reports imported=${String(expectImported)}`, gate.some((entry) => (entry.completed === true) === expectImported), gate);
+      if (expectImported) {
+        check(report, 'completion was entered', report.phasesRun.includes('completion'), report.phasesRun);
+        check(report, 'the completion check ran', compCalls.length >= 1, compCalls);
+      } else {
+        check(report, 'completion was not entered', !report.phasesRun.includes('completion'), report.phasesRun);
+        check(report, 'the refusal names the missing import', report.outcome !== null && report.outcome.rendered === 'PROOF.bend must import ./LAWS.bend', report.outcome);
+      }
+      check(report, 'the hook was released and the session closed', report.ownerAfter === '' && report.sessionClosed === true, { ownerAfter: report.ownerAfter, closed: report.sessionClosed });
+      return report;
+    }));
   }
-  // 6. Two adapters on one frontend module: the second install is refused and the first is untouched.
-  {
-    const first = adapterFor(captured);
-    const foreign = adapterFor(captured);
-    const install = kernel.bendHooks(first.sink, 'harness-owner');
-    if (install.status !== 'installed') fail('ownershipInstallRefused', install);
-    const result = await runFrontendInvocation({ frontend: kernel, adapter: foreign, root, phases: ['parse'], comp: null });
-    const owner = kernel.bendHookOwner();
+
+  reports.push(await runCase('holes-refused', async () => {
+    const { adapter } = adapterFor(fixture);
+    const result = await runFrontendInvocation({ frontend: kernel, adapter, root: join(dir, 'holes.bend'), phases: ['parse', 'check', 'completion'], comp });
+    const report = reportOf('holes-refused', result, adapter, { ownerAfter: kernel.bendHookOwner(), sessionClosed: adapter.currentSession() === null });
+    check(report, 'parse and check ran', report.phasesRun.includes('parse') && report.phasesRun.includes('check'), report.phasesRun);
+    check(report, 'a completion gate outcome was reached', report.outcome !== null && report.outcome.gate !== undefined, report.outcome);
+    check(report, 'the real thrown value is retained', report.outcome !== null && report.outcome.thrownIsValue === true, report.outcome);
+    check(report, 'the hook was released and the session closed', report.ownerAfter === '' && report.sessionClosed === true, { ownerAfter: report.ownerAfter, closed: report.sessionClosed });
+    return report;
+  }));
+
+  reports.push(await runCase('second-adapter-refused', async () => {
+    const first = adapterFor(fixture);
+    const second = adapterFor(fixture);
+    const install = kernel.bendHooks(first.adapter.sink, 'harness-owner');
+    const result = await runFrontendInvocation({ frontend: kernel, adapter: second.adapter, root: join(dir, 'valid.bend'), phases: ['parse'] });
+    const report = reportOf('second-adapter-refused', result, second.adapter, {
+      install,
+      ownerDuringRefusal: kernel.bendHookOwner(),
+      firstSessionClosed: first.adapter.currentSession() === null,
+      secondSessionClosed: second.adapter.currentSession() === null,
+    });
+    check(report, 'another owner holds the hook', report.ownerDuringRefusal === 'harness-owner', report.ownerDuringRefusal);
+    check(report, 'the second invocation is refused', report.status === 'rejected' && report.reason === 'frontendOwned', { status: report.status, reason: report.reason });
+    check(report, 'the second session was closed', report.secondSessionClosed === true, report.secondSessionClosed);
+    check(report, 'the first invocation sink was not disturbed', first.adapter.currentSession() === null, first.adapter.currentSession());
     kernel.bendHooks(null, 'harness-owner');
-    reports.push({ ...summarize('second-adapter-refused', result), ownerDuringRefusal: owner });
-  }
-  // 7. Cleanup after a failing completion: the hook is released and the session is closed.
-  {
-    const adapter = adapterFor(captured);
-    const failingComp = { SYNTH: 'SYNTH', book_owned() { throw { $: 'Err', def: 'root', spn: null }; } };
-    const result = await runFrontendInvocation({ frontend: kernel, adapter, root, phases: ['parse', 'check', 'completion'], comp: failingComp });
-    const closed = adapter.currentSession() === null;
-    reports.push({ ...summarize('cleanup-after-completion-failure', result), hookOwnerAfter: kernel.bendHookOwner(), sessionClosed: closed });
-  }
+    const after = await runFrontendInvocation({ frontend: kernel, adapter: second.adapter, root: join(dir, 'valid.bend'), phases: ['parse'] });
+    check(report, 'a later invocation starts normally', after.status === 'completed', after.status);
+    check(report, 'the hook is released afterwards', kernel.bendHookOwner() === '', kernel.bendHookOwner());
+    return report;
+  }));
+
+  reports.push(await runCase('throwing-install-session-closed', async () => {
+    const { adapter } = adapterFor(fixture);
+    const throwing = new Proxy(kernel, {
+      get(target, property) {
+        if (property === 'bendHooks') return () => { throw new Error('hook installation refused by the consumer'); };
+        return target[property];
+      },
+    });
+    const result = await runFrontendInvocation({ frontend: throwing, adapter, root: join(dir, 'valid.bend'), phases: ['parse'] });
+    const report = reportOf('throwing-install-session-closed', result, adapter, { sessionClosed: adapter.currentSession() === null, ownerAfter: kernel.bendHookOwner() });
+    check(report, 'the run fails at installation', report.status === 'failed', report.status);
+    check(report, 'the install failure is evidence', report.incompleteness.includes('evidenceFailure') || report.incompleteness.includes('hookInstallFailure'), report.incompleteness);
+    check(report, 'the session was closed', report.sessionClosed === true, report.sessionClosed);
+    check(report, 'the kernel hook is untouched', report.ownerAfter === '', report.ownerAfter);
+    const after = await runFrontendInvocation({ frontend: kernel, adapter, root: join(dir, 'valid.bend'), phases: ['parse'] });
+    check(report, 'a subsequent invocation starts', after.status === 'completed', after.status);
+    return report;
+  }));
+
+  reports.push(await runCase('ownerless-install-refused', async () => {
+    const { adapter } = adapterFor(fixture);
+    const install = kernel.bendHooks(adapter.sink);
+    const report = { name: 'ownerless-install-refused', status: 'checked', assertions: [], failed: false };
+    check(report, 'an ownerless installation is refused', install.status === 'refused' && install.reason === 'ownerRequired', install);
+    check(report, 'no owner was recorded', kernel.bendHookOwner() === '', kernel.bendHookOwner());
+    return report;
+  }));
+
   return reports;
 }
 
 async function main() {
-  requireEnv();
-  const inputs = pinned();
-  const derived = derive(inputs);
-  const captured = closure(process.env.BATON2_FIXTURE_DIR, inputs.base);
+  const inputs = pinnedInputs();
+  const derived = materialize(inputs);
+  const fixture = fixtures(inputs.base);
   const kernel = await import(pathToFileURL(join(derived.dir, 'bend.ts')).href);
-  const comp = await import(pathToFileURL(process.env.BATON2_COMP_TS).href);
-  const reports = await cases(kernel, comp, captured);
-  const failed = reports.filter((report) => report.status !== 'completed' && report.name !== 'second-adapter-refused' && report.name !== 'acquisition-refused' && report.name !== 'throwing-reader');
+  const compModule = await import(pathToFileURL(join(derived.dir, 'comp.ts')).href);
+  const reports = await cases(kernel, compModule, fixture);
+  const failed = reports.filter((report) => report.failed === true);
   process.stdout.write(`${JSON.stringify({
     upstreamPin: UPSTREAM_PIN,
     derivedDigests: { bend: derived.bend.outputDigest, main: derived.main.outputDigest },
-    absentOnDisk: !existsSync(join(process.env.BATON2_FIXTURE_DIR, 'absent-on-disk.bend')),
+    fixtureDir: process.env.BATON2_FIXTURE_DIR,
     cases: reports,
-    failedCases: failed.map((report) => ({ name: report.name, status: report.status })),
+    failedCases: failed.map((report) => ({ name: report.name, failedClaims: report.assertions.filter((entry) => entry.ok !== true).map((entry) => entry.claim) })),
   }, null, 2)}\n`);
   process.exit(failed.length === 0 ? 0 : 1);
 }
