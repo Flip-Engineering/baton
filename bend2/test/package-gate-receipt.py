@@ -279,7 +279,8 @@ class PackageGateReceipt(unittest.TestCase):
                    'before': initial, 'after': initial, 'log': name + '.log',
                    'log_sha256': hashlib.sha256(b'').hexdigest()}
                   for name, argv in PACKAGE.GATES]
-        summary = {'status': 'passed', 'worktree': str(ROOT), 'before': initial, 'after': initial,
+        summary = {'schema': PACKAGE.RECEIPT_SCHEMA,
+                   'status': 'passed', 'worktree': str(ROOT), 'before': initial, 'after': initial,
                    'compiler_sha256': hashlib.sha256(b'fixture compiler').hexdigest(),
                    'runner_sha256': hashlib.sha256(
                        (ROOT / 'bend2/scripts/package-native.py').read_bytes()).hexdigest(),
@@ -561,14 +562,14 @@ class PackageGateReceipt(unittest.TestCase):
             ('missing origin field', lambda directory: self.rewrite(
                 directory, origin={'workflow': 'w'}), 'producing origin'),
             ('unfinished baseline', lambda directory: self.rewrite_bundle(
-                directory, baseline={'process': {'state': 'signalled', 'exit_code': None,
-                                                 'signal': 'SIGKILL', 'spawn_error': None,
-                                                 'started': 1.0, 'ended': 2.0,
-                                                 'attempt': 'baseline'}}), 'did not complete'),
+                directory, baseline={'process': {
+                    **self.process(directory, baseline=True), 'state': 'signalled',
+                    'exit_code': None, 'signal': 'SIGKILL', 'spawn_error': None}}),
+             'did not complete'),
             ('baseline exit nonzero', lambda directory: self.rewrite_bundle(
-                directory, baseline={'process': {'state': 'exited', 'exit_code': 1, 'signal': None,
-                                                 'spawn_error': None, 'started': 1.0, 'ended': 2.0,
-                                                 'attempt': 'baseline'}}), 'records exit'),
+                directory, baseline={'process': {
+                    **self.process(directory, baseline=True), 'state': 'exited',
+                    'exit_code': 1, 'signal': None, 'spawn_error': None}}), 'records exit'),
             ('missing case', lambda directory: self.rewrite_bundle(
                 directory, results=[]), 'omits controls'),
             ('altered case definition', lambda directory: self.rewrite_result(
@@ -594,17 +595,17 @@ class PackageGateReceipt(unittest.TestCase):
                 directory, baseline={**self.bundle(directory)['baseline'], 'inputs': None}),
              'does not name the inputs'),
             ('case before baseline', lambda directory: self.rewrite_result(
-                directory, 0, process={'state': 'exited', 'exit_code': 1, 'signal': None,
-                                       'spawn_error': None, 'started': 0.5, 'ended': 1.5,
-                                       'attempt': 'early'}), 'before its baseline ended'),
+                directory, 0, process={**self.process(directory, 0), 'started': 0.5,
+                                       'ended': 1.5, 'attempt': 'early'}),
+             'before its baseline ended'),
             ('repeated attempt', lambda directory: self.rewrite_result(
-                directory, 1, process={'state': 'exited', 'exit_code': 1, 'signal': None,
-                                       'spawn_error': None, 'started': 11.0, 'ended': 12.0,
+                directory, 1, process={**self.process(directory, 1), 'started': 11.0,
+                                       'ended': 12.0,
                                        'attempt': self.attempt(directory, 0)}),
              'attempt repeats'),
             ('altered stream', lambda directory: self.alter_stream(directory), 'recorded digest'),
             ('no resource sample', lambda directory: self.rewrite_result(
-                directory, 0, resource={}), 'no resource sample'),
+                directory, 0, resource=None), 'carries no resource sample'),
             ('unknown module', lambda directory: self.rewrite(directory, bundles=[
                 {**self.bundle(directory), 'module': 'bend2/src/absent.bend'}]), 'absent from this source'),
         ]
@@ -636,6 +637,17 @@ class PackageGateReceipt(unittest.TestCase):
 
     def attempt(self, directory, index):
         return self.results(directory, 0)[index]['process']['attempt']
+
+    def process(self, directory, index=None, baseline=False):
+        """The valid process record of one result, or of the bundle baseline.
+
+        Defect cases derive from this record so that every field the contract
+        requires, including the wrapper process identity, stays valid and only the
+        field under test is defective.
+        """
+        if baseline:
+            return dict(self.bundle(directory)['baseline']['process'])
+        return dict(self.results(directory, 0)[index]['process'])
 
     def write(self, directory, index, **overrides):
         summary = self.load(directory)
@@ -911,14 +923,15 @@ class PackageGateReceipt(unittest.TestCase):
                  ('symlinked stream', dict(symlink=True), 'passes through a symlink'),
                  ('absent outcome', dict(outcome=False), 'records no terminal outcome'),
                  ('failed baseline', dict(baseline_exit=1), 'did not compile successfully'),
-                 ('late baseline', dict(baseline_position=2), 'does not precede the control rows'),
+                 ('late baseline', dict(baseline_position=2),
+                  'is consumed without its baseline reference'),
                  ('another compiler', dict(argv=['bend', PACKAGE.ADMITTED_ENTRY, '--check-only']),
                   'ran another compiler'),
                  ('unqualified verdict', dict(verdicts={self.laws()[0]['id']: {'qualified': False}}),
                   'did not qualify'),
                  ('accepted verdict', dict(verdicts={self.laws()[0]['id']:
                                                      {'class': 'law-accepted'}}),
-                  'not an intended refusal'),
+                  'producer verdict disagrees with the recomputed verdict'),
                  ('another law', dict(verdicts={self.laws()[0]['id']:
                                                 {'attributed_law': 'other_law'}}),
                   'attributes another law'),
@@ -968,7 +981,7 @@ class PackageGateReceipt(unittest.TestCase):
             PACKAGE.ordinary_evidence(located, controls, self.compiler(), None,
                                       self.parent_rows(), None,
                                       self.envelope(recorded, run_root=self.logs / 'run'))
-        with self.assertRaisesRegex(RuntimeError, 'no run envelope'):
+        with self.assertRaisesRegex(RuntimeError, 'without its run envelope'):
             PACKAGE.ordinary_evidence(path, controls, self.compiler(), None,
                                       self.parent_rows(), None, None)
 
@@ -1830,6 +1843,10 @@ class PackageGateReceipt(unittest.TestCase):
     def test_run_gates_launches_the_local_laws_command_without_remote_evidence(self):
         marker = self.home / 'launched-local'
         self.run_gates_fixture(marker, self.stub_gates(marker))
+        # The local route consumes the ordinary evidence graph the envelope names,
+        # so this case materializes that index and its streams under its own
+        # synthetic authority before the gates run.
+        self.ordinary_index(self.home / 'run')
         logs = self.home / 'local-gate-logs'
         logs.mkdir()
         _path, summary = PACKAGE.run_gates(self.compiler(), {'CC': 'gcc'}, logs, PACKAGE.snapshot(),
@@ -1842,8 +1859,9 @@ class PackageGateReceipt(unittest.TestCase):
     def test_the_classifier_verdict_governs_refusal(self):
         cases = [('classified diagnostic names another law', {'attributed_law': 'another_law'},
                   'classified diagnostic names another law'),
-                 ('classifier finds no refusal', {'class': 'unrelated-error'},
-                  'not an intended law refusal')]
+                 ('diagnostic label disagrees with the answered class',
+                  {'class': 'unrelated-error'},
+                  'produced diagnostic label disagrees with its bytes')]
         for name, answer, message in cases:
             with self.subTest(name=name):
                 directory = self.full_evidence()
@@ -1857,7 +1875,7 @@ class PackageGateReceipt(unittest.TestCase):
         first_job = summary['bundles'][0]['producing']['origin']['job']
         summary['bundles'][1]['producing']['origin']['job'] = first_job
         (directory / 'controls-summary.json').write_text(json.dumps(summary))
-        with self.assertRaisesRegex(RuntimeError, 'repeated or absent job'):
+        with self.assertRaisesRegex(RuntimeError, 'repeated or absent producing job'):
             PACKAGE.controls_evidence(directory, PACKAGE.snapshot(), self.compiler())
 
     def test_the_classifier_receives_the_verified_streams_and_baseline(self):

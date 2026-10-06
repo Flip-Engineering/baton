@@ -9,6 +9,7 @@ import importlib.util
 import io
 import json
 import pathlib
+import sys
 import tarfile
 import tempfile
 import unittest
@@ -178,7 +179,10 @@ class RecipeSettlement(unittest.TestCase):
         self.assertEqual(row['members_extracted_names'], ['bend2/manifest.json'])
         self.assertEqual(row['failing_member'], 'bend2/controls-evidence/bend2.json')
         self.assertEqual(row['members_extracted'], 1)
-        self.assertIn(str(raised.exception), row['failure'])
+        # The row records the failure with repr, which carries the error class and
+        # errno rather than the filename str adds.
+        self.assertEqual(row['failure'], repr(raised.exception))
+        self.assertIn('Not a directory', row['failure'])
 
     def test_a_failed_verified_write_keeps_the_extraction_outcome(self):
         # The extraction succeeds and its verified row cannot be written, so the
@@ -595,8 +599,12 @@ class RecipeSettlement(unittest.TestCase):
         package = RECIPE.package_handle()
         admitted, missing = package.expected_verifier_digests()
         if missing:
-            self.skipTest('this checkout lacks admitted verifier source: '
-                          + repr(sorted(missing)))
+            # Default unittest output prints the skip count without the reason, so
+            # the reason is emitted here for future complete-suite output.
+            reason = ('this checkout lacks admitted verifier source: '
+                      + repr(sorted(missing)))
+            print('skipped: the composed alias contract: ' + reason, file=sys.stderr)
+            self.skipTest(reason)
         fields = {'id': 'case-1', 'schema': 'capacity-controls/classify-verdict@1',
                   'class': 'bend2-native', 'attributed_law': 'laws-check', 'match': True,
                   'qualified': True, 'law': 'laws-check', 'evidence_verified': True,
