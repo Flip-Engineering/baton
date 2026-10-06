@@ -450,7 +450,7 @@ while True: time.sleep(1)
                                   'message': {'id': 'unfinished-message', 'role': 'assistant',
                                               'content': [{'type': 'text', 'text': 'partial answer %d' % i}]}})
                       for i in range(3))
-        self.stream(frames)
+        self.stream(frames + [self.terminal()])
         updates = [row for row in map(json.loads, self.lines()) if row.get('type') == 'message_update']
         self.assertEqual(updates, [json.loads(frames[-1])])
 
