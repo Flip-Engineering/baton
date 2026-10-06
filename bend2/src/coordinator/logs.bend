@@ -108,7 +108,7 @@ def admitted(level: String, budget: String, segments: String) -> String:
 def read_sql(+session: String) -> String:
   "SELECT json_object('session'," ++ C.q(session) ++ ",'level',coalesce((SELECT level FROM log_policies WHERE session=" ++ C.q(session) ++ ")," ++ C.q(default_level()) ++ "),'budgetBytes',coalesce((SELECT budget_bytes FROM log_policies WHERE session=" ++ C.q(session) ++ ")," ++ default_budget() ++ "),'keepSegments',coalesce((SELECT keep_segments FROM log_policies WHERE session=" ++ C.q(session) ++ ")," ++ default_segments() ++ "),'registeredLogs',(SELECT count(*) FROM log_files WHERE session=" ++ C.q(session) ++ ")) WHERE " ++ known(session) ++ ";"
 
-def read(db: String, session: String) -> IO(String):
+def read(+db: String, session: String) -> IO(String):
   do IO<String>:
     ensured : Unit <- Schema.ensure(db)
     saved : String <- IO.try(String,DB.Sql.query(db,schema() ++ read_sql(session)))
@@ -127,7 +127,7 @@ def write_sql(+session: String, +level: String, +budget: String, +segments: Stri
   ++ "SELECT json_object('error','invalid-log-setting','session'," ++ C.q(session) ++ ",'level'," ++ C.q(level) ++ ",'budgetBytes'," ++ C.q(budget) ++ ",'keepSegments'," ++ C.q(segments) ++ ",'condition','A level is quiet, default or diagnostic; a budget is 65536 bytes or more; a retention count fits a positive unsigned 32-bit integer.','next','Read logs SESSION for the stored policy and retry with admitted values.') WHERE " ++ known(session) ++ " AND NOT " ++ admitted(level,budget,segments) ++ ";"
   ++ "SELECT json_object('session',session,'level',level,'budgetBytes',budget_bytes,'keepSegments',keep_segments,'registeredLogs',(SELECT count(*) FROM log_files WHERE session=log_policies.session)) FROM log_policies WHERE session=" ++ C.q(session) ++ " AND " ++ admitted(level,budget,segments) ++ ";"
 
-def write(db: String, session: String, level: String, budget: String, segments: String) -> IO(String):
+def write(+db: String, session: String, level: String, budget: String, segments: String) -> IO(String):
   do IO<String>:
     ensured : Unit <- Schema.ensure(db)
     saved : String <- IO.try(String,DB.Sql.query(db,"BEGIN IMMEDIATE;" ++ schema() ++ write_sql(session,level,budget,segments) ++ "COMMIT;"))
@@ -542,7 +542,7 @@ def write_lines(policy: Policy, log: String, lines: List<String>, stopped: Bool)
 def register_sql(session: String, log: String) -> String:
   "INSERT OR IGNORE INTO log_files(session,log) VALUES(" ++ C.q(session) ++ "," ++ C.q(log) ++ ");"
 
-def register_if(empty: Bool, db: String, session: String, log: String) -> IO(Unit):
+def register_if(empty: Bool, +db: String, session: String, log: String) -> IO(Unit):
   match empty:
     case True{}: IO.pure(Unit,Unit{})
     case False{}: do IO<Unit>:
