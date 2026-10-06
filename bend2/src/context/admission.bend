@@ -146,11 +146,12 @@ type OwnerSubject is Data:
 # A stopped owner keeps only its own query-control recover/release and runtime
 # release; every ordinary computation subject refuses. An active owner is admitted
 # for its own subjects. Ownership is required in both arms.
-def owner_admission(active: Bool, owned: Bool, subject: OwnerSubject) -> Bool:
-  Bool.and(owned, Bool.or(active, stopped_owner_admitted(subject)))
-
 def stopped_owner_admitted(subject: OwnerSubject) -> Bool:
   match subject:
     case OwnerOrdinary{}: False{}
     case OwnerQueryControl{}: True{}
     case OwnerRuntimeRelease{}: True{}
+
+def owner_admission(active: Bool, owned: Bool, subject: OwnerSubject) -> Bool:
+  Bool.and(owned, Bool.or(active, stopped_owner_admitted(subject)))
+
