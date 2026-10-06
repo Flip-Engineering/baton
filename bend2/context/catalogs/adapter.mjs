@@ -292,6 +292,9 @@ export async function catalogAdapterMain({ readStdin, writeStdout, writeStderr }
       let snapshot;
       let release = null;
       let failure = null;
+      // Presence is tracked separately from the thrown value, because a thrown
+      // null or undefined is a failure too and must not read as no failure.
+      let failed = false;
       try {
         if (operation === 'codeAccessJoin') joined = session.join({ records });
         snapshot = {
@@ -303,6 +306,7 @@ export async function catalogAdapterMain({ readStdin, writeStdout, writeStderr }
         };
       } catch (error) {
         failure = error;
+        failed = true;
         throw error;
       } finally {
         release = session.close();
@@ -312,7 +316,7 @@ export async function catalogAdapterMain({ readStdin, writeStdout, writeStderr }
           // carry it, the returned carrier is rethrown after cleanup with the
           // original kept as its cause, so no evidence is dropped.
           writeStderr(`${JSON.stringify({ stage: 'catalogAdapterMain:sessionRelease', closed: release.closed, diagnostics: release.diagnostics })}\n`);
-          if (failure !== null) {
+          if (failed) {
             const carried = attachDiagnostics(failure, release.diagnostics);
             if (carried !== failure) throw carried;
           }

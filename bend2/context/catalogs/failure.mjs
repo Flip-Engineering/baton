@@ -17,12 +17,21 @@
 export function cleanupDiagnostic(stage, cleanupError) {
   const code = readMember(cleanupError, 'code');
   const message = readMember(cleanupError, 'message');
+  // An unreadable member reports the fixed text; a readable but missing message
+  // falls back to the thrown value itself, which is what a primitive failure
+  // carries.
+  let text;
+  if (message.status === 'unreadable') {
+    text = 'unreadable message';
+  } else if (message.value !== null && message.value !== undefined) {
+    text = asText(message.value, 'unreadable message');
+  } else {
+    text = asText(cleanupError, 'unreadable cleanup failure');
+  }
   return {
     stage,
     code: code.status === 'read' ? (code.value ?? null) : null,
-    message: message.status === 'read' && message.value !== null && message.value !== undefined
-      ? asText(message.value, 'unreadable message')
-      : asText(cleanupError, 'unreadable cleanup failure'),
+    message: text,
   };
 }
 
