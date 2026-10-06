@@ -1263,3 +1263,9 @@ law a_receipt_row_with_an_invalid_exit_flag_is_malformed:
 
 def a_receipt_row_with_an_invalid_exit_flag_is_malformed():
   {==}
+
+law a_receipt_row_missing_its_last_flag_is_short:
+  {ContextObserver.receipt_decode("q1","starter","0","2","present\t1\t1\t1\t1\t1\n") == ContextObserver.ReceiptMalformed{"short","present\t1\t1\t1\t1\t1\n"} : ContextObserver.ReceiptRead}
+
+def a_receipt_row_missing_its_last_flag_is_short():
+  {==}
