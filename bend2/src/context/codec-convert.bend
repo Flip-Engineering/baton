@@ -30,6 +30,10 @@ type WireFrame is Data:
   WfOk{frame: SV.Frame}
   WfRefused{condition: String}
 
+type WireOperands is Data:
+  WoOk{operands: Sel.RequestOperands}
+  WoRefused{condition: String}
+
 # --- member helpers --------------------------------------------------------
 
 def wc_name_present(+name: String, +members: Codec.RawValue) -> Bool:
@@ -180,7 +184,110 @@ def wc_producer_binding(+e: Wire.WireRead) -> WireBinding:
 def wire_frame_read(+e: Wire.WireRead) -> WireFrame:
   wc_frame_step(e, wc_producer_binding(e), wc_frame_ok(e))
 
+# --- the request operands --------------------------------------------------
+# The request contract fixes these member names, not this module and not a declaration:
+# subject.kind is the subject, select is the nonempty array of projections, and engine is
+# the explicit selector, with an omitted or auto engine reading as the empty string. The
+# common operation is not a request member; Core derives it through its own mappings, so
+# it arrives here as an input and this module keeps no second copy of that mapping.
+
+def wo_text_member_ok(+name: String, +members: Codec.RawValue) -> Bool:
+  Bool.pick(Bool, wc_name_present(name, members), wc_text_kind(wc_value_member(name, members)), False{})
+
+def wo_subject_kind_ok(+v: Codec.RawValue) -> Bool:
+  match v:
+    case Codec.Robj{+m}: wo_text_member_ok("kind", m)
+    case other: False{}
+
+def wo_subject_ok(+members: Codec.RawValue) -> Bool:
+  Bool.pick(Bool, wc_name_present("subject", members), wo_subject_kind_ok(wc_value_member("subject", members)), False{})
+
+def wo_select_rest_ok(+v: Codec.RawValue) -> Bool:
+  match v:
+    case Codec.Rnil{}: True{}
+    case Codec.Rarr{+head, +tail}: Bool.pick(Bool, wc_text_kind(head), wo_select_rest_ok(tail), False{})
+    case other: False{}
+
+def wo_select_items_ok(+v: Codec.RawValue) -> Bool:
+  match v:
+    case Codec.Rarr{Codec.Rnil{}, Codec.Rnil{}}: False{}
+    case Codec.Rarr{+head, +tail}: Bool.pick(Bool, wc_text_kind(head), wo_select_rest_ok(tail), False{})
+    case other: False{}
+
+def wo_select_ok(+members: Codec.RawValue) -> Bool:
+  Bool.pick(Bool, wc_name_present("select", members), wo_select_items_ok(wc_value_member("select", members)), False{})
+
+def wo_engine_ok(+members: Codec.RawValue) -> Bool:
+  Bool.pick(Bool, wc_name_present("engine", members), wc_text_kind(wc_value_member("engine", members)), True{})
+
+def wo_engine_text(+members: Codec.RawValue) -> String:
+  Bool.pick(String, wo_engine_ok(members), wc_text_member("engine", members), SNil{})
+
+def wo_subject_text(+members: Codec.RawValue) -> String:
+  wc_text_member_for(wc_value_member("subject", members), "kind")
+
+def wo_select_build(+v: Codec.RawValue) -> Eng.SS:
+  match v:
+    case Codec.Rnil{}: Eng.SSNil{}
+    case Codec.Rarr{+head, +tail}: Eng.SSCons{wc_text_of_value(head), wo_select_build(tail)}
+    case other: Eng.SSNil{}
+
+def wo_build(+members: Codec.RawValue, +common: String) -> Sel.RequestOperands:
+  Sel.RequestOperands{wo_subject_text(members), wo_select_build(wc_value_member("select", members)), wo_engine_text(members), common}
+
+def wo_ok(+members: Codec.RawValue) -> Bool:
+  Bool.pick(Bool, wo_subject_ok(members), Bool.pick(Bool, wo_select_ok(members), wo_engine_ok(members), False{}), False{})
+
+def wo_step(+members: Codec.RawValue, +common: String, ok: Bool) -> WireOperands:
+  Bool.pick(WireOperands, ok, WoOk{wo_build(members, common)}, WoRefused{"invalidRequestOperands"})
+
+def wire_operands_read(+request: Codec.RawValue, +common: String) -> WireOperands:
+  match request:
+    case Codec.Robj{+members}: wo_step(members, common, wo_ok(members))
+    case other: WoRefused{"invalidRequestOperands"}
+
 # --- laws ------------------------------------------------------------------
+
+def wo_request() -> Codec.RawValue:
+  Codec.Robj{Codec.Rpair{"subject", Codec.Robj{Codec.Rpair{"kind", Codec.Rstr{"clang"}, Codec.Rnil{}}},
+    Codec.Rpair{"select", Codec.Rarr{Codec.Rstr{"a"}, Codec.Rarr{Codec.Rstr{"b"}, Codec.Rnil{}}},
+      Codec.Rpair{"engine", Codec.Rstr{"auto"}, Codec.Rnil{}}}}}
+
+law wo_law_a_request_with_auto_reads_the_empty_explicit_selector:
+  {wire_operands_read(wo_request(), "") == WoOk{Sel.RequestOperands{"clang", Eng.SSCons{"a", Eng.SSCons{"b", Eng.SSNil{}}}, "", ""}} : WireOperands}
+
+def wo_law_a_request_with_auto_reads_the_empty_explicit_selector():
+  {==}
+
+law wo_law_an_omitted_engine_reads_the_empty_explicit_selector:
+  {wire_operands_read(Codec.Robj{Codec.Rpair{"subject", Codec.Robj{Codec.Rpair{"kind", Codec.Rstr{"json"}, Codec.Rnil{}}}, Codec.Rpair{"select", Codec.Rarr{Codec.Rstr{"a"}, Codec.Rnil{}}, Codec.Rnil{}}}, "core-1") == WoOk{Sel.RequestOperands{"json", Eng.SSCons{"a", Eng.SSNil{}}, "", "core-1"}} : WireOperands}
+
+def wo_law_an_omitted_engine_reads_the_empty_explicit_selector():
+  {==}
+
+law wo_law_a_named_engine_passes_through:
+  {wire_operands_read(Codec.Robj{Codec.Rpair{"subject", Codec.Robj{Codec.Rpair{"kind", Codec.Rstr{"clang"}, Codec.Rnil{}}}, Codec.Rpair{"select", Codec.Rarr{Codec.Rstr{"a"}, Codec.Rnil{}}, Codec.Rpair{"engine", Codec.Rstr{"selected"}, Codec.Rnil{}}}}, "c") == WoOk{Sel.RequestOperands{"clang", Eng.SSCons{"a", Eng.SSNil{}}, "selected", "c"}} : WireOperands}
+
+def wo_law_a_named_engine_passes_through():
+  {==}
+
+law wo_law_an_empty_select_refuses:
+  {wire_operands_read(Codec.Robj{Codec.Rpair{"subject", Codec.Robj{Codec.Rpair{"kind", Codec.Rstr{"clang"}, Codec.Rnil{}}}, Codec.Rpair{"select", Codec.Rarr{Codec.Rnil{}, Codec.Rnil{}}, Codec.Rnil{}}}, "c") == WoRefused{"invalidRequestOperands"} : WireOperands}
+
+def wo_law_an_empty_select_refuses():
+  {==}
+
+law wo_law_a_subject_without_a_kind_refuses:
+  {wire_operands_read(Codec.Robj{Codec.Rpair{"subject", Codec.Robj{Codec.Rnil{}}, Codec.Rpair{"select", Codec.Rarr{Codec.Rstr{"a"}, Codec.Rnil{}}, Codec.Rnil{}}}, "c") == WoRefused{"invalidRequestOperands"} : WireOperands}
+
+def wo_law_a_subject_without_a_kind_refuses():
+  {==}
+
+law wo_law_a_non_text_projection_refuses:
+  {wo_select_items_ok(Codec.Rarr{Codec.Rnum{"1"}, Codec.Rnil{}}) == False{} : Bool}
+
+def wo_law_a_non_text_projection_refuses():
+  {==}
 
 def wc_binding_value() -> Codec.RawValue:
   Codec.Robj{
