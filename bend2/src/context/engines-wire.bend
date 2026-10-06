@@ -192,3 +192,32 @@ def plan_identity_json(+p: Sel.Plan) -> J.Json:
 
 def plan_identity(+p: Sel.Plan) -> String:
   J.json_text(plan_identity_json(p))
+
+# --- the complete value rendering --------------------------------------------
+# plan_identity renders the members that decide what will run. This renders every
+# member of the plan value instead, including the admitted captured records and the
+# observed availability, for a caller that must carry the plan itself rather than
+# an identity over its deciding members.
+#
+# The round-trip rule, stated exactly: the existing encoder is canonical, so the
+# rendering is injective over the member values. Equal members render to equal
+# text, and any difference in a member renders to different text, which is what
+# makes the text usable to compare against a retained value. Core provides no
+# parser: reconstruction is the parsing owner's work, and this module neither
+# parses its own rendering nor authenticates it.
+def bool_json(+b: Bool) -> J.Json:
+  Bool.pick(J.Json, b, J.Jtrue{}, J.Jfalse{})
+
+def plan_value_json(+p: Sel.Plan) -> J.Json:
+  match p:
+    case Sel.Plan{primary, common, steps, effective_effects, inputs, available}:
+      J.Jobj{wire_obj("primary", bind_json(primary),
+             wire_obj("common", J.Jstr{common},
+             wire_obj("steps", steps_json(steps),
+             wire_obj("effectiveEffects", ss_json(effective_effects),
+             wire_obj("inputs", captures_json(inputs),
+             wire_obj("available", bool_json(available),
+                      J.Jnil{}))))))}
+
+def plan_value(+p: Sel.Plan) -> String:
+  J.json_text(plan_value_json(p))

@@ -111,3 +111,18 @@ law wire_plan_identity_ignores_availability_and_captures:
 
 def wire_plan_identity_ignores_availability_and_captures():
   {==}
+
+# --- the complete value rendering --------------------------------------------
+# The complete rendering carries the captured records and the observed
+# availability, which the identity over the deciding members deliberately omits.
+law wire_plan_value_renders_the_captures_and_availability:
+  {Wire.plan_value_json(fx_plan()) == J.Jobj{Wire.wire_obj("primary", Wire.bind_json(fx_bind()), Wire.wire_obj("common", J.Jstr{"sourceAnalysis"}, Wire.wire_obj("steps", Wire.steps_json(Sel.StepsCons{fx_step(), Sel.StepsNil{}}), Wire.wire_obj("effectiveEffects", Wire.ss_json(Eng.ss_one("executeTarget")), Wire.wire_obj("inputs", Wire.captures_json(Sel.CapNil{}), Wire.wire_obj("available", J.Jtrue{}, J.Jnil{}))))))} : J.Json}
+
+def wire_plan_value_renders_the_captures_and_availability():
+  {==}
+
+law wire_boolean_renders_as_a_json_boolean:
+  {Wire.bool_json(False{}) == J.Jfalse{} : J.Json}
+
+def wire_boolean_renders_as_a_json_boolean():
+  {==}
