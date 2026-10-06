@@ -130,6 +130,11 @@ def phase_admitted(phase: Phase, cleanup: Cleanup, owed: U32) -> Bool:
 # The stored `progress_json` is the same closed object the envelope returns, and a
 # query with no managed roles stores SQL null rather than an empty fragment.
 
+def role_event(+kind: String, +role: String, +incarnation: String) -> J.Json:
+  J.Jobj{J.Jpair{"incarnation", J.Jstr{incarnation},
+    J.Jpair{"kind", J.Jstr{kind},
+    J.Jpair{"role", J.Jstr{role}, J.Jnil{}}}}}
+
 def waiting_item(w: Waiting) -> J.Json:
   match w:
     case WaitingProviderResponse{}:
@@ -169,7 +174,3 @@ def progress_document(+phase: Phase, waiting: List<Waiting>, +control: Control, 
 def progress_json(has_roles: Bool, +phase: Phase, waiting: List<Waiting>, control: Control, cleanup: Cleanup) -> String:
   Bool.pick(String, has_roles, progress_document(phase, waiting, control, cleanup), "null")
 
-def role_event(+kind: String, +role: String, +incarnation: String) -> J.Json:
-  J.Jobj{J.Jpair{"incarnation", J.Jstr{incarnation},
-    J.Jpair{"kind", J.Jstr{kind},
-    J.Jpair{"role", J.Jstr{role}, J.Jnil{}}}}}
