@@ -17,6 +17,9 @@ EXE = ROOT / '.scratch/bend2/baton2'
 
 FIXTURE = r'''import json,os,pathlib,re,socket,subprocess,sys
 home=pathlib.Path(__file__).resolve().parent
+with (home/'child-entries.jsonl').open('a') as entry:
+    entry.write(json.dumps({'pid':os.getpid(),'ppid':os.getppid(),
+                            'argv':sys.argv,'cwd':os.getcwd()})+'\n')
 config=json.loads((home/'fixture.json').read_text())
 args=sys.argv[1:]
 model=args[args.index('--model')+1]
@@ -206,6 +209,11 @@ class Control(unittest.TestCase):
         self.controls.append((stream, connection))
         start = json.loads(stream.readline())
         self.assertEqual(start['session'], session)
+        entries = [json.loads(line) for line in
+                   (self.directory / 'child-entries.jsonl').read_text().splitlines()]
+        entry = next(row for row in entries if row['pid'] == start['pid'])
+        self.assertEqual(entry['argv'], [str(self.fixture.resolve()), *start['args']])
+        self.assertEqual(entry['cwd'], start['cwd'])
         with (self.directory / 'native-starts.jsonl').open('a') as output:
             output.write(json.dumps(start) + '\n')
         return stream, start

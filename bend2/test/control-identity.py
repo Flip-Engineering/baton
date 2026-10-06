@@ -6,6 +6,7 @@ import os
 import pathlib
 import shlex
 import shutil
+import subprocess
 import sys
 import unittest
 
@@ -200,6 +201,7 @@ class ControlIdentity(unittest.TestCase):
                 self.assertEqual(self.call('turns', 'recipient'), [])
                 self.assertEqual(self.rows('SELECT * FROM executions'), [])
                 self.assertFalse(self.process_rows())
+                self.assertFalse((self.directory / 'child-entries.jsonl').exists())
         self.assertEqual(self.controls, [])
         settings['attribution'] = {'name': 'Flip - Baton', 'email': 'baton@example.invalid'}
         self.registry.write_text(json.dumps(settings))
@@ -215,7 +217,23 @@ class ControlIdentity(unittest.TestCase):
         self.assertIsNone(self.call('delivery', 'retained-input')['receipt'])
         self.assertEqual(self.call('turns', 'recipient'), [])
         self.assertEqual(self.rows('SELECT * FROM executions'), [])
+        self.assertFalse((self.directory / 'child-entries.jsonl').exists())
         self.assertFalse((self.directory / 'native-starts.jsonl').exists())
+
+    def test_child_entry_witness_survives_exit_before_protocol_or_accept(self):
+        # Missing model arguments end this child before protocol input or greeting.
+        child = subprocess.Popen([str(self.fixture)], env=self.environment,
+                                 stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+        stdout, stderr = child.communicate(timeout=10)
+        self.assertNotEqual(child.returncode, 0, (stdout, stderr))
+        entries = [json.loads(line) for line in
+                   (self.directory / 'child-entries.jsonl').read_text().splitlines()]
+        self.assertEqual(entries, [{'pid': child.pid, 'ppid': os.getpid(),
+                                    'argv': [str(self.fixture)], 'cwd': os.getcwd()}])
+        self.assertFalse((self.directory / 'native-starts.jsonl').exists())
+        self.assertEqual(self.controls, [])
+        self.assertFalse(self.db.exists())
+        self.assertFalse(self.process_rows())
 
     def test_packaged_receiver_reselects_recipient_identity_and_finishes_native_delivery(self):
         self.root()
