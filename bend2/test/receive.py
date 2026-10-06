@@ -288,6 +288,28 @@ class Receive(unittest.TestCase):
         return ['receive', session, str(executable or self.fixture), session, 'low',
                 str(self.directory), str(self.directory / (session + '.jsonl')), '']
 
+    def reference_startup_stderr(self, executable, session):
+        """The complete diagnostic the platform prints for a missing executable.
+
+        The harness launches the recorded command through env, so the reference
+        is obtained by running that same launch directly, without a shell, in
+        this fixture's directory and environment. The trailing arguments mirror
+        harness/codex-player.bend; the diagnostic itself names only the path, and
+        the escape spelling is the platform's, not ours.
+        """
+        argv = ['/usr/bin/env', '-u', 'OPENAI_API_KEY', '-u', 'CODEX_API_KEY', str(executable),
+                '-c', 'forced_login_method="chatgpt"', 'exec', '--json', '--model', session,
+                '-c', 'model_reasoning_effort="low"', '--dangerously-bypass-approvals-and-sandbox', '-']
+        diagnostic = self.directory / 'reference-env.stderr'
+        with open(diagnostic, 'wb') as stream:
+            reference = subprocess.run(argv, cwd=str(self.directory), stdout=subprocess.DEVNULL,
+                                       stderr=stream, timeout=10)
+        data = diagnostic.read_bytes()
+        self.assertEqual(reference.returncode, 127,
+                         'the reference launch did not report the missing program')
+        self.assertTrue(data, 'the reference launch produced no diagnostic')
+        return data
+
     def endpoint(self, session):
         return json.dumps([str(EXE), str(self.db), *self.receive_args(session)[:-1]])
 
@@ -1416,9 +1438,9 @@ class Receive(unittest.TestCase):
         self.assertEqual([m['id'] for m in self.coord('inbox', 'parent')], ['input'])
         startup_report = next(m for m in self.coord('inbox', 'root') if 'without a native result (exit 127)' in m['body'])
         self.assertIn('Output: '+str(self.directory / 'parent.jsonl'), startup_report['body'])
-        startup_stderr = pathlib.Path(startup_report['body'].split(' Stderr: ', 1)[1]).read_text()
-        self.assertIn(str(self.directory / 'missing executable'), startup_stderr)
-        self.assertIn('No such file or directory', startup_stderr)
+        startup_stderr = pathlib.Path(startup_report['body'].split(' Stderr: ', 1)[1]).read_bytes()
+        reference = self.reference_startup_stderr(self.directory / 'missing executable', 'parent')
+        self.assertEqual(startup_stderr, reference)
         failed = self.spawn(*self.receive_args('parent'))
         control, _ = self.accept('parent')
         self.action(control, fail=True, ack=False)
@@ -1451,9 +1473,9 @@ class Receive(unittest.TestCase):
         startup_report = next(m for m in self.coord('inbox', 'root') if 'without a native result (exit 127)' in m['body'])
         self.assertIn(startup_report['body'], notified['prompt'])
         self.assertIn('Output: '+str(self.directory / 'parent.jsonl'), startup_report['body'])
-        startup_stderr = pathlib.Path(startup_report['body'].split(' Stderr: ', 1)[1]).read_text()
-        self.assertIn(str(self.directory / 'missing executable'), startup_stderr)
-        self.assertIn('No such file or directory', startup_stderr)
+        startup_stderr = pathlib.Path(startup_report['body'].split(' Stderr: ', 1)[1]).read_bytes()
+        reference = self.reference_startup_stderr(self.directory / 'missing executable', 'parent')
+        self.assertEqual(startup_stderr, reference)
         self.action(parent)
         self.finish(failed, ok=False)
         self.assertEqual([m['id'] for m in self.coord('inbox', 'parent')], ['input'])
