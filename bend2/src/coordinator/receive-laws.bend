@@ -229,7 +229,7 @@ law m17_refused_conversation_restarts_the_attempt:
   for outcome: Turn.Outcome
   for -deliveries: List<Chan(Result<&1,&1,U32 & String,String>)>
   for -again: Unit -> IO(Result<&1,&1,U32 & String,Unit>)
-  {Receive.complete_or_restart(db,session,id,log,stderr,cursor,native,cwd,handle,lock,outcome,deliveries,again,True{}) == Receive.restart_pending(db,session,id,native,cwd,handle,lock,deliveries,again) : IO(Result<&1,&1,U32 & String,Unit>)}
+  {Receive.complete_or_restart(db,session,id,log,stderr,cursor,native,cwd,handle,lock,outcome,deliveries,again,True{}) == Receive.restart_pending(db,session,id,cursor,native,cwd,handle,lock,deliveries,again) : IO(Result<&1,&1,U32 & String,Unit>)}
 
 def m17_refused_conversation_restarts_the_attempt(db,session,id,log,stderr,cursor,native,cwd,handle,lock,outcome,deliveries,again):
   {==}
@@ -271,7 +271,7 @@ def m17_the_observed_dispatch_is_the_refusal_it_read(db,session,id,log,cursor,na
 # only then releases the observer and the native process, delivers the wake
 # and settles question deliveries before acknowledging it. The written-out order is the whole obligation: a
 # reordering of any two steps breaks this proof.
-def restart_records_before_releasing_and_waking(+db: String, +session: String, +id: String, native: String, cwd: String, +handle: U32, lock: Maybe<U32>, deliveries: List<Chan(Result<&1,&1,U32 & String,String>)>, again: Unit -> IO(Result<&1,&1,U32 & String,Unit>)) -> IO(Result<&1,&1,U32 & String,Unit>):
+def restart_records_before_releasing_and_waking(+db: String, +session: String, +id: String, +cursor: String, native: String, cwd: String, +handle: U32, lock: Maybe<U32>, deliveries: List<Chan(Result<&1,&1,U32 & String,String>)>, again: Unit -> IO(Result<&1,&1,U32 & String,Unit>)) -> IO(Result<&1,&1,U32 & String,Unit>):
   do IO<Result<&1,&1,U32 & String,Unit>>:
     recorded : String <- IO.try(String,DB.Sql.query(db,"SELECT EXISTS(SELECT 1 FROM messages WHERE id=" ++ C.q(id ++ ":recovery-input") ++ ");"))
     saved : Unit <- Receive.record_recovery(db,session,id,native,cwd,String.eq(recorded,"1\n"))
@@ -279,24 +279,26 @@ def restart_records_before_releasing_and_waking(+db: String, +session: String, +
     native_released : Unit <- IO.try(Unit,P.ProcessChild.release(handle))
     delivery_task : Chan(Result<&1,&1,U32 & String,String>) <- IO.fork(Result<&1,&1,U32 & String,String>,Delivery.deliver(db,id ++ ":recovery","1",""))
     next : Result<&1,&1,U32 & String,Unit> <- again(Unit{})
+    woken : Result<&1,&1,U32 & String,Unit> <- Receive.wake_due(db,session,cursor,launch => Receive.wake_launch(db,launch))
     delivered : Result<&1,&1,U32 & String,String> <- IO.join(Result<&1,&1,U32 & String,String>,delivery_task)
     questions : Result<&1,&1,U32 & String,Unit> <- NativeRequests.settle(deliveries)
     acknowledged : Unit <- IO.try(Unit,P.ProcessChild.acknowledge(handle))
-    IO.pure(Result<&1,&1,U32 & String,Unit>,Turn.combine(Delivery.wake_result(delivered),Turn.combine(questions,next)))
+    IO.pure(Result<&1,&1,U32 & String,Unit>,Turn.combine(Delivery.wake_result(delivered),Turn.combine(questions,Turn.combine(next,woken))))
 
 law m17_restart_records_before_releasing_and_waking:
   for +db: String
   for +session: String
   for +id: String
+  for +cursor: String
   for +native: String
   for +cwd: String
   for +handle: U32
   for -lock: Maybe<U32>
   for -deliveries: List<Chan(Result<&1,&1,U32 & String,String>)>
   for -again: Unit -> IO(Result<&1,&1,U32 & String,Unit>)
-  {Receive.restart_pending(db,session,id,native,cwd,handle,lock,deliveries,again) == restart_records_before_releasing_and_waking(db,session,id,native,cwd,handle,lock,deliveries,again) : IO(Result<&1,&1,U32 & String,Unit>)}
+  {Receive.restart_pending(db,session,id,cursor,native,cwd,handle,lock,deliveries,again) == restart_records_before_releasing_and_waking(db,session,id,cursor,native,cwd,handle,lock,deliveries,again) : IO(Result<&1,&1,U32 & String,Unit>)}
 
-def m17_restart_records_before_releasing_and_waking(db,session,id,native,cwd,handle,lock,deliveries,again):
+def m17_restart_records_before_releasing_and_waking(db,session,id,cursor,native,cwd,handle,lock,deliveries,again):
   {==}
 
 # M-17: a recovery-input row already recorded writes nothing, so a replayed
@@ -524,486 +526,15 @@ law retained_report_is_delivered_by_its_own_id:
 def retained_report_is_delivered_by_its_own_id(db,parent,id):
   {==}
 
-# The strict report delivery keeps a missing message, an ineligible message, an
-# already-acknowledged report, an absent or malformed endpoint, an observed zero
-# exit and a failed launch as distinct results, and always carries the requested
-# and selected identities. The framing laws bind the whole row with the strict
-# routing mode and known selection, so a known handoff notification stays named
-# and an initial unselected row reports none. The kind and the recipient's
-# stopped state now ride the frame tail, so no positional routing flag remains.
-law missing_row_requires_its_own_frame:
-  for db: String
-  for id: String
-  {Delivery.report_row(db,id,"","strict",id,"m\n") == Delivery.report_selected_failed(id,"","","report-missing","No message matches this report id; its input is retained.") : IO(Delivery.ReportOutcome)}
 
-def missing_row_requires_its_own_frame(db,id):
-  {==}
-
-law ineligible_row_requires_its_own_frame:
-  for db: String
-  for id: String
-  {Delivery.report_row(db,id,"","strict",id,"i\n") == Delivery.report_selected_failed(id,"","","report-ineligible","The message is not an eligible retained report; its input is retained.") : IO(Delivery.ReportOutcome)}
-
-def ineligible_row_requires_its_own_frame(db,id):
-  {==}
-
-law missing_row_keeps_a_known_notification:
-  for db: String
-  {Delivery.report_row(db,"requested-report","notification-report","strict","notification-report","m\n") == Delivery.report_selected_failed("requested-report","notification-report","","report-missing","No message matches this report id; its input is retained.") : IO(Delivery.ReportOutcome)}
-
-def missing_row_keeps_a_known_notification(db):
-  {==}
-
-law ineligible_row_keeps_a_known_notification:
-  for db: String
-  {Delivery.report_row(db,"requested-report","notification-report","strict","notification-report","i\n") == Delivery.report_selected_failed("requested-report","notification-report","","report-ineligible","The message is not an eligible retained report; its input is retained.") : IO(Delivery.ReportOutcome)}
-
-def ineligible_row_keeps_a_known_notification(db):
-  {==}
-
-law marker_row_without_its_delimiter_is_rejected:
-  for db: String
-  for id: String
-  {Delivery.report_row(db,id,"","strict",id,"m") == Delivery.report_selected_failed(id,"","","report-framing-rejected","The retained report row does not end in exactly one host delimiter; the report and its input are retained.") : IO(Delivery.ReportOutcome)}
-
-def marker_row_without_its_delimiter_is_rejected(db,id):
-  {==}
-
-law marker_row_with_a_suffix_is_rejected:
-  for db: String
-  for id: String
-  {Delivery.report_row(db,id,"","strict",id,"m\njunk") == Delivery.report_selected_failed(id,"","","report-framing-rejected","The retained report row does not end in exactly one host delimiter; the report and its input are retained.") : IO(Delivery.ReportOutcome)}
-
-def marker_row_with_a_suffix_is_rejected(db,id):
-  {==}
-
-law marker_row_with_a_doubled_delimiter_is_rejected:
-  for db: String
-  for id: String
-  {Delivery.report_row(db,id,"","strict",id,"m\n\n") == Delivery.report_selected_failed(id,"","","report-framing-rejected","The retained report row does not end in exactly one host delimiter; the report and its input are retained.") : IO(Delivery.ReportOutcome)}
-
-def marker_row_with_a_doubled_delimiter_is_rejected(db,id):
-  {==}
-
-# The eligible frame carries the kind and the recipient's stopped state as two
-# counted fields after the argv payload and before the one host delimiter, so a
-# running row ends in "\n6\nreport\n0\n\n" and a stopped row in
-# "\n6\nreport\n8\nstopped\n".
-law eligible_frame_decodes_to_its_fields:
-  for db: String
-  for id: String
-  {Delivery.report_row(db,id,"","strict",id,"o\np\na\n4\nroot\n4\n2:ab" ++ "\n6\nreport\n0\n\n") == Delivery.report_endpoint(db,id,id,"root","a","2:ab") : IO(Delivery.ReportOutcome)}
-
-def eligible_frame_decodes_to_its_fields(db,id):
-  {==}
-
-law eligible_frame_keeps_an_empty_later_argument:
-  for db: String
-  for id: String
-  {Delivery.report_row(db,id,"","strict",id,"o\np\na\n4\nroot\n6\n2:ab0:" ++ "\n6\nreport\n0\n\n") == Delivery.report_endpoint(db,id,id,"root","a","2:ab0:") : IO(Delivery.ReportOutcome)}
-
-def eligible_frame_keeps_an_empty_later_argument(db,id):
-  {==}
-
-law eligible_frame_keeps_an_internal_newline:
-  for db: String
-  for id: String
-  {Delivery.report_row(db,id,"","strict",id,"o\np\na\n4\nroot\n11\n2:ab0:3:x\ny" ++ "\n6\nreport\n0\n\n") == Delivery.report_endpoint(db,id,id,"root","a","2:ab0:3:x\ny") : IO(Delivery.ReportOutcome)}
-
-def eligible_frame_keeps_an_internal_newline(db,id):
-  {==}
-
-law eligible_frame_keeps_a_trailing_newline:
-  for db: String
-  for id: String
-  {Delivery.report_row(db,id,"","strict",id,"o\np\na\n4\nroot\n4\n2:x\n" ++ "\n6\nreport\n0\n\n") == Delivery.report_endpoint(db,id,id,"root","a","2:x\n") : IO(Delivery.ReportOutcome)}
-
-def eligible_frame_keeps_a_trailing_newline(db,id):
-  {==}
-
-law eligible_frame_keeps_a_unicode_recipient:
-  for db: String
-  for id: String
-  {Delivery.report_row(db,id,"","strict",id,"o\np\na\n2\nrΩ\n4\n2:ab" ++ "\n6\nreport\n0\n\n") == Delivery.report_endpoint(db,id,id,"rΩ","a","2:ab") : IO(Delivery.ReportOutcome)}
-
-def eligible_frame_keeps_a_unicode_recipient(db,id):
-  {==}
-
-law eligible_frame_with_a_short_payload_is_rejected:
-  for db: String
-  for id: String
-  {Delivery.report_row(db,id,"","strict",id,"o\np\na\n4\nroot\n20\nshort" ++ "\n6\nreport\n0\n\n") == Delivery.report_selected_failed(id,"","root","report-truncated","The retained report row is shorter than its declared argv length; the report and its input are retained.") : IO(Delivery.ReportOutcome)}
-
-def eligible_frame_with_a_short_payload_is_rejected(db,id):
-  {==}
-
-law eligible_frame_without_its_delimiter_is_rejected:
-  for db: String
-  for id: String
-  {Delivery.report_row(db,id,"","strict",id,"o\np\na\n4\nroot\n4\n2:ab" ++ "\n6\nreport\n0") == Delivery.report_selected_failed(id,"","root","report-framing-rejected","The retained report row does not end in exactly one host delimiter; the report and its input are retained.") : IO(Delivery.ReportOutcome)}
-
-def eligible_frame_without_its_delimiter_is_rejected(db,id):
-  {==}
-
-# A malformed eligible frame refuses during decoding, before any handoff effect.
-law stopped_malformed_frame_refuses_before_handoff:
-  for db: String
-  for id: String
-  {Delivery.report_row(db,id,"","strict",id,"o\np\ne\n4\nroot\n4\n2:ab" ++ "\n6\nreport\n8\nstopped") == Delivery.report_selected_failed(id,"","root","report-framing-rejected","The retained report row does not end in exactly one host delimiter; the report and its input are retained.") : IO(Delivery.ReportOutcome)}
-
-def stopped_malformed_frame_refuses_before_handoff(db,id):
-  {==}
-
-# The wider frame is rejected when either tail field falls short or its delimiter
-# is missing; each row below carries the fields it can and fails the end check,
-# so the refusal still names the decoded recipient and no selected identity.
-law truncated_kind_field_is_rejected:
-  for db: String
-  for id: String
-  {Delivery.report_row(db,id,"","strict",id,"o\np\na\n4\nroot\n4\n2:ab" ++ "\n6\nrep") == Delivery.report_selected_failed(id,"","root","report-framing-rejected","The retained report row does not end in exactly one host delimiter; the report and its input are retained.") : IO(Delivery.ReportOutcome)}
-
-def truncated_kind_field_is_rejected(db,id):
-  {==}
-
-law missing_kind_delimiter_is_rejected:
-  for db: String
-  for id: String
-  {Delivery.report_row(db,id,"","strict",id,"o\np\na\n4\nroot\n4\n2:ab" ++ "\n6\nreport0\n\n") == Delivery.report_selected_failed(id,"","root","report-framing-rejected","The retained report row does not end in exactly one host delimiter; the report and its input are retained.") : IO(Delivery.ReportOutcome)}
-
-def missing_kind_delimiter_is_rejected(db,id):
-  {==}
-
-law truncated_stopped_field_is_rejected:
-  for db: String
-  for id: String
-  {Delivery.report_row(db,id,"","strict",id,"o\np\na\n4\nroot\n4\n2:ab" ++ "\n6\nreport\n8\nsto") == Delivery.report_selected_failed(id,"","root","report-framing-rejected","The retained report row does not end in exactly one host delimiter; the report and its input are retained.") : IO(Delivery.ReportOutcome)}
-
-def truncated_stopped_field_is_rejected(db,id):
-  {==}
-
-law missing_stopped_delimiter_is_rejected:
-  for db: String
-  for id: String
-  {Delivery.report_row(db,id,"","strict",id,"o\np\na\n4\nroot\n4\n2:ab" ++ "\n6\nreport\n8\nstopped") == Delivery.report_selected_failed(id,"","root","report-framing-rejected","The retained report row does not end in exactly one host delimiter; the report and its input are retained.") : IO(Delivery.ReportOutcome)}
-
-def missing_stopped_delimiter_is_rejected(db,id):
-  {==}
-
-law running_tail_is_not_a_framing_rejection:
-  for db: String
-  for id: String
-  {Delivery.report_row(db,id,"","strict",id,"o\np\ne\n4\nroot\n4\n2:ab" ++ "\n6\nreport\n0\n\n") == Delivery.report_endpoint(db,id,id,"root","e","2:ab") : IO(Delivery.ReportOutcome)}
-
-def running_tail_is_not_a_framing_rejection(db,id):
-  {==}
-
-# A stopped pending admission reaches the shared handoff whether its own recorded
-# endpoint is absent or malformed, which is what these two frames share. The
-# stopped state rides the frame tail, so no positional routing flag remains.
-law stopped_pending_absent_endpoint_reaches_handoff:
-  for db: String
-  for id: String
-  {Delivery.report_row(db,id,"","strict",id,"o\np\ne\n4\nroot\n4\n2:ab" ++ "\n6\nreport\n8\nstopped\n") == Delivery.report_handoff_admit(db,id,id) : IO(Delivery.ReportOutcome)}
-
-def stopped_pending_absent_endpoint_reaches_handoff(db,id):
-  {==}
-
-law stopped_pending_malformed_endpoint_reaches_handoff:
-  for db: String
-  for id: String
-  {Delivery.report_row(db,id,"","strict",id,"o\np\nx\n4\nroot\n4\n2:ab" ++ "\n6\nreport\n8\nstopped\n") == Delivery.report_handoff_admit(db,id,id) : IO(Delivery.ReportOutcome)}
-
-def stopped_pending_malformed_endpoint_reaches_handoff(db,id):
-  {==}
-
-# The routing decision is total over the mode, the decoded kind and the decoded
-# stopped state, and it is taken after the decode and before any launch: a strict
-# admission refuses every kind that is not a report before any invocation, both
-# admissions send a stopped report to the shared handoff, an ordinary admission
-# stops a stopped row of every other kind, and it accepts every unstopped row.
-# Each family carries its own negative control, which asserts the rival route.
-law strict_routing_refuses_a_non_report_kind:
-  {Delivery.report_routing("strict","message","") == Delivery.Refused{} : Delivery.ReportRouting}
-
-def strict_routing_refuses_a_non_report_kind():
-  {==}
-
-law strict_routing_refuses_a_non_report_kind_as_an_envelope:
-  {Delivery.strict_outcome("requested-report",Delivery.Refused{2,"","","report-ineligible","The message is not an eligible retained report; its input is retained."}) == Fail{(2,Delivery.report_envelope("requested-report","","","report-ineligible",False{},"","The message is not an eligible retained report; its input is retained."))} : Result<&1,&1,U32 & String,String>}
-
-def strict_routing_refuses_a_non_report_kind_as_an_envelope():
-  {==}
-
-law invoked_routing_is_not_the_refusal:
-  {Delivery.strict_outcome("requested-report",Delivery.Reached{0,"","","invoked",True{},"0","Endpoint process completed and exited zero."}) == Done{Delivery.report_envelope("requested-report","","","invoked",True{},"0","Endpoint process completed and exited zero.")} : Result<&1,&1,U32 & String,String>}
-
-def invoked_routing_is_not_the_refusal():
-  {==}
-
-law strict_routing_retains_a_stopped_report_for_any_kind:
-  {Delivery.report_routing("strict","report","stopped") == Delivery.Retained{} : Delivery.ReportRouting}
-
-def strict_routing_retains_a_stopped_report_for_any_kind():
-  {==}
-
-law strict_routing_refuses_a_stopped_non_report_kind:
-  {Delivery.report_routing("strict","message","stopped") == Delivery.Refused{} : Delivery.ReportRouting}
-
-def strict_routing_refuses_a_stopped_non_report_kind():
-  {==}
-
-law ordinary_routing_retains_a_stopped_report:
-  {Delivery.report_routing("ordinary","report","stopped") == Delivery.Retained{} : Delivery.ReportRouting}
-
-def ordinary_routing_retains_a_stopped_report():
-  {==}
-
-law ordinary_routing_retains_a_stopped_question:
-  {Delivery.report_routing("ordinary","question","stopped") == Delivery.Retained{} : Delivery.ReportRouting}
-
-def ordinary_routing_retains_a_stopped_question():
-  {==}
-
-law ordinary_routing_does_not_retain_an_unstopped_report:
-  {Delivery.report_routing("ordinary","report","") == Delivery.Accepted{} : Delivery.ReportRouting}
-
-def ordinary_routing_does_not_retain_an_unstopped_report():
-  {==}
-
-law ordinary_routing_stops_a_stopped_other_kind:
-  {Delivery.report_routing("ordinary","message","stopped") == Delivery.Stopped{} : Delivery.ReportRouting}
-
-def ordinary_routing_stops_a_stopped_other_kind():
-  {==}
-
-law ordinary_routing_stops_a_stopped_other_kind_as_the_stop_text:
-  for db: String
-  for id: String
-  for recipient: String
-  for saved: String
-  {Delivery.ordinary_outcome(db,id,saved,Delivery.Refused{2,id,recipient,"terminally-stopped","Session is terminally stopped; the retained input will not execute. Inspect its session and inbox."}) == Fail{(2,"Session is terminally stopped; the retained input will not execute. Inspect its session and inbox.")} : Result<&1,&1,U32 & String,String>}
-
-def ordinary_routing_stops_a_stopped_other_kind_as_the_stop_text(db,id,recipient,saved):
-  {==}
-
-law ordinary_routing_does_not_stop_a_stopped_report:
-  {Delivery.report_routing("ordinary","report","stopped") == Delivery.Retained{} : Delivery.ReportRouting}
-
-def ordinary_routing_does_not_stop_a_stopped_report():
-  {==}
-
-law ordinary_routing_accepts_every_unstopped_kind:
-  for kind: String
-  {Delivery.report_routing("ordinary",kind,"") == Delivery.Accepted{} : Delivery.ReportRouting}
-
-def ordinary_routing_accepts_every_unstopped_kind(kind):
-  {==}
-
-law ordinary_routing_observes_a_failed_query_before_the_saved_result:
-  for db: String
-  for id: String
-  for saved: String
-  for code: U32
-  for detail: String
-  {Delivery.ordinary_outcome(db,id,saved,Delivery.Refused{code,"","","report-query-failed",detail}) == Fail{(code,detail)} : Result<&1,&1,U32 & String,String>}
-
-def ordinary_routing_observes_a_failed_query_before_the_saved_result(db,id,saved,code,detail):
-  {==}
-
-law ordinary_routing_renders_an_invoked_reach_as_the_saved_result:
-  for db: String
-  for id: String
-  for recipient: String
-  for saved: String
-  {Delivery.ordinary_outcome(db,id,saved,Delivery.Reached{0,id,recipient,"invoked",True{},"0","Endpoint process completed and exited zero."}) == Done{saved} : Result<&1,&1,U32 & String,String>}
-
-def ordinary_routing_renders_an_invoked_reach_as_the_saved_result(db,id,recipient,saved):
-  {==}
-
-law ordinary_routing_renders_a_failed_invocation_as_the_log_text:
-  for db: String
-  for id: String
-  for recipient: String
-  for saved: String
-  for detail: String
-  {Delivery.ordinary_outcome(db,id,saved,Delivery.Reached{1,id,recipient,"invocation-failed",True{},"",detail}) == Fail{(1,"Message committed; session delivery failed. Read " ++ db ++ ".root.log and retry delivery from the pending inbox.")} : Result<&1,&1,U32 & String,String>}
-
-def ordinary_routing_renders_a_failed_invocation_as_the_log_text(db,id,recipient,saved,detail):
-  {==}
-
-law stopped_field_matches_the_handoff_query:
-  {Delivery.report_routing("strict","report","stopped") == Delivery.Retained{} : Delivery.ReportRouting}
-
-def stopped_field_matches_the_handoff_query():
-  {==}
-
-law empty_stopped_field_matches_the_own_endpoint_route:
-  {Delivery.report_routing("strict","report","") == Delivery.Accepted{} : Delivery.ReportRouting}
-
-def empty_stopped_field_matches_the_own_endpoint_route():
-  {==}
-
-# An acknowledged report completes during receipt classification, before the
-# routing decision is taken, so a running and a stopped row return the same
-# acknowledgment and no endpoint is invoked.
-law acknowledged_frame_completes_for_the_ordinary_mode:
-  for db: String
-  for id: String
-  {Delivery.report_row(db,id,"","strict",id,"o\na\na\n4\nroot\n4\n2:ab" ++ "\n6\nreport\n0\n\n") == IO.pure(Delivery.ReportOutcome,Delivery.Reached{0,id,"root","already-acknowledged",False{},"","The retained report already has a receipt; no endpoint was invoked."}) : IO(Delivery.ReportOutcome)}
-
-def acknowledged_frame_completes_for_the_ordinary_mode(db,id):
-  {==}
-
-law acknowledged_frame_completes_for_the_stopped_mode:
-  for db: String
-  for id: String
-  {Delivery.report_row(db,id,"","strict",id,"o\na\na\n4\nroot\n4\n2:ab" ++ "\n6\nreport\n8\nstopped\n") == IO.pure(Delivery.ReportOutcome,Delivery.Reached{0,id,"root","already-acknowledged",False{},"","The retained report already has a receipt; no endpoint was invoked."}) : IO(Delivery.ReportOutcome)}
-
-def acknowledged_frame_completes_for_the_stopped_mode(db,id):
-  {==}
-
-law absent_endpoint_is_not_an_invocation:
-  for db: String
-  for id: String
-  for recipient: String
-  for payload: String
-  {Delivery.report_endpoint(db,id,id,recipient,"e",payload) == Delivery.report_selected_failed(id,id,recipient,"endpoint-absent","The recorded endpoint is absent; the report and its input are retained.") : IO(Delivery.ReportOutcome)}
-
-def absent_endpoint_is_not_an_invocation(db,id,recipient,payload):
-  {==}
-
-law malformed_endpoint_is_not_an_invocation:
-  for db: String
-  for id: String
-  for recipient: String
-  for payload: String
-  {Delivery.report_endpoint(db,id,id,recipient,"x",payload) == Delivery.report_selected_failed(id,id,recipient,"endpoint-malformed","The recorded endpoint is not a complete usable argument array; the report and its input are retained.") : IO(Delivery.ReportOutcome)}
-
-def malformed_endpoint_is_not_an_invocation(db,id,recipient,payload):
-  {==}
-
-law acknowledged_report_is_not_an_invocation:
-  for db: String
-  for id: String
-  for recipient: String
-  for payload: String
-  {Delivery.report_receipt(db,id,id,"strict",id,recipient,"a","a","report","",payload) == IO.pure(Delivery.ReportOutcome,Delivery.Reached{0,id,recipient,"already-acknowledged",False{},"","The retained report already has a receipt; no endpoint was invoked."}) : IO(Delivery.ReportOutcome)}
-
-def acknowledged_report_is_not_an_invocation(db,id,recipient,payload):
-  {==}
-
-law zero_exit_reports_the_invoked_disposition:
-  for id: String
-  for recipient: String
-  for saved: String
-  {Delivery.report_launch_outcome(id,id,recipient,Done{saved}) == Delivery.Reached{0,id,recipient,"invoked",True{},"0","Endpoint process completed and exited zero."} : Delivery.ReportOutcome}
-
-def zero_exit_reports_the_invoked_disposition(id,recipient,saved):
-  {==}
-
-law failed_launch_keeps_its_code_and_identity:
-  for id: String
-  for recipient: String
-  for code: U32
-  for detail: String
-  {Delivery.report_launch_outcome(id,id,recipient,Fail{(code,detail)}) == Delivery.Reached{code,id,recipient,"invocation-failed",True{},"",detail} : Delivery.ReportOutcome}
-
-def failed_launch_keeps_its_code_and_identity(id,recipient,code,detail):
-  {==}
-
-law launch_outcome_keeps_both_identities:
-  for saved: String
-  {Delivery.report_launch_outcome("requested-report","selected-report","recipient-session",Done{saved}) == Delivery.Reached{0,"selected-report","recipient-session","invoked",True{},"0","Endpoint process completed and exited zero."} : Delivery.ReportOutcome}
-
-def launch_outcome_keeps_both_identities(saved):
-  {==}
-
-# A query failure before any selection carries the request with no delivered
-# identity, while one after a handoff keeps the selected notification. The
-# distinction comes from the call site, not from comparing the two ids, and the
-# observation is a refusal the caller renders.
-law pre_selection_query_failure_leaves_no_selected_identity:
-  for db: String
-  for code: U32
-  for detail: String
-  {Delivery.report_queried(db,"requested-report","","strict","selected-report",Fail{(code,detail)}) == IO.pure(Delivery.ReportOutcome,Delivery.Refused{code,"","","report-query-failed",detail}) : IO(Delivery.ReportOutcome)}
-
-def pre_selection_query_failure_leaves_no_selected_identity(db,code,detail):
-  {==}
-
-law post_handoff_query_failure_keeps_the_notification:
-  for db: String
-  for code: U32
-  for detail: String
-  {Delivery.report_queried(db,"requested-report","notification-report","strict","notification-report",Fail{(code,detail)}) == IO.pure(Delivery.ReportOutcome,Delivery.Refused{code,"notification-report","","report-query-failed",detail}) : IO(Delivery.ReportOutcome)}
-
-def post_handoff_query_failure_keeps_the_notification(db,code,detail):
-  {==}
-
-# The handoff route failure and the unavailable route are observed as refusals
-# carrying the observed code and detail and no selected identity, because nothing
-# has been selected when the handoff has not run. Rendering them through the one
-# envelope builder is what carries the requested identity, so that claim is
-# stated over the renderer and the observation itself over the chain.
-law handoff_route_failure_carries_the_requested_identity:
-  for code: U32
-  for detail: String
-  {Delivery.strict_outcome("requested-report",Delivery.Refused{code,"","","stopped-route-query-failed",detail}) == Fail{(code,Delivery.report_envelope("requested-report","","","stopped-route-query-failed",False{},"",detail))} : Result<&1,&1,U32 & String,String>}
-
-def handoff_route_failure_carries_the_requested_identity(code,detail):
-  {==}
-
-law handoff_route_failure_observes_its_code_and_detail:
-  for db: String
-  for code: U32
-  for detail: String
-  {Delivery.report_handoff_available(db,"requested-report","stopped-report",Fail{(code,detail)}) == IO.pure(Delivery.ReportOutcome,Delivery.Refused{code,"","","stopped-route-query-failed",detail}) : IO(Delivery.ReportOutcome)}
-
-def handoff_route_failure_observes_its_code_and_detail(db,code,detail):
-  {==}
-
-law unavailable_handoff_route_is_not_an_invocation:
-  for db: String
-  {Delivery.report_handoff_unavailable(db,"requested-report","stopped-report","",True{}) == IO.pure(Delivery.ReportOutcome,Delivery.Refused{2,"","","stopped-route-unavailable","Higher-parent delivery is unavailable; the retained input and the original report are preserved."}) : IO(Delivery.ReportOutcome)}
-
-def unavailable_handoff_route_is_not_an_invocation(db):
-  {==}
-
-law unavailable_handoff_route_renders_without_an_invocation:
-  {Delivery.strict_outcome("requested-report",Delivery.Refused{2,"","","stopped-route-unavailable","Higher-parent delivery is unavailable; the retained input and the original report are preserved."}) == Fail{(2,Delivery.report_envelope("requested-report","","","stopped-route-unavailable",False{},"","Higher-parent delivery is unavailable; the retained input and the original report are preserved."))} : Result<&1,&1,U32 & String,String>}
-
-def unavailable_handoff_route_renders_without_an_invocation():
-  {==}
-
-law available_handoff_route_reaches_the_handoff:
-  for db: String
-  {Delivery.report_handoff_unavailable(db,"requested-report","stopped-report","notification-report",False{}) == Delivery.handoff(db,"stopped-report",notification => Delivery.report_handoff("requested-report",notification)) : IO(Delivery.ReportOutcome)}
-
-def available_handoff_route_reaches_the_handoff(db):
-  {==}
-
-# The strict selection reads the shared projection with the unconditional
-# predicate, so the ordinary predicates can be supplied by the other caller
-# without a second selection builder.
-def strict_selection(+db: String, +id: String) -> IO(Delivery.ReportOutcome):
-  do IO<Delivery.ReportOutcome>:
-    queried : Result<&1,&1,U32 & String,String> <- DB.Sql.query(db,Delivery.report_projection_sql(id,"1"))
-    Delivery.report_queried(db,id,"","strict",id,queried)
-
-law strict_selection_uses_the_unconditional_predicate:
-  for db: String
-  for id: String
-  {Delivery.report_selected(db,id,"","strict",id,"1") == strict_selection(db,id) : IO(Delivery.ReportOutcome)}
-
-def strict_selection_uses_the_unconditional_predicate(db,id):
-  {==}
-
-def completion_prepares_before_owner_release(+db: String, +session: String, +id: String, +log: String, stderr: String, cursor: String, +handle: U32, lock: Maybe<U32>, +outcome: Turn.Outcome, deliveries: List<Chan(Result<&1,&1,U32 & String,String>)>, again: Unit -> IO(Result<&1,&1,U32 & String,Unit>)) -> IO(Result<&1,&1,U32 & String,Unit>):
+def completion_prepares_before_owner_release(+db: String, +session: String, +id: String, +log: String, stderr: String, +cursor: String, +handle: U32, lock: Maybe<U32>, +outcome: Turn.Outcome, deliveries: List<Chan(Result<&1,&1,U32 & String,String>)>, again: Unit -> IO(Result<&1,&1,U32 & String,Unit>)) -> IO(Result<&1,&1,U32 & String,Unit>):
   do IO<Result<&1,&1,U32 & String,Unit>>:
     prepared : Unit <- Turn.prepare(db,session,id,log,stderr,outcome)
     observer_released : Unit <- Receive.release_observer(lock)
     native_released : Unit <- IO.try(Unit,P.ProcessChild.release(handle))
-    Receive.finish_pending(db,session,id,log,cursor,outcome,deliveries,again,u => P.ProcessChild.acknowledge(handle))
+    finished : Result<&1,&1,U32 & String,Unit> <- Receive.finish_pending(db,session,id,log,cursor,outcome,deliveries,again,u => P.ProcessChild.acknowledge(handle))
+    woken : Result<&1,&1,U32 & String,Unit> <- Receive.wake_due(db,session,cursor,target => Receive.wake_launch(db,target))
+    IO.pure(Result<&1,&1,U32 & String,Unit>,Turn.combine(finished,woken))
 
 law native_completion_is_committed_before_owner_release:
   for +db: String
@@ -1257,4 +788,88 @@ law keeper_recovery_preserves_the_original_input_cursor:
   {Receive.observe_attached(db,session,id,cursor,cmd,model,effort,cwd,log,harness,directory,native,handle,again) == Receive.observe_guarded(db,session,id,cursor,cmd,model,effort,cwd,log,harness,directory,native,handle,None{},again,False{}) : IO(Result<&1,&1,U32 & String,Unit>)}
 
 def keeper_recovery_preserves_the_original_input_cursor(db,session,id,cursor,cmd,model,effort,cwd,log,harness,directory,native,handle,again):
+  {==}
+
+# M-5 and M-8 for the post-exit wake (#685). The driver reads the pending count
+# for the session, takes the session lock, re-reads the count under the lock,
+# reads the one message the obligation names, claims it while it holds the lock,
+# releases the lock and only then launches that message. Each claim below is a
+# written-out body of the function it constrains.
+def wake_due_reads_the_count_then_locks(+db: String, +session: String, +cursor: String, launch: String -> IO(Result<&1,&1,U32 & String,Unit>)) -> IO(Result<&1,&1,U32 & String,Unit>):
+  do IO<Result<&1,&1,U32 & String,Unit>>:
+    owed : Bool <- Receive.wake_owed(db,session,cursor)
+    Receive.wake_locked(db,session,cursor,launch,owed)
+
+law the_wake_driver_reads_the_count_before_it_locks:
+  for +db: String
+  for +session: String
+  for +cursor: String
+  for -launch: String -> IO(Result<&1,&1,U32 & String,Unit>)
+  {Receive.wake_due(db,session,cursor,launch) == wake_due_reads_the_count_then_locks(db,session,cursor,launch) : IO(Result<&1,&1,U32 & String,Unit>)}
+
+def the_wake_driver_reads_the_count_before_it_locks(db,session,cursor,launch):
+  {==}
+
+def continuation_reads_the_count_then_locks(+db: String, +session: String, +cursor: String, again: Unit -> IO(Result<&1,&1,U32 & String,Unit>)) -> IO(Result<&1,&1,U32 & String,Unit>):
+  do IO<Result<&1,&1,U32 & String,Unit>>:
+    pending : String <- IO.try(String,DB.Sql.query(db,Receive.pending_count_sql(session,cursor)))
+    Receive.continue_locked(db,session,cursor,again,Bool.not(String.eq(pending,"0\n")))
+
+law the_continuation_reads_the_count_before_it_locks:
+  for +db: String
+  for +session: String
+  for +cursor: String
+  for -again: Unit -> IO(Result<&1,&1,U32 & String,Unit>)
+  {Receive.continue_pending(db,session,cursor,again) == continuation_reads_the_count_then_locks(db,session,cursor,again) : IO(Result<&1,&1,U32 & String,Unit>)}
+
+def the_continuation_reads_the_count_before_it_locks(db,session,cursor,again):
+  {==}
+
+def handed_invocation_marks_the_claim_unclaimed(+db: String, +session: String) -> IO(Unit):
+  do IO<Unit>:
+    pending : String <- IO.try(String,DB.Sql.query(db,Receive.pending_count_sql(session,"0")))
+    left : Unit <- Receive.release_if_owed(db,session,Bool.not(String.eq(pending,"0\n")))
+    IO.pure(Unit,Unit{})
+
+law a_handed_invocation_marks_the_claim_unclaimed_when_input_is_owed:
+  for +db: String
+  for +session: String
+  {Receive.claim_left(db,session) == handed_invocation_marks_the_claim_unclaimed(db,session) : IO(Unit)}
+
+def a_handed_invocation_marks_the_claim_unclaimed_when_input_is_owed(db,session):
+  {==}
+
+# Negative controls. Each names the step a mutant would take and shows the code
+# does not take it. A held session lock launches nothing; an absent wake target
+# claims nothing; a zero count continues nothing.
+law a_held_session_lock_never_launches_the_wake:
+  for +db: String
+  for +session: String
+  for +cursor: String
+  for launch: String -> IO(Result<&1,&1,U32 & String,Unit>)
+  {Receive.wake_owned(db,session,cursor,launch,None{}) == IO.pure(Result<&1,&1,U32 & String,Unit>,Done{Unit{}}) : IO(Result<&1,&1,U32 & String,Unit>)}
+
+def a_held_session_lock_never_launches_the_wake(db,session,cursor,launch):
+  {==}
+
+law an_absent_wake_target_never_claims_the_obligation:
+  for +db: String
+  for +session: String
+  for launch: String -> IO(Result<&1,&1,U32 & String,Unit>)
+  for lock: U32
+  {Receive.wake_target(db,session,"",launch,lock,True{}) == (do IO<Result<&1,&1,U32 & String,Unit>>:
+    released : Unit <- IO.try(Unit,Lock.SessionLock.release(lock))
+    IO.pure(Result<&1,&1,U32 & String,Unit>,Done{Unit{}})) : IO(Result<&1,&1,U32 & String,Unit>)}
+
+def an_absent_wake_target_never_claims_the_obligation(db,session,launch,lock):
+  {==}
+
+law no_owed_input_never_takes_the_lock:
+  for +db: String
+  for +session: String
+  for +cursor: String
+  for launch: String -> IO(Result<&1,&1,U32 & String,Unit>)
+  {Receive.wake_locked(db,session,cursor,launch,False{}) == IO.pure(Result<&1,&1,U32 & String,Unit>,Done{Unit{}}) : IO(Result<&1,&1,U32 & String,Unit>)}
+
+def no_owed_input_never_takes_the_lock(db,session,cursor,launch):
   {==}

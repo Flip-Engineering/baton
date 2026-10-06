@@ -1633,5 +1633,110 @@ class Receive(unittest.TestCase):
         self.assertEqual(self.coord('inbox', 'parent'), [])
 
 
+    def claims(self, session=None):
+        with sqlite3.connect(f'{self.db.as_uri()}?mode=ro', uri=True) as database:
+            rows = database.execute('SELECT session, state FROM wake_claims ORDER BY session').fetchall()
+        return [row for row in rows if session is None or row[0] == session]
+
+    def claim(self, session, state='claimed'):
+        with sqlite3.connect(str(self.db)) as database:
+            database.execute('INSERT OR REPLACE INTO wake_claims(session, state) VALUES (?, ?)',
+                             (session, state))
+
+    def test_stop_clears_the_wake_claim(self):
+        """A terminal stop is the operator resolution: the session's claim goes with it
+        while the retained input stays in the inbox."""
+        self.player()
+        self.message('owed', 'parent')
+        self.claim('parent')
+        self.assertEqual(self.claims('parent'), [('parent', 'claimed')])
+        stopped = self.coord('stop', 'parent', 'stop-claim', 'operator resolution')
+        self.assertEqual(stopped['status'], 'stopped')
+        self.assertEqual(self.claims('parent'), [])
+        self.assertEqual([row['id'] for row in self.coord('inbox', 'parent')], ['owed'])
+
+    def test_acknowledgement_clears_the_wake_claim(self):
+        """Acknowledgement clears the obligation, and the claim row is deleted with it."""
+        self.player()
+        self.message('owed', 'parent')
+        self.claim('parent')
+        receipt = self.coord('ack', 'owed', 'parent', 'read-accepted')
+        self.assertEqual(receipt['receipt'], 'read-accepted')
+        self.assertEqual(self.claims('parent'), [])
+        self.assertEqual(self.coord('inbox', 'parent'), [])
+
+    def test_an_unclaimed_session_with_owed_input_never_starts_a_turn_by_itself(self):
+        """The obligation is durable and passive: with no driver and no admission, an idle
+        session with owed input starts nothing, keeps its unclaimed row, and retains the
+        input in its inbox."""
+        self.player()
+        self.message('owed', 'parent')
+        self.claim('parent', 'unclaimed')
+        self.assert_no_start()
+        self.assertEqual(self.claims('parent'), [('parent', 'unclaimed')])
+        self.assertEqual([row['id'] for row in self.coord('inbox', 'parent')], ['owed'])
+
+
+    def test_idle_arrival_starts_one_turn_and_leaves_no_duplicate(self):
+        """A message admitted to an idle session with a recorded receiver starts one turn
+        carrying that input, and the completed turn leaves no second turn behind."""
+        self.player()
+        self.connect('parent')
+        delivery = self.spawn('message', 'idle-input', 'root', 'parent', 'guidance', 'Idle arrival.')
+        control, started = self.accept('parent')
+        self.assertIn('[id: idle-input]', started['prompt'])
+        self.action(control)
+        self.finish(delivery)
+        self.assert_no_start()
+        self.assertEqual(len(self.coord('turns', 'parent')), 1)
+
+    def test_concurrent_sends_preserve_both_inputs_and_start_one_continuation(self):
+        """Two arrivals against one live session are both carried by a single continuation
+        turn, and no third turn or second native process appears."""
+        self.player()
+        self.message('first', 'parent')
+        first = self.spawn(*self.receive_args('parent'))
+        control, started = self.accept('parent')
+        self.message('second', 'parent')
+        self.message('third', 'parent')
+        queued = self.coord(*self.receive_args('parent'))
+        self.assertEqual(queued['status'], 'queued')
+        self.assert_no_start()
+        self.action(control)
+        control2, next_turn = self.accept('parent')
+        self.assertIn('[id: second]', next_turn['prompt'])
+        self.assertIn('[id: third]', next_turn['prompt'])
+        self.action(control2)
+        self.finish(first)
+        self.assert_no_start()
+        self.assertEqual(len(self.coord('turns', 'parent')), 2)
+        self.assertEqual(self.coord('inbox', 'parent'), [])
+
+
+    def inject(self, ident, recipient, kind='guidance', body='Injected input.'):
+        with sqlite3.connect(str(self.db)) as database:
+            database.execute('INSERT INTO messages(id, sender, recipient, kind, body) VALUES (?, ?, ?, ?, ?)',
+                             (ident, 'root', recipient, kind, body))
+
+    def test_input_behind_the_live_owner_is_woken_when_the_owner_exits(self):
+        """A row inserted behind the live turn's cursor is never carried by that turn, and
+        the wake driver hands it to a subsequent turn once the owner exits, once."""
+        self.player()
+        self.connect('parent')
+        delivery = self.spawn('message', 'first', 'root', 'parent', 'guidance', 'Carried input.')
+        control, started = self.accept('parent')
+        self.assertIn('[id: first]', started['prompt'])
+        self.inject('late', 'parent')
+        self.action(control)
+        control2, next_turn = self.accept('parent')
+        self.assertIn('[id: late]', next_turn['prompt'])
+        self.action(control2)
+        self.finish(delivery)
+        self.assert_no_start()
+        self.assertEqual(len(self.coord('turns', 'parent')), 2)
+        self.assertEqual(self.coord('inbox', 'parent'), [])
+        self.assertEqual(self.claims('parent'), [])
+
+
 if __name__ == '__main__':
     unittest.main()

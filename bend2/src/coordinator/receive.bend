@@ -8,6 +8,7 @@ import ./delivery.bend as Delivery
 import ../host/sqlite.bend as DB
 import ../host/session-lock.bend as Lock
 import ../host/process.bend as P
+import ../host/control.bend as Host
 import ../git/text.bend as Tx
 import ../host/text.bend as Text
 
@@ -95,10 +96,118 @@ def continue_if(again: Unit -> IO(Result<&1,&1,U32 & String,Unit>), present: Boo
 def pending_count_sql(+session: String, cursor: String) -> String:
   "SELECT count(*) FROM messages WHERE recipient=" ++ C.q(session) ++ " AND receipt IS NULL AND seq>CAST(" ++ C.q(cursor) ++ " AS INTEGER) AND NOT " ++ C.stopped_session_sql(C.q(session)) ++ ";"
 
-def continue_pending(db: String, session: String, cursor: String, again: Unit -> IO(Result<&1,&1,U32 & String,Unit>)) -> IO(Result<&1,&1,U32 & String,Unit>):
+# The continuation takes the session lock and re-reads the count while holding
+# it, so the in-invocation continuation and the wake driver cannot both proceed
+# for one session. The claim records the driver that took the obligation.
+def continue_owned(+db: String, +session: String, +cursor: String, again: Unit -> IO(Result<&1,&1,U32 & String,Unit>), lock: Maybe<U32>) -> IO(Result<&1,&1,U32 & String,Unit>):
+  match lock:
+    case None{}: IO.pure(Result<&1,&1,U32 & String,Unit>,Done{Unit{}})
+    case Some{handle}: do IO<Result<&1,&1,U32 & String,Unit>>:
+      pending : String <- IO.try(String,DB.Sql.query(db,pending_count_sql(session,cursor)))
+      claimed : Unit <- Store.claim(db,session)
+      released : Unit <- IO.try(Unit,Lock.SessionLock.release(handle))
+      continue_if(again,Bool.not(String.eq(pending,"0\n")))
+
+def continue_locked(+db: String, +session: String, +cursor: String, again: Unit -> IO(Result<&1,&1,U32 & String,Unit>), owed: Bool) -> IO(Result<&1,&1,U32 & String,Unit>):
+  match owed:
+    case False{}: IO.pure(Result<&1,&1,U32 & String,Unit>,Done{Unit{}})
+    case True{}: Lock.SessionLock.acquire_session(Result<&1,&1,U32 & String,Unit>,db,session,
+      +canonical => lock => continue_owned(canonical,session,cursor,again,lock))
+
+def continue_pending(+db: String, +session: String, +cursor: String, again: Unit -> IO(Result<&1,&1,U32 & String,Unit>)) -> IO(Result<&1,&1,U32 & String,Unit>):
   do IO<Result<&1,&1,U32 & String,Unit>>:
     pending : String <- IO.try(String,DB.Sql.query(db,pending_count_sql(session,cursor)))
-    continue_if(again,Bool.not(String.eq(pending,"0\n")))
+    continue_locked(db,session,cursor,again,Bool.not(String.eq(pending,"0\n")))
+
+# How much input is still owed after the cursor.
+def wake_owed(db: String, session: String, cursor: String) -> IO(Bool):
+  do IO<Bool>:
+    pending : String <- IO.try(String,DB.Sql.query(db,pending_count_sql(session,cursor)))
+    IO.pure(Bool,Bool.not(String.eq(pending,"0\n")))
+
+# The message the wake hands to the invocation. It is the first unacknowledged
+# message after the cursor, so the wake never re-delivers input the attempt
+# already carried.
+def wake_found(db: String, session: String, cursor: String) -> IO(String):
+  do IO<String>:
+    found : String <- IO.try(String,DB.Sql.query(db,Delivery.wake_sql(session,cursor)))
+    IO.pure(String,Tx.trim_nl(found))
+
+# The launch of one message through the existing delivery path. The delivery runs
+# as the detached self entry the admission path already uses, so the handing
+# invocation returns without carrying the delivered turn itself.
+def wake_launch(+db: String, +id: String) -> IO(Result<&1,&1,U32 & String,Unit>):
+  do IO<Result<&1,&1,U32 & String,Unit>>:
+    +executable : String <- IO.try(String,Lock.SessionLock.executable())
+    +database : String <- IO.try(String,Lock.SessionLock.canonical(db))
+    launched : String <- IO.try(String,Host.Control.launch(Tx.enc_argv([executable,"--dispatch-message",database,id]),database,id))
+    IO.pure(Result<&1,&1,U32 & String,Unit>,Done{Unit{}})
+
+def wake_refused(+db: String, +session: String, launched: Result<&1,&1,U32 & String,Unit>) -> IO(Result<&1,&1,U32 & String,Unit>):
+  match launched:
+    case Done{unit}: IO.pure(Result<&1,&1,U32 & String,Unit>,launched)
+    case Fail{error}: do IO<Result<&1,&1,U32 & String,Unit>>:
+      released : Unit <- Store.release(db,session)
+      IO.pure(Result<&1,&1,U32 & String,Unit>,launched)
+
+# A target that is absent or already handed over leaves the obligation as it
+# stands. A refused launch marks the claim unclaimed, so the next driver may
+# take the same obligation again.
+def wake_target(+db: String, +session: String, target: String, launch: String -> IO(Result<&1,&1,U32 & String,Unit>), lock: U32, empty: Bool) -> IO(Result<&1,&1,U32 & String,Unit>):
+  match empty:
+    case True{}: do IO<Result<&1,&1,U32 & String,Unit>>:
+      released : Unit <- IO.try(Unit,Lock.SessionLock.release(lock))
+      IO.pure(Result<&1,&1,U32 & String,Unit>,Done{Unit{}})
+    case False{}: do IO<Result<&1,&1,U32 & String,Unit>>:
+      claimed : Unit <- Store.claim(db,session)
+      released : Unit <- IO.try(Unit,Lock.SessionLock.release(lock))
+      launched : Result<&1,&1,U32 & String,Unit> <- launch(target)
+      wake_refused(db,session,launched)
+
+def wake_decided(+db: String, +session: String, +cursor: String, launch: String -> IO(Result<&1,&1,U32 & String,Unit>), lock: U32, owed: Bool) -> IO(Result<&1,&1,U32 & String,Unit>):
+  match owed:
+    case False{}: do IO<Result<&1,&1,U32 & String,Unit>>:
+      released : Unit <- IO.try(Unit,Lock.SessionLock.release(lock))
+      IO.pure(Result<&1,&1,U32 & String,Unit>,Done{Unit{}})
+    case True{}: do IO<Result<&1,&1,U32 & String,Unit>>:
+      +found : String <- wake_found(db,session,cursor)
+      wake_target(db,session,found,launch,lock,String.eq(found,""))
+
+def wake_owned(+db: String, +session: String, +cursor: String, launch: String -> IO(Result<&1,&1,U32 & String,Unit>), lock: Maybe<U32>) -> IO(Result<&1,&1,U32 & String,Unit>):
+  match lock:
+    case None{}: IO.pure(Result<&1,&1,U32 & String,Unit>,Done{Unit{}})
+    case Some{handle}: do IO<Result<&1,&1,U32 & String,Unit>>:
+      owed : Bool <- wake_owed(db,session,cursor)
+      wake_decided(db,session,cursor,launch,handle,owed)
+
+def wake_locked(+db: String, +session: String, +cursor: String, launch: String -> IO(Result<&1,&1,U32 & String,Unit>), owed: Bool) -> IO(Result<&1,&1,U32 & String,Unit>):
+  match owed:
+    case False{}: IO.pure(Result<&1,&1,U32 & String,Unit>,Done{Unit{}})
+    case True{}: Lock.SessionLock.acquire_session(Result<&1,&1,U32 & String,Unit>,db,session,
+      +canonical => lock => wake_owned(canonical,session,cursor,launch,lock))
+
+# The wake driver. It reads the pending count for the session, takes the session
+# lock, re-reads the count under the lock, claims the obligation and only then
+# releases the lock and launches the one message the obligation names. A held
+# lock is a live owner, which evaluates the obligation itself.
+def wake_due(+db: String, +session: String, +cursor: String, launch: String -> IO(Result<&1,&1,U32 & String,Unit>)) -> IO(Result<&1,&1,U32 & String,Unit>):
+  do IO<Result<&1,&1,U32 & String,Unit>>:
+    owed : Bool <- wake_owed(db,session,cursor)
+    wake_locked(db,session,cursor,launch,owed)
+
+def release_if_owed(+db: String, +session: String, owed: Bool) -> IO(Unit):
+  match owed:
+    case False{}: IO.pure(Unit,Unit{})
+    case True{}: Store.release(db,session)
+
+# The handed invocation marks the claim unclaimed when it exits with input still
+# owed, so a later driver may take the same obligation again. Acknowledging the
+# owed input deletes the row on the acknowledgement path.
+def claim_left(+db: String, +session: String) -> IO(Unit):
+  do IO<Unit>:
+    pending : String <- IO.try(String,DB.Sql.query(db,pending_count_sql(session,"0")))
+    left : Unit <- release_if_owed(db,session,Bool.not(String.eq(pending,"0\n")))
+    IO.pure(Unit,Unit{})
 
 def release_observer(lock: Maybe<U32>) -> IO(Unit):
   match lock:
@@ -123,12 +232,14 @@ def finish_pending(+db: String, +session: String, id: String, log: String, curso
     next : Result<&1,&1,U32 & String,Unit> <- IO.join(Result<&1,&1,U32 & String,Unit>,continued_task)
     IO.pure(Result<&1,&1,U32 & String,Unit>,Turn.combine(finished,Turn.combine(questions,Turn.combine(next,Turn.combine(ack,status)))))
 
-def completed(+db: String, +session: String, +id: String, +log: String, stderr: String, cursor: String, +handle: U32, lock: Maybe<U32>, +outcome: Turn.Outcome, deliveries: List<Chan(Result<&1,&1,U32 & String,String>)>, again: Unit -> IO(Result<&1,&1,U32 & String,Unit>)) -> IO(Result<&1,&1,U32 & String,Unit>):
+def completed(+db: String, +session: String, +id: String, +log: String, stderr: String, +cursor: String, +handle: U32, lock: Maybe<U32>, +outcome: Turn.Outcome, deliveries: List<Chan(Result<&1,&1,U32 & String,String>)>, again: Unit -> IO(Result<&1,&1,U32 & String,Unit>)) -> IO(Result<&1,&1,U32 & String,Unit>):
   do IO<Result<&1,&1,U32 & String,Unit>>:
     prepared : Unit <- Turn.prepare(db,session,id,log,stderr,outcome)
     observer_released : Unit <- release_observer(lock)
     native_released : Unit <- IO.try(Unit,P.ProcessChild.release(handle))
-    finish_pending(db,session,id,log,cursor,outcome,deliveries,again,u => P.ProcessChild.acknowledge(handle))
+    finished : Result<&1,&1,U32 & String,Unit> <- finish_pending(db,session,id,log,cursor,outcome,deliveries,again,u => P.ProcessChild.acknowledge(handle))
+    woken : Result<&1,&1,U32 & String,Unit> <- wake_due(db,session,cursor,target => wake_launch(db,target))
+    IO.pure(Result<&1,&1,U32 & String,Unit>,Turn.combine(finished,woken))
 
 # The recovery input records the workspace state and makes clearing the refused
 # identity atomic. Replaying the old attempt preserves a later native identity.
@@ -147,7 +258,7 @@ def record_recovery(db: String, session: String, id: String, native: String, cwd
       note : String <- Turn.refused_note(cwd,"")
       recovery_input(db,session,id,native,note)
 
-def restart_pending(+db: String, +session: String, +id: String, native: String, cwd: String, +handle: U32, lock: Maybe<U32>, deliveries: List<Chan(Result<&1,&1,U32 & String,String>)>, again: Unit -> IO(Result<&1,&1,U32 & String,Unit>)) -> IO(Result<&1,&1,U32 & String,Unit>):
+def restart_pending(+db: String, +session: String, +id: String, +cursor: String, native: String, cwd: String, +handle: U32, lock: Maybe<U32>, deliveries: List<Chan(Result<&1,&1,U32 & String,String>)>, again: Unit -> IO(Result<&1,&1,U32 & String,Unit>)) -> IO(Result<&1,&1,U32 & String,Unit>):
   do IO<Result<&1,&1,U32 & String,Unit>>:
     recorded : String <- IO.try(String,DB.Sql.query(db,"SELECT EXISTS(SELECT 1 FROM messages WHERE id=" ++ C.q(id ++ ":recovery-input") ++ ");"))
     saved : Unit <- record_recovery(db,session,id,native,cwd,String.eq(recorded,"1\n"))
@@ -155,15 +266,16 @@ def restart_pending(+db: String, +session: String, +id: String, native: String, 
     native_released : Unit <- IO.try(Unit,P.ProcessChild.release(handle))
     delivery_task : Chan(Result<&1,&1,U32 & String,String>) <- IO.fork(Result<&1,&1,U32 & String,String>,Delivery.deliver(db,id ++ ":recovery","1",""))
     next : Result<&1,&1,U32 & String,Unit> <- again(Unit{})
+    woken : Result<&1,&1,U32 & String,Unit> <- wake_due(db,session,cursor,launch => wake_launch(db,launch))
     delivered : Result<&1,&1,U32 & String,String> <- IO.join(Result<&1,&1,U32 & String,String>,delivery_task)
     questions : Result<&1,&1,U32 & String,Unit> <- NativeRequests.settle(deliveries)
     acknowledged : Unit <- IO.try(Unit,P.ProcessChild.acknowledge(handle))
-    IO.pure(Result<&1,&1,U32 & String,Unit>,Turn.combine(Delivery.wake_result(delivered),Turn.combine(questions,next)))
+    IO.pure(Result<&1,&1,U32 & String,Unit>,Turn.combine(Delivery.wake_result(delivered),Turn.combine(questions,Turn.combine(next,woken))))
 
 def complete_or_restart(db: String, session: String, id: String, log: String, stderr: String, cursor: String, native: String, cwd: String, handle: U32, lock: Maybe<U32>, outcome: Turn.Outcome, deliveries: List<Chan(Result<&1,&1,U32 & String,String>)>, again: Unit -> IO(Result<&1,&1,U32 & String,Unit>), gone: Bool) -> IO(Result<&1,&1,U32 & String,Unit>):
   match gone:
     case False{}: completed(db,session,id,log,stderr,cursor,handle,lock,outcome,deliveries,again)
-    case True{}: restart_pending(db,session,id,native,cwd,handle,lock,deliveries,again)
+    case True{}: restart_pending(db,session,id,cursor,native,cwd,handle,lock,deliveries,again)
 
 def observed(+db: String, +session: String, +id: String, +log: String, cursor: String, +native: String, cwd: String, +attempt: String, handle: U32, lock: Maybe<U32>, +outcome: Turn.Outcome, deliveries: List<Chan(Result<&1,&1,U32 & String,String>)>, again: Unit -> IO(Result<&1,&1,U32 & String,Unit>)) -> IO(Result<&1,&1,U32 & String,Unit>):
   do IO<Result<&1,&1,U32 & String,Unit>>:
@@ -299,7 +411,9 @@ def run(+db: String, +session: String, +cmd: String, +model: String, +effort: St
     recorded : String <- IO.try(String,Store.commit(db,C.Session{session}))
     exists : Unit <- registered(Bool.not(String.is_empty(recorded)))
     closed : Bool <- Stop.stopped(db,session)
-    available(db,session,u => run(db,session,cmd,model,effort,cwd,log,""),canonical => lock => fresh_pending_admission(canonical,lock,session,cmd,model,effort,cwd,log,u => run(db,session,cmd,model,effort,cwd,log,"")),closed)
+    result : Result<&1,&1,U32 & String,Unit> <- available(db,session,u => run(db,session,cmd,model,effort,cwd,log,""),canonical => lock => fresh_pending_admission(canonical,lock,session,cmd,model,effort,cwd,log,u => run(db,session,cmd,model,effort,cwd,log,"")),closed)
+    settled : Unit <- claim_left(db,session)
+    IO.pure(Result<&1,&1,U32 & String,Unit>,result)
 
 def attach_recorded(directory: String, next: @+handle: U32 -> IO(Result<&1,&1,U32 & String,Unit>)) -> IO(Result<&1,&1,U32 & String,Unit>):
   do IO<Result<&1,&1,U32 & String,Unit>>:
@@ -344,7 +458,7 @@ def recovery_endpoint_ready(db: String, parent: String, retained: Result<&1,&1,U
     case True{}: IO.pure(Result<&1,&1,U32 & String,String>,Fail{(2,"The responsible recipient " ++ parent ++ " has no usable recorded endpoint; the recovery report is retained in its inbox and the original attempt is preserved.")})
     case False{}: recovery_deliver(db,parent,retained)
 
-def recovery_parent_ready(db: String, parent: String, retained: Result<&1,&1,U32 & String,String>, absent: Bool) -> IO(Result<&1,&1,U32 & String,String>):
+def recovery_parent_ready(+db: String, +parent: String, retained: Result<&1,&1,U32 & String,String>, absent: Bool) -> IO(Result<&1,&1,U32 & String,String>):
   match absent:
     case True{}: IO.pure(Result<&1,&1,U32 & String,String>,Fail{(2,"The retained attempt has no responsible recorded recipient; configuration did not run and the attempt, its input and its manifest are preserved.")})
     case False{}: do IO<Result<&1,&1,U32 & String,String>>:
