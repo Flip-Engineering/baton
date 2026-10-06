@@ -23,6 +23,8 @@
 # value encoder or Core ownership, and it is not silently narrowed or turned into text
 # here.
 #
+# Every definition is declared before its use, and the small helper layer comes first.
+#
 # Ownership: the members belong to their producers; this module owns the envelope member
 # set and order. The declaration and schema identity are package-supplied.
 # Serves: docs/bend2/semantic-context-spec.md, the closed version-2 transport.
@@ -42,26 +44,18 @@ type WireRead is Data:
   WrEvent{version: String, query: Context.OptText, owner: Context.OptText, producer: Codec.RawValue, runtime: Context.OptText, role: Context.OptText, incarnation: Context.OptText, sequence: String, frame_type: String, payload: Codec.RawValue}
   WrRefused{condition: String}
 
-# --- small helpers ---------------------------------------------------------
+# --- member helpers --------------------------------------------------------
 
 def wire_nullable(+text: String) -> J.Json:
   Bool.pick(J.Json, String.is_empty(text), J.Jnull{}, J.Jstr{text})
-
-def wire_value_member(+name: String, +members: Codec.RawValue) -> Codec.RawValue:
-  wire_value_or(Codec.raw_member(name, members))
 
 def wire_value_or(found: Maybe<&2, Codec.RawValue>) -> Codec.RawValue:
   match found:
     case None{}: Codec.Rnil{}
     case Some{value}: value
 
-def wire_text_member(+name: String, +members: Codec.RawValue) -> Context.OptText:
-  wire_text_of(Codec.raw_member(name, members))
-
-def wire_text_of(found: Maybe<&2, Codec.RawValue>) -> Context.OptText:
-  match found:
-    case None{}: Context.Absent{}
-    case Some{value}: wire_text_value(value)
+def wire_value_member(+name: String, +members: Codec.RawValue) -> Codec.RawValue:
+  wire_value_or(Codec.raw_member(name, members))
 
 def wire_text_value(value: Codec.RawValue) -> Context.OptText:
   match value:
@@ -70,19 +64,36 @@ def wire_text_value(value: Codec.RawValue) -> Context.OptText:
       Bool.pick(Context.OptText, String.is_empty(text), Context.Absent{}, Context.Present{text})
     case other: Context.Absent{}
 
+def wire_text_of(found: Maybe<&2, Codec.RawValue>) -> Context.OptText:
+  match found:
+    case None{}: Context.Absent{}
+    case Some{value}: wire_text_value(value)
+
+def wire_text_member(+name: String, +members: Codec.RawValue) -> Context.OptText:
+  wire_text_of(Codec.raw_member(name, members))
+
+def wire_sequence_value(value: Codec.RawValue) -> String:
+  match value:
+    case Codec.Rstr{+text}: text
+    case other: SNil{}
+
+def wire_sequence_of(found: Maybe<&2, Codec.RawValue>) -> String:
+  match found:
+    case None{}: SNil{}
+    case Some{value}: wire_sequence_value(value)
+
+def wire_sequence_member(+members: Codec.RawValue) -> String:
+  wire_sequence_of(Codec.raw_member("sequence", members))
+
+def wire_type_value(value: Codec.RawValue) -> String:
+  match value:
+    case Codec.Rstr{+text}: text
+    case other: SNil{}
+
+# --- member kinds ----------------------------------------------------------
+
 def wire_name_present(+name: String, +members: Codec.RawValue) -> Bool:
   Codec.raw_member_present(name, members)
-
-# A member of one of the kinds the shape allows at its position.
-def wire_kind_is(+kind: String, +name: String, +members: Codec.RawValue) -> Bool:
-  Bool.pick(Bool, wire_name_present(name, members), wire_kind_of_value(kind, wire_value_member(name, members)), False{})
-
-def wire_kind_of_value(+kind: String, value: Codec.RawValue) -> Bool:
-  match kind:
-    case "textOrNull": wire_text_or_null(value)
-    case "text": wire_text_kind(value)
-    case "any": wire_any_kind(value)
-    case other: False{}
 
 def wire_text_or_null(value: Codec.RawValue) -> Bool:
   match value:
@@ -106,7 +117,23 @@ def wire_version_is_two(value: Codec.RawValue) -> Bool:
     case Codec.Rnum{+token}: String.eq(token, "2")
     case other: False{}
 
-# --- the member plans ------------------------------------------------------
+def wire_kind_of_value(+kind: String, value: Codec.RawValue) -> Bool:
+  match kind:
+    case "textOrNull": wire_text_or_null(value)
+    case "text": wire_text_kind(value)
+    case "any": wire_any_kind(value)
+    case other: False{}
+
+def wire_kind_is(+kind: String, +name: String, +members: Codec.RawValue) -> Bool:
+  Bool.pick(Bool, wire_name_present(name, members), wire_kind_of_value(kind, wire_value_member(name, members)), False{})
+
+def wire_sequence_ok(+text: String) -> Bool:
+  SV.canonical_unsigned_decimal(text)
+
+def wire_frame_type_ok(+members: Codec.RawValue) -> Bool:
+  wire_kind_is("text", "type", members)
+
+# --- member plans ----------------------------------------------------------
 
 def wire_invocation_names() -> Req.Words:
   Req.words_from(["version", "query", "owner", "moduleBinding", "request", "inputIdentities", "operationPlan", "role", "incarnation"])
@@ -114,19 +141,24 @@ def wire_invocation_names() -> Req.Words:
 def wire_event_names() -> Req.Words:
   Req.words_from(["version", "query", "owner", "moduleBinding", "runtime", "role", "incarnation", "sequence", "type", "payload"])
 
+def wire_all_present(words: Req.Words, members: Codec.RawValue) -> Bool:
+  match words:
+    case Req.Wnone{}: True{}
+    case Req.Wcons{+head, +tail}: Bool.pick(Bool, wire_name_present(head, members), wire_all_present(tail, members), False{})
+
 def wire_invocation_names_present(+members: Codec.RawValue) -> Bool:
   wire_all_present(wire_invocation_names(), members)
 
 def wire_event_names_present(+members: Codec.RawValue) -> Bool:
   wire_all_present(wire_event_names(), members)
 
-def wire_all_present(words: Req.Words, members: Codec.RawValue) -> Bool:
-  match words:
-    case Req.Wnone{}: True{}
-    case Req.Wcons{+head, +tail}: Bool.pick(Bool, wire_name_present(head, members), wire_all_present(tail, members), False{})
-
-# The scalar and composite kinds of each direction, checked member by member.
+# Each direction requires its exact member set: the allowed-and-unique admission rejects
+# an undeclared or repeated member, and the kind walk requires every declared member and
+# the kind of each.
 def wire_invocation_kinds_ok(+members: Codec.RawValue) -> Bool:
+  Bool.pick(Bool, Codec.raw_keys_ok(wire_invocation_names(), members), wire_invocation_kinds_go(members), False{})
+
+def wire_invocation_kinds_go(+members: Codec.RawValue) -> Bool:
   Bool.pick(Bool, wire_kind_is("textOrNull", "query", members),
     Bool.pick(Bool, wire_kind_is("textOrNull", "owner", members),
       Bool.pick(Bool, wire_kind_is("textOrNull", "role", members),
@@ -135,9 +167,12 @@ def wire_invocation_kinds_ok(+members: Codec.RawValue) -> Bool:
             Bool.pick(Bool, wire_kind_is("any", "moduleBinding", members),
               Bool.pick(Bool, wire_kind_is("any", "request", members),
                 Bool.pick(Bool, wire_kind_is("any", "inputIdentities", members),
-                  wire_kind_is("any", "operationPlan", members), False{}), False{}), False{}), False{}), False{}), False{}), False{}
+                  wire_kind_is("any", "operationPlan", members), False{}), False{}), False{}), False{}), False{}), False{}), False{})
 
 def wire_event_kinds_ok(+members: Codec.RawValue) -> Bool:
+  Bool.pick(Bool, Codec.raw_keys_ok(wire_event_names(), members), wire_event_kinds_go(members), False{})
+
+def wire_event_kinds_go(+members: Codec.RawValue) -> Bool:
   Bool.pick(Bool, wire_kind_is("textOrNull", "query", members),
     Bool.pick(Bool, wire_kind_is("textOrNull", "owner", members),
       Bool.pick(Bool, wire_kind_is("textOrNull", "runtime", members),
@@ -147,60 +182,9 @@ def wire_event_kinds_ok(+members: Codec.RawValue) -> Bool:
               Bool.pick(Bool, wire_kind_is("any", "moduleBinding", members),
                 Bool.pick(Bool, wire_sequence_ok(wire_sequence_member(members)),
                   Bool.pick(Bool, wire_frame_type_ok(members),
-                    wire_kind_is("any", "payload", members), False{}), False{}), False{}), False{}), False{}), False{}), False{}
-
-# The sequence is Core's canonical unsigned decimal, with no upper bound here.
-def wire_sequence_ok(+text: String) -> Bool:
-  SV.canonical_unsigned_decimal(text)
-
-def wire_sequence_member(+members: Codec.RawValue) -> String:
-  wire_sequence_of(Codec.raw_member("sequence", members))
-
-def wire_sequence_of(found: Maybe<&2, Codec.RawValue>) -> String:
-  match found:
-    case None{}: SNil{}
-    case Some{value}: wire_sequence_value(value)
-
-def wire_sequence_value(value: Codec.RawValue) -> String:
-  match value:
-    case Codec.Rstr{+text}: text
-    case other: SNil{}
-
-def wire_frame_type_ok(+members: Codec.RawValue) -> Bool:
-  wire_kind_is("text", "type", members)
+                    wire_kind_is("any", "payload", members), False{}), False{}), False{}), False{}), False{}), False{}), False{}))
 
 # --- the reader ------------------------------------------------------------
-
-def wire_read(rows: Req.Rows) -> WireRead:
-  wire_of_frame(Codec.frame_read(rows))
-
-def wire_of_frame(+r: Codec.FrameRead) -> WireRead:
-  match r:
-    case Codec.FrValue{+value}: wire_of_root(value)
-    case Codec.FrRefused{condition}: WrRefused{condition}
-
-def wire_of_root(+root: Codec.RawValue) -> WireRead:
-  match root:
-    case Codec.Robj{+members}: wire_direction(members)
-    case other: WrRefused{"wrongKind"}
-
-def wire_direction(+members: Codec.RawValue) -> WireRead:
-  Bool.pick(WireRead, wire_version_is_two(wire_value_member("version", members)), wire_with_version(members), WrRefused{"wrongVersion"})
-
-def wire_with_version(+members: Codec.RawValue) -> WireRead:
-  Bool.pick(WireRead, wire_invocation_kinds_ok(members), wire_read_invocation(members), wire_event_direction(members))
-
-def wire_event_direction(+members: Codec.RawValue) -> WireRead:
-  Bool.pick(WireRead, wire_event_kinds_ok(members), wire_read_event(members), wire_incomplete(members))
-
-# Neither direction admitted the frame: answer with the finer condition of the direction
-# whose member names are all present, so a missing member and a member of the wrong kind
-# stay distinct.
-def wire_incomplete(+members: Codec.RawValue) -> WireRead:
-  Bool.pick(WireRead, wire_invocation_names_present(members), WrRefused{"invalidMember"}, wire_event_incomplete(members))
-
-def wire_event_incomplete(+members: Codec.RawValue) -> WireRead:
-  Bool.pick(WireRead, wire_event_names_present(members), WrRefused{"invalidMember"}, WrRefused{"missingMember"})
 
 def wire_read_invocation(+members: Codec.RawValue) -> WireRead:
   WrInvocation{"2", wire_text_member("query", members), wire_text_member("owner", members),
@@ -215,15 +199,38 @@ def wire_read_event(+members: Codec.RawValue) -> WireRead:
     wire_sequence_value(wire_value_member("sequence", members)), wire_type_value(wire_value_member("type", members)),
     wire_value_member("payload", members)}
 
-def wire_type_value(value: Codec.RawValue) -> String:
-  match value:
-    case Codec.Rstr{+text}: text
-    case other: SNil{}
+# Neither direction admitted the frame: answer with the finer condition of the direction
+# whose member names are all present, so a missing member and a member of the wrong kind
+# stay distinct.
+def wire_event_incomplete(+members: Codec.RawValue) -> WireRead:
+  Bool.pick(WireRead, wire_event_names_present(members), WrRefused{"invalidMember"}, WrRefused{"missingMember"})
+
+def wire_incomplete(+members: Codec.RawValue) -> WireRead:
+  Bool.pick(WireRead, wire_invocation_names_present(members), WrRefused{"invalidMember"}, wire_event_incomplete(members))
+
+def wire_event_direction(+members: Codec.RawValue) -> WireRead:
+  Bool.pick(WireRead, wire_event_kinds_ok(members), wire_read_event(members), wire_incomplete(members))
+
+def wire_with_version(+members: Codec.RawValue) -> WireRead:
+  Bool.pick(WireRead, wire_invocation_kinds_ok(members), wire_read_invocation(members), wire_event_direction(members))
+
+def wire_direction(+members: Codec.RawValue) -> WireRead:
+  Bool.pick(WireRead, wire_version_is_two(wire_value_member("version", members)), wire_with_version(members), WrRefused{"wrongVersion"})
+
+def wire_of_root(+root: Codec.RawValue) -> WireRead:
+  match root:
+    case Codec.Robj{+members}: wire_direction(members)
+    case other: WrRefused{"wrongKind"}
+
+def wire_of_frame(+r: Codec.FrameRead) -> WireRead:
+  match r:
+    case Codec.FrValue{+value}: wire_of_root(value)
+    case Codec.FrRefused{condition}: WrRefused{condition}
+
+def wire_read(rows: Req.Rows) -> WireRead:
+  wire_of_frame(Codec.frame_read(rows))
 
 # --- the serializer --------------------------------------------------------
-
-def invocation_frame(+query: String, +owner: String, +binding: J.Json, +request: J.Json, +inputs: J.Json, +plan: J.Json, +role: String, +incarnation: String) -> String:
-  J.json_text(wire_invocation_value(query, owner, binding, request, inputs, plan, role, incarnation))
 
 def wire_invocation_value(+query: String, +owner: String, +binding: J.Json, +request: J.Json, +inputs: J.Json, +plan: J.Json, +role: String, +incarnation: String) -> J.Json:
   J.Jobj{
@@ -237,8 +244,8 @@ def wire_invocation_value(+query: String, +owner: String, +binding: J.Json, +req
                   J.Jpair{"role", wire_nullable(role),
                     J.Jpair{"incarnation", wire_nullable(incarnation), J.Jnil{}}}}}}}}}}}
 
-def event_frame(+query: String, +owner: String, +producer: J.Json, +runtime: String, +role: String, +incarnation: String, +sequence: String, +frame_type: String, +payload: J.Json) -> String:
-  J.json_text(wire_event_value(query, owner, producer, runtime, role, incarnation, sequence, frame_type, payload))
+def invocation_frame(+query: String, +owner: String, +binding: J.Json, +request: J.Json, +inputs: J.Json, +plan: J.Json, +role: String, +incarnation: String) -> String:
+  J.json_text(wire_invocation_value(query, owner, binding, request, inputs, plan, role, incarnation))
 
 def wire_event_value(+query: String, +owner: String, +producer: J.Json, +runtime: String, +role: String, +incarnation: String, +sequence: String, +frame_type: String, +payload: J.Json) -> J.Json:
   J.Jobj{
@@ -252,6 +259,9 @@ def wire_event_value(+query: String, +owner: String, +producer: J.Json, +runtime
                   J.Jpair{"sequence", J.Jstr{sequence},
                     J.Jpair{"type", J.Jstr{frame_type},
                       J.Jpair{"payload", payload, J.Jnil{}}}}}}}}}}}}
+
+def event_frame(+query: String, +owner: String, +producer: J.Json, +runtime: String, +role: String, +incarnation: String, +sequence: String, +frame_type: String, +payload: J.Json) -> String:
+  J.json_text(wire_event_value(query, owner, producer, runtime, role, incarnation, sequence, frame_type, payload))
 
 # --- rows for the laws -----------------------------------------------------
 
@@ -274,7 +284,7 @@ def wire_rows_version_only() -> Req.Rows:
     Codec.object_row("0", SNil{}, SNil{}),
     Codec.number_row("1", "0", "version", "2")])
 
-def wire_rows_wrong_kind() -> Req.Rows:
+def wire_rows_undeclared() -> Req.Rows:
   Codec.rows_of([
     Codec.object_row("0", SNil{}, SNil{}),
     Codec.number_row("1", "0", "version", "2"),
@@ -386,7 +396,7 @@ def wire_law_a_frame_with_only_a_version_is_not_an_invocation():
   {==}
 
 law wire_law_an_undeclared_member_refuses:
-  {wire_read(wire_rows_wrong_kind()) == WrRefused{"invalidMember"} : WireRead}
+  {wire_read(wire_rows_undeclared()) == WrRefused{"invalidMember"} : WireRead}
 
 def wire_law_an_undeclared_member_refuses():
   {==}
@@ -410,7 +420,7 @@ def wire_law_a_missing_member_is_not_present():
   {==}
 
 law wire_law_an_event_sequence_with_a_leading_zero_refuses:
-  {wire_read(wire_rows_event_leading_zero()) == WrRefused{"missingMember"} : WireRead}
+  {wire_read(wire_rows_event_leading_zero()) == WrRefused{"invalidMember"} : WireRead}
 
 def wire_law_an_event_sequence_with_a_leading_zero_refuses():
   {==}
