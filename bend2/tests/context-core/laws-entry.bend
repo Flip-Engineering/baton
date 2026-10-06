@@ -1,9 +1,9 @@
-# The isolated qualification entry of the context core modules. It imports the
-# three law modules, so this compile verifies every law they state, and it runs
-# the real selection, identity, applicability and admission functions over one
-# fixture each and prints the observed answer. It is module qualification: the
-# delivered gate is the import of these law modules by coordinator/laws.bend,
-# which the interfaces owner wires.
+# The isolated qualification entry of the context core modules. It imports every
+# law module, so this compile verifies every law they state, and it runs the real
+# selection, identity, applicability and admission functions over one fixture
+# each and prints the observed answer. It is module qualification: the delivered
+# gate is the import of these law modules by coordinator/laws.bend, which the
+# interfaces owner wires.
 #
 # Build and run from the repository root:
 #   sh bend2/scripts/build-native.sh bend2/tests/context-core/laws-entry.bend .scratch/context-core-entry
@@ -13,9 +13,15 @@ import Base
 import ../../src/context/engines.bend as Eng
 import ../../src/context/snapshot.bend as Snap
 import ../../src/context/refs.bend as Refs
+import ../../src/context/engines-decl.bend as Decl
+import ../../src/context/engines-select.bend as Sel
+import ../../src/context/snapshot-validate.bend as SV
 import ../../src/context/engines-laws.bend as EngLaws
 import ../../src/context/snapshot-laws.bend as SnapLaws
 import ../../src/context/refs-laws.bend as RefLaws
+import ../../src/context/engines-decl-laws.bend as DeclLaws
+import ../../src/context/engines-select-laws.bend as SelLaws
+import ../../src/context/snapshot-validate-laws.bend as SVLaws
 
 def choice_text(c: Eng.EngineChoice) -> String:
   match c:
