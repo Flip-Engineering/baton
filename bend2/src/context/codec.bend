@@ -1379,6 +1379,52 @@ def frame_refusal(r: FrameRead) -> String:
     case FrValue{+value}: SNil{}
     case FrRefused{condition}: condition
 
+# --- the validity-first staged decoder --------------------------------------
+# The pure stages over one retained raw document. The host runs the validity statement,
+# this lane reads its exact observation and answers with the next stage or with one
+# complete refusal document. Host failure never reaches these stages, and no stage
+# fabricates rows, counts or trimmed text.
+
+type ValidationObserved is Data:
+  VoValid{}
+  VoInvalid{}
+  VoMalformed{}
+
+def validation_observed(observed: String) -> ValidationObserved:
+  match observed:
+    case "1\n": VoValid{}
+    case "0\n": VoInvalid{}
+    case other: VoMalformed{}
+
+type InputPlan is Data:
+  IpRows{raw: String}
+  IpRefused{document: String}
+
+def plan_raw(+p: InputPlan) -> String:
+  match p:
+    case IpRows{raw}: raw
+    case IpRefused{+document}: SNil{}
+
+def plan_document(+p: InputPlan) -> String:
+  match p:
+    case IpRows{+raw}: SNil{}
+    case IpRefused{document}: document
+
+# The fixed refusal documents. The command names the agreed internal entry, the
+# condition is one fixed name that echoes no input, and the next value is the literal
+# navigation argv, which is empty for these refusals.
+def validation_refusal(condition: String) -> String:
+  Context.refusal_text(Context.Refuse{Context.RfValidation{}, "context-request-codec", Context.text_condition(condition), Context.NextStop{}})
+
+def finish_observed(retained: String, +v: ValidationObserved) -> InputPlan:
+  match v:
+    case VoValid{}: IpRows{retained}
+    case VoInvalid{}: IpRefused{validation_refusal("invalidJson")}
+    case VoMalformed{}: IpRefused{validation_refusal("malformedValidationObservation")}
+
+def finish_validation(retained: String, observed: String) -> InputPlan:
+  finish_observed(retained, validation_observed(observed))
+
 def record_probe(subject: String, policy: String, +projections: Eng.SS) -> Refs.RefRecord:
   Refs.Ref{"r1", "typescript", subject, subject, "s1", policy, projections}
 
@@ -2157,6 +2203,48 @@ law codec_law_a_wire_reference_with_distinct_fields_decodes:
   {ref_condition(ref_decode(ref_object_of(ref_members_subject("r9", cobj1("kind", J.Jstr{"symbol"}), J.Jarr{J.Jstr{"definition"}, J.Jnil{}})))) == "" : String}
 
 def codec_law_a_wire_reference_with_distinct_fields_decodes():
+  {==}
+
+law codec_law_the_valid_observation_is_exact:
+  {validation_observed("1\n") == VoValid{} : ValidationObserved}
+
+def codec_law_the_valid_observation_is_exact():
+  {==}
+
+law codec_law_the_invalid_observation_is_exact:
+  {validation_observed("0\n") == VoInvalid{} : ValidationObserved}
+
+def codec_law_the_invalid_observation_is_exact():
+  {==}
+
+law codec_law_any_other_observation_is_malformed:
+  {validation_observed("1") == VoMalformed{} : ValidationObserved}
+
+def codec_law_any_other_observation_is_malformed():
+  {==}
+
+law codec_law_the_valid_observation_returns_the_row_plan_over_the_retained_raw_text:
+  {plan_raw(finish_validation("{}", "1\n")) == "{}" : String}
+
+def codec_law_the_valid_observation_returns_the_row_plan_over_the_retained_raw_text():
+  {==}
+
+law codec_law_the_valid_observation_carries_no_document:
+  {String.is_empty(plan_document(finish_validation("{}", "1\n"))) == True{} : Bool}
+
+def codec_law_the_valid_observation_carries_no_document():
+  {==}
+
+law codec_law_the_invalid_observation_returns_a_refusal_document:
+  {String.is_empty(plan_document(finish_validation("{}", "0\n"))) == False{} : Bool}
+
+def codec_law_the_invalid_observation_returns_a_refusal_document():
+  {==}
+
+law codec_law_the_malformed_observation_returns_a_refusal_document:
+  {String.is_empty(plan_document(finish_validation("{}", "\n"))) == False{} : Bool}
+
+def codec_law_the_malformed_observation_returns_a_refusal_document():
   {==}
 
 law codec_law_a_public_mcp_name_maps_to_its_native_tool_name:
