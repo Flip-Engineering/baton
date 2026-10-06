@@ -1,10 +1,13 @@
 # Executable corpus for bend2/src/receive/output-framing.bend.
-# CLAIM: every ordinary corpus case calls the public framer through frame_prefix, and every
-# control case calls a comparator helper directly. Both compare the complete typed result,
-# including the retained request and observation, every frame range with its exact bytes in
-# order, the pending suffix, the last complete boundary, the inspected extent and the refusal
-# reason. Control groups assert the comparators by requiring inequality when exactly one field
-# differs. The fault rows appear in two groups, so their coverage is deliberately repeated.
+# CLAIM: every ordinary corpus case calls the public framer through frame_prefix and compares
+# the complete typed result, while every control case calls a comparator helper on its own typed
+# value pair and compares that value in full. Ordinary coverage therefore includes the retained
+# request and observation, every frame range with its exact bytes in order, the pending suffix,
+# the last complete boundary, the inspected extent and the refusal reason; control groups assert
+# their comparators by requiring inequality when exactly one field differs. The nine source pairs
+# serve both as comparator controls and, through the candidate group, as framer inputs that must
+# be refused as foreign. The fault rows appear in two groups, so their coverage is deliberately
+# repeated.
 # Representation. Case octets are literal byte values, and every position expectation is a
 # literal decimal digit list, so no expectation is copied from the implementation. The captured
 # extent is decimal text, as the API requires.
@@ -297,7 +300,7 @@ def unequal_observations() -> List<F.Observation & F.Observation & String>:
   [
     (open_obs(), sealed_obs([1]), "synthetic-observation-variant"),
     (sealed_obs([1]), sealed_obs([2]), "synthetic-observation-seal-extent"),
-    (sealed_obs([1]), foreign_obs(), "synthetic-observation-source"),
+    (F.OpenObs{source()}, F.OpenObs{other_source()}, "synthetic-observation-source"),
     (fault_obs("first"), fault_obs("second"), "synthetic-observation-fault-reason"),
   ]
 
@@ -307,6 +310,8 @@ def unequal_requests() -> List<F.FrameRequest & F.FrameRequest & String>:
     (ask([97], [49], open_obs()), ask([97], [50], open_obs()), "synthetic-request-extent-octets"),
     (ask([97], [49], open_obs()), ask([97], [49], foreign_obs()),
       "synthetic-request-observation"),
+    (ask([97], [49], open_obs()), F.FrameAsk{[97], [49], other_source(), open_obs()},
+      "synthetic-request-source"),
   ]
 
 def unequal_pendings() -> List<F.PendingSuffix & F.PendingSuffix & String>:
@@ -314,6 +319,10 @@ def unequal_pendings() -> List<F.PendingSuffix & F.PendingSuffix & String>:
     (no_pending([1]), pending_bytes([1], [2], [10]), "synthetic-pending-disposition"),
     (pending_bytes([1], [2], [10]), pending_bytes([1], [3], [10]), "synthetic-pending-end"),
     (pending_bytes([1], [2], [10]), pending_bytes([1], [2], [11]), "synthetic-pending-bytes"),
+    (F.PendingFrame{source(), pos([1]), pos([2]), [10]},
+      F.PendingFrame{other_source(), pos([1]), pos([2]), [10]}, "synthetic-pending-source"),
+    (F.PendingFrame{source(), pos([1]), pos([2]), [10]},
+      F.PendingFrame{source(), pos([5]), pos([2]), [10]}, "synthetic-pending-start"),
   ]
 
 def unequal_results() -> List<F.FramingResult & F.FramingResult & String>:
@@ -323,7 +332,16 @@ def unequal_results() -> List<F.FramingResult & F.FramingResult & String>:
       "synthetic-result-inspected"),
     (framed([10], [49], open_obs(), [frame([0], [1], [10])], no_pending([1]), [1], [1]),
       framed([10], [49], open_obs(), [frame([0], [1], [10])], no_pending([2]), [1], [1]),
+      "synthetic-result-pending-at"),
+    (framed([10], [49], open_obs(), [], no_pending([1]), [1], [1]),
+      F.Framed{ask([10], [49], open_obs()), [], no_pending([1]), pos([2]), pos([1]), [10]},
       "synthetic-result-boundary"),
+    (framed([10], [49], open_obs(), [], no_pending([1]), [1], [1]),
+      F.Framed{ask([10], [49], open_obs()), [], no_pending([1]), pos([1]), pos([1]), [11]},
+      "synthetic-result-original"),
+    (framed([10], [49], open_obs(), [], no_pending([1]), [1], [1]),
+      F.Framed{ask([11], [49], open_obs()), [], no_pending([1]), pos([1]), pos([1]), [10]},
+      "synthetic-result-request"),
     (framed([10], [49], open_obs(), [], no_pending([1]), [1], [1]),
       framed([10], [49], open_obs(), [frame([0], [1], [10])], no_pending([1]), [1], [1]),
       "synthetic-result-frame-count"),
@@ -334,7 +352,113 @@ def unequal_results() -> List<F.FramingResult & F.FramingResult & String>:
       refused([10], [49], open_obs(), "extent_mismatch"), "synthetic-result-disposition"),
     (refused([10], [49], open_obs(), "extent_mismatch"),
       refused([10], [49], open_obs(), "sealed_extent_mismatch"), "synthetic-result-reason"),
+    (refused([10], [49], open_obs(), "extent_mismatch"),
+      F.FramingRefused{"extent_mismatch", ask([10], [49], open_obs()), [11]},
+      "synthetic-refusal-original"),
+    (refused([10], [49], open_obs(), "extent_mismatch"),
+      F.FramingRefused{"extent_mismatch", ask([11], [49], open_obs()), [10]},
+      "synthetic-refusal-request"),
   ]
+
+def unequal_frames() -> List<F.Frame & F.Frame & String>:
+  [
+    (frame([1], [2], [10]), F.FrameRange{pos([5]), pos([2]), source(), [10]},
+      "synthetic-frame-start"),
+    (frame([1], [2], [10]), F.FrameRange{pos([1]), pos([6]), source(), [10]},
+      "synthetic-frame-end"),
+    (frame([1], [2], [10]), F.FrameRange{pos([1]), pos([2]), other_source(), [10]},
+      "synthetic-frame-source"),
+  ]
+
+def unequal_frame_lists() -> List<List<F.Frame> & List<F.Frame> & String>:
+  [
+    ([frame([0], [1], [10]), frame([1], [2], [97, 10])],
+      [frame([1], [2], [97, 10]), frame([0], [1], [10])],
+      "synthetic-frame-list-order"),
+  ]
+
+def unequal_bytes() -> List<List<U32> & List<U32> & String>:
+  [
+    ([97, 98], [98, 97], "synthetic-byte-order"),
+    ([97, 98], [97, 98, 10], "synthetic-byte-length"),
+  ]
+
+def judge_frame(left: F.Frame, right: F.Frame, name: String) -> IO(Unit):
+  +verdict = same_frame(left, right)
+  match verdict:
+    case True{}: IO.die(Unit, 1, name)
+    case False{}: IO.pure(Unit, Unit{})
+
+def judge_frame_list(left: List<F.Frame>, right: List<F.Frame>, name: String) -> IO(Unit):
+  +verdict = same_frames(left, right)
+  match verdict:
+    case True{}: IO.die(Unit, 1, name)
+    case False{}: IO.pure(Unit, Unit{})
+
+def judge_byte_pair(left: List<U32>, right: List<U32>, name: String) -> IO(Unit):
+  +verdict = same_units(left, right)
+  match verdict:
+    case True{}: IO.die(Unit, 1, name)
+    case False{}: IO.pure(Unit, Unit{})
+
+# The candidate correlation path: the same nine source pairs, each differing in one source
+# field, are passed to the actual framer with an empty payload and the declared extent zero.
+def judge_foreign(+left: F.SourceId, +right: F.SourceId, name: String) -> IO(Unit):
+  +actual = F.frame_prefix(Nil{}, [48], left, F.OpenObs{right})
+  +expected = F.FramingRefused{"foreign_source_observation",
+    F.FrameAsk{Nil{}, [48], left, F.OpenObs{right}}, Nil{}}
+  +verdict = same_result(actual, expected)
+  match verdict:
+    case True{}: IO.pure(Unit, Unit{})
+    case False{}: IO.die(Unit, 1, name)
+
+def check_frame(pair: F.Frame & F.Frame & String) -> IO(Unit):
+  (left, right, name) = pair
+  judge_frame(left, right, name)
+
+def check_frame_list(pair: List<F.Frame> & List<F.Frame> & String) -> IO(Unit):
+  (left, right, name) = pair
+  judge_frame_list(left, right, name)
+
+def check_byte_pair(pair: List<U32> & List<U32> & String) -> IO(Unit):
+  (left, right, name) = pair
+  judge_byte_pair(left, right, name)
+
+def check_foreign(pair: F.SourceId & F.SourceId & String) -> IO(Unit):
+  (left, right, name) = pair
+  judge_foreign(left, right, name)
+
+def run_frames(rows: List<F.Frame & F.Frame & String>) -> IO(Unit):
+  match rows:
+    case Nil{}: IO.pure(Unit, Unit{})
+    case h <> t:
+      do IO<Unit>:
+        checked : Unit <- check_frame(h)
+        run_frames(t)
+
+def run_frame_lists(rows: List<List<F.Frame> & List<F.Frame> & String>) -> IO(Unit):
+  match rows:
+    case Nil{}: IO.pure(Unit, Unit{})
+    case h <> t:
+      do IO<Unit>:
+        checked : Unit <- check_frame_list(h)
+        run_frame_lists(t)
+
+def run_bytes(rows: List<List<U32> & List<U32> & String>) -> IO(Unit):
+  match rows:
+    case Nil{}: IO.pure(Unit, Unit{})
+    case h <> t:
+      do IO<Unit>:
+        checked : Unit <- check_byte_pair(h)
+        run_bytes(t)
+
+def run_foreign(rows: List<F.SourceId & F.SourceId & String>) -> IO(Unit):
+  match rows:
+    case Nil{}: IO.pure(Unit, Unit{})
+    case h <> t:
+      do IO<Unit>:
+        checked : Unit <- check_foreign(h)
+        run_foreign(t)
 
 def judge(actual: F.FramingResult, expected: F.FramingResult, name: String) -> IO(Unit):
   +verdict = same_result(actual, expected)
@@ -452,5 +576,9 @@ def main() -> IO(Unit):
     observations : Unit <- run_observations(unequal_observations())
     requests : Unit <- run_requests(unequal_requests())
     pendings : Unit <- run_pendings(unequal_pendings())
+    frames : Unit <- run_frames(unequal_frames())
+    frame_lists : Unit <- run_frame_lists(unequal_frame_lists())
+    bytes : Unit <- run_bytes(unequal_bytes())
+    foreign : Unit <- run_foreign(unequal_sources())
     pairs : Unit <- run_pairs(unequal_results())
     IO.pure(Unit, Unit{})
