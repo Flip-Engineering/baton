@@ -139,10 +139,17 @@ path for OMP conversation storage. The lock records no durable session state.
 | OMP | RPC mode with session files beside the database. `get_state` supplies observed identity and model. Stdin remains open until turn completion. |
 | Muse | `exec --json --prompt-file`, with `--session-id` for resume. Session and terminal envelopes supply native identity, model and report text. |
 
-The supervisor drains native output and records relevant events. For OMP it
-logs every frame except `message_update`; `message_end` retains each complete
-message. Other harness frames go to the supplied log unchanged. Stderr has a
-separate file. Terminal output becomes a parent report. If OMP omits the terminal
+The supervisor drains native output and records relevant events. The public log
+keeps every frame the classification names, except the cumulative
+`message_update` and `tool_execution_update` snapshots: the newest
+`tool_execution_update` of each open call and the newest `message_start` of
+each message wait in memory for their `tool_execution_end` or `message_end`,
+and the turn writes whatever is still held when it ends. Frames the
+classification does not name, including every Codex, Muse and Claude frame,
+keep their own line. Stderr has a separate file. The log rotates at the
+session's byte budget; `logs`, `logs-storage` and `logs-clean` read and set the
+policy and reclaim eligible rotated segments. Terminal output becomes a parent
+report. If OMP omits the terminal
 message list, the latest assistant `message_end` supplies the report.
 Start failures, output-observation failures and exits without a native result
 also produce parent reports. The parent decides the next task; a turn ending

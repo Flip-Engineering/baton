@@ -50,6 +50,15 @@ while True:
         marker(action['marker'])
         stream.write((json.dumps({'bytes':total,'frames':len(action['lines'])})+'\n').encode())
         continue
+    if action['kind']=='tool':
+        total=0
+        for i in range(count):
+            size=action['step']*(i+1)
+            text=(fragment*(size//len(fragment)+1))[:size]
+            total+=output({'type':'tool_execution_update','toolCallId':'tool-1','toolName':'bash','partialResult':{'content':[{'type':'text','text':text}]}})
+        marker(action['marker'])
+        stream.write((json.dumps({'bytes':total,'frames':count})+'\n').encode())
+        continue
     count=action['count']
     total=0
     for i in range(count):
@@ -126,7 +135,7 @@ def main():
     start=time.monotonic()
     time.sleep(3)
     measures.append({'kind':'silent','wall_seconds':time.monotonic()-start,'native_cpu_seconds':cpu(child.pid)-start_cpu,'bytes':0,'frames':0})
-    for kind,step in [('small',128),('cumulative',args.step)]:
+    for kind,step in [('small',128),('cumulative',args.step),('tool',args.step)]:
         before=log.stat().st_size
         marker='native-'+kind
         action={'kind':kind,'count':args.count,'step':step,'marker':marker}

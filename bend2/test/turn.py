@@ -135,7 +135,7 @@ assert sys.stdin.read()==''
         frames=[json.loads(line) for line in self.log.read_text().splitlines()]
         self.assertEqual([f for f in frames if f.get('type')=='message_update'], [])
         self.assertEqual([f['partialResult']['content'][0]['text'] for f in frames if f.get('type')=='tool_execution_update'], [self.task.read_text()])
-        self.assertEqual([f['type'] for f in frames], ['response','tool_execution_update','message_start','message_end','agent_end','agent_end','baton_event_filter'])
+        self.assertEqual([f['type'] for f in frames], ['response','message_end','agent_end','agent_end','tool_execution_update','baton_event_filter'])
         args=json.loads((self.cwd/'argv.json').read_text())
         self.assertEqual(args[args.index('--mode')+1],'rpc')
         self.assertEqual(args[args.index('--session-dir')+1],str(self.db)+'.sessions')
