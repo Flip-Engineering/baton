@@ -12,7 +12,7 @@
 // delivers them as notifications/claude/channel. Tool calls delegate to the
 // coordinator executable for mutations. No npm dependencies; node stdlib only.
 
-import { execFileSync } from 'node:child_process';
+import { execFile, execFileSync } from 'node:child_process';
 import { existsSync } from 'node:fs';
 import { resolve, dirname } from 'node:path';
 import { createServer, createConnection } from 'node:net';
@@ -119,6 +119,18 @@ function coord(...args) {
     error.message += `${status}\nstdout:\n${error.stdout ?? ''}\nstderr:\n${error.stderr ?? ''}`;
     throw error;
   }
+}
+
+function attachCoord(...args) {
+  return new Promise((done, fail) => {
+    execFile(coordinatorExe, [dbPath, ...args], { encoding: 'utf8', maxBuffer: Infinity },
+      (error, stdout, stderr) => {
+        if (error) {
+          error.message += `\nexit code: ${error.code}\nstdout:\n${stdout}\nstderr:\n${stderr}`;
+          fail(error);
+        } else done(stdout);
+      });
+  });
 }
 
 // Tool definitions exposed to the attached Conductor.
@@ -389,6 +401,7 @@ const TOOLS = [
 
 // State.
 let deliveryReady = null;
+let attachmentState = { state: 'not-started' };
 let channelReady = false;
 let notifiedSeqs = new Set();
 let deliveryServer = null;
@@ -469,9 +482,14 @@ async function startDelivery() {
   ]);
   let existing;
   try { existing = selectedSession(); } catch {}
-  if (hasParent(existing)) coord('connect', sessionId, existing.native || '', endpoint);
-  else coord('attach', sessionId, 'claude-code', existing?.native || '', endpoint);
-  coord('role', sessionId, hasParent(existing) ? 'associate-conductor' : 'principal-conductor');
+  if (hasParent(existing)) await attachCoord('connect', sessionId, existing.native || '', endpoint);
+  else await attachCoord('attach', sessionId, 'claude-code', existing?.native || '', endpoint);
+  await attachCoord('role', sessionId, hasParent(existing) ? 'associate-conductor' : 'principal-conductor');
+  const registered = selectedSession();
+  if (!registered || registered.id !== sessionId || registered.endpoint !== endpoint) {
+    throw new Error('Attachment endpoint registration did not match the selected session');
+  }
+  return { session: sessionId, endpoint, native: registered.native, harness: registered.harness };
 }
 
 function selectedSession() {
@@ -499,9 +517,14 @@ function handleMessage(msg) {
   }
 
   if (msg.method === 'notifications/initialized') {
-    deliveryReady = startDelivery();
-    deliveryReady.catch((error) => {
+    if (deliveryReady) return;
+    attachmentState = { state: 'starting' };
+    deliveryReady = startDelivery().then((association) => {
+      attachmentState = { state: 'ready', association };
+    }, (error) => {
+      attachmentState = { state: 'failed', detail: error.message };
       process.stderr.write(`mcp-conductor: ${error.message}\n`);
+      deliveryServer?.close();
       process.exit(1);
     });
     return;
@@ -512,7 +535,9 @@ function handleMessage(msg) {
     // In the native recovery run, replay before the client installed its channel
     // handler was lost. Complete a round trip after discovery before replaying.
     if (!channelReady) deliveryReady?.then(() => {
-      writeMessage({ jsonrpc: '2.0', id: 'conductor-channel-ready', method: 'ping' });
+      if (attachmentState.state === 'ready') {
+        writeMessage({ jsonrpc: '2.0', id: 'conductor-channel-ready', method: 'ping' });
+      }
     });
     return;
   }
