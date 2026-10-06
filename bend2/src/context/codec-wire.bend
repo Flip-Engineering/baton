@@ -429,43 +429,31 @@ def wire_rows_event_good() -> Req.Rows:
 # --- laws ------------------------------------------------------------------
 
 law wire_law_the_invocation_frame_has_the_closed_shape:
-  {invocation_frame("q1", "o1", J.Jobj{J.Jpair{"id", J.Jstr{"m"}, J.Jnil{}}}, J.Jobj{J.Jnil{}}, J.Jarr{J.Jnil{}, J.Jnil{}}, J.Jarr{J.Jnil{}, J.Jnil{}}, "r1", "i1") == "{\"version\":2,\"query\":\"q1\",\"owner\":\"o1\",\"moduleBinding\":{\"id\":\"m\"},\"request\":{},\"inputIdentities\":[],\"operationPlan\":[],\"role\":\"r1\",\"incarnation\":\"i1\"}" : String}
+  {invocation_frame("q1", "o1", "{\"id\":\"m\"}", "{}", "[]", "[]", "r1", "i1") == "{\"version\":2,\"query\":\"q1\",\"owner\":\"o1\",\"moduleBinding\":{\"id\":\"m\"},\"request\":{},\"inputIdentities\":[],\"operationPlan\":[],\"role\":\"r1\",\"incarnation\":\"i1\"}" : String}
 
 def wire_law_the_invocation_frame_has_the_closed_shape():
   {==}
 
 law wire_law_the_invocation_version_is_the_number_two:
-  {invocation_frame("q", "", J.Jnull{}, J.Jnull{}, J.Jnull{}, J.Jnull{}, "", "") == "{\"version\":2,\"query\":\"q\",\"owner\":null,\"moduleBinding\":null,\"request\":null,\"inputIdentities\":null,\"operationPlan\":null,\"role\":null,\"incarnation\":null}" : String}
+  {invocation_frame("q", "", "null", "null", "null", "null", "", "") == "{\"version\":2,\"query\":\"q\",\"owner\":null,\"moduleBinding\":null,\"request\":null,\"inputIdentities\":null,\"operationPlan\":null,\"role\":null,\"incarnation\":null}" : String}
 
 def wire_law_the_invocation_version_is_the_number_two():
   {==}
 
-law wire_law_an_empty_role_and_incarnation_are_null:
-  {wire_nullable("") == J.Jnull{} : J.Json}
-
-def wire_law_an_empty_role_and_incarnation_are_null():
-  {==}
-
-law wire_law_a_present_role_is_a_string:
-  {wire_nullable("r1") == J.Jstr{"r1"} : J.Json}
-
-def wire_law_a_present_role_is_a_string():
-  {==}
-
 law wire_law_the_event_frame_has_the_closed_shape:
-  {event_frame("q1", "o1", J.Jobj{J.Jpair{"id", J.Jstr{"m"}, J.Jnil{}}}, "", "", "", "7", "result", J.Jstr{"p"}) == "{\"version\":2,\"query\":\"q1\",\"owner\":\"o1\",\"moduleBinding\":{\"id\":\"m\"},\"runtime\":null,\"role\":null,\"incarnation\":null,\"sequence\":\"7\",\"type\":\"result\",\"payload\":\"p\"}" : String}
+  {event_frame("q1", "o1", "{\"id\":\"m\"}", "", "", "", "7", "result", Codec.Rstr{"p"}) == "{\"version\":2,\"query\":\"q1\",\"owner\":\"o1\",\"moduleBinding\":{\"id\":\"m\"},\"runtime\":null,\"role\":null,\"incarnation\":null,\"sequence\":\"7\",\"type\":\"result\",\"payload\":\"p\"}" : String}
 
 def wire_law_the_event_frame_has_the_closed_shape():
   {==}
 
 law wire_law_a_sequence_longer_than_u32_keeps_its_exact_text:
-  {event_frame("q", "o", J.Jnull{}, "", "", "", "12345678901234567890", "event", J.Jnull{}) == "{\"version\":2,\"query\":\"q\",\"owner\":\"o\",\"moduleBinding\":null,\"runtime\":null,\"role\":null,\"incarnation\":null,\"sequence\":\"12345678901234567890\",\"type\":\"event\",\"payload\":null}" : String}
+  {event_frame("q", "o", "null", "", "", "", "12345678901234567890", "event", Codec.Rnull{}) == "{\"version\":2,\"query\":\"q\",\"owner\":\"o\",\"moduleBinding\":null,\"runtime\":null,\"role\":null,\"incarnation\":null,\"sequence\":\"12345678901234567890\",\"type\":\"event\",\"payload\":null}" : String}
 
 def wire_law_a_sequence_longer_than_u32_keeps_its_exact_text():
   {==}
 
 law wire_law_a_retained_role_and_incarnation_travel_as_strings:
-  {event_frame("q", "o", J.Jnull{}, "managed", "worker", "inc7", "1", "event", J.Jnull{}) == "{\"version\":2,\"query\":\"q\",\"owner\":\"o\",\"moduleBinding\":null,\"runtime\":\"managed\",\"role\":\"worker\",\"incarnation\":\"inc7\",\"sequence\":\"1\",\"type\":\"event\",\"payload\":null}" : String}
+  {event_frame("q", "o", "null", "managed", "worker", "inc7", "1", "event", Codec.Rnull{}) == "{\"version\":2,\"query\":\"q\",\"owner\":\"o\",\"moduleBinding\":null,\"runtime\":\"managed\",\"role\":\"worker\",\"incarnation\":\"inc7\",\"sequence\":\"1\",\"type\":\"event\",\"payload\":null}" : String}
 
 def wire_law_a_retained_role_and_incarnation_travel_as_strings():
   {==}
