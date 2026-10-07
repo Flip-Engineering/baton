@@ -333,7 +333,7 @@ def mode_number(+mode: String) -> U32:
   Bool.pick(U32,String.eq(mode,"recover-retained"),11,
   Bool.pick(U32,String.eq(mode,"partial"),12,
   Bool.pick(U32,String.eq(mode,"partial-uncommitted"),13,Bool.pick(U32,String.eq(mode,"admit-file"),14,
-  Bool.pick(U32,String.eq(mode,"subscribe"),15,Bool.pick(U32,String.eq(mode,"publish"),16,0)))))))))))))))
+  Bool.pick(U32,String.eq(mode,"subscribe"),15,Bool.pick(U32,String.eq(mode,"publish"),16,0))))))))))))))))
 
 def dispatch(mode: U32, rest: List<String>) -> IO(Unit):
   match mode:
