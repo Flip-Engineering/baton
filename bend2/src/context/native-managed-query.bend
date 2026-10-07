@@ -35,6 +35,30 @@ def query_bootstrap(+database_binding: String, +query: String, +owner: String,
       ContextIdentity.SubjectQuery{query}, ContextIdentity.RoleStarter{}, "0"),
     recovery_argv}
 
+def bootstrap_query(bootstrap: Bootstrap) -> String:
+  match bootstrap:
+    case QueryBootstrap{query, owner, database_binding, request, plan_value,
+        plan_identity, result_schema, artifact_path, keeper_path,
+        guard_identity, recovery_argv}: query
+
+def bootstrap_owner(bootstrap: Bootstrap) -> String:
+  match bootstrap:
+    case QueryBootstrap{query, owner, database_binding, request, plan_value,
+        plan_identity, result_schema, artifact_path, keeper_path,
+        guard_identity, recovery_argv}: owner
+
+def bootstrap_request(bootstrap: Bootstrap) -> String:
+  match bootstrap:
+    case QueryBootstrap{query, owner, database_binding, request, plan_value,
+        plan_identity, result_schema, artifact_path, keeper_path,
+        guard_identity, recovery_argv}: request
+
+def bootstrap_keeper_path(bootstrap: Bootstrap) -> String:
+  match bootstrap:
+    case QueryBootstrap{query, owner, database_binding, request, plan_value,
+        plan_identity, result_schema, artifact_path, keeper_path,
+        guard_identity, recovery_argv}: keeper_path
+
 def bootstrap_json(+bootstrap: Bootstrap) -> J.Json:
   match bootstrap:
     case QueryBootstrap{query, owner, database_binding, request, plan_value,
@@ -56,31 +80,6 @@ def bootstrap_json(+bootstrap: Bootstrap) -> J.Json:
 def bootstrap_text(+bootstrap: Bootstrap) -> String:
   J.json_text(bootstrap_json(bootstrap))
 
-def bootstrap_query(bootstrap: Bootstrap) -> String:
-  match bootstrap:
-    case QueryBootstrap{query, owner, database_binding, request, plan_value,
-        plan_identity, result_schema, artifact_path, keeper_path,
-        guard_identity, recovery_argv}: query
-
-def bootstrap_owner(bootstrap: Bootstrap) -> String:
-  match bootstrap:
-    case QueryBootstrap{query, owner, database_binding, request, plan_value,
-        plan_identity, result_schema, artifact_path, keeper_path,
-        guard_identity, recovery_argv}: owner
-
-def bootstrap_keeper_path(bootstrap: Bootstrap) -> String:
-  match bootstrap:
-    case QueryBootstrap{query, owner, database_binding, request, plan_value,
-        plan_identity, result_schema, artifact_path, keeper_path,
-        guard_identity, recovery_argv}: keeper_path
-
-def admission_fields_match(bootstrap: Bootstrap, +admission: Admission.Admission) -> Bool:
-  match bootstrap:
-    case QueryBootstrap{query, owner, database_binding, request, plan_value,
-        plan_identity, result_schema, artifact_path, keeper_path,
-        guard_identity, recovery_argv}:
-      admission_identity_match(owner, request, keeper_path, artifact_path, admission)
-
 def admission_identity_match(+expected_owner: String, +expected_request: String,
                              +expected_keeper: String, +expected_artifact: String,
                              +admission: Admission.Admission) -> Bool:
@@ -101,17 +100,26 @@ def admission_identity_match(+expected_owner: String, +expected_request: String,
       Bool.and(String.eq(decision, "accepted"), String.eq(state, "accepted"))))))
     case _: False{}
 
-def start_from_submission(+bootstrap: Bootstrap, readiness: KeeperReadiness,
-                          +submission: ContextService.Submission) -> StartDecision:
-  match readiness:
-    case KeeperObserverUnavailable{reason}: StartHeld{"observerUnavailable:" ++ reason}
-    case KeeperObserverReady{query, owner, keeper_path, role, incarnation}:
+def admission_fields_match(bootstrap: Bootstrap, +admission: Admission.Admission) -> Bool:
+  match bootstrap:
+    case QueryBootstrap{query, owner, database_binding, request, plan_value,
+        plan_identity, result_schema, artifact_path, keeper_path,
+        guard_identity, recovery_argv}:
+      admission_identity_match(owner, request, keeper_path, artifact_path, admission)
+
+def accepted_admission(+bootstrap: Bootstrap, +role: String, +incarnation: String,
+                       +admission: Admission.Admission, +stored_plan: String,
+                       +stored_schema: String) -> StartDecision:
+  match bootstrap:
+    case QueryBootstrap{query, owner, database_binding, request, plan_value,
+        plan_identity, result_schema, artifact_path, keeper_path,
+        guard_identity, recovery_argv}:
       Bool.pick(StartDecision,
-        Bool.and(String.eq(query, bootstrap_query(bootstrap)),
-        Bool.and(String.eq(owner, bootstrap_owner(bootstrap)),
-          String.eq(keeper_path, bootstrap_keeper_path(bootstrap)))),
-        submission_decision(bootstrap, role, incarnation, submission),
-        StartHeld{"observerIdentityMismatch"})
+        Bool.and(admission_fields_match(bootstrap, admission),
+        Bool.and(String.eq(plan_value, stored_plan), String.eq(result_schema, stored_schema))),
+        StartGranted{query, owner, role, incarnation, request, keeper_path,
+          artifact_path, stored_plan, stored_schema},
+        StartHeld{"committedAdmissionMismatch"})
 
 def submission_decision(+bootstrap: Bootstrap, +role: String, +incarnation: String,
                         +submission: ContextService.Submission) -> StartDecision:
@@ -128,30 +136,17 @@ def submission_decision(+bootstrap: Bootstrap, +role: String, +incarnation: Stri
     case ContextService.SubmissionRefused{code, detail}: StartHeld{"admissionReadFailed"}
     case ContextService.SubmissionUncertain{stage, answer}: StartHeld{"admissionUncertain:" ++ stage}
 
-def accepted_admission(+bootstrap: Bootstrap, +role: String, +incarnation: String,
-                       +admission: Admission.Admission, +stored_plan: String,
-                       +stored_schema: String) -> StartDecision:
-  match bootstrap:
-    case QueryBootstrap{query, owner, database_binding, request, plan_value,
-        plan_identity, result_schema, artifact_path, keeper_path,
-        guard_identity, recovery_argv}:
-      Bool.pick(StartDecision,
-        Bool.and(admission_fields_match(bootstrap, admission),
-        Bool.and(String.eq(plan_value, stored_plan), String.eq(result_schema, stored_schema))),
-        StartGranted{query, owner, role, incarnation, request, keeper_path,
-          artifact_path, stored_plan, stored_schema},
-        StartHeld{"committedAdmissionMismatch"})
-
-def cancel_rejected(+bootstrap: Bootstrap, readiness: KeeperReadiness,
-                    +admission: Admission.Admission) -> StartDecision:
+def start_from_submission(+bootstrap: Bootstrap, readiness: KeeperReadiness,
+                          +submission: ContextService.Submission) -> StartDecision:
   match readiness:
     case KeeperObserverUnavailable{reason}: StartHeld{"observerUnavailable:" ++ reason}
     case KeeperObserverReady{query, owner, keeper_path, role, incarnation}:
       Bool.pick(StartDecision,
         Bool.and(String.eq(query, bootstrap_query(bootstrap)),
         Bool.and(String.eq(owner, bootstrap_owner(bootstrap)),
-          String.eq(keeper_path, bootstrap_keeper_path(bootstrap)))),
-        rejected_admission_decision(bootstrap, admission),
+        Bool.and(String.eq(keeper_path, bootstrap_keeper_path(bootstrap)),
+        Bool.and(String.eq(role, "starter"), String.eq(incarnation, "0")))),
+        submission_decision(bootstrap, role, incarnation, submission),
         StartHeld{"observerIdentityMismatch"})
 
 def rejected_admission_decision(+bootstrap: Bootstrap,
@@ -169,8 +164,15 @@ def rejected_admission_decision(+bootstrap: Bootstrap,
         StartHeld{"rejectedAdmissionIdentityMismatch"})
     case _: StartHeld{"rejectedAdmissionNotRetained"}
 
-def bootstrap_request(bootstrap: Bootstrap) -> String:
-  match bootstrap:
-    case QueryBootstrap{query, owner, database_binding, request, plan_value,
-        plan_identity, result_schema, artifact_path, keeper_path,
-        guard_identity, recovery_argv}: request
+def cancel_rejected(+bootstrap: Bootstrap, readiness: KeeperReadiness,
+                    +admission: Admission.Admission) -> StartDecision:
+  match readiness:
+    case KeeperObserverUnavailable{reason}: StartHeld{"observerUnavailable:" ++ reason}
+    case KeeperObserverReady{query, owner, keeper_path, role, incarnation}:
+      Bool.pick(StartDecision,
+        Bool.and(String.eq(query, bootstrap_query(bootstrap)),
+        Bool.and(String.eq(owner, bootstrap_owner(bootstrap)),
+        Bool.and(String.eq(keeper_path, bootstrap_keeper_path(bootstrap)),
+        Bool.and(String.eq(role, "starter"), String.eq(incarnation, "0")))),
+        rejected_admission_decision(bootstrap, admission),
+        StartHeld{"observerIdentityMismatch"})

@@ -50,6 +50,14 @@ law a_different_query_never_receives_the_prepared_keeper_grant:
 def a_different_query_never_receives_the_prepared_keeper_grant():
   {==}
 
+law a_nonstarter_role_cannot_receive_the_initial_query_grant:
+  {Managed.start_from_submission(managed_bootstrap(),
+    Managed.KeeperObserverReady{"q-1", "owner-1", "/logs/keeper-q", "adapter", "7"},
+    accepted_submission()) == Managed.StartHeld{"observerIdentityMismatch"} : Managed.StartDecision}
+
+def a_nonstarter_role_cannot_receive_the_initial_query_grant():
+  {==}
+
 law a_changed_artifact_path_invalidates_the_committed_start:
   {Managed.accepted_admission(managed_bootstrap(), "starter", "0",
     Admission.AdmissionCreated{"owner-1", "{}", "accepted", "accepted", "0",
