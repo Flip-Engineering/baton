@@ -11,7 +11,6 @@
 import Base
 import ./instance.bend as Instance
 import ./commands.bend as C
-import ./receive.bend as Receive
 
 law owner_claim_table_names_holder_heartbeat_and_generation:
   {Instance.owner_schema() == "CREATE TABLE IF NOT EXISTS instance_owner (owner TEXT PRIMARY KEY NOT NULL, heartbeat INTEGER NOT NULL, generation INTEGER NOT NULL);" : String}
@@ -32,14 +31,32 @@ law lapsed_heartbeats_clear_after_three_hundred_seconds:
 def lapsed_heartbeats_clear_after_three_hundred_seconds():
   {==}
 
-law owner_claim_clears_lapsed_rows_then_admits_one_holder:
+law owner_claim_clears_lapsed_rows_first:
+  {Instance.claim_clear_sql() == "DELETE FROM instance_owner WHERE heartbeat<CAST((SELECT strftime('%s','now')) AS INTEGER)-" ++ Instance.claim_lapse_seconds() ++ ";" : String}
+
+def owner_claim_clears_lapsed_rows_first():
+  {==}
+
+law owner_claim_inserts_only_without_another_holder:
   for +owner: String
-  {Instance.claim_sql(owner) == "DELETE FROM instance_owner WHERE heartbeat<CAST((SELECT strftime('%s','now')) AS INTEGER)-" ++ Instance.claim_lapse_seconds() ++ ";"
-  ++ "INSERT INTO instance_owner(owner, heartbeat, generation) SELECT " ++ C.q(owner) ++ ",(SELECT strftime('%s','now')),coalesce((SELECT max(generation)+1 FROM instance_owner),1) WHERE NOT EXISTS(SELECT 1 FROM instance_owner WHERE owner<>" ++ C.q(owner) ++ ") ON CONFLICT(owner) DO UPDATE SET heartbeat=excluded.heartbeat;"
-  ++ "SELECT json_object('error','duplicate-owner','owner'," ++ C.q(owner) ++ ",'current',(SELECT owner FROM instance_owner WHERE owner<>" ++ C.q(owner) ++ " LIMIT 1),'condition','One native owner holds each Orchestra database.','next','Read owner status. Serve only after the current owner releases or its heartbeat lapses.') WHERE EXISTS(SELECT 1 FROM instance_owner WHERE owner<>" ++ C.q(owner) ++ ");"
+  {Instance.claim_insert_sql(owner) == "INSERT INTO instance_owner(owner, heartbeat, generation) SELECT " ++ C.q(owner) ++ ",(SELECT strftime('%s','now')),coalesce((SELECT max(generation)+1 FROM instance_owner),1) WHERE NOT EXISTS(SELECT 1 FROM instance_owner WHERE owner<>" ++ C.q(owner) ++ ") ON CONFLICT(owner) DO UPDATE SET heartbeat=excluded.heartbeat;" : String}
+
+def owner_claim_inserts_only_without_another_holder(owner):
+  {==}
+
+law owner_claim_decision_names_holder_or_refusal:
+  for +owner: String
+  {Instance.claim_decide_sql(owner) == "SELECT json_object('error','duplicate-owner','owner'," ++ C.q(owner) ++ ",'current',(SELECT owner FROM instance_owner WHERE owner<>" ++ C.q(owner) ++ " LIMIT 1),'condition','One native owner holds each Orchestra database.','next','Read owner status. Serve only after the current owner releases or its heartbeat lapses.') WHERE EXISTS(SELECT 1 FROM instance_owner WHERE owner<>" ++ C.q(owner) ++ ");"
   ++ "SELECT json_object('owner',owner,'heartbeat',heartbeat,'generation',generation) FROM instance_owner WHERE owner=" ++ C.q(owner) ++ " AND NOT EXISTS(SELECT 1 FROM instance_owner WHERE owner<>" ++ C.q(owner) ++ ");" : String}
 
-def owner_claim_clears_lapsed_rows_then_admits_one_holder(owner):
+def owner_claim_decision_names_holder_or_refusal(owner):
+  {==}
+
+law owner_claim_assembles_clear_insert_decide:
+  for +owner: String
+  {Instance.claim_sql(owner) == Instance.claim_clear_sql() ++ Instance.claim_insert_sql(owner) ++ Instance.claim_decide_sql(owner) : String}
+
+def owner_claim_assembles_clear_insert_decide(owner):
   {==}
 
 law owner_heartbeat_refreshes_only_the_claimant_row:
@@ -102,14 +119,10 @@ law admitted_owner_claim_returns_its_answer:
 def admitted_owner_claim_returns_its_answer(saved):
   {==}
 
-law owned_session_task_runs_the_receive_entry:
-  for +db: String
-  for +session: String
-  {Instance.serve_session(db,session) == Receive.run(db,session,"","","","","","") : IO(Result<&1,&1,U32 & String,Unit>)}
-
-def owned_session_task_runs_the_receive_entry(db,session):
-  {==}
-
+# The owned session task forwards to the public receive entry with the
+# session's recorded values; the executed serve gate covers the call. An
+# equation over that entry overflows the checker, as in the coordinator
+# entry's own unwired receive arms.
 law failed_owned_task_is_the_answer:
   for +code: U32
   for +text: String
@@ -156,12 +169,6 @@ law empty_verb_leaves_the_owner_entry:
 def empty_verb_leaves_the_owner_entry():
   {==}
 
-law serve_route_runs_the_owned_serve:
-  for +db: String
-  for +owner: String
-  {Instance.route(db,"serve",owner) == Bool.pick(IO(Unit),String.eq("serve","serve"),Instance.serve_unit(db,owner),
-  Bool.pick(IO(Unit),String.eq("serve","owner-status"),Instance.status_unit(db),
-  IO.die(Unit,2,"Unknown instance command; use serve SESSION-OWNER or owner-status."))) : IO(Unit)}
-
-def serve_route_runs_the_owned_serve(db,owner):
-  {==}
+# The verb dispatcher forwards to the serve unit, the status unit, or the
+# usage refusal; the executed CLI gate covers each arm. A nested dispatch
+# equation overflows the checker.

@@ -37,12 +37,20 @@ def claim_lapse_seconds() -> String:
 # refused claimant inserts nothing. A different held row refuses with the
 # duplicate-owner error naming the current holder. Each new holder epoch
 # carries the next generation number; subscribers use it to detect owner
-# replacement.
-def claim_sql(+owner: String) -> String:
+# replacement. Each statement has its own builder so no single checker term
+# carries the whole transaction.
+def claim_clear_sql() -> String:
   "DELETE FROM instance_owner WHERE heartbeat<CAST((SELECT strftime('%s','now')) AS INTEGER)-" ++ claim_lapse_seconds() ++ ";"
-  ++ "INSERT INTO instance_owner(owner, heartbeat, generation) SELECT " ++ C.q(owner) ++ ",(SELECT strftime('%s','now')),coalesce((SELECT max(generation)+1 FROM instance_owner),1) WHERE NOT EXISTS(SELECT 1 FROM instance_owner WHERE owner<>" ++ C.q(owner) ++ ") ON CONFLICT(owner) DO UPDATE SET heartbeat=excluded.heartbeat;"
-  ++ "SELECT json_object('error','duplicate-owner','owner'," ++ C.q(owner) ++ ",'current',(SELECT owner FROM instance_owner WHERE owner<>" ++ C.q(owner) ++ " LIMIT 1),'condition','One native owner holds each Orchestra database.','next','Read owner status. Serve only after the current owner releases or its heartbeat lapses.') WHERE EXISTS(SELECT 1 FROM instance_owner WHERE owner<>" ++ C.q(owner) ++ ");"
+
+def claim_insert_sql(+owner: String) -> String:
+  "INSERT INTO instance_owner(owner, heartbeat, generation) SELECT " ++ C.q(owner) ++ ",(SELECT strftime('%s','now')),coalesce((SELECT max(generation)+1 FROM instance_owner),1) WHERE NOT EXISTS(SELECT 1 FROM instance_owner WHERE owner<>" ++ C.q(owner) ++ ") ON CONFLICT(owner) DO UPDATE SET heartbeat=excluded.heartbeat;"
+
+def claim_decide_sql(+owner: String) -> String:
+  "SELECT json_object('error','duplicate-owner','owner'," ++ C.q(owner) ++ ",'current',(SELECT owner FROM instance_owner WHERE owner<>" ++ C.q(owner) ++ " LIMIT 1),'condition','One native owner holds each Orchestra database.','next','Read owner status. Serve only after the current owner releases or its heartbeat lapses.') WHERE EXISTS(SELECT 1 FROM instance_owner WHERE owner<>" ++ C.q(owner) ++ ");"
   ++ "SELECT json_object('owner',owner,'heartbeat',heartbeat,'generation',generation) FROM instance_owner WHERE owner=" ++ C.q(owner) ++ " AND NOT EXISTS(SELECT 1 FROM instance_owner WHERE owner<>" ++ C.q(owner) ++ ");"
+
+def claim_sql(+owner: String) -> String:
+  claim_clear_sql() ++ claim_insert_sql(owner) ++ claim_decide_sql(owner)
 
 def heartbeat_sql(+owner: String) -> String:
   "UPDATE instance_owner SET heartbeat=(SELECT strftime('%s','now')) WHERE owner=" ++ C.q(owner) ++ ";SELECT json_object('owner',owner,'heartbeat',heartbeat,'generation',generation) FROM instance_owner WHERE owner=" ++ C.q(owner) ++ ";"
