@@ -226,7 +226,8 @@ async function streamEvents(response, db, databasePath, reader, subject, initial
     return json(response, 503, { error: 'native-owner-subscription-unavailable' });
   }
   if (!subscription || subscription.ready !== true
-      || typeof subscription.generation !== 'string'
+      || typeof subscription.generation !== 'string' || !subscription.generation
+      || typeof subscription.cursor !== 'string'
       || parseCursor(subscription.cursor) === null
       || typeof subscription.close !== 'function') {
     try { subscription?.close?.(); } catch {}
