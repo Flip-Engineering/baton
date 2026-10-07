@@ -55,7 +55,10 @@ class PhysicalRoleGuard(unittest.TestCase):
         self.assertEqual(independent.stdout.splitlines(), ['role-held', 'role-released'])
         holder.stdin.close()
         self.assertEqual(holder.stdout.readline().strip(), 'role-released')
-        self.assertEqual(holder.wait(timeout=5), 0, holder.stderr.read())
+        holder.stdout.close()
+        holder_error = holder.stderr.read()
+        holder.stderr.close()
+        self.assertEqual(holder.wait(timeout=5), 0, holder_error)
 
         retried = self.acquire(self.alias, alias_binding, key)
         self.assertEqual(retried.returncode, 0, retried.stderr)
