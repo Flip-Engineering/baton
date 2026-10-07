@@ -136,4 +136,17 @@ test('admission uses CPU, available memory, and runner capacity', () => {
     memoryEstimateBytes: 1024,
     runnerCapacity: 6,
   }).admitted, 2);
+  assert.equal(concurrencyFor({
+    cpuCapacity: 32,
+    cpuLoadAverage: 4,
+    memoryAvailableBytes: 64 * 1024,
+    memoryEstimateBytes: 1024,
+    runnerCapacity: 20,
+  }).admitted, 20);
+  assert.equal(concurrencyFor({
+    cpuCapacity: 32,
+    cpuLoadAverage: 4,
+    memoryAvailableBytes: 64 * 1024,
+    memoryEstimateBytes: 1024,
+  }).admitted, 28);
 });

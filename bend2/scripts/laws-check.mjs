@@ -15,7 +15,7 @@ import {
   openSync, readFileSync, readSync, readdirSync, readlinkSync, renameSync,
   statSync, symlinkSync, writeFileSync,
 } from 'node:fs';
-import { availableParallelism, freemem, hostname, totalmem } from 'node:os';
+import { availableParallelism, freemem, hostname, loadavg, totalmem } from 'node:os';
 import { createHash, randomUUID } from 'node:crypto';
 import { dirname, join, relative, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
@@ -151,7 +151,11 @@ function runnerCpuCapacity() {
     const [quota, period] = readFileSync('/sys/fs/cgroup/cpu.max', 'utf8').trim().split(/\s+/);
     if (quota !== 'max') capacity = Math.min(capacity, Math.max(1, Math.floor(Number(quota) / Number(period))));
   } catch {}
-  return capacity;
+  return { cpuCapacity: capacity, cpuLoadAverage: Math.max(0, readCpuLoadAverage()) };
+}
+
+function readCpuLoadAverage() {
+  return Number(loadavg()[0]) || 0;
 }
 
 function peakRss(pid) {
@@ -322,12 +326,15 @@ export async function verifyResults(expected, results) {
   return failures;
 }
 
-export function concurrencyFor({ cpuCapacity, memoryAvailableBytes, memoryEstimateBytes, runnerCapacity }) {
+export function concurrencyFor({ cpuCapacity, cpuLoadAverage = 0, memoryAvailableBytes, memoryEstimateBytes, runnerCapacity }) {
   const configuredCapacity = Number.isInteger(runnerCapacity) && runnerCapacity > 0 ? runnerCapacity : Infinity;
+  const cpuAvailableCapacity = Math.max(1, Math.floor(cpuCapacity - Math.min(Math.max(0, cpuLoadAverage), Math.max(0, cpuCapacity - 1))));
   const memoryCapacity = Math.floor(memoryAvailableBytes / Math.max(memoryEstimateBytes, 1));
   return {
-    admitted: Math.max(1, Math.min(cpuCapacity, configuredCapacity, memoryCapacity)),
+    admitted: Math.max(1, Math.min(cpuAvailableCapacity, configuredCapacity, memoryCapacity)),
     cpuCapacity,
+    cpuLoadAverage,
+    cpuAvailableCapacity,
     memoryAvailableBytes,
     memoryEstimateBytes,
     memoryCapacity,
@@ -337,8 +344,9 @@ export function concurrencyFor({ cpuCapacity, memoryAvailableBytes, memoryEstima
 }
 
 function admittedConcurrency(memoryEstimateBytes) {
+  const cpu = runnerCpuCapacity();
   return concurrencyFor({
-    cpuCapacity: runnerCpuCapacity(),
+    ...cpu,
     memoryAvailableBytes: availableMemory(),
     memoryEstimateBytes,
     runnerCapacity: Number(process.env.BATON_LAW_CHECK_RUNNER_CAPACITY),
