@@ -308,7 +308,7 @@ static int br_artifact_same(const char *directory,const char *name,size_t name_l
 static int br_manifest_same(const char *directory,const BrManifestHeader *header,char *const *fields,int count);
 static int br_admission_verify(const char *directory,const char *database,int guard);
 static int br_attempt_manifest_verify(const char *directory);
-static int br_lifecycle_latch(const char *directory,const unsigned char *grant_digest);
+static int br_lifecycle_start(const char *directory,const unsigned char *grant_digest,int *retained);
 static int br_lifecycle_cancel(const char *directory,const unsigned char *rejection_digest);
 static int br_manifest_store(const char *directory,const char *manifest_path,BrManifestHeader *header,char **fields,size_t *lengths,int count);
 typedef struct {
@@ -1193,8 +1193,11 @@ static int br_keeper_start(BrKeeper *keeper,const char *directory,int lock) {
   keeper->identity=br_manifest_digest(&keeper->manifest.header,keeper->manifest.field,keeper->manifest.count);
   if(lock>=0)fcntl(lock,F_SETFD,FD_CLOEXEC);
   /* The one start of this task is latched durably before its program exists, so a
-     repeated start decision never spawns a second child. */
-  if((error=br_lifecycle_latch(directory,NULL)))return error;
+     repeated start decision never spawns a second child: an already latched start
+     keeps the work it retained and this keeper reports it rather than spawning. */
+  int retained=0;
+  if((error=br_lifecycle_start(directory,NULL,&retained)))return error;
+  if(retained)return 0;
   if((error=br_file(directory,"launch","launch\n",7,1)))return error;
   struct sockaddr_un address;
   if((error=br_socket_address(&address,keeper->manifest.field[5])))return error;
@@ -2496,17 +2499,34 @@ static int br_lifecycle_init(const char *directory,const unsigned char *expected
   if(expected_digest)memcpy(record.expected,expected_digest,sizeof(record.expected));
   return br_lifecycle_store(directory,&record);
 }
+/* Reads the lifecycle record of an attempt. A missing record fails closed: the
+   prepared state, the grant that authorized the start and the rejection that
+   cancelled the task are authority, so their absence is never treated as an empty
+   record with nothing latched. */
+static int br_lifecycle_required(const char *directory,BrLifecycle *record) {
+  int error=br_lifecycle_read(directory,record);
+  if(error==ENOENT) {
+    br_file(directory,"lifecycle-error","no lifecycle record for this attempt\n",37,1);
+    return EPERM;
+  }
+  if(error)br_file(directory,"lifecycle-error","unusable lifecycle record\n",27,1);
+  return error;
+}
 /* Latches the one start of this task before its program is spawned. A cancelled
-   task never starts; a repeated start with the same grant reports the latch that
-   already exists; a different grant is refused. */
-static int br_lifecycle_latch(const char *directory,const unsigned char *grant_digest) {
+   task never starts. A start already latched with the same grant reports that the
+   work is retained, so the caller reports the existing attempt instead of spawning
+   a second child; a different grant is refused. */
+static int br_lifecycle_start(const char *directory,const unsigned char *grant_digest,int *retained) {
   BrLifecycle record;
-  int error=br_lifecycle_read(directory,&record);
-  if(error==ENOENT) {memset(&record,0,sizeof(record));error=0;}
+  int error=br_lifecycle_required(directory,&record);
   if(error)return error;
+  *retained=0;
   if(record.cancelled)return EPERM;
-  if(record.latched)
-    return grant_digest && memcmp(record.grant,grant_digest,sizeof(record.grant))?EEXIST:0;
+  if(record.latched) {
+    if(grant_digest && memcmp(record.grant,grant_digest,sizeof(record.grant)))return EEXIST;
+    *retained=1;
+    return 0;
+  }
   record.latched=1;
   if(grant_digest)memcpy(record.grant,grant_digest,sizeof(record.grant));
   return br_lifecycle_store(directory,&record);
@@ -2515,8 +2535,7 @@ static int br_lifecycle_latch(const char *directory,const unsigned char *grant_d
    rejection after a start is refused because the task exists. */
 static int br_lifecycle_cancel(const char *directory,const unsigned char *rejection_digest) {
   BrLifecycle record;
-  int error=br_lifecycle_read(directory,&record);
-  if(error==ENOENT) {memset(&record,0,sizeof(record));error=0;}
+  int error=br_lifecycle_required(directory,&record);
   if(error)return error;
   if(record.latched)return EPERM;
   if(rejection_digest)memcpy(record.rejection,rejection_digest,sizeof(record.rejection));
