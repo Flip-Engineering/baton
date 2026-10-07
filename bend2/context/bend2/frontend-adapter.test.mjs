@@ -18,6 +18,14 @@ import { applyHookOperations, deriveHookedSource } from './frontend-hooks.mjs';
 
 const bytesOf = (text) => Buffer.from(text, 'utf8');
 
+// The read log lives outside the adapter: createFrontendAdapter returns a
+// frozen object, so the helper records acquisitions here and exposes them
+// through readsOf rather than by assigning onto the adapter.
+const helperReads = new WeakMap();
+function readsOf(adapter) {
+  return helperReads.get(adapter);
+}
+
 function adapterWith(files, options = {}) {
   const reads = [];
   const acquisition = {
@@ -33,7 +41,7 @@ function adapterWith(files, options = {}) {
   };
   if (options.baseBend !== undefined) acquisition.baseBend = options.baseBend;
   const adapter = createFrontendAdapter({ acquisition, captureOnly: options.captureOnly ?? true });
-  adapter.reads = reads;
+  helperReads.set(adapter, reads);
   return adapter;
 }
 
@@ -214,7 +222,7 @@ test('capture-only resolution answers from the closure and carries one cached ac
   assert.equal(adapter.sink.readSource('/work/root.bend', owner), text);
   assert.equal(adapter.sink.resolveSource('/work/root.bend', owner).status, 'captured');
   // Three lookups, one acquisition: the cached bytes are reused.
-  assert.deepEqual(adapter.reads, ['/work/root.bend']);
+  assert.deepEqual(readsOf(adapter), ['/work/root.bend']);
 
   const absent = adapter.sink.resolveSource('/work/other.bend', owner);
   assert.equal(absent.status, 'absent');
@@ -255,7 +263,10 @@ test('an alias and its canonical identity share one acquisition', () => {
   adapter.endQuery();
   const session = adapter.report().sessions[0];
   assert.equal(session.completeness, 'complete');
-  assert.equal(session.acquisitions.length, 1, 'requested and canonical names share one record');
+  // Two snapshot entries, one shared record: acquireRecord files the record
+  // under both the requested and the canonical key, and the snapshot emits
+  // one entry per key.
+  assert.equal(session.acquisitions.length, 2, 'requested and canonical names share one record under two keys');
 });
 
 test('a non-acquiring lookup answers presence without reading bytes', () => {
@@ -266,7 +277,7 @@ test('a non-acquiring lookup answers presence without reading bytes', () => {
   assert.equal(missing.status, 'absent');
   const present = adapter.sink.lookupSource('/work/root.bend', owner);
   assert.equal(present.status, 'present');
-  assert.equal(adapter.reads.length, 0, 'a lookup acquires nothing');
+  assert.equal(readsOf(adapter).length, 0, 'a lookup acquires nothing');
   assert.equal(adapter.counters.uncapturedDependencies, 0);
   adapter.endQuery();
 });

@@ -59,9 +59,16 @@ const ON_DISK = [
 const VIRTUAL = 'virtual.bend';
 const VIRTUAL_SOURCE = 'import Base\n\ndef pick(x: U32) -> U32:\n  x\n';
 
+// Evidence must survive a failing exit: when stdout is a pipe the write is
+// asynchronous, so the process exits only after the write flushes. Exiting
+// immediately truncates the stream (observed: exactly 65536 bytes ending
+// mid-JSON on the failing case).
+function emitAndExit(text, code) {
+  process.stdout.write(`${text}\n`, () => process.exit(code));
+}
+
 function refuse(reason, detail) {
-  process.stdout.write(`${JSON.stringify({ status: 'refused', reason, detail }, null, 2)}\n`);
-  process.exit(2);
+  emitAndExit(JSON.stringify({ status: 'refused', reason, detail }, null, 2), 2);
 }
 
 function sha256(bytes) {
@@ -461,14 +468,13 @@ async function main() {
   const compModule = await import(pathToFileURL(join(derived.dir, 'comp.ts')).href);
   const reports = await cases(kernel, compModule, fixture, inputs, derived);
   const failed = reports.filter((report) => report.failed === true);
-  process.stdout.write(`${JSON.stringify({
+  emitAndExit(JSON.stringify({
     upstreamPin: UPSTREAM_PIN,
     derivedDigests: { bend: derived.bend.outputDigest, main: derived.main.outputDigest },
     fixtureDir: process.env.BATON2_FIXTURE_DIR,
     cases: reports,
     failedCases: failed.map((report) => ({ name: report.name, failedClaims: report.assertions.filter((entry) => entry.ok !== true).map((entry) => entry.claim) })),
-  }, null, 2)}\n`);
-  process.exit(failed.length === 0 ? 0 : 1);
+  }, null, 2), failed.length === 0 ? 0 : 1);
 }
 
 await main();
