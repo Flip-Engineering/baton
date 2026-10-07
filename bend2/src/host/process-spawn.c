@@ -308,6 +308,8 @@ static int br_artifact_same(const char *directory,const char *name,size_t name_l
 static int br_manifest_same(const char *directory,const BrManifestHeader *header,char *const *fields,int count);
 static int br_admission_verify(const char *directory,const char *database,int guard);
 static int br_attempt_manifest_verify(const char *directory);
+static int br_lifecycle_latch(const char *directory,const unsigned char *grant_digest);
+static int br_lifecycle_cancel(const char *directory,const unsigned char *rejection_digest);
 static int br_manifest_store(const char *directory,const char *manifest_path,BrManifestHeader *header,char **fields,size_t *lengths,int count);
 typedef struct {
   int listener,lock,finishing,single,database_fd,bound;
