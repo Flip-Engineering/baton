@@ -72,13 +72,18 @@ def node_runtime_wait(+line: String, extra: Maybe<String>,
     case Fail{error}: IO.pure(NodeRuntime, NodeRuntimeRefused{"nodeRuntimeProbeWait"})
     case Done{+status}: IO.pure(NodeRuntime, node_runtime_status(line, status, extra))
 
+def node_runtime_read_refused(waited: Result<&1,&1,U32 & String,String>) -> IO(NodeRuntime):
+  match waited:
+    case Fail{error}: IO.pure(NodeRuntime, NodeRuntimeRefused{"nodeRuntimeProbeWait"})
+    case Done{status}: IO.pure(NodeRuntime, NodeRuntimeRefused{"nodeRuntimeProbeRead"})
+
 def node_runtime_second(+handle: U32, +line: String,
                         second: Result<&1,&1,U32 & String,Maybe<String>>) -> IO(NodeRuntime):
   match second:
     case Fail{error}:
       do IO<NodeRuntime>:
         waited : Result<&1,&1,U32 & String,String> <- Process.ProcessChild.wait(handle)
-        IO.pure(NodeRuntime, NodeRuntimeRefused{"nodeRuntimeProbeRead"})
+        node_runtime_read_refused(waited)
     case Done{+extra}:
       do IO<NodeRuntime>:
         waited : Result<&1,&1,U32 & String,String> <- Process.ProcessChild.wait(handle)
