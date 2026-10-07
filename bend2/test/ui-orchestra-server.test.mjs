@@ -43,11 +43,17 @@ function fixture() {
       VALUES ('root',NULL,'codex','configured/root','high','/root','main','base',''),
              ('child','root','muse','configured/child','medium','/child','work','base','["node","endpoint"]'),
              ('grandchild','child','omp','configured/grandchild','high','/grandchild','nested','base',''),
-             ('sibling','root','codex','configured/sibling','low','/sibling','other','base','');
+             ('sibling','root','codex','configured/sibling','low','/sibling','other','base',''),
+             ('external','sibling','codex','configured/external','low','/external','other','base','');
     INSERT INTO session_roles VALUES ('root','conductor'),('child','conductor'),('grandchild','player'),('sibling','player');
     INSERT INTO executions VALUES ('child','attempt-1','direct','running','');
     INSERT INTO messages(id,sender,recipient,kind,body) VALUES
       ('pending-1','root','child','task','pending input body');
+    INSERT INTO ensembles VALUES ('shared-ensemble','external','tight');
+    INSERT INTO ensemble_members VALUES ('shared-ensemble','child'),('shared-ensemble','external');
+    INSERT INTO sections VALUES ('shared-ensemble','shared-section','fixture capability');
+    INSERT INTO section_members VALUES ('shared-ensemble','shared-section','child'),
+      ('shared-ensemble','shared-section','external');
   `);
   db.close();
   return { directory, databasePath };
@@ -85,6 +91,9 @@ test('snapshot binds a selected subtree to the reader and preserves recorded unk
   assert.equal(snapshot.players[0].liveReceiver, null);
   assert.equal(snapshot.players[0].endpointRegistered, true);
   assert.equal(snapshot.players[0].pendingCount, 1);
+  assert.deepEqual(snapshot.ensembles[0].members, ['child']);
+  assert.equal(snapshot.ensembles[0].owner, null);
+  assert.deepEqual(snapshot.ensembles[0].sections[0].members, ['child']);
 
   const denied = await fetch(`${base}/orchestra/snapshot?subject=sibling&since=0`);
   assert.equal(denied.status, 403);

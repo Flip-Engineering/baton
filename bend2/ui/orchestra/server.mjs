@@ -128,18 +128,22 @@ function playerSnapshot(db, session) {
   };
 }
 
-function ensembleSnapshot(db, id) {
+function ensembleSnapshot(db, id, scope) {
+  const scopeJson = JSON.stringify(scope);
   return one(db, `
     SELECT json_object(
-      'id', e.id, 'owner', e.owner, 'coupling', e.coupling,
+      'id', e.id, 'owner', CASE WHEN e.owner IN (SELECT value FROM json_each(?)) THEN e.owner ELSE NULL END,
+      'coupling', e.coupling,
       'members', json((SELECT json_group_array(session) FROM
-        (SELECT session FROM ensemble_members WHERE ensemble = e.id ORDER BY session))),
+        (SELECT session FROM ensemble_members WHERE ensemble = e.id
+          AND session IN (SELECT value FROM json_each(?)) ORDER BY session))),
       'sections', json((SELECT json_group_array(json(item)) FROM (
         SELECT json_object('ensemble', s.ensemble, 'id', s.id, 'capability', s.capability,
           'members', json((SELECT json_group_array(session) FROM
-            (SELECT session FROM section_members WHERE ensemble = s.ensemble AND section = s.id ORDER BY session)))) AS item
+            (SELECT session FROM section_members WHERE ensemble = s.ensemble AND section = s.id
+              AND session IN (SELECT value FROM json_each(?)) ORDER BY session)))) AS item
         FROM sections s WHERE s.ensemble = e.id ORDER BY s.id)))) AS value
-      FROM ensembles e WHERE e.id = ?`, id)?.value;
+      FROM ensembles e WHERE e.id = ?`, scopeJson, scopeJson, scopeJson, id)?.value;
 }
 
 function snapshot(db, reader, subject, since) {
@@ -157,7 +161,7 @@ function snapshot(db, reader, subject, since) {
       for (const id of player.ownedEnsembles) ensembleIds.add(id);
       for (const id of player.memberEnsembles) ensembleIds.add(id);
     }
-    const ensembles = [...ensembleIds].sort().map((id) => JSON.parse(ensembleSnapshot(db, id)));
+    const ensembles = [...ensembleIds].sort().map((id) => JSON.parse(ensembleSnapshot(db, id, scope)));
     const placeholders = scope.map(() => '?').join(',') || "''";
     const transitions = rows(db, `
       SELECT change_id AS seq, committed_at AS at, session_id AS session,
@@ -247,7 +251,7 @@ function streamEvents(response, db, reader, subject, initialCursor) {
             unacknowledgedCount: player.unacknowledgedCount,
           });
         } else if (change.entity === 'ensemble') {
-          const ensemble = ensembleSnapshot(db, change.entityId);
+          const ensemble = ensembleSnapshot(db, change.entityId, [...scope]);
           if (ensemble) writeEvent(response, 'ensemble', String(cursor), JSON.parse(ensemble));
         }
         writeEvent(response, 'transition', String(cursor), {
