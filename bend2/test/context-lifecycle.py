@@ -380,6 +380,11 @@ def framed(stdout, key):
 
 
 def check_refs(values, stdout, db):
+    expected_raw = '{\n\t"nested":[{"text":"a}b"}]}'
+    check(values.get("refs.raw.first") == expected_raw.encode().hex().upper(), "refs.raw.first", values.get("refs.raw.first"))
+    check(values.get("refs.raw.later") == '{"id":"later"}', "refs.raw.later", values.get("refs.raw.later"))
+    check(values.get("refs.raw.absent") == "1", "refs.raw.absent", values.get("refs.raw.absent"))
+
     answers = {
         "refs.found": "found:qr1:ref-1:complete",
         "refs.absent": "absent:qr2:ref-2",
