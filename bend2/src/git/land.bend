@@ -1046,6 +1046,23 @@ def ld_adv_wt_refused(path: String, repo: String, target: String, basis: String,
     ld_adv_wt_refused_decided(ld_adv_refused_pick(g, p2, b2), g, capture)
 
 # The target read decides movement and failure; only a successful matching tip goes on to HEAD.
+def ld_adv_wt_head_decided(path: String, target: String, +capture: T.CapturedRaw, +tip: T.GitOut, +head: T.GitOut) -> IO(LdAdvObs):
+  match head:
+    case T.GBroken{detail}:
+      IO.pure(LdAdvObs, ld_adv_qualified_with(AdvBroken{detail}, capture, QualDecided{ld_adv_read(tip), ld_adv_read(head)}))
+    case T.GRun{code, out}:
+      Bool.pick(IO(LdAdvObs), U32.is_eq(code, 0),
+        Bool.pick(IO(LdAdvObs), Tx.str_eq(Tx.trim_nl(out), ld_hold_ref(target)),
+          IO.pure(LdAdvObs, ld_adv_qualified_with(AdvLanded{}, capture, QualDecided{ld_adv_read(tip), ld_adv_read(head)})),
+          IO.pure(LdAdvObs, ld_adv_qualified_with(AdvHolderChanged{path}, capture, QualDecided{ld_adv_read(tip), ld_adv_read(head)}))),
+        IO.pure(LdAdvObs, ld_adv_qualified_with(AdvBroken{out}, capture, QualDecided{ld_adv_read(tip), ld_adv_read(head)})))
+
+def ld_adv_wt_head_read(path: String, repo: String, target: String, +capture: T.CapturedRaw, +tip: T.GitOut) -> IO(LdAdvObs):
+  +p2 = path
+  do IO<LdAdvObs>:
+    +head : T.GitOut <- Git.runGit(p2, ld_head_argv())
+    ld_adv_wt_head_decided(p2, target, capture, tip, head)
+
 def ld_adv_wt_target_decided(path: String, repo: String, target: String, cand: String, +capture: T.CapturedRaw, +tip: T.GitOut) -> IO(LdAdvObs):
   match tip:
     case T.GBroken{detail}:
@@ -1067,23 +1084,6 @@ def ld_adv_wt_target_read(path: String, repo: String, target: String, cand: Stri
     ld_adv_wt_target_decided(p2, r2, t2, c2, capture, tip)
 
 # The symbolic HEAD read decides holder change and failure; the target read is carried through.
-def ld_adv_wt_head_decided(path: String, target: String, +capture: T.CapturedRaw, +tip: T.GitOut, +head: T.GitOut) -> IO(LdAdvObs):
-  match head:
-    case T.GBroken{detail}:
-      IO.pure(LdAdvObs, ld_adv_qualified_with(AdvBroken{detail}, capture, QualDecided{ld_adv_read(tip), ld_adv_read(head)}))
-    case T.GRun{code, out}:
-      Bool.pick(IO(LdAdvObs), U32.is_eq(code, 0),
-        Bool.pick(IO(LdAdvObs), Tx.str_eq(Tx.trim_nl(out), ld_hold_ref(target)),
-          IO.pure(LdAdvObs, ld_adv_qualified_with(AdvLanded{}, capture, QualDecided{ld_adv_read(tip), ld_adv_read(head)})),
-          IO.pure(LdAdvObs, ld_adv_qualified_with(AdvHolderChanged{path}, capture, QualDecided{ld_adv_read(tip), ld_adv_read(head)}))),
-        IO.pure(LdAdvObs, ld_adv_qualified_with(AdvBroken{out}, capture, QualDecided{ld_adv_read(tip), ld_adv_read(head)})))
-
-def ld_adv_wt_head_read(path: String, repo: String, target: String, +capture: T.CapturedRaw, +tip: T.GitOut) -> IO(LdAdvObs):
-  +p2 = path
-  do IO<LdAdvObs>:
-    +head : T.GitOut <- Git.runGit(p2, ld_head_argv())
-    ld_adv_wt_head_decided(p2, target, capture, tip, head)
-
 def ld_adv_wt_pick(g: T.GitOut, path: String, repo: String, target: String, cand: String, basis: String, ctx: LdAdvCtx, +capture: T.CapturedRaw) -> IO(LdAdvObs):
   match g:
     case T.GRun{code, out}:
