@@ -59,6 +59,12 @@ class LoggingUtility(unittest.TestCase):
         self.assertEqual(p.returncode, 0, p.stderr)
         return p.stdout
 
+    def terminal(self, text='Utility answer'):
+        """Provider termination: every real turn ends with a terminal frame,
+        which is what closes native input and lets the turn complete."""
+        return json.dumps({'type': 'agent_end', 'isTerminal': True,
+                           'messages': [{'role': 'assistant', 'content': [{'type': 'text', 'text': text}]}]})
+
     def stream(self, text, turn='turn-1'):
         """Run one turn over the given native stream text."""
         self.events.write_text(text)
@@ -79,7 +85,7 @@ sys.exit(0)
 
     def test_real_spool_drops_updates_and_keeps_ends(self):
         spool = SPOOL.read_text()
-        self.stream(spool)
+        self.stream(spool + self.terminal() + '\n')
         kept = self.retained()
         frames = [json.loads(line) for line in spool.splitlines()]
         ends = [line for line, frame in zip(spool.splitlines(), frames)
@@ -93,7 +99,7 @@ sys.exit(0)
 
     def test_real_spool_newest_tool_update_survives_its_end(self):
         spool = SPOOL.read_text()
-        self.stream(spool)
+        self.stream(spool + self.terminal() + '\n')
         kept = self.retained()
         last = None
         for line in spool.splitlines():
@@ -105,12 +111,12 @@ sys.exit(0)
 
     def test_real_spool_retention_ratio(self):
         spool = SPOOL.read_text()
-        self.stream(spool)
+        self.stream(spool + self.terminal() + '\n')
         self.assertLess(self.log.stat().st_size * 2, len(spool.encode('utf-8')))
 
     def test_open_stream_flushes_newest_update_at_turn_end(self):
         text = OPEN_STREAM.read_text()
-        self.stream(text)
+        self.stream(text + self.terminal() + '\n')
         kept = self.retained()
         updates = [line for line in kept if json.loads(line).get('type') == 'message_update']
         newest = text.splitlines()[-1]
@@ -118,7 +124,7 @@ sys.exit(0)
 
     def test_open_tool_call_flushes_newest_update_and_keeps_start(self):
         text = OPEN_TOOL.read_text()
-        self.stream(text, turn='turn-2')
+        self.stream(text + self.terminal() + '\n', turn='turn-2')
         kept = self.retained()
         frames = [json.loads(line) for line in text.splitlines()]
         start = next(line for line, frame in zip(text.splitlines(), frames)
