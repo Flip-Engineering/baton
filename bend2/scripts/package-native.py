@@ -25,6 +25,40 @@ GATES = (
     ('laws-check', ['node', 'bend2/scripts/laws-check.mjs']),
     ('check-native', ['sh', 'bend2/scripts/check-native.sh']),
 )
+SHARD_GATE = ('laws-shards-verification', ['node', 'bend2/scripts/verify-laws-shards.mjs'])
+
+
+def gate_commands(shards_dir, logs):
+    """The gate sequence for one packaging run. A shard set replaces the in-job
+    law gate with the independent verification of the module-group receipts."""
+    if shards_dir is None:
+        return GATES
+    argv = [*SHARD_GATE[1],
+            '--pin', str(ROOT),
+            '--plan', str(logs / 'laws-plan.json'),
+            '--shards', str(shards_dir),
+            '--toolchain', str(logs / 'laws-toolchain.json'),
+            '--report', str(logs / 'laws-shards-verification.json')]
+    return (GATES[0], (SHARD_GATE[0], argv), GATES[2])
+
+
+def toolchain_record(before_inputs):
+    """The toolchain identity the shard receipts must match, in the shape
+    bend2/scripts/toolchain-identity.mjs emits."""
+    return {
+        'schema': 'bend2-toolchain-identity-v1',
+        'compiler': {'path': before_inputs['compiler']['path'], 'version': before_inputs['compiler']['version'],
+                     'sha256': before_inputs['compiler']['sha256']},
+        'libraries': [{'path': row['path'], 'sha256': row['sha256']} for row in before_inputs['runtime']['files']],
+        'cc': {'path': before_inputs['tools']['cc']['path'], 'sha256': before_inputs['tools']['cc']['sha256']},
+    }
+
+
+def shard_inventory(directory):
+    rows = [{'path': path.name, **file_info(path)} for path in sorted(directory.glob('*')) if path.is_file()]
+    require(any(row['path'].endswith('.json') for row in rows),
+            'The supplied shard directory holds no receipts')
+    return rows
 
 
 def require(condition, message):
@@ -153,17 +187,32 @@ def archive_inputs(archive, compiler):
 
 
 def validation(logs):
-    law_text = (logs / 'laws-check.log').read_text(errors='replace')
-    match = re.search(r'^laws-check: green - (\d+) laws, (\d+) mutations, (\d+) compiles, 0 failures$',
-                      law_text, re.MULTILINE)
-    require(match is not None, 'The complete laws-check success summary is missing')
     native_text = (logs / 'check-native.log').read_text(errors='replace')
     suites = re.findall(r'Ran (\d+) tests? in [^\n]+', native_text)
-    return {'laws': dict(zip(('laws', 'mutations', 'compiles'), map(int, match.groups()))),
+    report_file = logs / 'laws-shards-verification.json'
+    if report_file.is_file():
+        observed = json.loads(report_file.read_text())
+        require(observed.get('schema') == 'bend2-laws-shard-verification-v1'
+                and observed.get('status') == 'accepted',
+                'The sharded law verification did not accept the shard set')
+        coverage = observed.get('coverage') or {}
+        require(coverage.get('expected') == coverage.get('observed'),
+                'The sharded law verification does not cover every case: ' + json.dumps(coverage))
+        require(observed.get('rediscovered') is True,
+                'The sharded law verification did not rediscover the plan from the pinned source')
+        laws = {'mode': 'shards', 'shards': observed['shards'], 'cases': coverage['expected'],
+                'report_sha256': sha256(report_file)}
+    else:
+        law_text = (logs / 'laws-check.log').read_text(errors='replace')
+        match = re.search(r'^laws-check: green - (\d+) laws, (\d+) mutations, (\d+) compiles, 0 failures$',
+                          law_text, re.MULTILINE)
+        require(match is not None, 'The complete laws-check success summary is missing')
+        laws = {'mode': 'full', **dict(zip(('laws', 'mutations', 'compiles'), map(int, match.groups())))}
+    return {'laws': laws,
             'native': {'python_tests': sum(map(int, suites)), 'python_suites': len(suites)}}
 
 
-def run_gates(compiler, env, logs, initial, before_inputs):
+def run_gates(compiler, env, logs, initial, before_inputs, stages):
     summary = {'status': 'running', 'worktree': str(ROOT), 'output': str(logs),
                'before': initial, 'environment': {'BEND': str(compiler), 'BEND_NO_TELEMETRY': '1',
                                                 'CC': env.get('CC', 'clang')},
@@ -172,7 +221,7 @@ def run_gates(compiler, env, logs, initial, before_inputs):
     path = logs / 'summary.json'
     write_json(path, summary)
     try:
-        for name, argv in GATES:
+        for name, argv in stages:
             stage = {'name': name, 'argv': argv, 'status': 'running',
                      'before': snapshot(), 'log': name + '.log'}
             same_source(stage['before'], initial)
@@ -204,7 +253,7 @@ def run_gates(compiler, env, logs, initial, before_inputs):
     return path, summary
 
 
-def reuse_gates(path, expected_sha, compiler, logs, initial):
+def reuse_gates(path, expected_sha, compiler, logs, initial, stages):
     require(sha256(path) == expected_sha, 'The supplied gate receipt does not match its requested SHA256')
     summary = json.loads(path.read_text())
     require(summary['status'] == 'passed' and Path(summary['worktree']).resolve() == ROOT,
@@ -215,8 +264,8 @@ def reuse_gates(path, expected_sha, compiler, logs, initial):
     require(summary['compiler_sha256'] == sha256(compiler), 'The receipt compiler differs from the selected compiler')
     require(summary['environment']['BEND'] == str(compiler) and summary['environment']['BEND_NO_TELEMETRY'] == '1',
             'The receipt must select this compiler with telemetry disabled')
-    require([(stage['name'], stage['argv']) for stage in summary['stages']] == list(GATES),
-            'The receipt must contain the complete three gate commands in order')
+    require([(stage['name'], stage['argv']) for stage in summary['stages']] == list(stages),
+            'The receipt must contain this run\'s complete gate commands in order')
     for stage in summary['stages']:
         require(stage['status'] == 'passed' and stage['exit_code'] == 0, 'A supplied gate did not pass')
         same_source(stage['before'], initial)
@@ -319,9 +368,15 @@ def package(args):
         identity = artifact_identity(args.release_version)
         compiler = args.bend.resolve()
         env = dict(os.environ, BEND=str(compiler), BEND_NO_TELEMETRY='1')
+        stages = gate_commands(args.laws_shards, logs)
         if args.gate_receipt:
-            receipt, summary = reuse_gates(args.gate_receipt.resolve(), args.gate_receipt_sha256, compiler, logs, initial)
+            receipt, summary = reuse_gates(args.gate_receipt.resolve(), args.gate_receipt_sha256,
+                                           compiler, logs, initial, stages)
         before_inputs = inputs(compiler, env, logs, 'before')
+        if args.laws_shards:
+            command(['node', 'bend2/scripts/laws-check.mjs', '--plan', str(logs / 'laws-plan.json')],
+                    ROOT, env, logs, 'laws-plan-command')
+            write_json(logs / 'laws-toolchain.json', toolchain_record(before_inputs))
         archive, notices = archive_inputs(args.compiler_archive.resolve(), compiler)
         write_json(output / 'compiler-archive.json', archive)
         if args.gate_receipt:
@@ -329,8 +384,10 @@ def package(args):
                 require(summary['inputs_after'] == before_inputs, 'The receipt toolchain or host inputs differ from current inputs')
             input_boundary = 'Compiler libraries, CC and host captured after the supplied gates and checked again during packaging.'
         else:
-            receipt, summary = run_gates(compiler, env, logs, initial, before_inputs)
-            input_boundary = 'Compiler libraries, CC and host captured before and after the three gates.'
+            receipt, summary = run_gates(compiler, env, logs, initial, before_inputs, stages)
+            input_boundary = ('Compiler libraries, CC and host captured before and after the native gates '
+                              'and the shard verification.' if args.laws_shards
+                              else 'Compiler libraries, CC and host captured before and after the three gates.')
         binary = ROOT / '.scratch/bend2/baton2'
         generated = ROOT / '.scratch/bend2/baton2.c'
         require(binary.is_file() and generated.is_file(), 'The gated executable and generated C are required')
@@ -354,6 +411,11 @@ def package(args):
         shutil.copyfile(binary, payload / 'bin/baton2')
         (payload / 'bin/baton2').chmod(0o755)
         stage_adapters(payload)
+        if args.laws_shards:
+            shards = logs / 'shards'
+            shards.mkdir()
+            for row in shard_inventory(args.laws_shards):
+                shutil.copyfile(args.laws_shards / row['path'], shards / row['path'])
         shutil.copytree(logs, payload / 'logs')
         terms = stage_notices(payload, notices, identity['kind'])
         generated_dir = output / 'generated'
@@ -378,7 +440,8 @@ def package(args):
                       'generated_c': {'path': str(generated), **file_info(generated)},
                       'linked_libraries': libraries},
             'gates': {'receipt': 'logs/summary.json', **file_info(receipt),
-                      'validation': summary['validation'], 'reused': bool(args.gate_receipt)},
+                      'validation': summary['validation'], 'reused': bool(args.gate_receipt),
+                      'shards': shard_inventory(args.laws_shards) if args.laws_shards else None},
             'terms': terms,
         }
         write_json(payload / 'manifest.json', manifest)
@@ -409,8 +472,12 @@ def main():
     parser.add_argument('--release-version', help='version identifier for a release archive; requires the project root LICENSE')
     parser.add_argument('--gate-receipt', type=Path, help='reuse a completed exact-source three-gate summary')
     parser.add_argument('--gate-receipt-sha256', help='required SHA256 pin when reusing a gate receipt')
+    parser.add_argument('--laws-shards', type=Path,
+                        help='directory of module-group shard receipts; replaces the in-job laws-check gate')
     args = parser.parse_args()
     require(bool(args.gate_receipt) == bool(args.gate_receipt_sha256), 'Gate receipt and SHA256 must be supplied together')
+    require(not (args.gate_receipt and args.laws_shards),
+            'A shard set and a three-gate receipt describe different gate sequences; supply one')
     package(args)
 
 

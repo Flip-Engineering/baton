@@ -10,7 +10,117 @@ permissions:
   contents: read
 
 jobs:
+  plan:
+    runs-on: xcode-27
+    env:
+      BEND_NO_TELEMETRY: '1'
+    outputs:
+      groups: ${{ steps.plan.outputs.groups }}
+    steps:
+      - name: Checkout exact source
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+        with:
+          persist-credentials: false
+
+      - name: Select Node 22
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: '22'
+
+      - name: Discover the control inventory
+        id: plan
+        shell: bash
+        run: |
+          set -euo pipefail
+          run="$RUNNER_TEMP/baton2-native-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT"
+          test ! -e "$run"
+          mkdir -p "$run/plan"
+          printf 'BATON2_NATIVE_RUN=%s\n' "$run" >> "$GITHUB_ENV"
+          test "$(uname -s)" = Darwin
+          test "$(uname -m)" = arm64
+          node bend2/scripts/laws-check.mjs --plan "$run/plan/plan.json" > "$run/plan/plan.stdout"
+          python3 -c 'import json,sys; plan=json.load(open(sys.argv[1])); print("groups=" + json.dumps([row["group"] for row in plan["groups"]])); print("cases=" + str(len(plan["cases"])))' \
+            "$run/plan/plan.json" >> "$GITHUB_OUTPUT"
+          cat "$run/plan/plan.stdout"
+
+      - name: Retain the control inventory
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: baton2-laws-plan-${{ github.sha }}-${{ github.run_attempt }}
+          path: ${{ env.BATON2_NATIVE_RUN }}/plan/
+          if-no-files-found: error
+
+  laws:
+    needs: plan
+    runs-on: xcode-27
+    strategy:
+      fail-fast: false
+      matrix:
+        group: ${{ fromJSON(needs.plan.outputs.groups) }}
+    env:
+      BEND_NO_TELEMETRY: '1'
+      BATON2_GROUP: ${{ matrix.group }}
+      BATON2_SHARD: ${{ strategy.job-index }}
+    steps:
+      - name: Checkout exact source
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+        with:
+          persist-credentials: false
+
+      - name: Select Node 22
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: '22'
+
+      - name: Create owned build clone and preserve compiler archive
+        shell: bash
+        run: |
+          set -euo pipefail
+          run="$RUNNER_TEMP/baton2-native-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT"
+          test ! -e "$run"
+          mkdir -p "$run/toolchain" "$run/plan" "$run/shard"
+          printf 'BATON2_NATIVE_RUN=%s\n' "$run" >> "$GITHUB_ENV"
+          test "$(uname -s)" = Darwin
+          test "$(uname -m)" = arm64
+          git clone --no-hardlinks --no-checkout "$GITHUB_WORKSPACE" "$run/build-source" > "$run/clone.log" 2>&1
+          git -C "$run/build-source" checkout --detach "$GITHUB_SHA" >> "$run/clone.log" 2>&1
+          test "$(git -C "$run/build-source" rev-parse HEAD)" = "$GITHUB_SHA"
+          archive="$run/toolchain/bend-2.0.25-darwin-arm64.tar.gz"
+          curl --proto '=https' --tlsv1.2 -fsSL \
+            https://github.com/bendlang/bend/releases/download/v2.0.25/bend-2.0.25-darwin-arm64.tar.gz \
+            -o "$archive" > "$run/toolchain/download.log" 2>&1
+          printf 'c5bb22ba029d5909da9c6db82aa037278a66d1cf8a5572f433879f7dcd866c31  %s\n' "$archive" | \
+            shasum -a 256 -c - > "$run/toolchain/archive-check.log" 2>&1
+          tar -tzf "$archive" > "$run/toolchain/archive-members.txt"
+          test ! -e "$run/toolchain-home"
+          BEND_HOME="$run/toolchain-home" sh "$run/build-source/docs/bend2/reference/toolchain/install-2.0.25.sh" \
+            > "$run/toolchain/install.log" 2>&1
+
+      - name: Run this module group's law and mutation controls
+        shell: bash
+        run: |
+          set -euo pipefail
+          run="$BATON2_NATIVE_RUN"
+          node "$run/build-source/bend2/scripts/laws-check.mjs" --plan "$run/plan/plan.json" > "$run/plan/plan.stdout"
+          node "$run/build-source/bend2/scripts/laws-check.mjs" \
+            --group "$BATON2_GROUP" \
+            --plan-in "$run/plan/plan.json" \
+            --bend "$run/toolchain-home/bin/bend" \
+            --cc clang \
+            --receipt "$run/shard/receipt-$BATON2_SHARD.json" \
+            --log "$run/shard/laws-check-$BATON2_SHARD.log" | tee "$run/shard/laws-check-$BATON2_SHARD.stdout"
+
+      - name: Retain this group's receipt and log
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: baton2-laws-shard-${{ strategy.job-index }}
+          path: ${{ env.BATON2_NATIVE_RUN }}/shard/
+          if-no-files-found: error
+
   darwin-arm64:
+    needs: [plan, laws]
     runs-on: xcode-27
     env:
       BEND_NO_TELEMETRY: '1'
@@ -31,7 +141,7 @@ jobs:
           set -euo pipefail
           run="$RUNNER_TEMP/baton2-native-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT"
           test ! -e "$run"
-          mkdir -p "$run/toolchain"
+          mkdir -p "$run/toolchain" "$run/shards"
           printf 'BATON2_NATIVE_RUN=%s\n' "$run" >> "$GITHUB_ENV"
           test "$(uname -s)" = Darwin
           test "$(uname -m)" = arm64
@@ -49,14 +159,22 @@ jobs:
           BEND_HOME="$run/toolchain-home" sh "$run/build-source/docs/bend2/reference/toolchain/install-2.0.25.sh" \
             > "$run/toolchain/install.log" 2>&1
 
-      - name: Run complete exact-source gates and package
+      - name: Collect the module-group shard receipts
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          pattern: baton2-laws-shard-*
+          path: ${{ env.BATON2_NATIVE_RUN }}/shards
+          merge-multiple: true
+
+      - name: Verify the shard set, run the native gates and package
         shell: bash
         run: |
           set -euo pipefail
           python3 "$BATON2_NATIVE_RUN/build-source/bend2/scripts/package-native.py" \
             --output "$BATON2_NATIVE_RUN/package" \
             --bend "$BATON2_NATIVE_RUN/toolchain-home/bin/bend" \
-            --compiler-archive "$BATON2_NATIVE_RUN/toolchain/bend-2.0.25-darwin-arm64.tar.gz"
+            --compiler-archive "$BATON2_NATIVE_RUN/toolchain/bend-2.0.25-darwin-arm64.tar.gz" \
+            --laws-shards "$BATON2_NATIVE_RUN/shards"
 
       - name: Exercise extracted artifact with build path unavailable
         shell: bash
@@ -83,6 +201,7 @@ jobs:
             ${{ env.BATON2_NATIVE_RUN }}/package/
             ${{ env.BATON2_NATIVE_RUN }}/smoke/
             ${{ env.BATON2_NATIVE_RUN }}/toolchain/
+            ${{ env.BATON2_NATIVE_RUN }}/shards/
             ${{ env.BATON2_NATIVE_RUN }}/clone.log
           if-no-files-found: error
           include-hidden-files: true

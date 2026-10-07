@@ -7,20 +7,54 @@
 // the entry still compiles is not part of the gate, and the script reports it.
 //
 // Usage: node bend2/scripts/laws-check.mjs [compiler]
+//        node bend2/scripts/laws-check.mjs --plan <path>
+//        node bend2/scripts/laws-check.mjs --group <module> --plan-in <path> --receipt <path>
+//             [--bend <compiler>] [--log <path>] [--cc <cc>]
+//
+// The ordinary invocation runs every case and prints one JSON row per case. The
+// plan mode writes the case inventory for a matrix of module groups, and a
+// grouped run executes one group and records the receipt the packager verifies.
 
+import { createHash } from 'node:crypto';
 import { execFileSync } from 'node:child_process';
-import { cpSync, existsSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
-import { join, relative, resolve } from 'node:path';
+import { cpSync, existsSync, mkdirSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import { dirname, join, relative, resolve, sep } from 'node:path';
 
 const ROOT = resolve(import.meta.dirname, '..', '..');
 const SRC = join(ROOT, 'bend2', 'src');
 const ENTRY = join('bend2', 'src', 'coordinator', 'main.bend');
-const SCRATCH = join(ROOT, '.scratch', 'bend2-laws-check');
 const ENV = { ...process.env, BEND_NO_TELEMETRY: '1' };
 
-function resolveBend() {
+// The ordinary invocation runs every case. `--plan <path>` writes the case
+// inventory without a compiler. `--group <module>` runs one module group and
+// records a receipt, which is the shard a matrix job uploads.
+const OPTIONS = new Set(['--plan', '--plan-in', '--group', '--receipt', '--log', '--bend', '--cc']);
+const ARGS = process.argv.slice(2);
+function option(name) {
+  const index = ARGS.indexOf(name);
+  return index === -1 ? null : ARGS[index + 1] ?? null;
+}
+const positionals = ARGS.filter((argument, index) =>
+  !argument.startsWith('--') && !(index > 0 && OPTIONS.has(ARGS[index - 1])));
+const PLAN_OUT = option('--plan');
+const PLAN_IN = option('--plan-in');
+const GROUP = option('--group');
+const RECEIPT_OUT = option('--receipt');
+const LOG_OUT = option('--log');
+const BEND_OPTION = option('--bend');
+const CC_OPTION = option('--cc');
+
+function slug(value) {
+  return value.replaceAll(/[^A-Za-z0-9._-]+/g, '_');
+}
+
+const SCRATCH = join(ROOT, '.scratch', GROUP ? `bend2-laws-check-${slug(GROUP)}` : 'bend2-laws-check');
+const STARTED_UNIX = Date.now() / 1000;
+
+function resolveBend(explicit) {
   const candidates = [
-    process.argv[2],
+    explicit,
+    BEND_OPTION,
     process.env.BEND,
     join(ROOT, 'node_modules', '.bend', 'bin', 'bend'),
     join(ROOT, '.bend', 'bin', 'bend'),
@@ -32,10 +66,14 @@ function resolveBend() {
   process.exit(1);
 }
 
-const BEND = resolveBend();
+let bendPath = null;
+function bend() {
+  if (bendPath === null) bendPath = resolveBend(positionals[0]);
+  return bendPath;
+}
 
 function run(args, cwd) {
-  return execFileSync(BEND, args, { env: ENV, cwd, encoding: 'utf8', maxBuffer: Infinity });
+  return execFileSync(bend(), args, { env: ENV, cwd, encoding: 'utf8', maxBuffer: Infinity });
 }
 
 function compile(cwd) {
@@ -45,6 +83,176 @@ function compile(cwd) {
   } catch (err) {
     return { ok: false, output: `${err.stdout ?? ''}${err.stderr ?? ''}` };
   }
+}
+
+function sha256File(path) {
+  return createHash('sha256').update(readFileSync(path)).digest('hex');
+}
+
+function git(args) {
+  return execFileSync('git', ['-C', ROOT, ...args], { encoding: 'utf8' }).trim();
+}
+
+function sourceSnapshot() {
+  return {
+    head: git(['rev-parse', 'HEAD']),
+    tree: git(['rev-parse', 'HEAD^{tree}']),
+    bend2Tree: git(['rev-parse', 'HEAD:bend2']),
+    status: git(['status', '--porcelain=v1']),
+  };
+}
+
+function modulePath(file) {
+  return relative(ROOT, file).split(sep).join('/');
+}
+
+// One case per law and one per mutation, grouped by the module that states the
+// law or holds the mutated text. The order is the ordinary run's order: every
+// law in discovery order, then every mutation in declaration order.
+function planCases() {
+  const cases = [];
+  for (const { law, file } of laws()) {
+    cases.push({ id: `law:${law}`, kind: 'law', law, module: modulePath(file), group: modulePath(file) });
+  }
+  for (const mutation of MUTATIONS) {
+    const file = mutation.file.split(sep).join('/');
+    cases.push({
+      id: `mutation:${mutation.name}`, kind: 'mutation', module: file, group: file, law: mutation.law,
+      anchor: { file, find: mutation.find },
+    });
+  }
+  return cases;
+}
+
+function planDocument() {
+  const cases = planCases();
+  const groups = [...new Set(cases.map((row) => row.group))].sort().map((group) => ({
+    group,
+    laws: cases.filter((row) => row.group === group && row.kind === 'law').length,
+    mutations: cases.filter((row) => row.group === group && row.kind === 'mutation').length,
+  }));
+  return {
+    schema: 'bend2-laws-plan-v1',
+    source: sourceSnapshot(),
+    checker: { path: 'bend2/scripts/laws-check.mjs', sha256: sha256File(import.meta.filename) },
+    cases,
+    groups,
+  };
+}
+
+// A shard refuses a plan that describes another source or another checker, so a
+// receipt can only be produced for the inventory the packager will verify.
+function requirePlan(plan) {
+  if (plan.schema !== 'bend2-laws-plan-v1') {
+    console.error(`laws-check: unsupported plan schema ${plan.schema}`);
+    process.exit(1);
+  }
+  const snapshot = sourceSnapshot();
+  for (const key of ['head', 'tree', 'bend2Tree', 'status']) {
+    if (plan.source?.[key] !== snapshot[key]) {
+      console.error(`laws-check: the plan describes another source (${key})`);
+      process.exit(1);
+    }
+  }
+  if (plan.checker?.sha256 !== sha256File(import.meta.filename)) {
+    console.error('laws-check: the plan was written by another checker');
+    process.exit(1);
+  }
+}
+
+function toolchainIdentity() {
+  const script = join(ROOT, 'bend2', 'scripts', 'toolchain-identity.mjs');
+  const args = [script, '--bend', bend(), ...(CC_OPTION ? ['--cc', CC_OPTION] : [])];
+  return JSON.parse(execFileSync(process.execPath, args, { encoding: 'utf8' }));
+}
+
+const logLines = [];
+const results = [];
+let failures = 0;
+
+function emit(text) {
+  console.log(text);
+  logLines.push(text);
+}
+
+function runLawCase(row) {
+  const file = join(ROOT, row.module);
+  const copied = join(SCRATCH, row.module);
+  cpSync(file, copied);
+  const removed = removeProof(copied, row.law);
+  const control = removed ? compile(SCRATCH) : { ok: true, output: '' };
+  const passed = removed && !control.ok && /TODO found|expected :|Error/.test(control.output);
+  if (!passed) failures++;
+  emit(JSON.stringify({
+    law: row.law,
+    module: row.module,
+    proof: removed ? 'removed' : 'missing',
+    gate: passed ? 'refuses' : 'accepts',
+    passed,
+  }));
+  cpSync(file, copied);
+  results.push({ id: row.id, kind: 'law', module: row.module, passed, gate: passed ? 'refuses' : 'accepts' });
+}
+
+function runMutationCase(mutation) {
+  const copied = join(SCRATCH, mutation.file);
+  cpSync(join(ROOT, mutation.file), copied);
+  const text = readFileSync(copied, 'utf8');
+  const applied = text.includes(mutation.find);
+  writeFileSync(copied, applied ? text.replace(mutation.find, mutation.replace) : text);
+  const control = applied ? compile(SCRATCH) : { ok: true, output: '' };
+  const passed = applied && !control.ok && control.output.includes(mutation.law);
+  if (!passed) failures++;
+  emit(JSON.stringify({
+    mutation: mutation.name,
+    law: mutation.law,
+    applied,
+    gate: passed ? 'refuses' : 'accepts',
+    passed,
+  }));
+  if (applied && !control.ok && !control.output.includes(mutation.law)) {
+    emit(control.output.trimEnd());
+  }
+  cpSync(join(ROOT, mutation.file), copied);
+  results.push({ id: `mutation:${mutation.name}`, kind: 'mutation', module: mutation.file.split(sep).join('/'), passed, gate: passed ? 'refuses' : 'accepts' });
+}
+
+// A shard records its own log and receipt before it exits, so a red shard still
+// leaves the evidence the packager rejects.
+function finish(code) {
+  let log = null;
+  if (LOG_OUT || RECEIPT_OUT) {
+    const logPath = resolve(LOG_OUT ?? RECEIPT_OUT.replace(/\.json$/, '.log'));
+    writeFileSync(logPath, logLines.join('\n') + '\n');
+    const beside = relative(dirname(resolve(RECEIPT_OUT)), logPath);
+    log = { path: beside.startsWith('..') ? logPath : beside, bytes: statSync(logPath).size, sha256: sha256File(logPath) };
+  }
+  if (RECEIPT_OUT) {
+    const receipt = {
+      schema: 'bend2-laws-shard-v1',
+      group: GROUP,
+      plan: PLAN_IN ? { path: resolve(PLAN_IN), sha256: sha256File(resolve(PLAN_IN)) } : null,
+      source: sourceSnapshot(),
+      checker: { path: 'bend2/scripts/laws-check.mjs', sha256: sha256File(import.meta.filename) },
+      toolchain: toolchainIdentity(),
+      execution: {
+        vm: { os: process.env.RUNNER_OS ?? null, image: process.env.ImageVersion ?? null, name: process.env.RUNNER_NAME ?? null },
+        maxConcurrentCompiles: 1,
+        startedUnix: STARTED_UNIX,
+        endedUnix: Date.now() / 1000,
+        exitCode: code,
+      },
+      counts: { laws: lawsIn(results), mutations: results.length - lawsIn(results), compiles: results.length + 1, failures },
+      cases: results,
+      log,
+    };
+    writeFileSync(resolve(RECEIPT_OUT), JSON.stringify(receipt, null, 2) + '\n');
+  }
+  process.exit(code);
+}
+
+function lawsIn(rows) {
+  return rows.filter((row) => row.kind === 'law').length;
 }
 
 function discover(dir) {
@@ -84,44 +292,9 @@ function removeProof(modulePath, name) {
   return true;
 }
 
-const version = run(['version'], ROOT).trim();
-if (version !== 'bend 2.0.25') {
-  console.error(`expected bend 2.0.25, got: ${version}`);
-  process.exit(1);
-}
-
-rmSync(SCRATCH, { recursive: true, force: true });
-mkdirSync(SCRATCH, { recursive: true });
-cpSync(join(ROOT, 'bend2'), join(SCRATCH, 'bend2'), { recursive: true });
-
-const rows = laws();
-let failures = 0;
-
-const baseline = compile(SCRATCH);
-console.log(JSON.stringify({ check: 'entry compiles with every law proven', passed: baseline.ok }));
-if (!baseline.ok) {
-  failures++;
-  console.log(baseline.output.trimEnd());
-  console.log(`laws-check: red - ${rows.length} laws, 1 compile, ${failures} failure; proof-removal controls did not run`);
-  process.exit(1);
-}
-
-for (const { law, file } of rows) {
-  const copied = join(SCRATCH, relative(ROOT, file));
-  cpSync(file, copied);
-  const removed = removeProof(copied, law);
-  const control = removed ? compile(SCRATCH) : { ok: true, output: '' };
-  const passed = removed && !control.ok && /TODO found|expected :|Error/.test(control.output);
-  if (!passed) failures++;
-  console.log(JSON.stringify({
-    law,
-    module: relative(ROOT, file),
-    proof: removed ? 'removed' : 'missing',
-    gate: passed ? 'refuses' : 'accepts',
-    passed,
-  }));
-  cpSync(file, copied);
-}
+// The case inventory is built from every `law` statement plus the declared
+// mutations. The driver that runs them is at the end of this file, after the
+// mutation list is declared.
 
 // A mutation is a deliberate change to an implementation, made in the scratch
 // copy, that a law must refuse. The proof-removal loop above shows every law's
@@ -1020,27 +1193,77 @@ MUTATIONS.push(
   {"name": "failed-replay-halts-before-release", "file": "bend2/src/coordinator/turn.bend", "find": "    case Fail{error}: replay_finished(db,player,lock,Fail{error})", "replace": "    case Fail{error}: IO.pass(Unit,Fail{error})", "law": "failed_replay_output_reaches_the_completion_boundary"}
 );
 
-for (const mutation of MUTATIONS) {
-  const copied = join(SCRATCH, mutation.file);
-  cpSync(join(ROOT, mutation.file), copied);
-  const text = readFileSync(copied, 'utf8');
-  const applied = text.includes(mutation.find);
-  writeFileSync(copied, applied ? text.replace(mutation.find, mutation.replace) : text);
-  const control = applied ? compile(SCRATCH) : { ok: true, output: '' };
-  const passed = applied && !control.ok && control.output.includes(mutation.law);
-  if (!passed) failures++;
+const MUTATIONS_BY_NAME = new Map(MUTATIONS.map((mutation) => [mutation.name, mutation]));
+
+const rows = laws();
+const cases = planCases();
+
+if (PLAN_OUT && !GROUP) {
+  const plan = planDocument();
+  writeFileSync(resolve(PLAN_OUT), JSON.stringify(plan, null, 2) + '\n');
   console.log(JSON.stringify({
-    mutation: mutation.name,
-    law: mutation.law,
-    applied,
-    gate: passed ? 'refuses' : 'accepts',
-    passed,
+    plan: resolve(PLAN_OUT),
+    cases: plan.cases.length,
+    groups: plan.groups.length,
+    laws: rows.length,
+    mutations: MUTATIONS.length,
   }));
-  if (applied && !control.ok && !control.output.includes(mutation.law)) {
-    console.log(control.output.trimEnd());
-  }
-  cpSync(join(ROOT, mutation.file), copied);
+  process.exit(0);
 }
 
-console.log(`laws-check: ${failures === 0 ? 'green' : 'red'} - ${rows.length} laws, ${MUTATIONS.length} mutations, ${rows.length + MUTATIONS.length + 1} compiles, ${failures} failures`);
-process.exit(failures === 0 ? 0 : 1);
+let selected = cases;
+if (GROUP) {
+  if (!PLAN_IN) {
+    console.error('laws-check: --group requires --plan-in');
+    process.exit(1);
+  }
+  const plan = JSON.parse(readFileSync(resolve(PLAN_IN), 'utf8'));
+  requirePlan(plan);
+  selected = plan.cases.filter((row) => row.group === GROUP);
+  if (selected.length === 0) {
+    console.error(`laws-check: no case is grouped under ${GROUP}`);
+    process.exit(1);
+  }
+}
+
+const version = run(['version'], ROOT).trim();
+if (version !== 'bend 2.0.25') {
+  console.error(`expected bend 2.0.25, got: ${version}`);
+  process.exit(1);
+}
+
+rmSync(SCRATCH, { recursive: true, force: true });
+mkdirSync(SCRATCH, { recursive: true });
+cpSync(join(ROOT, 'bend2'), join(SCRATCH, 'bend2'), { recursive: true });
+
+const lawsSelected = selected.filter((row) => row.kind === 'law').length;
+const mutationsSelected = selected.length - lawsSelected;
+
+const baseline = compile(SCRATCH);
+emit(JSON.stringify({ check: 'entry compiles with every law proven', passed: baseline.ok }));
+if (!baseline.ok) {
+  failures++;
+  emit(baseline.output.trimEnd());
+  emit(GROUP
+    ? `laws-check: red - ${lawsSelected} laws, ${mutationsSelected} mutations, 1 compile, ${failures} failure; proof-removal controls did not run`
+    : `laws-check: red - ${rows.length} laws, 1 compile, ${failures} failure; proof-removal controls did not run`);
+  finish(1);
+}
+
+for (const row of selected) {
+  if (row.kind === 'law') runLawCase(row);
+}
+for (const row of selected) {
+  if (row.kind !== 'mutation') continue;
+  const mutation = MUTATIONS_BY_NAME.get(row.id.slice('mutation:'.length));
+  if (!mutation) {
+    failures++;
+    results.push({ id: row.id, kind: 'mutation', module: row.module, passed: false, gate: 'accepts' });
+    emit(JSON.stringify({ mutation: row.id, law: row.law, applied: false, gate: 'accepts', passed: false }));
+    continue;
+  }
+  runMutationCase(mutation);
+}
+
+emit(`laws-check: ${failures === 0 ? 'green' : 'red'} - ${GROUP ? lawsSelected : rows.length} laws, ${GROUP ? mutationsSelected : MUTATIONS.length} mutations, ${selected.length + 1} compiles, ${failures} failures`);
+finish(failures === 0 ? 0 : 1);
