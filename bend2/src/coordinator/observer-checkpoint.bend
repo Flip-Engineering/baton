@@ -80,7 +80,8 @@ def field_sql(+value: String, +field: String) -> String:
   "SELECT CASE WHEN json_valid(" ++ C.q(value) ++ ") THEN json_extract(" ++ C.q(value) ++ "," ++ C.q("$." ++ field) ++ ") ELSE '' END;"
 
 def without_query_newline(+raw: String) -> String:
-  match Tx.str_rev(raw):
+  +reversed = Tx.str_rev(raw)
+  match reversed:
     case SNil{}: ""
     case SCon{c,rest}: Bool.pick(String,Tx.is_nl(c),Tx.str_rev(rest),raw)
 
