@@ -84,8 +84,8 @@ type Exec is Data:
 # `lifetime_profile` is the empty string when the declaration carries none.
 type Op is Data:
   Op{operation: String, implements_operation: String,
-     subject_schema: String, options_schema: String, projections: SS,
-     effects: SS, execution: Exec, result_schema: String,
+     subject_schema: String, options_schema: String, projections: Eng.SS,
+     effects: Eng.SS, execution: Exec, result_schema: String,
      reference_schema: String, event_schema: String,
      lifetime_profile: String, dependencies: ModRefs}
 
@@ -99,7 +99,7 @@ type Ops is Data:
 # carries an interpreter, schema or effect that a request could replace.
 type Entry is Data:
   ENative{artifact: Art, export_identity: String}
-  EProcess{artifact: Art, argv: SS}
+  EProcess{artifact: Art, argv: Eng.SS}
 
 # A declarative applicability check over admitted project facts. Evaluating one
 # reads admitted manifests, configuration and examined source; it loads no
@@ -134,7 +134,7 @@ type Digs is Data:
   DigsCons{head: Dig, rest: Digs}
 
 type Inv is Data:
-  Inv{artifacts: Arts, schemas: SS, digests: Digs}
+  Inv{artifacts: Arts, schemas: Eng.SS, digests: Digs}
 
 def digest_of(+digs: Digs, +want_module: String) -> String:
   match digs:
@@ -206,7 +206,7 @@ def protocol_version_supported(+v: String) -> Bool:
 # repeated as arguments: sourceAnalysis, catalogCapture, schemaValidation,
 # deploymentToolProbe, environmentRead, datasetRead, runtimeObserve,
 # queryControlRecover.
-def admitted_effect_vocabulary() -> SS:
+def admitted_effect_vocabulary() -> Eng.SS:
   Eng.union_add(Eng.required_effects(Eng.op_code_access_join()),
   Eng.union_add(Eng.required_effects(Eng.op_sql_plan()),
   Eng.union_add(Eng.required_effects(Eng.op_migration_replay()),
@@ -300,7 +300,7 @@ def check_entry(+module_id: String, +entry: Entry, +inv: Inv) -> Chk:
 
 # One declared schema identity must be admitted by the inventory.
 def check_schema(+module_id: String, +operation: String, +schema: String,
-                 +schemas: SS) -> Chk:
+                 +schemas: Eng.SS) -> Chk:
   Bool.pick(Chk, Eng.ss_member(schemas, schema), ChkOk{},
             ChkFail{DrMissingSchema{module_id, operation, schema}})
 
@@ -316,7 +316,7 @@ def check_schemas(+module_id: String, +operation: String, +subject: String,
                check_schema(module_id, operation, event, schemas)))))
 
 # Every declared effect must have an admitted meaning.
-def check_effects(+module_id: String, +operation: String, +effects: SS) -> Chk:
+def check_effects(+module_id: String, +operation: String, +effects: Eng.SS) -> Chk:
   match effects:
     case Eng.SSNil{}: ChkOk{}
     case Eng.SSCons{+head, rest}:
@@ -514,7 +514,7 @@ def op_common(+op: Op) -> String:
             event_schema, lifetime_profile, dependencies}:
       implements_operation
 
-def op_effects(+op: Op) -> SS:
+def op_effects(+op: Op) -> Eng.SS:
   match op:
     case Op{operation, implements_operation, subject_schema, options_schema,
             projections, effects, execution, result_schema, reference_schema,
@@ -545,7 +545,7 @@ def op_result_schema(+op: Op) -> String:
       result_schema
 
 # The five schema identities one binding freezes, as a set.
-def op_schema_set(+op: Op) -> SS:
+def op_schema_set(+op: Op) -> Eng.SS:
   match op:
     case Op{operation, implements_operation, subject_schema, options_schema,
             projections, effects, execution, result_schema, reference_schema,
@@ -557,16 +557,16 @@ def op_schema_set(+op: Op) -> SS:
 # --- declarative applicability -----------------------------------------------
 # One rule against the admitted facts it names. A rule reads a recorded fact and
 # compares it; it loads no project code and starts no process.
-def rule_holds(+rule: Rule, +paths: SS, +manifests: SS, +subject: String,
-               +projections: SS) -> Bool:
+def rule_holds(+rule: Rule, +paths: Eng.SS, +manifests: Eng.SS, +subject: String,
+               +projections: Eng.SS) -> Bool:
   match rule:
     case RPath{value}: Eng.ss_member(paths, value)
     case RManifest{value}: Eng.ss_member(manifests, value)
     case RSubject{value}: String.eq(subject, value)
     case RProjection{value}: Eng.ss_member(projections, value)
 
-def rules_hold(+rules: Rules, +paths: SS, +manifests: SS, +subject: String,
-               +projections: SS) -> Bool:
+def rules_hold(+rules: Rules, +paths: Eng.SS, +manifests: Eng.SS, +subject: String,
+               +projections: Eng.SS) -> Bool:
   match rules:
     case RulesNil{}: True{}
     case RulesCons{head, rest}:

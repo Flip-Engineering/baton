@@ -14,7 +14,7 @@ import ./engines-decl.bend as Decl
 import ./engines-select.bend as Sel
 
 # --- fixtures ----------------------------------------------------------------
-def fx_schemas() -> SS:
+def fx_schemas() -> Eng.SS:
   Eng.union_add(Eng.ss_three("sub", "opt", "res"),
                 Eng.union_add(Eng.ss_two("ref", "evt"), Eng.ss_empty()))
 
@@ -102,8 +102,8 @@ def request_at(+subject: String, +explicit: String,
                +common: String) -> Sel.RequestOperands:
   Sel.RequestOperands{subject, Eng.ss_one("definition"), explicit, common}
 
-def project_at(+installed: SS, +disabled: SS,
-               +preferred: SS) -> Sel.ProjectState:
+def project_at(+installed: Eng.SS, +disabled: Eng.SS,
+               +preferred: Eng.SS) -> Sel.ProjectState:
   Sel.ProjectState{Eng.ss_one("src/handler.ts"), Eng.ss_empty(), installed,
                    disabled, preferred}
 
@@ -112,8 +112,8 @@ def project_at(+installed: SS, +disabled: SS,
 def fx_inputs() -> Sel.SelInputs:
   Sel.sel_inputs(fx_request(), fx_project())
 
-def inputs_at(+explicit: String, +common: String, +disabled: SS,
-              +preferred: SS, +installed: SS, +subject: String) -> Sel.SelInputs:
+def inputs_at(+explicit: String, +common: String, +disabled: Eng.SS,
+              +preferred: Eng.SS, +installed: Eng.SS, +subject: String) -> Sel.SelInputs:
   Sel.sel_inputs(request_at(subject, explicit, common),
                  project_at(installed, disabled, preferred))
 
@@ -271,13 +271,13 @@ law selection_plan_carries_the_common_operation_minimum:
 def selection_plan_carries_the_common_operation_minimum():
   {==}
 
-def fx_decl_with_effects_op(+common: String, +effects: SS) -> Decl.Op:
+def fx_decl_with_effects_op(+common: String, +effects: Eng.SS) -> Decl.Op:
   Decl.Op{"definition", common, "sub", "opt", Eng.ss_one("definition"),
           effects, Decl.ExDirect{}, "res", "ref", "evt", "",
           Decl.ModRefsNil{}}
 
 def fx_decl_with_effects(+module_id: String, +artifact_digest: String,
-                         +common: String, +effects: SS) -> Decl.Decl:
+                         +common: String, +effects: Eng.SS) -> Decl.Decl:
   Decl.Decl{"1", module_id, "rev1", "2", "pkg-" ++ module_id,
             Decl.ENative{Decl.Art{"/pkg/" ++ module_id ++ ".bin",
                                   artifact_digest, "entry"},

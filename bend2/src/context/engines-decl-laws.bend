@@ -13,7 +13,7 @@ import ./engines.bend as Eng
 import ./engines-decl.bend as Decl
 
 # --- fixtures ----------------------------------------------------------------
-def fx_schemas() -> SS:
+def fx_schemas() -> Eng.SS:
   Eng.union_add(Eng.ss_three("sub", "opt", "res"),
                 Eng.union_add(Eng.ss_two("ref", "evt"), Eng.ss_empty()))
 
@@ -168,7 +168,7 @@ def fx_op_common(+common: String) -> Decl.Op:
           Eng.ss_empty(), Decl.ExDirect{}, "res", "ref", "evt", "",
           Decl.ModRefsNil{}}
 
-def fx_op_effects(+effects: SS) -> Decl.Op:
+def fx_op_effects(+effects: Eng.SS) -> Decl.Op:
   Decl.Op{"definition", "sourceAnalysis", "sub", "opt",
           Eng.ss_one("definition"), effects, Decl.ExDirect{}, "res", "ref",
           "evt", "", Decl.ModRefsNil{}}
