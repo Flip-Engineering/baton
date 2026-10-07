@@ -135,7 +135,7 @@ def after_observation(db: String, handle: U32, +state: ReducerState, enabled: Bo
 def fields(+state: ReducerState) -> String & String & String & String & String & String & String & String:
   match state:
     case ReducerSnapshot{guidance_cursor,last_message,muse_primary,muse_current,terminal,filter_mode,codex_log,held}:
-      guidance_cursor & last_message & muse_primary & muse_current & terminal & filter_mode & codex_log & held
+      (guidance_cursor,last_message,muse_primary,muse_current,terminal,filter_mode,codex_log,held)
 
 def restore_fields(db: String, +handle: U32) -> IO(String & String & String & String & String & String & String & String):
   do IO<String & String & String & String & String & String & String & String>:
