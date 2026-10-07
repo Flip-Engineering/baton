@@ -1604,6 +1604,18 @@ class Receive(unittest.TestCase):
                                     ' ORDER BY session').fetchall()
         return [row for row in rows if session is None or row[0] == session]
 
+    def execution(self, session):
+        """The session's recorded attempt row: phase, status and directory."""
+        with sqlite3.connect(f'{self.db.as_uri()}?mode=ro', uri=True) as database:
+            row = database.execute('SELECT phase, status, directory FROM executions'
+                                   ' WHERE session=?', (session,)).fetchone()
+        return row
+
+    def set_phase(self, session, phase):
+        with sqlite3.connect(str(self.db)) as database:
+            database.execute('UPDATE executions SET phase=? WHERE session=?',
+                             (phase, session))
+
     def claim(self, session, state='claimed', owner='', generation=0):
         with sqlite3.connect(str(self.db)) as database:
             database.execute('INSERT OR REPLACE INTO wake_claims(session, state, owner, generation)'
@@ -1767,6 +1779,137 @@ class Receive(unittest.TestCase):
                              " VALUES ('parent', 'live-1', 'direct', '/tmp', 'running', '')")
         before = self.claim_rows('parent')
         self.assertEqual(before, [('parent', 'claimed', 'first', 4)])
+        self.message('second', 'parent')
+        self.assert_no_start()
+        self.assertEqual(self.claim_rows('parent'), before)
+        self.assertEqual([row['id'] for row in self.coord('inbox', 'parent')],
+                         ['first', 'second'])
+
+    def kill_fixture(self):
+        """Kill the fixture native processes of this run, leaving keepers."""
+        result = subprocess.run(['ps', '-axo', 'pid=,command='], capture_output=True,
+                                text=True, check=True)
+        for line in result.stdout.splitlines():
+            fields = line.strip().split(None, 1)
+            if len(fields) == 2 and 'native fixture' in fields[1]:
+                try:
+                    os.kill(int(fields[0]), signal.SIGKILL)
+                except ProcessLookupError:
+                    pass
+
+    def kill_keeper(self, leader):
+        """Kill the keeper processes of this run, freeing an inherited
+        session lock. The leader driver is already dead; fixtures stay."""
+        result = subprocess.run(['ps', '-axo', 'pid=,command='], capture_output=True,
+                                text=True, check=True)
+        for line in result.stdout.splitlines():
+            fields = line.strip().split(None, 1)
+            if len(fields) != 2:
+                continue
+            pid, command = int(fields[0]), fields[1]
+            if pid == leader.pid or 'native fixture' in command:
+                continue
+            if str(self.directory) in command:
+                try:
+                    os.kill(pid, signal.SIGKILL)
+                except ProcessLookupError:
+                    pass
+
+    def test_wake_with_stale_running_phase_and_dead_native_takes_over_and_repairs_metadata(self):
+        """A running phase with a genuinely dead native never suppresses the
+        wake: the second admission's wake observes host death through the
+        reaped status, repairs the stale execution row, and takes the
+        obligation over with a fenced generation."""
+        self.player()
+        self.message('first', 'parent')
+        first = self.spawn(*self.receive_args('parent'))
+        control, started = self.accept('parent')
+        self.assertIn('[id: first]', started['prompt'])
+        self.action(control, ack=False)
+        self.finish(first)
+        self.assertEqual(self.execution('parent')[0], 'exited')
+        before = self.claim_rows('parent')
+        self.assertEqual(len(before), 1)
+        self.set_phase('parent', 'running')
+        self.message('second', 'parent')
+        self.assert_no_start()
+        taken = self.claim_rows('parent')
+        self.assertEqual(len(taken), 1)
+        self.assertEqual(taken[0][2], 'first')
+        self.assertGreater(taken[0][3], before[0][3])
+        self.assertEqual(self.execution('parent')[:2], ('exited', 'owner-death'))
+        self.assertEqual([row['id'] for row in self.coord('inbox', 'parent')],
+                         ['first', 'second'])
+
+    def test_direct_receive_recovers_a_dead_attempt_behind_a_stale_running_phase(self):
+        """Crash recovery through adoption: with the observer gone and the
+        native dead, a direct receive adopts the corpse and records its exit,
+        a later admission takes the still-owed input over with a fenced claim,
+        and a fresh turn carries it exactly once."""
+        self.player()
+        self.message('first', 'parent')
+        first = self.spawn(*self.receive_args('parent'))
+        control, started = self.accept('parent')
+        self.assertIn('[id: first]', started['prompt'])
+        before = self.claim_rows('parent')
+        self.assertEqual(len(before), 1)
+        first.kill()
+        first.wait(timeout=15)
+        self.kill_fixture()
+        self.kill_keeper(first)
+        directory = self.execution('parent')[2]
+        self.eventually(lambda: os.path.exists(os.path.join(directory, 'status')),
+                        'keeper never reaped the killed native')
+        second = self.spawn(*self.receive_args('parent'))
+        self.finish(second, ok=False)
+        self.assertEqual(self.execution('parent')[0], 'exited')
+        self.assertEqual(self.claim_rows('parent'), before)
+        self.assertEqual([row['id'] for row in self.coord('inbox', 'parent')], ['first'])
+        self.message('second', 'parent')
+        taken = self.claim_rows('parent')
+        self.assertEqual(len(taken), 1)
+        self.assertEqual(taken[0][2], 'first')
+        self.assertGreater(taken[0][3], before[0][3])
+        third = self.spawn(*self.receive_args('parent'))
+        control3, started3 = self.accept('parent')
+        self.assertIn('[id: first]', started3['prompt'])
+        self.action(control3, ack=False)
+        self.finish(third)
+
+    def test_direct_receive_behind_a_live_child_starts_no_second_turn(self):
+        """A live retained child outlives its dead observer with the session
+        lock free: a direct receive adopts rather than duplicating, so no
+        second native conversation starts and the live claim row is intact."""
+        self.player()
+        self.message('first', 'parent')
+        first = self.spawn(*self.receive_args('parent'))
+        control, started = self.accept('parent')
+        self.assertIn('[id: first]', started['prompt'])
+        before = self.claim_rows('parent')
+        self.assertEqual(len(before), 1)
+        first.kill()
+        first.wait(timeout=15)
+        self.kill_keeper(first)
+        second = self.spawn(*self.receive_args('parent'))
+        self.assert_no_start()
+        self.assertEqual(self.claim_rows('parent'), before)
+        self.assertEqual([row['id'] for row in self.coord('inbox', 'parent')], ['first'])
+
+    def test_racing_wake_behind_a_live_child_launches_nothing_and_reclaims_nothing(self):
+        """Two-driver launch handoff with a real live child: the winner holds
+        a live native with the lock free, and the loser's admission wake
+        stands down, so exactly one native conversation exists and the
+        winner's claim row keeps its owner and generation."""
+        self.player()
+        self.message('first', 'parent')
+        first = self.spawn(*self.receive_args('parent'))
+        control, started = self.accept('parent')
+        self.assertIn('[id: first]', started['prompt'])
+        before = self.claim_rows('parent')
+        self.assertEqual(len(before), 1)
+        first.kill()
+        first.wait(timeout=15)
+        self.kill_keeper(first)
         self.message('second', 'parent')
         self.assert_no_start()
         self.assertEqual(self.claim_rows('parent'), before)

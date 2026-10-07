@@ -8,6 +8,7 @@ import ./delivery.bend as Delivery
 import ../host/sqlite.bend as DB
 import ../host/session-lock.bend as Lock
 import ../host/process.bend as P
+import ../host/files.bend as F
 import ../host/control.bend as Host
 import ../git/text.bend as Tx
 import ../host/text.bend as Text
@@ -105,32 +106,76 @@ def continue_pending(+db: String, +session: String, +cursor: String, again: Unit
 # The lock holder deletes the claim row only once nothing is owed and no
 # retained attempt is recorded live. A finished turn with unacknowledged input
 # still owes the wake, so the row survives for the next driver.
-def release_if_settled(+db: String, +session: String, settled: Bool) -> IO(Unit):
+# The settler releases only the exact admission ticket it read under its own
+# held lock: the owner and generation the claim carried when this hold began.
+# A ticket that names a stale row removes nothing.
+def release_if_ticket(+db: String, +session: String, +owner: String, +generation: String, settled: Bool) -> IO(Unit):
   match settled:
     case False{}: IO.pure(Unit,Unit{})
-    case True{}: Store.release(db,session)
+    case True{}: Store.release_ticket(db,session,owner,generation)
 
-# A retained attempt recorded live keeps its claim however the lock moves: the
-# attempt may run without holding the session lock while it reattaches, and
-# releasing its row would invite a second driver to launch over it.
-def retained_attempt_live_sql(+session: String) -> String:
-  "SELECT EXISTS(SELECT 1 FROM executions WHERE session=" ++ C.q(session) ++ " AND phase IN ('starting','running'));"
+# Observed host custody for the attempt the executions row records, read only
+# through established file and recovery surfaces that never take custody or
+# move any offset. A reaped status file is genuine death: the keeper writes it
+# when it reaps the native. Without it, the recovery markers decide: a gone
+# directory, terminal markers, or a missing launch marker all mean nothing
+# holds the attempt, while a launch marker without terminal marks means the
+# attempt started with an unknown fate. An empty directory means no attempt is
+# on record. Anything ambiguous keeps the obligation. The executions phase is
+# never read as custody here.
+def attempt_dir_sql(+session: String) -> String:
+  "SELECT coalesce((SELECT directory FROM executions WHERE session=" ++ C.q(session) ++ "),'');"
+
+def custody_recovery_none(recovery: Result<&1,&1,U32 & String,Maybe<String>>) -> Bool:
+  match recovery:
+    case Done{found}: match found:
+      case Some{argv}: False{}
+      case None{}: True{}
+    case Fail{error}: False{}
+
+def custody_dead_recovery(+directory: String) -> IO(Bool):
+  do IO<Bool>:
+    recovery : Result<&1,&1,U32 & String,Maybe<String>> <- P.ProcessChild.recovery_argv(directory)
+    IO.pure(Bool,custody_recovery_none(recovery))
+
+def custody_dead_sized(+directory: String, missing: Bool) -> IO(Bool):
+  match missing:
+    case True{}: custody_dead_recovery(directory)
+    case False{}: IO.pure(Bool,True{})
+
+def custody_dead_size(+directory: String, reaped: Result<&1,&1,U32 & String,U32>) -> IO(Bool):
+  match reaped:
+    case Done{size}: custody_dead_sized(directory,U32.is_eq(size,0))
+    case Fail{error}: custody_dead_recovery(directory)
+
+def custody_dead(+db: String, +directory: String, empty: Bool) -> IO(Bool):
+  match empty:
+    case True{}: IO.pure(Bool,True{})
+    case False{}: do IO<Bool>:
+      reaped : Result<&1,&1,U32 & String,U32> <- F.Files.size(directory ++ "/status")
+      custody_dead_size(directory,reaped)
 
 # Only the lock holder settles a claim. A queued invocation that finds the lock
 # held returns without touching the row, so it can never clear a live driver's
 # claim. The holder deletes the row only when no unacknowledged input remains
-# and no retained attempt is recorded live, so a finished turn that still owes
-# input keeps the obligation for the next driver. Takeover never reads the
-# row: any driver that takes the lock may claim again, so a dead owner never
-# suppresses the wake. Acknowledging the owed input deletes the row on the
-# acknowledgement path; an admitted stop deletes it on the stop path.
+# and host custody observes the recorded attempt dead, so a finished turn that
+# still owes input keeps the obligation for the next driver. The delete names
+# the exact ticket read under this same hold, so it removes nothing a newer
+# admission wrote. Takeover never reads the row for custody: any driver that
+# takes the lock may claim again once custody is observed dead, so a dead
+# owner never suppresses the wake. Acknowledging the owed input deletes the row
+# on the acknowledgement path; an admitted stop deletes it on the stop path.
 def settle_owned(+db: String, +session: String, lock: Maybe<U32>) -> IO(Unit):
   match lock:
     case None{}: IO.pure(Unit,Unit{})
     case Some{handle}: do IO<Unit>:
+      +owner : String <- Store.claim_owner(db,session)
+      +generation : String <- Store.claim_generation(db,session)
       pending : String <- IO.try(String,DB.Sql.query(db,pending_count_sql(session,"0")))
-      live : String <- IO.try(String,DB.Sql.query(db,retained_attempt_live_sql(session)))
-      left : Unit <- release_if_settled(db,session,Bool.and(String.eq(pending,"0\n"),String.eq(live,"0\n")))
+      dir : String <- IO.try(String,DB.Sql.query(db,attempt_dir_sql(session)))
+      +trimmed : String <- IO.pure(String,Tx.trim_nl(dir))
+      dead : Bool <- custody_dead(db,trimmed,String.is_empty(trimmed))
+      left : Unit <- release_if_ticket(db,session,Tx.trim_nl(owner),generation,Bool.and(String.eq(pending,"0\n"),dead))
       unlocked : Unit <- IO.try(Unit,Lock.SessionLock.release(handle))
       IO.pure(Unit,Unit{})
 
@@ -184,8 +229,8 @@ def wake_decided(+db: String, +session: String, +cursor: String, launch: String 
       +found : String <- wake_found(db,session,cursor)
       wake_target(db,session,found,launch,lock,String.eq(found,""))
 
-# A live owner keeps the wake from launching or rewriting the row. Any other
-# admission proceeds to decide under the same held lock.
+# A held obligation keeps the wake from launching or rewriting the row. Any
+# other admission proceeds to decide under the same held lock.
 def wake_stand(+db: String, +session: String, +cursor: String, launch: String -> IO(Result<&1,&1,U32 & String,Unit>), lock: U32, owned: Bool) -> IO(Result<&1,&1,U32 & String,Unit>):
   match owned:
     case True{}: do IO<Result<&1,&1,U32 & String,Unit>>:
@@ -193,12 +238,27 @@ def wake_stand(+db: String, +session: String, +cursor: String, launch: String ->
       IO.pure(Result<&1,&1,U32 & String,Unit>,Done{Unit{}})
     case False{}: wake_decided(db,session,cursor,launch,lock,True{})
 
-# Owner-fenced admission under the lock. A claimed obligation with a live
-# retained attempt belongs to its owner, so the wake stands down without
-# launching and without rewriting the row. Any other state — absent,
-# unclaimed, or a dead owner's stale row — proceeds to claim under the lock,
-# which fences the generation past the stale row before the lock is released
-# and the message launches.
+# The obligation is held exactly when the claim row names an owner while host
+# custody cannot observe its death. A finished attempt, a missing directory,
+# and a session with no attempt on record are all observed dead; anything else
+# may still hold a live child, so the wake defers to it.
+def wake_held(+state: String, +dead: Bool) -> Bool:
+  Bool.and(String.eq(Tx.trim_nl(state),"claimed"),Bool.not(dead))
+
+def recover_if_dead(+db: String, +session: String, dead: Bool) -> IO(Unit):
+  match dead:
+    case False{}: IO.pure(Unit,Unit{})
+    case True{}: Store.record_owner_death(db,session)
+
+def wake_admit(+db: String, +session: String, +cursor: String, launch: String -> IO(Result<&1,&1,U32 & String,Unit>), lock: U32, state: String, dead: Bool) -> IO(Result<&1,&1,U32 & String,Unit>):
+  wake_stand(db,session,cursor,launch,lock,wake_held(state,dead))
+
+# Owner-fenced admission under the lock. The wake reads the claim row and the
+# host custody of the recorded attempt, repairs stale execution metadata when
+# custody observes death, and only then decides: a held obligation stands down
+# without launching and without rewriting the row, while any other state
+# proceeds to claim under the lock, which fences the generation past a dead
+# owner's row before the lock is released and the message launches.
 def wake_fenced(+db: String, +session: String, +cursor: String, launch: String -> IO(Result<&1,&1,U32 & String,Unit>), lock: U32, owed: Bool) -> IO(Result<&1,&1,U32 & String,Unit>):
   match owed:
     case False{}: do IO<Result<&1,&1,U32 & String,Unit>>:
@@ -206,8 +266,11 @@ def wake_fenced(+db: String, +session: String, +cursor: String, launch: String -
       IO.pure(Result<&1,&1,U32 & String,Unit>,Done{Unit{}})
     case True{}: do IO<Result<&1,&1,U32 & String,Unit>>:
       state : String <- Store.claim_state(db,session)
-      live : String <- IO.try(String,DB.Sql.query(db,retained_attempt_live_sql(session)))
-      wake_stand(db,session,cursor,launch,lock,Bool.and(String.eq(Tx.trim_nl(state),"claimed"),String.eq(live,"1\n")))
+      dir : String <- IO.try(String,DB.Sql.query(db,attempt_dir_sql(session)))
+      +trimmed : String <- IO.pure(String,Tx.trim_nl(dir))
+      +dead : Bool <- custody_dead(db,trimmed,String.is_empty(trimmed))
+      recovered : Unit <- recover_if_dead(db,session,dead)
+      wake_admit(db,session,cursor,launch,lock,state,dead)
 
 def wake_owned(+db: String, +session: String, +cursor: String, launch: String -> IO(Result<&1,&1,U32 & String,Unit>), lock: Maybe<U32>) -> IO(Result<&1,&1,U32 & String,Unit>):
   match lock:

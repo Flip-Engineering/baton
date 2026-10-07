@@ -46,11 +46,20 @@ def apply(+db: String, +command: C.Command) -> IO(Result<&1, &1, U32 & String, S
 def claim_sql(+session: String, +owner: String) -> String:
   "INSERT OR REPLACE INTO wake_claims(session,state,owner,generation) VALUES(" ++ C.q(session) ++ ",'claimed'," ++ C.q(owner) ++ ",coalesce((SELECT generation FROM wake_claims WHERE session=" ++ C.q(session) ++ "),0)+1);"
 
-def release_sql(+session: String) -> String:
-  "UPDATE wake_claims SET state='unclaimed' WHERE session=" ++ C.q(session) ++ ";"
+# A release names the exact row it settles: the owner and generation written
+# at admission, read back under the same held lock. A delete that names a
+# stale ticket removes nothing, so a late settler can never clear a newer
+# owner's row that an acknowledgement, a stop, or a takeover left behind.
+def release_ticket_sql(+session: String, +owner: String, +generation: String) -> String:
+  "DELETE FROM wake_claims WHERE session=" ++ C.q(session) ++ " AND owner=" ++ C.q(owner) ++ " AND generation=CAST(" ++ C.q(generation) ++ " AS INTEGER);"
 
-def clear_claim_sql(+session: String) -> String:
-  "DELETE FROM wake_claims WHERE session=" ++ C.q(session) ++ ";"
+# Stale execution metadata recovery. When host custody observes the recorded
+# attempt dead, the takeover marks its row exited with a fixed owner-death
+# marker instead of trusting its phase. The row's exit code stays in the
+# attempt directory's status file; the marker only records how the row died.
+# The phase guard keeps the write idempotent.
+def record_owner_death_sql(+session: String) -> String:
+  "UPDATE executions SET phase='exited',status='owner-death' WHERE session=" ++ C.q(session) ++ " AND phase<>'exited';"
 
 # Absent-tolerant claim read. SQLite resolves every named table when it
 # prepares a statement, so one statement cannot guard on sqlite_master and
@@ -74,19 +83,50 @@ def claim_state(+db: String, +session: String) -> IO(String):
     state : String <- read_claim_when_present(db,session,String.eq(present,"1\n"))
     IO.pure(String,state)
 
+# Absent-tolerant ticket reads. Empty owner and zero generation when the table
+# is missing or no row exists, otherwise the recorded admission identity. The
+# settler reads both under its held lock and releases only the exact row.
+def claim_owner_value_sql(+session: String) -> String:
+  "SELECT coalesce((SELECT owner FROM wake_claims WHERE session=" ++ C.q(session) ++ "),'');"
+
+def claim_generation_value_sql(+session: String) -> String:
+  "SELECT coalesce((SELECT generation FROM wake_claims WHERE session=" ++ C.q(session) ++ "),0);"
+
+def read_claim_owner_when_present(+db: String, +session: String, present: Bool) -> IO(String):
+  match present:
+    case False{}: IO.pure(String,"")
+    case True{}: IO.try(String,DB.Sql.query(db,claim_owner_value_sql(session)))
+
+def read_claim_generation_when_present(+db: String, +session: String, present: Bool) -> IO(String):
+  match present:
+    case False{}: IO.pure(String,"0\n")
+    case True{}: IO.try(String,DB.Sql.query(db,claim_generation_value_sql(session)))
+
+def claim_owner(+db: String, +session: String) -> IO(String):
+  do IO<String>:
+    present : String <- IO.try(String,DB.Sql.query(db,claim_state_present_sql()))
+    owner : String <- read_claim_owner_when_present(db,session,String.eq(present,"1\n"))
+    IO.pure(String,owner)
+
+def claim_generation(+db: String, +session: String) -> IO(String):
+  do IO<String>:
+    present : String <- IO.try(String,DB.Sql.query(db,claim_state_present_sql()))
+    generation : String <- read_claim_generation_when_present(db,session,String.eq(present,"1\n"))
+    IO.pure(String,generation)
+
 def claim(db: String, session: String, owner: String) -> IO(Unit):
   do IO<Unit>:
     claimed : String <- IO.try(String,DB.Sql.query(db,claim_sql(session,owner)))
     IO.pure(Unit,Unit{})
 
-def release(db: String, session: String) -> IO(Unit):
+def release_ticket(db: String, session: String, owner: String, generation: String) -> IO(Unit):
   do IO<Unit>:
-    released : String <- IO.try(String,DB.Sql.query(db,release_sql(session)))
+    released : String <- IO.try(String,DB.Sql.query(db,release_ticket_sql(session,owner,Tx.trim_nl(generation))))
     IO.pure(Unit,Unit{})
 
-def clear_claim(db: String, session: String) -> IO(Unit):
+def record_owner_death(db: String, session: String) -> IO(Unit):
   do IO<Unit>:
-    cleared : String <- IO.try(String,DB.Sql.query(db,clear_claim_sql(session)))
+    recorded : String <- IO.try(String,DB.Sql.query(db,record_owner_death_sql(session)))
     IO.pure(Unit,Unit{})
 
 law claim_sql_writes_a_claimed_row:
@@ -97,40 +137,38 @@ law claim_sql_writes_a_claimed_row:
 def claim_sql_writes_a_claimed_row(session,owner):
   {==}
 
-law release_sql_marks_the_session_unclaimed:
+law release_names_the_exact_admission_ticket:
   for session: String
-  {release_sql(session) == "UPDATE wake_claims SET state='unclaimed' WHERE session=" ++ C.q(session) ++ ";" : String}
+  for owner: String
+  for generation: String
+  {release_ticket_sql(session,owner,generation) == "DELETE FROM wake_claims WHERE session=" ++ C.q(session) ++ " AND owner=" ++ C.q(owner) ++ " AND generation=CAST(" ++ C.q(generation) ++ " AS INTEGER);" : String}
 
-def release_sql_marks_the_session_unclaimed(session):
+def release_names_the_exact_admission_ticket(session,owner,generation):
   {==}
 
-law release_sql_inserts_no_row:
+law release_inserts_no_row:
   for session: String
-  {Tx.starts_with(release_sql(session),"INSERT") == False{} : Bool}
+  for owner: String
+  for generation: String
+  {Tx.starts_with(release_ticket_sql(session,owner,generation),"INSERT") == False{} : Bool}
 
-def release_sql_inserts_no_row(session):
+def release_inserts_no_row(session,owner,generation):
   {==}
 
-law clear_claim_sql_deletes_the_session_row:
+law owner_death_marks_only_unexited_attempts:
   for session: String
-  {clear_claim_sql(session) == "DELETE FROM wake_claims WHERE session=" ++ C.q(session) ++ ";" : String}
+  {record_owner_death_sql(session) == "UPDATE executions SET phase='exited',status='owner-death' WHERE session=" ++ C.q(session) ++ " AND phase<>'exited';" : String}
 
-def clear_claim_sql_deletes_the_session_row(session):
-  {==}
-
-law clear_claim_sql_updates_no_state:
-  for session: String
-  {Tx.starts_with(clear_claim_sql(session),"UPDATE") == False{} : Bool}
-
-def clear_claim_sql_updates_no_state(session):
+def owner_death_marks_only_unexited_attempts(session):
   {==}
 
 law claim_and_release_are_distinct_transitions:
   for session: String
   for owner: String
-  {String.eq(claim_sql(session,owner),release_sql(session)) == False{} : Bool}
+  for generation: String
+  {String.eq(claim_sql(session,owner),release_ticket_sql(session,owner,generation)) == False{} : Bool}
 
-def claim_and_release_are_distinct_transitions(session,owner):
+def claim_and_release_are_distinct_transitions(session,owner,generation):
   {==}
 
 law missing_claim_table_reads_empty:

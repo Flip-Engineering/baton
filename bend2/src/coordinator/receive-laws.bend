@@ -736,18 +736,22 @@ law a_queued_invocation_without_the_lock_clears_nothing:
 def a_queued_invocation_without_the_lock_clears_nothing(db,session):
   {==}
 
-law the_holder_releases_only_when_no_input_remains_owed:
+law the_holder_releases_only_its_own_ticket:
   for +db: String
   for +session: String
   for +handle: U32
   {Receive.settle_owned(db,session,Some{handle}) == (do IO<Unit>:
+    +owner : String <- Store.claim_owner(db,session)
+    +generation : String <- Store.claim_generation(db,session)
     pending : String <- IO.try(String,DB.Sql.query(db,Receive.pending_count_sql(session,"0")))
-    live : String <- IO.try(String,DB.Sql.query(db,Receive.retained_attempt_live_sql(session)))
-    left : Unit <- Receive.release_if_settled(db,session,Bool.and(String.eq(pending,"0\n"),String.eq(live,"0\n")))
+    dir : String <- IO.try(String,DB.Sql.query(db,Receive.attempt_dir_sql(session)))
+    +trimmed : String <- IO.pure(String,Tx.trim_nl(dir))
+    dead : Bool <- Receive.custody_dead(db,trimmed,String.is_empty(trimmed))
+    left : Unit <- Receive.release_if_ticket(db,session,Tx.trim_nl(owner),generation,Bool.and(String.eq(pending,"0\n"),dead))
     unlocked : Unit <- IO.try(Unit,Lock.SessionLock.release(handle))
     IO.pure(Unit,Unit{})) : IO(Unit)}
 
-def the_holder_releases_only_when_no_input_remains_owed(db,session,handle):
+def the_holder_releases_only_its_own_ticket(db,session,handle):
   {==}
 
 # Negative controls. Each names the step a mutant would take and shows the code
@@ -779,24 +783,63 @@ law an_owned_wake_admits_through_the_fence:
 def an_owned_wake_admits_through_the_fence(db,session,cursor,launch,lock):
   {==}
 
-def fenced_admission_reads_owner_and_liveness(+db: String, +session: String, +cursor: String, launch: String -> IO(Result<&1,&1,U32 & String,Unit>), +lock: U32) -> IO(Result<&1,&1,U32 & String,Unit>):
+def fenced_admission_reads_claim_and_custody(+db: String, +session: String, +cursor: String, launch: String -> IO(Result<&1,&1,U32 & String,Unit>), +lock: U32) -> IO(Result<&1,&1,U32 & String,Unit>):
   do IO<Result<&1,&1,U32 & String,Unit>>:
     state : String <- Store.claim_state(db,session)
-    live : String <- IO.try(String,DB.Sql.query(db,Receive.retained_attempt_live_sql(session)))
-    Receive.wake_stand(db,session,cursor,launch,lock,Bool.and(String.eq(Tx.trim_nl(state),"claimed"),String.eq(live,"1\n")))
+    dir : String <- IO.try(String,DB.Sql.query(db,Receive.attempt_dir_sql(session)))
+    +trimmed : String <- IO.pure(String,Tx.trim_nl(dir))
+    +dead : Bool <- Receive.custody_dead(db,trimmed,String.is_empty(trimmed))
+    recovered : Unit <- Receive.recover_if_dead(db,session,dead)
+    Receive.wake_admit(db,session,cursor,launch,lock,state,dead)
 
-law the_wake_admits_only_past_a_live_owner:
+law the_wake_admits_on_claim_and_custody:
   for +db: String
   for +session: String
   for +cursor: String
   for launch: String -> IO(Result<&1,&1,U32 & String,Unit>)
   for +lock: U32
-  {Receive.wake_fenced(db,session,cursor,launch,lock,True{}) == fenced_admission_reads_owner_and_liveness(db,session,cursor,launch,lock) : IO(Result<&1,&1,U32 & String,Unit>)}
+  {Receive.wake_fenced(db,session,cursor,launch,lock,True{}) == fenced_admission_reads_claim_and_custody(db,session,cursor,launch,lock) : IO(Result<&1,&1,U32 & String,Unit>)}
 
-def the_wake_admits_only_past_a_live_owner(db,session,cursor,launch,lock):
+def the_wake_admits_on_claim_and_custody(db,session,cursor,launch,lock):
   {==}
 
-law a_live_owner_launches_nothing:
+law a_claimed_obligation_with_ambiguous_custody_is_held:
+  {Receive.wake_held("claimed\n",False{}) == True{} : Bool}
+
+def a_claimed_obligation_with_ambiguous_custody_is_held():
+  {==}
+
+law an_observed_death_releases_the_obligation:
+  {Receive.wake_held("claimed\n",True{}) == False{} : Bool}
+
+def an_observed_death_releases_the_obligation():
+  {==}
+
+law no_claim_names_no_holder:
+  {Receive.wake_held("",False{}) == False{} : Bool}
+
+def no_claim_names_no_holder():
+  {==}
+
+law recovery_markers_mean_no_holder:
+  {Receive.custody_recovery_none(Done{None{}}) == True{} : Bool}
+
+def recovery_markers_mean_no_holder():
+  {==}
+
+law a_started_attempt_without_terminal_marks_is_ambiguous:
+  {Receive.custody_recovery_none(Done{Some{""}}) == False{} : Bool}
+
+def a_started_attempt_without_terminal_marks_is_ambiguous():
+  {==}
+
+law a_failed_recovery_read_keeps_the_obligation:
+  {Receive.custody_recovery_none(Fail{(2,"")}) == False{} : Bool}
+
+def a_failed_recovery_read_keeps_the_obligation():
+  {==}
+
+law a_held_obligation_launches_nothing:
   for +db: String
   for +session: String
   for +cursor: String
@@ -806,10 +849,10 @@ law a_live_owner_launches_nothing:
     released : Unit <- IO.try(Unit,Lock.SessionLock.release(lock))
     IO.pure(Result<&1,&1,U32 & String,Unit>,Done{Unit{}})) : IO(Result<&1,&1,U32 & String,Unit>)}
 
-def a_live_owner_launches_nothing(db,session,cursor,launch,lock):
+def a_held_obligation_launches_nothing(db,session,cursor,launch,lock):
   {==}
 
-law a_dead_owner_proceeds_to_claim_and_launch:
+law a_released_obligation_proceeds_to_claim_and_launch:
   for +db: String
   for +session: String
   for +cursor: String
@@ -817,7 +860,7 @@ law a_dead_owner_proceeds_to_claim_and_launch:
   for lock: U32
   {Receive.wake_stand(db,session,cursor,launch,lock,False{}) == Receive.wake_decided(db,session,cursor,launch,lock,True{}) : IO(Result<&1,&1,U32 & String,Unit>)}
 
-def a_dead_owner_proceeds_to_claim_and_launch(db,session,cursor,launch,lock):
+def a_released_obligation_proceeds_to_claim_and_launch(db,session,cursor,launch,lock):
   {==}
 
 law an_absent_wake_target_never_claims_the_obligation:
