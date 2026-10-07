@@ -135,15 +135,18 @@ def cycle_started(start: P.RetainedStart, payload: String) -> IO(Unit):
       line : Maybe<String> <- IO.try(Maybe<String>,P.ProcessChild.read_line(handle))
       cycle_lines(handle,line)
 
-# The partially observed attempt: the observer prints the first line, which
-# advances its durable checkpoint, and then stops. The recovery observer
-# resumes at that checkpoint instead of replaying the stream.
+# Prints one observed line, or states that the stream ended.
 def printed_line(line: Maybe<String>) -> IO(Unit):
   match line:
     case None{}: IO.print("observed-eof")
     case Some{text}: IO.print(text)
 
-def partial_started(start: P.RetainedStart, payload: String) -> IO(Unit):
+# The partially observed attempt. With commit=1 the observer records the
+# checkpoint after reading, which stands for the observation owner's own durable
+# store or report commit. With commit=0 it reads without recording, which is the
+# crash-between-read-and-commit case: recovery must report that frame again
+# rather than skip it.
+def partial_started(start: P.RetainedStart, payload: String, commit: Bool) -> IO(Unit):
   match start:
     case P.Unstarted{error}: IO.die(Unit,1,error)
     case P.Retained{+handle}: do IO<Unit>:
@@ -153,8 +156,17 @@ def partial_started(start: P.RetainedStart, payload: String) -> IO(Unit):
       shown : Unit <- printed_line(first)
       second : Maybe<String> <- IO.try(Maybe<String>,P.ProcessChild.read_line(handle))
       observed : Unit <- printed_line(second)
+      recorded : Unit <- commit_step(handle,commit)
       gate : String <- IO.try(String,Text.Text.read("-"))
       IO.print("partial-released")
+
+def commit_step(+handle: U32, commit: Bool) -> IO(Unit):
+  match commit:
+    case True{}: do IO<Unit>:
+      result : Result<&1,&1,U32 & String,Unit> <- Custody.Instance.commit(handle)
+      printed : Unit <- operation("commit",result)
+      IO.pure(Unit,Unit{})
+    case False{}: IO.print("commit-skipped")
 
 # The held attempt: the observer writes the payload and then stops reading, so
 # its owner keeps the native work and the spool. The driver kills this process
@@ -171,7 +183,8 @@ def hold_started(start: P.RetainedStart, payload: String) -> IO(Unit):
 def attempted_started(start: P.RetainedStart, payload: String, kind: U32) -> IO(Unit):
   match kind:
     case 2: hold_started(start,payload)
-    case 3: partial_started(start,payload)
+    case 3: partial_started(start,payload,True{})
+    case 4: partial_started(start,payload,False{})
     case _: cycle_started(start,payload)
 
 def attempted_locked(+directory: String, +database: String, cwd: String, payload: String, program: List<String>, lock: Maybe<U32>, kind: U32) -> IO(Unit):
@@ -232,7 +245,8 @@ def mode_number(+mode: String) -> U32:
   Bool.pick(U32,String.eq(mode,"lock-try"),9,
   Bool.pick(U32,String.eq(mode,"owner-try"),10,
   Bool.pick(U32,String.eq(mode,"recover-retained"),11,
-  Bool.pick(U32,String.eq(mode,"partial"),12,0))))))))))))
+  Bool.pick(U32,String.eq(mode,"partial"),12,
+  Bool.pick(U32,String.eq(mode,"partial-uncommitted"),13,0)))))))))))))
 
 def dispatch(mode: U32, rest: List<String>) -> IO(Unit):
   match mode:
@@ -248,6 +262,7 @@ def dispatch(mode: U32, rest: List<String>) -> IO(Unit):
     case 10: owner_try_cli(rest)
     case 11: recover_cli(rest)
     case 12: admit_cli(rest,3)
+    case 13: admit_cli(rest,4)
     case _: IO.die(Unit,2,"instance mode required")
 
 def cli(args: List<String>) -> IO(Unit):

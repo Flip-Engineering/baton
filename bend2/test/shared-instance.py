@@ -285,10 +285,11 @@ class SharedInstance(unittest.TestCase):
         self.assertNotIn('stale-write-ok', output)
         print('evidence retirement', output.replace('\n', '|'))
 
-    def test_recovery_resumes_at_the_recorded_checkpoint(self):
+    def test_recovery_resumes_at_the_committed_checkpoint(self):
         directory, child = self.begin('partial', mode='partial', payload='one\n')
         self.line(child, 'admitted')
         self.line(child, 'echo:one')
+        self.line(child, 'commit-ok')
         cursor = directory / 'cursor'
         self.hold(cursor, '')
         self.assertGreater(cursor.stat().st_size, 0)
@@ -303,19 +304,40 @@ class SharedInstance(unittest.TestCase):
                          'the recovery observer replayed output the checkpoint already covered')
         self.write(directory, 'exit\n')
         self.hold(log, 'native-exit 0')
-        print('evidence checkpoint-bytes', cursor.stat().st_size)
-        print('evidence recovery-log', text.replace('\n', '|'))
+        print('evidence committed-checkpoint-bytes', cursor.stat().st_size)
+        print('evidence committed-recovery-log', text.replace('\n', '|'))
 
-    def test_corrupt_checkpoint_is_refused(self):
-        directory, child = self.begin('corrupt', mode='hold', payload='one\n')
+    def test_crash_between_read_and_commit_reports_the_frame_again(self):
+        directory, child = self.begin('uncommitted', mode='partial-uncommitted',
+                                      payload='one\n')
         self.line(child, 'admitted')
-        spool = directory / 'stdout'
-        self.hold(spool, 'echo:one')
-        (directory / 'cursor').write_bytes(b'not a checkpoint')
+        self.line(child, 'echo:one')
+        self.line(child, 'commit-skipped')
+        self.assertFalse((directory / 'cursor').exists(),
+                         'a bare read must not advance the durable checkpoint')
+        child.kill()
+        child.wait(timeout=10)
+        log = directory / 'observer.log'
+        text = self.hold(log, 'echo:one')
+        self.assertIn('"role": "native"', text,
+                      'recovery must replay from the beginning when nothing was committed')
+        print('evidence uncommitted-recovery-log', text.replace('\n', '|'))
+
+    def test_torn_checkpoint_recovers_and_preserves_output(self):
+        directory, child = self.begin('torn', mode='partial', payload='one\n')
+        self.line(child, 'admitted')
+        self.line(child, 'echo:one')
+        self.line(child, 'commit-ok')
+        (directory / 'cursor').write_bytes(b'\x00torn-checkpoint')
         child.kill()
         child.wait(timeout=10)
         marker = self.hold(directory / 'cursor-error', 'unreadable observation checkpoint')
-        print('evidence corrupt-checkpoint', marker.strip())
+        log = directory / 'observer.log'
+        text = self.hold(log, 'echo:one')
+        self.assertIn('"role": "native"', text,
+                      'a damaged checkpoint must replay the stream rather than lose it')
+        print('evidence torn-checkpoint', marker.strip())
+        print('evidence torn-recovery-log', text.replace('\n', '|'))
 
     def test_election_directory_binds_the_physical_database(self):
         directory, child = self.begin('layout', payload='layout\n')
@@ -335,6 +357,46 @@ class SharedInstance(unittest.TestCase):
         self.assertGreater(token, 0)
         self.assertEqual(record.read_bytes()[40:].split(b'\0')[0].decode(), str(socket_path))
         print('evidence election', str(ipc), key, 'epoch', epoch, 'pid', pid)
+
+    def test_repeated_admission_starts_no_second_native(self):
+        directory, first = self.begin('repeat', mode='hold', payload='one\n')
+        self.line(first, 'admitted')
+        spool = directory / 'stdout'
+        self.hold(spool, 'echo:one')
+        replayed, second = self.begin('repeat', mode='hold', payload='one\n')
+        second.stdin.close()
+        second.wait(timeout=60)
+        self.assertNotEqual(second.returncode, 0,
+                            'a repeated admission while an observer holds the attempt is refused')
+        self.assertEqual(spool.read_text(errors='replace').count('"role": "native"'), 1,
+                         'a repeated admission must not start a second native child')
+        first.kill()
+        first.wait(timeout=10)
+        again, third = self.begin('repeat', mode='hold', payload='one\n')
+        output = ''.join(third.output)
+        self.line(third, 'admitted')
+        self.hold(again / 'stdout', 'echo:one')
+        again_text = (again / 'stdout').read_text(errors='replace')
+        self.assertEqual(again_text.count('"role": "native"'), 1)
+        self.assertIn('echo:one', again_text)
+        third.kill()
+        third.wait(timeout=10)
+        print('evidence repeated-admission second-exit', second.returncode)
+        print('evidence repeated-admission spool', again_text.replace('\n', '|'))
+
+    def test_conflicting_reuse_of_one_attempt_is_refused(self):
+        directory, child = self.begin('conflict', mode='hold', payload='one\n')
+        self.line(child, 'admitted')
+        self.hold(directory / 'stdout', 'echo:one')
+        other, second = self.begin('conflict', mode='hold', payload='different\n')
+        second.stdin.close()
+        second.wait(timeout=60)
+        self.assertNotEqual(second.returncode, 0,
+                            'different work in the same attempt directory must be refused')
+        self.assertIn('File exists', second.stderr.read())
+        print('evidence conflicting-reuse refused')
+        child.kill()
+        child.wait(timeout=10)
 
     def test_shutdown_releases_the_database_for_a_new_owner(self):
         directory, child = self.begin('a0')
