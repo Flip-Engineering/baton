@@ -73,10 +73,9 @@ def expected_head(old_target: String) -> String:
 
 def mutation_old_value(old_target: String) -> String:
   +o = old_target
-  match Tx.str_eq(o, ""):
-    case True{}: zero_oid()
-    case False{}: o
-
+  Bool.pick(Bool, Tx.str_eq(o, ""),
+    zero_oid(),
+    o)
 def request_holder(request: LandingRequest) -> String:
   match request:
     case LandingRequested{intent, name, old_target, content, guard, artifact, attempt_directory, mutation}:
@@ -149,10 +148,9 @@ def Landing.old_value_checked(handle: U32, request: LandingRequest, published: S
   +base = basis
   +found = head
   +expected = expected_head(req.old_target)
-  match Tx.str_eq(found, expected):
-    case False{}: Landing.stopped(req, h, LandingOldValueMismatch{expected, found, Done{Unit{}}})
-    case True{}: Landing.mutated(h, req, cand, base, pub)
-
+  Bool.pick(Bool, Tx.str_eq(found, expected),
+    Landing.mutated(h, req, cand, base, pub),
+    Landing.stopped(req, h, LandingOldValueMismatch{expected, found, Done{Unit{}}}))
 # The mutation runs through the guarded capture with the live claim descriptor, so the child
 # inherits the lock and the artifact retains the diagnostics and the terminal outcome.
 def Landing.mutated(handle: U32, request: LandingRequest, candidate: String, basis: String, published: String) -> IO(Landing):

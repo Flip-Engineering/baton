@@ -78,49 +78,43 @@ def verdict_fifth(raw: String, wanted: String) -> ReceiptVerdict:
   +r5 = raw
   +w5 = wanted
   +whole5 = Tx.str_cat("qualified\t", Tx.str_cat(w5, "\t0\t\t"))
-  match Tx.str_eq(r5, whole5):
-    case True{}: verdict_pending_missing(r5, w5)
-    case False{}: VerdictRefused{r5, "record does not match the qualified production shape"}
-
+  Bool.pick(Bool, Tx.str_eq(r5, whole5),
+    verdict_pending_missing(r5, w5),
+    VerdictRefused{r5, "record does not match the qualified production shape"})
 def verdict_fourth(raw: String, wanted: String) -> ReceiptVerdict:
   +r4 = raw
   +w4 = wanted
   +whole4 = Tx.str_cat("qualified\t", Tx.str_cat(w4, "\t0\t\t0\t\t"))
-  match Tx.str_eq(r4, whole4):
-    case True{}: verdict_trailing(r4, w4)
-    case False{}: verdict_fifth(r4, w4)
-
+  Bool.pick(Bool, Tx.str_eq(r4, whole4),
+    verdict_trailing(r4, w4),
+    verdict_fifth(r4, w4))
 def verdict_third(raw: String, wanted: String) -> ReceiptVerdict:
   +r3 = raw
   +w3 = wanted
   +whole3 = Tx.str_cat("qualified\t", Tx.str_cat(w3, "\t0\t\t0"))
-  match Tx.str_eq(r3, whole3):
-    case True{}: verdict_no_final_separator(r3, w3)
-    case False{}: verdict_fourth(r3, w3)
-
+  Bool.pick(Bool, Tx.str_eq(r3, whole3),
+    verdict_no_final_separator(r3, w3),
+    verdict_fourth(r3, w3))
 def verdict_second(raw: String, wanted: String) -> ReceiptVerdict:
   +r2 = raw
   +w2 = wanted
   +whole2 = Tx.str_cat("qualified\t", Tx.str_cat(w2, "\t0\t\t1\t"))
-  match Tx.str_eq(r2, whole2):
-    case True{}: VerdictPending{r2, w2, "1"}
-    case False{}: verdict_third(r2, w2)
-
+  Bool.pick(Bool, Tx.str_eq(r2, whole2),
+    VerdictPending{r2, w2, "1"},
+    verdict_third(r2, w2))
 def verdict_exact(raw: String, wanted: String) -> ReceiptVerdict:
   +r8 = raw
   +w8 = wanted
   +whole8 = Tx.str_cat("qualified\t", Tx.str_cat(w8, "\t0\t\t0\t"))
-  match Tx.str_eq(r8, whole8):
-    case True{}: VerdictAdmitted{r8, w8}
-    case False{}: verdict_second(r8, w8)
-
+  Bool.pick(Bool, Tx.str_eq(r8, whole8),
+    VerdictAdmitted{r8, w8},
+    verdict_second(r8, w8))
 def receipt_verdict(record: String, wanted: String) -> ReceiptVerdict:
   +raw = record
   +path = wanted
-  match carries_tab(path):
-    case True{}: VerdictRefused{raw, "requested path carries a separator"}
-    case False{}: verdict_exact(raw, path)
-
+  Bool.pick(Bool, carries_tab(path),
+    VerdictRefused{raw, "requested path carries a separator"},
+    verdict_exact(raw, path))
 def verdict_admitted(verdict: ReceiptVerdict) -> Bool:
   match verdict:
     case VerdictAdmitted{raw, path}: True{}

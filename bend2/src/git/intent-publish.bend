@@ -56,30 +56,26 @@ def production_record(tag: String, path: String, pending: String) -> String:
 # for what it establishes, not for the producer's full check.
 def name_char_ok_slash(c: Char) -> Bool:
   +ch = c
-  match Char.is_eq(ch, Char.from_u32(47)):
-    case True{}: False{}
-    case False{}: True{}
-
+  Bool.pick(Bool, Char.is_eq(ch, Char.from_u32(47)),
+    False{},
+    True{})
 def name_char_ok_next(c: Char) -> Bool:
   +ch = c
-  match Tx.is_nul(ch):
-    case True{}: False{}
-    case False{}: name_char_ok_slash(ch)
-
+  Bool.pick(Bool, Tx.is_nul(ch),
+    False{},
+    name_char_ok_slash(ch))
 def name_char_ok(c: Char) -> Bool:
   +ch = c
-  match Tx.is_tab(ch):
-    case True{}: False{}
-    case False{}: name_char_ok_next(ch)
-
+  Bool.pick(Bool, Tx.is_tab(ch),
+    False{},
+    name_char_ok_next(ch))
 def name_go_char(rest: String, ok: Bool, c: Char) -> Bool:
   +tail = rest
   +sofar = ok
   +here = c
-  match name_char_ok(here):
-    case False{}: False{}
-    case True{}: name_go(tail, sofar)
-
+  Bool.pick(Bool, name_char_ok(here),
+    name_go(tail, sofar),
+    False{})
 def name_go(text: String, ok: Bool) -> Bool:
   match text:
     case SNil{}: ok
@@ -99,91 +95,78 @@ def name_has_nul_go(text: String) -> Bool:
 
 def name_not_dot_dot(text: String) -> Bool:
   +n = text
-  match Tx.str_eq(n, ".."):
-    case True{}: False{}
-    case False{}: True{}
-
+  Bool.pick(Bool, Tx.str_eq(n, ".."),
+    False{},
+    True{})
 def name_not_dot(text: String) -> Bool:
   +n = text
-  match Tx.str_eq(n, "."):
-    case True{}: False{}
-    case False{}: name_not_dot_dot(n)
-
+  Bool.pick(Bool, Tx.str_eq(n, "."),
+    False{},
+    name_not_dot_dot(n))
 def name_precondition_dots(name: String) -> Bool:
   +n = name
-  match name_not_dot(n):
-    case False{}: False{}
-    case True{}: name_not_dot_dot(n)
-
+  Bool.pick(Bool, name_not_dot(n),
+    name_not_dot_dot(n),
+    False{})
 # The directory precondition the ensure effect itself enforces: empty and NUL are outer
 # failures there, and a tab is refused by publish. Checked before ensure so no effect runs
 # on a directory the producer would reject.
 
 def name_precondition_go(name: String) -> Bool:
   +n = name
-  match name_go(n, True{}):
-    case False{}: False{}
-    case True{}: name_precondition_dots(n)
-
+  Bool.pick(Bool, name_go(n, True{}),
+    name_precondition_dots(n),
+    False{})
 def name_precondition(name: String) -> Bool:
   +n = name
-  match Tx.str_eq(n, ""):
-    case True{}: False{}
-    case False{}: name_precondition_go(n)
-
+  Bool.pick(Bool, Tx.str_eq(n, ""),
+    False{},
+    name_precondition_go(n))
 def directory_tab(directory: String) -> Bool:
   +d = directory
-  match I.carries_tab(d):
-    case True{}: False{}
-    case False{}: True{}
-
+  Bool.pick(Bool, I.carries_tab(d),
+    False{},
+    True{})
 def directory_next(directory: String) -> Bool:
   +d = directory
-  match name_has_nul_go(d):
-    case True{}: False{}
-    case False{}: directory_tab(d)
-
+  Bool.pick(Bool, name_has_nul_go(d),
+    False{},
+    directory_tab(d))
 def directory_precondition(directory: String) -> Bool:
   +d = directory
-  match Tx.str_eq(d, ""):
-    case True{}: False{}
-    case False{}: directory_next(d)
-
+  Bool.pick(Bool, Tx.str_eq(d, ""),
+    False{},
+    directory_next(d))
 def publish_third(raw: String, path: String) -> String:
   +r = raw
   +p = path
-  match Tx.str_eq(r, production_record("existing", p, "1")):
-    case True{}: "existing-pending"
-    case False{}: "other"
-
+  Bool.pick(Bool, Tx.str_eq(r, production_record("existing", p, "1")),
+    "existing-pending",
+    "other")
 def publish_second(raw: String, path: String) -> String:
   +r = raw
   +p = path
-  match Tx.str_eq(r, production_record("existing", p, "0")):
-    case True{}: "existing"
-    case False{}: publish_third(r, p)
-
+  Bool.pick(Bool, Tx.str_eq(r, production_record("existing", p, "0")),
+    "existing",
+    publish_third(r, p))
 def classify_publish(raw: String, path: String) -> String:
   +r = raw
   +p = path
-  match Tx.str_eq(r, production_record("published", p, "0")):
-    case True{}: "published"
-    case False{}: publish_second(r, p)
-
+  Bool.pick(Bool, Tx.str_eq(r, production_record("published", p, "0")),
+    "published",
+    publish_second(r, p))
 def ensure_second(raw: String, path: String) -> String:
   +r = raw
   +p = path
-  match Tx.str_eq(r, production_record("present", p, "0")):
-    case True{}: "present"
-    case False{}: "other"
-
+  Bool.pick(Bool, Tx.str_eq(r, production_record("present", p, "0")),
+    "present",
+    "other")
 def classify_ensure(raw: String, path: String) -> String:
   +r = raw
   +p = path
-  match Tx.str_eq(r, production_record("created", p, "0")):
-    case True{}: "created"
-    case False{}: ensure_second(r, p)
-
+  Bool.pick(Bool, Tx.str_eq(r, production_record("created", p, "0")),
+    "created",
+    ensure_second(r, p))
 def Intent.refused(request: I.IntentInput, step: String, name: String, raw: String) -> IO(IntentPublish):
   +req = request
   +s = step
@@ -199,10 +182,9 @@ def Intent.read_back_compare(request: I.IntentInput, publication: String, path: 
   +p = path
   +want = content
   +got = seen
-  match Tx.str_eq(got, want):
-    case True{}: IO.pure(IntentPublish, IntentBytesPublished{req, pub, p, got})
-    case False{}: IO.pure(IntentPublish, PublishContentMismatch{req, pub, want, got})
-
+  Bool.pick(Bool, Tx.str_eq(got, want),
+    IO.pure(IntentPublish, IntentBytesPublished{req, pub, p, got}),
+    IO.pure(IntentPublish, PublishContentMismatch{req, pub, want, got}))
 def Intent.read_back_seen(request: I.IntentInput, publication: String, path: String, content: String, observed: Result<&1, &1, U32 & String, String>) -> IO(IntentPublish):
   +req = request
   +pub = publication
@@ -227,30 +209,27 @@ def publish_admit_third(request: I.IntentInput, path: String, content: String, r
   +want = content
   +r = raw
   +k = kind
-  match Tx.str_eq(k, "existing-pending"):
-    case True{}: IO.pure(IntentPublish, PublishExistingPending{req, r, p})
-    case False{}: Intent.refused(req, "publish", "", r)
-
+  Bool.pick(Bool, Tx.str_eq(k, "existing-pending"),
+    IO.pure(IntentPublish, PublishExistingPending{req, r, p}),
+    Intent.refused(req, "publish", "", r))
 def publish_admit_second(request: I.IntentInput, path: String, content: String, raw: String, kind: String) -> IO(IntentPublish):
   +req = request
   +p = path
   +want = content
   +r = raw
   +k = kind
-  match Tx.str_eq(k, "existing"):
-    case True{}: Intent.read_back(req, r, p, want)
-    case False{}: publish_admit_third(req, p, want, r, k)
-
+  Bool.pick(Bool, Tx.str_eq(k, "existing"),
+    Intent.read_back(req, r, p, want),
+    publish_admit_third(req, p, want, r, k))
 def Intent.publish_admit(request: I.IntentInput, path: String, content: String, raw: String, kind: String) -> IO(IntentPublish):
   +req = request
   +p = path
   +want = content
   +r = raw
   +k = kind
-  match Tx.str_eq(k, "published"):
-    case True{}: Intent.read_back(req, r, p, want)
-    case False{}: publish_admit_second(req, p, want, r, k)
-
+  Bool.pick(Bool, Tx.str_eq(k, "published"),
+    Intent.read_back(req, r, p, want),
+    publish_admit_second(req, p, want, r, k))
 def Intent.publish_classify(request: I.IntentInput, path: String, content: String, raw: String) -> IO(IntentPublish):
   +req = request
   +p = path
@@ -284,10 +263,9 @@ def Intent.ensure_next(request: I.IntentInput, path: String, content: String, di
   +dir = directory
   +n = name
   +r = raw
-  match Tx.str_eq(kind, "other"):
-    case True{}: Intent.refused(req, "ensure", n, r)
-    case False{}: Intent.publish_now(req, p, want, dir, n)
-
+  Bool.pick(Bool, Tx.str_eq(kind, "other"),
+    Intent.refused(req, "ensure", n, r),
+    Intent.publish_now(req, p, want, dir, n))
 def Intent.ensure_admit(request: I.IntentInput, path: String, content: String, directory: String, name: String, raw: String) -> IO(IntentPublish):
   +req = request
   +p = path
@@ -327,10 +305,9 @@ def preflight_directory(request: I.IntentInput, path: String, content: String, d
   +want = content
   +dir = directory
   +n = name
-  match directory_precondition(dir):
-    case False{}: IO.pure(IntentPublish, PublishRefused{req, "directory", n, dir})
-    case True{}: publish_directory(req, p, want, dir, n)
-
+  Bool.pick(Bool, directory_precondition(dir),
+    publish_directory(req, p, want, dir, n),
+    IO.pure(IntentPublish, PublishRefused{req, "directory", n, dir}))
 law a_fresh_publication_record_is_admitted:
   {classify_publish("published\t/d/n\t0\t\t0\t", "/d/n") == "published" : String}
 
@@ -340,10 +317,9 @@ def preflight_name(request: I.IntentInput, path: String, content: String, direct
   +want = content
   +dir = directory
   +n = name
-  match name_precondition(n):
-    case False{}: IO.pure(IntentPublish, PublishRefused{req, "name", n, ""})
-    case True{}: preflight_directory(req, p, want, dir, n)
-
+  Bool.pick(Bool, name_precondition(n),
+    preflight_directory(req, p, want, dir, n),
+    IO.pure(IntentPublish, PublishRefused{req, "name", n, ""}))
 def Intent.publish_intent(request: I.IntentInput, directory: String, name: String, content: String) -> IO(IntentPublish):
   +req = request
   +dir = directory
@@ -351,11 +327,9 @@ def Intent.publish_intent(request: I.IntentInput, directory: String, name: Strin
   +want = content
   +derived = intent_path(dir, n)
   +asked = I.requested_path(req)
-  match Tx.str_eq(asked, derived):
-    case False{}: IO.pure(IntentPublish, PublishRefused{req, "association", n, derived})
-    case True{}: preflight_name(req, derived, want, dir, n)
-
-
+  Bool.pick(Bool, Tx.str_eq(asked, derived),
+    preflight_name(req, derived, want, dir, n),
+    IO.pure(IntentPublish, PublishRefused{req, "association", n, derived}))
 law a_fresh_publication_record_is_admitted:
   {classify_publish("published\t/d/n\t0\t\t0\t", "/d/n") == "published" : String}
 
