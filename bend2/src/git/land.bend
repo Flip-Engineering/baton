@@ -2139,24 +2139,29 @@ def ff_stage5_shared_answer(shared: SharedLanding, target: String, cand: String)
   +tg = target
   +c = cand
   match s:
-    case SharedClaimFailed{error}: FFDone{T.LBlocked{"the landing claim could not be taken"}}
+    case SharedClaimFailed{error}:
+      match error:
+        case (code, detail): FFDone{T.LBlocked{Tx.str_cat("the landing claim failed: ", detail)}}
     case SharedGuardBusy{target}: FFDone{T.LBlocked{"another landing holds the target"}}
     case SharedAdvanced{advance, released}:
       match released:
-        case Fail{error}: FFDone{T.LBlocked{"the advance ran but its release failed; inspect the target and the guard"}}
+        case Fail{error}:
+          match error:
+            case (code, detail): FFDone{T.LBlocked{Tx.str_cat("the advance ran but its release failed: ", detail)}}
         case Done{unit}: ff_stage5_adv_answer(advance, tg, c)
 
-# The checked adapter uses the same combined outcome, so it also refuses to answer landed when
-# the release failed.
 def ld_advance_shared_answer(shared: SharedLanding, target: String, cand: String) -> Ld:
   +s = shared
   +tg = target
   +c = cand
   match s:
-    case SharedClaimFailed{error}: LdFail{T.FCmd{"land", "the landing claim could not be taken"}}
+    case SharedClaimFailed{error}:
+      match error:
+        case (code, detail): LdFail{T.FCmd{"land", detail}}
     case SharedGuardBusy{target}: LdFail{T.FCmd{"land", "another landing holds the target; rerun land-checked to prepare and check against the current target"}}
     case SharedAdvanced{advance, released}:
       match released:
-        case Fail{error}: LdFail{T.FCmd{"land", "the advance ran but its release failed; inspect the target and the guard"}}
+        case Fail{error}:
+          match error:
+            case (code, detail): LdFail{T.FCmd{"land", detail}}
         case Done{unit}: ld_adv_answer(advance, tg, c)
-
