@@ -636,7 +636,6 @@ def attempt_reason(phase: String, released: String, acknowledged: String, report
                 Bool.pick(String,U32.is_lt(0,bytes),"eligible","no-diagnostic-files"))))))))
 
 def attempt_json(session: String, attempt: String, mode: String, phase: String, status: String, +directory: String, +stdout: U32, +stderr: U32, +observer: U32, +keeper: U32, released: U32, acknowledged: U32, reported: String, pending: String, level: String, path: String) -> String:
-  reason : String = attempt_reason(phase,Bool.pick(String,U32.is_lt(0,released),"1","0"),Bool.pick(String,U32.is_lt(0,acknowledged),"1","0"),reported,pending,level,path,U32.add(stdout,U32.add(stderr,U32.add(observer,keeper))))
   "{\"session\":" ++ J.string_literal(session)
   ++ ",\"attempt\":" ++ J.string_literal(attempt)
   ++ ",\"mode\":" ++ J.string_literal(mode)
@@ -652,8 +651,8 @@ def attempt_json(session: String, attempt: String, mode: String, phase: String, 
   ++ ",\"acknowledged\":" ++ Bool.pick(String,U32.is_lt(0,acknowledged),"true","false")
   ++ ",\"reported\":" ++ Bool.pick(String,String.eq(reported,"1"),"true","false")
   ++ ",\"pendingInput\":" ++ pending
-  ++ ",\"cleanupEligible\":" ++ Bool.pick(String,String.eq(reason,"eligible"),"true","false")
-  ++ ",\"cleanupReason\":" ++ J.string_literal(reason) ++ "}"
+  ++ ",\"cleanupEligible\":" ++ Bool.pick(String,String.eq(attempt_reason(phase,Bool.pick(String,U32.is_lt(0,released),"1","0"),Bool.pick(String,U32.is_lt(0,acknowledged),"1","0"),reported,pending,level,path,U32.add(stdout,U32.add(stderr,U32.add(observer,keeper)))),"eligible"),"true","false")
+  ++ ",\"cleanupReason\":" ++ J.string_literal(attempt_reason(phase,Bool.pick(String,U32.is_lt(0,released),"1","0"),Bool.pick(String,U32.is_lt(0,acknowledged),"1","0"),reported,pending,level,path,U32.add(stdout,U32.add(stderr,U32.add(observer,keeper))))) ++ "}"
 
 def attempt_fields(fields: List<String>) -> IO(String):
   match fields:
