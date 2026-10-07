@@ -235,13 +235,13 @@ def refs_resolve(+defs: SchemaDefs, +names: NameList) -> Bool:
 
 # The refs a form reaches without consuming an object member or an array element. A
 # record field, an array element, a dictionary value and a union case each consume a
-# member, so a cycle through any of them is guarded. A cycle through an optional form
-# alone consumes nothing.
+# member. A discriminated case keeps the same object as its payload, so its cases are
+# traversed here. A cycle through an optional form alone consumes nothing.
 def immediate_refs(form: SchemaForm) -> NameList:
   match form:
     case SfRef{name}: NlCons{name, NlNil{}}
     case SfUnion{+cases}: NlNil{}
-    case SfDiscriminated{+tag, +cases}: NlNil{}
+    case SfDiscriminated{+tag, cases}: immediate_refs(cases)
     case SfOptional{+inner}: immediate_refs(inner)
     case SfRecord{+fields}: NlNil{}
     case SfArray{+item}: NlNil{}
@@ -303,6 +303,8 @@ def refs_reach(+fuel: SchemaDefs, +form: SchemaForm, +defs: SchemaDefs, +target:
         case SfRef{name}:
           Bool.pick(Bool, String.eq(name, target), True{},
             refs_reach(reach_tail, def_body_or(defs, name), defs, target))
+        case SfDiscriminated{tag, cases}:
+          refs_reach(fuel, cases, defs, target)
         case SfFieldsCons{head, tail}:
           Bool.pick(Bool, refs_reach(fuel, head, defs, target), True{},
             refs_reach(fuel, tail, defs, target))
@@ -1696,4 +1698,42 @@ law schema_law_disc_nested_branch_wrong_leaf_refuses:
   {schema_admit_value(DefsCons{SchemaDef{"t", SfScalar{SsText{}}}, DefsNil{}}, SfRecord{SfFieldsCons{SfRequired{"outer", SfDiscriminated{"k", SfCasesCons{SchemaCase{"a", SfRecord{SfFieldsCons{SfRequired{"k", SfEnum{NlCons{"a", NlNil{}}}}, SfFieldsCons{SfRequired{"x", SfRef{"t"}}, SfFieldsNil{}}}}}, SfCasesCons{SchemaCase{"b", SfRecord{SfFieldsCons{SfRequired{"k", SfEnum{NlCons{"b", NlNil{}}}}, SfFieldsCons{SfRequired{"y", SfScalar{SsText{}}}, SfFieldsNil{}}}}}, SfCasesNil{}}}}}, SfFieldsNil{}}}, Codec.Robj{Codec.Rpair{"outer", Codec.Robj{Codec.Rpair{"k", Codec.Rstr{"a"}, Codec.Rpair{"x", Codec.Rnum{"1"}, Codec.Rnil{}}}}, Codec.Rnil{}}}) == SvRefused{"wrongKind"} : SchemaVerdict}
 
 def schema_law_disc_nested_branch_wrong_leaf_refuses():
+  {==}
+
+# The selected flat object is the payload of a discriminated case. A direct
+# reference in any case therefore forms an unguarded declaration cycle, even
+# when the input selects a different case.
+def disc_cycle_defs() -> SchemaDefs:
+  DefsCons{SchemaDef{"node", SfDiscriminated{"kind",
+    SfCasesCons{SchemaCase{"leaf", SfRecord{SfFieldsCons{
+      SfRequired{"kind", SfEnum{NlCons{"leaf", NlNil{}}}}, SfFieldsNil{}}}},
+      SfCasesCons{SchemaCase{"again", SfRef{"node"}}, SfCasesNil{}}}}}, DefsNil{}}
+
+def disc_cycle_leaf_value() -> Codec.RawValue:
+  Codec.Robj{Codec.Rpair{"kind", Codec.Rstr{"leaf"}, Codec.Rnil{}}}
+
+law schema_law_disc_direct_case_cycle_refuses:
+  {schema_admit_value(disc_cycle_defs(), SfRef{"node"}, disc_cycle_leaf_value()) == SvRefused{"declarationRefused"} : SchemaVerdict}
+
+def schema_law_disc_direct_case_cycle_refuses():
+  {==}
+
+# A reference below a selected record field consumes a nested object member and
+# remains a guarded recursive path.
+def disc_guarded_defs() -> SchemaDefs:
+  DefsCons{SchemaDef{"node", SfDiscriminated{"kind",
+    SfCasesCons{SchemaCase{"leaf", SfRecord{SfFieldsCons{
+      SfRequired{"kind", SfEnum{NlCons{"leaf", NlNil{}}}}, SfFieldsNil{}}}},
+      SfCasesCons{SchemaCase{"child", SfRecord{SfFieldsCons{
+        SfRequired{"kind", SfEnum{NlCons{"child", NlNil{}}}},
+        SfFieldsCons{SfRequired{"child", SfRef{"node"}}, SfFieldsNil{}}}}}, SfCasesNil{}}}}}, DefsNil{}}
+
+def disc_guarded_child_value() -> Codec.RawValue:
+  Codec.Robj{Codec.Rpair{"kind", Codec.Rstr{"child"},
+    Codec.Rpair{"child", Codec.Robj{Codec.Rpair{"kind", Codec.Rstr{"leaf"}, Codec.Rnil{}}}, Codec.Rnil{}}}}
+
+law schema_law_disc_member_consuming_cycle_admits:
+  {schema_admit_value(disc_guarded_defs(), SfRef{"node"}, disc_guarded_child_value()) == SvOk{} : SchemaVerdict}
+
+def schema_law_disc_member_consuming_cycle_admits():
   {==}
