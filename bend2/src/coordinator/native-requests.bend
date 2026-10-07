@@ -30,7 +30,7 @@ def dispatch(attempt: String, frame: String, allowed: Bool) -> IO(Result<&1,&1,U
 def prepare_projection(db: String) -> IO(Result<&1,&1,U32 & String,String>):
   DB.Sql.ensure_projection(db,C.schema())
 
-def written(db: String, +id: String, result: Result<&1,&1,U32 & String,Unit>) -> IO(Result<&1,&1,U32 & String,String>):
+def written(+db: String, +id: String, result: Result<&1,&1,U32 & String,Unit>) -> IO(Result<&1,&1,U32 & String,String>):
   match result:
     case Fail{error}: IO.pure(Result<&1,&1,U32 & String,String>,Fail{error})
     case Done{unit}: do IO<Result<&1,&1,U32 & String,String>>:
@@ -88,7 +88,7 @@ def observe(+db: String, +player: String, turn: String, attempt: String, +event:
       parent : String <- IO.try(String,DB.Sql.query(db,"SELECT CASE WHEN parent IS NULL AND json_extract(" ++ C.q(event) ++ ",'$.method') IN ('input','select','confirm','editor') THEN 0 ELSE 1 END FROM sessions WHERE id=" ++ C.q(player) ++ ";"))
       record(db,player,turn,attempt,event,tasks,String.eq(parent,"1\n"))
 
-def closed(db: String, attempt: String, enabled: Bool) -> IO(Result<&1,&1,U32 & String,String>):
+def closed(+db: String, attempt: String, enabled: Bool) -> IO(Result<&1,&1,U32 & String,String>):
   match enabled:
     case False{}: IO.pure(Result<&1,&1,U32 & String,String>,Done{""})
     case True{}: do IO<Result<&1,&1,U32 & String,String>>:
