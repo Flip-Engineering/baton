@@ -2868,10 +2868,17 @@ static int br_instance_request(const char *database,BrInstanceFrame frame,const 
     frame.owner=record.token;frame.epoch=record.epoch;
     error=br_instance_exchange(socket_fd,frame,payload,rights,reply);
     close(socket_fd);
-    if(error)return error;
-    if(reply->owner && (reply->owner!=record.token || reply->epoch!=record.epoch))error=ESTALE;
-    if(!error && !reply->error)return 0;
-    if(error!=ESTALE && reply->error!=ESTALE)return error?error:reply->error;
+    /* An owner that dies between the record read and the request resets the
+       connection; that is the same window as a stale record and is retried. */
+    if(error==ECONNRESET || error==EPIPE)error=ESTALE;
+    if(error && error!=ESTALE)return error;
+    if(!error && reply->owner && (reply->owner!=record.token || reply->epoch!=record.epoch))
+      error=ESTALE;
+    if(!error) {
+      if(!reply->error)return 0;
+      if(reply->error!=ESTALE)return reply->error;
+      error=ESTALE;
+    }
     if(attempt>=100)return ESTALE;
     struct timespec pause={0,20000000};
     nanosleep(&pause,NULL);
@@ -3140,6 +3147,7 @@ static int br_instance_subscription(const char *database,uint64_t generation,uin
     BrInstanceFrame frame={.op=BI_SUBSCRIBE,.owner=record.token,.epoch=record.epoch,
       .length=sizeof(request)};
     error=br_instance_exchange(socket_fd,frame,(const char *)&request,-1,&reply);
+    if(error==ECONNRESET || error==EPIPE)error=ESTALE;
     if(!error && (reply.owner!=record.token || reply.epoch!=record.epoch))error=ESTALE;
     if(!error && reply.error)error=reply.error;
     if(!error && (reply.op!=BI_READY || reply.length!=sizeof(*ready)))error=EPROTO;
