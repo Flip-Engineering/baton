@@ -44,33 +44,44 @@ def recorded_endpoint(+db: String, +session: String, index: String) -> IO(String
     IO.pure(String, Tx.trim_nl(saved))
 
 def dirty_session_sql() -> String:
-  "SELECT DISTINCT m.recipient || '|' || s.harness FROM messages m JOIN sessions s ON s.id=m.recipient WHERE m.receipt IS NULL AND m.recipient <> '' AND NOT " ++ C.stopped_session_sql("m.recipient") ++ " AND s.harness IN ('codex','omp','muse','claude-code') AND s.endpoint <> '' ORDER BY m.recipient;"
+  "SELECT DISTINCT m.recipient || '|' || s.harness || '|' || CASE WHEN s.harness IN ('codex','omp') AND s.endpoint <> '' THEN 'serve' ELSE 'refuse' END FROM messages m JOIN sessions s ON s.id=m.recipient WHERE m.receipt IS NULL AND m.recipient <> '' AND NOT " ++ C.stopped_session_sql("m.recipient") ++ " AND s.harness IN ('codex','omp','muse','claude-code') ORDER BY m.recipient;"
 
-def split_parts(parts: List<&2,String>, +line: String) -> String & String:
+def split_triple_parts(parts: List<&2,String>, +line: String) -> (String & String) & String:
   match parts:
-    case session <> harness <> Nil{}: (Tx.trim_nl(session), Tx.trim_nl(harness))
-    case other: (Tx.trim_nl(line), "")
+    case session <> harness <> route <> Nil{}: ((Tx.trim_nl(session), Tx.trim_nl(harness)), Tx.trim_nl(route))
+    case other: ((Tx.trim_nl(line), ""), "refuse")
 
-def split_pair(+line: String) -> String & String:
-  split_parts(String.split(line, Char.from_u32(124)), line)
+def split_triple(+line: String) -> (String & String) & String:
+  split_triple_parts(String.split(line, Char.from_u32(124)), line)
 
-def parse_pairs(lines: List<String>) -> List<(String & String)>:
+# The snapshot already marks the serving route: Codex and OMP sessions with a
+# recorded receiver endpoint run through receive, which admits them through
+# the session lock and consumes the inbox on completion. Every other
+# actionable session keeps its conductor-driven Turn route; the loop refuses
+# those explicitly instead of attempting a receive that cannot admit them.
+# An unparsable row refuses, never forks: the safe direction is loud, not new.
+def parse_fit(fit: Bool, session: String, harness: String, serve: List<(String & String)>, refuse: List<(String & String)>) -> List<(String & String)> & List<(String & String)>:
+  match fit:
+    case True{}: (Con{(session, harness), serve}, refuse)
+    case False{}: (serve, Con{(session, harness), refuse})
+
+def parse_routed(split: List<(String & String)> & List<(String & String)>, session: String, harness: String, fit: Bool) -> List<(String & String)> & List<(String & String)>:
+  match split:
+    case (serve, refuse): parse_fit(fit, session, harness, serve, refuse)
+
+def parse_cons(triple: (String & String) & String, split: List<(String & String)> & List<(String & String)>) -> List<(String & String)> & List<(String & String)>:
+  match triple:
+    case ((session, harness), route): parse_routed(split, session, harness, String.eq(route, "serve"))
+
+def parse_split(lines: List<String>) -> List<(String & String)> & List<(String & String)>:
   match lines:
-    case Nil{}: Nil{}
-    case line <> rest: Con{split_pair(line), parse_pairs(rest)}
+    case Nil{}: (Nil{}, Nil{})
+    case line <> rest: parse_cons(split_triple(line), parse_split(rest))
 
-def snapshot(+db: String) -> IO(List<(String & String)>):
-  do IO<List<(String & String)>>:
+def snapshot(+db: String) -> IO(List<(String & String)> & List<(String & String)>):
+  do IO<List<(String & String)> & List<(String & String)>>:
     saved : String <- IO.try(String, DB.Sql.query(db, dirty_session_sql()))
-    IO.pure(List<(String & String)>, parse_pairs(Tx.split_lines(saved)))
-
-# Only the receive route can start a native from pending input in this loop:
-# Receive admits Codex and OMP sessions through the session lock and consumes
-# the inbox on completion. Muse and Claude Code sessions keep their Turn
-# handler route, which conductors drive with dispatch-turn; the loop refuses
-# them explicitly instead of attempting a receive that cannot admit them.
-def receivable(+harness: String) -> Bool:
-  Bool.or(String.eq(harness, "codex"), String.eq(harness, "omp"))
+    IO.pure(List<(String & String)> & List<(String & String)>, parse_split(Tx.split_lines(saved)))
 
 def keep_or_drop(same: Bool, session: String, harness: String, tail: List<(String & String)>) -> List<(String & String)>:
   match same:
@@ -95,28 +106,13 @@ def strip_known(known: List<String>, pairs: List<(String & String)>) -> List<(St
     case Nil{}: (pairs, Nil{})
     case +id <> rest: strip_cons(strip_known(rest, without_session(pairs, id)), id)
 
-def partition_cons_fork(one: String & String, done: List<(String & String)> & List<(String & String)>) -> List<(String & String)> & List<(String & String)>:
-  match done:
-    case (fork, refuse): (Con{one, fork}, refuse)
+def serve_part(split: List<(String & String)> & List<(String & String)>) -> List<(String & String)>:
+  match split:
+    case (serve, refuse): serve
 
-def partition_cons_refuse(one: String & String, done: List<(String & String)> & List<(String & String)>) -> List<(String & String)> & List<(String & String)>:
-  match done:
-    case (fork, refuse): (fork, Con{one, refuse})
-
-def partition_pick(fits: Bool, one: String & String, done: List<(String & String)> & List<(String & String)>) -> List<(String & String)> & List<(String & String)>:
-  match fits:
-    case True{}: partition_cons_fork(one, done)
-    case False{}: partition_cons_refuse(one, done)
-
-def partition_go(pairs: List<(String & String)>, fork: List<(String & String)>, refuse: List<(String & String)>) -> List<(String & String)> & List<(String & String)>:
-  match pairs:
-    case Nil{}: (fork, refuse)
-    case (+session, +harness) <> rest:
-      rest_done = partition_go(rest, fork, refuse)
-      partition_pick(receivable(harness), (session, harness), rest_done)
-
-def partition(pairs: List<(String & String)>) -> List<(String & String)> & List<(String & String)>:
-  partition_go(pairs, Nil{}, Nil{})
+def refuse_part(split: List<(String & String)> & List<(String & String)>) -> List<(String & String)>:
+  match split:
+    case (serve, refuse): refuse
 
 def sessions_of(pairs: List<(String & String)>) -> List<String>:
   match pairs:
@@ -146,14 +142,6 @@ def member(sessions: List<String>, +id: String) -> Bool:
     case +session <> rest:
       +found = member(rest, id)
       member_or(String.eq(session, id), found)
-
-def fork_of(decided: List<(String & String)> & List<(String & String)>) -> List<String>:
-  match decided:
-    case (fork, refuse): sessions_of(fork)
-
-def refuse_of(decided: List<(String & String)> & List<(String & String)>) -> List<String>:
-  match decided:
-    case (fork, refuse): sessions_of(refuse)
 
 def stripped_fresh(stripped: List<(String & String)> & List<String>) -> List<(String & String)>:
   match stripped:
@@ -257,35 +245,61 @@ def fork_each(+db: String, +chan: Chan(Event), pairs: List<(String & String)>, f
       dropped : Unit <- drop_chan(relay_task)
       fork_each(db, chan, rest, Con{session, flying})
 
-# Sessions outside the receive route are refused aloud on every committed
-# change: the refusal names the session, its harness and the conductor Turn
-# route that serves it. Refusals never fork a native and never mark the serve
-# failed; TaskDone events do not re-probe them, so an instantly refused
-# session cannot spin the loop.
-def refuse_each(pairs: List<(String & String)>, refused: List<String>) -> IO(List<String>):
+# Sessions outside the receive route are refused aloud whenever no native
+# holds them: the refusal names the session, its harness and the route that
+# serves it. A session with an active native stays quiet because its input is
+# being served. Refusals never fork a native and never mark the serve failed;
+# TaskDone events do not re-probe them, so an instantly refused session cannot
+# spin the loop.
+def refusal_route(+session: String, +harness: String, turn: Bool) -> String:
+  match turn:
+    case True{}: "serve-refused " ++ session ++ " " ++ harness ++ ": this loop serves Codex and OMP sessions with recorded receivers through receive; serve " ++ harness ++ " sessions with dispatch-turn.\n"
+    case False{}: "serve-refused " ++ session ++ " " ++ harness ++ ": this loop serves Codex and OMP sessions with recorded receivers through receive; register a receiver for " ++ session ++ " before it can run.\n"
+
+def refusal_text(+session: String, +harness: String) -> String:
+  refusal_route(session, harness, Bool.or(String.eq(harness, "muse"), String.eq(harness, "claude-code")))
+
+def refuse_emit(held: Maybe<U32>, +session: String, +harness: String, tail: List<String>) -> IO(List<String>):
+  match held:
+    case None{}: IO.pure(List<String>, tail)
+    case Some{lock}: do IO<List<String>>:
+      released : Result<&1,&1,U32 & String,Unit> <- Lock.SessionLock.release(lock)
+      logged : Unit <- IO.write(refusal_text(session, harness))
+      IO.pure(List<String>, tail)
+
+def refuse_loop(canonical: String, pairs: List<(String & String)>, refused: List<String>) -> IO(List<String>):
   match pairs:
     case Nil{}: IO.pure(List<String>, refused)
     case (+session, +harness) <> rest: do IO<List<String>>:
-      logged : Unit <- IO.write("serve-refused " ++ session ++ " " ++ harness ++ ": this loop serves Codex and OMP sessions through receive; serve " ++ harness ++ " sessions with dispatch-turn.\n")
-      refuse_each(rest, Con{session, refused})
+      held : Maybe<U32> <- IO.try(Maybe<U32>, Lock.SessionLock.try_acquire(canonical, session))
+      tail : List<String> <- refuse_loop(canonical, rest, Con{session, refused})
+      refuse_emit(held, session, harness, tail)
 
-def fork_split(+db: String, +chan: Chan(Event), split: List<(String & String)> & List<(String & String)>, flying: List<String>, refused: List<String>, failed: Bool, again: Bool -> List<String> -> List<String> -> IO(Result<&1,&1,U32 & String,Unit>)) -> IO(Result<&1,&1,U32 & String,Unit>):
-  match split:
-    case (fork, refuse): do IO<Result<&1,&1,U32 & String,Unit>>:
-      flying_now : List<String> <- fork_each(db, chan, fork, flying)
-      refused_now : List<String> <- refuse_each(refuse, refused)
-      again(failed, flying_now, refused_now)
+def refuse_each(+db: String, pairs: List<(String & String)>, refused: List<String>) -> IO(List<String>):
+  do IO<List<String>>:
+    canonical : String <- IO.try(String, Lock.SessionLock.canonical(db))
+    refuse_loop(canonical, pairs, refused)
 
-def fork_stripped2(+db: String, +chan: Chan(Event), stripped2: List<(String & String)> & List<String>, flying: List<String>, failed: Bool, again: Bool -> List<String> -> List<String> -> IO(Result<&1,&1,U32 & String,Unit>)) -> IO(Result<&1,&1,U32 & String,Unit>):
-  match stripped2:
-    case (fresh2, refused): fork_split(db, chan, partition(fresh2), flying, refused, failed, again)
+def fork_both(+db: String, +chan: Chan(Event), fresh_serve: List<(String & String)>, fresh_refuse: List<(String & String)>, flying: List<String>, refused: List<String>, failed: Bool, again: Bool -> List<String> -> List<String> -> IO(Result<&1,&1,U32 & String,Unit>)) -> IO(Result<&1,&1,U32 & String,Unit>):
+  do IO<Result<&1,&1,U32 & String,Unit>>:
+    flying_now : List<String> <- fork_each(db, chan, fresh_serve, flying)
+    refused_now : List<String> <- refuse_each(db, fresh_refuse, refused)
+    again(failed, flying_now, refused_now)
 
-def fork_stripped(+db: String, +chan: Chan(Event), stripped1: List<(String & String)> & List<String>, refused: List<String>, failed: Bool, again: Bool -> List<String> -> List<String> -> IO(Result<&1,&1,U32 & String,Unit>)) -> IO(Result<&1,&1,U32 & String,Unit>):
-  match stripped1:
-    case (fresh1, flying): fork_stripped2(db, chan, strip_known(refused, fresh1), flying, failed, again)
+def fork_refusing(+db: String, +chan: Chan(Event), fresh_serve: List<(String & String)>, stripped_refuse: List<(String & String)> & List<String>, flying: List<String>, failed: Bool, again: Bool -> List<String> -> List<String> -> IO(Result<&1,&1,U32 & String,Unit>)) -> IO(Result<&1,&1,U32 & String,Unit>):
+  match stripped_refuse:
+    case (fresh_refuse, refused): fork_both(db, chan, fresh_serve, fresh_refuse, flying, refused, failed, again)
 
-def fork_new(+db: String, +chan: Chan(Event), pairs: List<(String & String)>, flying: List<String>, refused: List<String>, failed: Bool, again: Bool -> List<String> -> List<String> -> IO(Result<&1,&1,U32 & String,Unit>)) -> IO(Result<&1,&1,U32 & String,Unit>):
-  fork_stripped(db, chan, strip_known(flying, pairs), refused, failed, again)
+def fork_serving(+db: String, +chan: Chan(Event), stripped_serve: List<(String & String)> & List<String>, refuse: List<(String & String)>, refused: List<String>, failed: Bool, again: Bool -> List<String> -> List<String> -> IO(Result<&1,&1,U32 & String,Unit>)) -> IO(Result<&1,&1,U32 & String,Unit>):
+  match stripped_serve:
+    case (fresh_serve, flying): fork_refusing(db, chan, fresh_serve, strip_known(refused, refuse), flying, failed, again)
+
+def fork_new(+db: String, +chan: Chan(Event), serve: List<(String & String)>, refuse: List<(String & String)>, flying: List<String>, refused: List<String>, failed: Bool, again: Bool -> List<String> -> List<String> -> IO(Result<&1,&1,U32 & String,Unit>)) -> IO(Result<&1,&1,U32 & String,Unit>):
+  fork_serving(db, chan, strip_known(flying, serve), refuse, refused, failed, again)
+
+def fork_fresh(+db: String, +chan: Chan(Event), fresh: List<(String & String)> & List<(String & String)>, flying: List<String>, refused: List<String>, failed: Bool, again: Bool -> List<String> -> List<String> -> IO(Result<&1,&1,U32 & String,Unit>)) -> IO(Result<&1,&1,U32 & String,Unit>):
+  match fresh:
+    case (serve, refuse): fork_new(db, chan, serve, refuse, flying, refused, failed, again)
 
 def kept(result: Result<&1,&1,U32 & String,Unit>, failed: Bool) -> IO(Bool):
   match result:
@@ -319,18 +333,18 @@ def on_event(+db: String, handle: U32, guard: U32, +chan: Chan(Event), event: Ev
   match event:
     case TaskDone{session, ok}: do IO<Result<&1,&1,U32 & String,Unit>>:
       failed_now : Bool <- note_task(failed, ok)
-      fresh : List<(String & String)> <- snapshot(db)
-      fork_new(db, chan, fresh, without_id(flying, session), refused, failed_now, again)
+      fresh : List<(String & String)> & List<(String & String)> <- snapshot(db)
+      fork_fresh(db, chan, fresh, without_id(flying, session), refused, failed_now, again)
     case Committed{}: do IO<Result<&1,&1,U32 & String,Unit>>:
       waiter_task : Chan(Event) <- IO.fork(Event, waiter(db, handle, chan))
       dropped : Unit <- drop_chan(waiter_task)
-      fresh : List<(String & String)> <- snapshot(db)
-      fork_new(db, chan, fresh, flying, Nil{}, failed, again)
+      fresh : List<(String & String)> & List<(String & String)> <- snapshot(db)
+      fork_fresh(db, chan, fresh, flying, Nil{}, failed, again)
     case Gap{}: do IO<Result<&1,&1,U32 & String,Unit>>:
       waiter_task : Chan(Event) <- IO.fork(Event, waiter(db, handle, chan))
       dropped : Unit <- drop_chan(waiter_task)
-      fresh : List<(String & String)> <- snapshot(db)
-      fork_new(db, chan, fresh, flying, Nil{}, failed, again)
+      fresh : List<(String & String)> & List<(String & String)> <- snapshot(db)
+      fork_fresh(db, chan, fresh, flying, Nil{}, failed, again)
     case Closed{}: close_guarded(handle, guard, failed)
 
 def dispatch_maybe(db: String, handle: U32, guard: U32, chan: Chan(Event), failed: Bool, flying: List<String>, refused: List<String>, event: Maybe<&1,Event>, again: Bool -> List<String> -> List<String> -> IO(Result<&1,&1,U32 & String,Unit>)) -> IO(Result<&1,&1,U32 & String,Unit>):
@@ -355,10 +369,10 @@ def arm(db: String, handle: U32, chan: Chan(Event)) -> IO(Unit):
     waiter_task : Chan(Event) <- IO.fork(Event, waiter(db, handle, chan))
     drop_chan(waiter_task)
 
-def drive_new(+db: String, +handle: U32, guard: U32, +chan: Chan(Event), failed: Bool, pairs: List<(String & String)>) -> IO(Result<&1,&1,U32 & String,Unit>):
+def drive_new(+db: String, +handle: U32, guard: U32, +chan: Chan(Event), failed: Bool, fresh: List<(String & String)> & List<(String & String)>) -> IO(Result<&1,&1,U32 & String,Unit>):
   do IO<Result<&1,&1,U32 & String,Unit>>:
     armed : Unit <- arm(db, handle, chan)
-    fork_new(db, chan, pairs, Nil{}, Nil{}, failed, failed_next => flying_next => refused_next => drive(db, handle, guard, chan, failed_next, flying_next, refused_next))
+    fork_fresh(db, chan, fresh, Nil{}, Nil{}, failed, failed_next => flying_next => refused_next => drive(db, handle, guard, chan, failed_next, flying_next, refused_next))
 
 def admitted(+db: String, guard: U32, subscribed: Result<&1,&1,U32 & String,U32 & String>) -> IO(Result<&1,&1,U32 & String,Unit>):
   match subscribed:
