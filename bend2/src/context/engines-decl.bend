@@ -273,10 +273,10 @@ def check_artifact_digest(+module_id: String, +path: String, +want: String,
               ChkFail{DrArtifactMismatch{module_id, path, want, saw}}))
 
 def check_artifact(+module_id: String, +art: Art, +inv: Inv) -> Chk:
-  match inv:
-    case Inv{artifacts, schemas, digests}:
-      match art:
-        case Art{+path, sha256, role}:
+  match art:
+    case Art{+path, sha256, role}:
+      match inv:
+        case Inv{artifacts, schemas, digests}:
           check_artifact_digest(module_id, path, sha256,
                                 artifact_digest(artifacts, path))
 
@@ -435,12 +435,12 @@ def check_declaration(+decl: Decl, +cat: Cat, +inv: Inv) -> Chk:
                check_dependency_edges(module_id, operations, inv)))))))
 
 def admitted_digest(+decl: Decl, +inv: Inv) -> String:
-  match inv:
-    case Inv{artifacts, schemas, digests}:
-      match decl:
-        case Decl{decl_version, module_id, revision, protocol_version,
-                  package_identity, entry, dependencies, operations,
-                  applicability}:
+  match decl:
+    case Decl{decl_version, module_id, revision, protocol_version,
+              package_identity, entry, dependencies, operations,
+              applicability}:
+      match inv:
+        case Inv{artifacts, schemas, digests}:
           digest_of(digests, module_id)
 
 def decl_outcome(+c: Chk, +decl: Decl, +inv: Inv) -> DeclOutcome:

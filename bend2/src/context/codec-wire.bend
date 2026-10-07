@@ -47,9 +47,11 @@ type WireRead is Data:
 # --- the owned value encoder ----------------------------------------------
 # One self-recursive walk with a mode, so it needs no forward reference, and it keeps an
 # exact number token verbatim: 1e400 and a negative decimal stay numbers, and text stays
-# text. The mode names whether the value opens a container or continues one.
+# text. The mode names whether the value opens a container or continues one. The mode is
+# declared first because the walk matches it first, and a definition matches its
+# parameters in declaration order.
 
-def wire_value_text(+v: Codec.RawValue, +mode: String) -> String:
+def wire_value_text(+mode: String, +v: Codec.RawValue) -> String:
   match mode:
     case "value":
       match v:
@@ -59,25 +61,25 @@ def wire_value_text(+v: Codec.RawValue, +mode: String) -> String:
         case Codec.Rstr{+text}: J.json_text(J.Jstr{text})
         case Codec.Rnum{+token}: token
         case Codec.Rarr{Codec.Rnil{}, Codec.Rnil{}}: "[]"
-        case Codec.Rarr{+head, +tail}: "[" ++ wire_value_text(head, "value") ++ wire_value_text(tail, "items")
+        case Codec.Rarr{+head, +tail}: "[" ++ wire_value_text("value", head) ++ wire_value_text("items", tail)
         case Codec.Robj{Codec.Rnil{}}: "{}"
-        case Codec.Robj{Codec.Rpair{+key, +value, +rest}}: "{" ++ J.json_text(J.Jstr{key}) ++ ":" ++ wire_value_text(value, "value") ++ wire_value_text(rest, "members")
+        case Codec.Robj{Codec.Rpair{+key, +value, +rest}}: "{" ++ J.json_text(J.Jstr{key}) ++ ":" ++ wire_value_text("value", value) ++ wire_value_text("members", rest)
         case Codec.Robj{+members}: "{}"
         case other: "null"
     case "items":
       match v:
         case Codec.Rnil{}: "]"
-        case Codec.Rarr{+head, +tail}: "," ++ wire_value_text(head, "value") ++ wire_value_text(tail, "items")
+        case Codec.Rarr{+head, +tail}: "," ++ wire_value_text("value", head) ++ wire_value_text("items", tail)
         case other: "]"
     case "members":
       match v:
         case Codec.Rnil{}: "}"
-        case Codec.Rpair{+key, +value, +rest}: "," ++ J.json_text(J.Jstr{key}) ++ ":" ++ wire_value_text(value, "value") ++ wire_value_text(rest, "members")
+        case Codec.Rpair{+key, +value, +rest}: "," ++ J.json_text(J.Jstr{key}) ++ ":" ++ wire_value_text("value", value) ++ wire_value_text("members", rest)
         case other: "}"
     case other: ""
 
 def wire_value(+v: Codec.RawValue) -> String:
-  wire_value_text(v, "value")
+  wire_value_text("value", v)
 
 # A scalar member: null when it is absent, otherwise the canonical text of the string.
 def wire_scalar_text(+text: String) -> String:
@@ -239,8 +241,10 @@ def wire_event_kinds_ok(+members: Codec.RawValue) -> Bool:
 # forward reference. A number token must be a valid token, so a constructed one refuses;
 # a decoded key that appears twice in one object refuses at every depth; and the empty
 # array sentinel is a value rather than a missing element. Number tokens stay numbers:
-# the rule admits -0.25, 0.5 and 1e400 exactly as written.
-def wire_value_ok(+v: Codec.RawValue, +mode: String) -> Bool:
+# the rule admits -0.25, 0.5 and 1e400 exactly as written. The mode is declared first
+# because the walk matches it first, and a definition matches its parameters in
+# declaration order.
+def wire_value_ok(+mode: String, +v: Codec.RawValue) -> Bool:
   match mode:
     case "value":
       match v:
@@ -250,25 +254,25 @@ def wire_value_ok(+v: Codec.RawValue, +mode: String) -> Bool:
         case Codec.Rstr{+text}: True{}
         case Codec.Rnum{+token}: Context.strict_number_token_ok(token)
         case Codec.Rarr{Codec.Rnil{}, Codec.Rnil{}}: True{}
-        case Codec.Rarr{+head, +tail}: Bool.pick(Bool, wire_value_ok(head, "value"), wire_value_ok(tail, "items"), False{})
+        case Codec.Rarr{+head, +tail}: Bool.pick(Bool, wire_value_ok("value", head), wire_value_ok("items", tail), False{})
         case Codec.Robj{Codec.Rnil{}}: True{}
-        case Codec.Robj{Codec.Rpair{+key, +value, +rest}}: Bool.pick(Bool, Codec.raw_member_present(key, rest), False{}, Bool.pick(Bool, wire_value_ok(value, "value"), wire_value_ok(rest, "members"), False{}))
+        case Codec.Robj{Codec.Rpair{+key, +value, +rest}}: Bool.pick(Bool, Codec.raw_member_present(key, rest), False{}, Bool.pick(Bool, wire_value_ok("value", value), wire_value_ok("members", rest), False{}))
         case Codec.Robj{+members}: False{}
         case other: False{}
     case "items":
       match v:
         case Codec.Rnil{}: True{}
-        case Codec.Rarr{+head, +tail}: Bool.pick(Bool, wire_value_ok(head, "value"), wire_value_ok(tail, "items"), False{})
+        case Codec.Rarr{+head, +tail}: Bool.pick(Bool, wire_value_ok("value", head), wire_value_ok("items", tail), False{})
         case other: False{}
     case "members":
       match v:
         case Codec.Rnil{}: True{}
-        case Codec.Rpair{+key, +value, +rest}: Bool.pick(Bool, Codec.raw_member_present(key, rest), False{}, Bool.pick(Bool, wire_value_ok(value, "value"), wire_value_ok(rest, "members"), False{}))
+        case Codec.Rpair{+key, +value, +rest}: Bool.pick(Bool, Codec.raw_member_present(key, rest), False{}, Bool.pick(Bool, wire_value_ok("value", value), wire_value_ok("members", rest), False{}))
         case other: False{}
     case other: False{}
 
 def wire_payload_ok(+v: Codec.RawValue) -> Bool:
-  wire_value_ok(v, "value")
+  wire_value_ok("value", v)
 
 def wire_read_invocation(+members: Codec.RawValue) -> WireRead:
   WrInvocation{"2", wire_text_member("query", members), wire_text_member("owner", members),
@@ -543,13 +547,13 @@ def wire_law_an_exact_token_inside_the_payload_passes():
   {==}
 
 law wire_law_a_negative_decimal_inside_the_payload_passes:
-  {wire_value_ok(Codec.Rnum{"-0.25"}, "value") == True{} : Bool}
+  {wire_value_ok("value", Codec.Rnum{"-0.25"}) == True{} : Bool}
 
 def wire_law_a_negative_decimal_inside_the_payload_passes():
   {==}
 
 law wire_law_a_constructed_token_that_is_not_a_number_refuses:
-  {wire_value_ok(Codec.Rnum{"x"}, "value") == False{} : Bool}
+  {wire_value_ok("value", Codec.Rnum{"x"}) == False{} : Bool}
 
 def wire_law_a_constructed_token_that_is_not_a_number_refuses():
   {==}
