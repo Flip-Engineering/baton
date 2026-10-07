@@ -7,7 +7,9 @@
 // empty sentinels (Rarr{Rnil,Rnil} / Jarr{Jnil,Jnil}); records are closed;
 // strings are escaped. Numbers appear only as RawValue tokens: the
 // declaration carries none, so a number on the declaration path is an
-// explicit loader error, not a silent Jint.
+// explicit loader error, not a silent Jint. The probe also projects the
+// single declared operation out of the real decoded Decl value and checks
+// its effects spine is empty and its execution is managed (two laws).
 //
 // Usage: node native-schema-loader.mjs > native-schema-probe.bend
 // The probe sits in bend2/src/context/ of the gate assembly, beside the
@@ -166,6 +168,8 @@ lines.push('import Base');
 lines.push('import ./codec.bend as Codec');
 lines.push('import ./codec-schema.bend as Schema');
 lines.push('import ./native-declaration.bend as ND');
+lines.push('import ./engines-decl.bend as Decl');
+lines.push('import ./engines.bend as Eng');
 lines.push('import ../json/canonical.bend as J');
 lines.push('');
 for (const def of defs) {
@@ -207,6 +211,50 @@ lines.push('  match decoded:');
 lines.push('    case ND.DeclarationDecoded{+declaration, +inventory}: True{}');
 lines.push('    case ND.DeclarationRefused{+field}: False{}');
 lines.push('');
+lines.push('def op_effects_empty(+op: Decl.Op) -> Bool:');
+lines.push('  match op:');
+lines.push('    case Decl.Op{operation, implements_operation, subject_schema, options_schema, projections, effects, execution, result_schema, reference_schema, event_schema, lifetime_profile, dependencies}:');
+lines.push('      match effects:');
+lines.push('        case Eng.SSNil{}: True{}');
+lines.push('        case Eng.SSCons{ss_head, ss_rest}: False{}');
+lines.push('');
+lines.push('def op_execution_managed(+op: Decl.Op) -> Bool:');
+lines.push('  match op:');
+lines.push('    case Decl.Op{operation, implements_operation, subject_schema, options_schema, projections, effects, execution, result_schema, reference_schema, event_schema, lifetime_profile, dependencies}:');
+lines.push('      match execution:');
+lines.push('        case Decl.ExManaged{}: True{}');
+lines.push('        case Decl.ExPure{}: False{}');
+lines.push('        case Decl.ExDirect{}: False{}');
+lines.push('        case Decl.ExRuntime{}: False{}');
+lines.push('');
+lines.push('# The lane declaration carries exactly one operation; more than one');
+lines.push('# fails the projection so a widened declaration cannot slip through.');
+lines.push('def decl_single_op_effects_empty(+decoded: ND.DeclarationDecode) -> Bool:');
+lines.push('  match decoded:');
+lines.push('    case ND.DeclarationDecoded{+declaration, +inventory}:');
+lines.push('      match declaration:');
+lines.push('        case Decl.Decl{decl_version, module_id, revision, protocol_version, package_identity, entry, dependencies, operations, applicability}:');
+lines.push('          match operations:');
+lines.push('            case Decl.OpsCons{op_head, op_rest}:');
+lines.push('              match op_rest:');
+lines.push('                case Decl.OpsNil{}: op_effects_empty(op_head)');
+lines.push('                case Decl.OpsCons{more_head, more_rest}: False{}');
+lines.push('            case Decl.OpsNil{}: False{}');
+lines.push('    case ND.DeclarationRefused{+field}: False{}');
+lines.push('');
+lines.push('def decl_single_op_execution_managed(+decoded: ND.DeclarationDecode) -> Bool:');
+lines.push('  match decoded:');
+lines.push('    case ND.DeclarationDecoded{+declaration, +inventory}:');
+lines.push('      match declaration:');
+lines.push('        case Decl.Decl{decl_version, module_id, revision, protocol_version, package_identity, entry, dependencies, operations, applicability}:');
+lines.push('          match operations:');
+lines.push('            case Decl.OpsCons{op_head, op_rest}:');
+lines.push('              match op_rest:');
+lines.push('                case Decl.OpsNil{}: op_execution_managed(op_head)');
+lines.push('                case Decl.OpsCons{more_head, more_rest}: False{}');
+lines.push('            case Decl.OpsNil{}: False{}');
+lines.push('    case ND.DeclarationRefused{+field}: False{}');
+lines.push('');
 lines.push('law probe_declaration_decodes:');
 lines.push('  {decode_ok(ND.decode(declaration_json(), verified_digest())) == True{} : Bool}');
 lines.push('');
@@ -217,6 +265,18 @@ lines.push('law probe_declaration_missing_op_schema_refuses:');
 lines.push('  {decode_ok(ND.decode(declaration_json_missing_op_schema(), verified_digest())) == False{} : Bool}');
 lines.push('');
 lines.push('def probe_declaration_missing_op_schema_refuses():');
+lines.push('  {==}');
+lines.push('');
+lines.push('law probe_op_effects_empty:');
+lines.push('  {decl_single_op_effects_empty(ND.decode(declaration_json(), verified_digest())) == True{} : Bool}');
+lines.push('');
+lines.push('def probe_op_effects_empty():');
+lines.push('  {==}');
+lines.push('');
+lines.push('law probe_op_execution_managed:');
+lines.push('  {decl_single_op_execution_managed(ND.decode(declaration_json(), verified_digest())) == True{} : Bool}');
+lines.push('');
+lines.push('def probe_op_execution_managed():');
 lines.push('  {==}');
 lines.push('');
 for (const name of FIXTURES) {

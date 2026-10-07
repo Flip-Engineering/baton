@@ -1,0 +1,103 @@
+{
+  "format": "baton2-branch-requirements-v1",
+  "role": "coordination input for Schema Muse minimal generic discriminated-record support; not a SchemaDef and not admitted by the walker",
+  "decoder_pin": "495ec1f5",
+  "note": "confirmed rows are grounded in lane producer bytes or root direction; open rows name the exact missing evidence and must not be treated as contract",
+  "entries": [
+    {
+      "schema": "baton2.context.bend2.source-analysis.subject.v1",
+      "record": "top",
+      "discriminator": { "member": "kind", "values": ["position", "symbol", "diagnostic"] },
+      "variants": [
+        {
+          "value": "position",
+          "required": ["path", "line", "column"],
+          "evidence": "root direction: a valid position requires line/column",
+          "status": "confirmed"
+        },
+        {
+          "value": "symbol",
+          "required": ["path", "name"],
+          "evidence": "native-fixtures/schema/subject.valid.json carries kind symbol with path and name",
+          "status": "confirmed"
+        },
+        {
+          "value": "diagnostic",
+          "required": ["path", "code"],
+          "evidence": "asset member only; no lane producer frame yet",
+          "status": "open"
+        }
+      ]
+    },
+    {
+      "schema": "baton2.context.bend2.source-analysis.result.v1",
+      "record": "top",
+      "discriminator": { "member": "status", "note": "free-text scalar in the asset, not an enum; branch by value" },
+      "variants": [
+        {
+          "value": "unavailable",
+          "required": ["schema", "status", "reason", "detail"],
+          "evidence": "native-fixtures/schema/result.unavailable.json",
+          "invalid_branch_frame": "native-fixtures/schema/result-unavailable-missing-reason.STRICT-REFUSAL.json",
+          "status": "confirmed"
+        },
+        {
+          "value": "completed",
+          "required": ["schema", "status"],
+          "evidence": "native-fixtures/schema/result.valid.json carries status completed with neither reason nor detail; whether completed may carry them is unresolved",
+          "status": "confirmed"
+        },
+        {
+          "value": "sealed",
+          "required": ["schema", "status"],
+          "evidence": "nested occurrence only; top-level sealed frame not observed in lane",
+          "status": "open"
+        }
+      ]
+    },
+    {
+      "schema": "baton2.context.bend2.source-analysis.result.v1",
+      "record": "session.imports[].specifierSpan, session.declarations[].span, session.references[].span, session.diagnostics[].span, session.types[].span",
+      "discriminator": { "member": "status", "values": ["mapped", "unavailable"] },
+      "variants": [
+        {
+          "value": "mapped",
+          "required": ["status", "identity", "digest", "original", "byteRange", "text"],
+          "evidence": "asset contract only; no lane producer frame carries a mapped span",
+          "status": "open"
+        },
+        {
+          "value": "unavailable",
+          "required": ["status", "reason", "detail"],
+          "evidence": "asset contract only; no lane producer frame carries an unavailable span",
+          "status": "open"
+        }
+      ]
+    },
+    {
+      "schema": "baton2.context.bend2.source-analysis.reference.v1",
+      "record": "top",
+      "discriminator": { "member": "kind", "values": ["file", "symlink", "absent"] },
+      "variants": [
+        {
+          "value": "file",
+          "required": ["kind", "path", "real"],
+          "evidence": "asset contract only; no lane producer frame yet",
+          "status": "open"
+        },
+        {
+          "value": "symlink",
+          "required": ["kind", "path", "real"],
+          "evidence": "asset contract only; no lane producer frame yet",
+          "status": "open"
+        },
+        {
+          "value": "absent",
+          "required": ["kind", "path", "real"],
+          "evidence": "asset contract only; whether sha256 must be absent is unresolved",
+          "status": "open"
+        }
+      ]
+    }
+  ]
+}
