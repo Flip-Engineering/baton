@@ -60,6 +60,30 @@ class InstanceServe(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         self.assertIsNone(self.call('owner-status'))
 
+    def test_serve_recovers_a_lapsed_crash_row(self):
+        with closing(sqlite3.connect(self.db)) as connection:
+            connection.execute('CREATE TABLE instance_owner (owner TEXT PRIMARY KEY NOT NULL, heartbeat INTEGER NOT NULL, generation INTEGER NOT NULL);')
+            connection.execute("INSERT INTO instance_owner(owner, heartbeat, generation) VALUES ('dead-owner', 1, 4);")
+            connection.commit()
+        result = self.invoke(self.db, 'serve', 'test-owner')
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        with closing(sqlite3.connect(self.db)) as connection:
+            rows = connection.execute('SELECT owner, generation FROM instance_owner;').fetchall()
+        self.assertEqual(rows, [])
+        self.assertIsNone(self.call('owner-status'))
+
+    def test_serve_refuses_beside_a_live_holder(self):
+        with closing(sqlite3.connect(self.db)) as connection:
+            connection.execute('CREATE TABLE instance_owner (owner TEXT PRIMARY KEY NOT NULL, heartbeat INTEGER NOT NULL, generation INTEGER NOT NULL);')
+            connection.execute("INSERT INTO instance_owner(owner, heartbeat, generation) VALUES ('live-owner', strftime('%s','now'), 2);")
+            connection.commit()
+        result = self.invoke(self.db, 'serve', 'test-owner')
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn('duplicate-owner', result.stdout + result.stderr)
+        with closing(sqlite3.connect(self.db)) as connection:
+            rows = connection.execute('SELECT owner, generation FROM instance_owner;').fetchall()
+        self.assertEqual(rows, [('live-owner', 2)])
+
     def test_serve_without_owner_is_refused(self):
         result = self.invoke(self.db, 'serve')
         self.assertEqual(result.returncode, 2)
