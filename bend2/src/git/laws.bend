@@ -833,7 +833,7 @@ def reviewed_source_stages(repo: String, workerCommit: String, target: String) -
   +rp = repo
   +tg = target
   +wc = workerCommit
-  do IO(T.LandOutcome):
+  do IO<T.LandOutcome>:
     r2 : L.FFLD <- L.ff_go2(L.FFNext{wc, ""}, rp, tg)
     r3 : L.FFLD <- L.ff_go3(r2, rp, tg)
     r4 : L.FFLD <- L.ff_go4(r3, rp, tg)
