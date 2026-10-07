@@ -78,7 +78,7 @@ def open_fallback_result(opened: Result<&1,&1,U32 & String,String>) -> IO(Unit):
     case Done{+text}: IO.pure(Unit,Unit{})
     case Fail{error}: IO.write("No browser opener answered; visit the URL above in a browser.\n")
 
-def open_fallback(db: String, url: String) -> IO(Unit):
+def open_fallback(db: String, +url: String) -> IO(Unit):
   do IO<Unit>:
     opened : Result<&1,&1,U32 & String,String> <- Host.Control.launch(Tx.enc_argv(["xdg-open",url]),db,"view-open")
     open_fallback_result(opened)
@@ -88,7 +88,7 @@ def open_result(db: String, url: String, opened: Result<&1,&1,U32 & String,Strin
     case Done{+text}: IO.pure(Unit,Unit{})
     case Fail{error}: open_fallback(db,url)
 
-def open_browser(db: String, url: String) -> IO(Unit):
+def open_browser(db: String, +url: String) -> IO(Unit):
   do IO<Unit>:
     opened : Result<&1,&1,U32 & String,String> <- Host.Control.launch(Tx.enc_argv(["open",url]),db,"view-open")
     open_result(db,url,opened)
@@ -98,7 +98,7 @@ def finish(status: Result<&1,&1,U32 & String,String>) -> IO(Unit):
     case Done{+text}: IO.write("Orchestra live view server exited: " ++ text)
     case Fail{+error}: IO.die(Unit,2,"The view server wait failed: " ++ error_text(error))
 
-def serving(db: String, reader: String, url: String, handle: U32, line: String) -> IO(Unit):
+def serving(db: String, reader: String, +url: String, handle: U32, line: String) -> IO(Unit):
   do IO<Unit>:
     IO.write("Orchestra live view: " ++ url ++ "\n")
     IO.write("Reader " ++ reader ++ "; read-only recorded coordinator state; the reader's admitted scope applies. Serving until this command exits (Ctrl-C stops it).\n")
