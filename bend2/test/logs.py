@@ -601,7 +601,7 @@ sys.stdin.read()
                 turn.kill()
                 turn.communicate()
 
-    def test_abrupt_observer_exit_preserves_latest_incomplete_frame(self):
+    def test_abrupt_observer_checkpoint_restores_on_same_turn_retry(self):
         import os
         import signal
         import time
@@ -635,6 +635,25 @@ while True: time.sleep(1)
             self.assertEqual([json.loads(line) for line in pending.read_text().splitlines()],
                              [json.loads(updates[-1])])
             self.assertEqual(list(self.cwd.glob(self.log.name + '.pending.tmp.*')), [])
+            pid_file = self.cwd / 'harness.pid'
+            if pid_file.exists():
+                try: os.kill(int(pid_file.read_text()), signal.SIGKILL)
+                except ProcessLookupError: pass
+            (self.cwd / 'events.jsonl').write_text(self.terminal('Resumed from checkpoint') + '\n')
+            self.harness('''import pathlib,sys
+sys.stdin.readline()
+sys.stdin.readline()
+sys.stdin.readline()
+print(pathlib.Path('events.jsonl').read_text(),end='',flush=True)
+assert sys.stdin.read()==''
+''')
+            self.call('turn', 'omp-worker', 'abrupt-turn', str(self.player), 'model', 'low',
+                      str(self.cwd), str(self.task), str(self.base_log), '')
+            saved = [json.loads(line) for line in self.log.read_text().splitlines()]
+            self.assertEqual([item for item in saved if item.get('toolCallId') == 'unfinished'],
+                             [json.loads(updates[-1])])
+            self.assertTrue(any(item.get('type') == 'agent_end' for item in saved))
+            self.assertFalse(pending.exists())
         finally:
             if turn.poll() is None:
                 turn.kill()
