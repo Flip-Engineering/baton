@@ -1,6 +1,7 @@
 """Exercise terminal observation across mixed native frame shapes and nested runs."""
 
 import importlib.util
+import hashlib
 import json
 import pathlib
 import subprocess
@@ -217,8 +218,11 @@ class NativeObservation(RECEIVE.Receive):
 
         turns = self.eventually(lambda: self.coord('turns', 'parent'),
                                 'reattached observer did not preserve the oversized completion')
-        self.assertEqual([row['reportBody'] for row in turns], [text])
         self.assertEqual(len(turns), 1)
+        report_body = turns[0]['reportBody']
+        self.assertEqual(len(report_body), len(text))
+        self.assertEqual(hashlib.sha256(report_body.encode()).hexdigest(),
+                         hashlib.sha256(text.encode()).hexdigest())
         reports = [row for row in self.coord('inbox', 'root') if row['kind'] == 'report']
         checkpoint_reports = [row for row in reports if row['id'] == turn_id + ':checkpoint']
         self.assertEqual(len(checkpoint_reports), 1)
@@ -226,7 +230,12 @@ class NativeObservation(RECEIVE.Receive):
         log = (self.directory / 'parent.jsonl').read_text()
         self.assertEqual(log.count('oversized-checkpoint-assistant'), 1)
         self.assertEqual(log.count('checkpoint-barrier'), 1)
-        self.assertIn(text, turns[0]['reportBody'])
+        assistant_frames = [json.loads(line) for line in log.splitlines()
+                            if 'oversized-checkpoint-assistant' in line]
+        raw_text = assistant_frames[0]['message']['content'][0]['text']
+        self.assertEqual(len(raw_text), len(text))
+        self.assertEqual(hashlib.sha256(raw_text.encode()).hexdigest(),
+                         hashlib.sha256(text.encode()).hexdigest())
         launches = [json.loads(line) for line in (self.directory / 'native-launches.jsonl').read_text().splitlines()]
         self.assertEqual([launch['pid'] for launch in launches], [started['pid']])
         self.eventually(lambda: not self.owned_processes(), 'oversized OMP fixture did not exit')
