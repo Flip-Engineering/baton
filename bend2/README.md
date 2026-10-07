@@ -226,7 +226,9 @@ the old route is refused, so a continuation that lost its transport response
 cannot reconfigure a session whose route already moved. A terminal stop, an
 owned attempt, a harness a Player is not launched with, an empty model or an
 endpoint that is not admissible argv returns `configure-refused` with exit
-status 2; an unmapped model key is refused before any row is written. To
+status 2. For `codex` and `omp`, an unmapped model key is refused before
+any row is written. `muse` and `claude-code` validate the model when the
+next turn launches. To
 continue a Player whose provider stopped accepting work, read `session` and
 `inbox`, configure the recorded route to an available provider, and deliver the
 retained input again.
