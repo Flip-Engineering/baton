@@ -75,6 +75,8 @@ def decision_text(d: Refs.RefDecision) -> String:
   match d:
     case Refs.RAllow{projections}: "allow"
     case Refs.RUnknownId{}: "unknown"
+    case Refs.RPolicyMissing{}: "policy-missing"
+    case Refs.RPolicyRefused{stored, current}: "policy-mismatch:" ++ stored ++ ":" ++ current
     case Refs.RUnverified{reason}: "unverified:" ++ reason
     case Refs.RStaleRef{fresh}: "stale:" ++ fresh
     case Refs.REffectMissing{effect}: "missing:" ++ effect
@@ -98,6 +100,8 @@ def all_ok() -> List<Bool>:
     String.eq(Refs.source_ref("/work/a.ts", "sha", 40, 17, "definition"), "[\"source\",\"/work/a.ts\",\"sha\",40,17,\"definition\"]"),
     String.eq(decision_text(Refs.admit(Refs.RQ{True{}, "symbol", "pol-a", "pol-a", Eng.ss_one("authorization"), Eng.ss_one("authorization"), Snap.ACurrent{}, Eng.ss_one("planTargetSql"), Eng.SSNil{}, "[]"})), "missing:planTargetSql"),
     String.eq(decision_text(Refs.admit(Refs.RQ{True{}, "symbol", "pol-a", "pol-a", Eng.ss_one("definition"), Eng.ss_one("definition"), Snap.ACurrent{}, Eng.SSNil{}, Eng.SSNil{}, "[]"})), "allow"),
+    String.eq(decision_text(Refs.admit(Refs.RQ{True{}, "symbol", "", "", Eng.ss_one("definition"), Eng.ss_one("definition"), Snap.ACurrent{}, Eng.SSNil{}, Eng.SSNil{}, "[]"})), "policy-missing"),
+    String.eq(decision_text(Refs.admit(Refs.RQ{True{}, "symbol", "pol-a", "pol-b", Eng.ss_one("definition"), Eng.ss_one("definition"), Snap.ACurrent{}, Eng.SSNil{}, Eng.SSNil{}, "[]"})), "policy-mismatch:pol-a:pol-b"),
     String.eq(Refs.condition(Refs.RStaleRef{"[]"}), "staleReference"),
     String.eq(effects_text(Eng.required_effects(Eng.op_runtime_observe())), ""),
     String.eq(effects_text(Eng.required_effects(Eng.op_runtime_evaluate())), "controlRuntime,evaluateRuntime"),
