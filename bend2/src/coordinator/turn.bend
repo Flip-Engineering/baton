@@ -333,7 +333,12 @@ def observe_event(+db: String, +player: String, +id: String, +line: String, log:
     case True{}: do IO<Result<&1,&1,U32 & String,String>>:
       saved : Result<&1,&1,U32 & String,String> <- Store.commit(db,C.Observe{id,player,line,sealed})
       observe_projection(saved,db,player,id,line,log,sealed)
-    case False{}: IO.pure(Result<&1,&1,U32 & String,String>,Done{""})
+    case False{}:
+      match sealed:
+        case False{}: IO.pure(Result<&1,&1,U32 & String,String>,Done{""})
+        case True{}: do IO<Result<&1,&1,U32 & String,String>>:
+          recorded : Unit <- Logs.record_terminal_projection(db,player,id,line,log)
+          IO.pure(Result<&1,&1,U32 & String,String>,Done{""})
 
 # A terminal that completes after the managed completion was sealed cannot be
 # recorded as a report under the sealed identity: the first terminal stays the
@@ -662,7 +667,7 @@ def supervise_gone(+db: String, +player: String, +id: String, +cmd: String, +mod
 def supervise_retry(+db: String, +player: String, +id: String, +cmd: String, +model: String, +effort: String, +cwd: String, +task: String, +log: String, +harness: String, +sessions: String, +native: String, +prompt: String, +first: Outcome) -> IO(Outcome):
   do IO<Outcome>:
     resumable : Bool <- IO.pure(Bool, Bool.not(String.is_empty(native)))
-    gone : Bool <- refusal(log,resumable,first)
+    gone : Bool <- refusal(generation_log(log,id),resumable,first)
     supervise_gone(db,player,id,cmd,model,effort,cwd,task,log,harness,sessions,prompt,first,gone)
 
 def supervise(+db: String, +player: String, +id: String, +cmd: String, +model: String, +effort: String, +cwd: String, +task: String, +log: String, +session: String, +harness: String, +sessions: String, +prompt: String) -> IO(Outcome):

@@ -353,7 +353,8 @@ print(json.dumps({'type':'agent_end','isTerminal':True,'messages':[{'role':'assi
             self.task.write_text('run ' + name)
             turn_log = self.log.with_suffix('.' + name + '.jsonl')
             self.call('turn','omp-worker',name + '-turn',str(self.player),'requested-model','low',str(self.cwd),str(self.task),str(turn_log),'')
-            frames=[json.loads(line) for line in turn_log.read_text().splitlines()]
+            generated=pathlib.Path(str(turn_log)+'.attempt-'+name+'-turn')
+            frames=[json.loads(line) for line in generated.read_text().splitlines()]
             self.assertEqual(frames[0],reply,name)
             self.assertEqual(frames[-1],{'type':'baton_event_filter','requested':'delta','active':False,'outcome':expected[name]},name)
             self.assertEqual(json.loads(self.call('delivery',name + '-turn'))['body'],'partial answer λ',name)
