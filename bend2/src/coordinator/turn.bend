@@ -533,15 +533,9 @@ def retained_output(+db: String, +player: String, id: String, +log: String, +har
     sender : Chan(Result<&1,&1,U32 & String,Unit>) <- IO.fork(Result<&1,&1,U32 & String,Unit>,IO.pure(Result<&1,&1,U32 & String,Unit>,Done{Unit{}}))
     +checkpoint_state : Observer.State <- Observer.restore(db,handle)
     +first : Result<&1,&1,U32 & String,Maybe<String>> <- P.ProcessChild.read_line(handle)
-    cursor : String <- IO.pure(String,Observer.cursor(checkpoint_state))
-    last_message : String <- IO.pure(String,Observer.last_message(checkpoint_state))
-    primary : String <- IO.pure(String,Observer.muse_primary(checkpoint_state))
-    current : String <- IO.pure(String,Observer.muse_current(checkpoint_state))
-    terminal : String <- IO.pure(String,Observer.terminal(checkpoint_state))
-    filter : String <- IO.pure(String,Observer.filter_mode(checkpoint_state))
-    codex_log : String <- IO.pure(String,Observer.codex_log(checkpoint_state))
-    held : String <- IO.pure(String,Observer.held(checkpoint_state))
-    consume(db,player,id,log,policy,held,False{},handle,harness,cursor,last_message,primary,current,terminal,filter,codex_log,"",sender,attempt,checkpoint_state,False{},Nil{},first)
+    match checkpoint_state:
+      case Observer.State{guidance_cursor,last_message,muse_primary,muse_current,terminal,filter_mode,codex_log,held}:
+        consume(db,player,id,log,policy,held,False{},handle,harness,guidance_cursor,last_message,muse_primary,muse_current,terminal,filter_mode,codex_log,"",sender,attempt,checkpoint_state,False{},Nil{},first)
 
 def retained(+db: String, +player: String, +directory: String, +cmd: String, +model: String, +effort: String, cwd: String, +session: String, +harness: String, +sessions: String, +prompt: String, lock: U32, recovery: String) -> IO(Result<&1,&1,U32 & String,P.RetainedStart>):
   do IO<Result<&1,&1,U32 & String,P.RetainedStart>>:
