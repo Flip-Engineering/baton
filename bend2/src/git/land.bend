@@ -1102,6 +1102,9 @@ def ld_adv_wt_reuse(path: String, repo: String, target: String, cand: String, ba
 def ld_adv_wt_capture(path: String, repo: String, target: String, cand: String, basis: String, ctx: LdAdvCtx, host: Result<&1,&1,U32 & String,String & String>) -> IO(LdAdvObs):
   ld_adv_wt_reuse(path, repo, target, cand, basis, ctx, T.captured_raw_of(host))
 
+# Git provides no atomic CLI operation that pins symbolic HEAD across the final identity check
+# and the merge, so a switch in that interval can still direct the merge to another branch. The
+# target claim coordinates participating landings; it does not lock an independent Git process.
 def ld_adv_wt_head_same(same: Bool, path: String, repo: String, target: String, cand: String, basis: String, +ctx: LdAdvCtx) -> IO(LdAdvObs):
   match same:
     case False{}: IO.pure(LdAdvObs, ld_adv_wrap(AdvHolderChanged{path}))
@@ -2385,10 +2388,10 @@ law a_successful_unequal_target_read_is_movement:
 def a_successful_unequal_target_read_is_movement():
   {==}
 
-law a_successful_matching_target_and_holder_lands:
+law a_successful_matching_holder_read_lands:
   {ld_adv_wt_head_decided("/p", "tgt", T.CapturedDone{"framing bytes", "diagnostics bytes"}, T.GRun{0, "tip\n"}, T.GRun{0, Tx.str_cat(ld_hold_ref("tgt"), "\n")}) == IO.pure(LdAdvObs, ld_adv_qualified_with(AdvLanded{}, T.CapturedDone{"framing bytes", "diagnostics bytes"}, QualDecided{ld_adv_read(T.GRun{0, "tip\n"}), ld_adv_read(T.GRun{0, Tx.str_cat(ld_hold_ref("tgt"), "\n")})})) : IO(LdAdvObs)}
 
-def a_successful_matching_target_and_holder_lands():
+def a_successful_matching_holder_read_lands():
   {==}
 
 law a_successful_holder_mismatch_is_holder_change:
@@ -2407,4 +2410,30 @@ law a_refused_mutation_retains_its_target_read:
   {ld_adv_wt_refused_decided(AdvRefused{}, T.GRun{0, "tip\n"}, T.CapturedDone{"framing bytes", "diagnostics bytes"}) == IO.pure(LdAdvObs, ld_adv_qualified_with(AdvRefused{}, T.CapturedDone{"framing bytes", "diagnostics bytes"}, QualDecided{ld_adv_read(T.GRun{0, "tip\n"}), ReadSkipped{}})) : IO(LdAdvObs)}
 
 def a_refused_mutation_retains_its_target_read():
+  {==}
+
+law a_nonzero_target_read_is_failure_evidence:
+  {ld_adv_wt_target_decided("/p", "/r", "tgt", "cand", T.CapturedDone{"framing bytes", "diagnostics bytes"}, T.GRun{128, "fatal: not a valid ref\n"}) == IO.pure(LdAdvObs, ld_adv_qualified_with(AdvBroken{"fatal: not a valid ref\n"}, T.CapturedDone{"framing bytes", "diagnostics bytes"}, QualDecided{ld_adv_read(T.GRun{128, "fatal: not a valid ref\n"}), ReadSkipped{}})) : IO(LdAdvObs)}
+
+def a_nonzero_target_read_is_failure_evidence():
+  {==}
+
+law a_nonzero_holder_read_is_failure_evidence:
+  {ld_adv_wt_head_decided("/p", "tgt", T.CapturedDone{"framing bytes", "diagnostics bytes"}, T.GRun{0, "tip\n"}, T.GRun{128, "fatal: cannot resolve HEAD\n"}) == IO.pure(LdAdvObs, ld_adv_qualified_with(AdvBroken{"fatal: cannot resolve HEAD\n"}, T.CapturedDone{"framing bytes", "diagnostics bytes"}, QualDecided{ld_adv_read(T.GRun{0, "tip\n"}), ld_adv_read(T.GRun{128, "fatal: cannot resolve HEAD\n"})})) : IO(LdAdvObs)}
+
+def a_nonzero_holder_read_is_failure_evidence():
+  {==}
+
+law a_matching_target_read_continues_to_the_holder_read:
+  {ld_adv_wt_target_decided("/p", "/r", "tgt", "cand", T.CapturedDone{"framing bytes", "diagnostics bytes"}, T.GRun{0, "cand\n"}) == (do IO<LdAdvObs>:
+    head : T.GitOut <- Git.runGit("/p", ld_head_argv())
+    ld_adv_wt_head_decided("/p", "tgt", T.CapturedDone{"framing bytes", "diagnostics bytes"}, T.GRun{0, "cand\n"}, head)) : IO(LdAdvObs)}
+
+def a_matching_target_read_continues_to_the_holder_read():
+  {==}
+
+law a_refused_pick_and_decision_retain_the_read:
+  {ld_adv_wt_refused_decided(ld_adv_refused_pick(T.GRun{0, "tip\n"}, "/p", "tip"), T.GRun{0, "tip\n"}, T.CapturedDone{"framing bytes", "diagnostics bytes"}) == IO.pure(LdAdvObs, ld_adv_qualified_with(AdvHeld{"/p"}, T.CapturedDone{"framing bytes", "diagnostics bytes"}, QualDecided{ld_adv_read(T.GRun{0, "tip\n"}), ReadSkipped{}})) : IO(LdAdvObs)}
+
+def a_refused_pick_and_decision_retain_the_read():
   {==}
