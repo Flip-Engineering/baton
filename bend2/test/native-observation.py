@@ -19,13 +19,13 @@ class NativeObservation(RECEIVE.Receive):
         needle = "    if action.get('stdout_line'):\n"
         addition = (
             "    if 'native_line' in action:\n"
-            "        print(action['native_line'],flush=True)\n"
-            "        reply({'line_written':action['native_line']})\n"
-            "        continue\n"
-            "    if 'native_frame' in action:\n"
-            "        print(json.dumps(action['native_frame']),flush=True)\n"
-            "        reply({'frame_written':True})\n"
-            "        continue\n")
+            "            print(action['native_line'],flush=True)\n"
+            "            reply({'line_written':action['native_line']})\n"
+            "            continue\n"
+            "            if 'native_frame' in action:\n"
+            "                print(json.dumps(action['native_frame']),flush=True)\n"
+            "                reply({'frame_written':True})\n"
+            "                continue\n")
         self.assertIn(needle, fixture)
         self.fixture.write_text(fixture.replace(needle, addition + needle, 1))
 
@@ -116,4 +116,7 @@ class NativeObservation(RECEIVE.Receive):
 
 
 if __name__ == '__main__':
-    unittest.main()
+    unittest.main(defaultTest=[
+        'NativeObservation.test_mixed_agent_end_members_preserve_completion_and_raw_frame',
+        'NativeObservation.test_muse_uses_admitted_turn_terminal_and_keeps_later_lifecycle_separate',
+    ])
