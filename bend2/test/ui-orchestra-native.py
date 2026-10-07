@@ -42,7 +42,6 @@ class OrchestraProjection(unittest.TestCase):
 
     def player(self, name, parent):
         workspace = self.directory / name
-        workspace.mkdir()
         return self.call('recruit', name, parent, 'muse', 'configured-model', 'low',
                          str(self.repo), name + '-branch', str(workspace), 'HEAD')
 
