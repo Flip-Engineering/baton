@@ -48,7 +48,11 @@ class NativeObservation(RECEIVE.Receive):
         terminal = {
             'type': 'agent_end', 'isTerminal': True, 'is_error': False,
             'messages': [
-                {'role': 'assistant', 'content': [{'type': 'text', 'text': 'Observed completion text.'}]},
+                {'role': 'assistant', 'content': 'plain string content'},
+                {'role': 'assistant', 'content': [
+                    {'type': 'text', 'text': 'Observed completion text.'},
+                    'plain string content block', None, {'metadata': 'content metadata'},
+                ]},
                 '…[181 items elided for RPC frame]', None, {'metadata': 'retained in raw log'},
             ],
         }
@@ -61,6 +65,7 @@ class NativeObservation(RECEIVE.Receive):
         self.assertEqual([row['reportBody'] for row in turns], ['Observed completion text.'])
         log = (self.directory / 'parent.jsonl').read_text()
         self.assertIn('…[181 items elided for RPC frame]', log)
+        self.assertIn('plain string content block', log)
         self.assertIn('not-json', log)
         self.assertEqual(self.coord('player', 'parent')['native'], 'omp-native')
         self.assertFalse(any('Native output observation failed' in row['body']
