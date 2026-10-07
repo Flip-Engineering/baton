@@ -109,6 +109,42 @@ law native_invocation_frame_refuses_another_protocol_version:
 def native_invocation_frame_refuses_another_protocol_version():
   {==}
 
+def native_primary_binding() -> Sel.MBind:
+  Sel.MBind{"primary", "r1", "d1", "2", "sourceAnalysis", Decl.ArtsNil{}, Eng.SSNil{}}
+
+def native_dependency_binding() -> Sel.MBind:
+  Sel.MBind{"dependency", "r2", "d2", "2", "definition", Decl.ArtsNil{}, Eng.SSNil{}}
+
+def native_step_plan() -> Sel.Plan:
+  Sel.Plan{native_primary_binding(), "sourceAnalysis",
+    Sel.StepsCons{Sel.Step{native_primary_binding(), "sourceAnalysis", Eng.SSNil{},
+      Decl.ExManaged{}, Sel.StepRefsNil{}, "result-v1"},
+      Sel.StepsCons{Sel.Step{native_dependency_binding(), "sourceAnalysis", Eng.SSNil{},
+        Decl.ExManaged{}, Sel.StepRefsNil{}, "result-v1"}, Sel.StepsNil{}}},
+    Eng.SSNil{}, Sel.CapNil{}, True{}}
+
+law native_invocation_uses_the_named_dependency_step_binding:
+  {Native.invocation_for_step(native_step_plan(), "dependency", "d2", "definition",
+    "query-1", "owner-1", "{}", "", "") == Native.NativeStepFrame{
+      Native.invocation_frame(Sel.Invocation{"2", "query-1", "owner-1",
+        native_dependency_binding(), "{}",
+        Sel.StepsCons{Sel.Step{native_primary_binding(), "sourceAnalysis", Eng.SSNil{},
+          Decl.ExManaged{}, Sel.StepRefsNil{}, "result-v1"},
+          Sel.StepsCons{Sel.Step{native_dependency_binding(), "sourceAnalysis", Eng.SSNil{},
+            Decl.ExManaged{}, Sel.StepRefsNil{}, "result-v1"}, Sel.StepsNil{}}},
+        Sel.CapNil{}, "", ""})} : Native.StepInvocationFrame}
+
+def native_invocation_uses_the_named_dependency_step_binding():
+  {==}
+
+law native_invocation_refuses_a_step_absent_from_the_frozen_plan:
+  {Native.invocation_for_step(native_step_plan(), "foreign", "d9", "definition",
+    "query-1", "owner-1", "{}", "", "") ==
+      Native.NativeStepRefused{"foreign", "d9", "definition"} : Native.StepInvocationFrame}
+
+def native_invocation_refuses_a_step_absent_from_the_frozen_plan():
+  {==}
+
 law native_installed_provider_path_uses_the_executable_install_prefix:
   {Native.installed_provider_path("/opt/baton2/bin/baton2") == "/opt/baton2/bin/../libexec/baton2/context-provider.mjs" : String}
 

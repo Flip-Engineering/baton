@@ -13,6 +13,10 @@ type InvocationFrame is Data:
   NativeFrameReady{value: String}
   NativeFrameRefused{reason: String}
 
+type StepInvocationFrame is Data:
+  NativeStepFrame{frame: InvocationFrame}
+  NativeStepRefused{module_id: String, declaration_digest: String, operation: String}
+
 def invocation_frame(+invocation: Sel.Invocation) -> InvocationFrame:
   match invocation:
     case Sel.Invocation{version, query, owner, binding, request,
@@ -23,6 +27,20 @@ def invocation_frame(+invocation: Sel.Invocation) -> InvocationFrame:
           EnginesWire.captures_text(inputs), EnginesWire.plan_text(operation_plan),
           role, incarnation)},
         NativeFrameRefused{"invocationVersion"})
+
+def invocation_outcome(outcome: Sel.InvocationOutcome) -> StepInvocationFrame:
+  match outcome:
+    case Sel.InvocationMissing{module_id, declaration_digest, operation}:
+      NativeStepRefused{module_id, declaration_digest, operation}
+    case Sel.InvocationBound{invocation}:
+      NativeStepFrame{invocation_frame(invocation)}
+
+def invocation_for_step(+plan: Sel.Plan, +module_id: String, +digest: String,
+                        +operation: String, +query: String, +owner: String,
+                        +request: String, +role: String,
+                        +incarnation: String) -> StepInvocationFrame:
+  invocation_outcome(Sel.invocation_for_step(plan, module_id, digest, operation,
+    query, owner, request, role, incarnation))
 
 def dirname_step(+rest: String, +current: String, +last: String) -> String:
   match rest:
