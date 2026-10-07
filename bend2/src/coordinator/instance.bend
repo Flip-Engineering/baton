@@ -72,15 +72,17 @@ def snapshot(+db: String) -> IO(List<(String & String)>):
 def receivable(+harness: String) -> Bool:
   Bool.or(String.eq(harness, "codex"), String.eq(harness, "omp"))
 
-def without_session_eq(rest: List<(String & String)>, +id: String, session: String, harness: String, same: Bool) -> List<(String & String)>:
+def keep_or_drop(same: Bool, session: String, harness: String, tail: List<(String & String)>) -> List<(String & String)>:
   match same:
-    case True{}: without_session(rest, id)
-    case False{}: Con{(session, harness), without_session(rest, id)}
+    case True{}: tail
+    case False{}: Con{(session, harness), tail}
 
 def without_session(pairs: List<(String & String)>, +id: String) -> List<(String & String)>:
   match pairs:
     case Nil{}: Nil{}
-    case (+session, +harness) <> rest: without_session_eq(rest, id, session, harness, String.eq(session, id))
+    case (+session, +harness) <> rest:
+      +tail = without_session(rest, id)
+      keep_or_drop(String.eq(session, id), session, harness, tail)
 
 # Linear strip: each known session is removed by threading the remainder, and
 # the known set is returned alongside so no list is ever read twice.
@@ -93,18 +95,25 @@ def strip_known(pairs: List<(String & String)>, known: List<String>) -> List<(St
     case Nil{}: (pairs, Nil{})
     case id <> rest: strip_cons(strip_known(without_session(pairs, id), rest), id)
 
-def partition_fit(rest: List<(String & String)>, session: String, harness: String, fork: List<(String & String)>, refuse: List<(String & String)>, fits: Bool) -> List<(String & String)> & List<(String & String)>:
+def partition_cons_fork(one: String & String, done: List<(String & String)> & List<(String & String)>) -> List<(String & String)> & List<(String & String)>:
+  match done:
+    case (fork, refuse): (Con{one, fork}, refuse)
+
+def partition_cons_refuse(one: String & String, done: List<(String & String)> & List<(String & String)>) -> List<(String & String)> & List<(String & String)>:
+  match done:
+    case (fork, refuse): (fork, Con{one, refuse})
+
+def partition_pick(fits: Bool, one: String & String, done: List<(String & String)> & List<(String & String)>) -> List<(String & String)> & List<(String & String)>:
   match fits:
-    case True{}: partition_go(rest, Con{(session, harness), fork}, refuse)
-    case False{}: partition_go(rest, fork, Con{(session, harness), refuse})
+    case True{}: partition_cons_fork(one, done)
+    case False{}: partition_cons_refuse(one, done)
 
 def partition_go(pairs: List<(String & String)>, fork: List<(String & String)>, refuse: List<(String & String)>) -> List<(String & String)> & List<(String & String)>:
   match pairs:
     case Nil{}: (fork, refuse)
-    case (+session, +harness) <> rest: partition_add(rest, session, harness, fork, refuse)
-
-def partition_add(rest: List<(String & String)>, session: String, +harness: String, fork: List<(String & String)>, refuse: List<(String & String)>) -> List<(String & String)> & List<(String & String)>:
-  partition_fit(rest, session, harness, fork, refuse, receivable(harness))
+    case (+session, +harness) <> rest:
+      +rest_done = partition_go(rest, fork, refuse)
+      partition_pick(receivable(harness), (session, harness), rest_done)
 
 def partition(pairs: List<(String & String)>) -> List<(String & String)> & List<(String & String)>:
   partition_go(pairs, Nil{}, Nil{})
@@ -114,25 +123,29 @@ def sessions_of(pairs: List<(String & String)>) -> List<String>:
     case Nil{}: Nil{}
     case (session, harness) <> rest: Con{session, sessions_of(rest)}
 
-def without_id_eq(rest: List<String>, +id: String, session: String, same: Bool) -> List<String>:
+def keep_or_drop_id(same: Bool, session: String, tail: List<String>) -> List<String>:
   match same:
-    case True{}: without_id(rest, id)
-    case False{}: Con{session, without_id(rest, id)}
+    case True{}: tail
+    case False{}: Con{session, tail}
 
 def without_id(sessions: List<String>, +id: String) -> List<String>:
   match sessions:
     case Nil{}: Nil{}
-    case +session <> rest: without_id_eq(rest, id, session, String.eq(session, id))
+    case +session <> rest:
+      +tail = without_id(rest, id)
+      keep_or_drop_id(String.eq(session, id), session, tail)
 
-def member_eq(rest: List<String>, +id: String, same: Bool) -> Bool:
-  match same:
+def member_or(hit: Bool, found: Bool) -> Bool:
+  match hit:
     case True{}: True{}
-    case False{}: member(rest, id)
+    case False{}: found
 
 def member(sessions: List<String>, +id: String) -> Bool:
   match sessions:
     case Nil{}: False{}
-    case +session <> rest: member_eq(rest, id, String.eq(session, id))
+    case +session <> rest:
+      +found = member(rest, id)
+      member_or(String.eq(session, id), found)
 
 def fork_of(decided: List<(String & String)> & List<(String & String)>) -> List<String>:
   match decided:
