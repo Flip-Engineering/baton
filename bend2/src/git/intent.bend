@@ -35,7 +35,7 @@ type ReceiptVerdict is Data:
 
 type IntentPrepared is Data:
   IntentUnready{step: String, reason: String, raw: String}
-  IntentHostFailed{step: String, request: IntentInput, error: U32 & String}
+  IntentHostFailed{step: String, request: IntentInput, error: T.HostError}
   IntentPending{request: IntentInput, raw: String, pending: String}
   IntentObserved{request: IntentInput, raw: String, qualified_path: String, head: T.GitOut, index: T.GitOut, status: T.GitOut}
 
@@ -179,14 +179,18 @@ def Intent.recorded(request: IntentInput, raw: String) -> IO(IntentPrepared):
   +path = requested_path(req)
   Intent.decided(req, record, receipt_verdict(record, path))
 
+def Intent.host_failed(step: String, request: IntentInput, error: U32 & String) -> IO(IntentPrepared):
+  match error:
+    case (code, detail): IO.pure(IntentPrepared, IntentHostFailed{step, request, T.HostError{code, detail}})
+
 def Intent.record_observed(request: IntentInput, host: Result<&1, &1, U32 & String, String>) -> IO(IntentPrepared):
   match host:
-    case Fail{error}: IO.pure(IntentPrepared, IntentHostFailed{"record", request, error})
+    case Fail{error}: Intent.host_failed("record", request, error)
     case Done{raw}: Intent.recorded(request, raw)
 
 def Intent.read_observed(request: IntentInput, host: Result<&1, &1, U32 & String, String>) -> IO(IntentPrepared):
   match host:
-    case Fail{error}: IO.pure(IntentPrepared, IntentHostFailed{"qualify", request, error})
+    case Fail{error}: Intent.host_failed("qualify", request, error)
     case Done{raw}: Intent.record_observed(request, Done{raw})
 
 def Intent.prepare(request: IntentInput) -> IO(IntentPrepared):
@@ -262,7 +266,7 @@ def a_requested_path_with_a_separator_reaches_unready_for_the_separator():
 
 law a_host_failure_keeps_the_request_the_step_and_the_exact_error:
   for request: IntentInput
-  {Intent.record_observed(request, Fail{(13, "i/o error")}) == IO.pure(IntentPrepared, IntentHostFailed{"record", request, (13, "i/o error")}) : IO(IntentPrepared)}
+  {Intent.record_observed(request, Fail{(13, "i/o error")}) == IO.pure(IntentPrepared, IntentHostFailed{"record", request, T.HostError(13, "i/o error")}) : IO(IntentPrepared)}
 
 def a_host_failure_keeps_the_request_the_step_and_the_exact_error(request):
   {==}

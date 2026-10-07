@@ -19,6 +19,19 @@ type GitOut is Data:
   GRun{code: U32, out: String}
   GBroken{detail: String}
 
+# The failure payload of a host Result: the code the host answered and the detail
+# it wrote. A Data record, because a bare product is a Type and cannot be stored.
+type HostError is Data:
+  HostError{code: U32, detail: String}
+
+def HostError.code(error: HostError) -> U32:
+  match error:
+    case HostError{code, detail}: code
+
+def HostError.detail(error: HostError) -> String:
+  match error:
+    case HostError{code, detail}: detail
+
 # The answer of create-worktree: commit names the resolved base commit the new
 # worktree starts from.
 type WorktreeCreated is Data:
