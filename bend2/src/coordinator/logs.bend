@@ -935,7 +935,8 @@ def stderr_run_json(+db: String, fields: List<String>) -> IO(String):
       error_bytes : U32 <- IO.try(U32,F.Files.size(stderr_path ++ ".meta.processing-error"))
       text : Result<&1,&1,U32 & String,String> <- T.Text.read(stderr_path ++ ".meta")
       metadata : String <- stderr_meta_json_read(db,text)
-      health : String <- stderr_generation_health(db,stderr_path,metadata)
+      raw_health : String <- stderr_generation_health(db,stderr_path,metadata)
+      health : String <- IO.pure(String,Bool.pick(String,String.eq(raw_health,"legacy"),"run-artifacts-absent",raw_health))
       IO.pure(String,"{\"session\":" ++ J.string_literal(session) ++ ",\"attempt\":" ++ J.string_literal(attempt) ++ ",\"run\":" ++ run ++ ",\"generation\":" ++ J.string_literal(generation) ++ ",\"stderr\":" ++ J.string_literal(stderr_path) ++ ",\"stderrBytes\":" ++ U32.show(stderr) ++ ",\"spoolBytes\":" ++ U32.show(spool) ++ ",\"metadataBytes\":" ++ U32.show(meta_bytes) ++ ",\"processingErrorBytes\":" ++ U32.show(error_bytes) ++ ",\"accountedBytes\":" ++ U32.show(U32.add(stderr,U32.add(spool,U32.add(meta_bytes,error_bytes)))) ++ ",\"health\":" ++ J.string_literal(health) ++ ",\"metadata\":" ++ metadata ++ "}")
     case other: IO.pure(String,"")
 
