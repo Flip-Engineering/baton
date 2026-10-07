@@ -59,7 +59,7 @@ def observe_attached(result: Result<&1,&1,U32 & String,U32>) -> IO(Unit):
       printed : Unit <- IO.print("attached")
       line : Maybe<String> <- IO.try(Maybe<String>,P.ProcessChild.read_line(handle))
       attached_lines(handle,line)
-    case Fail{error}: IO.die(Unit,1,error)
+    case Fail{(code,text)}: IO.die(Unit,1,U32.show(code) ++ ": " ++ text)
 
 def attach_cli(args: List<String>) -> IO(Unit):
   match args:
