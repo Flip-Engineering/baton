@@ -285,10 +285,10 @@ law an_absent_old_target_consumes_an_absent_head:
   for artifact: String
   for attempt_directory: String
   for repository: String
-  {Landing.old_value_checked(1, LandingRequested{intent, name, old_target: "", content, guard, artifact, attempt_directory, repository}, "published", "0123456789abcdef0123456789abcdef01234567", "1111111111111111111111111111111111111111", "") == (do IO<Landing>:
+  {Landing.old_value_checked(1, LandingRequested{intent, name, "", content, guard, artifact, attempt_directory, repository}, "published", "0123456789abcdef0123456789abcdef01234567", "1111111111111111111111111111111111111111", "") == (do IO<Landing>:
     observed : Result<&1,&1,U32 & String,String & String> <- Process.Process.capture_holding(Tx.enc_argv(Con{"git", Con{"update-ref", Con{qualified_target(intent_target(intent)), Con{"0123456789abcdef0123456789abcdef01234567", Con{mutation_old_value(""), Nil{}}}}}}), repository, 1, guard, artifact)
     released : Result<&1, &1, U32 & String, Unit> <- R.Receipt.release(1)
-    IO.pure(Landing, LandingHeld{LandingRequested{intent, name, old_target: "", content, guard, artifact, attempt_directory, repository}, "0123456789abcdef0123456789abcdef01234567", "1111111111111111111111111111111111111111", "published", observed, released})) : IO(Landing)}
+    IO.pure(Landing, LandingHeld{LandingRequested{intent, name, "", content, guard, artifact, attempt_directory, repository}, "0123456789abcdef0123456789abcdef01234567", "1111111111111111111111111111111111111111", "published", observed, released})) : IO(Landing)}
 
 def an_absent_old_target_consumes_an_absent_head(intent,name,content,guard,artifact,attempt_directory,repository):
   {==}
@@ -301,10 +301,10 @@ law a_present_old_target_matching_the_head_consumes_it:
   for artifact: String
   for attempt_directory: String
   for repository: String
-  {Landing.old_value_checked(1, LandingRequested{intent, name, old_target: "2222222222222222222222222222222222222222", content, guard, artifact, attempt_directory, repository}, "published", "0123456789abcdef0123456789abcdef01234567", "1111111111111111111111111111111111111111", "2222222222222222222222222222222222222222") == (do IO<Landing>:
+  {Landing.old_value_checked(1, LandingRequested{intent, name, "2222222222222222222222222222222222222222", content, guard, artifact, attempt_directory, repository}, "published", "0123456789abcdef0123456789abcdef01234567", "1111111111111111111111111111111111111111", "2222222222222222222222222222222222222222") == (do IO<Landing>:
     observed : Result<&1,&1,U32 & String,String & String> <- Process.Process.capture_holding(Tx.enc_argv(Con{"git", Con{"update-ref", Con{qualified_target(intent_target(intent)), Con{"0123456789abcdef0123456789abcdef01234567", Con{mutation_old_value("2222222222222222222222222222222222222222"), Nil{}}}}}}), repository, 1, guard, artifact)
     released : Result<&1, &1, U32 & String, Unit> <- R.Receipt.release(1)
-    IO.pure(Landing, LandingHeld{LandingRequested{intent, name, old_target: "2222222222222222222222222222222222222222", content, guard, artifact, attempt_directory, repository}, "0123456789abcdef0123456789abcdef01234567", "1111111111111111111111111111111111111111", "published", observed, released})) : IO(Landing)}
+    IO.pure(Landing, LandingHeld{LandingRequested{intent, name, "2222222222222222222222222222222222222222", content, guard, artifact, attempt_directory, repository}, "0123456789abcdef0123456789abcdef01234567", "1111111111111111111111111111111111111111", "published", observed, released})) : IO(Landing)}
 
 def a_present_old_target_matching_the_head_consumes_it(intent,name,content,guard,artifact,attempt_directory,repository):
   {==}
@@ -317,7 +317,7 @@ law a_present_old_target_differing_from_the_head_is_refused:
   for artifact: String
   for attempt_directory: String
   for repository: String
-  {Landing.old_value_checked(1, LandingRequested{intent, name, old_target: "2222222222222222222222222222222222222222", content, guard, artifact, attempt_directory, repository}, "published", "0123456789abcdef0123456789abcdef01234567", "1111111111111111111111111111111111111111", "3333333333333333333333333333333333333333") == (do IO<Landing>:
+  {Landing.old_value_checked(1, LandingRequested{intent, name, "2222222222222222222222222222222222222222", content, guard, artifact, attempt_directory, repository}, "published", "0123456789abcdef0123456789abcdef01234567", "1111111111111111111111111111111111111111", "3333333333333333333333333333333333333333") == (do IO<Landing>:
     released : Result<&1, &1, U32 & String, Unit> <- R.Receipt.release(1)
     IO.pure(Landing, LandingOldValueMismatch{"2222222222222222222222222222222222222222", "3333333333333333333333333333333333333333", released})) : IO(Landing)}
 
