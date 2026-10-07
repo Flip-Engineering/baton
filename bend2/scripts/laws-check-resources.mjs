@@ -40,17 +40,26 @@ export function parseProcessCpuTime(value) {
   const text = String(value).trim();
   const daySplit = text.split('-');
   if (daySplit.length > 2) throw new Error(`invalid process CPU time: ${value}`);
-  const days = daySplit.length === 2 ? Number(daySplit[0]) : 0;
+  const dayText = daySplit.length === 2 ? daySplit[0] : '0';
+  if (!/^\d+$/.test(dayText)) throw new Error(`invalid process CPU time: ${value}`);
+  const days = Number(dayText);
   const clock = daySplit.at(-1).split(':');
   if ((daySplit.length === 2 && clock.length !== 3) || (clock.length !== 2 && clock.length !== 3)) {
     throw new Error(`invalid process CPU time: ${value}`);
   }
-  const secondsPart = Number(clock.at(-1));
-  const minutes = Number(clock.at(-2));
-  const hours = clock.length === 3 ? Number(clock[0]) : 0;
-  if (!Number.isFinite(days) || days < 0 || !Number.isFinite(hours) || hours < 0 ||
-      !Number.isFinite(minutes) || minutes < 0 || minutes >= 60 ||
-      !Number.isFinite(secondsPart) || secondsPart < 0 || secondsPart >= 60) {
+  const hasHours = clock.length === 3;
+  const hoursText = hasHours ? clock[0] : '0';
+  const minutesText = clock.at(-2);
+  const secondsText = clock.at(-1);
+  if (!/^\d+$/.test(hoursText) || !/^\d+$/.test(minutesText) || !/^\d+(?:\.\d+)?$/.test(secondsText)) {
+    throw new Error(`invalid process CPU time: ${value}`);
+  }
+  const hours = Number(hoursText);
+  const minutes = Number(minutesText);
+  const secondsPart = Number(secondsText);
+  if (!Number.isSafeInteger(days) || !Number.isSafeInteger(hours) || !Number.isSafeInteger(minutes) ||
+      (hasHours && minutes >= 60) || (daySplit.length === 2 && hours >= 24) ||
+      !Number.isFinite(secondsPart) || secondsPart >= 60) {
     throw new Error(`invalid process CPU time: ${value}`);
   }
   return days * 86400 + hours * 3600 + minutes * 60 + secondsPart;
@@ -177,10 +186,12 @@ export function createProcessGroupSampler({ intervalMs = 50, snapshotProvider = 
       trackers.set(key, { processGroup: group });
       if (firstTracker && !failure) poll();
       return {
+        // Usage returns the most recent completed shared snapshot.
         usage() {
           if (failure) throw new Error(`process-group sampling failed: ${failure.message}`, { cause: failure });
           return latest.get(group) ?? { rssBytes: 0, cpuSecondsByPid: new Map(), processCount: 0 };
         },
+        // Closing removes this group from later snapshots; it does not sample.
         close() {
           trackers.delete(key);
           if (![...trackers.values()].some(({ processGroup }) => processGroup === group)) latest.delete(group);
