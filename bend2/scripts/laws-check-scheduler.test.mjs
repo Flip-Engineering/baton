@@ -128,6 +128,20 @@ test('implementation mutations require one exact source match', () => {
   assert.equal(applyMutation(modulePath, mutation), false);
 });
 
+test('implementation mutations detach linked source before writing', () => {
+  const source = join(workspaceRoot, 'mutation-source');
+  const workspace = join(workspaceRoot, 'mutation-workspace');
+  mkdirSync(source);
+  writeFileSync(join(source, 'module.bend'), 'old expression\n');
+  cloneLinkedTree(source, workspace);
+  const isolated = join(workspace, 'module.bend');
+  assert.equal(statSync(isolated).ino, statSync(join(source, 'module.bend')).ino);
+  assert.equal(applyMutation(isolated, { find: 'old expression', replace: 'new expression' }), true);
+  assert.equal(readFileSync(isolated, 'utf8'), 'new expression\n');
+  assert.equal(readFileSync(join(source, 'module.bend'), 'utf8'), 'old expression\n');
+  assert.notEqual(statSync(isolated).ino, statSync(join(source, 'module.bend')).ino);
+});
+
 test('proof removal and implementation mutation require their distinct law diagnostics', async () => {
   const genericError = join(artifactRoot, 'generic-error.log');
   const incompleteProof = join(artifactRoot, 'incomplete-proof.log');

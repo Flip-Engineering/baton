@@ -306,6 +306,7 @@ export async function outputMatches(paths, pattern) {
 }
 
 export function applyMutation(modulePath, mutation) {
+  detachFile(modulePath);
   const text = readFileSync(modulePath, 'utf8');
   const first = text.indexOf(mutation.find);
   if (first < 0 || first !== text.lastIndexOf(mutation.find)) return false;
@@ -455,9 +456,11 @@ async function runControl(control, runRoot) {
   const stdoutPath = join(artifactRoot, 'stdout.log');
   const stderrPath = join(artifactRoot, 'stderr.log');
   const copied = join(cwd, control.kind === 'proof' ? control.payload.module : control.payload.file);
-  detachFile(copied);
   let applied;
-  if (control.kind === 'proof') applied = removeProof(copied, control.payload.law);
+  if (control.kind === 'proof') {
+    detachFile(copied);
+    applied = removeProof(copied, control.payload.law);
+  }
   else applied = applyMutation(copied, control.payload);
   const startedAt = new Date().toISOString();
   const started = process.hrtime.bigint();
