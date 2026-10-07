@@ -1,0 +1,135 @@
+{
+  "schema": "baton2-selected-context-payload-v1",
+  "moduleId": "bend2",
+  "protocolVersion": "2",
+  "upstreamPin": "a49524265bdfa5753a4bf38e25f0574a705dd868",
+  "providerArtifacts": [
+    {
+      "packagePath": "native-provider.mjs",
+      "sha256": "6c37c48265e99d0d732bee1aa96d78494d1b42808bdda49dfd4d4e4ad3e6114f",
+      "role": "provider"
+    },
+    {
+      "packagePath": "worktree-capture.mjs",
+      "sha256": "6a6e5dbed7e9b696bc3e2a1332dfa3ee4be1ddf3eeba15de8f58c9324ddb2f50",
+      "role": "source-custody"
+    },
+    {
+      "packagePath": "frontend-adapter.mjs",
+      "sha256": "a6e389276707738479881380fcde81b31bfc5630832135cc37d656ce3f92cd90",
+      "role": "frontend-adapter"
+    },
+    {
+      "packagePath": "frontend-hook-events.mjs",
+      "sha256": "acd25b7cef9ff87513448344c2e246aadf06c004ff2716a79e57e46b958f1374",
+      "role": "frontend-event-schema"
+    },
+    {
+      "packagePath": "frontend-hooks.mjs",
+      "sha256": "8040f3bf182a7d4b6aebcee21ba1909ade75bc85403ddf884e73f576db445f47",
+      "role": "frontend-hooks"
+    },
+    {
+      "packagePath": "frontend-invocation.mjs",
+      "sha256": "35151b95977d39df1b25191981e4a0ba906a4e6aefc82dc143178d6b5b32f93b",
+      "role": "frontend-invocation"
+    },
+    {
+      "packagePath": "source-binding.mjs",
+      "sha256": "4bf1cc96b8b6c89edc863caebff32f8e2f2aaa5ddc6b6becb10c9546f34d2bc7",
+      "role": "source-binding"
+    },
+    {
+      "packagePath": "upstream/base.bend",
+      "sha256": "e5639663177f2de93ef34867c029698aa4e68a98d46629f0b15452b67b99d798",
+      "role": "frontend-base"
+    },
+    {
+      "packagePath": "upstream/bend.ts",
+      "sha256": "93c2a43deeb82c15683e4e25bbc5dec5ac3edff9f54e09acc0975e290fcaeb85",
+      "role": "frontend-kernel"
+    },
+    {
+      "packagePath": "upstream/comp.ts",
+      "sha256": "ad8b82137e5decf588d507d008cb8ccf24bd0b94043de8bd6e048d0faedcf959",
+      "role": "frontend-completion"
+    },
+    {
+      "packagePath": "upstream/main.ts",
+      "sha256": "92dcdb49e82fd59443e3aea10784f7dcf03a93f5a21920666543098b657b6b1e",
+      "role": "frontend-main"
+    },
+    {
+      "packagePath": "upstream/LICENSE",
+      "sha256": "0beb288abd3d067e231f3fbe7df1f8ee37344061fc67f22018150a19e4b26c35",
+      "role": "upstream-license"
+    }
+  ],
+  "files": [
+    {
+      "path": "frontend-adapter.mjs",
+      "bytes": 40472,
+      "sha256": "a6e389276707738479881380fcde81b31bfc5630832135cc37d656ce3f92cd90"
+    },
+    {
+      "path": "frontend-hook-events.mjs",
+      "bytes": 9587,
+      "sha256": "acd25b7cef9ff87513448344c2e246aadf06c004ff2716a79e57e46b958f1374"
+    },
+    {
+      "path": "frontend-hooks.mjs",
+      "bytes": 39238,
+      "sha256": "8040f3bf182a7d4b6aebcee21ba1909ade75bc85403ddf884e73f576db445f47"
+    },
+    {
+      "path": "frontend-invocation.mjs",
+      "bytes": 15766,
+      "sha256": "35151b95977d39df1b25191981e4a0ba906a4e6aefc82dc143178d6b5b32f93b"
+    },
+    {
+      "path": "native-provider.declaration.json",
+      "bytes": 5674,
+      "sha256": "8b1394ea07eabc9f19bec020d5c91c8933c1ef45eccb21faa10ad48cd62aae54"
+    },
+    {
+      "path": "native-provider.mjs",
+      "bytes": 17197,
+      "sha256": "6c37c48265e99d0d732bee1aa96d78494d1b42808bdda49dfd4d4e4ad3e6114f"
+    },
+    {
+      "path": "source-binding.mjs",
+      "bytes": 23752,
+      "sha256": "4bf1cc96b8b6c89edc863caebff32f8e2f2aaa5ddc6b6becb10c9546f34d2bc7"
+    },
+    {
+      "path": "upstream/LICENSE",
+      "bytes": 11344,
+      "sha256": "0beb288abd3d067e231f3fbe7df1f8ee37344061fc67f22018150a19e4b26c35"
+    },
+    {
+      "path": "upstream/base.bend",
+      "bytes": 66363,
+      "sha256": "e5639663177f2de93ef34867c029698aa4e68a98d46629f0b15452b67b99d798"
+    },
+    {
+      "path": "upstream/bend.ts",
+      "bytes": 135926,
+      "sha256": "93c2a43deeb82c15683e4e25bbc5dec5ac3edff9f54e09acc0975e290fcaeb85"
+    },
+    {
+      "path": "upstream/comp.ts",
+      "bytes": 191956,
+      "sha256": "ad8b82137e5decf588d507d008cb8ccf24bd0b94043de8bd6e048d0faedcf959"
+    },
+    {
+      "path": "upstream/main.ts",
+      "bytes": 24396,
+      "sha256": "92dcdb49e82fd59443e3aea10784f7dcf03a93f5a21920666543098b657b6b1e"
+    },
+    {
+      "path": "worktree-capture.mjs",
+      "bytes": 12141,
+      "sha256": "6a6e5dbed7e9b696bc3e2a1332dfa3ee4be1ddf3eeba15de8f58c9324ddb2f50"
+    }
+  ]
+}

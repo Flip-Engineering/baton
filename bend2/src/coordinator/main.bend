@@ -15,6 +15,7 @@ import ./ui-subscription.bend as UISubscription
 import ./usage.bend as Usage
 import ./logs.bend as Logs
 import ./commands.bend as C
+import ../context/native.bend as ContextNative
 import ./control.bend as Control
 import ./control-laws.bend as ControlLaws
 import ../host/text.bend as T
@@ -80,6 +81,7 @@ def stored_command_entry_uses_the_actual_store(db,command):
   {==}
 
 def usage() -> String:
+  "context-engines\ncontext-query-file OWNER QUERY REQUEST_PATH\ncontext-result QUERY\n" ++
   "usage: baton2 DATABASE COMMAND ARGS\nstart SESSION HARNESS HARNESS_CMD MODEL EFFORT CWD OUTPUT_LOG TASK_ID TASK_FILE\nreceiver SESSION HARNESS_CMD OUTPUT_LOG\ndispatch-file ID SENDER RECIPIENT KIND PATH\ndispatch-turn PLAYER TURN_ID HARNESS_CMD OUTPUT_LOG TASK_FILE\nui-subscribe AFTER GENERATION\nstatus --pretty\nplayers --pretty\norchestra --pretty\npending --pretty\nplayer ID --pretty\nsession ID --pretty\ninbox ID --pretty\ndelivery ID --pretty\nturns PLAYER_ID --pretty\nknowledge READER --pretty\nworktree ID --pretty\nattach ID HARNESS NATIVE ENDPOINT\nrecruit ID PARENT HARNESS MODEL EFFORT REPO BRANCH PATH BASE\nworktree ID\nconnect ID NATIVE ENDPOINT\nbind ID NATIVE HARNESS MODEL EFFORT\nrole SESSION [player|principal-conductor|associate-conductor|operator]\nensemble ID [OWNER [loose|tight]]\nensemble-member ID OWNER PLAYER add|remove\nsection ENSEMBLE SECTION [OWNER CAPABILITY]\nsection-member ENSEMBLE SECTION OWNER PLAYER add|remove\norchestra\nmessage ID SENDER RECIPIENT KIND BODY\nmessage-file ID SENDER RECIPIENT KIND PATH\nobserve-file ID PLAYER PATH\nreport ID PLAYER BODY\nask ID PLAYER BODY\nask-file ID PLAYER PATH\nnative-reply PARENT REQUEST RESPONSE_JSON\nnative-reply-file PARENT REQUEST PATH\nsession ID\ndelivery ID\npending\ninbox RECIPIENT\nack ID RECIPIENT NATIVE_RECEIPT\nstatus\nplayers\nplayer ID\nturns PLAYER_ID\nland PLAYER_ID REPO TARGET_BRANCH\nland-checked PLAYER_ID REPO TARGET_BRANCH CHECK FILES\npush REPO BRANCH REMOTE\nremote-tip REPO BRANCH REMOTE\nobserved-usage SESSION\nlogs SESSION [LEVEL [BUDGET_BYTES [KEEP_SEGMENTS]]]\nlogs-storage\nlogs-clean SESSION\nturn PLAYER TURN_ID HARNESS_CMD MODEL EFFORT CWD TASK_FILE OUTPUT_LOG RESUME_SESSION\nstop SESSION STOP_ID REASON\nforce-stop SESSION STOP_ID\nreceive SESSION HARNESS_CMD MODEL EFFORT CWD OUTPUT_LOG MESSAGE_ID\nrecord FINDING_ID AUTHOR CLAIM EVIDENCE LIMITS\nknowledge READER\npromote PROMOTION_ID PROMOTER SOURCE DESTINATION FINDING\nEmpty receive MODEL/EFFORT/CWD use recorded values; empty MESSAGE_ID reads the pending inbox.\nPATH - reads stdin; empty RESUME_SESSION starts a new native session\nComplete stored input: delivery MESSAGE_ID returns the full body and receipt of any message; turns PLAYER_ID lists turn history with report bodies; players reports latestReport and latestReportId. Acknowledged messages leave inbox and pending and remain readable by ID."
 
 # A refused log command names its rule on stderr with status 2, as the stored
@@ -152,6 +154,12 @@ def execute(db: String, command: C.Command) -> IO(Unit):
       Knowledge.promote(db,id,promoter,source,destination,finding)
     case C.UiSubscribe{after_cursor,generation}:
       UISubscription.run(db,after_cursor,generation)
+    case C.ContextEngines{}:
+      ContextNative.engines(db)
+    case C.ContextQueryFile{owner,query,path}:
+      ContextNative.query_file(db,owner,query,path)
+    case C.ContextResult{query}:
+      ContextNative.result(db,query)
     case C.Receive{session,cmd,model,effort,cwd,log,message}:
       IO.try(Unit,Receive.run(db,session,cmd,model,effort,cwd,log,message))
     case C.RunTurn{player,id,cmd,model,effort,cwd,task,log,session}:
@@ -439,6 +447,31 @@ law database_cli_passes_the_complete_command_arguments:
   {normal_cli(db <> verb <> args) == execute(db,C.parse(verb <> args)) : IO(Unit)}
 
 def database_cli_passes_the_complete_command_arguments(db,verb,args):
+  {==}
+
+law context_engines_executes_the_native_inventory:
+  for db: String
+  {execute(db,C.ContextEngines{}) == ContextNative.engines(db) : IO(Unit)}
+
+def context_engines_executes_the_native_inventory(db):
+  {==}
+
+law context_query_file_executes_the_native_query_entry:
+  for db: String
+  for owner: String
+  for query: String
+  for path: String
+  {execute(db,C.ContextQueryFile{owner,query,path}) == ContextNative.query_file(db,owner,query,path) : IO(Unit)}
+
+def context_query_file_executes_the_native_query_entry(db,owner,query,path):
+  {==}
+
+law context_result_reads_the_retained_native_result:
+  for db: String
+  for query: String
+  {execute(db,C.ContextResult{query}) == ContextNative.result(db,query) : IO(Unit)}
+
+def context_result_reads_the_retained_native_result(db,query):
   {==}
 
 law native_main_passes_the_complete_runtime_arguments:

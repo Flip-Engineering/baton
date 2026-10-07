@@ -57,6 +57,9 @@ type Command is Data:
   KnowledgeRead{reader: String}
   KnowledgePromote{id: String, promoter: String, source: String, destination: String, finding: String}
   UiSubscribe{after_cursor: String, generation: String}
+  ContextEngines{}
+  ContextQueryFile{owner: String, query: String, path: String}
+  ContextResult{query: String}
   Help{}
   Invalid{}
 
@@ -350,6 +353,9 @@ def sql(command: Command) -> String:
     case KnowledgeRead{reader}: ""
     case KnowledgePromote{id,promoter,source,destination,finding}: ""
     case UiSubscribe{after_cursor,generation}: ""
+    case ContextEngines{}: ""
+    case ContextQueryFile{owner,query,path}: ""
+    case ContextResult{query}: ""
     case Help{}: ""
     case Invalid{}: ""
 
@@ -365,8 +371,10 @@ def parse(args: List<String>) -> Command:
       Bool.pick(Command, String.eq(verb,"workers"),LegacySubordinates{},
       Bool.pick(Command, String.eq(verb,"players"),Players{},
       Bool.pick(Command,String.eq(verb,"orchestra"),Orchestra{},
-      Bool.pick(Command, String.eq(verb,"pending"),Pending{},Invalid{})))))))
+      Bool.pick(Command, String.eq(verb,"pending"),Pending{},
+      Bool.pick(Command,String.eq(verb,"context-engines"),ContextEngines{},Invalid{}))))))))
     case +verb <> +id <> Nil{}:
+      Bool.pick(Command,String.eq(verb,"context-result"),ContextResult{id},
       Bool.pick(Command,String.eq(verb,"logs"),Logs{id,"","",""},
       Bool.pick(Command,String.eq(verb,"logs-clean"),LogsClean{id},
       Bool.pick(Command,Bool.and(Bool.or(String.eq(verb,"players"),Bool.or(String.eq(verb,"orchestra"),String.eq(verb,"pending"))),String.eq(id,"--pretty")),Pretty{Bool.pick(Command,String.eq(verb,"players"),Players{},Bool.pick(Command,String.eq(verb,"orchestra"),Orchestra{},Pending{}))},Bool.pick(Command,Bool.and(String.eq(verb,"status"),String.eq(id,"--pretty")),StatusPretty{},Bool.pick(Command,String.eq(verb,"player"),PlayerRead{id},Bool.pick(Command, String.eq(verb,"role"),RoleRead{id},Bool.pick(Command, String.eq(verb,"ensemble"),EnsembleRead{id},Bool.pick(Command, String.eq(verb,"inbox"),Inbox{id},
@@ -374,11 +382,12 @@ def parse(args: List<String>) -> Command:
       Bool.pick(Command, String.eq(verb,"delivery"),Delivery{id},
       Bool.pick(Command, String.eq(verb,"worktree"),Worktree{id},
       Bool.pick(Command, String.eq(verb,"turns"),Turns{id},
-      Bool.pick(Command, String.eq(verb,"knowledge"),KnowledgeRead{id},Bool.pick(Command, String.eq(verb,"observed-usage"),ObservedUsage{id},Invalid{}))))))))))))))
+      Bool.pick(Command, String.eq(verb,"knowledge"),KnowledgeRead{id},Bool.pick(Command, String.eq(verb,"observed-usage"),ObservedUsage{id},Invalid{})))))))))))))))
     case +verb <> +session <> +id <> Nil{}:
       Bool.pick(Command,String.eq(verb,"ui-subscribe"),UiSubscribe{session,id},Bool.pick(Command,String.eq(verb,"logs"),Logs{session,id,"",""},
       Bool.pick(Command,Bool.and(Bool.or(String.eq(verb,"player"),Bool.or(String.eq(verb,"session"),Bool.or(String.eq(verb,"inbox"),Bool.or(String.eq(verb,"delivery"),Bool.or(String.eq(verb,"turns"),Bool.or(String.eq(verb,"knowledge"),String.eq(verb,"worktree"))))))),String.eq(id,"--pretty")),Pretty{Bool.pick(Command,String.eq(verb,"player"),PlayerRead{session},Bool.pick(Command,String.eq(verb,"session"),Session{session},Bool.pick(Command,String.eq(verb,"inbox"),Inbox{session},Bool.pick(Command,String.eq(verb,"delivery"),Delivery{session},Bool.pick(Command,String.eq(verb,"turns"),Turns{session},Bool.pick(Command,String.eq(verb,"knowledge"),KnowledgeRead{session},Worktree{session}))))))},Bool.pick(Command,String.eq(verb,"section"),SectionRead{session,id},Bool.pick(Command,String.eq(verb,"role"),Role{session,id},Bool.pick(Command,String.eq(verb,"ensemble"),Ensemble{session,id,"loose"},Bool.pick(Command,String.eq(verb,"force-stop"),ForceStop{session,id},Invalid{})))))))
     case +verb <> +id <> +one <> +two <> Nil{}:
+      Bool.pick(Command,String.eq(verb,"context-query-file"),ContextQueryFile{id,one,two},
       Bool.pick(Command,String.eq(verb,"logs"),Logs{id,one,two,""},
       Bool.pick(Command,String.eq(verb,"receiver"),Receiver{id,one,two},Bool.pick(Command, String.eq(verb,"ensemble"),Ensemble{id,one,two},Bool.pick(Command, String.eq(verb,"native-reply"),NativeReply{id,one,two},
       Bool.pick(Command, String.eq(verb,"native-reply-file"),NativeReplyFile{id,one,two},
@@ -390,7 +399,7 @@ def parse(args: List<String>) -> Command:
       Bool.pick(Command, String.eq(verb,"land"),Land{id,one,two},
       Bool.pick(Command, String.eq(verb,"push"),Push{id,one,two},
       Bool.pick(Command, String.eq(verb,"ask"),Ask{id,one,two},
-      Bool.pick(Command, String.eq(verb,"ask-file"),AskFile{id,one,two},Bool.pick(Command, String.eq(verb,"remote-tip"),RemoteTip{id,one,two},Invalid{})))))))))))))))
+      Bool.pick(Command, String.eq(verb,"ask-file"),AskFile{id,one,two},Bool.pick(Command, String.eq(verb,"remote-tip"),RemoteTip{id,one,two},Invalid{}))))))))))))))))
     case +verb <> +id <> +one <> +two <> +three <> Nil{}:
       Bool.pick(Command,String.eq(verb,"logs"),Logs{id,one,two,three},
       Bool.pick(Command,String.eq(verb,"section"),Section{id,one,two,three},Bool.pick(Command, String.eq(verb,"ensemble-member"),EnsembleMember{id,one,two,three},Bool.pick(Command, String.eq(verb,"attach"),Attach{id,one,two,three},Invalid{}))))
@@ -416,6 +425,37 @@ law help_flag_selects_the_help_command:
   {parse(["--help"]) == Help{} : Command}
 
 def help_flag_selects_the_help_command():
+  {==}
+
+law context_engines_has_a_single_command_word:
+  {parse(["context-engines"]) == ContextEngines{} : Command}
+
+def context_engines_has_a_single_command_word():
+  {==}
+
+law context_query_file_binds_owner_query_and_path:
+  for +owner: String
+  for +query: String
+  for +path: String
+  {parse(["context-query-file",owner,query,path]) == ContextQueryFile{owner,query,path} : Command}
+
+def context_query_file_binds_owner_query_and_path(owner,query,path):
+  {==}
+
+law context_result_selects_the_retained_query:
+  for +query: String
+  {parse(["context-result",query]) == ContextResult{query} : Command}
+
+def context_result_selects_the_retained_query(query):
+  {==}
+
+law context_query_rejects_surplus_arguments:
+  for +owner: String
+  for +query: String
+  for +path: String
+  {parse(["context-query-file",owner,query,path,"extra"]) == Invalid{} : Command}
+
+def context_query_rejects_surplus_arguments(owner,query,path):
   {==}
 
 law message_parser_preserves_the_complete_body:
