@@ -1,10 +1,13 @@
 """Exercise the UI change projection through the admitted native coordinator."""
 import json
 import pathlib
+import shutil
 import sqlite3
 import subprocess
 import sys
 import tempfile
+import urllib.error
+import urllib.request
 import unittest
 
 ROOT = pathlib.Path(__file__).resolve().parents[2]
@@ -78,6 +81,35 @@ print(json.dumps({'stream':{'kind':'session','id':native},'payload_type':'run.te
                                         kind,summary
                                    FROM native_changes ORDER BY change_id''').fetchall()
 
+    def ui_snapshot(self, reader, subject):
+        node = shutil.which('node')
+        self.assertIsNotNone(node, 'Node 22 is required for the Orchestra UI fixture')
+        server = ROOT / 'ui' / 'orchestra' / 'server.mjs'
+        process = subprocess.Popen(
+            [node, str(server), '--database', str(self.db), '--reader', reader,
+             '--subject', subject, '--port', '0'],
+            stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+            text=True)
+        try:
+            binding = json.loads(process.stdout.readline())
+            self.assertEqual(binding['readOnly'], True)
+            self.assertEqual(binding['host'], '127.0.0.1')
+            url = process.stdout.readline().strip()
+            self.assertTrue(url.startswith('http://127.0.0.1:'), url)
+            with urllib.request.urlopen(url + 'orchestra/snapshot?subject=' + subject + '&since=0') as response:
+                self.assertEqual(response.status, 200)
+                snapshot = json.load(response)
+            with self.assertRaises(urllib.error.HTTPError) as denied:
+                urllib.request.urlopen(url + 'orchestra/snapshot?subject=root&since=0')
+            self.assertEqual(denied.exception.code, 403)
+            denied.exception.close()
+            return snapshot
+        finally:
+            process.stdin.close()
+            process.wait(timeout=10)
+            stderr = process.stderr.read()
+            self.assertEqual(process.returncode, 0, stderr)
+
     def test_multilevel_native_turns_report_finish_fail_and_pending_input_are_projected(self):
         pending = self.call('message', 'task-worker', 'root', 'worker', 'task',
                             'Retained task input.')
@@ -140,6 +172,14 @@ print(json.dumps({'stream':{'kind':'session','id':native},'payload_type':'run.te
             executions = dict(db.execute('SELECT session,status FROM executions'))
         self.assertEqual(executions['worker'], 'exit 0')
         self.assertNotEqual(executions['failed-worker'], 'exit 0')
+        snapshot = self.ui_snapshot('lead', 'worker')
+        self.assertEqual(snapshot['selection']['reader'], 'lead')
+        self.assertEqual(snapshot['selection']['scope'], ['failed-worker', 'worker'])
+        worker = next(player for player in snapshot['players'] if player['id'] == 'worker')
+        self.assertEqual(worker['model'], 'configured-model')
+        self.assertEqual(worker['observedModel'], 'observed-fixture-model')
+        self.assertEqual(worker['actualProcess'], 'unknown')
+        self.assertEqual(worker['pendingCount'], len(pending_inputs))
 
 
 if __name__ == '__main__':
