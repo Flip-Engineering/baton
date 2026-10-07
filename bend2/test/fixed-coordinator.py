@@ -615,6 +615,36 @@ class FixedCoordinator(unittest.TestCase):
         self.assertEqual(row, [(None,)], 'refused input was consumed or lost')
         self.shutdown()
 
+    def test_10_completed_session_serves_later_dispatch(self):
+        # The TaskDone drop is load-bearing in the post-quiescence window: a
+        # row dispatched after the previous task fully drained must fork anew.
+        # Without without_id the completed session stays in-flight forever and
+        # the later row is refused aloud instead of served.
+        self.recruit('w1', 'codex')
+        self.queue('w1', {'body': 'w1 first turn complete', 'hold_exit': True})
+        self.dispatch('t1', 'w1', 'First task.')
+        self.receiver('w1')
+        self.start_owner()
+        self.start_serve()
+        first_w1, _ = self.stream_for('w1')
+        self.assertEqual(json.loads(first_w1.readline()), {'terminal_written': True})
+        self.release('w1')
+        self.await_inbox('root', lambda messages: (
+            [m['body'] for m in messages]
+            if any('w1 first turn complete' in m['body'] for m in messages) else None),
+            'first turn report never reached the root inbox')
+        time.sleep(2)
+        self.queue('w1', {'body': 'w1 second turn complete'})
+        self.dispatch('t2', 'w1', 'Second task after the first completion.')
+        self.stream_for('w1', 1)
+        self.await_inbox('root', lambda messages: (
+            [m['body'] for m in messages]
+            if any('w1 second turn complete' in m['body'] for m in messages) else None),
+            'later dispatch for a completed session never ran')
+        row = self.query("SELECT receipt FROM messages WHERE id='t2'")
+        self.assertNotEqual(row, [(None,)], 't2 was not acknowledged')
+        self.shutdown()
+
 
 if __name__ == '__main__':
     unittest.main()
