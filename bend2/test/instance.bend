@@ -98,7 +98,7 @@ def operation(name: String, result: Result<&1,&1,U32 & String,Unit>) -> IO(Unit)
     case Done{unit}: IO.print(name ++ "-ok")
     case Fail{(code,text)}: IO.print(name ++ "-failed:" ++ U32.show(code) ++ ": " ++ text)
 
-def retired_step(+handle: U32, retire: Bool) -> IO<Unit>:
+def retired_step(+handle: U32, retire: Bool) -> IO(Unit):
   match retire:
     case False{}: IO.pure(Unit,Unit{})
     case True{}: do IO<Unit>:
@@ -118,15 +118,15 @@ def release_and_ack(+handle: U32, retire: Bool) -> IO(Unit):
     IO.pure(Unit,Unit{})
 
 # In hold mode the attempt stays alive while the driver kills this observer.
-def holding(mode: String) -> IO<Unit>:
+def holding(mode: String) -> IO(Unit):
   do IO<Unit>:
     gate : String <- IO.try(String,Text.Text.read("-"))
     IO.pure(Unit,Unit{})
 
-def held_step(+handle: U32, mode: String) -> IO<Unit>:
+def held_step(+handle: U32, mode: String) -> IO(Unit):
   Bool.pick(IO(Unit),String.eq(mode,"hold"),holding(mode),IO.pure(Unit,Unit{}))
 
-def closed_step(+handle: U32, mode: String) -> IO<Unit>:
+def closed_step(+handle: U32, mode: String) -> IO(Unit):
   Bool.pick(IO(Unit),String.eq(mode,"hold"),IO.pure(Unit,Unit{}),IO.try(Unit,P.ProcessChild.close_stdin(handle)))
 
 # An admitted attempt: the caller sees admitted, then the native output, then
