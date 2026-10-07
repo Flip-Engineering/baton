@@ -7,13 +7,13 @@ owner restart means SIGKILL of the `--instance-owner` process followed by
 re-election, and the assertions read the surviving native child, its birth
 record, the spool file, and the checkpoint file.
 
-Current status is WIP red controls. T1 and T2 assert the required
-behavior; the identity-restoration assertions fail on the present
-implementation with defect-tagged messages while the survival assertions
-pass. T3, T4, and T5 pass and pin safe refusal, exact payload bytes, and
-full-stream delivery after a torn checkpoint. Nothing in this file is
-selectable as a landing gate until the defects it names are fixed; it
-fails on the baseline tree because the owner entry does not exist there.
+Current status is WIP with one red control. The readoption test asserts
+the required D1 behavior and fails on the present implementation
+(BI_ATTACH answers ENOENT for the orphaned attempt even after a new owner
+is elected). Survival, re-admission refusal, conflicting-manifest
+refusal, payload bytes, and torn-checkpoint delivery pass. Nothing in
+this file is selectable as a landing gate until D1 is fixed; it fails
+on the baseline tree because the owner entry does not exist there.
 
 Defects referenced (see docs/bend2/shared-instance-676-review.md):
 D1 orphan re-election cannot restore the old attempt identity.
@@ -264,13 +264,12 @@ class SharedOwner(unittest.TestCase):
 
     # -- tests ------------------------------------------------------------
 
-    def test_owner_death_keeps_native_child_and_spool(self):
-        directory, child = self.hold('death', 's-death')
+    def begin_death(self, label='death', session='s-death'):
+        directory, child = self.hold(label, session)
         self.wait_spool(directory, 'tick:2')
         native = self.role_pid(directory)
         self.native_pids.append(native)
         birth_before = (directory / 'native.birth').read_bytes()
-        tick_before = self.max_tick(directory)
         owners = self.kill_owner()
         self.evidence('killed-owner', owners)
         self.assertTrue(self.alive(native), 'the native child died with its owner')
@@ -278,9 +277,13 @@ class SharedOwner(unittest.TestCase):
         self.assertEqual(self.role_count(directory), 1,
                          'a second native child started after owner death')
         self.assertEqual((directory / 'native.birth').read_bytes(), birth_before,
-                         'D1 the native birth record changed across owner death')
+                         'the native birth record changed across owner death')
         self.assertEqual(self.role_pid(directory), native,
-                         'D1 the surviving native identity is not the original birth')
+                         'the surviving native identity is not the original birth')
+        return directory, child, native, owners
+
+    def test_owner_death_keeps_native_child_and_spool(self):
+        directory, child, native, owners = self.begin_death()
         # Fail closed: with no owner serving the attempt, new input is refused,
         # never silently dropped.
         payload = self.home / 'late.payload'
@@ -289,8 +292,16 @@ class SharedOwner(unittest.TestCase):
         self.assertNotEqual(refused.returncode, 0,
                             'control-write into an unserved attempt succeeded silently')
         self.evidence('control-write-after-death-refused', refused.returncode)
-        # Re-election: a new owner serves the database and an observer
-        # reattaches to the surviving child.
+        self.assertEqual(self.role_count(directory), 1,
+                         'input after owner death started or disturbed the native child')
+
+    def test_reelected_owner_readopts_the_orphaned_attempt(self):
+        # D1 red control: re-election currently serves the database but the
+        # orphaned attempt is unknown to the new owner, so BI_ATTACH fails
+        # ENOENT and no observation resumes. Required behavior is an
+        # observer on the surviving child with its original identity.
+        directory, child, native, owners = self.begin_death('readopt', 's-readopt')
+        tick_before = self.max_tick(directory)
         reattached = self.spawn('attach-owned', self.db, directory)
         self.wait_tick_above(reattached, tick_before + 2)
         reelected = self.owner_pids()

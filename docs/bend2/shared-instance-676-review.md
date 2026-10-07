@@ -233,11 +233,14 @@ same-identity reuse path is unreachable through the current CLI.
   blackbox with real SIGKILL re-election: native-child and spool
   survival with birth preservation, re-admission with no second
   native, conflicting-manifest refusal, exact payload bytes, and
-  full-stream delivery after a torn checkpoint. Identity-restoration
-  assertions are WIP red controls for D1; the file is not gate
-  selectable until they pass. It does not duplicate DS's
-  `bend2/test/shared-instance.py` (custody-level scenarios without
-  owner death) or 685's pending-input tests.
+  full-stream delivery after a torn checkpoint. The readoption test is
+  a WIP red control for D1: probed on DS tip `5cf90d7a`, killing the
+  owner leaves the native child alive with spool and birth intact and
+  elects exactly one new owner on reattach, but `BI_ATTACH` answers
+  ENOENT for the orphaned attempt so no observation resumes. The file
+  is not gate selectable until D1 is fixed. It does not duplicate
+  DS's `bend2/test/shared-instance.py` (custody-level scenarios
+  without owner death) or 685's pending-input tests.
 - Prepared file input (`control-write` pathname) carries filesystem
   authority only; the fixture keeps payload files inside its temp
   directory. Prompt bytes are asserted byte-exact end to end.
