@@ -307,6 +307,7 @@ export async function verifyResults(expected, results) {
       continue;
     }
     seen.add(result.id);
+    if (result.kind !== descriptor.kind) failures.push({ id: result.id, reason: 'altered producer kind' });
     if (result.descriptorSha256 !== descriptor.descriptorSha256) failures.push({ id: result.id, reason: 'altered producer descriptor' });
     if (!descriptor.workToken || result.workToken !== descriptor.workToken) failures.push({ id: result.id, reason: 'execution token mismatch' });
     if (result.completed !== true) failures.push({ id: result.id, reason: 'producer did not complete' });

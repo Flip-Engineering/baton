@@ -114,6 +114,13 @@ test('aggregation rejects a changed producer descriptor', async () => {
   assert.ok((await verifyResults(dispatched, results)).some(({ reason }) => reason === 'altered producer descriptor'));
 });
 
+test('aggregation rejects a changed producer kind', async () => {
+  const results = complete.map((result, index) => index === 0
+    ? { ...result, kind: 'mutation' }
+    : result);
+  assert.ok((await verifyResults(dispatched, results)).some(({ reason }) => reason === 'altered producer kind'));
+});
+
 test('aggregation rejects a result from a different producer execution', async () => {
   const results = complete.map((result, index) => index === 0
     ? { ...result, workToken: randomUUID() }
