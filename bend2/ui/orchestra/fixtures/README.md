@@ -21,3 +21,11 @@ only with `?fixture=<name>`
   and narrow viewports.
 - `fixture-gap.json`: copy of the small fixture with
   `selection.gap: true`. Renders the history-gap notice path.
+- `fixture-events-recovery.json`: harness-driven SSE recovery script,
+  not a `?fixture=` render document. Scripts a transient pre-open 503
+  (`native-owner-subscription-unavailable`) followed by a healthy
+  long-lived SSE response (hello, pending, transition). Carries the
+  exact client assertions: bounded probe resumes via `connectEvents`,
+  zero snapshot requests during events-only recovery, bound
+  subject/cursor/generation, terminal 503 still stops with no polling,
+  notice clears after hello.

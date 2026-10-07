@@ -650,16 +650,29 @@ function scheduleEventsRetry() {
     // A 503 native-owner-subscription-unavailable is a permanent condition of this
     // server, not a transient failure: stop retrying (no browser polling loop) until
     // the operator asks with Reconnect.
+    //
+    // Probe bound: a healthy events endpoint answers 200 with an infinite SSE
+    // body, so the body is never awaited here. Response headers alone decide:
+    // only a 503 carries the finite JSON refusal. An open 200 stream proves
+    // the endpoint is available; its body is cancelled and connectEvents()
+    // resumes without an extra snapshot. Snapshot retry stays separate in
+    // scheduleEndpointRetry; events-only recovery never resnapshots.
+    const PROBE_BUDGET_MS = 5000;
+    const ctrl = new AbortController();
+    const budget = setTimeout(() => ctrl.abort(), PROBE_BUDGET_MS);
     try {
-      const probe = await fetch(state.apiBase + "/orchestra/events" + queryString());
-      const body = await probe.json().catch(() => ({}));
-      if (probe.status === 503 && body && body.error === "native-owner-subscription-unavailable") {
-        setConn("unavailable");
-        setNotice("Live stream unavailable: the shared owner subscription is not installed yet (#676). The snapshot still updates on Reconnect.");
-        return;
+      const probe = await fetch(state.apiBase + "/orchestra/events" + queryString(), { signal: ctrl.signal });
+      clearTimeout(budget);
+      if (probe.status === 503) {
+        const body = await probe.json().catch(() => ({}));
+        if (body && body.error === "native-owner-subscription-unavailable") {
+          setConn("unavailable");
+          setNotice("Live stream unavailable: the shared owner subscription is not installed yet (#676). The snapshot still updates on Reconnect.");
+          return;
+        }
       }
-      if (probe.body) probe.body.cancel();
-    } catch (e) { /* endpoint unreachable: keep the retry path */ }
+      if (probe.body) await probe.body.cancel().catch(() => {});
+    } catch (e) { /* endpoint unreachable or probe over budget: keep the retry path */ }
     connectEvents();
   }, wait);
 }
