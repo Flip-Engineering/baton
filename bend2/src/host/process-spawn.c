@@ -41,7 +41,7 @@ enum { BP_SPAWN, BP_WRITE, BP_CLOSE, BP_READ, BP_WAIT, BP_SIGNAL, BP_PID,
        BP_CONTROL_WRITE, BP_CONTROL_SIGNAL, BP_ATTACH_OWNED, BP_RECOVERY,
        BP_INSTANCE_OWNER, BP_INSTANCE_ADMIT, BP_INSTANCE_ATTACH,
        BP_INSTANCE_ATTACH_OWNED, BP_INSTANCE_SHUTDOWN, BP_INSTANCE_RETIRE,
-       BP_INSTANCE_COMMIT, BP_INSTANCE_RESTORE };
+       BP_INSTANCE_COMMIT, BP_INSTANCE_RESTORE, BP_INSTANCE_REPLAY };
 
 static int baton_pipe(int fds[2]) {
   if (pipe(fds)) return errno;
@@ -225,8 +225,17 @@ typedef struct BrOwnerControl {
   char *incoming,*reply;
   size_t size,capacity,reply_length,sent;
 } BrOwnerControl;
-/* A database-level reply payload: the owner token and its open attempt count. */
-typedef struct { uint64_t owner,epoch,attempts; } BrOwnerState;
+/* A database-level reply payload: the owner incarnation and the facts a caller
+   needs to address the attempt as a retained job. `observing` is one while an
+   observer holds the attempt's socket; a caller that cannot observe still has
+   the retained result path through this reference. */
+typedef struct {
+  uint64_t owner,epoch,attempts;
+  uint64_t attempt,generation;
+  uint64_t spool_bytes,checkpoint_offset;
+  int32_t status;
+  uint32_t status_known,observing,reserved;
+} BrOwnerState;
 /* The elected owner's published incarnation, in the per-user IPC directory. */
 typedef struct {
   uint64_t token,epoch,device,inode;
@@ -701,24 +710,35 @@ static void baton_retained_call(BatonProcessCall *call) {
   }
   if(call->kind==BP_INSTANCE_RESTORE) {
     /* Returns the committed reducer state and resumes at the offset that state
-       belongs to. A stale, mismatched or corrupt record yields no state and no
-       resume, with a durable diagnostic, so the caller replays from the
-       beginning with its own deduplication. */
+       belongs to. A missing, malformed or corrupt record yields no state and
+       rewinds this reader to the beginning with a durable diagnostic, so the
+       caller replays with its own deduplication and never skips a frame. */
     uint64_t offset=0;char *state=NULL;size_t length=0;
     int error=retained->spool<0?0:br_checkpoint_load(retained->directory,retained->spool,
       (uint32_t)call->signal,&offset,&state,&length);
-    if(error==EINVAL) {
+    if(error==EINVAL || error==EOVERFLOW) {
       br_file(retained->directory,"checkpoint-error",
         "unusable observation checkpoint; replaying from the beginning\n",62,1);
       free(state);state=NULL;length=0;offset=0;error=0;
     }
     if(error) {free(state);call->error=error;return;}
     call->text=state;call->length=length;
-    if(offset) {
-      pthread_mutex_lock(&retained->reader);
-      retained->offset=(off_t)offset;retained->offset_stored=offset;
-      pthread_mutex_unlock(&retained->reader);
-    }
+    /* The reader is positioned at the recorded offset when there is one and
+       rewound to the beginning when there is not. */
+    pthread_mutex_lock(&retained->reader);
+    retained->offset=(off_t)offset;retained->offset_stored=offset;
+    pthread_mutex_unlock(&retained->reader);
+    return;
+  }
+  if(call->kind==BP_INSTANCE_REPLAY) {
+    /* Rewinds this admitted reader to the beginning after its own decode of the
+       restored state was rejected. The child, its spool and its custody are
+       untouched; only the observation position changes. */
+    pthread_mutex_lock(&retained->reader);
+    retained->offset=0;retained->offset_stored=0;
+    pthread_mutex_unlock(&retained->reader);
+    br_file(retained->directory,"checkpoint-error",
+      "state rejected by the observer; replaying from the beginning\n",57,1);
     return;
   }
   if(call->kind==BP_INPUT_CLOSED) {
@@ -1298,6 +1318,22 @@ static uint64_t br_checkpoint_check(const BrCheckpoint *checkpoint,const char *s
 static char *br_checkpoint_path(const char *directory) {
   return br_path(directory,"checkpoint");
 }
+/* The offset recorded in the checkpoint, for a caller that only needs the
+   reference. Malformed or absent records report zero. */
+static int br_checkpoint_offset(const char *directory,uint64_t *offset) {
+  *offset=0;
+  char *path=br_checkpoint_path(directory);
+  if(!path)return ENOMEM;
+  int fd=open(path,O_RDONLY|O_CLOEXEC);
+  if(fd<0){int error=errno;free(path);return error==ENOENT?0:error;}
+  BrCheckpoint checkpoint;
+  int error=br_read_all(fd,&checkpoint,sizeof(checkpoint));
+  close(fd);free(path);
+  if(error)return 0;
+  if(memcmp(checkpoint.magic,BR_CHECKPOINT_MAGIC,8))return 0;
+  *offset=checkpoint.offset;
+  return 0;
+}
 /* The durable attempt identity: a digest of the attempt's canonical directory.
    An owner-local attempt number is not durable across an owner restart, so the
    checkpoint binds this value instead. */
@@ -1341,7 +1377,7 @@ static int br_checkpoint_store(const char *directory,int spool_fd,uint32_t schem
     checkpoint.check=br_checkpoint_check(&checkpoint,state,length);
     memcpy(record,&checkpoint,sizeof(checkpoint));
     if(length)memcpy(record+sizeof(checkpoint),state,length);
-    error=br_replace(directory,path,record,total,0);
+    error=br_replace(directory,path,record,total,1);
   }
   free(record);free(path);
   return error;
@@ -1524,6 +1560,30 @@ static int br_owner_reply(BrOwnerControl *control,BrInstanceFrame frame,const vo
    the attempt's own socket, so this connection stays short-lived. Every reply
    carries the owner token and the native custody epoch, so a client refuses a
    socket left behind by an earlier owner incarnation. */
+/* Fills the job facts a caller addresses an attempt by: the retained output
+   extent, the committed checkpoint offset, the terminal status when it is
+   recorded, and whether an observer holds the attempt. */
+static void br_owner_state(BrOwner *owner,BrKeeper *keeper,BrOwnerState *state) {
+  *state=(BrOwnerState){.owner=owner->token,.epoch=owner->epoch,
+    .attempts=br_owner_attempts(owner)};
+  if(!keeper)return;
+  state->attempt=keeper->id;state->generation=keeper->generation;
+  state->observing=(uint32_t)(keeper->client>=0);
+  char *spool=br_path(keeper->directory,"stdout");
+  struct stat info;
+  if(spool && !stat(spool,&info))state->spool_bytes=(uint64_t)info.st_size;
+  free(spool);
+  uint64_t offset=0;
+  if(!br_checkpoint_offset(keeper->directory,&offset))state->checkpoint_offset=offset;
+  char *status=br_path(keeper->directory,"status");
+  FILE *file=status?fopen(status,"r"):NULL;
+  if(file) {
+    int value=0;
+    if(fscanf(file,"%d",&value)==1) {state->status=value;state->status_known=1;}
+    fclose(file);
+  }
+  free(status);
+}
 static int br_owner_command(BrOwner *owner,BrOwnerControl *control,BrInstanceFrame frame) {
   const char *payload=control->incoming+sizeof(frame);
   if((frame.owner && frame.owner!=owner->token) || (frame.epoch && frame.epoch!=owner->epoch))
@@ -1531,7 +1591,8 @@ static int br_owner_command(BrOwner *owner,BrOwnerControl *control,BrInstanceFra
       .epoch=owner->epoch,.error=ESTALE},NULL);
   if(frame.op==BI_ENSURE || frame.op==BI_STATE) {
     if(frame.length)return br_owner_reply(control,(BrInstanceFrame){.op=BI_REPLY,.error=EPROTO},NULL);
-    BrOwnerState state={owner->token,owner->epoch,br_owner_attempts(owner)};
+    BrOwnerState state;
+    br_owner_state(owner,NULL,&state);
     return br_owner_reply(control,(BrInstanceFrame){.op=BI_HELLO,.owner=owner->token,
       .epoch=owner->epoch,.length=sizeof(state)},&state);
   }
@@ -1549,7 +1610,8 @@ static int br_owner_command(BrOwner *owner,BrOwnerControl *control,BrInstanceFra
     if(error)return br_owner_reply(control,(BrInstanceFrame){.op=BI_REPLY,.owner=owner->token,
       .epoch=owner->epoch,.error=error},NULL);
     BrKeeper *keeper=br_owner_find(owner,payload);
-    BrOwnerState state={owner->token,owner->epoch,br_owner_attempts(owner)};
+    BrOwnerState state;
+    br_owner_state(owner,keeper,&state);
     return br_owner_reply(control,(BrInstanceFrame){.op=BI_HELLO,.owner=owner->token,
       .epoch=owner->epoch,.attempt=keeper?keeper->id:0,
       .generation=keeper?keeper->generation:0,.state=(uint32_t)(existing?1:0),
@@ -1557,7 +1619,8 @@ static int br_owner_command(BrOwner *owner,BrOwnerControl *control,BrInstanceFra
   }
   if(frame.op==BI_ATTACH) {
     /* Resolves the attempt that already owns this directory, so an attaching
-       observer binds the same attempt identity the admitting client recorded. */
+       observer binds the same attempt identity the admitting client recorded,
+       and a caller that cannot observe still receives the retained job facts. */
     if(frame.length<2 || payload[frame.length-1])
       return br_owner_reply(control,(BrInstanceFrame){.op=BI_REPLY,.error=EINVAL},NULL);
     char *resolved=realpath(payload,NULL);
@@ -1570,7 +1633,8 @@ static int br_owner_command(BrOwner *owner,BrOwnerControl *control,BrInstanceFra
     }
     if(error)return br_owner_reply(control,(BrInstanceFrame){.op=BI_REPLY,.owner=owner->token,
       .epoch=owner->epoch,.error=error},NULL);
-    BrOwnerState state={owner->token,owner->epoch,br_owner_attempts(owner)};
+    BrOwnerState state;
+    br_owner_state(owner,held,&state);
     return br_owner_reply(control,(BrInstanceFrame){.op=BI_HELLO,.owner=owner->token,
       .epoch=owner->epoch,.attempt=held->id,.generation=held->generation,.state=1,
       .length=sizeof(state)},&state);
@@ -2332,7 +2396,7 @@ static void baton_process_call(IoWork *w) {
   }
   if(child->retained) { baton_retained_call(call);return; }
   if(call->kind==BP_RELEASE || call->kind==BP_ACK || call->kind==BP_INSTANCE_COMMIT ||
-     call->kind==BP_INSTANCE_RESTORE) { call->error=EINVAL;return; }
+     call->kind==BP_INSTANCE_RESTORE || call->kind==BP_INSTANCE_REPLAY) { call->error=EINVAL;return; }
   if(call->kind==BP_INPUT_CLOSED) {call->signal=(u32)(child->input<0 || child->reaped);return;}
   if(call->kind==BP_WRITE) {
     size_t offset=0;
@@ -2567,6 +2631,9 @@ BP_EFFECT(baton_instance_commit,CID_INSTANCE_COMMIT,BP_INSTANCE_COMMIT)
 #endif
 #ifdef CID_INSTANCE_RESTORE
 BP_EFFECT(baton_instance_restore,CID_INSTANCE_RESTORE,BP_INSTANCE_RESTORE)
+#endif
+#ifdef CID_INSTANCE_REPLAY
+BP_EFFECT(baton_instance_replay,CID_INSTANCE_REPLAY,BP_INSTANCE_REPLAY)
 #endif
 
 #undef BP_EFFECT
