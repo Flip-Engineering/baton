@@ -392,14 +392,16 @@ type HolderObservation is Data:
   HolderObserved{request: HolderRequest, code: U32, out: String, verdict: HolderVerdict}
   HolderObservedBroken{request: HolderRequest, detail: String, verdict: HolderVerdict}
 
+def prefix_drop_tail(line: String, head: String, rest: String) -> Maybe<String>:
+  match line:
+    case SNil{}: None{}
+    case SCon{got, gotrest}:
+      Bool.pick(Maybe<String>, Char.is_eq(head, got), prefix_drop_tail(gotrest, rest), None{})
+
 def prefix_drop(line: String, prefix: String) -> Maybe<String>:
   match prefix:
     case SNil{}: Some{line}
-    case SCon{head, rest}:
-      match line:
-        case SNil{}: None{}
-        case SCon{got, gotrest}:
-          Bool.pick(Maybe<String>, Char.is_eq(head, got), prefix_drop(gotrest, rest), None{})
+    case SCon{head, rest}: prefix_drop_tail(line, head, rest)
 
 def holder_path_of(+line: String) -> Maybe<String>:
   prefix_drop(line, "worktree ")
