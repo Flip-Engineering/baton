@@ -792,16 +792,6 @@ def ff_stage5_guard_observed(cand: String, old: String, repo: String, target: St
 # The fast-forward now advances through the same holder-aware path the checked landing uses,
 # so both reach one effect. Only a landed answer reports LLanded; a moved target, a held
 # worktree, a changed holder, a refused update and a broken read each keep their own answer.
-type LAdv is Data:
-  AdvLanded{}
-  AdvMoved{}
-  AdvHeld{path: String}
-  AdvHolderChanged{path: String}
-  AdvRefused{}
-  AdvBroken{detail: String}
-
-# The compare-and-swap where no worktree holds the target.
-
 def ff_stage5_adv_answer(a: LAdv, target: String, cand: String) -> FFLD:
   match a:
     case AdvLanded{}: FFDone{T.LLanded{target, cand}}
@@ -1130,6 +1120,45 @@ def ld_adv_update(repo: String, target: String, cand: String, basis: String) -> 
     g : T.GitOut <- Git.runGit(r2, ld_update_argv(t2, c2, b2))
     IO.pure(Ld, ld_update_pick(g, t2, c2))
 
+type LAdv is Data:
+  AdvLanded{}
+  AdvMoved{}
+  AdvHeld{path: String}
+  AdvHolderChanged{path: String}
+  AdvRefused{}
+  AdvBroken{detail: String}
+
+type LdAdvCtx is Data:
+  LdAdvContext{claim: U32, guard: String, artifact: String}
+
+type LdAdvObs is Data:
+  LdAdvNoCapture{advance: LAdv}
+  LdAdvCaptured{advance: LAdv, capture: Result<&1,&1,U32 & String,String & String>}
+  LdAdvQualified{advance: LAdv, capture: Result<&1,&1,U32 & String,String & String>, readback: T.GitOut}
+
+def ld_adv_wrap(advance: LAdv) -> LdAdvObs:
+  +a = advance
+  LdAdvNoCapture{a}
+
+def ld_adv_with(advance: LAdv, capture: Result<&1,&1,U32 & String,String & String>) -> LdAdvObs:
+  +a = advance
+  +c = capture
+  LdAdvCaptured{a, c}
+
+def ld_adv_status(capture: Result<&1,&1,U32 & String,String & String>) -> T.GitOut:
+  +c = capture
+  match c:
+    case Fail{error}:
+      match error:
+        case (code, detail): T.GBroken{detail}
+    case Done{pair}:
+      match pair:
+        case (framing, diagnostics):
+          match Tx.run_res(Done{framing}):
+            case T.RRun{T.SExit{code}, out}: T.GRun{code, out}
+            case T.RRun{T.SSignal{num}, out}: T.GBroken{"the mutation signalled"}
+            case T.RSpawn{detail}: T.GBroken{detail}
+
 def ld_adv_same(same: Bool, repo: String, target: String, cand: String, basis: String, ctx: LdAdvCtx) -> IO(LdAdvObs):
   +cx = ctx
   match same:
@@ -1154,9 +1183,8 @@ def ld_hold_branch(target: String) -> String:
 type LdHoldScan is Data:
   HoldScan{cur: String, found: String, seen: U32}
 
-# One branch line that names the target: the first one records the path of the
-# block it appeared in, and any later one, or one that appeared before any
-# block, makes the listing unusable.
+# The path one worktree-list line names: the line with its label matched off,
+# or the empty string for a line that does not carry the label.
 def wt_path_go(line: String, label: String) -> String:
   match line label:
     case SNil{} SNil{}: ""
@@ -1168,6 +1196,9 @@ def wt_path_go(line: String, label: String) -> String:
 def wt_path(line: String) -> String:
   wt_path_go(line, "worktree ")
 
+# One branch line that names the target: the first one records the path of the
+# block it appeared in, and any later one, or one that appeared before any
+# block, makes the listing unusable.
 def ld_hold_named(+cur: String, +found: String, +seen: U32) -> LdHoldScan:
   Bool.pick(LdHoldScan, String.is_empty(cur),
     HoldScan{cur, found, 2},
@@ -1354,12 +1385,6 @@ def ld_adv_of(obs: LdAdvObs) -> LAdv:
 # Git provides no atomic CLI operation that pins symbolic HEAD across the final identity check
 # and the merge, so a switch in that interval can still direct the merge to another branch. The
 # target claim coordinates participating landings; it does not lock an independent Git process.
-def ld_adv_wt_observe_wrapped(path: String, repo: String, target: String, cand: String, capture: Result<&1,&1,U32 & String,String & String>) -> IO(LdAdvObs):
-  +cp = capture
-  do IO<LdAdvObs>:
-    inner : LAdv <- ld_adv_wt_observe(path, repo, target, cand)
-    IO.pure(LdAdvObs, ld_adv_with(inner, cp))
-
 def ld_adv_wt_observe(path: String, repo: String, target: String, cand: String) -> IO(LAdv):
   +p2 = path
   +r2 = repo
@@ -1368,6 +1393,12 @@ def ld_adv_wt_observe(path: String, repo: String, target: String, cand: String) 
   do IO<LAdv>:
     target_tip : T.GitOut <- Git.runGit(r2, ld_target_ref_argv(t2))
     ld_adv_wt_observed_target_pick(target_tip, p2, t2, c2)
+
+def ld_adv_wt_observe_wrapped(path: String, repo: String, target: String, cand: String, capture: Result<&1,&1,U32 & String,String & String>) -> IO(LdAdvObs):
+  +cp = capture
+  do IO<LdAdvObs>:
+    inner : LAdv <- ld_adv_wt_observe(path, repo, target, cand)
+    IO.pure(LdAdvObs, ld_adv_with(inner, cp))
 
 def ld_adv_wt_pick(g: T.GitOut, path: String, repo: String, target: String, cand: String, basis: String, ctx: LdAdvCtx, capture: Result<&1,&1,U32 & String,String & String>) -> IO(LdAdvObs):
   +cx = ctx
@@ -1428,6 +1459,7 @@ def ld_adv_wt_target_pick(g: T.GitOut, path: String, repo: String, target: Strin
       +same = Bool.pick(Bool, status_ok, Tx.str_eq(Tx.trim_nl(out), b2), False{})
       ld_adv_wt_target_same(same, path, repo, target, cand, b2, cx)
     case T.GBroken{detail}: IO.pure(LdAdvObs, ld_adv_wrap(AdvBroken{detail}))
+# The compare-and-swap where no worktree holds the target.
 def ld_adv_wt(path: String, repo: String, target: String, cand: String, basis: String, ctx: LdAdvCtx) -> IO(LdAdvObs):
   +p2 = path
   +r2 = repo
@@ -1458,37 +1490,6 @@ def ld_adv_pick(g: T.GitOut, repo: String, target: String, cand: String, basis: 
         ld_adv_same(Tx.str_eq(Tx.trim_nl(out), b2), repo, target, cand, b2, cx),
         IO.pure(LdAdvObs, ld_adv_wrap(AdvBroken{"the target commit could not be read before publication"})))
     case T.GBroken{detail}: IO.pure(LdAdvObs, ld_adv_wrap(AdvBroken{detail}))
-type LdAdvCtx is Data:
-  LdAdvContext{claim: U32, guard: String, artifact: String}
-
-type LdAdvObs is Data:
-  LdAdvNoCapture{advance: LAdv}
-  LdAdvCaptured{advance: LAdv, capture: Result<&1,&1,U32 & String,String & String>}
-  LdAdvQualified{advance: LAdv, capture: Result<&1,&1,U32 & String,String & String>, readback: T.GitOut}
-
-def ld_adv_wrap(advance: LAdv) -> LdAdvObs:
-  +a = advance
-  LdAdvNoCapture{a}
-
-def ld_adv_with(advance: LAdv, capture: Result<&1,&1,U32 & String,String & String>) -> LdAdvObs:
-  +a = advance
-  +c = capture
-  LdAdvCaptured{a, c}
-
-def ld_adv_status(capture: Result<&1,&1,U32 & String,String & String>) -> T.GitOut:
-  +c = capture
-  match c:
-    case Fail{error}:
-      match error:
-        case (code, detail): T.GBroken{detail}
-    case Done{pair}:
-      match pair:
-        case (framing, diagnostics):
-          match Tx.run_res(Done{framing}):
-            case T.RRun{T.SExit{code}, out}: T.GRun{code, out}
-            case T.RRun{T.SSignal{num}, out}: T.GBroken{"the mutation signalled"}
-            case T.RSpawn{detail}: T.GBroken{detail}
-
 def ld_adv_run(repo: String, target: String, cand: String, basis: String, ctx: LdAdvCtx) -> IO(LdAdvObs):
   +r2 = repo
   +t2 = target
@@ -1514,6 +1515,15 @@ def ld_adv_answer(a: LAdv, target: String, cand: String) -> Ld:
 
 # Advance the checked candidate from its checked basis. A changed target
 # returns an explicit retry result; the next invocation prepares both trees.
+
+def shared_landing_run(repo: String, target: String, cand: String, basis: String) -> IO(SharedLanding):
+  +rp = repo
+  +tg = target
+  +c = cand
+  +b = basis
+  do IO<SharedLanding>:
+    observed : T.GitOut <- Git.runGit(rp, Con{"rev-parse", Con{"--path-format=absolute", Con{"--git-common-dir", Nil{}}}})
+    shared_common_read(rp, tg, c, b, observed)
 
 def ld_advance(repo: String, target: String, cand: String, basis: String) -> IO(Ld):
   +t2 = target
@@ -1818,8 +1828,6 @@ def ld_go5(r: Ld, repo: String, target: String, script: String, files: List<Stri
 def scratch_prefix(repo: String, worker: String) -> String:
   T.str_cat3(repo, "/.scratch/bend2-land-", Tx.str_cat(worker, "-"))
 
-# The path one worktree-list line names: the line with its label matched off,
-# or the empty string for a line that does not carry the label.
 def scratch_remove1(repo: String, dir: String) -> IO(Unit):
   +r2 = repo
   +d2 = dir
@@ -2348,15 +2356,6 @@ def shared_common_read(repo: String, target: String, cand: String, basis: String
         case True{}: shared_claimed(rp, tg, c, b, Tx.trim_nl(out))
         case False{}: IO.pure(SharedLanding, SharedCommonUnreadable{obs})
     case T.GBroken{detail}: IO.pure(SharedLanding, SharedCommonUnreadable{obs})
-
-def shared_landing_run(repo: String, target: String, cand: String, basis: String) -> IO(SharedLanding):
-  +rp = repo
-  +tg = target
-  +c = cand
-  +b = basis
-  do IO<SharedLanding>:
-    observed : T.GitOut <- Git.runGit(rp, Con{"rev-parse", Con{"--path-format=absolute", Con{"--git-common-dir", Nil{}}}})
-    shared_common_read(rp, tg, c, b, observed)
 
 def ff_stage5_shared_answer(shared: SharedLanding, target: String, cand: String) -> FFLD:
   +s = shared
