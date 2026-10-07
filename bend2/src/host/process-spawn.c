@@ -1142,11 +1142,17 @@ static int br_ipc_prepare(const char *path) {
   for(char *at=copy+1;*at;at++) {
     if(*at!='/')continue;
     *at=0;
+    /* Intermediate components belong to the system, so an existing one is
+       accepted as it is; only the directory this call creates is validated. */
     if(mkdir(copy,0700) && errno!=EEXIST) {int error=errno;free(copy);return error;}
-    if(lstat(copy,&info) || !S_ISDIR(info.st_mode) || info.st_uid!=geteuid()) {free(copy);return EPERM;}
     *at='/';
   }
   int error=mkdir(copy,0700)&&errno!=EEXIST?errno:0;
+  if(!error) {
+    if(lstat(copy,&info))error=errno;
+    else if(!S_ISDIR(info.st_mode) || info.st_uid!=geteuid())error=EPERM;
+    else if((info.st_mode&0077) && chmod(copy,0700))error=errno;
+  }
   free(copy);
   return error;
 }
