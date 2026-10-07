@@ -13,10 +13,13 @@ import ./native-catalog.bend as NativeCatalog
 import ./native-project-policy.bend as NativePolicy
 import ./service.bend as ContextService
 import ./native-managed-query.bend as ManagedQuery
+import ./bound-admission.bend as ContextAdmit
 import ./identity.bend as ContextIdentity
 import ../json/canonical.bend as J
 import ./request.bend as Req
 import ../coordinator/commands.bend as ContextCommands
+import ../coordinator/logs.bend as CoordinatorLogs
+import ./store.bend as ContextStore
 import ../host/sqlite.bend as DB
 import ../host/process.bend as Process
 import ../host/instance.bend as Instance
@@ -36,6 +39,19 @@ type StepInvocationFrame is Data:
 type InvocationVerification is Data:
   InvocationVerified{artifact_sha256: String}
   InvocationVerificationRefused{reason: String}
+
+type ManagedLaunch is Data:
+  ManagedLaunch{bootstrap: ManagedQuery.Bootstrap, invocation_text: String,
+    executable: String, runtime_path: String, worktree: String,
+    bootstrap_digest: String}
+
+type ManagedOutput is Data:
+  ManagedOutput{event_frame: String, error_json: String, exit_status: U32,
+    complete: Bool}
+
+type ManagedExit is Data:
+  ManagedExit{code: U32, complete: Bool}
+  ManagedExitRefused{}
 
 def invocation_frame(+invocation: Sel.Invocation) -> InvocationFrame:
   match invocation:
@@ -96,6 +112,18 @@ def query_bootstrap_argv(+runtime_path: String, +executable: String) -> String:
   Process.argv([runtime_path, "--experimental-strip-types",
     installed_provider_path(executable), "--persist-query-bootstrap"])
 
+def query_bootstrap_read_argv(+runtime_path: String, +executable: String,
+                              +owner: String, +worktree: String,
+                              +query: String, +path: String) -> String:
+  Process.argv([runtime_path, "--experimental-strip-types",
+    installed_provider_path(executable), "--read-query-bootstrap", owner,
+    worktree, query, path])
+
+def verify_invocation_file_argv(+runtime_path: String, +executable: String,
+                                +path: String) -> String:
+  Process.argv([runtime_path, "--experimental-strip-types",
+    installed_provider_path(executable), "--verify-invocation-file", path])
+
 def query_outcome_argv(+runtime_path: String, +executable: String) -> String:
   Process.argv([runtime_path, "--experimental-strip-types",
     installed_provider_path(executable), "--persist-query-outcome"])
@@ -118,7 +146,7 @@ def query_bootstrap_request(+owner: String, +worktree: String, +query: String,
   J.json_text(J.Jobj{J.Jpair{"owner", J.Jstr{owner},
     J.Jpair{"worktree", J.Jstr{worktree},
       J.Jpair{"query", J.Jstr{query},
-        J.Jpair{"bootstrapText", J.Jstr{bootstrap_text}, J.Jnil{}}}}}})
+      J.Jpair{"bootstrapText", J.Jstr{bootstrap_text}, J.Jnil{}}}}}})
 
 def query_outcome_request(+owner: String, +worktree: String, +query: String,
                           +bootstrap_digest: String, +exit_status: U32,
@@ -445,6 +473,527 @@ def verify_invocation_frame(+db: String, +binding: String, +query: String,
         invocation_verification_output(db, binding, query, owner, module_id,
           digest, answer)
 
+def boundary_member_value(found: Maybe<&2, J.Json>) -> J.Json:
+  match found:
+    case None{}: J.Jnil{}
+    case Some{+value}: value
+
+def boundary_member(+object: J.Json, +key: String) -> J.Json:
+  match object:
+    case J.Jobj{+members}: boundary_member_value(Req.member_lookup(key, members))
+    case other: J.Jnil{}
+
+def boundary_text(+object: J.Json, +key: String) -> String:
+  Req.text_of(boundary_member(object, key))
+
+def managed_exit_fields(fields: List<String>) -> ManagedExit:
+  match fields:
+    case +kind <> +code_text <> Nil{}:
+      match U32.read(code_text):
+        case Some{code}:
+          Bool.pick(ManagedExit, String.eq(kind, "exit"),
+            ManagedExit{code, U32.is_eq(code, 0)},
+            Bool.pick(ManagedExit, String.eq(kind, "signal"),
+              Bool.pick(ManagedExit, U32.is_lt(code, 128),
+                ManagedExit{U32.add(code, 128), False{}},
+                ManagedExit{255, False{}}), ManagedExitRefused{}))
+        case None{}: ManagedExitRefused{}
+    case other: ManagedExitRefused{}
+
+def managed_exit_status(+status: String) -> ManagedExit:
+  managed_exit_fields(Tx.split_spaces(status))
+
+def managed_output_value(+event_frame: String, exit: ManagedExit) -> ManagedOutput:
+  match exit:
+    case ManagedExit{code, complete}:
+      Bool.pick(ManagedOutput, complete,
+        ManagedOutput{event_frame, SNil{}, code, True{}},
+        ManagedOutput{event_frame, event_frame, code, False{}})
+    case ManagedExitRefused{}:
+      ManagedOutput{SNil{}, "{\"reason\":\"managedExitStatusMalformed\"}", 255, False{}}
+
+def managed_wait_output(+handle: U32, +event_frame: String,
+                        waited: Result<&1,&1,U32 & String,String>) -> IO(ManagedOutput):
+  match waited:
+    case Fail{error}: IO.die(ManagedOutput, 3, "managedChildWait")
+    case Done{+status}:
+      Bool.pick(IO(ManagedOutput), String.is_empty(status),
+        IO.die(ManagedOutput, 3, "managedChildStatusMissing"),
+        IO.pure(ManagedOutput, managed_output_value(event_frame,
+          managed_exit_status(status))))
+
+def managed_read_second(+handle: U32, +event_frame: String,
+                        second: Result<&1,&1,U32 & String,Maybe<String>>) -> IO(ManagedOutput):
+  match second:
+    case Fail{error}: IO.die(ManagedOutput, 3, "managedChildOutputRead")
+    case Done{+extra}:
+      match extra:
+        case Some{value}: IO.die(ManagedOutput, 3, "managedChildOutputSurplus")
+        case None{}:
+          do IO<ManagedOutput>:
+            waited : Result<&1,&1,U32 & String,String> <- Process.ProcessChild.wait(handle)
+            managed_wait_output(handle, event_frame, waited)
+
+def managed_read_first(+handle: U32,
+                       first: Result<&1,&1,U32 & String,Maybe<String>>) -> IO(ManagedOutput):
+  match first:
+    case Fail{error}: IO.die(ManagedOutput, 3, "managedChildOutputRead")
+    case Done{+line}:
+      match line:
+        case None{}: IO.die(ManagedOutput, 3, "managedChildOutputMissing")
+        case Some{+event_frame}:
+          do IO<ManagedOutput>:
+            second : Result<&1,&1,U32 & String,Maybe<String>> <- Process.ProcessChild.read_line(handle)
+            managed_read_second(handle, event_frame, second)
+
+def managed_observe(+handle: U32) -> IO(ManagedOutput):
+  do IO<ManagedOutput>:
+    first : Result<&1,&1,U32 & String,Maybe<String>> <- Process.ProcessChild.read_line(handle)
+    managed_read_first(handle, first)
+
+def managed_persist_output(+owner: String, +worktree: String, +query: String,
+                           +bootstrap_digest: String,
+                           output: ManagedOutput) -> String:
+  match output:
+    case ManagedOutput{event_frame, error_json, exit_status, complete}:
+      event_frame
+
+def managed_output_exit_status(output: ManagedOutput) -> U32:
+  match output:
+    case ManagedOutput{event_frame, error_json, exit_status, complete}: exit_status
+
+def managed_outcome_persisted(+owner: String, +query: String,
+                              output: ManagedOutput,
+                              decoded: ProjectPolicyJson) -> Bool:
+  match decoded:
+    case ProjectPolicyJsonRefused{reason}: False{}
+    case ProjectPolicyJsonReady{+value}:
+      Bool.and(String.eq(boundary_text(value, "status"), "persisted"),
+      Bool.and(String.eq(boundary_text(value, "owner"), owner),
+      Bool.and(String.eq(boundary_text(value, "query"), query),
+      String.eq(boundary_text(value, "exitStatus"),
+        U32.show(managed_output_exit_status(output))))))
+
+def managed_persist_answer(+owner: String, +worktree: String, +query: String,
+                           +bootstrap_digest: String, output: ManagedOutput,
+                           answer: ProviderAnswer) -> IO(ManagedOutput):
+  match answer:
+    case ProviderRefused{reason}: IO.die(ManagedOutput, 3, "managedOutcomePersistence:" ++ reason)
+    case ProviderRuntime{path, version}: IO.die(ManagedOutput, 3, "managedOutcomePersistenceMalformed")
+    case ProviderOutput{+value, +status}:
+      Bool.pick(IO(ManagedOutput), Bool.and(String.eq(status, "exit 0"),
+        managed_outcome_persisted(owner, query, output,
+          project_policy_json_rows(value))),
+        IO.pure(ManagedOutput, output),
+        IO.die(ManagedOutput, 3, "managedOutcomePersistenceRefused"))
+
+def persist_managed_output(+executable: String, +runtime_path: String,
+                           +cwd: String, +owner: String, +worktree: String,
+                           +query: String, +bootstrap_digest: String,
+                           output: ManagedOutput) -> IO(ManagedOutput):
+  do IO<ManagedOutput>:
+    spawned : Result<&1,&1,U32 & String,U32> <- Process.ProcessChild.spawn(
+      query_outcome_argv(runtime_path, executable), cwd, "/dev/null")
+    answer : ProviderAnswer <- provider_spawn(installed_provider_path(executable),
+      cwd, query_outcome_request(owner, worktree, query, bootstrap_digest,
+        managed_output_exit_status(output),
+        managed_persist_output(owner, worktree, query, bootstrap_digest, output)), spawned)
+    managed_persist_answer(owner, worktree, query, bootstrap_digest, output, answer)
+
+def managed_store_result(result: Result<&1,&1,U32 & String,String>) -> IO(Unit):
+  match result:
+    case Fail{error}: IO.die(Unit, 3, "managedOutcomeStore")
+    case Done{+rows}: IO.write(rows)
+
+def store_managed_output(+db: String, +binding: String, +query: String,
+                         output: ManagedOutput) -> IO(Unit):
+  match output:
+    case ManagedOutput{event_frame, error_json, exit_status, complete}:
+      do IO<Unit>:
+        result : Result<&1,&1,U32 & String,String> <- DB.Sql.query_bound(db, binding,
+          ContextStore.state_publish_sql(query,
+            Bool.pick(String, complete, "complete", "failed"),
+            Bool.pick(String, complete, event_frame, SNil{}),
+            Bool.pick(String, complete, SNil{}, error_json)))
+        managed_store_result(result)
+
+def launch_bootstrap(launch: ManagedLaunch) -> ManagedQuery.Bootstrap:
+  match launch:
+    case ManagedLaunch{bootstrap, invocation_text, executable, runtime_path,
+        worktree, bootstrap_digest}: bootstrap
+
+def managed_observe_complete(+db: String, +binding: String,
+                             launch: ManagedLaunch, handle: U32) -> IO(Unit):
+  match launch:
+    case ManagedLaunch{bootstrap, invocation_text, executable, runtime_path,
+        worktree, bootstrap_digest}:
+      do IO<Unit>:
+        output : ManagedOutput <- managed_observe(handle)
+        persisted : ManagedOutput <- persist_managed_output(executable,
+          runtime_path, ManagedQuery.bootstrap_cwd(bootstrap),
+          ManagedQuery.bootstrap_owner(bootstrap), worktree,
+          ManagedQuery.bootstrap_query(bootstrap), bootstrap_digest, output)
+        store_managed_output(db, binding,
+          ManagedQuery.bootstrap_query(bootstrap), persisted)
+
+def recovery_file_verify_sql(+output: String) -> String:
+  "SELECT coalesce(json_extract(" ++ ContextCommands.q(output) ++ ",'$.status'),''),"
+  ++ "coalesce(json_extract(" ++ ContextCommands.q(output) ++ ",'$.artifactSha256'),'');"
+
+def recovery_file_digest(+rows: String) -> String:
+  match Tx.split_lines(rows):
+    case +line <> Nil{}:
+      match Tx.split_tabs(line):
+        case +status <> +digest <> Nil{}:
+          Bool.pick(String, Bool.and(String.eq(status, "verified"),
+            Nat.is_eq(String.length(digest), 64n)), digest, SNil{})
+        case other: SNil{}
+    case other: SNil{}
+
+def recovery_file_verified(+db: String, +binding: String, +executable: String,
+                           +runtime_path: String, +cwd: String,
+                           +artifact_file: String, +expected_digest: String) -> IO(Bool):
+  do IO<Bool>:
+    spawned : Result<&1,&1,U32 & String,U32> <- Process.ProcessChild.spawn(
+      verify_invocation_file_argv(runtime_path, executable, artifact_file),
+      cwd, "/dev/null")
+    answer : ProviderAnswer <- provider_spawn(installed_provider_path(executable),
+      cwd, SNil{}, spawned)
+    match answer:
+      case ProviderOutput{+value, +status}:
+        Bool.pick(IO(Bool), String.eq(status, "exit 0"),
+          do IO<Bool>:
+            rows : Result<&1,&1,U32 & String,String> <- DB.Sql.query_bound(db,
+              binding, recovery_file_verify_sql(value))
+            match rows:
+              case Fail{error}: IO.pure(Bool, False{})
+              case Done{+row}: IO.pure(Bool,
+                String.eq(recovery_file_digest(row), expected_digest)),
+          IO.pure(Bool, False{}))
+      case other: IO.pure(Bool, False{})
+
+def managed_recovery_association_ok(bootstrap: ManagedQuery.Bootstrap,
+                                   admission: ContextAdmit.Admission,
+                                   association: ContextAdmit.ManagedAssociation) -> Bool:
+  Bool.and(Bool.or(ManagedQuery.admission_fields_match(bootstrap, admission),
+    ManagedQuery.rejection_identity_match(
+      ManagedQuery.bootstrap_owner(bootstrap),
+      ManagedQuery.bootstrap_request(bootstrap),
+      ManagedQuery.bootstrap_keeper_path(bootstrap),
+      ManagedQuery.bootstrap_cwd(bootstrap),
+      ManagedQuery.bootstrap_attempt(bootstrap),
+      ManagedQuery.bootstrap_artifact_path(bootstrap), admission)),
+    match association:
+      case ContextAdmit.ManagedAssociationStored{planValue, planIdentity,
+          resultSchema, artifactSha256, bootstrapText}:
+        Bool.and(String.eq(planValue, ManagedQuery.bootstrap_plan_value(bootstrap)),
+        Bool.and(String.eq(planIdentity, ManagedQuery.bootstrap_plan_identity(bootstrap)),
+        Bool.and(String.eq(resultSchema, ManagedQuery.bootstrap_result_schema(bootstrap)),
+        Bool.and(String.eq(artifactSha256,
+          ManagedQuery.bootstrap_artifact_sha256(bootstrap)),
+        String.eq(bootstrapText, ManagedQuery.bootstrap_text(bootstrap))))))
+      case other: False{})
+
+def managed_recovery_association(+db: String, +binding: String,
+                                 bootstrap: ManagedQuery.Bootstrap,
+                                 admission: ContextAdmit.Admission,
+                                 result: Result<&1,&1,U32 & String,ContextAdmit.ManagedAssociation>) -> IO(Bool):
+  match result:
+    case Fail{error}: IO.pure(Bool, False{})
+    case Done{+association}: IO.pure(Bool,
+      managed_recovery_association_ok(bootstrap, admission, association))
+
+def managed_recovery_admission(+db: String, +binding: String,
+                               bootstrap: ManagedQuery.Bootstrap,
+                               result: Result<&1,&1,U32 & String,ContextAdmit.Admission>) -> IO(Bool):
+  match result:
+    case Fail{error}: IO.pure(Bool, False{})
+    case Done{+admission}:
+      do IO<Bool>:
+        association : Result<&1,&1,U32 & String,ContextAdmit.ManagedAssociation> <-
+          ContextAdmit.readback_managed_association(db, binding,
+            ManagedQuery.bootstrap_query(bootstrap))
+        managed_recovery_association(db, binding, bootstrap, admission, association)
+
+def managed_recovery_binding(+db: String, bootstrap: ManagedQuery.Bootstrap,
+                             result: Result<&1,&1,U32 & String,String>) -> IO(Bool):
+  match result:
+    case Fail{error}: IO.pure(Bool, False{})
+    case Done{+binding}:
+      Bool.pick(IO(Bool), String.eq(binding,
+        ManagedQuery.bootstrap_database_binding(bootstrap)),
+        do IO<Bool>:
+          admission : Result<&1,&1,U32 & String,ContextAdmit.Admission> <-
+            ContextAdmit.readback(db, binding,
+              ManagedQuery.bootstrap_query(bootstrap))
+          managed_recovery_admission(db, binding, bootstrap, admission),
+        IO.pure(Bool, False{}))
+
+def managed_recovery_attach(+db: String, +executable: String,
+                            +runtime_path: String, +worktree: String,
+                            bootstrap: ManagedQuery.Bootstrap,
+                            bootstrap_digest: String) -> IO(Unit):
+  do IO<Unit>:
+    verified : Bool <- recovery_file_verified(db,
+      ManagedQuery.bootstrap_database_binding(bootstrap), executable,
+      runtime_path, ManagedQuery.bootstrap_cwd(bootstrap),
+      ManagedQuery.bootstrap_keeper_path(bootstrap) ++ "/invocation.json",
+      ManagedQuery.bootstrap_artifact_sha256(bootstrap))
+    Bool.pick(IO(Unit), verified,
+      do IO<Unit>:
+        binding_ok : Bool <- managed_recovery_binding(db, bootstrap,
+          DB.Sql.binding(db))
+        Bool.pick(IO(Unit), binding_ok,
+          do IO<Unit>:
+            attached : Result<&1,&1,U32 & String,U32> <- Instance.attach(db,
+              ManagedQuery.bootstrap_keeper_path(bootstrap))
+            match attached:
+              case Fail{error}: IO.die(Unit, 3, "managedRecoveryAttachUnavailable")
+              case Done{+handle}:
+                launch = ManagedLaunch{bootstrap, SNil{}, executable,
+                  runtime_path, worktree, bootstrap_digest}
+                readiness = ManagedQuery.KeeperObserverReady{
+                  ManagedQuery.bootstrap_query(bootstrap),
+                  ManagedQuery.bootstrap_owner(bootstrap),
+                  ManagedQuery.bootstrap_keeper_path(bootstrap), "starter", "0"}
+                managed_submit_start(db,
+                  ManagedQuery.bootstrap_database_binding(bootstrap), launch,
+                  handle, readiness),
+          IO.die(Unit, 3, "managedRecoveryBindingMismatch")),
+      IO.die(Unit, 3, "managedRecoveryInvocationMismatch"))
+
+def managed_recovery_bootstrap(+db: String, +owner: String, +query: String,
+                              +directory: String, +worktree: String,
+                              +bootstrap_file: String, +executable: String,
+                              +runtime_path: String,
+                              decoded: ProjectPolicyJson) -> IO(Unit):
+  match decoded:
+    case ProjectPolicyJsonRefused{reason}: IO.die(Unit, 3, "managedRecoveryBootstrapJson")
+    case ProjectPolicyJsonReady{+envelope}:
+      value = boundary_member(envelope, "value")
+      bootstrap_text = J.json_text(value)
+      bootstrap_digest = boundary_text(envelope, "sha256")
+      Bool.pick(IO(Unit), Bool.and(
+        String.eq(boundary_text(envelope, "status"), "loaded"),
+        Bool.and(String.eq(boundary_text(envelope, "owner"), owner),
+        Bool.and(String.eq(boundary_text(envelope, "worktree"), worktree),
+        Bool.and(String.eq(boundary_text(envelope, "query"), query),
+        Bool.and(String.eq(boundary_text(envelope, "path"), bootstrap_file),
+          Nat.is_eq(String.length(bootstrap_digest), 64n))))),
+        match ManagedQuery.bootstrap_from_json(value, owner, query):
+          case ManagedQuery.BootstrapDecodeRefused{reason}:
+            IO.die(Unit, 3, "managedRecoveryBootstrapIdentity")
+          case ManagedQuery.BootstrapDecoded{+bootstrap}:
+            Bool.pick(IO(Unit), Bool.and(
+              String.eq(bootstrap_text, ManagedQuery.bootstrap_text(bootstrap)),
+              Bool.and(String.eq(ManagedQuery.bootstrap_keeper_path(bootstrap), directory),
+              Bool.and(String.eq(directory, ContextIdentity.role_directory(
+                  ManagedQuery.bootstrap_artifact_path(bootstrap),
+                  ManagedQuery.bootstrap_guard_key(bootstrap))),
+              Bool.and(String.eq(ManagedQuery.bootstrap_artifact_path(bootstrap) ++ "/bootstrap.json",
+                  bootstrap_file),
+                String.eq(ManagedQuery.bootstrap_recovery_argv(bootstrap),
+                  Process.argv([executable, "--recover-context-query", db, owner,
+                    query, directory, worktree, bootstrap_file]))))))),
+              managed_recovery_attach(db, executable, runtime_path, worktree,
+                bootstrap, bootstrap_digest),
+              IO.die(Unit, 3, "managedRecoveryBootstrapPathMismatch")),
+        IO.die(Unit, 3, "managedRecoveryBootstrapEnvelope"))
+
+def managed_recovery_provider(+db: String, +owner: String, +query: String,
+                              +directory: String, +worktree: String,
+                              +bootstrap_file: String, +executable: String,
+                              runtime: ProviderAnswer) -> IO(Unit):
+  match runtime:
+    case ProviderRuntime{+path, +version}:
+      do IO<Unit>:
+        spawned : Result<&1,&1,U32 & String,U32> <- Process.ProcessChild.spawn(
+          query_bootstrap_read_argv(path, executable, owner, worktree, query,
+            bootstrap_file), worktree, "/dev/null")
+        answer : ProviderAnswer <- provider_spawn(installed_provider_path(executable),
+          worktree, SNil{}, spawned)
+        match answer:
+          case ProviderOutput{+value, +status}:
+            Bool.pick(IO(Unit), String.eq(status, "exit 0"),
+              managed_recovery_bootstrap(db, owner, query, directory, worktree,
+                bootstrap_file, executable, path, project_policy_json_rows(value)),
+              IO.die(Unit, 3, "managedRecoveryBootstrapRead"))
+          case other: IO.die(Unit, 3, "managedRecoveryBootstrapRead")
+    case other: IO.die(Unit, 3, "managedRecoveryNodeRuntime")
+
+def recover_managed_query(+db: String, +owner: String, +query: String,
+                          +directory: String, +worktree: String,
+                          +bootstrap_file: String) -> IO(Unit):
+  do IO<Unit>:
+    executable : String <- IO.try(String, Host.SessionLock.executable())
+    runtime : ProviderAnswer <- resolve_node_runtime(worktree)
+    managed_recovery_provider(db, owner, query, directory, worktree,
+      bootstrap_file, executable, runtime)
+
+def managed_start_decision(+db: String, +binding: String, launch: ManagedLaunch,
+                           handle: U32,
+                           decision: ManagedQuery.StartDecision) -> IO(Unit):
+  match decision:
+    case ManagedQuery.StartGranted{query, owner, role, incarnation, request,
+        keeper_path, artifact_path, plan_value, result_schema}:
+      do IO<Unit>:
+        started : Unit <- IO.try(Unit, Instance.start(handle,
+          ManagedQuery.bootstrap_text(launch_bootstrap(launch)),
+          ManagedQuery.start_decision_text(decision),
+          ManagedQuery.bootstrap_owner_witness(launch_bootstrap(launch))))
+        managed_observe_complete(db, binding, launch, handle)
+    case ManagedQuery.StartCancelled{query, owner, reason, keeper_path}:
+      do IO<Unit>:
+        cancelled : Unit <- IO.try(Unit, Instance.cancel(handle,
+          ManagedQuery.bootstrap_text(launch_bootstrap(launch)),
+          ManagedQuery.start_decision_text(decision),
+          ManagedQuery.bootstrap_owner_witness(launch_bootstrap(launch))))
+        IO.die(Unit, 3, "managedAdmissionCancelled:" ++ reason)
+    case ManagedQuery.StartHeld{reason}:
+      IO.die(Unit, 3, "managedStartHeld:" ++ reason)
+
+def managed_submit_start(+db: String, +binding: String,
+                         launch: ManagedLaunch, handle: U32,
+                         readiness: ManagedQuery.KeeperReadiness) -> IO(Unit):
+  match launch:
+    case ManagedLaunch{bootstrap, invocation_text, executable, runtime_path,
+        worktree, bootstrap_digest}:
+      do IO<Unit>:
+        decision : ManagedQuery.StartDecision <- ManagedQuery.submit_after_observer_ready(
+          bootstrap, readiness, db)
+        managed_start_decision(db, binding, launch, handle, decision)
+
+def managed_prepare_result(+db: String, +binding: String, launch: ManagedLaunch,
+                           result: Result<&1,&1,U32 & String,U32 & String & String>) -> IO(Unit):
+  match result:
+    case Fail{error}: IO.die(Unit, 3, "managedKeeperPrepare")
+    case Done{+prepared}:
+      match prepared:
+        case (handle, (identity, host_json)):
+          Bool.pick(IO(Unit), String.eq(identity,
+            ManagedQuery.bootstrap_text(launch_bootstrap(launch))),
+            do IO<Unit>:
+              readiness : ManagedQuery.KeeperReadiness <- decode_managed_readiness(
+                db, binding, launch_bootstrap(launch), host_json)
+              managed_submit_start(db, binding, launch, handle, readiness),
+            IO.die(Unit, 3, "managedKeeperIdentityMismatch"))
+
+def managed_prepare_roles(+db: String, +binding: String, +owner: String,
+                          +query: String, +request: String, +cwd: String,
+                          +worktree: String, +source_identity: String,
+                          +artifact_path: String, +invocation_text: String,
+                          +executable: String, +runtime_path: String,
+                          +result_schema: String, +artifact_sha256: String,
+                          +plan: Sel.Plan, +guard_identity: String,
+                          +physical_identity: String, +lock: U32,
+                          +owner_witness: String, +origin_attempt: String,
+                          +budget: U32) -> IO(Unit):
+  do IO<Unit>:
+    guard_key : String <- IO.try(String, ContextIdentity.role_guard_key(guard_identity))
+    physical_role_key : String <- IO.try(String,
+      ContextIdentity.physical_role_key(physical_identity))
+    +keeper_path = ContextIdentity.role_directory(artifact_path, guard_key)
+    bootstrap_file = artifact_path ++ "/bootstrap.json"
+    canonical_database : String <- IO.try(String, Host.SessionLock.canonical(db))
+    recovery_argv = Process.argv([executable, "--recover-context-query", canonical_database,
+      owner, query, keeper_path, worktree, bootstrap_file])
+    bootstrap = ManagedQuery.query_bootstrap(binding, query, owner, request, cwd,
+      origin_attempt, ManagedQuery.ArtifactEvidence{source_identity, artifact_sha256},
+      EnginesWire.plan_value(plan), EnginesWire.plan_identity(plan), result_schema,
+      artifact_path, keeper_path, guard_key, physical_role_key, owner_witness,
+      recovery_argv)
+    bootstrap_text = ManagedQuery.bootstrap_text(bootstrap)
+    bootstrap_digest : String <- persist_managed_bootstrap(executable, runtime_path,
+      cwd, owner, worktree, query, bootstrap_file, bootstrap)
+    launch = ManagedLaunch{bootstrap, invocation_text, executable, runtime_path,
+      worktree, bootstrap_digest}
+    argv = Process.argv([runtime_path, "--experimental-strip-types",
+      installed_provider_path(executable), "--invoke-file",
+      keeper_path ++ "/invocation.json"])
+    stderr_path = keeper_path ++ "/native.stderr"
+    result : Result<&1,&1,U32 & String,U32 & String & String> <-
+      Instance.prepare_with_file_bounded_start(db, keeper_path, argv, cwd,
+        stderr_path, budget, "invocation.json", invocation_text, SNil{}, 0, lock,
+        recovery_argv, bootstrap_text, owner_witness)
+    managed_prepare_result(db, binding, launch, result)
+
+def managed_prepare_owner(+db: String, +binding: String, +owner: String,
+                          +query: String, +request: String, +cwd: String,
+                          +worktree: String, +source_identity: String,
+                          +artifact_path: String, +invocation_text: String,
+                          +executable: String, +runtime_path: String,
+                          +result_schema: String, +artifact_sha256: String,
+                          +plan: Sel.Plan, +guard_identity: String,
+                          +physical_identity: String, +lock: U32,
+                          +budget: U32) -> IO(Unit):
+  do IO<Unit>:
+    owner_ready : Unit <- IO.try(Unit, Instance.owner(db))
+    owner_witness : String <- IO.try(String, Instance.owner_witness(db))
+    origin_attempt : String <- owner_origin_attempt(db, binding, owner)
+    managed_prepare_roles(db, binding, owner, query, request, cwd, worktree,
+      source_identity, artifact_path, invocation_text, executable, runtime_path,
+      result_schema, artifact_sha256, plan, guard_identity, physical_identity,
+      lock, owner_witness, origin_attempt, budget)
+
+def managed_prepare_policy(+db: String, +binding: String, +owner: String,
+                           +query: String, +request: String, +cwd: String,
+                           +worktree: String, +source_identity: String,
+                           +artifact_path: String, +invocation_text: String,
+                           +executable: String, +runtime_path: String,
+                           +result_schema: String, +artifact_sha256: String,
+                           +plan: Sel.Plan, +guard_identity: String,
+                           +physical_identity: String, +physical_role_key: String,
+                           +anchor: String,
+                           policy: CoordinatorLogs.Policy) -> IO(Unit):
+  match policy:
+    case CoordinatorLogs.Policy{level, budget, segments, pending, db0, session}:
+      do IO<Unit>:
+        lock : Maybe<U32> <- IO.try(Maybe<U32>, Host.SessionLock.try_acquire(
+          anchor, ContextIdentity.guard_lock_name(physical_role_key)))
+        match lock:
+          case None{}: IO.die(Unit, 3, "managedRoleLockHeld")
+          case Some{+lock_handle}:
+            managed_prepare_owner(db, binding, owner, query, request, cwd,
+              worktree, source_identity, artifact_path, invocation_text,
+              executable, runtime_path, result_schema, artifact_sha256, plan,
+              guard_identity, physical_identity, lock_handle, budget)
+
+def managed_prepare_anchor(+db: String, +binding: String, +owner: String,
+                           +query: String, +request: String, +cwd: String,
+                           +worktree: String, +source_identity: String,
+                           +artifact_path: String, +invocation_text: String,
+                           +executable: String, +runtime_path: String,
+                           +result_schema: String, +artifact_sha256: String,
+                           +plan: Sel.Plan) -> IO(Unit):
+  do IO<Unit>:
+    guard_identity = ContextIdentity.guard_identity(binding,
+      ContextIdentity.SubjectQuery{query}, ContextIdentity.RoleStarter{}, "0")
+    physical_identity = ContextIdentity.physical_role_identity(
+      ContextIdentity.SubjectQuery{query}, ContextIdentity.RoleStarter{})
+    physical_role_key : String <- IO.try(String,
+      ContextIdentity.physical_role_key(physical_identity))
+    anchor : String <- IO.try(String, ContextIdentity.prepare_guard_anchor(artifact_path))
+    policy : CoordinatorLogs.Policy <- CoordinatorLogs.policy(db, owner)
+    managed_prepare_policy(db, binding, owner, query, request, cwd, worktree,
+      source_identity, artifact_path, invocation_text, executable, runtime_path,
+      result_schema, artifact_sha256, plan, guard_identity, physical_identity,
+      physical_role_key, anchor, policy)
+
+def managed_query_verified(+plan: Sel.Plan, +result_schema: String,
+                           +db: String, +binding: String, +owner: String,
+                           +query: String, +request: String, +cwd: String,
+                           +source_identity: String, +artifact_path: String,
+                           +invocation_text: String, +executable: String,
+                           +runtime_path: String, +artifact_sha256: String) -> IO(Unit):
+  do IO<Unit>:
+    workspace : OwnerWorkspace <- read_owner_workspace(db, binding, owner)
+    match workspace:
+      case OwnerWorkspaceRefused{reason}: IO.die(Unit, 3, reason)
+      case OwnerWorkspaceReady{+path}:
+        managed_prepare_anchor(db, binding, owner, query, request, cwd, path,
+          source_identity, artifact_path, invocation_text, executable,
+          runtime_path, result_schema, artifact_sha256, plan)
+
 def project_policy_runtime_answer(+executable: String, +cwd: String,
                                   +owner: String, +worktree: String,
                                   +runtime: ProviderAnswer) -> IO(ProviderAnswer):
@@ -567,18 +1116,51 @@ def decode_managed_readiness(+db: String, +binding: String,
       ManagedQuery.bootstrap_text(bootstrap))
     managed_readiness_digest(db, binding, bootstrap, host_json, digest)
 
-def boundary_member_value(found: Maybe<&2, J.Json>) -> J.Json:
-  match found:
-    case None{}: J.Jnil{}
-    case Some{+value}: value
+def managed_bootstrap_persisted(+owner: String, +worktree: String, +query: String,
+                               +path: String, decoded: ProjectPolicyJson) -> Bool:
+  match decoded:
+    case ProjectPolicyJsonRefused{reason}: False{}
+    case ProjectPolicyJsonReady{+value}:
+      Bool.and(String.eq(boundary_text(value, "status"), "persisted"),
+      Bool.and(String.eq(boundary_text(value, "owner"), owner),
+      Bool.and(String.eq(boundary_text(value, "worktree"), worktree),
+      Bool.and(String.eq(boundary_text(value, "query"), query),
+      Bool.and(String.eq(boundary_text(value, "path"), path),
+        Nat.is_eq(String.length(boundary_text(value, "sha256")), 64n))))))
 
-def boundary_member(+object: J.Json, +key: String) -> J.Json:
-  match object:
-    case J.Jobj{+members}: boundary_member_value(Req.member_lookup(key, members))
-    case other: J.Jnil{}
+def managed_bootstrap_persist_answer(+owner: String, +worktree: String,
+                                    +query: String, +path: String,
+                                    answer: ProviderAnswer) -> Bool:
+  match answer:
+    case ProviderRefused{reason}: False{}
+    case ProviderRuntime{path, version}: False{}
+    case ProviderOutput{+value, +status}:
+      Bool.and(String.eq(status, "exit 0"),
+        managed_bootstrap_persisted(owner, worktree, query, path,
+          project_policy_json_rows(value)))
 
-def boundary_text(+object: J.Json, +key: String) -> String:
-  Req.text_of(boundary_member(object, key))
+def managed_bootstrap_digest_result(+owner: String, +worktree: String,
+                                    +query: String, +path: String,
+                                    +bootstrap_text: String,
+                                    answer: ProviderAnswer) -> IO(String):
+  Bool.pick(IO(String), managed_bootstrap_persist_answer(owner, worktree,
+    query, path, answer),
+    IO.try(String, ContextIdentity.role_guard_key(bootstrap_text ++ "\n")),
+    IO.die(String, 3, "managedBootstrapPersistence"))
+
+def persist_managed_bootstrap(+executable: String, +runtime_path: String,
+                              +cwd: String, +owner: String,
+                              +worktree: String, +query: String,
+                              +path: String, +bootstrap: ManagedQuery.Bootstrap)
+                              -> IO(String):
+  do IO<String>:
+    spawned : Result<&1,&1,U32 & String,U32> <- Process.ProcessChild.spawn(
+      query_bootstrap_argv(runtime_path, executable), cwd, "/dev/null")
+    answer : ProviderAnswer <- provider_spawn(installed_provider_path(executable),
+      cwd, query_bootstrap_request(owner, worktree, query,
+        ManagedQuery.bootstrap_text(bootstrap)), spawned)
+    managed_bootstrap_digest_result(owner, worktree, query, path,
+      ManagedQuery.bootstrap_text(bootstrap), answer)
 
 def query_source_json(+owner: String, +worktree: String,
                       decoded: ProjectPolicyJson) -> BoundaryPath:
@@ -810,7 +1392,9 @@ def verification_result(+plan: Sel.Plan, +result_schema: String,
     case InvocationVerificationRefused{reason}:
       IO.die(Unit, 3, "invocationVerification:" ++ reason)
     case InvocationVerified{artifact_sha256}:
-      IO.die(Unit, 3, "managedPreparationRequiresLifecycleBinding")
+      managed_query_verified(plan, result_schema, db, binding, owner, query,
+        canonical, cwd, source_identity, artifact_path, invocation_text,
+        executable, runtime_path, artifact_sha256)
 
 def verify_selected_plan(+plan: Sel.Plan, +result_schema: String,
                          +db: String, +binding: String, +owner: String,

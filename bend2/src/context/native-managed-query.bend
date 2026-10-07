@@ -19,6 +19,10 @@ type Bootstrap is Data:
 type ArtifactEvidence is Data:
   ArtifactEvidence{source_identity: String, artifact_sha256: String}
 
+type BootstrapDecode is Data:
+  BootstrapDecoded{bootstrap: Bootstrap}
+  BootstrapDecodeRefused{reason: String}
+
 type StartDecision is Data:
   StartGranted{query: String, owner: String, role: String, incarnation: String,
     request: String, keeper_path: String, artifact_path: String,
@@ -55,6 +59,48 @@ def bootstrap_query(bootstrap: Bootstrap) -> String:
         source_identity, plan_value, plan_identity, result_schema, artifact_path,
         artifact_sha256, keeper_path, guard_identity, guard_key, physical_role_key,
         owner_witness, recovery_argv}: query
+
+def bootstrap_database_binding(bootstrap: Bootstrap) -> String:
+  match bootstrap:
+    case QueryBootstrap{query, owner, database_binding, request, cwd, origin_attempt,
+        source_identity, plan_value, plan_identity, result_schema, artifact_path,
+        artifact_sha256, keeper_path, guard_identity, guard_key, physical_role_key,
+        owner_witness, recovery_argv}: database_binding
+
+def bootstrap_plan_value(bootstrap: Bootstrap) -> String:
+  match bootstrap:
+    case QueryBootstrap{query, owner, database_binding, request, cwd, origin_attempt,
+        source_identity, plan_value, plan_identity, result_schema, artifact_path,
+        artifact_sha256, keeper_path, guard_identity, guard_key, physical_role_key,
+        owner_witness, recovery_argv}: plan_value
+
+def bootstrap_plan_identity(bootstrap: Bootstrap) -> String:
+  match bootstrap:
+    case QueryBootstrap{query, owner, database_binding, request, cwd, origin_attempt,
+        source_identity, plan_value, plan_identity, result_schema, artifact_path,
+        artifact_sha256, keeper_path, guard_identity, guard_key, physical_role_key,
+        owner_witness, recovery_argv}: plan_identity
+
+def bootstrap_result_schema(bootstrap: Bootstrap) -> String:
+  match bootstrap:
+    case QueryBootstrap{query, owner, database_binding, request, cwd, origin_attempt,
+        source_identity, plan_value, plan_identity, result_schema, artifact_path,
+        artifact_sha256, keeper_path, guard_identity, guard_key, physical_role_key,
+        owner_witness, recovery_argv}: result_schema
+
+def bootstrap_guard_key(bootstrap: Bootstrap) -> String:
+  match bootstrap:
+    case QueryBootstrap{query, owner, database_binding, request, cwd, origin_attempt,
+        source_identity, plan_value, plan_identity, result_schema, artifact_path,
+        artifact_sha256, keeper_path, guard_identity, guard_key, physical_role_key,
+        owner_witness, recovery_argv}: guard_key
+
+def bootstrap_recovery_argv(bootstrap: Bootstrap) -> String:
+  match bootstrap:
+    case QueryBootstrap{query, owner, database_binding, request, cwd, origin_attempt,
+        source_identity, plan_value, plan_identity, result_schema, artifact_path,
+        artifact_sha256, keeper_path, guard_identity, guard_key, physical_role_key,
+        owner_witness, recovery_argv}: recovery_argv
 
 def bootstrap_owner(bootstrap: Bootstrap) -> String:
   match bootstrap:
@@ -218,6 +264,55 @@ def keeper_readiness_from_host(+bootstrap: Bootstrap, +expected_binding: String,
       bootstrap_keeper_path(bootstrap), "starter", "0"},
     KeeperObserverUnavailable{"hostReadinessMismatch"})
 
+def bootstrap_from_json(+value: J.Json, +expected_owner: String,
+                        +expected_query: String) -> BootstrapDecode:
+  match value:
+    case J.Jobj{+members}:
+      query = Req.text_of(readiness_member(value, "query"))
+      owner = Req.text_of(readiness_member(value, "owner"))
+      database_binding = Req.text_of(readiness_member(value, "databaseBinding"))
+      request = Req.text_of(readiness_member(value, "request"))
+      cwd = Req.text_of(readiness_member(value, "cwd"))
+      origin_attempt = Req.text_of(readiness_member(value, "originAttempt"))
+      plan_value = Req.text_of(readiness_member(value, "planValue"))
+      plan_identity = Req.text_of(readiness_member(value, "planIdentity"))
+      result_schema = Req.text_of(readiness_member(value, "resultSchema"))
+      artifact_path = Req.text_of(readiness_member(value, "artifactPath"))
+      artifact_sha256 = Req.text_of(readiness_member(value, "artifactSha256"))
+      keeper_path = Req.text_of(readiness_member(value, "keeperPath"))
+      guard_identity = Req.text_of(readiness_member(value, "guardIdentity"))
+      guard_key = Req.text_of(readiness_member(value, "guardKey"))
+      physical_role_key = Req.text_of(readiness_member(value, "physicalRoleKey"))
+      owner_witness = Req.text_of(readiness_member(value, "ownerWitness"))
+      recovery_argv = Req.text_of(readiness_member(value, "recoveryArgv"))
+      source_identity = Req.text_of(readiness_member(value, "sourceIdentity"))
+      Bool.pick(BootstrapDecode,
+        Bool.and(String.eq(readiness_text(value, "schema"), "baton2-managed-context-bootstrap-v1"),
+        Bool.and(String.eq(query, expected_query),
+        Bool.and(String.eq(owner, expected_owner),
+        Bool.and(Nat.is_eq(String.length(guard_key), 64n),
+        Bool.and(Nat.is_eq(String.length(artifact_sha256), 64n),
+        Bool.and(Nat.is_eq(String.length(physical_role_key), 64n),
+        Bool.and(Bool.not(String.is_empty(owner_witness)),
+        Bool.and(Bool.not(String.is_empty(source_identity)),
+        Bool.and(String.eq(guard_identity,
+          ContextIdentity.guard_identity(database_binding,
+            ContextIdentity.SubjectQuery{query}, ContextIdentity.RoleStarter{}, "0")),
+        Bool.and(Bool.not(String.is_empty(request)),
+        Bool.and(Bool.not(String.is_empty(cwd)),
+        Bool.and(Bool.not(String.is_empty(plan_value)),
+        Bool.and(Bool.not(String.is_empty(plan_identity)),
+        Bool.and(Bool.not(String.is_empty(result_schema)),
+        Bool.and(Bool.not(String.is_empty(artifact_path)),
+        Bool.and(Bool.not(String.is_empty(keeper_path)),
+        Bool.not(String.is_empty(recovery_argv))))))))))))))))))
+        BootstrapDecoded{QueryBootstrap{query, owner, database_binding,
+          request, cwd, origin_attempt, source_identity, plan_value, plan_identity,
+          result_schema, artifact_path, artifact_sha256, keeper_path, guard_identity,
+          guard_key, physical_role_key, owner_witness, recovery_argv}},
+        BootstrapDecodeRefused{"managedBootstrapIdentityMismatch"})
+    case other: BootstrapDecodeRefused{"managedBootstrapShape"}
+
 def nullable_text(+value: String) -> J.Json:
   Bool.pick(J.Json, String.is_empty(value), J.Jnil{}, J.Jstr{value})
 
@@ -228,20 +323,24 @@ def bootstrap_json(+bootstrap: Bootstrap) -> J.Json:
         artifact_sha256, keeper_path, guard_identity, guard_key, physical_role_key,
         owner_witness, recovery_argv}:
       J.Jobj{J.Jpair{"schema", J.Jstr{"baton2-managed-context-bootstrap-v1"},
-      J.Jpair{"query", J.Jstr{query},
-      J.Jpair{"owner", J.Jstr{owner},
-      J.Jpair{"databaseBinding", J.Jstr{database_binding},
-      J.Jpair{"request", J.Jstr{request},
-      J.Jpair{"cwd", J.Jstr{cwd},
-      J.Jpair{"originAttempt", nullable_text(origin_attempt),
-      J.Jpair{"planValue", J.Jstr{plan_value},
-      J.Jpair{"planIdentity", J.Jstr{plan_identity},
-      J.Jpair{"resultSchema", J.Jstr{result_schema},
       J.Jpair{"artifactPath", J.Jstr{artifact_path},
-      J.Jpair{"keeperPath", J.Jstr{keeper_path},
+      J.Jpair{"artifactSha256", J.Jstr{artifact_sha256},
+      J.Jpair{"cwd", J.Jstr{cwd},
+      J.Jpair{"databaseBinding", J.Jstr{database_binding},
       J.Jpair{"guardIdentity", J.Jstr{guard_identity},
       J.Jpair{"guardKey", J.Jstr{guard_key},
-      J.Jpair{"recoveryArgv", J.Jstr{recovery_argv}, J.Jnil{}}}}}}}}}}}}}}}}}}
+      J.Jpair{"keeperPath", J.Jstr{keeper_path},
+      J.Jpair{"originAttempt", nullable_text(origin_attempt),
+      J.Jpair{"owner", J.Jstr{owner},
+      J.Jpair{"ownerWitness", J.Jstr{owner_witness},
+      J.Jpair{"physicalRoleKey", J.Jstr{physical_role_key},
+      J.Jpair{"planIdentity", J.Jstr{plan_identity},
+      J.Jpair{"planValue", J.Jstr{plan_value},
+      J.Jpair{"query", J.Jstr{query},
+      J.Jpair{"recoveryArgv", J.Jstr{recovery_argv},
+      J.Jpair{"request", J.Jstr{request},
+      J.Jpair{"resultSchema", J.Jstr{result_schema},
+      J.Jpair{"sourceIdentity", J.Jstr{source_identity}, J.Jnil{}}}}}}}}}}}}}}}}}}}}}}
 
 def start_decision_json(decision: StartDecision) -> J.Json:
   match decision:

@@ -293,6 +293,18 @@ if (process.argv[1] !== undefined && import.meta.url === pathToFileURL(process.a
       process.stdout.write(JSON.stringify(refused('queryBootstrapAuthorityMalformed', error.message)) + '\n');
       process.exitCode = 2;
     }
+  } else if (process.argv[2] === '--read-query-bootstrap') {
+    const { readQueryBootstrap } = await import('./context-query-artifact.mjs');
+    try {
+      if (process.argv.length !== 7) throw new Error('query bootstrap owner, worktree, query and path are required');
+      const result = readQueryBootstrap({ owner: process.argv[3], worktree: process.argv[4],
+        query: process.argv[5], bootstrapPath: process.argv[6] });
+      process.stdout.write(JSON.stringify(result) + '\n');
+      if (result.status !== 'loaded') process.exitCode = 2;
+    } catch (error) {
+      process.stdout.write(JSON.stringify(refused('queryBootstrapReadAuthorityMalformed', error.message)) + '\n');
+      process.exitCode = 2;
+    }
   } else if (process.argv[2] === '--persist-query-outcome') {
     const { persistQueryOutcome } = await import('./context-query-artifact.mjs');
     let input = '';

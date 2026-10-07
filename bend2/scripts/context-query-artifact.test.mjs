@@ -5,7 +5,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { execFileSync } from 'node:child_process';
 import test from 'node:test';
-import { examineQuerySource, persistQueryBootstrap, persistQueryOutcome, prepareQueryArtifact } from './context-query-artifact.mjs';
+import { examineQuerySource, persistQueryBootstrap, persistQueryOutcome, prepareQueryArtifact, readQueryBootstrap } from './context-query-artifact.mjs';
 
 function worktree(t) {
   const path = mkdtempSync(join(tmpdir(), 'baton-query-artifact-'));
@@ -16,22 +16,30 @@ function worktree(t) {
 
 function bootstrapText(worktreePath, query = 'query-1', owner = 'owner-1', originAttempt = '0') {
   const guardIdentity = JSON.stringify(['context-role', 'binding-1', 'query', query, 'starter', '0']);
+  const artifactPath = join(worktreePath, '.baton', 'context-artifacts', Buffer.from(query).toString('hex'));
+  const guardKey = createHash('sha256').update(guardIdentity).digest('hex');
   return JSON.stringify({
-    artifactPath: join(worktreePath, '.baton', 'context-artifacts', Buffer.from(query).toString('hex')),
+    artifactPath,
+    artifactSha256: 'b'.repeat(64),
     cwd: worktreePath,
     databaseBinding: 'binding-1',
     guardIdentity,
-    guardKey: createHash('sha256').update(guardIdentity).digest('hex'),
-    keeperPath: '/logs/keeper-1',
+    guardKey,
+    keeperPath: join(artifactPath, guardKey),
     originAttempt,
     owner,
+    ownerWitness: 'owner-token:1',
+    physicalRoleKey: 'c'.repeat(64),
     planIdentity: 'plan-identity-1',
     planValue: '[]',
     query,
-    recoveryArgv: '/opt/baton2/bin/baton2\0recover-context-role\0' + query,
+    recoveryArgv: '/opt/baton2/bin/baton2\0--recover-context-query\0/database\0'
+      + owner + '\0' + query + '\0/logs/keeper-1\0' + worktreePath + '\0'
+      + join(worktreePath, '.baton', 'context-artifacts', Buffer.from(query).toString('hex'), 'bootstrap.json'),
     request: '{}',
     resultSchema: 'result-v1',
     schema: 'baton2-managed-context-bootstrap-v1',
+    sourceIdentity: 'source-identity-1',
   });
 }
 
@@ -121,6 +129,19 @@ test('persists one immutable canonical bootstrap bound to owner, query and priva
   assert.equal(persistQueryBootstrap({ ...authority,
     bootstrapText: bootstrapText(root).replace('"query":"query-1"', '"query":"query-1","query":"query-1"') }).reason,
   'queryBootstrapCanonicalMismatch');
+});
+
+test('recovery reads only the bootstrap under the matching owner-worktree marker', (t) => {
+  const root = worktree(t);
+  const authority = { owner: 'owner-1', worktree: root, query: 'query-1' };
+  const saved = persistQueryBootstrap({ ...authority, bootstrapText: bootstrapText(root) });
+  const loaded = readQueryBootstrap({ ...authority, bootstrapPath: saved.path });
+  assert.equal(loaded.status, 'loaded');
+  assert.equal(loaded.sha256, saved.sha256);
+  assert.equal(readQueryBootstrap({ ...authority, bootstrapPath: join(root, 'request.json') }).reason,
+    'queryBootstrapPathMismatch');
+  assert.equal(readQueryBootstrap({ ...authority, owner: 'owner-2', bootstrapPath: saved.path }).reason,
+    'queryArtifactIdentityMismatch');
 });
 
 test('preserves absent origin attempt as JSON null and rejects an empty-string substitute', (t) => {

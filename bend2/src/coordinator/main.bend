@@ -313,9 +313,20 @@ def instance_owner_cli(+database: String, +flag: String) -> IO(Unit):
   Bool.pick(IO(Unit),String.eq(flag,"--instance-owner"),
     IO.try(Unit,Custody.Instance.owner(database)),instance_shutdown_cli(database,flag))
 
+def recover_context_query_cli(+flag: String, +db: String, +owner: String,
+                              +query: String, +directory: String,
+                              +worktree: String, +bootstrap_file: String) -> IO(Unit):
+  Bool.pick(IO(Unit), String.eq(flag, "--recover-context-query"),
+    ContextNative.recover_managed_query(db, owner, query, directory, worktree,
+      bootstrap_file), normal_cli([flag, db, owner, query, directory, worktree,
+        bootstrap_file]))
+
 def cli(args: List<String>) -> IO(Unit):
   match args:
     case flag <> database <> Nil{}: instance_owner_cli(database,flag)
+    case flag <> db <> owner <> query <> directory <> worktree <> bootstrap_file <> Nil{}:
+      recover_context_query_cli(flag, db, owner, query, directory, worktree,
+        bootstrap_file)
     case +flag <> +directory <> +lock <> Nil{}:
       dispatch_cli(directory,lock,[flag,directory,lock],String.eq(flag,"--host-process-keeper"),String.eq(flag,"--dispatch-message"))
     case flag <> db <> session <> id <> cursor <> cmd <> model <> effort <> cwd <> log <> harness <> directory <> native <> Nil{}:

@@ -10,8 +10,15 @@ def managed_bootstrap() -> Managed.Bootstrap:
     Managed.ArtifactEvidence{"source-identity",
       "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"},
     "[]", "plan-identity", "result-v1", "/work/.baton/context-artifacts/q",
-    "/logs/keeper-q", "guard-key-64", "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+    "/logs/keeper-q", "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
     "owner-token:1", "native-recover-argv")
+
+law sealed_bootstrap_recovery_preserves_the_original_owner_witness_and_artifact:
+  {Managed.bootstrap_from_json(Managed.bootstrap_json(managed_bootstrap()),
+    "owner-1", "q-1") == Managed.BootstrapDecoded{managed_bootstrap()} : Managed.BootstrapDecode}
+
+def sealed_bootstrap_recovery_preserves_the_original_owner_witness_and_artifact():
+  {==}
 
 law an_absent_origin_attempt_serializes_as_null:
   {Managed.nullable_text("") == J.Jnil{} : J.Json}
