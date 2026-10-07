@@ -303,8 +303,7 @@ def query_catalog_decoded(catalog: NativeCatalog.CatalogDecode,
     case NativeRequest.RequestDecoded{canonical, operands, operation_chain, cwd, source_path}:
       query_catalog_admitted(catalog)
 
-def query_catalog_rows_result(db: String, binding: String,
-                              request: NativeRequest.RequestDecode,
+def query_catalog_rows_result(request: NativeRequest.RequestDecode,
                               result: Result<&1,&1,U32 & String,String>) -> IO(Unit):
   match result:
     case Fail{error}:
@@ -318,7 +317,7 @@ def query_catalog_rows(db: String, binding: String, value: String,
   do IO<Unit>:
     result : Result<&1,&1,U32 & String,String> <- DB.Sql.query_bound(db, binding,
       Req.json_tree_sql(value))
-    query_catalog_rows_result(db, binding, request, result)
+    query_catalog_rows_result(request, result)
 
 def query_catalog_result(db: String, binding: String, answer: ProviderAnswer,
                          request: NativeRequest.RequestDecode) -> IO(Unit):
