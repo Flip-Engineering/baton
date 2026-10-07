@@ -349,6 +349,7 @@ def sql(command: Command) -> String:
     case KnowledgeRecord{id,author,claim,evidence,limits}: ""
     case KnowledgeRead{reader}: ""
     case KnowledgePromote{id,promoter,source,destination,finding}: ""
+    case View{subject,reader,port}: ""
     case Help{}: ""
     case Invalid{}: ""
 
