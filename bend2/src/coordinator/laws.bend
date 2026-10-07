@@ -1172,7 +1172,7 @@ def terminal_observation_records_the_report_and_turn(id,player,event):
   {==}
 
 law observations_update_identity_before_recording_completion:
-  for id: String
+  for +id: String
   for +player: String
   for +event: String
   for sealed: Bool
@@ -1287,13 +1287,14 @@ def a_response_after_the_first_terminal_leaves_guidance_pending(db,player,event)
 law completion_preparation_checks_the_upstream_recipient:
   for +db: String
   for +player: String
-  for id: String
+  for +id: String
   for log: String
   for stderr: String
   for outcome: Turn.Outcome
   {Turn.prepare(db,player,id,log,stderr,outcome) == (do IO<Unit>:
+    +generation : String <- IO.pure(String,Logs.attempt_log(log,id))
     recipient : String <- IO.try(String,DB.Sql.query(db,"SELECT " ++ C.report_recipient(C.q(player)) ++ " IS NOT NULL;"))
-    Turn.prepare_parent(db,player,id,log,stderr,outcome,String.eq(recipient,"1\n"))) : IO(Unit)}
+    Turn.prepare_parent(db,player,id,generation,stderr,outcome,String.eq(recipient,"1\n"))) : IO(Unit)}
 
 def completion_preparation_checks_the_upstream_recipient(db,player,id,log,stderr,outcome):
   {==}
