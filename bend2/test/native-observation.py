@@ -65,7 +65,7 @@ class NativeObservation(RECEIVE.Receive):
         turns = self.coord('turns', 'parent')
         self.assertEqual([row['reportBody'] for row in turns], ['Observed completion text.'])
         log = (self.directory / 'parent.jsonl').read_text()
-        self.assertIn('…[181 items elided for RPC frame]', log)
+        self.assertIn('181 items elided for RPC frame', log)
         self.assertIn('plain string content block', log)
         self.assertIn('not-json', log)
         self.assertEqual(self.coord('player', 'parent')['native'], 'omp-native')
