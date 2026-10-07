@@ -238,10 +238,9 @@ def a_host_failure_keeps_the_request_the_step_and_the_exact_error(request):
 law an_admitted_record_is_retained_raw_on_the_observation_branch:
   for request: IntentInput
   {Intent.decided(request, "qualified\t/x\t0\t\t0\t", VerdictAdmitted{"qualified\t/x\t0\t\t0\t", "/x"}) == (do IO<IntentPrepared>:
-    +h = requested_holder(request)
-    observed_head : T.GitOut <- Git.runGit(h, ["rev-parse", "HEAD"])
-    observed_index : T.GitOut <- Git.runGit(h, ["diff", "--cached", "--name-status"])
-    observed_status : T.GitOut <- Git.runGit(h, ["status", "--porcelain"])
+    observed_head : T.GitOut <- Git.runGit(requested_holder(request), ["rev-parse", "HEAD"])
+    observed_index : T.GitOut <- Git.runGit(requested_holder(request), ["diff", "--cached", "--name-status"])
+    observed_status : T.GitOut <- Git.runGit(requested_holder(request), ["status", "--porcelain"])
     IO.pure(IntentPrepared, IntentObserved{request, "qualified\t/x\t0\t\t0\t", "/x", observed_head, observed_index, observed_status})) : IO(IntentPrepared)}
 
 def an_admitted_record_is_retained_raw_on_the_observation_branch(request):
