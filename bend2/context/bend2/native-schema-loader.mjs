@@ -5,9 +5,12 @@
 // corrected schema pin checks: SchemaDef/SchemaForm spines, Codec.RawValue
 // cells, and J.Json cells. Arrays become Rarr/Jarr chains with the canonical
 // empty sentinels (Rarr{Rnil,Rnil} / Jarr{Jnil,Jnil}); records are closed;
-// strings are escaped. Numbers appear only as RawValue tokens: the
-// declaration carries none, so a number on the declaration path is an
-// explicit loader error, not a silent Jint. The probe also projects the
+// branch records are SfDiscriminated{tag, SchemaCase spine} selecting the
+// case by the flat tag member value; strings are escaped. Numbers appear
+// only as RawValue tokens: the declaration carries none, so a number on the
+// declaration path is an explicit loader error, not a silent Jint. One
+// duplicate-key fixture is hand-built as Rpair literals because JSON cannot
+// carry a duplicate key. The probe also projects the
 // single declared operation out of the real decoded Decl value and checks
 // its effects spine is empty and its execution is managed (two laws).
 //
@@ -30,16 +33,33 @@ const ASSETS = [
   ['event', 'native-schemas/event.envelope.json'],
 ];
 const FIXTURES = ['result.valid', 'result.unavailable', 'result.missing-status',
-  'result.unknown-member', 'result.bad-scalar', 'subject.valid',
-  'subject.bad-kind', 'event.valid'];
+  'result.unknown-member', 'result.bad-scalar', 'result.unavailable.missing-reason',
+  'result.unavailable.extra-member', 'result.completed.bad-phase',
+  'subject.valid', 'subject.unknown-kind', 'subject.position.valid',
+  'subject.position.missing-line', 'subject.position.bad-line',
+  'subject.position.unknown-member', 'subject.symbol.wrong-branch',
+  'subject.symbol.missing-name',
+  'reference.file.valid', 'reference.absent.with-sha', 'event.valid'];
 const FIXTURE_FORMS = { 'result.valid': 'result', 'result.unavailable': 'result',
   'result.missing-status': 'result', 'result.unknown-member': 'result',
-  'result.bad-scalar': 'result', 'subject.valid': 'subject',
-  'subject.bad-kind': 'subject', 'event.valid': 'event' };
+  'result.bad-scalar': 'result', 'result.unavailable.missing-reason': 'result',
+  'result.unavailable.extra-member': 'result', 'result.completed.bad-phase': 'result',
+  'subject.valid': 'subject', 'subject.unknown-kind': 'subject',
+  'subject.position.valid': 'subject', 'subject.position.missing-line': 'subject',
+  'subject.position.bad-line': 'subject', 'subject.position.unknown-member': 'subject',
+  'subject.symbol.wrong-branch': 'subject', 'subject.symbol.missing-name': 'subject',
+  'reference.file.valid': 'reference',
+  'reference.absent.with-sha': 'reference', 'event.valid': 'event' };
 const FIXTURE_EXPECT = { 'result.valid': '"ok"', 'result.unavailable': '"ok"',
   'result.missing-status': '"missingField"', 'result.unknown-member': '"undeclaredField"',
-  'result.bad-scalar': '"wrongKind"', 'subject.valid': '"ok"',
-  'subject.bad-kind': '"enumLiteral"', 'event.valid': '"ok"' };
+  'result.bad-scalar': '"wrongKind"', 'result.unavailable.missing-reason': '"missingField"',
+  'result.unavailable.extra-member': '"undeclaredField"', 'result.completed.bad-phase': '"enumLiteral"',
+  'subject.valid': '"ok"', 'subject.unknown-kind': '"unknownTag"',
+  'subject.position.valid': '"ok"', 'subject.position.missing-line': '"missingField"',
+  'subject.position.bad-line': '"wrongKind"', 'subject.position.unknown-member': '"undeclaredField"',
+  'subject.symbol.wrong-branch': '"undeclaredField"', 'subject.symbol.missing-name': '"missingField"',
+  'reference.file.valid': '"ok"', 'reference.absent.with-sha': '"undeclaredField"',
+  'event.valid': '"ok"' };
 
 function bendString(value) {
   return `"${value.replace(/\\/g, '\\\\').replace(/"/g, '\\"')}"`;
@@ -53,6 +73,8 @@ function schemaForm(node) {
       return `Schema.SfRecord{${fieldsSpine(body.fields)}}`;
     case 'SfUnion':
       return `Schema.SfUnion{${casesSpine(body.cases)}}`;
+    case 'SfDiscriminated':
+      return `Schema.SfDiscriminated{${bendString(body.tag)}, ${casesSpine(body.cases)}}`;
     case 'SfArray':
       return `Schema.SfArray{${schemaForm(body.item)}}`;
     case 'SfEnum':
@@ -194,10 +216,15 @@ lines.push(`  ${jsonValue(mutated, 'declaration-negative')}`);
 lines.push('');
 for (const name of FIXTURES) {
   const fixture = readLaneJson(`native-fixtures/schema/${name}.json`);
-  lines.push(`def fixture_${name.replaceAll('-', '_')}() -> Codec.RawValue:`);
+  lines.push(`def fixture_${name.replaceAll('-', '_').replaceAll('.', '_')}() -> Codec.RawValue:`);
   lines.push(`  ${rawValue(fixture)}`);
   lines.push('');
 }
+// JSON cannot carry a duplicate key, so the duplicate-member refusal is a
+// hand-built Rpair chain: the unavailable branch with reason twice.
+lines.push('def fixture_result_unavailable_duplicate_reason() -> Codec.RawValue:');
+lines.push('  Codec.Robj{Codec.Rpair{"schema", Codec.Rstr{"baton2.context.bend2.source-analysis.result.v1"}, Codec.Rpair{"status", Codec.Rstr{"unavailable"}, Codec.Rpair{"reason", Codec.Rstr{"r"}, Codec.Rpair{"reason", Codec.Rstr{"r2"}, Codec.Rpair{"detail", Codec.Rstr{"d"}, Codec.Rnil{}}}}}}}');
+lines.push('');
 lines.push(`def verified_digest() -> String:`);
 lines.push(`  ${bendString(packageHex)}`);
 lines.push('');
@@ -280,7 +307,7 @@ lines.push('def probe_op_execution_managed():');
 lines.push('  {==}');
 lines.push('');
 for (const name of FIXTURES) {
-  const flat = name.replaceAll('-', '_');
+  const flat = name.replaceAll('-', '_').replaceAll('.', '_');
   lines.push(`law probe_admit_${flat}:`);
   lines.push(`  {verdict_code(Schema.schema_admit_value(asset_defs(), form_${FIXTURE_FORMS[name]}(), fixture_${flat}())) == ${FIXTURE_EXPECT[name]} : String}`);
   lines.push('');
@@ -288,4 +315,10 @@ for (const name of FIXTURES) {
   lines.push('  {==}');
   lines.push('');
 }
+lines.push('law probe_admit_result_unavailable_duplicate_reason:');
+lines.push('  {verdict_code(Schema.schema_admit_value(asset_defs(), form_result(), fixture_result_unavailable_duplicate_reason())) == "duplicateKey" : String}');
+lines.push('');
+lines.push('def probe_admit_result_unavailable_duplicate_reason():');
+lines.push('  {==}');
+lines.push('');
 process.stdout.write(lines.join('\n'));

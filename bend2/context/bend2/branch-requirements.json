@@ -1,8 +1,9 @@
 {
   "format": "baton2-branch-requirements-v1",
-  "role": "coordination input for Schema Muse minimal generic discriminated-record support; not a SchemaDef and not admitted by the walker",
+  "role": "coordination record for Schema Muse generic discriminated-record support; not a SchemaDef and not admitted by the walker",
   "decoder_pin": "495ec1f5",
-  "note": "confirmed rows are grounded in lane producer bytes or root direction; open rows name the exact missing evidence and must not be treated as contract",
+  "schema_pin": "237b5ba280fe373c16f46d7c0c78224010ef82d8",
+  "note": "strict rows are implemented as SfDiscriminated branch records in the lane assets and gated by refusal laws; open rows name the exact missing evidence and must not be treated as contract",
   "entries": [
     {
       "schema": "baton2.context.bend2.source-analysis.subject.v1",
@@ -11,21 +12,21 @@
       "variants": [
         {
           "value": "position",
-          "required": ["path", "line", "column"],
-          "evidence": "root direction: a valid position requires line/column",
-          "status": "confirmed"
+          "required": ["kind", "path", "line", "column"],
+          "evidence": "root direction: a valid position requires line/column; gated by subject.position.valid and subject.position.missing-line",
+          "status": "strict"
         },
         {
           "value": "symbol",
-          "required": ["path", "name"],
-          "evidence": "native-fixtures/schema/subject.valid.json carries kind symbol with path and name",
-          "status": "confirmed"
+          "required": ["kind", "path", "name"],
+          "evidence": "native-fixtures/schema/subject.valid.json carries kind symbol with path and name; line/column/container beyond container are not admitted on this branch",
+          "status": "strict"
         },
         {
           "value": "diagnostic",
-          "required": ["path", "code"],
-          "evidence": "asset member only; no lane producer frame yet",
-          "status": "open"
+          "required": ["kind", "path", "line", "column", "code"],
+          "evidence": "coordinated schema-law shape; no lane producer frame yet",
+          "status": "strict-unproven"
         }
       ]
     },
@@ -37,20 +38,19 @@
         {
           "value": "unavailable",
           "required": ["schema", "status", "reason", "detail"],
-          "evidence": "native-fixtures/schema/result.unavailable.json",
-          "invalid_branch_frame": "native-fixtures/schema/result-unavailable-missing-reason.STRICT-REFUSAL.json",
-          "status": "confirmed"
+          "evidence": "native-fixtures/schema/result.unavailable.json; refusal gated by result.unavailable.missing-reason",
+          "status": "strict"
         },
         {
           "value": "completed",
           "required": ["schema", "status"],
-          "evidence": "native-fixtures/schema/result.valid.json carries status completed with neither reason nor detail; whether completed may carry them is unresolved",
-          "status": "confirmed"
+          "evidence": "native-fixtures/schema/result.valid.json carries status completed with neither reason nor detail; the completed branch is a closed record and does not admit them",
+          "status": "strict"
         },
         {
           "value": "sealed",
           "required": ["schema", "status"],
-          "evidence": "nested occurrence only; top-level sealed frame not observed in lane",
+          "evidence": "no top-level sealed frame observed in lane; top-level sealed refuses unknownTag until characterized",
           "status": "open"
         }
       ]
@@ -64,13 +64,13 @@
           "value": "mapped",
           "required": ["status", "identity", "digest", "original", "byteRange", "text"],
           "evidence": "asset contract only; no lane producer frame carries a mapped span",
-          "status": "open"
+          "status": "strict-unproven"
         },
         {
           "value": "unavailable",
-          "required": ["status", "reason", "detail"],
-          "evidence": "asset contract only; no lane producer frame carries an unavailable span",
-          "status": "open"
+          "required": ["status", "reason"],
+          "evidence": "native-fixtures/schema/result.valid.json declarations[0].span carries status unavailable with reason and no detail; detail is admitted when present but not required",
+          "status": "strict"
         }
       ]
     },
@@ -82,20 +82,46 @@
         {
           "value": "file",
           "required": ["kind", "path", "real"],
-          "evidence": "asset contract only; no lane producer frame yet",
-          "status": "open"
+          "evidence": "native-fixtures/schema/reference.file.valid.json",
+          "status": "strict"
         },
         {
           "value": "symlink",
           "required": ["kind", "path", "real"],
           "evidence": "asset contract only; no lane producer frame yet",
-          "status": "open"
+          "status": "strict-unproven"
         },
         {
           "value": "absent",
           "required": ["kind", "path", "real"],
-          "evidence": "asset contract only; whether sha256 must be absent is unresolved",
-          "status": "open"
+          "evidence": "absent with sha256 refuses as undeclaredField, gated by reference.absent.with-sha",
+          "status": "strict"
+        }
+      ]
+    },
+    {
+      "schema": "baton2.context.bend2.source-analysis.result.v1",
+      "record": "session.retainedReadSet.descriptors[]",
+      "discriminator": { "member": "kind", "values": ["file", "symlink", "absent"] },
+      "note": "same branch shape as the reference record, converted together with it",
+      "variants": [
+        {
+          "value": "file",
+          "required": ["kind", "path", "real"],
+          "evidence": "asset contract only; no lane producer frame yet",
+          "status": "strict-unproven"
+        },
+        {
+          "value": "symlink",
+          "required": ["kind", "path", "real"],
+          "evidence": "asset contract only; no lane producer frame yet",
+          "status": "strict-unproven"
+        },
+        {
+          "value": "absent",
+          "required": ["kind", "path", "real"],
+          "evidence": "asset contract only; no lane producer frame yet",
+          "status": "strict-unproven"
         }
       ]
     }

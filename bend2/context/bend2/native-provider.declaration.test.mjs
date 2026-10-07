@@ -180,6 +180,20 @@ function checkForm(form, path) {
       }
       return null;
     }
+    case 'SfDiscriminated': {
+      if (!isRecord(body) || typeof body.tag !== 'string' || body.tag.length === 0) {
+        return `${path}:discriminatedTagMalformed`;
+      }
+      if (!Array.isArray(body.cases)) return `${path}:discriminatedCasesMalformed`;
+      for (const [index, kase] of body.cases.entries()) {
+        if (!isRecord(kase) || typeof kase.tag !== 'string' || !isRecord(kase.form)) {
+          return `${path}.cases[${index}]:caseMalformed`;
+        }
+        const refusal = checkForm(kase.form, `${path}.cases[${index}]`);
+        if (refusal !== null) return refusal;
+      }
+      return null;
+    }
     case 'SfArray': {
       if (!isRecord(body)) return `${path}:arrayMalformed`;
       return checkForm(body.item, `${path}.item`);
@@ -260,6 +274,8 @@ function collectRefs(form, into) {
       if (isRecord(entry)) collectRefs(entry.form, into);
     }
   } else if (tag === 'SfUnion') {
+    for (const kase of body.cases) collectRefs(kase.form, into);
+  } else if (tag === 'SfDiscriminated') {
     for (const kase of body.cases) collectRefs(kase.form, into);
   } else if (tag === 'SfArray') {
     collectRefs(body.item, into);
@@ -373,28 +389,55 @@ test('every asset is vocabulary-exact SchemaDef and every ref resolves', () => {
   }
 });
 
-test('assets are flat records with the canonical required members', () => {
-  // Payload variants share no tag wrapper: the flat record carries the
-  // members every shape has, and producer validation owns the rest.
+test('assets carry strict branch requirements per discriminated tag', () => {
+  // Payload variants dispatch on a flat tag member into closed branch
+  // records: each branch lists exactly the members its variant requires.
+  const requiredIn = (fields) => fields
+    .filter((field) => isRecord(field.SfRequired))
+    .map((field) => field.SfRequired.name);
+  const branchesOf = (identity) => {
+    const form = loadAsset(identity).SchemaDef.form;
+    assert.deepEqual(Object.keys(form), ['SfDiscriminated']);
+    const { tag, cases } = form.SfDiscriminated;
+    const branches = {};
+    for (const kase of cases) {
+      assert.deepEqual(Object.keys(kase.form), ['SfRecord']);
+      branches[kase.tag] = requiredIn(kase.form.SfRecord.fields);
+    }
+    return { tag, branches };
+  };
+  assert.deepEqual(branchesOf('baton2.context.bend2.source-analysis.subject.v1'), {
+    tag: 'kind',
+    branches: {
+      position: ['kind', 'path', 'line', 'column'],
+      symbol: ['kind', 'path', 'name'],
+      diagnostic: ['kind', 'path', 'line', 'column', 'code'],
+    },
+  });
+  assert.deepEqual(branchesOf('baton2.context.bend2.source-analysis.result.v1'), {
+    tag: 'status',
+    branches: {
+      unavailable: ['schema', 'status', 'reason', 'detail'],
+      completed: ['schema', 'status'],
+    },
+  });
+  assert.deepEqual(branchesOf('baton2.context.bend2.source-analysis.reference.v1'), {
+    tag: 'kind',
+    branches: {
+      file: ['kind', 'path', 'real'],
+      symlink: ['kind', 'path', 'real'],
+      absent: ['kind', 'path', 'real'],
+    },
+  });
+  // Options and event carry no variants and stay flat records.
   const requiredTop = (identity) => {
     const form = loadAsset(identity).SchemaDef.form;
     assert.deepEqual(Object.keys(form), ['SfRecord']);
-    return form.SfRecord.fields
-      .filter((field) => isRecord(field.SfRequired))
-      .map((field) => field.SfRequired.name);
+    return requiredIn(form.SfRecord.fields);
   };
-  assert.deepEqual(requiredTop('baton2.context.bend2.source-analysis.subject.v1'),
-    ['kind', 'path']);
   assert.deepEqual(requiredTop('baton2.context.bend2.source-analysis.options.v1'), []);
-  assert.deepEqual(requiredTop('baton2.context.bend2.source-analysis.result.v1'),
-    ['schema', 'status']);
-  assert.deepEqual(requiredTop('baton2.context.bend2.source-analysis.reference.v1'),
-    ['kind', 'path', 'real']);
   assert.deepEqual(requiredTop('baton2.context.bend2.source-analysis.event.v1'),
     ['version', 'query', 'owner', 'moduleBinding', 'sequence', 'type', 'payload']);
-  const subject = loadAsset('baton2.context.bend2.source-analysis.subject.v1');
-  const kind = subject.SchemaDef.form.SfRecord.fields[0].SfRequired.form;
-  assert.deepEqual(kind, { SfEnum: { literals: ['position', 'symbol', 'diagnostic'] } });
 });
 
 test('asset checker refuses non-vocabulary nodes', () => {

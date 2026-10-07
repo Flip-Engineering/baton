@@ -1,0 +1,6 @@
+{
+  "kind": "absent",
+  "path": "src/missing.bend",
+  "real": "src/missing.bend",
+  "sha256": "abc"
+}

@@ -2,54 +2,158 @@
   "SchemaDef": {
     "name": "baton2.context.bend2.source-analysis.reference.v1",
     "form": {
-      "SfRecord": {
-        "fields": [
+      "SfDiscriminated": {
+        "tag": "kind",
+        "cases": [
           {
-            "SfRequired": {
-              "form": {
-                "SfEnum": {
-                  "literals": [
-                    "file",
-                    "symlink",
-                    "absent"
-                  ]
-                }
-              },
-              "name": "kind"
-            }
-          },
-          {
-            "SfRequired": {
-              "form": {
-                "SfScalar": {
-                  "kind": "SsText"
-                }
-              },
-              "name": "path"
-            }
-          },
-          {
-            "SfRequired": {
-              "form": {
-                "SfScalar": {
-                  "kind": "SsText"
-                }
-              },
-              "name": "real"
-            }
-          },
-          {
-            "SfOptionalField": {
-              "form": {
-                "SfOptional": {
-                  "inner": {
-                    "SfScalar": {
-                      "kind": "SsText"
+            "tag": "file",
+            "form": {
+              "SfRecord": {
+                "fields": [
+                  {
+                    "SfRequired": {
+                      "form": {
+                        "SfEnum": {
+                          "literals": [
+                            "file"
+                          ]
+                        }
+                      },
+                      "name": "kind"
+                    }
+                  },
+                  {
+                    "SfRequired": {
+                      "form": {
+                        "SfScalar": {
+                          "kind": "SsText"
+                        }
+                      },
+                      "name": "path"
+                    }
+                  },
+                  {
+                    "SfRequired": {
+                      "form": {
+                        "SfScalar": {
+                          "kind": "SsText"
+                        }
+                      },
+                      "name": "real"
+                    }
+                  },
+                  {
+                    "SfOptionalField": {
+                      "form": {
+                        "SfOptional": {
+                          "inner": {
+                            "SfScalar": {
+                              "kind": "SsText"
+                            }
+                          }
+                        }
+                      },
+                      "name": "sha256"
                     }
                   }
-                }
-              },
-              "name": "sha256"
+                ]
+              }
+            }
+          },
+          {
+            "tag": "symlink",
+            "form": {
+              "SfRecord": {
+                "fields": [
+                  {
+                    "SfRequired": {
+                      "form": {
+                        "SfEnum": {
+                          "literals": [
+                            "symlink"
+                          ]
+                        }
+                      },
+                      "name": "kind"
+                    }
+                  },
+                  {
+                    "SfRequired": {
+                      "form": {
+                        "SfScalar": {
+                          "kind": "SsText"
+                        }
+                      },
+                      "name": "path"
+                    }
+                  },
+                  {
+                    "SfRequired": {
+                      "form": {
+                        "SfScalar": {
+                          "kind": "SsText"
+                        }
+                      },
+                      "name": "real"
+                    }
+                  },
+                  {
+                    "SfOptionalField": {
+                      "form": {
+                        "SfOptional": {
+                          "inner": {
+                            "SfScalar": {
+                              "kind": "SsText"
+                            }
+                          }
+                        }
+                      },
+                      "name": "sha256"
+                    }
+                  }
+                ]
+              }
+            }
+          },
+          {
+            "tag": "absent",
+            "form": {
+              "SfRecord": {
+                "fields": [
+                  {
+                    "SfRequired": {
+                      "form": {
+                        "SfEnum": {
+                          "literals": [
+                            "absent"
+                          ]
+                        }
+                      },
+                      "name": "kind"
+                    }
+                  },
+                  {
+                    "SfRequired": {
+                      "form": {
+                        "SfScalar": {
+                          "kind": "SsText"
+                        }
+                      },
+                      "name": "path"
+                    }
+                  },
+                  {
+                    "SfRequired": {
+                      "form": {
+                        "SfScalar": {
+                          "kind": "SsText"
+                        }
+                      },
+                      "name": "real"
+                    }
+                  }
+                ]
+              }
             }
           }
         ]

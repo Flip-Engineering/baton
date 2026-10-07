@@ -1,0 +1,11 @@
+{
+  "schema": "baton2.context.bend2.source-analysis.result.v1",
+  "status": "completed",
+  "session": {
+    "declarations": [
+      {
+        "phase": "bogus"
+      }
+    ]
+  }
+}
