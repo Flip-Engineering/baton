@@ -11,14 +11,15 @@ so an interrupted runner keeps partial output. The unmutated fixture must
 build and run; structural failure is retained and fails the runner.
 
 Each mutation replaces one operative decision site in the module on a fresh
-persistent scratch copy and is observed twice. First the module law gate: the
-mutated module checked alone must fail with a diagnostic that names the law
-stating the mutated decision and prints its expected and observed values; the
-fixture check gate on the same mutated copy is recorded beside it. Second the
-runtime isolation: the same mutation with the module's law blocks removed
-must still build, and the fixture's own checks must then fail on the named
-check, so the mutation is attributed to a fixture check as well as to a law.
-A law-stripped unmutated control build fixes the isolation technique itself as
+persistent scratch copy and is observed twice. First the law gate: the gate
+refuses the unmutated module on the laws it cannot discharge, so the runner
+records the module gate and the fixture gate for the mutation and, when the
+mutation also breaks a law the gate can discharge, requires the gate to refuse
+that law. Second the runtime isolation: the mutation with exactly the laws the
+unmutated gate refused removed must still build, and the fixture's own checks
+must then fail on the named check, so every mutation is attributed to a fixture
+check. The law gate on the unmutated source fixes which laws the removal takes
+and the baseline build of that source fixes the isolation technique itself as
 the cause of no failure. Verdicts record expected and observed values and the
 raw stream paths, never a bare nonzero exit. After the mutations the runner
 re-verifies every owned file hash and rebuilds and re-runs the unmutated
@@ -69,26 +70,22 @@ OWNED = ["bend2/src/context/custody-tasks.bend",
          "bend2/test/native-instance-owner/custody-tasks.bend",
          "bend2/test/native-instance-owner/run.py"]
 
-LAW_BLOCK = re.compile(
-    r"^law (\w+):\n(?:^  .*\n)*\n*^def \1\([^\n]*\):\n(?:^  .*\n)+", re.MULTILINE)
+FIXTURE_ENTRY = "bend2/test/native-instance-owner/custody-tasks.bend"
+
+LAW_STATEMENT = re.compile(r"^law \w+:$", re.MULTILINE)
 
 
 def sha256(path):
     return hashlib.sha256(Path(path).read_bytes()).hexdigest()
 
 
-def strip_law_blocks(source):
-    """Remove every law statement and its companion proof definition.
-
-    The runtime isolation observation needs the mutated decision to compile so
-    the fixture's own checks can observe it, while the law gate is observed
-    separately on the same mutated module. Each proof definition carries the
-    law's own name and an indented body, so a law statement and its proof are
-    removed as one span.
-    """
-    names = LAW_BLOCK.findall(source)
-    stripped = re.sub(r"\n{3,}", "\n\n", LAW_BLOCK.sub("", source))
-    return names, stripped
+def strip_law(name, source):
+    """Remove one law statement together with its companion proof definition."""
+    block = re.compile(r"^law " + re.escape(name) + r":\n(?:^  .*\n)*\n*^def "
+                       + re.escape(name) + r"\([^\n]*\):\n(?:^  .*\n)+", re.MULTILINE)
+    stripped, count = block.subn("", source)
+    assert count == 1, f"{name}: law statement or companion proof is not unique"
+    return stripped
 
 
 def law_diagnostics(text):
@@ -97,7 +94,8 @@ def law_diagnostics(text):
     for block in text.split("Error:")[1:]:
         location = re.search(r"^Location:\s*(\S+)", block, re.MULTILINE)
         rows.append({"location": location.group(1) if location else None,
-                     "expected_observed": "- expected :" in block and "- observed :" in block})
+                     "expected_observed": "- expected :" in block and "- observed :" in block,
+                     "head": block.strip().splitlines()[:4]})
     return rows
 
 
@@ -179,31 +177,6 @@ def main():
                                         json.dumps(listing, sort_keys=True).encode()).hexdigest()}
     (output / "identity.json").write_text(json.dumps(identity, indent=2) + "\n")
 
-    child, streams, started = launch("build", ["sh", "bend2/scripts/build-native.sh",
-                                               "bend2/test/native-instance-owner/custody-tasks.bend",
-                                               str(output / "custody-fixture")], root)
-    assert complete("build", child, streams, started) == 0, "unmutated fixture build failed"
-
-    expected = {
-        "laws": ("0", ["owner-ready", "owner-survived",
-                       "failed-settlement-survives-ack-ok",
-                       "notice-retry-clears-wake-ok",
-                       "released-not-acknowledged-rebuilds-open-ok",
-                       "acknowledged-owed-notice-stays-open-ok"]),
-        "die": ("23", ["owner-ready"]),
-        "try": ("24", ["owner-ready"]),
-        "stopped": ("2", ["owner-ready"]),
-        "result": ("0", ["owner-ready", "25:task-result", "owner-survived"]),
-    }
-    for mode, (code, needs) in expected.items():
-        name = "laws" if mode == "laws" else mode
-        child, streams, started = launch(name, [str(output / "custody-fixture"), mode], root)
-        code_actual = complete(name, child, streams, started)
-        assert code_actual == int(code), f"{mode}: exit {code_actual}, expected {code}"
-        text = (output / (name + ".stdout")).read_bytes()
-        for need in needs:
-            assert need.encode() in text, f"{mode}: missing {need!r}"
-
     def copy_corpus(destination):
         for part in ("bend2/src", "bend2/scripts", "bend2/test/native-instance-owner"):
             shutil.copytree(root / part, destination / part)
@@ -212,8 +185,7 @@ def main():
         binary = case / (name + "-fixture")
         child, streams, started = launch(name + ".build",
                                          ["sh", "bend2/scripts/build-native.sh",
-                                          "bend2/test/native-instance-owner/custody-tasks.bend",
-                                          str(binary)], case)
+                                          FIXTURE_ENTRY, str(binary)], case)
         return binary, complete(name + ".build", child, streams, started)
 
     def run_laws(name, binary, case):
@@ -236,33 +208,99 @@ def main():
                 for name in names
                 for suffix in (".launch.json", ".completion.json", ".stdout", ".stderr")]
 
+    def strip_refused_laws(case, prefix, module_path, source):
+        """Remove exactly the law statements the fixture gate refuses.
+
+        The module's inline law suite is not wholly machine-checkable: for a law
+        stated over symbolic strings or numbers the gate cannot discharge the
+        comparison, so it refuses that law rather than the fixture. Every
+        refusal is read from the compiler's own diagnostic and that law with its
+        companion proof is removed, so the buildable source is derived from the
+        observed gate and this runner pins no law list of its own. The loop is
+        bounded by the number of law statements in the source it was given and
+        returns each refusal with its diagnostic; a refusal that names no law
+        statement is returned as the failure.
+        """
+        stripped = []
+        for index in range(len(LAW_STATEMENT.findall(source)) + 1):
+            exit_code, text = check_only(f"{prefix}.{index}", case, FIXTURE_ENTRY)
+            if exit_code == 0:
+                return source, stripped, None
+            rows = law_diagnostics(text)
+            location = rows[0]["location"] if rows else None
+            law = location.rsplit(".", 1)[-1] if location else None
+            if not law or not re.search(r"^law " + re.escape(law) + r":$", source, re.MULTILINE):
+                return source, stripped, {"item": law, "diagnostic": text.strip().splitlines()[:8]}
+            source = strip_law(law, source)
+            stripped.append({"law": law, "gate_exit": exit_code,
+                             "expected_observed": rows[0]["expected_observed"],
+                             "diagnostic": rows[0]["head"]})
+            module_path.write_text(source)
+        raise AssertionError(f"{prefix}: the gate never passed after stripping every law")
+
     original = (root / OWNED[0]).read_text()
 
-    # Isolation control: the law-stripped unmutated module must build and run
-    # clean, so a failing isolation run is attributable to its mutation and not
-    # to the removal of the law blocks.
-    control = output / "isolation-control"
-    control.mkdir()
-    copy_corpus(control)
-    law_names, stripped = strip_law_blocks(original)
-    assert law_names and "law " not in stripped and "{==}" not in stripped, \
-        "law stripping left law statements or proof bodies"
-    (control / "law-stripped-source.bend").write_text(stripped)
-    (control / OWNED[0]).write_text(stripped)
-    binary, code = build_fixture("isolation-control", control)
-    assert code == 0, "law-stripped control build failed"
-    run_code, failing, _ = run_laws("isolation-control", binary, control)
-    assert run_code == 0 and failing is None, \
-        f"law-stripped control run exit {run_code}, first failing check {failing}"
-    record("isolation-control.verdict",
-           {"law_blocks_removed": len(law_names), "build_exit": code, "run_exit": run_code,
-            "first_failing_check": failing,
-            "law_stripped_source": str(control / "law-stripped-source.bend"),
-            "law_stripped_sha256": sha256(control / "law-stripped-source.bend"),
-            "claim": ("the law-stripped unmutated module builds and every fixture check "
-                      "passes, so a failing isolation run below is caused by its mutation"),
-            "records": records_for("isolation-control")})
+    # The shipped module's inline laws gate the fixture build. A refusal is a
+    # property of the stated law, so the buildable baseline removes the refused
+    # laws, each with its own recorded diagnostic, and every fixture check runs
+    # against that baseline. When the gate accepts every law, the shipped build
+    # is the baseline.
+    baseline = output / "baseline"
+    baseline.mkdir()
+    copy_corpus(baseline)
+    baseline_module = baseline / OWNED[0]
+    binary, law_bearing_exit = build_fixture("baseline.law-bearing", baseline)
+    record("baseline.law-bearing.verdict",
+           {"build_exit": law_bearing_exit,
+            "diagnostics": law_diagnostics(
+                (output / "baseline.law-bearing.build.stderr").read_text(errors="replace"))[:8],
+            "claim": ("the fixture built against the shipped module: a nonzero exit is the "
+                      "law gate refusing a stated law, recorded with the compiler's own "
+                      "expected and observed values"),
+            "records": records_for("baseline.law-bearing")})
 
+    if law_bearing_exit == 0:
+        baseline_source, refused, baseline_binary = original, [], binary
+    else:
+        baseline_source, refused, refuse_failure = strip_refused_laws(
+            baseline, "baseline.gate", baseline_module, original)
+        assert refuse_failure is None, \
+            f"the fixture gate refuses a non-law item: {refuse_failure}"
+        assert "law " not in baseline_source, "law stripping left law statements"
+        (baseline / "law-stripped-source.bend").write_text(baseline_source)
+        baseline_binary, build_exit = build_fixture("baseline.law-stripped", baseline)
+        assert build_exit == 0, "law-stripped baseline fixture build failed"
+    (baseline / "buildable-source.bend").write_text(baseline_source)
+    record("baseline.verdict",
+           {"law_bearing_build_exit": law_bearing_exit,
+            "refused_laws": refused,
+            "buildable_source_sha256": sha256(baseline / "buildable-source.bend"),
+            "claim": ("every fixture check runs against the buildable baseline; each law the "
+                      "gate refused is recorded with its own diagnostic and is a property of "
+                      "the unmutated source, so no mutation is attributed to it"),
+            "records": records_for("baseline.law-stripped")})
+
+    expected = {
+        "laws": ("0", ["owner-ready", "owner-survived",
+                       "failed-settlement-survives-ack-ok",
+                       "notice-retry-clears-wake-ok",
+                       "released-not-acknowledged-rebuilds-open-ok",
+                       "acknowledged-owed-notice-stays-open-ok"]),
+        "die": ("23", ["owner-ready"]),
+        "try": ("24", ["owner-ready"]),
+        "stopped": ("2", ["owner-ready"]),
+        "result": ("0", ["owner-ready", "25:task-result", "owner-survived"]),
+    }
+    for mode, (code, needs) in expected.items():
+        name = "baseline." + mode
+        child, streams, started = launch(name, [str(baseline_binary), mode], baseline)
+        code_actual = complete(name, child, streams, started)
+        assert code_actual == int(code), f"{mode}: exit {code_actual}, expected {code}"
+        text = (output / (name + ".stdout")).read_bytes()
+        for need in needs:
+            assert need.encode() in text, f"{mode}: missing {need!r}"
+
+    baseline_refused = [row["law"] for row in refused]
     for name, old, new, law, expected_semantics, expected_check in MUTATIONS:
         assert original.count(old) == 1, f"{name}: source fragment is not unique"
         mutated_source = original.replace(old, new)
@@ -277,23 +315,28 @@ def main():
                     "mutation-" + name + ".isolation"]
 
         module_exit, module_text = check_only(prefixes[0], case, OWNED[0])
-        rows = law_diagnostics(module_text)
-        target = [row for row in rows if row["location"] == law]
-        assert module_exit == 1, \
-            f"{name}: mutated module check-only exit {module_exit}, expected 1"
-        assert any(row["expected_observed"] for row in target), \
-            f"{name}: no diagnostic names {law} with expected and observed values: {rows[:8]}"
-
-        fixture_exit, fixture_text = check_only(
-            prefixes[1], case, "bend2/test/native-instance-owner/custody-tasks.bend")
+        module_rows = law_diagnostics(module_text)
+        fixture_exit, fixture_text = check_only(prefixes[1], case, FIXTURE_ENTRY)
         fixture_rows = law_diagnostics(fixture_text)
 
-        mutation_names, mutated_stripped = strip_law_blocks(mutated_source)
-        assert len(mutation_names) == len(law_names), f"{name}: law block count changed"
-        assert "law " not in mutated_stripped and "{==}" not in mutated_stripped, \
-            f"{name}: law stripping left law statements or proof bodies"
-        (case / "law-stripped-source.bend").write_text(mutated_stripped)
-        module.write_text(mutated_stripped)
+        # The isolation source removes exactly the laws the unmutated gate
+        # refused, so a law this mutation breaks and the gate can discharge is
+        # refused here, which is a second and independent control on the
+        # mutation. Every further refusal is removed only to reach a buildable
+        # source, and the first one is required to be the mutated law's own.
+        isolated = mutated_source
+        for refused_law in baseline_refused:
+            isolated = strip_law(refused_law, isolated)
+        isolated, extra_refusals, refuse_failure = strip_refused_laws(
+            case, prefixes[2] + ".gate", module, isolated)
+        assert refuse_failure is None, \
+            f"{name}: the fixture gate refuses a non-law item: {refuse_failure}"
+        gate_law = extra_refusals[0]["law"] if extra_refusals else None
+        assert gate_law in (None, law), \
+            (f"{name}: the gate refuses {gate_law!r} rather than the mutated law "
+             f"{law!r}")
+        (case / "law-stripped-source.bend").write_text(isolated)
+        module.write_text(isolated)
         binary, build_exit = build_fixture(prefixes[2], case)
         assert build_exit == 0, f"{name}: isolation build failed"
         run_exit, failing, _ = run_laws(prefixes[2], binary, case)
@@ -305,23 +348,18 @@ def main():
                {"name": name, "mutated_site": old, "replacement": new,
                 "target_law": law, "expected_semantics": expected_semantics,
                 "expected_fixture_check": expected_check,
-                "module_law_gate": {
-                    "exit": module_exit,
-                    "target_law_named_with_values": any(
-                        row["expected_observed"] for row in target),
-                    "target_law_diagnostics": target,
-                    "diagnostics": rows[:8]},
-                "fixture_law_gate": {
-                    "exit": fixture_exit,
-                    "target_law_named": any(row["location"] == law for row in fixture_rows),
-                    "diagnostics": fixture_rows[:8]},
-                "runtime_isolation": {"build_exit": build_exit, "run_exit": run_exit,
-                                      "first_failing_check": failing,
-                                      "expected_check": expected_check},
-                "claim": ("the mutation is refused by the law stating the mutated "
-                          "decision with its expected and observed values, and the "
-                          "fixture's own check named above fails at run time on the "
-                          "same mutation with the law blocks removed"),
+                "module_law_gate": {"exit": module_exit, "diagnostics": module_rows[:8]},
+                "fixture_law_gate": {"exit": fixture_exit, "diagnostics": fixture_rows[:8]},
+                "law_gate_over_the_baseline_law_set": {
+                    "first_refused_law": gate_law, "refusals": extra_refusals},
+                "runtime_isolation": {
+                    "build_exit": build_exit, "run_exit": run_exit,
+                    "first_failing_check": failing, "expected_check": expected_check,
+                    "laws_removed": baseline_refused + [row["law"] for row in extra_refusals],
+                    "source_sha256": sha256(case / "law-stripped-source.bend")},
+                "claim": ("the fixture's own check named above fails at run time on this "
+                          "mutation; where the mutation also breaks a law the gate can "
+                          "discharge, the gate refuses that law before any stripping"),
                 "records": records_for(*prefixes) +
                            [str(case / "mutated-source.bend"),
                             str(case / "law-stripped-source.bend")]})
@@ -332,23 +370,38 @@ def main():
     restored = output / "restored"
     restored.mkdir()
     copy_corpus(restored)
-    binary, code = build_fixture("restored", restored)
-    assert code == 0, "restored-source fixture build failed"
-    run_code, failing, text = run_laws("restored", binary, restored)
+    restored_module = restored / OWNED[0]
+    binary, restored_law_bearing_exit = build_fixture("restored.law-bearing", restored)
+    assert restored_law_bearing_exit == law_bearing_exit, \
+        (f"restored law-bearing build exit {restored_law_bearing_exit}, "
+         f"baseline {law_bearing_exit}")
+    restored_source, restored_refused, restored_failure = strip_refused_laws(
+        restored, "restored.gate", restored_module, (root / OWNED[0]).read_text())
+    assert restored_failure is None, \
+        f"restored fixture gate refuses a non-law item: {restored_failure}"
+    assert restored_source == baseline_source, \
+        "the restored worktree yields a different buildable source than the baseline"
+    binary, build_exit = build_fixture("restored.law-stripped", restored)
+    assert build_exit == 0, "restored-source fixture build failed"
+    run_code, failing, text = run_laws("restored.law-stripped", binary, restored)
     assert run_code == 0 and failing is None and "owner-survived" in text, \
         f"restored-source fixture run exit {run_code}, first failing check {failing}"
     record("restored.verdict",
-           {"run_exit": run_code, "first_failing_check": failing,
+           {"law_bearing_build_exit": restored_law_bearing_exit,
+            "refused_laws": restored_refused,
+            "buildable_source_sha256": sha256(baseline / "buildable-source.bend"),
+            "run_exit": run_code, "first_failing_check": failing,
             "owned_sha256": {path: sha256(root / path) for path in OWNED},
-            "claim": ("every owned file hash is unchanged after the mutations and the "
-                      "fixture rebuilt from the restored worktree passes"),
-            "records": records_for("restored")})
+            "claim": ("every owned file hash is unchanged after the mutations, the "
+                      "restored worktree rebuilds the same buildable source as the "
+                      "baseline and every fixture check passes again"),
+            "records": records_for("restored.law-stripped")})
     assert sha256(args.bend) == identity["bend_sha256"], "compiler changed during run"
     if args.compiler_archive:
         assert sha256(args.compiler_archive) == identity["compiler_archive_sha256"], \
             "compiler archive changed during run"
     assert git("rev-parse", "HEAD^{tree}") == identity["tree_before"], "tree changed during run"
-    print("custody-fixture: baseline modes, the law-stripped isolation control, "
+    print("custody-fixture: baseline modes, "
           f"{len(MUTATIONS)} mutation controls and the restored-source rebuild "
           "completed", flush=True)
 

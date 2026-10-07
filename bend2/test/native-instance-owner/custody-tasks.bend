@@ -74,6 +74,19 @@ def rebuild_no_wake_open(result: Maybe<Custody.Duty>) -> Bool:
     case Some{+duty}: Bool.and(Custody.duty_open(duty),Bool.not(Custody.wake_owed_of(duty)))
     case None{}: False{}
 
+def present_check(result: Maybe<Custody.Duty>) -> IO(Unit):
+  match result:
+    case Some{+duty}: check("rebuild-owed-notice-is-present",Bool.and(Custody.wake_owed_of(duty),Bool.not(Custody.ack_owed_of(duty))))
+    case None{}: check("rebuild-owed-notice-is-present",False{})
+
+def open_duty_or_die(result: Maybe<Custody.Duty>) -> IO(Custody.Duty):
+  match result:
+    case Some{duty}: IO.pure(Custody.Duty,duty)
+    case None{}: IO.die(Custody.Duty,1,"rebuild-returned-none-for-an-open-duty")
+
+def rebuilt_sample(owner: Custody.OwnerInstance, attempt: Custody.Attempt) -> Maybe<Custody.Duty>:
+  Custody.rebuild(attempt,owner,True{},Custody.RefDone{"enumerated"},Custody.RefFail{"enumerated delivery failure"},Custody.RefDone{"settled"},Custody.RefDone{"recovered"},"enumerated delivery failure\n")
+
 def checks() -> IO(Unit):
   do IO<Unit>:
     +owner : Custody.OwnerInstance <- IO.pure(Custody.OwnerInstance,sample_owner())
@@ -105,13 +118,8 @@ def checks() -> IO(Unit):
     opencont : Unit <- check("acknowledged-open-continuation-stays-open",rebuild_open(Custody.rebuild(attempt,owner,True{},Custody.RefDone{"enumerated"},Custody.RefDone{"report delivered"},Custody.RefDone{"settled"},Custody.RefOpen{},"")))
     unackedclear : Unit <- check("unacknowledged-fulfilled-rebuilds-open",rebuild_acks_owed(Custody.rebuild(attempt,owner,False{},Custody.RefDone{"enumerated"},Custody.RefDone{"delivered"},Custody.RefDone{"settled"},Custody.RefDone{"recovered"},"")))
     carries : Unit <- check("rebuild-carries-enumerated-errors",rebuild_carries(Custody.rebuild(attempt,owner,True{},Custody.RefDone{"enumerated"},Custody.RefFail{"delivery failed"},Custody.RefDone{"settled"},Custody.RefDone{"recovered"},"enumerated delivery failure\n"),"enumerated delivery failure\n"))
-    +rebuilt : Maybe<Custody.Duty> <- IO.pure(Maybe<Custody.Duty>,Custody.rebuild(attempt,owner,True{},Custody.RefDone{"enumerated"},Custody.RefFail{"enumerated delivery failure"},Custody.RefDone{"settled"},Custody.RefDone{"recovered"},"enumerated delivery failure\n"))
-    present : Unit <- match rebuilt:
-      case Some{+duty}: check("rebuild-owed-notice-is-present",Bool.and(Custody.wake_owed_of(duty),Bool.not(Custody.ack_owed_of(duty))))
-      case None{}: check("rebuild-owed-notice-is-present",False{})
-    +retriednotice : Custody.Duty <- match rebuilt:
-      case Some{duty}: IO.pure(Custody.Duty,duty)
-      case None{}: IO.die(Custody.Duty,1,"rebuild-returned-none-for-an-open-duty")
+    present : Unit <- present_check(rebuilt_sample(owner,attempt))
+    +retriednotice : Custody.Duty <- open_duty_or_die(rebuilt_sample(owner,attempt))
     carried : Unit <- check("rebuild-carries-errors-into-duty",String.eq(Custody.errors_of(retriednotice),"enumerated delivery failure\n"))
     +retried : Custody.Duty <- IO.pure(Custody.Duty,Custody.record_delivery(retriednotice,Custody.RefDone{"retry delivered"}))
     wakeagain : Unit <- check("rebuild-retry-clears-wake",Bool.not(Custody.wake_owed_of(retried)))
@@ -132,19 +140,20 @@ def checks() -> IO(Unit):
     completes : Unit <- check("notice-retry-completes-retirement",Bool.not(Custody.duty_open(finished)))
     +allDone : Custody.Duty <- IO.pure(Custody.Duty,Custody.record_continuation(Custody.record_ack(Custody.record_settle(Custody.record_delivery(Custody.seal_completion(Custody.open_duty(owner,attempt),Custody.RefDone{"exit 0"}),Custody.RefDone{"delivered"}),Custody.RefDone{"settled"}),True{},Custody.RefDone{"acknowledged"}),Custody.RefDone{"continued"}))
     retired : Unit <- check("all-done-refs-retire-without-errors",Bool.and(Bool.not(Custody.duty_open(allDone)),String.eq(Custody.errors_of(allDone),"")))
+    return retired
 
 def failure(mode: String) -> IO(Result<&1,&1,U32 & String,Unit>):
   match mode:
     case "die": IO.die(Result<&1,&1,U32 & String,Unit>,23,"task-die")
     case "try": do IO<Result<&1,&1,U32 & String,Unit>>:
       value : Unit <- IO.try(Unit,IO.pure(Result<&1,&1,U32 & String,Unit>,Fail{(24,"task-try")}))
-      IO.pure(Result<&1,&1,U32 & String,Unit>,Done{value})
+      return Done{value}
     case "stopped": do IO<Result<&1,&1,U32 & String,Unit>>:
       value : Unit <- Stop.require_open(True{})
-      IO.pure(Result<&1,&1,U32 & String,Unit>,Done{value})
+      return Done{value}
     case "laws": do IO<Result<&1,&1,U32 & String,Unit>>:
       ran : Unit <- checks()
-      IO.pure(Result<&1,&1,U32 & String,Unit>,Done{Unit{}})
+      return Done{Unit{}}
     case other: IO.pure(Result<&1,&1,U32 & String,Unit>,Fail{(25,"task-result")})
 
 def show(result: Result<&1,&1,U32 & String,Unit>) -> String:
