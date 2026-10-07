@@ -41,7 +41,8 @@ enum { BP_SPAWN, BP_WRITE, BP_CLOSE, BP_READ, BP_WAIT, BP_SIGNAL, BP_PID,
        BP_CONTROL_WRITE, BP_CONTROL_SIGNAL, BP_ATTACH_OWNED, BP_RECOVERY,
        BP_INSTANCE_OWNER, BP_INSTANCE_ADMIT, BP_INSTANCE_ATTACH,
        BP_INSTANCE_ATTACH_OWNED, BP_INSTANCE_SHUTDOWN, BP_INSTANCE_RETIRE,
-       BP_INSTANCE_COMMIT, BP_INSTANCE_RESTORE, BP_INSTANCE_REPLAY };
+       BP_INSTANCE_COMMIT, BP_INSTANCE_RESTORE, BP_INSTANCE_REPLAY,
+       BP_INSTANCE_JOB };
 
 static int baton_pipe(int fds[2]) {
   if (pipe(fds)) return errno;
@@ -2273,6 +2274,61 @@ static int br_instance_attach_owned(BatonProcessCall *call) {
   free(directory);
   return error;
 }
+/* A compact reference to a retained job: its owner-side identity when an owner
+   holds it, its retained output extent, the committed checkpoint offset and the
+   terminal status when it is recorded. One attempt has at most one observation
+   owner; any number of callers can read the retained result through this
+   reference, which is why a duplicate admission is not an EBUSY dead end. */
+static int br_instance_job(BatonProcessCall *call) {
+  char *directory=realpath(call->directory,NULL);
+  if(!directory)return errno;
+  BrOwnerRecord record;
+  BrInstanceFrame reply={0};
+  BrOwnerState state={0};
+  int owner_known=0,socket_fd=-1;
+  int error=br_instance_connect(call->database,0,&record,&socket_fd);
+  if(!error) {
+    BrInstanceFrame frame={.op=BI_ATTACH,.owner=record.token,.epoch=record.epoch,
+      .length=strlen(directory)+1};
+    error=br_instance_exchange(socket_fd,frame,directory,-1,&reply);
+    if(!error && !reply.error && reply.length==sizeof(state)) {
+      error=br_read_all(socket_fd,&state,sizeof(state));
+      owner_known=!error;
+    }
+    close(socket_fd);
+  }
+  error=0;
+  uint64_t spool_bytes=0,checkpoint_offset=0;
+  int status=0,status_known=0;
+  char *spool=br_path(directory,"stdout");
+  struct stat info;
+  if(spool && !stat(spool,&info))spool_bytes=(uint64_t)info.st_size;
+  free(spool);
+  br_checkpoint_offset(directory,&checkpoint_offset);
+  char *status_path=br_path(directory,"status");
+  FILE *file=status_path?fopen(status_path,"r"):NULL;
+  if(file) {if(fscanf(file,"%d",&status)==1)status_known=1;fclose(file);}
+  free(status_path);
+  if(!spool_bytes && owner_known)spool_bytes=state.spool_bytes;
+  if(!checkpoint_offset && owner_known)checkpoint_offset=state.checkpoint_offset;
+  if(!status_known && owner_known) {status=state.status;status_known=(int)state.status_known;}
+  char text[256];
+  int written=snprintf(text,sizeof(text),
+    "{\"attempt\":%llu,\"generation\":%llu,\"spool_bytes\":%llu,\"checkpoint_offset\":%llu,"
+    "\"status\":%d,\"status_known\":%s,\"observing\":%s,\"owner_known\":%s}",
+    (unsigned long long)(owner_known?state.attempt:0),
+    (unsigned long long)(owner_known?state.generation:0),
+    (unsigned long long)spool_bytes,(unsigned long long)checkpoint_offset,status,
+    status_known?"true":"false",
+    owner_known&&state.observing?"true":"false",
+    owner_known?"true":"false");
+  call->text=malloc((size_t)written+1);
+  if(!call->text) {free(directory);return ENOMEM;}
+  memcpy(call->text,text,(size_t)written+1);
+  call->length=(size_t)written;
+  free(directory);
+  return 0;
+}
 static int br_instance_shutdown(BatonProcessCall *call) {
   BrInstanceFrame reply;
   BrOwnerRecord record;
@@ -2337,6 +2393,7 @@ static void baton_retained_begin_call(BatonProcessCall *call) {
   else if(call->kind==BP_INSTANCE_ATTACH) call->error=br_instance_attach(call);
   else if(call->kind==BP_INSTANCE_ATTACH_OWNED) call->error=br_instance_attach_owned(call);
   else if(call->kind==BP_INSTANCE_SHUTDOWN) call->error=br_instance_shutdown(call);
+  else if(call->kind==BP_INSTANCE_JOB) call->error=br_instance_job(call);
   else if(call->kind==BP_INSTANCE_RETIRE) call->error=br_instance_retire(call);
   else {
     char *directory=realpath(call->directory,NULL);
@@ -2452,7 +2509,7 @@ static Term baton_process_pack(Env e, IoWork *w) {
        call->kind==BP_INSTANCE_ATTACH || call->kind==BP_INSTANCE_ATTACH_OWNED) value=(Term)call->handle;
     else if(call->kind==BP_INPUT_CLOSED) value=(Term)call->signal;
     else if(call->kind==BP_WAIT) value=io_str(e,call->text,call->length);
-    else if(call->kind==BP_INSTANCE_RESTORE)
+    else if(call->kind==BP_INSTANCE_RESTORE || call->kind==BP_INSTANCE_JOB)
       value=io_str(e,call->text?call->text:"",call->length);
 #ifdef CID_SOME
     else if(call->kind==BP_READ || call->kind==BP_RECOVERY) value=call->eof ? term_pak(CID_NONE,0)
@@ -2525,7 +2582,7 @@ static Term baton_process_begin(Env e, Term *f, IoWork *w, int kind) {
   } else if(kind==BP_INSTANCE_OWNER || kind==BP_INSTANCE_SHUTDOWN) {
     u64 length=0;call->database=io_cstr(e,f[0],&length);
     if(strlen(call->database)!=length)call->error=EINVAL;
-  } else if(kind==BP_INSTANCE_ATTACH || kind==BP_INSTANCE_ATTACH_OWNED) {
+  } else if(kind==BP_INSTANCE_ATTACH || kind==BP_INSTANCE_ATTACH_OWNED || kind==BP_INSTANCE_JOB) {
     u64 length=0;call->database=io_cstr(e,f[0],&length);
     call->directory=io_cstr(e,f[1],&length);
     if(strlen(call->directory)!=length)call->error=EINVAL;
@@ -2634,6 +2691,9 @@ BP_EFFECT(baton_instance_restore,CID_INSTANCE_RESTORE,BP_INSTANCE_RESTORE)
 #endif
 #ifdef CID_INSTANCE_REPLAY
 BP_EFFECT(baton_instance_replay,CID_INSTANCE_REPLAY,BP_INSTANCE_REPLAY)
+#endif
+#ifdef CID_INSTANCE_JOB
+BP_EFFECT(baton_instance_job,CID_INSTANCE_JOB,BP_INSTANCE_JOB)
 #endif
 
 #undef BP_EFFECT

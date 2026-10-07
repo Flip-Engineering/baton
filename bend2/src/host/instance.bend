@@ -51,6 +51,13 @@ def Instance.restore(handle: U32, schema: U32) -> IO(Result<&1,&1,U32 & String,S
 def Instance.replay(handle: U32) -> IO(Result<&1,&1,U32 & String,Unit>):
   import "./process-spawn.c"
 
+# A compact reference to a retained job: the owner-side attempt identity when an
+# owner holds it, the retained output extent, the committed checkpoint offset and
+# the terminal status when it is recorded. One attempt has one observation owner;
+# any number of callers read the retained result through this reference.
+def Instance.job(database: String, directory: String) -> IO(Result<&1,&1,U32 & String,String>):
+  import "./process-spawn.c"
+
 def Instance.started(result: Result<&1,&1,U32 & String,Maybe<U32> & String>) -> Result<&1,&1,U32 & String,P.RetainedStart>:
   match result:
     case Fail{error}: Fail{error}
