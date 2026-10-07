@@ -1070,8 +1070,8 @@ MUTATIONS.push(
   {
     name: 'held-success-arm-skips-publication-observation',
     file: join('bend2', 'src', 'git', 'land.bend'),
-    find: 'ld_adv_wt_observe(path, repo, target, cand),\n        ld_adv_wt_refused(path, repo, target, basis)',
-    replace: 'IO.pure(LAdv, AdvLanded{}),\n        ld_adv_wt_refused(path, repo, target, basis)',
+    find: 'ld_adv_wt_observe(p2, r2, t2, c2),\n        ld_adv_wt_refused(p2, r2, t2, b2)',
+    replace: 'IO.pure(LAdv, AdvLanded{}),\n        ld_adv_wt_refused(p2, r2, t2, b2)',
     law: 'm3a_held_success_arm_uses_publication_observation',
   },
   {
@@ -1085,7 +1085,7 @@ MUTATIONS.push(
     name: 'held-success-arm-accepts-a-different-target-tip',
     file: join('bend2', 'src', 'git', 'land.bend'),
     find: '+same = Bool.pick(Bool, status_ok, Tx.str_eq(Tx.trim_nl(out), cand), False{})\n      ld_adv_wt_observed_target_same(same, path, target)',
-    replace: '+same = True{}\n      ld_adv_wt_observed_target_same(same, path, target)',
+    replace: '+same = Bool.pick(Bool, True{}, True{}, True{})\n      ld_adv_wt_observed_target_same(same, path, target)',
     law: 'm3a_held_target_tip_mismatch_refuses',
   },
 );
