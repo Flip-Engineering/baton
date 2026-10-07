@@ -884,10 +884,10 @@ def managed_recovery_start_decision(+db: String, +binding: String,
                                     decision: IO(ManagedQuery.StartDecision)) -> IO(Unit):
   do IO<Unit>:
     committed : ManagedQuery.StartDecision <- decision
-    launch = ManagedLaunch{bootstrap, SNil{},
+    managed_start_decision(db, binding, ManagedLaunch{bootstrap, SNil{},
       ManagedQuery.bootstrap_executable_path(bootstrap),
-      ManagedQuery.bootstrap_runtime_path(bootstrap), worktree, bootstrap_digest}
-    managed_start_decision(db, binding, launch, handle, committed)
+      ManagedQuery.bootstrap_runtime_path(bootstrap), worktree, bootstrap_digest},
+      handle, committed)
 
 def managed_recovery_readiness_decision(+db: String, +binding: String,
                                         +bootstrap: ManagedQuery.Bootstrap,
