@@ -206,15 +206,6 @@ law ui_subscription_command_runs_the_native_subscription:
 def ui_subscription_command_runs_the_native_subscription(db,after_cursor,generation):
   {==}
 
-law ui_subscription_cli_dispatches_after_generation:
-  for db: String
-  for after_cursor: String
-  for generation: String
-  {normal_cli([db,"ui-subscribe",after_cursor,generation]) == UISubscription.run(db,after_cursor,generation) : IO(Unit)}
-
-def ui_subscription_cli_dispatches_after_generation(db,after_cursor,generation):
-  {==}
-
 law section_executes_the_stored_command:
   for db: String
   for ensemble: String
@@ -281,6 +272,15 @@ def normal_cli(args: List<String>) -> IO(Unit):
       Bool.pick(IO(Unit),C.help_verb(verb),execute("",C.Help{}),execute(verb,C.Invalid{}))
     case db <> rest: execute(db,C.parse(rest))
     case Nil{}: execute("",C.Invalid{})
+
+law ui_subscription_cli_dispatches_after_generation:
+  for db: String
+  for after_cursor: String
+  for generation: String
+  {normal_cli([db,"ui-subscribe",after_cursor,generation]) == UISubscription.run(db,after_cursor,generation) : IO(Unit)}
+
+def ui_subscription_cli_dispatches_after_generation(db,after_cursor,generation):
+  {==}
 
 def keeper_cli(directory: String, lock: String, args: List<String>, internal: Bool) -> IO(Unit):
   match internal:
