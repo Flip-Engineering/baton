@@ -18,7 +18,7 @@ law omp_terminal_normalizes_message_and_content_members:
 
 law omp_terminal_assistant_content_contains_only_object_blocks:
   for +message: String
-  {Turn.omp_content_sql(message) == "CASE WHEN json_extract(" ++ C.q(message) ++ ",'$.role')='assistant' THEN json_set(" ++ C.q(message) ++ ",'$.content',json(CASE WHEN json_type(" ++ C.q(message) ++ ",'$.content')='array' THEN coalesce((SELECT json_group_array(json(content.value)) FROM (SELECT c.value AS value,c.key AS key FROM json_each(" ++ C.q(message) ++ ",'$.content') c WHERE json_type(" ++ C.q(message) ++ ",'$.content[' || c.key || ']')='object' ORDER BY c.key) content),'[]') ELSE '[]' END)) ELSE json(" ++ C.q(message) ++ ") END" : String}
+  {Turn.omp_content_sql(message) == "CASE WHEN json_extract(" ++ C.q(message) ++ ",'$.role')='assistant' THEN json_set(" ++ C.q(message) ++ ",'$.content',json(CASE WHEN json_type(" ++ C.q(message) ++ ",'$.content')='array' THEN coalesce((SELECT json_group_array(json(CASE WHEN json_type(" ++ C.q(message) ++ ",'$.content[' || content.key || ']')='object' THEN content.value ELSE '{}' END)) FROM (SELECT c.value AS value,c.key AS key FROM json_each(" ++ C.q(message) ++ ",'$.content') c WHERE json_type(" ++ C.q(message) ++ ",'$.content[' || c.key || ']')='object' ORDER BY c.key) content),'[]') ELSE '[]' END)) ELSE json(" ++ C.q(message) ++ ") END" : String}
 
 law completion_identity_refuses_changed_reports_without_null_ids:
   for +id: String
