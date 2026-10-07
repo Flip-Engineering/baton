@@ -10,10 +10,11 @@ The browser implements exactly this boundary and nothing else.
 
 - `GET {apiBase}/orchestra/snapshot?subject=<id>&since=<cursor>`
   returns one snapshot JSON object.
-- `GET {apiBase}/orchestra/events?subject=<id>&since=<cursor>`
+- `GET {apiBase}/orchestra/events?subject=<id>&since=<cursor>&generation=<gen>`
   returns a Server-Sent Events stream over the same subject scope
   as the snapshot. The reader identity stays the immutable startup
-  identity; subject only filters within it.
+  identity; subject only filters within it. `generation` binds the
+  reconnect to the stored owner generation.
 
 `apiBase` is supplied to the page with `?api=<base>` or the
 `orchestra-api-base` meta tag. A server `/` redirect that carries
@@ -30,11 +31,14 @@ other network calls.
 - `capturedAt`: string. Server time the snapshot was taken,
   shown exactly as recorded.
 - `subject`: string or null. Selected Orchestra or Conductor id.
-- `selection`: object describing snapshot scope,
-  for example `{"mode": "all", "rule": "parent-owner-member-routes-v1"}`.
+- `selection`: object describing snapshot scope:
+  `{"mode": "all|subtree", "rule": "parent-owner-member-routes-v1",
+  "reader": "<bound reader>", "scope": ["<visible ids>"], "gap": false}`.
   `selection.gap: true` means the server could not honor the
   requested cursor; the page renders the snapshot as authoritative
   current state and holds the gap notice.
+- `subject`: echoed selected subject. The snapshot carries no owner
+  generation; generation arrives on `hello` and `gap` frames.
 - `players`: array of player objects (next section).
 - `ensembles`: array of ensemble objects (section below).
 - `transitions`: array of committed transition objects,
@@ -101,15 +105,25 @@ only from the `actualProcess` observation and defaults to
 Each SSE message carries `id: <cursor>` so the page resumes
 from the next event after a reconnect. Event types:
 
-- `hello`: `{"contractVersion": 1, "cursor": "..."}`.
-- `gap`: `{"reason": "cursor-gap" | "reader-scope-changed" |
-  "event-read-failed"}`. The server sends it when the durable
-  cursor can no longer be honored (retention prune, invalid
-  cursor, reader scope or owner-generation change) and then closes
-  the stream. The page shows a gap notice, re-reads the snapshot
-  immediately with `since=<last cursor>`, renders it as
-  authoritative current state, and reopens the stream at the
-  snapshot cursor.
+- `hello`: `{"contractVersion": 1, "cursor": "...",
+  "generation": "<owner generation>"}`. The page stores the
+  generation, shows it in the header, and sends it back with the
+  cursor on every explicit reconnect. A `hello` generation that
+  differs from the stored one closes the stream, clears the
+  cursor, re-reads a full snapshot immediately, and resubscribes
+  under the new generation.
+- `cursor`: named keepalive frame with empty data. The durable
+  cursor travels in the frame id. The page advances its stored
+  cursor from each frame id (or from `data.cursor` when present).
+- `gap`: `{"reason": ..., "generation": "<owner generation>"}` with
+  reason `cursor-gap`, `reader-scope-changed`,
+  `owner-generation-changed`, `owner-notification-lost`, or
+  `event-read-failed`. The server sends it when the durable
+  cursor can no longer be honored and then closes the stream.
+  The page stores the generation, shows the matching notice,
+  re-reads the snapshot immediately with `since=<last cursor>`,
+  renders it as authoritative current state, and reopens the
+  stream at the snapshot cursor.
 - `player`: one full player object, applied by id.
 - `ensemble`: one full ensemble object, applied by id.
 - `transition`: one transition object, prepended to the list.
@@ -122,14 +136,26 @@ from the next event after a reconnect. Event types:
 
 ## Reconnect rule
 
-On a `gap` event or stream loss the page re-reads the snapshot
-immediately with `since=<last cursor>`, renders it as authoritative
-current state, and reopens the stream at the snapshot cursor.
-Quadratic backoff (1s, 2s, 4s, up to 30s) applies only when the
-snapshot request itself fails (endpoint unreachable). The gap or
-lost-stream notice stays visible until the next committed
-`player`, `ensemble`, or `transition` event arrives. A version
-mismatch keeps the last rendered state with an explicit notice.
+The events endpoint takes `subject`, `since`, and `generation`
+(expected owner generation; a mismatch ends the stream with an
+`owner-generation-changed` gap before `hello`). Absent or empty
+`since` reads from zero; a non-numeric `since` is a 400
+`invalid-cursor`. A subject outside the bound reader scope is a
+403 `reader-scope-denied`. A missing owner subscription is a 503
+`native-owner-subscription-unavailable`, as is a failed snapshot
+read (`snapshot-unavailable`).
+
+An endpoint refusal before the first `hello` follows bounded
+quadratic backoff (1s, 2s, 4s, up to 30s) without repeated
+snapshot requests. After a `hello`, a `gap` event or stream loss
+re-reads the snapshot immediately with `since=<last cursor>`,
+renders it as authoritative current state, and reopens the
+stream at the snapshot cursor bound to the stored generation.
+Backoff then applies only when the snapshot request itself
+fails. The gap or lost-stream notice stays visible until the
+next committed `player`, `ensemble`, or `transition` event
+arrives. A version mismatch keeps the last rendered state with
+an explicit notice.
 
 ## Recorded status derivation
 

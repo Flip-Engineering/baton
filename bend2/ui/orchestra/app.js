@@ -10,6 +10,8 @@ const state = {
   fixtureName: "",
   subject: "",
   cursor: "",
+  generation: "",
+  opened: false,
   gapHeld: false,
   players: new Map(),
   ensembles: new Map(),
@@ -154,7 +156,15 @@ function queryString() {
   const parts = [];
   if (state.subject) parts.push("subject=" + encodeURIComponent(state.subject));
   if (state.cursor) parts.push("since=" + encodeURIComponent(state.cursor));
+  if (state.generation) parts.push("generation=" + encodeURIComponent(state.generation));
   return parts.length ? "?" + parts.join("&") : "";
+}
+
+function setGeneration(generation) {
+  state.generation = generation || "";
+  const node = document.getElementById("generation-state");
+  node.textContent = "";
+  text(node, state.generation || "none");
 }
 
 function holdGapNotice(message) {
@@ -472,6 +482,7 @@ function connectEvents() {
     return;
   }
   if (state.sse) state.sse.close();
+  state.opened = false;
   const url = state.apiBase + "/orchestra/events" + queryString();
   let es;
   try {
@@ -489,9 +500,23 @@ function connectEvents() {
     try { msg = JSON.parse(ev.data); } catch (e) { msg = {}; }
     if (msg.contractVersion !== CONTRACT_VERSION) {
       setNotice("Contract version " + msg.contractVersion + " on stream, page requires " + CONTRACT_VERSION + ".");
+      return;
     }
+    if (typeof msg.generation === "string" && msg.generation
+        && state.generation && msg.generation !== state.generation) {
+      if (state.sse) state.sse.close();
+      state.sse = null;
+      setConn("generation");
+      setGeneration(msg.generation);
+      setCursor("");
+      holdGapNotice("Owner generation changed. Re-reading current state.");
+      resnapshotThenResume();
+      return;
+    }
+    if (typeof msg.generation === "string" && msg.generation) setGeneration(msg.generation);
     if (ev.lastEventId) setCursor(ev.lastEventId);
     else if (msg.cursor) setCursor(msg.cursor);
+    state.opened = true;
     state.reconnectDelay = 1000;
     setConn("live");
   });
@@ -502,12 +527,26 @@ function connectEvents() {
     if (state.sse) state.sse.close();
     state.sse = null;
     setConn("gap");
+    if (typeof g.generation === "string" && g.generation) setGeneration(g.generation);
     if (g.reason === "reader-scope-changed") {
       holdGapNotice("Reader scope changed. Re-reading current state.");
+    } else if (g.reason === "owner-generation-changed") {
+      holdGapNotice("Owner generation changed. Re-reading current state.");
+    } else if (g.reason === "owner-notification-lost" || g.reason === "event-read-failed") {
+      holdGapNotice("Event read failed. Re-reading current state.");
     } else {
       holdGapNotice("Event history was pruned. Re-reading current state.");
     }
     resnapshotThenResume();
+  });
+
+  es.addEventListener("cursor", (ev) => {
+    let next = "";
+    try {
+      const data = JSON.parse(ev.data);
+      if (data && typeof data.cursor === "string") next = data.cursor;
+    } catch (e) { /* empty data carries the cursor in the frame id */ }
+    setCursor(next || ev.lastEventId);
   });
 
   es.addEventListener("player", (ev) => {
@@ -566,6 +605,11 @@ function connectEvents() {
   es.onerror = () => {
     if (state.sse) state.sse.close();
     state.sse = null;
+    if (!state.opened) {
+      setConn("retrying");
+      scheduleEndpointRetry(new Error("event endpoint refused before first hello"));
+      return;
+    }
     setConn("reconnecting");
     holdGapNotice("Stream lost. Re-reading current state.");
     resnapshotThenResume();
