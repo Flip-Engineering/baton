@@ -256,12 +256,20 @@ law section_command_reads_the_named_pair:
 def section_command_reads_the_named_pair(ensemble,id):
   {==}
 
+# A named command runs the preflight installer, the single committed
+# transaction, the post-commit publication, and then the answer
+# classification. The pipeline stages below are the transaction contract:
+# rollback silence (a failed query returns its failure unpublished),
+# committed classification, and successful post-commit wake all flow
+# through Store.commit and Store.committed, unchanged in shape.
 law named_commands_execute_the_committed_query_and_classify_its_answer:
   for +db: String
   for +command: C.Command
   {Store.apply(db,command) == (do IO<Result<&1,&1,U32 & String,String>>:
-    result : Result<&1,&1,U32 & String,String> <- DB.Sql.query(db,"BEGIN IMMEDIATE;" ++ C.schema() ++ C.sql(command) ++ "COMMIT;")
-    Store.committed(db,command,result)) : IO(Result<&1,&1,U32 & String,String>)}
+    ensured : Unit <- Store.ensure_before_begin(db)
+    queried : Result<&1,&1,U32 & String,String> <- DB.Sql.query(db,Store.commit_sql(command))
+    published : Result<&1,&1,U32 & String,String> <- Store.publish_after_commit(db,queried)
+    Store.committed(db,command,published)) : IO(Result<&1,&1,U32 & String,String>)}
 
 def named_commands_execute_the_committed_query_and_classify_its_answer(db,command):
   {==}

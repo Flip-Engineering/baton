@@ -923,14 +923,31 @@ def m3c_checked_landing_answers_the_outcome_it_reached(outcome):
 # M-5: a report row and its pending parent delivery are written in one
 # transaction. The schema, the report insert that names the sender's recorded
 # parent as its recipient, and the commit are the whole of it.
+# M-5: the report commit runs the preflight installer, the single committed
+# transaction, and the post-commit publication. A failed query returns its
+# failure unpublished, so a transaction that did not commit delivers nothing.
 law m5_a_report_and_its_delivery_are_one_transaction:
   for +db: String
   for +id: String
   for +sender: String
   for +body: String
-  {Store.commit(db, C.Report{id, sender, body}) == DB.Sql.query(db, "BEGIN IMMEDIATE;" ++ C.schema() ++ ("INSERT INTO messages(id,sender,recipient,kind,body) VALUES(" ++ C.q(id) ++ "," ++ C.q(sender) ++ "," ++ C.report_recipient(C.q(sender)) ++ ",'report'," ++ C.q(body) ++ ")" ++ C.message_upsert() ++ C.message_result(id)) ++ "COMMIT;") : IO(Result<&1,&1,U32 & String,String>)}
+  {Store.commit(db, C.Report{id, sender, body}) == (do IO<Result<&1,&1,U32 & String,String>>:
+    ensured : Unit <- Store.ensure_before_begin(db)
+    queried : Result<&1,&1,U32 & String,String> <- DB.Sql.query(db,Store.commit_sql(C.Report{id, sender, body}))
+    Store.publish_after_commit(db,queried)) : IO(Result<&1,&1,U32 & String,String>)}
 
 def m5_a_report_and_its_delivery_are_one_transaction(db, id, sender, body):
+  {==}
+
+# M-5: the report insert names the sender's recorded parent as its
+# recipient. This pins the exact bytes the committed transaction carries.
+law m5_report_insert_names_the_sender_parent:
+  for +id: String
+  for +sender: String
+  for +body: String
+  {C.sql(C.Report{id, sender, body}) == ("INSERT INTO messages(id,sender,recipient,kind,body) VALUES(" ++ C.q(id) ++ "," ++ C.q(sender) ++ "," ++ C.report_recipient(C.q(sender)) ++ ",'report'," ++ C.q(body) ++ ")" ++ C.message_upsert() ++ C.message_result(id)) : String}
+
+def m5_report_insert_names_the_sender_parent(id, sender, body):
   {==}
 
 # M-5: a transaction that did not commit delivers nothing and answers its own
