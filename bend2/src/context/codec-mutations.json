@@ -25,7 +25,7 @@
   "file": "bend2/src/context/contracts.bend",
   "find": "    Bool.pick(Bool, U32.is_lt(length(s), 10), True{}, digits_le(s, \"4294967295\"))",
   "replace": "    Bool.pick(Bool, U32.is_lt(length(s), 10), True{}, digits_le(s, \"9999999999\"))",
-  "law": "contracts_law_u32_token_refuses_a_ten_digit_number_above_the_bound"
+  "law": "contracts_law_u32_token_refuses_the_next_number"
  },
  {
   "name": "codec-signed-safe-token-widens-its-bound",

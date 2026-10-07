@@ -1128,13 +1128,13 @@ def an_unavailable_keeper_action_names_the_primitive():
   {==}
 
 law an_empty_failure_document_is_absent:
-  {ContextObserver.failure_schema("") == None{} : Maybe<&2,String>}
+  {ContextObserver.failure_schema("") == None{} : Maybe<String>}
 
 def an_empty_failure_document_is_absent():
   {==}
 
 law a_rendered_failure_document_is_present:
-  {ContextObserver.failure_schema("{\"code\":2}") == Some{"{\"code\":2}"} : Maybe<&2,String>}
+  {ContextObserver.failure_schema("{\"code\":2}") == Some{"{\"code\":2}"} : Maybe<String>}
 
 def a_rendered_failure_document_is_present():
   {==}
