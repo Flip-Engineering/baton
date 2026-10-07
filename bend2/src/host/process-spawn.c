@@ -1106,6 +1106,38 @@ static int br_owner_socket_path(const char *database,uint64_t device,uint64_t in
     (unsigned long long)device,(unsigned long long)inode);
   *path=full;return 0;
 }
+/* The owner publishes the rendezvous pathname it bound, so a client whose
+   TMPDIR differs still reaches the same owner instead of starting a second
+   one. The derived pathname is the fallback before the file exists. */
+static int br_owner_endpoint_write(const char *database,const char *socket_path) {
+  char *path=br_suffix(database,".owner-endpoint");
+  if(!path)return ENOMEM;
+  int fd=open(path,O_WRONLY|O_CREAT|O_TRUNC|O_CLOEXEC,0600);
+  int error=fd<0?errno:0;
+  if(!error) {
+    error=br_write_all(fd,socket_path,strlen(socket_path));
+    if(!error)error=br_write_all(fd,"\n",1);
+    if(!error && fsync(fd))error=errno;
+    close(fd);
+  }
+  free(path);
+  return error;
+}
+static int br_owner_endpoint_read(const char *database,char **path) {
+  char *file=br_suffix(database,".owner-endpoint");
+  if(!file)return ENOMEM;
+  int fd=open(file,O_RDONLY|O_CLOEXEC);free(file);
+  if(fd<0)return errno;
+  char buffer[256];ssize_t n=read(fd,buffer,sizeof(buffer)-1);
+  close(fd);
+  if(n<=0)return n<0?errno:ENOENT;
+  buffer[n]=0;
+  char *newline=strchr(buffer,'\n');
+  if(newline)*newline=0;
+  if(!buffer[0])return ENOENT;
+  *path=strdup(buffer);
+  return *path?0:ENOMEM;
+}
 static BrKeeper *br_owner_find(BrOwner *owner,const char *directory) {
   for(BrKeeper *keeper=owner->attempts;keeper;keeper=keeper->next)
     if(!strcmp(keeper->directory,directory))return keeper;
@@ -1374,6 +1406,7 @@ static int br_owner_bind(BrOwner *owner,const char *database) {
       }
     }
   }
+  if(!error)error=br_owner_endpoint_write(owner->database,owner->socket_path);
   if(error) {
     if(owner->listener>=0){close(owner->listener);owner->listener=-1;}
     if(owner->lock>=0){close(owner->lock);owner->lock=-1;}
@@ -1386,6 +1419,10 @@ static int br_owner_serve(const char *database) {
   if(!error)error=br_owner_loop(&owner);
   if(owner.listener>=0)close(owner.listener);
   if(owner.socket_path)unlink(owner.socket_path);
+  if(owner.database) {
+    char *endpoint=br_suffix(owner.database,".owner-endpoint");
+    if(endpoint){unlink(endpoint);free(endpoint);}
+  }
   while(owner.attempts){BrKeeper *keeper=owner.attempts;owner.attempts=keeper->next;br_keeper_stop(keeper);}
   while(owner.controls) {
     BrOwnerControl *control=owner.controls;owner.controls=control->next;
@@ -1537,13 +1574,17 @@ static int br_instance_connect(const char *database,int spawn,uint64_t *token,in
   if(!canonical)return errno;
   struct stat info;
   int error=stat(canonical,&info)?errno:0;
-  char *path=NULL;
-  if(!error)error=br_owner_socket_path(canonical,(uint64_t)info.st_dev,(uint64_t)info.st_ino,&path);
-  struct sockaddr_un address;
-  if(!error)error=br_socket_address(&address,path);
+  char *derived=NULL;
+  if(!error)error=br_owner_socket_path(canonical,(uint64_t)info.st_dev,(uint64_t)info.st_ino,&derived);
   int socket_fd=-1,started=0;
   for(int attempt=0;!error && attempt<600;attempt++) {
     if(attempt){struct timespec pause={0,20000000};nanosleep(&pause,NULL);}
+    char *chosen=NULL;
+    if(br_owner_endpoint_read(canonical,&chosen))chosen=strdup(derived);
+    struct sockaddr_un address;
+    int address_error=chosen?br_socket_address(&address,chosen):ENOMEM;
+    free(chosen);
+    if(address_error){error=address_error;break;}
     socket_fd=socket(AF_UNIX,SOCK_STREAM,0);
     if(socket_fd<0){error=errno;break;}
     fcntl(socket_fd,F_SETFD,FD_CLOEXEC);
@@ -1561,7 +1602,7 @@ static int br_instance_connect(const char *database,int spawn,uint64_t *token,in
   }
   if(!error)error=br_instance_token(canonical,token);
   if(error && socket_fd>=0){close(socket_fd);socket_fd=-1;}
-  free(path);free(canonical);
+  free(derived);free(canonical);
   *socket_out=socket_fd;
   return error;
 }
