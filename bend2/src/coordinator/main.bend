@@ -18,6 +18,7 @@ import ./control.bend as Control
 import ./control-laws.bend as ControlLaws
 import ../host/text.bend as T
 import ../host/process.bend as P
+import ../host/instance.bend as Custody
 
 def output(value: String, empty: Bool) -> IO(Unit):
   match empty:
@@ -275,8 +276,13 @@ def recover_cli(db: String, session: String, id: String, cursor: String, cmd: St
     case True{}: IO.try(Unit,Receive.recover(db,session,id,cursor,cmd,model,effort,cwd,log,harness,directory,native))
     case False{}: execute("",C.Invalid{})
 
+def instance_owner_cli(+database: String, +flag: String) -> IO(Unit):
+  Bool.pick(IO(Unit),String.eq(flag,"--instance-owner"),
+    IO.try(Unit,Custody.Instance.owner(database)),normal_cli([flag,database]))
+
 def cli(args: List<String>) -> IO(Unit):
   match args:
+    case flag <> database <> Nil{}: instance_owner_cli(database,flag)
     case +flag <> +directory <> +lock <> Nil{}:
       dispatch_cli(directory,lock,[flag,directory,lock],String.eq(flag,"--host-process-keeper"),String.eq(flag,"--dispatch-message"))
     case flag <> db <> session <> id <> cursor <> cmd <> model <> effort <> cwd <> log <> harness <> directory <> native <> Nil{}:
@@ -416,4 +422,11 @@ law native_main_passes_the_complete_runtime_arguments:
     cli(args)) : IO(Unit)}
 
 def native_main_passes_the_complete_runtime_arguments():
+  {==}
+
+law internal_instance_owner_entry_runs_native_custody:
+  for database: String
+  {cli(["--instance-owner",database]) == IO.try(Unit,Custody.Instance.owner(database)) : IO(Unit)}
+
+def internal_instance_owner_entry_runs_native_custody(database):
   {==}
