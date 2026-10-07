@@ -26,6 +26,17 @@ law completion_identity_refuses_changed_reports_without_null_ids:
   for +event: String
   {Turn.completion_state_expr(id,player,event) == "CASE WHEN EXISTS(SELECT 1 FROM turns WHERE id=" ++ C.q(id) ++ ") AND EXISTS(SELECT 1 FROM messages WHERE id=" ++ C.q(id) ++ " AND sender=" ++ C.q(player) ++ " AND kind='report' AND body=" ++ C.terminal_body(event) ++ ") THEN 'same' WHEN EXISTS(SELECT 1 FROM messages WHERE id=" ++ C.q(id) ++ " AND sender=" ++ C.q(player) ++ " AND kind='report' AND body=" ++ C.terminal_body(event) ++ ") THEN '' WHEN EXISTS(SELECT 1 FROM messages WHERE id=" ++ C.q(id) ++ ") OR EXISTS(SELECT 1 FROM turns WHERE id=" ++ C.q(id) ++ ") THEN 'conflict' ELSE '' END" : String}
 
+law a_terminal_outside_the_admitted_execution_is_not_a_report:
+  for +state: String
+  {Turn.terminal_observation_sealed(False{},True{},False{},state) == True{} : Bool}
+
+law the_first_admitted_terminal_remains_reportable:
+  {Turn.terminal_observation_sealed(False{},True{},True{},"") == False{} : Bool}
+
+law a_repeated_or_conflicting_terminal_is_sealed:
+  for +state: String
+  {Turn.terminal_observation_sealed(False{},True{},True{},state) == Bool.not(String.is_empty(state)) : Bool}
+
 def muse_primary_identity_comes_from_the_admitted_turn_input(event):
   {==}
 
@@ -39,4 +50,13 @@ def omp_terminal_assistant_content_contains_only_object_blocks(message):
   {==}
 
 def completion_identity_refuses_changed_reports_without_null_ids(id,player,event):
+  {==}
+
+def a_terminal_outside_the_admitted_execution_is_not_a_report(state):
+  {==}
+
+def the_first_admitted_terminal_remains_reportable():
+  {==}
+
+def a_repeated_or_conflicting_terminal_is_sealed(state):
   {==}

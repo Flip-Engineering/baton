@@ -287,6 +287,9 @@ def completion_conflict_note(+db: String, player: String, +id: String, +event: S
       saved : Unit <- report(db,player,Tx.trim_nl(note_id),"A native terminal produced output for report ID " ++ id ++ " after a different report already used that ID. The original report is preserved; this terminal event remains in the native log.")
       IO.pure(Unit,Unit{})
 
+def terminal_observation_sealed(sealed: Bool, terminal: Bool, admitted: Bool, +state: String) -> Bool:
+  Bool.or(sealed,Bool.and(terminal,Bool.or(Bool.not(admitted),Bool.not(String.is_empty(state)))))
+
 def observe_sealed(+db: String, id: String, player: String, +event: String, +primary: String, sealed: Bool, +muse: Bool) -> IO(Bool):
   do IO<Bool>:
       terminal_text : String <- IO.try(String,DB.Sql.query(db,"SELECT CASE WHEN json_valid(" ++ C.q(event) ++ ") THEN " ++ C.terminal(event) ++ " ELSE 0 END;"))
@@ -294,7 +297,7 @@ def observe_sealed(+db: String, id: String, player: String, +event: String, +pri
       accepted : Bool <- primary_terminal(db,event,primary,muse)
       +admitted : Bool <- IO.pure(Bool,Bool.and(terminal,Bool.or(Bool.not(muse),accepted)))
       state : String <- Bool.pick(IO(String),admitted,completion_state(db,id,player,event),IO.pure(String,""))
-      IO.pure(Bool,Bool.or(sealed,Bool.and(admitted,Bool.not(String.is_empty(state)))))
+      IO.pure(Bool,terminal_observation_sealed(sealed,terminal,admitted,state))
 
 def observe_event(db: String, player: String, id: String, line: String, relevant: Bool, sealed: Bool) -> IO(Result<&1,&1,U32 & String,String>):
   match relevant:
