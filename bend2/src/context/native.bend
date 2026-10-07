@@ -7,6 +7,7 @@ import ./engines-select.bend as Sel
 import ./engines-wire.bend as EnginesWire
 import ../host/process.bend as Process
 import ../host/session-lock.bend as Host
+import ../git/text.bend as Tx
 
 type InvocationFrame is Data:
   NativeFrameReady{value: String}
@@ -40,6 +41,84 @@ def installed_provider_path(executable: String) -> String:
 type ProviderAnswer is Data:
   ProviderOutput{value: String, status: String}
   ProviderRefused{reason: String}
+
+type NodeRuntime is Data:
+  NodeRuntimeReady{path: String, version: String}
+  NodeRuntimeRefused{reason: String}
+
+def absolute_node_path(+path: String) -> Bool:
+  match path:
+    case SNil{}: False{}
+    case SCon{head, tail}: U32.is_eq(Char.to_u32(head), 47)
+
+def node_runtime_fields(fields: List<String>) -> NodeRuntime:
+  match fields:
+    case +path <> +support <> +version <> Nil{}:
+      Bool.pick(NodeRuntime,
+        Bool.and(absolute_node_path(path), String.eq(support, "supported")),
+        NodeRuntimeReady{path, version}, NodeRuntimeRefused{"nodeRuntimeUnsupported"})
+    case other: NodeRuntimeRefused{"nodeRuntimeProbeMalformed"}
+
+def node_runtime_status(+line: String, +status: String, extra: Maybe<String>) -> NodeRuntime:
+  match extra:
+    case Some{value}: NodeRuntimeRefused{"nodeRuntimeProbeSurplus"}
+    case None{}:
+      Bool.pick(NodeRuntime, String.eq(status, "exit 0"),
+        node_runtime_fields(Tx.split_tabs(line)), NodeRuntimeRefused{"nodeRuntimeProbeExit"})
+
+def node_runtime_wait(+line: String, extra: Maybe<String>,
+                      waited: Result<&1,&1,U32 & String,String>) -> IO(NodeRuntime):
+  match waited:
+    case Fail{error}: IO.pure(NodeRuntime, NodeRuntimeRefused{"nodeRuntimeProbeWait"})
+    case Done{+status}: IO.pure(NodeRuntime, node_runtime_status(line, status, extra))
+
+def node_runtime_second(+handle: U32, +line: String,
+                        second: Result<&1,&1,U32 & String,Maybe<String>>) -> IO(NodeRuntime):
+  match second:
+    case Fail{error}:
+      do IO<NodeRuntime>:
+        waited : Result<&1,&1,U32 & String,String> <- Process.ProcessChild.wait(handle)
+        IO.pure(NodeRuntime, NodeRuntimeRefused{"nodeRuntimeProbeRead"})
+    case Done{+extra}:
+      do IO<NodeRuntime>:
+        waited : Result<&1,&1,U32 & String,String> <- Process.ProcessChild.wait(handle)
+        node_runtime_wait(line, extra, waited)
+
+def node_runtime_after_first(+handle: U32, +line: String) -> IO(NodeRuntime):
+  do IO<NodeRuntime>:
+    second : Result<&1,&1,U32 & String,Maybe<String>> <- Process.ProcessChild.read_line(handle)
+    node_runtime_second(handle, line, second)
+
+def node_runtime_read(+handle: U32,
+                      first: Result<&1,&1,U32 & String,Maybe<String>>) -> IO(NodeRuntime):
+  match first:
+    case Fail{error}:
+      do IO<NodeRuntime>:
+        waited : Result<&1,&1,U32 & String,String> <- Process.ProcessChild.wait(handle)
+        node_runtime_wait("", None{}, waited)
+    case Done{+line}:
+      match line:
+        case None{}:
+          do IO<NodeRuntime>:
+            waited : Result<&1,&1,U32 & String,String> <- Process.ProcessChild.wait(handle)
+            node_runtime_wait("", None{}, waited)
+        case Some{+value}: node_runtime_after_first(handle, value)
+
+def node_runtime_started(result: Result<&1,&1,U32 & String,U32>) -> IO(NodeRuntime):
+  match result:
+    case Fail{error}: IO.pure(NodeRuntime, NodeRuntimeRefused{"nodeRuntimeProbeSpawn"})
+    case Done{+handle}:
+      do IO<NodeRuntime>:
+        first : Result<&1,&1,U32 & String,Maybe<String>> <- Process.ProcessChild.read_line(handle)
+        node_runtime_read(handle, first)
+
+def resolve_node_runtime(+cwd: String) -> IO(NodeRuntime):
+  do IO<NodeRuntime>:
+    result : Result<&1,&1,U32 & String,U32> <- Process.ProcessChild.spawn(
+      Process.argv(["/usr/bin/env", "node", "-e",
+        "const [major,minor]=process.versions.node.split('.').map(Number);process.stdout.write(process.execPath+'\\t'+((major>22||(major===22&&minor>=15))?'supported':'unsupported')+'\\t'+process.versions.node)"]),
+      cwd, "/dev/null")
+    node_runtime_started(result)
 
 def provider_wait_answer(+value: String, surplus: Bool,
                          waited: Result<&1,&1,U32 & String,String>) -> IO(ProviderAnswer):
@@ -117,20 +196,24 @@ def provider_spawn(+path: String, +cwd: String, +frame: String, result: Result<&
         written : Result<&1,&1,U32 & String,Unit> <- Process.ProcessChild.write(handle, frame ++ "\n")
         provider_write(handle, written)
 
-def invoke_frame(+executable: String, +cwd: String, frame: InvocationFrame) -> IO(ProviderAnswer):
+def invoke_frame(+executable: String, +runtime_path: String, +cwd: String,
+                 frame: InvocationFrame) -> IO(ProviderAnswer):
   match frame:
     case NativeFrameRefused{reason}: IO.pure(ProviderAnswer, ProviderRefused{reason})
     case NativeFrameReady{value}:
       do IO<ProviderAnswer>:
         spawned : Result<&1,&1,U32 & String,U32> <- Process.ProcessChild.spawn(
-          Process.argv(["/usr/bin/env", "node", "--experimental-strip-types",
+          Process.argv([runtime_path, "--experimental-strip-types",
             installed_provider_path(executable)]), cwd, "/dev/null")
         provider_spawn(installed_provider_path(executable), cwd, value, spawned)
 
 def invoke(+invocation: Sel.Invocation, +cwd: String) -> IO(ProviderAnswer):
   do IO<ProviderAnswer>:
     executable : String <- IO.try(String, Host.SessionLock.executable())
-    invoke_frame(executable, cwd, invocation_frame(invocation))
+    runtime : NodeRuntime <- resolve_node_runtime(cwd)
+    match runtime:
+      case NodeRuntimeRefused{reason}: IO.pure(ProviderAnswer, ProviderRefused{reason})
+      case NodeRuntimeReady{path, version}: invoke_frame(executable, path, cwd, invocation_frame(invocation))
 
 def unavailable(command: String) -> IO(Unit):
   IO.die(Unit, 3, "Native Bend2 context provider is unavailable for " ++ command ++ "; no query was admitted.")
