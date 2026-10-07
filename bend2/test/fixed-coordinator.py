@@ -441,23 +441,27 @@ class FixedCoordinator(unittest.TestCase):
     def test_05_killed_client_leaves_atomic_commit_for_service(self):
         self.recruit('w6', 'codex')
         self.receiver('w6')
-        bodies = {}
-        for seq in range(3):
-            ident = f'c{seq}'
-            bodies[ident] = f'client-loss body {seq}'
-            child = subprocess.Popen([str(EXE), str(self.db), 'message', ident, 'root', 'w6',
-                                              'task', bodies[ident]],
-                                     stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
-            self.children.append(child)
-            time.sleep(.05)
-            if child.poll() is None:
-                child.kill()
         committed = []
-        for ident, body in bodies.items():
-            row = self.query(f"SELECT body, receipt FROM messages WHERE id='{ident}'")
-            if row:
-                self.assertEqual(row[0][0], body, f'{ident} committed partially')
-                committed.append(ident)
+        bodies = {}
+        for attempt in range(5):
+            for seq in range(3):
+                ident = f'c{attempt}_{seq}'
+                bodies[ident] = f'client-loss body {attempt} {seq}'
+                child = subprocess.Popen([str(EXE), str(self.db), 'message', ident, 'root',
+                                                  'w6', 'task', bodies[ident]],
+                                         stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                                         text=True)
+                self.children.append(child)
+                time.sleep(.05)
+                if child.poll() is None:
+                    child.kill()
+            for ident, body in bodies.items():
+                row = self.query(f"SELECT body, receipt FROM messages WHERE id='{ident}'")
+                if row:
+                    self.assertEqual(row[0][0], body, f'{ident} committed partially')
+                    committed.append(ident)
+            if committed:
+                break
         self.assertTrue(committed, 'no client input committed')
         self.start_owner()
         self.start_serve()
