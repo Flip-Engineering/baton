@@ -31,10 +31,18 @@ def Instance.shutdown(database: String) -> IO(Result<&1,&1,U32 & String,Unit>):
 def Instance.retire(handle: U32) -> IO(Result<&1,&1,U32 & String,Unit>):
   import "./process-spawn.c"
 
-# Records the offset this observer has durably observed. The observation owner
-# calls it after its own store transaction or report commit has succeeded; a
-# bare read is not a durable observation.
-def Instance.commit(handle: U32) -> IO(Result<&1,&1,U32 & String,Unit>):
+# Records one observation checkpoint: the consumed offset together with the
+# reducer state the observation owner had durably committed at that offset. The
+# host binds both to this native process and this owner incarnation in one
+# atomic record. A bare offset is never a resume decision.
+def Instance.commit_state(handle: U32, state: String) -> IO(Result<&1,&1,U32 & String,Unit>):
+  import "./process-spawn.c"
+
+# Hands back the reducer state recorded at the checkpoint and resumes this
+# observer at that offset. A damaged record, or one bound to another native
+# process or another owner incarnation, yields an empty state and no resume, so
+# the caller replays from the beginning with its own deduplication.
+def Instance.restore_state(handle: U32) -> IO(Result<&1,&1,U32 & String,String>):
   import "./process-spawn.c"
 
 def Instance.started(result: Result<&1,&1,U32 & String,Maybe<U32> & String>) -> Result<&1,&1,U32 & String,P.RetainedStart>:

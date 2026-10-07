@@ -285,27 +285,65 @@ class SharedInstance(unittest.TestCase):
         self.assertNotIn('stale-write-ok', output)
         print('evidence retirement', output.replace('\n', '|'))
 
+    def write_checkpoint(self, directory, incarnation, offset, blob, birth=None, attempt=0):
+        """Writes the on-disk checkpoint record the host documents, so a test can
+        present a record the host did not write itself."""
+        header = struct.Struct('=8sQQQQQi4xQQ')
+        if birth is None:
+            pid, first, second = struct.unpack('=iQQ', (directory / 'native.birth').read_bytes())
+        else:
+            pid, first, second = birth
+        body = header.pack(b'BATONC02', incarnation, attempt, offset, len(blob), 0, pid, first, second)
+        digest = 0xcbf29ce484222325
+        for byte in body[:40]:
+            digest ^= byte
+            digest = (digest * 0x100000001b3) & 0xFFFFFFFFFFFFFFFF
+        head = body[:40]
+        tail = body[48:]
+        record = head + struct.pack('=Q', digest) + tail + blob.encode()
+        (directory / 'checkpoint').write_bytes(record)
+
     def test_recovery_resumes_at_the_committed_checkpoint(self):
         directory, child = self.begin('partial', mode='partial', payload='one\n')
         self.line(child, 'admitted')
         self.line(child, 'echo:one')
-        self.line(child, 'commit-ok')
-        cursor = directory / 'cursor'
-        self.hold(cursor, '')
-        self.assertGreater(cursor.stat().st_size, 0)
+        self.line(child, 'commit-state-ok')
+        checkpoint = directory / 'checkpoint'
+        self.hold(checkpoint, '')
+        record = checkpoint.read_bytes()
+        self.assertEqual(record[:8], b'BATONC02')
+        self.assertIn(b'seen two frames', record)
         self.write(directory, 'two\n')
         spool = directory / 'stdout'
         self.hold(spool, 'echo:two')
         child.kill()
         child.wait(timeout=10)
         log = directory / 'observer.log'
-        text = self.hold(log, 'echo:two')
+        text = self.hold(log, 'restored:{"reducer":"seen two frames"}')
         self.assertNotIn('echo:one', text,
                          'the recovery observer replayed output the checkpoint already covered')
         self.write(directory, 'exit\n')
         self.hold(log, 'native-exit 0')
-        print('evidence committed-checkpoint-bytes', cursor.stat().st_size)
+        print('evidence committed-checkpoint-bytes', len(record))
         print('evidence committed-recovery-log', text.replace('\n', '|'))
+
+    def test_checkpoint_bound_to_another_incarnation_is_not_resumed(self):
+        directory, child = self.begin('foreign', mode='partial', payload='one\n')
+        self.line(child, 'admitted')
+        self.line(child, 'echo:one')
+        self.line(child, 'commit-state-ok')
+        child.kill()
+        child.wait(timeout=10)
+        _, _, _, record, _ = self.election_paths()
+        token = struct.unpack_from('=Q', record.read_bytes(), 0)[0]
+        self.write_checkpoint(directory, token ^ 0xFFFFFFFFFFFFFFFF,
+                              (directory / 'stdout').stat().st_size)
+        log = directory / 'observer.log'
+        text = self.hold(log, 'echo:one')
+        self.assertIn('"role": "native"', text,
+                      'a checkpoint bound to another incarnation must not be resumed')
+        marker = self.hold(directory / 'checkpoint-error', 'unreadable or unbound observation checkpoint')
+        print('evidence foreign-incarnation', marker.strip())
 
     def test_crash_between_read_and_commit_reports_the_frame_again(self):
         directory, child = self.begin('uncommitted', mode='partial-uncommitted',
@@ -313,12 +351,13 @@ class SharedInstance(unittest.TestCase):
         self.line(child, 'admitted')
         self.line(child, 'echo:one')
         self.line(child, 'commit-skipped')
-        self.assertFalse((directory / 'cursor').exists(),
-                         'a bare read must not advance the durable checkpoint')
+        self.assertFalse((directory / 'checkpoint').exists(),
+                         'a bare read must not create a durable checkpoint')
         child.kill()
         child.wait(timeout=10)
         log = directory / 'observer.log'
         text = self.hold(log, 'echo:one')
+        self.assertIn('restored:', text)
         self.assertIn('"role": "native"', text,
                       'recovery must replay from the beginning when nothing was committed')
         print('evidence uncommitted-recovery-log', text.replace('\n', '|'))
@@ -327,11 +366,12 @@ class SharedInstance(unittest.TestCase):
         directory, child = self.begin('torn', mode='partial', payload='one\n')
         self.line(child, 'admitted')
         self.line(child, 'echo:one')
-        self.line(child, 'commit-ok')
-        (directory / 'cursor').write_bytes(b'\x00torn-checkpoint')
+        self.line(child, 'commit-state-ok')
+        (directory / 'checkpoint').write_bytes(b'\x00torn-checkpoint')
         child.kill()
         child.wait(timeout=10)
-        marker = self.hold(directory / 'cursor-error', 'unreadable observation checkpoint')
+        marker = self.hold(directory / 'checkpoint-error',
+                           'unreadable or unbound observation checkpoint')
         log = directory / 'observer.log'
         text = self.hold(log, 'echo:one')
         self.assertIn('"role": "native"', text,

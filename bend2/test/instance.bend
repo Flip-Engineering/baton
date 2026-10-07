@@ -53,10 +53,25 @@ def attached_lines(+handle: U32, line: Maybe<String>) -> IO(Unit):
       next : Maybe<String> <- IO.try(Maybe<String>,P.ProcessChild.read_line(handle))
       attached_lines(handle,next)
 
+# Restores the recorded reducer state and resumes at the checkpointed offset.
+# An observer calls this before it reads: the state and the offset are one
+# durable record, so it never resumes without the state it belongs to.
+def restored(result: Result<&1,&1,U32 & String,String>) -> IO(Unit):
+  match result:
+    case Done{value}: IO.print("restored:" ++ value)
+    case Fail{(code,text)}: IO.print("restore-failed:" ++ U32.show(code) ++ ": " ++ text)
+
+def restore_step(+handle: U32) -> IO(Unit):
+  do IO<Unit>:
+    result : Result<&1,&1,U32 & String,String> <- Custody.Instance.restore_state(handle)
+    printed : Unit <- restored(result)
+    IO.pure(Unit,Unit{})
+
 def observe_attached(result: Result<&1,&1,U32 & String,U32>) -> IO(Unit):
   match result:
     case Done{+handle}: do IO<Unit>:
       printed : Unit <- IO.print("attached")
+      restored : Unit <- restore_step(handle)
       line : Maybe<String> <- IO.try(Maybe<String>,P.ProcessChild.read_line(handle))
       attached_lines(handle,line)
     case Fail{(code,text)}: IO.die(Unit,1,U32.show(code) ++ ": " ++ text)
@@ -144,8 +159,8 @@ def printed_line(line: Maybe<String>) -> IO(Unit):
 def commit_step(+handle: U32, commit: Bool) -> IO(Unit):
   match commit:
     case True{}: do IO<Unit>:
-      result : Result<&1,&1,U32 & String,Unit> <- Custody.Instance.commit(handle)
-      printed : Unit <- operation("commit",result)
+      result : Result<&1,&1,U32 & String,Unit> <- Custody.Instance.commit_state(handle,"{\"reducer\":\"seen two frames\"}")
+      printed : Unit <- operation("commit-state",result)
       IO.pure(Unit,Unit{})
     case False{}: IO.print("commit-skipped")
 
