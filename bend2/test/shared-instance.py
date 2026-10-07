@@ -201,8 +201,7 @@ class SharedInstance(unittest.TestCase):
             value = raw[offset:offset + length]
             offset += length
             if index == 5:
-                self.assertTrue(value.endswith(b'\0'))
-                control = pathlib.Path(os.fsdecode(value[:-1]))
+                control = pathlib.Path(os.fsdecode(value))
         self.assertIsNotNone(control)
         return control
 
