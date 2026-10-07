@@ -625,34 +625,46 @@ def log_items(rows: List<String>, acc: String) -> IO(String):
 def attempt_rows_sql(+db: String, +session: String) -> String:
   "SELECT e.session,e.id,e.mode,e.phase,e.status,e.directory,(SELECT count(*) FROM messages WHERE recipient=e.session AND receipt IS NULL),coalesce((SELECT level FROM log_policies WHERE session=e.session),'default'),CASE WHEN EXISTS(SELECT 1 FROM turns t WHERE t.id=e.id AND t.worker=e.session) OR EXISTS(SELECT 1 FROM messages m WHERE m.recipient=e.session AND m.kind='report' AND m.id IN (e.id,e.id||':exit',e.id||':observation')) OR EXISTS(SELECT 1 FROM session_stops ss JOIN messages m ON m.id=ss.report_id AND m.kind='report' WHERE ss.session=e.session AND ss.attempt=e.id) THEN 1 ELSE 0 END,CASE WHEN e.directory=" ++ C.q(db ++ ".attempt-") ++ " || lower(hex(e.id)) THEN 1 ELSE 0 END FROM executions e WHERE (" ++ C.q(session) ++ "='' OR e.session=" ++ C.q(session) ++ ") AND e.directory<>'' ORDER BY e.session,e.directory;"
 
-def attempt_reason(phase: String, released: String, acknowledged: String, reported: String, pending: String, level: String, path: String, bytes: U32) -> String:
-  Bool.pick(String,Bool.not(String.eq(pending,"0")),"pending-input",
-    Bool.pick(String,String.eq(level,"diagnostic"),"diagnostic-policy",
-      Bool.pick(String,String.eq(path,"0"),"attempt-path-unverified",
-        Bool.pick(String,Bool.not(String.eq(phase,"exited")),"native-not-exited",
-          Bool.pick(String,String.eq(released,"0"),"native-not-released",
-            Bool.pick(String,String.eq(acknowledged,"0"),"native-not-acknowledged",
-              Bool.pick(String,String.eq(reported,"0"),"observation-unreported",
-                Bool.pick(String,U32.is_lt(0,bytes),"eligible","no-diagnostic-files"))))))))
+type AttemptDecision is Data:
+  AttemptDecision{reason: String, eligible: Bool}
+
+def attempt_decision_eligible(decision: AttemptDecision) -> Bool:
+  match decision:
+    case AttemptDecision{reason,eligible}: eligible
+
+def attempt_decision(phase: String, released: String, acknowledged: String, reported: String, pending: String, level: String, path: String, bytes: U32) -> AttemptDecision:
+  Bool.pick(AttemptDecision,Bool.not(String.eq(pending,"0")),AttemptDecision{"pending-input",False{}},
+    Bool.pick(AttemptDecision,String.eq(level,"diagnostic"),AttemptDecision{"diagnostic-policy",False{}},
+      Bool.pick(AttemptDecision,String.eq(path,"0"),AttemptDecision{"attempt-path-unverified",False{}},
+        Bool.pick(AttemptDecision,Bool.not(String.eq(phase,"exited")),AttemptDecision{"native-not-exited",False{}},
+          Bool.pick(AttemptDecision,String.eq(released,"0"),AttemptDecision{"native-not-released",False{}},
+            Bool.pick(AttemptDecision,String.eq(acknowledged,"0"),AttemptDecision{"native-not-acknowledged",False{}},
+              Bool.pick(AttemptDecision,String.eq(reported,"0"),AttemptDecision{"observation-unreported",False{}},
+                Bool.pick(AttemptDecision,U32.is_lt(0,bytes),AttemptDecision{"eligible",True{}},AttemptDecision{"no-diagnostic-files",False{}}))))))))
+
+def attempt_json_fields(session: String, attempt: String, mode: String, phase: String, status: String, +directory: String, +stdout: U32, +stderr: U32, +observer: U32, +keeper: U32, released: U32, acknowledged: U32, reported: String, pending: String, decision: AttemptDecision) -> String:
+  match decision:
+    case AttemptDecision{reason,eligible}:
+      "{\"session\":" ++ J.string_literal(session)
+      ++ ",\"attempt\":" ++ J.string_literal(attempt)
+      ++ ",\"mode\":" ++ J.string_literal(mode)
+      ++ ",\"phase\":" ++ J.string_literal(phase)
+      ++ ",\"status\":" ++ J.string_literal(status)
+      ++ ",\"directory\":" ++ J.string_literal(directory)
+      ++ ",\"bytes\":" ++ U32.show(U32.add(stdout,U32.add(stderr,U32.add(observer,keeper))))
+      ++ ",\"stdoutBytes\":" ++ U32.show(stdout)
+      ++ ",\"stderrBytes\":" ++ U32.show(stderr)
+      ++ ",\"observerBytes\":" ++ U32.show(observer)
+      ++ ",\"keeperBytes\":" ++ U32.show(keeper)
+      ++ ",\"released\":" ++ Bool.pick(String,U32.is_lt(0,released),"true","false")
+      ++ ",\"acknowledged\":" ++ Bool.pick(String,U32.is_lt(0,acknowledged),"true","false")
+      ++ ",\"reported\":" ++ Bool.pick(String,String.eq(reported,"1"),"true","false")
+      ++ ",\"pendingInput\":" ++ pending
+      ++ ",\"cleanupEligible\":" ++ Bool.pick(String,eligible,"true","false")
+      ++ ",\"cleanupReason\":" ++ J.string_literal(reason) ++ "}"
 
 def attempt_json(session: String, attempt: String, mode: String, phase: String, status: String, +directory: String, +stdout: U32, +stderr: U32, +observer: U32, +keeper: U32, released: U32, acknowledged: U32, reported: String, pending: String, level: String, path: String) -> String:
-  "{\"session\":" ++ J.string_literal(session)
-  ++ ",\"attempt\":" ++ J.string_literal(attempt)
-  ++ ",\"mode\":" ++ J.string_literal(mode)
-  ++ ",\"phase\":" ++ J.string_literal(phase)
-  ++ ",\"status\":" ++ J.string_literal(status)
-  ++ ",\"directory\":" ++ J.string_literal(directory)
-  ++ ",\"bytes\":" ++ U32.show(U32.add(stdout,U32.add(stderr,U32.add(observer,keeper))))
-  ++ ",\"stdoutBytes\":" ++ U32.show(stdout)
-  ++ ",\"stderrBytes\":" ++ U32.show(stderr)
-  ++ ",\"observerBytes\":" ++ U32.show(observer)
-  ++ ",\"keeperBytes\":" ++ U32.show(keeper)
-  ++ ",\"released\":" ++ Bool.pick(String,U32.is_lt(0,released),"true","false")
-  ++ ",\"acknowledged\":" ++ Bool.pick(String,U32.is_lt(0,acknowledged),"true","false")
-  ++ ",\"reported\":" ++ Bool.pick(String,String.eq(reported,"1"),"true","false")
-  ++ ",\"pendingInput\":" ++ pending
-  ++ ",\"cleanupEligible\":" ++ Bool.pick(String,String.eq(attempt_reason(phase,Bool.pick(String,U32.is_lt(0,released),"1","0"),Bool.pick(String,U32.is_lt(0,acknowledged),"1","0"),reported,pending,level,path,U32.add(stdout,U32.add(stderr,U32.add(observer,keeper)))),"eligible"),"true","false")
-  ++ ",\"cleanupReason\":" ++ J.string_literal(attempt_reason(phase,Bool.pick(String,U32.is_lt(0,released),"1","0"),Bool.pick(String,U32.is_lt(0,acknowledged),"1","0"),reported,pending,level,path,U32.add(stdout,U32.add(stderr,U32.add(observer,keeper))))) ++ "}"
+  attempt_json_fields(session,attempt,mode,phase,status,directory,stdout,stderr,observer,keeper,released,acknowledged,reported,pending,attempt_decision(phase,Bool.pick(String,U32.is_lt(0,released),"1","0"),Bool.pick(String,U32.is_lt(0,acknowledged),"1","0"),reported,pending,level,path,U32.add(stdout,U32.add(stderr,U32.add(observer,keeper)))) )
 
 def attempt_fields(fields: List<String>) -> IO(String):
   match fields:
@@ -791,7 +803,7 @@ def attempt_cleanup_fields(db: String, fields: List<String>) -> IO(String):
       released : String = Bool.pick(String,String.eq(released_file,"1"),"1","0")
       acknowledged : String = Bool.pick(String,String.eq(acknowledged_file,"1"),"1","0")
       bytes : U32 = U32.add(stdout,U32.add(stderr,U32.add(observer,keeper)))
-      eligible : Bool = String.eq(attempt_reason(phase,released,acknowledged,reported,pending,level,path,bytes),"eligible")
+      eligible : Bool = attempt_decision_eligible(attempt_decision(phase,released,acknowledged,reported,pending,level,path,bytes))
       files : String <- Bool.pick(IO(String),eligible,attempt_cleanup_files(db,directory),IO.pure(String,""))
       IO.pure(String,files)
     case other: IO.pure(String,"")
