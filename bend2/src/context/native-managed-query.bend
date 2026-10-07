@@ -589,24 +589,31 @@ def submission_decision(+bootstrap: Bootstrap, +role: String, +incarnation: Stri
     case ContextService.SubmissionRefused{code, detail}: StartHeld{"admissionReadFailed"}
     case ContextService.SubmissionUncertain{stage, answer}: StartHeld{"admissionUncertain:" ++ stage}
 
+def reconcile_admission_association(+bootstrap: Bootstrap, +role: String,
+                                    +incarnation: String,
+                                    +admission: Admission.Admission,
+                                    +association: Result<&1,&1,U32 & String,Admission.ManagedAssociation>) -> StartDecision:
+  match association:
+    case Fail{error}: StartHeld{"committedDecisionAssociationUnavailable"}
+    case Done{+stored}:
+      match stored:
+        case Admission.ManagedAssociationStored{+planValue, +planIdentity,
+            +resultSchema, +artifactSha256, +bootstrapText}:
+          accepted_managed_admission(bootstrap, role, incarnation, admission,
+            planValue, planIdentity, resultSchema, artifactSha256, bootstrapText)
+        case other: StartHeld{"committedDecisionAssociationMissing"}
+
 def reconciled_admission_decision(+bootstrap: Bootstrap, +role: String,
                                   +incarnation: String,
                                   +admission: Admission.Admission,
-                                  association: Result<&1,&1,U32 & String,Admission.ManagedAssociation>) -> StartDecision:
+                                  +association: Result<&1,&1,U32 & String,Admission.ManagedAssociation>) -> StartDecision:
   Bool.pick(StartDecision,
     rejection_identity_match(bootstrap_owner(bootstrap), bootstrap_request(bootstrap),
       bootstrap_keeper_path(bootstrap), bootstrap_cwd(bootstrap),
       bootstrap_attempt(bootstrap), bootstrap_artifact_path(bootstrap), admission),
     rejected_admission_decision(bootstrap, admission),
-    match association:
-      case Fail{error}: StartHeld{"committedDecisionAssociationUnavailable"}
-      case Done{+stored}:
-        match stored:
-          case Admission.ManagedAssociationStored{+planValue, +planIdentity,
-              +resultSchema, +artifactSha256, +bootstrapText}:
-            accepted_managed_admission(bootstrap, role, incarnation, admission,
-              planValue, planIdentity, resultSchema, artifactSha256, bootstrapText)
-          case other: StartHeld{"committedDecisionAssociationMissing"})
+    reconcile_admission_association(bootstrap, role, incarnation, admission,
+      association))
 
 def reconcile_committed_admission(+bootstrap: Bootstrap, +role: String,
                                  +incarnation: String, +db: String) -> IO(StartDecision):
