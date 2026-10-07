@@ -16,9 +16,9 @@ class NativeObservation(RECEIVE.Receive):
     def setUp(self):
         super().setUp()
         fixture = self.fixture.read_text()
-        needle = "    if action.get('stdout_line'):\n"
+        needle = "            if action.get('stdout_line'):\n"
         addition = (
-            "    if 'native_line' in action:\n"
+            "            if 'native_line' in action:\n"
             "                print(action['native_line'],flush=True)\n"
             "                reply({'line_written':action['native_line']})\n"
             "                continue\n"
