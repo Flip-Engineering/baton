@@ -135,9 +135,6 @@ class ReviewedSourceLanding(unittest.TestCase):
         self.git_in(worktree, 'commit', '-q', '-m', f'later commit adds {name}')
         return self.git_in(worktree, 'rev-parse', 'HEAD').strip()
 
-    def commit_on_branch(self, path, name, body):
-        return self.commit_more(path, name, body)
-
     def check_fixtures(self, scripts):
         """Commit the check scripts onto main, the way land.py does."""
         for name, body in scripts.items():

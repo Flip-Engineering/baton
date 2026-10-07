@@ -32,8 +32,12 @@ landing = load('reviewed_land_fixture', 'land.py')
 landing.EXE = EXE
 
 
-class Translation(command.McpCommand):
+class Translation(unittest.TestCase):
     """One tool call, the native argv it composed, and the adapter's discovery."""
+
+    def harness(self):
+        """The shared adapter harness, which owns the recording coordinator."""
+        return command.McpCommand('run')
 
     def selector(self, tool, commit=None):
         """The tool arguments and the exact native argv for an optional selector."""
@@ -52,7 +56,7 @@ class Translation(command.McpCommand):
             home = Path(home)
             executable = home / 'fixture-coordinator'
             completed = home / 'completed.json'
-            executable.write_text('#' + sys.executable + '\n' + command.CHILD)
+            executable.write_text('#!' + sys.executable + '\n' + command.CHILD)
             executable.chmod(0o755)
             executable.with_suffix('.json').write_text(json.dumps({
                 'stdout': '{"status":"landed"}', 'stderr': '', 'code': 0,
@@ -77,11 +81,13 @@ class Translation(command.McpCommand):
             return replies[2]['result'], recorded
 
     def test_literal_selector_and_legacy_omission_each_use_one_native_call(self):
+        harness = self.harness()
         for tool in ['baton2_land', 'baton2_land_checked']:
             for selector in [None, '', "review's λ $(literal)", '--commit']:
                 with self.subTest(tool=tool, selector=selector):
                     arguments, argv = self.selector(tool, selector)
-                    result = self.command(tool=tool, arguments=arguments, expected_args=argv)
+                    result = harness.command(stdout='{"status":"landed"}\n', tool=tool,
+                                             arguments=arguments, expected_args=argv)
                     self.assertNotIn('isError', result)
                     self.assertEqual(json.loads(result['content'][0]['text']),
                                      {'status': 'landed'})
@@ -97,18 +103,20 @@ class Translation(command.McpCommand):
                     self.assertIsNone(recorded, 'a rejected selector reached the coordinator')
 
     def test_native_refusal_streams_and_exit_are_preserved(self):
+        harness = self.harness()
         for tool in ['baton2_land', 'baton2_land_checked']:
             with self.subTest(tool=tool):
                 arguments, argv = self.selector(tool, 'selected')
-                self.failure('', 'native refusal λ\n', code=2, tool=tool,
-                             arguments=arguments, expected_args=argv)
+                harness.failure('', 'native refusal λ\n', code=2, tool=tool,
+                                arguments=arguments, expected_args=argv)
 
     def test_discovery_advertises_optional_string_selector(self):
+        harness = self.harness()
         arguments, argv = self.selector('baton2_land')
-        self.command(tool='baton2_land', arguments=arguments, expected_args=argv)
+        harness.command(tool='baton2_land', arguments=arguments, expected_args=argv)
         for tool in ['baton2_land', 'baton2_land_checked']:
             with self.subTest(tool=tool):
-                schema = self.tools[tool]['inputSchema']
+                schema = harness.tools[tool]['inputSchema']
                 self.assertEqual(schema['properties']['commit']['type'], 'string')
                 self.assertNotIn('commit', schema['required'])
                 self.assertIn('recorded branch', schema['properties']['commit']['description'])
