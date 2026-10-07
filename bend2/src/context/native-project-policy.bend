@@ -108,6 +108,13 @@ def observation_identity(+observation: PolicyObservation) -> PolicyObservationId
           J.Jarr{J.Jstr{owner}, J.Jarr{J.Jstr{worktree}, J.Jarr{J.Jstr{path},
           J.Jarr{J.Jstr{sha256}, J.Jnil{}}}}}})},
         PolicyIdentityRefused{"projectPolicyObservationMalformed"})
+    case PolicyAbsent{owner, worktree, path}:
+      Bool.pick(PolicyObservationIdentity,
+        Bool.and(Bool.and(Bool.not(String.is_empty(owner)), Bool.not(String.is_empty(worktree))),
+                 Bool.not(String.is_empty(path))),
+        PolicyMissingIdentity{J.json_text(J.Jarr{J.Jstr{"baton2.context.project-policy.absent.v1"},
+          J.Jarr{J.Jstr{owner}, J.Jarr{J.Jstr{worktree}, J.Jarr{J.Jstr{path}, J.Jnil{}}}}})},
+        PolicyIdentityRefused{"projectPolicyObservationMalformed"})
 
 def observation_identity_text(identity: PolicyObservationIdentity) -> String:
   match identity:
