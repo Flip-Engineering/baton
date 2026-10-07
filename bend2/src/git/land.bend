@@ -258,9 +258,14 @@ def ld_adv_wt_observe(path: String, repo: String, target: String, cand: String) 
 def ld_adv_wt_pick(g: T.GitOut, path: String, repo: String, target: String, cand: String, basis: String) -> IO(LAdv):
   match g:
     case T.GRun{code, out}:
+      +p2 = path
+      +r2 = repo
+      +t2 = target
+      +c2 = cand
+      +b2 = basis
       Bool.pick(IO(LAdv), U32.is_eq(code, 0),
-        ld_adv_wt_observe(path, repo, target, cand),
-        ld_adv_wt_refused(path, repo, target, basis))
+        ld_adv_wt_observe(p2, r2, t2, c2),
+        ld_adv_wt_refused(p2, r2, t2, b2))
     case T.GBroken{detail}: IO.pure(LAdv, AdvBroken{detail})
 
 def ld_adv_wt_head_same(same: Bool, path: String, repo: String, target: String, cand: String, basis: String) -> IO(LAdv):
@@ -279,10 +284,11 @@ def ld_adv_wt_head_same(same: Bool, path: String, repo: String, target: String, 
 def ld_adv_wt_head_pick(g: T.GitOut, path: String, repo: String, target: String, cand: String, basis: String) -> IO(LAdv):
   match g:
     case T.GRun{code, out}:
+      +t2 = target
       +status_ok = U32.is_eq(code, 0)
       +same = Bool.pick(Bool, status_ok,
-        Tx.str_eq(Tx.trim_nl(out), ld_hold_ref(target)), False{})
-      ld_adv_wt_head_same(same, path, repo, target, cand, basis)
+        Tx.str_eq(Tx.trim_nl(out), ld_hold_ref(t2)), False{})
+      ld_adv_wt_head_same(same, path, repo, t2, cand, basis)
     case T.GBroken{detail}: IO.pure(LAdv, AdvBroken{detail})
 
 def ld_adv_wt_target_same(same: Bool, path: String, repo: String, target: String, cand: String, basis: String) -> IO(LAdv):
@@ -301,9 +307,10 @@ def ld_adv_wt_target_same(same: Bool, path: String, repo: String, target: String
 def ld_adv_wt_target_pick(g: T.GitOut, path: String, repo: String, target: String, cand: String, basis: String) -> IO(LAdv):
   match g:
     case T.GRun{code, out}:
+      +b2 = basis
       +status_ok = U32.is_eq(code, 0)
-      +same = Bool.pick(Bool, status_ok, Tx.str_eq(Tx.trim_nl(out), basis), False{})
-      ld_adv_wt_target_same(same, path, repo, target, cand, basis)
+      +same = Bool.pick(Bool, status_ok, Tx.str_eq(Tx.trim_nl(out), b2), False{})
+      ld_adv_wt_target_same(same, path, repo, target, cand, b2)
     case T.GBroken{detail}: IO.pure(LAdv, AdvBroken{detail})
 
 

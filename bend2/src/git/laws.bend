@@ -1120,9 +1120,14 @@ def m3a_held_advance_is_the_worktree_fast_forward(path, repo, target, cand, basi
 def held_success_arm(g: T.GitOut, path: String, repo: String, target: String, cand: String, basis: String) -> IO(L.LAdv):
   match g:
     case T.GRun{code, out}:
+      +p2 = path
+      +r2 = repo
+      +t2 = target
+      +c2 = cand
+      +b2 = basis
       Bool.pick(IO(L.LAdv), U32.is_eq(code, 0),
-        L.ld_adv_wt_observe(path, repo, target, cand),
-        L.ld_adv_wt_refused(path, repo, target, basis))
+        L.ld_adv_wt_observe(p2, r2, t2, c2),
+        L.ld_adv_wt_refused(p2, r2, t2, b2))
     case T.GBroken{detail}: IO.pure(L.LAdv, L.AdvBroken{detail})
 
 law m3a_held_success_arm_uses_publication_observation:
