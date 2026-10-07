@@ -186,13 +186,14 @@ test('CLI reports its actual URL and exits cleanly when stdin reaches EOF', asyn
   const child = spawn(process.execPath, [entry, '--database', f.databasePath,
     '--reader', 'root', '--subject', 'child', '--port', '0'],
   { stdio: ['pipe', 'pipe', 'pipe'] });
+  const closed = new Promise((resolve) => child.once('close', (code) => resolve(code)));
   const lines = createInterface({ input: child.stdout })[Symbol.asyncIterator]();
   const errors = [];
   child.stderr.on('data', (chunk) => errors.push(String(chunk)));
   t.after(async () => {
     if (child.exitCode === null && child.signalCode === null) child.kill('SIGTERM');
     if (child.exitCode === null && child.signalCode === null) {
-      await new Promise((resolve) => child.once('close', resolve));
+      await closed;
     }
     rmSync(f.directory, { recursive: true, force: true });
   });
@@ -208,7 +209,7 @@ test('CLI reports its actual URL and exits cleanly when stdin reaches EOF', asyn
   assert.match(page.headers.get('location'), /subject=child/);
 
   child.stdin.end();
-  const exit = await new Promise((resolve) => child.once('close', (code) => resolve(code)));
+  const exit = await closed;
   assert.equal(exit, 0, errors.join(''));
 });
 
