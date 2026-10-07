@@ -675,8 +675,8 @@ def attempt_fields(fields: List<String>) -> IO(String):
       keeper : U32 <- IO.try(U32,F.Files.size(directory ++ "/keeper.log"))
       released_file : String <- IO.try(String,F.Files.regular(directory ++ "/released"))
       acknowledged_file : String <- IO.try(String,F.Files.regular(directory ++ "/acknowledged"))
-      released : U32 <- IO.try(U32,U32.read(Bool.pick(String,String.eq(released_file,"1"),"1","0")))
-      acknowledged : U32 <- IO.try(U32,U32.read(Bool.pick(String,String.eq(acknowledged_file,"1"),"1","0")))
+      released : U32 = number_of(U32.read(Bool.pick(String,String.eq(released_file,"1"),"1","0")),0)
+      acknowledged : U32 = number_of(U32.read(Bool.pick(String,String.eq(acknowledged_file,"1"),"1","0")),0)
       IO.pure(String,attempt_json(session,attempt,mode,phase,status,directory,stdout,stderr,observer,keeper,released,acknowledged,reported,pending,level,path))
     case other: IO.pure(String,"")
 
