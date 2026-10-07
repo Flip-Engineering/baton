@@ -378,20 +378,23 @@ def project_policy_json_decoded(raw: NativeRequest.RawDecode) -> ProjectPolicyJs
 def project_policy_json_rows(+rows: String) -> ProjectPolicyJson:
   project_policy_json_decoded(NativeRequest.raw_rows(rows))
 
+def project_policy_is_present(observation: NativePolicy.PolicyObservation) -> Bool:
+  match observation:
+    case NativePolicy.PolicyPresent{owner, worktree, path, sha256, bytes}: True{}
+    case NativePolicy.PolicyAbsent{owner, worktree, path}: False{}
+
 def project_policy_identity_result(+observation: NativePolicy.PolicyObservation,
                                    identity: NativePolicy.PolicySelectionIdentity) -> ProjectPolicyAnswer:
   match identity:
     case NativePolicy.PolicySelectionRefused{condition}: ProjectPolicyRefused{condition}
     case NativePolicy.PolicySelectionRead{value}:
-      match observation:
-        case NativePolicy.PolicyPresent{owner, worktree, path, sha256, bytes}:
-          ProjectPolicyReady{NativePolicy.ProjectPolicy{Eng.ss_empty(), Eng.ss_empty()}, value}
-        case other: ProjectPolicyRefused{"projectPolicyObservationMismatch"}
+      Bool.pick(ProjectPolicyAnswer, project_policy_is_present(observation),
+        ProjectPolicyReady{NativePolicy.ProjectPolicy{Eng.ss_empty(), Eng.ss_empty()}, value},
+        ProjectPolicyRefused{"projectPolicyObservationMismatch"})
     case NativePolicy.PolicySelectionMissing{value}:
-      match observation:
-        case NativePolicy.PolicyAbsent{owner, worktree, path}:
-          ProjectPolicyReady{NativePolicy.ProjectPolicy{Eng.ss_empty(), Eng.ss_empty()}, value}
-        case other: ProjectPolicyRefused{"projectPolicyObservationMismatch"}
+      Bool.pick(ProjectPolicyAnswer, project_policy_is_present(observation),
+        ProjectPolicyRefused{"projectPolicyObservationMismatch"},
+        ProjectPolicyReady{NativePolicy.ProjectPolicy{Eng.ss_empty(), Eng.ss_empty()}, value})
 
 def project_policy_identity(+observation: NativePolicy.PolicyObservation) -> ProjectPolicyAnswer:
   project_policy_identity_result(observation, NativePolicy.selection_identity(observation))
