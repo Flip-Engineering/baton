@@ -526,7 +526,8 @@ law a_foreign_capability_registration_is_refused:
 def a_foreign_capability_registration_is_refused(identity,owner,capability,revision,other_capability,other_revision,database,request,session,adoptions,lease_references,armed,event,cancelled):
   {==}
 
-# A cancelled registration refuses re-registration in either revision state.
+# A cancelled registration refuses re-registration in either revision state,
+# preserving its outstanding occurrence and pending duty.
 law a_cancelled_registration_refuses_registration:
   for +identity: String
   for +owner: String
@@ -540,9 +541,11 @@ law a_cancelled_registration_refuses_registration:
   for +lease_references: U32
   for +armed: Bool
   for +event: Bool
-  {register_ready(Registration{identity,Generation{owner,capability,revision},database,owner,request,session,adoptions,lease_references,armed,event,True{}},Generation{owner,capability,other_revision}) == Registration{identity,Generation{owner,capability,revision},database,owner,request,session,adoptions,lease_references,armed,event,True{}} : Registration}
+  for +outstanding: Maybe<U32>
+  for +pending: Bool
+  {register_ready(Registration{identity,Generation{owner,capability,revision},database,owner,request,session,adoptions,lease_references,armed,event,True{},outstanding,pending},Generation{owner,capability,other_revision}) == Registration{identity,Generation{owner,capability,revision},database,owner,request,session,adoptions,lease_references,armed,event,True{},outstanding,pending} : Registration}
 
-def a_cancelled_registration_refuses_registration(identity,owner,capability,revision,other_revision,database,request,session,adoptions,lease_references,armed,event):
+def a_cancelled_registration_refuses_registration(identity,owner,capability,revision,other_revision,database,request,session,adoptions,lease_references,armed,event,outstanding,pending):
   {==}
 
 # An armed registration refuses repeated arming until its references
