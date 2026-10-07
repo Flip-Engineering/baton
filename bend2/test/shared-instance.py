@@ -865,6 +865,27 @@ class SharedInstance(unittest.TestCase):
                 except ProcessLookupError:
                     pass
 
+    def patch_admission(self, directory, database_inode=None, guard_inode=None):
+        """Rewrites one binding of an attempt's admission record and recomputes its
+        integrity check, so the only defect is the one under test."""
+        path = directory / 'admission'
+        raw = path.read_bytes()
+        layout = struct.Struct('=8sIIQQQQQQQQ')
+        (magic, schema, reserved, database_device, database, guard_device, guard,
+         attempt_device, attempt, path_length) = layout.unpack_from(raw, 0)
+        if database_inode is not None:
+            database = database_inode
+        if guard_inode is not None:
+            guard = guard_inode
+        head = layout.pack(magic, schema, reserved, database_device, database,
+                           guard_device, guard, attempt_device, attempt, path_length)
+        body = raw[layout.size + 8:]
+        digest = 0xcbf29ce484222325
+        for byte in head + body:
+            digest ^= byte
+            digest = (digest * 0x100000001b3) & 0xFFFFFFFFFFFFFFFF
+        path.write_bytes(head + struct.pack('=Q', digest) + body)
+
     def test_adoption_refuses_unbound_or_foreign_credentials(self):
         """A shared adoption needs a record bound to this database and to the
         session guard the caller holds. An attempt admitted without a guard, an
@@ -887,15 +908,13 @@ class SharedInstance(unittest.TestCase):
         detail = self.adoption_refusal(nolock)
         self.assertIn('states no session guard binding', detail, detail)
 
-        # A legacy attempt-level admission binds no database.
-        legacy = pathlib.Path(f'{self.db}.attempt-legacy')
-        child = self.spawn('legacy-retain', legacy, self.home, 'one\n',
-                           sys.executable, self.survivor)
-        self.line(child, 'admitted')
-        self.hold(legacy / 'stdout', '"role": "native"')
-        child.kill()
-        child.wait(timeout=10)
-        detail = self.adoption_refusal(legacy)
+        # A record that states no database binding is refused on a shared path.
+        unbound, unbound_observer, _ = self.prepared_survivor('unbound', 'fixture')
+        self.kill_owner()
+        unbound_observer.kill()
+        unbound_observer.wait(timeout=10)
+        self.patch_admission(unbound, database_inode=0)
+        detail = self.adoption_refusal(unbound)
         self.assertIn('states no database binding', detail, detail)
 
         # A record that belongs to this database is refused for another one.
