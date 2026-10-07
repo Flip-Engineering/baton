@@ -720,13 +720,6 @@ def decl_pending(+cat: Decl.Cat, +inv: Decl.Inv, +module_id: String,
                   PendsNil{}),
         decl_pending(rest, inv, module_id, want_digest, want, path))
 
-def decl_known(+cat: Decl.Cat, +module_id: String) -> Bool:
-  match cat:
-    case Decl.CatNil{}: False{}
-    case Decl.CatCons{head, rest}:
-      Bool.pick(Bool, String.eq(Decl.decl_module_id(head), module_id), True{},
-                decl_known(rest, module_id))
-
 def ops_known(+ops: Decl.Ops, +want: String) -> Bool:
   match ops:
     case Decl.OpsNil{}: False{}
@@ -742,15 +735,19 @@ def decl_ops_known(+cat: Decl.Cat, +module_id: String, +want: String) -> Bool:
                 ops_known(Decl.decl_operations(head), want),
                 decl_ops_known(rest, module_id, want))
 
+# The inventory records the admitted declaration digest, so a dependency whose
+# module the inventory does not carry is unresolved and one whose recorded digest
+# differs from the recorded edge is a mismatch. Only where the digest agrees does
+# the admitted catalog have to hold the operation.
 def edge_failure(+cat: Decl.Cat, +inv: Decl.Inv, +module_id: String,
                  +want_digest: String, +want: String) -> PlanFail:
-  Bool.pick(PlanFail, decl_known(cat, module_id),
+  Bool.pick(PlanFail, String.is_empty(digest_at(inv, module_id)),
+    PfAt{PlanDependencyUnresolved{module_id, want}},
     Bool.pick(PlanFail, String.eq(digest_at(inv, module_id), want_digest),
       Bool.pick(PlanFail, decl_ops_known(cat, module_id, want), PfNone{},
                 PfAt{PlanDependencyUnresolved{module_id, want}}),
       PfAt{PlanDependencyDigestMismatch{module_id, want_digest,
-                                        digest_at(inv, module_id)}}),
-    PfAt{PlanDependencyUnresolved{module_id, want}})
+                                        digest_at(inv, module_id)}}))
 
 def resolve_edges(+edges: Decl.ModRefs, +path: Eng.SS, +cat: Decl.Cat,
                   +inv: Decl.Inv, +acc: Pendings, +fail: PlanFail) -> Resolved:

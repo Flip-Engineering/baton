@@ -440,8 +440,8 @@ def wire_rows_full() -> Req.Rows:
     Codec.object_row("4", "0", "moduleBinding"),
     Codec.text_row("5", "4", "id", "m"),
     Codec.object_row("6", "0", "request"),
-    Codec.object_row("7", "0", "inputIdentities"),
-    Codec.object_row("8", "0", "operationPlan"),
+    Codec.array_row("7", "0", "inputIdentities"),
+    Codec.array_row("8", "0", "operationPlan"),
     Codec.text_row("9", "0", "role", "r1"),
     Codec.text_row("10", "0", "incarnation", "i1")])
 
@@ -458,8 +458,8 @@ def wire_rows_undeclared() -> Req.Rows:
     Codec.text_row("3", "0", "owner", "o1"),
     Codec.object_row("4", "0", "moduleBinding"),
     Codec.object_row("5", "0", "request"),
-    Codec.object_row("6", "0", "inputIdentities"),
-    Codec.object_row("7", "0", "operationPlan"),
+    Codec.array_row("6", "0", "inputIdentities"),
+    Codec.array_row("7", "0", "operationPlan"),
     Codec.text_row("8", "0", "role", "r1"),
     Codec.text_row("9", "0", "incarnation", "i1"),
     Codec.text_row("10", "0", "extra", "x")])
@@ -472,8 +472,8 @@ def wire_rows_null_scalar() -> Req.Rows:
     Codec.text_row("3", "0", "owner", "o1"),
     Codec.object_row("4", "0", "moduleBinding"),
     Codec.object_row("5", "0", "request"),
-    Codec.object_row("6", "0", "inputIdentities"),
-    Codec.object_row("7", "0", "operationPlan"),
+    Codec.array_row("6", "0", "inputIdentities"),
+    Codec.array_row("7", "0", "operationPlan"),
     Codec.text_row("8", "0", "role", "r1"),
     Codec.text_row("9", "0", "incarnation", "i1")])
 
@@ -538,7 +538,7 @@ def wire_law_a_retained_role_and_incarnation_travel_as_strings():
   {==}
 
 law wire_law_a_transported_invocation_reads_its_members:
-  {wire_read(wire_rows_full()) == WrInvocation{"2", Context.Present{"q1"}, Context.Present{"o1"}, Codec.Robj{Codec.Rpair{"id", Codec.Rstr{"m"}, Codec.Rnil{}}}, Codec.Robj{Codec.Rnil{}}, Codec.Robj{Codec.Rnil{}}, Codec.Robj{Codec.Rnil{}}, Context.Present{"r1"}, Context.Present{"i1"}} : WireRead}
+  {wire_read(wire_rows_full()) == WrInvocation{"2", Context.Present{"q1"}, Context.Present{"o1"}, Codec.Robj{Codec.Rpair{"id", Codec.Rstr{"m"}, Codec.Rnil{}}}, Codec.Robj{Codec.Rnil{}}, Codec.Rarr{Codec.Rnil{}, Codec.Rnil{}}, Codec.Rarr{Codec.Rnil{}, Codec.Rnil{}}, Context.Present{"r1"}, Context.Present{"i1"}} : WireRead}
 
 def wire_law_a_transported_invocation_reads_its_members():
   {==}
@@ -556,7 +556,7 @@ def wire_law_an_undeclared_member_refuses():
   {==}
 
 law wire_law_a_null_scalar_member_reads_as_absent:
-  {wire_read(wire_rows_null_scalar()) == WrInvocation{"2", Context.Absent{}, Context.Present{"o1"}, Codec.Robj{Codec.Rnil{}}, Codec.Robj{Codec.Rnil{}}, Codec.Robj{Codec.Rnil{}}, Codec.Robj{Codec.Rnil{}}, Context.Present{"r1"}, Context.Present{"i1"}} : WireRead}
+  {wire_read(wire_rows_null_scalar()) == WrInvocation{"2", Context.Absent{}, Context.Present{"o1"}, Codec.Robj{Codec.Rnil{}}, Codec.Robj{Codec.Rnil{}}, Codec.Rarr{Codec.Rnil{}, Codec.Rnil{}}, Codec.Rarr{Codec.Rnil{}, Codec.Rnil{}}, Context.Present{"r1"}, Context.Present{"i1"}} : WireRead}
 
 def wire_law_a_null_scalar_member_reads_as_absent():
   {==}
