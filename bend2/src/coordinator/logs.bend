@@ -873,7 +873,7 @@ def stderr_health(+db: String, +directory: String, metadata: String) -> IO(Strin
     Bool.pick(IO(String),String.eq(full,"0"),IO.pure(String,"spool-missing"),
     Bool.pick(IO(String),String.eq(meta,"0"),IO.pure(String,"metadata-missing"),do IO<String>:
       valid : String <- IO.try(String,DB.Sql.query(db,"SELECT CASE WHEN json_valid(" ++ C.q(metadata) ++ ") AND json_type(" ++ C.q(metadata) ++ ")='object' AND json_extract(" ++ C.q(metadata) ++ ",'$.schema')='baton2-stderr-v1' AND json_extract(" ++ C.q(metadata) ++ ",'$.status')='complete' AND json_type(" ++ C.q(metadata) ++ ",'$.limitBytes')='integer' AND json_type(" ++ C.q(metadata) ++ ",'$.truncated') IN ('true','false') AND json_type(" ++ C.q(metadata) ++ ",'$.observedBytes')='integer' AND json_type(" ++ C.q(metadata) ++ ",'$.retainedBytes')='integer' AND json_type(" ++ C.q(metadata) ++ ",'$.spool')='text' THEN 'ok' ELSE 'metadata-invalid' END;"))
-      IO.pure(String,Tx.trim_nl(valid)))))
+      IO.pure(String,Tx.trim_nl(valid))))))
 
 def stderr_generation_health(+db: String, +stderr_path: String, metadata: String) -> IO(String):
   do IO<String>:
@@ -885,7 +885,7 @@ def stderr_generation_health(+db: String, +stderr_path: String, metadata: String
     Bool.pick(IO(String),String.eq(full,"0"),IO.pure(String,"spool-missing"),
     Bool.pick(IO(String),String.eq(meta,"0"),IO.pure(String,"metadata-missing"),do IO<String>:
       valid : String <- IO.try(String,DB.Sql.query(db,"SELECT CASE WHEN json_valid(" ++ C.q(metadata) ++ ") AND json_type(" ++ C.q(metadata) ++ ")='object' AND json_extract(" ++ C.q(metadata) ++ ",'$.schema')='baton2-stderr-v1' AND json_extract(" ++ C.q(metadata) ++ ",'$.status')='complete' AND json_type(" ++ C.q(metadata) ++ ",'$.limitBytes')='integer' AND json_type(" ++ C.q(metadata) ++ ",'$.truncated') IN ('true','false') AND json_type(" ++ C.q(metadata) ++ ",'$.observedBytes')='integer' AND json_type(" ++ C.q(metadata) ++ ",'$.retainedBytes')='integer' AND json_type(" ++ C.q(metadata) ++ ",'$.spool')='text' THEN 'ok' ELSE 'metadata-invalid' END;"))
-      IO.pure(String,Tx.trim_nl(valid)))))
+      IO.pure(String,Tx.trim_nl(valid))))))
 
 def stderr_generation(+db: String, +stderr_path: String) -> IO(String):
   do IO<String>:
