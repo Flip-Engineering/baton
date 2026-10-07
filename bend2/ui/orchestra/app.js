@@ -623,7 +623,6 @@ async function resnapshotThenResume() {
     scheduleEndpointRetry(e);
     return;
   }
-  state.reconnectDelay = 1000;
   connectEvents();
 }
 
