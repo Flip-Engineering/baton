@@ -347,9 +347,6 @@ def state_cli(args: List<String>) -> IO(Unit):
       Lock.SessionLock.acquire_session(Unit,database,session,canonical => lock => state_locked(directory,canonical,cwd,payload,program,lock))
     case _: IO.die(Unit,2,"state DATABASE SESSION ATTEMPT CWD PAYLOAD PROGRAM ARGS...")
 
-def mode_number(+mode: String) -> U32:
-  Bool.pick(U32,String.eq(mode,"state"),17,mode_legacy(mode))
-
 def mode_legacy(+mode: String) -> U32:
   Bool.pick(U32,Bool.or(String.eq(mode,"--instance-owner"),String.eq(mode,"owner")),1,
   Bool.pick(U32,String.eq(mode,"admit"),2,
@@ -365,6 +362,9 @@ def mode_legacy(+mode: String) -> U32:
   Bool.pick(U32,String.eq(mode,"partial"),12,
   Bool.pick(U32,String.eq(mode,"partial-uncommitted"),13,Bool.pick(U32,String.eq(mode,"admit-file"),14,
   Bool.pick(U32,String.eq(mode,"subscribe"),15,Bool.pick(U32,String.eq(mode,"publish"),16,0))))))))))))))))
+
+def mode_number(+mode: String) -> U32:
+  Bool.pick(U32,String.eq(mode,"state"),17,mode_legacy(mode))
 
 def dispatch(mode: U32, rest: List<String>) -> IO(Unit):
   match mode:
