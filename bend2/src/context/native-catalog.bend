@@ -76,21 +76,27 @@ def decoded_declaration(+row: J.Json, decoded: NativeDecl.DeclarationDecode) -> 
 def decoded_row(+row: J.Json) -> CatalogDecode:
   decoded_declaration(row, NativeDecl.decode(member(row, "declaration"), field(row, "declarationDigest")))
 
+def catalog_tail_join(+catalog: Decl.Cat, +inventory: Decl.Inv, +installed: Eng.SS,
+                      tail: CatalogDecode) -> CatalogDecode:
+  match tail:
+    case CatalogRefused{condition}: CatalogRefused{condition}
+    case CatalogDecoded{next_catalog, next_inventory, next_installed}:
+      match catalog:
+        case Decl.CatCons{declaration, ignored}:
+          CatalogDecoded{append_catalog(next_catalog, declaration), merge_inv(inventory, next_inventory), merge_ss(installed, next_installed)}
+        case Decl.CatNil{}: CatalogRefused{"inventoryDeclarationMissing"}
+
+def catalog_tail_row(+tail: J.Json, row: CatalogDecode) -> CatalogDecode:
+  match row:
+    case CatalogRefused{condition}: CatalogRefused{condition}
+    case CatalogDecoded{catalog, inventory, installed}:
+      catalog_tail_join(catalog, inventory, installed, catalog_tail(tail))
+
 def catalog_tail(+rows: J.Json) -> CatalogDecode:
   match rows:
     case J.Jarr{J.Jnil{}, J.Jnil{}}:
       CatalogDecoded{Decl.CatNil{}, Decl.Inv{Decl.ArtsNil{}, Eng.ss_empty(), Decl.DigsNil{}}, Eng.ss_empty()}
-    case J.Jarr{+head, +tail}:
-      match decoded_row(head):
-        case CatalogRefused{condition}: CatalogRefused{condition}
-        case CatalogDecoded{catalog, inventory, installed}:
-          match catalog_tail(tail):
-            case CatalogRefused{condition}: CatalogRefused{condition}
-            case CatalogDecoded{next_catalog, next_inventory, next_installed}:
-              match catalog:
-                case Decl.CatCons{declaration, ignored}:
-              CatalogDecoded{append_catalog(next_catalog, declaration), merge_inv(inventory, next_inventory), merge_ss(installed, next_installed)}
-                case Decl.CatNil{}: CatalogRefused{"inventoryDeclarationMissing"}
+    case J.Jarr{+head, +tail}: catalog_tail_row(tail, decoded_row(head))
     case other: CatalogRefused{"inventoryModulesMalformed"}
 
 def inventory_value(+value: J.Json) -> CatalogDecode:
