@@ -94,6 +94,12 @@ def recover_cli(args: List<String>) -> IO(Unit):
       IO.pure(Unit,Unit{})
     case _: IO.die(Unit,2,"recover-retained DATABASE ATTEMPT")
 
+# Prints the outcome of one attempt-level operation.
+def operation(name: String, result: Result<&1,&1,U32 & String,Unit>) -> IO(Unit):
+  match result:
+    case Done{unit}: IO.print(name ++ "-ok")
+    case Fail{(code,text)}: IO.print(name ++ "-failed:" ++ U32.show(code) ++ ": " ++ text)
+
 def recovery_complete_lines(+handle: U32, line: Maybe<String>) -> IO(Unit):
   match line:
     case None{}: do IO<Unit>:
@@ -137,12 +143,6 @@ def attach_owned_cli(args: List<String>) -> IO(Unit):
   match args:
     case database <> directory <> Nil{}: Lock.SessionLock.acquire_session(Unit,database,"fixture",canonical => lock => attached_locked(canonical,directory,lock))
     case _: IO.die(Unit,2,"attach-owned DATABASE ATTEMPT")
-
-# Prints the outcome of one attempt-level operation.
-def operation(name: String, result: Result<&1,&1,U32 & String,Unit>) -> IO(Unit):
-  match result:
-    case Done{unit}: IO.print(name ++ "-ok")
-    case Fail{(code,text)}: IO.print(name ++ "-failed:" ++ U32.show(code) ++ ": " ++ text)
 
 # The completion cycle. Release and acknowledgment end custody; retirement
 # releases the capability, and a later write through it must be refused.
