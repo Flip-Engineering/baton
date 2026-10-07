@@ -50,26 +50,32 @@ law without_id_drops_the_completed_session:
 def without_id_drops_the_completed_session():
   {==}
 
-law novel_forks_receivable_sessions:
-  {Instance.member(Instance.fork_of(Instance.novel(Con{("n1", "codex"), Con{("n2", "muse"), Con{("n3", "omp"), Nil{}}}}, Nil{}, Nil{})), "n1") == True{} : Bool}
+law partition_forks_receivable_sessions:
+  {Instance.member(Instance.fork_of(Instance.partition(Con{("n1", "codex"), Con{("n2", "muse"), Con{("n3", "omp"), Nil{}}})), "n1") == True{} : Bool}
 
-def novel_forks_receivable_sessions():
+def partition_forks_receivable_sessions():
   {==}
 
-law novel_refuses_turn_route_sessions:
-  {Instance.member(Instance.refuse_of(Instance.novel(Con{("n1", "codex"), Con{("n2", "muse"), Con{("n3", "omp"), Nil{}}}}, Nil{}, Nil{})), "n2") == True{} : Bool}
+law partition_refuses_turn_route_sessions:
+  {Instance.member(Instance.refuse_of(Instance.partition(Con{("n1", "codex"), Con{("n2", "muse"), Con{("n3", "omp"), Nil{}}})), "n2") == True{} : Bool}
 
-def novel_refuses_turn_route_sessions():
+def partition_refuses_turn_route_sessions():
   {==}
 
-law novel_skips_in_flight_sessions:
-  {Instance.member(Instance.fork_of(Instance.novel(Con{("n1", "codex"), Con{("n3", "omp"), Nil{}}}, Con{"n1", Nil{}}, Nil{})), "n1") == False{} : Bool}
+law strip_known_removes_in_flight_sessions:
+  {Instance.member(Instance.sessions_of(Instance.stripped_fresh(Instance.strip_known(Con{("n1", "codex"), Con{("n3", "omp"), Nil{}}}, Con{"n1", Nil{}}))), "n1") == False{} : Bool}
 
-def novel_skips_in_flight_sessions():
+def strip_known_removes_in_flight_sessions():
   {==}
 
-law novel_skips_refused_sessions_until_a_commit:
-  {Instance.member(Instance.fork_of(Instance.novel(Con{("n1", "codex"), Con{("n2", "muse"), Nil{}}}, Nil{}, Con{"n2", Nil{}})), "n2") == False{} : Bool}
+law strip_known_returns_the_known_set:
+  {Instance.member(Instance.stripped_kept(Instance.strip_known(Con{("n1", "codex"), Con{("n3", "omp"), Nil{}}}, Con{"n1", Nil{}})), "n1") == True{} : Bool}
 
-def novel_skips_refused_sessions_until_a_commit():
+def strip_known_returns_the_known_set():
+  {==}
+
+law without_session_drops_the_named_pair:
+  {Instance.member(Instance.sessions_of(Instance.without_session(Con{("n1", "codex"), Con{("n2", "muse"), Nil{}}}, "n1")), "n1") == False{} : Bool}
+
+def without_session_drops_the_named_pair():
   {==}

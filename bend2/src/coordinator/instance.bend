@@ -51,10 +51,13 @@ def recorded_endpoint(+db: String, +session: String, index: String) -> IO(String
 def dirty_session_sql() -> String:
   "SELECT DISTINCT m.recipient || '|' || s.harness FROM messages m JOIN sessions s ON s.id=m.recipient WHERE m.receipt IS NULL AND m.recipient <> '' AND NOT " ++ C.stopped_session_sql("m.recipient") ++ " AND s.harness IN ('codex','omp','muse','claude-code') AND s.endpoint <> '' ORDER BY m.recipient;"
 
-def split_pair(line: String) -> String & String:
-  match String.split(line, Char.from_u32(124)):
+def split_parts(parts: List<String>, +line: String) -> String & String:
+  match parts:
     case session <> harness <> Nil{}: (Tx.trim_nl(session), Tx.trim_nl(harness))
     case other: (Tx.trim_nl(line), "")
+
+def split_pair(+line: String) -> String & String:
+  split_parts(String.split(line, Char.from_u32(124)), line)
 
 def parse_pairs(lines: List<String>) -> List<String & String>:
   match lines:
@@ -74,51 +77,67 @@ def snapshot(+db: String) -> IO(List<String & String>):
 def receivable(+harness: String) -> Bool:
   Bool.or(String.eq(harness, "codex"), String.eq(harness, "omp"))
 
+def without_session_eq(rest: List<String & String>, +id: String, session: String, harness: String, same: Bool) -> List<String & String>:
+  match same:
+    case True{}: without_session(rest, id)
+    case False{}: Con{(session, harness), without_session(rest, id)}
+
 def without_session(pairs: List<String & String>, +id: String) -> List<String & String>:
   match pairs:
     case Nil{}: Nil{}
-    case (session, harness) <> rest: match String.eq(session, id):
-      case True{}: without_session(rest, id)
-      case False{}: Con{(session, harness), without_session(rest, id)}
+    case (+session, +harness) <> rest: without_session_eq(rest, id, session, harness, String.eq(session, id))
 
-# Linear strip: each known session is removed by threading the remainder, so
-# the dirty list is read once per known session and never duplicated.
-def strip_known(pairs: List<String & String>, known: List<String>) -> List<String & String>:
+# Linear strip: each known session is removed by threading the remainder, and
+# the known set is returned alongside so no list is ever read twice.
+def strip_cons(stripped: List<String & String> & List<String>, id: String) -> List<String & String> & List<String>:
+  match stripped:
+    case (fresh, kept): (fresh, Con{id, kept})
+
+def strip_known(pairs: List<String & String>, known: List<String>) -> List<String & String> & List<String>:
   match known:
-    case Nil{}: pairs
-    case id <> rest: strip_known(without_session(pairs, id), rest)
+    case Nil{}: (pairs, Nil{})
+    case id <> rest: strip_cons(strip_known(without_session(pairs, id), rest), id)
+
+def partition_fit(rest: List<String & String>, session: String, harness: String, fork: List<String & String>, refuse: List<String & String>, fits: Bool) -> List<String & String> & List<String & String>:
+  match fits:
+    case True{}: partition_go(rest, Con{(session, harness), fork}, refuse)
+    case False{}: partition_go(rest, fork, Con{(session, harness), refuse})
 
 def partition_go(pairs: List<String & String>, fork: List<String & String>, refuse: List<String & String>) -> List<String & String> & List<String & String>:
   match pairs:
     case Nil{}: (fork, refuse)
-    case (session, harness) <> rest: match receivable(harness):
-      case True{}: partition_go(rest, Con{(session, harness), fork}, refuse)
-      case False{}: partition_go(rest, fork, Con{(session, harness), refuse})
+    case (+session, +harness) <> rest: partition_add(rest, session, harness, fork, refuse)
+
+def partition_add(rest: List<String & String>, session: String, +harness: String, fork: List<String & String>, refuse: List<String & String>) -> List<String & String> & List<String & String>:
+  partition_fit(rest, session, harness, fork, refuse, receivable(harness))
 
 def partition(pairs: List<String & String>) -> List<String & String> & List<String & String>:
   partition_go(pairs, Nil{}, Nil{})
-
-def novel(pairs: List<String & String>, flying: List<String>, refused: List<String>) -> List<String & String> & List<String & String>:
-  partition(strip_known(strip_known(pairs, flying), refused))
 
 def sessions_of(pairs: List<String & String>) -> List<String>:
   match pairs:
     case Nil{}: Nil{}
     case (session, harness) <> rest: Con{session, sessions_of(rest)}
 
+def without_id_eq(rest: List<String>, +id: String, session: String, same: Bool) -> List<String>:
+  match same:
+    case True{}: without_id(rest, id)
+    case False{}: Con{session, without_id(rest, id)}
+
 def without_id(sessions: List<String>, +id: String) -> List<String>:
   match sessions:
     case Nil{}: Nil{}
-    case session <> rest: match String.eq(session, id):
-      case True{}: without_id(rest, id)
-      case False{}: Con{session, without_id(rest, id)}
+    case +session <> rest: without_id_eq(rest, id, session, String.eq(session, id))
+
+def member_eq(rest: List<String>, +id: String, same: Bool) -> Bool:
+  match same:
+    case True{}: True{}
+    case False{}: member(rest, id)
 
 def member(sessions: List<String>, +id: String) -> Bool:
   match sessions:
     case Nil{}: False{}
-    case session <> rest: match String.eq(session, id):
-      case True{}: True{}
-      case False{}: member(rest, id)
+    case +session <> rest: member_eq(rest, id, String.eq(session, id))
 
 def fork_of(decided: List<String & String> & List<String & String>) -> List<String>:
   match decided:
@@ -127,6 +146,14 @@ def fork_of(decided: List<String & String> & List<String & String>) -> List<Stri
 def refuse_of(decided: List<String & String> & List<String & String>) -> List<String>:
   match decided:
     case (fork, refuse): sessions_of(refuse)
+
+def stripped_fresh(stripped: List<String & String> & List<String>) -> List<String & String>:
+  match stripped:
+    case (fresh, kept): fresh
+
+def stripped_kept(stripped: List<String & String> & List<String>) -> List<String>:
+  match stripped:
+    case (fresh, kept): kept
 
 # One session task runs the recorded receive entry with the recorded harness
 # executable and log resolved from the receiver endpoint array. Model, effort
@@ -165,8 +192,8 @@ def relay(task: Chan(Result<&1,&1,U32 & String,Unit>), session: String, chan: Ch
     done : Result<&1,&1,U32 & String,Unit> <- IO.join(Result<&1,&1,U32 & String,Unit>, task)
     send_or_die(chan, TaskDone{session, done})
 
-def kind_event(kind: String) -> IO(Event):
-  match String.eq(kind, "commit"):
+def kind_commit(commit: Bool) -> IO(Event):
+  match commit:
     case True{}: IO.pure(Event, Commit{})
     case False{}: IO.pure(Event, Gap{})
 
@@ -176,7 +203,7 @@ def kind_event(kind: String) -> IO(Event):
 def classify(db: String, text: String) -> IO(Event):
   do IO<Event>:
     saved : String <- IO.try(String, DB.Sql.query(db, "SELECT json_extract(" ++ C.q(text) ++ ",'$.kind');"))
-    kind_event(Tx.trim_nl(saved))
+    kind_commit(String.eq(Tx.trim_nl(saved), "commit"))
 
 def await_notice(db: String, result: Result<&1,&1,U32 & String,String>, chan: Chan(Event)) -> IO(Event):
   match result:
@@ -211,7 +238,7 @@ def drop_chan(chan: Chan(Event)) -> IO(Unit):
 def fork_each(+db: String, +chan: Chan(Event), pairs: List<String & String>, flying: List<String>) -> IO(List<String>):
   match pairs:
     case Nil{}: IO.pure(List<String>, flying)
-    case (session, harness) <> rest: do IO<List<String>>:
+    case (+session, harness) <> rest: do IO<List<String>>:
       task : Chan(Result<&1,&1,U32 & String,Unit>) <- IO.fork(Result<&1,&1,U32 & String,Unit>, serve_task(db, session))
       relay_task : Chan(Event) <- IO.fork(Event, relay(task, session, chan))
       dropped : Unit <- drop_chan(relay_task)
@@ -225,16 +252,27 @@ def fork_each(+db: String, +chan: Chan(Event), pairs: List<String & String>, fly
 def refuse_each(pairs: List<String & String>, refused: List<String>) -> IO(List<String>):
   match pairs:
     case Nil{}: IO.pure(List<String>, refused)
-    case (session, harness) <> rest: do IO<List<String>>:
+    case (session, +harness) <> rest: do IO<List<String>>:
       logged : Unit <- IO.write("serve-refused " ++ session ++ " " ++ harness ++ ": this loop serves Codex and OMP sessions through receive; serve " ++ harness ++ " sessions with dispatch-turn.\n")
       refuse_each(rest, Con{session, refused})
 
-def fork_new(+db: String, +chan: Chan(Event), pairs: List<String & String>, flying: List<String>, refused: List<String>, failed: Bool) -> IO(Loop):
-  match novel(pairs, flying, refused):
+def fork_split(+db: String, +chan: Chan(Event), split: List<String & String> & List<String & String>, flying: List<String>, refused: List<String>, failed: Bool) -> IO(Loop):
+  match split:
     case (fork, refuse): do IO<Loop>:
       flying_now : List<String> <- fork_each(db, chan, fork, flying)
       refused_now : List<String> <- refuse_each(refuse, refused)
       IO.pure(Loop, State{failed, flying_now, refused_now})
+
+def fork_stripped2(+db: String, +chan: Chan(Event), stripped2: List<String & String> & List<String>, flying: List<String>, failed: Bool) -> IO(Loop):
+  match stripped2:
+    case (fresh2, refused): fork_split(db, chan, partition(fresh2), flying, refused, failed)
+
+def fork_stripped(+db: String, +chan: Chan(Event), stripped1: List<String & String> & List<String>, refused: List<String>, failed: Bool) -> IO(Loop):
+  match stripped1:
+    case (fresh1, flying): fork_stripped2(db, chan, strip_known(fresh1, refused), flying, failed)
+
+def fork_new(+db: String, +chan: Chan(Event), pairs: List<String & String>, flying: List<String>, refused: List<String>, failed: Bool) -> IO(Loop):
+  fork_stripped(db, chan, strip_known(pairs, flying), refused, failed)
 
 def kept(result: Result<&1,&1,U32 & String,Unit>, failed: Bool) -> IO(Bool):
   match result:
