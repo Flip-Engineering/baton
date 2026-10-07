@@ -287,8 +287,10 @@ async function streamEvents(response, db, databasePath, reader, subject, initial
             }
             if (['ensemble', 'membership', 'section', 'section-membership'].includes(change.entity)) {
               const value = ensembleSnapshot(db, change.entityId.split('/')[0], scope);
+              const player = change.entity === 'membership' && visible.has(change.session)
+                ? playerSnapshot(db, change.session) : null;
               return { id, type: 'ensemble', data: value ? JSON.parse(value) : null,
-                transition: change };
+                player, transition: change };
             }
             const player = playerSnapshot(db, change.session);
             return { id, type: 'player', data: player, transition: change,
@@ -313,7 +315,9 @@ async function streamEvents(response, db, databasePath, reader, subject, initial
             writeEvent(response, 'cursor', String(cursor), {});
             continue;
           }
-          if (frame.data) writeEvent(response, frame.type, String(cursor), frame.data);
+          if (!frame.data) return endWithGap('reader-scope-changed');
+          writeEvent(response, frame.type, String(cursor), frame.data);
+          if (frame.player) writeEvent(response, 'player', String(cursor), frame.player);
           if (frame.pending) writeEvent(response, 'pending', String(cursor), frame.pending);
           const change = frame.transition;
           writeEvent(response, 'transition', String(cursor), {

@@ -60,6 +60,18 @@ function fixture() {
       VALUES (strftime('%Y-%m-%dT%H:%M:%fZ','now'),'ensemble',NEW.id,NEW.owner,'update',
         'ensemble',NEW.coupling);
     END;
+    CREATE TRIGGER ui_membership_delete AFTER DELETE ON ensemble_members
+    BEGIN
+      INSERT INTO native_changes(recorded_at,entity,entity_id,session_id,operation,kind,summary)
+      VALUES (strftime('%Y-%m-%dT%H:%M:%fZ','now'),'membership',OLD.ensemble,OLD.session,'delete',
+        'membership',OLD.ensemble);
+    END;
+    CREATE TRIGGER ui_ensemble_delete AFTER DELETE ON ensembles
+    BEGIN
+      INSERT INTO native_changes(recorded_at,entity,entity_id,session_id,operation,kind,summary)
+      VALUES (strftime('%Y-%m-%dT%H:%M:%fZ','now'),'ensemble',OLD.id,OLD.owner,'delete',
+        'ensemble','deleted');
+    END;
     INSERT INTO sessions(id,parent,harness,model,effort,workspace,branch,base,endpoint)
       VALUES ('root',NULL,'codex','configured/root','high','/root','main','base',''),
              ('child','root','muse','configured/child','medium','/child','work','base','["node","endpoint"]'),
@@ -195,6 +207,59 @@ test('scoped readers receive updates to outside-owned ensembles they can see thr
   assert.match(frame, /"owner":null/);
   assert.match(frame, /"members":\["child"\]/);
   assert.doesNotMatch(frame, /"owner":"external"/);
+  writer.close();
+  await reader.cancel();
+});
+
+test('membership removal updates the ensemble and the affected player', async (t) => {
+  const f = fixture();
+  const notifications = commitNotifications();
+  const server = createOrchestraServer({ databasePath: f.databasePath, reader: 'root',
+    subscribeCommittedChanges: notifications.subscribeCommittedChanges });
+  t.after(async () => { await close(server); rmSync(f.directory, { recursive: true, force: true }); });
+  const base = await listen(server);
+  const snapshot = await (await fetch(`${base}/orchestra/snapshot?subject=child&since=0`)).json();
+  const response = await fetch(`${base}/orchestra/events?subject=child&since=${snapshot.cursor}`);
+  const reader = response.body.getReader();
+  const decoder = new TextDecoder();
+  await reader.read();
+  const writer = new DatabaseSync(f.databasePath);
+  writer.exec("DELETE FROM ensemble_members WHERE ensemble='shared-ensemble' AND session='child';");
+  notifications.committed();
+  let frames = '';
+  const deadline = Date.now() + 3000;
+  while (!frames.includes('event: transition') && Date.now() < deadline) {
+    const chunk = await Promise.race([
+      reader.read(),
+      new Promise((resolve) => setTimeout(() => resolve({ timeout: true }), 1000)),
+    ]);
+    if (!chunk.timeout) frames += decoder.decode(chunk.value);
+  }
+  assert.match(frames, /event: ensemble/);
+  assert.match(frames, /"members":\[\]/);
+  assert.match(frames, /event: player/);
+  assert.match(frames, /"memberEnsembles":\[\]/);
+  writer.close();
+  await reader.cancel();
+});
+
+test('removing a visible ensemble emits a gap for an authoritative snapshot', async (t) => {
+  const f = fixture();
+  const notifications = commitNotifications();
+  const server = createOrchestraServer({ databasePath: f.databasePath, reader: 'root',
+    subscribeCommittedChanges: notifications.subscribeCommittedChanges });
+  t.after(async () => { await close(server); rmSync(f.directory, { recursive: true, force: true }); });
+  const base = await listen(server);
+  const snapshot = await (await fetch(`${base}/orchestra/snapshot?subject=child&since=0`)).json();
+  const response = await fetch(`${base}/orchestra/events?subject=child&since=${snapshot.cursor}`);
+  const reader = response.body.getReader();
+  const decoder = new TextDecoder();
+  await reader.read();
+  const writer = new DatabaseSync(f.databasePath);
+  writer.exec("DELETE FROM ensembles WHERE id='shared-ensemble';");
+  notifications.committed();
+  const frame = decoder.decode((await reader.read()).value);
+  assert.match(frame, /event: gap[\s\S]*reader-scope-changed/);
   writer.close();
   await reader.cancel();
 });
