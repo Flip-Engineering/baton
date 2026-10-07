@@ -413,11 +413,19 @@ class SharedInstance(unittest.TestCase):
         self.assertEqual(completed.returncode, 0, completed.stderr)
         self.assertIn('acknowledge-ok', completed.stdout)
         self.assertFalse(finished.exists(), 'the delayed recovery child should still be running')
-        self.hold(finished, '0\n0', timeout=15)
-        self.assertEqual(finished.read_text().splitlines(), ['0', '0'],
-                         'every tracked recovery observer must attach before attempt retirement')
+        deadline = time.monotonic() + 15
+        while time.monotonic() < deadline and (not finished.exists() or len(finished.read_text().splitlines()) < 2):
+            time.sleep(.05)
+        statuses = finished.read_text().splitlines() if finished.exists() else []
+        observer_log = (directory / 'observer.log').read_text(errors='replace') if (directory / 'observer.log').exists() else ''
+        if statuses != ['0', '0']:
+            saved = ROOT / '.scratch' / 'shared-instance-failures' / f'recovery-child-{os.getpid()}'
+            saved.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copytree(self.home, saved, dirs_exist_ok=True)
+            self.fail(f'every tracked recovery observer must attach before retirement; statuses={statuses}; '
+                      f'observer.log={observer_log!r}; preserved={saved}')
         print('evidence recovery-child-retained', completed.stdout.replace('\n', '|'),
-              'recovery-exit', finished.read_text().strip())
+              'recovery-exits', statuses)
 
     def test_retired_capability_refuses_the_old_generation(self):
         directory, child = self.begin('cycle')
