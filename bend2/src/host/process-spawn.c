@@ -987,10 +987,6 @@ static void br_recover(BrKeeper *keeper) {
   if(null>=0)close(null);if(log>=0)close(log);free(path);free(argv);
   if(!error)error=br_waiter_submit(keeper,waiter,keeper->recovery_pid);
   else br_waiter_discard(waiter);
-  if(!error) {
-    char text[96];int n=snprintf(text,sizeof(text),"spawn pid %d pending %zu\n",keeper->recovery_pid,keeper->recovery_pending);
-    br_file(keeper->directory,"recovery-pending.log",text,(size_t)n,0);
-  }
   if(error) br_note(keeper,"observer-error",error);
 }
 static void br_disconnected(BrKeeper *keeper) {
@@ -1422,8 +1418,6 @@ static int br_attempt_ready(BrKeeper *keeper,struct pollfd *fds,BrControl **clie
       /* Recovery waiters belong to this keeper attempt, not an observer
          generation. A replacement observer must not strand their counts. */
       if(keeper->recovery_pending)keeper->recovery_pending--;
-      char pending_text[96];int pending_n=snprintf(pending_text,sizeof(pending_text),"reaped pid %d pending %zu\n",event.pid,keeper->recovery_pending);
-      br_file(keeper->directory,"recovery-pending.log",pending_text,(size_t)pending_n,0);
       if(event.status<0) {
         br_note(keeper,"observer-error",ECHILD);
       } else if(keeper->client<0) {
@@ -2126,7 +2120,6 @@ static int br_owner_loop(BrOwner *owner) {
         br_note(keeper,"observer-error",error);error=0;
       }
       if(keeper->finishing && !keeper->outgoing && !keeper->recovery_pending) {
-        br_file(keeper->directory,"recovery-pending.log","retiring attempt\n",18,0);
         *link=keeper->next;
         if(owner->single)owner->finishing=1;
         else {br_keeper_cleanup_control_path(keeper);br_keeper_stop(keeper);}
