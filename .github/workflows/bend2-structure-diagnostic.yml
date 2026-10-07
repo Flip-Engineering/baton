@@ -1,0 +1,93 @@
+name: bend2-structure-diagnostic
+
+'on':
+  push:
+    branches: [codex/baton2-structure-diagnostic-20261007]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  darwin-arm64-diagnostic:
+    runs-on: xcode-27
+    env:
+      BEND_NO_TELEMETRY: '1'
+    steps:
+      - name: Checkout the immutable product commit
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+        with:
+          ref: 4a5b1df48e874f3d9363c48664cc52a069da5e4f
+          persist-credentials: false
+
+      - name: Select Node 22
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: '22'
+
+      - name: Provision the pinned Bend 2.0.25 toolchain
+        shell: bash
+        run: |
+          set -euo pipefail
+          run="$RUNNER_TEMP/bend2-structure-diagnostic-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT"
+          test ! -e "$run"
+          mkdir -p "$run/toolchain" "$run/evidence"
+          printf 'DIAGNOSTIC_RUN=%s\n' "$run" >> "$GITHUB_ENV"
+          archive="$run/toolchain/bend-2.0.25-darwin-arm64.tar.gz"
+          curl --proto '=https' --tlsv1.2 -fsSL \
+            https://github.com/bendlang/bend/releases/download/v2.0.25/bend-2.0.25-darwin-arm64.tar.gz \
+            -o "$archive" > "$run/evidence/download.log" 2>&1
+          printf 'c5bb22ba029d5909da9c6db82aa037278a66d1cf8a5572f433879f7dcd866c31  %s\n' "$archive" | \
+            shasum -a 256 -c - | tee "$run/evidence/archive-check.log"
+          BEND_HOME="$run/toolchain-home" sh "$GITHUB_WORKSPACE/docs/bend2/reference/toolchain/install-2.0.25.sh" \
+            > "$run/evidence/install.log" 2>&1
+
+      - name: Record the validation identity
+        shell: bash
+        run: |
+          set -u
+          run="$DIAGNOSTIC_RUN"
+          bend="$run/toolchain-home/bin/bend"
+          {
+            echo "workflow_revision $GITHUB_SHA"
+            echo "product_commit $(git -C "$GITHUB_WORKSPACE" rev-parse HEAD)"
+            echo "product_tree $(git -C "$GITHUB_WORKSPACE" rev-parse HEAD^{tree})"
+            echo "closure_sha256 $(cd "$GITHUB_WORKSPACE/bend2" && find src -type f | sort | xargs shasum -a 256 | shasum -a 256)"
+            echo "runner_os $RUNNER_OS $RUNNER_ARCH"
+            echo "kernel $(uname -s) $(uname -m) $(uname -r)"
+            echo "archive_sha256 $(shasum -a 256 "$run/toolchain/bend-2.0.25-darwin-arm64.tar.gz" | awk '{print $1}')"
+            echo "compiler_sha256 $(shasum -a 256 "$bend" | awk '{print $1}')"
+            echo "bend_version $("$bend" version 2>&1 | head -3 | tr '\n' ' ')"
+            echo "node $(node --version) $(command -v node)"
+            echo "python $(python3 --version) $(command -v python3)"
+            echo "cc $(cc --version 2>&1 | head -1) $(command -v cc)"
+            echo "ld_library_path ${LD_LIBRARY_PATH:-unset}"
+            echo "cwd $GITHUB_WORKSPACE/bend2"
+            echo "command $bend <module> --check-only"
+          } > "$run/evidence/identity.txt" 2>&1
+          cat "$run/evidence/identity.txt"
+
+      - name: Focused check-only on the landing closure
+        shell: bash
+        run: |
+          set -u
+          run="$DIAGNOSTIC_RUN"
+          bend="$run/toolchain-home/bin/bend"
+          for module in src/git/land.bend src/git/landing.bend src/git/association.bend src/git/intent.bend src/git/intent-publish.bend src/git/attempt.bend src/git/types.bend; do
+            name=$(printf '%s' "$module" | tr '/' '_')
+            ( cd "$GITHUB_WORKSPACE/bend2" && timeout 900 "$bend" "$module" --check-only ) \
+              > "$run/evidence/$name.stdout" 2> "$run/evidence/$name.stderr"
+            echo "$?" > "$run/evidence/$name.exit"
+            echo "== $module exit $(cat "$run/evidence/$name.exit")"
+            head -12 "$run/evidence/$name.stderr"
+          done
+          true
+
+      - name: Retain the diagnostic evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: bend2-structure-diagnostic-${{ github.sha }}-${{ github.run_attempt }}
+          path: ${{ env.DIAGNOSTIC_RUN }}/evidence/
+          if-no-files-found: error
+          include-hidden-files: true
