@@ -40,6 +40,12 @@ class PhysicalRoleGuard(unittest.TestCase):
         return subprocess.run([EXE, 'role-guard', path, binding, key],
                               text=True, capture_output=True)
 
+    def test_role_digest_matches_sha256_vector(self):
+        result = subprocess.run([EXE, 'role-key', 'abc'], text=True,
+                                capture_output=True, check=True)
+        self.assertEqual(result.stdout.strip(),
+                         'ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad')
+
     def test_owner_restart_refuses_old_witness_before_admission(self):
         def command(*args):
             return subprocess.run([EXE, *map(str, args)], text=True,
