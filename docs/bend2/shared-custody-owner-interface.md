@@ -85,8 +85,8 @@ def Instance.attach_owned(database: String, directory: String, lock: U32)
   -> IO(Result<&1,&1,U32 & String,U32>)
 def Instance.shutdown(database: String) -> IO(Result<&1,&1,U32 & String,Unit>)
 def Instance.retire(handle: U32) -> IO(Result<&1,&1,U32 & String,Unit>)
-def Instance.commit_state(handle: U32, state: String) -> IO(Result<&1,&1,U32 & String,Unit>)
-def Instance.restore_state(handle: U32) -> IO(Result<&1,&1,U32 & String,String>)
+def Instance.commit(handle: U32, schema: U32, state: String) -> IO(Result<&1,&1,U32 & String,Unit>)
+def Instance.restore(handle: U32, schema: U32) -> IO(Result<&1,&1,U32 & String,String>)
 ```
 
 The module is `src/host/instance.bend`. A caller imports the file with any alias
@@ -140,40 +140,44 @@ handshake, so the client's observer protocol is the one it already uses.
 `<attempt>/checkpoint` is one record:
 
 ```c
-typedef struct { char magic[8];
-                 uint64_t incarnation, attempt, offset, length, check;
-                 BrBirth birth; } BrCheckpoint;   /* reducer bytes follow */
+typedef struct { char magic[8];                 /* "BATONC03" */
+                 uint32_t schema, reserved;
+                 uint64_t incarnation, attempt, manifest,
+                          spool_device, spool_inode, offset, length, check;
+                 BrBirth birth; } BrCheckpoint; /* state bytes follow */
 ```
 
-It binds the consumed spool offset to the reducer state the observation owner
-had reached there, to the native process that produced the bytes (`BrBirth`, the
-native pid and start time from `native.birth`) and to the owner incarnation that
-observed them. The reducer bytes are opaque to the host; the host writes the
-header and the bytes in one rename, so a crash cannot leave an offset without the
-state that belongs to it.
+`Instance.commit(handle, schema, state)` writes the record after the observation
+owner's own durable store and reducer effects for the consumed frame. The state
+is versioned JSON text supplied by the caller; the host treats it as opaque bytes
+and refuses a state above one mebibyte (`EOVERFLOW`) so a growing transcript
+cannot become a checkpoint. `Instance.restore(handle, schema)` returns that state
+and positions the reader at the offset the state belongs to.
 
-Reading bytes is not a durable observation, and an offset alone never authorizes
-a resume:
+Each field is validated before the offset is trusted:
 
-- The reader does not move the checkpoint. An observer calls
-  `Instance.commit_state(handle, state)` after its own durable commit: its store
-  transaction and its reducer checkpoint for the same frame. A crash between a
-  read and that call leaves the checkpoint at the previous commit, so the
-  recovery observer reports the uncommitted frames again.
-- An observer calls `Instance.restore_state(handle)` before it reads. The call
-  returns the recorded reducer state and resumes the reader at the recorded
-  offset, so a caller cannot obtain the offset without also receiving the state
-  it was committed with. An empty state and a zero offset mean there is no
-  checkpoint, and the observer reads from the beginning.
-- A checkpoint bound to another native process or another owner incarnation is
-  not resumed. A damaged record is not resumed either. Both are reported with
-  `<attempt>/checkpoint-error`, and the observer replays from the beginning with
-  its own deduplication. Replay plus durable deduplication is the fallback for
-  every unreadable or unbound checkpoint.
+- the record magic and the caller's `schema`;
+- `attempt`, a digest of the attempt's canonical directory, which is durable
+  across an owner restart (an owner-local attempt number is not);
+- `birth`, the native process from `<attempt>/native.birth`;
+- `manifest`, the digest of the admitted manifest;
+- `spool_device` and `spool_inode`, the identity of the stdout spool file the
+  bytes came from;
+- `offset` within the current spool size;
+- `length` before any allocation, and the whole-record checksum, which covers
+  every header field and every state byte, so an equal-length corruption is
+  refused as well.
 
-The reducer state itself is the observation owner's. The module that captures and
-restores it belongs to the turn owner; this host interface only transports it and
-keeps it bound to the frame it describes.
+`incarnation` records which owner observed the checkpoint. It is provenance and
+not an acceptance criterion: a native attempt outlives an owner restart, and a
+restart that presents the same custody, manifest and spool is accepted rather
+than forced to replay. Everything else — a torn record, a mismatched binding, a
+state that fails its checksum — returns an empty state and offset zero, writes
+`<attempt>/checkpoint-error`, and leaves the reader at the beginning, so a caller
+replays with its own durable deduplication and never skips a frame.
+
+Reading bytes is not a durable observation: the reader never moves the
+checkpoint, and an offset alone never authorizes a resume.
 
 ## Admission identity
 
@@ -236,12 +240,14 @@ is not reused.
 - An observer that committed a checkpoint leaves one record carrying its reducer
   state; the recovery observer restores that state and resumes there, and it does
   not report output the checkpoint already covered.
+- The same record presented with a new owner incarnation is still accepted, so a
+  healthy owner restart resumes instead of replaying.
+- Each binding is enforced by its own fixture: a wrong schema, attempt, native
+  birth, manifest digest or spool identity, an offset past the spool, a torn
+  record and an equal-length state corruption each produce
+  `<attempt>/checkpoint-error` and a replay from the beginning.
 - An observer killed between a read and its commit leaves no checkpoint, and the
   recovery observer reports that frame again, so no frame is skipped.
-- A checkpoint bound to another owner incarnation is not resumed: the recovery
-  observer replays from the beginning and `<attempt>/checkpoint-error` records it.
-- A damaged checkpoint is recovered from the beginning: every frame is reported
-  again and `<attempt>/checkpoint-error` records it.
 - A repeated admission with the same identity starts no second native child and
   leaves the existing attempt's custody and stream intact; the same directory
   with different work is refused with `EEXIST`.
