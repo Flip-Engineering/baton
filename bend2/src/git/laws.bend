@@ -1170,11 +1170,9 @@ def m3a_held_candidate_tip_reads_the_holder(path, target):
 
 law m3a_held_target_tip_mismatch_refuses:
   for path: String
-  for target: String
-  for cand: String
-  {L.ld_adv_wt_observed_target_pick(T.GRun{0, Tx.str_cat(cand, "x")}, path, target, cand) == IO.pure(L.LAdv, L.AdvMoved{}) : IO(L.LAdv)}
+  {L.ld_adv_wt_observed_target_pick(T.GRun{0, "other"}, path, "main", "candidate") == IO.pure(L.LAdv, L.AdvMoved{}) : IO(L.LAdv)}
 
-def m3a_held_target_tip_mismatch_refuses(path, target, cand):
+def m3a_held_target_tip_mismatch_refuses(path):
   {==}
 
 law m3a_held_holder_exact_target_allows_success:
@@ -1187,10 +1185,9 @@ def m3a_held_holder_exact_target_allows_success(path, target):
 
 law m3a_held_holder_different_branch_refuses:
   for path: String
-  for target: String
-  {L.ld_adv_wt_observed_holder_pick(T.GRun{0, Tx.str_cat(L.ld_hold_ref(target), "-other")}, path, target) == IO.pure(L.LAdv, L.AdvHolderChanged{path}) : IO(L.LAdv)}
+  {L.ld_adv_wt_observed_holder_pick(T.GRun{0, "refs/heads/other"}, path, "main") == IO.pure(L.LAdv, L.AdvHolderChanged{path}) : IO(L.LAdv)}
 
-def m3a_held_holder_different_branch_refuses(path, target):
+def m3a_held_holder_different_branch_refuses(path):
   {==}
 
 law m3a_held_tip_read_names_the_local_branch:
