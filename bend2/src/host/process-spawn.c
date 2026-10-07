@@ -662,13 +662,23 @@ static int br_attach_socket(BatonChild *child,const char *directory,int socket,i
   child->pid=state.pid;child->retained=retained;
   return 0;
 }
-static int br_attach_orphan(BatonChild *child,const char *directory,int guard) {
+/* Adopts an attempt whose owner is gone. The authority is the durable evidence in
+   the attempt directory: the admission record binding this directory, the
+   database and the caller's session guard; the launch marker; the manifest with
+   the prepared artifact's bytes verified against the digest it binds; and the
+   native birth. A directory holding copied birth and spool files carries no such
+   evidence and is refused, and a refusal never starts a replacement child. */
+static int br_attach_orphan(BatonChild *child,const char *database,const char *directory,int guard) {
+  int error=br_admission_verify(directory,database,guard);
+  if(!error && !br_exists(directory,"launch"))error=EPERM;
+  if(!error)error=br_attempt_manifest_verify(directory);
+  if(error)return error;
   BatonRetained *retained=calloc(1,sizeof(*retained));if(!retained)return ENOMEM;
   retained->socket=-1;retained->spool=-1;retained->watch=-1;retained->life=-1;
   /* No owner serves this attempt, so no incarnation is bound and a checkpoint
      carrying one is unreadable; the native identity still binds. */
   retained->guard=fcntl(guard,F_DUPFD_CLOEXEC,10);retained->directory=strdup(directory);
-  int error=retained->guard<0?errno:!retained->directory?ENOMEM:0;
+  error=retained->guard<0?errno:!retained->directory?ENOMEM:0;
   char *path=br_path(directory,"stdout");
   if(!error){retained->spool=path?open(path,O_RDONLY|O_CLOEXEC):-1;if(retained->spool<0)error=errno;}
   free(path);
@@ -1170,19 +1180,12 @@ static void br_keeper_stop(BrKeeper *keeper) {
 static int br_keeper_start(BrKeeper *keeper,const char *directory,int lock) {
   int error=br_manifest_read(directory,&keeper->manifest);
   if(error)return error;
-  if(keeper->manifest.count==8) {
-    /* A prepared artifact is verified against its manifest before any child
-       starts, so the file cannot be swapped between preparation and launch. */
-    const char *name=keeper->manifest.field[6];
-    size_t name_length=(size_t)keeper->manifest.header.lengths[6];
-    unsigned char recorded[32],held[32];uint64_t held_length=0;
-    if(keeper->manifest.header.lengths[7]!=sizeof(recorded))error=EINVAL;
-    else memcpy(recorded,keeper->manifest.field[7],sizeof(recorded));
-    if(!error)error=br_artifact_name_ok(name,name_length);
-    if(!error)error=br_artifact_binding(directory,name,name_length,held,&held_length);
-    if(!error && memcmp(held,recorded,sizeof(recorded)))error=EINVAL;
-    if(error)return error;
-  }
+  /* A prepared artifact is verified against its manifest before any child
+     starts, so the file cannot be swapped between preparation and launch. */
+  if((error=br_attempt_manifest_verify(directory)))return error;
+  /* The attempt's own admission record must be intact before a keeper takes
+     custody of it. */
+  if((error=br_admission_verify(directory,NULL,lock)))return error;
   keeper->identity=br_manifest_digest(&keeper->manifest.header,keeper->manifest.field,keeper->manifest.count);
   if(lock>=0)fcntl(lock,F_SETFD,FD_CLOEXEC);
   if((error=br_file(directory,"launch","launch\n",7,1)))return error;
@@ -1644,6 +1647,11 @@ static int br_owner_admit(BrOwner *owner,const char *directory,int lock,int *exi
       br_manifest_free(&stored);
       if(!error)*existing=1;
     }
+  }
+  if(!error && !*existing) {
+    /* Custody starts only for an attempt whose durable admission record matches
+       this database and the guard the admitting client presented. */
+    error=br_admission_verify(resolved,owner->database,lock);
   }
   if(!error && !*existing) {
     BrKeeper *keeper=calloc(1,sizeof(*keeper));
@@ -2293,6 +2301,125 @@ static int br_manifest_store(const char *directory,const char *manifest_path,BrM
   if(dirfd>=0)close(dirfd);
   return error;
 }
+/* The durable admission record. It binds one attempt directory to the physical
+   database that admitted it, to the session guard whose lock the admitting call
+   held, and to the directory's own identity, so adoption and launch are
+   authorized from durable evidence rather than from the presence of a spool
+   file. The integrity check covers the record and the recorded path; the
+   authority comes from the recorded device and inode identities, which a copy
+   of the record into another directory cannot change. */
+#define BR_ADMISSION_MAGIC "BATONAD1"
+typedef struct {
+  char magic[8];
+  uint32_t schema,reserved;
+  uint64_t database_device,database_inode;
+  uint64_t guard_device,guard_inode;
+  uint64_t attempt_device,attempt_inode;
+  uint64_t directory_length;
+  uint64_t check;
+} BrAdmission;
+static uint64_t br_admission_check(const BrAdmission *record,const char *directory,size_t length) {
+  uint64_t digest=0xcbf29ce484222325ULL;
+  const unsigned char *bytes=(const unsigned char *)record;
+  for(size_t i=0;i<sizeof(*record);i++) {digest^=bytes[i];digest*=0x100000001b3ULL;}
+  for(size_t i=0;i<length;i++) {digest^=(unsigned char)directory[i];digest*=0x100000001b3ULL;}
+  return digest;
+}
+/* Records the admitting facts of a newly prepared attempt. `database` is the
+   path the admitting call named and `guard` its session guard descriptor. */
+static int br_admission_store(const char *directory,const char *database,int guard) {
+  struct stat attempt,database_info,guard_info;
+  if(lstat(directory,&attempt) || !S_ISDIR(attempt.st_mode))return EPERM;
+  memset(&database_info,0,sizeof(database_info));
+  /* An admission through the legacy attempt-level API carries no database, so the
+     record states no database binding and verification skips that comparison. */
+  if(database && stat(database,&database_info))return EPERM;
+  if(guard>=0) {if(fstat(guard,&guard_info))return EPERM;}
+  else memset(&guard_info,0,sizeof(guard_info));
+  size_t length=strlen(directory);
+  BrAdmission record={.schema=1,
+    .database_device=(uint64_t)database_info.st_dev,.database_inode=(uint64_t)database_info.st_ino,
+    .guard_device=(uint64_t)guard_info.st_dev,.guard_inode=(uint64_t)guard_info.st_ino,
+    .attempt_device=(uint64_t)attempt.st_dev,.attempt_inode=(uint64_t)attempt.st_ino,
+    .directory_length=length};
+  memcpy(record.magic,BR_ADMISSION_MAGIC,8);
+  record.check=br_admission_check(&record,directory,length);
+  char *path=br_path(directory,"admission");
+  if(!path)return ENOMEM;
+  char *bytes=malloc(sizeof(record)+length);
+  int error=bytes?0:ENOMEM;
+  if(!error) {
+    memcpy(bytes,&record,sizeof(record));
+    memcpy(bytes+sizeof(record),directory,length);
+    error=br_replace(directory,path,bytes,sizeof(record)+length,1);
+  }
+  free(bytes);free(path);
+  return error;
+}
+/* Verifies the admission record of a directory against the database that requests
+   it and the guard the caller holds. Every mismatch refuses: a directory whose
+   recorded identity, database or guard differs is not the attempt that was
+   admitted, whatever files it contains. */
+static int br_admission_verify(const char *directory,const char *database,int guard) {
+  char *path=br_path(directory,"admission");
+  if(!path)return ENOMEM;
+  int fd=open(path,O_RDONLY|O_CLOEXEC);
+  if(fd<0) {int error=errno;free(path);return error==ENOENT?EPERM:error;}
+  BrAdmission record;
+  int error=br_read_all(fd,&record,sizeof(record));
+  struct stat info;
+  if(error||fstat(fd,&info))error=EPERM;
+  if(!error && (memcmp(record.magic,BR_ADMISSION_MAGIC,8) || record.schema!=1))error=EPERM;
+  size_t length=error?0:(size_t)record.directory_length;
+  if(!error && (length==0 || length>4096))error=EPERM;
+  if(!error && (size_t)info.st_size!=sizeof(record)+length)error=EPERM;
+  char *recorded=NULL;
+  if(!error) {
+    recorded=malloc(length+1);
+    if(!recorded)error=ENOMEM;
+    else if(br_read_all(fd,recorded,length))error=EPERM;
+    else recorded[length]=0;
+  }
+  close(fd);free(path);
+  struct stat attempt,database_info,guard_info;
+  if(!error && (lstat(directory,&attempt) || !S_ISDIR(attempt.st_mode)))error=EPERM;
+  if(!error && ((uint64_t)attempt.st_dev!=record.attempt_device ||
+                (uint64_t)attempt.st_ino!=record.attempt_inode))error=EPERM;
+  if(!error && strcmp(recorded,directory))error=EPERM;
+  if(!error && br_admission_check(&record,recorded,length)!=record.check)error=EPERM;
+  if(!error && database && record.database_inode) {
+    if(stat(database,&database_info))error=EPERM;
+    else if((uint64_t)database_info.st_dev!=record.database_device ||
+            (uint64_t)database_info.st_ino!=record.database_inode)error=EPERM;
+  }
+  if(!error && guard>=0 && record.guard_inode) {
+    if(fstat(guard,&guard_info))error=EPERM;
+    else if((uint64_t)guard_info.st_dev!=record.guard_device ||
+            (uint64_t)guard_info.st_ino!=record.guard_inode)error=EPERM;
+  }
+  free(recorded);
+  return error;
+}
+/* Verifies the manifest of an attempt and, for a prepared artifact, that the file
+   in custody still carries the bytes the manifest binds. */
+static int br_attempt_manifest_verify(const char *directory) {
+  BrManifest manifest={0};
+  int error=br_manifest_read(directory,&manifest);
+  if(!error && manifest.count==8) {
+    const char *name=manifest.field[6];
+    size_t name_length=(size_t)manifest.header.lengths[6];
+    if(manifest.header.lengths[7]!=32)error=EINVAL;
+    else {
+      unsigned char recorded[32],held[32];uint64_t held_length=0;
+      memcpy(recorded,manifest.field[7],sizeof(recorded));
+      if(!(error=br_artifact_name_ok(name,name_length)))
+        error=br_artifact_binding(directory,name,name_length,held,&held_length);
+      if(!error && memcmp(held,recorded,sizeof(recorded)))error=EINVAL;
+    }
+  }
+  br_manifest_free(&manifest);
+  return error;
+}
 /* Creates the exclusive attempt directory, its control socket directory and
    the manifest that admits the attempt. */
 static int br_attempt_prepare(BatonProcessCall *call,char **directory_out,char **address_out,int idempotent) {
@@ -2328,6 +2455,7 @@ static int br_attempt_prepare(BatonProcessCall *call,char **directory_out,char *
     for(int i=0;i<count;i++)header.lengths[i]=lengths[i];
     /* The stored manifest must describe exactly this request, field by field. */
     if(!error)error=br_manifest_same(existing,&header,fields,count);
+    if(!error)error=br_admission_verify(existing,call->database,(int)call->lock);
     BrManifest manifest={0};
     if(!error)error=br_manifest_read(existing,&manifest);
     char *address=error?NULL:strdup(manifest.field[5]);
@@ -2372,6 +2500,7 @@ static int br_attempt_prepare(BatonProcessCall *call,char **directory_out,char *
     } else memcpy(header.magic,"BATONRP1",8);
     for(int i=0;i<count;i++)header.lengths[i]=lengths[i];
     if(!error)error=br_manifest_store(directory,manifest_path,&header,fields,lengths,count);
+    if(!error)error=br_admission_store(directory,call->database,(int)call->lock);
   }
   free(manifest_path);
   if(error){free(address);free(directory);return error;}
@@ -2639,6 +2768,8 @@ static void br_attempt_discard(char *directory,char *address) {
   if(!directory)return;
   char *manifest=br_path(directory,"manifest");
   if(manifest){unlink(manifest);free(manifest);}
+  char *admission=br_path(directory,"admission");
+  if(admission){unlink(admission);free(admission);}
   rmdir(directory);
 }
 /* Asks the owner for the attempt's custody, then joins as its observer. The
@@ -2685,7 +2816,7 @@ static int br_instance_attach_owned(BatonProcessCall *call) {
   if(!error) {
     error=br_instance_join(call,directory,reply.owner);
     if(error==ECONNREFUSED || error==ENOENT || error==EPIPE)
-      error=br_attach_orphan(call->child,directory,(int)call->lock);
+      error=br_attach_orphan(call->child,call->database,directory,(int)call->lock);
   }
   else if(error==ENOENT || error==ECONNREFUSED || error==EPIPE) {
     /* An owner elected after this attempt started has no in-memory record of
@@ -2695,7 +2826,7 @@ static int br_instance_attach_owned(BatonProcessCall *call) {
        Adoption attaches the surviving child to this observer; it never spawns a
        replacement, and an attempt with no spool or no launch record is refused
        by the same path. */
-    error=br_attach_orphan(call->child,directory,(int)call->lock);
+    error=br_attach_orphan(call->child,call->database,directory,(int)call->lock);
   }
   free(directory);
   return error;
@@ -2998,7 +3129,7 @@ static void baton_retained_begin_call(BatonProcessCall *call) {
         }
       }
       if(call->kind==BP_ATTACH_OWNED && (call->error==ECONNREFUSED || call->error==ENOENT || call->error==EPIPE))
-        call->error=br_attach_orphan(call->child,directory,(int)call->lock);
+        call->error=br_attach_orphan(call->child,call->database,directory,(int)call->lock);
       if(socket_fd>=0)close(socket_fd);
       free(directory);
     }

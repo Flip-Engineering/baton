@@ -678,7 +678,7 @@ class SharedInstance(unittest.TestCase):
         restored at its offset, so the adopted reader resumes after the frames
         that checkpoint covered and reports no duplicate child."""
         directory = pathlib.Path(f'{self.db}.attempt-death')
-        child = self.spawn('partial', self.db, 'death', directory, self.home, 'one\n',
+        child = self.spawn('partial', self.db, 'fixture', directory, self.home, 'one\n',
                            sys.executable, self.survivor)
         self.line(child, 'admitted')
         self.line(child, 'commit-ok')
@@ -701,6 +701,97 @@ class SharedInstance(unittest.TestCase):
         spool = (directory / 'stdout').read_text(errors='replace')
         self.assertEqual(spool.count('"role": "native"'), 1, 'adoption duplicated the native child')
         print('evidence owner-death restore', restored, 'native', summary['pid'])
+
+    # -- adoption authority ------------------------------------------------
+
+    def prepared_survivor(self, label, session, artifact='ALPHA-01\n'):
+        """Admits a prepared-file attempt under a session guard, with a native
+        child that keeps running after stdin EOF."""
+        directory = pathlib.Path(f'{self.db}.attempt-{label}')
+        child = self.spawn('admit-file', self.db, session, directory, self.home, artifact,
+                           sys.executable, self.survivor)
+        self.line(child, 'admitted')
+        summary = self.native(''.join(child.output))
+        return directory, child, summary
+
+    def kill_owner(self):
+        owners = self.owner_processes()
+        self.assertEqual(len(owners), 1, owners)
+        os.kill(int(owners[0].split()[0]), signal.SIGKILL)
+
+    def adoption_refusal(self, directory):
+        result = self.command('attach-owned', self.db, directory)
+        self.assertNotEqual(result.returncode, 0, result.stdout + result.stderr)
+        detail = (result.stdout + result.stderr).strip().replace('\n', '|')
+        self.assertNotIn('attached', detail, detail)
+        self.assertNotIn('busy', detail.lower(), detail)
+        return detail
+
+    def test_adoption_requires_durable_attempt_authority(self):
+        """An attempt whose owner is gone is adopted from durable evidence: the
+        admission record binding the directory, the database and the caller's
+        session guard, the launch marker, the manifest and its prepared bytes, and
+        the native birth. Files copied into another directory, a changed artifact,
+        a malformed manifest, a missing launch marker and a different session
+        guard are each refused, and the valid original stays adoptable."""
+        directory, observer, summary = self.prepared_survivor('authority', 'fixture')
+        original = {name: (directory / name).read_bytes()
+                    for name in ('manifest', 'launch', 'prompt.txt')}
+        self.kill_owner()
+        observer.kill()
+        observer.wait(timeout=10)
+        spool_before = (directory / 'stdout').read_bytes()
+
+        # A decoy holding only copies of this attempt's birth and spool, with no
+        # admission record, manifest or launch marker.
+        decoy = pathlib.Path(f'{self.db}.attempt-decoy')
+        decoy.mkdir()
+        for name in ('native.birth', 'stdout'):
+            (decoy / name).write_bytes((directory / name).read_bytes())
+        detail = self.adoption_refusal(decoy)
+        self.assertIn('not permitted', detail, detail)
+        self.assertEqual(sorted(p.name for p in decoy.iterdir()), ['native.birth', 'stdout'],
+                         'the refused adoption wrote into the decoy')
+
+        # A prepared artifact whose bytes were changed after the launch.
+        (directory / 'prompt.txt').write_bytes(b'BRAVO-01\n')
+        detail = self.adoption_refusal(directory)
+        self.assertIn('Invalid argument', detail, detail)
+        (directory / 'prompt.txt').write_bytes(original['prompt.txt'])
+
+        # A manifest whose first byte was flipped after the launch.
+        (directory / 'manifest').write_bytes(b'X' + original['manifest'][1:])
+        detail = self.adoption_refusal(directory)
+        self.assertNotIn('attached', detail, detail)
+        (directory / 'manifest').write_bytes(original['manifest'])
+
+        # A missing launch marker.
+        (directory / 'launch').unlink()
+        detail = self.adoption_refusal(directory)
+        self.assertIn('not permitted', detail, detail)
+        (directory / 'launch').write_bytes(original['launch'])
+
+        # The same attempt admitted under a different session guard.
+        other, other_observer, _ = self.prepared_survivor('authority-other', 'other')
+        self.kill_owner()
+        other_observer.kill()
+        other_observer.wait(timeout=10)
+        detail = self.adoption_refusal(other)
+        self.assertIn('not permitted', detail, detail)
+
+        # The valid original: same directory, same database, same session guard.
+        adopter = self.spawn('attach-owned', self.db, directory)
+        self.line(adopter, 'attached')
+        adopted = [json.loads(line) for line in adopter.output
+                   if line.startswith('{') and 'role' in json.loads(line)]
+        self.assertEqual([row['pid'] for row in adopted], [summary['pid']],
+                         'adoption did not bind the original native process')
+        os.kill(summary['pid'], 0)
+        spool = (directory / 'stdout').read_text(errors='replace')
+        self.assertEqual(spool.count('"role": "native"'), 1, 'adoption duplicated the native child')
+        self.assertTrue(spool.startswith(spool_before.decode(errors='replace').splitlines()[0]),
+                        'the attempt spool was rewritten by a refusal')
+        print('evidence adoption authority native', summary['pid'])
 
     def test_shutdown_releases_the_database_for_a_new_owner(self):
         directory, child = self.begin('a0')
