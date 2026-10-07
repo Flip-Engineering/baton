@@ -1492,11 +1492,11 @@ def command_frame_name_of_read(+r: FrameRead) -> String:
 def command_frame_name_of_text(rows_text: String) -> String:
   command_frame_name_of_read(frame_read(Req.Context.parse_rows(rows_text)))
 
-def command_document(+c: Context.CodecCommand, rows_text: String) -> Document:
-  command_document_step(c, rows_text, Context.command_admits_frame_name(c, command_frame_name_of_text(rows_text)))
-
 def command_document_step(+c: Context.CodecCommand, rows_text: String, ok: Bool) -> Document:
   Bool.pick(Document, ok, document_of_rows(c, rows_text), DocRefused{validation_refusal(c, Context.command_mismatch_condition())})
+
+def command_document(+c: Context.CodecCommand, rows_text: String) -> Document:
+  command_document_step(c, rows_text, Context.command_admits_frame_name(c, command_frame_name_of_text(rows_text)))
 
 # ---------------------------------------------------------------------------
 # The correlated frame decision. A caller that answers one frame correlates its
