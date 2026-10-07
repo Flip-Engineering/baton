@@ -526,17 +526,21 @@ def started(+db: String, +player: String, +id: String, +log: String, prompt: Str
 
 # The retained process sends its initial input once. Reattachment reads the same
 # attempt from its first frame so native completion can be reconstructed.
-def retained_from_fields(+db: String, +player: String, +id: String, +log: String, policy: Logs.Policy, +harness: String, attempt: String, handle: U32, sender: Chan(Result<&1,&1,U32 & String,Unit>), +restored: String & String & String & String & String & String & String & String, first: Result<&1,&1,U32 & String,Maybe<String>>) -> IO(Outcome & List<Chan(Result<&1,&1,U32 & String,String>)>):
-  (cursor,last_message,primary,current,terminal,filter,codex_log,held)=restored
-  consume(db,player,id,log,policy,held,False{},handle,harness,cursor,last_message,primary,current,terminal,filter,codex_log,"",sender,attempt,False{},Nil{},first)
-
 def retained_output(+db: String, +player: String, id: String, +log: String, +harness: String, attempt: String, +handle: U32) -> IO(Outcome & List<Chan(Result<&1,&1,U32 & String,String>)>):
   do IO<Outcome & List<Chan(Result<&1,&1,U32 & String,String>)>>:
     +policy : Logs.Policy <- Logs.open(db,player,log)
     sender : Chan(Result<&1,&1,U32 & String,Unit>) <- IO.fork(Result<&1,&1,U32 & String,Unit>,IO.pure(Result<&1,&1,U32 & String,Unit>,Done{Unit{}}))
-    +restored : String & String & String & String & String & String & String & String <- Observer.restore_fields(db,handle)
+    +restored : String <- Observer.restore_json(db,handle)
+    cursor : String <- Observer.field_value(db,restored,"guidance_cursor")
+    last_message : String <- Observer.field_value(db,restored,"last_message")
+    primary : String <- Observer.field_value(db,restored,"muse_primary")
+    current : String <- Observer.field_value(db,restored,"muse_current")
+    terminal : String <- Observer.field_value(db,restored,"terminal")
+    filter : String <- Observer.field_value(db,restored,"filter_mode")
+    codex_log : String <- Observer.field_value(db,restored,"codex_log")
+    held : String <- Observer.field_value(db,restored,"held")
     +first : Result<&1,&1,U32 & String,Maybe<String>> <- P.ProcessChild.read_line(handle)
-    retained_from_fields(db,player,id,log,policy,harness,attempt,handle,sender,restored,first)
+    consume(db,player,id,log,policy,held,False{},handle,harness,cursor,last_message,primary,current,terminal,filter,codex_log,"",sender,attempt,False{},Nil{},first)
 
 def retained(+db: String, +player: String, +directory: String, +cmd: String, +model: String, +effort: String, cwd: String, +session: String, +harness: String, +sessions: String, +prompt: String, lock: U32, recovery: String) -> IO(Result<&1,&1,U32 & String,P.RetainedStart>):
   do IO<Result<&1,&1,U32 & String,P.RetainedStart>>:

@@ -132,15 +132,16 @@ def after_observation(db: String, handle: U32, +state: ReducerState, enabled: Bo
     case Fail{error}: IO.pure(Result<&1,&1,U32 & String,Unit>,Fail{error})
     case Done{text}: commit(db,handle,state,enabled)
 
-def fields(+state: ReducerState) -> String & String & String & String & String & String & String & String:
-  match state:
-    case ReducerSnapshot{guidance_cursor,last_message,muse_primary,muse_current,terminal,filter_mode,codex_log,held}:
-      (guidance_cursor,last_message,muse_primary,muse_current,terminal,filter_mode,codex_log,held)
-
-def restore_fields(db: String, +handle: U32) -> IO(String & String & String & String & String & String & String & String):
-  do IO<String & String & String & String & String & String & String & String>:
+def restore_json(db: String, +handle: U32) -> IO(String):
+  do IO<String>:
     +state : ReducerState <- restore(db,handle)
-    IO.pure(String & String & String & String & String & String & String & String,fields(state))
+    +saved : String <- IO.try(String,DB.Sql.query(db,encode_sql(state)))
+    IO.pure(String,without_query_newline(saved))
+
+def field_value(db: String, +snapshot: String, +field: String) -> IO(String):
+  do IO<String>:
+    +value : String <- IO.try(String,DB.Sql.query(db,field_sql(snapshot,field)))
+    IO.pure(String,without_query_newline(value))
 
 def checkpoint_due_fields(previous_cursor: String, previous_message: String, previous_primary: String, previous_current: String, previous_terminal: String, previous_filter: String, previous_codex: String, previous_held: String, next_cursor: String, next_message: String, next_primary: String, next_current: String, next_terminal: String, next_filter: String, next_codex: String, next_held: String) -> Bool:
   checkpoint_due(make(previous_cursor,previous_message,previous_primary,previous_current,previous_terminal,previous_filter,previous_codex,previous_held),make(next_cursor,next_message,next_primary,next_current,next_terminal,next_filter,next_codex,next_held))
