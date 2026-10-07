@@ -827,6 +827,32 @@ class SharedInstance(unittest.TestCase):
                         'the attempt spool was rewritten by a refusal')
         print('evidence adoption authority native', summary['pid'])
 
+    def test_instance_state_reports_the_durable_task_state(self):
+        """The host reports the observed facts of a task: its durable state, the
+        start latch, the identity the admission fixed, the observer's own guard
+        identity, and the native process and status, while the child runs and
+        after it exited."""
+        directory = pathlib.Path(f'{self.db}.attempt-state')
+        child = self.spawn('state', self.db, 'fixture', directory, self.home, 'hello\n',
+                           sys.executable, self.fixture)
+        self.line(child, 'admitted')
+        running = self.subscription_line(child, 'state-running:')
+        self.assertEqual(running['state'], 'running', running)
+        self.assertTrue(running['spawn_latched'], running)
+        self.assertTrue(running['observer_ready'], running)
+        self.assertFalse(running['cancelled'], running)
+        self.assertEqual(running['identity'], 'none', running)
+        self.assertEqual(running['directory'], os.path.realpath(directory), running)
+        self.assertGreater(running['native_pid'], 0, running)
+        self.assertNotEqual(running['guard'], '0:0', running)
+        self.line(child, 'native-exit 0')
+        exited = self.subscription_line(child, 'state-exited:')
+        self.assertEqual(exited['state'], 'exited', exited)
+        self.assertTrue(exited['status_known'], exited)
+        self.assertEqual(exited['status'], 0, exited)
+        print('evidence task state', running['state'], running['spawn_latched'],
+              running['native_pid'], exited['state'], exited['status'])
+
     def test_shutdown_releases_the_database_for_a_new_owner(self):
         directory, child = self.begin('a0')
         self.wait_run(child)

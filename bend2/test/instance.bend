@@ -319,7 +319,38 @@ def publish_cli(args: List<String>) -> IO(Unit):
       IO.pure(Unit,Unit{})
     case _: IO.die(Unit,2,"publish DATABASE CURSOR")
 
+# Reports the durable task state while the native child runs, then the state after
+# the child exited, so a test can read both from the host rather than assume them.
+def state_started(start: P.RetainedStart, payload: String) -> IO(Unit):
+  match start:
+    case P.Unstarted{error}: IO.die(Unit,1,error)
+    case P.Retained{+handle}: do IO<Unit>:
+      printed : Unit <- IO.print("admitted")
+      written : Unit <- IO.try(Unit,P.ProcessChild.write(handle,payload ++ "exit\n"))
+      running : String <- IO.try(String,Custody.Instance.state(handle))
+      shown : Unit <- IO.print("state-running:" ++ running)
+      line : Maybe<String> <- IO.try(Maybe<String>,P.ProcessChild.read_line(handle))
+      drained : Unit <- read_all_lines(handle,line)
+      exited : String <- IO.try(String,Custody.Instance.state(handle))
+      IO.print("state-exited:" ++ exited)
+
+def state_locked(+directory: String, +database: String, cwd: String, payload: String, program: List<String>, lock: Maybe<U32>) -> IO(Unit):
+  do IO<Unit>:
+    executable : String <- IO.try(String,Lock.SessionLock.executable())
+    start : P.RetainedStart <- IO.try(P.RetainedStart,Custody.Instance.admit(database,directory,P.argv(program),cwd,directory ++ "/native.stderr","",1,lock,P.argv([executable,"recover-retained",database,directory])))
+    run : Unit <- state_started(start,payload)
+    IO.pure(Unit,Unit{})
+
+def state_cli(args: List<String>) -> IO(Unit):
+  match args:
+    case database <> session <> directory <> cwd <> payload <> program:
+      Lock.SessionLock.acquire_session(Unit,database,session,canonical => lock => state_locked(directory,canonical,cwd,payload,program,lock))
+    case _: IO.die(Unit,2,"state DATABASE SESSION ATTEMPT CWD PAYLOAD PROGRAM ARGS...")
+
 def mode_number(+mode: String) -> U32:
+  Bool.pick(U32,String.eq(mode,"state"),17,mode_legacy(mode))
+
+def mode_legacy(+mode: String) -> U32:
   Bool.pick(U32,Bool.or(String.eq(mode,"--instance-owner"),String.eq(mode,"owner")),1,
   Bool.pick(U32,String.eq(mode,"admit"),2,
   Bool.pick(U32,String.eq(mode,"hold"),3,
@@ -353,6 +384,7 @@ def dispatch(mode: U32, rest: List<String>) -> IO(Unit):
     case 14: admit_file_cli(rest)
     case 15: subscribe_cli(rest)
     case 16: publish_cli(rest)
+    case 17: state_cli(rest)
     case _: IO.die(Unit,2,"instance mode required")
 
 def cli(args: List<String>) -> IO(Unit):

@@ -97,6 +97,14 @@ def Instance.subscribe(database: String, after_cursor: String, expected_generati
 def Instance.notice(handle: U32) -> IO(Result<&1,&1,U32 & String,String>):
   import "./process-spawn.c"
 
+# Returns the observed facts of one attempt as JSON: the durable lifecycle state,
+# whether the one start latched, what it was authorized by, the identity fixed at
+# preparation when one was, the identity of the session guard this observer holds,
+# and the recorded native process and status. Every field comes from a file the
+# host wrote or from this process's own descriptors.
+def Instance.state(handle: U32) -> IO(Result<&1,&1,U32 & String,String>):
+  import "./process-spawn.c"
+
 # Ends a subscription locally. The owner drops the connection when it reads the
 # closed socket, so no request is needed.
 def Instance.unsubscribe(handle: U32) -> IO(Result<&1,&1,U32 & String,Unit>):

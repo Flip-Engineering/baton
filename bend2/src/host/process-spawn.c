@@ -45,7 +45,7 @@ enum { BP_SPAWN, BP_WRITE, BP_CLOSE, BP_READ, BP_WAIT, BP_SIGNAL, BP_PID,
        BP_INSTANCE_COMMIT, BP_INSTANCE_RESTORE, BP_INSTANCE_REPLAY,
        BP_INSTANCE_JOB, BP_RETAIN_WITH_FILE, BP_INSTANCE_ADMIT_WITH_FILE,
        BP_INSTANCE_SUBSCRIBE, BP_INSTANCE_NOTICE, BP_INSTANCE_UNSUBSCRIBE,
-       BP_INSTANCE_PUBLISH };
+       BP_INSTANCE_PUBLISH, BP_INSTANCE_STATE };
 
 static int baton_pipe(int fds[2]) {
   if (pipe(fds)) return errno;
@@ -1190,6 +1190,9 @@ static int br_keeper_start(BrKeeper *keeper,const char *directory,int lock) {
   if((error=br_admission_verify(directory,NULL,lock)))return error;
   keeper->identity=br_manifest_digest(&keeper->manifest.header,keeper->manifest.field,keeper->manifest.count);
   if(lock>=0)fcntl(lock,F_SETFD,FD_CLOEXEC);
+  /* The one start of this task is latched durably before its program exists, so a
+     repeated start decision never spawns a second child. */
+  if((error=br_lifecycle_latch(directory,NULL)))return error;
   if((error=br_file(directory,"launch","launch\n",7,1)))return error;
   struct sockaddr_un address;
   if((error=br_socket_address(&address,keeper->manifest.field[5])))return error;
@@ -2424,6 +2427,117 @@ static int br_admission_verify(const char *directory,const char *database,int gu
   free(canonical);
   return error;
 }
+/* The durable lifecycle record of one attempt. It carries the identity fixed when
+   the task was prepared, the grant that authorized its start and the rejection
+   that cancelled it, so a start decision is made once and survives every process
+   that takes part in it. The two latches are the task's state authority: a start
+   latches before it spawns, and a cancellation is refused once a start latched. */
+#define BR_LIFECYCLE_MAGIC "BATONLC1"
+typedef struct {
+  char magic[8];
+  uint32_t schema,reserved;
+  uint32_t latched,cancelled,reserved2,reserved3;
+  unsigned char expected[32],grant[32],rejection[32];
+  uint64_t check;
+} BrLifecycle;
+static uint64_t br_lifecycle_check(const BrLifecycle *record) {
+  uint64_t digest=0xcbf29ce484222325ULL;
+  const unsigned char *bytes=(const unsigned char *)record;
+  for(size_t i=0;i<offsetof(BrLifecycle,check);i++) {digest^=bytes[i];digest*=0x100000001b3ULL;}
+  for(size_t i=offsetof(BrLifecycle,check)+sizeof(uint64_t);i<sizeof(*record);i++) {
+    digest^=bytes[i];digest*=0x100000001b3ULL;
+  }
+  return digest;
+}
+static int br_lifecycle_store(const char *directory,const BrLifecycle *record) {
+  char *path=br_path(directory,"lifecycle");
+  if(!path)return ENOMEM;
+  BrLifecycle stored=*record;
+  memcpy(stored.magic,BR_LIFECYCLE_MAGIC,8);
+  stored.schema=1;
+  stored.check=br_lifecycle_check(&stored);
+  int error=br_replace(directory,path,&stored,sizeof(stored),1);
+  free(path);
+  return error;
+}
+static int br_lifecycle_read(const char *directory,BrLifecycle *record) {
+  char *path=br_path(directory,"lifecycle");
+  if(!path)return ENOMEM;
+  int fd=open(path,O_RDONLY|O_CLOEXEC);
+  if(fd<0) {int error=errno;free(path);return error;}
+  int error=br_read_all(fd,record,sizeof(*record));
+  struct stat info;
+  if(error||fstat(fd,&info))error=EINVAL;
+  else if((size_t)info.st_size!=sizeof(*record))error=EINVAL;
+  else if(memcmp(record->magic,BR_LIFECYCLE_MAGIC,8) || record->schema!=1)error=EINVAL;
+  else if(br_lifecycle_check(record)!=record->check)error=EINVAL;
+  close(fd);free(path);
+  return error;
+}
+/* Writes the record of a newly prepared attempt. The expected identity is the
+   digest of the admission identity the caller fixed before anything ran; the
+   legacy attempt-level admission fixes none, and the effect call passes NULL. */
+static int br_lifecycle_init(const char *directory,const unsigned char *expected_digest) {
+  BrLifecycle record={0};
+  if(expected_digest)memcpy(record.expected,expected_digest,sizeof(record.expected));
+  return br_lifecycle_store(directory,&record);
+}
+/* Latches the one start of this task before its program is spawned. A cancelled
+   task never starts; a repeated start with the same grant reports the latch that
+   already exists; a different grant is refused. */
+static int br_lifecycle_latch(const char *directory,const unsigned char *grant_digest) {
+  BrLifecycle record;
+  int error=br_lifecycle_read(directory,&record);
+  if(error==ENOENT) {memset(&record,0,sizeof(record));error=0;}
+  if(error)return error;
+  if(record.cancelled)return EPERM;
+  if(record.latched)
+    return grant_digest && memcmp(record.grant,grant_digest,sizeof(record.grant))?EEXIST:0;
+  record.latched=1;
+  if(grant_digest)memcpy(record.grant,grant_digest,sizeof(record.grant));
+  return br_lifecycle_store(directory,&record);
+}
+/* Records a rejection before any start. A repeated rejection is a no-op, and a
+   rejection after a start is refused because the task exists. */
+static int br_lifecycle_cancel(const char *directory,const unsigned char *rejection_digest) {
+  BrLifecycle record;
+  int error=br_lifecycle_read(directory,&record);
+  if(error==ENOENT) {memset(&record,0,sizeof(record));error=0;}
+  if(error)return error;
+  if(record.latched)return EPERM;
+  if(rejection_digest)memcpy(record.rejection,rejection_digest,sizeof(record.rejection));
+  record.cancelled=1;
+  return br_lifecycle_store(directory,&record);
+}
+/* Names the state the durable facts show: a started task is running while its
+   recorded native process is alive and exited once it is not. */
+static const char *br_lifecycle_state(const char *directory,BrLifecycle *record,uint64_t *pid,
+                                     int *status_known,int *status) {
+  *pid=0;*status_known=0;*status=0;
+  int error=br_lifecycle_read(directory,record);
+  if(error) {memset(record,0,sizeof(*record));return "unknown";}
+  char *pid_path=br_path(directory,"native.pid");
+  FILE *file=pid_path?fopen(pid_path,"r"):NULL;
+  if(file) {
+    unsigned long long value=0;
+    if(fscanf(file,"%llu",&value)==1)*pid=(uint64_t)value;
+    fclose(file);
+  }
+  free(pid_path);
+  char *status_path=br_path(directory,"status");
+  file=status_path?fopen(status_path,"r"):NULL;
+  if(file) {
+    int value=0;
+    if(fscanf(file,"%d",&value)==1) {*status=value;*status_known=1;}
+    fclose(file);
+  }
+  free(status_path);
+  if(record->cancelled)return "cancelled";
+  if(!record->latched)return "prepared";
+  if(!*pid)return "starting";
+  if(*status_known)return "exited";
+  return br_exists(directory,"native-start-error")?"failed":"running";
+}
 /* Verifies the manifest of an attempt and, for a prepared artifact, that the file
    in custody still carries the bytes the manifest binds. */
 static int br_attempt_manifest_verify(const char *directory) {
@@ -2525,6 +2639,7 @@ static int br_attempt_prepare(BatonProcessCall *call,char **directory_out,char *
     for(int i=0;i<count;i++)header.lengths[i]=lengths[i];
     if(!error)error=br_manifest_store(directory,manifest_path,&header,fields,lengths,count);
     if(!error)error=br_admission_store(directory,call->database,(int)call->lock);
+    if(!error)error=br_lifecycle_init(directory,NULL);
   }
   free(manifest_path);
   if(error){free(address);free(directory);return error;}
@@ -2794,6 +2909,10 @@ static void br_attempt_discard(char *directory,char *address) {
   if(manifest){unlink(manifest);free(manifest);}
   char *admission=br_path(directory,"admission");
   if(admission){unlink(admission);free(admission);}
+  char *lifecycle=br_path(directory,"lifecycle");
+  if(lifecycle){unlink(lifecycle);free(lifecycle);}
+  char *refusal=br_path(directory,"admission-error");
+  if(refusal){unlink(refusal);free(refusal);}
   rmdir(directory);
 }
 /* Asks the owner for the attempt's custody, then joins as its observer. The
@@ -3119,6 +3238,44 @@ static void br_instance_publish_call(BatonProcessCall *call) {
   if(!error)error=br_instance_publish(call->database,cursor);
   call->error=error;
 }
+static void br_hex(const unsigned char *bytes,size_t length,char *out) {
+  static const char digits[]="0123456789abcdef";
+  for(size_t i=0;i<length;i++) {out[i*2]=digits[bytes[i]>>4];out[i*2+1]=digits[bytes[i]&15];}
+  out[length*2]=0;
+}
+/* The observed facts of one attempt: the durable lifecycle state and identity, and
+   the custody this observer holds. Everything reported here comes from a file the
+   host wrote or from this process's own descriptors. */
+static void br_instance_state_call(BatonProcessCall *call) {
+  BatonRetained *retained=call->child?call->child->retained:NULL;
+  if(!retained || !retained->directory) {call->error=EBADF;return;}
+  BrLifecycle record;uint64_t pid=0;int status_known=0,status=0;
+  const char *state=br_lifecycle_state(retained->directory,&record,&pid,&status_known,&status);
+  uint64_t guard_device=0,guard_inode=0;
+  struct stat info;
+  if(retained->guard>=0 && !fstat(retained->guard,&info)) {
+    guard_device=(uint64_t)info.st_dev;guard_inode=(uint64_t)info.st_ino;
+  }
+  char grant[65],rejection[65];
+  br_hex(record.grant,sizeof(record.grant),grant);
+  br_hex(record.rejection,sizeof(record.rejection),rejection);
+  char text[1024];
+  int written=snprintf(text,sizeof(text),
+    "{\"state\":\"%s\",\"handle\":%u,\"directory\":\"%s\",\"guard\":\"%llu:%llu\","
+    "\"observer_ready\":%s,\"native_pid\":%llu,\"status_known\":%s,\"status\":%d,"
+    "\"spawn_latched\":%s,\"cancelled\":%s,\"identity\":\"%s\",\"grant\":\"%s\","
+    "\"rejection\":\"%s\"}",
+    state,(unsigned)call->handle,retained->directory,
+    (unsigned long long)guard_device,(unsigned long long)guard_inode,
+    retained->socket>=0?"true":"false",(unsigned long long)pid,
+    status_known?"true":"false",status,
+    record.latched?"true":"false",record.cancelled?"true":"false",
+    record.expected[0]?"fixed":"none",grant,rejection);
+  call->text=malloc((size_t)written+1);
+  if(!call->text) {call->error=ENOMEM;return;}
+  memcpy(call->text,text,(size_t)written+1);
+  call->length=(size_t)written;
+}
 static void baton_retained_begin_call(BatonProcessCall *call) {
   if(call->kind==BP_RECOVERY)call->error=br_recovery(call);
   else if(call->kind==BP_KEEPER) call->error=br_keeper(call->directory,(int)call->lock);
@@ -3187,6 +3344,7 @@ static void baton_process_call(IoWork *w) {
   if(call->kind==BP_INSTANCE_NOTICE) { br_instance_notice_call(call);return; }
   if(call->kind==BP_INSTANCE_UNSUBSCRIBE) { br_instance_unsubscribe_call(call);return; }
   if(call->kind==BP_INSTANCE_PUBLISH) { br_instance_publish_call(call);return; }
+  if(call->kind==BP_INSTANCE_STATE) { br_instance_state_call(call);return; }
   if(call->kind==BP_RETAIN || call->kind==BP_ATTACH || call->kind==BP_ATTACH_OWNED || call->kind==BP_RECOVERY || call->kind==BP_KEEPER || call->kind==BP_CONTROL_WRITE || call->kind==BP_CONTROL_SIGNAL ||
      call->kind==BP_INSTANCE_OWNER || call->kind==BP_INSTANCE_ADMIT || call->kind==BP_INSTANCE_ATTACH || call->kind==BP_INSTANCE_ATTACH_OWNED ||
      call->kind==BP_INSTANCE_SHUTDOWN || call->kind==BP_INSTANCE_RETIRE ||
@@ -3252,7 +3410,7 @@ static Term baton_process_pack(Env e, IoWork *w) {
     else if(call->kind==BP_INPUT_CLOSED) value=(Term)call->signal;
     else if(call->kind==BP_WAIT) value=io_str(e,call->text,call->length);
     else if(call->kind==BP_INSTANCE_RESTORE || call->kind==BP_INSTANCE_JOB ||
-            call->kind==BP_INSTANCE_NOTICE)
+            call->kind==BP_INSTANCE_NOTICE || call->kind==BP_INSTANCE_STATE)
       value=io_str(e,call->text?call->text:"",call->length);
 #ifdef CID_SOME
     else if(call->kind==BP_READ || call->kind==BP_RECOVERY) value=call->eof ? term_pak(CID_NONE,0)
@@ -3502,6 +3660,9 @@ BP_EFFECT(baton_instance_unsubscribe,CID_INSTANCE_UNSUBSCRIBE,BP_INSTANCE_UNSUBS
 #endif
 #ifdef CID_INSTANCE_PUBLISH_COMMIT
 BP_EFFECT(baton_instance_publish_commit,CID_INSTANCE_PUBLISH_COMMIT,BP_INSTANCE_PUBLISH)
+#endif
+#ifdef CID_INSTANCE_STATE
+BP_EFFECT(baton_instance_state,CID_INSTANCE_STATE,BP_INSTANCE_STATE)
 #endif
 
 #undef BP_EFFECT
