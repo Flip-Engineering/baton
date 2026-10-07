@@ -12,8 +12,8 @@
 # override adds `executeTarget` without replacing the subject's obligation.
 #
 # Serves: docs/bend2/semantic-context-spec.md, MCP framing and effect admission.
-# Fixture: the codec entry prints one line per decision; its expected output is an
-# independently reviewed oracle and is not checked in yet.
+# Fixture: the codec entry prints the decisions specified by
+# docs/bend2/codec-fixture-rendering.md and codec.expected.txt.
 import Base
 import ./text.bend as ContextText
 import ../json/canonical.bend as J
