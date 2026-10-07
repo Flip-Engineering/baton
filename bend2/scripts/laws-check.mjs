@@ -1447,6 +1447,10 @@ async function runGate() {
   const controlsPath = join(runRoot, 'controls.json');
   writeJson(controlsPath, controls);
   const controlsArtifactSha256 = await hashFile(controlsPath);
+  const dispatchedControls = controls.map((control) => ({ ...control, workToken: randomUUID() }));
+  const dispatchesPath = join(runRoot, 'dispatches.json');
+  writeJson(dispatchesPath, dispatchedControls);
+  const dispatchesArtifactSha256 = await hashFile(dispatchesPath);
   const startedAt = new Date().toISOString();
   const versionOut = join(artifactRoot, 'compiler-version.stdout.log');
   const versionErr = join(artifactRoot, 'compiler-version.stderr.log');
@@ -1487,6 +1491,8 @@ async function runGate() {
     producerCount: null,
     producerSetSha256: hash(stableJson(controls)),
     controlsArtifactSha256,
+    dispatchesIndex: dispatchesPath,
+    dispatchesArtifactSha256,
     completedCount: 0,
     elapsedMs: null,
     baseline: null,
@@ -1504,6 +1510,7 @@ async function runGate() {
     producerCount: controls.length,
     producerSetSha256: metadata.producerSetSha256,
     producerSetArtifact: metadata.controlsIndex,
+    dispatchesArtifact: metadata.dispatchesIndex,
   }));
   console.log(JSON.stringify({ check: 'compiler identity', version: toolchain.version, compilerSha256, passed: version === 'bend 2.0.25' && versionRun.status === 0 }));
   if (process.version !== 'v22.23.3' || version !== 'bend 2.0.25' || versionRun.status !== 0 || versionRun.error) {
@@ -1570,12 +1577,14 @@ async function runGate() {
   metadata.producerCount = controls.length;
   console.log(JSON.stringify({ scheduler: 'admitted', ...capacity, producerCount: controls.length }));
   const controlsStarted = process.hrtime.bigint();
-  const dispatchedControls = controls.map((control) => ({ ...control, workToken: randomUUID() }));
   const results = await runPool(dispatchedControls, capacity.admitted, runRoot);
   const controlsElapsedMs = Number(process.hrtime.bigint() - controlsStarted) / 1e6;
   const integrityFailures = await verifyResults(dispatchedControls, results);
   if (await hashFile(controlsPath) !== controlsArtifactSha256) {
     integrityFailures.push({ id: 'producer-set', reason: 'producer set artifact changed during execution' });
+  }
+  if (await hashFile(dispatchesPath) !== dispatchesArtifactSha256) {
+    integrityFailures.push({ id: 'producer-dispatch', reason: 'producer dispatch artifact changed during execution' });
   }
   const completedCount = results.filter(({ completed }) => completed === true).length;
   const elapsedMs = baselineElapsedMs + controlsElapsedMs;
