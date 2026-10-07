@@ -132,6 +132,19 @@ previous attempt's live file; resuming one fixed path re-appends into the same
 bytes, which re-expands a compressed 740 MB codec log and a 592 MB structure
 log on readback. The suffix holds no bare number, so the segment scan skips
 generations and rotation bounds each generation file under the session budget.
+
+`Logs.open_attempt` writes one `log_generations` row per generation file with
+the session, the raw attempt id, the file path, and the base log path. The
+`executions` table keeps one live row per session, so the registry is the
+record that still binds a superseded generation to its attempt after a later
+turn replaces the row. `Logs.attempt_code` percent-encodes the file-name form
+of an attempt id: letters, digits, dash and underscore pass through, and every
+other codepoint becomes a percent hex escape. `Logs.attempt_of` parses the
+file name only, so a `.attempt-` marker in a parent directory names no
+attempt. Consumers reading `OUTPUT_LOG` keep reading the base path;
+generation files are additional, and cleanup removes only eligible
+generations. `Logs.open_attempt` has no Turn caller in this tree.
+
 The Turn owner adopts this by rebinding the log path once per turn to
 `Logs.attempt_log(log, id)` before `Logs.open` in `Turn.started` and
 `Turn.retained_output`, and by using the rebound path for the checkpoint
@@ -172,7 +185,13 @@ answers with each removed path, its index and its size. Its `attemptLogs`
 answer removes the live file of a generation whose attempt is cleanup-eligible
 under the same decision that releases retained attempt diagnostics: exited,
 released, acknowledged, reported, exit 0, no pending input, no diagnostic
-policy. An empty stale `.pending` sidecar leaves with its generation; a
+policy. A generation whose live attempt row is gone resolves through the
+registry instead. The newest registered generation stays. An older registered
+generation leaves when the session holds no unanswered input, the policy
+level is not diagnostic, a report row exists for the attempt, the release and
+acknowledgement markers exist, and the file is nonempty. A file with no
+registry row keeps the suffix fallback and the live attempt decision.
+An empty stale `.pending` sidecar leaves with its generation; a
 nonempty one stays, and the `.stderr` sidecar stays in all cases. It reads the
 same eligibility rule `logs-storage` reports. The base live log,
 `OUTPUT_LOG.stderr`, the incomplete checkpoint, attempt directories, pending
@@ -241,6 +260,14 @@ the rotation bound, with terminal outcomes inline. The shape-faithful
 reference batch is
 [bend2/test/fixtures/codex-trace-audit-20261007.jsonl](../test/fixtures/codex-trace-audit-20261007.jsonl)
 with outputs replaced by equal-length runs and user paths redacted.
+
+Remote qualification of the generation registry ran on atari-homelab with
+Bend 2.0.25, clang-19, and SQLite 3.46: the native build passes,
+`bend2/test/logs.py` runs 43 tests green, and `bend2/test/turn.py` runs 17
+tests green. Four registry tests cover superseded removal after the
+executions row moves on, retention of an unacknowledged failed generation,
+an encoded slash identity bound to the registered attempt, and a dotted
+identity under a parent directory carrying its own `.attempt-` marker.
 
 ## Open work
 
