@@ -593,11 +593,13 @@ def ref_admit(+c: RefClaim, +e: RefExpect) -> RefOutcome:
 def projections_admissible(+requested: Eng.SS, +stored: Eng.SS, +current: Eng.SS) -> Bool:
   Bool.and(subset(requested, stored), subset(requested, current))
 
+# The accumulator carries the earliest operand first, because a union appends the
+# members it is handed to the ones already there.
 def effective_requirements(+historical: Eng.SS, +common_minimum: Eng.SS,
                            +declared: Eng.SS) -> Eng.SS:
-  Eng.union_add(historical,
+  Eng.union_add(declared,
                 Eng.union_add(common_minimum,
-                              Eng.union_add(declared, Eng.ss_empty())))
+                              Eng.union_add(historical, Eng.ss_empty())))
 
 # --- compatibility is evidence, never an effect-set comparison ---------------
 type CompatEvidence is Data:
