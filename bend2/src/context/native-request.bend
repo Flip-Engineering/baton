@@ -222,7 +222,7 @@ def read_raw_after(+db: String, +binding: String, result: Result<&1,&1,U32 & Str
           do IO<RequestDecode>:
             validity : Result<&1,&1,U32 & String,String> <- DB.Sql.query_bound(db, binding, Req.validity_sql(text))
             report_after_validation(db, binding, text, validity)
-        case invalid: RequestDecodeRefused{Req.raw_condition(invalid)}
+        case invalid: IO.pure(RequestDecode, RequestDecodeRefused{Req.raw_condition(invalid)})
 
 def read_file(+db: String, +binding: String, +path: String) -> IO(RequestDecode):
   do IO<RequestDecode>:
