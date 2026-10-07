@@ -139,7 +139,10 @@ sys.exit(%d)
             '{"probe":"unclassified frame"}',
         ]
         self.stream(frames)
-        stderr = pathlib.Path(str(self.log) + '.stderr')
+        with sqlite3.connect(self.db) as connection:
+            stderr = pathlib.Path(connection.execute(
+                'SELECT stderr FROM log_stderr_runs WHERE session=? AND attempt=? ORDER BY run DESC LIMIT 1',
+                ('omp-worker', self.active_turn)).fetchone()[0])
         stderr_full = pathlib.Path(str(stderr) + '.full')
         stderr_meta = pathlib.Path(str(stderr) + '.meta')
         self.assertTrue(stderr.is_file())
@@ -150,11 +153,11 @@ sys.exit(%d)
         self.assertEqual(retention['spool'], str(stderr_full))
         self.assertEqual(retention['limitBytes'], 33554432)
         self.assertLessEqual(retention['retainedBytes'], retention['limitBytes'])
-        log_row = next(row for row in json.loads(self.call('logs-storage'))['logs']
-                       if row['path'] == str(self.log))
-        self.assertEqual(log_row['stderrSpoolBytes'], stderr_full.stat().st_size)
-        self.assertEqual(log_row['stderrMetadataBytes'], stderr_meta.stat().st_size)
-        self.assertGreaterEqual(log_row['accountedBytes'],
+        storage = json.loads(self.call('logs-storage'))
+        stderr_row = next(row for row in storage['stderrRuns'] if row['stderr'] == str(stderr))
+        self.assertEqual(stderr_row['spoolBytes'], stderr_full.stat().st_size)
+        self.assertEqual(stderr_row['metadataBytes'], stderr_meta.stat().st_size)
+        self.assertGreaterEqual(stderr_row['accountedBytes'],
                                 stderr.stat().st_size + stderr_full.stat().st_size + stderr_meta.stat().st_size)
         saved = self.lines()
         self.assertEqual([json.loads(line).get('type') for line in saved],
@@ -707,6 +710,15 @@ assert sys.stdin.read()==''
 ''')
             self.call('turn', 'omp-worker', 'abrupt-turn', str(self.player), 'model', 'low',
                       str(self.cwd), str(self.task), str(self.base_log), '')
+            with sqlite3.connect(self.db) as connection:
+                stderr_runs = connection.execute(
+                    'SELECT run,stderr FROM log_stderr_runs WHERE session=? AND attempt=? ORDER BY run',
+                    ('omp-worker', 'abrupt-turn')).fetchall()
+            self.assertEqual([run for run, _ in stderr_runs], [1, 2])
+            self.assertTrue(pathlib.Path(stderr_runs[0][1] + '.full').is_file())
+            self.assertFalse(pathlib.Path(stderr_runs[0][1] + '.meta').exists())
+            self.assertTrue(pathlib.Path(stderr_runs[1][1] + '.full').is_file())
+            self.assertTrue(pathlib.Path(stderr_runs[1][1] + '.meta').is_file())
             saved = [json.loads(line) for line in self.log.read_text().splitlines()]
             self.assertEqual([item for item in saved if item.get('toolCallId') == 'unfinished'],
                              [json.loads(updates[-1])])
@@ -804,16 +816,20 @@ assert sys.stdin.read()==''
         self.stream([self.terminal('Second run')], turn='second-run')
         second = self.log
         self.assertNotEqual(first, second)
-        self.assertTrue(pathlib.Path(str(first) + '.stderr.full').is_file())
-        self.assertTrue(pathlib.Path(str(first) + '.stderr.meta').is_file())
-        self.assertTrue(pathlib.Path(str(second) + '.stderr.full').is_file())
-        self.assertTrue(pathlib.Path(str(second) + '.stderr.meta').is_file())
         with sqlite3.connect(self.db) as connection:
             rows = connection.execute(
                 'SELECT attempt,log,base FROM log_generations WHERE session=? ORDER BY rowid',
                 ('omp-worker',)).fetchall()
+            stderr_rows = connection.execute(
+                'SELECT attempt,run,stderr FROM log_stderr_runs WHERE session=? ORDER BY rowid',
+                ('omp-worker',)).fetchall()
         self.assertEqual(rows, [('first-run', str(first), str(self.base_log)),
                                 ('second-run', str(second), str(self.base_log))])
+        self.assertEqual([(row[0], row[1]) for row in stderr_rows],
+                         [('first-run', 1), ('second-run', 1)])
+        for _, _, stderr_name in stderr_rows:
+            self.assertTrue(pathlib.Path(stderr_name + '.full').is_file())
+            self.assertTrue(pathlib.Path(stderr_name + '.meta').is_file())
         self.assertEqual(json.loads(self.call('delivery', 'first-run'))['body'], 'First run')
         self.assertEqual(json.loads(self.call('delivery', 'second-run'))['body'], 'Second run')
 

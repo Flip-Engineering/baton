@@ -640,6 +640,19 @@ def attempt_log(+base: String, +attempt: String) -> String:
 def generations_schema() -> String:
   "CREATE TABLE IF NOT EXISTS log_generations(session TEXT NOT NULL,attempt TEXT NOT NULL,log TEXT NOT NULL,base TEXT NOT NULL,PRIMARY KEY(session,attempt));CREATE UNIQUE INDEX IF NOT EXISTS log_generations_log ON log_generations(log);"
 
+def stderr_runs_schema() -> String:
+  "CREATE TABLE IF NOT EXISTS log_stderr_runs(session TEXT NOT NULL,attempt TEXT NOT NULL,run INTEGER NOT NULL CHECK(run BETWEEN 1 AND 4294967295),generation TEXT NOT NULL,stderr TEXT NOT NULL,PRIMARY KEY(session,attempt,run),UNIQUE(stderr));"
+
+def stderr_run_sql(+session: String, +attempt: String, +generation: String) -> String:
+  "BEGIN IMMEDIATE;" ++ stderr_runs_schema()
+  ++ "INSERT INTO log_stderr_runs(session,attempt,run,generation,stderr) VALUES(" ++ C.q(session) ++ "," ++ C.q(attempt) ++ ",(SELECT coalesce(max(run),0)+1 FROM log_stderr_runs WHERE session=" ++ C.q(session) ++ " AND attempt=" ++ C.q(attempt) ++ ")," ++ C.q(generation) ++ "," ++ C.q(generation ++ ".stderr.run-") ++ " || (SELECT coalesce(max(run),0)+1 FROM log_stderr_runs WHERE session=" ++ C.q(session) ++ " AND attempt=" ++ C.q(attempt) ++ "));"
+  ++ "SELECT stderr FROM log_stderr_runs WHERE session=" ++ C.q(session) ++ " AND attempt=" ++ C.q(attempt) ++ " ORDER BY run DESC LIMIT 1;COMMIT;"
+
+def open_stderr_run(+db: String, +session: String, +attempt: String, +generation: String) -> IO(String):
+  do IO<String>:
+    path : String <- IO.try(String,DB.Sql.query(db,stderr_run_sql(session,attempt,generation)))
+    IO.pure(String,Tx.trim_nl(path))
+
 def generations_register_sql(+session: String, +attempt: String, +log: String, +base: String) -> String:
   "INSERT OR IGNORE INTO log_generations(session,attempt,log,base) VALUES(" ++ C.q(session) ++ "," ++ C.q(attempt) ++ "," ++ C.q(log) ++ "," ++ C.q(base) ++ ");"
 
@@ -913,13 +926,38 @@ def attempt_items(+db: String, rows: List<String>, acc: String) -> IO(String):
       deeper : String <- attempt_items(db,tail,items_join(acc,item))
       IO.pure(String,deeper)
 
-def storage_json(db: String, database: U32, root: U32, logs: String, attempts: String) -> String:
+def stderr_run_json(+db: String, fields: List<String>) -> IO(String):
+  match fields:
+    case session <> attempt <> run <> +generation <> +stderr_path <> rest: do IO<String>:
+      stderr : U32 <- IO.try(U32,F.Files.size(stderr_path))
+      spool : U32 <- IO.try(U32,F.Files.size(stderr_path ++ ".full"))
+      meta_bytes : U32 <- IO.try(U32,F.Files.size(stderr_path ++ ".meta"))
+      error_bytes : U32 <- IO.try(U32,F.Files.size(stderr_path ++ ".meta.processing-error"))
+      text : Result<&1,&1,U32 & String,String> <- T.Text.read(stderr_path ++ ".meta")
+      metadata : String <- stderr_meta_json_read(db,text)
+      health : String <- stderr_generation_health(db,stderr_path,metadata)
+      IO.pure(String,"{\"session\":" ++ J.string_literal(session) ++ ",\"attempt\":" ++ J.string_literal(attempt) ++ ",\"run\":" ++ run ++ ",\"generation\":" ++ J.string_literal(generation) ++ ",\"stderr\":" ++ J.string_literal(stderr_path) ++ ",\"stderrBytes\":" ++ U32.show(stderr) ++ ",\"spoolBytes\":" ++ U32.show(spool) ++ ",\"metadataBytes\":" ++ U32.show(meta_bytes) ++ ",\"processingErrorBytes\":" ++ U32.show(error_bytes) ++ ",\"accountedBytes\":" ++ U32.show(U32.add(stderr,U32.add(spool,U32.add(meta_bytes,error_bytes)))) ++ ",\"health\":" ++ J.string_literal(health) ++ ",\"metadata\":" ++ metadata ++ "}")
+    case other: IO.pure(String,"")
+
+def stderr_run_items(+db: String, rows: List<String>, acc: String) -> IO(String):
+  match rows:
+    case Nil{}: IO.pure(String,acc)
+    case head <> tail: do IO<String>:
+      item : String <- stderr_run_json(db,Tx.split_tabs(head))
+      rest : String <- stderr_run_items(db,tail,items_join(acc,item))
+      IO.pure(String,rest)
+
+def stderr_run_rows_sql() -> String:
+  "SELECT session,attempt,run,generation,stderr FROM log_stderr_runs ORDER BY session,attempt,run;"
+
+def storage_json(db: String, database: U32, root: U32, logs: String, attempts: String, stderr_runs: String) -> String:
   "{\"database\":" ++ J.string_literal(db)
   ++ ",\"databaseBytes\":" ++ U32.show(database)
   ++ ",\"rootLogBytes\":" ++ U32.show(root)
   ++ ",\"defaults\":{\"level\":" ++ J.string_literal(default_level()) ++ ",\"budgetBytes\":" ++ default_budget() ++ ",\"keepSegments\":" ++ default_segments() ++ "}"
   ++ ",\"logs\":[" ++ logs ++ "]"
-  ++ ",\"attempts\":[" ++ attempts ++ "]}"
+  ++ ",\"attempts\":[" ++ attempts ++ "]"
+  ++ ",\"stderrRuns\":[" ++ stderr_runs ++ "]}"
 
 # Inspects registered artifact paths and cleanup candidates. The policy schema
 # is initialized or migrated before the read.
@@ -930,9 +968,11 @@ def storage(+db: String) -> IO(String):
     logs : String <- log_items(Tx.split_lines(log_text),"")
     attempt_text : String <- IO.try(String,DB.Sql.query(db,attempt_rows_sql(db,"")))
     attempts : String <- attempt_items(db,Tx.split_lines(attempt_text),"")
+    run_text : String <- IO.try(String,DB.Sql.query(db,stderr_runs_schema() ++ stderr_run_rows_sql()))
+    stderr_runs : String <- stderr_run_items(db,Tx.split_lines(run_text),"")
     database : U32 <- IO.try(U32,F.Files.size(db))
     root : U32 <- IO.try(U32,F.Files.size(db ++ ".root.log"))
-    IO.pure(String,storage_json(db,database,root,logs,attempts))
+    IO.pure(String,storage_json(db,database,root,logs,attempts,stderr_runs))
 
 def clean_item_json(log: String, +index: U32, size: U32, gone: Result<&1,&1,U32 & String,Unit>) -> String:
   match gone:
@@ -1099,7 +1139,33 @@ def clean_attempt_log_first(rows: List<String>) -> String:
     case head <> tail: head
     case other: ""
 
-def clean_attempt_settled_fields(+db: String, fields: List<String>, +log: String, +attempt: String, +size: U32) -> IO(String):
+def clean_stderr_run_file(+db: String, +attempt: String, +stderr_path: String) -> IO(String):
+  do IO<String>:
+    health : String <- stderr_generation(db,stderr_path)
+    Bool.pick(IO(String),String.eq(health,"ok"),do IO<String>:
+      stderr_size : U32 <- IO.try(U32,F.Files.size(stderr_path))
+      spool_size : U32 <- IO.try(U32,F.Files.size(stderr_path ++ ".full"))
+      meta_size : U32 <- IO.try(U32,F.Files.size(stderr_path ++ ".meta"))
+      stderr : Result<&1,&1,U32 & String,Unit> <- F.Files.remove(stderr_path)
+      spool : Result<&1,&1,U32 & String,Unit> <- F.Files.remove(stderr_path ++ ".full")
+      meta : Result<&1,&1,U32 & String,Unit> <- F.Files.remove(stderr_path ++ ".meta")
+      IO.pure(String,items_join(clean_attempt_log_json(stderr_path,attempt,stderr_size,stderr),items_join(clean_attempt_log_json(stderr_path ++ ".full",attempt,spool_size,spool),clean_attempt_log_json(stderr_path ++ ".meta",attempt,meta_size,meta)))),IO.pure(String,""))
+
+def clean_stderr_run_rows(+db: String, +session: String, +attempt: String) -> IO(String):
+  do IO<String>:
+    rows : String <- IO.try(String,DB.Sql.query(db,"SELECT stderr FROM log_stderr_runs WHERE session=" ++ C.q(session) ++ " AND attempt=" ++ C.q(attempt) ++ " ORDER BY run;"))
+    cleaned : String <- clean_stderr_run_items(db,attempt,Tx.split_lines(rows),"")
+    IO.pure(String,cleaned)
+
+def clean_stderr_run_items(+db: String, +attempt: String, rows: List<String>, acc: String) -> IO(String):
+  match rows:
+    case Nil{}: IO.pure(String,acc)
+    case head <> tail: do IO<String>:
+      cleaned : String <- clean_stderr_run_file(db,attempt,Tx.trim_nl(head))
+      rest : String <- clean_stderr_run_items(db,attempt,tail,items_join(acc,cleaned))
+      IO.pure(String,rest)
+
+def clean_attempt_settled_fields(+db: String, +session: String, fields: List<String>, +log: String, +attempt: String, +size: U32) -> IO(String):
   match fields:
     case pending <> level <> reported <> +directory <> rest: do IO<String>:
       released_file : String <- IO.try(String,F.Files.regular(directory ++ "/released"))
@@ -1110,18 +1176,19 @@ def clean_attempt_settled_fields(+db: String, fields: List<String>, +log: String
       decision : Bool <- IO.pure(Bool,superseded_eligible(superseded_decision(pending,level,reported,released,acknowledged,size)))
       answer : String <- clean_attempt_log_eligible(decision,log,attempt,size)
       bounded_files : String <- Bool.pick(IO(String),Bool.and(decision,String.eq(health,"ok")),clean_attempt_stderr(log,attempt),IO.pure(String,""))
-      IO.pure(String,items_join(answer,bounded_files))
+      run_files : String <- Bool.pick(IO(String),decision,clean_stderr_run_rows(db,session,attempt),IO.pure(String,""))
+      IO.pure(String,items_join(answer,items_join(bounded_files,run_files)))
     case other: IO.pure(String,"")
 
-def clean_attempt_settled(+db: String, info: String, +log: String, +attempt: String, size: U32) -> IO(String):
-  clean_attempt_settled_fields(db,Tx.split_tabs(clean_attempt_log_first(Tx.split_lines(info))),log,attempt,size)
+def clean_attempt_settled(+db: String, +session: String, info: String, +log: String, +attempt: String, size: U32) -> IO(String):
+  clean_attempt_settled_fields(db,session,Tx.split_tabs(clean_attempt_log_first(Tx.split_lines(info))),log,attempt,size)
 
 def clean_attempt_older(older: Bool, +db: String, +session: String, +log: String, +attempt: String, +size: U32) -> IO(String):
   match older:
     case False{}: IO.pure(String,"")
     case True{}: do IO<String>:
       info : String <- IO.try(String,DB.Sql.query(db,superseded_info_sql(db,session,attempt)))
-      answer : String <- clean_attempt_settled(db,info,log,attempt,size)
+      answer : String <- clean_attempt_settled(db,session,info,log,attempt,size)
       IO.pure(String,answer)
 
 def clean_attempt_superseded(known: Bool, +older: Bool, +db: String, +session: String, +log: String, +attempt: String, +size: U32) -> IO(String):

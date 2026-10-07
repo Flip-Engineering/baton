@@ -608,14 +608,14 @@ def launch(sessions: String, +cmd: String, +model: String, +effort: String, +cwd
     Codex.start_player(cmd,model,effort,cwd,log ++ ".stderr",session,String.is_empty(session)),
     claude_launch(cmd,model,effort,cwd,log ++ ".stderr",session,String.is_empty(session)))))
 
-def launch_bounded(sessions: String, +cmd: String, +model: String, +effort: String, +cwd: String, +log: String, +session: String, +harness: String, task: String, limit: U32) -> IO(Result<&1,&1,U32 & String,U32>):
+def launch_bounded(sessions: String, +cmd: String, +model: String, +effort: String, +cwd: String, +log: String, +stderr: String, +session: String, +harness: String, task: String, limit: U32) -> IO(Result<&1,&1,U32 & String,U32>):
   Bool.pick(IO(Result<&1,&1,U32 & String,U32>), String.eq(harness,"omp\n"),
-    Omp.start_player_bounded(cmd,model,effort,cwd,log,sessions,session,String.is_empty(session),limit),
+    Omp.start_player_bounded(cmd,model,effort,cwd,log,stderr,sessions,session,String.is_empty(session),limit),
   Bool.pick(IO(Result<&1,&1,U32 & String,U32>), String.eq(harness,"muse\n"),
-    Bool.pick(IO(Result<&1,&1,U32 & String,U32>),String.is_empty(session),Muse.start_player_bounded(cmd,model,effort,cwd,log ++ ".stderr",task,limit),Muse.resume_player_bounded(cmd,model,effort,cwd,log ++ ".stderr",session,task,limit)),
+    Bool.pick(IO(Result<&1,&1,U32 & String,U32>),String.is_empty(session),Muse.start_player_bounded(cmd,model,effort,cwd,stderr,task,limit),Muse.resume_player_bounded(cmd,model,effort,cwd,stderr,session,task,limit)),
   Bool.pick(IO(Result<&1,&1,U32 & String,U32>), String.eq(harness,"codex\n"),
-    Codex.start_player_bounded(cmd,model,effort,cwd,log ++ ".stderr",session,String.is_empty(session),limit),
-  Bool.pick(IO(Result<&1,&1,U32 & String,U32>),String.is_empty(session),Claude.start_player_bounded(cmd,model,effort,cwd,log ++ ".stderr",limit),Claude.resume_player_bounded(cmd,model,effort,cwd,log ++ ".stderr",session,limit)))))
+    Codex.start_player_bounded(cmd,model,effort,cwd,stderr,session,String.is_empty(session),limit),
+  Bool.pick(IO(Result<&1,&1,U32 & String,U32>),String.is_empty(session),Claude.start_player_bounded(cmd,model,effort,cwd,stderr,limit),Claude.resume_player_bounded(cmd,model,effort,cwd,stderr,session,limit)))))
 
 # The state the workspace holds when a turn restarts: the work an interrupted
 # turn had already written.
@@ -656,7 +656,7 @@ def refusal(+log: String, resumable: Bool, +outcome: Outcome) -> IO(Bool):
   match outcome:
     case Ended{status,event,error}:
       do IO<Bool>:
-        text : Result<&1,&1,U32 & String,String> <- T.Text.read(log ++ ".stderr")
+        text : Result<&1,&1,U32 & String,String> <- T.Text.read(log)
         refusal_read(resumable,event,text)
 
 # The refused conversation is gone, so the pending input runs fresh and names
@@ -671,13 +671,14 @@ def supervise_gone(+db: String, +player: String, +id: String, +cmd: String, +mod
     case False{}: IO.pure(Outcome,first)
     case True{}: do IO<Outcome>:
       note : String <- refused_note(cwd,prompt)
-      child : Result<&1,&1,U32 & String,U32> <- launch_bounded(sessions,cmd,model,effort,cwd,generation_log(log,id),"",harness,task,limit)
+      stderr : String <- Logs.open_stderr_run(db,player,id,generation_log(log,id))
+      child : Result<&1,&1,U32 & String,U32> <- launch_bounded(sessions,cmd,model,effort,cwd,generation_log(log,id),stderr,"",harness,task,limit)
       restart(db,player,id,log,note,harness,child)
 
-def supervise_retry(+db: String, +player: String, +id: String, +cmd: String, +model: String, +effort: String, +cwd: String, +task: String, +log: String, +harness: String, +sessions: String, +native: String, +prompt: String, limit: U32, +first: Outcome) -> IO(Outcome):
+def supervise_retry(+db: String, +player: String, +id: String, +cmd: String, +model: String, +effort: String, +cwd: String, +task: String, +log: String, +harness: String, +sessions: String, +native: String, +stderr: String, +prompt: String, limit: U32, +first: Outcome) -> IO(Outcome):
   do IO<Outcome>:
     resumable : Bool <- IO.pure(Bool, Bool.not(String.is_empty(native)))
-    gone : Bool <- refusal(generation_log(log,id),resumable,first)
+    gone : Bool <- refusal(stderr,resumable,first)
     supervise_gone(db,player,id,cmd,model,effort,cwd,task,log,harness,sessions,prompt,limit,first,gone)
 
 def supervise(+db: String, +player: String, +id: String, +cmd: String, +model: String, +effort: String, +cwd: String, +task: String, +log: String, +session: String, +harness: String, +sessions: String, +prompt: String) -> IO(Outcome):
@@ -686,9 +687,10 @@ def supervise(+db: String, +player: String, +id: String, +cmd: String, +model: S
     +native : String <- Omp.resume_file(sessions,Tx.trim_nl(alternate),session,Bool.and(String.eq(harness,"omp\n"),Bool.not(String.is_empty(session))))
     +policy : Logs.Policy <- Logs.policy(db,player)
     limit : U32 <- IO.pure(U32,Logs.stderr_limit(policy))
-    child : Result<&1,&1,U32 & String,U32> <- launch_bounded(sessions,cmd,model,effort,cwd,generation_log(log,id),native,harness,task,limit)
+    stderr : String <- Logs.open_stderr_run(db,player,id,generation_log(log,id))
+    child : Result<&1,&1,U32 & String,U32> <- launch_bounded(sessions,cmd,model,effort,cwd,generation_log(log,id),stderr,native,harness,task,limit)
     first : Outcome <- started(db,player,id,log,prompt,harness,child)
-    supervise_retry(db,player,id,cmd,model,effort,cwd,task,log,harness,sessions,native,prompt,limit,first)
+    supervise_retry(db,player,id,cmd,model,effort,cwd,task,log,harness,sessions,native,stderr,prompt,limit,first)
 
 def task_read(db: String, player: String, id: String, cmd: String, model: String, effort: String, cwd: String, task: String, log: String, session: String, harness: String, sessions: String, result: Result<&1,&1,U32 & String,String>) -> IO(Outcome):
   match result:
