@@ -1346,7 +1346,7 @@ law the_association_is_written_only_by_the_transaction_that_created_the_row:
   for +planValue: String
   for +resultSchema: String
   for +originAttempt: String
-  {ContextStore.association_insert_sql(id,planValue,planIdentity,resultSchema,originAttempt) == "INSERT INTO semantic_admissions(query_id,plan_value,plan_identity,result_schema,origin_attempt) SELECT " ++ C.q(id) ++ "," ++ C.q(planValue) ++ "," ++ C.q(planIdentity) ++ "," ++ C.q(resultSchema) ++ "," ++ ContextStore.text_or_null(originAttempt) ++ " WHERE changes()=1 AND NOT EXISTS(SELECT 1 FROM semantic_admissions WHERE query_id=" ++ C.q(id) ++ ");" : String}
+  {ContextStore.association_insert_sql(id,planValue,planIdentity,resultSchema,originAttempt) == ("INSERT INTO semantic_admissions(query_id,plan_value,plan_identity,result_schema,origin_attempt) SELECT " ++ C.q(id) ++ ",") ++ (C.q(planValue) ++ "," ++ C.q(planIdentity) ++ "," ++ C.q(resultSchema) ++ "," ++ ContextStore.text_or_null(originAttempt) ++ " WHERE changes()=1 AND NOT EXISTS(SELECT 1 FROM semantic_admissions WHERE query_id=" ++ C.q(id) ++ ");") : String}
 
 def the_association_is_written_only_by_the_transaction_that_created_the_row(planIdentity,id,planValue,resultSchema,originAttempt):
   {==}
@@ -1373,6 +1373,12 @@ law two_different_plans_do_not_share_an_association_insert:
   {Bool.not(String.eq(ContextStore.association_insert_sql(id,"plan-a","id-a","schema-a",originAttempt), ContextStore.association_insert_sql(id,"plan-b","id-b","schema-a",originAttempt))) == True{} : Bool}
 
 def two_different_plans_do_not_share_an_association_insert(id,originAttempt):
+  +prefix = "INSERT INTO semantic_admissions(query_id,plan_value,plan_identity,result_schema,origin_attempt) SELECT " ++ C.q(id) ++ ","
+  +left = "','id-a','schema-a'," ++ ContextStore.text_or_null(originAttempt) ++ " WHERE changes()=1 AND NOT EXISTS(SELECT 1 FROM semantic_admissions WHERE query_id=" ++ C.q(id) ++ ");"
+  +right = "','id-b','schema-a'," ++ ContextStore.text_or_null(originAttempt) ++ " WHERE changes()=1 AND NOT EXISTS(SELECT 1 FROM semantic_admissions WHERE query_id=" ++ C.q(id) ++ ");"
+  %ContextEquality.prefix_a_differs_from_b(prefix ++ "'plan-",left,right) : {Bool.not(String.eq(prefix ++ ("'plan-" ++ SCon{'a',left}),prefix ++ ("'plan-" ++ SCon{'b',right}))) == _ : Bool}
+  %ContextEquality.append_associative(prefix,"'plan-",SCon{'a',left}) : {Bool.not(String.eq(_,prefix ++ ("'plan-" ++ SCon{'b',right}))) == Bool.not(String.eq((prefix ++ "'plan-") ++ SCon{'a',left},(prefix ++ "'plan-") ++ SCon{'b',right})) : Bool}
+  %ContextEquality.append_associative(prefix,"'plan-",SCon{'b',right}) : {Bool.not(String.eq((prefix ++ "'plan-") ++ SCon{'a',left},_)) == Bool.not(String.eq((prefix ++ "'plan-") ++ SCon{'a',left},(prefix ++ "'plan-") ++ SCon{'b',right})) : Bool}
   {==}
 
 law two_different_schemas_do_not_share_an_association_insert:
@@ -1381,6 +1387,12 @@ law two_different_schemas_do_not_share_an_association_insert:
   {Bool.not(String.eq(ContextStore.association_insert_sql(id,"plan-a","id-a","schema-a",originAttempt), ContextStore.association_insert_sql(id,"plan-a","id-a","schema-b",originAttempt))) == True{} : Bool}
 
 def two_different_schemas_do_not_share_an_association_insert(id,originAttempt):
+  +prefix = "INSERT INTO semantic_admissions(query_id,plan_value,plan_identity,result_schema,origin_attempt) SELECT " ++ C.q(id) ++ ","
+  +left = "'," ++ ContextStore.text_or_null(originAttempt) ++ " WHERE changes()=1 AND NOT EXISTS(SELECT 1 FROM semantic_admissions WHERE query_id=" ++ C.q(id) ++ ");"
+  +right = "'," ++ ContextStore.text_or_null(originAttempt) ++ " WHERE changes()=1 AND NOT EXISTS(SELECT 1 FROM semantic_admissions WHERE query_id=" ++ C.q(id) ++ ");"
+  %ContextEquality.prefix_a_differs_from_b(prefix ++ "'plan-a','id-a','schema-",left,right) : {Bool.not(String.eq(prefix ++ ("'plan-a','id-a','schema-" ++ SCon{'a',left}),prefix ++ ("'plan-a','id-a','schema-" ++ SCon{'b',right}))) == _ : Bool}
+  %ContextEquality.append_associative(prefix,"'plan-a','id-a','schema-",SCon{'a',left}) : {Bool.not(String.eq(_,prefix ++ ("'plan-a','id-a','schema-" ++ SCon{'b',right}))) == Bool.not(String.eq((prefix ++ "'plan-a','id-a','schema-") ++ SCon{'a',left},(prefix ++ "'plan-a','id-a','schema-") ++ SCon{'b',right})) : Bool}
+  %ContextEquality.append_associative(prefix,"'plan-a','id-a','schema-",SCon{'b',right}) : {Bool.not(String.eq((prefix ++ "'plan-a','id-a','schema-") ++ SCon{'a',left},_)) == Bool.not(String.eq((prefix ++ "'plan-a','id-a','schema-") ++ SCon{'a',left},(prefix ++ "'plan-a','id-a','schema-") ++ SCon{'b',right})) : Bool}
   {==}
 
 law an_association_answer_row_carries_the_absent_marker_for_a_row_without_one:

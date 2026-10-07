@@ -55,3 +55,41 @@ law string_eq_self:
 def string_eq_self(s):
   %string_cmp_self(s) : {String.eq.fin(String.cmp(s, s)) == String.eq.fin(_) : Bool}
   {==}
+
+
+law append_associative:
+  for +prefix: String
+  for +left: String
+  for +right: String
+  {(prefix ++ left) ++ right == prefix ++ (left ++ right) : String}
+
+def append_associative(prefix,left,right):
+  match prefix:
+    case SNil{}: {==}
+    case SCon{+head,+tail}:
+      %append_associative(tail,left,right) : {SCon{head,(tail ++ left) ++ right} == SCon{head,_} : String}
+      {==}
+
+law prefix_a_before_b:
+  for +prefix: String
+  for +left: String
+  for +right: String
+  {String.cmp(prefix ++ SCon{'a',left},prefix ++ SCon{'b',right}) == ((prefix ++ SCon{'a',left},prefix ++ SCon{'b',right}),LT{}) : (String & String) & Cmp}
+
+def prefix_a_before_b(prefix,left,right):
+  match prefix:
+    case SNil{}: {==}
+    case SCon{+head,+tail}:
+      %prefix_a_before_b(tail,left,right) : {String.cmp(prefix ++ SCon{'a',left},prefix ++ SCon{'b',right}) == String.cmp.rec(head,head,_) : (String & String) & Cmp}
+      %char_cmp_self(head) : {String.cmp(prefix ++ SCon{'a',left},prefix ++ SCon{'b',right}) == String.cmp.fin(tail ++ SCon{'a',left},tail ++ SCon{'b',right},_) : (String & String) & Cmp}
+      {==}
+
+law prefix_a_differs_from_b:
+  for +prefix: String
+  for +left: String
+  for +right: String
+  {Bool.not(String.eq(prefix ++ SCon{'a',left},prefix ++ SCon{'b',right})) == True{} : Bool}
+
+def prefix_a_differs_from_b(prefix,left,right):
+  %prefix_a_before_b(prefix,left,right) : {Bool.not(String.eq(prefix ++ SCon{'a',left},prefix ++ SCon{'b',right})) == Bool.not(String.eq.fin(_)) : Bool}
+  {==}

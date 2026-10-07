@@ -297,7 +297,7 @@ def text_or_null(+value: String) -> String:
 # complete rendering and the identity over the deciding members are both stored: the
 # rendering is the carrier, and the identity is what a replay compares without parsing.
 def association_insert_sql(+id: String, +planValue: String, +planIdentity: String, +resultSchema: String, +originAttempt: String) -> String:
-  "INSERT INTO semantic_admissions(query_id,plan_value,plan_identity,result_schema,origin_attempt) SELECT " ++ C.q(id) ++ "," ++ C.q(planValue) ++ "," ++ C.q(planIdentity) ++ "," ++ C.q(resultSchema) ++ "," ++ text_or_null(originAttempt) ++ " WHERE changes()=1 AND NOT EXISTS(SELECT 1 FROM semantic_admissions WHERE query_id=" ++ C.q(id) ++ ");"
+  ("INSERT INTO semantic_admissions(query_id,plan_value,plan_identity,result_schema,origin_attempt) SELECT " ++ C.q(id) ++ ",") ++ (C.q(planValue) ++ "," ++ C.q(planIdentity) ++ "," ++ C.q(resultSchema) ++ "," ++ text_or_null(originAttempt) ++ " WHERE changes()=1 AND NOT EXISTS(SELECT 1 FROM semantic_admissions WHERE query_id=" ++ C.q(id) ++ ");")
 
 # The repeated-ID rule of the store: the same ID, owner and canonical request text
 # replay the stored row; any other reuse aborts the transaction through the NOT NULL
